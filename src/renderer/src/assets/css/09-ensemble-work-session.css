@@ -2025,6 +2025,7 @@
   color: var(--surface-text);
 }
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="claude"] .ensemble-above-row,
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="claude"] .queued-messages-above-row,
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="claude"]
   .composer-above-bar-stack
   > .ensemble-roster-preset-picker.is-compact {
@@ -2436,18 +2437,31 @@
   overflow: visible;
 }
 [data-composer-style="claude"] .ensemble-above-row,
-[data-composer-style="claude"] .composer-above-bar-stack > .ensemble-roster-preset-picker.is-compact {
+[data-composer-style="claude"] .composer-above-bar-stack > .ensemble-roster-preset-picker.is-compact,
+[data-composer-style="claude"] .queued-messages-above-row {
   border-radius: 14px;
-  background: color-mix(in srgb, #161616 94%, transparent);
+  /* Exact same frame as the Create-PR row (07:~3841): #151515 solid,
+   * white-9% hairline, 14px radius, 12px vertical padding — every
+   * detached pill in the stack reads as one height/chrome family. */
+  background: #151515;
   border: 1px solid color-mix(in srgb, #ffffff 9%, transparent);
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.32);
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
-}
-[data-composer-style="claude"] .queued-messages-above-row {
-  border-radius: 12px;
+  padding: 12px 14px;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
 }
 [data-composer-style="claude"] .queued-messages-row {
+  border-radius: 8px;
+}
+/* Interactive chips inside these rows join the shell's squared
+ * rounded-rect language (8px, same as the git-row chips). */
+[data-composer-style="claude"] .ensemble-above-chip,
+[data-composer-style="claude"] .ensemble-above-row-skip,
+[data-composer-style="claude"]
+  .composer-above-bar-stack
+  > .ensemble-roster-preset-picker.is-compact
+  .ensemble-roster-preset-picker-chip {
   border-radius: 8px;
 }
 [data-composer-style="claude"]

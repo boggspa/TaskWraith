@@ -857,7 +857,7 @@
  * Phase K-followup — In the Claude shell, the composer surface uses
  * a rectangular-rounded corner shape rather than the default
  * capsule pills. Apply the same shape-language to the pills:
- * rounded-rectangle (~10px radius) instead of fully-rounded 999px.
+ * rounded-rectangle (~8px radius) instead of fully-rounded 999px.
  * The branch + files + stats pills + Create PR all pick up the same
  * radius so the whole above-bar row reads as ONE cohesive band
  * matching the textarea below. Only applies to the Claude shell. */
@@ -878,7 +878,7 @@
 [data-composer-style="claude"] .composer-above-bar .composer-above-bar-files,
 [data-composer-style="claude"] .composer-above-bar .composer-above-bar-stats,
 [data-composer-style="claude"] .composer-above-bar .composer-above-bar-action {
-  border-radius: var(--radius-md, 10px);
+  border-radius: 8px;
 }
 
 /* ============================================================
@@ -3843,7 +3843,7 @@
   border: 1px solid color-mix(in srgb, #ffffff 9%, transparent) !important;
   border-radius: 14px !important;
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.32) !important;
-  padding: 8px 14px !important;
+  padding: 12px 14px !important;
 }
 
 [data-interface-style="codex"] .composer-surface {

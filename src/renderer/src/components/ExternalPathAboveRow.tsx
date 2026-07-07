@@ -230,13 +230,18 @@ export function ExternalPathAboveRow({
       snapshot.remoteUrl &&
       (!snapshot.upstream || (snapshot.ahead ?? 0) > 0)
   )
-  const actionLabel = hasDiff
-    ? 'Review changes'
-    : needsPush
-      ? snapshot && !snapshot.upstream
-        ? 'Publish branch'
-        : 'Push'
-      : createPrLabel
+  // Claude shell mirrors the real Claude app: the headline is always the
+  // PR label ("Create PR"); Review/Push live inside the dropdown menu.
+  const actionLabel =
+    composerStyle === 'claude'
+      ? createPrLabel
+      : hasDiff
+        ? 'Review changes'
+        : needsPush
+          ? snapshot && !snapshot.upstream
+            ? 'Publish branch'
+            : 'Push'
+          : createPrLabel
   const useGitIconAction = composerGitActionUsesCommitIcon(composerStyle)
   const actionTitle =
     createPrState?.message || `Review, commit, push, or open a PR for ${descriptor.basename}`

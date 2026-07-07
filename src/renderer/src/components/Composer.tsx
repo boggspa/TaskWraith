@@ -2012,7 +2012,8 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               (primaryGitSnapshot.ahead ?? 0) > 0)
                         )
                         const primaryLabel =
-                          appearance.composerStyle === 'cursor'
+                          appearance.composerStyle === 'cursor' ||
+                          appearance.composerStyle === 'claude'
                             ? createPrLabel
                             : hasReviewableDiff
                               ? 'Review changes'
