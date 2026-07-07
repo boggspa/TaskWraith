@@ -3,8 +3,8 @@ import type {
   ChatMessage,
   ChatRecord,
   ChatRun,
-  DiffFileSummary,
-  EnsembleRoundState
+  EnsembleRoundState,
+  ToolActivity
 } from '../../../main/store/types'
 import { computeGoalRuntimeTiming } from '../../../main/GoalState'
 import {
@@ -27,7 +27,6 @@ export function buildTaskWraithRunCloseoutMessage(input: {
   run: ChatRun
   completedAt: string
   exitCode?: number
-  fileSummaries?: DiffFileSummary[]
   now?: Date
 }): ChatMessage {
   const { chat, run, completedAt, exitCode } = input
@@ -40,8 +39,8 @@ export function buildTaskWraithRunCloseoutMessage(input: {
   ]
   const summaryLine = latestAssistantSummary(chat.messages, run.runId)
   if (summaryLine) lines.push(`- Summary: ${summaryLine}`)
-  const fileLine = fileSummaryLine(input.fileSummaries)
-  if (fileLine) lines.push(`- Changed: ${fileLine}`)
+  const commitLine = commitSummaryLine(chat.messages, (message) => message.runId === run.runId)
+  if (commitLine) lines.push(`- Commits: ${commitLine}.`)
   const tokenLine = tokenSummaryLine([run])
   if (tokenLine) lines.push(`- Tokens: ${tokenLine}.`)
   const goalLine = goalSummaryLine(
@@ -73,7 +72,6 @@ export function buildTaskWraithRoundCloseoutMessage(input: {
   chat: ChatRecord
   round: EnsembleRoundState
   completedAt: string
-  fileSummaries?: DiffFileSummary[]
   now?: Date
 }): ChatMessage {
   const { chat, round, completedAt } = input
@@ -89,8 +87,11 @@ export function buildTaskWraithRoundCloseoutMessage(input: {
   if (participantLine) lines.push(`- Participants: ${participantLine}.`)
   const summaryLine = roundSummaryLine(chat, round.roundId)
   if (summaryLine) lines.push(`- Summary: ${summaryLine}`)
-  const fileLine = fileSummaryLine(input.fileSummaries)
-  if (fileLine) lines.push(`- Changed: ${fileLine}`)
+  const commitLine = commitSummaryLine(
+    chat.messages,
+    (message) => message.metadata?.ensembleRoundId === round.roundId
+  )
+  if (commitLine) lines.push(`- Commits: ${commitLine}.`)
   const tokenLine = tokenSummaryLine(roundRuns)
   if (tokenLine) lines.push(`- Tokens: ${tokenLine}.`)
   const goalLine = goalSummaryLine(chat.activeGoal, input.now)
@@ -216,19 +217,6 @@ function roundSummaryLine(chat: ChatRecord, roundId: string): string | null {
   return firstUsefulLine(explicit || summary)
 }
 
-function fileSummaryLine(fileSummaries: DiffFileSummary[] | undefined): string | null {
-  const files = (fileSummaries || []).filter((entry) => !(entry as { isNoise?: boolean }).isNoise)
-  if (files.length === 0) return null
-  let additions = 0
-  let deletions = 0
-  for (const file of files) {
-    additions += typeof file.additions === 'number' ? file.additions : 0
-    deletions += typeof file.deletions === 'number' ? file.deletions : 0
-  }
-  const stats = additions > 0 || deletions > 0 ? ` (+${additions} -${deletions})` : ''
-  return `${files.length} file${files.length === 1 ? '' : 's'}${stats}.`
-}
-
 function tokenSummaryLine(runs: ChatRun[]): string | null {
   const total = runs.reduce(
     (sum, run) => sum + extractUsageCountsFromCandidate(run.stats).totalTokens,
@@ -254,6 +242,83 @@ function participantSummaryLine(round: EnsembleRoundState): string | null {
     providers
   ].filter(Boolean)
   return parts.join('; ')
+}
+
+type CloseoutCommit = {
+  hash: string
+  subject?: string
+}
+
+function commitSummaryLine(
+  messages: ChatMessage[],
+  includeMessage: (message: ChatMessage) => boolean
+): string | null {
+  const commits = new Map<string, CloseoutCommit>()
+  for (const message of messages) {
+    if (!includeMessage(message)) continue
+    for (const activity of message.toolActivities || []) {
+      if (!isGitCommitActivity(activity)) continue
+      for (const commit of extractCommitsFromActivity(activity)) {
+        if (!commits.has(commit.hash)) commits.set(commit.hash, commit)
+      }
+    }
+  }
+  if (commits.size === 0) return null
+  return Array.from(commits.values())
+    .slice(0, 5)
+    .map((commit) => `${commit.hash.slice(0, 12)}${commit.subject ? ` ${commit.subject}` : ''}`)
+    .join('; ')
+}
+
+function isGitCommitActivity(activity: ToolActivity): boolean {
+  const text = `${activity.toolName || ''} ${activity.displayName || ''}`.toLowerCase()
+  return text.includes('git_commit') || text.includes('git commit')
+}
+
+function extractCommitsFromActivity(activity: ToolActivity): CloseoutCommit[] {
+  const fragments: string[] = []
+  collectCommitTextFragments(activity.resultSummary, fragments)
+  collectCommitTextFragments(activity.outputPreview, fragments)
+  collectCommitTextFragments(activity.rawResultEvent, fragments)
+  return extractCommitsFromText(fragments.join('\n'))
+}
+
+function collectCommitTextFragments(value: unknown, fragments: string[], depth = 0): void {
+  if (value === null || value === undefined || depth > 4 || fragments.length > 80) return
+  if (typeof value === 'string') {
+    if (value.trim()) fragments.push(value)
+    return
+  }
+  if (typeof value !== 'object') return
+  if (Array.isArray(value)) {
+    for (const item of value) collectCommitTextFragments(item, fragments, depth + 1)
+    return
+  }
+  for (const entry of Object.values(value as Record<string, unknown>)) {
+    collectCommitTextFragments(entry, fragments, depth + 1)
+  }
+}
+
+function extractCommitsFromText(text: string): CloseoutCommit[] {
+  const commits = new Map<string, CloseoutCommit>()
+  const bracketPattern = /\[[^\]\n]*\b([0-9a-f]{7,40})\]\s*([^\n]+)/gi
+  let match: RegExpExecArray | null
+  while ((match = bracketPattern.exec(text)) !== null) {
+    const hash = match[1]
+    const subject = match[2]?.trim()
+    commits.set(hash, { hash, ...(subject ? { subject } : {}) })
+  }
+  const commitLinePattern = /^commit\s+([0-9a-f]{7,40})\b.*$/gim
+  while ((match = commitLinePattern.exec(text)) !== null) {
+    const hash = match[1]
+    if (!commits.has(hash)) commits.set(hash, { hash })
+  }
+  const genericHashPattern = /\b([0-9a-f]{7,40})\b/gi
+  while ((match = genericHashPattern.exec(text)) !== null) {
+    const hash = match[1]
+    if (!commits.has(hash)) commits.set(hash, { hash })
+  }
+  return Array.from(commits.values())
 }
 
 function resolveCloseoutGoal(

@@ -53,21 +53,29 @@ describe('taskWraithCloseoutMessage', () => {
     }
     const closeout = buildTaskWraithRunCloseoutMessage({
       chat: chat({
-        messages: [{ ...message('a1', 'assistant', 'Implemented the feature.'), runId: 'run-1' }],
+        messages: [
+          { ...message('a1', 'assistant', 'Implemented the feature.'), runId: 'run-1' },
+          {
+            ...message('t1', 'tool', ''),
+            runId: 'run-1',
+            toolActivities: [
+              {
+                id: 'tool-1',
+                toolName: 'git_commit',
+                displayName: 'git commit',
+                category: 'write',
+                status: 'success',
+                outputPreview:
+                  '[master 18003ca96] Add TaskWraith transcript closeouts\n 21 files changed'
+              }
+            ]
+          }
+        ],
         runs: [run]
       }),
       run,
       completedAt: '2026-07-07T12:00:39.000Z',
-      exitCode: 0,
-      fileSummaries: [
-        {
-          path: 'src/App.tsx',
-          status: 'modified',
-          previewKind: 'text_preview',
-          additions: 9,
-          deletions: 2
-        }
-      ]
+      exitCode: 0
     })
 
     expect(closeout.role).toBe('system')
@@ -75,7 +83,8 @@ describe('taskWraithCloseoutMessage', () => {
     expect(closeout.metadata?.closeoutSource).toBe('deterministicFallback')
     expect(closeout.content).toContain('Worked for 39s')
     expect(closeout.content).toContain('Implemented the feature.')
-    expect(closeout.content).toContain('1 file (+9 -2).')
+    expect(closeout.content).not.toContain('Changed:')
+    expect(closeout.content).toContain('Commits: 18003ca96 Add TaskWraith transcript closeouts.')
     expect(closeout.content).toContain('3k total')
   })
 

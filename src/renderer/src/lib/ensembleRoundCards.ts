@@ -1,5 +1,6 @@
 import type { ChatMessage, ChatRecord } from '../../../main/store/types'
 import { isEnsembleRoundDispatchLive } from '../../../shared/ensembleRoundLifecycle'
+import { TASKWRAITH_CLOSEOUT_KIND } from '../../../shared/taskWraithCloseout'
 import { groupEnsembleMessagesByRound } from './ensembleRoundGrouping'
 import type { TranscriptGroupedMessageRange } from './transcriptToolMessageGrouping'
 
@@ -30,9 +31,10 @@ import type { TranscriptGroupedMessageRange } from './transcriptToolMessageGroup
  * behind a collapsed card. Only completed rounds become cards.
  *
  * Default collapse: when there is no active round the most-recent round
- * stays expanded; every older round collapses. While a round is active,
- * all completed rounds collapse. The user can override any completed
- * round via `manualRoundExpansion`.
+ * stays expanded until its TaskWraith close-out row exists; every older
+ * or close-out-backed round collapses. While a round is active, all
+ * completed rounds collapse. The user can override any completed round
+ * via `manualRoundExpansion`.
  */
 
 export const ENSEMBLE_ROUND_HEADER_KIND = 'ensembleRoundHeader'
@@ -222,6 +224,15 @@ export function buildEnsembleRoundCardRowsWithRanges(
     activeRoundId && isEnsembleRoundDispatchLive(activeRound) ? activeRoundId : null
   const liveFallbackRoundId = hasLiveRunEvidence ? lastRoundId : null
   const hasActiveRound = liveActiveRoundId !== null || liveFallbackRoundId !== null
+  const closeoutRoundIds = new Set(
+    displayMessages
+      .map((message) =>
+        message.metadata?.kind === TASKWRAITH_CLOSEOUT_KIND
+          ? message.metadata.closeoutRoundId
+          : null
+      )
+      .filter((roundId): roundId is string => typeof roundId === 'string' && roundId.length > 0)
+  )
 
   const out: TranscriptGroupedMessageRange[] = []
   let roundIndex = 0
@@ -251,12 +262,20 @@ export function buildEnsembleRoundCardRowsWithRanges(
       continue
     }
 
-    const defaultExpanded = !hasActiveRound && roundId === lastRoundId
+    const defaultExpanded =
+      !closeoutRoundIds.has(roundId) && !hasActiveRound && roundId === lastRoundId
     const override = manualRoundExpansion.get(roundId)
     const expanded = override === undefined ? defaultExpanded : override
 
     out.push({
-      message: buildRoundHeaderMessage({ roundId, roundIndex, roundCount, expanded, messages, summary }),
+      message: buildRoundHeaderMessage({
+        roundId,
+        roundIndex,
+        roundCount,
+        expanded,
+        messages,
+        summary
+      }),
       startIndex: groupStartIndex,
       endIndex: groupEndIndex
     })

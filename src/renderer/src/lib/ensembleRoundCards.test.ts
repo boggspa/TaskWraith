@@ -7,6 +7,7 @@ import {
   readEnsembleRoundHeader
 } from './ensembleRoundCards'
 import type { ChatMessage, ChatRecord } from '../../../main/store/types'
+import { TASKWRAITH_CLOSEOUT_KIND } from '../../../shared/taskWraithCloseout'
 
 function message(
   id: string,
@@ -38,6 +39,20 @@ function userPrompt(id: string, roundId: string, content = `prompt-${id}`): Chat
     content,
     timestamp: '2026-05-27T12:00:00.000Z',
     metadata: { kind: 'ensembleRoundPrompt', ensembleRoundId: roundId }
+  } as ChatMessage
+}
+
+function closeout(id: string, roundId: string): ChatMessage {
+  return {
+    id,
+    role: 'system',
+    content: 'Worked for 1m',
+    timestamp: '2026-05-27T12:01:00.000Z',
+    metadata: {
+      kind: TASKWRAITH_CLOSEOUT_KIND,
+      closeoutScope: 'ensembleRound',
+      closeoutRoundId: roundId
+    }
   } as ChatMessage
 }
 
@@ -157,6 +172,29 @@ describe('buildEnsembleRoundCardRows', () => {
     ])
     expect(readEnsembleRoundHeader(result[0])?.expanded).toBe(false)
     expect(readEnsembleRoundHeader(result[1])?.expanded).toBe(true)
+  })
+
+  it('collapses the most-recent idle round once its closeout row exists', () => {
+    const display = [
+      userPrompt('u1', 'r1'),
+      message('a1', { roundId: 'r1' }),
+      closeout('closeout-r1', 'r1')
+    ]
+    const result = buildEnsembleRoundCardRows({
+      chat: chat({
+        ensemble: {
+          enabled: true,
+          maxParticipants: 4,
+          participants: []
+        } as never
+      }),
+      displayMessages: display,
+      collapseOlderRounds: true,
+      manualRoundExpansion: NO_OVERRIDES
+    })
+
+    expect(result.map((m) => m.id)).toEqual([ensembleRoundHeaderId('r1'), 'closeout-r1'])
+    expect(readEnsembleRoundHeader(result[0])?.expanded).toBe(false)
   })
 
   it('honours a manual expand override on an otherwise-collapsed round', () => {

@@ -932,9 +932,20 @@ function shareUnchangedMessageObjects(
   return changed ? shared : (next as ChatMessage[])
 }
 
+function buildLiveToolFileSummarySignature(messages: readonly ChatMessage[]): string {
+  const chunks: string[] = []
+  for (const message of messages) {
+    if (message.metadata?.kind === TASKWRAITH_CLOSEOUT_KIND) continue
+    if (!message.toolActivities?.length) continue
+    chunks.push(`${message.id}:${JSON.stringify(message.toolActivities)}`)
+  }
+  return chunks.join('\u0001')
+}
+
 interface LiveToolFileSummaryState {
   chatId: string
   messages: ChatMessage[]
+  signature: string
   workspacePath?: string | null
   summaries: DiffFileSummary[]
 }
@@ -19654,6 +19665,10 @@ function App(): React.JSX.Element {
   const exactFileChangeSummaries = getRunFileDiffSummaries(runDiff || currentRunDiff || null)
   const liveToolFileSummaryChatId = currentChat?.appChatId ?? null
   const liveToolFileSummaryMessages = currentChat?.messages || EMPTY_CHAT_MESSAGES
+  const liveToolFileSummarySignature = useMemo(
+    () => buildLiveToolFileSummarySignature(liveToolFileSummaryMessages),
+    [liveToolFileSummaryMessages]
+  )
   const liveToolFileSummaryWorkspacePath = currentWorkspace?.path || currentChat?.workspacePath || null
   useEffect(() => {
     if (!liveToolFileSummaryChatId || liveToolFileSummaryMessages.length === 0) {
@@ -19663,7 +19678,7 @@ function App(): React.JSX.Element {
     const cached = liveToolFileSummaryCacheRef.current.get(liveToolFileSummaryChatId)
     if (
       cached &&
-      cached.messages === liveToolFileSummaryMessages &&
+      cached.signature === liveToolFileSummarySignature &&
       cached.workspacePath === liveToolFileSummaryWorkspacePath
     ) {
       setLiveToolFileSummaryState(cached)
@@ -19680,6 +19695,7 @@ function App(): React.JSX.Element {
       const entry: LiveToolFileSummaryState = {
         chatId: liveToolFileSummaryChatId,
         messages: liveToolFileSummaryMessages,
+        signature: liveToolFileSummarySignature,
         workspacePath: liveToolFileSummaryWorkspacePath,
         summaries
       }
@@ -19694,11 +19710,16 @@ function App(): React.JSX.Element {
       cancelled = true
       cancel()
     }
-  }, [liveToolFileSummaryChatId, liveToolFileSummaryMessages, liveToolFileSummaryWorkspacePath])
+  }, [
+    liveToolFileSummaryChatId,
+    liveToolFileSummaryMessages,
+    liveToolFileSummarySignature,
+    liveToolFileSummaryWorkspacePath
+  ])
   const liveToolFileChangeSummaries =
     liveToolFileSummaryState &&
     liveToolFileSummaryState.chatId === liveToolFileSummaryChatId &&
-    liveToolFileSummaryState.messages === liveToolFileSummaryMessages &&
+    liveToolFileSummaryState.signature === liveToolFileSummarySignature &&
     liveToolFileSummaryState.workspacePath === liveToolFileSummaryWorkspacePath
       ? liveToolFileSummaryState.summaries
       : EMPTY_DIFF_FILE_SUMMARIES
@@ -20280,8 +20301,7 @@ function App(): React.JSX.Element {
         const closeout = buildTaskWraithRoundCloseoutMessage({
           chat: source,
           round,
-          completedAt: round.endedAt || completedAt,
-          fileSummaries: displayFileChangeSummaries
+          completedAt: round.endedAt || completedAt
         })
         const existing = source.messages.find((message) => message.id === closeout.id)
         if (existing?.content === closeout.content && existing.timestamp === closeout.timestamp) {
@@ -20304,8 +20324,7 @@ function App(): React.JSX.Element {
         chat: source,
         run,
         completedAt,
-        exitCode: visibleRunCompleteNotice.exitCode,
-        fileSummaries: displayFileChangeSummaries
+        exitCode: visibleRunCompleteNotice.exitCode
       })
       const existing = source.messages.find((message) => message.id === closeout.id)
       if (existing?.content === closeout.content && existing.timestamp === closeout.timestamp) {
@@ -20328,7 +20347,6 @@ function App(): React.JSX.Element {
     currentRun?.runId,
     currentRun?.endedAt,
     currentRun?.status,
-    displayFileChangeSummaries,
     isWelcomeChat,
     settings?.showRunCompleteSummary,
     updateChatById,
