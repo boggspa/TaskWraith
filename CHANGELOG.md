@@ -33,6 +33,12 @@ history, and workspace state stay on your machine throughout.
   presets until eval confidence.
 
 ### Fixed
+- **Transcript scroll-up yank.** Automatic follow snaps no longer pull the
+  viewport back to the live edge when you scroll up to read history during
+  streaming. The scroll hook now checks live `scrollTop` movement before any
+  layout-effect or resize re-pin, closing a race where stream deltas could snap
+  before the scroll listener recorded your upward gesture. Pinned-at-bottom
+  streaming follow is unchanged.
 - **iOS transcript hydration.** The Mac bridge now avoids sending oversized rich
   remote-projection frames that could exceed the relay's payload budget after
   the phone had already received the lightweight chat list. Oversized projection
