@@ -257,6 +257,18 @@ describe('IpcValidation', () => {
     expect(() => validateIpcArgs('post-blackboard-entry', ['just a string'])).toThrow(/object/)
   })
 
+  it('accepts delete-blackboard-entry payloads', () => {
+    expect(() =>
+      validateIpcArgs('delete-blackboard-entry', [
+        {
+          chatId: 'chat-1',
+          entryId: 'blackboard-1'
+        }
+      ])
+    ).not.toThrow()
+    expect(() => validateIpcArgs('delete-blackboard-entry', ['just a string'])).toThrow(/object/)
+  })
+
   // Regression test for the bug reported 2026-05-28 (1.0.6-EW69): the
   // composer workspace-manager add flows (proactive folder grant +
   // attach-known-workspace-as-secondary) go through

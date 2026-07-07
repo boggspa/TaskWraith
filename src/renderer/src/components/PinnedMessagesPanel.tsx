@@ -115,6 +115,28 @@ function JumpMiniIcon(): React.JSX.Element {
   )
 }
 
+function TrashMiniIcon(): React.JSX.Element {
+  return (
+    <svg
+      width="13"
+      height="13"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M3 4h10" />
+      <path d="M5.5 4V2.5C5.5 2.22 5.72 2 6 2h4c.28 0 .5.22.5.5V4" />
+      <path d="M4.5 4l.5 9c.04.55.5 1 1 1h4c.5 0 .96-.45 1-1l.5-9" />
+      <path d="M7 7v5" />
+      <path d="M9 7v5" />
+    </svg>
+  )
+}
+
 function BossmanCrownIcon(): React.JSX.Element {
   return (
     <svg viewBox="0 0 24 24" width="12" height="12" aria-hidden focusable="false">
@@ -243,7 +265,8 @@ function BlackboardSection({
 }): React.JSX.Element {
   const [draft, setDraft] = useState('')
   const [posting, setPosting] = useState(false)
-  const [postError, setPostError] = useState<string | null>(null)
+  const [deletingEntryId, setDeletingEntryId] = useState<string | null>(null)
+  const [actionError, setActionError] = useState<string | null>(null)
   const canPost = Boolean(chat?.appChatId && chat?.ensemble)
   const visibleEntries = entries
     .filter((entry) => entry.key.trim() && entry.value.trim())
@@ -258,7 +281,7 @@ function BlackboardSection({
     event.preventDefault()
     if (!chat?.appChatId || !draftValue || posting) return
     setPosting(true)
-    setPostError(null)
+    setActionError(null)
     try {
       await window.api.postBlackboardEntry({
         chatId: chat.appChatId,
@@ -268,9 +291,26 @@ function BlackboardSection({
       })
       setDraft('')
     } catch (error) {
-      setPostError(error instanceof Error ? error.message : String(error))
+      setActionError(error instanceof Error ? error.message : String(error))
     } finally {
       setPosting(false)
+    }
+  }
+  const deleteEntry = async (entry: BlackboardEntry) => {
+    if (!chat?.appChatId || deletingEntryId) return
+    const confirmed = window.confirm(`Delete "${entry.key}" from the Blackboard?`)
+    if (!confirmed) return
+    setDeletingEntryId(entry.id)
+    setActionError(null)
+    try {
+      await window.api.deleteBlackboardEntry({
+        chatId: chat.appChatId,
+        entryId: entry.id
+      })
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setDeletingEntryId(null)
     }
   }
 
@@ -291,8 +331,11 @@ function BlackboardSection({
           <button type="submit" disabled={!draftValue || posting}>
             {posting ? 'Posting' : 'Post'}
           </button>
-          {postError && <small className="pinned-blackboard-post-error">{postError}</small>}
+          {actionError && <small className="pinned-blackboard-post-error">{actionError}</small>}
         </form>
+      )}
+      {!canPost && actionError && (
+        <small className="pinned-blackboard-post-error">{actionError}</small>
       )}
       {visibleEntries.length === 0 ? (
         <div className="right-dock-empty pinned-blackboard-empty">No blackboard entries.</div>
@@ -310,7 +353,25 @@ function BlackboardSection({
                 >
                   <div className="pinned-blackboard-entry-meta">
                     <strong>{entry.key}</strong>
-                    <span>{entry.scope}</span>
+                    <div className="pinned-blackboard-entry-actions">
+                      <span>{entry.scope}</span>
+                      {canPost && (
+                        <button
+                          type="button"
+                          className="pinned-blackboard-entry-delete"
+                          onClick={() => deleteEntry(entry)}
+                          disabled={deletingEntryId !== null}
+                          title={
+                            deletingEntryId === entry.id
+                              ? 'Deleting...'
+                              : 'Delete blackboard entry'
+                          }
+                          aria-label={`Delete blackboard entry ${entry.key}`}
+                        >
+                          <TrashMiniIcon />
+                        </button>
+                      )}
+                    </div>
                   </div>
                   <div className="pinned-blackboard-entry-body">
                     <MarkdownMessage content={entry.value} chat={chat || undefined} />

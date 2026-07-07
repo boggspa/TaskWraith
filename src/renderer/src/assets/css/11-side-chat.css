@@ -956,6 +956,38 @@
   text-transform: uppercase;
 }
 
+.pinned-blackboard-entry-actions {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.pinned-blackboard-entry-delete {
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--danger, #ff6b6b) 30%, transparent);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--danger, #ff6b6b) 7%, transparent);
+  color: color-mix(in srgb, var(--danger, #ff6b6b) 86%, var(--text-secondary));
+}
+
+.pinned-blackboard-entry-delete:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--danger, #ff6b6b) 58%, transparent);
+  background: color-mix(in srgb, var(--danger, #ff6b6b) 14%, transparent);
+  color: var(--danger, #ff6b6b);
+}
+
+.pinned-blackboard-entry-delete:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
 .pinned-blackboard-entry-body {
   color: var(--text-primary);
   font-size: var(--font-size-sm);

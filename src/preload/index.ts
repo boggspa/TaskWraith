@@ -1024,6 +1024,12 @@ const api = {
       ok: true
       entry: BlackboardEntry
     }>,
+  deleteBlackboardEntry: (payload: { chatId: string; entryId: string }) =>
+    ipcRenderer.invoke('delete-blackboard-entry', payload) as Promise<{
+      ok: true
+      removed: BlackboardEntry
+      remainingCount: number
+    }>,
   runEnsembleRound: (payload: {
     chatId: string
     prompt: string

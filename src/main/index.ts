@@ -31163,6 +31163,42 @@ if (isGeminiMcpBridgeProcess) {
       }
     )
 
+    ipcMain.handle(
+      'delete-blackboard-entry',
+      async (
+        _,
+        payload?: {
+          chatId?: string
+          entryId?: string
+        }
+      ) => {
+        if (AppStore.getSettings().ensembleModeEnabled === false) {
+          throw new Error('Ensemble Mode is disabled.')
+        }
+        const chatId = requireNonEmptyString(payload?.chatId, 'Ensemble chat id')
+        const entryId = requireNonEmptyString(payload?.entryId, 'Blackboard entry id')
+        const chat = AppStore.getChat(chatId)
+        if (!chat?.ensemble) throw new Error('Blackboard entries require an Ensemble chat.')
+        const result = removeBlackboardEntries(chat.ensemble.blackboard || [], { ids: [entryId] })
+        const removed = result.removed[0]
+        if (!removed) throw new Error('Blackboard entry not found.')
+        const updatedAt = new Date().toISOString()
+        const updated: ChatRecord = {
+          ...chat,
+          ensemble: {
+            ...chat.ensemble,
+            blackboard: result.next,
+            updatedAt
+          },
+          updatedAt: Date.now()
+        }
+        saveAndBroadcastChat(updated)
+        broadcastThreadUpdate(updated.appChatId)
+        bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
+        return { ok: true, removed, remainingCount: result.next.length }
+      }
+    )
+
     // Shared by the renderer IPC below and the iOS bridge 'blackboard' op:
     // consume a queued ensemble prompt into a user-authored blackboard note.
     // The queue mutation is EXACTLY the Delete path (removeQueuedPrompt keeps

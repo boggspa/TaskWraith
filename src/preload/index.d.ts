@@ -1375,6 +1375,10 @@ declare global {
         category?: string
         scope?: string
       }) => Promise<{ ok: true; entry: BlackboardEntry }>
+      deleteBlackboardEntry: (payload: {
+        chatId: string
+        entryId: string
+      }) => Promise<{ ok: true; removed: BlackboardEntry; remainingCount: number }>
       runEnsembleRound: (payload: {
         chatId: string
         prompt: string
