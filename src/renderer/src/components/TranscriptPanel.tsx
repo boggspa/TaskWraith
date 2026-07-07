@@ -9,6 +9,10 @@ import type {
   ProviderId
 } from '../../../main/store/types'
 import { isEnsembleRoundDispatchLive } from '../../../shared/ensembleRoundLifecycle'
+import {
+  closeoutProviderFromMetadata,
+  TASKWRAITH_CLOSEOUT_KIND
+} from '../../../shared/taskWraithCloseout'
 import { ensembleRoundStatusClass } from '../lib/ensembleRoundStatusClass'
 import { getChatProvider } from '../lib/chatScope'
 import { getProviderLabel } from '../lib/providerLabels'
@@ -2712,6 +2716,7 @@ export const TranscriptPanel = memo(
             const isParticipantHealth = msg.metadata?.kind === 'ensembleParticipantHealth'
             const isProviderRunFailure = msg.metadata?.kind === 'providerRunFailure'
             const isContextCompaction = msg.metadata?.kind === 'contextCompaction'
+            const isTaskWraithCloseout = msg.metadata?.kind === TASKWRAITH_CLOSEOUT_KIND
             const isRoundHeader = isEnsembleRoundHeaderMessage(msg)
             const collaboratorMeta = isCollaboratorComment ? humanCollaboratorMetadata(msg) : null
             const boundaryRun = displayRunBoundaryByMessageId.get(msg.id)
@@ -3123,7 +3128,9 @@ export const TranscriptPanel = memo(
                       isReturnCard ? 'subthread-return-message' : ''
                     } ${isDelegationCard ? 'subthread-delegation-message' : ''}${
                       isGuestReply ? ' guest-participant-reply-message' : ''
-                    }${isCollaboratorComment ? ' human-collaborator-comment-message' : ''}`}
+                    }${isCollaboratorComment ? ' human-collaborator-comment-message' : ''}${
+                      isTaskWraithCloseout ? ' taskwraith-closeout-message' : ''
+                    }`}
                   >
                     {(() => {
                       // Provider-aware label rendering. Solo chats: the
@@ -3168,6 +3175,33 @@ export const TranscriptPanel = memo(
                                 Action request
                               </span>
                             )}
+                          </div>
+                        )
+                      }
+                      if (isTaskWraithCloseout) {
+                        const closeoutProvider = closeoutProviderFromMetadata(msg.metadata)
+                        const source = msg.metadata?.closeoutSource
+                        const badge =
+                          source === 'deterministicFallback'
+                            ? 'deterministic'
+                            : closeoutProvider
+                              ? `via ${getProviderLabel(closeoutProvider)}`
+                              : 'generated'
+                        return (
+                          <div className="message-meta taskwraith-closeout-meta">
+                            <span className="message-meta-label">TaskWraith</span>
+                            <span
+                              className={`message-meta-model-badge taskwraith-closeout-badge${
+                                closeoutProvider ? ` provider-${closeoutProvider}` : ''
+                              }`}
+                              title={
+                                closeoutProvider
+                                  ? `Close-out generated via ${getProviderLabel(closeoutProvider)}`
+                                  : 'Deterministic TaskWraith close-out'
+                              }
+                            >
+                              {badge}
+                            </span>
                           </div>
                         )
                       }

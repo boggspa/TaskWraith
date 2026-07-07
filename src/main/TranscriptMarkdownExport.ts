@@ -171,6 +171,10 @@ function speakerLabel(chat: ChatRecord, message: ChatMessage): string {
     const title = asString(metadata.subThreadTitle)
     return title ? `Sub-thread result from ${provider} / ${title}` : `Sub-thread result from ${provider}`
   }
+  if (metadata.kind === 'taskWraithCloseout') {
+    const provider = asString(metadata.closeoutProvider)
+    return provider ? `TaskWraith close-out via ${providerLabel(provider)}` : 'TaskWraith close-out'
+  }
   if (metadata.kind === 'subThreadDelegation') {
     const provider = providerLabel(asString(metadata.subThreadProvider))
     return `Sub-thread delegation to ${provider}`

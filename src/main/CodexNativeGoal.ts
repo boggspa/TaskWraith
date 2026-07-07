@@ -1,4 +1,5 @@
 import type { ActiveGoal, ActiveGoalStatus } from './store/types'
+import { transitionGoalRuntimeLedger } from './GoalState'
 
 export const CODEX_THREAD_GOAL_SET_METHOD = 'thread/goal/set'
 export const CODEX_THREAD_GOAL_GET_METHOD = 'thread/goal/get'
@@ -71,6 +72,7 @@ export function activeGoalFromCodexThreadGoal(
     provider: 'codex',
     createdAt,
     updatedAt,
+    runtimeLedger: transitionGoalRuntimeLedger(existingGoal?.runtimeLedger, status, updatedAt),
     ...(existingGoal?.lastStatusReason ? { lastStatusReason: existingGoal.lastStatusReason } : {})
   }
 

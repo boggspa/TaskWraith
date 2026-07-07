@@ -4173,6 +4173,46 @@ html:has(.chat-split-region.chat-split-hidden-for-settings) .transcript-user-gut
   opacity: 0.6;
 }
 
+.taskwraith-closeout-meta {
+  color: color-mix(in srgb, var(--text-muted) 92%, var(--text-primary));
+}
+
+.taskwraith-closeout-badge {
+  color: color-mix(in srgb, var(--text-muted) 78%, var(--text-primary));
+}
+
+.taskwraith-closeout-badge.provider-codex {
+  color: var(--provider-codex-color);
+}
+
+.taskwraith-closeout-badge.provider-claude {
+  color: var(--provider-claude-color);
+}
+
+.taskwraith-closeout-badge.provider-gemini {
+  color: var(--provider-gemini-color);
+}
+
+.taskwraith-closeout-badge.provider-kimi {
+  color: var(--provider-kimi-color);
+}
+
+.taskwraith-closeout-badge.provider-grok {
+  color: var(--provider-grok-color);
+}
+
+.taskwraith-closeout-badge.provider-cursor {
+  color: var(--provider-cursor-color);
+}
+
+.taskwraith-closeout-badge.provider-ollama {
+  color: var(--provider-ollama-color);
+}
+
+.taskwraith-closeout-message .message-bubble.system {
+  border-color: color-mix(in srgb, var(--panel-border) 70%, transparent);
+}
+
 /* 1.0.7 — participant-rename continuity note. Sits after the speaker
  * label (and model badge, when present) as a quiet "renamed from
  * Planner" aside so a reader can tell a renamed seat's earlier

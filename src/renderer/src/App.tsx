@@ -34,6 +34,7 @@ import {
 import { classifyError, redactLog } from './lib/ErrorClassifier'
 import { shouldBackfillRunStats } from './lib/RunStatsBackfill'
 import { backfillRunDiffCounts, toolEvidenceFromActivities } from '../../shared/runDiffBackfill'
+import { TASKWRAITH_CLOSEOUT_KIND } from '../../shared/taskWraithCloseout'
 import { coerceLiveProvider, DEFAULT_PROVIDER, isRetiredProvider } from '../../shared/retiredProviders'
 import { sanitizeRawProviderMediaRefs } from '../../shared/transcriptMediaRefSanitize'
 import { normalizeThreadTitle } from '../../shared/threadTitles'
@@ -598,6 +599,11 @@ import {
   normalizeModelName
 } from './lib/usageStats'
 import { formatWorkDuration } from './lib/runCompleteSummary'
+import {
+  buildTaskWraithRoundCloseoutMessage,
+  buildTaskWraithRunCloseoutMessage,
+  upsertTaskWraithCloseoutMessage
+} from './lib/taskWraithCloseoutMessage'
 import { ollamaMemoryUsageFields } from './lib/ollamaMemoryDisplay'
 import { fetchProviderRates, type RendererProviderRates } from './lib/providerRateEstimate'
 import {
@@ -9552,10 +9558,17 @@ function App(): React.JSX.Element {
               m.metadata?.kind === 'contextCompaction' &&
               !incomingIds.has(m.id)
           )
+          const orphanedTaskWraithCloseouts = liveChat.messages.filter(
+            (m) =>
+              m.role === 'system' &&
+              m.metadata?.kind === TASKWRAITH_CLOSEOUT_KIND &&
+              !incomingIds.has(m.id)
+          )
           const orphans = [
             ...orphanedLiveAssistants,
             ...orphanedAgentQuestionMarkers,
-            ...orphanedContextCompactionCards
+            ...orphanedContextCompactionCards,
+            ...orphanedTaskWraithCloseouts
           ]
           if (
             mergedMessages.length !== chat.messages.length ||
@@ -11221,6 +11234,12 @@ function App(): React.JSX.Element {
         ...(runDiffUnavailable ? { diffUnavailableReason: WORKTREE_DIFF_UNAVAILABLE_TEXT } : {}),
         ...(composedPayload.geminiAuthProfileId
           ? { geminiAuthProfileId: composedPayload.geminiAuthProfileId }
+          : {}),
+        ...(chatToUpdate.activeGoal && chatToUpdate.activeGoal.status !== 'completed'
+          ? {
+              activeGoalId: chatToUpdate.activeGoal.id,
+              activeGoalStatusAtStart: chatToUpdate.activeGoal.status
+            }
           : {})
       }
       chatToUpdate.runs = [...(chatToUpdate.runs || []), newRun]
@@ -15008,30 +15027,30 @@ function App(): React.JSX.Element {
       grokNativeAvailable: currentGoalAllowProviderNative && currentProvider === 'grok',
       allowProviderNative: currentGoalAllowProviderNative
     })
-    const goal: ActiveGoal = existingGoal
-      ? {
-          ...existingGoal,
-          objective,
-          provider: currentProvider,
-          mode,
-          status: existingGoal.status === 'completed' ? 'active' : existingGoal.status,
-          updatedAt: now.toISOString()
-        }
-        : createActiveGoal(currentProvider, objective, {
-          now,
-          codexNativeAvailable:
-            currentGoalAllowProviderNative &&
-            Boolean(currentChat?.providerMetadata?.codexGoalNativeAvailable),
-          claudeNativeAvailable:
-            currentGoalAllowProviderNative &&
-            Boolean(currentChat?.providerMetadata?.claudeGoalNativeAvailable),
-          grokNativeAvailable: currentGoalAllowProviderNative && currentProvider === 'grok',
-          allowProviderNative: currentGoalAllowProviderNative
-        })
-    if (existingGoal?.status === 'completed') {
-      delete goal.completedAt
-      delete goal.completedSummary
-    }
+    const shouldStartFreshGoal =
+      !existingGoal ||
+      existingGoal.status === 'completed' ||
+      existingGoal.objective.trim() !== objective
+    const goal: ActiveGoal =
+      shouldStartFreshGoal || !existingGoal
+        ? createActiveGoal(currentProvider, objective, {
+            now,
+            codexNativeAvailable:
+              currentGoalAllowProviderNative &&
+              Boolean(currentChat?.providerMetadata?.codexGoalNativeAvailable),
+            claudeNativeAvailable:
+              currentGoalAllowProviderNative &&
+              Boolean(currentChat?.providerMetadata?.claudeGoalNativeAvailable),
+            grokNativeAvailable: currentGoalAllowProviderNative && currentProvider === 'grok',
+            allowProviderNative: currentGoalAllowProviderNative
+          })
+        : {
+            ...updateActiveGoalLifecycle(existingGoal, 'active', undefined, now),
+            objective,
+            provider: currentProvider,
+            mode,
+            updatedAt: now.toISOString()
+          }
     persistGoalForCurrentChat(goal)
     setGoalDraft(goal.objective)
     setGoalEditing(false)
@@ -20242,6 +20261,79 @@ function App(): React.JSX.Element {
     visibleRunCompleteNotice && !isWelcomeChat
       ? formatWorkDuration(visibleRunCompleteNotice.startedAt, visibleRunCompleteNotice.timestamp)
       : null
+  useEffect(() => {
+    if (
+      !currentChat?.appChatId ||
+      isWelcomeChat ||
+      !visibleRunCompleteNotice ||
+      settings?.showRunCompleteSummary === false
+    ) {
+      return
+    }
+    const completedAt = visibleRunCompleteNotice.timestamp
+    updateChatById(currentChat.appChatId, (source) => {
+      if (source.chatKind === 'ensemble') {
+        const round = source.ensemble?.activeRound
+        if (!round || (round.status !== 'completed' && round.status !== 'cancelled' && round.status !== 'failed')) {
+          return source
+        }
+        const closeout = buildTaskWraithRoundCloseoutMessage({
+          chat: source,
+          round,
+          completedAt: round.endedAt || completedAt,
+          fileSummaries: displayFileChangeSummaries
+        })
+        const existing = source.messages.find((message) => message.id === closeout.id)
+        if (existing?.content === closeout.content && existing.timestamp === closeout.timestamp) {
+          return source
+        }
+        return {
+          ...source,
+          messages: upsertTaskWraithCloseoutMessage(source.messages, closeout, {
+            closeoutRoundId: round.roundId
+          }),
+          updatedAt: Date.now()
+        }
+      }
+
+      const run = currentRun?.runId
+        ? (source.runs || []).find((item) => item.runId === currentRun.runId) || currentRun
+        : currentRun
+      if (!run?.runId || !run.endedAt) return source
+      const closeout = buildTaskWraithRunCloseoutMessage({
+        chat: source,
+        run,
+        completedAt,
+        exitCode: visibleRunCompleteNotice.exitCode,
+        fileSummaries: displayFileChangeSummaries
+      })
+      const existing = source.messages.find((message) => message.id === closeout.id)
+      if (existing?.content === closeout.content && existing.timestamp === closeout.timestamp) {
+        return source
+      }
+      return {
+        ...source,
+        messages: upsertTaskWraithCloseoutMessage(source.messages, closeout, {
+          sourceRunId: run.runId,
+          promptMessageId: run.promptMessageId
+        }),
+        updatedAt: Date.now()
+      }
+    })
+  }, [
+    currentChat?.appChatId,
+    currentChat?.chatKind,
+    currentChat?.ensemble?.activeRound?.roundId,
+    currentChat?.ensemble?.activeRound?.status,
+    currentRun?.runId,
+    currentRun?.endedAt,
+    currentRun?.status,
+    displayFileChangeSummaries,
+    isWelcomeChat,
+    settings?.showRunCompleteSummary,
+    updateChatById,
+    visibleRunCompleteNotice
+  ])
   const currentPinnedMessages = useMemo(
     () => buildPinnedMessageSummaries(currentChat?.messages),
     [currentChat?.messages]

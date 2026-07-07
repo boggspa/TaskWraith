@@ -5148,12 +5148,48 @@ function normalizeAgentRunActiveGoal(value: unknown): ActiveGoal | null | undefi
     provider,
     createdAt,
     updatedAt,
+    ...(normalizeGoalRuntimeLedger(value.runtimeLedger)
+      ? { runtimeLedger: normalizeGoalRuntimeLedger(value.runtimeLedger) }
+      : {}),
     pausedAt: optionalString(value.pausedAt),
     blockedAt: optionalString(value.blockedAt),
     blockedReason: optionalString(value.blockedReason),
     completedAt: optionalString(value.completedAt),
     completedSummary: optionalString(value.completedSummary),
     lastStatusReason: optionalString(value.lastStatusReason)
+  }
+}
+
+function normalizeGoalRuntimeLedger(value: unknown): ActiveGoal['runtimeLedger'] | undefined {
+  if (!isRecord(value)) return undefined
+  const startedAt = optionalString(value.startedAt)
+  if (!startedAt) return undefined
+  const intervalsValue = value.intervals
+  if (!Array.isArray(intervalsValue)) return undefined
+  const intervals: NonNullable<ActiveGoal['runtimeLedger']>['intervals'] = intervalsValue
+    .map((entry) => {
+      if (!isRecord(entry)) return null
+      const status = optionalString(entry.status)
+      if (status !== 'active' && status !== 'paused' && status !== 'blocked') return null
+      const intervalStatus: NonNullable<ActiveGoal['runtimeLedger']>['intervals'][number]['status'] =
+        status
+      const intervalStartedAt = optionalString(entry.startedAt)
+      if (!intervalStartedAt) return null
+      return {
+        status: intervalStatus,
+        startedAt: intervalStartedAt,
+        ...(optionalString(entry.endedAt) ? { endedAt: optionalString(entry.endedAt) } : {})
+      }
+    })
+    .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry))
+  if (intervals.length === 0) return undefined
+  const endedAt = optionalString(value.endedAt)
+  const endStatus = optionalString(value.endStatus)
+  return {
+    startedAt,
+    ...(endedAt ? { endedAt } : {}),
+    ...(endStatus === 'completed' || endStatus === 'cancelled' ? { endStatus } : {}),
+    intervals
   }
 }
 

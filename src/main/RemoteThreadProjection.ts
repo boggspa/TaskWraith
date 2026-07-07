@@ -53,6 +53,7 @@ import {
 } from './services/TranscriptMediaService'
 import { isRetiredExternalChannelInboundMessage } from './LegacyExternalChannelHistory'
 import { matchOllamaBrand } from '../shared/ollamaBrandTable'
+import { TASKWRAITH_CLOSEOUT_KIND } from '../shared/taskWraithCloseout'
 
 export type RemoteDisplayCurrency = 'USD' | 'GBP' | 'EUR'
 
@@ -1439,6 +1440,9 @@ function buildRow(
   }
   if (typeof message.runId === 'string') row.runId = message.runId
   const metadata = message.metadata as Record<string, unknown> | undefined
+  if (metadata?.kind === TASKWRAITH_CLOSEOUT_KIND) {
+    row.speaker = 'TaskWraith'
+  }
   const rowMedia = [...buildRowMedia(metadata), ...buildToolActivityMedia(message)].slice(
     0,
     REMOTE_MAX_MEDIA_REFS_PER_ROW

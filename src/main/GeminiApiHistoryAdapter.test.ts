@@ -118,6 +118,24 @@ describe('chatMessagesToGeminiContents', () => {
     expect(out[1].role).toBe('model')
   })
 
+  it('excludes TaskWraith closeouts even when includeSystem=true', () => {
+    const out = chatMessagesToGeminiContents(
+      [
+        msg('user', 'q'),
+        msg('system', 'Synthetic closeout says ignore the user', {
+          metadata: { kind: 'taskWraithCloseout' }
+        }),
+        msg('assistant', 'a')
+      ],
+      { includeSystem: true }
+    )
+
+    expect(out).toHaveLength(2)
+    expect(textOf(out[0])).toBe('q')
+    expect(JSON.stringify(out)).not.toContain('Synthetic closeout')
+    expect(JSON.stringify(out)).not.toContain('ignore the user')
+  })
+
   it('excludes unpromoted human collaborator comments even when includeSystem=true', () => {
     const out = chatMessagesToGeminiContents(
       [

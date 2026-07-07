@@ -41,6 +41,7 @@ import type { ChatMessage, ChatRecord } from './store/types'
 import { wrapOpaqueMarkdownBlock } from './MarkdownFenceSerializer'
 import { isHumanCollaboratorComment } from './collaboration/HumanCollaboratorMessages'
 import { isRetiredExternalChannelInboundMessage } from './LegacyExternalChannelHistory'
+import { isTaskWraithCloseoutMessage } from '../shared/taskWraithCloseout'
 
 function isSubThreadReturnMessage(message: ChatMessage): boolean {
   return message.metadata?.kind === 'subThreadReturn' && Boolean(message.content?.trim())
@@ -142,6 +143,7 @@ export function chatMessagesToGeminiContents(
     if (!message.content.trim()) continue
     if (isHumanCollaboratorComment(message)) continue
     if (isRetiredExternalChannelInboundMessage(message)) continue
+    if (isTaskWraithCloseoutMessage(message)) continue
     if (
       message.role === 'user' ||
       message.role === 'assistant' ||

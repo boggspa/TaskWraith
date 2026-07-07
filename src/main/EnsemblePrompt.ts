@@ -52,6 +52,7 @@ import {
 import { stripReasoningChains } from './EnsembleThinkingEphemerality'
 import { isHumanCollaboratorComment } from './collaboration/HumanCollaboratorMessages'
 import { isRetiredExternalChannelInboundMessage } from './LegacyExternalChannelHistory'
+import { isTaskWraithCloseoutMessage } from '../shared/taskWraithCloseout'
 import {
   formatActiveGoalPromptBlock,
   resolveActiveGoalForEnsemble,
@@ -1451,7 +1452,8 @@ function buildTaggedTranscript(
     (message) =>
       message.role !== 'tool' &&
       !isHumanCollaboratorComment(message) &&
-      !isRetiredExternalChannelInboundMessage(message)
+      !isRetiredExternalChannelInboundMessage(message) &&
+      !isTaskWraithCloseoutMessage(message)
   )
   // Spike 6 (docs/ensemble-posture-fanout-preamble-design.md) — "since your
   // last turn" widening. A fixed window (12 messages by default) means a

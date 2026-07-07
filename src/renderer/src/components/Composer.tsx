@@ -1,5 +1,8 @@
 import React, { memo, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { MAX_ACTIVE_GOAL_OBJECTIVE_CHARS } from '../../../main/GoalState'
+import {
+  MAX_ACTIVE_GOAL_OBJECTIVE_CHARS,
+  computeGoalRuntimeTiming
+} from '../../../main/GoalState'
 import {
   AgenticServiceId,
   AgenticWorkspaceGrant,
@@ -742,6 +745,11 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     : 'locked_writers_user_preflight'
   const goalControlDisabled = !currentChat || Boolean(goalControlDisabledReason)
   const goalControlTitle = goalControlDisabledReason || currentGoalButtonTitle
+  const hasGoalRuntimeTicker =
+    goalPopoverOpen &&
+    Boolean(currentActiveGoal?.runtimeLedger) &&
+    currentActiveGoal?.status !== 'completed'
+  const goalRuntimeLabel = formatGoalRuntimePopoverLabel(currentActiveGoal, scheduledNowMs)
 
   // Second row of the roster-presets above-row section — Orchestration /
   // Fan-Out / Shared History Budget / Turn Budget. These controls used to
@@ -788,10 +796,10 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
   }
 
   useEffect(() => {
-    if (!hasVisibleScheduledCountdown) return
+    if (!hasVisibleScheduledCountdown && !hasGoalRuntimeTicker) return
     const interval = window.setInterval(() => setScheduledNowMs(Date.now()), 1_000)
     return () => window.clearInterval(interval)
-  }, [hasVisibleScheduledCountdown])
+  }, [hasGoalRuntimeTicker, hasVisibleScheduledCountdown])
 
   const agentApprovalCardRef = useRef<HTMLDivElement | null>(null)
   const agentApprovalAppearedAtRef = useRef<number | null>(null)
@@ -4531,6 +4539,9 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
 	                              {currentActiveGoal.blockedReason}
 	                            </p>
 	                          )}
+	                          {goalRuntimeLabel && (
+	                            <p className="composer-goal-runtime">{goalRuntimeLabel}</p>
+	                          )}
 	                          <div className="composer-goal-popover-actions">
 	                            <button
 	                              type="button"
@@ -4762,6 +4773,37 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
             )}
           </div>
   )
+}
+
+function formatGoalRuntimePopoverLabel(goal: any, nowMs: number): string | null {
+  if (!goal?.runtimeLedger) return null
+  const now = Number.isFinite(nowMs) ? new Date(nowMs) : new Date()
+  const timing = computeGoalRuntimeTiming(goal.runtimeLedger, now)
+  const parts = [
+    `wall ${formatGoalRuntimeDuration(timing.wallMs)}`,
+    timing.activeMs > 0 ? `active ${formatGoalRuntimeDuration(timing.activeMs)}` : '',
+    timing.blockedMs > 0 ? `blocked ${formatGoalRuntimeDuration(timing.blockedMs)}` : '',
+    timing.pausedMs > 0 ? `paused ${formatGoalRuntimeDuration(timing.pausedMs)}` : ''
+  ].filter(Boolean)
+  return parts.length > 0 ? `Goal runtime · ${parts.join(' · ')}` : null
+}
+
+function formatGoalRuntimeDuration(durationMs: number): string {
+  const seconds = Math.max(0, Math.floor(durationMs / 1000))
+  if (seconds < 60) return `${seconds}s`
+  const minutes = Math.floor(seconds / 60)
+  const remainingSeconds = seconds % 60
+  if (minutes < 60) {
+    return remainingSeconds > 0 ? `${minutes}m ${remainingSeconds}s` : `${minutes}m`
+  }
+  const hours = Math.floor(minutes / 60)
+  const remainingMinutes = minutes % 60
+  if (hours < 24) {
+    return remainingMinutes > 0 ? `${hours}h ${remainingMinutes}m` : `${hours}h`
+  }
+  const days = Math.floor(hours / 24)
+  const remainingHours = hours % 24
+  return remainingHours > 0 ? `${days}d ${remainingHours}h` : `${days}d`
 }
 
 /**

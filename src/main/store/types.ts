@@ -281,6 +281,26 @@ export type ActiveGoalMode =
   | 'grok_native'
   | 'taskwraith_steered'
   | 'ollama_harness'
+export type GoalRuntimeLedgerStatus = ActiveGoalStatus | 'cancelled'
+export type GoalRuntimeLedgerTerminalStatus = Extract<
+  GoalRuntimeLedgerStatus,
+  'completed' | 'cancelled'
+>
+export type GoalRuntimeLedgerIntervalStatus = Exclude<
+  GoalRuntimeLedgerStatus,
+  GoalRuntimeLedgerTerminalStatus
+>
+export interface GoalRuntimeLedgerInterval {
+  status: GoalRuntimeLedgerIntervalStatus
+  startedAt: string
+  endedAt?: string
+}
+export interface GoalRuntimeLedger {
+  startedAt: string
+  endedAt?: string
+  endStatus?: GoalRuntimeLedgerTerminalStatus
+  intervals: GoalRuntimeLedgerInterval[]
+}
 export interface ActiveGoal {
   id: string
   objective: string
@@ -289,6 +309,8 @@ export interface ActiveGoal {
   provider: ProviderId
   createdAt: string
   updatedAt: string
+  /** Durable wall-clock accounting for goal active/paused/blocked intervals. */
+  runtimeLedger?: GoalRuntimeLedger
   pausedAt?: string
   blockedAt?: string
   blockedReason?: string
@@ -2855,6 +2877,17 @@ export interface ChatMessage {
     guestRunId?: string
     /** Parent chat id that received the mirrored guest reply. */
     parentChatId?: string
+    /** TaskWraith-authored, transcript-native close-out row. */
+    closeoutSource?: 'currentProvider' | 'summaryProvider' | 'deterministicFallback'
+    closeoutProvider?: ProviderId
+    closeoutModel?: string
+    closeoutScope?: 'run' | 'ensembleRound'
+    sourceRunId?: string
+    closeoutRoundId?: string
+    closeoutStatus?: string
+    closeoutDurationMs?: number
+    closeoutGoalId?: string
+    closeoutGoalStatus?: ActiveGoalStatus
     /** User pin timestamp (ms since epoch). Missing means not pinned. */
     pinnedAt?: number
     /** User thumbs feedback on an ASSISTANT message. This field is the render
@@ -2950,6 +2983,8 @@ export interface ChatRun {
   exitCode?: number
   cancelled?: boolean
   suppressRunSummary?: boolean
+  activeGoalId?: string
+  activeGoalStatusAtStart?: ActiveGoalStatus
   stats?: any
   geminiWorktree?: GeminiWorktreeConfig
   effectiveWorkspacePath?: string

@@ -21,6 +21,7 @@ import {
   taskWraithToolNameForProvider,
   taskWraithToolNamespaceHint
 } from './TaskWraithMcpPromptNames'
+import { isTaskWraithCloseoutMessage } from '../shared/taskWraithCloseout'
 
 /**
  * Prompt-composition utilities (Phase B3 step 1).
@@ -354,6 +355,7 @@ export function buildConversationContextBlock(
       (message.role === 'user' || message.role === 'assistant') &&
       !isHumanCollaboratorComment(message) &&
       !isRetiredExternalChannelInboundMessage(message) &&
+      !isTaskWraithCloseoutMessage(message) &&
       Boolean(message.content && message.content.trim())
   )
 

@@ -5417,6 +5417,15 @@
   color: color-mix(in srgb, var(--text-secondary) 88%, transparent);
 }
 
+.composer-goal-runtime {
+  margin: 0 0 8px;
+  color: color-mix(in srgb, var(--text-secondary) 84%, transparent);
+  font-size: var(--font-size-xs);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
 .composer-goal-textarea {
   width: 100%;
   resize: vertical;
