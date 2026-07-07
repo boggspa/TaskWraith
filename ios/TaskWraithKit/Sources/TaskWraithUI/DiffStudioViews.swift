@@ -424,7 +424,7 @@ enum DiffStudioSheetGlassPolicy {
     /// wash so monospace diff text keeps contrast over the glass.
     static func codePanelFillAlpha(glassSheetHosted: Bool, glassEnabled: Bool) -> Double? {
         guard glassSheetHosted else { return nil }
-        return glassEnabled ? 0.72 : 1.0
+        return glassEnabled ? 0.62 : 1.0
     }
 }
 

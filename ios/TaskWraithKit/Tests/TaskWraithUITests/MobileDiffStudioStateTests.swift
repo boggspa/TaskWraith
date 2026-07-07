@@ -301,8 +301,8 @@ struct DiffStudioSheetGlassPolicyTests {
             glassSheetHosted: true, glassEnabled: true)
         let code = DiffStudioSheetGlassPolicy.codePanelFillAlpha(
             glassSheetHosted: true, glassEnabled: true)
-        #expect(chrome == 0.55)
-        #expect(code == 0.72)
+        #expect(chrome == 0.35)
+        #expect(code == 0.62)
         // Code stays less transparent than chrome for monospace contrast.
         if let chrome, let code {
             #expect(code > chrome)

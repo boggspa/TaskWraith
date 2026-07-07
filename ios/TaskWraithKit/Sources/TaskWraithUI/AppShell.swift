@@ -157,8 +157,7 @@ public struct RootView: View {
                     model.firstLaunchSheetPresented = false
                 }
             )
-            .presentationDetents([.large])
-            .presentationDragIndicator(.visible)
+            .twSheetLiquidGlass(detents: [.large])
         }
         .animation(.easeInOut(duration: 0.25), value: showShellDuringDrop)
         // Privacy shield: iOS snapshots the UI for the app switcher —
@@ -506,7 +505,10 @@ private extension View {
         isPresented: Binding<Bool>, @ViewBuilder content: @escaping () -> Content
     ) -> some View {
         #if os(iOS)
-            self.fullScreenCover(isPresented: isPresented, content: content)
+            self.sheet(isPresented: isPresented) {
+                content()
+                    .twSheetLiquidGlass(detents: [.large])
+            }
         #else
             self.sheet(isPresented: isPresented, content: content)
         #endif

@@ -439,8 +439,7 @@ struct HomeView: View {
         }
         .sheet(isPresented: $showDiscoverySheet) {
             TailnetDiscoverySheet(model: model)
-                .presentationDetents([.medium, .large])
-                .presentationDragIndicator(.visible)
+                .twSheetLiquidGlass(detents: [.medium, .large])
         }
     }
 
@@ -1257,9 +1256,18 @@ struct TaskRow: View {
 struct TailnetDiscoverySheet: View {
     @ObservedObject var model: RemoteSessionModel
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.twGlassSheetHosted) private var glassSheetHosted
     /// macIdentityPubKey of the host currently being paired (POST /v1/beginpair
     /// in flight), so its row shows a spinner and the others disable.
     @State private var pairingHostId: String?
+
+    private var canvasFill: Color {
+        glassSheetHosted ? Color.clear : TWTheme.appBg
+    }
+
+    private var cardFill: Color {
+        twGlassSheetChromeFill(glassSheetHosted: glassSheetHosted) ?? TWTheme.surface1
+    }
 
     var body: some View {
         NavigationStack {
@@ -1281,7 +1289,7 @@ struct TailnetDiscoverySheet: View {
                         }
                         .padding(14)
                         .background(
-                            TWTheme.surface1, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                            cardFill, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                     } else if let error = model.discoveryError {
                         VStack(alignment: .leading, spacing: 10) {
                             HStack(alignment: .top, spacing: 9) {
@@ -1295,7 +1303,7 @@ struct TailnetDiscoverySheet: View {
                         }
                         .padding(14)
                         .background(
-                            TWTheme.surface1, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                            cardFill, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                     } else if model.discoveredHosts.isEmpty {
                         VStack(alignment: .leading, spacing: 10) {
                             Text("No other TaskWraith hosts found on your tailnet.")
@@ -1310,7 +1318,7 @@ struct TailnetDiscoverySheet: View {
                         }
                         .padding(14)
                         .background(
-                            TWTheme.surface1, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                            cardFill, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                     } else {
                         VStack(spacing: 0) {
                             ForEach(Array(model.discoveredHosts.enumerated()), id: \.element.id) {
@@ -1322,7 +1330,7 @@ struct TailnetDiscoverySheet: View {
                             }
                         }
                         .background(
-                            TWTheme.surface1, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                            cardFill, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                         searchButton(title: "Search again")
                     }
                 }
@@ -1330,7 +1338,7 @@ struct TailnetDiscoverySheet: View {
                 .frame(maxWidth: .infinity)
                 .padding(18)
             }
-            .background(TWTheme.appBg)
+            .background(canvasFill)
             .navigationTitle("Find hosts")
             #if os(iOS)
                 .navigationBarTitleDisplayMode(.inline)

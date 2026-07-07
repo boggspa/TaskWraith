@@ -16,7 +16,7 @@ struct GlassSheetSurfacePolicyTests {
     @Test func glassHostedSurfacesWashTranslucent() {
         #expect(
             TWGlassSheetSurfacePolicy.chromeFillAlpha(
-                glassSheetHosted: true, glassEnabled: true) == 0.55)
+                glassSheetHosted: true, glassEnabled: true) == 0.35)
     }
 
     @Test func reduceTransparencyKeepsGlassHostedSurfacesOpaque() {

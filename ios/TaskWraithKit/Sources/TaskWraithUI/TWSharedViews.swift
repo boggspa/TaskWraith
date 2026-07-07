@@ -699,14 +699,14 @@ extension View {
                 if TWTheme.composerGlassEnabled {
                     if #available(iOS 26.0, macOS 26.0, *) {
                         shape
-                            .fill(TWTheme.composerBg.opacity(0.18))
+                            .fill(TWTheme.composerBg.opacity(0.08))
                             .glassEffect(.regular, in: shape)
                     } else {
                         shape
                             .fill(.ultraThinMaterial)
                             .overlay(
                                 shape.fill(
-                                    TWTheme.composerBg.opacity(TWTheme.composerGlassTintOpacity)))
+                                    TWTheme.composerBg.opacity(0.12)))
                     }
                 } else {
                     shape.fill(TWTheme.surface2)
@@ -757,7 +757,7 @@ enum TWGlassSheetSurfacePolicy {
     /// backdrop's opaque tier.
     static func chromeFillAlpha(glassSheetHosted: Bool, glassEnabled: Bool) -> Double? {
         guard glassSheetHosted else { return nil }
-        return glassEnabled ? 0.55 : 1.0
+        return glassEnabled ? 0.35 : 1.0
     }
 }
 
@@ -820,6 +820,8 @@ extension View {
                 .presentationBackground {
                     TWSheetGlassBackdrop(cornerRadius: cornerRadius, rimmed: rimmed)
                 }
+                .toolbarBackground(.hidden, for: .navigationBar)
+                .background(Color.clear)
                 .environment(\.twGlassSheetHosted, true)
         #else
             self

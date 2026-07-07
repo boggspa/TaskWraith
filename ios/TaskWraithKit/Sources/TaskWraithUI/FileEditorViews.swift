@@ -703,6 +703,7 @@ struct FilesModeCompactView: View {
 private struct FileNavigatorPane: View {
     @ObservedObject var model: RemoteSessionModel
     @ObservedObject var state: MobileFileEditorState
+    @Environment(\.twGlassSheetHosted) private var glassSheetHosted
 
     var body: some View {
         List {
@@ -717,6 +718,7 @@ private struct FileNavigatorPane: View {
                         }
                     }
                 }
+                .twGlassSheetRowBackground()
             }
 
             Section {
@@ -727,6 +729,7 @@ private struct FileNavigatorPane: View {
                         state.scheduleSearch(model: model)
                     }
             }
+            .twGlassSheetRowBackground()
 
             Section {
                 if state.searchIsActive {
@@ -778,9 +781,10 @@ private struct FileNavigatorPane: View {
                     Text("Folder listing truncated. Use search or expand a narrower folder.")
                 }
             }
+            .twGlassSheetRowBackground()
         }
         .scrollContentBackground(.hidden)
-        .background(TWTheme.sidebarBg)
+        .background(glassSheetHosted ? Color.clear : TWTheme.sidebarBg)
     }
 }
 
@@ -848,6 +852,20 @@ private struct FileEditorPane: View {
     let onBack: () -> Void
     let onShowSelectedDiff: (String) -> Void
     let compact: Bool
+    @Environment(\.twGlassSheetHosted) private var glassSheetHosted
+
+    private var canvasFill: Color {
+        glassSheetHosted ? Color.clear : TWTheme.appBg
+    }
+
+    private var editorFill: Color {
+        glassSheetHosted && TWTheme.composerGlassEnabled
+            ? TWTheme.appBg.opacity(0.78) : TWTheme.appBg
+    }
+
+    private var chromeFill: Color {
+        twGlassSheetChromeFill(glassSheetHosted: glassSheetHosted) ?? TWTheme.surface1
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -862,13 +880,13 @@ private struct FileEditorPane: View {
                         .foregroundStyle(TWTheme.textSecondary)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(TWTheme.appBg)
+                .background(canvasFill)
             } else {
                 TaskWraithCodeEditor(
                     text: $state.content,
                     filePath: state.selectedPath ?? "",
                     isEditable: !state.isLoading)
-                    .background(TWTheme.appBg)
+                    .background(editorFill)
             }
             Divider().overlay(TWTheme.border)
             HStack {
@@ -899,9 +917,9 @@ private struct FileEditorPane: View {
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 7)
-            .background(TWTheme.surface1)
+            .background(chromeFill)
         }
-        .background(TWTheme.appBg)
+        .background(canvasFill)
         .navigationTitle(state.selectedName)
         .fileEditorInlineTitle()
         .alert("Delete file?", isPresented: $state.showDeleteConfirm) {
@@ -917,6 +935,7 @@ private struct FileEditorPane: View {
                 state: state,
                 model: model,
                 stagedCount: stagedCount)
+                .twSheetLiquidGlass(detents: [.medium])
         }
     }
 
@@ -1009,7 +1028,7 @@ private struct FileEditorPane: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
-        .background(TWTheme.surface1)
+        .background(chromeFill)
     }
 
     private var statusAccessibilityValue: String {
@@ -1103,7 +1122,9 @@ private struct FileCommitSheet: View {
                     Text(
                         "\(stagedCount) staged file\(stagedCount == 1 ? "" : "s") will be committed.")
                 }
+                .twGlassSheetRowBackground()
             }
+            .twGlassSheetListCanvas()
             .navigationTitle("Commit staged changes")
             #if os(iOS)
                 .navigationBarTitleDisplayMode(.inline)
