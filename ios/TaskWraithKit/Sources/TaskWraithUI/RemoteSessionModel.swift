@@ -3920,6 +3920,142 @@ public final class RemoteSessionModel: ObservableObject {
         scheduleThreadRefresh(thread)
     }
 
+    /// Rebuild a card with one boolean lifecycle flag flipped (pinned/archived)
+    /// through the same Codable round-trip retitledCard uses, so unknown wire
+    /// fields survive the local mutation.
+    private static func cardSettingFlag(
+        _ card: RemoteTaskCard, key: String, value: Bool
+    ) -> RemoteTaskCard {
+        guard
+            let data = try? JSONEncoder().encode(card),
+            var object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return card }
+        object[key] = value
+        guard
+            let nextData = try? JSONSerialization.data(withJSONObject: object),
+            let decoded = try? JSONDecoder().decode(RemoteTaskCard.self, from: nextData)
+        else { return card }
+        return decoded
+    }
+
+    private func applyLocalCardFlag(_ card: RemoteTaskCard, key: String, value: Bool) {
+        taskCards = taskCards.map { current in
+            current.id == card.id ? Self.cardSettingFlag(current, key: key, value: value) : current
+        }
+    }
+
+    /// Pin or unpin a whole chat (home-list lifecycle). Optimistic with
+    /// rollback on a rejected ack — mirrors renameThread's shape.
+    public func togglePinChat(_ card: RemoteTaskCard, pinned: Bool) {
+        if isDemo {
+            applyLocalCardFlag(card, key: "pinned", value: pinned)
+            lastActionMessage = pinned ? "Chat pinned." : "Chat unpinned."
+            return
+        }
+        let ws = (card.workspaceId ?? "").isEmpty ? "global" : card.workspaceId!
+        let previous = card.pinned ?? false
+        applyLocalCardFlag(card, key: "pinned", value: pinned)
+        send(
+            BridgeAction.togglePinChat(workspaceId: ws, appChatId: card.id, pinned: pinned),
+            successLabel: pinned ? "Chat pinned." : "Chat unpinned.",
+            navigateOnAck: false,
+            onAck: { [weak self] accepted in
+                if !accepted { self?.applyLocalCardFlag(card, key: "pinned", value: previous) }
+            })
+    }
+
+    /// Archive or unarchive a chat — reversible, so no confirmation UI.
+    /// Optimistic with rollback; archived cards leave the normal home
+    /// sections immediately (listedCards filters on the flag).
+    public func setChatArchived(_ card: RemoteTaskCard, archived: Bool) {
+        if isDemo {
+            applyLocalCardFlag(card, key: "archived", value: archived)
+            lastActionMessage = archived ? "Archived." : "Unarchived."
+            return
+        }
+        let ws = (card.workspaceId ?? "").isEmpty ? "global" : card.workspaceId!
+        let previous = card.archived ?? false
+        applyLocalCardFlag(card, key: "archived", value: archived)
+        send(
+            BridgeAction.setChatArchived(workspaceId: ws, appChatId: card.id, archived: archived),
+            successLabel: archived ? "Archived." : "Unarchived.",
+            navigateOnAck: false,
+            onAck: { [weak self] accepted in
+                if !accepted { self?.applyLocalCardFlag(card, key: "archived", value: previous) }
+            })
+    }
+
+    /// Decoded success payload of `chatMarkdownTranscript`.
+    public struct ChatMarkdownTranscript {
+        public let markdown: String
+        public let messageCount: Int?
+        public let charCount: Int?
+        public let omissions: [String]
+    }
+
+    /// Fetch the FULL chat transcript as desktop-identical markdown from the
+    /// Mac (the phone's 24-row snapshot window would silently truncate a
+    /// local build — ios-t2-transcript-wire-ruling). Failure copy is surfaced
+    /// via lastActionMessage using the ack's own message (desktop reasons
+    /// verbatim); completion receives nil on any failure.
+    public func fetchChatMarkdownTranscript(
+        _ card: RemoteTaskCard, completion: @escaping (ChatMarkdownTranscript?) -> Void
+    ) {
+        guard !isDemo else {
+            lastActionMessage = "Transcript export needs a connected Mac."
+            completion(nil)
+            return
+        }
+        let ws = (card.workspaceId ?? "").isEmpty ? "global" : card.workspaceId!
+        send(
+            BridgeAction.chatMarkdownTranscript(workspaceId: ws, appChatId: card.id),
+            successLabel: "Transcript copied.",
+            navigateOnAck: false,
+            onAckResult: { accepted, ack in
+                guard accepted,
+                    let raw = ack?.result,
+                    let object = try? JSONSerialization.jsonObject(with: raw) as? [String: Any]
+                else {
+                    completion(nil)
+                    return
+                }
+                // The ack envelope nests the action payload under `data` on
+                // some hosts and flat on others — accept both.
+                let data = (object["data"] as? [String: Any]) ?? object
+                guard let markdown = data["markdown"] as? String, !markdown.isEmpty else {
+                    completion(nil)
+                    return
+                }
+                completion(
+                    ChatMarkdownTranscript(
+                        markdown: markdown,
+                        messageCount: data["messageCount"] as? Int,
+                        charCount: data["charCount"] as? Int,
+                        omissions: data["omissions"] as? [String] ?? []))
+            })
+    }
+
+    /// One transcript-message → composer append request (T1 "Add to prompt").
+    /// Routed through the model because the transcript row views are Equatable-
+    /// gated value types; ThreadDetailView observes this and appends to the
+    /// LIVE `followUp` @State (the only channel the visible composer reads —
+    /// see ios-t1-draft-append-seam), whose onChange persists it for free.
+    public struct ComposerAppendRequest: Equatable {
+        public let id: UUID
+        public let threadId: String
+        public let text: String
+    }
+
+    @Published public var composerAppendRequest: ComposerAppendRequest?
+
+    public func requestComposerAppend(_ text: String, threadId: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        composerAppendRequest = ComposerAppendRequest(
+            id: UUID(), threadId: threadId, text: trimmed)
+        lastActionMessage = "Added to prompt."
+    }
+
     /// Manual refresh: tear down whatever half-state exists and redial the
     /// trusted reconnect. Covers "phone launched before the Mac app" —
     /// resolve initially failed, and waiting on backoff feels broken.

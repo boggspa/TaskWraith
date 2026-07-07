@@ -494,6 +494,76 @@ struct IosParityFixesTests {
         #expect(twSettledRowModelChip(from: "Codex / Adversary2") == nil)
     }
 
+    // ── Batch-1: chat-lifecycle + transcript bridge payloads (N2/T2) ──────
+    // Host wires key on `appChatId`, NOT `threadId` — asserting the exact
+    // keys guards against setThreadTitle copy/paste drift.
+
+    private func decodedPayload(_ params: [String: Any]) throws -> [String: Any] {
+        let base64 = try #require(params["payloadBase64"] as? String)
+        let data = try #require(Data(base64Encoded: base64))
+        return try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+    }
+
+    @Test func togglePinChatPayloadUsesAppChatIdKey() throws {
+        let payload = try decodedPayload(
+            BridgeAction.togglePinChat(workspaceId: "ws-1", appChatId: "chat-9", pinned: true))
+        #expect(payload["kind"] as? String == "togglePinChat")
+        #expect(payload["appChatId"] as? String == "chat-9")
+        #expect(payload["workspaceId"] as? String == "ws-1")
+        #expect(payload["pinned"] as? Bool == true)
+        #expect(payload["threadId"] == nil)
+    }
+
+    @Test func setChatArchivedPayloadShape() throws {
+        let payload = try decodedPayload(
+            BridgeAction.setChatArchived(workspaceId: "ws-1", appChatId: "chat-9", archived: false))
+        #expect(payload["kind"] as? String == "setChatArchived")
+        #expect(payload["appChatId"] as? String == "chat-9")
+        #expect(payload["archived"] as? Bool == false)
+        #expect(payload["threadId"] == nil)
+    }
+
+    @Test func chatMarkdownTranscriptPayloadShape() throws {
+        let payload = try decodedPayload(
+            BridgeAction.chatMarkdownTranscript(workspaceId: "global", appChatId: "chat-9"))
+        #expect(payload["kind"] as? String == "chatMarkdownTranscript")
+        #expect(payload["workspaceId"] as? String == "global")
+        #expect(payload["appChatId"] as? String == "chat-9")
+    }
+
+    // ── Batch-1: C1 orchestration-mode chip derivation ─────────────────────
+
+    @Test func ensembleModeChipHopsOnlyInContinuousWithData() {
+        let continuous = EnsembleModeChipState(mode: "continuous", hopsUsed: 3, hopsMax: 14)
+        #expect(continuous.hopsText == "3/14")
+        #expect(continuous.label == "Continuous")
+        let turn = EnsembleModeChipState(mode: "turn_bound", hopsUsed: 3, hopsMax: 14)
+        #expect(turn.hopsText == nil)
+        #expect(turn.label == "Turn")
+        let missing = EnsembleModeChipState(mode: "continuous", hopsUsed: nil, hopsMax: 14)
+        #expect(missing.hopsText == nil)
+        let zeroCap = EnsembleModeChipState(mode: "continuous", hopsUsed: 0, hopsMax: 0)
+        #expect(zeroCap.hopsText == nil)
+    }
+
+    // ── Batch-1: N1 search-scope chips ─────────────────────────────────────
+
+    @Test func homeSearchProviderMatchCoversDivergentVisibleLabels() {
+        // N1 matches BOTH the raw wire id and the visible label — the query
+        // "deep re" hits the rendered "Deep Reinforce" but not the raw
+        // "deep-reinforce" id (Adversary2 Batch-1 finding).
+        let label = TWTheme.providerLabel("deep-reinforce")
+        #expect(label == "Deep Reinforce")
+        #expect(!"deep-reinforce".localizedStandardContains("deep re"))
+        #expect(label.localizedStandardContains("deep re"))
+    }
+
+    @Test func homeSearchScopeChipsCoverArchivedDiscoverability() {
+        #expect(HomeSearchScope.allCases == [.active, .all])
+        #expect(HomeSearchScope.all.label == "All incl. Archived")
+        #expect(HomeSearchScope.active.label == "Active")
+    }
+
     @MainActor
     @Test func quietGitSnapshotRefreshPublishesToSharedCache() async {
         // The composer's event-driven git refreshes (run-finish, foregrounding,

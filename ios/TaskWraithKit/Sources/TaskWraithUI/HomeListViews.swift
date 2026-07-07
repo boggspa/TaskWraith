@@ -13,6 +13,22 @@ import TaskWraithKit
 
 extension RemoteTaskCard: Identifiable {}
 
+/// N1 home-search scope chips. "All" includes archived chats — the search
+/// path into N2's collapsed Archived section (ios-t2-transcript-wire-ruling
+/// ratified this over per-workspace scoping: home already shows every
+/// workspace, so a workspace chip would scope nothing).
+enum HomeSearchScope: String, CaseIterable {
+    case active
+    case all
+
+    var label: String {
+        switch self {
+        case .active: return "Active"
+        case .all: return "All incl. Archived"
+        }
+    }
+}
+
 #if canImport(UIKit)
     import PhotosUI
     import UIKit
@@ -37,6 +53,13 @@ struct HomeView: View {
     /// via the connected host as the "oracle").
     @State private var showDiscoverySheet = false
     @State private var renameTargetCard: RemoteTaskCard?
+    /// N1 home search — ephemeral by design (a theme-revision teardown clears
+    /// a transient search; boarded landmine ③ exception in ios-batch1-ux-spec).
+    @State private var searchText = ""
+    @State private var searchScope: HomeSearchScope = .active
+    /// Archived section starts collapsed every visit (discoverability lives in
+    /// the search "All incl. Archived" scope; the section is the browse path).
+    @State private var archivedExpanded = false
 
     private func openCanvas(_ mode: ComposeMode) {
         if explicitSelection {
@@ -83,12 +106,30 @@ struct HomeView: View {
         return parts.isEmpty ? nil : parts.joined(separator: " • ")
     }
 
+    /// N2 chat lifecycle menu — Pin/Unpin → Rename → Archive/Unarchive, per
+    /// ios-batch1-ux-spec. Archive is reversible so it carries NO confirmation;
+    /// Delete is Batch-2 (needs the future deleteChat capability) and is
+    /// deliberately absent — fail-closed, not disabled.
     @ViewBuilder
     private func renameContextMenu(for card: RemoteTaskCard) -> some View {
+        let pinned = card.pinned ?? false
+        let archived = card.archived ?? false
+        Button {
+            model.togglePinChat(card, pinned: !pinned)
+        } label: {
+            Label(pinned ? "Unpin" : "Pin", systemImage: pinned ? "pin.slash" : "pin")
+        }
         Button {
             presentRenameSheet(for: card)
         } label: {
             Label("Rename", systemImage: "pencil")
+        }
+        Button {
+            model.setChatArchived(card, archived: !archived)
+        } label: {
+            Label(
+                archived ? "Unarchive" : "Archive",
+                systemImage: archived ? "tray.and.arrow.up" : "archivebox")
         }
     }
 
@@ -165,11 +206,113 @@ struct HomeView: View {
             }
     }
 
+    // ── N1 home search ────────────────────────────────────────────────────
+    /// Results mode is on while the user has typed anything OR selected the
+    /// All-incl-Archived scope (an empty query + All must still surface
+    /// archived chats — Adversary1 nit on ios-batch1-ux-spec).
+    private var searchActive: Bool {
+        !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || searchScope == .all
+    }
+
+    /// Ranked title-prefix > title-substring > workspace/provider match;
+    /// recency within each rank. Match fields: title + workspace name +
+    /// provider label (body search is a Batch-2 host wire).
+    private var searchResults: [RemoteTaskCard] {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let workflowThreadIds = Set(model.workflows.compactMap(\.threadId))
+        let pool = model.taskCards.filter {
+            guard !($0.isDraft ?? false), !workflowThreadIds.contains($0.id) else { return false }
+            if searchScope == .active, $0.archived ?? false { return false }
+            return true
+        }
+        if query.isEmpty {
+            return pool.sorted { ($0.updatedAt ?? "") > ($1.updatedAt ?? "") }
+        }
+        func rank(_ card: RemoteTaskCard) -> Int? {
+            let title = (card.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            if title.lowercased().hasPrefix(query.lowercased()) { return 0 }
+            if title.localizedStandardContains(query) { return 1 }
+            if let ws = model.workspaceName(for: card.workspaceId),
+                ws.localizedStandardContains(query)
+            { return 2 }
+            if let provider = card.provider {
+                // Match the VISIBLE provider label as well as the raw id —
+                // rows render TWTheme.providerLabel, so "GPT"-style brand
+                // names must hit even where they diverge from the wire id
+                // (Adversary2 Batch-1 finding).
+                if provider.localizedStandardContains(query)
+                    || TWTheme.providerLabel(provider).localizedStandardContains(query)
+                {
+                    return 2
+                }
+            }
+            return nil
+        }
+        return
+            pool
+            .compactMap { card in rank(card).map { (card, $0) } }
+            .sorted {
+                if $0.1 != $1.1 { return $0.1 < $1.1 }
+                return ($0.0.updatedAt ?? "") > ($1.0.updatedAt ?? "")
+            }
+            .map(\.0)
+    }
+
+    @ViewBuilder
+    private var searchResultsSections: some View {
+        if !model.projectionHydrated {
+            // Never claim "No results" over state that hasn't arrived yet —
+            // the hydration ticker gate wins (ios-batch1-ux-spec).
+            Section {
+                HydrationTicker("Syncing chats from your Mac…")
+                    .listRowBackground(Color.clear)
+            }
+        } else {
+            let results = searchResults
+            if results.isEmpty {
+                Section {
+                    ContentUnavailableView.search(text: searchText)
+                        .listRowBackground(Color.clear)
+                }
+            } else {
+                Section("Results") {
+                    ForEach(results, id: \.id) { card in
+                        threadRow(card)
+                            .opacity((card.archived ?? false) ? 0.55 : 1)
+                    }
+                }
+            }
+        }
+    }
+
     var body: some View {
         Group {
             // One list for both widths — iPad selection is explicit Buttons
             // (List(selection:) needs edit mode on .plain-style iPadOS lists).
-            List { sections }
+            List {
+                if searchActive {
+                    searchResultsSections
+                } else {
+                    sections
+                }
+            }
+        }
+        .searchable(
+            text: $searchText,
+            placement: {
+                #if os(iOS)
+                    return .navigationBarDrawer(displayMode: .automatic)
+                #else
+                    return .automatic
+                #endif
+            }(),
+            prompt: "Search chats"
+        )
+        .searchScopes($searchScope) {
+            ForEach(HomeSearchScope.allCases, id: \.self) { scope in
+                Text(scope.label).tag(scope)
+            }
         }
         #if os(iOS)
             .listStyle(.plain)
@@ -602,6 +745,29 @@ struct HomeView: View {
                     count: globalCards.count,
                     collapsed: collapsedSections.contains("globalChats")
                 ) { toggleSection("globalChats") }
+            }
+        }
+
+        // ── Archived — collapsed by default; rows dimmed; Unarchive lives in
+        //    their context menu. Data already projected (archived flag rides
+        //    every task card), so this section is read-free. ────────────────
+        let archivedCards = model.taskCards
+            .filter { !($0.isDraft ?? false) && ($0.archived ?? false) }
+            .sorted { ($0.updatedAt ?? "") > ($1.updatedAt ?? "") }
+        if !archivedCards.isEmpty {
+            Section {
+                if archivedExpanded {
+                    ForEach(archivedCards, id: \.id) { card in
+                        threadRow(card)
+                            .opacity(0.55)
+                    }
+                }
+            } header: {
+                GlassPillHeader(
+                    title: "Archived", systemImage: "archivebox",
+                    count: archivedCards.count,
+                    collapsed: !archivedExpanded
+                ) { archivedExpanded.toggle() }
             }
         }
 

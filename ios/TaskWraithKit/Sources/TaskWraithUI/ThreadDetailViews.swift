@@ -844,6 +844,16 @@ struct ThreadDetailView: View {
         .onChange(of: followUp) { _, newValue in
             TWDraftPersistence.setDraft(newValue, for: taskId)
         }
+        // T1 "Add to prompt": append to the LIVE draft — TWDraftPersistence has
+        // no store→view observation, so writing the store alone would change
+        // nothing visible (ios-t1-draft-append-seam). Appending here lets the
+        // onChange above persist it for free (teardown/thread-switch safe).
+        // APPEND, never replace; \n\n separator only when a draft exists.
+        .onChange(of: model.composerAppendRequest) { _, request in
+            guard let request, request.threadId == taskId else { return }
+            followUp = followUp.isEmpty ? request.text : followUp + "\n\n" + request.text
+            model.composerAppendRequest = nil
+        }
     }
 
     private func transcriptList(proxy: ScrollViewProxy) -> some View {
@@ -1583,6 +1593,25 @@ struct ThreadDetailView: View {
                                                 for: card, enabled: enabled,
                                                 composerProvider: card.provider)
                                         },
+                                        // C1 — inline Turn/Continuous chip + hops.
+                                        // Data is already published on ensembleState;
+                                        // the roster sheet keeps the canonical picker.
+                                        ensembleModeChip: card.isEnsemble
+                                            ? EnsembleModeChipState(
+                                                mode: ensembleState?.orchestrationMode
+                                                    == "continuous"
+                                                    ? "continuous" : "turn_bound",
+                                                hopsUsed: ensembleState?.continuationHops,
+                                                hopsMax: ensembleState?.maxContinuationHops)
+                                            : nil,
+                                        onOrchestrationModeSelect: { mode in
+                                            guard let ws = card.workspaceId,
+                                                let thread = card.threadId
+                                            else { return }
+                                            model.updateEnsembleSettings(
+                                                workspaceId: ws, threadId: thread,
+                                                orchestrationMode: mode)
+                                        },
                                         activeGoal: card.activeGoal,
                                         onGoalUpdate: { op, objective, reason in
                                             model.updateGoal(
@@ -1899,6 +1928,37 @@ struct ThreadDetailView: View {
                     .buttonStyle(.plain)
                     .accessibilityLabel("Open Roster")
                     .accessibilityHint("Opens the ensemble participant roster.")
+                }
+            }
+            // T2 — full-transcript export. The markdown comes from the Mac's
+            // existing builder (desktop-identical bytes, paths scrubbed); a
+            // local build over the 24-row snapshot window would silently
+            // truncate (ios-t2-transcript-wire-ruling). Failure copy rides
+            // the ack banner verbatim. Individual pill (landmine ④).
+            if let card {
+                ToolbarItem(placement: .primaryAction) {
+                    Menu {
+                        Button {
+                            model.fetchChatMarkdownTranscript(card) { transcript in
+                                guard let transcript else { return }
+                                #if canImport(UIKit)
+                                    UIPasteboard.general.string = transcript.markdown
+                                #endif
+                                // Ack banner copy ("Transcript copied.") is posted
+                                // by the model's successLabel — the setter is
+                                // private(set) out here by design.
+                            }
+                        } label: {
+                            Label("Copy full transcript", systemImage: "doc.on.doc")
+                        }
+                    } label: {
+                        ToolbarIconPillLabel(
+                            "Transcript", systemImage: "square.and.arrow.up.on.square")
+                    }
+                    .buttonStyle(.plain)
+                    .tint(TWTheme.textPrimary)
+                    .accessibilityLabel("Export transcript")
+                    .accessibilityHint("Copies the full chat transcript as Markdown.")
                 }
             }
             ToolbarItem(placement: .primaryAction) {
@@ -2870,6 +2930,14 @@ struct ThreadRowView: View, Equatable {
                                 #endif
                             } label: {
                                 Label("Copy message", systemImage: "doc.on.doc")
+                            }
+                            // T1 — routes through the model because this row is an
+                            // Equatable-gated value type; ThreadDetailView appends to
+                            // the LIVE composer draft (ios-t1-draft-append-seam).
+                            Button {
+                                model.requestComposerAppend(preview, threadId: threadId)
+                            } label: {
+                                Label("Add to prompt", systemImage: "text.append")
                             }
                             if let card = model.taskCards.first(where: { $0.id == threadId }) {
                                 Button {

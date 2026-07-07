@@ -1843,6 +1843,44 @@ public enum BridgeAction {
         ])
     }
 
+    /// Pin or unpin a whole chat (home-list lifecycle; host action key is
+    /// `appChatId`, NOT `threadId` — matches BridgeActionPayload.togglePinChat).
+    public static func togglePinChat(
+        workspaceId: String, appChatId: String, pinned: Bool,
+        actionId: String = UUID().uuidString
+    ) -> [String: Any] {
+        encode([
+            "kind": "togglePinChat", "actionId": actionId,
+            "workspaceId": workspaceId, "appChatId": appChatId, "pinned": pinned,
+        ])
+    }
+
+    /// Archive or unarchive a chat. Reversible + non-destructive — gates on the
+    /// existing `pin` capability host-side (ios-lifecycle-capability-ruling).
+    public static func setChatArchived(
+        workspaceId: String, appChatId: String, archived: Bool,
+        actionId: String = UUID().uuidString
+    ) -> [String: Any] {
+        encode([
+            "kind": "setChatArchived", "actionId": actionId,
+            "workspaceId": workspaceId, "appChatId": appChatId, "archived": archived,
+        ])
+    }
+
+    /// Read-only full-transcript fetch — thin adapter over the Mac's existing
+    /// markdown-transcript builder (byte-identical desktop format, paths
+    /// scrubbed). Success ack data: { appChatId, markdown, messageCount,
+    /// charCount, omissions }. Gates on `monitor` capability.
+    public static func chatMarkdownTranscript(
+        workspaceId: String, appChatId: String,
+        actionId: String = UUID().uuidString
+    ) -> [String: Any] {
+        encode([
+            "kind": "chatMarkdownTranscript", "actionId": actionId,
+            "workspaceId": workspaceId, "appChatId": appChatId,
+        ])
+    }
+
     public static func createSideChat(
         workspaceId: String, threadId: String, provider: String?, model: String? = nil,
         reasoningEffort: String? = nil,
