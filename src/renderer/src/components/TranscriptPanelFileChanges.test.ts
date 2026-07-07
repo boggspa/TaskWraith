@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { ChatRecord, DiffFileSummary } from '../../../main/store/types'
 import {
+  buildFileChangeSummarySections,
   buildFileChangeSummaryWindow,
   FILE_CHANGE_SUMMARY_COLLAPSED_LIMIT,
   FILE_CHANGE_SUMMARY_MAX_VISIBLE,
@@ -46,6 +47,64 @@ describe('buildFileChangeSummaryWindow', () => {
     expect(window.hiddenCount).toBe(80)
     expect(window.canShowMore).toBe(false)
     expect(window.canShowFewer).toBe(true)
+  })
+})
+
+describe('buildFileChangeSummarySections', () => {
+  const summary = (path: string, patch: Partial<DiffFileSummary> = {}): DiffFileSummary => ({
+    path,
+    status: 'modified',
+    additions: 10,
+    deletions: 4,
+    previewKind: 'none',
+    ...patch
+  })
+
+  it('returns null without round summaries so the flat list renders unchanged', () => {
+    const display = [summary('a.ts'), summary('b.ts')]
+
+    expect(buildFileChangeSummarySections(display, undefined)).toBeNull()
+    expect(buildFileChangeSummarySections(display, [])).toBeNull()
+  })
+
+  it('returns null when the round covers the whole session list', () => {
+    const display = [summary('a.ts'), summary('b.ts')]
+    const round = [summary('b.ts', { additions: 1, deletions: 0 }), summary('a.ts')]
+
+    expect(buildFileChangeSummarySections(display, round)).toBeNull()
+  })
+
+  it('leads with round rows and drops their paths from the remaining section', () => {
+    const display = [
+      summary('a.ts', { additions: 100, deletions: 40 }),
+      summary('b.ts'),
+      summary('c.ts')
+    ]
+    const round = [summary('a.ts', { additions: 7, deletions: 2 })]
+
+    const sections = buildFileChangeSummarySections(display, round)
+
+    expect(sections).not.toBeNull()
+    expect(sections?.combined.map((item) => item.path)).toEqual(['a.ts', 'b.ts', 'c.ts'])
+    // The leading row is the ROUND-scoped entry, not the cumulative one.
+    expect(sections?.combined[0]?.additions).toBe(7)
+    expect(sections?.boundary).toBe(1)
+    expect(sections?.roundCount).toBe(1)
+    expect(sections?.remainingCount).toBe(2)
+    expect(sections?.roundAdds).toBe(7)
+    expect(sections?.roundDels).toBe(2)
+    expect(sections?.roundHasLineStats).toBe(true)
+  })
+
+  it('marks line stats absent when no round row carries counts', () => {
+    const display = [summary('a.ts'), summary('b.ts')]
+    const round = [summary('a.ts', { additions: undefined, deletions: undefined })]
+
+    const sections = buildFileChangeSummarySections(display, round)
+
+    expect(sections?.roundHasLineStats).toBe(false)
+    expect(sections?.roundAdds).toBe(0)
+    expect(sections?.roundDels).toBe(0)
   })
 })
 

@@ -5232,6 +5232,63 @@ input:disabled, select:disabled, textarea:disabled {
   font-style: italic;
 }
 
+/* Round/session section chrome inside the Task-complete file list: a
+   "This round" band leads the just-completed round's files, a chunky
+   divider separates them from the remaining session files. Rows in both
+   sections keep the standard .file-change-summary-item styling. */
+.file-change-summary-section-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  min-height: 26px;
+  padding: 2px var(--space-md);
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--text-primary) 5%, transparent);
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.file-change-summary-section-row:first-child {
+  border-top: none;
+}
+
+.file-change-summary-section-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.file-change-summary-section-row.is-round-section .file-change-summary-section-label {
+  color: var(--text-primary);
+}
+
+.file-change-summary-section-count {
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+}
+
+.file-change-summary-section-stats {
+  margin-left: auto;
+  display: grid;
+  grid-template-columns: minmax(6ch, max-content) minmax(8ch, max-content);
+  align-items: center;
+  column-gap: 8px;
+  min-width: 14ch;
+  padding-right: 10px;
+  font-size: var(--font-size-xs);
+}
+
+.file-change-summary-section-divider {
+  height: 6px;
+  flex-shrink: 0;
+  background: color-mix(in srgb, var(--text-primary) 10%, transparent);
+  border-top: 1px solid var(--panel-border);
+  border-bottom: 1px solid var(--panel-border);
+}
+
 .file-type-icon {
   display: inline-flex;
   align-items: center;

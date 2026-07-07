@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties, ReactElement } from 'react'
 import type {
   ChatMessage,
@@ -394,6 +394,14 @@ export type TranscriptPanelProps = {
    */
   thinkingModelBadge?: string | null
   displayFileChangeSummaries: DiffFileSummary[]
+  /**
+   * Files edited by the just-completed round (ensemble) or run (solo) only,
+   * with round-scoped line counts. When at least one round file AND at least
+   * one other session file exist, the Task-complete file list renders a
+   * "This round" section first, a chunky divider, then the remaining
+   * session files. Absent/empty → the flat session list renders unchanged.
+   */
+  roundFileChangeSummaries?: DiffFileSummary[]
   fileChangeSummaryText: string
   fileChangeShouldShowStats: boolean
   fileChangeDisplayAdds: number
@@ -605,6 +613,54 @@ export function buildFileChangeSummaryWindow(
     nextCount,
     nextShowCount: Math.max(0, nextCount - visibleCount),
     visibleCount
+  }
+}
+
+export interface FileChangeSummarySections {
+  /** Round rows first, then the remaining session rows; the window slices this. */
+  combined: DiffFileSummary[]
+  /** Index of the first remaining-session row — the chunky divider slot. */
+  boundary: number
+  roundCount: number
+  remainingCount: number
+  roundAdds: number
+  roundDels: number
+  /** False when no round row carries line counts — hide the header ± pill. */
+  roundHasLineStats: boolean
+}
+
+/**
+ * Split the Task-complete file list into "This round" / remaining-session
+ * sections. Returns null (flat list) unless BOTH sections are non-empty:
+ * an empty round means we could not attribute round edits (or none were
+ * made), and an empty remainder means the round IS the whole session —
+ * either way a split adds noise without information.
+ */
+export function buildFileChangeSummarySections(
+  displaySummaries: DiffFileSummary[],
+  roundSummaries: DiffFileSummary[] | undefined
+): FileChangeSummarySections | null {
+  if (!roundSummaries || roundSummaries.length === 0) return null
+  if (displaySummaries.length === 0) return null
+  const roundPaths = new Set(roundSummaries.map((item) => item.path))
+  const remaining = displaySummaries.filter((item) => !roundPaths.has(item.path))
+  if (remaining.length === 0) return null
+  let roundAdds = 0
+  let roundDels = 0
+  let roundHasLineStats = false
+  for (const item of roundSummaries) {
+    if (item.additions !== undefined || item.deletions !== undefined) roundHasLineStats = true
+    roundAdds += item.additions || 0
+    roundDels += item.deletions || 0
+  }
+  return {
+    combined: [...roundSummaries, ...remaining],
+    boundary: roundSummaries.length,
+    roundCount: roundSummaries.length,
+    remainingCount: remaining.length,
+    roundAdds,
+    roundDels,
+    roundHasLineStats
   }
 }
 
@@ -1714,6 +1770,7 @@ export const TranscriptPanel = memo(
     thinkingProviderClass,
     thinkingModelBadge,
     displayFileChangeSummaries,
+    roundFileChangeSummaries,
     fileChangeSummaryText,
     fileChangeShouldShowStats,
     fileChangeDisplayAdds,
@@ -1832,13 +1889,17 @@ export const TranscriptPanel = memo(
     const [fileChangeSummaryVisibleCount, setFileChangeSummaryVisibleCount] = useState(
       FILE_CHANGE_SUMMARY_COLLAPSED_LIMIT
     )
+    const fileChangeSections = useMemo(
+      () => buildFileChangeSummarySections(displayFileChangeSummaries, roundFileChangeSummaries),
+      [displayFileChangeSummaries, roundFileChangeSummaries]
+    )
+    // Round rows lead when the sectioned layout is active; the show-more
+    // window slices the combined list so the round section is always the
+    // first thing revealed.
+    const fileChangeDisplayList = fileChangeSections?.combined ?? displayFileChangeSummaries
     const fileChangeSummaryWindow = useMemo(
-      () =>
-        buildFileChangeSummaryWindow(
-          displayFileChangeSummaries,
-          fileChangeSummaryVisibleCount
-        ),
-      [displayFileChangeSummaries, fileChangeSummaryVisibleCount]
+      () => buildFileChangeSummaryWindow(fileChangeDisplayList, fileChangeSummaryVisibleCount),
+      [fileChangeDisplayList, fileChangeSummaryVisibleCount]
     )
     // Row-level render cache: stream updates replace one message object, so
     // unchanged rows can reuse their previous element instead of rebuilding all
@@ -1955,13 +2016,13 @@ export const TranscriptPanel = memo(
       closeFileChangeDiffPreview,
       currentChat?.appChatId,
       currentRun?.runId,
-      displayFileChangeSummaries
+      fileChangeDisplayList
     ])
     const showMoreFileChangeSummaries = useCallback(() => {
       setFileChangeSummaryVisibleCount((current) =>
-        buildFileChangeSummaryWindow(displayFileChangeSummaries, current).nextCount
+        buildFileChangeSummaryWindow(fileChangeDisplayList, current).nextCount
       )
-    }, [displayFileChangeSummaries])
+    }, [fileChangeDisplayList])
     const showFewerFileChangeSummaries = useCallback(() => {
       setFileChangeSummaryVisibleCount(FILE_CHANGE_SUMMARY_COLLAPSED_LIMIT)
     }, [])
@@ -4049,7 +4110,51 @@ export const TranscriptPanel = memo(
                 <div className="file-change-summary-list">
                   {displayFileChangeSummaries.length > 0 ? (
                     <>
-                      {fileChangeSummaryWindow.items.map((item) => {
+                      {fileChangeSummaryWindow.items.map((item, index) => {
+                        const inRoundSection =
+                          fileChangeSections !== null && index < fileChangeSections.boundary
+                        // Round rows can repeat a session path (normalisation
+                        // drift between the live and exact lanes) — prefix
+                        // keeps keys unique either way.
+                        const rowKey = inRoundSection
+                          ? `round-${item.path}-${item.status}`
+                          : `${item.path}-${item.status}`
+                        const sectionLead =
+                          fileChangeSections === null ? null : index === 0 ? (
+                            <div className="file-change-summary-section-row is-round-section">
+                              <span className="file-change-summary-section-label">This round</span>
+                              <span className="file-change-summary-section-count">
+                                {fileChangeSections.roundCount}{' '}
+                                {fileChangeSections.roundCount === 1 ? 'file' : 'files'}
+                              </span>
+                              {fileChangeSections.roundHasLineStats && (
+                                <span className="file-change-summary-section-stats">
+                                  <span className="file-change-stat file-change-stat-add composer-diff-add">
+                                    +{fileChangeSections.roundAdds}
+                                  </span>
+                                  <span className="file-change-stat file-change-stat-delete composer-diff-del">
+                                    -{fileChangeSections.roundDels}
+                                  </span>
+                                </span>
+                              )}
+                            </div>
+                          ) : index === fileChangeSections.boundary ? (
+                            <>
+                              <div
+                                className="file-change-summary-section-divider"
+                                aria-hidden="true"
+                              />
+                              <div className="file-change-summary-section-row is-session-section">
+                                <span className="file-change-summary-section-label">
+                                  Earlier in session
+                                </span>
+                                <span className="file-change-summary-section-count">
+                                  {fileChangeSections.remainingCount}{' '}
+                                  {fileChangeSections.remainingCount === 1 ? 'file' : 'files'}
+                                </span>
+                              </div>
+                            </>
+                          ) : null
                         const rowContent = (
                           <span className="file-change-summary-row-content">
                             <span className={`file-change-summary-status status-${item.status}`}>
@@ -4077,12 +4182,10 @@ export const TranscriptPanel = memo(
                         )
                         if (!item.diffText && !onOpenFileChangeInWorkbench) {
                           return (
-                            <div
-                              key={`${item.path}-${item.status}`}
-                              className="file-change-summary-item"
-                            >
-                              {rowContent}
-                            </div>
+                            <Fragment key={rowKey}>
+                              {sectionLead}
+                              <div className="file-change-summary-item">{rowContent}</div>
+                            </Fragment>
                           )
                         }
                         const hasDiffPreview = Boolean(item.diffText)
@@ -4094,84 +4197,86 @@ export const TranscriptPanel = memo(
                           ? `Open Workbench diff for ${item.path}`
                           : `Preview diff for ${item.path}`
                         return (
-                          <div
-                            key={`${item.path}-${item.status}`}
-                            className={`file-change-summary-item file-change-summary-item-interactive ${
-                              hasDiffPreview ? 'has-diff-preview' : 'has-workbench-link'
-                            }`}
-                            onMouseEnter={
-                              canShowHoverPreview
-                                ? (event) => openFileChangeDiffPreview(event, item)
-                                : undefined
-                            }
-                            onMouseLeave={
-                              canShowHoverPreview
-                                ? scheduleCloseFileChangeDiffPreview
-                                : undefined
-                            }
-                          >
-                            <button
-                              className="file-change-summary-main-action"
-                              type="button"
-                              aria-describedby={
-                                canShowHoverPreview &&
-                                fileChangeDiffPreview?.summary.path === item.path
-                                  ? DIFF_HOVER_PREVIEW_TOOLTIP_ID
-                                  : undefined
-                              }
-                              aria-label={fileChangeActionLabel}
-                              onFocus={
+                          <Fragment key={rowKey}>
+                            {sectionLead}
+                            <div
+                              className={`file-change-summary-item file-change-summary-item-interactive ${
+                                hasDiffPreview ? 'has-diff-preview' : 'has-workbench-link'
+                              }`}
+                              onMouseEnter={
                                 canShowHoverPreview
-                                  ? (event) =>
-                                      openFileChangeDiffPreview(event, item, {
-                                        focusTarget: 'preview'
-                                      })
+                                  ? (event) => openFileChangeDiffPreview(event, item)
                                   : undefined
                               }
-                              onBlur={
+                              onMouseLeave={
                                 canShowHoverPreview
                                   ? scheduleCloseFileChangeDiffPreview
                                   : undefined
                               }
-                              onClick={(event) => activateFileChangeSummary(event, item)}
                             >
-                              {rowContent}
-                            </button>
-                            {hasDiffPreview && (
                               <button
+                                className="file-change-summary-main-action"
                                 type="button"
-                                className="file-change-summary-diff-bubble"
                                 aria-describedby={
+                                  canShowHoverPreview &&
                                   fileChangeDiffPreview?.summary.path === item.path
                                     ? DIFF_HOVER_PREVIEW_TOOLTIP_ID
                                     : undefined
                                 }
-                                aria-label={`Preview diff for ${item.path}`}
-                                onMouseEnter={(event) => openFileChangeDiffPreview(event, item)}
-                                onMouseLeave={scheduleCloseFileChangeDiffPreview}
-                                onFocus={(event) =>
-                                  openFileChangeDiffPreview(event, item, {
-                                    focusTarget: 'preview'
-                                  })
+                                aria-label={fileChangeActionLabel}
+                                onFocus={
+                                  canShowHoverPreview
+                                    ? (event) =>
+                                        openFileChangeDiffPreview(event, item, {
+                                          focusTarget: 'preview'
+                                        })
+                                    : undefined
                                 }
-                                onBlur={scheduleCloseFileChangeDiffPreview}
-                                onClick={(event) => {
-                                  event.preventDefault()
-                                  event.stopPropagation()
-                                  openFileChangeDiffPreview(event, item, { immediate: true })
-                                }}
-                                onKeyDown={(event) => {
-                                  if (event.key === 'Enter' || event.key === ' ') {
+                                onBlur={
+                                  canShowHoverPreview
+                                    ? scheduleCloseFileChangeDiffPreview
+                                    : undefined
+                                }
+                                onClick={(event) => activateFileChangeSummary(event, item)}
+                              >
+                                {rowContent}
+                              </button>
+                              {hasDiffPreview && (
+                                <button
+                                  type="button"
+                                  className="file-change-summary-diff-bubble"
+                                  aria-describedby={
+                                    fileChangeDiffPreview?.summary.path === item.path
+                                      ? DIFF_HOVER_PREVIEW_TOOLTIP_ID
+                                      : undefined
+                                  }
+                                  aria-label={`Preview diff for ${item.path}`}
+                                  onMouseEnter={(event) => openFileChangeDiffPreview(event, item)}
+                                  onMouseLeave={scheduleCloseFileChangeDiffPreview}
+                                  onFocus={(event) =>
+                                    openFileChangeDiffPreview(event, item, {
+                                      focusTarget: 'preview'
+                                    })
+                                  }
+                                  onBlur={scheduleCloseFileChangeDiffPreview}
+                                  onClick={(event) => {
                                     event.preventDefault()
                                     event.stopPropagation()
-                                    openFileChangeDiffPreview(event, item, { focusTarget: 'action' })
-                                  }
-                                }}
-                              >
-                                Diff
-                              </button>
-                            )}
-                          </div>
+                                    openFileChangeDiffPreview(event, item, { immediate: true })
+                                  }}
+                                  onKeyDown={(event) => {
+                                    if (event.key === 'Enter' || event.key === ' ') {
+                                      event.preventDefault()
+                                      event.stopPropagation()
+                                      openFileChangeDiffPreview(event, item, { focusTarget: 'action' })
+                                    }
+                                  }}
+                                >
+                                  Diff
+                                </button>
+                              )}
+                            </div>
+                          </Fragment>
                         )
                       })}
                       {fileChangeSummaryWindow.canShowMore ? (
@@ -4257,6 +4362,7 @@ export const TranscriptPanel = memo(
     previous.thinkingProviderClass === next.thinkingProviderClass &&
     previous.thinkingModelBadge === next.thinkingModelBadge &&
     previous.displayFileChangeSummaries === next.displayFileChangeSummaries &&
+    previous.roundFileChangeSummaries === next.roundFileChangeSummaries &&
     previous.fileChangeSummaryText === next.fileChangeSummaryText &&
     previous.fileChangeShouldShowStats === next.fileChangeShouldShowStats &&
     previous.fileChangeDisplayAdds === next.fileChangeDisplayAdds &&

@@ -814,6 +814,110 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
     )
   })
 
+  it('renders a This-round section above the remaining session files', () => {
+    const html = renderToStaticMarkup(
+      <TranscriptPanel
+        {...makeProps({
+          virtualize: false,
+          runCompleteNotice: {
+            timestamp: '2026-01-01T00:00:10.000Z',
+            exitCode: 0
+          },
+          displayFileChangeSummaries: [
+            {
+              path: 'src/alpha.ts',
+              status: 'modified',
+              additions: 100,
+              deletions: 40,
+              previewKind: 'none'
+            },
+            {
+              path: 'src/bravo.ts',
+              status: 'modified',
+              additions: 5,
+              deletions: 1,
+              previewKind: 'none'
+            },
+            {
+              path: 'src/charlie.ts',
+              status: 'created',
+              additions: 20,
+              deletions: 0,
+              previewKind: 'none'
+            }
+          ],
+          roundFileChangeSummaries: [
+            {
+              path: 'src/alpha.ts',
+              status: 'modified',
+              additions: 7,
+              deletions: 2,
+              previewKind: 'none'
+            }
+          ],
+          fileChangeSummaryText: 'Created 1 · Edited 2 · Deleted 0',
+          fileChangeShouldShowStats: true,
+          fileChangeDisplayAdds: 125,
+          fileChangeDisplayDels: 41
+        })}
+      />
+    )
+
+    expect(html).toContain('This round')
+    expect(html).toContain('Earlier in session')
+    expect(html).toContain('file-change-summary-section-divider')
+    // Round rows lead, the divider + session header follow, remaining rows last.
+    const roundHeaderAt = html.indexOf('This round')
+    const alphaAt = html.indexOf('src/alpha.ts')
+    const dividerAt = html.indexOf('file-change-summary-section-divider')
+    const sessionHeaderAt = html.indexOf('Earlier in session')
+    const bravoAt = html.indexOf('src/bravo.ts')
+    expect(roundHeaderAt).toBeGreaterThan(-1)
+    expect(alphaAt).toBeGreaterThan(roundHeaderAt)
+    expect(dividerAt).toBeGreaterThan(alphaAt)
+    expect(sessionHeaderAt).toBeGreaterThan(dividerAt)
+    expect(bravoAt).toBeGreaterThan(sessionHeaderAt)
+    // Round-touched paths are deduped out of the remaining section: three
+    // session files with one already in the round section → three rows.
+    expect((html.match(/class="file-change-summary-item"/g) || []).length).toBe(3)
+    // The round header carries ROUND-scoped totals.
+    expect(html).toContain('+7')
+    expect(html).toContain('-2')
+  })
+
+  it('keeps the flat file list when the round covers every session file', () => {
+    const summaries = [
+      {
+        path: 'src/alpha.ts',
+        status: 'modified',
+        additions: 3,
+        deletions: 1,
+        previewKind: 'none'
+      }
+    ]
+    const html = renderToStaticMarkup(
+      <TranscriptPanel
+        {...makeProps({
+          virtualize: false,
+          runCompleteNotice: {
+            timestamp: '2026-01-01T00:00:10.000Z',
+            exitCode: 0
+          },
+          displayFileChangeSummaries: summaries,
+          roundFileChangeSummaries: summaries,
+          fileChangeSummaryText: 'Created 0 · Edited 1 · Deleted 0',
+          fileChangeShouldShowStats: true,
+          fileChangeDisplayAdds: 3,
+          fileChangeDisplayDels: 1
+        })}
+      />
+    )
+
+    expect(html).not.toContain('This round')
+    expect(html).not.toContain('Earlier in session')
+    expect(html).not.toContain('file-change-summary-section-divider')
+  })
+
   it('renders run-complete summary for plain stop/cancel when not suppressed', () => {
     const html = renderToStaticMarkup(
       <TranscriptPanel
