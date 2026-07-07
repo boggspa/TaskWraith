@@ -11490,6 +11490,13 @@ function App(): React.JSX.Element {
             updateChatById(runChatId, (source) => {
               const updated = { ...source }
               if (updated.chatKind === 'ensemble') return updated
+              // The assistant-delta handler hides the Working indicator while
+              // the bubble streams; tool traffic after the bubble seals means
+              // the run is still live, so re-arm it or the transcript shows
+              // no indicator at all for the rest of the tool phase.
+              if (isVisibleRunChat() && !steerSuppressionChatIdsRef.current.has(runChatId)) {
+                setIsThinking(true)
+              }
               let nextMessages = updated.messages
               for (const projection of toolProjections) {
                 const reduction = reduceSoloToolEventMessages(nextMessages, projection.event, {
@@ -12046,6 +12053,11 @@ function App(): React.JSX.Element {
             // because yield activities intentionally stay inline.
             if (updated.chatKind === 'ensemble') {
               return updated
+            }
+            // Mirrors the run-item lane above: text deltas hide the Working
+            // indicator, so trailing tool activity must re-arm it.
+            if (isVisibleRunChat() && !steerSuppressionChatIdsRef.current.has(runChatId)) {
+              setIsThinking(true)
             }
             if (isProviderExecutionToolEvent(event)) {
               runContext.toolCallsCount += 1
