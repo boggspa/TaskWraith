@@ -6855,11 +6855,8 @@ function flushBridgeRunTranscript(runId: string, final = false): void {
   const finalizedChat = final ? applyPendingProviderChangeOnFinalize(updated) : updated
   const saved = saveAndBroadcastChat(finalizedChat)
   if (final) {
-    // The 1s broadcast throttle has NO trailing retry — during a busy run
-    // the FINAL snapshot (the one flipping status running→terminal) often
-    // landed inside the window and was dropped, leaving every remote card
-    // stuck on 'running' / 'thinking' after completion. Terminal flushes
-    // bypass the throttle.
+    // Terminal per-thread/task deltas should not wait behind a coalesced full
+    // snapshot: this is the running→terminal flip the phone must see promptly.
     bridgeBroadcasterRef?.resetThrottle()
     pushBridgeRunTaskCardDelta?.(saved.appChatId)
   }
@@ -9747,10 +9744,8 @@ async function dispatchDueScheduledLoopHeadless(
     if (mainWindow && !mainWindow.webContents.isDestroyed()) {
       mainWindow.webContents.send('workflow-definitions-changed', AppStore.getWorkflowDefinitions())
     }
-    // The iOS projection broadcast is throttled (~1s, leading-edge, no trailing flush).
-    // For the IMPORTANT transitions (run-start reset + completion) force it through so an
-    // unrelated snapshot <1s earlier can't gate the phone badge into staleness; the
-    // per-iteration calls stay throttled (frequent + self-correcting within one iter).
+    // For important transitions (run-start reset + completion), force an immediate
+    // full projection; per-iteration calls stay coalesced by the broadcaster.
     if (force) bridgeBroadcasterRef?.resetThrottle()
     bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
   }
@@ -23055,7 +23050,7 @@ if (isGeminiMcpBridgeProcess) {
     const pushRemoteThreadSnapshot = (
       chat: ChatRecord,
       workspaceId: string,
-      limit = 40,
+      limit = 24,
       beforeRowId?: string
     ): boolean => {
       const projected = buildRemoteThreadSnapshotPayload(chat, workspaceId, limit, beforeRowId)
@@ -23084,7 +23079,6 @@ if (isGeminiMcpBridgeProcess) {
       if (!workspaceId) return
       pushRemoteThreadSnapshot(chat, workspaceId)
       pushRemoteDiffSummaryDeltaForChat(chat.appChatId)
-      bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
     }
 
     // T71 — does this chat belong to the workspace scope an iOS action
@@ -23204,8 +23198,6 @@ if (isGeminiMcpBridgeProcess) {
           pushRemoteGitSnapshotDelta(cachedWorkspaceId)
         }
       }
-      bridgeBroadcasterRef?.resetThrottle()
-      bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
     }
     const refreshRemoteGitSnapshot = async (
       workspaceId: string,
@@ -23857,25 +23849,22 @@ if (isGeminiMcpBridgeProcess) {
           return { archived: action.archived }
         },
         chatMarkdownTranscriptFn: async (action) => {
-          // Mirrors the desktop `copy-chat-markdown-transcript` IPC handler
-          // (ipc/sidebarHandlers.ts) — same builder, same failure reasons —
-          // but returns the markdown to the phone instead of writing the
-          // Mac clipboard.
+          // Bridge variant of the desktop transcript export: same builder and
+          // scrubbing, but with a smaller single-ack cap and archived reads allowed.
           const chat = AppStore.getChat(action.appChatId)
           if (!chat) return { ok: false as const, reason: 'not-found' }
           if (chat.workspaceId && chat.workspaceId !== action.workspaceId) {
             return { ok: false as const, reason: 'wrong-workspace' }
           }
-          if (chat.archived) return { ok: false as const, reason: 'archived' }
           if (!chat.messages?.length) return { ok: false as const, reason: 'empty' }
           const estimatedCharCount = estimateChatMarkdownTranscriptChars(chat)
-          if (estimatedCharCount > 2_000_000) {
+          if (estimatedCharCount > 750_000) {
             return {
               ok: false as const,
               reason: 'too-large',
               messageCount: chat.messages.length,
               charCount: estimatedCharCount,
-              omissions: ['transcript too large for clipboard copy']
+              omissions: ['transcript too large for remote transcript copy']
             }
           }
           const workspace = chat.workspaceId
@@ -23887,7 +23876,7 @@ if (isGeminiMcpBridgeProcess) {
             homeDir: os.homedir()
           })
           if (!result.markdown.trim()) return { ok: false as const, reason: 'empty' }
-          if (result.charCount > 2_000_000) {
+          if (result.charCount > 750_000) {
             return {
               ok: false as const,
               reason: 'too-large',
@@ -24443,11 +24432,8 @@ if (isGeminiMcpBridgeProcess) {
           broadcastChatUpdated(updated)
           const canonical = canonicalRemoteWorkspaceId(updated.workspaceId)
           if (canonical) pushRemoteThreadSnapshot(updated, canonical)
-          // Force the confirming projection snapshot through: the shared ~1s
-          // throttle otherwise drops it during an active round, so the phone
-          // never receives the authoritative new roster/order and an optimistic
-          // reorder snaps back. Roster edits are user-driven + infrequent, so a
-          // forced snapshot here is cheap.
+          // Force the confirming projection snapshot through: roster edits are
+          // user-driven and should beat any pending coalesced full snapshot.
           bridgeBroadcasterRef?.resetThrottle()
           bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
           return { ok: true }
@@ -26792,6 +26778,8 @@ if (isGeminiMcpBridgeProcess) {
           allowlist: bridgeAllowlist,
           projectionSource: { listRemoteProjectionEnvelopes },
           canonicalChatWorkspaceId: canonicalRemoteWorkspaceId,
+          remoteProjectionSnapshotThrottleMs: () =>
+            getActiveTaskWraithThreadCount() > 0 ? 2_500 : 1_000,
           routeAction: (method, params) => transportActionRouter.route(method, params),
           subscribeRunEvents: (sink) => runEventBus.subscribe(sink),
           onPairingPrompt: (prompt) => {
@@ -31538,10 +31526,9 @@ if (isGeminiMcpBridgeProcess) {
               // Window torn down mid-send.
             }
           }
-          // The phone clears its card from the next projection snapshot —
-          // approval flips are rare and important, so skip the 1s throttle
-          // that could otherwise silently drop this exact update (the
-          // pending broadcast usually fired <1s earlier).
+          // The phone clears its card from the next projection snapshot.
+          // Approval flips are rare and important, so publish immediately
+          // rather than waiting for the coalesced full-snapshot timer.
           bridgeBroadcasterRef?.resetThrottle()
         }
         bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()

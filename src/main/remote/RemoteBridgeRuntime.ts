@@ -144,6 +144,7 @@ export interface RemoteBridgeRuntimeOptions {
    * forwarded into the BridgeBroadcaster so workspace/thread lists count
    * those chats. See WorkspaceIdentity.ts. */
   canonicalChatWorkspaceId?: (workspaceId: string | null | undefined) => string | null
+  remoteProjectionSnapshotThrottleMs?: number | (() => number)
   /** The policy spine — `BridgeActionRouter.route` in production. */
   routeAction: (method: string, params: unknown) => Promise<unknown>
   /** `runEventBus.subscribe` in production; returns the unsubscribe fn. */
@@ -596,6 +597,7 @@ export class RemoteBridgeRuntime {
         allowlist: this.opts.allowlist,
         projectionSource: this.opts.projectionSource,
         canonicalChatWorkspaceId: this.opts.canonicalChatWorkspaceId,
+        remoteProjectionSnapshotThrottleMs: this.opts.remoteProjectionSnapshotThrottleMs,
         log: this.opts.log
       })
       this.opts.onBroadcasterChange?.(this.broadcaster)

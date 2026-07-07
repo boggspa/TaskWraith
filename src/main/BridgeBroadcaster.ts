@@ -117,6 +117,9 @@ export interface BridgeBroadcasterOptions {
   /** Throttle: at most one broadcast per method-name within this window.
    * Per-id updates throttle separately (method + ":" + id). Default 1000ms. */
   throttleMs?: number
+  /** Throttle window for full remote projection snapshots. Defaults to
+   * `throttleMs`; callers may return a longer window while runs are streaming. */
+  remoteProjectionSnapshotThrottleMs?: number | (() => number)
   /** Injectable clock for deterministic tests. Defaults to `Date.now`. */
   now?: () => number
   /**
@@ -305,6 +308,7 @@ export class BridgeBroadcaster {
   private readonly projectionSource?: BridgeBroadcasterProjectionSource
   private readonly log?: (line: string) => void
   private readonly throttleMs: number
+  private readonly remoteProjectionSnapshotThrottleMs: number | (() => number)
   private readonly now: () => number
   private readonly remoteProjectionSnapshotMaxBytes: number
   private readonly remoteProjectionEnvelopeMaxBytes: number
@@ -315,6 +319,7 @@ export class BridgeBroadcaster {
    * methods key on the bare method name; updated methods key on
    * `method:id` so two different chats can update in the same tick. */
   private readonly lastEmitMs = new Map<string, number>()
+  private remoteProjectionSnapshotTimer: ReturnType<typeof setTimeout> | null = null
 
   constructor(options: BridgeBroadcasterOptions) {
     this.daemon = options.daemon
@@ -323,6 +328,8 @@ export class BridgeBroadcaster {
     this.projectionSource = options.projectionSource
     this.log = options.log
     this.throttleMs = options.throttleMs ?? 1000
+    this.remoteProjectionSnapshotThrottleMs =
+      options.remoteProjectionSnapshotThrottleMs ?? this.throttleMs
     this.now = options.now ?? Date.now
     this.remoteProjectionSnapshotMaxBytes =
       options.remoteProjectionSnapshotMaxBytes ?? DEFAULT_REMOTE_PROJECTION_SNAPSHOT_MAX_BYTES
@@ -498,10 +505,21 @@ export class BridgeBroadcaster {
   broadcastRemoteProjectionSnapshot(): void {
     const method = BRIDGE_BROADCAST_METHODS.remoteProjectionSnapshot
     if (!this.projectionSource) return
-    if (!this.shouldEmit(method)) return
+    const remaining = this.remoteProjectionSnapshotThrottleRemaining(method)
+    if (remaining > 0) {
+      this.scheduleRemoteProjectionSnapshotTrailing(method, remaining)
+      return
+    }
+    this.lastEmitMs.set(method, this.now())
+    this.sendRemoteProjectionSnapshot(method)
+  }
+
+  private sendRemoteProjectionSnapshot(method: string): void {
+    const projectionSource = this.projectionSource
+    if (!projectionSource) return
     let projections: RemoteProjectionEnvelope[]
     try {
-      projections = this.projectionSource.listRemoteProjectionEnvelopes()
+      projections = projectionSource.listRemoteProjectionEnvelopes()
     } catch (err) {
       this.logErr(`failed to load remote projections for ${method}`, err)
       return
@@ -536,6 +554,45 @@ export class BridgeBroadcaster {
    * reconnects and we want a fresh snapshot to land immediately. */
   resetThrottle(): void {
     this.lastEmitMs.clear()
+    this.clearRemoteProjectionSnapshotTrailing()
+  }
+
+  private remoteProjectionSnapshotThrottleWindow(): number {
+    const raw =
+      typeof this.remoteProjectionSnapshotThrottleMs === 'function'
+        ? this.remoteProjectionSnapshotThrottleMs()
+        : this.remoteProjectionSnapshotThrottleMs
+    return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : this.throttleMs
+  }
+
+  private remoteProjectionSnapshotThrottleRemaining(throttleKey: string): number {
+    const last = this.lastEmitMs.get(throttleKey)
+    if (last === undefined) return 0
+    const now = this.now()
+    const throttleMs = this.remoteProjectionSnapshotThrottleWindow()
+    const elapsed = now - last
+    if (elapsed >= throttleMs) return 0
+    this.log?.(
+      `[BridgeBroadcaster] throttled ${throttleKey} (${elapsed}ms < ${throttleMs}ms); scheduling trailing flush`
+    )
+    return throttleMs - elapsed
+  }
+
+  private scheduleRemoteProjectionSnapshotTrailing(method: string, delayMs: number): void {
+    if (this.remoteProjectionSnapshotTimer) return
+    this.remoteProjectionSnapshotTimer = setTimeout(() => {
+      this.remoteProjectionSnapshotTimer = null
+      if (!this.projectionSource) return
+      this.lastEmitMs.set(method, this.now())
+      this.sendRemoteProjectionSnapshot(method)
+    }, Math.max(0, delayMs))
+    this.remoteProjectionSnapshotTimer.unref?.()
+  }
+
+  private clearRemoteProjectionSnapshotTrailing(): void {
+    if (!this.remoteProjectionSnapshotTimer) return
+    clearTimeout(this.remoteProjectionSnapshotTimer)
+    this.remoteProjectionSnapshotTimer = null
   }
 
   private shouldEmit(throttleKey: string): boolean {

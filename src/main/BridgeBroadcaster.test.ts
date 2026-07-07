@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   BRIDGE_BROADCAST_METHODS,
   BridgeBroadcaster,
@@ -69,6 +69,10 @@ function makeAllowlist(workspaceIds: string[]): RemoteWorkspaceAllowlist {
   }
   return allowlist
 }
+
+afterEach(() => {
+  vi.useRealTimers()
+})
 
 describe('workspaceRecordToSummary', () => {
   it('produces a summary with chat + running chat counts', () => {
@@ -698,6 +702,52 @@ describe('BridgeBroadcaster', () => {
     ])
     expect(notify).toHaveBeenLastCalledWith(BRIDGE_BROADCAST_METHODS.remoteProjectionSnapshot, {
       projections: [envelope]
+    })
+  })
+
+  it('coalesces full remote projection snapshot bursts into one trailing latest-state flush', async () => {
+    vi.useFakeTimers()
+    const notify = vi.fn()
+    const store = makeFakeStore([makeWorkspace()], [makeChat()])
+    let nowMs = 1000
+    let promptId = 'initial'
+    const broadcaster = new BridgeBroadcaster({
+      daemon: { notify },
+      appStore: store,
+      projectionSource: {
+        listRemoteProjectionEnvelopes: () => [
+          buildRemoteProjectionEnvelope({
+            kind: 'questionCard',
+            payload: { promptId },
+            generatedAt: `2026-05-30T12:00:00.000Z`,
+            envelopeId: `env-${promptId}`
+          })
+        ]
+      },
+      now: () => nowMs,
+      remoteProjectionSnapshotThrottleMs: 2500
+    })
+
+    broadcaster.broadcastRemoteProjectionSnapshot()
+    promptId = 'terminal'
+    nowMs += 400
+    broadcaster.broadcastRemoteProjectionSnapshot()
+    promptId = 'terminal-newest'
+    nowMs += 400
+    broadcaster.broadcastRemoteProjectionSnapshot()
+
+    expect(notify).toHaveBeenCalledTimes(1)
+    nowMs = 3500
+    await vi.advanceTimersByTimeAsync(2100)
+
+    expect(notify).toHaveBeenCalledTimes(2)
+    expect(notify).toHaveBeenLastCalledWith(BRIDGE_BROADCAST_METHODS.remoteProjectionSnapshot, {
+      projections: [
+        expect.objectContaining({
+          envelopeId: 'env-terminal-newest',
+          payload: { promptId: 'terminal-newest' }
+        })
+      ]
     })
   })
 
