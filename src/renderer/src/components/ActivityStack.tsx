@@ -1,7 +1,9 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
+  useRef,
   useState,
   type CSSProperties,
   type ReactNode
@@ -202,6 +204,8 @@ export interface ActivityTimelineSegment {
   items: ActivityTimelineItem[]
   activities: ToolActivity[]
 }
+
+const ACTIVITY_TIMELINE_COLLAPSE_DEBOUNCE_MS = 160
 
 export interface CompactGroupTargetChip {
   key: string
@@ -1502,6 +1506,67 @@ export function buildTimelineSegments(items: ActivityTimelineItem[]): ActivityTi
   return segments
 }
 
+function activityIdsForTimelineItems(items: ActivityTimelineItem[]): string[] {
+  return items.flatMap((item) =>
+    item.type === 'compact-group'
+      ? item.activities.map((activity) => activity.id)
+      : [item.activity.id]
+  )
+}
+
+function activitiesForTimelineItems(items: ActivityTimelineItem[]): ToolActivity[] {
+  return items.flatMap((item) =>
+    item.type === 'compact-group' ? item.activities : [item.activity]
+  )
+}
+
+function sameActivityIds(previous: ActivityTimelineItem[], next: ActivityTimelineItem[]): boolean {
+  const previousIds = activityIdsForTimelineItems(previous)
+  const nextIds = activityIdsForTimelineItems(next)
+  if (previousIds.length === 0 || previousIds.length !== nextIds.length) return false
+  return previousIds.every((id, index) => id === nextIds[index])
+}
+
+function hasAlertActivity(items: ActivityTimelineItem[]): boolean {
+  return activitiesForTimelineItems(items).some(
+    (activity) => activity.status === 'error' || activity.status === 'warning'
+  )
+}
+
+export function shouldDebounceActivityTimelineCollapse(
+  previous: ActivityTimelineItem[],
+  next: ActivityTimelineItem[]
+): boolean {
+  if (next.length >= previous.length) return false
+  if (!next.some((item) => item.type === 'compact-group')) return false
+  if (hasAlertActivity(next)) return false
+  return sameActivityIds(previous, next)
+}
+
+function useCollapseDebouncedTimelineItems(
+  immediateItems: ActivityTimelineItem[]
+): ActivityTimelineItem[] {
+  const previousImmediateRef = useRef(immediateItems)
+  const [heldItems, setHeldItems] = useState<ActivityTimelineItem[] | null>(null)
+
+  useLayoutEffect(() => {
+    const previousItems = previousImmediateRef.current
+    previousImmediateRef.current = immediateItems
+    if (!shouldDebounceActivityTimelineCollapse(previousItems, immediateItems)) {
+      setHeldItems(null)
+      return undefined
+    }
+
+    setHeldItems(previousItems)
+    const timeoutId = window.setTimeout(() => {
+      setHeldItems(null)
+    }, ACTIVITY_TIMELINE_COLLAPSE_DEBOUNCE_MS)
+    return () => window.clearTimeout(timeoutId)
+  }, [immediateItems])
+
+  return heldItems || immediateItems
+}
+
 function thinkingTraceActionContent(note: { title: string; body?: string }): string {
   return (note.body || note.title).trim()
 }
@@ -2453,7 +2518,11 @@ export function ActivityStack({
   // 1.0.74 — same-tool grouping is unified across single + ensemble
   // (no per-mode split): runs of 2+ consecutive same-family terminal
   // activities fold into one expandable compact group.
-  const timelineItems = useMemo(() => buildTimelineItems(topLevelActivities), [topLevelActivities])
+  const immediateTimelineItems = useMemo(
+    () => buildTimelineItems(topLevelActivities),
+    [topLevelActivities]
+  )
+  const timelineItems = useCollapseDebouncedTimelineItems(immediateTimelineItems)
   const liveViewportEnabled = Boolean(liveActivityViewport && topLevelActivities.length > 0)
   const renderedTimelineItems = useMemo(
     () =>

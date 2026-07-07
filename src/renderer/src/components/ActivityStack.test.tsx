@@ -1,6 +1,11 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
-import { ActivityStack, buildActivityWorkbenchDiffSummary } from './ActivityStack'
+import {
+  ActivityStack,
+  buildActivityWorkbenchDiffSummary,
+  buildTimelineItems,
+  shouldDebounceActivityTimelineCollapse
+} from './ActivityStack'
 import type { ChatRecord, EnsembleParticipant, ToolActivity } from '../../../main/store/types'
 
 function makeEnsembleYieldActivity(overrides: Partial<ToolActivity> = {}): ToolActivity {
@@ -535,6 +540,42 @@ describe('ActivityStack compact tool groups', () => {
     expect(html).toContain('digit-odometer')
     expect(html).toContain('2 raw tool calls')
     expect(html).not.toContain('activity-compact-chip muted')
+  })
+
+  it('debounces only same-id transitions from individual rows into a compact group', () => {
+    const running = buildTimelineItems([
+      makeReadActivity({ id: 'tool-read-1', status: 'running' }),
+      makeReadActivity({ id: 'tool-read-2', status: 'running' })
+    ])
+    const settled = buildTimelineItems([
+      makeReadActivity({ id: 'tool-read-1', status: 'success' }),
+      makeReadActivity({ id: 'tool-read-2', status: 'success' })
+    ])
+
+    expect(running.map((item) => item.type)).toEqual(['activity', 'activity'])
+    expect(settled.map((item) => item.type)).toEqual(['compact-group'])
+    expect(shouldDebounceActivityTimelineCollapse(running, settled)).toBe(true)
+  })
+
+  it('does not debounce compact grouping when activity ids changed or warnings need surfacing', () => {
+    const first = buildTimelineItems([
+      makeReadActivity({ id: 'tool-read-1', status: 'success' })
+    ])
+    const appended = buildTimelineItems([
+      makeReadActivity({ id: 'tool-read-1', status: 'success' }),
+      makeReadActivity({ id: 'tool-read-2', status: 'success' })
+    ])
+    const running = buildTimelineItems([
+      makeReadActivity({ id: 'tool-read-1', status: 'running' }),
+      makeReadActivity({ id: 'tool-read-2', status: 'running' })
+    ])
+    const warning = buildTimelineItems([
+      makeReadActivity({ id: 'tool-read-1', status: 'success' }),
+      makeReadActivity({ id: 'tool-read-2', status: 'warning' })
+    ])
+
+    expect(shouldDebounceActivityTimelineCollapse(first, appended)).toBe(false)
+    expect(shouldDebounceActivityTimelineCollapse(running, warning)).toBe(false)
   })
 })
 
