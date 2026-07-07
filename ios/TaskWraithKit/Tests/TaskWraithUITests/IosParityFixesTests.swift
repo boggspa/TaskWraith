@@ -554,25 +554,241 @@ struct IosParityFixesTests {
     }
 
     // ── Pass-2.5 Track-A: IF1 full-snapshot coalescing ─────────────────────
+    // ── Track-S S2 / IF3: off-MainActor decode inside coalescer ────────────
+
+    private final class CoalescerTestLabel: @unchecked Sendable {
+        var value = ""
+    }
+
+    private final class AppliedLabels: @unchecked Sendable {
+        var values: [String] = []
+    }
 
     @MainActor
-    @Test func projectionSnapshotBurstAppliesOnlyNewestEnvelope() {
-        var applied: [String] = []
-        let coalescer = RemoteSessionModel.ProjectionSnapshotCoalescer { data in
-            applied.append(String(decoding: data, as: UTF8.self))
-        }
-        // Burst of 5 queued full snapshots before any drain runs.
+    private func makeLabelTrackingCoalescer(
+        applied: AppliedLabels,
+        decodeThreadBox: DecodeThreadBox? = nil,
+        slowFirstDecode: Bool = false
+    ) -> (RemoteSessionModel.ProjectionSnapshotCoalescer, CoalescerTestLabel) {
+        let label = CoalescerTestLabel()
+        let decodeCalls = DecodeCallCounter()
+        let emptySnapshot = Data(#"{"projections":[]}"#.utf8)
+        let coalescer = RemoteSessionModel.ProjectionSnapshotCoalescer(
+            decode: { data in
+                if let decodeThreadBox {
+                    decodeThreadBox.onMain = Thread.isMainThread
+                }
+                decodeCalls.count += 1
+                if slowFirstDecode, decodeCalls.count == 1 {
+                    Thread.sleep(forTimeInterval: 0.08)
+                }
+                label.value = String(decoding: data, as: UTF8.self)
+                return try JSONDecoder().decode(RemoteProjectionSnapshot.self, from: emptySnapshot)
+            },
+            apply: { _ in applied.values.append(label.value) })
+        return (coalescer, label)
+    }
+
+    private final class DecodeThreadBox: @unchecked Sendable {
+        var onMain = false
+    }
+
+    private final class DecodeCallCounter: @unchecked Sendable {
+        var count = 0
+    }
+
+    @MainActor
+    @Test func projectionSnapshotBurstAppliesOnlyNewestEnvelope() async {
+        let applied = AppliedLabels()
+        let (coalescer, _) = makeLabelTrackingCoalescer(applied: applied)
         for n in 1...5 { coalescer.enqueue(Data("env-\(n)".utf8)) }
-        coalescer.drain()
-        #expect(applied == ["env-5"])
+        await coalescer.drainForTesting()
+        #expect(applied.values == ["env-5"])
         #expect(coalescer.applyCount == 1)
-        // Terminal-state safety: a late envelope after the drain still applies.
         coalescer.enqueue(Data("env-final".utf8))
-        coalescer.drain()
-        #expect(applied == ["env-5", "env-final"])
-        // Drain with nothing pending is a no-op, not a re-apply.
-        coalescer.drain()
+        await coalescer.drainForTesting()
+        #expect(applied.values == ["env-5", "env-final"])
         #expect(coalescer.applyCount == 2)
+    }
+
+    @MainActor
+    @Test func coalescerBurstDecodesNewestOnlyOffMain() async {
+        let applied = AppliedLabels()
+        let decodeThreadBox = DecodeThreadBox()
+        let (coalescer, _) = makeLabelTrackingCoalescer(
+            applied: applied, decodeThreadBox: decodeThreadBox)
+        for n in 1...5 { coalescer.enqueue(Data("env-\(n)".utf8)) }
+        await coalescer.drainForTesting()
+        #expect(applied.values == ["env-5"])
+        #expect(coalescer.applyCount == 1)
+        #expect(!decodeThreadBox.onMain)
+    }
+
+    @MainActor
+    @Test func coalescerAppliesTerminalStateAfterBurst() async {
+        let applied = AppliedLabels()
+        let (coalescer, _) = makeLabelTrackingCoalescer(applied: applied)
+        for n in 1...4 { coalescer.enqueue(Data("env-\(n)".utf8)) }
+        await coalescer.drainForTesting()
+        coalescer.enqueue(Data("env-terminal".utf8))
+        await coalescer.drainForTesting()
+        #expect(applied.values == ["env-4", "env-terminal"])
+        #expect(coalescer.applyCount == 2)
+    }
+
+    @MainActor
+    @Test func coalescerSkipsStaleDecodeWhenNewerPending() async {
+        let applied = AppliedLabels()
+        let (coalescer, _) = makeLabelTrackingCoalescer(applied: applied, slowFirstDecode: true)
+        coalescer.enqueue(Data("env-A".utf8))
+        try? await Task.sleep(nanoseconds: 5_000_000)
+        coalescer.enqueue(Data("env-B".utf8))
+        await coalescer.drainForTesting()
+        #expect(applied.values == ["env-B"])
+        #expect(coalescer.applyCount == 1)
+    }
+
+    @MainActor
+    @Test func coalescerResetDiscardsInFlightDecode() async {
+        let applied = AppliedLabels()
+        let (coalescer, _) = makeLabelTrackingCoalescer(applied: applied, slowFirstDecode: true)
+        coalescer.enqueue(Data("env-A".utf8))
+        try? await Task.sleep(nanoseconds: 5_000_000)
+        coalescer.reset()
+        await coalescer.drainForTesting()
+        #expect(applied.values.isEmpty)
+        #expect(coalescer.applyCount == 0)
+    }
+
+    @MainActor
+    @Test func coalescerResetThenEnqueueDuringInFlightDecodeStillDrains() async {
+        let applied = AppliedLabels()
+        let (coalescer, _) = makeLabelTrackingCoalescer(applied: applied, slowFirstDecode: true)
+        coalescer.enqueue(Data("env-A".utf8))
+        try? await Task.sleep(nanoseconds: 5_000_000)
+        coalescer.reset()
+        coalescer.enqueue(Data("env-B".utf8))
+        await coalescer.drainForTesting()
+        #expect(applied.values == ["env-B"])
+        #expect(coalescer.applyCount == 1)
+    }
+
+    @MainActor
+    @Test func coalescerDecodeFailureContinuesDrain() async {
+        let applied = AppliedLabels()
+        let label = CoalescerTestLabel()
+        let goodSnapshot = Data(
+            #"{"projections":[{"schemaVersion":1,"source":"mac","kind":"threadSnapshot","envelopeId":"t1","threadId":"thread-1","payload":{"threadId":"thread-1","rows":[{"id":"r1","preview":"from-snapshot"}]}}]}"#
+                .utf8)
+        let coalescer = RemoteSessionModel.ProjectionSnapshotCoalescer(
+            decode: { data in
+                let token = String(decoding: data, as: UTF8.self)
+                if token == "bad" { throw NSError(domain: "test", code: 1) }
+                label.value = token
+                return try JSONDecoder().decode(RemoteProjectionSnapshot.self, from: goodSnapshot)
+            },
+            apply: { _ in applied.values.append(label.value) })
+        coalescer.enqueue(Data("bad".utf8))
+        await coalescer.drainForTesting()
+        coalescer.enqueue(Data("good".utf8))
+        await coalescer.drainForTesting()
+        #expect(applied.values == ["good"])
+        #expect(coalescer.applyCount == 1)
+    }
+
+    @MainActor
+    @Test func deltaOrderingPreservedDuringSnapshotDecode() async throws {
+        let model = makeRemoteSessionModel()
+        let baseline = try decode(
+            RemoteProjectionSnapshot.self,
+            """
+            {
+              "projections":[
+                {
+                  "schemaVersion":1,
+                  "source":"mac",
+                  "kind":"threadSnapshot",
+                  "envelopeId":"thread-1",
+                  "threadId":"thread-1",
+                  "payload":{
+                    "threadId":"thread-1",
+                    "rows":[{"id":"r1","preview":"baseline"}]
+                  }
+                }
+              ]
+            }
+            """)
+        model.applySnapshot(baseline)
+        let deltaEnvelope = try decode(
+            RemoteProjectionEnvelope.self,
+            """
+            {
+              "schemaVersion":1,
+              "source":"mac",
+              "kind":"threadSnapshot",
+              "envelopeId":"thread-1-delta",
+              "threadId":"thread-1",
+              "payload":{
+                "threadId":"thread-1",
+                "rows":[{"id":"r1","preview":"from-delta"}]
+              }
+            }
+            """)
+        model.merge(envelope: deltaEnvelope)
+        #expect(model.threadSnapshots["thread-1"]?.rows?.first?.preview == "from-delta")
+
+        let staleFull = try JSONEncoder().encode(
+            try decode(
+                RemoteProjectionSnapshot.self,
+                """
+                {
+                  "projections":[
+                    {
+                      "schemaVersion":1,
+                      "source":"mac",
+                      "kind":"threadSnapshot",
+                      "envelopeId":"thread-1-full",
+                      "threadId":"thread-1",
+                      "payload":{
+                        "threadId":"thread-1",
+                        "rows":[{"id":"r1","preview":"stale-full"}]
+                      }
+                    }
+                  ]
+                }
+                """))
+        let midDecodeDelta = try decode(
+            RemoteProjectionEnvelope.self,
+            """
+            {
+              "schemaVersion":1,
+              "source":"mac",
+              "kind":"threadSnapshot",
+              "envelopeId":"thread-1-mid",
+              "threadId":"thread-1",
+              "payload":{
+                "threadId":"thread-1",
+                "rows":[
+                  {"id":"r1","preview":"from-delta"},
+                  {"id":"r2","preview":"delta-only-row"}
+                ]
+              }
+            }
+            """)
+        let decodeCalls = DecodeCallCounter()
+        let coalescer = RemoteSessionModel.ProjectionSnapshotCoalescer(
+            decode: { data in
+                decodeCalls.count += 1
+                if decodeCalls.count == 1 { Thread.sleep(forTimeInterval: 0.08) }
+                return try JSONDecoder().decode(RemoteProjectionSnapshot.self, from: data)
+            },
+            apply: { snapshot in model.applySnapshot(snapshot) })
+        coalescer.enqueue(staleFull)
+        try? await Task.sleep(nanoseconds: 5_000_000)
+        model.merge(envelope: midDecodeDelta)
+        await coalescer.drainForTesting()
+        let previews = model.threadSnapshots["thread-1"]?.rows?.map(\.preview) ?? []
+        #expect(previews.contains("delta-only-row"))
     }
 
     // ── Pass-2.5: TV thinking wire decode + viewport logic ─────────────────
