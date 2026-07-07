@@ -1641,6 +1641,23 @@ public enum BridgeAction {
         ])
     }
 
+    /// Tell the connected host which thread the phone is watching for
+    /// `bridge.runEvent` interest filtering (B2). Pair-scoped, read-only.
+    /// `nil` appChatId means home/background/non-thread surface.
+    public static func setWatchedThread(
+        appChatId: String?, actionId: String = UUID().uuidString
+    ) -> [String: Any] {
+        var payload: [String: Any] = [
+            "kind": "setWatchedThread", "actionId": actionId,
+        ]
+        if let appChatId {
+            payload["appChatId"] = appChatId
+        } else {
+            payload["appChatId"] = NSNull()
+        }
+        return encode(payload)
+    }
+
     /// Dismiss an agent question (resolves the parked tool as cancelled).
     public static func questionReject(
         promptId: String, workspaceId: String, threadId: String,

@@ -112,6 +112,109 @@ enum TWSidebarPersistence {
     }
 }
 
+/// Invalidation-coalesce gate for streaming `@Published` dict writes (pass-4 S3).
+/// Parse-per-event stays in `appendStreamingDeltas`; this bounds SwiftUI churn.
+@MainActor
+final class StreamingPublishGate {
+    static let streamingPublishCoalesceWindowNs: UInt64 = 80_000_000
+
+    struct Staging: Equatable {
+        var segments: [String]
+        var provider: String?
+        var runId: String?
+        var itemId: String?
+    }
+
+    enum PublishMode {
+        case coalescedIfBurst
+        case immediate
+    }
+
+    private var stagingByThread: [String: Staging] = [:]
+    private var armedThreads: Set<String> = []
+    private var flushTasks: [String: Task<Void, Never>] = [:]
+    private var onPublish: ((String, Staging) -> Void)?
+
+    private(set) var publishInvocationCount = 0
+
+    func bind(onPublish: @escaping (String, Staging) -> Void) {
+        self.onPublish = onPublish
+    }
+
+    func staging(
+        for threadId: String,
+        fallbackSegments: [String],
+        fallbackProvider: String?,
+        fallbackRunId: String?,
+        fallbackItemId: String?
+    ) -> Staging {
+        stagingByThread[threadId]
+            ?? Staging(
+                segments: fallbackSegments,
+                provider: fallbackProvider,
+                runId: fallbackRunId,
+                itemId: fallbackItemId)
+    }
+
+    func setStaging(_ staging: Staging, for threadId: String, mode: PublishMode) {
+        stagingByThread[threadId] = staging
+        switch mode {
+        case .coalescedIfBurst:
+            if !armedThreads.contains(threadId) {
+                publish(threadId)
+                armedThreads.insert(threadId)
+                scheduleFlush(threadId)
+            }
+        case .immediate:
+            cancelFlush(threadId)
+            armedThreads.remove(threadId)
+            publish(threadId)
+        }
+    }
+
+    /// Exit-contract: flush staged text before terminal capture; cancel armed window.
+    func flushBeforeTerminal(threadId: String) {
+        cancelFlush(threadId)
+        armedThreads.remove(threadId)
+        publish(threadId)
+    }
+
+    func reset(threadId: String) {
+        cancelFlush(threadId)
+        armedThreads.remove(threadId)
+        stagingByThread.removeValue(forKey: threadId)
+    }
+
+    func resetAll() {
+        flushTasks.values.forEach { $0.cancel() }
+        flushTasks.removeAll()
+        armedThreads.removeAll()
+        stagingByThread.removeAll()
+    }
+
+    private func publish(_ threadId: String) {
+        guard let staging = stagingByThread[threadId] else { return }
+        publishInvocationCount += 1
+        onPublish?(threadId, staging)
+    }
+
+    private func scheduleFlush(_ threadId: String) {
+        cancelFlush(threadId)
+        flushTasks[threadId] = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: Self.streamingPublishCoalesceWindowNs)
+            guard !Task.isCancelled, let self else { return }
+            self.armedThreads.remove(threadId)
+            self.flushTasks.removeValue(forKey: threadId)
+            self.publish(threadId)
+        }
+    }
+
+    private func cancelFlush(_ threadId: String) {
+        flushTasks[threadId]?.cancel()
+        flushTasks.removeValue(forKey: threadId)
+    }
+}
+
 @MainActor
 public final class RemoteSessionModel: ObservableObject {
     @Published public private(set) var phase: SessionPhase = .idle
@@ -212,6 +315,8 @@ public final class RemoteSessionModel: ObservableObject {
     /// transition gets a paragraph break so bursts don't jam ("…ops.The
     /// first shell…"). Not published: render state derives from the text.
     private var streamingItemIds: [String: String] = [:]
+    /// Coalesces `@Published` streaming dict writes during token bursts (S3).
+    private let streamingPublishGate = StreamingPublishGate()
     /// Live ensemble round state per thread (desktop roster-chip parity).
     @Published public private(set) var ensembleStates: [String: RemoteEnsembleState] = [:]
     /// Latest run diff summary per thread (inspector diff tab + changes row).
@@ -301,8 +406,13 @@ public final class RemoteSessionModel: ObservableObject {
     @Published public private(set) var projectionHydrated = false
     /// The thread currently open in a detail view (nil on home). Used to
     /// re-request its snapshot after a reconnect — it may be outside the
-    /// establish broadcast's recent-N window.
-    public var visibleThreadId: String? = nil
+    /// establish broadcast's recent-N window. Drives B2 `setWatchedThread`.
+    public var visibleThreadId: String? = nil {
+        didSet {
+            guard oldValue != visibleThreadId else { return }
+            reassertWatchedThreadToHost()
+        }
+    }
     /// Inspector presentation — hoisted here so the SHELL can attach the
     /// `.inspector` at NavigationStack level (true side-by-side column on
     /// iPad instead of an overlay; sheet on iPhone).
@@ -605,6 +715,9 @@ public final class RemoteSessionModel: ObservableObject {
         self.hasStoredPairing = doc.selectedHostId != nil
         if let active = doc.selectedHost {
             self.macDisplayName = Self.sanitizedMacName(active.macDisplayName)
+        }
+        streamingPublishGate.bind { [weak self] threadId, staging in
+            self?.applyStreamingStagingPublish(threadId: threadId, staging: staging)
         }
         startPathMonitor()
     }
@@ -1436,6 +1549,7 @@ public final class RemoteSessionModel: ObservableObject {
         streamingRunIds = [:]
         streamingProviders = [:]
         streamingItemIds = [:]
+        streamingPublishGate.resetAll()
         providerModels = [:]
         projectionHydrated = false
         usageRollup = nil
@@ -2118,6 +2232,7 @@ public final class RemoteSessionModel: ObservableObject {
                         if let visible = self.visibleThreadId {
                             self.requestThreadSnapshot(visible)
                         }
+                        self.reassertWatchedThreadToHost()
                         // APNs: ask AFTER a successful session (never at cold
                         // launch), then register; the token callback ships it
                         // up via handleApnsToken.
@@ -2399,6 +2514,9 @@ public final class RemoteSessionModel: ObservableObject {
                     provider: wire.provider, data: data)
             }
             if wire.channel == "agent-exit" || wire.channel == "gemini-exit" {
+                // Exit-contract (S3): flush staged stream text before capture so
+                // the 900ms handoff guard compares the final bubble.
+                streamingPublishGate.flushBeforeTerminal(threadId: threadId)
                 // Final snapshot supersedes the live bubble; clear shortly
                 // after the refresh lands so the handoff doesn't flash empty.
                 let captured = streamingTexts[threadId]
@@ -2415,6 +2533,7 @@ public final class RemoteSessionModel: ObservableObject {
                         self.streamingRunIds[threadId] = nil
                         self.streamingProviders[threadId] = nil
                         self.streamingItemIds[threadId] = nil
+                        self.streamingPublishGate.reset(threadId: threadId)
                     }
                 }
             }
@@ -2461,21 +2580,26 @@ public final class RemoteSessionModel: ObservableObject {
     private func appendStreamingDeltas(
         threadId: String, runId: String?, provider: String?, data: String
     ) {
+        var staging = streamingPublishGate.staging(
+            for: threadId,
+            fallbackSegments: streamingSegments[threadId] ?? [streamingTexts[threadId] ?? ""],
+            fallbackProvider: streamingProviders[threadId],
+            fallbackRunId: streamingRunIds[threadId],
+            fallbackItemId: streamingItemIds[threadId])
         if let provider, !provider.isEmpty {
-            streamingProviders[threadId] = provider
+            staging.provider = provider
         }
         // A new run on the same thread starts a fresh bubble — without this
         // a follow-up turn would append to the previous answer's text.
-        if let runId, let current = streamingRunIds[threadId], current != runId {
-            streamingSegments[threadId] = [""]
-            streamingTexts[threadId] = ""
-            streamingRunIds[threadId] = runId
-            if let provider, !provider.isEmpty {
-                streamingProviders[threadId] = provider
-            }
-            streamingItemIds[threadId] = nil
+        var publishMode: StreamingPublishGate.PublishMode = .coalescedIfBurst
+        if let runId, let current = staging.runId ?? streamingRunIds[threadId], current != runId {
+            staging = StreamingPublishGate.Staging(
+                segments: [""], provider: provider, runId: runId, itemId: nil)
+            streamingPublishGate.reset(threadId: threadId)
+            streamingPublishGate.setStaging(staging, for: threadId, mode: .immediate)
+            publishMode = .coalescedIfBurst
         }
-        var segments = streamingSegments[threadId] ?? [streamingTexts[threadId] ?? ""]
+        var segments = staging.segments
         var appended = false
         var changed = false
         for line in data.split(separator: "\n", omittingEmptySubsequences: true) {
@@ -2490,7 +2614,10 @@ public final class RemoteSessionModel: ObservableObject {
                 // segments are kept: they hold the position of back-to-back
                 // tool calls for the interleave count.
                 segments.append("")
+                staging.segments = segments
                 changed = true
+                streamingPublishGate.setStaging(staging, for: threadId, mode: .immediate)
+                publishMode = .coalescedIfBurst
                 continue
             }
             guard kind == "content" || kind == "token" else { continue }
@@ -2542,22 +2669,65 @@ public final class RemoteSessionModel: ObservableObject {
             // item, token deltas append seamlessly as before.
             let itemId = parsed["itemId"] as? String
             if let itemId, !itemId.isEmpty {
-                if let last = streamingItemIds[threadId], last != itemId,
+                if let last = staging.itemId, last != itemId,
                     let tail = segments.last, !tail.isEmpty, !tail.hasSuffix("\n\n")
                 {
                     segments[segments.count - 1] = tail + "\n\n"
                 }
-                streamingItemIds[threadId] = itemId
+                staging.itemId = itemId
             }
             segments[segments.count - 1] += text
             appended = true
             changed = true
         }
         guard changed else { return }
-        streamingSegments[threadId] = segments
-        streamingTexts[threadId] = Self.joinedStreamText(segments)
-        if appended, let runId, streamingRunIds[threadId] != runId {
+        staging.segments = segments
+        if appended, let runId, staging.runId != runId {
+            staging.runId = runId
+        }
+        streamingPublishGate.setStaging(staging, for: threadId, mode: publishMode)
+    }
+
+    private func applyStreamingStagingPublish(
+        threadId: String, staging: StreamingPublishGate.Staging
+    ) {
+        streamingSegments[threadId] = staging.segments
+        streamingTexts[threadId] = Self.joinedStreamText(staging.segments)
+        if let provider = staging.provider, !provider.isEmpty {
+            streamingProviders[threadId] = provider
+        }
+        if let runId = staging.runId {
             streamingRunIds[threadId] = runId
+        }
+        if let itemId = staging.itemId {
+            streamingItemIds[threadId] = itemId
+        }
+    }
+
+    /// B2 phone assertion: tell the host which thread is visible for runEvent
+    /// filtering. Fail-open on the host until this arrives; re-sent on establish.
+    private func reassertWatchedThreadToHost() {
+        #if DEBUG
+            lastWatchedThreadAssertionAppChatIdForTesting = visibleThreadId
+        #endif
+        guard !isDemo, client != nil else { return }
+        send(BridgeAction.setWatchedThread(appChatId: visibleThreadId), silent: true)
+    }
+
+    private func sendNullWatchedThreadToHost() {
+        #if DEBUG
+            lastWatchedThreadAssertionAppChatIdForTesting = nil
+        #endif
+        guard !isDemo, client != nil else { return }
+        send(BridgeAction.setWatchedThread(appChatId: nil), silent: true)
+    }
+
+    /// Scene-phase hook: background sends null watch; foreground reasserts.
+    public func handleScenePhaseWatchAssertion(isActive: Bool) {
+        if isActive {
+            reassertWatchedThreadToHost()
+        } else {
+            sendNullWatchedThreadToHost()
         }
     }
 
@@ -2778,6 +2948,7 @@ public final class RemoteSessionModel: ObservableObject {
         streamingRunIds[key] = nil
         streamingProviders[key] = nil
         streamingItemIds[key] = nil
+        streamingPublishGate.reset(threadId: key)
     }
 
     /// Terminal run-status vocabulary the Mac projects (bridge runs flip
@@ -3111,6 +3282,7 @@ public final class RemoteSessionModel: ObservableObject {
     private var loadingThreadSnapshots: Set<String> = []
     #if DEBUG
         private(set) var threadSnapshotPullAttemptsForTesting = 0
+        private(set) var lastWatchedThreadAssertionAppChatIdForTesting: String? = nil
     #endif
 
     private func scheduleThreadRefresh(
@@ -3158,6 +3330,24 @@ public final class RemoteSessionModel: ObservableObject {
 
         func seedStreamingStateForTesting(threadId: String, runId: String = "run-test") {
             streamingRunIds[threadId] = runId
+        }
+
+        func appendStreamingDeltasForTesting(
+            threadId: String, data: String, runId: String? = "run-test", provider: String = "codex"
+        ) {
+            appendStreamingDeltas(threadId: threadId, runId: runId, provider: provider, data: data)
+        }
+
+        func flushStreamingPublishForTesting(threadId: String) {
+            streamingPublishGate.flushBeforeTerminal(threadId: threadId)
+        }
+
+        func resetStreamingPublishGateForTesting(threadId: String) {
+            streamingPublishGate.reset(threadId: threadId)
+        }
+
+        var streamingPublishInvocationCountForTesting: Int {
+            streamingPublishGate.publishInvocationCount
         }
     #endif
 

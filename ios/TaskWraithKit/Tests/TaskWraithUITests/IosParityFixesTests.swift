@@ -986,6 +986,151 @@ struct IosParityFixesTests {
         #expect(model.gitSnapshots.isEmpty)
     }
 
+    // ── Pass-4 Track-B2: phone watch assertion ─────────────────────────────
+
+    @Test func setWatchedThreadPayloadShapeWithThreadId() throws {
+        let payload = try decodedPayload(BridgeAction.setWatchedThread(appChatId: "chat-42"))
+        #expect(payload["kind"] as? String == "setWatchedThread")
+        #expect(payload["appChatId"] as? String == "chat-42")
+    }
+
+    @Test func setWatchedThreadPayloadShapeWithNull() throws {
+        let payload = try decodedPayload(BridgeAction.setWatchedThread(appChatId: nil))
+        #expect(payload["kind"] as? String == "setWatchedThread")
+        #expect(payload["appChatId"] is NSNull)
+    }
+
+    @MainActor
+    @Test func visibleThreadIdChangeRecordsWatchAssertion() {
+        let model = makeRemoteSessionModel()
+        model.visibleThreadId = "thread-a"
+        #expect(model.lastWatchedThreadAssertionAppChatIdForTesting == "thread-a")
+        model.visibleThreadId = nil
+        #expect(model.lastWatchedThreadAssertionAppChatIdForTesting == Optional<String>.none)
+    }
+
+    @MainActor
+    @Test func scenePhaseBackgroundSendsNullWatchAssertion() {
+        let model = makeRemoteSessionModel()
+        model.visibleThreadId = "thread-a"
+        model.handleScenePhaseWatchAssertion(isActive: false)
+        #expect(model.lastWatchedThreadAssertionAppChatIdForTesting == nil)
+        model.handleScenePhaseWatchAssertion(isActive: true)
+        #expect(model.lastWatchedThreadAssertionAppChatIdForTesting == "thread-a")
+    }
+
+    // ── Pass-4 Track-S3: streaming publish coalesce ────────────────────────
+
+    private func streamingTokenLine(_ text: String) -> String {
+        "{\"type\":\"token\",\"text\":\"\(text)\"}"
+    }
+
+    @MainActor
+    @Test func firstDeltaPublishesImmediately() {
+        let model = makeRemoteSessionModel()
+        model.appendStreamingDeltasForTesting(
+            threadId: "t1", data: streamingTokenLine("hello"), runId: "run-1", provider: "codex")
+        #expect(model.streamingTexts["t1"] == "hello")
+        #expect(model.streamingRunIds["t1"] == "run-1")
+        #expect(model.streamingProviders["t1"] == "codex")
+        #expect(model.streamingPublishInvocationCountForTesting == 1)
+    }
+
+    @MainActor
+    @Test func burstWithinWindowPublishesOnceConcatenated() async throws {
+        let model = makeRemoteSessionModel()
+        model.appendStreamingDeltasForTesting(
+            threadId: "t1", data: streamingTokenLine("a"), runId: "run-1")
+        #expect(model.streamingPublishInvocationCountForTesting == 1)
+        model.appendStreamingDeltasForTesting(
+            threadId: "t1", data: streamingTokenLine("b"), runId: "run-1")
+        model.appendStreamingDeltasForTesting(
+            threadId: "t1", data: streamingTokenLine("c"), runId: "run-1")
+        #expect(model.streamingPublishInvocationCountForTesting == 1)
+        #expect(model.streamingTexts["t1"] == "a")
+        try await Task.sleep(nanoseconds: StreamingPublishGate.streamingPublishCoalesceWindowNs + 70_000_000)
+        #expect(model.streamingTexts["t1"] == "abc")
+        #expect(model.streamingPublishInvocationCountForTesting == 2)
+    }
+
+    @MainActor
+    @Test func trailingFlushCarriesFinalText() async throws {
+        let model = makeRemoteSessionModel()
+        model.appendStreamingDeltasForTesting(
+            threadId: "t1", data: streamingTokenLine("one"), runId: "run-1")
+        model.appendStreamingDeltasForTesting(
+            threadId: "t1", data: streamingTokenLine("two"), runId: "run-1")
+        try await Task.sleep(nanoseconds: StreamingPublishGate.streamingPublishCoalesceWindowNs + 70_000_000)
+        #expect(model.streamingTexts["t1"] == "onetwo")
+    }
+
+    @MainActor
+    @Test func exitBypassesWindowPublishesBeforeCleanup() {
+        let model = makeRemoteSessionModel()
+        model.appendStreamingDeltasForTesting(
+            threadId: "t1", data: streamingTokenLine("part"), runId: "run-1")
+        model.appendStreamingDeltasForTesting(
+            threadId: "t1", data: streamingTokenLine("-final"), runId: "run-1")
+        #expect(model.streamingTexts["t1"] == "part")
+        model.flushStreamingPublishForTesting(threadId: "t1")
+        #expect(model.streamingTexts["t1"] == "part-final")
+    }
+
+    @MainActor
+    @Test func windowFireAfterExitCleanupIsNoOp() async throws {
+        let model = makeRemoteSessionModel()
+        model.appendStreamingDeltasForTesting(
+            threadId: "t1", data: streamingTokenLine("x"), runId: "run-1")
+        model.appendStreamingDeltasForTesting(
+            threadId: "t1", data: streamingTokenLine("y"), runId: "run-1")
+        model.flushStreamingPublishForTesting(threadId: "t1")
+        let countAfterExit = model.streamingPublishInvocationCountForTesting
+        model.resetStreamingPublishGateForTesting(threadId: "t1")
+        try await Task.sleep(nanoseconds: StreamingPublishGate.streamingPublishCoalesceWindowNs + 70_000_000)
+        #expect(model.streamingPublishInvocationCountForTesting == countAfterExit)
+    }
+
+    @MainActor
+    @Test func perThreadGateIsolation() async throws {
+        let model = makeRemoteSessionModel()
+        model.appendStreamingDeltasForTesting(
+            threadId: "t1", data: streamingTokenLine("a"), runId: "run-1")
+        model.appendStreamingDeltasForTesting(
+            threadId: "t2", data: streamingTokenLine("b"), runId: "run-2")
+        #expect(model.streamingTexts["t1"] == "a")
+        #expect(model.streamingTexts["t2"] == "b")
+        model.appendStreamingDeltasForTesting(
+            threadId: "t1", data: streamingTokenLine("c"), runId: "run-1")
+        try await Task.sleep(nanoseconds: StreamingPublishGate.streamingPublishCoalesceWindowNs + 70_000_000)
+        #expect(model.streamingTexts["t1"] == "ac")
+        #expect(model.streamingTexts["t2"] == "b")
+    }
+
+    @MainActor
+    @Test func appendOrderPreservedExactly() async throws {
+        let model = makeRemoteSessionModel()
+        for ch in ["f", "i", "r", "s", "t"] {
+            model.appendStreamingDeltasForTesting(
+                threadId: "t1", data: streamingTokenLine(ch), runId: "run-1")
+        }
+        try await Task.sleep(nanoseconds: StreamingPublishGate.streamingPublishCoalesceWindowNs + 70_000_000)
+        #expect(model.streamingTexts["t1"] == "first")
+    }
+
+    @MainActor
+    @Test func stalenessBoundRespected() async throws {
+        let model = makeRemoteSessionModel()
+        let start = ContinuousClock.now
+        model.appendStreamingDeltasForTesting(
+            threadId: "t1", data: streamingTokenLine("z"), runId: "run-1")
+        model.appendStreamingDeltasForTesting(
+            threadId: "t1", data: streamingTokenLine("!"), runId: "run-1")
+        try await Task.sleep(nanoseconds: StreamingPublishGate.streamingPublishCoalesceWindowNs + 70_000_000)
+        #expect(model.streamingTexts["t1"] == "z!")
+        let elapsed = start.duration(to: .now)
+        #expect(elapsed <= .milliseconds(200))
+    }
+
     private func remoteTaskCard(_ json: String) throws -> RemoteTaskCard {
         try decode(RemoteTaskCard.self, json)
     }

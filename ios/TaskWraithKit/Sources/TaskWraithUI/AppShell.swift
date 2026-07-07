@@ -185,10 +185,12 @@ public struct RootView: View {
             // foreground silently re-resolves the stored pairing.
             if phase == .active {
                 model.reconnectIfStale()
+                model.handleScenePhaseWatchAssertion(isActive: true)
             } else {
                 // Leaving the foreground: flush any debounced composer draft now, so
                 // text typed in the last moment is durable before iOS suspends us.
                 TWDraftPersistence.flush()
+                model.handleScenePhaseWatchAssertion(isActive: false)
             }
         }
     }
