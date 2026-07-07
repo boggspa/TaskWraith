@@ -220,7 +220,10 @@
   transform: rotate(180deg);
 }
 
-/* Jump-to-latest pill — floats over the bottom edge when following is paused. */
+/* Jump-to-latest pill — floats over the bottom edge when following is paused.
+ * Surface/border ride the theme tokens (--surface-raised was never defined,
+ * so the old dark fallback rendered a black pill with dark text in light
+ * themes) — same recipe as .diff-hover-preview. */
 .live-activity-viewport-jump {
   position: absolute;
   left: 50%;
@@ -233,8 +236,8 @@
   font-size: 11px;
   font-weight: 500;
   color: var(--text-primary, #e6e6e6);
-  background: var(--surface-raised, rgba(40, 42, 48, 0.92));
-  border: 1px solid var(--border, rgba(127, 127, 127, 0.35));
+  background: color-mix(in srgb, var(--surface-elevated, #24242a) 92%, transparent);
+  border: 1px solid color-mix(in srgb, var(--text-primary, #e6e6e6) 16%, transparent);
   border-radius: 999px;
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.28);
   cursor: pointer;
