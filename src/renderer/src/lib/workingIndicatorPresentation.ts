@@ -21,11 +21,16 @@ export type WorkingIndicatorPresentation = {
 const LIVE_ROUND_PARTICIPANT_STATUSES = new Set(['idle', 'running', 'sleeping'])
 const LIVE_LANE_STATUSES = new Set(['pending', 'running', 'blocked', 'awaiting-approval'])
 
+type ParticipantModelDisplay = Pick<
+  EnsembleParticipant,
+  'provider' | 'model' | 'reasoningEffort' | 'thinkingEnabled'
+>
+
 function isLiveRoundParticipantStatus(status: EnsembleParticipantStatus | undefined): boolean {
   return Boolean(status && LIVE_ROUND_PARTICIPANT_STATUSES.has(status))
 }
 
-function modelBadgeForParticipant(participant: EnsembleParticipant): string | null {
+function modelBadgeForParticipant(participant: ParticipantModelDisplay): string | null {
   const model = participant.model || ''
   if (!model) return null
   const baseModelName = shortModelName(participant.provider, '', model)
@@ -87,17 +92,42 @@ function roundParticipantForId(
   )
 }
 
+function modelDisplayForParticipant(
+  provider: ProviderId,
+  roundParticipant: EnsembleRoundParticipantState | undefined,
+  participant: EnsembleParticipant | undefined
+): ParticipantModelDisplay | null {
+  if (roundParticipant?.model) {
+    return {
+      provider,
+      model: roundParticipant.model,
+      reasoningEffort: roundParticipant.reasoningEffort,
+      thinkingEnabled: roundParticipant.thinkingEnabled
+    }
+  }
+  if (participant?.provider === provider && participant.model) {
+    return {
+      provider,
+      model: participant.model,
+      reasoningEffort: participant.reasoningEffort,
+      thinkingEnabled: participant.thinkingEnabled
+    }
+  }
+  return null
+}
+
 function workingPresentationForParticipant(
   chat: ChatRecord,
   participantId: string
 ): WorkingIndicatorPresentation | null {
   const participant = chat.ensemble?.participants.find((item) => item.id === participantId)
   const roundParticipant = roundParticipantForId(chat, participantId)
-  const provider = participant?.provider || roundParticipant?.provider || null
+  const provider = roundParticipant?.provider || participant?.provider || null
   if (!provider) return null
 
-  const roleLabel = (participant?.role || roundParticipant?.role || '').trim() || null
-  const model = participant?.model || ''
+  const roleLabel = (roundParticipant?.role || participant?.role || '').trim() || null
+  const modelDisplay = modelDisplayForParticipant(provider, roundParticipant, participant)
+  const model = modelDisplay?.model || ''
   const brand =
     provider === 'ollama' && model
       ? resolveOllamaDisplayBrand(model, humaniseModelId('ollama', model))
@@ -108,7 +138,7 @@ function workingPresentationForParticipant(
     provider,
     providerClass: brand?.providerClass || provider,
     roleLabel,
-    modelBadge: participant ? modelBadgeForParticipant(participant) : null
+    modelBadge: modelDisplay ? modelBadgeForParticipant(modelDisplay) : null
   }
 }
 

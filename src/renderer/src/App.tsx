@@ -17057,6 +17057,12 @@ function App(): React.JSX.Element {
     },
     [queuedSeatPatchKeys]
   )
+  const hasProviderOrModelSeatPatch = useCallback((patch: Partial<EnsembleParticipant>): boolean => {
+    return (
+      Object.prototype.hasOwnProperty.call(patch, 'provider') ||
+      Object.prototype.hasOwnProperty.call(patch, 'model')
+    )
+  }, [])
   const applyChatSnapshot = useCallback((nextChat: ChatRecord): void => {
     chatByIdRef.current.set(nextChat.appChatId, nextChat)
     setCurrentChat((prev) => (prev?.appChatId === nextChat.appChatId ? nextChat : prev))
@@ -17123,12 +17129,18 @@ function App(): React.JSX.Element {
         sourceChat.ensemble?.activeRound,
         participantId
       )
-      if (mutationState.queueAtTurnEnd && requestQueuedParticipantSeatChange(sourceChat, participantId, patch)) {
+      const queueForNextRound =
+        isEnsembleActiveRoundDispatchLive(sourceChat.ensemble?.activeRound) &&
+        hasProviderOrModelSeatPatch(patch)
+      if (
+        (mutationState.queueAtTurnEnd || queueForNextRound) &&
+        requestQueuedParticipantSeatChange(sourceChat, participantId, patch)
+      ) {
         return null
       }
       return patchParticipantImmediate(sourceChat, participantId, patch)
     },
-    [patchParticipantImmediate, requestQueuedParticipantSeatChange]
+    [hasProviderOrModelSeatPatch, patchParticipantImmediate, requestQueuedParticipantSeatChange]
   )
   // Slice F v2 (1.0.3) — write-through helper used by the composer
   // pickers when an ensemble chip is selected. Patches the targeted

@@ -5295,7 +5295,7 @@ Next action:
     ).toBe(true)
   })
 
-  it('lets the Boss swap a pending participant provider and model through rosterEditForRun', async () => {
+  it('queues a Boss pending participant provider/model swap until round end', async () => {
     const initialChat = makeChat()
     initialChat.ensemble!.bossmanParticipantId = 'claude'
     initialChat.ensemble!.bossmanAutoApprovals = {
@@ -5328,33 +5328,26 @@ Next action:
       }
     })
 
-    expect(result.ok).toBe(true)
-    expect(result.participantId).toBe('codex')
-    expect(harness.probeParticipant).toHaveBeenCalledWith(
-      expect.objectContaining({
-        id: 'codex',
-        provider: 'kimi',
-        model: 'kimi-k2.7-code',
-        role: 'Quota relief',
-        reasoningEffort: 'medium'
-      })
-    )
+    expect(result).toMatchObject({
+      ok: true,
+      participantId: 'codex',
+      deferred: true
+    })
+    expect(result.message).toContain('It will apply after this round finishes.')
     expect(
       harness.chat.ensemble!.participants.find((participant) => participant.id === 'codex')
     ).toMatchObject({
-      provider: 'kimi',
-      model: 'kimi-k2.7-code',
-      role: 'Quota relief',
-      instructions: 'Pick up the implementation if Codex quota is tight.',
-      reasoningEffort: 'medium'
+      provider: 'codex',
+      model: 'codex-model',
+      role: 'Worker'
     })
     expect(
       harness.chat.ensemble!.activeRound?.participants.find(
         (participant) => participant.participantId === 'codex'
       )
     ).toMatchObject({
-      provider: 'kimi',
-      role: 'Quota relief',
+      provider: 'codex',
+      role: 'Worker',
       status: 'idle'
     })
 
@@ -5370,16 +5363,43 @@ Next action:
     )
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
     expect(harness.dispatched[1]).toMatchObject({
-      provider: 'kimi',
-      model: 'kimi-k2.7-code',
+      provider: 'codex',
+      model: 'codex-model',
       ensembleRun: {
         participantId: 'codex',
-        role: 'Quota relief'
+        role: 'Worker'
       }
+    })
+
+    harness.orchestrator.handleProviderOutput(
+      'codex',
+      { appRunId: harness.dispatched[1].appRunId, appChatId: 'ensemble-chat' },
+      { type: 'result', status: 'success', stats: { total_tokens: 5 } }
+    )
+
+    await vi.waitFor(() =>
+      expect(
+        harness.chat.ensemble!.participants.find((participant) => participant.id === 'codex')
+      ).toMatchObject({
+        provider: 'kimi',
+        model: 'kimi-k2.7-code',
+        role: 'Quota relief',
+        instructions: 'Pick up the implementation if Codex quota is tight.',
+        reasoningEffort: 'medium'
+      })
+    )
+    expect(
+      harness.chat.ensemble!.activeRound?.participants.find(
+        (participant) => participant.participantId === 'codex'
+      )
+    ).toMatchObject({
+      provider: 'codex',
+      role: 'Worker',
+      status: 'skipped'
     })
   })
 
-  it('queues a Boss roster seat swap for the actively executing participant until turn boundary', async () => {
+  it('queues a Boss roster provider/model swap for the actively executing participant until round end', async () => {
     const initialChat = makeChat()
     initialChat.ensemble!.bossmanParticipantId = 'claude'
     initialChat.ensemble!.bossmanAutoApprovals = {
@@ -5424,6 +5444,9 @@ Next action:
     expect(harness.chat.messages.at(-1)?.content).toContain(
       'Authoritative seat change queued for Boss'
     )
+    expect(harness.chat.messages.at(-1)?.content).toContain(
+      'It will apply after this round finishes.'
+    )
 
     const activeRoute = { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' }
     harness.orchestrator.handleProviderOutput('claude', activeRoute, {
@@ -5433,6 +5456,29 @@ Next action:
     harness.orchestrator.handleProviderOutput(
       'claude',
       activeRoute,
+      { type: 'result', status: 'success', stats: { total_tokens: 5 } }
+    )
+
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    expect(harness.dispatched[1]).toMatchObject({
+      provider: 'codex',
+      model: 'codex-model',
+      ensembleRun: {
+        participantId: 'codex',
+        role: 'Worker'
+      }
+    })
+    expect(
+      harness.chat.ensemble!.participants.find((participant) => participant.id === 'claude')
+    ).toMatchObject({
+      provider: 'claude',
+      model: 'claude-model',
+      role: 'Boss'
+    })
+
+    harness.orchestrator.handleProviderOutput(
+      'codex',
+      { appRunId: harness.dispatched[1].appRunId, appChatId: 'ensemble-chat' },
       { type: 'result', status: 'success', stats: { total_tokens: 5 } }
     )
 
@@ -5450,7 +5496,7 @@ Next action:
         (participant) => participant.participantId === 'claude'
       )
     ).toMatchObject({
-      provider: 'codex',
+      provider: 'claude',
       role: 'Boss',
       status: 'answered'
     })
@@ -5462,7 +5508,7 @@ Next action:
       newValue: expect.stringContaining('Codex / gpt-5.5')
     })
     expect(harness.chat.messages.at(-1)?.content).toContain(
-      'Authoritative seat change applied at turn boundary for Boss'
+      'Authoritative seat change applied after round for Boss'
     )
   })
 
@@ -5507,6 +5553,20 @@ Next action:
       { type: 'result', status: 'success', stats: { total_tokens: 5 } }
     )
 
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    expect(
+      harness.chat.ensemble!.participants.find((participant) => participant.id === 'claude')
+    ).toMatchObject({
+      provider: 'claude',
+      model: 'claude-model'
+    })
+
+    harness.orchestrator.handleProviderOutput(
+      'codex',
+      { appRunId: harness.dispatched[1].appRunId, appChatId: 'ensemble-chat' },
+      { type: 'result', status: 'success', stats: { total_tokens: 5 } }
+    )
+
     await vi.waitFor(() =>
       expect(
         harness.chat.ensemble!.participants.find((participant) => participant.id === 'claude')
@@ -5527,7 +5587,7 @@ Next action:
     })
   })
 
-  it('applies a user-requested inactive participant seat swap immediately', async () => {
+  it('queues a user-requested inactive participant provider/model swap until round end', async () => {
     const harness = makeHarness()
     harness.orchestrator.startRound({
       chatId: 'ensemble-chat',
@@ -5550,24 +5610,64 @@ Next action:
 
     expect(result).toMatchObject({
       ok: true,
-      status: 'applied',
+      status: 'queued',
       participantId: 'codex'
     })
+    expect(result.message).toContain('It will apply after this round finishes.')
     expect(
       harness.chat.ensemble!.participants.find((participant) => participant.id === 'codex')
     ).toMatchObject({
-      provider: 'kimi',
-      model: 'kimi-k2.7-code',
-      role: 'Quota relief'
+      provider: 'codex',
+      model: 'codex-model',
+      role: 'Worker'
     })
     expect(
       harness.chat.ensemble!.activeRound?.participants.find(
         (participant) => participant.participantId === 'codex'
       )
     ).toMatchObject({
-      provider: 'kimi',
-      role: 'Quota relief',
+      provider: 'codex',
+      role: 'Worker',
       status: 'idle'
+    })
+
+    harness.orchestrator.handleProviderOutput(
+      'claude',
+      { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' },
+      { type: 'result', status: 'success', stats: { total_tokens: 5 } }
+    )
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    expect(harness.dispatched[1]).toMatchObject({
+      provider: 'codex',
+      model: 'codex-model',
+      ensembleRun: {
+        participantId: 'codex',
+        role: 'Worker'
+      }
+    })
+    harness.orchestrator.handleProviderOutput(
+      'codex',
+      { appRunId: harness.dispatched[1].appRunId, appChatId: 'ensemble-chat' },
+      { type: 'result', status: 'success', stats: { total_tokens: 5 } }
+    )
+
+    await vi.waitFor(() =>
+      expect(
+        harness.chat.ensemble!.participants.find((participant) => participant.id === 'codex')
+      ).toMatchObject({
+        provider: 'kimi',
+        model: 'kimi-k2.7-code',
+        role: 'Quota relief'
+      })
+    )
+    expect(
+      harness.chat.ensemble!.activeRound?.participants.find(
+        (participant) => participant.participantId === 'codex'
+      )
+    ).toMatchObject({
+      provider: 'codex',
+      role: 'Worker',
+      status: 'skipped'
     })
     expect(harness.chat.ensemble!.sessionActivityLedger?.at(-1)).toMatchObject({
       changedBy: 'user',
@@ -5576,7 +5676,7 @@ Next action:
       newValue: expect.stringContaining('Kimi / kimi-k2.7-code')
     })
     expect(harness.chat.messages.at(-1)?.content).toContain(
-      'Authoritative seat change applied for Worker'
+      'Authoritative seat change applied after round for Worker'
     )
   })
 

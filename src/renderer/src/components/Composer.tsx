@@ -442,6 +442,13 @@ function ComposerPrimaryStack({
 const normalizeComposerWorkflowMode = (value: unknown): ChatWorkflowMode | null =>
   value === 'plan' || value === 'normal' ? value : null
 
+function patchTouchesProviderOrModel(patch: Partial<EnsembleParticipant>): boolean {
+  return (
+    Object.prototype.hasOwnProperty.call(patch, 'provider') ||
+    Object.prototype.hasOwnProperty.call(patch, 'model')
+  )
+}
+
 function ComposerInner(props: ComposerProps): React.JSX.Element {
   const {
     prompt,
@@ -720,6 +727,50 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
   const hasSendablePromptContent = hasAttachmentPromptContent(prompt, imageAttachments)
   const isTaskWraithNativeComposer = appearance.composerStyle === 'default'
   const [scheduledNowMs, setScheduledNowMs] = useState(() => Date.now())
+  const [seatChangeNoticeRoundKey, setSeatChangeNoticeRoundKey] = useState<string | null>(null)
+  const [dismissedSeatChangeNoticeRoundKey, setDismissedSeatChangeNoticeRoundKey] = useState<
+    string | null
+  >(null)
+  const activeSeatChangeNoticeRoundKey =
+    isCurrentEnsembleChat &&
+    isCurrentEnsembleRoundRunning &&
+    currentChat?.appChatId &&
+    currentChat.ensemble?.activeRound?.roundId
+      ? `${currentChat.appChatId}:${currentChat.ensemble.activeRound.roundId}`
+      : null
+  const showSeatChangeNextRoundNotice =
+    Boolean(activeSeatChangeNoticeRoundKey) &&
+    seatChangeNoticeRoundKey === activeSeatChangeNoticeRoundKey &&
+    dismissedSeatChangeNoticeRoundKey !== activeSeatChangeNoticeRoundKey
+  const updateSelectedParticipantWithNotice = (patch: Partial<EnsembleParticipant>): void => {
+    if (
+      activeSeatChangeNoticeRoundKey &&
+      dismissedSeatChangeNoticeRoundKey !== activeSeatChangeNoticeRoundKey &&
+      patchTouchesProviderOrModel(patch)
+    ) {
+      setSeatChangeNoticeRoundKey(activeSeatChangeNoticeRoundKey)
+    }
+    updateSelectedParticipant(patch)
+  }
+  const patchEnsembleParticipantByIdWithNotice = (
+    participantId: string,
+    patch: Partial<EnsembleParticipant>
+  ): void => {
+    if (
+      activeSeatChangeNoticeRoundKey &&
+      dismissedSeatChangeNoticeRoundKey !== activeSeatChangeNoticeRoundKey &&
+      patchTouchesProviderOrModel(patch)
+    ) {
+      setSeatChangeNoticeRoundKey(activeSeatChangeNoticeRoundKey)
+    }
+    patchEnsembleParticipantById(participantId, patch)
+  }
+
+  useEffect(() => {
+    if (seatChangeNoticeRoundKey && seatChangeNoticeRoundKey !== activeSeatChangeNoticeRoundKey) {
+      setSeatChangeNoticeRoundKey(null)
+    }
+  }, [activeSeatChangeNoticeRoundKey, seatChangeNoticeRoundKey])
 
   const hasVisibleScheduledCountdown =
     Array.isArray(visibleScheduledTasks) &&
@@ -831,7 +882,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     if (approvalParticipantId && currentChat?.ensemble) {
       patchEnsembleParticipantById(approvalParticipantId, { permissionPresetId: 'full_access' })
     } else if (isCurrentEnsembleChat && selectedParticipant) {
-      updateSelectedParticipant({ permissionPresetId: 'full_access' })
+      updateSelectedParticipantWithNotice({ permissionPresetId: 'full_access' })
     } else {
       setApprovalMode('auto_edit')
       rememberCurrentChatComposerSelection({
@@ -1601,7 +1652,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                   participant={overflowParticipant}
                                   mentionParticipants={currentChat.ensemble.participants}
                                   onPatch={(patch) =>
-                                    patchEnsembleParticipantById(overflowParticipant.id, patch)
+                                    patchEnsembleParticipantByIdWithNotice(overflowParticipant.id, patch)
                                   }
                                   isBossman={
                                     currentChat.ensemble.bossmanParticipantId ===
@@ -2757,6 +2808,27 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                         </div>
                       </div>
                     )}
+                    {showSeatChangeNextRoundNotice && (
+                      <div className="composer-permission-card composer-seat-change-notice" role="status">
+                        <span className="composer-seat-change-notice-copy">
+                          Provider/model changes during this round will apply to the next round.
+                        </span>
+                        <button
+                          type="button"
+                          className="composer-seat-change-notice-dismiss"
+                          aria-label="Dismiss provider/model next-round notice"
+                          title="Dismiss"
+                          onClick={() => {
+                            if (activeSeatChangeNoticeRoundKey) {
+                              setDismissedSeatChangeNoticeRoundKey(activeSeatChangeNoticeRoundKey)
+                            }
+                            setSeatChangeNoticeRoundKey(null)
+                          }}
+                        >
+                          <XSymbolIcon />
+                        </button>
+                      </div>
+                    )}
                     {pendingPlanImport && (
                       <ComposerPlanImportCard
                         pendingPlanImport={pendingPlanImport}
@@ -3213,7 +3285,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                           const handleComposerProviderChange = (provider: ProviderId): void => {
                             if (ensembleBinding) {
                               const defaults = getDefaultEnsembleParticipantConfig(provider)
-                              updateSelectedParticipant({
+                              updateSelectedParticipantWithNotice({
                                 provider,
                                 model: defaults.model,
                                 runtimeProfileId: undefined,
@@ -3493,7 +3565,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                   patch.fastModeEnabled = false
                                 }
                               }
-                              updateSelectedParticipant(patch)
+                              updateSelectedParticipantWithNotice(patch)
                               return
                             }
                             if (shouldUpdateLiveComposerState && nextModel !== 'custom') {
@@ -3599,7 +3671,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                   const nextTier =
                                     effectiveCodexServiceTier === 'fast' ? '' : 'fast'
                                   if (ensembleBinding) {
-                                    updateSelectedParticipant({
+                                    updateSelectedParticipantWithNotice({
                                       serviceTier: nextTier,
                                       fastModeEnabled: nextTier === 'fast'
                                     })
@@ -3616,7 +3688,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                 ? () => {
                                     const nextFast = !effectiveClaudeFastMode
                                     if (ensembleBinding) {
-                                      updateSelectedParticipant({ fastModeEnabled: nextFast })
+                                      updateSelectedParticipantWithNotice({ fastModeEnabled: nextFast })
                                       return
                                     }
                                     if (shouldUpdateLiveComposerState) {
@@ -3643,9 +3715,9 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                           const handleCombinedReasoningChange = (value: string) => {
                             if (ensembleBinding) {
                               if (ensembleBinding.provider === 'kimi') {
-                                updateSelectedParticipant({ thinkingEnabled: value !== 'off' })
+                                updateSelectedParticipantWithNotice({ thinkingEnabled: value !== 'off' })
                               } else {
-                                updateSelectedParticipant({ reasoningEffort: value })
+                                updateSelectedParticipantWithNotice({ reasoningEffort: value })
                               }
                               return
                             }
@@ -3887,7 +3959,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               return
                             }
                             if (ensembleBinding) {
-                              updateSelectedParticipant({
+                              updateSelectedParticipantWithNotice({
                                 permissionPresetId: nextPermissionPreset
                               })
                               return
@@ -3940,7 +4012,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                             enabled: boolean
                           ): void => {
                             if (ensembleBinding) {
-                              updateSelectedParticipant(
+                              updateSelectedParticipantWithNotice(
                                 buildParticipantToolGrantPatch(ensembleBinding, service, enabled)
                               )
                               return
@@ -3971,7 +4043,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               )
                             }
                             if (ensembleBinding) {
-                              updateSelectedParticipant({ permissionPresetId: 'workspace_write' })
+                              updateSelectedParticipantWithNotice({ permissionPresetId: 'workspace_write' })
                               return
                             }
                             setApprovalMode('auto_edit')

@@ -740,6 +740,15 @@ export interface EnsembleRoundParticipantState {
   role: string
   order: number
   status: EnsembleParticipantStatus
+  /**
+   * Frozen display/runtime knobs captured when the round starts. These keep the
+   * active-round UI truthful if the live roster is edited for the next round.
+   */
+  model?: string
+  reasoningEffort?: string
+  fastModeEnabled?: boolean
+  thinkingEnabled?: boolean
+  serviceTier?: string
   runId?: string
   reason?: string
   startedAt?: string

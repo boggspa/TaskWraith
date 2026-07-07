@@ -118,7 +118,8 @@ describe('resolveEnsembleParticipantSeatMutationState', () => {
     expect(resolveEnsembleParticipantSeatMutationState(round(), 'p1')).toEqual({
       locked: true,
       queueAtTurnEnd: true,
-      message: 'This seat is executing. Provider/model changes apply at turn end.'
+      message:
+        'This seat is executing. Provider/model changes apply next round; other seat edits queue until turn end.'
     })
   })
 

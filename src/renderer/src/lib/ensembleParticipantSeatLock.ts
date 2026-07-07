@@ -52,7 +52,7 @@ export function resolveEnsembleParticipantSeatMutationState(
     locked,
     queueAtTurnEnd: locked,
     message: locked
-      ? 'This seat is executing. Provider/model changes apply at turn end.'
+      ? 'This seat is executing. Provider/model changes apply next round; other seat edits queue until turn end.'
       : null
   }
 }

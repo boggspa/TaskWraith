@@ -48,6 +48,11 @@ function ensembleChat(
           provider: item.provider,
           role: item.role,
           order: item.order,
+          model: item.model,
+          reasoningEffort: item.reasoningEffort,
+          fastModeEnabled: item.fastModeEnabled,
+          thinkingEnabled: item.thinkingEnabled,
+          serviceTier: item.serviceTier,
           status: item.id === activeParticipantId ? 'running' : 'idle'
         }))
       }
@@ -84,6 +89,29 @@ describe('deriveActiveEnsembleWorkingPresentation', () => {
       providerClass: 'alibaba',
       roleLabel: 'Scout',
       modelBadge: 'Qwen 3.5 (9B Param)'
+    })
+  })
+
+  it('prefers the frozen round participant display over a next-round roster edit', () => {
+    const chat = ensembleChat([participant({ role: 'WriteSwift' })])
+    chat.ensemble!.participants = chat.ensemble!.participants.map((item) =>
+      item.id === 'codex-builder'
+        ? {
+            ...item,
+            provider: 'claude',
+            model: 'claude-fable-5-low',
+            reasoningEffort: 'low',
+            role: 'WriteSwift'
+          }
+        : item
+    )
+
+    expect(deriveActiveEnsembleWorkingPresentation(chat)).toEqual({
+      providerLabel: 'Codex',
+      provider: 'codex',
+      providerClass: 'codex',
+      roleLabel: 'WriteSwift',
+      modelBadge: '5.5 Extra High'
     })
   })
 

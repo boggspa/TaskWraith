@@ -40,6 +40,7 @@ import type {
   EnsembleParticipant,
   EnsembleParticipantStatus,
   EnsembleRunIdentity,
+  EnsembleRoundParticipantState,
   EnsembleRoundState,
   EnsembleStageRole,
   EnsembleWakeupRecord,
@@ -1618,6 +1619,38 @@ function participantSeatValue(participant: EnsembleParticipant): string {
   return `${provider}${model}${role}${stage}`
 }
 
+function roundParticipantDisplayFields(
+  participant: EnsembleParticipant
+): Pick<EnsembleRoundParticipantState, 'provider' | 'role' | 'order'> &
+  Partial<
+    Pick<
+      EnsembleRoundParticipantState,
+      'model' | 'reasoningEffort' | 'fastModeEnabled' | 'thinkingEnabled' | 'serviceTier'
+    >
+  > {
+  return {
+    provider: participant.provider,
+    role: participant.role,
+    order: participant.order,
+    model: participant.model,
+    reasoningEffort: participant.reasoningEffort,
+    fastModeEnabled: participant.fastModeEnabled,
+    thinkingEnabled: participant.thinkingEnabled,
+    serviceTier: participant.serviceTier
+  }
+}
+
+export function roundParticipantStateFromParticipant(
+  participant: EnsembleParticipant,
+  status: EnsembleParticipantStatus
+): EnsembleRoundParticipantState {
+  return {
+    participantId: participant.id,
+    ...roundParticipantDisplayFields(participant),
+    status
+  }
+}
+
 function compactBriefValue(value: string): string {
   const normalized = value.trim().replace(/\s+/g, ' ')
   if (!normalized) return '(empty)'
@@ -1659,6 +1692,23 @@ function hasSeatChangePatch(patch: RosterEditParticipantInput | undefined | null
     Object.prototype.hasOwnProperty.call(patch, 'stageRole') ||
     Object.prototype.hasOwnProperty.call(patch, 'linkedProviderSessionId')
   )
+}
+
+function hasProviderOrModelSeatChangePatch(
+  patch: RosterEditParticipantInput | undefined | null
+): boolean {
+  if (!patch) return false
+  return (
+    Object.prototype.hasOwnProperty.call(patch, 'provider') ||
+    Object.prototype.hasOwnProperty.call(patch, 'model')
+  )
+}
+
+function hasProviderOrModelSeatChange(
+  before: EnsembleParticipant,
+  after: EnsembleParticipant
+): boolean {
+  return before.provider !== after.provider || (before.model || '') !== (after.model || '')
 }
 
 function applySeatChangePatch(
@@ -2300,6 +2350,7 @@ interface PendingParticipantSeatChange {
   participantId: string
   before: EnsembleParticipant
   after: EnsembleParticipant
+  patch?: RosterEditParticipantInput
   changedBy: SessionActivityLedgerEntry['changedBy']
   reason: string
   queuedAt: string
@@ -2405,6 +2456,7 @@ interface ActiveRoundRuntime {
    */
   yieldReturnStack?: YieldReturnFrame[]
   pendingParticipantSeatChanges?: PendingParticipantSeatChange[]
+  pendingRoundEndParticipantSeatChanges?: PendingParticipantSeatChange[]
   /**
    * 1.0.4-AF — round-scoped self-reflective flag. Set when the user
    * opened the round with `/discuss` (alias `/meta`). Threaded into
@@ -3743,15 +3795,20 @@ export class EnsembleOrchestrator {
       action === 'edit_participant' &&
       affectedBefore &&
       affectedAfter &&
-      this.isParticipantActivelyExecuting(runtime, resolution.affectedParticipantId)
+      (this.isParticipantActivelyExecuting(runtime, resolution.affectedParticipantId) ||
+        (hasProviderOrModelSeatChangePatch(input.participant) &&
+          hasProviderOrModelSeatChange(affectedBefore, affectedAfter)))
     ) {
       const queued = this.queueOrApplyParticipantSeatChange({
         chat: latestChat,
         runtime,
         before: affectedBefore,
         after: affectedAfter,
+        patch: input.participant || undefined,
         changedBy: 'orchestrator',
-        reason: 'Boss roster edit queued while the participant was active.'
+        reason: hasProviderOrModelSeatChangePatch(input.participant)
+          ? 'Boss roster edit queued for the next round.'
+          : 'Boss roster edit queued while the participant was active.'
       })
       return {
         ok: queued.ok,
@@ -4229,6 +4286,7 @@ export class EnsembleOrchestrator {
           : undefined,
       before,
       after,
+      patch: input.participant,
       changedBy: input.changedBy || 'user',
       reason: input.reason || 'Participant seat changed by user.'
     })
@@ -4239,10 +4297,45 @@ export class EnsembleOrchestrator {
     runtime?: ActiveRoundRuntime
     before: EnsembleParticipant
     after: EnsembleParticipant
+    patch?: RosterEditParticipantInput
     changedBy: SessionActivityLedgerEntry['changedBy']
     reason: string
   }): EnsembleParticipantSeatChangeResult {
-    const { chat, runtime, before, after, changedBy, reason } = input
+    const { chat, runtime, before, after, patch, changedBy, reason } = input
+    if (
+      runtime &&
+      hasProviderOrModelSeatChangePatch(patch) &&
+      hasProviderOrModelSeatChange(before, after)
+    ) {
+      const queuedAt = this.deps.nowIso()
+      runtime.pendingRoundEndParticipantSeatChanges = [
+        ...(runtime.pendingRoundEndParticipantSeatChanges || []).filter(
+          (change) => change.participantId !== before.id
+        ),
+        {
+          participantId: before.id,
+          before,
+          after,
+          patch,
+          changedBy,
+          reason,
+          queuedAt
+        }
+      ]
+      const message =
+        `Authoritative seat change queued for ${participantLabel(before)}: ` +
+        `${participantSeatChangeValue(before, after, before)} -> ${participantSeatChangeValue(before, after, after)}. ` +
+        'It will apply after this round finishes.'
+      this.appendRoundStatus(runtime.chatId, runtime.roundId, message)
+      return {
+        ok: true,
+        status: 'queued',
+        chat: this.deps.getChat(chat.appChatId) || chat,
+        message,
+        participantId: before.id,
+        roundId: runtime.roundId
+      }
+    }
     if (runtime && this.isParticipantActivelyExecuting(runtime, before.id)) {
       const queuedAt = this.deps.nowIso()
       runtime.pendingParticipantSeatChanges = [
@@ -4253,6 +4346,7 @@ export class EnsembleOrchestrator {
           participantId: before.id,
           before,
           after,
+          patch,
           changedBy,
           reason,
           queuedAt
@@ -4330,6 +4424,36 @@ export class EnsembleOrchestrator {
     })
   }
 
+  private applyPendingRoundEndParticipantSeatChanges(runtime: ActiveRoundRuntime): void {
+    const pending = runtime.pendingRoundEndParticipantSeatChanges || []
+    if (pending.length === 0) return
+    runtime.pendingRoundEndParticipantSeatChanges = undefined
+
+    for (const change of pending) {
+      const chat = this.deps.getChat(runtime.chatId)
+      const current = chat?.ensemble?.participants.find(
+        (participant) => participant.id === change.participantId
+      )
+      if (!chat?.ensemble || !current) continue
+      const after = applySeatChangePatch(current, change.patch || change.after)
+      this.applyParticipantSeatChangeToChat({
+        chat,
+        before: current,
+        after,
+        changedBy: change.changedBy,
+        reason: change.reason,
+        boundary: false,
+        updateActiveRound: false
+      })
+      this.appendRoundStatus(
+        runtime.chatId,
+        runtime.roundId,
+        `Authoritative seat change applied after round for ${participantLabel(current)}: ` +
+          `${participantSeatChangeValue(current, after, current)} -> ${participantSeatChangeValue(current, after, after)}.`
+      )
+    }
+  }
+
   private applyParticipantSeatChangeToChat(input: {
     chat: ChatRecord
     runtime?: ActiveRoundRuntime
@@ -4338,13 +4462,14 @@ export class EnsembleOrchestrator {
     changedBy: SessionActivityLedgerEntry['changedBy']
     reason: string
     boundary: boolean
+    updateActiveRound?: boolean
   }): ChatRecord {
-    const { chat, runtime, before, after, changedBy, reason, boundary } = input
+    const { chat, runtime, before, after, changedBy, reason, boundary, updateActiveRound = true } = input
     const nowIso = this.deps.nowIso()
     const nextParticipants = chat.ensemble!.participants.map((participant) =>
       participant.id === before.id ? { ...after, order: participant.order } : participant
     )
-    const activeRound = runtime
+    const activeRound = runtime && updateActiveRound
       ? this.applyRosterEditToActiveRound(chat.ensemble!.activeRound, runtime.roundId, nextParticipants)
       : chat.ensemble!.activeRound
     const activityEntry = this.createSeatChangeActivityEntry(
@@ -4369,7 +4494,7 @@ export class EnsembleOrchestrator {
       updatedAt: this.deps.now()
     }
     this.saveChatWithCheckpoint(saved, 'participant-updated')
-    if (runtime) {
+    if (runtime && updateActiveRound) {
       this.applyRosterEditToRuntime(runtime, 'edit_participant', before.id, nextParticipants)
       const message =
         `Authoritative seat change ${boundary ? 'applied at turn boundary' : 'applied'} for ` +
@@ -11129,6 +11254,9 @@ export class EnsembleOrchestrator {
           : 'round-failed'
     )
     this.completeCheckpoint(chatId, roundId, status)
+    if (runtime?.roundId === roundId) {
+      this.applyPendingRoundEndParticipantSeatChanges(runtime)
+    }
     this.maybeAutoCompactSeatsAfterRound(chatId, status)
   }
 
