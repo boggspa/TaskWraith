@@ -339,7 +339,6 @@ import {
 } from './remote/relayReachability'
 import { deriveAgreementPublicRaw } from '../shared/e2ee/pushSeal'
 import { exportRawEd25519Seed } from '../shared/e2ee/keys'
-import type { KeyPair } from '../shared/e2ee/keys'
 import {
   resolveAutoUpdateServiceEnabled,
   UpdateService,
@@ -366,17 +365,8 @@ import { HumanCollaborationAuditLog } from './collaboration/HumanCollaborationAu
 import { HumanCollaborationIdentityStore } from './collaboration/HumanCollaborationIdentityStore'
 import { HumanCollaborationRuntime } from './collaboration/HumanCollaborationRuntime'
 import { HumanCollaborationHostTransport } from './collaboration/HumanCollaborationHostTransport'
-import { HumanCollaborationCollaboratorClient } from './collaboration/HumanCollaborationCollaboratorClient'
 import { buildHumanShareProjection } from './collaboration/HumanShareProjection'
 import type { HumanShareProjection } from './collaboration/HumanShareProjection'
-import type {
-  HumanCollaborationAppendCommentInput,
-  HumanCollaborationBeginHandshakeInput,
-  HumanCollaborationConfirmSasInput,
-  HumanCollaborationDisconnectInput,
-  HumanCollaborationEncryptedFrame,
-  HumanCollaborationSubscribeProjectionInput
-} from '../shared/collaboration/HumanCollaborationProtocol'
 import { detectConfiguredProviders } from './ProviderConfiguration'
 import { createDefaultEnsembleConfig } from './EnsembleDefaults'
 import { applyReroutePlanToPayload, isProviderPaused, resolveProviderDispatch } from './ProviderRunPause'
@@ -950,6 +940,7 @@ import { registerLaunchHandlers } from './ipc/launchHandlers'
 import { discoverLaunchTargets } from './launchTargets/discovery'
 import { registerLocalServersHandlers } from './ipc/localServersHandlers'
 import { registerChatHandlers } from './ipc/chatHandlers'
+import { registerHumanCollaborationHandlers } from './ipc/humanCollaborationHandlers'
 import { registerWorkspaceHandlers } from './ipc/workspaceHandlers'
 import { registerWorkspaceActivityHandlers } from './ipc/workspaceActivityHandlers'
 import { registerWorkspaceFileEditorHandlers } from './ipc/workspaceFileEditorHandlers'
@@ -23435,7 +23426,8 @@ if (isGeminiMcpBridgeProcess) {
         const workspace = AppStore.getWorkspaces().find((entry) => entry.id === workspaceId)
         return workspace ? workspace.path : null
       }
-      let remoteComposerQueuePumpScheduled = false
+      let remoteComposerQueuePumpTimer: ReturnType<typeof setTimeout> | null = null
+      let remoteComposerQueuePumpDueAt = 0
       const activeRemoteComposerSessionForChat = (chatId: string) => {
         const sessions = RUN_MANAGER_PROVIDERS.flatMap((provider) =>
           runManager.getActiveByProvider(provider)
@@ -23526,12 +23518,35 @@ if (isGeminiMcpBridgeProcess) {
           return false
         }
       }
+      const getRemoteComposerScheduledRunAtMs = (job: RunQueueJob): number | null => {
+        const value = job.request?.scheduledRunAt
+        if (!value) return null
+        const runAtMs = new Date(value).getTime()
+        return Number.isFinite(runAtMs) ? runAtMs : null
+      }
+      const normalizeRemoteComposerScheduledRunAt = (
+        value: string | undefined
+      ): { scheduledRunAt?: string; reason?: string } => {
+        if (!value) return {}
+        const runAtMs = new Date(value).getTime()
+        if (!Number.isFinite(runAtMs)) return { reason: 'Scheduled run time is invalid.' }
+        if (runAtMs <= Date.now()) return { reason: 'Choose a future time for scheduled runs.' }
+        return { scheduledRunAt: new Date(runAtMs).toISOString() }
+      }
       const pumpRemoteComposerQueue = async () => {
-        remoteComposerQueuePumpScheduled = false
         const jobs = AppStore.getRunQueueJobs({ statuses: ['queued'] }).filter(
           (job) => job.request?.remoteComposer
         )
+        const nowMs = Date.now()
+        let nextScheduledDelayMs: number | null = null
         for (const job of jobs) {
+          const scheduledRunAtMs = getRemoteComposerScheduledRunAtMs(job)
+          if (scheduledRunAtMs !== null && scheduledRunAtMs > nowMs) {
+            const delay = scheduledRunAtMs - nowMs
+            nextScheduledDelayMs =
+              nextScheduledDelayMs === null ? delay : Math.min(nextScheduledDelayMs, delay)
+            continue
+          }
           if (!job.chatId || remoteComposerChatIsBusy(job.chatId)) continue
           const dispatched = await dispatchRemoteComposerQueueJob(
             job,
@@ -23545,19 +23560,27 @@ if (isGeminiMcpBridgeProcess) {
             }
           }
         }
+        if (nextScheduledDelayMs !== null) {
+          scheduleRemoteComposerQueuePump(nextScheduledDelayMs)
+        }
       }
       const scheduleRemoteComposerQueuePump = (delayMs = 0) => {
-        if (remoteComposerQueuePumpScheduled) return
-        remoteComposerQueuePumpScheduled = true
-        setTimeout(() => {
+        const safeDelayMs = Math.max(0, delayMs)
+        const dueAt = Date.now() + safeDelayMs
+        if (remoteComposerQueuePumpTimer && remoteComposerQueuePumpDueAt <= dueAt) return
+        if (remoteComposerQueuePumpTimer) clearTimeout(remoteComposerQueuePumpTimer)
+        remoteComposerQueuePumpDueAt = dueAt
+        remoteComposerQueuePumpTimer = setTimeout(() => {
+          remoteComposerQueuePumpTimer = null
+          remoteComposerQueuePumpDueAt = 0
           void pumpRemoteComposerQueue().catch((err) => {
-            remoteComposerQueuePumpScheduled = false
             console.warn(
               '[remote-composer-queue] pump failed:',
               err instanceof Error ? err.message : String(err)
             )
           })
-        }, delayMs).unref?.()
+        }, safeDelayMs)
+        remoteComposerQueuePumpTimer.unref?.()
       }
       scheduleRemoteComposerQueuePumpRef = () => scheduleRemoteComposerQueuePump()
       const steerRemoteComposerQueueJob = async (
@@ -23621,6 +23644,7 @@ if (isGeminiMcpBridgeProcess) {
         contextTurns?: number
         extraWorkspaceIds?: string[]
         imageAttachments?: unknown[]
+        scheduledRunAt?: string
       }): Promise<{ ok: boolean; queueId?: string; reason?: string }> => {
         const chat = AppStore.getChat(action.threadId)
         if (!chat) return { ok: false, reason: 'Thread not found' }
@@ -23630,6 +23654,8 @@ if (isGeminiMcpBridgeProcess) {
         }
         const text = action.text.trim()
         if (!text) return { ok: false, reason: 'Prompt is empty' }
+        const schedule = normalizeRemoteComposerScheduledRunAt(action.scheduledRunAt)
+        if (schedule.reason) return { ok: false, reason: schedule.reason }
         if (action.imageAttachments?.length) {
           return {
             ok: false,
@@ -23700,6 +23726,7 @@ if (isGeminiMcpBridgeProcess) {
             workflowMode,
             sessionTrust: false,
             imageAttachments: [],
+            ...(schedule.scheduledRunAt ? { scheduledRunAt: schedule.scheduledRunAt } : {}),
             ...(action.reasoningEffort !== undefined
               ? { codexReasoningEffort: action.reasoningEffort }
               : {}),
@@ -23741,7 +23768,11 @@ if (isGeminiMcpBridgeProcess) {
           })
         })
         broadcastRemoteComposerQueueChange(chat, action.workspaceId)
-        scheduleRemoteComposerQueuePump()
+        scheduleRemoteComposerQueuePump(
+          schedule.scheduledRunAt
+            ? Math.max(0, new Date(schedule.scheduledRunAt).getTime() - Date.now())
+            : 0
+        )
         return { ok: true, queueId }
       }
       const updateRemoteComposerQueueItem = async (action: {
@@ -26695,6 +26726,7 @@ if (isGeminiMcpBridgeProcess) {
     // Surfaced startup failure (identity unreadable / unprotectable) — shown
     // in Settings → Bridge networking instead of a silent "Off" pill.
     let iosRemoteRuntimeError: string | null = null
+    let disposeHumanCollaborationIpcHandlers: (() => void) | null = null
     // Settings-first gating (BD1 prerequisite): GUI/login-item launches
     // don't inherit shell env, so an env-only gate silently disables the
     // bridge for exactly the headless scenario it exists for. Env keeps
@@ -27561,7 +27593,7 @@ if (isGeminiMcpBridgeProcess) {
       remoteGitSnapshotFeedRef?.dispose()
       iosRemoteRuntime?.dispose()
       humanCollaborationHostTransport?.dispose()
-      humanCollaborationCollaboratorClient?.dispose()
+      disposeHumanCollaborationIpcHandlers?.()
       void embeddedRelayHandle?.close()
       localServersServiceRef?.stop()
       // Opt-in (Settings → Local servers): tidy up agent-spawned servers still
@@ -28912,566 +28944,38 @@ if (isGeminiMcpBridgeProcess) {
         )
       })
     }
-    const resolveHumanCollaborationProjection = (input: {
-      shareId: string
-      chatId: string
-      collaboratorId: string
-    }) => {
-      const share = humanCollaborationStore.getShare(input.shareId)
-      if (!share || !share.enabled || share.chatId !== input.chatId) {
-        throw new Error('Collaboration share is not active.')
-      }
-      const participant = share.participants.find(
-        (candidate) => candidate.collaboratorId === input.collaboratorId
-      )
-      if (!participant || participant.status !== 'active') {
-        throw new Error('Collaborator is not active for this share.')
-      }
-      const chat = chatService.getChat(input.chatId)
-      if (!chat) throw new Error('Chat not found.')
-      return buildHumanShareProjection(chat, share)
-    }
-    const prepareHumanCollaborationInviteTransport = async (): Promise<{
-      relayUrl: string
-      relayUrls: string[]
-      relayWarning?: string
-    }> => {
-      if (!iosRemoteRuntime) {
-        await startIosRemoteBridge('human collaboration invite')
-      }
-      if (iosRemoteRuntime && !selfHostedWssLane) {
-        await maybeUpgradeIosRemoteToTailscaleLane('human collaboration invite')
-      }
-      if (!iosRemoteRuntime) {
-        const relayUrls = collaborationInviteRelayUrls()
-        return {
-          relayUrl: relayUrls[0] ?? '',
-          relayUrls,
-          ...(iosRemoteRuntimeError
-            ? { relayWarning: `Remote bridge is not running: ${iosRemoteRuntimeError}` }
-            : {})
-        }
-      }
-      const runtimeRelayUrls = iosRemoteRuntime.describeHost().relayUrls
-      const relayCandidates =
-        selfHostedWssLane?.candidates.length ? selfHostedWssLane.candidates : runtimeRelayUrls
-      let selection = await selectAdvertisableRelayUrls(relayCandidates)
-      if (selfHostedWssLane) {
-        const lane = selfHostedWssLane
-        if (!selection.advertisable.includes(lane.wssUrl) && lane.cliPath) {
-          const httpsPort = iosRemoteServeHttpsPort()
-          const serve = await getTailscaleServeStatus({
-            cliPath: lane.cliPath,
-            relayPort: lane.relayPort,
-            httpsPort
-          })
-          if (!serve.configured) {
-            const enabled = await enableTailscaleServe({
-              cliPath: lane.cliPath,
-              relayPort: lane.relayPort,
-              httpsPort
-            })
-            console[enabled.ok ? 'warn' : 'error'](
-              `[human-collaboration] invite self-heal: tailscale serve was off — re-enable ${
-                enabled.ok ? 'succeeded' : `FAILED: ${enabled.message ?? 'unknown'}`
-              }`
-            )
-            if (enabled.ok) selection = await selectAdvertisableRelayUrls(lane.candidates)
-          }
-        }
-      }
-      const relayUrls = selection.advertisable
-      return {
-        relayUrl: relayUrls[0] ?? '',
-        relayUrls,
-        ...(selection.warnings.length > 0
-          ? { relayWarning: `A relay door was left out of the invite: ${selection.warnings.join('; ')}` }
-          : {})
-      }
-    }
-    ipcMain.handle('human-collaboration:invite-health', async (_, chatId: string) => {
-      const chat = chatService.getChat(chatId)
-      const share = humanCollaborationStore.getShareForChat(chatId)
-      const settings = AppStore.getSettings()
-      const tailscale = await iosRemoteTailscaleStatus()
-      return {
-        chatAvailable: Boolean(chat && !chat.archived),
-        shareEnabled: Boolean(share?.enabled),
-        bridgeEnabled: settings.iosRemoteEnabled === true,
-        bridgeRunning: iosRemoteRuntime !== null,
-        ...(iosRemoteRuntimeError ? { bridgeError: iosRemoteRuntimeError } : {}),
-        relayUrls: collaborationInviteRelayUrls(),
-        tailscaleConfigured: Boolean(tailscale.active || tailscale.usingSavedRelayFallback),
-        tailscaleSuggestedUrl:
-          typeof tailscale.suggestedUrl === 'string' ? tailscale.suggestedUrl : null,
-        tailscaleReason:
-          typeof tailscale.tailscaleReason === 'string' ? tailscale.tailscaleReason : null
-      }
-    })
-    ipcMain.handle(
-      'human-collaboration:create-share',
-      async (_, input: { chatId: string; mode?: 'readOnly' | 'comments'; inviteTtlMs?: number }) => {
-        const inviteTransport = await prepareHumanCollaborationInviteTransport()
-        const result = chatService.createHumanCollaborationShare({
-          chatId: input.chatId,
-          mode: input.mode === 'readOnly' ? 'readOnly' : 'comments',
-          inviteTtlMs: input.inviteTtlMs
-        })
-        // Construct the runtime+transport (idempotent) and start LISTENING on
-        // this invite's relay room so the collaborator can dial in. The host
-        // takes the `mac` seat on its own (loopback) relay.
-        const runtime = getHumanCollaborationRuntime()
-        const hostRelay = collaborationHostRelayUrl()
-        if (hostRelay && result.roomId) {
-          humanCollaborationHostTransport?.openRoom(hostRelay, result.roomId)
-        }
-        broadcastHumanCollaborationUpdate(result.share.chatId)
-        // Augment the result with the transport coordinates the collaborator
-        // needs (and the host identity key to pin, Crypto-F2). relayUrl is empty
-        // when the remote-bridge infra isn't running — the renderer surfaces that.
-        return {
-          ...result,
-          relayUrl: inviteTransport.relayUrl,
-          relayUrls: inviteTransport.relayUrls,
-          relayWarning: inviteTransport.relayWarning,
-          hostIdentityPubKeyB64: runtime.hostIdentityPubKeyB64()
-        }
-      }
-    )
-    ipcMain.handle('human-collaboration:copy-invite', (_, input: { invite?: string }) => {
-      const invite = typeof input?.invite === 'string' ? input.invite.trim() : ''
-      if (!invite) throw new Error('Invite payload is empty.')
-      if (invite.length > 128_000) throw new Error('Invite payload is too large.')
-      clipboard.writeText(invite, 'clipboard')
-      return { ok: true }
-    })
-    ipcMain.handle('human-collaboration:list-shares', (_, chatId?: string) =>
-      chatService.listHumanCollaborationShares(chatId)
-    )
-    // chatIds with a live collaborator session (joined + not left/revoked).
-    // Guarded so a poll never constructs the runtime: no runtime => nobody in.
-    ipcMain.handle('human-collaboration:connected-chat-ids', () =>
-      humanCollaborationRuntime ? humanCollaborationRuntime.connectedChatIds() : []
-    )
-    // P2a presence clarity — per-session summaries (share + collaborator
-    // granularity) so host surfaces can distinguish "participant active" from
-    // "live session connected". Same never-constructs-the-runtime guard.
-    ipcMain.handle('human-collaboration:session-status', () =>
-      humanCollaborationRuntime ? humanCollaborationRuntime.sessionSummaries() : []
-    )
-    ipcMain.handle('human-collaboration:revoke-share', (_, shareId: string) => {
-      // Close the relay rooms for this share's invites before revoking.
-      const target = chatService
-        .listHumanCollaborationShares()
-        .find((share) => share.shareId === shareId)
-      const result = chatService.revokeHumanCollaborationShare(shareId)
-      for (const invite of target?.invites || []) {
-        if (invite.roomId) humanCollaborationHostTransport?.closeRoom(invite.roomId)
-      }
-      if (result) broadcastHumanCollaborationUpdate(result.chatId)
-      return result
-    })
-    ipcMain.handle(
-      'human-collaboration:revoke-participant',
-      (_, input: { shareId: string; collaboratorId: string }) => {
-        const result = chatService.revokeHumanCollaborationParticipant(
-          input.shareId,
-          input.collaboratorId
-        )
-        if (result) {
-          // Tear down only the relay room that admitted THIS collaborator, so
-          // their live session drops immediately while the share + any other
-          // collaborators stay up (mirrors revoke-share's closeRoom, scoped).
-          const invite = result.invites.find(
-            (candidate) => candidate.collaboratorId === input.collaboratorId
-          )
-          if (invite?.roomId) humanCollaborationHostTransport?.closeRoom(invite.roomId)
-          broadcastHumanCollaborationUpdate(result.chatId)
-        }
-        return result
-      }
-    )
-    ipcMain.handle(
-      'human-collaboration:consume-invite',
-      (
-        _,
-        input: {
-          shareId: string
-          inviteToken: string
-          displayName: string
-          publicKeyId: string
-        }
-      ) => {
-        const result = chatService.consumeHumanCollaborationInvite(input)
-        broadcastHumanCollaborationUpdate(result.share.chatId)
-        return result
-      }
-    )
-    ipcMain.handle(
-      'human-collaboration:append-comment',
-      (
-        _,
-        input: {
-          shareId: string
-          chatId: string
-          collaboratorId: string
-          clientMessageId: string
-          content: string
-        }
-      ) => {
-        const result = chatService.appendCollaboratorComment(input)
-        broadcastChatUpdated(result.chat)
-        broadcastHumanCollaborationUpdate(result.chat.appChatId)
-        return result
-      }
-    )
-    ipcMain.handle(
-      'human-collaboration:projection',
-      (_, input: { shareId: string; chatId: string; collaboratorId: string }) =>
-        resolveHumanCollaborationProjection(input)
-    )
-    ipcMain.handle(
-      'human-collaboration-runtime:begin-admission',
-      (_, input: HumanCollaborationBeginHandshakeInput) =>
-        getHumanCollaborationRuntime().beginAdmission(input)
-    )
-    ipcMain.handle(
-      'human-collaboration-runtime:confirm-sas',
-      async (_, input: HumanCollaborationConfirmSasInput) => {
-        const result = await getHumanCollaborationRuntime().confirmSas(input)
-        broadcastHumanCollaborationUpdate(result.chatId)
-        return result
-      }
-    )
-    ipcMain.handle(
-      'human-collaboration-runtime:subscribe-projection',
-      (_, input: HumanCollaborationSubscribeProjectionInput) =>
-        getHumanCollaborationRuntime().subscribeProjection(input)
-    )
-    ipcMain.handle(
-      'human-collaboration-runtime:append-comment',
-      (_, input: HumanCollaborationAppendCommentInput) =>
-        getHumanCollaborationRuntime().appendComment(input)
-    )
-    ipcMain.handle(
-      'human-collaboration-runtime:receive-frame',
-      (_, input: HumanCollaborationEncryptedFrame) =>
-        getHumanCollaborationRuntime().routeEncryptedAction(input)
-    )
-    ipcMain.handle(
-      'human-collaboration-runtime:disconnect',
-      (_, input: HumanCollaborationDisconnectInput) =>
-        getHumanCollaborationRuntime().disconnect(input)
-    )
-    ipcMain.handle(
-      'human-collaboration:promote-comment',
-      (_, input: { chatId: string; messageId: string }) => {
-        const result = chatService.promoteCollaboratorComment(input)
-        broadcastChatUpdated(result.chat)
-        broadcastHumanCollaborationUpdate(result.chat.appChatId)
-        return result
-      }
-    )
-    // P2a — host-only contribution-rules update. The store rejects the
-    // non-settable direct-dispatch tier and keeps legacy `mode` in lockstep.
-    ipcMain.handle(
-      'human-collaboration:update-share-rules',
-      (_, input: { shareId: string; preset: string }) => {
-        const result = chatService.updateHumanCollaborationShareRules({
-          shareId: input.shareId,
-          preset: input.preset as Parameters<
-            typeof chatService.updateHumanCollaborationShareRules
-          >[0]['preset']
-        })
-        if (result) broadcastHumanCollaborationUpdate(result.chatId)
-        return result
-      }
-    )
-    // P2a — bounded, newest-first audit rows for the host's review surfaces.
-    ipcMain.handle(
-      'human-collaboration:audit-log',
-      (_, input?: { chatId?: string; limit?: number }) =>
-        humanCollaborationAuditLog.list({
-          ...(input?.chatId ? { chatId: String(input.chatId) } : {}),
-          ...(typeof input?.limit === 'number' ? { limit: input.limit } : {})
-        })
-    )
-    // ── Collaborator side: this app instance JOINING someone else's shared chat ──
-    // One active join at a time (v1). The client dials the host's relay room,
-    // drives the two-phase SAS handshake, and streams the read-only projection.
-    let humanCollaborationCollaboratorClient: HumanCollaborationCollaboratorClient | null = null
-    const disposeCollaboratorClient = (): void => {
-      humanCollaborationCollaboratorClient?.dispose()
-      humanCollaborationCollaboratorClient = null
-    }
-    // Slice 5 reconnect — persisted collaborator identity (the host pins it per
-    // participant, so it must survive restarts) + the last-join coordinates a
-    // reconnect needs. Identity uses the same safeStorage-encrypted store as
-    // the host identity; if the keychain is unavailable we fall back to the
-    // Phase 1 per-join ephemeral identity (join still works, reconnect won't).
-    let humanCollaborationCollaboratorIdentity: KeyPair | null = null
-    const loadCollaboratorIdentity = (): KeyPair | undefined => {
-      if (humanCollaborationCollaboratorIdentity) return humanCollaborationCollaboratorIdentity
-      try {
-        humanCollaborationCollaboratorIdentity = new HumanCollaborationIdentityStore(
-          join(app.getPath('userData'), 'human-collaboration-collaborator-identity.json'),
-          safeStorage,
-          (line) => console.warn(line)
-        ).load()
-        return humanCollaborationCollaboratorIdentity
-      } catch (err) {
-        console.warn(
-          `[human-collaboration] collaborator identity unavailable (reconnect disabled): ${
-            err instanceof Error ? err.message : String(err)
-          }`
-        )
-        return undefined
-      }
-    }
-    interface CollaboratorSessionRecord {
-      shareId: string
-      chatId: string
-      collaboratorId: string
-      displayName: string
-      mode: 'readOnly' | 'comments'
-      relayUrls: string[]
-      roomId: string
-      hostIdentityPubKeyB64: string
-      savedAt: number
-    }
-    const collaboratorSessionRecordPath = (): string =>
-      join(app.getPath('userData'), 'human-collaboration-collaborator-session.json')
-    const readCollaboratorSessionRecord = (): CollaboratorSessionRecord | null => {
-      try {
-        const parsed = JSON.parse(
-          fsSync.readFileSync(collaboratorSessionRecordPath(), 'utf8')
-        ) as CollaboratorSessionRecord
-        if (
-          !parsed?.shareId ||
-          !parsed?.chatId ||
-          !parsed?.collaboratorId ||
-          !parsed?.roomId ||
-          !parsed?.hostIdentityPubKeyB64 ||
-          !Array.isArray(parsed?.relayUrls) ||
-          parsed.relayUrls.length === 0
-        ) {
-          return null
-        }
-        return parsed
-      } catch {
-        return null
-      }
-    }
-    const writeCollaboratorSessionRecord = (record: CollaboratorSessionRecord): void => {
-      try {
-        const target = collaboratorSessionRecordPath()
-        fsSync.writeFileSync(`${target}.tmp`, JSON.stringify(record, null, 2), { mode: 0o600 })
-        fsSync.renameSync(`${target}.tmp`, target)
-      } catch (err) {
-        console.warn(
-          `[human-collaboration] could not persist collaborator session: ${
-            err instanceof Error ? err.message : String(err)
-          }`
-        )
-      }
-    }
-    // Join coordinates captured at begin-time; persisted only after a HUMAN
-    // confirms the SAS (a never-confirmed join must not become reconnectable).
-    let pendingCollaboratorJoinContext: Omit<
-      CollaboratorSessionRecord,
-      'collaboratorId' | 'hostIdentityPubKeyB64' | 'savedAt'
-    > | null = null
-    ipcMain.handle(
-      'human-collaboration-collaborator:join',
-      async (
-        _,
-        input: {
-          shareId: string
-          chatId: string
-          inviteToken: string
-          displayName: string
-          mode: 'readOnly' | 'comments'
-          relayUrl: string
-          relayUrls?: string[]
-          roomId: string
-          hostIdentityPubKeyB64?: string
-        }
-      ) => {
-        disposeCollaboratorClient()
-        const relayUrls = Array.from(
-          new Set(
-            [
-              ...(Array.isArray(input.relayUrls) ? input.relayUrls : []),
-              input.relayUrl
-            ].filter((url): url is string => typeof url === 'string' && url.trim().length > 0)
-          )
-        )
-        if (relayUrls.length === 0) {
-          throw new Error(
-            'This invite has no relay URL. Ask the host to enable remote access and create a fresh invite.'
-          )
-        }
-        const isRetryableJoinError = (err: unknown): boolean => {
-          const message = err instanceof Error ? err.message : String(err)
-          return /transport|connect timed out|timed out|socket|websocket|ECONN|ENOTFOUND|ETIMEDOUT|EHOSTUNREACH|ENETUNREACH/i.test(
-            message
-          )
-        }
-        let lastRetryableError: unknown = null
-        const collaboratorIdentity = loadCollaboratorIdentity()
-        for (const relayUrl of relayUrls) {
-          const client = new HumanCollaborationCollaboratorClient({
-            socketFactory: wsTransportSocketFactory,
-            // Slice 5: pinned identity across joins/reconnects when available.
-            ...(collaboratorIdentity ? { identity: collaboratorIdentity } : {}),
-            onProjection: (projection) =>
-              mainWindow?.webContents.send('human-collaboration-collaborator-projection', { projection }),
-            onConnectionChange: (connected) =>
-              mainWindow?.webContents.send('human-collaboration-collaborator-status', { connected }),
-            onError: (err) =>
-              mainWindow?.webContents.send('human-collaboration-collaborator-status', { error: err.message }),
-            log: (line) => console.warn(line)
-          })
-          humanCollaborationCollaboratorClient = client
-          try {
-            client.connect(relayUrl, input.roomId)
-            await client.whenConnected()
-            const { confirmCode } = await client.beginAdmission({
-              shareId: input.shareId,
-              chatId: input.chatId,
-              inviteToken: input.inviteToken,
-              displayName: input.displayName,
-              shareMode: input.mode === 'readOnly' ? 'readOnly' : 'comments',
-              expectedHostIdentityPubKeyB64: input.hostIdentityPubKeyB64
-            })
-            // Captured for persistence at confirm-time (Slice 5 reconnect).
-            pendingCollaboratorJoinContext = {
-              shareId: input.shareId,
-              chatId: input.chatId,
-              displayName: input.displayName,
-              mode: input.mode === 'readOnly' ? 'readOnly' : 'comments',
-              relayUrls,
-              roomId: input.roomId
-            }
-            return { confirmCode, chatId: input.chatId, mode: input.mode }
-          } catch (err) {
-            // Don't leak a half-dead client/socket on a failed candidate.
-            if (humanCollaborationCollaboratorClient === client) disposeCollaboratorClient()
-            else client.dispose()
-            if (!isRetryableJoinError(err)) throw err
-            lastRetryableError = err
-          }
-        }
-        throw lastRetryableError instanceof Error
-          ? lastRetryableError
-          : new Error('Could not connect to any collaboration relay URL.')
-      }
-    )
-    ipcMain.handle('human-collaboration-collaborator:confirm', async () => {
-      const client = humanCollaborationCollaboratorClient
-      if (!client) throw new Error('No active collaboration join to confirm.')
-      const result = await client.confirmAdmission()
-      client.subscribe()
-      // Slice 5: only a HUMAN-CONFIRMED join becomes reconnectable. The pinned
-      // host key comes from the confirm result (the transcript signature was
-      // verified under it); reconnect requires it to match exactly.
-      if (pendingCollaboratorJoinContext && result?.collaboratorId) {
-        writeCollaboratorSessionRecord({
-          ...pendingCollaboratorJoinContext,
-          collaboratorId: result.collaboratorId,
-          hostIdentityPubKeyB64: result.hostIdentityPubKeyB64,
-          savedAt: Date.now()
-        })
-        pendingCollaboratorJoinContext = null
-      }
-      return result
-    })
-    // Slice 5 — can this instance reconnect to its last shared chat?
-    ipcMain.handle('human-collaboration-collaborator:last-session', () => {
-      const record = readCollaboratorSessionRecord()
-      if (!record || !loadCollaboratorIdentity()) return { available: false }
-      return {
-        available: true,
-        chatId: record.chatId,
-        displayName: record.displayName,
-        mode: record.mode,
-        savedAt: record.savedAt
-      }
-    })
-    // Slice 5 — pinned-identity reconnect: no invite token, no human SAS
-    // re-compare (the persisted host key already survived one; the handshake
-    // verifies fresh signatures under it, and the host validates our pinned
-    // identity against the participant it originally admitted).
-    ipcMain.handle('human-collaboration-collaborator:reconnect', async () => {
-      const record = readCollaboratorSessionRecord()
-      if (!record) throw new Error('No previous shared chat to reconnect to.')
-      const collaboratorIdentity = loadCollaboratorIdentity()
-      if (!collaboratorIdentity) {
-        throw new Error('Collaborator identity is unavailable, so reconnect is not possible.')
-      }
-      disposeCollaboratorClient()
-      const isRetryable = (err: unknown): boolean => {
-        const message = err instanceof Error ? err.message : String(err)
-        return /transport|connect timed out|timed out|socket|websocket|ECONN|ENOTFOUND|ETIMEDOUT|EHOSTUNREACH|ENETUNREACH/i.test(
-          message
-        )
-      }
-      let lastRetryableError: unknown = null
-      for (const relayUrl of record.relayUrls) {
-        const client = new HumanCollaborationCollaboratorClient({
-          socketFactory: wsTransportSocketFactory,
-          identity: collaboratorIdentity,
-          onProjection: (projection) =>
-            mainWindow?.webContents.send('human-collaboration-collaborator-projection', { projection }),
-          onConnectionChange: (connected) =>
-            mainWindow?.webContents.send('human-collaboration-collaborator-status', { connected }),
-          onError: (err) =>
-            mainWindow?.webContents.send('human-collaboration-collaborator-status', { error: err.message }),
-          log: (line) => console.warn(line)
-        })
-        humanCollaborationCollaboratorClient = client
-        try {
-          client.connect(relayUrl, record.roomId)
-          await client.whenConnected()
-          await client.reconnect({
-            shareId: record.shareId,
-            chatId: record.chatId,
-            collaboratorId: record.collaboratorId,
-            displayName: record.displayName,
-            shareMode: record.mode,
-            expectedHostIdentityPubKeyB64: record.hostIdentityPubKeyB64
-          })
-          client.subscribe()
-          return { chatId: record.chatId, mode: record.mode, displayName: record.displayName }
-        } catch (err) {
-          if (humanCollaborationCollaboratorClient === client) disposeCollaboratorClient()
-          else client.dispose()
-          if (!isRetryable(err)) throw err
-          lastRetryableError = err
-        }
-      }
-      throw lastRetryableError instanceof Error
-        ? lastRetryableError
-        : new Error('Could not reconnect over any known relay URL.')
-    })
-    ipcMain.handle(
-      'human-collaboration-collaborator:append-comment',
-      (_, input: { content: string; clientMessageId?: string; intent?: string }) => {
-        const client = humanCollaborationCollaboratorClient
-        if (!client) throw new Error('No active collaboration session.')
-        client.appendComment(
-          input.content,
-          input.clientMessageId,
-          // P2b — whitelist; anything else degrades to a plain comment.
-          input.intent === 'requestHostAction' ? 'requestHostAction' : undefined
-        )
-        return { ok: true }
-      }
-    )
-    ipcMain.handle('human-collaboration-collaborator:leave', () => {
-      disposeCollaboratorClient()
-      return true
-    })
+    disposeHumanCollaborationIpcHandlers = registerHumanCollaborationHandlers({
+      chatService,
+      humanCollaborationStore,
+      humanCollaborationAuditLog,
+      getSettings: () => AppStore.getSettings(),
+      getUserDataPath: () => app.getPath('userData'),
+      safeStorage,
+      getIosRemoteRuntime: () => iosRemoteRuntime,
+      getIosRemoteRuntimeError: () => iosRemoteRuntimeError,
+      getSelfHostedWssLane: () => selfHostedWssLane,
+      startIosRemoteBridge,
+      maybeUpgradeIosRemoteToTailscaleLane,
+      getIosRemoteTailscaleStatus: iosRemoteTailscaleStatus,
+      getIosRemoteServeHttpsPort: iosRemoteServeHttpsPort,
+      collaborationHostRelayUrl,
+      collaborationInviteRelayUrls,
+      getTailscaleServeStatus,
+      enableTailscaleServe,
+      selectAdvertisableRelayUrls,
+      getHumanCollaborationRuntime,
+      getCurrentHumanCollaborationRuntime: () => humanCollaborationRuntime,
+      openCollaborationHostRoom: (relayUrl, roomId) =>
+        humanCollaborationHostTransport?.openRoom(relayUrl, roomId),
+      closeCollaborationHostRoom: (roomId) =>
+        humanCollaborationHostTransport?.closeRoom(roomId),
+      socketFactory: wsTransportSocketFactory,
+      sendToMainWindow: (channel, payload) => {
+        mainWindow?.webContents.send(channel, payload)
+      },
+      broadcastChatUpdated,
+      broadcastHumanCollaborationUpdate
+    }).dispose
     ipcMain.handle('save-chat', (_, chat: ChatRecord) => {
       const normalized = normalizeTranscriptMarkdownMediaForChat(chat)
       const previous = AppStore.getChat(normalized.appChatId)
