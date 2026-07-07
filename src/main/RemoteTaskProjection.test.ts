@@ -1433,5 +1433,12 @@ describe('buildRemoteEnsembleState — round participant ordering', () => {
       'ensemble-participant-10',
       'ensemble-participant-12'
     ])
+    // The configured roster block has the same duplicate-order pair listed in
+    // reverse id order — without the id tie-break it would keep insertion
+    // order and diverge from the round participants sort above.
+    expect(state?.roster?.map((entry) => entry.id)).toEqual([
+      'ensemble-participant-10',
+      'ensemble-participant-12'
+    ])
   })
 })

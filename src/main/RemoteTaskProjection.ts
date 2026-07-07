@@ -1458,7 +1458,7 @@ export function buildRemoteEnsembleState(chat: ChatRecord): RemoteEnsembleState 
       })
       .map(projectEnsembleParticipant),
     roster: [...ensemble.participants]
-      .sort((a, b) => a.order - b.order)
+      .sort((a, b) => (a.order - b.order !== 0 ? a.order - b.order : a.id.localeCompare(b.id)))
       .map((participant) => {
         const contextTokens = latestRunContextTokens(chat.runs ?? [], participant.id)
         return {
