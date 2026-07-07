@@ -1421,6 +1421,32 @@ function buildToolActivityMedia(message: ChatMessage): RemoteThreadRowMedia[] {
   return buildRowMedia({ mediaRefs })
 }
 
+/** Seat identity for ensemble SYSTEM rows (participant yielded/skipped/failed
+ * status codas, side messages, compaction notices). The orchestrator stamps
+ * `ensembleProvider`/`ensembleRole` (and compaction's `displayParticipantLabel`)
+ * at event time, so the label is FROZEN — a later seat rename does not rewrite
+ * history, which is exactly the renamed-from identity iOS needs. Assistant rows
+ * are untouched: the bridge's `ensembleSpeakerForMessage` resolver owns those
+ * (it returns undefined for system rows, and the projectRemoteThread caller
+ * never clears a speaker buildRow seeded). */
+function ensembleSystemSeatLabel(
+  metadata: Record<string, unknown> | undefined
+): string | undefined {
+  if (!metadata) return undefined
+  const frozen = stringField(metadata.displayParticipantLabel, 120)
+  if (frozen) return frozen
+  const provider = providerField(metadata.ensembleProvider)
+  if (!provider) return undefined
+  let label = PROVIDER_LABELS[provider]
+  const model = stringField(metadata.ensembleModel, 120)
+  if (provider === 'ollama' && model) {
+    const brand = matchOllamaBrand(model)
+    if (brand) label = brand.providerLabel
+  }
+  const role = stringField(metadata.ensembleRole, 80)
+  return role ? `${label} / ${role}` : label
+}
+
 function buildRow(
   message: ChatMessage,
   previewMax: number,
@@ -1524,6 +1550,16 @@ function buildRow(
     // speaker for a guest reply — seed it here (the caller only overwrites
     // when its own resolver returns a truthy speaker, never clears this).
     if (guestReply.speaker) row.speaker = guestReply.speaker
+  }
+  // C4 (iOS transcript parity): ensemble system rows (yielded/skipped/failed
+  // status codas, side messages, compaction notices) carry seat identity in
+  // metadata but previously projected speaker-less, so iOS rendered a generic
+  // "System" header. Seed the frozen-at-stamp-time seat label; the closeout /
+  // pooled-agent / guest speakers above win, and the caller's resolver never
+  // clears a seeded speaker.
+  if (!row.speaker && message.role === 'system') {
+    const seatLabel = ensembleSystemSeatLabel(metadata)
+    if (seatLabel) row.speaker = seatLabel
   }
   const proposedPlan = buildProposedPlan(message)
   if (proposedPlan) row.proposedPlan = proposedPlan

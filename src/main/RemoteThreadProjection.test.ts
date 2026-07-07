@@ -1919,6 +1919,48 @@ describe('RemoteThreadProjection', () => {
       expect(solo.rows.every((row) => row.speaker === undefined)).toBe(true)
     })
 
+    it('seeds a frozen seat label on ensemble SYSTEM rows (yield/skip codas) and prefers displayParticipantLabel', () => {
+      const messages = [
+        // Yield/skip status coda — seat identity stamped at event time.
+        msg(2, {
+          role: 'system',
+          content: 'Adversary2 yielded.',
+          metadata: {
+            kind: 'ensembleParticipantStatus',
+            ensembleRoundId: 'round-1',
+            ensembleParticipantId: 'ensemble-participant-12',
+            ensembleProvider: 'codex',
+            ensembleRole: 'Adversary2',
+            ensembleStatus: 'yielded'
+          }
+        }),
+        // Compaction-style row with a pre-frozen label — wins over derivation.
+        msg(4, {
+          role: 'system',
+          content: 'Context compacted.',
+          metadata: {
+            ensembleProvider: 'claude',
+            ensembleRole: 'WriteMain',
+            displayParticipantLabel: 'Claude / WriteMain (Fable 5)'
+          }
+        }),
+        // Authority/round rows with no seat metadata stay speaker-less.
+        msg(6, {
+          role: 'system',
+          content: 'Round complete.',
+          metadata: { kind: 'ensembleRoundStatus', ensembleRoundId: 'round-1' }
+        })
+      ]
+      // Ensemble labeler returns undefined for system rows (role !== assistant)
+      // — mirror that so the test exercises buildRow's seeding, not the caller.
+      const snapshot = project({ kind: 'latestN', n: 10 }, messages, [], {
+        speakerForMessage: (message) => (message.role === 'assistant' ? 'never' : undefined)
+      })
+      expect(snapshot.rows[0].speaker).toBe('Codex / Adversary2')
+      expect(snapshot.rows[1].speaker).toBe('Claude / WriteMain (Fable 5)')
+      expect(snapshot.rows[2].speaker).toBeUndefined()
+    })
+
     it('projects pooled-agent identity and uses its nickname as speaker', () => {
       const messages = [
         msg(1, {
