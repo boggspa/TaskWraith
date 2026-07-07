@@ -3691,7 +3691,7 @@
   border-top-left-radius: calc(var(--radius-lg) * 2.45);
   border-top-right-radius: calc(var(--radius-lg) * 2.45);
   border-top: 1px solid var(--native-instrument-glass-border);
-  padding-top: 14px;
+  padding-top: 30px;
 }
 
 /* Corner fix (single + ensemble) — the TOP segment of the merged frame
@@ -8427,7 +8427,7 @@ button.composer-run-timecode.is-open {
 [data-composer-style="default"]
   .app-transcript
   .composer-surface.composer-surface--native-no-above-rows {
-  padding-top: 14px;
+  padding-top: 30px;
   gap: var(--space-sm);
 }
 
