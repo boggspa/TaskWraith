@@ -534,6 +534,42 @@ const FILE_CHANGE_DIFF_PREVIEW_CLOSE_DELAY_MS = 900
 export const FILE_CHANGE_SUMMARY_PAGE_SIZE = 24
 export const FILE_CHANGE_SUMMARY_MAX_VISIBLE = 120
 
+export function transcriptRunningChatIdsSignature(ids: readonly string[] | undefined): string {
+  if (!ids || ids.length === 0) return ''
+  return Array.from(new Set(ids)).sort().join('\u0000')
+}
+
+export function transcriptAuxiliaryChatsSignature(chats: readonly ChatRecord[]): string {
+  if (chats.length === 0) return ''
+  return chats
+    .map((chat) => {
+      const lastRun = chat.runs?.[chat.runs.length - 1]
+      const dispatchError = chat.delegationContext?.dispatchError
+      return [
+        chat.appChatId,
+        chat.title || '',
+        chat.updatedAt || '',
+        chat.delegationContext?.resultReturnedAt || '',
+        typeof dispatchError?.message === 'string' ? dispatchError.message : '',
+        lastRun?.runId || '',
+        lastRun?.status || '',
+        lastRun?.endedAt || ''
+      ].join('\u0001')
+    })
+    .sort()
+    .join('\u0002')
+}
+
+function transcriptAuxiliaryChatsEqual(
+  previous: readonly ChatRecord[],
+  next: readonly ChatRecord[]
+): boolean {
+  return (
+    previous === next ||
+    transcriptAuxiliaryChatsSignature(previous) === transcriptAuxiliaryChatsSignature(next)
+  )
+}
+
 export interface FileChangeSummaryWindow {
   canShowFewer: boolean
   canShowMore: boolean
@@ -2503,6 +2539,11 @@ export const TranscriptPanel = memo(
       () => transcriptChatRenderSignature(currentChat),
       [currentChat]
     )
+    const auxiliaryChatsSignature = useMemo(() => transcriptAuxiliaryChatsSignature(chats), [chats])
+    const runningChatIdsSignature = useMemo(
+      () => transcriptRunningChatIdsSignature(runningChatIds),
+      [runningChatIds]
+    )
     const previousChatIdRef = useRef<string | null>(chatId)
     useLayoutEffect(() => {
       if (previousChatIdRef.current === chatId) return
@@ -2955,9 +2996,7 @@ export const TranscriptPanel = memo(
               .join('\u0000')
             const auxiliaryKey =
               isDelegationCard || isReturnCard
-                ? `${runningChatIds.join('\u0000')}|${chats
-                    .map((chat) => `${chat.appChatId}:${chat.title || ''}:${chat.updatedAt || ''}`)
-                    .join('\u0000')}`
+                ? `${runningChatIdsSignature}|${auxiliaryChatsSignature}`
                 : ''
             const pendingProposedPlanKey = pendingProposedPlan?.messageId === msg.id
               ? `${pendingProposedPlan?.messageId || ''}:plan-modal`
@@ -4206,8 +4245,9 @@ export const TranscriptPanel = memo(
     previous.fileChangeShouldShowStats === next.fileChangeShouldShowStats &&
     previous.fileChangeDisplayAdds === next.fileChangeDisplayAdds &&
     previous.fileChangeDisplayDels === next.fileChangeDisplayDels &&
-    previous.chats === next.chats &&
-    previous.runningChatIds === next.runningChatIds &&
+    transcriptAuxiliaryChatsEqual(previous.chats, next.chats) &&
+    transcriptRunningChatIdsSignature(previous.runningChatIds) ===
+      transcriptRunningChatIdsSignature(next.runningChatIds) &&
     previous.onOpenFileChangeInWorkbench === next.onOpenFileChangeInWorkbench &&
     previous.pendingQueuedAppRunIds === next.pendingQueuedAppRunIds &&
     previous.queuedRunStatusByAppRunId === next.queuedRunStatusByAppRunId &&

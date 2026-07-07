@@ -1,5 +1,12 @@
 import { useCallback, type CSSProperties, type ReactNode } from 'react'
-import { EMPTY_CHAT_MESSAGES } from '../../lib/stableEmpties'
+import {
+  EMPTY_CHAT_MESSAGES,
+  EMPTY_TRANSCRIPT_FILE_SUMMARIES,
+  NOOP_AGENT_QUESTION_SUBMIT,
+  NOOP_MESSAGE_ACTION,
+  NOOP_PLAN_CHOICE_SUBMIT,
+  NOOP_PROPOSED_PLAN_CUSTOM
+} from '../../lib/stableEmpties'
 import { isRetiredProvider } from '../../../../shared/retiredProviders'
 import { handleSideChatComposerKeyDown } from '../../lib/sideChatComposer'
 import {
@@ -90,12 +97,6 @@ import { Composer } from '../../components/Composer'
 import { WorkspaceBoardCreatorSheet } from '../../components/WorkspaceBoardCreatorSheet'
 
 import type { MainAppLayoutProps } from './MainAppLayout.types'
-
-const EMPTY_TRANSCRIPT_FILE_SUMMARIES = []
-const noopAgentQuestionSubmit = () => {}
-const noopMessageAction = () => {}
-const noopPlanChoiceSubmit = () => {}
-const noopProposedPlanCustom = () => {}
 
 export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   const {
@@ -2181,8 +2182,8 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
               pendingAgentQuestions={
                 pendingAgentQuestionsByChatId[sideChat.appChatId] || EMPTY_AGENT_QUESTION_QUEUE
               }
-              onAgentQuestionSubmit={noopAgentQuestionSubmit}
-              onAgentQuestionDismiss={noopMessageAction}
+              onAgentQuestionSubmit={NOOP_AGENT_QUESTION_SUBMIT}
+              onAgentQuestionDismiss={NOOP_MESSAGE_ACTION}
               runCompleteNotice={sideRunCompleteNotice}
               runCompleteDurationText={null}
               queuedRunStatusByAppRunId={queuedRunStatusByAppRunId}
@@ -2203,11 +2204,11 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
               fileChangeDisplayDels={0}
               chats={chats}
               runningChatIds={runningChatIdsArray}
-              onPlanChoiceSubmit={noopPlanChoiceSubmit}
+              onPlanChoiceSubmit={NOOP_PLAN_CHOICE_SUBMIT}
               pendingProposedPlan={null}
-              onProposedPlanApprove={noopMessageAction}
-              onProposedPlanDismiss={noopMessageAction}
-              onProposedPlanCustom={noopProposedPlanCustom}
+              onProposedPlanApprove={NOOP_MESSAGE_ACTION}
+              onProposedPlanDismiss={NOOP_MESSAGE_ACTION}
+              onProposedPlanCustom={NOOP_PROPOSED_PLAN_CUSTOM}
               onOpenSubThread={handleOpenCockpitThread}
               onOpenSubThreadInSidePanel={handleOpenLinkedChatInSidePanelById}
               onInspectRun={handleSideTranscriptInspectRun}
