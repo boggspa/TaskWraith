@@ -7,6 +7,17 @@ history, and workspace state stay on your machine throughout.
 ## Unreleased
 
 ### Fixed
+- **The phone's git pill no longer lags the Mac.** Paired phones now ride the
+  same git watcher lane as the desktop pill: while at least one phone is
+  connected, the Mac lands every filesystem/run-driven git recompute (terminal
+  commits, edits from other sessions or editors, branch switches) in the remote
+  snapshot cache and pushes it immediately, at the watcher's existing 250ms
+  debounce / 1.2s-per-repo cadence. Previously the phone refreshed only on its
+  own pulls — opening a thread, foregrounding the app, a run finishing — and on
+  run events, so git changes with no run attached never arrived until some
+  unrelated event fired. Connecting a phone also lands a fresh snapshot per
+  workspace up front, and zero connected phones means zero extra watchers or
+  git work on an idle Mac.
 - **Roster, approval, and rename sheets render their liquid glass too (iOS).**
   Same root cause as the Diff Studio sheet below: the ensemble roster sheet, its
   nested participant editor, the approval detail sheet, and the chat rename

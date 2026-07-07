@@ -436,6 +436,7 @@ import { SettingsService } from './services/SettingsService'
 import { WorkspaceService } from './services/WorkspaceService'
 import { GitService } from './services/GitService'
 import { GitSnapshotPublisher } from './services/GitSnapshotPublisher'
+import { RemoteGitSnapshotFeed } from './services/RemoteGitSnapshotFeed'
 import type {
   GitPrReadiness,
   GitPrSummary,
@@ -2421,6 +2422,12 @@ function getFaviconService(): FaviconService {
 // methods. Stays null when the daemon is disabled or hasn't spawned yet;
 // the `attached_window_*` MCP tools null-check and return a clear error.
 let bridgeDaemonRef: BridgeDaemonClient | null = null
+
+/** Late-bound RemoteGitSnapshotFeed — keeps the phone git pill riding the
+ * desktop watcher lane while ≥1 phone is connected. Constructed next to the
+ * GitSnapshotPublisher inside the setup closure; the reconcile hooks
+ * (projection builds, device-count changes) null-check until then. */
+let remoteGitSnapshotFeedRef: RemoteGitSnapshotFeed | null = null
 
 /**
  * Phase K3 — singleton CreativeApprovalGate used by every creative-app
@@ -26231,6 +26238,9 @@ if (isGeminiMcpBridgeProcess) {
           .map((chat) => chat.workspaceId)
           .filter((workspaceId): workspaceId is string => Boolean(workspaceId))
       )
+      // Keep the watcher-lane feed aligned with the current workspace /
+      // allowlist set — a cheap set-diff when nothing changed.
+      remoteGitSnapshotFeedRef?.reconcile()
       for (const workspaceId of visibleWorkspaceIds) {
         ensureRemoteGitSnapshotFresh(workspaceId)
         const cached = remoteGitSnapshotCache.get(workspaceId)
@@ -26632,6 +26642,9 @@ if (isGeminiMcpBridgeProcess) {
       }
     }
     const stopIosRemoteBridge = async (): Promise<void> => {
+      // Runtime disposal drops every phone session without firing the
+      // device-count callback — release the git watcher feed explicitly.
+      remoteGitSnapshotFeedRef?.setConnectedDeviceCount(0)
       iosRemoteRuntime?.dispose()
       iosRemoteRuntime = null
       selfHostedWssLane = null
@@ -26737,6 +26750,9 @@ if (isGeminiMcpBridgeProcess) {
           // disconnect (see updateRemotePowerAssertion).
           onConnectedDeviceCountChange: (connectedCount) => {
             updateRemotePowerAssertion(connectedCount)
+            // The watcher-lane git feed subscribes only while a phone is
+            // connected — zero phones, zero watchers, zero git churn.
+            remoteGitSnapshotFeedRef?.setConnectedDeviceCount(connectedCount)
           },
           // EVERY establish (incl. phone relaunches) re-ships the async
           // provider-model catalogs — a freshly-launched phone starts with
@@ -27354,6 +27370,7 @@ if (isGeminiMcpBridgeProcess) {
       // Spike 7 — kill any persistent Grok seat processes (they outlive their
       // runs by design, so the per-run process registry doesn't cover them).
       grokSeatSessionRegistry.disposeAll()
+      remoteGitSnapshotFeedRef?.dispose()
       iosRemoteRuntime?.dispose()
       humanCollaborationHostTransport?.dispose()
       humanCollaborationCollaboratorClient?.dispose()
@@ -27442,6 +27459,38 @@ if (isGeminiMcpBridgeProcess) {
 
     const gitService = new GitService()
     const gitSnapshotPublisher = new GitSnapshotPublisher({ gitService })
+    // Remote lane of the publisher: while ≥1 phone is connected, headless
+    // subscriptions land every watcher/run recompute in the remote git
+    // snapshot cache — terminal commits and other-session edits reach the
+    // phone pill without needing a run event or a phone pull (parity with
+    // the desktop pill's freshness, at the publisher's 250ms/1.2s cadence).
+    remoteGitSnapshotFeedRef = new RemoteGitSnapshotFeed({
+      publisher: gitSnapshotPublisher,
+      listWorkspaces: () => {
+        const out: { workspaceId: string; workspacePath: string }[] = []
+        for (const workspace of AppStore.getWorkspaces()) {
+          const canonical = canonicalRemoteWorkspaceId(workspace.id)
+          if (!canonical) continue
+          const decision = bridgeAllowlist.evaluate({
+            workspaceId: canonical,
+            capability: 'monitor'
+          })
+          if (!decision.allowed) continue
+          const workspacePath = remoteGitWorkspacePath(canonical)
+          if (!workspacePath) continue
+          out.push({ workspaceId: canonical, workspacePath })
+        }
+        return out
+      },
+      onSnapshot: (workspaceId, workspacePath, snapshot) => {
+        // Stamp the pull-lane attempt clock too, so a projection build right
+        // after a feed push doesn't schedule a redundant git status.
+        remoteGitSnapshotLastAttempt.set(workspaceId, Date.now())
+        cacheRemoteGitSnapshot(workspaceId, workspacePath, snapshot)
+        publishRemoteGitSnapshotCache(workspaceId)
+      },
+      log: (line) => console.log(line)
+    })
     const liveGitSnapshotLastInvalidation = new Map<string, number>()
     runEventBus.subscribe({
       id: 'desktop-git-live-snapshots',
