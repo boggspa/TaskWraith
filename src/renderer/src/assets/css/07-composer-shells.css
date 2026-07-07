@@ -3967,10 +3967,22 @@
   background: transparent;
 }
 
-[data-interface-style="codex"] .composer-discovery-card,
-[data-interface-style="codex"] .composer-permission-card,
-[data-interface-style="claude"] .composer-discovery-card,
-[data-interface-style="claude"] .composer-permission-card {
+/* Shell-dark treatment for these two cards is DARK-THEME-ONLY. In light
+ * themes they must fall through to their base treatments — the approval
+ * card's amber caution + per-provider tints (03-composer-welcome-activity.css)
+ * and the discovery card's var()-driven elevated surface
+ * (04-settings-controls.css). Hardcoding #151515 for every theme turned the
+ * approval card into a dark-on-dark modal in light mode: its own text
+ * (--text-secondary / --text-muted resolve dark), the countdown, and the
+ * translucent note-field / .btn fills all composited against a forced
+ * near-black surface. Same trap as the welcome-suggestion cards below —
+ * but scoped here with :not() instead of a stacked light override, because
+ * a (0,3,0) light override on the bare card class would out-rank the
+ * per-provider light tints in 03 by source order and flatten them. */
+[data-interface-style="codex"]:not([data-theme="light"]):not([data-theme="mist"]):not([data-theme="sage"]) .composer-discovery-card,
+[data-interface-style="codex"]:not([data-theme="light"]):not([data-theme="mist"]):not([data-theme="sage"]) .composer-permission-card,
+[data-interface-style="claude"]:not([data-theme="light"]):not([data-theme="mist"]):not([data-theme="sage"]) .composer-discovery-card,
+[data-interface-style="claude"]:not([data-theme="light"]):not([data-theme="mist"]):not([data-theme="sage"]) .composer-permission-card {
   background: color-mix(in srgb, #151515 96%, transparent);
   border-color: color-mix(in srgb, #ffffff 12%, transparent);
   box-shadow: 0 18px 46px rgba(0, 0, 0, 0.28);
