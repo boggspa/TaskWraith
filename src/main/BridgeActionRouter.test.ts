@@ -302,6 +302,14 @@ function makeStubExecutor(
     executeTogglePinWorkspace: make('executeTogglePinWorkspace', {
       executed: true,
       message: 'togglePinWorkspace done'
+    }),
+    executeSetChatArchived: make('executeSetChatArchived', {
+      executed: true,
+      message: 'setChatArchived done'
+    }),
+    executeChatMarkdownTranscript: make('executeChatMarkdownTranscript', {
+      executed: true,
+      message: 'chatMarkdownTranscript done'
     })
   }
   return { executor, calls }
@@ -1797,6 +1805,37 @@ describe('BridgeActionRouter', () => {
       })) as { accepted: boolean; message?: string }
       expect(result.accepted).toBe(false)
       expect(result.message).toMatch(/capability "pin"/i)
+    })
+
+    it('denies setChatArchived against read-only workspace (rides the pin capability)', async () => {
+      const router = new BridgeActionRouter({ allowlist: seedReadOnly() })
+      const wire = encodeAction({
+        kind: 'setChatArchived',
+        workspaceId: 'ws-readonly',
+        appChatId: 'chat-1',
+        archived: true
+      })
+      const result = (await router.route('bridge.requestActionAck', {
+        payloadBase64: wire
+      })) as { accepted: boolean; message?: string }
+      expect(result.accepted).toBe(false)
+      expect(result.message).toMatch(/capability "pin"/i)
+    })
+
+    it('accepts chatMarkdownTranscript against read-only workspace (monitor-tier read)', async () => {
+      const { executor, calls } = makeStubExecutor()
+      const router = new BridgeActionRouter({ allowlist: seedReadOnly(), executor })
+      const wire = encodeAction({
+        kind: 'chatMarkdownTranscript',
+        workspaceId: 'ws-readonly',
+        appChatId: 'chat-1'
+      })
+      const result = (await router.route('bridge.requestActionAck', {
+        payloadBase64: wire
+      })) as { accepted: boolean }
+      expect(result.accepted).toBe(true)
+      expect(calls).toHaveLength(1)
+      expect(calls[0].method).toBe('executeChatMarkdownTranscript')
     })
 
     it('denies yolo changes when explicit capabilities omit yolo', async () => {

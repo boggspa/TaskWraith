@@ -651,6 +651,10 @@ export class BridgeActionRouter {
         return this.executor.executeTogglePinChat(payload)
       case 'togglePinWorkspace':
         return this.executor.executeTogglePinWorkspace(payload)
+      case 'setChatArchived':
+        return this.executor.executeSetChatArchived(payload)
+      case 'chatMarkdownTranscript':
+        return this.executor.executeChatMarkdownTranscript(payload)
       case 'unknown':
         // Should never reach here — `handleActionAck` denies `unknown`
         // before dispatch. Defensive fallthrough.
@@ -1155,7 +1159,13 @@ export function approvalModeFromPayload(payload: BridgeActionPayload): string | 
 
 function chatIdFromPayload(payload: BridgeActionPayload): string | undefined {
   if ('threadId' in payload && typeof payload.threadId === 'string') return payload.threadId
-  if (payload.kind === 'togglePinChat') return payload.appChatId
+  if (
+    payload.kind === 'togglePinChat' ||
+    payload.kind === 'setChatArchived' ||
+    payload.kind === 'chatMarkdownTranscript'
+  ) {
+    return payload.appChatId
+  }
   return undefined
 }
 
@@ -1170,9 +1180,13 @@ function capabilityForPayload(payload: BridgeActionPayload): RemoteWorkspaceCapa
     case 'composerQueuePrompt':
     case 'createThread':
       return 'startTurn'
+    // Full-markdown transcript is a read of already-visible thread content
+    // (built by the same scrubbing desktop builder) — monitor tier, like
+    // the snapshot fetches above.
     case 'threadSnapshotRequest':
     case 'threadRowExpand':
     case 'threadMediaFetch':
+    case 'chatMarkdownTranscript':
       return 'monitor'
     case 'workspaceFileList':
       return 'fileBrowse'
@@ -1231,8 +1245,13 @@ function capabilityForPayload(payload: BridgeActionPayload): RemoteWorkspaceCapa
     // session YOLO.
     case 'setYoloMode':
       return 'yolo'
+    // setChatArchived rides the same `pin` capability by Boss ruling
+    // (ios-lifecycle-capability-ruling): reversible + non-destructive =
+    // same organizational trust tier as pinning. Destructive delete is
+    // Batch-2 behind its own default-off capability.
     case 'togglePinChat':
     case 'togglePinWorkspace':
+    case 'setChatArchived':
       return 'pin'
     // Paired-device-level system actions — no workspace capability applies
     // (auth is the pair binding at the transport layer). discoverTailnetHosts

@@ -46,7 +46,9 @@ import type {
   BridgeDiscoverTailnetHostsAction,
   BridgeSetYoloModeAction,
   BridgeTogglePinChatAction,
-  BridgeTogglePinWorkspaceAction
+  BridgeTogglePinWorkspaceAction,
+  BridgeSetChatArchivedAction,
+  BridgeChatMarkdownTranscriptAction
 } from './BridgeActionPayload'
 import type { AgentApprovalAction } from './store/types'
 
@@ -192,6 +194,12 @@ export interface BridgeActionExecutor {
   executeTogglePinChat(action: BridgeTogglePinChatAction): Promise<BridgeActionExecutionResult>
   executeTogglePinWorkspace(
     action: BridgeTogglePinWorkspaceAction
+  ): Promise<BridgeActionExecutionResult>
+  executeSetChatArchived(
+    action: BridgeSetChatArchivedAction
+  ): Promise<BridgeActionExecutionResult>
+  executeChatMarkdownTranscript(
+    action: BridgeChatMarkdownTranscriptAction
   ): Promise<BridgeActionExecutionResult>
 }
 
@@ -429,6 +437,16 @@ export class NoopActionExecutor implements BridgeActionExecutor {
   ): Promise<BridgeActionExecutionResult> {
     return notWired('togglePinWorkspace', action.workspaceId)
   }
+  async executeSetChatArchived(
+    action: BridgeSetChatArchivedAction
+  ): Promise<BridgeActionExecutionResult> {
+    return notWired('setChatArchived', action.appChatId)
+  }
+  async executeChatMarkdownTranscript(
+    action: BridgeChatMarkdownTranscriptAction
+  ): Promise<BridgeActionExecutionResult> {
+    return notWired('chatMarkdownTranscript', action.appChatId)
+  }
 }
 
 function notWired(kind: string, id: string): BridgeActionExecutionResult {
@@ -647,6 +665,30 @@ export interface MainProcessActionExecutorDependencies {
     pinned: boolean
     reason?: string
   }>
+  setChatArchivedFn?: (action: BridgeSetChatArchivedAction) => Promise<{
+    archived: boolean
+    reason?: string
+  }>
+  /** Mirrors the desktop copy-chat-markdown-transcript result shapes:
+   * success carries the markdown itself (the phone has no Mac clipboard);
+   * failures reuse the exact desktop reasons (not-found / archived / empty /
+   * too-large with counts) so iOS renders the same failure copy verbatim. */
+  chatMarkdownTranscriptFn?: (action: BridgeChatMarkdownTranscriptAction) => Promise<
+    | {
+        ok: true
+        markdown: string
+        messageCount: number
+        charCount: number
+        omissions: string[]
+      }
+    | {
+        ok: false
+        reason: string
+        messageCount?: number
+        charCount?: number
+        omissions?: string[]
+      }
+  >
   ensembleCancelRoundFn?: (action: BridgeEnsembleCancelRoundAction) => Promise<unknown>
   ensembleSkipActiveParticipantFn?: (
     action: BridgeEnsembleSkipActiveParticipantAction
@@ -1779,6 +1821,76 @@ export class MainProcessActionExecutor implements BridgeActionExecutor {
       const errMessage = err instanceof Error ? err.message : String(err)
       this.log(`[BridgeActionExecutor] togglePinWorkspace failed: ${errMessage}`)
       return { executed: false, message: `Pin workspace update failed: ${errMessage}` }
+    }
+  }
+
+  async executeSetChatArchived(
+    action: BridgeSetChatArchivedAction
+  ): Promise<BridgeActionExecutionResult> {
+    if (!this.deps.setChatArchivedFn) {
+      this.log(
+        `[BridgeActionExecutor] setChatArchived has no setChatArchivedFn — appChatId=${action.appChatId}`
+      )
+      return notWired('setChatArchived', action.appChatId)
+    }
+    try {
+      const result = await this.deps.setChatArchivedFn(action)
+      if (result.reason) {
+        return { executed: false, message: result.reason }
+      }
+      return {
+        executed: true,
+        message: `Chat "${action.appChatId}" ${result.archived ? 'archived' : 'unarchived'}`,
+        data: { appChatId: action.appChatId, archived: result.archived }
+      }
+    } catch (err) {
+      const errMessage = err instanceof Error ? err.message : String(err)
+      this.log(`[BridgeActionExecutor] setChatArchived failed: ${errMessage}`)
+      return { executed: false, message: `Archive chat update failed: ${errMessage}` }
+    }
+  }
+
+  async executeChatMarkdownTranscript(
+    action: BridgeChatMarkdownTranscriptAction
+  ): Promise<BridgeActionExecutionResult> {
+    if (!this.deps.chatMarkdownTranscriptFn) {
+      this.log(
+        `[BridgeActionExecutor] chatMarkdownTranscript has no chatMarkdownTranscriptFn — appChatId=${action.appChatId}`
+      )
+      return notWired('chatMarkdownTranscript', action.appChatId)
+    }
+    try {
+      const result = await this.deps.chatMarkdownTranscriptFn(action)
+      if (!result.ok) {
+        return {
+          executed: false,
+          message: `Transcript unavailable: ${result.reason}`,
+          data: {
+            appChatId: action.appChatId,
+            reason: result.reason,
+            ...(typeof result.messageCount === 'number'
+              ? { messageCount: result.messageCount }
+              : {}),
+            ...(typeof result.charCount === 'number' ? { charCount: result.charCount } : {}),
+            ...(result.omissions ? { omissions: result.omissions } : {})
+          }
+        }
+      }
+      return {
+        executed: true,
+        message: `Transcript built for "${action.appChatId}" (${result.messageCount} messages)`,
+        data: {
+          appChatId: action.appChatId,
+          markdown: result.markdown,
+          messageCount: result.messageCount,
+          charCount: result.charCount,
+          omissions: result.omissions
+        }
+      }
+    } catch (err) {
+      const errMessage = err instanceof Error ? err.message : String(err)
+      this.log(`[BridgeActionExecutor] chatMarkdownTranscript failed: ${errMessage}`)
+      return { executed: false, message: `Transcript build failed: ${errMessage}` }
     }
   }
 

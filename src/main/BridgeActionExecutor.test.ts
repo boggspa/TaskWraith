@@ -38,7 +38,9 @@ import type {
   BridgeProposedPlanDecisionAction,
   BridgeCanvasActionAction,
   BridgeTogglePinChatAction,
-  BridgeTogglePinWorkspaceAction
+  BridgeTogglePinWorkspaceAction,
+  BridgeSetChatArchivedAction,
+  BridgeChatMarkdownTranscriptAction
 } from './BridgeActionPayload'
 
 const sample = {
@@ -203,6 +205,17 @@ const sample = {
     workspaceId: 'ws-1',
     pinned: true
   } satisfies BridgeTogglePinWorkspaceAction,
+  setChatArchived: {
+    kind: 'setChatArchived',
+    workspaceId: 'ws-1',
+    appChatId: 'chat-1',
+    archived: true
+  } satisfies BridgeSetChatArchivedAction,
+  chatMarkdownTranscript: {
+    kind: 'chatMarkdownTranscript',
+    workspaceId: 'ws-1',
+    appChatId: 'chat-1'
+  } satisfies BridgeChatMarkdownTranscriptAction,
   workspaceFileList: {
     kind: 'workspaceFileList',
     workspaceId: 'ws-1'
@@ -923,6 +936,86 @@ describe('MainProcessActionExecutor session and pin controls', () => {
     const result = await executor.executeTogglePinChat(sample.togglePinChat)
     expect(result.executed).toBe(false)
     expect(result.message).toBe('chat missing')
+  })
+
+  it('archives a chat through setChatArchivedFn', async () => {
+    const setChatArchivedFn = vi.fn().mockResolvedValue({ archived: true })
+    const executor = new MainProcessActionExecutor({ cancelRunFn, setChatArchivedFn })
+    const result = await executor.executeSetChatArchived(sample.setChatArchived)
+    expect(setChatArchivedFn).toHaveBeenCalledWith(sample.setChatArchived)
+    expect(result).toMatchObject({
+      executed: true,
+      data: { appChatId: 'chat-1', archived: true }
+    })
+  })
+
+  it('surfaces setChatArchivedFn decline reasons (membership guard)', async () => {
+    const setChatArchivedFn = vi.fn().mockResolvedValue({
+      archived: false,
+      reason: 'Chat "chat-1" does not belong to workspace "ws-1"'
+    })
+    const executor = new MainProcessActionExecutor({ cancelRunFn, setChatArchivedFn })
+    const result = await executor.executeSetChatArchived(sample.setChatArchived)
+    expect(result.executed).toBe(false)
+    expect(result.message).toContain('does not belong to workspace')
+  })
+
+  it('reports setChatArchived not wired when no setChatArchivedFn is supplied', async () => {
+    const executor = new MainProcessActionExecutor({ cancelRunFn })
+    const result = await executor.executeSetChatArchived(sample.setChatArchived)
+    expect(result.executed).toBe(false)
+    expect(result.message).toMatch(/not yet wired/i)
+  })
+
+  it('returns markdown through chatMarkdownTranscriptFn on the happy path', async () => {
+    const chatMarkdownTranscriptFn = vi.fn().mockResolvedValue({
+      ok: true,
+      markdown: '# Chat\n\nHello world',
+      messageCount: 2,
+      charCount: 20,
+      omissions: ['absolute paths scrubbed']
+    })
+    const executor = new MainProcessActionExecutor({ cancelRunFn, chatMarkdownTranscriptFn })
+    const result = await executor.executeChatMarkdownTranscript(sample.chatMarkdownTranscript)
+    expect(chatMarkdownTranscriptFn).toHaveBeenCalledWith(sample.chatMarkdownTranscript)
+    expect(result).toMatchObject({
+      executed: true,
+      data: {
+        appChatId: 'chat-1',
+        markdown: '# Chat\n\nHello world',
+        messageCount: 2,
+        charCount: 20,
+        omissions: ['absolute paths scrubbed']
+      }
+    })
+  })
+
+  it('surfaces chatMarkdownTranscript failure shapes with counts (too-large)', async () => {
+    const chatMarkdownTranscriptFn = vi.fn().mockResolvedValue({
+      ok: false,
+      reason: 'too-large',
+      messageCount: 900,
+      charCount: 2_400_000,
+      omissions: ['transcript too large for clipboard copy']
+    })
+    const executor = new MainProcessActionExecutor({ cancelRunFn, chatMarkdownTranscriptFn })
+    const result = await executor.executeChatMarkdownTranscript(sample.chatMarkdownTranscript)
+    expect(result.executed).toBe(false)
+    expect(result.message).toContain('too-large')
+    expect(result.data).toMatchObject({
+      reason: 'too-large',
+      messageCount: 900,
+      charCount: 2_400_000
+    })
+  })
+
+  it('surfaces chatMarkdownTranscript archived/empty failures without counts', async () => {
+    const chatMarkdownTranscriptFn = vi.fn().mockResolvedValue({ ok: false, reason: 'archived' })
+    const executor = new MainProcessActionExecutor({ cancelRunFn, chatMarkdownTranscriptFn })
+    const result = await executor.executeChatMarkdownTranscript(sample.chatMarkdownTranscript)
+    expect(result.executed).toBe(false)
+    expect(result.message).toContain('archived')
+    expect(result.data).toMatchObject({ reason: 'archived' })
   })
 
   it('updates a workspace pin through togglePinWorkspaceFn', async () => {

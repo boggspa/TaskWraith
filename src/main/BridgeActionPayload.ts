@@ -673,6 +673,28 @@ export interface BridgeTogglePinWorkspaceAction extends BridgeActionMetadata {
   pinned: boolean
 }
 
+/** Reversible chat archive/unarchive from a paired device. Same trust tier
+ * as `togglePinChat` (organizational, non-destructive) — gated on the
+ * existing `pin` capability by Boss ruling; destructive delete is a future
+ * action behind its own default-off capability. */
+export interface BridgeSetChatArchivedAction extends BridgeActionMetadata {
+  kind: 'setChatArchived'
+  workspaceId: string
+  appChatId: string
+  archived: boolean
+}
+
+/** Read-only full-markdown transcript request. Thin adapter over the SAME
+ * main-process builder desktop's copy-transcript uses
+ * (buildChatMarkdownTranscript) so the phone gets byte-identical output,
+ * path scrubbing, and the same archived/empty/too-large failure shapes —
+ * never a silently-truncated snapshot-window rebuild. */
+export interface BridgeChatMarkdownTranscriptAction extends BridgeActionMetadata {
+  kind: 'chatMarkdownTranscript'
+  workspaceId: string
+  appChatId: string
+}
+
 /** Fallback for any unrecognized `kind`. The router treats this as a
  * structured deny (no execution) but logs the original kind so we can
  * monitor schema drift between iOS and Electron versions. */
@@ -733,6 +755,8 @@ export type BridgeActionPayload =
   | BridgeSetYoloModeAction
   | BridgeTogglePinChatAction
   | BridgeTogglePinWorkspaceAction
+  | BridgeSetChatArchivedAction
+  | BridgeChatMarkdownTranscriptAction
   | BridgeUnknownAction
 
 export interface DecodedActionPayload {
@@ -859,6 +883,8 @@ export function workspaceIdFromPayload(payload: BridgeActionPayload): string | n
     case 'setYoloMode':
     case 'togglePinChat':
     case 'togglePinWorkspace':
+    case 'setChatArchived':
+    case 'chatMarkdownTranscript':
       return payload.workspaceId
     case 'registerApnsToken':
     case 'ensemblePresetMutate':
@@ -929,6 +955,8 @@ export function payloadRequiresWorkspaceGating(payload: BridgeActionPayload): bo
     case 'setYoloMode':
     case 'togglePinChat':
     case 'togglePinWorkspace':
+    case 'setChatArchived':
+    case 'chatMarkdownTranscript':
       return true
     case 'registerApnsToken':
       // falls through: ensemblePresetMutate is pair-gated only (no workspace
@@ -1003,6 +1031,7 @@ export function payloadIsMutating(payload: BridgeActionPayload): boolean {
     case 'setYoloMode':
     case 'togglePinChat':
     case 'togglePinWorkspace':
+    case 'setChatArchived':
     case 'workspaceFileWrite':
     case 'workspaceFileDelete':
     case 'gitStageAll':
@@ -1026,6 +1055,7 @@ export function payloadIsMutating(payload: BridgeActionPayload): boolean {
     case 'githubPrStatus':
     case 'githubPrReadiness':
     case 'discoverTailnetHosts':
+    case 'chatMarkdownTranscript':
       return false
     case 'unknown':
       return true
@@ -1231,6 +1261,14 @@ function coerceToPayload(parsed: unknown): BridgeActionPayload {
       return isTogglePinWorkspace(parsed)
         ? (parsed as unknown as BridgeTogglePinWorkspaceAction)
         : { kind: 'unknown', rawKind: 'togglePinWorkspace', raw: parsed }
+    case 'setChatArchived':
+      return isSetChatArchived(parsed)
+        ? (parsed as unknown as BridgeSetChatArchivedAction)
+        : { kind: 'unknown', rawKind: 'setChatArchived', raw: parsed }
+    case 'chatMarkdownTranscript':
+      return isChatMarkdownTranscript(parsed)
+        ? (parsed as unknown as BridgeChatMarkdownTranscriptAction)
+        : { kind: 'unknown', rawKind: 'chatMarkdownTranscript', raw: parsed }
     default:
       return { kind: 'unknown', rawKind: parsed.kind, raw: parsed }
   }
@@ -1904,6 +1942,23 @@ function isTogglePinChat(v: Record<string, unknown>): boolean {
 function isTogglePinWorkspace(v: Record<string, unknown>): boolean {
   return (
     hasValidActionMetadata(v) && typeof v.workspaceId === 'string' && typeof v.pinned === 'boolean'
+  )
+}
+
+function isSetChatArchived(v: Record<string, unknown>): boolean {
+  return (
+    hasValidActionMetadata(v) &&
+    typeof v.workspaceId === 'string' &&
+    typeof v.appChatId === 'string' &&
+    typeof v.archived === 'boolean'
+  )
+}
+
+function isChatMarkdownTranscript(v: Record<string, unknown>): boolean {
+  return (
+    hasValidActionMetadata(v) &&
+    typeof v.workspaceId === 'string' &&
+    typeof v.appChatId === 'string'
   )
 }
 

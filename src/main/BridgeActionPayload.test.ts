@@ -1093,6 +1093,62 @@ describe('decodeBridgeActionPayload', () => {
       })
     })
 
+    it('decodes setChatArchived and classifies it as a gated mutation', () => {
+      const wire = encode({
+        kind: 'setChatArchived',
+        workspaceId: 'ws-1',
+        appChatId: 'chat-1',
+        archived: true
+      })
+      const { payload } = decodeBridgeActionPayload(wire)
+      expect(payload).toEqual({
+        kind: 'setChatArchived',
+        workspaceId: 'ws-1',
+        appChatId: 'chat-1',
+        archived: true
+      })
+      expect(workspaceIdFromPayload(payload)).toBe('ws-1')
+      expect(payloadRequiresWorkspaceGating(payload)).toBe(true)
+      expect(payloadIsMutating(payload)).toBe(true)
+    })
+
+    it('rejects setChatArchived without a boolean archived flag', () => {
+      const wire = encode({
+        kind: 'setChatArchived',
+        workspaceId: 'ws-1',
+        appChatId: 'chat-1',
+        archived: 'yes'
+      })
+      const { payload } = decodeBridgeActionPayload(wire)
+      expect(payload.kind).toBe('unknown')
+    })
+
+    it('decodes chatMarkdownTranscript and classifies it as a gated read', () => {
+      const wire = encode({
+        kind: 'chatMarkdownTranscript',
+        workspaceId: 'ws-1',
+        appChatId: 'chat-1'
+      })
+      const { payload } = decodeBridgeActionPayload(wire)
+      expect(payload).toEqual({
+        kind: 'chatMarkdownTranscript',
+        workspaceId: 'ws-1',
+        appChatId: 'chat-1'
+      })
+      expect(workspaceIdFromPayload(payload)).toBe('ws-1')
+      expect(payloadRequiresWorkspaceGating(payload)).toBe(true)
+      expect(payloadIsMutating(payload)).toBe(false)
+    })
+
+    it('rejects chatMarkdownTranscript without an appChatId', () => {
+      const wire = encode({
+        kind: 'chatMarkdownTranscript',
+        workspaceId: 'ws-1'
+      })
+      const { payload } = decodeBridgeActionPayload(wire)
+      expect(payload.kind).toBe('unknown')
+    })
+
     it('decodes a registerApnsToken with production env', () => {
       const wire = encode({
         kind: 'registerApnsToken',

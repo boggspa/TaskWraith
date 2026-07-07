@@ -23837,6 +23837,73 @@ if (isGeminiMcpBridgeProcess) {
           broadcastThreadList()
           return { pinned: action.pinned }
         },
+        setChatArchivedFn: async (action) => {
+          const chat = AppStore.getChat(action.appChatId)
+          if (!chat) {
+            return {
+              archived: false,
+              reason: `Chat id "${action.appChatId}" was not found`
+            }
+          }
+          if (chat.workspaceId && chat.workspaceId !== action.workspaceId) {
+            return {
+              archived: Boolean(chat.archived),
+              reason: `Chat "${action.appChatId}" does not belong to workspace "${action.workspaceId}"`
+            }
+          }
+          chatService.saveChat({ ...chat, archived: action.archived })
+          broadcastThreadUpdate(action.appChatId)
+          broadcastThreadList()
+          return { archived: action.archived }
+        },
+        chatMarkdownTranscriptFn: async (action) => {
+          // Mirrors the desktop `copy-chat-markdown-transcript` IPC handler
+          // (ipc/sidebarHandlers.ts) — same builder, same failure reasons —
+          // but returns the markdown to the phone instead of writing the
+          // Mac clipboard.
+          const chat = AppStore.getChat(action.appChatId)
+          if (!chat) return { ok: false as const, reason: 'not-found' }
+          if (chat.workspaceId && chat.workspaceId !== action.workspaceId) {
+            return { ok: false as const, reason: 'wrong-workspace' }
+          }
+          if (chat.archived) return { ok: false as const, reason: 'archived' }
+          if (!chat.messages?.length) return { ok: false as const, reason: 'empty' }
+          const estimatedCharCount = estimateChatMarkdownTranscriptChars(chat)
+          if (estimatedCharCount > 2_000_000) {
+            return {
+              ok: false as const,
+              reason: 'too-large',
+              messageCount: chat.messages.length,
+              charCount: estimatedCharCount,
+              omissions: ['transcript too large for clipboard copy']
+            }
+          }
+          const workspace = chat.workspaceId
+            ? AppStore.getWorkspaces().find((candidate) => candidate.id === chat.workspaceId) ||
+              null
+            : null
+          const result = buildChatMarkdownTranscript(chat, {
+            workspace,
+            homeDir: os.homedir()
+          })
+          if (!result.markdown.trim()) return { ok: false as const, reason: 'empty' }
+          if (result.charCount > 2_000_000) {
+            return {
+              ok: false as const,
+              reason: 'too-large',
+              messageCount: result.messageCount,
+              charCount: result.charCount,
+              omissions: result.omissions
+            }
+          }
+          return {
+            ok: true as const,
+            markdown: result.markdown,
+            messageCount: result.messageCount,
+            charCount: result.charCount,
+            omissions: result.omissions
+          }
+        },
         ensembleCancelRoundFn: async (action) => {
           const chat = AppStore.getChat(action.threadId)
           if (!chat?.ensemble) return { ok: false, error: 'Thread is not an Ensemble chat' }
