@@ -580,6 +580,18 @@ function escapeDomSelectorValue(value: string): string {
     : value.replace(/["\\]/g, '\\$&')
 }
 
+/**
+ * Position-independent identity for a tool stack row's lifted UI state: the
+ * first CONSTITUENT tool message id. A grouped tool row's merged id mutates
+ * from `<id>` to `tool-group-<id>` the moment a second message joins the
+ * group (remounting the row), and `rowKey` embeds the list index — both churn
+ * while activity streams in. The first constituent id survives group growth,
+ * remounts, and index shifts.
+ */
+export function toolStackStateKey(message: ChatMessage): string {
+  return groupedTranscriptMessageIds(message)[0] || message.id
+}
+
 function useProjectedTranscriptRows(
   messages: ChatMessage[],
   runBoundaryIds: ReadonlySet<string> | null | undefined
@@ -2005,6 +2017,25 @@ export const TranscriptPanel = memo(
         return next
       })
     }, [])
+    // 1.0.7 — lifted live-viewport expansion (the collapsed tool/thinking
+    // viewport's Expand toggle). Held here — NOT inside ActivityStack — for
+    // the same survival reason as `activityExpansionByRow`, but keyed by
+    // `toolStackStateKey` (first constituent tool message id) instead of
+    // rowKey: the grouped row's id AND rowKey both churn while activity
+    // streams in (group growth 1→2 rewrites the merged id; new rows shift
+    // indexes), and each churn remounted the stack and snapped an expanded
+    // viewport shut mid-stream.
+    const [expandedLiveViewportStacks, setExpandedLiveViewportStacks] = useState<Set<string>>(
+      new Set()
+    )
+    const setLiveViewportExpandedForStack = useCallback((stackKey: string, expanded: boolean) => {
+      setExpandedLiveViewportStacks((prev) => {
+        const next = new Set(prev)
+        if (expanded) next.add(stackKey)
+        else next.delete(stackKey)
+        return next
+      })
+    }, [])
     // Row ids whose tool stack has something open — the measurementKey
     // geometry bit, so collapsed vs expanded rows cache distinct heights.
     const expandedRowIds = useMemo(() => {
@@ -2295,6 +2326,21 @@ export const TranscriptPanel = memo(
         )?.rowKey ?? null
       )
     }, [displayMessages.length, liveRevealMessageId, projectedRows])
+    // Geometry companion to `expandedLiveViewportStacks`: the virtualizer's
+    // measurement cache keys on rowKey + an expanded bit, so rows with an
+    // expanded live viewport must resolve their CURRENT rowKey each render
+    // (stack keys are position-independent; rowKeys are not).
+    const expandedRowIdsWithLiveViewports = useMemo(() => {
+      if (expandedLiveViewportStacks.size === 0) return expandedRowIds
+      const ids = new Set(expandedRowIds)
+      for (const stackKey of expandedLiveViewportStacks) {
+        const row =
+          projectedRowLookup.byMessageId.get(stackKey) ||
+          projectedRowLookup.byConstituentId.get(stackKey)
+        if (row) ids.add(row.rowKey)
+      }
+      return ids
+    }, [expandedLiveViewportStacks, expandedRowIds, projectedRowLookup])
     const [pendingFocusTarget, setPendingFocusTarget] = useState<{
       messageId: string
       rowKey?: string
@@ -2341,7 +2387,7 @@ export const TranscriptPanel = memo(
       compactDensity,
       forcedRowIndex: pendingFocusRowIndex,
       activeLiveRowKey: liveRevealRowKey,
-      expandedRowIds
+      expandedRowIds: expandedRowIdsWithLiveViewports
     })
     const virtualHeightOffsets = useMemo(
       () => (virtualizeEnabled ? buildHeightOffsets(virtualHeights) : EMPTY_TRANSCRIPT_HEIGHT_OFFSETS),
@@ -2810,6 +2856,10 @@ export const TranscriptPanel = memo(
                 : highlightedMessageTarget.messageId === msg.id
               : false
             const activityExpansionIds = activityExpansionByRow.get(rowKey)
+            const liveViewportStackKey = isToolActivityStack ? toolStackStateKey(msg) : ''
+            const liveViewportExpanded = liveViewportStackKey
+              ? expandedLiveViewportStacks.has(liveViewportStackKey)
+              : false
             const pendingQuestionsForRow = pendingAgentQuestions.filter(
               (question) => question.messageId === msg.id
             )
@@ -2916,6 +2966,7 @@ export const TranscriptPanel = memo(
                 : '',
               subThreadExpanded: expandedSubThreadResults.has(rowKey),
               fanoutExpanded: expandedFanoutResults.has(rowKey),
+              liveViewportExpanded,
               pendingPlanChoiceKey,
               pendingAgentQuestionsKey,
               assistantRunModelKey,
@@ -2947,6 +2998,7 @@ export const TranscriptPanel = memo(
                 setActivityExpansionForRow,
                 setSubThreadResultExpanded,
                 setFanoutResultExpanded,
+                setLiveViewportExpandedForStack,
                 toggleUserMessageExpanded,
                 setRoundExpanded
               ]
@@ -3067,6 +3119,10 @@ export const TranscriptPanel = memo(
                     chat={currentChat || undefined}
                     compactDensity={compactDensity}
                     liveActivityViewport={liveActivityViewport}
+                    liveActivityViewportExpanded={liveViewportExpanded}
+                    onLiveActivityViewportExpandedChange={(expanded) =>
+                      setLiveViewportExpandedForStack(liveViewportStackKey, expanded)
+                    }
                     expandedActivityIds={activityExpansionIds ?? EMPTY_ACTIVITY_EXPANSION}
                     onExpandedActivityIdsChange={(next) => setActivityExpansionForRow(rowKey, next)}
                     onOpenFileChangeInWorkbench={onOpenFileChangeInWorkbench}
