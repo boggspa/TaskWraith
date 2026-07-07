@@ -882,6 +882,39 @@ function isComparableFanoutTimelineMessage(message: ChatMessage, run: ActivePart
   )
 }
 
+function isRoundLaneTimelineMessage(message: ChatMessage, roundId: string): boolean {
+  if (message.metadata?.ensembleRoundId !== roundId) return false
+  if (!messageLaneId(message)) return false
+  if (message.role !== 'assistant' && message.role !== 'tool') return false
+  return (
+    message.metadata?.kind === 'ensembleParticipant' ||
+    message.metadata?.kind === 'ensembleParticipantTools'
+  )
+}
+
+function isOpaqueRunTimelineMessage(message: ChatMessage): boolean {
+  return (message.role === 'assistant' || message.role === 'tool') && Boolean(message.runId)
+}
+
+/** Start index of the transcript's TAIL lane cluster for this round: the
+ * earliest index such that no non-lane run-timeline row (a serial
+ * participant's rows, or any prior round's rows) appears at or after it.
+ * System/status/prompt rows are transparent — lanes may slot around them.
+ *
+ * A lane's first-flush roster-order slot-in is confined to this cluster.
+ * Matching a STALE lane row further up (e.g. a settled round-start recon
+ * wave sitting above a still-streaming serial speaker) would hoist the
+ * lane's whole report above the live speaker's message — the "fan-out
+ * completion shoves the viewports above the current turn" jump. */
+function tailLaneClusterStart(messages: ChatMessage[], roundId: string): number {
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const message = messages[i]
+    if (isRoundLaneTimelineMessage(message, roundId)) continue
+    if (isOpaqueRunTimelineMessage(message)) return i + 1
+  }
+  return 0
+}
+
 function isRunTimelineMessage(message: ChatMessage, run: ActiveParticipantRun): boolean {
   if (message.runId !== run.runId) return false
   if (message.role !== 'assistant' && message.role !== 'tool') return false
@@ -897,19 +930,52 @@ function insertRunTimelineMessages(
   messages: ChatMessage[],
   desiredMessages: ChatMessage[],
   run: ActiveParticipantRun,
-  preferredInsertionIndex: number | null = null
+  preferredInsertionIndex: number | null = null,
+  runDispatchOrder?: Map<string, number>
 ): ChatMessage[] {
   if (desiredMessages.length === 0) return messages
   if (preferredInsertionIndex !== null) {
     const index = Math.max(0, Math.min(preferredInsertionIndex, messages.length))
     return [...messages.slice(0, index), ...desiredMessages, ...messages.slice(index)]
   }
-  if (!run.laneId) return [...messages, ...desiredMessages]
-  const insertionIndex = messages.findIndex(
-    (message) =>
+  if (!run.laneId) {
+    // First flush of a serial participant: append at the tail, EXCEPT above
+    // rows of same-round lanes dispatched AFTER this run started — i.e. the
+    // fan-out it sourced. A Boss that calls ensemble_fanout before producing
+    // visible output must not have its whole turn pinned below its own
+    // lanes; every lane flush (most visibly the completion batch) would keep
+    // piling in above the Boss's live message. Lanes dispatched BEFORE this
+    // run (a settled recon wave) stay above it — that IS the chronology.
+    if (!runDispatchOrder) return [...messages, ...desiredMessages]
+    const ownDispatchIndex = runDispatchOrder.get(run.runId)
+    if (ownDispatchIndex === undefined) return [...messages, ...desiredMessages]
+    const insertionIndex = messages.findIndex((message) => {
+      if (!isRoundLaneTimelineMessage(message, run.roundId)) return false
+      const laneDispatchIndex = message.runId ? runDispatchOrder.get(message.runId) : undefined
+      return laneDispatchIndex !== undefined && laneDispatchIndex > ownDispatchIndex
+    })
+    if (insertionIndex < 0) return [...messages, ...desiredMessages]
+    return [
+      ...messages.slice(0, insertionIndex),
+      ...desiredMessages,
+      ...messages.slice(insertionIndex)
+    ]
+  }
+  // First flush of a fan-out lane: keep sibling lanes in participant order,
+  // but only within the round's tail lane cluster so the slot-in can never
+  // leapfrog a serial participant's already-rendered rows.
+  const clusterStart = tailLaneClusterStart(messages, run.roundId)
+  let insertionIndex = -1
+  for (let i = clusterStart; i < messages.length; i += 1) {
+    const message = messages[i]
+    if (
       isComparableFanoutTimelineMessage(message, run) &&
       compareRunLaneToMessage(run, message) < 0
-  )
+    ) {
+      insertionIndex = i
+      break
+    }
+  }
   if (insertionIndex < 0) return [...messages, ...desiredMessages]
   return [
     ...messages.slice(0, insertionIndex),
@@ -11005,7 +11071,16 @@ export class EnsembleOrchestrator {
             .filter((message) => !isRunTimelineMessage(message, run)).length
         : null
     messages = messages.filter((message) => !isRunTimelineMessage(message, run))
-    messages = insertRunTimelineMessages(messages, desiredMessages, run, preferredInsertionIndex)
+    // Dispatch chronology for the first-flush placement rules: chat.runs is
+    // appended per seeded run, so its array order IS the dispatch order.
+    const runDispatchOrder = new Map(chat.runs.map((chatRun, index) => [chatRun.runId, index]))
+    messages = insertRunTimelineMessages(
+      messages,
+      desiredMessages,
+      run,
+      preferredInsertionIndex,
+      runDispatchOrder
+    )
 
     // Status card for yielded / failed / skipped, appended after
     // the timeline messages so it reads as a coda. Unchanged from
