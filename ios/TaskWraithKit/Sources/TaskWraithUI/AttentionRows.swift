@@ -1,6 +1,37 @@
 import SwiftUI
 import TaskWraithKit
 
+/// One shared 1 Hz clock for approval auto-deny countdowns so N visible cards
+/// do not each drive their own TimelineView timer.
+@MainActor
+final class TWApprovalCountdownTicker: ObservableObject {
+    static let shared = TWApprovalCountdownTicker()
+
+    @Published private(set) var now = Date()
+    private var task: Task<Void, Never>?
+    private var retainCount = 0
+
+    private init() {}
+
+    func retain() {
+        retainCount += 1
+        guard task == nil else { return }
+        task = Task { @MainActor in
+            while !Task.isCancelled {
+                now = Date()
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+            }
+        }
+    }
+
+    func release() {
+        retainCount = max(0, retainCount - 1)
+        guard retainCount == 0 else { return }
+        task?.cancel()
+        task = nil
+    }
+}
+
 /// Approval card row — Electron approval-card parity within phone idiom:
 /// provider accent, title + body (the command/params detail the Mac
 /// sanitizes to 400 chars), requested-at caption, and the FULL decision
@@ -10,6 +41,7 @@ import TaskWraithKit
 struct ApprovalRow: View {
     @ObservedObject var model: RemoteSessionModel
     let card: MobileApprovalCard
+    @ObservedObject private var countdownTicker = TWApprovalCountdownTicker.shared
     @State private var showDetail = false
 
     private var accent: Color { TWTheme.providerAccent(card.provider) }
@@ -66,18 +98,16 @@ struct ApprovalRow: View {
                             .foregroundStyle(TWTheme.textPrimary)
                             .lineLimit(2)
                         Spacer(minLength: 4)
-                        TimelineView(.periodic(from: .now, by: 1)) { context in
-                            if let expiry = expiresCaption(now: context.date) {
-                                Text(expiry.text)
-                                    .font(.caption2.monospacedDigit())
-                                    .foregroundStyle(
-                                        expiry.urgent
-                                            ? TWTheme.statusFailed : TWTheme.statusAttention)
-                            } else if let requestedCaption {
-                                Text(requestedCaption)
-                                    .font(.caption2)
-                                    .foregroundStyle(TWTheme.textMuted)
-                            }
+                        if let expiry = expiresCaption(now: countdownTicker.now) {
+                            Text(expiry.text)
+                                .font(.caption2.monospacedDigit())
+                                .foregroundStyle(
+                                    expiry.urgent
+                                        ? TWTheme.statusFailed : TWTheme.statusAttention)
+                        } else if let requestedCaption {
+                            Text(requestedCaption)
+                                .font(.caption2)
+                                .foregroundStyle(TWTheme.textMuted)
                         }
                     }
                     if let body = card.body, !body.isEmpty {
@@ -148,6 +178,8 @@ struct ApprovalRow: View {
             }
         }
         .padding(.vertical, 2)
+        .onAppear { countdownTicker.retain() }
+        .onDisappear { countdownTicker.release() }
         .background {
             if let expiresAt = card.expiresAt {
                 ApprovalExpiryAnnouncer(expiresAt: expiresAt)
@@ -450,19 +482,20 @@ struct QuestionRow: View {
 /// Posts VoiceOver announcements when an approval countdown becomes urgent or expires.
 private struct ApprovalExpiryAnnouncer: View {
     let expiresAt: String
+    @ObservedObject private var countdownTicker = TWApprovalCountdownTicker.shared
     @State private var announcedUrgent = false
     @State private var announcedExpired = false
 
     var body: some View {
-        TimelineView(.periodic(from: .now, by: 1)) { context in
-            ApprovalExpiryTick(
-                expiresAt: expiresAt,
-                now: context.date,
-                announcedUrgent: $announcedUrgent,
-                announcedExpired: $announcedExpired
-            )
-        }
+        ApprovalExpiryTick(
+            expiresAt: expiresAt,
+            now: countdownTicker.now,
+            announcedUrgent: $announcedUrgent,
+            announcedExpired: $announcedExpired
+        )
         .accessibilityHidden(true)
+        .onAppear { countdownTicker.retain() }
+        .onDisappear { countdownTicker.release() }
     }
 }
 

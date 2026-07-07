@@ -10,6 +10,19 @@
 import SwiftUI
 import TaskWraithKit
 
+/// When false, obsidian/alabaster rim-chase renders a static rim instead of
+/// driving TimelineView(.animation) — gated by the host on shell-visible + run-active.
+private struct ComposerRimChaseActiveKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+extension EnvironmentValues {
+    var composerRimChaseActive: Bool {
+        get { self[ComposerRimChaseActiveKey.self] }
+        set { self[ComposerRimChaseActiveKey.self] = newValue }
+    }
+}
+
 /// Resolve the effective composer shell: local override → Mac-projected style →
 /// default, then the visual recipe for the current theme + accessibility.
 @MainActor
@@ -181,22 +194,37 @@ private struct ComposerRimChase: View {
     let cornerRadius: CGFloat
     let lineWidth: CGFloat
 
+    @Environment(\.composerRimChaseActive) private var rimChaseActive
+
     var body: some View {
-        TimelineView(.animation) { timeline in
-            let seconds = timeline.date.timeIntervalSinceReferenceDate
-            let fraction = seconds.truncatingRemainder(dividingBy: 16) / 16
-            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                .strokeBorder(
-                    AngularGradient(
-                        gradient: Gradient(colors: [
-                            color.opacity(0), color.opacity(0.06), color,
-                            color.opacity(0.06), color.opacity(0),
-                        ]),
-                        center: .center,
-                        angle: .degrees(fraction * 360)),
-                    lineWidth: lineWidth)
+        Group {
+            if rimChaseActive {
+                TimelineView(.animation) { timeline in
+                    rimStroke(fraction: rimFraction(at: timeline.date))
+                }
+            } else {
+                rimStroke(fraction: 0)
+            }
         }
         .allowsHitTesting(false)
+    }
+
+    private func rimFraction(at date: Date) -> Double {
+        let seconds = date.timeIntervalSinceReferenceDate
+        return seconds.truncatingRemainder(dividingBy: 16) / 16
+    }
+
+    private func rimStroke(fraction: Double) -> some View {
+        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+            .strokeBorder(
+                AngularGradient(
+                    gradient: Gradient(colors: [
+                        color.opacity(0), color.opacity(0.06), color,
+                        color.opacity(0.06), color.opacity(0),
+                    ]),
+                    center: .center,
+                    angle: .degrees(fraction * 360)),
+                lineWidth: lineWidth)
     }
 }
 

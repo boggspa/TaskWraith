@@ -45,7 +45,11 @@ enum ThreadSnapshotRequestPolicy {
 private final class ComposerDiffPillRefreshState: ObservableObject {
     @Published var snapshot: GitWorkspaceSnapshot?
 
-    private static let refreshIntervalNanos: UInt64 = 90_000_000_000
+    func refresh(model: RemoteSessionModel, workspaceId: String) async {
+        guard let next = try? await model.fetchGitSnapshotWithoutPublishing(workspaceId: workspaceId)
+        else { return }
+        snapshot = next
+    }
 
     func run(
         model: RemoteSessionModel,
@@ -58,17 +62,6 @@ private final class ComposerDiffPillRefreshState: ObservableObject {
         if snapshot == nil {
             await refresh(model: model, workspaceId: workspaceId)
         }
-        while !Task.isCancelled {
-            try? await Task.sleep(nanoseconds: Self.refreshIntervalNanos)
-            guard !Task.isCancelled else { return }
-            await refresh(model: model, workspaceId: workspaceId)
-        }
-    }
-
-    private func refresh(model: RemoteSessionModel, workspaceId: String) async {
-        guard let next = try? await model.fetchGitSnapshotWithoutPublishing(workspaceId: workspaceId)
-        else { return }
-        snapshot = next
     }
 }
 
@@ -92,8 +85,11 @@ private struct RefreshingComposerDiffPill: View {
     let fallbackDeletions: Int
     let fallbackCommitsAhead: Int
     let reduceMotion: Bool
+    let isRunning: Bool
+    let refreshGeneration: Int
     let onTap: () -> Void
 
+    @Environment(\.scenePhase) private var scenePhase
     @StateObject private var refreshState = ComposerDiffPillRefreshState()
 
     private var snapshot: GitWorkspaceSnapshot? {
@@ -134,6 +130,31 @@ private struct RefreshingComposerDiffPill: View {
                 workspaceId: workspaceId,
                 initialSnapshot: initialGitSnapshot)
         }
+        .onChange(of: refreshGeneration) { _, _ in
+            guard let workspaceId, !workspaceId.isEmpty else { return }
+            Task { await refreshState.refresh(model: model, workspaceId: workspaceId) }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            guard phase == .active, let workspaceId, !workspaceId.isEmpty else { return }
+            Task { await refreshState.refresh(model: model, workspaceId: workspaceId) }
+        }
+        .onChange(of: isRunning) { wasRunning, running in
+            guard wasRunning, !running, let workspaceId, !workspaceId.isEmpty else { return }
+            Task { await refreshState.refresh(model: model, workspaceId: workspaceId) }
+        }
+        .onChange(of: publishedGitSnapshotToken) { _, _ in
+            if let workspaceId, let published = model.gitSnapshots[workspaceId] {
+                refreshState.snapshot = published
+            }
+        }
+    }
+
+    private var publishedGitSnapshotToken: String {
+        guard let workspaceId, let snap = model.gitSnapshots[workspaceId] else { return "" }
+        let changed = snap.counts?.changed ?? 0
+        let ahead = snap.ahead ?? 0
+        let branch = snap.branch ?? ""
+        return "\(workspaceId)|\(changed)|\(ahead)|\(branch)"
     }
 }
 
@@ -173,12 +194,14 @@ struct ThreadDetailView: View {
     @State private var ensembleSoloProviderChoices: [String] = []
     @StateObject private var composerDiffSheetState = MobileDiffStudioState()
     @State private var composerDiffSheetPresented = false
+    @State private var diffPillRefreshGeneration = 0
     /// Follow the transcript tail as content streams in. Driven by the bottom
     /// sentinel's visibility (on screen ⇒ follow); the jump-to-latest pill and
     /// thread-open also re-arm it.
     @State private var autoFollow = true
     /// One-scroll-per-turn coalescer for the follow-pin (kills stacked scrolls).
     @State private var followPin = TranscriptFollowPin()
+    @State private var toolRowGroupingCache = TranscriptToolRowGroupingCache()
     /// Last time a touch was live on the transcript (see `.simultaneousGesture`
     /// in `listCore`). A forced follow-pin's SETTLE pass checks this so it
     /// doesn't yank the scroll position back to bottom while the user is
@@ -550,11 +573,27 @@ struct ThreadDetailView: View {
     }
 
     private var settledDisplayItemsBeforeLive: [TranscriptDisplayItem] {
-        groupAdjacentToolRows(settledRowsBeforeLive)
+        toolRowGroupingCache.items(
+            segment: "before",
+            rows: settledRowsBeforeLive,
+            revision: snapshotRevisionToken,
+            liveRunId: liveRunId,
+            group: groupAdjacentToolRows)
     }
 
     private var settledDisplayItemsAfterLive: [TranscriptDisplayItem] {
-        groupAdjacentToolRows(settledRowsAfterLive)
+        toolRowGroupingCache.items(
+            segment: "after",
+            rows: settledRowsAfterLive,
+            revision: snapshotRevisionToken,
+            liveRunId: liveRunId,
+            group: groupAdjacentToolRows)
+    }
+
+    private var snapshotRevisionToken: String {
+        let rows = snapshot?.rows ?? []
+        let lastId = rows.last?.id ?? ""
+        return "\(rows.count)-\(lastId)-\(snapshot?.totalRows ?? 0)"
     }
 
     private var visibleDisplayItems: [TranscriptDisplayItem] {
@@ -692,6 +731,39 @@ struct ThreadDetailView: View {
     private func toolBurstId(_ rows: [RemoteThreadSnapshot.Row]) -> String {
         guard let first = rows.first, let last = rows.last else { return "tool-burst-empty" }
         return "tool-burst-\(first.id)-\(last.id)-\(rows.count)"
+    }
+
+    /// Memoizes adjacent tool-row grouping so long threads do not re-walk settled
+    /// rows on every streaming token. Keyed by snapshot revision + live run id.
+    private final class TranscriptToolRowGroupingCache {
+        private var beforeKey = ""
+        private var beforeItems: [TranscriptDisplayItem] = []
+        private var afterKey = ""
+        private var afterItems: [TranscriptDisplayItem] = []
+
+        func items(
+            segment: String,
+            rows: [RemoteThreadSnapshot.Row],
+            revision: String,
+            liveRunId: String?,
+            group: ([RemoteThreadSnapshot.Row]) -> [TranscriptDisplayItem]
+        ) -> [TranscriptDisplayItem] {
+            let key = "\(revision)|\(liveRunId ?? "")|\(segment)"
+            switch segment {
+            case "before":
+                if key == beforeKey { return beforeItems }
+                beforeItems = group(rows)
+                beforeKey = key
+                return beforeItems
+            case "after":
+                if key == afterKey { return afterItems }
+                afterItems = group(rows)
+                afterKey = key
+                return afterItems
+            default:
+                return group(rows)
+            }
+        }
     }
 
     /// runId → id of that run's LAST visible row (cards anchor there).
@@ -1215,6 +1287,7 @@ struct ThreadDetailView: View {
             // type-check budget when inlined into the transcript chain.
             if !showsEmptyWelcomeCanvas {
                 AnyView(composerShellStack)
+                    .environment(\.composerRimChaseActive, card != nil && isRunning)
             }
         }
     }
@@ -1367,6 +1440,8 @@ struct ThreadDetailView: View {
                             fallbackDeletions: pillDeletions,
                             fallbackCommitsAhead: pillCommitsAhead,
                             reduceMotion: reduceMotion,
+                            isRunning: isRunning,
+                            refreshGeneration: diffPillRefreshGeneration,
                             onTap: { openComposerDiffSheet(workspaceId: primaryWorkspaceId) }
                         )
                     }
@@ -1598,6 +1673,7 @@ struct ThreadDetailView: View {
     }
 
     private func openComposerDiffSheet(workspaceId: String?) {
+        diffPillRefreshGeneration += 1
         let resolvedWorkspaceId = workspaceId ?? model.diffReviewableWorkspaces.first?.id
         guard model.workspaceCanReviewDiffs(resolvedWorkspaceId) else {
             model.inspectorPresented = true

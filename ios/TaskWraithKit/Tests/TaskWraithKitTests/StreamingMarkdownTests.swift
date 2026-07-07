@@ -90,6 +90,19 @@ struct StreamingMarkdownSplitterTests {
         #expect(incremental == StreamingMarkdownSplitter.split(replaced))
     }
 
+    @Test func incrementalSplitResplitsWhenWhitespaceOnlyLineCrossesChunkBoundary() {
+        let previousText = "Done paragraph.\n"
+        let growth = "   \nNext grow"
+        #expect(
+            StreamingMarkdownSplitter.growthContainsNewSettlingBoundary(
+                since: previousText, growth: growth))
+        let incremental = StreamingMarkdownSplitter.splitIncremental(
+            previousSettled: "",
+            previousText: previousText,
+            text: previousText + growth)
+        #expect(incremental == StreamingMarkdownSplitter.split(previousText + growth))
+    }
+
     @Test func incrementalSplitResplitsAfterFenceCloseThenBlankLine() {
         let chunk1 = "Intro.\n\n```\ncode"
         let split1 = StreamingMarkdownSplitter.splitIncremental(

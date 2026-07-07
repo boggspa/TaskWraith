@@ -76,10 +76,6 @@ public enum StreamingMarkdownSplitter {
         let stablePrefix = String(previousText[..<lineStartInPrevious])
         let crossChunk = String(previousText[lineStartInPrevious...]) + growth
 
-        if !crossChunk.contains("\n\n") {
-            if !(previousText.hasSuffix("\n") && growth.hasPrefix("\n")) { return false }
-        }
-
         var inFence = fenceOpen(atEndOf: stablePrefix)
         var lineStart = crossChunk.startIndex
         while lineStart < crossChunk.endIndex {

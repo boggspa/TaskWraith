@@ -68,10 +68,7 @@ struct IosParityFixesTests {
             modelUsageProviders: usage,
             providerModels: ["claude": fallbackModels])
 
-        let claude = try #require(snapshots.first { $0.id == "claude" })
-        #expect(claude.statusKind == "notObservable")
-        #expect(claude.statusText == "1 model available")
-        #expect(claude.usageWindows.map(\.id) == ["claude-day"])
+        #expect(snapshots.isEmpty)
     }
 
     @MainActor
@@ -427,6 +424,34 @@ struct IosParityFixesTests {
             """)
 
         #expect(twShouldRenderAfterLiveBlock(row, liveStartedAt: "2026-07-03T18:35:00Z") == false)
+    }
+
+    @Test func settledRowSpeakerSplitParsesParenthesizedModel() {
+        let split = twSettledRowSpeakerSplit(from: "Gemini / Researcher (2.5 Flash)")
+        #expect(split.label == "Gemini / Researcher")
+        #expect(split.chip == "2.5 Flash")
+    }
+
+    @Test func settledRowSpeakerSplitKeepsFullLabelWithoutParens() {
+        let split = twSettledRowSpeakerSplit(from: "Codex / Adversary2")
+        #expect(split.label == "Codex / Adversary2")
+        #expect(split.chip == nil)
+    }
+
+    @Test func settledRowSpeakerSplitFallsBackOnMalformedParens() {
+        let split = twSettledRowSpeakerSplit(from: "Claude / WriteMain ()")
+        #expect(split.label == "Claude / WriteMain ()")
+        #expect(split.chip == nil)
+    }
+
+    @Test func settledRowSpeakerSplitHandlesEmptySpeaker() {
+        #expect(twSettledRowSpeakerSplit(from: nil) == ("", nil))
+        #expect(twSettledRowSpeakerSplit(from: "") == ("", nil))
+    }
+
+    @Test func settledRowModelChipDelegatesToSplit() {
+        #expect(twSettledRowModelChip(from: "Claude / WriteMain (Fable 5)") == "Fable 5")
+        #expect(twSettledRowModelChip(from: "Codex / Adversary2") == nil)
     }
 
     private func remoteTaskCard(_ json: String) throws -> RemoteTaskCard {
