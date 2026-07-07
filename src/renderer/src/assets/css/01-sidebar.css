@@ -1210,7 +1210,10 @@
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: var(--sidebar-section-row-gap);
+  /* Even vertical rhythm comes from each section's own padding-block
+   * (see .sidebar-hierarchy-section) so the grouping divider sits
+   * centered between sections; the flex gap would double it up. */
+  gap: 0;
 }
 
 #sidebar-threads-panel > .sidebar-hierarchy-section {
@@ -1242,6 +1245,20 @@
   display: flex;
   flex-direction: column;
   gap: var(--sidebar-section-body-gap);
+  /* Full-width grouping divider + even padding. The divider is chrome
+   * on EACH section (never a sibling combinator): sections reorder via
+   * flex `order`, so only chrome attached to the section itself travels
+   * with it when dragged. Contrast-aware via --sidebar-text (white-mix
+   * on dark themes, black-mix on light). */
+  padding-block: 9px;
+  border-top: 1px solid color-mix(in srgb, var(--sidebar-text) 13%, transparent);
+}
+
+/* Sections whose content resolved to null (e.g. Recents with no chats)
+ * still mount their drag wrapper — hide them so they don't contribute
+ * stray dividers/padding to the stack. */
+.sidebar-hierarchy-section:empty {
+  display: none;
 }
 
 .sidebar-hierarchy-section.is-dragging {
@@ -1399,11 +1416,11 @@
 
 .sidebar-section-title {
   /* Top-level sidebar hierarchy pills (Pinned / Recents / Ensembles /
-   * Workspaces / Chats) stay compact, but need enough weight to remain
-   * findable in long chat lists. */
+   * Workspaces / Chats). iOS-parity: sentence case, semibold — the
+   * capsule chrome lives on .sidebar-section-header-toggle (shard 08). */
   font-size: calc(var(--font-size-xs) * 0.95);
-  font-weight: 700;
-  text-transform: uppercase;
+  font-weight: 600;
+  text-transform: none;
   letter-spacing: 0;
   color: var(--sidebar-text-secondary);
   margin: 0;
@@ -1456,16 +1473,17 @@
 .sidebar-section-header-toggle:focus-visible {
   outline: 2px solid color-mix(in srgb, var(--accent) 56%, transparent);
   outline-offset: 2px;
-  border-radius: var(--composer-bubble-radius, 18px);
+  border-radius: 999px;
 }
 
 /* Keep the chevron quietly compact next to the title pill — the
  * pill carries its own padding; the chevron should not push the pill
  * off-center vertically. */
 .sidebar-section-header-toggle .sidebar-tree-chevron {
-  width: 12px;
-  height: 12px;
-  color: color-mix(in srgb, var(--sidebar-text) 56%, transparent);
+  /* iOS: 11pt bold chevron inside the capsule (lifted for contrast). */
+  width: 11px;
+  height: 11px;
+  color: color-mix(in srgb, var(--sidebar-text) 62%, transparent);
 }
 
 .sidebar-section-header-toggle > :is(.sidebar-tree-chevron, .sidebar-section-title) {
@@ -1489,10 +1507,10 @@
   height: var(--sidebar-section-action-size);
   align-items: center;
   justify-content: center;
-  border: 1px solid color-mix(in srgb, var(--sidebar-border) 34%, transparent);
+  border: 1px solid color-mix(in srgb, var(--sidebar-text) 16%, var(--sidebar-border));
   border-radius: 999px;
-  background: color-mix(in srgb, var(--sidebar-text) 6%, transparent);
-  color: color-mix(in srgb, var(--sidebar-text) 76%, transparent);
+  background: color-mix(in srgb, var(--sidebar-text) 10%, transparent);
+  color: color-mix(in srgb, var(--sidebar-text) 88%, transparent);
   cursor: pointer;
   transition:
     background 120ms ease,
@@ -1584,11 +1602,15 @@
 .sidebar-item {
   display: flex;
   align-items: center;
-  gap: 7px;
-  padding: 7px 10px;
-  border-radius: var(--radius-sm);
+  /* iOS-parity rows: 8pt glyph→text gap, roomier vertical rhythm,
+   * 12px continuous-style corners (matches the iOS selection rect). */
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 12px;
   font-size: var(--font-size-sm);
-  color: color-mix(in srgb, var(--sidebar-text) 86%, transparent);
+  /* 92% ink: row titles are the sidebar's primary content — anything
+   * fainter reads hazy against busy glass/wallpaper backdrops. */
+  color: color-mix(in srgb, var(--sidebar-text) 92%, transparent);
   cursor: pointer;
   transition: color 0.12s ease, background-color 0.12s ease;
   outline: none;
@@ -1619,18 +1641,16 @@ button.sidebar-item {
 }
 
 .sidebar-item:hover {
-  background: color-mix(in srgb, var(--text-primary) 5%, transparent);
+  background: color-mix(in srgb, var(--text-primary) 7%, transparent);
 }
 
 .sidebar-item.active {
-  /* Selection rim (base). The prominent gradient + rim for the .app-sidebar
-     context lives in shard 05; the "fingernail" ::before is removed. */
-  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  /* Selection (base) — iOS recipe: flat accent fill @16% + accent ring
+     @50%, no inner glow. Shard 05 repeats this for .app-sidebar scope. */
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
   color: var(--text-primary);
   font-weight: 600;
-  box-shadow:
-    inset 0 0 0 1px color-mix(in srgb, var(--accent) 40%, var(--panel-border)),
-    inset 0 0 12px color-mix(in srgb, var(--accent) 9%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 50%, transparent);
 }
 
 .sidebar-workspace-group {
@@ -1713,7 +1733,7 @@ button.sidebar-item {
   border: 0;
   border-radius: var(--radius-sm);
   background: transparent;
-  color: color-mix(in srgb, var(--sidebar-text-secondary, var(--text-secondary)) 74%, transparent);
+  color: color-mix(in srgb, var(--sidebar-text-secondary, var(--text-secondary)) 88%, transparent);
   font: inherit;
   font-size: calc(var(--sidebar-row-font-size) * 0.92);
   font-weight: 600;
@@ -1765,6 +1785,10 @@ button.sidebar-item {
 }
 
 .sidebar-chat-age {
+  /* iOS-parity: the iOS sidebar deliberately dropped row timestamps
+   * (HomeListViews TaskRow) — rows carry glyph + title + chevron only.
+   * Remove this display:none to bring the "9m"/"22h" ages back. */
+  display: none;
   flex: 0 0 auto;
   margin-left: auto;
   color: var(--sidebar-text-secondary);

@@ -739,9 +739,9 @@
     0 10px 26px rgba(0, 0, 0, 0.13);
 }
 
+/* iOS-parity: section header rows and titles carry NO box of their own —
+ * the capsule chrome lives on .sidebar-section-header-toggle (shard 08). */
 [data-appearance="native_glass"][data-reduce-transparency="false"] .app-sidebar :is(
-  .sidebar-section-header,
-  .sidebar-section-title,
   .sidebar-masthead-stats span,
   .sidebar-workspace-count-badge,
   .sidebar-chat-age

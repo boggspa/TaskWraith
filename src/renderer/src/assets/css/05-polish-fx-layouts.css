@@ -10,18 +10,10 @@
 }
 
 .app-sidebar .sidebar-item.active {
-  /* Selection = rim-highlight chrome: the opacity-gradient background (kept)
-     + an accent inset ring + faint inner glow. Replaces the old left-edge
-     "fingernail" sliver (the ::before below is removed). */
-  background: linear-gradient(
-    90deg,
-    color-mix(in srgb, var(--accent) 17%, transparent) 0%,
-    color-mix(in srgb, var(--accent) 7%, transparent) 60%,
-    transparent 100%
-  );
-  box-shadow:
-    inset 0 0 0 1px color-mix(in srgb, var(--accent) 42%, var(--panel-border)),
-    inset 0 0 12px color-mix(in srgb, var(--accent) 10%, transparent);
+  /* Selection — iOS recipe (HomeListViews selection chrome): flat
+     accent fill @16% + accent ring @50%, no gradient, no inner glow. */
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 50%, transparent);
 }
 
 /* --- Sidebar: section header sticky + subtle frosted backdrop --------- */
@@ -38,14 +30,16 @@
   );
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
-  border-bottom: 1px solid color-mix(in srgb, var(--sidebar-border) 70%, transparent);
+  /* iOS-parity: no divider hairline under the sticky header. */
+  border-bottom: 0;
 }
 
 .app-sidebar .sidebar-section-title {
   font-size: calc(var(--font-size-xs) * 0.95);
-  font-weight: 760;
+  /* iOS GlassPillHeader: 15pt semibold (lifted for desktop contrast). */
+  font-weight: 600;
   letter-spacing: 0;
-  color: color-mix(in srgb, var(--sidebar-text) 82%, var(--text-primary));
+  color: color-mix(in srgb, var(--sidebar-text) 92%, var(--text-primary));
 }
 
 /* --- Sidebar: vertical tree-line for nested chats --------------------- */
@@ -116,15 +110,23 @@
    sliver — "fingernail" removed). A selected chat gets a provider-tinted
    gradient + rim, so the accent reads only where it carries meaning. */
 .app-sidebar .sidebar-workspace-group .sidebar-chat-item.active {
-  background: linear-gradient(
-    90deg,
-    color-mix(in srgb, var(--chat-provider-accent) 15%, transparent) 0%,
-    color-mix(in srgb, var(--chat-provider-accent) 6%, transparent) 60%,
-    transparent 100%
-  );
-  box-shadow:
-    inset 0 0 0 1px color-mix(in srgb, var(--chat-provider-accent) 42%, var(--panel-border)),
-    inset 0 0 12px color-mix(in srgb, var(--chat-provider-accent) 10%, transparent);
+  background: color-mix(in srgb, var(--chat-provider-accent) 15%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--chat-provider-accent) 48%, transparent);
+}
+
+/* iOS-parity trailing disclosure chevron on thread rows (TaskRow's
+ * chevron.right, caption2 at textMuted). Pure chrome — the row stays
+ * the click target; the glyph just signals navigation, replacing the
+ * timestamp that used to occupy the trailing slot. */
+.app-sidebar .sidebar-chat-item::after {
+  content: "";
+  flex: 0 0 auto;
+  width: 10px;
+  height: 10px;
+  margin-left: auto;
+  background: color-mix(in srgb, var(--sidebar-text) 38%, transparent);
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M4.5 2.5 8 6l-3.5 3.5' fill='none' stroke='%23000' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M4.5 2.5 8 6l-3.5 3.5' fill='none' stroke='%23000' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / contain no-repeat;
 }
 
 .app-sidebar .sidebar-workspace-group .sidebar-chat-item .sidebar-chat-age {
@@ -154,10 +156,13 @@
   margin-left: auto;
   padding: 0 6px;
   border-radius: 999px;
-  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
-  color: color-mix(in srgb, var(--sidebar-text-secondary) 92%, transparent);
-  font-size: 10.5px;
-  font-weight: 650;
+  /* iOS count badge recipe, matched to the section-header count chips
+   * (16% capsule / 72% digits) so every count in the sidebar reads at
+   * one consistent strength. */
+  background: color-mix(in srgb, var(--sidebar-text) 16%, transparent);
+  color: color-mix(in srgb, var(--sidebar-text) 72%, transparent);
+  font-size: 11px;
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
   line-height: 1;
   transition: opacity 0.12s ease, transform 0.12s ease;
@@ -2081,24 +2086,25 @@
   align-items: center;
   justify-content: center;
   gap: 5px;
-  padding: 0 10px;
-  border: 1px solid color-mix(in srgb, var(--accent) 36%, transparent);
+  padding: 0 12px;
+  /* iOS-parity capsule (matches the "+ New" pill on the iOS masthead
+   * and the section-header capsules): flat translucent fill + hairline,
+   * no gradient, no bevel, no hover lift. */
+  border: 1px solid color-mix(in srgb, var(--sidebar-text) 20%, var(--sidebar-border));
   border-radius: 999px;
-  background:
-    linear-gradient(135deg, color-mix(in srgb, var(--accent) 30%, transparent), color-mix(in srgb, var(--accent) 12%, transparent)),
-    color-mix(in srgb, var(--text-primary) 7%, transparent);
-  color: var(--text-primary);
+  background: color-mix(in srgb, var(--sidebar-text) 14%, transparent);
+  color: color-mix(in srgb, var(--sidebar-text) 96%, var(--text-primary));
   font: inherit;
   font-size: var(--font-size-xs);
-  font-weight: 700;
+  font-weight: 600;
   cursor: pointer;
-  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--text-primary) 12%, transparent);
-  transition: transform 140ms ease, background-color 140ms ease, border-color 140ms ease;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.22), 0 2px 8px rgba(0, 0, 0, 0.16);
+  transition: background-color 140ms ease, border-color 140ms ease;
 }
 
 .sidebar-primary-action:hover {
-  transform: translateY(-1px);
-  border-color: color-mix(in srgb, var(--accent) 54%, transparent);
+  background: color-mix(in srgb, var(--sidebar-text) 20%, transparent);
+  border-color: color-mix(in srgb, var(--sidebar-text) 28%, var(--sidebar-border));
 }
 
 .sidebar-masthead-stats {
@@ -2160,14 +2166,19 @@
   color: color-mix(in srgb, var(--accent) 86%, var(--text-primary));
 }
 
+/* iOS-parity segmented control: capsule track with a hairline, flat
+ * neutral thumb on the active segment — no accent gradient, no drop
+ * shadow, mirrors the native iOS segmented-picker language used by
+ * the app's iOS sidebar chrome. */
 .sidebar-view-tabs {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 4px;
   padding: 3px;
-  border: 1px solid color-mix(in srgb, var(--sidebar-border) 72%, transparent);
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--text-primary) 5%, transparent);
+  border: 1px solid color-mix(in srgb, var(--sidebar-text) 16%, var(--sidebar-border));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--sidebar-text) 8%, transparent);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.22), 0 2px 8px rgba(0, 0, 0, 0.16);
 }
 
 .sidebar-view-tab {
@@ -2176,28 +2187,25 @@
   min-width: 0;
   height: 28px;
   border: 0;
-  border-radius: 7px;
+  border-radius: 999px;
   background: transparent;
-  color: color-mix(in srgb, var(--sidebar-text-secondary) 86%, transparent);
+  color: color-mix(in srgb, var(--sidebar-text) 75%, transparent);
   font: inherit;
   font-size: 11px;
-  font-weight: 760;
+  font-weight: 600;
   letter-spacing: 0;
   cursor: pointer;
 }
 
 .sidebar-view-tab:hover {
   color: var(--sidebar-text);
-  background: color-mix(in srgb, var(--text-primary) 7%, transparent);
+  background: color-mix(in srgb, var(--sidebar-text) 10%, transparent);
 }
 
 .sidebar-view-tab.is-active {
-  color: var(--sidebar-text);
-  background:
-    linear-gradient(180deg, color-mix(in srgb, var(--accent) 20%, transparent), color-mix(in srgb, var(--text-primary) 6%, transparent));
-  box-shadow:
-    inset 0 0 0 1px color-mix(in srgb, var(--accent) 34%, transparent),
-    0 1px 3px color-mix(in srgb, var(--shadow-color, #000) 18%, transparent);
+  color: color-mix(in srgb, var(--sidebar-text) 98%, var(--text-primary));
+  background: color-mix(in srgb, var(--sidebar-text) 20%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--sidebar-text) 22%, transparent);
 }
 
 .app-sidebar .sidebar-hierarchy-scroll,
@@ -2290,20 +2298,29 @@
 
 .sidebar-workspace-name {
   color: color-mix(in srgb, var(--sidebar-text) 92%, var(--text-primary));
-  font-weight: 760;
+  /* iOS folder rows: 15pt semibold name, no heavier. */
+  font-weight: 600;
   letter-spacing: 0;
 }
 
 .sidebar-workspace-meta,
 .sidebar-chat-subline {
   min-width: 0;
-  color: color-mix(in srgb, var(--sidebar-text-secondary) 82%, transparent);
+  /* 10.5px text needs near-full secondary ink to stay legible. */
+  color: color-mix(in srgb, var(--sidebar-text-secondary) 94%, transparent);
   font-size: 10.5px;
   font-weight: 500;
   line-height: 1.2;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* iOS-parity: folder rows show name + count only — the path/branch
+ * subtitle is dropped (full path remains on the row's hover tooltip).
+ * Remove this display:none to bring the subtitles back. */
+.app-sidebar .sidebar-workspace-meta {
+  display: none;
 }
 
 .app-sidebar .sidebar-chat-list {

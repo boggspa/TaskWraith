@@ -3909,6 +3909,61 @@
   padding: 0 !important;
 }
 
+/* iOS-parity section headers (GlassPillHeader): the outlined capsule
+ * wraps chevron + title as ONE pill — chrome lives on the toggle
+ * wrapper, not the <h4>, so the disclosure chevron sits inside the
+ * capsule exactly like the iOS sidebar. Fill/stroke are --sidebar-text
+ * mixes (≈ ultra-thin material + white-6%/black-10% hairline) so they
+ * adapt to light themes and stay translucent over the slider-driven
+ * sidebar background. */
+.app-sidebar .sidebar-section-header-toggle {
+  flex: 0 1 auto;
+  width: max-content;
+  min-width: 0;
+  max-width: 100%;
+  padding: 5px 12px 5px 10px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--sidebar-text) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--sidebar-text) 18%, var(--sidebar-border));
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.22), 0 2px 8px rgba(0, 0, 0, 0.16);
+  transition: background 120ms ease, border-color 120ms ease;
+}
+
+/* Light themes: same lift, gentler ink — heavy black shadows read as
+ * grime on pale surfaces. */
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .app-sidebar :is(
+  .sidebar-section-header-toggle,
+  .sidebar-primary-action,
+  .sidebar-view-tabs
+) {
+  box-shadow: 0 1px 2px rgba(20, 20, 35, 0.08), 0 2px 6px rgba(20, 20, 35, 0.06);
+}
+
+.app-sidebar .sidebar-section-header-toggle:hover,
+.app-sidebar .sidebar-section-header-toggle:focus-visible {
+  background: color-mix(in srgb, var(--sidebar-text) 17%, transparent);
+  border-color: color-mix(in srgb, var(--sidebar-text) 26%, var(--sidebar-border));
+}
+
+/* Section count badge INSIDE the header capsule (iOS GlassPillHeader:
+ * 11pt semibold monospaced digits on a surface3 capsule, tertiary text). */
+.app-sidebar .sidebar-section-header-toggle .sidebar-section-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  min-width: 16px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--sidebar-text) 16%, transparent);
+  color: color-mix(in srgb, var(--sidebar-text) 72%, transparent);
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.3;
+  pointer-events: none;
+}
+
 .app-sidebar .sidebar-active-runs-section .sidebar-section-title,
 .app-sidebar .sidebar-local-servers-section .sidebar-section-title,
 .app-sidebar .sidebar-workflows-section .sidebar-section-title,
@@ -3928,82 +3983,35 @@
   text-transform: none;
   letter-spacing: 0;
   display: inline-flex;
-  width: max-content;
   min-width: 0;
   max-width: 100%;
-  padding: 3px 8px;
-  border-radius: var(--composer-bubble-radius, 18px);
-  background:
-    linear-gradient(
-      180deg,
-      color-mix(in srgb, var(--sidebar-text) 11%, transparent),
-      color-mix(in srgb, var(--sidebar-text) 6%, transparent)
-    );
-  border: 1px solid color-mix(in srgb, var(--sidebar-text) 16%, var(--sidebar-border));
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, #ffffff 8%, transparent),
-    inset 0 0 0 1px color-mix(in srgb, var(--sidebar-text) 4%, transparent),
-    0 1px 2px rgba(0, 0, 0, 0.08);
+  /* Bare label — the capsule chrome moved to the toggle wrapper above. */
+  padding: 0;
+  border-radius: 0;
+  background: none;
+  border: 0;
+  box-shadow: none;
+  font-weight: 600;
   line-height: 1.16;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.app-sidebar .sidebar-section-header-toggle:hover .sidebar-section-title,
-.app-sidebar .sidebar-section-header-toggle:focus-visible .sidebar-section-title {
-  background:
-    linear-gradient(
-      180deg,
-      color-mix(in srgb, var(--accent) 18%, var(--sidebar-text) 8%),
-      color-mix(in srgb, var(--accent) 9%, transparent)
-    );
-  border-color: color-mix(in srgb, var(--accent) 42%, var(--sidebar-border));
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, #ffffff 10%, transparent),
-    inset 0 0 0 1px color-mix(in srgb, var(--accent) 10%, transparent),
-    0 1px 4px color-mix(in srgb, var(--accent) 12%, transparent);
-  color: color-mix(in srgb, var(--sidebar-text) 92%, var(--text-primary));
+/* Native-glass sidebar sits over the desktop, so the capsule needs a
+ * brighter white fill than the --sidebar-text mix to stay legible.
+ * Same iOS capsule shape as above, chrome on the toggle wrapper. */
+[data-appearance="native_glass"][data-reduce-transparency="false"] .app-sidebar .sidebar-section-header-toggle {
+  background: color-mix(in srgb, #ffffff 13%, transparent) !important;
+  border-color: color-mix(in srgb, #ffffff 24%, transparent) !important;
+  box-shadow: none;
 }
 
-[data-appearance="native_glass"][data-reduce-transparency="false"] .app-sidebar .sidebar-active-runs-section .sidebar-section-title,
-[data-appearance="native_glass"][data-reduce-transparency="false"] .app-sidebar .sidebar-local-servers-section .sidebar-section-title,
-[data-appearance="native_glass"][data-reduce-transparency="false"] .app-sidebar .sidebar-workflows-section .sidebar-section-title,
-[data-appearance="native_glass"][data-reduce-transparency="false"] .app-sidebar .sidebar-workspace-boards-section .sidebar-section-title,
-[data-appearance="native_glass"][data-reduce-transparency="false"] .app-sidebar .sidebar-projects-header .sidebar-section-title,
-[data-appearance="native_glass"][data-reduce-transparency="false"] .app-sidebar .sidebar-workspace-scroll .sidebar-section-title,
-[data-appearance="native_glass"][data-reduce-transparency="false"] .app-sidebar .sidebar-chats-section .sidebar-section-title,
-[data-appearance="native_glass"][data-reduce-transparency="false"] .app-sidebar .sidebar-chats-header .sidebar-section-title,
-[data-appearance="native_glass"][data-reduce-transparency="false"] .app-sidebar .sidebar-recents-section .sidebar-section-title,
-[data-appearance="native_glass"][data-reduce-transparency="false"] .app-sidebar .sidebar-pinned-section .sidebar-section-title,
-[data-appearance="native_glass"][data-reduce-transparency="false"] .app-sidebar .sidebar-ensembles-section .sidebar-section-title,
-[data-appearance="native_glass"][data-reduce-transparency="false"] .app-sidebar .sidebar-shared-section .sidebar-section-title {
-  background:
-    linear-gradient(
-      180deg,
-      color-mix(in srgb, #ffffff 10%, transparent),
-      color-mix(in srgb, #ffffff 5%, transparent)
-    ) !important;
-  border-color: color-mix(in srgb, #ffffff 18%, transparent) !important;
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, #ffffff 14%, transparent),
-    inset 0 0 0 1px color-mix(in srgb, #ffffff 5%, transparent),
-    0 1px 3px rgba(0, 0, 0, 0.08);
-}
-
-[data-appearance="native_glass"][data-reduce-transparency="false"] .app-sidebar .sidebar-section-header-toggle:hover .sidebar-section-title,
-[data-appearance="native_glass"][data-reduce-transparency="false"] .app-sidebar .sidebar-section-header-toggle:focus-visible .sidebar-section-title {
-  background:
-    linear-gradient(
-      180deg,
-      color-mix(in srgb, var(--accent) 20%, #ffffff 8%),
-      color-mix(in srgb, var(--accent) 10%, transparent)
-    ) !important;
-  border-color: color-mix(in srgb, var(--accent) 44%, #ffffff 14%) !important;
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, #ffffff 16%, transparent),
-    inset 0 0 0 1px color-mix(in srgb, var(--accent) 12%, transparent),
-    0 1px 4px color-mix(in srgb, var(--accent) 14%, transparent);
+[data-appearance="native_glass"][data-reduce-transparency="false"] .app-sidebar .sidebar-section-header-toggle:hover,
+[data-appearance="native_glass"][data-reduce-transparency="false"] .app-sidebar .sidebar-section-header-toggle:focus-visible {
+  background: color-mix(in srgb, #ffffff 19%, transparent) !important;
+  border-color: color-mix(in srgb, #ffffff 32%, transparent) !important;
+  box-shadow: none;
 }
 
 /* ─── Phase K1B: RunInspector ─────────────────────────────────────────── */
@@ -5142,9 +5150,9 @@
     0 8px 22px rgba(60, 60, 80, 0.08);
 }
 
-/* Section header badges. */
+/* Section header badges. (The header row itself carries no box —
+ * capsule chrome lives on .sidebar-section-header-toggle.) */
 [data-appearance="native_glass"][data-reduce-transparency="false"]:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .app-sidebar :is(
-  .sidebar-section-header,
   .sidebar-masthead-stats span,
   .sidebar-workspace-count-badge,
   .sidebar-chat-age
@@ -5153,29 +5161,20 @@
   border-color: rgba(0, 0, 0, 0.08);
 }
 
-[data-appearance="native_glass"][data-reduce-transparency="false"]:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .app-sidebar .sidebar-section-title {
-  background:
-    linear-gradient(180deg, rgba(0, 0, 0, 0.055), rgba(0, 0, 0, 0.032)) !important;
-  border-color: rgba(0, 0, 0, 0.13) !important;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.42),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.18),
-    0 1px 2px rgba(60, 60, 80, 0.08);
+/* iOS-parity: capsule chrome lives on the toggle wrapper (the title is
+ * a bare label — chip chrome on it would draw a box-inside-the-pill).
+ * Flat light fill + black-10% hairline, matching iOS light borders. */
+[data-appearance="native_glass"][data-reduce-transparency="false"]:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .app-sidebar .sidebar-section-header-toggle {
+  background: rgba(0, 0, 0, 0.07) !important;
+  border-color: rgba(0, 0, 0, 0.18) !important;
+  box-shadow: none;
 }
 
-[data-appearance="native_glass"][data-reduce-transparency="false"]:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .app-sidebar .sidebar-section-header-toggle:hover .sidebar-section-title,
-[data-appearance="native_glass"][data-reduce-transparency="false"]:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .app-sidebar .sidebar-section-header-toggle:focus-visible .sidebar-section-title {
-  background:
-    linear-gradient(
-      180deg,
-      color-mix(in srgb, var(--accent) 18%, rgba(0, 0, 0, 0.04)),
-      color-mix(in srgb, var(--accent) 9%, rgba(0, 0, 0, 0.025))
-    ) !important;
-  border-color: color-mix(in srgb, var(--accent) 38%, rgba(0, 0, 0, 0.16)) !important;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.46),
-    inset 0 0 0 1px color-mix(in srgb, var(--accent) 10%, transparent),
-    0 1px 4px color-mix(in srgb, var(--accent) 14%, transparent);
+[data-appearance="native_glass"][data-reduce-transparency="false"]:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .app-sidebar .sidebar-section-header-toggle:hover,
+[data-appearance="native_glass"][data-reduce-transparency="false"]:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .app-sidebar .sidebar-section-header-toggle:focus-visible {
+  background: rgba(0, 0, 0, 0.11) !important;
+  border-color: rgba(0, 0, 0, 0.26) !important;
+  box-shadow: none;
 }
 
 [data-appearance="native_glass"][data-reduce-transparency="false"]:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .app-sidebar .sidebar-workspace-scroll .sidebar-section-header {
@@ -8042,18 +8041,47 @@
 
 [data-composer-style="claude"] .composer-above-bar .composer-above-bar-action {
   background: #3a3a3a;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: var(--radius-md, 10px);
-  padding: 5px 12px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  padding: 5px 10px 5px 12px;
   color: rgba(255, 255, 255, 0.92);
   font-weight: 500;
   box-shadow: none;
   transition: background 0.16s, border-color 0.16s, color 0.16s;
 }
 
+/* Split-button parity: the action is already a menu trigger
+ * (aria-haspopup), and real Claude renders it as "Create PR | ⌄".
+ * Fake the attached chevron segment with flex-ordered pseudos —
+ * ::before is the hairline divider (order 1 places it after the
+ * label's anonymous flex item), ::after the chevron glyph (mask so
+ * it inherits currentColor). Icon-only variant keeps its glyph. */
+[data-composer-style="claude"] .composer-above-bar .composer-above-bar-action:not(.composer-above-bar-action--git-commit-icon) {
+  display: inline-flex;
+  align-items: center;
+}
+[data-composer-style="claude"] .composer-above-bar .composer-above-bar-action:not(.composer-above-bar-action--git-commit-icon)::before {
+  content: "";
+  order: 1;
+  width: 1px;
+  align-self: stretch;
+  margin: 1px 7px 1px 9px;
+  background: rgba(255, 255, 255, 0.16);
+}
+[data-composer-style="claude"] .composer-above-bar .composer-above-bar-action:not(.composer-above-bar-action--git-commit-icon)::after {
+  content: "";
+  order: 2;
+  width: 9px;
+  height: 9px;
+  background: currentColor;
+  opacity: 0.75;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2.5 4.5 6 8l3.5-3.5' fill='none' stroke='%23000' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2.5 4.5 6 8l3.5-3.5' fill='none' stroke='%23000' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+
 [data-composer-style="claude"] .composer-above-bar .composer-above-bar-action:hover:not(:disabled) {
   background: #444444;
-  border-color: rgba(255, 255, 255, 0.14);
+  border-color: transparent;
   color: #ffffff;
 }
 
@@ -8065,14 +8093,19 @@
 
 /* Light-mode counterpart for the gray button. */
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="claude"] .composer-above-bar .composer-above-bar-action {
-  background: #e8e8ea !important;
+  background: #ffffff !important;
   border-color: rgba(0, 0, 0, 0.08) !important;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05) !important;
   color: rgba(29, 29, 31, 0.92) !important;
 }
 
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="claude"] .composer-above-bar .composer-above-bar-action:not(.composer-above-bar-action--git-commit-icon)::before {
+  background: rgba(0, 0, 0, 0.16);
+}
+
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="claude"] .composer-above-bar .composer-above-bar-action:hover:not(:disabled) {
-  background: #dcdce0 !important;
-  border-color: rgba(0, 0, 0, 0.14) !important;
+  background: #f5f5f6 !important;
+  border-color: rgba(0, 0, 0, 0.12) !important;
   color: rgba(29, 29, 31, 1) !important;
 }
 
@@ -8665,57 +8698,91 @@
  *    (workspace → branch → upstream → files → diff → action). Inherits
  *    the shared flex `order` ladder from shard 07; only the visual skin
  *    lives here. */
+/* Info chips (files-changed count + diff stat) share the SAME gray as
+ * the Create-PR button — in the real Claude row the diff pill and the
+ * button are one matched family of flat, rimless chips. */
 [data-composer-style="claude"] .composer-above-bar .composer-above-bar-files {
   background: #3a3a3a !important;
-  border: 1px solid rgba(255, 255, 255, 0.08) !important;
-  border-radius: var(--radius-md, 10px) !important;
-  padding: 4px 10px !important;
+  border: 1px solid transparent !important;
+  border-radius: 8px !important;
+  /* 5px vertical = the action button's padding; with matching 1px
+   * borders + font-size all three chips land the same box height. */
+  padding: 5px 10px !important;
   color: rgba(255, 255, 255, 0.92) !important;
   font-variant-numeric: tabular-nums;
 }
 
 [data-composer-style="claude"] .composer-above-bar .composer-above-bar-stats {
   background: #3a3a3a !important;
-  border: 1px solid rgba(255, 255, 255, 0.08) !important;
-  border-radius: var(--radius-md, 10px) !important;
-  padding: 4px 10px !important;
+  border: 1px solid transparent !important;
+  border-radius: 8px !important;
+  padding: 5px 10px !important;
   color: rgba(255, 255, 255, 0.92) !important;
   font-variant-numeric: tabular-nums;
 }
 
+/* Even 8px rhythm across files → diff → action. The shared shell rules
+ * give the flattened stats chip a legacy 4px margin on top of the row's
+ * 10px gap (14px total); -2px matches the action's 8px pairing below.
+ * Scoped to the files-cluster so the secondary row's center-cluster
+ * (already an 8px gap) is untouched. */
+[data-composer-style="claude"] .composer-above-bar-files-cluster .composer-above-bar-stats {
+  margin-left: -2px;
+}
+
+/* Row labels pinned to the system stack: the app default (Avenir Next)
+ * has geometric digits, and these chips are mostly digits — the one
+ * typographic tell against the real Claude row, which renders its
+ * chrome in SF Pro / system-ui. Branch/workspace label included so the
+ * whole row reads as one typeface. Pinned regardless of the user's
+ * composer-font pref; mimicry is this shell's whole contract. */
+[data-composer-style="claude"] .composer-above-bar .composer-above-bar-branch,
+[data-composer-style="claude"] .composer-above-bar .composer-above-bar-files,
+[data-composer-style="claude"] .composer-above-bar .composer-above-bar-stats,
+[data-composer-style="claude"] .composer-above-bar .composer-above-bar-action {
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+}
+
 /* Pull tighter against the diff button — the parent has a 10px
  * `gap` which is a touch wide for the diff-to-PR pairing real
- * Claude shows. -6px lands on a 4px effective gap. */
+ * Claude shows. -2px lands on an 8px effective gap. */
 [data-composer-style="claude"] .composer-above-bar .composer-above-bar-action {
-  margin-left: -6px;
+  margin-left: -2px;
 }
 
 /* Light-mode counterparts for the new files-changed button skin. */
+/* Light mode inverts the real app's contrast: white chips lifted off the
+ * gray band, defined by a hairline rim + whisper of shadow. */
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="claude"] .composer-above-bar .composer-above-bar-files {
-  background: #e8e8ea !important;
+  background: #ffffff !important;
   border-color: rgba(0, 0, 0, 0.08) !important;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
   color: rgba(29, 29, 31, 0.92) !important;
 }
 
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="claude"] .composer-above-bar .composer-above-bar-stats {
-  background: #e8e8ea !important;
+  background: #ffffff !important;
   border-color: rgba(0, 0, 0, 0.08) !important;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
   color: rgba(29, 29, 31, 0.92) !important;
 }
 
-/* Inner +/- spans keep their semantic green/red but lift contrast
- * against the new gray button bg. */
+/* Inner +/- spans: real Claude's diff numbers are semibold and a
+ * notch more saturated than the shared theme vars, so pin explicit
+ * values in this shell. */
 [data-composer-style="claude"] .composer-above-bar .composer-above-bar-stats .composer-diff-add {
-  color: var(--diff-stat-add-color, #2db777);
+  color: #3fb950;
+  font-weight: 600;
 }
 [data-composer-style="claude"] .composer-above-bar .composer-above-bar-stats .composer-diff-del {
-  color: var(--diff-stat-del-color, #ec3d35);
+  color: #f85149;
+  font-weight: 600;
 }
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="claude"] .composer-above-bar .composer-above-bar-stats .composer-diff-add {
-  color: var(--diff-stat-add-color, #2db777);
+  color: #1f883d;
 }
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="claude"] .composer-above-bar .composer-above-bar-stats .composer-diff-del {
-  color: var(--diff-stat-del-color, #ec3d35);
+  color: #d1242f;
 }
 
 /* 4) Permissions picker as a contained "Auto"-style button.

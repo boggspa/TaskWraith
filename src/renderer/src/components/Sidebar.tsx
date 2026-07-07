@@ -3948,6 +3948,9 @@ export function Sidebar({
               >
                 <ChevronSymbolIcon isExpanded={!isSectionCollapsed('workflows')} />
                 <h4 className="sidebar-section-title">Workflows</h4>
+                {visibleWorkflows.length > 0 && (
+                  <span className="sidebar-section-count">{visibleWorkflows.length}</span>
+                )}
               </button>
               <button
                 type="button"
@@ -4221,6 +4224,9 @@ export function Sidebar({
                 >
                   <ChevronSymbolIcon isExpanded={!isSectionCollapsed('workspace-boards')} />
                   <h4 className="sidebar-section-title">Workspace Boards</h4>
+                  {visibleWorkspaceBoards.length > 0 && (
+                    <span className="sidebar-section-count">{visibleWorkspaceBoards.length}</span>
+                  )}
                 </button>
                 <button
                   type="button"
@@ -4363,6 +4369,11 @@ export function Sidebar({
                 >
                   <ChevronSymbolIcon isExpanded={!isSectionCollapsed('pinned')} />
                   <h4 className="sidebar-section-title">Pinned</h4>
+                  {visiblePinnedWorkspaces.length + visiblePinnedChats.length > 0 && (
+                    <span className="sidebar-section-count">
+                      {visiblePinnedWorkspaces.length + visiblePinnedChats.length}
+                    </span>
+                  )}
                 </button>
               </div>
               {!isSectionCollapsed('pinned') && (
@@ -4554,6 +4565,9 @@ export function Sidebar({
                 >
                   <ChevronSymbolIcon isExpanded={!isSectionCollapsed('ensembles')} />
                   <h4 className="sidebar-section-title">Ensembles</h4>
+                  {visibleEnsembleChats.length > 0 && (
+                    <span className="sidebar-section-count">{visibleEnsembleChats.length}</span>
+                  )}
                 </button>
                 <button
                   type="button"
@@ -4737,6 +4751,9 @@ export function Sidebar({
               >
                 <ChevronSymbolIcon isExpanded={!isSectionCollapsed('workspaces')} />
                 <h4 className="sidebar-section-title">Workspaces</h4>
+                {visibleWorkspaceEntries.length > 0 && (
+                  <span className="sidebar-section-count">{visibleWorkspaceEntries.length}</span>
+                )}
               </button>
               {/*
                 `+` workspace button. The wrapping span carries the
@@ -5072,6 +5089,9 @@ export function Sidebar({
                 >
                   <ChevronSymbolIcon isExpanded={!isSectionCollapsed('chats')} />
                   <h4 className="sidebar-section-title">Chats</h4>
+                  {visibleGlobalChats.length > 0 && (
+                    <span className="sidebar-section-count">{visibleGlobalChats.length}</span>
+                  )}
                 </button>
                 <button
                   type="button"
@@ -5177,6 +5197,9 @@ export function Sidebar({
                 >
                   <ChevronSymbolIcon isExpanded={!isSectionCollapsed('shared')} />
                   <h4 className="sidebar-section-title">Shared</h4>
+                  {visibleSharedChats.length > 0 && (
+                    <span className="sidebar-section-count">{visibleSharedChats.length}</span>
+                  )}
                 </button>
                 {onCreateSharedChat && (
                   <div className="sidebar-new-menu-wrap" ref={sharedCreateMenuWrapRef}>

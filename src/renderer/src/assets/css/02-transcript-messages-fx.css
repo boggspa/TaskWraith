@@ -37,7 +37,7 @@
    * clearance. Each *additional* above-row strip in `.composer-above-bar-stack`
    * adds `--composer-above-row-clearance` (+20px per strip, set in App.tsx)
    * on top of the live `--composer-reserved-height` from ResizeObserver. */
-  --composer-scroll-clearance: 10px;
+  --composer-scroll-clearance: 5px;
   --composer-above-row-clearance: 0px;
   --composer-scroll-under-padding: calc(
     var(--composer-reserved-height) + var(--composer-bottom-gap) + var(--composer-scroll-clearance) +
@@ -6386,7 +6386,8 @@ html:has(.chat-split-region.chat-split-hidden-for-settings) .transcript-user-gut
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.02em;
-  background: rgb(255 255 255 / 0.07);
+  /* Contrast-aware fill: hardcoded white washed out on light themes. */
+  background: color-mix(in srgb, var(--sidebar-text, var(--text-primary)) 10%, transparent);
   color: var(--text-secondary);
   margin-left: 0.4rem;
   white-space: nowrap;
@@ -6398,7 +6399,7 @@ html:has(.chat-split-region.chat-split-hidden-for-settings) .transcript-user-gut
 }
 
 .sidebar-branched-badge.sidebar-branched-dim {
-  background: rgb(255 255 255 / 0.04);
+  background: color-mix(in srgb, var(--sidebar-text, var(--text-primary)) 6%, transparent);
   color: var(--text-tertiary);
 }
 
