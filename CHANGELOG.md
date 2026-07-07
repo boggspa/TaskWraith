@@ -6,6 +6,32 @@ history, and workspace state stay on your machine throughout.
 
 ## 1.7.8 - 2026-07-06
 
+### Added
+- **Queued messages → Blackboard.** The queued-message Steer button on desktop
+  is now a small menu: **Steer now** (unchanged — interrupts the round and
+  dispatches immediately) or **Add to Blackboard** (consumes the queued
+  message into a user-authored blackboard note the panel sees next turn,
+  without interrupting the round). Ensemble chats only; solo queue rows keep
+  the plain Steer button.
+- **iOS queued-message bubbles.** Queued messages moved out of the cramped
+  composer above-row into dashed "Queued #n" bubbles at the transcript tail
+  (Claude-app style), each with a 3-dots menu: Steer now / Add to Blackboard
+  (ensemble) / Edit / Remove. The side-chat mini composer keeps its compact
+  stack and the round HUD keeps its queued-count pill.
+- **Blackboard unread nudge.** Participants who post but never read: each
+  seat's briefing now calls out how many in-scope blackboard entries are new
+  to that seat ("N of these are new to you…") and reminds it to re-check the
+  board via `blackboard_read` at wrap-up. Quiet when everything is already
+  seen; resumed turns keep the existing unseen-only delta.
+- **GPT-5.6 Sol / Terra / Luna un-gated.** The GPT-5.6 trio is now selectable
+  and runnable in the Codex model pickers (composer, ensemble rosters, paired
+  iOS picker) under concrete ids `gpt-5.6-sol`, `gpt-5.6-terra`, and
+  `gpt-5.6-luna`, with Max reasoning on Sol. Launch-day safety posture is
+  unchanged: dispatch preflight still verifies the id against the live Codex
+  `model/list` and blocks with "Requires OpenAI preview access" until OpenAI
+  serves the model, and GPT-5.6 runs keep the stricter preview-risk approval
+  presets until eval confidence.
+
 ### Fixed
 - **iOS transcript hydration.** The Mac bridge now avoids sending oversized rich
   remote-projection frames that could exceed the relay's payload budget after

@@ -1185,10 +1185,22 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
     // without re-dumping the transcript. Empty digest (no entries, or only
     // foreign round-scoped ones) skips the section entirely.
     ...(() => {
-      const digest = formatBlackboardForPrompt(
-        selectBlackboardForRound(input.config.blackboard || [], input.roundId)
-      )
-      return digest ? ['', digest] : []
+      const visible = selectBlackboardForRound(input.config.blackboard || [], input.roundId)
+      const digest = formatBlackboardForPrompt(visible)
+      if (!digest) return []
+      // Write-only-participant nudge: seats reliably POST to the board but
+      // rarely go back and READ it. When this seat has in-scope entries it
+      // has never had surfaced (never injected into one of its prompts, never
+      // fetched via blackboard_read), say so with a concrete count — ambient
+      // digest text alone skims past. Quiet when everything is already seen.
+      const unseenCount = selectUnseenBlackboard(visible, input.participant.id).length
+      const nudge =
+        unseenCount > 0
+          ? [
+              `(${unseenCount} of these ${unseenCount === 1 ? 'is' : 'are'} new to you — review ${unseenCount === 1 ? 'it' : 'them'} before you start, and re-check the board when you wrap up: blackboard_read returns the newest posts on demand.)`
+            ]
+          : []
+      return ['', digest, ...nudge]
     })(),
     // 1.0.4-AT8 — prior round summary block. When the config has a
     // non-empty `lastRoundSummary` from the previous round's

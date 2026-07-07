@@ -2229,6 +2229,66 @@ describe('slim resumed-turn prompt shape', () => {
     expect(prompt).toContain('1 blackboard entry you have already seen is omitted')
     expect(prompt).toContain('blackboard_read')
   })
+
+  it('flags unseen-count on the full-briefing blackboard digest and stays quiet when all seen', () => {
+    const base = chat()
+    const blackboard = [
+      {
+        id: 'bb-seen',
+        chatId: 'chat-1',
+        roundId: 'round-1',
+        participantId: 'codex',
+        key: 'seen-note',
+        value: 'Already surfaced to this seat.',
+        category: 'fact' as const,
+        scope: 'session' as const,
+        createdAt: '2026-05-24T00:00:01.000Z',
+        seenBy: ['codex', 'claude']
+      },
+      {
+        id: 'bb-user',
+        chatId: 'chat-1',
+        roundId: 'round-1',
+        participantId: 'user',
+        key: 'queued-note-1',
+        value: 'User guidance from a queued message.',
+        category: 'note' as const,
+        scope: 'session' as const,
+        createdAt: '2026-05-24T00:00:02.000Z',
+        seenBy: ['user']
+      }
+    ]
+    const config: EnsembleConfig = { ...ensemble, blackboard }
+    const prompt = buildEnsembleParticipantPrompt({
+      chat: { ...base, ensemble: config },
+      config,
+      participant: config.participants.find((entry) => entry.id === 'claude')!,
+      currentPrompt: 'Continue.',
+      roundId: 'round-1',
+      chatContextTurns: 6
+    })
+    // Full briefing shows the whole digest PLUS the write-only-participant
+    // nudge with a concrete new-to-you count.
+    expect(prompt).toContain('Ensemble blackboard (shared scratchpad')
+    expect(prompt).toContain('queued-note-1: User guidance from a queued message.')
+    expect(prompt).toContain('1 of these is new to you')
+    expect(prompt).toContain('re-check the board when you wrap up')
+
+    const allSeen: EnsembleConfig = {
+      ...ensemble,
+      blackboard: blackboard.map((entry) => ({ ...entry, seenBy: ['codex', 'claude', 'user'] }))
+    }
+    const quietPrompt = buildEnsembleParticipantPrompt({
+      chat: { ...base, ensemble: allSeen },
+      config: allSeen,
+      participant: allSeen.participants.find((entry) => entry.id === 'claude')!,
+      currentPrompt: 'Continue.',
+      roundId: 'round-1',
+      chatContextTurns: 6
+    })
+    expect(quietPrompt).toContain('Ensemble blackboard (shared scratchpad')
+    expect(quietPrompt).not.toContain('new to you')
+  })
 })
 
 describe('seat compaction summary injection (wave 3)', () => {
