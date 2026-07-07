@@ -2157,18 +2157,76 @@ public final class RemoteSessionModel: ObservableObject {
 
     // ── Inbound projections ───────────────────────────────────────────────────
 
+    /// IF2 (Track-A): pure decision — suppress the agent-output snapshot
+    /// re-pull only when the event's thread is BOTH actively streaming and
+    /// the one on screen. Exit/other channels and off-screen threads keep
+    /// their refresh. Static + pure so tests exercise the exact gate.
+    nonisolated static func shouldSuppressStreamRefreshPull(
+        channel: String?, isStreamingThread: Bool, isVisibleThread: Bool
+    ) -> Bool {
+        channel == "agent-output" && isStreamingThread && isVisibleThread
+    }
+
+    /// IF1 (Track-A): coalescer for FULL projection-snapshot broadcasts.
+    /// Full snapshots are idempotent whole-state replacements, so while a
+    /// drain is pending only the NEWEST envelope matters — a burst of N
+    /// queued snapshots decodes and applies exactly once. Ordered per-thread
+    /// deltas and runEvents never route through here. The drain always runs
+    /// (pending is never dropped), so terminal state cannot be lost.
+    @MainActor
+    final class ProjectionSnapshotCoalescer {
+        private var pending: Data?
+        private var drainScheduled = false
+        /// Observability + tests: how many drains actually applied.
+        private(set) var applyCount = 0
+        private let apply: (Data) -> Void
+
+        init(apply: @escaping (Data) -> Void) {
+            self.apply = apply
+        }
+
+        func enqueue(_ data: Data) {
+            pending = data
+            guard !drainScheduled else { return }
+            drainScheduled = true
+            // One cooperative yield lets every already-buffered envelope in
+            // the event stream overwrite `pending` before the single decode+
+            // apply. (Plain Task.yield — landmine ② is specific to the
+            // follow-pin scrollTo path, not general task scheduling.)
+            Task { @MainActor [weak self] in
+                await Task.yield()
+                self?.drain()
+            }
+        }
+
+        /// Test seam: apply whatever is pending right now, synchronously.
+        func drain() {
+            drainScheduled = false
+            guard let latest = pending else { return }
+            pending = nil
+            applyCount += 1
+            apply(latest)
+        }
+    }
+
+    private lazy var projectionSnapshotCoalescer = ProjectionSnapshotCoalescer {
+        [weak self] data in
+        guard let self else { return }
+        guard
+            let snapshot = try? JSONDecoder().decode(
+                RemoteProjectionSnapshot.self, from: data)
+        else {
+            print("[tw] DECODE FAILED: projection snapshot — state not rehydrated")
+            return
+        }
+        self.applySnapshot(snapshot)
+    }
+
     private func handle(method: String, params: Data?) async {
         guard let params else { return }
         switch method {
         case "bridge.broadcastRemoteProjectionSnapshot":
-            guard
-                let snapshot = try? JSONDecoder().decode(
-                    RemoteProjectionSnapshot.self, from: params)
-            else {
-                print("[tw] DECODE FAILED: projection snapshot — state not rehydrated")
-                return
-            }
-            applySnapshot(snapshot)
+            projectionSnapshotCoalescer.enqueue(params)
         case "bridge.broadcastWorkspaceList":
             guard let message = try? JSONDecoder().decode(WorkspaceListMessage.self, from: params)
             else {
@@ -2285,6 +2343,21 @@ public final class RemoteSessionModel: ObservableObject {
             // agent-output so the re-pull mainly catches tool rows / dedup
             // instead of fighting the stream.
             let isExit = wire.channel == "agent-exit" || wire.channel == "gemini-exit"
+            // IF2 (Track-A stall fix): while THIS thread is on-screen and its
+            // live stream buffer is driving the transcript, an agent-output
+            // re-pull is pure amplification — the phone asks the Mac for a
+            // 24-row snapshot it is already rendering live, on top of the
+            // host's own pushes. Skip it entirely; the agent-exit refresh
+            // (kept below) plus the host's terminal trailing flush restore
+            // full consistency when the stream ends. Off-screen threads keep
+            // the slow re-pull so their previews stay fresh.
+            if Self.shouldSuppressStreamRefreshPull(
+                channel: wire.channel,
+                isStreamingThread: streamingRunIds[threadId] != nil,
+                isVisibleThread: visibleThreadId == threadId)
+            {
+                return
+            }
             let debounceNanos: UInt64 =
                 isExit
                 ? 200_000_000

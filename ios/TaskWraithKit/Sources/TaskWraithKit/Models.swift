@@ -1371,6 +1371,18 @@ public struct RemoteThreadSnapshot: Codable, Sendable {
             }
         }
         public let toolSummary: ToolSummary?
+        /// Bounded thinking/reasoning trace (dedicated wire field, capped
+        /// host-side at REMOTE_IOS_THINKING_MAX≈4000; full text rides the
+        /// existing expandRow path when `truncated`). Absent on older Macs
+        /// and rows without thinking — renderers must treat as optional.
+        public struct Thinking: Codable, Sendable, Equatable {
+            public let title: String?
+            public let preview: String?
+            public let truncated: Bool?
+            public let toolName: String?
+            public let status: String?
+        }
+        public let thinking: Thinking?
         /// Structured ensemble participant reachability summary. Older Mac
         /// builds only send `preview`, so renderers must treat this as
         /// optional.

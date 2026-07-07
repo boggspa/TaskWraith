@@ -2902,6 +2902,23 @@ struct ThreadRowView: View, Equatable {
                 {
                     imageAttachmentChip(count)
                 }
+                // TV (thinking viewport): dedicated bounded presentation for
+                // the row's thinking trace — collapsed 8 lines + fade +
+                // "Show thinking" chip, in-place expand, full text via the
+                // existing expandRow path when host-truncated. Renders ABOVE
+                // the answer body, mirroring desktop chronology.
+                if !hasParticipantHealthCard && !hasSubThreadReturnCard && !hasProposedPlanCard
+                    && !hasAgentQuestionCard,
+                    let thinking = row.thinking,
+                    let thinkingText = thinking.preview, !thinkingText.isEmpty
+                {
+                    ThinkingViewportView(
+                        thinking: thinking,
+                        isExpanding: isExpanding,
+                        onExpandFullText: {
+                            model.expandRow(threadId: threadId, rowId: row.id)
+                        })
+                }
                 if !hasParticipantHealthCard && !hasSubThreadReturnCard && !hasProposedPlanCard
                     && !hasAgentQuestionCard,
                     let preview = row.preview, !preview.isEmpty
@@ -3805,6 +3822,92 @@ struct StreamingSegmentRow: View {
 /// between a "Thinking…" and a "Working…" visual mid-run. Desktop parity:
 /// Electron's `ThinkingIndicator` mirrors this exact element (ghost + glow +
 /// "Working" + dots). Holds the mark solid under Reduce Motion.
+/// TV — bounded thinking viewport (ios-thinking-viewport-spec). Collapsed to
+/// 8 lines with a bottom fade + "Show thinking" chip; tap expands IN PLACE
+/// (the transcript's own scroll is the viewport — deliberately NO nested
+/// inline ScrollView, which would fight transcript pan on touch). When the
+/// host truncated the trace (cap ≈4000), expansion also requests the full
+/// text through the EXISTING expandRow path — the merged snapshot re-renders
+/// this row with the longer preview. Heights stay bounded: collapsed by
+/// lineLimit, expanded by the host's expand ceiling.
+struct ThinkingViewportView: View {
+    let thinking: RemoteThreadSnapshot.Row.Thinking
+    let isExpanding: Bool
+    let onExpandFullText: () -> Void
+
+    @State private var expanded = false
+
+    private static let collapsedLineLimit = 8
+
+    nonisolated static func chipTitle(expanded: Bool, isExpanding: Bool) -> String {
+        if isExpanding { return "Loading…" }
+        return expanded ? "Hide thinking" : "Show thinking"
+    }
+
+    /// Wire fetch fires only on expand of a host-truncated trace.
+    nonisolated static func needsWireExpansion(expanding: Bool, truncated: Bool?) -> Bool {
+        expanding && truncated == true
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                // Settled ghost mark, static + glow-off (landmine ⑤ concerns
+                // the working indicator's tint/glow pair; this is the plain
+                // mark family at rest).
+                GhostMonolineMarkView(size: 14, glow: false)
+                    .opacity(0.6)
+                Text(thinking.title?.isEmpty == false ? thinking.title! : "Thinking")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(TWTheme.textMuted)
+            }
+            Text(thinking.preview ?? "")
+                .font(.callout)
+                .foregroundStyle(TWTheme.textSecondary.opacity(0.85))
+                .lineLimit(expanded ? nil : Self.collapsedLineLimit)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .mask(
+                    // Bottom fade only while collapsed — signals more content
+                    // without measuring text height.
+                    Group {
+                        if expanded {
+                            Rectangle()
+                        } else {
+                            LinearGradient(
+                                stops: [
+                                    .init(color: .black, location: 0.0),
+                                    .init(color: .black, location: 0.72),
+                                    .init(color: .black.opacity(0.25), location: 1.0),
+                                ],
+                                startPoint: .top, endPoint: .bottom)
+                        }
+                    }
+                )
+                .textSelection(.enabled)
+            Button {
+                let next = !expanded
+                expanded = next
+                if Self.needsWireExpansion(expanding: next, truncated: thinking.truncated) {
+                    onExpandFullText()
+                }
+            } label: {
+                Text(Self.chipTitle(expanded: expanded, isExpanding: isExpanding))
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(TWTheme.textMuted)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(Capsule().fill(TWTheme.surface2))
+            }
+            .buttonStyle(.plain)
+            .disabled(isExpanding)
+            .padding(.top, 2)
+        }
+        .padding(.vertical, 2)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(expanded ? "Thinking, expanded" : "Thinking, collapsed")
+    }
+}
+
 struct WorkingGhostIndicator: View {
     var accent: Color
     /// The tail anchor stretches full-width so the mark left-aligns under the

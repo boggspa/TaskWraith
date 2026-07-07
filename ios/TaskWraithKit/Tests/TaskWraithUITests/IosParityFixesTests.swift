@@ -546,6 +546,88 @@ struct IosParityFixesTests {
         #expect(zeroCap.hopsText == nil)
     }
 
+    // ── Pass-2.5 Track-A: IF2 stream-pull suppression gate ─────────────────
+
+    @Test func agentOutputPullSuppressedOnlyForVisibleStreamingThread() {
+        // Suppress: agent-output + streaming + visible.
+        #expect(
+            RemoteSessionModel.shouldSuppressStreamRefreshPull(
+                channel: "agent-output", isStreamingThread: true, isVisibleThread: true))
+        // Keep the refresh in every other combination.
+        #expect(
+            !RemoteSessionModel.shouldSuppressStreamRefreshPull(
+                channel: "agent-exit", isStreamingThread: true, isVisibleThread: true))
+        #expect(
+            !RemoteSessionModel.shouldSuppressStreamRefreshPull(
+                channel: "agent-output", isStreamingThread: false, isVisibleThread: true))
+        #expect(
+            !RemoteSessionModel.shouldSuppressStreamRefreshPull(
+                channel: "agent-output", isStreamingThread: true, isVisibleThread: false))
+        #expect(
+            !RemoteSessionModel.shouldSuppressStreamRefreshPull(
+                channel: nil, isStreamingThread: true, isVisibleThread: true))
+    }
+
+    // ── Pass-2.5 Track-A: IF1 full-snapshot coalescing ─────────────────────
+
+    @MainActor
+    @Test func projectionSnapshotBurstAppliesOnlyNewestEnvelope() {
+        var applied: [String] = []
+        let coalescer = RemoteSessionModel.ProjectionSnapshotCoalescer { data in
+            applied.append(String(decoding: data, as: UTF8.self))
+        }
+        // Burst of 5 queued full snapshots before any drain runs.
+        for n in 1...5 { coalescer.enqueue(Data("env-\(n)".utf8)) }
+        coalescer.drain()
+        #expect(applied == ["env-5"])
+        #expect(coalescer.applyCount == 1)
+        // Terminal-state safety: a late envelope after the drain still applies.
+        coalescer.enqueue(Data("env-final".utf8))
+        coalescer.drain()
+        #expect(applied == ["env-5", "env-final"])
+        // Drain with nothing pending is a no-op, not a re-apply.
+        coalescer.drain()
+        #expect(coalescer.applyCount == 2)
+    }
+
+    // ── Pass-2.5: TV thinking wire decode + viewport logic ─────────────────
+
+    @Test func thinkingFieldDecodesFromWireRow() throws {
+        let row = try decode(
+            RemoteThreadSnapshot.Row.self,
+            """
+            {
+              "id": "r1",
+              "role": "assistant",
+              "preview": "Answer body",
+              "thinking": {
+                "title": "Thinking",
+                "preview": "step 1... step 2...",
+                "truncated": true,
+                "toolName": "_thinking",
+                "status": "done"
+              }
+            }
+            """)
+        #expect(row.thinking?.preview == "step 1... step 2...")
+        #expect(row.thinking?.truncated == true)
+        // Older-Mac rows without the field stay decodable.
+        let legacy = try decode(
+            RemoteThreadSnapshot.Row.self, #"{"id":"r2","preview":"x"}"#)
+        #expect(legacy.thinking == nil)
+    }
+
+    @Test func thinkingViewportChipAndWireExpansionRules() {
+        #expect(ThinkingViewportView.chipTitle(expanded: false, isExpanding: false) == "Show thinking")
+        #expect(ThinkingViewportView.chipTitle(expanded: true, isExpanding: false) == "Hide thinking")
+        #expect(ThinkingViewportView.chipTitle(expanded: true, isExpanding: true) == "Loading…")
+        // Wire fetch only on expand of a host-truncated trace.
+        #expect(ThinkingViewportView.needsWireExpansion(expanding: true, truncated: true))
+        #expect(!ThinkingViewportView.needsWireExpansion(expanding: true, truncated: false))
+        #expect(!ThinkingViewportView.needsWireExpansion(expanding: true, truncated: nil))
+        #expect(!ThinkingViewportView.needsWireExpansion(expanding: false, truncated: true))
+    }
+
     // ── Batch-1: N1 search-scope chips ─────────────────────────────────────
 
     @Test func homeSearchProviderMatchCoversDivergentVisibleLabels() {
