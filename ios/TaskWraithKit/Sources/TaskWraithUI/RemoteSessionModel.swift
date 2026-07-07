@@ -2230,7 +2230,8 @@ public final class RemoteSessionModel: ObservableObject {
                         // explicitly so the transcript catches up after a
                         // backgrounded run finished.
                         if let visible = self.visibleThreadId {
-                            self.requestThreadSnapshot(visible)
+                            self.requestThreadSnapshot(
+                                visible, bypassVisibleStreamSuppression: true)
                         }
                         self.reassertWatchedThreadToHost()
                         // APNs: ask AFTER a successful session (never at cold
@@ -2273,15 +2274,18 @@ public final class RemoteSessionModel: ObservableObject {
 
     // ── Inbound projections ───────────────────────────────────────────────────
 
-    /// IF2+S3 (Track-A/Pass-3): suppress on-demand snapshot re-pulls while THIS
-    /// thread is actively streaming AND on screen. The live buffer
-    /// (`appendStreamingDeltas`) plus inbound host thread deltas cover visible
-    /// transcript updates; off-screen threads and terminal refreshes keep their
-    /// pulls. Static + pure so tests exercise the exact gate.
+    /// IF2+S3 (Track-A/Pass-3) + iOS5 (Pass-5): suppress on-demand snapshot
+    /// re-pulls while THIS thread is actively streaming AND on screen. The live
+    /// buffer (`appendStreamingDeltas`) plus inbound host thread deltas cover
+    /// visible transcript updates; off-screen threads and terminal refreshes
+    /// keep their pulls. User-initiated and convergence pulls bypass this gate.
+    /// Static + pure so tests exercise the exact policy.
     nonisolated static func shouldSuppressOnDemandSnapshotPull(
-        isStreamingThread: Bool, isVisibleThread: Bool
+        isStreamingThread: Bool, isVisibleThread: Bool,
+        bypassVisibleStreamSuppression: Bool = false
     ) -> Bool {
-        isStreamingThread && isVisibleThread
+        guard !bypassVisibleStreamSuppression else { return false }
+        return isStreamingThread && isVisibleThread
     }
 
     /// IF2 (Track-A): agent-output runEvent re-pull — narrow wrapper over the
@@ -3307,7 +3311,27 @@ public final class RemoteSessionModel: ObservableObject {
         }
     }
 
+    /// iOS5: user explicitly mutated thread state (composer send, approval,
+    /// roster edit, etc.) — convergence must reach the wire even while the
+    /// visible live stream buffer is driving the transcript.
+    /// Pass-5 iOS5: count of `scheduleThreadRefreshAfterUserAction` call sites in
+    /// `RemoteSessionModel.swift` (grep-maintained inventory for the pull audit).
+    nonisolated static let ios5UserInitiatedThreadRefreshSiteCount = 25
+
+    private func scheduleThreadRefreshAfterUserAction(
+        _ threadId: String, debounceMs: UInt64 = 450_000_000
+    ) {
+        scheduleThreadRefresh(
+            threadId, debounceMs: debounceMs, bypassVisibleStreamSuppression: true)
+    }
+
     #if DEBUG
+        func scheduleThreadRefreshAfterUserActionForTesting(
+            _ threadId: String, debounceMs: UInt64 = 450_000_000
+        ) {
+            scheduleThreadRefreshAfterUserAction(threadId, debounceMs: debounceMs)
+        }
+
         func scheduleThreadRefreshForTesting(
             _ threadId: String, debounceMs: UInt64 = 450_000_000,
             bypassVisibleStreamSuppression: Bool = false
@@ -3968,7 +3992,7 @@ public final class RemoteSessionModel: ObservableObject {
             BridgeAction.ensembleRosterUpdate(
                 workspaceId: workspaceId, threadId: threadId, participants: participants),
             successLabel: "Roster updated.")
-        scheduleThreadRefresh(threadId)
+        scheduleThreadRefreshAfterUserAction(threadId)
     }
 
     public func updateEnsembleSettings(
@@ -3999,7 +4023,7 @@ public final class RemoteSessionModel: ObservableObject {
                 fanoutPolicy: fanout,
                 ensembleContextChars: chars),
             successLabel: "Ensemble settings updated.")
-        scheduleThreadRefresh(threadId)
+        scheduleThreadRefreshAfterUserAction(threadId)
     }
 
     /// Providers the user can pick when converting ensemble → solo.
@@ -4047,7 +4071,7 @@ public final class RemoteSessionModel: ObservableObject {
                 seedParticipant: seedParticipant, canonicalProvider: canonicalProvider),
             successLabel: label,
             onAck: { [weak self] accepted in
-                if accepted { self?.scheduleThreadRefresh(thread) }
+                if accepted { self?.scheduleThreadRefreshAfterUserAction(thread) }
             })
     }
 
@@ -4140,7 +4164,7 @@ public final class RemoteSessionModel: ObservableObject {
             navigateToThreadId: nil,
             navigateOnAck: navigateOnAck,
             onThreadCreated: onCreated)
-        scheduleThreadRefresh(thread)
+        scheduleThreadRefreshAfterUserAction(thread)
     }
 
     /// Steer-now, remove, or blackboard one queued ensemble prompt.
@@ -4161,7 +4185,7 @@ public final class RemoteSessionModel: ObservableObject {
                 workspaceId: ws, threadId: thread, index: index,
                 textPrefix: String(text.prefix(60)), op: op),
             successLabel: successLabel)
-        scheduleThreadRefresh(thread)
+        scheduleThreadRefreshAfterUserAction(thread)
     }
 
     /// Queue a prompt behind the active ensemble round. Solo chat queueing is
@@ -4176,7 +4200,7 @@ public final class RemoteSessionModel: ObservableObject {
                 workspaceId: ws, threadId: thread, text: trimmed,
                 roundId: ensembleStates[card.id]?.roundId),
             successLabel: "Queued.")
-        scheduleThreadRefresh(thread)
+        scheduleThreadRefreshAfterUserAction(thread)
     }
 
     /// Queue a solo-chat prompt behind the active run. The Mac owns the
@@ -4201,7 +4225,7 @@ public final class RemoteSessionModel: ObservableObject {
                 extraWorkspaceIds: extraWorkspaceIds,
                 reasoningEffort: reasoningEffort),
             successLabel: "Queued.")
-        scheduleThreadRefresh(thread)
+        scheduleThreadRefreshAfterUserAction(thread)
     }
 
     /// Steer-now or remove one queued solo composer prompt.
@@ -4215,7 +4239,7 @@ public final class RemoteSessionModel: ObservableObject {
                 workspaceId: ws, threadId: thread, queueId: item.id,
                 textPrefix: String(item.text.prefix(60)), op: op),
             successLabel: op == "steerNow" ? "Steering…" : "Removed from queue.")
-        scheduleThreadRefresh(thread)
+        scheduleThreadRefreshAfterUserAction(thread)
     }
 
     /// Save thread notes (markdown; empty clears).
@@ -4231,7 +4255,7 @@ public final class RemoteSessionModel: ObservableObject {
         send(
             BridgeAction.setThreadNotes(workspaceId: ws, threadId: thread, notes: notes),
             successLabel: "Notes saved.")
-        scheduleThreadRefresh(thread)
+        scheduleThreadRefreshAfterUserAction(thread)
     }
 
     /// Rename a chat on the Mac; the phone updates optimistically and rolls back
@@ -4261,7 +4285,7 @@ public final class RemoteSessionModel: ObservableObject {
             onAck: { [weak self] accepted in
                 guard let self else { return }
                 if accepted {
-                    self.scheduleThreadRefresh(thread)
+                    self.scheduleThreadRefreshAfterUserAction(thread)
                 } else {
                     self.pendingThreadTitleRenames.removeValue(forKey: thread)
                     self.applyLocalThreadTitle(card, title: previousTitle)
@@ -4280,7 +4304,7 @@ public final class RemoteSessionModel: ObservableObject {
                 workspaceId: ws, threadId: thread, op: op,
                 objective: objective, reason: reason),
             successLabel: "Goal updated.")
-        scheduleThreadRefresh(thread)
+        scheduleThreadRefreshAfterUserAction(thread)
     }
 
     /// Pin or unpin a transcript message.
@@ -4308,7 +4332,7 @@ public final class RemoteSessionModel: ObservableObject {
             BridgeAction.toggleMessagePin(
                 workspaceId: ws, threadId: thread, messageId: messageId, pinned: pinned),
             successLabel: pinned ? "Pinned." : "Unpinned.")
-        scheduleThreadRefresh(thread)
+        scheduleThreadRefreshAfterUserAction(thread)
     }
 
     /// Rebuild a card with one boolean lifecycle flag flipped (pinned/archived)
@@ -4822,7 +4846,7 @@ public final class RemoteSessionModel: ObservableObject {
                     }
                 }
             })
-        scheduleThreadRefresh(thread)
+        scheduleThreadRefreshAfterUserAction(thread)
     }
 
     /// Lock-screen Approve/Deny: resolve an approval from a notification action
@@ -4899,7 +4923,7 @@ public final class RemoteSessionModel: ObservableObject {
                     self.questions.insert(card, at: 0)
                 }
             })
-        scheduleThreadRefresh(thread)
+        scheduleThreadRefreshAfterUserAction(thread)
     }
 
     /// Dismiss a question — the Mac resolves the parked tool as cancelled.
@@ -4923,7 +4947,7 @@ public final class RemoteSessionModel: ObservableObject {
                     self.questions.insert(card, at: 0)
                 }
             })
-        scheduleThreadRefresh(thread)
+        scheduleThreadRefreshAfterUserAction(thread)
     }
 
     /// Provider that owns a thread (for a composerPrompt continuation): the task
@@ -4957,7 +4981,7 @@ public final class RemoteSessionModel: ObservableObject {
     private func failMissingProposedPlanProvider(_ threadId: String) {
         lastActionMessage =
             "Can't act on this plan yet because the Mac has not projected the thread's provider. Refresh the thread, then try again."
-        scheduleThreadRefresh(threadId)
+        scheduleThreadRefreshAfterUserAction(threadId)
     }
 
     /// True once the user has acted on this plan locally (optimistic) — drives the
@@ -5008,7 +5032,7 @@ public final class RemoteSessionModel: ObservableObject {
                 // collapses the card if it was in fact decided elsewhere.
                 self.repliedProposedPlanIds.remove(messageId)
             })
-        scheduleThreadRefresh(threadId)
+        scheduleThreadRefreshAfterUserAction(threadId)
     }
 
     /// Respond to a proposed plan with feedback: send it as a normal turn WITHOUT
@@ -5039,7 +5063,7 @@ public final class RemoteSessionModel: ObservableObject {
                     self.repliedProposedPlanIds.remove(messageId)
                 }
             })
-        scheduleThreadRefresh(threadId)
+        scheduleThreadRefreshAfterUserAction(threadId)
     }
 
     /// Dismiss a proposed plan with no run — the executor only flips status.
@@ -5055,7 +5079,7 @@ public final class RemoteSessionModel: ObservableObject {
                 guard let self, !accepted else { return }
                 self.repliedProposedPlanIds.remove(messageId)
             })
-        scheduleThreadRefresh(threadId)
+        scheduleThreadRefreshAfterUserAction(threadId)
     }
 
     /// P3 phone Canvas write-actions: close or reload an open preview. No local
@@ -5072,7 +5096,7 @@ public final class RemoteSessionModel: ObservableObject {
             BridgeAction.canvasAction(
                 workspaceId: ws, threadId: threadId, canvasId: canvasId, action: action),
             successLabel: action == "close" ? "Canvas closed." : "Canvas reloaded.")
-        scheduleThreadRefresh(threadId)
+        scheduleThreadRefreshAfterUserAction(threadId)
     }
 
     public func cancelRun(_ card: RemoteTaskCard) {
@@ -5141,7 +5165,7 @@ public final class RemoteSessionModel: ObservableObject {
                 timeoutMs: 12_000,
                 successLabel: "Sent.",
                 navigateToThreadId: threadId)
-            self.scheduleThreadRefresh(threadId)
+            self.scheduleThreadRefreshAfterUserAction(threadId)
         }
     }
 
@@ -5177,7 +5201,7 @@ public final class RemoteSessionModel: ObservableObject {
                     return
                 }
                 self.rememberThreadWorkspace(threadId, workspaceId: workspaceId)
-                self.scheduleThreadRefresh(threadId)
+                self.scheduleThreadRefreshAfterUserAction(threadId)
                 onCreated?(threadId)
             },
             // A denied/failed create never reaches onThreadCreated (send only
@@ -5239,7 +5263,7 @@ public final class RemoteSessionModel: ObservableObject {
                         BridgeAction.ensembleSteer(
                             workspaceId: workspaceId, threadId: threadId, text: trimmed),
                         successLabel: "Round started.")
-                    self.scheduleThreadRefresh(threadId)
+                    self.scheduleThreadRefreshAfterUserAction(threadId)
                 })
         }
     }
@@ -5256,7 +5280,7 @@ public final class RemoteSessionModel: ObservableObject {
         ) { [weak self] threadId in
             guard let self, let threadId else { return }
             self.rememberThreadWorkspace(threadId, workspaceId: "global")
-            self.scheduleThreadRefresh(threadId)
+            self.scheduleThreadRefreshAfterUserAction(threadId)
         }
     }
 
@@ -5331,7 +5355,7 @@ public final class RemoteSessionModel: ObservableObject {
                     }
                 })
         }
-        scheduleThreadRefresh(thread)
+        scheduleThreadRefreshAfterUserAction(thread)
     }
 
     private func send(

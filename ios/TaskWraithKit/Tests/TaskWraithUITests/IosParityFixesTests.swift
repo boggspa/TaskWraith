@@ -567,6 +567,31 @@ struct IosParityFixesTests {
                 isStreamingThread: true, isVisibleThread: false))
     }
 
+    @Test func onDemandSnapshotPullBypassesSuppressionForUserInitiatedPulls() {
+        #expect(
+            !RemoteSessionModel.shouldSuppressOnDemandSnapshotPull(
+                isStreamingThread: true, isVisibleThread: true,
+                bypassVisibleStreamSuppression: true))
+    }
+
+    /// iOS5 inventory: 25 user-action sites route through
+    /// `scheduleThreadRefreshAfterUserAction`; runEvent uses passive gate + exit bypass.
+    @Test func ios5ThreadRefreshSiteInventoryCount() {
+        #expect(RemoteSessionModel.ios5UserInitiatedThreadRefreshSiteCount == 25)
+    }
+
+    @MainActor
+    @Test func userInitiatedThreadRefreshSchedulesWhileVisibleStreaming() {
+        let model = makeRemoteSessionModel()
+        model.visibleThreadId = "thread-1"
+        model.seedStreamingStateForTesting(threadId: "thread-1")
+        model.scheduleThreadRefreshForTesting("thread-1")
+        #expect(model.pendingThreadRefreshCountForTesting == 0)
+        model.scheduleThreadRefreshAfterUserActionForTesting("thread-1")
+        #expect(model.pendingThreadRefreshCountForTesting == 1)
+        model.cancelPendingThreadRefreshForTesting()
+    }
+
     @MainActor
     @Test func scheduleThreadRefreshBypassFiresThroughSuppressionGate() async throws {
         let model = makeRemoteSessionModel()
