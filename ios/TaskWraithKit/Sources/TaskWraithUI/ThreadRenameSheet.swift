@@ -47,7 +47,9 @@ struct ThreadRenameSheet: View {
                         Text(subtitle)
                     }
                 }
+                .twGlassSheetRowBackground()
             }
+            .twGlassSheetListCanvas()
             .navigationTitle("Rename chat")
             #if os(iOS)
                 .navigationBarTitleDisplayMode(.inline)

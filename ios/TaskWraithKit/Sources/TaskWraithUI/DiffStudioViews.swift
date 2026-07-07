@@ -413,9 +413,11 @@ enum DiffStudioSheetGlassPolicy {
 
     /// Alpha for chrome surfaces (navigator rows, viewer header/status bars)
     /// over the glass backdrop; nil keeps the host's default opaque fill.
+    /// Delegates to the shared sheet-wide chrome tier so every glass-hosted
+    /// sheet washes surfaces identically.
     static func chromeFillAlpha(glassSheetHosted: Bool, glassEnabled: Bool) -> Double? {
-        guard glassSheetHosted else { return nil }
-        return glassEnabled ? 0.55 : 1.0
+        TWGlassSheetSurfacePolicy.chromeFillAlpha(
+            glassSheetHosted: glassSheetHosted, glassEnabled: glassEnabled)
     }
 
     /// Alpha for the hunk-grid code panel — less transparent than the chrome

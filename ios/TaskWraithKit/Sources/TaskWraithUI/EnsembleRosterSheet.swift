@@ -175,11 +175,15 @@ public struct EnsembleRosterSheet: View {
     public var body: some View {
         NavigationStack {
             List {
-                presetsSection
-                orchestrationSection
-                participantsSection
-                addSection
+                Group {
+                    presetsSection
+                    orchestrationSection
+                    participantsSection
+                    addSection
+                }
+                .twGlassSheetRowBackground()
             }
+            .twGlassSheetListCanvas()
             #if os(iOS)
                 .navigationBarTitleDisplayMode(.inline)
             #endif

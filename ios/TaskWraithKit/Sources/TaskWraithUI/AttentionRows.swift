@@ -213,6 +213,7 @@ struct ApprovalDetailSheet: View {
     @ObservedObject var model: RemoteSessionModel
     let card: MobileApprovalCard
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.twGlassSheetHosted) private var glassSheetHosted
 
     private var accent: Color { TWTheme.providerAccent(card.provider) }
     private var approvalActions: [ApprovalActionDescriptor] {
@@ -259,7 +260,7 @@ struct ApprovalDetailSheet: View {
                 }
                 .padding(16)
             }
-            .background(TWTheme.appBg)
+            .background(glassSheetHosted ? Color.clear : TWTheme.appBg)
             #if os(iOS)
                 .navigationBarTitleDisplayMode(.inline)
             #endif

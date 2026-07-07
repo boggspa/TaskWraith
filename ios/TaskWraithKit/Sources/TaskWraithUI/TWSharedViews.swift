@@ -747,6 +747,62 @@ extension EnvironmentValues {
     }
 }
 
+/// Chrome wash for surfaces riding the glass sheet backdrop, shared by every
+/// glass-hosted sheet (Diff Studio's DiffStudioSheetGlassPolicy delegates its
+/// chrome tier here).
+enum TWGlassSheetSurfacePolicy {
+    /// Alpha for chrome surfaces (list/form rows, cards, header bars) over the
+    /// glass backdrop; nil keeps the host's default opaque fill. Reduce
+    /// Transparency (glassEnabled false) keeps surfaces fully opaque over the
+    /// backdrop's opaque tier.
+    static func chromeFillAlpha(glassSheetHosted: Bool, glassEnabled: Bool) -> Double? {
+        guard glassSheetHosted else { return nil }
+        return glassEnabled ? 0.55 : 1.0
+    }
+}
+
+/// Translucent row/card fill over the glass sheet backdrop; nil = keep the
+/// system default fill (content not glass-hosted).
+@MainActor
+func twGlassSheetChromeFill(glassSheetHosted: Bool) -> Color? {
+    guard
+        let alpha = TWGlassSheetSurfacePolicy.chromeFillAlpha(
+            glassSheetHosted: glassSheetHosted,
+            glassEnabled: TWTheme.composerGlassEnabled)
+    else { return nil }
+    return TWTheme.surface1.opacity(alpha)
+}
+
+private struct TWGlassSheetRowBackgroundModifier: ViewModifier {
+    @Environment(\.twGlassSheetHosted) private var glassSheetHosted
+
+    func body(content: Content) -> some View {
+        content.listRowBackground(twGlassSheetChromeFill(glassSheetHosted: glassSheetHosted))
+    }
+}
+
+private struct TWGlassSheetListCanvasModifier: ViewModifier {
+    @Environment(\.twGlassSheetHosted) private var glassSheetHosted
+
+    func body(content: Content) -> some View {
+        content.scrollContentBackground(glassSheetHosted ? .hidden : .automatic)
+    }
+}
+
+extension View {
+    /// Attach to List/Form Sections inside a `twSheetLiquidGlass` sheet:
+    /// translucent chrome wash over the glass; system row fill elsewhere.
+    func twGlassSheetRowBackground() -> some View {
+        modifier(TWGlassSheetRowBackgroundModifier())
+    }
+
+    /// Attach to the List/Form itself: clears the opaque scroll canvas so the
+    /// glass backdrop reads through; keeps the system canvas elsewhere.
+    func twGlassSheetListCanvas() -> some View {
+        modifier(TWGlassSheetListCanvasModifier())
+    }
+}
+
 extension View {
     /// Liquid-glass sheet chrome. Apply to the root of sheet content (inside
     /// any NavigationStack). iOS-only; non-iOS is pass-through.
@@ -4951,14 +5007,17 @@ struct RosterChipEditor: View {
                     }
                     .tint(TWTheme.chroma3)
                 }
+                .twGlassSheetRowBackground()
                 Section("Role") {
                     TextField("Role name", text: $entry.role)
                 }
+                .twGlassSheetRowBackground()
                 Section("Goal / brief") {
                     TextEditor(text: $entry.brief)
                         .frame(minHeight: 88)
                         .font(.footnote)
                 }
+                .twGlassSheetRowBackground()
                 Section("Provider · model") {
                     Menu {
                         ForEach(catalogs.map(\.provider), id: \.self) { provider in
@@ -4997,6 +5056,7 @@ struct RosterChipEditor: View {
                         }
                     }
                 }
+                .twGlassSheetRowBackground()
                 Section("Permission") {
                     Picker("Approval", selection: permissionBinding) {
                         Text("Read-Only/Recon").tag("read_only")
@@ -5014,6 +5074,7 @@ struct RosterChipEditor: View {
                     }
                     .pickerStyle(.menu)
                 }
+                .twGlassSheetRowBackground()
                 Section {
                     Picker("Fan-out stage", selection: stageBinding) {
                         Text("Any (by permissions)").tag("")
@@ -5029,11 +5090,13 @@ struct RosterChipEditor: View {
                         "Scouts investigate at round start, workers take serial implementation turns, reviewers wait for the others and then verify the work."
                     )
                 }
+                .twGlassSheetRowBackground()
                 if entry.provider.lowercased() == "kimi" {
                     Section("Reasoning") {
                         Toggle("Extended thinking", isOn: $entry.thinkingEnabled)
                             .tint(TWTheme.providerAccent(entry.provider))
                     }
+                    .twGlassSheetRowBackground()
                 } else if !reasoningEfforts.isEmpty {
                     Section("Reasoning") {
                         Picker("Effort", selection: reasoningBinding) {
@@ -5049,6 +5112,7 @@ struct RosterChipEditor: View {
                                 .tint(TWTheme.providerAccent(entry.provider))
                         }
                     }
+                    .twGlassSheetRowBackground()
                 }
                 Section {
                     HStack {
@@ -5073,7 +5137,9 @@ struct RosterChipEditor: View {
                         }
                     }
                 }
+                .twGlassSheetRowBackground()
             }
+            .twGlassSheetListCanvas()
             .navigationTitle(
                 entry.role.isEmpty ? TWTheme.providerLabel(entry.provider) : entry.role
             )

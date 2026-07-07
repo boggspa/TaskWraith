@@ -7,6 +7,14 @@ history, and workspace state stay on your machine throughout.
 ## Unreleased
 
 ### Fixed
+- **Roster, approval, and rename sheets render their liquid glass too (iOS).**
+  Same root cause as the Diff Studio sheet below: the ensemble roster sheet, its
+  nested participant editor, the approval detail sheet, and the chat rename
+  sheet all painted opaque canvases or default grouped list fills over their
+  glass backdrop. Glass-hosted content now clears its canvas and washes rows
+  with the shared translucent chrome tier (`TWGlassSheetSurfacePolicy` — the
+  Diff Studio policy delegates to it), staying fully opaque under Reduce
+  Transparency.
 - **Diff Studio sheet now renders its liquid glass (iOS).** The composer diff
   sheet applied the shared `twSheetLiquidGlass` chrome, but its panes painted a
   full-bleed opaque canvas over the backdrop, so the sheet read as flat gray.
