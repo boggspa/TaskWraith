@@ -1,4 +1,5 @@
 import type Electron from 'electron'
+import type { CliProviderThinkingSegmentsState } from './providers/CliProviderThinking'
 import type {
   ChatScope,
   ChatWorkflowMode,
@@ -103,7 +104,7 @@ export interface HostCommandResult {
   durationMs: number
 }
 
-export interface CliProviderStreamState {
+export interface CliProviderStreamState extends CliProviderThinkingSegmentsState {
   provider: ProviderId
   sender: Electron.WebContents
   startedAt: number
@@ -111,8 +112,6 @@ export interface CliProviderStreamState {
   fallback: boolean
   completed: boolean
   assistantText: string
-  thinkingText?: string
-  thinkingStarted?: boolean
   providerSessionId?: string | null
   approvalMode?: string
   workflowMode?: ChatWorkflowMode

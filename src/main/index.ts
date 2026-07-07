@@ -55,7 +55,11 @@ import {
   nestedRecord,
   cliProviderToolId
 } from './providers/ProviderEventText'
-import { mergeCliProviderThinkingChunk } from './providers/CliProviderThinking'
+import {
+  advanceCliProviderThinkingSegments,
+  cliProviderThinkingSegmentToolId,
+  shouldBreakThinkingChronology
+} from './providers/CliProviderThinking'
 import { claudeSdkThinkingConfigForEffort } from './providers/ClaudeThinkingConfig'
 import type {
   CodexRunState,
@@ -10733,11 +10737,20 @@ function emitCliProviderThinkingEvent(
   text: string,
   options: { cumulative?: boolean } = {}
 ) {
-  const merged = mergeCliProviderThinkingChunk(state.thinkingText, text, options)
-  if (merged == null) return
-  const toolId = `${state.provider}-thinking-${state.appRunId || 'run'}`
-  if (!state.thinkingStarted) {
-    state.thinkingStarted = true
+  // Chronological segmentation (1.0.7): thinking is emitted as a SEQUENCE of
+  // trace activities. When transcript-visible output (assistant text, tool
+  // calls, progress cards…) landed since the last chunk — marked on the state
+  // by sendAgentCompatLine — the next chunk opens a fresh activity with a
+  // per-segment id, so late reasoning renders at its true transcript position
+  // instead of growing the turn's first trace card in place.
+  const advance = advanceCliProviderThinkingSegments(state, text, options)
+  if (!advance) return
+  const toolId = cliProviderThinkingSegmentToolId(
+    state.provider,
+    state.appRunId,
+    advance.segmentSeq
+  )
+  if (advance.startedNewActivity) {
     sendAgentCompatLine(
       state.sender,
       state.provider,
@@ -10751,7 +10764,6 @@ function emitCliProviderThinkingEvent(
       state
     )
   }
-  state.thinkingText = merged
   sendAgentCompatLine(
     state.sender,
     state.provider,
@@ -10760,7 +10772,7 @@ function emitCliProviderThinkingEvent(
       tool_id: toolId,
       tool_name: `${state.provider}_thinking`,
       status: 'success',
-      output: state.thinkingText,
+      output: advance.text,
       provider: state.provider
     },
     state
@@ -14372,6 +14384,16 @@ function sendAgentCompatLine(
     'provider'
   )
   if (!transcriptVisible) return
+  // Chronological thinking segmentation (1.0.7): any transcript-visible,
+  // non-reasoning line marks a chronology break on the emitting CLI stream
+  // state (threaded here as `route` by every CLI-provider emit site). The
+  // NEXT thinking chunk then opens a fresh trace activity at the current
+  // transcript position (see emitCliProviderThinkingEvent) instead of growing
+  // the run's first trace in place. Routes that aren't stream states just
+  // carry an unread flag — harmless.
+  if (route && shouldBreakThinkingChronology(payload)) {
+    ;(route as { thinkingChronoBreak?: boolean }).thinkingChronoBreak = true
+  }
   materializeBackgroundSubThreadProviderOutput(provider, routed, payload)
   materializeBridgeRunProviderOutput(provider, routed, payload, { trustedCompatLane: true })
   ensembleOrchestratorRef?.handleProviderOutput(provider, routed, payload)
