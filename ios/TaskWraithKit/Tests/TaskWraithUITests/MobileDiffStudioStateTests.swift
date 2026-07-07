@@ -282,3 +282,40 @@ private func decodeFilterableWorkspaceDiff() throws -> WorkspaceDiffResult {
         """
     return try JSONDecoder().decode(WorkspaceDiffResult.self, from: Data(json.utf8))
 }
+
+@Suite("Diff Studio sheet glass policy")
+struct DiffStudioSheetGlassPolicyTests {
+    @Test func fullScreenHostsKeepTheOpaqueCanvasAndDefaultFills() {
+        #expect(DiffStudioSheetGlassPolicy.paintsOpaqueCanvas(glassSheetHosted: false))
+        #expect(
+            DiffStudioSheetGlassPolicy.chromeFillAlpha(
+                glassSheetHosted: false, glassEnabled: true) == nil)
+        #expect(
+            DiffStudioSheetGlassPolicy.codePanelFillAlpha(
+                glassSheetHosted: false, glassEnabled: true) == nil)
+    }
+
+    @Test func glassSheetDropsTheCanvasAndWashesSurfaces() {
+        #expect(!DiffStudioSheetGlassPolicy.paintsOpaqueCanvas(glassSheetHosted: true))
+        let chrome = DiffStudioSheetGlassPolicy.chromeFillAlpha(
+            glassSheetHosted: true, glassEnabled: true)
+        let code = DiffStudioSheetGlassPolicy.codePanelFillAlpha(
+            glassSheetHosted: true, glassEnabled: true)
+        #expect(chrome == 0.55)
+        #expect(code == 0.72)
+        // Code stays less transparent than chrome for monospace contrast.
+        if let chrome, let code {
+            #expect(code > chrome)
+        }
+    }
+
+    @Test func reduceTransparencyKeepsSurfacesOpaqueOverTheOpaqueBackdrop() {
+        #expect(!DiffStudioSheetGlassPolicy.paintsOpaqueCanvas(glassSheetHosted: true))
+        #expect(
+            DiffStudioSheetGlassPolicy.chromeFillAlpha(
+                glassSheetHosted: true, glassEnabled: false) == 1.0)
+        #expect(
+            DiffStudioSheetGlassPolicy.codePanelFillAlpha(
+                glassSheetHosted: true, glassEnabled: false) == 1.0)
+    }
+}

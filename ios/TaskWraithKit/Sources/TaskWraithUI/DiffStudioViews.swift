@@ -399,11 +399,55 @@ struct DiffStudioCompactView: View {
     }
 }
 
+// ── Sheet glass chrome policy ─────────────────────────────────────────────────
+
+/// How the panes paint beneath their content per host. The compact composer
+/// sheet rides the shared liquid-glass backdrop (`twSheetLiquidGlass`), where a
+/// full-bleed opaque canvas would smother the glass — panes go transparent and
+/// drop shared surfaces to a translucent wash there. The full-screen hosts
+/// (iPad split view, the phone file-mode cover) keep the opaque app canvas.
+enum DiffStudioSheetGlassPolicy {
+    static func paintsOpaqueCanvas(glassSheetHosted: Bool) -> Bool {
+        !glassSheetHosted
+    }
+
+    /// Alpha for chrome surfaces (navigator rows, viewer header/status bars)
+    /// over the glass backdrop; nil keeps the host's default opaque fill.
+    static func chromeFillAlpha(glassSheetHosted: Bool, glassEnabled: Bool) -> Double? {
+        guard glassSheetHosted else { return nil }
+        return glassEnabled ? 0.55 : 1.0
+    }
+
+    /// Alpha for the hunk-grid code panel — less transparent than the chrome
+    /// wash so monospace diff text keeps contrast over the glass.
+    static func codePanelFillAlpha(glassSheetHosted: Bool, glassEnabled: Bool) -> Double? {
+        guard glassSheetHosted else { return nil }
+        return glassEnabled ? 0.72 : 1.0
+    }
+}
+
 // ── Changed-file rail ──────────────────────────────────────────────────────────
 
 private struct DiffFileNavigatorPane: View {
     @ObservedObject var model: RemoteSessionModel
     @ObservedObject var state: MobileDiffStudioState
+    @Environment(\.twGlassSheetHosted) private var glassSheetHosted
+
+    /// Translucent row cards over the sheet's glass backdrop; nil keeps the
+    /// system grouped-row fill in the full-screen hosts.
+    private var glassRowFill: Color? {
+        guard
+            let alpha = DiffStudioSheetGlassPolicy.chromeFillAlpha(
+                glassSheetHosted: glassSheetHosted,
+                glassEnabled: TWTheme.composerGlassEnabled)
+        else { return nil }
+        return TWTheme.surface1.opacity(alpha)
+    }
+
+    private var canvasFill: Color {
+        DiffStudioSheetGlassPolicy.paintsOpaqueCanvas(glassSheetHosted: glassSheetHosted)
+            ? TWTheme.sidebarBg : Color.clear
+    }
 
     var body: some View {
         List {
@@ -424,6 +468,7 @@ private struct DiffFileNavigatorPane: View {
                         }
                     }
                 }
+                .listRowBackground(glassRowFill)
             }
 
             Section {
@@ -431,6 +476,7 @@ private struct DiffFileNavigatorPane: View {
                     .disableAutocorrection(true)
                     .accessibilityLabel("Filter changed files")
             }
+            .listRowBackground(glassRowFill)
 
             Section {
                 Picker("Change Group", selection: $state.stageFilter) {
@@ -441,6 +487,7 @@ private struct DiffFileNavigatorPane: View {
                 .pickerStyle(.menu)
                 .accessibilityLabel("Filter by change group")
             }
+            .listRowBackground(glassRowFill)
 
             Section {
                 if state.files.isEmpty {
@@ -476,9 +523,10 @@ private struct DiffFileNavigatorPane: View {
                     }
                 }
             }
+            .listRowBackground(glassRowFill)
         }
         .scrollContentBackground(.hidden)
-        .background(TWTheme.sidebarBg)
+        .background(canvasFill)
     }
 }
 
@@ -622,6 +670,21 @@ private struct DiffViewerPane: View {
     var onExpand: (() -> Void)? = nil
     var onOpenSelectedFile: ((String) -> Void)? = nil
     let compact: Bool
+    @Environment(\.twGlassSheetHosted) private var glassSheetHosted
+
+    private var canvasFill: Color {
+        DiffStudioSheetGlassPolicy.paintsOpaqueCanvas(glassSheetHosted: glassSheetHosted)
+            ? TWTheme.appBg : Color.clear
+    }
+
+    private var chromeBarFill: Color {
+        guard
+            let alpha = DiffStudioSheetGlassPolicy.chromeFillAlpha(
+                glassSheetHosted: glassSheetHosted,
+                glassEnabled: TWTheme.composerGlassEnabled)
+        else { return TWTheme.surface1 }
+        return TWTheme.surface1.opacity(alpha)
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -638,7 +701,7 @@ private struct DiffViewerPane: View {
                         .foregroundStyle(TWTheme.textSecondary)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(TWTheme.appBg)
+                .background(canvasFill)
             }
             Divider().overlay(TWTheme.border)
             HStack {
@@ -665,9 +728,9 @@ private struct DiffViewerPane: View {
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 7)
-            .background(TWTheme.surface1)
+            .background(chromeBarFill)
         }
-        .background(TWTheme.appBg)
+        .background(canvasFill)
         .navigationTitle(state.selectedName)
         .diffStudioInlineTitle()
     }
@@ -760,14 +823,24 @@ private struct DiffViewerPane: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
-        .background(TWTheme.surface1)
+        .background(chromeBarFill)
     }
 }
 
 private struct DiffHunksView: View {
     let file: WorkspaceDiffFile
+    @Environment(\.twGlassSheetHosted) private var glassSheetHosted
 
     private var hunks: [WorkspaceDiffHunk] { file.hunks ?? [] }
+
+    private var codePanelFill: Color {
+        guard
+            let alpha = DiffStudioSheetGlassPolicy.codePanelFillAlpha(
+                glassSheetHosted: glassSheetHosted,
+                glassEnabled: TWTheme.composerGlassEnabled)
+        else { return TWTheme.appBg }
+        return TWTheme.appBg.opacity(alpha)
+    }
 
     /// Widest clipped line (≤400 chars) sets the scrollable width — fixed
     /// row widths keep the add/del tints uniform inside the two-axis scroll.
@@ -792,7 +865,7 @@ private struct DiffHunksView: View {
                     .padding(.horizontal, 24)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(TWTheme.appBg)
+            .background(codePanelFill)
         } else {
             ScrollView([.vertical, .horizontal]) {
                 LazyVStack(alignment: .leading, spacing: 0) {
@@ -812,7 +885,7 @@ private struct DiffHunksView: View {
                 }
                 .padding(.vertical, 6)
             }
-            .background(TWTheme.appBg)
+            .background(codePanelFill)
         }
     }
 }

@@ -4,6 +4,18 @@ Notable changes to TaskWraith, the local-first macOS desktop workbench for runni
 and reviewing AI coding agents. Entries are user-facing highlights; execution,
 history, and workspace state stay on your machine throughout.
 
+## Unreleased
+
+### Fixed
+- **Diff Studio sheet now renders its liquid glass (iOS).** The composer diff
+  sheet applied the shared `twSheetLiquidGlass` chrome, but its panes painted a
+  full-bleed opaque canvas over the backdrop, so the sheet read as flat gray.
+  Sheet-hosted panes now keep their canvas transparent, with translucent row and
+  header washes over the glass — the hunk grid keeps a darker wash so diff text
+  stays readable — while the full-screen Diff Studio hosts (iPad split view and
+  the phone cover) keep their opaque app canvas. Reduce Transparency keeps every
+  surface opaque, matching the sheet chrome's opaque tier.
+
 ## 1.7.9 - 2026-07-07
 
 ### Added

@@ -732,6 +732,21 @@ extension View {
     }
 #endif
 
+private struct TWGlassSheetHostedKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+extension EnvironmentValues {
+    /// True for content hosted inside a `twSheetLiquidGlass` presentation.
+    /// A full-bleed opaque canvas smothers the glass backdrop, so panes shared
+    /// with full-screen hosts (Diff Studio) check this to keep their sheet
+    /// canvas transparent while the full-screen hosts keep the opaque canvas.
+    var twGlassSheetHosted: Bool {
+        get { self[TWGlassSheetHostedKey.self] }
+        set { self[TWGlassSheetHostedKey.self] = newValue }
+    }
+}
+
 extension View {
     /// Liquid-glass sheet chrome. Apply to the root of sheet content (inside
     /// any NavigationStack). iOS-only; non-iOS is pass-through.
@@ -749,6 +764,7 @@ extension View {
                 .presentationBackground {
                     TWSheetGlassBackdrop(cornerRadius: cornerRadius, rimmed: rimmed)
                 }
+                .environment(\.twGlassSheetHosted, true)
         #else
             self
         #endif
