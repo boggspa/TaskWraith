@@ -1449,7 +1449,14 @@ export function buildRemoteEnsembleState(chat: ChatRecord): RemoteEnsembleState 
         }
       : {}),
     participantCount: participants.length || ensemble.participants.length,
-    participants: participants.map(projectEnsembleParticipant),
+    participants: [...participants]
+      .sort((a, b) => {
+        const leftOrder = a.order ?? Number.MAX_SAFE_INTEGER
+        const rightOrder = b.order ?? Number.MAX_SAFE_INTEGER
+        if (leftOrder !== rightOrder) return leftOrder - rightOrder
+        return a.participantId.localeCompare(b.participantId)
+      })
+      .map(projectEnsembleParticipant),
     roster: [...ensemble.participants]
       .sort((a, b) => a.order - b.order)
       .map((participant) => {

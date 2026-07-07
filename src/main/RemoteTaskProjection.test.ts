@@ -1328,3 +1328,110 @@ describe('buildRemoteEnsembleState — per-participant context (roster.contextTo
     ])
   })
 })
+
+describe('buildRemoteEnsembleState — round participant ordering', () => {
+  it('sorts activeRound participants by order then participantId regardless of wire array order', () => {
+    const state = buildRemoteEnsembleState(
+      chat({
+        chatKind: 'ensemble',
+        ensemble: {
+          participants: [
+            { id: 'p-alpha', provider: 'claude', role: 'First', enabled: true, order: 0 },
+            { id: 'p-beta', provider: 'codex', role: 'Second', enabled: true, order: 1 },
+            { id: 'p-gamma', provider: 'grok', role: 'Third', enabled: true, order: 2 }
+          ],
+          activeRound: {
+            roundId: 'round-1',
+            status: 'running',
+            prompt: 'Coordinate',
+            startedAt: ISO,
+            activeParticipantId: 'p-beta',
+            participants: [
+              {
+                participantId: 'p-gamma',
+                provider: 'grok',
+                role: 'Third',
+                order: 2,
+                status: 'idle'
+              },
+              {
+                participantId: 'p-alpha',
+                provider: 'claude',
+                role: 'First',
+                order: 0,
+                status: 'answered'
+              },
+              {
+                participantId: 'p-beta',
+                provider: 'codex',
+                role: 'Second',
+                order: 1,
+                status: 'running'
+              }
+            ]
+          }
+        },
+        runs: []
+      } as unknown as Partial<ChatRecord>)
+    )
+    expect(state?.participants?.map((participant) => participant.participantId)).toEqual([
+      'p-alpha',
+      'p-beta',
+      'p-gamma'
+    ])
+  })
+
+  it('tie-breaks duplicate order values by participantId', () => {
+    const state = buildRemoteEnsembleState(
+      chat({
+        chatKind: 'ensemble',
+        ensemble: {
+          participants: [
+            {
+              id: 'ensemble-participant-12',
+              provider: 'grok',
+              role: 'CheckCommit',
+              enabled: true,
+              order: 11
+            },
+            {
+              id: 'ensemble-participant-10',
+              provider: 'grok',
+              role: 'Other',
+              enabled: true,
+              order: 11
+            }
+          ],
+          activeRound: {
+            roundId: 'round-1',
+            status: 'running',
+            prompt: 'Coordinate',
+            startedAt: ISO,
+            activeParticipantId: 'ensemble-participant-12',
+            participants: [
+              {
+                participantId: 'ensemble-participant-12',
+                provider: 'grok',
+                role: 'CheckCommit',
+                order: 11,
+                status: 'running'
+              },
+              {
+                participantId: 'ensemble-participant-10',
+                provider: 'grok',
+                role: 'Other',
+                order: 11,
+                status: 'idle'
+              }
+            ]
+          }
+        },
+        runs: []
+      } as unknown as Partial<ChatRecord>)
+    )
+    expect(state?.participants?.map((participant) => participant.participantId)).toEqual([
+      'ensemble-participant-10',
+      'ensemble-participant-12'
+    ])
+  })
+})
