@@ -461,6 +461,32 @@ struct IosParityFixesTests {
         #expect(twSettledRowModelChip(from: "Codex / Adversary2") == nil)
     }
 
+    @MainActor
+    @Test func quietGitSnapshotRefreshPublishesToSharedCache() async {
+        // The composer's event-driven git refreshes (run-finish, foregrounding,
+        // diff-sheet open) must land in the SHARED gitSnapshots cache — the one
+        // ChangesAttachedRow and the compact pill both render from — not in
+        // pill-local state, or the focused changes rows go stale while the
+        // blurred pill shows fresh counts.
+        let model = makeRemoteSessionModel()
+        model.enterDemoMode()
+        #expect(model.gitSnapshots["quiet-refresh-ws"] == nil)
+        await model.refreshGitSnapshotCacheQuietly(workspaceId: "quiet-refresh-ws")
+        #expect(model.gitSnapshots["quiet-refresh-ws"]?.counts?.changed == 3)
+        #expect(model.gitSnapshots["quiet-refresh-ws"]?.branch == "feat/auth-refactor")
+    }
+
+    @MainActor
+    @Test func quietGitSnapshotRefreshToleratesMissingWorkspaceAndConnection() async {
+        // Fired opportunistically, so it must no-op — never throw, never store
+        // garbage — with no workspace id or no live bridge connection.
+        let model = makeRemoteSessionModel()
+        await model.refreshGitSnapshotCacheQuietly(workspaceId: nil)
+        await model.refreshGitSnapshotCacheQuietly(workspaceId: "")
+        await model.refreshGitSnapshotCacheQuietly(workspaceId: "ws")
+        #expect(model.gitSnapshots.isEmpty)
+    }
+
     private func remoteTaskCard(_ json: String) throws -> RemoteTaskCard {
         try decode(RemoteTaskCard.self, json)
     }

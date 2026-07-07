@@ -3262,6 +3262,20 @@ public final class RemoteSessionModel: ObservableObject {
         }
     }
 
+    /// Event-driven refresh shared by the composer diff surfaces (compact
+    /// pill + focused changes rows): fetch quietly — no Mac-side rebroadcast
+    /// — but store into the published `gitSnapshots` cache so every surface
+    /// renders the same numbers. Unlike `refreshGitSnapshotCache`, a failed
+    /// fetch keeps the last good snapshot instead of wiping it: these fire
+    /// opportunistically (run-finish, foregrounding, diff-sheet open) and a
+    /// dropped ack must not blank rows that were showing valid counts.
+    public func refreshGitSnapshotCacheQuietly(workspaceId: String?) async {
+        guard let workspaceId, !workspaceId.isEmpty else { return }
+        guard let git = try? await fetchGitSnapshotWithoutPublishing(workspaceId: workspaceId)
+        else { return }
+        gitSnapshots[workspaceId] = git
+    }
+
     public enum RemoteFileActionError: LocalizedError {
         case notConnected
         case denied(String)

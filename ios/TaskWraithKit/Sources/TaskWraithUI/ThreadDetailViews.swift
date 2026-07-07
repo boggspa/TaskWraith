@@ -61,30 +61,6 @@ enum ThreadSnapshotRequestPolicy {
     }
 }
 
-@MainActor
-private final class ComposerDiffPillRefreshState: ObservableObject {
-    @Published var snapshot: GitWorkspaceSnapshot?
-
-    func refresh(model: RemoteSessionModel, workspaceId: String) async {
-        guard let next = try? await model.fetchGitSnapshotWithoutPublishing(workspaceId: workspaceId)
-        else { return }
-        snapshot = next
-    }
-
-    func run(
-        model: RemoteSessionModel,
-        workspaceId: String?,
-        initialSnapshot: GitWorkspaceSnapshot?
-    ) async {
-        snapshot = initialSnapshot
-        guard let workspaceId, !workspaceId.isEmpty, model.workspaceCanReviewDiffs(workspaceId)
-        else { return }
-        if snapshot == nil {
-            await refresh(model: model, workspaceId: workspaceId)
-        }
-    }
-}
-
 private struct ComposerDiffPillMetrics: Equatable {
     var filesChanged: Int
     var additions: Int
@@ -96,28 +72,25 @@ private struct ComposerDiffPillMetrics: Equatable {
     }
 }
 
-private struct RefreshingComposerDiffPill: View {
+/// Compact floating diff pill (blurred composer). Renders straight from the
+/// shared `model.gitSnapshots` cache — ThreadDetailView owns the event-driven
+/// refreshes (run-finish, foregrounding, diff-sheet open) that keep the cache
+/// fresh for this pill AND the focused changes rows, so the two surfaces can
+/// never disagree. The pill's old private refresh state made those triggers
+/// pill-only (and unmounted whenever the composer was focused), leaving the
+/// ChangesAttachedRow numbers stale.
+private struct CachedComposerDiffPill: View {
     @ObservedObject var model: RemoteSessionModel
     let workspaceId: String?
-    let initialGitSnapshot: GitWorkspaceSnapshot?
     let fallbackFilesChanged: Int
     let fallbackAdditions: Int
     let fallbackDeletions: Int
     let fallbackCommitsAhead: Int
     let reduceMotion: Bool
-    let isRunning: Bool
-    let refreshGeneration: Int
     let onTap: () -> Void
 
-    @Environment(\.scenePhase) private var scenePhase
-    @StateObject private var refreshState = ComposerDiffPillRefreshState()
-
     private var snapshot: GitWorkspaceSnapshot? {
-        refreshState.snapshot ?? initialGitSnapshot
-    }
-
-    private var refreshIdentity: String {
-        workspaceId ?? ""
+        workspaceId.flatMap { model.gitSnapshots[$0] }
     }
 
     private var metrics: ComposerDiffPillMetrics {
@@ -129,52 +102,19 @@ private struct RefreshingComposerDiffPill: View {
     }
 
     var body: some View {
-        Group {
-            if metrics.isVisible {
-                ComposerDiffPill(
-                    filesChanged: metrics.filesChanged,
-                    additions: metrics.additions,
-                    deletions: metrics.deletions,
-                    commitsAhead: metrics.commitsAhead,
-                    onTap: onTap
-                )
-                .padding(.horizontal, 10)
-                .padding(.bottom, 2)
-                // Lifts in as the keyboard drops; fades when focus returns.
-                .transition(ComposerMotion.compactPillTransition(reduceMotion: reduceMotion))
-            }
+        if metrics.isVisible {
+            ComposerDiffPill(
+                filesChanged: metrics.filesChanged,
+                additions: metrics.additions,
+                deletions: metrics.deletions,
+                commitsAhead: metrics.commitsAhead,
+                onTap: onTap
+            )
+            .padding(.horizontal, 10)
+            .padding(.bottom, 2)
+            // Lifts in as the keyboard drops; fades when focus returns.
+            .transition(ComposerMotion.compactPillTransition(reduceMotion: reduceMotion))
         }
-        .task(id: refreshIdentity) {
-            await refreshState.run(
-                model: model,
-                workspaceId: workspaceId,
-                initialSnapshot: initialGitSnapshot)
-        }
-        .onChange(of: refreshGeneration) { _, _ in
-            guard let workspaceId, !workspaceId.isEmpty else { return }
-            Task { await refreshState.refresh(model: model, workspaceId: workspaceId) }
-        }
-        .onChange(of: scenePhase) { _, phase in
-            guard phase == .active, let workspaceId, !workspaceId.isEmpty else { return }
-            Task { await refreshState.refresh(model: model, workspaceId: workspaceId) }
-        }
-        .onChange(of: isRunning) { wasRunning, running in
-            guard wasRunning, !running, let workspaceId, !workspaceId.isEmpty else { return }
-            Task { await refreshState.refresh(model: model, workspaceId: workspaceId) }
-        }
-        .onChange(of: publishedGitSnapshotToken) { _, _ in
-            if let workspaceId, let published = model.gitSnapshots[workspaceId] {
-                refreshState.snapshot = published
-            }
-        }
-    }
-
-    private var publishedGitSnapshotToken: String {
-        guard let workspaceId, let snap = model.gitSnapshots[workspaceId] else { return "" }
-        let changed = snap.counts?.changed ?? 0
-        let ahead = snap.ahead ?? 0
-        let branch = snap.branch ?? ""
-        return "\(workspaceId)|\(changed)|\(ahead)|\(branch)"
     }
 }
 
@@ -215,6 +155,10 @@ struct ThreadDetailView: View {
     @StateObject private var composerDiffSheetState = MobileDiffStudioState()
     @State private var composerDiffSheetPresented = false
     @State private var diffPillRefreshGeneration = 0
+    /// Drives the focus-independent git snapshot refresh on foregrounding —
+    /// the compact pill (mounted only while the composer is blurred) can no
+    /// longer own that trigger.
+    @Environment(\.scenePhase) private var scenePhase
     /// Follow the transcript tail as content streams in. Driven by the bottom
     /// sentinel's visibility (on screen ⇒ follow); the jump-to-latest pill and
     /// thread-open also re-arm it.
@@ -1455,24 +1399,15 @@ struct ThreadDetailView: View {
                     // pill appear ONLY after an iOS-initiated run — never for the
                     // workspace's own uncommitted changes (which arrive as a git
                     // snapshot). That's why it only showed in demo (both seeded).
-                    let pillFilesChanged = primaryGitSnapshot?.counts?.changed ?? changedFileCount
-                    let pillAdditions =
-                        primaryGitSnapshot?.lineStats?.additions ?? diff?.additions ?? 0
-                    let pillDeletions =
-                        primaryGitSnapshot?.lineStats?.deletions ?? diff?.deletions ?? 0
-                    let pillCommitsAhead = primaryGitSnapshot?.ahead ?? 0
                     if !composerFocused {
-                        RefreshingComposerDiffPill(
+                        CachedComposerDiffPill(
                             model: model,
                             workspaceId: primaryWorkspaceId,
-                            initialGitSnapshot: primaryGitSnapshot,
-                            fallbackFilesChanged: pillFilesChanged,
-                            fallbackAdditions: pillAdditions,
-                            fallbackDeletions: pillDeletions,
-                            fallbackCommitsAhead: pillCommitsAhead,
+                            fallbackFilesChanged: changedFileCount,
+                            fallbackAdditions: diff?.additions ?? 0,
+                            fallbackDeletions: diff?.deletions ?? 0,
+                            fallbackCommitsAhead: 0,
                             reduceMotion: reduceMotion,
-                            isRunning: isRunning,
-                            refreshGeneration: diffPillRefreshGeneration,
                             onTap: { openComposerDiffSheet(workspaceId: primaryWorkspaceId) }
                         )
                     }
@@ -1667,6 +1602,24 @@ struct ThreadDetailView: View {
                             await model.refreshGitSnapshotCache(workspaceId: workspaceId)
                         }
                     }
+                    // Event-driven git refreshes live HERE — focus-independent —
+                    // not inside the compact pill, which is mounted only while
+                    // the composer is blurred: a run finishing with the composer
+                    // focused must still refresh the changes rows. The quiet
+                    // variant lands results in the shared `gitSnapshots` cache
+                    // both surfaces render from, without Mac-side rebroadcast,
+                    // and never wipes the cache on a dropped ack.
+                    .onChange(of: isRunning) { wasRunning, running in
+                        guard wasRunning, !running else { return }
+                        refreshComposerGitSnapshotsQuietly(card: card)
+                    }
+                    .onChange(of: scenePhase) { _, phase in
+                        guard phase == .active else { return }
+                        refreshComposerGitSnapshotsQuietly(card: card)
+                    }
+                    .onChange(of: diffPillRefreshGeneration) { _, _ in
+                        refreshComposerGitSnapshotsQuietly(card: card)
+                    }
                     .padding(.horizontal, 10).padding(.bottom, 6)
                 }
             }
@@ -1699,6 +1652,16 @@ struct ThreadDetailView: View {
             .composerShellIf(onOwnCards, resolved)
             if !onOwnCards {
                 Rectangle().fill(TWTheme.border).frame(height: 1)
+            }
+        }
+    }
+
+    private func refreshComposerGitSnapshotsQuietly(card: RemoteTaskCard) {
+        let workspaceIds = composerGitWorkspaceIds(card: card)
+        guard !workspaceIds.isEmpty else { return }
+        Task {
+            for workspaceId in workspaceIds {
+                await model.refreshGitSnapshotCacheQuietly(workspaceId: workspaceId)
             }
         }
     }
