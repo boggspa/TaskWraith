@@ -41,7 +41,7 @@
 | **Side chats** | solid | `RemoteSessionModel.swift:3705+` (`createSideChat`); `TWSharedViews.swift:7848+` (side-chat list); `GuestCardLifecycleTests.swift` (guest legacy lifecycle) | — | — |
 | **Git workflows (stage/commit/PR)** | solid when granted | `GitWorkflowViews.swift:1-10`; `RemoteSessionModel.swift:3247` (`externalPublish` gate) | — | — |
 | **Settings scope / Mac-owned tabs** | solid (intentional) | `TWSharedViews.swift:5482-5491` (Mac-owned callouts); `TWSharedViews.swift:5682` (approval timeouts) | — | intentional defer |
-| **Settings null/placeholder values + dead read-only tabs** | rough-edge → dispositioned | `TWSharedViews.swift:5294-5409` (`MobileSettingsSection` enum + default selection), `:5673-6104` (section builders). Design spec (`ios-settings-spec`) dispositions every tab: 4 REMOVE, 2 MERGE→1, 4 KEEP+FIX, 4 KEEP. Implementation queued for WriteSwift pass-4. | Medium | Design (spec ✓), WriteSwift (pass-4 implementation) |
+| **Settings null/placeholder values + dead read-only tabs** | solid | `TWSharedViews.swift:5294-5409` (`MobileSettingsSection` enum + default selection), `:5673-6104` (section builders). Implementation landed in `bff0e3fb1` per Design spec (`ios-settings-spec`): 14 → 9 tabs, dead read-only tabs removed, Safety & Privacy + About merged, default `.appearance`. | — | — |
 | **Canvas** | rough-edge | `CanvasPreviewCard.swift` only — preview card exists; no interactive DOM / drawing surface | Low | defer (out of iOS scope) |
 | **Full-size media** | rough-edge | `ThreadDetailViews.swift` — fallback path renders `"Full image unavailable"` when full-resolution asset is absent | Low | WriteSwift or defer |
 
@@ -81,5 +81,5 @@ Audited all 14 `MobileSettingsSection` tabs. Net: **14 → 9 tabs**; zero action
 - **No high-severity holes found** in the current iOS feature set.
 - **C4 (ensemble system-row identity)** is now end-to-end solid: host seeds frozen seat labels and iOS renders them through the same single-source speaker split used for C1.
 - **Question / answer card capability** is solid: the host always projects a boolean `capabilities.answer`, so iOS's `nil` fail-close is no longer reachable in practice.
-- **Settings cleanup** is the largest remaining rough-edge. It is fully dispositioned (14→9 tabs) and queued for WriteSwift implementation; once implemented it moves to **solid**.
+- **Settings cleanup** is now **solid**: the 14→9 tab refactor landed in `bff0e3fb1` with dead read-only tabs removed and Safety & Privacy + About merged into "About & Privacy".
 - **Remaining low-severity rough-edges** (archived chats, Canvas preview-only, full-size media fallback) are acceptable and can be deferred or handled in small follow-ups.

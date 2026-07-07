@@ -4,6 +4,68 @@ Notable changes to TaskWraith, the local-first macOS desktop workbench for runni
 and reviewing AI coding agents. Entries are user-facing highlights; execution,
 history, and workspace state stay on your machine throughout.
 
+## 1.7.9 - 2026-07-07
+
+### Added
+- **iOS performance pass.** The companion app caches MarkdownLite blocks by text
+  and participant signature, resplits streaming Markdown only when a paragraph
+  boundary crosses chunk edges, gates the composer rim-chase idle animation behind
+  shell visibility / active run / Reduce Motion, replaces the 90-second git-status
+  poll in the diff pill with event-driven refreshes, shares a single approval
+  countdown ticker across attention rows, and memoizes adjacent tool-row grouping.
+  Long ensemble threads should scroll and stream more smoothly while using less
+  battery.
+- **Liquid-glass sheets and subtler titles on iOS.** Sheets now use a new
+  `twSheetLiquidGlass` chrome with three tiers: opaque under Reduce Transparency,
+  native `glassEffect(.regular)` on iOS 26+, and an ultra-thin material fallback
+  with the same dual-stroke rim as the desktop composer. `TWPrincipalTitle`
+  replaces heavier inline navigation titles in Diff Studio, Files, the roster
+  sheet, and thread covers.
+- **iOS transcript parity refinements.** Settled rows show a typographic model
+  chip parsed from the same single-source speaker split as the label, so they
+  never disagree; ensemble yield/skip system rows render seat names from the host
+  projection; footer timestamps use a static cached formatter; leading marks drop
+  to 14 pt; and a 760 pt centered reading column improves iPad readability.
+- **iOS Settings cleanup.** Mobile Settings shrinks from 14 tabs to 9: empty or
+  duplicated read-only tabs are removed, Safety & Privacy and About merge into
+  one honest "About & Privacy" tab, and the default landing tab is Appearance.
+- **Deterministic ensemble participant seeding.** Adding a participant to an
+  ensemble now seeds provider, model, and reasoning defaults from stable
+  per-provider snapshots instead of volatile live catalogs, so rebuilt rosters
+  match.
+- **Queued-message Steer menu and blackboard nudge (ensemble).** The queued
+  message Steer button on desktop is now a small menu: **Steer now** dispatches
+  immediately, while **Add to Blackboard** consumes the message into a shared
+  note without interrupting the round. Each seat's briefing also nudges it to
+  re-check unread blackboard entries before wrapping up.
+- **Ensemble Boss goal management.** The Boss/Captain orchestrator can now set,
+  update, clear, and query the active thread goal inside ensemble rounds.
+
+### Fixed
+- **Ensemble participant ordering on iOS and Mac.** Round `participants` arrived
+  in speaking-queue array order while the configured roster used slot order; both
+  the host projection and iOS `displayParticipants` now sort by `(order,
+  participantId)` so transcript, mention, and chip-strip surfaces stay aligned
+  after mid-round roster edits.
+- **iPad transcript scrolling restored.** A layout regression from the iOS parity
+  work broke scroll-to-bottom and upward scrolling on iPad; the detail view now
+  keeps correct content bounds and the follow-pin stays deferred to the next
+  runloop.
+- **Residual fan-out duplicate windows.** Review-wave and target-resolution paths
+  could open duplicate fan-out windows; the orchestrator now closes them
+  deterministically.
+- **Composer git snapshot cache.** The Mac bridge routes composer git snapshot
+  refreshes through the shared cache, cutting redundant git-status work.
+- **Transcript scroll-up yank.** Streaming follow no longer snaps the viewport
+  back to the live edge while you are scrolled up to read history.
+- **Tool/thinking viewport persistence and chronology.** Live tool/thinking
+  viewport expansion persists across remounts, and CLI thinking traces are
+  segmented chronologically.
+- **iOS projection aliases and hydration.** Oversized remote projection frames
+  are trimmed before they hit the relay payload budget, and aliases are preserved
+  so rows, ensemble metadata, and composer context stay attached to the selected
+  chat.
+
 ## 1.7.8 - 2026-07-06
 
 ### Added
