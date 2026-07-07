@@ -53,6 +53,7 @@ export interface ClaudeTaskWraithMcpInput {
   /** Optional TaskWraith route stamps for per-run MCP subprocesses. */
   appRunId?: string
   appChatId?: string
+  workspacePath?: string
 }
 
 /**
@@ -151,7 +152,8 @@ function buildClaudeTaskWraithMcpEnv(input: ClaudeTaskWraithMcpInput): Record<st
   return {
     TASKWRAITH_PARENT_PROVIDER: 'claude',
     ...(input.appRunId ? { TASKWRAITH_RUN_ID: input.appRunId } : {}),
-    ...(input.appChatId ? { TASKWRAITH_CHAT_ID: input.appChatId } : {})
+    ...(input.appChatId ? { TASKWRAITH_CHAT_ID: input.appChatId } : {}),
+    ...(input.workspacePath ? { TASKWRAITH_WORKSPACE_PATH: input.workspacePath } : {})
   }
 }
 

@@ -9,6 +9,7 @@ import { dirname, join, resolve } from 'path'
 import type { WebContents } from 'electron'
 import { TASKWRAITH_MCP_TOOLS, type TaskWraithMcpToolName } from '../TaskWraithMcpTools'
 import { isPlanAdvertisedTool, isReadOnlyAdvertisedTool } from './McpAutoAllowedTools'
+import type { McpCallerContext } from './McpRouteGuards'
 // Audit MCP tool definitions — advertised ONLY to audit role-runs (the bridge
 // child carries TASKWRAITH_MCP_AUDIT=1, set per-run at the provider spawn site).
 // AuditToolExecutors imports McpToolDefinition from here as `import type` (erased
@@ -228,7 +229,8 @@ export interface McpBridgeRuntimeDeps {
     toolName: TaskWraithMcpToolName,
     args: unknown,
     route: McpBridgeAgentRunRoute,
-    parentProvider: ProviderId
+    parentProvider: ProviderId,
+    callerContext?: McpCallerContext
   ) => Promise<McpToolExecutionResult>
   installGeminiToolContextForRun: (
     sender: WebContents,
@@ -623,6 +625,9 @@ export function handleMcpJsonRpcMessage(
       arguments: args,
       appRunId: deps.env?.TASKWRAITH_RUN_ID ?? process.env.TASKWRAITH_RUN_ID,
       appChatId: deps.env?.TASKWRAITH_CHAT_ID ?? process.env.TASKWRAITH_CHAT_ID,
+      callerCwd: deps.cwd?.() || process.cwd(),
+      callerWorkspacePath:
+        deps.env?.TASKWRAITH_WORKSPACE_PATH ?? process.env.TASKWRAITH_WORKSPACE_PATH ?? '',
       parentProvider:
         deps.env?.TASKWRAITH_PARENT_PROVIDER || process.env.TASKWRAITH_PARENT_PROVIDER || 'gemini'
     })
@@ -672,7 +677,7 @@ export function startGeminiMcpBridgeProcess(deps: GeminiMcpBridgeProcessDeps): v
   const socketPath = parseBridgeSocketArg(argv, deps.getDefaultSocketPath())
   const brokerToken = parseBridgeTokenArg(argv)
   bridgeLog(
-    `spawn argv=${JSON.stringify(argv.slice(1))} cwd=${deps.cwd?.() || process.cwd()} env.TASKWRAITH_RUN_ID=${env.TASKWRAITH_RUN_ID || ''} env.TASKWRAITH_PARENT_PROVIDER=${env.TASKWRAITH_PARENT_PROVIDER || ''}`,
+    `spawn argv=${JSON.stringify(argv.slice(1))} cwd=${deps.cwd?.() || process.cwd()} env.TASKWRAITH_RUN_ID=${env.TASKWRAITH_RUN_ID || ''} env.TASKWRAITH_PARENT_PROVIDER=${env.TASKWRAITH_PARENT_PROVIDER || ''} env.TASKWRAITH_WORKSPACE_PATH=${env.TASKWRAITH_WORKSPACE_PATH || ''}`,
     deps.pid?.() || process.pid
   )
 
@@ -870,11 +875,20 @@ export class McpBridgeRuntime {
       return { ok: false, error: `Unknown TaskWraith MCP tool: ${String(toolName || 'unknown')}` }
     }
     const parentProvider = normalizeBrokerParentProvider(brokerRequestRecord.parentProvider)
+    const callerContext: McpCallerContext = {
+      ...(typeof brokerRequestRecord.callerCwd === 'string'
+        ? { callerCwd: brokerRequestRecord.callerCwd }
+        : {}),
+      ...(typeof brokerRequestRecord.callerWorkspacePath === 'string'
+        ? { callerWorkspacePath: brokerRequestRecord.callerWorkspacePath }
+        : {})
+    }
     const result = await this.deps.executeGeminiMcpTool(
       toolName,
       brokerRequestRecord.arguments ?? brokerRequestRecord.args ?? brokerRequestRecord.input,
       normalizeRunRoute(brokerRequestRecord),
-      parentProvider
+      parentProvider,
+      callerContext
     )
     return { ok: !result.isError, ...result }
   }

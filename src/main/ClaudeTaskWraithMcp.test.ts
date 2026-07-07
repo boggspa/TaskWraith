@@ -67,6 +67,20 @@ describe('buildClaudeTaskWraithMcpServers', () => {
     })
   })
 
+  it('adds the workspace path stamp when provided', () => {
+    const servers = buildClaudeTaskWraithMcpServers({
+      ...fixture,
+      workspacePath: '/repo'
+    })
+    const taskWraith = servers?.TaskWraith
+    expect(taskWraith?.type).toBe('stdio')
+    if (!taskWraith || taskWraith.type !== 'stdio') throw new Error('TaskWraith server missing')
+    expect(taskWraith.env).toEqual({
+      TASKWRAITH_PARENT_PROVIDER: 'claude',
+      TASKWRAITH_WORKSPACE_PATH: '/repo'
+    })
+  })
+
   it('uses the TaskWraith server name (matches Gemini/Codex bridge registrations)', () => {
     const servers = buildClaudeTaskWraithMcpServers(fixture)!
     expect(Object.keys(servers)).toEqual([CLAUDE_TASKWRAITH_SERVER_NAME])

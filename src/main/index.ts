@@ -893,6 +893,7 @@ import {
   CURSOR_SCOPED_MCP_SERVER_NAME
 } from './cursor/CursorMcpBridge'
 import { runGrokAcpTurn, type AcpChildProcess } from './grok/GrokAcpClient'
+import { sweepGrokProjectTaskWraithMcpRegistrations } from './grok/GrokMcpConfig'
 import { GrokSeatSessionRegistry } from './grok/GrokSeatSession'
 import {
   estimateProjectedTokenUsage,
@@ -1057,6 +1058,11 @@ import {
   MCP_AUTO_ALLOWED_TOOLS,
   isReadOnlyAdvertisedTool
 } from './mcp/McpAutoAllowedTools'
+import {
+  validateMcpCallerWorkspace,
+  validateMutatingMcpRoute,
+  type McpCallerContext
+} from './mcp/McpRouteGuards'
 import { executeWebMcpTool, isWebMcpToolName } from './mcp/WebTools'
 import { inheritedSubThreadPermissions } from './SubThreadPermissions'
 import { isNetworkAccessBlockedTool, isReadOnlyBlockedTool } from './ToolClassTaxonomy'
@@ -11372,6 +11378,7 @@ function runCliProviderProcess(
         TASKWRAITH_PARENT_PROVIDER: provider,
         TASKWRAITH_RUN_ID: route.appRunId || '',
         TASKWRAITH_CHAT_ID: route.appChatId || '',
+        TASKWRAITH_WORKSPACE_PATH: payload.scope === 'global' ? '' : payload.workspace || '',
         // Audit role-run: advertise the audit_* MCP tools to THIS run's bridge
         // child (it inherits the CLI's env). Set only for audit runs; a normal
         // run never carries payload.auditRun, so the namespace stays hidden.
@@ -11565,7 +11572,10 @@ async function loadOptionalClaudeSdk(): Promise<any | null> {
  * bridge argv Gemini/Codex use, plus user-managed MCP servers.
  * Centralised so SDK and CLI paths build identical config.
  */
-function claudeTaskWraithMcpInput(route?: AgentRunRoute | null): ClaudeTaskWraithMcpInput {
+function claudeTaskWraithMcpInput(
+  route?: AgentRunRoute | null,
+  workspacePath?: string | null
+): ClaudeTaskWraithMcpInput {
   const bridgeCommandStatus = taskwraithMcpBridgeCommandStatus()
   const settings = AppStore.getSettings()
   const enabled = Boolean(settings.geminiMcpBridgeEnabled && bridgeCommandStatus.available)
@@ -11579,7 +11589,8 @@ function claudeTaskWraithMcpInput(route?: AgentRunRoute | null): ClaudeTaskWrait
       validatePluginProvenance: validateUserMcpPluginProvenance
     }),
     ...(route?.appRunId ? { appRunId: route.appRunId } : {}),
-    ...(route?.appChatId ? { appChatId: route.appChatId } : {})
+    ...(route?.appChatId ? { appChatId: route.appChatId } : {}),
+    ...(workspacePath ? { workspacePath } : {})
   }
 }
 
@@ -12015,7 +12026,7 @@ async function tryRunClaudeSdk(
   // pre-approval list closes the gap. Only TaskWraith's own bridge
   // tools are pre-approved; arbitrary user MCP server tools still flow
   // through Claude's normal tool-permission path.
-  const claudeMcpInput = claudeTaskWraithMcpInput(route)
+  const claudeMcpInput = claudeTaskWraithMcpInput(route, payload.workspace)
   const claudeSdkMcpServers = buildClaudeTaskWraithMcpServers(claudeMcpInput)
   const claudeSdkAllowedTools = claudeMcpInput.enabled ? buildClaudeTaskWraithAllowedToolNames() : null
   const claudeSdkSettings =
@@ -12032,6 +12043,7 @@ async function tryRunClaudeSdk(
     TASKWRAITH_PARENT_PROVIDER: 'claude',
     TASKWRAITH_RUN_ID: route.appRunId || '',
     TASKWRAITH_CHAT_ID: route.appChatId || '',
+    TASKWRAITH_WORKSPACE_PATH: payload.scope === 'global' ? '' : payload.workspace || '',
     ...(claudeApiKey ? { ANTHROPIC_API_KEY: claudeApiKey } : {})
   }
   // 1.0.71 dogfood fix: make sure the TaskWraith MCP broker socket is actually
@@ -12210,7 +12222,7 @@ async function runClaudeProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
   // and clean up the temp file when the run exits. User-managed stdio
   // servers share the same config file but do not get added to
   // --allowedTools.
-  const mcpInput = claudeTaskWraithMcpInput(route)
+  const mcpInput = claudeTaskWraithMcpInput(route, payload.workspace)
   let mcpConfigPath: string | null = null
   let args = baseArgs
   const configJson = buildClaudeTaskWraithMcpConfigJson(mcpInput)
@@ -12250,6 +12262,7 @@ async function runClaudeProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
     TASKWRAITH_PARENT_PROVIDER: 'claude',
     TASKWRAITH_RUN_ID: route.appRunId || '',
     TASKWRAITH_CHAT_ID: route.appChatId || '',
+    TASKWRAITH_WORKSPACE_PATH: payload.scope === 'global' ? '' : payload.workspace || '',
     ...(claudeKey ? { ANTHROPIC_API_KEY: claudeKey } : {})
   }
   const claudeUsageWarning = claudeProgrammaticUsageWarning('cli-print', Boolean(claudeKey))
@@ -12327,7 +12340,8 @@ async function runGrokProvider(event: Electron.IpcMainInvokeEvent, payload: Agen
     extraEnv: {
       TASKWRAITH_PARENT_PROVIDER: 'grok',
       TASKWRAITH_RUN_ID: route.appRunId || '',
-      TASKWRAITH_CHAT_ID: route.appChatId || ''
+      TASKWRAITH_CHAT_ID: route.appChatId || '',
+      TASKWRAITH_WORKSPACE_PATH: payload.scope === 'global' ? '' : payload.workspace || ''
     }
   })
 }
@@ -12452,7 +12466,8 @@ async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
           [GEMINI_MCP_BRIDGE_ENV]: '1',
           TASKWRAITH_PARENT_PROVIDER: 'cursor',
           TASKWRAITH_RUN_ID: route.appRunId || '',
-          TASKWRAITH_CHAT_ID: route.appChatId || ''
+          TASKWRAITH_CHAT_ID: route.appChatId || '',
+          TASKWRAITH_WORKSPACE_PATH: payload.scope === 'global' ? '' : payload.workspace || ''
         }
       }
       // "B" mode (default): register the broker in the GLOBAL ~/.cursor/mcp.json —
@@ -12569,7 +12584,8 @@ async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
           [GEMINI_MCP_BRIDGE_ENV]: '1',
           TASKWRAITH_PARENT_PROVIDER: 'cursor',
           TASKWRAITH_RUN_ID: route.appRunId || '',
-          TASKWRAITH_CHAT_ID: route.appChatId || ''
+          TASKWRAITH_CHAT_ID: route.appChatId || '',
+          TASKWRAITH_WORKSPACE_PATH: payload.scope === 'global' ? '' : payload.workspace || ''
         }
       })
       // "B" mode (default): durable GLOBAL registration so the scoped read-only
@@ -12633,7 +12649,8 @@ async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
     extraEnv: {
       TASKWRAITH_PARENT_PROVIDER: 'cursor',
       TASKWRAITH_RUN_ID: route.appRunId || '',
-      TASKWRAITH_CHAT_ID: route.appChatId || ''
+      TASKWRAITH_CHAT_ID: route.appChatId || '',
+      TASKWRAITH_WORKSPACE_PATH: payload.scope === 'global' ? '' : payload.workspace || ''
     },
     // Restore (or remove) the workspace .cursor/cli.json after the run.
     onComplete: () => restoreCursorConfig?.()
@@ -12787,6 +12804,28 @@ async function runGrokAcpProvider(event: Electron.IpcMainInvokeEvent, payload: A
     state
   )
 
+  if (payload.workspace) {
+    try {
+      const sweep = sweepGrokProjectTaskWraithMcpRegistrations(app.getPath('home'), payload.workspace)
+      if (
+        sweep.removed.length > 0 &&
+        ['1', 'true', 'yes'].includes(String(process.env.TASKWRAITH_GROK_DEBUG || '').toLowerCase())
+      ) {
+        process.stderr.write(
+          `[grok-mcp] swept stale project MCP registrations ${JSON.stringify(sweep.removed)} from ${sweep.mcpDir || 'unknown'}\n`
+        )
+      }
+    } catch (error) {
+      if (
+        ['1', 'true', 'yes'].includes(String(process.env.TASKWRAITH_GROK_DEBUG || '').toLowerCase())
+      ) {
+        process.stderr.write(
+          `[grok-mcp] stale registration sweep failed: ${error instanceof Error ? error.message : String(error)}\n`
+        )
+      }
+    }
+  }
+
   // G5b/G6 — advertise TaskWraith MCP tools via ACP `session/new`.
   // Write-capable seats receive the full brokered TaskWraith server: mutating
   // MCP tools still route through executeGeminiMcpTool, which applies the
@@ -12846,6 +12885,10 @@ async function runGrokAcpProvider(event: Electron.IpcMainInvokeEvent, payload: A
             { name: 'TASKWRAITH_PARENT_PROVIDER', value: 'grok' },
             { name: 'TASKWRAITH_RUN_ID', value: route.appRunId || '' },
             { name: 'TASKWRAITH_CHAT_ID', value: route.appChatId || '' },
+            {
+              name: 'TASKWRAITH_WORKSPACE_PATH',
+              value: payload.scope === 'global' ? '' : payload.workspace || ''
+            },
             ...(grokAuditRun ? [{ name: 'TASKWRAITH_MCP_AUDIT', value: '1' }] : [])
           ]
         }
@@ -12898,7 +12941,8 @@ async function runGrokAcpProvider(event: Electron.IpcMainInvokeEvent, payload: A
           // goes stale after the first turn. That is inert by construction —
           // seat sessions are TOOLLESS (no bridge child ever inherits it).
           TASKWRAITH_RUN_ID: route.appRunId || '',
-          TASKWRAITH_CHAT_ID: route.appChatId || ''
+          TASKWRAITH_CHAT_ID: route.appChatId || '',
+          TASKWRAITH_WORKSPACE_PATH: payload.scope === 'global' ? '' : payload.workspace || ''
         },
         binaryPath
       )
@@ -13289,6 +13333,7 @@ async function runKimiWireProvider(
           TASKWRAITH_RUNTIME_PROFILE_ID: payload.runtimeProfileId || '',
           TASKWRAITH_RUN_ID: route.appRunId || '',
           TASKWRAITH_CHAT_ID: route.appChatId || '',
+          TASKWRAITH_WORKSPACE_PATH: payload.scope === 'global' ? '' : payload.workspace || '',
           // Phase I4 (Kimi initiator): belt-and-braces env stamp on the
           // Kimi CLI process itself. The per-server env block in
           // ~/.kimi/mcp.json already stamps TASKWRAITH_PARENT_PROVIDER=
@@ -18338,6 +18383,7 @@ async function runGeminiProvider(
       ...resolveGeminiAuthProfileEnv(payload.geminiAuthProfileId),
       TASKWRAITH_RUN_ID: route.appRunId || '',
       TASKWRAITH_CHAT_ID: route.appChatId || '',
+      TASKWRAITH_WORKSPACE_PATH: payload.scope === 'global' ? '' : payload.workspace || '',
       TASKWRAITH_RUNTIME_PROFILE_ID: payload.runtimeProfileId || '',
       // Audit role-run: set the audit-tool advertisement flag for this run's
       // bridge child (inherited via the Gemini CLI env). NOTE (v1 gap): a
@@ -19977,16 +20023,28 @@ async function executeGeminiMcpTool(
   toolName: TaskWraithMcpToolName,
   rawArgs: unknown,
   route?: AgentRunRoute | null,
-  parentProvider: ProviderId = 'gemini'
+  parentProvider: ProviderId = 'gemini',
+  callerContext?: McpCallerContext
 ): Promise<McpToolExecutionResult> {
   const args = normalizeMcpToolArguments(rawArgs)
   const effectiveRoute =
     parentProvider === 'codex' && !route?.appRunId && !route?.appChatId
       ? resolveCodexMcpRouteFromHints(toolName, args) || route
       : route
+  const routeGuard = validateMutatingMcpRoute(toolName, effectiveRoute)
+  if (!routeGuard.ok) {
+    return {
+      ...mcpStructuredJsonResult({
+        ok: false,
+        tool: toolName,
+        error: routeGuard.error
+      }),
+      isError: true
+    }
+  }
   const context = getAgentToolContext(parentProvider, effectiveRoute)
   if (!context) {
-    const hasExplicitRoute = Boolean(route?.appRunId || route?.appChatId)
+    const hasExplicitRoute = Boolean(effectiveRoute?.appRunId || effectiveRoute?.appChatId)
     const activeCount = runManager.getActiveByProvider(parentProvider).length
     const error =
       !hasExplicitRoute && activeCount > 1
@@ -20004,6 +20062,21 @@ async function executeGeminiMcpTool(
 
   const baseCwd = resolve(context.cwd || context.workspacePath || globalRunCwd())
   const workspacePath = context.workspacePath ? resolve(context.workspacePath) : undefined
+  const workspaceGuard = validateMcpCallerWorkspace({
+    toolName,
+    caller: callerContext,
+    contextWorkspacePath: context.scope === 'global' ? undefined : workspacePath
+  })
+  if (!workspaceGuard.ok) {
+    return {
+      ...mcpStructuredJsonResult({
+        ok: false,
+        tool: toolName,
+        error: workspaceGuard.error
+      }),
+      isError: true
+    }
+  }
   const cwd = resolveScopedDirectory(
     context.scope,
     baseCwd,
@@ -31926,6 +31999,7 @@ if (isGeminiMcpBridgeProcess) {
             ...resolveGeminiAuthProfileEnv(getDefaultGeminiAuthProfileId()),
             TASKWRAITH_RUN_ID: routedSession.appRunId || '',
             TASKWRAITH_CHAT_ID: routedSession.appChatId || '',
+            TASKWRAITH_WORKSPACE_PATH: registeredWorkspace || '',
             // Phase I2: tag the Gemini interactive session so the bridge
             // subprocess stamps broker requests as parent='gemini'. Without
             // this the new I2 default could mis-route session tool calls.
