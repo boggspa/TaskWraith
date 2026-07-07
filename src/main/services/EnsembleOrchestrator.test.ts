@@ -10415,6 +10415,122 @@ Next action:
     completeDispatchedRun(harness, 2)
   })
 
+  it('review wave does not re-dispatch a reviewer already running in a fan-out lane', async () => {
+    const harness = makeHarness()
+    harness.chat.ensemble!.fanoutPolicy = 'read_only'
+    harness.chat.ensemble!.participants = [
+      {
+        id: 'codex',
+        provider: 'codex',
+        enabled: true,
+        role: 'Builder',
+        instructions: 'Do the work.',
+        order: 1,
+        permissionPresetId: 'workspace_write'
+      },
+      {
+        id: 'claude',
+        provider: 'claude',
+        enabled: true,
+        role: 'Reviewer A',
+        instructions: 'Review.',
+        order: 2,
+        permissionPresetId: 'read_only',
+        stageRole: 'reviewer'
+      },
+      {
+        id: 'kimi',
+        provider: 'kimi',
+        enabled: true,
+        role: 'Reviewer B',
+        instructions: 'Review.',
+        order: 3,
+        permissionPresetId: 'read_only',
+        stageRole: 'reviewer'
+      },
+      {
+        id: 'gemini',
+        provider: 'gemini',
+        enabled: true,
+        role: 'Reviewer C',
+        instructions: 'Review.',
+        order: 4,
+        permissionPresetId: 'read_only',
+        stageRole: 'reviewer'
+      }
+    ]
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Build, fan out one reviewer early, then close with the wave.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1), { timeout: 1000 })
+    expect(harness.dispatched[0].ensembleRun?.participantId).toBe('codex')
+    const fanout = harness.orchestrator.fanoutForRun(harness.dispatched[0].appRunId, {
+      targets: ['Reviewer A'],
+      prompt: 'Early look while I keep building.'
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2), { timeout: 1000 })
+    expect(harness.dispatched[1].ensembleRun?.participantId).toBe('claude')
+
+    completeDispatchedRun(harness, 0)
+
+    // With only reviewers left the closing wave fires — but only for the two
+    // idle reviewers. The reviewer whose mid-round lane is still live must
+    // not be spliced into the wave as a duplicate concurrent dispatch.
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(4), { timeout: 1000 })
+    expect(
+      new Set(harness.dispatched.slice(2).map((payload) => payload.ensembleRun?.participantId))
+    ).toEqual(new Set(['kimi', 'gemini']))
+    expect(
+      harness.dispatched.filter((payload) => payload.ensembleRun?.participantId === 'claude')
+    ).toHaveLength(1)
+
+    completeDispatchedRun(harness, 1)
+    await expect(fanout).resolves.toMatchObject({ ok: true })
+    completeDispatchedRun(harness, 2)
+    completeDispatchedRun(harness, 3)
+  })
+
+  it('ensemble_fanout cannot target a participant reserved for a pending fan-out lane', async () => {
+    const harness = makeFanoutRaceHarness()
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Lead starts.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1), { timeout: 1000 })
+    // Simulate the reservation window: targets are reserved before their lane
+    // runs are seeded into runsByRunId (the seat-compaction barrier can hold
+    // that window open for seconds), so a concurrent ensemble_fanout must be
+    // rejected by the reservation, not just by a live run.
+    const runtime = (
+      harness.orchestrator as unknown as {
+        roundsByChatId: Map<string, { fanoutReservedParticipantIds?: Set<string> }>
+      }
+    ).roundsByChatId.get('ensemble-chat')!
+    runtime.fanoutReservedParticipantIds = new Set(['claude'])
+
+    await expect(
+      harness.orchestrator.fanoutForRun(harness.dispatched[0].appRunId, {
+        targets: ['Reviewer'],
+        prompt: 'Duplicate consult.'
+      })
+    ).resolves.toMatchObject({
+      ok: false,
+      error: 'invalid_target',
+      message: expect.stringContaining('reserved')
+    })
+    expect(harness.dispatched).toHaveLength(1)
+
+    runtime.fanoutReservedParticipantIds = undefined
+    completeDispatchedRun(harness, 0)
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2), { timeout: 1000 })
+    completeDispatchedRun(harness, 1)
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3), { timeout: 1000 })
+    completeDispatchedRun(harness, 2)
+  })
+
   it('1.0.8: ensemble_fanout locked_writers mode is feature-gated', async () => {
     const previous = process.env.TASKWRAITH_CONCURRENT_WRITE_LANES
     process.env.TASKWRAITH_CONCURRENT_WRITE_LANES = '0'

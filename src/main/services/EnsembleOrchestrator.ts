@@ -4782,9 +4782,11 @@ export class EnsembleOrchestrator {
             ? 'summon_hop_limit'
             : continuation.reason === 'not_continuous'
               ? 'summon_not_continuous'
-              : continuation.reason === 'budget_exhausted'
-                ? 'budget_exhausted'
-                : 'summon_blocked_status'
+              : continuation.reason === 'active_fanout'
+                ? 'summon_target_active'
+                : continuation.reason === 'budget_exhausted'
+                  ? 'budget_exhausted'
+                  : 'summon_blocked_status'
       }
     }
     runtime.bossmanSummonCountsByParticipantId.set(target.id, previousSummonCount + 1)
@@ -8862,8 +8864,12 @@ export class EnsembleOrchestrator {
         )
       ) {
         const pendingReviewers = remaining.filter(
+          // Live/reserved fan-out lanes are excluded alongside completed ones:
+          // a reviewer whose mid-round lane is still running must not be
+          // spliced into the wave as a duplicate concurrent dispatch (the
+          // serial shift-guard below cannot see wave members).
           (entry) =>
-            entry.stageRole === 'reviewer' && !runtime.fannedOutParticipantIds?.has(entry.id)
+            entry.stageRole === 'reviewer' && !this.participantFanoutDispatchState(runtime, entry.id)
         )
         const eligibleReviewers = pendingReviewers.filter(
           (entry) =>
@@ -9667,6 +9673,11 @@ export class EnsembleOrchestrator {
       if (!participant.enabled) return false
       if (participant.id === run.participant.id) return false
       if (activeParticipantIds.has(participant.id)) return false
+      // A target can be reserved for a concurrent ensemble_fanout call whose
+      // lane runs are not yet seeded into runsByRunId (the seat-compaction
+      // barrier holds that window open for seconds). '=== active' keeps
+      // participants whose lane already SETTLED re-targetable, as before.
+      if (this.participantFanoutDispatchState(runtime, participant.id) === 'active') return false
       if (!fanoutTargetStageMatches(participant, targetStage)) return false
       if (mode === 'locked_writers') return true
       return this.resolveFanoutEligibilityPermissions(chat, runtime, participant, mode).readOnly
@@ -9701,6 +9712,13 @@ export class EnsembleOrchestrator {
         return {
           ok: false,
           message: `ensemble_fanout: target "${rawTarget}" is already active in this round.`,
+          error: 'invalid_target'
+        }
+      }
+      if (this.participantFanoutDispatchState(runtime, participant.id) === 'active') {
+        return {
+          ok: false,
+          message: `ensemble_fanout: target "${rawTarget}" is already reserved for or running in a fan-out lane.`,
           error: 'invalid_target'
         }
       }
@@ -10192,15 +10210,20 @@ export class EnsembleOrchestrator {
     runtime: ActiveRoundRuntime,
     participantId: string
   ): 'handled' | 'active' | null {
-    if (runtime.fannedOutParticipantIds?.has(participantId)) return 'handled'
+    // The 'active' layers are checked before the completed-fanout marker so a
+    // participant whose earlier lane already settled ('handled') but who has
+    // been re-reserved by a NEW ensemble_fanout call reads as 'active' —
+    // `resolveFanoutTargets` and the review wave key off that distinction.
     if (runtime.fanoutReservedParticipantIds?.has(participantId)) return 'active'
     if (this.activeFanoutRunForParticipant(runtime, participantId)) return 'active'
     const round = this.deps.getChat(runtime.chatId)?.ensemble?.activeRound
-    if (!round || round.roundId !== runtime.roundId) return null
-    const activeLane = Object.values(round.lanes || {}).find(
-      (lane) => lane.participantId === participantId && !isTerminalLaneStatus(lane.status)
-    )
-    return activeLane ? 'active' : null
+    if (round && round.roundId === runtime.roundId) {
+      const activeLane = Object.values(round.lanes || {}).find(
+        (lane) => lane.participantId === participantId && !isTerminalLaneStatus(lane.status)
+      )
+      if (activeLane) return 'active'
+    }
+    return runtime.fannedOutParticipantIds?.has(participantId) ? 'handled' : null
   }
 
   private tryRouteYieldReturn(
