@@ -1,6 +1,6 @@
 # Workspace Monolith Decomposition Plan
 
-Last refreshed: 2026-07-02
+Last refreshed: 2026-07-08
 
 This is the active source of truth for decomposing TaskWraith's remaining
 monoliths. It supersedes the old tactical "First 10 Slices" queue in this file
@@ -32,10 +32,29 @@ into a new 8K file and call the slice done.
 
 ## Current Snapshot
 
-Measured from the live worktree on 2026-07-02. The worktree was dirty during
-measurement, including concurrent main-process Grok work and unrelated renderer
-CSS/test changes. Treat these numbers as orientation only. Every Ensemble round
-must refresh counts and dirty state before assigning a slice.
+Measured from the live worktree on 2026-07-08. Root metrics below are unchanged
+since the 2026-07-07 refresh: both `src/main/index.ts` and
+`src/renderer/src/App.tsx` remain at 32,234 and 25,738 lines respectively,
+so extraction has not yet outpaced feature accretion. Treat these numbers as
+orientation only. Every Ensemble round must refresh counts and dirty state
+before assigning a slice.
+
+Pass-1 dirty baseline (recorded at round start):
+
+- Branch `master`, ahead 40 of `origin/master`.
+- `docs/refactors/app-index-decomposition.md` dirty pre-round (user edits plus
+  this Phase-0 refresh).
+- `.cursor/` untracked — never staged.
+- All `src/**` paths clean at round start; peer-owned dirty paths defer or
+  coordinate before write.
+
+Tier-2 orientation: early Pass-1 recon reported `SettingsPanel.tsx` ~10,714 and
+`EnsembleOrchestrator.ts` ~11,996 lines; live `wc -l` on 2026-07-08 confirms
+11,063 and 12,416 — the ranking table below remains accurate.
+
+IPC handler-test gap (42 flat modules, 38 tests): `shellHandlers`,
+`contextCompactionHandlers`, `ptyHandlers`, and `ensembleRosterPresetsHandlers`
+lack focused handler tests.
 
 Snapshot commands:
 
@@ -43,7 +62,9 @@ Snapshot commands:
 wc -l docs/refactors/app-index-decomposition.md src/renderer/src/App.tsx src/main/index.ts
 find src -type f \( -name '*.ts' -o -name '*.tsx' \) -print0 | xargs -0 wc -l | sort -nr | head -40
 rg -n "ipcMain\.(handle|on)" src/main/index.ts | wc -l
-rg -n "register[A-Za-z0-9]+Handlers\(" src/main/index.ts | wc -l
+rg -n "^\s+register[A-Za-z0-9]+Handlers\(" src/main/index.ts | wc -l
+find src/main/ipc -maxdepth 1 -name '*Handlers.ts' | wc -l
+find src/main/ipc -maxdepth 1 -name '*Handlers.test.ts' | wc -l
 rg -n ": any" src/renderer/src/app/views/MainAppLayout.types.ts | wc -l
 git status --short
 ```
@@ -52,30 +73,35 @@ Current high-level facts:
 
 | Area | Current signal |
 | --- | ---: |
-| `src/main/index.ts` | 30,137 lines |
-| `src/renderer/src/App.tsx` | 24,157 lines |
-| Inline `ipcMain.handle/on` registrations still in `index.ts` | 136 |
+| `src/main/index.ts` | 32,234 lines |
+| `src/renderer/src/App.tsx` | 25,738 lines |
+| Inline `ipcMain.handle/on` registrations still in `index.ts` | 103 |
 | Registrar calls already wired from `index.ts` | 43 |
-| `MainAppLayout.types.ts` remaining `: any` props | 389 |
+| Flat `src/main/ipc/*Handlers.ts` modules | 42 |
+| Flat `src/main/ipc/*Handlers.test.ts` modules | 38 |
+| `MainAppLayout.types.ts` remaining `: any` props | 391 |
 
 Largest production TS/TSX files at this snapshot:
 
 | Rank | File | Lines | Campaign |
 | ---: | --- | ---: | --- |
-| 1 | `src/main/index.ts` | 30,137 | Tier 1 main root |
-| 2 | `src/renderer/src/App.tsx` | 24,157 | Tier 1 renderer root |
-| 3 | `src/renderer/src/components/SettingsPanel.tsx` | 8,974 | Tier 2 renderer settings |
-| 4 | `src/main/services/EnsembleOrchestrator.ts` | 8,974 | Tier 2 service |
-| 5 | `src/renderer/src/components/Sidebar.tsx` | 5,391 | Tier 2 renderer shell |
-| 6 | `src/renderer/src/components/Composer.tsx` | 4,709 | Tier 2 composer |
-| 7 | `src/main/store/index.ts` | 4,430 | Tier 2 store |
-| 8 | `src/main/store/types.ts` | 4,287 | Tier 2 store types |
-| 9 | `src/main/McpToolCatalog.ts` | 3,435 | Tier 2 MCP catalog |
-| 10 | `src/main/mcp/WorkspaceToolExecutors.ts` | 3,277 | Tier 2 MCP executors |
-| 11 | `src/renderer/src/components/Inspector.tsx` | 3,036 | Tier 2 renderer component |
+| 1 | `src/main/index.ts` | 32,234 | Tier 1 main root |
+| 2 | `src/renderer/src/App.tsx` | 25,738 | Tier 1 renderer root |
+| 3 | `src/main/services/EnsembleOrchestrator.ts` | 12,416 | Tier 2 service |
+| 4 | `src/renderer/src/components/SettingsPanel.tsx` | 11,063 | Tier 2 renderer settings |
+| 5 | `src/renderer/src/components/Sidebar.tsx` | 5,533 | Tier 2 renderer shell |
+| 6 | `src/main/store/types.ts` | 5,490 | Tier 2 store types |
+| 7 | `src/main/store/index.ts` | 5,467 | Tier 2 store |
+| 8 | `src/renderer/src/components/Composer.tsx` | 4,879 | Tier 2 composer |
+| 9 | `src/renderer/src/components/TranscriptPanel.tsx` | 4,292 | Tier 2 transcript |
+| 10 | `src/main/McpToolCatalog.ts` | 4,218 | Tier 2 MCP catalog |
+| 11 | `src/main/mcp/WorkspaceToolExecutors.ts` | 3,511 | Tier 2 MCP executors |
+| 12 | `src/renderer/src/components/ActivityStack.tsx` | 3,423 | Tier 2 transcript/activity |
+| 13 | `src/main/ollama/OllamaProvider.ts` | 3,162 | Tier 2 provider |
+| 14 | `src/renderer/src/components/Inspector.tsx` | 3,055 | Tier 2 renderer component |
 
 Largest test hotspot: `src/main/services/EnsembleOrchestrator.test.ts`
-is also large and should be split when the service is split.
+is 12,641 lines and should be split when the service is split.
 
 ## Completed Work Archive
 
@@ -87,10 +113,12 @@ without fresh recon.
   `MainAppLayout` exists, `MainAppLayout.types.ts` has started to tighten its
   prop contract, and view-host extraction proved that typecheck alone is not
   enough to catch runtime prop omissions.
-- Main: M1-M17f landed many flat IPC registrar modules under `src/main/ipc/`.
-  That proved the registrar pattern, but the easy thin-registrar well is now
-  mostly exhausted. The remaining mass is facade and trust-boundary work, not
-  just more file shuffling.
+- Main: M1-M17f and later focused registrar slices landed many flat IPC
+  modules under `src/main/ipc/`; as of 2026-07-08 there are 42 handler modules
+  and 38 focused handler tests. That proved the registrar pattern and reduced
+  inline `ipcMain.handle/on` registrations to 103, but the easy
+  thin-registrar well is now mostly exhausted. The remaining mass is facade and
+  trust-boundary work, not just more file shuffling.
 - Current IPC handler rule from `src/main/ipc/README.md` still applies:
   handler modules stay directly under `src/main/ipc/` unless the IPC validation
   scanner is expanded in the same commit.
@@ -140,6 +168,11 @@ These rules are more important than line-count reduction:
 Run the Ensemble as a slice factory, not a debate room. Each round should
 produce at most one committed implementation slice, with separate recon, write,
 review, and plan-update responsibilities.
+
+Pass-1 cadence override (2026-07-08): when Lead authorizes disjoint locked
+write scopes, multiple slices may land in one pass — each with its own gates and
+exact pathspec commit. The default one-slice-per-round rule resumes unless Lead
+re-authorizes concurrent scopes.
 
 ### Roles
 
@@ -211,6 +244,21 @@ staged diff is limited to the slice paths and the failure is named.
 
 The phase order is explicit. Exact line ranges are intentionally omitted because
 they rot quickly. Recon must refresh anchors before each slice.
+
+### Active slice ledger
+
+Pass 1 (2026-07-08). Snapshot metrics above are pre-slice baselines.
+
+| Slice | Owner | Status | Scope |
+| --- | --- | --- | --- |
+| `docs(refactor-plan)` Phase-0 baseline refresh | @WriteDocs | IN FLIGHT | `docs/refactors/app-index-decomposition.md` |
+| `refactor(main-m1)` human collaboration IPC extraction | @WriteMain | IN FLIGHT | `src/main/index.ts`, `src/main/ipc/**` |
+| `refactor(renderer-r0)` scoped app IPC unsubscribe | @WriteRender | IN FLIGHT | `src/renderer/src/App.tsx` |
+
+Commit names: `docs(refactor-plan): refresh phase-0 baseline`,
+`refactor(main-m1): extract human collaboration ipc handlers`,
+`refactor(renderer-r0): add scoped app ipc unsubscribe`. @CheckCommit owns
+staging and commits by exact pathspec only.
 
 ### Phase 0 - Refresh And Freeze Invariants
 
