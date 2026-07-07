@@ -583,6 +583,7 @@ export interface EnsembleFanoutResult {
   tool: 'ensemble_fanout'
   mode: EnsembleFanoutMode
   targetStage?: EnsembleFanoutTargetStage
+  status?: 'dispatched' | 'completed'
   message: string
   laneIds?: string[]
   participantIds?: string[]
@@ -6948,7 +6949,8 @@ export class EnsembleOrchestrator {
         reason: input.reason,
         mode,
         sourceRunId: runId,
-        writeScopesByParticipantId
+        writeScopesByParticipantId,
+        waitForCompletion: false
       })
       this.incrementBossmanBudgetUsage(
         runtime,
@@ -6964,9 +6966,10 @@ export class EnsembleOrchestrator {
         tool: 'ensemble_fanout',
         mode,
         ...(targetStage ? { targetStage } : {}),
+        status: 'dispatched',
         laneIds,
         participantIds: resolvedTargets.targets.map((participant) => participant.id),
-        message: `${label} complete: ${laneIds.length} lane(s) returned.`
+        message: `${label} dispatched: ${laneIds.length} lane(s) started. Results will appear in the transcript; this tool returns after dispatch so the caller does not time out while lanes are working.`
       }
     } catch (error) {
       const message =
@@ -9937,10 +9940,13 @@ export class EnsembleOrchestrator {
    * 1.0.4-AK5 — Parallel fan-out executor.
    *
    * Dispatches N participants concurrently via Promise.all,
-   * then awaits all their completion promises before returning to
-   * `runRound`. The orchestrator emits a transcript status row at
-   * the start ("Parallel pass · N scouts dispatched.") so the user
-   * sees the fan-out as it happens.
+   * then, by default, awaits all their completion promises before
+   * returning to `runRound`. MCP-triggered fan-out sets
+   * `waitForCompletion: false` so the agent-facing tool gets a dispatch
+   * receipt before provider MCP timeouts while the transcript continues
+   * tracking lane completion in the background. The orchestrator emits a
+   * transcript status row at the start ("Parallel pass · N scouts
+   * dispatched.") so the user sees the fan-out as it happens.
    *
    * Critical invariants:
    *   - Read-only mode requires every participant to resolve as
@@ -9974,6 +9980,7 @@ export class EnsembleOrchestrator {
       forceReadOnlyDispatch?: boolean
       writeScopesByParticipantId?: Map<string, ConcurrentLaneWriteScope[]>
       onCompleteRuns?: (runs: ActiveParticipantRun[]) => void
+      waitForCompletion?: boolean
     } = {}
   ): Promise<string[]> {
     if (participants.length === 0) return []
@@ -10067,10 +10074,14 @@ export class EnsembleOrchestrator {
       runtime.activeScoutRunIds.add(run.runId)
     }
 
-    // Build the per-lane dispatch payload + completion promise
-    // pair. Dispatch concurrently via Promise.all so the round is
-    // bounded by the SLOWEST lane, not the sum of lane durations.
-    const dispatchPromises = laneRuns.map(async (run) => {
+    // Build the per-lane dispatch payload + completion promise pair. Keep
+    // dispatch-start and completion promises separate: an async mapper that
+    // returns `completion` would be promise-assimilated by JavaScript, causing
+    // Promise.all(dispatchPromises) to wait for lane completion instead of the
+    // dispatch attempt. That was visible to MCP callers as a tool timeout even
+    // though the fan-out had launched successfully.
+    const dispatchStartPromises: Array<Promise<void>> = []
+    const completionPromises = laneRuns.map((run) => {
       const participant = run.participant
       const completion = new Promise<EnsembleParticipantStatus>((resolve) => {
         run.completion = resolve
@@ -10169,60 +10180,95 @@ export class EnsembleOrchestrator {
         ...(kimiThinking !== undefined ? { kimiThinking } : {}),
         ...ollamaRunControls
       }
-      try {
-        const dispatched = await this.deps.dispatch(payload, { sender: runtime.sender })
-        if (!dispatched.dispatched) {
-          if (this.runsByRunId.get(run.runId) === run) {
-            const note = formatDispatchFailureNote(participant, { kind: 'unknown', message: '' })
-            this.appendRoundStatus(runtime.chatId, runtime.roundId, note)
-            this.finalizeRun(run, 'failed', note)
-          }
-        }
-      } catch (error) {
-        if (this.runsByRunId.get(run.runId) === run) {
-          const reason = classifyDispatchError(error)
-          const note = formatDispatchFailureNote(participant, reason)
-          this.appendRoundStatus(runtime.chatId, runtime.roundId, note)
-          this.finalizeRun(run, 'failed', note)
-        }
-      }
+      dispatchStartPromises.push(
+        Promise.resolve()
+          .then(() => this.deps.dispatch(payload, { sender: runtime.sender }))
+          .then((dispatched) => {
+            if (!dispatched.dispatched) {
+              if (this.runsByRunId.get(run.runId) === run) {
+                const note = formatDispatchFailureNote(participant, { kind: 'unknown', message: '' })
+                this.appendRoundStatus(runtime.chatId, runtime.roundId, note)
+                this.finalizeRun(run, 'failed', note)
+              }
+            }
+          })
+          .catch((error) => {
+            if (this.runsByRunId.get(run.runId) === run) {
+              const reason = classifyDispatchError(error)
+              const note = formatDispatchFailureNote(participant, reason)
+              this.appendRoundStatus(runtime.chatId, runtime.roundId, note)
+              this.finalizeRun(run, 'failed', note)
+            }
+          })
+      )
       return completion
     })
 
-    // Wait for every dispatch to return its completion promise,
-    // then wait for every completion promise to resolve.
-    const completionPromises = await Promise.all(dispatchPromises)
-    await Promise.all(completionPromises)
+    const laneIds = laneRuns
+      .map((run) => run.laneId)
+      .filter((laneId): laneId is string => Boolean(laneId))
+
+    // Wait for dispatch attempts, not lane completion, so agent-facing MCP
+    // callers get a real dispatch receipt while serial orchestrator fan-out can
+    // still wait for lane completion below.
+    await Promise.all(dispatchStartPromises)
+    if (runtime.cancelled) {
+      if (options.waitForCompletion === false) return laneIds
+      return []
+    }
+    const finishFanoutPass = async (): Promise<void> => {
+      await Promise.all(completionPromises)
+      if (runtime.cancelled) {
+        for (const run of laneRuns) {
+          runtime.activeScoutRunIds?.delete(run.runId)
+        }
+        if (runtime.activeScoutRunIds?.size === 0) {
+          runtime.activeScoutRunIds = undefined
+        }
+        return
+      }
+      for (const run of laneRuns) {
+        this.applyPendingParticipantSeatChangeFor(runtime, run.participant.id)
+      }
+      options.onCompleteRuns?.(laneRuns)
+
+      for (const run of laneRuns) {
+        runtime.activeScoutRunIds?.delete(run.runId)
+      }
+      if (runtime.activeScoutRunIds?.size === 0) {
+        runtime.activeScoutRunIds = undefined
+      }
+
+      this.appendRoundStatus(
+        runtime.chatId,
+        runtime.roundId,
+        (() => {
+          const skippedCount = laneRuns.filter((run) => run.status === 'cancelled').length
+          if (skippedCount === laneRuns.length) {
+            return `${label} skipped · ${skippedCount} lane(s) stopped.`
+          }
+          if (skippedCount > 0) {
+            return `${label} complete · ${laneRuns.length - skippedCount} lane(s) returned, ${skippedCount} skipped.`
+          }
+          return options.sourceRunId
+            ? `${label} complete · ${laneRuns.length} lane(s) returned to the caller.`
+            : `${label} complete · returning to serial writer step.`
+        })()
+      )
+    }
+
+    if (options.waitForCompletion === false) {
+      void finishFanoutPass().catch((error) => {
+        const message =
+          error instanceof Error ? error.message : 'fan-out completion tracking failed.'
+        this.appendRoundStatus(runtime.chatId, runtime.roundId, `${label} tracking failed: ${message}`)
+      })
+      return laneIds
+    }
+
+    await finishFanoutPass()
     if (runtime.cancelled) return []
-    for (const run of laneRuns) {
-      this.applyPendingParticipantSeatChangeFor(runtime, run.participant.id)
-    }
-    options.onCompleteRuns?.(laneRuns)
-
-    for (const run of laneRuns) {
-      runtime.activeScoutRunIds?.delete(run.runId)
-    }
-    if (runtime.activeScoutRunIds?.size === 0) {
-      runtime.activeScoutRunIds = undefined
-    }
-
-    this.appendRoundStatus(
-      runtime.chatId,
-      runtime.roundId,
-      (() => {
-        const skippedCount = laneRuns.filter((run) => run.status === 'cancelled').length
-        if (skippedCount === laneRuns.length) {
-          return `${label} skipped · ${skippedCount} lane(s) stopped.`
-        }
-        if (skippedCount > 0) {
-          return `${label} complete · ${laneRuns.length - skippedCount} lane(s) returned, ${skippedCount} skipped.`
-        }
-        return options.sourceRunId
-          ? `${label} complete · ${laneRuns.length} lane(s) returned to the caller.`
-          : `${label} complete · returning to serial writer step.`
-      })()
-    )
-    return laneRuns.map((run) => run.laneId).filter((laneId): laneId is string => Boolean(laneId))
+    return laneIds
   }
 
   private seedParticipantRun(

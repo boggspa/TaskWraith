@@ -10248,6 +10248,69 @@ Next action:
     expect(result.laneIds).toHaveLength(1)
   })
 
+  it('returns a fan-out dispatch receipt before the lane completes', async () => {
+    const harness = makeHarness()
+    harness.chat.ensemble!.fanoutPolicy = 'read_only'
+    harness.chat.ensemble!.participants = [
+      {
+        id: 'codex',
+        provider: 'codex',
+        enabled: true,
+        role: 'Worker',
+        instructions: 'Work.',
+        order: 1,
+        permissionPresetId: 'workspace_write'
+      },
+      {
+        id: 'claude',
+        provider: 'claude',
+        enabled: true,
+        role: 'Reviewer',
+        instructions: 'Review.',
+        order: 2,
+        permissionPresetId: 'read_only'
+      }
+    ]
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Worker starts, peer fans out.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    const result = await harness.orchestrator.fanoutForRun(harness.dispatched[0].appRunId, {
+      targets: ['Reviewer'],
+      prompt: 'Inspect the workspace and emit a brief.'
+    })
+
+    expect(result).toMatchObject({
+      ok: true,
+      status: 'dispatched',
+      laneIds: [expect.any(String)],
+      participantIds: ['claude']
+    })
+    expect(result.message).toContain('dispatched')
+    expect(harness.dispatched).toHaveLength(2)
+    expect(
+      harness.chat.messages.some((message) =>
+        message.content.includes('Parallel fan-out complete')
+      )
+    ).toBe(false)
+
+    harness.orchestrator.handleProviderOutput(
+      'claude',
+      { appRunId: harness.dispatched[1].appRunId, appChatId: 'ensemble-chat' },
+      { type: 'result', status: 'success' }
+    )
+    await vi.waitFor(() =>
+      expect(
+        harness.chat.messages.some((message) =>
+          message.content.includes('Parallel fan-out complete')
+        )
+      ).toBe(true)
+    )
+  })
+
   it('dispatches explicit ensemble_fanout targets up to the participant cap', async () => {
     const harness = makeHarness()
     harness.chat.ensemble!.fanoutPolicy = 'read_only'
