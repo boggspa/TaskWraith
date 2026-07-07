@@ -553,6 +553,54 @@ struct IosParityFixesTests {
                 channel: nil, isStreamingThread: true, isVisibleThread: true))
     }
 
+    // ── Pass-3 Track-S3: on-demand snapshot pull suppression ───────────────
+
+    @Test func onDemandSnapshotPullSuppressedOnlyForVisibleStreamingThread() {
+        #expect(
+            RemoteSessionModel.shouldSuppressOnDemandSnapshotPull(
+                isStreamingThread: true, isVisibleThread: true))
+        #expect(
+            !RemoteSessionModel.shouldSuppressOnDemandSnapshotPull(
+                isStreamingThread: false, isVisibleThread: true))
+        #expect(
+            !RemoteSessionModel.shouldSuppressOnDemandSnapshotPull(
+                isStreamingThread: true, isVisibleThread: false))
+    }
+
+    @MainActor
+    @Test func scheduleThreadRefreshBypassFiresThroughSuppressionGate() async throws {
+        let model = makeRemoteSessionModel()
+        model.visibleThreadId = "thread-1"
+        model.seedStreamingStateForTesting(threadId: "thread-1")
+        model.rememberThreadWorkspace("thread-1", workspaceId: "ws-1")
+        model.scheduleThreadRefreshForTesting(
+            "thread-1", debounceMs: 20_000_000, bypassVisibleStreamSuppression: true)
+        try await Task.sleep(nanoseconds: 50_000_000)
+        #expect(model.threadSnapshotPullAttemptsForTesting == 1)
+        model.cancelPendingThreadRefreshForTesting()
+    }
+
+    @MainActor
+    @Test func scheduleThreadRefreshSkippedForVisibleStreamingThread() async throws {
+        let model = makeRemoteSessionModel()
+        model.visibleThreadId = "thread-1"
+        model.seedStreamingStateForTesting(threadId: "thread-1")
+        model.scheduleThreadRefreshForTesting("thread-1")
+        try await Task.sleep(nanoseconds: 500_000_000)
+        #expect(model.pendingThreadRefreshCountForTesting == 0)
+    }
+
+    @MainActor
+    @Test func scheduleThreadRefreshBypassesSuppressionForTerminalRefresh() async throws {
+        let model = makeRemoteSessionModel()
+        model.visibleThreadId = "thread-1"
+        model.seedStreamingStateForTesting(threadId: "thread-1")
+        model.scheduleThreadRefreshForTesting(
+            "thread-1", bypassVisibleStreamSuppression: true)
+        #expect(model.pendingThreadRefreshCountForTesting == 1)
+        model.cancelPendingThreadRefreshForTesting()
+    }
+
     // ── Pass-2.5 Track-A: IF1 full-snapshot coalescing ─────────────────────
     // ── Track-S S2 / IF3: off-MainActor decode inside coalescer ────────────
 

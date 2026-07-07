@@ -2158,14 +2158,25 @@ public final class RemoteSessionModel: ObservableObject {
 
     // ── Inbound projections ───────────────────────────────────────────────────
 
-    /// IF2 (Track-A): pure decision — suppress the agent-output snapshot
-    /// re-pull only when the event's thread is BOTH actively streaming and
-    /// the one on screen. Exit/other channels and off-screen threads keep
-    /// their refresh. Static + pure so tests exercise the exact gate.
+    /// IF2+S3 (Track-A/Pass-3): suppress on-demand snapshot re-pulls while THIS
+    /// thread is actively streaming AND on screen. The live buffer
+    /// (`appendStreamingDeltas`) plus inbound host thread deltas cover visible
+    /// transcript updates; off-screen threads and terminal refreshes keep their
+    /// pulls. Static + pure so tests exercise the exact gate.
+    nonisolated static func shouldSuppressOnDemandSnapshotPull(
+        isStreamingThread: Bool, isVisibleThread: Bool
+    ) -> Bool {
+        isStreamingThread && isVisibleThread
+    }
+
+    /// IF2 (Track-A): agent-output runEvent re-pull — narrow wrapper over the
+    /// shared on-demand gate so only that channel is dropped mid-stream.
     nonisolated static func shouldSuppressStreamRefreshPull(
         channel: String?, isStreamingThread: Bool, isVisibleThread: Bool
     ) -> Bool {
-        channel == "agent-output" && isStreamingThread && isVisibleThread
+        channel == "agent-output"
+            && shouldSuppressOnDemandSnapshotPull(
+                isStreamingThread: isStreamingThread, isVisibleThread: isVisibleThread)
     }
 
     /// IF1+IF3: coalescer for FULL projection-snapshot broadcasts.
@@ -2435,7 +2446,9 @@ public final class RemoteSessionModel: ObservableObject {
                 isExit
                 ? 200_000_000
                 : (wire.channel == "agent-output" ? 700_000_000 : 450_000_000)
-            scheduleThreadRefresh(threadId, debounceMs: debounceNanos)
+            scheduleThreadRefresh(
+                threadId, debounceMs: debounceNanos,
+                bypassVisibleStreamSuppression: isExit)
         default:
             break
         }
@@ -3096,15 +3109,57 @@ public final class RemoteSessionModel: ObservableObject {
     private var pendingThreadRefresh: [String: Task<Void, Never>] = [:]
     private var pendingThreadSnapshotScopeWait: Set<String> = []
     private var loadingThreadSnapshots: Set<String> = []
+    #if DEBUG
+        private(set) var threadSnapshotPullAttemptsForTesting = 0
+    #endif
 
-    private func scheduleThreadRefresh(_ threadId: String, debounceMs: UInt64 = 450_000_000) {
+    private func scheduleThreadRefresh(
+        _ threadId: String, debounceMs: UInt64 = 450_000_000,
+        bypassVisibleStreamSuppression: Bool = false
+    ) {
+        if !bypassVisibleStreamSuppression,
+            Self.shouldSuppressOnDemandSnapshotPull(
+                isStreamingThread: streamingRunIds[threadId] != nil,
+                isVisibleThread: visibleThreadId == threadId)
+        {
+            return
+        }
         pendingThreadRefresh[threadId]?.cancel()
-        pendingThreadRefresh[threadId] = Task { [weak self] in
+        pendingThreadRefresh[threadId] = Task { [weak self, bypassVisibleStreamSuppression] in
             try? await Task.sleep(nanoseconds: debounceMs)
             guard !Task.isCancelled else { return }
-            await MainActor.run { self?.requestThreadSnapshot(threadId) }
+            await MainActor.run {
+                self?.requestThreadSnapshot(
+                    threadId, bypassVisibleStreamSuppression: bypassVisibleStreamSuppression)
+            }
         }
     }
+
+    #if DEBUG
+        func scheduleThreadRefreshForTesting(
+            _ threadId: String, debounceMs: UInt64 = 450_000_000,
+            bypassVisibleStreamSuppression: Bool = false
+        ) {
+            scheduleThreadRefresh(
+                threadId, debounceMs: debounceMs,
+                bypassVisibleStreamSuppression: bypassVisibleStreamSuppression)
+        }
+
+        var pendingThreadRefreshCountForTesting: Int { pendingThreadRefresh.count }
+
+        func cancelPendingThreadRefreshForTesting() {
+            pendingThreadRefresh.values.forEach { $0.cancel() }
+            pendingThreadRefresh = [:]
+        }
+
+        func isLoadingThreadSnapshotForTesting(_ threadId: String) -> Bool {
+            loadingThreadSnapshots.contains(threadId)
+        }
+
+        func seedStreamingStateForTesting(threadId: String, runId: String = "run-test") {
+            streamingRunIds[threadId] = runId
+        }
+    #endif
 
     private func flushPendingThreadSnapshotRequests() {
         guard !pendingThreadSnapshotScopeWait.isEmpty else { return }
@@ -4227,8 +4282,19 @@ public final class RemoteSessionModel: ObservableObject {
         threadWorkspaceHints[threadId] = workspaceId
     }
 
-    public func requestThreadSnapshot(_ threadId: String, limit: Int = 40, beforeRowId: String? = nil) {
+    public func requestThreadSnapshot(
+        _ threadId: String, limit: Int = 40, beforeRowId: String? = nil,
+        bypassVisibleStreamSuppression: Bool = false
+    ) {
         guard !isDemo else { return }  // demo snapshots are pre-seeded; never hit the wire
+        if beforeRowId == nil,
+            !bypassVisibleStreamSuppression,
+            Self.shouldSuppressOnDemandSnapshotPull(
+                isStreamingThread: streamingRunIds[threadId] != nil,
+                isVisibleThread: visibleThreadId == threadId)
+        {
+            return
+        }
         guard let workspaceId = remoteScopeForThread(threadId) else {
             if beforeRowId == nil {
                 pendingThreadSnapshotScopeWait.insert(threadId)
@@ -4239,6 +4305,9 @@ public final class RemoteSessionModel: ObservableObject {
         if beforeRowId == nil {
             guard !loadingThreadSnapshots.contains(threadId) else { return }
             loadingThreadSnapshots.insert(threadId)
+            #if DEBUG
+                threadSnapshotPullAttemptsForTesting += 1
+            #endif
         }
         let params = BridgeAction.threadSnapshotRequest(
             workspaceId: workspaceId, threadId: threadId, limit: limit, beforeRowId: beforeRowId)
