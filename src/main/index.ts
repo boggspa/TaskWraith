@@ -1154,6 +1154,9 @@ const remoteQuestionRegistry = new RemoteQuestionRegistry({
   defaultTtlMs: AGENT_QUESTION_TIMEOUT_MS
 })
 let bridgeBroadcasterRef: BridgeBroadcaster | null = null
+function broadcastCoalescedRemoteProjectionSnapshot(): void {
+  bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
+}
 // Remote-session power assertion: while >=1 iOS device is connected over the
 // bridge, hold an Electron powerSaveBlocker so the Mac stays awake to serve
 // remote approvals/questions (the agent runs on-Mac; a sleeping Mac can't be
@@ -1383,7 +1386,9 @@ remoteQuestionRegistry.subscribe((event) => {
   })
   try {
     bridgeBroadcasterRef?.broadcastRemoteProjection(envelope)
-    bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
+    if (record.threadId) {
+      pushBridgeRunTaskCardDelta?.(record.threadId)
+    }
   } catch (err) {
     console.error('[BridgeBroadcaster] question projection failed:', err)
   }
@@ -3582,6 +3587,7 @@ type BridgeRunTranscriptState = {
 const bridgeRunTranscripts = new Map<string, BridgeRunTranscriptState>()
 let pushBridgeRunSnapshot: ((chat: ChatRecord) => void) | null = null
 let pushBridgeRunTaskCardDelta: ((chatId: string) => void) | null = null
+let pushRemoteThreadSnapshotForChat: ((chat: ChatRecord) => boolean) | null = null
 
 /**
  * Phase B3 — thin proxy. Delegates to `approvalService.scheduleTimeout`
@@ -5359,7 +5365,7 @@ function emitWorkspaceBoardsChanged(): void {
     boards: AppStore.getWorkspaceBoards(),
     cards: AppStore.getWorkspaceBoardCards()
   })
-  bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
+  broadcastCoalescedRemoteProjectionSnapshot()
 }
 
 function emitEvidencePacksChanged(): void {
@@ -8170,7 +8176,7 @@ function stampPlanArtifactPathOnPendingPlan(
     broadcastChatUpdated(updated)
     try {
       bridgeBroadcasterRef?.broadcastThreadUpdated(updated.appChatId)
-      bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
+      pushRemoteThreadSnapshotForChat?.(updated)
     } catch (err) {
       console.warn('[PlanArtifact] bridge broadcast failed:', err)
     }
@@ -9758,7 +9764,7 @@ async function dispatchDueScheduledLoopHeadless(
     // For important transitions (run-start reset + completion), force an immediate
     // full projection; per-iteration calls stay coalesced by the broadcaster.
     if (force) bridgeBroadcasterRef?.resetThrottle()
-    bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
+    broadcastCoalescedRemoteProjectionSnapshot()
   }
 
   // 7c — reset the cached loop summary at the START of a new run so the live badge drops
@@ -16956,7 +16962,8 @@ function syncCodexGoalCapabilityMetadata(
   broadcastChatUpdated(updated)
   try {
     bridgeBroadcasterRef?.broadcastThreadUpdated(updated.appChatId)
-    bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
+    pushRemoteThreadSnapshotForChat?.(updated)
+    pushBridgeRunTaskCardDelta?.(updated.appChatId)
   } catch (err) {
     console.warn('[codex] native goal bridge broadcast failed:', err)
   }
@@ -23099,6 +23106,13 @@ if (isGeminiMcpBridgeProcess) {
       pushRemoteThreadSnapshot(chat, workspaceId)
       pushRemoteDiffSummaryDeltaForChat(chat.appChatId)
     }
+    pushRemoteThreadSnapshotForChat = (chat) => {
+      const workspaceId =
+        canonicalRemoteWorkspaceId(chat.workspaceId) ??
+        (!chat.workspaceId || chat.scope === 'global' ? GLOBAL_REMOTE_SCOPE : null)
+      if (!workspaceId) return false
+      return pushRemoteThreadSnapshot(chat, workspaceId)
+    }
 
     // T71 — does this chat belong to the workspace scope an iOS action
     // presented? Workspace chats match their canonical workspace id;
@@ -25831,7 +25845,6 @@ if (isGeminiMcpBridgeProcess) {
               if (refreshed) {
                 pushRemoteThreadSnapshot(refreshed, action.workspaceId)
               }
-              bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
             })
             .catch((err) => {
               if (internalQueueDispatch) {
@@ -27724,7 +27737,7 @@ if (isGeminiMcpBridgeProcess) {
       pluginSecretStore,
       pluginContributionManager,
       onActivationChanged: () => {
-        bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
+        broadcastCoalescedRemoteProjectionSnapshot()
         remoteFirstLaunchStateTrigger?.()
         void localServersService.refreshNow()
       },
@@ -29609,7 +29622,7 @@ if (isGeminiMcpBridgeProcess) {
         })
       },
       broadcastRemoteProjectionSnapshot: () => {
-        bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
+        broadcastCoalescedRemoteProjectionSnapshot()
       }
     })
 
@@ -31571,7 +31584,7 @@ if (isGeminiMcpBridgeProcess) {
           // rather than waiting for the coalesced full-snapshot timer.
           bridgeBroadcasterRef?.resetThrottle()
         }
-        bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
+        broadcastCoalescedRemoteProjectionSnapshot()
       },
       getApprovalTimeoutSettings: () => {
         // Phase K1 — when session YOLO is on, every approval is
@@ -32032,7 +32045,7 @@ if (isGeminiMcpBridgeProcess) {
     // syncs its list up via 'ensemble-roster-presets:sync' so the bridge can
     // project presets to iOS. A sync re-broadcasts the projection snapshot.
     registerEnsembleRosterPresetsHandlers({
-      onChanged: () => bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
+      onChanged: broadcastCoalescedRemoteProjectionSnapshot
     })
 
     // PTY (Trust Assistant terminal) handlers: start-pty / stop-pty /

@@ -69,6 +69,28 @@ describe('RemoteBridgePerfTuning', () => {
     expect(pushes).toEqual(['thread-a'])
   })
 
+  it('forgets the last live snapshot cadence when clearing a thread', () => {
+    let nowMs = 1000
+    const pushes: Array<{ threadId: string; nowMs: number }> = []
+    const scheduler = createRemoteLiveSnapshotScheduler({
+      now: () => nowMs,
+      push: (threadId) => {
+        pushes.push({ threadId, nowMs })
+        return true
+      }
+    })
+
+    scheduler.schedule('thread-a')
+    nowMs = 1200
+    scheduler.clear('thread-a')
+    scheduler.schedule('thread-a')
+
+    expect(pushes).toEqual([
+      { threadId: 'thread-a', nowMs: 1000 },
+      { threadId: 'thread-a', nowMs: 1200 }
+    ])
+  })
+
   it('keys the full projection throttle on true running chat streams', () => {
     expect(
       hasStreamingRemoteRunSessions([

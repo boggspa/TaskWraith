@@ -128,6 +128,12 @@ export interface ScheduledWorkflowHandlersDeps {
   broadcastRemoteProjectionSnapshot: () => void
 }
 
+function broadcastCoalescedRemoteProjectionAfterIpcMutation(
+  deps: ScheduledWorkflowHandlersDeps
+): void {
+  deps.broadcastRemoteProjectionSnapshot()
+}
+
 export function registerScheduledWorkflowHandlers(deps: ScheduledWorkflowHandlersDeps): void {
   ipcMain.handle('get-scheduled-tasks', (_, workspaceId?: string) =>
     deps.getScheduledTasks(workspaceId)
@@ -165,7 +171,7 @@ export function registerScheduledWorkflowHandlers(deps: ScheduledWorkflowHandler
   ipcMain.handle('save-workflow-definition', (_, workflow: Parameters<ScheduledWorkflowHandlersDeps['saveWorkflowDefinition']>[0]) => {
     const saved = deps.saveWorkflowDefinition(deps.sanitizeWorkflowForSave(workflow))
     deps.broadcastWorkflowDefinitionsChanged()
-    deps.broadcastRemoteProjectionSnapshot()
+    broadcastCoalescedRemoteProjectionAfterIpcMutation(deps)
     deps.emitDueScheduledTasks()
     return saved
   })
@@ -175,7 +181,7 @@ export function registerScheduledWorkflowHandlers(deps: ScheduledWorkflowHandler
     if (!sanitized) return null
     const updated = deps.updateWorkflowDefinition(id, sanitized)
     deps.broadcastWorkflowDefinitionsChanged()
-    deps.broadcastRemoteProjectionSnapshot()
+    broadcastCoalescedRemoteProjectionAfterIpcMutation(deps)
     deps.scheduleNextTaskTimer()
     return updated
   })
@@ -184,7 +190,7 @@ export function registerScheduledWorkflowHandlers(deps: ScheduledWorkflowHandler
     deps.deleteWorkflowDefinition(id)
     deps.broadcastWorkflowDefinitionsChanged()
     deps.broadcastScheduledTasksChanged()
-    deps.broadcastRemoteProjectionSnapshot()
+    broadcastCoalescedRemoteProjectionAfterIpcMutation(deps)
     deps.scheduleNextTaskTimer()
   })
 
@@ -195,21 +201,21 @@ export function registerScheduledWorkflowHandlers(deps: ScheduledWorkflowHandler
   ipcMain.handle('save-workspace-board', (_, board: WorkspaceBoardSaveInput) => {
     const saved = deps.saveWorkspaceBoard(deps.sanitizeWorkspaceBoardForSave(board))
     deps.broadcastWorkspaceBoardsChanged()
-    deps.broadcastRemoteProjectionSnapshot()
+    broadcastCoalescedRemoteProjectionAfterIpcMutation(deps)
     return saved
   })
 
   ipcMain.handle('update-workspace-board', (_, id: string, partial: Partial<WorkspaceBoardDefinition>) => {
     const updated = deps.updateWorkspaceBoard(id, deps.sanitizeWorkspaceBoardPatch(partial))
     deps.broadcastWorkspaceBoardsChanged()
-    deps.broadcastRemoteProjectionSnapshot()
+    broadcastCoalescedRemoteProjectionAfterIpcMutation(deps)
     return updated
   })
 
   ipcMain.handle('delete-workspace-board', (_, id: string) => {
     deps.deleteWorkspaceBoard(id)
     deps.broadcastWorkspaceBoardsChanged()
-    deps.broadcastRemoteProjectionSnapshot()
+    broadcastCoalescedRemoteProjectionAfterIpcMutation(deps)
   })
 
   ipcMain.handle('get-workspace-board-cards', (_, boardId?: string) =>
@@ -219,21 +225,21 @@ export function registerScheduledWorkflowHandlers(deps: ScheduledWorkflowHandler
   ipcMain.handle('save-workspace-board-card', (_, card: WorkspaceBoardCardSaveInput) => {
     const saved = deps.saveWorkspaceBoardCard(deps.sanitizeWorkspaceBoardCardForSave(card))
     deps.broadcastWorkspaceBoardsChanged()
-    deps.broadcastRemoteProjectionSnapshot()
+    broadcastCoalescedRemoteProjectionAfterIpcMutation(deps)
     return saved
   })
 
   ipcMain.handle('update-workspace-board-card', (_, id: string, partial: Partial<WorkspaceBoardCard>) => {
     const updated = deps.updateWorkspaceBoardCard(id, deps.sanitizeWorkspaceBoardCardPatch(partial))
     deps.broadcastWorkspaceBoardsChanged()
-    deps.broadcastRemoteProjectionSnapshot()
+    broadcastCoalescedRemoteProjectionAfterIpcMutation(deps)
     return updated
   })
 
   ipcMain.handle('delete-workspace-board-card', (_, id: string) => {
     deps.deleteWorkspaceBoardCard(id)
     deps.broadcastWorkspaceBoardsChanged()
-    deps.broadcastRemoteProjectionSnapshot()
+    broadcastCoalescedRemoteProjectionAfterIpcMutation(deps)
   })
 
   ipcMain.handle('get-evidence-packs', (_, workspaceId?: string) =>
@@ -271,7 +277,7 @@ export function registerScheduledWorkflowHandlers(deps: ScheduledWorkflowHandler
       deps.broadcastWorkflowDefinitionsChanged()
       deps.broadcastScheduledTasksChanged()
       deps.broadcastScheduledTaskDue(task)
-      deps.broadcastRemoteProjectionSnapshot()
+      broadcastCoalescedRemoteProjectionAfterIpcMutation(deps)
     }
     deps.scheduleNextTaskTimer()
     return task
@@ -290,7 +296,7 @@ export function registerScheduledWorkflowHandlers(deps: ScheduledWorkflowHandler
     )
     const updated = deps.setWorkflowUnattendedElevation(id, ack)
     deps.broadcastWorkflowDefinitionsChanged()
-    deps.broadcastRemoteProjectionSnapshot()
+    broadcastCoalescedRemoteProjectionAfterIpcMutation(deps)
     return updated
   })
 

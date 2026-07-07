@@ -41,9 +41,11 @@ export function createRemoteLiveSnapshotScheduler(
 
   const clear = (threadId: string): void => {
     const timer = trailingTimers.get(threadId)
-    if (!timer) return
-    clearTimeout(timer)
-    trailingTimers.delete(threadId)
+    if (timer) {
+      clearTimeout(timer)
+      trailingTimers.delete(threadId)
+    }
+    lastPushMs.delete(threadId)
   }
 
   const push = (threadId: string): void => {
