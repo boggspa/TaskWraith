@@ -23,21 +23,32 @@ const cssBlockStartingAt = (source: string, selector: string): string => {
 }
 
 describe('sidebar hierarchy rhythm CSS', () => {
-  it('keeps top-level section rows on one shared spacing grid', () => {
+  it('keeps top-level section rows on one shared vertical rhythm', () => {
     const css = readSidebarCss()
     const scrollBlock = cssBlockStartingAt(css, '.sidebar-hierarchy-scroll {')
     const panelBlock = cssBlockStartingAt(css, '#sidebar-threads-panel,')
     const childResetBlock = cssBlockStartingAt(css, '.sidebar-hierarchy-section > :is(')
     const headerBlock = cssBlockStartingAt(css, '.sidebar-hierarchy-scroll .sidebar-section-header {')
     const sectionBlock = cssBlockStartingAt(css, '\n.sidebar-hierarchy-section {')
+    const emptySectionBlock = cssBlockStartingAt(css, '.sidebar-hierarchy-section:empty {')
 
     expect(scrollBlock).toContain('--sidebar-section-row-gap: 10px')
     expect(scrollBlock).toContain('--sidebar-section-header-height: 28px')
     expect(scrollBlock).toContain('--sidebar-section-body-gap: 4px')
     expect(scrollBlock).toContain('--sidebar-section-action-size: 22px')
+    expect(scrollBlock).toContain('gap: var(--sidebar-section-row-gap)')
     expect(panelBlock).toContain('#sidebar-projects-panel')
     expect(panelBlock).toContain('display: flex')
-    expect(panelBlock).toContain('gap: var(--sidebar-section-row-gap)')
+    // 120a5230b (iOS-parity sidebar chrome): the panels' section rhythm
+    // moved OFF the flex gap — each section carries its own padding-block
+    // plus a full-width top divider, so the divider sits centered between
+    // sections (a panel flex gap would double the spacing) and the chrome
+    // travels with the section when drag-reordering changes flex `order`.
+    expect(panelBlock).toContain('gap: 0')
+    expect(sectionBlock).toContain('padding-block: 9px')
+    expect(sectionBlock).toContain('border-top: 1px solid')
+    // Null-content sections must not leave a stray divider/padding band.
+    expect(emptySectionBlock).toContain('display: none')
     expect(childResetBlock).toContain('.sidebar-shared-section')
     expect(headerBlock).toContain('min-height: var(--sidebar-section-header-height)')
     expect(headerBlock).toContain('margin-bottom: 0')
