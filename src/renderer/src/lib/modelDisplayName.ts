@@ -50,6 +50,10 @@ const KNOWN_MODEL_LABELS: Record<string, string> = {
   'gpt-5.3-codex': 'GPT-5.3 Codex',
   'gpt-5.3-codex-spark': 'GPT-5.3 Codex Spark',
   'gpt-5.2': 'GPT-5.2',
+  'gpt-5.6-sol': 'GPT-5.6 Sol',
+  'gpt-5.6-terra': 'GPT-5.6 Terra',
+  'gpt-5.6-luna': 'GPT-5.6 Luna',
+  // Stale pre-un-gate placeholder ids — kept so historical runs still render.
   'preview:openai:gpt-5.6:sol': 'GPT-5.6 Sol',
   'preview:openai:gpt-5.6:terra': 'GPT-5.6 Terra',
   'preview:openai:gpt-5.6:luna': 'GPT-5.6 Luna',

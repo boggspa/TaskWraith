@@ -614,6 +614,7 @@ import {
   normalizeCodexModel
 } from './providers/StaticProviderModels'
 import {
+  isPreviewCatalogModelId,
   isPreviewRiskModel,
   previewModelAccessFlagEnabledForProvider,
   previewModelCatalogEnabledForProvider
@@ -30275,8 +30276,11 @@ if (isGeminiMcpBridgeProcess) {
               ? { retiresAt: CODEX_MODEL_RETIREMENTS[model.id] }
               : {})
           }))
+        // Preview-family rows TaskWraith curates (GPT-5.6 trio) merge into the
+        // live list until the CLI's `model/list` returns them natively — the
+        // id-dedupe below prefers the CLI's row the day it appears.
         const codexPreviewRows = codexStaticFallback.filter((model) =>
-          String(model.id || '').startsWith('preview:')
+          isPreviewCatalogModelId(model.id)
         )
         const liveModels =
           previewModelCatalogEnabledForProvider('codex', process.env)

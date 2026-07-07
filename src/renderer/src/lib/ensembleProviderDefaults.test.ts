@@ -225,16 +225,21 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
       getEnsembleReasoningOptions('codex', 'gpt-5.5').map((option) => option.value)
     ).toEqual(['low', 'medium', 'high', 'xhigh'])
     expect(
+      getEnsembleReasoningOptions('codex', 'gpt-5.6-sol').map((option) => option.value)
+    ).toEqual(['low', 'medium', 'high', 'xhigh', 'max'])
+    // Stale pre-un-gate placeholder ids keep resolving Sol's Max ladder so a
+    // persisted roster row renders the right reasoning options.
+    expect(
       getEnsembleReasoningOptions('codex', 'preview:openai:gpt-5.6:sol').map(
         (option) => option.value
       )
     ).toEqual(['low', 'medium', 'high', 'xhigh', 'max'])
-    expect(
-      codex.modelOptions.find((option) => option.id === 'preview:openai:gpt-5.6:sol')
-    ).toMatchObject({
-      disabled: true,
-      disabledReason: 'Requires OpenAI preview access'
-    })
+    const sol = codex.modelOptions.find((option) => option.id === 'gpt-5.6-sol')
+    expect(sol).toMatchObject({ label: 'GPT-5.6 Sol' })
+    expect(sol?.disabled).toBeUndefined()
+    expect(codex.modelOptions.map((option) => option.id)).toEqual(
+      expect.arrayContaining(['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna'])
+    )
   })
 
   it('does not expose Default or CLI Default as ensemble picker model rows', () => {

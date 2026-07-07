@@ -26,7 +26,6 @@ import type {
   CombinedModelPickerReasoningOption
 } from '../components/CombinedModelPicker'
 import type { EnsembleParticipant, PermissionPresetId, ProviderId } from '../../../main/store/types'
-import { OPENAI_PREVIEW_MODEL_ACCESS_REASON } from '../../../shared/previewModelCatalog'
 import { codexReasoningDisplayLabel, claudeReasoningDisplayLabel } from './composerChipFormat'
 
 export interface EnsembleModelDefaults {
@@ -97,27 +96,15 @@ const GROK_REASONING: CombinedModelPickerReasoningOption[] = [
 
 const CODEX_MODELS: CombinedModelPickerModelOption[] = [
   { id: 'gpt-5.5', label: 'GPT-5.5' },
+  // GPT-5.6 trio un-gated 2026-07-07 — selectable here; dispatch preflight
+  // still probes the live CLI `model/list` and errors cleanly if OpenAI has
+  // not released the id yet.
+  { id: 'gpt-5.6-sol', label: 'GPT-5.6 Sol' },
+  { id: 'gpt-5.6-terra', label: 'GPT-5.6 Terra' },
+  { id: 'gpt-5.6-luna', label: 'GPT-5.6 Luna' },
   { id: 'gpt-5.4', label: 'GPT-5.4' },
   { id: 'gpt-5.4-mini', label: 'GPT-5.4 Mini' },
-  { id: 'gpt-5.3-codex-spark', label: 'GPT-5.3 Codex Spark' },
-  {
-    id: 'preview:openai:gpt-5.6:sol',
-    label: 'GPT-5.6 Sol',
-    disabled: true,
-    disabledReason: OPENAI_PREVIEW_MODEL_ACCESS_REASON
-  },
-  {
-    id: 'preview:openai:gpt-5.6:terra',
-    label: 'GPT-5.6 Terra',
-    disabled: true,
-    disabledReason: OPENAI_PREVIEW_MODEL_ACCESS_REASON
-  },
-  {
-    id: 'preview:openai:gpt-5.6:luna',
-    label: 'GPT-5.6 Luna',
-    disabled: true,
-    disabledReason: OPENAI_PREVIEW_MODEL_ACCESS_REASON
-  }
+  { id: 'gpt-5.3-codex-spark', label: 'GPT-5.3 Codex Spark' }
   // gpt-5.2 and gpt-5.3-codex are HARD-retired (the API rejects requests) and
   // removed from the ensemble Codex picker. Historical/cost lookups elsewhere
   // (modelDisplayName, contextWindows, ProviderRateService) keep their entries.
@@ -209,10 +196,14 @@ export function getEnsembleReasoningOptions(
   modelId?: string | null
 ): CombinedModelPickerReasoningOption[] {
   switch (provider) {
-    case 'codex':
-      return String(modelId || '').toLowerCase() === 'preview:openai:gpt-5.6:sol'
+    case 'codex': {
+      // Mirrors main's codexModelSupportsMaxReasoning: Sol (or its stale
+      // pre-un-gate placeholder id) is the only Codex row with Max.
+      const codexModel = String(modelId || '').toLowerCase()
+      return codexModel === 'gpt-5.6-sol' || codexModel === 'preview:openai:gpt-5.6:sol'
         ? CODEX_SOL_REASONING
         : CODEX_REASONING
+    }
     case 'claude':
       if (isClaudeHaikuModel(modelId)) return CLAUDE_HAIKU_REASONING
       return isClaudeFullReasoningModel(modelId) || isClaudeSonnet5Model(modelId)

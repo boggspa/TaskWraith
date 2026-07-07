@@ -5,6 +5,10 @@ import {
   getStaticProviderModels,
   normalizeCliProviderModel
 } from './StaticProviderModels'
+import {
+  concreteModelForPreviewPlaceholder,
+  isPreviewCatalogModelId
+} from '../../shared/previewModelCatalog'
 
 describe('codexModelContextConfig', () => {
   const longContextConfig = {
@@ -83,6 +87,7 @@ interface StaticModelShape {
   isDefault?: boolean
   disabled?: boolean
   disabledReason?: string
+  runnable?: boolean
   defaultReasoningEffort?: string | null
   additionalSpeedTiers?: string[]
   supportedReasoningEfforts?: Array<{
@@ -157,15 +162,11 @@ describe('getStaticProviderModels (provider-specific catalogs)', () => {
     ])
   })
 
-  it('keeps GPT-5.5 as the Codex default and hides GPT-5.6 previews by default', () => {
+  it('keeps GPT-5.5 as the Codex default and omits GPT-5.6 rows without the catalog flag', () => {
     const models = getStaticProviderModels('codex') as StaticModelShape[]
     expect(models.find((model) => model.isDefault)?.id).toBe('gpt-5.5')
     expect(models.map((model) => model.id)).not.toEqual(
-      expect.arrayContaining([
-        'preview:openai:gpt-5.6:sol',
-        'preview:openai:gpt-5.6:terra',
-        'preview:openai:gpt-5.6:luna'
-      ])
+      expect.arrayContaining(['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna'])
     )
   })
 
@@ -190,17 +191,17 @@ describe('getStaticProviderModels (provider-specific catalogs)', () => {
     ).toEqual(['low', 'medium', 'high', 'xhigh'])
   })
 
-  it('can expose disabled OpenAI preview placeholders behind the preview catalog flag', () => {
+  it('exposes selectable GPT-5.6 rows behind the preview catalog flag', () => {
     const models = getStaticProviderModels('codex', {
       includePreviewModels: true
     }) as StaticModelShape[]
     expect(models.find((model) => model.isDefault)?.id).toBe('gpt-5.5')
-    const sol = models.find((model) => model.id === 'preview:openai:gpt-5.6:sol')
-    const terra = models.find((model) => model.id === 'preview:openai:gpt-5.6:terra')
-    const luna = models.find((model) => model.id === 'preview:openai:gpt-5.6:luna')
+    const sol = models.find((model) => model.id === 'gpt-5.6-sol')
+    const terra = models.find((model) => model.id === 'gpt-5.6-terra')
+    const luna = models.find((model) => model.id === 'gpt-5.6-luna')
     expect(sol).toMatchObject({
-      disabled: true,
-      disabledReason: 'Requires OpenAI preview access',
+      disabled: false,
+      runnable: true,
       defaultReasoningEffort: 'medium'
     })
     expect(sol?.supportedReasoningEfforts?.map((option) => option.reasoningEffort)).toEqual([
@@ -210,26 +211,32 @@ describe('getStaticProviderModels (provider-specific catalogs)', () => {
       'xhigh',
       'max'
     ])
-    expect(terra).toMatchObject({
-      disabled: true,
-      disabledReason: 'Requires OpenAI preview access'
-    })
+    expect(terra).toMatchObject({ disabled: false, runnable: true })
     expect(terra?.supportedReasoningEfforts?.map((option) => option.reasoningEffort)).toEqual([
       'low',
       'medium',
       'high',
       'xhigh'
     ])
-    expect(luna).toMatchObject({
-      disabled: true,
-      disabledReason: 'Requires OpenAI preview access'
-    })
+    expect(luna).toMatchObject({ disabled: false, runnable: true })
   })
 
-  it('maps non-runnable OpenAI preview placeholder IDs back to GPT-5.5', () => {
-    expect(normalizeCliProviderModel('codex', 'preview:openai:gpt-5.6:sol')).toBe(
-      'gpt-5.5'
-    )
+  it('maps stale OpenAI preview placeholder IDs to their concrete GPT-5.6 slugs', () => {
+    expect(normalizeCliProviderModel('codex', 'preview:openai:gpt-5.6:sol')).toBe('gpt-5.6-sol')
+    expect(normalizeCliProviderModel('codex', 'preview:openai:gpt-5.6:terra')).toBe('gpt-5.6-terra')
+    expect(normalizeCliProviderModel('codex', 'preview:openai:gpt-5.6:luna')).toBe('gpt-5.6-luna')
+    expect(concreteModelForPreviewPlaceholder('preview:openai:gpt-5.6:sol')).toBe('gpt-5.6-sol')
+    expect(concreteModelForPreviewPlaceholder('gpt-5.6-sol')).toBeNull()
+  })
+
+  it('flags only curated preview-family rows for the live model/list merge', () => {
+    // isPreviewCatalogModelId is the predicate the get-agent-models live-merge
+    // uses to append TaskWraith-curated rows the CLI does not return yet.
+    expect(isPreviewCatalogModelId('gpt-5.6-sol')).toBe(true)
+    expect(isPreviewCatalogModelId('gpt-5.6-terra')).toBe(true)
+    expect(isPreviewCatalogModelId('gpt-5.6-luna')).toBe(true)
+    expect(isPreviewCatalogModelId('gpt-5.5')).toBe(false)
+    expect(isPreviewCatalogModelId('preview:openai:gpt-5.6:sol')).toBe(false)
   })
 
   it('adds Max reasoning only for GPT-5.6 Sol Codex rows', () => {

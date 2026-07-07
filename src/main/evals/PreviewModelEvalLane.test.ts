@@ -12,11 +12,9 @@ describe('GPT-5.6 preview eval lane', () => {
       defaultPreviewPermissionPreset: 'read_only',
       promotedPreviewPermissionPreset: 'default'
     })
-    expect(GPT56_PREVIEW_EVAL_LANE.candidatePlaceholders.map((entry) => entry.placeholderId)).toEqual([
-      'preview:openai:gpt-5.6:sol',
-      'preview:openai:gpt-5.6:terra',
-      'preview:openai:gpt-5.6:luna'
-    ])
+    expect(
+      GPT56_PREVIEW_EVAL_LANE.candidatePlaceholders.map((entry) => entry.placeholderId)
+    ).toEqual(['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna'])
     expect(GPT56_PREVIEW_EVAL_LANE.tasks.map((task) => task.metadata?.dimension)).toEqual([
       'tool_obedience',
       'approval_respect',

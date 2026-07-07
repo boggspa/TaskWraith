@@ -1,16 +1,16 @@
 export type PreviewModelProvider = 'codex' | 'claude'
 
-export type PreviewModelAccessState = 'requires_preview_access'
+export type PreviewModelAccessState = 'requires_preview_access' | 'available'
 
 export interface PreviewModelCatalogEntry {
   id: string
   provider: PreviewModelProvider
   label: string
   description: string
-  disabled: true
-  disabledReason: string
-  hidden: true
-  runnable: false
+  disabled: boolean
+  disabledReason?: string
+  hidden: boolean
+  runnable: boolean
   accessState: PreviewModelAccessState
   previewFamily: string
   previewRole: string
@@ -39,53 +39,65 @@ const OPENAI_GPT56_SOL_REASONING_EFFORTS = [
   { reasoningEffort: 'max' }
 ]
 
+// 2026-07-07 — GPT-5.6 launch-day un-gate. The trio is selectable and
+// runnable with concrete slugs; the run-time safety net is unchanged:
+// ProviderPreflightService still treats every gpt-5.6* id as preview-risk and
+// blocks dispatch with "Requires OpenAI preview access" until the live Codex
+// CLI `model/list` returns the id (previewModelAccessProvenForPayload), so a
+// not-yet-released model errors cleanly instead of failing mid-run.
 export const PREVIEW_MODEL_CATALOG: PreviewModelCatalogEntry[] = [
   {
-    id: 'preview:openai:gpt-5.6:sol',
+    id: 'gpt-5.6-sol',
     provider: 'codex',
     label: 'GPT-5.6 Sol',
-    description: 'Preview placeholder for hardest long-horizon coding and research.',
-    disabled: true,
-    disabledReason: OPENAI_PREVIEW_MODEL_ACCESS_REASON,
-    hidden: true,
-    runnable: false,
-    accessState: 'requires_preview_access',
+    description: 'Hardest long-horizon coding and research.',
+    disabled: false,
+    hidden: false,
+    runnable: true,
+    accessState: 'available',
     previewFamily: 'gpt-5.6',
     previewRole: 'Hardest long-horizon coding/research',
     supportedReasoningEfforts: OPENAI_GPT56_SOL_REASONING_EFFORTS,
     defaultReasoningEffort: 'medium'
   },
   {
-    id: 'preview:openai:gpt-5.6:terra',
+    id: 'gpt-5.6-terra',
     provider: 'codex',
     label: 'GPT-5.6 Terra',
-    description: 'Preview placeholder for strong everyday advanced agentic work.',
-    disabled: true,
-    disabledReason: OPENAI_PREVIEW_MODEL_ACCESS_REASON,
-    hidden: true,
-    runnable: false,
-    accessState: 'requires_preview_access',
+    description: 'Strong everyday advanced agentic work.',
+    disabled: false,
+    hidden: false,
+    runnable: true,
+    accessState: 'available',
     previewFamily: 'gpt-5.6',
     previewRole: 'Strong everyday advanced agentic work',
     supportedReasoningEfforts: OPENAI_GPT56_REASONING_EFFORTS,
     defaultReasoningEffort: 'medium'
   },
   {
-    id: 'preview:openai:gpt-5.6:luna',
+    id: 'gpt-5.6-luna',
     provider: 'codex',
     label: 'GPT-5.6 Luna',
-    description: 'Preview placeholder for fast triage, board planning, and lightweight subagents.',
-    disabled: true,
-    disabledReason: OPENAI_PREVIEW_MODEL_ACCESS_REASON,
-    hidden: true,
-    runnable: false,
-    accessState: 'requires_preview_access',
+    description: 'Fast triage, board planning, and lightweight subagents.',
+    disabled: false,
+    hidden: false,
+    runnable: true,
+    accessState: 'available',
     previewFamily: 'gpt-5.6',
     previewRole: 'Fast triage, board planning, summarization, lightweight subagents',
     supportedReasoningEfforts: OPENAI_GPT56_REASONING_EFFORTS,
     defaultReasoningEffort: 'medium'
   }
 ]
+
+// Ids of the disabled preview:… placeholder rows the picker showed before the
+// trio became selectable. Never valid CLI model ids — normalizeCodexModel maps
+// a stale persisted id to its concrete slug via this table.
+export const PREVIEW_PLACEHOLDER_MODEL_ALIASES: Readonly<Record<string, string>> = {
+  'preview:openai:gpt-5.6:sol': 'gpt-5.6-sol',
+  'preview:openai:gpt-5.6:terra': 'gpt-5.6-terra',
+  'preview:openai:gpt-5.6:luna': 'gpt-5.6-luna'
+}
 
 const RETIRED_PREVIEW_MODEL_PLACEHOLDER_IDS = new Set([
   'preview:anthropic:claude-fable-5',
@@ -105,9 +117,23 @@ export function previewModelsForProvider(provider: string): PreviewModelCatalogE
 export function isPreviewModelPlaceholder(model?: string | null): boolean {
   const id = normalizePreviewModelKey(model)
   return (
-    PREVIEW_MODEL_CATALOG.some((entry) => entry.id === id) ||
-    RETIRED_PREVIEW_MODEL_PLACEHOLDER_IDS.has(id)
+    Boolean(PREVIEW_PLACEHOLDER_MODEL_ALIASES[id]) || RETIRED_PREVIEW_MODEL_PLACEHOLDER_IDS.has(id)
   )
+}
+
+/** Concrete slug for a stale preview:… placeholder id, or null. */
+export function concreteModelForPreviewPlaceholder(model?: string | null): string | null {
+  return PREVIEW_PLACEHOLDER_MODEL_ALIASES[normalizePreviewModelKey(model)] || null
+}
+
+/**
+ * True when the id is a preview-family catalog row TaskWraith curates itself.
+ * The live `model/list` merge uses this to append catalog rows the CLI does
+ * not return yet without resurrecting any other static-fallback row.
+ */
+export function isPreviewCatalogModelId(model?: string | null): boolean {
+  const id = normalizePreviewModelKey(model)
+  return PREVIEW_MODEL_CATALOG.some((entry) => entry.id.toLowerCase() === id)
 }
 
 export function isPreviewRiskModel(provider: string, model?: string | null): boolean {
@@ -151,7 +177,9 @@ export function previewModelAccessFlagEnabledForProvider(
 }
 
 function normalizePreviewModelKey(model?: string | null): string {
-  return String(model || '').trim().toLowerCase()
+  return String(model || '')
+    .trim()
+    .toLowerCase()
 }
 
 function envFlagEnabled(

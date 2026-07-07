@@ -1,5 +1,6 @@
 import type { ProviderId } from '../store/types'
 import {
+  concreteModelForPreviewPlaceholder,
   isPreviewModelPlaceholder,
   previewModelsForProvider,
   type PreviewModelCatalogEntry
@@ -474,6 +475,10 @@ export function claudePermissionModeForApproval(approvalMode?: string): string {
 
 export function normalizeCodexModel(model?: string | null): string {
   const trimmed = typeof model === 'string' ? model.trim() : ''
+  // A stale preview:… placeholder id (persisted before the GPT-5.6 trio became
+  // selectable) maps to its concrete slug, not to the default model.
+  const placeholderConcrete = concreteModelForPreviewPlaceholder(trimmed)
+  if (placeholderConcrete) return placeholderConcrete
   if (
     !trimmed ||
     ['cli-default', 'auto', 'pro', 'flash', 'flash-lite', 'custom'].includes(trimmed) ||

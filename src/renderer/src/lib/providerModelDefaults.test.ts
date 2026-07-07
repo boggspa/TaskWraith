@@ -21,24 +21,20 @@ describe('Codex provider model defaults', () => {
     }
   })
 
-  it('exposes disabled GPT-5.6 preview rows with Max reasoning only on Sol', () => {
+  it('exposes selectable GPT-5.6 rows with Max reasoning only on Sol', () => {
     const byId = new Map(CODEX_DEFAULT_MODELS.map((model) => [model.id, model]))
-    expect(byId.get('preview:openai:gpt-5.6:sol')).toMatchObject({
+    expect(byId.get('gpt-5.6-sol')).toMatchObject({
       label: 'GPT-5.6 Sol',
-      disabled: true,
-      disabledReason: 'Requires OpenAI preview access',
+      disabled: false,
       defaultReasoningEffort: 'medium'
     })
     expect(
-      byId
-        .get('preview:openai:gpt-5.6:sol')
-        ?.supportedReasoningEfforts?.map((option) => option.reasoningEffort)
+      byId.get('gpt-5.6-sol')?.supportedReasoningEfforts?.map((option) => option.reasoningEffort)
     ).toEqual(['low', 'medium', 'high', 'xhigh', 'max'])
     expect(
-      byId
-        .get('preview:openai:gpt-5.6:terra')
-        ?.supportedReasoningEfforts?.map((option) => option.reasoningEffort)
+      byId.get('gpt-5.6-terra')?.supportedReasoningEfforts?.map((option) => option.reasoningEffort)
     ).toEqual(['low', 'medium', 'high', 'xhigh'])
+    expect(byId.get('gpt-5.6-luna')).toMatchObject({ label: 'GPT-5.6 Luna', disabled: false })
   })
 })
 
