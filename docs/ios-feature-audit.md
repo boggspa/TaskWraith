@@ -1,9 +1,9 @@
 # iOS Feature Solidity Matrix
 
-> Round: Cross-platform perf session — pass-2.5 stall fix + pass-1 knobs (Track-H/S/E)
+> Round: Cross-platform perf session — **pass-3** residual rebuild cuts + de-vibe + interest-filter specs
 > Scope: solidity of **existing iOS features only**, plus Batch-1 parity, Track-A resolution, and perf-session residuals.
-> Compiled from: Scout1/Scout2 recon, pass-2.5 + pass-1 implementation, adversary review, and `ios/TaskWraithKit` source walk.
-> Updated: Pass-6 — pass-2.5 committed locally (`3a49cd83c`–`438141f6e`), pass-1 perf slices committed (`44feed71e`/`a971e7bbe`/`c5372ca88`), TestFlight build **74** uploaded; IF3 S2 pending adversary fix.
+> Compiled from: Scout1/Scout2 recon, pass-1/2/2.5/3 implementation, adversary review, and `ios/TaskWraithKit` source walk.
+> Updated: Pass-7 — pass-3 in flight (2026-07-07); IF3 committed (`f765f4ad9`); S3/H3/E2 landed uncommitted pending adversary fixes; B2 + S3-batching specs boarded.
 
 ## Legend
 
@@ -48,9 +48,40 @@
 | **Settings scope / Mac-owned tabs** | solid (intentional) | `TWSharedViews.swift:5482-5491` (Mac-owned callouts); `TWSharedViews.swift:5682` (approval timeouts) | — | intentional defer |
 | **Settings null/placeholder values + dead read-only tabs** | solid | 14 → 9 tabs per `ios-settings-spec` (`bff0e3fb1`); Safety & Privacy + About merged into "About & Privacy" | — | — |
 | **Thinking viewport** | solid | Host projects dedicated `thinking` field capped ≈4000 (`3ec96cc0c`); iOS `ThinkingViewportView` — collapsed 8 lines + bottom fade + "Show thinking" chip, in-place expand via `expandRow` (`438141f6e`) | — | — |
-| **Track-A stall / live-update lag** | solid | Pass-2.5 host flood cut + iOS coalescer + stream-pull suppression landed; pass-1 further tightens cadence. User smoke test (19:02) reports heavy ensemble run with no lag. IF3 off-MainActor decode landed uncommitted — one adversary fix pending before commit. | — | — |
+| **Track-A stall / live-update lag** | solid | Pass-2.5 host flood cut + iOS coalescer + stream-pull suppression; pass-1 tightened cadence; pass-3 S3 centralizes on-demand pull suppression. User smoke test (19:02) reports heavy ensemble run with no lag ("chugging"). | — | — |
 | **Canvas** | rough-edge | `CanvasPreviewCard.swift` only — preview card exists; no interactive DOM / drawing surface | Low | defer |
 | **Full-size media** | rough-edge | `ThreadDetailViews.swift` — fallback path renders `"Full image unavailable"` when full-resolution asset is absent | Low | defer |
+
+## Pass-3 gate ledger (in flight, 2026-07-07)
+
+User-directed continuation on 18-commit local baseline. Every landed perf slice names the trigger it cuts. De-vibe boundary: session-touched surfaces + adversary nits only — not a repo-wide slop hunt.
+
+| Track | Owner | Status | Adversary gate | Trigger / scope |
+|-------|-------|--------|----------------|-----------------|
+| **IF3** off-MainActor decode | WriteSwift | **Committed** `f765f4ad9` | ✅ unanimous (pass-2) | JSON decode off MainActor; coalescer generation guard; teardown `reset()` |
+| **H2** meta-helper delta-first | WriteMain | **Committed** `4edad9087` | ✅ | `broadcastThreadUpdate` / `broadcastThreadList` skip chained full when delta covers |
+| **H3** residual full-rebuild cuts | WriteMain | Landed uncommitted | ❌ F1+F2 pending | Tier-1/2 delta drops; workflow IPC de-vibe helper; agent-exit decision; git-refresh coalesce |
+| **E2** renderer identity churn | WriteRender | Landed uncommitted | ✅ code approved · **ON HOLD** | `TranscriptPanel` delegation signature memo; `stableEmpties` de-vibe — blocked on external-session foreign hunks in `TranscriptPanel.tsx` |
+| **S3** pull-site audit | WriteSwift | Landed uncommitted | ❌ F-S1+F-S2 pending | Centralized `shouldSuppressOnDemandSnapshotPull`; ~25 schedule sites suppressed mid-stream |
+| **B2** runEvent interest filter | Design → Boss ruling | Spec boarded | ✅ amended (A1/A2) | Host sink filter; `setWatchedThread` wire; fail-open on missing signal |
+| **S3-batching** invalidation-coalesce | Design → Boss ruling | Spec boarded | ✅ exit pins | 80ms publish window; S3-DELTA **killed** (ordered envelope contract differs from IF3) |
+
+### H3 adversary findings (WriteMain — one-liners required)
+
+| ID | Defect | Fix |
+|----|--------|-----|
+| **F1** | `syncCodexGoalCapabilityMetadata` (`index.ts:16959`) pushes `threadSnapshot` but mutates `activeGoal` — phone reads goal from **taskCard** (`Models.swift:627`) | Replace with `pushRemoteTaskCardDelta` |
+| **F2** | Pairing fix (Adversary1 low) | One-line companion to F1 |
+| **F3** | Git-refresh coalesce gap | Boss ruling pending |
+
+### S3 adversary findings (WriteSwift — fold into same two-file slice)
+
+| ID | Defect | Fix |
+|----|--------|-----|
+| **F-S1** | Agent-exit `bypassVisibleStreamSuppression` skips outer gate but debounced fire at `:3129` calls `requestThreadSnapshot(threadId)` **without** forwarding bypass → inner gate re-suppresses terminal re-pull | Forward bypass through debounced task + fire-through test |
+| **F-S2** | `isTerminalRefresh` param on gate is dead (zero production callers) | Delete param or route bypass through gate as single decision point |
+
+**CheckCommit correction:** IF3 is committed at `f765f4ad9`. Working `RemoteSessionModel.swift` diff is **S3-only** (not IF3+S3 combined).
 
 ## Pass-2.5 Track-A resolution (committed locally)
 
@@ -85,18 +116,48 @@ Gates at commit time: typecheck node+web, vitest 8761/8761, swift 316/316, lint+
 | `a971e7bbe` | **E — renderer** | `MainAppLayout.tsx` | Fresh inline callbacks / `[]` props defeating `TranscriptPanel` memo during unrelated streaming |
 | `c5372ca88` | **S — iOS** | `HomeListViews.swift`, `TWSharedViews.swift`, `IosParityFixesTests.swift` | MarkdownLite FIFO eviction → LRU touch-on-hit (participants key preserved); `HomeSearchRanker` matches `TWTheme.providerLabel` |
 
-### IF3 S2 — off-MainActor decode (uncommitted, gates IF3 commit)
+## Perf pass-2 (committed locally, 2026-07-07)
 
-Landed by WriteSwift; **blocked on Adversary1 fix** before CheckCommit pathspec commit.
+| SHA | Track | Files | Trigger cut |
+|-----|-------|-------|-------------|
+| `f765f4ad9` | **IF3 — iOS** | `RemoteSessionModel.swift`, `IosParityFixesTests.swift` | Full projection JSON decode off MainActor; coalescer generation guard; teardown `reset()` (landmine ③) |
+| `4edad9087` | **H2 — host** | `index.ts`, `RemoteBridgePerfTuning.test.ts` | Meta-helpers delta-first; redundant full-snapshot dedupe in same branch |
 
-| Item | Status |
-|------|--------|
-| Decode in `Task.detached(.userInitiated)` inside `ProjectionSnapshotCoalescer` | ✅ landed |
-| `reset()` wired in `teardown()` (landmine ③) | ✅ landed |
-| Skip-stale-apply when newer pending mid-decode | ✅ landed |
-| **Stale-generation branch strands post-reset `pending`** (`finishDecode` :2245-2248) | ❌ **fix required** — mirror `:2249` drain path; add `coalescerResetThenEnqueueDuringInFlightDecodeStillDrains` test |
+## Perf pass-3 landed detail (uncommitted — pending adversary fixes + CheckCommit wave)
 
-Files for CheckCommit (after fix): `RemoteSessionModel.swift`, `IosParityFixesTests.swift`.
+### S3 — iOS pull-site audit (WriteSwift)
+
+Centralized `shouldSuppressOnDemandSnapshotPull` wired into `scheduleThreadRefresh` + `requestThreadSnapshot` (head pulls only). ~25 composer/ensemble/approval/goal/roster sites now suppressed when visible thread is actively streaming. Covering path: `appendStreamingDeltas` live buffer + host 600ms thread deltas.
+
+| Trigger | Verdict |
+|---------|---------|
+| IF2 `agent-output` schedule | Already suppressed (unchanged) |
+| `scheduleThreadRefresh` → head snapshot (~25 sites) | **Suppressed** when visible + streaming |
+| `.established` visible refresh | **Suppressed** mid-stream |
+| `agent-exit` schedule | **Kept** — terminal convergence (F-S1 fix required for fire-through) |
+| Off-screen / pagination / scenePhase / side-chat | **Kept** |
+
+Files: `RemoteSessionModel.swift`, `IosParityFixesTests.swift`. Gates: swift 326/326 at land time.
+
+### E2 — renderer identity churn (WriteRender)
+
+`TranscriptPanel` compares `transcriptAuxiliaryChatsSignature` (delegation-visible fields + `updatedAt`) and running-id set signature instead of raw `chats` / `runningChatIds` references. Cuts sibling/side pane re-renders on unrelated streaming token churn (rAF coalesced flushes do not bump `updatedAt`). `MainAppLayout` uses shared `stableEmpties.ts` exports.
+
+Files: `TranscriptPanel.tsx`, `TranscriptPanelFileChanges.test.ts`, `MainAppLayout.tsx`, `stableEmpties.ts`. **Held:** external session interleaved hover-preview hunks in `TranscriptPanel.tsx`.
+
+### H3 — host residual rebuild cuts (WriteMain)
+
+Tier-1 delta-able drops, Tier-2 coalesce-OK conversions, `scheduledWorkflowHandlers.ts` shared `broadcastCoalescedRemoteProjectionAfterIpcMutation` helper (11 IPC save sites), agent-exit full-rebuild evaluation. **Blocked:** F1 taskCard coverage hole on codex goal sync.
+
+Files (partial): `index.ts`, `scheduledWorkflowHandlers.ts`, `RemoteBridgePerfTuning.ts`, `RemoteBridgePerfTuning.test.ts`.
+
+## Pass-3 spec deferrals (implementation awaits Boss ruling)
+
+| Spec | Verdict | Notes |
+|------|---------|-------|
+| **B2** runEvent interest filter | Boarded + Adversary1-amended | A1: reset watch on `onDeviceEstablished` (no phantom generation); A2: single global watch slot + `connectedDeviceCount > 1 → fail-open` |
+| **S3-batching** invalidation-coalesce | Boarded + approved | 80ms `streamingPublishCoalesceWindow`; leading-edge immediate publish preserves type-out feel |
+| **S3-DELTA** off-main ordered envelopes | **Killed** | IF3 safety from full-snapshot idempotence; ordered `runEvent`/`threadSnapshot` envelopes are a different contract |
 
 ## Batch-1 landed summary
 
@@ -126,14 +187,15 @@ Track-A is resolved. Batch-2 items remain deferred until user accepts perf-sessi
 
 ## Build-74 device validation checklist
 
-Pair **TestFlight build 74** with a Mac host running this checkout (pass-2.5 + pass-1). iOS-only TestFlight without updated Mac host leaves old publish patterns on the relay side.
+Pair **TestFlight build 74** with a Mac host running this checkout (pass-2.5 + pass-1 + pass-2/3). iOS-only TestFlight without updated Mac host leaves old publish patterns on the relay side.
 
 | Check | Pass criteria | Notes |
 |-------|---------------|-------|
 | Heavy ensemble streaming | Transcript updates smoothly; no "chonking" | User smoke 19:02 ✅ on dev build |
 | Thinking rows | Collapsed 8-line fade; expand in-place | `ThinkingViewportView` |
 | Diff pill / git refresh | Pill updates without full-snapshot stall | Delta-only git publish (`3a49cd83c`) |
-| Reconnect after theme change | Snapshot applies; no indefinite stale UI | **IF3 fix required** for quiet single-snapshot reconnect |
+| Reconnect after theme change | Snapshot applies; no indefinite stale UI | IF3 committed — off-MainActor decode |
+| Agent-exit handoff prompt (visible thread) | Terminal re-pull reaches wire | **F-S1 fix required** before S3 commit |
 | Ensemble roster edit ack | Roster change visible on phone ≤2.5s during unrelated streaming | Adversary1 flag: `resetThrottle` removal on roster edit may lag full-projection readers |
 | Home search by provider label | e.g. "Codex" finds cards labeled "GPT 5.5" | `HomeSearchRanker` (`c5372ca88`) |
 | Copy full transcript | Works under 750KB; honest error above | |
@@ -157,27 +219,35 @@ Pair **TestFlight build 74** with a Mac host running this checkout (pass-2.5 + p
 | Follow-pin deferred via next runloop | ✅ solid | `ThreadDetailViews.swift:1691-1695`; landmine ② — never `Task.yield` |
 | `ThreadRowView` / `ToolBurstRowView` Equatable gates | ✅ solid | landmine ① — load-bearing streaming perf |
 | IF1 coalescer newest-only | ✅ solid | burst test in `IosParityFixesTests.swift` |
-| IF2 no stream-pull during visible streaming | ✅ solid | `IosParityFixesTests.swift` |
+| IF2 + S3 on-demand pull suppression | ⚠️ F-S1 pending | Gate sound; exit bypass must fire-through at `:3129` |
+| IF3 off-MainActor decode | ✅ committed | `f765f4ad9` |
 | MarkdownLite LRU + participants key | ✅ solid | landmine ⑥ — `c5372ca88` tests prove FIFO fails |
 | C1 speaker label / model chip single-source | ✅ solid | `twSettledRowSpeakerSplit` |
 | Theme teardown must-survive state | ✅ solid | landmine ③ — state on `RemoteSessionModel`, not `@State` |
 
-## Residuals ledger (low — none block commit)
+## Residuals ledger
 
 | ID | Item | Disposition |
 |----|------|-------------|
 | N1 | Provider-label search | **Closed** — `c5372ca88` |
 | R1 wording | Throttle keyed on active threads vs streaming-only | **Closed** — `44feed71e` keys on running chat streams |
-| IF3 | Off-MainActor decode | **In flight** — fix stale-gen branch, then commit |
-| B3 | `resetThrottle` caller audit (H2) | Deferred — awaits Scout1 classification |
-| runEvent micro-batching | Streaming-latency trade | Deferred |
+| IF3 | Off-MainActor decode | **Closed** — `f765f4ad9` |
+| S3 F-S1/F-S2 | Exit bypass fire-through + dead param | **In flight** — WriteSwift this pass |
+| H3 F1/F2 | Codex goal sync taskCard coverage | **In flight** — WriteMain this pass |
+| E2 hold | TranscriptPanel foreign hunks | **Held** — external session commit first |
+| B2 / S3-batching | Interest filter + invalidation-coalesce | **Spec only** — Boss implement-vs-defer ruling |
+| S3-DELTA | Off-main ordered envelopes | **Killed** — Design verdict |
+| B3 | `resetThrottle` caller audit (H2) | Deferred — Scout1 classification done |
+| runEvent micro-batching | Streaming-latency trade | Deferred (B2 spec is separate) |
 | Socket-close banner copy | Polish | Deferred |
 
 ## Disposition summary
 
-- **Track-A stall is resolved** in local commits. Pass-2.5 cut the host flood; pass-1 tightened cadence/throttle/memo/LRU. User reports heavy ensemble runs now "chug" smoothly.
-- **Thinking viewport is solid** end-to-end (host wire + iOS render).
-- **IF3 S2 is the remaining iOS perf commit** — one 3-line adversary fix + named test before CheckCommit gates it.
+- **Track-A stall is resolved** in local commits. Pass-2.5 cut the host flood; pass-1 tightened cadence/throttle/memo/LRU; pass-3 adds residual rebuild cuts + pull-audit suppression. User reports heavy ensemble runs now "chug" smoothly.
+- **IF3 is committed** (`f765f4ad9`). S3 pull-audit is the remaining iOS perf slice — two adversary one-liners (F-S1+F-S2) before CheckCommit.
+- **H3 host slice** landed but blocked on F1 taskCard fix before commit.
+- **E2 renderer slice** code-approved; held on external-session collision in `TranscriptPanel.tsx`.
 - **TestFlight build 74** is committed locally (`fd4c63e29`) and uploaded; device validation verdict **pending** user input on build 74 + updated Mac host pairing.
 - **Batch-2** is unblocked by Track-A but still needs explicit user go/no-go.
 - **No high-severity holes** remain in the current iOS feature set.
+- **Pass-3 completion** requires: adversary fixes landed → CheckCommit LOCAL wave → honest pass summary → user acceptance → `goal_complete`.
