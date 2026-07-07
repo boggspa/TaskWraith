@@ -448,7 +448,7 @@ describe('buildProviderChangeParticipantPatch', () => {
   it('clears stale cross-provider grants + runtime profile (keys present for shallow-merge clear)', () => {
     const patch = buildProviderChangeParticipantPatch('claude')
     expect(patch.provider).toBe('claude')
-    expect(patch.permissionPresetId).toBe('read_only') // claude default
+    expect(patch.permissionPresetId).toBe('default') // claude default approval
     expect(patch.permissionOverrides).toBeUndefined()
     expect(patch.runtimeProfileId).toBeUndefined()
     expect('permissionOverrides' in patch).toBe(true)

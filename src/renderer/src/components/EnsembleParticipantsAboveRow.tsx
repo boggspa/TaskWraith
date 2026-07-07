@@ -39,7 +39,10 @@ import type {
   EnsembleParticipant,
   ProviderId
 } from '../../../main/store/types'
-import { getDefaultEnsembleParticipantConfig } from '../lib/ensembleProviderDefaults'
+import {
+  getDefaultEnsembleParticipantConfig,
+  getDefaultEnsembleRoleName
+} from '../lib/ensembleProviderDefaults'
 import {
   ENSEMBLE_STAGE_ROLE_HINT,
   ENSEMBLE_STAGE_ROLE_OPTIONS,
@@ -754,11 +757,19 @@ export function EnsembleParticipantsAboveRow({
 
   const addParticipant = (chosenProvider?: ProviderId): void => {
     if (!canAddParticipant) return
+    // The selected (or last) chip decides only WHERE the new chip is
+    // inserted — never what it contains. Cloning it used to leak
+    // cross-provider config onto the new seat (a Grok model id on a Codex
+    // participant, the previous chip's role name, its permission preset,
+    // its runtime profile). Every field below comes from the chosen
+    // provider's canonical defaults; roster presets and the Agent Pool are
+    // the only inheritance paths.
     const source =
       participants.find((participant) => participant.id === selectedParticipantId) ||
       participants[participants.length - 1]
     const provider: ProviderId = chosenProvider || source?.provider || 'codex'
     const defaults = getDefaultEnsembleParticipantConfig(provider)
+    const roleName = getDefaultEnsembleRoleName(provider)
     const sourceIndex = source
       ? participants.findIndex((participant) => participant.id === source.id)
       : participants.length - 1
@@ -766,18 +777,16 @@ export function EnsembleParticipantsAboveRow({
       id: nextParticipantId(participants),
       provider,
       enabled: true,
-      role: nextRoleLabel(source?.role || getProviderName(provider), participants),
-      instructions:
-        source?.instructions || `Contribute as ${getProviderName(provider)} for this ensemble.`,
+      role: nextRoleLabel(roleName, participants),
+      instructions: `Contribute as ${roleName} for this ensemble.`,
       order: participants.length + 1,
-      model: source?.model || defaults.model,
-      runtimeProfileId: source?.runtimeProfileId,
-      geminiAuthProfileId: provider === 'gemini' ? source?.geminiAuthProfileId || null : null,
-      permissionPresetId: source?.permissionPresetId || defaults.permissionPresetId,
-      reasoningEffort: source?.reasoningEffort || defaults.reasoningEffort,
-      fastModeEnabled: source?.fastModeEnabled ?? defaults.fastModeEnabled,
-      thinkingEnabled: source?.thinkingEnabled ?? defaults.thinkingEnabled,
-      serviceTier: source?.serviceTier ?? defaults.serviceTier
+      model: defaults.model,
+      geminiAuthProfileId: null,
+      permissionPresetId: defaults.permissionPresetId,
+      reasoningEffort: defaults.reasoningEffort,
+      fastModeEnabled: defaults.fastModeEnabled,
+      thinkingEnabled: defaults.thinkingEnabled,
+      serviceTier: defaults.serviceTier
     }
     const next = [...participants]
     next.splice(Math.max(0, sourceIndex + 1), 0, newParticipant)

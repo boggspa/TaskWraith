@@ -9,8 +9,10 @@ import type {
   PooledAgentIdentitySnapshot,
   ProviderId
 } from '../../../main/store/types'
-import { getDefaultEnsembleParticipantConfig } from './ensembleProviderDefaults'
-import { getProviderLabel } from './providerLabels'
+import {
+  getDefaultEnsembleParticipantConfig,
+  getDefaultEnsembleRoleName
+} from './ensembleProviderDefaults'
 
 const STORAGE_KEY = 'taskwraith-ensemble-roster-presets'
 const EXPORT_FORMAT = 'taskwraith.ensembleRosterPresets'
@@ -548,7 +550,7 @@ export function defaultParticipantForProvider(
     id,
     provider,
     enabled: true,
-    role: getProviderLabel(provider),
+    role: getDefaultEnsembleRoleName(provider),
     instructions: '',
     order,
     model: defaults.model,

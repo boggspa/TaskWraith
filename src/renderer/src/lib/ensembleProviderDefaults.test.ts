@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { EnsembleParticipant } from '../../../main/store/types'
 import {
   getDefaultEnsembleParticipantConfig,
+  getDefaultEnsembleRoleName,
   getEnsembleModelDefaults,
   getEnsembleReasoningOptions,
   resolveEnsembleParticipantSettings
@@ -27,60 +28,77 @@ function participant(overrides: Partial<EnsembleParticipant> = {}): EnsemblePart
 }
 
 describe('getDefaultEnsembleParticipantConfig', () => {
-  it('returns codex defaults: GPT-5.5 model, workspace_write, medium reasoning, fast off', () => {
+  // Every live provider seeds new participants with the 'default'
+  // (Default Approval) preset — deterministic, never inherited from the
+  // selected chip. Roster presets / Agent Pool are the only inheritance
+  // paths; the seeded default panel (EnsembleDefaults.ts) keeps its own
+  // curated writer/reader split and is pinned in EnsembleDefaults.test.ts.
+  it('returns codex defaults: GPT-5.5 model, default approval, medium reasoning, fast off', () => {
     expect(getDefaultEnsembleParticipantConfig('codex')).toEqual({
       model: 'gpt-5.5',
-      permissionPresetId: 'workspace_write',
+      permissionPresetId: 'default',
       reasoningEffort: 'medium',
       fastModeEnabled: false,
       serviceTier: ''
     })
   })
 
-  it('returns claude defaults: Sonnet 5 model, read_only, medium reasoning, fast off', () => {
+  it('returns claude defaults: Sonnet 5 model, default approval, medium reasoning, fast off', () => {
     expect(getDefaultEnsembleParticipantConfig('claude')).toEqual({
       model: 'claude-sonnet-5',
-      permissionPresetId: 'read_only',
+      permissionPresetId: 'default',
       reasoningEffort: 'medium',
       fastModeEnabled: false
     })
   })
 
-  it('returns gemini defaults: Flash Lite model, read_only, no reasoning axis', () => {
+  it('returns gemini (retired) defaults: Flash Lite model, read_only, no reasoning axis', () => {
     expect(getDefaultEnsembleParticipantConfig('gemini')).toEqual({
       model: 'flash-lite',
       permissionPresetId: 'read_only'
     })
   })
 
-  it('returns kimi defaults: K2.7 Code model, read_only, thinking off', () => {
+  it('returns kimi defaults: K2.7 Code model, default approval, thinking ON', () => {
     expect(getDefaultEnsembleParticipantConfig('kimi')).toEqual({
       model: 'kimi-k2.7-code',
-      permissionPresetId: 'read_only',
-      thinkingEnabled: false
+      permissionPresetId: 'default',
+      thinkingEnabled: true
     })
   })
 
-  it('returns grok defaults: Build 0.1 model, read_only (until G5), medium reasoning', () => {
+  it('returns grok defaults: Build 0.1 model, default approval, medium reasoning', () => {
     expect(getDefaultEnsembleParticipantConfig('grok')).toEqual({
       model: 'grok-build',
-      permissionPresetId: 'read_only',
+      permissionPresetId: 'default',
       reasoningEffort: 'medium'
     })
   })
 
-  it('returns cursor defaults: Composer 2.5 Fast model, read_only, no reasoning axis', () => {
+  it('returns cursor defaults: Composer 2.5 Fast model, default approval, no reasoning axis', () => {
     expect(getDefaultEnsembleParticipantConfig('cursor')).toEqual({
       model: 'composer-2.5-fast',
-      permissionPresetId: 'read_only'
+      permissionPresetId: 'default'
     })
   })
 
-  it('returns ollama defaults: Qwen 3 model, read_only, no reasoning axis', () => {
+  it('returns ollama defaults: Qwen 3.5 model, default approval, no reasoning axis', () => {
     expect(getDefaultEnsembleParticipantConfig('ollama')).toEqual({
-      model: 'qwen3:4b-instruct',
-      permissionPresetId: 'read_only'
+      model: 'qwen3.5:9b',
+      permissionPresetId: 'default'
     })
+  })
+})
+
+describe('getDefaultEnsembleRoleName', () => {
+  it('maps each live provider to its deterministic default role name', () => {
+    expect(getDefaultEnsembleRoleName('codex')).toBe('Codex')
+    expect(getDefaultEnsembleRoleName('claude')).toBe('Claude')
+    expect(getDefaultEnsembleRoleName('kimi')).toBe('Kimi')
+    expect(getDefaultEnsembleRoleName('grok')).toBe('Grok')
+    expect(getDefaultEnsembleRoleName('cursor')).toBe('Cursor')
+    // Ollama seats read "Local" — mirrors the seeded default panel.
+    expect(getDefaultEnsembleRoleName('ollama')).toBe('Local')
   })
 })
 
@@ -90,7 +108,7 @@ describe('resolveEnsembleParticipantSettings', () => {
     expect(resolved).toEqual({
       provider: 'codex',
       model: 'gpt-5.5',
-      permissionPresetId: 'workspace_write',
+      permissionPresetId: 'default',
       reasoningEffort: 'medium',
       fastModeEnabled: false,
       thinkingEnabled: false,
@@ -131,7 +149,7 @@ describe('resolveEnsembleParticipantSettings', () => {
       participant({ provider: 'claude', id: 'ensemble-claude' })
     )
     expect(defaults.reasoningEffort).toBe('medium')
-    expect(defaults.permissionPresetId).toBe('read_only')
+    expect(defaults.permissionPresetId).toBe('default')
     expect(defaults.fastModeEnabled).toBe(false)
 
     const overridden = resolveEnsembleParticipantSettings(
@@ -188,21 +206,21 @@ describe('resolveEnsembleParticipantSettings', () => {
     expect(resolved.thinkingEnabled).toBe(false)
   })
 
-  it('resolves kimi thinking off by default, on when overridden', () => {
+  it('resolves kimi thinking ON by default, off when overridden', () => {
     const defaults = resolveEnsembleParticipantSettings(
       participant({ provider: 'kimi', id: 'ensemble-kimi' })
     )
-    expect(defaults.thinkingEnabled).toBe(false)
-    expect(defaults.permissionPresetId).toBe('read_only')
+    expect(defaults.thinkingEnabled).toBe(true)
+    expect(defaults.permissionPresetId).toBe('default')
 
     const overridden = resolveEnsembleParticipantSettings(
       participant({
         provider: 'kimi',
         id: 'ensemble-kimi',
-        thinkingEnabled: true
+        thinkingEnabled: false
       })
     )
-    expect(overridden.thinkingEnabled).toBe(true)
+    expect(overridden.thinkingEnabled).toBe(false)
   })
 })
 
@@ -262,8 +280,9 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
     }
   })
 
-  it('exposes kimi preferred model id as kimi-k2.7-code', () => {
+  it('exposes kimi preferred model id as kimi-k2.7-code with thinking on by default', () => {
     expect(getEnsembleModelDefaults('kimi').defaultModelId).toBe('kimi-k2.7-code')
+    expect(getEnsembleModelDefaults('kimi').defaultReasoning).toBe('on')
   })
 
   it('exposes returned Claude 5 family rows and Sonnet 4.6 Legacy without Mythos', () => {
@@ -371,9 +390,9 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
     expect(cursor.reasoningOptions).toEqual([])
   })
 
-  it('exposes local Ollama models without changing the Qwen default', () => {
+  it('exposes local Ollama models with Qwen 3.5 as the default', () => {
     const ollama = getEnsembleModelDefaults('ollama')
-    expect(ollama.defaultModelId).toBe('qwen3:4b-instruct')
+    expect(ollama.defaultModelId).toBe('qwen3.5:9b')
     expect(ollama.modelOptions.map((o) => o.id)).toEqual([
       'qwen3:4b-instruct',
       'qwen3.5:9b',

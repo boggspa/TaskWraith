@@ -9044,7 +9044,10 @@ export class EnsembleOrchestrator {
       const claudeFastMode =
         participant.provider === 'claude' ? Boolean(participant.fastModeEnabled) : undefined
       const kimiThinking =
-        participant.provider === 'kimi' ? Boolean(participant.thinkingEnabled) : undefined
+        // Unset resolves to thinking ON — must match the renderer's
+        // getDefaultEnsembleParticipantConfig('kimi').thinkingEnabled so a
+        // seat whose chip displays "Thinking on" dispatches the same way.
+        participant.provider === 'kimi' ? (participant.thinkingEnabled ?? true) : undefined
       const ollamaRunControls = ensembleOllamaRunControls(participant)
 
       const payload: AgentRunPayload = {
@@ -9951,7 +9954,10 @@ export class EnsembleOrchestrator {
       const claudeFastMode =
         participant.provider === 'claude' ? Boolean(participant.fastModeEnabled) : undefined
       const kimiThinking =
-        participant.provider === 'kimi' ? Boolean(participant.thinkingEnabled) : undefined
+        // Unset resolves to thinking ON — must match the renderer's
+        // getDefaultEnsembleParticipantConfig('kimi').thinkingEnabled so a
+        // seat whose chip displays "Thinking on" dispatches the same way.
+        participant.provider === 'kimi' ? (participant.thinkingEnabled ?? true) : undefined
       const ollamaRunControls = ensembleOllamaRunControls(participant)
       const payload: AgentRunPayload = {
         provider: participant.provider,

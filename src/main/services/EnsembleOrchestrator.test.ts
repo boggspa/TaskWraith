@@ -8652,6 +8652,33 @@ Next action:
     expect(kimiPayload.claudeFastMode).toBeUndefined()
   })
 
+  it('dispatches kimi thinking ON when the participant never set the flag', async () => {
+    // Unset resolves to the provider default (thinking on) — must stay in
+    // lockstep with getDefaultEnsembleParticipantConfig('kimi') so the chip
+    // display ("Thinking on") and the dispatched run agree for seats that
+    // predate the explicit seed (e.g. the seeded default panel).
+    const harness = makeHarness()
+    harness.chat.ensemble!.participants = [
+      {
+        id: 'kimi',
+        provider: 'kimi',
+        enabled: true,
+        role: 'Reviewer',
+        instructions: 'Review.',
+        order: 1,
+        model: 'kimi-k2.7-code',
+        permissionPresetId: 'read_only'
+      }
+    ]
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Think hard.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    expect(harness.dispatched[0].kimiThinking).toBe(true)
+  })
+
   // A2 (1.0.3) — `dmTargetParticipantId` scopes the round to a
   // single chip. The orchestrator's machinery still drives the run
   // (so per-participant status pills + activeRound state stay

@@ -238,6 +238,15 @@ export function getEnsembleReasoningOptions(
  * New participants persist concrete provider defaults rather than a generic
  * `cli-default` sentinel, so the picker never needs to expose a fake Default
  * row and dispatch does not depend on provider-native defaults drifting.
+ *
+ * Every live provider seeds with `permissionPresetId: 'default'` (the
+ * "Default Approval" preset). A freshly added participant is fully
+ * deterministic — model, reasoning, thinking, approval — regardless of which
+ * participant happened to be selected when the user hit "+". Roster presets
+ * and the Agent Pool are the only paths that carry participant config over.
+ * (The seeded default panel in `src/main/EnsembleDefaults.ts` keeps its
+ * curated writer/reader preset split — that panel is effectively a built-in
+ * preset, and read-only recon fan-out relies on it.)
  */
 export interface DefaultEnsembleParticipantConfig {
   model: string
@@ -255,7 +264,7 @@ export function getDefaultEnsembleParticipantConfig(
     case 'codex':
       return {
         model: 'gpt-5.5',
-        permissionPresetId: 'workspace_write',
+        permissionPresetId: 'default',
         reasoningEffort: 'medium',
         fastModeEnabled: false,
         serviceTier: ''
@@ -263,11 +272,13 @@ export function getDefaultEnsembleParticipantConfig(
     case 'claude':
       return {
         model: 'claude-sonnet-5',
-        permissionPresetId: 'read_only',
+        permissionPresetId: 'default',
         reasoningEffort: 'medium',
         fastModeEnabled: false
       }
     case 'gemini':
+      // Retired provider — kept only so legacy participants resolve; not
+      // part of the deterministic new-participant matrix.
       return {
         model: 'flash-lite',
         permissionPresetId: 'read_only'
@@ -275,36 +286,61 @@ export function getDefaultEnsembleParticipantConfig(
     case 'kimi':
       return {
         model: 'kimi-k2.7-code',
-        permissionPresetId: 'read_only',
-        thinkingEnabled: false
+        permissionPresetId: 'default',
+        thinkingEnabled: true
       }
     case 'grok':
-      // Grok stays read-only as an ensemble member until G5 (tool mediation
-      // via TaskWraith MCP + approval ledger) lands write-capable runs.
+      // Default Approval like every other seed; the Grok seat itself is
+      // still toolless at dispatch, so the preset only matters if the user
+      // later swaps the row to a tool-capable provider config.
       return {
         model: 'grok-build',
-        permissionPresetId: 'read_only',
+        permissionPresetId: 'default',
         reasoningEffort: 'medium'
       }
     case 'cursor':
-      // Cursor (Composer 2.5) has no reasoning axis; default to read-only in
-      // ensembles like most members (codex is the lone writer). The user can
-      // grant write per-participant — cursor's write mode is deny-list
-      // contained + diff-reviewed. MUST mirror EnsembleDefaults.ts.
+      // Cursor (Composer 2.5) has no reasoning axis. Approval-gated like the
+      // rest — cursor's write mode stays deny-list contained + diff-reviewed.
       return {
         model: 'composer-2.5-fast',
-        permissionPresetId: 'read_only'
+        permissionPresetId: 'default'
       }
     case 'ollama':
       return {
-        model: 'qwen3:4b-instruct',
-        permissionPresetId: 'read_only'
+        model: 'qwen3.5:9b',
+        permissionPresetId: 'default'
       }
     default:
       return {
         model: 'gpt-5.5',
         permissionPresetId: 'default'
       }
+  }
+}
+
+/**
+ * Deterministic default role name for a freshly added participant. Matches
+ * the provider display name except Ollama, which reads "Local" (mirrors the
+ * seeded default panel in `src/main/EnsembleDefaults.ts`). The chip strip
+ * suffixes " 2", " 3", … when the name is already taken, so two Claude seats
+ * become "Claude" / "Claude 2" — never a clone of the selected chip's role.
+ */
+export function getDefaultEnsembleRoleName(provider: ProviderId): string {
+  switch (provider) {
+    case 'codex':
+      return 'Codex'
+    case 'claude':
+      return 'Claude'
+    case 'kimi':
+      return 'Kimi'
+    case 'grok':
+      return 'Grok'
+    case 'cursor':
+      return 'Cursor'
+    case 'ollama':
+      return 'Local'
+    default:
+      return 'Gemini'
   }
 }
 
@@ -438,7 +474,7 @@ export function getEnsembleModelDefaults(provider: ProviderId): EnsembleModelDef
       return {
         modelOptions: KIMI_MODELS,
         reasoningOptions: KIMI_REASONING,
-        defaultReasoning: 'off',
+        defaultReasoning: 'on',
         fastModeCapableModelIds: new Set<string>(),
         defaultModelId: 'kimi-k2.7-code'
       }
@@ -464,7 +500,7 @@ export function getEnsembleModelDefaults(provider: ProviderId): EnsembleModelDef
         reasoningOptions: [],
         defaultReasoning: '',
         fastModeCapableModelIds: new Set<string>(),
-        defaultModelId: 'qwen3:4b-instruct'
+        defaultModelId: 'qwen3.5:9b'
       }
     default:
       return {

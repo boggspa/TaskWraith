@@ -18,7 +18,7 @@ describe('createDefaultEnsembleConfig parity guard', () => {
     expect(config.participants).toHaveLength(EXPECTED_PROVIDERS.length)
   })
 
-  it('keeps main participant seeds in sync with renderer provider defaults', () => {
+  it('keeps main participant MODEL seeds in sync with renderer provider defaults', () => {
     const config = createDefaultEnsembleConfig()
 
     for (const participant of config.participants) {
@@ -26,17 +26,21 @@ describe('createDefaultEnsembleConfig parity guard', () => {
       expect(participant.id).toBe(`ensemble-${participant.provider}`)
       expect(participant.enabled).toBe(true)
       expect(participant.model).toBe(rendererDefaults.model)
-      expect(participant.permissionPresetId).toBe(rendererDefaults.permissionPresetId)
     }
   })
 
-  it('pins provider roles and instructions exposed by the default config', () => {
+  it('pins provider roles, instructions and curated presets exposed by the default config', () => {
+    // permissionPresetId is pinned EXPLICITLY here, not against
+    // getDefaultEnsembleParticipantConfig: the seeded panel keeps a curated
+    // writer/reader split (codex lone writer, read-only recon seats) while
+    // chip-strip adds seed uniformly with 'default' (Default Approval).
     const rolesByProvider = Object.fromEntries(
       createDefaultEnsembleConfig().participants.map((participant) => [
         participant.provider,
         {
           role: participant.role,
-          instructions: participant.instructions
+          instructions: participant.instructions,
+          permissionPresetId: participant.permissionPresetId
         }
       ])
     )
@@ -45,30 +49,37 @@ describe('createDefaultEnsembleConfig parity guard', () => {
       claude: {
         role: 'Claude',
         instructions:
-          'Explore the request, identify constraints, and propose the safest path forward.'
+          'Explore the request, identify constraints, and propose the safest path forward.',
+        permissionPresetId: 'read_only'
       },
       codex: {
         role: 'Codex',
-        instructions: 'Implement concrete code or workflow changes when the round calls for action.'
+        instructions:
+          'Implement concrete code or workflow changes when the round calls for action.',
+        permissionPresetId: 'workspace_write'
       },
       kimi: {
         role: 'Kimi',
-        instructions: 'Review prior responses for gaps, edge cases, and test coverage.'
+        instructions: 'Review prior responses for gaps, edge cases, and test coverage.',
+        permissionPresetId: 'read_only'
       },
       grok: {
         role: 'Grok',
         instructions:
-          'Stress-test the proposed approach: surface risky assumptions, failure modes, and simpler alternatives.'
+          'Stress-test the proposed approach: surface risky assumptions, failure modes, and simpler alternatives.',
+        permissionPresetId: 'read_only'
       },
       cursor: {
         role: 'Cursor',
         instructions:
-          'Draft the concrete implementation: propose specific edits, file touches, and integration steps.'
+          'Draft the concrete implementation: propose specific edits, file touches, and integration steps.',
+        permissionPresetId: 'read_only'
       },
       ollama: {
         role: 'Local',
         instructions:
-          'Provide a local, privacy-preserving second opinion for summaries, triage, and small read-only reasoning tasks.'
+          'Provide a local, privacy-preserving second opinion for summaries, triage, and small read-only reasoning tasks.',
+        permissionPresetId: 'read_only'
       }
     })
   })
@@ -85,7 +96,6 @@ describe('createDefaultEnsembleConfig parity guard', () => {
         const rendererDefaults = getDefaultEnsembleParticipantConfig(participant.provider)
         expect(participant.order).toBe(config.participants.indexOf(participant) + 1)
         expect(participant.model).toBe(rendererDefaults.model)
-        expect(participant.permissionPresetId).toBe(rendererDefaults.permissionPresetId)
       }
     }
   })

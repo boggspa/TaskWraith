@@ -6,17 +6,26 @@ import type {
 } from './store/types'
 
 /*
- * F2 (1.0.3) — the per-provider participant defaults below MUST stay in
+ * F2 (1.0.3) — the per-provider MODEL defaults below MUST stay in
  * lockstep with `getDefaultEnsembleParticipantConfig` in
  * `src/renderer/src/lib/ensembleProviderDefaults.ts`, which is the
  * renderer-side single source-of-truth for the same values (model,
- * permissionPresetId, plus the reasoning/fast/thinking fallbacks the
- * composer pickers read at runtime). The two modules can't share a
- * file because the renderer module imports renderer-only types from
- * `CombinedModelPicker` and bundling main → renderer would tangle the
- * electron-vite build graph. Treat the renderer module as canonical;
- * if you change a default here, change it there too (the
- * `ensembleProviderDefaults.test.ts` fixtures pin the values).
+ * plus the reasoning/fast/thinking fallbacks the composer pickers read
+ * at runtime). The two modules can't share a file because the renderer
+ * module imports renderer-only types from `CombinedModelPicker` and
+ * bundling main → renderer would tangle the electron-vite build graph.
+ * Treat the renderer module as canonical; if you change a model default
+ * here, change it there too (the `ensembleProviderDefaults.test.ts`
+ * fixtures pin the values, and `EnsembleDefaults.test.ts` asserts the
+ * model parity).
+ *
+ * permissionPresetId is the one INTENTIONAL divergence: this seeded
+ * default panel keeps a curated writer/reader split (codex is the lone
+ * writer; the rest are read-only recon seats, which read-only fan-out
+ * depends on). Participants ADDED later via the chip strip / roster
+ * editor instead seed uniformly with 'default' (Default Approval) from
+ * `getDefaultEnsembleParticipantConfig` — fully deterministic, no
+ * inheritance from whichever chip was selected.
  */
 const DEFAULT_ENSEMBLE_ROLES: Array<{
   provider: ProviderId
@@ -44,9 +53,9 @@ const DEFAULT_ENSEMBLE_ROLES: Array<{
   },
   {
     // Grok is now a first-class provider, so it seeds into the default panel
-    // like the others. Read-only until G5 (tool mediation via TaskWraith MCP +
-    // approval ledger) lands write-capable runs; `getDefaultEnsembleParticipantConfig`
-    // in ensembleProviderDefaults.ts mirrors this preset.
+    // like the others. Read-only in THIS curated panel until G5 (tool
+    // mediation via TaskWraith MCP + approval ledger) lands write-capable
+    // runs; chip-strip adds seed 'default' instead (see header note).
     provider: 'grok',
     role: 'Grok',
     instructions:
@@ -55,9 +64,9 @@ const DEFAULT_ENSEMBLE_ROLES: Array<{
   },
   {
     // Cursor (Composer 2.5) is first-class, so it seeds into the default panel
-    // too. Read-only by default like the others (codex is the lone writer); the
-    // user can grant write per-participant. `getDefaultEnsembleParticipantConfig`
-    // in ensembleProviderDefaults.ts mirrors this preset.
+    // too. Read-only in THIS curated panel like the other recon seats (codex
+    // is the lone writer); the user can grant write per-participant.
+    // Chip-strip adds seed 'default' instead (see header note).
     provider: 'cursor',
     role: 'Cursor',
     instructions:
@@ -133,7 +142,7 @@ function getDefaultEnsembleModel(provider: ProviderId): string {
   if (provider === 'kimi') return 'kimi-k2.7-code'
   if (provider === 'grok') return 'grok-build'
   if (provider === 'cursor') return 'composer-2.5-fast'
-  if (provider === 'ollama') return 'qwen3:4b-instruct'
+  if (provider === 'ollama') return 'qwen3.5:9b'
   return 'flash-lite'
 }
 
