@@ -152,6 +152,7 @@ import {
   createRemoteLiveGitRefreshScheduler,
   createRemoteLiveSnapshotScheduler,
   hasStreamingRemoteRunSessions,
+  publishRemoteAgentExitConvergenceDeltas,
   remoteProjectionSnapshotThrottleMsForStreaming
 } from './RemoteBridgePerfTuning'
 import { createRemoteBridgeRunEventInterestFilter } from './RemoteBridgeRunEventFilter'
@@ -1157,7 +1158,7 @@ const remoteQuestionRegistry = new RemoteQuestionRegistry({
 })
 let bridgeBroadcasterRef: BridgeBroadcaster | null = null
 const remoteBridgeRunEventFilter = createRemoteBridgeRunEventInterestFilter()
-function broadcastCoalescedRemoteProjectionSnapshot(): void {
+function requestThrottledRemoteProjectionSnapshot(): void {
   bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
 }
 // Remote-session power assertion: while >=1 iOS device is connected over the
@@ -5368,7 +5369,7 @@ function emitWorkspaceBoardsChanged(): void {
     boards: AppStore.getWorkspaceBoards(),
     cards: AppStore.getWorkspaceBoardCards()
   })
-  broadcastCoalescedRemoteProjectionSnapshot()
+  requestThrottledRemoteProjectionSnapshot()
 }
 
 function emitEvidencePacksChanged(): void {
@@ -9767,7 +9768,7 @@ async function dispatchDueScheduledLoopHeadless(
     // For important transitions (run-start reset + completion), force an immediate
     // full projection; per-iteration calls stay coalesced by the broadcaster.
     if (force) bridgeBroadcasterRef?.resetThrottle()
-    broadcastCoalescedRemoteProjectionSnapshot()
+    requestThrottledRemoteProjectionSnapshot()
   }
 
   // 7c — reset the cached loop summary at the START of a new run so the live badge drops
@@ -25914,19 +25915,20 @@ if (isGeminiMcpBridgeProcess) {
         if (event.channel === 'agent-exit') {
           remoteLiveSnapshotScheduler.clear(threadId)
           // Terminal status for DESKTOP-initiated runs persists via the
-          // renderer's save shortly after exit — re-push once the record
-          // settles, with the throttle cleared so the running→terminal
-          // card flip is never the broadcast that gets dropped.
+          // renderer's save shortly after exit. Re-push once the record
+          // settles via targeted deltas: threadSnapshot covers the transcript,
+          // taskCard covers terminal card state and emits diffSummary when present.
           setTimeout(() => {
             const chat = AppStore.getChat(threadId)
             const workspaceId = canonicalRemoteWorkspaceId(chat?.workspaceId)
             if (!chat || !workspaceId) return
-            bridgeBroadcasterRef?.resetThrottle()
-            pushRemoteThreadSnapshot(chat, workspaceId)
-            pushRemoteDiffSummaryDeltaForChat(chat.appChatId)
-            bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
-            scheduleRemoteGitSnapshotRefresh(workspaceId, { delayMs: 50, force: true })
-            scheduleRemoteComposerQueuePumpRef?.()
+            publishRemoteAgentExitConvergenceDeltas({
+              pushThreadSnapshot: () => pushRemoteThreadSnapshot(chat, workspaceId),
+              pushTaskCardDelta: () => pushRemoteTaskCardDelta(chat.appChatId),
+              scheduleGitRefresh: () =>
+                scheduleRemoteGitSnapshotRefresh(workspaceId, { delayMs: 50, force: true }),
+              scheduleComposerQueuePump: () => scheduleRemoteComposerQueuePumpRef?.()
+            })
           }, 900).unref?.()
           return
         }
@@ -27753,7 +27755,7 @@ if (isGeminiMcpBridgeProcess) {
       pluginSecretStore,
       pluginContributionManager,
       onActivationChanged: () => {
-        broadcastCoalescedRemoteProjectionSnapshot()
+        requestThrottledRemoteProjectionSnapshot()
         remoteFirstLaunchStateTrigger?.()
         void localServersService.refreshNow()
       },
@@ -29638,7 +29640,7 @@ if (isGeminiMcpBridgeProcess) {
         })
       },
       broadcastRemoteProjectionSnapshot: () => {
-        broadcastCoalescedRemoteProjectionSnapshot()
+        requestThrottledRemoteProjectionSnapshot()
       }
     })
 
@@ -31600,7 +31602,7 @@ if (isGeminiMcpBridgeProcess) {
           // rather than waiting for the coalesced full-snapshot timer.
           bridgeBroadcasterRef?.resetThrottle()
         }
-        broadcastCoalescedRemoteProjectionSnapshot()
+        requestThrottledRemoteProjectionSnapshot()
       },
       getApprovalTimeoutSettings: () => {
         // Phase K1 — when session YOLO is on, every approval is
@@ -32061,7 +32063,7 @@ if (isGeminiMcpBridgeProcess) {
     // syncs its list up via 'ensemble-roster-presets:sync' so the bridge can
     // project presets to iOS. A sync re-broadcasts the projection snapshot.
     registerEnsembleRosterPresetsHandlers({
-      onChanged: broadcastCoalescedRemoteProjectionSnapshot
+      onChanged: requestThrottledRemoteProjectionSnapshot
     })
 
     // PTY (Trust Assistant terminal) handlers: start-pty / stop-pty /

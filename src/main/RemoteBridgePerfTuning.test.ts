@@ -4,6 +4,7 @@ import {
   createRemoteLiveGitRefreshScheduler,
   createRemoteLiveSnapshotScheduler,
   hasStreamingRemoteRunSessions,
+  publishRemoteAgentExitConvergenceDeltas,
   remoteLiveSnapshotDelayMs,
   remoteProjectionSnapshotThrottleMsForStreaming
 } from './RemoteBridgePerfTuning'
@@ -117,6 +118,20 @@ describe('RemoteBridgePerfTuning', () => {
       { workspaceId: 'workspace-a', nowMs: 1000 },
       { workspaceId: 'workspace-a', nowMs: 2200 }
     ])
+  })
+
+  it('publishes agent-exit terminal convergence via deltas without a full snapshot', () => {
+    const calls: string[] = []
+
+    publishRemoteAgentExitConvergenceDeltas({
+      pushThreadSnapshot: () => calls.push('threadSnapshot'),
+      pushTaskCardDelta: () => calls.push('taskCard'),
+      scheduleGitRefresh: () => calls.push('gitRefresh'),
+      scheduleComposerQueuePump: () => calls.push('composerQueuePump')
+    })
+
+    expect(calls).toEqual(['threadSnapshot', 'taskCard', 'gitRefresh', 'composerQueuePump'])
+    expect(calls).not.toContain('remoteProjectionSnapshot')
   })
 
   it('keys the full projection throttle on true running chat streams', () => {

@@ -30,6 +30,13 @@ export interface RemoteLiveGitRefreshSchedulerOptions {
   refresh: (workspaceId: string) => void
 }
 
+export interface RemoteAgentExitConvergenceDeltas {
+  pushThreadSnapshot(): void
+  pushTaskCardDelta(): void
+  scheduleGitRefresh(): void
+  scheduleComposerQueuePump?: () => void
+}
+
 export function remoteLiveSnapshotDelayMs(
   nowMs: number,
   lastPushMs: number | undefined,
@@ -121,6 +128,15 @@ export function createRemoteLiveGitRefreshScheduler(
   }
 
   return { schedule }
+}
+
+export function publishRemoteAgentExitConvergenceDeltas(
+  deltas: RemoteAgentExitConvergenceDeltas
+): void {
+  deltas.pushThreadSnapshot()
+  deltas.pushTaskCardDelta()
+  deltas.scheduleGitRefresh()
+  deltas.scheduleComposerQueuePump?.()
 }
 
 export function hasStreamingRemoteRunSessions(
