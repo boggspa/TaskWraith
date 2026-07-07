@@ -66,23 +66,32 @@ public enum StreamingMarkdownSplitter {
     /// a new blank-line paragraph boundary outside an open ``` fence.
     static func growthContainsNewSettlingBoundary(since previousText: String, growth: String) -> Bool {
         guard !growth.isEmpty else { return false }
-        if !growth.contains("\n\n") {
+
+        let lineStartInPrevious: String.Index
+        if let lastNewline = previousText.lastIndex(of: "\n") {
+            lineStartInPrevious = previousText.index(after: lastNewline)
+        } else {
+            lineStartInPrevious = previousText.startIndex
+        }
+        let stablePrefix = String(previousText[..<lineStartInPrevious])
+        let crossChunk = String(previousText[lineStartInPrevious...]) + growth
+
+        if !crossChunk.contains("\n\n") {
             if !(previousText.hasSuffix("\n") && growth.hasPrefix("\n")) { return false }
         }
-        let inFence = fenceOpen(atEndOf: previousText)
-        var scanningFence = inFence
-        var lineStart = growth.startIndex
-        while lineStart < growth.endIndex {
-            let lineEnd = growth[lineStart...].firstIndex(of: "\n") ?? growth.endIndex
-            let line = growth[lineStart..<lineEnd]
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
+
+        var inFence = fenceOpen(atEndOf: stablePrefix)
+        var lineStart = crossChunk.startIndex
+        while lineStart < crossChunk.endIndex {
+            let lineEnd = crossChunk[lineStart...].firstIndex(of: "\n") ?? crossChunk.endIndex
+            let trimmed = crossChunk[lineStart..<lineEnd].trimmingCharacters(in: .whitespaces)
             if trimmed.hasPrefix("```") {
-                scanningFence.toggle()
-            } else if trimmed.isEmpty, !scanningFence, lineEnd < growth.endIndex {
+                inFence.toggle()
+            } else if trimmed.isEmpty, !inFence, lineEnd < crossChunk.endIndex {
                 return true
             }
-            if lineEnd == growth.endIndex { break }
-            lineStart = growth.index(after: lineEnd)
+            if lineEnd == crossChunk.endIndex { break }
+            lineStart = crossChunk.index(after: lineEnd)
         }
         return false
     }

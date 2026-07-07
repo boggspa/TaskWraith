@@ -184,6 +184,7 @@ struct HomeView: View {
             ) { title in
                 model.renameThread(card, title: title)
             }
+            .twSheetLiquidGlass(detents: [.medium])
         }
         .onAppear { seedSidebarCollapseIfNeeded() }
         .onChange(of: model.navigationTarget) { _, threadId in

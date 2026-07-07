@@ -167,6 +167,11 @@ public struct EnsembleRosterSheet: View {
         state?.participants?.first { $0.participantId == id }?.status
     }
 
+    private var threadTitle: String {
+        model.taskCards.first { $0.id == threadId || $0.threadId == threadId }?.title
+            ?? "Chat"
+    }
+
     public var body: some View {
         NavigationStack {
             List {
@@ -175,11 +180,13 @@ public struct EnsembleRosterSheet: View {
                 participantsSection
                 addSection
             }
-            .navigationTitle("Roster")
             #if os(iOS)
                 .navigationBarTitleDisplayMode(.inline)
             #endif
             .toolbar {
+                ToolbarItem(placement: .principal) {
+                    TWPrincipalTitle(title: "Roster", subtitle: threadTitle)
+                }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") { dismiss() }
                 }
@@ -229,8 +236,7 @@ public struct EnsembleRosterSheet: View {
                         commit()
                     }
                 )
-                .presentationDetents([.medium, .large])
-                .presentationDragIndicator(.visible)
+                .twSheetLiquidGlass(detents: [.medium, .large])
             }
             .confirmationDialog(
                 "Replace the current roster?",

@@ -678,6 +678,157 @@ extension View {
     }
 }
 
+// ── Sheet liquid glass (B spec) ───────────────────────────────────────────
+// Sheet-presentation sibling of composerShellGlass — same tier constants,
+// applied via presentationBackground on iOS sheets.
+
+#if os(iOS)
+    private struct TWSheetGlassBackdrop: View {
+        var cornerRadius: CGFloat
+        var rimmed: Bool
+
+        var body: some View {
+            let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+            let rimTop: Color =
+                TWThemeStore.shared.systemTheme.isLight
+                ? Color.black.opacity(0.10) : Color.white.opacity(0.18)
+            let rimBottom: Color =
+                TWThemeStore.shared.systemTheme.isLight
+                ? Color.black.opacity(0.02) : Color.white.opacity(0.02)
+            Group {
+                if TWTheme.composerGlassEnabled {
+                    if #available(iOS 26.0, macOS 26.0, *) {
+                        shape
+                            .fill(TWTheme.composerBg.opacity(0.18))
+                            .glassEffect(.regular, in: shape)
+                    } else {
+                        shape
+                            .fill(.ultraThinMaterial)
+                            .overlay(
+                                shape.fill(
+                                    TWTheme.composerBg.opacity(TWTheme.composerGlassTintOpacity)))
+                    }
+                } else {
+                    shape.fill(TWTheme.surface2)
+                }
+            }
+            .compositingGroup()
+            .ignoresSafeArea()
+            .overlay {
+                if TWTheme.composerGlassEnabled, rimmed {
+                    shape.strokeBorder(TWTheme.border, lineWidth: 1)
+                    shape.inset(by: 0.5)
+                        .strokeBorder(
+                            LinearGradient(
+                                colors: [rimTop, rimBottom],
+                                startPoint: .top,
+                                endPoint: .bottom),
+                            lineWidth: 1)
+                } else if !TWTheme.composerGlassEnabled {
+                    shape.strokeBorder(TWTheme.border, lineWidth: 1)
+                }
+            }
+        }
+    }
+#endif
+
+extension View {
+    /// Liquid-glass sheet chrome. Apply to the root of sheet content (inside
+    /// any NavigationStack). iOS-only; non-iOS is pass-through.
+    @ViewBuilder
+    func twSheetLiquidGlass(
+        detents: Set<PresentationDetent> = [.medium, .large],
+        cornerRadius: CGFloat = 32,
+        rimmed: Bool = true
+    ) -> some View {
+        #if os(iOS)
+            self
+                .presentationDetents(detents)
+                .presentationDragIndicator(.visible)
+                .presentationCornerRadius(cornerRadius)
+                .presentationBackground {
+                    TWSheetGlassBackdrop(cornerRadius: cornerRadius, rimmed: rimmed)
+                }
+        #else
+            self
+        #endif
+    }
+}
+
+/// Subtle two-line toolbar title — thread nav, Diff Studio, Files, roster.
+public struct TWPrincipalTitle: View {
+    let title: String
+    let subtitle: String?
+
+    public init(title: String, subtitle: String? = nil) {
+        self.title = title
+        self.subtitle = subtitle
+    }
+
+    public var body: some View {
+        VStack(alignment: .center, spacing: 1) {
+            Text(title)
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(TWTheme.textPrimary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.78)
+                .truncationMode(.tail)
+                .multilineTextAlignment(.center)
+            if let subtitle, !subtitle.isEmpty {
+                Text(subtitle)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(TWTheme.textSecondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.82)
+                    .truncationMode(.middle)
+                    .multilineTextAlignment(.center)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .center)
+        .accessibilityElement(children: .combine)
+    }
+}
+
+/// Static formatters for always-visible transcript footer times (C2).
+enum TWTranscriptTimestampFormat {
+    private static let today: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm"
+        return formatter
+    }()
+    private static let other: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "d MMM, HH:mm"
+        return formatter
+    }()
+
+    static func footerCaption(iso timestamp: String) -> String? {
+        guard let date = twParseISODate(timestamp) else { return nil }
+        let formatter = Calendar.current.isDateInToday(date) ? today : other
+        return formatter.string(from: date)
+    }
+}
+
+/// Splits a settled-row speaker tag into display label and optional model chip.
+/// Single parse so label and chip can never disagree.
+func twSettledRowSpeakerSplit(from speaker: String?) -> (label: String, chip: String?) {
+    guard let speaker, !speaker.isEmpty else { return ("", nil) }
+    guard let open = speaker.lastIndex(of: "("),
+        speaker.hasSuffix(")"),
+        open < speaker.index(before: speaker.endIndex)
+    else { return (speaker, nil) }
+    let model = String(speaker[speaker.index(after: open)..<speaker.index(before: speaker.endIndex)])
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !model.isEmpty else { return (speaker, nil) }
+    let label = String(speaker[..<open]).trimmingCharacters(in: .whitespacesAndNewlines)
+    return (label.isEmpty ? speaker : label, model)
+}
+
+/// Model chip text extracted from a settled-row speaker tag "(Model)" suffix.
+func twSettledRowModelChip(from speaker: String?) -> String? {
+    twSettledRowSpeakerSplit(from: speaker).chip
+}
+
 /// Hierarchical provider → model menu for phone-sized composer surfaces.
 struct ProviderModelPicker: View {
     let catalogs: [ProviderModelCatalog]
@@ -8379,7 +8530,8 @@ struct MiniThreadView: View {
             StreamingRowView(
                 text: live, provider: card.provider,
                 model: snapshot?.runSummary?.model,
-                agentIdentity: ThreadAgentIdentity(card: card))
+                agentIdentity: ThreadAgentIdentity(card: card),
+                participants: model.ensembleStates[threadId]?.displayParticipants ?? [])
         }
     }
 

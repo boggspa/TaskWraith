@@ -660,8 +660,15 @@ struct FilesModeCompactView: View {
         Group {
             if state.selectedPath == nil {
                 FileNavigatorPane(model: model, state: state)
-                    .navigationTitle("Files")
+                    #if os(iOS)
+                        .navigationBarTitleDisplayMode(.inline)
+                    #endif
                     .toolbar {
+                        ToolbarItem(placement: .principal) {
+                            TWPrincipalTitle(
+                                title: "Files",
+                                subtitle: filesModeWorkspaceSubtitle(model: model, state: state))
+                        }
                         ToolbarItem(placement: .cancellationAction) {
                             Button("Close") {
                                 if state.requestClose() { onClose() }
@@ -1382,4 +1389,12 @@ private func twShouldAnnounceEditorStatus(_ status: String) -> Bool {
     if lower.contains(" · ") { return false }
     if lower == "select a text file" { return false }
     return true
+}
+
+@MainActor
+private func filesModeWorkspaceSubtitle(
+    model: RemoteSessionModel, state: MobileFileEditorState
+) -> String? {
+    guard let workspaceId = state.selectedWorkspaceId else { return nil }
+    return model.workspaces.first(where: { $0.id == workspaceId })?.displayName
 }

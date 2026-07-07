@@ -155,8 +155,7 @@ struct ApprovalRow: View {
         }
         .sheet(isPresented: $showDetail) {
             ApprovalDetailSheet(model: model, card: card)
-                .presentationDetents([.medium, .large])
-                .presentationDragIndicator(.visible)
+                .twSheetLiquidGlass(detents: [.medium, .large])
         }
     }
 
@@ -229,11 +228,13 @@ struct ApprovalDetailSheet: View {
                 .padding(16)
             }
             .background(TWTheme.appBg)
-            .navigationTitle("Approval")
             #if os(iOS)
                 .navigationBarTitleDisplayMode(.inline)
             #endif
             .toolbar {
+                ToolbarItem(placement: .principal) {
+                    TWPrincipalTitle(title: "Approval", subtitle: TWTheme.providerLabel(card.provider))
+                }
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Close") { dismiss() }
                 }

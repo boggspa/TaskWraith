@@ -360,8 +360,15 @@ struct DiffStudioCompactView: View {
         Group {
             if state.selectedPath == nil {
                 DiffFileNavigatorPane(model: model, state: state)
-                    .navigationTitle("Diff Studio")
+                    #if os(iOS)
+                        .navigationBarTitleDisplayMode(.inline)
+                    #endif
                     .toolbar {
+                        ToolbarItem(placement: .principal) {
+                            TWPrincipalTitle(
+                                title: "Diff Studio",
+                                subtitle: diffStudioWorkspaceSubtitle(model: model, state: state))
+                        }
                         ToolbarItem(placement: .cancellationAction) {
                             Button("Close") { onClose() }
                         }
@@ -928,6 +935,14 @@ private extension View {
             self
         #endif
     }
+}
+
+@MainActor
+private func diffStudioWorkspaceSubtitle(
+    model: RemoteSessionModel, state: MobileDiffStudioState
+) -> String? {
+    guard let workspaceId = state.selectedWorkspaceId else { return nil }
+    return model.workspaces.first(where: { $0.id == workspaceId })?.displayName
 }
 
 private func twShouldAnnounceDiffStudioStatus(_ status: String) -> Bool {

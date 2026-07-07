@@ -161,6 +161,7 @@ struct ThreadDetailView: View {
     /// opacity crossfade (see ComposerMotion). Read here so the focus-gated row
     /// groups can pick their transition without a second source of truth.
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.horizontalSizeClass) private var hSizeClass
     @State private var followUp = ""
     /// Mirrors the Composer's expanded state (focused / drafting / queued /
     /// ensemble) so the host hides the secondary rows + telemetry rail when the
@@ -232,6 +233,11 @@ struct ThreadDetailView: View {
     }
     private var showsRosterToolbarButton: Bool {
         card?.isEnsemble == true && card?.workspaceId != nil
+    }
+    private var isGlobalChat: Bool { card?.isGlobalScope == true }
+    private var transcriptColumnMaxWidth: CGFloat? {
+        guard isGlobalChat, hSizeClass == .regular else { return nil }
+        return 760
     }
     private var snapshot: RemoteThreadSnapshot? { threadValue(model.threadSnapshots) }
     private var ensembleState: RemoteEnsembleState? { threadValue(model.ensembleStates) }
@@ -1072,6 +1078,71 @@ struct ThreadDetailView: View {
                     .listRowBackground(Color.clear)
                     .listRowSeparator(.hidden)
                 }
+                // Queued messages — transcript-tail bubbles (Claude-app style).
+                // Replaces the cramped composer above-row stacks: each pending
+                // prompt reads as a dimmed dashed user bubble with a 3-dots
+                // menu (Steer now / Add to Blackboard / Edit / Remove). The
+                // queue itself stays Mac-owned — every action is a bridge op.
+                // Must stay ABOVE the transcript-bottom sentinel so the
+                // follow-pin's at-bottom detection includes the queued tail.
+                if let card {
+                    if card.isEnsemble {
+                        ForEach(ensembleState?.queuedPrompts ?? []) { prompt in
+                            QueuedMessageBubbleRow(
+                                position: prompt.index + 1,
+                                text: prompt.text,
+                                onSteer: {
+                                    model.ensembleQueueItem(
+                                        card, index: prompt.index, text: prompt.text,
+                                        op: "steerNow")
+                                },
+                                onBlackboard: {
+                                    model.ensembleQueueItem(
+                                        card, index: prompt.index, text: prompt.text,
+                                        op: "blackboard")
+                                },
+                                onEdit: {
+                                    followUp = prompt.text
+                                    model.ensembleQueueItem(
+                                        card, index: prompt.index, text: prompt.text,
+                                        op: "remove")
+                                },
+                                onRemove: {
+                                    model.ensembleQueueItem(
+                                        card, index: prompt.index, text: prompt.text,
+                                        op: "remove")
+                                }
+                            )
+                            .listRowInsets(EdgeInsets(top: 2, leading: 12, bottom: 2, trailing: 12))
+                            .listRowBackground(Color.clear)
+                            .listRowSeparator(.hidden)
+                        }
+                    } else {
+                        ForEach(
+                            Array((card.queuedComposerPrompts ?? []).enumerated()),
+                            id: \.element.id
+                        ) { pair in
+                            QueuedMessageBubbleRow(
+                                position: pair.offset + 1,
+                                text: pair.element.text,
+                                onSteer: {
+                                    model.composerQueueItem(card, item: pair.element, op: "steerNow")
+                                },
+                                onBlackboard: nil,
+                                onEdit: {
+                                    followUp = pair.element.text
+                                    model.composerQueueItem(card, item: pair.element, op: "remove")
+                                },
+                                onRemove: {
+                                    model.composerQueueItem(card, item: pair.element, op: "remove")
+                                }
+                            )
+                            .listRowInsets(EdgeInsets(top: 2, leading: 12, bottom: 2, trailing: 12))
+                            .listRowBackground(Color.clear)
+                            .listRowSeparator(.hidden)
+                        }
+                    }
+                }
                 Color.clear
                     .frame(height: 1)
                     .id("transcript-bottom")
@@ -1087,7 +1158,8 @@ struct ThreadDetailView: View {
                     .listRowSeparator(.hidden)
             }
             .padding(.horizontal, 12)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(maxWidth: transcriptColumnMaxWidth ?? .infinity, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: .center)
         }
         .background(TWTheme.appBg)
         // Observe-only touch tracker (never claims the gesture, so it can't
@@ -1506,46 +1578,17 @@ struct ThreadDetailView: View {
         card: RemoteTaskCard, hasAttachedRows: Bool, onOwnCards: Bool,
         suppressFill: Bool, resolved: ResolvedComposerShell
     ) -> some View {
-        if card.isEnsemble,
-            let queued = ensembleState?.queuedPrompts,
-            !queued.isEmpty
-        {
-            // Stacked queued prompts (desktop parity) — one shared Mac-side
-            // queue, any-device origin.
-            QueuedPromptsStack(
-                model: model, card: card, prompts: queued,
-                isShellTop: !hasAttachedRows, onOwnCard: suppressFill
-            ) { queuedText in
-                followUp = queuedText
-            }
-            .composerShellIf(onOwnCards, resolved)
-            if !onOwnCards {
-                Rectangle().fill(TWTheme.border).frame(height: 1)
-            }
-        }
-        if !card.isEnsemble,
-            let queued = card.queuedComposerPrompts,
-            !queued.isEmpty
-        {
-            QueuedComposerPromptsStack(
-                model: model, card: card, prompts: queued,
-                isShellTop: !hasAttachedRows, onOwnCard: suppressFill
-            ) { queuedText in
-                followUp = queuedText
-            }
-            .composerShellIf(onOwnCards, resolved)
-            if !onOwnCards {
-                Rectangle().fill(TWTheme.border).frame(height: 1)
-            }
-        }
+        // Queued prompts no longer render here — they read as dashed
+        // transcript-tail bubbles with a per-row 3-dots menu (see
+        // QueuedMessageBubbleRow in the transcript List). The side-chat
+        // mini composer keeps its compact stack; the round HUD keeps the
+        // QueuedPromptsChip count pill.
         if card.isEnsemble, let wsId = card.workspaceId {
             // Roster row lives IN the shell, under the changes row(s).
             EditableRosterStrip(
                 model: model, threadId: taskId, workspaceId: wsId,
                 attached: true,
-                isShellTop: !hasAttachedRows
-                    && (ensembleState?.queuedPrompts ?? [])
-                        .isEmpty,
+                isShellTop: !hasAttachedRows,
                 onOwnCard: suppressFill)
             .composerShellIf(onOwnCards, resolved)
             if !onOwnCards {
@@ -1735,7 +1778,7 @@ struct ThreadDetailView: View {
                             title: threadHeaderTitle,
                             subtitle: threadHeaderSubtitle)
                     } label: {
-                        ThreadNavigationTitle(
+                        TWPrincipalTitle(
                             title: threadHeaderTitle, subtitle: threadHeaderSubtitle)
                     }
                     .buttonStyle(.plain)
@@ -1806,6 +1849,7 @@ struct ThreadDetailView: View {
         .sheet(isPresented: $model.rosterPresented) {
             if let wsId = card?.workspaceId {
                 EnsembleRosterSheet(model: model, threadId: taskId, workspaceId: wsId)
+                    .twSheetLiquidGlass(detents: [.large])
             }
         }
         .sheet(item: $renameSheetContext) { context in
@@ -1817,6 +1861,7 @@ struct ThreadDetailView: View {
                     model.renameThread(card, title: title)
                 }
             }
+            .twSheetLiquidGlass(detents: [.medium])
         }
         .sheet(isPresented: $composerDiffSheetPresented) {
             NavigationStack {
@@ -1866,34 +1911,6 @@ struct ThreadDetailView: View {
             Text("Ensemble will turn off and this chat will continue as a solo thread.")
         }
 
-    }
-}
-
-private struct ThreadNavigationTitle: View {
-    let title: String
-    let subtitle: String?
-
-    var body: some View {
-        VStack(alignment: .center, spacing: 1) {
-            Text(title)
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(TWTheme.textPrimary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.78)
-                .truncationMode(.tail)
-                .multilineTextAlignment(.center)
-            if let subtitle, !subtitle.isEmpty {
-                Text(subtitle)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(TWTheme.textSecondary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.82)
-                    .truncationMode(.middle)
-                    .multilineTextAlignment(.center)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .center)
-        .accessibilityElement(children: .combine)
     }
 }
 
@@ -2329,7 +2346,7 @@ private struct AgentTranscriptLeadingMark: View {
                     accentHex: identity.accentHex,
                     slug: identity.slug,
                     hueEnabled: identity.hueEnabled,
-                    size: 16
+                    size: 14
                 )
                 .padding(.top, 1)
                 .frame(width: 20, alignment: .leading)
@@ -2348,11 +2365,7 @@ private extension View {
     @ViewBuilder
     func composerDiffSheetChrome() -> some View {
         #if os(iOS)
-            self
-                .presentationDetents([.medium, .large])
-                .presentationDragIndicator(.visible)
-                .presentationBackground(.ultraThinMaterial)
-                .presentationCornerRadius(32)
+            twSheetLiquidGlass()
         #else
             self.frame(minWidth: 520, minHeight: 520)
         #endif
@@ -2648,9 +2661,17 @@ struct ThreadRowView: View, Equatable {
                 if !hasParticipantHealthCard && !hasSubThreadReturnCard && !hasProposedPlanCard
                     && !hasAgentQuestionCard
                 {
-                    Text(label)
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(labelColor)
+                    HStack(spacing: 0) {
+                        Text(label)
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(labelColor)
+                        if let modelChip = settledRowModelChip {
+                            Text(" · \(modelChip)")
+                                .font(.caption2.weight(.regular))
+                                .foregroundStyle(labelColor.opacity(0.72))
+                                .monospacedDigit()
+                        }
+                    }
                 }
                 if let agentQuestion = row.agentQuestion, agentQuestion.promptId != nil {
                     AgentQuestionRow(model: model, question: agentQuestion)
@@ -2732,12 +2753,20 @@ struct ThreadRowView: View, Equatable {
                     && !hasAgentQuestionCard,
                     let preview = row.preview, !preview.isEmpty
                 {
-                    MarkdownLite(
-                        preview,
-                        participants: participants,
-                        baseColor: bodyColor
-                    )
-                    .textSelection(.enabled)
+                    VStack(alignment: .leading, spacing: 4) {
+                        MarkdownLite(
+                            preview,
+                            participants: participants,
+                            baseColor: bodyColor
+                        )
+                        .textSelection(.enabled)
+                        if let footerTime = transcriptFooterTime {
+                            Text(footerTime)
+                                .font(.caption2)
+                                .foregroundStyle(TWTheme.textMuted.opacity(0.88))
+                                .monospacedDigit()
+                        }
+                    }
                     .contextMenu {
                         // Read-only delivery moment rides as the section
                         // header; the actions sit beneath it.
@@ -2807,11 +2836,20 @@ struct ThreadRowView: View, Equatable {
     /// "Delivered 22:43" (today) / "Delivered 9 Jun, 22:43" — context-menu
     /// section header so the user can see when the message landed.
     private var deliveredCaption: String? {
-        guard let timestamp = row.timestamp, let date = twParseISODate(timestamp)
+        guard let timestamp = row.timestamp,
+            let caption = TWTranscriptTimestampFormat.footerCaption(iso: timestamp)
         else { return nil }
-        let formatter = DateFormatter()
-        formatter.dateFormat = Calendar.current.isDateInToday(date) ? "HH:mm" : "d MMM, HH:mm"
-        return "Delivered \(formatter.string(from: date))"
+        return "Delivered \(caption)"
+    }
+
+    /// Always-visible footer time (Electron message-footer-time parity).
+    private var transcriptFooterTime: String? {
+        guard let timestamp = row.timestamp else { return nil }
+        return TWTranscriptTimestampFormat.footerCaption(iso: timestamp)
+    }
+
+    private var settledRowModelChip: String? {
+        twSettledRowModelChip(from: row.speaker)
     }
 
     private var activeAgentIdentity: ThreadAgentIdentity? {
@@ -2820,7 +2858,10 @@ struct ThreadRowView: View, Equatable {
     }
 
     private var baseLabel: String {
-        if let speaker = row.speaker, !speaker.isEmpty { return speaker }
+        if let speaker = row.speaker, !speaker.isEmpty {
+            let split = twSettledRowSpeakerSplit(from: speaker)
+            return split.chip != nil ? split.label : speaker
+        }
         switch row.role {
         case "user": return "You"
         case "assistant": return "Assistant"
@@ -3447,6 +3488,7 @@ struct StreamingRowView: View {
     var model: String? = nil
     var role: String? = nil
     var agentIdentity: ThreadAgentIdentity? = nil
+    var participants: [RemoteEnsembleState.Participant] = []
     @State private var streamingSplitCache = StreamingMarkdownSplitCacheBox()
 
     private var accent: Color {
@@ -3472,8 +3514,12 @@ struct StreamingRowView: View {
                     StreamingDots(color: accent)
                 }
                 if !parts.settled.isEmpty {
-                    MarkdownLite(parts.settled, baseColor: TWTheme.textPrimary)
-                        .textSelection(.enabled)
+                    MarkdownLite(
+                        parts.settled,
+                        participants: participants,
+                        baseColor: TWTheme.textPrimary
+                    )
+                    .textSelection(.enabled)
                 }
                 if !parts.tail.isEmpty {
                     TokenRevealText(
@@ -3690,6 +3736,86 @@ private struct ShimmerWorkingLabel: View {
 /// and pins the unified "[ghost] Working…" indicator beneath it — the very same
 /// element the streaming tail (`LiveActivityAnchor`) uses, so the transcript
 /// never swaps indicators mid-run.
+/// Queued-message bubble at the transcript tail (Claude-app style) — the
+/// pending prompt reads as a dimmed, dash-bordered user bubble with a
+/// "Queued #n" caption and a trailing 3-dots menu: Steer now / Add to
+/// Blackboard (ensemble only — `onBlackboard: nil` hides it for solo
+/// chats) / Edit / Remove. Replaces the composer above-row queued stacks
+/// on the thread detail screen; every action is a Mac-ward bridge op.
+private struct QueuedMessageBubbleRow: View {
+    let position: Int
+    let text: String
+    let onSteer: () -> Void
+    let onBlackboard: (() -> Void)?
+    let onEdit: () -> Void
+    let onRemove: () -> Void
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "text.line.first.and.arrowtriangle.forward")
+                .font(.caption2)
+                .foregroundStyle(TWTheme.textTertiary)
+                .padding(.top, 10)
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Queued #\(position)")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(TWTheme.textTertiary)
+                Text(text)
+                    .font(.callout)
+                    .foregroundStyle(TWTheme.textSecondary)
+                    .lineLimit(6)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(TWTheme.surface2.opacity(0.55))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .strokeBorder(
+                        TWTheme.border,
+                        style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
+            )
+            Menu {
+                Button {
+                    onSteer()
+                } label: {
+                    Label("Steer now", systemImage: "arrow.uturn.forward")
+                }
+                if let onBlackboard {
+                    Button {
+                        onBlackboard()
+                    } label: {
+                        Label("Add to Blackboard", systemImage: "note.text.badge.plus")
+                    }
+                }
+                Button {
+                    onEdit()
+                } label: {
+                    Label("Edit", systemImage: "pencil")
+                }
+                Button(role: .destructive) {
+                    onRemove()
+                } label: {
+                    Label("Remove from queue", systemImage: "trash")
+                }
+            } label: {
+                Image(systemName: "ellipsis")
+                    .font(.caption)
+                    .foregroundStyle(TWTheme.textTertiary)
+                    .frame(width: 22, height: 22)
+                    .contentShape(Rectangle())
+            }
+            .padding(.top, 6)
+            .accessibilityLabel("Queued message \(position) actions")
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 2)
+    }
+}
+
 struct ThinkingRow: View {
     let provider: String?
     var model: String? = nil

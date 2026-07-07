@@ -89,6 +89,29 @@ struct StreamingMarkdownSplitterTests {
             text: replaced)
         #expect(incremental == StreamingMarkdownSplitter.split(replaced))
     }
+
+    @Test func incrementalSplitResplitsAfterFenceCloseThenBlankLine() {
+        let chunk1 = "Intro.\n\n```\ncode"
+        let split1 = StreamingMarkdownSplitter.splitIncremental(
+            previousSettled: "", previousText: "", text: chunk1)
+        #expect(split1 == StreamingMarkdownSplitter.split(chunk1))
+
+        let chunk2 = chunk1 + "\n```"
+        let split2 = StreamingMarkdownSplitter.splitIncremental(
+            previousSettled: split1.settled,
+            previousText: chunk1,
+            text: chunk2)
+        #expect(split2 == StreamingMarkdownSplitter.split(chunk2))
+
+        let chunk3 = chunk2 + "\n\nNext grow"
+        let split3 = StreamingMarkdownSplitter.splitIncremental(
+            previousSettled: split2.settled,
+            previousText: chunk2,
+            text: chunk3)
+        #expect(split3 == StreamingMarkdownSplitter.split(chunk3))
+        #expect(split3.settled == "Intro.\n\n```\ncode\n```\n\n")
+        #expect(split3.tail == "Next grow")
+    }
 }
 
 @Suite("StreamingInterleave")
