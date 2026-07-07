@@ -1120,8 +1120,32 @@ public struct RemoteEnsembleState: Codable, Sendable {
     /// by the Mac but previously dropped on decode. Optional for old builds.
     public let workSessionStatus: String?
 
+    /// Roster-order comparator: `order` ascending, then `participantId` tie-break.
+    /// Nil `order` sorts last (matches WelcomeViews.sortedParticipants).
+    public static func rosterOrder(
+        _ lhs: Participant, _ rhs: Participant
+    ) -> Bool {
+        let leftOrder = lhs.order ?? Int.max
+        let rightOrder = rhs.order ?? Int.max
+        if leftOrder != rightOrder { return leftOrder < rightOrder }
+        return lhs.participantId < rhs.participantId
+    }
+
+    /// Roster-entry comparator for configured roster rows (`id` tie-break).
+    public static func rosterEntryOrder(
+        _ lhs: RosterEntry, _ rhs: RosterEntry
+    ) -> Bool {
+        let leftOrder = lhs.order ?? Int.max
+        let rightOrder = rhs.order ?? Int.max
+        if leftOrder != rightOrder { return leftOrder < rightOrder }
+        return lhs.id < rhs.id
+    }
+
     /// Live participants enriched with any configured roster model ids so UI
     /// consumers can render brand-aware Ollama accents without rejoining.
+    /// Sorted by roster slot (`order`, then `participantId`) so transcript,
+    /// side-chat, and mention surfaces match the chip strip even when the wire
+    /// round `participants` array arrives in speaking-queue order.
     public var displayParticipants: [Participant] {
         guard let participants else { return [] }
         let rosterModels: [String: String] = Dictionary(
@@ -1144,6 +1168,7 @@ public struct RemoteEnsembleState: Codable, Sendable {
                 status: participant.status,
                 model: resolvedModel)
         }
+        .sorted(by: Self.rosterOrder)
     }
 
     public struct QueuedPrompt: Codable, Sendable, Identifiable {

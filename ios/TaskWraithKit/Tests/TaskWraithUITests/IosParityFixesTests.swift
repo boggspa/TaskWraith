@@ -363,6 +363,39 @@ struct IosParityFixesTests {
     }
 
     @MainActor
+    @Test func displayParticipantsAndMentionCandidatesSortShuffledWireOrder() throws {
+        let state = try decode(
+            RemoteEnsembleState.self,
+            """
+            {
+              "threadId":"thread-1",
+              "participants":[
+                {"participantId":"p-charlie","provider":"claude","role":"Charlie","order":3,"status":"idle"},
+                {"participantId":"p-dup-b","provider":"cursor","role":"DupB","order":2,"status":"idle"},
+                {"participantId":"p-alpha","provider":"codex","role":"Alpha","order":1,"status":"idle"},
+                {"participantId":"p-dup-a","provider":"grok","role":"DupA","order":2,"status":"idle"},
+                {"participantId":"p-bravo","provider":"kimi","role":"Bravo","order":2,"status":"idle"}
+              ],
+              "roster":[
+                {"id":"p-alpha","provider":"codex","role":"Alpha","enabled":true,"order":1},
+                {"id":"p-bravo","provider":"kimi","role":"Bravo","enabled":true,"order":2},
+                {"id":"p-dup-a","provider":"grok","role":"DupA","enabled":true,"order":2},
+                {"id":"p-dup-b","provider":"cursor","role":"DupB","enabled":true,"order":2},
+                {"id":"p-charlie","provider":"claude","role":"Charlie","enabled":true,"order":3}
+              ]
+            }
+            """)
+
+        let expectedIds = [
+            "p-alpha", "p-bravo", "p-dup-a", "p-dup-b", "p-charlie",
+        ]
+        #expect(state.displayParticipants.map(\.participantId) == expectedIds)
+
+        let mentionIds = twMentionCandidates(participants: state.displayParticipants).map(\.id)
+        #expect(mentionIds == expectedIds)
+    }
+
+    @MainActor
     @Test func participantHealthRepairsGenericOllamaStampForLaguna() throws {
         let entry = try decode(
             RemoteThreadSnapshot.Row.ParticipantHealth.Entry.self,

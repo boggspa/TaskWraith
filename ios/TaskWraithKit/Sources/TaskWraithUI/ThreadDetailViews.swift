@@ -2444,9 +2444,31 @@ private extension View {
 
 struct ParticipantHealthSummaryCard: View {
     let summary: RemoteThreadSnapshot.Row.ParticipantHealth
+    /// Roster-ordered participants for chip layout (matches chip strip).
+    let rosterParticipants: [RemoteEnsembleState.Participant]
+
+    init(
+        summary: RemoteThreadSnapshot.Row.ParticipantHealth,
+        rosterParticipants: [RemoteEnsembleState.Participant] = []
+    ) {
+        self.summary = summary
+        self.rosterParticipants = rosterParticipants
+    }
 
     private var entries: [RemoteThreadSnapshot.Row.ParticipantHealth.Entry] {
-        summary.entries ?? []
+        let raw = summary.entries ?? []
+        guard !rosterParticipants.isEmpty else { return raw }
+        let orderIndex = Dictionary(
+            uniqueKeysWithValues: rosterParticipants.enumerated().map { ($1.participantId, $0) }
+        )
+        return raw.sorted { lhs, rhs in
+            let lhsId = lhs.participantId ?? ""
+            let rhsId = rhs.participantId ?? ""
+            let lhsIdx = orderIndex[lhsId] ?? Int.max
+            let rhsIdx = orderIndex[rhsId] ?? Int.max
+            if lhsIdx != rhsIdx { return lhsIdx < rhsIdx }
+            return lhsId < rhsId
+        }
     }
     private var okCount: Int {
         summary.okCount ?? entries.filter { $0.status?.lowercased() == "ok" }.count
@@ -2751,7 +2773,8 @@ struct ThreadRowView: View, Equatable {
                 } else if let health = row.participantHealth,
                     let entries = health.entries, !entries.isEmpty
                 {
-                    ParticipantHealthSummaryCard(summary: health)
+                    ParticipantHealthSummaryCard(
+                        summary: health, rosterParticipants: participants)
                 } else if let subThreadReturn = row.subThreadReturn {
                     SubThreadReturnSummaryCard(
                         summary: subThreadReturn,

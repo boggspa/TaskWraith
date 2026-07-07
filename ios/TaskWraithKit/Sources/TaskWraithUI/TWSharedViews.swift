@@ -2348,7 +2348,7 @@ public func twMentionCandidates(
     participants: [RemoteEnsembleState.Participant]
 ) -> [MentionCandidate] {
     participants
-        .sorted { ($0.order ?? 0) < ($1.order ?? 0) }
+        .sorted(by: RemoteEnsembleState.rosterOrder)
         .map { participant in
             let role = participant.role?.trimmingCharacters(in: .whitespaces) ?? ""
             let label = role.isEmpty ? twMentionProviderLabel(participant) : role
@@ -4560,7 +4560,7 @@ public struct EditableRosterStrip: View {
 
     private var remoteRoster: [RemoteSessionModel.RosterDraftEntry] {
         (state?.roster ?? [])
-            .sorted { ($0.order ?? 0) < ($1.order ?? 0) }
+            .sorted(by: RemoteEnsembleState.rosterEntryOrder)
             .map { entry in
                 RemoteSessionModel.RosterDraftEntry(
                     id: entry.id,

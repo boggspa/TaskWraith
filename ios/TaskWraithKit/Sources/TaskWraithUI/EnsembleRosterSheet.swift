@@ -59,7 +59,7 @@ public struct EnsembleRosterSheet: View {
 
     private var remoteRoster: [RemoteSessionModel.RosterDraftEntry] {
         (state?.roster ?? [])
-            .sorted { ($0.order ?? 0) < ($1.order ?? 0) }
+            .sorted(by: RemoteEnsembleState.rosterEntryOrder)
             .map { entry in
                 RemoteSessionModel.RosterDraftEntry(
                     id: entry.id,
@@ -635,7 +635,7 @@ public struct EnsembleRosterSheet: View {
     /// roster-update path), so loading a preset == applying it.
     private func applyPreset(_ preset: RemoteEnsemblePreset) {
         let entries = (preset.participants ?? [])
-            .sorted { ($0.order ?? 0) < ($1.order ?? 0) }
+            .sorted(by: RemoteEnsembleState.rosterEntryOrder)
             .prefix(maxEnsembleRosterParticipants)
             .map { participant in
                 RemoteSessionModel.RosterDraftEntry(

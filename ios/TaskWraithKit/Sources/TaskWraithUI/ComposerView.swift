@@ -677,7 +677,7 @@ struct Composer: View {
     private var contextMeterRows: [ContextMeterRowVM] {
         if contextMeterIsEnsemble, let roster = model.ensembleStates[card.id]?.roster {
             return roster
-                .sorted { ($0.order ?? 0) < ($1.order ?? 0) }
+                .sorted(by: RemoteEnsembleState.rosterEntryOrder)
                 .map { entry in
                     let providerName = TWTheme.providerLabel(entry.provider)
                     let role = entry.role?.trimmingCharacters(in: .whitespaces) ?? ""
