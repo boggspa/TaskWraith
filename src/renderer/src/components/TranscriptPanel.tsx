@@ -135,6 +135,7 @@ import {
   useDiffHoverPreviewDismiss,
   useDiffHoverPreviewState
 } from './DiffHoverPreview'
+import { buildToolEditDiffSnapshotForPath } from '../lib/toolEditDiffSnapshot'
 
 function ContextCompactionProgressRow({
   event
@@ -524,6 +525,12 @@ export type TranscriptPanelProps = {
 }
 
 export const FILE_CHANGE_SUMMARY_COLLAPSED_LIMIT = 12
+
+// "Almost 1s" both ways: hovering a file-change row must feel deliberate
+// before the diff bubble appears, and slipping off the row (or the bubble)
+// must not snap it away mid-read.
+const FILE_CHANGE_DIFF_PREVIEW_OPEN_DELAY_MS = 900
+const FILE_CHANGE_DIFF_PREVIEW_CLOSE_DELAY_MS = 900
 export const FILE_CHANGE_SUMMARY_PAGE_SIZE = 24
 export const FILE_CHANGE_SUMMARY_MAX_VISIBLE = 120
 
@@ -1780,8 +1787,12 @@ export const TranscriptPanel = memo(
       keepPreviewOpen: keepFileChangeDiffPreviewOpen,
       preview: fileChangeDiffPreview,
       scheduleClosePreview: scheduleCloseFileChangeDiffPreview,
+      scheduleShowPreview: scheduleShowFileChangeDiffPreview,
       showPreview: showFileChangeDiffPreview
-    } = useDiffHoverPreviewState()
+    } = useDiffHoverPreviewState(
+      FILE_CHANGE_DIFF_PREVIEW_CLOSE_DELAY_MS,
+      FILE_CHANGE_DIFF_PREVIEW_OPEN_DELAY_MS
+    )
     const [fileChangeSummaryVisibleCount, setFileChangeSummaryVisibleCount] = useState(
       FILE_CHANGE_SUMMARY_COLLAPSED_LIMIT
     )
@@ -1802,45 +1813,97 @@ export const TranscriptPanel = memo(
     const closeMessageContextMenu = useCallback(() => {
       setMessageContextMenu(null)
     }, [])
+    // Snapshot fallback for summaries with no captured git diff (non-git
+    // workspaces, tool-derived live summaries): synthesize hunks from the
+    // run's write-tool payloads. Computed lazily on hover and cached per
+    // (messages identity, path) — a stream update swaps the messages array,
+    // which invalidates the whole cache.
+    const toolEditSnapshotCacheRef = useRef<{
+      messages: ChatMessage[] | null
+      byPath: Map<string, string | null>
+    }>({ messages: null, byPath: new Map() })
+    const resolveFileChangeDiffText = useCallback(
+      (summary: DiffFileSummary): { diffText?: string; snapshot?: boolean } => {
+        if (summary.diffText?.trim()) return { diffText: summary.diffText }
+        const cache = toolEditSnapshotCacheRef.current
+        if (cache.messages !== visibleMessages) {
+          cache.messages = visibleMessages
+          cache.byPath.clear()
+        }
+        if (!cache.byPath.has(summary.path)) {
+          cache.byPath.set(
+            summary.path,
+            buildToolEditDiffSnapshotForPath(
+              visibleMessages,
+              summary.path,
+              currentWorkspacePath || currentChat?.workspacePath
+            )
+          )
+        }
+        const diffText = cache.byPath.get(summary.path) || undefined
+        return diffText ? { diffText, snapshot: true } : {}
+      },
+      [currentChat?.workspacePath, currentWorkspacePath, visibleMessages]
+    )
     const openFileChangeDiffPreview = useCallback(
       (
         event: { currentTarget: HTMLElement },
         summary: DiffFileSummary,
-        options?: { focusTarget?: DiffHoverPreviewState['focusTarget'] }
+        options?: { focusTarget?: DiffHoverPreviewState['focusTarget']; immediate?: boolean }
       ) => {
         if (!canShowDiffHoverPreview(summary, Boolean(onOpenFileChangeInWorkbench))) return
-        showFileChangeDiffPreview({
-          anchor: event.currentTarget.getBoundingClientRect(),
-          boundary: diffHoverPreviewBoundaryForElement(event.currentTarget),
-          summary: {
-            actionLabel: onOpenFileChangeInWorkbench
-              ? 'Click row to open Diff Studio'
-              : 'Click row to preview',
-            path: summary.path,
-            status: summary.status,
-            additions: summary.additions,
-            deletions: summary.deletions,
-            diffText: summary.diffText,
-            source: 'run-summary'
-          },
-          focusTarget: options?.focusTarget,
-          action: onOpenFileChangeInWorkbench
-            ? {
-                label: 'Open Diff Studio',
-                onActivate: () => {
-                  closeFileChangeDiffPreview()
-                  onOpenFileChangeInWorkbench(summary)
+        const anchorElement = event.currentTarget
+        const produce = (): DiffHoverPreviewState | null => {
+          if (!anchorElement.isConnected) return null
+          const resolved = resolveFileChangeDiffText(summary)
+          return {
+            anchor: anchorElement.getBoundingClientRect(),
+            boundary: diffHoverPreviewBoundaryForElement(anchorElement),
+            summary: {
+              actionLabel: onOpenFileChangeInWorkbench
+                ? 'Click row to open Diff Studio'
+                : 'Click row to preview',
+              path: summary.path,
+              status: summary.status,
+              additions: summary.additions,
+              deletions: summary.deletions,
+              diffText: resolved.diffText,
+              snapshot: resolved.snapshot,
+              source: 'run-summary'
+            },
+            focusTarget: options?.focusTarget,
+            action: onOpenFileChangeInWorkbench
+              ? {
+                  label: 'Open Diff Studio',
+                  onActivate: () => {
+                    closeFileChangeDiffPreview()
+                    onOpenFileChangeInWorkbench(summary)
+                  }
                 }
-              }
-            : undefined
-        })
+              : undefined
+          }
+        }
+        // Keyboard focus and clicks open instantly; only pointer hover waits
+        // out the open delay.
+        if (options?.immediate || options?.focusTarget) {
+          const nextPreview = produce()
+          if (nextPreview) showFileChangeDiffPreview(nextPreview)
+          return
+        }
+        scheduleShowFileChangeDiffPreview(produce)
       },
-      [closeFileChangeDiffPreview, onOpenFileChangeInWorkbench, showFileChangeDiffPreview]
+      [
+        closeFileChangeDiffPreview,
+        onOpenFileChangeInWorkbench,
+        resolveFileChangeDiffText,
+        scheduleShowFileChangeDiffPreview,
+        showFileChangeDiffPreview
+      ]
     )
     const activateFileChangeSummary = useCallback(
       (event: React.MouseEvent<HTMLElement>, summary: DiffFileSummary) => {
         if (!onOpenFileChangeInWorkbench) {
-          openFileChangeDiffPreview(event, summary)
+          openFileChangeDiffPreview(event, summary, { immediate: true })
           return
         }
         closeFileChangeDiffPreview()
@@ -4040,7 +4103,7 @@ export const TranscriptPanel = memo(
                                 onClick={(event) => {
                                   event.preventDefault()
                                   event.stopPropagation()
-                                  openFileChangeDiffPreview(event, item)
+                                  openFileChangeDiffPreview(event, item, { immediate: true })
                                 }}
                                 onKeyDown={(event) => {
                                   if (event.key === 'Enter' || event.key === ' ') {

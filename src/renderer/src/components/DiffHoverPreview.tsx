@@ -11,6 +11,10 @@ export interface DiffHoverPreviewSummary {
   additions?: number
   deletions?: number
   diffText?: string
+  /** diffText was synthesized from the run's tool-call edit payloads rather
+   * than captured from git — badge it so the hunks aren't mistaken for the
+   * file's on-disk diff. */
+  snapshot?: boolean
   source?: DiffHoverPreviewSource
 }
 
@@ -229,9 +233,13 @@ export function useDiffHoverPreviewDismiss(
   }, [closePreview, preview])
 }
 
-export function useDiffHoverPreviewState(delayMs = DIFF_HOVER_PREVIEW_CLOSE_DELAY_MS) {
+export function useDiffHoverPreviewState(
+  delayMs = DIFF_HOVER_PREVIEW_CLOSE_DELAY_MS,
+  openDelayMs = 0
+) {
   const [preview, setPreview] = useState<DiffHoverPreviewState | null>(null)
   const closeTimerRef = useRef<number | null>(null)
+  const openTimerRef = useRef<number | null>(null)
 
   const keepPreviewOpen = useCallback(() => {
     if (closeTimerRef.current === null || typeof window === 'undefined') return
@@ -239,20 +247,51 @@ export function useDiffHoverPreviewState(delayMs = DIFF_HOVER_PREVIEW_CLOSE_DELA
     closeTimerRef.current = null
   }, [])
 
+  const cancelScheduledShow = useCallback(() => {
+    if (openTimerRef.current === null || typeof window === 'undefined') return
+    window.clearTimeout(openTimerRef.current)
+    openTimerRef.current = null
+  }, [])
+
   const closePreview = useCallback(() => {
+    cancelScheduledShow()
     keepPreviewOpen()
     setPreview(null)
-  }, [keepPreviewOpen])
+  }, [cancelScheduledShow, keepPreviewOpen])
 
   const showPreview = useCallback(
     (nextPreview: DiffHoverPreviewState) => {
+      cancelScheduledShow()
       keepPreviewOpen()
       setPreview(nextPreview)
     },
-    [keepPreviewOpen]
+    [cancelScheduledShow, keepPreviewOpen]
+  )
+
+  // Deferred open for hover: the producer runs when the timer fires so the
+  // anchor rect is measured at show time, not at schedule time (the row can
+  // scroll or unmount during the wait — return null to abort). A currently
+  // open preview stays visible until the new one replaces it.
+  const scheduleShowPreview = useCallback(
+    (produce: () => DiffHoverPreviewState | null) => {
+      cancelScheduledShow()
+      keepPreviewOpen()
+      if (openDelayMs <= 0 || typeof window === 'undefined') {
+        const nextPreview = produce()
+        if (nextPreview) setPreview(nextPreview)
+        return
+      }
+      openTimerRef.current = window.setTimeout(() => {
+        openTimerRef.current = null
+        const nextPreview = produce()
+        if (nextPreview) setPreview(nextPreview)
+      }, openDelayMs)
+    },
+    [cancelScheduledShow, keepPreviewOpen, openDelayMs]
   )
 
   const scheduleClosePreview = useCallback(() => {
+    cancelScheduledShow()
     keepPreviewOpen()
     if (typeof window === 'undefined') {
       setPreview(null)
@@ -262,15 +301,22 @@ export function useDiffHoverPreviewState(delayMs = DIFF_HOVER_PREVIEW_CLOSE_DELA
       closeTimerRef.current = null
       setPreview(null)
     }, delayMs)
-  }, [delayMs, keepPreviewOpen])
+  }, [cancelScheduledShow, delayMs, keepPreviewOpen])
 
-  useEffect(() => keepPreviewOpen, [keepPreviewOpen])
+  useEffect(
+    () => () => {
+      cancelScheduledShow()
+      keepPreviewOpen()
+    },
+    [cancelScheduledShow, keepPreviewOpen]
+  )
 
   return {
     closePreview,
     keepPreviewOpen,
     preview,
     scheduleClosePreview,
+    scheduleShowPreview,
     showPreview
   }
 }
@@ -357,9 +403,8 @@ export function DiffHoverPreviewOverlay({
   const statusText = preview.summary.status || 'modified'
   const sourceLabel = diffHoverPreviewSourceLabel(preview.summary.source)
   const role = diffHoverPreviewRole(Boolean(preview.action))
-  const badgeLabel = changeText
-    ? `${sourceLabel} ${statusText} ${changeText}`
-    : `${sourceLabel} ${statusText}`
+  const snapshotLabel = preview.summary.snapshot ? 'tool snapshot' : ''
+  const badgeLabel = [sourceLabel, statusText, snapshotLabel, changeText].filter(Boolean).join(' ')
   const hiddenLineCount =
     parsed && (parsed.omittedLineCount > 0 || preparedDiff?.capped)
       ? Math.max(parsed.omittedLineCount, 1)
@@ -400,6 +445,7 @@ export function DiffHoverPreviewOverlay({
         <div className="diff-hover-preview-badges" aria-label={badgeLabel}>
           <span className="diff-hover-preview-status">{sourceLabel}</span>
           <span className="diff-hover-preview-status">{statusText}</span>
+          {snapshotLabel && <span className="diff-hover-preview-status">{snapshotLabel}</span>}
           {stats.length > 0 && (
             <span className="diff-hover-preview-stats" aria-label={changeText}>
               {stats.map((stat) => (
