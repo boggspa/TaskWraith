@@ -126,11 +126,23 @@ describe('ComposerShellPreview — per-shell send glyph', () => {
     expect(modular).toEqual(nativeDefault)
   })
 
-  it('labels the above-bar action per shell (Create PR for codex/grok)', () => {
-    expect(render('codex')).toContain('Create PR')
-    expect(render('grok')).toContain('Create PR')
-    expect(render('claude')).toContain('Review changes')
-    expect(render('default')).toContain('Review changes')
+  it('uses the commit icon above-bar action for every icon shell', () => {
+    const textActionShells = new Set<ComposerStyle>(['claude', 'cursor'])
+
+    for (const style of ALL_SHELLS) {
+      const html = render(style)
+      if (textActionShells.has(style)) {
+        expect(html, style).toContain('class="composer-above-bar-action"')
+        expect(html, style).toContain('Review changes')
+        expect(html, style).not.toContain('composer-above-bar-action--git-commit-icon')
+        expect(html, style).not.toContain('composer-git-commit-trigger-icon')
+      } else {
+        expect(html, style).toContain(
+          'class="composer-above-bar-action composer-above-bar-action--git-commit-icon"'
+        )
+        expect(html, style).toContain('composer-git-commit-trigger-icon')
+      }
+    }
   })
 
   it('renders the above-row branch label without italic emphasis markup', () => {

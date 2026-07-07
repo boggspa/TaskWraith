@@ -4,12 +4,14 @@ import {
   ClaudeReturnSymbolIcon,
   CopyResponseIcon,
   FolderSymbolIcon,
+  GitCommitSymbolIcon,
   GoalSymbolIcon,
   RunSymbolIcon,
   ScreenWatchSymbolIcon
 } from './AppChromeSymbols'
 import { ComposerTimecode } from './ComposerTimecodes'
 import { FONT_STACKS, resolveComposerFontFamily } from '../lib/typefaceOptions'
+import { composerGitActionUsesCommitIcon } from '../lib/composerGitActionIcon'
 import type { ComposerStyle, ProviderId, ThemeAppearance } from '../../../main/store/types'
 import { ProviderBadgeIcon } from './Sidebar'
 
@@ -241,6 +243,15 @@ export function ComposerShellPreview({
   const meta = getComposerPreviewMeta(composerStyle)
   const previewProviderId = previewProviderIdForStyle(composerStyle)
   const previewProviderHueClass = previewProviderId
+  const useGitIconAction = composerGitActionUsesCommitIcon(composerStyle)
+  const actionClassName = [
+    'composer-above-bar-action',
+    useGitIconAction ? 'composer-above-bar-action--git-commit-icon' : null
+  ]
+    .filter(Boolean)
+    .join(' ')
+  const previewActionLabel =
+    composerStyle === 'codex' || composerStyle === 'grok' ? 'Create PR' : 'Review changes'
 
   // Font injection mirrors the prior SettingsPanel preview: only inject when the
   // caller actually supplies the font (onboarding omits both → inherit).
@@ -317,13 +328,11 @@ export function ComposerShellPreview({
             <div className="composer-above-bar-pill composer-above-bar-pill--action">
               <button
                 type="button"
-                className="composer-above-bar-action"
+                className={actionClassName}
                 tabIndex={-1}
                 aria-hidden="true"
               >
-                {composerStyle === 'codex' || composerStyle === 'grok'
-                  ? 'Create PR'
-                  : 'Review changes'}
+                {useGitIconAction ? <GitCommitSymbolIcon /> : previewActionLabel}
               </button>
             </div>
           </div>

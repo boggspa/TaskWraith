@@ -118,6 +118,7 @@ import {
   resolveClaudeDefaultReasoningEffort
 } from '../lib/providerModelDefaults'
 import { codexReasoningDisplayLabel, claudeReasoningDisplayLabel } from '../lib/composerChipFormat'
+import { composerGitActionUsesCommitIcon } from '../lib/composerGitActionIcon'
 import { composerVoicePlacementForStyle } from '../lib/composerVoicePlacement'
 import { composerPermissionOptions } from '../lib/planModeLabels'
 import { WORKSPACE_POLICY_SERVICES } from '../lib/workspacePolicyServices'
@@ -1967,8 +1968,10 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                   ? 'Publish branch'
                                   : 'Push'
                                 : createPrLabel
-                        const isCodexGitActionTrigger = appearance.composerStyle === 'codex'
-                        const actionClassName = `composer-above-bar-action ${isCodexGitActionTrigger ? 'composer-above-bar-action--git-commit-icon' : ''} ${primaryPrState.status === 'pending' ? 'is-pending' : ''} ${primaryPrState.status === 'error' ? 'is-error' : ''} ${primaryPrState.status === 'success' ? 'is-success' : ''}`
+                        const useGitIconAction = composerGitActionUsesCommitIcon(
+                          appearance.composerStyle
+                        )
+                        const actionClassName = `composer-above-bar-action ${useGitIconAction ? 'composer-above-bar-action--git-commit-icon' : ''} ${primaryPrState.status === 'pending' ? 'is-pending' : ''} ${primaryPrState.status === 'error' ? 'is-error' : ''} ${primaryPrState.status === 'success' ? 'is-success' : ''}`
                         const actionTitle =
                           primaryPrState.message ||
                           'Review, commit, push, or open a PR for the current workspace'
@@ -1982,13 +1985,13 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               aria-haspopup="menu"
                               aria-expanded={diffActionMenuOpen}
                               aria-label={
-                                isCodexGitActionTrigger
+                                useGitIconAction
                                   ? `${primaryLabel}. ${actionTitle}`
                                   : undefined
                               }
                               title={actionTitle}
                             >
-                              {isCodexGitActionTrigger ? <GitCommitSymbolIcon /> : primaryLabel}
+                              {useGitIconAction ? <GitCommitSymbolIcon /> : primaryLabel}
                             </button>
                             {diffActionMenuOpen && (
                               <div className="composer-diff-action-menu" role="menu">

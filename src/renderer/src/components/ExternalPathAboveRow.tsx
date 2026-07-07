@@ -28,6 +28,7 @@ import { AnimatedDiffNumber } from './AnimatedDiffNumber'
 import { ComposerBranchWorktreePopover } from './ComposerBranchWorktreePopover'
 import type { GitPrSummary, GitRepositorySnapshot } from '../../../main/services/GitService'
 import { GitCommitSymbolIcon } from './AppChromeSymbols'
+import { composerGitActionUsesCommitIcon } from '../lib/composerGitActionIcon'
 
 /**
  * 1.0.5-EW42b — Derive a human-readable "where did this grant
@@ -236,7 +237,7 @@ export function ExternalPathAboveRow({
         ? 'Publish branch'
         : 'Push'
       : createPrLabel
-  const useGitIconAction = composerStyle === 'codex'
+  const useGitIconAction = composerGitActionUsesCommitIcon(composerStyle)
   const actionTitle =
     createPrState?.message || `Review, commit, push, or open a PR for ${descriptor.basename}`
   // 1.0.5-EW42b — Build a rich tooltip that explains what created
