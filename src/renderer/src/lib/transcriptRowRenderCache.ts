@@ -11,6 +11,7 @@ export interface TranscriptRowRenderSignature {
   workspacePath?: string
   compactDensity: boolean
   liveActivityViewport?: boolean
+  liveActivityViewportActive?: boolean
   virtualized: boolean
   isGlobal?: boolean
   sideChatSeed: boolean
@@ -220,6 +221,7 @@ export function transcriptRowRenderSignatureEqual(
   if (prev.workspacePath !== next.workspacePath) return false
   if (prev.compactDensity !== next.compactDensity) return false
   if (prev.liveActivityViewport !== next.liveActivityViewport) return false
+  if (prev.liveActivityViewportActive !== next.liveActivityViewportActive) return false
   if (prev.virtualized !== next.virtualized) return false
   if (prev.isGlobal !== next.isGlobal) return false
   if (prev.sideChatSeed !== next.sideChatSeed) return false

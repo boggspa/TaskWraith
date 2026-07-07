@@ -375,6 +375,24 @@ describe('TranscriptVirtualWindow', () => {
       expect(measurementContentVersion(row, row.rowKey)).toBe('assistant:live')
     })
 
+    it('uses a stable live key for the active tool row', () => {
+      const row = projectRows([
+        msg({
+          id: 'tool',
+          role: 'tool',
+          toolActivities: [
+            activity({
+              id: 'kimi-thinking',
+              toolName: 'kimi_thinking',
+              status: 'success',
+              resultSummary: 'reasoning chunk'
+            })
+          ]
+        })
+      ])[0]
+      expect(measurementContentVersion(row, row.rowKey)).toBe('tool:live')
+    })
+
     it('leaves non-active rows on their content version', () => {
       const row = projectRows([msg({ id: 'a', role: 'assistant', content: 'hello' })])[0]
       expect(measurementContentVersion(row, 'other#0')).toBe(row.contentVersion)

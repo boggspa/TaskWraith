@@ -7,6 +7,11 @@ export interface LiveRevealMessageOptions {
   revealRunId?: string | null
 }
 
+export interface LiveToolMessageOptions {
+  revealChatIsRunning: boolean
+  revealRunId?: string | null
+}
+
 export function isLiveRevealMessageCandidate(
   message: ChatMessage | null | undefined,
   revealRunId?: string | null
@@ -25,5 +30,25 @@ export function resolveLiveRevealMessageId(
   if (!options.revealEnabled || !options.revealChatIsRunning) return null
   const lastMessage = messages[messages.length - 1]
   if (!isLiveRevealMessageCandidate(lastMessage, options.revealRunId)) return null
+  return lastMessage.id
+}
+
+export function isLiveToolMessageCandidate(
+  message: ChatMessage | null | undefined,
+  revealRunId?: string | null
+): boolean {
+  if (!message || message.role !== 'tool') return false
+  if (!Array.isArray(message.toolActivities) || message.toolActivities.length === 0) return false
+  if (revealRunId && message.runId && message.runId !== revealRunId) return false
+  return true
+}
+
+export function resolveLiveToolMessageId(
+  messages: readonly ChatMessage[],
+  options: LiveToolMessageOptions
+): string | null {
+  if (!options.revealChatIsRunning) return null
+  const lastMessage = messages[messages.length - 1]
+  if (!isLiveToolMessageCandidate(lastMessage, options.revealRunId)) return null
   return lastMessage.id
 }

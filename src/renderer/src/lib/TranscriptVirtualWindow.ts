@@ -356,8 +356,11 @@ export function measurementKey(
  * The actively streaming reveal row keeps one measurement slot while it grows.
  * Its message content length can change every provider frame, but giving every
  * token a fresh measurement key makes the virtualizer repeatedly fall back to
- * estimates right where the user is watching. Once the row leaves live mode,
- * normal content-version keys resume and the final settled height is measured.
+ * estimates right where the user is watching. Tool/progress rows get the same
+ * treatment while they are the live tail: Kimi-style `_thinking` / progress
+ * events can arrive as success-status tool rows whose output keeps changing.
+ * Once the row leaves live mode, normal content-version keys resume and the
+ * final settled height is measured.
  */
 export function measurementContentVersion(
   row: VirtualRow,
@@ -366,7 +369,10 @@ export function measurementContentVersion(
   if (
     activeLiveRowKey &&
     row.rowKey === activeLiveRowKey &&
-    (row.rowType === 'assistant' || row.rowType === 'guestReply' || row.rowType === 'fanoutResult')
+    (row.rowType === 'assistant' ||
+      row.rowType === 'guestReply' ||
+      row.rowType === 'fanoutResult' ||
+      row.rowType === 'tool')
   ) {
     return `${row.rowType}:live`
   }

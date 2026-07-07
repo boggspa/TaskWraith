@@ -374,6 +374,23 @@ describe('ActivityStack live activity viewport', () => {
     expect(html).toContain('activity-row')
   })
 
+  it('keeps success-status thinking traces active when the transcript marks the row live', () => {
+    const html = renderToStaticMarkup(
+      <ActivityStack
+        activities={[
+          makeThinkingActivity({ toolName: 'kimi_thinking', displayName: 'Kimi thinking' })
+        ]}
+        provider="kimi"
+        liveActivityViewport
+        liveActivityViewportActive
+      />
+    )
+
+    expect(html).toContain('live-activity-viewport')
+    expect(html).toContain('data-active="true"')
+    expect(html).toContain('is-thinking-trace')
+  })
+
   it('keeps the plain timeline when the viewport setting is disabled', () => {
     const html = renderToStaticMarkup(
       <ActivityStack

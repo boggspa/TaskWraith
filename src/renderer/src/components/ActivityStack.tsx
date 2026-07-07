@@ -96,6 +96,7 @@ interface ActivityStackProps {
    * edge-faded region that auto-follows while activity is still live and
    * remains scrollable after the activity settles. */
   liveActivityViewport?: boolean
+  liveActivityViewportActive?: boolean
   liveActivityViewportClassName?: string
   liveActivityViewportCollapsedMaxHeight?: number
   liveActivityViewportLabel?: string
@@ -876,10 +877,7 @@ function isCallMcpToolActivity(activity: ToolActivity): boolean {
 function isThinkingTraceActivity(activity: ToolActivity): boolean {
   if (isReasoningToolName(activity.toolName || '')) return true
   const kind = activity.parameters?.kind
-  if (
-    typeof kind === 'string' &&
-    ['thinking', 'reasoning'].includes(kind.trim().toLowerCase())
-  ) {
+  if (typeof kind === 'string' && ['thinking', 'reasoning'].includes(kind.trim().toLowerCase())) {
     return true
   }
   const displayName = (activity.displayName || '').trim().toLowerCase()
@@ -2291,6 +2289,10 @@ export function activitiesHaveLiveWork(activities: readonly ToolActivity[]): boo
   return activities.some((a) => a.status === 'running' || a.status === 'pending')
 }
 
+function activitiesHaveThinkingTrace(activities: readonly ToolActivity[]): boolean {
+  return activities.some(isThinkingTraceActivity)
+}
+
 /** Cheap signature that changes whenever streamed content grows, so the
  * viewport re-pins to the live edge as reasoning text / tool results stream in. */
 export function liveActivityRevision(activities: readonly ToolActivity[]): string {
@@ -2328,6 +2330,7 @@ export function ActivityStack({
   chat,
   compactDensity = false,
   liveActivityViewport = false,
+  liveActivityViewportActive = false,
   liveActivityViewportClassName,
   liveActivityViewportCollapsedMaxHeight,
   liveActivityViewportLabel,
@@ -2617,7 +2620,10 @@ export function ActivityStack({
             <LiveActivityViewport
               key={segment.id}
               className={className}
-              active={activitiesHaveLiveWork(segment.activities)}
+              active={
+                activitiesHaveLiveWork(segment.activities) ||
+                (liveActivityViewportActive && activitiesHaveThinkingTrace(segment.activities))
+              }
               revision={liveActivityRevision(segment.activities)}
               collapsedMaxHeight={liveActivityViewportCollapsedMaxHeight}
               expanded={liveViewportExpanded}

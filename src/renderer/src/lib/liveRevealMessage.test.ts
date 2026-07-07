@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import type { ChatMessage } from '../../../main/store/types'
-import { isLiveRevealMessageCandidate, resolveLiveRevealMessageId } from './liveRevealMessage'
+import {
+  isLiveRevealMessageCandidate,
+  isLiveToolMessageCandidate,
+  resolveLiveRevealMessageId,
+  resolveLiveToolMessageId
+} from './liveRevealMessage'
 
 function msg(overrides: Partial<ChatMessage> & { id: string }): ChatMessage {
   return {
@@ -61,6 +66,59 @@ describe('liveRevealMessage', () => {
   it('blocks candidates from a different active run', () => {
     expect(
       isLiveRevealMessageCandidate(msg({ id: 'a', role: 'assistant', runId: 'old' }), 'new')
+    ).toBe(false)
+  })
+
+  it('marks the final tool activity row as the live measurement row while a chat runs', () => {
+    const messages = [
+      msg({ id: 'a1', role: 'assistant', runId: 'run-1' }),
+      msg({
+        id: 'tool',
+        role: 'tool',
+        runId: 'run-1',
+        toolActivities: [
+          {
+            id: 'kimi-thinking-1',
+            toolName: 'kimi_thinking',
+            displayName: 'Kimi thinking',
+            category: 'task',
+            status: 'success',
+            resultSummary: 'streamed reasoning chunk'
+          }
+        ]
+      })
+    ]
+
+    expect(
+      resolveLiveToolMessageId(messages, {
+        revealChatIsRunning: true,
+        revealRunId: 'run-1'
+      })
+    ).toBe('tool')
+  })
+
+  it('does not mark non-final or mismatched tool rows as live measurement rows', () => {
+    const nonFinalMessages = [
+      msg({
+        id: 'tool',
+        role: 'tool',
+        runId: 'run-1',
+        toolActivities: [{ id: 't1', status: 'running' } as any]
+      }),
+      msg({ id: 'a2', role: 'assistant', runId: 'run-1' })
+    ]
+
+    expect(resolveLiveToolMessageId(nonFinalMessages, { revealChatIsRunning: true })).toBeNull()
+    expect(
+      isLiveToolMessageCandidate(
+        msg({
+          id: 'tool',
+          role: 'tool',
+          runId: 'old',
+          toolActivities: [{ id: 't1', status: 'running' } as any]
+        }),
+        'new'
+      )
     ).toBe(false)
   })
 })

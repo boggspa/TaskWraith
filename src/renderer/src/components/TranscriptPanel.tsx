@@ -67,7 +67,7 @@ import {
   transcriptRowRenderSignatureEqual,
   type TranscriptRowRenderSignature
 } from '../lib/transcriptRowRenderCache'
-import { resolveLiveRevealMessageId } from '../lib/liveRevealMessage'
+import { resolveLiveRevealMessageId, resolveLiveToolMessageId } from '../lib/liveRevealMessage'
 import type { PlanChoiceState } from '../lib/planModeChoice'
 import type { DisplayCurrency } from '../lib/formatCost'
 import type { RendererProviderRates } from '../lib/providerRateEstimate'
@@ -2388,6 +2388,17 @@ export const TranscriptPanel = memo(
         }),
       [displayMessages, revealEnabled, revealChatIsRunning, revealRunId]
     )
+    const liveToolMessageId = useMemo(
+      () =>
+        liveRevealMessageId
+          ? null
+          : resolveLiveToolMessageId(displayMessages, {
+              revealChatIsRunning,
+              revealRunId
+            }),
+      [displayMessages, liveRevealMessageId, revealChatIsRunning, revealRunId]
+    )
+    const liveMeasurementMessageId = liveRevealMessageId || liveToolMessageId
     const displayRunBoundaryByMessageId = useMemo(() => {
       const map = new Map(runBoundaryByMessageId)
       for (const message of displayMessages) {
@@ -2417,14 +2428,16 @@ export const TranscriptPanel = memo(
       }
       return { byRowKey, byMessageId, byConstituentId, indexByRowKey }
     }, [displayMessages, projectedRows])
-    const liveRevealRowKey = useMemo(() => {
-      if (!liveRevealMessageId) return null
+    const liveMeasurementRowKey = useMemo(() => {
+      if (!liveMeasurementMessageId) return null
       return (
         projectedRows.find(
-          (row) => row.id === liveRevealMessageId && row.index === displayMessages.length - 1
+          (row) =>
+            row.id === liveMeasurementMessageId && row.index === displayMessages.length - 1
         )?.rowKey ?? null
       )
-    }, [displayMessages.length, liveRevealMessageId, projectedRows])
+    }, [displayMessages.length, liveMeasurementMessageId, projectedRows])
+    const liveRevealRowKey = liveRevealMessageId ? liveMeasurementRowKey : null
     // Geometry companion to `expandedLiveViewportStacks`: the virtualizer's
     // measurement cache keys on rowKey + an expanded bit, so rows with an
     // expanded live viewport must resolve their CURRENT rowKey each render
@@ -2485,7 +2498,7 @@ export const TranscriptPanel = memo(
       onProgrammaticScrollWrite,
       compactDensity,
       forcedRowIndex: pendingFocusRowIndex,
-      activeLiveRowKey: liveRevealRowKey,
+      activeLiveRowKey: liveMeasurementRowKey,
       expandedRowIds: expandedRowIdsWithLiveViewports
     })
     const virtualHeightOffsets = useMemo(
@@ -2964,6 +2977,7 @@ export const TranscriptPanel = memo(
             const liveViewportExpanded = liveViewportStackKey
               ? expandedLiveViewportStacks.has(liveViewportStackKey)
               : false
+            const liveViewportActive = isToolActivityStack && rowKey === liveMeasurementRowKey
             const pendingQuestionsForRow = pendingAgentQuestions.filter(
               (question) => question.messageId === msg.id
             )
@@ -3055,6 +3069,7 @@ export const TranscriptPanel = memo(
               ...(currentWorkspacePath ? { workspacePath: currentWorkspacePath } : {}),
               compactDensity,
               liveActivityViewport,
+              liveActivityViewportActive: liveViewportActive,
               virtualized: virtualizeEnabled,
               isGlobal,
               sideChatSeed: isSideChatSeedMessage,
@@ -3221,6 +3236,7 @@ export const TranscriptPanel = memo(
                     chat={currentChat || undefined}
                     compactDensity={compactDensity}
                     liveActivityViewport={liveActivityViewport}
+                    liveActivityViewportActive={liveViewportActive}
                     liveActivityViewportExpanded={liveViewportExpanded}
                     onLiveActivityViewportExpandedChange={(expanded) =>
                       setLiveViewportExpandedForStack(liveViewportStackKey, expanded)
