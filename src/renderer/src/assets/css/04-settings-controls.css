@@ -7047,7 +7047,9 @@ input:disabled, select:disabled, textarea:disabled {
   list-style: none;
   max-height: 260px;
   overflow-y: auto;
-  background: var(--surface-raised, var(--background-secondary, #1c1c1f));
+  /* --surface-raised/--background-secondary are not theme tokens — the old
+   * fallback pinned this popover dark in light themes. */
+  background: var(--surface-elevated, #1c1c1f);
   border: 1px solid color-mix(in srgb, var(--text-primary) 14%, transparent);
   border-radius: 10px;
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.32);
