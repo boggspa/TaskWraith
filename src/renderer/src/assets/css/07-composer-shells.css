@@ -1573,7 +1573,7 @@
 
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .composer-diff-action-menu {
   border-color: var(--surface-border);
-  background: color-mix(in srgb, var(--surface-1) 78%, transparent);
+  background: color-mix(in srgb, var(--surface-1) 85%, transparent);
   color: rgba(29, 29, 31, 0.88);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.8),
