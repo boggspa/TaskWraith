@@ -6821,6 +6821,59 @@ Next action:
     expect(updated?.timestamp).toBe(first?.timestamp)
   })
 
+  it('keeps system rows after already-rendered participant timeline rows during re-flushes', async () => {
+    const harness = makeHarness()
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Stream, then emit status.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    const route = {
+      appRunId: harness.dispatched[0].appRunId,
+      appChatId: 'ensemble-chat'
+    }
+    harness.orchestrator.handleProviderOutput('claude', route, {
+      type: 'content',
+      text: 'First visible participant chunk.'
+    })
+    await vi.waitFor(() =>
+      expect(
+        harness.chat.messages.find(
+          (message) => message.id === `ensemble-content-${route.appRunId}-0`
+        )?.content
+      ).toContain('First visible participant chunk.')
+    )
+
+    expect(
+      harness.orchestrator.appendStatusForRun(route.appRunId!, 'System event after chunk.')
+    ).toBe(true)
+    harness.orchestrator.handleProviderOutput('claude', route, {
+      type: 'content',
+      text: ' Second streamed chunk.'
+    })
+    await vi.waitFor(() =>
+      expect(
+        harness.chat.messages.find(
+          (message) => message.id === `ensemble-content-${route.appRunId}-0`
+        )?.content
+      ).toContain('Second streamed chunk.')
+    )
+
+    const transcriptIds = harness.chat.messages.map((message) => message.id)
+    const participantIndex = transcriptIds.indexOf(`ensemble-content-${route.appRunId}-0`)
+    const systemIndex = harness.chat.messages.findIndex(
+      (message) =>
+        message.metadata?.kind === 'ensembleRoundStatus' &&
+        typeof message.content === 'string' &&
+        message.content.includes('System event after chunk.')
+    )
+    expect(participantIndex).toBeGreaterThanOrEqual(0)
+    expect(systemIndex).toBeGreaterThanOrEqual(0)
+    expect(systemIndex).toBeGreaterThan(participantIndex)
+  })
+
   it('persists real write_file line stats for ensemble tool activities', async () => {
     const harness = makeHarness()
     harness.orchestrator.startRound({

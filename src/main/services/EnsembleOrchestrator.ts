@@ -881,12 +881,29 @@ function isComparableFanoutTimelineMessage(message: ChatMessage, run: ActivePart
   )
 }
 
+function isRunTimelineMessage(message: ChatMessage, run: ActiveParticipantRun): boolean {
+  if (message.runId !== run.runId) return false
+  if (message.role !== 'assistant' && message.role !== 'tool') return false
+  const stableId = typeof message.id === 'string' ? message.id : ''
+  return (
+    stableId.startsWith(`ensemble-content-${run.runId}-`) ||
+    stableId.startsWith(`ensemble-tool-${run.runId}`) ||
+    message.id === run.assistantMessageId
+  )
+}
+
 function insertRunTimelineMessages(
   messages: ChatMessage[],
   desiredMessages: ChatMessage[],
-  run: ActiveParticipantRun
+  run: ActiveParticipantRun,
+  preferredInsertionIndex: number | null = null
 ): ChatMessage[] {
-  if (!run.laneId || desiredMessages.length === 0) return [...messages, ...desiredMessages]
+  if (desiredMessages.length === 0) return messages
+  if (preferredInsertionIndex !== null) {
+    const index = Math.max(0, Math.min(preferredInsertionIndex, messages.length))
+    return [...messages.slice(0, index), ...desiredMessages, ...messages.slice(index)]
+  }
+  if (!run.laneId) return [...messages, ...desiredMessages]
   const insertionIndex = messages.findIndex(
     (message) =>
       isComparableFanoutTimelineMessage(message, run) &&
@@ -10927,27 +10944,22 @@ export class EnsembleOrchestrator {
 
     // Strip any prior timeline messages for this run from the chat
     // (other messages — round-prompt user msgs, status cards from
-    // OTHER runs, etc. — stay untouched). Serial runs still append at
-    // the tail. Fan-out lanes reinsert relative to other lane rows in
-    // participant order; otherwise every streaming flush would move
-    // the freshest lane to the bottom and churn the transcript order.
-    messages = messages.filter((message) => {
-      if (message.runId !== run.runId) return true
-      if (message.role !== 'assistant' && message.role !== 'tool') return true
-      // Only filter our own timeline-ids; non-timeline assistant
-      // messages from older code paths (none remain in this file
-      // but defending in depth) stay.
-      const stableId = typeof message.id === 'string' ? message.id : ''
-      return (
-        !stableId.startsWith(`ensemble-content-${run.runId}-`) &&
-        !stableId.startsWith(`ensemble-tool-${run.runId}-`) &&
-        // Legacy single-id flush from earlier 1.0.3 builds — also
-        // remove so migrated chats don't show stale duplicates.
-        message.id !== run.assistantMessageId &&
-        !stableId.startsWith(`ensemble-tool-${run.runId}`)
-      )
-    })
-    messages = insertRunTimelineMessages(messages, desiredMessages, run)
+    // OTHER runs, etc. — stay untouched). Re-flushes preserve the
+    // participant timeline's original anchor so later system/status
+    // rows stay chronological. First fan-out lane insertion still uses
+    // participant order; otherwise every streaming flush would move the
+    // freshest lane to the bottom and churn the transcript order.
+    const existingTimelineStartIndex = messages.findIndex((message) =>
+      isRunTimelineMessage(message, run)
+    )
+    const preferredInsertionIndex =
+      existingTimelineStartIndex >= 0
+        ? messages
+            .slice(0, existingTimelineStartIndex)
+            .filter((message) => !isRunTimelineMessage(message, run)).length
+        : null
+    messages = messages.filter((message) => !isRunTimelineMessage(message, run))
+    messages = insertRunTimelineMessages(messages, desiredMessages, run, preferredInsertionIndex)
 
     // Status card for yielded / failed / skipped, appended after
     // the timeline messages so it reads as a coda. Unchanged from
