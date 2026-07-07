@@ -312,10 +312,16 @@
 
 /* ----- AgentMentionMenu autocomplete popover ----- */
 .agent-mention-menu {
-  background: color-mix(in srgb, var(--panel-elevated-bg) 96%, transparent);
+  background: color-mix(
+    in srgb,
+    var(--surface-2, var(--panel-bg-solid, var(--surface-1, #24242a))) 85%,
+    transparent
+  );
   border: 1px solid color-mix(in srgb, var(--panel-border) 82%, transparent);
   border-radius: 10px;
-  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.36);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--text-primary) 10%, transparent),
+    0 18px 44px rgba(0, 0, 0, 0.34);
   min-width: 220px;
   max-width: 340px;
   padding: 4px;
@@ -324,19 +330,19 @@
   overflow-y: auto;
   /* Frost the transcript behind the popover so text stays legible — the one
      property this menu lacked vs the working .composer-combined-picker-popover. */
-  backdrop-filter: blur(18px);
-  -webkit-backdrop-filter: blur(18px);
+  backdrop-filter: blur(18px) saturate(150%);
+  -webkit-backdrop-filter: blur(18px) saturate(150%);
   isolation: isolate;
 }
 /* Light themes: floor to an opaque surface token + a soft light shadow (mirrors
    the picker's light variant). backdrop-filter inherits from the base rule. */
 :is([data-theme='light'], [data-theme='citrus'], [data-theme='mist'], [data-theme='sage'])
   .agent-mention-menu {
-  background: color-mix(in srgb, var(--surface-1) 78%, transparent);
+  background: color-mix(in srgb, var(--surface-1) 85%, transparent);
   border-color: var(--surface-border);
   box-shadow:
-    0 18px 44px rgba(0, 0, 0, 0.12),
-    inset 0 1px 0 rgba(255, 255, 255, 0.7);
+    0 1px 0 inset rgba(255, 255, 255, 0.72),
+    0 18px 44px rgba(0, 0, 0, 0.14);
   color: var(--surface-text);
 }
 /* native_glass dark: --panel-elevated-bg collapses to ~0.02 alpha (see-through
@@ -345,7 +351,7 @@
     :is([data-theme='light'], [data-theme='citrus'], [data-theme='mist'], [data-theme='sage'])
   )
   .agent-mention-menu {
-  background: color-mix(in srgb, var(--surface-2) 64%, transparent);
+  background: color-mix(in srgb, var(--surface-2) 85%, transparent);
 }
 .agent-mention-menu-list {
   list-style: none;
@@ -418,30 +424,36 @@
  * Sectioned by group with subtle headers and a monospace pill for the
  * literal slash command. */
 .composer-slash-menu {
-  background: color-mix(in srgb, var(--panel-elevated-bg) 96%, transparent);
+  background: color-mix(
+    in srgb,
+    var(--surface-2, var(--panel-bg-solid, var(--surface-1, #24242a))) 85%,
+    transparent
+  );
   border: 1px solid color-mix(in srgb, var(--panel-border) 82%, transparent);
   border-radius: 10px;
   box-sizing: border-box;
-  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.36);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--text-primary) 10%, transparent),
+    0 18px 44px rgba(0, 0, 0, 0.34);
   padding: 4px;
   font-size: var(--font-size-xs);
   max-height: 360px;
   overflow-y: auto;
   /* Frost the transcript behind the popover so text stays legible — the one
      property this menu lacked vs the working .composer-combined-picker-popover. */
-  backdrop-filter: blur(18px);
-  -webkit-backdrop-filter: blur(18px);
+  backdrop-filter: blur(18px) saturate(150%);
+  -webkit-backdrop-filter: blur(18px) saturate(150%);
   isolation: isolate;
 }
 /* Light themes: floor to an opaque surface token + a soft light shadow (mirrors
    the picker's light variant). backdrop-filter inherits from the base rule. */
 :is([data-theme='light'], [data-theme='citrus'], [data-theme='mist'], [data-theme='sage'])
   .composer-slash-menu {
-  background: color-mix(in srgb, var(--surface-1) 78%, transparent);
+  background: color-mix(in srgb, var(--surface-1) 85%, transparent);
   border-color: var(--surface-border);
   box-shadow:
-    0 18px 44px rgba(0, 0, 0, 0.12),
-    inset 0 1px 0 rgba(255, 255, 255, 0.7);
+    0 1px 0 inset rgba(255, 255, 255, 0.72),
+    0 18px 44px rgba(0, 0, 0, 0.14);
   color: var(--surface-text);
 }
 /* native_glass dark: --panel-elevated-bg collapses to ~0.02 alpha (see-through
@@ -450,7 +462,7 @@
     :is([data-theme='light'], [data-theme='citrus'], [data-theme='mist'], [data-theme='sage'])
   )
   .composer-slash-menu {
-  background: color-mix(in srgb, var(--surface-2) 64%, transparent);
+  background: color-mix(in srgb, var(--surface-2) 85%, transparent);
 }
 .composer-slash-menu-list {
   display: flex;
@@ -8890,13 +8902,17 @@
   max-width: 420px;
   padding: 6px;
   border-radius: var(--radius-md, 10px);
-  background: color-mix(in srgb, var(--panel-elevated-bg) 96%, transparent);
+  background: color-mix(
+    in srgb,
+    var(--surface-2, var(--panel-bg-solid, var(--surface-1, #24242a))) 85%,
+    transparent
+  );
   border: 1px solid color-mix(in srgb, var(--panel-border) 90%, transparent);
   box-shadow:
-    0 18px 44px rgba(0, 0, 0, 0.32),
-    inset 0 1px 0 color-mix(in srgb, var(--text-primary) 6%, transparent);
-  backdrop-filter: blur(18px);
-  -webkit-backdrop-filter: blur(18px);
+    inset 0 1px 0 color-mix(in srgb, var(--text-primary) 10%, transparent),
+    0 18px 44px rgba(0, 0, 0, 0.34);
+  backdrop-filter: blur(18px) saturate(150%);
+  -webkit-backdrop-filter: blur(18px) saturate(150%);
   z-index: 1000;
   font-family: inherit;
   font-size: calc(var(--font-size-xs) + 1px);
@@ -8918,11 +8934,11 @@
  * a higher-mix backdrop blur — closer to the macOS
  * liquid-glass aesthetic real Codex / Claude use for menus. */
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .composer-combined-picker-popover {
-  background: color-mix(in srgb, var(--surface-1) 78%, transparent);
+  background: color-mix(in srgb, var(--surface-1) 85%, transparent);
   border-color: var(--surface-border);
   box-shadow:
-    0 18px 44px rgba(0, 0, 0, 0.12),
-    inset 0 1px 0 rgba(255, 255, 255, 0.7);
+    0 1px 0 inset rgba(255, 255, 255, 0.72),
+    0 18px 44px rgba(0, 0, 0, 0.14);
   color: var(--surface-text);
 }
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .composer-combined-picker-column + .composer-combined-picker-column {
@@ -8955,9 +8971,20 @@
  * popover already sets isolation:isolate + border-radius, so the
  * pseudo-element inherits the rounded clip via inset:0 + inherit. */
 .composer-combined-picker-popover::after,
+.agent-mention-menu::after,
+.composer-slash-menu::after,
+.welcome-workspace-popover::after,
+.composer-workspace-popover::after,
+.continuous-hops-popover::after,
+.composer-copy-transcript-popover::after,
 .composer-diff-action-menu::after,
 .composer-goal-popover::after,
-.composer-plan-popover::after {
+.composer-plan-popover::after,
+.composer-ensemble-toggle-popover::after,
+.sidebar-settings-menu::after,
+.sidebar-footer-popover::after,
+.sidebar-new-menu::after,
+.ensemble-above-overflow::after {
   content: "";
   position: absolute;
   inset: 0;
@@ -8975,9 +9002,20 @@
  * plain frosted popover. Perf: own cached layer, decoupled from the
  * backdrop repaint, NO animation of the filter or its inputs. */
 :root[data-advanced-fx-refraction="true"] .composer-combined-picker-popover::before,
+:root[data-advanced-fx-refraction="true"] .agent-mention-menu::before,
+:root[data-advanced-fx-refraction="true"] .composer-slash-menu::before,
+:root[data-advanced-fx-refraction="true"] .welcome-workspace-popover::before,
+:root[data-advanced-fx-refraction="true"] .composer-workspace-popover::before,
+:root[data-advanced-fx-refraction="true"] .continuous-hops-popover::before,
+:root[data-advanced-fx-refraction="true"] .composer-copy-transcript-popover::before,
 :root[data-advanced-fx-refraction="true"] .composer-diff-action-menu::before,
 :root[data-advanced-fx-refraction="true"] .composer-goal-popover::before,
-:root[data-advanced-fx-refraction="true"] .composer-plan-popover::before {
+:root[data-advanced-fx-refraction="true"] .composer-plan-popover::before,
+:root[data-advanced-fx-refraction="true"] .composer-ensemble-toggle-popover::before,
+:root[data-advanced-fx-refraction="true"] .sidebar-settings-menu::before,
+:root[data-advanced-fx-refraction="true"] .sidebar-footer-popover::before,
+:root[data-advanced-fx-refraction="true"] .sidebar-new-menu::before,
+:root[data-advanced-fx-refraction="true"] .ensemble-above-overflow::before {
   content: "";
   position: absolute;
   inset: 0;
@@ -9009,12 +9047,44 @@
  * stronger intensity tiers. At `subtle` the sheen renders flat (CSS
  * rim + gradient only, no SVG). Reserve the strongest warp for epic. */
 :root[data-advanced-fx-refraction="true"][data-advanced-fx-intensity="cinematic"]
-  :is(.composer-combined-picker-popover, .composer-diff-action-menu, .composer-goal-popover, .composer-plan-popover)::before {
+  :is(
+    .composer-combined-picker-popover,
+    .agent-mention-menu,
+    .composer-slash-menu,
+    .welcome-workspace-popover,
+    .composer-workspace-popover,
+    .continuous-hops-popover,
+    .composer-copy-transcript-popover,
+    .composer-diff-action-menu,
+    .composer-goal-popover,
+    .composer-plan-popover,
+    .composer-ensemble-toggle-popover,
+    .sidebar-settings-menu,
+    .sidebar-footer-popover,
+    .sidebar-new-menu,
+    .ensemble-above-overflow
+  )::before {
   filter: url(#tw-glass-refract);
   opacity: 0.85;
 }
 :root[data-advanced-fx-refraction="true"][data-advanced-fx-intensity="epic"]
-  :is(.composer-combined-picker-popover, .composer-diff-action-menu, .composer-goal-popover, .composer-plan-popover)::before {
+  :is(
+    .composer-combined-picker-popover,
+    .agent-mention-menu,
+    .composer-slash-menu,
+    .welcome-workspace-popover,
+    .composer-workspace-popover,
+    .continuous-hops-popover,
+    .composer-copy-transcript-popover,
+    .composer-diff-action-menu,
+    .composer-goal-popover,
+    .composer-plan-popover,
+    .composer-ensemble-toggle-popover,
+    .sidebar-settings-menu,
+    .sidebar-footer-popover,
+    .sidebar-new-menu,
+    .ensemble-above-overflow
+  )::before {
   filter: url(#tw-glass-refract);
   opacity: 1;
 }
@@ -9025,7 +9095,23 @@
  * diagonal so the bright frosted surface never blows out. */
 :root[data-advanced-fx-refraction="true"]
   :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])
-  :is(.composer-combined-picker-popover, .composer-diff-action-menu, .composer-goal-popover, .composer-plan-popover)::before {
+  :is(
+    .composer-combined-picker-popover,
+    .agent-mention-menu,
+    .composer-slash-menu,
+    .welcome-workspace-popover,
+    .composer-workspace-popover,
+    .continuous-hops-popover,
+    .composer-copy-transcript-popover,
+    .composer-diff-action-menu,
+    .composer-goal-popover,
+    .composer-plan-popover,
+    .composer-ensemble-toggle-popover,
+    .sidebar-settings-menu,
+    .sidebar-footer-popover,
+    .sidebar-new-menu,
+    .ensemble-above-overflow
+  )::before {
   mix-blend-mode: screen;
   opacity: 0.7;
 }
@@ -9036,20 +9122,68 @@
  *     real a11y gap regardless of the refraction attr. High specificity
  *     (:root + class) beats the base rule's `backdrop-filter`. */
 :root[data-reduce-transparency="true"]
-  :is(.composer-combined-picker-popover, .composer-diff-action-menu, .composer-goal-popover, .composer-plan-popover) {
+  :is(
+    .composer-combined-picker-popover,
+    .agent-mention-menu,
+    .composer-slash-menu,
+    .welcome-workspace-popover,
+    .composer-workspace-popover,
+    .continuous-hops-popover,
+    .composer-copy-transcript-popover,
+    .composer-diff-action-menu,
+    .composer-goal-popover,
+    .composer-plan-popover,
+    .composer-ensemble-toggle-popover,
+    .sidebar-settings-menu,
+    .sidebar-footer-popover,
+    .sidebar-new-menu,
+    .ensemble-above-overflow
+  ) {
   background: var(--tw-glass-solid, var(--panel-bg-solid, #0f1830));
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }
 :root[data-reduce-transparency="true"]
-  :is(.composer-combined-picker-popover, .composer-diff-action-menu, .composer-goal-popover, .composer-plan-popover)::before {
+  :is(
+    .composer-combined-picker-popover,
+    .agent-mention-menu,
+    .composer-slash-menu,
+    .welcome-workspace-popover,
+    .composer-workspace-popover,
+    .continuous-hops-popover,
+    .composer-copy-transcript-popover,
+    .composer-diff-action-menu,
+    .composer-goal-popover,
+    .composer-plan-popover,
+    .composer-ensemble-toggle-popover,
+    .sidebar-settings-menu,
+    .sidebar-footer-popover,
+    .sidebar-new-menu,
+    .ensemble-above-overflow
+  )::before {
   display: none;
   filter: none;
 }
 :root[data-reduce-transparency="true"]
   :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])
-  :is(.composer-combined-picker-popover, .composer-diff-action-menu, .composer-goal-popover, .composer-plan-popover) {
-  background: var(--tw-glass-solid, var(--surface-1, #f4f6fb));
+  :is(
+    .composer-combined-picker-popover,
+    .agent-mention-menu,
+    .composer-slash-menu,
+    .welcome-workspace-popover,
+    .composer-workspace-popover,
+    .continuous-hops-popover,
+    .composer-copy-transcript-popover,
+    .composer-diff-action-menu,
+    .composer-goal-popover,
+    .composer-plan-popover,
+    .composer-ensemble-toggle-popover,
+    .sidebar-settings-menu,
+    .sidebar-footer-popover,
+    .sidebar-new-menu,
+    .ensemble-above-overflow
+  ) {
+  background: var(--surface-1, #f4f6fb);
   color: var(--surface-text);
 }
 
@@ -9057,19 +9191,85 @@
  *     pattern at 03-composer-welcome-activity.css:3215. Also neutralise
  *     the sheen filter so a non-supporting engine never tries url(). */
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  :is(.composer-combined-picker-popover, .composer-diff-action-menu, .composer-goal-popover, .composer-plan-popover) {
+  :root :is(
+    .composer-combined-picker-popover,
+    .agent-mention-menu,
+    .composer-slash-menu,
+    .welcome-workspace-popover,
+    .composer-workspace-popover,
+    .continuous-hops-popover,
+    .composer-copy-transcript-popover,
+    .composer-diff-action-menu,
+    .composer-goal-popover,
+    .composer-plan-popover,
+    .composer-ensemble-toggle-popover,
+    .sidebar-settings-menu,
+    .sidebar-footer-popover,
+    .sidebar-new-menu,
+    .ensemble-above-overflow
+  ) {
     background: var(--tw-glass-solid, var(--panel-bg-solid, #0f1830));
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
   }
-  :is(.composer-combined-picker-popover, .composer-diff-action-menu, .composer-goal-popover, .composer-plan-popover)::before {
+  :root :is(
+    .composer-combined-picker-popover,
+    .agent-mention-menu,
+    .composer-slash-menu,
+    .welcome-workspace-popover,
+    .composer-workspace-popover,
+    .continuous-hops-popover,
+    .composer-diff-action-menu,
+    .composer-goal-popover,
+    .composer-plan-popover,
+    .composer-ensemble-toggle-popover,
+    .sidebar-settings-menu,
+    .sidebar-footer-popover,
+    .sidebar-new-menu,
+    .ensemble-above-overflow
+  )::before {
     filter: none;
   }
-  :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])
-    :is(.composer-combined-picker-popover, .composer-diff-action-menu, .composer-goal-popover, .composer-plan-popover) {
-    background: var(--tw-glass-solid, var(--surface-1, #f4f6fb));
+  :root :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])
+    :is(
+      .composer-combined-picker-popover,
+      .agent-mention-menu,
+      .composer-slash-menu,
+      .welcome-workspace-popover,
+      .composer-workspace-popover,
+      .continuous-hops-popover,
+      .composer-copy-transcript-popover,
+      .composer-diff-action-menu,
+      .composer-goal-popover,
+      .composer-plan-popover,
+      .composer-ensemble-toggle-popover,
+      .sidebar-settings-menu,
+      .sidebar-footer-popover,
+      .sidebar-new-menu,
+      .ensemble-above-overflow
+    ) {
+    background: var(--surface-1, #f4f6fb);
     color: var(--surface-text);
   }
+}
+
+.composer-combined-picker-popover > *,
+.agent-mention-menu > *,
+.composer-slash-menu > *,
+.welcome-workspace-popover > *,
+.composer-workspace-popover > *,
+.continuous-hops-popover > *,
+.composer-copy-transcript-popover > *,
+.composer-diff-action-menu > *,
+.composer-goal-popover > *,
+.composer-plan-popover > *,
+.composer-ensemble-toggle-popover > *,
+.sidebar-settings-menu > *,
+.sidebar-footer-popover > *,
+.sidebar-new-menu > *,
+.ensemble-above-overflow > * {
+  position: relative;
+  z-index: 2;
 }
 
 .composer-combined-picker-column {
@@ -9587,7 +9787,9 @@
 .composer-slash-menu.shell-obsidian,
 .agent-mention-menu.shell-obsidian,
 .composer-workspace-popover.shell-obsidian,
-.composer-goal-popover.shell-obsidian {
+.composer-goal-popover.shell-obsidian,
+.composer-plan-popover.shell-obsidian,
+.composer-ensemble-toggle-popover.shell-obsidian {
   --text-primary: rgba(255, 255, 255, 0.92);
   --text-secondary: rgba(255, 255, 255, 0.64);
   --text-tertiary: rgba(255, 255, 255, 0.48);
@@ -9599,19 +9801,21 @@
   --surface-1: var(--obsidian-composer-fill);
   --surface-2: var(--obsidian-composer-fill);
   --surface-border: var(--obsidian-composer-border);
-  background: var(--obsidian-composer-fill);
+  background: color-mix(in srgb, var(--surface-2) 85%, transparent);
   border-color: var(--obsidian-composer-border);
   color: rgba(255, 255, 255, 0.92);
   color-scheme: dark;
   box-shadow:
-    0 18px 44px rgba(0, 0, 0, 0.5),
-    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+    inset 0 1px 0 color-mix(in srgb, var(--text-primary) 10%, transparent),
+    0 18px 44px rgba(0, 0, 0, 0.34);
 }
 .composer-combined-picker-popover.shell-alabaster,
 .composer-slash-menu.shell-alabaster,
 .agent-mention-menu.shell-alabaster,
 .composer-workspace-popover.shell-alabaster,
-.composer-goal-popover.shell-alabaster {
+.composer-goal-popover.shell-alabaster,
+.composer-plan-popover.shell-alabaster,
+.composer-ensemble-toggle-popover.shell-alabaster {
   --text-primary: rgba(18, 21, 27, 0.92);
   --text-secondary: rgba(18, 21, 27, 0.64);
   --text-tertiary: rgba(18, 21, 27, 0.5);
@@ -9623,13 +9827,13 @@
   --surface-1: var(--alabaster-composer-fill);
   --surface-2: var(--alabaster-composer-fill);
   --surface-border: var(--alabaster-composer-border);
-  background: var(--alabaster-composer-fill);
+  background: color-mix(in srgb, var(--surface-1) 85%, transparent);
   border-color: var(--alabaster-composer-border);
   color: rgba(18, 21, 27, 0.92);
   color-scheme: light;
   box-shadow:
-    0 18px 44px rgba(60, 50, 30, 0.16),
-    inset 0 1px 0 rgba(255, 255, 255, 0.6);
+    0 1px 0 inset rgba(255, 255, 255, 0.72),
+    0 18px 44px rgba(0, 0, 0, 0.14);
 }
 
 /* ============================================================

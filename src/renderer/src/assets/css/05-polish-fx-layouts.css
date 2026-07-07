@@ -2914,7 +2914,7 @@
 }
 
 .sidebar-settings-menu {
-  --sidebar-picker-bg-solid: var(--panel-bg-solid, var(--surface-1, #1c1c20));
+  --sidebar-picker-bg-solid: var(--surface-2, var(--panel-bg-solid, var(--surface-1, #24242a)));
   position: absolute;
   left: 0;
   bottom: calc(100% + 8px);
@@ -2928,13 +2928,13 @@
   gap: 2px;
   border: 1px solid color-mix(in srgb, var(--panel-border) 82%, transparent);
   border-radius: 14px;
-  background: color-mix(in srgb, var(--sidebar-picker-bg-solid) 75%, transparent);
-  backdrop-filter: blur(20px) saturate(160%);
-  -webkit-backdrop-filter: blur(20px) saturate(160%);
+  background: color-mix(in srgb, var(--sidebar-picker-bg-solid) 85%, transparent);
+  backdrop-filter: blur(18px) saturate(150%);
+  -webkit-backdrop-filter: blur(18px) saturate(150%);
   box-shadow:
-    0 1px 0 inset color-mix(in srgb, #ffffff 10%, transparent),
-    0 18px 46px rgba(0, 0, 0, 0.38),
-    0 0 0 1px color-mix(in srgb, var(--accent) 10%, transparent);
+    inset 0 1px 0 color-mix(in srgb, var(--text-primary) 10%, transparent),
+    0 18px 44px rgba(0, 0, 0, 0.34);
+  isolation: isolate;
   animation: sidebar-new-menu-fade-in 140ms ease-out;
   transform-origin: bottom left;
 }
@@ -2942,12 +2942,11 @@
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .sidebar-settings-menu {
   --sidebar-picker-bg-solid: var(--surface-1, #ffffff);
   border-color: var(--surface-border);
-  background: color-mix(in srgb, var(--sidebar-picker-bg-solid) 75%, transparent);
+  background: color-mix(in srgb, var(--sidebar-picker-bg-solid) 85%, transparent);
   color: var(--surface-text);
   box-shadow:
     0 1px 0 inset rgba(255, 255, 255, 0.72),
-    0 18px 46px rgba(0, 0, 0, 0.16),
-    0 0 0 1px color-mix(in srgb, var(--accent) 8%, transparent);
+    0 18px 44px rgba(0, 0, 0, 0.14);
 }
 
 .sidebar-settings-menu-item {
@@ -3194,7 +3193,7 @@
    bottom-left corner tracks that button instead of the wider footer cluster.
    Reuses the settings-menu item styles for rows + nav. */
 .sidebar-footer-popover {
-  --sidebar-picker-bg-solid: var(--panel-bg-solid, var(--surface-1, #1c1c20));
+  --sidebar-picker-bg-solid: var(--surface-2, var(--panel-bg-solid, var(--surface-1, #24242a)));
   position: absolute;
   left: 0;
   bottom: calc(100% + 8px);
@@ -3212,13 +3211,13 @@
   gap: 3px;
   border: 1px solid color-mix(in srgb, var(--panel-border) 82%, transparent);
   border-radius: 14px;
-  background: color-mix(in srgb, var(--sidebar-picker-bg-solid) 75%, transparent);
-  backdrop-filter: blur(20px) saturate(160%);
-  -webkit-backdrop-filter: blur(20px) saturate(160%);
+  background: color-mix(in srgb, var(--sidebar-picker-bg-solid) 85%, transparent);
+  backdrop-filter: blur(18px) saturate(150%);
+  -webkit-backdrop-filter: blur(18px) saturate(150%);
   box-shadow:
-    0 1px 0 inset color-mix(in srgb, #ffffff 10%, transparent),
-    0 18px 46px rgba(0, 0, 0, 0.38),
-    0 0 0 1px color-mix(in srgb, var(--accent) 10%, transparent);
+    inset 0 1px 0 color-mix(in srgb, var(--text-primary) 10%, transparent),
+    0 18px 44px rgba(0, 0, 0, 0.34);
+  isolation: isolate;
   animation: sidebar-new-menu-fade-in 140ms ease-out;
   transform-origin: bottom left;
 }
@@ -3244,16 +3243,15 @@
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .sidebar-footer-popover {
   --sidebar-picker-bg-solid: var(--surface-1, #ffffff);
   border-color: var(--surface-border);
-  background: color-mix(in srgb, var(--sidebar-picker-bg-solid) 75%, transparent);
+  background: color-mix(in srgb, var(--sidebar-picker-bg-solid) 85%, transparent);
   color: var(--surface-text);
   box-shadow:
     0 1px 0 inset rgba(255, 255, 255, 0.72),
-    0 18px 46px rgba(0, 0, 0, 0.16),
-    0 0 0 1px color-mix(in srgb, var(--accent) 8%, transparent);
+    0 18px 44px rgba(0, 0, 0, 0.14);
 }
 
 [data-reduce-transparency="true"]
-  :is(.sidebar-settings-menu, .sidebar-footer-popover, .sidebar-shared-create-menu) {
+  :is(.sidebar-settings-menu, .sidebar-footer-popover, .sidebar-new-menu) {
   background: var(--sidebar-picker-bg-solid) !important;
   backdrop-filter: none;
   -webkit-backdrop-filter: none;

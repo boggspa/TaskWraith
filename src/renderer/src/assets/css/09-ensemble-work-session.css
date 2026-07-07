@@ -345,7 +345,7 @@
  * elevated shadow). Outside-click + Escape dismissal lives in the React
  * component; this stylesheet only covers chrome. */
 .sidebar-new-menu {
-  --sidebar-picker-bg-solid: var(--panel-bg-solid, var(--surface-1, #1c1c20));
+  --sidebar-picker-bg-solid: var(--surface-2, var(--panel-bg-solid, var(--surface-1, #24242a)));
   position: absolute;
   top: calc(100% + 8px);
   right: 0;
@@ -358,13 +358,13 @@
   gap: 2px;
   border: 1px solid color-mix(in srgb, var(--panel-border) 82%, transparent);
   border-radius: 14px;
-  background: color-mix(in srgb, var(--sidebar-picker-bg-solid) 75%, transparent);
-  backdrop-filter: blur(20px) saturate(160%);
-  -webkit-backdrop-filter: blur(20px) saturate(160%);
+  background: color-mix(in srgb, var(--sidebar-picker-bg-solid) 85%, transparent);
+  backdrop-filter: blur(18px) saturate(150%);
+  -webkit-backdrop-filter: blur(18px) saturate(150%);
   box-shadow:
-    0 1px 0 inset color-mix(in srgb, #ffffff 10%, transparent),
-    0 18px 46px rgba(0, 0, 0, 0.38),
-    0 0 0 1px color-mix(in srgb, var(--accent) 10%, transparent);
+    inset 0 1px 0 color-mix(in srgb, var(--text-primary) 10%, transparent),
+    0 18px 44px rgba(0, 0, 0, 0.34);
+  isolation: isolate;
   /* Subtle fade-in so the popover doesn't pop in jarringly when the
    * user hits the `+ New` button. ~140ms matches the slash-menu's
    * cadence so popovers feel like one family. */
@@ -375,23 +375,22 @@
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .sidebar-new-menu {
   --sidebar-picker-bg-solid: var(--surface-1, #ffffff);
   border-color: var(--surface-border);
-  background: color-mix(in srgb, var(--sidebar-picker-bg-solid) 75%, transparent);
+  background: color-mix(in srgb, var(--sidebar-picker-bg-solid) 85%, transparent);
   color: var(--surface-text);
   box-shadow:
     0 1px 0 inset rgba(255, 255, 255, 0.72),
-    0 18px 46px rgba(0, 0, 0, 0.16),
-    0 0 0 1px color-mix(in srgb, var(--accent) 8%, transparent);
+    0 18px 44px rgba(0, 0, 0, 0.14);
 }
 
 .sidebar-new-menu.sidebar-shared-create-menu {
-  --sidebar-picker-bg-solid: var(--panel-bg-solid, var(--surface-1, #1c1c20));
-  background: color-mix(in srgb, var(--sidebar-picker-bg-solid) 75%, transparent);
+  --sidebar-picker-bg-solid: var(--surface-2, var(--panel-bg-solid, var(--surface-1, #24242a)));
+  background: color-mix(in srgb, var(--sidebar-picker-bg-solid) 85%, transparent);
 }
 
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])
   .sidebar-new-menu.sidebar-shared-create-menu {
   --sidebar-picker-bg-solid: var(--surface-1, #ffffff);
-  background: color-mix(in srgb, var(--sidebar-picker-bg-solid) 75%, transparent);
+  background: color-mix(in srgb, var(--sidebar-picker-bg-solid) 85%, transparent);
 }
 
 @keyframes sidebar-new-menu-fade-in {
@@ -1649,13 +1648,42 @@
   width: 296px;
   padding: 12px;
   border-radius: 12px;
-  background: var(--surface-elevated);
-  border: 1px solid color-mix(in srgb, var(--accent-color) 30%, var(--panel-border));
-  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.32);
+  background: color-mix(
+    in srgb,
+    var(--surface-2, var(--panel-bg-solid, var(--surface-1, #24242a))) 85%,
+    transparent
+  );
+  border: 1px solid color-mix(in srgb, var(--panel-border) 90%, transparent);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--text-primary) 10%, transparent),
+    0 18px 44px rgba(0, 0, 0, 0.34);
+  backdrop-filter: blur(18px) saturate(150%);
+  -webkit-backdrop-filter: blur(18px) saturate(150%);
+  isolation: isolate;
   z-index: 9500;
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .ensemble-above-overflow {
+  background: color-mix(in srgb, var(--surface-1, #ffffff) 85%, transparent);
+  border-color: var(--surface-border);
+  box-shadow:
+    0 1px 0 inset rgba(255, 255, 255, 0.72),
+    0 18px 44px rgba(0, 0, 0, 0.14);
+}
+
+[data-reduce-transparency="true"] .ensemble-above-overflow {
+  background: var(--surface-2, var(--panel-bg-solid, var(--surface-1, #24242a))) !important;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-reduce-transparency="true"]
+  .ensemble-above-overflow {
+  background: var(--surface-1, #ffffff) !important;
+  color: var(--surface-text);
 }
 
 .ensemble-above-overflow-enable {
