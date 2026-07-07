@@ -24239,6 +24239,16 @@ if (isGeminiMcpBridgeProcess) {
             bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
             return { ok, ...result }
           }
+          if (action.op === 'blackboard') {
+            // Consume the queued prompt into a user blackboard note — the
+            // helper does the remove + post + broadcasts; never interrupts
+            // the live round.
+            return blackboardQueuedEnsemblePrompt({
+              chatId: action.threadId,
+              index: action.index,
+              ...(action.textPrefix ? { textPrefix: action.textPrefix } : {})
+            })
+          }
           const result = ensembleOrchestratorRef?.removeQueuedPrompt({
             chatId: action.threadId,
             index: action.index,
@@ -31034,6 +31044,87 @@ if (isGeminiMcpBridgeProcess) {
         }
         saveAndBroadcastChat(updated)
         return { ok: true, entry }
+      }
+    )
+
+    // Shared by the renderer IPC below and the iOS bridge 'blackboard' op:
+    // consume a queued ensemble prompt into a user-authored blackboard note.
+    // The queue mutation is EXACTLY the Delete path (removeQueuedPrompt keeps
+    // its textPrefix race-guard and restart-orphan recovery) — the live round
+    // is never cancelled or interrupted, and the steer path is untouched.
+    function blackboardQueuedEnsemblePrompt(input: {
+      chatId: string
+      index: number
+      textPrefix?: string
+    }): { ok: boolean; entry?: NonNullable<ReturnType<typeof makeBlackboardEntry>>; error?: string } {
+      const removal = ensembleOrchestratorRef?.removeQueuedPrompt({
+        chatId: input.chatId,
+        index: input.index,
+        ...(typeof input.textPrefix === 'string' ? { textPrefix: input.textPrefix } : {})
+      }) ?? { ok: false, error: 'Ensemble orchestrator is not initialized.' }
+      if (!removal.ok || !removal.prompt?.trim()) {
+        return {
+          ok: false,
+          error: removal.error || 'Queued item could not be moved to the blackboard.'
+        }
+      }
+      const chat = AppStore.getChat(input.chatId)
+      if (!chat?.ensemble) {
+        return { ok: false, error: 'Blackboard entries require an Ensemble chat.' }
+      }
+      const createdAt = new Date().toISOString()
+      const entry = makeBlackboardEntry({
+        id: `blackboard-user-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        chatId: chat.appChatId,
+        roundId: chat.ensemble.activeRound?.roundId || 'manual',
+        participantId: 'user',
+        // Millisecond key (unlike the per-second user-note fallback) — rapid
+        // "Add to Blackboard" clicks on several queued messages must not
+        // upsert-collide on (participantId, key, scope).
+        key: `queued-note-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        value: removal.prompt,
+        category: 'note',
+        scope: 'session',
+        createdAt
+      })
+      if (!entry) {
+        return { ok: false, error: 'Blackboard entry requires non-empty key and value.' }
+      }
+      const updated: ChatRecord = {
+        ...chat,
+        ensemble: {
+          ...chat.ensemble,
+          blackboard: upsertBlackboardEntry(chat.ensemble.blackboard || [], entry),
+          updatedAt: createdAt
+        },
+        updatedAt: Date.now()
+      }
+      saveAndBroadcastChat(updated)
+      broadcastThreadUpdate(chat.appChatId)
+      bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
+      return { ok: true, entry }
+    }
+
+    ipcMain.handle(
+      'blackboard-queued-ensemble-prompt',
+      async (
+        _,
+        payload?: {
+          chatId?: string
+          index?: number
+          textPrefix?: string
+        }
+      ) => {
+        if (AppStore.getSettings().ensembleModeEnabled === false) {
+          throw new Error('Ensemble Mode is disabled.')
+        }
+        const chatId = requireNonEmptyString(payload?.chatId, 'Ensemble chat id')
+        const index = Number.isFinite(payload?.index) ? Math.floor(Number(payload?.index)) : -1
+        return blackboardQueuedEnsemblePrompt({
+          chatId,
+          index,
+          ...(typeof payload?.textPrefix === 'string' ? { textPrefix: payload.textPrefix } : {})
+        })
       }
     )
 

@@ -18883,7 +18883,10 @@ function App(): React.JSX.Element {
             id: `ensemble-queued-${ensembleRound.roundId}-${idx}`,
             provider: ensembleProvider,
             providerDisplayLabel: 'Ensemble',
-            prompt: prompts[idx]
+            prompt: prompts[idx],
+            // Ensemble rows get the Steer menu (Steer now / Add to Blackboard);
+            // solo run-queue jobs above keep the plain Steer button.
+            canAddToBlackboard: true
           })
         }
       }
@@ -19095,6 +19098,71 @@ function App(): React.JSX.Element {
       }
     },
     [currentChat, workspaces]
+  )
+  // Blackboard: consume the queued ensemble prompt into a user-authored
+  // blackboard note (session scope) WITHOUT interrupting the live round —
+  // the Steer menu's counterpart to "Steer now". Ensemble entries only;
+  // solo run-queue jobs never show the action (no blackboard outside
+  // ensembles). Queue mutation main-side is EXACTLY the Delete path
+  // (removeQueuedPrompt), so the steer lifecycle is untouched.
+  const handleBlackboardQueuedMessage = useCallback(
+    (entryId: string, targetChat?: ChatRecord | null) => {
+      const ensembleMatch = entryId.match(/^ensemble-queued-(.+)-(\d+)$/)
+      if (!ensembleMatch) return
+      const idx = Number(ensembleMatch[2])
+      const chat = targetChat || currentChat
+      const round = chat?.ensemble?.activeRound
+      if (!chat || !round) return
+      const currentQueue =
+        Array.isArray(round.queuedPrompts) && round.queuedPrompts.length > 0
+          ? round.queuedPrompts
+          : round.queuedPrompt
+            ? [round.queuedPrompt]
+            : []
+      if (idx < 0 || idx >= currentQueue.length) return
+      const target = currentQueue[idx]
+      void window.api
+        .blackboardQueuedEnsemblePrompt({
+          chatId: chat.appChatId,
+          index: idx,
+          textPrefix: target
+        })
+        .then((result) => {
+          if (result?.ok !== true) {
+            appendThreadRawLog(chat.appChatId, {
+              type: 'stderr',
+              content: result?.error || 'Queued prompt could not be added to the blackboard.'
+            })
+            return
+          }
+          // Optimistic queue splice mirrors handleDeleteQueuedMessage; the
+          // new blackboard entry itself arrives via the chat-updated
+          // broadcast from the main-side save.
+          const nextQueue = [...currentQueue.slice(0, idx), ...currentQueue.slice(idx + 1)]
+          const nextChat: ChatRecord = {
+            ...chat,
+            ensemble: {
+              ...chat.ensemble!,
+              activeRound: {
+                ...round,
+                queuedPrompt: nextQueue[0],
+                queuedPrompts: nextQueue
+              },
+              updatedAt: new Date().toISOString()
+            }
+          }
+          chatByIdRef.current.set(nextChat.appChatId, nextChat)
+          setCurrentChat((prev) => (prev?.appChatId === nextChat.appChatId ? nextChat : prev))
+          setChats((prev) => prev.map((c) => (c.appChatId === nextChat.appChatId ? nextChat : c)))
+        })
+        .catch((error) => {
+          appendThreadRawLog(chat.appChatId, {
+            type: 'stderr',
+            content: `Queued prompt could not be added to the blackboard: ${redactLog(String(error))}`
+          })
+        })
+    },
+    [currentChat]
   )
   // Steer to a queued item: cancel the chat's active run, then
   // dispatch this queued request immediately. Same gentle handoff
@@ -23670,6 +23738,7 @@ function App(): React.JSX.Element {
       goalPopoverPosition,
       goalPopoverRef,
       grokProviderAvailable,
+      handleBlackboardQueuedMessage,
       handleDeleteQueuedMessage,
       handleEditQueuedMessage,
       handleExternalGitSnapshotRefresh,
@@ -23799,6 +23868,7 @@ function App(): React.JSX.Element {
       goalPopoverPosition,
       goalPopoverRef,
       grokProviderAvailable,
+      handleBlackboardQueuedMessage,
       handleDeleteQueuedMessage,
       handleEditQueuedMessage,
       handleReorderQueuedMessages,
@@ -24811,6 +24881,7 @@ function App(): React.JSX.Element {
     handleCreateHumanCollaborationShare,
     handleCreateWorkspaceBoard,
     handleDeleteAllChatHistory,
+    handleBlackboardQueuedMessage,
     handleDeleteChat,
     handleDeleteMessage,
     handleDeleteQueuedMessage,

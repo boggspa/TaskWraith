@@ -1065,6 +1065,11 @@ const api = {
   }) => ipcRenderer.invoke('steer-queued-ensemble-prompt', payload),
   removeQueuedEnsemblePrompt: (payload: { chatId: string; index: number; textPrefix?: string }) =>
     ipcRenderer.invoke('remove-queued-ensemble-prompt', payload),
+  blackboardQueuedEnsemblePrompt: (payload: {
+    chatId: string
+    index: number
+    textPrefix?: string
+  }) => ipcRenderer.invoke('blackboard-queued-ensemble-prompt', payload),
   cancelEnsembleRound: (chatId: string) => ipcRenderer.invoke('cancel-ensemble-round', chatId),
   requestEnsembleParticipantSeatChange: (payload: {
     chatId: string

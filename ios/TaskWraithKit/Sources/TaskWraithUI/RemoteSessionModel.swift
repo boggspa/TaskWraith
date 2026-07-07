@@ -3738,16 +3738,24 @@ public final class RemoteSessionModel: ObservableObject {
         scheduleThreadRefresh(thread)
     }
 
-    /// Steer-now or remove one queued ensemble prompt.
+    /// Steer-now, remove, or blackboard one queued ensemble prompt.
+    /// `op: "blackboard"` consumes the queued item into a user-authored
+    /// blackboard note on the Mac without interrupting the live round.
     public func ensembleQueueItem(
         _ card: RemoteTaskCard, index: Int, text: String, op: String
     ) {
         guard let ws = card.workspaceId, let thread = card.threadId else { return }
+        let successLabel: String
+        switch op {
+        case "steerNow": successLabel = "Steering…"
+        case "blackboard": successLabel = "Added to blackboard."
+        default: successLabel = "Removed from queue."
+        }
         send(
             BridgeAction.ensembleQueueItem(
                 workspaceId: ws, threadId: thread, index: index,
                 textPrefix: String(text.prefix(60)), op: op),
-            successLabel: op == "steerNow" ? "Steering…" : "Removed from queue.")
+            successLabel: successLabel)
         scheduleThreadRefresh(thread)
     }
 

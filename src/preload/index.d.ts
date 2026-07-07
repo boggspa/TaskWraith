@@ -1400,6 +1400,14 @@ declare global {
         index: number
         textPrefix?: string
       }) => Promise<{ ok: boolean; prompt?: string; queuedPrompts?: string[]; error?: string }>
+      /** Consume a queued ensemble prompt into a user-authored blackboard
+       * note (session scope) WITHOUT interrupting the live round. Queue
+       * mutation matches Delete (textPrefix race-guard + restart recovery). */
+      blackboardQueuedEnsemblePrompt: (payload: {
+        chatId: string
+        index: number
+        textPrefix?: string
+      }) => Promise<{ ok: boolean; error?: string }>
       cancelEnsembleRound: (chatId: string) => Promise<boolean>
       requestEnsembleParticipantSeatChange: (payload: {
         chatId: string

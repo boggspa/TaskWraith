@@ -36,6 +36,7 @@
  */
 
 import { memo, useCallback, useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import type { ChatRecord, ProviderId } from '../../../main/store/types'
 import { ProviderBadgeIcon, getProviderName } from './Sidebar'
 import { MentionHighlightedText } from './MentionHighlightedText'
@@ -61,6 +62,10 @@ export interface QueuedMessageRowEntry {
    * direct-message dispatch. Drives a tiny "→ Role" hint next to
    * the provider chip. */
   dmTargetParticipantId?: string
+  /** Ensemble-queued entries only: the Steer button becomes a two-item
+   * menu (Steer now / Add to Blackboard). Solo queue jobs keep the
+   * plain Steer button — there is no blackboard outside ensembles. */
+  canAddToBlackboard?: boolean
 }
 
 interface QueuedMessagesAboveRowProps {
@@ -69,6 +74,7 @@ interface QueuedMessagesAboveRowProps {
   onEdit: (id: string) => void
   onDelete: (id: string) => void
   onSteer: (id: string) => void
+  onAddToBlackboard: (id: string) => void
   onReorder: (orderedIds: string[]) => void
 }
 
@@ -84,7 +90,11 @@ export function queuedMessageEntryProviderLabel(entry: QueuedMessageRowEntry): s
   return entry.providerDisplayLabel?.trim() || getProviderName(entry.provider)
 }
 
-function getPositionedRowLabel(entry: QueuedMessageRowEntry, position: number, total: number): string {
+function getPositionedRowLabel(
+  entry: QueuedMessageRowEntry,
+  position: number,
+  total: number
+): string {
   const prompt = truncatePrompt(entry.prompt)
   const positionLabel = `${position} of ${total}`
   const scheduleLabel = entry.scheduledRunAt ? ` scheduled for ${entry.scheduledRunAt}` : ''
@@ -118,6 +128,7 @@ function QueuedMessagesAboveRowImpl({
   onEdit,
   onDelete,
   onSteer,
+  onAddToBlackboard,
   onReorder
 }: QueuedMessagesAboveRowProps): React.JSX.Element | null {
   const [dragId, setDragId] = useState<string | null>(null)
@@ -187,6 +198,7 @@ function QueuedMessagesAboveRowImpl({
             onEdit={() => onEdit(entry.id)}
             onDelete={() => onDelete(entry.id)}
             onSteer={() => onSteer(entry.id)}
+            onAddToBlackboard={() => onAddToBlackboard(entry.id)}
             nowMs={nowMs}
             onMoveUp={() => handleMove(entry.id, -1)}
             onMoveDown={() => handleMove(entry.id, 1)}
@@ -223,12 +235,147 @@ interface QueuedMessageRowProps {
   onEdit: () => void
   onDelete: () => void
   onSteer: () => void
+  onAddToBlackboard: () => void
   onMoveUp: () => void
   onMoveDown: () => void
   onDragStart: () => void
   onDragHover: (overId: string | null) => void
   onDragEnd: (droppedOnId: string | null) => void
   nowMs: number
+}
+
+/**
+ * Steer action menu — ensemble-queued rows only. The Steer button opens a
+ * two-item menu: "Steer now" (existing dispatch, unchanged) and "Add to
+ * Blackboard" (consumes the queued message into a user blackboard note
+ * without interrupting the round). Portaled into `document.body` because
+ * the queued list scrolls (`overflow-y: auto`) and would clip an anchored
+ * popover; chrome matches the popover super-pass glass recipe
+ * (`.queued-steer-menu` mirrors `.composer-diff-action-menu`).
+ */
+function QueuedSteerActionMenu({
+  position,
+  providerLabel,
+  onSteer,
+  onAddToBlackboard
+}: {
+  position: number
+  providerLabel: string
+  onSteer: () => void
+  onAddToBlackboard: () => void
+}): React.JSX.Element {
+  const [open, setOpen] = useState(false)
+  const [anchor, setAnchor] = useState<{ left: number; top: number } | null>(null)
+  const triggerRef = useRef<HTMLButtonElement | null>(null)
+  const menuRef = useRef<HTMLDivElement | null>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const onDown = (event: MouseEvent): void => {
+      const target = event.target as Node
+      if (menuRef.current?.contains(target) || triggerRef.current?.contains(target)) return
+      setOpen(false)
+    }
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') {
+        setOpen(false)
+        triggerRef.current?.focus()
+      }
+    }
+    // The queued list scrolls under a fixed-position menu — close instead
+    // of letting the menu drift away from its trigger.
+    const onScroll = (): void => setOpen(false)
+    document.addEventListener('mousedown', onDown, true)
+    document.addEventListener('keydown', onKey, true)
+    document.addEventListener('scroll', onScroll, true)
+    return () => {
+      document.removeEventListener('mousedown', onDown, true)
+      document.removeEventListener('keydown', onKey, true)
+      document.removeEventListener('scroll', onScroll, true)
+    }
+  }, [open])
+
+  return (
+    <>
+      <button
+        ref={triggerRef}
+        type="button"
+        className="queued-messages-row-action queued-messages-row-action-steer"
+        onClick={(event) => {
+          event.stopPropagation()
+          if (open) {
+            setOpen(false)
+            return
+          }
+          // Anchor computed at open time (not in an effect): open upward,
+          // right-aligned to the trigger — the actions hug the row's right
+          // edge and the composer sits below. translate(-100%, -100%) in the
+          // menu's inline style flips the fixed anchor to its bottom-right.
+          const rect = event.currentTarget.getBoundingClientRect()
+          setAnchor({ left: Math.min(rect.right, window.innerWidth - 8), top: rect.top - 6 })
+          setOpen(true)
+        }}
+        onPointerDown={(event) => event.stopPropagation()}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        title={`Steer ${providerLabel} queued message ${position} now, or add it to the blackboard without interrupting the round.`}
+        aria-label={`Open steer menu for ${providerLabel} queued message ${position}`}
+      >
+        ↳ Steer{' '}
+        <span className="queued-steer-caret" aria-hidden>
+          ▾
+        </span>
+      </button>
+      {open && anchor
+        ? createPortal(
+            <div
+              ref={menuRef}
+              className="queued-steer-menu"
+              role="menu"
+              aria-label={`Queued message ${position} steer actions`}
+              style={{
+                position: 'fixed',
+                left: `${anchor.left}px`,
+                top: `${anchor.top}px`,
+                transform: 'translate(-100%, -100%)'
+              }}
+            >
+              <button
+                type="button"
+                role="menuitem"
+                className="queued-steer-menu-item"
+                onClick={(event) => {
+                  event.stopPropagation()
+                  setOpen(false)
+                  onSteer()
+                }}
+              >
+                <span className="queued-steer-menu-item-title">↳ Steer now</span>
+                <span className="queued-steer-menu-item-sub">
+                  Interrupt the round and dispatch this message
+                </span>
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                className="queued-steer-menu-item"
+                onClick={(event) => {
+                  event.stopPropagation()
+                  setOpen(false)
+                  onAddToBlackboard()
+                }}
+              >
+                <span className="queued-steer-menu-item-title">▦ Add to Blackboard</span>
+                <span className="queued-steer-menu-item-sub">
+                  Share as a note — doesn&apos;t interrupt the round
+                </span>
+              </button>
+            </div>,
+            document.body
+          )
+        : null}
+    </>
+  )
 }
 
 function QueuedMessageRow({
@@ -244,6 +391,7 @@ function QueuedMessageRow({
   onEdit,
   onDelete,
   onSteer,
+  onAddToBlackboard,
   onMoveUp,
   onMoveDown,
   onDragStart,
@@ -374,6 +522,13 @@ function QueuedMessageRow({
           >
             {scheduleCountdown === 'due now' ? 'Due' : scheduleCountdown}
           </span>
+        ) : entry.canAddToBlackboard ? (
+          <QueuedSteerActionMenu
+            position={position}
+            providerLabel={providerLabel}
+            onSteer={onSteer}
+            onAddToBlackboard={onAddToBlackboard}
+          />
         ) : (
           <button
             type="button"

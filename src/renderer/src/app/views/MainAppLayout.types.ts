@@ -350,6 +350,7 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   handleSideToggleFastMode: any
   handleSidebarQuickUpdate: MainAppLayoutSidebarProps['handleSidebarQuickUpdate']
   handleStartSharedChat: MainAppLayoutSidebarProps['handleStartSharedChat']
+  handleBlackboardQueuedMessage: any
   handleSteerToQueuedMessage: any
   handleStopHumanCollaborationSharing: any
   handleStoreClaudeApiKey: any

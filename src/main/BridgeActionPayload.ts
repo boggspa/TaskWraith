@@ -614,7 +614,9 @@ export interface BridgeEnsembleQueueItemAction extends BridgeActionMetadata {
   /** Optional race guard — first chars of the expected text; the executor
    * rejects if the item at `index` no longer starts with it. */
   textPrefix?: string
-  op: 'steerNow' | 'remove'
+  /** 'blackboard' consumes the queued item into a user-authored blackboard
+   * note without interrupting the live round. */
+  op: 'steerNow' | 'remove' | 'blackboard'
 }
 
 export interface BridgeEnsembleRosterUpdateAction extends BridgeActionMetadata {
@@ -1798,7 +1800,7 @@ function isEnsembleQueueItem(v: Record<string, unknown>): boolean {
     v.index < 100 &&
     (v.textPrefix === undefined ||
       (typeof v.textPrefix === 'string' && v.textPrefix.length <= 120)) &&
-    (v.op === 'steerNow' || v.op === 'remove')
+    (v.op === 'steerNow' || v.op === 'remove' || v.op === 'blackboard')
   )
 }
 

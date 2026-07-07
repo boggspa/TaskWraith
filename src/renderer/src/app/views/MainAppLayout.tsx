@@ -297,6 +297,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   handleSideToggleFastMode,
   handleSidebarQuickUpdate,
   handleStartSharedChat,
+  handleBlackboardQueuedMessage,
   handleSteerToQueuedMessage,
   handleStopHumanCollaborationSharing,
   handleStoreClaudeApiKey,
@@ -2190,6 +2191,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                       onEdit={(entryId) => handleEditQueuedMessage(entryId, sideChat)}
                       onDelete={(entryId) => handleDeleteQueuedMessage(entryId, sideChat)}
                       onSteer={(entryId) => handleSteerToQueuedMessage(entryId, sideChat)}
+                      onAddToBlackboard={(entryId) => handleBlackboardQueuedMessage(entryId, sideChat)}
                       onReorder={handleReorderQueuedMessages}
                     />
                   )}
