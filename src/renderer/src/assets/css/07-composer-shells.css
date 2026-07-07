@@ -1495,7 +1495,7 @@
   border-color: transparent;
   background: transparent;
   box-shadow: none;
-  color: color-mix(in srgb, #8fb7ff 88%, #ffffff 12%);
+  color: color-mix(in srgb, var(--text-primary) 88%, var(--text-secondary) 12%);
 }
 
 .composer-above-bar-action--git-commit-icon:hover:not(:disabled),
@@ -1506,11 +1506,17 @@
   outline: none;
 }
 
-.composer-git-commit-trigger-icon,
+.composer-git-commit-trigger-icon {
+  display: block;
+  width: 24px;
+  height: 24px;
+}
+
+.composer-git-commit-trigger-icon svg,
 .composer-git-commit-trigger-icon .agent-pool-asset-svg {
   display: block;
-  width: 22px;
-  height: 22px;
+  width: 24px;
+  height: 24px;
 }
 
 .composer-diff-action-menu {

@@ -794,6 +794,25 @@ export function ReviewSymbolIcon() {
   )
 }
 
+export function GitCommitSymbolIcon() {
+  return (
+    <span className="sf-symbol-icon composer-git-commit-trigger-icon" aria-hidden>
+      <svg
+        viewBox="0 0 16 16"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.45"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <path d="M1.9 8h4.15" />
+        <circle cx="8" cy="8" r="2" />
+        <path d="M9.95 8h4.15" />
+      </svg>
+    </span>
+  )
+}
+
 export function ClockSymbolIcon() {
   return (
     <span className="sf-symbol-icon composer-control-icon" aria-hidden>

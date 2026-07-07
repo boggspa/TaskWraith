@@ -20,7 +20,7 @@ import type {
   HumanCollaborationInviteHealth
 } from '../lib/humanCollaborationInviteHealth'
 import { AgentMentionMenu } from '../components/AgentMentionMenu'
-import { ArrowUpSendIcon, ChatMediaIcon, ClaudeReturnSymbolIcon, ClockSymbolIcon, CommandSymbolIcon, FileMenuSelectionIcon, GoalSymbolIcon, ModelSymbolIcon, PermissionSymbolIcon, PlusSymbolIcon, QueueSymbolIcon, ReviewSymbolIcon, RunSymbolIcon, ScreenWatchSymbolIcon, SteerSymbolIcon, StopSymbolIcon, TrustSymbolIcon, WorkflowGlyphIcon, XSymbolIcon } from '../components/AppChromeSymbols'
+import { ArrowUpSendIcon, ChatMediaIcon, ClaudeReturnSymbolIcon, ClockSymbolIcon, CommandSymbolIcon, FileMenuSelectionIcon, GitCommitSymbolIcon, GoalSymbolIcon, ModelSymbolIcon, PermissionSymbolIcon, PlusSymbolIcon, QueueSymbolIcon, ReviewSymbolIcon, RunSymbolIcon, ScreenWatchSymbolIcon, SteerSymbolIcon, StopSymbolIcon, TrustSymbolIcon, WorkflowGlyphIcon, XSymbolIcon } from '../components/AppChromeSymbols'
 import { ContextMeterPopover } from './ContextMeterPopover'
 import { CombinedModelPicker } from '../components/CombinedModelPicker'
 import type { CombinedModelPickerModelOption, CombinedModelPickerReasoningOption } from '../components/CombinedModelPicker'
@@ -82,7 +82,6 @@ import { lastRetryableEnsembleUserPrompt } from '../lib/ensembleRetryPrompt'
 import { renderAgentApprovalPreview } from '../lib/agentApprovalPreview'
 import { isNativeSubAgentPreferenceApproval } from '../lib/agentApprovalTypes'
 import { decideApprovalElevation } from '../lib/approvalElevation'
-import { getPoolIconAsset, preparePoolIconSvg } from '../lib/agentPoolIconAssets'
 import { formatScheduledRunTime } from '../lib/dateTimeFormat'
 import { formatScheduledTaskCountdown } from '../lib/scheduledCountdown'
 import { resolveEnsembleParticipantSeatMutationState } from '../lib/ensembleParticipantSeatLock'
@@ -123,24 +122,6 @@ import { composerVoicePlacementForStyle } from '../lib/composerVoicePlacement'
 import { composerPermissionOptions } from '../lib/planModeLabels'
 import { WORKSPACE_POLICY_SERVICES } from '../lib/workspacePolicyServices'
 import { createPortal } from 'react-dom'
-
-const gitCommitTriggerAsset = getPoolIconAsset('pool:glyph-git-commit')
-const gitCommitTriggerSvg = gitCommitTriggerAsset
-  ? preparePoolIconSvg(gitCommitTriggerAsset, 22, 'currentColor')
-  : ''
-
-function CodexGitCommitTriggerIcon(): React.JSX.Element {
-  if (!gitCommitTriggerSvg) {
-    return <ReviewSymbolIcon />
-  }
-  return (
-    <span
-      className="composer-git-commit-trigger-icon"
-      aria-hidden="true"
-      dangerouslySetInnerHTML={{ __html: gitCommitTriggerSvg }}
-    />
-  )
-}
 
 /**
  * Composer — the chat composer, lifted verbatim from App.tsx's inline
@@ -2007,7 +1988,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               }
                               title={actionTitle}
                             >
-                              {isCodexGitActionTrigger ? <CodexGitCommitTriggerIcon /> : primaryLabel}
+                              {isCodexGitActionTrigger ? <GitCommitSymbolIcon /> : primaryLabel}
                             </button>
                             {diffActionMenuOpen && (
                               <div className="composer-diff-action-menu" role="menu">

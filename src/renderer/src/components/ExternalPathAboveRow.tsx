@@ -20,7 +20,6 @@
 import type { ComposerStyle, ExternalPathGrant } from '../../../main/store/types'
 import type { ExternalPathGitMetadata } from '../lib/ExternalPathRepoDetect'
 import { describeExternalPath } from '../lib/ExternalPathRepoDetect'
-import { getPoolIconAsset, preparePoolIconSvg } from '../lib/agentPoolIconAssets'
 import { getProviderName } from './Sidebar'
 import { useState } from 'react'
 import { GitMergeBadge, GitPrLifecycleChip, GitSyncChip } from './GitStatusChips'
@@ -28,6 +27,7 @@ import { GitCommitControls } from './GitCommitControls'
 import { AnimatedDiffNumber } from './AnimatedDiffNumber'
 import { ComposerBranchWorktreePopover } from './ComposerBranchWorktreePopover'
 import type { GitPrSummary, GitRepositorySnapshot } from '../../../main/services/GitService'
+import { GitCommitSymbolIcon } from './AppChromeSymbols'
 
 /**
  * 1.0.5-EW42b — Derive a human-readable "where did this grant
@@ -125,21 +125,6 @@ interface ExternalPathAboveRowProps {
   /** Cursor shell — detached satellite pills above the merged stack. */
   cursorLeadDetached?: boolean
   composerStyle?: ComposerStyle
-}
-
-const gitCommitTriggerAsset = getPoolIconAsset('pool:glyph-git-commit')
-const gitCommitTriggerSvg = gitCommitTriggerAsset
-  ? preparePoolIconSvg(gitCommitTriggerAsset, 22, 'currentColor')
-  : ''
-
-function GitCommitTriggerIcon(): React.JSX.Element {
-  return (
-    <span
-      className="composer-git-commit-trigger-icon"
-      aria-hidden="true"
-      dangerouslySetInnerHTML={{ __html: gitCommitTriggerSvg }}
-    />
-  )
 }
 
 function BranchGlyph(): React.JSX.Element {
@@ -251,7 +236,7 @@ export function ExternalPathAboveRow({
         ? 'Publish branch'
         : 'Push'
       : createPrLabel
-  const useGitIconAction = composerStyle === 'codex' && Boolean(gitCommitTriggerSvg)
+  const useGitIconAction = composerStyle === 'codex'
   const actionTitle =
     createPrState?.message || `Review, commit, push, or open a PR for ${descriptor.basename}`
   // 1.0.5-EW42b — Build a rich tooltip that explains what created
@@ -313,7 +298,7 @@ export function ExternalPathAboveRow({
             aria-label={useGitIconAction ? `${actionLabel}. ${actionTitle}` : undefined}
             title={actionTitle}
           >
-            {useGitIconAction ? <GitCommitTriggerIcon /> : actionLabel}
+            {useGitIconAction ? <GitCommitSymbolIcon /> : actionLabel}
           </button>
           {diffMenuOpen && (
             <div className="composer-diff-action-menu" role="menu">
