@@ -5292,88 +5292,68 @@ private enum MobileSettingsGroup: String, CaseIterable, Identifiable {
 }
 
 private enum MobileSettingsSection: String, CaseIterable, Identifiable, Hashable {
-    case general
     case appearance
     case composer
     case providers
-    case ensembleRoster
     case approvals
     case workspaces
     case remote
-    case toolsMcp
-    case localServers
     case modelUsage
     case privacy
     case guide
-    case about
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
-        case .general: return "General"
         case .appearance: return "Appearance"
         case .composer: return "Composer & Transcript"
         case .providers: return "Providers"
-        case .ensembleRoster: return "Ensemble Roster"
         case .approvals: return "Approvals"
         case .workspaces: return "Workspaces"
         case .remote: return "Devices & Hosts"
-        case .toolsMcp: return "Tools & MCPs"
-        case .localServers: return "Local Servers"
         case .modelUsage: return "Model Usage"
-        case .privacy: return "Safety & Privacy"
+        case .privacy: return "About & Privacy"
         case .guide: return "First-launch guide"
-        case .about: return "About"
         }
     }
 
     var subtitle: String {
         switch self {
-        case .general: return "Device role, defaults, and orientation."
         case .appearance: return "Theme, accent, app icon, and display size."
         case .composer: return "Composer shell, tools, and transcript type."
         case .providers: return "Readiness, availability, and Mac-owned setup."
-        case .ensembleRoster: return "Multi-provider roles and preset orientation."
         case .approvals: return "Live requests, questions, and approval boundaries."
         case .workspaces: return "Visible workspaces and remote access scope."
         case .remote: return "Pairing, host reachability, and device identity."
-        case .toolsMcp: return "Remote view of desktop tool configuration."
-        case .localServers: return "Mac-hosted runtimes and dev servers."
         case .modelUsage: return "Quota windows, usage snapshots, and coverage."
-        case .privacy: return "Approvals, local data, and visibility boundaries."
+        case .privacy: return "Version, transport, and data boundaries."
         case .guide: return "Provider, usage, approvals, and Ensemble orientation."
-        case .about: return "Version and transport details."
         }
     }
 
     var group: MobileSettingsGroup {
         switch self {
-        case .general, .appearance, .composer: return .app
-        case .providers, .ensembleRoster: return .aiProviders
+        case .appearance, .composer: return .app
+        case .providers: return .aiProviders
         case .approvals: return .automation
         case .workspaces: return .workspaces
-        case .remote, .toolsMcp, .localServers: return .integrations
-        case .modelUsage, .privacy, .guide, .about: return .data
+        case .remote: return .integrations
+        case .modelUsage, .privacy, .guide: return .data
         }
     }
 
     var systemImage: String {
         switch self {
-        case .general: return "gearshape"
         case .appearance: return "paintpalette"
         case .composer: return "text.bubble"
         case .providers: return "switch.2"
-        case .ensembleRoster: return "person.3.sequence"
         case .approvals: return "checkmark.shield"
         case .workspaces: return "folder"
         case .remote: return "macbook.and.iphone"
-        case .toolsMcp: return "wrench.and.screwdriver"
-        case .localServers: return "server.rack"
         case .modelUsage: return "chart.bar.xaxis"
-        case .privacy: return "checkmark.shield"
+        case .privacy: return "info.circle"
         case .guide: return "questionmark.circle"
-        case .about: return "info.circle"
         }
     }
 
@@ -5381,15 +5361,14 @@ private enum MobileSettingsSection: String, CaseIterable, Identifiable, Hashable
         [
             title, subtitle, group.label, rawValue,
             "settings", "preferences",
-            self == .providers ? "codex claude kimi cursor grok ollama models readiness sign in login api keys cli" : "",
-            self == .ensembleRoster ? "ensemble participants roster roles turn continuous presets multi provider" : "",
+            self == .providers
+                ? "codex claude kimi cursor grok ollama models readiness sign in login api keys cli mcp tools browser automation integrations setup local runtimes"
+                : "",
             self == .approvals ? "permissions approve decline questions grants timeouts" : "",
             self == .workspaces ? "workspace allowlist folder project file write read" : "",
             self == .modelUsage ? "usage quota tokens cost windows dashboard snapshots" : "",
-            self == .privacy ? "approvals grants safety data local history visibility" : "",
+            self == .privacy ? "approvals grants safety data local history visibility version transport about taskwraith" : "",
             self == .remote ? "pairing workspace mac devices hosts reconnect switch forget" : "",
-            self == .toolsMcp ? "mcp tools browser automation integrations setup" : "",
-            self == .localServers ? "ollama local runtime dev servers localhost" : "",
             self == .composer ? "shell transcript font tool call style" : "",
             self == .appearance ? "theme accent color icon glass scale zoom display size font text" : ""
         ].joined(separator: " ").lowercased()
@@ -5406,7 +5385,7 @@ public struct AppSettingsSheet: View {
     @ObservedObject private var model: RemoteSessionModel
     @ObservedObject private var themes = TWThemeStore.shared
     @State private var appIcon: TWAppIconVariant = TWAppIconController.selected
-    @State private var selectedSection: MobileSettingsSection = .general
+    @State private var selectedSection: MobileSettingsSection = .appearance
     @State private var compactPath: [MobileSettingsSection] = []
     @State private var searchText = ""
     private let onOpenFirstLaunchGuide: (() -> Void)?
@@ -5629,20 +5608,15 @@ public struct AppSettingsSheet: View {
             VStack(alignment: .leading, spacing: 16) {
                 detailHeader(section)
                 switch section {
-                case .general: generalSection
                 case .appearance: appearanceSection
                 case .composer: composerSection
                 case .providers: providersSection
-                case .ensembleRoster: ensembleRosterSection
                 case .approvals: approvalsSection
                 case .workspaces: workspacesSection
                 case .remote: remoteSection
-                case .toolsMcp: toolsMcpSection
-                case .localServers: localServersSection
                 case .modelUsage: modelUsageSection
                 case .privacy: privacySection
                 case .guide: guideSection
-                case .about: aboutSection
                 }
             }
                 .padding(.horizontal, appScale.scaled(horizontalSizeClass == .regular ? 28 : 16))
@@ -5668,30 +5642,6 @@ public struct AppSettingsSheet: View {
             }
         }
         .padding(.top, horizontalSizeClass == .regular ? 18 : 0)
-    }
-
-    private var generalSection: some View {
-        VStack(spacing: 12) {
-            SettingsCard(title: "Desktop parity", systemImage: "rectangle.3.group") {
-                SettingsInfoRow(
-                    icon: "macbook.and.iphone",
-                    title: "Mac owns provider setup",
-                    detail: "Provider logins, API keys, MCP servers, and local runtimes still live on the desktop."
-                )
-                SettingsInfoRow(
-                    icon: "checkmark.shield",
-                    title: "iPhone can respond",
-                    detail: "Approvals, questions, monitoring, and allowed remote turns stay visible here."
-                )
-            }
-            SettingsCard(title: "Current defaults", systemImage: "slider.horizontal.3") {
-                SettingsValueRow(title: "Theme", value: themes.systemTheme.label)
-                SettingsValueRow(title: "Accent", value: themes.accentTheme.label)
-                SettingsValueRow(title: "Display size", value: themes.appScalePreference.label)
-                SettingsValueRow(title: "Composer shell", value: composerShellLabel)
-                SettingsValueRow(title: "Transcript font", value: themes.transcriptFontPreference.label)
-            }
-        }
     }
 
     private var appearanceSection: some View {
@@ -5795,42 +5745,27 @@ public struct AppSettingsSheet: View {
     private var providersSection: some View {
         VStack(spacing: 12) {
             SettingsCard(title: "Readiness snapshot", systemImage: "switch.2") {
-                SettingsValueRow(title: "Providers", value: "\(providerSnapshots.count) visible")
-                if let asOf = snapshotTimeText(model.modelUsage?.generatedAt) {
-                    SettingsValueRow(title: "Snapshot", value: asOf)
-                }
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 240), spacing: 10)], spacing: 10) {
-                    ForEach(providerSnapshots) { card in
-                        providerReadinessRow(card)
+                if providerSnapshots.isEmpty {
+                    SettingsInfoRow(
+                        icon: "circle.dashed",
+                        title: "Waiting for the Mac's readiness snapshot",
+                        detail: "Provider status appears within a few seconds of connecting. Setup and sign-in stay on the Mac."
+                    )
+                } else {
+                    SettingsValueRow(title: "Providers", value: "\(providerSnapshots.count) visible")
+                    if let asOf = snapshotTimeText(model.modelUsage?.generatedAt) {
+                        SettingsValueRow(title: "Snapshot", value: asOf)
+                    }
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 240), spacing: 10)], spacing: 10) {
+                        ForEach(providerSnapshots) { card in
+                            providerReadinessRow(card)
+                        }
                     }
                 }
-                Text("This is a read-only remote projection. Sign in, install CLIs, manage API keys, and configure local runtimes on the Mac.")
+                Text("Sign in, install CLIs, manage API keys, MCP tool servers, and local runtimes on the Mac.")
                     .font(.footnote)
                     .foregroundStyle(TWTheme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-    }
-
-    private var ensembleRosterSection: some View {
-        VStack(spacing: 12) {
-            SettingsCard(title: "Ensemble UX", systemImage: "person.3.sequence") {
-                SettingsValueRow(title: "Preset rosters", value: "\(model.ensemblePresets.count)")
-                SettingsInfoRow(
-                    icon: "arrow.triangle.2.circlepath",
-                    title: "Turn-bound and continuous rounds",
-                    detail: "iOS follows the active chat's orchestration mode so you can monitor and steer multi-provider rounds from the transcript."
-                )
-                SettingsInfoRow(
-                    icon: "person.crop.circle.badge.plus",
-                    title: "Roles stay visible",
-                    detail: "Participant chips expose provider, model, role, and current-turn state in Ensemble chats."
-                )
-                SettingsInfoRow(
-                    icon: "macwindow",
-                    title: "Roster editing stays desktop-first",
-                    detail: "The Mac remains the richer surface for preset curation, provider setup, and deep participant configuration."
-                )
             }
         }
     }
@@ -5848,18 +5783,36 @@ public struct AppSettingsSheet: View {
                     )
                 } else {
                     ForEach(Array(model.approvals.prefix(3).enumerated()), id: \.offset) { _, card in
-                        attentionSummaryRow(
-                            icon: "checkmark.shield",
-                            title: card.title ?? TWTheme.providerLabel(card.provider ?? "approval"),
-                            detail: card.body ?? "Approval requested by \(TWTheme.providerLabel(card.provider ?? "provider"))."
-                        )
+                        Button {
+                            if let threadId = card.threadId, !threadId.isEmpty {
+                                model.selectedTaskId = threadId
+                                dismiss()
+                            }
+                        } label: {
+                            attentionSummaryRow(
+                                icon: "checkmark.shield",
+                                title: card.title ?? "Approval request",
+                                detail: card.body ?? "Approval requested by \(TWTheme.providerLabel(card.provider ?? "provider"))."
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(card.threadId == nil || card.threadId?.isEmpty == true)
                     }
                     ForEach(Array(model.questions.prefix(3).enumerated()), id: \.offset) { _, card in
-                        attentionSummaryRow(
-                            icon: "questionmark.bubble",
-                            title: card.resolvedQuestion ?? "Question from \(TWTheme.providerLabel(card.provider ?? "provider"))",
-                            detail: card.context ?? "Answer from the active thread."
-                        )
+                        Button {
+                            if let threadId = card.threadId, !threadId.isEmpty {
+                                model.selectedTaskId = threadId
+                                dismiss()
+                            }
+                        } label: {
+                            attentionSummaryRow(
+                                icon: "questionmark.bubble",
+                                title: card.resolvedQuestion ?? "Question from \(TWTheme.providerLabel(card.provider ?? "provider"))",
+                                detail: card.context ?? "Answer from the active thread."
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(card.threadId == nil || card.threadId?.isEmpty == true)
                     }
                 }
             }
@@ -5889,7 +5842,7 @@ public struct AppSettingsSheet: View {
                 SettingsInfoRow(
                     icon: "lock.open",
                     title: "Allowlist is Mac-owned",
-                    detail: "A phone can start work only inside workspaces exposed from TaskWraith on the paired desktop."
+                    detail: "The Mac owns the allowlist; where granted, this device can toggle its own workspace access."
                 )
                 if model.workspaces.isEmpty {
                     SettingsInfoRow(
@@ -5944,61 +5897,20 @@ public struct AppSettingsSheet: View {
         }
     }
 
-    private var toolsMcpSection: some View {
-        VStack(spacing: 12) {
-            SettingsCard(title: "Tool surface", systemImage: "wrench.and.screwdriver") {
-                SettingsValueRow(title: "Projected providers", value: "\(providerSnapshots.count)")
-                SettingsInfoRow(
-                    icon: "server.rack",
-                    title: "MCP servers run on the desktop",
-                    detail: "Tool servers, authentication prompts, browser automation, editor hooks, and creative app bridges stay attached to the Mac runtime."
-                )
-                SettingsInfoRow(
-                    icon: "checkmark.shield",
-                    title: "Approvals still project to iOS",
-                    detail: "When a tool call needs permission, the phone can answer the live request if the Mac projects it."
-                )
-                SettingsInfoRow(
-                    icon: "eye",
-                    title: "Remote view, not remote configuration",
-                    detail: "iOS can orient the user and monitor availability; it does not install servers or mutate desktop MCP profiles."
-                )
-            }
-        }
-    }
-
-    private var localServersSection: some View {
-        VStack(spacing: 12) {
-            SettingsCard(title: "Local runtimes", systemImage: "server.rack") {
-                if let ollama = providerSnapshots.first(where: { $0.id == "ollama" }) {
-                    providerReadinessRow(ollama)
-                } else {
-                    SettingsInfoRow(
-                        icon: "circle.dashed",
-                        title: "Ollama status not loaded",
-                        detail: "The Mac has not projected local runtime readiness yet."
-                    )
-                }
-                SettingsInfoRow(
-                    icon: "terminal",
-                    title: "Server lifecycle is Mac-side",
-                    detail: "Local servers, Ollama pulls, dev-server previews, and localhost routing are started and stopped on the desktop."
-                )
-                SettingsInfoRow(
-                    icon: "iphone",
-                    title: "Phone receives projected state",
-                    detail: "When a local runtime or server is relevant to a run, iOS shows the remote transcript, prompts, and usage context."
-                )
-            }
-        }
-    }
-
     private var modelUsageSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             SettingsCard(title: "Coverage", systemImage: "chart.bar.xaxis") {
-                SettingsValueRow(title: "Quota providers", value: "\(model.modelUsage?.providers.count ?? 0)")
-                if let asOf = snapshotTimeText(model.modelUsage?.generatedAt) {
-                    SettingsValueRow(title: "Usage snapshot", value: asOf)
+                if (model.modelUsage?.providers.count ?? 0) == 0 {
+                    SettingsInfoRow(
+                        icon: "circle.dashed",
+                        title: "No usage snapshot yet",
+                        detail: "Quota windows appear after the Mac broadcasts its first usage snapshot."
+                    )
+                } else {
+                    SettingsValueRow(title: "Quota providers", value: "\(model.modelUsage?.providers.count ?? 0)")
+                    if let asOf = snapshotTimeText(model.modelUsage?.generatedAt) {
+                        SettingsValueRow(title: "Usage snapshot", value: asOf)
+                    }
                 }
                 SettingsInfoRow(
                     icon: "info.circle",
@@ -6033,6 +5945,11 @@ public struct AppSettingsSheet: View {
 
     private var privacySection: some View {
         VStack(spacing: 12) {
+            SettingsCard(title: "About", systemImage: "info.circle") {
+                SettingsValueRow(title: "App", value: "TaskWraith Remote")
+                SettingsValueRow(title: "Version", value: appVersionLabel)
+                SettingsValueRow(title: "Transport", value: "taskwraith-e2ee-v1")
+            }
             SettingsCard(title: "Safety posture", systemImage: "checkmark.shield") {
                 SettingsInfoRow(
                     icon: "hand.raised",
@@ -6097,16 +6014,6 @@ public struct AppSettingsSheet: View {
                     .buttonStyle(.plain)
                     .padding(.top, 2)
                 }
-            }
-        }
-    }
-
-    private var aboutSection: some View {
-        VStack(spacing: 12) {
-            SettingsCard(title: "About", systemImage: "info.circle") {
-                SettingsValueRow(title: "App", value: "TaskWraith Remote")
-                SettingsValueRow(title: "Transport", value: "taskwraith-e2ee-v1")
-                SettingsValueRow(title: "Settings style", value: "Full-screen")
             }
         }
     }
@@ -6283,6 +6190,22 @@ public struct AppSettingsSheet: View {
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .strokeBorder(TWTheme.border, lineWidth: 1)
         )
+        .contextMenu {
+            if host.id != model.selectedHostId {
+                Button("Switch to this host") {
+                    model.switchHost(to: host.macIdentityPubKey)
+                }
+            }
+            Button("Forget host", role: .destructive) {
+                model.forgetHost(macIdentityPubKey: host.macIdentityPubKey)
+            }
+        }
+    }
+
+    private var appVersionLabel: String {
+        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "—"
+        let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "—"
+        return "\(version) (\(build))"
     }
 
     private var composerShellLabel: String {
@@ -6671,20 +6594,7 @@ struct SettingsProviderSnapshot: Identifiable, Equatable {
             }
         }
 
-        return providerOrder.map { provider in
-            let modelCount = providerModels[provider]?.count ?? 0
-            return SettingsProviderSnapshot(
-                id: provider,
-                label: TWTheme.providerLabel(provider),
-                optional: ["kimi", "cursor", "grok", "ollama"].contains(provider),
-                statusKind: modelCount > 0 ? "notObservable" : "notLoaded",
-                statusText: modelCount > 0 ? "\(modelCount) model\(modelCount == 1 ? "" : "s") available" : "Not loaded yet",
-                detail: "Waiting for the paired Mac to report provider readiness.",
-                setupHint: "Provider setup and sign-in happen on the Mac.",
-                usageWindows: usageByProvider[provider]?.windows.map(SettingsUsageWindow.init(window:)) ?? []
-            )
-        }
-        .filter { !TWTheme.isRetiredProvider($0.id) }
+        return []
     }
 
 }
