@@ -449,6 +449,7 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   rightDockStyle: any
   rightDockVisible: any
   rightTab: any
+  roundFileChangeSummaries: any
   runCompleteDurationText: any
   runCompleteNotice: any
   runDiff: any

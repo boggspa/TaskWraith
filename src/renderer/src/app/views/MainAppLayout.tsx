@@ -400,6 +400,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   rightDockStyle,
   rightDockVisible,
   rightTab,
+  roundFileChangeSummaries,
   runCompleteDurationText,
   runDiff,
   runFxStatus,
@@ -1881,6 +1882,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                 thinkingProviderClass={thinkingProviderClass}
                 thinkingModelBadge={thinkingModelBadge}
                 displayFileChangeSummaries={displayFileChangeSummaries}
+                roundFileChangeSummaries={roundFileChangeSummaries}
                 fileChangeSummaryText={fileChangeSummaryText}
                 fileChangeShouldShowStats={fileChangeShouldShowStats}
                 fileChangeDisplayAdds={fileChangeDisplayAdds}

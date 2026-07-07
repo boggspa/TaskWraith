@@ -19863,6 +19863,68 @@ function App(): React.JSX.Element {
     () => fileChangeSummaries.filter((item) => !item.isNoise),
     [fileChangeSummaries]
   )
+  // Round-scoped slice of the live tool-diff extraction: only messages from
+  // the just-completed ensemble round (every run stamped with its roundId,
+  // plus the round's own participant/lane bookkeeping for older records) or,
+  // for solo chats, the last run. TranscriptPanel renders these as the
+  // "This round" section above the remaining session files in the
+  // Task-complete card. Gated on runCompleteNotice — null while a run
+  // streams — so this costs nothing during live token commits. Like the
+  // session-wide extraction above, the result identity is signature-cached:
+  // unrelated chat churn (pins, renames) must not hand the panel a fresh
+  // array and reset its show-more window.
+  const roundFileChangeSummariesCacheRef = useRef<{
+    key: string
+    summaries: DiffFileSummary[]
+  } | null>(null)
+  const roundFileChangeSummaries = useMemo(() => {
+    if (!runCompleteNotice) return EMPTY_DIFF_FILE_SUMMARIES
+    const roundRunIds = new Set<string>()
+    const activeRound =
+      currentChat?.chatKind === 'ensemble' ? currentChat.ensemble?.activeRound : undefined
+    if (activeRound?.roundId) {
+      for (const run of currentChat?.runs || []) {
+        if (run.runId && run.ensembleRoundId === activeRound.roundId) roundRunIds.add(run.runId)
+      }
+      for (const participant of activeRound.participants || []) {
+        if (participant.runId) roundRunIds.add(participant.runId)
+      }
+      for (const lane of Object.values(activeRound.lanes || {})) {
+        if (lane?.runId) roundRunIds.add(lane.runId)
+      }
+    } else if (currentRun?.runId) {
+      roundRunIds.add(currentRun.runId)
+    }
+    if (roundRunIds.size === 0) return EMPTY_DIFF_FILE_SUMMARIES
+    const roundMessages = liveToolFileSummaryMessages.filter(
+      (message) =>
+        message.runId !== undefined &&
+        roundRunIds.has(message.runId) &&
+        (message.toolActivities?.length || 0) > 0
+    )
+    if (roundMessages.length === 0) return EMPTY_DIFF_FILE_SUMMARIES
+    const cacheKey = [
+      liveToolFileSummaryChatId || '',
+      liveToolFileSummaryWorkspacePath || '',
+      Array.from(roundRunIds).sort().join(','),
+      buildLiveToolFileSummarySignature(roundMessages)
+    ].join('\u0000')
+    const cached = roundFileChangeSummariesCacheRef.current
+    if (cached && cached.key === cacheKey) return cached.summaries
+    const summaries = getLiveToolFileDiffSummaries(
+      roundMessages,
+      liveToolFileSummaryWorkspacePath
+    ).filter((item) => !item.isNoise)
+    roundFileChangeSummariesCacheRef.current = { key: cacheKey, summaries }
+    return summaries
+  }, [
+    runCompleteNotice,
+    currentChat,
+    currentRun,
+    liveToolFileSummaryChatId,
+    liveToolFileSummaryMessages,
+    liveToolFileSummaryWorkspacePath
+  ])
   const createdChangeCount = displayFileChangeSummaries.filter(
     (item) => item.status === 'created'
   ).length
@@ -25080,6 +25142,7 @@ function App(): React.JSX.Element {
     rightDockStyle,
     rightDockVisible,
     rightTab,
+    roundFileChangeSummaries,
     runCompleteDurationText,
     runCompleteNotice,
     runDiff,
