@@ -22958,11 +22958,17 @@ if (isGeminiMcpBridgeProcess) {
         console.error('[BridgeBroadcaster] workspace update failed:', err)
       }
     }
-    const broadcastThreadUpdate = (chatId: string | undefined): void => {
+    type RemoteProjectionBroadcastOptions = { remoteProjectionSnapshot?: boolean }
+    const broadcastThreadUpdate = (
+      chatId: string | undefined,
+      options: RemoteProjectionBroadcastOptions = {}
+    ): void => {
       if (!chatId || !bridgeBroadcaster) return
       try {
         bridgeBroadcaster.broadcastThreadUpdated(chatId)
-        bridgeBroadcaster.broadcastRemoteProjectionSnapshot()
+        if (options.remoteProjectionSnapshot !== false) {
+          bridgeBroadcaster.broadcastRemoteProjectionSnapshot()
+        }
       } catch (err) {
         console.error('[BridgeBroadcaster] thread update failed:', err)
       }
@@ -22975,11 +22981,13 @@ if (isGeminiMcpBridgeProcess) {
         console.error('[BridgeBroadcaster] workspace list failed:', err)
       }
     }
-    const broadcastThreadList = (): void => {
+    const broadcastThreadList = (options: RemoteProjectionBroadcastOptions = {}): void => {
       if (!bridgeBroadcaster) return
       try {
         bridgeBroadcaster.broadcastThreadList()
-        bridgeBroadcaster.broadcastRemoteProjectionSnapshot()
+        if (options.remoteProjectionSnapshot !== false) {
+          bridgeBroadcaster.broadcastRemoteProjectionSnapshot()
+        }
       } catch (err) {
         console.error('[BridgeBroadcaster] thread list failed:', err)
       }
@@ -23499,10 +23507,10 @@ if (isGeminiMcpBridgeProcess) {
         return ok ? { ok: true } : { ok: false, reason: 'Queued prompt could not be steered' }
       }
       const broadcastRemoteComposerQueueChange = (chat: ChatRecord, workspaceId: string) => {
-        broadcastThreadUpdate(chat.appChatId)
+        broadcastThreadUpdate(chat.appChatId, { remoteProjectionSnapshot: false })
         pushRemoteThreadSnapshot(chat, workspaceId)
-        // Queue changes already publish a targeted thread delta; let the full projection coalesce.
-        bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
+        // Queue state is in the task card; thread + task deltas make the full snapshot redundant.
+        pushRemoteTaskCardDelta(chat.appChatId)
       }
       const queueRemoteComposerPrompt = async (action: {
         workspaceId: string
@@ -23921,8 +23929,9 @@ if (isGeminiMcpBridgeProcess) {
             )
           )
           if (ok) {
-            broadcastThreadUpdate(action.threadId)
-            bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
+            broadcastThreadUpdate(action.threadId, { remoteProjectionSnapshot: false })
+            // Round status is projected in the task card; avoid a duplicate full rebuild.
+            pushRemoteTaskCardDelta(action.threadId)
           }
           return { ok }
         },
@@ -23945,8 +23954,9 @@ if (isGeminiMcpBridgeProcess) {
           }
           const ok = Boolean(await ensembleOrchestratorRef?.skipActiveParticipant(action.threadId))
           if (ok) {
-            broadcastThreadUpdate(action.threadId)
-            bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
+            broadcastThreadUpdate(action.threadId, { remoteProjectionSnapshot: false })
+            // Active participant state rides the task-card ensemble projection.
+            pushRemoteTaskCardDelta(action.threadId)
           }
           return { ok }
         },
@@ -23954,8 +23964,9 @@ if (isGeminiMcpBridgeProcess) {
           wakeupTimerServiceRef?.cancel(action.wakeupId)
           const ok = Boolean(ensembleOrchestratorRef?.handleWakeupFired(action.wakeupId))
           if (ok) {
-            broadcastThreadUpdate(action.threadId)
-            bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
+            broadcastThreadUpdate(action.threadId, { remoteProjectionSnapshot: false })
+            // Wake-triggered round state is reflected by the task-card delta.
+            pushRemoteTaskCardDelta(action.threadId)
           }
           return { ok, wakeupId: action.wakeupId }
         },
@@ -23966,8 +23977,9 @@ if (isGeminiMcpBridgeProcess) {
             action.message || 'cancelled from iOS'
           )
           if (cancelled) {
-            broadcastThreadUpdate(action.threadId)
-            bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
+            broadcastThreadUpdate(action.threadId, { remoteProjectionSnapshot: false })
+            // Wakeup cancellation only changes the owning ensemble card.
+            pushRemoteTaskCardDelta(action.threadId)
             return { ok: true, cancelled }
           }
           const persisted = findPersistedEnsembleWakeup(action.wakeupId)
@@ -23981,8 +23993,9 @@ if (isGeminiMcpBridgeProcess) {
             message: action.message || 'cancelled from iOS'
           }
           savePersistedEnsembleWakeup(fallback)
-          broadcastThreadUpdate(action.threadId)
-          bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
+          broadcastThreadUpdate(action.threadId, { remoteProjectionSnapshot: false })
+          // Wakeup fallback cancellation only changes the owning ensemble card.
+          pushRemoteTaskCardDelta(action.threadId)
           return { ok: true, cancelled: fallback }
         },
         ensembleQueuePromptFn: async (action) => {
@@ -24003,8 +24016,9 @@ if (isGeminiMcpBridgeProcess) {
             ensembleOrchestratorRef?.enqueueWorkSessionContinuation(action.threadId, text)
           )
           if (ok) {
-            broadcastThreadUpdate(action.threadId)
-            bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
+            broadcastThreadUpdate(action.threadId, { remoteProjectionSnapshot: false })
+            // Queued prompts are embedded in the task-card ensemble state.
+            pushRemoteTaskCardDelta(action.threadId)
           }
           return { ok }
         },
@@ -24048,10 +24062,10 @@ if (isGeminiMcpBridgeProcess) {
           }
           AppStore.saveChat(updated)
           broadcastChatUpdated(updated)
-          broadcastThreadUpdate(updated.appChatId)
-          broadcastThreadList()
+          broadcastThreadUpdate(updated.appChatId, { remoteProjectionSnapshot: false })
+          broadcastThreadList({ remoteProjectionSnapshot: false })
+          // Title is carried by the task-card delta; list events handle the legacy sidebar.
           pushRemoteTaskCardDelta(updated.appChatId)
-          bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
           return { ok: true, title }
         },
         setChatKindFn: async (action) => {
@@ -24089,10 +24103,10 @@ if (isGeminiMcpBridgeProcess) {
               canonicalProviderMetadata: action.canonicalProviderMetadata
             })
             broadcastChatUpdated(updated)
-            broadcastThreadUpdate(updated.appChatId)
-            broadcastThreadList()
+            broadcastThreadUpdate(updated.appChatId, { remoteProjectionSnapshot: false })
+            broadcastThreadList({ remoteProjectionSnapshot: false })
+            // Chat-kind and ensemble seed data are carried by the task-card delta.
             pushRemoteTaskCardDelta(updated.appChatId)
-            bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
             return {
               ok: true,
               threadId: updated.appChatId,
@@ -24176,10 +24190,11 @@ if (isGeminiMcpBridgeProcess) {
           AppStore.saveChat(updated)
           broadcastChatUpdated(updated)
           maybeScheduleCodexNativeGoalSync(chat, updated, 'remote-goal-update')
-          broadcastThreadUpdate(updated.appChatId)
+          broadcastThreadUpdate(updated.appChatId, { remoteProjectionSnapshot: false })
           const canonical = canonicalRemoteWorkspaceId(updated.workspaceId)
           if (canonical) pushRemoteThreadSnapshot(updated, canonical)
-          bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
+          // Active goal lives on the task card; thread snapshot covers the open transcript.
+          pushRemoteTaskCardDelta(updated.appChatId)
           return { ok: true, goal: activeGoal }
         },
         proposedPlanDecisionFn: async (action) => {
@@ -24265,8 +24280,7 @@ if (isGeminiMcpBridgeProcess) {
             broadcastThreadUpdate(chat.appChatId)
             const canonical = canonicalRemoteWorkspaceId(chat.workspaceId)
             if (canonical) pushRemoteThreadSnapshot(chat, canonical)
-            // Side-chat creation has a thread delta; the feed-wide projection can ride the throttle.
-            bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
+            // Side-chat creation changes feed membership; keep the helper's one full snapshot only.
             return { ok: true, threadId: chat.appChatId }
           } catch (err) {
             return { ok: false, error: err instanceof Error ? err.message : String(err) }
@@ -24309,8 +24323,9 @@ if (isGeminiMcpBridgeProcess) {
             const ok = result?.status === 'steered'
             const updated = AppStore.getChat(action.threadId)
             if (updated) broadcastChatUpdated(updated)
-            broadcastThreadUpdate(action.threadId)
-            bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
+            broadcastThreadUpdate(action.threadId, { remoteProjectionSnapshot: false })
+            // Steered queue state is embedded in the task-card ensemble projection.
+            pushRemoteTaskCardDelta(action.threadId)
             return { ok, ...result }
           }
           if (action.op === 'blackboard') {
@@ -24333,8 +24348,9 @@ if (isGeminiMcpBridgeProcess) {
           }
           const updated = AppStore.getChat(action.threadId)
           if (updated) broadcastChatUpdated(updated)
-          broadcastThreadUpdate(action.threadId)
-          bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
+          broadcastThreadUpdate(action.threadId, { remoteProjectionSnapshot: false })
+          // Queue removal is embedded in the task-card ensemble projection.
+          pushRemoteTaskCardDelta(action.threadId)
           return result
         },
         ensembleRosterUpdateFn: async (action) => {
@@ -24443,8 +24459,8 @@ if (isGeminiMcpBridgeProcess) {
           broadcastChatUpdated(updated)
           const canonical = canonicalRemoteWorkspaceId(updated.workspaceId)
           if (canonical) pushRemoteThreadSnapshot(updated, canonical)
-          // Roster edits publish the thread delta immediately; coalesce the full projection.
-          bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
+          // Roster edits are projected through the task-card ensemble state.
+          pushRemoteTaskCardDelta(updated.appChatId)
           return { ok: true }
         },
         ensembleSettingsUpdateFn: async (action) => {
@@ -24503,8 +24519,8 @@ if (isGeminiMcpBridgeProcess) {
           broadcastChatUpdated(updated)
           const canonical = canonicalRemoteWorkspaceId(updated.workspaceId)
           if (canonical) pushRemoteThreadSnapshot(updated, canonical)
-          // Settings edits publish the thread delta immediately; coalesce the full projection.
-          bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
+          // Ensemble settings are projected through the task-card ensemble state.
+          pushRemoteTaskCardDelta(updated.appChatId)
           return {
             ok: true,
             orchestrationMode: updated.ensemble?.orchestrationMode,
@@ -24592,8 +24608,9 @@ if (isGeminiMcpBridgeProcess) {
           })
           const ok = result?.status === 'started' || result?.status === 'steered'
           if (ok) {
-            broadcastThreadUpdate(action.threadId)
-            bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
+            broadcastThreadUpdate(action.threadId, { remoteProjectionSnapshot: false })
+            // Started/steered round state is embedded in the task-card ensemble projection.
+            pushRemoteTaskCardDelta(action.threadId)
           }
           return { ok, ...result }
         },
@@ -24602,7 +24619,7 @@ if (isGeminiMcpBridgeProcess) {
             broadcastChatUpdated(chat)
             broadcastThreadUpdate(chat.appChatId)
             pushRemoteThreadSnapshot(chat, workspaceId)
-            bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
+            // Thread creation changes feed membership; keep the helper's one full snapshot only.
           }
           const now = Date.now()
           const cleanupRemoteDrafts = (keepId: string) => {
@@ -25390,7 +25407,7 @@ if (isGeminiMcpBridgeProcess) {
             )
             broadcastChatUpdated(savedChat)
             broadcastThreadUpdate(savedChat.appChatId)
-            bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
+            // Workflow creation keeps the helper's full snapshot; a second rebuild is redundant.
             return { dispatched: true, appRunId: null }
           }
           // Phone-attached images → temp files → the SAME imagePaths lane the
@@ -25633,9 +25650,9 @@ if (isGeminiMcpBridgeProcess) {
               })
           }
           broadcastChatUpdated(chat)
-          broadcastThreadUpdate(chat.appChatId)
+          broadcastThreadUpdate(chat.appChatId, { remoteProjectionSnapshot: false })
           pushRemoteThreadSnapshot(chat, action.workspaceId)
-          bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
+          // Run-start state is covered by registerBridgeRunTranscript's task-card delta.
 
           // Conversation continuity — desktop runs compose prior turns + a
           // provider session-resume handle in the RENDERER before invoking
@@ -31102,8 +31119,9 @@ if (isGeminiMcpBridgeProcess) {
         }) ?? { ok: false, error: 'Ensemble orchestrator is not initialized.' }
         const updated = AppStore.getChat(chatId)
         if (updated) broadcastChatUpdated(updated)
-        broadcastThreadUpdate(chatId)
-        bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
+        broadcastThreadUpdate(chatId, { remoteProjectionSnapshot: false })
+        // Queued prompt removal is embedded in the task-card ensemble projection.
+        pushRemoteTaskCardDelta(chatId)
         return result
       }
     )
@@ -31193,8 +31211,12 @@ if (isGeminiMcpBridgeProcess) {
           updatedAt: Date.now()
         }
         saveAndBroadcastChat(updated)
-        broadcastThreadUpdate(updated.appChatId)
-        bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
+        broadcastThreadUpdate(updated.appChatId, { remoteProjectionSnapshot: false })
+        const workspaceId =
+          canonicalRemoteWorkspaceId(updated.workspaceId) ??
+          (!updated.workspaceId || updated.scope === 'global' ? GLOBAL_REMOTE_SCOPE : null)
+        if (workspaceId) pushRemoteThreadSnapshot(updated, workspaceId)
+        // Blackboard delete is thread-local; the thread snapshot carries the entry list.
         return { ok: true, removed, remainingCount: result.next.length }
       }
     )
@@ -31252,8 +31274,13 @@ if (isGeminiMcpBridgeProcess) {
         updatedAt: Date.now()
       }
       saveAndBroadcastChat(updated)
-      broadcastThreadUpdate(chat.appChatId)
-      bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
+      broadcastThreadUpdate(updated.appChatId, { remoteProjectionSnapshot: false })
+      const workspaceId =
+        canonicalRemoteWorkspaceId(updated.workspaceId) ??
+        (!updated.workspaceId || updated.scope === 'global' ? GLOBAL_REMOTE_SCOPE : null)
+      if (workspaceId) pushRemoteThreadSnapshot(updated, workspaceId)
+      // Moving a queued prompt changes both the task-card queue and thread blackboard.
+      pushRemoteTaskCardDelta(updated.appChatId)
       return { ok: true, entry }
     }
 
@@ -31410,8 +31437,9 @@ if (isGeminiMcpBridgeProcess) {
           }
         const updated = AppStore.getChat(chatId)
         if (updated) broadcastChatUpdated(updated)
-        broadcastThreadUpdate(chatId)
-        bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
+        broadcastThreadUpdate(chatId, { remoteProjectionSnapshot: false })
+        // Participant seat changes are projected through the task-card ensemble state.
+        pushRemoteTaskCardDelta(chatId)
         return result
       }
     )
