@@ -406,6 +406,14 @@ export interface BridgeDiscoverTailnetHostsAction extends BridgeActionMetadata {
   kind: 'discoverTailnetHosts'
 }
 
+/** Pair-scoped read-only interest assertion from the phone. The host uses it
+ * only to avoid encoding per-token run events for threads the phone cannot
+ * currently display. `null` means the phone is on a non-thread surface. */
+export interface BridgeSetWatchedThreadAction extends BridgeActionMetadata {
+  kind: 'setWatchedThread'
+  appChatId: string | null
+}
+
 export interface BridgeCancelRunAction extends BridgeActionMetadata {
   kind: 'cancelRun'
   workspaceId: string
@@ -752,6 +760,7 @@ export type BridgeActionPayload =
   | BridgeRegisterApnsTokenAction
   | BridgeEnsemblePresetMutateAction
   | BridgeDiscoverTailnetHostsAction
+  | BridgeSetWatchedThreadAction
   | BridgeSetYoloModeAction
   | BridgeTogglePinChatAction
   | BridgeTogglePinWorkspaceAction
@@ -889,6 +898,7 @@ export function workspaceIdFromPayload(payload: BridgeActionPayload): string | n
     case 'registerApnsToken':
     case 'ensemblePresetMutate':
     case 'discoverTailnetHosts':
+    case 'setWatchedThread':
     case 'unknown':
       return null
   }
@@ -968,6 +978,7 @@ export function payloadRequiresWorkspaceGating(payload: BridgeActionPayload): bo
       // eslint-disable-next-line no-fallthrough
     case 'ensemblePresetMutate':
     case 'discoverTailnetHosts':
+    case 'setWatchedThread':
       return false
     case 'unknown':
       // Unknown variants are rejected upstream; the gating question
@@ -1055,6 +1066,7 @@ export function payloadIsMutating(payload: BridgeActionPayload): boolean {
     case 'githubPrStatus':
     case 'githubPrReadiness':
     case 'discoverTailnetHosts':
+    case 'setWatchedThread':
     case 'chatMarkdownTranscript':
       return false
     case 'unknown':
@@ -1249,6 +1261,10 @@ function coerceToPayload(parsed: unknown): BridgeActionPayload {
       return isDiscoverTailnetHosts(parsed)
         ? (parsed as unknown as BridgeDiscoverTailnetHostsAction)
         : { kind: 'unknown', rawKind: 'discoverTailnetHosts', raw: parsed }
+    case 'setWatchedThread':
+      return isSetWatchedThread(parsed)
+        ? (parsed as unknown as BridgeSetWatchedThreadAction)
+        : { kind: 'unknown', rawKind: 'setWatchedThread', raw: parsed }
     case 'setYoloMode':
       return isSetYoloMode(parsed)
         ? (parsed as unknown as BridgeSetYoloModeAction)
@@ -2003,6 +2019,13 @@ function isDiscoverTailnetHosts(v: Record<string, unknown>): boolean {
   // No payload fields beyond the shared metadata — the host derives everything
   // (own identity, paired devices, stored OAuth credential) locally.
   return hasValidActionMetadata(v)
+}
+
+function isSetWatchedThread(v: Record<string, unknown>): boolean {
+  return (
+    hasValidActionMetadata(v) &&
+    (v.appChatId === null || (typeof v.appChatId === 'string' && v.appChatId.length > 0))
+  )
 }
 
 function hasValidActionMetadata(v: Record<string, unknown>): boolean {

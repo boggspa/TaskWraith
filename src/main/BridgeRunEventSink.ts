@@ -13,12 +13,9 @@ import type { RunEvent, RunEventSink } from './RunEventBus'
  * and the adapters, nothing changed — events still flow through
  * `runEventBus.publish(...)` and the renderer still receives them.
  *
- * Filtering today: **forward everything**. The daemon receives the
- * notifications and broadcasts to any connected iOS devices; iOS-side
- * filtering (by appRunId / workspaceId / interest set) decides whether
- * to surface them. Per-pair routing is a future refinement once iOS
- * actually opts in to specific runs (Phase D1's "watched chats"
- * concept from the original plan).
+ * Filtering today: the host may attach a sink-level interest filter before
+ * JSON encoding. When no phone has asserted a watch signal, the filter fails
+ * open and preserves the old forward-everything behavior.
  *
  * Performance: each forwarded notification is a single stdout `write`
  * line into the daemon's stdin pipe. Cost is dominated by JSON encoding
@@ -73,12 +70,10 @@ export function makeBridgeRunEventSink(options: BridgeRunEventSinkOptions): RunE
       // forwarding — it's only meaningful to the in-process Electron IPC
       // sink. Everything else round-trips through JSON without surprise.
       //
-      // Per-pair filter hint: extract `appChatId` from the routed
-      // payload (when present) and surface it as a top-level
-      // `threadId` on the notification. The Swift daemon uses this
-      // to consult its watched-threads store and scope the QUIC
-      // broadcast to subscribing iOS pairs only. Absent threadId
-      // → daemon falls back to broadcast-all.
+      // Surface `appChatId` as a top-level `threadId` on the notification.
+      // The host-side sink filter uses the same extraction before this handle
+      // path runs, so filtered events avoid both JSON encoding and the daemon
+      // pipe write. Absent threadId stays fail-open.
       const threadId = extractThreadId(event.payload)
       const wireEvent: Record<string, unknown> = {
         channel: event.channel,

@@ -44,6 +44,7 @@ import type {
   BridgeRegisterApnsTokenAction,
   BridgeEnsemblePresetMutateAction,
   BridgeDiscoverTailnetHostsAction,
+  BridgeSetWatchedThreadAction,
   BridgeSetYoloModeAction,
   BridgeTogglePinChatAction,
   BridgeTogglePinWorkspaceAction,
@@ -190,6 +191,7 @@ export interface BridgeActionExecutor {
   executeDiscoverTailnetHosts(
     action: BridgeDiscoverTailnetHostsAction
   ): Promise<BridgeActionExecutionResult>
+  executeSetWatchedThread(action: BridgeSetWatchedThreadAction): Promise<BridgeActionExecutionResult>
   executeSetYoloMode(action: BridgeSetYoloModeAction): Promise<BridgeActionExecutionResult>
   executeTogglePinChat(action: BridgeTogglePinChatAction): Promise<BridgeActionExecutionResult>
   executeTogglePinWorkspace(
@@ -424,6 +426,11 @@ export class NoopActionExecutor implements BridgeActionExecutor {
   ): Promise<BridgeActionExecutionResult> {
     return notWired('discoverTailnetHosts', 'oracle')
   }
+  async executeSetWatchedThread(
+    action: BridgeSetWatchedThreadAction
+  ): Promise<BridgeActionExecutionResult> {
+    return notWired('setWatchedThread', action.appChatId ?? 'none')
+  }
   async executeSetYoloMode(action: BridgeSetYoloModeAction): Promise<BridgeActionExecutionResult> {
     return notWired('setYoloMode', String(action.enabled))
   }
@@ -650,6 +657,11 @@ export interface MainProcessActionExecutorDependencies {
   discoverTailnetHostsFn?: () => Promise<{
     ok: boolean
     hosts?: Array<Record<string, unknown>>
+    reason?: string
+  }>
+  setWatchedThreadFn?: (action: BridgeSetWatchedThreadAction) => Promise<{
+    ok: boolean
+    watchedAppChatId: string | null
     reason?: string
   }>
   setYoloModeFn?: (enabled: boolean) => Promise<{
@@ -1747,6 +1759,34 @@ export class MainProcessActionExecutor implements BridgeActionExecutor {
       const message = err instanceof Error ? err.message : String(err)
       this.log(`[BridgeActionExecutor] discoverTailnetHosts failed: ${message}`)
       return { executed: false, message: `Discovery failed: ${message}` }
+    }
+  }
+
+  async executeSetWatchedThread(
+    action: BridgeSetWatchedThreadAction
+  ): Promise<BridgeActionExecutionResult> {
+    if (!this.deps.setWatchedThreadFn) {
+      return notWired('setWatchedThread', action.appChatId ?? 'none')
+    }
+    try {
+      const result = await this.deps.setWatchedThreadFn(action)
+      if (result.ok) {
+        return {
+          executed: true,
+          message:
+            result.watchedAppChatId === null
+              ? 'Remote watch cleared.'
+              : `Remote watch set to ${result.watchedAppChatId}.`,
+          data: { appChatId: result.watchedAppChatId }
+        }
+      }
+      return {
+        executed: false,
+        message: `Remote watch declined${result.reason ? `: ${result.reason}` : ''}`
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      return { executed: false, message: `Remote watch failed: ${message}` }
     }
   }
 

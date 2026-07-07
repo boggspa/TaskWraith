@@ -149,10 +149,12 @@ import {
   RUN_MANAGER_PROVIDERS
 } from './index.constants'
 import {
+  createRemoteLiveGitRefreshScheduler,
   createRemoteLiveSnapshotScheduler,
   hasStreamingRemoteRunSessions,
   remoteProjectionSnapshotThrottleMsForStreaming
 } from './RemoteBridgePerfTuning'
+import { createRemoteBridgeRunEventInterestFilter } from './RemoteBridgeRunEventFilter'
 import type {
   McpToolContentBlock,
   McpToolExecutionResult,
@@ -1154,6 +1156,7 @@ const remoteQuestionRegistry = new RemoteQuestionRegistry({
   defaultTtlMs: AGENT_QUESTION_TIMEOUT_MS
 })
 let bridgeBroadcasterRef: BridgeBroadcaster | null = null
+const remoteBridgeRunEventFilter = createRemoteBridgeRunEventInterestFilter()
 function broadcastCoalescedRemoteProjectionSnapshot(): void {
   bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
 }
@@ -23271,6 +23274,10 @@ if (isGeminiMcpBridgeProcess) {
       timer.unref?.()
       remoteGitSnapshotTimers.set(canonical, timer)
     }
+    const remoteLiveGitRefreshScheduler = createRemoteLiveGitRefreshScheduler({
+      intervalMs: REMOTE_GIT_SNAPSHOT_MIN_INTERVAL_MS,
+      refresh: (workspaceId) => scheduleRemoteGitSnapshotRefresh(workspaceId)
+    })
     const ensureRemoteGitSnapshotFresh = (workspaceId: string | null | undefined): void => {
       const canonical = canonicalRemoteWorkspaceId(workspaceId)
       if (!canonical) return
@@ -23858,7 +23865,8 @@ if (isGeminiMcpBridgeProcess) {
             }
           }
           chatService.saveChat({ ...chat, pinned: action.pinned })
-          broadcastThreadUpdate(action.appChatId)
+          // The following list publish already carries the coalesced full snapshot.
+          broadcastThreadUpdate(action.appChatId, { remoteProjectionSnapshot: false })
           broadcastThreadList()
           return { pinned: action.pinned }
         },
@@ -23877,7 +23885,8 @@ if (isGeminiMcpBridgeProcess) {
             }
           }
           chatService.saveChat({ ...chat, archived: action.archived })
-          broadcastThreadUpdate(action.appChatId)
+          // The following list publish already carries the coalesced full snapshot.
+          broadcastThreadUpdate(action.appChatId, { remoteProjectionSnapshot: false })
           broadcastThreadList()
           return { archived: action.archived }
         },
@@ -25018,6 +25027,10 @@ if (isGeminiMcpBridgeProcess) {
           )
           return { ok: true, thread: projected.payload }
         },
+        setWatchedThreadFn: async (action) => {
+          remoteBridgeRunEventFilter.setWatchedThread(action.appChatId)
+          return { ok: true, watchedAppChatId: action.appChatId }
+        },
         workspaceFileListFn: async (action) => {
           const workspace = AppStore.getWorkspaces().find((entry) => entry.id === action.workspaceId)
           if (!workspace) {
@@ -25886,7 +25899,7 @@ if (isGeminiMcpBridgeProcess) {
       if (!workspaceId) return false
       pushRemoteThreadSnapshot(chat, workspaceId)
       pushRemoteDiffSummaryDeltaForChat(chat.appChatId)
-      scheduleRemoteGitSnapshotRefresh(workspaceId)
+      remoteLiveGitRefreshScheduler.schedule(workspaceId)
       return true
     }
     const remoteLiveSnapshotScheduler = createRemoteLiveSnapshotScheduler({
@@ -26823,6 +26836,7 @@ if (isGeminiMcpBridgeProcess) {
           remoteProjectionSnapshotThrottleMs: () =>
             remoteProjectionSnapshotThrottleMsForStreaming(hasActiveStreamingTaskWraithRun()),
           routeAction: (method, params) => transportActionRouter.route(method, params),
+          runEventFilter: (event) => remoteBridgeRunEventFilter.shouldForward(event),
           subscribeRunEvents: (sink) => runEventBus.subscribe(sink),
           onPairingPrompt: (prompt) => {
             // Field-debugging breadcrumb: proves the phone's clientAuth
@@ -26846,6 +26860,7 @@ if (isGeminiMcpBridgeProcess) {
           // Hold/release the Mac-awake power assertion as phones connect and
           // disconnect (see updateRemotePowerAssertion).
           onConnectedDeviceCountChange: (connectedCount) => {
+            remoteBridgeRunEventFilter.setConnectedDeviceCount(connectedCount)
             updateRemotePowerAssertion(connectedCount)
             // The watcher-lane git feed subscribes only while a phone is
             // connected — zero phones, zero watchers, zero git churn.
@@ -26855,6 +26870,7 @@ if (isGeminiMcpBridgeProcess) {
           // provider-model catalogs — a freshly-launched phone starts with
           // empty pickers otherwise.
           onDeviceEstablished: () => {
+            remoteBridgeRunEventFilter.resetOnDeviceEstablished()
             remoteProviderModelsTrigger?.()
             remoteUsageRollupTrigger?.()
             remoteModelUsageTrigger?.()

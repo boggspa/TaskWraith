@@ -285,6 +285,10 @@ function makeStubExecutor(
       executed: true,
       message: 'registerApnsToken done'
     }),
+    executeSetWatchedThread: make('executeSetWatchedThread', {
+      executed: true,
+      message: 'setWatchedThread done'
+    }),
     executeEnsemblePresetMutate: make('executeEnsemblePresetMutate', {
       executed: true,
       message: 'ensemblePresetMutate done'
@@ -1387,6 +1391,64 @@ describe('BridgeActionRouter', () => {
         payloadBase64: wire
       })) as { accepted: boolean }
       expect(result.accepted).toBe(true)
+    })
+
+    it('setWatchedThread bypasses workspace allowlist as a read-only pair-scoped assertion', async () => {
+      const { executor, calls } = makeStubExecutor()
+      const { ledger, records } = makeAuditLedger()
+      const router = new BridgeActionRouter({ executor, auditLedger: ledger })
+      const wire = Buffer.from(
+        JSON.stringify(withReplayMeta({ kind: 'setWatchedThread', appChatId: 'chat-1' })),
+        'utf-8'
+      ).toString('base64')
+      const result = (await router.route('bridge.requestActionAck', {
+        pairID: 'pair-1',
+        payloadBase64: wire
+      })) as { accepted: boolean; message?: string; threadId?: string }
+      expect(result.accepted).toBe(true)
+      expect(result.message).toBe('setWatchedThread done')
+      expect(result.threadId).toBe('chat-1')
+      expect(calls).toEqual([
+        expect.objectContaining({
+          method: 'executeSetWatchedThread',
+          payload: expect.objectContaining({ kind: 'setWatchedThread', appChatId: 'chat-1' })
+        })
+      ])
+      expect(records).toEqual([
+        expect.objectContaining({
+          deviceId: 'pair-1',
+          capability: 'system',
+          action: 'setWatchedThread',
+          decision: 'allowed',
+          reasonCode: 'accepted',
+          chatId: 'chat-1'
+        })
+      ])
+    })
+
+    it('setWatchedThread accepts null without assigning an audit chat id', async () => {
+      const { executor, calls } = makeStubExecutor()
+      const { ledger, records } = makeAuditLedger()
+      const router = new BridgeActionRouter({ executor, auditLedger: ledger })
+      const wire = Buffer.from(
+        JSON.stringify(withReplayMeta({ kind: 'setWatchedThread', appChatId: null })),
+        'utf-8'
+      ).toString('base64')
+      const result = (await router.route('bridge.requestActionAck', {
+        pairID: 'pair-1',
+        payloadBase64: wire
+      })) as { accepted: boolean; threadId?: string }
+      expect(result.accepted).toBe(true)
+      expect(result.threadId).toBeUndefined()
+      expect(calls[0]).toMatchObject({
+        method: 'executeSetWatchedThread',
+        payload: { kind: 'setWatchedThread', appChatId: null }
+      })
+      expect(records[0]).toEqual(
+        expect.not.objectContaining({
+          chatId: expect.any(String)
+        })
+      )
     })
 
     it('setYoloMode requires a workspace allowlist entry before dispatch', async () => {

@@ -15,6 +15,7 @@ import type {
   BridgeQuestionReplyAction,
   BridgeRegisterApnsTokenAction,
   BridgeDiscoverTailnetHostsAction,
+  BridgeSetWatchedThreadAction,
   BridgeSetYoloModeAction,
   BridgeThreadMediaFetchAction,
   BridgeThreadSnapshotRequestAction,
@@ -132,6 +133,10 @@ const sample = {
     deviceToken: 'abc123def456',
     env: 'production'
   } satisfies BridgeRegisterApnsTokenAction,
+  setWatchedThread: {
+    kind: 'setWatchedThread',
+    appChatId: 'chat-1'
+  } satisfies BridgeSetWatchedThreadAction,
   setYoloMode: {
     kind: 'setYoloMode',
     workspaceId: 'ws-1',
@@ -1221,6 +1226,46 @@ describe('MainProcessActionExecutor.executeRegisterApnsToken', () => {
     const executor = new MainProcessActionExecutor({ cancelRunFn, registerApnsTokenFn })
     await executor.executeRegisterApnsToken({ ...sample.registerApnsToken, env: 'sandbox' })
     expect(registerApnsTokenFn.mock.calls[0][0].env).toBe('sandbox')
+  })
+})
+
+describe('MainProcessActionExecutor.executeSetWatchedThread', () => {
+  const cancelRunFn = vi.fn().mockResolvedValue(true)
+
+  it('returns executed=false when no setWatchedThreadFn is configured', async () => {
+    const executor = new MainProcessActionExecutor({ cancelRunFn })
+    const result = await executor.executeSetWatchedThread(sample.setWatchedThread)
+    expect(result.executed).toBe(false)
+    expect(result.message).toMatch(/not yet wired/i)
+  })
+
+  it('dispatches the action to setWatchedThreadFn', async () => {
+    const setWatchedThreadFn = vi.fn().mockResolvedValue({
+      ok: true,
+      watchedAppChatId: 'chat-1'
+    })
+    const executor = new MainProcessActionExecutor({ cancelRunFn, setWatchedThreadFn })
+    const result = await executor.executeSetWatchedThread(sample.setWatchedThread)
+    expect(setWatchedThreadFn).toHaveBeenCalledTimes(1)
+    expect(setWatchedThreadFn).toHaveBeenCalledWith(sample.setWatchedThread)
+    expect(result.executed).toBe(true)
+    expect(result.message).toMatch(/chat-1/)
+    expect(result.data).toMatchObject({ appChatId: 'chat-1' })
+  })
+
+  it('accepts null as a cleared watch assertion', async () => {
+    const setWatchedThreadFn = vi.fn().mockResolvedValue({
+      ok: true,
+      watchedAppChatId: null
+    })
+    const executor = new MainProcessActionExecutor({ cancelRunFn, setWatchedThreadFn })
+    const result = await executor.executeSetWatchedThread({
+      kind: 'setWatchedThread',
+      appChatId: null
+    })
+    expect(result.executed).toBe(true)
+    expect(result.message).toMatch(/cleared/i)
+    expect(result.data).toEqual({ appChatId: null })
   })
 })
 

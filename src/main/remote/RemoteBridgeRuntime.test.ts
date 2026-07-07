@@ -17,7 +17,7 @@ import {
 import { verifyRegisterRequest, type RegisterRequest } from '../../shared/e2ee/resolve'
 import { buildRemoteProjectionEnvelope } from '../RemoteTaskProjection'
 import type { E2eeFrame } from '../../shared/e2ee/protocol'
-import type { RunEventSink } from '../RunEventBus'
+import type { RunEvent, RunEventSink } from '../RunEventBus'
 
 const settle = (): Promise<void> => new Promise((r) => setTimeout(r, 10))
 
@@ -61,6 +61,7 @@ function harness(
     pairingStore?: RemotePairingPersistence
     hostPlatform?: string
     advertiseRelayUrls?: string[]
+    runEventFilter?: (event: RunEvent) => boolean
   } = {}
 ) {
   const macId = generateIdentityKeyPair()
@@ -105,6 +106,7 @@ function harness(
       routed.push({ method, params })
       return { accepted: true, reasonCode: 'testStub' }
     }),
+    runEventFilter: opts.runEventFilter,
     subscribeRunEvents: (sink) => {
       capturedSink = sink
       return () => {
@@ -389,6 +391,22 @@ describe('RemoteBridgeRuntime established channel', () => {
       provider: 'claude',
       payload: { text: 'hello from a run' }
     })
+  })
+
+  it('wires the optional run-event filter onto the bridge sink', async () => {
+    const runEventFilter = vi.fn(() => false)
+    const h = harness({ runEventFilter })
+    await establish(h)
+    const sink = h.getSink()
+    expect(sink).not.toBeNull()
+    const sampleEvent: RunEvent = {
+      channel: 'agent-output',
+      provider: 'claude',
+      payload: { appChatId: 'chat-1', text: 'hello from a run' },
+      publishedAt: '2026-06-09T00:00:01.000Z'
+    }
+    expect(sink!.filter?.(sampleEvent)).toBe(false)
+    expect(runEventFilter).toHaveBeenCalledWith(sampleEvent)
   })
 
   it('routes inbound actions with pairID bound to the pinned identity', async () => {

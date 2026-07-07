@@ -37,7 +37,7 @@ import {
   type BridgeBroadcasterProjectionSource
 } from '../BridgeBroadcaster'
 import { makeBridgeRunEventSink } from '../BridgeRunEventSink'
-import type { RunEventSink } from '../RunEventBus'
+import type { RunEvent, RunEventSink } from '../RunEventBus'
 import { E2EE_PROTOCOL, type PairingBootstrapPayload } from '../../shared/e2ee/protocol'
 import { b64, exportRawEd25519PublicKey, type KeyPair } from '../../shared/e2ee/keys'
 import { signRegisterRequest, type RegisterRequest } from '../../shared/e2ee/resolve'
@@ -149,6 +149,8 @@ export interface RemoteBridgeRuntimeOptions {
   routeAction: (method: string, params: unknown) => Promise<unknown>
   /** `runEventBus.subscribe` in production; returns the unsubscribe fn. */
   subscribeRunEvents: (sink: RunEventSink) => () => void
+  /** Optional host-side interest filter for the bridge run-event sink. */
+  runEventFilter?: (event: RunEvent) => boolean
   onPairingPrompt: (prompt: RemotePairingPrompt) => void
   /** Keeps index.ts's `bridgeBroadcaster`/`bridgeBroadcasterRef` (the mutation
    * hooks' nullable refs) in sync with the runtime-owned instance. */
@@ -606,6 +608,7 @@ export class RemoteBridgeRuntime {
       this.runSinkUnsub = this.opts.subscribeRunEvents(
         makeBridgeRunEventSink({
           notifier: { notify: (method, params) => this.broadcast(method, params) },
+          filter: this.opts.runEventFilter,
           log: this.opts.log
         })
       )

@@ -1176,6 +1176,26 @@ describe('decodeBridgeActionPayload', () => {
       expect(payload.kind).toBe('registerApnsToken')
     })
 
+    it('decodes setWatchedThread as a read-only pair-scoped action', () => {
+      const wire = encode({ kind: 'setWatchedThread', appChatId: 'chat-1' })
+      const { payload } = decodeBridgeActionPayload(wire)
+      expect(payload.kind).toBe('setWatchedThread')
+      if (payload.kind !== 'setWatchedThread') throw new Error('discriminant')
+      expect(payload.appChatId).toBe('chat-1')
+      expect(workspaceIdFromPayload(payload)).toBeNull()
+      expect(payloadRequiresWorkspaceGating(payload)).toBe(false)
+      expect(payloadIsMutating(payload)).toBe(false)
+    })
+
+    it('decodes setWatchedThread null as no visible thread', () => {
+      const wire = encode({ kind: 'setWatchedThread', appChatId: null })
+      const { payload } = decodeBridgeActionPayload(wire)
+      expect(payload.kind).toBe('setWatchedThread')
+      if (payload.kind === 'setWatchedThread') {
+        expect(payload.appChatId).toBeNull()
+      }
+    })
+
     it('decodes ensemble control variants', () => {
       const variants = [
         {
@@ -1390,6 +1410,12 @@ describe('decodeBridgeActionPayload', () => {
         deviceToken: '',
         env: 'production'
       })
+      const { payload } = decodeBridgeActionPayload(wire)
+      expect(payload.kind).toBe('unknown')
+    })
+
+    it('treats setWatchedThread with empty appChatId as unknown', () => {
+      const wire = encode({ kind: 'setWatchedThread', appChatId: '' })
       const { payload } = decodeBridgeActionPayload(wire)
       expect(payload.kind).toBe('unknown')
     })
@@ -1864,6 +1890,11 @@ describe('workspaceIdFromPayload', () => {
       })
     ).toBeNull()
   })
+
+  it('returns null for setWatchedThread (paired-device-level, not workspace-bound)', () => {
+    expect(workspaceIdFromPayload({ kind: 'setWatchedThread', appChatId: 'chat-1' })).toBeNull()
+    expect(workspaceIdFromPayload({ kind: 'setWatchedThread', appChatId: null })).toBeNull()
+  })
 })
 
 describe('payloadRequiresWorkspaceGating', () => {
@@ -1926,6 +1957,15 @@ describe('payloadRequiresWorkspaceGating', () => {
         env: 'production'
       })
     ).toBe(false)
+  })
+
+  it('returns false for setWatchedThread (pair-scoped watch assertion)', () => {
+    expect(payloadRequiresWorkspaceGating({ kind: 'setWatchedThread', appChatId: 'chat-1' })).toBe(
+      false
+    )
+    expect(payloadRequiresWorkspaceGating({ kind: 'setWatchedThread', appChatId: null })).toBe(
+      false
+    )
   })
 
   it('returns true defensively for unknown variants', () => {
@@ -2078,6 +2118,11 @@ describe('payloadIsMutating', () => {
         env: 'production'
       })
     ).toBe(true)
+  })
+
+  it('classifies setWatchedThread as non-mutating', () => {
+    expect(payloadIsMutating({ kind: 'setWatchedThread', appChatId: 'chat-1' })).toBe(false)
+    expect(payloadIsMutating({ kind: 'setWatchedThread', appChatId: null })).toBe(false)
   })
 
   it('classifies unknown variants as mutating defensively', () => {

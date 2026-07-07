@@ -20,6 +20,16 @@ export interface RemoteLiveSnapshotSchedulerOptions {
   push: (threadId: string) => boolean
 }
 
+export interface RemoteLiveGitRefreshScheduler {
+  schedule(workspaceId: string): void
+}
+
+export interface RemoteLiveGitRefreshSchedulerOptions {
+  intervalMs: number
+  now?: () => number
+  refresh: (workspaceId: string) => void
+}
+
 export function remoteLiveSnapshotDelayMs(
   nowMs: number,
   lastPushMs: number | undefined,
@@ -71,6 +81,46 @@ export function createRemoteLiveSnapshotScheduler(
   }
 
   return { clear, schedule }
+}
+
+export function createRemoteLiveGitRefreshScheduler(
+  options: RemoteLiveGitRefreshSchedulerOptions
+): RemoteLiveGitRefreshScheduler {
+  const now = options.now ?? Date.now
+  const lastRefreshMs = new Map<string, number>()
+  const trailingTimers = new Map<string, ReturnType<typeof setTimeout>>()
+
+  const refresh = (workspaceId: string): void => {
+    const timer = trailingTimers.get(workspaceId)
+    if (timer) {
+      clearTimeout(timer)
+      trailingTimers.delete(workspaceId)
+    }
+    options.refresh(workspaceId)
+    lastRefreshMs.set(workspaceId, now())
+  }
+
+  const schedule = (workspaceId: string): void => {
+    const delayMs = remoteLiveSnapshotDelayMs(
+      now(),
+      lastRefreshMs.get(workspaceId),
+      options.intervalMs
+    )
+    if (delayMs <= 0) {
+      refresh(workspaceId)
+      return
+    }
+    if (trailingTimers.has(workspaceId)) return
+    const timer = setTimeout(() => {
+      trailingTimers.delete(workspaceId)
+      options.refresh(workspaceId)
+      lastRefreshMs.set(workspaceId, now())
+    }, delayMs)
+    timer.unref?.()
+    trailingTimers.set(workspaceId, timer)
+  }
+
+  return { schedule }
 }
 
 export function hasStreamingRemoteRunSessions(

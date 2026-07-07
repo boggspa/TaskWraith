@@ -645,6 +645,8 @@ export class BridgeActionRouter {
         return this.executor.executeEnsemblePresetMutate(payload)
       case 'discoverTailnetHosts':
         return this.executor.executeDiscoverTailnetHosts(payload)
+      case 'setWatchedThread':
+        return this.executor.executeSetWatchedThread(payload)
       case 'setYoloMode':
         return this.executor.executeSetYoloMode(payload)
       case 'togglePinChat':
@@ -1259,6 +1261,7 @@ function capabilityForPayload(payload: BridgeActionPayload): RemoteWorkspaceCapa
     case 'registerApnsToken':
     case 'ensemblePresetMutate':
     case 'discoverTailnetHosts':
+    case 'setWatchedThread':
     case 'unknown':
       return null
   }
@@ -1312,6 +1315,9 @@ function actionAckDescriptorFromPayload(
 
   if ('threadId' in payload && typeof payload.threadId === 'string') {
     descriptor.threadId = payload.threadId
+  }
+  if (payload.kind === 'setWatchedThread' && payload.appChatId !== null) {
+    descriptor.threadId = payload.appChatId
   }
   if (payload.kind === 'createSideChat') {
     const result = isRecord(data?.result) ? data.result : null

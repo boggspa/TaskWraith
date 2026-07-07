@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   REMOTE_LIVE_SNAPSHOT_INTERVAL_MS,
+  createRemoteLiveGitRefreshScheduler,
   createRemoteLiveSnapshotScheduler,
   hasStreamingRemoteRunSessions,
   remoteLiveSnapshotDelayMs,
@@ -88,6 +89,33 @@ describe('RemoteBridgePerfTuning', () => {
     expect(pushes).toEqual([
       { threadId: 'thread-a', nowMs: 1000 },
       { threadId: 'thread-a', nowMs: 1200 }
+    ])
+  })
+
+  it('coalesces live git refresh scheduling to the trailing edge of its cadence', async () => {
+    vi.useFakeTimers()
+    let nowMs = 1000
+    const refreshes: Array<{ workspaceId: string; nowMs: number }> = []
+    const scheduler = createRemoteLiveGitRefreshScheduler({
+      intervalMs: 1200,
+      now: () => nowMs,
+      refresh: (workspaceId) => {
+        refreshes.push({ workspaceId, nowMs })
+      }
+    })
+
+    scheduler.schedule('workspace-a')
+    nowMs = 1400
+    scheduler.schedule('workspace-a')
+    scheduler.schedule('workspace-a')
+
+    expect(refreshes).toEqual([{ workspaceId: 'workspace-a', nowMs: 1000 }])
+    nowMs = 2200
+    await vi.advanceTimersByTimeAsync(800)
+
+    expect(refreshes).toEqual([
+      { workspaceId: 'workspace-a', nowMs: 1000 },
+      { workspaceId: 'workspace-a', nowMs: 2200 }
     ])
   })
 
