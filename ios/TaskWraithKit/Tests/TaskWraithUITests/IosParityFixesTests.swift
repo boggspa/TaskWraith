@@ -625,6 +625,71 @@ struct IosParityFixesTests {
         #expect(label.localizedStandardContains("deep re"))
     }
 
+    @Test func homeSearchRankerMatchesVisibleProviderLabelThroughRealPath() throws {
+        // Track-S R5: exercise HomeSearchRanker (same logic as HomeView.searchResults),
+        // not just TWTheme.providerLabel in isolation.
+        let target = try remoteTaskCard(
+            #"{"id":"chat-dr","title":"Auth refactor","provider":"deep-reinforce","updatedAt":"2026-07-07T12:00:00Z"}"#)
+        let other = try remoteTaskCard(
+            #"{"id":"chat-cx","title":"Unrelated chat","provider":"codex","updatedAt":"2026-07-07T11:00:00Z"}"#)
+        let results = HomeSearchRanker.rankedResults(
+            query: "deep re",
+            scope: .active,
+            taskCards: [target, other],
+            workflows: [],
+            workspaceName: { _ in nil })
+        #expect(results.map(\.id) == ["chat-dr"])
+        #expect(!"deep-reinforce".localizedStandardContains("deep re"))
+    }
+
+    @Test func homeSearchRankerStillMatchesRawProviderId() throws {
+        let card = try remoteTaskCard(
+            #"{"id":"chat-codex","title":"Planner thread","provider":"codex","updatedAt":"2026-07-07T12:00:00Z"}"#)
+        let results = HomeSearchRanker.rankedResults(
+            query: "codex",
+            scope: .active,
+            taskCards: [card],
+            workflows: [],
+            workspaceName: { _ in nil })
+        #expect(results.map(\.id) == ["chat-codex"])
+    }
+
+    @MainActor
+    @Test func markdownLiteBlockCacheLRUTouchOnHitRefreshesRecency() {
+        // Track-S R4: after filling the cache, touching the oldest entry must
+        // keep it resident when a new key forces eviction (FIFO would drop it).
+        MarkdownLite._resetBlockCacheForTesting()
+        for index in 0..<96 {
+            MarkdownLite._touchBlockCacheForTesting(text: "block-\(index)")
+        }
+        MarkdownLite._touchBlockCacheForTesting(text: "block-0")
+        MarkdownLite._touchBlockCacheForTesting(text: "block-96")
+        #expect(MarkdownLite._blockCacheContainsForTesting(text: "block-0"))
+        #expect(!MarkdownLite._blockCacheContainsForTesting(text: "block-1"))
+        MarkdownLite._resetBlockCacheForTesting()
+    }
+
+    @MainActor
+    @Test func markdownLiteBlockCacheKeyRetainsParticipantsSignature() throws {
+        // Landmine ⑥: cache key must include participants or mention re-tint goes stale.
+        MarkdownLite._resetBlockCacheForTesting()
+        let participantsA = [
+            try decode(
+                RemoteEnsembleState.Participant.self,
+                #"{"participantId":"p-a","provider":"codex","role":"Alpha","order":1}"#)
+        ]
+        let participantsB = [
+            try decode(
+                RemoteEnsembleState.Participant.self,
+                #"{"participantId":"p-b","provider":"claude","role":"Bravo","order":1}"#)
+        ]
+        MarkdownLite._touchBlockCacheForTesting(text: "same body", participants: participantsA)
+        MarkdownLite._touchBlockCacheForTesting(text: "same body", participants: participantsB)
+        #expect(MarkdownLite._blockCacheContainsForTesting(text: "same body", participants: participantsA))
+        #expect(MarkdownLite._blockCacheContainsForTesting(text: "same body", participants: participantsB))
+        MarkdownLite._resetBlockCacheForTesting()
+    }
+
     @Test func homeSearchScopeChipsCoverArchivedDiscoverability() {
         #expect(HomeSearchScope.allCases == [.active, .all])
         #expect(HomeSearchScope.all.label == "All incl. Archived")

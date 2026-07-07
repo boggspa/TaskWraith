@@ -2614,7 +2614,15 @@ public struct MarkdownLite: View {
 
         static func blocks(text: String, participants: [RemoteEnsembleState.Participant]) -> [Block] {
             let key = Key(text: text, participantsSignature: twParticipantsSignature(participants))
-            if let hit = store[key] { return hit }
+            if let hit = store[key] {
+                // LRU touch-on-hit: refresh recency so hot streaming prefixes
+                // aren't evicted while cold one-off rows fall out first.
+                if let index = order.firstIndex(of: key) {
+                    order.remove(at: index)
+                    order.append(key)
+                }
+                return hit
+            }
             let parsed = parseBlocks(from: text)
             store[key] = parsed
             order.append(key)
@@ -2634,8 +2642,31 @@ public struct MarkdownLite: View {
                 store = [:]
                 order = []
             }
+
+            static func _containsForTesting(text: String, participants: [RemoteEnsembleState.Participant]) -> Bool {
+                let key = Key(text: text, participantsSignature: twParticipantsSignature(participants))
+                return store[key] != nil
+            }
         #endif
     }
+
+    #if DEBUG
+        public static func _resetBlockCacheForTesting() {
+            BlockCache._resetForTesting()
+        }
+
+        public static func _touchBlockCacheForTesting(
+            text: String, participants: [RemoteEnsembleState.Participant] = []
+        ) {
+            _ = BlockCache.blocks(text: text, participants: participants)
+        }
+
+        public static func _blockCacheContainsForTesting(
+            text: String, participants: [RemoteEnsembleState.Participant] = []
+        ) -> Bool {
+            BlockCache._containsForTesting(text: text, participants: participants)
+        }
+    #endif
 
     private var blocks: [Block] {
         BlockCache.blocks(text: text, participants: participants)

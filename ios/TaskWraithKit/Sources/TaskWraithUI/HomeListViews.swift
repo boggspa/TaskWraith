@@ -29,6 +29,53 @@ enum HomeSearchScope: String, CaseIterable {
     }
 }
 
+/// Shared N1 home-search ranking — extracted so tests exercise the same path
+/// as `HomeView.searchResults` (Track-S R5).
+enum HomeSearchRanker {
+    static func rankedResults(
+        query: String,
+        scope: HomeSearchScope,
+        taskCards: [RemoteTaskCard],
+        workflows: [RemoteWorkflow],
+        workspaceName: (String?) -> String?
+    ) -> [RemoteTaskCard] {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let workflowThreadIds = Set(workflows.compactMap(\.threadId))
+        let pool = taskCards.filter {
+            guard !($0.isDraft ?? false), !workflowThreadIds.contains($0.id) else { return false }
+            if scope == .active, $0.archived ?? false { return false }
+            return true
+        }
+        if trimmed.isEmpty {
+            return pool.sorted { ($0.updatedAt ?? "") > ($1.updatedAt ?? "") }
+        }
+        func rank(_ card: RemoteTaskCard) -> Int? {
+            let title = (card.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            if title.lowercased().hasPrefix(trimmed.lowercased()) { return 0 }
+            if title.localizedStandardContains(trimmed) { return 1 }
+            if let ws = workspaceName(card.workspaceId),
+                ws.localizedStandardContains(trimmed)
+            { return 2 }
+            if let provider = card.provider {
+                if provider.localizedStandardContains(trimmed)
+                    || TWTheme.providerLabel(provider).localizedStandardContains(trimmed)
+                {
+                    return 2
+                }
+            }
+            return nil
+        }
+        return
+            pool
+            .compactMap { card in rank(card).map { (card, $0) } }
+            .sorted {
+                if $0.1 != $1.1 { return $0.1 < $1.1 }
+                return ($0.0.updatedAt ?? "") > ($1.0.updatedAt ?? "")
+            }
+            .map(\.0)
+    }
+}
+
 #if canImport(UIKit)
     import PhotosUI
     import UIKit
@@ -219,44 +266,12 @@ struct HomeView: View {
     /// recency within each rank. Match fields: title + workspace name +
     /// provider label (body search is a Batch-2 host wire).
     private var searchResults: [RemoteTaskCard] {
-        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        let workflowThreadIds = Set(model.workflows.compactMap(\.threadId))
-        let pool = model.taskCards.filter {
-            guard !($0.isDraft ?? false), !workflowThreadIds.contains($0.id) else { return false }
-            if searchScope == .active, $0.archived ?? false { return false }
-            return true
-        }
-        if query.isEmpty {
-            return pool.sorted { ($0.updatedAt ?? "") > ($1.updatedAt ?? "") }
-        }
-        func rank(_ card: RemoteTaskCard) -> Int? {
-            let title = (card.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-            if title.lowercased().hasPrefix(query.lowercased()) { return 0 }
-            if title.localizedStandardContains(query) { return 1 }
-            if let ws = model.workspaceName(for: card.workspaceId),
-                ws.localizedStandardContains(query)
-            { return 2 }
-            if let provider = card.provider {
-                // Match the VISIBLE provider label as well as the raw id —
-                // rows render TWTheme.providerLabel, so "GPT"-style brand
-                // names must hit even where they diverge from the wire id
-                // (Adversary2 Batch-1 finding).
-                if provider.localizedStandardContains(query)
-                    || TWTheme.providerLabel(provider).localizedStandardContains(query)
-                {
-                    return 2
-                }
-            }
-            return nil
-        }
-        return
-            pool
-            .compactMap { card in rank(card).map { (card, $0) } }
-            .sorted {
-                if $0.1 != $1.1 { return $0.1 < $1.1 }
-                return ($0.0.updatedAt ?? "") > ($1.0.updatedAt ?? "")
-            }
-            .map(\.0)
+        HomeSearchRanker.rankedResults(
+            query: searchText,
+            scope: searchScope,
+            taskCards: model.taskCards,
+            workflows: model.workflows,
+            workspaceName: { model.workspaceName(for: $0) })
     }
 
     @ViewBuilder
