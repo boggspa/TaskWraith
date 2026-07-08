@@ -3677,19 +3677,27 @@
   border-color: color-mix(in srgb, var(--accent) 42%, var(--popout-pill-border));
 }
 
-.popout-root[data-popout-family="workspace"] .diff-view-toggle button {
+.popout-root[data-popout-family="workspace"] .diff-view-toggle {
+  --segmented-control-border: var(--popout-pill-border);
+  --segmented-control-bg: var(--popout-control-bg);
+  --segmented-segment-active-bg: color-mix(in srgb, var(--accent) 16%, var(--popout-pill-bg));
+  --segmented-segment-active-ring: color-mix(in srgb, var(--accent) 36%, transparent);
+}
+
+.popout-root[data-popout-family="workspace"] .diff-view-toggle .segmented-control-segment {
   color: var(--text-secondary);
 }
 
 .popout-root[data-popout-family="workspace"]
-  :is(.diff-view-toggle button:hover, .diff-view-toggle button:focus-visible) {
+  :is(
+    .diff-view-toggle .segmented-control-segment:hover,
+    .diff-view-toggle .segmented-control-segment:focus-visible
+  ) {
   color: var(--text-primary);
 }
 
-.popout-root[data-popout-family="workspace"] .diff-view-toggle button.active {
+.popout-root[data-popout-family="workspace"] .diff-view-toggle .segmented-control-segment.is-active {
   color: var(--text-primary);
-  background-color: color-mix(in srgb, var(--accent) 16%, var(--popout-pill-bg)) !important;
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 36%, transparent);
 }
 
 .popout-root[data-popout-family="workspace"] .btn:not(.btn-ghost) {

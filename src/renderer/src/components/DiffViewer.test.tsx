@@ -348,9 +348,10 @@ describe('DiffToolbar', () => {
     expect(html).toContain('class="diff-noise-toggle"')
     expect(html).toContain('class="diff-noise-checkbox"')
     expect(html).toMatch(/type="checkbox"[^>]*checked/)
-    expect(html).toContain('role="group" aria-label="Diff view mode"')
-    expect(html).toContain('aria-pressed="false"')
-    expect(html).toContain('aria-pressed="true"')
+    expect(html).toContain('role="radiogroup" aria-label="Diff view mode"')
+    expect(html).toContain('class="segmented-control segmented-control--compact diff-view-toggle"')
+    expect(html).toContain('aria-checked="false"')
+    expect(html).toContain('aria-checked="true"')
   })
 
   it('keeps the active stage group chip visible when its count reaches zero', () => {
@@ -771,7 +772,7 @@ describe('DiffViewer changed-file rail virtualization', () => {
     expect(html).toContain('aria-label="Filter changed files"')
     expect(html).toMatch(/type="checkbox"[^>]*checked/)
     expect(html).toContain('Hide noise')
-    expect(html).toContain('role="group" aria-label="Diff view mode"')
+    expect(html).toContain('role="radiogroup" aria-label="Diff view mode"')
     expect(html).toContain('<span>Unstaged</span><small>1</small>')
     expect(html).toContain('<span>Staged</span><small>1</small>')
     expect(html).toContain('<span>Untracked</span><small>1</small>')

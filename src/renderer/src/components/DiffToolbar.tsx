@@ -96,19 +96,25 @@ export function DiffToolbar({
         />
         <span className="diff-noise-toggle-text">Hide noise</span>
       </label>
-      <div className="diff-view-toggle" role="group" aria-label="Diff view mode">
+      <div
+        className="segmented-control segmented-control--compact diff-view-toggle"
+        role="radiogroup"
+        aria-label="Diff view mode"
+      >
         <button
           type="button"
-          className={viewMode === 'inline' ? 'active' : ''}
-          aria-pressed={viewMode === 'inline'}
+          className={`segmented-control-segment ${viewMode === 'inline' ? 'is-active' : ''}`}
+          role="radio"
+          aria-checked={viewMode === 'inline'}
           onClick={() => onViewModeChange('inline')}
         >
           Inline
         </button>
         <button
           type="button"
-          className={viewMode === 'split' ? 'active' : ''}
-          aria-pressed={viewMode === 'split'}
+          className={`segmented-control-segment ${viewMode === 'split' ? 'is-active' : ''}`}
+          role="radio"
+          aria-checked={viewMode === 'split'}
           onClick={() => onViewModeChange('split')}
         >
           Split

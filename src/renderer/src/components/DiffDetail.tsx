@@ -155,6 +155,7 @@ export function DiffDetail({
   const previewKind: DiffPreviewKind = summary.previewKind || 'none'
   const headerSummary = diffDetailHeaderSummary(summary)
   const pathDisplay = diffDetailPathDisplay(summary.path)
+  const actionClass = 'segmented-control-action segmented-control-action--compact'
   const usesDiffLines =
     Boolean(summary.diffText) && (previewKind === 'synthetic_new_file' || previewKind === 'git_diff')
   const parsedDiff = useMemo(
@@ -287,7 +288,7 @@ export function DiffDetail({
         </div>
         <div className="diff-detail-actions">
           <button
-            className="btn btn-sm btn-ghost"
+            className={actionClass}
             type="button"
             onClick={() => onOpenFile?.(summary.path)}
             disabled={!canOpenFile}
@@ -298,7 +299,7 @@ export function DiffDetail({
           {(onStageFile || onUnstageFile) && (
             <>
               <button
-                className="btn btn-sm btn-ghost"
+                className={actionClass}
                 type="button"
                 onClick={() => void onStageFile?.(summary.path)}
                 disabled={!canStageFile}
@@ -307,7 +308,7 @@ export function DiffDetail({
                 {isBusy ? 'Working' : 'Stage'}
               </button>
               <button
-                className="btn btn-sm btn-ghost"
+                className={actionClass}
                 type="button"
                 onClick={() => void onUnstageFile?.(summary.path)}
                 disabled={!canUnstageFile}
@@ -318,7 +319,7 @@ export function DiffDetail({
             </>
           )}
           <button
-            className="btn btn-sm btn-ghost"
+            className={actionClass}
             type="button"
             onClick={() => summary.diffText && copy('diff', summary.diffText)}
             title="Copy diff"
