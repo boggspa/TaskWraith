@@ -276,17 +276,55 @@ export function TranscriptParticipantFilterRail({
   useLayoutEffect(() => {
     updateFrame()
     const frameIds: number[] = []
+    let timeoutId: number | null = null
+    let observer: ResizeObserver | null = null
+    let fontsCancelled = false
     if (typeof window !== 'undefined') {
-      frameIds.push(window.requestAnimationFrame(updateFrame))
+      // Nested rAF: measure next frame, then once more after it paints — catches
+      // virtualized rows and composer growth that land a frame late.
+      frameIds.push(
+        window.requestAnimationFrame(() => {
+          updateFrame()
+          frameIds.push(window.requestAnimationFrame(updateFrame))
+        })
+      )
+      // Layout-settle belt for the roster-preset expand animation / async mount.
+      timeoutId = window.setTimeout(updateFrame, 160)
       window.addEventListener('resize', updateFrame)
       window.addEventListener('scroll', updateFrame, true)
     }
+    // The rail's vertical centre + right edge track the composer surface and the
+    // transcript column. Previously this effect had NO ResizeObserver, so an
+    // ensemble roster mounting / the composer growing taller after first paint
+    // never re-measured the rail — it stayed mispositioned until an incidental
+    // scroll fired the capture listener above. Observe the scroller, the
+    // transcript inner, and `.composer-area` so those relayouts re-clamp the
+    // rail immediately (mirrors the sibling TranscriptUserMessageGutter).
+    const scroller = scrollRef.current
+    const content = contentRef.current
+    if (typeof ResizeObserver !== 'undefined') {
+      observer = new ResizeObserver(() => updateFrame())
+      if (scroller) observer.observe(scroller)
+      if (content) observer.observe(content)
+      const composerArea = scroller?.closest('.app-transcript')?.querySelector('.composer-area')
+      if (composerArea instanceof HTMLElement) observer.observe(composerArea)
+    }
+    // Web-font swap shifts the composer height (and thus the rail's centre)
+    // after first paint — re-measure once fonts settle.
+    if (typeof document !== 'undefined' && document.fonts?.ready) {
+      void document.fonts.ready.then(() => {
+        if (!fontsCancelled) updateFrame()
+      })
+    }
     return () => {
+      fontsCancelled = true
+      observer?.disconnect()
       for (const id of frameIds) window.cancelAnimationFrame(id)
+      if (timeoutId !== null) window.clearTimeout(timeoutId)
       window.removeEventListener('resize', updateFrame)
       window.removeEventListener('scroll', updateFrame, true)
     }
-  }, [updateFrame])
+  }, [contentRef, scrollRef, updateFrame])
 
   if (!currentChat || currentChat.chatKind !== 'ensemble' || participantItems.length === 0) return null
 

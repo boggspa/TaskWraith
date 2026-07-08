@@ -305,7 +305,21 @@ export function TranscriptUserMessageGutter({
     if (composerBox) {
       anchorLeft = Math.min(anchorLeft, composerBox.left - GUTTER_COMPOSER_CLEARANCE_PX)
     }
-    const left = Math.max(scrollerRect.left + 4, anchorLeft - GUTTER_RAIL_WIDTH_PX)
+    // Hard floor at the settled Sidebar's right edge. The rail is a body-portaled
+    // position:fixed element at z-index 10030 — it paints ABOVE the sidebar, so a
+    // stale/mid-reflow scrollerRect (which can briefly read near the pane's left
+    // edge during a roster/composer/sidebar relayout) would drop the rail over the
+    // bottom-left footer pills (Devices/Shares/Approvals/Settings). The sidebar
+    // settles early and is stable, so its right edge is a reliable guard even
+    // before the transcript column has finished laying out.
+    const sidebarEl = scroller.closest('.app-main')?.querySelector('.app-sidebar')
+    const sidebarRight =
+      sidebarEl instanceof HTMLElement ? sidebarEl.getBoundingClientRect().right : 0
+    const left = Math.max(
+      scrollerRect.left + 4,
+      sidebarRight + 4,
+      anchorLeft - GUTTER_RAIL_WIDTH_PX
+    )
     // No lane left of the composer → hide rather than overlap.
     if (composerBox && left + GUTTER_RAIL_WIDTH_PX > composerBox.left + 1) {
       setFrame(null)
@@ -349,6 +363,7 @@ export function TranscriptUserMessageGutter({
       timeoutId = window.setTimeout(updateFrame, 160)
     }
     let observer: ResizeObserver | null = null
+    let fontsCancelled = false
     const scroller = scrollRef.current
     const content = contentRef.current
     if (typeof ResizeObserver !== 'undefined') {
@@ -361,7 +376,16 @@ export function TranscriptUserMessageGutter({
       const composerArea = scroller?.closest('.app-transcript')?.querySelector('.composer-area')
       if (composerArea instanceof HTMLElement) observer.observe(composerArea)
     }
+    // Web-font swap reflows the transcript/composer after first paint; the rAF +
+    // 160ms belts can land before fonts settle, leaving the rail offset until an
+    // incidental scroll. One more measure on fonts.ready closes that gap.
+    if (typeof document !== 'undefined' && document.fonts?.ready) {
+      void document.fonts.ready.then(() => {
+        if (!fontsCancelled) updateFrame()
+      })
+    }
     return () => {
+      fontsCancelled = true
       observer?.disconnect()
       for (const frameId of frameIds) window.cancelAnimationFrame(frameId)
       if (timeoutId !== null) window.clearTimeout(timeoutId)
