@@ -1,0 +1,479 @@
+import type { WebContents } from 'electron'
+import type { AgentRunRoute } from './AgentRunTypes'
+import type { ApprovalService, PendingExternalPathDetection } from '../services/ApprovalService'
+import type { AuditService } from '../services/AuditService'
+import type { PermissionService } from '../PermissionService'
+import type { RunManager } from '../RunManager'
+import type {
+  AgenticServiceId,
+  AgentApprovalAction,
+  AppSettings,
+  EffectiveRunPermissions,
+  EnsembleRunIdentity,
+  ProviderId,
+  RunEventInput
+} from '../store/types'
+import { effectiveAgenticSettings } from '../NativeApprovalPolicy'
+import { agenticServiceBlockedMessage, approvalActionsForPolicy } from '../AgenticServiceMessages'
+import { isPlanInstrumentGrantHold } from '../EffectiveRunPermissions'
+
+/**
+ * ApprovalOrchestration — M3-3b orchestration-facade extraction (per
+ * `design-m3-3b-spec`). This is the TRUST CHOKE POINT: every non-Codex-native
+ * agentic-service approval (Gemini/Claude/Kimi tool prompts, host commands,
+ * cross-thread reads, external-path grants, MCP tools) flows through
+ * `requestAgenticServiceApproval` before it can auto-allow, auto-deny, or prompt.
+ *
+ * `createApprovalOrchestration(deps)` returns the orchestrator that was inline in
+ * index.ts (built once in module scope, so all callsites stay unchanged — the
+ * M3-2b factory precedent, not M3-1b's deps-param form). M3-3a made the seam
+ * explicit via `RequestAgenticServiceApprovalDeps` (every index.ts-scoped symbol
+ * injected — the trust services, the AppStore accessor, the audit/ledger sinks,
+ * the push fan-out); M3-3b relocates the body here. The 4 pure cross-module
+ * helpers (`effectiveAgenticSettings`, `agenticServiceBlockedMessage`,
+ * `isPlanInstrumentGrantHold`, `approvalActionsForPolicy`) carry no index.ts state
+ * and are direct-imported.
+ *
+ * Unlike M3-1/M3-2 (behaviour-preserving), this relocation must be
+ * SECURITY-PRESERVING: a reordered/dropped guard is a security regression, not a
+ * behaviour change. The body is byte-for-byte the committed code (only the dep
+ * prefix `requestAgenticServiceApprovalDeps.` → `deps.` differs), preserving the
+ * five ordering invariants verbatim:
+ *   1. NETWORK-BLOCK auto-deny fires BEFORE permission resolution.
+ *   2. policy DENY is absolute — it sits BEFORE session-YOLO / standing-grant /
+ *      bossman, so no later auto-allow can override an explicit deny.
+ *   3. the plan-artifact fast-path sits AFTER resolve and BEFORE the plain deny.
+ *   4. `registerGeminiTool` (the terminal approval registration read live via
+ *      `deps.getApprovalService()`) opens the prompt's REGISTER sequence.
+ *   5. `neverAutoAllow` (canvasEval / mediaRecording / externalPublish /
+ *      plan-instrument-grant-hold) forces a prompt on every auto-allow path.
+ * `ApprovalOrchestration.test.ts` is the security net — it fences these branches
+ * because `ApprovalServiceM3Gate` only guards `ApprovalService.resolve()`, never
+ * this 306-line orchestration.
+ */
+export interface RequestAgenticServiceApprovalDeps {
+  runManager: RunManager<any>
+  permissionService: PermissionService
+  auditService: AuditService
+  // Lazy accessor (NOT a captured value): approvalService is a whenReady-assigned
+  // module-let (null at module-init when this bundle is built). Reading it live —
+  // exactly like getSettings below — is what keeps registerGeminiTool firing after
+  // whenReady. A by-value capture here freezes null → the terminal approval
+  // registration silently no-ops (a security regression on the trust choke point).
+  getApprovalService: () => ApprovalService | null
+  getSettings: () => AppSettings
+  appendDurableRunEventForRoute: (
+    provider: ProviderId,
+    route: AgentRunRoute | null | undefined,
+    kind: RunEventInput['kind'],
+    phase: RunEventInput['phase'],
+    summary: string,
+    payload?: unknown,
+    source?: RunEventInput['source']
+  ) => void
+  recordApprovalLedgerRequest: (
+    provider: ProviderId,
+    route: AgentRunRoute | null | undefined,
+    payload: {
+      id?: string
+      approvalId?: string
+      requestId?: number | string
+      method?: string
+      title?: string
+      body?: string
+      preview?: unknown
+      params?: unknown
+      actions?: AgentApprovalAction[]
+    },
+    options?: {
+      service?: AgenticServiceId
+      workspacePath?: string
+      metadata?: Record<string, unknown>
+    }
+  ) => void
+  safeSendToSender: (
+    sender: WebContents | null | undefined,
+    channel: string,
+    payload: unknown
+  ) => boolean
+  isSessionYoloEffective: () => boolean
+  sessionYoloState: { enabled: boolean; enabledAt: string | null }
+  scheduleApprovalTimeout: (args: {
+    approvalId: string
+    provider: ProviderId
+    route?: AgentRunRoute | null
+    isMainAuthority?: boolean
+    kind?: string
+  }) => void
+  workspaceIdForApprovalPush: (workspacePath: string | undefined) => string | null
+  notifyPairedDevicesOfApproval: (args: {
+    approvalId: string
+    workspaceId: string | null
+    threadId: string
+    summary: string
+  }) => void
+  networkAccessBlockedToolName: (
+    toolName: string | null | undefined,
+    effectivePermissions?: EffectiveRunPermissions
+  ) => string | null
+  networkAccessBlockedMessage: (toolName: string) => string
+  ensembleApprovalContext: (
+    identity: EnsembleRunIdentity | undefined,
+    service: AgenticServiceId,
+    workspacePath: string | undefined
+  ) => { label: string; bodyPrefix: string; preview: Record<string, unknown> } | undefined
+  planArtifactWriteApprovalMetadata: (input: {
+    workflowMode: unknown
+    effectivePermissions: EffectiveRunPermissions | undefined
+    globalFileChangesPolicy?: string
+    service: AgenticServiceId
+    workspacePath: string | undefined
+    request: {
+      preview?: any
+    }
+  }) => Record<string, unknown> | null
+  stampPlanArtifactPathOnPendingPlan: (
+    appChatId: string | undefined,
+    metadata: Record<string, unknown> | null
+  ) => void
+  bossmanAutoApprovalMetadata: (input: {
+    session: ReturnType<RunManager<any>['get']> | undefined
+    ensembleRun: EnsembleRunIdentity | undefined
+    service: AgenticServiceId
+    workspacePath: string | undefined
+    request: {
+      method: string
+      title: string
+      body: string
+      preview?: any
+      runId?: string
+      forcePrompt?: boolean
+      externalPathDetection?: PendingExternalPathDetection
+    }
+    effectivePermissions: EffectiveRunPermissions | undefined
+    policy: string
+    decision: string
+    neverAutoAllow: boolean
+  }) => Record<string, unknown> | null
+  externalPathApprovalTitle: () => string
+  externalPathApprovalBody: (detection: PendingExternalPathDetection) => string
+  externalPathApprovalPreview: (detection: PendingExternalPathDetection) => {
+    path: string
+    basename?: string
+    access: 'read' | 'write'
+  }
+}
+
+export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalDeps) {
+  return async (
+    sender: WebContents | null,
+    provider: ProviderId,
+    service: AgenticServiceId,
+    workspacePath: string | undefined,
+    request: {
+      method: string
+      title: string
+      body: string
+      preview?: any
+      runId?: string
+      forcePrompt?: boolean
+      externalPathDetection?: PendingExternalPathDetection
+    }
+  ): Promise<boolean> => {
+    const settings = deps.getSettings()
+    const session = deps.runManager.get(request.runId)
+    const effectivePermissions = session?.state?.effectivePermissions as
+      | EffectiveRunPermissions
+      | undefined
+    const workflowMode = (session?.state as { workflowMode?: unknown } | undefined)?.workflowMode
+    const ensembleRun = session?.state?.ensembleRun as EnsembleRunIdentity | undefined
+    const ensembleApproval = deps.ensembleApprovalContext(ensembleRun, service, workspacePath)
+    // 1.0.4-AR3 — carry `appChatId` into every auto-decision so the
+    // ledger row is filterable by chat without re-deriving via
+    // `approvalRouteContext`. Pre-AR3 the central path passed only
+    // `{ appRunId: request.runId }` while the Codex inline path
+    // (index.ts:8716+) passed both, leaving Gemini / Claude / Kimi-
+    // bridge rows missing the explicit chat-routing breadcrumb. The
+    // session lookup already happened above, so the value is in
+    // scope and free.
+    const appChatId = session?.state?.appChatId
+    const auditRoute = { appRunId: request.runId, ...(appChatId ? { appChatId } : {}) }
+    const previewToolName =
+      request.preview && typeof request.preview === 'object' && !Array.isArray(request.preview)
+        ? request.preview.toolName
+        : undefined
+    const networkBlockedTool = deps.networkAccessBlockedToolName(previewToolName, effectivePermissions)
+    if (networkBlockedTool) {
+      deps.auditService.recordAutomaticApprovalDecision(
+        provider,
+        auditRoute,
+        service,
+        workspacePath,
+        request,
+        'autoDeny',
+        'policy',
+        'request',
+        {
+          policy: 'deny',
+          networkAccess: 'deny',
+          toolName: networkBlockedTool,
+          rationale: 'Network access is disabled for this run.',
+          ...(ensembleApproval ? { ensembleParticipant: ensembleApproval.preview } : {})
+        }
+      )
+      deps.safeSendToSender(sender, 'agent-error', {
+        provider,
+        error: deps.networkAccessBlockedMessage(networkBlockedTool)
+      })
+      return false
+    }
+    const effectiveSettings = effectiveAgenticSettings(settings, effectivePermissions)
+    const resolution = deps.permissionService.resolvePermission(
+      provider,
+      service,
+      workspacePath,
+      request.runId,
+      effectiveSettings
+    )
+    const { policy, workspaceGrantAllowed, sessionGrantAllowed, decision } = resolution
+    const planArtifactWriteMetadata = deps.planArtifactWriteApprovalMetadata({
+      workflowMode,
+      effectivePermissions,
+      globalFileChangesPolicy: settings.agenticServices?.fileChanges,
+      service,
+      workspacePath,
+      request
+    })
+
+    if (decision === 'deny' && planArtifactWriteMetadata) {
+      deps.auditService.recordAutomaticApprovalDecision(
+        provider,
+        auditRoute,
+        service,
+        workspacePath,
+        request,
+        'autoAllow',
+        'plan_artifact',
+        'request',
+        { policy, ...planArtifactWriteMetadata }
+      )
+      deps.stampPlanArtifactPathOnPendingPlan(appChatId, planArtifactWriteMetadata)
+      return true
+    }
+
+    if (decision === 'deny') {
+      deps.auditService.recordAutomaticApprovalDecision(
+        provider,
+        auditRoute,
+        service,
+        workspacePath,
+        request,
+        'autoDeny',
+        'policy',
+        'request',
+        { policy, ...(ensembleApproval ? { ensembleParticipant: ensembleApproval.preview } : {}) }
+      )
+      deps.safeSendToSender(sender, 'agent-error', {
+        provider,
+        error: agenticServiceBlockedMessage(service)
+      })
+      return false
+    }
+
+    // Phase J3: session-scoped YOLO override. Auto-allows every approval
+    // for the rest of the process lifetime (or until the user disables
+    // it). Sits AFTER the deny check above so an explicit user opt-out
+    // for a service still wins — YOLO is "trust everything ask-policy
+    // would have prompted for", not "bypass every guardrail". Audit
+    // trail records the bypass with reason `session_yolo` so the user
+    // can review what got auto-allowed.
+    //
+    // 1.0.72 — but YOLO must NOT loosen an explicit read-only run. The deny check
+    // above already blocks file/shell, yet YOLO would otherwise auto-allow the
+    // 'ask' services a read-only posture leaves open (mcpTools / subThreadDelegation)
+    // — silently widening "read-only" into "trust everything". Skip the bypass for
+    // read-only sessions so the posture is never weakened by a global toggle.
+    // canvasEval (arbitrary eval = RCE) is signed-elevated: NEVER auto-allowed, not
+    // even by session-YOLO or a grant. Every eval is individually human-approved
+    // (deny above still wins). The Codex gate enforces the same via neverAutoAllow.
+    // mediaRecording (future capture) shares the same non-grantable invariant: it is
+    // never promoted above its default-deny by session-YOLO/grant/preset.
+    // plan-preset instruments (canvasInteraction/mediaEditing) are approval-only:
+    // a standing/session grant must NOT zero-click them under `plan` (standing
+    // instrument grants are the conformance-gated W7-b rung), so they join
+    // neverAutoAllow here — which forces the prompt on every auto-allow path below.
+    const neverAutoAllow =
+      service === 'canvasEval' ||
+      service === 'mediaRecording' ||
+      service === 'externalPublish' ||
+      isPlanInstrumentGrantHold(effectivePermissions?.presetId, service)
+    if (
+      deps.isSessionYoloEffective() &&
+      !effectivePermissions?.readOnly &&
+      !request.forcePrompt &&
+      !neverAutoAllow
+    ) {
+      deps.auditService.recordAutomaticApprovalDecision(
+        provider,
+        auditRoute,
+        service,
+        workspacePath,
+        request,
+        'autoAllow',
+        'session_yolo',
+        'session',
+        {
+          policy,
+          yoloEnabledAt: deps.sessionYoloState.enabledAt,
+          ...(ensembleApproval ? { ensembleParticipant: ensembleApproval.preview } : {})
+        }
+      )
+      return true
+    }
+    if (
+      decision === 'allow' &&
+      !request.externalPathDetection &&
+      !request.forcePrompt &&
+      !neverAutoAllow
+    ) {
+      deps.auditService.recordAutomaticApprovalDecision(
+        provider,
+        auditRoute,
+        service,
+        workspacePath,
+        request,
+        'autoAllow',
+        workspaceGrantAllowed ? 'workspace_grant' : sessionGrantAllowed ? 'session_grant' : 'policy',
+        workspaceGrantAllowed ? 'workspace' : sessionGrantAllowed ? 'session' : 'request',
+        { policy, ...(ensembleApproval ? { ensembleParticipant: ensembleApproval.preview } : {}) }
+      )
+      return true
+    }
+    const bossmanAutoMetadata = deps.bossmanAutoApprovalMetadata({
+      session,
+      ensembleRun,
+      service,
+      workspacePath,
+      request,
+      effectivePermissions,
+      policy,
+      decision,
+      neverAutoAllow
+    })
+    if (bossmanAutoMetadata) {
+      deps.auditService.recordAutomaticApprovalDecision(
+        provider,
+        auditRoute,
+        service,
+        workspacePath,
+        request,
+        'autoAllow',
+        'bossman_auto',
+        'request',
+        {
+          ...bossmanAutoMetadata,
+          ...(ensembleApproval ? { ensembleParticipant: ensembleApproval.preview } : {})
+        }
+      )
+      return true
+    }
+    if (!sender || sender.isDestroyed()) {
+      return false
+    }
+
+    const approvalId = Date.now() + '-' + Math.random().toString(36).slice(2)
+    const externalPathDetection = request.externalPathDetection
+    const requestOnly = request.forcePrompt === true && !externalPathDetection
+    const actions: AgentApprovalAction[] = externalPathDetection
+      ? ['grantExternalPathRead', 'grantExternalPathEdit', 'declineExternalPath']
+      : requestOnly
+        ? ['accept', 'decline', 'cancel']
+        : approvalActionsForPolicy(policy, workspacePath, service)
+    const baseTitle = externalPathDetection ? deps.externalPathApprovalTitle() : request.title
+    const baseBody = externalPathDetection
+      ? deps.externalPathApprovalBody(externalPathDetection)
+      : request.body
+    const title = ensembleApproval ? `${ensembleApproval.label}: ${baseTitle}` : baseTitle
+    const body = ensembleApproval ? `${ensembleApproval.bodyPrefix}\n\n${baseBody}` : baseBody
+    return new Promise((resolveApproval) => {
+      deps.getApprovalService()?.registerGeminiTool(approvalId, {
+        provider,
+        service,
+        workspacePath,
+        runId: request.runId,
+        externalPathDetection,
+        requestOnly,
+        allowedActions: actions,
+        resolve: resolveApproval
+      })
+      deps.runManager.registerApproval(request.runId, approvalId)
+      deps.scheduleApprovalTimeout({
+        approvalId,
+        provider,
+        route: {
+          appRunId: request.runId,
+          appChatId: deps.runManager.get(request.runId)?.appChatId
+        },
+        kind: request.method
+      })
+      const approvalPayload = {
+        provider,
+        appRunId: session?.runId,
+        appChatId: session?.appChatId,
+        id: approvalId,
+        approvalId,
+        method: request.method,
+        title,
+        body,
+        preview: {
+          ...(request.preview || {}),
+          actions,
+          ...(requestOnly
+            ? {
+                requestOnly: true,
+                requestOnlyReason:
+                  'This approval is per-call only; session/workspace grants are disabled for this request.'
+              }
+            : {}),
+          ...(ensembleApproval ? { ensembleParticipant: ensembleApproval.preview } : {}),
+          ...(externalPathDetection
+            ? {
+                externalPathDetection: deps.externalPathApprovalPreview(externalPathDetection)
+              }
+            : {})
+        },
+        actions
+      }
+      deps.appendDurableRunEventForRoute(
+        provider,
+        { appRunId: session?.runId, appChatId: session?.appChatId },
+        'approval_request',
+        'control',
+        title,
+        approvalPayload
+      )
+      deps.recordApprovalLedgerRequest(
+        provider,
+        { appRunId: session?.runId, appChatId: session?.appChatId },
+        approvalPayload,
+        {
+          service,
+          workspacePath,
+          metadata: {
+            policy,
+            ...(ensembleApproval ? { ensembleParticipant: ensembleApproval.preview } : {})
+          }
+        }
+      )
+      deps.safeSendToSender(sender, 'agent-approval-request', approvalPayload)
+      // Fan out a wake-push to any paired iOS device so the user can
+      // approve the agentic-service request away from the desktop.
+      deps.notifyPairedDevicesOfApproval({
+        approvalId,
+        workspaceId: deps.workspaceIdForApprovalPush(workspacePath),
+        threadId: session?.appChatId ?? request.runId ?? approvalId,
+        summary: title
+      })
+    })
+  }
+}
