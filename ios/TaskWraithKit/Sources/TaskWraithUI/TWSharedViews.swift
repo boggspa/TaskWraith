@@ -977,9 +977,24 @@ struct ProviderModelPicker: View {
         }
     }
 
+    // A nil modelId means "inherit / provider default". We no longer offer a
+    // synthetic "Default" row, so resolve nil -> the catalog's concrete
+    // isDefault model for DISPLAY only. Dispatch keeps sending nil (the Mac
+    // inherits + normalizes), so this never stamps a concrete id onto the chat.
+    private var resolvedDefaultModel: ModelOption? {
+        currentCatalog?.models.first(where: { $0.isDefault == true })
+            ?? currentCatalog?.models.first
+    }
+    private var displayModelId: String? { modelId ?? resolvedDefaultModel?.id }
+    private var displayModelLabel: String? {
+        if let modelId { return shortModelLabel(modelId) }
+        return resolvedDefaultModel.map { $0.label ?? $0.id }
+    }
+
     private var providerModelAccessibilityValue: String {
-        let modelLabel = modelId.map(shortModelLabel) ?? "Default"
-        let providerName = TWTheme.providerLabel(provider, modelId: modelId, modelLabel: modelLabel)
+        let modelLabel = displayModelLabel ?? "default model"
+        let providerName = TWTheme.providerLabel(
+            provider, modelId: displayModelId, modelLabel: displayModelLabel)
         var value = "\(providerName), \(modelLabel)"
         if let reasoningLabel {
             value += ", \(reasoningLabel) reasoning"
@@ -992,16 +1007,16 @@ struct ProviderModelPicker: View {
         // text is the tap target; no pill chrome. Ollama-backed display
         // brands spoof their upstream brand name + hue (e.g. Qwen → Alibaba)
         // so the pill matches the transcript header and the Mac.
-        let modelLabel = modelId.map(shortModelLabel)
+        let modelLabel = displayModelLabel
         return HStack(spacing: 6) {
             Circle()
-                .fill(TWTheme.providerAccent(provider, modelId: modelId, modelLabel: modelLabel))
+                .fill(TWTheme.providerAccent(provider, modelId: displayModelId, modelLabel: modelLabel))
                 .frame(width: 7, height: 7)
-            Text(TWTheme.providerLabel(provider, modelId: modelId, modelLabel: modelLabel))
+            Text(TWTheme.providerLabel(provider, modelId: displayModelId, modelLabel: modelLabel))
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(
-                    TWTheme.providerAccent(provider, modelId: modelId, modelLabel: modelLabel))
-            Text(modelLabel ?? "Default")
+                    TWTheme.providerAccent(provider, modelId: displayModelId, modelLabel: modelLabel))
+            Text(modelLabel ?? "")
                 .font(.caption)
                 .foregroundStyle(TWTheme.textPrimary)
                 .lineLimit(1)
@@ -1104,13 +1119,13 @@ struct ProviderModelPicker: View {
     private func modelRows(for catalog: ProviderModelCatalog) -> some View {
         let isCurrentProvider = catalog.provider.lowercased() == provider.lowercased()
         let accent = TWTheme.providerAccent(catalog.provider)
-        pickerRow(title: "Default", selected: isCurrentProvider && modelId == nil, accent: accent) {
-            selectDefault(in: catalog)
-        }
+        // No synthetic "Default" row — a nil modelId marks the provider's
+        // concrete isDefault model as selected so the checkmark still lands.
         ForEach(catalog.models) { option in
             pickerRow(
                 title: option.label ?? option.id,
-                selected: isCurrentProvider && modelId == option.id,
+                selected: isCurrentProvider
+                    && (modelId == option.id || (modelId == nil && option.isDefault == true)),
                 accent: accent,
                 disabled: option.disabled == true
             ) {
@@ -1176,15 +1191,6 @@ struct ProviderModelPicker: View {
         .buttonStyle(.plain)
         .disabled(disabled)
         .opacity(disabled ? 0.55 : 1)
-    }
-
-    private func selectDefault(in catalog: ProviderModelCatalog) {
-        if allowsProviderChange {
-            provider = catalog.provider
-        }
-        modelId = nil
-        twNormalizeReasoningSelection(
-            catalog: catalog, modelId: nil, reasoningEffort: &reasoningEffort)
     }
 
     private func selectModel(_ option: ModelOption, in catalog: ProviderModelCatalog) {
@@ -1302,7 +1308,6 @@ private struct ProviderModelPickerSheet: View {
                     }
                 } else {
                     Section(TWTheme.providerLabel(provider)) {
-                        defaultModelRow(for: currentCatalog)
                         ForEach(currentCatalog?.models ?? []) { option in
                             modelRow(option, catalog: currentCatalog)
                         }
@@ -1348,7 +1353,6 @@ private struct ProviderModelPickerSheet: View {
                 set: { expandedProvider = $0 ? catalog.provider.lowercased() : nil }
             )
         ) {
-            defaultModelRow(for: catalog, indented: true)
             ForEach(catalog.models) { option in
                 modelRow(option, catalog: catalog, indented: true)
             }
@@ -1375,45 +1379,14 @@ private struct ProviderModelPickerSheet: View {
         .tint(accent)
     }
 
-    private func defaultModelRow(
-        for catalog: ProviderModelCatalog?, indented: Bool = false
-    ) -> some View {
-        let selected =
-            catalog?.provider.lowercased() == provider.lowercased() && modelId == nil
-        return Button {
-            if let catalog, allowsProviderChange {
-                provider = catalog.provider
-            }
-            modelId = nil
-            normalizeReasoningSelection(catalog: catalog, selectedModelId: nil)
-            let hasReasoning = !twReasoningOptions(in: catalog, modelId: nil).isEmpty
-            if dismissesOnSelection && !hasReasoning { dismiss() }
-        } label: {
-            HStack(spacing: 10) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Default")
-                        .foregroundStyle(TWTheme.textPrimary)
-                    Text("Use the selected provider's default model")
-                        .font(.caption)
-                        .foregroundStyle(TWTheme.textSecondary)
-                }
-                Spacer()
-                if selected {
-                    Image(systemName: "checkmark")
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(TWTheme.providerAccent(catalog?.provider ?? provider))
-                }
-            }
-            .padding(.leading, indented ? 18 : 0)
-        }
-        .buttonStyle(.plain)
-    }
-
     private func modelRow(
         _ option: ModelOption, catalog: ProviderModelCatalog?, indented: Bool = false
     ) -> some View {
+        // A nil modelId selects the provider's concrete isDefault model (the
+        // synthetic "Default" row was removed).
         let selected =
-            catalog?.provider.lowercased() == provider.lowercased() && modelId == option.id
+            catalog?.provider.lowercased() == provider.lowercased()
+            && (modelId == option.id || (modelId == nil && option.isDefault == true))
         let disabled = option.disabled == true
         return Button {
             guard !disabled else { return }
@@ -8295,7 +8268,11 @@ struct SideChatsPanel: View {
                     model.createSideChat(
                         card,
                         provider: createProvider,
-                        model: createModelId ?? "default",
+                        // Pass nil (not the string "default") when no model was
+                        // picked — the wire builder omits the key and the Mac
+                        // resolves the provider default; "default" isn't a valid
+                        // Codex sentinel and would dispatch a bogus model.
+                        model: createModelId,
                         reasoningEffort: createReasoningEffort,
                         navigateOnAck: false
                     ) { threadId in
