@@ -4830,7 +4830,52 @@ function persistRunPermissionPostureOnChatRun(session: {
   broadcastChatUpdated(updated)
 }
 
-function normalizeAgentRunPayload(rawPayload: unknown): AgentRunPayload {
+/**
+ * Explicit dependencies for `normalizeAgentRunPayload` — the universal
+ * run-dispatch trust boundary (M3-1a seam-first slice per
+ * `design-next-extraction-spec`). Every field below closes over
+ * index.ts-scoped runtime state (the external-grant signing secret, the
+ * AppStore singleton, Electron paths, or fs realpath); injecting them makes
+ * the normalizer independently unit-testable without a full Electron +
+ * AppStore bootstrap and lets the eventual `run/AgentRunNormalizer.ts` module
+ * (M3-1b) consume the secret ONLY via the `verifyRunPosture` /
+ * `normalizeExternalPathGrants` / `isMainIssuedExternalPathGrant` closures —
+ * never by re-reading it. Pattern mirrors the landed `RunCoordinatorDeps`.
+ * Body stays inline this slice; zero behaviour change (each dep IS the exact
+ * function the body previously referenced directly).
+ */
+interface AgentRunNormalizerDeps {
+  /** Verify an HMAC-bound run-permission-posture signature (signing secret).
+   *  Currently `verifyRunPosture`. */
+  verifyRunPosture: (
+    approvalMode: string | null | undefined,
+    effectivePermissions: EffectiveRunPermissions | null | undefined,
+    signature: string | null | undefined,
+    context?: RunPermissionPostureContext | null
+  ) => boolean
+  /** Integrity-check + canonicalize external path grants (signing secret + fs
+   *  realpath). Currently `normalizeExternalPathGrants`. */
+  normalizeExternalPathGrants: (grants?: ExternalPathGrant[]) => ExternalPathGrant[]
+  /** Timing-safe main-issued-grant check (signing secret). Currently
+   *  `isMainIssuedExternalPathGrant`. */
+  isMainIssuedExternalPathGrant: (grant: ExternalPathGrant) => boolean
+  /** Resolve + assert a saved GLOBAL chat by id (AppStore). Currently
+   *  `requireGlobalChat`. */
+  requireGlobalChat: (chatId: unknown, label?: string) => ChatRecord
+  /** Canonical cwd for global-mode runs (Electron `app.getPath('home')`).
+   *  Currently `globalRunCwd`. */
+  globalRunCwd: () => string
+  /** Home-expand + resolve a workspace path. Currently `canonicalPath`. */
+  canonicalWorkspacePath: (value: string) => string
+  /** Read current app settings for the posture re-derivation closures
+   *  (AppStore). Currently `AppStore.getSettings`. */
+  getSettings: () => ReturnType<typeof AppStore.getSettings>
+}
+
+function normalizeAgentRunPayload(
+  rawPayload: unknown,
+  deps: AgentRunNormalizerDeps
+): AgentRunPayload {
   const payload = requireRecord(rawPayload, 'Run payload')
   // Universal run-dispatch chokepoint (renderer + main-built ensemble / sub-thread
   // / solo all flow through here): a retired provider can never start a new run.
@@ -4840,7 +4885,7 @@ function normalizeAgentRunPayload(rawPayload: unknown): AgentRunPayload {
     ? (payload.externalPathGrants as ExternalPathGrant[])
     : []
   const externalPathGrants = rawExternalPathGrants.length
-    ? normalizeExternalPathGrants(rawExternalPathGrants)
+    ? deps.normalizeExternalPathGrants(rawExternalPathGrants)
     : []
   if (
     rawExternalPathGrants.some(
@@ -4850,7 +4895,7 @@ function normalizeAgentRunPayload(rawPayload: unknown): AgentRunPayload {
         grant.issuedBy === 'main' &&
         typeof grant.signature === 'string' &&
         grant.signature.length > 0 &&
-        !isMainIssuedExternalPathGrant(grant as ExternalPathGrant)
+        !deps.isMainIssuedExternalPathGrant(grant as ExternalPathGrant)
     )
   ) {
     throw new Error('External path grants must be issued by TaskWraith in this app session.')
@@ -4859,14 +4904,14 @@ function normalizeAgentRunPayload(rawPayload: unknown): AgentRunPayload {
   let workspace: string | undefined
   let scopedExternalPathGrants = externalPathGrants.filter((grant) => grant.provider === provider)
   if (scope === 'global') {
-    requireGlobalChat(appChatId, 'Run global chat')
-    workspace = globalRunCwd()
+    deps.requireGlobalChat(appChatId, 'Run global chat')
+    workspace = deps.globalRunCwd()
     if (rawExternalPathGrants.length > 0) {
       throw new Error('Global chats use approval prompts instead of external path grants.')
     }
     scopedExternalPathGrants = []
   } else {
-    workspace = canonicalPath(requireNonEmptyString(payload.workspace, 'Workspace'))
+    workspace = deps.canonicalWorkspacePath(requireNonEmptyString(payload.workspace, 'Workspace'))
   }
   const suppliedEffectivePermissions = isRecord(payload.effectivePermissions)
     ? (payload.effectivePermissions as unknown as EffectiveRunPermissions)
@@ -4896,19 +4941,19 @@ function normalizeAgentRunPayload(rawPayload: unknown): AgentRunPayload {
       })
     },
     {
-      verify: verifyRunPosture,
+      verify: deps.verifyRunPosture,
       reDeriveReadOnly: () =>
         resolveEffectiveRunPermissions({
           provider,
           workspacePath: scope === 'global' ? undefined : workspace,
-          settings: AppStore.getSettings(),
+          settings: deps.getSettings(),
           presetId: 'read_only'
         }),
       reDeriveDefault: () =>
         resolveEffectiveRunPermissions({
           provider,
           workspacePath: undefined,
-          settings: AppStore.getSettings(),
+          settings: deps.getSettings(),
           presetId: 'default'
         })
     }
@@ -29927,8 +29972,21 @@ if (isGeminiMcpBridgeProcess) {
     // in src/main/services/RunCoordinator.ts where it's testable with
     // mocked dependencies. Behaviour is byte-identical to the previous
     // inline version.
+    // M3-1a seam: the explicit dep bundle `normalizeAgentRunPayload` now
+    // receives. Built ONCE here (every field is a module-scope function ref /
+    // AppStore accessor — capturing refs, so the signing secret is only read
+    // when these closures are later invoked, never at build time).
+    const agentRunNormalizerDeps: AgentRunNormalizerDeps = {
+      verifyRunPosture,
+      normalizeExternalPathGrants,
+      isMainIssuedExternalPathGrant,
+      requireGlobalChat,
+      globalRunCwd,
+      canonicalWorkspacePath: canonicalPath,
+      getSettings: () => AppStore.getSettings()
+    }
     const runCoordinator = new RunCoordinator({
-      normalizePayload: normalizeAgentRunPayload,
+      normalizePayload: (raw) => normalizeAgentRunPayload(raw, agentRunNormalizerDeps),
       routeWithRunId,
       applyRuntimeProfileToPayload,
       ensureProviderRunPreflight,
@@ -31098,7 +31156,7 @@ if (isGeminiMcpBridgeProcess) {
           providerSessionId: resumeSessionId,
           geminiWorktree: worktree,
           ...runRoute
-        })
+        }, agentRunNormalizerDeps)
         normalizedPayload.appRunId = routeWithRunId('gemini', normalizedPayload).appRunId
         if (!(await ensureProviderRunPreflight(event.sender, normalizedPayload))) {
           return
