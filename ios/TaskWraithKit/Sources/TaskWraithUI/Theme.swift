@@ -535,16 +535,13 @@ private extension TWAppScale {
             .accessibility5
         ]
         guard let index = sizes.firstIndex(of: current) else { return current }
-        switch self {
-        case .compact:
-            // Keep explicit accessibility text sizes intact; compact layout should
+        let step = rawValue
+        if step < 0 {
+            // Keep explicit accessibility text sizes intact; compact layouts should
             // not fight a user's OS-level readability setting.
             guard current < .accessibility1 else { return current }
-            return sizes[max(0, index - 1)]
-        case .standard:
-            return current
-        case .large:
-            return sizes[min(sizes.count - 1, index + 1)]
+            return sizes[max(0, index + step)]
         }
+        return sizes[min(sizes.count - 1, index + step)]
     }
 }
