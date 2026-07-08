@@ -134,6 +134,7 @@ import type {
   DiscordContextReadMetadata
 } from '../main/channels/DiscordContextService'
 import type {
+  GitCiStatusSummary,
   GitPrReadiness,
   GitPrSummary,
   GitBranchInfo,
@@ -639,6 +640,17 @@ declare global {
         workspacePath?: string
         repoPath?: string
       }) => Promise<GitResult<GitPrReadiness>>
+      githubCiStatus: (payload: {
+        workspacePath?: string
+        repoPath?: string
+        pr?: string | number
+        branch?: string
+        commitSha?: string
+        includeFailedLogs?: boolean
+        maxRuns?: number
+        maxFailedLogs?: number
+        maxLogChars?: number
+      }) => Promise<GitResult<GitCiStatusSummary>>
       createGithubPr: (payload: {
         workspacePath?: string
         repoPath?: string

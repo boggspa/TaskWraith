@@ -132,7 +132,17 @@ function createDeps() {
       ),
       createPullRequest: vi.fn<GitHandlersDeps['gitService']['createPullRequest']>(
         async () => ({ ok: true, data: { url: 'https://example.test/pr/1' } })
-      )
+      ),
+      ciStatus: vi.fn<GitHandlersDeps['gitService']['ciStatus']>(async (input) => ({
+        ok: true,
+        data: {
+          status: 'passed',
+          binding: { branch: input.branch, commitSha: input.commitSha },
+          checks: [],
+          runs: [],
+          failedLogs: []
+        } as any
+      }))
     },
     gitSnapshotPublisher: {
       subscribe: vi.fn<NonNullable<GitHandlersDeps['gitSnapshotPublisher']>['subscribe']>(
@@ -183,6 +193,7 @@ describe('registerGitHandlers', () => {
     expect(handlerFor('git:select-worktree')).toBeTypeOf('function')
     expect(handlerFor('github:pr-status')).toBeTypeOf('function')
     expect(handlerFor('github:pr-readiness')).toBeTypeOf('function')
+    expect(handlerFor('github:ci-status')).toBeTypeOf('function')
     expect(handlerFor('create-github-pr')).toBeTypeOf('function')
   })
 
@@ -442,6 +453,42 @@ describe('registerGitHandlers', () => {
       ok: false,
       error: 'Git actions require registered workspaces or signed write grants.'
     })
+  })
+
+  it('resolves ci-status through the read grant and forwards the pr/branch selectors', async () => {
+    const { deps } = createDeps()
+    deps.getChats.mockReturnValue([createChat()])
+    deps.externalPathGrantMetadataLists.mockReturnValue([createGrant()])
+    registerGitHandlers(deps)
+
+    await expect(
+      handlerFor('github:ci-status')(
+        {},
+        { repoPath: '/granted/repo/subdir', pr: 75, branch: 'feat/x', includeFailedLogs: true }
+      )
+    ).resolves.toMatchObject({ ok: true, data: { status: 'passed' } })
+    expect(deps.gitService.ciStatus).toHaveBeenCalledWith(
+      expect.objectContaining({
+        repoPath: '/granted/repo/subdir',
+        pr: 75,
+        branch: 'feat/x',
+        includeFailedLogs: true
+      })
+    )
+  })
+
+  it('rejects ci-status for a path with no registered workspace or signed grant', async () => {
+    const { deps } = createDeps()
+    deps.getChats.mockReturnValue([])
+    registerGitHandlers(deps)
+
+    await expect(
+      handlerFor('github:ci-status')({}, { repoPath: '/not/granted' })
+    ).resolves.toEqual({
+      ok: false,
+      error: expect.any(String)
+    })
+    expect(deps.gitService.ciStatus).not.toHaveBeenCalled()
   })
 
   it('preserves path normalization and directory grant boundary matching', async () => {

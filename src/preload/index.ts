@@ -20,6 +20,7 @@ import type {
   DiscordContextSnapshot
 } from '../main/channels/DiscordContextService'
 import type {
+  GitCiStatusSummary,
   GitPrReadiness,
   GitPrSummary,
   GitRepositorySnapshot,
@@ -320,6 +321,17 @@ const api = {
     ipcRenderer.invoke('github:pr-status', payload) as Promise<GitResult<GitPrSummary>>,
   githubPrReadiness: (payload: { workspacePath?: string; repoPath?: string }) =>
     ipcRenderer.invoke('github:pr-readiness', payload) as Promise<GitResult<GitPrReadiness>>,
+  githubCiStatus: (payload: {
+    workspacePath?: string
+    repoPath?: string
+    pr?: string | number
+    branch?: string
+    commitSha?: string
+    includeFailedLogs?: boolean
+    maxRuns?: number
+    maxFailedLogs?: number
+    maxLogChars?: number
+  }) => ipcRenderer.invoke('github:ci-status', payload) as Promise<GitResult<GitCiStatusSummary>>,
   createGithubPr: (payload: {
     workspacePath?: string
     repoPath?: string

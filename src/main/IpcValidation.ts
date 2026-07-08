@@ -282,6 +282,7 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'git:select-worktree': ['optionalObject'],
   'github:pr-status': ['optionalObject'],
   'github:pr-readiness': ['optionalObject'],
+  'github:ci-status': ['optionalObject'],
   'create-github-pr': ['optionalObject'],
   'agentic-yolo-get': [],
   'agentic-yolo-set': ['boolean'],

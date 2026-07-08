@@ -1,6 +1,8 @@
 import { ipcMain, type IpcMainInvokeEvent } from 'electron'
 import type { ChatRecord, ExternalPathGrant } from '../store/types'
 import type {
+  GitCiStatusInput,
+  GitCiStatusSummary,
   GitCommitInput,
   GitCreateBranchInput,
   GitCreatePrInput,
@@ -66,6 +68,7 @@ export interface GitHandlersDeps {
     | 'pullRequestStatus'
     | 'pullRequestReadiness'
     | 'createPullRequest'
+    | 'ciStatus'
   >
   gitSnapshotPublisher?: Pick<
     GitSnapshotPublisher,
@@ -492,6 +495,37 @@ export function registerGitHandlers(deps: GitHandlersDeps): void {
     ): Promise<GitResult<GitPrReadiness> | { ok: false; error: string }> => {
       const repo = gitPayloadPath(deps, payload, 'registered-or-granted-read')
       return repo.ok ? deps.gitService.pullRequestReadiness(repo.path) : repo
+    }
+  )
+
+  ipcMain.handle(
+    'github:ci-status',
+    async (
+      _event,
+      payload?: GitIpcPayload &
+        Pick<
+          GitCiStatusInput,
+          | 'pr'
+          | 'branch'
+          | 'commitSha'
+          | 'includeFailedLogs'
+          | 'maxRuns'
+          | 'maxFailedLogs'
+          | 'maxLogChars'
+        >
+    ): Promise<GitResult<GitCiStatusSummary> | { ok: false; error: string }> => {
+      const repo = gitPayloadPath(deps, payload, 'registered-or-granted-read')
+      if (!repo.ok) return repo
+      return deps.gitService.ciStatus({
+        repoPath: repo.path,
+        pr: payload?.pr,
+        branch: payload?.branch,
+        commitSha: payload?.commitSha,
+        includeFailedLogs: payload?.includeFailedLogs,
+        maxRuns: payload?.maxRuns,
+        maxFailedLogs: payload?.maxFailedLogs,
+        maxLogChars: payload?.maxLogChars
+      })
     }
   )
 
