@@ -297,6 +297,9 @@ export interface RemoteTaskCard {
   grokReasoningEffort?: string
   cursorReasoningEffort?: string
   cursorFastMode?: boolean
+  claudeFastMode?: boolean
+  codexServiceTier?: string
+  kimiThinkingEnabled?: boolean
   /** Slice B (provider unlock): a provider/model/reasoning switch queued while
    *  a run is active, applied at turn end. Remote composers show a "switching at
    *  turn end" pill and reflect the queued target instead of snapping the picker
@@ -1159,6 +1162,15 @@ export function buildRemoteTaskCard(
   }
   if (typeof providerMetadata.cursorFastMode === 'boolean') {
     card.cursorFastMode = providerMetadata.cursorFastMode
+  }
+  if (typeof providerMetadata.claudeFastMode === 'boolean') {
+    card.claudeFastMode = providerMetadata.claudeFastMode
+  }
+  if (isString(providerMetadata.codexServiceTier)) {
+    card.codexServiceTier = providerMetadata.codexServiceTier
+  }
+  if (typeof providerMetadata.kimiThinkingEnabled === 'boolean') {
+    card.kimiThinkingEnabled = providerMetadata.kimiThinkingEnabled
   }
   const pendingProviderChange = readPendingProviderChange(chat)
   if (pendingProviderChange) {

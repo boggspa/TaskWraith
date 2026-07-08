@@ -129,6 +129,12 @@ export interface BridgeComposerPromptAction extends BridgeActionMetadata {
   cursorReasoningEffort?: string | null
   /** Cursor Fast tier toggle. Valid only for Cursor Grok 4.5. */
   cursorFastMode?: boolean
+  /** Claude Fast-mode toggle (SDK/CLI `--settings {fastMode}`). Opus/Fable only. */
+  claudeFastMode?: boolean
+  /** Codex service-tier override, e.g. `'fast'`. */
+  codexServiceTier?: string | null
+  /** Kimi "thinking" toggle. Absent means ON (matches appendKimiThinkingArgs default). */
+  kimiThinkingEnabled?: boolean
   /** Optional context-turn count (0–20 per the plan's standard payload). */
   contextTurns?: number
   /** Phone-attached images (downscaled JPEG/PNG, base64). The executor
@@ -1439,6 +1445,11 @@ function isComposerPrompt(v: Record<string, unknown>): boolean {
       v.cursorReasoningEffort === null ||
       typeof v.cursorReasoningEffort === 'string') &&
     (v.cursorFastMode === undefined || typeof v.cursorFastMode === 'boolean') &&
+    (v.claudeFastMode === undefined || typeof v.claudeFastMode === 'boolean') &&
+    (v.codexServiceTier === undefined ||
+      v.codexServiceTier === null ||
+      typeof v.codexServiceTier === 'string') &&
+    (v.kimiThinkingEnabled === undefined || typeof v.kimiThinkingEnabled === 'boolean') &&
     (v.imageAttachments === undefined || isImageAttachments(v.imageAttachments)) &&
     (v.contextTurns === undefined ||
       (typeof v.contextTurns === 'number' &&

@@ -25321,6 +25321,18 @@ if (isGeminiMcpBridgeProcess) {
             typeof providerMetadata.cursorFastMode === 'boolean'
               ? providerMetadata.cursorFastMode
               : undefined
+          const metadataClaudeFastMode =
+            typeof providerMetadata.claudeFastMode === 'boolean'
+              ? providerMetadata.claudeFastMode
+              : undefined
+          const metadataCodexServiceTier =
+            typeof providerMetadata.codexServiceTier === 'string'
+              ? providerMetadata.codexServiceTier
+              : undefined
+          const metadataKimiThinkingEnabled =
+            typeof providerMetadata.kimiThinkingEnabled === 'boolean'
+              ? providerMetadata.kimiThinkingEnabled
+              : undefined
           // Model inheritance: a phone send without an explicit model means
           // "whatever this chat was using" — falling to the provider
           // default reset continuations (catastrophic for Ollama, where
@@ -25354,6 +25366,22 @@ if (isGeminiMcpBridgeProcess) {
           const inheritedCursorFastMode =
             provider === 'cursor' && isCursorGrok45ModelId(inheritedReasoningCapabilityModel)
               ? (action.cursorFastMode ?? metadataCursorFastMode ?? false)
+              : undefined
+          // Claude Fast + Codex service-tier + Kimi thinking, phone-sent (with
+          // chat-metadata fallback). Provider-gated so the single-valued run
+          // never sets conflicting fields; serviceTier is shared by codex+cursor
+          // (mutually exclusive by provider). nil kimiThinking stays ON.
+          const inheritedClaudeFastMode =
+            provider === 'claude'
+              ? (action.claudeFastMode ?? metadataClaudeFastMode ?? false)
+              : undefined
+          const inheritedCodexServiceTier =
+            provider === 'codex'
+              ? (action.codexServiceTier ?? metadataCodexServiceTier ?? null)
+              : undefined
+          const inheritedKimiThinkingEnabled =
+            provider === 'kimi'
+              ? (action.kimiThinkingEnabled ?? metadataKimiThinkingEnabled ?? true)
               : undefined
           const run: ChatRun = {
             runId,
@@ -25520,6 +25548,15 @@ if (isGeminiMcpBridgeProcess) {
             ...(inheritedReasoningEffort ? { reasoningEffort: inheritedReasoningEffort } : {}),
             ...(inheritedCursorFastMode !== undefined
               ? { serviceTier: inheritedCursorFastMode ? 'fast' : null }
+              : {}),
+            ...(inheritedCodexServiceTier !== undefined
+              ? { serviceTier: inheritedCodexServiceTier }
+              : {}),
+            ...(inheritedClaudeFastMode !== undefined
+              ? { claudeFastMode: inheritedClaudeFastMode }
+              : {}),
+            ...(inheritedKimiThinkingEnabled !== undefined
+              ? { kimiThinking: inheritedKimiThinkingEnabled }
               : {}),
             ...(inheritedClaudeReasoningEffort
               ? { claudeReasoningEffort: inheritedClaudeReasoningEffort }
