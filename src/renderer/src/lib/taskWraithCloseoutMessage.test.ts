@@ -81,7 +81,7 @@ describe('taskWraithCloseoutMessage', () => {
     expect(closeout.role).toBe('system')
     expect(closeout.metadata?.kind).toBe(TASKWRAITH_CLOSEOUT_KIND)
     expect(closeout.metadata?.closeoutSource).toBe('deterministicFallback')
-    expect(closeout.content).toContain('Worked for 39s')
+    expect(closeout.content).toContain('**Worked for 39s**')
     expect(closeout.content).toContain('Implemented the feature.')
     expect(closeout.content).not.toContain('Changed:')
     expect(closeout.content).toContain('**Commits**')
@@ -198,7 +198,7 @@ describe('taskWraithCloseoutMessage', () => {
     expect(closeout.metadata?.ensembleRoundId).toBeUndefined()
   })
 
-  it('attributes the participant summary to individual @-tagged members with turn counts', () => {
+  it('attributes the participant summary to individual @-tagged members with turn counts and tokens', () => {
     const round: EnsembleRoundState = {
       roundId: 'round-2',
       status: 'completed',
@@ -218,28 +218,32 @@ describe('taskWraithCloseoutMessage', () => {
         provider: 'codex',
         startedAt: '2026-07-07T12:00:00.000Z',
         ensembleRoundId: 'round-2',
-        ensembleParticipantId: 'p1'
+        ensembleParticipantId: 'p1',
+        stats: { input_tokens: 1000, output_tokens: 200 }
       },
       {
         runId: 'run-p1b',
         provider: 'codex',
         startedAt: '2026-07-07T12:00:10.000Z',
         ensembleRoundId: 'round-2',
-        ensembleParticipantId: 'p1'
+        ensembleParticipantId: 'p1',
+        stats: { input_tokens: 300, output_tokens: 50 }
       },
       {
         runId: 'run-p2',
         provider: 'claude',
         startedAt: '2026-07-07T12:00:00.000Z',
         ensembleRoundId: 'round-2',
-        ensembleParticipantId: 'p2'
+        ensembleParticipantId: 'p2',
+        stats: { input_tokens: 400, output_tokens: 100 }
       },
       {
         runId: 'run-p4',
         provider: 'kimi',
         startedAt: '2026-07-07T12:00:00.000Z',
         ensembleRoundId: 'round-2',
-        ensembleParticipantId: 'p4'
+        ensembleParticipantId: 'p4',
+        stats: { input_tokens: 200, output_tokens: 100 }
       }
     ]
     const closeout = buildTaskWraithRoundCloseoutMessage({
@@ -253,10 +257,14 @@ describe('taskWraithCloseoutMessage', () => {
     })
 
     expect(closeout.content).toContain('**Participants**')
-    expect(closeout.content).toContain('| Participant | Turns | Status |')
-    expect(closeout.content).toContain('| [@Builder](ensemble-dm://p1) | 2 | answered |')
-    expect(closeout.content).toContain('| [@Reviewer](ensemble-dm://p2) | 1 | yielded |')
-    expect(closeout.content).toContain('| [@Cursor](ensemble-dm://p3) | 0 | skipped |')
-    expect(closeout.content).toContain('| [@Kimi](ensemble-dm://p4) | 1 | failed |')
+    expect(closeout.content).toContain('| Participant | Turns | Tokens | Status |')
+    expect(closeout.content).toContain('| [@Builder](ensemble-dm://p1) | 2 | 2k | answered |')
+    expect(closeout.content).toContain('| [@Reviewer](ensemble-dm://p2) | 1 | 500 | yielded |')
+    expect(closeout.content).toContain('| [@Cursor](ensemble-dm://p3) | 0 | — | skipped |')
+    expect(closeout.content).toContain('| [@Kimi](ensemble-dm://p4) | 1 | 300 | failed |')
+    expect(closeout.content).toContain(
+      '| **Round Total** | 4 | 2k | 1 answered, 1 yielded, 1 skipped, 1 failed |'
+    )
+    expect(closeout.content).not.toContain('- Tokens:')
   })
 })

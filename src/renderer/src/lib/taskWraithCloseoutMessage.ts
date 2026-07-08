@@ -90,8 +90,6 @@ export function buildTaskWraithRoundCloseoutMessage(input: {
   if (participantLine) lines.push(`- Participants: ${participantLine}.`)
   const summaryLine = roundSummaryLine(chat, round.roundId)
   if (summaryLine) lines.push(`- Summary: ${summaryLine}`)
-  const tokenLine = tokenSummaryLine(roundRuns)
-  if (tokenLine) lines.push(`- Tokens: ${tokenLine}.`)
   const goalLine = goalSummaryLine(chat.activeGoal, input.now)
   if (goalLine) lines.push(`- Goal: ${goalLine}`)
   lines.push(
@@ -165,7 +163,9 @@ function durationBetween(startedAt?: string, endedAt?: string): number {
 }
 
 function formatWorkedFor(durationMs: number): string {
-  return durationMs > 0 ? `Worked for ${formatCompactDuration(durationMs)}` : 'Worked for a moment'
+  return durationMs > 0
+    ? `**Worked for ${formatCompactDuration(durationMs)}**`
+    : '**Worked for a moment**'
 }
 
 function formatCompactDuration(durationMs: number): string {
@@ -254,16 +254,54 @@ function formatParticipantTableSection(round: EnsembleRoundState, roundRuns: Cha
   const participants = round.participants || []
   if (participants.length === 0) return []
   const turnCounts = new Map<string, number>()
+  const tokenCounts = new Map<string, number>()
   for (const run of roundRuns) {
     if (!run.ensembleParticipantId) continue
     turnCounts.set(run.ensembleParticipantId, (turnCounts.get(run.ensembleParticipantId) || 0) + 1)
+    tokenCounts.set(
+      run.ensembleParticipantId,
+      (tokenCounts.get(run.ensembleParticipantId) || 0) +
+        extractUsageCountsFromCandidate(run.stats).totalTokens
+    )
   }
+  const totalTurns = Array.from(turnCounts.values()).reduce((sum, count) => sum + count, 0)
+  const totalTokens = Array.from(tokenCounts.values()).reduce((sum, count) => sum + count, 0)
   const rows = participants.map((participant) => {
-    const label = escapeMarkdownTableCell(participant.role?.trim() || getProviderLabel(participant.provider))
+    const label = escapeMarkdownTableCell(
+      participant.role?.trim() || getProviderLabel(participant.provider)
+    )
     const turns = turnCounts.get(participant.participantId) || 0
-    return `| [@${label}](ensemble-dm://${participant.participantId}) | ${turns} | ${participant.status} |`
+    const tokens = tokenCounts.get(participant.participantId) || 0
+    const tokenCell = formatParticipantTokenCell(tokens)
+    return `| [@${label}](ensemble-dm://${participant.participantId}) | ${turns} | ${tokenCell} | ${participant.status} |`
   })
-  return ['', '**Participants**', '', '| Participant | Turns | Status |', '| --- | --- | --- |', ...rows]
+  const totalTokenCell = formatParticipantTokenCell(totalTokens)
+  const totalStatusCell = formatStatusCountSummary(participants)
+  rows.push(
+    `| **Round Total** | ${totalTurns} | ${totalTokenCell} | ${totalStatusCell} |`
+  )
+  return [
+    '',
+    '**Participants**',
+    '',
+    '| Participant | Turns | Tokens | Status |',
+    '| --- | --- | --- | --- |',
+    ...rows
+  ]
+}
+
+function formatParticipantTokenCell(totalTokens: number): string {
+  return totalTokens > 0 ? formatContextTokens(totalTokens) : '—'
+}
+
+function formatStatusCountSummary(participants: EnsembleRoundState['participants']): string {
+  const counts = new Map<string, number>()
+  for (const participant of participants) {
+    counts.set(participant.status, (counts.get(participant.status) || 0) + 1)
+  }
+  return Array.from(counts.entries())
+    .map(([status, count]) => `${count} ${status}`)
+    .join(', ')
 }
 
 const CLOSEOUT_COMMIT_TABLE_LIMIT = 8
@@ -384,7 +422,7 @@ function extractCommitsFromText(text: string): CloseoutCommit[] {
   const normalized = normalizeCommitText(text)
   const commits = new Map<string, CloseoutCommit>()
   const bracketPattern =
-    /\[([^\]\n]*)\s([0-9a-f]{7,40})\]\s*([^\n]+)(?:\n([^\n\[]+))?/gi
+    /\[([^\]\n]*)\s([0-9a-f]{7,40})\]\s*([^\n]+)(?:\n([^\n[]+))?/gi
   let match: RegExpExecArray | null
   while ((match = bracketPattern.exec(normalized)) !== null) {
     const hash = match[2]

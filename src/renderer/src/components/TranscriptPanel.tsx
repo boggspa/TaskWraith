@@ -22,11 +22,7 @@ import { shortModelName } from '../lib/composerChipFormat'
 import { shouldSurfaceProposedPlanCard } from '../lib/ensemblePlanPolicy'
 import { deriveParticipantRenameContinuity } from '../lib/sessionActivityLedger'
 import { shouldCollapseUserMessage, truncateUserMessagePreview } from '../lib/UserMessageCollapse'
-import {
-  buildEnsembleRoundTokenDetails,
-  buildEscalationChips,
-  buildRunCompleteTokenDetails
-} from '../lib/runCompleteSummary'
+import { buildEscalationChips } from '../lib/runCompleteSummary'
 import { decideMeasurePass, MAX_MEASURE_REWRITE_PASSES } from '../lib/transcriptMeasureConvergence'
 import { deriveQueuedLifecycleProjection } from '../lib/queuedMessageRows'
 import {
@@ -276,43 +272,6 @@ function ActivityStackSpeakerHeader({
         )}
       </div>
     </div>
-  )
-}
-
-function RunDetailsBossIcon(): ReactElement {
-  return (
-    <svg viewBox="0 0 24 24" width="12" height="12" aria-hidden focusable="false">
-      <path
-        d="M4.7 17.8h14.6l1.2-9.1-4.8 3.4-3.7-6-3.7 6-4.8-3.4 1.2 9.1Z"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinejoin="round"
-      />
-      <path d="M5.4 20h13.2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-    </svg>
-  )
-}
-
-function RunDetailsCaptainIcon(): ReactElement {
-  return (
-    <svg viewBox="0 0 24 24" width="12" height="12" aria-hidden focusable="false">
-      <path
-        d="M5.2 15.8c2.3 1.2 11.3 1.2 13.6 0"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.9"
-        strokeLinecap="round"
-      />
-      <path
-        d="M6.8 14.8 8 9.7c.3-1.1 1.2-1.8 2.3-1.8h3.4c1.1 0 2 .7 2.3 1.8l1.2 5.1"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.9"
-        strokeLinejoin="round"
-      />
-      <path d="M9.3 9.2c1.2 1 4.2 1 5.4 0" fill="none" stroke="currentColor" strokeWidth="1.5" />
-    </svg>
   )
 }
 
@@ -929,14 +888,6 @@ function workingAccentStyle(presentation: WorkingIndicatorPresentation): CSSProp
   } as CSSProperties
 }
 
-function runDetailsAccentStyle(providerClass: string): CSSProperties | undefined {
-  const safeProviderClass = providerClass.replace(/[^a-z0-9-]/gi, '')
-  if (!safeProviderClass) return undefined
-  return {
-    '--run-complete-token-accent': `var(--provider-${safeProviderClass}-color, var(--accent))`
-  } as CSSProperties
-}
-
 function fileChangeOwnerLabel(owner: DiffFileSummaryOwner): string {
   if (owner.role) return owner.role
   if (owner.provider) return getProviderLabel(owner.provider)
@@ -1023,13 +974,6 @@ function FileChangePathCell({ path }: { path: string }): ReactElement {
       <span className="file-change-summary-path-tail">{filePathTailSegments(path)}</span>
     </span>
   )
-}
-
-function runDetailsGridTemplate(participantCount: number): string {
-  const dense = participantCount >= 6
-  const participantTrack = dense ? 'minmax(64px, 1fr)' : 'minmax(92px, 1fr)'
-  const totalTrack = dense ? 'minmax(86px, auto)' : 'minmax(92px, auto)'
-  return `repeat(${participantCount}, ${participantTrack}) ${totalTrack}`
 }
 
 function TranscriptMessageFooter({
@@ -2092,15 +2036,6 @@ export const TranscriptPanel = memo(
     }, [messageContextMenu, visibleMessages])
     const shouldShowRunCompleteNotice =
       Boolean(runCompleteNotice && !isWelcomeChat && !shouldSuppressRunCompleteSummary(runCompleteNotice))
-    const runCompleteTokenDetails = useMemo(() => {
-      // Keep the run-complete card focused on turn token usage. Ensemble
-      // chats render participants in P-order; solo chats render the single
-      // provider as P1.
-      if (currentChat?.chatKind === 'ensemble' && currentChat.ensemble?.activeRound) {
-        return buildEnsembleRoundTokenDetails(currentChat)
-      }
-      return buildRunCompleteTokenDetails(currentRun)
-    }, [currentChat, currentRun])
     // 1.0.7 (M5 surfacing) — advisory chips for the dark-shipped escalation
     // signals on the current round. Read-only: the orchestrator persists
     // these; we just surface label + recommended action.
@@ -4023,75 +3958,6 @@ export const TranscriptPanel = memo(
                   )}
                 </div>
               </div>
-              {!isGlobal && runCompleteTokenDetails && (
-                <div className="run-complete-summary-card">
-                  <div className="run-complete-summary-header">
-                    <strong>Run details</strong>
-                  </div>
-                  <div
-                    className={`run-complete-token-table${
-                      runCompleteTokenDetails.participants.length >= 6 ? ' is-dense' : ''
-                    }`}
-                    role="table"
-                    aria-label="Run token usage by participant"
-                    style={{
-                      gridTemplateColumns: runDetailsGridTemplate(
-                        runCompleteTokenDetails.participants.length
-                      )
-                    }}
-                  >
-                    {runCompleteTokenDetails.participants.map((participant, index) => (
-                      <div
-                        key={participant.id}
-                        className={`run-complete-token-participant${index === 0 ? ' is-row-start' : ''}`}
-                        role="columnheader"
-                        title={participant.title}
-                        style={runDetailsAccentStyle(participant.providerClass)}
-                      >
-                        <span className="run-complete-token-icon" aria-hidden="true">
-                          <ProviderGlyph
-                            provider={participant.provider}
-                            accentProvider={participant.providerClass}
-                          />
-                        </span>
-                        <span className="run-complete-token-name">
-                          {participant.isBossman && (
-                            <span className="run-complete-token-authority is-boss" title="Boss">
-                              <RunDetailsBossIcon />
-                            </span>
-                          )}
-                          {participant.isCaptain && (
-                            <span className="run-complete-token-authority is-captain" title="Captain">
-                              <RunDetailsCaptainIcon />
-                            </span>
-                          )}
-                          <span className="run-complete-token-role">{participant.label}</span>
-                        </span>
-                      </div>
-                    ))}
-                    <div className="run-complete-token-total-label" role="columnheader">
-                      Round total
-                    </div>
-                    {runCompleteTokenDetails.participants.map((participant, index) => (
-                      <div
-                        key={`${participant.id}-tokens`}
-                        className={`run-complete-token-value${index === 0 ? ' is-row-start' : ''}`}
-                        role="cell"
-                        title={participant.title}
-                      >
-                        {participant.tokensLabel}
-                      </div>
-                    ))}
-                    <div
-                      className="run-complete-token-value run-complete-token-total-value"
-                      role="cell"
-                      title={runCompleteTokenDetails.totalTitle}
-                    >
-                      {runCompleteTokenDetails.totalLabel}
-                    </div>
-                  </div>
-                </div>
-              )}
               {!isGlobal && escalationChips.length > 0 && (
                 <div
                   className="ensemble-escalation-advisory"
