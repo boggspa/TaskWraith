@@ -3,7 +3,7 @@ export const COMPOSER_ABOVE_ROW_CLEARANCE_PX = 20
 
 /** Direct children of `.composer-above-bar-stack` that count as a row strip. */
 export const COMPOSER_ABOVE_ROW_STRIP_SELECTOR =
-  ':scope > .composer-above-bar, :scope > .ensemble-above-row, :scope > .queued-messages-above-row, :scope > .ensemble-roster-preset-picker'
+  ':scope > .composer-above-bar, :scope > .ensemble-above-row, :scope > .queued-messages-above-row, :scope > .ensemble-roster-preset-picker, :scope > .github-satellite-row'
 
 export function countComposerAboveRowStrips(stack: Element | null): number {
   if (!stack) return 0

@@ -4658,3 +4658,340 @@
   border-color: color-mix(in srgb, var(--text-primary) 30%, transparent);
   color: var(--text-primary);
 }
+
+/*
+ * GitHub PR/CI/Merge satellite row — a compact, icon-only strip pinned above
+ * the primary above-bar. Tone colours mirror the .git-status-* chip palette so
+ * the icon language matches the text chips it replaces (open = violet, ready /
+ * merged = green, stale = amber, blocked / closed / danger = red).
+ */
+.github-satellite-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 1px 2px 3px;
+}
+.github-satellite-icon {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, currentColor 26%, transparent);
+  background: color-mix(in srgb, currentColor 11%, transparent);
+  font-size: var(--font-size-xs, 11px);
+  font-weight: 600;
+  line-height: 1;
+  color: var(--text-secondary);
+  transition:
+    background 120ms ease,
+    border-color 120ms ease;
+}
+.github-satellite-icon .tool-family-icon {
+  opacity: 0.9;
+}
+.github-satellite-icon-label {
+  font-variant-numeric: tabular-nums;
+}
+.github-satellite-icon.is-clickable {
+  cursor: pointer;
+}
+.github-satellite-icon.is-clickable:hover {
+  background: color-mix(in srgb, currentColor 20%, transparent);
+  border-color: color-mix(in srgb, currentColor 42%, transparent);
+}
+.github-satellite-icon.is-clickable:focus-visible {
+  outline: 2px solid color-mix(in srgb, currentColor 55%, transparent);
+  outline-offset: 1px;
+}
+
+/* CI status dot — filled circle + soft glow ring, mirrors the provider-auth dot. */
+.github-satellite-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: currentColor;
+  box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 22%, transparent);
+}
+
+/* Tone colours — currentColor drives the icon glyph, label, dot + pill tint. */
+.github-satellite-icon.tone-open {
+  color: #a78bfa;
+}
+.github-satellite-icon.tone-ready,
+.github-satellite-icon.tone-merged,
+.github-satellite-icon.tone-success {
+  color: #6ddfa8;
+}
+.github-satellite-icon.tone-draft {
+  color: color-mix(in srgb, var(--text-secondary) 82%, transparent);
+}
+.github-satellite-icon.tone-stale,
+.github-satellite-icon.tone-warning {
+  color: #f0c674;
+}
+.github-satellite-icon.tone-blocked,
+.github-satellite-icon.tone-closed,
+.github-satellite-icon.tone-danger {
+  color: #ff6b7a;
+}
+.github-satellite-icon.tone-muted {
+  color: var(--text-tertiary);
+}
+
+/* Light-family themes — mirror the .git-status-* light overrides exactly. */
+:is(
+  [data-theme='light'],
+  [data-theme='citrus'],
+  [data-theme='mist'],
+  [data-theme='sage'],
+  [data-theme='alabaster']
+) .github-satellite-icon.tone-open {
+  color: #6d4fe0;
+}
+:is(
+  [data-theme='light'],
+  [data-theme='citrus'],
+  [data-theme='mist'],
+  [data-theme='sage'],
+  [data-theme='alabaster']
+) :is(.github-satellite-icon.tone-ready, .github-satellite-icon.tone-merged, .github-satellite-icon.tone-success) {
+  color: #138a59;
+}
+:is(
+  [data-theme='light'],
+  [data-theme='citrus'],
+  [data-theme='mist'],
+  [data-theme='sage'],
+  [data-theme='alabaster']
+) :is(.github-satellite-icon.tone-stale, .github-satellite-icon.tone-warning) {
+  color: #b8860b;
+}
+:is(
+  [data-theme='light'],
+  [data-theme='citrus'],
+  [data-theme='mist'],
+  [data-theme='sage'],
+  [data-theme='alabaster']
+) :is(.github-satellite-icon.tone-blocked, .github-satellite-icon.tone-closed, .github-satellite-icon.tone-danger) {
+  color: #d23b4e;
+}
+
+/* Standalone CI dot tones (popover — no `.github-satellite-icon` ancestor). */
+.github-satellite-dot.tone-success {
+  color: #6ddfa8;
+}
+.github-satellite-dot.tone-danger {
+  color: #ff6b7a;
+}
+.github-satellite-dot.tone-warning {
+  color: #f0c674;
+}
+.github-satellite-dot.tone-muted {
+  color: var(--text-tertiary);
+}
+
+/* Hover popover — content layout over the shared frosted-glass chrome. */
+.github-satellite-popover {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 11px 13px;
+  font-size: var(--font-size-sm, 12px);
+  color: var(--text-primary);
+}
+.github-satellite-popover-repo {
+  font-size: var(--font-size-xs, 11px);
+  color: var(--text-tertiary);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+.github-satellite-popover-pr-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.github-satellite-popover-pr-number {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.github-satellite-popover-pr-state,
+.github-satellite-popover-branches,
+.github-satellite-popover-merge {
+  color: var(--text-secondary);
+}
+.github-satellite-popover-branches {
+  margin-top: 4px;
+  font-size: var(--font-size-xs, 11px);
+}
+.github-satellite-popover-branches code {
+  padding: 1px 5px;
+  border-radius: var(--radius-sm, 5px);
+  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+  font-family: var(--font-mono, ui-monospace, monospace);
+}
+.github-satellite-popover-merge {
+  margin-top: 4px;
+  font-size: var(--font-size-xs, 11px);
+}
+.github-satellite-popover-ci {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border-top: 1px solid color-mix(in srgb, var(--text-primary) 10%, transparent);
+  padding-top: 8px;
+}
+.github-satellite-popover-ci-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+}
+.github-satellite-popover-ci-counts {
+  margin-left: auto;
+  color: var(--text-tertiary);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+.github-satellite-popover-checks {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  max-height: 148px;
+  overflow-y: auto;
+}
+.github-satellite-popover-checks li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--font-size-xs, 11px);
+}
+.github-satellite-popover-check-name {
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.github-satellite-popover-check-label {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.github-satellite-popover-check-more {
+  color: var(--text-tertiary);
+  font-size: var(--font-size-xs, 11px);
+}
+.github-satellite-popover-footer {
+  color: var(--text-tertiary);
+  font-size: var(--font-size-xs, 11px);
+}
+
+/* Soft-action "Notify thread" button — accent-tinted, non-destructive. */
+.github-satellite-popover-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  border-top: 1px solid color-mix(in srgb, var(--text-primary) 10%, transparent);
+  padding-top: 8px;
+}
+.github-satellite-notify-button {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 11px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--text-primary);
+  font-size: var(--font-size-xs, 11px);
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background 120ms ease,
+    border-color 120ms ease;
+}
+.github-satellite-notify-button:hover {
+  background: color-mix(in srgb, var(--accent) 26%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 65%, transparent);
+}
+.github-satellite-notify-button:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 60%, transparent);
+  outline-offset: 1px;
+}
+.github-satellite-notify-hint {
+  color: var(--text-tertiary);
+  font-size: var(--font-size-xs, 11px);
+}
+
+/* Tone accents inside the popover (dark default). */
+.github-satellite-popover .tone-open {
+  color: #a78bfa;
+}
+.github-satellite-popover :is(.tone-ready, .tone-merged, .tone-success) {
+  color: #6ddfa8;
+}
+.github-satellite-popover .tone-draft {
+  color: color-mix(in srgb, var(--text-secondary) 82%, transparent);
+}
+.github-satellite-popover :is(.tone-stale, .tone-warning) {
+  color: #f0c674;
+}
+.github-satellite-popover :is(.tone-blocked, .tone-closed, .tone-danger) {
+  color: #ff6b7a;
+}
+.github-satellite-popover .tone-muted {
+  color: var(--text-tertiary);
+}
+
+/* Light-family theme overrides for the popover + standalone dots. */
+:is(
+  [data-theme='light'],
+  [data-theme='citrus'],
+  [data-theme='mist'],
+  [data-theme='sage'],
+  [data-theme='alabaster']
+) :is(.github-satellite-popover .tone-open) {
+  color: #6d4fe0;
+}
+:is(
+  [data-theme='light'],
+  [data-theme='citrus'],
+  [data-theme='mist'],
+  [data-theme='sage'],
+  [data-theme='alabaster']
+) :is(
+    .github-satellite-popover :is(.tone-ready, .tone-merged, .tone-success),
+    .github-satellite-dot.tone-success
+  ) {
+  color: #138a59;
+}
+:is(
+  [data-theme='light'],
+  [data-theme='citrus'],
+  [data-theme='mist'],
+  [data-theme='sage'],
+  [data-theme='alabaster']
+) :is(
+    .github-satellite-popover :is(.tone-stale, .tone-warning),
+    .github-satellite-dot.tone-warning
+  ) {
+  color: #b8860b;
+}
+:is(
+  [data-theme='light'],
+  [data-theme='citrus'],
+  [data-theme='mist'],
+  [data-theme='sage'],
+  [data-theme='alabaster']
+) :is(
+    .github-satellite-popover :is(.tone-blocked, .tone-closed, .tone-danger),
+    .github-satellite-dot.tone-danger
+  ) {
+  color: #d23b4e;
+}

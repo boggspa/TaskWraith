@@ -94,9 +94,12 @@ function normalisePrState(value: string | undefined): string {
   return (value || '').trim().toUpperCase()
 }
 
-type PrLifecycleTone = 'open' | 'ready' | 'draft' | 'merged' | 'stale' | 'blocked' | 'closed'
+export type PrLifecycleTone = 'open' | 'ready' | 'draft' | 'merged' | 'stale' | 'blocked' | 'closed'
 
-function prLifecycle(pr: GitPrSummary, snapshot?: GitRepositorySnapshot | null): {
+export function prLifecycle(
+  pr: GitPrSummary,
+  snapshot?: GitRepositorySnapshot | null
+): {
   tone: PrLifecycleTone
   label: string
   title: string

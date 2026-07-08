@@ -56,7 +56,8 @@ import { GhostCompanion } from '../components/FxLayers'
 import { NotificationZone } from '../components/NotificationZone'
 import { GitCommitControls } from '../components/GitCommitControls'
 import { ComposerBranchWorktreePopover } from '../components/ComposerBranchWorktreePopover'
-import { GitCiChip, GitMergeBadge, GitPrLifecycleChip, GitSyncChip } from '../components/GitStatusChips'
+import { GitMergeBadge, GitSyncChip } from '../components/GitStatusChips'
+import { GitHubSatelliteRow } from '../components/GitHubSatelliteRow'
 import { LiveThreadTokenTally } from '../components/LiveThreadTokenTally'
 import { MultiviewLayoutPicker } from '../components/MultiviewLayoutPicker'
 import { CanvasComposerButton } from '../components/CanvasComposerButton'
@@ -357,6 +358,8 @@ export interface ComposerProps {
   onComposerWorktreeChange?: any
   primaryModifierLabel: any
   primaryPr: any
+  primaryCi?: any
+  onNotifyThreadOfCi?: (notice: any) => void
   providerRates: any
   queuedMessagesAboveRowEntries: any
   queuedRunQueueCount: any
@@ -655,6 +658,8 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     onComposerWorktreeChange,
     primaryModifierLabel,
     primaryPr,
+    primaryCi,
+    onNotifyThreadOfCi,
     providerRates,
     queuedMessagesAboveRowEntries,
     queuedRunQueueCount,
@@ -1933,6 +1938,18 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                    merged-frame never flattens these two rows. */
                 const aboveRowsFloatAboveStack =
                   appearance.composerStyle === 'cursor' || appearance.composerStyle === 'codex'
+                // GitHub PR/CI/Merge satellite row — icon-only upstream status,
+                // pinned at the top of the above-composer area. Renders null
+                // unless there's a remote + PR/CI worth surfacing.
+                const githubSatelliteRow =
+                  !isWelcomeChat && currentWorkspace ? (
+                    <GitHubSatelliteRow
+                      pr={primaryPr}
+                      ci={primaryCi}
+                      snapshot={primaryGitSnapshot}
+                      onNotify={onNotifyThreadOfCi}
+                    />
+                  ) : null
                 const primaryWorkspaceAboveBar =
                   !isWelcomeChat && currentWorkspace ? (
                     <div
@@ -1985,8 +2002,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                       </span>
                       {primaryGitSnapshot && <GitMergeBadge snapshot={primaryGitSnapshot} />}
                       {primaryGitSnapshot && <GitSyncChip snapshot={primaryGitSnapshot} />}
-                      <GitPrLifecycleChip pr={primaryPr} snapshot={primaryGitSnapshot} />
-                      <GitCiChip pr={primaryPr} />
                       </div>
                       <div className="composer-above-bar-pill composer-above-bar-pill--changes">
                       <span className="composer-above-bar-files-cluster">
@@ -2159,9 +2174,11 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
 
                 return (
                   <>
+                    {aboveRowsFloatAboveStack && githubSatelliteRow}
                     {aboveRowsFloatAboveStack && primaryWorkspaceAboveBar}
                     {aboveRowsFloatAboveStack && externalWorkspaceAboveRows}
                     <div className={`composer-above-bar-stack ${composerAboveBarStackAuraClass}`}>
+                      {!aboveRowsFloatAboveStack && githubSatelliteRow}
                       {!aboveRowsFloatAboveStack && primaryWorkspaceAboveBar}
                       {/* Slice 3 of the external-path-redesign arc. One stacked
                     row per external-path grant. Per-grant repo metadata

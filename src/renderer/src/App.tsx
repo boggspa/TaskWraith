@@ -535,6 +535,7 @@ import {
 import { buildRunDiffByPath } from './lib/RunWorkspaceDiff'
 import { shouldRunUsageRefresh } from './lib/usageRefresh'
 import { isCiStatusTerminal, shouldRunCiPoll } from './lib/ciStatusRefresh'
+import type { CiNotice } from './lib/ciNotice'
 import { shouldRenderWelcome, isReusableWelcomeChat } from './lib/welcomeState'
 import { isChatSummaryRecord, mergeChatRecord } from './lib/chatRecordMerge'
 import {
@@ -2296,6 +2297,70 @@ function App(): React.JSX.Element {
     void window.api.gitInvalidateSnapshot({ workspacePath: currentWorkspacePath, reason: 'run-diff' })
   }, [currentWorkspacePath, runCompleteNotice?.timestamp])
 
+  // Keep latest-value refs fresh for the mount-once CI poll below.
+  useEffect(() => {
+    refreshPrimaryCiStatusRef.current = refreshPrimaryCiStatus
+    primaryPrRef.current = primaryPr
+    primaryCiRef.current = primaryCi
+  }, [refreshPrimaryCiStatus, primaryPr, primaryCi])
+
+  // Fetch the rich CI summary when the PR (or its head) changes or a run
+  // completes; clears it when there's no PR. The satellite row falls back to
+  // pr.checks when this is null, so this only enriches + freshens.
+  useEffect(() => {
+    if (primaryPr?.number != null) void refreshPrimaryCiStatus()
+    else setPrimaryCi(null)
+  }, [refreshPrimaryCiStatus, primaryPr?.number, primaryPr?.headRefOid, runCompleteNotice?.timestamp])
+
+  // Bounded, visibility-gated CI poll. CI transitions (pending → pass/fail) on
+  // GitHub's servers without a local commit, so the PR-status dedup key can't
+  // see them — this keeps the satellite dot live while a PR's CI is running.
+  // Mirrors the usage-summary heartbeat: mount-once, all values read from refs
+  // at call time, self-limiting via `shouldRunCiPoll`.
+  useEffect(() => {
+    const INTERVAL_MS = 75_000
+    const fire = (force = false): void => {
+      const pr = primaryPrRef.current
+      const hasOpenPr = Boolean(
+        pr && pr.number != null && (pr.state || '').toUpperCase() === 'OPEN'
+      )
+      const ciTerminal = isCiStatusTerminal(primaryCiRef.current?.status)
+      const online = typeof navigator === 'undefined' ? true : navigator.onLine !== false
+      const decision = force
+        ? hasOpenPr && !ciTerminal && !primaryCiInFlightRef.current && online
+        : shouldRunCiPoll({
+            msSinceLastPoll:
+              primaryCiLastPolledAtRef.current === null
+                ? null
+                : Date.now() - primaryCiLastPolledAtRef.current,
+            intervalMs: INTERVAL_MS,
+            inFlight: primaryCiInFlightRef.current,
+            windowFocused:
+              typeof document === 'undefined' ? true : document.visibilityState !== 'hidden',
+            online,
+            hasOpenPr,
+            ciTerminal
+          })
+      if (!decision) return
+      void refreshPrimaryCiStatusRef.current()
+    }
+    const intervalId = window.setInterval(() => fire(false), INTERVAL_MS)
+    const onVisible = (): void => {
+      if (typeof document === 'undefined' || document.visibilityState === 'visible') fire(true)
+    }
+    const onOnline = (): void => fire(true)
+    document.addEventListener('visibilitychange', onVisible)
+    window.addEventListener('focus', onVisible)
+    window.addEventListener('online', onOnline)
+    return () => {
+      window.clearInterval(intervalId)
+      document.removeEventListener('visibilitychange', onVisible)
+      window.removeEventListener('focus', onVisible)
+      window.removeEventListener('online', onOnline)
+    }
+    // Mount-once: refs are read at call time, so the timer never needs teardown.
+  }, [])
+
   useEffect(() => {
     if (!currentWorkspacePath || !hasGitSnapshotSubscriptionApi() || !window.api.gitInvalidateSnapshot) {
       return undefined
@@ -3472,6 +3537,52 @@ function App(): React.JSX.Element {
       setChatPromptDraft(chatId, (previous) => appendMessageContentToPromptDraft(previous, content))
     },
     [setChatPromptDraft]
+  )
+  // Soft-action for the GitHub satellite row: when CI fails / a PR is blocked,
+  // surface it to the thread WITHOUT steering. Ensemble → a Blackboard note the
+  // agents read at their next turn (upsert-deduped on notice.key). Solo → a UI
+  // system-note for the record + a suggested fix drafted into the composer for
+  // the user to send. The CI text is third-party, so notice.detail is already
+  // framed as external/unverified. Host of this write is the focused chat, so
+  // no cross-run routing risk (see Slice 6 for the auto/poller variant).
+  const handleNotifyThreadOfCi = useCallback(
+    (notice: CiNotice) => {
+      const chat = currentChat
+      if (!chat || !notice.shouldOffer) return
+      const chatId = chat.appChatId
+      if (chat.chatKind === 'ensemble') {
+        void window.api
+          .postBlackboardEntry({
+            chatId,
+            key: notice.key,
+            value: notice.detail,
+            category: 'ci-status',
+            scope: 'chat'
+          })
+          .catch(() => {})
+        return
+      }
+      const noticeMessage = {
+        id: `ci-notice-${chatId}-${Date.now()}`,
+        role: 'system' as const,
+        content: notice.detail,
+        timestamp: new Date().toISOString(),
+        metadata: { kind: 'ciNotice' }
+      }
+      const updatedChat: ChatRecord = {
+        ...chat,
+        messages: [...(chat.messages || []), noticeMessage],
+        updatedAt: Date.now()
+      }
+      chatByIdRef.current.set(updatedChat.appChatId, updatedChat)
+      setChats((prev) =>
+        prev.map((item) => (item.appChatId === updatedChat.appChatId ? updatedChat : item))
+      )
+      setCurrentChat((prev) => (prev?.appChatId === updatedChat.appChatId ? updatedChat : prev))
+      void window.api.saveChat(updatedChat).catch(() => {})
+      setChatPromptDraft(chatId, notice.suggestedPrompt)
+    },
+    [currentChat, setChatPromptDraft]
   )
   const clearPlanImportIfDraftChanged = (nextValue: string): void => {
     if (pendingPlanImport && nextValue.trim() !== pendingPlanImport.rawText) {
@@ -5274,7 +5385,7 @@ function App(): React.JSX.Element {
     setRuntimeProfiles(profiles)
     setPluginActivation(activation)
     setHandoffCards(handoffs)
-    setChats(allChats)
+    chatMutations.replaceAll(allChats)
     setWorkspaces(wsList)
     setWorkspacesHydrated(true)
     await rehydrateQueuedRuns(wsList).catch(() => {})
@@ -7110,7 +7221,7 @@ function App(): React.JSX.Element {
       setSlashCommandsOpenRequestForChat(chatId, 0)
       setScheduleRunAtForChat(chatId, '')
     }
-    setChats(Array.isArray(nextChats) ? nextChats : [])
+    chatMutations.replaceAll(Array.isArray(nextChats) ? nextChats : [])
     setCurrentChat(null)
     setActiveSidebarChatId(null)
     setSideChatId(null)
@@ -24866,6 +24977,7 @@ function App(): React.JSX.Element {
     onComposerWorktreeChange: handleComposerWorktreeChange,
     primaryPr,
     primaryCi,
+    onNotifyThreadOfCi: handleNotifyThreadOfCi,
     queuedMessagesAboveRowEntries,
     runtimeProfileControl,
     scheduleControls,
