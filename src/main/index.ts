@@ -369,7 +369,8 @@ import { buildHumanShareProjection } from './collaboration/HumanShareProjection'
 import type { HumanShareProjection } from './collaboration/HumanShareProjection'
 import { detectConfiguredProviders } from './ProviderConfiguration'
 import { createDefaultEnsembleConfig } from './EnsembleDefaults'
-import { applyReroutePlanToPayload, isProviderPaused, resolveProviderDispatch } from './ProviderRunPause'
+import { isProviderPaused } from './ProviderRunPause'
+import { createRunDispatchFacade, type RunDispatchFacadeDeps } from './run/RunDispatchFacade'
 import { classifyProviderQuotaWall } from './ProviderQuotaWallClassifier'
 import { isNonEscalatingPreset, reroutePresetId } from './RerouteFailoverPosture'
 import {
@@ -377,7 +378,6 @@ import {
   type AutoFailoverNotice,
   type FailoverRunSnapshot
 } from './services/ProviderAutoFailover'
-import { hasAnyBudget } from './WorkflowBudgetGuard'
 import { WorkflowBudgetRegistry } from './WorkflowBudgetRegistry'
 import { decideCancelInterrupt, shouldFlushPendingInterrupt } from './CodexPendingInterrupt'
 import { routeDueScheduledTask } from './HeadlessScheduledDispatch'
@@ -29725,7 +29725,7 @@ if (isGeminiMcpBridgeProcess) {
     // this exact bundle; the ref + all 5 callsites + ensemble binding + IPC paths
     // stay UNCHANGED. Seam-only: zero behaviour change (each field IS the same
     // instance / fn the body previously referenced directly).
-    const runDispatchFacadeDeps = {
+    const runDispatchFacadeDeps: RunDispatchFacadeDeps = {
       applyFailoverReroutePosture,
       repairKnownStaleGeminiMcpBridgeConfigs,
       expandPdfImagePathsForPayload,
@@ -29738,94 +29738,7 @@ if (isGeminiMcpBridgeProcess) {
       getScheduledTasks: () => AppStore.getScheduledTasks(),
       getWorkflowDefinitions: () => AppStore.getWorkflowDefinitions()
     }
-    const dispatchRunWithProviderPause = async (
-      payload: AgentRunPayload,
-      event: Electron.IpcMainInvokeEvent | { sender: Electron.WebContents }
-    ): Promise<{ dispatched: boolean; appRunId: string }> => {
-      const resolution = resolveProviderDispatch(runDispatchFacadeDeps.getSettings(), payload.provider)
-      const routedPayload = applyReroutePlanToPayload(payload, resolution)
-      // Auto-failover re-dispatch: a provider-change reroute clears
-      // effectivePermissions, which normalize would then downgrade to read-only.
-      // Re-derive + re-sign a CAPPED, non-escalating posture for the target so a
-      // failover PRESERVES (never raises) the user's approved authority. Scoped
-      // to failover runs (failoverHopCount set) so manual reroutes are unchanged.
-      if (resolution.reroute && typeof routedPayload.failoverHopCount === 'number') {
-        runDispatchFacadeDeps.applyFailoverReroutePosture(routedPayload, payload)
-      }
-      // Self-heal stale persisted MCP configs on EVERY dispatch path, not
-      // just renderer capability refreshes — bridge (iOS) dispatches on a
-      // Mac whose UI never opens the capabilities panel were running with
-      // pre-rebrand absolute command paths ("Failed to spawn MCP server
-      // 'TaskWraith'": ENOENT). The needs-repair probe is a cheap file
-      // read+compare and a no-op when healthy.
-      const repairCwd =
-        typeof routedPayload?.workspace === 'string' && routedPayload.workspace.length > 0
-          ? routedPayload.workspace
-          : undefined
-      await runDispatchFacadeDeps.repairKnownStaleGeminiMcpBridgeConfigs(repairCwd).catch(() => {})
-      await runDispatchFacadeDeps.expandPdfImagePathsForPayload(routedPayload).catch((error) => {
-        console.warn(
-          `[pdf-attachments] failed to expand PDF image paths: ${
-            error instanceof Error ? error.message : String(error)
-          }`
-        )
-      })
-      // Per-occurrence SOLO-scheduled-run bookkeeping (completion mark + mid-run
-      // budget kill) MUST be wired BEFORE dispatch. The default Claude (Agent SDK)
-      // path consumes its stream INLINE and fires sendAgentCompatExit SYNCHRONOUSLY
-      // before runCoordinator.dispatch returns; a post-dispatch set/register would
-      // miss the whole run — the solo completion mark would never fire (the task
-      // wedges 'running' until the 6h stall reconciler, which records it 'failed'
-      // and can auto-disable the workflow after maxConsecutiveFailures), and onUsage
-      // budget checks during the inline run would find no registration. routedPayload
-      // is the PRE-normalize raw payload, so scheduledTaskId + appRunId are present;
-      // routeWithRunId PRESERVES a set appRunId and a scheduled run always carries
-      // one (composeRun), so soloRunId matches the appRunId sendAgentCompatExit reads.
-      // Per-workflow limits ARE the opt-in (hasAnyBudget); workflowBudgetKillEnabled
-      // is the escape hatch. NOT wired for ensemble — this chokepoint never sees a
-      // round runId.
-      const budgetScheduledTaskId = (routedPayload as { scheduledTaskId?: string }).scheduledTaskId
-      const soloRunId = typeof routedPayload.appRunId === 'string' ? routedPayload.appRunId : ''
-      if (budgetScheduledTaskId && soloRunId) {
-        // Stage 0b-completion: main marks this solo scheduled run terminal in
-        // sendAgentCompatExit, so a mid-run renderer close (or a windowless run)
-        // can't wedge it.
-        runDispatchFacadeDeps.scheduledTaskIdBySoloRun.set(soloRunId, budgetScheduledTaskId)
-        const budgetSettings = runDispatchFacadeDeps.getSettings()
-        if (budgetSettings.workflowBudgetKillEnabled !== false) {
-          const task = runDispatchFacadeDeps.getScheduledTasks().find((t) => t.id === budgetScheduledTaskId)
-          const limits = task?.workflowId
-            ? runDispatchFacadeDeps.getWorkflowDefinitions().find((w) => w.id === task.workflowId)?.limits
-            : undefined
-          if (hasAnyBudget(limits)) {
-            runDispatchFacadeDeps.workflowBudgetRegistry.register({
-              runId: soloRunId,
-              scheduledTaskId: budgetScheduledTaskId,
-              provider: routedPayload.provider,
-              startedAtMs: Date.now(),
-              timeoutSeconds: limits!.timeoutSeconds,
-              maxTokens: limits!.maxTokens,
-              maxCostUsd: limits!.maxCostUsd
-            })
-          }
-        }
-      }
-      const dispatchResult = await runDispatchFacadeDeps.runCoordinator.dispatch(routedPayload, event)
-      // Snapshot the dispatched request so a later quota wall can re-run it.
-      // A provider-native `/compact` dispatch is excluded: failing it over
-      // would send the literal slash text to a DIFFERENT provider as prose.
-      if (
-        runDispatchFacadeDeps.getSettings().autoFailoverEnabled &&
-        dispatchResult.appRunId &&
-        routedPayload.prompt?.trim() !== '/compact'
-      ) {
-        runDispatchFacadeDeps.failoverSnapshotByRun.set(
-          dispatchResult.appRunId,
-          runDispatchFacadeDeps.captureFailoverSnapshot(routedPayload)
-        )
-      }
-      return dispatchResult
-    }
+    const dispatchRunWithProviderPause = createRunDispatchFacade(runDispatchFacadeDeps)
     dispatchRunWithProviderPauseRef = dispatchRunWithProviderPause
     // Stage 0b-dispatch: expose the composer + dispatcher to the module-scope
     // scheduler so a windowless app can compose + fire a due SOLO run itself.
