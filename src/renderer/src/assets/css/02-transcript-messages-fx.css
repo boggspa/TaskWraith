@@ -2354,7 +2354,7 @@
 }
 
 html:has(.chat-split-region.chat-split-hidden-for-settings) .transcript-participant-filter-rail,
-html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelog-sheet-backdrop))
+html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelog-sheet-backdrop, .sub-thread-creator-backdrop, .work-session-setup-backdrop, .discord-context-picker-backdrop, .creative-approval-backdrop, .chat-media-preview-backdrop))
   .transcript-participant-filter-rail {
   display: none !important;
 }
@@ -2541,15 +2541,19 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
    fires. Suppress it whenever the transcript is covered:
      - the Settings / workspace-board takeover (both add `chat-split-hidden-for-settings`)
        hides the transcript region behind it; and
-     - a blocking sheet whose body-portaled backdrop (first-launch / bug-report /
-       changelog) sits BELOW the rail's z-index (9100-9140 vs 10030/10031) and would
-       otherwise let the rail bleed through the overlay.
+     - a blocking full-screen sheet whose backdrop sits BELOW the rail's z-index (the
+       ~70-9140 band vs 10030/10031) and would otherwise let the rail bleed through the
+       overlay. The `:is()` list enumerates those backdrops; add any NEW full-screen
+       `position:fixed; inset:0` sheet backdrop there. Each MUST be conditionally
+       mounted (rendered only while open, e.g. `if (!open) return null`) so `:has()`
+       matches only while the sheet is up — an always-mounted backdrop would hide the
+       rails permanently.
    `:has()` applies synchronously with the covering element (no JS, no one-frame flash).
    The `offsetParent` guard in TranscriptUserMessageGutter is the belt for any future
    hide condition. Keep this selector list in sync with the participant-filter-rail rule
    above. */
 html:has(.chat-split-region.chat-split-hidden-for-settings) .transcript-user-gutter,
-html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelog-sheet-backdrop))
+html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelog-sheet-backdrop, .sub-thread-creator-backdrop, .work-session-setup-backdrop, .discord-context-picker-backdrop, .creative-approval-backdrop, .chat-media-preview-backdrop))
   .transcript-user-gutter {
   display: none !important;
 }
