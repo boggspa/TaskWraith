@@ -1942,6 +1942,33 @@
   background-image: none !important;
 }
 
+/* Top chrome band. The masthead, workspace/thread counts, Threads/Projects tabs,
+ * and search box are wrapped in .sidebar-top-chrome (Sidebar.tsx) so the whole top
+ * region reads as ONE flat fixed-alpha band — not the floating rounded card the
+ * masthead alone used to be — flush to the sidebar edges. Negative margins bleed
+ * .sidebar-content's side padding (--space-md) + the 10px gap before the list; the
+ * padding/gap are re-applied inside so the controls keep their positions. The
+ * workspace/threads list below is deliberately excluded — it stays on the
+ * user-defined .app-sidebar opacity. The masthead keeps its own !important fill
+ * (which suppresses the native_glass tile-chrome group selectors); it paints the
+ * same color as the band, so its 14px radius reads as a seamless part of it. */
+.app-sidebar .sidebar-top-chrome {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 auto;
+  gap: 10px;
+  margin: 0 calc(var(--space-md) * -1) -10px;
+  padding: 0 var(--space-md) 10px;
+  background: var(--sidebar-chrome-fixed-bg);
+}
+
+/* Reach the content's top edge too (no plain strip above the masthead) — but only
+ * when the optional update pill isn't occupying that space above the band. */
+.app-sidebar .sidebar-content:not(:has(> .sidebar-update-pill-row)) .sidebar-top-chrome {
+  margin-top: calc(var(--space-md) * -1);
+  padding-top: var(--space-md);
+}
+
 .sidebar-masthead-copy {
   min-width: 0;
   display: grid;

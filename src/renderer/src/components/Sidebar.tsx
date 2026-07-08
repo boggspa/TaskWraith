@@ -3591,6 +3591,7 @@ export function Sidebar({
             />
           </div>
         ) : null}
+        <div className="sidebar-top-chrome">
         <div className="sidebar-masthead">
           <div className="sidebar-masthead-copy">
             <span className="sidebar-product-label">
@@ -3895,6 +3896,7 @@ export function Sidebar({
               </>
             )}
           </label>
+        </div>
         </div>
 
         <div className="sidebar-hierarchy-scroll">

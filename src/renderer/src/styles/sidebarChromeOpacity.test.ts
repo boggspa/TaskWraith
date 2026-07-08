@@ -67,4 +67,15 @@ describe('sidebar chrome fixed opacity CSS', () => {
     expect(reduced).toContain('.model-usage-summary--sidebar')
     expect(reduced).toContain('background: var(--sidebar-bg-solid) !important;')
   })
+
+  it('wraps the top region (masthead->search) in a seamless fixed-alpha band, excluding the list', () => {
+    const css = readCss('05-polish-fx-layouts.css')
+    const band = cssBlockStartingAt(css, '.app-sidebar .sidebar-top-chrome {')
+    expect(band).toContain('background: var(--sidebar-chrome-fixed-bg);')
+    // Bleeds the sidebar-content side padding + the 10px gap so it reads as one
+    // flat edge-to-edge rectangle rather than the old floating masthead card.
+    expect(band).toContain('margin: 0 calc(var(--space-md) * -1) -10px;')
+    // The list + its own scroll container are NOT part of the band.
+    expect(band).not.toContain('sidebar-hierarchy-scroll')
+  })
 })
