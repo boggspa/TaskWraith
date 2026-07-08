@@ -32,34 +32,34 @@ into a new 8K file and call the slice done.
 
 ## Current Snapshot
 
-Measured from the live worktree on 2026-07-08. Pass-1 landed two slices
-(`5d1ada4fb`, `6a06b1ebc`); main-root metrics below reflect post-`main-m1`
-state. `src/renderer/src/App.tsx` remains at 25,738 lines. Treat these numbers
-as orientation only. Every Ensemble round must refresh counts and dirty state
-before assigning a slice.
+Measured from the live worktree on 2026-07-08 (post-crash resume). Pass-1
+through pass-3 helper slices are committed (`5d1ada4fb` … `5ad23b356`); metrics
+below reflect post-`renderer-r0` / post-scaffold / post-chat-CRUD state. Treat
+these numbers as orientation only. Every Ensemble round must refresh counts and
+dirty state before assigning a slice.
 
-Pass-2 dirty baseline (recorded at round start):
+Pass-3 worktree baseline (recorded after TaskWraith renderer crash recovery):
 
-- Branch `master`, ahead 48 of `origin/master` (includes pass-1 commits).
-- `src/main/index.ts` contested by a foreign session — chat CRUD slice HELD.
-- Untracked scaffold paths from @NewFiles pending adversary review:
-  `src/main/runtime/MainRuntimeContext.ts`,
-  `src/renderer/src/hooks/useScopedIpc.ts`,
-  `src/renderer/src/hooks/useScopedIpc.test.ts`,
-  `src/renderer/src/state/chatMutations.ts`,
-  `src/renderer/src/state/useChatMutations.ts`.
+- Branch `master`, ahead 58 of `origin/master`.
+- Pass-2 tails closed: preload-r0 (`94c104cf8`), chat CRUD (`74895af4d`),
+  renderer-r0 (`760c57510`), scaffolds (`60f662341`).
+- One dirty renderer path: `src/renderer/src/App.tsx` — @WriteRender
+  `useScopedIpc` adoption follow-up (gates green; awaiting @CheckCommit).
+- WriteMain pass-3 writer lanes (I-drop fix, iOS-remote extraction) left zero
+  files on disk after crash-interrupted runs; need fresh restart.
+- Crash context: release build 1.7.9 native renderer instability (`.ips` on
+  disk); unrelated to uncommitted refactor slices. Codex WriteMain run
+  `codex-1783472098113-m7vxtuz7zm` marked failed on recovery.
 - `.cursor/` untracked — never staged.
-- Peer-owned dirty paths (`ios/**`, bridge/remote/store) defer or coordinate
-  before write.
 
 Tier-2 orientation: early Pass-1 recon reported `SettingsPanel.tsx` ~10,714 and
 `EnsembleOrchestrator.ts` ~11,996 lines; live `wc -l` on 2026-07-08 confirms
 11,063 and 12,416 — the ranking table below remains accurate.
 
-IPC handler-test gap (43 flat modules, 39 tests): `shellHandlers`,
-`contextCompactionHandlers`, `ptyHandlers`, and `ensembleRosterPresetsHandlers`
-lack focused handler tests. `humanCollaborationHandlers.test.ts` landed in
-pass-1 (`6a06b1ebc`).
+IPC handler-test gap: **closed** at pass-3 close. All 43 flat handler modules
+now have focused tests (`5ad23b356` added `shellHandlers`,
+`contextCompactionHandlers`, `ptyHandlers`, `ensembleRosterPresetsHandlers`;
+`79dda4275` extended `humanCollaborationHandlers` null-runtime poll guards).
 
 Snapshot commands:
 
@@ -78,20 +78,21 @@ Current high-level facts:
 
 | Area | Current signal |
 | --- | ---: |
-| `src/main/index.ts` | 31,698 lines (was 32,234 pre-pass-1) |
-| `src/renderer/src/App.tsx` | 25,738 lines |
-| Inline `ipcMain.handle/on` registrations still in `index.ts` | 77 (was 103) |
-| Registrar calls already wired from `index.ts` | 44 (was 43) |
-| Flat `src/main/ipc/*Handlers.ts` modules | 43 (was 42) |
-| Flat `src/main/ipc/*Handlers.test.ts` modules | 39 (was 38) |
-| `MainAppLayout.types.ts` remaining `: any` props | 391 |
+| `src/main/index.ts` | 31,728 lines (was 32,234 pre-pass-1) |
+| `src/renderer/src/App.tsx` | 25,832 lines (committed HEAD; +14-line hook adoption dirty) |
+| Inline `ipcMain.handle/on` registrations still in `index.ts` | 72 (was 103 pre-pass-1; 77 post-pass-1) |
+| Registrar calls already wired from `index.ts` | 43 |
+| Flat `src/main/ipc/*Handlers.ts` modules | 43 |
+| Flat `src/main/ipc/*Handlers.test.ts` modules | 43 (parity with handler modules) |
+| `MainAppLayout.types.ts` remaining `: any` props | 392 |
+| `removeListeners()` occurrences in `App.tsx` | 0 (R0 landed `760c57510`) |
 
 Largest production TS/TSX files at this snapshot:
 
 | Rank | File | Lines | Campaign |
 | ---: | --- | ---: | --- |
-| 1 | `src/main/index.ts` | 32,234 | Tier 1 main root |
-| 2 | `src/renderer/src/App.tsx` | 25,738 | Tier 1 renderer root |
+| 1 | `src/main/index.ts` | 31,728 | Tier 1 main root |
+| 2 | `src/renderer/src/App.tsx` | 25,832 | Tier 1 renderer root |
 | 3 | `src/main/services/EnsembleOrchestrator.ts` | 12,416 | Tier 2 service |
 | 4 | `src/renderer/src/components/SettingsPanel.tsx` | 11,063 | Tier 2 renderer settings |
 | 5 | `src/renderer/src/components/Sidebar.tsx` | 5,533 | Tier 2 renderer shell |
@@ -135,6 +136,26 @@ without fresh recon.
   Pass-1 dirty snapshot, cadence override for concurrent locked scopes,
   handler-test gap, and active slice ledger. Commit `5d1ada4fb`. Gate:
   `git diff --check -- docs/refactors/app-index-decomposition.md` green.
+- Preload pass-2 (2026-07-08): `refactor(preload-r0)` — 16 void `window.api.on*`
+  listeners in `src/preload/index.ts` now return scoped unsubscribes;
+  `index.d.ts` parity restored. Commit `94c104cf8`. Gates:
+  `npm run typecheck:node` and `npm run typecheck:web` green.
+- Main pass-2 (2026-07-08): `refactor(main-m1)` — residual chat CRUD channels
+  (`save-chat`, `delete-chat`, `reap-abandoned-chats`, `truncate-chat`,
+  `clear-chats`) moved from inline `index.ts` into `chatHandlers.ts` with
+  focused test extension. Commit `74895af4d`. Gates: `typecheck:node`;
+  `IpcValidation.test`; `chatHandlers.test` green. Inline `ipcMain` 77→72.
+- Docs pass-2 (2026-07-08): `docs(refactor-plan)` pass-1 ledger update.
+  Commit `6adf0ef32`.
+- Renderer pass-3 (2026-07-08): `refactor(renderer-r0)` — mount-once IPC effect
+  collects 24 scoped unsubscribes; `removeListeners()` deleted. Commit
+  `760c57510`. Gate: `typecheck:web` green.
+- Scaffold pass-3 (2026-07-08): `feat(scaffold)` — `MainRuntimeContext`,
+  `useScopedIpc` + test, `chatMutations` + `useChatMutations` facades (6 files).
+  Commit `60f662341`. Gates: `typecheck:node/web`; scaffold tests 14/14 green.
+- Test pass-3 (2026-07-08): `test(main-m1)` null-runtime poll guards for human
+  collaboration (`79dda4275`, 4→6 tests); `test(main-ipc)` missing handler
+  coverage for four IPC modules (`5ad23b356`, 43/43 module parity).
 - Current IPC handler rule from `src/main/ipc/README.md` still applies:
   handler modules stay directly under `src/main/ipc/` unless the IPC validation
   scanner is expanded in the same commit.
@@ -277,21 +298,35 @@ they rot quickly. Recon must refresh anchors before each slice.
 Pass-1 retired from the active queue. Stale IN FLIGHT rows above are superseded
 by this table.
 
-#### Pass 2 — IN FLIGHT (2026-07-08)
+#### Pass 2 — LANDED (2026-07-08)
 
-| Slice | Owner | Status | Scope | Notes |
+| Slice | Owner | Status | Commit | Gates | Metric deltas |
+| --- | --- | --- | --- | --- | --- |
+| `refactor(preload-r0)` scoped app IPC unsubscribes | @WriteMain | LANDED | `94c104cf8` | `typecheck:node`; `typecheck:web` | 16 void listeners → scoped unsubscribes; `index.d.ts` parity |
+| `refactor(main-m1)` residual chat CRUD | @WriteMain | LANDED | `74895af4d` | `typecheck:node`; `IpcValidation.test`; `chatHandlers.test` | inline `ipcMain` 77→72; `chatHandlers` +137 test lines |
+| `docs(refactor-plan)` pass-1 ledger update | @WriteDocs | LANDED | `6adf0ef32` | `git diff --check` on doc path | — |
+
+Pass-2 renderer-r0 and scaffold rows deferred to pass-3 (landed there).
+
+#### Pass 3 — IN FLIGHT (2026-07-08)
+
+| Slice | Owner | Status | Commit / scope | Notes |
 | --- | --- | --- | --- | --- |
-| `refactor(preload-r0)` scoped app IPC unsubscribes | @WriteMain | IN FLIGHT | `src/preload/index.ts`, `src/preload/index.d.ts` ONLY | 17 void listeners → scoped unsubscribes; `index.d.ts` parity; additive — `removeListeners()` stays until renderer-r0 lands |
-| `refactor(renderer-r0)` scoped app IPC unsubscribe | @WriteRender | IN FLIGHT | `src/renderer/src/App.tsx` | Serial after preload green; fresh zero-gap precheck mandatory; delete `removeListeners()` |
-| `refactor(main-m1)` residual chat CRUD | @WriteMain | HELD | `src/main/index.ts`, `src/main/ipc/chatHandlers.ts` | `index.ts` contested by foreign session; channels: `save-chat`, `delete-chat`, `reap-abandoned-chats`, `truncate-chat`, `clear-chats` |
-| NewFiles scaffolds (5 files) | @NewFiles | IN FLIGHT | `src/main/runtime/MainRuntimeContext.ts`; `src/renderer/src/hooks/useScopedIpc.ts` + `.test.ts`; `src/renderer/src/state/chatMutations.ts`; `src/renderer/src/state/useChatMutations.ts` | Pending @Adversary1 review before commit |
-| `docs(refactor-plan)` pass-1 ledger update | @WriteDocs | IN FLIGHT | `docs/refactors/app-index-decomposition.md` | This slice |
+| `refactor(renderer-r0)` scoped app IPC unsubscribe | @WriteRender | LANDED | `760c57510` | 24 scoped subs; `removeListeners()` = 0 |
+| `feat(scaffold)` MainRuntimeContext + facades | @NewFiles | LANDED | `60f662341` | 6 files; @Adversary1 approved getter-closure revision |
+| `test(main-m1)` human-collab null-runtime guards | @WriteMain | LANDED | `79dda4275` | 4→6 tests |
+| `test(main-ipc)` four missing handler modules | @Captain track | LANDED | `5ad23b356` | 43/43 handler module parity |
+| `refactor(renderer-r0b)` adopt `useScopedIpc` hook | @WriteRender | READY | dirty `App.tsx` | Gates green; pathspec commit pending @CheckCommit |
+| I-drop evidence-first fix (or stop report) | @WriteMain | RESTART | — | Crash interrupted; verify raw provider events first |
+| M1 iOS-remote / Tailscale extraction | @WriteMain | QUEUED | `bridgeRemoteHandlers.ts` | After I-drop lane |
+| `docs(refactor-plan)` pass-2/3 ledger update | @WriteDocs | IN FLIGHT | this doc | This slice |
 
-Commit names: `refactor(preload-r0): return scoped unsubscribes from app ipc
-listeners`, `refactor(renderer-r0): add scoped app ipc unsubscribe`,
-`refactor(main-m1): move residual chat crud into chat handlers`,
-`docs(refactor-plan): record pass-1 landed slices`. @CheckCommit owns staging
-and commits by exact pathspec only (`git add -f` for docs).
+@CheckCommit owns staging and commits by exact pathspec only (`git add -f` for
+docs). Commit names for remaining pass-3 tails:
+`refactor(renderer-r0b): adopt useScopedIpc in app ipc listeners`,
+`fix(providers): evidence-based i-drop channel split` (or stop-report doc),
+`refactor(main-m1): extract ios remote ipc handlers`,
+`docs(refactor-plan): record pass-2/3 landed slices`.
 
 ### Phase 0 - Refresh And Freeze Invariants
 
