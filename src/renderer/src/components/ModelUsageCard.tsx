@@ -839,7 +839,7 @@ export function ModelUsageCard({ usageSummary, variant = 'card', apiSpend }: Mod
     readSidebarUsageHeight()
   )
   const sidebarHeightRef = useRef<number | null>(sidebarHeightPx)
-  const [sidebarExpanded, setSidebarExpanded] = useState(true)
+  const [sidebarExpanded, setSidebarExpanded] = useState(false)
   const [sidebarResizing, setSidebarResizing] = useState(false)
   const [localRefreshPending, setLocalRefreshPending] = useState(false)
   // Grok subscription-credit meter gate. Grok is NOT part of the token/cost

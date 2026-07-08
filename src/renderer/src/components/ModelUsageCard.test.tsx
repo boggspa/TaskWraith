@@ -82,13 +82,17 @@ describe('ModelUsageCard', () => {
     expect(html).not.toContain('Subscription credits')
   })
 
-  it('renders the sidebar resize grip band when expanded', () => {
+  it('starts the sidebar model usage section collapsed', () => {
     const html = renderToStaticMarkup(
       <ModelUsageCard usageSummary={[quotaEntry()]} variant="sidebar" />
     )
 
-    expect(html).toContain('model-usage-resize-handle')
-    expect(html).toContain('model-usage-resize-grip')
+    expect(html).toContain('model-usage-summary--sidebar is-collapsed')
+    expect(html).toContain('aria-expanded="false"')
+    expect(html).toContain('title="Expand provider usage"')
+    expect(html).toContain('model-usage-compact-grid')
+    expect(html).not.toContain('model-usage-resize-handle')
+    expect(html).not.toContain('model-usage-resize-grip')
   })
 
   it('omits the 30-day activity heatmap from the sidebar overlay only', () => {
@@ -164,8 +168,8 @@ describe('ModelUsageCard', () => {
     )
     expect(html).toContain('aria-checked="true"')
     expect(html).toContain('No API spend tracked in the last 30 days')
-    // Quota meter rows are hidden while the spend view is active.
-    expect(html).not.toContain('200 / 200 remaining')
+    // Full quota meter rows are hidden while the spend view is active.
+    expect(html).not.toContain('model-usage-window-list')
   })
 
   it('renders the context-lengths table when view=context (static data, no IPC)', () => {
@@ -182,8 +186,8 @@ describe('ModelUsageCard', () => {
     // Sidebar variant includes local Ollama models but omits Gemini.
     expect(html).toContain('Ollama')
     expect(html).not.toContain('Gemini')
-    // Quota meter rows are hidden while the context view is active.
-    expect(html).not.toContain('200 / 200 remaining')
+    // Full quota meter rows are hidden while the context view is active.
+    expect(html).not.toContain('model-usage-window-list')
   })
 
   it('shows a spend/context toggle (no Plan tab) when there are no quota meters but apiSpend is wired', () => {
