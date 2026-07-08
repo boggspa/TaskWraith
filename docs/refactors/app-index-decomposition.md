@@ -32,37 +32,39 @@ into a new 8K file and call the slice done.
 
 ## Current Snapshot
 
-Measured from the live worktree on 2026-07-08 (pass-12 fresh round, post
-pass-12 approvalService fix). Pass-1 through pass-12a slices are committed
-(`5d1ada4fb` … `2e02828fd`); metrics below reflect committed HEAD unless noted.
-Treat these numbers as orientation only. Every Ensemble round must refresh counts
-and dirty state before assigning a slice.
+Measured from the live worktree on 2026-07-08 (pass-15 fresh round, hop budget
+refreshed to 256). Pass-1 through pass-14 slices are committed (`5d1ada4fb` …
+`32cb8d30e`); metrics below reflect committed HEAD unless noted. Treat these
+numbers as orientation only. Every Ensemble round must refresh counts and dirty
+state before assigning a slice.
 
-Pass-12 worktree baseline (HEAD `2e02828fd`):
+Pass-15 worktree baseline (HEAD `241405a84`):
 
-- Branch `master`, ahead 79 of `origin/master`.
-- Pass-11 code commit: `d038a820e` M3-3a approval seam
-  (`index.ts` +100/−31; `RequestAgenticServiceApprovalDeps` 22-field inject-only
-  bundle per `design-m3-3a-amendment`; `networkAccessBlockedMessage` 22nd field;
-  threading-only, zero body move; ipcMain 62 unchanged).
-- Pass-12a code commit: `2e02828fd` approvalService stale-capture fix
-  (`getApprovalService` lazy accessor; restores `registerGeminiTool` at call-time;
-  `design-rule-seam-bundle-latebinding`; Adversary2 SECURITY APPROVE; `index.ts`
-  +8/−3).
-- Pass-10 docs commit: `875b1e9f7` pass-10 ledger refresh (already landed).
-- Worktree dirty: `docs/refactors/app-index-decomposition.md` (this doc) +
-  M3-3b code paths (`index.ts` + `ApprovalOrchestration.ts` +
-  `ApprovalOrchestration.test.ts`; gates green, uncommitted) + `.cursor/`
-  untracked (never staged).
-- **Active front:** M3-3b **ON DISK** — approval-cluster body relocation +
-  **SECURITY wrapper test** (9 cases, 5 ordering invariants). Spec:
-  `design-m3-3b-spec`; factory `createApprovalOrchestration(deps)` per M3-2b
-  precedent. Awaiting @Adversary2 full security review → @CheckCommit sole-actor
-  commit (disjoint from docs lane).
-- **Parallel (non-blocking):** pass-12 docs ledger refresh (this doc) →
-  @CheckCommit `git add -f`.
-- **Teed (serial after M3-3b):** M3-3c requestMain/workspace-trust → M3-3d
-  grant handler.
+- Branch `master`, ahead 84 of `origin/master`.
+- Pass-13 code commit: `4caa10cd1` M3-3c-a main-approval seam (`index.ts` ONLY;
+  `RequestMainApprovalDeps` 8-field bundle; `getApprovalService` lazy accessor;
+  threading-only; Adversary3 APPROVE).
+- Pass-14 code commit: `32cb8d30e` M3-3c-b main-approval body
+  (`createMainApprovalOrchestration` via `Pick<>`; 6-case main-authority wrapper
+  test; `index.ts` net −89; Adversary1 APPROVE).
+- Disjoint non-campaign commit at HEAD: `241405a84` (native composer steer queue
+  buttons — no `index.ts` / approval touch).
+- Worktree dirty (campaign-relevant): `src/main/index.ts` + untracked
+  `src/main/ipc/approvalResponseHandlers.ts` +
+  `src/main/ipc/approvalResponseHandlers.test.ts` — M3-3d grant handler
+  (+8/−67 net −59; 9-case wrapper test; Adversary2 FULL security APPROVE;
+  re-gated on `241405a84`; gates green). This doc dirty separately (pass-15
+  ledger). `.cursor/` untracked (never staged).
+- **Active front:** M3-3d **ON DISK** — `respond-agent-approval` extracted to
+  `approvalResponseHandlers.ts` (120L) + registrar test (284L, 9 cases).
+  @CheckCommit sole-actor commit (`refactor(main-m3): extract approval response
+  handler`; 3 code paths ONLY; leave docs + `.cursor/` unstaged) → **closes M3-3**
+  (entire approval-cluster trust choke point).
+- **Teed (serial after M3-3d):** @CheckCommit pass-15 docs ledger (`git add -f`,
+  this doc only); then post-M3-3 lane allocation (chat-facade batch 2, I-drop
+  sidequest, M0 incremental consumers).
+- **Parallel (non-blocking, disjoint pathspecs):** renderer/chat-facade batch 2
+  (`design-spec-chat-facade` census) — never concurrent with `index.ts` I-drop.
 - Crash context: **CLOSED** (user confirmed; not attributable to campaign slices).
   No further recon wall-time.
 
@@ -92,12 +94,12 @@ Current high-level facts:
 
 | Area | Current signal |
 | --- | ---: |
-| `src/main/index.ts` | 30,950 committed (`2e02828fd`); ~30,600 on disk (M3-3b −350 net; was 32,234 pre-pass-1) |
+| `src/main/index.ts` | 30,892 committed (`32cb8d30e` / `241405a84`); 30,833 on disk (M3-3d −59 net; was 32,234 pre-pass-1) |
 | `src/renderer/src/App.tsx` | 25,831 (committed `9dcaf0ec4`) |
-| Inline `ipcMain.handle/on` registrations still in `index.ts` | 62 (unchanged; was 103 pre-pass-1) |
-| Registrar calls already wired from `index.ts` | 44 |
-| Flat `src/main/ipc/*Handlers.ts` modules | 44 |
-| Flat `src/main/ipc/*Handlers.test.ts` modules | 44 (parity with handler modules) |
+| Inline `ipcMain.handle/on` registrations still in `index.ts` | 62 committed; 61 on disk (M3-3d moves one handler to `ipc/`; was 103 pre-pass-1) |
+| Registrar calls already wired from `index.ts` | 44 committed; 45 on disk (M3-3d adds `registerApprovalResponseHandlers`) |
+| Flat `src/main/ipc/*Handlers.ts` modules | 44 committed; 45 on disk (M3-3d adds `approvalResponseHandlers.ts`) |
+| Flat `src/main/ipc/*Handlers.test.ts` modules | 44 committed; 45 on disk (parity with handler modules) |
 | `setChats(` call sites in `App.tsx` | 44 on disk (was 45 post-Site C `ac3ef6c07`; 47 pre-renderer-r3 slice 1) |
 | `MainAppLayout.types.ts` remaining `: any` props | 392 |
 | `removeListeners()` occurrences in `App.tsx` | 0 (R0 + R0b landed) |
@@ -106,7 +108,7 @@ Largest production TS/TSX files at this snapshot:
 
 | Rank | File | Lines | Campaign |
 | ---: | --- | ---: | --- |
-| 1 | `src/main/index.ts` | 30,950 | Tier 1 main root |
+| 1 | `src/main/index.ts` | 30,892 | Tier 1 main root |
 | 2 | `src/renderer/src/App.tsx` | 25,831 | Tier 1 renderer root |
 | 3 | `src/main/services/EnsembleOrchestrator.ts` | 12,558 | Tier 2 service |
 | 4 | `src/renderer/src/components/SettingsPanel.tsx` | 11,063 | Tier 2 renderer settings |
@@ -247,6 +249,33 @@ without fresh recon.
   `design-rule-seam-bundle-latebinding`). Commit `2e02828fd`. Gates:
   `typecheck:node`; vitest 45/45. Adversary2 SECURITY APPROVE. `index.ts`
   +8/−3.
+- Main pass-12 (2026-07-08): `refactor(main-m3)` — M3-3b approval orchestration
+  facade: `createApprovalOrchestration(deps)` →
+  `src/main/run/ApprovalOrchestration.ts` (479L) + 9-case security wrapper test
+  (353L; 5 ordering invariants fenced). Commit `bc718247f`. Gates:
+  `typecheck:node`; vitest 54/54 (ApprovalOrchestration 9 + IpcValidation 34 +
+  RunCoordinator 11). Adversary2 FULL security APPROVE. `index.ts` net −350;
+  ipcMain 62 unchanged. Factory bound once @L8005; 6 callsites unchanged (5 in
+  `index.ts` + 1 via `ptyHandlers.ts` deps injection — no import cycle).
+- Docs pass-12 (2026-07-08): `docs(refactor-plan)` pass-12 ledger refresh.
+  Commit `a7d7ae97b`. Gate: `git diff --check` on doc path. Captures M3-3b SHA
+  + pass-11/12 queue closure; stale self-contradictory rows removed.
+- Main pass-13 (2026-07-08): `refactor(main-m3)` — M3-3c-a main-approval seam:
+  `RequestMainApprovalDeps` 8-field bundle with `getApprovalService` lazy
+  accessor baked in; threading-only, zero body move. Commit `4caa10cd1`. Gates:
+  `typecheck:node`; vitest 54/54. Adversary3 APPROVE. `index.ts` +35/−8; ipcMain
+  62 unchanged.
+- Main pass-14 (2026-07-08): `refactor(main-m3)` — M3-3c-b main-approval body:
+  `createMainApprovalOrchestration(deps)` via `Pick<RequestAgenticServiceApprovalDeps,
+  8>` → `ApprovalOrchestration.ts` + 6-case main-authority wrapper test (15 total
+  with agentic cases). Commit `32cb8d30e`. Gates: `typecheck:node`; vitest
+  60/60. Adversary1 APPROVE. `index.ts` net −89; ipcMain 62 unchanged;
+  `ensureWorkspaceTrustForRun` stays inline.
+- Main pass-15 (2026-07-08): `refactor(main-m3)` — M3-3d approval response
+  handler: `respond-agent-approval` → `approvalResponseHandlers.ts` (120L) +
+  9-case wrapper test (284L; co-move-forbidden ordering fenced). **ON DISK**
+  (uncommitted). Adversary2 FULL security APPROVE; re-gated on `241405a84`.
+  `index.ts` +8/−67 net −59; ipcMain 62→61; handler modules 44→45.
 - Current IPC handler rule from `src/main/ipc/README.md` still applies:
   handler modules stay directly under `src/main/ipc/` unless the IPC validation
   scanner is expanded in the same commit.
@@ -483,40 +512,72 @@ Pass-10 retired from the active queue. M3-2 (dispatch facade) is complete.
 | Slice | Owner | Status | Commit / scope | Notes |
 | --- | --- | --- | --- | --- |
 | `refactor(main-m3)` M3-3a approval seam | @WriteMain | LANDED | `d038a820e` | 22-field inject-only bundle; `networkAccessBlockedMessage` 22nd field; Adversary2 APPROVE; `index.ts` +100/−31 |
-| `docs(refactor-plan)` pass-11 ledger refresh | @WriteDocs | ON DISK | this doc | Captures pass-10/11 SHAs + M3-3a; commit pending pass-12 |
+| `docs(refactor-plan)` pass-11 ledger refresh | @WriteDocs | LANDED | `a7d7ae97b` | Folded into pass-12 docs commit; captures pass-10/11 SHAs + M3-3a |
 
 Pass-11 retired from the active queue. M3-3a seam is complete.
 
-#### Pass 12 — IN FLIGHT (2026-07-08, fresh round)
+#### Pass 12 — LANDED (2026-07-08)
 
 | Slice | Owner | Status | Commit / scope | Notes |
 | --- | --- | --- | --- | --- |
 | `fix(main-m3)` approvalService stale-capture fix | @WriteMain | LANDED | `2e02828fd` | `getApprovalService` lazy accessor; `design-rule-seam-bundle-latebinding`; Adversary2 SECURITY APPROVE; `index.ts` +8/−3 |
-| `docs(refactor-plan)` pass-12 ledger refresh | @WriteDocs | ON DISK | this doc | Pass-11/12 SHAs + M3-3b status; stale queue rows removed (Adversary1) |
-| `refactor(main-m3)` M3-3b approval body + security test | @WriteMain | **ON DISK** | `index.ts` + `ApprovalOrchestration.ts` + test | `createApprovalOrchestration(deps)` factory; 9-case wrapper test; gates green (vitest 54/54); awaiting @Adversary2 |
-| `refactor(main-m3)` M3-3c–d approval cluster + grant handler | @WriteMain | QUEUED | `index.ts` + new modules | M3-3c requestMain/workspace-trust; M3-3d grant handler; serial after M3-3b |
+| `refactor(main-m3)` M3-3b approval body + security test | @WriteMain | LANDED | `bc718247f` | `createApprovalOrchestration(deps)` factory; 9-case wrapper test; vitest 54/54; Adversary2 FULL security APPROVE; `index.ts` net −350 |
+| `docs(refactor-plan)` pass-12 ledger refresh | @WriteDocs | LANDED | `a7d7ae97b` | Pass-10/11/12 SHAs + M3-3b status; stale queue rows removed (Adversary1) |
+
+Pass-12 retired from the active queue. M3-3b trust-choke-point body relocation
+is complete.
+
+#### Pass 13 — LANDED (2026-07-08)
+
+| Slice | Owner | Status | Commit / scope | Notes |
+| --- | --- | --- | --- | --- |
+| `refactor(main-m3)` M3-3c-a main-approval seam | @WriteMain | LANDED | `4caa10cd1` | `RequestMainApprovalDeps` 8-field bundle; `getApprovalService` lazy accessor; threading-only; Adversary3 APPROVE; `index.ts` +35/−8 |
+
+Pass-13 retired from the active queue. M3-3c-a seam is complete.
+
+#### Pass 14 — LANDED (2026-07-08)
+
+| Slice | Owner | Status | Commit / scope | Notes |
+| --- | --- | --- | --- | --- |
+| `refactor(main-m3)` M3-3c-b main-approval body + test | @WriteMain | LANDED | `32cb8d30e` | `createMainApprovalOrchestration` via `Pick<>`; 6-case main-authority wrapper test; Adversary1 APPROVE; `index.ts` net −89 |
+
+Pass-14 retired from the active queue. M3-3c (main-approval orchestration) is
+complete.
+
+#### Pass 15 — IN FLIGHT (2026-07-08, hop budget refreshed to 256)
+
+| Slice | Owner | Status | Commit / scope | Notes |
+| --- | --- | --- | --- | --- |
+| `refactor(main-m3)` M3-3d approval response handler | @WriteMain | **ON DISK** | `index.ts` + `approvalResponseHandlers.ts` + test | `respond-agent-approval` registrar; 9-case wrapper test; co-move-forbidden ordering; Adversary2 FULL security APPROVE; re-gated on `241405a84` |
+| `docs(refactor-plan)` pass-15 ledger refresh | @WriteDocs | ON DISK | this doc | Captures pass-13/14 SHAs + M3-3d status; commit disjoint from code |
 | `refactor(renderer-r3)` chat-facade batch 2 | @WriteRender | QUEUED | `App.tsx` | Replace/reconcile `setChats` sites per `design-spec-chat-facade` census |
-| `fix(providers)` I-drop leading delta restore | @WriteMain | DEFERRED | `index.ts` / orchestrator | Sidequest; `sidequest-i-drop-fix-plan`; serial after M3-3 unless reprioritized |
+| `fix(providers)` I-drop leading delta restore | @WriteMain | QUEUED | `index.ts` / orchestrator | Sidequest; `sidequest-i-drop-fix-plan`; serial after M3-3d commit |
+| `refactor(main-m0)` incremental context consumers | @WriteMain | QUEUED | `index.ts` | One consumer per slice; proof-of-consumer (`54abac2d3`) already landed |
 
-Retired from active queue (already LANDED — see Pass 2/3 archive): preload-r0
-(`94c104cf8`), main-m1 chat CRUD (`74895af4d`), renderer-r0 (`760c57510`).
+Retired from active queue (already LANDED — do not re-dispatch): preload pass-2
+(`94c104cf8`), renderer-r0 + r0b (`760c57510`, `5ebcc6ad1`), main-m1 chat CRUD
+(`74895af4d`), `removeChats` bulk verb (`ca4418b54`), iOS-remote extraction
+(`bb65ca4c5`), M0 wiring proof consumer (`54abac2d3`), M3-unfreeze gate tests
+(`bdb93501a`).
 
-Pass-12 critical path (serial on `index.ts` — **docs lane is disjoint, not a
+Pass-15 critical path (serial on `index.ts` — **docs lane is disjoint, not a
 gate**):
 
-1. @Adversary2 — **full security review** of M3-3b ON DISK (elevated vs M3-3a
-   threading-only): verbatim relocation + wrapper test asserts all 5 ordering
-   invariants + 9 branches.
-2. @CheckCommit — sole-actor M3-3b commit (`refactor(main-m3): extract approval
-   orchestration facade`; exact pathspec from WriteMain).
+1. @CheckCommit — sole-actor M3-3d commit (`refactor(main-m3): extract approval
+   response handler`; 3 code paths ONLY; leave docs + `.cursor/` unstaged) →
+   **closes M3-3**.
+2. @CheckCommit — `docs(refactor-plan): refresh pass-15 ledger` (`git add -f`,
+   pathspec this doc only).
 
 Parallel (non-blocking, disjoint pathspecs):
 
-- @CheckCommit — `docs(refactor-plan): refresh pass-12 ledger` (`git add -f`,
-  pathspec this doc only).
-- Renderer/chat-facade batch 2 — never concurrent with `index.ts` M3-3c–d.
+- Renderer/chat-facade batch 2 — never concurrent with `index.ts` I-drop.
+- M0 incremental consumer migration — one slice at a time on `index.ts`.
 
-No idle gate after M3-3b: M3-3c–d teed per `design-m3-3-spec`.
+Late-binding rule (`design-rule-seam-bundle-latebinding`) applied throughout
+M3-3c–d: M3-3c-a baked `getApprovalService` from the start; M3-3c-b inherited
+via `Pick<>`; M3-3d uses by-value `approvalServiceInstance` (pattern B — registrar
+runs inside `whenReady` post-construction).
 
 ### Phase 0 - Refresh And Freeze Invariants
 
@@ -682,7 +743,8 @@ Candidate clusters, subject to fresh recon:
 - human collaboration — **LANDED** pass 1 (`humanCollaborationHandlers.ts`)
 - chat CRUD still inline after existing `chatHandlers` — **LANDED** pass 2 (`chatHandlers.ts`)
 - ensemble controls and wakeups
-- approval response handlers
+- ~~approval response handlers~~ — **ON DISK** M3-3d (`approvalResponseHandlers.ts`;
+  awaiting @CheckCommit)
 - Gemini session/PTY controls
 - residual provider usage/status handlers
 
@@ -724,7 +786,7 @@ Suggested gates:
 Purpose: extract the core run path as a trust-boundary bundle, not as scattered
 helpers.
 
-**Status (pass 12):** trust primitives are already modules; M3 is orchestration-
+**Status (pass 15):** trust primitives are already modules; M3 is orchestration-
 facade extraction. Gate tests landed (`bdb93501a`). **M3-1a** landed
 (`4aa2c84d1`: `AgentRunNormalizerDeps`, 7 explicit deps, no body move).
 **M3-1b** landed (`ba96e108b`): `normalizeAgentRunPayload` →
@@ -747,13 +809,19 @@ landed (`7f3ab2359`): `createRunDispatchFacade(deps)` →
 +100/−31; ipcMain 62 unchanged. **Pass-12a** landed (`2e02828fd`):
 `approvalService` stale-capture fix — `getApprovalService` lazy accessor per
 `design-rule-seam-bundle-latebinding` (module-scope bundle + whenReady-assigned
-`let` trap; Adversary2 SECURITY APPROVE). **M3-3b** **ON DISK**
-(`design-m3-3b-spec`): body relocation → `src/main/run/ApprovalOrchestration.ts`
+`let` trap; Adversary2 SECURITY APPROVE). **M3-3b** landed (`bc718247f`,
+`design-m3-3b-spec`): body relocation → `src/main/run/ApprovalOrchestration.ts`
 (479L) via `createApprovalOrchestration(deps)` factory (M3-2b precedent) +
 **9-case security wrapper test** (353L; campaign's highest-stakes cut); `index.ts`
-net −350; gates green (vitest 54/54). Awaiting @Adversary2 full security review
-→ @CheckCommit. **M3-3c–d** teed: M3-3c requestMain/workspace-trust → M3-3d
-grant handler. Serial on `index.ts` after M3-3b commits.
+net −350; vitest 54/54; Adversary2 FULL security APPROVE. **M3-3c-a** landed
+(`4caa10cd1`, `design-m3-3c-spec`): `requestMainApproval` seam — 8-field
+`RequestMainApprovalDeps` with `getApprovalService` lazy accessor; threading-only;
+Adversary3 APPROVE. **M3-3c-b** landed (`32cb8d30e`, `design-m3-3c-b-spec`):
+`createMainApprovalOrchestration` body move + 6-case main-authority wrapper test;
+Adversary1 APPROVE. **M3-3d** **ON DISK** (`design-m3-3d-spec`): grant handler
+→ `approvalResponseHandlers.ts` + 9-case wrapper test; Adversary2 FULL security
+APPROVE; awaiting @CheckCommit → **closes M3-3**. Post-M3-3: I-drop sidequest,
+M0 incremental consumers, chat-facade batch 2.
 
 Actions:
 
