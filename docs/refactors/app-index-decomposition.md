@@ -32,24 +32,29 @@ into a new 8K file and call the slice done.
 
 ## Current Snapshot
 
-Measured from the live worktree on 2026-07-08 (post-crash resume). Pass-1
-through pass-3 helper slices are committed (`5d1ada4fb` … `5ad23b356`); metrics
-below reflect post-`renderer-r0` / post-scaffold / post-chat-CRUD state. Treat
-these numbers as orientation only. Every Ensemble round must refresh counts and
-dirty state before assigning a slice.
+Measured from the live worktree on 2026-07-08 (fresh round, post pass-5 commit
+wave). Pass-1 through pass-5 slices are committed (`5d1ada4fb` … `54abac2d3`);
+metrics below reflect post-`renderer-r0b` / post-iOS-remote / post-M0-wiring /
+post-renderer-r3-slice1 state. Treat these numbers as orientation only. Every
+Ensemble round must refresh counts and dirty state before assigning a slice.
 
-Pass-3 worktree baseline (recorded after TaskWraith renderer crash recovery):
+Pass-6 worktree baseline (HEAD `54abac2d3`, recorded fresh round start):
 
-- Branch `master`, ahead 58 of `origin/master`.
-- Pass-2 tails closed: preload-r0 (`94c104cf8`), chat CRUD (`74895af4d`),
-  renderer-r0 (`760c57510`), scaffolds (`60f662341`).
-- One dirty renderer path: `src/renderer/src/App.tsx` — @WriteRender
-  `useScopedIpc` adoption follow-up (gates green; awaiting @CheckCommit).
-- WriteMain pass-3 writer lanes (I-drop fix, iOS-remote extraction) left zero
-  files on disk after crash-interrupted runs; need fresh restart.
-- Crash context: release build 1.7.9 native renderer instability (`.ips` on
-  disk); unrelated to uncommitted refactor slices. Codex WriteMain run
-  `codex-1783472098113-m7vxtuz7zm` marked failed on recovery.
+- Branch `master`, ahead 65 of `origin/master`.
+- Pass-4 tails closed: pass-2/3 ledger (`88d6b8abe`), renderer-r0b
+  (`5ebcc6ad1`), iOS-remote extraction (`bb65ca4c5`).
+- Pass-5 commit wave closed: renderer-r3 slice 1 (`d34fb748c`), M3 gate tests
+  (`bdb93501a`), M0 wiring (`54abac2d3`).
+- Two disjoint dirty lanes (do not cross-stage):
+  - `src/main/index.ts` — @WriteMain M3-1a seam-first slice (+69/−11,
+    `normalizeAgentRunPayload` deps explicit; no body move). Awaiting
+    @Adversary1 review → @CheckCommit.
+  - `src/renderer/src/state/chatMutations.ts`,
+    `src/renderer/src/state/useChatMutations.ts`, untracked
+    `src/renderer/src/state/chatMutations.test.ts` — @NewFiles `removeChats`
+    bulk verb. Awaiting @Adversary3/@GH5 sign-off → @CheckCommit.
+- Crash context: **CLOSED** (release 1.7.9 native SIGTRAP; not attributable to
+  campaign slices). Tracking item only — no further recon wall-time.
 - `.cursor/` untracked — never staged.
 
 Tier-2 orientation: early Pass-1 recon reported `SettingsPanel.tsx` ~10,714 and
@@ -78,22 +83,23 @@ Current high-level facts:
 
 | Area | Current signal |
 | --- | ---: |
-| `src/main/index.ts` | 31,728 lines (was 32,234 pre-pass-1) |
-| `src/renderer/src/App.tsx` | 25,832 lines (committed HEAD; +14-line hook adoption dirty) |
-| Inline `ipcMain.handle/on` registrations still in `index.ts` | 72 (was 103 pre-pass-1; 77 post-pass-1) |
-| Registrar calls already wired from `index.ts` | 43 |
-| Flat `src/main/ipc/*Handlers.ts` modules | 43 |
-| Flat `src/main/ipc/*Handlers.test.ts` modules | 43 (parity with handler modules) |
+| `src/main/index.ts` | 31,570 lines committed (`54abac2d3`; was 32,234 pre-pass-1) |
+| `src/renderer/src/App.tsx` | 25,834 lines (committed HEAD; clean) |
+| Inline `ipcMain.handle/on` registrations still in `index.ts` | 62 (was 103 pre-pass-1; 72 post-pass-3) |
+| Registrar calls already wired from `index.ts` | 44 |
+| Flat `src/main/ipc/*Handlers.ts` modules | 44 |
+| Flat `src/main/ipc/*Handlers.test.ts` modules | 44 (parity with handler modules) |
+| `setChats(` call sites in `App.tsx` | 46 (was 47 pre-renderer-r3 slice 1) |
 | `MainAppLayout.types.ts` remaining `: any` props | 392 |
-| `removeListeners()` occurrences in `App.tsx` | 0 (R0 landed `760c57510`) |
+| `removeListeners()` occurrences in `App.tsx` | 0 (R0 + R0b landed) |
 
 Largest production TS/TSX files at this snapshot:
 
 | Rank | File | Lines | Campaign |
 | ---: | --- | ---: | --- |
-| 1 | `src/main/index.ts` | 31,728 | Tier 1 main root |
-| 2 | `src/renderer/src/App.tsx` | 25,832 | Tier 1 renderer root |
-| 3 | `src/main/services/EnsembleOrchestrator.ts` | 12,416 | Tier 2 service |
+| 1 | `src/main/index.ts` | 31,570 | Tier 1 main root |
+| 2 | `src/renderer/src/App.tsx` | 25,834 | Tier 1 renderer root |
+| 3 | `src/main/services/EnsembleOrchestrator.ts` | 12,558 | Tier 2 service |
 | 4 | `src/renderer/src/components/SettingsPanel.tsx` | 11,063 | Tier 2 renderer settings |
 | 5 | `src/renderer/src/components/Sidebar.tsx` | 5,533 | Tier 2 renderer shell |
 | 6 | `src/main/store/types.ts` | 5,490 | Tier 2 store types |
@@ -156,6 +162,29 @@ without fresh recon.
 - Test pass-3 (2026-07-08): `test(main-m1)` null-runtime poll guards for human
   collaboration (`79dda4275`, 4→6 tests); `test(main-ipc)` missing handler
   coverage for four IPC modules (`5ad23b356`, 43/43 module parity).
+- Docs pass-3/4 (2026-07-08): `docs(refactor-plan)` pass-2/3 ledger refresh.
+  Commit `88d6b8abe`.
+- Renderer pass-4 (2026-07-08): `refactor(renderer-r0b)` — adopt committed
+  `useScopedIpc` hook in mount-once IPC effect; 24 registrations preserved.
+  Commit `5ebcc6ad1`. Gate: `typecheck:web`; `useScopedIpc.test` 7/7.
+- Main pass-4 (2026-07-08): `refactor(main-m1)` — 10 iOS-remote/Tailscale IPC
+  channels moved into `bridgeRemoteHandlers.ts` with
+  `BridgeRemoteHandlersDeps` injection and focused test. Commit `bb65ca4c5`.
+  Gates: `typecheck:node`; `bridgeRemoteHandlers.test` 8/8; `IpcValidation.test`
+  34/34. Inline `ipcMain` 72→62; handler modules 43→44.
+- Renderer pass-5 (2026-07-08): `refactor(renderer-r3)` — first chat-mutation
+  facade consumer: `useChatMutations` + `removeChat` at delete site. Commit
+  `d34fb748c`. Gate: `typecheck:web`. `setChats(` 47→46.
+- Test pass-5 (2026-07-08): `test(m3)` — M3-unfreeze gate tests lock run-payload
+  normalization and approval choke-point invariants. Commit `bdb93501a`.
+  Gates: `typecheck:node`; `M3RunPayloadTrustBoundary` 3/3;
+  `ApprovalServiceM3Gate` 2/2. Zero production edits.
+- Main pass-5 (2026-07-08): `refactor(main-m0)` — wire `MainRuntimeContext` once
+  at registrar block top; proof-of-consumer swaps `localServersService` →
+  `mainRuntimeContext.services.requireLocalServers()`. Commit `54abac2d3`.
+  Gates: `typecheck:node`; `MainRuntimeContext.test` 7/7; `localServersHandlers`
+  2/2; `IpcValidation.test` 34/34. Getter-closure injection; zero
+  assignment-site edits.
 - Current IPC handler rule from `src/main/ipc/README.md` still applies:
   handler modules stay directly under `src/main/ipc/` unless the IPC validation
   scanner is expanded in the same commit.
@@ -308,25 +337,48 @@ by this table.
 
 Pass-2 renderer-r0 and scaffold rows deferred to pass-3 (landed there).
 
-#### Pass 3 — IN FLIGHT (2026-07-08)
+#### Pass 3 — LANDED (2026-07-08)
+
+| Slice | Owner | Status | Commit | Gates | Metric deltas |
+| --- | --- | --- | --- | --- | --- |
+| `refactor(renderer-r0)` scoped app IPC unsubscribe | @WriteRender | LANDED | `760c57510` | `typecheck:web` | 24 scoped subs; `removeListeners()` = 0 |
+| `feat(scaffold)` MainRuntimeContext + facades | @NewFiles | LANDED | `60f662341` | `typecheck:node/web`; scaffold tests 14/14 | 6 files |
+| `test(main-m1)` human-collab null-runtime guards | @WriteMain | LANDED | `79dda4275` | focused test green | 4→6 tests |
+| `test(main-ipc)` four missing handler modules | @Captain track | LANDED | `5ad23b356` | `typecheck:node` | 43/43 handler module parity |
+
+#### Pass 4 — LANDED (2026-07-08)
+
+| Slice | Owner | Status | Commit | Gates | Metric deltas |
+| --- | --- | --- | --- | --- | --- |
+| `docs(refactor-plan)` pass-2/3 ledger update | @WriteDocs | LANDED | `88d6b8abe` | `git diff --check` on doc path | — |
+| `refactor(renderer-r0b)` adopt `useScopedIpc` hook | @WriteRender | LANDED | `5ebcc6ad1` | `typecheck:web`; `useScopedIpc.test` 7/7 | inline collector → hook |
+| `refactor(main-m1)` iOS-remote / Tailscale extraction | @WriteMain | LANDED | `bb65ca4c5` | `typecheck:node`; `bridgeRemoteHandlers.test` 8/8; `IpcValidation.test` 34/34 | inline `ipcMain` 72→62; handler modules 43→44; `index.ts` −314 net |
+
+#### Pass 5 — LANDED (2026-07-08)
+
+| Slice | Owner | Status | Commit | Gates | Metric deltas |
+| --- | --- | --- | --- | --- | --- |
+| `refactor(renderer-r3)` chat-facade first consumer (delete) | @WriteRender | LANDED | `d34fb748c` | `typecheck:web` | `setChats(` 47→46; `useChatMutations` + `removeChat` |
+| `test(m3)` run-payload + approval trust-boundary gates | @GenericHelper1 | LANDED | `bdb93501a` | `typecheck:node`; M3 tests 5/5 | M3 bundle **unfrozen**; zero prod edits |
+| `refactor(main-m0)` wire MainRuntimeContext proof consumer | @WriteMain | LANDED | `54abac2d3` | `typecheck:node`; `MainRuntimeContext.test` 7/7; `IpcValidation.test` 34/34 | `createMainRuntimeContext` @L27747; getter-closure; zero assignment-site edits |
+
+#### Pass 6 — IN FLIGHT (2026-07-08)
 
 | Slice | Owner | Status | Commit / scope | Notes |
 | --- | --- | --- | --- | --- |
-| `refactor(renderer-r0)` scoped app IPC unsubscribe | @WriteRender | LANDED | `760c57510` | 24 scoped subs; `removeListeners()` = 0 |
-| `feat(scaffold)` MainRuntimeContext + facades | @NewFiles | LANDED | `60f662341` | 6 files; @Adversary1 approved getter-closure revision |
-| `test(main-m1)` human-collab null-runtime guards | @WriteMain | LANDED | `79dda4275` | 4→6 tests |
-| `test(main-ipc)` four missing handler modules | @Captain track | LANDED | `5ad23b356` | 43/43 handler module parity |
-| `refactor(renderer-r0b)` adopt `useScopedIpc` hook | @WriteRender | READY | dirty `App.tsx` | Gates green; pathspec commit pending @CheckCommit |
-| I-drop evidence-first fix (or stop report) | @WriteMain | RESTART | — | Crash interrupted; verify raw provider events first |
-| M1 iOS-remote / Tailscale extraction | @WriteMain | QUEUED | `bridgeRemoteHandlers.ts` | After I-drop lane |
-| `docs(refactor-plan)` pass-2/3 ledger update | @WriteDocs | IN FLIGHT | this doc | This slice |
+| `feat(chat-facade)` `removeChats` bulk verb + tests | @NewFiles | ON DISK | 3 `state/` files | Awaiting @Adversary3/@GH5 → @CheckCommit `feat(chat-facade): add removeChats bulk verb + facade tests` |
+| `refactor(main-m3)` M3-1a seam-first normalizer deps | @WriteMain | ON DISK | `index.ts` only | `AgentRunNormalizerDeps` (7 deps); no body move. Awaiting @Adversary1 → @CheckCommit `refactor(main-m3): make agent-run normalizer deps explicit` |
+| `refactor(main-m3)` M3-1b body move + focused test | @WriteMain | QUEUED | `AgentRunNormalizer.ts` | **Serial after M3-1a commits** — relocate fn + faked-deps test |
+| `refactor(renderer-r3)` Site C reap migration | @WriteRender | QUEUED | `App.tsx` | Gated on `removeChats` commit |
+| `refactor(renderer-r3)` Slice 1b `promoteToFront` | @WriteRender | QUEUED | `App.tsx` | Per `design-chatfacade-slice1`; verify sorted-list invariant |
+| `fix(providers)` I-drop leading delta restore | @WriteMain | DEFERRED | `index.ts` / orchestrator | Sidequest; sequenced **after** M3-1a per General reorder; GH5 evidence gate |
+| `docs(refactor-plan)` pass-5/6 ledger refresh | @WriteDocs | IN FLIGHT | this doc | Captures pass-4/5 SHAs + pass-6 dirty lanes |
 
 @CheckCommit owns staging and commits by exact pathspec only (`git add -f` for
-docs). Commit names for remaining pass-3 tails:
-`refactor(renderer-r0b): adopt useScopedIpc in app ipc listeners`,
-`fix(providers): evidence-based i-drop channel split` (or stop-report doc),
-`refactor(main-m1): extract ios remote ipc handlers`,
-`docs(refactor-plan): record pass-2/3 landed slices`.
+docs). Pass-6 commit queue (disjoint pathspecs — never cross-stage):
+`feat(chat-facade): add removeChats bulk verb + facade tests` (3 `state/` files),
+`refactor(main-m3): make agent-run normalizer deps explicit` (`index.ts` only),
+`docs(refactor-plan): refresh pass-5/6 ledger` (this doc).
 
 ### Phase 0 - Refresh And Freeze Invariants
 
@@ -427,6 +479,11 @@ Suggested gates:
 
 Purpose: move high-leverage state out of `App.tsx` behind explicit facades.
 
+**Status (pass 6):** facade scaffold landed (`60f662341`); slice 1 delete consumer
+landed (`d34fb748c`, `setChats(` 46). `removeChats` bulk verb on disk (unlocks
+Site C reap migration). Slice 1b `promoteToFront` queued per
+`design-chatfacade-slice1`.
+
 Order:
 
 1. Run queue helpers and request-building selectors.
@@ -448,6 +505,10 @@ Guardrails:
 
 Purpose: prevent `index.ts` extraction from creating hidden cycles or policy
 holes.
+
+**Status (pass 5):** scaffold landed (`60f662341`); wiring + proof-of-consumer
+landed (`54abac2d3`). Next M0 work is incremental consumer migration as M3/M1
+facades extract — not another bootstrap slice.
 
 Actions:
 
@@ -478,9 +539,9 @@ facades.
 
 Candidate clusters, subject to fresh recon:
 
-- iOS remote config and pairing
-- human collaboration
-- chat CRUD still inline after existing `chatHandlers`
+- ~~iOS remote config and pairing~~ — **LANDED** `bb65ca4c5` (`bridgeRemoteHandlers.ts`)
+- human collaboration — **LANDED** pass 1 (`humanCollaborationHandlers.ts`)
+- chat CRUD still inline after existing `chatHandlers` — **LANDED** pass 2 (`chatHandlers.ts`)
 - ensemble controls and wakeups
 - approval response handlers
 - Gemini session/PTY controls
@@ -523,6 +584,13 @@ Suggested gates:
 
 Purpose: extract the core run path as a trust-boundary bundle, not as scattered
 helpers.
+
+**Status (pass 6):** trust primitives are already modules; M3 is orchestration-
+facade extraction (~977 inline lines). Gate tests landed (`bdb93501a`).
+**M3-1a** (seam-first: `AgentRunNormalizerDeps`, 7 explicit deps, no body
+move) on disk awaiting review. **M3-1b** (relocate `normalizeAgentRunPayload`
+→ `src/main/run/AgentRunNormalizer.ts` + faked-deps test) queues serially after
+M3-1a commits.
 
 Actions:
 
