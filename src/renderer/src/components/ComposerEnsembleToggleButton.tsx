@@ -110,23 +110,25 @@ export function ComposerEnsembleToggleButton({
               <span className="composer-ensemble-toggle-state">{enabled ? 'On' : 'Off'}</span>
             </div>
             <div
-              className="composer-ensemble-toggle-segmented"
-              role="group"
+              className="segmented-control segmented-control--compact composer-ensemble-toggle-segmented"
+              role="radiogroup"
               aria-label="Ensemble mode"
             >
               <button
                 type="button"
-                className={enabled ? 'is-active' : ''}
+                className={`segmented-control-segment ${enabled ? 'is-active' : ''}`}
                 onClick={() => selectMode(true)}
-                aria-pressed={enabled}
+                role="radio"
+                aria-checked={enabled}
               >
                 On
               </button>
               <button
                 type="button"
-                className={enabled ? '' : 'is-active'}
+                className={`segmented-control-segment ${enabled ? '' : 'is-active'}`}
                 onClick={() => selectMode(false)}
-                aria-pressed={!enabled}
+                role="radio"
+                aria-checked={!enabled}
               >
                 Off
               </button>

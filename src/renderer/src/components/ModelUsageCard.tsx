@@ -1026,13 +1026,17 @@ export function ModelUsageCard({ usageSummary, variant = 'card', apiSpend }: Mod
       <div className="model-usage-summary-header">
         <div className="run-summary-title">Model Usage</div>
         {showViewToggle && (
-          <div className="model-usage-view-toggle" role="radiogroup" aria-label="Model usage view">
+          <div
+            className="segmented-control segmented-control--compact model-usage-view-toggle"
+            role="radiogroup"
+            aria-label="Model usage view"
+          >
             {planViewAvailable && (
               <button
                 type="button"
                 role="radio"
                 aria-checked={effectiveView === 'plan'}
-                className={`model-usage-view-toggle-btn ${effectiveView === 'plan' ? 'is-active' : ''}`}
+                className={`segmented-control-segment model-usage-view-toggle-btn ${effectiveView === 'plan' ? 'is-active' : ''}`}
                 onClick={() => selectView('plan')}
                 aria-label="Plan limits"
                 title="Plan limits"
@@ -1045,7 +1049,7 @@ export function ModelUsageCard({ usageSummary, variant = 'card', apiSpend }: Mod
                 type="button"
                 role="radio"
                 aria-checked={effectiveView === 'spend'}
-                className={`model-usage-view-toggle-btn ${effectiveView === 'spend' ? 'is-active' : ''}`}
+                className={`segmented-control-segment model-usage-view-toggle-btn ${effectiveView === 'spend' ? 'is-active' : ''}`}
                 onClick={() => selectView('spend')}
                 aria-label="API spend"
                 title="API spend"
@@ -1058,7 +1062,7 @@ export function ModelUsageCard({ usageSummary, variant = 'card', apiSpend }: Mod
                 type="button"
                 role="radio"
                 aria-checked={effectiveView === 'context'}
-                className={`model-usage-view-toggle-btn ${effectiveView === 'context' ? 'is-active' : ''}`}
+                className={`segmented-control-segment model-usage-view-toggle-btn ${effectiveView === 'context' ? 'is-active' : ''}`}
                 onClick={() => selectView('context')}
                 aria-label="Context lengths"
                 title="Context lengths"

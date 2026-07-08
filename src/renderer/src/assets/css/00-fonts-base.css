@@ -145,6 +145,7 @@ body {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  gap: 6px;
   min-height: var(--segmented-action-height);
   padding: var(--segmented-action-padding);
   border: 1px solid var(--segmented-action-border);
@@ -164,11 +165,31 @@ body {
   --segmented-action-padding: 0 9px;
 }
 
+.segmented-control-action--primary {
+  --segmented-action-foreground: var(--accent);
+  --segmented-action-border: color-mix(in srgb, var(--accent) 56%, var(--panel-border));
+  --segmented-action-bg: color-mix(in srgb, var(--accent) 70%, transparent);
+  --segmented-action-hover-bg: color-mix(in srgb, var(--accent) 82%, transparent);
+  color: color-mix(in srgb, #ffffff 94%, var(--text-primary));
+}
+
+.segmented-control-action--danger {
+  --segmented-action-foreground: var(--danger);
+  --segmented-action-border: color-mix(in srgb, var(--danger) 50%, var(--panel-border));
+  --segmented-action-bg: color-mix(in srgb, var(--danger) 14%, transparent);
+  --segmented-action-hover-bg: color-mix(in srgb, var(--danger) 24%, transparent);
+}
+
 .segmented-control-action:hover:not(:disabled),
 .segmented-control-action:focus-visible {
   color: var(--segmented-action-foreground);
   background: var(--segmented-action-hover-bg);
   border-color: color-mix(in srgb, var(--segmented-action-foreground) 24%, var(--panel-border));
+}
+
+.segmented-control-action--primary:hover:not(:disabled),
+.segmented-control-action--primary:focus-visible {
+  color: color-mix(in srgb, #ffffff 96%, var(--text-primary));
 }
 
 .segmented-control-action:disabled {

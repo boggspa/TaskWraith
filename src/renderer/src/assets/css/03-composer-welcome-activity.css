@@ -5702,37 +5702,28 @@
 }
 
 .composer-ensemble-toggle-segmented {
-  display: grid;
+  --segmented-control-foreground: var(--text-primary);
+  --segmented-control-border: color-mix(in srgb, var(--panel-border) 58%, transparent);
+  --segmented-control-bg: color-mix(in srgb, var(--text-primary) 8%, transparent);
+  --segmented-control-gap: 3px;
+  --segmented-control-padding: 3px;
+  --segmented-segment-height: 27px;
+  --segmented-segment-padding: 0 12px;
   grid-template-columns: 1fr 1fr;
-  gap: 3px;
-  padding: 3px;
-  border-radius: 9px;
-  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
-  border: 1px solid color-mix(in srgb, var(--panel-border) 58%, transparent);
 }
 
-.composer-ensemble-toggle-segmented button {
-  appearance: none;
-  -webkit-appearance: none;
-  min-height: 27px;
-  border: 0;
-  border-radius: 7px;
-  background: transparent;
-  color: color-mix(in srgb, var(--text-primary) 74%, transparent);
-  font: inherit;
+.composer-ensemble-toggle-segmented .segmented-control-segment {
   font-size: var(--font-size-xs);
   font-weight: 700;
-  cursor: pointer;
 }
 
-.composer-ensemble-toggle-segmented button:hover,
-.composer-ensemble-toggle-segmented button:focus-visible {
+.composer-ensemble-toggle-segmented .segmented-control-segment:hover,
+.composer-ensemble-toggle-segmented .segmented-control-segment:focus-visible {
   outline: none;
   color: var(--text-primary);
-  background: color-mix(in srgb, var(--text-primary) 9%, transparent);
 }
 
-.composer-ensemble-toggle-segmented button.is-active {
+.composer-ensemble-toggle-segmented .segmented-control-segment.is-active {
   color: color-mix(in srgb, var(--provider-ensemble-color, var(--accent)) 88%, var(--text-primary));
   background: color-mix(in srgb, var(--provider-ensemble-color, var(--accent)) 16%, transparent);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--provider-ensemble-color, var(--accent)) 28%, transparent);
