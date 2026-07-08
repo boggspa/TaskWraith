@@ -7977,7 +7977,12 @@ interface RequestAgenticServiceApprovalDeps {
   runManager: typeof runManager
   permissionService: typeof permissionService
   auditService: typeof auditService
-  approvalService: ApprovalService | null
+  // Lazy accessor (NOT a captured value): approvalService is a whenReady-assigned
+  // module-let (null at module-init when this bundle is built). Reading it live —
+  // exactly like getSettings below — is what keeps registerGeminiTool firing after
+  // whenReady. A by-value capture here freezes null → the terminal approval
+  // registration silently no-ops (a security regression on the trust choke point).
+  getApprovalService: () => ApprovalService | null
   getSettings: () => AppSettings
   appendDurableRunEventForRoute: typeof appendDurableRunEventForRoute
   recordApprovalLedgerRequest: typeof recordApprovalLedgerRequest
@@ -8002,7 +8007,7 @@ const requestAgenticServiceApprovalDeps: RequestAgenticServiceApprovalDeps = {
   runManager,
   permissionService,
   auditService,
-  approvalService,
+  getApprovalService: () => approvalService,
   getSettings: () => AppStore.getSettings(),
   appendDurableRunEventForRoute,
   recordApprovalLedgerRequest,
@@ -8266,7 +8271,7 @@ async function requestAgenticServiceApproval(
   const title = ensembleApproval ? `${ensembleApproval.label}: ${baseTitle}` : baseTitle
   const body = ensembleApproval ? `${ensembleApproval.bodyPrefix}\n\n${baseBody}` : baseBody
   return new Promise((resolveApproval) => {
-    requestAgenticServiceApprovalDeps.approvalService?.registerGeminiTool(approvalId, {
+    requestAgenticServiceApprovalDeps.getApprovalService()?.registerGeminiTool(approvalId, {
       provider,
       service,
       workspacePath,
