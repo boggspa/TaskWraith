@@ -29,6 +29,13 @@ final class TranscriptFollowPin {
     var scheduled = false
     /// Wall-clock of the last pin — throttles the ~24fps reveal-driven pins.
     var lastPinAt: Date = .distantPast
+    /// Wall-clock of the last user touch on the transcript. Held HERE (a plain
+    /// reference type), not in `@State`: the zero-distance DragGesture tracker
+    /// stamps it on every touch-move sample, and an `@State` write would
+    /// invalidate the whole ThreadDetailView.body — re-running it and
+    /// Equatable-diffing every materialized row on essentially every scroll
+    /// frame (the baseline scroll stutter, independent of streaming).
+    var lastUserTouchAt: Date = .distantPast
 }
 
 enum TranscriptTouchTrackingPolicy {
@@ -180,14 +187,10 @@ struct ThreadDetailView: View {
     /// One-scroll-per-turn coalescer for the follow-pin (kills stacked scrolls).
     @State private var followPin = TranscriptFollowPin()
     @State private var toolRowGroupingCache = TranscriptToolRowGroupingCache()
-    /// Last time a touch was live on the transcript (see `.simultaneousGesture`
-    /// in `listCore`). A forced follow-pin's SETTLE pass checks this so it
-    /// doesn't yank the scroll position back to bottom while the user is
-    /// actively dragging to read older text — the same class of bug `fafe49ef5`
-    /// fixed for the reveal pump's non-forced pins, but that fix only throttled
-    /// pin FREQUENCY; it never checked for a live touch, and forced pins (every
-    /// streamed token batch) were never throttled at all.
-    @State private var lastUserTouchAt: Date = .distantPast
+    // Last user-touch wall-clock lives on `followPin` (a reference type) so the
+    // per-touch-move tracker never re-renders the body. A forced follow-pin's
+    // SETTLE pass reads it so it doesn't yank the scroll back to bottom while the
+    // user is actively dragging to read older text (bug class `fafe49ef5`).
     @State private var keyboardVisible = false
     /// Secondary workspace granted to subsequent runs (rail picker), keyed by
     /// thread so navigation away and back does not drop an unsent choice.
@@ -727,8 +730,16 @@ struct ThreadDetailView: View {
     }
 
     private func toolBurstId(_ rows: [RemoteThreadSnapshot.Row]) -> String {
-        guard let first = rows.first, let last = rows.last else { return "tool-burst-empty" }
-        return "tool-burst-\(first.id)-\(last.id)-\(rows.count)"
+        // STABLE across burst growth: anchor on the FIRST row's id only. Baking in
+        // `last.id` + `rows.count` changed the ForEach identity every time a new
+        // tool row landed in a still-growing burst, forcing LazyVStack to
+        // destroy+recreate that subtree instead of an Equatable-gated in-place
+        // diff — the stutter that compounds during a live ensemble round (a
+        // concurrent participant's burst regrows even in the "settled" region).
+        // Content growth is still detected by ToolBurstRowView's `==` (compares
+        // `rows`), so the burst re-renders on new rows without churning identity.
+        guard let first = rows.first else { return "tool-burst-empty" }
+        return "tool-burst-\(first.id)"
     }
 
     /// Memoizes adjacent tool-row grouping so long threads do not re-walk settled
@@ -1254,7 +1265,7 @@ struct ThreadDetailView: View {
             enabled: TranscriptTouchTrackingPolicy.usesZeroDistanceDragTracker(
                 isPadInterface: isPadInterface)
         ) {
-            lastUserTouchAt = Date()
+            followPin.lastUserTouchAt = Date()
         }
         .safeAreaInset(edge: .top, spacing: 0) {
             VStack(spacing: 4) {
@@ -1832,7 +1843,7 @@ struct ThreadDetailView: View {
             // not "override the user's finger."
             await awaitNextMainRunloop()
             guard force || autoFollow else { return }
-            if Date().timeIntervalSince(lastUserTouchAt) < 0.25 { return }
+            if Date().timeIntervalSince(followPin.lastUserTouchAt) < 0.25 { return }
             scrollSentinelToBottomNow(proxy)
         }
     }
@@ -3108,7 +3119,12 @@ struct ThreadRowView: View, Equatable {
 
 #if canImport(UIKit)
     private struct TranscriptMediaStrip: View {
-        @ObservedObject var model: RemoteSessionModel
+        // Plain reference, NOT @ObservedObject: this strip only *calls* async
+        // methods (fetchThreadMedia*) and passes `model` to its preview sheet — it
+        // reads no @Published property, so observing the model would re-run this
+        // strip's body on every streamed token (the per-token cascade ThreadRowView
+        // was deliberately fixed to avoid), for every row that carries media.
+        let model: RemoteSessionModel
         let threadId: String
         let rowId: String
         let media: [RemoteThreadSnapshot.Row.Media]
