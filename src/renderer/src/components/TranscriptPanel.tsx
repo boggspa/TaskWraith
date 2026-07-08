@@ -895,9 +895,15 @@ function formatTranscriptMessageFooterTime(timestamp: string | undefined): {
 }
 
 function workingStatusLabel(presentation: WorkingIndicatorPresentation): string {
+  const activity =
+    presentation.activity === 'compacting' ? 'compacting context' : 'working'
   return presentation.roleLabel
-    ? `${presentation.roleLabel} (${presentation.providerLabel || 'Agent'}) working`
-    : `${presentation.providerLabel || 'Agent'} working`
+    ? `${presentation.roleLabel} (${presentation.providerLabel || 'Agent'}) ${activity}`
+    : `${presentation.providerLabel || 'Agent'} ${activity}`
+}
+
+function workingIndicatorLabel(presentation: WorkingIndicatorPresentation): string {
+  return presentation.activity === 'compacting' ? 'Compacting' : 'Working'
 }
 
 function workingIndicatorKey(
@@ -1835,12 +1841,12 @@ export const TranscriptPanel = memo(
       })
     }, [isWelcomeChat, messages, pendingQueuedAppRunIds, queuedRunStatusByAppRunId])
     const ensembleWorkingPresentation = useMemo(
-      () => deriveActiveEnsembleWorkingPresentation(currentChat),
-      [currentChat]
+      () => deriveActiveEnsembleWorkingPresentation(currentChat, contextCompactionProgress),
+      [contextCompactionProgress, currentChat]
     )
     const ensembleWorkingPresentations = useMemo(
-      () => deriveActiveEnsembleWorkingPresentations(currentChat),
-      [currentChat]
+      () => deriveActiveEnsembleWorkingPresentations(currentChat, contextCompactionProgress),
+      [contextCompactionProgress, currentChat]
     )
     const workingProviderLabel =
       ensembleWorkingPresentation?.providerLabel || thinkingProviderLabel || currentProviderLabel
@@ -1860,10 +1866,16 @@ export const TranscriptPanel = memo(
                 provider: workingProvider ?? null,
                 providerClass: workingProviderClass || (workingProvider ? String(workingProvider) : null),
                 roleLabel: workingRoleLabel,
-                modelBadge: workingModelBadge
+                modelBadge: workingModelBadge,
+                activity: contextCompactionProgress.some(
+                  (event) => event.status === 'started' && !event.participantId
+                )
+                  ? 'compacting'
+                  : 'working'
               }
             ],
       [
+        contextCompactionProgress,
         currentProviderLabel,
         ensembleWorkingPresentations,
         workingModelBadge,
@@ -3896,7 +3908,10 @@ export const TranscriptPanel = memo(
                         </span>
                       )}
                     </div>
-                    <ThinkingIndicator ariaLabel={workingStatusLabel(presentation)} />
+                    <ThinkingIndicator
+                      label={workingIndicatorLabel(presentation)}
+                      ariaLabel={workingStatusLabel(presentation)}
+                    />
                   </div>
                 )
               })}

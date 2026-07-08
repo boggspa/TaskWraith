@@ -5,10 +5,13 @@ import type {
   EnsembleRoundParticipantState,
   ProviderId
 } from '../../../main/store/types'
+import type { ContextCompactionProgressEvent } from '../../../shared/contextCompaction'
 import { reasoningDisplayLabel, shortModelName } from './composerChipFormat'
 import { humaniseModelId } from './modelDisplayName'
 import { resolveOllamaDisplayBrand } from './ollamaDisplayBrand'
 import { getProviderLabel } from './providerLabels'
+
+export type WorkingIndicatorActivity = 'working' | 'compacting'
 
 export type WorkingIndicatorPresentation = {
   providerLabel: string
@@ -16,6 +19,7 @@ export type WorkingIndicatorPresentation = {
   providerClass: string | null
   roleLabel: string | null
   modelBadge: string | null
+  activity: WorkingIndicatorActivity
 }
 
 const LIVE_ROUND_PARTICIPANT_STATUSES = new Set(['idle', 'running', 'sleeping'])
@@ -116,9 +120,25 @@ function modelDisplayForParticipant(
   return null
 }
 
+function activityForParticipant(
+  chat: ChatRecord,
+  participantId: string,
+  contextCompactionProgress: readonly ContextCompactionProgressEvent[]
+): WorkingIndicatorActivity {
+  return contextCompactionProgress.some(
+    (event) =>
+      event.status === 'started' &&
+      event.chatId === chat.appChatId &&
+      event.participantId === participantId
+  )
+    ? 'compacting'
+    : 'working'
+}
+
 function workingPresentationForParticipant(
   chat: ChatRecord,
-  participantId: string
+  participantId: string,
+  contextCompactionProgress: readonly ContextCompactionProgressEvent[]
 ): WorkingIndicatorPresentation | null {
   const participant = chat.ensemble?.participants.find((item) => item.id === participantId)
   const roundParticipant = roundParticipantForId(chat, participantId)
@@ -138,21 +158,24 @@ function workingPresentationForParticipant(
     provider,
     providerClass: brand?.providerClass || provider,
     roleLabel,
-    modelBadge: modelDisplay ? modelBadgeForParticipant(modelDisplay) : null
+    modelBadge: modelDisplay ? modelBadgeForParticipant(modelDisplay) : null,
+    activity: activityForParticipant(chat, participantId, contextCompactionProgress)
   }
 }
 
 export function deriveActiveEnsembleWorkingPresentation(
-  chat: ChatRecord | null | undefined
+  chat: ChatRecord | null | undefined,
+  contextCompactionProgress: readonly ContextCompactionProgressEvent[] = []
 ): WorkingIndicatorPresentation | null {
   if (chat?.chatKind !== 'ensemble') return null
   const participantId = activeParticipantId(chat)
   if (!participantId) return null
-  return workingPresentationForParticipant(chat, participantId)
+  return workingPresentationForParticipant(chat, participantId, contextCompactionProgress)
 }
 
 export function deriveActiveEnsembleWorkingPresentations(
-  chat: ChatRecord | null | undefined
+  chat: ChatRecord | null | undefined,
+  contextCompactionProgress: readonly ContextCompactionProgressEvent[] = []
 ): WorkingIndicatorPresentation[] {
   if (chat?.chatKind !== 'ensemble') return []
   const round = chat.ensemble?.activeRound
@@ -181,6 +204,8 @@ export function deriveActiveEnsembleWorkingPresentations(
       if (orderDelta !== 0) return orderDelta
       return left.localeCompare(right)
     })
-    .map((participantId) => workingPresentationForParticipant(chat, participantId))
+    .map((participantId) =>
+      workingPresentationForParticipant(chat, participantId, contextCompactionProgress)
+    )
     .filter((presentation): presentation is WorkingIndicatorPresentation => Boolean(presentation))
 }

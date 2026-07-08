@@ -67,7 +67,8 @@ describe('deriveActiveEnsembleWorkingPresentation', () => {
       provider: 'codex',
       providerClass: 'codex',
       roleLabel: 'Builder',
-      modelBadge: '5.5 Extra High'
+      modelBadge: '5.5 Extra High',
+      activity: 'working'
     })
   })
 
@@ -88,7 +89,8 @@ describe('deriveActiveEnsembleWorkingPresentation', () => {
       provider: 'ollama',
       providerClass: 'alibaba',
       roleLabel: 'Scout',
-      modelBadge: 'Qwen 3.5 (9B Param)'
+      modelBadge: 'Qwen 3.5 (9B Param)',
+      activity: 'working'
     })
   })
 
@@ -111,7 +113,26 @@ describe('deriveActiveEnsembleWorkingPresentation', () => {
       provider: 'codex',
       providerClass: 'codex',
       roleLabel: 'WriteSwift',
-      modelBadge: '5.5 Extra High'
+      modelBadge: '5.5 Extra High',
+      activity: 'working'
+    })
+  })
+
+  it('marks the active participant as compacting while its context compaction is live', () => {
+    const chat = ensembleChat([participant()])
+
+    expect(
+      deriveActiveEnsembleWorkingPresentation(chat, [
+        {
+          chatId: 'ensemble-chat',
+          participantId: 'codex-builder',
+          provider: 'codex',
+          status: 'started'
+        }
+      ])
+    ).toMatchObject({
+      roleLabel: 'Builder',
+      activity: 'compacting'
     })
   })
 
@@ -186,6 +207,47 @@ describe('deriveActiveEnsembleWorkingPresentation', () => {
     expect(deriveActiveEnsembleWorkingPresentations(chat).map((item) => item.roleLabel)).toEqual([
       'Planner',
       'Builder'
+    ])
+  })
+
+  it('marks only the compacting fan-out participant during concurrent work', () => {
+    const chat = ensembleChat([
+      participant({ id: 'codex-builder', provider: 'codex', role: 'Builder', order: 2 }),
+      participant({ id: 'claude-planner', provider: 'claude', role: 'Planner', order: 1 })
+    ])
+    chat.ensemble!.activeRound!.concurrentMode = true
+    chat.ensemble!.activeRound!.fanoutPolicy = 'read_only'
+    chat.ensemble!.activeRound!.lanes = {
+      lane1: {
+        laneId: 'lane1',
+        participantId: 'codex-builder',
+        provider: 'codex',
+        status: 'running',
+        intent: 'read',
+        startedAt: '2026-07-01T00:00:01.000Z'
+      },
+      lane2: {
+        laneId: 'lane2',
+        participantId: 'claude-planner',
+        provider: 'claude',
+        status: 'running',
+        intent: 'read',
+        startedAt: '2026-07-01T00:00:02.000Z'
+      }
+    }
+
+    expect(
+      deriveActiveEnsembleWorkingPresentations(chat, [
+        {
+          chatId: 'ensemble-chat',
+          participantId: 'claude-planner',
+          provider: 'claude',
+          status: 'started'
+        }
+      ]).map((item) => ({ role: item.roleLabel, activity: item.activity }))
+    ).toEqual([
+      { role: 'Planner', activity: 'compacting' },
+      { role: 'Builder', activity: 'working' }
     ])
   })
 
