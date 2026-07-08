@@ -32,45 +32,42 @@ into a new 8K file and call the slice done.
 
 ## Current Snapshot
 
-Measured from the live worktree on 2026-07-08 (pass-15 fresh round, hop budget
-refreshed to 256). Pass-1 through pass-14 slices are committed (`5d1ada4fb` …
-`32cb8d30e`); metrics below reflect committed HEAD unless noted. Treat these
-numbers as orientation only. Every Ensemble round must refresh counts and dirty
-state before assigning a slice.
+Measured from the live worktree on 2026-07-08 (pass-16, hop budget refreshed
+to 256 by user). Pass-1 through pass-15 campaign slices are committed
+(`5d1ada4fb` … `de4a546ba`); metrics below reflect live disk unless noted.
+Treat these numbers as orientation only. Every Ensemble round must refresh
+counts and dirty state before assigning a slice.
 
-Pass-15 worktree baseline (HEAD `241405a84`):
+Pass-16 worktree baseline (HEAD `f0a2a026f`):
 
-- Branch `master`, ahead 84 of `origin/master`.
-- Pass-13 code commit: `4caa10cd1` M3-3c-a main-approval seam (`index.ts` ONLY;
-  `RequestMainApprovalDeps` 8-field bundle; `getApprovalService` lazy accessor;
-  threading-only; Adversary3 APPROVE).
-- Pass-14 code commit: `32cb8d30e` M3-3c-b main-approval body
-  (`createMainApprovalOrchestration` via `Pick<>`; 6-case main-authority wrapper
-  test; `index.ts` net −89; Adversary1 APPROVE).
-- Disjoint non-campaign commit at HEAD: `241405a84` (native composer steer queue
-  buttons — no `index.ts` / approval touch).
-- Worktree dirty (campaign-relevant): `src/main/index.ts` + untracked
-  `src/main/ipc/approvalResponseHandlers.ts` +
-  `src/main/ipc/approvalResponseHandlers.test.ts` — M3-3d grant handler
-  (+8/−67 net −59; 9-case wrapper test; Adversary2 FULL security APPROVE;
-  re-gated on `241405a84`; gates green). This doc dirty separately (pass-15
+- Branch `master`, ahead 91 of `origin/master`.
+- Campaign chain ends at `de4a546ba` (pass-15 docs ledger). Four disjoint
+  product commits landed after it (`1233af5dc`, `8273df714`, `bbf46aa57`,
+  `f0a2a026f` — context-compaction icon, meter popover, GitHub CI bridge,
+  composer PR/CI satellite row). None touch `index.ts` or campaign pathspecs.
+- Worktree dirty (campaign-relevant): `src/main/services/EnsembleOrchestrator.test.ts`
+  — I-drop replay regression guard ON DISK (3 Codex/Kimi/Grok cases; 286/286 +
+  `typecheck:node` green per @WriteMain); this doc dirty separately (pass-16
   ledger). `.cursor/` untracked (never staged).
-- **Active front:** M3-3d **ON DISK** — `respond-agent-approval` extracted to
-  `approvalResponseHandlers.ts` (120L) + registrar test (284L, 9 cases).
-  @CheckCommit sole-actor commit (`refactor(main-m3): extract approval response
-  handler`; 3 code paths ONLY; leave docs + `.cursor/` unstaged) → **closes M3-3**
-  (entire approval-cluster trust choke point).
-- **Teed (serial after M3-3d):** @CheckCommit pass-15 docs ledger (`git add -f`,
-  this doc only); then post-M3-3 lane allocation (chat-facade batch 2, I-drop
-  sidequest, M0 incremental consumers).
+- **Active front:** `@CheckCommit` banks the I-drop test-only guard (exact
+  pathspec `EnsembleOrchestrator.test.ts` ONLY; leave docs unstaged). Then
+  `@WriteRender` chat-facade batch 2 (re-verify `setChats(` census — foreign
+  `App.tsx` edits shifted counts).
+- **I-drop sidequest:** **REDIRECTED** — static trace + live replay test
+  **exonerate** the orchestrator synchronous apply path (`idrop-orchestrator-sync-path-exonerated`).
+  Original plan location (`handleCliProviderJsonEvent` / orchestrator delta-apply)
+  is wrong. Next probe awaits @General/@Captain/@Design GO (live instrumentation
+  vs reload/replay path check). **Do not blind-patch the exonerated path.**
+- **Teed (post banking):** `@WriteRender` chat-facade batch 2 → `@WriteMain`
+  M0 incremental consumers (I-drop fix blocked on lead pivot decision).
 - **Parallel (non-blocking, disjoint pathspecs):** renderer/chat-facade batch 2
-  (`design-spec-chat-facade` census) — never concurrent with `index.ts` I-drop.
+  (`design-spec-chat-facade` census).
 - Crash context: **CLOSED** (user confirmed; not attributable to campaign slices).
   No further recon wall-time.
 
 Tier-2 orientation: early Pass-1 recon reported `SettingsPanel.tsx` ~10,714 and
 `EnsembleOrchestrator.ts` ~11,996 lines; live `wc -l` on 2026-07-08 confirms
-11,063 and 12,416 — the ranking table below remains accurate.
+11,063 and 12,558 — the ranking table below is refreshed.
 
 IPC handler-test gap: **closed** at pass-3 close. All 43 flat handler modules
 now have focused tests (`5ad23b356` added `shellHandlers`,
@@ -94,13 +91,13 @@ Current high-level facts:
 
 | Area | Current signal |
 | --- | ---: |
-| `src/main/index.ts` | 30,892 committed (`32cb8d30e` / `241405a84`); 30,833 on disk (M3-3d −59 net; was 32,234 pre-pass-1) |
-| `src/renderer/src/App.tsx` | 25,831 (committed `9dcaf0ec4`) |
-| Inline `ipcMain.handle/on` registrations still in `index.ts` | 62 committed; 61 on disk (M3-3d moves one handler to `ipc/`; was 103 pre-pass-1) |
-| Registrar calls already wired from `index.ts` | 44 committed; 45 on disk (M3-3d adds `registerApprovalResponseHandlers`) |
-| Flat `src/main/ipc/*Handlers.ts` modules | 44 committed; 45 on disk (M3-3d adds `approvalResponseHandlers.ts`) |
-| Flat `src/main/ipc/*Handlers.test.ts` modules | 44 committed; 45 on disk (parity with handler modules) |
-| `setChats(` call sites in `App.tsx` | 44 on disk (was 45 post-Site C `ac3ef6c07`; 47 pre-renderer-r3 slice 1) |
+| `src/main/index.ts` | 30,833 (`b51938711` / `de4a546ba` chain); 30,833 on disk |
+| `src/renderer/src/App.tsx` | 25,988 on disk (foreign commits after `9dcaf0ec4` shifted lines) |
+| Inline `ipcMain.handle/on` registrations still in `index.ts` | 61 committed; 61 on disk (was 103 pre-pass-1) |
+| Registrar calls already wired from `index.ts` | 45 committed; 45 on disk |
+| Flat `src/main/ipc/*Handlers.ts` modules | 45 committed; 45 on disk |
+| Flat `src/main/ipc/*Handlers.test.ts` modules | 45 committed; 45 on disk |
+| `setChats(` call sites in `App.tsx` | 41 on disk (was 44 post-Slice 1b; foreign `App.tsx` edits migrated 3 sites) |
 | `MainAppLayout.types.ts` remaining `: any` props | 392 |
 | `removeListeners()` occurrences in `App.tsx` | 0 (R0 + R0b landed) |
 
@@ -108,8 +105,8 @@ Largest production TS/TSX files at this snapshot:
 
 | Rank | File | Lines | Campaign |
 | ---: | --- | ---: | --- |
-| 1 | `src/main/index.ts` | 30,892 | Tier 1 main root |
-| 2 | `src/renderer/src/App.tsx` | 25,831 | Tier 1 renderer root |
+| 1 | `src/main/index.ts` | 30,833 | Tier 1 main root |
+| 2 | `src/renderer/src/App.tsx` | 25,988 | Tier 1 renderer root |
 | 3 | `src/main/services/EnsembleOrchestrator.ts` | 12,558 | Tier 2 service |
 | 4 | `src/renderer/src/components/SettingsPanel.tsx` | 11,063 | Tier 2 renderer settings |
 | 5 | `src/renderer/src/components/Sidebar.tsx` | 5,533 | Tier 2 renderer shell |
@@ -124,7 +121,8 @@ Largest production TS/TSX files at this snapshot:
 | 14 | `src/renderer/src/components/Inspector.tsx` | 3,055 | Tier 2 renderer component |
 
 Largest test hotspot: `src/main/services/EnsembleOrchestrator.test.ts`
-is 12,641 lines and should be split when the service is split.
+is 12,834 lines on disk (+3 I-drop replay cases pending commit) and should be
+split when the service is split.
 
 ## Completed Work Archive
 
@@ -273,9 +271,14 @@ without fresh recon.
   `ensureWorkspaceTrustForRun` stays inline.
 - Main pass-15 (2026-07-08): `refactor(main-m3)` — M3-3d approval response
   handler: `respond-agent-approval` → `approvalResponseHandlers.ts` (120L) +
-  9-case wrapper test (284L; co-move-forbidden ordering fenced). **ON DISK**
-  (uncommitted). Adversary2 FULL security APPROVE; re-gated on `241405a84`.
-  `index.ts` +8/−67 net −59; ipcMain 62→61; handler modules 44→45.
+  9-case wrapper test (284L; co-move-forbidden ordering fenced). **LANDED**
+  (`b51938711`); Adversary2 FULL security APPROVE; re-gated on `241405a84`.
+- Docs pass-15 (2026-07-08): `docs(refactor-plan)` pass-15 ledger refresh.
+  Commit `de4a546ba`. Gate: `git diff --check` on doc path.
+- Test pass-16 (2026-07-08): `test(ensemble)` I-drop replay regression guard —
+  **ON DISK** (uncommitted). 3 GH2 fixture cases through `handleProviderOutput`;
+  proves orchestrator sync path preserves every content delta; gates 286/286 +
+  `typecheck:node` green per @WriteMain. Awaiting @CheckCommit.
 - Current IPC handler rule from `src/main/ipc/README.md` still applies:
   handler modules stay directly under `src/main/ipc/` unless the IPC validation
   scanner is expanded in the same commit.
@@ -544,14 +547,14 @@ Pass-13 retired from the active queue. M3-3c-a seam is complete.
 Pass-14 retired from the active queue. M3-3c (main-approval orchestration) is
 complete.
 
-#### Pass 15 — IN FLIGHT (2026-07-08, hop budget refreshed to 256)
+#### Pass 15 — LANDED (2026-07-08, hop budget refreshed to 256)
 
 | Slice | Owner | Status | Commit / scope | Notes |
 | --- | --- | --- | --- | --- |
-| `refactor(main-m3)` M3-3d approval response handler | @WriteMain | **ON DISK** | `index.ts` + `approvalResponseHandlers.ts` + test | `respond-agent-approval` registrar; 9-case wrapper test; co-move-forbidden ordering; Adversary2 FULL security APPROVE; re-gated on `241405a84` |
-| `docs(refactor-plan)` pass-15 ledger refresh | @WriteDocs | ON DISK | this doc | Captures pass-13/14 SHAs + M3-3d status; commit disjoint from code |
-| `refactor(renderer-r3)` chat-facade batch 2 | @WriteRender | QUEUED | `App.tsx` | Replace/reconcile `setChats` sites per `design-spec-chat-facade` census |
-| `fix(providers)` I-drop leading delta restore | @WriteMain | QUEUED | `index.ts` / orchestrator | Sidequest; `sidequest-i-drop-fix-plan`; serial after M3-3d commit |
+| `refactor(main-m3)` M3-3d approval response handler | @WriteMain | LANDED | `b51938711` (`index.ts` + `approvalResponseHandlers.ts` + test) | `respond-agent-approval` registrar; 9-case wrapper test; co-move-forbidden ordering; Adversary2 FULL security APPROVE; re-gated on `241405a84` |
+| `docs(refactor-plan)` pass-15 ledger refresh | @WriteDocs | LANDED | `de4a546ba` | Captures pass-13/14/15 SHAs + post-M3-3d active queue; commit disjoint from code |
+| `refactor(renderer-r3)` chat-facade batch 2 | @WriteRender | QUEUED | `App.tsx` | Replace/reconcile `setChats` sites per `design-spec-chat-facade` census; re-census after foreign `App.tsx` edits (`setChats(` 44→41) |
+| `fix(providers)` I-drop leading delta restore | @WriteMain | **REDIRECTED** | — | Sync path exonerated (`idrop-orchestrator-sync-path-exonerated`); await lead GO on next probe |
 | `refactor(main-m0)` incremental context consumers | @WriteMain | QUEUED | `index.ts` | One consumer per slice; proof-of-consumer (`54abac2d3`) already landed |
 
 Retired from active queue (already LANDED — do not re-dispatch): preload pass-2
@@ -563,21 +566,40 @@ Retired from active queue (already LANDED — do not re-dispatch): preload pass-
 Pass-15 critical path (serial on `index.ts` — **docs lane is disjoint, not a
 gate**):
 
-1. @CheckCommit — sole-actor M3-3d commit (`refactor(main-m3): extract approval
-   response handler`; 3 code paths ONLY; leave docs + `.cursor/` unstaged) →
-   **closes M3-3**.
-2. @CheckCommit — `docs(refactor-plan): refresh pass-15 ledger` (`git add -f`,
-   pathspec this doc only).
+1. `refactor(main-m3): extract approval response handler` landed (`b51938711`) — closes M3-3.
+2. `docs(refactor-plan): refresh pass-15 ledger` landed (`de4a546ba`).
 
 Parallel (non-blocking, disjoint pathspecs):
 
-- Renderer/chat-facade batch 2 — never concurrent with `index.ts` I-drop.
+- Renderer/chat-facade batch 2 — disjoint from `index.ts` until I-drop pivot
+  resolves.
 - M0 incremental consumer migration — one slice at a time on `index.ts`.
 
 Late-binding rule (`design-rule-seam-bundle-latebinding`) applied throughout
 M3-3c–d: M3-3c-a baked `getApprovalService` from the start; M3-3c-b inherited
 via `Pick<>`; M3-3d uses by-value `approvalServiceInstance` (pattern B — registrar
 runs inside `whenReady` post-construction).
+
+#### Pass 16 — IN FLIGHT (2026-07-08, hop budget 256 refreshed by user)
+
+| Slice | Owner | Status | Commit / scope | Notes |
+| --- | --- | --- | --- | --- |
+| `test(ensemble)` I-drop replay regression guard | @WriteMain | **ON DISK** | `EnsembleOrchestrator.test.ts` ONLY | 3 GH2 fixture cases (Codex/Kimi/Grok); sync path exonerated; 286/286 + `typecheck:node` green; @CheckCommit sole-actor |
+| `docs(refactor-plan)` pass-16 ledger refresh | @WriteDocs | ON DISK | this doc | Captures pass-15 close + I-drop pivot + foreign-commit chain + pass-16 queue |
+| `refactor(renderer-r3)` chat-facade batch 2 | @WriteRender | QUEUED | `App.tsx` | Re-census `setChats(` (41 on disk); Design verdicts for buckets 1–3 still valid |
+| `fix(providers)` I-drop leading delta restore | @WriteMain | **REDIRECTED** | — | Await @General/@Captain/@Design GO (live instrumentation vs reload/replay) |
+| `refactor(main-m0)` incremental context consumers | @WriteMain | QUEUED | `index.ts` | One consumer per slice |
+
+Pass-16 critical path:
+
+1. @CheckCommit — bank I-drop test-only guard (`test(ensemble): guard orchestrator
+   apply path preserves every content delta (I-drop diagnostic)`; pathspec
+   `src/main/services/EnsembleOrchestrator.test.ts` ONLY; leave docs unstaged).
+2. @CheckCommit — bank pass-16 docs ledger (`git add -f`, this doc only).
+3. @WriteRender — chat-facade batch 2 (fresh census before edit).
+
+Concurrent-writer protection remains mandatory: exact pathspec staging only;
+foreign commits (`c1afe44ee` … `f0a2a026f`) already interleaved in this chain.
 
 ### Phase 0 - Refresh And Freeze Invariants
 
@@ -743,8 +765,7 @@ Candidate clusters, subject to fresh recon:
 - human collaboration — **LANDED** pass 1 (`humanCollaborationHandlers.ts`)
 - chat CRUD still inline after existing `chatHandlers` — **LANDED** pass 2 (`chatHandlers.ts`)
 - ensemble controls and wakeups
-- ~~approval response handlers~~ — **ON DISK** M3-3d (`approvalResponseHandlers.ts`;
-  awaiting @CheckCommit)
+- ~~approval response handlers~~ — **LANDED** `b51938711` (`approvalResponseHandlers.ts`)
 - Gemini session/PTY controls
 - residual provider usage/status handlers
 
@@ -818,10 +839,11 @@ net −350; vitest 54/54; Adversary2 FULL security APPROVE. **M3-3c-a** landed
 `RequestMainApprovalDeps` with `getApprovalService` lazy accessor; threading-only;
 Adversary3 APPROVE. **M3-3c-b** landed (`32cb8d30e`, `design-m3-3c-b-spec`):
 `createMainApprovalOrchestration` body move + 6-case main-authority wrapper test;
-Adversary1 APPROVE. **M3-3d** **ON DISK** (`design-m3-3d-spec`): grant handler
-→ `approvalResponseHandlers.ts` + 9-case wrapper test; Adversary2 FULL security
-APPROVE; awaiting @CheckCommit → **closes M3-3**. Post-M3-3: I-drop sidequest,
-M0 incremental consumers, chat-facade batch 2.
+Adversary1 APPROVE. **M3-3d** **LANDED** (`b51938711`, `design-m3-3d-spec`):
+grant handler → `approvalResponseHandlers.ts` + 9-case wrapper test; Adversary2
+FULL security APPROVE; closes M3-3. Post-M3-3: chat-facade batch 2,
+M0 incremental consumers; I-drop sidequest **redirected** (sync path exonerated
+— see `idrop-orchestrator-sync-path-exonerated`).
 
 Actions:
 
