@@ -2,6 +2,7 @@ import { execFile } from 'child_process'
 import { promisify } from 'util'
 import { normalizeProviderUsage } from '../ProviderRunStats'
 import { buildProviderCapabilityContract } from '../ProviderCapabilities'
+import { canonicalTaskWraithToolName } from '../TaskWraithMcpTools'
 import type { AgentRunPayload, AgentRunRoute } from '../run/AgentRunTypes'
 import type { RunManager, RunSessionStatus } from '../RunManager'
 import type { AppSettings, OllamaToolControlTier, ProviderCapabilityContract } from '../store/types'
@@ -1167,7 +1168,8 @@ export function parseOllamaToolRequest(text: string): OllamaToolRequest | null {
     if (!parsed) continue
     const wrapper = recordFromUnknown(parsed.taskwraith_tool) || recordFromUnknown(parsed.tool)
     if (!wrapper) continue
-    const name = typeof wrapper.name === 'string' ? wrapper.name.trim() : ''
+    const rawName = typeof wrapper.name === 'string' ? wrapper.name.trim() : ''
+    const name = canonicalTaskWraithToolName(rawName)
     if (!OLLAMA_KNOWN_TOOL_NAMES.has(name as OllamaToolName) && name !== OLLAMA_TOOL_HELP_NAME) {
       continue
     }
@@ -1551,7 +1553,8 @@ export function ollamaNativeToolDefinitions(
 /** Normalize a single native tool call from an Ollama stream chunk into the
  * internal request shape, or null when the name is unknown / unparseable. */
 export function normalizeOllamaNativeToolCall(call: OllamaNativeToolCall): OllamaToolRequest | null {
-  const name = typeof call.function?.name === 'string' ? call.function.name.trim() : ''
+  const rawName = typeof call.function?.name === 'string' ? call.function.name.trim() : ''
+  const name = canonicalTaskWraithToolName(rawName)
   if (!OLLAMA_KNOWN_TOOL_NAMES.has(name as OllamaToolName) && name !== OLLAMA_TOOL_HELP_NAME) {
     return null
   }

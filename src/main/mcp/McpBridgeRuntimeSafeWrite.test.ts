@@ -90,6 +90,46 @@ describe('MCP bridge stream writes', () => {
     )
   })
 
+  it('canonicalizes AskUserQuestion aliases before brokered tool calls', async () => {
+    const brokerRequest = vi.fn(async () => ({ ok: true, text: 'ok' }))
+    const stream = {
+      write: vi.fn((_chunk: string, callback?: (error?: Error | null) => void) => callback?.())
+    }
+
+    handleMcpJsonRpcMessage(
+      {
+        getDefaultSocketPath: () => '/tmp/taskwraith.sock',
+        getAppVersion: () => '1.0.0',
+        getMcpToolDefinitions: () => [],
+        brokerRequest,
+        env: {
+          TASKWRAITH_MCP_SAFE_SUBSET: '1',
+          TASKWRAITH_PARENT_PROVIDER: 'claude'
+        },
+        cwd: () => '/repo',
+        stdout: stream as never
+      },
+      '/tmp/taskwraith.sock',
+      'token-1',
+      {
+        jsonrpc: '2.0',
+        id: 8,
+        method: 'tools/call',
+        params: { name: 'ASkUserQuestion', arguments: { question: 'Continue?' } }
+      },
+      'line'
+    )
+    await new Promise((resolve) => setImmediate(resolve))
+
+    expect(brokerRequest).toHaveBeenCalledWith(
+      '/tmp/taskwraith.sock',
+      expect.objectContaining({
+        tool: 'ask_user_question',
+        parentProvider: 'claude'
+      })
+    )
+  })
+
   it('passes broker caller context into the main MCP executor', async () => {
     const executeGeminiMcpTool = vi.fn(async () => ({ text: 'ok' }))
     const runtime = new McpBridgeRuntime({
@@ -114,6 +154,31 @@ describe('MCP bridge stream writes', () => {
       { appRunId: 'run-1', appChatId: 'chat-1' },
       'grok',
       { callerCwd: '/repo/subdir', callerWorkspacePath: '/repo' }
+    )
+  })
+
+  it('canonicalizes AskUserQuestion aliases before main MCP execution', async () => {
+    const executeGeminiMcpTool = vi.fn(async () => ({ text: 'ok' }))
+    const runtime = new McpBridgeRuntime({
+      getGeminiMcpBrokerToken: () => 'token-1',
+      executeGeminiMcpTool
+    } as never)
+
+    await runtime.handleGeminiMcpBrokerRequest({
+      token: 'token-1',
+      tool: 'mcp__TaskWraith__AskUserQuestion',
+      arguments: { question: 'Continue?' },
+      parentProvider: 'claude',
+      appRunId: 'run-1',
+      appChatId: 'chat-1'
+    })
+
+    expect(executeGeminiMcpTool).toHaveBeenCalledWith(
+      'ask_user_question',
+      { question: 'Continue?' },
+      { appRunId: 'run-1', appChatId: 'chat-1' },
+      'claude',
+      {}
     )
   })
 })

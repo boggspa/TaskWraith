@@ -17659,13 +17659,14 @@ function geminiApiProviderDeps() {
     decryptApiKey,
     getMcpToolDefinitions: mcpToolDefinitions,
     executeMcpTool: async (toolName: string, args: unknown, route: AgentRunRoute | null) => {
-      if (!isTaskWraithMcpToolName(toolName)) {
+      const canonicalToolName = canonicalTaskWraithToolName(toolName)
+      if (!isTaskWraithMcpToolName(canonicalToolName)) {
         return {
           text: `Unknown TaskWraith MCP tool: ${toolName}`,
           isError: true
         }
       }
-      const result = await executeGeminiMcpTool(toolName, args, route, 'gemini')
+      const result = await executeGeminiMcpTool(canonicalToolName, args, route, 'gemini')
       return { text: result.text, isError: result.isError }
     },
     prepareToolContext: (

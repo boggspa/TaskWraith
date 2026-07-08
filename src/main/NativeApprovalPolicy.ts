@@ -1,11 +1,13 @@
 import { isTaskWraithMcpToolName } from './mcp/McpResultHelpers'
-import { MEDIA_EDITING_TOOLS } from './TaskWraithMcpTools'
+import { canonicalTaskWraithToolName, MEDIA_EDITING_TOOLS } from './TaskWraithMcpTools'
 import type {
   AgenticServiceId,
   AgenticServicePolicy,
   AppSettings,
   EffectiveRunPermissions
 } from './store/types'
+
+export { canonicalTaskWraithToolName } from './TaskWraithMcpTools'
 
 export type NativePermissionResolution = {
   policy: AgenticServicePolicy
@@ -142,31 +144,6 @@ export function resolveNativeApprovalPreflightDecision(args: {
     }
   }
   return { kind: 'ask', policy, effectivePermissions: args.effectivePermissions }
-}
-
-export function canonicalTaskWraithToolName(toolName: string): string {
-  const lower = (toolName || '').trim().toLowerCase()
-  if (lower.startsWith('mcp__')) {
-    const idx = lower.indexOf('__', 5)
-    return idx > 5 ? lower.slice(idx + 2) : lower.slice('mcp__'.length)
-  }
-  const cursorMcpPrefixes = [
-    'mcp_taskwraith-broker_',
-    'mcp_taskwraith-broker-',
-    'mcp_taskwraith_',
-    'mcp_taskwraith-',
-    'taskwraith-broker__',
-    'taskwraith_broker__',
-    'taskwraith-broker_',
-    'taskwraith_broker_',
-    'taskwraith-broker-',
-    'taskwraith_broker-'
-  ]
-  for (const prefix of cursorMcpPrefixes) {
-    if (lower.startsWith(prefix)) return lower.slice(prefix.length)
-  }
-  if (lower.startsWith('taskwraith__')) return lower.slice('taskwraith__'.length)
-  return lower
 }
 
 export function taskWraithToolAgenticService(toolName: string): AgenticServiceId {

@@ -7,7 +7,11 @@ import { createConnection, createServer, type Server as NetServer, type Socket }
 import os from 'os'
 import { dirname, join, resolve } from 'path'
 import type { WebContents } from 'electron'
-import { TASKWRAITH_MCP_TOOLS, type TaskWraithMcpToolName } from '../TaskWraithMcpTools'
+import {
+  canonicalTaskWraithToolName,
+  TASKWRAITH_MCP_TOOLS,
+  type TaskWraithMcpToolName
+} from '../TaskWraithMcpTools'
 import { isPlanAdvertisedTool, isReadOnlyAdvertisedTool } from './McpAutoAllowedTools'
 import type { McpCallerContext } from './McpRouteGuards'
 // Audit MCP tool definitions — advertised ONLY to audit role-runs (the bridge
@@ -587,7 +591,8 @@ export function handleMcpJsonRpcMessage(
   }
   if (method === 'tools/call') {
     const params = isRecord(request.params) ? request.params : {}
-    const name = params.name
+    const rawName = params.name
+    const name = canonicalTaskWraithToolName(String(rawName || ''))
     const args = params.arguments || {}
     // Read-only scoped bridge (TASKWRAITH_MCP_SAFE_SUBSET=1): refuse any tool
     // outside the non-mutating safe subset rather than routing it to the broker.
@@ -605,18 +610,22 @@ export function handleMcpJsonRpcMessage(
     const isAdvertisedForSeat = planSubset ? isPlanAdvertisedTool : isReadOnlyAdvertisedTool
     if (safeSubsetOnly && !isAdvertisedForSeat(String(name))) {
       bridgeLog(
-        `tools/call REJECTED (${planSubset ? 'plan' : 'read-only'} scope) name=${String(name)} id=${String(id)}`
+        `tools/call REJECTED (${planSubset ? 'plan' : 'read-only'} scope) ` +
+          `name=${String(rawName)} canonical=${String(name)} id=${String(id)}`
       )
       writeMcpError(
         id,
         -32601,
-        `Tool '${String(name)}' is not available to a read-only TaskWraith seat.`,
+        `Tool '${String(rawName || name)}' is not available to a read-only TaskWraith seat.`,
         transport,
         stdout
       )
       return
     }
-    bridgeLog(`tools/call name=${String(name)} id=${String(id)} args=${JSON.stringify(args).slice(0, 200)}`)
+    bridgeLog(
+      `tools/call name=${String(rawName)} canonical=${String(name)} id=${String(id)} ` +
+        `args=${JSON.stringify(args).slice(0, 200)}`
+    )
     const requestBroker = deps.brokerRequest || brokerRequest
     requestBroker(socketPath, {
       id: id ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`,
@@ -636,7 +645,8 @@ export function handleMcpJsonRpcMessage(
           deps.mcpToolCallResponseFromBrokerResult || mcpToolCallResponseFromBrokerResult
         const resultRecord = isRecord(result) ? result : {}
         bridgeLog(
-          `tools/call name=${String(name)} id=${String(id)} result.ok=${String(resultRecord.ok)} text.len=${String((String(resultRecord.text || resultRecord.error || '')).length)}`
+          `tools/call name=${String(rawName)} canonical=${String(name)} id=${String(id)} ` +
+            `result.ok=${String(resultRecord.ok)} text.len=${String((String(resultRecord.text || resultRecord.error || '')).length)}`
         )
         try {
           writeMcpResponse(id, responseFromResult(result), transport, stdout)
@@ -870,9 +880,10 @@ export class McpBridgeRuntime {
     if (!this.isValidGeminiMcpBrokerToken(brokerRequestRecord.token)) {
       return { ok: false, error: 'TaskWraith MCP broker authentication failed.' }
     }
-    const toolName = brokerRequestRecord.tool || brokerRequestRecord.name
+    const rawToolName = brokerRequestRecord.tool || brokerRequestRecord.name
+    const toolName = canonicalTaskWraithToolName(String(rawToolName || ''))
     if (!isTaskWraithMcpToolName(toolName)) {
-      return { ok: false, error: `Unknown TaskWraith MCP tool: ${String(toolName || 'unknown')}` }
+      return { ok: false, error: `Unknown TaskWraith MCP tool: ${String(rawToolName || 'unknown')}` }
     }
     const parentProvider = normalizeBrokerParentProvider(brokerRequestRecord.parentProvider)
     const callerContext: McpCallerContext = {

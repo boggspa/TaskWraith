@@ -2393,6 +2393,17 @@ describe('parseOllamaToolRequest', () => {
     })
   })
 
+  it('canonicalizes AskUserQuestion aliases', () => {
+    expect(
+      parseOllamaToolRequest(
+        '{"taskwraith_tool":{"name":"ASkUserQuestion","arguments":{"question":"Continue?"}}}'
+      )
+    ).toEqual({
+      toolName: 'ask_user_question',
+      arguments: { question: 'Continue?' }
+    })
+  })
+
   it('builds a constrained-decoding format schema with the tool-name enum', () => {
     const schema = ollamaToolCallFormatSchema(['read_file', 'write_file', 'tool_help']) as any
     // Envelope is required, name is enum-constrained → the model cannot decode a
@@ -2872,6 +2883,14 @@ describe('normalizeOllamaNativeToolCall', () => {
         function: { name: 'web_fetch', arguments: '{"url":"https://example.com"}' }
       })
     ).toEqual({ toolName: 'web_fetch', arguments: { url: 'https://example.com' } })
+  })
+
+  it('canonicalizes AskUserQuestion aliases', () => {
+    expect(
+      normalizeOllamaNativeToolCall({
+        function: { name: 'AskUserQuestion', arguments: { question: 'Continue?' } }
+      })
+    ).toEqual({ toolName: 'ask_user_question', arguments: { question: 'Continue?' } })
   })
 
   it('rejects unknown tool names', () => {

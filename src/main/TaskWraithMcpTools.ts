@@ -291,6 +291,38 @@ export type TaskWraithMcpToolName = (typeof TASKWRAITH_MCP_TOOLS)[number]
 
 export const TASKWRAITH_MCP_TOOL_LIST = TASKWRAITH_MCP_TOOLS.join(', ')
 
+export function canonicalTaskWraithToolName(toolName: string): string {
+  let normalized = (toolName || '').trim().toLowerCase()
+  if (normalized.startsWith('mcp__')) {
+    const idx = normalized.indexOf('__', 5)
+    normalized = idx > 5 ? normalized.slice(idx + 2) : normalized.slice('mcp__'.length)
+  } else {
+    const cursorMcpPrefixes = [
+      'mcp_taskwraith-broker_',
+      'mcp_taskwraith-broker-',
+      'mcp_taskwraith_',
+      'mcp_taskwraith-',
+      'taskwraith-broker__',
+      'taskwraith_broker__',
+      'taskwraith-broker_',
+      'taskwraith_broker_',
+      'taskwraith-broker-',
+      'taskwraith_broker-'
+    ]
+    for (const prefix of cursorMcpPrefixes) {
+      if (normalized.startsWith(prefix)) {
+        normalized = normalized.slice(prefix.length)
+        break
+      }
+    }
+  }
+  if (normalized.startsWith('taskwraith__')) {
+    normalized = normalized.slice('taskwraith__'.length)
+  }
+  if (normalized.replace(/[\s_-]+/g, '') === 'askuserquestion') return 'ask_user_question'
+  return normalized
+}
+
 /**
  * The audio/video media tools. ALL map to the dedicated `mediaEditing` agentic
  * service (grant bucket + audit tag) so they're gated/audited at shell/file

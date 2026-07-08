@@ -62,6 +62,11 @@ describe('canonicalTaskWraithToolName', () => {
       'run_shell_command'
     )
     expect(canonicalTaskWraithToolName('mcp_taskwraith-read_file')).toBe('read_file')
+    expect(canonicalTaskWraithToolName('ASkUserQuestion')).toBe('ask_user_question')
+    expect(canonicalTaskWraithToolName('mcp__TaskWraith__AskUserQuestion')).toBe(
+      'ask_user_question'
+    )
+    expect(canonicalTaskWraithToolName('TaskWraith__Ask_User_Question')).toBe('ask_user_question')
   })
 })
 

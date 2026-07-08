@@ -13,6 +13,12 @@ describe('CodexMcpRouting', () => {
     )
   })
 
+  it('normalizes TaskWraith tool aliases when building routing keys', () => {
+    expect(codexMcpRoutingKey('ASkUserQuestion', { question: 'Continue?' })).toBe(
+      codexMcpRoutingKey('ask_user_question', { question: 'Continue?' })
+    )
+  })
+
   it('resolves a unique fresh hint', () => {
     const route = { appRunId: 'run-1', appChatId: 'chat-1' }
     const hints: CodexMcpRouteHint[] = [
@@ -31,6 +37,29 @@ describe('CodexMcpRouting', () => {
         nowMs: 1_500,
         toolName: 'delegate_to_subthread',
         args: { prompt: 'hi', provider: 'claude' },
+        maxAgeMs: 5_000
+      })
+    ).toEqual(route)
+  })
+
+  it('resolves a fresh hint when the provider used an AskUserQuestion alias', () => {
+    const route = { appRunId: 'run-1', appChatId: 'chat-1' }
+    const hints: CodexMcpRouteHint[] = [
+      {
+        itemId: 'item-1',
+        toolName: 'ASkUserQuestion',
+        args: { question: 'Continue?' },
+        route,
+        startedAtMs: 1_000
+      }
+    ]
+
+    expect(
+      resolveCodexMcpRouteHint({
+        hints,
+        nowMs: 1_500,
+        toolName: 'ask_user_question',
+        args: { question: 'Continue?' },
         maxAgeMs: 5_000
       })
     ).toEqual(route)

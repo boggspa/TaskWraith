@@ -1,4 +1,5 @@
 import type { AgentRunRoute } from '../run/AgentRunTypes'
+import { canonicalTaskWraithToolName } from '../TaskWraithMcpTools'
 
 export interface CodexMcpRouteHint {
   itemId: string
@@ -23,7 +24,7 @@ function sortJsonValue(value: unknown): unknown {
 
 export function codexMcpRoutingKey(toolName: string, args: unknown): string {
   return JSON.stringify({
-    toolName,
+    toolName: canonicalTaskWraithToolName(toolName),
     args: sortJsonValue(args)
   })
 }
