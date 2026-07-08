@@ -368,6 +368,12 @@ public final class RemoteSessionModel: ObservableObject {
     /// Deep-link target captured from a notification tap before the session is
     /// established (cold launch); applied to navigationTarget on `.established`.
     private var pendingDeepLinkThreadId: String?
+    /// Slice 5 (RC4): per-thread wake generation. A notification tap / foreground
+    /// bumps the target thread's counter; the detail view refetches a cached-but-
+    /// stale transcript when the generation advances past what it last applied, so
+    /// the user lands on the approval/summary the push pointed at rather than a
+    /// pre-event cache. Reset on host switch.
+    @Published public private(set) var wakeRefreshGeneration: [String: Int] = [:]
     /// Expanded row bodies keyed by threadId → rowId.
     @Published public private(set) var rowExpansions: [String: [String: RemoteThreadSnapshot.Row]] =
         [:]
@@ -1744,6 +1750,7 @@ public final class RemoteSessionModel: ObservableObject {
         providerModels = [:]
         projectionHydrated = false
         projectionGraceExpired = false
+        wakeRefreshGeneration = [:]
         // A host switch bumps connectAttempt and aborts any in-flight resync retry
         // loop; clear the latch here too so the new host's resync can start.
         fullProjectionResyncInFlight = false
@@ -5122,14 +5129,44 @@ public final class RemoteSessionModel: ObservableObject {
             guard let self else { return }
             _ = await self.handleRemoteWake(reason: "notification-tap", timeoutMs: 22_000)
             await MainActor.run {
-                if case .connected = self.phase {
-                    self.navigationTarget = threadId
-                } else {
-                    self.pendingDeepLinkThreadId = threadId
-                }
+                self.routeNotificationTarget(threadId)
             }
         }
     }
+
+    /// Slice 5 (RC4): route a tapped notification to its target thread AND force
+    /// that thread's transcript to refresh, so the user lands on the exact
+    /// approval/summary the push pointed at — not a stale cached transcript. Bumps
+    /// the per-thread wake generation FIRST (covers both the warm and cold paths):
+    /// the detail view's needsRefresh gate refetches a cached-but-non-empty thread
+    /// once the generation advances. On the warm (.connected) path we also issue an
+    /// immediate targeted refresh and set navigationTarget; on the cold path the
+    /// target is restored on `.established`. Do NOT reroute the warm path through
+    /// pendingDeepLinkThreadId — .established won't re-fire, so it would never navigate.
+    func routeNotificationTarget(_ threadId: String) {
+        markWakeTarget(threadId)
+        if case .connected = phase {
+            navigationTarget = threadId
+            // Non-bypassing: the internal suppression only drops a pull for the
+            // VISIBLE streaming thread, which the just-tapped target is not yet.
+            requestThreadSnapshot(threadId)
+        } else {
+            pendingDeepLinkThreadId = threadId
+        }
+    }
+
+    private func markWakeTarget(_ id: String) {
+        wakeRefreshGeneration[id, default: 0] += 1
+    }
+
+    #if DEBUG
+        func routeNotificationTargetForTesting(_ threadId: String) {
+            routeNotificationTarget(threadId)
+        }
+        func setPhaseForTesting(_ newPhase: SessionPhase) {
+            phase = newPhase
+        }
+    #endif
 
     public func answer(_ card: MobileQuestionCard, _ text: String) {
         guard let promptId = card.resolvedId,

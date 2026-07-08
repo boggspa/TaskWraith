@@ -263,6 +263,45 @@ struct IosParityFixesTests {
                     threadId: "thread-1",
                     rows: [row],
                     totalRows: 1)) == false)
+
+        // Slice 5 (RC4): a wake-generation mismatch forces a refetch even over a
+        // cached, non-empty transcript; matching generations fall through to the
+        // existing row check (behaviour-identical to the default-arg callers).
+        #expect(
+            ThreadSnapshotRequestPolicy.needsRefresh(
+                RemoteThreadSnapshot(threadId: "thread-1", rows: [row], totalRows: 1),
+                wakeGeneration: 2, lastAppliedWakeGeneration: 1) == true)
+        #expect(
+            ThreadSnapshotRequestPolicy.needsRefresh(
+                RemoteThreadSnapshot(threadId: "thread-1", rows: [row], totalRows: 1),
+                wakeGeneration: 1, lastAppliedWakeGeneration: 1) == false)
+    }
+
+    // Slice 5 (RC4): notification-tap routing bumps the per-thread wake generation.
+    @MainActor
+    @Test func notificationTapWarmPathNavigatesAndBumpsGeneration() {
+        let model = makeRemoteSessionModel()
+        model.setPhaseForTesting(.connected)
+        model.routeNotificationTargetForTesting("thread-1")
+        #expect(model.navigationTarget == "thread-1")
+        #expect(model.wakeRefreshGeneration["thread-1"] == 1)
+        // A second tap advances the SAME thread's generation.
+        model.routeNotificationTargetForTesting("thread-1")
+        #expect(model.wakeRefreshGeneration["thread-1"] == 2)
+        // A different thread has its own independent counter.
+        model.routeNotificationTargetForTesting("thread-2")
+        #expect(model.wakeRefreshGeneration["thread-2"] == 1)
+    }
+
+    @MainActor
+    @Test func notificationTapColdPathDefersNavigationButStillBumpsGeneration() {
+        let model = makeRemoteSessionModel()
+        model.setPhaseForTesting(.idle)
+        model.routeNotificationTargetForTesting("thread-9")
+        // Cold path: navigation is restored on .established, not now — but the wake
+        // generation is still bumped so the eventual landing refetches fresh.
+        #expect(model.navigationTarget == nil)
+        #expect(model.wakeRefreshGeneration["thread-9"] == 1)
     }
 
     @MainActor

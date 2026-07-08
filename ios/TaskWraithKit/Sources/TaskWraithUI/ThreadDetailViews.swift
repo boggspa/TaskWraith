@@ -52,7 +52,17 @@ private extension View {
 }
 
 enum ThreadSnapshotRequestPolicy {
-    static func needsRefresh(_ snapshot: RemoteThreadSnapshot?) -> Bool {
+    static func needsRefresh(
+        _ snapshot: RemoteThreadSnapshot?,
+        wakeGeneration: Int = 0,
+        lastAppliedWakeGeneration: Int = 0
+    ) -> Bool {
+        // Slice 5 (RC4): a wake (notification tap / foreground) that advanced this
+        // thread's generation forces a refetch even over a cached, NON-empty
+        // transcript — the cache may be stale relative to the approval/summary the
+        // push pointed at. The default args (0,0) keep every existing caller/test
+        // behaviour-identical (0 != 0 is false → falls through to the row check).
+        if wakeGeneration != lastAppliedWakeGeneration { return true }
         guard let snapshot else { return true }
         let rows = snapshot.rows ?? []
         if !rows.isEmpty { return false }
@@ -138,6 +148,10 @@ func twShouldRenderAfterLiveBlock(
 struct ThreadDetailView: View {
     @ObservedObject var model: RemoteSessionModel
     let taskId: String
+    /// Slice 5 (RC4): the wake generation this view last honored with a refetch.
+    /// When the model's per-thread generation advances past this, needsRefresh
+    /// forces a refresh even over a cached, non-empty transcript.
+    @State private var lastAppliedWakeRefreshGeneration = 0
     /// Reduce Motion collapses the composer focus spring/slide to a short
     /// opacity crossfade (see ComposerMotion). Read here so the focus-gated row
     /// groups can pick their transition without a second source of truth.
@@ -236,8 +250,20 @@ struct ThreadDetailView: View {
     private var snapshot: RemoteThreadSnapshot? { threadValue(model.threadSnapshots) }
     private var ensembleState: RemoteEnsembleState? { threadValue(model.ensembleStates) }
     private var diffSummary: MobileDiffSummary? { threadValue(model.diffSummaries) }
+    /// Slice 5 (RC4): this thread's current wake generation (bumped by a
+    /// notification tap / foreground targeting it).
+    private var wakeRefreshGeneration: Int { model.wakeRefreshGeneration[taskId] ?? 0 }
     private func requestSnapshotIfNeeded() {
-        guard ThreadSnapshotRequestPolicy.needsRefresh(snapshot) else { return }
+        guard
+            ThreadSnapshotRequestPolicy.needsRefresh(
+                snapshot,
+                wakeGeneration: wakeRefreshGeneration,
+                lastAppliedWakeGeneration: lastAppliedWakeRefreshGeneration)
+        else { return }
+        // Write-back on ISSUE (not on arrival): otherwise a wake generation that
+        // never advances lastApplied would keep re-firing on every subsequent
+        // rows-count trigger change — a per-thread refetch loop.
+        lastAppliedWakeRefreshGeneration = wakeRefreshGeneration
         model.requestThreadSnapshot(taskId)
     }
     private var snapshotRequestTrigger: String {
@@ -254,6 +280,7 @@ struct ThreadDetailView: View {
             card?.workspaceId ?? "",
             "\(snapshot?.rows?.count ?? -1):\(snapshot?.totalRows ?? -1)",
             phaseKey,
+            "wake:\(wakeRefreshGeneration)",
         ].joined(separator: "|")
     }
     private var showsRunCompleteSummary: Bool { snapshot?.showRunCompleteSummary != false }
