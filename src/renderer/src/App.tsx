@@ -12682,10 +12682,7 @@ function App(): React.JSX.Element {
         void window.api.saveChat(nextSideChat).catch(() => {})
       }
       chatByIdRef.current.set(nextSideChat.appChatId, nextSideChat)
-      setChats((prev) => [
-        nextSideChat,
-        ...prev.filter((chat) => chat.appChatId !== nextSideChat.appChatId)
-      ])
+      chatMutations.promoteToFront(nextSideChat)
       if (presentInline && sideChat?.appChatId && sideChat.appChatId !== nextSideChat.appChatId) {
         closeSideChatPresentationRecord(sideChat)
       }
