@@ -37,7 +37,7 @@
    * clearance. Each *additional* above-row strip in `.composer-above-bar-stack`
    * adds `--composer-above-row-clearance` (+20px per strip, set in App.tsx)
    * on top of the live `--composer-reserved-height` from ResizeObserver. */
-  --composer-scroll-clearance: 5px;
+  --composer-scroll-clearance: 15px;
   --composer-above-row-clearance: 0px;
   --composer-scroll-under-padding: calc(
     var(--composer-reserved-height) + var(--composer-bottom-gap) + var(--composer-scroll-clearance) +
