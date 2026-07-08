@@ -27411,7 +27411,7 @@ if (isGeminiMcpBridgeProcess) {
     pluginContributionManagerRef = pluginContributionManager
     pluginContributionManager.sync()
     registerPluginHandlers({
-      pluginHost,
+      pluginHost: mainRuntimeContext.requirePluginHost(),
       pluginSecretStore,
       pluginContributionManager,
       onActivationChanged: () => {
