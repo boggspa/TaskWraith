@@ -973,6 +973,10 @@ import {
   createBridgeNetworkingTailscaleStatusGetter,
   registerBridgeAllowlistHandlers
 } from './ipc/bridgeAllowlistHandlers'
+import {
+  createIosRemoteTailscaleStatusGetter,
+  registerBridgeRemoteHandlers
+} from './ipc/bridgeRemoteHandlers'
 import { registerDiagnosticsHandlers } from './ipc/diagnosticsHandlers'
 import { registerSidebarHandlers } from './ipc/sidebarHandlers'
 import { registerAppearanceHandlers } from './ipc/appearanceHandlers'
@@ -28251,323 +28255,49 @@ if (isGeminiMcpBridgeProcess) {
       }, 3000)
     }
 
-    ipcMain.handle('get-ios-remote-config', () => {
-      const settings = AppStore.getSettings()
-      const resolution = resolveDaemonShouldRun(
-        settings.iosRemoteEnabled === true,
-        process.env.IOS_REMOTE_TRUE
-      )
-      return {
-        enabled: settings.iosRemoteEnabled === true,
-        relayUrl: settings.iosRemoteRelayUrl || '',
-        manualRelayUrl: settings.iosRemoteManualRelayUrl || '',
-        effectiveEnabled: resolution.shouldRun,
-        envOverride: resolution.envOverride,
-        runtimeActive: iosRemoteRuntime !== null,
-        runtimeError: iosRemoteRuntimeError,
-        openAtLogin: app.getLoginItemSettings().openAtLogin
-      }
-    })
-
-    // ── Remote access via Tailscale ─────────────────────────────────
-    // One-click TLS front door for the embedded relay: `tailscale serve`
-    // terminates HTTPS at tailscaled with the tailnet's *.ts.net cert and
-    // reverse-proxies (WebSocket-aware) to the relay's loopback port. The
-    // pairing QR then advertises wss://<dnsName>, which iOS ATS accepts
-    // off-LAN — the only way a cellular phone can reach the bridge.
-    // Front-door HTTPS port for `tailscale serve`. Release owns :443; a dev build
-    // uses :8443 so the two coexist as SEPARATE serve handlers on one Mac instead
-    // of clobbering one shared :443 mapping (which silently broke release pairing).
     const liveIosRemoteRelayPort = (): number => selfHostedWssLane?.relayPort ?? iosRemoteRelayPort()
-    const iosRemoteTailscaleStatus = async (): Promise<Record<string, unknown>> => {
-      const tailscale = await detectTailscale()
-      const relayPort = liveIosRemoteRelayPort()
-      const httpsPort = iosRemoteServeHttpsPort()
-      const currentRelayUrl = (AppStore.getSettings().iosRemoteRelayUrl || '').trim()
-      const manualRelayInput = configuredManualRelayInput()
-      const manualRelayUrl = normalizeManualRelayUrl(manualRelayInput, relayPort)
-      const configuredCandidate =
-        tailscaleWssCandidateFromUrl(currentRelayUrl, httpsPort) ??
-        tailscaleWssCandidateFromUrl(manualRelayUrl, httpsPort)
-      const serve =
-        tailscale.cliPath
-          ? await getTailscaleServeStatus({ cliPath: tailscale.cliPath, relayPort, httpsPort })
-          : { configured: false as const }
-      const dnsName =
-        tailscale.dnsName ?? ('dnsName' in serve ? serve.dnsName : undefined) ?? configuredCandidate?.dnsName
-      const suggestedUrl = dnsName ? serveWssUrl(dnsName, httpsPort) : null
-      const relayUrlMatches = Boolean(suggestedUrl && currentRelayUrl === suggestedUrl)
-      const usingSavedRelayFallback = Boolean(
-        configuredCandidate && !tailscale.available && !(serve.configured && dnsName)
-      )
-      return {
-        tailscaleAvailable:
-          tailscale.available || Boolean(serve.configured && dnsName) || usingSavedRelayFallback,
-        tailscaleReason:
-          tailscale.available || (serve.configured && dnsName)
-            ? null
-            : usingSavedRelayFallback
-              ? `${tailscale.reason ?? 'Tailscale status is not ready.'} Using the saved relay door for Copy/Test.`
-              : (tailscale.reason ?? null),
-        dnsName: dnsName ?? null,
-        suggestedUrl,
-        relayPort,
-        serveConfigured: serve.configured,
-        serveHttpsPort: 'httpsPort' in serve ? (serve.httpsPort ?? null) : null,
-        serveError: 'error' in serve ? (serve.error ?? null) : null,
-        relayUrlMatches,
-        manualRelayInput,
-        manualRelayUrl,
-        active: relayUrlMatches && serve.configured,
-        runtimeActive: iosRemoteRuntime !== null,
-        usingSavedRelayFallback
-      }
-    }
-    ipcMain.handle('ios-remote-tailscale-status', () => iosRemoteTailscaleStatus())
-    ipcMain.handle('ios-remote-tailscale-enable', async () => {
-      const tailscale = await detectTailscale()
-      const relayPort = liveIosRemoteRelayPort()
-      const httpsPort = iosRemoteServeHttpsPort()
-      const configuredCandidate = configuredTailscaleWssCandidate(relayPort, httpsPort)
-      if (!tailscale.cliPath) {
-        return {
-          ok: false,
-          message:
-            tailscale.reason ||
-            'Tailscale is not available — install it and sign in to your tailnet first.'
-        }
-      }
-      if (!tailscale.available && !configuredCandidate) {
-        return {
-          ok: false,
-          message:
-            tailscale.reason ||
-            'Tailscale is installed but not connected. Sign in to Tailscale and try again.',
-          status: await iosRemoteTailscaleStatus()
-        }
-      }
-      const dnsName = tailscale.dnsName ?? configuredCandidate?.dnsName
-      if (!dnsName) {
-        return {
-          ok: false,
-          message:
-            'Tailscale is connected, but TaskWraith could not determine this Mac’s MagicDNS name.'
-        }
-      }
-      const relayUrl = serveWssUrl(dnsName, httpsPort)
-      AppStore.updateSettings({
-        iosRemoteEnabled: true,
-        iosRemoteRelayUrl: relayUrl
-      })
-      await restartIosRemoteBridge('tailscale enable')
-
-      const lane = selfHostedWssLane
-      if (!lane || lane.wssUrl !== relayUrl || !embeddedRelayHandle) {
-        return {
-          ok: false,
-          message:
-            iosRemoteRuntimeError ||
-            'TaskWraith could not start its local iOS remote relay. Toggle iOS remote bridge off/on and try again.',
-          status: await iosRemoteTailscaleStatus(),
-          relayUrl,
-          reachable: false
-        }
-      }
-
-      const loopback = await probeRelayFrontDoor(`ws://127.0.0.1:${lane.relayPort}`)
-      if (!loopback.reachable) {
-        await disableTailscaleServe({
-          cliPath: tailscale.cliPath,
-          httpsPort
-        })
-        return {
-          ok: false,
-          message: `TaskWraith's local relay is not answering on ${lane.relayPort}: ${loopback.detail}`,
-          status: await iosRemoteTailscaleStatus(),
-          relayUrl,
-          reachable: false
-        }
-      }
-
-      const serve = await getTailscaleServeStatus({
-        cliPath: tailscale.cliPath,
-        relayPort: lane.relayPort,
-        httpsPort
-      })
-      let enableMessage: string | undefined
-      if (!serve.configured) {
-        const result = await enableTailscaleServe({
-          cliPath: tailscale.cliPath,
-          relayPort: lane.relayPort,
-          httpsPort
-        })
-        if (!result.ok) {
-          return { ok: false, message: result.message || '`tailscale serve` failed.' }
-        }
-        enableMessage = result.message
-      }
-      const probe = await probeRelayFrontDoor(relayUrl)
-      const status = await iosRemoteTailscaleStatus()
-      if (!probe.reachable) {
-        return {
-          ok: false,
-          message: `Set the detected relay door (${relayUrl}), but it is not reachable yet: ${probe.detail}`,
-          status,
-          relayUrl,
-          reachable: false
-        }
-      }
-      return {
-        ok: true,
-        message: enableMessage ?? 'Ready for cellular.',
-        status,
-        relayUrl,
-        reachable: true
-      }
+    const iosRemoteTailscaleStatus = createIosRemoteTailscaleStatusGetter({
+      getSettings: () => AppStore.getSettings(),
+      getLiveIosRemoteRelayPort: liveIosRemoteRelayPort,
+      getIosRemoteServeHttpsPort: iosRemoteServeHttpsPort,
+      getConfiguredManualRelayInput: configuredManualRelayInput,
+      getConfiguredManualRelayUrl: configuredManualRelayUrl,
+      getConfiguredTailscaleWssCandidate: configuredTailscaleWssCandidate,
+      serveWssUrl,
+      detectTailscale,
+      getTailscaleServeStatus,
+      getIosRemoteRuntimeActive: () => iosRemoteRuntime !== null
     })
-    ipcMain.handle('ios-remote-tailscale-test', async () => {
-      const status = await iosRemoteTailscaleStatus()
-      const relayUrl =
-        typeof status.suggestedUrl === 'string' && status.suggestedUrl ? status.suggestedUrl : null
-      if (!relayUrl) {
-        return {
-          ok: false,
-          message:
-            status.tailscaleReason ||
-            'TaskWraith could not detect this Mac’s Tailscale MagicDNS relay door.',
-          status
-        }
-      }
-      const probe = await probeRelayFrontDoor(relayUrl)
-      return {
-        ok: probe.reachable,
-        message: probe.reachable
-          ? `Ready for cellular: ${relayUrl}`
-          : `${relayUrl} is not reachable yet: ${probe.detail}`,
-        relayUrl,
-        reachable: probe.reachable,
-        status
-      }
+    registerBridgeRemoteHandlers({
+      getSettings: () => AppStore.getSettings(),
+      updateSettings: (partial) => AppStore.updateSettings(partial),
+      getIosRemoteEnvValue: () => process.env.IOS_REMOTE_TRUE,
+      getIosRemoteRuntimeActive: () => iosRemoteRuntime !== null,
+      getIosRemoteRuntimeError: () => iosRemoteRuntimeError,
+      getOpenAtLogin: () => app.getLoginItemSettings().openAtLogin,
+      setOpenAtLogin: (openAtLogin) => app.setLoginItemSettings({ openAtLogin }),
+      getIosRemoteRelayPort: iosRemoteRelayPort,
+      getLiveIosRemoteRelayPort: liveIosRemoteRelayPort,
+      getIosRemoteServeHttpsPort: iosRemoteServeHttpsPort,
+      getConfiguredManualRelayInput: configuredManualRelayInput,
+      getConfiguredManualRelayUrl: configuredManualRelayUrl,
+      getConfiguredTailscaleWssCandidate: configuredTailscaleWssCandidate,
+      serveWssUrl,
+      detectTailscale,
+      getTailscaleServeStatus,
+      enableTailscaleServe,
+      disableTailscaleServe,
+      tailscaleUpWithAuthKey,
+      probeRelayFrontDoor,
+      getSelfHostedWssLane: () => selfHostedWssLane,
+      hasEmbeddedRelayHandle: () => embeddedRelayHandle !== null,
+      getIosRemoteTailscaleStatus: iosRemoteTailscaleStatus,
+      restartIosRemoteBridge,
+      stopIosRemoteBridge,
+      setTailscaleOAuthCredentials,
+      clearTailscaleOAuthCredentials,
+      tailscaleOAuthStatus
     })
-    ipcMain.handle('ios-remote-tailscale-disable', async () => {
-      const tailscale = await detectTailscale()
-      if (tailscale.cliPath) {
-        const serve = await getTailscaleServeStatus({
-          cliPath: tailscale.cliPath,
-          relayPort: iosRemoteRelayPort(),
-          httpsPort: iosRemoteServeHttpsPort()
-        })
-        if (serve.configured) {
-          const result = await disableTailscaleServe({
-            cliPath: tailscale.cliPath,
-            httpsPort: serve.httpsPort ?? iosRemoteServeHttpsPort()
-          })
-          if (!result.ok) {
-            return { ok: false, message: result.message || '`tailscale serve off` failed.' }
-          }
-        }
-      }
-      const current = (AppStore.getSettings().iosRemoteRelayUrl || '').trim()
-      if (
-        tailscale.dnsName &&
-        current === serveWssUrl(tailscale.dnsName, iosRemoteServeHttpsPort())
-      ) {
-        AppStore.updateSettings({ iosRemoteRelayUrl: '' })
-      }
-      return { ok: true, status: await iosRemoteTailscaleStatus() }
-    })
-    ipcMain.handle('ios-remote-tailscale-link', async (_event, authKey: string) => {
-      const tailscale = await detectTailscale()
-      if (!tailscale.cliPath) {
-        return {
-          ok: false,
-          message:
-            tailscale.reason ||
-            'Tailscale is not installed — install it first, then paste your auth key.'
-        }
-      }
-      if (tailscale.available) {
-        // Already on a tailnet — re-running `tailscale up` with a key could
-        // switch tailnets or reset this node's flags. Don't; just report it.
-        return {
-          ok: true,
-          message: tailscale.tailnetName
-            ? `This Mac is already connected to tailnet "${tailscale.tailnetName}" — no linking needed.`
-            : 'This Mac is already connected to Tailscale — no linking needed.',
-          status: await iosRemoteTailscaleStatus()
-        }
-      }
-      // The auth key is used once here and never stored or logged.
-      const result = await tailscaleUpWithAuthKey({ cliPath: tailscale.cliPath, authKey })
-      return {
-        ok: result.ok,
-        message: result.message ?? null,
-        status: await iosRemoteTailscaleStatus()
-      }
-    })
-    // QR-optional discovery (Slice 5d) — host-side Tailscale OAuth custody. The
-    // client secret is encrypted at rest and NEVER returned to the renderer;
-    // status reports only whether it's configured. An already-paired phone's
-    // discovery request makes the host USE it (the oracle enumerates the
-    // tailnet); the credential itself stays on this Mac.
-    ipcMain.handle(
-      'ios-remote-tailscale-oauth-set',
-      async (_event, input: { clientId?: string; clientSecret?: string }) =>
-        setTailscaleOAuthCredentials({
-          clientId: input?.clientId ?? '',
-          clientSecret: input?.clientSecret ?? ''
-        })
-    )
-    ipcMain.handle('ios-remote-tailscale-oauth-clear', async () => {
-      clearTailscaleOAuthCredentials()
-      return { ok: true }
-    })
-    ipcMain.handle('ios-remote-tailscale-oauth-status', () => tailscaleOAuthStatus())
-    ipcMain.handle(
-      'set-ios-remote-config',
-      async (
-        _,
-        config: {
-          enabled?: boolean
-          relayUrl?: string
-          manualRelayUrl?: string
-          openAtLogin?: boolean
-        }
-      ) => {
-        if (typeof config?.openAtLogin === 'boolean') {
-          app.setLoginItemSettings({ openAtLogin: config.openAtLogin })
-        }
-        AppStore.updateSettings({
-          ...(typeof config?.enabled === 'boolean' ? { iosRemoteEnabled: config.enabled } : {}),
-          ...(typeof config?.relayUrl === 'string'
-            ? { iosRemoteRelayUrl: config.relayUrl.trim() }
-            : {}),
-          ...(typeof config?.manualRelayUrl === 'string'
-            ? { iosRemoteManualRelayUrl: config.manualRelayUrl.trim() }
-            : {})
-        })
-        const next = AppStore.getSettings()
-        const resolution = resolveDaemonShouldRun(
-          next.iosRemoteEnabled === true,
-          process.env.IOS_REMOTE_TRUE
-        )
-        if (resolution.shouldRun) {
-          await restartIosRemoteBridge('settings change')
-        } else {
-          await stopIosRemoteBridge()
-        }
-        return {
-          enabled: next.iosRemoteEnabled === true,
-          relayUrl: next.iosRemoteRelayUrl || '',
-          manualRelayUrl: next.iosRemoteManualRelayUrl || '',
-          effectiveEnabled: resolution.shouldRun,
-          envOverride: resolution.envOverride,
-          runtimeActive: iosRemoteRuntime !== null,
-          runtimeError: iosRemoteRuntimeError,
-          openAtLogin: app.getLoginItemSettings().openAtLogin
-        }
-      }
-    )
 
     ipcMain.handle(
       'bridge-finalize-pairing',
