@@ -252,9 +252,11 @@ describe('taskWraithCloseoutMessage', () => {
       completedAt: round.endedAt!
     })
 
-    expect(closeout.content).toContain('[@Builder](ensemble-dm://p1) (2 turns)')
-    expect(closeout.content).toContain('[@Reviewer](ensemble-dm://p2) (1 turn, yielded)')
-    expect(closeout.content).toContain('[@Cursor](ensemble-dm://p3) (0 turns, skipped)')
-    expect(closeout.content).toContain('[@Kimi](ensemble-dm://p4) (1 turn, failed)')
+    expect(closeout.content).toContain('**Participants**')
+    expect(closeout.content).toContain('| Participant | Turns | Status |')
+    expect(closeout.content).toContain('| [@Builder](ensemble-dm://p1) | 2 | answered |')
+    expect(closeout.content).toContain('| [@Reviewer](ensemble-dm://p2) | 1 | yielded |')
+    expect(closeout.content).toContain('| [@Cursor](ensemble-dm://p3) | 0 | skipped |')
+    expect(closeout.content).toContain('| [@Kimi](ensemble-dm://p4) | 1 | failed |')
   })
 })

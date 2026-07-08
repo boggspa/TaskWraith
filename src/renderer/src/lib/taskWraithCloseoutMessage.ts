@@ -86,7 +86,7 @@ export function buildTaskWraithRoundCloseoutMessage(input: {
     'Close-out:',
     `- Status: ${formatRoundStatus(round.status)}.`
   ]
-  const participantLine = participantSummaryLine(round, roundRuns)
+  const participantLine = participantSummaryLine(round)
   if (participantLine) lines.push(`- Participants: ${participantLine}.`)
   const summaryLine = roundSummaryLine(chat, round.roundId)
   if (summaryLine) lines.push(`- Summary: ${summaryLine}`)
@@ -95,6 +95,7 @@ export function buildTaskWraithRoundCloseoutMessage(input: {
   const goalLine = goalSummaryLine(chat.activeGoal, input.now)
   if (goalLine) lines.push(`- Goal: ${goalLine}`)
   lines.push(
+    ...formatParticipantTableSection(round, roundRuns),
     ...formatCommitTableSection(
       collectCloseoutCommits(
         chat.messages,
@@ -231,37 +232,38 @@ function tokenSummaryLine(runs: ChatRun[]): string | null {
   return total > 0 ? `${formatContextTokens(total)} total` : null
 }
 
-function participantSummaryLine(round: EnsembleRoundState, roundRuns: ChatRun[]): string | null {
+function participantSummaryLine(round: EnsembleRoundState): string | null {
   const participants = round.participants || []
   if (participants.length === 0) return null
-  const answered = participants.filter((participant) => participant.status === 'answered').length
-  const yielded = participants.filter((participant) => participant.status === 'yielded').length
-  const skipped = participants.filter((participant) => participant.status === 'skipped').length
-  const failed = participants.filter((participant) => participant.status === 'failed').length
+  const contributed = participants.filter(
+    (participant) => participant.status === 'answered' || participant.status === 'yielded'
+  ).length
+  const otherStatusCounts = new Map<string, number>()
+  for (const participant of participants) {
+    if (participant.status === 'answered' || participant.status === 'yielded') continue
+    otherStatusCounts.set(participant.status, (otherStatusCounts.get(participant.status) || 0) + 1)
+  }
+  const parts = [
+    `${contributed} contributed`,
+    ...Array.from(otherStatusCounts.entries()).map(([status, count]) => `${count} ${status}`)
+  ]
+  return parts.join('; ')
+}
 
+function formatParticipantTableSection(round: EnsembleRoundState, roundRuns: ChatRun[]): string[] {
+  const participants = round.participants || []
+  if (participants.length === 0) return []
   const turnCounts = new Map<string, number>()
   for (const run of roundRuns) {
     if (!run.ensembleParticipantId) continue
     turnCounts.set(run.ensembleParticipantId, (turnCounts.get(run.ensembleParticipantId) || 0) + 1)
   }
-
-  const participantTags = participants
-    .map((participant) => {
-      const label = participant.role?.trim() || getProviderLabel(participant.provider)
-      const turns = turnCounts.get(participant.participantId) || 0
-      const turnLabel = `${turns} turn${turns === 1 ? '' : 's'}`
-      const statusSuffix = participant.status !== 'answered' ? `, ${participant.status}` : ''
-      return `[@${label}](ensemble-dm://${participant.participantId}) (${turnLabel}${statusSuffix})`
-    })
-    .join(', ')
-
-  const parts = [
-    `${answered + yielded} contributed`,
-    skipped > 0 ? `${skipped} skipped` : '',
-    failed > 0 ? `${failed} failed` : '',
-    participantTags
-  ].filter(Boolean)
-  return parts.join('; ')
+  const rows = participants.map((participant) => {
+    const label = escapeMarkdownTableCell(participant.role?.trim() || getProviderLabel(participant.provider))
+    const turns = turnCounts.get(participant.participantId) || 0
+    return `| [@${label}](ensemble-dm://${participant.participantId}) | ${turns} | ${participant.status} |`
+  })
+  return ['', '**Participants**', '', '| Participant | Turns | Status |', '| --- | --- | --- |', ...rows]
 }
 
 const CLOSEOUT_COMMIT_TABLE_LIMIT = 8
