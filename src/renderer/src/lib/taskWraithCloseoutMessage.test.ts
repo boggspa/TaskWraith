@@ -84,8 +84,84 @@ describe('taskWraithCloseoutMessage', () => {
     expect(closeout.content).toContain('Worked for 39s')
     expect(closeout.content).toContain('Implemented the feature.')
     expect(closeout.content).not.toContain('Changed:')
-    expect(closeout.content).toContain('Commits: 18003ca96 Add TaskWraith transcript closeouts.')
+    expect(closeout.content).toContain('**Commits**')
+    expect(closeout.content).toContain('| Hash | Message | Changes |')
+    expect(closeout.content).toContain('`18003ca96` | Add TaskWraith transcript closeouts | 21 files |')
+    expect(closeout.content).not.toContain('- Commits:')
     expect(closeout.content).toContain('3k total')
+  })
+
+  it('formats escaped git commit output into a markdown table', () => {
+    const run: ChatRun = {
+      runId: 'run-2',
+      provider: 'codex',
+      startedAt: '2026-07-07T12:00:00.000Z',
+      endedAt: '2026-07-07T12:05:00.000Z',
+      status: 'cancelled'
+    }
+    const closeout = buildTaskWraithRunCloseoutMessage({
+      chat: chat({
+        messages: [
+          {
+            ...message('t1', 'tool', ''),
+            runId: 'run-2',
+            toolActivities: [
+              {
+                id: 'tool-1',
+                toolName: 'git_commit',
+                displayName: 'git commit',
+                category: 'write',
+                status: 'success',
+                outputPreview:
+                  '[main d038a820e] refactor(main-m3): make approval orchestration deps explicit\\n 1 file changed, 100 insertions(+), 31 deletions(-)\\n",; [main bf52e2a62] test(services): add coverage for M3 approval routing\\n 1 file changed, 66 insertions(+), 13 deletions(-)\\n'
+              }
+            ]
+          }
+        ],
+        runs: [run]
+      }),
+      run,
+      completedAt: '2026-07-07T12:05:00.000Z',
+      exitCode: 130
+    })
+
+    expect(closeout.content).toContain(
+      '`d038a820e` | refactor(main-m3): make approval orchestration deps explicit | 1 file, +100 −31 |'
+    )
+    expect(closeout.content).toContain(
+      '`bf52e2a62` | test(services): add coverage for M3 approval routing | 1 file, +66 −13 |'
+    )
+    expect(closeout.content).not.toContain('\\n')
+  })
+
+  it('notes when more commits exist than the table shows', () => {
+    const run: ChatRun = {
+      runId: 'run-3',
+      provider: 'codex',
+      startedAt: '2026-07-07T12:00:00.000Z',
+      endedAt: '2026-07-07T12:01:00.000Z',
+      status: 'success'
+    }
+    const toolActivities = Array.from({ length: 10 }, (_, index) => ({
+      id: `tool-${index}`,
+      toolName: 'git_commit',
+      displayName: 'git commit',
+      category: 'write' as const,
+      status: 'success' as const,
+      outputPreview: `[main ${(index + 1).toString(16).padStart(9, '0')}a] commit ${index + 1}\n 1 file changed`
+    }))
+    const closeout = buildTaskWraithRunCloseoutMessage({
+      chat: chat({
+        messages: [{ ...message('t1', 'tool', ''), runId: 'run-3', toolActivities }],
+        runs: [run]
+      }),
+      run,
+      completedAt: '2026-07-07T12:01:00.000Z',
+      exitCode: 0
+    })
+
+    expect(closeout.content).toContain('_2 more commits not shown._')
+    expect(closeout.content.match(/^\| `/gm)?.length).toBe(8)
   })
 
   it('inserts an ensemble closeout after its round body without stamping ensembleRoundId', () => {

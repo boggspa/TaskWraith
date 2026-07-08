@@ -39,8 +39,6 @@ export function buildTaskWraithRunCloseoutMessage(input: {
   ]
   const summaryLine = latestAssistantSummary(chat.messages, run.runId)
   if (summaryLine) lines.push(`- Summary: ${summaryLine}`)
-  const commitLine = commitSummaryLine(chat.messages, (message) => message.runId === run.runId)
-  if (commitLine) lines.push(`- Commits: ${commitLine}.`)
   const tokenLine = tokenSummaryLine([run])
   if (tokenLine) lines.push(`- Tokens: ${tokenLine}.`)
   const goalLine = goalSummaryLine(
@@ -48,6 +46,11 @@ export function buildTaskWraithRunCloseoutMessage(input: {
     input.now
   )
   if (goalLine) lines.push(`- Goal: ${goalLine}`)
+  lines.push(
+    ...formatCommitTableSection(
+      collectCloseoutCommits(chat.messages, (message) => message.runId === run.runId)
+    )
+  )
 
   return {
     id: taskWraithRunCloseoutId(run.runId),
@@ -87,15 +90,18 @@ export function buildTaskWraithRoundCloseoutMessage(input: {
   if (participantLine) lines.push(`- Participants: ${participantLine}.`)
   const summaryLine = roundSummaryLine(chat, round.roundId)
   if (summaryLine) lines.push(`- Summary: ${summaryLine}`)
-  const commitLine = commitSummaryLine(
-    chat.messages,
-    (message) => message.metadata?.ensembleRoundId === round.roundId
-  )
-  if (commitLine) lines.push(`- Commits: ${commitLine}.`)
   const tokenLine = tokenSummaryLine(roundRuns)
   if (tokenLine) lines.push(`- Tokens: ${tokenLine}.`)
   const goalLine = goalSummaryLine(chat.activeGoal, input.now)
   if (goalLine) lines.push(`- Goal: ${goalLine}`)
+  lines.push(
+    ...formatCommitTableSection(
+      collectCloseoutCommits(
+        chat.messages,
+        (message) => message.metadata?.ensembleRoundId === round.roundId
+      )
+    )
+  )
 
   return {
     id: taskWraithRoundCloseoutId(round.roundId),
@@ -244,30 +250,89 @@ function participantSummaryLine(round: EnsembleRoundState): string | null {
   return parts.join('; ')
 }
 
+const CLOSEOUT_COMMIT_TABLE_LIMIT = 8
+
 type CloseoutCommit = {
   hash: string
   subject?: string
+  stats?: string
 }
 
-function commitSummaryLine(
+function collectCloseoutCommits(
   messages: ChatMessage[],
   includeMessage: (message: ChatMessage) => boolean
-): string | null {
+): CloseoutCommit[] {
   const commits = new Map<string, CloseoutCommit>()
   for (const message of messages) {
     if (!includeMessage(message)) continue
     for (const activity of message.toolActivities || []) {
       if (!isGitCommitActivity(activity)) continue
       for (const commit of extractCommitsFromActivity(activity)) {
-        if (!commits.has(commit.hash)) commits.set(commit.hash, commit)
+        const existing = commits.get(commit.hash)
+        if (!existing || scoreCloseoutCommit(commit) > scoreCloseoutCommit(existing)) {
+          commits.set(commit.hash, commit)
+        }
       }
     }
   }
-  if (commits.size === 0) return null
   return Array.from(commits.values())
-    .slice(0, 5)
-    .map((commit) => `${commit.hash.slice(0, 12)}${commit.subject ? ` ${commit.subject}` : ''}`)
-    .join('; ')
+}
+
+function scoreCloseoutCommit(commit: CloseoutCommit): number {
+  return (commit.subject ? 2 : 0) + (commit.stats ? 1 : 0)
+}
+
+function formatCommitTableSection(commits: CloseoutCommit[]): string[] {
+  if (commits.length === 0) return []
+  const visible = commits.slice(0, CLOSEOUT_COMMIT_TABLE_LIMIT)
+  const lines = [
+    '',
+    '**Commits**',
+    '',
+    '| Hash | Message | Changes |',
+    '| --- | --- | --- |',
+    ...visible.map((commit) => {
+      const hash = commit.hash.slice(0, 9)
+      const subject = escapeMarkdownTableCell(commit.subject || '—')
+      const stats = escapeMarkdownTableCell(commit.stats || '—')
+      return `| \`${hash}\` | ${subject} | ${stats} |`
+    })
+  ]
+  const overflow = commits.length - visible.length
+  if (overflow > 0) {
+    lines.push('', `_${overflow} more commit${overflow === 1 ? '' : 's'} not shown._`)
+  }
+  return lines
+}
+
+function escapeMarkdownTableCell(value: string): string {
+  return value.replace(/\|/g, '\\|').replace(/\s+/g, ' ').trim()
+}
+
+function normalizeCommitText(text: string): string {
+  return text.replace(/\\n/g, '\n').replace(/\\"/g, '"').replace(/\\t/g, '\t').trim()
+}
+
+function cleanCommitSubject(subject: string): string {
+  return subject
+    .replace(/\\n/g, ' ')
+    .replace(/\s+/g, ' ')
+    .replace(/["',;]+$/g, '')
+    .trim()
+}
+
+function formatCommitStats(raw: string): string {
+  const files = raw.match(/^(\d+\s+files?\s+changed)/i)?.[1]
+  const insertions = raw.match(/(\d+)\s+insertions?\(\+\)/i)?.[1]
+  const deletions = raw.match(/(\d+)\s+deletions?\(-\)/i)?.[1]
+  const filePart = files?.replace(/\s+changed$/i, '') || '1 file'
+  if (insertions || deletions) {
+    const statParts: string[] = []
+    if (insertions) statParts.push(`+${insertions}`)
+    if (deletions) statParts.push(`−${deletions}`)
+    return `${filePart}, ${statParts.join(' ')}`
+  }
+  return filePart
 }
 
 function isGitCommitActivity(activity: ToolActivity): boolean {
@@ -300,25 +365,39 @@ function collectCommitTextFragments(value: unknown, fragments: string[], depth =
 }
 
 function extractCommitsFromText(text: string): CloseoutCommit[] {
+  const normalized = normalizeCommitText(text)
   const commits = new Map<string, CloseoutCommit>()
-  const bracketPattern = /\[[^\]\n]*\b([0-9a-f]{7,40})\]\s*([^\n]+)/gi
+  const bracketPattern =
+    /\[([^\]\n]*)\s([0-9a-f]{7,40})\]\s*([^\n]+)(?:\n([^\n\[]+))?/gi
   let match: RegExpExecArray | null
-  while ((match = bracketPattern.exec(text)) !== null) {
-    const hash = match[1]
-    const subject = match[2]?.trim()
-    commits.set(hash, { hash, ...(subject ? { subject } : {}) })
+  while ((match = bracketPattern.exec(normalized)) !== null) {
+    const hash = match[2]
+    const subject = cleanCommitSubject(match[3] || '')
+    const nextLine = match[4]?.trim()
+    const stats =
+      nextLine && /files?\s+changed/i.test(nextLine) ? formatCommitStats(nextLine) : undefined
+    mergeCloseoutCommit(commits, { hash, ...(subject ? { subject } : {}), ...(stats ? { stats } : {}) })
   }
   const commitLinePattern = /^commit\s+([0-9a-f]{7,40})\b.*$/gim
-  while ((match = commitLinePattern.exec(text)) !== null) {
-    const hash = match[1]
-    if (!commits.has(hash)) commits.set(hash, { hash })
+  while ((match = commitLinePattern.exec(normalized)) !== null) {
+    mergeCloseoutCommit(commits, { hash: match[1] })
   }
   const genericHashPattern = /\b([0-9a-f]{7,40})\b/gi
-  while ((match = genericHashPattern.exec(text)) !== null) {
-    const hash = match[1]
-    if (!commits.has(hash)) commits.set(hash, { hash })
+  while ((match = genericHashPattern.exec(normalized)) !== null) {
+    mergeCloseoutCommit(commits, { hash: match[1] })
   }
   return Array.from(commits.values())
+}
+
+function mergeCloseoutCommit(commits: Map<string, CloseoutCommit>, commit: CloseoutCommit): void {
+  const existing = commits.get(commit.hash)
+  if (!existing || scoreCloseoutCommit(commit) >= scoreCloseoutCommit(existing)) {
+    commits.set(commit.hash, {
+      hash: commit.hash,
+      subject: commit.subject || existing?.subject,
+      stats: commit.stats || existing?.stats
+    })
+  }
 }
 
 function resolveCloseoutGoal(
