@@ -926,6 +926,7 @@ struct ProviderModelPicker: View {
     @Binding var reasoningEffort: String?
     var allowsProviderChange: Bool = true
     @State private var isPresented = false
+    @State private var dragOffset: CGFloat = 0
 
     private var currentCatalog: ProviderModelCatalog? {
         catalogs.first { $0.provider.lowercased() == provider.lowercased() }
@@ -1025,22 +1026,57 @@ struct ProviderModelPicker: View {
     // grabber is layered on in a follow-up slice.
     @ViewBuilder
     private var pickerPopover: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 2) {
-                if allowsProviderChange {
-                    ForEach(catalogs) { catalog in
-                        providerSection(catalog)
+        VStack(spacing: 0) {
+            grabber
+            ScrollView {
+                VStack(alignment: .leading, spacing: 2) {
+                    if allowsProviderChange {
+                        ForEach(catalogs) { catalog in
+                            providerSection(catalog)
+                        }
+                    } else if let catalog = currentCatalog {
+                        modelRows(for: catalog)
+                        reasoningRows(for: catalog)
                     }
-                } else if let catalog = currentCatalog {
-                    modelRows(for: catalog)
-                    reasoningRows(for: catalog)
                 }
+                .padding(.top, 2)
+                .padding(.bottom, 8)
             }
-            .padding(.vertical, 8)
+            .frame(maxHeight: 360)
         }
         .frame(width: 280)
-        .frame(maxHeight: 360)
         .modifier(GlassPopoverPanel())
+        .offset(y: dragOffset)
+        .opacity(dragOffset > 0 ? max(0.55, 1 - dragOffset / 320) : 1)
+    }
+
+    // Swipe-down grabber: dragging the handle down past ~70pt dismisses (parity
+    // with a sheet's pull-to-dismiss), while releasing short springs back. The
+    // gesture lives on the grabber only so the model/reasoning list still
+    // scrolls normally.
+    private var grabber: some View {
+        Capsule()
+            .fill(TWTheme.textMuted.opacity(0.5))
+            .frame(width: 36, height: 5)
+            .frame(maxWidth: .infinity)
+            .padding(.top, 8)
+            .padding(.bottom, 2)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 6)
+                    .onChanged { value in
+                        dragOffset = max(0, min(value.translation.height, 160))
+                    }
+                    .onEnded { value in
+                        if value.translation.height > 70 {
+                            isPresented = false
+                        }
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
+                            dragOffset = 0
+                        }
+                    }
+            )
+            .accessibilityHidden(true)
     }
 
     @ViewBuilder
