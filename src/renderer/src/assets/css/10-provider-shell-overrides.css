@@ -2038,17 +2038,20 @@
   box-shadow: none !important;
 }
 
-/* Above-bar contents — monochrome pills + branch text. */
+/* Above-bar contents — bare monochrome labels + branch text. */
 [data-composer-style="grok"] .composer-above-bar :is(.composer-above-bar-branch, .composer-above-bar-summary),
 [data-composer-style="grok"] .composer-above-bar-secondary-branch {
   color: var(--grok-muted) !important;
 }
 [data-composer-style="grok"] .composer-above-bar :is(.composer-above-bar-files, .composer-above-bar-stats) {
-  background: var(--grok-fill) !important;
-  border: 1px solid var(--grok-border) !important;
-  border-radius: 999px;
-  padding: 4px 10px;
+  background: transparent !important;
+  background-image: none !important;
+  border: 0 !important;
+  border-radius: 0;
+  box-shadow: none !important;
+  padding: 0;
   color: var(--grok-fg) !important;
+  font-variant-numeric: tabular-nums;
 }
 [data-composer-style="grok"] .composer-above-bar-action {
   background: var(--grok-fill) !important;
@@ -2059,6 +2062,28 @@
 [data-composer-style="grok"] .composer-above-bar-action:hover:not(:disabled) {
   background: var(--grok-hover) !important;
   border-color: var(--grok-border-strong) !important;
+}
+[data-composer-style="grok"] .composer-above-bar .composer-above-bar-action--git-commit-icon {
+  background: transparent !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+  color: var(--grok-muted) !important;
+}
+[data-composer-style="grok"]
+  .composer-above-bar
+  .composer-above-bar-action--git-commit-icon:hover:not(:disabled):not(.is-success):not(.is-error),
+[data-composer-style="grok"]
+  .composer-above-bar
+  .composer-above-bar-action--git-commit-icon:focus-visible:not(:disabled):not(.is-success):not(.is-error) {
+  background: transparent !important;
+  border-color: transparent !important;
+  color: var(--grok-fg) !important;
+}
+[data-composer-style="grok"] .composer-above-bar .composer-above-bar-action--git-commit-icon.is-success {
+  color: var(--diff-stat-add-color, #2db777) !important;
+}
+[data-composer-style="grok"] .composer-above-bar .composer-above-bar-action--git-commit-icon.is-error {
+  color: var(--diff-stat-del-color, #ec3d35) !important;
 }
 [data-composer-style="grok"] .composer-workspace-access-pill {
   background: transparent !important;
