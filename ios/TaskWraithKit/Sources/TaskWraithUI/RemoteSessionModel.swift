@@ -1297,6 +1297,67 @@ public final class RemoteSessionModel: ObservableObject {
         }
     }
 
+    /// Single-flight latch for `requestFullProjection`. Reset via `defer` when the
+    /// resync Task ends AND in `clearCachedProjectionState` on host switch — a
+    /// stranded `true` would permanently wedge the resync seam (a reconnect bumps
+    /// `connectAttempt`, aborting the in-flight retry loop), so both resets are
+    /// load-bearing.
+    private var fullProjectionResyncInFlight = false
+
+    /// Slice 2 (RC1/RC2): pull the WHOLE home projection from the Mac. The client
+    /// otherwise has no way to re-request the home list — it depends entirely on an
+    /// unsolicited Mac push it may have missed while suspended. Fire-and-forget,
+    /// single-flight, `connectAttempt`-guarded, with a small bounded retry so a
+    /// dropped ack self-heals. The Mac's re-pushed snapshot frames are ingested by
+    /// the existing NON-destructive `bridge.broadcastWorkspaceList` /
+    /// `broadcastThreadList` / `broadcastRemoteProjectionSnapshot` handlers, so this
+    /// only drives the request + retry, never a decode path of its own. No teardown
+    /// is ever forced here (that would expose the RC5 one-shot drop).
+    public func requestFullProjection() {
+        guard !isDemo, let client, case .connected = phase else { return }
+        guard !fullProjectionResyncInFlight else { return }
+        fullProjectionResyncInFlight = true
+        let attempt = connectAttempt
+        Task { [weak self] in
+            defer { self?.fullProjectionResyncInFlight = false }
+            var backoffNs: UInt64 = 400_000_000
+            for _ in 0..<3 {
+                guard let self, self.connectAttempt == attempt, case .connected = self.phase
+                else { return }
+                // FRESH actionId per attempt (the default UUID) so a retry is not
+                // dropped by the Mac's per-pair replay guard.
+                let ack = try? await client.requestSerialized(
+                    "bridge.requestActionAck",
+                    paramsData: JSONSerialization.data(
+                        withJSONObject: BridgeAction.fullProjectionResync()),
+                    timeoutMs: 10_000)
+                if Self.fullProjectionResyncSucceeded(ack) { return }
+                guard Self.fullProjectionResyncShouldRetry(ack: ack, phase: self.phase) else {
+                    return
+                }
+                try? await Task.sleep(nanoseconds: backoffNs)
+                backoffNs *= 2
+            }
+        }
+    }
+
+    /// Pure: the resync ack succeeded (the Mac accepted + re-pushed).
+    nonisolated static func fullProjectionResyncSucceeded(_ ack: AckResult?) -> Bool {
+        ack?.ok == true
+    }
+
+    /// Pure: retry only while still connected, and only on a transient failure
+    /// (nil = the request threw / no ack, or an explicit "timeout"). A hard reject
+    /// (the Mac answered `ok:false` for another reason) is NOT retried.
+    nonisolated static func fullProjectionResyncShouldRetry(
+        ack: AckResult?, phase: SessionPhase
+    ) -> Bool {
+        guard case .connected = phase else { return false }
+        guard let ack else { return true }
+        if ack.ok { return false }
+        return ack.error == "timeout"
+    }
+
     public func disconnect() {
         cancelAutoReconnect(resetAttempts: true)
         cancelSocketHealthCheck()
@@ -1552,6 +1613,9 @@ public final class RemoteSessionModel: ObservableObject {
         streamingPublishGate.resetAll()
         providerModels = [:]
         projectionHydrated = false
+        // A host switch bumps connectAttempt and aborts any in-flight resync retry
+        // loop; clear the latch here too so the new host's resync can start.
+        fullProjectionResyncInFlight = false
         usageRollup = nil
         taskwraithTokenDaily = nil
         externalTokenDaily = nil

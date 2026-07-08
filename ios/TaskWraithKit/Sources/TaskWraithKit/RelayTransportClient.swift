@@ -40,6 +40,12 @@ public struct AckResult: Sendable {
     public let ok: Bool
     public let result: Data?  // raw JSON of `result`, if any
     public let error: String?
+
+    public init(ok: Bool, result: Data?, error: String?) {
+        self.ok = ok
+        self.result = result
+        self.error = error
+    }
 }
 
 public enum TransportError: Error, Sendable {

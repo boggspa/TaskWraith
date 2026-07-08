@@ -1642,6 +1642,20 @@ public enum BridgeAction {
         ])
     }
 
+    /// Slice 1/2 (RC1/RC2): client-initiated targeted full-projection resync. The
+    /// phone fires this on foreground / notification alive-wake so it can pull the
+    /// current home projection itself, rather than depending on a Mac push it may
+    /// have missed while suspended. Read-only + pair-scoped; the host re-pushes the
+    /// snapshot UNICAST to this device. A FRESH `actionId` per call keeps a bounded
+    /// retry from being replay-dropped by the Mac.
+    public static func fullProjectionResync(
+        actionId: String = UUID().uuidString
+    ) -> [String: Any] {
+        encode([
+            "kind": "fullProjectionResync", "actionId": actionId,
+        ])
+    }
+
     /// Tell the connected host which thread the phone is watching for
     /// `bridge.runEvent` interest filtering (B2). Pair-scoped, read-only.
     /// `nil` appChatId means home/background/non-thread surface.

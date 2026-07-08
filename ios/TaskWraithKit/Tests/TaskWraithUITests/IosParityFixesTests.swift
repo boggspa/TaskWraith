@@ -580,6 +580,35 @@ struct IosParityFixesTests {
         #expect(RemoteSessionModel.ios5UserInitiatedThreadRefreshSiteCount == 25)
     }
 
+    // Slice 2 (RC1/RC2): requestFullProjection retry-decision policy.
+    @Test func fullProjectionResyncSucceededOnlyForOkAck() {
+        #expect(RemoteSessionModel.fullProjectionResyncSucceeded(AckResult(ok: true, result: nil, error: nil)))
+        #expect(!RemoteSessionModel.fullProjectionResyncSucceeded(AckResult(ok: false, result: nil, error: "timeout")))
+        #expect(!RemoteSessionModel.fullProjectionResyncSucceeded(nil))
+    }
+
+    @Test func fullProjectionResyncRetriesOnlyOnTransientFailureWhileConnected() {
+        // nil ack (threw / no ack) while connected → retry.
+        #expect(RemoteSessionModel.fullProjectionResyncShouldRetry(ack: nil, phase: .connected))
+        // explicit timeout while connected → retry.
+        #expect(
+            RemoteSessionModel.fullProjectionResyncShouldRetry(
+                ack: AckResult(ok: false, result: nil, error: "timeout"), phase: .connected))
+        // success → no retry.
+        #expect(
+            !RemoteSessionModel.fullProjectionResyncShouldRetry(
+                ack: AckResult(ok: true, result: nil, error: nil), phase: .connected))
+        // hard reject (ok:false, non-timeout reason) → no retry.
+        #expect(
+            !RemoteSessionModel.fullProjectionResyncShouldRetry(
+                ack: AckResult(ok: false, result: nil, error: "denied"), phase: .connected))
+        // not connected → never retry, regardless of ack.
+        #expect(!RemoteSessionModel.fullProjectionResyncShouldRetry(ack: nil, phase: .idle))
+        #expect(
+            !RemoteSessionModel.fullProjectionResyncShouldRetry(
+                ack: AckResult(ok: false, result: nil, error: "timeout"), phase: .error("x")))
+    }
+
     @MainActor
     @Test func userInitiatedThreadRefreshSchedulesWhileVisibleStreaming() {
         let model = makeRemoteSessionModel()
