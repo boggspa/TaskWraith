@@ -32,29 +32,34 @@ into a new 8K file and call the slice done.
 
 ## Current Snapshot
 
-Measured from the live worktree on 2026-07-08. Root metrics below are unchanged
-since the 2026-07-07 refresh: both `src/main/index.ts` and
-`src/renderer/src/App.tsx` remain at 32,234 and 25,738 lines respectively,
-so extraction has not yet outpaced feature accretion. Treat these numbers as
-orientation only. Every Ensemble round must refresh counts and dirty state
+Measured from the live worktree on 2026-07-08. Pass-1 landed two slices
+(`5d1ada4fb`, `6a06b1ebc`); main-root metrics below reflect post-`main-m1`
+state. `src/renderer/src/App.tsx` remains at 25,738 lines. Treat these numbers
+as orientation only. Every Ensemble round must refresh counts and dirty state
 before assigning a slice.
 
-Pass-1 dirty baseline (recorded at round start):
+Pass-2 dirty baseline (recorded at round start):
 
-- Branch `master`, ahead 40 of `origin/master`.
-- `docs/refactors/app-index-decomposition.md` dirty pre-round (user edits plus
-  this Phase-0 refresh).
+- Branch `master`, ahead 48 of `origin/master` (includes pass-1 commits).
+- `src/main/index.ts` contested by a foreign session — chat CRUD slice HELD.
+- Untracked scaffold paths from @NewFiles pending adversary review:
+  `src/main/runtime/MainRuntimeContext.ts`,
+  `src/renderer/src/hooks/useScopedIpc.ts`,
+  `src/renderer/src/hooks/useScopedIpc.test.ts`,
+  `src/renderer/src/state/chatMutations.ts`,
+  `src/renderer/src/state/useChatMutations.ts`.
 - `.cursor/` untracked — never staged.
-- All `src/**` paths clean at round start; peer-owned dirty paths defer or
-  coordinate before write.
+- Peer-owned dirty paths (`ios/**`, bridge/remote/store) defer or coordinate
+  before write.
 
 Tier-2 orientation: early Pass-1 recon reported `SettingsPanel.tsx` ~10,714 and
 `EnsembleOrchestrator.ts` ~11,996 lines; live `wc -l` on 2026-07-08 confirms
 11,063 and 12,416 — the ranking table below remains accurate.
 
-IPC handler-test gap (42 flat modules, 38 tests): `shellHandlers`,
+IPC handler-test gap (43 flat modules, 39 tests): `shellHandlers`,
 `contextCompactionHandlers`, `ptyHandlers`, and `ensembleRosterPresetsHandlers`
-lack focused handler tests.
+lack focused handler tests. `humanCollaborationHandlers.test.ts` landed in
+pass-1 (`6a06b1ebc`).
 
 Snapshot commands:
 
@@ -73,12 +78,12 @@ Current high-level facts:
 
 | Area | Current signal |
 | --- | ---: |
-| `src/main/index.ts` | 32,234 lines |
+| `src/main/index.ts` | 31,698 lines (was 32,234 pre-pass-1) |
 | `src/renderer/src/App.tsx` | 25,738 lines |
-| Inline `ipcMain.handle/on` registrations still in `index.ts` | 103 |
-| Registrar calls already wired from `index.ts` | 43 |
-| Flat `src/main/ipc/*Handlers.ts` modules | 42 |
-| Flat `src/main/ipc/*Handlers.test.ts` modules | 38 |
+| Inline `ipcMain.handle/on` registrations still in `index.ts` | 77 (was 103) |
+| Registrar calls already wired from `index.ts` | 44 (was 43) |
+| Flat `src/main/ipc/*Handlers.ts` modules | 43 (was 42) |
+| Flat `src/main/ipc/*Handlers.test.ts` modules | 39 (was 38) |
 | `MainAppLayout.types.ts` remaining `: any` props | 391 |
 
 Largest production TS/TSX files at this snapshot:
@@ -114,11 +119,22 @@ without fresh recon.
   prop contract, and view-host extraction proved that typecheck alone is not
   enough to catch runtime prop omissions.
 - Main: M1-M17f and later focused registrar slices landed many flat IPC
-  modules under `src/main/ipc/`; as of 2026-07-08 there are 42 handler modules
-  and 38 focused handler tests. That proved the registrar pattern and reduced
-  inline `ipcMain.handle/on` registrations to 103, but the easy
+  modules under `src/main/ipc/`; as of pass-1 close there are 43 handler
+  modules and 39 focused handler tests. That proved the registrar pattern and
+  reduced inline `ipcMain.handle/on` registrations to 77, but the easy
   thin-registrar well is now mostly exhausted. The remaining mass is facade and
   trust-boundary work, not just more file shuffling.
+- Main pass-1 (2026-07-08): `refactor(main-m1)` — 26 human-collaboration
+  channels moved from inline `index.ts` into `humanCollaborationHandlers.ts`
+  with `HumanCollaborationHandlersDeps` injection, will-quit collaborator
+  teardown, and focused registration test (`humanCollaborationHandlers.test.ts`,
+  4 tests). Commit `6a06b1ebc`. Gates: `npm run typecheck:node` green;
+  `npm test -- src/main/IpcValidation.test.ts` (34) and
+  `npm test -- src/main/ipc/humanCollaborationHandlers.test.ts` (4) green.
+- Docs pass-1 (2026-07-08): `docs(refactor-plan)` Phase-0 baseline refresh —
+  Pass-1 dirty snapshot, cadence override for concurrent locked scopes,
+  handler-test gap, and active slice ledger. Commit `5d1ada4fb`. Gate:
+  `git diff --check -- docs/refactors/app-index-decomposition.md` green.
 - Current IPC handler rule from `src/main/ipc/README.md` still applies:
   handler modules stay directly under `src/main/ipc/` unless the IPC validation
   scanner is expanded in the same commit.
@@ -222,6 +238,10 @@ git diff --cached --name-only
 `git diff --cached --name-only` must show only approved slice paths. Never use
 `git add -A`, `git add .`, or broad path staging for decomposition work.
 
+Ops note: `docs/` is gitignored-but-tracked in this repo. Staging plan-doc
+slices requires `git add -f -- docs/refactors/app-index-decomposition.md` (or
+the specific doc path). @CheckCommit must use `-f` for docs commits.
+
 If a target file is already dirty from another session, defer, coordinate
 ownership, or split the slice into non-overlapping files. Do not edit over
 concurrent changes.
@@ -247,18 +267,31 @@ they rot quickly. Recon must refresh anchors before each slice.
 
 ### Active slice ledger
 
-Pass 1 (2026-07-08). Snapshot metrics above are pre-slice baselines.
+#### Pass 1 — LANDED (2026-07-08)
 
-| Slice | Owner | Status | Scope |
-| --- | --- | --- | --- |
-| `docs(refactor-plan)` Phase-0 baseline refresh | @WriteDocs | IN FLIGHT | `docs/refactors/app-index-decomposition.md` |
-| `refactor(main-m1)` human collaboration IPC extraction | @WriteMain | IN FLIGHT | `src/main/index.ts`, `src/main/ipc/**` |
-| `refactor(renderer-r0)` scoped app IPC unsubscribe | @WriteRender | IN FLIGHT | `src/renderer/src/App.tsx` |
+| Slice | Owner | Status | Commit | Gates | Metric deltas |
+| --- | --- | --- | --- | --- | --- |
+| `docs(refactor-plan)` Phase-0 baseline refresh | @WriteDocs | LANDED | `5d1ada4fb` | `git diff --check` on doc path | — |
+| `refactor(main-m1)` human collaboration IPC extraction | @WriteMain | LANDED | `6a06b1ebc` | `typecheck:node`; `IpcValidation.test` (34); `humanCollaborationHandlers.test` (4) | inline `ipcMain` 103→77; `index.ts` 32,234→31,698; handler modules 42→43; handler tests 38→39; registrar calls 43→44 |
 
-Commit names: `docs(refactor-plan): refresh phase-0 baseline`,
-`refactor(main-m1): extract human collaboration ipc handlers`,
-`refactor(renderer-r0): add scoped app ipc unsubscribe`. @CheckCommit owns
-staging and commits by exact pathspec only.
+Pass-1 retired from the active queue. Stale IN FLIGHT rows above are superseded
+by this table.
+
+#### Pass 2 — IN FLIGHT (2026-07-08)
+
+| Slice | Owner | Status | Scope | Notes |
+| --- | --- | --- | --- | --- |
+| `refactor(preload-r0)` scoped app IPC unsubscribes | @WriteMain | IN FLIGHT | `src/preload/index.ts`, `src/preload/index.d.ts` ONLY | 17 void listeners → scoped unsubscribes; `index.d.ts` parity; additive — `removeListeners()` stays until renderer-r0 lands |
+| `refactor(renderer-r0)` scoped app IPC unsubscribe | @WriteRender | IN FLIGHT | `src/renderer/src/App.tsx` | Serial after preload green; fresh zero-gap precheck mandatory; delete `removeListeners()` |
+| `refactor(main-m1)` residual chat CRUD | @WriteMain | HELD | `src/main/index.ts`, `src/main/ipc/chatHandlers.ts` | `index.ts` contested by foreign session; channels: `save-chat`, `delete-chat`, `reap-abandoned-chats`, `truncate-chat`, `clear-chats` |
+| NewFiles scaffolds (5 files) | @NewFiles | IN FLIGHT | `src/main/runtime/MainRuntimeContext.ts`; `src/renderer/src/hooks/useScopedIpc.ts` + `.test.ts`; `src/renderer/src/state/chatMutations.ts`; `src/renderer/src/state/useChatMutations.ts` | Pending @Adversary1 review before commit |
+| `docs(refactor-plan)` pass-1 ledger update | @WriteDocs | IN FLIGHT | `docs/refactors/app-index-decomposition.md` | This slice |
+
+Commit names: `refactor(preload-r0): return scoped unsubscribes from app ipc
+listeners`, `refactor(renderer-r0): add scoped app ipc unsubscribe`,
+`refactor(main-m1): move residual chat crud into chat handlers`,
+`docs(refactor-plan): record pass-1 landed slices`. @CheckCommit owns staging
+and commits by exact pathspec only (`git add -f` for docs).
 
 ### Phase 0 - Refresh And Freeze Invariants
 
