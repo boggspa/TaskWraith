@@ -71,6 +71,8 @@ function harness(
   const iphoneCodes: string[] = []
   const routed: Array<{ method: string; params: unknown }> = []
   const broadcasterChanges: Array<boolean> = []
+  const connectedCounts: number[] = []
+  const pairedCounts: number[] = []
   let capturedSink: RunEventSink | null = null
   let clientHandlers: TransportSocketHandlers | null = null
   let iphone: E2eeSession | null = null
@@ -115,6 +117,8 @@ function harness(
     },
     onPairingPrompt: (prompt) => prompts.push(prompt),
     onBroadcasterChange: (b) => broadcasterChanges.push(b !== null),
+    onConnectedDeviceCountChange: (n) => connectedCounts.push(n),
+    onPairedDeviceCountChange: (n) => pairedCounts.push(n),
     pairingWindowMs: opts.pairingWindowMs,
     pairingStore: opts.pairingStore,
     postRegistration: async (url, body) => {
@@ -150,6 +154,8 @@ function harness(
     iphoneCodes,
     routed,
     broadcasterChanges,
+    connectedCounts,
+    pairedCounts,
     registrations,
     sendFromIphone: (m: string, p?: unknown) => iphone!.sendApp(m, p),
     getSink: () => capturedSink
@@ -479,6 +485,19 @@ describe('RemoteBridgeRuntime established channel', () => {
       ok: false,
       reason: 'device not connected'
     })
+  })
+
+  it('publishes both live and paired device counts on establish and on unpair (RC6)', async () => {
+    const h = harness()
+    await establish(h)
+    // Establish fires BOTH signals: this device is genuinely connected.
+    expect(h.connectedCounts.at(-1)).toBe(1)
+    expect(h.pairedCounts.at(-1)).toBe(1)
+    // Unpair drops both to 0 (releases the powerSaveBlocker exactly as before).
+    h.runtime.unpair()
+    await settle()
+    expect(h.connectedCounts.at(-1)).toBe(0)
+    expect(h.pairedCounts.at(-1)).toBe(0)
   })
 
   it('rejects unsupported inbound methods without touching the router', async () => {

@@ -26477,14 +26477,22 @@ if (isGeminiMcpBridgeProcess) {
             bridgeBroadcaster = broadcaster
             bridgeBroadcasterRef = broadcaster
           },
-          // Hold/release the Mac-awake power assertion as phones connect and
-          // disconnect (see updateRemotePowerAssertion).
+          // LIVE connected count drives the run-event filter + git feed: a
+          // silently-dropped or suspended phone (RC6) flips this to a true count
+          // so we stop encoding run events / watching git for a gone viewer.
           onConnectedDeviceCountChange: (connectedCount) => {
             remoteBridgeRunEventFilter.setConnectedDeviceCount(connectedCount)
-            updateRemotePowerAssertion(connectedCount)
             // The watcher-lane git feed subscribes only while a phone is
             // connected — zero phones, zero watchers, zero git churn.
             remoteGitSnapshotFeedRef?.setConnectedDeviceCount(connectedCount)
+          },
+          // PAIRED presence drives the Mac-awake power assertion (see
+          // updateRemotePowerAssertion). Kept on paired (not live) count so a
+          // phone that merely SUSPENDED — still paired, about to return — keeps
+          // the Mac awake to serve its push-to-wake / backgrounded-run reconcile;
+          // released only on genuine unpair.
+          onPairedDeviceCountChange: (pairedCount) => {
+            updateRemotePowerAssertion(pairedCount)
           },
           // EVERY establish (incl. phone relaunches) re-ships the async
           // provider-model catalogs — a freshly-launched phone starts with

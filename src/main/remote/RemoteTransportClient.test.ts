@@ -136,3 +136,118 @@ describe('RemoteTransportClient app channel', () => {
     expect(h.iphoneMessages).toHaveLength(0)
   })
 })
+
+describe('RemoteTransportClient liveness watchdog (RC6)', () => {
+  function livenessHarness() {
+    const macId = generateIdentityKeyPair()
+    const iphoneId = generateIdentityKeyPair()
+    let clock = 1000
+    let dropOutbound = false
+    let closeCalls = 0
+    const connectionChanges: boolean[] = []
+    let clientHandlers: TransportSocketHandlers | null = null
+    // eslint-disable-next-line prefer-const
+    let iphone: E2eeSession
+
+    const socketFactory: TransportSocketFactory = (_url, _headers, handlers) => {
+      clientHandlers = handlers
+      setTimeout(() => handlers.onOpen(), 0)
+      return {
+        // A silently-OS-killed socket: outbound frames vanish, so the phone
+        // never receives PINGs and never PONGs back.
+        send: (data: string) => {
+          if (dropOutbound) return
+          void iphone.handleFrame(JSON.parse(data) as E2eeFrame)
+        },
+        close: () => {
+          closeCalls += 1
+        }
+      }
+    }
+
+    const client = new RemoteTransportClient({
+      identityKeyPair: macId,
+      socketFactory,
+      pinnedPeerIdentityRaw: exportRawEd25519PublicKey(iphoneId.publicKey),
+      now: () => clock,
+      pingIntervalMs: 5,
+      pingTimeoutMs: 40,
+      onConnectionChange: (c) => connectionChanges.push(c)
+    })
+    iphone = new E2eeSession({
+      role: 'iphone',
+      sessionId: 'sess-live',
+      identityKeyPair: iphoneId,
+      peerIdentityPublicKey: macId.publicKey,
+      send: (frame: E2eeFrame) => clientHandlers?.onMessage(JSON.stringify(frame)),
+      onAppMessage: () => {},
+      onConfirmCode: () => {}
+    })
+
+    return {
+      client,
+      establish: async () => {
+        client.beginSession('ws://relay.test', 'sess-live')
+        await settle()
+        iphone.start()
+        await settle()
+      },
+      // Drive the interval callback deterministically (avoids real-timer flake).
+      tick: () => (client as unknown as { livenessTick: () => void }).livenessTick(),
+      advance: (ms: number) => {
+        clock += ms
+      },
+      setDrop: (v: boolean) => {
+        dropOutbound = v
+      },
+      connectionChanges,
+      closeCalls: () => closeCalls,
+      isEstablished: () =>
+        (client as unknown as { session?: { isEstablished: boolean } }).session?.isEstablished ===
+        true
+    }
+  }
+
+  it('never marks a healthy link down (pongs keep refreshing lastPongAt)', async () => {
+    const h = livenessHarness()
+    await h.establish()
+    expect(h.client.isConnected).toBe(true)
+    for (let i = 0; i < 10; i++) {
+      h.advance(5) // < pingTimeoutMs, and each tick's pong refreshes liveness
+      h.tick()
+      await settle()
+    }
+    expect(h.client.isConnected).toBe(true)
+    expect(h.connectionChanges.filter((c) => c === false)).toHaveLength(0)
+  })
+
+  it('marks a silent link down WITHOUT closing the socket or disposing the session', async () => {
+    const h = livenessHarness()
+    await h.establish()
+    expect(h.client.isConnected).toBe(true)
+
+    h.setDrop(true) // OS-kills the socket — no pongs return
+    h.advance(100) // past pingTimeoutMs
+    h.tick()
+
+    expect(h.client.isConnected).toBe(false) // logical link down
+    expect(h.connectionChanges.at(-1)).toBe(false)
+    expect(h.closeCalls()).toBe(0) // NOT torn down — the dead peer is the phone
+    expect(h.isEstablished()).toBe(true) // session intact for a re-handshake
+  })
+
+  it('self-heals on a resumed pong with no re-handshake', async () => {
+    const h = livenessHarness()
+    await h.establish()
+    h.setDrop(true)
+    h.advance(100)
+    h.tick()
+    expect(h.client.isConnected).toBe(false)
+
+    // Pongs resume on the SAME session.
+    h.setDrop(false)
+    h.tick() // this ping now reaches the phone, which pongs back
+    await settle()
+    expect(h.client.isConnected).toBe(true)
+  })
+})

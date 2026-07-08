@@ -11,7 +11,7 @@ import type { E2eeFrame } from './protocol'
  * `drop()` clears in-flight frames (simulates a socket close on reconnect).
  * Every frame delivered to the iphone is also captured for replay tests.
  */
-function wire(opts?: { trustPeer?: boolean; macPinsIphone?: boolean }) {
+function wire(opts?: { trustPeer?: boolean; macPinsIphone?: boolean; macBufferMaxMsgs?: number }) {
   const macIdentity = generateIdentityKeyPair()
   const iphoneIdentity = generateIdentityKeyPair()
   const macReceived: Array<{ method: string; params: unknown }> = []
@@ -22,6 +22,8 @@ function wire(opts?: { trustPeer?: boolean; macPinsIphone?: boolean }) {
   const framesToMac: E2eeFrame[] = []
   const framesFromMac: E2eeFrame[] = []
   const macErrors: Error[] = []
+  const macPongs: number[] = []
+  const macReplayGaps: number[] = []
   let queue: Array<() => Promise<void>> = []
 
   const mac: E2eeSession = new E2eeSession({
@@ -29,6 +31,7 @@ function wire(opts?: { trustPeer?: boolean; macPinsIphone?: boolean }) {
     sessionId: 'sess-1',
     identityKeyPair: macIdentity,
     peerIdentityPublicKey: opts?.macPinsIphone ? iphoneIdentity.publicKey : undefined,
+    bufferMaxMsgs: opts?.macBufferMaxMsgs,
     send: (f: E2eeFrame) => {
       framesToIphone.push(f)
       framesFromMac.push(f)
@@ -37,6 +40,8 @@ function wire(opts?: { trustPeer?: boolean; macPinsIphone?: boolean }) {
     onAppMessage: (method, params) => macReceived.push({ method, params }),
     onConfirmCode: (c) => macCodes.push(c),
     onError: (e) => macErrors.push(e),
+    onPong: () => macPongs.push(1),
+    onReplayGap: () => macReplayGaps.push(1),
     trustPeer: opts?.trustPeer === false ? () => false : () => true
   })
   let iphone: E2eeSession
@@ -100,7 +105,9 @@ function wire(opts?: { trustPeer?: boolean; macPinsIphone?: boolean }) {
     swapIphone,
     framesFromMac,
     framesToMac,
-    macErrors
+    macErrors,
+    macPongs,
+    macReplayGaps
   }
 }
 
@@ -163,6 +170,48 @@ describe('E2eeSession reconnect + replay', () => {
     expect(w.iphoneReceived).toEqual([{ method: 'bridge.runEvent', params: { n: 42 } }])
   })
 
+  it('fires onReplayGap when a same-epoch resume finds the buffer evicted (RC5)', async () => {
+    const w = wire({ macBufferMaxMsgs: 1 }) // buffer holds only the newest msg
+    await w.establish()
+    w.mac.sendApp('bridge.runEvent', { n: 1 })
+    w.mac.sendApp('bridge.runEvent', { n: 2 })
+    w.mac.sendApp('bridge.runEvent', { n: 3 }) // evicts 1 and 2
+    w.drop() // phone never receives or acks any of them
+    w.mac.reconnect()
+    w.iphone.reconnect() // SAME epoch → same-epoch resume, lastAcked = 0
+    await w.pump()
+    expect(w.macReplayGaps).toHaveLength(1)
+  })
+
+  it('does NOT fire onReplayGap on a clean same-epoch resume (RC5 regression guard)', async () => {
+    const w = wire() // default (large) buffer — nothing evicts
+    await w.establish()
+    w.mac.sendApp('bridge.runEvent', { n: 1 })
+    w.mac.sendApp('bridge.runEvent', { n: 2 })
+    w.drop()
+    w.mac.reconnect()
+    w.iphone.reconnect()
+    await w.pump()
+    expect(w.macReplayGaps).toHaveLength(0)
+    // Both messages still replay-deliver (the gap check is gap-specific).
+    expect(w.iphoneReceived.filter((m) => m.method === 'bridge.runEvent')).toHaveLength(2)
+  })
+
+  it('does NOT fire onReplayGap on a fresh-epoch relaunch (RC5 — freshPeer path untouched)', async () => {
+    const w = wire({ macBufferMaxMsgs: 1 })
+    await w.establish()
+    w.mac.sendApp('bridge.runEvent', { n: 1 })
+    w.mac.sendApp('bridge.runEvent', { n: 2 }) // evicts 1
+    w.drop()
+    const fresh = w.swapIphone() // brand-new session object → fresh epoch
+    w.mac.reconnect()
+    fresh.start()
+    await w.pump()
+    // freshPeer branch re-pushes the establish snapshot itself — the gap callback
+    // must NEVER fire there (would double-push / risk the relaunch class).
+    expect(w.macReplayGaps).toHaveLength(0)
+  })
+
   it('does not re-deliver an already-acked message after reconnect', async () => {
     const w = wire()
     await w.establish()
@@ -175,6 +224,17 @@ describe('E2eeSession reconnect + replay', () => {
     w.iphone.reconnect()
     await w.pump()
     expect(w.iphoneReceived.filter((m) => m.method === 'bridge.runEvent')).toHaveLength(1)
+  })
+
+  it('surfaces TRANSPORT_PONG to the mac onPong observer (RC6 liveness)', async () => {
+    const w = wire()
+    await w.establish()
+    expect(w.macPongs).toHaveLength(0)
+    // Mac pings → iphone auto-responds PONG → mac.onPong fires (the missing half
+    // of "caller tracks liveness"). The PING auto-response path is unchanged.
+    w.mac.ping()
+    await w.pump()
+    expect(w.macPongs).toHaveLength(1)
   })
 
   it('ignores relay-tampered plaintext frame ACKs when trimming replay buffers', async () => {

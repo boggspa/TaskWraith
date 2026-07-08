@@ -61,6 +61,16 @@ export interface E2eeSessionOptions {
   /** Surfaced on both sides for the user to compare during first pairing. */
   onConfirmCode?: (code: string) => void
   onEstablished?: () => void
+  /** Fires on every decrypted TRANSPORT_PONG so the transport client can
+   * timestamp peer liveness — the missing half of RC6's "caller tracks
+   * liveness". Fires only from an established, authenticated session. */
+  onPong?: () => void
+  /** RC5: fired when a same-epoch peer resume leaves a gap the bounded replay
+   * buffer can no longer fill (evicted un-acked msgIds). The caller responds with
+   * a targeted full-projection resync so no one-shot event is permanently lost.
+   * NEVER fired on the fresh-epoch (relaunch) path — that path is covered by the
+   * re-pushed establish snapshot. */
+  onReplayGap?: () => void
   onError?: (err: Error) => void
   /**
    * Decide whether to trust the peer's identity key (Mac side). Returns true to
@@ -514,8 +524,12 @@ export class E2eeSession {
         return
       }
       this.applyPeerResume(lastAcked, epoch)
+    } else if (msg.method === TRANSPORT_PONG) {
+      // Keepalive ack — surface it so the transport client can timestamp peer
+      // liveness (RC6). The caller (RemoteTransportClient) drives a watchdog off
+      // the last-pong time; the PING branch above still auto-responds unchanged.
+      this.opts.onPong?.()
     }
-    // TRANSPORT_PONG: keepalive ack, nothing to do here (caller tracks liveness).
   }
 
   private applyPeerResume(lastAcked: number, epoch: string | null): void {
@@ -540,6 +554,9 @@ export class E2eeSession {
         return
       }
       this.trimReplayBuffer(lastAcked)
+      // RC5: detect an unfillable gap BEFORE replay (trim just ran); fire the
+      // callback AFTER replay so the surviving buffered frames drain first.
+      const gap = this.hasReplayGap(lastAcked)
       if (this.awaitingPeerResume) {
         this.awaitingPeerResume = false
         this.replayUnacked(lastAcked)
@@ -547,6 +564,11 @@ export class E2eeSession {
         // Peer re-resumed mid-connection (defensive) — replay what it lacks.
         this.replayUnacked(lastAcked)
       }
+      // The bounded replay buffer evicted un-acked tail the peer still lacks —
+      // replays alone can't fill it, so ask the caller to push a full snapshot.
+      // NEVER on the freshPeer branch above (it re-pushes the establish snapshot
+      // itself; a gap callback there would double-push).
+      if (gap) this.opts.onReplayGap?.()
   }
 
   private trimReplayBuffer(ackMsgId: number): void {

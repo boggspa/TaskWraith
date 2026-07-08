@@ -49,6 +49,9 @@ export interface RemoteTransportClientOptions {
   onMessage?: (method: string, params: unknown) => void
   onEstablished?: (sessionId: string) => void
   onConnectionChange?: (connected: boolean) => void
+  /** RC5: a same-epoch resume detected an unfillable replay-buffer gap on the
+   * live session — the caller should push a full snapshot to this device. */
+  onReplayGap?: () => void
   log?: (line: string) => void
   now?: () => number
   pingIntervalMs?: number
@@ -68,6 +71,11 @@ export class RemoteTransportClient {
   /** Raw Ed25519 key of the iPhone, pinned after the user confirms pairing. */
   private trustedPeerRaw: Buffer | null = null
   private pingTimer: ReturnType<typeof setInterval> | null = null
+  /** RC6: timestamp of the last decrypted TRANSPORT_PONG. The liveness watchdog
+   * marks the logical link down (setConnected(false)) if no pong lands within
+   * `pingTimeoutMs` — WITHOUT closing the socket or disposing the session, so a
+   * returning phone re-handshakes over the still-open Mac↔relay socket. */
+  private lastPongAt = 0
   private reconnectAttempt = 0
   private disposed = false
 
@@ -146,6 +154,8 @@ export class RemoteTransportClient {
         this.startPing()
         this.opts.onEstablished?.(this.sessionId)
       },
+      onPong: () => this.onPong(),
+      onReplayGap: () => this.opts.onReplayGap?.(),
       trustPeer: (peerRaw, code) => this.decideTrust(peerRaw, code),
       log: this.opts.log
     })
@@ -198,8 +208,11 @@ export class RemoteTransportClient {
 
   private startPing(): void {
     this.stopPing()
+    // Fresh baseline at each establish so we never insta-trip the watchdog on a
+    // connection that just came up.
+    this.lastPongAt = this.now()
     const interval = this.opts.pingIntervalMs ?? 20_000
-    this.pingTimer = setInterval(() => this.session?.ping(), interval)
+    this.pingTimer = setInterval(() => this.livenessTick(), interval)
     this.pingTimer.unref?.()
   }
 
@@ -208,6 +221,34 @@ export class RemoteTransportClient {
       clearInterval(this.pingTimer)
       this.pingTimer = null
     }
+  }
+
+  private now(): number {
+    return this.opts.now?.() ?? Date.now()
+  }
+
+  /** RC6: a decrypted pong proves the peer is live. Refresh the timestamp and, if
+   * the link had been marked down on the SAME session, self-heal it back up with
+   * no re-handshake. */
+  private onPong(): void {
+    this.lastPongAt = this.now()
+    if (this.session?.isEstablished) this.setConnected(true)
+  }
+
+  /** RC6: fired every ping interval. Send the keepalive ping AND, if too long has
+   * passed since the last pong on a connected link, mark it down. Crucially this
+   * does NOT close the socket, dispose the session, or touch the reconnect
+   * machinery — the dead peer is the PHONE, not the Mac's relay socket. A
+   * returning phone re-handshakes over the still-open socket (re-firing
+   * onEstablished → setConnected(true) + a fresh ping baseline); recovery of
+   * content is the phone's own Slice-2 pull. Pinging continues after mark-down so
+   * a same-session pong can self-heal via onPong. */
+  private livenessTick(): void {
+    const timeout = this.opts.pingTimeoutMs ?? 60_000
+    if (this.connected && this.now() - this.lastPongAt > timeout) {
+      this.setConnected(false)
+    }
+    this.session?.ping()
   }
 
   private onSocketClosed(): void {

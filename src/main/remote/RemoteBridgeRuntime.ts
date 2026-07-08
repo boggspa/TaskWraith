@@ -161,12 +161,21 @@ export interface RemoteBridgeRuntimeOptions {
    * broadcastSnapshot (e.g. the async provider-model catalogs) hook here,
    * or a phone that reconnects after an app relaunch never receives them. */
   onDeviceEstablished?: () => void
-  /** Fired whenever the number of ESTABLISHED (connected) devices changes —
-   * on establish and on teardown. The host (index.ts) uses this to hold an
-   * Electron powerSaveBlocker while ≥1 phone is connected so the Mac stays
-   * awake to serve remote approvals, and to release it when the last device
-   * disconnects. Kept as a callback so the runtime stays electron-free. */
+  /** Fired with the LIVE connected-device count (established entries whose
+   * transport `isConnected`) — on establish, teardown, and now also when a
+   * liveness watchdog marks a silently-dropped phone down (RC6). Consumers that
+   * care about who can actually RECEIVE right now (the run-event broadcast
+   * filter, the git-snapshot feed) read this. Distinct from paired presence —
+   * see `onPairedDeviceCountChange`. Kept as a callback so the runtime stays
+   * electron-free. */
   onConnectedDeviceCountChange?: (connectedCount: number) => void
+  /** Fired with the PAIRED-with-reconnect-intent count (`established.size`) — on
+   * establish and teardown ONLY. The host drives the Electron powerSaveBlocker
+   * off this so the Mac stays awake through a phone SUSPEND (a suspended phone is
+   * still paired and about to return; RC6's watchdog only moves the live count,
+   * never the paired count), and releases it on unpair. Not fired at the
+   * persisted-listen add site, so a saved-but-offline pairing never holds power. */
+  onPairedDeviceCountChange?: (pairedCount: number) => void
   /** Pairing QR validity window; the un-paired socket is torn down after. */
   pairingWindowMs?: number
   /** Trusted reconnect (T5): persisted pairing + relay resolve registration.
@@ -494,14 +503,47 @@ export class RemoteBridgeRuntime {
       onEstablished: () => {
         overrides.onEstablished?.()
       },
-      onConnectionChange: (connected) =>
+      onConnectionChange: (connected) => {
         this.opts.log?.(
           `[remote-bridge] transport ${connected ? 'established' : 'down'} (${knownPubKey ?? 'pending'})`
-        ),
+        )
+        // RC6: a watchdog-driven mark-down (or a clean close) recomputes the LIVE
+        // count so the run-event filter / git feed stop treating a gone phone as
+        // present. On a fresh-pairing establish this may transiently compute 0
+        // before promoteToEstablished adds the entry, then onDeviceEstablished
+        // re-publishes 1 synchronously — benign (no async yield between them).
+        this.publishConnectedDeviceCount()
+      },
+      onReplayGap: () => {
+        // RC5: same pubKey resolution as onMessage. A same-epoch resume evicted
+        // un-acked tail — push a targeted full snapshot so the returning peer
+        // recovers any one-shot it missed.
+        const pubKey =
+          knownPubKey ??
+          (() => {
+            const raw = clientRef.current?.trustedPeerIdentityRaw()
+            return raw ? b64.encode(raw) : null
+          })()
+        this.resyncDeviceOnReplayGap(pubKey)
+      },
       log: this.opts.log
     })
     clientRef.current = client
     return client
+  }
+
+  /** RC5: on a detected replay-buffer gap, re-push the current projection to
+   * EXACTLY the affected device via Slice 1's targeted `emitSnapshotTo` (never a
+   * broadcast, never resetThrottle). Idempotent by envelopeId, so it composes
+   * safely with the phone's own Slice-2 pull. No teardown, no reconnect. */
+  private resyncDeviceOnReplayGap(iphoneIdentityPubKey: string | null): void {
+    if (!iphoneIdentityPubKey) return
+    const device = this.established.get(iphoneIdentityPubKey)
+    if (!device || !this.broadcaster) return
+    this.broadcaster.emitSnapshotTo((method, params) => device.client.send(method, params))
+    this.opts.log?.(
+      `[remote-bridge] replay gap → targeted resync (${pairIdFromIdentityPubKey(iphoneIdentityPubKey)})`
+    )
   }
 
   private promoteToEstablished(args: {
@@ -591,6 +633,25 @@ export class RemoteBridgeRuntime {
     }
   }
 
+  /** RC6: count of established devices whose transport is actually connected
+   * right now (a silently-dropped or suspended phone stays in `established` but
+   * flips isConnected=false). */
+  private connectedDeviceCount(): number {
+    let n = 0
+    for (const device of this.established.values()) {
+      if (device.client.isConnected) n += 1
+    }
+    return n
+  }
+
+  private publishConnectedDeviceCount(): void {
+    this.opts.onConnectedDeviceCountChange?.(this.connectedDeviceCount())
+  }
+
+  private publishPairedDeviceCount(): void {
+    this.opts.onPairedDeviceCountChange?.(this.established.size)
+  }
+
   private onDeviceEstablished(): void {
     if (!this.broadcaster) {
       this.broadcaster = new BridgeBroadcaster({
@@ -615,7 +676,10 @@ export class RemoteBridgeRuntime {
     }
     this.broadcaster.broadcastSnapshot()
     this.opts.onDeviceEstablished?.()
-    this.opts.onConnectedDeviceCountChange?.(this.established.size)
+    // Live count for the run-event filter / git feed; paired count for the
+    // powerSaveBlocker (this device is genuinely connected now).
+    this.publishConnectedDeviceCount()
+    this.publishPairedDeviceCount()
   }
 
   private async handleInbound(
@@ -711,7 +775,10 @@ export class RemoteBridgeRuntime {
     this.stopRegistrationRefresh(device)
     device.client.dispose()
     this.established.delete(iphoneIdentityPubKey)
-    this.opts.onConnectedDeviceCountChange?.(this.established.size)
+    // Post-delete: recompute the live count AND the paired count — the last
+    // unpair drops paired to 0 and releases the powerSaveBlocker exactly as before.
+    this.publishConnectedDeviceCount()
+    this.publishPairedDeviceCount()
   }
 
   private teardownAllEstablished(): void {
