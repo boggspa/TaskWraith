@@ -1158,7 +1158,24 @@ struct ProviderModelPicker: View {
     // slider on the picker's right edge (see ReasoningLadder). It reflects the
     // CURRENTLY selected model and updates live as the user taps models.
 
+    private var isKimiProvider: Bool { provider.lowercased() == "kimi" }
+
+    /// The ladder binds to `reasoningEffort` for string-providers, but Kimi has
+    /// no reasoning axis — it maps stop 0/1 (Off/Light) onto its thinking Bool.
+    private var ladderEffortBinding: Binding<String?> {
+        if isKimiProvider {
+            return Binding<String?>(
+                get: { kimiThinkingEnabled ? "low" : "off" },
+                set: { newValue in
+                    kimiThinkingEnabled = twNormalizeLadderEffort(newValue ?? "off") != "off"
+                }
+            )
+        }
+        return $reasoningEffort
+    }
+
     private var enabledLadderIndices: Set<Int> {
+        if isKimiProvider { return [0, 1] }  // Off (thinking off) / Light (thinking on)
         var indices = Set<Int>()
         for option in twReasoningOptions(in: currentCatalog, modelId: modelId)
         where option.disabled != true {
@@ -1166,22 +1183,33 @@ struct ProviderModelPicker: View {
         }
         return indices
     }
-    private var showsReasoningSidecar: Bool { !enabledLadderIndices.isEmpty }
-    private var currentLadderLabel: String { twLadderLabel(for: reasoningEffort) ?? "—" }
+    private var showsReasoningSidecar: Bool {
+        !enabledLadderIndices.isEmpty || fastControlState != nil
+    }
+    private var currentLadderLabel: String {
+        twLadderLabel(for: ladderEffortBinding.wrappedValue) ?? "—"
+    }
 
     private var reasoningSidecar: some View {
         VStack(spacing: 10) {
-            Text(currentLadderLabel)
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(TWTheme.providerAccent(provider))
-                .lineLimit(1)
-                .minimumScaleFactor(0.6)
-                .frame(maxWidth: .infinity)
-            ReasoningLadder(
-                enabledIndices: enabledLadderIndices,
-                reasoningEffort: $reasoningEffort,
-                accent: TWTheme.providerAccent(provider)
-            )
+            if !enabledLadderIndices.isEmpty {
+                Text(currentLadderLabel)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(TWTheme.providerAccent(provider))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
+                    .frame(maxWidth: .infinity)
+                ReasoningLadder(
+                    enabledIndices: enabledLadderIndices,
+                    reasoningEffort: ladderEffortBinding,
+                    accent: TWTheme.providerAccent(provider)
+                )
+            } else {
+                Spacer(minLength: 0)
+            }
+            if let fast = fastControlState {
+                fastPill(for: fast)
+            }
         }
         .padding(.top, 12)
         .padding(.bottom, 14)
@@ -1190,6 +1218,62 @@ struct ProviderModelPicker: View {
         .overlay(alignment: .leading) {
             Rectangle().fill(TWTheme.border).frame(width: 0.5)
         }
+    }
+
+    // MARK: Fast toggle (sidecar, under the ladder)
+
+    /// How Fast is expressed for the current (provider, model): a Bool toggle
+    /// (Cursor Grok 4.5 / capable Claude+Codex), a model swap (Cursor Composer
+    /// 2.5 ↔ 2.5 Fast), or permanently-on + locked (Grok). Nil hides the control.
+    private enum FastControl: Equatable {
+        case toggle(on: Bool)
+        case modelSwap(on: Bool, fastId: String, plainId: String)
+        case locked
+    }
+    private var fastControlState: FastControl? {
+        let p = provider.lowercased()
+        if p == "grok" { return .locked }  // both Grok models run permanently Fast
+        let mid = (modelId ?? resolvedDefaultModel?.id ?? "").lowercased()
+        if p == "cursor" && (mid == "composer-2.5" || mid == "composer-2.5-fast") {
+            return .modelSwap(
+                on: mid == "composer-2.5-fast", fastId: "composer-2.5-fast", plainId: "composer-2.5")
+        }
+        return twFastToggleModelIds.contains(mid) ? .toggle(on: fastModeEnabled) : nil
+    }
+
+    @ViewBuilder
+    private func fastPill(for state: FastControl) -> some View {
+        let accent = TWTheme.providerAccent(provider)
+        let on: Bool = {
+            switch state {
+            case .toggle(let v): return v
+            case .modelSwap(let v, _, _): return v
+            case .locked: return true
+            }
+        }()
+        let locked = state == .locked
+        Button {
+            switch state {
+            case .toggle: fastModeEnabled.toggle()
+            case .modelSwap(let v, let fastId, let plainId): modelId = v ? plainId : fastId
+            case .locked: break
+            }
+        } label: {
+            HStack(spacing: 3) {
+                Image(systemName: "bolt.fill").font(.system(size: 8, weight: .bold))
+                Text("Fast").font(.caption2.weight(.semibold))
+            }
+            .foregroundStyle(on ? Color.white : TWTheme.textSecondary)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .frame(maxWidth: .infinity)
+            .background(Capsule().fill(on ? accent : Color.clear))
+            .overlay(Capsule().strokeBorder(on ? Color.clear : TWTheme.border, lineWidth: 0.5))
+        }
+        .buttonStyle(.plain)
+        .disabled(locked)
+        .accessibilityLabel(locked ? "Fast mode on (always)" : "Fast mode")
+        .accessibilityValue(on ? "On" : "Off")
     }
 
     @ViewBuilder
@@ -1253,6 +1337,21 @@ private struct TWReasoningStop: Identifiable {
     let label: String
     var id: Int { index }
 }
+
+/// Models that expose a Fast tier as a Bool toggle in the composer (desktop
+/// capability sets + the requested list). Cursor Composer 2.5 uses a model swap
+/// instead (FastControl.modelSwap); Grok is permanently Fast (locked).
+private let twFastToggleModelIds: Set<String> = [
+    // Codex
+    "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5", "gpt-5.4",
+    // Claude (base + 1M variants)
+    "claude-fable-5", "claude-fable-5-1m",
+    "claude-opus-4-8", "claude-opus-4-8-1m",
+    "claude-opus-4-7", "claude-opus-4-7-1m",
+    "claude-opus-4-6", "claude-opus-4-6-1m",
+    // Cursor Grok 4.5
+    "cursor-grok-4.5", "grok-4.5",
+]
 
 private let twReasoningStops: [TWReasoningStop] = [
     TWReasoningStop(index: 0, effort: "off", label: "Off"),

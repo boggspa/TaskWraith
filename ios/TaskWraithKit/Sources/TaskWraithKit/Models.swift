@@ -576,6 +576,15 @@ public struct RemoteTaskCard: Codable, Sendable {
     public let customModel: String?
     public let codexReasoningEffort: String?
     public let claudeReasoningEffort: String?
+    /// Fast/thinking state the Mac projects for the composer to resync to (the
+    /// picker's Fast toggle + Kimi thinking). Provider-specific: cursor/claude use
+    /// a Bool, codex uses a service tier ("fast"), kimi uses a thinking Bool.
+    /// `var … = nil` so the synthesized memberwise init defaults them (older
+    /// construction sites don't pass them) while Codable still decodes them.
+    public var cursorFastMode: Bool? = nil
+    public var claudeFastMode: Bool? = nil
+    public var codexServiceTier: String? = nil
+    public var kimiThinkingEnabled: Bool? = nil
     /// Slice B: a provider (and optional model/reasoning) switch queued by the
     /// Mac while a run is active (`readPendingProviderChange`). PRESENT only
     /// while a switch is pending, ABSENT otherwise — the composer reflects it as
@@ -1755,6 +1764,25 @@ public enum BridgeAction {
     /// (e.g. "ios-<uuid>") starts a new chat; an existing one continues it.
     /// The Mac enforces the allowlist (workspace, provider, approval mode)
     /// and the run appears live in the desktop transcript too.
+    /// Map the composer's single `fastModeEnabled` toggle + `kimiThinkingEnabled`
+    /// onto the provider-specific wire keys the Mac reads (cursorFastMode /
+    /// claudeFastMode / codexServiceTier='fast' / kimiThinkingEnabled). Grok is
+    /// permanently Fast (implicit Mac-side) so it sends nothing.
+    private static func applyFastAndThinking(
+        _ payload: inout [String: Any], provider: String,
+        fastModeEnabled: Bool, kimiThinkingEnabled: Bool?
+    ) {
+        switch provider.lowercased() {
+        case "cursor": payload["cursorFastMode"] = fastModeEnabled
+        case "claude": payload["claudeFastMode"] = fastModeEnabled
+        case "codex": if fastModeEnabled { payload["codexServiceTier"] = "fast" }
+        default: break
+        }
+        if provider.lowercased() == "kimi", let kimiThinkingEnabled {
+            payload["kimiThinkingEnabled"] = kimiThinkingEnabled
+        }
+    }
+
     public static func composerPrompt(
         workspaceId: String, threadId: String, provider: String, text: String,
         approvalMode: String? = nil, workflowMode: String? = nil,
@@ -1762,6 +1790,7 @@ public enum BridgeAction {
         model: String? = nil, extraWorkspaceIds: [String]? = nil,
         reasoningEffort: String? = nil, imageAttachments: [[String: Any]]? = nil,
         proposedPlanImplementOf: String? = nil,
+        fastModeEnabled: Bool = false, kimiThinkingEnabled: Bool? = nil,
         actionId: String = UUID().uuidString
     ) -> [String: Any] {
         var payload: [String: Any] = [
@@ -1788,6 +1817,9 @@ public enum BridgeAction {
         if let proposedPlanImplementOf {
             payload["proposedPlanImplementOf"] = proposedPlanImplementOf
         }
+        applyFastAndThinking(
+            &payload, provider: provider,
+            fastModeEnabled: fastModeEnabled, kimiThinkingEnabled: kimiThinkingEnabled)
         return encode(payload)
     }
 
@@ -1797,6 +1829,7 @@ public enum BridgeAction {
         permissionPresetId: String? = nil,
         model: String? = nil, extraWorkspaceIds: [String]? = nil,
         reasoningEffort: String? = nil,
+        fastModeEnabled: Bool = false, kimiThinkingEnabled: Bool? = nil,
         actionId: String = UUID().uuidString
     ) -> [String: Any] {
         var payload: [String: Any] = [
@@ -1817,6 +1850,9 @@ public enum BridgeAction {
         if let extraWorkspaceIds, !extraWorkspaceIds.isEmpty {
             payload["extraWorkspaceIds"] = extraWorkspaceIds
         }
+        applyFastAndThinking(
+            &payload, provider: provider,
+            fastModeEnabled: fastModeEnabled, kimiThinkingEnabled: kimiThinkingEnabled)
         return encode(payload)
     }
 
@@ -1826,7 +1862,9 @@ public enum BridgeAction {
         approvalMode: String? = nil, workflowMode: String? = nil,
         permissionPresetId: String? = nil,
         model: String? = nil, extraWorkspaceIds: [String]? = nil,
-        reasoningEffort: String? = nil, actionId: String = UUID().uuidString
+        reasoningEffort: String? = nil,
+        fastModeEnabled: Bool = false, kimiThinkingEnabled: Bool? = nil,
+        actionId: String = UUID().uuidString
     ) -> [String: Any] {
         var payload: [String: Any] = [
             "kind": "composerSchedulePrompt", "actionId": actionId, "workspaceId": workspaceId,
@@ -1847,6 +1885,9 @@ public enum BridgeAction {
         if let extraWorkspaceIds, !extraWorkspaceIds.isEmpty {
             payload["extraWorkspaceIds"] = extraWorkspaceIds
         }
+        applyFastAndThinking(
+            &payload, provider: provider,
+            fastModeEnabled: fastModeEnabled, kimiThinkingEnabled: kimiThinkingEnabled)
         return encode(payload)
     }
 

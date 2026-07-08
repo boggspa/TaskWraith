@@ -116,6 +116,8 @@ struct Composer: View {
     @State private var selectedProvider: String = "claude"
     @State private var selectedModelId: String?
     @State private var selectedReasoningEffort: String?
+    @State private var selectedFastMode: Bool = false
+    @State private var selectedKimiThinking: Bool = true
     #if canImport(UIKit)
         @State private var pickedItems: [PhotosPickerItem] = []
         @State private var attachments: [(name: String, image: UIImage)] = []
@@ -181,6 +183,21 @@ struct Composer: View {
             return nonEmpty(card.codexReasoningEffort)
         }
         return nil
+    }
+    // Fast toggle + Kimi thinking the loaded thread last used (provider-specific
+    // wire fields). Cursor/Claude are Bools; Codex uses a 'fast' service tier.
+    private var cardFastMode: Bool {
+        switch (card.provider ?? selectedProvider).lowercased() {
+        case "cursor": return card.cursorFastMode ?? false
+        case "claude": return card.claudeFastMode ?? false
+        case "codex": return card.codexServiceTier == "fast"
+        default: return false
+        }
+    }
+    private var cardKimiThinking: Bool { card.kimiThinkingEnabled ?? true }
+    /// Only carry the Kimi thinking flag for Kimi runs (nil for everyone else).
+    private var effectiveKimiThinking: Bool? {
+        selectedProvider.lowercased() == "kimi" ? selectedKimiThinking : nil
     }
     private var isEmpty: Bool {
         text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -448,6 +465,8 @@ struct Composer: View {
                 provider: $selectedProvider,
                 modelId: $selectedModelId,
                 reasoningEffort: $selectedReasoningEffort,
+                fastModeEnabled: $selectedFastMode,
+                kimiThinkingEnabled: $selectedKimiThinking,
                 allowsProviderChange: canChangeProvider)
         } else {
             Text(providerName)
@@ -849,6 +868,8 @@ struct Composer: View {
         selectedProvider = card.provider ?? selectedProvider
         selectedModelId = resolvedThreadModelId()
         selectedReasoningEffort = cardReasoningEffort
+        selectedFastMode = cardFastMode
+        selectedKimiThinking = cardKimiThinking
         providerEcho?.wrappedValue = selectedProvider
     }
 
@@ -919,7 +940,8 @@ struct Composer: View {
                     workflowMode: bridgeWorkflowMode,
                     permissionPresetId: bridgePermissionPresetId,
                     reasoningEffort: selectedReasoningEffort,
-                    imageAttachments: hasAttachments ? encoded : nil)
+                    imageAttachments: hasAttachments ? encoded : nil,
+                    fastModeEnabled: selectedFastMode, kimiThinkingEnabled: effectiveKimiThinking)
                 attachments = []
             #else
                 model.startTask(
@@ -928,7 +950,8 @@ struct Composer: View {
                     approvalMode: bridgeApprovalMode,
                     workflowMode: bridgeWorkflowMode,
                     permissionPresetId: bridgePermissionPresetId,
-                    reasoningEffort: selectedReasoningEffort)
+                    reasoningEffort: selectedReasoningEffort,
+                    fastModeEnabled: selectedFastMode, kimiThinkingEnabled: effectiveKimiThinking)
             #endif
             text = ""
             return
@@ -945,6 +968,7 @@ struct Composer: View {
                 reasoningEffort: selectedReasoningEffort,
                 imageAttachments: encoded.isEmpty ? nil : encoded,
                 extraWorkspaceIds: extraWorkspaceIds,
+                fastModeEnabled: selectedFastMode, kimiThinkingEnabled: effectiveKimiThinking,
                 navigateOnAck: navigateOnSend)
             attachments = []
         #else
@@ -956,6 +980,7 @@ struct Composer: View {
                 model: selectedModelId,
                 providerOverride: canChangeProvider ? selectedProvider : nil,
                 reasoningEffort: selectedReasoningEffort,
+                fastModeEnabled: selectedFastMode, kimiThinkingEnabled: effectiveKimiThinking,
                 navigateOnAck: navigateOnSend)
         #endif
         text = ""
@@ -975,7 +1000,8 @@ struct Composer: View {
                 model: selectedModelId,
                 providerOverride: canChangeProvider ? selectedProvider : nil,
                 reasoningEffort: selectedReasoningEffort,
-                extraWorkspaceIds: extraWorkspaceIds)
+                extraWorkspaceIds: extraWorkspaceIds,
+                fastModeEnabled: selectedFastMode, kimiThinkingEnabled: effectiveKimiThinking)
         }
         text = ""
     }
@@ -995,6 +1021,7 @@ struct Composer: View {
                 workflowMode: bridgeWorkflowMode,
                 permissionPresetId: bridgePermissionPresetId,
                 reasoningEffort: selectedReasoningEffort,
+                fastModeEnabled: selectedFastMode, kimiThinkingEnabled: effectiveKimiThinking,
                 scheduledRunAt: scheduledRunAt)
         } else {
             model.queueComposerPrompt(
@@ -1006,6 +1033,7 @@ struct Composer: View {
                 providerOverride: canChangeProvider ? selectedProvider : nil,
                 reasoningEffort: selectedReasoningEffort,
                 extraWorkspaceIds: extraWorkspaceIds,
+                fastModeEnabled: selectedFastMode, kimiThinkingEnabled: effectiveKimiThinking,
                 scheduledRunAt: scheduledRunAt)
         }
         text = ""

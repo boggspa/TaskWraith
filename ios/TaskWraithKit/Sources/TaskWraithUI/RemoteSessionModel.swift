@@ -4436,6 +4436,7 @@ public final class RemoteSessionModel: ObservableObject {
         workflowMode: String? = nil, permissionPresetId: String? = nil,
         model: String? = nil, providerOverride: String? = nil,
         reasoningEffort: String? = nil, extraWorkspaceIds: [String]? = nil,
+        fastModeEnabled: Bool = false, kimiThinkingEnabled: Bool? = nil,
         scheduledRunAt: String? = nil
     ) {
         guard !card.isEnsemble, let thread = card.threadId else { return }
@@ -4450,14 +4451,16 @@ public final class RemoteSessionModel: ObservableObject {
                 approvalMode: approvalMode, workflowMode: workflowMode,
                 permissionPresetId: permissionPresetId, model: model,
                 extraWorkspaceIds: extraWorkspaceIds,
-                reasoningEffort: reasoningEffort)
+                reasoningEffort: reasoningEffort,
+                fastModeEnabled: fastModeEnabled, kimiThinkingEnabled: kimiThinkingEnabled)
             : BridgeAction.composerSchedulePrompt(
                 workspaceId: ws, threadId: thread, provider: provider, text: trimmed,
                 scheduledRunAt: scheduledRunAt!,
                 approvalMode: approvalMode, workflowMode: workflowMode,
                 permissionPresetId: permissionPresetId, model: model,
                 extraWorkspaceIds: extraWorkspaceIds,
-                reasoningEffort: reasoningEffort)
+                reasoningEffort: reasoningEffort,
+                fastModeEnabled: fastModeEnabled, kimiThinkingEnabled: kimiThinkingEnabled)
         send(
             action,
             successLabel: scheduledRunAt == nil ? "Queued." : "Scheduled.")
@@ -5405,6 +5408,7 @@ public final class RemoteSessionModel: ObservableObject {
         permissionPresetId: String? = nil,
         reasoningEffort: String? = nil,
         imageAttachments: [[String: Any]]? = nil,
+        fastModeEnabled: Bool = false, kimiThinkingEnabled: Bool? = nil,
         scheduledRunAt: String? = nil
     ) {
         let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -5429,13 +5433,15 @@ public final class RemoteSessionModel: ObservableObject {
                     text: trimmed, approvalMode: approvalMode, workflowMode: workflowMode,
                     permissionPresetId: permissionPresetId,
                     model: model, reasoningEffort: reasoningEffort,
-                    imageAttachments: imageAttachments)
+                    imageAttachments: imageAttachments,
+                    fastModeEnabled: fastModeEnabled, kimiThinkingEnabled: kimiThinkingEnabled)
                 : BridgeAction.composerSchedulePrompt(
                     workspaceId: workspaceId, threadId: threadId, provider: provider,
                     text: trimmed, scheduledRunAt: scheduledRunAt!,
                     approvalMode: approvalMode, workflowMode: workflowMode,
                     permissionPresetId: permissionPresetId,
-                    model: model, reasoningEffort: reasoningEffort)
+                    model: model, reasoningEffort: reasoningEffort,
+                    fastModeEnabled: fastModeEnabled, kimiThinkingEnabled: kimiThinkingEnabled)
             self.send(
                 action,
                 timeoutMs: 12_000,
@@ -5572,6 +5578,7 @@ public final class RemoteSessionModel: ObservableObject {
         reasoningEffort: String? = nil,
         imageAttachments: [[String: Any]]? = nil,
         extraWorkspaceIds: [String]? = nil,
+        fastModeEnabled: Bool = false, kimiThinkingEnabled: Bool? = nil,
         navigateOnAck: Bool = true
     ) {
         if isDemo {
@@ -5617,7 +5624,8 @@ public final class RemoteSessionModel: ObservableObject {
                     permissionPresetId: permissionPresetId, model: model,
                     extraWorkspaceIds: extraWorkspaceIds,
                     reasoningEffort: reasoningEffort,
-                    imageAttachments: imageAttachments),
+                    imageAttachments: imageAttachments,
+                    fastModeEnabled: fastModeEnabled, kimiThinkingEnabled: kimiThinkingEnabled),
                 timeoutMs: 12_000,
                 successLabel: "Sent.",
                 navigateOnAck: navigateOnAck,
