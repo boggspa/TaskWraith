@@ -6,6 +6,7 @@ import {
   reconcileAll,
   replaceAll,
   removeChat,
+  removeChats,
   promoteToFront,
   type UpdateChatOptions,
 } from './chatMutations'
@@ -28,6 +29,7 @@ export interface ChatMutationsApi {
   reconcileAll: (records: ChatRecord[]) => void
   replaceAll: (records: ChatRecord[]) => void
   removeChat: (id: string) => void
+  removeChats: (ids: Iterable<string>) => void
   promoteToFront: (record: ChatRecord) => void
 }
 
@@ -82,6 +84,9 @@ export function useChatMutations(
     },
     removeChat: (id) => {
       setChatsRef.current((prev) => removeChat(prev, id))
+    },
+    removeChats: (ids) => {
+      setChatsRef.current((prev) => removeChats(prev, ids))
     },
     promoteToFront: (record) => {
       setChatsRef.current((prev) => promoteToFront(prev, record))

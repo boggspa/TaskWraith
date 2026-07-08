@@ -62,6 +62,15 @@ export function removeChat(chats: ChatRecord[], id: string): ChatRecord[] {
   return filtered.length === chats.length ? chats : filtered
 }
 
+/** Remove chats by ids. Returns prev unchanged when no requested id matches. */
+export function removeChats(chats: ChatRecord[], ids: Iterable<string>): ChatRecord[] {
+  const idSet = new Set(ids)
+  if (idSet.size === 0) return chats
+
+  const filtered = chats.filter((chat) => !idSet.has(chat.appChatId))
+  return filtered.length === chats.length ? chats : filtered
+}
+
 /**
  * Prepend a chat to the front, deduplicating by id.
  * Used for the "new chat created" flow where the chat should appear first.
