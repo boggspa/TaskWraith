@@ -19,6 +19,29 @@
   padding-top: 36px;
 }
 
+/* Paint the fixed chrome colour BEHIND the macOS traffic lights — the 36px strip
+ * reserved by .app-sidebar's padding-top above, which sits outside .sidebar-content
+ * so the chrome band can't reach it. A non-interactive absolute layer clipped to
+ * .app-sidebar (position:relative; overflow:hidden). The dots are OS-drawn on top;
+ * `pointer-events:none` keeps the window-drag strip / traffic lights unaffected. */
+.sidebar-titlebar-fill {
+  display: none;
+}
+:root[data-platform='darwin'] .sidebar-titlebar-fill {
+  display: block;
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 36px; /* must match .app-sidebar padding-top above */
+  background: var(--sidebar-chrome-fixed-bg);
+  pointer-events: none;
+  z-index: 1;
+}
+:root[data-platform='darwin'][data-reduce-transparency='true'] .sidebar-titlebar-fill {
+  background: var(--sidebar-chrome-color);
+}
+
 .workspace-sidebar-resize-handle {
   width: 8px;
   flex: 0 0 8px;

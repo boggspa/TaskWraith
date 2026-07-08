@@ -93,4 +93,13 @@ describe('sidebar chrome fixed opacity CSS', () => {
     // The list + its own scroll container are NOT part of the band.
     expect(band).not.toContain('sidebar-hierarchy-scroll')
   })
+
+  it('paints the chrome fill behind the macOS traffic lights, non-interactively', () => {
+    const css = readCss('01-sidebar.css')
+    const fill = cssBlockStartingAt(css, ":root[data-platform='darwin'] .sidebar-titlebar-fill {")
+    expect(fill).toContain('background: var(--sidebar-chrome-fixed-bg);')
+    // Matches the .app-sidebar padding-top inset and never intercepts input.
+    expect(fill).toContain('height: 36px')
+    expect(fill).toContain('pointer-events: none;')
+  })
 })

@@ -3580,6 +3580,7 @@ export function Sidebar({
         footerPopoverActive ? ' has-footer-popover' : ''
       }`}
     >
+      <div className="sidebar-titlebar-fill" aria-hidden />
       <div className="sidebar-content">
         {isUpdatePillVisible(updateSnapshot) && (onQuickUpdate || onOpenChangelog) ? (
           <div className="sidebar-update-pill-row">
