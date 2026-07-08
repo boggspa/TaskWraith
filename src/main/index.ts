@@ -30221,7 +30221,7 @@ if (isGeminiMcpBridgeProcess) {
     })
 
     registerCheckpointHandlers({
-      getSessionCheckpointStore: () => sessionCheckpointStoreRef,
+      getSessionCheckpointStore: () => mainRuntimeContext.getSessionCheckpoints(),
       requireNonEmptyString,
       formatSessionCheckpointResumePrompt
     })

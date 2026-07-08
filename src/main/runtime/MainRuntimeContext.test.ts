@@ -132,6 +132,62 @@ describe('createMainRuntimeContext', () => {
     expect(ctx.getTranscriptMediaAssetStore()).toBe(fakeStore)
   })
 
+  it('getSessionCheckpoints returns null (not throw) where requireSessionCheckpoints throws', () => {
+    const ctx = makeMinimalContext()
+    expect(() => ctx.getSessionCheckpoints()).not.toThrow()
+    expect(ctx.getSessionCheckpoints()).toBeNull()
+    expect(() => ctx.requireSessionCheckpoints()).toThrow('SessionCheckpointStore has not been initialized yet')
+  })
+
+  it('getSessionCheckpoints returns the store when the getter returns a value', () => {
+    const fakeStore = { id: 'checkpoints' } as unknown as import('../checkpoints/SessionCheckpoint').SessionCheckpointStore
+    const ctx = makeMinimalContext({
+      services: {
+        getSettings: () => null,
+        getApprovalService: () => null,
+        getComposerService: () => null,
+        getEnsembleOrchestrator: () => null,
+        getWakeupTimers: () => null,
+        getSessionCheckpoints: () => fakeStore,
+        getAuditOrchestrator: () => null,
+        getCreativeApprovalGate: () => null,
+        getPluginHost: () => null,
+        getPluginContributions: () => null,
+        getLocalServers: () => null,
+        getApnsTokenStore: () => null,
+      },
+    })
+    expect(ctx.getSessionCheckpoints()).toBe(fakeStore)
+  })
+
+  it('getAuditOrchestrator returns null (not throw) where requireAuditOrchestrator throws', () => {
+    const ctx = makeMinimalContext()
+    expect(() => ctx.getAuditOrchestrator()).not.toThrow()
+    expect(ctx.getAuditOrchestrator()).toBeNull()
+    expect(() => ctx.requireAuditOrchestrator()).toThrow('AuditOrchestrator has not been initialized yet')
+  })
+
+  it('getAuditOrchestrator returns the orchestrator when the getter returns a value', () => {
+    const fakeOrch = { id: 'audit' } as unknown as import('../audit/AuditOrchestrator').AuditOrchestrator
+    const ctx = makeMinimalContext({
+      services: {
+        getSettings: () => null,
+        getApprovalService: () => null,
+        getComposerService: () => null,
+        getEnsembleOrchestrator: () => null,
+        getWakeupTimers: () => null,
+        getSessionCheckpoints: () => null,
+        getAuditOrchestrator: () => fakeOrch,
+        getCreativeApprovalGate: () => null,
+        getPluginHost: () => null,
+        getPluginContributions: () => null,
+        getLocalServers: () => null,
+        getApnsTokenStore: () => null,
+      },
+    })
+    expect(ctx.getAuditOrchestrator()).toBe(fakeOrch)
+  })
+
   it('sendToRenderer delegates to the injected closure', () => {
     const sendFn = vi.fn()
     const ctx = makeMinimalContext({

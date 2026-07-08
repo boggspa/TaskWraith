@@ -83,7 +83,11 @@ export interface CoreServices {
   requireEnsembleOrchestrator: () => EnsembleOrchestrator
   requireWakeupTimers: () => WakeupTimerService
   requireSessionCheckpoints: () => SessionCheckpointStore
+  /** Nullable flavour — for consumers with deliberate graceful-null handling (does NOT throw). */
+  getSessionCheckpoints: () => SessionCheckpointStore | null
   requireAuditOrchestrator: () => AuditOrchestrator
+  /** Nullable flavour — for consumers with deliberate defensive null-handling (does NOT throw). */
+  getAuditOrchestrator: () => AuditOrchestrator | null
   requireCreativeApprovalGate: () => CreativeApprovalGate
   requirePluginHost: () => PluginHost
   requirePluginContributions: () => PluginContributionManager
@@ -214,8 +218,10 @@ export function createMainRuntimeContext(opts: {
     requireWakeupTimers: () => requireOrThrow(services.getWakeupTimers, 'WakeupTimerService'),
     requireSessionCheckpoints: () =>
       requireOrThrow(services.getSessionCheckpoints, 'SessionCheckpointStore'),
+    getSessionCheckpoints: services.getSessionCheckpoints,
     requireAuditOrchestrator: () =>
       requireOrThrow(services.getAuditOrchestrator, 'AuditOrchestrator'),
+    getAuditOrchestrator: services.getAuditOrchestrator,
     requireCreativeApprovalGate: () =>
       requireOrThrow(services.getCreativeApprovalGate, 'CreativeApprovalGate'),
     requirePluginHost: () => requireOrThrow(services.getPluginHost, 'PluginHost'),
