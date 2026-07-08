@@ -32,27 +32,23 @@ into a new 8K file and call the slice done.
 
 ## Current Snapshot
 
-Measured from the live worktree on 2026-07-08 (fresh round, post pass-5 commit
-wave). Pass-1 through pass-5 slices are committed (`5d1ada4fb` … `54abac2d3`);
-metrics below reflect post-`renderer-r0b` / post-iOS-remote / post-M0-wiring /
-post-renderer-r3-slice1 state. Treat these numbers as orientation only. Every
-Ensemble round must refresh counts and dirty state before assigning a slice.
+Measured from the live worktree on 2026-07-08 (fresh round, post pass-6 commit
+wave). Pass-1 through pass-6 slices are committed (`5d1ada4fb` … `4aa2c84d1`);
+metrics below reflect post-`removeChats` / post-M3-1a / post-renderer-r3-Site-C
+(on disk) state. Treat these numbers as orientation only. Every Ensemble round
+must refresh counts and dirty state before assigning a slice.
 
-Pass-6 worktree baseline (HEAD `54abac2d3`, recorded fresh round start):
+Pass-7 worktree baseline (HEAD `4aa2c84d1`, recorded fresh round start):
 
-- Branch `master`, ahead 65 of `origin/master`.
-- Pass-4 tails closed: pass-2/3 ledger (`88d6b8abe`), renderer-r0b
-  (`5ebcc6ad1`), iOS-remote extraction (`bb65ca4c5`).
-- Pass-5 commit wave closed: renderer-r3 slice 1 (`d34fb748c`), M3 gate tests
-  (`bdb93501a`), M0 wiring (`54abac2d3`).
-- Two disjoint dirty lanes (do not cross-stage):
-  - `src/main/index.ts` — @WriteMain M3-1a seam-first slice (+69/−11,
-    `normalizeAgentRunPayload` deps explicit; no body move). Awaiting
-    @Adversary1 review → @CheckCommit.
-  - `src/renderer/src/state/chatMutations.ts`,
-    `src/renderer/src/state/useChatMutations.ts`, untracked
-    `src/renderer/src/state/chatMutations.test.ts` — @NewFiles `removeChats`
-    bulk verb. Awaiting @Adversary3/@GH5 sign-off → @CheckCommit.
+- Branch `master`, ahead 68 of `origin/master`.
+- Pass-6 commit wave closed (`5b3b21117` partial ledger, `ca4418b54`,
+  `4aa2c84d1`). Note: `5b3b21117` landed before the two code commits — this
+  pass-7 refresh supersedes its partial snapshot.
+- One dirty lane:
+  - `src/renderer/src/App.tsx` — @WriteRender Site C reap migration
+    (`chatMutations.removeChats(reaped)` @L7183; `setChats(` 46→45). Awaiting
+    @Adversary3 review → @CheckCommit
+    `refactor(renderer-r3): use chat facade for reap cleanup`.
 - Crash context: **CLOSED** (release 1.7.9 native SIGTRAP; not attributable to
   campaign slices). Tracking item only — no further recon wall-time.
 - `.cursor/` untracked — never staged.
@@ -83,13 +79,13 @@ Current high-level facts:
 
 | Area | Current signal |
 | --- | ---: |
-| `src/main/index.ts` | 31,570 lines committed (`54abac2d3`; was 32,234 pre-pass-1) |
-| `src/renderer/src/App.tsx` | 25,834 lines (committed HEAD; clean) |
+| `src/main/index.ts` | 31,570 lines committed (`4aa2c84d1`; was 32,234 pre-pass-1) |
+| `src/renderer/src/App.tsx` | 25,834 lines (committed HEAD; Site C on disk) |
 | Inline `ipcMain.handle/on` registrations still in `index.ts` | 62 (was 103 pre-pass-1; 72 post-pass-3) |
 | Registrar calls already wired from `index.ts` | 44 |
 | Flat `src/main/ipc/*Handlers.ts` modules | 44 |
 | Flat `src/main/ipc/*Handlers.test.ts` modules | 44 (parity with handler modules) |
-| `setChats(` call sites in `App.tsx` | 46 (was 47 pre-renderer-r3 slice 1) |
+| `setChats(` call sites in `App.tsx` | 45 on disk (was 46 pre-Site C; 47 pre-renderer-r3 slice 1) |
 | `MainAppLayout.types.ts` remaining `: any` props | 392 |
 | `removeListeners()` occurrences in `App.tsx` | 0 (R0 + R0b landed) |
 
@@ -105,7 +101,7 @@ Largest production TS/TSX files at this snapshot:
 | 6 | `src/main/store/types.ts` | 5,490 | Tier 2 store types |
 | 7 | `src/main/store/index.ts` | 5,467 | Tier 2 store |
 | 8 | `src/renderer/src/components/Composer.tsx` | 4,879 | Tier 2 composer |
-| 9 | `src/renderer/src/components/TranscriptPanel.tsx` | 4,292 | Tier 2 transcript |
+| 9 | `src/renderer/src/components/TranscriptPanel.tsx` | 4,417 | Tier 2 transcript |
 | 10 | `src/main/McpToolCatalog.ts` | 4,218 | Tier 2 MCP catalog |
 | 11 | `src/main/mcp/WorkspaceToolExecutors.ts` | 3,511 | Tier 2 MCP executors |
 | 12 | `src/renderer/src/components/ActivityStack.tsx` | 3,423 | Tier 2 transcript/activity |
@@ -185,6 +181,16 @@ without fresh recon.
   Gates: `typecheck:node`; `MainRuntimeContext.test` 7/7; `localServersHandlers`
   2/2; `IpcValidation.test` 34/34. Getter-closure injection; zero
   assignment-site edits.
+- Docs pass-6 (2026-07-08): `docs(refactor-plan)` pass-5/6 ledger refresh
+  (partial — landed before code commits). Commit `5b3b21117`. Gate:
+  `git diff --check` on doc path.
+- Renderer pass-6 (2026-07-08): `feat(chat-facade)` — `removeChats` bulk verb +
+  `useChatMutations` binding + facade tests. Commit `ca4418b54`. Gates:
+  `typecheck:web`; `chatMutations.test` 4/4. Unlocks Site C reap migration.
+- Main pass-6 (2026-07-08): `refactor(main-m3)` — M3-1a seam-first:
+  `AgentRunNormalizerDeps` (7 explicit deps); no body move. Commit `4aa2c84d1`.
+  Gates: `typecheck:node`; `M3RunPayloadTrustBoundary` 3/3; `IpcValidation.test`
+  34/34. Unblocks M3-1b body extraction.
 - Current IPC handler rule from `src/main/ipc/README.md` still applies:
   handler modules stay directly under `src/main/ipc/` unless the IPC validation
   scanner is expanded in the same commit.
@@ -362,23 +368,29 @@ Pass-2 renderer-r0 and scaffold rows deferred to pass-3 (landed there).
 | `test(m3)` run-payload + approval trust-boundary gates | @GenericHelper1 | LANDED | `bdb93501a` | `typecheck:node`; M3 tests 5/5 | M3 bundle **unfrozen**; zero prod edits |
 | `refactor(main-m0)` wire MainRuntimeContext proof consumer | @WriteMain | LANDED | `54abac2d3` | `typecheck:node`; `MainRuntimeContext.test` 7/7; `IpcValidation.test` 34/34 | `createMainRuntimeContext` @L27747; getter-closure; zero assignment-site edits |
 
-#### Pass 6 — IN FLIGHT (2026-07-08)
+#### Pass 6 — LANDED (2026-07-08)
+
+| Slice | Owner | Status | Commit | Gates | Metric deltas |
+| --- | --- | --- | --- | --- | --- |
+| `docs(refactor-plan)` pass-5/6 ledger (partial) | @WriteDocs | LANDED | `5b3b21117` | `git diff --check` on doc path | Superseded by pass-7 refresh |
+| `feat(chat-facade)` `removeChats` bulk verb + tests | @NewFiles | LANDED | `ca4418b54` | `typecheck:web`; `chatMutations.test` 4/4 | Unlocks Site C |
+| `refactor(main-m3)` M3-1a seam-first normalizer deps | @WriteMain | LANDED | `4aa2c84d1` | `typecheck:node`; M3 tests 3/3; `IpcValidation.test` 34/34 | `AgentRunNormalizerDeps` 7 deps; `index.ts` +69/−11; no body move |
+
+#### Pass 7 — IN FLIGHT (2026-07-08)
 
 | Slice | Owner | Status | Commit / scope | Notes |
 | --- | --- | --- | --- | --- |
-| `feat(chat-facade)` `removeChats` bulk verb + tests | @NewFiles | ON DISK | 3 `state/` files | Awaiting @Adversary3/@GH5 → @CheckCommit `feat(chat-facade): add removeChats bulk verb + facade tests` |
-| `refactor(main-m3)` M3-1a seam-first normalizer deps | @WriteMain | ON DISK | `index.ts` only | `AgentRunNormalizerDeps` (7 deps); no body move. Awaiting @Adversary1 → @CheckCommit `refactor(main-m3): make agent-run normalizer deps explicit` |
-| `refactor(main-m3)` M3-1b body move + focused test | @WriteMain | QUEUED | `AgentRunNormalizer.ts` | **Serial after M3-1a commits** — relocate fn + faked-deps test |
-| `refactor(renderer-r3)` Site C reap migration | @WriteRender | QUEUED | `App.tsx` | Gated on `removeChats` commit |
+| `refactor(renderer-r3)` Site C reap migration | @WriteRender | ON DISK | `App.tsx` only | `removeChats(reaped)` @L7183; `setChats(` 45. Awaiting @Adversary3 → @CheckCommit |
+| `refactor(main-m3)` M3-1b body move + focused test | @WriteMain | QUEUED | `AgentRunNormalizer.ts` | Spec: blackboard `design-m3-1b-spec`. **Pre-flight:** `runPostureContextFromPayload` has 5 non-normalizer callers — do not co-move alone; inject as 8th dep or extract to pure sibling |
 | `refactor(renderer-r3)` Slice 1b `promoteToFront` | @WriteRender | QUEUED | `App.tsx` | Per `design-chatfacade-slice1`; verify sorted-list invariant |
-| `fix(providers)` I-drop leading delta restore | @WriteMain | DEFERRED | `index.ts` / orchestrator | Sidequest; sequenced **after** M3-1a per General reorder; GH5 evidence gate |
-| `docs(refactor-plan)` pass-5/6 ledger refresh | @WriteDocs | IN FLIGHT | this doc | Captures pass-4/5 SHAs + pass-6 dirty lanes |
+| `fix(providers)` I-drop leading delta restore | @WriteMain | DEFERRED | `index.ts` / orchestrator | Sidequest; GH5 evidence gate; serial after M3-1b unless reprioritized |
+| `docs(refactor-plan)` pass-7 ledger refresh | @WriteDocs | ON DISK | this doc | Anchored at `4aa2c84d1`; captures pass-6 SHAs + pass-7 queue |
 
 @CheckCommit owns staging and commits by exact pathspec only (`git add -f` for
-docs). Pass-6 commit queue (disjoint pathspecs — never cross-stage):
-`feat(chat-facade): add removeChats bulk verb + facade tests` (3 `state/` files),
-`refactor(main-m3): make agent-run normalizer deps explicit` (`index.ts` only),
-`docs(refactor-plan): refresh pass-5/6 ledger` (this doc).
+docs). Pass-7 commit queue (disjoint pathspecs — never cross-stage):
+`refactor(renderer-r3): use chat facade for reap cleanup` (`App.tsx` only),
+`docs(refactor-plan): refresh pass-7 ledger` (this doc),
+then @WriteMain `refactor(main-m3): extract agent run normalizer` when green.
 
 ### Phase 0 - Refresh And Freeze Invariants
 
@@ -479,10 +491,10 @@ Suggested gates:
 
 Purpose: move high-leverage state out of `App.tsx` behind explicit facades.
 
-**Status (pass 6):** facade scaffold landed (`60f662341`); slice 1 delete consumer
-landed (`d34fb748c`, `setChats(` 46). `removeChats` bulk verb on disk (unlocks
-Site C reap migration). Slice 1b `promoteToFront` queued per
-`design-chatfacade-slice1`.
+**Status (pass 7):** facade scaffold landed (`60f662341`); slice 1 delete
+consumer landed (`d34fb748c`); `removeChats` landed (`ca4418b54`). Site C reap
+migration on disk (`App.tsx`, `setChats(` 45). Slice 1b `promoteToFront` queued
+per `design-chatfacade-slice1`.
 
 Order:
 
@@ -585,12 +597,15 @@ Suggested gates:
 Purpose: extract the core run path as a trust-boundary bundle, not as scattered
 helpers.
 
-**Status (pass 6):** trust primitives are already modules; M3 is orchestration-
+**Status (pass 7):** trust primitives are already modules; M3 is orchestration-
 facade extraction (~977 inline lines). Gate tests landed (`bdb93501a`).
-**M3-1a** (seam-first: `AgentRunNormalizerDeps`, 7 explicit deps, no body
-move) on disk awaiting review. **M3-1b** (relocate `normalizeAgentRunPayload`
-→ `src/main/run/AgentRunNormalizer.ts` + faked-deps test) queues serially after
-M3-1a commits.
+**M3-1a** landed (`4aa2c84d1`: `AgentRunNormalizerDeps`, 7 explicit deps, no
+body move). **M3-1b** queued: relocate `normalizeAgentRunPayload` →
+`src/main/run/AgentRunNormalizer.ts` + faked-deps wrapper test (spec:
+`design-m3-1b-spec`). Co-move helpers: `normalizeRuntimeWorktreeIntent`,
+`normalizeAgentRunActiveGoal`, `normalizeGoalRuntimeLedger`. Keep
+`runPostureContextFromPayload` in `index.ts` (5 non-normalizer callers) unless
+extracted as a shared pure sibling.
 
 Actions:
 
