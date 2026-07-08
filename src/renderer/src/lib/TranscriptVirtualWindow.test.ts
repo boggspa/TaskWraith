@@ -5,6 +5,7 @@ import {
   RUN_BOUNDARY_HEIGHT_PX,
   CONTENT_PX_PER_CHAR,
   CONTENT_SCALE_CAP_PX,
+  VIEWPORT_CLAMPED_ESTIMATE_CAP_PX,
   DEFAULT_OVERSCAN_PX,
   WIDTH_BUCKET_PX,
   TRANSCRIPT_VIRTUALIZATION_ENABLED,
@@ -275,6 +276,26 @@ describe('TranscriptVirtualWindow', () => {
     it('sizes dense viewport rows above the flat estimate from a coarse content signal', () => {
       expect(estimatedHeightFor('tool', false, 5000)).toBe(CONTENT_SCALE_CAP_PX)
       expect(estimatedHeightFor('return', false, 2000)).toBe(Math.round(2000 * CONTENT_PX_PER_CHAR))
+    })
+
+    it('caps a fan-out result estimate at the viewport-clamped ceiling', () => {
+      // A READ-heavy Cursor fan-out lane accumulates thousands of chars of tool
+      // output, but the ENTIRE card body renders inside one 240px-capped
+      // LiveActivityViewport — so its off-screen height must NOT balloon toward
+      // CONTENT_SCALE_CAP_PX. That phantom bottom-spacer height is what made
+      // auto-follow's snap-to-scrollHeight lurch the transcript to the bottom on
+      // every flush while the visible lane card stayed contained at 240px.
+      expect(estimatedHeightFor('fanoutResult', false, 100000)).toBe(
+        VIEWPORT_CLAMPED_ESTIMATE_CAP_PX
+      )
+      expect(estimatedHeightFor('fanoutResult', false, 100000)).toBeLessThan(CONTENT_SCALE_CAP_PX)
+      // A small fan-out card still floors at its flat per-type base estimate.
+      expect(estimatedHeightFor('fanoutResult', false, 0)).toBe(
+        ESTIMATED_ROW_HEIGHT_PX.fanoutResult
+      )
+      // tool rows are multi-segment (no single outer cap) and keep scaling —
+      // only the hard-clamped fan-out card body is capped.
+      expect(estimatedHeightFor('tool', false, 100000)).toBe(CONTENT_SCALE_CAP_PX)
     })
 
     it('1.0.7 — adds the run-boundary band on top of a scaled estimate', () => {

@@ -261,17 +261,42 @@ const CONTENT_SCALED_TYPES: ReadonlySet<VirtualRowType> = new Set([
 ])
 const TOOL_ACTIVITY_ESTIMATE_CHARS = 180
 
+/**
+ * Tighter scale ceiling for row types whose ENTIRE body renders inside a single
+ * height-clamped `LiveActivityViewport`, so their off-screen (collapsed) height
+ * is bounded no matter how much content accumulates.
+ *
+ * `fanoutResult`: `EnsembleFanoutResultCard` wraps the whole card body in one
+ * viewport capped at 240px (`collapsedMaxHeight={240}`); with the header + chrome
+ * a collapsed lane card rests at ~320px — the flat base estimate. A READ-heavy
+ * Cursor fan-out lane accumulates thousands of chars of tool output, which the
+ * generic content scale would size toward `CONTENT_SCALE_CAP_PX` (1400) — ~5× the
+ * real clamped height. That phantom height inflates the virtualiser's bottom
+ * spacer, so `scrollHeight` balloons on every 250ms flush while the visible card
+ * stays 240px. Auto-follow's snap-to-`scrollHeight` then lurches the viewport into
+ * empty overscan (the "jumps to the bottom even though the fan-out output is
+ * contained in its collapsible window" report), and a scrolled-away reader's
+ * `distanceFromBottom` is corrupted enough to feed the re-engage bands. Capping the
+ * estimate at the real clamped height keeps `scrollHeight` honest.
+ *
+ * NOT applied to `tool`: a standalone `ActivityStack` renders one viewport PER
+ * segment with no single outer cap, so its height genuinely scales with activity
+ * count and the generic scale is appropriate.
+ */
+export const VIEWPORT_CLAMPED_ESTIMATE_CAP_PX = 360
+const VIEWPORT_CLAMPED_TYPES: ReadonlySet<VirtualRowType> = new Set(['fanoutResult'])
+
 export function estimatedHeightFor(
   rowType: VirtualRowType,
   hasRunBoundary: boolean,
   contentLength = 0
 ): number {
   const base = ESTIMATED_ROW_HEIGHT_PX[rowType]
+  const scaleCap = VIEWPORT_CLAMPED_TYPES.has(rowType)
+    ? VIEWPORT_CLAMPED_ESTIMATE_CAP_PX
+    : CONTENT_SCALE_CAP_PX
   const scaled = CONTENT_SCALED_TYPES.has(rowType)
-    ? Math.min(
-        CONTENT_SCALE_CAP_PX,
-        Math.max(base, Math.round(contentLength * CONTENT_PX_PER_CHAR))
-      )
+    ? Math.min(scaleCap, Math.max(base, Math.round(contentLength * CONTENT_PX_PER_CHAR)))
     : base
   return scaled + (hasRunBoundary ? RUN_BOUNDARY_HEIGHT_PX : 0)
 }
@@ -311,7 +336,10 @@ export function projectRow(
   // Tool/fan-out/sub-thread rows can hide a lot of content inside bounded
   // viewports. Feed the virtualizer a coarse size signal so it does not begin
   // from a tiny spacer and then spend extra passes correcting when the row
-  // enters view.
+  // enters view. NOTE: `estimatedHeightFor` caps hard-clamped types
+  // (`fanoutResult`, whose entire body sits in one 240px viewport) at
+  // VIEWPORT_CLAMPED_ESTIMATE_CAP_PX so this coarse signal cannot balloon the
+  // bottom spacer past the row's real clamped height (see that constant).
   const activityEstimate =
     (message.toolActivities?.length || 0) * TOOL_ACTIVITY_ESTIMATE_CHARS +
     (message.toolActivities || []).reduce(
