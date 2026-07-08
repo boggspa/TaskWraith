@@ -13,7 +13,19 @@ import { formatContextTokens } from '../lib/contextWindows'
 import { contextPressureSeverity } from '../../../shared/contextCompaction'
 import { humaniseModelIdCompact } from '../lib/modelDisplayName'
 import { getProviderName } from './Sidebar'
-import { ContextWheel } from './AppChromeSymbols'
+import { ContextWheel, ContextCompactionIcon } from './AppChromeSymbols'
+
+// Extremity ramp for the per-row compaction icon. A healthy seat reads in its
+// provider hue; as pressure builds the glyph warms to a bright, saturated
+// orange (~60%) and finally red near the ceiling (~85%) — a glanceable "this
+// one really wants compacting" cue. Deliberately distinct from the ≥80/≥95
+// warn/critical severity used for the bar + %: the icon nudges earlier so the
+// user acts before a seat is genuinely pressed.
+function compactionIconAccent(percent: number, provider: ProviderId): string {
+  if (percent >= 85) return 'var(--danger, #e54d4d)'
+  if (percent >= 60) return '#ff7d1a'
+  return `var(--provider-${provider}-color, var(--accent))`
+}
 
 interface ContextMeterPopoverProps {
   meter?: ContextMeterModel | null
@@ -37,7 +49,18 @@ interface ContextMeterPopoverProps {
    * `compactableParticipantIds` render no button.
    */
   onCompactParticipant?: (participantId: string) => void
+  /**
+   * Participant rows that surface the compaction lever at all — the enabled
+   * seats. The icon renders for every one of these, always (no flicker as
+   * seats go idle/busy); the row itself decides whether it's actionable.
+   */
   compactableParticipantIds?: readonly string[]
+  /**
+   * The participant whose turn is live right now. Its compaction icon is shown
+   * but disabled — compacting mid-turn would derail the in-flight run (auto
+   * compaction covers the active seat instead).
+   */
+  speakingParticipantId?: string
 }
 
 interface RowView {
@@ -69,11 +92,24 @@ function toRowView(row: ContextMeterRow, isParticipant: boolean): RowView {
 function MeterRow({
   row,
   focused,
-  onCompact
+  compactable,
+  speaking,
+  confirming,
+  onRequestCompact,
+  onConfirmCompact,
+  onCancelCompact
 }: {
   row: RowView
   focused?: boolean
-  onCompact?: () => void
+  /** Show the compaction icon on this row (an enabled participant seat). */
+  compactable?: boolean
+  /** This seat is the live speaker — icon disabled to avoid racing its turn. */
+  speaking?: boolean
+  /** This row's inline "Compact X?" confirmation is open. */
+  confirming?: boolean
+  onRequestCompact?: () => void
+  onConfirmCompact?: () => void
+  onCancelCompact?: () => void
 }): React.JSX.Element {
   const accent = `var(--provider-${row.provider}-color, var(--accent))`
   const pctText = `${Math.round(row.percent)}%`
@@ -82,6 +118,16 @@ function MeterRow({
       ? `${formatContextTokens(row.usedTokens)} / ${formatContextTokens(row.windowTokens)}`
       : formatContextTokens(row.usedTokens)
   const severity = contextPressureSeverity(row.percent)
+  // Nothing to compact until a seat has actually accrued context; the live
+  // speaker is locked out so a manual compaction can't collide with its turn.
+  const nothingToCompact = row.percent < 1
+  const compactDisabled = nothingToCompact || Boolean(speaking)
+  const compactAccent = compactionIconAccent(row.percent, row.provider)
+  const compactTitle = speaking
+    ? `${row.primary} is speaking — auto-compaction handles the active seat`
+    : nothingToCompact
+      ? `No context to compact yet for ${row.primary}`
+      : `Compact ${row.primary}`
   return (
     <div
       className={`context-meter-row${focused ? ' context-meter-row--focused' : ''}${
@@ -92,14 +138,17 @@ function MeterRow({
         <span className="context-meter-row-dot" style={{ background: accent }} aria-hidden />
         <span className="context-meter-row-primary">{row.primary}</span>
         {row.detail && <span className="context-meter-row-detail">{row.detail}</span>}
-        {onCompact && (
+        {compactable && (
           <button
             type="button"
-            className="context-meter-row-compact-button"
-            title={`Compact ${row.primary}'s session context`}
-            onClick={onCompact}
+            className={`context-meter-row-compact-icon${confirming ? ' is-confirming' : ''}`}
+            style={compactDisabled ? undefined : { color: compactAccent }}
+            title={compactTitle}
+            aria-label={compactTitle}
+            disabled={compactDisabled}
+            onClick={onRequestCompact}
           >
-            Compact
+            <ContextCompactionIcon />
           </button>
         )}
         <span className="context-meter-row-pct">{pctText}</span>
@@ -117,7 +166,33 @@ function MeterRow({
           style={{ width: `${Math.max(0, Math.min(100, row.percent))}%`, background: accent }}
         />
       </div>
-      <div className="context-meter-row-amount">{amount} context</div>
+      {confirming ? (
+        <div
+          className="context-meter-row-confirm"
+          role="group"
+          aria-label={`Compact ${row.primary}?`}
+        >
+          <span className="context-meter-row-confirm-label">Compact {row.primary}?</span>
+          <span className="context-meter-row-confirm-actions">
+            <button
+              type="button"
+              className="context-meter-row-confirm-btn context-meter-row-confirm-btn--yes"
+              onClick={onConfirmCompact}
+            >
+              Yes
+            </button>
+            <button
+              type="button"
+              className="context-meter-row-confirm-btn context-meter-row-confirm-btn--no"
+              onClick={onCancelCompact}
+            >
+              No
+            </button>
+          </span>
+        </div>
+      ) : (
+        <div className="context-meter-row-amount">{amount} context</div>
+      )}
     </div>
   )
 }
@@ -131,17 +206,21 @@ export function ContextMeterPopover({
   disabled,
   onCompactContext,
   onCompactParticipant,
-  compactableParticipantIds
+  compactableParticipantIds,
+  speakingParticipantId
 }: ContextMeterPopoverProps): React.JSX.Element {
   const triggerRef = useRef<HTMLButtonElement | null>(null)
   const popoverRef = useRef<HTMLDivElement | null>(null)
   const [open, setOpen] = useState(false)
   const [position, setPosition] = useState<{ left: number; top: number } | null>(null)
+  // Which participant row's inline "Compact X?" confirm is open (one at a time).
+  const [confirmingId, setConfirmingId] = useState<string | null>(null)
 
   // Anchor above-right of the donut (mirrors CombinedModelPicker).
   useEffect(() => {
     if (!open) {
       setPosition(null)
+      setConfirmingId(null)
       return
     }
     const compute = (): void => {
@@ -217,21 +296,27 @@ export function ContextMeterPopover({
         {participantRows ? 'Context · per participant' : 'Context usage'}
       </div>
       <div className="context-meter-rows">
-        {rows.map((row) => (
-          <MeterRow
-            key={row.id}
-            row={row}
-            focused={!!meter?.focusedId && row.id === meter.focusedId}
-            onCompact={
-              participantRows && onCompactParticipant && compactableParticipantIds?.includes(row.id)
-                ? () => {
-                    setOpen(false)
-                    onCompactParticipant(row.id)
-                  }
-                : undefined
-            }
-          />
-        ))}
+        {rows.map((row) => {
+          const compactable = Boolean(
+            participantRows && onCompactParticipant && compactableParticipantIds?.includes(row.id)
+          )
+          return (
+            <MeterRow
+              key={row.id}
+              row={row}
+              focused={!!meter?.focusedId && row.id === meter.focusedId}
+              compactable={compactable}
+              speaking={!!speakingParticipantId && row.id === speakingParticipantId}
+              confirming={compactable && confirmingId === row.id}
+              onRequestCompact={compactable ? () => setConfirmingId(row.id) : undefined}
+              onConfirmCompact={() => {
+                setOpen(false)
+                onCompactParticipant?.(row.id)
+              }}
+              onCancelCompact={() => setConfirmingId(null)}
+            />
+          )
+        })}
       </div>
       <div className="context-meter-foot">
         <span>Estimated from the latest turn</span>

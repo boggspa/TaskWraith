@@ -191,6 +191,8 @@ export interface ComposerProps {
    * (native claude/codex seats, round idle). */
   onCompactParticipant?: (participantId: string) => void
   compactableParticipantIds?: readonly string[]
+  /** Live speaker participant id — its compaction icon is disabled. */
+  speakingParticipantId?: string
   cumulativeRunBaseMs: any
   currentActiveGoal: any
   currentChat: any
@@ -496,6 +498,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     onCompactContext,
     onCompactParticipant,
     compactableParticipantIds,
+    speakingParticipantId,
     contextModelId,
     contextUsedPercent,
     cumulativeRunBaseMs,
@@ -3799,6 +3802,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                   onCompactContext={onCompactContext}
                                   onCompactParticipant={onCompactParticipant}
                                   compactableParticipantIds={compactableParticipantIds}
+                                  speakingParticipantId={speakingParticipantId}
                                 />
                               )}
                               <CombinedModelPicker
@@ -4204,6 +4208,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                             onCompactContext={onCompactContext}
                             onCompactParticipant={onCompactParticipant}
                             compactableParticipantIds={compactableParticipantIds}
+                            speakingParticipantId={speakingParticipantId}
                           />
                         )}
                         {steerIndicatorMessage && (

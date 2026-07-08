@@ -4499,6 +4499,10 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   min-width: 0;
+  /* Grow to consume the free space so the compaction icon + % pin to the row's
+   * right edge (icon then %, separated by the head's 6px gap); shrinks with an
+   * ellipsis before the fixed-width icon/% are ever pushed off. */
+  flex: 1 1 auto;
 }
 .context-meter-row-pct {
   margin-left: auto;
@@ -4566,23 +4570,91 @@
 .context-meter-compact-button:hover {
   background: color-mix(in srgb, #f0a93f 22%, transparent);
 }
-/* Per-participant seat compaction — quieter than the footer CTA (it appears
- * on every compactable row, pressure or not, so it must not shout). */
-.context-meter-row-compact-button {
-  margin-left: 4px;
-  font-size: 10px;
+/* Per-participant seat compaction — an always-present icon lever that sits just
+ * left of the row %. Its `color` is driven inline with an "extremity" hue
+ * (provider tint → bright orange ≥60% → red ≥85%), so the glyph itself signals
+ * how badly the seat wants compacting. Disabled (0% context / live speaker) it
+ * mutes to a quiet, non-interactive tertiary. */
+.context-meter-row-compact-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition:
+    background 0.12s ease,
+    color 0.12s ease,
+    opacity 0.12s ease;
+}
+.context-meter-row-compact-icon:hover:not(:disabled),
+.context-meter-row-compact-icon:focus-visible {
+  background: color-mix(in srgb, currentColor 16%, transparent);
+  outline: none;
+}
+.context-meter-row-compact-icon.is-confirming {
+  background: color-mix(in srgb, currentColor 22%, transparent);
+}
+.context-meter-row-compact-icon:disabled {
+  cursor: default;
+  opacity: 0.32;
+  color: var(--text-tertiary) !important;
+}
+.context-meter-row-compact-icon .context-compaction-icon,
+.context-meter-row-compact-icon svg {
+  display: block;
+  width: 15px;
+  height: 15px;
+}
+/* Inline "Compact X?" confirmation — reuses the popover's pill idiom; replaces
+ * the amount line while open so the row height stays put. */
+.context-meter-row-confirm {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.context-meter-row-confirm-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
   font-weight: 600;
-  padding: 1px 7px;
+  color: var(--text-secondary);
+}
+.context-meter-row-confirm-actions {
+  display: inline-flex;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+.context-meter-row-confirm-btn {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 10px;
   border-radius: 999px;
-  border: 1px solid color-mix(in srgb, var(--panel-border) 70%, transparent);
+  border: 1px solid color-mix(in srgb, var(--panel-border) 80%, transparent);
   background: color-mix(in srgb, var(--surface-base) 55%, transparent);
   color: var(--text-secondary);
   cursor: pointer;
   white-space: nowrap;
-  flex: 0 0 auto;
 }
-.context-meter-row-compact-button:hover {
-  border-color: color-mix(in srgb, #f0a93f 55%, var(--panel-border));
-  background: color-mix(in srgb, #f0a93f 12%, transparent);
+.context-meter-row-confirm-btn--yes {
+  border-color: color-mix(in srgb, #f0a93f 60%, var(--panel-border));
+  background: color-mix(in srgb, #f0a93f 16%, transparent);
+  color: var(--text-primary);
+}
+.context-meter-row-confirm-btn--yes:hover {
+  background: color-mix(in srgb, #f0a93f 26%, transparent);
+}
+.context-meter-row-confirm-btn--no:hover {
+  border-color: color-mix(in srgb, var(--text-primary) 30%, transparent);
   color: var(--text-primary);
 }

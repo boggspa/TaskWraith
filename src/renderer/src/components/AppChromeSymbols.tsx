@@ -813,6 +813,44 @@ export function GitCommitSymbolIcon() {
   )
 }
 
+/**
+ * Context compaction — monoline glyph (adapted from the Codex-authored master
+ * at design-assets/context-compaction/context-compaction-monoline.svg): the
+ * participant's context rows compressing into a tighter centre stack, with the
+ * up/down arrows folding inward. Strokes use currentColor so the caller can
+ * drive an "extremity" hue on the button (provider tint → orange → red) via
+ * its `color`. Sits in the context-meter popover rows as the compaction lever.
+ */
+export function ContextCompactionIcon() {
+  return (
+    <span className="sf-symbol-icon context-compaction-icon" aria-hidden>
+      <svg
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <path
+          strokeWidth="1.55"
+          d="M5.2 4.7h13.6c.9 0 1.5.6 1.5 1.5v11.6c0 .9-.6 1.5-1.5 1.5H5.2c-.9 0-1.5-.6-1.5-1.5V6.2c0-.9.6-1.5 1.5-1.5Z"
+        />
+        <circle cx="6.9" cy="8.1" r="0.62" fill="currentColor" stroke="none" />
+        <circle cx="6.9" cy="12" r="0.62" fill="currentColor" stroke="none" />
+        <circle cx="6.9" cy="15.9" r="0.62" fill="currentColor" stroke="none" />
+        <path strokeWidth="1.2" opacity="0.72" d="M9.2 8.1h5.7" />
+        <path strokeWidth="1.2" opacity="0.72" d="M9.2 12h4.5" />
+        <path strokeWidth="1.2" opacity="0.72" d="M9.2 15.9h5.7" />
+        <path strokeWidth="1.85" d="M17.35 7.15v2.55" />
+        <path strokeWidth="1.85" d="m16.2 8.55 1.15 1.15 1.15-1.15" />
+        <path strokeWidth="1.85" d="M17.35 16.85V14.3" />
+        <path strokeWidth="1.85" d="m16.2 15.45 1.15-1.15 1.15 1.15" />
+        <path strokeWidth="1.2" opacity="0.72" d="M15.85 12h3" />
+      </svg>
+    </span>
+  )
+}
+
 export function ClockSymbolIcon() {
   return (
     <span className="sf-symbol-icon composer-control-icon" aria-hidden>

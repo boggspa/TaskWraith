@@ -321,7 +321,11 @@ import {
   missingExternalPathGrantProviders,
   type ExternalPathGrantGap
 } from './lib/externalPathGrantPreflight'
-import type { GitPrSummary, GitRepositorySnapshot } from '../../main/services/GitService'
+import type {
+  GitCiStatusSummary,
+  GitPrSummary,
+  GitRepositorySnapshot
+} from '../../main/services/GitService'
 import {
   buildComposerRuntimeWorktreeIntent,
   normalizeWorkspacePath,
@@ -530,12 +534,9 @@ import {
 } from './lib/composerScrollClearance'
 import { buildRunDiffByPath } from './lib/RunWorkspaceDiff'
 import { shouldRunUsageRefresh } from './lib/usageRefresh'
+import { isCiStatusTerminal, shouldRunCiPoll } from './lib/ciStatusRefresh'
 import { shouldRenderWelcome, isReusableWelcomeChat } from './lib/welcomeState'
-import {
-  isChatSummaryRecord,
-  mergeChatRecord,
-  reconcileChatRecords
-} from './lib/chatRecordMerge'
+import { isChatSummaryRecord, mergeChatRecord } from './lib/chatRecordMerge'
 import {
   buildPinnedMessageSummaries,
   countMessagesWithPinnedMetadata,
@@ -2102,6 +2103,13 @@ function App(): React.JSX.Element {
   // PR check rollup for the current workspace, lifted alongside the snapshot so
   // the unified workspace line shows CI without a separate git-status row.
   const [primaryPr, setPrimaryPr] = useState<GitPrSummary | null>(null)
+  // Live rich CI summary for the focused workspace's PR (github:ci-status).
+  // Feeds the satellite row's dot/popover; kept fresh by the bounded poll below.
+  const [primaryCi, setPrimaryCi] = useState<GitCiStatusSummary | null>(null)
+  const primaryCiInFlightRef = useRef(false)
+  const primaryCiLastPolledAtRef = useRef<number | null>(null)
+  const primaryPrRef = useRef<GitPrSummary | null>(primaryPr)
+  const primaryCiRef = useRef<GitCiStatusSummary | null>(primaryCi)
   // P4 — live git snapshot per unique external-workspace path, so each collapsed
   // additional-workspace row shows git-grounded "N files changed +A −B" that
   // resets on commit (same as the primary). Keyed by path.
@@ -2147,6 +2155,25 @@ function App(): React.JSX.Element {
     },
     [currentWorkspacePath]
   )
+  const refreshPrimaryCiStatus = useCallback(async (): Promise<void> => {
+    const workspacePath = currentWorkspacePath
+    if (!workspacePath || typeof window.api.githubCiStatus !== 'function') {
+      setPrimaryCi(null)
+      return
+    }
+    if (primaryCiInFlightRef.current) return
+    primaryCiInFlightRef.current = true
+    primaryCiLastPolledAtRef.current = Date.now()
+    try {
+      const res = await window.api.githubCiStatus({ workspacePath })
+      setPrimaryCi(res?.ok ? res.data : null)
+    } catch {
+      setPrimaryCi(null)
+    } finally {
+      primaryCiInFlightRef.current = false
+    }
+  }, [currentWorkspacePath])
+  const refreshPrimaryCiStatusRef = useRef(refreshPrimaryCiStatus)
   const refreshExternalPrStatus = useCallback(
     (path: string, snapshot: GitRepositorySnapshot | null): void => {
       const key = gitPrStatusRefreshKey(snapshot)
@@ -4290,9 +4317,9 @@ function App(): React.JSX.Element {
 
   const refreshChatList = useCallback(async (workspaceId?: string): Promise<ChatRecord[]> => {
     const list = await loadChatList(workspaceId)
-    setChats((prev) => reconcileChatRecords(prev, list))
+    chatMutations.reconcileAll(list)
     return list
-  }, [loadChatList])
+  }, [chatMutations, loadChatList])
 
   const applyHydratedChat = useCallback((chat: ChatRecord): ChatRecord => {
     const local = chatByIdRef.current.get(chat.appChatId)
@@ -6267,7 +6294,7 @@ function App(): React.JSX.Element {
       const provider = getChatProvider(emptyChat)
       selectedProvider = provider
       selectedChat = emptyChat
-      setChats((prev) => reconcileChatRecords(prev, allChats))
+      chatMutations.reconcileAll(allChats)
       currentChatIdRef.current = emptyChat.appChatId
       chatByIdRef.current.set(emptyChat.appChatId, emptyChat)
       setCurrentChat(emptyChat)
@@ -18435,37 +18462,23 @@ function App(): React.JSX.Element {
         : undefined,
     [canCompactCurrentChatContext, compactChatContext, currentChatIdRef]
   )
-  // Per-seat compaction (ensemble meter rows + /compact-selected): native
-  // claude/codex seats with a linked session, offered only while the round is
-  // idle. The main-side router re-checks round liveness authoritatively.
+  // Per-seat compaction — the meter-popover compaction icon + /compact-selected.
+  // This is the set of participant rows that carry the compaction LEVER at all:
+  // every ENABLED seat, so the icon is a stable, always-present affordance and
+  // never flickers as seats go idle/busy across a round. The popover decides
+  // per row whether it's actionable — it's disabled when the seat has no
+  // context yet (0%) or is the one actively speaking (see speakingParticipantId
+  // below); a seat only reaches >0% once it has run, by which point its native
+  // session exists, so "has context" is also a truthful "has a resumable lever"
+  // proxy. The main-side router re-checks round liveness authoritatively before
+  // executing, so offering idle seats mid-round is safe.
   const compactableParticipantIds = useMemo(() => {
-    if (!isCurrentEnsembleChat || isCurrentChatRunning) return undefined
+    if (!isCurrentEnsembleChat) return undefined
     const ids = (currentChat?.ensemble?.participants || [])
-      .filter((participant) => {
-        if (participant.enabled === false) return false
-        // Native levers need a resumable session; kimi's host lane carries its
-        // material in-prompt, so any seat that has spoken qualifies.
-        if (
-          participant.provider === 'claude' ||
-          participant.provider === 'codex' ||
-          participant.provider === 'cursor'
-        ) {
-          return Boolean(participant.linkedProviderSessionId)
-        }
-        // Kimi + Grok host lanes carry their material in-prompt, so any seat
-        // that has spoken qualifies. Grok reports projected token totals; a
-        // seat with no runs has none yet.
-        if (participant.provider === 'kimi' || participant.provider === 'grok') {
-          return (
-            Boolean(participant.linkedProviderSessionId) ||
-            (participant.tokenTotals?.total_tokens || 0) > 0
-          )
-        }
-        return false
-      })
+      .filter((participant) => participant.enabled !== false)
       .map((participant) => participant.id)
     return ids.length > 0 ? ids : undefined
-  }, [isCurrentEnsembleChat, isCurrentChatRunning, currentChat])
+  }, [isCurrentEnsembleChat, currentChat])
   const onCompactParticipant = useMemo(
     () =>
       compactableParticipantIds
@@ -18486,6 +18499,11 @@ function App(): React.JSX.Element {
         : undefined,
     [compactableParticipantIds, currentChatIdRef]
   )
+  // The seat whose turn is live right now — the context-meter popover disables
+  // that row's compaction icon (compacting mid-turn would race the in-flight
+  // run; TaskWraith auto-compaction covers the active seat instead). Reuses the
+  // same live-speaker signal that drives the donut's in-flight tick.
+  const speakingParticipantId = liveContextParticipantId
   // 1.0.5-EW25 — pass the user's display currency through so cost
   // numbers respect their Settings → General choice. Defaults to
   // USD if settings haven't hydrated yet, matching the helper's
@@ -23394,6 +23412,7 @@ function App(): React.JSX.Element {
       onCompactContext: undefined,
       onCompactParticipant: undefined,
       compactableParticipantIds: undefined,
+      speakingParticipantId: undefined,
       // ── per-chat identity / display ──
       prompt: composerDraftsByChatId[viewerChatId] || '',
       // Per-pane ghost: this pane's EFFECTIVE ghost flag (its override, else the
@@ -23565,6 +23584,7 @@ function App(): React.JSX.Element {
       onComposerWorktreeChange: handleComposerWorktreeChange,
       // Pane PR/CI rollup stays focused-only for now (no per-pane gh fetch).
       primaryPr: null,
+      primaryCi: null,
       externalPrByPath: {},
       pendingPlanImport: null,
       externalPathGrantPrompt: null,
@@ -23837,6 +23857,7 @@ function App(): React.JSX.Element {
       onCompactContext,
       onCompactParticipant,
       compactableParticipantIds,
+      speakingParticipantId,
       currentChatIdRef,
       currentComposerMentionParticipants,
       currentDiscordContextSelection,
@@ -23971,6 +23992,7 @@ function App(): React.JSX.Element {
       onCompactContext,
       onCompactParticipant,
       compactableParticipantIds,
+      speakingParticipantId,
       currentChatIdRef,
       currentComposerMentionParticipants,
       currentDiscordContextSelection,
@@ -24471,6 +24493,7 @@ function App(): React.JSX.Element {
         onCompactContext: undefined,
         onCompactParticipant: undefined,
         compactableParticipantIds: undefined,
+        speakingParticipantId: undefined,
         // ── per-chat identity / display ──
         prompt: composerDraftsByChatId[viewerChatId] || '',
         // Per-pane ghost: this pane's EFFECTIVE ghost flag (its override, else the
@@ -24672,6 +24695,7 @@ function App(): React.JSX.Element {
         onComposerWorktreeChange: handleComposerWorktreeChange,
         // Pane PR/CI rollup stays focused-only for now (no per-pane gh fetch).
         primaryPr: null,
+        primaryCi: null,
         externalPrByPath: {},
         pendingPlanImport: null,
         externalPathGrantPrompt: null,
@@ -24841,6 +24865,7 @@ function App(): React.JSX.Element {
     composerWorktreeSelection: currentComposerWorktreeSelection,
     onComposerWorktreeChange: handleComposerWorktreeChange,
     primaryPr,
+    primaryCi,
     queuedMessagesAboveRowEntries,
     runtimeProfileControl,
     scheduleControls,
