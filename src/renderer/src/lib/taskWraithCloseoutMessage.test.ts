@@ -197,4 +197,64 @@ describe('taskWraithCloseoutMessage', () => {
     expect(closeout.metadata?.closeoutRoundId).toBe('round-1')
     expect(closeout.metadata?.ensembleRoundId).toBeUndefined()
   })
+
+  it('attributes the participant summary to individual @-tagged members with turn counts', () => {
+    const round: EnsembleRoundState = {
+      roundId: 'round-2',
+      status: 'completed',
+      prompt: 'Do it',
+      startedAt: '2026-07-07T12:00:00.000Z',
+      endedAt: '2026-07-07T12:01:00.000Z',
+      participants: [
+        { participantId: 'p1', provider: 'codex', role: 'Builder', order: 1, status: 'answered' },
+        { participantId: 'p2', provider: 'claude', role: 'Reviewer', order: 2, status: 'yielded' },
+        { participantId: 'p3', provider: 'cursor', role: '', order: 3, status: 'skipped' },
+        { participantId: 'p4', provider: 'kimi', role: '', order: 4, status: 'failed' }
+      ]
+    }
+    const runs: ChatRun[] = [
+      {
+        runId: 'run-p1a',
+        provider: 'codex',
+        startedAt: '2026-07-07T12:00:00.000Z',
+        ensembleRoundId: 'round-2',
+        ensembleParticipantId: 'p1'
+      },
+      {
+        runId: 'run-p1b',
+        provider: 'codex',
+        startedAt: '2026-07-07T12:00:10.000Z',
+        ensembleRoundId: 'round-2',
+        ensembleParticipantId: 'p1'
+      },
+      {
+        runId: 'run-p2',
+        provider: 'claude',
+        startedAt: '2026-07-07T12:00:00.000Z',
+        ensembleRoundId: 'round-2',
+        ensembleParticipantId: 'p2'
+      },
+      {
+        runId: 'run-p4',
+        provider: 'kimi',
+        startedAt: '2026-07-07T12:00:00.000Z',
+        ensembleRoundId: 'round-2',
+        ensembleParticipantId: 'p4'
+      }
+    ]
+    const closeout = buildTaskWraithRoundCloseoutMessage({
+      chat: chat({
+        chatKind: 'ensemble',
+        ensemble: { activeRound: round } as ChatRecord['ensemble'],
+        runs
+      }),
+      round,
+      completedAt: round.endedAt!
+    })
+
+    expect(closeout.content).toContain('[@Builder](ensemble-dm://p1) (2 turns)')
+    expect(closeout.content).toContain('[@Reviewer](ensemble-dm://p2) (1 turn, yielded)')
+    expect(closeout.content).toContain('[@Cursor](ensemble-dm://p3) (0 turns, skipped)')
+    expect(closeout.content).toContain('[@Kimi](ensemble-dm://p4) (1 turn, failed)')
+  })
 })

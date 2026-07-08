@@ -86,7 +86,7 @@ export function buildTaskWraithRoundCloseoutMessage(input: {
     'Close-out:',
     `- Status: ${formatRoundStatus(round.status)}.`
   ]
-  const participantLine = participantSummaryLine(round)
+  const participantLine = participantSummaryLine(round, roundRuns)
   if (participantLine) lines.push(`- Participants: ${participantLine}.`)
   const summaryLine = roundSummaryLine(chat, round.roundId)
   if (summaryLine) lines.push(`- Summary: ${summaryLine}`)
@@ -231,21 +231,35 @@ function tokenSummaryLine(runs: ChatRun[]): string | null {
   return total > 0 ? `${formatContextTokens(total)} total` : null
 }
 
-function participantSummaryLine(round: EnsembleRoundState): string | null {
+function participantSummaryLine(round: EnsembleRoundState, roundRuns: ChatRun[]): string | null {
   const participants = round.participants || []
   if (participants.length === 0) return null
   const answered = participants.filter((participant) => participant.status === 'answered').length
   const yielded = participants.filter((participant) => participant.status === 'yielded').length
   const skipped = participants.filter((participant) => participant.status === 'skipped').length
   const failed = participants.filter((participant) => participant.status === 'failed').length
-  const providers = Array.from(new Set(participants.map((participant) => participant.provider)))
-    .map((provider) => getProviderLabel(provider))
+
+  const turnCounts = new Map<string, number>()
+  for (const run of roundRuns) {
+    if (!run.ensembleParticipantId) continue
+    turnCounts.set(run.ensembleParticipantId, (turnCounts.get(run.ensembleParticipantId) || 0) + 1)
+  }
+
+  const participantTags = participants
+    .map((participant) => {
+      const label = participant.role?.trim() || getProviderLabel(participant.provider)
+      const turns = turnCounts.get(participant.participantId) || 0
+      const turnLabel = `${turns} turn${turns === 1 ? '' : 's'}`
+      const statusSuffix = participant.status !== 'answered' ? `, ${participant.status}` : ''
+      return `[@${label}](ensemble-dm://${participant.participantId}) (${turnLabel}${statusSuffix})`
+    })
     .join(', ')
+
   const parts = [
     `${answered + yielded} contributed`,
     skipped > 0 ? `${skipped} skipped` : '',
     failed > 0 ? `${failed} failed` : '',
-    providers
+    participantTags
   ].filter(Boolean)
   return parts.join('; ')
 }
