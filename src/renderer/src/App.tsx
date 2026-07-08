@@ -517,6 +517,7 @@ import {
   restoreChatScrollStateWhenReady,
   shouldEngageAutoFollow,
   shouldDisengageAutoFollow,
+  shouldReengageAutoFollowAfterScroll,
   shouldTreatScrollAsUserScrollAway,
   shouldRepinAfterFrame
 } from './lib/TranscriptScroll'
@@ -2755,10 +2756,13 @@ function App(): React.JSX.Element {
   const popoutMenuRef = useRef<HTMLDivElement | null>(null)
   const sideAutoFollowRef = useRef(true)
   const lastSideTranscriptScrollTopRef = useRef(0)
-  // Set true immediately before the side-chat panel's programmatic snap so its
-  // evaluate listener doesn't mistake the app's own write for the user
-  // returning to the live edge and re-engage follow. Mirrors the main
-  // transcript's `programmaticScrollRef`.
+  // Set true immediately before a programmatic scroll on the side-chat panel
+  // (its own snap-to-bottom, the manual message jump, and the virtual-window
+  // anchor correction) so its evaluate listener doesn't mistake the app's own
+  // write for the user returning to the live edge and re-engage follow. Coarser
+  // one-shot boolean twin of the main transcript's numeric `programmaticScroll`
+  // target: leaner, and it covers the manual message jump whose landing
+  // position is unknown up front (a numeric target couldn't predict it).
   const sideProgrammaticScrollRef = useRef(false)
   const setChatMediaPanelOpenPreservingTranscript = useCallback(
     (next: boolean | ((open: boolean) => boolean)) => {
@@ -2804,6 +2808,19 @@ function App(): React.JSX.Element {
     sideProgrammaticScrollRef.current = true
     clearPendingMainTranscriptMessageJump()
   }, [clearPendingMainTranscriptMessageJump])
+  // Arm the side-panel programmatic-scroll guard for a write the App did NOT
+  // issue itself — TranscriptPanel's virtual-window anchor correction on the
+  // side scroller (keeps the anchored row fixed while rows above it re-measure;
+  // 2+ fan-out lane cards push a normally-short side transcript over the
+  // virtualization threshold that makes this write run). The anchor write arms
+  // this synchronously BEFORE its own scrollTop write, so the resulting scroll
+  // event is consumed by the evaluate below instead of re-locking follow. The
+  // landed position isn't needed for the one-shot boolean; the arg is validated
+  // only to reject a malformed callback payload.
+  const markSideTranscriptProgrammaticScroll = useCallback((landedScrollTop: number) => {
+    if (!Number.isFinite(landedScrollTop)) return
+    sideProgrammaticScrollRef.current = true
+  }, [])
   // Raw Events panel auto-follow mirror of the transcript pair above.
   // The Inspector's Raw Events tab streams every run event as it arrives;
   // an earlier implementation unconditionally scrolled the panel to the
@@ -3420,18 +3437,37 @@ function App(): React.JSX.Element {
     let rafId: number | null = null
     const evaluate = () => {
       rafId = null
+      const previousScrollTop = lastSideTranscriptScrollTopRef.current
+      const nextScrollTop = scroller.scrollTop
       if (sideProgrammaticScrollRef.current) {
         sideProgrammaticScrollRef.current = false
-        lastSideTranscriptScrollTopRef.current = scroller.scrollTop
+        lastSideTranscriptScrollTopRef.current = nextScrollTop
         return
       }
-      const distanceFromBottom = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight
-      if (shouldEngageAutoFollow(distanceFromBottom)) {
+      const distanceFromBottom = scroller.scrollHeight - nextScrollTop - scroller.clientHeight
+      // Being numerically near the bottom is NOT enough to re-arm follow once the
+      // user has scrolled away: an app-owned write (the virtual-window anchor
+      // correction on the side scroller) can land inside the 2px engage band
+      // while the user reads history. Require a real downward return (movedDown)
+      // in that case — the same predicate the main transcript uses instead of a
+      // bare `shouldEngageAutoFollow`. The side twin stays lean: it tracks no
+      // downward-intent gesture, so `recentDownwardIntent` is always false and
+      // only the strict 2px + movedDown path can re-engage after a scroll-away.
+      if (
+        shouldReengageAutoFollowAfterScroll({
+          distanceFromBottom,
+          userScrolledAwayInThisFrame: !sideAutoFollowRef.current,
+          previousScrollTop,
+          nextScrollTop,
+          isProgrammatic: false,
+          recentDownwardIntent: false
+        })
+      ) {
         sideAutoFollowRef.current = true
       } else if (shouldDisengageAutoFollow(distanceFromBottom)) {
         sideAutoFollowRef.current = false
       }
-      lastSideTranscriptScrollTopRef.current = scroller.scrollTop
+      lastSideTranscriptScrollTopRef.current = nextScrollTop
     }
     const onScroll = () => {
       if (
@@ -24975,6 +25011,7 @@ function App(): React.JSX.Element {
     auraProviderKey,
     autoFollowRef,
     markMainTranscriptProgrammaticScroll,
+    markSideTranscriptProgrammaticScroll,
     autoResumeParentOnSubThreadCompletion,
     autoUpdateEnabled,
     auditBundleVerificationResult,

@@ -125,6 +125,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   auraProviderKey,
   autoFollowRef,
   markMainTranscriptProgrammaticScroll,
+  markSideTranscriptProgrammaticScroll,
   autoResumeParentOnSubThreadCompletion,
   autoUpdateEnabled,
   auditBundleVerificationResult,
@@ -2229,6 +2230,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                 transcriptJumpRequest?.chatId === sideChat.appChatId ? transcriptJumpRequest : null
               }
               onManualTranscriptJump={beginManualSideTranscriptJump}
+              onProgrammaticScrollWrite={markSideTranscriptProgrammaticScroll}
               copiedId={copiedId}
               copy={copy}
               autoFollowRef={sideAutoFollowRef}
