@@ -1259,6 +1259,18 @@
   .composer-area.interface-codex
   > .composer-primary-stack
   > .composer-surface
+  > .composer-inner-module,
+[data-composer-style="codex"]:not(
+    :is(
+      [data-theme="light"],
+      [data-theme="citrus"],
+      [data-theme="mist"],
+      [data-theme="sage"],
+      [data-theme="alabaster"]
+    )
+  )
+  .app-transcript
+  .side-chat-composer.interface-codex
   > .composer-inner-module {
   background: #2d2d2d !important;
   background-image: none !important;
