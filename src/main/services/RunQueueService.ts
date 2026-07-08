@@ -549,9 +549,11 @@ function sanitizeRemoteComposer(value: unknown): RunQueueRequestSnapshot['remote
   if (!isRecord(value)) return undefined
   const approvalMode = optionalString(value.approvalMode)
   const workflowMode = sanitizeWorkflowMode(value.workflowMode)
+  const permissionPresetId = optionalString(value.permissionPresetId)
   const model = optionalString(value.model)
   const reasoningEffort = optionalStringOrNull(value.reasoningEffort)
   const claudeReasoningEffort = optionalStringOrNull(value.claudeReasoningEffort)
+  const scheduledRunAt = optionalString(value.scheduledRunAt)
   return {
     workspaceId: optionalString(value.workspaceId) || '',
     threadId: optionalString(value.threadId) || '',
@@ -559,10 +561,12 @@ function sanitizeRemoteComposer(value: unknown): RunQueueRequestSnapshot['remote
     text: optionalString(value.text) || '',
     ...(approvalMode ? { approvalMode } : {}),
     ...(workflowMode ? { workflowMode } : {}),
+    ...(permissionPresetId ? { permissionPresetId } : {}),
     ...(model ? { model } : {}),
     ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
     ...(claudeReasoningEffort !== undefined ? { claudeReasoningEffort } : {}),
     ...(typeof value.contextTurns === 'number' ? { contextTurns: value.contextTurns } : {}),
+    ...(scheduledRunAt ? { scheduledRunAt } : {}),
     ...(Array.isArray(value.extraWorkspaceIds)
       ? { extraWorkspaceIds: value.extraWorkspaceIds.filter((id) => typeof id === 'string') }
       : {})

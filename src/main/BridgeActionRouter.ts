@@ -564,6 +564,7 @@ export class BridgeActionRouter {
       case 'composerPrompt':
         return this.executor.executeComposerPrompt(payload)
       case 'composerQueuePrompt':
+      case 'composerSchedulePrompt':
         return this.executor.executeComposerQueuePrompt(payload)
       case 'composerQueueItem':
         return this.executor.executeComposerQueueItem(payload)
@@ -1180,6 +1181,7 @@ function capabilityForPayload(payload: BridgeActionPayload): RemoteWorkspaceCapa
       return 'answer'
     case 'composerPrompt':
     case 'composerQueuePrompt':
+    case 'composerSchedulePrompt':
     case 'createThread':
       return 'startTurn'
     // Full-markdown transcript is a read of already-visible thread content

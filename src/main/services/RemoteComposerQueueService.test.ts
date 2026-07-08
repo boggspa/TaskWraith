@@ -117,8 +117,10 @@ describe('buildRemoteComposerQueueDispatchAction', () => {
           reasoningEffort: 'low',
           claudeReasoningEffort: null,
           contextTurns: 7,
+          scheduledRunAt: '2026-07-08T21:15:00.000Z',
           extraWorkspaceIds: ['ws-extra-2']
-        }
+        },
+        scheduledRunAt: '2026-07-08T21:15:00.000Z'
       }
     })
     const dispatch = buildRemoteComposerQueueDispatchAction(job)
@@ -142,6 +144,7 @@ describe('buildRemoteComposerQueueDispatchAction', () => {
       }
     })
     expect('appRunId' in dispatch!.action).toBe(false)
+    expect('scheduledRunAt' in dispatch!.action).toBe(false)
   })
 
   it('uses the frozen permission posture instead of re-inflating stale full_access requests', () => {

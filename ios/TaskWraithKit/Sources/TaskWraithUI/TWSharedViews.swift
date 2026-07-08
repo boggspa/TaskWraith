@@ -7716,13 +7716,23 @@ public struct QueuedComposerPromptsStack: View {
 
     private func row(_ prompt: RemoteTaskCard.QueuedComposerPrompt) -> some View {
         HStack(alignment: .center, spacing: 8) {
-            Image(systemName: "tray.and.arrow.down")
+            Image(systemName: prompt.scheduledRunAt == nil ? "tray.and.arrow.down" : "clock")
                 .font(.caption2)
-                .foregroundStyle(TWTheme.providerAccent(prompt.provider))
-            Text(prompt.text)
-                .font(.caption)
-                .foregroundStyle(TWTheme.textSecondary)
-                .lineLimit(2)
+                .foregroundStyle(
+                    prompt.scheduledRunAt == nil
+                        ? TWTheme.providerAccent(prompt.provider) : TWTheme.statusAttention)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(prompt.text)
+                    .font(.caption)
+                    .foregroundStyle(TWTheme.textSecondary)
+                    .lineLimit(2)
+                if let caption = scheduledCaption(prompt.scheduledRunAt) {
+                    Text(caption)
+                        .font(.caption2.weight(.medium))
+                        .foregroundStyle(TWTheme.textTertiary)
+                        .lineLimit(1)
+                }
+            }
                 .frame(maxWidth: .infinity, alignment: .leading)
             Button {
                 model.composerQueueItem(card, item: prompt, op: "steerNow")
@@ -7758,6 +7768,13 @@ public struct QueuedComposerPromptsStack: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
+    }
+
+    private func scheduledCaption(_ iso: String?) -> String? {
+        guard let date = twParseISODate(iso) else { return nil }
+        let formatter = DateFormatter()
+        formatter.dateFormat = Calendar.current.isDateInToday(date) ? "HH:mm" : "d MMM, HH:mm"
+        return "Scheduled \(formatter.string(from: date))"
     }
 }
 

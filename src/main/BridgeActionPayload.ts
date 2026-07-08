@@ -148,6 +148,17 @@ export interface BridgeComposerQueuePromptAction
   kind: 'composerQueuePrompt'
 }
 
+export interface BridgeComposerSchedulePromptAction
+  extends Omit<BridgeComposerPromptAction, 'kind'> {
+  kind: 'composerSchedulePrompt'
+  /** ISO8601 future timestamp for paired-device scheduled composer prompts. */
+  scheduledRunAt: string
+}
+
+export type BridgeComposerQueuedPromptAction =
+  | BridgeComposerQueuePromptAction
+  | BridgeComposerSchedulePromptAction
+
 export interface BridgeComposerQueueItemAction extends BridgeActionMetadata {
   kind: 'composerQueueItem'
   workspaceId: string
@@ -720,6 +731,7 @@ export type BridgeActionPayload =
   | BridgeQuestionRejectAction
   | BridgeComposerPromptAction
   | BridgeComposerQueuePromptAction
+  | BridgeComposerSchedulePromptAction
   | BridgeComposerQueueItemAction
   | BridgeCreateThreadAction
   | BridgeThreadRowExpandAction
@@ -852,6 +864,7 @@ export function workspaceIdFromPayload(payload: BridgeActionPayload): string | n
     case 'questionReject':
     case 'composerPrompt':
     case 'composerQueuePrompt':
+    case 'composerSchedulePrompt':
     case 'composerQueueItem':
     case 'createThread':
     case 'threadRowExpand':
@@ -925,6 +938,7 @@ export function payloadRequiresWorkspaceGating(payload: BridgeActionPayload): bo
     case 'questionReject':
     case 'composerPrompt':
     case 'composerQueuePrompt':
+    case 'composerSchedulePrompt':
     case 'composerQueueItem':
     case 'createThread':
     case 'threadRowExpand':
@@ -1018,6 +1032,7 @@ export function payloadIsMutating(payload: BridgeActionPayload): boolean {
   switch (payload.kind) {
     case 'composerPrompt':
     case 'composerQueuePrompt':
+    case 'composerSchedulePrompt':
     case 'composerQueueItem':
     case 'createThread':
     case 'cancelRun':
@@ -1101,6 +1116,10 @@ function coerceToPayload(parsed: unknown): BridgeActionPayload {
       return isComposerPrompt(parsed)
         ? (parsed as unknown as BridgeComposerQueuePromptAction)
         : { kind: 'unknown', rawKind: 'composerQueuePrompt', raw: parsed }
+    case 'composerSchedulePrompt':
+      return isComposerPrompt(parsed)
+        ? (parsed as unknown as BridgeComposerSchedulePromptAction)
+        : { kind: 'unknown', rawKind: 'composerSchedulePrompt', raw: parsed }
     case 'composerQueueItem':
       return isComposerQueueItem(parsed)
         ? (parsed as unknown as BridgeComposerQueueItemAction)
@@ -1369,6 +1388,7 @@ function isImageAttachments(value: unknown): boolean {
 }
 
 function isComposerPrompt(v: Record<string, unknown>): boolean {
+  const isScheduled = v.kind === 'composerSchedulePrompt'
   return (
     hasValidActionMetadata(v) &&
     typeof v.workspaceId === 'string' &&
@@ -1397,7 +1417,11 @@ function isComposerPrompt(v: Record<string, unknown>): boolean {
         ))) &&
     (v.proposedPlanImplementOf === undefined ||
       (typeof v.proposedPlanImplementOf === 'string' &&
-        v.proposedPlanImplementOf.trim().length > 0))
+        v.proposedPlanImplementOf.trim().length > 0)) &&
+    (v.scheduledRunAt === undefined ||
+      (isScheduled && typeof v.scheduledRunAt === 'string')) &&
+    (!isScheduled ||
+      (typeof v.scheduledRunAt === 'string' && v.scheduledRunAt.trim().length > 0))
   )
 }
 

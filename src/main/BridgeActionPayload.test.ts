@@ -1016,6 +1016,58 @@ describe('decodeBridgeActionPayload', () => {
       }
     })
 
+    it('decodes scheduled composer actions as their own fail-closed kind', () => {
+      const scheduledRunAt = '2026-07-08T21:15:00.000Z'
+      const prompt = decodeBridgeActionPayload(
+        encode({
+          kind: 'composerSchedulePrompt',
+          workspaceId: 'ws-1',
+          threadId: 't-1',
+          text: 'run this later',
+          provider: 'codex',
+          approvalMode: 'plan',
+          workflowMode: 'plan',
+          scheduledRunAt
+        })
+      ).payload
+
+      expect(prompt.kind).toBe('composerSchedulePrompt')
+      if (prompt.kind === 'composerSchedulePrompt') {
+        expect(prompt.provider).toBe('codex')
+        expect(prompt.scheduledRunAt).toBe(scheduledRunAt)
+      }
+    })
+
+    it('rejects direct composer prompts that carry scheduledRunAt', () => {
+      const prompt = decodeBridgeActionPayload(
+        encode({
+          kind: 'composerPrompt',
+          workspaceId: 'ws-1',
+          threadId: 't-1',
+          text: 'do not send now',
+          provider: 'codex',
+          scheduledRunAt: '2026-07-08T21:15:00.000Z'
+        })
+      ).payload
+
+      expect(prompt).toMatchObject({ kind: 'unknown', rawKind: 'composerPrompt' })
+    })
+
+    it('rejects queue prompts that try to smuggle scheduledRunAt without the schedule kind', () => {
+      const prompt = decodeBridgeActionPayload(
+        encode({
+          kind: 'composerQueuePrompt',
+          workspaceId: 'ws-1',
+          threadId: 't-1',
+          text: 'do not queue now',
+          provider: 'codex',
+          scheduledRunAt: '2026-07-08T21:15:00.000Z'
+        })
+      ).payload
+
+      expect(prompt).toMatchObject({ kind: 'unknown', rawKind: 'composerQueuePrompt' })
+    })
+
     it('treats composerPrompt without provider as unknown', () => {
       const wire = encode({
         kind: 'composerPrompt',
@@ -1283,6 +1335,14 @@ describe('decodeBridgeActionPayload', () => {
           threadId: 't-1',
           text: 'queue me',
           provider: 'gemini'
+        },
+        {
+          kind: 'composerSchedulePrompt',
+          workspaceId: 'ws-1',
+          threadId: 't-1',
+          text: 'schedule me',
+          provider: 'gemini',
+          scheduledRunAt: '2026-07-08T21:15:00.000Z'
         },
         {
           kind: 'composerQueueItem',
@@ -1777,6 +1837,27 @@ describe('workspaceIdFromPayload', () => {
       },
       {
         payload: {
+          kind: 'composerQueuePrompt',
+          workspaceId: 'ws-queue',
+          threadId: 't',
+          provider: 'gemini',
+          text: 'queue'
+        },
+        expected: 'ws-queue'
+      },
+      {
+        payload: {
+          kind: 'composerSchedulePrompt',
+          workspaceId: 'ws-schedule',
+          threadId: 't',
+          provider: 'gemini',
+          text: 'schedule',
+          scheduledRunAt: '2026-07-08T21:15:00.000Z'
+        },
+        expected: 'ws-schedule'
+      },
+      {
+        payload: {
           kind: 'cancelRun',
           workspaceId: 'ws-e',
           threadId: 't',
@@ -1910,6 +1991,15 @@ describe('payloadRequiresWorkspaceGating', () => {
       { kind: 'questionReply', workspaceId: 'w', threadId: 't', promptId: 'p', answer: 'a' },
       { kind: 'questionReject', workspaceId: 'w', threadId: 't', promptId: 'p' },
       { kind: 'composerPrompt', workspaceId: 'w', threadId: 't', provider: 'gemini', text: 'x' },
+      { kind: 'composerQueuePrompt', workspaceId: 'w', threadId: 't', provider: 'gemini', text: 'x' },
+      {
+        kind: 'composerSchedulePrompt',
+        workspaceId: 'w',
+        threadId: 't',
+        provider: 'gemini',
+        text: 'x',
+        scheduledRunAt: '2026-07-08T21:15:00.000Z'
+      },
       { kind: 'threadMediaFetch', workspaceId: 'w', threadId: 't', rowId: 'm', mediaId: 'img' },
       { kind: 'cancelRun', workspaceId: 'w', threadId: 't', provider: 'gemini', runId: 'r' },
       { kind: 'setYoloMode', workspaceId: 'w', enabled: false },
@@ -1974,7 +2064,7 @@ describe('payloadRequiresWorkspaceGating', () => {
 })
 
 describe('payloadIsMutating', () => {
-  it('classifies composerPrompt as mutating', () => {
+  it('classifies composer prompt variants as mutating', () => {
     expect(
       payloadIsMutating({
         kind: 'composerPrompt',
@@ -1982,6 +2072,25 @@ describe('payloadIsMutating', () => {
         threadId: 't',
         provider: 'gemini',
         text: 'hi'
+      })
+    ).toBe(true)
+    expect(
+      payloadIsMutating({
+        kind: 'composerQueuePrompt',
+        workspaceId: 'w',
+        threadId: 't',
+        provider: 'gemini',
+        text: 'queue'
+      })
+    ).toBe(true)
+    expect(
+      payloadIsMutating({
+        kind: 'composerSchedulePrompt',
+        workspaceId: 'w',
+        threadId: 't',
+        provider: 'gemini',
+        text: 'schedule',
+        scheduledRunAt: '2026-07-08T21:15:00.000Z'
       })
     ).toBe(true)
   })

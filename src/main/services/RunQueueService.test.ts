@@ -378,8 +378,11 @@ describe('RunQueueService', () => {
           text: 'From paired device',
           approvalMode: 'default',
           workflowMode: 'plan',
-          model: 'opus'
-        }
+          permissionPresetId: 'full_access',
+          model: 'opus',
+          scheduledRunAt: '2026-07-08T21:15:00.000Z'
+        },
+        scheduledRunAt: '2026-07-08T21:15:00.000Z'
       }
     })
     expect(repository.saveRunQueueJob).toHaveBeenCalledWith(
@@ -395,8 +398,11 @@ describe('RunQueueService', () => {
             text: 'From paired device',
             approvalMode: 'default',
             workflowMode: 'plan',
-            model: 'opus'
-          }
+            permissionPresetId: 'full_access',
+            model: 'opus',
+            scheduledRunAt: '2026-07-08T21:15:00.000Z'
+          },
+          scheduledRunAt: '2026-07-08T21:15:00.000Z'
         })
       })
     )

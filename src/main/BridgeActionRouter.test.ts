@@ -1068,6 +1068,27 @@ describe('BridgeActionRouter', () => {
       expect(calls[0].method).toBe('executeComposerPrompt')
     })
 
+    it('dispatches scheduled composer prompts through the queue executor', async () => {
+      const { executor, calls } = makeStubExecutor()
+      const router = new BridgeActionRouter({ allowlist: seedAllowlist(), executor })
+      const result = (await router.route('bridge.requestActionAck', {
+        pairID: 'p',
+        payloadBase64: composerPromptWire({
+          kind: 'composerSchedulePrompt',
+          scheduledRunAt: '2026-07-08T21:15:00.000Z'
+        })
+      })) as { accepted: boolean; message?: string }
+
+      expect(result.accepted).toBe(true)
+      expect(result.message).toBe('composerQueuePrompt done')
+      expect(calls).toHaveLength(1)
+      expect(calls[0].method).toBe('executeComposerQueuePrompt')
+      expect(calls[0].payload).toMatchObject({
+        kind: 'composerSchedulePrompt',
+        scheduledRunAt: '2026-07-08T21:15:00.000Z'
+      })
+    })
+
     it('surfaces run ids from executor data in the structured ack', async () => {
       const { executor } = makeStubExecutor({
         executeComposerPrompt: async () => ({

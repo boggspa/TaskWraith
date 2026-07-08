@@ -2,7 +2,7 @@ import type {
   BridgeApprovalReplyAction,
   BridgeCancelRunAction,
   BridgeComposerPromptAction,
-  BridgeComposerQueuePromptAction,
+  BridgeComposerQueuedPromptAction,
   BridgeComposerQueueItemAction,
   BridgeCreateThreadAction,
   BridgeThreadRowExpandAction,
@@ -103,7 +103,7 @@ export interface BridgeActionExecutor {
   executeQuestionReject(action: BridgeQuestionRejectAction): Promise<BridgeActionExecutionResult>
   executeComposerPrompt(action: BridgeComposerPromptAction): Promise<BridgeActionExecutionResult>
   executeComposerQueuePrompt(
-    action: BridgeComposerQueuePromptAction
+    action: BridgeComposerQueuedPromptAction
   ): Promise<BridgeActionExecutionResult>
   executeComposerQueueItem(
     action: BridgeComposerQueueItemAction
@@ -234,9 +234,9 @@ export class NoopActionExecutor implements BridgeActionExecutor {
     return notWired('composerPrompt', action.threadId)
   }
   async executeComposerQueuePrompt(
-    action: BridgeComposerQueuePromptAction
+    action: BridgeComposerQueuedPromptAction
   ): Promise<BridgeActionExecutionResult> {
-    return notWired('composerQueuePrompt', action.threadId)
+    return notWired(action.kind, action.threadId)
   }
   async executeComposerQueueItem(
     action: BridgeComposerQueueItemAction
@@ -517,7 +517,7 @@ export interface MainProcessActionExecutorDependencies {
     appRunId: string | null
     reason?: string
   }>
-  composerQueuePromptFn?: (action: BridgeComposerQueuePromptAction) => Promise<{
+  composerQueuePromptFn?: (action: BridgeComposerQueuedPromptAction) => Promise<{
     ok: boolean
     queueId?: string
     reason?: string
@@ -1328,20 +1328,23 @@ export class MainProcessActionExecutor implements BridgeActionExecutor {
   }
 
   async executeComposerQueuePrompt(
-    action: BridgeComposerQueuePromptAction
+    action: BridgeComposerQueuedPromptAction
   ): Promise<BridgeActionExecutionResult> {
     if (!this.deps.composerQueuePromptFn) {
-      return notWired('composerQueuePrompt', action.threadId)
+      return notWired(action.kind, action.threadId)
     }
     this.log(
-      `[BridgeActionExecutor] composerQueuePrompt provider=${action.provider} ws=${action.workspaceId} thread=${action.threadId}`
+      `[BridgeActionExecutor] ${action.kind} provider=${action.provider} ws=${action.workspaceId} thread=${action.threadId}`
     )
     try {
       const result = await this.deps.composerQueuePromptFn(action)
       if (result.ok) {
         return {
           executed: true,
-          message: 'Queued on your Mac.',
+          message:
+            action.kind === 'composerSchedulePrompt'
+              ? 'Scheduled on your Mac.'
+              : 'Queued on your Mac.',
           data: {
             ...(result.queueId ? { queueId: result.queueId } : {}),
             workspaceId: action.workspaceId,
@@ -1356,10 +1359,10 @@ export class MainProcessActionExecutor implements BridgeActionExecutor {
       }
     } catch (err) {
       const errMessage = err instanceof Error ? err.message : String(err)
-      this.log(`[BridgeActionExecutor] composerQueuePrompt failed: ${errMessage}`)
+      this.log(`[BridgeActionExecutor] ${action.kind} failed: ${errMessage}`)
       return {
         executed: false,
-        message: `Composer prompt queue failed: ${errMessage}`
+        message: `Composer prompt ${action.kind === 'composerSchedulePrompt' ? 'schedule' : 'queue'} failed: ${errMessage}`
       }
     }
   }

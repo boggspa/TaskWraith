@@ -4722,6 +4722,7 @@ export interface RunQueueRequestSnapshot {
     claudeReasoningEffort?: string | null
     contextTurns?: number
     extraWorkspaceIds?: string[]
+    scheduledRunAt?: string
   }
 }
 

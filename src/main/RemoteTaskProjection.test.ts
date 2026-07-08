@@ -1129,7 +1129,8 @@ describe('RemoteTaskProjection', () => {
           provider: 'codex',
           text: 'Queued prompt'
         },
-        prompt: 'Queued request prompt'
+        prompt: 'Queued request prompt',
+        scheduledRunAt: '2026-07-08T21:15:00.000Z'
       })
     })
     const active = queueJob({
@@ -1162,6 +1163,7 @@ describe('RemoteTaskProjection', () => {
       approvalMode: 'manual',
       reasoningEffort: 'high',
       claudeReasoningEffort: 'off',
+      scheduledRunAt: '2026-07-08T21:15:00.000Z',
       createdAt: '2026-05-30T11:00:00.000Z',
       enqueuedAt: '2026-05-30T11:00:01.000Z'
     })

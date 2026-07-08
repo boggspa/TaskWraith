@@ -23754,6 +23754,7 @@ if (isGeminiMcpBridgeProcess) {
                 ? { claudeReasoningEffort: action.claudeReasoningEffort }
                 : {}),
               ...(action.contextTurns !== undefined ? { contextTurns: action.contextTurns } : {}),
+              ...(schedule.scheduledRunAt ? { scheduledRunAt: schedule.scheduledRunAt } : {}),
               ...(action.extraWorkspaceIds?.length
                 ? { extraWorkspaceIds: action.extraWorkspaceIds }
                 : {})

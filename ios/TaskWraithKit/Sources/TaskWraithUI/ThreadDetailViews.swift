@@ -1144,6 +1144,7 @@ struct ThreadDetailView: View {
                             QueuedMessageBubbleRow(
                                 position: prompt.index + 1,
                                 text: prompt.text,
+                                scheduledRunAt: nil,
                                 onSteer: {
                                     model.ensembleQueueItem(
                                         card, index: prompt.index, text: prompt.text,
@@ -1178,6 +1179,7 @@ struct ThreadDetailView: View {
                             QueuedMessageBubbleRow(
                                 position: pair.offset + 1,
                                 text: pair.element.text,
+                                scheduledRunAt: pair.element.scheduledRunAt,
                                 onSteer: {
                                     model.composerQueueItem(card, item: pair.element, op: "steerNow")
                                 },
@@ -3990,6 +3992,7 @@ private struct ShimmerWorkingLabel: View {
 private struct QueuedMessageBubbleRow: View {
     let position: Int
     let text: String
+    let scheduledRunAt: String?
     let onSteer: () -> Void
     let onBlackboard: (() -> Void)?
     let onEdit: () -> Void
@@ -3997,12 +4000,12 @@ private struct QueuedMessageBubbleRow: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
-            Image(systemName: "text.line.first.and.arrowtriangle.forward")
+            Image(systemName: scheduledRunAt == nil ? "text.line.first.and.arrowtriangle.forward" : "clock")
                 .font(.caption2)
-                .foregroundStyle(TWTheme.textTertiary)
+                .foregroundStyle(scheduledRunAt == nil ? TWTheme.textTertiary : TWTheme.statusAttention)
                 .padding(.top, 10)
             VStack(alignment: .leading, spacing: 3) {
-                Text("Queued #\(position)")
+                Text(scheduledCaption ?? "Queued #\(position)")
                     .font(.caption2.weight(.semibold))
                     .foregroundStyle(TWTheme.textTertiary)
                 Text(text)
@@ -4058,6 +4061,13 @@ private struct QueuedMessageBubbleRow: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.vertical, 2)
+    }
+
+    private var scheduledCaption: String? {
+        guard let date = twParseISODate(scheduledRunAt) else { return nil }
+        let formatter = DateFormatter()
+        formatter.dateFormat = Calendar.current.isDateInToday(date) ? "HH:mm" : "d MMM, HH:mm"
+        return "Scheduled \(formatter.string(from: date))"
     }
 }
 

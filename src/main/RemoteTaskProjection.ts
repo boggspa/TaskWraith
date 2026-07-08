@@ -351,6 +351,7 @@ export interface RemoteQueuedComposerPrompt {
   approvalMode?: string
   reasoningEffort?: string | null
   claudeReasoningEffort?: string | null
+  scheduledRunAt?: string
 }
 
 export interface RemoteTaskCapabilities {
@@ -1225,6 +1226,7 @@ export function buildRemoteQueuedComposerPrompts(
         ...(remote.claudeReasoningEffort !== undefined
           ? { claudeReasoningEffort: remote.claudeReasoningEffort }
           : {}),
+        ...(job.request?.scheduledRunAt ? { scheduledRunAt: job.request.scheduledRunAt } : {}),
         ...(job.createdAt ? { createdAt: job.createdAt } : {}),
         ...(job.enqueuedAt ? { enqueuedAt: job.enqueuedAt } : {})
       }

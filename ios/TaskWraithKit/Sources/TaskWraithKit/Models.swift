@@ -655,6 +655,7 @@ public struct RemoteTaskCard: Codable, Sendable {
         public let index: Int?
         public let createdAt: String?
         public let enqueuedAt: String?
+        public let scheduledRunAt: String?
     }
 
     /// Mac-projected target of a queued mid-run provider (and optional
@@ -1781,11 +1782,42 @@ public enum BridgeAction {
         approvalMode: String? = nil, workflowMode: String? = nil,
         permissionPresetId: String? = nil,
         model: String? = nil, extraWorkspaceIds: [String]? = nil,
-        reasoningEffort: String? = nil, actionId: String = UUID().uuidString
+        reasoningEffort: String? = nil,
+        actionId: String = UUID().uuidString
     ) -> [String: Any] {
         var payload: [String: Any] = [
             "kind": "composerQueuePrompt", "actionId": actionId, "workspaceId": workspaceId,
             "threadId": threadId, "provider": provider, "text": text,
+        ]
+        if let approvalMode { payload["approvalMode"] = approvalMode }
+        if let workflowMode { payload["workflowMode"] = workflowMode }
+        if let permissionPresetId { payload["permissionPresetId"] = permissionPresetId }
+        if let model { payload["model"] = model }
+        if let reasoningEffort, !reasoningEffort.isEmpty {
+            if provider.lowercased() == "claude" {
+                payload["claudeReasoningEffort"] = reasoningEffort
+            } else {
+                payload["reasoningEffort"] = reasoningEffort
+            }
+        }
+        if let extraWorkspaceIds, !extraWorkspaceIds.isEmpty {
+            payload["extraWorkspaceIds"] = extraWorkspaceIds
+        }
+        return encode(payload)
+    }
+
+    public static func composerSchedulePrompt(
+        workspaceId: String, threadId: String, provider: String, text: String,
+        scheduledRunAt: String,
+        approvalMode: String? = nil, workflowMode: String? = nil,
+        permissionPresetId: String? = nil,
+        model: String? = nil, extraWorkspaceIds: [String]? = nil,
+        reasoningEffort: String? = nil, actionId: String = UUID().uuidString
+    ) -> [String: Any] {
+        var payload: [String: Any] = [
+            "kind": "composerSchedulePrompt", "actionId": actionId, "workspaceId": workspaceId,
+            "threadId": threadId, "provider": provider, "text": text,
+            "scheduledRunAt": scheduledRunAt,
         ]
         if let approvalMode { payload["approvalMode"] = approvalMode }
         if let workflowMode { payload["workflowMode"] = workflowMode }

@@ -4210,21 +4210,32 @@ public final class RemoteSessionModel: ObservableObject {
         _ card: RemoteTaskCard, prompt: String, approvalMode: String? = nil,
         workflowMode: String? = nil, permissionPresetId: String? = nil,
         model: String? = nil, providerOverride: String? = nil,
-        reasoningEffort: String? = nil, extraWorkspaceIds: [String]? = nil
+        reasoningEffort: String? = nil, extraWorkspaceIds: [String]? = nil,
+        scheduledRunAt: String? = nil
     ) {
         guard !card.isEnsemble, let thread = card.threadId else { return }
         let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         let ws = (card.workspaceId ?? "").isEmpty ? "global" : card.workspaceId!
         guard let provider = providerOverride ?? card.provider else { return }
-        send(
-            BridgeAction.composerQueuePrompt(
+        let action =
+            scheduledRunAt == nil
+            ? BridgeAction.composerQueuePrompt(
                 workspaceId: ws, threadId: thread, provider: provider, text: trimmed,
                 approvalMode: approvalMode, workflowMode: workflowMode,
                 permissionPresetId: permissionPresetId, model: model,
                 extraWorkspaceIds: extraWorkspaceIds,
-                reasoningEffort: reasoningEffort),
-            successLabel: "Queued.")
+                reasoningEffort: reasoningEffort)
+            : BridgeAction.composerSchedulePrompt(
+                workspaceId: ws, threadId: thread, provider: provider, text: trimmed,
+                scheduledRunAt: scheduledRunAt!,
+                approvalMode: approvalMode, workflowMode: workflowMode,
+                permissionPresetId: permissionPresetId, model: model,
+                extraWorkspaceIds: extraWorkspaceIds,
+                reasoningEffort: reasoningEffort)
+        send(
+            action,
+            successLabel: scheduledRunAt == nil ? "Queued." : "Scheduled.")
         scheduleThreadRefreshAfterUserAction(thread)
     }
 
@@ -5138,7 +5149,8 @@ public final class RemoteSessionModel: ObservableObject {
         workflowMode: String? = nil,
         permissionPresetId: String? = nil,
         reasoningEffort: String? = nil,
-        imageAttachments: [[String: Any]]? = nil
+        imageAttachments: [[String: Any]]? = nil,
+        scheduledRunAt: String? = nil
     ) {
         let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         let hasAttachments = imageAttachments?.isEmpty == false
@@ -5155,15 +5167,24 @@ public final class RemoteSessionModel: ObservableObject {
             guard let self, let threadId else { return }
             self.navigationTarget = threadId
             self.rememberThreadWorkspace(threadId, workspaceId: workspaceId)
-            self.send(
-                BridgeAction.composerPrompt(
+            let action =
+                scheduledRunAt == nil
+                ? BridgeAction.composerPrompt(
                     workspaceId: workspaceId, threadId: threadId, provider: provider,
                     text: trimmed, approvalMode: approvalMode, workflowMode: workflowMode,
                     permissionPresetId: permissionPresetId,
                     model: model, reasoningEffort: reasoningEffort,
-                    imageAttachments: imageAttachments),
+                    imageAttachments: imageAttachments)
+                : BridgeAction.composerSchedulePrompt(
+                    workspaceId: workspaceId, threadId: threadId, provider: provider,
+                    text: trimmed, scheduledRunAt: scheduledRunAt!,
+                    approvalMode: approvalMode, workflowMode: workflowMode,
+                    permissionPresetId: permissionPresetId,
+                    model: model, reasoningEffort: reasoningEffort)
+            self.send(
+                action,
                 timeoutMs: 12_000,
-                successLabel: "Sent.",
+                successLabel: scheduledRunAt == nil ? "Sent." : "Scheduled.",
                 navigateToThreadId: threadId)
             self.scheduleThreadRefreshAfterUserAction(threadId)
         }

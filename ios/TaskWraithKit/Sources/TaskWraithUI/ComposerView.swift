@@ -64,6 +64,8 @@ struct Composer: View {
     @State private var inputFocused: Bool = false
     /// Drives the context-donut → context-meter popover.
     @State private var showContextMeter = false
+    /// Native iOS schedule sheet for queued future sends.
+    @State private var showScheduleSheet = false
     /// Scope-global chat — every phone-origin turn is clamped to the
     /// read-only floor by the Mac; the composer pins the picker to match.
     private var isGlobalChat: Bool {
@@ -230,6 +232,25 @@ struct Composer: View {
     private var canQueueCurrentPrompt: Bool {
         isRunActive && newTaskWorkspaceId == nil && !isEmpty && !hasImageAttachments
     }
+    private var canScheduleFromThisComposer: Bool {
+        !card.isEnsemble
+            && ((newTaskWorkspaceId?.isEmpty == false) || !(card.workspaceId ?? "").isEmpty)
+    }
+    private var scheduleValidationReason: String? {
+        if card.isEnsemble {
+            return "Ensemble scheduling is not available on iOS yet."
+        }
+        if !canScheduleFromThisComposer {
+            return "Scheduling requires a workspace-backed chat."
+        }
+        if hasImageAttachments {
+            return "Scheduled image attachments from paired devices are not supported yet."
+        }
+        if isEmpty {
+            return "Prompt required"
+        }
+        return nil
+    }
     private var catalogs: [ProviderModelCatalog] {
         let live = model.providerModels.map {
             ProviderModelCatalog(provider: $0.key, models: $0.value)
@@ -315,6 +336,16 @@ struct Composer: View {
             if selectedReasoningEffort == nil, let newValue {
                 selectedReasoningEffort = newValue
             }
+        }
+        .sheet(isPresented: $showScheduleSheet) {
+            ComposerScheduleSheet(
+                threadTitle: card.title ?? providerName,
+                validationReason: scheduleValidationReason,
+                onSchedule: { runAt in
+                    scheduleCurrent(runAt: runAt)
+                }
+            )
+            .twSheetLiquidGlass(detents: [.medium, .large])
         }
     }
 
@@ -586,6 +617,9 @@ struct Composer: View {
                 if canQueueCurrentPrompt {
                     queueButton
                 }
+                if !card.isEnsemble {
+                    scheduleButton
+                }
                 if let pct = contextUsedPercent {
                     Button {
                         showContextMeter = true
@@ -637,6 +671,24 @@ struct Composer: View {
         .buttonStyle(.plain)
         .accessibilityLabel("Queue message")
         .accessibilityHint("Queues this message behind the active run.")
+    }
+
+    private var scheduleButton: some View {
+        Button {
+            showScheduleSheet = true
+        } label: {
+            Image(systemName: "clock")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(canScheduleFromThisComposer ? TWTheme.textSecondary : TWTheme.textMuted)
+                .frame(width: 30, height: 30)
+                .background(TWTheme.surface3.opacity(0.7), in: Circle())
+                .overlay(Circle().strokeBorder(TWTheme.border.opacity(0.7)))
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .disabled(!canScheduleFromThisComposer)
+        .accessibilityLabel("Schedule message")
+        .accessibilityHint("Opens scheduling options for this message.")
     }
 
     /// Context-window fill for the donut left of the send button — the phone
@@ -924,6 +976,37 @@ struct Composer: View {
                 providerOverride: canChangeProvider ? selectedProvider : nil,
                 reasoningEffort: selectedReasoningEffort,
                 extraWorkspaceIds: extraWorkspaceIds)
+        }
+        text = ""
+    }
+
+    private func scheduleCurrent(runAt: Date) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !hasImageAttachments, canScheduleFromThisComposer else { return }
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let scheduledRunAt = formatter.string(from: runAt)
+
+        if let workspaceId = newTaskWorkspaceId, !workspaceId.isEmpty {
+            model.startTask(
+                workspaceId: workspaceId, provider: selectedProvider, prompt: trimmed,
+                model: selectedModelId,
+                approvalMode: bridgeApprovalMode,
+                workflowMode: bridgeWorkflowMode,
+                permissionPresetId: bridgePermissionPresetId,
+                reasoningEffort: selectedReasoningEffort,
+                scheduledRunAt: scheduledRunAt)
+        } else {
+            model.queueComposerPrompt(
+                card, prompt: trimmed,
+                approvalMode: bridgeApprovalMode,
+                workflowMode: bridgeWorkflowMode,
+                permissionPresetId: bridgePermissionPresetId,
+                model: selectedModelId,
+                providerOverride: canChangeProvider ? selectedProvider : nil,
+                reasoningEffort: selectedReasoningEffort,
+                extraWorkspaceIds: extraWorkspaceIds,
+                scheduledRunAt: scheduledRunAt)
         }
         text = ""
     }
