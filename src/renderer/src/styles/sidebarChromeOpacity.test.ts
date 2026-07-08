@@ -27,7 +27,7 @@ describe('sidebar chrome fixed opacity CSS', () => {
     expect(fillLine, 'Missing --sidebar-chrome-fixed-bg token').toBeTruthy()
     // Derived from --sidebar-chrome-color, NOT --sidebar-bg-solid (which stays the
     // list surface colour) and NOT --sidebar-bg (transparent in native_glass).
-    expect(fillLine).toContain('var(--sidebar-chrome-color) 85%')
+    expect(fillLine).toContain('var(--sidebar-chrome-color) 95%')
     expect(fillLine).not.toContain('--sidebar-bg-solid')
     expect(fillLine).not.toContain('var(--sidebar-bg)')
     // Dark default is the requested #1D1D1C.
@@ -35,6 +35,18 @@ describe('sidebar chrome fixed opacity CSS', () => {
       (line) => line.includes('--sidebar-chrome-color:') && line.includes('#1d1d1c')
     )
     expect(darkColor, 'Missing dark --sidebar-chrome-color: #1d1d1c').toBeTruthy()
+  })
+
+  it('shares one theme-adaptive rim token across the chrome sections', () => {
+    const theme = readRepoFile('src/renderer/src/styles/theme.css')
+    // Light rim on the dark default, dark rim on the light-family flip.
+    expect(theme).toContain('--sidebar-chrome-rim: rgba(255, 255, 255, 0.08)')
+    expect(theme).toContain('--sidebar-chrome-rim: rgba(18, 21, 27, 0.08)')
+    const band = cssBlockStartingAt(
+      readCss('05-polish-fx-layouts.css'),
+      '.app-sidebar .sidebar-top-chrome {'
+    )
+    expect(band).toContain('inset 0 0 0 1px var(--sidebar-chrome-rim)')
   })
 
   it('paints the masthead with the fixed chrome token (no longer transparent)', () => {

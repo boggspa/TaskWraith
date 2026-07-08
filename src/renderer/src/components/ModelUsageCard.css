@@ -225,7 +225,8 @@
   border-style: solid;
   border-color: color-mix(in srgb, var(--sidebar-border) 62%, transparent);
   background: color-mix(in srgb, var(--text-primary) 3%, transparent);
-  box-shadow: none;
+  /* Subtle theme-adaptive rim, shared with the other fixed chrome sections. */
+  box-shadow: inset 0 0 0 1px var(--sidebar-chrome-rim);
 }
 
 .app-sidebar .model-usage-summary--sidebar .model-usage-collapsible {
@@ -352,7 +353,7 @@
   background:
     linear-gradient(180deg, color-mix(in srgb, var(--text-primary) 4%, transparent), transparent),
     color-mix(in srgb, var(--sidebar-bg) 20%, transparent);
-  box-shadow: none;
+  /* box-shadow inherited from the base rule's rim (was: none). */
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }

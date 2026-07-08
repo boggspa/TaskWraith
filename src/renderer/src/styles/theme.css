@@ -35,11 +35,16 @@
    * --sidebar-bg-solid because that also colours the workspace/threads list
    * surface, which must stay on the user's opacity. */
   --sidebar-chrome-color: #1d1d1c; /* rgb(29, 29, 28) */
-  /* Fixed 85% fill derived from the chrome colour, held independent of the user's
+  /* Subtle rim-highlight paired with --sidebar-chrome-color: a light inset edge on
+   * the dark default, flipped dark wherever the chrome flips light (light-family +
+   * obsidian below). Its own token (not --sidebar-border, which is tuned for list
+   * dividers) so one rim is shared identically across all three chrome regions. */
+  --sidebar-chrome-rim: rgba(255, 255, 255, 0.08);
+  /* Fixed 95% fill derived from the chrome colour, held independent of the user's
    * sidebar-opacity slider (that governs only the .app-sidebar list surface).
    * color-mix on the always-opaque chrome colour, NOT --sidebar-bg (which is
    * literally `transparent` in native_glass). */
-  --sidebar-chrome-fixed-bg: color-mix(in srgb, var(--sidebar-chrome-color) 85%, transparent);
+  --sidebar-chrome-fixed-bg: color-mix(in srgb, var(--sidebar-chrome-color) 95%, transparent);
   --sidebar-border: rgba(255, 255, 255, 0.06);
   --sidebar-text: rgba(255, 255, 255, 0.85);
   --sidebar-text-secondary: rgba(255, 255, 255, 0.5);
@@ -315,6 +320,7 @@
  * block below. */
 :is([data-theme="light"], [data-theme="citrus"], [data-theme="mist"], [data-theme="sage"]) {
   --sidebar-chrome-color: var(--sidebar-bg-solid);
+  --sidebar-chrome-rim: rgba(18, 21, 27, 0.08);
 }
 
 /* Theme palettes ported from the Swift shared theme choices */
@@ -834,6 +840,7 @@
   --sidebar-bg: rgba(238, 242, 247, 0.06);
   --sidebar-bg-solid: #eef2f7;
   --sidebar-chrome-color: var(--sidebar-bg-solid);
+  --sidebar-chrome-rim: rgba(18, 21, 27, 0.08);
   --sidebar-text: rgba(18, 21, 27, 0.86);
   --sidebar-text-secondary: rgba(18, 21, 27, 0.54);
   --sidebar-border: rgba(18, 21, 27, 0.14);

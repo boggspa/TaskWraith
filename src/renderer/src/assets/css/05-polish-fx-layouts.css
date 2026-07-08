@@ -356,6 +356,7 @@
 [data-appearance="solid"] .app-sidebar .sidebar-footer {
   background: color-mix(in srgb, var(--app-bg-elevated) 92%, transparent);
   border-top-color: color-mix(in srgb, var(--sidebar-border) 80%, transparent);
+  box-shadow: inset 0 0 0 1px var(--sidebar-chrome-rim);
 }
 [data-appearance="soft_glass"] .app-sidebar .sidebar-footer {
   background: color-mix(in srgb, var(--sidebar-bg) 36%, transparent);
@@ -369,7 +370,7 @@
    * (which we close below via the card's margin-bottom override). */
   border-top-color: rgba(255, 255, 255, 0.08);
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    inset 0 0 0 1px var(--sidebar-chrome-rim),
     0 -4px 18px -8px rgba(0, 0, 0, 0.25);
 }
 [data-appearance="native_glass"] .app-sidebar .sidebar-footer {
@@ -377,7 +378,7 @@
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
   border-top-color: rgba(255, 255, 255, 0.10);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  box-shadow: inset 0 0 0 1px var(--sidebar-chrome-rim);
 }
 
 /* EW3b — Close the gap between the model-usage card and the
@@ -1961,6 +1962,8 @@
   margin: 0 calc(var(--space-md) * -1) -10px;
   padding: 0 var(--space-md) 10px;
   background: var(--sidebar-chrome-fixed-bg);
+  /* Subtle theme-adaptive rim wrapping the band's edges. */
+  box-shadow: inset 0 0 0 1px var(--sidebar-chrome-rim);
 }
 
 /* Reach the content's top edge too (no plain strip above the masthead) — but only
