@@ -319,7 +319,7 @@ export function PopoutApp() {
               {status}
             </span>
             <button
-              className="btn btn-sm"
+              className="segmented-control-action segmented-control-action--compact segmented-control-action--primary"
               type="button"
               onClick={() => void refreshDiff()}
               aria-label={`Refresh diff for ${workspaceName}`}

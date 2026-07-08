@@ -55,11 +55,12 @@ export function FileEditorGitActions({
       : stagedCount > 0
         ? `Commit ${stagedCount} staged file${stagedCount === 1 ? '' : 's'}`
         : 'No staged files'
+  const actionClass = 'segmented-control-action segmented-control-action--compact'
 
   return (
     <div className="file-editor-actions">
       <button
-        className="btn btn-sm btn-ghost"
+        className={`${actionClass} segmented-control-action--danger`}
         type="button"
         onClick={onDeleteRequest}
         disabled={!workspacePath || !selectedPath || isDirty || isLoading}
@@ -69,7 +70,7 @@ export function FileEditorGitActions({
         Delete
       </button>
       <button
-        className="btn btn-sm btn-ghost"
+        className={actionClass}
         type="button"
         onClick={() => void onStage()}
         disabled={
@@ -81,7 +82,7 @@ export function FileEditorGitActions({
         Stage
       </button>
       <button
-        className="btn btn-sm btn-ghost"
+        className={actionClass}
         type="button"
         onClick={() => void onUnstage()}
         disabled={!workspacePath || !selectedPath || isLoading || !selectedHasStagedChanges}
@@ -91,7 +92,7 @@ export function FileEditorGitActions({
         Unstage
       </button>
       <button
-        className="btn btn-sm btn-ghost"
+        className={actionClass}
         type="button"
         onClick={onCommitRequest}
         disabled={commitDisabled}
@@ -101,7 +102,7 @@ export function FileEditorGitActions({
         Commit
       </button>
       <button
-        className="btn btn-sm btn-ghost"
+        className={actionClass}
         type="button"
         onClick={() => void onReloadSelected()}
         disabled={!workspacePath || !selectedPath || isLoading}
@@ -115,7 +116,7 @@ export function FileEditorGitActions({
         Reload
       </button>
       <button
-        className="btn btn-sm btn-ghost"
+        className={actionClass}
         type="button"
         onClick={() => void onRevealInTree()}
         disabled={!workspacePath || !selectedPath || isLoading}
@@ -127,7 +128,7 @@ export function FileEditorGitActions({
       </button>
       {onShowInDiff && (
         <button
-          className="btn btn-sm btn-ghost"
+          className={actionClass}
           type="button"
           onClick={onShowInDiff}
           disabled={!workspacePath || !selectedPath || isLoading}
@@ -139,7 +140,7 @@ export function FileEditorGitActions({
         </button>
       )}
       <button
-        className="btn btn-sm btn-ghost"
+        className={actionClass}
         type="button"
         onClick={onOpenQuickOpen}
         disabled={!workspacePath || isLoading}
@@ -149,7 +150,7 @@ export function FileEditorGitActions({
         Quick Open
       </button>
       <button
-        className="btn btn-sm btn-ghost"
+        className={actionClass}
         type="button"
         onClick={onToggleLineWrap}
         aria-pressed={lineWrapEnabled}
@@ -159,7 +160,7 @@ export function FileEditorGitActions({
         Wrap
       </button>
       <button
-        className="btn btn-sm btn-ghost"
+        className={actionClass}
         type="button"
         onClick={() => void onSaveAll()}
         disabled={!workspacePath || dirtyBufferCount === 0 || isLoading}
@@ -174,7 +175,7 @@ export function FileEditorGitActions({
         Save All
       </button>
       <button
-        className="btn btn-sm"
+        className={`${actionClass} segmented-control-action--primary`}
         type="button"
         onClick={() => void onSave()}
         disabled={!workspacePath || !selectedPath || !isDirty || isLoading}

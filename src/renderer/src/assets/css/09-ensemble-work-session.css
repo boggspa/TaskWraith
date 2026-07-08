@@ -3560,6 +3560,21 @@
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 13%, transparent);
 }
 
+.popout-root[data-popout-family="workspace"] .segmented-control-action {
+  --segmented-action-foreground: var(--text-primary);
+  --segmented-action-border: var(--popout-pill-border);
+  --segmented-action-bg: var(--popout-control-bg);
+  --segmented-action-hover-bg: color-mix(in srgb, var(--accent) 12%, var(--popout-control-bg));
+}
+
+.popout-root[data-popout-family="workspace"] .segmented-control-action--primary {
+  --segmented-action-foreground: var(--accent);
+  --segmented-action-border: color-mix(in srgb, var(--accent) 70%, var(--popout-rim));
+  --segmented-action-bg: color-mix(in srgb, var(--accent) 70%, transparent);
+  --segmented-action-hover-bg: color-mix(in srgb, var(--accent) 82%, transparent);
+  color: var(--popout-primary-action-text);
+}
+
 .popout-root[data-popout-family="workspace"] .diff-stage-count-chip > strong {
   color: var(--text-primary);
 }

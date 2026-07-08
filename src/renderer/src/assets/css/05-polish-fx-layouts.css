@@ -407,12 +407,12 @@
 /* Inspector polish                                                        */
 /* ====================================================================== */
 
-/* --- Tabs: segmented control with smoother active pill --------------- */
+/* --- Inspector view buttons ----------------------------------------- */
 .app-inspector .inspector-tabs {
   padding: 8px 10px;
   gap: 4px;
-  /* 1.5: labels restored — the 7 sub-tabs wrap instead of collapsing to
-     cryptic icon-only glyphs. Neutral segmented control on --rightdock tokens. */
+  /* Labels restored — the 7 sub-views wrap instead of collapsing to
+     cryptic icon-only glyphs. Each item is a button, not a toggle switch. */
   flex-wrap: wrap;
   background: color-mix(in srgb, var(--panel-elevated-bg) 55%, transparent);
   border-bottom: 1px solid color-mix(in srgb, var(--panel-border) 70%, transparent);
@@ -421,6 +421,10 @@
 
 .app-inspector .inspector-tab {
   /* Override the bare icon-only 28x28 square (03-…:9388) so icon + label fit. */
+  --segmented-action-foreground: var(--text-primary);
+  --segmented-action-border: color-mix(in srgb, var(--text-primary) 12%, var(--panel-border));
+  --segmented-action-bg: color-mix(in srgb, var(--text-primary) 5%, transparent);
+  --segmented-action-hover-bg: color-mix(in srgb, var(--text-primary) 8%, transparent);
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -428,12 +432,14 @@
   height: auto;
   min-height: 28px;
   padding: 5px 10px;
-  border-radius: var(--rightdock-radius-row, 6px);
   font-size: var(--font-size-xs);
   font-weight: 550;
-  letter-spacing: 0.005em;
+  letter-spacing: 0;
   color: color-mix(in srgb, var(--text-secondary) 92%, transparent);
-  transition: color 0.14s ease, background 0.14s ease, box-shadow 0.14s ease;
+  transition:
+    color 0.14s ease,
+    background 0.14s ease,
+    box-shadow 0.14s ease;
 }
 
 .app-inspector .inspector-tab-icon {
@@ -448,7 +454,6 @@
 
 .app-inspector .inspector-tab:hover {
   color: var(--text-primary);
-  background: color-mix(in srgb, var(--text-primary) 5%, transparent);
 }
 
 .app-inspector .inspector-tab.active {

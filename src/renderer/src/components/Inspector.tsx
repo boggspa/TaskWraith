@@ -414,7 +414,7 @@ export function Inspector(props: InspectorProps) {
             key={tab.id}
             type="button"
             role="tab"
-            className={`inspector-tab ${props.rightTab === tab.id ? 'active' : ''}`}
+            className={`segmented-control-action segmented-control-action--compact inspector-tab ${props.rightTab === tab.id ? 'active' : ''}`}
             onClick={() => props.setRightTab(tab.id)}
             title={tab.label}
             aria-label={tab.label}

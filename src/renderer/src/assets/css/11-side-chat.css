@@ -671,8 +671,8 @@
   border-bottom: 1px solid var(--rightdock-border);
 }
 
-.right-dock-panel-header button,
-.run-rail-actions button {
+.right-dock-panel-header button:not(.segmented-control-action),
+.run-rail-actions button:not(.segmented-control-action) {
   min-height: 28px;
   display: inline-flex;
   align-items: center;
@@ -686,14 +686,23 @@
   cursor: pointer;
 }
 
-.right-dock-panel-header button {
+.right-dock-panel-header button:not(.segmented-control-action) {
   padding: 0 9px;
 }
 
-.right-dock-panel-header button:hover,
-.run-rail-actions button:hover:not(:disabled) {
+.right-dock-panel-header button:not(.segmented-control-action):hover,
+.run-rail-actions button:not(.segmented-control-action):hover:not(:disabled) {
   color: var(--text-primary);
   border-color: color-mix(in srgb, var(--accent) 34%, var(--panel-border));
+}
+
+.right-dock-panel-header .segmented-control-action,
+.run-rail-actions .segmented-control-action {
+  --segmented-action-foreground: var(--text-primary);
+  --segmented-action-border: var(--rightdock-border);
+  --segmented-action-bg: var(--rightdock-surface-raised);
+  --segmented-action-hover-bg: color-mix(in srgb, var(--accent) 10%, var(--rightdock-surface-raised));
+  color: var(--text-secondary);
 }
 
 .right-dock-media-panel {
@@ -1626,7 +1635,7 @@
   flex-wrap: wrap;
 }
 
-.run-rail-actions button {
+.run-rail-actions button:not(.segmented-control-action) {
   padding: 0 8px;
 }
 

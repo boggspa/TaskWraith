@@ -1009,7 +1009,7 @@ export function TaskWraithWorkbench({
           </nav>
           <div className="workbench-actions">
             <button
-              className="btn btn-sm btn-ghost"
+              className="segmented-control-action segmented-control-action--compact"
               type="button"
               onClick={() => dispatchEditorCommand('quick-open')}
               disabled={editorBusy}
@@ -1019,7 +1019,7 @@ export function TaskWraithWorkbench({
               Quick Open
             </button>
             <button
-              className="btn btn-sm btn-ghost"
+              className="segmented-control-action segmented-control-action--compact"
               type="button"
               onClick={() => dispatchEditorCommand('save-all')}
               disabled={editorState.dirtyBufferCount === 0 || editorBusy}
@@ -1037,7 +1037,7 @@ export function TaskWraithWorkbench({
             {(activeView === 'editor' || activeView === 'split') && (
               <>
                 <button
-                  className="btn btn-sm btn-ghost"
+                  className="segmented-control-action segmented-control-action--compact"
                   type="button"
                   onClick={() => dispatchEditorCommand('reveal-selected')}
                   disabled={!editorState.selectedPath || editorBusy}
@@ -1056,7 +1056,7 @@ export function TaskWraithWorkbench({
                   Reveal
                 </button>
                 <button
-                  className="btn btn-sm btn-ghost"
+                  className="segmented-control-action segmented-control-action--compact"
                   type="button"
                   onClick={() => dispatchEditorCommand('toggle-wrap')}
                   disabled={editorBusy}
@@ -1072,7 +1072,7 @@ export function TaskWraithWorkbench({
             )}
             {(activeView === 'editor' || activeView === 'split') && (
               <button
-                className="btn btn-sm btn-ghost"
+                className="segmented-control-action segmented-control-action--compact"
                 type="button"
                 onClick={() => {
                   if (editorDiffActionPath) showFileInDiff(editorDiffActionPath)
@@ -1095,7 +1095,7 @@ export function TaskWraithWorkbench({
             )}
             {diffEditorActionPath && (
               <button
-                className="btn btn-sm btn-ghost"
+                className="segmented-control-action segmented-control-action--compact"
                 type="button"
                 onClick={() => openFileInEditor(diffEditorActionPath)}
                 disabled={editorBusy}
@@ -1109,7 +1109,11 @@ export function TaskWraithWorkbench({
             <span className="workbench-status" role="status" aria-live="polite">
               {workbenchStatus}
             </span>
-            <button className="btn btn-sm" type="button" onClick={refreshActiveView}>
+            <button
+              className="segmented-control-action segmented-control-action--compact segmented-control-action--primary"
+              type="button"
+              onClick={refreshActiveView}
+            >
               Refresh
             </button>
           </div>

@@ -1534,7 +1534,11 @@ export function ChatMediaDockPanel({
           <span className="right-dock-kicker">Media</span>
           <strong>Uploads and paths</strong>
         </div>
-        <button type="button" onClick={onClose}>
+        <button
+          type="button"
+          className="segmented-control-action segmented-control-action--compact"
+          onClick={onClose}
+        >
           Close
         </button>
       </header>

@@ -214,6 +214,7 @@ export function RunRailPanel({
   const localAnalysis = useMemo(() => buildLocalAnalysis(source, replay), [source, replay])
   const displayedAnalysis = analysis || storedAnalysis || localAnalysis
   const openHandoffs = handoffCards.filter((card) => card.status === 'draft')
+  const actionClass = 'segmented-control-action segmented-control-action--compact'
   const activeCount = lanes.filter((lane) => lane.phase === 'active').length
   const waitingCount = lanes.filter((lane) =>
     lane.phase === 'queued' || lane.phase === 'scheduled' || lane.phase === 'paused'
@@ -355,6 +356,7 @@ export function RunRailPanel({
                   {row.previewUrl && (
                     <button
                       type="button"
+                      className={actionClass}
                       onClick={() => {
                         if (row.previewUrl) void window.api.openExternalOrPath(row.previewUrl)
                       }}
@@ -363,12 +365,17 @@ export function RunRailPanel({
                     </button>
                   )}
                   {row.chatId && (
-                    <button type="button" onClick={() => onOpenThread(row.chatId)}>
+                    <button
+                      type="button"
+                      className={actionClass}
+                      onClick={() => onOpenThread(row.chatId)}
+                    >
                       Thread
                     </button>
                   )}
                   <button
                     type="button"
+                    className={actionClass}
                     onClick={() => void handleStopLaunch(row)}
                     disabled={!row.canStop}
                   >
@@ -467,30 +474,58 @@ export function RunRailPanel({
           <div className="run-rail-empty">Select a recorded run to analyze it.</div>
         )}
         <div className="run-rail-actions">
-          <button type="button" onClick={handleAnalyze} disabled={!runId || analysisBusy}>
+          <button
+            type="button"
+            className={actionClass}
+            onClick={handleAnalyze}
+            disabled={!runId || analysisBusy}
+          >
             <ReviewSymbolIcon />
             <span>{analysisBusy ? 'Analyzing' : 'Local AI'}</span>
           </button>
           {source.lane && (
             <>
-              <button type="button" onClick={() => onOpenThread(source.lane?.chatId)}>
+              <button
+                type="button"
+                className={actionClass}
+                onClick={() => onOpenThread(source.lane?.chatId)}
+              >
                 <RunSymbolIcon />
                 <span>Open</span>
               </button>
               <button
                 type="button"
+                className={actionClass}
                 onClick={() => source.lane && onCancelRun(source.lane)}
-                disabled={!source.lane.runId || !['active', 'queued', 'paused'].includes(source.lane.phase)}
+                disabled={
+                  !source.lane.runId ||
+                  !['active', 'queued', 'paused'].includes(source.lane.phase)
+                }
               >
                 Cancel
               </button>
-              <button type="button" onClick={() => source.lane && onRetryRun(source.lane)} disabled={!source.lane.runId}>
+              <button
+                type="button"
+                className={actionClass}
+                onClick={() => source.lane && onRetryRun(source.lane)}
+                disabled={!source.lane.runId}
+              >
                 Retry
               </button>
-              <button type="button" onClick={() => source.lane && onDuplicateRun(source.lane)} disabled={!source.lane.chatId}>
+              <button
+                type="button"
+                className={actionClass}
+                onClick={() => source.lane && onDuplicateRun(source.lane)}
+                disabled={!source.lane.chatId}
+              >
                 Duplicate
               </button>
-              <button type="button" onClick={() => source.lane && onCreateHandoff(source.lane)} disabled={!source.lane.runId || !source.lane.chatId}>
+              <button
+                type="button"
+                className={actionClass}
+                onClick={() => source.lane && onCreateHandoff(source.lane)}
+                disabled={!source.lane.runId || !source.lane.chatId}
+              >
                 Handoff
               </button>
             </>
@@ -525,13 +560,25 @@ export function RunRailPanel({
                 <strong>{getProviderLabel(card.sourceProvider)} handoff</strong>
                 <p>{compactPromptPreview(card.summary || card.finalPrompt)}</p>
                 <div className="run-rail-actions">
-                  <button type="button" onClick={() => onOpenThread(card.sourceChatId)}>
+                  <button
+                    type="button"
+                    className={actionClass}
+                    onClick={() => onOpenThread(card.sourceChatId)}
+                  >
                     Source
                   </button>
-                  <button type="button" onClick={() => onDispatchHandoff(card)}>
+                  <button
+                    type="button"
+                    className={actionClass}
+                    onClick={() => onDispatchHandoff(card)}
+                  >
                     Dispatch
                   </button>
-                  <button type="button" onClick={() => onArchiveHandoff(card)}>
+                  <button
+                    type="button"
+                    className={actionClass}
+                    onClick={() => onArchiveHandoff(card)}
+                  >
                     Archive
                   </button>
                 </div>

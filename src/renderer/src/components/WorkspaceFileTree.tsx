@@ -264,7 +264,7 @@ export function WorkspaceFileTree({
       <div className="file-editor-header">
         <strong>Files</strong>
         <button
-          className="btn btn-sm btn-ghost"
+          className="segmented-control-action segmented-control-action--compact"
           type="button"
           onClick={() => void onRefresh()}
           disabled={!workspacePath || isListLoading}
