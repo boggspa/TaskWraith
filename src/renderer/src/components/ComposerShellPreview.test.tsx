@@ -133,7 +133,7 @@ describe('ComposerShellPreview — per-shell send glyph', () => {
       const html = render(style)
       if (textActionShells.has(style)) {
         expect(html, style).toContain('class="composer-above-bar-action"')
-        expect(html, style).toContain('Review changes')
+        expect(html, style).toContain(style === 'claude' ? 'Create PR' : 'Review changes')
         expect(html, style).not.toContain('composer-above-bar-action--git-commit-icon')
         expect(html, style).not.toContain('composer-git-commit-trigger-icon')
       } else {
@@ -143,6 +143,19 @@ describe('ComposerShellPreview — per-shell send glyph', () => {
         expect(html, style).toContain('composer-git-commit-trigger-icon')
       }
     }
+  })
+
+  it('renders the Claude Create PR action as a text pill rather than an icon action', () => {
+    const html = render('claude')
+    const actionPill = html.match(
+      /<div class="composer-above-bar-pill composer-above-bar-pill--action">(.*?)<\/div>/s
+    )?.[1]
+
+    expect(actionPill).toContain('class="composer-above-bar-action"')
+    expect(actionPill).toContain('Create PR')
+    expect(actionPill).not.toContain('Review changes')
+    expect(actionPill).not.toContain('composer-above-bar-action--git-commit-icon')
+    expect(actionPill).not.toContain('composer-git-commit-trigger-icon')
   })
 
   it('renders the above-row branch label without italic emphasis markup', () => {

@@ -29,7 +29,7 @@ describe('Claude composer queued message CSS', () => {
       '[data-composer-style="claude"] .queued-messages-row {'
     )
 
-    expect(shellBlock).toContain('border-radius: 12px;')
+    expect(shellBlock).toContain('border-radius: 14px;')
     expect(itemBlock).toContain('border-radius: 8px;')
     expect(shellBlock).not.toContain('calc(var(--radius-lg) * 1.6)')
     expect(itemBlock).not.toContain('border-radius: 999px')

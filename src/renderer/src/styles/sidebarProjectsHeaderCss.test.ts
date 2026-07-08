@@ -17,7 +17,7 @@ const cssBlockStartingAt = (source: string, selector: string): string => {
 }
 
 describe('sidebar Projects header CSS', () => {
-  it('includes the Projects tab header in the glass section-title treatment', () => {
+  it('includes the Projects tab header in the bare-title treatment and glass toggle chrome', () => {
     const css = readCss()
 
     const resetBlock = cssBlockStartingAt(
@@ -28,18 +28,22 @@ describe('sidebar Projects header CSS', () => {
       css,
       '.app-sidebar .sidebar-active-runs-section .sidebar-section-title,'
     )
-    const nativeTitleBlock = cssBlockStartingAt(
+    const nativeToggleBlock = cssBlockStartingAt(
       css,
-      '[data-appearance="native_glass"][data-reduce-transparency="false"] .app-sidebar .sidebar-active-runs-section .sidebar-section-title,'
+      '[data-appearance="native_glass"][data-reduce-transparency="false"] .app-sidebar .sidebar-section-header-toggle {'
     )
 
     expect(resetBlock).toContain('.app-sidebar .sidebar-projects-view .sidebar-section-header')
     expect(titleBlock).toContain('.app-sidebar .sidebar-projects-header .sidebar-section-title')
     expect(titleBlock).toContain('font-family:')
     expect(titleBlock).toContain('text-transform: none')
-    expect(titleBlock).toContain('border-radius: var(--composer-bubble-radius, 18px)')
-    expect(nativeTitleBlock).toContain(
-      '[data-appearance="native_glass"][data-reduce-transparency="false"] .app-sidebar .sidebar-projects-header .sidebar-section-title'
+    expect(titleBlock).toContain('border-radius: 0')
+    expect(titleBlock).toContain('background: none')
+    expect(nativeToggleBlock).toContain(
+      'background: color-mix(in srgb, #ffffff 13%, transparent) !important'
+    )
+    expect(nativeToggleBlock).toContain(
+      'border-color: color-mix(in srgb, #ffffff 24%, transparent) !important'
     )
   })
 })
