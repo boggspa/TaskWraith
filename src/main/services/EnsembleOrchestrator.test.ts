@@ -12764,3 +12764,71 @@ describe('post-round host seat auto-compaction (maybeAutoCompactSeatsAfterRound)
     expect(h.compactSeatContext).toHaveBeenCalledTimes(1)
   })
 })
+
+describe('I-drop regression — leading assistant content delta preservation', () => {
+  // GH2 `sidequest-i-drop-fix-plan`: three REAL captured content-delta streams
+  // (Codex / Kimi / Grok) where a mid-stream delta ("I" / "I" / "Review") vanished
+  // from the persisted transcript ("IpcValidation"→"pcValidation",
+  // "useScopedIpc.ts"→"useScopedpc.ts", "\n\nReviewed"→"\n\ned"). The raw wire
+  // captured at sendAgentCompatLine was complete in every case, so the drop is
+  // DOWNSTREAM of extraction. This replays each stream through the orchestrator's
+  // SYNCHRONOUS apply path (handleProviderOutput → appendProviderContent →
+  // flushRun) to localise the drop there — or, if the joined text survives every
+  // delta, to EXONERATE that path and redirect the investigation to the
+  // async/persistence lane. Provider label is irrelevant: the content branch is
+  // provider-agnostic, so all three replay as the first (default) participant.
+  const CASES: Array<{ name: string; deltas: string[]; mustContain: string; brokenIf: string }> = [
+    {
+      name: 'Codex — dropped leading "I" in `IpcValidation`',
+      deltas: ['The', ' focused', ' tests', ' pass', ',', ' and', ' `', 'I', 'pc', 'Validation', '` passes.'],
+      mustContain: '`IpcValidation`',
+      brokenIf: '`pcValidation'
+    },
+    {
+      name: 'Kimi — dropped leading "I" in useScopedIpc.ts',
+      deltas: ['/src', '/h', 'ooks', '/use', 'Scoped', 'I', 'pc', '.ts'],
+      mustContain: 'useScopedIpc.ts',
+      brokenIf: 'useScopedpc.ts'
+    },
+    {
+      name: 'Grok — dropped leading word "Review" in Reviewed',
+      deltas: [')**\n\n', 'Review', 'ed', ' the frozen diff:'],
+      mustContain: '\n\nReviewed',
+      brokenIf: '\n\ned'
+    }
+  ]
+
+  for (const testCase of CASES) {
+    it(`preserves every content delta — ${testCase.name}`, async () => {
+      const harness = makeHarness()
+      harness.orchestrator.startRound({
+        chatId: 'ensemble-chat',
+        prompt: 'go',
+        event: { sender: {} as Electron.WebContents }
+      })
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+      const runId = harness.dispatched[0].appRunId!
+      const route = { appRunId: runId, appChatId: 'ensemble-chat' }
+      const provider = harness.chat.ensemble!.participants[0].provider
+
+      for (const delta of testCase.deltas) {
+        harness.orchestrator.handleProviderOutput(provider, route, {
+          type: 'content',
+          text: delta
+        })
+      }
+
+      const findMessage = () =>
+        harness.chat.messages.find(
+          (m) => m.role === 'assistant' && m.metadata?.kind === 'ensembleParticipant'
+        )
+      await vi.waitFor(() => expect(findMessage()?.content).toBeTruthy())
+
+      const content = findMessage()?.content ?? ''
+      // The whole point: no content delta may be dropped from the transcript.
+      expect(content).toContain(testCase.mustContain)
+      expect(content).not.toContain(testCase.brokenIf)
+      expect(content).toBe(testCase.deltas.join(''))
+    })
+  }
+})
