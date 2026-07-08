@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" role="img" aria-labelledby="context-compaction-monoline-title context-compaction-monoline-desc" style="color: currentColor; --context-compaction-accent: currentColor;">
+  <title id="context-compaction-monoline-title">Context compaction</title>
+  <desc id="context-compaction-monoline-desc">Original monoline participant context rows compressing into a tighter center stack.</desc>
+  <style>
+    .line {
+      fill: none;
+      stroke: var(--context-compaction-accent);
+      stroke-width: 6.2;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      vector-effect: non-scaling-stroke;
+    }
+
+    .fine {
+      stroke-width: 4.72;
+      opacity: 0.74;
+    }
+
+    .arrow {
+      stroke-width: 7.6;
+    }
+
+    .dot {
+      fill: var(--context-compaction-accent);
+      stroke: none;
+    }
+  </style>
+
+  <path class="line" d="M5.2 4.7h13.6c.9 0 1.5.6 1.5 1.5v11.6c0 .9-.6 1.5-1.5 1.5H5.2c-.9 0-1.5-.6-1.5-1.5V6.2c0-.9.6-1.5 1.5-1.5Z"/>
+  <circle class="dot" cx="6.9" cy="8.1" r=".58"/>
+  <circle class="dot" cx="6.9" cy="12" r=".58"/>
+  <circle class="dot" cx="6.9" cy="15.9" r=".58"/>
+  <path class="line fine" d="M9.2 8.1h5.7"/>
+  <path class="line fine" d="M9.2 12h4.5"/>
+  <path class="line fine" d="M9.2 15.9h5.7"/>
+  <path class="line arrow" d="M17.35 7.15v2.55"/>
+  <path class="line arrow" d="m16.2 8.55 1.15 1.15 1.15-1.15"/>
+  <path class="line arrow" d="M17.35 16.85V14.3"/>
+  <path class="line arrow" d="m16.2 15.45 1.15-1.15 1.15 1.15"/>
+  <path class="line fine" d="M15.85 12h3"/>
+</svg>
