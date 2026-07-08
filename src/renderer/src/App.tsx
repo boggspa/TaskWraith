@@ -314,6 +314,7 @@ import { useChangelog } from './hooks/useChangelog'
 import { useLaunchAttempts } from './hooks/useLaunchAttempts'
 import { useWorkspaceLaunchTargets } from './hooks/useWorkspaceLaunchTargets'
 import { useScopedIpc } from './hooks/useScopedIpc'
+import { useChatMutations } from './state/useChatMutations'
 import {
   filterDispatchExternalPathGrants,
   findExternalPathGrantGaps,
@@ -1018,6 +1019,7 @@ function App(): React.JSX.Element {
   const remoteAccessNavRanRef = useRef(false)
 
   const [chats, setChats] = useState<ChatRecord[]>([])
+  const chatMutations = useChatMutations(setChats)
   const [currentChat, setCurrentChat] = useState<ChatRecord | null>(null)
   const [contextCompactionProgressByKey, setContextCompactionProgressByKey] = useState<
     Record<string, ContextCompactionProgressState>
@@ -7009,7 +7011,7 @@ function App(): React.JSX.Element {
         ? window.confirm("Delete this chat? This can't be undone.")
         : true
     if (!ok) return
-    setChats((prev) => prev.filter((chat) => chat.appChatId !== chatId))
+    chatMutations.removeChat(chatId)
     chatByIdRef.current.delete(chatId)
     if (currentChat?.appChatId === chatId) {
       setCurrentChat(null)
