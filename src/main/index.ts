@@ -518,7 +518,6 @@ import {
   ChatRecord,
   ChatMessage,
   ChatRun,
-  ActiveGoal,
   ChatScope,
   ChatWorkflowMode,
   ToolActivity,
@@ -589,8 +588,6 @@ import {
   imageAttachmentSnapshots,
   isAppearanceMode,
   isRecord,
-  normalizeAuditRunIdentity,
-  normalizeEnsembleRunIdentity,
   optionalNumber,
   optionalString,
   optionalStringOrNull,
@@ -627,11 +624,15 @@ import {
 import { isReconRunPosture } from './ReconPosture'
 import {
   buildRunPermissionPostureSnapshot,
-  clampUntrustedRunPosture,
+  runPostureContextFromPayload,
   signRunPermissionPosture,
   verifyRunPermissionPosture,
   type RunPermissionPostureContext
 } from './RunPermissionPosture'
+import {
+  normalizeAgentRunPayload,
+  type AgentRunNormalizerDeps
+} from './run/AgentRunNormalizer'
 import {
   buildUnattendedElevationAck,
   isUnattendedElevationAckCurrent,
@@ -4688,48 +4689,6 @@ function saveScheduledTaskWithSignedPosture(
   })
 }
 
-function runPostureContextFromPayload(payload: {
-  provider?: unknown
-  scope?: unknown
-  appRunId?: unknown
-  appChatId?: unknown
-  prompt?: unknown
-  workflowMode?: unknown
-  runtimeProfileId?: unknown
-  ensembleRun?: unknown
-}): RunPermissionPostureContext {
-  const ensembleRun = isRecord(payload.ensembleRun) ? payload.ensembleRun : null
-  return {
-    provider: optionalString(payload.provider),
-    scope: optionalString(payload.scope),
-    appRunId: optionalString(payload.appRunId),
-    appChatId: optionalString(payload.appChatId),
-    prompt: typeof payload.prompt === 'string' ? payload.prompt : String(payload.prompt ?? ''),
-    workflowMode: payload.workflowMode === 'plan' ? 'plan' : 'normal',
-    runtimeProfileId: optionalString(payload.runtimeProfileId),
-    ensembleParticipantId: ensembleRun ? optionalString(ensembleRun.participantId) : null,
-    ensembleLaneId: ensembleRun ? optionalString(ensembleRun.laneId) : null
-  }
-}
-
-function normalizeRuntimeWorktreeIntent(value: unknown): AgentRunPayload['runtimeWorktree'] {
-  if (!isRecord(value)) return undefined
-  const effectiveWorkspacePath = optionalString(value.effectiveWorkspacePath)
-  const baseWorkspacePath = optionalString(value.baseWorkspacePath)
-  const status =
-    value.status === 'selected' && effectiveWorkspacePath ? 'selected' : 'selection-required'
-  const source = value.source === 'composer' ? 'composer' : 'runtimeProfile'
-  return {
-    requested: value.requested !== false,
-    source,
-    profileId: optionalString(value.profileId),
-    profileName: optionalString(value.profileName),
-    baseWorkspacePath,
-    effectiveWorkspacePath: status === 'selected' ? effectiveWorkspacePath : undefined,
-    status
-  }
-}
-
 function permissionPostureSnapshotFromSession(
   session:
     | {
@@ -4844,162 +4803,6 @@ function persistRunPermissionPostureOnChatRun(session: {
  * Body stays inline this slice; zero behaviour change (each dep IS the exact
  * function the body previously referenced directly).
  */
-interface AgentRunNormalizerDeps {
-  /** Verify an HMAC-bound run-permission-posture signature (signing secret).
-   *  Currently `verifyRunPosture`. */
-  verifyRunPosture: (
-    approvalMode: string | null | undefined,
-    effectivePermissions: EffectiveRunPermissions | null | undefined,
-    signature: string | null | undefined,
-    context?: RunPermissionPostureContext | null
-  ) => boolean
-  /** Integrity-check + canonicalize external path grants (signing secret + fs
-   *  realpath). Currently `normalizeExternalPathGrants`. */
-  normalizeExternalPathGrants: (grants?: ExternalPathGrant[]) => ExternalPathGrant[]
-  /** Timing-safe main-issued-grant check (signing secret). Currently
-   *  `isMainIssuedExternalPathGrant`. */
-  isMainIssuedExternalPathGrant: (grant: ExternalPathGrant) => boolean
-  /** Resolve + assert a saved GLOBAL chat by id (AppStore). Currently
-   *  `requireGlobalChat`. */
-  requireGlobalChat: (chatId: unknown, label?: string) => ChatRecord
-  /** Canonical cwd for global-mode runs (Electron `app.getPath('home')`).
-   *  Currently `globalRunCwd`. */
-  globalRunCwd: () => string
-  /** Home-expand + resolve a workspace path. Currently `canonicalPath`. */
-  canonicalWorkspacePath: (value: string) => string
-  /** Read current app settings for the posture re-derivation closures
-   *  (AppStore). Currently `AppStore.getSettings`. */
-  getSettings: () => ReturnType<typeof AppStore.getSettings>
-}
-
-function normalizeAgentRunPayload(
-  rawPayload: unknown,
-  deps: AgentRunNormalizerDeps
-): AgentRunPayload {
-  const payload = requireRecord(rawPayload, 'Run payload')
-  // Universal run-dispatch chokepoint (renderer + main-built ensemble / sub-thread
-  // / solo all flow through here): a retired provider can never start a new run.
-  const provider = assertLiveProviderId(payload.provider)
-  const scope: ChatScope = payload.scope === 'global' ? 'global' : 'workspace'
-  const rawExternalPathGrants = Array.isArray(payload.externalPathGrants)
-    ? (payload.externalPathGrants as ExternalPathGrant[])
-    : []
-  const externalPathGrants = rawExternalPathGrants.length
-    ? deps.normalizeExternalPathGrants(rawExternalPathGrants)
-    : []
-  if (
-    rawExternalPathGrants.some(
-      (grant) =>
-        grant &&
-        typeof grant.path === 'string' &&
-        grant.issuedBy === 'main' &&
-        typeof grant.signature === 'string' &&
-        grant.signature.length > 0 &&
-        !deps.isMainIssuedExternalPathGrant(grant as ExternalPathGrant)
-    )
-  ) {
-    throw new Error('External path grants must be issued by TaskWraith in this app session.')
-  }
-  const appChatId = optionalString(payload.appChatId) || optionalString(payload.chatId)
-  let workspace: string | undefined
-  let scopedExternalPathGrants = externalPathGrants.filter((grant) => grant.provider === provider)
-  if (scope === 'global') {
-    deps.requireGlobalChat(appChatId, 'Run global chat')
-    workspace = deps.globalRunCwd()
-    if (rawExternalPathGrants.length > 0) {
-      throw new Error('Global chats use approval prompts instead of external path grants.')
-    }
-    scopedExternalPathGrants = []
-  } else {
-    workspace = deps.canonicalWorkspacePath(requireNonEmptyString(payload.workspace, 'Workspace'))
-  }
-  const suppliedEffectivePermissions = isRecord(payload.effectivePermissions)
-    ? (payload.effectivePermissions as unknown as EffectiveRunPermissions)
-    : undefined
-  const requestedWorkflowMode = payload.workflowMode === 'plan' ? 'plan' : 'normal'
-  // Downgrade-only permission-posture clamp at the renderer / bridge trust
-  // boundary. A validly-signed posture (stamped by a main-side producer via
-  // `signRunPosture`) passes through byte-for-byte; an unsigned / forged /
-  // inflated posture is clamped so it cannot auto-approve itself. This closes
-  // the escalation-via-payload gap that `preserveExplicitDeny` (which only
-  // stops un-denying a global deny) does not cover. See RunPermissionPosture.ts.
-  const clampedPosture = clampUntrustedRunPosture(
-    {
-      scope,
-      approvalMode: optionalString(payload.approvalMode),
-      effectivePermissions: suppliedEffectivePermissions,
-      signature: optionalString(payload.effectivePermissionsSignature),
-      context: runPostureContextFromPayload({
-        provider,
-        scope,
-        appRunId: optionalString(payload.appRunId),
-        appChatId,
-        prompt: typeof payload.prompt === 'string' ? payload.prompt : String(payload.prompt ?? ''),
-        workflowMode: requestedWorkflowMode,
-        runtimeProfileId: optionalString(payload.runtimeProfileId),
-        ensembleRun: payload.ensembleRun
-      })
-    },
-    {
-      verify: deps.verifyRunPosture,
-      reDeriveReadOnly: () =>
-        resolveEffectiveRunPermissions({
-          provider,
-          workspacePath: scope === 'global' ? undefined : workspace,
-          settings: deps.getSettings(),
-          presetId: 'read_only'
-        }),
-      reDeriveDefault: () =>
-        resolveEffectiveRunPermissions({
-          provider,
-          workspacePath: undefined,
-          settings: deps.getSettings(),
-          presetId: 'default'
-        })
-    }
-  )
-  if (clampedPosture.downgraded) {
-    console.warn(
-      `[run-posture] clamped ${provider} run permission posture — ${clampedPosture.reason}`
-    )
-  }
-  return {
-    provider,
-    scope,
-    workspace,
-    prompt: typeof payload.prompt === 'string' ? payload.prompt : String(payload.prompt ?? ''),
-    activeGoal: normalizeAgentRunActiveGoal(payload.activeGoal),
-    appRunId: optionalString(payload.appRunId),
-    appChatId,
-    model: optionalString(payload.model),
-    reasoningEffort: optionalStringOrNull(payload.reasoningEffort),
-    serviceTier: optionalStringOrNull(payload.serviceTier),
-    claudeReasoningEffort: optionalStringOrNull(payload.claudeReasoningEffort),
-    claudeFastMode:
-      typeof payload.claudeFastMode === 'boolean' ? payload.claudeFastMode : undefined,
-    kimiThinking: typeof payload.kimiThinking === 'boolean' ? payload.kimiThinking : undefined,
-    approvalMode: clampedPosture.approvalMode,
-    workflowMode: clampedPosture.downgraded ? 'normal' : requestedWorkflowMode,
-    imagePaths: stringArray(payload.imagePaths),
-    providerSessionId: optionalStringOrNull(payload.providerSessionId),
-    externalPathGrants: scopedExternalPathGrants,
-    sessionTrust: Boolean(payload.sessionTrust),
-    geminiWorktree: (payload.geminiWorktree ?? null) as GeminiWorktreeLaunchOption,
-    runtimeProfileId: optionalString(payload.runtimeProfileId),
-    geminiAuthProfileId: optionalStringOrNull(payload.geminiAuthProfileId),
-    handoffSourceRunId: optionalString(payload.handoffSourceRunId),
-    failoverHopCount:
-      typeof payload.failoverHopCount === 'number' && Number.isFinite(payload.failoverHopCount)
-        ? payload.failoverHopCount
-        : undefined,
-    runtimeWorktree: normalizeRuntimeWorktreeIntent(payload.runtimeWorktree),
-    effectivePermissions: clampedPosture.effectivePermissions,
-    effectivePermissionsSignature: clampedPosture.signature,
-    ensembleRun: normalizeEnsembleRunIdentity(payload.ensembleRun),
-    auditRun: normalizeAuditRunIdentity(payload.auditRun)
-  }
-}
-
 async function ensureProviderRunPreflight(
   sender: Electron.WebContents,
   payload: AgentRunPayload
@@ -5185,93 +4988,6 @@ const appShellStatsService = new AppShellStatsService({
 appShellStatsService.onChange((snapshot) => {
   safeSendToWebContents(mainWindow, 'app-shell-stats-changed', snapshot)
 })
-
-function normalizeAgentRunActiveGoal(value: unknown): ActiveGoal | null | undefined {
-  if (value === undefined) return undefined
-  if (value === null) return null
-  if (!isRecord(value)) return undefined
-  const id = optionalString(value.id)
-  const objective = normalizeActiveGoalObjective(value.objective)
-  const status = optionalString(value.status)
-  const mode = optionalString(value.mode)
-  const createdAt = optionalString(value.createdAt)
-  const updatedAt = optionalString(value.updatedAt)
-  if (!id || !objective || !createdAt || !updatedAt) return undefined
-  if (
-    status !== 'active' &&
-    status !== 'paused' &&
-    status !== 'blocked' &&
-    status !== 'completed'
-  ) {
-    return undefined
-  }
-  if (
-    mode !== 'codex_native' &&
-    mode !== 'claude_native' &&
-    mode !== 'grok_native' &&
-    mode !== 'taskwraith_steered' &&
-    mode !== 'ollama_harness'
-  ) {
-    return undefined
-  }
-  let provider: ProviderId
-  try {
-    provider = assertProviderId(value.provider)
-  } catch {
-    return undefined
-  }
-  return {
-    id,
-    objective,
-    status,
-    mode,
-    provider,
-    createdAt,
-    updatedAt,
-    ...(normalizeGoalRuntimeLedger(value.runtimeLedger)
-      ? { runtimeLedger: normalizeGoalRuntimeLedger(value.runtimeLedger) }
-      : {}),
-    pausedAt: optionalString(value.pausedAt),
-    blockedAt: optionalString(value.blockedAt),
-    blockedReason: optionalString(value.blockedReason),
-    completedAt: optionalString(value.completedAt),
-    completedSummary: optionalString(value.completedSummary),
-    lastStatusReason: optionalString(value.lastStatusReason)
-  }
-}
-
-function normalizeGoalRuntimeLedger(value: unknown): ActiveGoal['runtimeLedger'] | undefined {
-  if (!isRecord(value)) return undefined
-  const startedAt = optionalString(value.startedAt)
-  if (!startedAt) return undefined
-  const intervalsValue = value.intervals
-  if (!Array.isArray(intervalsValue)) return undefined
-  const intervals: NonNullable<ActiveGoal['runtimeLedger']>['intervals'] = intervalsValue
-    .map((entry) => {
-      if (!isRecord(entry)) return null
-      const status = optionalString(entry.status)
-      if (status !== 'active' && status !== 'paused' && status !== 'blocked') return null
-      const intervalStatus: NonNullable<ActiveGoal['runtimeLedger']>['intervals'][number]['status'] =
-        status
-      const intervalStartedAt = optionalString(entry.startedAt)
-      if (!intervalStartedAt) return null
-      return {
-        status: intervalStatus,
-        startedAt: intervalStartedAt,
-        ...(optionalString(entry.endedAt) ? { endedAt: optionalString(entry.endedAt) } : {})
-      }
-    })
-    .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry))
-  if (intervals.length === 0) return undefined
-  const endedAt = optionalString(value.endedAt)
-  const endStatus = optionalString(value.endStatus)
-  return {
-    startedAt,
-    ...(endedAt ? { endedAt } : {}),
-    ...(endStatus === 'completed' || endStatus === 'cancelled' ? { endStatus } : {}),
-    intervals
-  }
-}
 
 const workspaceWriteIntentRegistry = new WorkspaceWriteIntentRegistry()
 

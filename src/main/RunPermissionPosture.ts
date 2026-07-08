@@ -1,5 +1,6 @@
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto'
 import type { EffectiveRunPermissions, RunPermissionPostureSnapshot } from './store/types'
+import { isRecord, optionalString } from './settings/MainSanitizers'
 
 /**
  * Downgrade-only clamp for a run's permission posture
@@ -149,6 +150,37 @@ export interface RunPermissionPostureContext {
   runtimeProfileId?: string | null
   ensembleParticipantId?: string | null
   ensembleLaneId?: string | null
+}
+
+/**
+ * Build a `RunPermissionPostureContext` from a raw run payload. Pure (no
+ * Electron / AppStore coupling), so it lives next to the context type it
+ * constructs and the clamp / sign / verify consumers of that type — relocated
+ * here from index.ts in M3-1b. Every main-side producer that binds a posture
+ * signature to stable run context calls this.
+ */
+export function runPostureContextFromPayload(payload: {
+  provider?: unknown
+  scope?: unknown
+  appRunId?: unknown
+  appChatId?: unknown
+  prompt?: unknown
+  workflowMode?: unknown
+  runtimeProfileId?: unknown
+  ensembleRun?: unknown
+}): RunPermissionPostureContext {
+  const ensembleRun = isRecord(payload.ensembleRun) ? payload.ensembleRun : null
+  return {
+    provider: optionalString(payload.provider),
+    scope: optionalString(payload.scope),
+    appRunId: optionalString(payload.appRunId),
+    appChatId: optionalString(payload.appChatId),
+    prompt: typeof payload.prompt === 'string' ? payload.prompt : String(payload.prompt ?? ''),
+    workflowMode: payload.workflowMode === 'plan' ? 'plan' : 'normal',
+    runtimeProfileId: optionalString(payload.runtimeProfileId),
+    ensembleParticipantId: ensembleRun ? optionalString(ensembleRun.participantId) : null,
+    ensembleLaneId: ensembleRun ? optionalString(ensembleRun.laneId) : null
+  }
 }
 
 export interface UntrustedRunPosture {
