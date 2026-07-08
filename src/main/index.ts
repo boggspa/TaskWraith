@@ -997,6 +997,7 @@ import { registerImageGenerationHandlers } from './ipc/imageGenerationHandlers'
 import { registerMediaAssetHandlers } from './ipc/mediaAssetHandlers'
 import { registerSpellcheckHandlers } from './ipc/spellcheckHandlers'
 import { registerExternalPathGrantHandlers } from './ipc/externalPathGrantHandlers'
+import { registerApprovalResponseHandlers } from './ipc/approvalResponseHandlers'
 import { registerGitHandlers } from './ipc/gitHandlers'
 import {
   createDefaultExternalPublishReceiptLedger,
@@ -30385,73 +30386,13 @@ if (isGeminiMcpBridgeProcess) {
     )
     approvalServiceInstance.setScheduler(approvalTimeoutScheduler)
 
-    ipcMain.handle(
-      'respond-agent-approval',
-      async (_, requestId: string, action: AgentApprovalAction, intentNote?: string) => {
-        // Order-4 — optional one-line "why" note captured in the
-        // approval card. Trim + cap defensively (the renderer already
-        // trims, but the IPC boundary is untrusted) and ride it on the
-        // existing ledger metadata channel as `intentNote`. Empty stays
-        // off the metadata entirely so we never persist a blank note.
-        const trimmedIntentNote =
-          typeof intentNote === 'string' ? intentNote.trim().slice(0, 280) : ''
-        const resolveOptions = trimmedIntentNote
-          ? { extraMetadata: { intentNote: trimmedIntentNote } }
-          : undefined
-        // Slice 5 v2 of the external-path-redesign arc. When the user
-        // clicks "Grant read access" / "Grant edit access" in an
-        // external-path approval modal, peek at the pending approval's stashed
-        // externalPathDetection BEFORE resolving — issue a signed grant
-        // and persist it onto the chat's providerMetadata so the secondary
-        // above-row appears the moment the modal closes.
-        if (action === 'grantExternalPathRead' || action === 'grantExternalPathEdit') {
-          const detection = approvalServiceInstance.getPendingExternalPathDetection(requestId)
-          if (detection?.path && detection.appChatId) {
-            try {
-              const grantAccess: 'read' | 'write' =
-                action === 'grantExternalPathEdit' ? 'write' : 'read'
-              // Probe synchronously to determine file vs directory.
-              // Best-effort — fall back to 'file' on any error.
-              let grantKind: 'file' | 'directory' = 'file'
-              try {
-                const stat = await fs.stat(detection.path)
-                if (stat.isDirectory()) grantKind = 'directory'
-              } catch {
-                /* keep default */
-              }
-              const grant = issueExternalPathGrant({
-                id: `runtime-${Date.now()}-${randomBytes(4).toString('hex')}`,
-                provider: detection.provider,
-                workspaceId: undefined,
-                chatId: detection.appChatId,
-                path: detection.path,
-                kind: grantKind,
-                access: grantAccess,
-                duration: 'thisThread',
-                securityScopedBookmark: undefined,
-                createdAt: new Date().toISOString()
-              })
-              const chat = AppStore.getChat(detection.appChatId)
-              if (chat) {
-                const updatedChat = {
-                  ...chat,
-                  providerMetadata: canonicalizeExternalPathGrantMetadata(chat.providerMetadata, [
-                    ...collectExternalPathGrantsFromMetadata(chat.providerMetadata),
-                    grant
-                  ]),
-                  updatedAt: Date.now()
-                }
-                AppStore.saveChat(updatedChat)
-                broadcastChatUpdated(updatedChat)
-              }
-            } catch (err) {
-              console.warn('[ExternalPathGrant] runtime grant persistence failed', err)
-            }
-          }
-        }
-        return approvalServiceInstance.resolve(requestId, action, resolveOptions)
-      }
-    )
+    registerApprovalResponseHandlers({
+      approvalService: approvalServiceInstance,
+      issueExternalPathGrant,
+      getChat: (chatId) => AppStore.getChat(chatId),
+      saveChat: (chat) => AppStore.saveChat(chat),
+      broadcastChatUpdated
+    })
 
     ipcMain.handle(
       'run-gemini',
