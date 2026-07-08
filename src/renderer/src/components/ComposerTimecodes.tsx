@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
 import type { ComposerStyle } from '../../../main/store/types'
+import { resolveComposerSurfacePopoverPosition } from '../lib/composerSurfacePopover'
 import { ClockSymbolIcon } from './AppChromeSymbols'
 
 const ZERO_RUN_TIMECODE = '00:00:00:00'
-const TIMECODE_POPOVER_WIDTH = 220
+const TIMECODE_POPOVER_WIDTH_FLOOR = 320
 
 export const formatRunTimecodeDuration = (durationMs: number): string => {
   const totalSeconds = Math.max(0, Math.floor(durationMs / 1000))
@@ -50,22 +51,24 @@ export function getComposerTimecodePresentation({
 }
 
 export interface ComposerTimecodePopoverPositionInput {
-  triggerRect: Pick<DOMRect, 'left' | 'right' | 'top'>
-  popoverWidth?: number
+  triggerRect: Pick<DOMRect, 'left' | 'top' | 'width'>
+  surfaceRect?: Pick<DOMRect, 'left' | 'width'>
   viewportWidth: number
+  widthFloor?: number
 }
 
 export function computeComposerTimecodePopoverPosition({
   triggerRect,
-  popoverWidth = TIMECODE_POPOVER_WIDTH,
-  viewportWidth
-}: ComposerTimecodePopoverPositionInput): { left: number; top: number } {
-  const maxLeft = Math.max(8, viewportWidth - popoverWidth - 8)
-  const desiredLeft = triggerRect.right - popoverWidth
-  return {
-    left: Math.min(maxLeft, Math.max(8, desiredLeft)),
-    top: triggerRect.top - 8
-  }
+  surfaceRect = triggerRect,
+  viewportWidth,
+  widthFloor = TIMECODE_POPOVER_WIDTH_FLOOR
+}: ComposerTimecodePopoverPositionInput): { left: number; top: number; width: number } {
+  return resolveComposerSurfacePopoverPosition({
+    triggerRect,
+    surfaceRect,
+    viewportWidth,
+    widthFloor
+  })
 }
 
 export function ComposerTimecode({
@@ -85,7 +88,9 @@ export function ComposerTimecode({
   const popoverRef = useRef<HTMLDivElement | null>(null)
   const [now, setNow] = useState(() => Date.now())
   const [open, setOpen] = useState(false)
-  const [position, setPosition] = useState<{ left: number; top: number } | null>(null)
+  const [position, setPosition] = useState<{ left: number; top: number; width: number } | null>(
+    null
+  )
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => setNow(Date.now()))
@@ -105,9 +110,13 @@ export function ComposerTimecode({
     const computePosition = (): void => {
       const trigger = triggerRef.current
       if (!trigger) return
+      const triggerRect = trigger.getBoundingClientRect()
+      const surface = trigger.closest('.composer-surface') as HTMLElement | null
+      const surfaceRect = surface?.getBoundingClientRect() ?? triggerRect
       setPosition(
         computeComposerTimecodePopoverPosition({
-          triggerRect: trigger.getBoundingClientRect(),
+          triggerRect,
+          surfaceRect,
           viewportWidth: window.innerWidth
         })
       )
@@ -178,14 +187,16 @@ export function ComposerTimecode({
       ? createPortal(
           <div
             ref={popoverRef}
-            className={`composer-combined-picker-popover composer-timecode-popover shell-${composerStyle}`}
+            className={`composer-combined-picker-popover composer-plus-picker-popover composer-timecode-popover shell-${composerStyle}`}
             style={
               {
                 position: 'fixed',
                 left: `${position.left}px`,
                 top: `${position.top}px`,
+                width: `${position.width}px`,
+                minWidth: 0,
+                maxWidth: 'calc(100vw - 16px)',
                 transform: 'translateY(-100%)',
-                '--composer-timecode-popover-width': `${TIMECODE_POPOVER_WIDTH}px`
               } as CSSProperties
             }
             role="dialog"

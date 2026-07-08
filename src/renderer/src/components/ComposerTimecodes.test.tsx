@@ -59,27 +59,33 @@ describe('ComposerTimecode presentation', () => {
 })
 
 describe('computeComposerTimecodePopoverPosition', () => {
-  it('anchors the popover above the trigger and right-aligns to it', () => {
+  it('anchors the popover above the composer surface', () => {
     const position = computeComposerTimecodePopoverPosition({
-      triggerRect: { left: 760, right: 876, top: 920 },
+      triggerRect: { left: 760, top: 920, width: 116 },
+      surfaceRect: { left: 256, width: 840 },
       viewportWidth: 1280
     })
 
-    expect(position.left).toBe(656)
+    expect(position.left).toBe(264)
     expect(position.top).toBe(912)
+    expect(position.width).toBe(824)
   })
 
-  it('keeps the popover inside narrow viewport edges', () => {
+  it('keeps the popover inside viewport edges', () => {
     const leftEdge = computeComposerTimecodePopoverPosition({
-      triggerRect: { left: 2, right: 118, top: 920 },
+      triggerRect: { left: 2, top: 920, width: 116 },
+      surfaceRect: { left: 2, width: 260 },
       viewportWidth: 1280
     })
     const rightEdge = computeComposerTimecodePopoverPosition({
-      triggerRect: { left: 1264, right: 1298, top: 920 },
+      triggerRect: { left: 1264, top: 920, width: 34 },
+      surfaceRect: { left: 1160, width: 260 },
       viewportWidth: 1280
     })
 
-    expect(leftEdge.left).toBe(8)
-    expect(rightEdge.left).toBe(1052)
+    expect(leftEdge.left).toBe(10)
+    expect(leftEdge.width).toBe(320)
+    expect(rightEdge.left).toBe(952)
+    expect(rightEdge.width).toBe(320)
   })
 })
