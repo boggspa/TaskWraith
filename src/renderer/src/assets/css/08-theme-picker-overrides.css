@@ -8847,7 +8847,7 @@
 .composer-combined-picker-trigger {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 7px;
   height: 28px;
   padding: 0 10px;
   border-radius: 999px;
@@ -10125,7 +10125,7 @@
   background: transparent;
   border: 0;
   padding: 0 4px;
-  gap: 3px;
+  gap: 4px;
   color: rgba(255, 255, 255, 0.86);
   font-weight: 500;
 }

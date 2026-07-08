@@ -894,8 +894,11 @@ export function CombinedModelPicker({
             <span className="composer-combined-picker-trigger-primary">{claudeChipSegments.model}</span>
             {claudeChipSegments.fast ? (
               <span className="composer-combined-picker-trigger-tail">
+                {/* No dot glyph — a couple of non-breaking spaces stand in as
+                    the model/reasoning gap (nbsp so it survives whitespace
+                    collapsing). */}
                 <span className="composer-combined-picker-trigger-separator" aria-hidden>
-                  {' · '}
+                  {'  '}
                 </span>
                 <span className="composer-combined-picker-trigger-fast-reasoning">
                   <span className="composer-combined-picker-trigger-fast">{claudeChipSegments.fast}</span>
@@ -909,7 +912,7 @@ export function CombinedModelPicker({
             ) : claudeChipSegments.reasoning ? (
               <span className="composer-combined-picker-trigger-tail">
                 <span className="composer-combined-picker-trigger-separator" aria-hidden>
-                  {' · '}
+                  {'  '}
                 </span>
                 <span className="composer-combined-picker-trigger-suffix">
                   {claudeChipSegments.reasoning}
