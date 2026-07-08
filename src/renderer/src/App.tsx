@@ -313,6 +313,7 @@ import { useViewportWidth } from './hooks/useViewportWidth'
 import { useChangelog } from './hooks/useChangelog'
 import { useLaunchAttempts } from './hooks/useLaunchAttempts'
 import { useWorkspaceLaunchTargets } from './hooks/useWorkspaceLaunchTargets'
+import { useScopedIpc } from './hooks/useScopedIpc'
 import {
   filterDispatchExternalPathGrants,
   findExternalPathGrantGaps,
@@ -8760,7 +8761,7 @@ function App(): React.JSX.Element {
   }
 
   // IPC Listeners
-  useEffect(() => {
+  useScopedIpc(() => {
     const handleProviderOutput = (fallbackProvider: ProviderId, payload: unknown) => {
       const handlers = appEventHandlersRef.current
       const provider = getRouteProvider(payload, fallbackProvider)
@@ -9859,17 +9860,14 @@ function App(): React.JSX.Element {
       )
     }
 
-    return () => {
-      for (let index = ipcUnsubscriptions.length - 1; index >= 0; index -= 1) {
-        ipcUnsubscriptions[index]?.()
-      }
+    ipcUnsubscriptions.unshift(() => {
       for (const timer of contextCompactionProgressTimersRef.current.values()) {
         window.clearTimeout(timer)
       }
       contextCompactionProgressTimersRef.current.clear()
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- app-wide IPC subscriptions register once; mutable handlers route through refs.
-  }, [])
+    })
+    return ipcUnsubscriptions
+  })
 
   const currentGeminiWorktree =
     currentProvider === 'gemini' ? resolveGeminiWorktreeConfig(currentWorkspace) : undefined
