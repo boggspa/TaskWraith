@@ -417,6 +417,17 @@ export interface BridgeDiscoverTailnetHostsAction extends BridgeActionMetadata {
   kind: 'discoverTailnetHosts'
 }
 
+/** Pair-scoped read-only client-initiated full-projection resync. The phone
+ * fires this on foreground/notification alive-wake (Slice 1/2) so it can pull
+ * the current home projection itself rather than waiting for a Mac push it may
+ * have missed while suspended. No workspaceId — it targets the whole visible
+ * home projection, which the broadcaster builders already allowlist-filter. The
+ * host re-pushes the current snapshot UNICAST to exactly the requesting device
+ * (never a broadcast). Read-only: no desktop state changes. */
+export interface BridgeFullProjectionResyncAction extends BridgeActionMetadata {
+  kind: 'fullProjectionResync'
+}
+
 /** Pair-scoped read-only interest assertion from the phone. The host uses it
  * only to avoid encoding per-token run events for threads the phone cannot
  * currently display. `null` means the phone is on a non-thread surface. */
@@ -772,6 +783,7 @@ export type BridgeActionPayload =
   | BridgeRegisterApnsTokenAction
   | BridgeEnsemblePresetMutateAction
   | BridgeDiscoverTailnetHostsAction
+  | BridgeFullProjectionResyncAction
   | BridgeSetWatchedThreadAction
   | BridgeSetYoloModeAction
   | BridgeTogglePinChatAction
@@ -911,6 +923,7 @@ export function workspaceIdFromPayload(payload: BridgeActionPayload): string | n
     case 'registerApnsToken':
     case 'ensemblePresetMutate':
     case 'discoverTailnetHosts':
+    case 'fullProjectionResync':
     case 'setWatchedThread':
     case 'unknown':
       return null
@@ -992,6 +1005,7 @@ export function payloadRequiresWorkspaceGating(payload: BridgeActionPayload): bo
       // eslint-disable-next-line no-fallthrough
     case 'ensemblePresetMutate':
     case 'discoverTailnetHosts':
+    case 'fullProjectionResync':
     case 'setWatchedThread':
       return false
     case 'unknown':
@@ -1081,6 +1095,7 @@ export function payloadIsMutating(payload: BridgeActionPayload): boolean {
     case 'githubPrStatus':
     case 'githubPrReadiness':
     case 'discoverTailnetHosts':
+    case 'fullProjectionResync':
     case 'setWatchedThread':
     case 'chatMarkdownTranscript':
       return false
@@ -1280,6 +1295,10 @@ function coerceToPayload(parsed: unknown): BridgeActionPayload {
       return isDiscoverTailnetHosts(parsed)
         ? (parsed as unknown as BridgeDiscoverTailnetHostsAction)
         : { kind: 'unknown', rawKind: 'discoverTailnetHosts', raw: parsed }
+    case 'fullProjectionResync':
+      return isFullProjectionResync(parsed)
+        ? (parsed as unknown as BridgeFullProjectionResyncAction)
+        : { kind: 'unknown', rawKind: 'fullProjectionResync', raw: parsed }
     case 'setWatchedThread':
       return isSetWatchedThread(parsed)
         ? (parsed as unknown as BridgeSetWatchedThreadAction)
@@ -2042,6 +2061,12 @@ function isRegisterApnsToken(v: Record<string, unknown>): boolean {
 function isDiscoverTailnetHosts(v: Record<string, unknown>): boolean {
   // No payload fields beyond the shared metadata — the host derives everything
   // (own identity, paired devices, stored OAuth credential) locally.
+  return hasValidActionMetadata(v)
+}
+
+function isFullProjectionResync(v: Record<string, unknown>): boolean {
+  // No payload fields beyond the shared metadata — the host re-pushes the
+  // current visible projection to the authenticated requesting device.
   return hasValidActionMetadata(v)
 }
 

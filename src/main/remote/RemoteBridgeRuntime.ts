@@ -643,7 +643,15 @@ export class RemoteBridgeRuntime {
       return
     }
     try {
-      const result = await this.opts.routeAction(method, { ...dict, pairID })
+      // requestingDeviceKey is the AUTHENTICATED pinned identity (same source
+      // as pairID), spread LAST so a client-supplied value in `dict` cannot
+      // override it. Read-only device-targeted actions (fullProjectionResync)
+      // use it to re-push to exactly this device.
+      const result = await this.opts.routeAction(method, {
+        ...dict,
+        pairID,
+        requestingDeviceKey: iphoneIdentityPubKey
+      })
       this.sendToDevice(iphoneIdentityPubKey, 'bridge.ack', { requestId, method, ok: true, result })
     } catch (err) {
       this.sendToDevice(iphoneIdentityPubKey, 'bridge.ack', {
@@ -662,6 +670,30 @@ export class RemoteBridgeRuntime {
   ): void {
     if (!iphoneIdentityPubKey) return
     this.established.get(iphoneIdentityPubKey)?.client.send(method, params)
+  }
+
+  /** Slice 1 (RC1/RC2): re-push the current visible projection to EXACTLY one
+   * requesting device — never a broadcast, never resetThrottle. Synchronous, so
+   * the snapshot frames enqueue on the device's session ahead of the action ack
+   * (the phone applies the snapshot before it applies the ack). Read-only; the
+   * emitted frames are the SAME the periodic broadcast produces, so no data
+   * surface is widened. Invoked by the fullProjectionResyncFn executor dep. */
+  resyncProjectionToDevice(iphoneIdentityPubKey: string): {
+    ok: boolean
+    sentEnvelopes?: number
+    reason?: string
+  } {
+    const device = this.established.get(iphoneIdentityPubKey)
+    if (!device || !device.client.isConnected) {
+      return { ok: false, reason: 'device not connected' }
+    }
+    if (!this.broadcaster) {
+      return { ok: false, reason: 'no broadcaster' }
+    }
+    const { sentEnvelopes } = this.broadcaster.emitSnapshotTo((method, params) =>
+      device.client.send(method, params)
+    )
+    return { ok: true, sentEnvelopes }
   }
 
   private teardownPending(): void {

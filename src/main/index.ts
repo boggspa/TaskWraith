@@ -23434,6 +23434,17 @@ if (isGeminiMcpBridgeProcess) {
             hosts: result.hosts as unknown as Array<Record<string, unknown>>
           }
         },
+        // Slice 1 (RC1/RC2): client-initiated targeted full-projection resync.
+        // The phone fires this on foreground/notification alive-wake so it can
+        // pull the current home projection itself. Synchronous — the runtime
+        // enqueues the snapshot frames on the requesting device's session
+        // BEFORE the action ack drains. `iosRemoteRuntime` is captured from the
+        // enclosing whenReady scope (request-time live).
+        fullProjectionResyncFn: (requestingDeviceKey) =>
+          iosRemoteRuntime?.resyncProjectionToDevice(requestingDeviceKey) ?? {
+            ok: false,
+            reason: 'bridge runtime not ready'
+          },
         setYoloModeFn: async (enabled) => {
           const state = setSessionYoloMode(enabled)
           return {

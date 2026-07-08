@@ -436,6 +436,51 @@ describe('RemoteBridgeRuntime established channel', () => {
     })
   })
 
+  it('injects the authenticated requestingDeviceKey into routeAction, ignoring any client value', async () => {
+    const h = harness()
+    await establish(h)
+    h.sendFromIphone('bridge.requestActionAck', {
+      requestId: 'req-k',
+      requestingDeviceKey: 'spoofed-device-key',
+      payloadBase64: Buffer.from('{}').toString('base64'),
+      payloadBytes: 2
+    })
+    await settle()
+    expect(h.routed).toHaveLength(1)
+    const params = h.routed[0].params as { requestingDeviceKey: string }
+    // The spoofed value was overwritten with the pinned-identity-derived key.
+    expect(params.requestingDeviceKey).not.toBe('spoofed-device-key')
+    expect(typeof params.requestingDeviceKey).toBe('string')
+    expect(params.requestingDeviceKey.length).toBeGreaterThan(20)
+  })
+
+  it('resyncProjectionToDevice re-pushes the snapshot to exactly the requesting device', async () => {
+    const h = harness()
+    await establish(h)
+    // Drive one inbound action so we learn the authenticated device key.
+    h.sendFromIphone('bridge.requestActionAck', {
+      requestId: 'req-x',
+      payloadBase64: Buffer.from('{}').toString('base64'),
+      payloadBytes: 2
+    })
+    await settle()
+    const deviceKey = (h.routed[0].params as { requestingDeviceKey: string }).requestingDeviceKey
+
+    h.iphoneMessages.length = 0 // clear the establish-time snapshot
+    const result = h.runtime.resyncProjectionToDevice(deviceKey)
+    expect(result.ok).toBe(true)
+    expect(result.sentEnvelopes).toBeGreaterThan(0)
+    const methods = h.iphoneMessages.map((m) => m.method)
+    expect(methods).toContain('bridge.broadcastWorkspaceList')
+    expect(methods).toContain('bridge.broadcastRemoteProjectionSnapshot')
+
+    // Unknown device → safe no-op, no throw.
+    expect(h.runtime.resyncProjectionToDevice('not-a-real-key')).toEqual({
+      ok: false,
+      reason: 'device not connected'
+    })
+  })
+
   it('rejects unsupported inbound methods without touching the router', async () => {
     const h = harness()
     await establish(h)

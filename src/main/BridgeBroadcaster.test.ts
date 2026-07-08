@@ -915,3 +915,108 @@ describe('BridgeBroadcaster', () => {
     expect(notify).toHaveBeenCalledTimes(2)
   })
 })
+
+describe('BridgeBroadcaster.emitSnapshotTo (Slice 1 targeted resync)', () => {
+  it('sends the 3 snapshot frames to the sink, never to daemon.notify', () => {
+    const notify = vi.fn()
+    const sink = vi.fn()
+    const store = makeFakeStore([makeWorkspace()], [makeChat()])
+    const envelope = buildRemoteProjectionEnvelope({
+      kind: 'taskFeedSnapshot',
+      payload: { tasks: [] },
+      generatedAt: '2026-05-30T12:00:00.000Z',
+      envelopeId: 'env-feed'
+    })
+    const broadcaster = new BridgeBroadcaster({
+      daemon: { notify },
+      appStore: store,
+      projectionSource: { listRemoteProjectionEnvelopes: () => [envelope] },
+      now: () => 1000
+    })
+    const result = broadcaster.emitSnapshotTo(sink)
+    expect(notify).not.toHaveBeenCalled()
+    expect(sink.mock.calls.map((c) => c[0])).toEqual([
+      BRIDGE_BROADCAST_METHODS.workspaceList,
+      BRIDGE_BROADCAST_METHODS.threadList,
+      BRIDGE_BROADCAST_METHODS.remoteProjectionSnapshot
+    ])
+    expect(result.sentEnvelopes).toBe(3)
+  })
+
+  it('does NOT touch the broadcast throttle (a later broadcast stays gated)', () => {
+    const notify = vi.fn()
+    const sink = vi.fn()
+    const store = makeFakeStore([makeWorkspace()], [makeChat()])
+    const broadcaster = new BridgeBroadcaster({
+      daemon: { notify },
+      appStore: store,
+      now: () => 1000,
+      throttleMs: 5000
+    })
+    // Prime the throttle with a real broadcast.
+    broadcaster.broadcastWorkspaceList()
+    expect(notify).toHaveBeenCalledTimes(1)
+    // Targeted resync fires regardless of the throttle...
+    broadcaster.emitSnapshotTo(sink)
+    expect(sink).toHaveBeenCalled()
+    // ...but does not clear lastEmitMs, so the next broadcast is still gated.
+    broadcaster.broadcastWorkspaceList()
+    expect(notify).toHaveBeenCalledTimes(1)
+  })
+
+  it('applies the same visibility filtering as the periodic broadcast', () => {
+    const notify = vi.fn()
+    const sink = vi.fn()
+    const store = makeFakeStore(
+      [
+        makeWorkspace({ id: 'ws-visible' }),
+        makeWorkspace({ id: 'ws-hidden', path: '/tmp/h', displayName: 'h' })
+      ],
+      [
+        makeChat({ workspaceId: 'ws-visible' }),
+        makeChat({ appChatId: 'chat-h', workspaceId: 'ws-hidden' })
+      ]
+    )
+    const broadcaster = new BridgeBroadcaster({
+      daemon: { notify },
+      appStore: store,
+      allowlist: makeAllowlist(['ws-visible']),
+      now: () => 1000
+    })
+    broadcaster.emitSnapshotTo(sink)
+    const wsCall = sink.mock.calls.find((c) => c[0] === BRIDGE_BROADCAST_METHODS.workspaceList)
+    const workspaces = (wsCall?.[1] as { workspaces: Array<{ workspaceId: string }> }).workspaces
+    expect(workspaces.map((w) => w.workspaceId)).toEqual(['ws-visible'])
+  })
+
+  it('oversized projection fans EACH envelope to the sink (never the daemon)', () => {
+    const notify = vi.fn()
+    const sink = vi.fn()
+    const store = makeFakeStore([makeWorkspace()], [makeChat()])
+    const first = buildRemoteProjectionEnvelope({
+      kind: 'questionCard',
+      payload: { promptId: 'a' },
+      generatedAt: '2026-05-30T12:00:00.000Z',
+      envelopeId: 'env-a'
+    })
+    const second = buildRemoteProjectionEnvelope({
+      kind: 'questionCard',
+      payload: { promptId: 'b' },
+      generatedAt: '2026-05-30T12:00:00.000Z',
+      envelopeId: 'env-b'
+    })
+    const broadcaster = new BridgeBroadcaster({
+      daemon: { notify },
+      appStore: store,
+      projectionSource: { listRemoteProjectionEnvelopes: () => [first, second] },
+      remoteProjectionSnapshotMaxBytes: 1, // force the per-envelope fan path
+      now: () => 1000
+    })
+    broadcaster.emitSnapshotTo(sink)
+    expect(notify).not.toHaveBeenCalled()
+    const remoteCalls = sink.mock.calls.filter(
+      (c) => c[0] === BRIDGE_BROADCAST_METHODS.remoteProjection
+    )
+    expect(remoteCalls).toHaveLength(2)
+  })
+})

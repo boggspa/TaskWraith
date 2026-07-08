@@ -15,6 +15,7 @@ import type {
   BridgeQuestionReplyAction,
   BridgeRegisterApnsTokenAction,
   BridgeDiscoverTailnetHostsAction,
+  BridgeFullProjectionResyncAction,
   BridgeSetWatchedThreadAction,
   BridgeSetYoloModeAction,
   BridgeThreadMediaFetchAction,
@@ -291,7 +292,10 @@ const sample = {
   } satisfies BridgeGithubCreatePrAction,
   discoverTailnetHosts: {
     kind: 'discoverTailnetHosts'
-  } satisfies BridgeDiscoverTailnetHostsAction
+  } satisfies BridgeDiscoverTailnetHostsAction,
+  fullProjectionResync: {
+    kind: 'fullProjectionResync'
+  } satisfies BridgeFullProjectionResyncAction
 }
 
 describe('NoopActionExecutor', () => {
@@ -1319,6 +1323,58 @@ describe('MainProcessActionExecutor.executeDiscoverTailnetHosts', () => {
     expect(result.message).toMatch(/Discovery failed/)
     expect(result.message).toMatch(/tailnet offline/)
     expect(log).toHaveBeenCalled()
+  })
+})
+
+describe('MainProcessActionExecutor.executeFullProjectionResync (Slice 1)', () => {
+  const cancelRunFn = vi.fn().mockResolvedValue(true)
+  const ctx = { requestingDeviceKey: 'device-A' }
+
+  it('returns executed=false when there is no requesting device identity', async () => {
+    const fullProjectionResyncFn = vi.fn()
+    const executor = new MainProcessActionExecutor({ cancelRunFn, fullProjectionResyncFn })
+    const result = await executor.executeFullProjectionResync(sample.fullProjectionResync, {
+      requestingDeviceKey: null
+    })
+    expect(result.executed).toBe(false)
+    expect(fullProjectionResyncFn).not.toHaveBeenCalled()
+  })
+
+  it('returns executed=false (not wired) when no fn is configured', async () => {
+    const executor = new MainProcessActionExecutor({ cancelRunFn })
+    const result = await executor.executeFullProjectionResync(sample.fullProjectionResync, ctx)
+    expect(result.executed).toBe(false)
+    expect(result.message).toMatch(/not yet wired/i)
+  })
+
+  it('re-pushes to the requesting device and reports the frame count', async () => {
+    const fullProjectionResyncFn = vi.fn().mockReturnValue({ ok: true, sentEnvelopes: 3 })
+    const executor = new MainProcessActionExecutor({ cancelRunFn, fullProjectionResyncFn })
+    const result = await executor.executeFullProjectionResync(sample.fullProjectionResync, ctx)
+    expect(fullProjectionResyncFn).toHaveBeenCalledWith('device-A')
+    expect(result.executed).toBe(true)
+    expect(result.data).toEqual({ sentEnvelopes: 3 })
+  })
+
+  it('returns executed=false with the reason when the device is not connected', async () => {
+    const fullProjectionResyncFn = vi
+      .fn()
+      .mockReturnValue({ ok: false, reason: 'device not connected' })
+    const executor = new MainProcessActionExecutor({ cancelRunFn, fullProjectionResyncFn })
+    const result = await executor.executeFullProjectionResync(sample.fullProjectionResync, ctx)
+    expect(result.executed).toBe(false)
+    expect(result.message).toMatch(/not connected/)
+  })
+
+  it('always acks even when the resync fn throws', async () => {
+    const fullProjectionResyncFn = vi.fn().mockImplementation(() => {
+      throw new Error('broadcaster exploded')
+    })
+    const log = vi.fn()
+    const executor = new MainProcessActionExecutor({ cancelRunFn, fullProjectionResyncFn, log })
+    const result = await executor.executeFullProjectionResync(sample.fullProjectionResync, ctx)
+    expect(result.executed).toBe(false)
+    expect(result.message).toMatch(/Resync failed/)
   })
 })
 

@@ -14,6 +14,7 @@ import {
 } from './BridgeActionPayload'
 import {
   NoopActionExecutor,
+  type BridgeActionDispatchContext,
   type BridgeActionExecutionResult,
   type BridgeActionExecutor
 } from './BridgeActionExecutor'
@@ -283,6 +284,13 @@ export class BridgeActionRouter {
     const pairID = String(dict.pairID ?? '?')
     const bytes = Number(dict.payloadBytes ?? 0)
     const payloadBase64 = typeof dict.payloadBase64 === 'string' ? dict.payloadBase64 : ''
+    // The runtime injects the AUTHENTICATED requesting device identity (the
+    // pinned iphoneIdentityPubKey, same trust source as pairID) so a read-only
+    // device-targeted action (fullProjectionResync) can re-push to exactly the
+    // requesting device. Never client-supplied — it is spread AFTER the decoded
+    // dict in handleInbound.
+    const requestingDeviceKey =
+      typeof dict.requestingDeviceKey === 'string' ? dict.requestingDeviceKey : null
 
     if (this.permissiveDev) {
       await this.auditRawBridgeDecision({
@@ -527,7 +535,7 @@ export class BridgeActionRouter {
       )
     }
 
-    const dispatch = await this.dispatch(payload)
+    const dispatch = await this.dispatch(payload, { requestingDeviceKey })
     const workspaceIdForLog = workspaceIdFromPayload(payload) ?? 'null'
     this.log(
       `[BridgeActionRouter] ACCEPT actionAck pairID=${pairID} kind=${payload.kind} ws=${workspaceIdForLog} executed=${dispatch.executed}`
@@ -553,7 +561,10 @@ export class BridgeActionRouter {
 
   /** Dispatch a policy-cleared action through the executor. The big
    * switch keeps payload-kind narrowing TypeScript-checked. */
-  private async dispatch(payload: BridgeActionPayload): Promise<BridgeActionExecutionResult> {
+  private async dispatch(
+    payload: BridgeActionPayload,
+    ctx: BridgeActionDispatchContext
+  ): Promise<BridgeActionExecutionResult> {
     switch (payload.kind) {
       case 'approvalReply':
         return this.executor.executeApprovalReply(payload)
@@ -646,6 +657,8 @@ export class BridgeActionRouter {
         return this.executor.executeEnsemblePresetMutate(payload)
       case 'discoverTailnetHosts':
         return this.executor.executeDiscoverTailnetHosts(payload)
+      case 'fullProjectionResync':
+        return this.executor.executeFullProjectionResync(payload, ctx)
       case 'setWatchedThread':
         return this.executor.executeSetWatchedThread(payload)
       case 'setYoloMode':
@@ -1263,6 +1276,7 @@ function capabilityForPayload(payload: BridgeActionPayload): RemoteWorkspaceCapa
     case 'registerApnsToken':
     case 'ensemblePresetMutate':
     case 'discoverTailnetHosts':
+    case 'fullProjectionResync':
     case 'setWatchedThread':
     case 'unknown':
       return null

@@ -44,6 +44,7 @@ import type {
   BridgeRegisterApnsTokenAction,
   BridgeEnsemblePresetMutateAction,
   BridgeDiscoverTailnetHostsAction,
+  BridgeFullProjectionResyncAction,
   BridgeSetWatchedThreadAction,
   BridgeSetYoloModeAction,
   BridgeTogglePinChatAction,
@@ -77,6 +78,14 @@ import type { AgentApprovalAction } from './store/types'
  * service surface stabilizes (the approval-response handler is 182
  * lines deep and needs its own extraction before bridge wiring).
  */
+
+/** Per-dispatch context threaded from the router to the executor. Carries the
+ * AUTHENTICATED requesting device identity (pinned iphoneIdentityPubKey) so a
+ * read-only device-targeted action (fullProjectionResync) can re-push to
+ * exactly that device. Not client-supplied. */
+export interface BridgeActionDispatchContext {
+  requestingDeviceKey: string | null
+}
 
 export interface BridgeActionExecutionResult {
   /** Whether the action's real effect was applied (run canceled,
@@ -190,6 +199,10 @@ export interface BridgeActionExecutor {
   ): Promise<BridgeActionExecutionResult>
   executeDiscoverTailnetHosts(
     action: BridgeDiscoverTailnetHostsAction
+  ): Promise<BridgeActionExecutionResult>
+  executeFullProjectionResync(
+    action: BridgeFullProjectionResyncAction,
+    ctx: BridgeActionDispatchContext
   ): Promise<BridgeActionExecutionResult>
   executeSetWatchedThread(action: BridgeSetWatchedThreadAction): Promise<BridgeActionExecutionResult>
   executeSetYoloMode(action: BridgeSetYoloModeAction): Promise<BridgeActionExecutionResult>
@@ -426,6 +439,12 @@ export class NoopActionExecutor implements BridgeActionExecutor {
   ): Promise<BridgeActionExecutionResult> {
     return notWired('discoverTailnetHosts', 'oracle')
   }
+  async executeFullProjectionResync(
+    _action: BridgeFullProjectionResyncAction,
+    ctx: BridgeActionDispatchContext
+  ): Promise<BridgeActionExecutionResult> {
+    return notWired('fullProjectionResync', ctx.requestingDeviceKey ?? 'device')
+  }
   async executeSetWatchedThread(
     action: BridgeSetWatchedThreadAction
   ): Promise<BridgeActionExecutionResult> {
@@ -659,6 +678,16 @@ export interface MainProcessActionExecutorDependencies {
     hosts?: Array<Record<string, unknown>>
     reason?: string
   }>
+  /** Slice 1 (RC1/RC2): client-initiated targeted full-projection resync. The
+   * phone fires fullProjectionResync on foreground/notification alive-wake; the
+   * host re-pushes the current visible projection to EXACTLY the requesting
+   * device (never a broadcast, never resetThrottle). SYNCHRONOUS so the snapshot
+   * frames enqueue on the device's session BEFORE the action ack drains. */
+  fullProjectionResyncFn?: (requestingDeviceKey: string) => {
+    ok: boolean
+    sentEnvelopes?: number
+    reason?: string
+  }
   setWatchedThreadFn?: (action: BridgeSetWatchedThreadAction) => Promise<{
     ok: boolean
     watchedAppChatId: string | null
@@ -1762,6 +1791,37 @@ export class MainProcessActionExecutor implements BridgeActionExecutor {
       const message = err instanceof Error ? err.message : String(err)
       this.log(`[BridgeActionExecutor] discoverTailnetHosts failed: ${message}`)
       return { executed: false, message: `Discovery failed: ${message}` }
+    }
+  }
+
+  async executeFullProjectionResync(
+    _action: BridgeFullProjectionResyncAction,
+    ctx: BridgeActionDispatchContext
+  ): Promise<BridgeActionExecutionResult> {
+    if (!ctx.requestingDeviceKey) {
+      return { executed: false, message: 'No requesting device identity for the resync.' }
+    }
+    if (!this.deps.fullProjectionResyncFn) {
+      return notWired('fullProjectionResync', ctx.requestingDeviceKey)
+    }
+    // The fn is synchronous: the targeted snapshot frames enqueue on the
+    // requesting device's session BEFORE this executor returns, so they drain
+    // ahead of the action ack (the phone applies the snapshot before the ack).
+    try {
+      const result = this.deps.fullProjectionResyncFn(ctx.requestingDeviceKey)
+      if (result.ok) {
+        const sentEnvelopes = result.sentEnvelopes ?? 0
+        return {
+          executed: true,
+          message: `Re-pushed the home projection (${sentEnvelopes} frame${sentEnvelopes === 1 ? '' : 's'}).`,
+          data: { sentEnvelopes }
+        }
+      }
+      return { executed: false, message: result.reason ?? 'Device not connected for resync.' }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      this.log(`[BridgeActionExecutor] fullProjectionResync failed: ${message}`)
+      return { executed: false, message: `Resync failed: ${message}` }
     }
   }
 

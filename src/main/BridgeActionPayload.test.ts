@@ -1248,6 +1248,17 @@ describe('decodeBridgeActionPayload', () => {
       }
     })
 
+    it('decodes fullProjectionResync as a read-only pair-scoped action (Slice 1)', () => {
+      const wire = encode({ kind: 'fullProjectionResync' })
+      const { payload } = decodeBridgeActionPayload(wire)
+      expect(payload.kind).toBe('fullProjectionResync')
+      // Grouped with discoverTailnetHosts/setWatchedThread across all classifiers:
+      // no workspace, no gating, not mutating.
+      expect(workspaceIdFromPayload(payload)).toBeNull()
+      expect(payloadRequiresWorkspaceGating(payload)).toBe(false)
+      expect(payloadIsMutating(payload)).toBe(false)
+    })
+
     it('decodes ensemble control variants', () => {
       const variants = [
         {

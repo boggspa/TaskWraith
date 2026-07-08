@@ -393,21 +393,13 @@ export class BridgeBroadcaster {
    * `bridge.broadcastWorkspaceList`. */
   broadcastWorkspaceList(): void {
     const method = BRIDGE_BROADCAST_METHODS.workspaceList
+    // shouldEmit STAMPS lastEmitMs first (throttle) — then build; a build that
+    // returns null on a load failure leaves the stamp in place, preserving the
+    // throttle-stamped-even-on-load-failure behavior.
     if (!this.shouldEmit(method)) return
-    let chats: ChatRecord[]
-    let workspaces: WorkspaceRecord[]
-    try {
-      workspaces = this.appStore.getWorkspaces()
-      chats = this.canonicalizeChats(this.appStore.getChats())
-    } catch (err) {
-      this.logErr(`failed to load workspaces/chats for ${method}`, err)
-      return
-    }
-    const visibleWorkspaces = this.visibleWorkspaces(workspaces)
-    const visibleWorkspaceIds = new Set(visibleWorkspaces.map((ws) => ws.id))
-    const visibleChats = this.visibleChats(chats, visibleWorkspaceIds)
-    const summaries = visibleWorkspaces.map((ws) => this.workspaceRecordToSummary(ws, visibleChats))
-    this.sendNotify(method, { workspaces: summaries })
+    const params = this.buildWorkspaceListParams()
+    if (!params) return
+    this.sendNotify(method, params)
   }
 
   /** Build a current snapshot from AppStore + emit
@@ -415,16 +407,46 @@ export class BridgeBroadcaster {
   broadcastThreadList(): void {
     const method = BRIDGE_BROADCAST_METHODS.threadList
     if (!this.shouldEmit(method)) return
+    const params = this.buildThreadListParams()
+    if (!params) return
+    this.sendNotify(method, params)
+  }
+
+  /** Pure builder for the workspace-list broadcast payload. Returns null on a
+   * load failure (the caller already stamped the throttle). Shared by the
+   * throttled broadcast and the targeted `emitSnapshotTo` resync. */
+  private buildWorkspaceListParams(): { workspaces: WorkspaceSummary[] } | null {
+    const method = BRIDGE_BROADCAST_METHODS.workspaceList
+    let chats: ChatRecord[]
+    let workspaces: WorkspaceRecord[]
+    try {
+      workspaces = this.appStore.getWorkspaces()
+      chats = this.canonicalizeChats(this.appStore.getChats())
+    } catch (err) {
+      this.logErr(`failed to load workspaces/chats for ${method}`, err)
+      return null
+    }
+    const visibleWorkspaces = this.visibleWorkspaces(workspaces)
+    const visibleWorkspaceIds = new Set(visibleWorkspaces.map((ws) => ws.id))
+    const visibleChats = this.visibleChats(chats, visibleWorkspaceIds)
+    const summaries = visibleWorkspaces.map((ws) => this.workspaceRecordToSummary(ws, visibleChats))
+    return { workspaces: summaries }
+  }
+
+  /** Pure builder for the thread-list broadcast payload. Returns null on load
+   * failure. Shared by the throttled broadcast and `emitSnapshotTo`. */
+  private buildThreadListParams(): { threads: ReturnType<typeof chatRecordToSummary>[] } | null {
+    const method = BRIDGE_BROADCAST_METHODS.threadList
     let chats: ChatRecord[]
     try {
       chats = this.canonicalizeChats(this.appStore.getChats())
     } catch (err) {
       this.logErr(`failed to load chats for ${method}`, err)
-      return
+      return null
     }
     const visibleWorkspaceIds = this.visibleWorkspaceIdsFromChats(chats)
     const threads = this.visibleChats(chats, visibleWorkspaceIds).map(chatRecordToSummary)
-    this.sendNotify(method, { threads })
+    return { threads }
   }
 
   /** Emit `bridge.broadcastWorkspaceUpdated` for a single workspace.
@@ -515,16 +537,9 @@ export class BridgeBroadcaster {
   }
 
   private sendRemoteProjectionSnapshot(method: string): void {
-    const projectionSource = this.projectionSource
-    if (!projectionSource) return
-    let projections: RemoteProjectionEnvelope[]
-    try {
-      projections = projectionSource.listRemoteProjectionEnvelopes()
-    } catch (err) {
-      this.logErr(`failed to load remote projections for ${method}`, err)
-      return
-    }
-    const params = { projections }
+    const built = this.buildRemoteProjectionSnapshotParams()
+    if (!built) return
+    const params = { projections: built.projections }
     const maxBytes = this.remoteProjectionSnapshotMaxBytes
     const bytes = Buffer.byteLength(JSON.stringify(params), 'utf8')
     if (bytes <= maxBytes) {
@@ -533,11 +548,31 @@ export class BridgeBroadcaster {
     }
 
     this.log?.(
-      `[BridgeBroadcaster] ${method} ${bytes}B exceeds ${maxBytes}B; sending ${projections.length} single projection envelopes`
+      `[BridgeBroadcaster] ${method} ${bytes}B exceeds ${maxBytes}B; sending ${built.projections.length} single projection envelopes`
     )
-    for (const envelope of projections) {
+    for (const envelope of built.projections) {
       this.broadcastRemoteProjection(envelope)
     }
+  }
+
+  /** Pure builder for the remote-projection-snapshot payload. Returns null
+   * when no projection source is wired or the load fails. Does NOT touch the
+   * throttle (the throttled entry `broadcastRemoteProjectionSnapshot` owns
+   * that). Shared by the throttled broadcast and `emitSnapshotTo`. */
+  private buildRemoteProjectionSnapshotParams(): { projections: RemoteProjectionEnvelope[] } | null {
+    const projectionSource = this.projectionSource
+    if (!projectionSource) return null
+    let projections: RemoteProjectionEnvelope[]
+    try {
+      projections = projectionSource.listRemoteProjectionEnvelopes()
+    } catch (err) {
+      this.logErr(
+        `failed to load remote projections for ${BRIDGE_BROADCAST_METHODS.remoteProjectionSnapshot}`,
+        err
+      )
+      return null
+    }
+    return { projections }
   }
 
   /** Fire both full-list broadcasts. Called when a new iOS client
@@ -548,6 +583,56 @@ export class BridgeBroadcaster {
     this.broadcastWorkspaceList()
     this.broadcastThreadList()
     this.broadcastRemoteProjectionSnapshot()
+  }
+
+  /** Targeted, un-throttled full-projection re-push to a SINGLE device sink.
+   * Reuses the same visibility-filtered builders as the periodic broadcasts,
+   * but never touches the shared throttle (`lastEmitMs`), never calls
+   * `resetThrottle`, and never hits `this.daemon` — the sink targets exactly
+   * one device's session. Used by the client-initiated `fullProjectionResync`
+   * (Slice 1) and the replay-gap resync (Slice 7). Snapshots are idempotent by
+   * envelopeId, so a redundant push is harmless. Returns the number of frames
+   * sent. */
+  emitSnapshotTo(sink: (method: string, params: unknown) => void): { sentEnvelopes: number } {
+    let sentEnvelopes = 0
+    const workspaceParams = this.buildWorkspaceListParams()
+    if (workspaceParams) {
+      sink(BRIDGE_BROADCAST_METHODS.workspaceList, workspaceParams)
+      sentEnvelopes += 1
+    }
+    const threadParams = this.buildThreadListParams()
+    if (threadParams) {
+      sink(BRIDGE_BROADCAST_METHODS.threadList, threadParams)
+      sentEnvelopes += 1
+    }
+    const projectionBuilt = this.buildRemoteProjectionSnapshotParams()
+    if (projectionBuilt) {
+      const method = BRIDGE_BROADCAST_METHODS.remoteProjectionSnapshot
+      const params = { projections: projectionBuilt.projections }
+      const bytes = Buffer.byteLength(JSON.stringify(params), 'utf8')
+      if (bytes <= this.remoteProjectionSnapshotMaxBytes) {
+        sink(method, params)
+        sentEnvelopes += 1
+      } else {
+        // Oversized: fan EACH envelope to the SINK (never broadcastRemoteProjection,
+        // which hits the daemon / all devices). Per-envelope guard mirrors
+        // broadcastRemoteProjection's size check.
+        const remoteMethod = BRIDGE_BROADCAST_METHODS.remoteProjection
+        for (const envelope of projectionBuilt.projections) {
+          const envParams = { envelope }
+          const envBytes = Buffer.byteLength(JSON.stringify(envParams), 'utf8')
+          if (envBytes > this.remoteProjectionEnvelopeMaxBytes) {
+            this.log?.(
+              `[BridgeBroadcaster] emitSnapshotTo skipped oversized ${envelope.kind} envelope ${envelope.envelopeId}`
+            )
+            continue
+          }
+          sink(remoteMethod, envParams)
+          sentEnvelopes += 1
+        }
+      }
+    }
+    return { sentEnvelopes }
   }
 
   /** Reset throttle state. Useful for tests or when the daemon

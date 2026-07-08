@@ -298,6 +298,11 @@ function makeStubExecutor(
       message: 'discoverTailnetHosts done',
       data: { hosts: [] }
     }),
+    executeFullProjectionResync: make('executeFullProjectionResync', {
+      executed: true,
+      message: 'fullProjectionResync done',
+      data: { sentEnvelopes: 3 }
+    }),
     executeSetYoloMode: make('executeSetYoloMode', { executed: true, message: 'setYoloMode done' }),
     executeTogglePinChat: make('executeTogglePinChat', {
       executed: true,
@@ -1443,6 +1448,41 @@ describe('BridgeActionRouter', () => {
           decision: 'allowed',
           reasonCode: 'accepted',
           chatId: 'chat-1'
+        })
+      ])
+    })
+
+    it('fullProjectionResync accepts pair-scoped read-only and threads requestingDeviceKey to the executor', async () => {
+      const { executor } = makeStubExecutor()
+      const capturedCtx: unknown[] = []
+      const spy = vi.fn(async (_payload: unknown, ctx: unknown) => {
+        capturedCtx.push(ctx)
+        return { executed: true, message: 'resynced', data: { sentEnvelopes: 3 } }
+      })
+      ;(executor as unknown as { executeFullProjectionResync: unknown }).executeFullProjectionResync =
+        spy
+      const { ledger, records } = makeAuditLedger()
+      // No allowlist configured — a read-only pair-scoped action must still be accepted.
+      const router = new BridgeActionRouter({ executor, auditLedger: ledger })
+      const wire = Buffer.from(
+        JSON.stringify(withReplayMeta({ kind: 'fullProjectionResync' })),
+        'utf-8'
+      ).toString('base64')
+      const result = (await router.route('bridge.requestActionAck', {
+        pairID: 'pair-1',
+        requestingDeviceKey: 'device-A',
+        payloadBase64: wire
+      })) as { accepted: boolean }
+      expect(result.accepted).toBe(true)
+      // The AUTHENTICATED requesting device identity reaches the executor via ctx.
+      expect(capturedCtx).toEqual([{ requestingDeviceKey: 'device-A' }])
+      expect(records).toEqual([
+        expect.objectContaining({
+          deviceId: 'pair-1',
+          capability: 'system',
+          action: 'fullProjectionResync',
+          decision: 'allowed',
+          reasonCode: 'accepted'
         })
       ])
     })
