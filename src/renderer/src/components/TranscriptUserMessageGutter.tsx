@@ -8,6 +8,7 @@ import {
   layoutTranscriptUserGutterMarkers,
   type TranscriptUserGutterMarker
 } from '../lib/TranscriptUserMessageGutter'
+import { useRailFrameRemeasure } from '../lib/useRailFrameRemeasure'
 import { collectMessageMediaRefs } from './ChatMediaPanel'
 import { FileTypeIcon } from './FileTypeIcon'
 
@@ -346,75 +347,11 @@ export function TranscriptUserMessageGutter({
     })
   }, [contentRef, markers.length, scrollRef])
 
-  useLayoutEffect(() => {
-    updateFrame()
-    const frameIds: number[] = []
-    let timeoutId: number | null = null
-    if (typeof window !== 'undefined') {
-      const scheduleFrame = () => {
-        frameIds.push(window.requestAnimationFrame(updateFrame))
-      }
-      frameIds.push(
-        window.requestAnimationFrame(() => {
-          updateFrame()
-          scheduleFrame()
-        })
-      )
-      timeoutId = window.setTimeout(updateFrame, 160)
-    }
-    let observer: ResizeObserver | null = null
-    let fontsCancelled = false
-    const scroller = scrollRef.current
-    const content = contentRef.current
-    if (typeof ResizeObserver !== 'undefined') {
-      observer = new ResizeObserver(() => updateFrame())
-      if (scroller) observer.observe(scroller)
-      if (content) observer.observe(content)
-      // The composer clamp (composerStackBox) depends on the composer
-      // stack's size — observe it too so an ensemble roster mounting or a
-      // composer-style swap re-clamps the rail without a window resize.
-      const composerArea = scroller?.closest('.app-transcript')?.querySelector('.composer-area')
-      if (composerArea instanceof HTMLElement) observer.observe(composerArea)
-    }
-    // Web-font swap reflows the transcript/composer after first paint; the rAF +
-    // 160ms belts can land before fonts settle, leaving the rail offset until an
-    // incidental scroll. One more measure on fonts.ready closes that gap.
-    if (typeof document !== 'undefined' && document.fonts?.ready) {
-      void document.fonts.ready.then(() => {
-        if (!fontsCancelled) updateFrame()
-      })
-    }
-    return () => {
-      fontsCancelled = true
-      observer?.disconnect()
-      for (const frameId of frameIds) window.cancelAnimationFrame(frameId)
-      if (timeoutId !== null) window.clearTimeout(timeoutId)
-    }
-  }, [contentRef, scrollRef, updateFrame])
-
-  useEffect(() => {
-    const handleResize = () => updateFrame()
-    window.addEventListener('resize', handleResize)
-    return () => window.removeEventListener('resize', handleResize)
-  }, [updateFrame])
-
-  // Layout-settle belt: the sidebar collapse/expand and dock open/close are
-  // 260ms width/transform transitions. ResizeObserver fires while they run,
-  // but the FINAL settled geometry can land between observer ticks — one more
-  // measure at transitionend guarantees the rail's fixed frame matches the
-  // resting layout. Filtered to geometry-affecting properties and to events
-  // outside the rail itself (marker width/background transitions would
-  // otherwise re-measure on every hover). setFrame's <0.5px bail makes the
-  // no-change case free.
-  useEffect(() => {
-    const handleTransitionEnd = (event: TransitionEvent) => {
-      if (!/^(width|left|right|transform|flex-basis|margin-left)$/.test(event.propertyName)) return
-      if (event.target instanceof Node && railRef.current?.contains(event.target)) return
-      updateFrame()
-    }
-    document.addEventListener('transitionend', handleTransitionEnd, true)
-    return () => document.removeEventListener('transitionend', handleTransitionEnd, true)
-  }, [updateFrame])
+  // Shared re-measure lifecycle (rAF/timeout settle belt + ResizeObserver on
+  // scroller/content/.composer-area + fonts.ready + resize + capture-scroll +
+  // filtered transitionend). Kept identical to the sibling filter rail so the
+  // two can't drift apart again. See lib/useRailFrameRemeasure.
+  useRailFrameRemeasure(updateFrame, { scrollRef, contentRef, railRef })
 
   const activeMarkerModel = useMemo(
     () => markers.find((marker) => marker.key === activeMarker?.key) || null,

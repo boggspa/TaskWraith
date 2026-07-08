@@ -1,7 +1,7 @@
 import {
   useCallback,
-  useLayoutEffect,
   useMemo,
+  useRef,
   useState,
   type CSSProperties,
   type ReactElement,
@@ -13,6 +13,7 @@ import {
   buildTranscriptParticipantFilterItems,
   type TranscriptParticipantFilterItem
 } from '../lib/transcriptParticipantFilter'
+import { useRailFrameRemeasure } from '../lib/useRailFrameRemeasure'
 import { resolveProviderHueClass } from '../lib/ollamaDisplayBrand'
 import { getProviderLabel } from '../lib/providerLabels'
 import { PooledAgentIcon } from './icons/PooledAgentIcon'
@@ -221,6 +222,9 @@ export function TranscriptParticipantFilterRail({
   const systemItem = useMemo(() => items.find((item) => item.kind === 'system') || null, [items])
   const columnCount = Math.max(1, Math.ceil(participantItems.length / FILTER_MAX_ROWS))
   const [frame, setFrame] = useState<RailFrame | null>(null)
+  // Root ref for the shared re-measure hook's transitionend filter (skips
+  // transitions originating inside the rail itself).
+  const railRef = useRef<HTMLDivElement | null>(null)
 
   const updateFrame = useCallback(() => {
     const scroller = scrollRef.current
@@ -273,58 +277,12 @@ export function TranscriptParticipantFilterRail({
     })
   }, [columnCount, contentRef, participantItems.length, scrollRef, systemItem])
 
-  useLayoutEffect(() => {
-    updateFrame()
-    const frameIds: number[] = []
-    let timeoutId: number | null = null
-    let observer: ResizeObserver | null = null
-    let fontsCancelled = false
-    if (typeof window !== 'undefined') {
-      // Nested rAF: measure next frame, then once more after it paints — catches
-      // virtualized rows and composer growth that land a frame late.
-      frameIds.push(
-        window.requestAnimationFrame(() => {
-          updateFrame()
-          frameIds.push(window.requestAnimationFrame(updateFrame))
-        })
-      )
-      // Layout-settle belt for the roster-preset expand animation / async mount.
-      timeoutId = window.setTimeout(updateFrame, 160)
-      window.addEventListener('resize', updateFrame)
-      window.addEventListener('scroll', updateFrame, true)
-    }
-    // The rail's vertical centre + right edge track the composer surface and the
-    // transcript column. Previously this effect had NO ResizeObserver, so an
-    // ensemble roster mounting / the composer growing taller after first paint
-    // never re-measured the rail — it stayed mispositioned until an incidental
-    // scroll fired the capture listener above. Observe the scroller, the
-    // transcript inner, and `.composer-area` so those relayouts re-clamp the
-    // rail immediately (mirrors the sibling TranscriptUserMessageGutter).
-    const scroller = scrollRef.current
-    const content = contentRef.current
-    if (typeof ResizeObserver !== 'undefined') {
-      observer = new ResizeObserver(() => updateFrame())
-      if (scroller) observer.observe(scroller)
-      if (content) observer.observe(content)
-      const composerArea = scroller?.closest('.app-transcript')?.querySelector('.composer-area')
-      if (composerArea instanceof HTMLElement) observer.observe(composerArea)
-    }
-    // Web-font swap shifts the composer height (and thus the rail's centre)
-    // after first paint — re-measure once fonts settle.
-    if (typeof document !== 'undefined' && document.fonts?.ready) {
-      void document.fonts.ready.then(() => {
-        if (!fontsCancelled) updateFrame()
-      })
-    }
-    return () => {
-      fontsCancelled = true
-      observer?.disconnect()
-      for (const id of frameIds) window.cancelAnimationFrame(id)
-      if (timeoutId !== null) window.clearTimeout(timeoutId)
-      window.removeEventListener('resize', updateFrame)
-      window.removeEventListener('scroll', updateFrame, true)
-    }
-  }, [contentRef, scrollRef, updateFrame])
+  // Shared re-measure lifecycle (rAF/timeout settle belt + ResizeObserver on
+  // scroller/content/.composer-area + fonts.ready + resize + capture-scroll +
+  // filtered transitionend). This rail previously shipped with NO
+  // ResizeObserver and stayed mispositioned until an incidental scroll; the
+  // shared hook keeps it in lockstep with the sibling gutter rail.
+  useRailFrameRemeasure(updateFrame, { scrollRef, contentRef, railRef })
 
   if (!currentChat || currentChat.chatKind !== 'ensemble' || participantItems.length === 0) return null
 
@@ -381,6 +339,7 @@ export function TranscriptParticipantFilterRail({
 
   const rail = (
     <div
+      ref={railRef}
       className={`transcript-participant-filter-rail${frame ? '' : ' is-unmeasured'}${
         activeFilterKeys.size > 0 ? ' has-active-filter' : ''
       }`}
