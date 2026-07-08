@@ -939,6 +939,7 @@ import { registerPtyHandlers } from './ipc/ptyHandlers'
 import { registerLaunchHandlers } from './ipc/launchHandlers'
 import { discoverLaunchTargets } from './launchTargets/discovery'
 import { registerLocalServersHandlers } from './ipc/localServersHandlers'
+import { createMainRuntimeContext } from './runtime/MainRuntimeContext'
 import { registerChatHandlers } from './ipc/chatHandlers'
 import { registerHumanCollaborationHandlers } from './ipc/humanCollaborationHandlers'
 import { registerWorkspaceHandlers } from './ipc/workspaceHandlers'
@@ -27735,6 +27736,59 @@ if (isGeminiMcpBridgeProcess) {
       detectTailscale,
       getNowMs: () => Date.now()
     })
+
+    // M0 wiring — construct the MainRuntimeContext seam ONCE, at the top of the
+    // registrar block. Every accessor is a lazy getter-closure over the existing
+    // module-let binding (deref only at handler invocation, post-whenReady), so
+    // constructing here — before the Tier-B services below are assigned — is safe.
+    // ROOTS ONLY: pure utilities never become context fields. This slice proves a
+    // single consumer (registerLocalServersHandlers); further consumers wire in
+    // one-per-slice. Zero assignment-site changes; the forward-ref tricks untouched.
+    const mainRuntimeContext = createMainRuntimeContext({
+      windows: {
+        getMainWindow: () => mainWindow,
+        sendToRenderer: (channel, payload) => {
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send(channel, payload)
+          }
+        }
+      },
+      runtime: {
+        dispatchRun: async (payload, event) => {
+          const dispatch = dispatchRunWithProviderPauseRef
+          if (!dispatch || !event) {
+            throw new Error('MainRuntimeContext.dispatchRun invoked before run dispatch was ready')
+          }
+          await dispatch(payload as AgentRunPayload, event)
+        },
+        getRunCoordinator: () => runCoordinatorRef,
+        getRunQueue: () => runQueueServiceRef,
+        getRunLifecycle: () => runLifecycleCoordinatorRef,
+        getRunRepository
+      },
+      services: {
+        getSettings: () => settingsServiceRef,
+        getApprovalService: () => approvalService,
+        getComposerService: () => composerServiceRef,
+        getEnsembleOrchestrator: () => ensembleOrchestratorRef,
+        getWakeupTimers: () => wakeupTimerServiceRef,
+        getSessionCheckpoints: () => sessionCheckpointStoreRef,
+        getAuditOrchestrator: () => auditOrchestratorRef,
+        getCreativeApprovalGate: () => creativeApprovalGateRef,
+        getPluginHost: () => pluginHostRef,
+        getPluginContributions: () => pluginContributionManagerRef,
+        getLocalServers: () => localServersServiceRef,
+        getApnsTokenStore: () => bridgeApnsTokenStoreRef
+      },
+      remote: {
+        getBridgeBroadcaster: () => bridgeBroadcasterRef,
+        getBridgeDaemon: () => bridgeDaemonRef,
+        getGitSnapshotFeed: () => remoteGitSnapshotFeedRef
+      },
+      lazy: {
+        getTranscriptMediaAssetStore
+      }
+    })
     registerBridgeAllowlistHandlers({
       listRemoteAllowlist: () => workspaceService.listRemoteAllowlist(),
       upsertRemoteAllowlist: (entry) => workspaceService.upsertRemoteAllowlist(entry),
@@ -27905,7 +27959,7 @@ if (isGeminiMcpBridgeProcess) {
       }
     })
     localServersService.start()
-    registerLocalServersHandlers({ localServersService })
+    registerLocalServersHandlers({ localServersService: mainRuntimeContext.requireLocalServers() })
     const pluginHost = new PluginHost({
       userDataPath: app.getPath('userData'),
       log: (line) => console.log(line)
