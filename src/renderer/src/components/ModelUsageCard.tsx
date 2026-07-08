@@ -701,7 +701,6 @@ export function ContextLengthsView() {
             <span className={`sidebar-provider-label provider-${group.provider}`}>
               <ProviderLogoTile provider={group.provider} />
               <span className="model-usage-provider-name">{getProviderName(group.provider)}</span>
-              <span className="model-usage-tier-badge">{group.models.length} model{group.models.length === 1 ? '' : 's'}</span>
             </span>
           </div>
           <div className="model-usage-context-rows">
