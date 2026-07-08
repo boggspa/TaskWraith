@@ -133,7 +133,7 @@ describe('ComposerShellPreview — per-shell send glyph', () => {
       const html = render(style)
       if (textActionShells.has(style)) {
         expect(html, style).toContain('class="composer-above-bar-action"')
-        expect(html, style).toContain(style === 'claude' ? 'Create PR' : 'Review changes')
+        expect(html, style).toContain(style === 'claude' ? 'Create PR' : 'Commit')
         expect(html, style).not.toContain('composer-above-bar-action--git-commit-icon')
         expect(html, style).not.toContain('composer-git-commit-trigger-icon')
       } else {

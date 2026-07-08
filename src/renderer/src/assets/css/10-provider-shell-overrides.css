@@ -2369,9 +2369,11 @@
   --cursor-shell-border-strong: rgba(216, 216, 216, 0.42);
   --cursor-shell-hover: rgba(216, 216, 216, 0.09);
   --cursor-shell-fill: rgba(216, 216, 216, 0.1);
-  /* Flat, quiet top-edge rim — a faint neutral lip, not a bright shine. */
-  --cursor-shell-rim: rgba(216, 216, 216, 0.22);
-  --cursor-shell-rim-strong: rgba(216, 216, 216, 0.42);
+  /* Flat, quiet top-edge rim — a faint neutral lip, not a bright shine.
+   * 1.0.6 — backed off hard (was 0.22/0.42) so the capsule top-edge highlight
+   * reads almost flat against the darkened #1E1E1E surface. */
+  --cursor-shell-rim: rgba(216, 216, 216, 0.04);
+  --cursor-shell-rim-strong: rgba(216, 216, 216, 0.1);
   /* Merged above-bar stack + input capsule — subtler than the old
    * ~26px pill; top segment reads darker than the body in dark mode. */
   --cursor-shell-stack-radius: 14px;
@@ -2392,8 +2394,8 @@
   --cursor-shell-hover: rgba(46, 46, 46, 0.06);
   --cursor-shell-fill: rgba(46, 46, 46, 0.08);
   /* Faint neutral lip — flat, no gloss. */
-  --cursor-shell-rim: rgba(46, 46, 46, 0.14);
-  --cursor-shell-rim-strong: rgba(46, 46, 46, 0.3);
+  --cursor-shell-rim: rgba(46, 46, 46, 0.03);
+  --cursor-shell-rim-strong: rgba(46, 46, 46, 0.08);
   --cursor-shell-stack-header: transparent;
 }
 /* `system` theme follows the OS appearance. */
@@ -2411,6 +2413,28 @@
     --cursor-shell-rim: rgba(46, 46, 46, 0.14);
     --cursor-shell-rim-strong: rgba(46, 46, 46, 0.3);
     --cursor-shell-stack-header: transparent;
+  }
+}
+
+/* Dark-mode-only: darken the COMPOSER surfaces to a flat #1E1E1E (RGB
+ * 30,30,30) — the textarea capsule + the above-row containers both back
+ * off `--cursor-shell-surface`, so re-declaring the token on the composer
+ * containers (NOT the <html> root) darkens them without touching the
+ * body-portaled popovers / app-wide chrome, which keep #2a2a2a. Scoped to
+ * `.composer-area` / `.composer-primary-stack` so the Settings preview and
+ * every multiview pane pick it up. Light themes reset to the light surface
+ * (higher specificity), so this is strictly a dark-mode change. */
+[data-composer-style="cursor"] :is(.composer-area, .composer-primary-stack) {
+  --cursor-shell-surface: #1e1e1e;
+}
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"])[data-composer-style="cursor"]
+  :is(.composer-area, .composer-primary-stack) {
+  --cursor-shell-surface: #f4f4f4;
+}
+@media (prefers-color-scheme: light) {
+  [data-theme="system"][data-composer-style="cursor"]
+    :is(.composer-area, .composer-primary-stack) {
+    --cursor-shell-surface: #f4f4f4;
   }
 }
 
@@ -2626,11 +2650,12 @@
   background: transparent;
   border: 0;
   /* left gutter clears the [+]; right gutter clears [model][send] —
-   * sized like Gemini for the widest realistic model label. The top/bottom
-   * padding is redistributed (13/5 rather than 9/9, same 18px total so the
-   * capsule height is unchanged) to drop the single-line text ~4px and align
-   * it with the lowered +/model/send. */
-  padding: 13px 224px 5px 46px;
+   * sized like Gemini for the widest realistic model label. 1.0.6 — trimmed
+   * 5px of vertical padding (13/5 → 10/3, i.e. 18px → 13px total) for a
+   * tighter single-line text inset. The capsule's OUTER height is pinned by
+   * the shell-wide `min-height: calc(1.55em + 22px) !important` floor
+   * (03-composer-welcome-activity.css), so this is padding-only. */
+  padding: 10px 224px 3px 46px;
   min-height: 32px;
   font-size: var(--font-size-md);
   color: var(--cursor-shell-fg);
@@ -2705,7 +2730,12 @@
 [data-composer-style="cursor"] [data-composer-control="attach"] {
   position: absolute;
   position-anchor: --composer-capsule;
-  top: calc(anchor(--composer-capsule bottom) - var(--composer-capsule-single-h) + 16px);
+  /* 1.0.6 — the trailing `+ Npx` on each of these three `top:` calcs is the
+   * per-control vertical-position knob (bigger N = lower, smaller = higher;
+   * 1 unit = 1px). Tuned so +/model/send sit ~centred in the capsule; the
+   * `anchor(bottom) - single-h` part keeps them bottom-tracking on multi-line,
+   * so only this constant needs touching to re-align. */
+  top: calc(anchor(--composer-capsule bottom) - var(--composer-capsule-single-h) + 15px);
   left: 10px;
   margin: 0;
   z-index: 3;
@@ -2713,7 +2743,7 @@
 [data-composer-style="cursor"] [data-composer-control="model"] {
   position: absolute;
   position-anchor: --composer-capsule;
-  top: calc(anchor(--composer-capsule bottom) - var(--composer-capsule-single-h) + 17px);
+  top: calc(anchor(--composer-capsule bottom) - var(--composer-capsule-single-h) + 15px);
   right: 50px;
   max-width: 172px;
   margin: 0;
@@ -2724,7 +2754,7 @@
   align-items: center;
   position: absolute;
   position-anchor: --composer-capsule;
-  top: calc(anchor(--composer-capsule bottom) - var(--composer-capsule-single-h) + 16px);
+  top: calc(anchor(--composer-capsule bottom) - var(--composer-capsule-single-h) + 14px);
   right: 12px;
   z-index: 3;
 }
@@ -3058,6 +3088,32 @@
 [data-composer-style="cursor"] .composer-above-bar-secondary-branch {
   color: var(--cursor-shell-muted) !important;
 }
+/* Dark-mode-only: the workspace + branch names read WHITE instead of the
+ * muted gray above, so they stand out against the darkened capsule. Same
+ * selectors/specificity as the muted rule, placed after it → wins in dark;
+ * the light-theme overrides below restore the muted gray. */
+[data-composer-style="cursor"]
+  .composer-above-bar-pill
+  :is(.composer-above-bar-branch, .composer-above-bar-summary),
+[data-composer-style="cursor"] .composer-above-bar-secondary-branch {
+  color: #ffffff !important;
+}
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"])[data-composer-style="cursor"]
+  .composer-above-bar-pill
+  :is(.composer-above-bar-branch, .composer-above-bar-summary),
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"])[data-composer-style="cursor"]
+  .composer-above-bar-secondary-branch {
+  color: var(--cursor-shell-muted) !important;
+}
+@media (prefers-color-scheme: light) {
+  [data-theme="system"][data-composer-style="cursor"]
+    .composer-above-bar-pill
+    :is(.composer-above-bar-branch, .composer-above-bar-summary),
+  [data-theme="system"][data-composer-style="cursor"]
+    .composer-above-bar-secondary-branch {
+    color: var(--cursor-shell-muted) !important;
+  }
+}
 [data-composer-style="cursor"]
   .composer-above-bar-pill
   :is(.composer-above-bar-files, .composer-above-bar-stats) {
@@ -3108,6 +3164,13 @@
   flex: 0 1 auto;
   min-width: 0;
   max-width: min(100%, 38rem);
+  /* Right-align the trailing group (Commit / Push / Review + revoke)
+   * unconditionally. The changes cluster carried `margin-left: auto`, but it
+   * only renders when there's a diff — with a clean tree the action + revoke
+   * collapsed left against the branch pill. `margin-right: auto` on the git
+   * pill absorbs the free space in EITHER case (it's a no-op next to the
+   * cluster's own auto-margin when a diff is present). */
+  margin-right: auto;
 }
 [data-composer-style="cursor"] .composer-above-bar-secondary .composer-above-bar-center-cluster {
   order: 30;

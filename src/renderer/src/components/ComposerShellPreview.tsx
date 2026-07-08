@@ -251,9 +251,11 @@ export function ComposerShellPreview({
     .filter(Boolean)
     .join(' ')
   const previewActionLabel =
-    composerStyle === 'codex' || composerStyle === 'grok' || composerStyle === 'claude'
-      ? 'Create PR'
-      : 'Review changes'
+    composerStyle === 'cursor'
+      ? 'Commit'
+      : composerStyle === 'codex' || composerStyle === 'grok' || composerStyle === 'claude'
+        ? 'Create PR'
+        : 'Review changes'
 
   // Font injection mirrors the prior SettingsPanel preview: only inject when the
   // caller actually supplies the font (onboarding omits both → inherit).

@@ -217,7 +217,11 @@ export function ExternalPathAboveRow({
         ? 'PR opened'
         : prStatus === 'error'
           ? 'Retry PR'
-          : 'Create PR'
+          : // Cursor shell relabels the idle git action to "Commit" so the
+            // secondary workspace row matches the primary composer row.
+            composerStyle === 'cursor'
+            ? 'Commit'
+            : 'Create PR'
   const hasDiff =
     diffStats && (diffStats.filesChanged > 0 || diffStats.additions > 0 || diffStats.deletions > 0)
   // Context-aware headline + per-row commit/push/PR menu, mirroring the primary
@@ -230,10 +234,12 @@ export function ExternalPathAboveRow({
       snapshot.remoteUrl &&
       (!snapshot.upstream || (snapshot.ahead ?? 0) > 0)
   )
-  // Claude shell mirrors the real Claude app: the headline is always the
-  // PR label ("Create PR"); Review/Push live inside the dropdown menu.
+  // Claude + Cursor shells mirror their desktop apps: the headline is always
+  // the single git-action label (Cursor → "Commit"), so the secondary
+  // workspace row matches the primary composer row rather than swapping
+  // between Review/Push. Review/Push still live inside the dropdown menu.
   const actionLabel =
-    composerStyle === 'claude'
+    composerStyle === 'claude' || composerStyle === 'cursor'
       ? createPrLabel
       : hasDiff
         ? 'Review changes'
@@ -258,33 +264,37 @@ export function ExternalPathAboveRow({
 
   const diffCluster = hasDiff ? (
     <span className="composer-above-bar-center-cluster">
+      {/* Single changes pill — files-changed + add/del live in ONE
+          `.composer-above-bar-files-cluster` container, matching the primary
+          workspace row (Composer.tsx) rather than splitting them into two
+          separate pills. */}
       <div className="composer-above-bar-pill composer-above-bar-pill--changes">
-        <span
-          className="composer-above-bar-files"
-          title={`${diffStats!.filesChanged} ${
-            diffStats!.filesChanged === 1 ? 'file' : 'files'
-          } changed in this path`}
-        >
-          <AnimatedDiffNumber value={diffStats!.filesChanged} strong />{' '}
-          {diffStats!.filesChanged === 1 ? 'file changed' : 'files changed'}
+        <span className="composer-above-bar-files-cluster">
+          <span
+            className="composer-above-bar-files"
+            title={`${diffStats!.filesChanged} ${
+              diffStats!.filesChanged === 1 ? 'file' : 'files'
+            } changed in this path`}
+          >
+            <AnimatedDiffNumber value={diffStats!.filesChanged} strong />{' '}
+            {diffStats!.filesChanged === 1 ? 'file changed' : 'files changed'}
+          </span>
+          {(diffStats!.additions > 0 || diffStats!.deletions > 0) && (
+            <span className="composer-above-bar-stats">
+              <AnimatedDiffNumber
+                value={diffStats!.additions}
+                prefix="+"
+                className="composer-diff-add"
+              />
+              <AnimatedDiffNumber
+                value={diffStats!.deletions}
+                prefix="-"
+                className="composer-diff-del"
+              />
+            </span>
+          )}
         </span>
       </div>
-      {(diffStats!.additions > 0 || diffStats!.deletions > 0) && (
-        <div className="composer-above-bar-pill composer-above-bar-pill--stats">
-          <span className="composer-above-bar-stats">
-            <AnimatedDiffNumber
-              value={diffStats!.additions}
-              prefix="+"
-              className="composer-diff-add"
-            />
-            <AnimatedDiffNumber
-              value={diffStats!.deletions}
-              prefix="-"
-              className="composer-diff-del"
-            />
-          </span>
-        </div>
-      )}
     </span>
   ) : null
 

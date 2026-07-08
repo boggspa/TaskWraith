@@ -2052,7 +2052,11 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               ? 'PR opened'
                               : primaryPrState.status === 'error'
                                 ? 'Retry PR'
-                                : 'Create PR'
+                                : // Cursor shell relabels the idle git action to
+                                  // "Commit" (matches the secondary workspace row).
+                                  appearance.composerStyle === 'cursor'
+                                  ? 'Commit'
+                                  : 'Create PR'
                         // Phase Git-U5 — context-aware primary action: Review
                         // (working-tree changes) → Push (clean but unpushed) →
                         // Create PR (pushed). Mirrors the menu's
