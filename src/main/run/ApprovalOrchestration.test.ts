@@ -2,6 +2,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import {
   createApprovalOrchestration,
+  createMainApprovalOrchestration,
   type RequestAgenticServiceApprovalDeps
 } from './ApprovalOrchestration'
 
@@ -80,6 +81,9 @@ function makeDeps(order: string[]): RequestAgenticServiceApprovalDeps {
       return {
         registerGeminiTool: vi.fn(() => {
           order.push('registerGeminiTool')
+        }),
+        registerMain: vi.fn(() => {
+          order.push('registerMain')
         })
       }
     }) as never,
@@ -349,5 +353,148 @@ describe('createApprovalOrchestration — security guard sequence (faked deps)',
     expect(order).not.toContain('audit:autoAllow:bossman_auto')
     // …it reaches the human prompt instead.
     expect(order).toContain('registerGeminiTool')
+  })
+})
+
+function makeMainDeps(order: string[]) {
+  const deps = makeDeps(order)
+  return {
+    getApprovalService: deps.getApprovalService,
+    runManager: deps.runManager,
+    scheduleApprovalTimeout: deps.scheduleApprovalTimeout,
+    appendDurableRunEventForRoute: deps.appendDurableRunEventForRoute,
+    recordApprovalLedgerRequest: deps.recordApprovalLedgerRequest,
+    safeSendToSender: deps.safeSendToSender,
+    notifyPairedDevicesOfApproval: deps.notifyPairedDevicesOfApproval,
+    workspaceIdForApprovalPush: deps.workspaceIdForApprovalPush
+  }
+}
+
+function mainRequest(overrides: Record<string, unknown> = {}) {
+  return {
+    method: 'workspace/session-trust',
+    title: 'Approve workspace trust',
+    body: 'trust body',
+    runId: 'run-1',
+    ...overrides
+  } as never
+}
+
+const mainSender = { isDestroyed: () => false, send: vi.fn() } as never
+
+describe('createMainApprovalOrchestration — security guard sequence', () => {
+  // (m1) Missing sender should short-circuit without side effects.
+  it('(m1) short-circuits when sender is absent or destroyed', async () => {
+    const order: string[] = []
+    const deps = makeMainDeps(order)
+
+    expect(await createMainApprovalOrchestration(deps)(null, 'gemini', null, mainRequest())).toBe(false)
+    expect(order).toEqual([])
+
+    const destroyed = { isDestroyed: () => true, send: vi.fn() } as never
+    expect(await createMainApprovalOrchestration(deps)(destroyed, 'gemini', null, mainRequest())).toBe(false)
+    expect(order).toEqual([])
+  })
+
+  // (m2) The main-authority prompt must register live through getApprovalService
+  // (REGISTER equivalent) so a stale by-value capture cannot no-op this path.
+  it('(m2) opens a main-authority prompt with live getApprovalService()', async () => {
+    const order: string[] = []
+    const deps = makeMainDeps(order)
+
+    createMainApprovalOrchestration(deps)(
+      mainSender,
+      'gemini',
+      { appRunId: 'run-1', appChatId: 'chat-1' },
+      mainRequest()
+    )
+    await Promise.resolve()
+
+    expect(order).toEqual([
+      'getApprovalService',
+      'registerMain',
+      'runManager.registerApproval',
+      'scheduleApprovalTimeout',
+      'appendDurableRunEventForRoute',
+      'recordApprovalLedgerRequest',
+      'safeSendToSender:agent-approval-request',
+      'notifyPairedDevicesOfApproval'
+    ])
+    expect(deps.getApprovalService).toHaveBeenCalled()
+  })
+
+  // (m3) Null approval service still logs and fans out but skips registerMain.
+  it('(m3) a null approval service skips registerMain but still completes the main-authority sequence', async () => {
+    const order: string[] = []
+    const deps = makeMainDeps(order)
+    vi.mocked(deps.getApprovalService).mockReturnValue(null as never)
+
+    createMainApprovalOrchestration(deps)(mainSender, 'gemini', null, mainRequest())
+    await Promise.resolve()
+
+    expect(order).toContain('runManager.registerApproval')
+    expect(order).not.toContain('registerMain')
+    expect(order).toContain('safeSendToSender:agent-approval-request')
+    expect(order).toContain('notifyPairedDevicesOfApproval')
+  })
+
+  // (m4) The main-authority timeout and ledger metadata flags must be injected.
+  it('(m4) preserves main-authority markers on timeout + ledger metadata', async () => {
+    const order: string[] = []
+    const deps = makeMainDeps(order)
+
+    createMainApprovalOrchestration(deps)(mainSender, 'gemini', null, mainRequest())
+    await Promise.resolve()
+
+    expect(deps.scheduleApprovalTimeout).toHaveBeenCalledWith(
+      expect.objectContaining({
+        approvalId: expect.any(String),
+        provider: 'gemini',
+        route: expect.objectContaining({
+          appRunId: expect.any(String)
+        }),
+        isMainAuthority: true,
+        kind: 'workspace/session-trust'
+      })
+    )
+    const ledgerCalls = vi.mocked(deps.recordApprovalLedgerRequest).mock.calls
+    expect(ledgerCalls[0][3]).toMatchObject({ metadata: { mainAuthority: true } })
+  })
+
+  // (m5) Route normalization should apply fallback run IDs when missing from route.
+  it('(m5) normalizes route through routeWithRunId before building approval payload', async () => {
+    const order: string[] = []
+    const deps = makeMainDeps(order)
+
+    createMainApprovalOrchestration(deps)(mainSender, 'gemini', null, mainRequest())
+    await Promise.resolve()
+
+    expect(vi.mocked(deps.runManager.registerApproval)).toHaveBeenCalledWith(expect.stringContaining('gemini-'), expect.any(String))
+    expect(vi.mocked(deps.safeSendToSender)).toHaveBeenCalledWith(mainSender, 'agent-approval-request', expect.objectContaining({
+      appRunId: expect.stringContaining('gemini-'),
+      appChatId: undefined,
+      title: 'Approve workspace trust',
+      preview: expect.objectContaining({
+        actions: ['accept', 'decline', 'cancel']
+      })
+    }))
+  })
+
+  // (m6) Paired-device fan-out should include workspace-derived thread and summary metadata.
+  it('(m6) fans out paired-device approval metadata with workspace-derived thread id', async () => {
+    const order: string[] = []
+    const deps = makeMainDeps(order)
+    vi.mocked(deps.workspaceIdForApprovalPush).mockReturnValue('ws-id')
+
+    createMainApprovalOrchestration(deps)(mainSender, 'gemini', { appRunId: 'run-1', appChatId: 'chat-1' }, mainRequest())
+    await Promise.resolve()
+
+    const notifyCall = vi.mocked(deps.notifyPairedDevicesOfApproval).mock.calls[0]
+    expect(notifyCall[0]).toMatchObject({
+      approvalId: expect.any(String),
+      workspaceId: 'ws-id',
+      threadId: 'chat-1',
+      summary: 'Approve workspace trust'
+    })
   })
 })

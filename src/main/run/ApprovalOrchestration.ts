@@ -1,5 +1,6 @@
 import type { WebContents } from 'electron'
 import type { AgentRunRoute } from './AgentRunTypes'
+import { routeWithRunId } from './RunRoute'
 import type { ApprovalService, PendingExternalPathDetection } from '../services/ApprovalService'
 import type { AuditService } from '../services/AuditService'
 import type { PermissionService } from '../PermissionService'
@@ -16,6 +17,7 @@ import type {
 import { effectiveAgenticSettings } from '../NativeApprovalPolicy'
 import { agenticServiceBlockedMessage, approvalActionsForPolicy } from '../AgenticServiceMessages'
 import { isPlanInstrumentGrantHold } from '../EffectiveRunPermissions'
+import { isRecord } from '../settings/MainSanitizers'
 
 /**
  * ApprovalOrchestration — M3-3b orchestration-facade extraction (per
@@ -161,6 +163,89 @@ export interface RequestAgenticServiceApprovalDeps {
     path: string
     basename?: string
     access: 'read' | 'write'
+  }
+}
+
+export type RequestMainApprovalDeps = Pick<
+  RequestAgenticServiceApprovalDeps,
+  | 'getApprovalService'
+  | 'runManager'
+  | 'scheduleApprovalTimeout'
+  | 'appendDurableRunEventForRoute'
+  | 'recordApprovalLedgerRequest'
+  | 'safeSendToSender'
+  | 'notifyPairedDevicesOfApproval'
+  | 'workspaceIdForApprovalPush'
+>
+
+export function createMainApprovalOrchestration(deps: RequestMainApprovalDeps) {
+  return async (
+    sender: WebContents | null,
+    provider: ProviderId,
+    route: AgentRunRoute | null | undefined,
+    request: {
+      method: string
+      title: string
+      body: string
+      preview?: unknown
+      workspacePath?: string
+      actions?: AgentApprovalAction[]
+      resolveAction?: (action: AgentApprovalAction) => void
+    }
+  ): Promise<boolean> => {
+    if (!sender || sender.isDestroyed()) return false
+    const routed = routeWithRunId(provider, route)
+    const approvalId = Date.now() + '-' + Math.random().toString(36).slice(2)
+    const actions: AgentApprovalAction[] = request.actions || ['accept', 'decline', 'cancel']
+    return new Promise((resolveApproval) => {
+      deps.getApprovalService()?.registerMain(approvalId, {
+        provider,
+        workspacePath: request.workspacePath,
+        runId: routed.appRunId,
+        allowedActions: actions,
+        resolveAction: request.resolveAction,
+        resolve: resolveApproval
+      })
+      deps.runManager.registerApproval(routed.appRunId, approvalId)
+      deps.scheduleApprovalTimeout({
+        approvalId,
+        provider,
+        route: routed,
+        isMainAuthority: true,
+        kind: request.method
+      })
+      const approvalPayload = {
+        provider,
+        appRunId: routed.appRunId,
+        appChatId: routed.appChatId,
+        id: approvalId,
+        approvalId,
+        method: request.method,
+        title: request.title,
+        body: request.body,
+        preview: { ...(isRecord(request.preview) ? request.preview : {}), actions },
+        actions
+      }
+      deps.appendDurableRunEventForRoute(
+        provider,
+        routed,
+        'approval_request',
+        'control',
+        request.title,
+        approvalPayload
+      )
+      deps.recordApprovalLedgerRequest(provider, routed, approvalPayload, {
+        workspacePath: request.workspacePath,
+        metadata: { mainAuthority: true }
+      })
+      deps.safeSendToSender(sender, 'agent-approval-request', approvalPayload)
+      deps.notifyPairedDevicesOfApproval({
+        approvalId,
+        workspaceId: deps.workspaceIdForApprovalPush(request.workspacePath),
+        threadId: routed.appChatId ?? routed.appRunId ?? approvalId,
+        summary: request.title
+      })
+    })
   }
 }
 
