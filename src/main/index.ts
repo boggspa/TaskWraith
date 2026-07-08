@@ -8004,6 +8004,33 @@ const requestAgenticServiceApprovalDeps: RequestAgenticServiceApprovalDeps = {
 
 const requestAgenticServiceApproval = createApprovalOrchestration(requestAgenticServiceApprovalDeps)
 
+interface RequestMainApprovalDeps {
+  // Lazy accessor (NOT a captured value): approvalService is a whenReady-assigned
+  // module-let (null at module-init when this bundle is built). Reading it live
+  // keeps registerMain firing after whenReady — a by-value capture would freeze
+  // null and silently no-op the main-authority approval registration
+  // (design-rule-seam-bundle-latebinding; the exact bug class M3-3a shipped + 2e02828fd fixed).
+  getApprovalService: () => ApprovalService | null
+  runManager: typeof runManager
+  scheduleApprovalTimeout: typeof scheduleApprovalTimeout
+  appendDurableRunEventForRoute: typeof appendDurableRunEventForRoute
+  recordApprovalLedgerRequest: typeof recordApprovalLedgerRequest
+  safeSendToSender: typeof safeSendToSender
+  notifyPairedDevicesOfApproval: typeof notifyPairedDevicesOfApproval
+  workspaceIdForApprovalPush: typeof workspaceIdForApprovalPush
+}
+
+const requestMainApprovalDeps: RequestMainApprovalDeps = {
+  getApprovalService: () => approvalService,
+  runManager,
+  scheduleApprovalTimeout,
+  appendDurableRunEventForRoute,
+  recordApprovalLedgerRequest,
+  safeSendToSender,
+  notifyPairedDevicesOfApproval,
+  workspaceIdForApprovalPush
+}
+
 async function requestMainApproval(
   sender: Electron.WebContents | null,
   provider: ProviderId,
@@ -8023,7 +8050,7 @@ async function requestMainApproval(
   const approvalId = Date.now() + '-' + Math.random().toString(36).slice(2)
   const actions: AgentApprovalAction[] = request.actions || ['accept', 'decline', 'cancel']
   return new Promise((resolveApproval) => {
-    approvalService?.registerMain(approvalId, {
+    requestMainApprovalDeps.getApprovalService()?.registerMain(approvalId, {
       provider,
       workspacePath: request.workspacePath,
       runId: routed.appRunId,
@@ -8031,8 +8058,8 @@ async function requestMainApproval(
       resolveAction: request.resolveAction,
       resolve: resolveApproval
     })
-    runManager.registerApproval(routed.appRunId, approvalId)
-    scheduleApprovalTimeout({
+    requestMainApprovalDeps.runManager.registerApproval(routed.appRunId, approvalId)
+    requestMainApprovalDeps.scheduleApprovalTimeout({
       approvalId,
       provider,
       route: routed,
@@ -8051,7 +8078,7 @@ async function requestMainApproval(
       preview: { ...(isRecord(request.preview) ? request.preview : {}), actions },
       actions
     }
-    appendDurableRunEventForRoute(
+    requestMainApprovalDeps.appendDurableRunEventForRoute(
       provider,
       routed,
       'approval_request',
@@ -8059,18 +8086,18 @@ async function requestMainApproval(
       request.title,
       approvalPayload
     )
-    recordApprovalLedgerRequest(provider, routed, approvalPayload, {
+    requestMainApprovalDeps.recordApprovalLedgerRequest(provider, routed, approvalPayload, {
       workspacePath: request.workspacePath,
       metadata: { mainAuthority: true }
     })
-    safeSendToSender(sender, 'agent-approval-request', approvalPayload)
+    requestMainApprovalDeps.safeSendToSender(sender, 'agent-approval-request', approvalPayload)
     // Fan out a wake-push to any paired iOS device. Main-authority
     // approvals are typically workspace-trust or other infrequent
     // events — exactly the kind of decision the user benefits from
     // handling on their phone.
-    notifyPairedDevicesOfApproval({
+    requestMainApprovalDeps.notifyPairedDevicesOfApproval({
       approvalId,
-      workspaceId: workspaceIdForApprovalPush(request.workspacePath),
+      workspaceId: requestMainApprovalDeps.workspaceIdForApprovalPush(request.workspacePath),
       threadId: routed.appChatId ?? routed.appRunId ?? approvalId,
       summary: request.title
     })
