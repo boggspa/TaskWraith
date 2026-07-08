@@ -10,7 +10,7 @@ export type SidebarHierarchySectionId =
   | 'chats'
   | 'shared'
 
-export const SIDEBAR_HIERARCHY_SECTION_IDS: readonly SidebarHierarchySectionId[] = [
+const LEGACY_SIDEBAR_HIERARCHY_ORDER_V1: readonly SidebarHierarchySectionId[] = [
   'active-runs',
   'local-servers',
   'workflows',
@@ -21,6 +21,19 @@ export const SIDEBAR_HIERARCHY_SECTION_IDS: readonly SidebarHierarchySectionId[]
   'workspaces',
   'chats',
   'shared'
+]
+
+export const SIDEBAR_HIERARCHY_SECTION_IDS: readonly SidebarHierarchySectionId[] = [
+  'active-runs',
+  'local-servers',
+  'pinned',
+  'recents',
+  'workspaces',
+  'chats',
+  'shared',
+  'workflows',
+  'ensembles',
+  'workspace-boards'
 ] as const
 
 export const DEFAULT_SIDEBAR_HIERARCHY_ORDER: readonly SidebarHierarchySectionId[] =
@@ -42,6 +55,13 @@ export const SIDEBAR_HIERARCHY_SECTION_LABELS: Record<SidebarHierarchySectionId,
 const STORAGE_KEY = 'taskwraith-sidebar-hierarchy-order'
 const STORAGE_VERSION_KEY = 'taskwraith-sidebar-hierarchy-order-version'
 const STORAGE_VERSION = 'hierarchy-v1'
+
+function ordersEqual(
+  left: readonly SidebarHierarchySectionId[],
+  right: readonly SidebarHierarchySectionId[]
+): boolean {
+  return left.length === right.length && left.every((id, index) => id === right[index])
+}
 
 export function normalizeSidebarHierarchyOrder(
   input: unknown
@@ -79,7 +99,11 @@ export function loadSidebarHierarchyOrder(): SidebarHierarchySectionId[] {
     }
     const raw = window.localStorage.getItem(STORAGE_KEY)
     if (!raw) return [...DEFAULT_SIDEBAR_HIERARCHY_ORDER]
-    return normalizeSidebarHierarchyOrder(JSON.parse(raw))
+    const order = normalizeSidebarHierarchyOrder(JSON.parse(raw))
+    if (ordersEqual(order, LEGACY_SIDEBAR_HIERARCHY_ORDER_V1)) {
+      return [...DEFAULT_SIDEBAR_HIERARCHY_ORDER]
+    }
+    return order
   } catch {
     return [...DEFAULT_SIDEBAR_HIERARCHY_ORDER]
   }

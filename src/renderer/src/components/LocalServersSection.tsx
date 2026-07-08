@@ -38,7 +38,7 @@ export function LocalServersSection({
   onAddLocalServerToWorkspaceBoard
 }: LocalServersSectionProps): JSX.Element | null {
   const { servers, busy, stop, stopAll } = useLocalServers()
-  const [collapsed, setCollapsed] = useState(false)
+  const [collapsed, setCollapsed] = useState(true)
   const headerMenuItems = useMemo(
     () => [
       {
