@@ -32,23 +32,27 @@ into a new 8K file and call the slice done.
 
 ## Current Snapshot
 
-Measured from the live worktree on 2026-07-08 (fresh round, post pass-6 commit
-wave). Pass-1 through pass-6 slices are committed (`5d1ada4fb` … `4aa2c84d1`);
-metrics below reflect post-`removeChats` / post-M3-1a / post-renderer-r3-Site-C
-(on disk) state. Treat these numbers as orientation only. Every Ensemble round
-must refresh counts and dirty state before assigning a slice.
+Measured from the live worktree on 2026-07-08 (fresh round, post pass-7 commit
+wave). Pass-1 through pass-7 slices are committed (`5d1ada4fb` … `f3bb65cf4`);
+metrics below reflect post-Site-C / post-M3-1b-on-disk state. Treat these
+numbers as orientation only. Every Ensemble round must refresh counts and dirty
+state before assigning a slice.
 
-Pass-7 worktree baseline (HEAD `4aa2c84d1`, recorded fresh round start):
+Pass-8 worktree baseline (HEAD `f3bb65cf4`, recorded fresh round start):
 
-- Branch `master`, ahead 68 of `origin/master`.
-- Pass-6 commit wave closed (`5b3b21117` partial ledger, `ca4418b54`,
-  `4aa2c84d1`). Note: `5b3b21117` landed before the two code commits — this
-  pass-7 refresh supersedes its partial snapshot.
-- One dirty lane:
-  - `src/renderer/src/App.tsx` — @WriteRender Site C reap migration
-    (`chatMutations.removeChats(reaped)` @L7183; `setChats(` 46→45). Awaiting
-    @Adversary3 review → @CheckCommit
-    `refactor(renderer-r3): use chat facade for reap cleanup`.
+- Branch `master`, ahead 70 of `origin/master`.
+- Pass-7 commit wave closed (`ac3ef6c07` Site C, `f3bb65cf4` pass-7 ledger).
+- Two dirty lanes (General GREENLIT → @CheckCommit by exact pathspec):
+  - **Renderer Slice 1b** — `src/renderer/src/App.tsx` only:
+    `chatMutations.promoteToFront(nextSideChat)` @L12685;
+    `setChats(` 44 (was 45 post-Site C). Commit:
+    `refactor(renderer-r3): use chat facade for side-chat promote`.
+  - **Main M3-1b** — four paths, no foreign dirt:
+    `src/main/index.ts` (−289 net), `src/main/RunPermissionPosture.ts`
+    (`runPostureContextFromPayload` relocated), NEW
+    `src/main/run/AgentRunNormalizer.ts` (308L) + `AgentRunNormalizer.test.ts`
+    (207L, 5 wrapper invariants). Commit:
+    `refactor(main-m3): extract agent run normalizer`.
 - Crash context: **CLOSED** (release 1.7.9 native SIGTRAP; not attributable to
   campaign slices). Tracking item only — no further recon wall-time.
 - `.cursor/` untracked — never staged.
@@ -79,13 +83,13 @@ Current high-level facts:
 
 | Area | Current signal |
 | --- | ---: |
-| `src/main/index.ts` | 31,570 lines committed (`4aa2c84d1`; was 32,234 pre-pass-1) |
-| `src/renderer/src/App.tsx` | 25,834 lines (committed HEAD; Site C on disk) |
-| Inline `ipcMain.handle/on` registrations still in `index.ts` | 62 (was 103 pre-pass-1; 72 post-pass-3) |
+| `src/main/index.ts` | 31,286 on disk (31,570 committed `f3bb65cf4`; was 32,234 pre-pass-1) |
+| `src/renderer/src/App.tsx` | 25,831 on disk (25,834 committed `f3bb65cf4`) |
+| Inline `ipcMain.handle/on` registrations still in `index.ts` | 62 (unchanged; was 103 pre-pass-1) |
 | Registrar calls already wired from `index.ts` | 44 |
 | Flat `src/main/ipc/*Handlers.ts` modules | 44 |
 | Flat `src/main/ipc/*Handlers.test.ts` modules | 44 (parity with handler modules) |
-| `setChats(` call sites in `App.tsx` | 45 on disk (was 46 pre-Site C; 47 pre-renderer-r3 slice 1) |
+| `setChats(` call sites in `App.tsx` | 44 on disk (was 45 post-Site C `ac3ef6c07`; 47 pre-renderer-r3 slice 1) |
 | `MainAppLayout.types.ts` remaining `: any` props | 392 |
 | `removeListeners()` occurrences in `App.tsx` | 0 (R0 + R0b landed) |
 
@@ -93,8 +97,8 @@ Largest production TS/TSX files at this snapshot:
 
 | Rank | File | Lines | Campaign |
 | ---: | --- | ---: | --- |
-| 1 | `src/main/index.ts` | 31,570 | Tier 1 main root |
-| 2 | `src/renderer/src/App.tsx` | 25,834 | Tier 1 renderer root |
+| 1 | `src/main/index.ts` | 31,286 | Tier 1 main root |
+| 2 | `src/renderer/src/App.tsx` | 25,831 | Tier 1 renderer root |
 | 3 | `src/main/services/EnsembleOrchestrator.ts` | 12,558 | Tier 2 service |
 | 4 | `src/renderer/src/components/SettingsPanel.tsx` | 11,063 | Tier 2 renderer settings |
 | 5 | `src/renderer/src/components/Sidebar.tsx` | 5,533 | Tier 2 renderer shell |
@@ -191,6 +195,11 @@ without fresh recon.
   `AgentRunNormalizerDeps` (7 explicit deps); no body move. Commit `4aa2c84d1`.
   Gates: `typecheck:node`; `M3RunPayloadTrustBoundary` 3/3; `IpcValidation.test`
   34/34. Unblocks M3-1b body extraction.
+- Renderer pass-7 (2026-07-08): `refactor(renderer-r3)` — Site C reap migration:
+  `chatMutations.removeChats(reaped)` @L7183. Commit `ac3ef6c07`. Gate:
+  `typecheck:web`; `chatMutations.test` 4/4. `setChats(` 46→45.
+- Docs pass-7 (2026-07-08): `docs(refactor-plan)` pass-6/7 ledger refresh.
+  Commit `f3bb65cf4`. Gate: `git diff --check` on doc path.
 - Current IPC handler rule from `src/main/ipc/README.md` still applies:
   handler modules stay directly under `src/main/ipc/` unless the IPC validation
   scanner is expanded in the same commit.
@@ -376,21 +385,30 @@ Pass-2 renderer-r0 and scaffold rows deferred to pass-3 (landed there).
 | `feat(chat-facade)` `removeChats` bulk verb + tests | @NewFiles | LANDED | `ca4418b54` | `typecheck:web`; `chatMutations.test` 4/4 | Unlocks Site C |
 | `refactor(main-m3)` M3-1a seam-first normalizer deps | @WriteMain | LANDED | `4aa2c84d1` | `typecheck:node`; M3 tests 3/3; `IpcValidation.test` 34/34 | `AgentRunNormalizerDeps` 7 deps; `index.ts` +69/−11; no body move |
 
-#### Pass 7 — IN FLIGHT (2026-07-08)
+#### Pass 7 — LANDED (2026-07-08)
+
+| Slice | Owner | Status | Commit | Gates | Metric deltas |
+| --- | --- | --- | --- | --- | --- |
+| `refactor(renderer-r3)` Site C reap migration | @WriteRender | LANDED | `ac3ef6c07` | `typecheck:web`; `chatMutations.test` 4/4 | `removeChats(reaped)` @L7183; `setChats(` 46→45 |
+| `docs(refactor-plan)` pass-6/7 ledger refresh | @WriteDocs | LANDED | `f3bb65cf4` | `git diff --check` on doc path | Captures pass-6 SHAs + pass-7 queue closure |
+
+Pass-7 retired from the active queue. M3-1b and Slice 1b moved to pass-8.
+
+#### Pass 8 — IN FLIGHT (2026-07-08)
 
 | Slice | Owner | Status | Commit / scope | Notes |
 | --- | --- | --- | --- | --- |
-| `refactor(renderer-r3)` Site C reap migration | @WriteRender | ON DISK | `App.tsx` only | `removeChats(reaped)` @L7183; `setChats(` 45. Awaiting @Adversary3 → @CheckCommit |
-| `refactor(main-m3)` M3-1b body move + focused test | @WriteMain | QUEUED | `AgentRunNormalizer.ts` | Spec: blackboard `design-m3-1b-spec`. **Pre-flight:** `runPostureContextFromPayload` has 5 non-normalizer callers — do not co-move alone; inject as 8th dep or extract to pure sibling |
-| `refactor(renderer-r3)` Slice 1b `promoteToFront` | @WriteRender | QUEUED | `App.tsx` | Per `design-chatfacade-slice1`; verify sorted-list invariant |
-| `fix(providers)` I-drop leading delta restore | @WriteMain | DEFERRED | `index.ts` / orchestrator | Sidequest; GH5 evidence gate; serial after M3-1b unless reprioritized |
-| `docs(refactor-plan)` pass-7 ledger refresh | @WriteDocs | ON DISK | this doc | Anchored at `4aa2c84d1`; captures pass-6 SHAs + pass-7 queue |
+| `refactor(renderer-r3)` Slice 1b `promoteToFront` | @WriteRender | ON DISK | `App.tsx` only | `promoteToFront(nextSideChat)` @L12685; `setChats(` 44. Design-verified zero-behavior (fresh `updatedAt` → sort no-op). General GREENLIT → @CheckCommit |
+| `refactor(main-m3)` M3-1b body extraction + test | @WriteMain | ON DISK | 4 paths | `AgentRunNormalizer.ts` + test; `runPostureContextFromPayload` → `RunPermissionPosture.ts`; `index.ts` −289 net; ipcMain 62 unchanged; vitest 42/42. General GREENLIT → @CheckCommit |
+| `docs(refactor-plan)` pass-8 ledger refresh | @WriteDocs | ON DISK | this doc | Captures pass-7 SHAs, M3-1b metrics, Slice 1b `setChats` 44 |
+| `refactor(main-m3)` M3-2 `dispatchRunWithProviderPause` facade | @WriteMain | QUEUED | `index.ts` | Spec: `design-next-extraction-spec`; serial after M3-1b commits |
+| `fix(providers)` I-drop leading delta restore | @WriteMain | DEFERRED | `index.ts` / orchestrator | Sidequest; `sidequest-i-drop-fix-plan`; serial after M3-2 unless reprioritized |
 
 @CheckCommit owns staging and commits by exact pathspec only (`git add -f` for
-docs). Pass-7 commit queue (disjoint pathspecs — never cross-stage):
-`refactor(renderer-r3): use chat facade for reap cleanup` (`App.tsx` only),
-`docs(refactor-plan): refresh pass-7 ledger` (this doc),
-then @WriteMain `refactor(main-m3): extract agent run normalizer` when green.
+docs). Pass-8 commit queue (disjoint pathspecs — never cross-stage):
+`refactor(renderer-r3): use chat facade for side-chat promote` (`App.tsx` only),
+`refactor(main-m3): extract agent run normalizer` (4 main paths),
+`docs(refactor-plan): refresh pass-8 ledger` (this doc, `git add -f`).
 
 ### Phase 0 - Refresh And Freeze Invariants
 
@@ -491,10 +509,11 @@ Suggested gates:
 
 Purpose: move high-leverage state out of `App.tsx` behind explicit facades.
 
-**Status (pass 7):** facade scaffold landed (`60f662341`); slice 1 delete
-consumer landed (`d34fb748c`); `removeChats` landed (`ca4418b54`). Site C reap
-migration on disk (`App.tsx`, `setChats(` 45). Slice 1b `promoteToFront` queued
-per `design-chatfacade-slice1`.
+**Status (pass 8):** facade scaffold landed (`60f662341`); delete consumer
+landed (`d34fb748c`); `removeChats` landed (`ca4418b54`); Site C landed
+(`ac3ef6c07`, `setChats(` 45). Slice 1b `promoteToFront` on disk
+(`App.tsx` @L12685, `setChats(` 44) — awaiting @CheckCommit. Next facade
+sites: replace/reconcile (5), map-updates (20), merge (18), coalescer last.
 
 Order:
 
@@ -597,15 +616,17 @@ Suggested gates:
 Purpose: extract the core run path as a trust-boundary bundle, not as scattered
 helpers.
 
-**Status (pass 7):** trust primitives are already modules; M3 is orchestration-
+**Status (pass 8):** trust primitives are already modules; M3 is orchestration-
 facade extraction (~977 inline lines). Gate tests landed (`bdb93501a`).
 **M3-1a** landed (`4aa2c84d1`: `AgentRunNormalizerDeps`, 7 explicit deps, no
-body move). **M3-1b** queued: relocate `normalizeAgentRunPayload` →
-`src/main/run/AgentRunNormalizer.ts` + faked-deps wrapper test (spec:
-`design-m3-1b-spec`). Co-move helpers: `normalizeRuntimeWorktreeIntent`,
-`normalizeAgentRunActiveGoal`, `normalizeGoalRuntimeLedger`. Keep
-`runPostureContextFromPayload` in `index.ts` (5 non-normalizer callers) unless
-extracted as a shared pure sibling.
+body move). **M3-1b** on disk (awaiting commit): `normalizeAgentRunPayload` →
+`src/main/run/AgentRunNormalizer.ts` (308L) + faked-deps wrapper test (207L,
+5 invariants). Co-moved helpers: `normalizeRuntimeWorktreeIntent`,
+`normalizeAgentRunActiveGoal`, `normalizeGoalRuntimeLedger`.
+`runPostureContextFromPayload` relocated → `RunPermissionPosture.ts` (Design
+ratification: `design-pass8-verdicts`). `index.ts` −289 net; ipcMain 62
+unchanged. **M3-2** queued next: `dispatchRunWithProviderPause` → run-dispatch
+facade (spec: `design-next-extraction-spec`; anchors ~L29717–29801 post-shift).
 
 Actions:
 
