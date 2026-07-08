@@ -404,6 +404,13 @@ public final class RemoteSessionModel: ObservableObject {
     /// re-seeds at ~1.5s; 5s leaves margin on a slow relay). Never reset on
     /// transient drops — retained data stays on screen by design.
     @Published public private(set) var projectionHydrated = false
+    /// Slice 4 (RC3): true once the post-establish grace window has expired (or
+    /// real content arrived). Splits "presumed empty (still loading → spinner +
+    /// retry)" from "confirmed empty (setup copy)". Kept DISTINCT from
+    /// `projectionHydrated` — which also gates the preset-settling window — so a
+    /// slow/asleep Mac can't latch a false confirmed-empty that only force-quit
+    /// clears, and so the two concerns don't fight. Reset on host switch.
+    @Published public private(set) var projectionGraceExpired = false
     /// The thread currently open in a detail view (nil on home). Used to
     /// re-request its snapshot after a reconnect — it may be outside the
     /// establish broadcast's recent-N window. Drives B2 `setWatchedThread`.
@@ -1316,8 +1323,10 @@ public final class RemoteSessionModel: ObservableObject {
     /// resync Task ends AND in `clearCachedProjectionState` on host switch — a
     /// stranded `true` would permanently wedge the resync seam (a reconnect bumps
     /// `connectAttempt`, aborting the in-flight retry loop), so both resets are
-    /// load-bearing.
-    private var fullProjectionResyncInFlight = false
+    /// load-bearing. Published so the RC3 empty-state retry button can show a
+    /// spinner / disable while a resync is in flight (single source of truth — no
+    /// second flag to latch).
+    @Published public private(set) var fullProjectionResyncInFlight = false
 
     /// Slice 2 (RC1/RC2): pull the WHOLE home projection from the Mac. The client
     /// otherwise has no way to re-request the home list — it depends entirely on an
@@ -1420,6 +1429,59 @@ public final class RemoteSessionModel: ObservableObject {
         #if DEBUG
             aliveRehydrateInvocationsForTesting += 1
         #endif
+        requestFullProjection()
+        if let tid = visibleThreadId {
+            requestThreadSnapshot(tid, bypassVisibleStreamSuppression: streamingRunIds[tid] == nil)
+        }
+    }
+
+    // ── Slice 4 (RC3): hydration-signal split + retry ──────────────────────────
+    /// Real content arrived — end BOTH the "Syncing…" spinner (`projectionHydrated`,
+    /// which also releases the preset-settling window) and the RC3 presumed-empty
+    /// state (`projectionGraceExpired`) in the SAME pass so the UI never renders a
+    /// frame with only one flag flipped.
+    private func markProjectionContentHydrated() {
+        projectionHydrated = true
+        projectionGraceExpired = true
+    }
+
+    /// The empty-state presentations for the home list.
+    public enum ProjectionEmptyPresentation: Equatable, Sendable {
+        /// Still within the post-establish grace window — may just be loading.
+        /// Show a spinner + a "Check now" affordance.
+        case presumed
+        /// Grace expired with nothing shared — show the setup instructions + a
+        /// "Check again" affordance.
+        case confirmed
+    }
+
+    /// Pure: the empty-state presentation, or nil when content exists.
+    nonisolated static func projectionEmptyPresentation(
+        hasWorkspaces: Bool, hasTaskCards: Bool, graceExpired: Bool
+    ) -> ProjectionEmptyPresentation? {
+        if hasWorkspaces || hasTaskCards { return nil }
+        return graceExpired ? .confirmed : .presumed
+    }
+
+    /// Pure: the 5s grace timer may only confirm-empty if it belongs to the CURRENT
+    /// connection and we are still connected — a superseded reconnect's timer must
+    /// not latch the flag for a newer, still-loading connection.
+    nonisolated static func shouldConfirmProjectionEmpty(
+        timerConnectAttempt: Int, currentConnectAttempt: Int, isConnected: Bool
+    ) -> Bool {
+        timerConnectAttempt == currentConnectAttempt && isConnected
+    }
+
+    /// Slice 4 (RC3): user tapped "Check again" / "Check now" from the empty or
+    /// loading state. If the session dropped, reconnect; otherwise pull the full
+    /// projection + refresh the visible thread. Single-flight is owned by
+    /// `requestFullProjection`'s latch, so a double-tap coalesces to one request
+    /// and the button's spinner is driven off `fullProjectionResyncInFlight`.
+    public func retryProjectionSync() {
+        guard case .connected = phase else {
+            reconnectIfStale()
+            return
+        }
         requestFullProjection()
         if let tid = visibleThreadId {
             requestThreadSnapshot(tid, bypassVisibleStreamSuppression: streamingRunIds[tid] == nil)
@@ -1642,7 +1704,7 @@ public final class RemoteSessionModel: ObservableObject {
 
         macDisplayName = "Demo Mac"
         selectedTaskId = "demo-1"
-        projectionHydrated = true
+        markProjectionContentHydrated()
         isDemo = true
         phase = .connected
     }
@@ -1681,6 +1743,7 @@ public final class RemoteSessionModel: ObservableObject {
         streamingPublishGate.resetAll()
         providerModels = [:]
         projectionHydrated = false
+        projectionGraceExpired = false
         // A host switch bumps connectAttempt and aborts any in-flight resync retry
         // loop; clear the latch here too so the new host's resync can start.
         fullProjectionResyncInFlight = false
@@ -2352,9 +2415,32 @@ public final class RemoteSessionModel: ObservableObject {
                         // rather than ticking forever. Idempotent — content
                         // arriving first flips the flag and this no-ops.
                         if !self.projectionHydrated {
+                            let graceAttempt = self.connectAttempt
                             Task { [weak self] in
                                 try? await Task.sleep(nanoseconds: 5_000_000_000)
-                                await MainActor.run { self?.projectionHydrated = true }
+                                await MainActor.run {
+                                    guard let self else { return }
+                                    // Only confirm-empty for THIS connection (a
+                                    // superseded reconnect's timer must not latch a
+                                    // false empty for a newer, still-loading one).
+                                    let connected: Bool
+                                    if case .connected = self.phase {
+                                        connected = true
+                                    } else {
+                                        connected = false
+                                    }
+                                    guard
+                                        Self.shouldConfirmProjectionEmpty(
+                                            timerConnectAttempt: graceAttempt,
+                                            currentConnectAttempt: self.connectAttempt,
+                                            isConnected: connected)
+                                    else { return }
+                                    // Keep projectionHydrated=true too: the
+                                    // preset-settling guard reads it as its
+                                    // timeout-release for a genuinely-empty Mac.
+                                    self.projectionHydrated = true
+                                    self.projectionGraceExpired = true
+                                }
                             }
                         }
                         // The establish snapshot covers recent-N threads; the
@@ -2576,7 +2662,7 @@ public final class RemoteSessionModel: ObservableObject {
             } else {
                 workspaces = message.workspaces
             }
-            if !message.workspaces.isEmpty { projectionHydrated = true }
+            if !message.workspaces.isEmpty { markProjectionContentHydrated() }
         case "bridge.broadcastThreadList":
             guard let message = try? JSONDecoder().decode(ThreadListMessage.self, from: params)
             else {
@@ -4742,7 +4828,7 @@ public final class RemoteSessionModel: ObservableObject {
             rememberWorkspace(for: card)
         }
         if !merged.cards.isEmpty {
-            projectionHydrated = true
+            markProjectionContentHydrated()
         }
     }
 
@@ -4869,7 +4955,7 @@ public final class RemoteSessionModel: ObservableObject {
         // an empty settling snapshot does NOT (the grace timer or the Mac's
         // delayed re-seed resolves it instead).
         if !tasks.isEmpty || !workflowCards.isEmpty || !boardCards.isEmpty || !presetCards.isEmpty {
-            projectionHydrated = true
+            markProjectionContentHydrated()
         }
         // Reconcile the optimistic-dismissal sets: keep suppressing only cards
         // the Mac STILL lists as pending (a reply in flight); once it drops a

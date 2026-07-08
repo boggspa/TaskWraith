@@ -276,9 +276,11 @@ struct HomeView: View {
 
     @ViewBuilder
     private var searchResultsSections: some View {
-        if !model.projectionHydrated {
+        if !model.projectionGraceExpired {
             // Never claim "No results" over state that hasn't arrived yet —
-            // the hydration ticker gate wins (ios-batch1-ux-spec).
+            // the hydration ticker gate wins (ios-batch1-ux-spec). Keyed on the
+            // grace-expiry gate (Slice 4/RC3) so a genuinely-empty Mac stops
+            // ticking after the window instead of forever.
             Section {
                 HydrationTicker("Syncing chats from your Mac…")
                     .listRowBackground(Color.clear)
@@ -299,6 +301,28 @@ struct HomeView: View {
                 }
             }
         }
+    }
+
+    /// Slice 4 (RC3): manual "Check now / Check again" from the empty/loading home
+    /// state so a slow/asleep Mac or a dropped push isn't a force-quit dead end.
+    /// Drives the Slice-2 targeted resync; the spinner + disabled state read the
+    /// single `fullProjectionResyncInFlight` latch.
+    @ViewBuilder
+    private func projectionRetryButton(_ label: String) -> some View {
+        Button {
+            model.retryProjectionSync()
+        } label: {
+            HStack(spacing: 6) {
+                if model.fullProjectionResyncInFlight {
+                    ProgressView().controlSize(.small)
+                }
+                Text(model.fullProjectionResyncInFlight ? "Checking…" : label)
+            }
+        }
+        .buttonStyle(.borderless)
+        .disabled(model.fullProjectionResyncInFlight)
+        .font(.footnote.weight(.semibold))
+        .foregroundStyle(TWTheme.chroma1)
     }
 
     var body: some View {
@@ -529,26 +553,35 @@ struct HomeView: View {
             }
         }
 
-        if model.workspaces.isEmpty && model.taskCards.isEmpty {
+        if let emptyPresentation = RemoteSessionModel.projectionEmptyPresentation(
+            hasWorkspaces: !model.workspaces.isEmpty,
+            hasTaskCards: !model.taskCards.isEmpty,
+            graceExpired: model.projectionGraceExpired)
+        {
             Section {
-                if model.projectionHydrated {
-                    // Confirmed empty — content never arrived within the
-                    // hydration window, so the setup instructions are real.
-                    VStack(alignment: .leading, spacing: 6) {
+                switch emptyPresentation {
+                case .confirmed:
+                    // Grace window elapsed with nothing shared — the setup
+                    // instructions are real, but still offer a manual re-check so a
+                    // dropped/late push isn't a force-quit dead end.
+                    VStack(alignment: .leading, spacing: 8) {
                         Text("No workspaces shared with this device yet.")
                             .foregroundStyle(TWTheme.textPrimary)
                         Text(
                             "On your Mac: Settings → Devices → “Add workspace access”. Chats in allowed workspaces appear here."
                         )
                         .font(.footnote).foregroundStyle(TWTheme.textSecondary)
+                        projectionRetryButton("Check again")
                     }
                     .listRowBackground(TWTheme.surface1)
-                } else {
-                    // First-connect hydration — claiming "no workspaces"
-                    // here sent users to Mac Settings over a state that
-                    // wasn't real yet.
-                    HydrationTicker("Syncing workspaces from your Mac…")
-                        .listRowBackground(Color.clear)
+                case .presumed:
+                    // Still within the grace window — may just be loading (a slow or
+                    // waking Mac). Show the ticker plus a manual "Check now".
+                    VStack(alignment: .leading, spacing: 8) {
+                        HydrationTicker("Syncing workspaces from your Mac…")
+                        projectionRetryButton("Check now")
+                    }
+                    .listRowBackground(Color.clear)
                 }
             }
         }

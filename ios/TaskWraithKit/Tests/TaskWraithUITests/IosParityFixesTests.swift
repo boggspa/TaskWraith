@@ -629,6 +629,40 @@ struct IosParityFixesTests {
                 nowMs: 1000 + gap + 1, lastMs: 1000, minGapMs: gap))
     }
 
+    // Slice 4 (RC3): empty-state presentation + grace-timer supersession.
+    @Test func projectionEmptyPresentationSplitsPresumedFromConfirmed() {
+        // Content present → no empty state, regardless of grace.
+        #expect(
+            RemoteSessionModel.projectionEmptyPresentation(
+                hasWorkspaces: true, hasTaskCards: false, graceExpired: false) == nil)
+        #expect(
+            RemoteSessionModel.projectionEmptyPresentation(
+                hasWorkspaces: false, hasTaskCards: true, graceExpired: true) == nil)
+        // Empty + still in grace window → presumed (spinner + retry).
+        #expect(
+            RemoteSessionModel.projectionEmptyPresentation(
+                hasWorkspaces: false, hasTaskCards: false, graceExpired: false) == .presumed)
+        // Empty + grace expired → confirmed (setup copy + retry).
+        #expect(
+            RemoteSessionModel.projectionEmptyPresentation(
+                hasWorkspaces: false, hasTaskCards: false, graceExpired: true) == .confirmed)
+    }
+
+    @Test func graceTimerOnlyConfirmsEmptyForItsOwnLiveConnection() {
+        // Same attempt + connected → confirm.
+        #expect(
+            RemoteSessionModel.shouldConfirmProjectionEmpty(
+                timerConnectAttempt: 3, currentConnectAttempt: 3, isConnected: true))
+        // Superseded by a newer reconnect → do NOT latch.
+        #expect(
+            !RemoteSessionModel.shouldConfirmProjectionEmpty(
+                timerConnectAttempt: 3, currentConnectAttempt: 4, isConnected: true))
+        // Same attempt but no longer connected → do NOT latch.
+        #expect(
+            !RemoteSessionModel.shouldConfirmProjectionEmpty(
+                timerConnectAttempt: 3, currentConnectAttempt: 3, isConnected: false))
+    }
+
     @MainActor
     @Test func userInitiatedThreadRefreshSchedulesWhileVisibleStreaming() {
         let model = makeRemoteSessionModel()
