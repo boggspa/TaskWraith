@@ -9218,229 +9218,258 @@ function App(): React.JSX.Element {
       }
     }
 
-    window.api.onGeminiOutput((payload) => handleProviderOutput('gemini', payload))
-    window.api.onGeminiError((payload) => handleProviderError('gemini', payload))
-    window.api.onGeminiExit((payload) => handleProviderExit('gemini', payload))
+    const ipcUnsubscriptions: Array<() => void> = []
+    const addIpcSubscription = (unsubscribe: (() => void) | null | undefined): void => {
+      if (typeof unsubscribe === 'function') ipcUnsubscriptions.push(unsubscribe)
+    }
+
+    addIpcSubscription(window.api.onGeminiOutput((payload) => handleProviderOutput('gemini', payload)))
+    addIpcSubscription(window.api.onGeminiError((payload) => handleProviderError('gemini', payload)))
+    addIpcSubscription(window.api.onGeminiExit((payload) => handleProviderExit('gemini', payload)))
 
     if (typeof window.api.onAgentOutput === 'function') {
-      window.api.onAgentOutput((payload) => {
-        if (payload?.provider === 'gemini') return
-        handleProviderOutput(payload?.provider || 'codex', payload)
-      })
+      addIpcSubscription(
+        window.api.onAgentOutput((payload) => {
+          if (payload?.provider === 'gemini') return
+          handleProviderOutput(payload?.provider || 'codex', payload)
+        })
+      )
     }
 
     if (typeof window.api.onAgentError === 'function') {
-      window.api.onAgentError((payload) => {
-        if (payload?.provider === 'gemini') return
-        handleProviderError(payload?.provider || 'codex', payload)
-      })
+      addIpcSubscription(
+        window.api.onAgentError((payload) => {
+          if (payload?.provider === 'gemini') return
+          handleProviderError(payload?.provider || 'codex', payload)
+        })
+      )
     }
 
     if (typeof window.api.onAgentExit === 'function') {
-      window.api.onAgentExit((payload) => {
-        if (payload?.provider === 'gemini') return
-        handleProviderExit(payload?.provider || 'codex', payload)
-      })
+      addIpcSubscription(
+        window.api.onAgentExit((payload) => {
+          if (payload?.provider === 'gemini') return
+          handleProviderExit(payload?.provider || 'codex', payload)
+        })
+      )
     }
 
     if (typeof window.api.onAgentApprovalRequest === 'function') {
-      window.api.onAgentApprovalRequest((request) => {
-        const handlers = appEventHandlersRef.current
-        const context = handlers.resolveActiveRunContext(
-          request.provider,
-          request.appRunId,
-          request.appChatId
-        )
-        const targetChatId = context?.chatId || request.appChatId || currentChatIdRef.current
-        // 1.0.4-AK4 — queue when an approval is already pending for
-        // this chat. Pre-AK4 the second arrival would overwrite the
-        // first (losing the user's chance to act on it). With AK5/AK6
-        // parallel fan-out lanes each can produce their own approval gate
-        // simultaneously; queueing keeps them all addressable.
-        handlers.setPendingAgentApprovalForChat(targetChatId, (previous) => {
-          if (previous && targetChatId) {
-            handlers.enqueueApprovalForChat(targetChatId, request)
-            return previous
-          }
-          return request
+      addIpcSubscription(
+        window.api.onAgentApprovalRequest((request) => {
+          const handlers = appEventHandlersRef.current
+          const context = handlers.resolveActiveRunContext(
+            request.provider,
+            request.appRunId,
+            request.appChatId
+          )
+          const targetChatId = context?.chatId || request.appChatId || currentChatIdRef.current
+          // 1.0.4-AK4 — queue when an approval is already pending for
+          // this chat. Pre-AK4 the second arrival would overwrite the
+          // first (losing the user's chance to act on it). With AK5/AK6
+          // parallel fan-out lanes each can produce their own approval gate
+          // simultaneously; queueing keeps them all addressable.
+          handlers.setPendingAgentApprovalForChat(targetChatId, (previous) => {
+            if (previous && targetChatId) {
+              handlers.enqueueApprovalForChat(targetChatId, request)
+              return previous
+            }
+            return request
+          })
+          handlers.appendThreadRawLog(targetChatId, {
+            type: 'info',
+            content: `${getProviderLabel(request.provider)} approval requested: ${request.title}\n${request.body}`
+          })
         })
-        handlers.appendThreadRawLog(targetChatId, {
-          type: 'info',
-          content: `${getProviderLabel(request.provider)} approval requested: ${request.title}\n${request.body}`
-        })
-      })
+      )
     }
 
     if (typeof window.api.onAgentApprovalTimeout === 'function') {
-      window.api.onAgentApprovalTimeout((timeout) => {
-        const handlers = appEventHandlersRef.current
-        // Find which chat held this approval, clear it, and surface a
-        // visible "auto-denied" note. The main process has already
-        // dispatched action='decline' through the same processAgentApprovalResponse
-        // path the renderer would use — this is just the UI tidy-up.
-        // Raw-log uses `stderr` (red-toned in the existing UI) rather
-        // than introducing a new `error` kind to the union.
-        const matchedChatIds: string[] = []
-        handlers.setPendingAgentApprovalByChatId((prev) => {
-          const next: Record<string, AgentApprovalRequest | null> = {}
-          for (const [chatId, request] of Object.entries(prev)) {
-            if (request && request.id === timeout.approvalId) {
-              matchedChatIds.push(chatId)
-              next[chatId] = null
-              handlers.appendThreadRawLog(chatId, {
-                type: 'stderr',
-                content: `Approval ${timeout.approvalId} auto-denied after ${(timeout.appliedMs / 1000).toFixed(0)}s (timeout). Run will need manual intervention if it stalled.`
-              })
-            } else {
-              next[chatId] = request
+      addIpcSubscription(
+        window.api.onAgentApprovalTimeout((timeout) => {
+          const handlers = appEventHandlersRef.current
+          // Find which chat held this approval, clear it, and surface a
+          // visible "auto-denied" note. The main process has already
+          // dispatched action='decline' through the same processAgentApprovalResponse
+          // path the renderer would use — this is just the UI tidy-up.
+          // Raw-log uses `stderr` (red-toned in the existing UI) rather
+          // than introducing a new `error` kind to the union.
+          const matchedChatIds: string[] = []
+          handlers.setPendingAgentApprovalByChatId((prev) => {
+            const next: Record<string, AgentApprovalRequest | null> = {}
+            for (const [chatId, request] of Object.entries(prev)) {
+              if (request && request.id === timeout.approvalId) {
+                matchedChatIds.push(chatId)
+                next[chatId] = null
+                handlers.appendThreadRawLog(chatId, {
+                  type: 'stderr',
+                  content: `Approval ${timeout.approvalId} auto-denied after ${(timeout.appliedMs / 1000).toFixed(0)}s (timeout). Run will need manual intervention if it stalled.`
+                })
+              } else {
+                next[chatId] = request
+              }
             }
-          }
-          // No matching chat — log into the active chat as a fallback
-          // so the user at least sees something happened.
-          if (matchedChatIds.length === 0) {
-            const fallbackChatId = currentChatIdRef.current
-            if (fallbackChatId) {
-              handlers.appendThreadRawLog(fallbackChatId, {
-                type: 'stderr',
-                content: `Approval ${timeout.approvalId} auto-denied after ${(timeout.appliedMs / 1000).toFixed(0)}s (timeout).`
-              })
+            // No matching chat — log into the active chat as a fallback
+            // so the user at least sees something happened.
+            if (matchedChatIds.length === 0) {
+              const fallbackChatId = currentChatIdRef.current
+              if (fallbackChatId) {
+                handlers.appendThreadRawLog(fallbackChatId, {
+                  type: 'stderr',
+                  content: `Approval ${timeout.approvalId} auto-denied after ${(timeout.appliedMs / 1000).toFixed(0)}s (timeout).`
+                })
+              }
             }
+            return next
+          })
+          // 1.0.4-AK4 — advance queued approvals for any chat whose
+          // head approval just timed out. The setState above runs
+          // synchronously enough for our advance to see the cleared
+          // head, but advanceApprovalQueueForChat reads from the
+          // queue state (not the head), so order doesn't matter
+          // here — it just promotes the next queued approval into
+          // the head slot for each affected chat.
+          for (const chatId of matchedChatIds) {
+            handlers.advanceApprovalQueueForChat(chatId)
           }
-          return next
         })
-        // 1.0.4-AK4 — advance queued approvals for any chat whose
-        // head approval just timed out. The setState above runs
-        // synchronously enough for our advance to see the cleared
-        // head, but advanceApprovalQueueForChat reads from the
-        // queue state (not the head), so order doesn't matter
-        // here — it just promotes the next queued approval into
-        // the head slot for each affected chat.
-        for (const chatId of matchedChatIds) {
-          handlers.advanceApprovalQueueForChat(chatId)
-        }
-      })
+      )
     }
 
     if (typeof window.api.onAgentApprovalResolved === 'function') {
-      window.api.onAgentApprovalResolved((resolved) => {
-        // Cross-surface acknowledgment: the approval was decided
-        // SOMEWHERE — a paired iPhone, another window, or the auto-deny
-        // timer — and main's ApprovalService has already executed the
-        // decision. Tidy any modal still showing it here. Local clicks
-        // and timeouts clear the head before this event lands, so those
-        // paths fall through as no-ops.
-        const handlers = appEventHandlersRef.current
-        const matchedChatIds: string[] = []
-        handlers.setPendingAgentApprovalByChatId((prev) => {
-          const next: Record<string, AgentApprovalRequest | null> = {}
-          for (const [chatId, request] of Object.entries(prev)) {
-            if (request && request.id === resolved.approvalId) {
-              matchedChatIds.push(chatId)
-              next[chatId] = null
-              handlers.appendThreadRawLog(chatId, {
-                type: 'info',
-                content: `Approval ${resolved.action || 'resolved'} from ${
-                  resolved.decisionSource === 'system'
-                    ? 'the auto-deny timer'
-                    : 'a paired device or another window'
-                } — clearing this prompt.`
-              })
-            } else {
-              next[chatId] = request
+      addIpcSubscription(
+        window.api.onAgentApprovalResolved((resolved) => {
+          // Cross-surface acknowledgment: the approval was decided
+          // SOMEWHERE — a paired iPhone, another window, or the auto-deny
+          // timer — and main's ApprovalService has already executed the
+          // decision. Tidy any modal still showing it here. Local clicks
+          // and timeouts clear the head before this event lands, so those
+          // paths fall through as no-ops.
+          const handlers = appEventHandlersRef.current
+          const matchedChatIds: string[] = []
+          handlers.setPendingAgentApprovalByChatId((prev) => {
+            const next: Record<string, AgentApprovalRequest | null> = {}
+            for (const [chatId, request] of Object.entries(prev)) {
+              if (request && request.id === resolved.approvalId) {
+                matchedChatIds.push(chatId)
+                next[chatId] = null
+                handlers.appendThreadRawLog(chatId, {
+                  type: 'info',
+                  content: `Approval ${resolved.action || 'resolved'} from ${
+                    resolved.decisionSource === 'system'
+                      ? 'the auto-deny timer'
+                      : 'a paired device or another window'
+                  } — clearing this prompt.`
+                })
+              } else {
+                next[chatId] = request
+              }
             }
+            return next
+          })
+          // Purge it from every queue tail too: an approval resolved
+          // elsewhere while queued must never be promoted back into the
+          // head as a zombie prompt.
+          handlers.setPendingApprovalQueueByChatId((prev) => {
+            let changed = false
+            const next: Record<string, AgentApprovalRequest[]> = {}
+            for (const [chatId, queue] of Object.entries(prev)) {
+              const filtered = queue.filter((request) => request.id !== resolved.approvalId)
+              if (filtered.length !== queue.length) changed = true
+              next[chatId] = filtered
+            }
+            return changed ? next : prev
+          })
+          for (const chatId of matchedChatIds) {
+            handlers.advanceApprovalQueueForChat(chatId)
           }
-          return next
         })
-        // Purge it from every queue tail too: an approval resolved
-        // elsewhere while queued must never be promoted back into the
-        // head as a zombie prompt.
-        handlers.setPendingApprovalQueueByChatId((prev) => {
-          let changed = false
-          const next: Record<string, AgentApprovalRequest[]> = {}
-          for (const [chatId, queue] of Object.entries(prev)) {
-            const filtered = queue.filter((request) => request.id !== resolved.approvalId)
-            if (filtered.length !== queue.length) changed = true
-            next[chatId] = filtered
-          }
-          return changed ? next : prev
-        })
-        for (const chatId of matchedChatIds) {
-          handlers.advanceApprovalQueueForChat(chatId)
-        }
-      })
+      )
     }
 
     if (typeof window.api.onScheduledTaskDue === 'function') {
-      window.api.onScheduledTaskDue((task) => {
-        if (!isScheduledTaskReadyToDispatch(task)) return
-        setDueScheduledTasks((prev) =>
-          prev.some((item) => item.id === task.id) ? prev : [...prev, task]
-        )
-      })
+      addIpcSubscription(
+        window.api.onScheduledTaskDue((task) => {
+          if (!isScheduledTaskReadyToDispatch(task)) return
+          setDueScheduledTasks((prev) =>
+            prev.some((item) => item.id === task.id) ? prev : [...prev, task]
+          )
+        })
+      )
     }
 
     if (typeof window.api.onScheduledTasksChanged === 'function') {
-      window.api.onScheduledTasksChanged((tasks) => {
-        setScheduledTasks(tasks)
-        const taskById = new Map(tasks.map((task) => [task.id, task]))
-        const nowMs = Date.now()
-        setDueScheduledTasks((prev) =>
-          prev.filter((task) => {
-            const latest = taskById.get(task.id)
-            return latest ? isScheduledTaskReadyToDispatch(latest, nowMs) : false
-          })
-        )
-      })
+      addIpcSubscription(
+        window.api.onScheduledTasksChanged((tasks) => {
+          setScheduledTasks(tasks)
+          const taskById = new Map(tasks.map((task) => [task.id, task]))
+          const nowMs = Date.now()
+          setDueScheduledTasks((prev) =>
+            prev.filter((task) => {
+              const latest = taskById.get(task.id)
+              return latest ? isScheduledTaskReadyToDispatch(latest, nowMs) : false
+            })
+          )
+        })
+      )
     }
 
     if (typeof window.api.onWorkflowDefinitionsChanged === 'function') {
-      window.api.onWorkflowDefinitionsChanged((workflows) => {
-        const workspaceId = currentWorkspaceIdRef.current || currentWorkspace?.id
-        setWorkflowDefinitions(
-          workspaceId ? workflows.filter((workflow) => workflow.workspaceId === workspaceId) : workflows
-        )
-      })
+      addIpcSubscription(
+        window.api.onWorkflowDefinitionsChanged((workflows) => {
+          const workspaceId = currentWorkspaceIdRef.current || currentWorkspace?.id
+          setWorkflowDefinitions(
+            workspaceId ? workflows.filter((workflow) => workflow.workspaceId === workspaceId) : workflows
+          )
+        })
+      )
     }
 
     if (workspaceBoardApiReady && typeof window.api.onWorkspaceBoardsChanged === 'function') {
-      window.api.onWorkspaceBoardsChanged((payload) => {
-        setWorkspaceBoards(payload.boards)
-        setWorkspaceBoardCards(payload.cards)
-        setActiveWorkspaceBoardId((activeId) =>
-          activeId && payload.boards.some((board) => board.id === activeId && !board.archived)
-            ? activeId
-            : null
-        )
-      })
+      addIpcSubscription(
+        window.api.onWorkspaceBoardsChanged((payload) => {
+          setWorkspaceBoards(payload.boards)
+          setWorkspaceBoardCards(payload.cards)
+          setActiveWorkspaceBoardId((activeId) =>
+            activeId && payload.boards.some((board) => board.id === activeId && !board.archived)
+              ? activeId
+              : null
+          )
+        })
+      )
     }
 
     if (evidencePackApiReady && typeof window.api.onEvidencePacksChanged === 'function') {
-      window.api.onEvidencePacksChanged((payload) => {
-        const workspaceId = currentWorkspaceIdRef.current || currentWorkspace?.id
-        if (!workspaceId || payload.ledger.workspaceId === workspaceId) {
-          setCapabilityLedgerSnapshot(payload.ledger)
-        } else {
-          void window.api.getCapabilityLedgerSnapshot(workspaceId).then(setCapabilityLedgerSnapshot)
-        }
-      })
+      addIpcSubscription(
+        window.api.onEvidencePacksChanged((payload) => {
+          const workspaceId = currentWorkspaceIdRef.current || currentWorkspace?.id
+          if (!workspaceId || payload.ledger.workspaceId === workspaceId) {
+            setCapabilityLedgerSnapshot(payload.ledger)
+          } else {
+            void window.api.getCapabilityLedgerSnapshot(workspaceId).then(setCapabilityLedgerSnapshot)
+          }
+        })
+      )
     }
 
     if (typeof window.api.onUsageChanged === 'function') {
       // Live-refresh the usage meters the moment a run records usage, rather
       // than waiting for the 90s poll.
-      window.api.onUsageChanged(() => {
-        if (!usageRefreshInFlightRef.current) {
-          usageRefreshInFlightRef.current = true
-          usageRefreshLastFiredAtRef.current = Date.now()
-          void refreshUsageSummaryRef.current?.(currentWorkspaceIdRef.current || undefined)
-            .catch(() => {})
-            .finally(() => {
-              usageRefreshInFlightRef.current = false
-            })
-        }
-        // Nudge the sidebar API-spend view to re-query the priced records.
-        setUsageRefreshTick((tick) => tick + 1)
-      })
+      addIpcSubscription(
+        window.api.onUsageChanged(() => {
+          if (!usageRefreshInFlightRef.current) {
+            usageRefreshInFlightRef.current = true
+            usageRefreshLastFiredAtRef.current = Date.now()
+            void refreshUsageSummaryRef.current?.(currentWorkspaceIdRef.current || undefined)
+              .catch(() => {})
+              .finally(() => {
+                usageRefreshInFlightRef.current = false
+              })
+          }
+          // Nudge the sidebar API-spend view to re-query the priced records.
+          setUsageRefreshTick((tick) => tick + 1)
+        })
+      )
     }
 
     if (typeof window.api.onChatUpdated === 'function') {
@@ -9460,7 +9489,8 @@ function App(): React.JSX.Element {
       // (it diffs `chats` against a ref of previously-seen
       // appChatIds), so when a sub-thread is added here the workspace
       // group containing its parent auto-expands too.
-      window.api.onChatUpdated((chat) => {
+      addIpcSubscription(
+        window.api.onChatUpdated((chat) => {
         if (clearedChatIdsRef.current.has(chat.appChatId) && !chatByIdRef.current.has(chat.appChatId)) {
           return
         }
@@ -9642,14 +9672,16 @@ function App(): React.JSX.Element {
             setIsThinking(true)
           }
         }
-      })
+        })
+      )
     }
 
-    let humanCollaborationUnsubscribe: (() => void) | null = null
     if (typeof window.api.onHumanCollaborationUpdated === 'function') {
-      humanCollaborationUnsubscribe = window.api.onHumanCollaborationUpdated(() => {
-        refreshHumanCollaborationShares()
-      })
+      addIpcSubscription(
+        window.api.onHumanCollaborationUpdated(() => {
+          refreshHumanCollaborationShares()
+        })
+      )
     }
 
     // P2b auto-draft: a collaborator action request under autoDraft rules
@@ -9658,15 +9690,14 @@ function App(): React.JSX.Element {
     // NEVER clobbers a draft the host is already typing (functional update
     // keeps any non-empty draft; the request stays reviewable on its
     // transcript row via "Insert as draft").
-    let humanCollaborationActionRequestUnsubscribe: (() => void) | null = null
     if (typeof window.api.onHumanCollaborationActionRequest === 'function') {
-      humanCollaborationActionRequestUnsubscribe = window.api.onHumanCollaborationActionRequest(
-        (payload) => {
+      addIpcSubscription(
+        window.api.onHumanCollaborationActionRequest((payload) => {
           if (!payload?.chatId || typeof payload.draft !== 'string') return
           setComposerDraftForChat(payload.chatId, (previous) =>
             previous && previous.trim() ? previous : payload.draft
           )
-        }
+        })
       )
     }
 
@@ -9678,63 +9709,66 @@ function App(): React.JSX.Element {
     // Keyed by appChatId (streamed assistant messages carry no runId); the
     // shared helper's append-new-assistant fallback covers the no-trailing-
     // assistant case, and mergeTranscriptMediaRefs dedupes redundant deliveries.
-    let trustedMediaRefsUnsubscribe: (() => void) | null = null
     if (typeof window.api.onRunTrustedMediaRefs === 'function') {
-      trustedMediaRefsUnsubscribe = window.api.onRunTrustedMediaRefs((payload) => {
-        if (
-          !payload?.appChatId ||
-          !Array.isArray(payload.mediaRefs) ||
-          payload.mediaRefs.length === 0
-        )
-          return
-        applyAssistantMediaRefsToChat(payload.appChatId, payload.mediaRefs as TranscriptMediaRef[])
-      })
+      addIpcSubscription(
+        window.api.onRunTrustedMediaRefs((payload) => {
+          if (
+            !payload?.appChatId ||
+            !Array.isArray(payload.mediaRefs) ||
+            payload.mediaRefs.length === 0
+          )
+            return
+          applyAssistantMediaRefsToChat(payload.appChatId, payload.mediaRefs as TranscriptMediaRef[])
+        })
+      )
     }
 
     if (typeof window.api.onRunQueueChanged === 'function') {
-      window.api.onRunQueueChanged((jobs) => {
-        setRunQueueJobs(jobs)
-      })
+      addIpcSubscription(
+        window.api.onRunQueueChanged((jobs) => {
+          setRunQueueJobs(jobs)
+        })
+      )
     }
 
-    let contextCompactionProgressUnsubscribe: (() => void) | null = null
     if (typeof window.api.onContextCompactionProgress === 'function') {
-      contextCompactionProgressUnsubscribe = window.api.onContextCompactionProgress((event) => {
-        if (!event?.chatId) return
-        const key = contextCompactionProgressKey(event)
-        const existingTimer = contextCompactionProgressTimersRef.current.get(key)
-        if (existingTimer !== undefined) {
-          window.clearTimeout(existingTimer)
-          contextCompactionProgressTimersRef.current.delete(key)
-        }
-        if (event.status !== 'started') {
-          setContextCompactionProgressByKey((prev) => {
-            if (!prev[key]) return prev
-            const { [key]: _drop, ...rest } = prev
-            return rest
-          })
-          return
-        }
-        setContextCompactionProgressByKey((prev) => ({
-          ...prev,
-          [key]: { ...event, key, updatedAt: Date.now() }
-        }))
-        const timer = window.setTimeout(() => {
-          contextCompactionProgressTimersRef.current.delete(key)
-          setContextCompactionProgressByKey((prev) => {
-            if (!prev[key]) return prev
-            const { [key]: _drop, ...rest } = prev
-            return rest
-          })
-        }, CONTEXT_COMPACTION_PROGRESS_STALE_MS)
-        contextCompactionProgressTimersRef.current.set(key, timer)
-      })
+      addIpcSubscription(
+        window.api.onContextCompactionProgress((event) => {
+          if (!event?.chatId) return
+          const key = contextCompactionProgressKey(event)
+          const existingTimer = contextCompactionProgressTimersRef.current.get(key)
+          if (existingTimer !== undefined) {
+            window.clearTimeout(existingTimer)
+            contextCompactionProgressTimersRef.current.delete(key)
+          }
+          if (event.status !== 'started') {
+            setContextCompactionProgressByKey((prev) => {
+              if (!prev[key]) return prev
+              const { [key]: _drop, ...rest } = prev
+              return rest
+            })
+            return
+          }
+          setContextCompactionProgressByKey((prev) => ({
+            ...prev,
+            [key]: { ...event, key, updatedAt: Date.now() }
+          }))
+          const timer = window.setTimeout(() => {
+            contextCompactionProgressTimersRef.current.delete(key)
+            setContextCompactionProgressByKey((prev) => {
+              if (!prev[key]) return prev
+              const { [key]: _drop, ...rest } = prev
+              return rest
+            })
+          }, CONTEXT_COMPACTION_PROGRESS_STALE_MS)
+          contextCompactionProgressTimersRef.current.set(key, timer)
+        })
+      )
     }
 
     // Legacy global auto-approval indicator. Main refuses new enable requests,
     // but we still read the current value in case multiple windows are attached
     // to a process with an older/global bypass already active.
-    let yoloUnsubscribe: (() => void) | null = null
     if (typeof window.api.agenticYoloGet === 'function') {
       window.api
         .agenticYoloGet()
@@ -9742,7 +9776,9 @@ function App(): React.JSX.Element {
         .catch(() => {})
     }
     if (typeof window.api.onAgenticYoloState === 'function') {
-      yoloUnsubscribe = window.api.onAgenticYoloState((state) => setSessionYoloModeState(state))
+      addIpcSubscription(
+        window.api.onAgenticYoloState((state) => setSessionYoloModeState(state))
+      )
     }
 
     // QMOD (1.0.3) — listen for `ask_user_question` MCP-driven question
@@ -9751,89 +9787,86 @@ function App(): React.JSX.Element {
     // system message in the chat (so the question appears in-line with
     // the conversation) and stash the metadata in per-chat state so the
     // transcript renderer can show the modal card next to it.
-    let agentQuestionUnsubscribe: (() => void) | null = null
-    let agentQuestionCancelUnsubscribe: (() => void) | null = null
     if (typeof window.api.onAgentQuestionRequested === 'function') {
-      agentQuestionUnsubscribe = window.api.onAgentQuestionRequested((request) => {
-        const messageId = `agent-question-${request.questionId}`
-        // Insert a synthetic system message into the chat's transcript
-        // marking the question. Persisted in `chat.messages` so the
-        // question + answer trail survives chat reloads. The transcript
-        // renderer keys off `metadata.kind === 'agentQuestion'` to
-        // render the modal card next to this message.
-        updateChatById(request.appChatId, (prev) => {
-          // Avoid duplicating the marker on re-fires (e.g. main retries
-          // an event after a renderer reload). We key on questionId.
-          if (prev.messages?.some((msg) => msg.id === messageId)) return prev
-          const askedAt = new Date().toISOString()
-          const provider = (request.provider as ProviderId | undefined) ?? null
-          const headerProvider = provider ? getProviderLabel(provider) : 'Agent'
-          const headerLine = request.options?.length
-            ? `${headerProvider} asked you to pick an option:`
-            : `${headerProvider} asked you a question:`
-          // Stamp the ACTIVE ensemble round id so the marker groups with the
-          // live round (groupEnsembleMessagesByRound keys on ensembleRoundId)
-          // instead of rendering as a detached, adjacency-breaking "System"
-          // block separated from the current participant's turn.
-          const activeRoundId = prev.ensemble?.activeRound?.roundId
-          const next: ChatMessage = {
-            id: messageId,
-            role: 'system',
-            content: headerLine,
-            timestamp: askedAt,
-            ...(request.appRunId ? { runId: request.appRunId } : {}),
-            metadata: {
-              kind: 'agentQuestion',
-              questionId: request.questionId,
-              ensembleProvider: provider || undefined,
-              agentQuestion: request.question,
-              agentQuestionOptions: request.options,
-              agentQuestionContext: request.context,
-              ...(activeRoundId ? { ensembleRoundId: activeRoundId } : {})
+      addIpcSubscription(
+        window.api.onAgentQuestionRequested((request) => {
+          const messageId = `agent-question-${request.questionId}`
+          // Insert a synthetic system message into the chat's transcript
+          // marking the question. Persisted in `chat.messages` so the
+          // question + answer trail survives chat reloads. The transcript
+          // renderer keys off `metadata.kind === 'agentQuestion'` to
+          // render the modal card next to this message.
+          updateChatById(request.appChatId, (prev) => {
+            // Avoid duplicating the marker on re-fires (e.g. main retries
+            // an event after a renderer reload). We key on questionId.
+            if (prev.messages?.some((msg) => msg.id === messageId)) return prev
+            const askedAt = new Date().toISOString()
+            const provider = (request.provider as ProviderId | undefined) ?? null
+            const headerProvider = provider ? getProviderLabel(provider) : 'Agent'
+            const headerLine = request.options?.length
+              ? `${headerProvider} asked you to pick an option:`
+              : `${headerProvider} asked you a question:`
+            // Stamp the ACTIVE ensemble round id so the marker groups with the
+            // live round (groupEnsembleMessagesByRound keys on ensembleRoundId)
+            // instead of rendering as a detached, adjacency-breaking "System"
+            // block separated from the current participant's turn.
+            const activeRoundId = prev.ensemble?.activeRound?.roundId
+            const next: ChatMessage = {
+              id: messageId,
+              role: 'system',
+              content: headerLine,
+              timestamp: askedAt,
+              ...(request.appRunId ? { runId: request.appRunId } : {}),
+              metadata: {
+                kind: 'agentQuestion',
+                questionId: request.questionId,
+                ensembleProvider: provider || undefined,
+                agentQuestion: request.question,
+                agentQuestionOptions: request.options,
+                agentQuestionContext: request.context,
+                ...(activeRoundId ? { ensembleRoundId: activeRoundId } : {})
+              }
             }
-          }
-          return { ...prev, messages: [...(prev.messages || []), next] }
-        })
-        setPendingAgentQuestionsForChat(request.appChatId, (prev) =>
-          enqueueAgentQuestion(prev, {
-            questionId: request.questionId,
-            appRunId: request.appRunId,
-            messageId,
-            provider: (request.provider as ProviderId | undefined) ?? null,
-            question: request.question,
-            options: request.options,
-            context: request.context,
-            askedAt: Date.now()
+            return { ...prev, messages: [...(prev.messages || []), next] }
           })
-        )
-      })
+          setPendingAgentQuestionsForChat(request.appChatId, (prev) =>
+            enqueueAgentQuestion(prev, {
+              questionId: request.questionId,
+              appRunId: request.appRunId,
+              messageId,
+              provider: (request.provider as ProviderId | undefined) ?? null,
+              question: request.question,
+              options: request.options,
+              context: request.context,
+              askedAt: Date.now()
+            })
+          )
+        })
+      )
     }
     if (typeof window.api.onAgentQuestionCancelled === 'function') {
-      agentQuestionCancelUnsubscribe = window.api.onAgentQuestionCancelled((info) => {
-        // Clear the pending-question slot for the chat that owned the
-        // question. appChatId comes back on the cancellation payload so
-        // we don't have to maintain our own questionId → chatId map.
-        if (info.appChatId) {
-          setPendingAgentQuestionsForChat(info.appChatId, (prev) =>
-            removeAgentQuestionFromQueue(prev, info.questionId)
-          )
-        }
-      })
+      addIpcSubscription(
+        window.api.onAgentQuestionCancelled((info) => {
+          // Clear the pending-question slot for the chat that owned the
+          // question. appChatId comes back on the cancellation payload so
+          // we don't have to maintain our own questionId → chatId map.
+          if (info.appChatId) {
+            setPendingAgentQuestionsForChat(info.appChatId, (prev) =>
+              removeAgentQuestionFromQueue(prev, info.questionId)
+            )
+          }
+        })
+      )
     }
 
     return () => {
-      window.api.removeListeners()
-      humanCollaborationUnsubscribe?.()
-      humanCollaborationActionRequestUnsubscribe?.()
-      trustedMediaRefsUnsubscribe?.()
-      contextCompactionProgressUnsubscribe?.()
+      for (let index = ipcUnsubscriptions.length - 1; index >= 0; index -= 1) {
+        ipcUnsubscriptions[index]?.()
+      }
       for (const timer of contextCompactionProgressTimersRef.current.values()) {
         window.clearTimeout(timer)
       }
       contextCompactionProgressTimersRef.current.clear()
-      yoloUnsubscribe?.()
-      agentQuestionUnsubscribe?.()
-      agentQuestionCancelUnsubscribe?.()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- app-wide IPC subscriptions register once; mutable handlers route through refs.
   }, [])
