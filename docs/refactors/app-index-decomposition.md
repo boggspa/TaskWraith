@@ -32,30 +32,26 @@ into a new 8K file and call the slice done.
 
 ## Current Snapshot
 
-Measured from the live worktree on 2026-07-08 (fresh round, post pass-7 commit
-wave). Pass-1 through pass-7 slices are committed (`5d1ada4fb` … `f3bb65cf4`);
-metrics below reflect post-Site-C / post-M3-1b-on-disk state. Treat these
-numbers as orientation only. Every Ensemble round must refresh counts and dirty
-state before assigning a slice.
+Measured from the live worktree on 2026-07-08 (fresh round, post pass-8 commit
+wave). Pass-1 through pass-8 slices are committed (`5d1ada4fb` … `b222960fd`);
+metrics below reflect post-M3-1b / post-Slice-1b state. Treat these numbers as
+orientation only. Every Ensemble round must refresh counts and dirty state
+before assigning a slice.
 
-Pass-8 worktree baseline (HEAD `f3bb65cf4`, recorded fresh round start):
+Pass-9 worktree baseline (HEAD `b222960fd`, recorded fresh round start):
 
-- Branch `master`, ahead 70 of `origin/master`.
-- Pass-7 commit wave closed (`ac3ef6c07` Site C, `f3bb65cf4` pass-7 ledger).
-- Two dirty lanes (General GREENLIT → @CheckCommit by exact pathspec):
-  - **Renderer Slice 1b** — `src/renderer/src/App.tsx` only:
-    `chatMutations.promoteToFront(nextSideChat)` @L12685;
-    `setChats(` 44 (was 45 post-Site C). Commit:
-    `refactor(renderer-r3): use chat facade for side-chat promote`.
-  - **Main M3-1b** — four paths, no foreign dirt:
-    `src/main/index.ts` (−289 net), `src/main/RunPermissionPosture.ts`
-    (`runPostureContextFromPayload` relocated), NEW
-    `src/main/run/AgentRunNormalizer.ts` (308L) + `AgentRunNormalizer.test.ts`
-    (207L, 5 wrapper invariants). Commit:
-    `refactor(main-m3): extract agent run normalizer`.
+- Branch `master`, ahead 73 of `origin/master`.
+- Pass-8 commit wave closed (General landed directly after CheckCommit stall):
+  `9dcaf0ec4` Slice 1b (`App.tsx` `promoteToFront`), `ba96e108b` M3-1b
+  (god-module cut, `index.ts` −289), `b222960fd` pass-8 ledger.
+- Worktree **clean** except `.cursor/` (never staged).
+- **Active front:** M3-2a — seam-only for `dispatchRunWithProviderPause`
+  (spec: `design-m3-2-spec`; trace findings: `m3-2a-trace-findings`). **Live
+  gate:** @Design spec amendment on 3 trace flags (hidden 9th dep
+  `captureFailoverSnapshot`, pure-helper treatment, AppStore accessor injection)
+  before @WriteMain cuts the seam in `index.ts`.
 - Crash context: **CLOSED** (release 1.7.9 native SIGTRAP; not attributable to
   campaign slices). Tracking item only — no further recon wall-time.
-- `.cursor/` untracked — never staged.
 
 Tier-2 orientation: early Pass-1 recon reported `SettingsPanel.tsx` ~10,714 and
 `EnsembleOrchestrator.ts` ~11,996 lines; live `wc -l` on 2026-07-08 confirms
@@ -83,8 +79,8 @@ Current high-level facts:
 
 | Area | Current signal |
 | --- | ---: |
-| `src/main/index.ts` | 31,286 on disk (31,570 committed `f3bb65cf4`; was 32,234 pre-pass-1) |
-| `src/renderer/src/App.tsx` | 25,831 on disk (25,834 committed `f3bb65cf4`) |
+| `src/main/index.ts` | 31,286 (committed `ba96e108b`; was 32,234 pre-pass-1) |
+| `src/renderer/src/App.tsx` | 25,831 (committed `9dcaf0ec4`) |
 | Inline `ipcMain.handle/on` registrations still in `index.ts` | 62 (unchanged; was 103 pre-pass-1) |
 | Registrar calls already wired from `index.ts` | 44 |
 | Flat `src/main/ipc/*Handlers.ts` modules | 44 |
@@ -200,6 +196,19 @@ without fresh recon.
   `typecheck:web`; `chatMutations.test` 4/4. `setChats(` 46→45.
 - Docs pass-7 (2026-07-08): `docs(refactor-plan)` pass-6/7 ledger refresh.
   Commit `f3bb65cf4`. Gate: `git diff --check` on doc path.
+- Renderer pass-8 (2026-07-08): `refactor(renderer-r3)` — Slice 1b side-chat
+  promote: `chatMutations.promoteToFront(nextSideChat)` @L12685. Commit
+  `9dcaf0ec4`. Gate: `typecheck:web`; `chatMutations.test` 4/4. `setChats(` 45→44.
+- Main pass-8 (2026-07-08): `refactor(main-m3)` — M3-1b body extraction:
+  `normalizeAgentRunPayload` → `src/main/run/AgentRunNormalizer.ts` (308L) +
+  faked-deps wrapper test (207L, 5 invariants). Co-moved helpers:
+  `normalizeRuntimeWorktreeIntent`, `normalizeAgentRunActiveGoal`,
+  `normalizeGoalRuntimeLedger`. `runPostureContextFromPayload` relocated →
+  `RunPermissionPosture.ts`. Commit `ba96e108b`. Gates: `typecheck:node`;
+  vitest 42/42 (AgentRunNormalizer 5 + M3RunPayloadTrustBoundary 3 +
+  IpcValidation 34). `index.ts` −289 net; ipcMain 62 unchanged.
+- Docs pass-8 (2026-07-08): `docs(refactor-plan)` pass-8 ledger refresh.
+  Commit `b222960fd`. Gate: `git diff --check` on doc path.
 - Current IPC handler rule from `src/main/ipc/README.md` still applies:
   handler modules stay directly under `src/main/ipc/` unless the IPC validation
   scanner is expanded in the same commit.
@@ -392,23 +401,36 @@ Pass-2 renderer-r0 and scaffold rows deferred to pass-3 (landed there).
 | `refactor(renderer-r3)` Site C reap migration | @WriteRender | LANDED | `ac3ef6c07` | `typecheck:web`; `chatMutations.test` 4/4 | `removeChats(reaped)` @L7183; `setChats(` 46→45 |
 | `docs(refactor-plan)` pass-6/7 ledger refresh | @WriteDocs | LANDED | `f3bb65cf4` | `git diff --check` on doc path | Captures pass-6 SHAs + pass-7 queue closure |
 
-Pass-7 retired from the active queue. M3-1b and Slice 1b moved to pass-8.
+Pass-7 retired from the active queue.
 
-#### Pass 8 — IN FLIGHT (2026-07-08)
+#### Pass 8 — LANDED (2026-07-08)
+
+| Slice | Owner | Status | Commit | Gates | Metric deltas |
+| --- | --- | --- | --- | --- | --- |
+| `refactor(renderer-r3)` Slice 1b `promoteToFront` | @WriteRender | LANDED | `9dcaf0ec4` | `typecheck:web`; `chatMutations.test` 4/4 | `promoteToFront(nextSideChat)` @L12685; `setChats(` 45→44 |
+| `refactor(main-m3)` M3-1b body extraction + test | @WriteMain | LANDED | `ba96e108b` | `typecheck:node`; vitest 42/42 | `AgentRunNormalizer.ts` + test; `runPostureContextFromPayload` → `RunPermissionPosture.ts`; `index.ts` −289 net; ipcMain 62 unchanged |
+| `docs(refactor-plan)` pass-8 ledger refresh | @WriteDocs | LANDED | `b222960fd` | `git diff --check` on doc path | Captures pass-7 SHAs + pass-8 queue closure |
+
+Pass-8 retired from the active queue. General committed directly after
+CheckCommit stalled ~20 hops; future commit waves route CheckCommit as sole next
+actor.
+
+#### Pass 9 — IN FLIGHT (2026-07-08)
 
 | Slice | Owner | Status | Commit / scope | Notes |
 | --- | --- | --- | --- | --- |
-| `refactor(renderer-r3)` Slice 1b `promoteToFront` | @WriteRender | ON DISK | `App.tsx` only | `promoteToFront(nextSideChat)` @L12685; `setChats(` 44. Design-verified zero-behavior (fresh `updatedAt` → sort no-op). General GREENLIT → @CheckCommit |
-| `refactor(main-m3)` M3-1b body extraction + test | @WriteMain | ON DISK | 4 paths | `AgentRunNormalizer.ts` + test; `runPostureContextFromPayload` → `RunPermissionPosture.ts`; `index.ts` −289 net; ipcMain 62 unchanged; vitest 42/42. General GREENLIT → @CheckCommit |
-| `docs(refactor-plan)` pass-8 ledger refresh | @WriteDocs | ON DISK | this doc | Captures pass-7 SHAs, M3-1b metrics, Slice 1b `setChats` 44 |
-| `refactor(main-m3)` M3-2 `dispatchRunWithProviderPause` facade | @WriteMain | QUEUED | `index.ts` | Spec: `design-next-extraction-spec`; serial after M3-1b commits |
+| `docs(refactor-plan)` pass-9 ledger refresh | @WriteDocs | ON DISK | this doc | Captures pass-8 SHAs, M3-2a gate, pass-9 queue |
+| `refactor(main-m3)` M3-2a dispatch seam (deps explicit) | @WriteMain | BLOCKED | `index.ts` | Spec: `design-m3-2-spec`; trace: `m3-2a-trace-findings`. **Gate:** @Design amends spec on 9th dep + pure-helper + AppStore treatment before seam edit |
+| `refactor(main-m3)` M3-2b `createRunDispatchFacade` body + test | @WriteMain | QUEUED | `index.ts` + new module | After M3-2a commits; side-effect-sequence wrapper test per spec |
+| `refactor(main-m3)` M3-3 further run-dispatch facades | @WriteMain | QUEUED | `index.ts` | Serial after M3-2b |
+| `refactor(preload-r0)` scoped listener parity | @WriteMain | QUEUED | `src/preload/` | Disjoint from `index.ts`; serial behind M3-2a on main registrar |
+| `refactor(main-m1)` residual chat CRUD move | @WriteMain | QUEUED | `chatHandlers.ts` | Disjoint pathspec; serial behind M3-2a on `index.ts` |
+| `refactor(renderer-r0)` scoped app IPC unsubscribe retry | @WriteRender | QUEUED | `App.tsx` | After preload slice lands; 24 scoped unsubscribes |
+| `refactor(renderer-r3)` chat-facade batch 2 | @WriteRender | QUEUED | `App.tsx` | Replace/reconcile `setChats` sites per `design-spec-chat-facade` census |
 | `fix(providers)` I-drop leading delta restore | @WriteMain | DEFERRED | `index.ts` / orchestrator | Sidequest; `sidequest-i-drop-fix-plan`; serial after M3-2 unless reprioritized |
 
-@CheckCommit owns staging and commits by exact pathspec only (`git add -f` for
-docs). Pass-8 commit queue (disjoint pathspecs — never cross-stage):
-`refactor(renderer-r3): use chat facade for side-chat promote` (`App.tsx` only),
-`refactor(main-m3): extract agent run normalizer` (4 main paths),
-`docs(refactor-plan): refresh pass-8 ledger` (this doc, `git add -f`).
+Pass-9 critical path (serial on `index.ts`): @Design amends `design-m3-2-spec` →
+@WriteMain M3-2a seam → @Adversary2 review → @CheckCommit commit (sole actor).
 
 ### Phase 0 - Refresh And Freeze Invariants
 
@@ -616,17 +638,21 @@ Suggested gates:
 Purpose: extract the core run path as a trust-boundary bundle, not as scattered
 helpers.
 
-**Status (pass 8):** trust primitives are already modules; M3 is orchestration-
+**Status (pass 9):** trust primitives are already modules; M3 is orchestration-
 facade extraction (~977 inline lines). Gate tests landed (`bdb93501a`).
 **M3-1a** landed (`4aa2c84d1`: `AgentRunNormalizerDeps`, 7 explicit deps, no
-body move). **M3-1b** on disk (awaiting commit): `normalizeAgentRunPayload` →
+body move). **M3-1b** landed (`ba96e108b`): `normalizeAgentRunPayload` →
 `src/main/run/AgentRunNormalizer.ts` (308L) + faked-deps wrapper test (207L,
 5 invariants). Co-moved helpers: `normalizeRuntimeWorktreeIntent`,
 `normalizeAgentRunActiveGoal`, `normalizeGoalRuntimeLedger`.
 `runPostureContextFromPayload` relocated → `RunPermissionPosture.ts` (Design
 ratification: `design-pass8-verdicts`). `index.ts` −289 net; ipcMain 62
-unchanged. **M3-2** queued next: `dispatchRunWithProviderPause` → run-dispatch
-facade (spec: `design-next-extraction-spec`; anchors ~L29717–29801 post-shift).
+unchanged. **M3-2a** active (BLOCKED on Design spec amendment per
+`m3-2a-trace-findings`): seam-only — make `dispatchRunWithProviderPause` deps
+explicit (9 inject deps + 3 AppStore accessors per trace; pure helpers
+direct-import in M3-2b). Spec: `design-m3-2-spec`; anchors ~L29717–29802.
+**M3-2b** queued: `createRunDispatchFacade(deps)` body move + side-effect-
+sequence wrapper test. **M3-3** queued after M3-2b.
 
 Actions:
 
