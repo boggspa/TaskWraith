@@ -28931,8 +28931,30 @@ if (isGeminiMcpBridgeProcess) {
       chatService,
       getSettings: () => AppStore.getSettings(),
       detectConfiguredProviders,
+      normalizeTranscriptMarkdownMediaForChat,
+      maybeScheduleCodexNativeGoalSync,
       broadcastThreadUpdate,
-      broadcastChatPopoutUpdate
+      broadcastThreadList,
+      broadcastChatUpdated,
+      broadcastChatPopoutUpdate,
+      pushRemoteTaskCardDelta,
+      pushRemoteThreadSnapshot,
+      canonicalRemoteWorkspaceId: (workspaceId) => canonicalRemoteWorkspaceId(workspaceId),
+      globalRemoteScope: GLOBAL_REMOTE_SCOPE,
+      reapAbandonedChats,
+      getWorkflowChatIds: () =>
+        new Set(
+          AppStore.getWorkflowDefinitions()
+            .map((wf) => wf.template?.chatId)
+            .filter((id): id is string => typeof id === 'string')
+        ),
+      getScheduledChatIds: () =>
+        new Set(
+          AppStore.getScheduledTasks()
+            .filter((t) => t.status === 'pending' || t.status === 'due' || t.status === 'running')
+            .map((t) => t.chatId)
+            .filter((id): id is string => typeof id === 'string')
+        )
     })
     const broadcastHumanCollaborationUpdate = (chatId: string): void => {
       mainWindow?.webContents.send('human-collaboration-updated', { chatId })
@@ -28977,107 +28999,6 @@ if (isGeminiMcpBridgeProcess) {
       broadcastChatUpdated,
       broadcastHumanCollaborationUpdate
     }).dispose
-    ipcMain.handle('save-chat', (_, chat: ChatRecord) => {
-      const normalized = normalizeTranscriptMarkdownMediaForChat(chat)
-      const previous = AppStore.getChat(normalized.appChatId)
-      const saved = chatService.saveChat(normalized)
-      broadcastChatUpdated(saved)
-      maybeScheduleCodexNativeGoalSync(previous, saved, 'renderer-save-chat')
-      broadcastThreadUpdate(saved?.appChatId)
-      if (previous?.title !== saved.title) {
-        pushRemoteTaskCardDelta(saved.appChatId)
-      }
-      const latestRun = saved.runs?.[saved.runs.length - 1]
-      const previousRun = previous?.runs?.find((run) => run.runId === latestRun?.runId)
-      const runHasDiff = (run: ChatRun | undefined): boolean =>
-        Boolean(
-          run?.runDiff ||
-            (run?.runDiffByPath && Object.keys(run.runDiffByPath).length > 0)
-        )
-      if (latestRun?.endedAt && runHasDiff(latestRun) && !runHasDiff(previousRun)) {
-        const workspaceId =
-          canonicalRemoteWorkspaceId(saved.workspaceId) ??
-          (!saved.workspaceId || saved.scope === 'global' ? GLOBAL_REMOTE_SCOPE : null)
-        if (workspaceId) {
-          // First diff availability rides a targeted thread delta; keep full snapshots coalesced.
-          pushRemoteThreadSnapshot(saved, workspaceId)
-        }
-      }
-    })
-    ipcMain.handle('delete-chat', (_, chatId: string) => {
-      chatService.deleteChat(chatId)
-      broadcastThreadList()
-    })
-    /**
-     * Reap abandoned never-started "New Chat" tombstones (delete-only). The
-     * renderer supplies the do-not-reap signals the main process can't see —
-     * the active/multiview/popout selection and chats with unsent composer
-     * text — plus the just-created `keepChatId`. The main side adds the
-     * workflow + scheduled-task links. Ensembles are never reaped (the service
-     * supplies no default-roster check), so a curated roster is never lost.
-     * Returns the reaped ids so the renderer can drop them from its own state.
-     */
-    ipcMain.handle(
-      'reap-abandoned-chats',
-      (
-        _,
-        renderer: { protectedChatIds?: string[]; draftChatIds?: string[]; keepChatId?: string } = {}
-      ) => {
-        try {
-          const reaped = reapAbandonedChats(
-            {
-              getChats: () => AppStore.getChats(),
-              getWorkflowChatIds: () =>
-                new Set(
-                  AppStore.getWorkflowDefinitions()
-                    .map((wf) => wf.template?.chatId)
-                    .filter((id): id is string => typeof id === 'string')
-                ),
-              getScheduledChatIds: () =>
-                new Set(
-                  AppStore.getScheduledTasks()
-                    .filter(
-                      (t) => t.status === 'pending' || t.status === 'due' || t.status === 'running'
-                    )
-                    .map((t) => t.chatId)
-                    .filter((id): id is string => typeof id === 'string')
-                ),
-              deleteChat: (id) => chatService.deleteChat(id)
-            },
-            renderer ?? {}
-          )
-          if (reaped.length > 0) broadcastThreadList()
-          return { ok: true, reaped }
-        } catch (error) {
-          console.warn('[reap-abandoned-chats] failed:', error)
-          return { ok: false, reaped: [] as string[] }
-        }
-      }
-    )
-    /**
-     * Slash-picker `/clear`: wipe the chat's message + run history while
-     * keeping the chat record so the user stays anchored to the same
-     * provider session id, workspace, settings. Mirrors what a "Reset
-     * conversation" affordance does in native Claude / Codex apps.
-     */
-    ipcMain.handle('truncate-chat', (_, chatId: string) => {
-      const existing = chatService.getChat(chatId)
-      if (!existing) return null
-      const truncated: ChatRecord = {
-        ...existing,
-        messages: [],
-        runs: [],
-        updatedAt: Date.now()
-      }
-      chatService.saveChat(truncated)
-      broadcastThreadUpdate(chatId)
-      return truncated
-    })
-    ipcMain.handle('clear-chats', (_, workspaceId?: string) => {
-      chatService.clearChats(workspaceId)
-      broadcastThreadList()
-    })
-
     registerUsageRatesHandlers({
       recordUsage: (usage) => AppStore.recordUsage(usage),
       getUsage: (workspaceId, chatId) => AppStore.getUsage(workspaceId, chatId),
