@@ -415,9 +415,9 @@ enum DiffStudioSheetGlassPolicy {
     /// over the glass backdrop; nil keeps the host's default opaque fill.
     /// Delegates to the shared sheet-wide chrome tier so every glass-hosted
     /// sheet washes surfaces identically.
-    static func chromeFillAlpha(glassSheetHosted: Bool, glassEnabled: Bool) -> Double? {
+    static func chromeFillAlpha(glassSheetHosted: Bool, glassEnabled: Bool, isLight: Bool = false) -> Double? {
         TWGlassSheetSurfacePolicy.chromeFillAlpha(
-            glassSheetHosted: glassSheetHosted, glassEnabled: glassEnabled)
+            glassSheetHosted: glassSheetHosted, glassEnabled: glassEnabled, isLight: isLight)
     }
 
     /// Alpha for the hunk-grid code panel — less transparent than the chrome
@@ -441,7 +441,8 @@ private struct DiffFileNavigatorPane: View {
         guard
             let alpha = DiffStudioSheetGlassPolicy.chromeFillAlpha(
                 glassSheetHosted: glassSheetHosted,
-                glassEnabled: TWTheme.composerGlassEnabled)
+                glassEnabled: TWTheme.composerGlassEnabled,
+                isLight: TWThemeStore.shared.systemTheme.isLight)
         else { return nil }
         return TWTheme.surface1.opacity(alpha)
     }
@@ -683,7 +684,8 @@ private struct DiffViewerPane: View {
         guard
             let alpha = DiffStudioSheetGlassPolicy.chromeFillAlpha(
                 glassSheetHosted: glassSheetHosted,
-                glassEnabled: TWTheme.composerGlassEnabled)
+                glassEnabled: TWTheme.composerGlassEnabled,
+                isLight: TWThemeStore.shared.systemTheme.isLight)
         else { return TWTheme.surface1 }
         return TWTheme.surface1.opacity(alpha)
     }

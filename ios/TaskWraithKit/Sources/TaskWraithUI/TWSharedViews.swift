@@ -755,9 +755,18 @@ enum TWGlassSheetSurfacePolicy {
     /// glass backdrop; nil keeps the host's default opaque fill. Reduce
     /// Transparency (glassEnabled false) keeps surfaces fully opaque over the
     /// backdrop's opaque tier.
-    static func chromeFillAlpha(glassSheetHosted: Bool, glassEnabled: Bool) -> Double? {
+    ///
+    /// Light-family themes need a much heavier wash than dark ones: `surface1`
+    /// is near-white there, so at the dark-tuned 0.35 alpha a row reads as
+    /// indistinguishable from the equally pale glass backdrop behind it —
+    /// rows lose their card separation and the whole sheet reads as flat gray.
+    /// Dark themes don't have this problem (a dark wash over a dark backdrop
+    /// still shows up), so only the light path is bumped — mirrors
+    /// `ToolbarIconPillChromeModifier`'s isLight ? white.opacity(0.80) split.
+    static func chromeFillAlpha(glassSheetHosted: Bool, glassEnabled: Bool, isLight: Bool = false) -> Double? {
         guard glassSheetHosted else { return nil }
-        return glassEnabled ? 0.35 : 1.0
+        guard glassEnabled else { return 1.0 }
+        return isLight ? 0.72 : 0.35
     }
 }
 
@@ -768,7 +777,8 @@ func twGlassSheetChromeFill(glassSheetHosted: Bool) -> Color? {
     guard
         let alpha = TWGlassSheetSurfacePolicy.chromeFillAlpha(
             glassSheetHosted: glassSheetHosted,
-            glassEnabled: TWTheme.composerGlassEnabled)
+            glassEnabled: TWTheme.composerGlassEnabled,
+            isLight: TWThemeStore.shared.systemTheme.isLight)
     else { return nil }
     return TWTheme.surface1.opacity(alpha)
 }
@@ -924,6 +934,8 @@ struct ProviderModelPicker: View {
     @Binding var provider: String
     @Binding var modelId: String?
     @Binding var reasoningEffort: String?
+    @Binding var fastModeEnabled: Bool
+    @Binding var kimiThinkingEnabled: Bool
     var allowsProviderChange: Bool = true
     @State private var isPresented = false
     @State private var dragOffset: CGFloat = 0
