@@ -7180,7 +7180,7 @@ function App(): React.JSX.Element {
         const reaped = new Set(res.reaped.filter((id) => id !== currentChatIdRef.current))
         if (reaped.size === 0) return
         for (const id of reaped) chatByIdRef.current.delete(id)
-        setChats((prev) => prev.filter((chat) => !reaped.has(chat.appChatId)))
+        chatMutations.removeChats(reaped)
       })
       .catch(() => {})
   }
