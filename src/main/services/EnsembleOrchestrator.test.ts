@@ -502,6 +502,65 @@ describe('EnsembleOrchestrator', () => {
     expect(harness.dispatched[1].provider).toBe('codex')
   })
 
+  it('emits participant progress for native provider context compaction events', async () => {
+    const progressEvents: ContextCompactionProgressEvent[] = []
+    const harness = makeHarness({
+      onContextCompactionProgress: (event) => progressEvents.push(event)
+    })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Please review and implement.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const route = {
+      appRunId: harness.dispatched[0].appRunId,
+      appChatId: 'ensemble-chat'
+    }
+
+    harness.orchestrator.handleProviderOutput('claude', route, {
+      type: 'compaction_event',
+      compaction: {
+        kind: 'started',
+        telemetry: { provider: 'claude', trigger: 'auto' }
+      }
+    })
+    harness.orchestrator.handleProviderOutput('claude', route, {
+      type: 'compaction_event',
+      compaction: {
+        kind: 'completed',
+        telemetry: {
+          provider: 'claude',
+          trigger: 'auto',
+          eventUuid: 'compact-1',
+          preTokens: 240_000,
+          postTokens: 80_000
+        }
+      }
+    })
+
+    expect(progressEvents).toMatchObject([
+      {
+        chatId: 'ensemble-chat',
+        participantId: 'claude',
+        provider: 'claude',
+        status: 'started',
+        trigger: 'auto'
+      },
+      {
+        chatId: 'ensemble-chat',
+        participantId: 'claude',
+        provider: 'claude',
+        status: 'completed',
+        trigger: 'auto'
+      }
+    ])
+    expect(harness.chat.messages.at(-1)?.metadata).toMatchObject({
+      kind: 'contextCompaction',
+      ensembleParticipantId: 'claude'
+    })
+  })
+
   it('markRunExited finalizes a clean exit as answered when content streamed, else skipped', async () => {
     // A seat that streamed its answer and then exited 0 (e.g. after the Ollama
     // retry-ceiling finalize, where the exit can beat the result event) must NOT

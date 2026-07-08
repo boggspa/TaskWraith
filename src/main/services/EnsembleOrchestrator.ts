@@ -8414,8 +8414,26 @@ export class EnsembleOrchestrator {
     // either way so the signal never falls through to the content lanes.
     if (payload?.type === 'compaction_event') {
       const signal = payload.compaction as ContextCompactionSignal | undefined
-      if (signal && typeof signal === 'object' && signal.kind !== 'started') {
-        this.appendContextCompactionCard(run, runId, signal)
+      if (
+        signal &&
+        typeof signal === 'object' &&
+        (signal.kind === 'started' || signal.kind === 'completed' || signal.kind === 'failed')
+      ) {
+        const telemetry =
+          signal.telemetry && typeof signal.telemetry === 'object' ? signal.telemetry : {}
+        const normalizedSignal: ContextCompactionSignal = {
+          kind: signal.kind,
+          telemetry
+        }
+        this.emitSeatCompactionProgress(
+          run.chatId,
+          run.participant,
+          normalizedSignal.kind,
+          normalizedSignal.telemetry.trigger || 'auto'
+        )
+        if (normalizedSignal.kind !== 'started') {
+          this.appendContextCompactionCard(run, runId, normalizedSignal)
+        }
       }
       return true
     }
