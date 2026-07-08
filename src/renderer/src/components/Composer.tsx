@@ -70,6 +70,7 @@ import { readPendingProviderChange } from '../../../main/providerChangeQueue'
 import {
   hasSlashCommandPlaceholders,
   slashCommandDispatchPrefix,
+  matchStandaloneSlashCommandToken,
   matchLeadingSlashCommand
 } from '../lib/ComposerSlashCommands'
 import type {
@@ -1290,10 +1291,16 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
   /** Build the context handed to an action command's `run()`. Computed against
    * THIS composer's draft + slash state so App-level closures operate on the
    * invoking pane. */
-  const buildSlashRunContext = (options?: { onSetDraft?: () => void }): SlashCommandRunContext => ({
+  const buildSlashRunContext = (options?: {
+    consumeSlashToken?: () => void
+    dispatchSource?: SlashCommandRunContext['dispatchSource']
+    onSetDraft?: () => void
+    promptWithoutSlashToken?: string
+  }): SlashCommandRunContext => ({
     rawPrompt: prompt,
-    promptWithoutSlashToken: promptWithoutCurrentSlashToken(),
-    consumeSlashToken: consumeSlashTokenFromPrompt,
+    promptWithoutSlashToken: options?.promptWithoutSlashToken ?? promptWithoutCurrentSlashToken(),
+    dispatchSource: options?.dispatchSource,
+    consumeSlashToken: options?.consumeSlashToken ?? consumeSlashTokenFromPrompt,
     setDraft: (value: string) => {
       options?.onSetDraft?.()
       setChatPromptDraft(currentComposerChatId, value)
@@ -1343,7 +1350,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
           }
           return
         case 'action':
-          void command.run(buildSlashRunContext())
+          void command.run(buildSlashRunContext({ dispatchSource: 'picker' }))
           return
         case 'prompt-template':
           // Insert the template at the slash position; caller can keep
@@ -1418,6 +1425,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
       // a replacement draft (for example /import-plan or /compact scaffolds).
       void command.run(
         buildSlashRunContext({
+          dispatchSource: 'submit',
           onSetDraft: () => {
             actionWroteDraft = true
           }
@@ -1461,6 +1469,38 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
       return true
     }
     return false
+  }
+
+  const tryHandleInlineGoalSlashSubmit = (): boolean => {
+    const command = composerSlashCommands.find(
+      (entry): entry is ComposerSlashCommand & { kind: 'action' } =>
+        entry.kind === 'action' && entry.command.toLowerCase() === '/goal'
+    )
+    if (!command) return false
+    const tokenMatch = matchStandaloneSlashCommandToken(prompt, command.command)
+    if (!tokenMatch) return false
+    setSlashMenuOpen(false)
+    setSlashQuery('')
+    slashAnchorIndexRef.current = null
+    let actionWroteDraft = false
+    const consumeSlashToken = (): void => {
+      setChatPromptDraft(currentComposerChatId, tokenMatch.promptWithoutToken)
+      focusComposerTextarea(tokenMatch.start)
+    }
+    void command.run(
+      buildSlashRunContext({
+        consumeSlashToken,
+        dispatchSource: 'submit',
+        promptWithoutSlashToken: tokenMatch.promptWithoutToken,
+        onSetDraft: () => {
+          actionWroteDraft = true
+        }
+      })
+    )
+    if (!actionWroteDraft) {
+      setChatPromptDraft(currentComposerChatId, '')
+    }
+    return true
   }
 
   const canRenderComposerAboveRowStack = Boolean(
@@ -2555,6 +2595,9 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               return
                             }
                             if (tryHandleActionSlashSubmit()) {
+                              return
+                            }
+                            if (tryHandleInlineGoalSlashSubmit()) {
                               return
                             }
                             triggerSendConfirmation()
@@ -4241,6 +4284,9 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                   return
                                 }
                                 if (tryHandleActionSlashSubmit()) {
+                                  return
+                                }
+                                if (tryHandleInlineGoalSlashSubmit()) {
                                   return
                                 }
                                 triggerSendConfirmation()

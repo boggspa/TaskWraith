@@ -8,6 +8,7 @@ import {
   hasSlashCommandPlaceholders,
   matchLeadingActionCommand,
   matchLeadingSlashCommand,
+  matchStandaloneSlashCommandToken,
   paletteCoreForProvider,
   slashCommandDispatchPrefix,
   wrapPaletteItemAsSlashCommand,
@@ -388,6 +389,43 @@ describe('ComposerSlashCommands', () => {
         matchedText: '/project:review',
         remainder: 'src/App.tsx'
       })
+    })
+  })
+
+  describe('matchStandaloneSlashCommandToken', () => {
+    it('matches and removes a standalone slash command inside prose', () => {
+      expect(matchStandaloneSlashCommandToken('Fix this /goal today', '/goal')).toEqual({
+        start: 9,
+        end: 14,
+        matchedText: '/goal',
+        promptWithoutToken: 'Fix this today'
+      })
+    })
+
+    it('matches standalone commands at the start or end of the draft', () => {
+      expect(matchStandaloneSlashCommandToken('/goal Fix this', '/goal')).toMatchObject({
+        start: 0,
+        end: 5,
+        promptWithoutToken: ' Fix this'
+      })
+      expect(matchStandaloneSlashCommandToken('Fix this /goal', '/goal')).toMatchObject({
+        start: 9,
+        end: 14,
+        promptWithoutToken: 'Fix this '
+      })
+    })
+
+    it('rejects command-looking text merged with other characters', () => {
+      expect(matchStandaloneSlashCommandToken('Fix/goal this', '/goal')).toBeNull()
+      expect(matchStandaloneSlashCommandToken('Fix /goalish today', '/goal')).toBeNull()
+      expect(matchStandaloneSlashCommandToken('Fix /goal,today', '/goal')).toBeNull()
+      expect(matchStandaloneSlashCommandToken('Fix /goal: today', '/goal')).toBeNull()
+      expect(matchStandaloneSlashCommandToken('Fix /goal. today', '/goal')).toBeNull()
+      expect(matchStandaloneSlashCommandToken('See https://example.test/goal today', '/goal')).toBeNull()
+    })
+
+    it('does not match multi-word command declarations as inline tokens', () => {
+      expect(matchStandaloneSlashCommandToken('Reload /commands reload', '/commands reload')).toBeNull()
     })
   })
 

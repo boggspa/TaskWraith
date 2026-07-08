@@ -210,6 +210,10 @@ export interface SlashCommandRunContext {
   /** The composer draft with the leading `/<query>` token removed (read-only
    * snapshot). Equivalent to the old `promptWithoutCurrentSlashToken()`. */
   promptWithoutSlashToken: string
+  /** Where this command dispatch came from. Submit dispatch means the user
+   * pressed Enter / Run with a slash command in the draft instead of choosing
+   * the picker item. */
+  dispatchSource?: 'picker' | 'submit'
   /** Strip the `/<query>` token from the invoking composer's draft and
    * re-focus its textarea with the caret where the slash used to be.
    * Equivalent to the old `consumeSlashTokenFromPrompt()`. */
@@ -383,6 +387,13 @@ export interface LeadingSlashCommandMatch {
   remainder: string
 }
 
+export interface StandaloneSlashTokenMatch {
+  start: number
+  end: number
+  matchedText: string
+  promptWithoutToken: string
+}
+
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
@@ -409,6 +420,32 @@ function leadingCommandPattern(command: string): RegExp | null {
   const tokens = slashCommandDispatchPrefix(command).split(/\s+/).filter(Boolean)
   if (tokens.length === 0) return null
   return new RegExp(`^${tokens.map(escapeRegExp).join('\\s+')}(?=\\s|$)`, 'i')
+}
+
+export function matchStandaloneSlashCommandToken(
+  prompt: string,
+  command: string
+): StandaloneSlashTokenMatch | null {
+  const dispatchCommand = slashCommandDispatchPrefix(command).trim()
+  if (!dispatchCommand || /\s/.test(dispatchCommand)) return null
+  const pattern = new RegExp(`(^|\\s)(${escapeRegExp(dispatchCommand)})(?=\\s|$)`, 'i')
+  const match = prompt.match(pattern)
+  if (!match || match.index === undefined) return null
+  const leadingWhitespace = match[1] || ''
+  const matchedText = match[2] || ''
+  const start = match.index + leadingWhitespace.length
+  const end = start + matchedText.length
+  const before = prompt.slice(0, start)
+  let after = prompt.slice(end)
+  if (/\s$/.test(before) && /^\s/.test(after)) {
+    after = after.slice(1)
+  }
+  return {
+    start,
+    end,
+    matchedText,
+    promptWithoutToken: `${before}${after}`
+  }
 }
 
 /**

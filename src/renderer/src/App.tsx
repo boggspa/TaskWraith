@@ -15051,12 +15051,15 @@ function App(): React.JSX.Element {
     })
   }
 
-  const setGoalFromObjective = (rawObjective: string, options: { confirmReplace?: boolean } = {}) => {
+  const setGoalFromObjective = (
+    rawObjective: string,
+    options: { confirmReplace?: boolean } = {}
+  ): boolean => {
     const objective = normalizeActiveGoalObjective(rawObjective)
     const existingGoal = currentActiveGoal
     if (!objective) {
       window.alert('Type a goal objective first.')
-      return
+      return false
     }
     if (
       options.confirmReplace !== false &&
@@ -15067,7 +15070,7 @@ function App(): React.JSX.Element {
       const confirmed = window.confirm(
         'Replace the current active goal?\n\nThe existing goal will stop steering this chat.'
       )
-      if (!confirmed) return
+      if (!confirmed) return false
     }
     const now = new Date()
     const mode = resolveActiveGoalMode(currentProvider, {
@@ -15108,6 +15111,7 @@ function App(): React.JSX.Element {
     setGoalDraft(goal.objective)
     setGoalEditing(false)
     setGoalPopoverOpen(true)
+    return true
   }
 
   const setPlanImportPolicy = (policy: PlanImportPolicyMode): void => {
@@ -15242,10 +15246,10 @@ function App(): React.JSX.Element {
     void executeRun(request)
   }
 
-  const updateCurrentGoalStatus = (status: ActiveGoalStatus, reason?: string): void => {
+  const updateCurrentGoalStatus = (status: ActiveGoalStatus, reason?: string): boolean => {
     if (!currentActiveGoal) {
       window.alert('No active goal is set for this chat.')
-      return
+      return false
     }
     const nextGoal = updateActiveGoalLifecycle(
       currentResolvedGoal || currentActiveGoal,
@@ -15255,31 +15259,33 @@ function App(): React.JSX.Element {
     persistGoalForCurrentChat(nextGoal)
     setGoalDraft(nextGoal.objective)
     setGoalEditing(false)
+    return true
   }
 
-  const markCurrentGoalBlocked = (): void => {
+  const markCurrentGoalBlocked = (): boolean => {
     if (!currentActiveGoal) {
       window.alert('No active goal is set for this chat.')
-      return
+      return false
     }
     const reason = window.prompt(
       'Why is this goal blocked?',
       currentActiveGoal.blockedReason || ''
     )
-    if (reason === null) return
-    updateCurrentGoalStatus('blocked', reason.trim() || 'Blocked by user.')
+    if (reason === null) return false
+    return updateCurrentGoalStatus('blocked', reason.trim() || 'Blocked by user.')
   }
 
-  const clearCurrentGoal = (): void => {
-    if (!currentActiveGoal) return
+  const clearCurrentGoal = (): boolean => {
+    if (!currentActiveGoal) return false
     if (isUnfinishedActiveGoal(currentActiveGoal)) {
       const confirmed = window.confirm('Clear the current active goal? This stops goal steering.')
-      if (!confirmed) return
+      if (!confirmed) return false
     }
     persistGoalForCurrentChat(null)
     setGoalDraft('')
     setGoalEditing(false)
     setGoalPopoverOpen(false)
+    return true
   }
 
   const updateGoalPopoverPosition = useCallback((): void => {
@@ -15370,35 +15376,41 @@ function App(): React.JSX.Element {
 
   const handleGoalSlashCommand = (
     promptWithoutSlashToken: string,
-    rawPrompt: string = prompt
-  ): void => {
+    rawPrompt: string = prompt,
+    options: { activateInlinePrompt?: boolean } = {}
+  ): boolean => {
     const trimmed = rawPrompt.trim()
-    if (trimmed && !/^\/goal\b/i.test(trimmed)) {
-      openGoalPopover(false, promptWithoutSlashToken.trim())
-      return
+    if (trimmed && !/^\/goal(?=\s|$)/i.test(trimmed)) {
+      if (options.activateInlinePrompt) {
+        return setGoalFromObjective(promptWithoutSlashToken)
+      } else {
+        openGoalPopover(false, promptWithoutSlashToken.trim())
+        return true
+      }
     }
-    const args = trimmed.replace(/^\/goal\b/i, '').trim()
+    const args = trimmed.replace(/^\/goal(?=\s|$)/i, '').trim()
     if (!args) {
       openGoalPopover(false, '')
-      return
+      return true
     }
     const [verbToken, ...restTokens] = args.split(/\s+/)
     const verb = verbToken.toLowerCase()
     const remainder = restTokens.join(' ').trim()
     if (verb === 'pause') {
-      updateCurrentGoalStatus('paused', remainder)
+      return updateCurrentGoalStatus('paused', remainder)
     } else if (verb === 'resume') {
-      updateCurrentGoalStatus('active', remainder)
+      return updateCurrentGoalStatus('active', remainder)
     } else if (verb === 'clear') {
-      clearCurrentGoal()
+      return clearCurrentGoal()
     } else if (verb === 'complete' || verb === 'done') {
-      updateCurrentGoalStatus('completed', remainder)
+      return updateCurrentGoalStatus('completed', remainder)
     } else if (verb === 'blocked' || verb === 'block') {
-      updateCurrentGoalStatus('blocked', remainder || 'Blocked by user slash command.')
+      return updateCurrentGoalStatus('blocked', remainder || 'Blocked by user slash command.')
     } else if (verb === 'edit') {
       openGoalPopover(true)
+      return true
     } else {
-      setGoalFromObjective(args)
+      return setGoalFromObjective(args)
     }
   }
 
@@ -22184,7 +22196,15 @@ function App(): React.JSX.Element {
     handleDetachWindowCommand: () => handleDetachWindow(),
     openWorkspacePopoutCommand: openWorkspacePopoutWindow,
     openSideChatCommand: openSideChatFromSlashCommand,
-    handleGoalCommand: (ctx) => handleGoalSlashCommand(ctx.promptWithoutSlashToken, ctx.rawPrompt)
+    handleGoalCommand: (ctx) => {
+      const handled = handleGoalSlashCommand(ctx.promptWithoutSlashToken, ctx.rawPrompt, {
+        activateInlinePrompt: ctx.dispatchSource === 'submit'
+      })
+      if (!handled && ctx.dispatchSource === 'submit') {
+        ctx.setDraft(ctx.rawPrompt)
+        ctx.focusComposer(ctx.rawPrompt.length)
+      }
+    }
   })
 
   // Slash-picker registry: per-provider palette items wrapped as
