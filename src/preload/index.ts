@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type {
   GeminiWorktreeLaunchOption,
   BlackboardEntry,
@@ -61,6 +61,13 @@ const api = {
   getRuntimeVersions: () => ({ ...(process?.versions || {}) }),
   selectWorkspace: () => ipcRenderer.invoke('select-workspace'),
   selectImageFiles: () => ipcRenderer.invoke('select-image-files'),
+  // Electron 32+ removed `File.path`, so a dragged/pasted file's absolute path
+  // can only be resolved via webUtils.getPathForFile (which must run in the
+  // preload). The renderer's drop/paste collectors call this to restore
+  // drag-and-drop attach that regressed on the Electron 39 upgrade. Param type
+  // is derived from Electron's own signature so it needs no DOM lib here.
+  getPathForFile: (file: Parameters<typeof webUtils.getPathForFile>[0]): string =>
+    webUtils.getPathForFile(file),
   saveClipboardImageAttachment: () => ipcRenderer.invoke('save-clipboard-image-attachment'),
   authorizeImagePreview: (paths: string[]) => ipcRenderer.invoke('authorize-image-preview', paths),
   readImagePreview: (path: string) => ipcRenderer.invoke('read-image-preview', path),

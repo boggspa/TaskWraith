@@ -114,6 +114,44 @@ export const dedupePaths = (values: string[]): string[] => {
   return next
 }
 
+/**
+ * Resolve a dragged/pasted File's absolute local path.
+ *
+ * Electron 32+ removed the non-standard `File.path`, so `file.path` is
+ * `undefined` at runtime (this app runs Electron 39) and the drag/paste
+ * collectors silently gathered nothing — the drop-to-attach regression. The
+ * path now comes from `webUtils.getPathForFile`, which must run in the preload
+ * and is exposed to the renderer as `window.api.getPathForFile`. A present
+ * `file.path` is still honoured first (legacy contexts + unit tests that set
+ * it); the `typeof window` guard keeps this callable from non-DOM test envs.
+ */
+const resolveAttachmentFilePath = (file: File): string => {
+  const legacyPath = (file as File & { path?: string }).path
+  if (legacyPath) return legacyPath
+  try {
+    const bridged =
+      typeof window !== 'undefined' ? window.api?.getPathForFile?.(file) : undefined
+    return typeof bridged === 'string' ? bridged : ''
+  } catch {
+    return ''
+  }
+}
+
+/**
+ * Whether an in-flight drag carries OS files. Safe to call during
+ * `dragenter`/`dragover`, when the DataTransfer is in the HTML5 "protected
+ * mode": `.files` is empty and `getData` is blocked, but `.types` (and each
+ * item's `.kind`) ARE readable — the browser lists the literal `'Files'` type
+ * whenever real OS files are part of the drag. Actual path resolution can only
+ * happen on `drop` (see collectDroppedAttachmentPaths); this just powers the
+ * drop-zone highlight so the composer can react the moment a file drag enters.
+ */
+export const dataTransferHasFiles = (dataTransfer?: DataTransfer | null): boolean => {
+  if (!dataTransfer) return false
+  if (Array.from(dataTransfer.types || []).includes('Files')) return true
+  return Array.from(dataTransfer.items || []).some((item) => item.kind === 'file')
+}
+
 export const collectClipboardAttachmentPaths = (
   clipboardData?: DataTransfer | null
 ): string[] => {
@@ -126,8 +164,7 @@ export const collectClipboardAttachmentPaths = (
   for (let i = 0; i < fileList.length; i += 1) {
     const file = fileList.item(i)
     if (!file) continue
-    const asFile = file as File & { path?: string }
-    const candidate = sanitizeImagePath(asFile.path || '')
+    const candidate = sanitizeImagePath(resolveAttachmentFilePath(file))
     if (isReadableLocalAttachmentPath(candidate)) {
       paths.push(candidate)
     }
@@ -158,8 +195,7 @@ export const collectClipboardAttachmentPaths = (
     }
     const file = item.getAsFile()
     if (!file) continue
-    const asFile = file as File & { path?: string }
-    const candidate = sanitizeImagePath(asFile.path || '')
+    const candidate = sanitizeImagePath(resolveAttachmentFilePath(file))
     if (isReadableLocalAttachmentPath(candidate)) {
       paths.push(candidate)
     }
@@ -178,8 +214,7 @@ export const collectDroppedAttachmentPaths = (dataTransfer?: DataTransfer | null
   for (let i = 0; i < fileList.length; i += 1) {
     const file = fileList.item(i)
     if (!file) continue
-    const asFile = file as File & { path?: string }
-    const candidate = sanitizeImagePath(asFile.path || '')
+    const candidate = sanitizeImagePath(resolveAttachmentFilePath(file))
     if (isReadableLocalAttachmentPath(candidate)) {
       paths.push(candidate)
     }

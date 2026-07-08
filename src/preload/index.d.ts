@@ -414,6 +414,9 @@ declare global {
       getRuntimeVersions: () => NodeJS.ProcessVersions
       selectWorkspace: () => Promise<WorkspaceRecord | null>
       selectImageFiles: () => Promise<string[]>
+      // Resolves a dragged/pasted File's absolute path (Electron 32+ removed
+      // `File.path`; webUtils.getPathForFile is the replacement).
+      getPathForFile: (file: File) => string
       saveClipboardImageAttachment: () => Promise<string[]>
       authorizeImagePreview: (paths: string[]) => Promise<void>
       readImagePreview: (path: string) => Promise<string | null>

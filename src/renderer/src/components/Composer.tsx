@@ -97,6 +97,7 @@ import {
   MAX_IMAGE_ATTACHMENTS,
   collectClipboardAttachmentPaths,
   collectDroppedAttachmentPaths,
+  dataTransferHasFiles,
   hasAttachmentPromptContent,
   isPdfAttachmentPath
 } from '../lib/imageAttachments'
@@ -1171,8 +1172,10 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     event.preventDefault()
     event.stopPropagation()
     imageDragCounterRef.current += 1
-    const hasAttachmentPaths = collectDroppedAttachmentPaths(event.dataTransfer).length > 0
-    if (hasAttachmentPaths) {
+    // Detect an incoming file drag from `.types` (readable in protected mode).
+    // `.files`/paths aren't exposed until `drop`, so resolving paths here (the
+    // old check) never lit the drop-zone highlight for real OS file drags.
+    if (dataTransferHasFiles(event.dataTransfer)) {
       setIsComposerDragOver(true)
     }
   }

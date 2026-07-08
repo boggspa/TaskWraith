@@ -1,9 +1,11 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   MAX_IMAGE_ATTACHMENTS,
   attachmentQueueKey,
   attachmentSummary,
   collectClipboardAttachmentPaths,
+  collectDroppedAttachmentPaths,
+  dataTransferHasFiles,
   dedupePaths,
   getImageName,
   getImagePreviewSrc,
@@ -97,5 +99,81 @@ describe('image attachment path helpers', () => {
     } as unknown as DataTransfer
 
     expect(collectClipboardAttachmentPaths(clipboard)).toEqual(['/tmp/screenshot.png'])
+  })
+})
+
+describe('dropped file path resolution (Electron 39 File.path removal)', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('resolves a dropped file path via the webUtils preload bridge when File.path is absent', () => {
+    // Electron 32+ dropped Files carry no `.path`; the path comes from
+    // window.api.getPathForFile (webUtils.getPathForFile in the preload).
+    vi.stubGlobal('window', {
+      api: {
+        getPathForFile: (file: { name?: string }) =>
+          file?.name === 'dropped.png' ? '/tmp/dropped.png' : ''
+      }
+    })
+    const dataTransfer = {
+      files: { length: 1, item: () => ({ name: 'dropped.png' }) },
+      getData: () => '',
+      items: []
+    } as unknown as DataTransfer
+
+    expect(collectDroppedAttachmentPaths(dataTransfer)).toEqual(['/tmp/dropped.png'])
+  })
+
+  it('collects nothing when neither File.path nor the preload bridge yields a path', () => {
+    vi.stubGlobal('window', { api: { getPathForFile: () => '' } })
+    const dataTransfer = {
+      files: { length: 1, item: () => ({ name: 'dropped.png' }) },
+      getData: () => '',
+      items: []
+    } as unknown as DataTransfer
+
+    expect(collectDroppedAttachmentPaths(dataTransfer)).toEqual([])
+  })
+
+  it('honours a present File.path without invoking the bridge', () => {
+    const getPathForFile = vi.fn(() => '/should/not/be/used.png')
+    vi.stubGlobal('window', { api: { getPathForFile } })
+    const dataTransfer = {
+      files: { length: 1, item: () => ({ name: 'legacy.png', path: '/tmp/legacy.png' }) },
+      getData: () => '',
+      items: []
+    } as unknown as DataTransfer
+
+    expect(collectDroppedAttachmentPaths(dataTransfer)).toEqual(['/tmp/legacy.png'])
+    expect(getPathForFile).not.toHaveBeenCalled()
+  })
+})
+
+describe('dataTransferHasFiles (drag-over file detection in protected mode)', () => {
+  it('detects an OS file drag from the `Files` type', () => {
+    expect(dataTransferHasFiles({ types: ['Files'], items: [] } as unknown as DataTransfer)).toBe(
+      true
+    )
+  })
+
+  it('detects files from item.kind when the types list is empty', () => {
+    expect(
+      dataTransferHasFiles({ types: [], items: [{ kind: 'file' }] } as unknown as DataTransfer)
+    ).toBe(true)
+  })
+
+  it('ignores internal app drags that carry only custom MIME types', () => {
+    expect(
+      dataTransferHasFiles({
+        types: ['application/x-taskwraith-chat-id'],
+        items: [{ kind: 'string' }]
+      } as unknown as DataTransfer)
+    ).toBe(false)
+  })
+
+  it('is null-safe', () => {
+    expect(dataTransferHasFiles(null)).toBe(false)
+    expect(dataTransferHasFiles(undefined)).toBe(false)
   })
 })
