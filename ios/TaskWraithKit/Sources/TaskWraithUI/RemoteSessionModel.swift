@@ -514,7 +514,7 @@ public final class RemoteSessionModel: ObservableObject {
         }
     }
 
-    public func handleRemoteWake(reason _: String, timeoutMs: Int = 10_000) async -> Bool {
+    public func handleRemoteWake(reason: String, timeoutMs: Int = 10_000) async -> Bool {
         guard hasStoredPairing else { return false }
         switch phase {
         case .connected:
@@ -524,7 +524,16 @@ public final class RemoteSessionModel: ObservableObject {
                 guard connectAttempt == attempt else {
                     return await waitForRemoteWakeConnection(timeoutMs: timeoutMs)
                 }
-                if alive { return true }
+                if alive {
+                    // Rehydrate content on a genuinely-alive wake (RC1), EXCEPT on
+                    // the approval-ack path (tight background budget) and the silent
+                    // push (runs outside the background assertion). rehydrate only
+                    // enqueues fire-and-forget work, so the ack still returns now.
+                    if reason != Self.approvalAckWakeReason, reason != Self.silentPushWakeReason {
+                        rehydrateAfterAliveWake()
+                    }
+                    return true
+                }
             }
             autoReconnectAttempt = 0
             reconnectTrusted()
@@ -1290,7 +1299,13 @@ public final class RemoteSessionModel: ObservableObject {
                 self.socketHealthTask = nil
                 guard self.connectAttempt == attempt else { return }
                 guard case .connected = self.phase else { return }
-                guard !alive else { return }
+                // Socket is alive but the app was suspended and may have missed
+                // pushes — rehydrate content instead of bare-returning (RC1). No
+                // teardown on the alive path (keeps RC5 masked).
+                guard !alive else {
+                    self.rehydrateAfterAliveWake()
+                    return
+                }
                 self.autoReconnectAttempt = 0
                 self.reconnectTrusted()
             }
@@ -1356,6 +1371,59 @@ public final class RemoteSessionModel: ObservableObject {
         guard let ack else { return true }
         if ack.ok { return false }
         return ack.error == "timeout"
+    }
+
+    // ── Slice 3 (RC1): alive-wake targeted rehydration ─────────────────────────
+    /// Timestamp (ms since epoch) of the last alive-wake rehydrate; 0 = never.
+    /// Debounces back-to-back foregrounds / the error-banner retry so a trivial
+    /// app-switch doesn't re-pull the whole projection every time.
+    private var lastAliveResyncMs: Double = 0
+    private static let aliveResyncMinGapMs: Double = 4_000
+    /// Reasons `handleRemoteWake` must NOT rehydrate on. The approval-ack path
+    /// runs inside a tight OS background-execution budget (a resync could time out
+    /// the ack), and the silent-push path runs OUTSIDE the background assertion (a
+    /// resync there is wasted / half-run). Genuine foreground (verifyConnectedSocket,
+    /// no reason) and a user tap ("notification-tap") DO rehydrate.
+    static let approvalAckWakeReason = "notification-action"
+    static let silentPushWakeReason = "remote-notification"
+
+    #if DEBUG
+        private(set) var aliveRehydrateInvocationsForTesting = 0
+        static var aliveResyncMinGapMsForTesting: Double { aliveResyncMinGapMs }
+    #endif
+
+    /// Pure: has enough time passed since the last alive-wake resync to fire again?
+    nonisolated static func shouldRehydrateOnAliveWake(
+        nowMs: Double, lastMs: Double, minGapMs: Double
+    ) -> Bool {
+        lastMs <= 0 || (nowMs - lastMs) >= minGapMs
+    }
+
+    /// Slice 3 (RC1): the alive-ping fast paths (foreground scenePhase.active via
+    /// `verifyConnectedSocket`, and a user notification tap via `handleRemoteWake`)
+    /// used to bare-return on the pre-background cache, doing ZERO content
+    /// rehydration — the dominant reconnect-blank/stale path. This drives a
+    /// lightweight, debounced rehydrate instead: a full-projection resync (Slice 2)
+    /// for the home list plus a refresh of the visible thread's transcript.
+    /// Fire-and-forget (never awaits, never blocks an approval ack) and never forces
+    /// a teardown (which would expose the RC5 one-shot drop). The visible-thread pull
+    /// bypasses stream-suppression ONLY when that thread is not mid-stream, so a live
+    /// turn is never clobbered.
+    private func rehydrateAfterAliveWake() {
+        guard !isDemo, case .connected = phase else { return }
+        let nowMs = Date().timeIntervalSince1970 * 1000
+        guard
+            Self.shouldRehydrateOnAliveWake(
+                nowMs: nowMs, lastMs: lastAliveResyncMs, minGapMs: Self.aliveResyncMinGapMs)
+        else { return }
+        lastAliveResyncMs = nowMs
+        #if DEBUG
+            aliveRehydrateInvocationsForTesting += 1
+        #endif
+        requestFullProjection()
+        if let tid = visibleThreadId {
+            requestThreadSnapshot(tid, bypassVisibleStreamSuppression: streamingRunIds[tid] == nil)
+        }
     }
 
     public func disconnect() {

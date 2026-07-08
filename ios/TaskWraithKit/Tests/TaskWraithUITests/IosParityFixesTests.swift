@@ -609,6 +609,26 @@ struct IosParityFixesTests {
                 ack: AckResult(ok: false, result: nil, error: "timeout"), phase: .error("x")))
     }
 
+    // Slice 3 (RC1): alive-wake rehydrate debounce.
+    @MainActor
+    @Test func shouldRehydrateOnAliveWakeDebounce() {
+        let gap = RemoteSessionModel.aliveResyncMinGapMsForTesting
+        // Never resynced → always allowed.
+        #expect(RemoteSessionModel.shouldRehydrateOnAliveWake(nowMs: 1000, lastMs: 0, minGapMs: gap))
+        // Inside the window → suppressed.
+        #expect(
+            !RemoteSessionModel.shouldRehydrateOnAliveWake(
+                nowMs: 900 + gap - 1, lastMs: 900, minGapMs: gap))
+        // Exactly at the boundary → allowed.
+        #expect(
+            RemoteSessionModel.shouldRehydrateOnAliveWake(
+                nowMs: 1000 + gap, lastMs: 1000, minGapMs: gap))
+        // Past the window → allowed.
+        #expect(
+            RemoteSessionModel.shouldRehydrateOnAliveWake(
+                nowMs: 1000 + gap + 1, lastMs: 1000, minGapMs: gap))
+    }
+
     @MainActor
     @Test func userInitiatedThreadRefreshSchedulesWhileVisibleStreaming() {
         let model = makeRemoteSessionModel()
