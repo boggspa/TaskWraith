@@ -176,7 +176,7 @@ export function WelcomeUsageDashboard({
     gemini: '#8eb1ff',
     codex: '#aaa0ff',
     claude: '#ffad64',
-    kimi: '#bbcf66',
+    kimi: '#70B8FF',
     // Grok — monochrome identity; the dashboard rails sit on a dark
     // surface, so the "white" end of black/white reads here.
     grok: '#e6e6e8',

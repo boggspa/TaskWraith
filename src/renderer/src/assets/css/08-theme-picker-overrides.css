@@ -4756,7 +4756,7 @@
  * default light bg and a subtle warm-accent border for identity. */
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-interface-style="kimi"] .app-sidebar {
   background: color-mix(in srgb, var(--sidebar-bg) var(--sidebar-opacity-100), transparent);
-  border-right: 1px solid color-mix(in srgb, #a9bd55 24%, var(--panel-border));
+  border-right: 1px solid color-mix(in srgb, #4da6ff 24%, var(--panel-border));
 }
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-interface-style="kimi"] .app-sidebar .sidebar-section-header {
   color: var(--text-secondary);
@@ -4764,11 +4764,11 @@
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-interface-style="kimi"] .app-sidebar .sidebar-workspace-item:hover,
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-interface-style="kimi"] .app-sidebar .sidebar-chat-item:hover,
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-interface-style="kimi"] .app-sidebar .sidebar-global-chat-item:hover {
-  background: color-mix(in srgb, #a9bd55 10%, transparent);
+  background: color-mix(in srgb, #4da6ff 10%, transparent);
 }
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-interface-style="kimi"] .app-sidebar .sidebar-chat-item.active,
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-interface-style="kimi"] .app-sidebar .sidebar-global-chat-item.active {
-  background: color-mix(in srgb, #a9bd55 18%, transparent);
+  background: color-mix(in srgb, #4da6ff 18%, transparent);
 }
 
 /* Transcript surfaces — the themed shells composite a near-black
@@ -4864,7 +4864,7 @@
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .run-card-provider.provider-kimi {
   box-shadow:
     inset 0 1px 0 rgba(0, 0, 0, 0.10),
-    0 0 8px rgba(187, 207, 102, 0.18);
+    0 0 8px rgba(112, 184, 255, 0.18);
 }
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .run-card-provider.provider-grok {
   box-shadow:
@@ -10373,8 +10373,8 @@
 }
 
 [data-composer-style="kimi"] .composer-combined-picker-trigger {
-  background: color-mix(in srgb, #a9bd55 12%, transparent);
-  border-color: color-mix(in srgb, #a9bd55 22%, transparent);
+  background: color-mix(in srgb, #4da6ff 12%, transparent);
+  border-color: color-mix(in srgb, #4da6ff 22%, transparent);
   color: rgba(255, 255, 255, 0.92);
 }
 

@@ -594,11 +594,11 @@ public enum ComposerShellResolver {
 
     private static func kimiRecipe(_ context: ComposerShellContext) -> ResolvedComposerShell {
         // kimi — Kimi. Single SOLID near-black rounded rectangle (no glass, no
-        // card-in-card) with a green-yellow/olive accent that surfaces only on
+        // card-in-card) with a blue accent that surfaces only on
         // focus. Theme-immune at core: hardcodes #0a0a0c surface, #ffffff/8%
-        // border, #ffffff/36% placeholder, #a9bd55 accent regardless of theme.
+        // border, #ffffff/36% placeholder, #4da6ff accent regardless of theme.
         // Light family (light/mist/sage/alabaster) re-keys to a soft cream surface
-        // and the darker olive #84a33b. See COMPOSER-SHELL-PARITY.md (Part C, kimi)
+        // and the base blue #1a8cff. See COMPOSER-SHELL-PARITY.md (Part C, kimi)
         // / desktop 07-composer-shells.css:2553-2759.
         let isLight = context.appIsLight
 
@@ -614,11 +614,11 @@ public enum ComposerShellResolver {
             ? TWTheme.border            // light: soft-surface hairline
             : Color.white.opacity(0.08)            // dark: #ffffff @ 8%
 
-        // focusAccent — dark olive #a9bd55; light darker olive #84a33b. Signature
+        // focusAccent — dark blue #4da6ff; light base blue #1a8cff. Signature
         // accent surfaces only on focus (border color-mix 50% + 3px 10% ring).
         let focusAccent = isLight
-            ? Color(hex: 0x84A33B)                 // light: darker olive
-            : Color(hex: 0xA9BD55)                 // dark: green-yellow olive
+            ? Color(hex: 0x1A8CFF)                 // light: base blue
+            : Color(hex: 0x4DA6FF)                 // dark: brighter blue
 
         // textPrimary — dark: model #ffffff 88%; light: var(--text-primary).
         let textPrimary = isLight
@@ -632,9 +632,9 @@ public enum ComposerShellResolver {
             : Color.white.opacity(0.36)            // dark: #ffffff @ 36%
 
         // Send button glyph color (#ffffff on the neutral white/18% fill in dark;
-        // the light/alabaster run-btn flips to olive-on-cream with glyph #34410f).
+        // the light/alabaster run-btn flips to blue-on-cream with glyph #0a3357).
         let sendTint = isLight
-            ? Color(hex: 0x34410F)                 // light: olive chip text on cream run-btn
+            ? Color(hex: 0x0A3357)                 // light: dark-blue chip text on cream run-btn
             : Color(hex: 0xFFFFFF)                 // dark: #ffffff glyph
 
         return ResolvedComposerShell(
@@ -647,7 +647,7 @@ public enum ComposerShellResolver {
                 focusAccent: focusAccent,
                 textPrimary: textPrimary,
                 placeholder: placeholder,
-                rim: nil),                          // no rest rim (rest shadow only; focus adds the olive ring)
+                rim: nil),                          // no rest rim (rest shadow only; focus adds the blue ring)
             geometry: ComposerShellGeometry(
                 surfaceCornerRadius: 18,            // surface 18px (above-bar 18px)
                 innerCornerRadius: 18,              // no distinct inner module; mirror the surface radius
@@ -658,11 +658,11 @@ public enum ComposerShellResolver {
                 glyph: .arrowUp,                    // ArrowUpSendIcon (App.tsx:20681-20682)
                 shape: .capsule,                    // 32px filled circle (999px)
                 size: 32,                           // 07:2740-2759
-                fill: .neutral,                     // dark: color-mix(#ffffff 18%) ≈ rgba(255,255,255,0.18) (hover→olive, ignored on iOS)
+                fill: .neutral,                     // dark: color-mix(#ffffff 18%) ≈ rgba(255,255,255,0.18) (hover→blue, ignored on iOS)
                 tint: sendTint),
             rowPolicy: .insideStack,                // shared above-bar-stack; rows are sibling cards matching the surface (no tucked-tab / merged-instrument)
             effects: [],                            // surface/above-bar ::before suppressed; aura suppressed; no paper/perforation/caret/two-surface split
-            themeImmune: false)                      // locks its own olive palette regardless of app theme
+            themeImmune: false)                      // locks its own blue palette regardless of app theme
     }
 
     /// Modular — "deletes the composer container." The surface goes fully

@@ -87,7 +87,7 @@
 }
 
 .app-sidebar .sidebar-workspace-group .sidebar-chat-item.provider-kimi {
-  --chat-provider-accent: #a9bd55;
+  --chat-provider-accent: #4da6ff;
 }
 
 .app-sidebar .sidebar-workspace-group .sidebar-chat-item.provider-grok {
@@ -2332,7 +2332,7 @@
 
 .app-sidebar .sidebar-chat-item.provider-kimi,
 .app-sidebar .sidebar-global-chat-item.provider-kimi {
-  --chat-provider-accent: #a9bd55;
+  --chat-provider-accent: #4da6ff;
 }
 
 .app-sidebar .sidebar-chat-item.provider-grok,

@@ -26,7 +26,7 @@ export const HEATMAP_PROVIDER_COLOR_HEX: Record<ProviderId, string> = {
   gemini: '#2563EB',
   codex: '#6366F1',
   claude: '#D97706',
-  kimi: '#84A33B',
+  kimi: '#1A8CFF',
   // Grok — monochrome identity. Use the theme-reactive token directly
   // (the cell colour is applied as an inline `backgroundColor`, so the CSS
   // var resolves; the heatmap never canvas-renders these). This keeps Grok

@@ -153,7 +153,7 @@
   --provider-gemini-color: #2563EB;
   --provider-codex-color: #6366F1;
   --provider-claude-color: #D97706;
-  --provider-kimi-color: #84A33B;
+  --provider-kimi-color: #1A8CFF;
   /* Grok (gated) — monochrome by design. We alias to the active
    * theme's primary text colour so the accent reads as the
    * "black/white" end of whatever theme is mounted: near-white on

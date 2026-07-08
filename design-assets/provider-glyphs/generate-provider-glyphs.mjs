@@ -55,7 +55,7 @@ const providers = [
   {
     id: 'kimi',
     label: 'Kimi',
-    accent: '#84A33B',
+    accent: '#1A8CFF',
     hint: 'crescent and angled wordmark slash',
     body: `
       <path class="line" d="M15.6 4.7a7.9 7.9 0 1 0 0 14.6 6.1 6.1 0 1 1 0-14.6Z" />

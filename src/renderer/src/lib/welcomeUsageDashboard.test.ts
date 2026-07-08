@@ -844,7 +844,7 @@ describe('mixProviderColors', () => {
     gemini: '#2563EB',
     codex: '#6366F1',
     claude: '#D97706',
-    kimi: '#84A33B',
+    kimi: '#1A8CFF',
     grok: '#6B7280',
     cursor: '#06B6D4',
     ollama: '#20A77A'

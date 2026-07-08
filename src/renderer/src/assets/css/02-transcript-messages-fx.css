@@ -133,8 +133,8 @@
 }
 
 .app-transcript.provider-kimi {
-  --agent-accent-rgb: 164 190 74;
-  /* Kimi native: pure dark, hint of green-yellow on hover/active states. */
+  --agent-accent-rgb: 26 140 255;
+  /* Kimi native: pure dark, hint of blue on hover/active states. */
   background-color: color-mix(in srgb, var(--bg-primary) 92%, #080808 8%);
 }
 
@@ -164,7 +164,7 @@
   background-color: color-mix(in srgb, var(--bg-primary) 96%, #ff973a 4%);
 }
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .app-transcript.provider-kimi {
-  background-color: color-mix(in srgb, var(--bg-primary) 96%, #a4be4a 4%);
+  background-color: color-mix(in srgb, var(--bg-primary) 96%, #1a8cff 4%);
 }
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .app-transcript.provider-grok {
   background-color: color-mix(in srgb, var(--bg-primary) 97%, #111318 3%);
@@ -3555,8 +3555,8 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
 }
 
 .sidebar-provider-label.provider-kimi {
-  color: #a9bd55;
-  text-shadow: 0 0 10px rgba(135, 166, 52, 0.3);
+  color: #4da6ff;
+  text-shadow: 0 0 10px rgba(14, 134, 255, 0.3);
 }
 
 .sidebar-provider-label.provider-grok {
@@ -4263,7 +4263,7 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
  *   - Gemini: #2563EB (blue)
  *   - Codex:  #6366F1 (saturated indigo)
  *   - Claude: #D97706 (rust orange / brown)
- *   - Kimi:   #84A33B (olive green)
+ *   - Kimi:   #1a8cff (blue)
  *
  * Earlier draft mixed these with `--text-muted` (a low-opacity
  * white/black gray) at 22%. That dropped both saturation AND

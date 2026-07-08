@@ -798,7 +798,7 @@
 
 [data-theme="obsidian"][data-composer-style="kimi"]
   .composer-ensemble-mode-button.is-active {
-  background: rgba(169, 189, 85, 0.7) !important;
+  background: rgba(77, 166, 255, 0.7) !important;
   color: #0a0a0c !important;
 }
 
@@ -3576,10 +3576,10 @@
 }
 
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"])[data-composer-style="kimi"] .composer-surface:focus-within {
-  border-color: color-mix(in srgb, #84a33b 42%, var(--unified-soft-surface-border)) !important;
+  border-color: color-mix(in srgb, #1a8cff 42%, var(--unified-soft-surface-border)) !important;
   box-shadow:
     0 4px 20px rgba(0, 0, 0, 0.10),
-    0 0 0 3px color-mix(in srgb, #84a33b 12%, transparent) !important;
+    0 0 0 3px color-mix(in srgb, #1a8cff 12%, transparent) !important;
 }
 
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"])[data-composer-style="kimi"]
@@ -3588,10 +3588,10 @@
     [data-composer-control="workspace"],
     [data-composer-control="ensemble-mode"] .composer-picker-label
   ) {
-  background: color-mix(in srgb, #84a33b 12%, var(--surface-1)) !important;
-  border-color: color-mix(in srgb, #84a33b 28%, var(--unified-soft-surface-border)) !important;
-  color: #34410f !important;
-  -webkit-text-fill-color: #34410f !important;
+  background: color-mix(in srgb, #1a8cff 12%, var(--surface-1)) !important;
+  border-color: color-mix(in srgb, #1a8cff 28%, var(--unified-soft-surface-border)) !important;
+  color: #0a3357 !important;
+  -webkit-text-fill-color: #0a3357 !important;
 }
 
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"])[data-composer-style="kimi"]
@@ -3599,8 +3599,8 @@
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"])[data-composer-style="kimi"]
   [data-composer-control="ensemble-mode"]
   .composer-picker-label:hover {
-  background: color-mix(in srgb, #84a33b 18%, var(--surface-1)) !important;
-  border-color: color-mix(in srgb, #84a33b 38%, var(--unified-soft-surface-border)) !important;
+  background: color-mix(in srgb, #1a8cff 18%, var(--surface-1)) !important;
+  border-color: color-mix(in srgb, #1a8cff 38%, var(--unified-soft-surface-border)) !important;
 }
 
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"])[data-composer-style="kimi"]
@@ -3670,8 +3670,8 @@
   .welcome-hero
   h1
   strong:not(.workspace-name-glow) {
-  color: color-mix(in srgb, #84a33b 66%, #1d1d1f 34%) !important;
-  text-shadow: 0 0 14px color-mix(in srgb, #84a33b 14%, transparent) !important;
+  color: color-mix(in srgb, #1a8cff 66%, #1d1d1f 34%) !important;
+  text-shadow: 0 0 14px color-mix(in srgb, #1a8cff 14%, transparent) !important;
 }
 
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]):is(
@@ -4223,7 +4223,7 @@
   .composer-above-bar-stack
   > .ensemble-roster-preset-picker.is-compact {
   background: var(--surface-2) !important;
-  border-color: color-mix(in srgb, #a9bd55 32%, var(--surface-border)) !important;
+  border-color: color-mix(in srgb, #4da6ff 32%, var(--surface-border)) !important;
   box-shadow: 0 4px 18px rgba(0, 0, 0, 0.08) !important;
   color: var(--surface-text) !important;
   color-scheme: light;
@@ -4271,10 +4271,10 @@
   :is([data-composer-control="model"], [data-composer-control="provider"], [data-composer-control="workspace"]),
 [data-theme="alabaster"][data-composer-style="kimi"]
   [data-composer-control="ensemble-mode"] {
-  background: color-mix(in srgb, #84a33b 10%, #ffffff) !important;
-  border-color: color-mix(in srgb, #84a33b 26%, var(--surface-border)) !important;
-  color: #34410f !important;
-  -webkit-text-fill-color: #34410f !important;
+  background: color-mix(in srgb, #1a8cff 10%, #ffffff) !important;
+  border-color: color-mix(in srgb, #1a8cff 26%, var(--surface-border)) !important;
+  color: #0a3357 !important;
+  -webkit-text-fill-color: #0a3357 !important;
 }
 
 [data-theme="alabaster"][data-composer-style="gemini"]
@@ -4288,14 +4288,14 @@
 [data-theme="alabaster"][data-composer-style="kimi"]
   [data-composer-control="ensemble-mode"]
   .composer-ensemble-mode-button.is-active {
-  background: color-mix(in srgb, #a9bd55 70%, transparent) !important;
+  background: color-mix(in srgb, #4da6ff 70%, transparent) !important;
   color: #0a0a0c !important;
   -webkit-text-fill-color: #0a0a0c !important;
 }
 
 [data-theme="alabaster"][data-composer-style="kimi"] .composer-action-btn.run-btn:not(:disabled) {
-  background: color-mix(in srgb, #84a33b 18%, #ffffff) !important;
-  color: #34410f !important;
+  background: color-mix(in srgb, #1a8cff 18%, #ffffff) !important;
+  color: #0a3357 !important;
 }
 
 [data-theme="light"][data-composer-style="modular"]

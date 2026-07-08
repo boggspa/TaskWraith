@@ -95,7 +95,7 @@ public enum TWTheme {
         case "gemini", "google": return Color(hex: 0x2563EB)
         case "codex", "openai": return Color(hex: 0x6366F1)
         case "claude": return Color(hex: 0xD97706)
-        case "kimi": return Color(hex: 0x84A33B)
+        case "kimi": return Color(hex: 0x1A8CFF)
         case "cursor": return Color(hex: 0xE3B91E)
         case "ollama": return Color(hex: 0x20A77A)
         case "ensemble": return Color(hex: 0xE8DDE3)

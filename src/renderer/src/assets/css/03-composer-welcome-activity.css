@@ -1255,9 +1255,9 @@
 .app-transcript.provider-kimi .welcome-hero h1 strong {
   color: rgba(250, 255, 230, 1);
   text-shadow:
-    0 0 8px rgba(192, 220, 91, 0.5),
-    0 0 18px rgba(124, 151, 42, 0.36),
-    0 0 36px rgba(70, 92, 24, 0.3);
+    0 0 8px rgba(107, 181, 255, 0.5),
+    0 0 18px rgba(0, 122, 244, 0.36),
+    0 0 36px rgba(7, 58, 109, 0.3);
 }
 
 /* Grok + Cursor were missing from this per-provider set, so the welcome
@@ -1306,7 +1306,7 @@
  *
  * The ensemble welcome screen receives a subtle hue gradient built
  * from up to four participant colours (codex indigo, claude rust,
- * gemini blue, kimi olive). React feeds the per-slot colours through
+ * gemini blue, kimi blue). React feeds the per-slot colours through
  * `--ensemble-provider-1..4` custom properties on the wrapper; the
  * rules below lerp them across the surface at low opacity so the
  * gradient reads as a fingerprint, not a rainbow strip. A 1px tinted
@@ -1516,7 +1516,7 @@
   border-color: color-mix(in srgb, var(--provider-gemini-color, #2563eb) 48%, var(--panel-border));
 }
 .ensemble-hierarchy-tile.provider-kimi {
-  border-color: color-mix(in srgb, var(--provider-kimi-color, #84a33b) 48%, var(--panel-border));
+  border-color: color-mix(in srgb, var(--provider-kimi-color, #1a8cff) 48%, var(--panel-border));
 }
 .ensemble-hierarchy-tile.provider-grok {
   border-color: color-mix(in srgb, var(--provider-grok-color) 48%, var(--panel-border));
@@ -2358,7 +2358,7 @@
   border-color: color-mix(in srgb, #8eb1ff 55%, transparent);
 }
 .welcome-usage-provider-card.provider-kimi:hover {
-  border-color: color-mix(in srgb, #bbcf66 55%, transparent);
+  border-color: color-mix(in srgb, #70b8ff 55%, transparent);
 }
 .welcome-usage-provider-card.provider-grok:hover {
   border-color: color-mix(in srgb, #e5e7eb 55%, transparent);
@@ -2409,8 +2409,8 @@
   box-shadow: 0 0 6px color-mix(in srgb, #8eb1ff 50%, transparent);
 }
 .welcome-usage-provider-card-dot.provider-kimi {
-  background: #bbcf66;
-  box-shadow: 0 0 6px color-mix(in srgb, #bbcf66 50%, transparent);
+  background: #70b8ff;
+  box-shadow: 0 0 6px color-mix(in srgb, #70b8ff 50%, transparent);
 }
 .welcome-usage-provider-card-dot.provider-grok {
   background: #e5e7eb;
@@ -2466,7 +2466,7 @@
   background: linear-gradient(90deg, color-mix(in srgb, #8eb1ff 70%, transparent), #8eb1ff);
 }
 .welcome-usage-provider-card-fill.provider-kimi {
-  background: linear-gradient(90deg, color-mix(in srgb, #bbcf66 70%, transparent), #bbcf66);
+  background: linear-gradient(90deg, color-mix(in srgb, #70b8ff 70%, transparent), #70b8ff);
 }
 .welcome-usage-provider-card-fill.provider-grok {
   background: linear-gradient(90deg, color-mix(in srgb, var(--provider-grok-color) 70%, transparent), var(--provider-grok-color));
@@ -2853,7 +2853,7 @@
 .welcome-usage-bar-segment.provider-claude { color: #ff9b54; }
 .welcome-usage-model-dot.provider-kimi,
 .welcome-usage-model-meter-fill.provider-kimi,
-.welcome-usage-bar-segment.provider-kimi { color: #a7c84b; }
+.welcome-usage-bar-segment.provider-kimi { color: #4da6ff; }
 .welcome-usage-model-dot.provider-grok,
 .welcome-usage-model-meter-fill.provider-grok,
 .welcome-usage-bar-segment.provider-grok { color: var(--provider-grok-color); }
@@ -3139,12 +3139,12 @@
 }
 
 .app-transcript.provider-kimi .composer-surface:focus-within {
-  border-color: rgba(163, 190, 74, 0.5);
+  border-color: rgba(26, 140, 255, 0.5);
   box-shadow:
     var(--composer-shadow),
-    0 0 0 1px rgba(124, 154, 48, 0.2),
-    0 0 24px rgba(91, 117, 34, 0.2),
-    0 0 46px rgba(40, 55, 14, 0.18);
+    0 0 0 1px rgba(0, 126, 253, 0.2),
+    0 0 24px rgba(9, 75, 142, 0.2),
+    0 0 46px rgba(4, 34, 65, 0.18);
 }
 
 /* 1.0.6 — Grok = silver (xAI is monochrome black/white; a neutral silver reads
@@ -3202,10 +3202,10 @@
 }
 
 .app-transcript.provider-kimi .composer-surface::before {
-  background: linear-gradient(90deg, rgba(18, 24, 8, 0.32), rgba(92, 115, 34, 0.18) 18%, transparent 36%, transparent 64%, rgba(86, 111, 34, 0.18) 82%, rgba(12, 17, 6, 0.32));
+  background: linear-gradient(90deg, rgba(2, 16, 30, 0.32), rgba(9, 74, 140, 0.18) 18%, transparent 36%, transparent 64%, rgba(9, 72, 136, 0.18) 82%, rgba(1, 11, 22, 0.32));
   box-shadow:
-    inset 42px 0 52px -30px rgba(36, 51, 14, 0.32),
-    inset -42px 0 52px -30px rgba(91, 114, 32, 0.26);
+    inset 42px 0 52px -30px rgba(4, 32, 61, 0.32),
+    inset -42px 0 52px -30px rgba(9, 73, 137, 0.26);
 }
 
 /* 1.0.6 — Grok resting tint: neutral silver, persists across light + dark. */
@@ -4144,7 +4144,7 @@
  * 1.0.4 — Light-theme contrast bump for composer mention tokens.
  *
  * Default provider hex values (`--provider-codex-color: #6366F1`
- * etc.) are mid-saturation indigos / ambers / blues / olives. In
+ * etc.) are mid-saturation indigos / ambers / blues. In
  * dark theme they pop against the dark composer surface. In light
  * theme they sit at similar luminance to the surface text — the maintainer
  * reported `@Worker` rendering as if the provider tinting wasn't
@@ -7945,8 +7945,8 @@ button.composer-run-timecode.is-open {
 }
 
 .composer-permission-card.provider-kimi {
-  border-color: rgba(164, 190, 74, 0.28);
-  background: rgba(91, 119, 33, 0.08);
+  border-color: rgba(26, 140, 255, 0.28);
+  background: rgba(9, 76, 143, 0.08);
 }
 
 /* Light-mode awareness for the composer-area approval card.
@@ -7971,8 +7971,8 @@ button.composer-run-timecode.is-open {
   background: rgba(255, 151, 58, 0.22);
 }
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .composer-permission-card.provider-kimi {
-  border-color: rgba(91, 119, 33, 0.45);
-  background: rgba(164, 190, 74, 0.22);
+  border-color: rgba(9, 76, 143, 0.45);
+  background: rgba(26, 140, 255, 0.22);
 }
 
 .composer-permission-title {
@@ -11962,7 +11962,7 @@ button.diff-file-row {
 .activity-yield-target.provider-codex { --provider-tint: #aaa0ff; }
 .activity-yield-target.provider-claude { --provider-tint: #ffad64; }
 .activity-yield-target.provider-gemini { --provider-tint: #8eb1ff; }
-.activity-yield-target.provider-kimi { --provider-tint: #bbcf66; }
+.activity-yield-target.provider-kimi { --provider-tint: #70b8ff; }
 .activity-yield-target.provider-grok { --provider-tint: var(--provider-grok-color); }
 .activity-yield-target.provider-cursor { --provider-tint: var(--provider-cursor-color); }
 .activity-yield-target.provider-ollama { --provider-tint: var(--provider-ollama-color); }
@@ -12123,7 +12123,7 @@ button.diff-file-row {
   --jump-pill-accent: #ff9f4a;
 }
 .transcript-jump-to-latest-pill.provider-kimi {
-  --jump-pill-accent: #a9bd55;
+  --jump-pill-accent: #4da6ff;
 }
 
 @keyframes transcript-jump-pill-fade-in {

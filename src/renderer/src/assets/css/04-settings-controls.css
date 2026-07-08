@@ -994,7 +994,7 @@
 .settings-model-comparison-dot.provider-kimi,
 .settings-model-comparison-fill.provider-kimi,
 .settings-provider-telemetry-card.provider-kimi {
-  color: #a7c84b;
+  color: #4da6ff;
 }
 
 .settings-model-comparison-dot.provider-grok,
@@ -4365,7 +4365,7 @@ input:disabled, select:disabled, textarea:disabled {
 }
 
 .model-usage-item.provider-kimi .model-usage-meter-fill {
-  background: linear-gradient(90deg, rgba(128, 160, 48, 0.95), rgba(184, 205, 84, 0.9));
+  background: linear-gradient(90deg, rgba(4, 129, 255, 0.95), rgba(85, 170, 255, 0.9));
 }
 
 .model-usage-item.provider-grok .model-usage-meter-fill {
@@ -4513,12 +4513,12 @@ input:disabled, select:disabled, textarea:disabled {
     0 0 10px rgba(255, 173, 100, 0.14);
 }
 .run-card-provider.provider-kimi {
-  color: #bbcf66;
-  border-color: rgba(187, 207, 102, 0.32);
-  background: rgba(187, 207, 102, 0.12);
+  color: #70b8ff;
+  border-color: rgba(112, 184, 255, 0.32);
+  background: rgba(112, 184, 255, 0.12);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.18),
-    0 0 10px rgba(187, 207, 102, 0.14);
+    0 0 10px rgba(112, 184, 255, 0.14);
 }
 /* Grok + Cursor were missing here, so the transcript run header ("Cursor
  * Done #…") fell back to the base .run-card-provider colour — making

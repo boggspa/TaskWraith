@@ -986,10 +986,10 @@
     inset -42px 0 52px -30px rgba(151, 72, 20, 0.26);
 }
 .app-transcript.provider-kimi .composer-above-bar::before {
-  background: linear-gradient(90deg, rgba(15, 24, 7, 0.32), rgba(91, 117, 34, 0.18) 18%, transparent 36%, transparent 64%, rgba(91, 117, 34, 0.18) 82%, rgba(11, 17, 5, 0.32));
+  background: linear-gradient(90deg, rgba(2, 15, 29, 0.32), rgba(9, 75, 142, 0.18) 18%, transparent 36%, transparent 64%, rgba(9, 75, 142, 0.18) 82%, rgba(1, 11, 21, 0.32));
   box-shadow:
-    inset 42px 0 52px -30px rgba(40, 55, 14, 0.34),
-    inset -42px 0 52px -30px rgba(117, 144, 38, 0.24);
+    inset 42px 0 52px -30px rgba(4, 34, 65, 0.34),
+    inset -42px 0 52px -30px rgba(0, 116, 233, 0.24);
 }
 /* Phase J1 composer-unification: the above-bar SHAPE is now identical
  * across every provider. The previous `style-codex` / `style-claude` /
@@ -2728,7 +2728,7 @@
 
 /* C (#6/#7) — first-class control tints. The KEPT Gemini/Kimi Turn / Provider /
  * Workspace pills carry the provider highlight (Gemini blue = the model pill's
- * #5a8cff; Kimi olive = #84a33b/#bbcf66) instead of the neutral base pill. The
+ * #5a8cff; Kimi blue = #1a8cff/#70b8ff) instead of the neutral base pill. The
  * :is() arg includes a 2-class selector so the rule outranks the per-control
  * neutral styling (your "overridden in the cascade" worry). */
 [data-composer-style="gemini"]
@@ -2754,17 +2754,17 @@
     [data-composer-control="workspace"],
     [data-composer-control="ensemble-mode"] .composer-picker-label
   ) {
-  background: color-mix(in srgb, #84a33b 22%, transparent);
-  border-color: color-mix(in srgb, #bbcf66 34%, transparent);
-  color: color-mix(in srgb, #d4e79a 96%, transparent);
+  background: color-mix(in srgb, #1a8cff 22%, transparent);
+  border-color: color-mix(in srgb, #70b8ff 34%, transparent);
+  color: color-mix(in srgb, #cfe4ff 96%, transparent);
 }
 [data-composer-style="kimi"]
   :is([data-composer-control="provider"], [data-composer-control="workspace"]):hover,
 [data-composer-style="kimi"]
   [data-composer-control="ensemble-mode"]
   .composer-picker-label:hover {
-  background: color-mix(in srgb, #84a33b 32%, transparent);
-  border-color: color-mix(in srgb, #bbcf66 46%, transparent);
+  background: color-mix(in srgb, #1a8cff 32%, transparent);
+  border-color: color-mix(in srgb, #70b8ff 46%, transparent);
 }
 
 /* D — shared-history char-budget slider. Originally a section of the
@@ -2855,7 +2855,7 @@
 
 /* ============================================================
  * KIMI composer style
- * Dark rounded rectangle, green-yellow focus accent.
+ * Dark rounded rectangle, blue focus accent.
  * Outlined model pill on the right. Filled circular send button.
  * ============================================================ */
 [data-composer-style="kimi"] .composer-top-toggles,
@@ -2894,10 +2894,10 @@
   display: none;
 }
 [data-composer-style="kimi"] .composer-surface:focus-within {
-  border-color: color-mix(in srgb, #a9bd55 50%, transparent);
+  border-color: color-mix(in srgb, #4da6ff 50%, transparent);
   box-shadow:
     0 4px 16px rgba(0, 0, 0, 0.55),
-    0 0 0 3px color-mix(in srgb, #a9bd55 10%, transparent);
+    0 0 0 3px color-mix(in srgb, #4da6ff 10%, transparent);
 }
 [data-composer-style="kimi"] .composer-textarea {
   background: transparent;
@@ -2942,7 +2942,7 @@
 }
 [data-composer-style="kimi"] [data-composer-control="workspace"]:hover:not(:disabled) {
   background: color-mix(in srgb, #ffffff 6%, transparent);
-  border-color: color-mix(in srgb, #a9bd55 40%, transparent);
+  border-color: color-mix(in srgb, #4da6ff 40%, transparent);
 }
 [data-composer-style="kimi"] [data-composer-control="workspace"] .composer-control-icon {
   width: 12px;
@@ -3019,7 +3019,7 @@
 /* Turn / Continuous toggle — matches the Kimi shell's provider chip
  * (transparent bg, faint white border, white-78% text — slightly
  * brighter than Codex/Gemini per Kimi's terminal aesthetic). Active
- * state uses the olive (#a9bd55) accent so the choice reads in
+ * state uses the blue (#4da6ff) accent so the choice reads in
  * Kimi's signature colour rather than a neutral white. */
 [data-composer-style="kimi"] [data-composer-control="ensemble-mode"] {
   min-height: 28px;
@@ -3043,7 +3043,7 @@
 }
 [data-composer-style="kimi"] [data-composer-control="ensemble-mode"] .composer-ensemble-mode-button.is-active {
   color: #0a0a0c;
-  background: color-mix(in srgb, #a9bd55 70%, transparent);
+  background: color-mix(in srgb, #4da6ff 70%, transparent);
   font-weight: 600;
 }
 
@@ -3057,7 +3057,7 @@
   border: 0;
 }
 [data-composer-style="kimi"] .composer-action-btn.run-btn:hover:not(:disabled) {
-  background: color-mix(in srgb, #a9bd55 65%, transparent);
+  background: color-mix(in srgb, #4da6ff 65%, transparent);
   color: #0a0a0c;
 }
 [data-composer-style="kimi"] .composer-action-btn:disabled {
@@ -4172,7 +4172,7 @@
 /* ============================================================
  * KIMI app-wide chrome
  * Near-black sidebar, transparent assistant bubbles, centered welcome
- * hero, green-yellow accent highlights.
+ * hero, blue accent highlights.
  * ============================================================ */
 [data-interface-style="kimi"] .app-sidebar {
   background: color-mix(in srgb, color-mix(in srgb, #080808 96%, transparent) var(--sidebar-opacity-100), transparent);
@@ -4202,7 +4202,7 @@
 }
 [data-interface-style="kimi"] .app-sidebar .sidebar-chat-item.active,
 [data-interface-style="kimi"] .app-sidebar .sidebar-global-chat-item.active {
-  background: color-mix(in srgb, #a9bd55 12%, transparent);
+  background: color-mix(in srgb, #4da6ff 12%, transparent);
 }
 
 [data-interface-style="kimi"] .app-transcript {
@@ -4238,8 +4238,8 @@
  * exclude `.workspace-name-glow` so it matches native rendering in every shell. */
 [data-interface-style="kimi"] .welcome-hero h1 strong:not(.workspace-name-glow) {
   font-weight: 500;
-  color: color-mix(in srgb, #a9bd55 95%, transparent);
-  text-shadow: 0 0 24px color-mix(in srgb, #a9bd55 28%, transparent);
+  color: color-mix(in srgb, #4da6ff 95%, transparent);
+  text-shadow: 0 0 24px color-mix(in srgb, #4da6ff 28%, transparent);
 }
 [data-interface-style="kimi"] .welcome-hero p {
   text-align: center;

@@ -136,7 +136,7 @@
     <text class="hint" x="72" y="207">64px + 16px preview</text>
   </g>
   <g transform="translate(0 210)">
-    <g transform="translate(40 24) scale(2.65)" style="color: #84A33B; --provider-accent: #84A33B;">
+    <g transform="translate(40 24) scale(2.65)" style="color: #1A8CFF; --provider-accent: #1A8CFF;">
 
       <path class="line" d="M15.6 4.7a7.9 7.9 0 1 0 0 14.6 6.1 6.1 0 1 1 0-14.6Z" />
       <path class="accent" d="M8 7.4v9.2" />
@@ -145,7 +145,7 @@
       <circle class="dot" cx="18.5" cy="5.8" r="1.2" />
 
     </g>
-    <g transform="translate(61 112) scale(0.9)" style="color: #84A33B; --provider-accent: #84A33B;">
+    <g transform="translate(61 112) scale(0.9)" style="color: #1A8CFF; --provider-accent: #1A8CFF;">
 
       <path class="line" d="M15.6 4.7a7.9 7.9 0 1 0 0 14.6 6.1 6.1 0 1 1 0-14.6Z" />
       <path class="accent" d="M8 7.4v9.2" />
@@ -155,7 +155,7 @@
 
     </g>
     <text class="label" x="72" y="168">Kimi</text>
-    <text class="accent-label" x="72" y="188">#84A33B</text>
+    <text class="accent-label" x="72" y="188">#1A8CFF</text>
     <text class="hint" x="72" y="207">64px + 16px preview</text>
   </g>
   <g transform="translate(144 210)">

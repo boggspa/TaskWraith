@@ -608,7 +608,7 @@ const COMPOSER_STYLE_OPTIONS: Array<{ value: ComposerStyle; label: string; helpe
   {
     value: 'kimi',
     label: 'Kimi shell',
-    helper: 'Kimi-like dark rounded composer, green-yellow accent, minimal sidebar.'
+    helper: 'Kimi-like dark rounded composer, blue accent, minimal sidebar.'
   },
   {
     value: 'modular',
