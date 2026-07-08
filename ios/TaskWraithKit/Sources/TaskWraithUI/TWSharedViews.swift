@@ -904,12 +904,28 @@ func twSettledRowModelChip(from speaker: String?) -> String? {
 }
 
 /// Hierarchical provider → model menu for phone-sized composer surfaces.
+/// Rounded-rect Liquid Glass panel for the compact model/reasoning popover —
+/// real glass on iOS/macOS 26, an ultra-thin material with a rim stroke below
+/// (mirrors `GlassPillBackground`, just a rounded-rect instead of a capsule).
+private struct GlassPopoverPanel: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(iOS 26.0, macOS 26.0, *) {
+            content.glassEffect(.regular, in: RoundedRectangle(cornerRadius: 18))
+        } else {
+            content
+                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18))
+                .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(TWTheme.border))
+        }
+    }
+}
+
 struct ProviderModelPicker: View {
     let catalogs: [ProviderModelCatalog]
     @Binding var provider: String
     @Binding var modelId: String?
     @Binding var reasoningEffort: String?
     var allowsProviderChange: Bool = true
+    @State private var isPresented = false
 
     private var currentCatalog: ProviderModelCatalog? {
         catalogs.first { $0.provider.lowercased() == provider.lowercased() }
@@ -922,14 +938,18 @@ struct ProviderModelPicker: View {
     }
 
     var body: some View {
-        Menu {
-            pickerMenuContent
+        Button {
+            isPresented = true
         } label: {
             pickerLabel
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Provider and model")
         .accessibilityValue(providerModelAccessibilityValue)
+        .popover(isPresented: $isPresented) {
+            pickerPopover
+                .presentationCompactAdaptation(.popover)
+        }
         .onChange(of: provider) { _, newProvider in
             // Switching provider invalidates a model from the OLD catalog —
             // reset to nil (= inherit on existing chats / provider default
@@ -998,78 +1018,128 @@ struct ProviderModelPicker: View {
         .contentShape(Rectangle())
     }
 
+    // Compact anchored glass popover replacing the native Menu. Selecting a
+    // MODEL keeps the popover open (so the user can pick reasoning without
+    // re-summoning); selecting a REASONING level — usually the last, confirming
+    // choice — dismisses. Tapping outside dismisses natively; a swipe-down
+    // grabber is layered on in a follow-up slice.
     @ViewBuilder
-    private var pickerMenuContent: some View {
-        if allowsProviderChange {
-            ForEach(catalogs) { catalog in
-                Menu {
-                    modelMenuEntries(for: catalog)
-                } label: {
-                    providerMenuLabel(catalog)
-                }
-            }
-        } else {
-            modelMenuEntries(for: currentCatalog)
-        }
-    }
-
-    @ViewBuilder
-    private func modelMenuEntries(for catalog: ProviderModelCatalog?) -> some View {
-        if let catalog {
-            Button {
-                selectDefault(in: catalog)
-            } label: {
-                checkedMenuLabel(
-                    "Default",
-                    selected: catalog.provider.lowercased() == provider.lowercased()
-                        && modelId == nil)
-            }
-            ForEach(catalog.models) { option in
-                Button {
-                    selectModel(option, in: catalog)
-                } label: {
-                    checkedMenuLabel(
-                        option.label ?? option.id,
-                        selected: catalog.provider.lowercased() == provider.lowercased()
-                            && modelId == option.id)
-                }
-            }
-            if catalog.provider.lowercased() == provider.lowercased() {
-                let options = twReasoningOptions(in: catalog, modelId: modelId)
-                if !options.isEmpty {
-                    Menu("Reasoning") {
-                        ForEach(options) { option in
-                            Button {
-                                reasoningEffort = option.reasoningEffort
-                            } label: {
-                                checkedMenuLabel(
-                                    twReasoningDisplayLabel(option.reasoningEffort),
-                                    selected: reasoningEffort == option.reasoningEffort)
-                            }
-                        }
+    private var pickerPopover: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 2) {
+                if allowsProviderChange {
+                    ForEach(catalogs) { catalog in
+                        providerSection(catalog)
                     }
+                } else if let catalog = currentCatalog {
+                    modelRows(for: catalog)
+                    reasoningRows(for: catalog)
+                }
+            }
+            .padding(.vertical, 8)
+        }
+        .frame(width: 280)
+        .frame(maxHeight: 360)
+        .modifier(GlassPopoverPanel())
+    }
+
+    @ViewBuilder
+    private func providerSection(_ catalog: ProviderModelCatalog) -> some View {
+        let isCurrent = catalog.provider.lowercased() == provider.lowercased()
+        let accent = TWTheme.providerAccent(catalog.provider)
+        HStack(spacing: 8) {
+            Circle().fill(accent).frame(width: 7, height: 7)
+            Text(TWTheme.providerLabel(catalog.provider))
+                .font(.caption2.weight(.semibold))
+                .textCase(.uppercase)
+                .foregroundStyle(isCurrent ? accent : TWTheme.textSecondary)
+            Spacer()
+        }
+        .padding(.horizontal, 14)
+        .padding(.top, 10)
+        .padding(.bottom, 2)
+        modelRows(for: catalog)
+        if isCurrent {
+            reasoningRows(for: catalog)
+        }
+    }
+
+    @ViewBuilder
+    private func modelRows(for catalog: ProviderModelCatalog) -> some View {
+        let isCurrentProvider = catalog.provider.lowercased() == provider.lowercased()
+        let accent = TWTheme.providerAccent(catalog.provider)
+        pickerRow(title: "Default", selected: isCurrentProvider && modelId == nil, accent: accent) {
+            selectDefault(in: catalog)
+        }
+        ForEach(catalog.models) { option in
+            pickerRow(
+                title: option.label ?? option.id,
+                selected: isCurrentProvider && modelId == option.id,
+                accent: accent,
+                disabled: option.disabled == true
+            ) {
+                selectModel(option, in: catalog)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func reasoningRows(for catalog: ProviderModelCatalog) -> some View {
+        let options = twReasoningOptions(in: catalog, modelId: modelId)
+        let accent = TWTheme.providerAccent(catalog.provider)
+        if !options.isEmpty {
+            HStack {
+                Text("Reasoning")
+                    .font(.caption2.weight(.semibold))
+                    .textCase(.uppercase)
+                    .foregroundStyle(TWTheme.textSecondary)
+                Spacer()
+            }
+            .padding(.horizontal, 14)
+            .padding(.top, 10)
+            .padding(.bottom, 2)
+            ForEach(options) { option in
+                pickerRow(
+                    title: twReasoningDisplayLabel(option.reasoningEffort),
+                    selected: reasoningEffort == option.reasoningEffort,
+                    accent: accent,
+                    disabled: option.disabled == true
+                ) {
+                    reasoningEffort = option.reasoningEffort
+                    isPresented = false
                 }
             }
         }
     }
 
     @ViewBuilder
-    private func providerMenuLabel(_ catalog: ProviderModelCatalog) -> some View {
-        let selected = catalog.provider.lowercased() == provider.lowercased()
-        if selected {
-            Label(TWTheme.providerLabel(catalog.provider), systemImage: "checkmark")
-        } else {
-            Text(TWTheme.providerLabel(catalog.provider))
+    private func pickerRow(
+        title: String, selected: Bool, accent: Color, disabled: Bool = false,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button {
+            guard !disabled else { return }
+            action()
+        } label: {
+            HStack(spacing: 8) {
+                Text(title)
+                    .font(.subheadline)
+                    .foregroundStyle(disabled ? TWTheme.textSecondary : TWTheme.textPrimary)
+                    .lineLimit(1)
+                Spacer()
+                if selected {
+                    Image(systemName: "checkmark")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(accent)
+                }
+            }
+            .contentShape(Rectangle())
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
         }
-    }
-
-    @ViewBuilder
-    private func checkedMenuLabel(_ title: String, selected: Bool) -> some View {
-        if selected {
-            Label(title, systemImage: "checkmark")
-        } else {
-            Text(title)
-        }
+        .buttonStyle(.plain)
+        .disabled(disabled)
+        .opacity(disabled ? 0.55 : 1)
     }
 
     private func selectDefault(in catalog: ProviderModelCatalog) {
