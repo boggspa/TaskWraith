@@ -30751,7 +30751,7 @@ if (isGeminiMcpBridgeProcess) {
     // orchestrator (assigned above) is reached via a getter; cancellation
     // bookkeeping + store reads are injected so the module needs no back-ref.
     registerAuditHandlers({
-      getAuditOrchestrator: () => auditOrchestratorRef,
+      getAuditOrchestrator: () => mainRuntimeContext.getAuditOrchestrator(),
       getAuditRun: (id) => AppStore.getAuditRun(id),
       getAuditRuns: (workspaceId) => AppStore.getAuditRuns(workspaceId),
       validateWorkspacePath: (workspacePath) => {
