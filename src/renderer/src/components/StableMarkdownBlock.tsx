@@ -8,7 +8,7 @@ import {
   type ReactElement,
   type ReactNode
 } from 'react'
-import ReactMarkdown, { type Components } from 'react-markdown'
+import ReactMarkdown, { defaultUrlTransform, type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { HighlightedCodeBlock } from './HighlightedCodeBlock'
 import { AgentMention } from './AgentMention'
@@ -438,6 +438,18 @@ const MARKDOWN_COMPONENTS: Components = {
 
 const REMARK_PLUGINS = [remarkGfm]
 
+// react-markdown's default urlTransform only allows http(s)/irc(s)/mailto/xmpp
+// protocols and silently replaces anything else with an empty string — which
+// strips our custom agent:// and ensemble-dm:// mention-link schemes before
+// the components.a override below ever sees the real href. Allow those two
+// schemes through unchanged; delegate everything else to the default
+// sanitizer so external-link security posture (blocking javascript:, data:,
+// etc.) is unchanged.
+function markdownUrlTransform(value: string): string {
+  if (value.startsWith('agent://') || value.startsWith('ensemble-dm://')) return value
+  return defaultUrlTransform(value)
+}
+
 interface StableMarkdownBlockProps {
   /** The raw markdown for a single block. Memo equality is `prev.raw === next.raw`. */
   raw: string
@@ -452,7 +464,11 @@ interface StableMarkdownBlockProps {
 
 function StableMarkdownBlockImpl({ raw, streamRunId }: StableMarkdownBlockProps) {
   const markdown = (
-    <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={MARKDOWN_COMPONENTS}>
+    <ReactMarkdown
+      remarkPlugins={REMARK_PLUGINS}
+      components={MARKDOWN_COMPONENTS}
+      urlTransform={markdownUrlTransform}
+    >
       {raw}
     </ReactMarkdown>
   )

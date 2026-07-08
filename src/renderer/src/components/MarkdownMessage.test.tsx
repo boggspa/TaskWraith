@@ -299,4 +299,27 @@ describe('MarkdownMessage', () => {
     expect(html).not.toContain('@Fable')
     expect(html).not.toContain('@RenderWrite')
   })
+
+  it('resolves an ensemble-dm:// markdown link to a provider-tinted participant chip', () => {
+    const html = renderToStaticMarkup(
+      <MarkdownMessage
+        chat={ensembleChat([participant({ id: 'p1', provider: 'codex', role: 'Builder' })])}
+        content={'Thanks, [@Builder](ensemble-dm://p1)!'}
+      />
+    )
+    expect(html).toContain('class="participant-mention"')
+    expect(html).toContain('--provider-codex-color')
+    expect(html).toContain('@Builder')
+  })
+
+  it('falls back to plain text for an ensemble-dm:// link with no matching participant', () => {
+    const html = renderToStaticMarkup(
+      <MarkdownMessage
+        chat={ensembleChat([participant({ id: 'p1', provider: 'codex', role: 'Builder' })])}
+        content={'Gone: [@Ghost](ensemble-dm://p-missing).'}
+      />
+    )
+    expect(html).not.toContain('class="participant-mention"')
+    expect(html).toContain('@Ghost')
+  })
 })
