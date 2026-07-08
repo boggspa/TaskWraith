@@ -4667,7 +4667,11 @@ button.sidebar-footer-approval-row.is-clickable:focus-visible {
 .message-markdown-pro .markdown-table-scroll {
   width: 100%;
   overflow-x: auto;
-  border: 1px solid color-mix(in srgb, rgb(var(--agent-accent-rgb)) 22%, var(--surface-border));
+  /* Theme-neutral silver frame. Same policy as `hr` above (line-break silver):
+     markdown tables must NOT inherit the provider/participant accent
+     (--agent-accent-rgb), so a table reads identically no matter which
+     model/participant emitted it. Silver base = 184 191 200. */
+  border: 1px solid color-mix(in srgb, rgb(184 191 200) 22%, var(--surface-border));
   border-radius: var(--radius-sm);
   background:
     linear-gradient(180deg, rgb(255 255 255 / 0.035), transparent 42%),
@@ -4678,7 +4682,8 @@ button.sidebar-footer-approval-row.is-clickable:focus-visible {
 }
 
 .message-markdown-pro .markdown-table-scroll:focus-visible {
-  outline: 2px solid rgb(var(--agent-accent-rgb) / 0.52);
+  /* Silver focus ring (neutral table policy), not the provider accent. */
+  outline: 2px solid rgb(184 191 200 / 0.6);
   outline-offset: 2px;
 }
 
@@ -4707,8 +4712,10 @@ button.sidebar-footer-approval-row.is-clickable:focus-visible {
 
 .message-markdown-pro th {
   color: var(--text-primary);
+  /* Silver header fill (neutral table policy), not the provider accent — this
+     is the tint that used to bleed provider colour into the header row. */
   background:
-    linear-gradient(180deg, rgb(var(--agent-accent-rgb) / 0.15), rgb(var(--agent-accent-rgb) / 0.08)),
+    linear-gradient(180deg, rgb(184 191 200 / 0.15), rgb(184 191 200 / 0.08)),
     rgb(255 255 255 / 0.035);
   font-weight: 700;
   white-space: normal;

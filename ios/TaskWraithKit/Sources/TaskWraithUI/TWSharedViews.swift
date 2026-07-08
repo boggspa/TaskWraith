@@ -3424,7 +3424,12 @@ public struct MarkdownLite: View {
     }
 
     private func tableRowBackground(header: Bool, rowIndex: Int) -> Color {
-        if header { return TWTheme.chroma1.opacity(0.14) }
+        // Theme-neutral silver header — same policy as the `.divider` line-break
+        // above (which stays neutral TWTheme.border): markdown tables must NOT
+        // inherit the provider/participant accent (chroma1), so a table reads
+        // identically no matter which model/participant emitted it. surface3
+        // keeps the header in the same neutral family as the zebra rows below.
+        if header { return TWTheme.surface3.opacity(0.5) }
         return rowIndex.isMultiple(of: 2) ? Color.clear : TWTheme.surface3.opacity(0.26)
     }
 
