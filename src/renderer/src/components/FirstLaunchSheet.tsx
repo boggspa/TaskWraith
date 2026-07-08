@@ -882,7 +882,7 @@ export function FirstLaunchSheet({
           <div className="first-launch-sheet-footer-actions">
             <button
               type="button"
-              className="btn btn-ghost"
+              className="segmented-control-action"
               onClick={onDismiss}
               aria-label="Skip onboarding sheet"
             >
@@ -890,7 +890,7 @@ export function FirstLaunchSheet({
             </button>
             <button
               type="button"
-              className="btn btn-primary"
+              className="segmented-control-action segmented-control-action--primary"
               onClick={onDismiss}
               aria-label="Close onboarding sheet"
             >
@@ -934,6 +934,13 @@ function ProviderCard({
     row.variant !== 'signed-in' &&
     row.variant !== 'out-of-usage' &&
     (!row.localOnly || row.cloudSignIn)
+  const signInClass = [
+    'segmented-control-action',
+    'segmented-control-action--compact',
+    row.cloudSignIn ? '' : 'segmented-control-action--primary'
+  ]
+    .filter(Boolean)
+    .join(' ')
   return (
     <div className={classes} data-provider={row.id}>
       <div className="first-launch-sheet-provider-card-header">
@@ -967,7 +974,7 @@ function ProviderCard({
             // cloudSignIn rows (Ollama) are local-FIRST — the cloud sign-in is
             // optional, so it's a ghost button, not the primary "you must sign
             // in" CTA the cloud providers use.
-            className={`btn btn-sm ${row.cloudSignIn ? 'btn-ghost' : 'btn-primary'}`}
+            className={signInClass}
             onClick={() => onProviderLogin(row.id)}
             aria-label={row.cloudSignIn ? `Sign in to ${row.label} Cloud` : `Sign in to ${row.label}`}
             title={
@@ -982,7 +989,7 @@ function ProviderCard({
         {row.variant === 'signed-in' && !row.localOnly && onProviderLogout && (
           <button
             type="button"
-            className="btn btn-sm btn-ghost"
+            className="segmented-control-action segmented-control-action--compact"
             onClick={() => onProviderLogout(row.id)}
             aria-label={`Sign out of ${row.label}`}
             title={`Open the ${row.label} sign-out flow. Future runs may require signing in again.`}
@@ -992,7 +999,7 @@ function ProviderCard({
         )}
         <button
           type="button"
-          className="btn btn-sm"
+          className="segmented-control-action segmented-control-action--compact segmented-control-action--primary"
           onClick={onOpenSettings}
           aria-label={`Open settings for ${row.label}`}
           title={`Open provider settings for ${row.label}, including auth, model, and permission controls.`}

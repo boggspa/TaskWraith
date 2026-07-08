@@ -157,14 +157,18 @@ export function ChangelogSheet({
 
         <footer className="changelog-sheet-actions">
           {releasePageUrl && (
-            <button type="button" className="btn btn-sm btn-ghost" onClick={handleOpenRelease}>
+            <button
+              type="button"
+              className="segmented-control-action segmented-control-action--compact"
+              onClick={handleOpenRelease}
+            >
               Open release
             </button>
           )}
           {updateStatus === 'available' && onDownloadUpdate && (
             <button
               type="button"
-              className="btn btn-sm btn-primary"
+              className="segmented-control-action segmented-control-action--compact segmented-control-action--primary"
               disabled={!canAct}
               onClick={() => void onDownloadUpdate()}
             >
@@ -174,7 +178,7 @@ export function ChangelogSheet({
           {updateStatus === 'downloaded' && onInstallUpdateNow && (
             <button
               type="button"
-              className="btn btn-sm btn-primary"
+              className="segmented-control-action segmented-control-action--compact segmented-control-action--primary"
               disabled={busy}
               onClick={handleInstall}
             >
@@ -188,14 +192,18 @@ export function ChangelogSheet({
             onCheckForUpdates && (
               <button
                 type="button"
-                className="btn btn-sm"
+                className="segmented-control-action segmented-control-action--compact segmented-control-action--primary"
                 disabled={busy || updateStatus === 'disabled'}
                 onClick={() => void onCheckForUpdates()}
               >
                 {updateStatus === 'error' ? 'Check again' : 'Check for updates'}
               </button>
             )}
-          <button type="button" className="btn btn-sm btn-ghost" onClick={onDismiss}>
+          <button
+            type="button"
+            className="segmented-control-action segmented-control-action--compact"
+            onClick={onDismiss}
+          >
             Close
           </button>
         </footer>

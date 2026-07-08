@@ -125,8 +125,8 @@ describe('BugReportSheet', () => {
     const html = renderToStaticMarkup(
       <BugReportSheet {...baseProps} open onDismiss={() => {}} onSubmit={async () => {}} />
     )
-    // Cancel button — ghost variant, dismisses without saving.
-    expect(html).toMatch(/<button[^>]*class="btn btn-ghost"[^>]*>Cancel</)
+    // Cancel button — neutral shared action, dismisses without saving.
+    expect(html).toMatch(/<button[^>]*class="segmented-control-action"[^>]*>Cancel</)
     // Close X — top-right corner.
     expect(html).toMatch(/aria-label="Close bug-report sheet"/)
     // Backdrop renders as the outer click-outside target so the host

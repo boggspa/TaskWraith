@@ -624,7 +624,7 @@ export function BugReportSheet({
             <div className="bug-report-sheet-footer-actions">
               <button
                 type="button"
-                className="btn btn-ghost"
+                className="segmented-control-action"
                 onClick={onDismiss}
                 disabled={submitting}
               >
@@ -632,7 +632,7 @@ export function BugReportSheet({
               </button>
               <button
                 type="button"
-                className="btn"
+                className="segmented-control-action segmented-control-action--primary"
                 onClick={handleOpenGitHubIssue}
                 disabled={submitting || trimmedTitle.length === 0}
                 title="Open a pre-filled GitHub issue with this report and captured context"
@@ -641,7 +641,7 @@ export function BugReportSheet({
               </button>
               <button
                 type="submit"
-                className="btn btn-primary"
+                className="segmented-control-action segmented-control-action--primary"
                 disabled={submitting || trimmedTitle.length === 0}
               >
                 {submitting ? 'Saving…' : 'Save report'}
