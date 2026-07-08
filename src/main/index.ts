@@ -29714,11 +29714,35 @@ if (isGeminiMcpBridgeProcess) {
     // (Phase F3) can dispatch agent-driven sub-thread runs without
     // requiring a Gemini-renderer round-trip.
     runCoordinatorRef = runCoordinator
+    // M3-2a seam (design-m3-2-spec + General's ratified amendment): the dispatch
+    // orchestrator's index.ts-coupled deps as an explicit bundle, built ONCE here.
+    // Registries inject by DIRECT REFERENCE (const Maps/registry mutated in place)
+    // but STAY owned in index.ts (external readers live outside the dispatch path).
+    // AppStore is injected as 3 accessors (M3-1b AppStore-free-leaf precedent). The
+    // pure helpers resolveProviderDispatch / applyReroutePlanToPayload / hasAnyBudget
+    // stay BARE — direct-imported in the M3-2b facade module, never bundle fields.
+    // M3-2b relocates the closure body into createRunDispatchFacade(deps) consuming
+    // this exact bundle; the ref + all 5 callsites + ensemble binding + IPC paths
+    // stay UNCHANGED. Seam-only: zero behaviour change (each field IS the same
+    // instance / fn the body previously referenced directly).
+    const runDispatchFacadeDeps = {
+      applyFailoverReroutePosture,
+      repairKnownStaleGeminiMcpBridgeConfigs,
+      expandPdfImagePathsForPayload,
+      captureFailoverSnapshot,
+      scheduledTaskIdBySoloRun,
+      workflowBudgetRegistry,
+      failoverSnapshotByRun,
+      runCoordinator,
+      getSettings: () => AppStore.getSettings(),
+      getScheduledTasks: () => AppStore.getScheduledTasks(),
+      getWorkflowDefinitions: () => AppStore.getWorkflowDefinitions()
+    }
     const dispatchRunWithProviderPause = async (
       payload: AgentRunPayload,
       event: Electron.IpcMainInvokeEvent | { sender: Electron.WebContents }
     ): Promise<{ dispatched: boolean; appRunId: string }> => {
-      const resolution = resolveProviderDispatch(AppStore.getSettings(), payload.provider)
+      const resolution = resolveProviderDispatch(runDispatchFacadeDeps.getSettings(), payload.provider)
       const routedPayload = applyReroutePlanToPayload(payload, resolution)
       // Auto-failover re-dispatch: a provider-change reroute clears
       // effectivePermissions, which normalize would then downgrade to read-only.
@@ -29726,7 +29750,7 @@ if (isGeminiMcpBridgeProcess) {
       // failover PRESERVES (never raises) the user's approved authority. Scoped
       // to failover runs (failoverHopCount set) so manual reroutes are unchanged.
       if (resolution.reroute && typeof routedPayload.failoverHopCount === 'number') {
-        applyFailoverReroutePosture(routedPayload, payload)
+        runDispatchFacadeDeps.applyFailoverReroutePosture(routedPayload, payload)
       }
       // Self-heal stale persisted MCP configs on EVERY dispatch path, not
       // just renderer capability refreshes — bridge (iOS) dispatches on a
@@ -29738,8 +29762,8 @@ if (isGeminiMcpBridgeProcess) {
         typeof routedPayload?.workspace === 'string' && routedPayload.workspace.length > 0
           ? routedPayload.workspace
           : undefined
-      await repairKnownStaleGeminiMcpBridgeConfigs(repairCwd).catch(() => {})
-      await expandPdfImagePathsForPayload(routedPayload).catch((error) => {
+      await runDispatchFacadeDeps.repairKnownStaleGeminiMcpBridgeConfigs(repairCwd).catch(() => {})
+      await runDispatchFacadeDeps.expandPdfImagePathsForPayload(routedPayload).catch((error) => {
         console.warn(
           `[pdf-attachments] failed to expand PDF image paths: ${
             error instanceof Error ? error.message : String(error)
@@ -29766,15 +29790,15 @@ if (isGeminiMcpBridgeProcess) {
         // Stage 0b-completion: main marks this solo scheduled run terminal in
         // sendAgentCompatExit, so a mid-run renderer close (or a windowless run)
         // can't wedge it.
-        scheduledTaskIdBySoloRun.set(soloRunId, budgetScheduledTaskId)
-        const budgetSettings = AppStore.getSettings()
+        runDispatchFacadeDeps.scheduledTaskIdBySoloRun.set(soloRunId, budgetScheduledTaskId)
+        const budgetSettings = runDispatchFacadeDeps.getSettings()
         if (budgetSettings.workflowBudgetKillEnabled !== false) {
-          const task = AppStore.getScheduledTasks().find((t) => t.id === budgetScheduledTaskId)
+          const task = runDispatchFacadeDeps.getScheduledTasks().find((t) => t.id === budgetScheduledTaskId)
           const limits = task?.workflowId
-            ? AppStore.getWorkflowDefinitions().find((w) => w.id === task.workflowId)?.limits
+            ? runDispatchFacadeDeps.getWorkflowDefinitions().find((w) => w.id === task.workflowId)?.limits
             : undefined
           if (hasAnyBudget(limits)) {
-            workflowBudgetRegistry.register({
+            runDispatchFacadeDeps.workflowBudgetRegistry.register({
               runId: soloRunId,
               scheduledTaskId: budgetScheduledTaskId,
               provider: routedPayload.provider,
@@ -29786,16 +29810,19 @@ if (isGeminiMcpBridgeProcess) {
           }
         }
       }
-      const dispatchResult = await runCoordinator.dispatch(routedPayload, event)
+      const dispatchResult = await runDispatchFacadeDeps.runCoordinator.dispatch(routedPayload, event)
       // Snapshot the dispatched request so a later quota wall can re-run it.
       // A provider-native `/compact` dispatch is excluded: failing it over
       // would send the literal slash text to a DIFFERENT provider as prose.
       if (
-        AppStore.getSettings().autoFailoverEnabled &&
+        runDispatchFacadeDeps.getSettings().autoFailoverEnabled &&
         dispatchResult.appRunId &&
         routedPayload.prompt?.trim() !== '/compact'
       ) {
-        failoverSnapshotByRun.set(dispatchResult.appRunId, captureFailoverSnapshot(routedPayload))
+        runDispatchFacadeDeps.failoverSnapshotByRun.set(
+          dispatchResult.appRunId,
+          runDispatchFacadeDeps.captureFailoverSnapshot(routedPayload)
+        )
       }
       return dispatchResult
     }
