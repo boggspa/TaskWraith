@@ -20,7 +20,7 @@ import type {
   HumanCollaborationInviteHealth
 } from '../lib/humanCollaborationInviteHealth'
 import { AgentMentionMenu } from '../components/AgentMentionMenu'
-import { ArrowUpSendIcon, ChatMediaIcon, ClaudeReturnSymbolIcon, ClockSymbolIcon, CommandSymbolIcon, FileMenuSelectionIcon, GitCommitSymbolIcon, GoalSymbolIcon, ModelSymbolIcon, PermissionSymbolIcon, PlusSymbolIcon, QueueSymbolIcon, ReviewSymbolIcon, RunSymbolIcon, ScreenWatchSymbolIcon, SteerSymbolIcon, StopSymbolIcon, TrustSymbolIcon, WorkflowGlyphIcon, XSymbolIcon } from '../components/AppChromeSymbols'
+import { ArrowUpSendIcon, ChatMediaIcon, ClaudeReturnSymbolIcon, ClockSymbolIcon, CommandSymbolIcon, FileMenuSelectionIcon, GitCommitSymbolIcon, GoalSymbolIcon, ModelSymbolIcon, PermissionSymbolIcon, PlusSymbolIcon, ReviewSymbolIcon, RunSymbolIcon, ScreenWatchSymbolIcon, StopSymbolIcon, TrustSymbolIcon, WorkflowGlyphIcon, XSymbolIcon } from '../components/AppChromeSymbols'
 import { ContextMeterPopover } from './ContextMeterPopover'
 import { CombinedModelPicker } from '../components/CombinedModelPicker'
 import type { CombinedModelPickerModelOption, CombinedModelPickerReasoningOption } from '../components/CombinedModelPicker'
@@ -593,7 +593,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     handleSelectWorkspace,
     handleSetAgenticWorkspaceGrant,
     handleBlackboardQueuedMessage,
-    handleSteer,
     handleSteerToQueuedMessage,
     handleStopWorkSession,
     handleToggleWelcomeEnsemble,
@@ -603,11 +602,10 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     interfaceStyle,
     isAttachingWindow,
     openSlashCommandsRequestId,
-    isCurrentChatBusyForSteer,
-  isCurrentChatProviderLocked,
-  isCurrentChatRunning,
-  isCurrentChatLinkedChild,
-  isCurrentComposerLocked,
+    isCurrentChatProviderLocked,
+    isCurrentChatRunning,
+    isCurrentChatLinkedChild,
+    isCurrentComposerLocked,
     isCurrentEnsembleChat,
     isCurrentEnsembleRoundRunning,
     isCurrentGlobalChat,
@@ -725,7 +723,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     workspaces
   } = props
   const hasSendablePromptContent = hasAttachmentPromptContent(prompt, imageAttachments)
-  const isTaskWraithNativeComposer = appearance.composerStyle === 'default'
   const [scheduledNowMs, setScheduledNowMs] = useState(() => Date.now())
   const [seatChangeNoticeRoundKey, setSeatChangeNoticeRoundKey] = useState<string | null>(null)
   const [dismissedSeatChangeNoticeRoundKey, setDismissedSeatChangeNoticeRoundKey] = useState<
@@ -4203,7 +4200,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                           />
                         )}
                         {/*
-                        1.0.6-EW70 — the run/queue/steer/stop buttons are
+                        1.0.6-EW70 — the run/stop buttons are
                         wrapped in `.composer-send-cluster` (display:contents
                         by default, so the nine other shells are unchanged).
                         Obsidian/Alabaster lift this cluster up into the
@@ -4226,72 +4223,16 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                             />
                           )}
                           {isCurrentChatRunning ? (
-                            <>
-                              {isTaskWraithNativeComposer && (
-                                <button
-                                  className={`composer-action-btn run-btn queue ${isSendConfirming ? 'send-confirming' : ''}`}
-                                  onClick={() => {
-                                    if (tryHandleSideSlashSubmit()) {
-                                      return
-                                    }
-                                    if (tryHandleActionSlashSubmit()) {
-                                      return
-                                    }
-                                    triggerSendConfirmation()
-                                    handleRun()
-                                  }}
-                                  disabled={
-                                    !currentChat ||
-                                    (!isCurrentGlobalChat && !currentWorkspace) ||
-                                    !hasSendablePromptContent ||
-                                    (currentProvider === 'gemini' && !geminiWorkspaceTrustReady) ||
-                                    isSteerBusyForCurrentChat
-                                  }
-                                  title="Queue next run"
-                                  aria-label="Queue next run"
-                                  type="button"
-                                >
-                                  <QueueSymbolIcon />
-                                </button>
-                              )}
-                              {/* Phase J3 (steer): sit Steer between Queue and Stop
-                               *   - Queue waits passively for the chat's run to finish.
-                               *   - Steer interrupts and dispatches immediately.
-                               *   - Stop only interrupts (no follow-up dispatch).
-                               * Only render when THIS chat is busy (per-chat busy
-                               * predicate), so multi-chat parallel runs don't get a
-                               * misleading Steer button in idle chats. */}
-                              {isTaskWraithNativeComposer && isCurrentChatBusyForSteer && (
-                                <button
-                                  className={`composer-action-btn steer-btn ${isSteerBusyForCurrentChat ? 'is-busy' : ''}`}
-                                  onClick={() => void handleSteer()}
-                                  disabled={
-                                    !currentChat ||
-                                    (!isCurrentGlobalChat && !currentWorkspace) ||
-                                    !hasSendablePromptContent ||
-                                    (currentProvider === 'gemini' && !geminiWorkspaceTrustReady) ||
-                                    isSteerBusyForCurrentChat
-                                  }
-                                  title="Interrupt the active turn and dispatch this prompt immediately."
-                                  aria-label="Steer: interrupt and dispatch this prompt"
-                                  type="button"
-                                >
-                                  <SteerSymbolIcon />
-                                </button>
-                              )}
-                              {isCurrentChatRunning && (
-                                <button
-                                  className="composer-action-btn stop-btn"
-                                  onClick={handleCancel}
-                                  title="Stop run"
-                                  aria-label="Stop run"
-                                  type="button"
-                                  disabled={isSteerBusyForCurrentChat}
-                                >
-                                  <StopSymbolIcon />
-                                </button>
-                              )}
-                            </>
+                            <button
+                              className="composer-action-btn stop-btn"
+                              onClick={handleCancel}
+                              title="Stop run"
+                              aria-label="Stop run"
+                              type="button"
+                              disabled={isSteerBusyForCurrentChat}
+                            >
+                              <StopSymbolIcon />
+                            </button>
                           ) : (
                             <button
                               className={`composer-action-btn run-btn ${isSendConfirming ? 'send-confirming' : ''}`}
