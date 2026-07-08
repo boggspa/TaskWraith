@@ -27,7 +27,10 @@ describe('resolveContextWindow', () => {
     expect(resolveContextWindow('kimi', 'kimi-k2.7-code')).toBe(256_000)
     expect(resolveContextWindow('kimi', 'kimi-k2.6')).toBe(256_000)
     expect(resolveContextWindow('grok', 'grok-composer-2.5-fast')).toBe(200_000)
-    expect(resolveContextWindow('grok', 'grok-build')).toBe(256_000)
+    expect(resolveContextWindow('grok', 'grok-4.5')).toBe(500_000)
+    expect(resolveContextWindow('grok', 'grok-build')).toBe(500_000)
+    expect(resolveContextWindow('cursor', 'composer-2.5-fast')).toBe(200_000)
+    expect(resolveContextWindow('cursor', 'grok-4.5')).toBe(500_000)
     expect(resolveContextWindow('ollama', 'qwen3:4b-instruct')).toBe(262_144)
     expect(resolveContextWindow('ollama', 'qwen3.5:9b')).toBe(262_144)
     expect(resolveContextWindow('ollama', 'qwen3.6:35b')).toBe(262_144)
@@ -58,7 +61,7 @@ describe('resolveContextWindow', () => {
       codex: 1_050_000,
       claude: 200_000,
       kimi: 256_000,
-      grok: 256_000,
+      grok: 500_000,
       cursor: 200_000,
       ollama: 262_144
     }

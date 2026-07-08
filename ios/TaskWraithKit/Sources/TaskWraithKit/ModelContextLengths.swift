@@ -76,13 +76,16 @@ public enum ModelContextLengths {
             ]
         case "grok":
             return [
-                (id: "grok-build",              label: "Grok Build 0.1"),
+                // Grok's CLI models are permanently Fast-mode (Cursor's grok-4.5
+                // keeps a separate Fast toggle and stays "Cursor Grok 4.5").
+                (id: "grok-4.5",                label: "Grok 4.5 Fast"),
                 (id: "grok-composer-2.5-fast",  label: "Grok Composer 2.5 Fast"),
             ]
         case "cursor":
             return [
                 (id: "composer-2.5",       label: "Composer 2.5"),
                 (id: "composer-2.5-fast",  label: "Composer 2.5 Fast"),
+                (id: "grok-4.5",           label: "Cursor Grok 4.5"),
             ]
         case "ollama":
             return [

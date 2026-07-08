@@ -119,10 +119,16 @@ export interface BridgeComposerPromptAction extends BridgeActionMetadata {
   permissionPresetId?: string
   /** Optional model override (provider-specific). */
   model?: string
-  /** Codex/Grok-style reasoning effort override. */
+  /** Legacy Codex-style reasoning effort override. Also accepted for Grok 4.5. */
   reasoningEffort?: string | null
   /** Claude-specific reasoning effort override. */
   claudeReasoningEffort?: string | null
+  /** Grok-specific reasoning effort override. Valid only for Grok 4.5. */
+  grokReasoningEffort?: string | null
+  /** Cursor-specific reasoning effort override. Valid only for Cursor Grok 4.5. */
+  cursorReasoningEffort?: string | null
+  /** Cursor Fast tier toggle. Valid only for Cursor Grok 4.5. */
+  cursorFastMode?: boolean
   /** Optional context-turn count (0–20 per the plan's standard payload). */
   contextTurns?: number
   /** Phone-attached images (downscaled JPEG/PNG, base64). The executor
@@ -632,6 +638,9 @@ export interface BridgeCreateSideChatAction extends BridgeActionMetadata {
   model?: string
   codexReasoningEffort?: string | null
   claudeReasoningEffort?: string | null
+  grokReasoningEffort?: string | null
+  cursorReasoningEffort?: string | null
+  cursorFastMode?: boolean
   mode?: 'singleProvider' | 'ensembleClone' | 'fanOut'
 }
 
@@ -1423,6 +1432,13 @@ function isComposerPrompt(v: Record<string, unknown>): boolean {
     (v.claudeReasoningEffort === undefined ||
       v.claudeReasoningEffort === null ||
       typeof v.claudeReasoningEffort === 'string') &&
+    (v.grokReasoningEffort === undefined ||
+      v.grokReasoningEffort === null ||
+      typeof v.grokReasoningEffort === 'string') &&
+    (v.cursorReasoningEffort === undefined ||
+      v.cursorReasoningEffort === null ||
+      typeof v.cursorReasoningEffort === 'string') &&
+    (v.cursorFastMode === undefined || typeof v.cursorFastMode === 'boolean') &&
     (v.imageAttachments === undefined || isImageAttachments(v.imageAttachments)) &&
     (v.contextTurns === undefined ||
       (typeof v.contextTurns === 'number' &&

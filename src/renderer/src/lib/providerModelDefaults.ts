@@ -3,6 +3,12 @@ import {
   previewModelsForProvider,
   type PreviewModelCatalogEntry
 } from '../../../shared/previewModelCatalog'
+import {
+  CURSOR_GROK_45_BASE_MODEL_ID,
+  GROK_45_DEFAULT_REASONING_EFFORT,
+  GROK_45_MODEL_ID,
+  GROK_45_REASONING_EFFORTS
+} from '../../../shared/grok45Models'
 
 interface CodexModelOption {
   id: string
@@ -185,20 +191,36 @@ const GEMINI_DEFAULT_MODELS = [
   { id: 'flash-lite', label: 'Flash Lite', isDefault: true }
 ] satisfies CodexModelOption[]
 const GEMINI_DEFAULT_MODEL = 'flash-lite'
-// Grok — keep Grok Build CLI ids provider-native. Build 0.1 is TaskWraith's
-// concrete default; Composer 2.5 Fast remains selectable for users who want it.
-// Cursor's `composer-2.5-fast` remains a separate provider route.
-const GROK_DEFAULT_MODEL = 'grok-build'
+// Grok - the live Grok Build CLI now defaults to Grok 4.5. Composer 2.5 Fast
+// remains selectable for historical/specialized runs.
+const GROK_DEFAULT_MODEL = GROK_45_MODEL_ID
 const GROK_DEFAULT_MODELS = [
-  { id: GROK_DEFAULT_MODEL, label: 'Grok Build 0.1', isDefault: true },
+  {
+    id: GROK_DEFAULT_MODEL,
+    // Both Grok CLI models run permanently in Fast mode, so the label carries
+    // "Fast" (unlike Cursor's grok-4.5, which keeps a separate Fast toggle).
+    label: 'Grok 4.5 Fast',
+    description: '500K context - low/medium/high reasoning',
+    isDefault: true,
+    supportedReasoningEfforts: [...GROK_45_REASONING_EFFORTS],
+    defaultReasoningEffort: GROK_45_DEFAULT_REASONING_EFFORT
+  },
   { id: 'grok-composer-2.5-fast', label: 'Grok Composer 2.5 Fast' }
 ] satisfies CodexModelOption[]
-// Cursor (Composer 2.5). Two selectable variants = the model + its Fast mode
-// (the Fast toggle modelled as a second model id, like Cursor's own picker).
-// composer-2.5-fast is Cursor's default; composer-2.5 is the slower/normal tier.
+// Cursor: Composer 2.5 remains the default route. Cursor Grok 4.5 is exposed as
+// one friendly model row with reasoning + Fast controls; dispatch maps those
+// controls to Cursor's concrete grok-4.5-* model ids.
 const CURSOR_DEFAULT_MODELS = [
   { id: 'composer-2.5-fast', label: 'Composer 2.5 Fast', isDefault: true },
-  { id: 'composer-2.5', label: 'Composer 2.5' }
+  { id: 'composer-2.5', label: 'Composer 2.5' },
+  {
+    id: CURSOR_GROK_45_BASE_MODEL_ID,
+    label: 'Cursor Grok 4.5',
+    description: 'First-party Cursor model pool - 500K context',
+    supportedReasoningEfforts: [...GROK_45_REASONING_EFFORTS],
+    defaultReasoningEffort: GROK_45_DEFAULT_REASONING_EFFORT,
+    additionalSpeedTiers: ['fast']
+  }
 ] satisfies CodexModelOption[]
 const OLLAMA_DEFAULT_MODELS = [
   {

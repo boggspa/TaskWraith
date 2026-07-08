@@ -232,7 +232,8 @@ export function defaultProviderDescriptor(provider: ProviderId): ProviderAdapter
     }
   }
   if (provider === 'cursor') {
-    // First-class Cursor (Composer 2.5). Transport is the cursor-agent headless
+    // First-class Cursor (Composer 2.5 + Cursor Grok 4.5). Transport is the
+    // cursor-agent headless
     // stream-json CLI; sessions resume via --resume. CR6 landed write mode
     // (`approvalModes: ['plan','default']`): 'plan' = read-only (--mode plan),
     // 'default' = file-write contained by a workspace-local deny-list (native
@@ -259,8 +260,8 @@ export function defaultProviderDescriptor(provider: ProviderId): ProviderAdapter
       },
       capabilities: {
         approvalModes: ['plan', 'default'],
-        reasoningEffort: false,
-        speedTiers: [],
+        reasoningEffort: true,
+        speedTiers: ['fast'],
         imageAttachments: false,
         contextInjection: false,
         sessionResumption: true,

@@ -42,6 +42,10 @@ import type {
   ProviderId
 } from '../store/types'
 import { isPreviewRiskModel } from '../../shared/previewModelCatalog'
+import {
+  isCursorGrok45ModelId,
+  isGrok45ReasoningModelId
+} from '../../shared/grok45Models'
 
 // Grok + Cursor are first-class providers; no eligibility gate (see ProviderId).
 const PROVIDER_IDS = new Set<ProviderId>(['gemini', 'codex', 'claude', 'kimi', 'grok', 'cursor', 'ollama'])
@@ -81,6 +85,9 @@ export interface ComposerInput {
   claudeReasoningEffort?: string | null
   claudeFastMode?: boolean | null
   kimiThinkingEnabled?: boolean
+  grokReasoningEffort?: string | null
+  cursorReasoningEffort?: string | null
+  cursorFastMode?: boolean | null
   runtimeProfileId?: string
   geminiAuthProfileId?: string | null
   handoffSourceRunId?: string
@@ -474,11 +481,19 @@ export class ComposerService {
       reasoningEffort:
         provider === 'codex'
           ? optionalStringOrNull(effectiveInput.codexReasoningEffort) || null
-          : null,
+          : provider === 'grok' && isGrok45ReasoningModelId(requestedModel)
+            ? optionalStringOrNull(effectiveInput.grokReasoningEffort) || null
+            : provider === 'cursor' && isCursorGrok45ModelId(requestedModel)
+              ? optionalStringOrNull(effectiveInput.cursorReasoningEffort) || null
+              : null,
       serviceTier:
         provider === 'codex'
           ? optionalStringOrNull(effectiveInput.codexServiceTier) || null
-          : null,
+          : provider === 'cursor' && isCursorGrok45ModelId(requestedModel)
+            ? (effectiveInput.cursorFastMode ?? metadataBoolean(chat, 'cursorFastMode') ?? false)
+              ? 'fast'
+              : null
+            : null,
       claudeReasoningEffort:
         provider === 'claude'
           ? optionalStringOrNull(effectiveInput.claudeReasoningEffort) || null
@@ -592,6 +607,15 @@ function applyComposerReroutePlan(
       : {}),
     ...(resolution.provider === 'kimi'
       ? { kimiThinkingEnabled: plan.kimiThinkingEnabled ?? true }
+      : {}),
+    ...(resolution.provider === 'grok'
+      ? { grokReasoningEffort: plan.grokReasoningEffort ?? null }
+      : {}),
+    ...(resolution.provider === 'cursor'
+      ? {
+          cursorReasoningEffort: plan.cursorReasoningEffort ?? null,
+          cursorFastMode: plan.cursorFastMode ?? null
+        }
       : {})
   }
 }
@@ -865,7 +889,7 @@ export function getDefaultModelForProvider(provider: ProviderId): string {
   if (provider === 'codex') return 'gpt-5.5'
   if (provider === 'claude') return 'claude-sonnet-5'
   if (provider === 'kimi') return 'kimi-k2.7-code'
-  if (provider === 'grok') return 'grok-build'
+  if (provider === 'grok') return 'grok-4.5'
   if (provider === 'cursor') return 'composer-2.5-fast'
   if (provider === 'ollama') return 'qwen3:4b-instruct'
   return 'flash-lite'

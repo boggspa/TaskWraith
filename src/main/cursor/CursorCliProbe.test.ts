@@ -202,7 +202,16 @@ describe('CursorCliProbe', () => {
     })
   })
 
-  it('exposes only the two Composer 2.5 ids', () => {
-    expect(CURSOR_COMPOSER_MODEL_IDS).toEqual(['composer-2.5', 'composer-2.5-fast'])
+  it('exposes Composer 2.5 and Cursor Grok 4.5 concrete ids', () => {
+    expect(CURSOR_COMPOSER_MODEL_IDS).toEqual([
+      'composer-2.5',
+      'composer-2.5-fast',
+      'grok-4.5-medium',
+      'grok-4.5-fast-medium',
+      'grok-4.5-high',
+      'grok-4.5-fast-high',
+      'grok-4.5-xhigh',
+      'grok-4.5-fast-xhigh'
+    ])
   })
 })

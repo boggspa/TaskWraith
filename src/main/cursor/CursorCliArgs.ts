@@ -7,10 +7,11 @@
 //     to refuse edits), and write runs are contained by a workspace-local
 //     `.cursor/cli.json` deny-list (written by CursorWorkspaceConfig, NOT here).
 //   * We NEVER pass `--force` / `--yolo` (they auto-allow everything).
-//   * Only Composer 2.5 model ids are forwarded — TaskWraith exposes no other
-//     Cursor-proxied model.
+//   * Only TaskWraith-exposed Cursor model ids are forwarded. Cursor-proxied
+//     native-provider models are still dropped unless explicitly listed here.
 
 import { CURSOR_COMPOSER_MODEL_IDS } from './CursorCliProbe'
+import { resolveCursorGrok45CliModelId } from '../../shared/grok45Models'
 
 /**
  * `'plan'` / unset = read-only (`--mode plan`, no edits). Anything else =
@@ -25,6 +26,8 @@ export interface BuildCursorCliArgsInput {
   prompt: string
   workspace: string
   model?: string | null
+  reasoningEffort?: string | null
+  fastModeEnabled?: boolean | null
   /** Resume a prior chat by id (Cursor `--resume <chatId>`). */
   providerSessionId?: string | null
   /** Composer approval mode: 'plan'/unset = read-only; else write-capable. */
@@ -73,12 +76,19 @@ export interface BuildCursorProviderCliArgsInput extends BuildCursorCliArgsInput
   forceAllowMcpTools?: boolean
 }
 
-/** True only for the canonical Composer 2.5 ids (composer-2.5 / -fast). Any
- *  other value (CLI-default sentinel, a leaked id from another provider's
- *  picker) is dropped so Cursor falls back to its account default rather than
- *  erroring on an unknown model. */
-function isComposerModel(model: string | null | undefined): model is string {
-  return typeof model === 'string' && CURSOR_COMPOSER_MODEL_IDS.includes(model)
+/** Resolve only canonical TaskWraith-exposed Cursor ids. Any other value
+ * (CLI-default sentinel, a leaked id from another provider's picker) is dropped
+ * so Cursor falls back to its account default rather than erroring. */
+function resolveCursorModelArg(input: {
+  model?: string | null
+  reasoningEffort?: string | null
+  fastModeEnabled?: boolean | null
+}): string | null {
+  const grok45 = resolveCursorGrok45CliModelId(input)
+  if (grok45) return grok45
+  return typeof input.model === 'string' && CURSOR_COMPOSER_MODEL_IDS.includes(input.model)
+    ? input.model
+    : null
 }
 
 export function buildCursorCliArgs(input: BuildCursorCliArgsInput): string[] {
@@ -127,8 +137,9 @@ export function buildCursorCliArgs(input: BuildCursorCliArgsInput): string[] {
   if (resumeId) {
     args.push('--resume', resumeId)
   }
-  if (isComposerModel(input.model)) {
-    args.push('--model', input.model)
+  const modelArg = resolveCursorModelArg(input)
+  if (modelArg) {
+    args.push('--model', modelArg)
   }
   // Prompt is the trailing positional.
   args.push(input.prompt)

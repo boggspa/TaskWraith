@@ -92,6 +92,7 @@ import {
 import { canonicalizeExternalPathGrantMetadata } from './ExternalPathGrants'
 import { createDefaultEnsembleConfig } from '../EnsembleDefaults'
 import { isEnsembleRoundDispatchLive } from '../../shared/ensembleRoundLifecycle'
+import { isCursorGrok45ModelId, isGrok45ReasoningModelId } from '../../shared/grok45Models'
 import { createHash, randomUUID } from 'crypto'
 import { buildRunQueueDispatchReceipt } from '../RunQueueDispatchReceipt'
 import {
@@ -441,8 +442,11 @@ function normalizeWorkflowTemplate(value: unknown): WorkflowRunTemplate | null {
     externalPathGrants: input.externalPathGrants,
     geminiWorktree: input.geminiWorktree,
     codexReasoningEffort: input.codexReasoningEffort,
+    grokReasoningEffort: input.grokReasoningEffort,
+    cursorReasoningEffort: input.cursorReasoningEffort,
     codexServiceTier: input.codexServiceTier,
     claudeFastMode: input.claudeFastMode,
+    cursorFastMode: input.cursorFastMode,
     kimiThinkingEnabled: input.kimiThinkingEnabled,
     runtimeProfileId: input.runtimeProfileId,
     geminiAuthProfileId: input.geminiAuthProfileId,
@@ -1515,6 +1519,13 @@ function buildScheduledTaskDispatchReceipt(task: ScheduledTask) {
         ? { claudeReasoningEffort: task.claudeReasoningEffort }
         : {}),
       ...(task.claudeFastMode !== undefined ? { claudeFastMode: task.claudeFastMode } : {}),
+      ...(task.grokReasoningEffort !== undefined
+        ? { grokReasoningEffort: task.grokReasoningEffort }
+        : {}),
+      ...(task.cursorReasoningEffort !== undefined
+        ? { cursorReasoningEffort: task.cursorReasoningEffort }
+        : {}),
+      ...(task.cursorFastMode !== undefined ? { cursorFastMode: task.cursorFastMode } : {}),
       ...(task.kimiThinkingEnabled !== undefined
         ? { kimiThinkingEnabled: task.kimiThinkingEnabled }
         : {}),
@@ -2922,7 +2933,20 @@ export class AppStore {
           derived.codexReasoningEffort = participant.reasoningEffort
         } else if (participant.provider === 'claude') {
           derived.claudeReasoningEffort = participant.reasoningEffort
+        } else if (
+          participant.provider === 'grok' &&
+          isGrok45ReasoningModelId(participant.model)
+        ) {
+          derived.grokReasoningEffort = participant.reasoningEffort
+        } else if (
+          participant.provider === 'cursor' &&
+          isCursorGrok45ModelId(participant.model)
+        ) {
+          derived.cursorReasoningEffort = participant.reasoningEffort
         }
+      }
+      if (participant.provider === 'cursor' && participant.fastModeEnabled !== undefined) {
+        derived.cursorFastMode = participant.fastModeEnabled
       }
       return derived
     }
@@ -2995,6 +3019,9 @@ export class AppStore {
     selectedModelType?: string
     codexReasoningEffort?: string | null
     claudeReasoningEffort?: string | null
+    grokReasoningEffort?: string | null
+    cursorReasoningEffort?: string | null
+    cursorFastMode?: boolean
   }): ChatRecord {
     const parent = this.getChat(args.parentChatId)
     if (!parent) {
@@ -3033,7 +3060,14 @@ export class AppStore {
         : {}),
       ...(args.claudeReasoningEffort !== undefined
         ? { claudeReasoningEffort: args.claudeReasoningEffort }
-        : {})
+        : {}),
+      ...(args.grokReasoningEffort !== undefined
+        ? { grokReasoningEffort: args.grokReasoningEffort }
+        : {}),
+      ...(args.cursorReasoningEffort !== undefined
+        ? { cursorReasoningEffort: args.cursorReasoningEffort }
+        : {}),
+      ...(args.cursorFastMode !== undefined ? { cursorFastMode: args.cursorFastMode } : {})
     }
 
     const base: ChatRecord = {

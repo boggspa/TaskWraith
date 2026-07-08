@@ -655,7 +655,10 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
       workspacePath: deps.canonicalPath(workspace.path),
       provider: assertProviderId(input.provider),
       externalPathGrants: normalizeScheduledTaskExternalGrants(input.externalPathGrants),
+      grokReasoningEffort: optionalStringOrNull(input.grokReasoningEffort),
+      cursorReasoningEffort: optionalStringOrNull(input.cursorReasoningEffort),
       claudeFastMode: typeof input.claudeFastMode === 'boolean' ? input.claudeFastMode : undefined,
+      cursorFastMode: typeof input.cursorFastMode === 'boolean' ? input.cursorFastMode : undefined,
       runtimeProfileId: optionalString(input.runtimeProfileId),
       geminiAuthProfileId: optionalStringOrNull(input.geminiAuthProfileId),
       handoffSourceRunId: optionalString(input.handoffSourceRunId)
@@ -701,6 +704,16 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
     if ('claudeFastMode' in input) {
       sanitized.claudeFastMode =
         typeof input.claudeFastMode === 'boolean' ? input.claudeFastMode : undefined
+    }
+    if ('grokReasoningEffort' in input) {
+      sanitized.grokReasoningEffort = optionalStringOrNull(input.grokReasoningEffort)
+    }
+    if ('cursorReasoningEffort' in input) {
+      sanitized.cursorReasoningEffort = optionalStringOrNull(input.cursorReasoningEffort)
+    }
+    if ('cursorFastMode' in input) {
+      sanitized.cursorFastMode =
+        typeof input.cursorFastMode === 'boolean' ? input.cursorFastMode : undefined
     }
     if ('runtimeProfileId' in input) {
       sanitized.runtimeProfileId = optionalString(input.runtimeProfileId)
@@ -775,8 +788,11 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
       externalPathGrants: normalizeScheduledTaskExternalGrants(input.externalPathGrants),
       geminiWorktree: input.geminiWorktree as any,
       codexReasoningEffort: optionalString(input.codexReasoningEffort),
+      grokReasoningEffort: optionalString(input.grokReasoningEffort),
+      cursorReasoningEffort: optionalString(input.cursorReasoningEffort),
       codexServiceTier: optionalString(input.codexServiceTier),
       claudeFastMode: typeof input.claudeFastMode === 'boolean' ? input.claudeFastMode : undefined,
+      cursorFastMode: typeof input.cursorFastMode === 'boolean' ? input.cursorFastMode : undefined,
       kimiThinkingEnabled:
         typeof input.kimiThinkingEnabled === 'boolean' ? input.kimiThinkingEnabled : undefined,
       runtimeProfileId: optionalString(input.runtimeProfileId),

@@ -151,16 +151,22 @@ describe('Ollama provider model defaults', () => {
 })
 
 describe('Grok provider model defaults', () => {
-  it('uses Grok Build as the concrete Grok default while keeping Composer selectable', () => {
+  it('uses Grok 4.5 as the concrete Grok default while keeping Composer reasoning-free', () => {
     expect(GROK_DEFAULT_MODELS[0]).toMatchObject({
-      id: 'grok-build',
-      label: 'Grok Build 0.1',
+      id: 'grok-4.5',
+      label: 'Grok 4.5 Fast',
       isDefault: true
     })
+    expect(GROK_DEFAULT_MODELS[0].supportedReasoningEfforts?.map((option) => option.reasoningEffort)).toEqual([
+      'low',
+      'medium',
+      'high'
+    ])
     expect(GROK_DEFAULT_MODELS.map((model) => model.id)).toEqual([
-      'grok-build',
+      'grok-4.5',
       'grok-composer-2.5-fast'
     ])
+    expect(GROK_DEFAULT_MODELS[1].supportedReasoningEfforts).toBeUndefined()
   })
 })
 

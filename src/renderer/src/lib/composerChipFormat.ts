@@ -13,6 +13,10 @@
  */
 
 import type { ProviderId, ComposerStyle } from '../../../main/store/types'
+import {
+  isCursorGrok45ModelId,
+  isGrok45ReasoningModelId
+} from '../../../shared/grok45Models'
 
 export interface ComposerChipContext {
   provider: ProviderId
@@ -25,6 +29,10 @@ export interface ComposerChipContext {
   codexReasoningEffort?: string
   /** Claude reasoning effort token (e.g. "low" | "medium" | "high" | "xhigh" | "max" | "ultracode"). */
   claudeReasoningEffort?: string
+  /** Grok reasoning effort token (e.g. "low" | "medium" | "high"). */
+  grokReasoningEffort?: string
+  /** Cursor Grok reasoning effort token (e.g. "low" | "medium" | "high"). */
+  cursorReasoningEffort?: string
   /** Kimi thinking toggle (boolean). */
   kimiThinkingEnabled?: boolean
   /** Claude composer shell only — render explicit "Fast" between model +
@@ -39,8 +47,8 @@ export interface ComposerChipContext {
  * Claude (`claude-opus-4-7-1m`)            → `Opus 4.7 1M`
  * Kimi (`kimi-k2.7-code`, `kimi-k2.7-code-thinking`) → `K2.7 Code`
  * Gemini (`gemini-2.5-pro`)                → `2.5 Pro`
- * Cursor (`composer-2.5-fast`)             → `Composer 2.5 Fast`
- * Grok (`grok-composer-2.5-fast`)          → `Grok Composer 2.5 Fast`
+ * Cursor (`grok-4.5`)                      → `Cursor Grok 4.5`
+ * Grok (`grok-4.5`)                        → `Grok 4.5 Fast` (permanently Fast-mode)
  * Ollama (`qwen3:4b-instruct`)             → `Qwen 3 (4B Param)`
  *
  * Falls back to the full label when no provider-specific pattern matches.
@@ -55,7 +63,7 @@ export function shortModelName(provider: ProviderId, modelLabel: string, modelId
     if (provider === 'codex') return '5.5'
     if (provider === 'claude') return 'Sonnet 4.6'
     if (provider === 'kimi') return 'K2.7 Code'
-    if (provider === 'grok') return 'Grok Build 0.1'
+    if (provider === 'grok') return 'Grok 4.5 Fast'
     if (provider === 'cursor') return 'Composer 2.5 Fast'
     if (provider === 'ollama') return 'Qwen 3 (4B Param)'
     if (provider === 'gemini') return 'Flash Lite'
@@ -117,11 +125,18 @@ export function shortModelName(provider: ProviderId, modelLabel: string, modelId
     // composer-2.5-fast (Cursor's default = Fast mode) / composer-2.5 → human label.
     if (id === 'composer-2.5-fast') return 'Composer 2.5 Fast'
     if (id === 'composer-2.5') return 'Composer 2.5'
+    if (id === 'grok-4.5' || id === 'cursor-grok-4.5' || id.startsWith('grok-4.5')) {
+      return 'Cursor Grok 4.5'
+    }
   }
 
   if (provider === 'grok') {
+    // Grok's CLI models are permanently Fast-mode, so "Fast" is part of the name.
+    if (id === 'grok-4.5' || id === 'grok-4.5-latest' || id === 'grok-build-latest') {
+      return 'Grok 4.5 Fast'
+    }
     if (id === 'grok-composer-2.5-fast') return 'Grok Composer 2.5 Fast'
-    if (id === 'grok-build') return 'Grok Build 0.1'
+    if (id === 'grok-build' || id === 'grok-build-0.1') return 'Grok 4.5 Fast'
   }
 
   if (provider === 'ollama') {
@@ -187,6 +202,7 @@ export function shortModelName(provider: ProviderId, modelLabel: string, modelId
  *
  * Codex: `Light` / `Medium` / `High` / `Extra High` (low/light → "Light"; xhigh → "Extra High")
  * Claude: `Low` / `Medium` / `High` / `Extra` / `Max` / `Ultracode`
+ * Grok/Cursor Grok: `Low` / `Medium` / `High`
  * Kimi: `Thinking` when on, empty when off
  * Gemini: no reasoning concept today — returns empty
  *
@@ -205,6 +221,18 @@ export function reasoningDisplayLabel(ctx: ComposerChipContext): string {
 
   if (provider === 'kimi') {
     return ctx.kimiThinkingEnabled ? 'Thinking' : ''
+  }
+
+  if (provider === 'grok') {
+    return isGrok45ReasoningModelId(ctx.modelId)
+      ? grokReasoningDisplayLabel(ctx.grokReasoningEffort)
+      : ''
+  }
+
+  if (provider === 'cursor') {
+    return isCursorGrok45ModelId(ctx.modelId)
+      ? grokReasoningDisplayLabel(ctx.cursorReasoningEffort)
+      : ''
   }
 
   return ''
@@ -229,6 +257,15 @@ export function claudeReasoningDisplayLabel(effortValue?: string | null): string
   if (effort === 'xhigh' || effort === 'extra') return 'Extra'
   if (effort === 'max') return 'Max'
   if (effort === 'ultracode') return 'Ultracode'
+  return effort.charAt(0).toUpperCase() + effort.slice(1)
+}
+
+export function grokReasoningDisplayLabel(effortValue?: string | null): string {
+  const effort = (effortValue || '').toLowerCase()
+  if (!effort || effort === 'off') return ''
+  if (effort === 'low') return 'Low'
+  if (effort === 'medium') return 'Medium'
+  if (effort === 'high') return 'High'
   return effort.charAt(0).toUpperCase() + effort.slice(1)
 }
 
@@ -301,13 +338,18 @@ export function formatComposerModelChip(ctx: ComposerChipContext): string {
   const shellMatchesProvider =
     (composerStyle === 'codex' && provider === 'codex') ||
     (composerStyle === 'kimi' && provider === 'kimi') ||
-    (composerStyle === 'gemini' && provider === 'gemini')
+    (composerStyle === 'gemini' && provider === 'gemini') ||
+    (composerStyle === 'grok' && provider === 'grok') ||
+    (composerStyle === 'cursor' && provider === 'cursor')
 
   // Per-shell native format — only when the shell is themed FOR the
   // active provider. Mixed combinations fall back to the TaskWraith
   // default so the chip is always readable.
   if (shellMatchesProvider) {
-    const short = shortModelName(provider, modelLabel, modelId)
+    const short =
+      provider === 'cursor' && ctx.shellFastModeActive && modelId === 'composer-2.5-fast'
+        ? 'Composer 2.5'
+        : shortModelName(provider, modelLabel, modelId)
     if (provider === 'codex') {
       return reasoning ? `${short} ${reasoning}` : short
     }
@@ -317,9 +359,19 @@ export function formatComposerModelChip(ctx: ComposerChipContext): string {
     if (provider === 'gemini') {
       return short
     }
+    if (provider === 'grok' || provider === 'cursor') {
+      const fast = ctx.shellFastModeActive ? 'Fast' : ''
+      if (fast && reasoning) return `${short} ${reasoning} ${fast}`
+      if (fast) return `${short} ${fast}`
+      return reasoning ? `${short} ${reasoning}` : short
+    }
   }
 
   // Default (TaskWraith native shell, mismatched shell/provider, or
   // creative shells: modular / terminal / stub / satellite).
+  if (provider === 'cursor' && ctx.shellFastModeActive) {
+    const label = modelId === 'composer-2.5-fast' ? 'Composer 2.5' : modelLabel
+    return reasoning ? `${label} · ${reasoning} Fast` : `${label} · Fast`
+  }
   return reasoning ? `${modelLabel} · ${reasoning}` : modelLabel
 }

@@ -67,18 +67,19 @@ describe('getDefaultEnsembleParticipantConfig', () => {
     })
   })
 
-  it('returns grok defaults: Build 0.1 model, default approval, medium reasoning', () => {
+  it('returns grok defaults: Grok 4.5 model, default approval, high reasoning', () => {
     expect(getDefaultEnsembleParticipantConfig('grok')).toEqual({
-      model: 'grok-build',
+      model: 'grok-4.5',
       permissionPresetId: 'default',
-      reasoningEffort: 'medium'
+      reasoningEffort: 'high'
     })
   })
 
   it('returns cursor defaults: Composer 2.5 Fast model, default approval, no reasoning axis', () => {
     expect(getDefaultEnsembleParticipantConfig('cursor')).toEqual({
       model: 'composer-2.5-fast',
-      permissionPresetId: 'default'
+      permissionPresetId: 'default',
+      fastModeEnabled: true
     })
   })
 
@@ -369,25 +370,36 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
     expect(haiku.every((o) => o.disabled)).toBe(true)
   })
 
-  it('exposes grok preferred model id as Grok Build with the effort reasoning axis', () => {
+  it('exposes grok preferred model id as Grok 4.5 with the effort reasoning axis', () => {
     const grok = getEnsembleModelDefaults('grok')
-    expect(grok.defaultModelId).toBe('grok-build')
-    expect(grok.modelOptions.map((o) => o.id)).toEqual(['grok-build', 'grok-composer-2.5-fast'])
-    expect(grok.defaultReasoning).toBe('medium')
+    expect(grok.defaultModelId).toBe('grok-4.5')
+    expect(grok.modelOptions.map((o) => o.id)).toEqual(['grok-4.5', 'grok-composer-2.5-fast'])
+    expect(grok.defaultReasoning).toBe('high')
     expect(grok.reasoningOptions.map((o) => o.value)).toEqual([
       'low',
       'medium',
-      'high',
-      'xhigh',
-      'max'
+      'high'
     ])
+    expect(getEnsembleReasoningOptions('grok', 'grok-composer-2.5-fast')).toEqual([])
   })
 
-  it('exposes cursor models (composer-2.5 + fast) with no reasoning axis', () => {
+  it('exposes cursor Composer without reasoning and Cursor Grok 4.5 with reasoning/Fast', () => {
     const cursor = getEnsembleModelDefaults('cursor')
     expect(cursor.defaultModelId).toBe('composer-2.5-fast')
-    expect(cursor.modelOptions.map((o) => o.id)).toEqual(['composer-2.5', 'composer-2.5-fast'])
+    expect(cursor.modelOptions.map((o) => o.id)).toEqual([
+      'composer-2.5-fast',
+      'composer-2.5',
+      'grok-4.5'
+    ])
     expect(cursor.reasoningOptions).toEqual([])
+    expect(getEnsembleReasoningOptions('cursor', 'composer-2.5')).toEqual([])
+    expect(getEnsembleReasoningOptions('cursor', 'composer-2.5-fast')).toEqual([])
+    expect(getEnsembleReasoningOptions('cursor', 'grok-4.5').map((o) => o.value)).toEqual([
+      'low',
+      'medium',
+      'high'
+    ])
+    expect(cursor.fastModeCapableModelIds.has('grok-4.5')).toBe(true)
   })
 
   it('exposes local Ollama models with Qwen 3.5 as the default', () => {

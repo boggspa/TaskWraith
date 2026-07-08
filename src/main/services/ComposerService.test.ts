@@ -601,7 +601,7 @@ describe('ComposerService', () => {
     ])
   })
 
-  it('uses Grok Build as the Grok fallback instead of Gemini defaults', () => {
+  it('uses Grok 4.5 as the Grok fallback instead of Gemini defaults', () => {
     const payload = compose(
       {
         provider: 'grok',
@@ -616,7 +616,7 @@ describe('ComposerService', () => {
     )
 
     expect(payload.provider).toBe('grok')
-    expect(payload.model).toBe('grok-build')
+    expect(payload.model).toBe('grok-4.5')
   })
 
   it('passes provider-filtered external grants for non-Codex providers without Codex prompt text', () => {

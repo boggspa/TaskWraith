@@ -385,6 +385,8 @@ export class RunQueueService {
       codexNativeReview: Boolean(value.codexNativeReview) || undefined,
       codexReasoningEffort: optionalStringOrNull(value.codexReasoningEffort),
       claudeReasoningEffort: optionalStringOrNull(value.claudeReasoningEffort),
+      grokReasoningEffort: optionalStringOrNull(value.grokReasoningEffort),
+      cursorReasoningEffort: optionalStringOrNull(value.cursorReasoningEffort),
       codexServiceTier: optionalStringOrNull(value.codexServiceTier),
       geminiAuthProfileId: optionalStringOrNull(value.geminiAuthProfileId),
       guestParentChatId: optionalString(value.guestParentChatId),
@@ -393,6 +395,7 @@ export class RunQueueService {
         ? sanitizeRemoteComposer(value.remoteComposer)
         : undefined,
       claudeFastMode: typeof value.claudeFastMode === 'boolean' ? value.claudeFastMode : undefined,
+      cursorFastMode: typeof value.cursorFastMode === 'boolean' ? value.cursorFastMode : undefined,
       kimiThinkingEnabled:
         typeof value.kimiThinkingEnabled === 'boolean' ? value.kimiThinkingEnabled : undefined,
       scheduledTaskId: optionalString(value.scheduledTaskId),
@@ -553,6 +556,8 @@ function sanitizeRemoteComposer(value: unknown): RunQueueRequestSnapshot['remote
   const model = optionalString(value.model)
   const reasoningEffort = optionalStringOrNull(value.reasoningEffort)
   const claudeReasoningEffort = optionalStringOrNull(value.claudeReasoningEffort)
+  const grokReasoningEffort = optionalStringOrNull(value.grokReasoningEffort)
+  const cursorReasoningEffort = optionalStringOrNull(value.cursorReasoningEffort)
   const scheduledRunAt = optionalString(value.scheduledRunAt)
   return {
     workspaceId: optionalString(value.workspaceId) || '',
@@ -565,6 +570,9 @@ function sanitizeRemoteComposer(value: unknown): RunQueueRequestSnapshot['remote
     ...(model ? { model } : {}),
     ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
     ...(claudeReasoningEffort !== undefined ? { claudeReasoningEffort } : {}),
+    ...(grokReasoningEffort !== undefined ? { grokReasoningEffort } : {}),
+    ...(cursorReasoningEffort !== undefined ? { cursorReasoningEffort } : {}),
+    ...(typeof value.cursorFastMode === 'boolean' ? { cursorFastMode: value.cursorFastMode } : {}),
     ...(typeof value.contextTurns === 'number' ? { contextTurns: value.contextTurns } : {}),
     ...(scheduledRunAt ? { scheduledRunAt } : {}),
     ...(Array.isArray(value.extraWorkspaceIds)

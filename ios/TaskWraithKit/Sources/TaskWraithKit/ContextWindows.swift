@@ -42,11 +42,24 @@ public enum ContextWindows {
         // Kimi
         "kimi-k2.7-code": 256_000,
         "kimi-k2.6": 256_000,
-        // Grok — Composer 2.5 Fast runs through Grok Build CLI; grok-build is the
-        // 256K build model and grok-4.3 is the 1M API model.
+        // Grok
         "grok-composer-2.5-fast": 200_000,
-        "grok-build": 256_000,
+        "grok-4.5": 500_000,
+        "grok-4.5-latest": 500_000,
+        "grok-build-latest": 500_000,
+        "grok-build": 500_000,
+        "grok-build-0.1": 500_000,
         "grok-4.3": 1_000_000,
+        // Cursor
+        "composer-2.5": 200_000,
+        "composer-2.5-fast": 200_000,
+        "cursor-grok-4.5": 500_000,
+        "grok-4.5-medium": 500_000,
+        "grok-4.5-fast-medium": 500_000,
+        "grok-4.5-high": 500_000,
+        "grok-4.5-fast-high": 500_000,
+        "grok-4.5-xhigh": 500_000,
+        "grok-4.5-fast-xhigh": 500_000,
         // Ollama local defaults — conservative UI fallbacks when no live limit
         // is known.
         "qwen3:4b-instruct": 262_144,
@@ -83,7 +96,7 @@ public enum ContextWindows {
         "codex": 1_050_000,
         "claude": 200_000,
         "kimi": 256_000,
-        "grok": 256_000,
+        "grok": 500_000,
         "cursor": 200_000,
         "ollama": 262_144,
     ]

@@ -36,10 +36,12 @@ describe('normalizeGrokEffortFlag', () => {
   })
 
   it('passes through documented effort levels case-insensitively', () => {
-    for (const level of ['low', 'medium', 'high', 'xhigh', 'max']) {
+    for (const level of ['low', 'medium', 'high']) {
       expect(normalizeGrokEffortFlag(level)).toBe(level)
     }
     expect(normalizeGrokEffortFlag('HIGH')).toBe('high')
+    expect(normalizeGrokEffortFlag('xhigh')).toBeNull()
+    expect(normalizeGrokEffortFlag('max')).toBeNull()
   })
 
   it('rejects unknown values rather than passing them to the CLI', () => {
@@ -140,15 +142,15 @@ describe('buildGrokCliArgs', () => {
     expect(composerArgs[composerArgs.indexOf('--model') + 1]).toBe('grok-composer-2.5-fast')
   })
 
-  it('builds ACP stdio args with selected Grok model and effort before the subcommand', () => {
+  it('builds ACP stdio args with selected Grok 4.5 model and effort before the subcommand', () => {
     const args = buildGrokAcpCliArgs({
-      model: 'grok-composer-2.5-fast',
+      model: 'grok-4.5',
       reasoningEffort: 'high',
       readOnlySeat: true
     })
 
     expect(args[0]).toBe('--no-auto-update')
-    expect(args[args.indexOf('--model') + 1]).toBe('grok-composer-2.5-fast')
+    expect(args[args.indexOf('--model') + 1]).toBe('grok-4.5')
     expect(args[args.indexOf('--effort') + 1]).toBe('high')
     expect(args.slice(-2)).toEqual(['agent', 'stdio'])
     expect(args.indexOf('--model')).toBeLessThan(args.indexOf('agent'))
@@ -158,6 +160,15 @@ describe('buildGrokCliArgs', () => {
         .map((value, index) => (value === '--deny' ? args[index + 1] : null))
         .filter(Boolean)
     ).toEqual([...GROK_READ_ONLY_DENY_RULES])
+  })
+
+  it('does not pass effort for Grok Composer 2.5 Fast', () => {
+    const args = buildGrokAcpCliArgs({
+      model: 'grok-composer-2.5-fast',
+      reasoningEffort: 'high'
+    })
+    expect(args[args.indexOf('--model') + 1]).toBe('grok-composer-2.5-fast')
+    expect(args).not.toContain('--effort')
   })
 
   it('does not forward foreign model ids to ACP stdio', () => {

@@ -132,6 +132,10 @@ interface CombinedModelPickerProps {
   codexReasoningEffort?: string
   /** Claude reasoning effort token (so the chip text can format it). */
   claudeReasoningEffort?: string
+  /** Grok reasoning effort token (so the chip text can format it). */
+  grokReasoningEffort?: string
+  /** Cursor Grok reasoning effort token (so the chip text can format it). */
+  cursorReasoningEffort?: string
   /** Kimi thinking flag (so the chip text can format it). */
   kimiThinkingEnabled?: boolean
   /**
@@ -293,6 +297,8 @@ export function CombinedModelPicker({
   onSelectReasoning,
   codexReasoningEffort,
   claudeReasoningEffort,
+  grokReasoningEffort,
+  cursorReasoningEffort,
   kimiThinkingEnabled,
   fastModeCapableModelIds,
   fastModeEnabled,
@@ -369,7 +375,8 @@ export function CombinedModelPicker({
       : modelOptions
 
   const useClaudeShellChipLayout = composerStyle === 'claude'
-  const showShellFastLabel = useClaudeShellChipLayout && fastModeEnabled && fastModeCapable
+  const showShellFastLabel =
+    (useClaudeShellChipLayout || provider === 'cursor') && fastModeEnabled && fastModeCapable
   const showCodexShellFastBolt = composerStyle === 'codex' && fastModeEnabled && fastModeCapable
   const useCodexMonolineFastBolt = composerStyle === 'codex'
 
@@ -382,6 +389,8 @@ export function CombinedModelPicker({
         modelLabel: selectedModelOption.label,
         codexReasoningEffort,
         claudeReasoningEffort,
+        grokReasoningEffort,
+        cursorReasoningEffort,
         kimiThinkingEnabled,
         shellFastModeActive: showShellFastLabel
       }),
@@ -392,6 +401,8 @@ export function CombinedModelPicker({
       selectedModelOption.label,
       codexReasoningEffort,
       claudeReasoningEffort,
+      grokReasoningEffort,
+      cursorReasoningEffort,
       kimiThinkingEnabled,
       showShellFastLabel
     ]
@@ -406,6 +417,8 @@ export function CombinedModelPicker({
         modelLabel: selectedModelOption.label,
         codexReasoningEffort,
         claudeReasoningEffort,
+        grokReasoningEffort,
+        cursorReasoningEffort,
         kimiThinkingEnabled
       }),
     [
@@ -415,6 +428,8 @@ export function CombinedModelPicker({
       selectedModelOption.label,
       codexReasoningEffort,
       claudeReasoningEffort,
+      grokReasoningEffort,
+      cursorReasoningEffort,
       kimiThinkingEnabled
     ]
   )

@@ -44,7 +44,7 @@ import type { ProviderId } from '../store/types'
 
 /** Snapshot date for the baked-in rate values. Bump alongside the
  * rate values themselves when the manual diligence cycle runs. */
-export const RATE_TABLE_VERSION = '2026-06-28'
+export const RATE_TABLE_VERSION = '2026-07-08'
 
 /**
  * Per-model rate entry. Rates are USD per 1,000,000 tokens (so
@@ -114,24 +114,34 @@ export interface ProviderRateTable {
  * comparable capability.
  */
 export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
-  // Grok (gated). IMPORTANT: TaskWraith drives Grok through the SuperGrok CLI
+  // Grok. IMPORTANT: TaskWraith drives Grok through the SuperGrok CLI
   // subscription (a credit pool — see GrokUsage's "Subscription credits"
   // meter), NOT the xAI per-token API. These rates are therefore a PROJECTED
   // API-equivalent ("what this run would have cost on the xAI API"), not actual
-  // billing. Captured from xAI pricing docs 2026-06-23.
+  // billing. Captured from xAI model docs 2026-07-08.
   grok: {
     provider: 'grok',
     pricingUrl: 'https://docs.x.ai/developers/pricing',
     models: [
       {
-        modelId: 'grok-build',
-        inputUsdPerMillion: 1.0,
-        outputUsdPerMillion: 2.0,
-        cachedInputUsdPerMillion: 0.2,
-        sourceUrl: 'https://docs.x.ai/developers/pricing',
+        modelId: 'grok-4.5',
+        inputUsdPerMillion: 2.0,
+        outputUsdPerMillion: 6.0,
+        cachedInputUsdPerMillion: 0.5,
+        sourceUrl: 'https://docs.x.ai/developers/models/grok-4.5',
         lastVerified: RATE_TABLE_VERSION,
         notes:
-          'xAI API pricing for grok-build-0.1 (256K ctx). PROJECTED API-equivalent; CLI auth bills via subscription credits.'
+          'xAI API pricing for Grok 4.5 (500K ctx). PROJECTED API-equivalent; CLI auth bills via subscription credits.'
+      },
+      {
+        modelId: 'grok-build',
+        inputUsdPerMillion: 2.0,
+        outputUsdPerMillion: 6.0,
+        cachedInputUsdPerMillion: 0.5,
+        sourceUrl: 'https://docs.x.ai/developers/models/grok-4.5',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'Historical Grok Build id now maps to Grok 4.5. PROJECTED API-equivalent; CLI auth bills via subscription credits.'
       },
       {
         modelId: 'grok-composer-2.5-fast',
@@ -162,7 +172,7 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
   // as a conservative interactive-session proxy (estimated, not billed).
   cursor: {
     provider: 'cursor',
-    pricingUrl: 'https://cursor.com/docs/models/cursor-composer-2-5',
+    pricingUrl: 'https://cursor.com/docs/models-and-pricing',
     models: [
       {
         modelId: 'composer-2.5-fast',
@@ -181,6 +191,26 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         lastVerified: RATE_TABLE_VERSION,
         notes:
           'Composer 2.5 Standard tier. PROJECTED API-equivalent — exact rows should use this lower standard-tier rate instead of the Fast proxy.'
+      },
+      {
+        modelId: 'grok-4.5',
+        inputUsdPerMillion: 2.0,
+        outputUsdPerMillion: 6.0,
+        cachedInputUsdPerMillion: 0.5,
+        sourceUrl: 'https://cursor.com/docs/models-and-pricing',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'Cursor Grok 4.5 first-party model pool row. PROJECTED API-equivalent; individual plans draw from Cursor included/auto quota.'
+      },
+      {
+        modelId: 'cursor-grok-4.5',
+        inputUsdPerMillion: 2.0,
+        outputUsdPerMillion: 6.0,
+        cachedInputUsdPerMillion: 0.5,
+        sourceUrl: 'https://cursor.com/docs/models-and-pricing',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'UI alias for Cursor Grok 4.5. PROJECTED API-equivalent; individual plans draw from Cursor included/auto quota.'
       }
     ]
   },

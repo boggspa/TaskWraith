@@ -128,7 +128,7 @@ const DEFAULT_RATE_MODEL_BY_PROVIDER: Partial<Record<ProviderId, string>> = {
   claude: 'claude-sonnet-5',
   gemini: 'gemini-3.1-flash-lite',
   kimi: 'kimi-k2.7-code',
-  grok: 'grok-build',
+  grok: 'grok-4.5',
   cursor: 'composer-2.5-fast',
   ollama: 'qwen3:4b-instruct'
 }
@@ -147,6 +147,13 @@ function canonicalRateModelId(
   if (DEFAULT_MODEL_SENTINELS.has(key)) return fallback
   if (provider === 'codex' && CODEX_DEFAULT_SENTINELS.has(key)) return fallback
   if (provider === 'gemini' && key === 'flash-lite') return fallback
+  if (provider === 'grok' && (key === 'grok-build' || key === 'grok-build-0.1')) return fallback
+  if (
+    provider === 'cursor' &&
+    (key === 'cursor-grok-4.5' || key.startsWith('grok-4.5-fast-') || key.startsWith('grok-4.5-'))
+  ) {
+    return 'grok-4.5'
+  }
   return trimmed
 }
 

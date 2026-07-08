@@ -45,11 +45,24 @@ const CONTEXT_WINDOWS_BY_MODEL: Record<string, number> = {
   // Kimi
   'kimi-k2.7-code': 256_000,
   'kimi-k2.6': 256_000,
-  // Grok - Composer 2.5 Fast is selected through Grok Build CLI; grok-build is
-  // the 256K build model and grok-4.3 is the 1M API model.
+  // Grok
   'grok-composer-2.5-fast': 200_000,
-  'grok-build': 256_000,
+  'grok-4.5': 500_000,
+  'grok-4.5-latest': 500_000,
+  'grok-build-latest': 500_000,
+  'grok-build': 500_000,
+  'grok-build-0.1': 500_000,
   'grok-4.3': 1_000_000,
+  // Cursor
+  'composer-2.5': 200_000,
+  'composer-2.5-fast': 200_000,
+  'cursor-grok-4.5': 500_000,
+  'grok-4.5-medium': 500_000,
+  'grok-4.5-fast-medium': 500_000,
+  'grok-4.5-high': 500_000,
+  'grok-4.5-fast-high': 500_000,
+  'grok-4.5-xhigh': 500_000,
+  'grok-4.5-fast-xhigh': 500_000,
   // Ollama local defaults. qwen3:4b advertises a large context in Ollama
   // metadata, but use a conservative UI fallback when no live limit is known.
   'qwen3:4b-instruct': 262_144,
@@ -84,9 +97,7 @@ const PROVIDER_FALLBACK_WINDOW: Record<ContextWindowProviderId, number> = {
   codex: 1_050_000,
   claude: 200_000,
   kimi: 256_000,
-  // Grok (gated) - placeholder until G10 wires real model metadata.
-  grok: 256_000,
-  // Cursor (gated) - Composer 2.5 placeholder until real metadata.
+  grok: 500_000,
   cursor: 200_000,
   // Ollama - local models vary by tag, so keep the fallback conservative.
   ollama: 262_144

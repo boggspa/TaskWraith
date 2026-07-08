@@ -191,6 +191,9 @@ export interface ProviderReroutePlan {
   claudeReasoningEffort?: string | null
   claudeFastMode?: boolean | null
   kimiThinkingEnabled?: boolean
+  grokReasoningEffort?: string | null
+  cursorReasoningEffort?: string | null
+  cursorFastMode?: boolean | null
 }
 export interface ProviderRunPauseState {
   paused: boolean
@@ -3763,6 +3766,9 @@ export interface ScheduledTask {
   claudeReasoningEffort?: string | null
   claudeFastMode?: boolean | null
   kimiThinkingEnabled?: boolean
+  grokReasoningEffort?: string | null
+  cursorReasoningEffort?: string | null
+  cursorFastMode?: boolean | null
   runtimeProfileId?: string
   geminiAuthProfileId?: string | null
   handoffSourceRunId?: string
@@ -4701,6 +4707,9 @@ export interface RunQueueRequestSnapshot {
   claudeReasoningEffort?: string | null
   claudeFastMode?: boolean | null
   kimiThinkingEnabled?: boolean
+  grokReasoningEffort?: string | null
+  cursorReasoningEffort?: string | null
+  cursorFastMode?: boolean | null
   scheduledTaskId?: string
   scheduledRunAt?: string
   preserveComposer?: boolean
@@ -4720,6 +4729,9 @@ export interface RunQueueRequestSnapshot {
     model?: string
     reasoningEffort?: string | null
     claudeReasoningEffort?: string | null
+    grokReasoningEffort?: string | null
+    cursorReasoningEffort?: string | null
+    cursorFastMode?: boolean
     contextTurns?: number
     extraWorkspaceIds?: string[]
     scheduledRunAt?: string

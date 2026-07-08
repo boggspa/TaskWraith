@@ -123,24 +123,26 @@ describe('getStaticProviderModels (provider-specific catalogs)', () => {
     const grok = getStaticProviderModels('grok').map((m) => m.id)
     const cursor = getStaticProviderModels('cursor').map((m) => m.id)
     expect(gemini).toContain('flash')
-    expect(grok).toEqual(['grok-build', 'grok-composer-2.5-fast'])
-    expect(cursor).toEqual(['composer-2.5-fast', 'composer-2.5'])
+    expect(grok).toEqual(['grok-4.5', 'grok-composer-2.5-fast'])
+    expect(cursor).toEqual(['composer-2.5-fast', 'composer-2.5', 'grok-4.5'])
   })
 
   it('normalizes invalid cross-provider model ids back to provider defaults', () => {
-    expect(normalizeCliProviderModel('grok', 'flash')).toBe('grok-build')
+    expect(normalizeCliProviderModel('grok', 'flash')).toBe('grok-4.5')
     expect(normalizeCliProviderModel('cursor', 'pro')).toBe('composer-2.5-fast')
     expect(normalizeCliProviderModel('gemini', 'flash')).toBe('flash')
     expect(normalizeCliProviderModel('gemini', 'cli-default')).toBe('flash-lite')
   })
 
-  it('uses Grok Build as the default while keeping Grok Composer selectable', () => {
-    expect(normalizeCliProviderModel('grok', undefined)).toBe('grok-build')
-    expect(normalizeCliProviderModel('grok', 'cli-default')).toBe('grok-build')
+  it('uses Grok 4.5 as the default while keeping Grok Composer selectable', () => {
+    expect(normalizeCliProviderModel('grok', undefined)).toBe('grok-4.5')
+    expect(normalizeCliProviderModel('grok', 'cli-default')).toBe('grok-4.5')
     expect(normalizeCliProviderModel('grok', 'grok-composer-2.5-fast')).toBe(
       'grok-composer-2.5-fast'
     )
-    expect(normalizeCliProviderModel('grok', 'composer-2.5-fast')).toBe('grok-build')
+    expect(normalizeCliProviderModel('grok', 'composer-2.5-fast')).toBe('grok-4.5')
+    expect(normalizeCliProviderModel('grok', 'grok-build')).toBe('grok-4.5')
+    expect(normalizeCliProviderModel('cursor', 'grok-4.5-fast-xhigh')).toBe('grok-4.5')
   })
 
   it('exposes the curated optional Ollama model tags', () => {

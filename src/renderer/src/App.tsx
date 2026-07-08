@@ -387,9 +387,17 @@ import { useCopyFeedback } from './lib/useCopyFeedback'
 import {
   codexReasoningDisplayLabel,
   claudeReasoningDisplayLabel,
+  grokReasoningDisplayLabel,
   reasoningDisplayLabel,
   shortModelName
 } from './lib/composerChipFormat'
+import {
+  CURSOR_GROK_45_BASE_MODEL_ID,
+  GROK_45_DEFAULT_REASONING_EFFORT,
+  GROK_45_MODEL_ID,
+  isCursorGrok45ModelId,
+  isGrok45ReasoningModelId
+} from '../../shared/grok45Models'
 import {
   deleteEnsembleRosterPreset,
   listEnsembleRosterPresets,
@@ -1721,6 +1729,13 @@ function App(): React.JSX.Element {
    */
   const [claudeFastMode, setClaudeFastMode] = useState<boolean>(false)
   const [kimiThinkingEnabled, setKimiThinkingEnabled] = useState<boolean>(true)
+  const [grokReasoningEffort, setGrokReasoningEffort] = useState<string>(
+    GROK_45_DEFAULT_REASONING_EFFORT
+  )
+  const [cursorReasoningEffort, setCursorReasoningEffort] = useState<string>(
+    GROK_45_DEFAULT_REASONING_EFFORT
+  )
+  const [cursorFastMode, setCursorFastMode] = useState<boolean>(false)
   const [approvalMode, setApprovalMode] = useState<string>('default')
   // Permission-mode ELEVATION warning sheet. When a picker raise needs a
   // failsafe (Tier 1 → Default Approval, shown once per workspace+provider;
@@ -3246,6 +3261,25 @@ function App(): React.JSX.Element {
         : {}),
       ...(provider === 'kimi'
         ? { kimiThinkingEnabled: participant.thinkingEnabled ?? true }
+        : {}),
+      ...(provider === 'grok'
+        ? isGrok45ReasoningModelId(providerModel)
+          ? {
+              grokReasoningEffort:
+                participant.reasoningEffort || GROK_45_DEFAULT_REASONING_EFFORT
+            }
+          : { grokReasoningEffort: '' }
+        : {}),
+      ...(provider === 'cursor'
+        ? {
+            ...(isCursorGrok45ModelId(providerModel)
+              ? {
+                  cursorReasoningEffort:
+                    participant.reasoningEffort || GROK_45_DEFAULT_REASONING_EFFORT
+                }
+              : { cursorReasoningEffort: '' }),
+            cursorFastMode: Boolean(participant.fastModeEnabled)
+          }
         : {})
     }
   }
@@ -3351,6 +3385,21 @@ function App(): React.JSX.Element {
             ? typeof fallbackMetadata.kimiThinkingEnabled === 'boolean'
               ? { kimiThinkingEnabled: fallbackMetadata.kimiThinkingEnabled }
               : {}
+            : {}),
+          ...(fallbackProvider === 'grok'
+            ? typeof fallbackMetadata.grokReasoningEffort === 'string'
+              ? { grokReasoningEffort: fallbackMetadata.grokReasoningEffort }
+              : {}
+            : {}),
+          ...(fallbackProvider === 'cursor'
+            ? {
+                ...(typeof fallbackMetadata.cursorReasoningEffort === 'string'
+                  ? { cursorReasoningEffort: fallbackMetadata.cursorReasoningEffort }
+                  : {}),
+                ...(typeof fallbackMetadata.cursorFastMode === 'boolean'
+                  ? { cursorFastMode: fallbackMetadata.cursorFastMode }
+                  : {})
+              }
             : {})
         }
       })
@@ -4595,11 +4644,11 @@ function App(): React.JSX.Element {
     if (provider === 'codex') return isCodexModelId(modelId)
     if (provider === 'claude') return isClaudeModelId(modelId)
     if (provider === 'kimi') return isKimiModelId(modelId)
-    // Grok (gated): only a genuine grok* model id is valid — never a model
+    // Grok: only a genuine grok* model id is valid - never a model
     // carried over from another provider. A legacy 'cli-default' coerces to the
-    // provider default so the picker shows "Grok Composer 2.5 Fast", not blank.
+    // provider default so the picker shows Grok 4.5, not blank.
     if (provider === 'grok') return modelId.startsWith('grok')
-    if (provider === 'cursor') return modelId.startsWith('composer-')
+    if (provider === 'cursor') return modelId.startsWith('composer-') || isCursorGrok45ModelId(modelId)
     if (provider === 'ollama') return isOllamaModelId(modelId)
     return isGeminiModelId(modelId)
   }
@@ -4747,11 +4796,21 @@ function App(): React.JSX.Element {
             (model) => model.id === selected
           )
         : undefined
+    const providerModelOption = getProviderModelOptions(provider).find(
+      (model) => model.id === selected
+    )
     const enabledClaudeReasoningEfforts = new Set(
       resolveClaudeReasoningEfforts(claudeModelOption)
         .filter((option) => !option.disabled)
         .map((option) => option.reasoningEffort)
     )
+    const providerReasoningEfforts = new Set(
+      (providerModelOption?.supportedReasoningEfforts || [])
+        .filter((option) => !option.disabled)
+        .map((option) => option.reasoningEffort)
+    )
+    const providerDefaultReasoning =
+      providerModelOption?.defaultReasoningEffort || GROK_45_DEFAULT_REASONING_EFFORT
     // Tier retirement (2026-07): Ollama chats resolve their permission role the
     // same way as every provider — the persisted per-chat approvalMode, else the
     // snapshot/composer default ('default' = Default Approval out of the box). No
@@ -4793,6 +4852,24 @@ function App(): React.JSX.Element {
         typeof metadata.claudeFastMode === 'boolean' ? metadata.claudeFastMode : false,
       kimiThinkingEnabled:
         typeof metadata.kimiThinkingEnabled === 'boolean' ? metadata.kimiThinkingEnabled : true,
+      grokReasoningEffort:
+        typeof metadata.grokReasoningEffort === 'string' &&
+        providerReasoningEfforts.has(metadata.grokReasoningEffort)
+          ? metadata.grokReasoningEffort
+          : providerDefaultReasoning,
+      cursorReasoningEffort:
+        typeof metadata.cursorReasoningEffort === 'string' &&
+        providerReasoningEfforts.has(metadata.cursorReasoningEffort)
+          ? metadata.cursorReasoningEffort
+          : providerDefaultReasoning,
+      cursorFastMode:
+        selected === 'composer-2.5-fast'
+          ? true
+          : selected === 'composer-2.5'
+            ? false
+            : typeof metadata.cursorFastMode === 'boolean'
+              ? metadata.cursorFastMode
+              : false,
       // Solo-chat Ollama run profile: honored only if a legacy chat still
       // carries one in providerMetadata (there is no picker to set it any more).
       // Absent → undefined → the runtime defaults to provider_parity. The
@@ -4816,6 +4893,9 @@ function App(): React.JSX.Element {
     setClaudeReasoningEffort(selection.claudeReasoningEffort)
     setClaudeFastMode(selection.claudeFastMode)
     setKimiThinkingEnabled(selection.kimiThinkingEnabled)
+    setGrokReasoningEffort(selection.grokReasoningEffort)
+    setCursorReasoningEffort(selection.cursorReasoningEffort)
+    setCursorFastMode(selection.cursorFastMode)
     setRuntimeProfileForChat(
       chat.appChatId,
       getRuntimeProfileIdForChat(chat, selection.provider) || ''
@@ -4868,6 +4948,21 @@ function App(): React.JSX.Element {
         : {}),
       ...(provider === 'kimi'
         ? { thinkingEnabled: selection.kimiThinkingEnabled ?? defaults.thinkingEnabled ?? true }
+        : {}),
+      ...(provider === 'grok'
+        ? isGrok45ReasoningModelId(selection.selectedModelType)
+          ? { reasoningEffort: selection.grokReasoningEffort || defaults.reasoningEffort }
+          : {}
+        : {}),
+      ...(provider === 'cursor'
+        ? {
+            ...(isCursorGrok45ModelId(selection.selectedModelType)
+              ? { reasoningEffort: selection.cursorReasoningEffort || defaults.reasoningEffort }
+              : {}),
+            fastModeEnabled: isCursorGrok45ModelId(selection.selectedModelType)
+              ? Boolean(selection.cursorFastMode)
+              : selection.selectedModelType === 'composer-2.5-fast'
+          }
         : {})
     }
   }
@@ -4904,6 +4999,9 @@ function App(): React.JSX.Element {
     'claudeReasoningEffort',
     'claudeFastMode',
     'kimiThinkingEnabled',
+    'grokReasoningEffort',
+    'cursorReasoningEffort',
+    'cursorFastMode',
     'runtimeProfileId',
     'geminiAuthProfileId'
   ])
@@ -6157,7 +6255,16 @@ function App(): React.JSX.Element {
             : undefined,
         claudeFastMode: provider === 'claude' ? Boolean(defaults.fastModeEnabled) : undefined,
         kimiThinkingEnabled:
-          provider === 'kimi' ? (defaults.thinkingEnabled ?? true) : undefined
+          provider === 'kimi' ? (defaults.thinkingEnabled ?? true) : undefined,
+        grokReasoningEffort:
+          provider === 'grok'
+            ? defaults.reasoningEffort || GROK_45_DEFAULT_REASONING_EFFORT
+            : undefined,
+        cursorReasoningEffort:
+          provider === 'cursor'
+            ? defaults.reasoningEffort || GROK_45_DEFAULT_REASONING_EFFORT
+            : undefined,
+        cursorFastMode: provider === 'cursor' ? Boolean(defaults.fastModeEnabled) : undefined
       }
       return {
         change: {
@@ -10371,6 +10478,15 @@ function App(): React.JSX.Element {
       ...(snapshot.kimiThinkingEnabled !== undefined
         ? { kimiThinkingEnabled: snapshot.kimiThinkingEnabled }
         : {}),
+      ...(snapshot.grokReasoningEffort !== undefined
+        ? { grokReasoningEffort: snapshot.grokReasoningEffort }
+        : {}),
+      ...(snapshot.cursorReasoningEffort !== undefined
+        ? { cursorReasoningEffort: snapshot.cursorReasoningEffort }
+        : {}),
+      ...(snapshot.cursorFastMode !== undefined
+        ? { cursorFastMode: snapshot.cursorFastMode }
+        : {}),
       ...(snapshot.scheduledTaskId ? { scheduledTaskId: snapshot.scheduledTaskId } : {}),
       ...(snapshot.scheduledRunAt ? { scheduledRunAt: snapshot.scheduledRunAt } : {}),
       ...(snapshot.runtimeProfileId ? { runtimeProfileId: snapshot.runtimeProfileId } : {}),
@@ -10446,6 +10562,13 @@ function App(): React.JSX.Element {
     ...(request.kimiThinkingEnabled !== undefined
       ? { kimiThinkingEnabled: request.kimiThinkingEnabled }
       : {}),
+    ...(request.grokReasoningEffort !== undefined
+      ? { grokReasoningEffort: request.grokReasoningEffort }
+      : {}),
+    ...(request.cursorReasoningEffort !== undefined
+      ? { cursorReasoningEffort: request.cursorReasoningEffort }
+      : {}),
+    ...(request.cursorFastMode !== undefined ? { cursorFastMode: request.cursorFastMode } : {}),
     ...(request.scheduledTaskId ? { scheduledTaskId: request.scheduledTaskId } : {}),
     ...(request.scheduledRunAt ? { scheduledRunAt: request.scheduledRunAt } : {}),
     ...(request.runtimeProfileId ? { runtimeProfileId: request.runtimeProfileId } : {}),
@@ -10567,6 +10690,11 @@ function App(): React.JSX.Element {
       claudeFastMode: queuedProviderSelection?.claudeFastMode ?? request.claudeFastMode,
       kimiThinkingEnabled:
         queuedProviderSelection?.kimiThinkingEnabled ?? request.kimiThinkingEnabled,
+      grokReasoningEffort:
+        queuedProviderSelection?.grokReasoningEffort ?? request.grokReasoningEffort,
+      cursorReasoningEffort:
+        queuedProviderSelection?.cursorReasoningEffort ?? request.cursorReasoningEffort,
+      cursorFastMode: queuedProviderSelection?.cursorFastMode ?? request.cursorFastMode,
       scheduledTaskId: request.scheduledTaskId,
       scheduledRunAt: request.scheduledRunAt,
       runtimeProfileId: queuedProviderSelection
@@ -10813,6 +10941,18 @@ function App(): React.JSX.Element {
         : claudeReasoningEffort
     const requestClaudeFastMode =
       provider === 'claude' ? (composerSelection?.claudeFastMode ?? claudeFastMode) : claudeFastMode
+    const requestGrokReasoningEffort =
+      provider === 'grok'
+        ? composerSelection?.grokReasoningEffort || grokReasoningEffort
+        : grokReasoningEffort
+    const requestCursorReasoningEffort =
+      provider === 'cursor'
+        ? composerSelection?.cursorReasoningEffort || cursorReasoningEffort
+        : cursorReasoningEffort
+    const requestCursorFastMode =
+      provider === 'cursor'
+        ? (composerSelection?.cursorFastMode ?? cursorFastMode)
+        : cursorFastMode
     const normalizedExternalPathGrants =
       scope !== 'global'
         ? normalizeExternalPathGrants(
@@ -10858,6 +10998,9 @@ function App(): React.JSX.Element {
       claudeReasoningEffort: requestClaudeReasoningEffort,
       claudeFastMode: requestClaudeFastMode,
       kimiThinkingEnabled: requestKimiThinkingEnabled,
+      grokReasoningEffort: requestGrokReasoningEffort,
+      cursorReasoningEffort: requestCursorReasoningEffort,
+      cursorFastMode: requestCursorFastMode,
       runtimeProfileId: getRuntimeProfileIdForChat(selectedChat, provider),
       geminiAuthProfileId:
         provider === 'gemini'
@@ -11339,6 +11482,9 @@ function App(): React.JSX.Element {
           claudeReasoningEffort: request.claudeReasoningEffort,
           claudeFastMode: request.claudeFastMode,
           kimiThinkingEnabled: request.kimiThinkingEnabled,
+          grokReasoningEffort: request.grokReasoningEffort,
+          cursorReasoningEffort: request.cursorReasoningEffort,
+          cursorFastMode: request.cursorFastMode,
           runtimeProfileId: request.runtimeProfileId,
           geminiAuthProfileId: request.geminiAuthProfileId,
           handoffSourceRunId: request.handoffSourceRunId,
@@ -13880,8 +14026,12 @@ function App(): React.JSX.Element {
       geminiWorktree: request.geminiWorktree,
       codexReasoningEffort: request.codexReasoningEffort,
       codexServiceTier: request.codexServiceTier,
+      claudeReasoningEffort: request.claudeReasoningEffort,
       claudeFastMode: request.claudeFastMode,
       kimiThinkingEnabled: request.kimiThinkingEnabled,
+      grokReasoningEffort: request.grokReasoningEffort,
+      cursorReasoningEffort: request.cursorReasoningEffort,
+      cursorFastMode: request.cursorFastMode,
       runtimeProfileId: request.runtimeProfileId,
       geminiAuthProfileId: request.geminiAuthProfileId,
       handoffSourceRunId: request.handoffSourceRunId,
@@ -14676,8 +14826,12 @@ function App(): React.JSX.Element {
           : resolveGeminiWorktreeConfig(workspace || null),
       codexReasoningEffort: selection.codexReasoningEffort,
       codexServiceTier: selection.codexServiceTier,
+      claudeReasoningEffort: selection.claudeReasoningEffort,
       claudeFastMode: selection.claudeFastMode,
       kimiThinkingEnabled: selection.kimiThinkingEnabled,
+      grokReasoningEffort: selection.grokReasoningEffort,
+      cursorReasoningEffort: selection.cursorReasoningEffort,
+      cursorFastMode: selection.cursorFastMode,
       runtimeProfileId: lane.runtimeProfileId || getRuntimeProfileIdForChat(chat, provider),
       handoffSourceRunId: lane.handoffSourceRunId,
       workspaceRecord: getChatScope(chat) === 'global' ? undefined : workspace,
@@ -14917,6 +15071,15 @@ function App(): React.JSX.Element {
       if (dispatchTask.provider === 'kimi') {
         setKimiThinkingEnabled(dispatchTask.kimiThinkingEnabled !== false)
       }
+      if (dispatchTask.provider === 'grok') {
+        setGrokReasoningEffort(dispatchTask.grokReasoningEffort || GROK_45_DEFAULT_REASONING_EFFORT)
+      }
+      if (dispatchTask.provider === 'cursor') {
+        setCursorReasoningEffort(
+          dispatchTask.cursorReasoningEffort || GROK_45_DEFAULT_REASONING_EFFORT
+        )
+        setCursorFastMode(Boolean(dispatchTask.cursorFastMode))
+      }
 
       const scheduledRunId =
         dispatchTask.runId || `${dispatchTask.provider}-scheduled-${Date.now()}`
@@ -14950,8 +15113,12 @@ function App(): React.JSX.Element {
         geminiWorktree: dispatchTask.geminiWorktree,
         codexReasoningEffort: dispatchTask.codexReasoningEffort,
         codexServiceTier: dispatchTask.codexServiceTier,
+        claudeReasoningEffort: dispatchTask.claudeReasoningEffort,
         claudeFastMode: dispatchTask.claudeFastMode,
         kimiThinkingEnabled: dispatchTask.kimiThinkingEnabled,
+        grokReasoningEffort: dispatchTask.grokReasoningEffort,
+        cursorReasoningEffort: dispatchTask.cursorReasoningEffort,
+        cursorFastMode: dispatchTask.cursorFastMode,
         runtimeProfileId: dispatchTask.runtimeProfileId,
         geminiAuthProfileId: dispatchTask.geminiAuthProfileId,
         handoffSourceRunId: dispatchTask.handoffSourceRunId,
@@ -18170,6 +18337,11 @@ function App(): React.JSX.Element {
     sideComposerSelection?.claudeReasoningEffort ||
     resolveClaudeDefaultReasoningEffort(sideClaudeModelOption)
   const sideKimiThinking = sideComposerSelection?.kimiThinkingEnabled ?? true
+  const sideGrokReasoning =
+    sideComposerSelection?.grokReasoningEffort || GROK_45_DEFAULT_REASONING_EFFORT
+  const sideCursorReasoning =
+    sideComposerSelection?.cursorReasoningEffort || GROK_45_DEFAULT_REASONING_EFFORT
+  const sideCursorFastMode = Boolean(sideComposerSelection?.cursorFastMode)
   let sideComposerReasoningOptions: CombinedModelPickerReasoningOption[] = []
   let sideComposerSelectedReasoning = ''
   if (sideComposerProvider === 'codex') {
@@ -18201,6 +18373,26 @@ function App(): React.JSX.Element {
       { value: 'off', label: 'Thinking off' }
     ]
     sideComposerSelectedReasoning = sideKimiThinking ? 'on' : 'off'
+  } else if (
+    sideComposerProvider === 'grok' &&
+    isGrok45ReasoningModelId(sideComposerSelectedModel)
+  ) {
+    sideComposerReasoningOptions = [
+      { value: 'low', label: grokReasoningDisplayLabel('low') },
+      { value: 'medium', label: grokReasoningDisplayLabel('medium') },
+      { value: 'high', label: grokReasoningDisplayLabel('high') }
+    ]
+    sideComposerSelectedReasoning = sideGrokReasoning
+  } else if (
+    sideComposerProvider === 'cursor' &&
+    isCursorGrok45ModelId(sideComposerSelectedModel)
+  ) {
+    sideComposerReasoningOptions = [
+      { value: 'low', label: grokReasoningDisplayLabel('low') },
+      { value: 'medium', label: grokReasoningDisplayLabel('medium') },
+      { value: 'high', label: grokReasoningDisplayLabel('high') }
+    ]
+    sideComposerSelectedReasoning = sideCursorReasoning
   }
   const sideFastModeCapableModelIds = (() => {
     if (sideComposerProvider === 'codex') {
@@ -18218,7 +18410,12 @@ function App(): React.JSX.Element {
       )
     }
     if (sideComposerProvider === 'cursor') {
-      return new Set(['composer-2.5', 'composer-2.5-fast'])
+      return new Set(['composer-2.5', 'composer-2.5-fast', CURSOR_GROK_45_BASE_MODEL_ID])
+    }
+    if (sideComposerProvider === 'grok') {
+      // Both Grok models are permanently Fast-mode → Fast ⚡ glyph on both
+      // rows. No onToggleFastMode is passed for grok, so no toggle renders.
+      return new Set([GROK_45_MODEL_ID, 'grok-composer-2.5-fast'])
     }
     return new Set<string>()
   })()
@@ -18228,7 +18425,9 @@ function App(): React.JSX.Element {
       : sideComposerProvider === 'claude'
         ? Boolean(sideComposerSelection?.claudeFastMode)
         : sideComposerProvider === 'cursor'
-          ? sideComposerSelectedModel === 'composer-2.5-fast'
+          ? isCursorGrok45ModelId(sideComposerSelectedModel)
+            ? sideCursorFastMode
+            : sideComposerSelectedModel === 'composer-2.5-fast'
           : false
   const sidePermissionOptions: PermissionOption[] = [
     { value: 'plan', label: PLAN_LABEL },
@@ -18347,6 +18546,19 @@ function App(): React.JSX.Element {
         metadataPatch.claudeFastMode = false
       }
     }
+    if (sideComposerProvider === 'grok') {
+      metadataPatch.grokReasoningEffort = isGrok45ReasoningModelId(nextModel)
+        ? GROK_45_DEFAULT_REASONING_EFFORT
+        : ''
+    }
+    if (sideComposerProvider === 'cursor') {
+      if (isCursorGrok45ModelId(nextModel)) {
+        metadataPatch.cursorReasoningEffort = GROK_45_DEFAULT_REASONING_EFFORT
+      } else {
+        metadataPatch.cursorReasoningEffort = ''
+        metadataPatch.cursorFastMode = nextModel === 'composer-2.5-fast'
+      }
+    }
     rememberSideChatComposerSelection(metadataPatch)
   }
   const handleSideReasoningChange = (value: string): void => {
@@ -18357,6 +18569,10 @@ function App(): React.JSX.Element {
       rememberSideChatComposerSelection({ claudeReasoningEffort: value })
     } else if (sideComposerProvider === 'kimi') {
       rememberSideChatComposerSelection({ kimiThinkingEnabled: value !== 'off' })
+    } else if (sideComposerProvider === 'grok') {
+      rememberSideChatComposerSelection({ grokReasoningEffort: value })
+    } else if (sideComposerProvider === 'cursor') {
+      rememberSideChatComposerSelection({ cursorReasoningEffort: value })
     }
   }
   const handleSideToggleFastMode =
@@ -18371,12 +18587,17 @@ function App(): React.JSX.Element {
               claudeFastMode: !sideComposerSelection?.claudeFastMode
             })
         : sideComposerProvider === 'cursor'
-          ? () =>
+          ? () => {
+              if (isCursorGrok45ModelId(sideComposerSelectedModel)) {
+                rememberSideChatComposerSelection({ cursorFastMode: !sideCursorFastMode })
+                return
+              }
               handleSideModelChange(
                 sideComposerSelectedModel === 'composer-2.5-fast'
                   ? 'composer-2.5'
                   : 'composer-2.5-fast'
               )
+            }
           : undefined
   const handleSetSideAgenticWorkspaceGrant = async (
     service: AgenticServiceId,
@@ -23077,6 +23298,11 @@ function App(): React.JSX.Element {
       viewerSelection.claudeReasoningEffort ||
       resolveClaudeDefaultReasoningEffort(viewerClaudeModelOption)
     const viewerKimiThinking = viewerSelection.kimiThinkingEnabled ?? true
+    const viewerGrokReasoning =
+      viewerSelection.grokReasoningEffort || GROK_45_DEFAULT_REASONING_EFFORT
+    const viewerCursorReasoning =
+      viewerSelection.cursorReasoningEffort || GROK_45_DEFAULT_REASONING_EFFORT
+    const viewerCursorFastMode = Boolean(viewerSelection.cursorFastMode)
     // RAW per-pane reasoning option lists ({ reasoningEffort }[]) for the shared
     // <Composer>. The composer does its OWN mapping to picker shape from
     // codex/claudeReasoningOptions, so it must receive the RAW shape — passing
@@ -23629,6 +23855,9 @@ function App(): React.JSX.Element {
       claudeReasoningOptions: viewerClaudeReasoningOptionsRaw,
       claudeReasoningEffort: viewerClaudeReasoning,
       kimiThinkingEnabled: viewerKimiThinking,
+      grokReasoningEffort: viewerGrokReasoning,
+      cursorReasoningEffort: viewerCursorReasoning,
+      cursorFastMode: viewerCursorFastMode,
       codexServiceTier: paneViewerSelection.codexServiceTier || '',
       claudeFastMode: Boolean(paneViewerSelection.claudeFastMode),
       // permission (display). NOTE: <Composer> derives `enabledGrantIds`
@@ -23688,6 +23917,9 @@ function App(): React.JSX.Element {
       setCodexReasoningEffort: paneNoopSetter,
       setClaudeReasoningEffort: paneNoopSetter,
       setKimiThinkingEnabled: paneNoopSetter,
+      setGrokReasoningEffort: paneNoopSetter,
+      setCursorReasoningEffort: paneNoopSetter,
+      setCursorFastMode: paneNoopSetter,
       setCodexServiceTier: paneNoopSetter,
       setClaudeFastMode: paneNoopSetter,
       setApprovalMode: paneNoopSetter,
@@ -24289,6 +24521,11 @@ function App(): React.JSX.Element {
         viewerSelection.claudeReasoningEffort ||
         resolveClaudeDefaultReasoningEffort(viewerClaudeModelOption)
       const viewerKimiThinking = viewerSelection.kimiThinkingEnabled ?? true
+      const viewerGrokReasoning =
+        viewerSelection.grokReasoningEffort || GROK_45_DEFAULT_REASONING_EFFORT
+      const viewerCursorReasoning =
+        viewerSelection.cursorReasoningEffort || GROK_45_DEFAULT_REASONING_EFFORT
+      const viewerCursorFastMode = Boolean(viewerSelection.cursorFastMode)
       // RAW per-pane reasoning option lists ({ reasoningEffort }[]) for the shared
       // <Composer>. The composer does its OWN mapping to picker shape from
       // codex/claudeReasoningOptions, so it must receive the RAW shape — passing
@@ -24675,6 +24912,9 @@ function App(): React.JSX.Element {
         claudeReasoningOptions: viewerClaudeReasoningOptionsRaw,
         claudeReasoningEffort: viewerClaudeReasoning,
         kimiThinkingEnabled: viewerKimiThinking,
+        grokReasoningEffort: viewerGrokReasoning,
+        cursorReasoningEffort: viewerCursorReasoning,
+        cursorFastMode: viewerCursorFastMode,
         codexServiceTier: paneViewerSelection.codexServiceTier || '',
         claudeFastMode: Boolean(paneViewerSelection.claudeFastMode),
         // permission (display). NOTE: <Composer> derives `enabledGrantIds`
@@ -24737,6 +24977,9 @@ function App(): React.JSX.Element {
         setCodexReasoningEffort: paneNoopSetter,
         setClaudeReasoningEffort: paneNoopSetter,
         setKimiThinkingEnabled: paneNoopSetter,
+        setGrokReasoningEffort: paneNoopSetter,
+        setCursorReasoningEffort: paneNoopSetter,
+        setCursorFastMode: paneNoopSetter,
         setCodexServiceTier: paneNoopSetter,
         setClaudeFastMode: paneNoopSetter,
         setApprovalMode: paneNoopSetter,
@@ -24865,6 +25108,9 @@ function App(): React.JSX.Element {
     codexReasoningEffort,
     codexReasoningOptions,
     codexServiceTier,
+    grokReasoningEffort,
+    cursorReasoningEffort,
+    cursorFastMode,
     composerAreaRef,
     composerAriaLabel,
     composerFileAttachments,
@@ -24957,6 +25203,9 @@ function App(): React.JSX.Element {
     setCodexReasoningEffort,
     setCodexServiceTier,
     setCustomModel,
+    setGrokReasoningEffort,
+    setCursorReasoningEffort,
+    setCursorFastMode,
     setKimiThinkingEnabled,
     setLastNonCustomModelType,
     setSelectedModelType,
@@ -25381,6 +25630,8 @@ function App(): React.JSX.Element {
     sideChatWelcomeWorkspaceLabel,
     sideClaudeReasoning,
     sideCodexReasoning,
+    sideGrokReasoning,
+    sideCursorReasoning,
     sideComposerContextMenu,
     sideComposerHasMention,
     sideComposerModelOptions,
@@ -25397,6 +25648,7 @@ function App(): React.JSX.Element {
     sideEnabledGrantIds,
     sideFastModeCapableModelIds,
     sideFastModeEnabled,
+    sideCursorFastMode,
     sideGrantServices,
     sideKimiThinking,
     sideLiveRunOutputTokens,

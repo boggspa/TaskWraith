@@ -294,6 +294,9 @@ export interface RemoteTaskCard {
   customModel?: string
   codexReasoningEffort?: string
   claudeReasoningEffort?: string
+  grokReasoningEffort?: string
+  cursorReasoningEffort?: string
+  cursorFastMode?: boolean
   /** Slice B (provider unlock): a provider/model/reasoning switch queued while
    *  a run is active, applied at turn end. Remote composers show a "switching at
    *  turn end" pill and reflect the queued target instead of snapping the picker
@@ -351,6 +354,9 @@ export interface RemoteQueuedComposerPrompt {
   approvalMode?: string
   reasoningEffort?: string | null
   claudeReasoningEffort?: string | null
+  grokReasoningEffort?: string | null
+  cursorReasoningEffort?: string | null
+  cursorFastMode?: boolean
   scheduledRunAt?: string
 }
 
@@ -1145,6 +1151,15 @@ export function buildRemoteTaskCard(
   if (isString(providerMetadata.claudeReasoningEffort)) {
     card.claudeReasoningEffort = providerMetadata.claudeReasoningEffort
   }
+  if (isString(providerMetadata.grokReasoningEffort)) {
+    card.grokReasoningEffort = providerMetadata.grokReasoningEffort
+  }
+  if (isString(providerMetadata.cursorReasoningEffort)) {
+    card.cursorReasoningEffort = providerMetadata.cursorReasoningEffort
+  }
+  if (typeof providerMetadata.cursorFastMode === 'boolean') {
+    card.cursorFastMode = providerMetadata.cursorFastMode
+  }
   const pendingProviderChange = readPendingProviderChange(chat)
   if (pendingProviderChange) {
     const pendingMeta = pendingProviderChange.providerMetadata ?? {}
@@ -1226,6 +1241,13 @@ export function buildRemoteQueuedComposerPrompts(
         ...(remote.claudeReasoningEffort !== undefined
           ? { claudeReasoningEffort: remote.claudeReasoningEffort }
           : {}),
+        ...(remote.grokReasoningEffort !== undefined
+          ? { grokReasoningEffort: remote.grokReasoningEffort }
+          : {}),
+        ...(remote.cursorReasoningEffort !== undefined
+          ? { cursorReasoningEffort: remote.cursorReasoningEffort }
+          : {}),
+        ...(remote.cursorFastMode !== undefined ? { cursorFastMode: remote.cursorFastMode } : {}),
         ...(job.request?.scheduledRunAt ? { scheduledRunAt: job.request.scheduledRunAt } : {}),
         ...(job.createdAt ? { createdAt: job.createdAt } : {}),
         ...(job.enqueuedAt ? { enqueuedAt: job.enqueuedAt } : {})

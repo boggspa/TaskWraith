@@ -99,13 +99,27 @@ const KNOWN_MODEL_LABELS: Record<string, string> = {
   'kimi-k2-0905-preview': 'Kimi K2 (0905 Preview)',
 
   // ── Grok ─────────────────────────────────────────────────
+  // Grok's CLI models are permanently Fast-mode; the Grok-only ids read
+  // "Grok 4.5 Fast". The bare `grok-4.5` key stays "Grok 4.5" because it is
+  // SHARED with Cursor's base Grok row (Fast is a toggle there); `humaniseModelId`
+  // upgrades it to "Grok 4.5 Fast" only when the provider is Grok.
   'grok-composer-2.5-fast': 'Grok Composer 2.5 Fast',
-  'grok-build': 'Grok Build 0.1',
-  'grok-build-0.1': 'Grok Build 0.1',
+  'grok-4.5': 'Grok 4.5',
+  'grok-4.5-latest': 'Grok 4.5 Fast',
+  'grok-build-latest': 'Grok 4.5 Fast',
+  'grok-build': 'Grok 4.5 Fast',
+  'grok-build-0.1': 'Grok 4.5 Fast',
 
   // ── Cursor ────────────────────────────────────────────────
   'composer-2.5': 'Composer 2.5',
   'composer-2.5-fast': 'Composer 2.5 Fast',
+  'cursor-grok-4.5': 'Grok 4.5',
+  'grok-4.5-medium': 'Grok 4.5',
+  'grok-4.5-fast-medium': 'Grok 4.5 Fast',
+  'grok-4.5-high': 'Grok 4.5',
+  'grok-4.5-fast-high': 'Grok 4.5 Fast',
+  'grok-4.5-xhigh': 'Grok 4.5',
+  'grok-4.5-fast-xhigh': 'Grok 4.5 Fast',
 
   // ── Ollama ────────────────────────────────────────────────
   'qwen3:4b-instruct': 'Qwen 3 (4B Param)',
@@ -167,18 +181,14 @@ export function canonicalModelIdForProvider(
     if (provider === 'claude') return 'claude-sonnet-5'
     if (provider === 'gemini') return 'flash-lite'
     if (provider === 'kimi') return 'kimi-k2.7-code'
-    if (provider === 'grok') return 'grok-build'
+    if (provider === 'grok') return 'grok-4.5'
     if (provider === 'cursor') return 'composer-2.5-fast'
     if (provider === 'ollama') return 'qwen3:4b-instruct'
   }
   if (provider === 'grok') {
-    // A stale Gemini fast-lite fallback persisted under Grok repairs to Grok's
-    // fast model (Composer 2.5 Fast) — NOT the Build model — mirroring the Cursor
-    // rule below (stale fast-lite -> composer-2.5-fast). The generic `default`
-    // case above still maps to grok-build.
-    if (STALE_GEMINI_PLACEHOLDER_MODEL_IDS.has(key)) return 'grok-composer-2.5-fast'
+    if (STALE_GEMINI_PLACEHOLDER_MODEL_IDS.has(key)) return 'grok-4.5'
     if (!key || key === 'grok') {
-      return 'grok-build'
+      return 'grok-4.5'
     }
     if (
       key === 'grok composer 2.5 fast' ||
@@ -188,13 +198,30 @@ export function canonicalModelIdForProvider(
     ) {
       return 'grok-composer-2.5-fast'
     }
-    if (key === 'grok build' || key === 'grok build 0.1' || key === 'grok-build-0.1') {
-      return 'grok-build'
+    if (
+      key === 'grok 4.5' ||
+      key === 'grok-4.5' ||
+      key === 'grok-4.5-latest' ||
+      key === 'grok-build-latest' ||
+      key === 'grok build' ||
+      key === 'grok build 0.1' ||
+      key === 'grok-build-0.1' ||
+      key === 'grok-build'
+    ) {
+      return 'grok-4.5'
     }
   }
   if (provider === 'cursor') {
     if (STALE_GEMINI_PLACEHOLDER_MODEL_IDS.has(key)) return 'composer-2.5-fast'
     if (!key || key === 'cursor' || key === 'composer') return 'composer-2.5-fast'
+    if (
+      key === 'cursor-grok-4.5' ||
+      key === 'grok 4.5' ||
+      key === 'grok-4.5' ||
+      key.startsWith('grok-4.5-')
+    ) {
+      return 'grok-4.5'
+    }
     if (key === 'composer 2.5 fast' || key === 'composer-2.5-fast') return 'composer-2.5-fast'
     if (key === 'composer 2.5' || key === 'composer-2.5') return 'composer-2.5'
     if (key.startsWith('composer-')) return key
@@ -270,6 +297,13 @@ export function humaniseModelId(
   }
   if (provider === 'ollama' && key.startsWith('nemotron3:33b-')) {
     return 'Nemotron 3 Nano Omni (33B Param)'
+  }
+  // Both Grok CLI models run permanently in Fast mode. The canonicaliser has
+  // collapsed every Grok reasoning id to 'grok-4.5' by here, so label the Grok
+  // seat "Grok 4.5 Fast". Cursor's grok-4.5 (separate Fast toggle) is untouched
+  // and keeps the flat-map "Grok 4.5".
+  if (provider === 'grok' && key === 'grok-4.5') {
+    return 'Grok 4.5 Fast'
   }
   return KNOWN_MODEL_LABELS[key] || canonical
 }

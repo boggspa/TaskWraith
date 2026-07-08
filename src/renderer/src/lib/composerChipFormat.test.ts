@@ -57,7 +57,8 @@ describe('shortModelName', () => {
 
   it('renders Grok CLI model ids as Grok model labels', () => {
     expect(shortModelName('grok', '', 'grok-composer-2.5-fast')).toBe('Grok Composer 2.5 Fast')
-    expect(shortModelName('grok', '', 'grok-build')).toBe('Grok Build 0.1')
+    expect(shortModelName('grok', '', 'grok-build')).toBe('Grok 4.5 Fast')
+    expect(shortModelName('grok', '', 'grok-4.5')).toBe('Grok 4.5 Fast')
   })
 
   it('renders local Ollama tags as model names', () => {
@@ -85,7 +86,7 @@ describe('shortModelName', () => {
     expect(shortModelName('codex', '', 'cli-default')).toBe('5.5')
     expect(shortModelName('claude', '', 'cli-default')).toBe('Sonnet 4.6')
     expect(shortModelName('kimi', '', 'cli-default')).toBe('K2.7 Code')
-    expect(shortModelName('grok', '', 'cli-default')).toBe('Grok Build 0.1')
+    expect(shortModelName('grok', '', 'cli-default')).toBe('Grok 4.5 Fast')
     expect(shortModelName('gemini', '', 'cli-default')).toBe('Flash Lite')
     expect(shortModelName('cursor', '', 'cli-default')).toBe('Composer 2.5 Fast')
     expect(shortModelName('ollama', '', 'cli-default')).toBe('Qwen 3 (4B Param)')
@@ -204,6 +205,45 @@ describe('reasoningDisplayLabel', () => {
         composerStyle: 'gemini',
         modelId: 'gemini-2.5-pro',
         modelLabel: 'Gemini 2.5 Pro'
+      })
+    ).toBe('')
+  })
+
+  it('Grok and Cursor reasoning only display for Grok 4.5 models', () => {
+    expect(
+      reasoningDisplayLabel({
+        provider: 'grok',
+        composerStyle: 'grok',
+        modelId: 'grok-4.5',
+        modelLabel: 'Grok 4.5',
+        grokReasoningEffort: 'high'
+      })
+    ).toBe('High')
+    expect(
+      reasoningDisplayLabel({
+        provider: 'grok',
+        composerStyle: 'grok',
+        modelId: 'grok-composer-2.5-fast',
+        modelLabel: 'Grok Composer 2.5 Fast',
+        grokReasoningEffort: 'high'
+      })
+    ).toBe('')
+    expect(
+      reasoningDisplayLabel({
+        provider: 'cursor',
+        composerStyle: 'cursor',
+        modelId: 'grok-4.5',
+        modelLabel: 'Cursor Grok 4.5',
+        cursorReasoningEffort: 'medium'
+      })
+    ).toBe('Medium')
+    expect(
+      reasoningDisplayLabel({
+        provider: 'cursor',
+        composerStyle: 'cursor',
+        modelId: 'composer-2.5-fast',
+        modelLabel: 'Composer 2.5 Fast',
+        cursorReasoningEffort: 'medium'
       })
     ).toBe('')
   })

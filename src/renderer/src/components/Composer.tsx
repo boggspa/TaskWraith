@@ -119,7 +119,18 @@ import {
   CLAUDE_DEFAULT_MODELS,
   resolveClaudeDefaultReasoningEffort
 } from '../lib/providerModelDefaults'
-import { codexReasoningDisplayLabel, claudeReasoningDisplayLabel } from '../lib/composerChipFormat'
+import {
+  codexReasoningDisplayLabel,
+  claudeReasoningDisplayLabel,
+  grokReasoningDisplayLabel
+} from '../lib/composerChipFormat'
+import {
+  CURSOR_GROK_45_BASE_MODEL_ID,
+  GROK_45_DEFAULT_REASONING_EFFORT,
+  GROK_45_MODEL_ID,
+  isCursorGrok45ModelId,
+  isGrok45ReasoningModelId
+} from '../../../shared/grok45Models'
 import { composerGitActionUsesCommitIcon } from '../lib/composerGitActionIcon'
 import { composerVoicePlacementForStyle } from '../lib/composerVoicePlacement'
 import { composerPermissionOptions } from '../lib/planModeLabels'
@@ -171,6 +182,9 @@ export interface ComposerProps {
   codexReasoningEffort: any
   codexReasoningOptions: any
   codexServiceTier: any
+  grokReasoningEffort: any
+  cursorReasoningEffort: any
+  cursorFastMode: any
   composerAboveBarStackAuraClass: any
   composerAgentAuraClass: any
   composerAreaRef: any
@@ -386,6 +400,9 @@ export interface ComposerProps {
   setClaudeReasoningEffort: any
   setCodexReasoningEffort: any
   setCodexServiceTier: any
+  setGrokReasoningEffort: any
+  setCursorReasoningEffort: any
+  setCursorFastMode: any
   setCurrentChat: any
   setCustomModel: any
   setDiffActionMenuOpen: any
@@ -487,6 +504,9 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     codexReasoningEffort,
     codexReasoningOptions,
     codexServiceTier,
+    grokReasoningEffort,
+    cursorReasoningEffort,
+    cursorFastMode,
     composerAboveBarStackAuraClass,
     composerAgentAuraClass,
     composerAreaRef,
@@ -686,6 +706,9 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     setClaudeReasoningEffort,
     setCodexReasoningEffort,
     setCodexServiceTier,
+    setGrokReasoningEffort,
+    setCursorReasoningEffort,
+    setCursorFastMode,
     setCurrentChat,
     setCustomModel,
     setDiffActionMenuOpen,
@@ -3508,6 +3531,20 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                     'boolean'
                                 ? soloPendingProviderMetadata.kimiThinkingEnabled
                                 : kimiThinkingEnabled
+                          const effectiveGrokReasoning =
+                            ensembleResolved?.provider === 'grok'
+                              ? ensembleResolved.reasoningEffort
+                              : typeof soloPendingProviderMetadata?.grokReasoningEffort ===
+                                    'string'
+                                ? soloPendingProviderMetadata.grokReasoningEffort
+                                : grokReasoningEffort
+                          const effectiveCursorReasoning =
+                            ensembleResolved?.provider === 'cursor'
+                              ? ensembleResolved.reasoningEffort
+                              : typeof soloPendingProviderMetadata?.cursorReasoningEffort ===
+                                    'string'
+                                ? soloPendingProviderMetadata.cursorReasoningEffort
+                                : cursorReasoningEffort
                           const effectiveCodexServiceTier =
                             ensembleResolved?.provider === 'codex'
                               ? ensembleResolved.serviceTier
@@ -3520,6 +3557,12 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               : typeof soloPendingProviderMetadata?.claudeFastMode === 'boolean'
                                 ? soloPendingProviderMetadata.claudeFastMode
                                 : claudeFastMode
+                          const effectiveCursorFastMode =
+                            ensembleResolved?.provider === 'cursor'
+                              ? ensembleResolved.fastModeEnabled
+                              : typeof soloPendingProviderMetadata?.cursorFastMode === 'boolean'
+                                ? soloPendingProviderMetadata.cursorFastMode
+                                : cursorFastMode
                           const shouldUpdateLiveComposerState =
                             !ensembleBinding &&
                             (!soloPendingProviderChange ||
@@ -3598,6 +3641,28 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               { value: 'off', label: 'Thinking off' }
                             ]
                             combinedSelectedReasoning = effectiveKimiThinking ? 'on' : 'off'
+                          } else if (
+                            effectiveProvider === 'grok' &&
+                            isGrok45ReasoningModelId(effectiveSelectedModel)
+                          ) {
+                            combinedReasoningOptions = [
+                              { value: 'low', label: grokReasoningDisplayLabel('low') },
+                              { value: 'medium', label: grokReasoningDisplayLabel('medium') },
+                              { value: 'high', label: grokReasoningDisplayLabel('high') }
+                            ]
+                            combinedSelectedReasoning =
+                              effectiveGrokReasoning || GROK_45_DEFAULT_REASONING_EFFORT
+                          } else if (
+                            effectiveProvider === 'cursor' &&
+                            isCursorGrok45ModelId(effectiveSelectedModel)
+                          ) {
+                            combinedReasoningOptions = [
+                              { value: 'low', label: grokReasoningDisplayLabel('low') },
+                              { value: 'medium', label: grokReasoningDisplayLabel('medium') },
+                              { value: 'high', label: grokReasoningDisplayLabel('high') }
+                            ]
+                            combinedSelectedReasoning =
+                              effectiveCursorReasoning || GROK_45_DEFAULT_REASONING_EFFORT
                           }
 
                           const handleCombinedModelChange = (nextModel: string) => {
@@ -3629,6 +3694,21 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                 patch.reasoningEffort =
                                   resolveClaudeDefaultReasoningEffort(claudeModelOption)
                                 if (!claudeModelOption?.additionalSpeedTiers?.includes('fast')) {
+                                  patch.fastModeEnabled = false
+                                }
+                              }
+                              if (effectiveProvider === 'grok') {
+                                patch.reasoningEffort = isGrok45ReasoningModelId(nextModel)
+                                  ? GROK_45_DEFAULT_REASONING_EFFORT
+                                  : undefined
+                              }
+                              if (effectiveProvider === 'cursor') {
+                                if (isCursorGrok45ModelId(nextModel)) {
+                                  patch.reasoningEffort = GROK_45_DEFAULT_REASONING_EFFORT
+                                } else {
+                                  patch.reasoningEffort = undefined
+                                }
+                                if (!isCursorGrok45ModelId(nextModel) && nextModel !== 'composer-2.5-fast') {
                                   patch.fastModeEnabled = false
                                 }
                               }
@@ -3683,6 +3763,37 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                 metadataPatch.claudeFastMode = false
                               }
                             }
+                            if (effectiveProvider === 'grok') {
+                              if (isGrok45ReasoningModelId(nextModel)) {
+                                if (shouldUpdateLiveComposerState) {
+                                  setGrokReasoningEffort(GROK_45_DEFAULT_REASONING_EFFORT)
+                                }
+                                metadataPatch.grokReasoningEffort =
+                                  GROK_45_DEFAULT_REASONING_EFFORT
+                              } else {
+                                if (shouldUpdateLiveComposerState) {
+                                  setGrokReasoningEffort('')
+                                }
+                                metadataPatch.grokReasoningEffort = ''
+                              }
+                            }
+                            if (effectiveProvider === 'cursor') {
+                              if (isCursorGrok45ModelId(nextModel)) {
+                                if (shouldUpdateLiveComposerState) {
+                                  setCursorReasoningEffort(GROK_45_DEFAULT_REASONING_EFFORT)
+                                }
+                                metadataPatch.cursorReasoningEffort =
+                                  GROK_45_DEFAULT_REASONING_EFFORT
+                              }
+                              if (!isCursorGrok45ModelId(nextModel)) {
+                                if (shouldUpdateLiveComposerState) {
+                                  setCursorFastMode(nextModel === 'composer-2.5-fast')
+                                  setCursorReasoningEffort('')
+                                }
+                                metadataPatch.cursorReasoningEffort = ''
+                                metadataPatch.cursorFastMode = nextModel === 'composer-2.5-fast'
+                              }
+                            }
                             if (effectiveProvider === 'gemini' && shouldUpdateLiveComposerState) {
                               syncPersistentModelSelection(nextModel)
                             }
@@ -3713,11 +3824,18 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               )
                             }
                             if (effectiveProvider === 'cursor') {
-                              // Cursor's "fast" is a distinct model id
-                              // (composer-2.5-fast) rather than a tier flag, so the
-                              // toggle swaps between the two Composer 2.5 ids. Both
-                              // are "capable" so the bolt is always live for Cursor.
-                              return new Set(['composer-2.5', 'composer-2.5-fast'])
+                              return new Set([
+                                'composer-2.5',
+                                'composer-2.5-fast',
+                                CURSOR_GROK_45_BASE_MODEL_ID
+                              ])
+                            }
+                            if (effectiveProvider === 'grok') {
+                              // Both Grok models are permanently Fast-mode, so
+                              // both picker rows get the Fast ⚡ glyph. Grok
+                              // passes no onToggleFastMode, so no toggle row
+                              // renders (Fast isn't user-switchable here).
+                              return new Set([GROK_45_MODEL_ID, 'grok-composer-2.5-fast'])
                             }
                             // Gemini + Kimi: no Fast tier — hide the toggle
                             // by passing an empty set (CombinedModelPicker
@@ -3730,7 +3848,9 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               : effectiveProvider === 'claude'
                                 ? effectiveClaudeFastMode
                                 : effectiveProvider === 'cursor'
-                                  ? effectiveSelectedModel === 'composer-2.5-fast'
+                                  ? isCursorGrok45ModelId(effectiveSelectedModel)
+                                    ? effectiveCursorFastMode
+                                    : effectiveSelectedModel === 'composer-2.5-fast'
                                   : false
                           const handleToggleFastMode =
                             effectiveProvider === 'codex'
@@ -3767,10 +3887,22 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                   }
                                 : effectiveProvider === 'cursor'
                                   ? () => {
-                                      // Cursor fast = the composer-2.5-fast model id;
-                                      // swap the selected model (handleCombinedModelChange
-                                      // handles both chat-level + ensemble-participant
-                                      // persistence). No separate fast flag needed.
+                                      if (isCursorGrok45ModelId(effectiveSelectedModel)) {
+                                        const nextFast = !effectiveCursorFastMode
+                                        if (ensembleBinding) {
+                                          updateSelectedParticipantWithNotice({
+                                            fastModeEnabled: nextFast
+                                          })
+                                          return
+                                        }
+                                        if (shouldUpdateLiveComposerState) {
+                                          setCursorFastMode(nextFast)
+                                        }
+                                        rememberCurrentChatComposerSelection({
+                                          cursorFastMode: nextFast
+                                        })
+                                        return
+                                      }
                                       const nextModel =
                                         effectiveSelectedModel === 'composer-2.5-fast'
                                           ? 'composer-2.5'
@@ -3810,6 +3942,20 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               rememberCurrentChatComposerSelection({
                                 kimiThinkingEnabled: enabled
                               })
+                            } else if (effectiveProvider === 'grok') {
+                              if (shouldUpdateLiveComposerState) {
+                                setGrokReasoningEffort(value)
+                              }
+                              rememberCurrentChatComposerSelection({
+                                grokReasoningEffort: value
+                              })
+                            } else if (effectiveProvider === 'cursor') {
+                              if (shouldUpdateLiveComposerState) {
+                                setCursorReasoningEffort(value)
+                              }
+                              rememberCurrentChatComposerSelection({
+                                cursorReasoningEffort: value
+                              })
                             }
                           }
 
@@ -3839,6 +3985,8 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                 onSelectReasoning={handleCombinedReasoningChange}
                                 codexReasoningEffort={effectiveCodexReasoning}
                                 claudeReasoningEffort={effectiveClaudeReasoning}
+                                grokReasoningEffort={effectiveGrokReasoning}
+                                cursorReasoningEffort={effectiveCursorReasoning}
                                 kimiThinkingEnabled={effectiveKimiThinking}
                                 fastModeCapableModelIds={fastModeCapableModelIds}
                                 fastModeEnabled={fastModeEnabledForProvider}

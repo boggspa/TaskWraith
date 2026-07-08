@@ -108,16 +108,41 @@ describe('buildCursorCliArgs', () => {
     expect(off).toContain('--approve-mcps')
   })
 
-  it('forwards only Composer 2.5 model ids', () => {
+  it('forwards Composer 2.5 model ids without applying reasoning/Fast overrides', () => {
     expect(buildCursorCliArgs({ ...base, model: 'composer-2.5' }).join(' ')).toContain(
       '--model composer-2.5'
     )
     expect(buildCursorCliArgs({ ...base, model: 'composer-2.5-fast' }).join(' ')).toContain(
       '--model composer-2.5-fast'
     )
+    expect(
+      buildCursorCliArgs({
+        ...base,
+        model: 'composer-2.5',
+        reasoningEffort: 'high',
+        fastModeEnabled: true
+      }).join(' ')
+    ).toContain('--model composer-2.5')
   })
 
-  it('drops non-Composer / sentinel / leaked model ids', () => {
+  it('maps Cursor Grok 4.5 reasoning and Fast to concrete Cursor model ids', () => {
+    expect(
+      buildCursorCliArgs({ ...base, model: 'grok-4.5', reasoningEffort: 'low' }).join(' ')
+    ).toContain('--model grok-4.5-medium')
+    expect(
+      buildCursorCliArgs({ ...base, model: 'grok-4.5', reasoningEffort: 'medium' }).join(' ')
+    ).toContain('--model grok-4.5-high')
+    expect(
+      buildCursorCliArgs({
+        ...base,
+        model: 'grok-4.5',
+        reasoningEffort: 'high',
+        fastModeEnabled: true
+      }).join(' ')
+    ).toContain('--model grok-4.5-fast-xhigh')
+  })
+
+  it('drops non-Cursor / sentinel / leaked model ids', () => {
     for (const m of ['gpt-5', 'cli-default', 'flash-lite', 'sonnet-4', '']) {
       expect(buildCursorCliArgs({ ...base, model: m })).not.toContain('--model')
     }

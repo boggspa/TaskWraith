@@ -621,6 +621,11 @@ import {
   previewModelAccessFlagEnabledForProvider,
   previewModelCatalogEnabledForProvider
 } from '../shared/previewModelCatalog'
+import {
+  GROK_45_MODEL_ID,
+  isCursorGrok45ModelId,
+  isGrok45ReasoningModelId
+} from '../shared/grok45Models'
 import { buildCodexStatusSnapshot } from './CodexStatusSnapshot'
 import {
   resolveEffectiveRunPermissions,
@@ -9313,6 +9318,9 @@ async function dispatchDueScheduledLoopHeadless(
               selectedModelType: task.selectedModelType,
               customModel: task.customModel,
               codexReasoningEffort: task.codexReasoningEffort,
+              grokReasoningEffort: task.grokReasoningEffort,
+              cursorReasoningEffort: task.cursorReasoningEffort,
+              cursorFastMode: task.cursorFastMode,
               codexServiceTier: task.codexServiceTier,
               claudeReasoningEffort: task.claudeReasoningEffort,
               claudeFastMode: task.claudeFastMode,
@@ -9500,6 +9508,9 @@ async function dispatchDueScheduledTaskHeadless(task: ScheduledTask): Promise<vo
       imageAttachments: task.imageAttachments,
       externalPathGrants: task.externalPathGrants,
       codexReasoningEffort: task.codexReasoningEffort,
+      grokReasoningEffort: task.grokReasoningEffort,
+      cursorReasoningEffort: task.cursorReasoningEffort,
+      cursorFastMode: task.cursorFastMode,
       codexServiceTier: task.codexServiceTier,
       claudeReasoningEffort: task.claudeReasoningEffort,
       claudeFastMode: task.claudeFastMode,
@@ -12072,6 +12083,8 @@ async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
     prompt: payload.prompt,
     workspace: payload.workspace!,
     model: payload.model,
+    reasoningEffort: payload.reasoningEffort,
+    fastModeEnabled: payload.serviceTier === 'fast',
     providerSessionId: payload.providerSessionId,
     // Honor the chat's approval mode only when the WRITE containment config is in
     // place; otherwise force read-only. A read-only seat with the safe-subset
@@ -23142,6 +23155,9 @@ if (isGeminiMcpBridgeProcess) {
         model?: string
         reasoningEffort?: string | null
         claudeReasoningEffort?: string | null
+        grokReasoningEffort?: string | null
+        cursorReasoningEffort?: string | null
+        cursorFastMode?: boolean
         contextTurns?: number
         extraWorkspaceIds?: string[]
         imageAttachments?: unknown[]
@@ -23192,6 +23208,25 @@ if (isGeminiMcpBridgeProcess) {
         const queueId = `remote-queue-${randomUUID()}`
         const workflowMode: ChatWorkflowMode = action.workflowMode === 'plan' ? 'plan' : 'normal'
         const approvalMode = action.approvalMode || 'default'
+        const selectedModelType = action.model || 'default'
+        const grokCapabilityModel =
+          selectedModelType === 'default' || selectedModelType === 'cli-default'
+            ? GROK_45_MODEL_ID
+            : selectedModelType
+        const queueCodexReasoning =
+          provider === 'codex' ? action.reasoningEffort : undefined
+        const queueGrokReasoning =
+          provider === 'grok' && isGrok45ReasoningModelId(grokCapabilityModel)
+            ? (action.grokReasoningEffort ?? action.reasoningEffort)
+            : undefined
+        const queueCursorReasoning =
+          provider === 'cursor' && isCursorGrok45ModelId(selectedModelType)
+            ? (action.cursorReasoningEffort ?? action.reasoningEffort)
+            : undefined
+        const queueCursorFastMode =
+          provider === 'cursor' && isCursorGrok45ModelId(selectedModelType)
+            ? action.cursorFastMode
+            : undefined
         const permissionPosture = buildRemoteComposerQueuePermissionPosture({
           provider,
           scope,
@@ -23221,16 +23256,23 @@ if (isGeminiMcpBridgeProcess) {
             scope,
             prompt: text,
             displayPrompt: text,
-            selectedModelType: action.model || 'default',
+            selectedModelType,
             customModel: '',
             approvalMode,
             workflowMode,
             sessionTrust: false,
             imageAttachments: [],
             ...(schedule.scheduledRunAt ? { scheduledRunAt: schedule.scheduledRunAt } : {}),
-            ...(action.reasoningEffort !== undefined
-              ? { codexReasoningEffort: action.reasoningEffort }
+            ...(queueCodexReasoning !== undefined
+              ? { codexReasoningEffort: queueCodexReasoning }
               : {}),
+            ...(queueGrokReasoning !== undefined
+              ? { grokReasoningEffort: queueGrokReasoning }
+              : {}),
+            ...(queueCursorReasoning !== undefined
+              ? { cursorReasoningEffort: queueCursorReasoning }
+              : {}),
+            ...(queueCursorFastMode !== undefined ? { cursorFastMode: queueCursorFastMode } : {}),
             ...(action.claudeReasoningEffort !== undefined
               ? { claudeReasoningEffort: action.claudeReasoningEffort }
               : {}),
@@ -23254,6 +23296,13 @@ if (isGeminiMcpBridgeProcess) {
               ...(action.claudeReasoningEffort !== undefined
                 ? { claudeReasoningEffort: action.claudeReasoningEffort }
                 : {}),
+              ...(action.grokReasoningEffort !== undefined
+                ? { grokReasoningEffort: action.grokReasoningEffort }
+                : {}),
+              ...(action.cursorReasoningEffort !== undefined
+                ? { cursorReasoningEffort: action.cursorReasoningEffort }
+                : {}),
+              ...(action.cursorFastMode !== undefined ? { cursorFastMode: action.cursorFastMode } : {}),
               ...(action.contextTurns !== undefined ? { contextTurns: action.contextTurns } : {}),
               ...(schedule.scheduledRunAt ? { scheduledRunAt: schedule.scheduledRunAt } : {}),
               ...(action.extraWorkspaceIds?.length
@@ -23914,6 +23963,15 @@ if (isGeminiMcpBridgeProcess) {
                 : {}),
               ...(action.claudeReasoningEffort !== undefined
                 ? { claudeReasoningEffort: action.claudeReasoningEffort }
+                : {}),
+              ...(action.grokReasoningEffort !== undefined
+                ? { grokReasoningEffort: action.grokReasoningEffort }
+                : {}),
+              ...(action.cursorReasoningEffort !== undefined
+                ? { cursorReasoningEffort: action.cursorReasoningEffort }
+                : {}),
+              ...(action.cursorFastMode !== undefined
+                ? { cursorFastMode: action.cursorFastMode }
                 : {}),
               sideChatMode: action.mode ?? 'singleProvider'
             })
@@ -25016,6 +25074,25 @@ if (isGeminiMcpBridgeProcess) {
             }
             AppStore.saveChat(workflowChat)
             const savedChat = AppStore.getChat(workflowChat.appChatId) ?? workflowChat
+            const workflowSelectedModel = action.model || 'default'
+            const workflowGrokCapabilityModel =
+              workflowSelectedModel === 'default' || workflowSelectedModel === 'cli-default'
+                ? GROK_45_MODEL_ID
+                : workflowSelectedModel
+            const workflowCodexReasoning =
+              provider === 'codex' ? action.reasoningEffort : undefined
+            const workflowGrokReasoning =
+              provider === 'grok' && isGrok45ReasoningModelId(workflowGrokCapabilityModel)
+                ? (action.grokReasoningEffort ?? action.reasoningEffort)
+                : undefined
+            const workflowCursorReasoning =
+              provider === 'cursor' && isCursorGrok45ModelId(workflowSelectedModel)
+                ? (action.cursorReasoningEffort ?? action.reasoningEffort)
+                : undefined
+            const workflowCursorFastMode =
+              provider === 'cursor' && isCursorGrok45ModelId(workflowSelectedModel)
+                ? action.cursorFastMode
+                : undefined
             AppStore.saveWorkflowDefinition({
               name: derivedName,
               workspaceId: workspaceRecord.id,
@@ -25029,13 +25106,22 @@ if (isGeminiMcpBridgeProcess) {
                 provider,
                 prompt,
                 displayPrompt: prompt,
-                selectedModelType: action.model || 'default',
+                selectedModelType: workflowSelectedModel,
                 customModel: '',
                 approvalMode: effectiveApprovalMode || 'default',
                 sessionTrust: false,
                 imageAttachments: [],
-                ...(action.reasoningEffort !== undefined
-                  ? { codexReasoningEffort: action.reasoningEffort }
+                ...(workflowCodexReasoning !== undefined
+                  ? { codexReasoningEffort: workflowCodexReasoning }
+                  : {}),
+                ...(workflowGrokReasoning !== undefined
+                  ? { grokReasoningEffort: workflowGrokReasoning }
+                  : {}),
+                ...(workflowCursorReasoning !== undefined
+                  ? { cursorReasoningEffort: workflowCursorReasoning }
+                  : {}),
+                ...(workflowCursorFastMode !== undefined
+                  ? { cursorFastMode: workflowCursorFastMode }
                   : {}),
                 ...(action.claudeReasoningEffort !== undefined
                   ? { claudeReasoningEffort: action.claudeReasoningEffort }
@@ -25223,6 +25309,18 @@ if (isGeminiMcpBridgeProcess) {
             typeof providerMetadata.claudeReasoningEffort === 'string'
               ? providerMetadata.claudeReasoningEffort
               : undefined
+          const metadataGrokReasoningEffort =
+            typeof providerMetadata.grokReasoningEffort === 'string'
+              ? providerMetadata.grokReasoningEffort
+              : undefined
+          const metadataCursorReasoningEffort =
+            typeof providerMetadata.cursorReasoningEffort === 'string'
+              ? providerMetadata.cursorReasoningEffort
+              : undefined
+          const metadataCursorFastMode =
+            typeof providerMetadata.cursorFastMode === 'boolean'
+              ? providerMetadata.cursorFastMode
+              : undefined
           // Model inheritance: a phone send without an explicit model means
           // "whatever this chat was using" — falling to the provider
           // default reset continuations (catastrophic for Ollama, where
@@ -25233,10 +25331,30 @@ if (isGeminiMcpBridgeProcess) {
             lastProviderRun?.actualModel ||
             lastProviderRun?.requestedModel ||
             undefined
+          const inheritedReasoningCapabilityModel =
+            inheritedModel || (provider === 'grok' ? GROK_45_MODEL_ID : undefined)
           const inheritedReasoningEffort =
-            action.reasoningEffort || metadataReasoningEffort || undefined
+            provider === 'codex'
+              ? action.reasoningEffort || metadataReasoningEffort || undefined
+              : provider === 'grok' &&
+                  isGrok45ReasoningModelId(inheritedReasoningCapabilityModel)
+                ? action.grokReasoningEffort ||
+                  action.reasoningEffort ||
+                  metadataGrokReasoningEffort ||
+                  undefined
+                : provider === 'cursor' &&
+                    isCursorGrok45ModelId(inheritedReasoningCapabilityModel)
+                  ? action.cursorReasoningEffort ||
+                    action.reasoningEffort ||
+                    metadataCursorReasoningEffort ||
+                    undefined
+                  : undefined
           const inheritedClaudeReasoningEffort =
             action.claudeReasoningEffort || metadataClaudeReasoningEffort || undefined
+          const inheritedCursorFastMode =
+            provider === 'cursor' && isCursorGrok45ModelId(inheritedReasoningCapabilityModel)
+              ? (action.cursorFastMode ?? metadataCursorFastMode ?? false)
+              : undefined
           const run: ChatRun = {
             runId,
             provider,
@@ -25400,6 +25518,9 @@ if (isGeminiMcpBridgeProcess) {
               : {}),
             model: inheritedModel,
             ...(inheritedReasoningEffort ? { reasoningEffort: inheritedReasoningEffort } : {}),
+            ...(inheritedCursorFastMode !== undefined
+              ? { serviceTier: inheritedCursorFastMode ? 'fast' : null }
+              : {}),
             ...(inheritedClaudeReasoningEffort
               ? { claudeReasoningEffort: inheritedClaudeReasoningEffort }
               : {}),

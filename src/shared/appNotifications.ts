@@ -21,7 +21,7 @@ export type AppNotificationKind = 'deprecation' | 'addition' | 'feature' | 'info
 export type AppNotificationTone = 'default' | 'danger'
 
 /** Optional provider accent for model/provider-specific announcement cards. */
-export type AppNotificationAccent = 'default' | 'claude' | 'ensemble'
+export type AppNotificationAccent = 'default' | 'claude' | 'ensemble' | 'cursor' | 'grok'
 
 /** Optional semantic icon override for notices that need a product signpost. */
 export type AppNotificationIcon = 'ensemble'
@@ -101,6 +101,22 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
     body: 'On a new chat, use the Ensemble glyph in the composer bottom row and choose On before first send. That turns the draft into an Ensemble; the separate New Ensemble Chat menu entry moved into that button, and Ensembles + still works.',
     accent: 'ensemble',
     icon: 'ensemble',
+    dismissible: true
+  },
+  {
+    id: 'cursor-grok-4-5-2026-07-08',
+    kind: 'addition',
+    title: 'Cursor Grok 4.5 is available.',
+    body: 'Cursor now offers Grok 4.5 from the first-party model pool with 500K context, Low/Medium/High reasoning, and a Fast toggle. Composer 2.5 and Composer 2.5 Fast remain reasoning-free.',
+    accent: 'cursor',
+    dismissible: true
+  },
+  {
+    id: 'grok-4-5-2026-07-08',
+    kind: 'addition',
+    title: 'Grok 4.5 is available.',
+    body: 'Grok now defaults to Grok 4.5, the 500K-context coding model used by Grok Build. TaskWraith exposes Low/Medium/High reasoning for Grok 4.5 only; Grok Composer 2.5 Fast has no reasoning value.',
+    accent: 'grok',
     dismissible: true
   },
   {

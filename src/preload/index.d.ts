@@ -290,6 +290,9 @@ interface ComposerRunInput {
   claudeReasoningEffort?: string | null
   claudeFastMode?: boolean | null
   kimiThinkingEnabled?: boolean
+  grokReasoningEffort?: string | null
+  cursorReasoningEffort?: string | null
+  cursorFastMode?: boolean | null
   runtimeProfileId?: string
   geminiAuthProfileId?: string | null
   handoffSourceRunId?: string

@@ -477,6 +477,8 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   sideChatWelcomeWorkspaceLabel,
   sideClaudeReasoning,
   sideCodexReasoning,
+  sideGrokReasoning,
+  sideCursorReasoning,
   sideComposerContextMenu,
   sideComposerHasMention,
   sideComposerModelOptions,
@@ -2352,6 +2354,8 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                               onSelectReasoning={handleSideReasoningChange}
                               codexReasoningEffort={sideCodexReasoning}
                               claudeReasoningEffort={sideClaudeReasoning}
+                              grokReasoningEffort={sideGrokReasoning}
+                              cursorReasoningEffort={sideCursorReasoning}
                               kimiThinkingEnabled={sideKimiThinking}
                               fastModeCapableModelIds={sideFastModeCapableModelIds}
                               fastModeEnabled={sideFastModeEnabled}

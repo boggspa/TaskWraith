@@ -25,6 +25,7 @@ import { WORKSPACE_POLICY_SERVICES } from '../lib/workspacePolicyServices'
 import { CombinedModelPicker, type CombinedModelPickerModelOption } from './CombinedModelPicker'
 import { CombinedPermissionsPicker, type PermissionOption } from './CombinedPermissionsPicker'
 import { ComposerProviderPicker } from './ComposerProviderPicker'
+import { isCursorGrok45ModelId } from '../../../shared/grok45Models'
 
 // Lossless permission options: the values ARE the PermissionPresetId, so
 // full_access + custom survive a round-trip (unlike the composer's 3-mode
@@ -84,17 +85,26 @@ export function ParticipantPickerCluster({
 
   const onSelectModel = (nextModel: string): void => {
     const patch: Partial<EnsembleParticipant> = { model: nextModel }
-    if (participant.provider === 'claude') {
+    if (
+      participant.provider === 'claude' ||
+      participant.provider === 'cursor' ||
+      participant.provider === 'grok'
+    ) {
       const nextReasoningOptions = getEnsembleReasoningOptions(participant.provider, nextModel)
       const enabledReasoningOptions = nextReasoningOptions.filter((option) => !option.disabled)
       const nextReasoningValues = new Set(enabledReasoningOptions.map((option) => option.value))
-      patch.reasoningEffort = nextReasoningValues.has(defaults.defaultReasoning)
-        ? defaults.defaultReasoning
-        : enabledReasoningOptions[0]?.value
+      patch.reasoningEffort =
+        enabledReasoningOptions.length === 0
+          ? undefined
+          : nextReasoningValues.has(defaults.defaultReasoning)
+            ? defaults.defaultReasoning
+            : enabledReasoningOptions[0]?.value
     }
     // Drop fast mode when the new model can't support it (mirrors composer).
     if (
-      (participant.provider === 'codex' || participant.provider === 'claude') &&
+      (participant.provider === 'codex' ||
+        participant.provider === 'claude' ||
+        participant.provider === 'cursor') &&
       !defaults.fastModeCapableModelIds.has(nextModel)
     ) {
       patch.fastModeEnabled = false
@@ -123,7 +133,9 @@ export function ParticipantPickerCluster({
       ? resolved.serviceTier === 'fast'
       : participant.provider === 'claude'
         ? resolved.fastModeEnabled
-        : false
+        : participant.provider === 'cursor'
+          ? selectedModelId === 'composer-2.5-fast' || resolved.fastModeEnabled
+          : false
   const onToggleFastMode =
     participant.provider === 'codex'
       ? (): void => {
@@ -132,6 +144,18 @@ export function ParticipantPickerCluster({
         }
       : participant.provider === 'claude'
         ? (): void => onPatch({ fastModeEnabled: !resolved.fastModeEnabled })
+        : participant.provider === 'cursor'
+          ? (): void => {
+              if (selectedModelId === 'composer-2.5' || selectedModelId === 'composer-2.5-fast') {
+                onPatch({
+                  model: selectedModelId === 'composer-2.5-fast' ? 'composer-2.5' : 'composer-2.5-fast',
+                  fastModeEnabled: selectedModelId !== 'composer-2.5-fast'
+                })
+                return
+              }
+              if (!isCursorGrok45ModelId(selectedModelId)) return
+              onPatch({ fastModeEnabled: !resolved.fastModeEnabled })
+            }
         : undefined
 
   const permissionOptions: PermissionOption[] = [
@@ -174,6 +198,10 @@ export function ParticipantPickerCluster({
         codexReasoningEffort={participant.provider === 'codex' ? resolved.reasoningEffort : undefined}
         claudeReasoningEffort={
           participant.provider === 'claude' ? resolved.reasoningEffort : undefined
+        }
+        grokReasoningEffort={participant.provider === 'grok' ? resolved.reasoningEffort : undefined}
+        cursorReasoningEffort={
+          participant.provider === 'cursor' ? resolved.reasoningEffort : undefined
         }
         kimiThinkingEnabled={participant.provider === 'kimi' ? resolved.thinkingEnabled : undefined}
         fastModeCapableModelIds={defaults.fastModeCapableModelIds}

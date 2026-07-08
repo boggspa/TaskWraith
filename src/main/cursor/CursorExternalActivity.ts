@@ -61,6 +61,15 @@ export function normalizeCursorExternalModelId(raw: string | undefined | null): 
   const trimmed = String(raw || '').trim()
   const key = trimmed.toLowerCase()
   if (!key || key === 'cursor' || key === 'composer') return 'composer-2.5-fast'
+  if (
+    key === 'cursor grok 4.5' ||
+    key === 'cursor-grok-4.5' ||
+    key === 'grok 4.5' ||
+    key === 'grok-4.5' ||
+    key.startsWith('grok-4.5-')
+  ) {
+    return 'grok-4.5'
+  }
   if (key === 'composer 2.5 fast' || key === 'composer-2.5-fast') return 'composer-2.5-fast'
   if (key === 'composer 2.5' || key === 'composer-2.5') return 'composer-2.5'
   if (key.startsWith('composer-')) return key
@@ -96,6 +105,14 @@ export function extractTranscriptMessageText(content: unknown): string {
 
 export function inferCursorModelFromText(text: string): string {
   const haystack = text.toLowerCase()
+  if (
+    haystack.includes('cursor grok 4.5') ||
+    haystack.includes('cursor-grok-4.5') ||
+    haystack.includes('grok 4.5') ||
+    haystack.includes('grok-4.5')
+  ) {
+    return 'grok-4.5'
+  }
   if (haystack.includes('composer-2.5-fast') || haystack.includes('composer 2.5 fast')) {
     return 'composer-2.5-fast'
   }

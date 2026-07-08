@@ -8,6 +8,10 @@ import type {
 } from './store/types'
 import { approvalModeRank, coerceApprovalMode } from './RunPermissionPosture'
 import { resolveActiveGoalForProvider } from './GoalState'
+import {
+  isCursorGrok45ModelId,
+  isGrok45ReasoningModelId
+} from '../shared/grok45Models'
 
 const PROVIDER_IDS: readonly ProviderId[] = [
   'gemini',
@@ -137,6 +141,22 @@ export function applyReroutePlanToPayload<T extends { provider: ProviderId }>(
       ? {
           reasoningEffort: plan.codexReasoningEffort ?? null,
           serviceTier: plan.codexServiceTier ?? null
+        }
+      : {}),
+    ...(resolution.provider === 'grok'
+      ? {
+          reasoningEffort: isGrok45ReasoningModelId(plan.selectedModelType)
+            ? plan.grokReasoningEffort ?? null
+            : null
+        }
+      : {}),
+    ...(resolution.provider === 'cursor'
+      ? {
+          reasoningEffort: isCursorGrok45ModelId(plan.selectedModelType)
+            ? plan.cursorReasoningEffort ?? null
+            : null,
+          serviceTier:
+            isCursorGrok45ModelId(plan.selectedModelType) && plan.cursorFastMode ? 'fast' : null
         }
       : {}),
     ...(resolution.provider === 'claude'
@@ -271,6 +291,21 @@ function sanitizeReroutePlan(value: unknown): ProviderReroutePlan | null {
       ? { claudeFastMode: null }
       : typeof input.claudeFastMode === 'boolean'
         ? { claudeFastMode: input.claudeFastMode }
+        : {}),
+    ...(input.grokReasoningEffort === null
+      ? { grokReasoningEffort: null }
+      : sanitizeShortString(input.grokReasoningEffort, 80)
+        ? { grokReasoningEffort: sanitizeShortString(input.grokReasoningEffort, 80) }
+        : {}),
+    ...(input.cursorReasoningEffort === null
+      ? { cursorReasoningEffort: null }
+      : sanitizeShortString(input.cursorReasoningEffort, 80)
+        ? { cursorReasoningEffort: sanitizeShortString(input.cursorReasoningEffort, 80) }
+        : {}),
+    ...(input.cursorFastMode === null
+      ? { cursorFastMode: null }
+      : typeof input.cursorFastMode === 'boolean'
+        ? { cursorFastMode: input.cursorFastMode }
         : {}),
     ...(typeof input.kimiThinkingEnabled === 'boolean'
       ? { kimiThinkingEnabled: input.kimiThinkingEnabled }

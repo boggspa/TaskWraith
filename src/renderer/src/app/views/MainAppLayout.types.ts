@@ -532,6 +532,8 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   sideChatWelcomeWorkspaceLabel: any
   sideClaudeReasoning: any
   sideCodexReasoning: any
+  sideGrokReasoning: any
+  sideCursorReasoning: any
   sideComposerContextMenu: any
   sideComposerHasMention: any
   sideComposerModelOptions: any

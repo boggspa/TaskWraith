@@ -23,8 +23,9 @@
 // In NO mode is `--always-approve` ever emitted.
 
 import type { ActiveGoal } from '../store/types'
+import { isGrok45ReasoningModelId } from '../../shared/grok45Models'
 
-const GROK_EFFORT_LEVELS = new Set(['low', 'medium', 'high', 'xhigh', 'max'])
+const GROK_EFFORT_LEVELS = new Set(['low', 'medium', 'high'])
 
 export function normalizeGrokEffortFlag(value: string | null | undefined): string | null {
   if (!value) return null
@@ -198,7 +199,8 @@ function appendGrokModelAndEffortArgs(
   if (input.model && input.model.startsWith('grok')) {
     args.push('--model', input.model)
   }
-  const effort = normalizeGrokEffortFlag(input.reasoningEffort)
+  const allowsReasoning = !input.model || isGrok45ReasoningModelId(input.model)
+  const effort = allowsReasoning ? normalizeGrokEffortFlag(input.reasoningEffort) : null
   if (effort) {
     args.push('--effort', effort)
   }

@@ -5,6 +5,13 @@ import {
   previewModelsForProvider,
   type PreviewModelCatalogEntry
 } from '../../shared/previewModelCatalog'
+import {
+  CURSOR_GROK_45_BASE_MODEL_ID,
+  GROK_45_DEFAULT_REASONING_EFFORT,
+  GROK_45_MODEL_ID,
+  GROK_45_REASONING_EFFORTS,
+  isCursorGrok45ModelId
+} from '../../shared/grok45Models'
 
 export interface StaticProviderModelOptions {
   includePreviewModels?: boolean
@@ -322,14 +329,30 @@ const GEMINI_STATIC_MODELS = [
   { id: 'flash-lite', label: 'Flash Lite', isDefault: true }
 ]
 const GEMINI_DEFAULT_MODEL = 'flash-lite'
-const GROK_DEFAULT_MODEL = 'grok-build'
+const GROK_DEFAULT_MODEL = GROK_45_MODEL_ID
 const GROK_STATIC_MODELS = [
-  { id: GROK_DEFAULT_MODEL, label: 'Grok Build 0.1', isDefault: true },
+  {
+    id: GROK_DEFAULT_MODEL,
+    // Grok's CLI models are permanently Fast-mode, so the label reflects that.
+    label: 'Grok 4.5 Fast',
+    description: '500K context - low/medium/high reasoning',
+    isDefault: true,
+    supportedReasoningEfforts: [...GROK_45_REASONING_EFFORTS],
+    defaultReasoningEffort: GROK_45_DEFAULT_REASONING_EFFORT
+  },
   { id: 'grok-composer-2.5-fast', label: 'Grok Composer 2.5 Fast' }
 ]
 const CURSOR_STATIC_MODELS = [
   { id: 'composer-2.5-fast', label: 'Composer 2.5 Fast', isDefault: true },
-  { id: 'composer-2.5', label: 'Composer 2.5' }
+  { id: 'composer-2.5', label: 'Composer 2.5' },
+  {
+    id: CURSOR_GROK_45_BASE_MODEL_ID,
+    label: 'Cursor Grok 4.5',
+    description: 'First-party Cursor model pool - 500K context',
+    supportedReasoningEfforts: [...GROK_45_REASONING_EFFORTS],
+    defaultReasoningEffort: GROK_45_DEFAULT_REASONING_EFFORT,
+    additionalSpeedTiers: ['fast']
+  }
 ]
 const KIMI_DEFAULT_MODEL = 'kimi-k2.7-code'
 const KIMI_CLI_MODEL_IDS = new Set(KIMI_STATIC_MODELS.map((model) => model.id))
@@ -407,12 +430,14 @@ export function normalizeCliProviderModel(provider: ProviderId, model?: string |
   }
   if (provider === 'grok') {
     if (!trimmed || lowered === 'cli-default' || lowered === 'default') return GROK_DEFAULT_MODEL
+    if (lowered === 'grok-build' || lowered === 'grok-build-0.1') return GROK_DEFAULT_MODEL
     if (lowered.startsWith('grok')) return trimmed
     return GROK_DEFAULT_MODEL
   }
   if (provider === 'cursor') {
     if (!trimmed || lowered === 'cli-default' || lowered === 'default') return 'composer-2.5-fast'
     if (trimmed.startsWith('composer-')) return trimmed
+    if (isCursorGrok45ModelId(trimmed)) return CURSOR_GROK_45_BASE_MODEL_ID
     return 'composer-2.5-fast'
   }
   if (provider === 'gemini') {

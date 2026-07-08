@@ -32,7 +32,7 @@ export interface CursorProbeFindings {
   subcommands: string[]
   /** Full `cursor-agent models` list (empty when logged out). */
   models: CursorModel[]
-  /** The only ids TaskWraith exposes: composer-2.5 + composer-2.5-fast. */
+  /** TaskWraith-exposed Cursor ids: Composer 2.5 plus Cursor Grok 4.5 variants. */
   composerModelIds: string[]
   errors: string[]
 }
@@ -60,14 +60,20 @@ export interface CursorProbeDeps {
 }
 
 /**
- * The canonical Composer 2.5 model ids TaskWraith ships (confirmed live via
- * `cursor-agent models`). Cursor proxies ~27 other models (GPT/Claude/Codex/…);
- * TaskWraith deliberately exposes ONLY Composer 2.5 — the others belong to their
- * own native providers.
+ * The canonical Cursor model ids TaskWraith ships (confirmed live via
+ * `cursor-agent models`). Most Cursor-proxied models belong to their native
+ * providers; Cursor Grok 4.5 is included because Cursor exposes it in the
+ * first-party included model pool with its own reasoning/fast variants.
  */
 export const CURSOR_COMPOSER_MODELS: readonly CursorModel[] = [
   { id: 'composer-2.5', label: 'Composer 2.5' },
-  { id: 'composer-2.5-fast', label: 'Composer 2.5 Fast' }
+  { id: 'composer-2.5-fast', label: 'Composer 2.5 Fast' },
+  { id: 'grok-4.5-medium', label: 'Grok 4.5 Low' },
+  { id: 'grok-4.5-fast-medium', label: 'Grok 4.5 Low Fast' },
+  { id: 'grok-4.5-high', label: 'Grok 4.5 Medium' },
+  { id: 'grok-4.5-fast-high', label: 'Grok 4.5 Medium Fast' },
+  { id: 'grok-4.5-xhigh', label: 'Grok 4.5 High' },
+  { id: 'grok-4.5-fast-xhigh', label: 'Grok 4.5 High Fast' }
 ]
 
 export const CURSOR_COMPOSER_MODEL_IDS: readonly string[] = CURSOR_COMPOSER_MODELS.map((m) => m.id)

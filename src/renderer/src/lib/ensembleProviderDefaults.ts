@@ -27,6 +27,12 @@ import type {
 } from '../components/CombinedModelPicker'
 import type { EnsembleParticipant, PermissionPresetId, ProviderId } from '../../../main/store/types'
 import { codexReasoningDisplayLabel, claudeReasoningDisplayLabel } from './composerChipFormat'
+import {
+  CURSOR_GROK_45_BASE_MODEL_ID,
+  GROK_45_DEFAULT_REASONING_EFFORT,
+  GROK_45_MODEL_ID,
+  isGrok45ReasoningModelId
+} from '../../../shared/grok45Models'
 
 export interface EnsembleModelDefaults {
   modelOptions: CombinedModelPickerModelOption[]
@@ -84,14 +90,12 @@ const KIMI_REASONING: CombinedModelPickerReasoningOption[] = [
   { value: 'off', label: 'Thinking off' }
 ]
 
-// Grok mirrors Claude Code's effort grammar (low|medium|high|xhigh|max);
-// GrokCliArgs.normalizeGrokEffortFlag is the dispatch-side guard.
+// Grok 4.5 exposes low/medium/high only; GrokCliArgs.normalizeGrokEffortFlag
+// is the dispatch-side guard.
 const GROK_REASONING: CombinedModelPickerReasoningOption[] = [
   { value: 'low', label: 'Low' },
   { value: 'medium', label: 'Medium' },
-  { value: 'high', label: 'High' },
-  { value: 'xhigh', label: 'Extra High' },
-  { value: 'max', label: 'Max' }
+  { value: 'high', label: 'High' }
 ]
 
 const CODEX_MODELS: CombinedModelPickerModelOption[] = [
@@ -133,16 +137,16 @@ const KIMI_MODELS: CombinedModelPickerModelOption[] = [
 // Grok — mirrors App.tsx GROK_DEFAULT_MODELS. Keep Grok Composer separate from
 // Cursor's `composer-2.5-fast` because it dispatches through Grok Build CLI auth.
 const GROK_MODELS: CombinedModelPickerModelOption[] = [
-  { id: 'grok-build', label: 'Grok Build 0.1' },
+  { id: GROK_45_MODEL_ID, label: 'Grok 4.5 Fast' },
   { id: 'grok-composer-2.5-fast', label: 'Grok Composer 2.5 Fast' }
 ]
 
-// Cursor — the only ids TaskWraith exposes (mirrors CursorCliProbe). "Fast" is a
-// distinct model id (composer-2.5-fast), not a service tier, so both are listed
-// as model options rather than a fast-tier toggle (no reasoning axis).
+// Cursor — Composer 2.5 plus Cursor Grok 4.5. Grok 4.5 is one friendly row in
+// the UI; dispatch maps reasoning/Fast to Cursor's concrete grok-4.5-* ids.
 const CURSOR_MODELS: CombinedModelPickerModelOption[] = [
+  { id: 'composer-2.5-fast', label: 'Composer 2.5 Fast' },
   { id: 'composer-2.5', label: 'Composer 2.5' },
-  { id: 'composer-2.5-fast', label: 'Composer 2.5 Fast' }
+  { id: CURSOR_GROK_45_BASE_MODEL_ID, label: 'Cursor Grok 4.5' }
 ]
 
 const OLLAMA_MODELS: CombinedModelPickerModelOption[] = [
@@ -169,6 +173,15 @@ const CLAUDE_FAST_CAPABLE = new Set<string>([
   'claude-fable-5',
   'claude-fable-5-1m'
 ])
+const CURSOR_FAST_CAPABLE = new Set<string>([
+  'composer-2.5',
+  'composer-2.5-fast',
+  CURSOR_GROK_45_BASE_MODEL_ID
+])
+// Both Grok models run permanently in Fast mode. This set only drives the
+// picker's Fast ⚡ glyph — Grok passes no onToggleFastMode, so no toggle row
+// renders and no fast-clearing runs on model switch.
+const GROK_FAST_CAPABLE = new Set<string>([GROK_45_MODEL_ID, 'grok-composer-2.5-fast'])
 
 function isClaudeFullReasoningModel(modelId?: string | null): boolean {
   const normalized = String(modelId || '').toLowerCase()
@@ -212,7 +225,9 @@ export function getEnsembleReasoningOptions(
     case 'kimi':
       return KIMI_REASONING
     case 'grok':
-      return GROK_REASONING
+      return isGrok45ReasoningModelId(modelId) ? GROK_REASONING : []
+    case 'cursor':
+      return modelId === CURSOR_GROK_45_BASE_MODEL_ID ? GROK_REASONING : []
     default:
       return []
   }
@@ -294,16 +309,15 @@ export function getDefaultEnsembleParticipantConfig(
       // still toolless at dispatch, so the preset only matters if the user
       // later swaps the row to a tool-capable provider config.
       return {
-        model: 'grok-build',
+        model: GROK_45_MODEL_ID,
         permissionPresetId: 'default',
-        reasoningEffort: 'medium'
+        reasoningEffort: GROK_45_DEFAULT_REASONING_EFFORT
       }
     case 'cursor':
-      // Cursor (Composer 2.5) has no reasoning axis. Approval-gated like the
-      // rest — cursor's write mode stays deny-list contained + diff-reviewed.
       return {
         model: 'composer-2.5-fast',
-        permissionPresetId: 'default'
+        permissionPresetId: 'default',
+        fastModeEnabled: true
       }
     case 'ollama':
       return {
@@ -482,16 +496,16 @@ export function getEnsembleModelDefaults(provider: ProviderId): EnsembleModelDef
       return {
         modelOptions: GROK_MODELS,
         reasoningOptions: GROK_REASONING,
-        defaultReasoning: 'medium',
-        fastModeCapableModelIds: new Set<string>(),
-        defaultModelId: 'grok-build'
+        defaultReasoning: GROK_45_DEFAULT_REASONING_EFFORT,
+        fastModeCapableModelIds: GROK_FAST_CAPABLE,
+        defaultModelId: GROK_45_MODEL_ID
       }
     case 'cursor':
       return {
         modelOptions: CURSOR_MODELS,
         reasoningOptions: [],
-        defaultReasoning: '',
-        fastModeCapableModelIds: new Set<string>(),
+        defaultReasoning: GROK_45_DEFAULT_REASONING_EFFORT,
+        fastModeCapableModelIds: CURSOR_FAST_CAPABLE,
         defaultModelId: 'composer-2.5-fast'
       }
     case 'ollama':

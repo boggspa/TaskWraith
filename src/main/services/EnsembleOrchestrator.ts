@@ -130,6 +130,7 @@ import {
 } from '../channels/DiscordContextService'
 import { contextPercent, resolveContextWindow } from '../../shared/contextWindows'
 import { isEnsembleRoundDispatchLive } from '../../shared/ensembleRoundLifecycle'
+import { isCursorGrok45ModelId, isGrok45ReasoningModelId } from '../../shared/grok45Models'
 import { isPreviewRiskModel } from '../../shared/previewModelCatalog'
 import type { NormalizedProviderUsageSnapshot } from '../ProviderQuotaSnapshots'
 import { summarizeProviderUsage, type ProviderUsageSummary } from '../ProviderUsageStatus'
@@ -9265,17 +9266,19 @@ export class EnsembleOrchestrator {
       // matches the participant's provider so adapters don't see
       // cross-provider noise. Falls back silently when a participant
       // pre-dates the setup-sheet picker rework.
-      // 1.0.6-CRUX30 — codex AND grok both dispatch reasoning via the shared
-      // `reasoningEffort` payload field (each adapter normalizes it — Codex
-      // effort vs Grok's normalizeGrokEffortFlag). Thread both so a grok
-      // ensemble participant's reasoning isn't silently dropped.
-      const codexOrGrokReasoning =
-        participant.provider === 'codex' || participant.provider === 'grok'
+      const sharedReasoning =
+        participant.provider === 'codex' ||
+        (participant.provider === 'grok' && isGrok45ReasoningModelId(participant.model)) ||
+        (participant.provider === 'cursor' && isCursorGrok45ModelId(participant.model))
           ? participant.reasoningEffort
           : undefined
-      const codexServiceTier =
+      const sharedServiceTier =
         participant.provider === 'codex'
           ? (participant.serviceTier ?? (participant.fastModeEnabled ? 'fast' : ''))
+          : participant.provider === 'cursor' && isCursorGrok45ModelId(participant.model)
+            ? participant.fastModeEnabled
+              ? 'fast'
+              : ''
           : undefined
       const claudeReasoning =
         participant.provider === 'claude' ? participant.reasoningEffort : undefined
@@ -9330,8 +9333,8 @@ export class EnsembleOrchestrator {
           ensembleConfigForRound,
           chatContextTurns
         ),
-        ...(codexOrGrokReasoning !== undefined ? { reasoningEffort: codexOrGrokReasoning } : {}),
-        ...(codexServiceTier !== undefined ? { serviceTier: codexServiceTier } : {}),
+        ...(sharedReasoning !== undefined ? { reasoningEffort: sharedReasoning } : {}),
+        ...(sharedServiceTier !== undefined ? { serviceTier: sharedServiceTier } : {}),
         ...(claudeReasoning !== undefined ? { claudeReasoningEffort: claudeReasoning } : {}),
         ...(claudeFastMode !== undefined ? { claudeFastMode } : {}),
         ...(kimiThinking !== undefined ? { kimiThinking } : {}),
@@ -10199,13 +10202,19 @@ export class EnsembleOrchestrator {
       // Mirror the serial path: thread per-participant reasoning/thinking into
       // the fan-out payload too, else a concurrent round silently runs every
       // participant at provider-default reasoning regardless of its config.
-      const codexOrGrokReasoning =
-        participant.provider === 'codex' || participant.provider === 'grok'
+      const sharedReasoning =
+        participant.provider === 'codex' ||
+        (participant.provider === 'grok' && isGrok45ReasoningModelId(participant.model)) ||
+        (participant.provider === 'cursor' && isCursorGrok45ModelId(participant.model))
           ? participant.reasoningEffort
           : undefined
-      const codexServiceTier =
+      const sharedServiceTier =
         participant.provider === 'codex'
           ? (participant.serviceTier ?? (participant.fastModeEnabled ? 'fast' : ''))
+          : participant.provider === 'cursor' && isCursorGrok45ModelId(participant.model)
+            ? participant.fastModeEnabled
+              ? 'fast'
+              : ''
           : undefined
       const claudeReasoning =
         participant.provider === 'claude' ? participant.reasoningEffort : undefined
@@ -10260,8 +10269,8 @@ export class EnsembleOrchestrator {
           chat.ensemble,
           chatContextTurns
         ),
-        ...(codexOrGrokReasoning !== undefined ? { reasoningEffort: codexOrGrokReasoning } : {}),
-        ...(codexServiceTier !== undefined ? { serviceTier: codexServiceTier } : {}),
+        ...(sharedReasoning !== undefined ? { reasoningEffort: sharedReasoning } : {}),
+        ...(sharedServiceTier !== undefined ? { serviceTier: sharedServiceTier } : {}),
         ...(claudeReasoning !== undefined ? { claudeReasoningEffort: claudeReasoning } : {}),
         ...(claudeFastMode !== undefined ? { claudeFastMode } : {}),
         ...(kimiThinking !== undefined ? { kimiThinking } : {}),
@@ -12008,7 +12017,12 @@ function ensembleRunIdentity(
  * doesn't apply.
  */
 function ensembleReasoningMetadata(participant: EnsembleParticipant): Record<string, unknown> {
-  if (participant.provider === 'codex' || participant.provider === 'claude') {
+  if (
+    participant.provider === 'codex' ||
+    participant.provider === 'claude' ||
+    (participant.provider === 'grok' && isGrok45ReasoningModelId(participant.model)) ||
+    (participant.provider === 'cursor' && isCursorGrok45ModelId(participant.model))
+  ) {
     return participant.reasoningEffort
       ? { ensembleReasoningEffort: participant.reasoningEffort }
       : {}
