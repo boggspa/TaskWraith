@@ -255,7 +255,10 @@ function makeHarness(
      * stay byte-identical.
      */
     probeParticipant?: (participant: EnsembleParticipant) => Promise<ParticipantProbeResult>
-    awaitPendingSeatCompaction?: (participantId: string) => Promise<unknown> | undefined
+    awaitPendingSeatCompaction?: (
+      chatId: string,
+      participantId: string
+    ) => Promise<unknown> | undefined
     onContextCompactionProgress?: (event: ContextCompactionProgressEvent) => void
     scheduleWakeupTimer?: (wakeup: EnsembleWakeupRecord) => void
     cancelWakeupTimer?: (wakeupId: string) => void
@@ -2778,7 +2781,7 @@ Next action:
     // (keeps speaking, Stop can't reach it, round reads stuck 'running').
     let resolveCompaction: (() => void) | undefined
     const harness = makeHarness({
-      awaitPendingSeatCompaction: (participantId) =>
+      awaitPendingSeatCompaction: (_chatId, participantId) =>
         participantId === 'codex'
           ? new Promise<void>((resolve) => {
               resolveCompaction = resolve
@@ -2823,7 +2826,7 @@ Next action:
     try {
       let resolveCompaction: (() => void) | undefined
       const harness = makeHarness({
-        awaitPendingSeatCompaction: (participantId) =>
+        awaitPendingSeatCompaction: (_chatId, participantId) =>
           participantId === 'ollama-a'
             ? new Promise<void>((resolve) => {
                 resolveCompaction = resolve
@@ -2885,7 +2888,7 @@ Next action:
       let resolveCompaction: (() => void) | undefined
       const progressEvents: ContextCompactionProgressEvent[] = []
       const harness = makeHarness({
-        awaitPendingSeatCompaction: (participantId) =>
+        awaitPendingSeatCompaction: (_chatId, participantId) =>
           participantId === 'ollama-a'
             ? new Promise<void>((resolve) => {
                 resolveCompaction = resolve

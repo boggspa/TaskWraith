@@ -293,7 +293,10 @@ export interface EnsembleOrchestratorDeps {
    * `compactSeatContext` powers the post-round auto-trigger. Both optional so
    * the unit-test harness can omit them (no-ops).
    */
-  awaitPendingSeatCompaction?: (participantId: string) => Promise<unknown> | undefined
+  awaitPendingSeatCompaction?: (
+    chatId: string,
+    participantId: string
+  ) => Promise<unknown> | undefined
   compactSeatContext?: (input: {
     chatId: string
     participantId: string
@@ -11620,7 +11623,7 @@ export class EnsembleOrchestrator {
     chatId: string,
     participant: EnsembleParticipant
   ): Promise<void> {
-    const pending = this.deps.awaitPendingSeatCompaction?.(participant.id)
+    const pending = this.deps.awaitPendingSeatCompaction?.(chatId, participant.id)
     if (pending) {
       this.emitSeatCompactionProgress(chatId, participant, 'started')
       let succeeded = true

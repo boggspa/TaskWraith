@@ -1840,6 +1840,10 @@ export const TranscriptPanel = memo(
         return !pendingQueuedAppRunIds.has(appRunId)
       })
     }, [isWelcomeChat, messages, pendingQueuedAppRunIds, queuedRunStatusByAppRunId])
+    const hasLiveContextCompactionProgress = useMemo(
+      () => contextCompactionProgress.some((event) => event.status === 'started'),
+      [contextCompactionProgress]
+    )
     const ensembleWorkingPresentation = useMemo(
       () => deriveActiveEnsembleWorkingPresentation(currentChat, contextCompactionProgress),
       [contextCompactionProgress, currentChat]
@@ -3862,7 +3866,7 @@ export const TranscriptPanel = memo(
               event={event}
             />
           ))}
-          {isThinking && (
+          {(isThinking || hasLiveContextCompactionProgress) && (
             <div
               key="thinking-indicator"
               className={`message-group${workingPresentations.length > 1 ? ' message-working-stack' : ''}`}

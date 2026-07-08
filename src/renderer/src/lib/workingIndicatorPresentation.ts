@@ -79,6 +79,24 @@ function activeParticipantId(chat: ChatRecord): string | undefined {
     ?.participantId
 }
 
+function compactingParticipantIds(
+  chat: ChatRecord,
+  contextCompactionProgress: readonly ContextCompactionProgressEvent[]
+): string[] {
+  const ids = new Set<string>()
+  for (const event of contextCompactionProgress) {
+    if (
+      event.status === 'started' &&
+      event.chatId === chat.appChatId &&
+      typeof event.participantId === 'string' &&
+      event.participantId
+    ) {
+      ids.add(event.participantId)
+    }
+  }
+  return Array.from(ids)
+}
+
 function participantOrder(chat: ChatRecord, participantId: string): number {
   const participant = chat.ensemble?.participants.find((item) => item.id === participantId)
   if (typeof participant?.order === 'number') return participant.order
@@ -168,7 +186,8 @@ export function deriveActiveEnsembleWorkingPresentation(
   contextCompactionProgress: readonly ContextCompactionProgressEvent[] = []
 ): WorkingIndicatorPresentation | null {
   if (chat?.chatKind !== 'ensemble') return null
-  const participantId = activeParticipantId(chat)
+  const participantId =
+    activeParticipantId(chat) || compactingParticipantIds(chat, contextCompactionProgress)[0]
   if (!participantId) return null
   return workingPresentationForParticipant(chat, participantId, contextCompactionProgress)
 }
@@ -180,22 +199,35 @@ export function deriveActiveEnsembleWorkingPresentations(
   if (chat?.chatKind !== 'ensemble') return []
   const round = chat.ensemble?.activeRound
   const lanes = Object.values(round?.lanes || {})
-  if (!round || round.status !== 'running' || round.concurrentMode !== true || lanes.length === 0) {
-    return []
-  }
-  if (round.fanoutPolicy === 'off') return []
+  const compactingIds = compactingParticipantIds(chat, contextCompactionProgress)
+  const isConcurrentFanout =
+    Boolean(round) &&
+    round?.status === 'running' &&
+    round.concurrentMode === true &&
+    lanes.length > 0 &&
+    round.fanoutPolicy !== 'off'
+  if (!isConcurrentFanout && compactingIds.length === 0) return []
 
   const liveParticipantIds = new Set<string>()
-  if (round.activeParticipantId) {
+  if (compactingIds.length > 0) {
+    const activeId = activeParticipantId(chat)
+    if (activeId) liveParticipantIds.add(activeId)
+  }
+  if (isConcurrentFanout && round?.activeParticipantId) {
     const activeParticipant = roundParticipantForId(chat, round.activeParticipantId)
     if (!activeParticipant || isLiveRoundParticipantStatus(activeParticipant.status)) {
       liveParticipantIds.add(round.activeParticipantId)
     }
   }
-  for (const lane of lanes) {
-    if (LIVE_LANE_STATUSES.has(lane.status)) {
-      liveParticipantIds.add(lane.participantId)
+  if (isConcurrentFanout) {
+    for (const lane of lanes) {
+      if (LIVE_LANE_STATUSES.has(lane.status)) {
+        liveParticipantIds.add(lane.participantId)
+      }
     }
+  }
+  for (const participantId of compactingIds) {
+    liveParticipantIds.add(participantId)
   }
 
   return Array.from(liveParticipantIds)

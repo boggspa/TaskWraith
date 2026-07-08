@@ -251,6 +251,59 @@ describe('deriveActiveEnsembleWorkingPresentation', () => {
     ])
   })
 
+  it('shows a compacting participant during background seat maintenance', () => {
+    const chat = ensembleChat(
+      [
+        participant({ id: 'cursor-writer', provider: 'cursor', role: 'Writer', order: 1 }),
+        participant({ id: 'grok-reviewer', provider: 'grok', role: 'Reviewer', order: 2 })
+      ],
+      'cursor-writer'
+    )
+    chat.ensemble!.activeRound!.status = 'completed'
+    chat.ensemble!.activeRound!.participants = chat.ensemble!.activeRound!.participants.map(
+      (item) => ({ ...item, status: 'answered' })
+    )
+
+    expect(
+      deriveActiveEnsembleWorkingPresentations(chat, [
+        {
+          chatId: 'ensemble-chat',
+          participantId: 'grok-reviewer',
+          provider: 'grok',
+          status: 'started'
+        }
+      ]).map((item) => ({
+        provider: item.provider,
+        role: item.roleLabel,
+        activity: item.activity
+      }))
+    ).toEqual([{ provider: 'grok', role: 'Reviewer', activity: 'compacting' }])
+  })
+
+  it('keeps the serial active participant visible while another seat compacts', () => {
+    const chat = ensembleChat(
+      [
+        participant({ id: 'codex-builder', provider: 'codex', role: 'Builder', order: 1 }),
+        participant({ id: 'kimi-reviewer', provider: 'kimi', role: 'Reviewer', order: 2 })
+      ],
+      'codex-builder'
+    )
+
+    expect(
+      deriveActiveEnsembleWorkingPresentations(chat, [
+        {
+          chatId: 'ensemble-chat',
+          participantId: 'kimi-reviewer',
+          provider: 'kimi',
+          status: 'started'
+        }
+      ]).map((item) => ({ role: item.roleLabel, activity: item.activity }))
+    ).toEqual([
+      { role: 'Builder', activity: 'working' },
+      { role: 'Reviewer', activity: 'compacting' }
+    ])
+  })
+
   it('keeps the active non-lane participant visible during fan-out', () => {
     const chat = ensembleChat(
       [

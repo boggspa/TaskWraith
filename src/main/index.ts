@@ -11113,6 +11113,21 @@ function emitContextCompactionCompatLine(
   signal: ContextCompactionSignal,
   route?: AgentRunRoute | null
 ): void {
+  const routedChatId =
+    route && typeof route.appChatId === 'string' && route.appChatId ? route.appChatId : undefined
+  const ensembleParticipantId =
+    route &&
+    typeof (route as { ensembleRun?: { participantId?: unknown } }).ensembleRun?.participantId ===
+      'string'
+      ? (route as { ensembleRun: { participantId: string } }).ensembleRun.participantId
+      : undefined
+  if (routedChatId && !ensembleParticipantId) {
+    broadcastContextCompactionSignalProgress({
+      chatId: routedChatId,
+      provider,
+      signal
+    })
+  }
   sendAgentCompatLine(
     sender,
     provider,
@@ -15246,6 +15261,32 @@ function appendContextCompactionMessageToChat(
   return true
 }
 
+function broadcastContextCompactionSignalProgress(input: {
+  chatId: string
+  provider: ProviderId
+  signal: ContextCompactionSignal
+  cardMetadata?: Record<string, unknown>
+  trigger?: 'auto' | 'manual'
+}): void {
+  const participantId =
+    typeof input.cardMetadata?.ensembleParticipantId === 'string'
+      ? input.cardMetadata.ensembleParticipantId
+      : undefined
+  broadcastContextCompactionProgress({
+    chatId: input.chatId,
+    ...(participantId ? { participantId } : {}),
+    provider: input.provider,
+    status: input.signal.kind,
+    trigger: input.trigger || input.signal.telemetry.trigger || 'manual',
+    ...(typeof input.cardMetadata?.displayParticipantLabel === 'string'
+      ? { label: input.cardMetadata.displayParticipantLabel }
+      : {}),
+    ...(typeof input.cardMetadata?.displayHueClass === 'string'
+      ? { hueClass: input.cardMetadata.displayHueClass }
+      : {})
+  })
+}
+
 /**
  * Host-triggered Codex context compaction ("compact now"). Claude's manual
  * compaction is dispatched renderer-side as a normal `/compact` run (the CLI
@@ -15285,6 +15326,12 @@ async function compactCodexProviderContext(payload: {
     return { ok: false, error: 'A compaction is already in progress for this chat.' }
   }
   const startedAtMs = Date.now()
+  broadcastContextCompactionSignalProgress({
+    chatId: payload.chatId,
+    provider: 'codex',
+    signal: { kind: 'started', telemetry: { provider: 'codex', trigger: 'manual' } },
+    cardMetadata: payload.cardMetadata
+  })
   let settled = false
   const completion = new Promise<{ ok: boolean; error?: string }>((resolve) => {
     const finish = (result: { ok: boolean; error?: string }) => {
@@ -15362,6 +15409,12 @@ async function compactCodexProviderContext(payload: {
     `manual-${threadId}-${startedAtMs}`,
     payload.cardMetadata
   )
+  broadcastContextCompactionSignalProgress({
+    chatId: payload.chatId,
+    provider: 'codex',
+    signal,
+    cardMetadata: payload.cardMetadata
+  })
   const lastRunId = [...(chat.runs || [])].reverse().find((run) => run?.runId)?.runId
   if (lastRunId) {
     appendDurableRunEventForRoute(
@@ -15402,6 +15455,12 @@ async function compactClaudeProviderContext(payload: {
   }
   activeClaudeManualCompactions.add(payload.providerSessionId)
   const startedAtMs = Date.now()
+  broadcastContextCompactionSignalProgress({
+    chatId: payload.chatId,
+    provider: 'claude',
+    signal: { kind: 'started', telemetry: { provider: 'claude', trigger: 'manual' } },
+    cardMetadata: payload.cardMetadata
+  })
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), 180_000)
   let observed: ContextCompactionSignal | null = null
@@ -15412,10 +15471,7 @@ async function compactClaudeProviderContext(payload: {
     if (app.isPackaged) {
       const resolvedClaude = await resolveCliProviderBinary('claude', undefined)
       if (!resolvedClaude.binaryPath) {
-        return {
-          ok: false,
-          error: resolvedClaude.error || 'Claude Code CLI was not found.'
-        }
+        throw new Error(resolvedClaude.error || 'Claude Code CLI was not found.')
       }
       pathToClaudeCodeExecutable = resolvedClaude.binaryPath
     }
@@ -15467,6 +15523,12 @@ async function compactClaudeProviderContext(payload: {
     `manual-claude-${payload.providerSessionId}-${startedAtMs}`,
     payload.cardMetadata
   )
+  broadcastContextCompactionSignalProgress({
+    chatId: payload.chatId,
+    provider: 'claude',
+    signal,
+    cardMetadata: payload.cardMetadata
+  })
   const lastRunId = [...(chat.runs || [])].reverse().find((run) => run?.runId)?.runId
   if (lastRunId) {
     appendDurableRunEventForRoute(
@@ -15502,6 +15564,10 @@ async function compactClaudeProviderContext(payload: {
  */
 const pendingSeatCompactions = new Map<string, Promise<{ ok: boolean; error?: string }>>()
 
+function seatCompactionKey(chatId: string, participantId: string): string {
+  return `${chatId}:${participantId}`
+}
+
 function seatRunPreTokens(chat: ChatRecord, participantId: string): number | undefined {
   const run = [...(chat.runs || [])]
     .reverse()
@@ -15522,7 +15588,8 @@ async function compactCliSeatContext(payload: {
   cardMetadata?: Record<string, unknown>
   trigger?: 'auto' | 'manual'
 }): Promise<{ ok: boolean; error?: string }> {
-  const existing = pendingSeatCompactions.get(payload.participantId)
+  const pendingKey = seatCompactionKey(payload.chatId, payload.participantId)
+  const existing = pendingSeatCompactions.get(pendingKey)
   if (existing) return { ok: false, error: 'A compaction is already in progress for this seat.' }
   const work = (async (): Promise<{ ok: boolean; error?: string }> => {
     const chat = AppStore.getChat(payload.chatId)
@@ -15750,11 +15817,11 @@ async function compactCliSeatContext(payload: {
       ? { ok: true }
       : { ok: false, error: signal.telemetry.error }
   })()
-  pendingSeatCompactions.set(payload.participantId, work)
+  pendingSeatCompactions.set(pendingKey, work)
   try {
     return await work
   } finally {
-    pendingSeatCompactions.delete(payload.participantId)
+    pendingSeatCompactions.delete(pendingKey)
   }
 }
 
@@ -30199,7 +30266,8 @@ if (isGeminiMcpBridgeProcess) {
       // Wave 3 seat compaction — the dispatch barrier + the post-round
       // auto-trigger's route into the maintenance lane (frozen labels and the
       // round-liveness re-check live in compactProviderContextForRequest).
-      awaitPendingSeatCompaction: (participantId) => pendingSeatCompactions.get(participantId),
+      awaitPendingSeatCompaction: (chatId, participantId) =>
+        pendingSeatCompactions.get(seatCompactionKey(chatId, participantId)),
       compactSeatContext: ({ chatId, participantId, provider, trigger }) =>
         compactProviderContextForRequest({ chatId, provider, participantId, trigger }),
       onContextCompactionProgress: broadcastContextCompactionProgress,
