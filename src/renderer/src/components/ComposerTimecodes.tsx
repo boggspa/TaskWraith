@@ -178,7 +178,7 @@ export function ComposerTimecode({
   const content = (
     <>
       <ClockSymbolIcon />
-      <span>{presentation.visibleLabel}</span>
+      <span className="composer-timecode-value">{presentation.visibleLabel}</span>
     </>
   )
 

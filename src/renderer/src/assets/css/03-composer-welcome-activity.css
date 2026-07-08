@@ -33,6 +33,7 @@
   background: transparent;
   pointer-events: none;
   z-index: 4;
+  container-type: inline-size;
 }
 
 .chat-popout-window .app-main {
@@ -5863,6 +5864,20 @@ button.composer-run-timecode {
 button.composer-run-timecode:hover,
 button.composer-run-timecode.is-open {
   color: color-mix(in srgb, var(--accent) 72%, var(--text-primary));
+}
+
+@container (max-width: 620px) {
+  .composer-diff-action-menu-wrap {
+    display: none;
+  }
+
+  .composer-telemetry-row .composer-run-timecode {
+    min-width: 0;
+  }
+
+  .composer-timecode-value {
+    display: none;
+  }
 }
 
 .composer-scheduler-controls {

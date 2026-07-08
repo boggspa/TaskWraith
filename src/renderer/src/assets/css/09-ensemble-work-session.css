@@ -229,6 +229,18 @@
 .composer-ensemble-orchestration-row .composer-ensemble-hop-meter {
   margin-left: 0;
 }
+
+@container (max-width: 620px) {
+  .composer-orchestration-cell-label,
+  .composer-orchestration-cell-history {
+    display: none;
+  }
+
+  .ensemble-roster-preset-picker.is-compact .composer-ensemble-orchestration-row {
+    gap: 6px 10px;
+  }
+}
+
 /* Roster-presets second row uses the controls as satellite text buttons, not
  * footer-style pill groups. Keep the click targets and popovers, but remove
  * the local container chrome for the mode picker, fan-out group, and hop meter. */

@@ -42,6 +42,7 @@ describe('ComposerTimecode presentation', () => {
     )
 
     expect(html).toContain('data-mode="total"')
+    expect(html).toContain('composer-timecode-value')
     expect(html).toContain('00:00:02:05')
     expect(html).not.toContain('00:00:00:00')
     expect(html).not.toContain('Thread timecodes')
