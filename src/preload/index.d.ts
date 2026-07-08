@@ -1830,9 +1830,9 @@ declare global {
         }
       }) => Promise<{ ok: boolean; path?: string; error?: string }>
 
-      onGeminiOutput: (callback: (data: GeminiStreamPayload) => void) => void
-      onGeminiError: (callback: (error: GeminiStreamPayload) => void) => void
-      onGeminiExit: (callback: (code: GeminiStreamPayload | number | null) => void) => void
+      onGeminiOutput: (callback: (data: GeminiStreamPayload) => void) => () => void
+      onGeminiError: (callback: (error: GeminiStreamPayload) => void) => () => void
+      onGeminiExit: (callback: (code: GeminiStreamPayload | number | null) => void) => () => void
       onAgentOutput: (
         callback: (payload: {
           provider: ProviderId
@@ -1856,8 +1856,8 @@ declare global {
           appRunId?: string
           appChatId?: string
         }) => void
-      ) => void
-      onRunQueueChanged: (callback: (jobs: RunQueueJob[]) => void) => void
+      ) => () => void
+      onRunQueueChanged: (callback: (jobs: RunQueueJob[]) => void) => () => void
       onRunEventsChanged: (
         callback: (payload: {
           runId: string
@@ -1865,15 +1865,15 @@ declare global {
           workspaceId?: string
           sequence: number
         }) => void
-      ) => void
-      onAgentApprovalRequest: (callback: (payload: AgentApprovalRequest) => void) => void
+      ) => () => void
+      onAgentApprovalRequest: (callback: (payload: AgentApprovalRequest) => void) => () => void
       onAgentApprovalTimeout: (
         callback: (payload: {
           approvalId: string
           appliedMs: number
           source: 'perKind' | 'mainAuthority' | 'providerDefault'
         }) => void
-      ) => void
+      ) => () => void
       onAgentApprovalResolved: (
         callback: (payload: {
           approvalId: string
@@ -1882,28 +1882,28 @@ declare global {
           provider?: string
           threadId?: string
         }) => void
-      ) => void
-      onScheduledTaskDue: (callback: (payload: ScheduledTask) => void) => void
-      onScheduledTasksChanged: (callback: (payload: ScheduledTask[]) => void) => void
+      ) => () => void
+      onScheduledTaskDue: (callback: (payload: ScheduledTask) => void) => () => void
+      onScheduledTasksChanged: (callback: (payload: ScheduledTask[]) => void) => () => void
       onEnsembleRosterPresetSaveRequested: (
         callback: (payload: { name: string; participants: unknown[] }) => void
       ) => () => void
       onEnsembleRosterPresetDeleteRequested: (callback: (presetId: string) => void) => () => void
-      onWorkflowDefinitionsChanged: (callback: (payload: WorkflowDefinition[]) => void) => void
+      onWorkflowDefinitionsChanged: (callback: (payload: WorkflowDefinition[]) => void) => () => void
       onWorkspaceBoardsChanged: (
         callback: (payload: {
           boards: WorkspaceBoardDefinition[]
           cards: WorkspaceBoardCard[]
         }) => void
-      ) => void
+      ) => () => void
       onEvidencePacksChanged: (
         callback: (payload: {
           packs: EvidencePackRecord[]
           ledger: CapabilityLedgerSnapshot
         }) => void
-      ) => void
+      ) => () => void
       onAuditRunChanged: (callback: (run: AuditRunRecord) => void) => () => void
-      onUsageChanged: (callback: () => void) => void
+      onUsageChanged: (callback: () => void) => () => void
       onChatUpdated: (callback: (chat: ChatRecord) => void) => () => void
       onContextCompactionProgress: (
         callback: (event: ContextCompactionProgressEvent) => void

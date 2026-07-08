@@ -1445,36 +1445,59 @@ const api = {
     }>,
 
   onGeminiOutput: (callback: (data: any) => void) => {
-    ipcRenderer.on('gemini-output', (_event, data) => callback(data))
+    const wrapped = (_event: unknown, data: unknown): void => callback(data)
+    ipcRenderer.on('gemini-output', wrapped)
+    return () => ipcRenderer.removeListener('gemini-output', wrapped)
   },
   onGeminiError: (callback: (error: any) => void) => {
-    ipcRenderer.on('gemini-error', (_event, error) => callback(error))
+    const wrapped = (_event: unknown, error: unknown): void => callback(error)
+    ipcRenderer.on('gemini-error', wrapped)
+    return () => ipcRenderer.removeListener('gemini-error', wrapped)
   },
   onGeminiExit: (callback: (code: any) => void) => {
-    ipcRenderer.on('gemini-exit', (_event, code) => callback(code))
+    const wrapped = (_event: unknown, code: unknown): void => callback(code)
+    ipcRenderer.on('gemini-exit', wrapped)
+    return () => ipcRenderer.removeListener('gemini-exit', wrapped)
   },
   onAgentOutput: (callback: (payload: any) => void) => {
-    ipcRenderer.on('agent-output', (_event, payload) => callback(payload))
+    const wrapped = (_event: unknown, payload: unknown): void => callback(payload)
+    ipcRenderer.on('agent-output', wrapped)
+    return () => ipcRenderer.removeListener('agent-output', wrapped)
   },
   onAgentError: (callback: (payload: any) => void) => {
-    ipcRenderer.on('agent-error', (_event, payload) => callback(payload))
+    const wrapped = (_event: unknown, payload: unknown): void => callback(payload)
+    ipcRenderer.on('agent-error', wrapped)
+    return () => ipcRenderer.removeListener('agent-error', wrapped)
   },
   onAgentExit: (callback: (payload: any) => void) => {
-    ipcRenderer.on('agent-exit', (_event, payload) => callback(payload))
+    const wrapped = (_event: unknown, payload: unknown): void => callback(payload)
+    ipcRenderer.on('agent-exit', wrapped)
+    return () => ipcRenderer.removeListener('agent-exit', wrapped)
   },
   onRunQueueChanged: (callback: (jobs: any[]) => void) => {
-    ipcRenderer.on('run-queue-changed', (_event, jobs) => callback(jobs))
+    const wrapped = (_event: unknown, jobs: any[]): void => callback(jobs)
+    ipcRenderer.on('run-queue-changed', wrapped)
+    return () => ipcRenderer.removeListener('run-queue-changed', wrapped)
   },
   onRunEventsChanged: (callback: (payload: any) => void) => {
-    ipcRenderer.on('run-events-changed', (_event, payload) => callback(payload))
+    const wrapped = (_event: unknown, payload: unknown): void => callback(payload)
+    ipcRenderer.on('run-events-changed', wrapped)
+    return () => ipcRenderer.removeListener('run-events-changed', wrapped)
   },
   onAgentApprovalRequest: (callback: (payload: any) => void) => {
-    ipcRenderer.on('agent-approval-request', (_event, payload) => callback(payload))
+    const wrapped = (_event: unknown, payload: unknown): void => callback(payload)
+    ipcRenderer.on('agent-approval-request', wrapped)
+    return () => ipcRenderer.removeListener('agent-approval-request', wrapped)
   },
   onAgentApprovalTimeout: (
     callback: (payload: { approvalId: string; appliedMs: number; source: string }) => void
   ) => {
-    ipcRenderer.on('agent-approval-timeout', (_event, payload) => callback(payload))
+    const wrapped = (
+      _event: unknown,
+      payload: { approvalId: string; appliedMs: number; source: string }
+    ): void => callback(payload)
+    ipcRenderer.on('agent-approval-timeout', wrapped)
+    return () => ipcRenderer.removeListener('agent-approval-timeout', wrapped)
   },
   onAgentApprovalResolved: (
     callback: (payload: {
@@ -1485,26 +1508,53 @@ const api = {
       threadId?: string
     }) => void
   ) => {
-    ipcRenderer.on('agent-approval-resolved', (_event, payload) => callback(payload))
+    const wrapped = (
+      _event: unknown,
+      payload: {
+        approvalId: string
+        action?: string
+        decisionSource?: string
+        provider?: string
+        threadId?: string
+      }
+    ): void => callback(payload)
+    ipcRenderer.on('agent-approval-resolved', wrapped)
+    return () => ipcRenderer.removeListener('agent-approval-resolved', wrapped)
   },
   onScheduledTaskDue: (callback: (payload: any) => void) => {
-    ipcRenderer.on('scheduled-task-due', (_event, payload) => callback(payload))
+    const wrapped = (_event: unknown, payload: unknown): void => callback(payload)
+    ipcRenderer.on('scheduled-task-due', wrapped)
+    return () => ipcRenderer.removeListener('scheduled-task-due', wrapped)
   },
   onScheduledTasksChanged: (callback: (payload: any) => void) => {
-    ipcRenderer.on('scheduled-tasks-changed', (_event, payload) => callback(payload))
+    const wrapped = (_event: unknown, payload: unknown): void => callback(payload)
+    ipcRenderer.on('scheduled-tasks-changed', wrapped)
+    return () => ipcRenderer.removeListener('scheduled-tasks-changed', wrapped)
   },
   onWorkflowDefinitionsChanged: (callback: (payload: any) => void) => {
-    ipcRenderer.on('workflow-definitions-changed', (_event, payload) => callback(payload))
+    const wrapped = (_event: unknown, payload: unknown): void => callback(payload)
+    ipcRenderer.on('workflow-definitions-changed', wrapped)
+    return () => ipcRenderer.removeListener('workflow-definitions-changed', wrapped)
   },
   onWorkspaceBoardsChanged: (
     callback: (payload: { boards: WorkspaceBoardDefinition[]; cards: WorkspaceBoardCard[] }) => void
   ) => {
-    ipcRenderer.on('workspace-boards-changed', (_event, payload) => callback(payload))
+    const wrapped = (
+      _event: unknown,
+      payload: { boards: WorkspaceBoardDefinition[]; cards: WorkspaceBoardCard[] }
+    ): void => callback(payload)
+    ipcRenderer.on('workspace-boards-changed', wrapped)
+    return () => ipcRenderer.removeListener('workspace-boards-changed', wrapped)
   },
   onEvidencePacksChanged: (
     callback: (payload: { packs: EvidencePackRecord[]; ledger: CapabilityLedgerSnapshot }) => void
   ) => {
-    ipcRenderer.on('evidence-packs-changed', (_event, payload) => callback(payload))
+    const wrapped = (
+      _event: unknown,
+      payload: { packs: EvidencePackRecord[]; ledger: CapabilityLedgerSnapshot }
+    ): void => callback(payload)
+    ipcRenderer.on('evidence-packs-changed', wrapped)
+    return () => ipcRenderer.removeListener('evidence-packs-changed', wrapped)
   },
   // iOS-triggered roster-preset writes round-tripped back to the renderer (the
   // localStorage source of truth). The renderer persists, which re-syncs the
@@ -1528,7 +1578,9 @@ const api = {
     return () => ipcRenderer.removeListener('audit-run-changed', wrapped)
   },
   onUsageChanged: (callback: () => void) => {
-    ipcRenderer.on('usage-changed', () => callback())
+    const wrapped = (): void => callback()
+    ipcRenderer.on('usage-changed', wrapped)
+    return () => ipcRenderer.removeListener('usage-changed', wrapped)
   },
   onChatUpdated: (callback: (chat: unknown) => void) => {
     const wrapped = (_event: unknown, chat: unknown): void => callback(chat)
