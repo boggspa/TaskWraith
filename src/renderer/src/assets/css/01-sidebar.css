@@ -29,14 +29,21 @@
 }
 :root[data-platform='darwin'] .sidebar-titlebar-fill {
   display: block;
-  position: absolute;
+  /* !important: the epic-FX (05-polish `[data-fx-mode="epic"] .app-sidebar > *`,
+     specificity 0,4,0) and native_glass (06 `.app-sidebar > *`) rules force
+     position:relative + z-index on EVERY direct child at higher specificity —
+     without this override the fill drops into normal flow and never overlays the
+     36px traffic-light inset (the band still works because it lives inside
+     .sidebar-content, not as a direct .app-sidebar child). z-index:2 keeps it
+     above the aurora/frost ::before/::after (z-index:0). */
+  position: absolute !important;
   top: 0;
   left: 0;
   right: 0;
   height: 36px; /* must match .app-sidebar padding-top above */
   background: var(--sidebar-chrome-fixed-bg);
   pointer-events: none;
-  z-index: 1;
+  z-index: 2 !important;
 }
 :root[data-platform='darwin'][data-reduce-transparency='true'] .sidebar-titlebar-fill {
   background: var(--sidebar-chrome-color);

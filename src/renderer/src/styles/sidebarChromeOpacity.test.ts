@@ -101,5 +101,8 @@ describe('sidebar chrome fixed opacity CSS', () => {
     // Matches the .app-sidebar padding-top inset and never intercepts input.
     expect(fill).toContain('height: 36px')
     expect(fill).toContain('pointer-events: none;')
+    // Must beat the epic-FX / native_glass `.app-sidebar > *` position:relative
+    // override, or the fill drops into flow and stops overlaying the strip.
+    expect(fill).toContain('position: absolute !important;')
   })
 })
