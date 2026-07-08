@@ -106,10 +106,12 @@ export function MemoryProposalReviewPanel({
   const loading = loadingProp || fetchLoading
   const error = errorProp ?? fetchError
 
-  const refresh = useCallback(async () => {
-    if (onRefresh) {
-      await onRefresh()
-    }
+  // Reload packs from the host. Deliberately does NOT invoke `onRefresh`:
+  // automatic loads (mount, window focus, post-apply) must never call back into
+  // the host. A host that remounts this panel in response to `onRefresh` (e.g.
+  // by bumping a value used as our `key`) would otherwise spin an infinite
+  // mount → load → remount loop and freeze the app.
+  const loadPacks = useCallback(async () => {
     if (!fetchPacks) return
     try {
       setFetchLoading(true)
@@ -121,21 +123,31 @@ export function MemoryProposalReviewPanel({
     } finally {
       setFetchLoading(false)
     }
-  }, [fetchPacks, onRefresh, workspaceId])
+  }, [fetchPacks, workspaceId])
+
+  // Explicit user-initiated refresh (toolbar button). This is the only path
+  // that notifies the host via `onRefresh`; because it is a one-shot user
+  // gesture it cannot loop even if the host remounts us in response.
+  const handleManualRefresh = useCallback(async () => {
+    if (onRefresh) {
+      await onRefresh()
+    }
+    await loadPacks()
+  }, [loadPacks, onRefresh])
 
   useEffect(() => {
     if (!usingFetch) return
-    void Promise.resolve().then(() => refresh())
-  }, [refresh, usingFetch])
+    void Promise.resolve().then(() => loadPacks())
+  }, [loadPacks, usingFetch])
 
   useEffect(() => {
     if (!usingFetch) return
     const onFocus = (): void => {
-      void refresh()
+      void loadPacks()
     }
     window.addEventListener('focus', onFocus)
     return () => window.removeEventListener('focus', onFocus)
-  }, [refresh, usingFetch])
+  }, [loadPacks, usingFetch])
 
   const allPacks = useMemo(() => {
     const source = packsProp ?? fetchedPacks
@@ -278,7 +290,7 @@ export function MemoryProposalReviewPanel({
         if (result.pack) {
           mergePackUpdate(result.pack)
         } else {
-          await refresh()
+          await loadPacks()
         }
         const entryId = result.conventionEntryId ?? result.pack?.proposals.find(
           (item) => item.id === proposal.id
@@ -294,7 +306,7 @@ export function MemoryProposalReviewPanel({
         setActingProposalId(null)
       }
     },
-    [mergePackUpdate, onApplyMemoryProposal, refresh, selectedPack]
+    [loadPacks, mergePackUpdate, onApplyMemoryProposal, selectedPack]
   )
 
   const pendingCount = selectedPack ? countPendingReview(selectedPack.proposals) : 0
@@ -313,7 +325,7 @@ export function MemoryProposalReviewPanel({
           <button
             type="button"
             className="memory-proposal-review-refresh-button"
-            onClick={() => void refresh()}
+            onClick={() => void handleManualRefresh()}
             disabled={loading}
             aria-label="Refresh memory proposals"
             title="Refresh"

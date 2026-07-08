@@ -326,13 +326,21 @@ export function ThreadIntrospectionSettingsPanel({
         </p>
       )}
 
+      {/*
+        Do NOT wire `onRefresh` to `bumpRefresh` here. `bumpRefresh` increments
+        `refreshToken`, which is this panel's `key` — bumping it remounts the
+        review panel. The review panel calls `onRefresh` at the start of its own
+        mount-time load, so wiring the two together spins an infinite
+        mount → refresh → remount loop that freezes the whole Settings window.
+        The panel reloads its own packs on mount; `bumpRefresh` is only used to
+        remount it after a manual run completes (see handleRunLast24h).
+      */}
       <MemoryProposalReviewPanel
         key={refreshToken}
         workspaceId={workspaceId}
         fetchPacks={ipcReady ? fetchPacks : undefined}
         onUpdateProposalStatus={ipcReady ? onUpdateProposalStatus : undefined}
         onApplyMemoryProposal={ipcReady && applyIpcReady ? onApplyMemoryProposal : undefined}
-        onRefresh={ipcReady ? bumpRefresh : undefined}
         error={ipcReady ? null : 'Thread Introspection IPC is not wired yet.'}
       />
     </div>
