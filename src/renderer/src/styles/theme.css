@@ -28,6 +28,13 @@
   --sidebar-alpha-002: 0.02;
   --sidebar-bg: rgba(30, 30, 34, 0.72);
   --sidebar-bg-solid: #1e1e22;
+  /* Fixed 85% fill for the sidebar's non-list chrome (masthead, model-usage
+   * pane, footer/status). Anchored on --sidebar-bg-solid (always opaque, and
+   * re-scoped inside .app-sidebar for the obsidian/alabaster theme flip) rather
+   * than --sidebar-bg, which is literally `transparent` in native_glass. Held
+   * independent of the user's sidebar-opacity slider — that keeps governing only
+   * the .app-sidebar surface the workspace/threads list paints over. */
+  --sidebar-chrome-fixed-bg: color-mix(in srgb, var(--sidebar-bg-solid) 85%, transparent);
   --sidebar-border: rgba(255, 255, 255, 0.06);
   --sidebar-text: rgba(255, 255, 255, 0.85);
   --sidebar-text-secondary: rgba(255, 255, 255, 0.5);
