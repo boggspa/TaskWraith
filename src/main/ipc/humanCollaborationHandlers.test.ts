@@ -229,6 +229,28 @@ describe('registerHumanCollaborationHandlers', () => {
     expect(deps.getHumanCollaborationRuntime).not.toHaveBeenCalled()
   })
 
+  it('reports no connected chat ids without constructing the runtime when none is active', () => {
+    const { deps } = createDeps({
+      getCurrentHumanCollaborationRuntime: vi.fn(() => null)
+    })
+    registerHumanCollaborationHandlers(deps)
+
+    expect(handlerFor('human-collaboration:connected-chat-ids')({})).toEqual([])
+    expect(deps.getCurrentHumanCollaborationRuntime).toHaveBeenCalledTimes(1)
+    expect(deps.getHumanCollaborationRuntime).not.toHaveBeenCalled()
+  })
+
+  it('reports no session status without constructing the runtime when none is active', () => {
+    const { deps } = createDeps({
+      getCurrentHumanCollaborationRuntime: vi.fn(() => null)
+    })
+    registerHumanCollaborationHandlers(deps)
+
+    expect(handlerFor('human-collaboration:session-status')({})).toEqual([])
+    expect(deps.getCurrentHumanCollaborationRuntime).toHaveBeenCalledTimes(1)
+    expect(deps.getHumanCollaborationRuntime).not.toHaveBeenCalled()
+  })
+
   it('creates a share, opens its host room, and returns collaborator transport coordinates', async () => {
     const { deps } = createDeps()
     registerHumanCollaborationHandlers(deps)
