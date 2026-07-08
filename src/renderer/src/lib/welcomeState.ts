@@ -43,6 +43,13 @@ export interface WelcomeStateInput {
   isCurrentChatRunning: boolean
 }
 
+export interface WelcomeUsageDashboardBuildInput {
+  isWelcomeChat: boolean
+  isCurrentGlobalChat: boolean
+  usageInitialized: boolean
+  isMultiviewSplit: boolean
+}
+
 /**
  * Roles that represent real conversation content. Tool activity rows
  * count: a chat that already invoked a tool is not a welcome surface
@@ -91,6 +98,21 @@ export function shouldRenderWelcome(input: WelcomeStateInput): boolean {
   }
   if (hasConversationContent(input.messages)) return false
   return true
+}
+
+/**
+ * True only when the renderer is on a surface that can actually display the
+ * welcome usage dashboard or its usage-backed standalone heatmaps.
+ */
+export function shouldBuildWelcomeUsageDashboardData(
+  input: WelcomeUsageDashboardBuildInput
+): boolean {
+  return (
+    input.isWelcomeChat &&
+    !input.isCurrentGlobalChat &&
+    input.usageInitialized &&
+    !input.isMultiviewSplit
+  )
 }
 
 /**

@@ -6,9 +6,15 @@ import {
   HEATMAP_PROVIDER_COLOR_HEX,
   type HeatmapProviderFilter
 } from '../lib/UsageHeatmap'
+import {
+  getCachedRendererUsageRecords,
+  loadRendererUsageRecords,
+  setCachedRendererUsageRecords,
+  type RendererUsageSource
+} from '../lib/usageRecordsCache'
 import './TokenUsageChart.css'
 
-type TokenUsageSource = 'taskwraith' | 'external'
+type TokenUsageSource = RendererUsageSource
 
 interface TokenUsageDay {
   dayKey: string
@@ -32,8 +38,6 @@ interface TokenUsageChartProps {
   showProviderFilter?: boolean
   className?: string
 }
-
-const tokenUsageChartCache = new Map<TokenUsageSource, UsageRecord[]>()
 
 const TOKEN_PROVIDER_FILTERS: Array<{ id: HeatmapProviderFilter; label: string }> = [
   { id: 'all', label: 'All' },
@@ -161,34 +165,33 @@ export function TokenUsageChart({
   showProviderFilter = false,
   className
 }: TokenUsageChartProps) {
-  const [fetchedRecords, setFetchedRecords] = useState<UsageRecord[]>(
-    () => tokenUsageChartCache.get(source) ?? []
+  const [fetched, setFetched] = useState<{ source: TokenUsageSource; records: UsageRecord[] }>(
+    () => ({
+      source,
+      records: records ?? getCachedRendererUsageRecords(source)
+    })
   )
   const [loading, setLoading] = useState(false)
   const [providerFilter, setProviderFilter] = useState<HeatmapProviderFilter>('all')
 
   useEffect(() => {
     if (records) {
-      tokenUsageChartCache.set(source, records)
-      setFetchedRecords(records)
-      return
+      setCachedRendererUsageRecords(source, records)
     }
+  }, [records, source])
 
+  useEffect(() => {
+    if (records) return
     let cancelled = false
     const frame = window.requestAnimationFrame(() => {
       if (cancelled) return
       setLoading(true)
-      const loader =
-        source === 'external' && typeof window.api.getExternalUsage === 'function'
-          ? window.api.getExternalUsage
-          : window.api.getUsage
-      loader()
+      loadRendererUsageRecords(source)
         .then((latest) => {
-          tokenUsageChartCache.set(source, latest)
-          if (!cancelled) setFetchedRecords(latest)
+          if (!cancelled) setFetched({ source, records: latest })
         })
         .catch(() => {
-          if (!cancelled) setFetchedRecords(tokenUsageChartCache.get(source) ?? [])
+          if (!cancelled) setFetched({ source, records: getCachedRendererUsageRecords(source) })
         })
         .finally(() => {
           if (!cancelled) setLoading(false)
@@ -201,7 +204,8 @@ export function TokenUsageChart({
     }
   }, [records, refreshKey, source])
 
-  const chartRecords = records ?? fetchedRecords
+  const chartRecords =
+    records ?? (fetched.source === source ? fetched.records : getCachedRendererUsageRecords(source))
   const data = useMemo(
     () =>
       showProviderFilter
@@ -227,7 +231,7 @@ export function TokenUsageChart({
     <div
       className={rootClassName}
       aria-label={`${title} ${windowLabel} token usage chart`}
-      aria-busy={loading}
+      aria-busy={records ? false : loading}
     >
       <div className="token-usage-chart-header">
         <span className="token-usage-chart-title">{title}</span>

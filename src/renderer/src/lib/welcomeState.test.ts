@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   hasConversationContent,
   isReusableWelcomeChat,
+  shouldBuildWelcomeUsageDashboardData,
   shouldRenderWelcome,
   type ReusableChatLike,
   type WelcomeChatLike,
@@ -153,6 +154,57 @@ describe('shouldRenderWelcome', () => {
         currentChat: chat,
         messages: [{ role: 'user' }],
         isCurrentChatRunning: true
+      })
+    ).toBe(false)
+  })
+})
+
+describe('shouldBuildWelcomeUsageDashboardData', () => {
+  it('allows dashboard aggregation for an initialized workspace welcome screen', () => {
+    expect(
+      shouldBuildWelcomeUsageDashboardData({
+        isWelcomeChat: true,
+        isCurrentGlobalChat: false,
+        usageInitialized: true,
+        isMultiviewSplit: false
+      })
+    ).toBe(true)
+  })
+
+  it('skips dashboard aggregation for an active transcript even when usage refreshes', () => {
+    expect(
+      shouldBuildWelcomeUsageDashboardData({
+        isWelcomeChat: false,
+        isCurrentGlobalChat: false,
+        usageInitialized: true,
+        isMultiviewSplit: false
+      })
+    ).toBe(false)
+  })
+
+  it('skips dashboard aggregation for global, pre-usage, and split-view surfaces', () => {
+    expect(
+      shouldBuildWelcomeUsageDashboardData({
+        isWelcomeChat: true,
+        isCurrentGlobalChat: true,
+        usageInitialized: true,
+        isMultiviewSplit: false
+      })
+    ).toBe(false)
+    expect(
+      shouldBuildWelcomeUsageDashboardData({
+        isWelcomeChat: true,
+        isCurrentGlobalChat: false,
+        usageInitialized: false,
+        isMultiviewSplit: false
+      })
+    ).toBe(false)
+    expect(
+      shouldBuildWelcomeUsageDashboardData({
+        isWelcomeChat: true,
+        isCurrentGlobalChat: false,
+        usageInitialized: true,
+        isMultiviewSplit: true
       })
     ).toBe(false)
   })

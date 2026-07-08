@@ -28,24 +28,12 @@ import {
   type HeatmapCell,
   type HeatmapGrid
 } from '../lib/UsageHeatmap'
-
-/**
- * Module-level per-source cache of the last successfully fetched usage
- * records, keyed by `usageSource` ('taskwraith' | 'external' | …).
- *
- * Why: in the welcome "single (cycle)" layout the heatmap REMOUNTS every
- * time the cycle swaps slots, which would otherwise reset `records` to []
- * and run the swipe-in animation over a blank grid until the async IPC
- * fetch resolves — a visible flash on EVERY cycle. By retaining the last
- * grid here and seeding `records` from it on mount (PRE-WARM), a remount
- * paints the previously-rendered grid instantly and then silently
- * refreshes in the background (RETAIN).
- *
- * Keyed by source so external/taskwraith/workspace data never bleed into one
- * another. Lives at module scope (survives unmount) but resets on full
- * page reload, which is the desired lifetime.
- */
-const usageHeatmapCache = new Map<string, UsageRecord[]>()
+import {
+  getCachedRendererUsageRecords,
+  loadRendererUsageRecords,
+  setCachedRendererUsageRecords,
+  type RendererUsageSource
+} from '../lib/usageRecordsCache'
 
 const TIME_LABELS = ['00', '04', '08', '12', '16', '20'] // hour-of-day ticks shown on the left rail
 const PROVIDER_FILTERS: Array<{ id: HeatmapProviderFilter; label: string }> = [
@@ -100,7 +88,9 @@ interface UsageHeatmapProps {
   /** Number of day columns to render. Defaults to the sidebar's 30-day window. */
   dayCount?: number
   /** Data source for the rendered grid. */
-  usageSource?: 'taskwraith' | 'external'
+  usageSource?: RendererUsageSource
+  /** Optional caller-owned records. When present no IPC fetch is performed. */
+  records?: UsageRecord[]
   /** Header title. Defaults to the original TaskWraith "Activity" label. */
   title?: string
   /** Optional accessible label override. */
@@ -117,6 +107,7 @@ export function UsageHeatmap({
   showHeader = true,
   dayCount = HEATMAP_COLUMNS,
   usageSource = 'taskwraith',
+  records: providedRecords,
   title = 'Activity',
   ariaLabel,
   showProviderFilter = false,
@@ -126,43 +117,38 @@ export function UsageHeatmap({
   // initializer so a remount paints the retained grid synchronously on the
   // first render — before the IPC fetch below resolves — instead of
   // flashing an empty grid. Falls back to [] on the very first ever fetch.
-  const [records, setRecords] = useState<UsageRecord[]>(
-    () => usageHeatmapCache.get(usageSource) ?? []
+  const [fetched, setFetched] = useState<{ source: RendererUsageSource; records: UsageRecord[] }>(
+    () => ({
+      source: usageSource,
+      records: providedRecords ?? getCachedRendererUsageRecords(usageSource)
+    })
   )
   const [loading, setLoading] = useState(false)
   const [providerFilter, setProviderFilter] = useState<HeatmapProviderFilter>('all')
 
   useEffect(() => {
+    if (providedRecords) {
+      setCachedRendererUsageRecords(usageSource, providedRecords)
+    }
+  }, [providedRecords, usageSource])
+
+  useEffect(() => {
+    if (providedRecords) return
     let cancelled = false
-    // If `usageSource` changed without a remount, immediately repaint with
-    // that source's cached grid (if any) so we never show stale data from
-    // the previous source while the new fetch is in flight. On a fresh
-    // mount this matches the lazy initializer and is a no-op.
-    setRecords(usageHeatmapCache.get(usageSource) ?? [])
     const frame = window.requestAnimationFrame(() => {
       if (cancelled) return
       setLoading(true)
-      // We always fetch ALL records and filter in the bucketing helper
-      // — the existing IPC has no time-range param, and the filter step
-      // happens in O(n) which is fine for typical usage volumes
-      // (~thousands of records over a 30-day window).
-      const loader =
-        usageSource === 'external' && typeof window.api.getExternalUsage === 'function'
-          ? window.api.getExternalUsage
-          : window.api.getUsage
-      loader()
+      loadRendererUsageRecords(usageSource)
         .then((latest) => {
-          // RETAIN: persist the freshest grid for this source BEFORE
-          // committing it, so the next remount/cycle pre-warms instantly.
-          // Keyed by source to keep external/taskwraith/workspace isolated.
-          usageHeatmapCache.set(usageSource, latest)
-          if (!cancelled) setRecords(latest)
+          if (!cancelled) setFetched({ source: usageSource, records: latest })
         })
         .catch(() => {
           // Best-effort: render an empty heatmap rather than crashing
           // the whole card if the IPC fails. Leave any cached grid in
           // place — don't clobber a good cache on a transient failure.
-          if (!cancelled) setRecords(usageHeatmapCache.get(usageSource) ?? [])
+          if (!cancelled) {
+            setFetched({ source: usageSource, records: getCachedRendererUsageRecords(usageSource) })
+          }
         })
         .finally(() => {
           if (!cancelled) setLoading(false)
@@ -172,14 +158,17 @@ export function UsageHeatmap({
       cancelled = true
       window.cancelAnimationFrame(frame)
     }
-  }, [refreshKey, usageSource])
+  }, [providedRecords, refreshKey, usageSource])
 
+  const displayRecords =
+    providedRecords ??
+    (fetched.source === usageSource ? fetched.records : getCachedRendererUsageRecords(usageSource))
   const grid: HeatmapGrid = useMemo(
     () =>
       showProviderFilter
-        ? buildProviderFilteredHeatmapGrid(records, new Date(), dayCount, providerFilter)
-        : buildHeatmapGrid(records, new Date(), dayCount),
-    [records, dayCount, showProviderFilter, providerFilter]
+        ? buildProviderFilteredHeatmapGrid(displayRecords, new Date(), dayCount, providerFilter)
+        : buildHeatmapGrid(displayRecords, new Date(), dayCount),
+    [displayRecords, dayCount, showProviderFilter, providerFilter]
   )
   const windowLabel = grid.columns === HEATMAP_COLUMNS ? '30D' : `${grid.columns}D`
   const rootClassName = [
@@ -224,7 +213,7 @@ export function UsageHeatmap({
           </span>
         </div>
       )}
-      <div className="usage-heatmap-grid-wrapper" aria-busy={loading}>
+      <div className="usage-heatmap-grid-wrapper" aria-busy={providedRecords ? false : loading}>
         <div className="usage-heatmap-time-labels" aria-hidden>
           {TIME_LABELS.map((label) => (
             <span key={label} className="usage-heatmap-time-label">

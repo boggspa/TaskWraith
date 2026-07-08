@@ -536,7 +536,11 @@ import { buildRunDiffByPath } from './lib/RunWorkspaceDiff'
 import { shouldRunUsageRefresh } from './lib/usageRefresh'
 import { isCiStatusTerminal, shouldRunCiPoll } from './lib/ciStatusRefresh'
 import type { CiNotice } from './lib/ciNotice'
-import { shouldRenderWelcome, isReusableWelcomeChat } from './lib/welcomeState'
+import {
+  shouldBuildWelcomeUsageDashboardData,
+  shouldRenderWelcome,
+  isReusableWelcomeChat
+} from './lib/welcomeState'
 import { isChatSummaryRecord, mergeChatRecord } from './lib/chatRecordMerge'
 import {
   buildPinnedMessageSummaries,
@@ -783,6 +787,101 @@ function compactShortcutHint(keys: string[]): string {
 // clampContextTurns moved to `src/main/PromptComposition.ts` and re-exported below.
 
 const EMPTY_WELCOME_USAGE_DASHBOARD_DATA = buildWelcomeUsageDashboardData([], [], '30d', 0)
+const EMPTY_WELCOME_HEATMAP_SLOTS: WelcomeHeatmapSlot[] = []
+
+interface WelcomeHeatmapSlotsConfig {
+  workspaceActivityPath?: string
+  showUsageDashboard: boolean
+  taskwraithActivityEnabled: boolean
+  externalActivityEnabled: boolean
+  refreshKey: number
+  usageRecords: UsageRecord[]
+}
+
+function buildWelcomeHeatmapSlots({
+  workspaceActivityPath,
+  showUsageDashboard,
+  taskwraithActivityEnabled,
+  externalActivityEnabled,
+  refreshKey,
+  usageRecords
+}: WelcomeHeatmapSlotsConfig): WelcomeHeatmapSlot[] {
+  if (!workspaceActivityPath && !showUsageDashboard) return EMPTY_WELCOME_HEATMAP_SLOTS
+
+  const slots: WelcomeHeatmapSlot[] = []
+  if (workspaceActivityPath) {
+    slots.push({
+      key: 'workspace',
+      node: (
+        <WorkspaceActivityHeatmap
+          workspacePath={workspaceActivityPath}
+          dayCount={90}
+          refreshKey={refreshKey}
+          className="usage-heatmap--welcome-standalone"
+        />
+      )
+    })
+  }
+  if (showUsageDashboard && taskwraithActivityEnabled) {
+    slots.push({
+      key: 'taskwraith',
+      node: (
+        <UsageHeatmap
+          dayCount={90}
+          refreshKey={refreshKey}
+          records={usageRecords}
+          title="TaskWraith Activity"
+          showProviderFilter
+          className="usage-heatmap--welcome-standalone"
+        />
+      )
+    })
+  }
+  if (showUsageDashboard && externalActivityEnabled) {
+    slots.push({
+      key: 'external',
+      node: (
+        <UsageHeatmap
+          dayCount={90}
+          refreshKey={refreshKey}
+          usageSource="external"
+          title="External Activity"
+          showProviderFilter
+          className="usage-heatmap--welcome-standalone"
+        />
+      )
+    })
+  }
+  if (showUsageDashboard) {
+    slots.push({
+      key: 'taskwraith-tokens',
+      node: (
+        <TokenUsageChart
+          title="TaskWraith Tokens"
+          records={usageRecords}
+          dayCount={90}
+          refreshKey={refreshKey}
+          showProviderFilter
+          className="token-usage-chart--welcome"
+        />
+      )
+    })
+    slots.push({
+      key: 'external-tokens',
+      node: (
+        <TokenUsageChart
+          title="External Tokens"
+          source="external"
+          dayCount={90}
+          refreshKey={refreshKey}
+          showProviderFilter
+          className="token-usage-chart--welcome"
+        />
+      )
+    })
+  }
+  return slots.length > 0 ? slots : EMPTY_WELCOME_HEATMAP_SLOTS
+}
 
 // Prompt-composition helpers moved to `src/main/PromptComposition.ts` (Phase B3 step 1).
 // Re-exported below from the canonical module so existing call sites keep working
@@ -20337,8 +20436,14 @@ function App(): React.JSX.Element {
   // `usageRecords` is re-fetched on the 90s usage poll AND on ensemble-run
   // completion, so its length is a cheap, monotonic-enough refresh trigger.
   const welcomeHeatmapRefreshKey = usageRecords.length
+  const shouldBuildWelcomeUsageDashboardDataNow = shouldBuildWelcomeUsageDashboardData({
+    isWelcomeChat,
+    isCurrentGlobalChat,
+    usageInitialized,
+    isMultiviewSplit
+  })
   const welcomeUsageDashboardData = useMemo(() => {
-    if (!usageInitialized) return EMPTY_WELCOME_USAGE_DASHBOARD_DATA
+    if (!shouldBuildWelcomeUsageDashboardDataNow) return EMPTY_WELCOME_USAGE_DASHBOARD_DATA
     return buildWelcomeUsageDashboardData(
       usageRecords,
       chats,
@@ -20347,7 +20452,13 @@ function App(): React.JSX.Element {
       workspaces,
       dashboardStatResetAt
     )
-  }, [usageInitialized, usageRecords, chats, workspaces, dashboardStatResetAt])
+  }, [
+    shouldBuildWelcomeUsageDashboardDataNow,
+    usageRecords,
+    chats,
+    workspaces,
+    dashboardStatResetAt
+  ])
   // Welcome L6 — the outer guard uses `lifetimeHasActivity` so the
   // dashboard (and its range toggle) stay mounted even when the
   // currently-selected window happens to be empty. The empty-state
@@ -20358,11 +20469,8 @@ function App(): React.JSX.Element {
   // Until then we show the reserved placeholder instead of mounting
   // the real dashboard (prevents appear → hide → reappear flicker).
   const shouldShowWelcomeUsageDashboard =
-    isWelcomeChat &&
-    !isCurrentGlobalChat &&
-    usageInitialized &&
-    welcomeUsageDashboardData.lifetimeHasActivity &&
-    !isMultiviewSplit
+    shouldBuildWelcomeUsageDashboardDataNow &&
+    welcomeUsageDashboardData.lifetimeHasActivity
   const welcomeWorkspaceHeatmapEnabled =
     settings?.welcomeHeatmapPrefs?.workspaceActivityEnabled !== false
   const welcomeTaskWraithHeatmapEnabled =
@@ -20380,77 +20488,25 @@ function App(): React.JSX.Element {
   // presentation. Older stored `welcomeHeatmapPrefs.layout` values are ignored
   // so a legacy "stacked" setting cannot crowd the new-chat screen.
   const welcomeDashboardCardEnabled = settings?.dashboardStatPrefs?.dashboardEnabled !== false
-  const welcomeHeatmapSlots: WelcomeHeatmapSlot[] = []
-  if (welcomeWorkspaceActivityPath) {
-    welcomeHeatmapSlots.push({
-      key: 'workspace',
-      node: (
-        <WorkspaceActivityHeatmap
-          workspacePath={welcomeWorkspaceActivityPath}
-          dayCount={90}
-          refreshKey={welcomeHeatmapRefreshKey}
-          className="usage-heatmap--welcome-standalone"
-        />
-      )
-    })
-  }
-  if (shouldShowWelcomeUsageDashboard && welcomeTaskWraithHeatmapEnabled) {
-    welcomeHeatmapSlots.push({
-      key: 'taskwraith',
-      node: (
-        <UsageHeatmap
-          dayCount={90}
-          refreshKey={welcomeHeatmapRefreshKey}
-          title="TaskWraith Activity"
-          showProviderFilter
-          className="usage-heatmap--welcome-standalone"
-        />
-      )
-    })
-  }
-  if (shouldShowWelcomeUsageDashboard && welcomeExternalHeatmapEnabled) {
-    welcomeHeatmapSlots.push({
-      key: 'external',
-      node: (
-        <UsageHeatmap
-          dayCount={90}
-          refreshKey={welcomeHeatmapRefreshKey}
-          usageSource="external"
-          title="External Activity"
-          showProviderFilter
-          className="usage-heatmap--welcome-standalone"
-        />
-      )
-    })
-  }
-  if (shouldShowWelcomeUsageDashboard) {
-    welcomeHeatmapSlots.push({
-      key: 'taskwraith-tokens',
-      node: (
-        <TokenUsageChart
-          title="TaskWraith Tokens"
-          records={usageRecords}
-          dayCount={90}
-          refreshKey={welcomeHeatmapRefreshKey}
-          showProviderFilter
-          className="token-usage-chart--welcome"
-        />
-      )
-    })
-    welcomeHeatmapSlots.push({
-      key: 'external-tokens',
-      node: (
-        <TokenUsageChart
-          title="External Tokens"
-          source="external"
-          dayCount={90}
-          refreshKey={welcomeHeatmapRefreshKey}
-          showProviderFilter
-          className="token-usage-chart--welcome"
-        />
-      )
-    })
-  }
+  const welcomeHeatmapSlots = useMemo(
+    () =>
+      buildWelcomeHeatmapSlots({
+        workspaceActivityPath: welcomeWorkspaceActivityPath,
+        showUsageDashboard: shouldShowWelcomeUsageDashboard,
+        taskwraithActivityEnabled: welcomeTaskWraithHeatmapEnabled,
+        externalActivityEnabled: welcomeExternalHeatmapEnabled,
+        refreshKey: welcomeHeatmapRefreshKey,
+        usageRecords
+      }),
+    [
+      shouldShowWelcomeUsageDashboard,
+      usageRecords,
+      welcomeExternalHeatmapEnabled,
+      welcomeHeatmapRefreshKey,
+      welcomeTaskWraithHeatmapEnabled,
+      welcomeWorkspaceActivityPath
+    ]
+  )
   const welcomeDashboardFitActive =
     isWelcomeChat &&
     welcomeDashboardCardEnabled &&
@@ -23025,77 +23081,14 @@ function App(): React.JSX.Element {
     const viewerShouldShowWelcomeStandaloneHeatmaps =
       !isMultiviewSplit &&
       (Boolean(viewerWorkspaceActivityPath) || viewerShouldShowWelcomeUsageDashboard)
-    const viewerWelcomeHeatmapSlots: WelcomeHeatmapSlot[] = []
-    if (viewerWorkspaceActivityPath) {
-      viewerWelcomeHeatmapSlots.push({
-        key: 'workspace',
-        node: (
-          <WorkspaceActivityHeatmap
-            workspacePath={viewerWorkspaceActivityPath}
-            dayCount={90}
-            refreshKey={welcomeHeatmapRefreshKey}
-            className="usage-heatmap--welcome-standalone"
-          />
-        )
-      })
-    }
-    if (viewerShouldShowWelcomeUsageDashboard && welcomeTaskWraithHeatmapEnabled) {
-      viewerWelcomeHeatmapSlots.push({
-        key: 'taskwraith',
-        node: (
-          <UsageHeatmap
-            dayCount={90}
-            refreshKey={welcomeHeatmapRefreshKey}
-            title="TaskWraith Activity"
-            showProviderFilter
-            className="usage-heatmap--welcome-standalone"
-          />
-        )
-      })
-    }
-    if (viewerShouldShowWelcomeUsageDashboard && welcomeExternalHeatmapEnabled) {
-      viewerWelcomeHeatmapSlots.push({
-        key: 'external',
-        node: (
-          <UsageHeatmap
-            dayCount={90}
-            refreshKey={welcomeHeatmapRefreshKey}
-            usageSource="external"
-            title="External Activity"
-            showProviderFilter
-            className="usage-heatmap--welcome-standalone"
-          />
-        )
-      })
-    }
-    if (viewerShouldShowWelcomeUsageDashboard) {
-      viewerWelcomeHeatmapSlots.push({
-        key: 'taskwraith-tokens',
-        node: (
-          <TokenUsageChart
-            title="TaskWraith Tokens"
-            records={usageRecords}
-            dayCount={90}
-            refreshKey={welcomeHeatmapRefreshKey}
-            showProviderFilter
-            className="token-usage-chart--welcome"
-          />
-        )
-      })
-      viewerWelcomeHeatmapSlots.push({
-        key: 'external-tokens',
-        node: (
-          <TokenUsageChart
-            title="External Tokens"
-            source="external"
-            dayCount={90}
-            refreshKey={welcomeHeatmapRefreshKey}
-            showProviderFilter
-            className="token-usage-chart--welcome"
-          />
-        )
-      })
-    }
+    const viewerWelcomeHeatmapSlots = buildWelcomeHeatmapSlots({
+      workspaceActivityPath: viewerWorkspaceActivityPath,
+      showUsageDashboard: viewerShouldShowWelcomeUsageDashboard,
+      taskwraithActivityEnabled: welcomeTaskWraithHeatmapEnabled,
+      externalActivityEnabled: welcomeExternalHeatmapEnabled,
+      refreshKey: welcomeHeatmapRefreshKey,
+      usageRecords
+    })
     const viewerTokenTally = buildChatTokenTally(viewerChat.runs || [], { providerRates })
     const viewerLiveOutputTokens = (() => {
       if (!viewerIsRunning) return 0
@@ -24301,77 +24294,14 @@ function App(): React.JSX.Element {
       const viewerShouldShowWelcomeStandaloneHeatmaps =
         !isMultiviewSplit &&
         (Boolean(viewerWorkspaceActivityPath) || viewerShouldShowWelcomeUsageDashboard)
-      const viewerWelcomeHeatmapSlots: WelcomeHeatmapSlot[] = []
-      if (viewerWorkspaceActivityPath) {
-        viewerWelcomeHeatmapSlots.push({
-          key: 'workspace',
-          node: (
-            <WorkspaceActivityHeatmap
-              workspacePath={viewerWorkspaceActivityPath}
-              dayCount={90}
-              refreshKey={welcomeHeatmapRefreshKey}
-              className="usage-heatmap--welcome-standalone"
-            />
-          )
-        })
-      }
-      if (viewerShouldShowWelcomeUsageDashboard && welcomeTaskWraithHeatmapEnabled) {
-        viewerWelcomeHeatmapSlots.push({
-          key: 'taskwraith',
-          node: (
-            <UsageHeatmap
-              dayCount={90}
-              refreshKey={welcomeHeatmapRefreshKey}
-              title="TaskWraith Activity"
-              showProviderFilter
-              className="usage-heatmap--welcome-standalone"
-            />
-          )
-        })
-      }
-      if (viewerShouldShowWelcomeUsageDashboard && welcomeExternalHeatmapEnabled) {
-        viewerWelcomeHeatmapSlots.push({
-          key: 'external',
-          node: (
-            <UsageHeatmap
-              dayCount={90}
-              refreshKey={welcomeHeatmapRefreshKey}
-              usageSource="external"
-              title="External Activity"
-              showProviderFilter
-              className="usage-heatmap--welcome-standalone"
-            />
-          )
-        })
-      }
-      if (viewerShouldShowWelcomeUsageDashboard) {
-        viewerWelcomeHeatmapSlots.push({
-          key: 'taskwraith-tokens',
-          node: (
-            <TokenUsageChart
-              title="TaskWraith Tokens"
-              records={usageRecords}
-              dayCount={90}
-              refreshKey={welcomeHeatmapRefreshKey}
-              showProviderFilter
-              className="token-usage-chart--welcome"
-            />
-          )
-        })
-        viewerWelcomeHeatmapSlots.push({
-          key: 'external-tokens',
-          node: (
-            <TokenUsageChart
-              title="External Tokens"
-              source="external"
-              dayCount={90}
-              refreshKey={welcomeHeatmapRefreshKey}
-              showProviderFilter
-              className="token-usage-chart--welcome"
-            />
-          )
-        })
-      }
+      const viewerWelcomeHeatmapSlots = buildWelcomeHeatmapSlots({
+        workspaceActivityPath: viewerWorkspaceActivityPath,
+        showUsageDashboard: viewerShouldShowWelcomeUsageDashboard,
+        taskwraithActivityEnabled: welcomeTaskWraithHeatmapEnabled,
+        externalActivityEnabled: welcomeExternalHeatmapEnabled,
+        refreshKey: welcomeHeatmapRefreshKey,
+        usageRecords
+      })
       const viewerTokenTally = buildChatTokenTally(viewerChat.runs || [], { providerRates })
       const viewerLiveOutputTokens = (() => {
         if (!viewerIsRunning) return 0
