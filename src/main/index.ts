@@ -7973,6 +7973,56 @@ function planArtifactRawPathFromChanges(changes: unknown): string | null {
   return null
 }
 
+interface RequestAgenticServiceApprovalDeps {
+  runManager: typeof runManager
+  permissionService: typeof permissionService
+  auditService: typeof auditService
+  approvalService: ApprovalService | null
+  getSettings: () => AppSettings
+  appendDurableRunEventForRoute: typeof appendDurableRunEventForRoute
+  recordApprovalLedgerRequest: typeof recordApprovalLedgerRequest
+  safeSendToSender: typeof safeSendToSender
+  isSessionYoloEffective: typeof isSessionYoloEffective
+  sessionYoloState: typeof sessionYoloState
+  scheduleApprovalTimeout: typeof scheduleApprovalTimeout
+  workspaceIdForApprovalPush: typeof workspaceIdForApprovalPush
+  notifyPairedDevicesOfApproval: typeof notifyPairedDevicesOfApproval
+  networkAccessBlockedToolName: typeof networkAccessBlockedToolName
+  networkAccessBlockedMessage: typeof networkAccessBlockedMessage
+  ensembleApprovalContext: typeof ensembleApprovalContext
+  planArtifactWriteApprovalMetadata: typeof planArtifactWriteApprovalMetadata
+  stampPlanArtifactPathOnPendingPlan: typeof stampPlanArtifactPathOnPendingPlan
+  bossmanAutoApprovalMetadata: typeof bossmanAutoApprovalMetadata
+  externalPathApprovalTitle: typeof externalPathApprovalTitle
+  externalPathApprovalBody: typeof externalPathApprovalBody
+  externalPathApprovalPreview: typeof externalPathApprovalPreview
+}
+
+const requestAgenticServiceApprovalDeps: RequestAgenticServiceApprovalDeps = {
+  runManager,
+  permissionService,
+  auditService,
+  approvalService,
+  getSettings: () => AppStore.getSettings(),
+  appendDurableRunEventForRoute,
+  recordApprovalLedgerRequest,
+  safeSendToSender,
+  isSessionYoloEffective,
+  sessionYoloState,
+  scheduleApprovalTimeout,
+  workspaceIdForApprovalPush,
+  notifyPairedDevicesOfApproval,
+  networkAccessBlockedToolName,
+  networkAccessBlockedMessage,
+  ensembleApprovalContext,
+  planArtifactWriteApprovalMetadata,
+  stampPlanArtifactPathOnPendingPlan,
+  bossmanAutoApprovalMetadata,
+  externalPathApprovalTitle,
+  externalPathApprovalBody,
+  externalPathApprovalPreview
+}
+
 async function requestAgenticServiceApproval(
   sender: Electron.WebContents | null,
   provider: ProviderId,
@@ -7988,14 +8038,18 @@ async function requestAgenticServiceApproval(
     externalPathDetection?: PendingExternalPathDetection
   }
 ): Promise<boolean> {
-  const settings = AppStore.getSettings()
-  const session = runManager.get(request.runId)
+  const settings = requestAgenticServiceApprovalDeps.getSettings()
+  const session = requestAgenticServiceApprovalDeps.runManager.get(request.runId)
   const effectivePermissions = session?.state?.effectivePermissions as
     | EffectiveRunPermissions
     | undefined
   const workflowMode = (session?.state as { workflowMode?: unknown } | undefined)?.workflowMode
   const ensembleRun = session?.state?.ensembleRun as EnsembleRunIdentity | undefined
-  const ensembleApproval = ensembleApprovalContext(ensembleRun, service, workspacePath)
+  const ensembleApproval = requestAgenticServiceApprovalDeps.ensembleApprovalContext(
+    ensembleRun,
+    service,
+    workspacePath
+  )
   // 1.0.4-AR3 — carry `appChatId` into every auto-decision so the
   // ledger row is filterable by chat without re-deriving via
   // `approvalRouteContext`. Pre-AR3 the central path passed only
@@ -8010,9 +8064,12 @@ async function requestAgenticServiceApproval(
     request.preview && typeof request.preview === 'object' && !Array.isArray(request.preview)
       ? request.preview.toolName
       : undefined
-  const networkBlockedTool = networkAccessBlockedToolName(previewToolName, effectivePermissions)
+  const networkBlockedTool = requestAgenticServiceApprovalDeps.networkAccessBlockedToolName(
+    previewToolName,
+    effectivePermissions
+  )
   if (networkBlockedTool) {
-    auditService.recordAutomaticApprovalDecision(
+    requestAgenticServiceApprovalDeps.auditService.recordAutomaticApprovalDecision(
       provider,
       auditRoute,
       service,
@@ -8029,14 +8086,14 @@ async function requestAgenticServiceApproval(
         ...(ensembleApproval ? { ensembleParticipant: ensembleApproval.preview } : {})
       }
     )
-    safeSendToSender(sender, 'agent-error', {
+    requestAgenticServiceApprovalDeps.safeSendToSender(sender, 'agent-error', {
       provider,
-      error: networkAccessBlockedMessage(networkBlockedTool)
+      error: requestAgenticServiceApprovalDeps.networkAccessBlockedMessage(networkBlockedTool)
     })
     return false
   }
   const effectiveSettings = effectiveAgenticSettings(settings, effectivePermissions)
-  const resolution = permissionService.resolvePermission(
+  const resolution = requestAgenticServiceApprovalDeps.permissionService.resolvePermission(
     provider,
     service,
     workspacePath,
@@ -8044,7 +8101,7 @@ async function requestAgenticServiceApproval(
     effectiveSettings
   )
   const { policy, workspaceGrantAllowed, sessionGrantAllowed, decision } = resolution
-  const planArtifactWriteMetadata = planArtifactWriteApprovalMetadata({
+  const planArtifactWriteMetadata = requestAgenticServiceApprovalDeps.planArtifactWriteApprovalMetadata({
     workflowMode,
     effectivePermissions,
     globalFileChangesPolicy: settings.agenticServices?.fileChanges,
@@ -8054,7 +8111,7 @@ async function requestAgenticServiceApproval(
   })
 
   if (decision === 'deny' && planArtifactWriteMetadata) {
-    auditService.recordAutomaticApprovalDecision(
+    requestAgenticServiceApprovalDeps.auditService.recordAutomaticApprovalDecision(
       provider,
       auditRoute,
       service,
@@ -8065,12 +8122,15 @@ async function requestAgenticServiceApproval(
       'request',
       { policy, ...planArtifactWriteMetadata }
     )
-    stampPlanArtifactPathOnPendingPlan(appChatId, planArtifactWriteMetadata)
+    requestAgenticServiceApprovalDeps.stampPlanArtifactPathOnPendingPlan(
+      appChatId,
+      planArtifactWriteMetadata
+    )
     return true
   }
 
   if (decision === 'deny') {
-    auditService.recordAutomaticApprovalDecision(
+    requestAgenticServiceApprovalDeps.auditService.recordAutomaticApprovalDecision(
       provider,
       auditRoute,
       service,
@@ -8081,7 +8141,7 @@ async function requestAgenticServiceApproval(
       'request',
       { policy, ...(ensembleApproval ? { ensembleParticipant: ensembleApproval.preview } : {}) }
     )
-    safeSendToSender(sender, 'agent-error', {
+    requestAgenticServiceApprovalDeps.safeSendToSender(sender, 'agent-error', {
       provider,
       error: agenticServiceBlockedMessage(service)
     })
@@ -8116,12 +8176,12 @@ async function requestAgenticServiceApproval(
     service === 'externalPublish' ||
     isPlanInstrumentGrantHold(effectivePermissions?.presetId, service)
   if (
-    isSessionYoloEffective() &&
+    requestAgenticServiceApprovalDeps.isSessionYoloEffective() &&
     !effectivePermissions?.readOnly &&
     !request.forcePrompt &&
     !neverAutoAllow
   ) {
-    auditService.recordAutomaticApprovalDecision(
+    requestAgenticServiceApprovalDeps.auditService.recordAutomaticApprovalDecision(
       provider,
       auditRoute,
       service,
@@ -8132,7 +8192,7 @@ async function requestAgenticServiceApproval(
       'session',
       {
         policy,
-        yoloEnabledAt: sessionYoloState.enabledAt,
+        yoloEnabledAt: requestAgenticServiceApprovalDeps.sessionYoloState.enabledAt,
         ...(ensembleApproval ? { ensembleParticipant: ensembleApproval.preview } : {})
       }
     )
@@ -8144,7 +8204,7 @@ async function requestAgenticServiceApproval(
     !request.forcePrompt &&
     !neverAutoAllow
   ) {
-    auditService.recordAutomaticApprovalDecision(
+    requestAgenticServiceApprovalDeps.auditService.recordAutomaticApprovalDecision(
       provider,
       auditRoute,
       service,
@@ -8157,7 +8217,7 @@ async function requestAgenticServiceApproval(
     )
     return true
   }
-  const bossmanAutoMetadata = bossmanAutoApprovalMetadata({
+  const bossmanAutoMetadata = requestAgenticServiceApprovalDeps.bossmanAutoApprovalMetadata({
     session,
     ensembleRun,
     service,
@@ -8169,7 +8229,7 @@ async function requestAgenticServiceApproval(
     neverAutoAllow
   })
   if (bossmanAutoMetadata) {
-    auditService.recordAutomaticApprovalDecision(
+    requestAgenticServiceApprovalDeps.auditService.recordAutomaticApprovalDecision(
       provider,
       auditRoute,
       service,
@@ -8197,14 +8257,16 @@ async function requestAgenticServiceApproval(
     : requestOnly
       ? ['accept', 'decline', 'cancel']
       : approvalActionsForPolicy(policy, workspacePath, service)
-  const baseTitle = externalPathDetection ? externalPathApprovalTitle() : request.title
+  const baseTitle = externalPathDetection
+    ? requestAgenticServiceApprovalDeps.externalPathApprovalTitle()
+    : request.title
   const baseBody = externalPathDetection
-    ? externalPathApprovalBody(externalPathDetection)
+    ? requestAgenticServiceApprovalDeps.externalPathApprovalBody(externalPathDetection)
     : request.body
   const title = ensembleApproval ? `${ensembleApproval.label}: ${baseTitle}` : baseTitle
   const body = ensembleApproval ? `${ensembleApproval.bodyPrefix}\n\n${baseBody}` : baseBody
   return new Promise((resolveApproval) => {
-    approvalService?.registerGeminiTool(approvalId, {
+    requestAgenticServiceApprovalDeps.approvalService?.registerGeminiTool(approvalId, {
       provider,
       service,
       workspacePath,
@@ -8214,11 +8276,14 @@ async function requestAgenticServiceApproval(
       allowedActions: actions,
       resolve: resolveApproval
     })
-    runManager.registerApproval(request.runId, approvalId)
-    scheduleApprovalTimeout({
+    requestAgenticServiceApprovalDeps.runManager.registerApproval(request.runId, approvalId)
+    requestAgenticServiceApprovalDeps.scheduleApprovalTimeout({
       approvalId,
       provider,
-      route: { appRunId: request.runId, appChatId: runManager.get(request.runId)?.appChatId },
+      route: {
+        appRunId: request.runId,
+        appChatId: requestAgenticServiceApprovalDeps.runManager.get(request.runId)?.appChatId
+      },
       kind: request.method
     })
     const approvalPayload = {
@@ -8242,12 +8307,16 @@ async function requestAgenticServiceApproval(
           : {}),
         ...(ensembleApproval ? { ensembleParticipant: ensembleApproval.preview } : {}),
         ...(externalPathDetection
-          ? { externalPathDetection: externalPathApprovalPreview(externalPathDetection) }
+          ? {
+              externalPathDetection: requestAgenticServiceApprovalDeps.externalPathApprovalPreview(
+                externalPathDetection
+              )
+            }
           : {})
       },
       actions
     }
-    appendDurableRunEventForRoute(
+    requestAgenticServiceApprovalDeps.appendDurableRunEventForRoute(
       provider,
       { appRunId: session?.runId, appChatId: session?.appChatId },
       'approval_request',
@@ -8255,7 +8324,7 @@ async function requestAgenticServiceApproval(
       title,
       approvalPayload
     )
-    recordApprovalLedgerRequest(
+    requestAgenticServiceApprovalDeps.recordApprovalLedgerRequest(
       provider,
       { appRunId: session?.runId, appChatId: session?.appChatId },
       approvalPayload,
@@ -8268,12 +8337,12 @@ async function requestAgenticServiceApproval(
         }
       }
     )
-    safeSendToSender(sender, 'agent-approval-request', approvalPayload)
+    requestAgenticServiceApprovalDeps.safeSendToSender(sender, 'agent-approval-request', approvalPayload)
     // Fan out a wake-push to any paired iOS device so the user can
     // approve the agentic-service request away from the desktop.
-    notifyPairedDevicesOfApproval({
+    requestAgenticServiceApprovalDeps.notifyPairedDevicesOfApproval({
       approvalId,
-      workspaceId: workspaceIdForApprovalPush(workspacePath),
+      workspaceId: requestAgenticServiceApprovalDeps.workspaceIdForApprovalPush(workspacePath),
       threadId: session?.appChatId ?? request.runId ?? approvalId,
       summary: title
     })
