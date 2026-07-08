@@ -1935,10 +1935,11 @@
 
 /* Reduce Transparency (OS setting or in-app toggle): pin the fixed chrome to
  * fully opaque, matching the app's picker/popover convention for that setting. */
+[data-reduce-transparency="true"] .app-sidebar .sidebar-top-chrome,
 [data-reduce-transparency="true"] .app-sidebar .sidebar-masthead,
 [data-reduce-transparency="true"] .app-sidebar .sidebar-footer,
 [data-reduce-transparency="true"] .app-sidebar .model-usage-summary--sidebar {
-  background: var(--sidebar-bg-solid) !important;
+  background: var(--sidebar-chrome-color) !important;
   background-image: none !important;
 }
 

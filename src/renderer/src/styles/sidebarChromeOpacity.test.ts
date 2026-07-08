@@ -21,19 +21,20 @@ const cssBlockStartingAt = (source: string, selector: string, fromIndex = 0): st
 // while the workspace/threads list keeps riding the factor-scaled .app-sidebar
 // surface. See --sidebar-chrome-fixed-bg in theme.css.
 describe('sidebar chrome fixed opacity CSS', () => {
-  it('defines the fixed chrome token anchored on the always-opaque --sidebar-bg-solid', () => {
-    const theme = readRepoFile('src/renderer/src/styles/theme.css')
-    const tokenLine = theme
-      .split('\n')
-      .find((line) => line.includes('--sidebar-chrome-fixed-bg:'))
-    expect(tokenLine, 'Missing --sidebar-chrome-fixed-bg token').toBeTruthy()
-    // Must anchor on --sidebar-bg-solid (opaque in every mode; --sidebar-bg is
-    // literally `transparent` in native_glass, and --surface-1/2 miss the
-    // obsidian/alabaster .app-sidebar theme flip).
-    expect(tokenLine).toContain('var(--sidebar-bg-solid) 85%')
-    expect(tokenLine).not.toContain('var(--sidebar-bg)')
-    expect(tokenLine).not.toContain('--surface-1')
-    expect(tokenLine).not.toContain('--surface-2')
+  it('derives the fixed chrome fill from the decoupled --sidebar-chrome-color token', () => {
+    const lines = readRepoFile('src/renderer/src/styles/theme.css').split('\n')
+    const fillLine = lines.find((line) => line.includes('--sidebar-chrome-fixed-bg:'))
+    expect(fillLine, 'Missing --sidebar-chrome-fixed-bg token').toBeTruthy()
+    // Derived from --sidebar-chrome-color, NOT --sidebar-bg-solid (which stays the
+    // list surface colour) and NOT --sidebar-bg (transparent in native_glass).
+    expect(fillLine).toContain('var(--sidebar-chrome-color) 85%')
+    expect(fillLine).not.toContain('--sidebar-bg-solid')
+    expect(fillLine).not.toContain('var(--sidebar-bg)')
+    // Dark default is the requested #1D1D1C.
+    const darkColor = lines.find(
+      (line) => line.includes('--sidebar-chrome-color:') && line.includes('#1d1d1c')
+    )
+    expect(darkColor, 'Missing dark --sidebar-chrome-color: #1d1d1c').toBeTruthy()
   })
 
   it('paints the masthead with the fixed chrome token (no longer transparent)', () => {
@@ -57,15 +58,17 @@ describe('sidebar chrome fixed opacity CSS', () => {
     expect(grouped).not.toContain('sidebar-search-section')
   })
 
-  it('pins the three chrome regions fully opaque under Reduce Transparency', () => {
+  it('pins the chrome regions (incl. the top band) fully opaque under Reduce Transparency', () => {
     const css = readCss('05-polish-fx-layouts.css')
     const reduced = cssBlockStartingAt(
       css,
-      '[data-reduce-transparency="true"] .app-sidebar .sidebar-masthead,'
+      '[data-reduce-transparency="true"] .app-sidebar .sidebar-top-chrome,'
     )
+    expect(reduced).toContain('.sidebar-masthead')
     expect(reduced).toContain('.sidebar-footer')
     expect(reduced).toContain('.model-usage-summary--sidebar')
-    expect(reduced).toContain('background: var(--sidebar-bg-solid) !important;')
+    // Uses the chrome colour opaque — not --sidebar-bg-solid (the list colour).
+    expect(reduced).toContain('background: var(--sidebar-chrome-color) !important;')
   })
 
   it('wraps the top region (masthead->search) in a seamless fixed-alpha band, excluding the list', () => {
