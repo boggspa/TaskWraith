@@ -150,7 +150,7 @@ export function WorkspaceRemoteAccessToggle({
 
   return (
     <div
-      className="settings-workspace-remote"
+      className="segmented-control segmented-control--compact settings-workspace-remote"
       role="group"
       aria-label={`Remote access for ${workspace.displayName}`}
       aria-busy={busy ? 'true' : undefined}
@@ -173,9 +173,11 @@ export function WorkspaceRemoteAccessToggle({
             // No `disabled={busy}`: disabling the focused button mid-change drops
             // keyboard focus to <body>. The handleSelect busy-guard blocks
             // re-activation; aria-disabled + CSS pointer-events block the mouse.
-            className={`settings-workspace-remote-segment ${active ? 'is-active' : ''} ${
-              isWrite ? 'is-write' : ''
-            } ${active && isWrite && filesOff ? 'is-files-off' : ''}`}
+            className={`segmented-control-segment settings-workspace-remote-segment ${
+              active ? 'is-active' : ''
+            } ${isWrite ? 'is-write' : ''} ${
+              active && isWrite && filesOff ? 'is-files-off' : ''
+            }`}
             onClick={() => void handleSelect(seg.value)}
           >
             {seg.label}

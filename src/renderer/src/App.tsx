@@ -23881,6 +23881,7 @@ function App(): React.JSX.Element {
     handlePermissionRetry,
     handlePickImages,
     handleProviderChange,
+    handleRemoveWorkspace,
     handleRemoveExternalPathGrant,
     handleRemoveExternalPathGrantsByPath,
     handleRemoveImageAttachment,

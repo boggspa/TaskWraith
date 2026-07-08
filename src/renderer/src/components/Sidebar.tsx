@@ -3807,7 +3807,11 @@ export function Sidebar({
           {runningCount > 0 && <span className="sidebar-stat-live">{runningCount} running</span>}
         </div>
 
-        <div className="sidebar-view-tabs" role="tablist" aria-label="Sidebar view">
+        <div
+          className="segmented-control sidebar-view-tabs"
+          role="tablist"
+          aria-label="Sidebar view"
+        >
           {(['threads', 'projects'] as const).map((tab) => (
             <button
               key={tab}
@@ -3815,7 +3819,9 @@ export function Sidebar({
               role="tab"
               aria-selected={activeSidebarTab === tab}
               aria-controls={`sidebar-${tab}-panel`}
-              className={`sidebar-view-tab ${activeSidebarTab === tab ? 'is-active' : ''}`}
+              className={`segmented-control-segment sidebar-view-tab ${
+                activeSidebarTab === tab ? 'is-active' : ''
+              }`}
               id={`sidebar-${tab}-tab`}
               onClick={() => setActiveSidebarTab(tab)}
               onKeyDown={(event) => {

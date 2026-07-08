@@ -275,6 +275,7 @@ export interface ComposerProps {
   handlePermissionRetry: any
   handlePickImages: any
   handleProviderChange: any
+  handleRemoveWorkspace: any
   handleRemoveExternalPathGrant: any
   handleRemoveExternalPathGrantsByPath: any
   handleRemoveImageAttachment: any
@@ -584,6 +585,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     handlePermissionRetry,
     handlePickImages,
     handleProviderChange,
+    handleRemoveWorkspace,
     handleRemoveExternalPathGrant,
     handleRemoveExternalPathGrantsByPath,
     handleRemoveImageAttachment,
@@ -4733,6 +4735,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                     onRemoveWorkspacePath={
                       currentChat?.appChatId ? handleRemoveExternalPathGrantsByPath : undefined
                     }
+                    onRemoveWorkspace={handleRemoveWorkspace}
                     onAddFolder={currentChat?.appChatId ? handleAddWorkspaceFolder : undefined}
                     onAddKnownWorkspace={
                       currentChat?.appChatId ? handleAddKnownWorkspaceAsSecondary : undefined

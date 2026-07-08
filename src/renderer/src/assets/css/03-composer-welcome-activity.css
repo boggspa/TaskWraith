@@ -782,6 +782,9 @@
   max-width: 420px;
   overflow: hidden;
 }
+.welcome-workspace-popover--portaled.composer-workspace-popover {
+  max-width: calc(100vw - 16px);
+}
 .welcome-workspace-popover--portaled
   > .welcome-workspace-popover-section:not(.welcome-workspace-popover-actions) {
   flex: 1 1 auto;
@@ -874,7 +877,7 @@
  * ceiling there.
  */
 .composer-workspace-popover {
-  width: min(420px, calc(100vw - 16px));
+  width: min(720px, calc(100vw - 16px));
   max-height: min(520px, calc(100vh - 16px));
   overflow-y: auto;
   /* The popover sits above the composer (z-index 9999 from the
@@ -927,9 +930,6 @@
   padding: 6px 10px;
   border-radius: 6px;
   min-width: 0;
-}
-.composer-workspace-row-primary {
-  background: color-mix(in srgb, var(--accent) 10%, transparent);
 }
 .composer-workspace-row-additional {
   cursor: grab;
@@ -987,18 +987,162 @@
 }
 .composer-workspace-badge {
   flex: 0 0 auto;
-  font-size: 9px;
-  font-weight: 700;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  padding: 2px 6px;
-  border-radius: 999px;
-  border: 1px solid transparent;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
 }
 .composer-workspace-badge-primary {
-  color: var(--accent, var(--text-primary));
-  background: color-mix(in srgb, var(--accent) 16%, transparent);
-  border-color: color-mix(in srgb, var(--accent) 36%, transparent);
+  color: color-mix(in srgb, var(--accent) 74%, var(--text-secondary));
+}
+.composer-workspace-badge-attached {
+  color: color-mix(in srgb, var(--text-secondary) 88%, transparent);
+}
+.composer-workspace-known-row {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) auto auto auto 24px;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  min-width: 0;
+  padding: 4px 10px;
+  border-radius: 7px;
+}
+.composer-workspace-known-row:hover {
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+}
+.composer-workspace-known-row.is-primary {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+.composer-workspace-known-add,
+.composer-workspace-known-remove {
+  appearance: none;
+  -webkit-appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: color-mix(in srgb, var(--text-secondary) 82%, transparent);
+  font: inherit;
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+}
+.composer-workspace-known-add:hover:not(:disabled),
+.composer-workspace-known-add:focus-visible {
+  outline: none;
+  color: color-mix(in srgb, var(--accent) 92%, var(--text-primary));
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.composer-workspace-known-add:disabled {
+  cursor: default;
+  opacity: 0.36;
+}
+.composer-workspace-known-add {
+  grid-column: 1;
+}
+.composer-workspace-known-remove {
+  grid-column: 6;
+  color: color-mix(in srgb, var(--text-secondary) 66%, transparent);
+}
+.composer-workspace-known-remove .sf-symbol-icon {
+  width: 13px;
+  height: 13px;
+}
+.composer-workspace-known-remove:hover,
+.composer-workspace-known-remove:focus-visible {
+  outline: none;
+  color: var(--danger, #e5484d);
+  background: color-mix(in srgb, var(--danger, #e5484d) 14%, transparent);
+}
+.composer-workspace-known-main {
+  grid-column: 2;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.composer-workspace-known-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+  font-weight: 600;
+}
+.composer-workspace-switch-action,
+.composer-workspace-known-detach {
+  --segmented-action-foreground: var(--text-primary);
+  --segmented-action-border: color-mix(in srgb, var(--text-primary) 16%, var(--panel-border));
+  --segmented-action-bg: color-mix(in srgb, var(--text-primary) 8%, transparent);
+  --segmented-action-hover-bg: color-mix(in srgb, var(--text-primary) 12%, transparent);
+  font-weight: 650;
+}
+.composer-workspace-known-detach {
+  grid-column: 3;
+}
+.composer-workspace-switch-action {
+  grid-column: 4;
+}
+.composer-workspace-switch-action:disabled {
+  opacity: 0.4;
+}
+.composer-workspace-known-remote {
+  grid-column: 5;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  min-width: 0;
+}
+.composer-workspace-known-remote-label {
+  color: color-mix(in srgb, var(--text-secondary) 82%, transparent);
+  font-size: var(--font-size-xs);
+  font-weight: 650;
+  white-space: nowrap;
+}
+.composer-workspace-known-row .settings-workspace-remote {
+  --segmented-control-foreground: var(--text-primary);
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--segmented-control-gap);
+  padding: var(--segmented-control-padding);
+  border: 1px solid var(--segmented-control-border);
+  border-radius: 999px;
+  background: var(--segmented-control-bg);
+  box-shadow: var(--segmented-control-shadow);
+  justify-self: end;
+}
+.composer-workspace-known-row .settings-workspace-remote-segment {
+  min-width: 0;
+  min-height: var(--segmented-segment-height);
+  padding: var(--segmented-segment-padding);
+  border-radius: 999px;
+  color: var(--segmented-segment-color);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+.composer-workspace-known-row .settings-workspace-remote-segment:hover:not(:disabled) {
+  color: var(--segmented-control-foreground);
+  background: var(--segmented-segment-hover-bg);
+}
+.composer-workspace-known-row .settings-workspace-remote-segment.is-active,
+.composer-workspace-known-row .settings-workspace-remote-segment.is-active.is-write,
+.composer-workspace-known-row .settings-workspace-remote-segment.is-active.is-files-off {
+  color: color-mix(in srgb, var(--segmented-control-foreground) 98%, var(--text-primary));
+  background: var(--segmented-segment-active-bg);
+  box-shadow: inset 0 0 0 1px var(--segmented-segment-active-ring);
 }
 .composer-workspace-row-remove {
   flex: 0 0 auto;
@@ -1045,57 +1189,26 @@
   background: color-mix(in srgb, var(--accent) 18%, transparent);
   color: var(--accent, var(--text-primary));
 }
-.composer-workspace-switch-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding-right: 6px;
-}
-.composer-workspace-switch-row .welcome-workspace-popover-row-main-action {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 1px;
-  border: 0;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-  padding: 8px 10px;
-  border-radius: 6px;
-}
-.composer-workspace-switch-row .welcome-workspace-popover-row-main-action:hover {
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
-}
-.composer-workspace-access-toggle {
-  display: flex;
-  gap: 0;
-  margin: 2px 10px 6px;
-  padding: 2px;
-  border-radius: 7px;
-  background: color-mix(in srgb, var(--panel-border) 28%, transparent);
-}
-.composer-workspace-access-option {
-  flex: 1;
-  padding: 4px 8px;
-  border: 0;
-  border-radius: 5px;
-  background: transparent;
-  color: var(--text-secondary);
-  font: inherit;
-  font-size: 11px;
-  font-weight: 600;
-  cursor: pointer;
-  appearance: none;
-  -webkit-appearance: none;
-}
-.composer-workspace-access-option.is-active {
-  background: var(--surface-1, color-mix(in srgb, var(--accent) 20%, transparent));
-  color: var(--text-primary);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18);
+@media (max-width: 760px) {
+  .composer-workspace-known-row {
+    grid-template-columns: 24px minmax(0, 1fr) auto auto 24px;
+  }
+
+  .composer-workspace-known-remote {
+    grid-column: 1 / -1;
+    justify-self: stretch;
+    justify-content: flex-end;
+  }
+
+  .composer-workspace-known-row .settings-workspace-remote {
+    min-width: 0;
+    flex: 1 1 auto;
+    justify-self: stretch;
+  }
+
+  .composer-workspace-known-row .settings-workspace-remote-segment {
+    min-width: 0;
+  }
 }
 .welcome-hero h1 {
   margin: 0;
@@ -12629,46 +12742,6 @@ button.diff-file-row {
 .composer-textarea-context-menu-shortcut {
   color: var(--text-secondary);
   font-size: 12px;
-}
-
-/* ── Remote (iOS) access in the composer workspace popover ────────────────────
-   The reused .settings-workspace-remote toggle drops to its own line under the
-   primary workspace's name/badge row; the add-section "Remote off|read|R/W"
-   toggle stacks under the local Read|Write toggle, sharing its chrome. */
-.composer-workspace-row-primary {
-  flex-wrap: wrap;
-}
-.composer-workspace-row-primary .settings-workspace-remote {
-  flex-basis: 100%;
-  margin-top: 4px;
-}
-.composer-workspace-access-option.is-write.is-active {
-  background: color-mix(in srgb, var(--warning) 22%, transparent);
-}
-/* Keyboard focus ring — the UA ring is suppressed by appearance:none on these
-   segments. Also covers the pre-existing local Read|Write toggle (same class). */
-.composer-workspace-access-option:focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: 2px;
-}
-/* Small captions that disambiguate the local "agent access" toggle from the
-   remote "phone access" toggle stacked beneath it. */
-.composer-workspace-remote-caption {
-  margin: 6px 10px 2px;
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
-  color: var(--text-tertiary, var(--text-secondary));
-}
-.composer-workspace-remote-hint {
-  margin: 0 10px 8px;
-  font-size: 11px;
-  line-height: 1.35;
-  /* Mix amber with --text-primary (not --text-secondary) so the security
-     disclosure stays legible in BOTH light and dark themes — --text-primary is
-     theme-adaptive high-contrast, avoiding the amber-on-near-white failure. */
-  color: color-mix(in srgb, var(--warning) 55%, var(--text-primary));
 }
 
 /* ── Reusable notification zone ───────────────────────────────────────────

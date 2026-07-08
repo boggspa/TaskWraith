@@ -2,10 +2,10 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { describeExternalPath } from '../lib/ExternalPathRepoDetect'
 import type { ExternalPathGitMetadata } from '../lib/ExternalPathRepoDetect'
+import { resolveComposerSurfacePopoverPosition } from '../lib/composerSurfacePopover'
 import type { AppSettings, ExternalPathGrant, WorkspaceRecord } from '../../../main/store/types'
-import { FolderSymbolIcon } from './AppChromeSymbols'
+import { FolderSymbolIcon, XSymbolIcon } from './AppChromeSymbols'
 import { WorkspaceRemoteAccessToggle } from './WorkspaceRemoteAccessToggle'
-import { buildAllowlistUpsertForSegment } from './workspaceRemoteAccess'
 import type { RemoteWorkspaceEntry } from '../../../shared/remoteWorkspaceDefaults'
 
 /**
@@ -44,6 +44,8 @@ export interface ComposerWorkspaceSwitcherProps {
   onAddNewWorkspace: () => void
   /** Switch to a workspace-less (global / system) chat. */
   onSelectNoWorkspace: () => void
+  /** Remove a registered workspace/environment from TaskWraith. */
+  onRemoveWorkspace?: (id: string, event: React.MouseEvent<HTMLButtonElement>) => void
   /**
    * 1.0.6-EW66 — The chat's *additional*-workspace grants (one
    * `ExternalPathGrant` per chat-provider per path). The picker
@@ -140,6 +142,7 @@ export function ComposerWorkspaceSwitcher({
   onPickExisting,
   onAddNewWorkspace,
   onSelectNoWorkspace,
+  onRemoveWorkspace,
   additionalGrants,
   repoMetadata,
   onReorderWorkspaces,
@@ -151,16 +154,17 @@ export function ComposerWorkspaceSwitcher({
   const [popoverOpen, setPopoverOpen] = useState(false)
   const triggerRef = useRef<HTMLButtonElement | null>(null)
   const popoverRef = useRef<HTMLDivElement | null>(null)
-  const [popoverPosition, setPopoverPosition] = useState<{ left: number; top: number } | null>(null)
+  const [popoverPosition, setPopoverPosition] = useState<{
+    left: number
+    top: number
+    width: number
+  } | null>(null)
   // 1.0.6-EW66 — pointer-drag reorder state for the additional-
   // workspace list (same pattern as QueuedMessagesAboveRow).
   const [dragPath, setDragPath] = useState<string | null>(null)
   const [dragOverPath, setDragOverPath] = useState<string | null>(null)
-  // Remote (iOS) access for workspaces added from the list below, and shown per
-  // current workspace. 'off' (default) writes nothing — preserves the prior add
-  // behavior. One allowlist fetch (on open) feeds the primary toggle (controlled)
-  // and the add logic.
-  const [addRemoteMode, setAddRemoteMode] = useState<'off' | 'read' | 'read-write'>('off')
+  // Remote (iOS) access for every registered workspace row. One allowlist fetch
+  // (on open) feeds each per-row WorkspaceRemoteAccessToggle.
   const [remoteAllowlist, setRemoteAllowlist] = useState<RemoteWorkspaceEntry[]>([])
   const refreshRemoteAllowlist = (): void => {
     void window.api
@@ -169,12 +173,7 @@ export function ComposerWorkspaceSwitcher({
       .catch(() => undefined)
   }
   useEffect(() => {
-    if (!popoverOpen) {
-      // Re-arm to the safe default each session, so a previously chosen Read/Write
-      // can't silently apply to a later add.
-      setAddRemoteMode('off')
-      return
-    }
+    if (!popoverOpen) return
     void window.api
       .bridgeAllowlistList()
       .then((list) => setRemoteAllowlist((list ?? []) as RemoteWorkspaceEntry[]))
@@ -205,12 +204,8 @@ export function ComposerWorkspaceSwitcher({
     }
   }, [popoverOpen])
 
-  // Position computation: anchor below the trigger, left-align to
-  // the trigger so the popover grows toward the composer's centre
-  // (the welcome variant centres on the trigger, but the composer
-  // button sits at the far left of the composer row so left-anchor
-  // reads more naturally). Clamped to the viewport edges on
-  // narrow windows.
+  // Position computation: anchor to the full composer surface, matching the
+  // bottom-row popovers that were already converted to composer-width sheets.
   useLayoutEffect(() => {
     if (!popoverOpen) {
       const frame = window.requestAnimationFrame(() => setPopoverPosition(null))
@@ -219,24 +214,17 @@ export function ComposerWorkspaceSwitcher({
     const computePosition = (): void => {
       const trigger = triggerRef.current
       if (!trigger) return
-      const rect = trigger.getBoundingClientRect()
-      const popoverWidth = 420
-      const margin = 8
-      // Left-align to the trigger but keep on-screen.
-      const idealLeft = rect.left
-      const clampedLeft = Math.max(
-        margin,
-        Math.min(window.innerWidth - popoverWidth - margin, idealLeft)
+      const triggerRect = trigger.getBoundingClientRect()
+      const surface = trigger.closest('.composer-surface') as HTMLElement | null
+      const surfaceRect = surface?.getBoundingClientRect() ?? triggerRect
+      setPopoverPosition(
+        resolveComposerSurfacePopoverPosition({
+          triggerRect,
+          surfaceRect,
+          viewportWidth: window.innerWidth,
+          widthFloor: 420
+        })
       )
-      // Open ABOVE the button when the composer sits at the bottom
-      // of the viewport — flip if there's no room below. Match the
-      // CSS cap while allowing more room than the old 360px picker.
-      const POPOVER_MAX_HEIGHT = Math.min(520, Math.max(320, window.innerHeight - margin * 2))
-      const wouldOverflowBottom = rect.bottom + 6 + POPOVER_MAX_HEIGHT > window.innerHeight - margin
-      const top = wouldOverflowBottom
-        ? Math.max(margin, rect.top - 6 - POPOVER_MAX_HEIGHT)
-        : rect.bottom + 6
-      setPopoverPosition({ left: clampedLeft, top })
     }
     computePosition()
     window.addEventListener('resize', computePosition)
@@ -247,9 +235,16 @@ export function ComposerWorkspaceSwitcher({
     }
   }, [popoverOpen])
 
-  const others = workspaces
-    .filter((ws) => ws.id !== currentWorkspace?.id)
-    .sort((a, b) => (b.lastOpenedAt || b.createdAt || 0) - (a.lastOpenedAt || a.createdAt || 0))
+  const registeredWorkspaces = useMemo(() => {
+    const byId = new Map<string, WorkspaceRecord>()
+    for (const ws of workspaces) byId.set(ws.id, ws)
+    if (currentWorkspace && !byId.has(currentWorkspace.id)) byId.set(currentWorkspace.id, currentWorkspace)
+    return [...byId.values()].sort((a, b) => {
+      if (a.id === currentWorkspace?.id) return -1
+      if (b.id === currentWorkspace?.id) return 1
+      return (b.lastOpenedAt || b.createdAt || 0) - (a.lastOpenedAt || a.createdAt || 0)
+    })
+  }, [currentWorkspace, workspaces])
 
   // 1.0.6-EW66 — collapse the per-provider grants into one entry
   // per PATH for the "Current workspaces" list. Order comes from
@@ -289,43 +284,22 @@ export function ComposerWorkspaceSwitcher({
     })
   }, [additionalGrants, repoMetadata])
 
-  // 1.0.6-EW69 — known workspaces eligible to attach as a SECONDARY:
-  // everything except the primary (already in `others`) and anything
-  // already attached as an additional workspace.
   const attachedPaths = new Set(additionalEntries.map((entry) => entry.path))
-  const addableWorkspaces = others.filter((ws) => ws.path && !attachedPaths.has(ws.path))
+  const registeredPaths = new Set(registeredWorkspaces.map((ws) => ws.path).filter(Boolean))
+  const externalOnlyAdditionalEntries = additionalEntries.filter(
+    (entry) => !registeredPaths.has(entry.path)
+  )
 
   const handleSelectFromPopover = (callback: () => void): void => {
     setPopoverOpen(false)
     setTimeout(callback, 0)
   }
 
-  // Add a known workspace as a secondary folder AND, if a remote tier is chosen,
-  // write its iOS allowlist entry. Read-modify-write (buildAllowlistUpsertForSegment)
-  // so it never widens a grant narrowed in Settings → Devices.
+  // Add a known workspace as a secondary folder. Remote access is now controlled
+  // per workspace row via WorkspaceRemoteAccessToggle.
   const handleAddKnown = (ws: WorkspaceRecord): void => {
     handleSelectFromPopover(() => {
       onAddKnownWorkspace?.(ws.path, SECONDARY_WORKSPACE_ACCESS)
-      if (addRemoteMode === 'off') return
-      void (async () => {
-        try {
-          // Read the LIVE allowlist right before writing so read-modify-write is
-          // based on truth, not a stale/unresolved snapshot — otherwise a fast add
-          // could widen a grant the user narrowed in Settings → Devices to
-          // first-grant defaults. (The popover is already closed; the on-open
-          // effect re-fetches next time, so no refresh is needed here.)
-          const fresh = ((await window.api.bridgeAllowlistList()) ?? []) as RemoteWorkspaceEntry[]
-          const existing = fresh.find((entry) => entry.workspaceId === ws.id)
-          const payload = buildAllowlistUpsertForSegment(
-            { id: ws.id, path: ws.path },
-            addRemoteMode,
-            existing
-          )
-          await window.api.bridgeAllowlistUpsert(payload)
-        } catch {
-          // keep prior behavior on IPC failure
-        }
-      })()
     })
   }
 
@@ -351,8 +325,8 @@ export function ComposerWorkspaceSwitcher({
     (event: React.PointerEvent): void => {
       if (event.button !== 0 || !onReorderWorkspaces) return
       const target = event.target as HTMLElement
-      // Don't start a drag from the remove button.
-      if (target.closest('.composer-workspace-row-remove')) return
+      // Don't start a drag from row controls.
+      if (target.closest('button') || target.closest('.settings-workspace-remote')) return
       const startX = event.clientX
       const startY = event.clientY
       let dragged = false
@@ -416,7 +390,7 @@ export function ComposerWorkspaceSwitcher({
         }`}
         data-composer-control="workspace"
         aria-expanded={popoverOpen}
-        aria-haspopup="menu"
+        aria-haspopup="dialog"
         onClick={() => setPopoverOpen((open) => !open)}
         title={titleText}
         aria-label={titleText}
@@ -432,51 +406,117 @@ export function ComposerWorkspaceSwitcher({
             className={`welcome-workspace-popover welcome-workspace-popover--portaled composer-workspace-popover shell-${
               composerStyle || 'default'
             }`}
-            role="menu"
+            role="dialog"
             style={{
               position: 'fixed',
               left: `${popoverPosition.left}px`,
               top: `${popoverPosition.top}px`,
-              transform: 'none'
+              width: `${popoverPosition.width}px`,
+              maxWidth: 'calc(100vw - 16px)',
+              transform: 'translateY(-100%)'
             }}
+            aria-label="Workspaces"
           >
-            {/*
-              1.0.6-EW66 — "Current workspaces": the chat's primary
-              workspace (PRIMARY badge, not removable) plus any
-              additional folders attached via grants — de-duped by
-              path, sorted by the shared per-path `order`, each with
-              a remove (×), and a drag handle for reordering
-              (pointer-drag, persisted via onReorderWorkspaces).
-            */}
-            <div className="welcome-workspace-popover-section composer-workspace-current">
-              <div className="welcome-workspace-popover-header">Current workspaces</div>
-              {currentWorkspace ? (
-                <div
-                  className="composer-workspace-row composer-workspace-row-primary"
-                  title={currentWorkspace.path}
-                >
-                  <span className="composer-workspace-row-main">
-                    <span className="composer-workspace-row-name">{primaryLabel}</span>
-                    {currentWorkspace.path && (
-                      <span className="composer-workspace-row-path">{currentWorkspace.path}</span>
+            <div className="welcome-workspace-popover-section composer-workspace-known">
+              <div className="welcome-workspace-popover-header">Workspaces</div>
+              {registeredWorkspaces.map((ws) => {
+                const label = ws.displayName || ws.path.split('/').pop() || 'Workspace'
+                const isPrimary = ws.id === currentWorkspace?.id
+                const isAttached = Boolean(ws.path && attachedPaths.has(ws.path))
+                const canAdd = Boolean(onAddKnownWorkspace && ws.path && !isPrimary && !isAttached)
+                return (
+                  <div
+                    key={ws.id}
+                    className={`composer-workspace-known-row${isPrimary ? ' is-primary' : ''}${
+                      isAttached ? ' is-attached' : ''
+                    }`}
+                    title={ws.path}
+                  >
+                    <button
+                      type="button"
+                      className="composer-workspace-known-add"
+                      onClick={() => handleAddKnown(ws)}
+                      disabled={!canAdd}
+                      title={
+                        isPrimary
+                          ? 'This is already the primary workspace'
+                          : isAttached
+                            ? 'Already attached to this chat'
+                            : onAddKnownWorkspace
+                              ? `Attach ${label} as an additional workspace`
+                              : 'Open a saved chat to attach secondary workspaces'
+                      }
+                      aria-label={`Add ${label} as secondary workspace`}
+                    >
+                      +
+                    </button>
+                    <span className="composer-workspace-known-main">
+                      <span className="composer-workspace-known-name">{label}</span>
+                      {isPrimary && (
+                        <span className="composer-workspace-badge composer-workspace-badge-primary">
+                          primary
+                        </span>
+                      )}
+                      {!isPrimary && isAttached && (
+                        <span className="composer-workspace-badge composer-workspace-badge-attached">
+                          attached
+                        </span>
+                      )}
+                    </span>
+                    {isAttached && onRemoveWorkspacePath ? (
+                      <button
+                        type="button"
+                        className="segmented-control-action segmented-control-action--compact composer-workspace-known-detach"
+                        onClick={() => onRemoveWorkspacePath(ws.path)}
+                        title={`Detach ${label} from this chat`}
+                      >
+                        Detach
+                      </button>
+                    ) : null}
+                    <button
+                      type="button"
+                      className="segmented-control-action segmented-control-action--compact composer-workspace-switch-action"
+                      onClick={() => handleSelectFromPopover(() => onPickExisting(ws))}
+                      disabled={isPrimary}
+                      title={isPrimary ? 'Already the primary workspace' : `Make ${label} primary`}
+                    >
+                      Switch
+                    </button>
+                    <span className="composer-workspace-known-remote">
+                      <span className="composer-workspace-known-remote-label">Remote:</span>
+                      <WorkspaceRemoteAccessToggle
+                        workspace={ws}
+                        entries={remoteAllowlist}
+                        onChanged={refreshRemoteAllowlist}
+                      />
+                    </span>
+                    {onRemoveWorkspace && (
+                      <button
+                        type="button"
+                        className="composer-workspace-known-remove"
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          onRemoveWorkspace(ws.id, event)
+                        }}
+                        title={`Remove ${label} from TaskWraith`}
+                        aria-label={`Remove ${label} from TaskWraith`}
+                      >
+                        <XSymbolIcon />
+                      </button>
                     )}
-                  </span>
-                  <span className="composer-workspace-badge composer-workspace-badge-primary">
-                    PRIMARY
-                  </span>
-                  <WorkspaceRevealButton path={currentWorkspace.path} label={primaryLabel} />
-                  <WorkspaceRemoteAccessToggle
-                    workspace={currentWorkspace}
-                    entries={remoteAllowlist}
-                    onChanged={refreshRemoteAllowlist}
-                  />
-                </div>
-              ) : (
+                  </div>
+                )
+              })}
+              {registeredWorkspaces.length === 0 && (
                 <div className="composer-workspace-row composer-workspace-row-empty">
-                  <span className="composer-workspace-row-name">No primary workspace</span>
+                  <span className="composer-workspace-row-name">No saved workspaces</span>
                 </div>
               )}
-              {additionalEntries.map((entry) => (
+            </div>
+            {externalOnlyAdditionalEntries.length > 0 && (
+              <div className="welcome-workspace-popover-section composer-workspace-current">
+                <div className="welcome-workspace-popover-header">Attached folders</div>
+                {externalOnlyAdditionalEntries.map((entry) => (
                 <div
                   key={entry.path}
                   data-workspace-path={entry.path}
@@ -523,79 +563,11 @@ export function ComposerWorkspaceSwitcher({
                     </button>
                   )}
                 </div>
-              ))}
-            </div>
-            {/*
-              1.0.6-EW69 — "Add a workspace": attach an *additional*
-              (secondary) workspace. This is an explicit thread-level
-              attachment, so new secondary workspaces are write grants
-              by default and participant permission state remains the
-              write guard. Hidden for welcome-state chats (no chat
-              record to attach grants to yet).
-            */}
-            {onAddFolder && (
-              <div className="welcome-workspace-popover-section composer-workspace-add">
-                <div className="welcome-workspace-popover-header">Add a workspace</div>
-                <div className="composer-workspace-remote-caption">Phone access (remote)</div>
-                <div
-                  className="composer-workspace-access-toggle composer-workspace-remote-toggle"
-                  role="group"
-                  aria-label="Remote (iOS) access for the workspace you add"
-                >
-                  {(['off', 'read', 'read-write'] as const).map((mode) => (
-                    <button
-                      key={mode}
-                      type="button"
-                      aria-pressed={addRemoteMode === mode}
-                      className={`composer-workspace-access-option ${
-                        addRemoteMode === mode ? 'is-active' : ''
-                      } ${mode === 'read-write' ? 'is-write' : ''}`}
-                      onClick={() => setAddRemoteMode(mode)}
-                      title={
-                        mode === 'off'
-                          ? 'Remote: not shared with paired devices'
-                          : mode === 'read'
-                            ? 'Remote: phone can monitor + approve, no file changes'
-                            : 'Remote: phone can edit files and run git commit/push'
-                      }
-                    >
-                      {mode === 'off' ? 'Off' : mode === 'read' ? 'Read' : 'Read/Write'}
-                    </button>
-                  ))}
-                </div>
-                {addRemoteMode !== 'off' && (
-                  <p className="composer-workspace-remote-hint">
-                    {addRemoteMode === 'read-write'
-                      ? 'Workspaces you add become writable from your phone (incl. git commit/push).'
-                      : 'Workspaces you add become viewable from your phone.'}
-                    {remoteAllowlist.length === 0
-                      ? ' Your first remote grant also exposes general chats to your phone in plan mode.'
-                      : ''}
-                  </p>
-                )}
-                {/*
-                  1.0.6-EW69 — one-click add for every KNOWN workspace
-                  that isn't the primary and isn't already attached.
-                  No OS dialog needed.
-                */}
-                {onAddKnownWorkspace &&
-                  addableWorkspaces.map((ws) => (
-                    <button
-                      key={ws.id}
-                      type="button"
-                      role="menuitem"
-                      className="welcome-workspace-popover-row composer-workspace-add-known"
-                      onClick={() => handleAddKnown(ws)}
-                      title={`Attach ${ws.displayName || ws.path} as an additional workspace`}
-                    >
-                      <span className="welcome-workspace-popover-row-glyph" aria-hidden>
-                        +
-                      </span>
-                      <span className="welcome-workspace-popover-row-name">
-                        {ws.displayName || ws.path.split('/').pop() || 'Workspace'}
-                      </span>
-                    </button>
-                  ))}
+                ))}
+              </div>
+            )}
+            <div className="welcome-workspace-popover-section welcome-workspace-popover-actions">
+              {onAddFolder && (
                 <button
                   type="button"
                   role="menuitem"
@@ -608,45 +580,9 @@ export function ComposerWorkspaceSwitcher({
                   <span className="welcome-workspace-popover-row-glyph" aria-hidden>
                     +
                   </span>
-                  <span className="welcome-workspace-popover-row-name">
-                    Add another folder…
-                  </span>
+                  <span className="welcome-workspace-popover-row-name">Add another folder…</span>
                 </button>
-              </div>
-            )}
-            {/*
-              1.0.6-EW66 — "Switch primary": rebind the chat's primary
-              workspace to another known folder, open a brand-new
-              folder as the primary, or drop to a workspace-less
-              system chat. (Distinct from "Add a workspace" above,
-              which keeps the primary and attaches an additional one.)
-            */}
-            <div className="welcome-workspace-popover-section welcome-workspace-popover-actions">
-              <div className="welcome-workspace-popover-header">Switch primary workspace</div>
-              {others.map((ws) => (
-                <div key={ws.id} className="welcome-workspace-popover-row composer-workspace-switch-row">
-                  <button
-                    type="button"
-                    role="menuitem"
-                    className="welcome-workspace-popover-row-main-action"
-                    onClick={() => handleSelectFromPopover(() => onPickExisting(ws))}
-                    title={`Make ${ws.displayName || ws.path} the primary workspace`}
-                  >
-                    <span className="welcome-workspace-popover-row-name">
-                      {ws.displayName || ws.path.split('/').pop() || 'Workspace'}
-                    </span>
-                    {ws.path && (
-                      <span className="welcome-workspace-popover-row-path">{ws.path}</span>
-                    )}
-                  </button>
-                  {ws.path ? (
-                    <WorkspaceRevealButton
-                      path={ws.path}
-                      label={ws.displayName || ws.path.split('/').pop() || 'Workspace'}
-                    />
-                  ) : null}
-                </div>
-              ))}
+              )}
               <button
                 type="button"
                 role="menuitem"
