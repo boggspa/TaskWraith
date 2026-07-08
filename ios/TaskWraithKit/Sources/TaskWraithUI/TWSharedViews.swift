@@ -935,7 +935,9 @@ struct ProviderModelPicker: View {
         guard let effort = reasoningEffort,
             !twReasoningOptions(in: currentCatalog, modelId: modelId).isEmpty
         else { return nil }
-        return twReasoningDisplayLabel(effort)
+        // Ladder terminology on the chip too (low -> "Light"), falling back to
+        // the generic label for anything off-ladder.
+        return twLadderLabel(for: effort) ?? twReasoningDisplayLabel(effort)
     }
 
     var body: some View {
@@ -1043,23 +1045,31 @@ struct ProviderModelPicker: View {
     private var pickerPopover: some View {
         VStack(spacing: 0) {
             grabber
-            ScrollView {
-                VStack(alignment: .leading, spacing: 2) {
-                    if allowsProviderChange {
-                        ForEach(catalogs) { catalog in
-                            providerSection(catalog)
+            HStack(alignment: .top, spacing: 0) {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 2) {
+                        if allowsProviderChange {
+                            ForEach(catalogs) { catalog in
+                                providerSection(catalog)
+                            }
+                        } else if let catalog = currentCatalog {
+                            modelRows(for: catalog)
                         }
-                    } else if let catalog = currentCatalog {
-                        modelRows(for: catalog)
-                        reasoningRows(for: catalog)
                     }
+                    .padding(.top, 2)
+                    .padding(.bottom, 8)
                 }
-                .padding(.top, 2)
-                .padding(.bottom, 8)
+                .frame(width: showsReasoningSidecar ? 232 : 240)
+                .frame(maxHeight: .infinity)
+                if showsReasoningSidecar {
+                    reasoningSidecar
+                        .frame(maxHeight: .infinity)
+                }
             }
+            .frame(height: showsReasoningSidecar ? 322 : nil)
             .frame(maxHeight: 360)
         }
-        .frame(width: 280)
+        .frame(width: showsReasoningSidecar ? 300 : 240)
         .modifier(GlassPopoverPanel())
         .offset(y: dragOffset)
         .opacity(dragOffset > 0 ? max(0.55, 1 - dragOffset / 320) : 1)
@@ -1110,9 +1120,6 @@ struct ProviderModelPicker: View {
         .padding(.top, 10)
         .padding(.bottom, 2)
         modelRows(for: catalog)
-        if isCurrent {
-            reasoningRows(for: catalog)
-        }
     }
 
     @ViewBuilder
@@ -1134,32 +1141,42 @@ struct ProviderModelPicker: View {
         }
     }
 
-    @ViewBuilder
-    private func reasoningRows(for catalog: ProviderModelCatalog) -> some View {
-        let options = twReasoningOptions(in: catalog, modelId: modelId)
-        let accent = TWTheme.providerAccent(catalog.provider)
-        if !options.isEmpty {
-            HStack {
-                Text("Reasoning")
-                    .font(.caption2.weight(.semibold))
-                    .textCase(.uppercase)
-                    .foregroundStyle(TWTheme.textSecondary)
-                Spacer()
-            }
-            .padding(.horizontal, 14)
-            .padding(.top, 10)
-            .padding(.bottom, 2)
-            ForEach(options) { option in
-                pickerRow(
-                    title: twReasoningDisplayLabel(option.reasoningEffort),
-                    selected: reasoningEffort == option.reasoningEffort,
-                    accent: accent,
-                    disabled: option.disabled == true
-                ) {
-                    reasoningEffort = option.reasoningEffort
-                    isPresented = false
-                }
-            }
+    // MARK: - Reasoning ladder sidecar
+    // Reasoning moved out of the model list into a vertical gradient "ladder"
+    // slider on the picker's right edge (see ReasoningLadder). It reflects the
+    // CURRENTLY selected model and updates live as the user taps models.
+
+    private var enabledLadderIndices: Set<Int> {
+        var indices = Set<Int>()
+        for option in twReasoningOptions(in: currentCatalog, modelId: modelId)
+        where option.disabled != true {
+            if let i = twLadderIndex(for: option.reasoningEffort) { indices.insert(i) }
+        }
+        return indices
+    }
+    private var showsReasoningSidecar: Bool { !enabledLadderIndices.isEmpty }
+    private var currentLadderLabel: String { twLadderLabel(for: reasoningEffort) ?? "—" }
+
+    private var reasoningSidecar: some View {
+        VStack(spacing: 10) {
+            Text(currentLadderLabel)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(TWTheme.providerAccent(provider))
+                .lineLimit(1)
+                .minimumScaleFactor(0.6)
+                .frame(maxWidth: .infinity)
+            ReasoningLadder(
+                enabledIndices: enabledLadderIndices,
+                reasoningEffort: $reasoningEffort,
+                accent: TWTheme.providerAccent(provider)
+            )
+        }
+        .padding(.top, 12)
+        .padding(.bottom, 14)
+        .padding(.horizontal, 6)
+        .frame(width: 68)
+        .overlay(alignment: .leading) {
+            Rectangle().fill(TWTheme.border).frame(width: 0.5)
         }
     }
 
@@ -1211,6 +1228,192 @@ struct ProviderModelPicker: View {
         if id.count > 22 { return String(id.prefix(20)) + "…" }
         return id
     }
+}
+
+// MARK: - Reasoning ladder (sidecar slider)
+
+/// One fixed stop on the 7-position reasoning ladder. `effort` is the wire value
+/// (off/low/medium/high/xhigh/max/ultracode); `label` is the composer's display
+/// term (Off/Light/Medium/High/Extra/Max/Ultracode).
+private struct TWReasoningStop: Identifiable {
+    let index: Int
+    let effort: String
+    let label: String
+    var id: Int { index }
+}
+
+private let twReasoningStops: [TWReasoningStop] = [
+    TWReasoningStop(index: 0, effort: "off", label: "Off"),
+    TWReasoningStop(index: 1, effort: "low", label: "Light"),
+    TWReasoningStop(index: 2, effort: "medium", label: "Medium"),
+    TWReasoningStop(index: 3, effort: "high", label: "High"),
+    TWReasoningStop(index: 4, effort: "xhigh", label: "Extra"),
+    TWReasoningStop(index: 5, effort: "max", label: "Max"),
+    TWReasoningStop(index: 6, effort: "ultracode", label: "Ultracode"),
+]
+
+/// Coalesce provider synonyms onto the canonical ladder effort strings.
+private func twNormalizeLadderEffort(_ effort: String) -> String {
+    switch effort.lowercased() {
+    case "extra": return "xhigh"
+    case "light": return "low"
+    default: return effort.lowercased()
+    }
+}
+private func twLadderIndex(for effort: String?) -> Int? {
+    guard let effort else { return nil }
+    let normalized = twNormalizeLadderEffort(effort)
+    return twReasoningStops.first(where: { $0.effort == normalized })?.index
+}
+private func twLadderLabel(for effort: String?) -> String? {
+    guard let index = twLadderIndex(for: effort) else { return nil }
+    return twReasoningStops[index].label
+}
+
+/// Vertical gradient "ladder" reasoning slider: 7 fixed stops from Off (bottom,
+/// faint gray) to Ultracode (top, shimmering purple), mirroring the Electron
+/// reasoning picker's gray→silver→purple ramp. The metallic-rect thumb snaps
+/// only to the stops the current model actually supports (`enabledIndices`).
+private struct ReasoningLadder: View {
+    let enabledIndices: Set<Int>
+    @Binding var reasoningEffort: String?
+    let accent: Color
+    @State private var shimmer: CGFloat = 0
+
+    private var currentIndex: Int {
+        twLadderIndex(for: reasoningEffort) ?? enabledIndices.min() ?? 0
+    }
+
+    var body: some View {
+        GeometryReader { geo in
+            let h = geo.size.height
+            let cx = geo.size.width / 2
+            let trackW: CGFloat = 12
+            ZStack {
+                Capsule()
+                    .fill(Self.ladderGradient)
+                    .frame(width: trackW, height: h)
+                    .overlay(alignment: .top) { shimmerBand(height: h, trackW: trackW) }
+                    .position(x: cx, y: h / 2)
+
+                ForEach(twReasoningStops) { stop in
+                    let on = enabledIndices.contains(stop.index)
+                    Circle()
+                        .fill(Color.white.opacity(on ? 0.9 : 0.22))
+                        .frame(width: on ? 4 : 3, height: on ? 4 : 3)
+                        .position(x: cx, y: yFor(stop.index, height: h))
+                }
+
+                metallicThumb
+                    .position(x: cx, y: yFor(currentIndex, height: h))
+                    .animation(.spring(response: 0.28, dampingFraction: 0.8), value: currentIndex)
+            }
+            .frame(width: geo.size.width, height: h)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { value in snap(toY: value.location.y, height: h) }
+            )
+        }
+        .onAppear {
+            withAnimation(.linear(duration: 3.2).repeatForever(autoreverses: false)) {
+                shimmer = 1
+            }
+        }
+        .accessibilityElement()
+        .accessibilityLabel("Reasoning effort")
+        .accessibilityValue(twReasoningStops[currentIndex].label)
+        .accessibilityAdjustableAction { direction in
+            let sorted = enabledIndices.sorted()
+            guard !sorted.isEmpty else { return }
+            let pos = sorted.firstIndex(of: currentIndex)
+                ?? sorted.firstIndex(where: { $0 >= currentIndex })
+                ?? (sorted.count - 1)
+            let next = direction == .increment
+                ? min(sorted.count - 1, pos + 1) : max(0, pos - 1)
+            reasoningEffort = twReasoningStops[sorted[next]].effort
+        }
+    }
+
+    private func yFor(_ index: Int, height: CGFloat) -> CGFloat {
+        let inset: CGFloat = 8
+        let usable = max(1, height - inset * 2)
+        return inset + usable * (1 - CGFloat(index) / 6)
+    }
+
+    private func snap(toY y: CGFloat, height: CGFloat) {
+        let inset: CGFloat = 8
+        let usable = max(1, height - inset * 2)
+        let frac = max(0, min(1, 1 - (y - inset) / usable))
+        let raw = Int((frac * 6).rounded())
+        guard
+            let nearest = enabledIndices.min(by: {
+                let d0 = abs($0 - raw), d1 = abs($1 - raw)
+                return d0 == d1 ? $0 > $1 : d0 < d1
+            })
+        else { return }
+        let effort = twReasoningStops[nearest].effort
+        if reasoningEffort != effort { reasoningEffort = effort }
+    }
+
+    private var metallicThumb: some View {
+        RoundedRectangle(cornerRadius: 3, style: .continuous)
+            .fill(
+                LinearGradient(
+                    colors: [
+                        Color(white: 0.97), Color(white: 0.66),
+                        Color(white: 0.88), Color(white: 0.54),
+                    ],
+                    startPoint: .top, endPoint: .bottom
+                )
+            )
+            .frame(width: 26, height: 11)
+            .overlay(
+                RoundedRectangle(cornerRadius: 3, style: .continuous)
+                    .strokeBorder(Color.black.opacity(0.25), lineWidth: 0.5)
+            )
+            .overlay(
+                Rectangle().fill(Color.white.opacity(0.65))
+                    .frame(height: 0.5).padding(.horizontal, 3)
+            )
+            .shadow(color: .black.opacity(0.32), radius: 1.5, y: 0.5)
+    }
+
+    @ViewBuilder
+    private func shimmerBand(height: CGFloat, trackW: CGFloat) -> some View {
+        if enabledIndices.contains(6) {
+            let zoneH = height / 6 + 8
+            Capsule()
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            Color(hex: 0x8E6FD8).opacity(0),
+                            Color(hex: 0xE0C4FF),
+                            Color(hex: 0x8E6FD8).opacity(0),
+                        ],
+                        startPoint: .top, endPoint: .bottom
+                    )
+                )
+                .frame(width: trackW, height: zoneH * 0.55)
+                .offset(y: -zoneH * 0.55 + shimmer * (zoneH * 1.1))
+                .frame(width: trackW, height: zoneH, alignment: .top)
+                .clipShape(Capsule())
+                .allowsHitTesting(false)
+        }
+    }
+
+    static let ladderGradient = LinearGradient(
+        stops: [
+            Gradient.Stop(color: Color(white: 0.62).opacity(0.40), location: 0.0),
+            Gradient.Stop(color: Color(white: 0.56).opacity(0.55), location: 0.1666),
+            Gradient.Stop(color: Color(white: 0.46).opacity(0.78), location: 0.3333),
+            Gradient.Stop(color: Color(hex: 0xB6B2C8), location: 0.50),
+            Gradient.Stop(color: Color(hex: 0xB088E8), location: 0.6666),
+            Gradient.Stop(color: Color(hex: 0x8E6FD8), location: 0.8333),
+            Gradient.Stop(color: Color(hex: 0xE0C4FF), location: 1.0),
+        ],
+        startPoint: .bottom, endPoint: .top
+    )
 }
 
 private func twReasoningModelOption(
