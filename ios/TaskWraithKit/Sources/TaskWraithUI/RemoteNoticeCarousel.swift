@@ -249,7 +249,12 @@ private struct RemoteNoticeGroupsView: View {
                         .font(.caption.weight(.bold))
                         .foregroundStyle(accent)
                     ForEach(group.models, id: \.name) { model in
-                        (Text(model.name).fontWeight(.bold).foregroundStyle(accent)
+                        // Ollama-backed models wear their spoofed brand hue
+                        // (accentProvider); everything else falls back to the
+                        // group's provider accent.
+                        let modelAccent = TWTheme.providerAccent(
+                            model.accentProvider ?? group.provider)
+                        (Text(model.name).fontWeight(.bold).foregroundStyle(modelAccent)
                             + Text(" - \(model.blurb)").fontWeight(.regular)
                                 .foregroundStyle(TWTheme.textSecondary))
                             .font(.caption2)

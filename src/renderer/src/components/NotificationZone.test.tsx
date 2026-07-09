@@ -137,7 +137,13 @@ describe('NotificationZone', () => {
         {
           provider: 'ollama',
           label: 'Ollama',
-          models: [{ name: 'Deep Reinforce - Ornith 9B + Ornith 35B', blurb: 'Local coding models.' }]
+          models: [
+            {
+              name: 'Deep Reinforce - Ornith 9B + Ornith 35B',
+              blurb: 'Local coding models.',
+              accentProvider: 'deep-reinforce'
+            }
+          ]
         }
       ]
     }
@@ -148,6 +154,10 @@ describe('NotificationZone', () => {
     expect(html).toContain('Fable 5')
     expect(html).toContain('notification-newadditions-provider provider-ollama')
     expect(html).toContain('Deep Reinforce - Ornith 9B + Ornith 35B')
+    // The Ollama-backed model name wears its spoofed brand hue (deep-reinforce);
+    // the "Ollama" group heading keeps the Ollama hue.
+    expect(html).toContain('notification-newadditions-model provider-deep-reinforce')
+    expect(html).not.toContain('notification-newadditions-model provider-ollama')
     // The plain body fallback paragraph is not rendered when groups are present.
     expect(html).not.toContain('Fallback summary text.')
   })

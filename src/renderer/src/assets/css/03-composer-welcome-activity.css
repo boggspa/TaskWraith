@@ -13035,6 +13035,15 @@ button.diff-file-row {
 .notification-newadditions-model.provider-ollama {
   color: var(--provider-ollama-color, #20a77a);
 }
+/* Ollama-backed models wear their spoofed upstream brand hue (set per-model via
+ * `accentProvider`) — so a model name reads in its brand colour instead of
+ * generic Ollama green. The "Ollama" group heading stays green above. */
+.notification-newadditions-model.provider-deep-reinforce {
+  color: var(--provider-deep-reinforce-color, #b45309);
+}
+.notification-newadditions-model.provider-liquid {
+  color: var(--provider-liquid-color, #f7d5e6);
+}
 
 .notification-card-dismiss {
   flex: 0 0 auto;

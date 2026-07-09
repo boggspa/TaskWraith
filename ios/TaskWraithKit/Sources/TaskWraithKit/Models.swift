@@ -145,6 +145,10 @@ public struct FirstLaunchNotice: Codable, Sendable, Identifiable, Hashable {
 public struct FirstLaunchNoticeModel: Codable, Sendable, Hashable {
     public let name: String
     public let blurb: String
+    /// Optional per-model hue override — the spoofed display-brand provider id
+    /// (e.g. "deep-reinforce", "liquid") for Ollama-backed models that wear an
+    /// upstream brand. Falls back to the group's `provider` hue when absent.
+    public let accentProvider: String?
 }
 
 /// One provider heading + its newly-added models in a "New Additions" notice.

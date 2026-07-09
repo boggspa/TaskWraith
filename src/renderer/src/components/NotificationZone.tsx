@@ -100,7 +100,11 @@ function NotificationGroups({
           <ul className="notification-newadditions-models">
             {group.models.map((model) => (
               <li key={model.name} className="notification-newadditions-model-row">
-                <span className={`notification-newadditions-model provider-${group.provider}`}>
+                <span
+                  className={`notification-newadditions-model provider-${
+                    model.accentProvider ?? group.provider
+                  }`}
+                >
                   {model.name}
                 </span>{' '}
                 <span className="notification-newadditions-blurb">- {model.blurb}</span>

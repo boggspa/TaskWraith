@@ -34,6 +34,12 @@ export interface AppNotificationModelEntry {
   /** Plain-language blurb (aim for ~120 chars). Rendered in the provider's hue
    *  at normal (non-bold) weight, right after the model name. */
   blurb: string
+  /** Optional per-model hue override — the spoofed display-brand provider id
+   *  (e.g. 'deep-reinforce', 'liquid') for Ollama-backed models that wear an
+   *  upstream brand. Resolves `--provider-<accentProvider>-color`; falls back
+   *  to the group's `provider` hue when omitted, so the model name matches its
+   *  brand (amber, pink, …) instead of generic Ollama green. */
+  accentProvider?: string
 }
 
 /** One provider heading + its newly-added models in a "New Additions" card. */
@@ -197,11 +203,13 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
           {
             name: 'Deep Reinforce - Ornith 9B + Ornith 35B',
             blurb:
-              'Open-source 262K-context coding models — local inference, no per-token cost.'
+              'Open-source 262K-context coding models — local inference, no per-token cost.',
+            accentProvider: 'deep-reinforce'
           },
           {
             name: 'Liquid - LFM 2.5 8B-1A',
-            blurb: 'A 131K-context local tool/thinking model for agentic coding — no cloud account required.'
+            blurb: 'A 131K-context local tool/thinking model for agentic coding — no cloud account required.',
+            accentProvider: 'liquid'
           }
         ]
       }
