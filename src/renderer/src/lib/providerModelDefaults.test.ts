@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   CODEX_DEFAULT_MODELS,
+  CODEX_DEFAULT_MODEL,
   CLAUDE_DEFAULT_MODELS,
   resolveClaudeDefaultReasoningEffort,
   resolveClaudeReasoningEfforts,
@@ -35,6 +36,15 @@ describe('Codex provider model defaults', () => {
       byId.get('gpt-5.6-terra')?.supportedReasoningEfforts?.map((option) => option.reasoningEffort)
     ).toEqual(['low', 'medium', 'high', 'xhigh'])
     expect(byId.get('gpt-5.6-luna')).toMatchObject({ label: 'GPT-5.6 Luna', disabled: false })
+  })
+
+  it('leads the picker with the GPT-5.6 trio (above 5.5) but keeps 5.5 the default', () => {
+    const ids = CODEX_DEFAULT_MODELS.map((model) => model.id)
+    // Trio sits at the very top, in Sol → Terra → Luna order, above 5.5.
+    expect(ids.slice(0, 3)).toEqual(['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna'])
+    expect(ids.indexOf('gpt-5.6-sol')).toBeLessThan(ids.indexOf('gpt-5.5'))
+    // The default must NOT follow the reorder to position 0 — it stays 5.5.
+    expect(CODEX_DEFAULT_MODEL).toBe('gpt-5.5')
   })
 })
 

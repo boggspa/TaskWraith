@@ -49,6 +49,8 @@ const previewModelForPicker = (entry: PreviewModelCatalogEntry): CodexModelOptio
 })
 
 const CODEX_DEFAULT_MODELS = [
+  // GPT-5.6 trio leads the picker (above 5.5); 5.5 below stays the default.
+  ...previewModelsForProvider('codex').map(previewModelForPicker),
   {
     id: 'gpt-5.5',
     label: 'GPT-5.5',
@@ -91,15 +93,17 @@ const CODEX_DEFAULT_MODELS = [
     supportedReasoningEfforts: [{ reasoningEffort: 'low' }, { reasoningEffort: 'medium' }],
     defaultReasoningEffort: 'low'
     // Fast tier removed alongside 5.3 — see note above.
-  },
-  ...previewModelsForProvider('codex').map(previewModelForPicker)
+  }
   // gpt-5.2 and gpt-5.3-codex were HARD-retired (the API rejects requests for
   // them) and removed from the picker. The authoritative removal lives in the
   // main process (CODEX_RETIRED_MODEL_IDS, applied in the get-agent-models
   // handler); this renderer fallback list is only shown on mount before IPC
   // resolves / on IPC failure, so it's kept in sync by deletion here.
 ] satisfies CodexModelOption[]
-const CODEX_DEFAULT_MODEL = CODEX_DEFAULT_MODELS[0].id
+// The 5.6 trio now leads CODEX_DEFAULT_MODELS, so the default can't be [0] any
+// more — pin it to GPT-5.5 (falling back to the first row only if 5.5 is gone).
+const CODEX_DEFAULT_MODEL =
+  CODEX_DEFAULT_MODELS.find((model) => model.id === 'gpt-5.5')?.id ?? CODEX_DEFAULT_MODELS[0].id
 const CLAUDE_REASONING_UNAVAILABLE = 'Not available for this Claude model'
 const CLAUDE_FULL_REASONING_EFFORTS = [
   { reasoningEffort: 'low' },

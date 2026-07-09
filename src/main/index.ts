@@ -4933,6 +4933,17 @@ async function previewModelAccessProvenForPayload(payload: AgentRunPayload): Pro
   }
 }
 
+// Codex picker ordering: the GPT-5.6 trio (Sol → Terra → Luna) leads the list,
+// then GPT-5.5 (which stays the DEFAULT), then everything else in its incoming
+// order. Anything off this list sorts after 5.5 (stable, so the CLI's relative
+// order is preserved). This is the single choke point the renderer picker AND
+// the iOS broadcast both read, so ordering it here fixes both platforms.
+const CODEX_PICKER_LEAD_ORDER = ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5']
+function codexModelPickerRank(id?: string): number {
+  const index = id ? CODEX_PICKER_LEAD_ORDER.indexOf(id) : -1
+  return index >= 0 ? index : CODEX_PICKER_LEAD_ORDER.length
+}
+
 function normalizeCodexDefaultModelRows<T extends { id?: string; isDefault?: boolean; disabled?: boolean }>(
   models: T[]
 ): T[] {
@@ -4942,11 +4953,10 @@ function normalizeCodexDefaultModelRows<T extends { id?: string; isDefault?: boo
       ...model,
       isDefault: hasGpt55 ? model.id === 'gpt-5.5' : Boolean(model.isDefault && model.disabled !== true)
     }))
-    .sort((a, b) => {
-      if (a.id === 'gpt-5.5') return -1
-      if (b.id === 'gpt-5.5') return 1
-      return 0
-    })
+    // Order the picker rows (trio first, 5.5 next); the DEFAULT is carried by
+    // `isDefault` above, not by array position, so 5.5 stays default even
+    // though it is no longer first.
+    .sort((a, b) => codexModelPickerRank(a.id) - codexModelPickerRank(b.id))
   return normalized as T[]
 }
 

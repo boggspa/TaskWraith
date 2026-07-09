@@ -3198,7 +3198,10 @@ function App(): React.JSX.Element {
   }
 
   const getDefaultModelForProvider = (provider: ProviderId): string => {
-    if (provider === 'codex') return codexModels[0]?.id || CODEX_DEFAULT_MODEL
+    // The 5.6 trio now leads the list, so [0] is no longer the default — pick the
+    // isDefault row (GPT-5.5), falling back to the pinned default constant.
+    if (provider === 'codex')
+      return codexModels.find((model) => model.isDefault)?.id || CODEX_DEFAULT_MODEL
     if (provider === 'claude') return CLAUDE_DEFAULT_MODEL
     if (provider === 'kimi') return KIMI_DEFAULT_MODEL
     if (provider === 'grok') return GROK_DEFAULT_MODEL

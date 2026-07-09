@@ -431,7 +431,11 @@ export function getStaticProviderModels(
   if (!options.includePreviewModels) return models
   const previews = previewModelsForProvider(provider)
   if (previews.length === 0) return models
-  return [...models, ...previews.map(previewModelForPicker)]
+  // Codex: the GPT-5.6 preview trio leads the list (above 5.5); 5.5 keeps
+  // isDefault so it stays the default. Other providers append previews as before.
+  return provider === 'codex'
+    ? [...previews.map(previewModelForPicker), ...models]
+    : [...models, ...previews.map(previewModelForPicker)]
 }
 
 export function normalizeCliProviderModel(provider: ProviderId, model?: string | null): string {
