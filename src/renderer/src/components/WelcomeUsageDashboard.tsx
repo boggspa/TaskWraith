@@ -174,7 +174,7 @@ export function WelcomeUsageDashboard({
   // Claude's single-accent dashboard.
   const PROVIDER_PALETTE = {
     gemini: '#8eb1ff',
-    codex: '#aaa0ff',
+    codex: '#A070F2',
     claude: '#ffad64',
     kimi: '#70B8FF',
     // Grok — monochrome identity; the dashboard rails sit on a dark

@@ -122,7 +122,7 @@
 }
 
 .activity-progress-note[data-provider="codex"] {
-  --activity-progress-note-thinking-accent: var(--provider-codex-color, #6366f1);
+  --activity-progress-note-thinking-accent: var(--provider-codex-color, #a070f2);
 }
 
 .activity-progress-note[data-provider="claude"] {
@@ -415,7 +415,7 @@
   color: var(--text-secondary);
 }
 .compact-tool-trace-provider.provider-gemini { color: var(--provider-gemini-color, #8eb1ff); }
-.compact-tool-trace-provider.provider-codex  { color: var(--provider-codex-color,  #aaa0ff); }
+.compact-tool-trace-provider.provider-codex  { color: var(--provider-codex-color,  #a070f2); }
 .compact-tool-trace-provider.provider-claude { color: var(--provider-claude-color, #ffad64); }
 .compact-tool-trace-provider.provider-kimi   { color: var(--provider-kimi-color,   #70b8ff); }
 .compact-tool-trace-provider.provider-grok   { color: var(--provider-grok-color,   #f5f5f5); }

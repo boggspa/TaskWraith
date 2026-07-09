@@ -545,7 +545,7 @@
 
 .sidebar-pinned-item.provider-codex,
 .sidebar-recents-item.provider-codex {
-  --chat-provider-accent: #9b8cff;
+  --chat-provider-accent: var(--provider-codex-color);
 }
 
 .sidebar-pinned-item.provider-claude,

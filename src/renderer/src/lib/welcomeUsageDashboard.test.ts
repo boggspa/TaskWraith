@@ -842,7 +842,7 @@ describe('buildWelcomeUsageDashboardData favoriteProject (Welcome L9 hero chip)'
 describe('mixProviderColors', () => {
   const palette = {
     gemini: '#2563EB',
-    codex: '#6366F1',
+    codex: '#A070F2',
     claude: '#D97706',
     kimi: '#1A8CFF',
     grok: '#6B7280',
@@ -865,7 +865,7 @@ describe('mixProviderColors', () => {
         { gemini: 0, codex: 50, claude: 0, kimi: 0, grok: 0, cursor: 0, ollama: 0 },
         palette
       )
-    ).toBe('#6366F1')
+    ).toBe('#A070F2')
   })
 
   it('builds a nested color-mix() expression that references both providers when two contribute', () => {
@@ -875,7 +875,7 @@ describe('mixProviderColors', () => {
     )
     expect(result).toContain('color-mix(in srgb,')
     expect(result).toContain('#2563EB')
-    expect(result).toContain('#6366F1')
+    expect(result).toContain('#A070F2')
   })
 
   it('weights the dominant provider with a higher percentage in the color-mix expression', () => {
@@ -884,7 +884,7 @@ describe('mixProviderColors', () => {
       palette
     )
     // color-mix(in srgb, <gemini> 10%, <codex> 90%) → codex weight should appear with a high number.
-    expect(dominantCodex).toMatch(/#6366F1 9[0-9]%/)
+    expect(dominantCodex).toMatch(/#A070F2 9[0-9]%/)
   })
 })
 

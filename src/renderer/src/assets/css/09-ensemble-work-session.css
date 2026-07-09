@@ -2852,12 +2852,12 @@
 .app-transcript.provider-codex .ensemble-above-row::before {
   background: linear-gradient(
     90deg,
-    rgba(9, 8, 18, 0.22),
-    rgba(48, 40, 130, 0.14) 18%,
+    color-mix(in srgb, var(--provider-codex-color) 8%, rgb(0 0 0 / 22%)),
+    color-mix(in srgb, var(--provider-codex-color) 14%, transparent) 18%,
     transparent 36%,
     transparent 64%,
-    rgba(42, 34, 118, 0.14) 82%,
-    rgba(6, 5, 14, 0.22)
+    color-mix(in srgb, var(--provider-codex-color) 14%, transparent) 82%,
+    color-mix(in srgb, var(--provider-codex-color) 8%, rgb(0 0 0 / 22%))
   );
 }
 .app-transcript.provider-claude .ensemble-above-row::before {
@@ -3914,7 +3914,7 @@
 }
 
 /* Ensemble IDLE rim — shard 03's per-provider `::after` rim would paint a
- * single provider's brand colour (e.g. Codex indigo) on the ensemble
+ * single provider's brand colour (e.g. Codex purple) on the ensemble
  * composer. An ensemble has no single provider, so blend the participant
  * tints into a 2-tone hairline + a faint multi gradient. Resolves the
  * shard-03 "ENSEMBLE rim deferred" TODO. Tint-based, so light + dark both

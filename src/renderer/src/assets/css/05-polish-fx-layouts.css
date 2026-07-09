@@ -79,7 +79,7 @@
 }
 
 .app-sidebar .sidebar-workspace-group .sidebar-chat-item.provider-codex {
-  --chat-provider-accent: #9b8cff;
+  --chat-provider-accent: var(--provider-codex-color);
 }
 
 .app-sidebar .sidebar-workspace-group .sidebar-chat-item.provider-claude {
@@ -2382,7 +2382,7 @@
 
 .app-sidebar .sidebar-chat-item.provider-codex,
 .app-sidebar .sidebar-global-chat-item.provider-codex {
-  --chat-provider-accent: #9b8cff;
+  --chat-provider-accent: var(--provider-codex-color);
 }
 
 .app-sidebar .sidebar-chat-item.provider-claude,
@@ -3695,8 +3695,8 @@ button.sidebar-footer-approval-row.is-clickable:focus-visible {
 }
 
 :is(.app-root, .agent-aura-layer).fx-provider-codex {
-  --agent-aura-rgb: 255 154 85;
-  --agent-aura-rgb-2: 255 218 112;
+  --agent-aura-rgb: 160 112 242;
+  --agent-aura-rgb-2: 160 112 242;
 }
 
 :is(.app-root, .agent-aura-layer).fx-provider-claude {

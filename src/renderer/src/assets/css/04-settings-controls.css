@@ -982,7 +982,7 @@
 .settings-model-comparison-dot.provider-codex,
 .settings-model-comparison-fill.provider-codex,
 .settings-provider-telemetry-card.provider-codex {
-  color: #8b7cff;
+  color: var(--provider-codex-color);
 }
 
 .settings-model-comparison-dot.provider-claude,
@@ -4357,7 +4357,11 @@ input:disabled, select:disabled, textarea:disabled {
 }
 
 .model-usage-item.provider-codex .model-usage-meter-fill {
-  background: linear-gradient(90deg, rgba(110, 95, 255, 0.95), rgba(160, 145, 255, 0.9));
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--provider-codex-color) 85%, transparent),
+    var(--provider-codex-color)
+  );
 }
 
 .model-usage-item.provider-claude .model-usage-meter-fill {
@@ -4497,12 +4501,12 @@ input:disabled, select:disabled, textarea:disabled {
     0 0 10px rgba(142, 177, 255, 0.14);
 }
 .run-card-provider.provider-codex {
-  color: #aaa0ff;
-  border-color: rgba(170, 160, 255, 0.32);
-  background: rgba(170, 160, 255, 0.12);
+  color: var(--provider-codex-color);
+  border-color: color-mix(in srgb, var(--provider-codex-color) 32%, transparent);
+  background: color-mix(in srgb, var(--provider-codex-color) 12%, transparent);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.18),
-    0 0 10px rgba(170, 160, 255, 0.14);
+    0 0 10px color-mix(in srgb, var(--provider-codex-color) 14%, transparent);
 }
 .run-card-provider.provider-claude {
   color: #ffad64;

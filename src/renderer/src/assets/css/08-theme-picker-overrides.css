@@ -4854,7 +4854,7 @@
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .run-card-provider.provider-codex {
   box-shadow:
     inset 0 1px 0 rgba(0, 0, 0, 0.10),
-    0 0 8px rgba(170, 160, 255, 0.18);
+    0 0 8px color-mix(in srgb, var(--provider-codex-color) 18%, transparent);
 }
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .run-card-provider.provider-claude {
   box-shadow:
@@ -8162,8 +8162,8 @@
   /* CX2: notch darker than the composer-surface body for visual
    * depth — the tab now reads as a recessed tray rather than a
    * continuous extension of the composer. */
-  background: color-mix(in srgb, #0f0f0f 92%, #756af4 8%);
-  border-color: color-mix(in srgb, #8c80ff 18%, #ffffff 8%);
+  background: color-mix(in srgb, #0f0f0f 92%, var(--provider-codex-color) 8%);
+  border-color: color-mix(in srgb, var(--provider-codex-color) 18%, #ffffff 8%);
   /* CX1 (refined): keep the tucked tab as one flex row. The live
    * row can include sync/CI chips between the files+diff cluster and
    * the action; a fixed three-column grid auto-places those extra

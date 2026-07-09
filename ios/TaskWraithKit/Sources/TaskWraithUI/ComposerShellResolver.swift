@@ -218,13 +218,13 @@ public enum ComposerShellResolver {
                 textPrimary: textPrimary,
                 placeholder: placeholder,
                 // CS13: codex detached above-rows carry the desktop agent-aura rim
-                // (05-polish-fx-layouts.css:3120-3139 → rgb(87 148 255), ring 0.28
+                // (05-polish-fx-layouts.css:3120-3139 → rgb(160 112 242), ring 0.28
                 // / glow 0.18). The .composerShell rim shows on the above-row pills
                 // AND the core card (consistent with terminal/stub, which also rim
                 // their core); the desktop strips only the core's OWN rim, not the aura.
                 rim: ComposerShellRim(
-                    color: Color(hex: 0x5794FF).opacity(0.28), width: 1,
-                    glow: Color(hex: 0x5794FF).opacity(0.18))),
+                    color: Color(hex: 0xA070F2).opacity(0.28), width: 1,
+                    glow: Color(hex: 0xA070F2).opacity(0.18))),
             geometry: ComposerShellGeometry(
                 surfaceCornerRadius: 22,   // 07:22 outer r22
                 // Inner module is 21/21/14/14; the contract carries a single

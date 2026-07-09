@@ -93,7 +93,7 @@ public enum TWTheme {
     @MainActor public static func providerAccent(_ provider: String?) -> Color {
         switch provider?.lowercased() {
         case "gemini", "google": return Color(hex: 0x2563EB)
-        case "codex", "openai": return Color(hex: 0x6366F1)
+        case "codex", "openai": return Color(hex: 0xA070F2)
         case "claude": return Color(hex: 0xD97706)
         case "kimi": return Color(hex: 0x1A8CFF)
         case "cursor": return Color(hex: 0xE3B91E)

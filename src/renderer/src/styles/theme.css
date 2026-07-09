@@ -168,7 +168,7 @@
   /* Provider palette (consumed by the welcome activity grid; runtime values in
    * App.tsx PROVIDER_GRID_COLORS mirror these). */
   --provider-gemini-color: #2563EB;
-  --provider-codex-color: #6366F1;
+  --provider-codex-color: #A070F2;
   --provider-claude-color: #D97706;
   --provider-kimi-color: #1A8CFF;
   /* Grok (gated) — monochrome by design. We alias to the active

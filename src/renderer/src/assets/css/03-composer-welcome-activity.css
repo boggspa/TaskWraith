@@ -1271,11 +1271,11 @@
 }
 
 .app-transcript.provider-codex .welcome-hero h1 strong {
-  color: rgba(246, 245, 255, 1);
+  color: color-mix(in srgb, var(--provider-codex-color) 28%, #ffffff 72%);
   text-shadow:
-    0 0 8px rgba(142, 129, 255, 0.58),
-    0 0 18px rgba(78, 67, 194, 0.42),
-    0 0 36px rgba(39, 31, 121, 0.34);
+    0 0 8px color-mix(in srgb, var(--provider-codex-color) 58%, transparent),
+    0 0 18px color-mix(in srgb, var(--provider-codex-color) 42%, transparent),
+    0 0 36px color-mix(in srgb, var(--provider-codex-color) 34%, transparent);
 }
 
 .app-transcript.provider-claude .welcome-hero h1 strong {
@@ -1339,7 +1339,7 @@
 /* TaskWraith 1.0.3 polish — provider-theme-aware ensemble welcome shell.
  *
  * The ensemble welcome screen receives a subtle hue gradient built
- * from up to four participant colours (codex indigo, claude rust,
+ * from up to four participant colours (codex purple, claude rust,
  * gemini blue, kimi blue). React feeds the per-slot colours through
  * `--ensemble-provider-1..4` custom properties on the wrapper; the
  * rules below lerp them across the surface at low opacity so the
@@ -2274,7 +2274,7 @@
   transition: border-color 160ms ease, background 160ms ease;
 }
 .welcome-usage-provider-card.provider-codex:hover {
-  border-color: color-mix(in srgb, #aaa0ff 55%, transparent);
+  border-color: color-mix(in srgb, var(--provider-codex-color) 55%, transparent);
 }
 .welcome-usage-provider-card.provider-claude:hover {
   border-color: color-mix(in srgb, #ffad64 55%, transparent);
@@ -2322,8 +2322,8 @@
   background: var(--panel-border);
 }
 .welcome-usage-provider-card-dot.provider-codex {
-  background: #aaa0ff;
-  box-shadow: 0 0 6px color-mix(in srgb, #aaa0ff 50%, transparent);
+  background: var(--provider-codex-color);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--provider-codex-color) 50%, transparent);
 }
 .welcome-usage-provider-card-dot.provider-claude {
   background: #ffad64;
@@ -2382,7 +2382,11 @@
   );
 }
 .welcome-usage-provider-card-fill.provider-codex {
-  background: linear-gradient(90deg, color-mix(in srgb, #aaa0ff 70%, transparent), #aaa0ff);
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--provider-codex-color) 70%, transparent),
+    var(--provider-codex-color)
+  );
 }
 .welcome-usage-provider-card-fill.provider-claude {
   background: linear-gradient(90deg, color-mix(in srgb, #ffad64 70%, transparent), #ffad64);
@@ -2577,7 +2581,7 @@
 
 [data-interface-style="codex"] .welcome-usage-activity-grid,
 [data-composer-style="codex"] .welcome-usage-activity-grid {
-  --activity-heatmap-color: #8c80ff;
+  --activity-heatmap-color: var(--provider-codex-color);
 }
 
 .welcome-usage-footnote {
@@ -2772,7 +2776,7 @@
 .welcome-usage-bar-segment.provider-gemini { color: #5a8cff; }
 .welcome-usage-model-dot.provider-codex,
 .welcome-usage-model-meter-fill.provider-codex,
-.welcome-usage-bar-segment.provider-codex { color: #8b7cff; }
+.welcome-usage-bar-segment.provider-codex { color: var(--provider-codex-color); }
 .welcome-usage-model-dot.provider-claude,
 .welcome-usage-model-meter-fill.provider-claude,
 .welcome-usage-bar-segment.provider-claude { color: #ff9b54; }
@@ -3046,12 +3050,12 @@
 }
 
 .app-transcript.provider-codex .composer-surface:focus-within {
-  border-color: rgba(132, 119, 246, 0.52);
+  border-color: color-mix(in srgb, var(--provider-codex-color) 52%, transparent);
   box-shadow:
     var(--composer-shadow),
-    0 0 0 1px rgba(116, 101, 230, 0.22),
-    0 0 24px rgba(74, 58, 176, 0.24),
-    0 0 46px rgba(28, 20, 86, 0.2);
+    0 0 0 1px color-mix(in srgb, var(--provider-codex-color) 22%, transparent),
+    0 0 24px color-mix(in srgb, var(--provider-codex-color) 24%, transparent),
+    0 0 46px color-mix(in srgb, var(--provider-codex-color) 20%, transparent);
 }
 
 .app-transcript.provider-claude .composer-surface:focus-within {
@@ -3113,10 +3117,18 @@
 }
 
 .app-transcript.provider-codex .composer-surface::before {
-  background: linear-gradient(90deg, rgba(9, 8, 18, 0.32), rgba(48, 40, 130, 0.2) 18%, transparent 36%, transparent 64%, rgba(42, 34, 118, 0.2) 82%, rgba(6, 5, 14, 0.34));
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--provider-codex-color) 8%, rgb(0 0 0 / 32%)),
+    color-mix(in srgb, var(--provider-codex-color) 20%, transparent) 18%,
+    transparent 36%,
+    transparent 64%,
+    color-mix(in srgb, var(--provider-codex-color) 20%, transparent) 82%,
+    color-mix(in srgb, var(--provider-codex-color) 8%, rgb(0 0 0 / 34%))
+  );
   box-shadow:
-    inset 42px 0 52px -30px rgba(17, 14, 38, 0.36),
-    inset -42px 0 52px -30px rgba(45, 36, 128, 0.32);
+    inset 42px 0 52px -30px color-mix(in srgb, var(--provider-codex-color) 18%, transparent),
+    inset -42px 0 52px -30px color-mix(in srgb, var(--provider-codex-color) 32%, transparent);
 }
 
 .app-transcript.provider-claude .composer-surface::before {
@@ -4068,8 +4080,8 @@
 /*
  * 1.0.4 — Light-theme contrast bump for composer mention tokens.
  *
- * Default provider hex values (`--provider-codex-color: #6366F1`
- * etc.) are mid-saturation indigos / ambers / blues. In
+ * Default provider hex values (`--provider-codex-color: #A070F2`
+ * etc.) are mid-saturation purples / ambers / blues. In
  * dark theme they pop against the dark composer surface. In light
  * theme they sit at similar luminance to the surface text — the maintainer
  * reported `@Worker` rendering as if the provider tinting wasn't
@@ -7967,8 +7979,8 @@ button.composer-run-timecode.is-open {
 }
 
 .composer-permission-card.provider-codex {
-  border-color: rgba(132, 118, 255, 0.26);
-  background: rgba(72, 58, 190, 0.08);
+  border-color: color-mix(in srgb, var(--provider-codex-color) 26%, transparent);
+  background: color-mix(in srgb, var(--provider-codex-color) 8%, transparent);
 }
 
 .composer-permission-card.provider-claude {
@@ -7995,8 +8007,8 @@ button.composer-run-timecode.is-open {
   background: rgba(255, 213, 130, 0.22);
 }
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .composer-permission-card.provider-codex {
-  border-color: rgba(72, 58, 190, 0.42);
-  background: rgba(132, 118, 255, 0.18);
+  border-color: color-mix(in srgb, var(--provider-codex-color) 42%, transparent);
+  background: color-mix(in srgb, var(--provider-codex-color) 18%, transparent);
 }
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .composer-permission-card.provider-claude {
   border-color: rgba(176, 79, 18, 0.42);
@@ -11991,7 +12003,7 @@ button.diff-file-row {
   white-space: nowrap;
 }
 
-.activity-yield-target.provider-codex { --provider-tint: #aaa0ff; }
+.activity-yield-target.provider-codex { --provider-tint: var(--provider-codex-color); }
 .activity-yield-target.provider-claude { --provider-tint: #ffad64; }
 .activity-yield-target.provider-gemini { --provider-tint: #8eb1ff; }
 .activity-yield-target.provider-kimi { --provider-tint: #70b8ff; }
@@ -12149,7 +12161,7 @@ button.diff-file-row {
   --jump-pill-accent: #6f9dff;
 }
 .transcript-jump-to-latest-pill.provider-codex {
-  --jump-pill-accent: #9b8cff;
+  --jump-pill-accent: var(--provider-codex-color);
 }
 .transcript-jump-to-latest-pill.provider-claude {
   --jump-pill-accent: #ff9f4a;
@@ -13046,7 +13058,7 @@ button.diff-file-row {
 }
 .notification-newadditions-provider.provider-codex,
 .notification-newadditions-model.provider-codex {
-  color: var(--provider-codex-color, #6366f1);
+  color: var(--provider-codex-color, #a070f2);
 }
 .notification-newadditions-provider.provider-cursor,
 .notification-newadditions-model.provider-cursor {

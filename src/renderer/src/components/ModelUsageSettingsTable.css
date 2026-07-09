@@ -383,7 +383,7 @@
   box-shadow: inset 3px 0 0 var(--provider-gemini-color, #4a8cff);
 }
 .model-usage-table-provider.provider-codex .model-usage-table-provider-cell {
-  box-shadow: inset 3px 0 0 var(--provider-codex-color, #10a37f);
+  box-shadow: inset 3px 0 0 var(--provider-codex-color, #a070f2);
 }
 .model-usage-table-provider.provider-claude .model-usage-table-provider-cell {
   box-shadow: inset 3px 0 0 var(--provider-claude-color, #d97757);

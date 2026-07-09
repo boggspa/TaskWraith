@@ -24,7 +24,7 @@ const MAX_HEATMAP_COLUMNS = 180
  * above it. */
 export const HEATMAP_PROVIDER_COLOR_HEX: Record<ProviderId, string> = {
   gemini: '#2563EB',
-  codex: '#6366F1',
+  codex: '#A070F2',
   claude: '#D97706',
   kimi: '#1A8CFF',
   // Grok — monochrome identity. Use the theme-reactive token directly

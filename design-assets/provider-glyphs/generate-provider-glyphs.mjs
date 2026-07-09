@@ -24,7 +24,7 @@ const providers = [
   {
     id: 'codex',
     label: 'Codex',
-    accent: '#6366F1',
+    accent: '#A070F2',
     hint: 'prompt box and bracket cursor',
     body: `
       <path class="line" d="M4.6 6.2h14.8v11.6H4.6Z" />

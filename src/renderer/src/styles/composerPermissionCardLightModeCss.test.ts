@@ -69,6 +69,8 @@ describe('composer approval/discovery card light-mode CSS', () => {
       css,
       ':is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .composer-permission-card.provider-codex {'
     )
-    expect(lightCodex).toContain('background: rgba(132, 118, 255, 0.18)')
+    expect(lightCodex).toContain(
+      'background: color-mix(in srgb, var(--provider-codex-color) 18%, transparent)'
+    )
   })
 })

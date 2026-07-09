@@ -121,9 +121,9 @@
 }
 
 .app-transcript.provider-codex {
-  --agent-accent-rgb: 142 129 255;
+  --agent-accent-rgb: 160 112 242;
   /* Codex native: near-black with a faint cool/violet wash. */
-  background-color: color-mix(in srgb, var(--bg-primary) 90%, #14121e 10%);
+  background-color: color-mix(in srgb, var(--bg-primary) 98%, var(--provider-codex-color) 2%);
 }
 
 .app-transcript.provider-claude {
@@ -158,7 +158,7 @@
   background-color: color-mix(in srgb, var(--bg-primary) 96%, #4a73ff 4%);
 }
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .app-transcript.provider-codex {
-  background-color: color-mix(in srgb, var(--bg-primary) 96%, #8e81ff 4%);
+  background-color: color-mix(in srgb, var(--bg-primary) 96%, var(--provider-codex-color) 4%);
 }
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .app-transcript.provider-claude {
   background-color: color-mix(in srgb, var(--bg-primary) 96%, #ff973a 4%);
@@ -3612,8 +3612,8 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
 }
 
 .sidebar-provider-label.provider-codex {
-  color: #9b8cff;
-  text-shadow: 0 0 10px rgba(91, 75, 220, 0.34);
+  color: var(--provider-codex-color);
+  text-shadow: 0 0 10px color-mix(in srgb, var(--provider-codex-color) 34%, transparent);
 }
 
 .sidebar-provider-label.provider-claude {
@@ -4328,7 +4328,7 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
  *
  * Tokens live in `src/renderer/src/styles/theme.css`:
  *   - Gemini: #2563EB (blue)
- *   - Codex:  #6366F1 (saturated indigo)
+ *   - Codex:  #A070F2 (lavender purple)
  *   - Claude: #D97706 (rust orange / brown)
  *   - Kimi:   #1a8cff (blue)
  *

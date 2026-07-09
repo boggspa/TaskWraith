@@ -80,7 +80,7 @@
     <text class="hint" x="72" y="207">64px + 16px preview</text>
   </g>
   <g transform="translate(144 0)">
-    <g transform="translate(40 24) scale(2.65)" style="color: #6366F1; --provider-accent: #6366F1;">
+    <g transform="translate(40 24) scale(2.65)" style="color: #A070F2; --provider-accent: #A070F2;">
 
       <path class="line" d="M4.6 6.2h14.8v11.6H4.6Z" />
       <path class="accent" d="m8.1 9.3 2.7 2.7-2.7 2.7" />
@@ -89,7 +89,7 @@
       <path class="line fine" d="M17.3 19.6l2.1-1.8" />
 
     </g>
-    <g transform="translate(61 112) scale(0.9)" style="color: #6366F1; --provider-accent: #6366F1;">
+    <g transform="translate(61 112) scale(0.9)" style="color: #A070F2; --provider-accent: #A070F2;">
 
       <path class="line" d="M4.6 6.2h14.8v11.6H4.6Z" />
       <path class="accent" d="m8.1 9.3 2.7 2.7-2.7 2.7" />
@@ -99,7 +99,7 @@
 
     </g>
     <text class="label" x="72" y="168">Codex</text>
-    <text class="accent-label" x="72" y="188">#6366F1</text>
+    <text class="accent-label" x="72" y="188">#A070F2</text>
     <text class="hint" x="72" y="207">64px + 16px preview</text>
   </g>
   <g transform="translate(288 0)">
