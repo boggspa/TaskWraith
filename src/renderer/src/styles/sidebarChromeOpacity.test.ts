@@ -16,7 +16,7 @@ const cssBlockStartingAt = (source: string, selector: string, fromIndex = 0): st
   return source.slice(start, end + 1)
 }
 
-// The sidebar's masthead, model-usage pane, and footer/status keep a FIXED 85%
+// The top masthead band, model-usage pane, and footer/status keep a FIXED 95%
 // fill independent of the user's Settings -> Appearance sidebar-opacity slider,
 // while the workspace/threads list keeps riding the factor-scaled .app-sidebar
 // surface. See --sidebar-chrome-fixed-bg in theme.css.
@@ -49,11 +49,11 @@ describe('sidebar chrome fixed opacity CSS', () => {
     expect(band).toContain('inset 0 0 0 1px var(--sidebar-chrome-rim)')
   })
 
-  it('paints the masthead with the fixed chrome token (no longer transparent)', () => {
+  it('lets the masthead inherit the fixed chrome band without stacking opacity', () => {
     const css = readCss('05-polish-fx-layouts.css')
     const masthead = cssBlockStartingAt(css, '.sidebar-masthead {')
-    expect(masthead).toContain('background: var(--sidebar-chrome-fixed-bg) !important;')
-    expect(masthead).not.toContain('background: transparent')
+    expect(masthead).toContain('background: transparent !important;')
+    expect(masthead).not.toContain('background: var(--sidebar-chrome-fixed-bg)')
   })
 
   it('paints the footer/status and model-usage pane with the fixed chrome token', () => {

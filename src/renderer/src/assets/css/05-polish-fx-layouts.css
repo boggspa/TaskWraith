@@ -1910,18 +1910,19 @@
   padding: 12px;
   border: 0 !important;
   border-radius: 14px;
-  /* Fixed 85% chrome fill, independent of the sidebar-opacity slider (which
-   * still governs the .app-sidebar surface behind the list). The !important is
+  /* The parent top-chrome band supplies the fixed 95% fill. Keeping this
+   * transparent avoids compositing a second 95% layer over it, which otherwise
+   * makes the rounded masthead read as an almost-solid block. The !important is
    * load-bearing: it keeps beating the native_glass "tile chrome" group
    * selectors (06-component-panels-modals.css / 08-theme-picker-overrides.css)
-   * that also list .sidebar-masthead — same as the old transparent value did. */
-  background: var(--sidebar-chrome-fixed-bg) !important;
+   * that also list .sidebar-masthead. */
+  background: transparent !important;
   background-image: none !important;
   box-shadow: none !important;
 }
 
-/* Sidebar chrome (model-usage pane + footer/status) shares the masthead's fixed
- * 85% fill so the three non-list regions stay readable regardless of the user's
+/* Sidebar chrome (model-usage pane + footer/status) shares the top band's fixed
+ * 95% fill so the non-list regions stay readable regardless of the user's
  * sidebar-opacity slider. !important overrides each region's per-appearance-mode
  * background rules (footer above, model-usage in ModelUsageCard.css, plus the
  * native_glass tile-chrome group selectors) while leaving their borders / blur /
@@ -1951,9 +1952,9 @@
  * .sidebar-content's side padding (--space-md) + the 10px gap before the list; the
  * padding/gap are re-applied inside so the controls keep their positions. The
  * workspace/threads list below is deliberately excluded — it stays on the
- * user-defined .app-sidebar opacity. The masthead keeps its own !important fill
- * (which suppresses the native_glass tile-chrome group selectors); it paints the
- * same color as the band, so its 14px radius reads as a seamless part of it. */
+ * user-defined .app-sidebar opacity. The masthead stays transparent while its
+ * paint is still explicitly suppressed, so the top band remains a single,
+ * seamless 95% layer. */
 .app-sidebar .sidebar-top-chrome {
   display: flex;
   flex-direction: column;
