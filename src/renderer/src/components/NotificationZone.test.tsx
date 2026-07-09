@@ -119,6 +119,39 @@ describe('NotificationZone', () => {
     expect(html).not.toContain('notification-card-dismiss')
   })
 
+  it('renders grouped "New Additions" content instead of the plain body paragraph', () => {
+    const newAdditions: AppNotification = {
+      id: 'new-additions-2026-07-09',
+      kind: 'addition',
+      title: 'New Additions',
+      body: 'Fallback summary text.',
+      groups: [
+        {
+          provider: 'claude',
+          label: 'Claude',
+          models: [
+            { name: 'Sonnet 5', blurb: 'Fast model for coding.' },
+            { name: 'Fable 5', blurb: 'Frontier tier above Opus.' }
+          ]
+        },
+        {
+          provider: 'ollama',
+          label: 'Ollama',
+          models: [{ name: 'Deep Reinforce - Ornith 9B + Ornith 35B', blurb: 'Local coding models.' }]
+        }
+      ]
+    }
+    const html = renderToStaticMarkup(<NotificationZone notifications={[newAdditions]} />)
+    expect(html).toContain('New Additions')
+    expect(html).toContain('notification-newadditions-provider provider-claude')
+    expect(html).toContain('Sonnet 5')
+    expect(html).toContain('Fable 5')
+    expect(html).toContain('notification-newadditions-provider provider-ollama')
+    expect(html).toContain('Deep Reinforce - Ornith 9B + Ornith 35B')
+    // The plain body fallback paragraph is not rendered when groups are present.
+    expect(html).not.toContain('Fallback summary text.')
+  })
+
   it('drops expired notifications when now is past expiresAt', () => {
     const expired: AppNotification = {
       id: 'expired-1',

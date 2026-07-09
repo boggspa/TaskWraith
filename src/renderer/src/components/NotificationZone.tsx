@@ -7,7 +7,8 @@ import {
   appNotificationAccent,
   appNotificationTone,
   type AppNotification,
-  type AppNotificationKind
+  type AppNotificationKind,
+  type AppNotificationProviderGroup
 } from '../../../shared/appNotifications'
 import { ProviderGlyph } from './icons/ProviderGlyph'
 
@@ -84,6 +85,36 @@ interface NotificationDragState {
   lastY: number
 }
 
+function NotificationGroups({
+  groups
+}: {
+  groups: readonly AppNotificationProviderGroup[]
+}): React.JSX.Element {
+  return (
+    <div className="notification-newadditions-groups">
+      {groups.map((group) => (
+        <div key={group.provider} className="notification-newadditions-group">
+          <div className={`notification-newadditions-provider provider-${group.provider}`}>
+            {group.label}
+          </div>
+          <ul className="notification-newadditions-models">
+            {group.models.map((model) => (
+              <li key={model.name} className="notification-newadditions-model-row">
+                <span className={`notification-newadditions-model provider-${group.provider}`}>
+                  {model.name}
+                </span>{' '}
+                <span className={`notification-newadditions-blurb provider-${group.provider}`}>
+                  - {model.blurb}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 function NotificationCard({
   notification,
   onDismiss
@@ -93,6 +124,7 @@ function NotificationCard({
 }): React.JSX.Element {
   const tone = appNotificationTone(notification.kind)
   const accent = appNotificationAccent(notification)
+  const groups = notification.groups
   return (
     <div
       className={`notification-card notification-card--${tone} notification-card--accent-${accent}`}
@@ -105,9 +137,16 @@ function NotificationCard({
           KIND_ICON[notification.kind]
         )}
       </span>
-      <p className="notification-card-text">
-        <strong>{notification.title}</strong> {notification.body}
-      </p>
+      {groups && groups.length > 0 ? (
+        <div className="notification-card-text">
+          <strong>{notification.title}</strong>
+          <NotificationGroups groups={groups} />
+        </div>
+      ) : (
+        <p className="notification-card-text">
+          <strong>{notification.title}</strong> {notification.body}
+        </p>
+      )}
       {notification.dismissible !== false && (
         <button
           type="button"
