@@ -273,8 +273,8 @@ export function resolveCombinedModelPickerResetState(params: {
 function FastBoltIcon(): React.JSX.Element {
   return (
     <svg
-      width="11"
-      height="11"
+      width="13"
+      height="13"
       viewBox="0 0 12 12"
       fill="currentColor"
       aria-hidden
@@ -283,6 +283,293 @@ function FastBoltIcon(): React.JSX.Element {
     >
       <path d="M7 1 2.2 6.8h2.5L3.6 11 9 4.6H6.4L7 1z" />
     </svg>
+  )
+}
+
+/*
+ * Reasoning ladder — a vertical 7-stop gradient slider that replaces the old
+ * hierarchical reasoning row list, ported from the iOS composer's
+ * `ReasoningLadder` (ios/.../TWSharedViews.swift). Bottom (index 0, Off) climbs
+ * to top (index 6, Ultracode); the thumb snaps only to the stops the current
+ * model actually supports. Provider synonyms (extra→xhigh, light→low) and
+ * Kimi's binary thinking flag (off/on → Off/Light) map onto the same ladder.
+ */
+const LADDER_STOPS: ReadonlyArray<{ index: number; effort: string; label: string }> = [
+  { index: 0, effort: 'off', label: 'Off' },
+  { index: 1, effort: 'low', label: 'Light' },
+  { index: 2, effort: 'medium', label: 'Medium' },
+  { index: 3, effort: 'high', label: 'High' },
+  { index: 4, effort: 'xhigh', label: 'Extra' },
+  { index: 5, effort: 'max', label: 'Max' },
+  { index: 6, effort: 'ultracode', label: 'Ultracode' }
+]
+const LADDER_MAX_INDEX = 6
+// Top/bottom padding of the track's usable travel. Kept a touch above the
+// thumb's half-height (15px thumb → 7.5px) so the extreme stops still leave a
+// little rail showing above/below the thumb.
+const LADDER_TRACK_INSET = 11
+
+// Sparkle positions (within the top sparkle layer) + staggered twinkle delays.
+// Scattered top-heavy; the layer's mask fades them out toward the middle.
+const LADDER_SPARKLES: ReadonlyArray<{ left: string; top: string; delay: string }> = [
+  { left: '30%', top: '6%', delay: '0s' },
+  { left: '64%', top: '13%', delay: '0.5s' },
+  { left: '44%', top: '21%', delay: '1.1s' },
+  { left: '20%', top: '29%', delay: '0.8s' },
+  { left: '74%', top: '37%', delay: '1.6s' },
+  { left: '52%', top: '45%', delay: '0.3s' },
+  { left: '34%', top: '57%', delay: '1.3s' },
+  { left: '60%', top: '69%', delay: '2s' }
+]
+
+function normalizeLadderEffort(effort: string): string {
+  const value = effort.trim().toLowerCase()
+  if (value === 'extra') return 'xhigh'
+  if (value === 'light') return 'low'
+  return value
+}
+
+/**
+ * Map a reasoning-option value onto a ladder index, or null when it doesn't
+ * belong on the ladder. Kimi has no reasoning axis, so its off/on thinking flag
+ * rides the bottom two stops (Off / Light) — mirroring the iOS ladder's
+ * synthetic Kimi binding.
+ */
+export function ladderIndexForOption(provider: ProviderId, value: string): number | null {
+  if (provider === 'kimi') {
+    const token = value.trim().toLowerCase()
+    if (token === 'off') return 0
+    if (token === 'on') return 1
+    return null
+  }
+  const normalized = normalizeLadderEffort(value)
+  const stop = LADDER_STOPS.find((entry) => entry.effort === normalized)
+  return stop ? stop.index : null
+}
+
+export interface LadderModel {
+  /** Enabled ladder indices, ascending. */
+  enabledIndices: number[]
+  enabledSet: Set<number>
+  /** ladder index → the reasoning-option value that lands there. */
+  valueByIndex: Record<number, string>
+  /** ladder index → the provider's display label for that stop. */
+  labelByIndex: Record<number, string>
+  /** First disabled option's reason, surfaced as the track tooltip (mirrors the
+   * old per-row `disabledReason` when reasoning is fixed for a model). */
+  disabledReason?: string
+}
+
+export function buildLadderModel(
+  provider: ProviderId,
+  options: readonly CombinedModelPickerReasoningOption[]
+): LadderModel {
+  const enabledIndices: number[] = []
+  const valueByIndex: Record<number, string> = {}
+  const labelByIndex: Record<number, string> = {}
+  let disabledReason: string | undefined
+  for (const option of options) {
+    if (option.disabled) {
+      if (!disabledReason && option.disabledReason) disabledReason = option.disabledReason
+      continue
+    }
+    const index = ladderIndexForOption(provider, option.value)
+    if (index == null) continue
+    if (valueByIndex[index] === undefined) {
+      enabledIndices.push(index)
+      valueByIndex[index] = option.value
+      labelByIndex[index] = option.label
+    }
+  }
+  enabledIndices.sort((a, b) => a - b)
+  return {
+    enabledIndices,
+    enabledSet: new Set(enabledIndices),
+    valueByIndex,
+    labelByIndex,
+    disabledReason
+  }
+}
+
+/** Nearest enabled stop to a raw index; ties break to the HIGHER stop (matches iOS). */
+export function nearestEnabledLadderIndex(raw: number, enabled: readonly number[]): number | null {
+  let best: number | null = null
+  let bestDistance = Infinity
+  for (const index of enabled) {
+    // `enabled` is ascending, so `<=` lets the higher stop win an exact tie.
+    const distance = Math.abs(index - raw)
+    if (distance <= bestDistance) {
+      bestDistance = distance
+      best = index
+    }
+  }
+  return best
+}
+
+/**
+ * The stop the thumb sits on: the current effort's stop when it's enabled, else
+ * the nearest enabled stop (a carried-over disabled effort must never park the
+ * thumb on a disabled stop), else the lowest enabled stop.
+ */
+export function clampedLadderIndex(
+  provider: ProviderId,
+  effort: string,
+  ladder: LadderModel
+): number {
+  const raw = ladderIndexForOption(provider, effort)
+  if (raw != null && ladder.enabledSet.has(raw)) return raw
+  if (raw != null) {
+    const nearest = nearestEnabledLadderIndex(raw, ladder.enabledIndices)
+    if (nearest != null) return nearest
+  }
+  return ladder.enabledIndices[0] ?? 0
+}
+
+/** Bottom-offset (from the track's bottom edge) for a ladder index, 0..1 of usable. */
+function ladderStopBottom(index: number): string {
+  return `calc(${LADDER_TRACK_INSET}px + (100% - ${LADDER_TRACK_INSET * 2}px) * ${
+    index / LADDER_MAX_INDEX
+  })`
+}
+
+function ReasoningLadderSlider({
+  provider,
+  ladder,
+  selectedReasoning,
+  onSelectReasoning,
+  disabled,
+  onInteract
+}: {
+  provider: ProviderId
+  ladder: LadderModel
+  selectedReasoning: string
+  onSelectReasoning: (value: string) => void
+  disabled?: boolean
+  onInteract: () => void
+}): React.JSX.Element {
+  const trackRef = useRef<HTMLDivElement | null>(null)
+  const draggingRef = useRef(false)
+  // During a drag the thumb tracks the finger via LOCAL state and commits ONLY
+  // on release — so a whole drag fires one onSelectReasoning (one persist + one
+  // parent re-render / ensemble notice), not one per stop crossed. Keyboard/
+  // click paths still commit directly.
+  const [dragIndex, setDragIndex] = useState<number | null>(null)
+  const currentIndex = clampedLadderIndex(provider, selectedReasoning, ladder)
+  const displayIndex = dragIndex ?? currentIndex
+  const currentLabel = ladder.labelByIndex[displayIndex] ?? '—'
+  // Shimmer + sparkles only ignite once the thumb reaches the top (Ultra/
+  // Ultracode) — they emerge with effort, like the coloured fill below.
+  const atUltracode = displayIndex === LADDER_MAX_INDEX
+  const interactive = !disabled && ladder.enabledIndices.length > 0
+
+  const indexFromClientY = (clientY: number): number | null => {
+    const el = trackRef.current
+    if (!el) return null
+    const rect = el.getBoundingClientRect()
+    const usable = Math.max(1, rect.height - LADDER_TRACK_INSET * 2)
+    const frac = Math.max(0, Math.min(1, 1 - (clientY - rect.top - LADDER_TRACK_INSET) / usable))
+    return nearestEnabledLadderIndex(Math.round(frac * LADDER_MAX_INDEX), ladder.enabledIndices)
+  }
+
+  return (
+    <div
+      className="composer-combined-picker-ladder"
+      onMouseEnter={onInteract}
+      // The popover's `--accent` is the generic theme accent (only shell-grok/
+      // shell-cursor re-point it, to monochrome) — it is NOT the provider brand
+      // hue. Bind a scoped `--ladder-accent` to the provider's `:root` brand
+      // colour so the track/shimmer/sparkles emerge in that hue, falling back to
+      // the theme accent for any unknown provider.
+      style={
+        {
+          '--ladder-accent': `var(--provider-${provider}-color, var(--accent))`
+        } as React.CSSProperties
+      }
+    >
+      <div
+        className="composer-combined-picker-ladder-value"
+        data-ultracode={displayIndex === 6 ? 'true' : undefined}
+      >
+        {currentLabel}
+      </div>
+      <div
+        ref={trackRef}
+        className="composer-combined-picker-ladder-track"
+        data-dragging={dragIndex !== null ? 'true' : undefined}
+        role="slider"
+        aria-label="Reasoning effort"
+        aria-valuemin={0}
+        aria-valuemax={LADDER_MAX_INDEX}
+        aria-valuenow={displayIndex}
+        aria-valuetext={currentLabel}
+        aria-disabled={interactive ? undefined : true}
+        title={
+          interactive ? undefined : ladder.disabledReason ?? 'Reasoning is fixed for this model'
+        }
+        onPointerDown={(event) => {
+          if (!interactive) return
+          onInteract()
+          draggingRef.current = true
+          try {
+            event.currentTarget.setPointerCapture(event.pointerId)
+          } catch {
+            /* setPointerCapture can throw on stale pointer ids; ignore. */
+          }
+          const idx = indexFromClientY(event.clientY)
+          if (idx != null) setDragIndex(idx)
+        }}
+        onPointerMove={(event) => {
+          if (!draggingRef.current) return
+          const idx = indexFromClientY(event.clientY)
+          if (idx != null) setDragIndex(idx)
+        }}
+        onPointerUp={(event) => {
+          if (!draggingRef.current) return
+          draggingRef.current = false
+          try {
+            event.currentTarget.releasePointerCapture(event.pointerId)
+          } catch {
+            /* releasePointerCapture can throw if capture was already lost. */
+          }
+          const idx = indexFromClientY(event.clientY) ?? dragIndex
+          const value = idx != null ? ladder.valueByIndex[idx] : undefined
+          if (value != null && value !== selectedReasoning) onSelectReasoning(value)
+          setDragIndex(null)
+        }}
+        onPointerCancel={() => {
+          draggingRef.current = false
+          setDragIndex(null)
+        }}
+      >
+        <div className="composer-combined-picker-ladder-rail" aria-hidden />
+        {/* Coloured gradient fill, clipped to BELOW the thumb — the hue emerges
+            as effort climbs; above the thumb stays the neutral empty rail. */}
+        <div
+          className="composer-combined-picker-ladder-fill"
+          style={{ height: ladderStopBottom(displayIndex) }}
+          aria-hidden
+        />
+        {atUltracode && (
+          <>
+            <div className="composer-combined-picker-ladder-shimmer" aria-hidden />
+            <div className="composer-combined-picker-ladder-sparkles" aria-hidden>
+              {LADDER_SPARKLES.map((sparkle, index) => (
+                <span
+                  key={index}
+                  className="composer-combined-picker-ladder-sparkle"
+                  style={{ left: sparkle.left, top: sparkle.top, animationDelay: sparkle.delay }}
+                />
+              ))}
+            </div>
+          </>
+        )}
+        <span
+          className="composer-combined-picker-ladder-thumb"
+          style={{ bottom: ladderStopBottom(displayIndex) }}
+          aria-hidden
+        />
+      </div>
+    </div>
   )
 }
 
@@ -312,6 +599,10 @@ export function CombinedModelPicker({
   const fastModeRowVisible = Boolean(
     fastModeCapableModelIds && fastModeCapableModelIds.size > 0 && onToggleFastMode
   )
+  const ladder = useMemo(
+    () => buildLadderModel(provider, reasoningOptions),
+    [provider, reasoningOptions]
+  )
   const triggerRef = useRef<HTMLButtonElement | null>(null)
   const popoverRef = useRef<HTMLDivElement | null>(null)
   const [open, setOpen] = useState(false)
@@ -319,7 +610,6 @@ export function CombinedModelPicker({
   const [focusedColumn, setFocusedColumn] = useState<CombinedModelPickerColumn>('model')
   const [providerHighlight, setProviderHighlight] = useState(0)
   const [modelHighlight, setModelHighlight] = useState(0)
-  const [reasoningHighlight, setReasoningHighlight] = useState(0)
   const [activeOllamaProviderId, setActiveOllamaProviderId] = useState<string | null>(null)
   const resetSignatureRef = useRef<string | null>(null)
 
@@ -535,7 +825,6 @@ export function CombinedModelPicker({
       setProviderHighlight(resetState.providerIndex)
       setActiveOllamaProviderId(resetState.activeOllamaProviderId)
       setModelHighlight(resetState.modelIndex)
-      setReasoningHighlight(resetState.reasoningIndex)
       setFocusedColumn(resetState.focusedColumn)
     })
     return () => window.cancelAnimationFrame(frame)
@@ -549,17 +838,6 @@ export function CombinedModelPicker({
     reasoningOptions,
     selectedReasoning
   ])
-
-  // Keep the reasoning row highlight current without disturbing the provider
-  // and model browse columns.
-  useEffect(() => {
-    if (!open) return
-    const reasoningIdx = Math.max(
-      0,
-      reasoningOptions.findIndex((option) => option.value === selectedReasoning)
-    )
-    setReasoningHighlight(reasoningIdx)
-  }, [open, reasoningOptions, selectedReasoning])
 
   // Click-outside + Escape dismiss.
   useEffect(() => {
@@ -598,9 +876,13 @@ export function CombinedModelPicker({
             Math.min(Math.max(0, visibleModelOptions.length - 1), idx + 1)
           )
         } else {
-          setReasoningHighlight((idx) =>
-            Math.min(Math.max(0, reasoningOptions.length - 1), idx + 1)
-          )
+          // Reasoning ladder: down = lower effort. The slider commits on move.
+          const enabled = ladder.enabledIndices
+          if (enabled.length > 0 && !disabled) {
+            const pos = enabled.indexOf(clampedLadderIndex(provider, selectedReasoning, ladder))
+            const value = ladder.valueByIndex[enabled[Math.max(0, pos - 1)]]
+            if (value) onSelectReasoning(value)
+          }
         }
       } else if (event.key === 'ArrowUp') {
         event.preventDefault()
@@ -609,7 +891,14 @@ export function CombinedModelPicker({
         } else if (focusedColumn === 'model') {
           setModelHighlight((idx) => Math.max(0, idx - 1))
         } else {
-          setReasoningHighlight((idx) => Math.max(0, idx - 1))
+          // Reasoning ladder: up = higher effort.
+          const enabled = ladder.enabledIndices
+          if (enabled.length > 0 && !disabled) {
+            const cur = enabled.indexOf(clampedLadderIndex(provider, selectedReasoning, ladder))
+            const pos = cur < 0 ? 0 : cur
+            const value = ladder.valueByIndex[enabled[Math.min(enabled.length - 1, pos + 1)]]
+            if (value) onSelectReasoning(value)
+          }
         }
       } else if (event.key === 'ArrowRight') {
         event.preventDefault()
@@ -639,8 +928,11 @@ export function CombinedModelPicker({
           const option = visibleModelOptions[modelHighlight]
           if (option && !option.disabled) onSelectModel(option.id)
         } else {
-          const option = reasoningOptions[reasoningHighlight]
-          if (option && !option.disabled) onSelectReasoning(option.value)
+          // Reasoning ladder: Enter confirms exactly what the thumb shows (the
+          // clamped stop), never a stale row index. Up/Down/drag already commit
+          // on every move, so this is effectively a no-op re-commit.
+          const value = ladder.valueByIndex[clampedLadderIndex(provider, selectedReasoning, ladder)]
+          if (value) onSelectReasoning(value)
         }
       }
     }
@@ -656,11 +948,13 @@ export function CombinedModelPicker({
     reasoningOptions,
     modelHighlight,
     providerHighlight,
-    reasoningHighlight,
     onSelectModel,
     onSelectReasoning,
     visibleModelOptions,
-    disabled
+    disabled,
+    ladder,
+    provider,
+    selectedReasoning
   ])
 
   const popoverContent = open && position && (
@@ -797,31 +1091,14 @@ export function CombinedModelPicker({
           className={`composer-combined-picker-column composer-combined-picker-reasoning ${focusedColumn === 'reasoning' ? 'is-focused' : ''}`}
         >
           <div className="composer-combined-picker-column-header">Reasoning</div>
-          {reasoningOptions.map((option, idx) => (
-            <button
-              key={option.value}
-              type="button"
-              className={`composer-combined-picker-row ${option.value === selectedReasoning ? 'is-selected' : ''} ${option.value === 'ultracode' ? 'is-ultracode' : ''} ${option.disabled ? 'is-disabled' : ''} ${idx === reasoningHighlight && focusedColumn === 'reasoning' ? 'is-highlighted' : ''}`}
-              data-reasoning-value={option.value}
-              disabled={Boolean(disabled || option.disabled)}
-              title={option.disabled ? option.disabledReason || 'Unavailable for this model' : undefined}
-              onMouseEnter={() => {
-                setFocusedColumn('reasoning')
-                setReasoningHighlight(idx)
-              }}
-              onClick={() => {
-                if (disabled || option.disabled) return
-                onSelectReasoning(option.value)
-              }}
-            >
-              <span className="composer-combined-picker-row-label">{option.label}</span>
-              {option.value === selectedReasoning && (
-                <span className="composer-combined-picker-check" aria-hidden>
-                  ✓
-                </span>
-              )}
-            </button>
-          ))}
+          <ReasoningLadderSlider
+            provider={provider}
+            ladder={ladder}
+            selectedReasoning={selectedReasoning}
+            onSelectReasoning={onSelectReasoning}
+            disabled={disabled}
+            onInteract={() => setFocusedColumn('reasoning')}
+          />
           {/*
             Fast Mode toggle. Tucked under the Reasoning column so
             it reads as a Reasoning-adjacent capability rather than
@@ -855,7 +1132,7 @@ export function CombinedModelPicker({
                 ) : (
                   <FastBoltIcon />
                 )}
-                <span>Fast mode</span>
+                <span>Fast</span>
               </span>
               <span
                 className={`composer-combined-picker-fast-switch ${fastModeEnabled && fastModeCapable ? 'is-on' : ''}`}

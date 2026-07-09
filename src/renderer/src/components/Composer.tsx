@@ -3567,25 +3567,18 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                           let combinedReasoningOptions: CombinedModelPickerReasoningOption[] = []
                           let combinedSelectedReasoning = ''
                           if (effectiveProvider === 'codex') {
-                            // For ensemble binding we use a stable default
-                            // reasoning list (low/medium/high/xhigh) because the
-                            // participant doesn't carry per-model reasoning
-                            // sets the way `codexReasoningOptions` does for
-                            // the chat-level state.
-                            const sourceOptions = ensembleBinding
-                              ? [
-                                  { reasoningEffort: 'low' },
-                                  { reasoningEffort: 'medium' },
-                                  { reasoningEffort: 'high' },
-                                  { reasoningEffort: 'xhigh' }
-                                ]
+                            // Ensemble binding resolves the per-model reasoning set
+                            // from the selected model (so GPT-5.6 Sol keeps its Max
+                            // + Ultra tiers), mirroring the Claude branch below;
+                            // the chat-level path uses the live `codexReasoningOptions`.
+                            combinedReasoningOptions = ensembleBinding
+                              ? getEnsembleReasoningOptions('codex', effectiveSelectedModel)
                               : codexReasoningOptions
-                            combinedReasoningOptions = sourceOptions
-                              .filter((option) => option?.reasoningEffort)
-                              .map((option) => ({
-                                value: option.reasoningEffort,
-                                label: codexReasoningDisplayLabel(option.reasoningEffort)
-                              }))
+                                  .filter((option) => option?.reasoningEffort)
+                                  .map((option) => ({
+                                    value: option.reasoningEffort,
+                                    label: codexReasoningDisplayLabel(option.reasoningEffort)
+                                  }))
                             combinedSelectedReasoning = effectiveCodexReasoning
                           } else if (effectiveProvider === 'claude') {
                             combinedReasoningOptions = ensembleBinding

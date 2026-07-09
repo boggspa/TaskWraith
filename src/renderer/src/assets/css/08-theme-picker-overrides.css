@@ -9467,24 +9467,9 @@
   box-shadow: none;
 }
 
-.composer-combined-picker-row[data-reasoning-value="ultracode"]:not(.is-disabled) {
-  color: color-mix(in srgb, #b088e8 86%, var(--text-primary) 14%);
-}
-
-.composer-combined-picker-row[data-reasoning-value="ultracode"]:not(.is-disabled):hover,
-.composer-combined-picker-row[data-reasoning-value="ultracode"]:not(.is-disabled).is-highlighted,
-.composer-combined-picker-row[data-reasoning-value="ultracode"]:not(.is-disabled).is-selected {
-  background:
-    linear-gradient(135deg, rgba(142, 111, 216, 0.2), rgba(180, 136, 232, 0.14)),
-    color-mix(in srgb, #8e6fd8 12%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, #b088e8 32%, transparent);
-}
-
-.composer-combined-picker-row[data-reasoning-value="ultracode"]:not(.is-disabled).is-selected
-  .composer-combined-picker-check {
-  color: color-mix(in srgb, #d4b8ff 84%, #ffffff 16%);
-  text-shadow: 0 0 10px color-mix(in srgb, #b088e8 58%, transparent);
-}
+/* (Removed: the old per-row ultracode `data-reasoning-value` styles — the
+ * reasoning row list was replaced by the ladder slider, so nothing emits that
+ * attribute any more.) */
 
 .composer-combined-picker-row.is-paused {
   border: 1px solid color-mix(in srgb, var(--color-warning, #d29922) 28%, transparent);
@@ -9714,6 +9699,225 @@
 }
 .composer-combined-picker-fast-switch.is-on .composer-combined-picker-fast-switch-thumb {
   transform: translateX(12px);
+}
+
+/* Reasoning ladder slider — replaces the hierarchical reasoning row list with a
+ * vertical 7-stop gradient track + metallic thumb, ported from the iOS
+ * composer's ReasoningLadder. Lives inside `.composer-combined-picker-column`
+ * so it inherits the popover chrome, and reads --accent / --text tokens so it
+ * follows every shell + theme swap for free. */
+.composer-combined-picker-ladder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px 2px;
+  flex: 1 1 auto;
+}
+.composer-combined-picker-ladder-value {
+  max-width: 100%;
+  overflow: hidden;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.2;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: color-mix(in srgb, var(--ladder-accent, var(--accent)) 82%, var(--text-primary));
+}
+.composer-combined-picker-ladder-value[data-ultracode='true'] {
+  color: color-mix(in srgb, var(--ladder-accent, var(--accent)) 88%, var(--text-primary) 12%);
+}
+.composer-combined-picker-ladder-track {
+  --ladder-track-h: 172px;
+  position: relative;
+  width: 85px;
+  height: var(--ladder-track-h);
+  flex: 0 0 auto;
+  cursor: pointer;
+  touch-action: none;
+}
+/* While dragging, the thumb + fill track the finger 1:1 (the slide animation is
+ * for keyboard/click stop-to-stop moves only). */
+.composer-combined-picker-ladder-track[data-dragging='true'] .composer-combined-picker-ladder-thumb,
+.composer-combined-picker-ladder-track[data-dragging='true'] .composer-combined-picker-ladder-fill {
+  transition: none;
+}
+.composer-combined-picker-ladder-track[aria-disabled='true'] {
+  cursor: default;
+  opacity: 0.5;
+}
+/* Empty base track (the "unfilled" rail above the thumb). */
+.composer-combined-picker-ladder-rail {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 30px;
+  transform: translateX(-50%);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--text-primary) 9%, transparent);
+  box-shadow:
+    inset 0 0 0 0.5px rgba(0, 0, 0, 0.18),
+    inset 0 0 5px rgba(0, 0, 0, 0.1);
+}
+/* Coloured gradient fill, anchored to the FULL track height (so a given height
+ * always maps to the same hue) but clipped to the thumb via its inline height —
+ * faint grey at the bottom climbing to the provider hue near the top. */
+.composer-combined-picker-ladder-fill {
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  width: 30px;
+  transform: translateX(-50%);
+  /* Round only the bottom (the real track corner); the top edge is an interior
+   * cut at every stop, so keep it square to avoid exposing the rail behind it. */
+  border-radius: 0 0 4px 4px;
+  background: linear-gradient(
+    to top,
+    rgba(158, 158, 158, 0.4) 0%,
+    rgba(143, 143, 143, 0.55) 16.66%,
+    rgba(117, 117, 117, 0.78) 33.33%,
+    color-mix(in srgb, var(--ladder-accent, var(--accent)) 24%, rgba(150, 150, 158, 0.85)) 50%,
+    color-mix(in srgb, var(--ladder-accent, var(--accent)) 62%, #ffffff) 66.66%,
+    var(--ladder-accent, var(--accent)) 83.33%,
+    color-mix(in srgb, var(--ladder-accent, var(--accent)) 55%, #ffffff) 100%
+  );
+  background-size: 100% var(--ladder-track-h);
+  background-position: center bottom;
+  background-repeat: no-repeat;
+  box-shadow: inset 0 0 6px rgba(0, 0, 0, 0.12);
+  transition: height 0.16s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.composer-combined-picker-ladder-thumb {
+  position: absolute;
+  left: 50%;
+  width: 43px;
+  height: 15px;
+  border-radius: 3px;
+  transform: translate(-50%, 50%);
+  background: linear-gradient(to bottom, #f7f7f7 0%, #a8a8a8 34%, #e0e0e0 66%, #8a8a8a 100%);
+  border: 0.5px solid rgba(0, 0, 0, 0.28);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.34);
+  pointer-events: none;
+  transition: bottom 0.16s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.composer-combined-picker-ladder-thumb::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 7px;
+  right: 7px;
+  height: 1px;
+  border-radius: 1px;
+  background: rgba(255, 255, 255, 0.65);
+}
+.composer-combined-picker-ladder-shimmer {
+  position: absolute;
+  top: 2px;
+  left: 50%;
+  width: 30px;
+  height: 40px;
+  overflow: hidden;
+  border-radius: 4px;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+.composer-combined-picker-ladder-shimmer::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 60%;
+  border-radius: 4px;
+  background: linear-gradient(
+    to bottom,
+    transparent 0%,
+    color-mix(in srgb, var(--ladder-accent, var(--accent)) 78%, #ffffff) 50%,
+    transparent 100%
+  );
+  animation: tw-ladder-shimmer 3.2s linear infinite;
+}
+@keyframes tw-ladder-shimmer {
+  0% {
+    transform: translateY(-110%);
+  }
+  100% {
+    transform: translateY(180%);
+  }
+}
+[data-reduce-motion='true'] .composer-combined-picker-ladder-shimmer::before {
+  animation: none;
+}
+
+/* Sparkles — twinkling points layered over the ultracode shimmer at the TOP of
+ * the track, fading down via a soft mask so the effect dissolves toward Max. */
+.composer-combined-picker-ladder-sparkles {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: 46px;
+  height: 58%;
+  transform: translateX(-50%);
+  pointer-events: none;
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 1) 0%,
+    rgba(0, 0, 0, 0.7) 40%,
+    rgba(0, 0, 0, 0) 100%
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 1) 0%,
+    rgba(0, 0, 0, 0.7) 40%,
+    rgba(0, 0, 0, 0) 100%
+  );
+}
+.composer-combined-picker-ladder-sparkle {
+  position: absolute;
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow:
+    0 0 3px 1px color-mix(in srgb, var(--ladder-accent, var(--accent)) 85%, #ffffff),
+    0 0 6px 2px color-mix(in srgb, var(--ladder-accent, var(--accent)) 55%, transparent);
+  opacity: 0;
+  transform: scale(0.3);
+  animation: tw-ladder-sparkle 2.4s ease-in-out infinite;
+}
+@keyframes tw-ladder-sparkle {
+  0%,
+  100% {
+    opacity: 0;
+    transform: scale(0.3);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+[data-reduce-motion='true'] .composer-combined-picker-ladder-sparkle {
+  animation: none;
+  opacity: 0.55;
+}
+/* Fade the shimmer + sparkles in when the thumb reaches Ultra, instead of a
+ * hard pop, so they feel connected to the thumb's slide. */
+.composer-combined-picker-ladder-shimmer,
+.composer-combined-picker-ladder-sparkles {
+  animation: tw-ladder-emerge 0.3s ease-out both;
+}
+@keyframes tw-ladder-emerge {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+[data-reduce-motion='true'] .composer-combined-picker-ladder-shimmer,
+[data-reduce-motion='true'] .composer-combined-picker-ladder-sparkles {
+  animation: none;
 }
 
 .composer-combined-picker-apply-all {

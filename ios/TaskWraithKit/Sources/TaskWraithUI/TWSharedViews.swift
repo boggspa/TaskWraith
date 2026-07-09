@@ -918,14 +918,27 @@ func twSettledRowModelChip(from speaker: String?) -> String? {
 /// real glass on iOS/macOS 26, an ultra-thin material with a rim stroke below
 /// (mirrors `GlassPillBackground`, just a rounded-rect instead of a capsule).
 private struct GlassPopoverPanel: ViewModifier {
+    // A popover presents in its own context, so glassEffect/material can't blur
+    // the app behind it and renders close to opaque. Apply the glass/material as
+    // a BACKGROUND layer at reduced opacity so the picker reads as translucent
+    // rather than a solid slab (tunable — lower = more see-through).
+    private static let backgroundOpacity: Double = 0.85
+
     func body(content: Content) -> some View {
-        if #available(iOS 26.0, macOS 26.0, *) {
-            content.glassEffect(.regular, in: RoundedRectangle(cornerRadius: 18))
-        } else {
+        let shape = RoundedRectangle(cornerRadius: 18, style: .continuous)
+        return
             content
-                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18))
-                .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(TWTheme.border))
-        }
+            .background {
+                Group {
+                    if #available(iOS 26.0, macOS 26.0, *) {
+                        shape.fill(Color.clear).glassEffect(.regular, in: shape)
+                    } else {
+                        shape.fill(.ultraThinMaterial)
+                    }
+                }
+                .opacity(Self.backgroundOpacity)
+            }
+            .overlay(shape.strokeBorder(TWTheme.border))
     }
 }
 
@@ -1107,7 +1120,7 @@ struct ProviderModelPicker: View {
             .frame(height: showsReasoningSidecar ? 322 : nil)
             .frame(maxHeight: 360)
         }
-        .frame(width: showsReasoningSidecar ? 300 : 240)
+        .frame(width: showsReasoningSidecar ? 312 : 240)
         .modifier(GlassPopoverPanel())
         .offset(y: dragOffset)
         .opacity(dragOffset > 0 ? max(0.55, 1 - dragOffset / 320) : 1)
@@ -1172,7 +1185,8 @@ struct ProviderModelPicker: View {
                 selected: isCurrentProvider
                     && (modelId == option.id || (modelId == nil && option.isDefault == true)),
                 accent: accent,
-                disabled: option.disabled == true
+                disabled: option.disabled == true,
+                fast: modelSupportsFast(provider: catalog.provider, modelId: option.id)
             ) {
                 selectModel(option, in: catalog)
             }
@@ -1245,7 +1259,7 @@ struct ProviderModelPicker: View {
         .padding(.top, 12)
         .padding(.bottom, 14)
         .padding(.horizontal, 6)
-        .frame(width: 68)
+        .frame(width: 80)
         .overlay(alignment: .leading) {
             Rectangle().fill(TWTheme.border).frame(width: 0.5)
         }
@@ -1308,8 +1322,19 @@ struct ProviderModelPicker: View {
     }
 
     @ViewBuilder
+    /// Models that expose the paid Fast tier — mirrors the Electron picker's
+    /// per-model lightning bolt (Grok is always Fast; Cursor Composer 2.5 has a
+    /// Fast variant; otherwise the shared twFastToggleModelIds set).
+    private func modelSupportsFast(provider: String, modelId: String) -> Bool {
+        let p = provider.lowercased()
+        let mid = modelId.lowercased()
+        if p == "grok" { return true }
+        if p == "cursor" && (mid == "composer-2.5" || mid == "composer-2.5-fast") { return true }
+        return twFastToggleModelIds.contains(mid)
+    }
+
     private func pickerRow(
-        title: String, selected: Bool, accent: Color, disabled: Bool = false,
+        title: String, selected: Bool, accent: Color, disabled: Bool = false, fast: Bool = false,
         action: @escaping () -> Void
     ) -> some View {
         Button {
@@ -1322,6 +1347,11 @@ struct ProviderModelPicker: View {
                     .foregroundStyle(disabled ? TWTheme.textSecondary : TWTheme.textPrimary)
                     .lineLimit(1)
                 Spacer()
+                if fast {
+                    Image(systemName: "bolt.fill")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(accent.opacity(0.85))
+                }
                 if selected {
                     Image(systemName: "checkmark")
                         .font(.caption.weight(.bold))
@@ -1421,6 +1451,21 @@ private struct ReasoningLadder: View {
     @Binding var reasoningEffort: String?
     let accent: Color
     @State private var shimmer: CGFloat = 0
+    @State private var twinkle = false
+
+    // Sparkle spots over the ultracode zone: (dx from centre, y-fraction of the
+    // top 55%, dim/bright opacity, twinkle delay). `hi` tapers with depth so the
+    // sparkles fade DOWN the track.
+    private static let sparkleSpots:
+        [(dx: CGFloat, y: CGFloat, lo: Double, hi: Double, delay: Double)] = [
+            (-6, 0.05, 0.15, 1.0, 0.0),
+            (7, 0.13, 0.15, 0.95, 0.4),
+            (0, 0.22, 0.1, 0.9, 0.9),
+            (-8, 0.32, 0.12, 0.75, 0.6),
+            (9, 0.42, 0.08, 0.6, 1.3),
+            (3, 0.52, 0.06, 0.45, 0.2),
+            (-4, 0.62, 0.04, 0.3, 1.6),
+        ]
 
     private var currentIndex: Int {
         Self.clampedIndex(for: reasoningEffort, enabled: enabledIndices)
@@ -1432,7 +1477,12 @@ private struct ReasoningLadder: View {
     static func clampedIndex(for effort: String?, enabled: Set<Int>) -> Int {
         if let raw = twLadderIndex(for: effort) {
             if enabled.contains(raw) { return raw }
-            if let nearest = enabled.min(by: { abs($0 - raw) < abs($1 - raw) }) { return nearest }
+            // Deterministic tie-break to the HIGHER stop (Set iteration order is
+            // per-launch random) — matches snap(toY:) + Electron's nearestEnabled.
+            if let nearest = enabled.min(by: {
+                let d0 = abs($0 - raw), d1 = abs($1 - raw)
+                return d0 == d1 ? $0 > $1 : d0 < d1
+            }) { return nearest }
         }
         return enabled.min() ?? 0
     }
@@ -1441,20 +1491,47 @@ private struct ReasoningLadder: View {
         GeometryReader { geo in
             let h = geo.size.height
             let cx = geo.size.width / 2
-            let trackW: CGFloat = 12
+            let trackW: CGFloat = 30
+            // Coloured fill reaches up to the thumb (its centre offset from the
+            // bottom); above that stays the neutral empty rail.
+            let fillH = 11 + max(1, h - 22) * CGFloat(currentIndex) / 6
             ZStack {
-                Capsule()
-                    .fill(Self.ladderGradient)
+                // Empty base track (unfilled rail above the thumb).
+                RoundedRectangle(cornerRadius: 4, style: .continuous)
+                    .fill(Color.white.opacity(0.08))
                     .frame(width: trackW, height: h)
-                    .overlay(alignment: .top) { shimmerBand(height: h, trackW: trackW) }
                     .position(x: cx, y: h / 2)
 
-                ForEach(twReasoningStops) { stop in
-                    let on = enabledIndices.contains(stop.index)
-                    Circle()
-                        .fill(Color.white.opacity(on ? 0.9 : 0.22))
-                        .frame(width: on ? 4 : 3, height: on ? 4 : 3)
-                        .position(x: cx, y: yFor(stop.index, height: h))
+                // Provider-hued gradient fill, clipped to BELOW the thumb so the
+                // colour emerges as effort climbs.
+                RoundedRectangle(cornerRadius: 4, style: .continuous)
+                    .fill(ladderGradient)
+                    .frame(width: trackW, height: h)
+                    .mask(alignment: .bottom) {
+                        Rectangle().frame(width: trackW, height: fillH)
+                    }
+                    .overlay(alignment: .top) {
+                        if currentIndex == 6 { shimmerBand(height: h, trackW: trackW) }
+                    }
+                    .position(x: cx, y: h / 2)
+                    .animation(.spring(response: 0.28, dampingFraction: 0.8), value: currentIndex)
+
+                if currentIndex == 6 {
+                    ForEach(Array(Self.sparkleSpots.enumerated()), id: \.offset) { _, spot in
+                        Circle()
+                            .fill(Color.white)
+                            .frame(width: 2.5, height: 2.5)
+                            .shadow(color: accent.opacity(0.9), radius: 2)
+                            .shadow(color: accent.opacity(0.5), radius: 3)
+                            .position(x: cx + spot.dx, y: 6 + h * 0.55 * spot.y)
+                            .opacity(twinkle ? spot.hi : spot.lo)
+                            .animation(
+                                .easeInOut(duration: 1.2).repeatForever(autoreverses: true)
+                                    .delay(spot.delay),
+                                value: twinkle
+                            )
+                            .allowsHitTesting(false)
+                    }
                 }
 
                 metallicThumb
@@ -1472,6 +1549,7 @@ private struct ReasoningLadder: View {
             withAnimation(.linear(duration: 3.2).repeatForever(autoreverses: false)) {
                 shimmer = 1
             }
+            twinkle = true
         }
         .accessibilityElement()
         .accessibilityLabel("Reasoning effort")
@@ -1489,13 +1567,13 @@ private struct ReasoningLadder: View {
     }
 
     private func yFor(_ index: Int, height: CGFloat) -> CGFloat {
-        let inset: CGFloat = 8
+        let inset: CGFloat = 11
         let usable = max(1, height - inset * 2)
         return inset + usable * (1 - CGFloat(index) / 6)
     }
 
     private func snap(toY y: CGFloat, height: CGFloat) {
-        let inset: CGFloat = 8
+        let inset: CGFloat = 11
         let usable = max(1, height - inset * 2)
         let frac = max(0, min(1, 1 - (y - inset) / usable))
         let raw = Int((frac * 6).rounded())
@@ -1520,14 +1598,14 @@ private struct ReasoningLadder: View {
                     startPoint: .top, endPoint: .bottom
                 )
             )
-            .frame(width: 26, height: 11)
+            .frame(width: 43, height: 15)
             .overlay(
                 RoundedRectangle(cornerRadius: 3, style: .continuous)
                     .strokeBorder(Color.black.opacity(0.25), lineWidth: 0.5)
             )
             .overlay(
                 Rectangle().fill(Color.white.opacity(0.65))
-                    .frame(height: 0.5).padding(.horizontal, 3)
+                    .frame(height: 0.5).padding(.horizontal, 7)
             )
             .shadow(color: .black.opacity(0.32), radius: 1.5, y: 0.5)
     }
@@ -1536,13 +1614,13 @@ private struct ReasoningLadder: View {
     private func shimmerBand(height: CGFloat, trackW: CGFloat) -> some View {
         if enabledIndices.contains(6) {
             let zoneH = height / 6 + 8
-            Capsule()
+            RoundedRectangle(cornerRadius: 4, style: .continuous)
                 .fill(
                     LinearGradient(
                         colors: [
-                            Color(hex: 0x8E6FD8).opacity(0),
-                            Color(hex: 0xE0C4FF),
-                            Color(hex: 0x8E6FD8).opacity(0),
+                            accent.opacity(0),
+                            accent,
+                            accent.opacity(0),
                         ],
                         startPoint: .top, endPoint: .bottom
                     )
@@ -1550,23 +1628,28 @@ private struct ReasoningLadder: View {
                 .frame(width: trackW, height: zoneH * 0.55)
                 .offset(y: -zoneH * 0.55 + shimmer * (zoneH * 1.1))
                 .frame(width: trackW, height: zoneH, alignment: .top)
-                .clipShape(Capsule())
+                .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
                 .allowsHitTesting(false)
         }
     }
 
-    static let ladderGradient = LinearGradient(
-        stops: [
-            Gradient.Stop(color: Color(white: 0.62).opacity(0.40), location: 0.0),
-            Gradient.Stop(color: Color(white: 0.56).opacity(0.55), location: 0.1666),
-            Gradient.Stop(color: Color(white: 0.46).opacity(0.78), location: 0.3333),
-            Gradient.Stop(color: Color(hex: 0xB6B2C8), location: 0.50),
-            Gradient.Stop(color: Color(hex: 0xB088E8), location: 0.6666),
-            Gradient.Stop(color: Color(hex: 0x8E6FD8), location: 0.8333),
-            Gradient.Stop(color: Color(hex: 0xE0C4FF), location: 1.0),
-        ],
-        startPoint: .bottom, endPoint: .top
-    )
+    // Provider-hued ramp: neutral grey at the bottom (low effort) climbing to
+    // the provider accent at the top. Instance member so it can read `accent`
+    // (Color.mix is macOS 15+, so we compose with .opacity only).
+    private var ladderGradient: LinearGradient {
+        LinearGradient(
+            stops: [
+                Gradient.Stop(color: Color(white: 0.62).opacity(0.40), location: 0.0),
+                Gradient.Stop(color: Color(white: 0.56).opacity(0.55), location: 0.1666),
+                Gradient.Stop(color: Color(white: 0.46).opacity(0.78), location: 0.3333),
+                Gradient.Stop(color: accent.opacity(0.40), location: 0.50),
+                Gradient.Stop(color: accent.opacity(0.70), location: 0.6666),
+                Gradient.Stop(color: accent, location: 0.8333),
+                Gradient.Stop(color: accent, location: 1.0),
+            ],
+            startPoint: .bottom, endPoint: .top
+        )
+    }
 }
 
 private func twReasoningModelOption(
