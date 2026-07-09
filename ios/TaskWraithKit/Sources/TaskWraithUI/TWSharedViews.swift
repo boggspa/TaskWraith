@@ -964,6 +964,10 @@ struct ProviderModelPicker: View {
         .popover(isPresented: $isPresented) {
             pickerPopover
                 .presentationCompactAdaptation(.popover)
+                // Clear the system popover chrome so the GlassPopoverPanel's
+                // Liquid Glass blurs the real content behind the whole picker
+                // (otherwise it just frosts an opaque popover background).
+                .presentationBackground(.clear)
         }
         .onChange(of: provider) { _, newProvider in
             // Switching provider invalidates a model from the OLD catalog —
