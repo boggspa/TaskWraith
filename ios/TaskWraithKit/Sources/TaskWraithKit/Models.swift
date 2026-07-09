@@ -1775,7 +1775,10 @@ public enum BridgeAction {
         switch provider.lowercased() {
         case "cursor": payload["cursorFastMode"] = fastModeEnabled
         case "claude": payload["claudeFastMode"] = fastModeEnabled
-        case "codex": if fastModeEnabled { payload["codexServiceTier"] = "fast" }
+        // ALWAYS send codex tier (not just when on): "" is a non-nullish
+        // off-signal, so the Mac's `action.codexServiceTier ?? metadata ?? null`
+        // uses it instead of resurrecting a stale 'fast' from chat metadata.
+        case "codex": payload["codexServiceTier"] = fastModeEnabled ? "fast" : ""
         default: break
         }
         if provider.lowercased() == "kimi", let kimiThinkingEnabled {

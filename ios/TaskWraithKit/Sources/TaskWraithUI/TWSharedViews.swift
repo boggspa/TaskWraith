@@ -1187,7 +1187,12 @@ struct ProviderModelPicker: View {
         !enabledLadderIndices.isEmpty || fastControlState != nil
     }
     private var currentLadderLabel: String {
-        twLadderLabel(for: ladderEffortBinding.wrappedValue) ?? "—"
+        guard !enabledLadderIndices.isEmpty else { return "—" }
+        // Clamp to an ENABLED stop so a carried-over disabled effort doesn't
+        // mislabel the sidecar header (matches the thumb's clamped position).
+        let idx = ReasoningLadder.clampedIndex(
+            for: ladderEffortBinding.wrappedValue, enabled: enabledLadderIndices)
+        return twReasoningStops[idx].label
     }
 
     private var reasoningSidecar: some View {
@@ -1392,7 +1397,18 @@ private struct ReasoningLadder: View {
     @State private var shimmer: CGFloat = 0
 
     private var currentIndex: Int {
-        twLadderIndex(for: reasoningEffort) ?? enabledIndices.min() ?? 0
+        Self.clampedIndex(for: reasoningEffort, enabled: enabledIndices)
+    }
+
+    /// The stop the thumb sits on: the current effort's stop when it's enabled,
+    /// else the NEAREST enabled stop (a carried-over disabled effort — e.g.
+    /// 'xhigh' on Sonnet 4.6 — must never park the thumb on a disabled stop).
+    static func clampedIndex(for effort: String?, enabled: Set<Int>) -> Int {
+        if let raw = twLadderIndex(for: effort) {
+            if enabled.contains(raw) { return raw }
+            if let nearest = enabled.min(by: { abs($0 - raw) < abs($1 - raw) }) { return nearest }
+        }
+        return enabled.min() ?? 0
     }
 
     var body: some View {
