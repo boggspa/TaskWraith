@@ -25383,6 +25383,24 @@ if (isGeminiMcpBridgeProcess) {
             provider === 'kimi'
               ? (action.kimiThinkingEnabled ?? metadataKimiThinkingEnabled ?? true)
               : undefined
+          // Persist the resolved Fast/thinking selection into providerMetadata
+          // (the same keys the desktop's rememberChatComposerSelection writes and
+          // RemoteTaskProjection reads) so a phone-originated toggle survives to
+          // the next projection instead of resyncing to stale state.
+          const composerSelectionPatch: Record<string, unknown> = {
+            ...(inheritedCursorFastMode !== undefined
+              ? { cursorFastMode: inheritedCursorFastMode }
+              : {}),
+            ...(inheritedClaudeFastMode !== undefined
+              ? { claudeFastMode: inheritedClaudeFastMode }
+              : {}),
+            ...(typeof inheritedCodexServiceTier === 'string'
+              ? { codexServiceTier: inheritedCodexServiceTier }
+              : {}),
+            ...(inheritedKimiThinkingEnabled !== undefined
+              ? { kimiThinkingEnabled: inheritedKimiThinkingEnabled }
+              : {})
+          }
           const run: ChatRun = {
             runId,
             provider,
@@ -25400,6 +25418,14 @@ if (isGeminiMcpBridgeProcess) {
           chat = {
             ...chat,
             runs: [...(chat.runs || []).filter((entry) => entry.runId !== runId), run],
+            ...(Object.keys(composerSelectionPatch).length > 0
+              ? {
+                  providerMetadata: {
+                    ...(chat.providerMetadata || {}),
+                    ...composerSelectionPatch
+                  }
+                }
+              : {}),
             updatedAt: Date.now()
           }
           AppStore.saveChat(chat)
