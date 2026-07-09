@@ -3367,27 +3367,33 @@ export const TranscriptPanel = memo(
                       if (isTaskWraithCloseout) {
                         const closeoutProvider = closeoutProviderFromMetadata(msg.metadata)
                         const source = msg.metadata?.closeoutSource
+                        // Deterministic-fallback close-outs render "TaskWraith"
+                        // with no source badge — the "deterministic" chip read as
+                        // noise. Provider-generated close-outs still note their
+                        // source ("via Claude" / "generated").
                         const badge =
                           source === 'deterministicFallback'
-                            ? 'deterministic'
+                            ? null
                             : closeoutProvider
                               ? `via ${getProviderLabel(closeoutProvider)}`
                               : 'generated'
                         return (
                           <div className="message-meta taskwraith-closeout-meta">
                             <span className="message-meta-label">TaskWraith</span>
-                            <span
-                              className={`message-meta-model-badge taskwraith-closeout-badge${
-                                closeoutProvider ? ` provider-${closeoutProvider}` : ''
-                              }`}
-                              title={
-                                closeoutProvider
-                                  ? `Close-out generated via ${getProviderLabel(closeoutProvider)}`
-                                  : 'Deterministic TaskWraith close-out'
-                              }
-                            >
-                              {badge}
-                            </span>
+                            {badge && (
+                              <span
+                                className={`message-meta-model-badge taskwraith-closeout-badge${
+                                  closeoutProvider ? ` provider-${closeoutProvider}` : ''
+                                }`}
+                                title={
+                                  closeoutProvider
+                                    ? `Close-out generated via ${getProviderLabel(closeoutProvider)}`
+                                    : 'TaskWraith close-out'
+                                }
+                              >
+                                {badge}
+                              </span>
+                            )}
                           </div>
                         )
                       }
