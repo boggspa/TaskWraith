@@ -39,7 +39,7 @@ import {
   ComposerTextareaContextMenu,
   useComposerTextareaContextMenu
 } from '../components/ComposerTextareaContextMenu'
-import { ComposerTimecode } from '../components/ComposerTimecodes'
+import { ComposerThreadTimecodeBar } from '../components/ComposerTimecodes'
 import { ComposerWorkspaceSwitcher } from '../components/ComposerWorkspaceSwitcher'
 import { CopyTranscriptButton } from '../components/CopyTranscriptButton'
 import { EnsembleOrchestrationRow } from '../components/EnsembleOrchestrationRow'
@@ -4390,12 +4390,12 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                 className="composer-telemetry-row"
                 data-has-token-tally={threadTokenTallyHasValue ? 'true' : 'false'}
               >
-                <ComposerTimecode
-                  running={isCurrentChatRunning}
-                  startedAt={composerRunTimecodeStartedAt}
-                  cumulativeBaseMs={cumulativeRunBaseMs}
-                  composerStyle={appearance.composerStyle}
-                />
+                {/* Timecode relocated to the pane-bottom bar. The row is split
+                    into left zone (workspace) / centre cluster (icons) / right
+                    zone (token tally); the three are placed left/centre/right
+                    via flex `order` in CSS (not DOM order), so the cluster stays
+                    pane-centred regardless of the side widths. */}
+                <div className="composer-telemetry-cluster">
                 <ComposerEnsembleToggleButton
                   enabled={isCurrentEnsembleChat}
                   visible={Boolean(
@@ -4671,14 +4671,11 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
 	                  chatId={currentChat?.appChatId ?? null}
 	                  composerStyle={appearance.composerStyle}
 	                />
-	                {/* 1.0.5-AR12c — Workspace switcher in its new home.
-                     Sits between the timecode / Screen Watch cluster
-                     on the left and the token tally on the right. The
-                     `composer-workspace-button` class gets a
-                     telemetry-row scoped CSS override (`margin-left:
-                     auto`) so the two auto-margins (this + the tally)
-                     split the free space. Hidden in global chats —
-                     same gating as the previous top-row mount. */}
+	                </div>
+                <div className="composer-telemetry-side composer-telemetry-side--left">
+                {/* Workspace switcher — LEFT zone of the telemetry row (the
+                    timecode's old spot). Hidden in global chats. Placed on the
+                    left via the zone's flex `order` in CSS. */}
                 {!isCurrentGlobalChat && (
                   <ComposerWorkspaceSwitcher
                     workspaces={workspaces}
@@ -4711,6 +4708,8 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                     }
                   />
                 )}
+                </div>
+                <div className="composer-telemetry-side composer-telemetry-side--right">
                 {threadTokenTallyHasValue && (
                   <LiveThreadTokenTally
                     baseTally={composerTokenTally}
@@ -4725,6 +4724,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                     title={threadTokenTallyTooltip}
                   />
                 )}
+                </div>
               </div>
               {/*
                 Composer-unification (Phase J1): removed the codex-style
@@ -4792,6 +4792,18 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
               />
             )}
             </ComposerPrimaryStack>
+            {/* Pane-bottom timecode bar — the unpacked timecode picker, glued
+                under the composer as its own centred row (Turn on the left,
+                total thread wall time on the right). Last child of .composer-area
+                so its height folds into --composer-reserved-height. Skipped on
+                the welcome screen, where the composer floats mid-pane. */}
+            {!isWelcomeChat && (
+              <ComposerThreadTimecodeBar
+                running={isCurrentChatRunning}
+                startedAt={composerRunTimecodeStartedAt}
+                cumulativeBaseMs={cumulativeRunBaseMs}
+              />
+            )}
             {shouldShowWelcomeStandaloneHeatmaps && (
               <WelcomeHeatmaps slots={welcomeHeatmapSlots} layout="single" />
             )}

@@ -25,6 +25,26 @@ export interface ComposerTimecodePresentation {
   visibleMode: ComposerTimecodeMode
 }
 
+/**
+ * Live "now" tick shared by the interactive timecode button and the pane-bottom
+ * timecode bar. One rAF for the first paint, then a 1s interval while a run is
+ * in flight (idle threads don't tick). `startedAt` in the dep list restarts the
+ * cadence when a new turn begins.
+ */
+export function useTimecodeNow(running: boolean, startedAt?: string | null): number {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => setNow(Date.now()))
+    if (!running) return () => window.cancelAnimationFrame(frame)
+    const timer = window.setInterval(() => setNow(Date.now()), 1000)
+    return () => {
+      window.cancelAnimationFrame(frame)
+      window.clearInterval(timer)
+    }
+  }, [running, startedAt])
+  return now
+}
+
 export function getComposerTimecodePresentation({
   running,
   startedAt,
@@ -86,21 +106,11 @@ export function ComposerTimecode({
 }) {
   const triggerRef = useRef<HTMLButtonElement | null>(null)
   const popoverRef = useRef<HTMLDivElement | null>(null)
-  const [now, setNow] = useState(() => Date.now())
+  const now = useTimecodeNow(running, startedAt)
   const [open, setOpen] = useState(false)
   const [position, setPosition] = useState<{ left: number; top: number; width: number } | null>(
     null
   )
-
-  useEffect(() => {
-    const frame = window.requestAnimationFrame(() => setNow(Date.now()))
-    if (!running) return () => window.cancelAnimationFrame(frame)
-    const timer = window.setInterval(() => setNow(Date.now()), 1000)
-    return () => {
-      window.cancelAnimationFrame(frame)
-      window.clearInterval(timer)
-    }
-  }, [running, startedAt])
 
   useEffect(() => {
     if (!open || !interactive) {
@@ -244,5 +254,53 @@ export function ComposerTimecode({
       </button>
       {popover}
     </>
+  )
+}
+
+/**
+ * Pane-bottom timecode bar. Unpacks what used to be the composer telemetry-row
+ * timecode picker into a standalone, pane-aligned row that sits glued under the
+ * composer: the current turn / round elapsed time on the left, the total thread
+ * wall time on the right. Static (no popover / no interactivity) — it reuses the
+ * pure presentation helper + the shared live tick so both values update in step.
+ */
+export function ComposerThreadTimecodeBar({
+  running,
+  startedAt,
+  cumulativeBaseMs
+}: {
+  running: boolean
+  startedAt?: string | null
+  cumulativeBaseMs: number
+}) {
+  const now = useTimecodeNow(running, startedAt)
+  const { turnLabel, totalLabel } = getComposerTimecodePresentation({
+    running,
+    startedAt,
+    cumulativeBaseMs,
+    nowMs: now
+  })
+
+  return (
+    <div className="composer-thread-timecodes" data-running={running ? 'true' : 'false'}>
+      <span
+        className="composer-thread-timecode composer-thread-timecode--turn"
+        title="Current turn / round elapsed time"
+        aria-label={`Current turn elapsed time ${turnLabel}`}
+      >
+        <ClockSymbolIcon />
+        <span className="composer-thread-timecode-label">Turn</span>
+        <span className="composer-thread-timecode-value">{turnLabel}</span>
+      </span>
+      <span
+        className="composer-thread-timecode composer-thread-timecode--total"
+        title="Total thread wall time"
+        aria-label={`Total thread wall time ${totalLabel}`}
+      >
+        <span className="composer-thread-timecode-label">Total thread</span>
+        <span className="composer-thread-timecode-value">{totalLabel}</span>
+        <ClockSymbolIcon />
+      </span>
+    </div>
   )
 }

@@ -4795,11 +4795,12 @@
  * overflow.
  */
 .composer-telemetry-row .composer-workspace-button {
-  margin-left: auto;
+  /* Timecode-relocation: the switcher now lives in the row's LEFT zone
+     (.composer-telemetry-side--left, flex-start), so it sits at the left edge
+     on its own. The old `margin-left: auto` — which used to push it toward
+     centre against the token-tally's auto-margin — is dropped. */
+  margin-left: 0;
   max-width: min(220px, 32vw);
-  /* Vertical alignment with the timecode + tally text in the same
-   * row — the switcher button is taller than the run timecode by
-   * default so this nudges it down by a hairline to read level. */
   align-self: center;
 }
 
@@ -4824,6 +4825,112 @@
  */
 .composer-telemetry-row .composer-workspace-button[data-composer-control='workspace'] {
   order: 0;
+}
+
+/* ── Timecode-relocation: three-zone telemetry row ──────────────────────────
+ * The timecode moved out to the pane-bottom bar, freeing the (cramped) row.
+ * The main composer row is now split into three wrappers — a left zone (the
+ * workspace switcher), a centre cluster (the icon buttons), and a right zone
+ * (the token tally). The row keeps `display: flex` (so the side-chat and
+ * multiview variants that rely on `flex-wrap` are untouched); the zones are
+ * placed left / centre / right purely via flex `order`, NOT DOM order, so the
+ * heavy workspace-switcher markup never had to move.
+ *
+ * Both side zones are `flex: 1 1 0`, so the centre cluster is pinned to the
+ * TRUE centre of the row no matter how wide the workspace pill or token tally
+ * are. Empty side zones (a global chat with no workspace, or a thread with no
+ * token tally yet) still take their equal share, so the cluster stays centred.
+ * These classes are unique to the main composer row, so the side-chat row —
+ * which has no such wrappers — is completely unaffected. */
+.composer-telemetry-side {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex: 1 1 0;
+  min-width: 0;
+}
+.composer-telemetry-side--left {
+  order: 1;
+  justify-content: flex-start;
+}
+.composer-telemetry-cluster {
+  order: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  min-width: 0;
+}
+.composer-telemetry-side--right {
+  order: 3;
+  justify-content: flex-end;
+}
+/* The workspace pill is alone in its zone — keep it hard-left there even if a
+ * shell override tried to re-apply an auto margin. */
+.composer-telemetry-side--left .composer-workspace-button {
+  margin-left: 0;
+}
+
+/* ── Pane-bottom timecode bar ───────────────────────────────────────────────
+ * The unpacked timecode picker, relocated out of the telemetry row into its own
+ * row glued under the composer. Rendered as the last child of `.composer-area`,
+ * so it inherits that column's centring + bottom anchor, and its height is
+ * folded into `--composer-reserved-height` by the composer-area ResizeObserver
+ * (App.tsx) — the transcript clears it automatically, no manual padding math.
+ * Matches the composer surface's centred column width so the two values align
+ * under the composer's left/right edges: current turn / round on the left,
+ * total thread wall time on the right. Typography mirrors `.composer-run-timecode`. */
+.composer-thread-timecodes {
+  width: 100%;
+  max-width: min(100%, var(--composer-content-max-width));
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+  padding: 1px 6px 0;
+  pointer-events: auto;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  letter-spacing: 0;
+  color: color-mix(in srgb, var(--text-secondary) 62%, transparent);
+  user-select: none;
+}
+.composer-thread-timecode {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.composer-thread-timecode-label {
+  font-family: var(--font-sans);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-size: 9px;
+  font-weight: 600;
+  opacity: 0.72;
+}
+.composer-thread-timecode-value {
+  font-variant-numeric: tabular-nums;
+}
+.composer-thread-timecode .composer-control-icon {
+  width: 11px;
+  height: 11px;
+  opacity: 0.6;
+  flex-shrink: 0;
+}
+/* The live turn ticks in the accent while a run is in flight; the total stays
+ * quiet (it is a cumulative wall-clock, not a live signal). */
+.composer-thread-timecodes[data-running='true'] .composer-thread-timecode--turn {
+  color: color-mix(in srgb, var(--accent) 82%, var(--text-secondary));
+}
+.composer-thread-timecodes[data-running='true']
+  .composer-thread-timecode--turn
+  .composer-thread-timecode-label {
+  opacity: 0.9;
 }
 
 /* 1.0.4-AS3 — Screen Watch (Appwatch/Appshots) button in the
