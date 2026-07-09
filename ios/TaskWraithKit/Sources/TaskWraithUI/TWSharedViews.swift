@@ -937,6 +937,10 @@ struct ProviderModelPicker: View {
     @Binding var fastModeEnabled: Bool
     @Binding var kimiThinkingEnabled: Bool
     var allowsProviderChange: Bool = true
+    /// Compact trigger — a tiny provider-dot + chevron pill (for the unfocused
+    /// composer's top-left corner) instead of the full flat-text label. The
+    /// popover it opens is identical.
+    var compact: Bool = false
     @State private var isPresented = false
     @State private var dragOffset: CGFloat = 0
 
@@ -956,7 +960,7 @@ struct ProviderModelPicker: View {
         Button {
             isPresented = true
         } label: {
-            pickerLabel
+            if compact { compactPickerLabel } else { pickerLabel }
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Provider and model")
@@ -1018,6 +1022,24 @@ struct ProviderModelPicker: View {
             value += ", \(reasoningLabel) reasoning"
         }
         return value
+    }
+
+    /// Tiny pill for the unfocused composer's top-left corner: the provider-hued
+    /// dot + a chevron in a small capsule. Opens the same picker popover.
+    private var compactPickerLabel: some View {
+        HStack(spacing: 3) {
+            Circle()
+                .fill(TWTheme.providerAccent(provider, modelId: displayModelId, modelLabel: displayModelLabel))
+                .frame(width: 7, height: 7)
+            Image(systemName: "chevron.up.chevron.down")
+                .font(.system(size: 7, weight: .semibold))
+                .foregroundStyle(TWTheme.textMuted)
+        }
+        .padding(.horizontal, 7)
+        .padding(.vertical, 4)
+        .background(Capsule().fill(TWTheme.surface3))
+        .overlay(Capsule().strokeBorder(TWTheme.border, lineWidth: 0.5))
+        .contentShape(Capsule())
     }
 
     private var pickerLabel: some View {

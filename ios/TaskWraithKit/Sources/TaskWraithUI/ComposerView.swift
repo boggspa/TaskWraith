@@ -319,6 +319,10 @@ struct Composer: View {
                 composerInputBody
             }
         }
+        // Fade the control row ⇄ compact-pill swap on focus/idle transitions.
+        // Scoped to isExpanded so only those two views animate — nothing else in
+        // the body changes on this value.
+        .animation(ComposerMotion.inlineFade, value: isExpanded)
         // Re-bind the picker to the LOADED thread on first appear AND on every
         // thread switch. SwiftUI reuses this Composer instance across threads on
         // iPhone (the compact nav destination has no per-thread `.id`), so a
@@ -405,37 +409,29 @@ struct Composer: View {
         return composerAttachedRowFill()
     }
 
+    @ViewBuilder
     private var composerControlsRow: some View {
-        HStack(spacing: 8) {
-            modelPickerControl
-            // Slice B: reflect a Mac-queued mid-run provider switch (idle
-            // switches apply immediately, so they never linger here). Shown in
-            // both compact + expanded states — a pending switch is rare + salient.
-            pendingProviderPill
-            // Compact idle bar: only the model pill shows. The approval
-            // control appears once the composer is focused/expanded.
-            if isExpanded {
-                // Fade the approval/separator chips in together as the
-                // composer expands. Opacity-only (inherently Reduce-Motion-safe)
-                // so the always-present model pill never shifts; the Group is
-                // layout-transparent so HStack spacing is unchanged.
-                Group {
-                    composerControlSeparator
-                    approvalControl
-                }
-                .transition(.opacity)
+        // Collapse the whole control row when the composer is idle/unfocused to
+        // give the transcript more vertical room. The model/reasoning picker
+        // stays reachable via a tiny pill in the input row's top-left corner
+        // (compactModelPickerControl); focusing expands the full row back.
+        if isExpanded {
+            HStack(spacing: 8) {
+                modelPickerControl
+                // Reflect a Mac-queued mid-run provider switch (rare + salient).
+                pendingProviderPill
+                composerControlSeparator
+                approvalControl
+                Spacer(minLength: 0)
             }
-            Spacer(minLength: 0)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .background(Rectangle().fill(composerControlsRowFill))
+            // CS12: two-rect shells (obsidian/alabaster) give the control row its
+            // OWN lit rect; bare-footer shells leave it transparent.
+            .composerShellIf(shell.layout.splitChromeRects, shell)
+            .transition(.opacity)
         }
-        // Scoped to isExpanded so only the chip fade animates — never the
-        // picker reseed, send/queue, or any other composer state change.
-        .animation(ComposerMotion.inlineFade, value: isExpanded)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 7)
-        .background(Rectangle().fill(composerControlsRowFill))
-        // CS12: two-rect shells (obsidian/alabaster) give the control row its OWN
-        // lit rect; bare-footer shells (claude/gemini/cursor) leave it transparent.
-        .composerShellIf(shell.layout.splitChromeRects, shell)
     }
 
     @ViewBuilder
@@ -454,6 +450,24 @@ struct Composer: View {
             .background(TWTheme.surface3, in: Capsule())
             .accessibilityLabel(
                 "Provider switching to \(TWTheme.providerLabel(prov)) at turn end")
+        }
+    }
+
+    /// Tiny picker pill for the idle/unfocused composer's top-left corner —
+    /// same picker + popover as `modelPickerControl`, just a compact trigger.
+    @ViewBuilder
+    private var compactModelPickerControl: some View {
+        if !catalogs.isEmpty {
+            ProviderModelPicker(
+                catalogs: catalogs,
+                provider: $selectedProvider,
+                modelId: $selectedModelId,
+                reasoningEffort: $selectedReasoningEffort,
+                fastModeEnabled: $selectedFastMode,
+                kimiThinkingEnabled: $selectedKimiThinking,
+                allowsProviderChange: canChangeProvider,
+                compact: true)
+            .transition(.opacity)
         }
     }
 
@@ -623,6 +637,14 @@ struct Composer: View {
             // Input cluster: the composer body supplies the darker fill, so
             // this row stays flat like the desktop central panel.
             HStack(spacing: 8) {
+                // Idle/unfocused: the collapsed control row is gone, so surface a
+                // tiny picker pill in the input's top-left corner (the transcript
+                // keeps the reclaimed vertical space). Solo chats only — ensemble
+                // uses the roster, not this picker.
+                if !isExpanded && !card.isEnsemble {
+                    compactModelPickerControl
+                    pendingProviderPill
+                }
                 #if canImport(UIKit)
                     // Ensembles included: steer now carries attachments.
                     photosButton
