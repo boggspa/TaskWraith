@@ -3937,8 +3937,37 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               return
                             }
                             if (ensembleBinding) {
-                              updateSelectedParticipantWithNotice({
-                                permissionPresetId: nextPermissionPreset
+                              // Participant raises pass through the same two-tier
+                              // elevation failsafe as solo chats. `from` derives
+                              // from the participant's own preset (not the
+                              // chat-level approvalMode); full_access never
+                              // reaches here — it's intercepted above into the
+                              // TrustedSessionConfirmSheet.
+                              const applyParticipantSelection = (): void => {
+                                updateSelectedParticipantWithNotice({
+                                  permissionPresetId: nextPermissionPreset
+                                })
+                              }
+                              const participantElevation = decideApprovalElevation({
+                                from: presetToApprovalMode(effectiveSelectedPermission),
+                                to: presetToApprovalMode(nextPermissionPreset),
+                                provider: effectiveProvider,
+                                workspacePath: currentWorkspacePath,
+                                acknowledgedDefault: acknowledgedElevationDefaults
+                              })
+                              if (!participantElevation) {
+                                applyParticipantSelection()
+                                return
+                              }
+                              setPendingElevation({
+                                tier: participantElevation.tier,
+                                provider: effectiveProvider,
+                                workspaceLabel: currentWorkspace?.displayName ?? null,
+                                ackKey: participantElevation.ackKey,
+                                persistAck: participantElevation.persistAckOnConfirm,
+                                toMode: presetToApprovalMode(nextPermissionPreset),
+                                permissionPresetId: nextPermissionPreset,
+                                apply: applyParticipantSelection
                               })
                               return
                             }

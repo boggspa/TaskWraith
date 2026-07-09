@@ -4,8 +4,11 @@
  * Storage-agnostic on purpose: the caller owns where the "already acknowledged
  * Default approval" set is persisted (an AppSettings map keyed by
  * workspace+provider) and just passes it in. This module only decides *whether*
- * to warn and at *which tier*, so it is trivially unit-testable and can't collide
- * with the composer / store wiring (which is deferred until that area is stable).
+ * to warn and at *which tier*, so it is trivially unit-testable. Live callers:
+ * the composer permission picker (solo AND ensemble-participant raises, in
+ * Composer.tsx; full_access raises route to the TrustedSessionConfirmSheet
+ * instead), the side-chat picker (MainAppLayout.tsx), and the plan-import
+ * policy flow (App.tsx setPlanImportPolicy).
  *
  * Tiers (mirrors the Claude / Codex desktop failsafes):
  *  - Tier 1 — raising up to Default Approval ('default'): a small, reassuring
