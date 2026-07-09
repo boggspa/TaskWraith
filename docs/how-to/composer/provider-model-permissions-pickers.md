@@ -21,7 +21,7 @@ In the **composer's inline pickers row**, just below the prompt input. Each cont
 3. Pick a model in the left column — disabled or retiring models show a reason or a retirement date pill.
 4. Pick a reasoning effort in the right column (e.g. Low/Medium/High/Extra High for Codex, or Extra/Max/Ultracode for Claude). For Codex and Claude models that support it, toggle **Fast mode** at the bottom of the Reasoning column for the paid fast tier.
 5. Click the **permissions chip** to open the Permissions popover. Choose **Plan**, **Read-Only/Recon**, **Default Approval**, **Workspace Write**, or **Trusted Session** on the left; if a workspace is active, toggle individual **Tool Grants** on the right. Plan and Read-Only/Recon both keep ordinary tools read-only, but Plan can save the narrow markdown plan artifact used by proposed-plan cards.
-6. Raising to **Trusted Session** shows a confirmation sheet with an explicit risk acknowledgement before it applies (see [Permission Elevation Sheet](../approvals-and-permissions/permission-elevation-sheet.md)); the other presets apply immediately.
+6. Raising the preset asks first: **Default Approval** shows a one-time notice per workspace, while **Workspace Write** and **Trusted Session** show a confirmation sheet with an explicit risk acknowledgement every time (see [Permission Elevation Sheet](../approvals-and-permissions/permission-elevation-sheet.md)). Lowering a preset applies immediately.
 7. If a normal chat is currently running, provider/model/reasoning changes do
    not interrupt that in-flight turn. The picker keeps your latest selection and
    the change applies at turn end. A same-provider model/reasoning change keeps
