@@ -155,13 +155,15 @@ struct ModelContextLengthsTests {
 
     // MARK: - Grok group
 
-    @Test("grok grok-build: 256_000 / 256k")
-    func grokBuild() {
+    @Test("grok grok-4.5: 500_000 / 500k")
+    func grok45() {
+        // The primary grok CLI model is Grok 4.5 (500k); it replaced grok-build in
+        // buildGroups when Grok 4.5 landed (1db1f1d8c).
         let groups = ModelContextLengths.buildGroups()
         let row = groups.first { $0.provider == "grok" }?
-            .models.first { $0.modelId == "grok-build" }
-        #expect(row?.contextWindow == 256_000)
-        #expect(row?.formatted == "256k")
+            .models.first { $0.modelId == "grok-4.5" }
+        #expect(row?.contextWindow == 500_000)
+        #expect(row?.formatted == "500k")
     }
 
     // MARK: - Gemini group
