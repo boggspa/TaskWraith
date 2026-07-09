@@ -62,7 +62,6 @@ import { LiveThreadTokenTally } from '../components/LiveThreadTokenTally'
 import { MultiviewLayoutPicker } from '../components/MultiviewLayoutPicker'
 import { CanvasComposerButton } from '../components/CanvasComposerButton'
 import { QueuedMessagesAboveRow } from '../components/QueuedMessagesAboveRow'
-import { ProviderBadgeIcon } from '../components/Sidebar'
 import { WelcomeHeatmaps } from '../components/WelcomeHeatmaps'
 import { WelcomeWorkspacePicker } from '../components/WelcomeWorkspacePicker'
 import { WorkflowComposeControls } from '../components/WorkflowComposeControls'
@@ -1651,46 +1650,10 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                             </>
                           )}
                         </p>
-                        <div
-                          className="ensemble-hierarchy-chain"
-                          role="list"
-                          aria-label="Ensemble orchestration order"
-                        >
-                          {orderedEnabled.map((participant, idx) => (
-                            <div key={participant.id} className="ensemble-hierarchy-chain-step">
-                              <button
-                                type="button"
-                                className={`ensemble-hierarchy-tile provider-${participant.provider} ${
-                                  effectiveSelectedParticipantId === participant.id ? 'is-selected' : ''
-                                }`}
-                                role="listitem"
-                                title={`${participant.role || participant.provider} — speaks at position ${idx + 1}. Click to edit.`}
-                                onClick={(event) => {
-                                  handleSelectParticipant(participant.id)
-                                  setWelcomeParticipantOverflow({
-                                    participantId: participant.id,
-                                    anchor: event.currentTarget
-                                  })
-                                }}
-                              >
-                                <ProviderBadgeIcon provider={participant.provider} />
-                                <div className="ensemble-hierarchy-tile-text">
-                                  <span className="ensemble-hierarchy-tile-role">
-                                    {participant.role || participant.provider}
-                                  </span>
-                                  <span className="ensemble-hierarchy-tile-provider">
-                                    {participant.provider}
-                                  </span>
-                                </div>
-                              </button>
-                              {idx < orderedEnabled.length - 1 && (
-                                <span className="ensemble-hierarchy-arrow" aria-hidden>
-                                  →
-                                </span>
-                              )}
-                            </div>
-                          ))}
-                        </div>
+                        {/* The ordered-provider chip chain that used to sit here
+                            was removed — the speaking order is already shown by the
+                            composer chip strip below and its per-provider filter
+                            icons, so the duplicate welcome-hero chain was redundant. */}
                         {welcomeParticipantOverflow && currentChat?.ensemble
                           ? (() => {
                               const overflowParticipant = currentChat.ensemble.participants.find(
