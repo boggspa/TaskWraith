@@ -404,6 +404,45 @@ describe('RemoteThreadProjection', () => {
       ])
     })
 
+    it('tags an ensemble-round close-out row with its round (so the iOS card anchors after it)', () => {
+      const snap = project(
+        { kind: 'latestN', n: 50 },
+        [
+          msg(1, { id: 'ensemble-a', runId: 'run-a', metadata: { ensembleRoundId: 'round-1' } }),
+          msg(2, {
+            id: 'closeout-round-1',
+            role: 'system',
+            content: '**Worked for 1m**\n\nClose-out:\n- Status: complete.',
+            metadata: { kind: 'taskWraithCloseout', closeoutRoundId: 'round-1' }
+          })
+        ]
+      )
+      const closeoutRow = snap.rows.find((row) => row.id === 'closeout-round-1')
+      expect(closeoutRow?.speaker).toBe('TaskWraith')
+      // Inherits the round id from closeoutRoundId → it is the round's last
+      // tagged row, so iOS anchors the Task-complete card after the close-out.
+      expect(closeoutRow?.ensembleRoundId).toBe('round-1')
+    })
+
+    it('leaves a run-scoped close-out untagged by any round', () => {
+      const snap = project(
+        { kind: 'latestN', n: 50 },
+        [
+          msg(1, { id: 'run-msg', runId: 'run-solo' }),
+          msg(2, {
+            id: 'closeout-run',
+            role: 'system',
+            content: '**Worked for 1m**\n\nClose-out:\n- Status: complete.',
+            runId: 'run-solo',
+            metadata: { kind: 'taskWraithCloseout', closeoutScope: 'run' }
+          })
+        ]
+      )
+      const closeoutRow = snap.rows.find((row) => row.id === 'closeout-run')
+      expect(closeoutRow?.speaker).toBe('TaskWraith')
+      expect(closeoutRow?.ensembleRoundId).toBeUndefined()
+    })
+
     it('projects ensemble participant identity for mobile run detail tables', () => {
       const runs = [
         {

@@ -1531,6 +1531,16 @@ function buildRow(
   const metadata = message.metadata as Record<string, unknown> | undefined
   if (metadata?.kind === TASKWRAITH_CLOSEOUT_KIND) {
     row.speaker = 'TaskWraith'
+    // Associate an ensemble-ROUND close-out with its round so the iOS
+    // completion (Task-complete) card anchors AFTER the close-out, not before
+    // it. A round close-out carries `closeoutRoundId` (not `ensembleRoundId`),
+    // so it would otherwise project round-less; iOS anchors the card to the
+    // round's last *tagged* row, and an untagged close-out then renders after
+    // the card. Run-scoped close-outs already carry the run's `runId`, so they
+    // are the run's last row and need no help here.
+    if (typeof metadata.closeoutRoundId === 'string' && metadata.closeoutRoundId.trim()) {
+      row.ensembleRoundId = metadata.closeoutRoundId.trim()
+    }
   }
   const rowMedia = [...buildRowMedia(metadata), ...buildToolActivityMedia(message)].slice(
     0,
