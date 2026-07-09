@@ -44,7 +44,8 @@ const previewModelForPicker = (entry: PreviewModelCatalogEntry): CodexModelOptio
   ...(entry.supportedReasoningEfforts
     ? { supportedReasoningEfforts: entry.supportedReasoningEfforts }
     : {}),
-  ...(entry.defaultReasoningEffort ? { defaultReasoningEffort: entry.defaultReasoningEffort } : {})
+  ...(entry.defaultReasoningEffort ? { defaultReasoningEffort: entry.defaultReasoningEffort } : {}),
+  ...(entry.additionalSpeedTiers ? { additionalSpeedTiers: entry.additionalSpeedTiers } : {})
 })
 
 const CODEX_DEFAULT_MODELS = [

@@ -21,6 +21,8 @@ export interface PreviewModelCatalogEntry {
     disabledReason?: string
   }>
   defaultReasoningEffort?: string | null
+  /** Paid speed tiers this model exposes (e.g. ['fast']). Absent = standard only. */
+  additionalSpeedTiers?: string[]
 }
 
 export const PREVIEW_MODEL_ACCESS_REASON = 'Requires preview access'
@@ -58,7 +60,8 @@ export const PREVIEW_MODEL_CATALOG: PreviewModelCatalogEntry[] = [
     previewFamily: 'gpt-5.6',
     previewRole: 'Hardest long-horizon coding/research',
     supportedReasoningEfforts: OPENAI_GPT56_SOL_REASONING_EFFORTS,
-    defaultReasoningEffort: 'medium'
+    defaultReasoningEffort: 'medium',
+    additionalSpeedTiers: ['fast']
   },
   {
     id: 'gpt-5.6-terra',
@@ -72,7 +75,8 @@ export const PREVIEW_MODEL_CATALOG: PreviewModelCatalogEntry[] = [
     previewFamily: 'gpt-5.6',
     previewRole: 'Strong everyday advanced agentic work',
     supportedReasoningEfforts: OPENAI_GPT56_REASONING_EFFORTS,
-    defaultReasoningEffort: 'medium'
+    defaultReasoningEffort: 'medium',
+    additionalSpeedTiers: ['fast']
   },
   {
     id: 'gpt-5.6-luna',
@@ -86,7 +90,8 @@ export const PREVIEW_MODEL_CATALOG: PreviewModelCatalogEntry[] = [
     previewFamily: 'gpt-5.6',
     previewRole: 'Fast triage, board planning, summarization, lightweight subagents',
     supportedReasoningEfforts: OPENAI_GPT56_REASONING_EFFORTS,
-    defaultReasoningEffort: 'medium'
+    defaultReasoningEffort: 'medium',
+    additionalSpeedTiers: ['fast']
   }
 ]
 

@@ -536,6 +536,9 @@ function previewModelForPicker(entry: PreviewModelCatalogEntry) {
       : {}),
     ...(entry.defaultReasoningEffort
       ? { defaultReasoningEffort: entry.defaultReasoningEffort }
+      : {}),
+    ...(entry.additionalSpeedTiers
+      ? { additionalSpeedTiers: entry.additionalSpeedTiers }
       : {})
   }
 }
