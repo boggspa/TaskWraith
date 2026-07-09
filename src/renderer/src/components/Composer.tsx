@@ -47,7 +47,7 @@ import type {
   ContinuousHopsGoalStatus,
   ContinuousHopsRoundStatus
 } from '../components/ContinuousHopsLimitChip'
-import { EnsembleParticipantOverflowPopover, EnsembleParticipantsAboveRow } from '../components/EnsembleParticipantsAboveRow'
+import { EnsembleParticipantsAboveRow } from '../components/EnsembleParticipantsAboveRow'
 import { EnsembleRosterPresetPicker } from '../components/EnsembleRosterPresetPicker'
 import { ExternalPathAboveRow } from '../components/ExternalPathAboveRow'
 import { ExternalPathGrantPromptCard } from '../components/ExternalPathGrantPromptCard'
@@ -421,7 +421,6 @@ export interface ComposerProps {
   setSelectedModelType: any
   setSessionTrust: any
   setShowWorkSessionSheet: any
-  setWelcomeParticipantOverflow: any
   setWorkflowDraft: any
   settings: any
   shouldShowGhostCompanion: any
@@ -443,7 +442,6 @@ export interface ComposerProps {
   visibleScheduledTasks: any
   welcomeCopy: any
   welcomeHeatmapSlots: any
-  welcomeParticipantOverflow: any
   workflowDraft: any
   workflowForCurrentChat: any
   workflowMode?: ChatWorkflowMode
@@ -727,7 +725,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     setSelectedModelType,
     setSessionTrust,
     setShowWorkSessionSheet,
-    setWelcomeParticipantOverflow,
     setWorkflowDraft,
     settings,
     shouldShowGhostCompanion,
@@ -748,7 +745,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     visibleScheduledTasks,
     welcomeCopy,
     welcomeHeatmapSlots,
-    welcomeParticipantOverflow,
     workflowDraft,
     workflowForCurrentChat,
     workflowMode,
@@ -782,19 +778,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
       setSeatChangeNoticeRoundKey(activeSeatChangeNoticeRoundKey)
     }
     updateSelectedParticipant(patch)
-  }
-  const patchEnsembleParticipantByIdWithNotice = (
-    participantId: string,
-    patch: Partial<EnsembleParticipant>
-  ): void => {
-    if (
-      activeSeatChangeNoticeRoundKey &&
-      dismissedSeatChangeNoticeRoundKey !== activeSeatChangeNoticeRoundKey &&
-      patchTouchesProviderOrModel(patch)
-    ) {
-      setSeatChangeNoticeRoundKey(activeSeatChangeNoticeRoundKey)
-    }
-    patchEnsembleParticipantById(participantId, patch)
   }
 
   useEffect(() => {
@@ -1654,139 +1637,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                             was removed — the speaking order is already shown by the
                             composer chip strip below and its per-provider filter
                             icons, so the duplicate welcome-hero chain was redundant. */}
-                        {welcomeParticipantOverflow && currentChat?.ensemble
-                          ? (() => {
-                              const overflowParticipant = currentChat.ensemble.participants.find(
-                                (participant) =>
-                                  participant.id === welcomeParticipantOverflow.participantId
-                              )
-                              if (!overflowParticipant) return null
-                              const persistWelcomeEnsemblePatch = (patch: Record<string, unknown>) => {
-                                if (!currentChat?.ensemble) return
-                                const updatedChat = {
-                                  ...currentChat,
-                                  ensemble: {
-                                    ...currentChat.ensemble,
-                                    ...patch,
-                                    updatedAt: new Date().toISOString()
-                                  }
-                                }
-                                chatByIdRef.current.set(updatedChat.appChatId, updatedChat)
-                                setCurrentChat((prev) =>
-                                  prev?.appChatId === updatedChat.appChatId ? updatedChat : prev
-                                )
-                                setChats((prev) =>
-                                  prev.map((c) =>
-                                    c.appChatId === updatedChat.appChatId ? updatedChat : c
-                                  )
-                                )
-                                void window.api.saveChat(updatedChat)
-                              }
-                              return (
-                                <EnsembleParticipantOverflowPopover
-                                  anchor={welcomeParticipantOverflow.anchor}
-                                  participant={overflowParticipant}
-                                  mentionParticipants={currentChat.ensemble.participants}
-                                  onPatch={(patch) =>
-                                    patchEnsembleParticipantByIdWithNotice(overflowParticipant.id, patch)
-                                  }
-                                  isBossman={
-                                    currentChat.ensemble.bossmanParticipantId ===
-                                    overflowParticipant.id
-                                  }
-                                  isSecondInCommand={
-                                    currentChat.ensemble.secondInCommandParticipantId ===
-                                      overflowParticipant.id &&
-                                    currentChat.ensemble.bossmanParticipantId !==
-                                      overflowParticipant.id
-                                  }
-                                  autoApprovalsEnabled={
-                                    (currentChat.ensemble.bossmanParticipantId ===
-                                      overflowParticipant.id ||
-                                      (currentChat.ensemble.secondInCommandParticipantId ===
-                                        overflowParticipant.id &&
-                                        currentChat.ensemble.bossmanParticipantId !==
-                                          overflowParticipant.id)) &&
-                                    currentChat.ensemble.bossmanAutoApprovals?.enabled === true
-                                  }
-                                  onSetBossman={(participantId) => {
-                                    const nextBossmanParticipantId =
-                                      participantId &&
-                                      currentChat.ensemble?.participants.some(
-                                        (participant) => participant.id === participantId
-                                      )
-                                        ? participantId
-                                        : undefined
-                                    const existingSecondInCommandParticipantId =
-                                      currentChat.ensemble?.secondInCommandParticipantId
-                                    const nextSecondInCommandParticipantId =
-                                      existingSecondInCommandParticipantId &&
-                                      existingSecondInCommandParticipantId !==
-                                        nextBossmanParticipantId
-                                        ? existingSecondInCommandParticipantId
-                                        : undefined
-                                    persistWelcomeEnsemblePatch({
-                                      bossmanParticipantId: nextBossmanParticipantId,
-                                      secondInCommandParticipantId:
-                                        nextSecondInCommandParticipantId,
-                                      bossmanAutoApprovals:
-                                        (nextBossmanParticipantId &&
-                                          nextBossmanParticipantId ===
-                                            currentChat.ensemble?.bossmanParticipantId) ||
-                                        (!nextBossmanParticipantId &&
-                                          nextSecondInCommandParticipantId)
-                                          ? currentChat.ensemble?.bossmanAutoApprovals
-                                          : undefined
-                                    })
-                                  }}
-                                  onSetSecondInCommand={(participantId) => {
-                                    const nextSecondInCommandParticipantId =
-                                      participantId &&
-                                      participantId !== currentChat.ensemble?.bossmanParticipantId &&
-                                      currentChat.ensemble?.participants.some(
-                                        (participant) => participant.id === participantId
-                                      )
-                                        ? participantId
-                                        : undefined
-                                    persistWelcomeEnsemblePatch({
-                                      secondInCommandParticipantId:
-                                        nextSecondInCommandParticipantId,
-                                      bossmanAutoApprovals:
-                                        currentChat.ensemble?.bossmanParticipantId ||
-                                        nextSecondInCommandParticipantId
-                                          ? currentChat.ensemble?.bossmanAutoApprovals
-                                          : undefined
-                                    })
-                                  }}
-                                  onToggleBossmanAutoApprovals={(enabled) => {
-                                    if (
-                                      !currentChat.ensemble?.bossmanParticipantId &&
-                                      !currentChat.ensemble?.secondInCommandParticipantId
-                                    ) {
-                                      return
-                                    }
-                                    if (enabled) {
-                                      const confirmed = window.confirm(
-                                        'Allow Boss/Captain Auto Approvals for this Ensemble? Boss remains primary; Captain can only use this consent when Boss is unavailable. Approvals stay one-shot and limited to the selected participant permission preset and workspace policy. This will not grant session/workspace approval, YOLO, policy changes, external-path escapes, or unclassified requests.'
-                                      )
-                                      if (!confirmed) return
-                                    }
-                                    persistWelcomeEnsemblePatch({
-                                      bossmanAutoApprovals: enabled
-                                        ? {
-                                            enabled: true,
-                                            mode: 'permission_preset_once',
-                                            confirmedAt: new Date().toISOString()
-                                          }
-                                        : undefined
-                                    })
-                                  }}
-                                  locked={isCurrentEnsembleRoundRunning}
-                                  onClose={() => setWelcomeParticipantOverflow(null)}
-                                />
-                              )
-                            })()
-                          : null}
                       </>
                     )}
                     {/* Workspace picker on the ensemble welcome too —

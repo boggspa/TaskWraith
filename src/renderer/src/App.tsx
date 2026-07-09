@@ -2865,10 +2865,6 @@ function App(): React.JSX.Element {
   // handleImportPlanSlashCommand) all live in <Composer> now. App-level slash
   // `run()` closures that need to read or mutate the composer receive a
   // SlashCommandRunContext at dispatch time instead of reaching into globals.
-  const [welcomeParticipantOverflow, setWelcomeParticipantOverflow] = useState<{
-    participantId: string
-    anchor: HTMLElement
-  } | null>(null)
   const [goalPopoverOpen, setGoalPopoverOpen] = useState(false)
   const [goalDraft, setGoalDraft] = useState('')
   const [goalEditing, setGoalEditing] = useState(false)
@@ -24320,7 +24316,6 @@ function App(): React.JSX.Element {
       setRawLogs,
       setSessionTrust,
       setShowWorkSessionSheet,
-      setWelcomeParticipantOverflow,
       setWorkflowDraft,
       settings,
       showComposerChips,
@@ -24335,7 +24330,6 @@ function App(): React.JSX.Element {
       updateCurrentEnsembleOrchestrationMode,
       updateSelectedParticipant,
       visibleScheduledTasks,
-      welcomeParticipantOverflow,
       workflowDraft,
       workflowIntervalMinutes,
       workspaceDiffStats,
@@ -24447,7 +24441,6 @@ function App(): React.JSX.Element {
       setRawLogs,
       setSessionTrust,
       setShowWorkSessionSheet,
-      setWelcomeParticipantOverflow,
       setWorkflowDraft,
       settings,
       showComposerChips,
@@ -24462,7 +24455,6 @@ function App(): React.JSX.Element {
       updateCurrentEnsembleOrchestrationMode,
       updateSelectedParticipant,
       visibleScheduledTasks,
-      welcomeParticipantOverflow,
       workflowDraft,
       workflowIntervalMinutes,
       workspaceDiffStats,

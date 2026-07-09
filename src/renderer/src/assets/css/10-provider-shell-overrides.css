@@ -3739,57 +3739,6 @@
     [data-composer-style="obsidian"]
   )
   .app-transcript.welcome-mode
-  .ensemble-hierarchy-tile {
-  background: rgba(255, 255, 255, 0.68) !important;
-  border-color: color-mix(in srgb, var(--panel-border) 58%, rgba(29, 29, 31, 0.14)) !important;
-  color: rgba(29, 29, 31, 0.86) !important;
-  box-shadow: 0 5px 16px rgba(60, 70, 110, 0.06) !important;
-}
-
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]):is(
-    [data-interface-style="obsidian"],
-    [data-composer-style="obsidian"]
-  )
-  .app-transcript.welcome-mode
-  .ensemble-hierarchy-tile:hover {
-  background: rgba(255, 255, 255, 0.86) !important;
-  border-color: color-mix(in srgb, var(--accent) 30%, rgba(29, 29, 31, 0.14)) !important;
-}
-
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]):is(
-    [data-interface-style="obsidian"],
-    [data-composer-style="obsidian"]
-  )
-  .app-transcript.welcome-mode
-  :is(.ensemble-hierarchy-tile-role, .ensemble-hierarchy-tile-provider) {
-  color: inherit !important;
-  -webkit-text-fill-color: inherit !important;
-}
-
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]):is(
-    [data-interface-style="obsidian"],
-    [data-composer-style="obsidian"]
-  )
-  .app-transcript.welcome-mode
-  .ensemble-hierarchy-tile-provider {
-  color: rgba(29, 29, 31, 0.5) !important;
-  -webkit-text-fill-color: rgba(29, 29, 31, 0.5) !important;
-}
-
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]):is(
-    [data-interface-style="obsidian"],
-    [data-composer-style="obsidian"]
-  )
-  .app-transcript.welcome-mode
-  .ensemble-hierarchy-arrow {
-  color: rgba(29, 29, 31, 0.24) !important;
-}
-
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]):is(
-    [data-interface-style="obsidian"],
-    [data-composer-style="obsidian"]
-  )
-  .app-transcript.welcome-mode
   .welcome-workspace-picker-label {
   color: rgba(29, 29, 31, 0.48) !important;
 }
