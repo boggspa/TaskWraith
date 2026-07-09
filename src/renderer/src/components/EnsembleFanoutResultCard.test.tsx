@@ -67,6 +67,39 @@ describe('EnsembleFanoutResultCard', () => {
     expect(html).toContain('<strong>Scout finding</strong>')
   })
 
+  it('themes each card with its own participant accent, not the pane accent', () => {
+    const html = renderToStaticMarkup(
+      <EnsembleFanoutResultCard message={fanoutMessage()} onPreviewImage={() => {}} />
+    )
+
+    // Codex participant → codex hue class + --accent pinned to the codex brand
+    // token, so the card frame/badge paint codex regardless of the surrounding
+    // transcript's provider tint.
+    expect(html).toContain('ensemble-fanout-result-card provider-codex')
+    expect(html).toContain('--accent:var(--provider-codex-color, var(--accent))')
+  })
+
+  it('spoofs the upstream brand accent for Ollama-backed participants', () => {
+    const html = renderToStaticMarkup(
+      <EnsembleFanoutResultCard
+        message={fanoutMessage({
+          metadata: {
+            ...fanoutMessage().metadata,
+            ensembleProvider: 'ollama',
+            ensembleModel: 'qwen3.5:9b'
+          }
+        })}
+        onPreviewImage={() => {}}
+      />
+    )
+
+    // A Qwen model on Ollama paints Alibaba purple (matching the mention chips),
+    // not generic Ollama green.
+    expect(html).toContain('provider-alibaba')
+    expect(html).toContain('--accent:var(--provider-alibaba-color, var(--accent))')
+    expect(html).not.toContain('provider-ollama')
+  })
+
   it('labels write-intent lanes as writer fan-out', () => {
     const html = renderToStaticMarkup(
       <EnsembleFanoutResultCard

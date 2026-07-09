@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useMemo, type CSSProperties } from 'react'
 import type {
   ChatMessage,
   ChatRecord,
@@ -8,6 +8,7 @@ import type {
 import { shortModelName } from '../lib/composerChipFormat'
 import { collectInlineImageRefIds } from '../lib/resolveMarkdownImageRef'
 import { getProviderLabel } from '../lib/providerLabels'
+import { resolveProviderHueClass } from '../lib/ollamaDisplayBrand'
 import { ActivityStack, type ThinkingTraceActionsConfig } from './ActivityStack'
 import { LiveActivityViewport } from './LiveActivityViewport'
 import { MarkdownMessage } from './MarkdownMessage'
@@ -153,6 +154,19 @@ export function EnsembleFanoutResultCard({
   const providerLabel = provider ? getProviderLabel(provider) : 'Participant'
   const role = textValue(metadata.ensembleRole) || providerLabel
   const model = textValue(metadata.ensembleModel)
+  // Each fan-out card wears the accent of the participant that produced it,
+  // not the pane/host accent. `resolveProviderHueClass` maps (provider, model)
+  // to a CSS hue class — the same helper the @-mention chips + above-row use —
+  // so an Ollama-backed model spoofs its upstream brand (e.g. Qwen → Alibaba
+  // purple) instead of generic Ollama green. The card's `--accent` is pinned
+  // to that brand token here (falling back to the global accent when unknown);
+  // the card CSS derives its border, glyph, gradient, and provider badge from
+  // it, so the container is self-contained rather than inheriting whatever
+  // provider the surrounding transcript happens to be tinted with.
+  const hueClass = resolveProviderHueClass(provider, model) || 'unknown'
+  const cardAccentStyle = {
+    '--accent': `var(--provider-${hueClass}-color, var(--accent))`
+  } as CSSProperties
   const modelBadge = provider && model ? shortModelName(provider, '', model) : model
   const laneId = textValue(metadata.ensembleLaneId)
   const order = numberValue(metadata.ensembleOrder)
@@ -199,14 +213,14 @@ export function EnsembleFanoutResultCard({
   const collapsedResult = !expandedResult
 
   return (
-    <article className={`ensemble-fanout-result-card provider-${provider || 'unknown'}`}>
+    <article className={`ensemble-fanout-result-card provider-${hueClass}`} style={cardAccentStyle}>
       <header className="ensemble-fanout-result-header">
         <div className="ensemble-fanout-result-heading">
           <span aria-hidden="true" className="ensemble-fanout-result-glyph">
             ↠
           </span>
           <span className="ensemble-fanout-result-label">{laneLabel(message)}</span>
-          <span className={`ensemble-fanout-result-provider provider-${provider || 'unknown'}`}>
+          <span className={`ensemble-fanout-result-provider provider-${hueClass}`}>
             {providerLabel}
           </span>
           <strong className="ensemble-fanout-result-title">{role}</strong>

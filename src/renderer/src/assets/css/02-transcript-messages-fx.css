@@ -5683,10 +5683,14 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
 .ensemble-fanout-result-card {
   width: min(100%, 860px);
   position: relative;
+  /* --accent is pinned per participant on the element (EnsembleFanoutResultCard
+     sets it from the card's own provider/brand hue), so the frame + wash derive
+     from --accent rather than the pane-inherited --agent-accent-rgb — each card
+     wears its participant's colour instead of the surrounding transcript's. */
   border: 1px solid color-mix(in srgb, var(--accent) 34%, transparent);
   border-radius: 8px;
   background:
-    linear-gradient(135deg, rgb(var(--agent-accent-rgb, 255 255 255) / 0.1), transparent 56%),
+    linear-gradient(135deg, color-mix(in srgb, var(--accent) 10%, transparent), transparent 56%),
     rgb(255 255 255 / 0.032);
   box-shadow: 0 12px 28px rgb(0 0 0 / 0.13);
   color: var(--text-primary);
@@ -5727,9 +5731,10 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   display: inline-flex;
   align-items: center;
   min-height: 22px;
-  border: 1px solid rgb(var(--agent-accent-rgb, 255 255 255) / 0.24);
+  /* Provider badge tracks the card's per-participant --accent (see card note). */
+  border: 1px solid color-mix(in srgb, var(--accent) 24%, transparent);
   border-radius: 7px;
-  background: rgb(var(--agent-accent-rgb, 255 255 255) / 0.11);
+  background: color-mix(in srgb, var(--accent) 11%, transparent);
   color: var(--text-primary);
   font-size: var(--font-size-xs);
   font-weight: 700;
