@@ -136,6 +136,22 @@ public struct FirstLaunchNotice: Codable, Sendable, Identifiable, Hashable {
     public let accent: String?
     public let icon: String?
     public let dismissible: Bool?
+    /// "New Additions" grouped content — provider headings, each with its own
+    /// newly-added models. Nil for plain title/body notices.
+    public let groups: [FirstLaunchNoticeGroup]?
+}
+
+/// One newly-added model under a provider heading in a "New Additions" notice.
+public struct FirstLaunchNoticeModel: Codable, Sendable, Hashable {
+    public let name: String
+    public let blurb: String
+}
+
+/// One provider heading + its newly-added models in a "New Additions" notice.
+public struct FirstLaunchNoticeGroup: Codable, Sendable, Hashable {
+    public let provider: String
+    public let label: String
+    public let models: [FirstLaunchNoticeModel]
 }
 
 public struct FirstLaunchWorkspaceSummary: Codable, Sendable, Hashable {

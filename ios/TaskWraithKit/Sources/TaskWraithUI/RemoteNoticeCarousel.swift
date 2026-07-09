@@ -89,10 +89,14 @@ struct RemoteNoticeCard: View {
                 Text(notice.title)
                     .font(.footnote.weight(.semibold))
                     .foregroundStyle(TWTheme.textPrimary)
-                Text(notice.body)
-                    .font(.caption)
-                    .foregroundStyle(TWTheme.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                if let groups = notice.groups, !groups.isEmpty {
+                    RemoteNoticeGroupsView(groups: groups)
+                } else {
+                    Text(notice.body)
+                        .font(.caption)
+                        .foregroundStyle(TWTheme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
         }
         .padding(12)
@@ -158,5 +162,34 @@ struct RemoteNoticeCard: View {
         }
         if accentKey == "ensemble" { return TWTheme.statusSuccess.opacity(0.42) }
         return TWTheme.border
+    }
+}
+
+/// "New Additions" grouped content — provider heading + its newly-added
+/// models, each model name bold+hued and its blurb the same hue at regular
+/// weight. Hue comes from `TWTheme.providerAccent`, matching the same tokens
+/// the Electron notification card uses (one card spans several providers
+/// here, so this ignores the card's own single accentColor).
+private struct RemoteNoticeGroupsView: View {
+    let groups: [FirstLaunchNoticeGroup]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(groups, id: \.provider) { group in
+                let accent = TWTheme.providerAccent(group.provider)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(group.label)
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(accent)
+                    ForEach(group.models, id: \.name) { model in
+                        (Text(model.name).fontWeight(.bold)
+                            + Text(" - \(model.blurb)").fontWeight(.regular))
+                            .font(.caption2)
+                            .foregroundStyle(accent)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+        }
     }
 }

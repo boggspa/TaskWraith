@@ -46,4 +46,38 @@ struct FirstLaunchStateDecodeTests {
         #expect(message.state.providerCards.first?.usageWindows.first?.usedPercent == 28)
         #expect(message.state.ollamaModelCommands.first?.command == "ollama run qwen3:4b-instruct")
     }
+
+    @Test("decodes a \"New Additions\" notice's grouped provider/model content")
+    func decodesNewAdditionsGroups() throws {
+        let json = """
+        {"id":"new-additions-2026-07-09","kind":"addition","title":"New Additions","body":"Summary fallback.","tone":"default","dismissible":true,
+         "groups":[
+          {"provider":"claude","label":"Claude","models":[
+            {"name":"Sonnet 5","blurb":"Fast model for coding and professional work."},
+            {"name":"Fable 5","blurb":"Frontier tier above Opus."}
+          ]},
+          {"provider":"ollama","label":"Ollama","models":[
+            {"name":"Deep Reinforce - Ornith 9B + Ornith 35B","blurb":"Open-source models for agentic coding."}
+          ]}
+         ]}
+        """
+        let notice = try JSONDecoder().decode(FirstLaunchNotice.self, from: Data(json.utf8))
+
+        #expect(notice.groups?.count == 2)
+        #expect(notice.groups?.first?.provider == "claude")
+        #expect(notice.groups?.first?.label == "Claude")
+        #expect(notice.groups?.first?.models.map(\.name) == ["Sonnet 5", "Fable 5"])
+        #expect(notice.groups?.first?.models.first?.blurb == "Fast model for coding and professional work.")
+        #expect(notice.groups?.last?.provider == "ollama")
+        #expect(notice.groups?.last?.models.first?.name == "Deep Reinforce - Ornith 9B + Ornith 35B")
+    }
+
+    @Test("a notice without groups decodes groups as nil")
+    func decodesNilGroupsWhenAbsent() throws {
+        let json = """
+        {"id":"plain","kind":"info","title":"Plain notice","body":"No groups here.","tone":"default","dismissible":true}
+        """
+        let notice = try JSONDecoder().decode(FirstLaunchNotice.self, from: Data(json.utf8))
+        #expect(notice.groups == nil)
+    }
 }
