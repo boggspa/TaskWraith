@@ -59,7 +59,8 @@ const CODEX_REASONING: CombinedModelPickerReasoningOption[] = [
 ]
 const CODEX_SOL_REASONING: CombinedModelPickerReasoningOption[] = [
   ...CODEX_REASONING,
-  { value: 'max', label: codexReasoningDisplayLabel('max') }
+  { value: 'max', label: codexReasoningDisplayLabel('max') },
+  { value: 'ultracode', label: codexReasoningDisplayLabel('ultracode') }
 ]
 
 const CLAUDE_REASONING_UNAVAILABLE = 'Not available for this Claude model'

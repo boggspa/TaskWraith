@@ -245,14 +245,14 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
     ).toEqual(['low', 'medium', 'high', 'xhigh'])
     expect(
       getEnsembleReasoningOptions('codex', 'gpt-5.6-sol').map((option) => option.value)
-    ).toEqual(['low', 'medium', 'high', 'xhigh', 'max'])
+    ).toEqual(['low', 'medium', 'high', 'xhigh', 'max', 'ultracode'])
     // Stale pre-un-gate placeholder ids keep resolving Sol's Max ladder so a
     // persisted roster row renders the right reasoning options.
     expect(
       getEnsembleReasoningOptions('codex', 'preview:openai:gpt-5.6:sol').map(
         (option) => option.value
       )
-    ).toEqual(['low', 'medium', 'high', 'xhigh', 'max'])
+    ).toEqual(['low', 'medium', 'high', 'xhigh', 'max', 'ultracode'])
     const sol = codex.modelOptions.find((option) => option.id === 'gpt-5.6-sol')
     expect(sol).toMatchObject({ label: 'GPT-5.6 Sol' })
     expect(sol?.disabled).toBeUndefined()

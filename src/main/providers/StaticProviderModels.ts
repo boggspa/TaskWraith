@@ -85,6 +85,12 @@ export function codexModelSupportsMaxReasoning(modelId?: string | null): boolean
   return id === 'gpt-5.6-sol' || id === 'preview:openai:gpt-5.6:sol'
 }
 
+// GPT-5.6 Sol ONLY — the sole Codex model with the Ultracode (Ultra) tier.
+export function codexModelSupportsUltracodeReasoning(modelId?: string | null): boolean {
+  const id = String(modelId || '').trim().toLowerCase()
+  return id === 'gpt-5.6-sol' || id === 'preview:openai:gpt-5.6:sol'
+}
+
 export function codexReasoningEffortsForModel<T extends CodexReasoningEffortOption>(
   modelId: string,
   efforts: readonly T[] | null | undefined
@@ -109,6 +115,10 @@ export function codexReasoningEffortsForModel<T extends CodexReasoningEffortOpti
   }
   if (codexModelSupportsMaxReasoning(modelId) && !seen.has('max')) {
     normalized.push({ reasoningEffort: 'max' })
+    seen.add('max')
+  }
+  if (codexModelSupportsUltracodeReasoning(modelId) && !seen.has('ultracode')) {
+    normalized.push({ reasoningEffort: 'ultracode' })
   }
   return normalized
 }

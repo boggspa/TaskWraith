@@ -21,7 +21,7 @@ describe('Codex provider model defaults', () => {
     }
   })
 
-  it('exposes selectable GPT-5.6 rows with Max reasoning only on Sol', () => {
+  it('exposes selectable GPT-5.6 rows with Max + Ultracode reasoning only on Sol', () => {
     const byId = new Map(CODEX_DEFAULT_MODELS.map((model) => [model.id, model]))
     expect(byId.get('gpt-5.6-sol')).toMatchObject({
       label: 'GPT-5.6 Sol',
@@ -30,7 +30,7 @@ describe('Codex provider model defaults', () => {
     })
     expect(
       byId.get('gpt-5.6-sol')?.supportedReasoningEfforts?.map((option) => option.reasoningEffort)
-    ).toEqual(['low', 'medium', 'high', 'xhigh', 'max'])
+    ).toEqual(['low', 'medium', 'high', 'xhigh', 'max', 'ultracode'])
     expect(
       byId.get('gpt-5.6-terra')?.supportedReasoningEfforts?.map((option) => option.reasoningEffort)
     ).toEqual(['low', 'medium', 'high', 'xhigh'])

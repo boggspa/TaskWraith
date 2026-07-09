@@ -36,9 +36,12 @@ const OPENAI_GPT56_REASONING_EFFORTS = [
   { reasoningEffort: 'xhigh' }
 ]
 
+// Sol is the top-tier 5.6 model: it alone gets the Max + Ultracode reasoning
+// levels (beyond the trio's shared low/medium/high/xhigh), plus Fast.
 const OPENAI_GPT56_SOL_REASONING_EFFORTS = [
   ...OPENAI_GPT56_REASONING_EFFORTS,
-  { reasoningEffort: 'max' }
+  { reasoningEffort: 'max' },
+  { reasoningEffort: 'ultracode' }
 ]
 
 // 2026-07-07 — GPT-5.6 launch-day un-gate. The trio is selectable and
