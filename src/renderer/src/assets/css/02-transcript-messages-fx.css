@@ -5732,38 +5732,24 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   white-space: nowrap;
 }
 
+/* Provider/role/model/order chips reuse the shared segmented-control-action
+   pill chrome (00-fonts-base.css) instead of a bespoke chip style, so they
+   read as the same "double-pill" family as the masthead/workspace toggles.
+   The provider chip's --primary variant tints itself from the card's own
+   per-participant --accent (see .ensemble-fanout-result-card note above);
+   the rest stay neutral. None of these are interactive, so drop the pointer
+   cursor the shared button chrome assumes. */
 .ensemble-fanout-result-provider,
+.ensemble-fanout-result-title,
 .ensemble-fanout-result-model,
 .ensemble-fanout-result-order {
-  display: inline-flex;
-  align-items: center;
-  min-height: 22px;
-  /* Provider badge tracks the card's per-participant --accent (see card note). */
-  border: 1px solid color-mix(in srgb, var(--accent) 24%, transparent);
-  border-radius: 7px;
-  background: color-mix(in srgb, var(--accent) 11%, transparent);
-  color: var(--text-primary);
-  font-size: var(--font-size-xs);
-  font-weight: 700;
-  line-height: 1;
-  padding: 0.26rem 0.45rem;
-}
-
-.ensemble-fanout-result-model,
-.ensemble-fanout-result-order {
-  border-color: rgb(255 255 255 / 0.12);
-  background: rgb(255 255 255 / 0.045);
-  color: var(--text-secondary);
+  cursor: default;
 }
 
 .ensemble-fanout-result-title {
   min-width: 0;
   overflow: hidden;
-  color: var(--text-primary);
-  font-size: var(--font-size-sm);
-  font-weight: 700;
   text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .ensemble-fanout-result-body {

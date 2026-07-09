@@ -220,13 +220,17 @@ export function EnsembleFanoutResultCard({
             ↠
           </span>
           <span className="ensemble-fanout-result-label">{laneLabel(message)}</span>
-          <span className={`ensemble-fanout-result-provider provider-${hueClass}`}>
+          <span
+            className={`segmented-control-action segmented-control-action--compact segmented-control-action--primary ensemble-fanout-result-provider provider-${hueClass}`}
+          >
             {providerLabel}
           </span>
-          <strong className="ensemble-fanout-result-title">{role}</strong>
+          <strong className="segmented-control-action segmented-control-action--compact ensemble-fanout-result-title">
+            {role}
+          </strong>
           {modelBadge && (
             <span
-              className="ensemble-fanout-result-model"
+              className="segmented-control-action segmented-control-action--compact ensemble-fanout-result-model"
               title={`Model: ${modelBadge}`}
               aria-label={`Model ${modelBadge}`}
             >
@@ -234,7 +238,10 @@ export function EnsembleFanoutResultCard({
             </span>
           )}
           {typeof order === 'number' && (
-            <span className="ensemble-fanout-result-order" title={`Participant order ${order}`}>
+            <span
+              className="segmented-control-action segmented-control-action--compact ensemble-fanout-result-order"
+              title={`Participant order ${order}`}
+            >
               #{order}
             </span>
           )}
