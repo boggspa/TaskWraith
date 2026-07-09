@@ -8883,10 +8883,13 @@
   font-weight: 400;
 }
 
-/* Ultracode — provider-hued shimmer sweep on the effort label (chip suffix).
+/* Top reasoning tiers (Max + Ultra/Ultracode) — provider-hued shimmer sweep on
+ * the effort label (chip suffix), for ANY provider whose ladder reaches them.
  * `--chip-accent` is the provider brand hue (set inline on the trigger); reuses
  * the global `text-shimmer-sweep` from transcript FX. */
 .composer-combined-picker-trigger[data-selected-reasoning="ultracode"]
+  .composer-combined-picker-trigger-suffix,
+.composer-combined-picker-trigger[data-selected-reasoning="max"]
   .composer-combined-picker-trigger-suffix {
   position: relative;
   display: inline-block;
@@ -8930,6 +8933,9 @@
 
 [data-reduce-motion="true"]
   .composer-combined-picker-trigger[data-selected-reasoning="ultracode"]
+  .composer-combined-picker-trigger-suffix,
+[data-reduce-motion="true"]
+  .composer-combined-picker-trigger[data-selected-reasoning="max"]
   .composer-combined-picker-trigger-suffix {
   animation: none;
   background-image: none;
@@ -9753,7 +9759,8 @@
   white-space: nowrap;
   color: color-mix(in srgb, var(--ladder-accent, var(--accent)) 82%, var(--text-primary));
 }
-.composer-combined-picker-ladder-value[data-ultracode='true'] {
+.composer-combined-picker-ladder-value[data-ultracode='true'],
+.composer-combined-picker-ladder-value[data-tier='max'] {
   color: color-mix(in srgb, var(--ladder-accent, var(--accent)) 88%, var(--text-primary) 12%);
 }
 .composer-combined-picker-ladder-track {
@@ -9929,23 +9936,35 @@
   animation: none;
   opacity: 0.55;
 }
-/* Fade the shimmer + sparkles in when the thumb reaches Ultra, instead of a
- * hard pop, so they feel connected to the thumb's slide. */
+/* Fade the shimmer + sparkles in when the thumb reaches a top tier, instead of
+ * a hard pop, so they feel connected to the thumb's slide. */
 .composer-combined-picker-ladder-shimmer,
 .composer-combined-picker-ladder-sparkles {
   animation: tw-ladder-emerge 0.3s ease-out both;
+}
+/* Max (index 5) wears the same treatment a touch subtler than Ultra/Ultracode
+ * (index 6), so the very top stop still reads as the peak. The emerge keyframe
+ * fills forwards, so the resting opacity must flow through its `to` frame via
+ * this custom property rather than a static `opacity` (which the fill-mode
+ * would override). */
+.composer-combined-picker-ladder-shimmer[data-tier='max'] {
+  --ladder-fx-opacity: 0.82;
+}
+.composer-combined-picker-ladder-sparkles[data-tier='max'] {
+  --ladder-fx-opacity: 0.78;
 }
 @keyframes tw-ladder-emerge {
   from {
     opacity: 0;
   }
   to {
-    opacity: 1;
+    opacity: var(--ladder-fx-opacity, 1);
   }
 }
 [data-reduce-motion='true'] .composer-combined-picker-ladder-shimmer,
 [data-reduce-motion='true'] .composer-combined-picker-ladder-sparkles {
   animation: none;
+  opacity: var(--ladder-fx-opacity, 1);
 }
 
 .composer-combined-picker-apply-all {

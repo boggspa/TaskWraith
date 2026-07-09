@@ -309,6 +309,12 @@ const LADDER_MAX_INDEX = 6
 // little rail showing above/below the thumb.
 const LADDER_TRACK_INSET = 11
 
+// Reasoning efforts that carry the provider-hued shimmer sweep + sparkles on
+// the trigger chip (and the ladder's top-zone FX): the top two tiers, for ANY
+// provider whose ladder reaches them — Claude's Max/Ultracode, Codex's
+// Max/Ultra, and any future provider with a 'max' setting.
+const TOP_TIER_SPARKLE_EFFORTS: ReadonlySet<string> = new Set(['max', 'ultracode'])
+
 // Sparkle positions (within the top sparkle layer) + staggered twinkle delays.
 // Dense + top-heavy; the layer's mask fades them out toward the middle.
 const LADDER_SPARKLES: ReadonlyArray<{ left: string; top: string; delay: string }> = [
@@ -477,9 +483,12 @@ function ReasoningLadderSlider({
   const currentIndex = clampedLadderIndex(provider, selectedReasoning, ladder)
   const displayIndex = dragIndex ?? currentIndex
   const currentLabel = ladder.labelByIndex[displayIndex] ?? '—'
-  // Shimmer + sparkles only ignite once the thumb reaches the top (Ultra/
-  // Ultracode) — they emerge with effort, like the coloured fill below.
-  const atUltracode = displayIndex === LADDER_MAX_INDEX
+  // Shimmer + sparkles ignite at the top TWO stops — Max (index 5) and
+  // Ultra/Ultracode (index 6) — emerging with effort like the coloured fill
+  // below. `data-tier` lets the CSS render Max a touch subtler so the very top
+  // stop still reads as the peak. Provider-agnostic: any provider/model whose
+  // ladder reaches 'max' gets the treatment in its own brand hue.
+  const fxTier = displayIndex === LADDER_MAX_INDEX ? 'ultracode' : displayIndex === 5 ? 'max' : null
   const interactive = !disabled && ladder.enabledIndices.length > 0
 
   const indexFromClientY = (clientY: number): number | null => {
@@ -509,6 +518,7 @@ function ReasoningLadderSlider({
       <div
         className="composer-combined-picker-ladder-value"
         data-ultracode={displayIndex === 6 ? 'true' : undefined}
+        data-tier={fxTier ?? undefined}
       >
         {currentLabel}
       </div>
@@ -524,7 +534,7 @@ function ReasoningLadderSlider({
         aria-valuetext={currentLabel}
         aria-disabled={interactive ? undefined : true}
         title={
-          interactive ? undefined : ladder.disabledReason ?? 'Reasoning is fixed for this model'
+          interactive ? undefined : (ladder.disabledReason ?? 'Reasoning is fixed for this model')
         }
         onPointerDown={(event) => {
           if (!interactive) return
@@ -569,10 +579,18 @@ function ReasoningLadderSlider({
           style={{ height: ladderStopBottom(displayIndex) }}
           aria-hidden
         />
-        {atUltracode && (
+        {fxTier && (
           <>
-            <div className="composer-combined-picker-ladder-shimmer" aria-hidden />
-            <div className="composer-combined-picker-ladder-sparkles" aria-hidden>
+            <div
+              className="composer-combined-picker-ladder-shimmer"
+              data-tier={fxTier}
+              aria-hidden
+            />
+            <div
+              className="composer-combined-picker-ladder-sparkles"
+              data-tier={fxTier}
+              aria-hidden
+            >
               {LADDER_SPARKLES.map((sparkle, index) => (
                 <span
                   key={index}
@@ -696,9 +714,7 @@ export function CombinedModelPicker({
     if (!isOllamaProviderPicker) return null
     const activeId = activeOllamaProviderId || selectedOllamaProviderId
     return (
-      ollamaProviderGroups.find((group) => group.id === activeId) ||
-      ollamaProviderGroups[0] ||
-      null
+      ollamaProviderGroups.find((group) => group.id === activeId) || ollamaProviderGroups[0] || null
     )
   }, [
     activeOllamaProviderId,
@@ -920,9 +936,7 @@ export function CombinedModelPicker({
         if (focusedColumn === 'provider') {
           setProviderHighlight((idx) => Math.min(ollamaProviderGroups.length - 1, idx + 1))
         } else if (focusedColumn === 'model') {
-          setModelHighlight((idx) =>
-            Math.min(Math.max(0, visibleModelOptions.length - 1), idx + 1)
-          )
+          setModelHighlight((idx) => Math.min(Math.max(0, visibleModelOptions.length - 1), idx + 1))
         } else {
           // Reasoning ladder: down = lower effort. The slider commits on move.
           const enabled = ladder.enabledIndices
@@ -1223,7 +1237,9 @@ export function CombinedModelPicker({
         )}
         {claudeChipSegments ? (
           <>
-            <span className="composer-combined-picker-trigger-primary">{claudeChipSegments.model}</span>
+            <span className="composer-combined-picker-trigger-primary">
+              {claudeChipSegments.model}
+            </span>
             {claudeChipSegments.fast ? (
               <span className="composer-combined-picker-trigger-tail">
                 {/* No dot glyph — a couple of non-breaking spaces stand in as
@@ -1233,11 +1249,13 @@ export function CombinedModelPicker({
                   {'  '}
                 </span>
                 <span className="composer-combined-picker-trigger-fast-reasoning">
-                  <span className="composer-combined-picker-trigger-fast">{claudeChipSegments.fast}</span>
+                  <span className="composer-combined-picker-trigger-fast">
+                    {claudeChipSegments.fast}
+                  </span>
                   {claudeChipSegments.reasoning && (
                     <TriggerReasoningSuffix
                       text={claudeChipSegments.reasoning}
-                      sparkle={selectedReasoning === 'ultracode'}
+                      sparkle={TOP_TIER_SPARKLE_EFFORTS.has(selectedReasoning || '')}
                     />
                   )}
                 </span>
@@ -1249,7 +1267,7 @@ export function CombinedModelPicker({
                 </span>
                 <TriggerReasoningSuffix
                   text={claudeChipSegments.reasoning}
-                  sparkle={selectedReasoning === 'ultracode'}
+                  sparkle={TOP_TIER_SPARKLE_EFFORTS.has(selectedReasoning || '')}
                 />
               </span>
             ) : null}
@@ -1260,7 +1278,7 @@ export function CombinedModelPicker({
             {chipPieces.suffix && (
               <TriggerReasoningSuffix
                 text={chipPieces.suffix}
-                sparkle={selectedReasoning === 'ultracode'}
+                sparkle={TOP_TIER_SPARKLE_EFFORTS.has(selectedReasoning || '')}
               />
             )}
           </>
