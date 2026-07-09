@@ -251,7 +251,9 @@ public final class RemoteSessionModel: ObservableObject {
     /// a plan card stays in the transcript, so this set must be @Published to
     /// drive the action row's disabled state until the Mac's status re-projection
     /// lands. Restored in onAck on `!accepted` so a denied decision re-enables it.
-    @Published private var repliedProposedPlanIds: Set<String> = []
+    // `public private(set)`: setter stays internal, but the projected publisher
+    // must be observable by ThreadTranscriptStore's re-render gate.
+    @Published public private(set) var repliedProposedPlanIds: Set<String> = []
     /// Allowlist-visible workspaces (the compose surface). Empty until the Mac
     /// has at least one entry in Settings → Devices → workspace access.
     @Published public private(set) var workspaces: [WorkspaceSummary] = []
@@ -5247,6 +5249,25 @@ public final class RemoteSessionModel: ObservableObject {
             threadId: threadId, taskCards: taskCards, threadSnapshots: threadSnapshots)
     }
 
+    /// The Fast + Kimi-thinking the thread last used, derived from its projected
+    /// card (mirrors ComposerView.cardFastMode/cardKimiThinking) so a plan
+    /// approve/respond inherits the thread's toggle state instead of forcing Fast
+    /// off / thinking to default.
+    private func cardFastAndThinking(threadId: String, provider: String) -> (Bool, Bool?) {
+        guard let card = taskCards.first(where: { $0.id == threadId || $0.threadId == threadId })
+        else { return (false, nil) }
+        let fast: Bool
+        switch provider.lowercased() {
+        case "cursor": fast = card.cursorFastMode ?? false
+        case "claude": fast = card.claudeFastMode ?? false
+        case "codex": fast = card.codexServiceTier == "fast"
+        default: fast = false
+        }
+        let thinking: Bool? =
+            provider.lowercased() == "kimi" ? (card.kimiThinkingEnabled ?? true) : nil
+        return (fast, thinking)
+    }
+
     private func failMissingProposedPlanProvider(_ threadId: String) {
         lastActionMessage =
             "Can't act on this plan yet because the Mac has not projected the thread's provider. Refresh the thread, then try again."
@@ -5288,11 +5309,13 @@ public final class RemoteSessionModel: ObservableObject {
             return
         }
         repliedProposedPlanIds.insert(messageId)
+        let (fast, thinking) = cardFastAndThinking(threadId: threadId, provider: provider)
         send(
             BridgeAction.composerPrompt(
                 workspaceId: ws, threadId: threadId, provider: provider,
                 text: "The plan above is approved — go ahead and implement it now.",
-                approvalMode: "default", proposedPlanImplementOf: messageId),
+                approvalMode: "default", proposedPlanImplementOf: messageId,
+                fastModeEnabled: fast, kimiThinkingEnabled: thinking),
             successLabel: "Plan approved — implementing.",
             onAck: { [weak self] accepted in
                 guard let self, !accepted else { return }
@@ -5317,9 +5340,11 @@ public final class RemoteSessionModel: ObservableObject {
             return
         }
         repliedProposedPlanIds.insert(messageId)
+        let (fast, thinking) = cardFastAndThinking(threadId: threadId, provider: provider)
         send(
             BridgeAction.composerPrompt(
-                workspaceId: ws, threadId: threadId, provider: provider, text: trimmed),
+                workspaceId: ws, threadId: threadId, provider: provider, text: trimmed,
+                fastModeEnabled: fast, kimiThinkingEnabled: thinking),
             successLabel: "Feedback sent.",
             onAck: { [weak self] accepted in
                 guard let self else { return }
