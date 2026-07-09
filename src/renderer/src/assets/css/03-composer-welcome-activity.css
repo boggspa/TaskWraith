@@ -414,6 +414,15 @@
   gap: 4px;
   position: relative;
   z-index: 2;
+  /* Cap the popover height so a long preset list scrolls in place instead of
+     growing the popover off the top of the viewport (it opens upward via
+     translateY(-100%), so an unbounded list pushes the Save / Save As actions
+     off-screen). Bounds to the shorter of ~half the viewport or 360px. */
+  max-height: min(48vh, 360px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  /* Keep the scrollbar clear of the per-row action buttons. */
+  padding-right: 2px;
 }
 .ensemble-roster-preset-popover-actions {
   display: grid;
