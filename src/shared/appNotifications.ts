@@ -142,7 +142,7 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
           {
             name: 'Sonnet 5',
             blurb:
-              "Anthropic's fast model for coding and professional work — adaptive thinking, 1M context, 85.2% SWE-bench Verified."
+              "Anthropic's fast coding model — adaptive thinking, 1M context, 85.2% SWE-bench Verified."
           },
           {
             name: 'Fable 5',
@@ -197,7 +197,7 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
           {
             name: 'Deep Reinforce - Ornith 9B + Ornith 35B',
             blurb:
-              'Open-source 262K-context models built for agentic coding — local inference, no per-token cost.'
+              'Open-source 262K-context coding models — local inference, no per-token cost.'
           },
           {
             name: 'Liquid - LFM 2.5 8B-1A',
