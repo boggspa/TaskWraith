@@ -22,9 +22,9 @@ import {
 const COLLAPSED_FANOUT_PART_LIMIT = 24
 // Collapsed height cap for the outer result body. Longer outputs scroll within
 // this window (with an edge fade) until the card is expanded; shorter ones size
-// to fit. 288 = the prior 240 grown ~20% so more of a long lane is visible at
-// rest without dominating the transcript.
-const COLLAPSED_FANOUT_RESULT_VIEWPORT_HEIGHT = 288
+// to fit. 331 = the original 240 grown ~20% (→288) then a further ~15% so more
+// of a long lane is visible at rest without dominating the transcript.
+const COLLAPSED_FANOUT_RESULT_VIEWPORT_HEIGHT = 331
 const COLLAPSED_FANOUT_TOOL_VIEWPORT_HEIGHT = 184
 const COLLAPSED_FANOUT_MARKDOWN_LIMIT = 6_000
 const COLLAPSED_FANOUT_PREVIEW_CHARS = 2_400
