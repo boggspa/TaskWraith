@@ -165,7 +165,10 @@
   grid-template-rows:
     minmax(clamp(18px, 3vh, 48px), 1fr)
     auto
-    minmax(clamp(18px, 3vh, 44px), 0.45fr)
+    /* Composer → 90-day heatmap gap. Tightened so the busiest welcome screen
+       (workflow: cadence + max-runs + permissions rows) has more vertical
+       headroom before things collide. */
+    minmax(clamp(10px, 2vh, 28px), 0.3fr)
     auto
     minmax(clamp(24px, 4vh, 64px), 1fr)
     auto;
