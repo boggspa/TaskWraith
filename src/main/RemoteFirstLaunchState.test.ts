@@ -251,60 +251,31 @@ describe('buildRemoteFirstLaunchState', () => {
       usage: {}
     })
 
-    expect(state.notifications.map((notice) => notice.id)).toContain(
-      'ensemble-composer-toggle-2026-07-03'
-    )
-    expect(state.notifications.map((notice) => notice.id)).toContain(
-      'ollama-local-models-2026-06-30'
-    )
-    expect(state.notifications.map((notice) => notice.id)).toContain('claude-sonnet-5-2026-06-30')
-    expect(state.notifications.map((notice) => notice.id)).toContain(
-      'claude-fable-mythos-return-2026-07-01'
-    )
-    expect(state.notifications.map((notice) => notice.id)).toContain(
-      'changelog-plan-mode-workflow-2026-07-01'
-    )
-    expect(state.notifications.map((notice) => notice.id)).toContain(
-      'changelog-ensemble-recovery-2026-07-01'
-    )
-    expect(state.notifications.map((notice) => notice.id)).toContain(
-      'antigravity-not-planned-2026-06-26'
-    )
+    expect(state.notifications.map((notice) => notice.id)).toContain('new-additions-2026-07-09')
     expect(state.notifications.map((notice) => notice.id)).not.toContain(
       'gemini-retirement-2026-06-18'
     )
     expect(state.notifications.map((notice) => notice.id)).not.toContain(
       'grok-composer-2-5-fast-2026-06-19'
     )
-    const antigravity = state.notifications.find(
-      (notice) => notice.id === 'antigravity-not-planned-2026-06-26'
-    )
-    expect(antigravity?.tone).toBe('default')
-    expect(antigravity?.accent).toBe('default')
-    expect(antigravity?.kind).toBe('info')
-    expect(antigravity?.title).toBe('AntiGravity will not be added.')
 
-    const ensemble = state.notifications.find(
-      (notice) => notice.id === 'ensemble-composer-toggle-2026-07-03'
+    const newAdditions = state.notifications.find(
+      (notice) => notice.id === 'new-additions-2026-07-09'
     )
-    expect(ensemble?.tone).toBe('default')
-    expect(ensemble?.accent).toBe('ensemble')
-    expect(ensemble?.icon).toBe('ensemble')
-    expect(ensemble?.title).toBe('Ensemble starts from new drafts now.')
-
-    const sonnet = state.notifications.find((notice) => notice.id === 'claude-sonnet-5-2026-06-30')
-    expect(sonnet?.tone).toBe('default')
-    expect(sonnet?.accent).toBe('claude')
-    expect(sonnet?.title).toBe('Claude Sonnet 5 is available.')
-
-    const returnedClaude5 = state.notifications.find(
-      (notice) => notice.id === 'claude-fable-mythos-return-2026-07-01'
-    )
-    expect(returnedClaude5?.tone).toBe('default')
-    expect(returnedClaude5?.accent).toBe('claude')
-    expect(returnedClaude5?.title).toBe('Claude Fable 5 access is returning.')
-    expect(returnedClaude5?.body).toContain('July 7, 2026')
-    expect(returnedClaude5?.body).toContain('SDK/API-only')
+    expect(newAdditions?.tone).toBe('default')
+    expect(newAdditions?.accent).toBe('default')
+    expect(newAdditions?.kind).toBe('addition')
+    expect(newAdditions?.title).toBe('New Additions')
+    expect(newAdditions?.groups?.map((group) => group.provider)).toEqual([
+      'claude',
+      'codex',
+      'cursor',
+      'grok',
+      'ollama'
+    ])
+    const claudeGroup = newAdditions?.groups?.find((group) => group.provider === 'claude')
+    expect(claudeGroup?.models.map((model) => model.name)).toEqual(['Sonnet 5', 'Fable 5'])
+    expect(claudeGroup?.models.every((model) => model.blurb.length > 0)).toBe(true)
   })
 
   it('surfaces stale usage snapshots and no-workspace access without leaking setup internals', () => {

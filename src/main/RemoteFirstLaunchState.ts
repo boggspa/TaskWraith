@@ -4,7 +4,8 @@ import {
   appNotificationTone,
   type AppNotification,
   type AppNotificationAccent,
-  type AppNotificationIcon
+  type AppNotificationIcon,
+  type AppNotificationProviderGroup
 } from '../shared/appNotifications'
 import { isRetiredProvider } from '../shared/retiredProviders'
 import {
@@ -36,6 +37,8 @@ export interface RemoteFirstLaunchNotice {
   accent: AppNotificationAccent
   icon?: AppNotificationIcon
   dismissible: boolean
+  /** "New Additions" grouped content, passed through verbatim when present. */
+  groups?: AppNotificationProviderGroup[]
 }
 
 export interface RemoteFirstLaunchUsageWindow {
@@ -177,7 +180,8 @@ function buildNotices(notifications: readonly AppNotification[]): RemoteFirstLau
       tone: appNotificationTone(notice.kind),
       accent: appNotificationAccent(notice),
       ...(notice.icon ? { icon: notice.icon } : {}),
-      dismissible: notice.dismissible !== false
+      dismissible: notice.dismissible !== false,
+      ...(notice.groups && notice.groups.length > 0 ? { groups: notice.groups } : {})
     }))
 }
 

@@ -11,8 +11,9 @@
  * zone rotates through more than one with the welcome heatmap's swipe effect.
  *
  * Carousel layout:
- *   pinned notices (major UX/provider notices + AntiGravity policy)
+ *   pinned notices (currently just the "New Additions" model-launch card)
  *   up to 2 dynamic highlights rotated daily from CHANGELOG_FEATURE_NOTIFICATION_POOL
+ *   (currently empty — repopulate as future shipped features warrant a highlight)
  */
 
 export type AppNotificationKind = 'deprecation' | 'addition' | 'feature' | 'info'
@@ -26,6 +27,25 @@ export type AppNotificationAccent = 'default' | 'claude' | 'ensemble' | 'cursor'
 /** Optional semantic icon override for notices that need a product signpost. */
 export type AppNotificationIcon = 'ensemble'
 
+/** One newly-added model under a provider heading in a "New Additions" card. */
+export interface AppNotificationModelEntry {
+  /** Model display name, e.g. "Sonnet 5". Rendered bold in the provider's hue. */
+  name: string
+  /** Plain-language blurb (aim for ~120 chars). Rendered in the provider's hue
+   *  at normal (non-bold) weight, right after the model name. */
+  blurb: string
+}
+
+/** One provider heading + its newly-added models in a "New Additions" card. */
+export interface AppNotificationProviderGroup {
+  /** Provider id, used to resolve the hue (`--provider-<id>-color`). Kept as a
+   *  plain string (not `ProviderId`) so this file stays import-free. */
+  provider: string
+  /** Provider display label, e.g. "Claude". Rendered bold in the provider's hue. */
+  label: string
+  models: AppNotificationModelEntry[]
+}
+
 export interface AppNotification {
   /** Stable slug — also the dismiss-key suffix. Never reuse an id for new
    *  content (a returning id would resurrect a dismissed notice). */
@@ -33,7 +53,9 @@ export interface AppNotification {
   kind: AppNotificationKind
   /** Short bold lede, e.g. "Local models are available." */
   title: string
-  /** One or two sentences of plain copy. */
+  /** One or two sentences of plain copy. Also serves as the accessible/
+   *  fallback description when `groups` is present but a consumer doesn't yet
+   *  render it (e.g. a not-yet-updated client). */
   body: string
   /** Provider-accented glass/card treatment. Omit for the theme default. */
   accent?: AppNotificationAccent
@@ -46,6 +68,10 @@ export interface AppNotification {
   /** A pre-existing localStorage dismiss key to also honour, so users who
    *  already dismissed an earlier bespoke banner don't see it again. */
   legacyDismissKey?: string
+  /** Structured "New Additions" content: provider headings, each with its own
+   *  newly-added models. When present, renderers show this grouped list
+   *  instead of the plain `body` paragraph. */
+  groups?: AppNotificationProviderGroup[]
 }
 
 /** Max changelog-derived cards in the carousel at once (after pinned notices). */
@@ -92,62 +118,94 @@ export function activeAppNotifications(args: {
   })
 }
 
-/** Always-on carousel notices — major UX/provider notices + AntiGravity policy. */
+/** Stable id for the current "New Additions" card — bump the date suffix (and
+ *  never reuse this exact id) when the lineup below changes, so a user who
+ *  already dismissed the old lineup sees the refreshed one. */
+export const NEW_ADDITIONS_NOTIFICATION_ID = 'new-additions-2026-07-09'
+
+/** Always-on carousel notices. Currently just the "New Additions" model-launch
+ *  card — replace/extend this list the next time a significant provider or
+ *  model change warrants a pinned notice. */
 export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
   {
-    id: 'ensemble-composer-toggle-2026-07-03',
-    kind: 'feature',
-    title: 'Ensemble starts from new drafts now.',
-    body: 'On a new chat, use the Ensemble glyph in the composer bottom row and choose On before first send. That turns the draft into an Ensemble; the separate New Ensemble Chat menu entry moved into that button, and Ensembles + still works.',
-    accent: 'ensemble',
-    icon: 'ensemble',
-    dismissible: true
-  },
-  {
-    id: 'cursor-grok-4-5-2026-07-08',
+    id: NEW_ADDITIONS_NOTIFICATION_ID,
     kind: 'addition',
-    title: 'Cursor Grok 4.5 is available.',
-    body: 'Cursor now offers Grok 4.5 from the first-party model pool with 500K context, Low/Medium/High reasoning, and a Fast toggle. Composer 2.5 and Composer 2.5 Fast remain reasoning-free.',
-    accent: 'cursor',
-    dismissible: true
-  },
-  {
-    id: 'grok-4-5-2026-07-08',
-    kind: 'addition',
-    title: 'Grok 4.5 is available.',
-    body: 'Grok now defaults to Grok 4.5, the 500K-context coding model used by Grok Build. TaskWraith exposes Low/Medium/High reasoning for Grok 4.5 only; Grok Composer 2.5 Fast has no reasoning value.',
-    accent: 'grok',
-    dismissible: true
-  },
-  {
-    id: 'ollama-local-models-2026-06-30',
-    kind: 'addition',
-    title: 'New local Ollama models are available.',
-    body: 'Ollama now includes Ornith 1.0 (9B Param) and Ornith 1.0 (35B Param), 256K-context open-source models for agentic coding, plus Liquid LFM 2.5 (8B-1A), a 131K-context tool/thinking model — all in the model picker and setup commands.',
-    dismissible: true
-  },
-  {
-    id: 'claude-sonnet-5-2026-06-30',
-    kind: 'addition',
-    title: 'Claude Sonnet 5 is available.',
-    body: 'Claude now includes Sonnet 5, Anthropic’s fast model for coding and professional work: adaptive thinking, 1M context, 128K max output, 85.2% SWE-bench Verified, and introductory $2/$10 per MTok pricing through Aug. 31, 2026.',
-    accent: 'claude',
-    dismissible: true
-  },
-  {
-    id: 'claude-fable-mythos-return-2026-07-01',
-    kind: 'addition',
-    title: 'Claude Fable 5 access is returning.',
-    body: 'Fable 5 is currently available in TaskWraith until July 7, 2026. After that it becomes SDK/API-only for a short while before broader access returns. It still brings 1M context, 128K max output, adaptive thinking, a Fast tier, and $10/$50 per MTok pricing.',
-    accent: 'claude',
-    dismissible: true
-  },
-  {
-    id: 'antigravity-not-planned-2026-06-26',
-    kind: 'info',
-    title: 'AntiGravity will not be added.',
-    body: 'TaskWraith will not integrate Google AntiGravity as a Gemini replacement because it would require unsupported credential use and would not fit TaskWraith’s provider model.',
-    dismissible: true
+    title: 'New Additions',
+    body:
+      'Claude Sonnet 5 and Fable 5, the GPT-5.6 Luna/Terra/Sol trio, Cursor Grok 4.5, Grok 4.5 Fast, and two new local Ollama models are all available now.',
+    dismissible: true,
+    groups: [
+      {
+        provider: 'claude',
+        label: 'Claude',
+        models: [
+          {
+            name: 'Sonnet 5',
+            blurb:
+              "Anthropic's fast model for coding and professional work — adaptive thinking, 1M context, 85.2% SWE-bench Verified."
+          },
+          {
+            name: 'Fable 5',
+            blurb:
+              "Anthropic's frontier tier above Opus — 1M context, 128K max output, adaptive thinking, and a Fast tier."
+          }
+        ]
+      },
+      {
+        provider: 'codex',
+        label: 'Codex',
+        models: [
+          {
+            name: 'GPT 5.6 Luna',
+            blurb: 'Fast triage, board planning, and lightweight subagents.'
+          },
+          {
+            name: 'GPT 5.6 Terra',
+            blurb: 'Strong everyday advanced agentic work for typical coding tasks.'
+          },
+          {
+            name: 'GPT 5.6 Sol',
+            blurb: 'Hardest long-horizon coding and research, with Max and Ultracode reasoning tiers.'
+          }
+        ]
+      },
+      {
+        provider: 'cursor',
+        label: 'Cursor',
+        models: [
+          {
+            name: 'Cursor Grok 4.5',
+            blurb:
+              "Cursor's first-party model pool — 500K context, Low/Medium/High reasoning, and a Fast toggle."
+          }
+        ]
+      },
+      {
+        provider: 'grok',
+        label: 'Grok',
+        models: [
+          {
+            name: 'Grok 4.5 Fast',
+            blurb: "xAI's 500K-context coding model behind Grok Build, with Low/Medium/High reasoning."
+          }
+        ]
+      },
+      {
+        provider: 'ollama',
+        label: 'Ollama',
+        models: [
+          {
+            name: 'Deep Reinforce - Ornith 9B + Ornith 35B',
+            blurb:
+              'Open-source 262K-context models built for agentic coding — local inference, no per-token cost.'
+          },
+          {
+            name: 'Liquid - LFM 2.5 8B-1A',
+            blurb: 'A 131K-context local tool/thinking model for agentic coding — no cloud account required.'
+          }
+        ]
+      }
+    ]
   }
 ]
 
@@ -155,58 +213,10 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
  * Curated highlights from recent CHANGELOG entries. Up to
  * CHANGELOG_FEATURE_NOTIFICATION_MAX_ACTIVE are surfaced at a time; the slice
  * rotates daily so repeat visits see different shipped features without
- * growing the carousel without bound.
+ * growing the carousel without bound. Currently empty — repopulate as future
+ * shipped features warrant a rotating highlight.
  */
-export const CHANGELOG_FEATURE_NOTIFICATION_POOL: readonly AppNotification[] = [
-  {
-    id: 'changelog-plan-mode-workflow-2026-07-01',
-    kind: 'feature',
-    title: 'Plan Mode is a workflow now.',
-    body: 'Pick Plan to draft one proposed plan and approve it before edits; Read-only (recon) stays separate, and Ensemble chats use the designated plan owner.'
-  },
-  {
-    id: 'changelog-ensemble-recovery-2026-07-01',
-    kind: 'feature',
-    title: 'Crash recovery is cleaner.',
-    body: 'Restarting mid-parallel fan-out now shows one grouped recovery message per chat instead of a row per interrupted lane.'
-  },
-  {
-    id: 'changelog-read-fanout-skip-2026-07-01',
-    kind: 'feature',
-    title: 'Parallel scouts can be skipped.',
-    body: 'When read-only fan-out has enough signal, stop the active scout lanes and move on to the writer step without waiting for every lane to finish.'
-  },
-  {
-    id: 'changelog-boss-roster-swap-2026-07-01',
-    kind: 'feature',
-    title: 'Boss seats get better swap context.',
-    body: 'Boss participants can inspect participant ids, provider/model choices, context windows, and coarse quota bands before swapping an inactive Ensemble seat.'
-  },
-  {
-    id: 'changelog-scheduled-queue-2026-06-28',
-    kind: 'feature',
-    title: 'Scheduled sends are visible now.',
-    body: 'Use the composer Schedule clock to queue a prompt for later; scheduled rows stay editable, show a live countdown, and dispatch when due.'
-  },
-  {
-    id: 'changelog-model-usage-matrix-2026-06-28',
-    kind: 'feature',
-    title: 'Model usage by workspace is here.',
-    body: 'Settings → Model Usage now breaks down provider/model spend and diffs per workspace, alongside the existing aggregate table.'
-  },
-  {
-    id: 'changelog-chat-search-2026-06-28',
-    kind: 'feature',
-    title: 'Search and jump inside long threads.',
-    body: 'Current-chat search plus transcript gutter controls help you move between user prompts without scrolling entire conversations.'
-  },
-  {
-    id: 'changelog-tailscale-relay-2026-06-28',
-    kind: 'feature',
-    title: 'Tailscale relay setup is easier on iOS.',
-    body: 'The iOS bridge now surfaces this Mac’s detected wss:// relay door with Use this, Copy, and Test actions for cellular pairing.'
-  }
-]
+export const CHANGELOG_FEATURE_NOTIFICATION_POOL: readonly AppNotification[] = []
 
 /** Pick up to `maxCount` changelog highlights, rotating the window daily. */
 export function selectChangelogFeatureNotifications(
