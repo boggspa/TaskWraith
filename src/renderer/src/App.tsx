@@ -7302,18 +7302,6 @@ function App(): React.JSX.Element {
     })
   }
 
-  const handleSelectWelcomeWorkspaceDialog = async () => {
-    const ws = await window.api.selectWorkspace()
-    if (ws) {
-      setWorkspaces(await window.api.getWorkspaces())
-      remoteAccessNavRanRef.current = false
-      setPendingRemoteAccessWorkspace({
-        workspace: ws,
-        next: () => handleSelectWelcomeWorkspace(ws)
-      })
-    }
-  }
-
   const handleRemoveWorkspace = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation()
     const ok =
@@ -24121,8 +24109,6 @@ function App(): React.JSX.Element {
     handleRun,
     handleRunImportedPlan,
     handleSelectExistingWorkspace,
-    handleSelectWelcomeWorkspace,
-    handleSelectWelcomeWorkspaceDialog,
     handleSelectWorkspace,
     handleSetAgenticWorkspaceGrant,
     handleSteer,

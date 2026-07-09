@@ -63,7 +63,6 @@ import { MultiviewLayoutPicker } from '../components/MultiviewLayoutPicker'
 import { CanvasComposerButton } from '../components/CanvasComposerButton'
 import { QueuedMessagesAboveRow } from '../components/QueuedMessagesAboveRow'
 import { WelcomeHeatmaps } from '../components/WelcomeHeatmaps'
-import { WelcomeWorkspacePicker } from '../components/WelcomeWorkspacePicker'
 import { WorkflowComposeControls } from '../components/WorkflowComposeControls'
 import { extractFirstEnsembleDmTarget, formatComposerPathMention, parseComposerMentionTrigger } from '../lib/ComposerMentionTrigger'
 import { readPendingProviderChange } from '../../../main/providerChangeQueue'
@@ -302,8 +301,6 @@ export interface ComposerProps {
   handleSelectExistingWorkspace: any
   handleSelectMultiviewLayout: any
   handleSelectParticipant: any
-  handleSelectWelcomeWorkspace: any
-  handleSelectWelcomeWorkspaceDialog: any
   handleSelectWorkspace: any
   handleSetAgenticWorkspaceGrant: any
   handleBlackboardQueuedMessage: any
@@ -616,8 +613,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     handleSelectExistingWorkspace,
     handleSelectMultiviewLayout,
     handleSelectParticipant,
-    handleSelectWelcomeWorkspace,
-    handleSelectWelcomeWorkspaceDialog,
     handleSelectWorkspace,
     handleSetAgenticWorkspaceGrant,
     handleBlackboardQueuedMessage,
@@ -1640,19 +1635,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                             icons, so the duplicate welcome-hero chain was redundant. */}
                       </>
                     )}
-                    {/* Workspace picker on the ensemble welcome too —
-                      same affordance as the solo welcome surface above,
-                      because the ensemble path lands here just as
-                      often after a "New Chat" click and needs the
-                      same one-click workspace swap. */}
-                    <WelcomeWorkspacePicker
-                      workspaces={workspaces}
-                      currentWorkspace={currentWorkspace}
-                      isGlobalChat={isCurrentGlobalChat}
-                      onPickExisting={handleSelectWelcomeWorkspace}
-                      onAddNewWorkspace={handleSelectWelcomeWorkspaceDialog}
-                      onSelectNoWorkspace={handleNewGlobalChat}
-                    />
                   </div>
                 )
               })()}
@@ -1673,14 +1655,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                       Describe the recurring task. It captures the current provider and run
                       settings, then runs on the cadence you set below.
                     </p>
-                    <WelcomeWorkspacePicker
-                      workspaces={workspaces}
-                      currentWorkspace={currentWorkspace}
-                      isGlobalChat={false}
-                      onPickExisting={handleSelectExistingWorkspace}
-                      onAddNewWorkspace={handleSelectWorkspace}
-                      onSelectNoWorkspace={handleNewGlobalChat}
-                    />
                   </>
                 ) : (
                   <>
@@ -1708,28 +1682,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                   <span>{welcomeCopy.heading.afterWorkspace}</span>
                 </h1>
                 {welcomeCopy.subheading ? <p>{welcomeCopy.subheading}</p> : null}
-                {/*
-                  Welcome workspace picker (1.0.3). The sidebar already has a
-                  workspace list, but landing on the welcome screen of a new
-                  chat — especially the global-chat fall-through — leaves the
-                  user staring at "Workspace: <something>" with no way to change
-                  it without first re-finding the sidebar. This row gives them
-                  a one-click affordance: recent workspaces as quick chips,
-                  plus a "Browse…" button to open the system folder picker.
-                  Workspaces show their displayName + folder basename when
-                  different. Hidden on General chats — the stripped welcome
-                  is greeting + composer + notifications only.
-                */}
-                {!isCurrentGlobalChat && (
-                  <WelcomeWorkspacePicker
-                    workspaces={workspaces}
-                    currentWorkspace={currentWorkspace}
-                    isGlobalChat={isCurrentGlobalChat}
-                    onPickExisting={handleSelectExistingWorkspace}
-                    onAddNewWorkspace={handleSelectWorkspace}
-                    onSelectNoWorkspace={handleNewGlobalChat}
-                  />
-                )}
               </div>
             )}
             {/*
