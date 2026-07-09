@@ -16757,8 +16757,9 @@ async function runCodexAppServer(event: Electron.IpcMainInvokeEvent, payload: Ag
 
   const codexReasoningSummaryMode = codexReasoningSummaryModeForEffort(payload.reasoningEffort)
   // Internal token → official CLI wire value (GPT-5.6's top tier is 'ultra' on
-  // the wire; TaskWraith's shared internal token is 'ultracode').
-  const codexWireEffort = codexWireReasoningEffort(payload.reasoningEffort)
+  // the wire; TaskWraith's shared internal token is 'ultracode'; models without
+  // the ultra tier clamp to 'max'). The API hard-rejects the raw internal token.
+  const codexWireEffort = codexWireReasoningEffort(payload.reasoningEffort, model)
   await client.request(
     'turn/start',
     {

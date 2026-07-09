@@ -115,40 +115,58 @@ export function codexModelSupportsMaxReasoning(modelId?: string | null): boolean
   )
 }
 
-// GPT-5.6 top tier: `max` is the TOP reasoning level TaskWraith offers for
-// Codex. The official catalog also exposes an `ultra` level ("Maximum reasoning
-// with automatic task delegation") on Sol + Terra, and codex core maps
-// Ultra→Max for the actual model request (reasoning_effort_for_request) — so
-// `ultra` gives the SAME reasoning depth as `max`; its ONLY extra effect is
-// activating codex's own proactive MULTI-AGENT orchestration (it spawns a
-// hidden sub-agent swarm).
-//
-// TaskWraith deliberately does NOT expose that tier for Codex:
-//   1. It crashes: dispatched through TaskWraith's app-server session (which
-//      registers TaskWraith itself as an MCP server), an `effort: "ultra"`
-//      turn kills the app-server — "Provider exited with code 1". (`codex exec`
-//      and a plain `codex app-server` both run ultra fine; the crash is the
-//      multi-agent path colliding with the MCP-registered session.)
-//   2. It's redundant: same reasoning depth as `max` on the wire.
-//   3. It's out of scope: TaskWraith IS the multi-agent orchestrator
-//      (ensembles, sub-threads, fan-out) with its own permission / token /
-//      telemetry model; a single seat spawning codex-internal sub-agents
-//      bypasses all of it.
-// So codex tops out at `max`; `ultra` is folded into `max` on ingest and any
-// stray internal `ultracode` on a codex seat is clamped to `max` on the wire.
-// (Claude's own `ultracode` tier is a separate thing and is untouched.)
+// Official GPT-5.6 catalog (2026-07-09): the top tier's OFFICIAL effort id is
+// `ultra` ("Maximum reasoning with automatic task delegation") and it exists on
+// Sol AND Terra — NOT Luna. TaskWraith's internal token for this tier stays
+// `ultracode` (shared with Claude's ladder and persisted composer state);
+// codexWireReasoningEffort maps it to the official `ultra` at the CLI boundary,
+// and codexReasoningEffortsForModel maps an inbound `ultra` from the live
+// `model/list` back onto the internal token.
+// NOTE (verified in codex core, reasoning_effort_for_request): on the wire the
+// client maps Ultra→Max for the model request — `ultra` IS max reasoning plus
+// the client's proactive multi-agent delegation. `max` remains a real,
+// separately-selectable level on ALL THREE trio models per the live account
+// catalog; the ChatGPT app merely hides Max behind a settings toggle (Ultra is
+// plan-gated instead). Do NOT remove `max` from the trio because an app picker
+// doesn't show it by default.
+export function codexModelSupportsUltracodeReasoning(modelId?: string | null): boolean {
+  const id = String(modelId || '')
+    .trim()
+    .toLowerCase()
+  return (
+    id === 'gpt-5.6-sol' ||
+    id === 'gpt-5.6-terra' ||
+    id === 'preview:openai:gpt-5.6:sol' ||
+    id === 'preview:openai:gpt-5.6:terra'
+  )
+}
 
 /**
- * Map TaskWraith's internal reasoning-effort token to the Codex CLI wire value.
- * Codex tops out at `max`, so a stray internal `ultracode` (e.g. persisted on a
- * seat before this cap, or copied from a Claude preset) is clamped DOWN to
- * `max` rather than sent as `ultra` (which would crash the app-server). The CLI
- * also rejects the literal "ultracode".
+ * Map TaskWraith's internal reasoning-effort token to the official Codex CLI
+ * wire value. The top-tier divergence: internal `ultracode` → official `ultra`
+ * on models that support it, clamped to `max` on models that don't (Luna, or a
+ * stale persisted seat). Mirrors ClaudeCliArgs' internal→wire mapping on the
+ * Claude side.
+ *
+ * This mapping MUST run on every codex dispatch: the API hard-rejects the raw
+ * internal token ("[reasoning.effort] invalid_enum_value: 'ultracode'"), which
+ * is exactly the failure users saw as "Codex failed · exit 1" on Ultra runs
+ * from a main process built before this map existed. (Verified 2026-07-09 via
+ * the durable run-event log + live app-server repros: ultra itself — including
+ * its multi-agent sub-agent delegation — runs fine through TaskWraith's
+ * MCP-registered app-server session.)
  */
-export function codexWireReasoningEffort(effort?: string | null): string | undefined {
+export function codexWireReasoningEffort(
+  effort?: string | null,
+  modelId?: string | null
+): string | undefined {
   const normalized = String(effort || '').trim()
   if (!normalized) return undefined
-  return normalized.toLowerCase() === 'ultracode' ? 'max' : normalized
+  if (normalized.toLowerCase() !== 'ultracode') return normalized
+  // When the target model is known and lacks the ultra tier, clamp to max
+  // (same reasoning depth on the wire) instead of sending an unsupported id.
+  if (modelId !== undefined && !codexModelSupportsUltracodeReasoning(modelId)) return 'max'
+  return 'ultra'
 }
 
 export function codexReasoningEffortsForModel<T extends CodexReasoningEffortOption>(
@@ -158,13 +176,12 @@ export function codexReasoningEffortsForModel<T extends CodexReasoningEffortOpti
   const normalized: Array<T | CodexReasoningEffortOption> = []
   const seen = new Set<string>()
   // Inbound wire-token → internal-token aliases: the live `model/list` says
-  // 'light' where TaskWraith says 'low', and (GPT-5.6) 'ultra' — which TaskWraith
-  // deliberately does NOT offer for Codex (see codexWireReasoningEffort). Fold
-  // an inbound `ultra` into `max` so it dedupes away and never surfaces as a
-  // selectable Codex level.
+  // 'light' where TaskWraith says 'low', and (GPT-5.6) 'ultra' where
+  // TaskWraith's shared internal tier token is 'ultracode' (the outbound
+  // mapping back to 'ultra' lives in codexWireReasoningEffort).
   const INBOUND_EFFORT_ALIASES: Readonly<Record<string, string>> = {
     light: 'low',
-    ultra: 'max'
+    ultra: 'ultracode'
   }
   for (const effort of efforts || []) {
     if (!effort?.reasoningEffort) continue
@@ -182,6 +199,9 @@ export function codexReasoningEffortsForModel<T extends CodexReasoningEffortOpti
   if (codexModelSupportsMaxReasoning(modelId) && !seen.has('max')) {
     normalized.push({ reasoningEffort: 'max' })
     seen.add('max')
+  }
+  if (codexModelSupportsUltracodeReasoning(modelId) && !seen.has('ultracode')) {
+    normalized.push({ reasoningEffort: 'ultracode' })
   }
   return normalized
 }
@@ -243,11 +263,10 @@ export function mergeCodexLiveModelRows<
 // GPT-5.6 trio rows carry the OFFICIAL metadata (verified 2026-07-09 against
 // the upstream Codex catalog codex-rs/models-manager/models.json +
 // developers.openai.com): official display names are hyphenated
-// ("GPT-5.6-Sol"), Sol's official default effort is LOW, and `max` is the TOP
-// tier on all three — codexReasoningEffortsForModel appends `max` per
-// codexModelSupportsMaxReasoning. Codex's own `ultra` tier is NOT offered (it
-// crashes TaskWraith's app-server via its multi-agent path; same wire reasoning
-// as max regardless — see codexWireReasoningEffort above).
+// ("GPT-5.6-Sol"), Sol's official default effort is LOW, `max` exists on all
+// three, and the top `ultra` tier (TaskWraith-internal token: 'ultracode')
+// exists on Sol + Terra only — codexReasoningEffortsForModel appends those two
+// tiers per the codexModelSupports* predicates.
 export const CODEX_STATIC_MODELS = [
   {
     id: 'gpt-5.6-sol',
