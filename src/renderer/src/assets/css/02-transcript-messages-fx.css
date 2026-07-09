@@ -2314,6 +2314,66 @@
   position: relative;
   z-index: 1;
   overflow-anchor: none;
+  /* Composer fade-under (scroll-aware). Content dissolves into the background as
+   * it scrolls down toward / under the floating composer, and reveals again as it
+   * scrolls back up. The mask is anchored to the scroll VIEWPORT (not the content),
+   * so ONE fixed gradient handles BOTH directions automatically — content simply
+   * passes through the fixed fade band. The transparent point sits at the
+   * composer's TOP EDGE, which tracks the LIVE composer height
+   * (--composer-reserved-height, a ResizeObserver on .composer-area) + its bottom
+   * offset, so the fade auto-follows a growing composer (ensemble rows, wrapped
+   * input) without JS. --transcript-composer-fade is the soft dissolve band above
+   * that edge; the multi-stop easing matches .live-activity-viewport's house style.
+   * Safe on the scroll container: the flank rails portal to <body> and the
+   * jump-to-latest pill / composer are .app-transcript siblings, so only
+   * .transcript-inner is masked. A mask is paint-only — it never changes
+   * scrollTop/scrollHeight, so the auto-follow / scroll-override logic is untouched. */
+  --transcript-composer-fade: 88px;
+  --transcript-composer-fade-anchor: calc(
+    var(--composer-reserved-height) + var(--composer-bottom-gap) +
+      env(safe-area-inset-bottom, 0px)
+  );
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    #000 0,
+    #000 calc(100% - var(--transcript-composer-fade-anchor) - var(--transcript-composer-fade)),
+    rgba(0, 0, 0, 0.72) calc(100% - var(--transcript-composer-fade-anchor) - 32px),
+    rgba(0, 0, 0, 0.18) calc(100% - var(--transcript-composer-fade-anchor) - 10px),
+    transparent calc(100% - var(--transcript-composer-fade-anchor))
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    #000 0,
+    #000 calc(100% - var(--transcript-composer-fade-anchor) - var(--transcript-composer-fade)),
+    rgba(0, 0, 0, 0.72) calc(100% - var(--transcript-composer-fade-anchor) - 32px),
+    rgba(0, 0, 0, 0.18) calc(100% - var(--transcript-composer-fade-anchor) - 10px),
+    transparent calc(100% - var(--transcript-composer-fade-anchor))
+  );
+}
+
+/* Gemini terminal docks below the composer, extending the bottom reserve — push
+ * the fade anchor past the terminal so content still fades at the true top edge
+ * of the composer+terminal stack. */
+.gemini-terminal-open .transcript-scroll {
+  --transcript-composer-fade-anchor: calc(
+    var(--composer-reserved-height) + var(--composer-bottom-gap) +
+      var(--gemini-terminal-height) + var(--gemini-terminal-bottom-gap) +
+      env(safe-area-inset-bottom, 0px)
+  );
+}
+
+/* Scope the fade to the true "composer floats over the transcript" surfaces
+ * (the focused single-chat view + popout). Two secondary surfaces opt out:
+ *   - Multiview split panes put the composer in NORMAL flow (14-multiview.css) so
+ *     nothing scrolls under it, and --composer-reserved-height is a static 150px —
+ *     a live-anchored fade would just over-dim a short pane.
+ *   - The side-chat pane's composer overlaps, but its scroller uses a fixed
+ *     218px bottom reserve (not the live --composer-reserved-height), so this
+ *     anchor wouldn't line up. Left off until it has its own anchor. */
+.multiview-pane-transcript .transcript-scroll,
+.side-chat-pane .transcript-scroll {
+  -webkit-mask-image: none;
+  mask-image: none;
 }
 
 .transcript-user-gutter {
