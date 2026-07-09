@@ -65,10 +65,10 @@
 		3AC061527DD5E03FB2CB5FB6 /* TaskWraithLaunchUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskWraithLaunchUITests.swift; sourceTree = "<group>"; };
 		5829A7D0E9EA0BDA0DEB9BE3 /* TaskWraithKit */ = {isa = PBXFileReference; lastKnownFileType = folder; name = TaskWraithKit; path = ../TaskWraithKit; sourceTree = SOURCE_ROOT; };
 		70D53F402BCC1456A7E9D116 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
-		793E610251E2C2C41B44C224 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		793E610251E2C2C41B44C224 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		8738F17EF74CF59C08107065 /* TaskWraithAppLifecycleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskWraithAppLifecycleTests.swift; sourceTree = "<group>"; };
-		A12FB9A2BBEAC31DB7D439FE /* TaskWraithUnitTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = TaskWraithUnitTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
-		F52EAA275EC223F7FEF2C488 /* TaskWraithUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = TaskWraithUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		A12FB9A2BBEAC31DB7D439FE /* TaskWraithUnitTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TaskWraithUnitTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		F52EAA275EC223F7FEF2C488 /* TaskWraithUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TaskWraithUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		FAD184B8DAC8733EE42CBCA3 /* NotificationService.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = NotificationService.entitlements; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -361,6 +361,7 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = 8CZML8FK2D;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -379,6 +380,7 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = 8CZML8FK2D;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
