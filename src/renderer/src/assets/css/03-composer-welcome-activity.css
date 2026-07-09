@@ -162,6 +162,15 @@
   margin-top: 0;
   margin-bottom: 0;
   display: grid;
+  /* The single column must span the pane, not shrink to its content: with an
+     implicit (auto) column, the track sizes to the widest in-flow item and
+     parks at the inline start, so the welcome composer renders narrower than
+     --composer-content-max-width AND off-centre — while the absolutely
+     positioned notification zone (out of flow) still centres, making the
+     drift obvious. minmax(0, 1fr) fills the content box so the stack's
+     width: 100% resolves to the pane and justify-items: center actually
+     centres everything, matching the started-transcript composer. */
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows:
     minmax(clamp(18px, 3vh, 48px), 1fr)
     auto
