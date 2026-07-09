@@ -196,11 +196,19 @@
   .composer-area
   > :is(.welcome-standalone-heatmaps, .composer-primary-stack)
   + .notification-zone {
-  grid-row: 6;
-  align-self: end;
+  /* Float the New Additions notice at the pane bottom, OUT of the grid flow, so
+     its height never reserves a grid row or nudges the composer / heatmaps above
+     it. composer-area fills the pane in this state (flex: 1 1 auto) and is the
+     positioning context (position: relative), so bottom-anchoring lands it at
+     the pane bottom. Centred via translateX so the swipe-widened width still
+     centres. Was grid-row 6 (align-self:end) which reserved its height. */
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: clamp(4px, 1.5vh, 16px);
+  margin: 0;
   width: 100%;
   max-width: min(100%, var(--composer-content-max-width));
-  margin: clamp(16px, 2.5vh, 28px) auto 0;
 }
 
 .app-transcript.welcome-mode:not(.multiview-pane-transcript)
@@ -259,6 +267,11 @@
   .composer-area
   > :is(.welcome-standalone-heatmaps, .composer-primary-stack)
   + .notification-zone {
+  /* Fit mode (short window, dashboard hidden): composer-area is CENTRED here
+     (flex: 0 1 auto; margin: auto), not filling, so an absolute-bottom notice
+     would anchor to the composer's own bottom and overlap it. Keep it in flow
+     at the bottom of the centred stack instead — the float only applies to the
+     normal (filling) welcome layout above. */
   width: 100%;
   max-width: min(100%, var(--composer-content-max-width));
   margin-top: clamp(16px, 2.5vh, 28px);
