@@ -122,6 +122,13 @@ export function codexModelSupportsMaxReasoning(modelId?: string | null): boolean
 // codexWireReasoningEffort maps it to the official `ultra` at the CLI boundary,
 // and codexReasoningEffortsForModel maps an inbound `ultra` from the live
 // `model/list` back onto the internal token.
+// NOTE (verified in codex core, reasoning_effort_for_request): on the wire the
+// client maps Ultra→Max for the model request — `ultra` IS max reasoning plus
+// the client's proactive multi-agent delegation. `max` remains a real,
+// separately-selectable level on ALL THREE trio models per the live account
+// catalog; the ChatGPT app merely hides Max behind a settings toggle (Ultra is
+// plan-gated instead). Do NOT remove `max` from the trio because an app picker
+// doesn't show it by default.
 export function codexModelSupportsUltracodeReasoning(modelId?: string | null): boolean {
   const id = String(modelId || '')
     .trim()
