@@ -278,7 +278,7 @@ export function ContinuousHopsLimitChip({
                 <div className="continuous-hops-popover-actions">
                   <button
                     type="button"
-                    className="btn btn-sm btn-ghost"
+                    className="segmented-control-action segmented-control-action--compact"
                     onClick={() => {
                       setOpen(false)
                       triggerRef.current?.focus()
@@ -288,7 +288,7 @@ export function ContinuousHopsLimitChip({
                   </button>
                   <button
                     type="submit"
-                    className="btn btn-sm btn-primary"
+                    className="segmented-control-action segmented-control-action--compact segmented-control-action--primary"
                     disabled={!draftValid}
                   >
                     Set
