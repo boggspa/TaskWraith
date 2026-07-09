@@ -22,31 +22,37 @@ describe('Codex provider model defaults', () => {
     }
   })
 
-  it('exposes GPT-5.6 rows with official GA metadata (tiers, names, defaults)', () => {
-    // Official (2026-07-09): hyphenated names; Sol defaults LOW; max on all
-    // three; ultra('ultracode') on Sol + Terra only.
+  it('exposes GPT-5.6 rows with official GA metadata, topping out at max', () => {
+    // Official (2026-07-09): hyphenated names; Sol defaults LOW. All three top
+    // out at max — codex's ultra tier is deliberately not offered.
     const byId = new Map(CODEX_DEFAULT_MODELS.map((model) => [model.id, model]))
+    const topTier = ['low', 'medium', 'high', 'xhigh', 'max']
     expect(byId.get('gpt-5.6-sol')).toMatchObject({
       label: 'GPT-5.6-Sol',
       defaultReasoningEffort: 'low'
     })
     expect(
       byId.get('gpt-5.6-sol')?.supportedReasoningEfforts?.map((option) => option.reasoningEffort)
-    ).toEqual(['low', 'medium', 'high', 'xhigh', 'max', 'ultracode'])
+    ).toEqual(topTier)
     expect(byId.get('gpt-5.6-terra')).toMatchObject({
       label: 'GPT-5.6-Terra',
       defaultReasoningEffort: 'medium'
     })
     expect(
       byId.get('gpt-5.6-terra')?.supportedReasoningEfforts?.map((option) => option.reasoningEffort)
-    ).toEqual(['low', 'medium', 'high', 'xhigh', 'max', 'ultracode'])
+    ).toEqual(topTier)
     expect(byId.get('gpt-5.6-luna')).toMatchObject({
       label: 'GPT-5.6-Luna',
       defaultReasoningEffort: 'medium'
     })
     expect(
       byId.get('gpt-5.6-luna')?.supportedReasoningEfforts?.map((option) => option.reasoningEffort)
-    ).toEqual(['low', 'medium', 'high', 'xhigh', 'max'])
+    ).toEqual(topTier)
+    for (const id of ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna']) {
+      expect(byId.get(id)?.supportedReasoningEfforts?.map((o) => o.reasoningEffort)).not.toContain(
+        'ultracode'
+      )
+    }
   })
 
   it('leads the picker with the GPT-5.6 trio (above 5.5) but keeps 5.5 the default', () => {

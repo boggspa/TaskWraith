@@ -159,20 +159,20 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
       {
         provider: 'codex',
         label: 'Codex',
-        // Official GA metadata (2026-07-09): 1M+ raw context on all three,
-        // Max on all three, and the Ultra tier on Sol + Terra.
+        // Official GA metadata (2026-07-09): 1M+ raw context on all three, with
+        // reasoning up to the Max tier.
         models: [
           {
             name: 'GPT-5.6-Luna',
-            blurb: 'Fast and affordable agentic coding — with the Max reasoning tier.'
+            blurb: 'Fast and affordable agentic coding — reasoning up to the Max tier.'
           },
           {
             name: 'GPT-5.6-Terra',
-            blurb: 'Balanced agentic coding for everyday work — Max and Ultra reasoning tiers.'
+            blurb: 'Balanced agentic coding for everyday work — reasoning up to the Max tier.'
           },
           {
             name: 'GPT-5.6-Sol',
-            blurb: 'Latest frontier agentic coding model — Max and Ultra reasoning tiers.'
+            blurb: 'Latest frontier agentic coding model — reasoning up to the Max tier.'
           }
         ]
       },

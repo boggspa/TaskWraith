@@ -57,14 +57,10 @@ const CODEX_REASONING: CombinedModelPickerReasoningOption[] = [
   { value: 'high', label: codexReasoningDisplayLabel('high') },
   { value: 'xhigh', label: codexReasoningDisplayLabel('xhigh') }
 ]
-// Official GPT-5.6 tiers (2026-07-09): `max` on all three trio models; the top
-// `ultra` tier (internal token 'ultracode', displayed "Ultra") on Sol + Terra
-// only — Luna stops at max.
-const CODEX_TRIO_FULL_REASONING: CombinedModelPickerReasoningOption[] = [
-  ...CODEX_REASONING,
-  { value: 'max', label: codexReasoningDisplayLabel('max') },
-  { value: 'ultracode', label: codexReasoningDisplayLabel('ultracode') }
-]
+// GPT-5.6 trio: `max` is the top tier TaskWraith offers for Codex on all three.
+// Codex's own `ultra` tier is deliberately not offered — same reasoning depth
+// as Max on the wire, but it activates codex-internal multi-agent that crashes
+// TaskWraith's app-server (see codexWireReasoningEffort in StaticProviderModels).
 const CODEX_TRIO_MAX_REASONING: CombinedModelPickerReasoningOption[] = [
   ...CODEX_REASONING,
   { value: 'max', label: codexReasoningDisplayLabel('max') }
@@ -229,20 +225,20 @@ export function getEnsembleReasoningOptions(
 ): CombinedModelPickerReasoningOption[] {
   switch (provider) {
     case 'codex': {
-      // Mirrors main's codexModelSupportsMaxReasoning / -UltracodeReasoning
-      // (official 2026-07-09 tiers): Sol + Terra get max + ultra('ultracode');
-      // Luna gets max only; everything else stops at xhigh. Stale
-      // pre-un-gate placeholder ids count as their concrete slugs.
+      // Mirrors main's codexModelSupportsMaxReasoning: the whole GPT-5.6 trio
+      // tops out at `max`. Codex's `ultra` tier is deliberately not offered
+      // (same wire reasoning as Max, but crashes the app-server via its
+      // multi-agent path). Everything else stops at xhigh. Stale pre-un-gate
+      // placeholder ids count as their concrete slugs.
       const codexModel = String(modelId || '').toLowerCase()
       if (
         codexModel === 'gpt-5.6-sol' ||
         codexModel === 'gpt-5.6-terra' ||
+        codexModel === 'gpt-5.6-luna' ||
         codexModel === 'preview:openai:gpt-5.6:sol' ||
-        codexModel === 'preview:openai:gpt-5.6:terra'
+        codexModel === 'preview:openai:gpt-5.6:terra' ||
+        codexModel === 'preview:openai:gpt-5.6:luna'
       ) {
-        return CODEX_TRIO_FULL_REASONING
-      }
-      if (codexModel === 'gpt-5.6-luna' || codexModel === 'preview:openai:gpt-5.6:luna') {
         return CODEX_TRIO_MAX_REASONING
       }
       return CODEX_REASONING

@@ -34,10 +34,13 @@ interface CodexModelOption {
 const CODEX_DEFAULT_MODELS = [
   // GPT-5.6 trio leads the picker (above 5.5); 5.5 below stays the default.
   // GA rows with OFFICIAL metadata (2026-07-09, upstream Codex catalog +
-  // developers.openai.com): hyphenated display names, Sol defaults to LOW,
-  // `max` on all three, top `ultra` tier (internal token 'ultracode') on
-  // Sol + Terra only. This is the pre-IPC fallback list — the authoritative
-  // rows come from the main process (CODEX_STATIC_MODELS + live model/list).
+  // developers.openai.com): hyphenated display names, Sol defaults to LOW.
+  // `max` is the TOP tier for all three — Codex's own `ultra` tier is NOT
+  // offered (it maps to Max reasoning on the wire but activates codex-internal
+  // multi-agent, which crashes TaskWraith's app-server; see
+  // codexWireReasoningEffort in StaticProviderModels.ts). This is the pre-IPC
+  // fallback list — the authoritative rows come from the main process
+  // (CODEX_STATIC_MODELS + live model/list).
   {
     id: 'gpt-5.6-sol',
     label: 'GPT-5.6-Sol',
@@ -47,8 +50,7 @@ const CODEX_DEFAULT_MODELS = [
       { reasoningEffort: 'medium' },
       { reasoningEffort: 'high' },
       { reasoningEffort: 'xhigh' },
-      { reasoningEffort: 'max' },
-      { reasoningEffort: 'ultracode' }
+      { reasoningEffort: 'max' }
     ],
     defaultReasoningEffort: 'low',
     additionalSpeedTiers: ['fast']
@@ -62,8 +64,7 @@ const CODEX_DEFAULT_MODELS = [
       { reasoningEffort: 'medium' },
       { reasoningEffort: 'high' },
       { reasoningEffort: 'xhigh' },
-      { reasoningEffort: 'max' },
-      { reasoningEffort: 'ultracode' }
+      { reasoningEffort: 'max' }
     ],
     defaultReasoningEffort: 'medium',
     additionalSpeedTiers: ['fast']

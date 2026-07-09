@@ -246,29 +246,21 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
       'high',
       'xhigh'
     ])
-    // Official GA tiers (2026-07-09): max on all three; ultra('ultracode') on
-    // Sol + Terra only — Luna stops at max.
-    expect(
-      getEnsembleReasoningOptions('codex', 'gpt-5.6-sol').map((option) => option.value)
-    ).toEqual(['low', 'medium', 'high', 'xhigh', 'max', 'ultracode'])
-    expect(
-      getEnsembleReasoningOptions('codex', 'gpt-5.6-terra').map((option) => option.value)
-    ).toEqual(['low', 'medium', 'high', 'xhigh', 'max', 'ultracode'])
-    expect(
-      getEnsembleReasoningOptions('codex', 'gpt-5.6-luna').map((option) => option.value)
-    ).toEqual(['low', 'medium', 'high', 'xhigh', 'max'])
+    // All three trio models top out at max — codex's ultra tier is deliberately
+    // not offered (crashes TaskWraith's app-server via its multi-agent path).
+    const codexTop = ['low', 'medium', 'high', 'xhigh', 'max']
+    for (const id of ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna']) {
+      expect(getEnsembleReasoningOptions('codex', id).map((option) => option.value)).toEqual(
+        codexTop
+      )
+    }
     // Stale pre-un-gate placeholder ids keep resolving their concrete slug's
     // ladder so a persisted roster row renders the right reasoning options.
-    expect(
-      getEnsembleReasoningOptions('codex', 'preview:openai:gpt-5.6:sol').map(
-        (option) => option.value
+    for (const id of ['preview:openai:gpt-5.6:sol', 'preview:openai:gpt-5.6:luna']) {
+      expect(getEnsembleReasoningOptions('codex', id).map((option) => option.value)).toEqual(
+        codexTop
       )
-    ).toEqual(['low', 'medium', 'high', 'xhigh', 'max', 'ultracode'])
-    expect(
-      getEnsembleReasoningOptions('codex', 'preview:openai:gpt-5.6:luna').map(
-        (option) => option.value
-      )
-    ).toEqual(['low', 'medium', 'high', 'xhigh', 'max'])
+    }
     const sol = codex.modelOptions.find((option) => option.id === 'gpt-5.6-sol')
     expect(sol).toMatchObject({ label: 'GPT-5.6-Sol' })
     expect(sol?.disabled).toBeUndefined()

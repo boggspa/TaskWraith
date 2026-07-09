@@ -203,43 +203,34 @@ describe('getStaticProviderModels (provider-specific catalogs)', () => {
     ).toEqual(['low', 'medium', 'high', 'xhigh'])
   })
 
-  it('carries official GA metadata on the GPT-5.6 trio rows', () => {
+  it('carries official GA metadata on the GPT-5.6 trio rows, topping out at max', () => {
     // Verified 2026-07-09 against the upstream Codex catalog
     // (codex-rs/models-manager/models.json): hyphenated display names, Sol
-    // defaults to LOW, `max` on all three, `ultra` (internal 'ultracode') on
-    // Sol + Terra only.
+    // defaults to LOW. `max` is the TOP tier for all three — codex's own
+    // `ultra` tier is deliberately NOT offered (it crashes TaskWraith's
+    // app-server via its multi-agent path; same wire reasoning as max anyway).
     const models = getStaticProviderModels('codex') as StaticModelShape[]
     const sol = models.find((model) => model.id === 'gpt-5.6-sol')
     const terra = models.find((model) => model.id === 'gpt-5.6-terra')
     const luna = models.find((model) => model.id === 'gpt-5.6-luna')
+    const topTier = ['low', 'medium', 'high', 'xhigh', 'max']
     expect(sol).toMatchObject({ label: 'GPT-5.6-Sol', defaultReasoningEffort: 'low' })
-    expect(sol?.supportedReasoningEfforts?.map((option) => option.reasoningEffort)).toEqual([
-      'low',
-      'medium',
-      'high',
-      'xhigh',
-      'max',
-      'ultracode'
-    ])
+    expect(sol?.supportedReasoningEfforts?.map((option) => option.reasoningEffort)).toEqual(topTier)
     expect(terra).toMatchObject({ label: 'GPT-5.6-Terra', defaultReasoningEffort: 'medium' })
-    expect(terra?.supportedReasoningEfforts?.map((option) => option.reasoningEffort)).toEqual([
-      'low',
-      'medium',
-      'high',
-      'xhigh',
-      'max',
-      'ultracode'
-    ])
+    expect(terra?.supportedReasoningEfforts?.map((option) => option.reasoningEffort)).toEqual(
+      topTier
+    )
     expect(luna).toMatchObject({ label: 'GPT-5.6-Luna', defaultReasoningEffort: 'medium' })
-    expect(luna?.supportedReasoningEfforts?.map((option) => option.reasoningEffort)).toEqual([
-      'low',
-      'medium',
-      'high',
-      'xhigh',
-      'max'
-    ])
+    expect(luna?.supportedReasoningEfforts?.map((option) => option.reasoningEffort)).toEqual(
+      topTier
+    )
     for (const row of [sol, terra, luna]) {
       expect(row?.additionalSpeedTiers).toEqual(['fast'])
+      // ultra/ultracode must NOT appear on any codex row.
+      expect(row?.supportedReasoningEfforts?.map((o) => o.reasoningEffort)).not.toContain(
+        'ultracode'
+      )
+      expect(row?.supportedReasoningEfforts?.map((o) => o.reasoningEffort)).not.toContain('ultra')
     }
   })
 
@@ -265,29 +256,30 @@ describe('getStaticProviderModels (provider-specific catalogs)', () => {
     expect(isPreviewCatalogModelId('preview:openai:gpt-5.6:sol')).toBe(false)
   })
 
-  it('adds Max on the whole GPT-5.6 trio and Ultra(code) on Sol + Terra only', () => {
+  it('tops the whole GPT-5.6 trio at Max — no ultra/ultracode for codex', () => {
     const base = [
       { reasoningEffort: 'medium' },
       { reasoningEffort: 'high' },
       { reasoningEffort: 'xhigh' }
     ]
-    expect(
-      codexReasoningEffortsForModel('gpt-5.6-sol', base).map((option) => option.reasoningEffort)
-    ).toEqual(['low', 'medium', 'high', 'xhigh', 'max', 'ultracode'])
-    expect(
-      codexReasoningEffortsForModel('gpt-5.6-terra', base).map((option) => option.reasoningEffort)
-    ).toEqual(['low', 'medium', 'high', 'xhigh', 'max', 'ultracode'])
-    expect(
-      codexReasoningEffortsForModel('gpt-5.6-luna', base).map((option) => option.reasoningEffort)
-    ).toEqual(['low', 'medium', 'high', 'xhigh', 'max'])
+    for (const id of ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna']) {
+      expect(codexReasoningEffortsForModel(id, base).map((o) => o.reasoningEffort)).toEqual([
+        'low',
+        'medium',
+        'high',
+        'xhigh',
+        'max'
+      ])
+    }
     expect(
       codexReasoningEffortsForModel('gpt-5.5', base).map((option) => option.reasoningEffort)
     ).toEqual(['low', 'medium', 'high', 'xhigh'])
   })
 
-  it("normalizes the live catalog's official 'ultra' token onto internal 'ultracode'", () => {
-    // The live model/list says 'ultra' (official tier id); TaskWraith's shared
-    // internal token is 'ultracode'. Inbound rows normalize + dedupe.
+  it("folds the live catalog's 'ultra' tier into 'max' so it never surfaces for codex", () => {
+    // The live model/list serves both 'max' and the multi-agent 'ultra' on
+    // Sol/Terra; TaskWraith folds 'ultra' into 'max' (deduped) so a codex seat
+    // can never select the crashing tier.
     expect(
       codexReasoningEffortsForModel('gpt-5.6-sol', [
         { reasoningEffort: 'low' },
@@ -297,12 +289,20 @@ describe('getStaticProviderModels (provider-specific catalogs)', () => {
         { reasoningEffort: 'max' },
         { reasoningEffort: 'ultra' }
       ]).map((option) => option.reasoningEffort)
-    ).toEqual(['low', 'medium', 'high', 'xhigh', 'max', 'ultracode'])
+    ).toEqual(['low', 'medium', 'high', 'xhigh', 'max'])
+    // Even if 'ultra' arrives WITHOUT an explicit 'max', it becomes max (not a
+    // separate selectable ultra row). Light 'low' is prepended for gpt-5 models.
+    expect(
+      codexReasoningEffortsForModel('gpt-5.6-terra', [
+        { reasoningEffort: 'medium' },
+        { reasoningEffort: 'ultra' }
+      ]).map((option) => option.reasoningEffort)
+    ).toEqual(['low', 'medium', 'max'])
   })
 
-  it("maps internal 'ultracode' to the official 'ultra' wire value for the Codex CLI", () => {
-    expect(codexWireReasoningEffort('ultracode')).toBe('ultra')
-    expect(codexWireReasoningEffort('Ultracode')).toBe('ultra')
+  it("clamps internal 'ultracode' DOWN to 'max' at the Codex wire (never sends crashing 'ultra')", () => {
+    expect(codexWireReasoningEffort('ultracode')).toBe('max')
+    expect(codexWireReasoningEffort('Ultracode')).toBe('max')
     expect(codexWireReasoningEffort('max')).toBe('max')
     expect(codexWireReasoningEffort('medium')).toBe('medium')
     expect(codexWireReasoningEffort('')).toBeUndefined()
