@@ -8,7 +8,7 @@ The Local servers tab lists dev servers and watchers (Next.js, Vite, and similar
 ## Where to find it
 **Settings → Integrations → Local servers**
 
-<!-- screenshot-pending: Local servers tab showing dev server list with workspace associations -->
+![Local servers tab showing dev server list with workspace associations](../images/settings-and-configuration__local-servers-tab.png)
 
 ## How to use it
 1. Open **Settings → Integrations → Local servers** to see how many servers are currently running, grouped by workspace.

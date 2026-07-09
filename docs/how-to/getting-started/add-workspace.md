@@ -8,7 +8,7 @@ Add a new workspace folder to the sidebar so TaskWraith can run agents against i
 ## Where to find it
 Click the **+** button in the **sidebar masthead**, or go to **Settings → Workspaces**.
 
-<!-- screenshot-pending: Sidebar masthead + button or Settings Workspaces tab -->
+![Sidebar masthead + button or Settings Workspaces tab](../images/getting-started__add-workspace.png)
 
 ## How to use it
 1. Click the **+** in the sidebar masthead (or open Settings → Workspaces).

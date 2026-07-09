@@ -8,7 +8,7 @@ The Devices popover shows the status of paired iOS devices and provides a quick 
 ## Where to find it
 In the **Sidebar footer control row** — click the **green devices** icon (when iOS remote is enabled).
 
-<!-- screenshot-pending: Sidebar footer green devices icon and expanded Devices popover -->
+![Sidebar footer green devices icon and expanded Devices popover](../images/footer-control-row__devices-popover.png)
 
 ## How to use it
 1. Click the green devices icon to open the popover.

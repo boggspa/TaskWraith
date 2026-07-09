@@ -8,7 +8,7 @@ The Continuous Hops Meter is the `n/m` chip that tracks extra handoff turns used
 ## Where to find it
 In the labeled **Turn Budget** cell on the second row of the Roster Presets section above the composer input, next to the Turn / Continuous / Work Session mode picker and Fan-Out toggle, whenever Continuous mode is active for the current round.
 
-<!-- screenshot-pending: Continuous hops meter chip showing "2/6" in the Turn Budget cell -->
+![Continuous hops meter chip showing "2/6" in the Turn Budget cell](../images/ensemble-mode__continuous-hops-meter.png)
 
 ## How to use it
 1. Switch the ensemble chat's orchestration mode to **Continuous** so participants can hand work back and forth (via `@mentions` or the `ensemble_yield` tool) instead of each speaking once.

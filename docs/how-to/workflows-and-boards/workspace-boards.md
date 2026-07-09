@@ -8,7 +8,7 @@ A Workspace Board is a kanban-style view scoped to one workspace, with columns l
 ## Where to find it
 Sidebar → **Workspace Boards** section. Click a board to open it in the center stage; create a new one from the sidebar's "+" / New menu (**New Workspace Board**), which requires at least one workspace to exist.
 
-<!-- screenshot-pending: Workspace board view with kanban columns and cards -->
+![Workspace board view with kanban columns and cards](../images/workflows-and-boards__workspace-boards.png)
 
 ## How to use it
 1. Open a board from the **Workspace Boards** section in the sidebar.

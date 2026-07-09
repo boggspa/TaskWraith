@@ -8,7 +8,7 @@ Provider Tools is an audit page for TaskWraith's own tool surface: the built-in 
 ## Where to find it
 **Settings → Integrations → Provider Tools**.
 
-<!-- screenshot-pending: Provider tools tab showing MCP bridge audit and tool catalog -->
+![Provider tools tab showing MCP bridge audit and tool catalog](../images/settings-and-configuration__provider-tools-tab.png)
 
 ## How to use it
 1. Open **Settings → Integrations → Provider Tools**.

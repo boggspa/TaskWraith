@@ -8,7 +8,7 @@ The MCP Servers tab is where you add, edit, import, validate, and manage your ow
 ## Where to find it
 **Settings → Integrations → MCP Servers**
 
-<!-- screenshot-pending: MCP servers tab showing server list with add/edit/import controls -->
+![MCP servers tab showing server list with add/edit/import controls](../images/settings-and-configuration__mcp-servers-tab.png)
 
 ## How to use it
 1. Click **Add server**, give it a name, choose a transport (stdio, HTTP, or SSE), and fill in the command (stdio) or URL (HTTP/SSE).

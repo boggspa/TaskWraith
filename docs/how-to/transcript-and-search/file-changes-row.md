@@ -8,7 +8,7 @@ The file changes row is the "File changes" card that summarizes every file an ag
 ## Where to find it
 It sits at the bottom of the transcript, just above the composer, in any workspace chat that has file changes (it's hidden in a General/Global chat unless that chat has changes too).
 
-<!-- screenshot-pending: File changes row showing pending diffs above the composer -->
+![File changes row showing pending diffs above the composer](../images/transcript-and-search__file-changes-row.png)
 
 ## How to use it
 1. Check the header for a quick summary: counts of created/edited/deleted files and a `+added | -deleted` line total.

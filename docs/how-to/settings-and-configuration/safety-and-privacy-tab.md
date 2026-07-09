@@ -8,7 +8,7 @@ The Safety & Privacy tab is a read-only overview of TaskWraith's risk posture: a
 ## Where to find it
 Open **Settings → Data → Safety & Privacy**.
 
-<!-- screenshot-pending: Safety and privacy tab showing risk posture overview and deep-links -->
+![Safety and privacy tab showing risk posture overview and deep-links](../images/settings-and-configuration__safety-and-privacy-tab.png)
 
 ## How to use it
 1. Open **Settings → Data → Safety & Privacy** to see the summary cards: always-allow policy count, saved workspace grants, provider surfaces signed in or usage-visible, MCP bridge connection count, user MCP server count, and (if device pairing is visible) remote workspace count.

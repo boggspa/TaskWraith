@@ -14,7 +14,7 @@ Open the **linked chat menu** (the split-pane icon with a chevron, in the chat h
 
 You can also right-click (or use the context menu on) any message in the transcript and choose **Open side chat** to seed a new side chat from that message.
 
-<!-- screenshot-pending: Side chat panel docked on the right -->
+![Side chat panel docked on the right](../images/chats-and-threads__side-chat.png)
 
 ## How to use it
 1. With a chat open, click the linked chat menu in the chat header and pick a presentation: **Open isolated side split** (docked pane) or **Open isolated side drawer** (overlay).

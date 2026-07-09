@@ -8,7 +8,7 @@ TaskWraith runs agent prompts on a schedule instead of immediately, in two forms
 ## Where to find it
 For a single message: the **clock icon** in the composer's control row. For recurring runs: the **Workflows** section in the sidebar (below Active Runs and Local Servers), including its **+** button to create one.
 
-<!-- screenshot-pending: ComposerScheduleButton showing quick-offset schedule picker -->
+![ComposerScheduleButton showing quick-offset schedule picker](../images/goals-todos-and-scheduling__routines-and-scheduled-tasks.png)
 
 ## How to use it
 1. To schedule a single prompt, click the **clock icon** in the composer, pick a date/time (or a quick preset like **15m**, **1h**, **Tonight**, **Tomorrow**), then click **Schedule** and send as usual — it fires automatically at that time.

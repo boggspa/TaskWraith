@@ -8,7 +8,7 @@ The Plus Tools menu is the composer's "+" popover for adding context to a messag
 ## Where to find it
 Click the **+ button** at the start of the composer's action row (next to the prompt input, identified by the plus icon). The popover opens grouped into sections: **Add**, **Workspace**, and **Commands**.
 
-<!-- screenshot-pending: Composer + tools menu expanded showing attachments, multiview, screen watch -->
+![Composer + tools menu expanded showing attachments, multiview, screen watch](../images/composer__plus-tools-menu.png)
 
 ## How to use it
 1. Click the **+** button to open the popover.

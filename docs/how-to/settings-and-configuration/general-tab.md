@@ -8,7 +8,7 @@ The General tab holds TaskWraith's core behavior settings: your display name, co
 ## Where to find it
 Open **Settings → App → General**.
 
-<!-- screenshot-pending: General tab showing behavior settings, context turns slider, and product ops section -->
+![General tab showing behavior settings, context turns slider, and product ops section](../images/settings-and-configuration__general-tab.png)
 
 ## How to use it
 1. Set **Your name** so New General Chat greetings can address you by name.

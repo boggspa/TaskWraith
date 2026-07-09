@@ -8,7 +8,7 @@ The Goal button lets you set an active "Goal" for a chat — an objective and st
 ## Where to find it
 In the **composer's telemetry row** (the icon row beneath the prompt box), next to the Screen Watch and schedule controls. Click the target-shaped goal icon to open the Goal popover.
 
-<!-- screenshot-pending: Composer goal button popover showing objective and status -->
+![Composer goal button popover showing objective and status](../images/composer__goal-button.png)
 
 ## How to use it
 1. Click the **Goal** button (disabled until a chat is open).

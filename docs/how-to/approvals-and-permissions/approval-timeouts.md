@@ -8,7 +8,7 @@ Approval timeouts auto-decline a pending approval request if nobody responds in 
 ## Where to find it
 Settings → **Behavior** tab → **Timeout windows** section.
 
-<!-- screenshot-pending: Settings panel showing approval timeout fields per provider -->
+![Settings panel showing approval timeout fields per provider](../images/approvals-and-permissions__approval-timeouts.png)
 
 ## How to use it
 1. Open Settings → Behavior and check **Auto-deny approvals after a timeout** to turn the feature on.

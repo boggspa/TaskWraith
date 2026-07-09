@@ -3,19 +3,20 @@
 **Platform:** Electron
 
 ## What it is
-The permission elevation sheet is a confirmation dialog shown when you raise an agent's permission preset to a riskier level — **Default Approval** or **Full Workspace Access**. It warns you about what the agent can now do before the change takes effect, so a one-click preset change can't silently grant broad file access.
+The permission elevation sheet is a confirmation dialog shown when you raise an agent's permission preset to **Trusted Session** — TaskWraith's highest local authority. It spells out exactly what that chat or participant lane can now do before the change takes effect, so a one-click preset change can't silently grant host-level access.
 
 ## Where to find it
-Appears automatically over the current chat when you raise the **permissions chip** in the composer (or the side-chat composer) to Default Approval or Full Workspace Access. Raising to **Default Approval** shows a smaller notice once per workspace+provider combination; raising to **Full Workspace Access** shows a larger warning every time, with an explicit risk acknowledgement. Lowering the permission level (e.g. back to Plan or Read-only) never triggers this sheet.
+Appears automatically over the current chat when you raise the **permissions chip** in the composer (or the side-chat composer) to **Trusted Session**. Moving between the lower presets (Plan, Read-Only/Recon, Default Approval, Workspace Write) applies immediately without a confirmation, and lowering the permission level never triggers this sheet.
 
-<!-- screenshot-pending: Permission elevation sheet showing posture options -->
+![Trusted Session confirmation sheet with risk acknowledgement checkbox](../images/approvals-and-permissions__permission-elevation-sheet.png)
 
 ## How to use it
-1. Open the **permissions chip** in the composer and pick **Default Approval** or **Full Workspace Access**.
-2. Read the warning: Default Approval lets the agent create, edit, and delete files in the workspace without per-step prompts; Full Workspace Access goes further, additionally letting the agent run files, with no per-step confirmation at all.
-3. For **Full Workspace Access**, check **"I understand the risks and am on a disposable or recoverable device"** — the **Enable Full Access** button stays disabled until you do.
-4. Click **Continue** (Default Approval) or **Enable Full Access** (Full Workspace Access) to apply the change, or **Cancel** (or press Esc) to stay at the current, safer mode.
-5. You can revoke an elevated permission at any time by reopening the permissions chip and picking a lower preset — no warning is shown when lowering.
+1. Open the **permissions chip** in the composer and pick **Trusted Session**.
+2. Read the warning: a Trusted Session raises **only this chat or participant lane** to TaskWraith's highest local authority — it may allow shell commands without the workspace sandbox, signing or keychain-backed tools, and files outside the workspace when the provider adapter supports it.
+3. Note what stays protected: other chats and ensemble participants are unchanged, and TaskWraith still prompts or denies for external publishing, Canvas eval, media recording, per-call-only prompts, and anything blocked by global policy.
+4. Check **"I understand this applies only to … and stays active until I lower that lane's permission"** — the **Start Trusted Session** button stays disabled until you do.
+5. Click **Start Trusted Session** to apply the change, or **Cancel** (or press Esc) to stay at the current, safer preset.
+6. You can revoke it at any time by reopening the permissions chip and picking a lower preset — no warning is shown when lowering.
 
 ## Tips & related
 - [Provider, Model, and Permissions Pickers](../composer/provider-model-permissions-pickers.md) — the composer chip that triggers this sheet.

@@ -8,7 +8,7 @@ Agentic services are the global policy switches that decide whether an agent's s
 ## Where to find it
 **Settings → AI & Providers → Providers → Agentic services.** A read-only summary ("Policy posture") also appears on **Settings → Data → Safety & Privacy**, with an **Edit policies** button that jumps back here.
 
-<!-- screenshot-pending: Provider settings showing agentic policy matrix -->
+![Provider settings showing agentic policy matrix](../images/approvals-and-permissions__provider-agentic-policies.png)
 
 ## How to use it
 1. Open **Settings → AI & Providers → Providers** and scroll to the **Agentic services** group.

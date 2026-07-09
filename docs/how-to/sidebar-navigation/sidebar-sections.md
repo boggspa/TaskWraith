@@ -8,7 +8,7 @@ The sidebar is organized into hierarchical, drag-reorderable sections: Active ru
 ## Where to find it
 In the **left sidebar panel** of the TaskWraith main window.
 
-<!-- screenshot-pending: Sidebar showing all hierarchical sections -->
+![Sidebar showing all hierarchical sections](../images/sidebar-navigation__sidebar-sections.png)
 
 ## How to use it
 1. Drag section headers up or down to reorder them.

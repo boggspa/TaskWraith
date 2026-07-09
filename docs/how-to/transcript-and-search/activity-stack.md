@@ -8,7 +8,7 @@ The activity stack is the collapsible list of tool calls (file reads, edits, she
 ## Where to find it
 Renders inline in the transcript, beneath an agent's turn, wherever the agent used tools.
 
-<!-- screenshot-pending: Collapsible activity stack showing tool calls in the transcript -->
+![Collapsible activity stack showing tool calls in the transcript](../images/transcript-and-search__activity-stack.png)
 
 ## How to use it
 1. Click a row (or a compact group's header) to expand it and see details — file path, command, search query, diff preview, or full output.

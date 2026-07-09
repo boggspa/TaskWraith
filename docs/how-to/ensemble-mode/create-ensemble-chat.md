@@ -8,7 +8,7 @@ An Ensemble chat is a single thread where multiple provider agents (Claude, Code
 ## Where to find it
 Open a new draft and turn on the **Ensemble** button in the composer's bottom row before your first send, click the **+** button in the sidebar's **Ensembles** section header, or use the same **Ensemble** button in an existing top-level idle chat to convert that thread in place.
 
-<!-- screenshot-pending: New draft composer with the Ensemble button in the bottom row highlighted -->
+![New draft composer with the Ensemble button in the bottom row highlighted](../images/ensemble-mode__create-ensemble-chat.png)
 
 ## How to use it
 1. Create a new draft, then open the **Ensemble** button in the composer's bottom row and choose **On** before your first send (or click the **+** on the **Ensembles** section header). The draft switches to Ensemble — there's no setup modal.

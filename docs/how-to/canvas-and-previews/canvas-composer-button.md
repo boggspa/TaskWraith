@@ -8,7 +8,7 @@ The Canvas composer button is a one-click way to open a running web app (e.g. a 
 ## Where to find it
 It's an icon-only button in the composer's telemetry row (the footer icon cluster), next to the Multiview layout picker. Hovering or focusing it shows a "Web canvas" hint label; clicking it opens a small popover with a URL field.
 
-<!-- screenshot-pending: Canvas composer button in the telemetry row -->
+![Canvas composer button in the telemetry row](../images/canvas-and-previews__canvas-composer-button.png)
 
 ## How to use it
 1. Click the canvas icon in the composer's telemetry row to open the URL popover.

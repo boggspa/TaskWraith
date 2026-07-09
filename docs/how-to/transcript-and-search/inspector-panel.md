@@ -8,7 +8,7 @@ The Inspector is the right-dock panel for digging into a chat's run details: fil
 ## Where to find it
 Click **Inspect** in the right-dock rim (the icon strip at the edge of the chat) to open it. Inside the panel, seven icon tabs switch between views: **Diff Studio**, **Raw Events**, **Invocations**, **Invocation Timeline**, **Safety**, **Capabilities**, and **Live Invocations**.
 
-<!-- screenshot-pending: Inspector panel showing diff/Raw/Delegation/Timeline tabs -->
+![Inspector panel showing diff/Raw/Delegation/Timeline tabs](../images/transcript-and-search__inspector-panel.png)
 
 ## How to use it
 1. Open **Diff Studio** to review file changes for the current run or the whole workspace; if a run touched multiple write-enabled workspaces, a selector lets you switch between them.

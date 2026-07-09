@@ -8,7 +8,7 @@ Board overflow actions are the per-board options — Pin/Unpin, Rename, Duplicat
 ## Where to find it
 In the sidebar's **Workspace Boards** section, hover a board row and click its **⋯** button, or right-click the row directly.
 
-<!-- screenshot-pending: Board overflow menu showing pin, rename, duplicate, archive options -->
+![Board overflow menu showing pin, rename, duplicate, archive options](../images/workflows-and-boards__board-overflow-actions.png)
 
 ## How to use it
 1. Open the sidebar's **Workspace Boards** section and locate the board.

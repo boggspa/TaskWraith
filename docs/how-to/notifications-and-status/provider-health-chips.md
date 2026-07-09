@@ -13,7 +13,7 @@ Warning chips appear in the **composer chips row**, just above the prompt input,
 ## How to use it
 1. Glance at the composer chips row before sending a message — a warning chip means the active provider has a problem (unavailable, blocked tool category, or blocked network access).
 2. Hover a warning chip to read its full tooltip message, which explains what's wrong and what it affects.
-3. For Ollama, use the normal permission picker to choose Read-Only/Recon, Plan, Default Approval, or Full Workspace Access, and use the run-profile control for local-model behavior.
+3. For Ollama, use the normal permission picker to choose Plan, Read-Only/Recon, Default Approval, Workspace Write, or Trusted Session, and use the run-profile control for local-model behavior.
 4. If the Ollama trigger shows a ⚠, open it and check whether the local server/model is unavailable or a standard permission/network policy is blocking the requested capability.
 5. Fix the underlying issue (sign in where relevant, start the local Ollama server, select an installed model, or adjust agentic service policy) and the chip clears automatically once the provider reports healthy.
 

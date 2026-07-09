@@ -8,7 +8,7 @@ The **Settings** button opens the full-app Settings takeover, where you can conf
 ## Where to find it
 In the **Sidebar footer** — click the **Settings** (gear) button.
 
-<!-- screenshot-pending: Sidebar footer with Settings button highlighted -->
+![Sidebar footer with Settings button highlighted](../images/sidebar-navigation__settings-entry.png)
 
 ## How to use it
 1. Click the **Settings** button in the sidebar footer.

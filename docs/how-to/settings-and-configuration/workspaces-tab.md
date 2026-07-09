@@ -8,7 +8,7 @@ The Workspaces tab lists every project folder you've pointed TaskWraith at. From
 ## Where to find it
 **Settings → Workspaces → Workspaces**.
 
-<!-- screenshot-pending: Workspaces tab showing loaded workspace list with pin/remove controls -->
+![Workspaces tab showing loaded workspace list with pin/remove controls](../images/settings-and-configuration__workspaces-tab.png)
 
 ## How to use it
 1. Click **Add workspace** to open a folder picker and register a new project folder.

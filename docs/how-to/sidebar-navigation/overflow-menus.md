@@ -8,7 +8,7 @@ Right-click (or click the ⋯ button) on any workspace or chat to open a context
 ## Where to find it
 In the **Sidebar**, on any workspace or chat item — click the **⋯** (overflow) button or right-click the item.
 
-<!-- screenshot-pending: Sidebar overflow menu expanded on a workspace or chat item -->
+![Sidebar overflow menu expanded on a workspace or chat item](../images/sidebar-navigation__overflow-menus.png)
 
 ## How to use it
 1. Hover over a workspace or chat in the sidebar.

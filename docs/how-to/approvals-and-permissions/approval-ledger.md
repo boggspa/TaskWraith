@@ -8,7 +8,7 @@ The Approval Ledger is an audit log of every approval decision TaskWraith has re
 ## Where to find it
 **Settings → Automation → Approvals & Grants.**
 
-<!-- screenshot-pending: Approval Ledger panel with filter and export controls -->
+![Approval Ledger panel with filter and export controls](../images/approvals-and-permissions__approval-ledger.png)
 
 ## How to use it
 1. Open **Settings → Automation → Approvals & Grants** to see the **Workspace grants** list at the top — durable grants that stay active until revoked (session and per-run grants expire automatically and aren't listed here).
