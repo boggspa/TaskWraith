@@ -1,6 +1,7 @@
 import type { ProviderId } from '../store/types'
 import {
   concreteModelForPreviewPlaceholder,
+  isPreviewCatalogModelId,
   isPreviewModelPlaceholder,
   previewModelsForProvider,
   type PreviewModelCatalogEntry
@@ -44,10 +45,7 @@ export const CODEX_MODEL_RETIREMENTS: Record<string, string> = {}
 // either path. Unlike CODEX_MODEL_RETIREMENTS (soft, date-driven pill) these
 // are removed outright. Historical lookups (display name, context window,
 // billing rates) intentionally keep their entries so past runs still render.
-export const CODEX_RETIRED_MODEL_IDS: ReadonlySet<string> = new Set([
-  'gpt-5.2',
-  'gpt-5.3-codex'
-])
+export const CODEX_RETIRED_MODEL_IDS: ReadonlySet<string> = new Set(['gpt-5.2', 'gpt-5.3-codex'])
 
 export interface CodexModelContextConfig {
   model_context_window: number
@@ -66,9 +64,13 @@ const CODEX_MODEL_CONTEXT_CONFIGS: Readonly<Record<string, CodexModelContextConf
     model_context_window: CODEX_LONG_CONTEXT_WINDOW,
     model_auto_compact_token_limit: CODEX_LONG_CONTEXT_AUTO_COMPACT_LIMIT
   },
-  // GPT-5.6 trio (GA) — same long-context override as gpt-5.5/5.4 for parity.
-  // CONFIRM against the live Codex CLI `model/list` model_context_window once
-  // gpt-5.6 ships, in case OpenAI publishes a different window.
+  // GPT-5.6 trio (GA 2026-07-09) — CONFIRMED against official metadata: the raw
+  // API window is 1,050,000 (128K max output, cutoff 2026-02-16, per
+  // developers.openai.com/api/docs/models/gpt-5.6-*), while the Codex CLI's own
+  // catalog ships a smaller 372,000 default working window (same truncation it
+  // applies to gpt-5.5's 272,000). TaskWraith keeps its deliberate long-context
+  // override — raise the working window to the raw API window — exactly as it
+  // does for gpt-5.5/5.4.
   'gpt-5.6-sol': {
     model_context_window: CODEX_LONG_CONTEXT_WINDOW,
     model_auto_compact_token_limit: CODEX_LONG_CONTEXT_AUTO_COMPACT_LIMIT
@@ -91,19 +93,57 @@ export interface CodexReasoningEffortOption {
 }
 
 export function codexModelSupportsLightReasoning(modelId?: string | null): boolean {
-  const id = String(modelId || '').trim().toLowerCase()
+  const id = String(modelId || '')
+    .trim()
+    .toLowerCase()
   return /^gpt-5(?:[.-]|$)/.test(id) && !id.startsWith('preview:')
 }
 
+// Official GPT-5.6 catalog (2026-07-09): ALL THREE trio models expose the
+// `max` tier ("Maximum reasoning depth for the hardest problems").
 export function codexModelSupportsMaxReasoning(modelId?: string | null): boolean {
-  const id = String(modelId || '').trim().toLowerCase()
-  return id === 'gpt-5.6-sol' || id === 'preview:openai:gpt-5.6:sol'
+  const id = String(modelId || '')
+    .trim()
+    .toLowerCase()
+  return (
+    id === 'gpt-5.6-sol' ||
+    id === 'gpt-5.6-terra' ||
+    id === 'gpt-5.6-luna' ||
+    id === 'preview:openai:gpt-5.6:sol' ||
+    id === 'preview:openai:gpt-5.6:terra' ||
+    id === 'preview:openai:gpt-5.6:luna'
+  )
 }
 
-// GPT-5.6 Sol ONLY — the sole Codex model with the Ultracode (Ultra) tier.
+// Official GPT-5.6 catalog (2026-07-09): the top tier's OFFICIAL effort id is
+// `ultra` ("Maximum reasoning with automatic task delegation") and it exists on
+// Sol AND Terra — NOT Luna. TaskWraith's internal token for this tier stays
+// `ultracode` (shared with Claude's ladder and persisted composer state);
+// codexWireReasoningEffort maps it to the official `ultra` at the CLI boundary,
+// and codexReasoningEffortsForModel maps an inbound `ultra` from the live
+// `model/list` back onto the internal token.
 export function codexModelSupportsUltracodeReasoning(modelId?: string | null): boolean {
-  const id = String(modelId || '').trim().toLowerCase()
-  return id === 'gpt-5.6-sol' || id === 'preview:openai:gpt-5.6:sol'
+  const id = String(modelId || '')
+    .trim()
+    .toLowerCase()
+  return (
+    id === 'gpt-5.6-sol' ||
+    id === 'gpt-5.6-terra' ||
+    id === 'preview:openai:gpt-5.6:sol' ||
+    id === 'preview:openai:gpt-5.6:terra'
+  )
+}
+
+/**
+ * Map TaskWraith's internal reasoning-effort token to the official Codex CLI
+ * wire value. The only divergence is the top GPT-5.6 tier: internal
+ * `ultracode` → official `ultra` (the CLI rejects "ultracode"). Mirrors
+ * ClaudeCliArgs' internal→wire mapping on the Claude side.
+ */
+export function codexWireReasoningEffort(effort?: string | null): string | undefined {
+  const normalized = String(effort || '').trim()
+  if (!normalized) return undefined
+  return normalized.toLowerCase() === 'ultracode' ? 'ultra' : normalized
 }
 
 export function codexReasoningEffortsForModel<T extends CodexReasoningEffortOption>(
@@ -112,17 +152,22 @@ export function codexReasoningEffortsForModel<T extends CodexReasoningEffortOpti
 ): Array<T | CodexReasoningEffortOption> {
   const normalized: Array<T | CodexReasoningEffortOption> = []
   const seen = new Set<string>()
+  // Inbound wire-token → internal-token aliases: the live `model/list` says
+  // 'light' where TaskWraith says 'low', and (GPT-5.6) 'ultra' where
+  // TaskWraith's shared internal tier token is 'ultracode' (the outbound
+  // mapping back to 'ultra' lives in codexWireReasoningEffort).
+  const INBOUND_EFFORT_ALIASES: Readonly<Record<string, string>> = {
+    light: 'low',
+    ultra: 'ultracode'
+  }
   for (const effort of efforts || []) {
     if (!effort?.reasoningEffort) continue
-    const key = effort.reasoningEffort.toLowerCase() === 'light' ? 'low' : effort.reasoningEffort
+    const alias = INBOUND_EFFORT_ALIASES[effort.reasoningEffort.toLowerCase()]
+    const key = alias ?? effort.reasoningEffort
     const normalizedKey = key.toLowerCase()
     if (seen.has(normalizedKey)) continue
     seen.add(normalizedKey)
-    normalized.push(
-      effort.reasoningEffort.toLowerCase() === 'light'
-        ? { ...effort, reasoningEffort: 'low' }
-        : effort
-    )
+    normalized.push(alias ? { ...effort, reasoningEffort: alias } : effort)
   }
   if (codexModelSupportsLightReasoning(modelId) && !seen.has('low')) {
     normalized.unshift({ reasoningEffort: 'low' })
@@ -138,14 +183,106 @@ export function codexReasoningEffortsForModel<T extends CodexReasoningEffortOpti
   return normalized
 }
 
+// GPT-5.6 trio: GA'd upstream on 2026-07-09, but OpenAI is ramping accounts
+// gradually AND the CLI catalog gates the rows behind
+// minimal_client_version=0.144.0 — so a given user's live `model/list` may
+// omit them for a while. `get-agent-models` appends these static rows to the
+// live list when missing (the id-dedupe prefers the CLI's row the day it
+// appears). This replaces the retired preview-catalog append for the trio.
+export const CODEX_STAGED_ROLLOUT_MODEL_IDS: ReadonlySet<string> = new Set([
+  'gpt-5.6-sol',
+  'gpt-5.6-terra',
+  'gpt-5.6-luna'
+])
+
+// Fallback default when a persisted/unknown id can't be resolved. Deliberately
+// NOT the newest family: gpt-5.6 is still ramping account-by-account (see
+// CODEX_STAGED_ROLLOUT_MODEL_IDS), so an unramped account falling back to Sol
+// would fail its runs. Upstream's own default is gpt-5.6-sol; revisit once the
+// rollout completes.
+export const CODEX_DEFAULT_MODEL_ID = 'gpt-5.5'
+
+/**
+ * Merge the live Codex `model/list` rows with TaskWraith-appended rows:
+ * staged-rollout GA models (always) and preview-catalog rows (behind the
+ * preview flag). The CLI's own row wins the id-dedupe the day it appears.
+ *
+ * Returns `null` when the live list is EMPTY — an empty/malformed model/list
+ * response (transient hiccup, CLI warm-up race, zero-entitled account) must
+ * fall back to the FULL static catalog at the call site, not to an
+ * append-rows-only list that would drop gpt-5.5 and carry no default.
+ */
+export function mergeCodexLiveModelRows<
+  TLive extends { id: string },
+  TStatic extends { id: string }
+>(
+  liveRows: readonly TLive[],
+  staticFallback: readonly TStatic[],
+  options: { includePreviewAppends: boolean }
+): Array<TLive | TStatic> | null {
+  if (liveRows.length === 0) return null
+  const appendRows = staticFallback.filter(
+    (model) =>
+      CODEX_STAGED_ROLLOUT_MODEL_IDS.has(model.id) ||
+      (options.includePreviewAppends && isPreviewCatalogModelId(model.id))
+  )
+  return [
+    ...liveRows,
+    ...appendRows.filter((appended) => !liveRows.some((model) => model.id === appended.id))
+  ]
+}
+
 // Fallback model list — used ONLY when the live Codex CLI `model/list` query
 // fails or returns nothing (see `get-agent-models`). On the normal path the
 // renderer's `codexModels` comes from the CLI-derived `normalized` list, not
 // from here. Retirement metadata is sourced from CODEX_MODEL_RETIREMENTS so
 // the fallback and live paths can never drift.
+// GPT-5.6 trio rows carry the OFFICIAL metadata (verified 2026-07-09 against
+// the upstream Codex catalog codex-rs/models-manager/models.json +
+// developers.openai.com): official display names are hyphenated
+// ("GPT-5.6-Sol"), Sol's official default effort is LOW, `max` exists on all
+// three, and the top `ultra` tier (TaskWraith-internal token: 'ultracode')
+// exists on Sol + Terra only — codexReasoningEffortsForModel appends those two
+// tiers per the codexModelSupports* predicates.
 export const CODEX_STATIC_MODELS = [
   {
-    id: 'gpt-5.5',
+    id: 'gpt-5.6-sol',
+    label: 'GPT-5.6-Sol',
+    description: 'Latest frontier agentic coding model.',
+    supportedReasoningEfforts: codexReasoningEffortsForModel('gpt-5.6-sol', [
+      { reasoningEffort: 'medium' },
+      { reasoningEffort: 'high' },
+      { reasoningEffort: 'xhigh' }
+    ]),
+    defaultReasoningEffort: 'low',
+    additionalSpeedTiers: ['fast']
+  },
+  {
+    id: 'gpt-5.6-terra',
+    label: 'GPT-5.6-Terra',
+    description: 'Balanced agentic coding model for everyday work.',
+    supportedReasoningEfforts: codexReasoningEffortsForModel('gpt-5.6-terra', [
+      { reasoningEffort: 'medium' },
+      { reasoningEffort: 'high' },
+      { reasoningEffort: 'xhigh' }
+    ]),
+    defaultReasoningEffort: 'medium',
+    additionalSpeedTiers: ['fast']
+  },
+  {
+    id: 'gpt-5.6-luna',
+    label: 'GPT-5.6-Luna',
+    description: 'Fast and affordable agentic coding model.',
+    supportedReasoningEfforts: codexReasoningEffortsForModel('gpt-5.6-luna', [
+      { reasoningEffort: 'medium' },
+      { reasoningEffort: 'high' },
+      { reasoningEffort: 'xhigh' }
+    ]),
+    defaultReasoningEffort: 'medium',
+    additionalSpeedTiers: ['fast']
+  },
+  {
+    id: CODEX_DEFAULT_MODEL_ID,
     label: 'GPT-5.5',
     description: 'Default Codex model',
     isDefault: true,
@@ -431,8 +568,10 @@ export function getStaticProviderModels(
   if (!options.includePreviewModels) return models
   const previews = previewModelsForProvider(provider)
   if (previews.length === 0) return models
-  // Codex: the GPT-5.6 preview trio leads the list (above 5.5); 5.5 keeps
-  // isDefault so it stays the default. Other providers append previews as before.
+  // PREVIEW_MODEL_CATALOG is empty since the GPT-5.6 trio graduated to
+  // first-class CODEX_STATIC_MODELS rows (2026-07-09), so this path is
+  // currently inert — kept for the NEXT preview family: codex previews lead
+  // the list; other providers append previews after their static rows.
   return provider === 'codex'
     ? [...previews.map(previewModelForPicker), ...models]
     : [...models, ...previews.map(previewModelForPicker)]
@@ -538,7 +677,10 @@ export function normalizeCodexModel(model?: string | null): string {
     ['cli-default', 'auto', 'pro', 'flash', 'flash-lite', 'custom'].includes(trimmed) ||
     isPreviewModelPlaceholder(trimmed)
   ) {
-    return CODEX_STATIC_MODELS[0].id
+    // Explicit default, NOT [0]: the GPT-5.6 trio leads CODEX_STATIC_MODELS
+    // but is still ramping account-by-account, so unresolved ids must keep
+    // falling back to the universally-available default.
+    return CODEX_DEFAULT_MODEL_ID
   }
   return trimmed
 }
@@ -566,8 +708,6 @@ function previewModelForPicker(entry: PreviewModelCatalogEntry) {
     ...(entry.defaultReasoningEffort
       ? { defaultReasoningEffort: entry.defaultReasoningEffort }
       : {}),
-    ...(entry.additionalSpeedTiers
-      ? { additionalSpeedTiers: entry.additionalSpeedTiers }
-      : {})
+    ...(entry.additionalSpeedTiers ? { additionalSpeedTiers: entry.additionalSpeedTiers } : {})
   }
 }

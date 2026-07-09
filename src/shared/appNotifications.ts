@@ -137,8 +137,7 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
     id: NEW_ADDITIONS_NOTIFICATION_ID,
     kind: 'addition',
     title: 'New Additions',
-    body:
-      'Claude Sonnet 5 and Fable 5, the GPT-5.6 Luna/Terra/Sol trio, Cursor Grok 4.5, Grok 4.5 Fast, and two new local Ollama models are all available now.',
+    body: 'Claude Sonnet 5 and Fable 5, the GPT-5.6 Luna/Terra/Sol trio, Cursor Grok 4.5, Grok 4.5 Fast, and two new local Ollama models are all available now.',
     dismissible: true,
     groups: [
       {
@@ -160,18 +159,20 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
       {
         provider: 'codex',
         label: 'Codex',
+        // Official GA metadata (2026-07-09): 1M+ raw context on all three,
+        // Max on all three, and the Ultra tier on Sol + Terra.
         models: [
           {
-            name: 'GPT 5.6 Luna',
-            blurb: 'Fast triage, board planning, and lightweight subagents.'
+            name: 'GPT-5.6-Luna',
+            blurb: 'Fast and affordable agentic coding — with the Max reasoning tier.'
           },
           {
-            name: 'GPT 5.6 Terra',
-            blurb: 'Strong everyday advanced agentic work for typical coding tasks.'
+            name: 'GPT-5.6-Terra',
+            blurb: 'Balanced agentic coding for everyday work — Max and Ultra reasoning tiers.'
           },
           {
-            name: 'GPT 5.6 Sol',
-            blurb: 'Hardest long-horizon coding and research, with Max and Ultracode reasoning tiers.'
+            name: 'GPT-5.6-Sol',
+            blurb: 'Latest frontier agentic coding model — Max and Ultra reasoning tiers.'
           }
         ]
       },
@@ -192,7 +193,8 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
         models: [
           {
             name: 'Grok 4.5 Fast',
-            blurb: "xAI's 500K-context coding model behind Grok Build, with Low/Medium/High reasoning."
+            blurb:
+              "xAI's 500K-context coding model behind Grok Build, with Low/Medium/High reasoning."
           }
         ]
       },
@@ -202,13 +204,13 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
         models: [
           {
             name: 'Deep Reinforce - Ornith 9B + Ornith 35B',
-            blurb:
-              'Open-source 262K-context coding models — local inference, no per-token cost.',
+            blurb: 'Open-source 262K-context coding models — local inference, no per-token cost.',
             accentProvider: 'deep-reinforce'
           },
           {
             name: 'Liquid - LFM 2.5 8B-1A',
-            blurb: 'A 131K-context local tool/thinking model for agentic coding — no cloud account required.',
+            blurb:
+              'A 131K-context local tool/thinking model for agentic coding — no cloud account required.',
             accentProvider: 'liquid'
           }
         ]
@@ -233,8 +235,7 @@ export function selectChangelogFeatureNotifications(
   maxCount: number = CHANGELOG_FEATURE_NOTIFICATION_MAX_ACTIVE
 ): AppNotification[] {
   const eligible = pool.filter(
-    (notification) =>
-      typeof notification.expiresAt !== 'number' || notification.expiresAt > now
+    (notification) => typeof notification.expiresAt !== 'number' || notification.expiresAt > now
   )
   if (eligible.length === 0 || maxCount <= 0) return []
   if (eligible.length <= maxCount) return [...eligible]

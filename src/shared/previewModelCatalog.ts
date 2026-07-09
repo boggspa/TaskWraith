@@ -29,81 +29,26 @@ export const PREVIEW_MODEL_ACCESS_REASON = 'Requires preview access'
 export const OPENAI_PREVIEW_MODEL_ACCESS_REASON = 'Requires OpenAI preview access'
 export const CLAUDE_PREVIEW_MODEL_ACCESS_REASON = 'Requires Claude preview access'
 
-const OPENAI_GPT56_REASONING_EFFORTS = [
-  { reasoningEffort: 'low' },
-  { reasoningEffort: 'medium' },
-  { reasoningEffort: 'high' },
-  { reasoningEffort: 'xhigh' }
-]
-
-// Sol is the top-tier 5.6 model: it alone gets the Max + Ultracode reasoning
-// levels (beyond the trio's shared low/medium/high/xhigh), plus Fast.
-const OPENAI_GPT56_SOL_REASONING_EFFORTS = [
-  ...OPENAI_GPT56_REASONING_EFFORTS,
-  { reasoningEffort: 'max' },
-  { reasoningEffort: 'ultracode' }
-]
-
 // 2026-07-07 — GPT-5.6 launch-day un-gate: the trio became selectable and
 // runnable with concrete slugs (59357640e), but isPreviewRiskModel still flagged
 // every gpt-5.6* id, so ProviderPreflightService blocked dispatch until the live
 // Codex CLI `model/list` echoed the id back.
 // 2026-07-09 — GPT-5.6 full parity: isPreviewRiskModel('codex', <concrete
-// gpt-5.6* id>) now returns false, so NONE of the 5 preview-risk clamps apply —
-// not the preflight block, not EffectiveRunPermissions' service/network/
-// approvalMode caps, not ComposerService's attended/unattended caps, not
-// EnsembleOrchestrator's unattended read_only force. The trio behaves exactly
-// like gpt-5.5. Stale `preview:openai:gpt-5.6:*` PLACEHOLDER ids still resolve
-// preview-risk via isPreviewModelPlaceholder — harmless: they're legacy persisted
-// ids only, rewritten to a concrete slug by normalizeCodexModel on read, so no
-// live run reaches a clamp carrying the placeholder string.
-export const PREVIEW_MODEL_CATALOG: PreviewModelCatalogEntry[] = [
-  {
-    id: 'gpt-5.6-sol',
-    provider: 'codex',
-    label: 'GPT-5.6 Sol',
-    description: 'Hardest long-horizon coding and research.',
-    disabled: false,
-    hidden: false,
-    runnable: true,
-    accessState: 'available',
-    previewFamily: 'gpt-5.6',
-    previewRole: 'Hardest long-horizon coding/research',
-    supportedReasoningEfforts: OPENAI_GPT56_SOL_REASONING_EFFORTS,
-    defaultReasoningEffort: 'medium',
-    additionalSpeedTiers: ['fast']
-  },
-  {
-    id: 'gpt-5.6-terra',
-    provider: 'codex',
-    label: 'GPT-5.6 Terra',
-    description: 'Strong everyday advanced agentic work.',
-    disabled: false,
-    hidden: false,
-    runnable: true,
-    accessState: 'available',
-    previewFamily: 'gpt-5.6',
-    previewRole: 'Strong everyday advanced agentic work',
-    supportedReasoningEfforts: OPENAI_GPT56_REASONING_EFFORTS,
-    defaultReasoningEffort: 'medium',
-    additionalSpeedTiers: ['fast']
-  },
-  {
-    id: 'gpt-5.6-luna',
-    provider: 'codex',
-    label: 'GPT-5.6 Luna',
-    description: 'Fast triage, board planning, and lightweight subagents.',
-    disabled: false,
-    hidden: false,
-    runnable: true,
-    accessState: 'available',
-    previewFamily: 'gpt-5.6',
-    previewRole: 'Fast triage, board planning, summarization, lightweight subagents',
-    supportedReasoningEfforts: OPENAI_GPT56_REASONING_EFFORTS,
-    defaultReasoningEffort: 'medium',
-    additionalSpeedTiers: ['fast']
-  }
-]
+// gpt-5.6* id>) now returns false, so NONE of the 5 preview-risk clamps apply.
+// 2026-07-09 (GA) — GPT-5.6 GRADUATED out of this catalog: official metadata
+// confirmed against the upstream Codex catalog (codex-rs/models-manager/
+// models.json) + developers.openai.com, and the trio now lives as first-class
+// rows in CODEX_STATIC_MODELS (StaticProviderModels.ts), appended to the live
+// `model/list` via CODEX_STAGED_ROLLOUT_MODEL_IDS while OpenAI's account-cohort
+// ramp + the CLI's minimal_client_version=0.144.0 gate keep it out of some
+// accounts' lists. This catalog is intentionally EMPTY — it is the structural
+// slot for the NEXT preview family (mirrors the claude branch narrowing when
+// claude-sonnet-5 went GA in e7b906273). Do not delete the machinery.
+// Stale `preview:openai:gpt-5.6:*` PLACEHOLDER ids still resolve preview-risk
+// via isPreviewModelPlaceholder — harmless: they're legacy persisted ids only,
+// rewritten to a concrete slug by normalizeCodexModel on read, so no live run
+// reaches a clamp carrying the placeholder string.
+export const PREVIEW_MODEL_CATALOG: PreviewModelCatalogEntry[] = []
 
 // Ids of the disabled preview:… placeholder rows the picker showed before the
 // trio became selectable. Never valid CLI model ids — normalizeCodexModel maps

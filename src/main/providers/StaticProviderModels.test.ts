@@ -1,8 +1,11 @@
 import { describe, it, expect } from 'vitest'
 import {
+  CODEX_STAGED_ROLLOUT_MODEL_IDS,
   codexReasoningEffortsForModel,
   codexModelContextConfig,
+  codexWireReasoningEffort,
   getStaticProviderModels,
+  mergeCodexLiveModelRows,
   normalizeCliProviderModel
 } from './StaticProviderModels'
 import {
@@ -168,12 +171,15 @@ describe('getStaticProviderModels (provider-specific catalogs)', () => {
     ])
   })
 
-  it('keeps GPT-5.5 as the Codex default and omits GPT-5.6 rows without the catalog flag', () => {
+  it('ships the GA GPT-5.6 trio as first-class rows regardless of the preview flag', () => {
+    // Graduated 2026-07-09: the trio lives in CODEX_STATIC_MODELS itself, so it
+    // is present WITHOUT includePreviewModels; 5.5 stays the default during the
+    // staged account rollout.
     const models = getStaticProviderModels('codex') as StaticModelShape[]
     expect(models.find((model) => model.isDefault)?.id).toBe('gpt-5.5')
-    expect(models.map((model) => model.id)).not.toEqual(
-      expect.arrayContaining(['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna'])
-    )
+    const ids = models.map((model) => model.id)
+    expect(ids.slice(0, 3)).toEqual(['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna'])
+    expect(ids.indexOf('gpt-5.6-sol')).toBeLessThan(ids.indexOf('gpt-5.5'))
   })
 
   it('advertises Light/low reasoning on GPT-5 Codex models', () => {
@@ -197,23 +203,16 @@ describe('getStaticProviderModels (provider-specific catalogs)', () => {
     ).toEqual(['low', 'medium', 'high', 'xhigh'])
   })
 
-  it('exposes selectable GPT-5.6 rows behind the preview catalog flag', () => {
-    const models = getStaticProviderModels('codex', {
-      includePreviewModels: true
-    }) as StaticModelShape[]
-    expect(models.find((model) => model.isDefault)?.id).toBe('gpt-5.5')
-    // GPT-5.6 trio leads the codex list (above 5.5) without changing the default.
-    const ids = models.map((model) => model.id)
-    expect(ids.slice(0, 3)).toEqual(['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna'])
-    expect(ids.indexOf('gpt-5.6-sol')).toBeLessThan(ids.indexOf('gpt-5.5'))
+  it('carries official GA metadata on the GPT-5.6 trio rows', () => {
+    // Verified 2026-07-09 against the upstream Codex catalog
+    // (codex-rs/models-manager/models.json): hyphenated display names, Sol
+    // defaults to LOW, `max` on all three, `ultra` (internal 'ultracode') on
+    // Sol + Terra only.
+    const models = getStaticProviderModels('codex') as StaticModelShape[]
     const sol = models.find((model) => model.id === 'gpt-5.6-sol')
     const terra = models.find((model) => model.id === 'gpt-5.6-terra')
     const luna = models.find((model) => model.id === 'gpt-5.6-luna')
-    expect(sol).toMatchObject({
-      disabled: false,
-      runnable: true,
-      defaultReasoningEffort: 'medium'
-    })
+    expect(sol).toMatchObject({ label: 'GPT-5.6-Sol', defaultReasoningEffort: 'low' })
     expect(sol?.supportedReasoningEfforts?.map((option) => option.reasoningEffort)).toEqual([
       'low',
       'medium',
@@ -222,14 +221,26 @@ describe('getStaticProviderModels (provider-specific catalogs)', () => {
       'max',
       'ultracode'
     ])
-    expect(terra).toMatchObject({ disabled: false, runnable: true })
+    expect(terra).toMatchObject({ label: 'GPT-5.6-Terra', defaultReasoningEffort: 'medium' })
     expect(terra?.supportedReasoningEfforts?.map((option) => option.reasoningEffort)).toEqual([
       'low',
       'medium',
       'high',
-      'xhigh'
+      'xhigh',
+      'max',
+      'ultracode'
     ])
-    expect(luna).toMatchObject({ disabled: false, runnable: true })
+    expect(luna).toMatchObject({ label: 'GPT-5.6-Luna', defaultReasoningEffort: 'medium' })
+    expect(luna?.supportedReasoningEfforts?.map((option) => option.reasoningEffort)).toEqual([
+      'low',
+      'medium',
+      'high',
+      'xhigh',
+      'max'
+    ])
+    for (const row of [sol, terra, luna]) {
+      expect(row?.additionalSpeedTiers).toEqual(['fast'])
+    }
   })
 
   it('maps stale OpenAI preview placeholder IDs to their concrete GPT-5.6 slugs', () => {
@@ -240,31 +251,126 @@ describe('getStaticProviderModels (provider-specific catalogs)', () => {
     expect(concreteModelForPreviewPlaceholder('gpt-5.6-sol')).toBeNull()
   })
 
-  it('flags only curated preview-family rows for the live model/list merge', () => {
-    // isPreviewCatalogModelId is the predicate the get-agent-models live-merge
-    // uses to append TaskWraith-curated rows the CLI does not return yet.
-    expect(isPreviewCatalogModelId('gpt-5.6-sol')).toBe(true)
-    expect(isPreviewCatalogModelId('gpt-5.6-terra')).toBe(true)
-    expect(isPreviewCatalogModelId('gpt-5.6-luna')).toBe(true)
+  it('marks the GA trio for the staged-rollout live-merge, not the preview catalog', () => {
+    // The get-agent-models live-merge appends CODEX_STAGED_ROLLOUT_MODEL_IDS
+    // rows while OpenAI's account ramp / the CLI's minimal_client_version gate
+    // keep them out of a given account's model/list. The preview catalog is
+    // empty post-graduation, so isPreviewCatalogModelId is false for the trio.
+    expect(CODEX_STAGED_ROLLOUT_MODEL_IDS.has('gpt-5.6-sol')).toBe(true)
+    expect(CODEX_STAGED_ROLLOUT_MODEL_IDS.has('gpt-5.6-terra')).toBe(true)
+    expect(CODEX_STAGED_ROLLOUT_MODEL_IDS.has('gpt-5.6-luna')).toBe(true)
+    expect(CODEX_STAGED_ROLLOUT_MODEL_IDS.has('gpt-5.5')).toBe(false)
+    expect(isPreviewCatalogModelId('gpt-5.6-sol')).toBe(false)
     expect(isPreviewCatalogModelId('gpt-5.5')).toBe(false)
     expect(isPreviewCatalogModelId('preview:openai:gpt-5.6:sol')).toBe(false)
   })
 
-  it('adds Max + Ultracode reasoning only for GPT-5.6 Sol Codex rows', () => {
+  it('adds Max on the whole GPT-5.6 trio and Ultra(code) on Sol + Terra only', () => {
+    const base = [
+      { reasoningEffort: 'medium' },
+      { reasoningEffort: 'high' },
+      { reasoningEffort: 'xhigh' }
+    ]
     expect(
-      codexReasoningEffortsForModel('gpt-5.6-sol', [
-        { reasoningEffort: 'medium' },
-        { reasoningEffort: 'high' },
-        { reasoningEffort: 'xhigh' }
-      ]).map((option) => option.reasoningEffort)
+      codexReasoningEffortsForModel('gpt-5.6-sol', base).map((option) => option.reasoningEffort)
     ).toEqual(['low', 'medium', 'high', 'xhigh', 'max', 'ultracode'])
     expect(
-      codexReasoningEffortsForModel('gpt-5.6-terra', [
+      codexReasoningEffortsForModel('gpt-5.6-terra', base).map((option) => option.reasoningEffort)
+    ).toEqual(['low', 'medium', 'high', 'xhigh', 'max', 'ultracode'])
+    expect(
+      codexReasoningEffortsForModel('gpt-5.6-luna', base).map((option) => option.reasoningEffort)
+    ).toEqual(['low', 'medium', 'high', 'xhigh', 'max'])
+    expect(
+      codexReasoningEffortsForModel('gpt-5.5', base).map((option) => option.reasoningEffort)
+    ).toEqual(['low', 'medium', 'high', 'xhigh'])
+  })
+
+  it("normalizes the live catalog's official 'ultra' token onto internal 'ultracode'", () => {
+    // The live model/list says 'ultra' (official tier id); TaskWraith's shared
+    // internal token is 'ultracode'. Inbound rows normalize + dedupe.
+    expect(
+      codexReasoningEffortsForModel('gpt-5.6-sol', [
+        { reasoningEffort: 'low' },
         { reasoningEffort: 'medium' },
         { reasoningEffort: 'high' },
-        { reasoningEffort: 'xhigh' }
+        { reasoningEffort: 'xhigh' },
+        { reasoningEffort: 'max' },
+        { reasoningEffort: 'ultra' }
       ]).map((option) => option.reasoningEffort)
-    ).toEqual(['low', 'medium', 'high', 'xhigh'])
+    ).toEqual(['low', 'medium', 'high', 'xhigh', 'max', 'ultracode'])
+  })
+
+  it("maps internal 'ultracode' to the official 'ultra' wire value for the Codex CLI", () => {
+    expect(codexWireReasoningEffort('ultracode')).toBe('ultra')
+    expect(codexWireReasoningEffort('Ultracode')).toBe('ultra')
+    expect(codexWireReasoningEffort('max')).toBe('max')
+    expect(codexWireReasoningEffort('medium')).toBe('medium')
+    expect(codexWireReasoningEffort('')).toBeUndefined()
+    expect(codexWireReasoningEffort(null)).toBeUndefined()
+    expect(codexWireReasoningEffort(undefined)).toBeUndefined()
+  })
+})
+
+describe('mergeCodexLiveModelRows', () => {
+  const staticFallback = getStaticProviderModels('codex') as Array<{
+    id: string
+    isDefault?: boolean
+  }>
+
+  it('returns null for an EMPTY live list so the caller falls back to the full static catalog', () => {
+    // An empty/malformed model/list response (transient hiccup, CLI warm-up
+    // race, zero-entitled account) must NOT produce an append-rows-only list
+    // that drops gpt-5.5 and carries no default.
+    expect(mergeCodexLiveModelRows([], staticFallback, { includePreviewAppends: true })).toBeNull()
+    expect(mergeCodexLiveModelRows([], staticFallback, { includePreviewAppends: false })).toBeNull()
+  })
+
+  it('appends the staged-rollout trio when the live list omits them (preview flag OFF too)', () => {
+    const live = [{ id: 'gpt-5.5', isDefault: true }]
+    const merged = mergeCodexLiveModelRows(live, staticFallback, {
+      includePreviewAppends: false
+    })
+    expect(merged?.map((model) => model.id)).toEqual([
+      'gpt-5.5',
+      'gpt-5.6-sol',
+      'gpt-5.6-terra',
+      'gpt-5.6-luna'
+    ])
+    // The live row object itself is preserved (not replaced by a static row).
+    expect(merged?.[0]).toBe(live[0])
+  })
+
+  it("prefers the CLI's own row when the live list already returns a trio id", () => {
+    const liveSol = { id: 'gpt-5.6-sol', label: 'GPT-5.6-Sol (live)' }
+    const merged = mergeCodexLiveModelRows([{ id: 'gpt-5.5' }, liveSol], staticFallback, {
+      includePreviewAppends: true
+    })
+    const solRows = merged?.filter((model) => model.id === 'gpt-5.6-sol')
+    expect(solRows).toHaveLength(1)
+    expect(solRows?.[0]).toBe(liveSol)
+    // Terra + Luna still appended from static.
+    expect(merged?.map((model) => model.id)).toEqual(
+      expect.arrayContaining(['gpt-5.6-terra', 'gpt-5.6-luna'])
+    )
+  })
+
+  it('appends nothing extra once the live list carries the whole trio', () => {
+    const live = [
+      { id: 'gpt-5.6-sol' },
+      { id: 'gpt-5.6-terra' },
+      { id: 'gpt-5.6-luna' },
+      { id: 'gpt-5.5', isDefault: true }
+    ]
+    const merged = mergeCodexLiveModelRows(live, staticFallback, {
+      includePreviewAppends: true
+    })
+    expect(merged).toHaveLength(4)
+    expect(merged?.map((model) => model.id)).toEqual([
+      'gpt-5.6-sol',
+      'gpt-5.6-terra',
+      'gpt-5.6-luna',
+      'gpt-5.5'
+    ])
   })
 })
 
@@ -332,20 +438,20 @@ describe('getStaticProviderModels (claude)', () => {
     const opusReasoning = byId.get('claude-opus-4-8-1m')?.supportedReasoningEfforts ?? []
     const fableReasoning = byId.get('claude-fable-5')?.supportedReasoningEfforts ?? []
     const haikuReasoning = byId.get('claude-haiku-4-5')?.supportedReasoningEfforts ?? []
-    expect(
-      sonnetReasoning.map((e) => e.reasoningEffort)
-    ).toEqual(['low', 'medium', 'high', 'xhigh', 'max', 'ultracode'])
+    expect(sonnetReasoning.map((e) => e.reasoningEffort)).toEqual([
+      'low',
+      'medium',
+      'high',
+      'xhigh',
+      'max',
+      'ultracode'
+    ])
     // Sonnet 5 unlocks the full Opus ladder — none of its efforts are disabled.
-    expect(
-      sonnetReasoning
-        .filter((e) => e.disabled)
-        .map((e) => e.reasoningEffort)
-    ).toEqual([])
-    expect(
-      legacySonnetReasoning
-        .filter((e) => e.disabled)
-        .map((e) => e.reasoningEffort)
-    ).toEqual(['xhigh', 'ultracode'])
+    expect(sonnetReasoning.filter((e) => e.disabled).map((e) => e.reasoningEffort)).toEqual([])
+    expect(legacySonnetReasoning.filter((e) => e.disabled).map((e) => e.reasoningEffort)).toEqual([
+      'xhigh',
+      'ultracode'
+    ])
     expect(opusReasoning.map((e) => e.reasoningEffort)).toEqual([
       'low',
       'medium',

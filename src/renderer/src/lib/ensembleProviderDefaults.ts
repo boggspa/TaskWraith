@@ -57,10 +57,17 @@ const CODEX_REASONING: CombinedModelPickerReasoningOption[] = [
   { value: 'high', label: codexReasoningDisplayLabel('high') },
   { value: 'xhigh', label: codexReasoningDisplayLabel('xhigh') }
 ]
-const CODEX_SOL_REASONING: CombinedModelPickerReasoningOption[] = [
+// Official GPT-5.6 tiers (2026-07-09): `max` on all three trio models; the top
+// `ultra` tier (internal token 'ultracode', displayed "Ultra") on Sol + Terra
+// only — Luna stops at max.
+const CODEX_TRIO_FULL_REASONING: CombinedModelPickerReasoningOption[] = [
   ...CODEX_REASONING,
   { value: 'max', label: codexReasoningDisplayLabel('max') },
   { value: 'ultracode', label: codexReasoningDisplayLabel('ultracode') }
+]
+const CODEX_TRIO_MAX_REASONING: CombinedModelPickerReasoningOption[] = [
+  ...CODEX_REASONING,
+  { value: 'max', label: codexReasoningDisplayLabel('max') }
 ]
 
 const CLAUDE_REASONING_UNAVAILABLE = 'Not available for this Claude model'
@@ -72,15 +79,15 @@ const CLAUDE_FULL_REASONING: CombinedModelPickerReasoningOption[] = [
   { value: 'max', label: claudeReasoningDisplayLabel('max') },
   { value: 'ultracode', label: claudeReasoningDisplayLabel('ultracode') }
 ]
-const claudeReasoningOptions = (enabled: ReadonlySet<string>): CombinedModelPickerReasoningOption[] =>
+const claudeReasoningOptions = (
+  enabled: ReadonlySet<string>
+): CombinedModelPickerReasoningOption[] =>
   CLAUDE_FULL_REASONING.map((option) =>
     enabled.has(option.value)
       ? option
       : { ...option, disabled: true, disabledReason: CLAUDE_REASONING_UNAVAILABLE }
   )
-const CLAUDE_SONNET_REASONING = claudeReasoningOptions(
-  new Set(['low', 'medium', 'high', 'max'])
-)
+const CLAUDE_SONNET_REASONING = claudeReasoningOptions(new Set(['low', 'medium', 'high', 'max']))
 const CLAUDE_OPUS_REASONING = claudeReasoningOptions(
   new Set(['low', 'medium', 'high', 'xhigh', 'max', 'ultracode'])
 )
@@ -101,12 +108,12 @@ const GROK_REASONING: CombinedModelPickerReasoningOption[] = [
 
 const CODEX_MODELS: CombinedModelPickerModelOption[] = [
   { id: 'gpt-5.5', label: 'GPT-5.5' },
-  // GPT-5.6 trio un-gated 2026-07-07 — selectable here; dispatch preflight
-  // still probes the live CLI `model/list` and errors cleanly if OpenAI has
-  // not released the id yet.
-  { id: 'gpt-5.6-sol', label: 'GPT-5.6 Sol' },
-  { id: 'gpt-5.6-terra', label: 'GPT-5.6 Terra' },
-  { id: 'gpt-5.6-luna', label: 'GPT-5.6 Luna' },
+  // GPT-5.6 trio — GA 2026-07-09, official hyphenated display names. Dispatch
+  // errors cleanly if the user's account hasn't been ramped into the staged
+  // rollout yet (the id is simply absent from that account's live model/list).
+  { id: 'gpt-5.6-sol', label: 'GPT-5.6-Sol' },
+  { id: 'gpt-5.6-terra', label: 'GPT-5.6-Terra' },
+  { id: 'gpt-5.6-luna', label: 'GPT-5.6-Luna' },
   { id: 'gpt-5.4', label: 'GPT-5.4' },
   { id: 'gpt-5.4-mini', label: 'GPT-5.4 Mini' },
   { id: 'gpt-5.3-codex-spark', label: 'GPT-5.3 Codex Spark' }
@@ -195,7 +202,9 @@ const GROK_FAST_CAPABLE = new Set<string>([GROK_45_MODEL_ID, 'grok-composer-2.5-
 
 function isClaudeFullReasoningModel(modelId?: string | null): boolean {
   const normalized = String(modelId || '').toLowerCase()
-  return normalized.includes('opus') || normalized.includes('fable') || normalized.includes('mythos')
+  return (
+    normalized.includes('opus') || normalized.includes('fable') || normalized.includes('mythos')
+  )
 }
 
 // Sonnet 5 exposes the full Opus-equivalent reasoning ladder (unlike the
@@ -220,12 +229,23 @@ export function getEnsembleReasoningOptions(
 ): CombinedModelPickerReasoningOption[] {
   switch (provider) {
     case 'codex': {
-      // Mirrors main's codexModelSupportsMaxReasoning: Sol (or its stale
-      // pre-un-gate placeholder id) is the only Codex row with Max.
+      // Mirrors main's codexModelSupportsMaxReasoning / -UltracodeReasoning
+      // (official 2026-07-09 tiers): Sol + Terra get max + ultra('ultracode');
+      // Luna gets max only; everything else stops at xhigh. Stale
+      // pre-un-gate placeholder ids count as their concrete slugs.
       const codexModel = String(modelId || '').toLowerCase()
-      return codexModel === 'gpt-5.6-sol' || codexModel === 'preview:openai:gpt-5.6:sol'
-        ? CODEX_SOL_REASONING
-        : CODEX_REASONING
+      if (
+        codexModel === 'gpt-5.6-sol' ||
+        codexModel === 'gpt-5.6-terra' ||
+        codexModel === 'preview:openai:gpt-5.6:sol' ||
+        codexModel === 'preview:openai:gpt-5.6:terra'
+      ) {
+        return CODEX_TRIO_FULL_REASONING
+      }
+      if (codexModel === 'gpt-5.6-luna' || codexModel === 'preview:openai:gpt-5.6:luna') {
+        return CODEX_TRIO_MAX_REASONING
+      }
+      return CODEX_REASONING
     }
     case 'claude':
       if (isClaudeHaikuModel(modelId)) return CLAUDE_HAIKU_REASONING

@@ -102,7 +102,8 @@ describe('resolveAppNotifications', () => {
       PINNED_APP_NOTIFICATIONS.map((n) => n.id)
     )
     expect(resolved.length).toBe(
-      PINNED_APP_NOTIFICATIONS.length + selectChangelogFeatureNotifications(CHANGELOG_FEATURE_NOTIFICATION_POOL, 0).length
+      PINNED_APP_NOTIFICATIONS.length +
+        selectChangelogFeatureNotifications(CHANGELOG_FEATURE_NOTIFICATION_POOL, 0).length
     )
   })
 })
@@ -153,7 +154,12 @@ describe('notification registry', () => {
     expect(claude?.models.map((m) => m.name)).toEqual(['Sonnet 5', 'Fable 5'])
 
     const codex = groups.find((g) => g.provider === 'codex')
-    expect(codex?.models.map((m) => m.name)).toEqual(['GPT 5.6 Luna', 'GPT 5.6 Terra', 'GPT 5.6 Sol'])
+    // Official hyphenated display names (GA 2026-07-09).
+    expect(codex?.models.map((m) => m.name)).toEqual([
+      'GPT-5.6-Luna',
+      'GPT-5.6-Terra',
+      'GPT-5.6-Sol'
+    ])
 
     const cursor = groups.find((g) => g.provider === 'cursor')
     expect(cursor?.models.map((m) => m.name)).toEqual(['Cursor Grok 4.5'])

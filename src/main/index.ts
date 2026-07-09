@@ -611,12 +611,13 @@ import {
   claudePermissionModeForApproval,
   codexModelContextConfig,
   codexReasoningEffortsForModel,
+  codexWireReasoningEffort,
   getStaticProviderModels,
+  mergeCodexLiveModelRows,
   normalizeCliProviderModel,
   normalizeCodexModel
 } from './providers/StaticProviderModels'
 import {
-  isPreviewCatalogModelId,
   isPreviewRiskModel,
   previewModelAccessFlagEnabledForProvider,
   previewModelCatalogEnabledForProvider
@@ -16755,6 +16756,9 @@ async function runCodexAppServer(event: Electron.IpcMainInvokeEvent, payload: Ag
   )
 
   const codexReasoningSummaryMode = codexReasoningSummaryModeForEffort(payload.reasoningEffort)
+  // Internal token → official CLI wire value (GPT-5.6's top tier is 'ultra' on
+  // the wire; TaskWraith's shared internal token is 'ultracode').
+  const codexWireEffort = codexWireReasoningEffort(payload.reasoningEffort)
   await client.request(
     'turn/start',
     {
@@ -16771,7 +16775,7 @@ async function runCodexAppServer(event: Electron.IpcMainInvokeEvent, payload: Ag
         fullAccessGranted
       ),
       model,
-      ...(payload.reasoningEffort ? { effort: payload.reasoningEffort } : {}),
+      ...(codexWireEffort ? { effort: codexWireEffort } : {}),
       ...(codexReasoningSummaryMode ? { summary: codexReasoningSummaryMode } : {}),
       ...(payload.serviceTier ? { serviceTier: payload.serviceTier } : {})
     },
@@ -29474,22 +29478,17 @@ if (isGeminiMcpBridgeProcess) {
               ? { retiresAt: CODEX_MODEL_RETIREMENTS[model.id] }
               : {})
           }))
-        // Preview-family rows TaskWraith curates (GPT-5.6 trio) merge into the
-        // live list until the CLI's `model/list` returns them natively — the
-        // id-dedupe below prefers the CLI's row the day it appears.
-        const codexPreviewRows = codexStaticFallback.filter((model) =>
-          isPreviewCatalogModelId(model.id)
-        )
-        const liveModels =
-          previewModelCatalogEnabledForProvider('codex', process.env)
-            ? [
-                ...normalized,
-                ...codexPreviewRows.filter(
-                  (preview) => !normalized.some((model) => model.id === preview.id)
-                )
-              ]
-            : normalized
-        return liveModels.length > 0 ? normalizeCodexDefaultModelRows(liveModels) : codexStaticFallback
+        // Merge TaskWraith-appended rows into the live list (staged-rollout GA
+        // models always; preview-catalog rows behind the preview flag; the
+        // CLI's own row wins the id-dedupe the day it appears). An EMPTY live
+        // list returns null so we fall back to the FULL static catalog —
+        // never an append-only list missing gpt-5.5 / a default.
+        const mergedCodexModels = mergeCodexLiveModelRows(normalized, codexStaticFallback, {
+          includePreviewAppends: previewModelCatalogEnabledForProvider('codex', process.env)
+        })
+        return mergedCodexModels
+          ? normalizeCodexDefaultModelRows(mergedCodexModels)
+          : codexStaticFallback
       } catch {
         return codexStaticFallback
       }

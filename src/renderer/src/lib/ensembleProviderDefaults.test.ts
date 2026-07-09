@@ -240,21 +240,37 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
       'high',
       'xhigh'
     ])
-    expect(
-      getEnsembleReasoningOptions('codex', 'gpt-5.5').map((option) => option.value)
-    ).toEqual(['low', 'medium', 'high', 'xhigh'])
+    expect(getEnsembleReasoningOptions('codex', 'gpt-5.5').map((option) => option.value)).toEqual([
+      'low',
+      'medium',
+      'high',
+      'xhigh'
+    ])
+    // Official GA tiers (2026-07-09): max on all three; ultra('ultracode') on
+    // Sol + Terra only — Luna stops at max.
     expect(
       getEnsembleReasoningOptions('codex', 'gpt-5.6-sol').map((option) => option.value)
     ).toEqual(['low', 'medium', 'high', 'xhigh', 'max', 'ultracode'])
-    // Stale pre-un-gate placeholder ids keep resolving Sol's Max ladder so a
-    // persisted roster row renders the right reasoning options.
+    expect(
+      getEnsembleReasoningOptions('codex', 'gpt-5.6-terra').map((option) => option.value)
+    ).toEqual(['low', 'medium', 'high', 'xhigh', 'max', 'ultracode'])
+    expect(
+      getEnsembleReasoningOptions('codex', 'gpt-5.6-luna').map((option) => option.value)
+    ).toEqual(['low', 'medium', 'high', 'xhigh', 'max'])
+    // Stale pre-un-gate placeholder ids keep resolving their concrete slug's
+    // ladder so a persisted roster row renders the right reasoning options.
     expect(
       getEnsembleReasoningOptions('codex', 'preview:openai:gpt-5.6:sol').map(
         (option) => option.value
       )
     ).toEqual(['low', 'medium', 'high', 'xhigh', 'max', 'ultracode'])
+    expect(
+      getEnsembleReasoningOptions('codex', 'preview:openai:gpt-5.6:luna').map(
+        (option) => option.value
+      )
+    ).toEqual(['low', 'medium', 'high', 'xhigh', 'max'])
     const sol = codex.modelOptions.find((option) => option.id === 'gpt-5.6-sol')
-    expect(sol).toMatchObject({ label: 'GPT-5.6 Sol' })
+    expect(sol).toMatchObject({ label: 'GPT-5.6-Sol' })
     expect(sol?.disabled).toBeUndefined()
     expect(codex.modelOptions.map((option) => option.id)).toEqual(
       expect.arrayContaining(['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna'])
@@ -306,8 +322,12 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
         'claude-fable-5-1m'
       ])
     )
-    expect(claude.modelOptions.find((option) => option.id === 'claude-sonnet-5')?.disabled).toBeFalsy()
-    expect(claude.modelOptions.find((option) => option.id === 'claude-fable-5')?.disabled).toBeFalsy()
+    expect(
+      claude.modelOptions.find((option) => option.id === 'claude-sonnet-5')?.disabled
+    ).toBeFalsy()
+    expect(
+      claude.modelOptions.find((option) => option.id === 'claude-fable-5')?.disabled
+    ).toBeFalsy()
     expect(claude.modelOptions.map((option) => option.id)).toEqual([
       'claude-opus-4-8-1m',
       'claude-fable-5',
@@ -352,14 +372,7 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
         .filter((o) => o.disabled)
         .map((o) => o.value)
     ).toEqual(['xhigh', 'ultracode'])
-    expect(opus.map((o) => o.value)).toEqual([
-      'low',
-      'medium',
-      'high',
-      'xhigh',
-      'max',
-      'ultracode'
-    ])
+    expect(opus.map((o) => o.value)).toEqual(['low', 'medium', 'high', 'xhigh', 'max', 'ultracode'])
     expect(opus.every((o) => !o.disabled)).toBe(true)
     expect(fable.every((o) => !o.disabled)).toBe(true)
     expect(mythos.every((o) => !o.disabled)).toBe(true)
@@ -379,11 +392,7 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
     expect(grok.defaultModelId).toBe('grok-4.5')
     expect(grok.modelOptions.map((o) => o.id)).toEqual(['grok-4.5', 'grok-composer-2.5-fast'])
     expect(grok.defaultReasoning).toBe('high')
-    expect(grok.reasoningOptions.map((o) => o.value)).toEqual([
-      'low',
-      'medium',
-      'high'
-    ])
+    expect(grok.reasoningOptions.map((o) => o.value)).toEqual(['low', 'medium', 'high'])
     expect(getEnsembleReasoningOptions('grok', 'grok-composer-2.5-fast')).toEqual([])
   })
 

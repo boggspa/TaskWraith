@@ -38,9 +38,7 @@ describe('humaniseModelId', () => {
       expect(humaniseModelId('claude', 'claude-fable-5-1m')).toBe('Claude Fable 5 (1M)')
       expect(humaniseModelId('claude', 'claude-mythos-5')).toBe('Claude Mythos 5')
       expect(humaniseModelId('claude', 'claude-sonnet-5')).toBe('Claude Sonnet 5')
-      expect(humaniseModelId('claude', 'preview:anthropic:claude-sonnet-5')).toBe(
-        'Claude Sonnet 5'
-      )
+      expect(humaniseModelId('claude', 'preview:anthropic:claude-sonnet-5')).toBe('Claude Sonnet 5')
       expect(humaniseModelId('claude', 'claude-opus-4-8')).toBe('Claude Opus 4.8')
       expect(humaniseModelId('claude', 'claude-opus-4-8-1m')).toBe('Claude Opus 4.8 (1M)')
       expect(humaniseModelId('claude', 'claude-opus-4-7')).toBe('Claude Opus 4.7')
@@ -67,18 +65,19 @@ describe('humaniseModelId', () => {
       expect(humaniseModelId('codex', 'gpt-5.3-codex')).toBe('GPT-5.3 Codex')
       expect(humaniseModelId('codex', 'gpt-5.3-codex-spark')).toBe('GPT-5.3 Codex Spark')
       expect(humaniseModelId('codex', 'gpt-5.2')).toBe('GPT-5.2')
-      expect(humaniseModelId('codex', 'preview:openai:gpt-5.6:sol')).toBe(
-        'GPT-5.6 Sol'
-      )
+      // GPT-5.6 uses the OFFICIAL hyphenated display names (GA 2026-07-09);
+      // stale placeholder ids resolve to the same official name.
+      expect(humaniseModelId('codex', 'gpt-5.6-sol')).toBe('GPT-5.6-Sol')
+      expect(humaniseModelId('codex', 'gpt-5.6-terra')).toBe('GPT-5.6-Terra')
+      expect(humaniseModelId('codex', 'gpt-5.6-luna')).toBe('GPT-5.6-Luna')
+      expect(humaniseModelId('codex', 'preview:openai:gpt-5.6:sol')).toBe('GPT-5.6-Sol')
     })
   })
 
   describe('Kimi', () => {
     it('maps Kimi ids including the old/new thinking aliases', () => {
       expect(humaniseModelId('kimi', 'kimi-k2.7-code')).toBe('Kimi K2.7 Code')
-      expect(humaniseModelId('kimi', 'kimi-k2.7-code-thinking')).toBe(
-        'Kimi K2.7 Code Thinking'
-      )
+      expect(humaniseModelId('kimi', 'kimi-k2.7-code-thinking')).toBe('Kimi K2.7 Code Thinking')
       expect(humaniseModelId('kimi', 'kimi-k2.6')).toBe('Kimi K2.6')
       expect(humaniseModelId('kimi', 'kimi-k2.6-thinking')).toBe('Kimi K2.6 Thinking')
       // Pre-renamed alias still maps to the same display
@@ -97,9 +96,7 @@ describe('humaniseModelId', () => {
 
   describe('Grok', () => {
     it('maps Grok CLI ids to the product model name', () => {
-      expect(humaniseModelId('grok', 'grok-composer-2.5-fast')).toBe(
-        'Grok Composer 2.5 Fast'
-      )
+      expect(humaniseModelId('grok', 'grok-composer-2.5-fast')).toBe('Grok Composer 2.5 Fast')
       // Grok's CLI models are permanently Fast-mode, so the Grok seat reads
       // "Grok 4.5 Fast".
       expect(humaniseModelId('grok', 'grok-4.5')).toBe('Grok 4.5 Fast')
@@ -121,39 +118,27 @@ describe('humaniseModelId', () => {
     it('maps local Ollama tags to readable model names', () => {
       expect(humaniseModelId('ollama', 'qwen3:4b-instruct')).toBe('Qwen 3 (4B Param)')
       expect(humaniseModelId('ollama', 'qwen3.5:9b')).toBe('Qwen 3.5 (9B Param)')
-      expect(humaniseModelId('ollama', 'qwen3.5:9b-q4_K_M')).toBe(
-        'Qwen 3.5 (9B Param)'
-      )
+      expect(humaniseModelId('ollama', 'qwen3.5:9b-q4_K_M')).toBe('Qwen 3.5 (9B Param)')
       expect(humaniseModelId('ollama', 'qwen3.6:35b')).toBe('Qwen 3.6 (35B-A3B)')
       expect(humaniseModelId('ollama', 'qwen3.6:35b-a3b')).toBe('Qwen 3.6 (35B-A3B)')
       expect(humaniseModelId('ollama', 'gemma4:12b')).toBe('Gemma 4 (12B Param)')
-      expect(humaniseModelId('ollama', 'gemma4:12b-it-q4_K_M')).toBe(
-        'Gemma 4 (12B Param)'
-      )
+      expect(humaniseModelId('ollama', 'gemma4:12b-it-q4_K_M')).toBe('Gemma 4 (12B Param)')
       expect(humaniseModelId('ollama', 'ornith')).toBe('Ornith 1.0 (9B Param)')
       expect(humaniseModelId('ollama', 'ornith:latest')).toBe('Ornith 1.0 (9B Param)')
       expect(humaniseModelId('ollama', 'ornith:9b')).toBe('Ornith 1.0 (9B Param)')
       expect(humaniseModelId('ollama', 'ornith:35b')).toBe('Ornith 1.0 (35B Param)')
-      expect(humaniseModelId('ollama', 'ornith:35b-q4_K_M')).toBe(
-        'Ornith 1.0 (35B Param)'
-      )
-      expect(humaniseModelId('ollama', 'laguna-xs-2.1:q8_0')).toBe(
-        'Laguna XS 2.1 (33B-A3B Q8)'
-      )
+      expect(humaniseModelId('ollama', 'ornith:35b-q4_K_M')).toBe('Ornith 1.0 (35B Param)')
+      expect(humaniseModelId('ollama', 'laguna-xs-2.1:q8_0')).toBe('Laguna XS 2.1 (33B-A3B Q8)')
       expect(humaniseModelId('ollama', 'gpt-oss')).toBe('GPT OSS (20B Param)')
       expect(humaniseModelId('ollama', 'gpt-oss:20b')).toBe('GPT OSS (20B Param)')
       expect(humaniseModelId('ollama', 'gpt-oss:latest')).toBe('GPT OSS (20B Param)')
       expect(humaniseModelId('ollama', 'lfm2.5')).toBe('LFM 2.5 (8B-1A)')
       expect(humaniseModelId('ollama', 'lfm2.5:8b')).toBe('LFM 2.5 (8B-1A)')
       expect(humaniseModelId('ollama', 'lfm2.5:8b-q4_K_M')).toBe('LFM 2.5 (8B-1A)')
-      expect(humaniseModelId('ollama', 'minicpm-v4.5:8b')).toBe(
-        'MiniCPM-V 4.5 (8B Param)'
-      )
+      expect(humaniseModelId('ollama', 'minicpm-v4.5:8b')).toBe('MiniCPM-V 4.5 (8B Param)')
       expect(humaniseModelId('ollama', 'granite4.1:3b')).toBe('Granite 4.1 (3B Param)')
       expect(humaniseModelId('ollama', 'granite4.1:30b')).toBe('Granite 4.1 (30B Param)')
-      expect(humaniseModelId('ollama', 'nemotron3:33b')).toBe(
-        'Nemotron 3 Nano Omni (33B Param)'
-      )
+      expect(humaniseModelId('ollama', 'nemotron3:33b')).toBe('Nemotron 3 Nano Omni (33B Param)')
     })
   })
 
@@ -263,9 +248,7 @@ describe('humaniseModelIdCompact', () => {
     expect(humaniseModelIdCompact('claude', 'claude-opus-4-8')).toBe('Opus 4.8')
     expect(humaniseModelIdCompact('gemini', 'gemini-3-flash-preview')).toBe('3 Flash Preview')
     expect(humaniseModelIdCompact('kimi', 'kimi-k2.6')).toBe('K2.6')
-    expect(humaniseModelIdCompact('grok', 'grok-composer-2.5-fast')).toBe(
-      'Composer 2.5 Fast'
-    )
+    expect(humaniseModelIdCompact('grok', 'grok-composer-2.5-fast')).toBe('Composer 2.5 Fast')
     expect(humaniseModelIdCompact('grok', 'grok-build')).toBe('4.5 Fast')
   })
 

@@ -1,8 +1,4 @@
-import {
-  isPreviewModelPlaceholder,
-  previewModelsForProvider,
-  type PreviewModelCatalogEntry
-} from '../../../shared/previewModelCatalog'
+import { isPreviewModelPlaceholder } from '../../../shared/previewModelCatalog'
 import {
   CURSOR_GROK_45_BASE_MODEL_ID,
   GROK_45_DEFAULT_REASONING_EFFORT,
@@ -35,22 +31,57 @@ interface CodexModelOption {
   retiresAt?: string
 }
 
-const previewModelForPicker = (entry: PreviewModelCatalogEntry): CodexModelOption => ({
-  id: entry.id,
-  label: entry.label,
-  description: entry.description,
-  disabled: entry.disabled,
-  disabledReason: entry.disabledReason,
-  ...(entry.supportedReasoningEfforts
-    ? { supportedReasoningEfforts: entry.supportedReasoningEfforts }
-    : {}),
-  ...(entry.defaultReasoningEffort ? { defaultReasoningEffort: entry.defaultReasoningEffort } : {}),
-  ...(entry.additionalSpeedTiers ? { additionalSpeedTiers: entry.additionalSpeedTiers } : {})
-})
-
 const CODEX_DEFAULT_MODELS = [
   // GPT-5.6 trio leads the picker (above 5.5); 5.5 below stays the default.
-  ...previewModelsForProvider('codex').map(previewModelForPicker),
+  // GA rows with OFFICIAL metadata (2026-07-09, upstream Codex catalog +
+  // developers.openai.com): hyphenated display names, Sol defaults to LOW,
+  // `max` on all three, top `ultra` tier (internal token 'ultracode') on
+  // Sol + Terra only. This is the pre-IPC fallback list — the authoritative
+  // rows come from the main process (CODEX_STATIC_MODELS + live model/list).
+  {
+    id: 'gpt-5.6-sol',
+    label: 'GPT-5.6-Sol',
+    description: 'Latest frontier agentic coding model.',
+    supportedReasoningEfforts: [
+      { reasoningEffort: 'low' },
+      { reasoningEffort: 'medium' },
+      { reasoningEffort: 'high' },
+      { reasoningEffort: 'xhigh' },
+      { reasoningEffort: 'max' },
+      { reasoningEffort: 'ultracode' }
+    ],
+    defaultReasoningEffort: 'low',
+    additionalSpeedTiers: ['fast']
+  },
+  {
+    id: 'gpt-5.6-terra',
+    label: 'GPT-5.6-Terra',
+    description: 'Balanced agentic coding model for everyday work.',
+    supportedReasoningEfforts: [
+      { reasoningEffort: 'low' },
+      { reasoningEffort: 'medium' },
+      { reasoningEffort: 'high' },
+      { reasoningEffort: 'xhigh' },
+      { reasoningEffort: 'max' },
+      { reasoningEffort: 'ultracode' }
+    ],
+    defaultReasoningEffort: 'medium',
+    additionalSpeedTiers: ['fast']
+  },
+  {
+    id: 'gpt-5.6-luna',
+    label: 'GPT-5.6-Luna',
+    description: 'Fast and affordable agentic coding model.',
+    supportedReasoningEfforts: [
+      { reasoningEffort: 'low' },
+      { reasoningEffort: 'medium' },
+      { reasoningEffort: 'high' },
+      { reasoningEffort: 'xhigh' },
+      { reasoningEffort: 'max' }
+    ],
+    defaultReasoningEffort: 'medium',
+    additionalSpeedTiers: ['fast']
+  },
   {
     id: 'gpt-5.5',
     label: 'GPT-5.5',

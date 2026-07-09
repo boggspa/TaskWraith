@@ -22,20 +22,31 @@ describe('Codex provider model defaults', () => {
     }
   })
 
-  it('exposes selectable GPT-5.6 rows with Max + Ultracode reasoning only on Sol', () => {
+  it('exposes GPT-5.6 rows with official GA metadata (tiers, names, defaults)', () => {
+    // Official (2026-07-09): hyphenated names; Sol defaults LOW; max on all
+    // three; ultra('ultracode') on Sol + Terra only.
     const byId = new Map(CODEX_DEFAULT_MODELS.map((model) => [model.id, model]))
     expect(byId.get('gpt-5.6-sol')).toMatchObject({
-      label: 'GPT-5.6 Sol',
-      disabled: false,
-      defaultReasoningEffort: 'medium'
+      label: 'GPT-5.6-Sol',
+      defaultReasoningEffort: 'low'
     })
     expect(
       byId.get('gpt-5.6-sol')?.supportedReasoningEfforts?.map((option) => option.reasoningEffort)
     ).toEqual(['low', 'medium', 'high', 'xhigh', 'max', 'ultracode'])
+    expect(byId.get('gpt-5.6-terra')).toMatchObject({
+      label: 'GPT-5.6-Terra',
+      defaultReasoningEffort: 'medium'
+    })
     expect(
       byId.get('gpt-5.6-terra')?.supportedReasoningEfforts?.map((option) => option.reasoningEffort)
-    ).toEqual(['low', 'medium', 'high', 'xhigh'])
-    expect(byId.get('gpt-5.6-luna')).toMatchObject({ label: 'GPT-5.6 Luna', disabled: false })
+    ).toEqual(['low', 'medium', 'high', 'xhigh', 'max', 'ultracode'])
+    expect(byId.get('gpt-5.6-luna')).toMatchObject({
+      label: 'GPT-5.6-Luna',
+      defaultReasoningEffort: 'medium'
+    })
+    expect(
+      byId.get('gpt-5.6-luna')?.supportedReasoningEfforts?.map((option) => option.reasoningEffort)
+    ).toEqual(['low', 'medium', 'high', 'xhigh', 'max'])
   })
 
   it('leads the picker with the GPT-5.6 trio (above 5.5) but keeps 5.5 the default', () => {
@@ -167,11 +178,9 @@ describe('Grok provider model defaults', () => {
       label: 'Grok 4.5 Fast',
       isDefault: true
     })
-    expect(GROK_DEFAULT_MODELS[0].supportedReasoningEfforts?.map((option) => option.reasoningEffort)).toEqual([
-      'low',
-      'medium',
-      'high'
-    ])
+    expect(
+      GROK_DEFAULT_MODELS[0].supportedReasoningEfforts?.map((option) => option.reasoningEffort)
+    ).toEqual(['low', 'medium', 'high'])
     expect(GROK_DEFAULT_MODELS.map((model) => model.id)).toEqual([
       'grok-4.5',
       'grok-composer-2.5-fast'
