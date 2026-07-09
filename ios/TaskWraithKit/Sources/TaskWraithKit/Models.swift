@@ -567,7 +567,7 @@ public struct RemoteProjectionEnvelope: Codable, Sendable {
     }
 }
 
-public struct RemoteTaskCard: Codable, Sendable {
+public struct RemoteTaskCard: Codable, Sendable, Equatable {
     public let id: String
     public let title: String?
     public let status: String?
@@ -656,7 +656,7 @@ public struct RemoteTaskCard: Codable, Sendable {
         public let order: Int?
     }
 
-    public struct QueuedComposerPrompt: Codable, Sendable, Identifiable {
+    public struct QueuedComposerPrompt: Codable, Sendable, Identifiable, Equatable {
         public let id: String
         public let runId: String
         public let provider: String
@@ -671,7 +671,7 @@ public struct RemoteTaskCard: Codable, Sendable {
     /// model/reasoning) switch. Field names mirror the card's current-provider
     /// fields (`provider` / `selectedModelType` / `customModel`). All optional
     /// for decode resilience across Mac builds.
-    public struct PendingProviderChange: Codable, Sendable {
+    public struct PendingProviderChange: Codable, Sendable, Equatable {
         public let provider: String?
         public let selectedModelType: String?
         public let customModel: String?
@@ -1077,8 +1077,8 @@ public struct MobileQuestionCard: Codable, Sendable {
 
 /// `ensembleState` projection payload — the live round/participant state
 /// the desktop roster chips render from.
-public struct RemoteEnsembleState: Codable, Sendable {
-    public struct Participant: Codable, Sendable, Identifiable {
+public struct RemoteEnsembleState: Codable, Sendable, Equatable {
+    public struct Participant: Codable, Sendable, Identifiable, Equatable {
         public let participantId: String
         public let provider: String?
         public let role: String?
@@ -1181,13 +1181,13 @@ public struct RemoteEnsembleState: Codable, Sendable {
         .sorted(by: Self.rosterOrder)
     }
 
-    public struct QueuedPrompt: Codable, Sendable, Identifiable {
+    public struct QueuedPrompt: Codable, Sendable, Identifiable, Equatable {
         public let index: Int
         public let text: String
         public var id: Int { index }
     }
 
-    public struct RosterEntry: Codable, Sendable, Identifiable {
+    public struct RosterEntry: Codable, Sendable, Identifiable, Equatable {
         public let id: String
         public let provider: String
         public let role: String?
@@ -1275,7 +1275,7 @@ public struct MobileDiffSummary: Codable, Sendable {
     }
 }
 
-public struct RemoteThreadSnapshot: Codable, Sendable {
+public struct RemoteThreadSnapshot: Codable, Sendable, Equatable {
     public struct Row: Codable, Sendable, Equatable, Identifiable {
         public let id: String
         /// Run that produced this row — lets the live streaming bubble
@@ -1469,7 +1469,7 @@ public struct RemoteThreadSnapshot: Codable, Sendable {
         }
         public let agentQuestion: AgentQuestion?
     }
-    public struct RunSummary: Codable, Sendable {
+    public struct RunSummary: Codable, Sendable, Equatable {
         public let runId: String?
         /// Ensemble round this participant run belongs to, when present.
         public let ensembleRoundId: String?
@@ -1491,7 +1491,7 @@ public struct RemoteThreadSnapshot: Codable, Sendable {
         /// latest run's diffSummary envelope.
         public let fileChanges: FileChanges?
 
-        public struct FileChanges: Codable, Sendable {
+        public struct FileChanges: Codable, Sendable, Equatable {
             public let filesChanged: Int?
             public let additions: Int?
             public let deletions: Int?
@@ -1501,7 +1501,7 @@ public struct RemoteThreadSnapshot: Codable, Sendable {
             /// Bounded (≤12) per-file rows; overflow = filesChanged - files.count.
             public let files: [ChangedFile]?
 
-            public struct ChangedFile: Codable, Sendable, Identifiable {
+            public struct ChangedFile: Codable, Sendable, Identifiable, Equatable {
                 public let path: String
                 public let status: String?
                 public let additions: Int?
@@ -1510,7 +1510,7 @@ public struct RemoteThreadSnapshot: Codable, Sendable {
             }
         }
     }
-    public struct BlackboardEntry: Codable, Sendable, Identifiable {
+    public struct BlackboardEntry: Codable, Sendable, Identifiable, Equatable {
         public let id: String
         public let key: String
         public let value: String
@@ -1770,16 +1770,20 @@ public enum BridgeAction {
     /// permanently Fast (implicit Mac-side) so it sends nothing.
     private static func applyFastAndThinking(
         _ payload: inout [String: Any], provider: String,
-        fastModeEnabled: Bool, kimiThinkingEnabled: Bool?
+        fastModeEnabled: Bool?, kimiThinkingEnabled: Bool?
     ) {
-        switch provider.lowercased() {
-        case "cursor": payload["cursorFastMode"] = fastModeEnabled
-        case "claude": payload["claudeFastMode"] = fastModeEnabled
-        // ALWAYS send codex tier (not just when on): "" is a non-nullish
-        // off-signal, so the Mac's `action.codexServiceTier ?? metadata ?? null`
-        // uses it instead of resurrecting a stale 'fast' from chat metadata.
-        case "codex": payload["codexServiceTier"] = fastModeEnabled ? "fast" : ""
-        default: break
+        // nil = "no Fast signal — let the Mac inherit from chat metadata" (used
+        // by proposed-plan when the thread's card isn't cached, so we don't force
+        // Fast off). An explicit true/false is authoritative; "" is codex's
+        // non-nullish off-signal so the Mac's `?? metadata ?? null` uses it
+        // instead of resurrecting a stale 'fast'.
+        if let fastModeEnabled {
+            switch provider.lowercased() {
+            case "cursor": payload["cursorFastMode"] = fastModeEnabled
+            case "claude": payload["claudeFastMode"] = fastModeEnabled
+            case "codex": payload["codexServiceTier"] = fastModeEnabled ? "fast" : ""
+            default: break
+            }
         }
         if provider.lowercased() == "kimi", let kimiThinkingEnabled {
             payload["kimiThinkingEnabled"] = kimiThinkingEnabled
@@ -1793,7 +1797,7 @@ public enum BridgeAction {
         model: String? = nil, extraWorkspaceIds: [String]? = nil,
         reasoningEffort: String? = nil, imageAttachments: [[String: Any]]? = nil,
         proposedPlanImplementOf: String? = nil,
-        fastModeEnabled: Bool = false, kimiThinkingEnabled: Bool? = nil,
+        fastModeEnabled: Bool? = nil, kimiThinkingEnabled: Bool? = nil,
         actionId: String = UUID().uuidString
     ) -> [String: Any] {
         var payload: [String: Any] = [
@@ -1832,7 +1836,7 @@ public enum BridgeAction {
         permissionPresetId: String? = nil,
         model: String? = nil, extraWorkspaceIds: [String]? = nil,
         reasoningEffort: String? = nil,
-        fastModeEnabled: Bool = false, kimiThinkingEnabled: Bool? = nil,
+        fastModeEnabled: Bool? = nil, kimiThinkingEnabled: Bool? = nil,
         actionId: String = UUID().uuidString
     ) -> [String: Any] {
         var payload: [String: Any] = [
@@ -1866,7 +1870,7 @@ public enum BridgeAction {
         permissionPresetId: String? = nil,
         model: String? = nil, extraWorkspaceIds: [String]? = nil,
         reasoningEffort: String? = nil,
-        fastModeEnabled: Bool = false, kimiThinkingEnabled: Bool? = nil,
+        fastModeEnabled: Bool? = nil, kimiThinkingEnabled: Bool? = nil,
         actionId: String = UUID().uuidString
     ) -> [String: Any] {
         var payload: [String: Any] = [

@@ -4438,7 +4438,7 @@ public final class RemoteSessionModel: ObservableObject {
         workflowMode: String? = nil, permissionPresetId: String? = nil,
         model: String? = nil, providerOverride: String? = nil,
         reasoningEffort: String? = nil, extraWorkspaceIds: [String]? = nil,
-        fastModeEnabled: Bool = false, kimiThinkingEnabled: Bool? = nil,
+        fastModeEnabled: Bool? = nil, kimiThinkingEnabled: Bool? = nil,
         scheduledRunAt: String? = nil
     ) {
         guard !card.isEnsemble, let thread = card.threadId else { return }
@@ -5253,9 +5253,12 @@ public final class RemoteSessionModel: ObservableObject {
     /// card (mirrors ComposerView.cardFastMode/cardKimiThinking) so a plan
     /// approve/respond inherits the thread's toggle state instead of forcing Fast
     /// off / thinking to default.
-    private func cardFastAndThinking(threadId: String, provider: String) -> (Bool, Bool?) {
+    private func cardFastAndThinking(threadId: String, provider: String) -> (Bool?, Bool?) {
+        // No cached card (older thread outside the snapshot window, or projection
+        // not yet landed) — return nil so the composerPrompt OMITS Fast entirely
+        // and the Mac inherits it from chat metadata, rather than forcing it off.
         guard let card = taskCards.first(where: { $0.id == threadId || $0.threadId == threadId })
-        else { return (false, nil) }
+        else { return (nil, nil) }
         let fast: Bool
         switch provider.lowercased() {
         case "cursor": fast = card.cursorFastMode ?? false
@@ -5433,7 +5436,7 @@ public final class RemoteSessionModel: ObservableObject {
         permissionPresetId: String? = nil,
         reasoningEffort: String? = nil,
         imageAttachments: [[String: Any]]? = nil,
-        fastModeEnabled: Bool = false, kimiThinkingEnabled: Bool? = nil,
+        fastModeEnabled: Bool? = nil, kimiThinkingEnabled: Bool? = nil,
         scheduledRunAt: String? = nil
     ) {
         let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -5603,7 +5606,7 @@ public final class RemoteSessionModel: ObservableObject {
         reasoningEffort: String? = nil,
         imageAttachments: [[String: Any]]? = nil,
         extraWorkspaceIds: [String]? = nil,
-        fastModeEnabled: Bool = false, kimiThinkingEnabled: Bool? = nil,
+        fastModeEnabled: Bool? = nil, kimiThinkingEnabled: Bool? = nil,
         navigateOnAck: Bool = true
     ) {
         if isDemo {
