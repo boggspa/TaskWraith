@@ -83,10 +83,14 @@ export function grokWriteCapable(approvalMode: string | null | undefined): boole
  * and is unchanged. NEVER applied to a write-capable seat.
  */
 export const GROK_READ_ONLY_PROMPT_PREAMBLE =
-  'You are running in READ-ONLY mode. File writes, edits, and shell commands ' +
-  'will be refused by the host — do not attempt them. Use only read and ' +
-  'inspection tools and answer directly; if the task would require a write, ' +
-  'explain what you would change instead of attempting it.'
+  'You are running in READ-ONLY mode (recon / investigation). You CAN read and ' +
+  'inspect freely — read files and run read-only shell commands such as ls, ' +
+  'cat, grep, find, and git log / status / diff. File writes and edits, and ' +
+  'MUTATING shell commands (anything that changes files or git state, installs ' +
+  'packages, or has other side effects) are refused by the host — do not ' +
+  'attempt them; if the task would need one, describe what you would change ' +
+  'instead. If a tool call is refused, do NOT end your turn — summarise what ' +
+  'you found from the reads you did and answer the user directly.'
 
 /**
  * WRITE-mode steer prepended to a write-capable Grok turn's prompt. In write

@@ -870,6 +870,7 @@ import {
   buildGrokProviderPrompt
 } from './grok/GrokCliArgs'
 import { grokToolKindToService, type AcpPermissionRequest } from './grok/GrokAcpProtocol'
+import { grokReadOnlyShellRequestAllowed } from './grok/GrokReadOnlyShell'
 import { grokEventToRunEvents, type NormalizedGrokRunEvent } from './grok/GrokStreamingJson'
 import {
   cursorDebugEnabled,
@@ -12430,7 +12431,14 @@ async function runGrokAcpProvider(event: Electron.IpcMainInvokeEvent, payload: A
       const networkRead = grokAcpNetworkReadRequested(request)
       if (networkRead && !grokNetworkAccessAllowed(state)) return 'deny'
       if (!grokWriteCapable(payload.approvalMode)) {
-        return networkRead ? 'allow' : 'deny'
+        if (networkRead) return 'allow'
+        // Read-only / recon: allow a shell tool call ONLY when it is a provably
+        // read-only command (ls, cat, git log, find, grep, …). This is what lets
+        // "investigate this repo" actually run under read-only posture instead of
+        // Grok hard-cancelling the turn on the denied tool. Mutating shell stays
+        // denied (fail-closed classifier). See GrokReadOnlyShell.
+        if (grokReadOnlyShellRequestAllowed(request)) return 'allow'
+        return 'deny'
       }
       const service = grokToolKindToService(request.toolKind)
       const allowed = await requestAgenticServiceApproval(

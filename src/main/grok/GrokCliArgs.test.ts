@@ -433,10 +433,13 @@ describe('applyGrokReadOnlyPromptPreamble', () => {
     expect(applyGrokReadOnlyPromptPreamble('x', readOnlySeatDefault)).toBe('x')
   })
 
-  it('steer tells Grok not to attempt writes and to answer instead', () => {
-    // Guards the intent (not exact wording): do-not-attempt + answer/explain.
+  it('steer tells Grok read-only shell is allowed, not to attempt writes, and to summarise', () => {
+    // Guards the intent (not exact wording): read-only shell IS available,
+    // mutations are refused (do-not-attempt), describe-instead, and summarise
+    // rather than dead-end on a refused tool.
     expect(GROK_READ_ONLY_PROMPT_PREAMBLE).toMatch(/do not attempt/i)
-    expect(GROK_READ_ONLY_PROMPT_PREAMBLE).toMatch(/read/i)
-    expect(GROK_READ_ONLY_PROMPT_PREAMBLE).toMatch(/explain what you would change/i)
+    expect(GROK_READ_ONLY_PROMPT_PREAMBLE).toMatch(/read-only shell/i)
+    expect(GROK_READ_ONLY_PROMPT_PREAMBLE).toMatch(/describe what you would change/i)
+    expect(GROK_READ_ONLY_PROMPT_PREAMBLE).toMatch(/summar/i)
   })
 })
