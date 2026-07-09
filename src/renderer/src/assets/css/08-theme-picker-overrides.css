@@ -6334,6 +6334,7 @@
   --surface-2: var(--obsidian-composer-fill);
   --surface-border: var(--obsidian-composer-border);
   --provider-grok-color: rgba(255, 255, 255, 0.86);
+  --provider-glyph-contrast-color: #FFFFFF;
   color: rgba(255, 255, 255, 0.86);
   /* Tell the browser this subtree is dark — affects native
    * form controls (date picker, scrollbars) so they don't
@@ -6797,6 +6798,7 @@
   --surface-2: var(--alabaster-composer-fill);
   --surface-border: var(--alabaster-composer-border);
   --provider-grok-color: rgba(18, 21, 27, 0.86);
+  --provider-glyph-contrast-color: #000000;
   color: rgba(18, 21, 27, 0.86);
   color-scheme: light;
 }

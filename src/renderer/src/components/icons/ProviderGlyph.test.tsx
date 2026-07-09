@@ -17,8 +17,19 @@ describe('ProviderGlyph', () => {
       const html = renderToStaticMarkup(<ProviderGlyph provider={provider} />)
       expect(html).toContain(`provider-glyph-${provider}`)
       expect(html).toContain(`--provider-accent:var(--provider-${provider}-color, currentColor)`)
+      expect(html).toContain('provider-glyph-contrast-outline')
+      expect(html).toContain('provider-glyph-foreground')
       expect(html).not.toContain('<img')
     }
+  })
+
+  it('paints a contrast copy behind the provider-accented foreground', () => {
+    const html = renderToStaticMarkup(<ProviderGlyph provider="codex" />)
+
+    expect(html.indexOf('provider-glyph-contrast-outline')).toBeLessThan(
+      html.indexOf('provider-glyph-foreground')
+    )
+    expect(html.match(/M4\.6 6\.2h14\.8v11\.6H4\.6Z/g)).toHaveLength(2)
   })
 
   it('falls back to a generic prompt glyph for future providers', () => {

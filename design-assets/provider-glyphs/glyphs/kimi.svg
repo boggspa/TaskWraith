@@ -1,7 +1,19 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" role="img" aria-labelledby="provider-glyph-kimi-title provider-glyph-kimi-desc" data-provider="kimi" style="color: #1A8CFF; --provider-accent: #1A8CFF;">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" role="img" aria-labelledby="provider-glyph-kimi-title provider-glyph-kimi-desc" data-provider="kimi" data-provider-glyph="true" style="color: #1A8CFF; --provider-accent: #1A8CFF;">
   <title id="provider-glyph-kimi-title">Kimi provider glyph</title>
   <desc id="provider-glyph-kimi-desc">Original monoline crescent and angled wordmark slash mnemonic for Kimi. Not an official logo.</desc>
   <style>
+
+  [data-provider-glyph],
+  [data-provider-glyph-catalog] {
+    --provider-glyph-contrast: var(--provider-glyph-contrast-color, #000000);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    [data-provider-glyph],
+    [data-provider-glyph-catalog] {
+      --provider-glyph-contrast: var(--provider-glyph-contrast-color, #FFFFFF);
+    }
+  }
 
   .line {
     fill: none;
@@ -35,11 +47,54 @@
     stroke: none;
   }
 
-  </style>
+  .contrast-outline {
+    pointer-events: none;
+  }
 
-      <path class="line" d="M15.6 4.7a7.9 7.9 0 1 0 0 14.6 6.1 6.1 0 1 1 0-14.6Z" />
-      <path class="accent" d="M8 7.4v9.2" />
-      <path class="accent" d="m16 7.4-5.1 4.5 5.1 4.7" />
-      <path class="line fine" d="M6.6 12h6.2" />
-      <circle class="dot" cx="18.5" cy="5.8" r="1.2" />
+  .contrast-outline .line {
+    stroke: var(--provider-glyph-contrast);
+    stroke-width: 2.75;
+    opacity: 1;
+  }
+
+  .contrast-outline .accent {
+    stroke: var(--provider-glyph-contrast);
+    stroke-width: 2.85;
+    opacity: 1;
+  }
+
+  .contrast-outline .fine {
+    stroke-width: 2.3;
+    opacity: 1;
+  }
+
+  .contrast-outline .soft {
+    fill: none;
+    stroke: var(--provider-glyph-contrast);
+    stroke-width: 1;
+    opacity: 1;
+  }
+
+  .contrast-outline .dot {
+    fill: var(--provider-glyph-contrast);
+    stroke: var(--provider-glyph-contrast);
+    stroke-width: 1;
+    opacity: 1;
+  }
+
+  </style>
+  <g class="contrast-outline" data-provider-glyph-contrast="true" aria-hidden="true">
+    <path class="line" d="M15.6 4.7a7.9 7.9 0 1 0 0 14.6 6.1 6.1 0 1 1 0-14.6Z" />
+    <path class="accent" d="M8 7.4v9.2" />
+    <path class="accent" d="m16 7.4-5.1 4.5 5.1 4.7" />
+    <path class="line fine" d="M6.6 12h6.2" />
+    <circle class="dot" cx="18.5" cy="5.8" r="1.2" />
+  </g>
+  <g class="foreground">
+    <path class="line" d="M15.6 4.7a7.9 7.9 0 1 0 0 14.6 6.1 6.1 0 1 1 0-14.6Z" />
+    <path class="accent" d="M8 7.4v9.2" />
+    <path class="accent" d="m16 7.4-5.1 4.5 5.1 4.7" />
+    <path class="line fine" d="M6.6 12h6.2" />
+    <circle class="dot" cx="18.5" cy="5.8" r="1.2" />
+  </g>
 </svg>

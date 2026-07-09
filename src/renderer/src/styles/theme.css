@@ -183,6 +183,10 @@
   --provider-ollama-color: #20A77A;
   /* Ensemble — aggregate provider roster in a soft white-gray pink. */
   --provider-ensemble-color: #E8DDE3;
+  /* Two-pass provider glyphs paint this contrast silhouette behind their
+   * provider-coloured linework. Dark themes default to white; light-family
+   * themes and inverted local panes override it below. */
+  --provider-glyph-contrast-color: #FFFFFF;
   /* Ollama-backed display brands. Runtime provider remains `ollama`; these
    * presentation aliases let local models wear their upstream brand hue. */
   --provider-alibaba-color: #7C3AED;
@@ -310,6 +314,24 @@
   --scrollbar-track: transparent;
   --scrollbar-thumb: rgba(255,255,255,0.12);
   --scrollbar-thumb-hover: rgba(255,255,255,0.22);
+}
+
+/* Provider glyph contrast follows the actual surface polarity. One glyph
+ * catalogue serves both modes; no light/dark asset duplication is required. */
+:is(
+    [data-theme="light"],
+    [data-theme="citrus"],
+    [data-theme="mist"],
+    [data-theme="sage"],
+    [data-theme="alabaster"]
+  ) {
+  --provider-glyph-contrast-color: #000000;
+}
+
+@media (prefers-color-scheme: light) {
+  :root[data-theme="system"] {
+    --provider-glyph-contrast-color: #000000;
+  }
 }
 
 /* Light-family sidebars keep the fixed chrome on their OWN (light) sidebar
@@ -855,6 +877,7 @@
   --panel-border: rgba(18, 21, 27, 0.10);
   --panel-bg: rgba(255, 255, 255, 0.42);
   --panel-elevated-bg: rgba(255, 255, 255, 0.58);
+  --provider-glyph-contrast-color: #000000;
   /* Drop the dark-mode rim-shine on the sidebar — it was a
    * white-tint-on-dark cue that no longer reads when the
    * surface itself is light. A subtle dark right-edge replaces
@@ -1080,6 +1103,7 @@
   --panel-border: rgba(255, 255, 255, 0.10);
   --panel-bg: rgba(20, 22, 28, 0.46);
   --panel-elevated-bg: rgba(28, 30, 38, 0.56);
+  --provider-glyph-contrast-color: #FFFFFF;
   /* Inverse rim shadow: dark inset on the LEFT edge (interior
    * highlight), charcoal inset on the right (the visual cut
    * to the cream transcript). Mirrors obsidian's white-left +
@@ -1148,6 +1172,7 @@
   --text-muted: rgba(255, 255, 255, 0.32);
   --surface-text: rgba(255, 255, 255, 0.92);
   --surface-text-muted: rgba(255, 255, 255, 0.52);
+  --provider-glyph-contrast-color: #FFFFFF;
   /* Dark surface tokens so the panels' token-driven background
    * rules (`--panel-bg-solid`, `--composer-glass-bg`, `--bg-primary`,
    * `--app-bg-sunken` for the code surface, etc.) resolve dark. */

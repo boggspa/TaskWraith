@@ -85,8 +85,12 @@ describe('agent pool icon assets', () => {
     const provider = getPoolIconAsset('provider:codex')!
     const providerOut = preparePoolIconSvg(provider, 24)
     expect(providerOut).toContain('.agent-pool-icon-provider-codex-line')
+    expect(providerOut).toContain('.agent-pool-icon-provider-codex-contrast-outline')
+    expect(providerOut).toContain('data-provider-glyph="true"')
     expect(providerOut).toContain('stroke-width: 1.05')
+    expect(providerOut).toContain('stroke-width: 2.05')
     expect(providerOut).not.toContain('stroke-width: 1.75')
+    expect(providerOut).not.toContain('stroke-width: 2.75')
   })
 
   it('preparePoolIconSvg keeps workflow action icons visible when tinted', () => {

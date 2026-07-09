@@ -35,12 +35,21 @@ const IOS_RESOURCES = join(
 // even if a future surface shows the glyph at 10x the row size.
 const SIZE = 512
 
-/** Force the accent to white so the PNG is a pure template mask. */
+/**
+ * Remove the theme-aware contrast pass and force the foreground accent to
+ * white so the PNG remains a pure template mask. iOS paints its black/white
+ * contrast silhouette separately at runtime.
+ */
 const whitened = (svg) =>
-  svg.replace(
-    /style="color: #[0-9A-Fa-f]+; --provider-accent: #[0-9A-Fa-f]+;"/,
-    'style="color: #FFFFFF; --provider-accent: #FFFFFF;"'
-  )
+  svg
+    .replace(
+      /\s*<g\b[^>]*data-provider-glyph-contrast="true"[^>]*>[\s\S]*?<\/g>/,
+      ''
+    )
+    .replace(
+      /style="color: #[0-9A-Fa-f]+; --provider-accent: #[0-9A-Fa-f]+;"/,
+      'style="color: #FFFFFF; --provider-accent: #FFFFFF;"'
+    )
 
 async function renderGlyph(win, svgText) {
   const svgB64 = Buffer.from(svgText, 'utf8').toString('base64')

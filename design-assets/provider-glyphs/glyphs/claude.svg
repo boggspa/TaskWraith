@@ -1,7 +1,19 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" role="img" aria-labelledby="provider-glyph-claude-title provider-glyph-claude-desc" data-provider="claude" style="color: #D97706; --provider-accent: #D97706;">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" role="img" aria-labelledby="provider-glyph-claude-title provider-glyph-claude-desc" data-provider="claude" data-provider-glyph="true" style="color: #D97706; --provider-accent: #D97706;">
   <title id="provider-glyph-claude-title">Claude provider glyph</title>
   <desc id="provider-glyph-claude-desc">Original monoline uneven radial burst mnemonic for Claude. Not an official logo.</desc>
   <style>
+
+  [data-provider-glyph],
+  [data-provider-glyph-catalog] {
+    --provider-glyph-contrast: var(--provider-glyph-contrast-color, #000000);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    [data-provider-glyph],
+    [data-provider-glyph-catalog] {
+      --provider-glyph-contrast: var(--provider-glyph-contrast-color, #FFFFFF);
+    }
+  }
 
   .line {
     fill: none;
@@ -35,16 +47,64 @@
     stroke: none;
   }
 
-  </style>
+  .contrast-outline {
+    pointer-events: none;
+  }
 
-      <circle class="soft" cx="12" cy="12" r="4.2" />
-      <path class="accent" d="M12 4.2v3" />
-      <path class="accent" d="M12 16.8v3" />
-      <path class="accent" d="M4.2 12h3" />
-      <path class="accent" d="M16.8 12h3" />
-      <path class="line" d="m6.4 6.4 2.2 2.2" />
-      <path class="line" d="m15.4 15.4 2.2 2.2" />
-      <path class="line" d="m17.3 6.7-2.1 2.1" />
-      <path class="line" d="m8.7 15.3-2 2" />
-      <circle class="dot" cx="12" cy="12" r="1.6" />
+  .contrast-outline .line {
+    stroke: var(--provider-glyph-contrast);
+    stroke-width: 2.75;
+    opacity: 1;
+  }
+
+  .contrast-outline .accent {
+    stroke: var(--provider-glyph-contrast);
+    stroke-width: 2.85;
+    opacity: 1;
+  }
+
+  .contrast-outline .fine {
+    stroke-width: 2.3;
+    opacity: 1;
+  }
+
+  .contrast-outline .soft {
+    fill: none;
+    stroke: var(--provider-glyph-contrast);
+    stroke-width: 1;
+    opacity: 1;
+  }
+
+  .contrast-outline .dot {
+    fill: var(--provider-glyph-contrast);
+    stroke: var(--provider-glyph-contrast);
+    stroke-width: 1;
+    opacity: 1;
+  }
+
+  </style>
+  <g class="contrast-outline" data-provider-glyph-contrast="true" aria-hidden="true">
+    <circle class="soft" cx="12" cy="12" r="4.2" />
+    <path class="accent" d="M12 4.2v3" />
+    <path class="accent" d="M12 16.8v3" />
+    <path class="accent" d="M4.2 12h3" />
+    <path class="accent" d="M16.8 12h3" />
+    <path class="line" d="m6.4 6.4 2.2 2.2" />
+    <path class="line" d="m15.4 15.4 2.2 2.2" />
+    <path class="line" d="m17.3 6.7-2.1 2.1" />
+    <path class="line" d="m8.7 15.3-2 2" />
+    <circle class="dot" cx="12" cy="12" r="1.6" />
+  </g>
+  <g class="foreground">
+    <circle class="soft" cx="12" cy="12" r="4.2" />
+    <path class="accent" d="M12 4.2v3" />
+    <path class="accent" d="M12 16.8v3" />
+    <path class="accent" d="M4.2 12h3" />
+    <path class="accent" d="M16.8 12h3" />
+    <path class="line" d="m6.4 6.4 2.2 2.2" />
+    <path class="line" d="m15.4 15.4 2.2 2.2" />
+    <path class="line" d="m17.3 6.7-2.1 2.1" />
+    <path class="line" d="m8.7 15.3-2 2" />
+    <circle class="dot" cx="12" cy="12" r="1.6" />
+  </g>
 </svg>

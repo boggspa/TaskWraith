@@ -1,7 +1,19 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" role="img" aria-labelledby="provider-glyph-ensemble-title provider-glyph-ensemble-desc" data-provider="ensemble" style="color: #E8DDE3; --provider-accent: #E8DDE3;">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" role="img" aria-labelledby="provider-glyph-ensemble-title provider-glyph-ensemble-desc" data-provider="ensemble" data-provider-glyph="true" style="color: #E8DDE3; --provider-accent: #E8DDE3;">
   <title id="provider-glyph-ensemble-title">Ensemble provider glyph</title>
   <desc id="provider-glyph-ensemble-desc">Original monoline staggered three-agent roster with identicon visor mnemonic for Ensemble. Not an official logo.</desc>
   <style>
+
+  [data-provider-glyph],
+  [data-provider-glyph-catalog] {
+    --provider-glyph-contrast: var(--provider-glyph-contrast-color, #000000);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    [data-provider-glyph],
+    [data-provider-glyph-catalog] {
+      --provider-glyph-contrast: var(--provider-glyph-contrast-color, #FFFFFF);
+    }
+  }
 
   .line {
     fill: none;
@@ -35,16 +47,64 @@
     stroke: none;
   }
 
-  </style>
+  .contrast-outline {
+    pointer-events: none;
+  }
 
-      <circle class="line fine" cx="6.7" cy="7.3" r="2.35" />
-      <circle class="line fine" cx="17.3" cy="7.3" r="2.35" />
-      <circle class="accent" cx="12" cy="6.5" r="2.7" />
-      <path class="line fine" d="M2.8 18.4c.35-2.9 2.65-4.7 5.45-4.7 1.15 0 2.25.3 3.15.85" />
-      <path class="line fine" d="M21.2 18.4c-.35-2.9-2.65-4.7-5.45-4.7-1.15 0-2.25.3-3.15.85" />
-      <path class="accent" d="M6.6 19.8c.25-3.45 2.55-5.65 5.4-5.65s5.15 2.2 5.4 5.65" />
-      <path class="line fine" d="M5.55 7.35h2.3" />
-      <path class="line fine" d="M16.15 7.35h2.3" />
-      <path class="line" d="M9.8 6.55h4.4" />
-      <path class="line fine" d="m9.7 12.25 2.3 1.9 2.3-1.9" />
+  .contrast-outline .line {
+    stroke: var(--provider-glyph-contrast);
+    stroke-width: 2.75;
+    opacity: 1;
+  }
+
+  .contrast-outline .accent {
+    stroke: var(--provider-glyph-contrast);
+    stroke-width: 2.85;
+    opacity: 1;
+  }
+
+  .contrast-outline .fine {
+    stroke-width: 2.3;
+    opacity: 1;
+  }
+
+  .contrast-outline .soft {
+    fill: none;
+    stroke: var(--provider-glyph-contrast);
+    stroke-width: 1;
+    opacity: 1;
+  }
+
+  .contrast-outline .dot {
+    fill: var(--provider-glyph-contrast);
+    stroke: var(--provider-glyph-contrast);
+    stroke-width: 1;
+    opacity: 1;
+  }
+
+  </style>
+  <g class="contrast-outline" data-provider-glyph-contrast="true" aria-hidden="true">
+    <circle class="line fine" cx="6.7" cy="7.3" r="2.35" />
+    <circle class="line fine" cx="17.3" cy="7.3" r="2.35" />
+    <circle class="accent" cx="12" cy="6.5" r="2.7" />
+    <path class="line fine" d="M2.8 18.4c.35-2.9 2.65-4.7 5.45-4.7 1.15 0 2.25.3 3.15.85" />
+    <path class="line fine" d="M21.2 18.4c-.35-2.9-2.65-4.7-5.45-4.7-1.15 0-2.25.3-3.15.85" />
+    <path class="accent" d="M6.6 19.8c.25-3.45 2.55-5.65 5.4-5.65s5.15 2.2 5.4 5.65" />
+    <path class="line fine" d="M5.55 7.35h2.3" />
+    <path class="line fine" d="M16.15 7.35h2.3" />
+    <path class="line" d="M9.8 6.55h4.4" />
+    <path class="line fine" d="m9.7 12.25 2.3 1.9 2.3-1.9" />
+  </g>
+  <g class="foreground">
+    <circle class="line fine" cx="6.7" cy="7.3" r="2.35" />
+    <circle class="line fine" cx="17.3" cy="7.3" r="2.35" />
+    <circle class="accent" cx="12" cy="6.5" r="2.7" />
+    <path class="line fine" d="M2.8 18.4c.35-2.9 2.65-4.7 5.45-4.7 1.15 0 2.25.3 3.15.85" />
+    <path class="line fine" d="M21.2 18.4c-.35-2.9-2.65-4.7-5.45-4.7-1.15 0-2.25.3-3.15.85" />
+    <path class="accent" d="M6.6 19.8c.25-3.45 2.55-5.65 5.4-5.65s5.15 2.2 5.4 5.65" />
+    <path class="line fine" d="M5.55 7.35h2.3" />
+    <path class="line fine" d="M16.15 7.35h2.3" />
+    <path class="line" d="M9.8 6.55h4.4" />
+    <path class="line fine" d="m9.7 12.25 2.3 1.9 2.3-1.9" />
+  </g>
 </svg>

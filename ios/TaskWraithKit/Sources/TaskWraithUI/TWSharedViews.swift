@@ -3031,8 +3031,9 @@ func twParticipantsSignature(_ participants: [RemoteEnsembleState.Participant]) 
 
 /// Monoline provider glyph — the sidebar's upgrade from the plain colored
 /// dot. Loads a white-on-alpha template PNG from the app asset catalog or
-/// package resources and tints it with the provider accent at runtime, so one
-/// master serves every theme.
+/// package resources and paints it twice at runtime: a theme-aware contrast
+/// silhouette (black on light, white on dark) behind the provider accent. One
+/// master still serves every theme.
 /// Ensembles and providers with a baked glyph use the monoline PNG;
 /// providers without one (qwen, unknown) keep the original dot.
 public struct ProviderGlyphIcon: View {
@@ -3040,6 +3041,14 @@ public struct ProviderGlyphIcon: View {
     let modelId: String?
     let isEnsemble: Bool
     let size: CGFloat
+
+    /// Eight half-unit directions approximate the SVG catalogue's 1-unit
+    /// centred outline while retaining a single template PNG per provider.
+    private static let contrastDirections: [(x: CGFloat, y: CGFloat)] = [
+        (-1, -1), (0, -1), (1, -1),
+        (-1, 0), (1, 0),
+        (-1, 1), (0, 1), (1, 1),
+    ]
 
     public init(
         provider: String?, modelId: String? = nil, isEnsemble: Bool = false, size: CGFloat = 16
@@ -3067,15 +3076,40 @@ public struct ProviderGlyphIcon: View {
         return nil
     }
 
-    public var body: some View {
-        if isEnsemble {
-            if let glyph = Self.glyphImage(for: "ensemble") {
+    private var contrastOffset: CGFloat {
+        max(0.25, size / 48)
+    }
+
+    @ViewBuilder
+    private func glyphWithContrast(_ glyph: Image, accent: Color) -> some View {
+        ZStack {
+            ForEach(Self.contrastDirections.indices, id: \.self) { index in
+                let direction = Self.contrastDirections[index]
                 glyph
                     .renderingMode(.template)
                     .resizable()
                     .scaledToFit()
                     .frame(width: size, height: size)
-                    .foregroundStyle(TWTheme.providerAccent("ensemble"))
+                    .foregroundStyle(TWTheme.providerGlyphContrast)
+                    .offset(
+                        x: direction.x * contrastOffset,
+                        y: direction.y * contrastOffset)
+                    .accessibilityHidden(true)
+            }
+            glyph
+                .renderingMode(.template)
+                .resizable()
+                .scaledToFit()
+                .frame(width: size, height: size)
+                .foregroundStyle(accent)
+        }
+        .frame(width: size, height: size)
+    }
+
+    public var body: some View {
+        if isEnsemble {
+            if let glyph = Self.glyphImage(for: "ensemble") {
+                glyphWithContrast(glyph, accent: TWTheme.providerAccent("ensemble"))
             } else {
                 Image(systemName: "star.fill")
                     .font(.system(size: size * 0.72, weight: .semibold))
@@ -3083,12 +3117,9 @@ public struct ProviderGlyphIcon: View {
                     .frame(width: size, height: size)
             }
         } else if let glyph = Self.glyphImage(for: provider) {
-            glyph
-                .renderingMode(.template)
-                .resizable()
-                .scaledToFit()
-                .frame(width: size, height: size)
-                .foregroundStyle(TWTheme.providerAccent(provider, modelId: modelId))
+            glyphWithContrast(
+                glyph,
+                accent: TWTheme.providerAccent(provider, modelId: modelId))
         } else {
             Circle()
                 .fill(TWTheme.providerAccent(provider, modelId: modelId))

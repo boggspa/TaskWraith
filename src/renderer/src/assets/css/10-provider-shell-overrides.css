@@ -560,6 +560,7 @@
   --composer-glass-border: rgba(255, 255, 255, 0.14);
   --composer-border: rgba(255, 255, 255, 0.14);
   --provider-grok-color: rgba(255, 255, 255, 0.86);
+  --provider-glyph-contrast-color: #FFFFFF;
   color: rgba(255, 255, 255, 0.9);
   color-scheme: dark;
 }
@@ -633,6 +634,7 @@
   --composer-glass-border: rgba(18, 21, 27, 0.14);
   --composer-border: rgba(18, 21, 27, 0.14);
   --provider-grok-color: rgba(18, 21, 27, 0.86);
+  --provider-glyph-contrast-color: #000000;
   color: rgba(18, 21, 27, 0.9);
   color-scheme: light;
 }

@@ -10,7 +10,9 @@ Design constraints:
 
 - `24x24` SVG viewBox.
 - No container baked into the glyph.
-- Fully provider-accented linework via `--provider-accent`.
+- Provider-accented linework via `--provider-accent`.
+- A 1-unit contrast pass behind the linework: black in light mode, white in
+  dark mode. Each provider still has one theme-aware catalogue entry.
 - No official raster assets.
 - No exact provider logo geometry.
 
@@ -36,6 +38,8 @@ Renders each glyph white-on-transparent at 512px via Chromium (the SVGs
 lean on `<style>` + `var(--provider-accent)`, which qlmanage/NSImage
 flatten onto a white card). Writes masters to `png/` and copies into the
 iOS package resources, where `ProviderGlyphIcon` tints them with the
-provider accent at runtime (`renderingMode(.template)`).
+provider accent and adds the theme-aware contrast pass at runtime
+(`renderingMode(.template)`). The baker intentionally strips the SVG contrast
+copy so the template mask can be tinted independently.
 After changing glyph geometry, also sync any inline desktop copy in
 `src/renderer/src/components/icons/ProviderGlyph.tsx`.

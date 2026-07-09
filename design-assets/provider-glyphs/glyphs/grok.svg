@@ -1,7 +1,19 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" role="img" aria-labelledby="provider-glyph-grok-title provider-glyph-grok-desc" data-provider="grok" style="color: #D8DEE9; --provider-accent: #D8DEE9;">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" role="img" aria-labelledby="provider-glyph-grok-title provider-glyph-grok-desc" data-provider="grok" data-provider-glyph="true" style="color: #D8DEE9; --provider-accent: #D8DEE9;">
   <title id="provider-glyph-grok-title">Grok provider glyph</title>
   <desc id="provider-glyph-grok-desc">Original monoline crosshair diagonal slash mnemonic for Grok. Not an official logo.</desc>
   <style>
+
+  [data-provider-glyph],
+  [data-provider-glyph-catalog] {
+    --provider-glyph-contrast: var(--provider-glyph-contrast-color, #000000);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    [data-provider-glyph],
+    [data-provider-glyph-catalog] {
+      --provider-glyph-contrast: var(--provider-glyph-contrast-color, #FFFFFF);
+    }
+  }
 
   .line {
     fill: none;
@@ -35,14 +47,60 @@
     stroke: none;
   }
 
-  </style>
+  .contrast-outline {
+    pointer-events: none;
+  }
 
-      <circle class="line" cx="12" cy="12" r="6.4" />
-      <path class="line fine" d="M12 3.8v3" />
-      <path class="line fine" d="M12 17.2v3" />
-      <path class="line fine" d="M3.8 12h3" />
-      <path class="line fine" d="M17.2 12h3" />
-      <path class="accent" d="M8.7 15.3 15.3 8.7" />
-      <circle class="dot" cx="8.4" cy="15.6" r="1" />
-      <circle class="dot" cx="15.6" cy="8.4" r="1" />
+  .contrast-outline .line {
+    stroke: var(--provider-glyph-contrast);
+    stroke-width: 2.75;
+    opacity: 1;
+  }
+
+  .contrast-outline .accent {
+    stroke: var(--provider-glyph-contrast);
+    stroke-width: 2.85;
+    opacity: 1;
+  }
+
+  .contrast-outline .fine {
+    stroke-width: 2.3;
+    opacity: 1;
+  }
+
+  .contrast-outline .soft {
+    fill: none;
+    stroke: var(--provider-glyph-contrast);
+    stroke-width: 1;
+    opacity: 1;
+  }
+
+  .contrast-outline .dot {
+    fill: var(--provider-glyph-contrast);
+    stroke: var(--provider-glyph-contrast);
+    stroke-width: 1;
+    opacity: 1;
+  }
+
+  </style>
+  <g class="contrast-outline" data-provider-glyph-contrast="true" aria-hidden="true">
+    <circle class="line" cx="12" cy="12" r="6.4" />
+    <path class="line fine" d="M12 3.8v3" />
+    <path class="line fine" d="M12 17.2v3" />
+    <path class="line fine" d="M3.8 12h3" />
+    <path class="line fine" d="M17.2 12h3" />
+    <path class="accent" d="M8.7 15.3 15.3 8.7" />
+    <circle class="dot" cx="8.4" cy="15.6" r="1" />
+    <circle class="dot" cx="15.6" cy="8.4" r="1" />
+  </g>
+  <g class="foreground">
+    <circle class="line" cx="12" cy="12" r="6.4" />
+    <path class="line fine" d="M12 3.8v3" />
+    <path class="line fine" d="M12 17.2v3" />
+    <path class="line fine" d="M3.8 12h3" />
+    <path class="line fine" d="M17.2 12h3" />
+    <path class="accent" d="M8.7 15.3 15.3 8.7" />
+    <circle class="dot" cx="8.4" cy="15.6" r="1" />
+    <circle class="dot" cx="15.6" cy="8.4" r="1" />
+  </g>
 </svg>

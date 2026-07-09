@@ -1,8 +1,20 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="432" height="654" viewBox="0 0 432 654">
+<svg xmlns="http://www.w3.org/2000/svg" width="432" height="654" viewBox="0 0 432 654" data-provider-glyph-catalog="true">
   <title>TaskWraith provider mnemonic glyph catalog</title>
   <desc>Original monoline provider mnemonics. These are deliberately simplified and are not official provider logos.</desc>
-  <rect width="432" height="654" rx="18" fill="#111820" />
+  <rect class="catalog-background" width="432" height="654" rx="18" />
   <style>
+
+  [data-provider-glyph],
+  [data-provider-glyph-catalog] {
+    --provider-glyph-contrast: var(--provider-glyph-contrast-color, #000000);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    [data-provider-glyph],
+    [data-provider-glyph-catalog] {
+      --provider-glyph-contrast: var(--provider-glyph-contrast-color, #FFFFFF);
+    }
+  }
 
   .line {
     fill: none;
@@ -36,23 +48,78 @@
     stroke: none;
   }
 
+  .contrast-outline {
+    pointer-events: none;
+  }
+
+  .contrast-outline .line {
+    stroke: var(--provider-glyph-contrast);
+    stroke-width: 2.75;
+    opacity: 1;
+  }
+
+  .contrast-outline .accent {
+    stroke: var(--provider-glyph-contrast);
+    stroke-width: 2.85;
+    opacity: 1;
+  }
+
+  .contrast-outline .fine {
+    stroke-width: 2.3;
+    opacity: 1;
+  }
+
+  .contrast-outline .soft {
+    fill: none;
+    stroke: var(--provider-glyph-contrast);
+    stroke-width: 1;
+    opacity: 1;
+  }
+
+  .contrast-outline .dot {
+    fill: var(--provider-glyph-contrast);
+    stroke: var(--provider-glyph-contrast);
+    stroke-width: 1;
+    opacity: 1;
+  }
+
+
+    [data-provider-glyph-catalog] {
+      --catalog-background: #F8FAFC;
+      --catalog-label: #0F172A;
+      --catalog-accent-label: #475569;
+      --catalog-hint: #64748B;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      [data-provider-glyph-catalog] {
+        --catalog-background: #111820;
+        --catalog-label: #F1F5F9;
+        --catalog-accent-label: #AAB4C2;
+        --catalog-hint: #7E8A9A;
+      }
+    }
+
+    .catalog-background {
+      fill: var(--catalog-background);
+    }
 
     .label {
-      fill: #F1F5F9;
+      fill: var(--catalog-label);
       font: 700 14px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       text-anchor: middle;
       letter-spacing: 0;
     }
 
     .accent-label {
-      fill: #AAB4C2;
+      fill: var(--catalog-accent-label);
       font: 10px ui-monospace, SFMono-Regular, Menlo, monospace;
       text-anchor: middle;
       letter-spacing: 0;
     }
 
     .hint {
-      fill: #7E8A9A;
+      fill: var(--catalog-hint);
       font: 9px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       text-anchor: middle;
       letter-spacing: 0;
@@ -60,20 +127,32 @@
   </style>
   <g transform="translate(0 0)">
     <g transform="translate(40 24) scale(2.65)" style="color: #2563EB; --provider-accent: #2563EB;">
-
-      <path class="accent" d="M12 3.6l1.7 4.6 4.7 1.7-4.7 1.7L12 16.4l-1.7-4.8-4.7-1.7 4.7-1.7Z" />
-      <path class="line" d="M4.4 18.2l1.1 2.6 2.6 1-2.6 1-1.1 2.6-1-2.6-2.7-1 2.7-1Z" transform="translate(1 -3)" />
-      <path class="line fine" d="M17.8 4.7h2.8" />
-      <path class="line fine" d="M19.2 3.3v2.8" />
-
+      <g class="contrast-outline" data-provider-glyph-contrast="true" aria-hidden="true">
+        <path class="accent" d="M12 3.6l1.7 4.6 4.7 1.7-4.7 1.7L12 16.4l-1.7-4.8-4.7-1.7 4.7-1.7Z" />
+        <path class="line" d="M4.4 18.2l1.1 2.6 2.6 1-2.6 1-1.1 2.6-1-2.6-2.7-1 2.7-1Z" transform="translate(1 -3)" />
+        <path class="line fine" d="M17.8 4.7h2.8" />
+        <path class="line fine" d="M19.2 3.3v2.8" />
+      </g>
+      <g class="foreground">
+        <path class="accent" d="M12 3.6l1.7 4.6 4.7 1.7-4.7 1.7L12 16.4l-1.7-4.8-4.7-1.7 4.7-1.7Z" />
+        <path class="line" d="M4.4 18.2l1.1 2.6 2.6 1-2.6 1-1.1 2.6-1-2.6-2.7-1 2.7-1Z" transform="translate(1 -3)" />
+        <path class="line fine" d="M17.8 4.7h2.8" />
+        <path class="line fine" d="M19.2 3.3v2.8" />
+      </g>
     </g>
     <g transform="translate(61 112) scale(0.9)" style="color: #2563EB; --provider-accent: #2563EB;">
-
-      <path class="accent" d="M12 3.6l1.7 4.6 4.7 1.7-4.7 1.7L12 16.4l-1.7-4.8-4.7-1.7 4.7-1.7Z" />
-      <path class="line" d="M4.4 18.2l1.1 2.6 2.6 1-2.6 1-1.1 2.6-1-2.6-2.7-1 2.7-1Z" transform="translate(1 -3)" />
-      <path class="line fine" d="M17.8 4.7h2.8" />
-      <path class="line fine" d="M19.2 3.3v2.8" />
-
+      <g class="contrast-outline" data-provider-glyph-contrast="true" aria-hidden="true">
+        <path class="accent" d="M12 3.6l1.7 4.6 4.7 1.7-4.7 1.7L12 16.4l-1.7-4.8-4.7-1.7 4.7-1.7Z" />
+        <path class="line" d="M4.4 18.2l1.1 2.6 2.6 1-2.6 1-1.1 2.6-1-2.6-2.7-1 2.7-1Z" transform="translate(1 -3)" />
+        <path class="line fine" d="M17.8 4.7h2.8" />
+        <path class="line fine" d="M19.2 3.3v2.8" />
+      </g>
+      <g class="foreground">
+        <path class="accent" d="M12 3.6l1.7 4.6 4.7 1.7-4.7 1.7L12 16.4l-1.7-4.8-4.7-1.7 4.7-1.7Z" />
+        <path class="line" d="M4.4 18.2l1.1 2.6 2.6 1-2.6 1-1.1 2.6-1-2.6-2.7-1 2.7-1Z" transform="translate(1 -3)" />
+        <path class="line fine" d="M17.8 4.7h2.8" />
+        <path class="line fine" d="M19.2 3.3v2.8" />
+      </g>
     </g>
     <text class="label" x="72" y="168">Gemini</text>
     <text class="accent-label" x="72" y="188">#2563EB</text>
@@ -81,22 +160,36 @@
   </g>
   <g transform="translate(144 0)">
     <g transform="translate(40 24) scale(2.65)" style="color: #A070F2; --provider-accent: #A070F2;">
-
-      <path class="line" d="M4.6 6.2h14.8v11.6H4.6Z" />
-      <path class="accent" d="m8.1 9.3 2.7 2.7-2.7 2.7" />
-      <path class="line fine" d="M12.2 14.7h4" />
-      <path class="line fine" d="M6.7 4.4 4.6 6.2" />
-      <path class="line fine" d="M17.3 19.6l2.1-1.8" />
-
+      <g class="contrast-outline" data-provider-glyph-contrast="true" aria-hidden="true">
+        <path class="line" d="M4.6 6.2h14.8v11.6H4.6Z" />
+        <path class="accent" d="m8.1 9.3 2.7 2.7-2.7 2.7" />
+        <path class="line fine" d="M12.2 14.7h4" />
+        <path class="line fine" d="M6.7 4.4 4.6 6.2" />
+        <path class="line fine" d="M17.3 19.6l2.1-1.8" />
+      </g>
+      <g class="foreground">
+        <path class="line" d="M4.6 6.2h14.8v11.6H4.6Z" />
+        <path class="accent" d="m8.1 9.3 2.7 2.7-2.7 2.7" />
+        <path class="line fine" d="M12.2 14.7h4" />
+        <path class="line fine" d="M6.7 4.4 4.6 6.2" />
+        <path class="line fine" d="M17.3 19.6l2.1-1.8" />
+      </g>
     </g>
     <g transform="translate(61 112) scale(0.9)" style="color: #A070F2; --provider-accent: #A070F2;">
-
-      <path class="line" d="M4.6 6.2h14.8v11.6H4.6Z" />
-      <path class="accent" d="m8.1 9.3 2.7 2.7-2.7 2.7" />
-      <path class="line fine" d="M12.2 14.7h4" />
-      <path class="line fine" d="M6.7 4.4 4.6 6.2" />
-      <path class="line fine" d="M17.3 19.6l2.1-1.8" />
-
+      <g class="contrast-outline" data-provider-glyph-contrast="true" aria-hidden="true">
+        <path class="line" d="M4.6 6.2h14.8v11.6H4.6Z" />
+        <path class="accent" d="m8.1 9.3 2.7 2.7-2.7 2.7" />
+        <path class="line fine" d="M12.2 14.7h4" />
+        <path class="line fine" d="M6.7 4.4 4.6 6.2" />
+        <path class="line fine" d="M17.3 19.6l2.1-1.8" />
+      </g>
+      <g class="foreground">
+        <path class="line" d="M4.6 6.2h14.8v11.6H4.6Z" />
+        <path class="accent" d="m8.1 9.3 2.7 2.7-2.7 2.7" />
+        <path class="line fine" d="M12.2 14.7h4" />
+        <path class="line fine" d="M6.7 4.4 4.6 6.2" />
+        <path class="line fine" d="M17.3 19.6l2.1-1.8" />
+      </g>
     </g>
     <text class="label" x="72" y="168">Codex</text>
     <text class="accent-label" x="72" y="188">#A070F2</text>
@@ -104,32 +197,56 @@
   </g>
   <g transform="translate(288 0)">
     <g transform="translate(40 24) scale(2.65)" style="color: #D97706; --provider-accent: #D97706;">
-
-      <circle class="soft" cx="12" cy="12" r="4.2" />
-      <path class="accent" d="M12 4.2v3" />
-      <path class="accent" d="M12 16.8v3" />
-      <path class="accent" d="M4.2 12h3" />
-      <path class="accent" d="M16.8 12h3" />
-      <path class="line" d="m6.4 6.4 2.2 2.2" />
-      <path class="line" d="m15.4 15.4 2.2 2.2" />
-      <path class="line" d="m17.3 6.7-2.1 2.1" />
-      <path class="line" d="m8.7 15.3-2 2" />
-      <circle class="dot" cx="12" cy="12" r="1.6" />
-
+      <g class="contrast-outline" data-provider-glyph-contrast="true" aria-hidden="true">
+        <circle class="soft" cx="12" cy="12" r="4.2" />
+        <path class="accent" d="M12 4.2v3" />
+        <path class="accent" d="M12 16.8v3" />
+        <path class="accent" d="M4.2 12h3" />
+        <path class="accent" d="M16.8 12h3" />
+        <path class="line" d="m6.4 6.4 2.2 2.2" />
+        <path class="line" d="m15.4 15.4 2.2 2.2" />
+        <path class="line" d="m17.3 6.7-2.1 2.1" />
+        <path class="line" d="m8.7 15.3-2 2" />
+        <circle class="dot" cx="12" cy="12" r="1.6" />
+      </g>
+      <g class="foreground">
+        <circle class="soft" cx="12" cy="12" r="4.2" />
+        <path class="accent" d="M12 4.2v3" />
+        <path class="accent" d="M12 16.8v3" />
+        <path class="accent" d="M4.2 12h3" />
+        <path class="accent" d="M16.8 12h3" />
+        <path class="line" d="m6.4 6.4 2.2 2.2" />
+        <path class="line" d="m15.4 15.4 2.2 2.2" />
+        <path class="line" d="m17.3 6.7-2.1 2.1" />
+        <path class="line" d="m8.7 15.3-2 2" />
+        <circle class="dot" cx="12" cy="12" r="1.6" />
+      </g>
     </g>
     <g transform="translate(61 112) scale(0.9)" style="color: #D97706; --provider-accent: #D97706;">
-
-      <circle class="soft" cx="12" cy="12" r="4.2" />
-      <path class="accent" d="M12 4.2v3" />
-      <path class="accent" d="M12 16.8v3" />
-      <path class="accent" d="M4.2 12h3" />
-      <path class="accent" d="M16.8 12h3" />
-      <path class="line" d="m6.4 6.4 2.2 2.2" />
-      <path class="line" d="m15.4 15.4 2.2 2.2" />
-      <path class="line" d="m17.3 6.7-2.1 2.1" />
-      <path class="line" d="m8.7 15.3-2 2" />
-      <circle class="dot" cx="12" cy="12" r="1.6" />
-
+      <g class="contrast-outline" data-provider-glyph-contrast="true" aria-hidden="true">
+        <circle class="soft" cx="12" cy="12" r="4.2" />
+        <path class="accent" d="M12 4.2v3" />
+        <path class="accent" d="M12 16.8v3" />
+        <path class="accent" d="M4.2 12h3" />
+        <path class="accent" d="M16.8 12h3" />
+        <path class="line" d="m6.4 6.4 2.2 2.2" />
+        <path class="line" d="m15.4 15.4 2.2 2.2" />
+        <path class="line" d="m17.3 6.7-2.1 2.1" />
+        <path class="line" d="m8.7 15.3-2 2" />
+        <circle class="dot" cx="12" cy="12" r="1.6" />
+      </g>
+      <g class="foreground">
+        <circle class="soft" cx="12" cy="12" r="4.2" />
+        <path class="accent" d="M12 4.2v3" />
+        <path class="accent" d="M12 16.8v3" />
+        <path class="accent" d="M4.2 12h3" />
+        <path class="accent" d="M16.8 12h3" />
+        <path class="line" d="m6.4 6.4 2.2 2.2" />
+        <path class="line" d="m15.4 15.4 2.2 2.2" />
+        <path class="line" d="m17.3 6.7-2.1 2.1" />
+        <path class="line" d="m8.7 15.3-2 2" />
+        <circle class="dot" cx="12" cy="12" r="1.6" />
+      </g>
     </g>
     <text class="label" x="72" y="168">Claude</text>
     <text class="accent-label" x="72" y="188">#D97706</text>
@@ -137,22 +254,36 @@
   </g>
   <g transform="translate(0 210)">
     <g transform="translate(40 24) scale(2.65)" style="color: #1A8CFF; --provider-accent: #1A8CFF;">
-
-      <path class="line" d="M15.6 4.7a7.9 7.9 0 1 0 0 14.6 6.1 6.1 0 1 1 0-14.6Z" />
-      <path class="accent" d="M8 7.4v9.2" />
-      <path class="accent" d="m16 7.4-5.1 4.5 5.1 4.7" />
-      <path class="line fine" d="M6.6 12h6.2" />
-      <circle class="dot" cx="18.5" cy="5.8" r="1.2" />
-
+      <g class="contrast-outline" data-provider-glyph-contrast="true" aria-hidden="true">
+        <path class="line" d="M15.6 4.7a7.9 7.9 0 1 0 0 14.6 6.1 6.1 0 1 1 0-14.6Z" />
+        <path class="accent" d="M8 7.4v9.2" />
+        <path class="accent" d="m16 7.4-5.1 4.5 5.1 4.7" />
+        <path class="line fine" d="M6.6 12h6.2" />
+        <circle class="dot" cx="18.5" cy="5.8" r="1.2" />
+      </g>
+      <g class="foreground">
+        <path class="line" d="M15.6 4.7a7.9 7.9 0 1 0 0 14.6 6.1 6.1 0 1 1 0-14.6Z" />
+        <path class="accent" d="M8 7.4v9.2" />
+        <path class="accent" d="m16 7.4-5.1 4.5 5.1 4.7" />
+        <path class="line fine" d="M6.6 12h6.2" />
+        <circle class="dot" cx="18.5" cy="5.8" r="1.2" />
+      </g>
     </g>
     <g transform="translate(61 112) scale(0.9)" style="color: #1A8CFF; --provider-accent: #1A8CFF;">
-
-      <path class="line" d="M15.6 4.7a7.9 7.9 0 1 0 0 14.6 6.1 6.1 0 1 1 0-14.6Z" />
-      <path class="accent" d="M8 7.4v9.2" />
-      <path class="accent" d="m16 7.4-5.1 4.5 5.1 4.7" />
-      <path class="line fine" d="M6.6 12h6.2" />
-      <circle class="dot" cx="18.5" cy="5.8" r="1.2" />
-
+      <g class="contrast-outline" data-provider-glyph-contrast="true" aria-hidden="true">
+        <path class="line" d="M15.6 4.7a7.9 7.9 0 1 0 0 14.6 6.1 6.1 0 1 1 0-14.6Z" />
+        <path class="accent" d="M8 7.4v9.2" />
+        <path class="accent" d="m16 7.4-5.1 4.5 5.1 4.7" />
+        <path class="line fine" d="M6.6 12h6.2" />
+        <circle class="dot" cx="18.5" cy="5.8" r="1.2" />
+      </g>
+      <g class="foreground">
+        <path class="line" d="M15.6 4.7a7.9 7.9 0 1 0 0 14.6 6.1 6.1 0 1 1 0-14.6Z" />
+        <path class="accent" d="M8 7.4v9.2" />
+        <path class="accent" d="m16 7.4-5.1 4.5 5.1 4.7" />
+        <path class="line fine" d="M6.6 12h6.2" />
+        <circle class="dot" cx="18.5" cy="5.8" r="1.2" />
+      </g>
     </g>
     <text class="label" x="72" y="168">Kimi</text>
     <text class="accent-label" x="72" y="188">#1A8CFF</text>
@@ -160,22 +291,36 @@
   </g>
   <g transform="translate(144 210)">
     <g transform="translate(40 24) scale(2.65)" style="color: #E3B91E; --provider-accent: #E3B91E;">
-
-      <path class="line" d="M5.7 3.8 18.8 12l-6.1 1.3-2.7 5.8Z" />
-      <path class="accent" d="m12.7 13.3 4.2 4.1" />
-      <path class="line fine" d="M19.1 5.8v5.1" />
-      <path class="line fine" d="M16.6 5.8h5" />
-      <circle class="dot" cx="7.7" cy="6.2" r="1.1" />
-
+      <g class="contrast-outline" data-provider-glyph-contrast="true" aria-hidden="true">
+        <path class="line" d="M5.7 3.8 18.8 12l-6.1 1.3-2.7 5.8Z" />
+        <path class="accent" d="m12.7 13.3 4.2 4.1" />
+        <path class="line fine" d="M19.1 5.8v5.1" />
+        <path class="line fine" d="M16.6 5.8h5" />
+        <circle class="dot" cx="7.7" cy="6.2" r="1.1" />
+      </g>
+      <g class="foreground">
+        <path class="line" d="M5.7 3.8 18.8 12l-6.1 1.3-2.7 5.8Z" />
+        <path class="accent" d="m12.7 13.3 4.2 4.1" />
+        <path class="line fine" d="M19.1 5.8v5.1" />
+        <path class="line fine" d="M16.6 5.8h5" />
+        <circle class="dot" cx="7.7" cy="6.2" r="1.1" />
+      </g>
     </g>
     <g transform="translate(61 112) scale(0.9)" style="color: #E3B91E; --provider-accent: #E3B91E;">
-
-      <path class="line" d="M5.7 3.8 18.8 12l-6.1 1.3-2.7 5.8Z" />
-      <path class="accent" d="m12.7 13.3 4.2 4.1" />
-      <path class="line fine" d="M19.1 5.8v5.1" />
-      <path class="line fine" d="M16.6 5.8h5" />
-      <circle class="dot" cx="7.7" cy="6.2" r="1.1" />
-
+      <g class="contrast-outline" data-provider-glyph-contrast="true" aria-hidden="true">
+        <path class="line" d="M5.7 3.8 18.8 12l-6.1 1.3-2.7 5.8Z" />
+        <path class="accent" d="m12.7 13.3 4.2 4.1" />
+        <path class="line fine" d="M19.1 5.8v5.1" />
+        <path class="line fine" d="M16.6 5.8h5" />
+        <circle class="dot" cx="7.7" cy="6.2" r="1.1" />
+      </g>
+      <g class="foreground">
+        <path class="line" d="M5.7 3.8 18.8 12l-6.1 1.3-2.7 5.8Z" />
+        <path class="accent" d="m12.7 13.3 4.2 4.1" />
+        <path class="line fine" d="M19.1 5.8v5.1" />
+        <path class="line fine" d="M16.6 5.8h5" />
+        <circle class="dot" cx="7.7" cy="6.2" r="1.1" />
+      </g>
     </g>
     <text class="label" x="72" y="168">Cursor</text>
     <text class="accent-label" x="72" y="188">#E3B91E</text>
@@ -183,28 +328,48 @@
   </g>
   <g transform="translate(288 210)">
     <g transform="translate(40 24) scale(2.65)" style="color: #D8DEE9; --provider-accent: #D8DEE9;">
-
-      <circle class="line" cx="12" cy="12" r="6.4" />
-      <path class="line fine" d="M12 3.8v3" />
-      <path class="line fine" d="M12 17.2v3" />
-      <path class="line fine" d="M3.8 12h3" />
-      <path class="line fine" d="M17.2 12h3" />
-      <path class="accent" d="M8.7 15.3 15.3 8.7" />
-      <circle class="dot" cx="8.4" cy="15.6" r="1" />
-      <circle class="dot" cx="15.6" cy="8.4" r="1" />
-
+      <g class="contrast-outline" data-provider-glyph-contrast="true" aria-hidden="true">
+        <circle class="line" cx="12" cy="12" r="6.4" />
+        <path class="line fine" d="M12 3.8v3" />
+        <path class="line fine" d="M12 17.2v3" />
+        <path class="line fine" d="M3.8 12h3" />
+        <path class="line fine" d="M17.2 12h3" />
+        <path class="accent" d="M8.7 15.3 15.3 8.7" />
+        <circle class="dot" cx="8.4" cy="15.6" r="1" />
+        <circle class="dot" cx="15.6" cy="8.4" r="1" />
+      </g>
+      <g class="foreground">
+        <circle class="line" cx="12" cy="12" r="6.4" />
+        <path class="line fine" d="M12 3.8v3" />
+        <path class="line fine" d="M12 17.2v3" />
+        <path class="line fine" d="M3.8 12h3" />
+        <path class="line fine" d="M17.2 12h3" />
+        <path class="accent" d="M8.7 15.3 15.3 8.7" />
+        <circle class="dot" cx="8.4" cy="15.6" r="1" />
+        <circle class="dot" cx="15.6" cy="8.4" r="1" />
+      </g>
     </g>
     <g transform="translate(61 112) scale(0.9)" style="color: #D8DEE9; --provider-accent: #D8DEE9;">
-
-      <circle class="line" cx="12" cy="12" r="6.4" />
-      <path class="line fine" d="M12 3.8v3" />
-      <path class="line fine" d="M12 17.2v3" />
-      <path class="line fine" d="M3.8 12h3" />
-      <path class="line fine" d="M17.2 12h3" />
-      <path class="accent" d="M8.7 15.3 15.3 8.7" />
-      <circle class="dot" cx="8.4" cy="15.6" r="1" />
-      <circle class="dot" cx="15.6" cy="8.4" r="1" />
-
+      <g class="contrast-outline" data-provider-glyph-contrast="true" aria-hidden="true">
+        <circle class="line" cx="12" cy="12" r="6.4" />
+        <path class="line fine" d="M12 3.8v3" />
+        <path class="line fine" d="M12 17.2v3" />
+        <path class="line fine" d="M3.8 12h3" />
+        <path class="line fine" d="M17.2 12h3" />
+        <path class="accent" d="M8.7 15.3 15.3 8.7" />
+        <circle class="dot" cx="8.4" cy="15.6" r="1" />
+        <circle class="dot" cx="15.6" cy="8.4" r="1" />
+      </g>
+      <g class="foreground">
+        <circle class="line" cx="12" cy="12" r="6.4" />
+        <path class="line fine" d="M12 3.8v3" />
+        <path class="line fine" d="M12 17.2v3" />
+        <path class="line fine" d="M3.8 12h3" />
+        <path class="line fine" d="M17.2 12h3" />
+        <path class="accent" d="M8.7 15.3 15.3 8.7" />
+        <circle class="dot" cx="8.4" cy="15.6" r="1" />
+        <circle class="dot" cx="15.6" cy="8.4" r="1" />
+      </g>
     </g>
     <text class="label" x="72" y="168">Grok</text>
     <text class="accent-label" x="72" y="188">#D8DEE9</text>
@@ -212,34 +377,60 @@
   </g>
   <g transform="translate(0 420)">
     <g transform="translate(40 24) scale(2.65)" style="color: #20A77A; --provider-accent: #20A77A;">
-
-      <path class="line" d="M5.1 18.3v-4.2c0-1.8 1.5-3.3 3.3-3.3h5.1c1.6 0 2.9 1.3 2.9 2.9v4.6" />
-      <path class="accent" d="M15.2 11.5V6.6c0-1.4 1.1-2.5 2.5-2.5h.5c1.1 0 2 .9 2 2v1.7c0 1.1-.9 2-2 2h-3" />
-      <path class="line fine" d="m16.5 4.2-.8-1.8" />
-      <path class="line fine" d="m18.6 4.2 1-1.7" />
-      <path class="line fine" d="M5.1 14.3 3.7 13.5" />
-      <path class="line fine" d="M7.2 18.3v2.3" />
-      <path class="line fine" d="M13.8 18.3v2.3" />
-      <path class="line fine" d="M6.6 20.6h1.3" />
-      <path class="line fine" d="M13.2 20.6h1.3" />
-      <path class="line fine" d="M18.5 7.6h1.4" />
-      <circle class="dot" cx="17.8" cy="6.2" r=".7" />
-
+      <g class="contrast-outline" data-provider-glyph-contrast="true" aria-hidden="true">
+        <path class="line" d="M5.1 18.3v-4.2c0-1.8 1.5-3.3 3.3-3.3h5.1c1.6 0 2.9 1.3 2.9 2.9v4.6" />
+        <path class="accent" d="M15.2 11.5V6.6c0-1.4 1.1-2.5 2.5-2.5h.5c1.1 0 2 .9 2 2v1.7c0 1.1-.9 2-2 2h-3" />
+        <path class="line fine" d="m16.5 4.2-.8-1.8" />
+        <path class="line fine" d="m18.6 4.2 1-1.7" />
+        <path class="line fine" d="M5.1 14.3 3.7 13.5" />
+        <path class="line fine" d="M7.2 18.3v2.3" />
+        <path class="line fine" d="M13.8 18.3v2.3" />
+        <path class="line fine" d="M6.6 20.6h1.3" />
+        <path class="line fine" d="M13.2 20.6h1.3" />
+        <path class="line fine" d="M18.5 7.6h1.4" />
+        <circle class="dot" cx="17.8" cy="6.2" r=".7" />
+      </g>
+      <g class="foreground">
+        <path class="line" d="M5.1 18.3v-4.2c0-1.8 1.5-3.3 3.3-3.3h5.1c1.6 0 2.9 1.3 2.9 2.9v4.6" />
+        <path class="accent" d="M15.2 11.5V6.6c0-1.4 1.1-2.5 2.5-2.5h.5c1.1 0 2 .9 2 2v1.7c0 1.1-.9 2-2 2h-3" />
+        <path class="line fine" d="m16.5 4.2-.8-1.8" />
+        <path class="line fine" d="m18.6 4.2 1-1.7" />
+        <path class="line fine" d="M5.1 14.3 3.7 13.5" />
+        <path class="line fine" d="M7.2 18.3v2.3" />
+        <path class="line fine" d="M13.8 18.3v2.3" />
+        <path class="line fine" d="M6.6 20.6h1.3" />
+        <path class="line fine" d="M13.2 20.6h1.3" />
+        <path class="line fine" d="M18.5 7.6h1.4" />
+        <circle class="dot" cx="17.8" cy="6.2" r=".7" />
+      </g>
     </g>
     <g transform="translate(61 112) scale(0.9)" style="color: #20A77A; --provider-accent: #20A77A;">
-
-      <path class="line" d="M5.1 18.3v-4.2c0-1.8 1.5-3.3 3.3-3.3h5.1c1.6 0 2.9 1.3 2.9 2.9v4.6" />
-      <path class="accent" d="M15.2 11.5V6.6c0-1.4 1.1-2.5 2.5-2.5h.5c1.1 0 2 .9 2 2v1.7c0 1.1-.9 2-2 2h-3" />
-      <path class="line fine" d="m16.5 4.2-.8-1.8" />
-      <path class="line fine" d="m18.6 4.2 1-1.7" />
-      <path class="line fine" d="M5.1 14.3 3.7 13.5" />
-      <path class="line fine" d="M7.2 18.3v2.3" />
-      <path class="line fine" d="M13.8 18.3v2.3" />
-      <path class="line fine" d="M6.6 20.6h1.3" />
-      <path class="line fine" d="M13.2 20.6h1.3" />
-      <path class="line fine" d="M18.5 7.6h1.4" />
-      <circle class="dot" cx="17.8" cy="6.2" r=".7" />
-
+      <g class="contrast-outline" data-provider-glyph-contrast="true" aria-hidden="true">
+        <path class="line" d="M5.1 18.3v-4.2c0-1.8 1.5-3.3 3.3-3.3h5.1c1.6 0 2.9 1.3 2.9 2.9v4.6" />
+        <path class="accent" d="M15.2 11.5V6.6c0-1.4 1.1-2.5 2.5-2.5h.5c1.1 0 2 .9 2 2v1.7c0 1.1-.9 2-2 2h-3" />
+        <path class="line fine" d="m16.5 4.2-.8-1.8" />
+        <path class="line fine" d="m18.6 4.2 1-1.7" />
+        <path class="line fine" d="M5.1 14.3 3.7 13.5" />
+        <path class="line fine" d="M7.2 18.3v2.3" />
+        <path class="line fine" d="M13.8 18.3v2.3" />
+        <path class="line fine" d="M6.6 20.6h1.3" />
+        <path class="line fine" d="M13.2 20.6h1.3" />
+        <path class="line fine" d="M18.5 7.6h1.4" />
+        <circle class="dot" cx="17.8" cy="6.2" r=".7" />
+      </g>
+      <g class="foreground">
+        <path class="line" d="M5.1 18.3v-4.2c0-1.8 1.5-3.3 3.3-3.3h5.1c1.6 0 2.9 1.3 2.9 2.9v4.6" />
+        <path class="accent" d="M15.2 11.5V6.6c0-1.4 1.1-2.5 2.5-2.5h.5c1.1 0 2 .9 2 2v1.7c0 1.1-.9 2-2 2h-3" />
+        <path class="line fine" d="m16.5 4.2-.8-1.8" />
+        <path class="line fine" d="m18.6 4.2 1-1.7" />
+        <path class="line fine" d="M5.1 14.3 3.7 13.5" />
+        <path class="line fine" d="M7.2 18.3v2.3" />
+        <path class="line fine" d="M13.8 18.3v2.3" />
+        <path class="line fine" d="M6.6 20.6h1.3" />
+        <path class="line fine" d="M13.2 20.6h1.3" />
+        <path class="line fine" d="M18.5 7.6h1.4" />
+        <circle class="dot" cx="17.8" cy="6.2" r=".7" />
+      </g>
     </g>
     <text class="label" x="72" y="168">Ollama</text>
     <text class="accent-label" x="72" y="188">#20A77A</text>
@@ -247,32 +438,56 @@
   </g>
   <g transform="translate(144 420)">
     <g transform="translate(40 24) scale(2.65)" style="color: #E8DDE3; --provider-accent: #E8DDE3;">
-
-      <circle class="line fine" cx="6.7" cy="7.3" r="2.35" />
-      <circle class="line fine" cx="17.3" cy="7.3" r="2.35" />
-      <circle class="accent" cx="12" cy="6.5" r="2.7" />
-      <path class="line fine" d="M2.8 18.4c.35-2.9 2.65-4.7 5.45-4.7 1.15 0 2.25.3 3.15.85" />
-      <path class="line fine" d="M21.2 18.4c-.35-2.9-2.65-4.7-5.45-4.7-1.15 0-2.25.3-3.15.85" />
-      <path class="accent" d="M6.6 19.8c.25-3.45 2.55-5.65 5.4-5.65s5.15 2.2 5.4 5.65" />
-      <path class="line fine" d="M5.55 7.35h2.3" />
-      <path class="line fine" d="M16.15 7.35h2.3" />
-      <path class="line" d="M9.8 6.55h4.4" />
-      <path class="line fine" d="m9.7 12.25 2.3 1.9 2.3-1.9" />
-
+      <g class="contrast-outline" data-provider-glyph-contrast="true" aria-hidden="true">
+        <circle class="line fine" cx="6.7" cy="7.3" r="2.35" />
+        <circle class="line fine" cx="17.3" cy="7.3" r="2.35" />
+        <circle class="accent" cx="12" cy="6.5" r="2.7" />
+        <path class="line fine" d="M2.8 18.4c.35-2.9 2.65-4.7 5.45-4.7 1.15 0 2.25.3 3.15.85" />
+        <path class="line fine" d="M21.2 18.4c-.35-2.9-2.65-4.7-5.45-4.7-1.15 0-2.25.3-3.15.85" />
+        <path class="accent" d="M6.6 19.8c.25-3.45 2.55-5.65 5.4-5.65s5.15 2.2 5.4 5.65" />
+        <path class="line fine" d="M5.55 7.35h2.3" />
+        <path class="line fine" d="M16.15 7.35h2.3" />
+        <path class="line" d="M9.8 6.55h4.4" />
+        <path class="line fine" d="m9.7 12.25 2.3 1.9 2.3-1.9" />
+      </g>
+      <g class="foreground">
+        <circle class="line fine" cx="6.7" cy="7.3" r="2.35" />
+        <circle class="line fine" cx="17.3" cy="7.3" r="2.35" />
+        <circle class="accent" cx="12" cy="6.5" r="2.7" />
+        <path class="line fine" d="M2.8 18.4c.35-2.9 2.65-4.7 5.45-4.7 1.15 0 2.25.3 3.15.85" />
+        <path class="line fine" d="M21.2 18.4c-.35-2.9-2.65-4.7-5.45-4.7-1.15 0-2.25.3-3.15.85" />
+        <path class="accent" d="M6.6 19.8c.25-3.45 2.55-5.65 5.4-5.65s5.15 2.2 5.4 5.65" />
+        <path class="line fine" d="M5.55 7.35h2.3" />
+        <path class="line fine" d="M16.15 7.35h2.3" />
+        <path class="line" d="M9.8 6.55h4.4" />
+        <path class="line fine" d="m9.7 12.25 2.3 1.9 2.3-1.9" />
+      </g>
     </g>
     <g transform="translate(61 112) scale(0.9)" style="color: #E8DDE3; --provider-accent: #E8DDE3;">
-
-      <circle class="line fine" cx="6.7" cy="7.3" r="2.35" />
-      <circle class="line fine" cx="17.3" cy="7.3" r="2.35" />
-      <circle class="accent" cx="12" cy="6.5" r="2.7" />
-      <path class="line fine" d="M2.8 18.4c.35-2.9 2.65-4.7 5.45-4.7 1.15 0 2.25.3 3.15.85" />
-      <path class="line fine" d="M21.2 18.4c-.35-2.9-2.65-4.7-5.45-4.7-1.15 0-2.25.3-3.15.85" />
-      <path class="accent" d="M6.6 19.8c.25-3.45 2.55-5.65 5.4-5.65s5.15 2.2 5.4 5.65" />
-      <path class="line fine" d="M5.55 7.35h2.3" />
-      <path class="line fine" d="M16.15 7.35h2.3" />
-      <path class="line" d="M9.8 6.55h4.4" />
-      <path class="line fine" d="m9.7 12.25 2.3 1.9 2.3-1.9" />
-
+      <g class="contrast-outline" data-provider-glyph-contrast="true" aria-hidden="true">
+        <circle class="line fine" cx="6.7" cy="7.3" r="2.35" />
+        <circle class="line fine" cx="17.3" cy="7.3" r="2.35" />
+        <circle class="accent" cx="12" cy="6.5" r="2.7" />
+        <path class="line fine" d="M2.8 18.4c.35-2.9 2.65-4.7 5.45-4.7 1.15 0 2.25.3 3.15.85" />
+        <path class="line fine" d="M21.2 18.4c-.35-2.9-2.65-4.7-5.45-4.7-1.15 0-2.25.3-3.15.85" />
+        <path class="accent" d="M6.6 19.8c.25-3.45 2.55-5.65 5.4-5.65s5.15 2.2 5.4 5.65" />
+        <path class="line fine" d="M5.55 7.35h2.3" />
+        <path class="line fine" d="M16.15 7.35h2.3" />
+        <path class="line" d="M9.8 6.55h4.4" />
+        <path class="line fine" d="m9.7 12.25 2.3 1.9 2.3-1.9" />
+      </g>
+      <g class="foreground">
+        <circle class="line fine" cx="6.7" cy="7.3" r="2.35" />
+        <circle class="line fine" cx="17.3" cy="7.3" r="2.35" />
+        <circle class="accent" cx="12" cy="6.5" r="2.7" />
+        <path class="line fine" d="M2.8 18.4c.35-2.9 2.65-4.7 5.45-4.7 1.15 0 2.25.3 3.15.85" />
+        <path class="line fine" d="M21.2 18.4c-.35-2.9-2.65-4.7-5.45-4.7-1.15 0-2.25.3-3.15.85" />
+        <path class="accent" d="M6.6 19.8c.25-3.45 2.55-5.65 5.4-5.65s5.15 2.2 5.4 5.65" />
+        <path class="line fine" d="M5.55 7.35h2.3" />
+        <path class="line fine" d="M16.15 7.35h2.3" />
+        <path class="line" d="M9.8 6.55h4.4" />
+        <path class="line fine" d="m9.7 12.25 2.3 1.9 2.3-1.9" />
+      </g>
     </g>
     <text class="label" x="72" y="168">Ensemble</text>
     <text class="accent-label" x="72" y="188">#E8DDE3</text>

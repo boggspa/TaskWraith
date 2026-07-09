@@ -172,7 +172,10 @@ export function ProviderGlyph({ provider, accentProvider, className }: ProviderG
       style={style}
       aria-hidden="true"
     >
-      {glyphBody(providerKey)}
+      <g className="provider-glyph-contrast-outline" aria-hidden="true">
+        {glyphBody(providerKey)}
+      </g>
+      <g className="provider-glyph-foreground">{glyphBody(providerKey)}</g>
     </svg>
   )
 }

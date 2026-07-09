@@ -1,7 +1,19 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" role="img" aria-labelledby="provider-glyph-codex-title provider-glyph-codex-desc" data-provider="codex" style="color: #A070F2; --provider-accent: #A070F2;">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" role="img" aria-labelledby="provider-glyph-codex-title provider-glyph-codex-desc" data-provider="codex" data-provider-glyph="true" style="color: #A070F2; --provider-accent: #A070F2;">
   <title id="provider-glyph-codex-title">Codex provider glyph</title>
   <desc id="provider-glyph-codex-desc">Original monoline prompt box and bracket cursor mnemonic for Codex. Not an official logo.</desc>
   <style>
+
+  [data-provider-glyph],
+  [data-provider-glyph-catalog] {
+    --provider-glyph-contrast: var(--provider-glyph-contrast-color, #000000);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    [data-provider-glyph],
+    [data-provider-glyph-catalog] {
+      --provider-glyph-contrast: var(--provider-glyph-contrast-color, #FFFFFF);
+    }
+  }
 
   .line {
     fill: none;
@@ -35,11 +47,54 @@
     stroke: none;
   }
 
-  </style>
+  .contrast-outline {
+    pointer-events: none;
+  }
 
-      <path class="line" d="M4.6 6.2h14.8v11.6H4.6Z" />
-      <path class="accent" d="m8.1 9.3 2.7 2.7-2.7 2.7" />
-      <path class="line fine" d="M12.2 14.7h4" />
-      <path class="line fine" d="M6.7 4.4 4.6 6.2" />
-      <path class="line fine" d="M17.3 19.6l2.1-1.8" />
+  .contrast-outline .line {
+    stroke: var(--provider-glyph-contrast);
+    stroke-width: 2.75;
+    opacity: 1;
+  }
+
+  .contrast-outline .accent {
+    stroke: var(--provider-glyph-contrast);
+    stroke-width: 2.85;
+    opacity: 1;
+  }
+
+  .contrast-outline .fine {
+    stroke-width: 2.3;
+    opacity: 1;
+  }
+
+  .contrast-outline .soft {
+    fill: none;
+    stroke: var(--provider-glyph-contrast);
+    stroke-width: 1;
+    opacity: 1;
+  }
+
+  .contrast-outline .dot {
+    fill: var(--provider-glyph-contrast);
+    stroke: var(--provider-glyph-contrast);
+    stroke-width: 1;
+    opacity: 1;
+  }
+
+  </style>
+  <g class="contrast-outline" data-provider-glyph-contrast="true" aria-hidden="true">
+    <path class="line" d="M4.6 6.2h14.8v11.6H4.6Z" />
+    <path class="accent" d="m8.1 9.3 2.7 2.7-2.7 2.7" />
+    <path class="line fine" d="M12.2 14.7h4" />
+    <path class="line fine" d="M6.7 4.4 4.6 6.2" />
+    <path class="line fine" d="M17.3 19.6l2.1-1.8" />
+  </g>
+  <g class="foreground">
+    <path class="line" d="M4.6 6.2h14.8v11.6H4.6Z" />
+    <path class="accent" d="m8.1 9.3 2.7 2.7-2.7 2.7" />
+    <path class="line fine" d="M12.2 14.7h4" />
+    <path class="line fine" d="M6.7 4.4 4.6 6.2" />
+    <path class="line fine" d="M17.3 19.6l2.1-1.8" />
+  </g>
 </svg>

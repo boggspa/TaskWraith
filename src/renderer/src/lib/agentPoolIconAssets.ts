@@ -251,9 +251,24 @@ function namespaceInlineSvgClasses(raw: string, key: string): string {
 
 function normalizeProviderGlyphStroke(raw: string): string {
   return raw
+    .replace(/(stroke-width:\s*)2\.85\b/g, (_match, prefix: string) => `${prefix}2.1`)
+    .replace(/(stroke-width:\s*)2\.75\b/g, (_match, prefix: string) => `${prefix}2.05`)
+    .replace(/(stroke-width:\s*)2\.3\b/g, (_match, prefix: string) => `${prefix}1.82`)
     .replace(/(stroke-width:\s*)1\.85\b/g, (_match, prefix: string) => `${prefix}1.1`)
     .replace(/(stroke-width:\s*)1\.75\b/g, (_match, prefix: string) => `${prefix}1.05`)
     .replace(/(stroke-width:\s*)1\.3\b/g, (_match, prefix: string) => `${prefix}0.82`)
+    .replace(
+      /(stroke-width=")2\.85(")/g,
+      (_match, open: string, close: string) => `${open}2.1${close}`
+    )
+    .replace(
+      /(stroke-width=")2\.75(")/g,
+      (_match, open: string, close: string) => `${open}2.05${close}`
+    )
+    .replace(
+      /(stroke-width=")2\.3(")/g,
+      (_match, open: string, close: string) => `${open}1.82${close}`
+    )
     .replace(
       /(stroke-width=")1\.85(")/g,
       (_match, open: string, close: string) => `${open}1.1${close}`

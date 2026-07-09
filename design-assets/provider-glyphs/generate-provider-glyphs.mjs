@@ -7,6 +7,10 @@ const scriptDir = path.dirname(fileURLToPath(import.meta.url))
 const glyphDir = path.join(scriptDir, 'glyphs')
 const catalogPath = path.join(scriptDir, 'provider-glyphs.catalog.svg')
 const manifestPath = path.join(scriptDir, 'provider-glyphs.manifest.json')
+const contrastStrokeWidth = 1
+const contrastLineWidth = 1.75 + contrastStrokeWidth
+const contrastAccentWidth = 1.85 + contrastStrokeWidth
+const contrastFineWidth = 1.3 + contrastStrokeWidth
 
 const providers = [
   {
@@ -134,6 +138,18 @@ const providers = [
 ]
 
 const style = `
+  [data-provider-glyph],
+  [data-provider-glyph-catalog] {
+    --provider-glyph-contrast: var(--provider-glyph-contrast-color, #000000);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    [data-provider-glyph],
+    [data-provider-glyph-catalog] {
+      --provider-glyph-contrast: var(--provider-glyph-contrast-color, #FFFFFF);
+    }
+  }
+
   .line {
     fill: none;
     stroke: var(--provider-accent);
@@ -165,7 +181,60 @@ const style = `
     fill: var(--provider-accent);
     stroke: none;
   }
+
+  .contrast-outline {
+    pointer-events: none;
+  }
+
+  .contrast-outline .line {
+    stroke: var(--provider-glyph-contrast);
+    stroke-width: ${contrastLineWidth};
+    opacity: 1;
+  }
+
+  .contrast-outline .accent {
+    stroke: var(--provider-glyph-contrast);
+    stroke-width: ${contrastAccentWidth};
+    opacity: 1;
+  }
+
+  .contrast-outline .fine {
+    stroke-width: ${contrastFineWidth};
+    opacity: 1;
+  }
+
+  .contrast-outline .soft {
+    fill: none;
+    stroke: var(--provider-glyph-contrast);
+    stroke-width: ${contrastStrokeWidth};
+    opacity: 1;
+  }
+
+  .contrast-outline .dot {
+    fill: var(--provider-glyph-contrast);
+    stroke: var(--provider-glyph-contrast);
+    stroke-width: ${contrastStrokeWidth};
+    opacity: 1;
+  }
 `
+
+function indentBody(body, indent) {
+  return body
+    .trim()
+    .split('\n')
+    .map((line) => `${indent}${line.trimStart()}`)
+    .join('\n')
+}
+
+function buildLayeredBody(body, indent = '  ') {
+  const paths = indentBody(body, `${indent}  `)
+  return `${indent}<g class="contrast-outline" data-provider-glyph-contrast="true" aria-hidden="true">
+${paths}
+${indent}</g>
+${indent}<g class="foreground">
+${paths}
+${indent}</g>`
+}
 
 function escapeXml(value) {
   return value
@@ -182,13 +251,13 @@ function stripTrailingWhitespace(value) {
 
 function buildGlyph(provider) {
   const id = `provider-glyph-${provider.id}`
-  return stripTrailingWhitespace(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" role="img" aria-labelledby="${id}-title ${id}-desc" data-provider="${provider.id}" style="color: ${provider.accent}; --provider-accent: ${provider.accent};">
+  return stripTrailingWhitespace(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" role="img" aria-labelledby="${id}-title ${id}-desc" data-provider="${provider.id}" data-provider-glyph="true" style="color: ${provider.accent}; --provider-accent: ${provider.accent};">
   <title id="${id}-title">${escapeXml(provider.label)} provider glyph</title>
   <desc id="${id}-desc">Original monoline ${escapeXml(provider.hint)} mnemonic for ${escapeXml(provider.label)}. Not an official logo.</desc>
   <style>
 ${style}
   </style>
-${provider.body.trimEnd()}
+${buildLayeredBody(provider.body)}
 </svg>
 `)
 }
@@ -205,10 +274,10 @@ function buildCatalog() {
       const y = Math.floor(index / columns) * cellHeight
       return `  <g transform="translate(${x} ${y})">
     <g transform="translate(40 24) scale(2.65)" style="color: ${provider.accent}; --provider-accent: ${provider.accent};">
-${provider.body}
+${buildLayeredBody(provider.body, '      ')}
     </g>
     <g transform="translate(61 112) scale(0.9)" style="color: ${provider.accent}; --provider-accent: ${provider.accent};">
-${provider.body}
+${buildLayeredBody(provider.body, '      ')}
     </g>
     <text class="label" x="72" y="168">${escapeXml(provider.label)}</text>
     <text class="accent-label" x="72" y="188">${provider.accent}</text>
@@ -217,29 +286,49 @@ ${provider.body}
     })
     .join('\n')
 
-  return stripTrailingWhitespace(`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
+  return stripTrailingWhitespace(`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" data-provider-glyph-catalog="true">
   <title>TaskWraith provider mnemonic glyph catalog</title>
   <desc>Original monoline provider mnemonics. These are deliberately simplified and are not official provider logos.</desc>
-  <rect width="${width}" height="${height}" rx="18" fill="#111820" />
+  <rect class="catalog-background" width="${width}" height="${height}" rx="18" />
   <style>
 ${style}
 
+    [data-provider-glyph-catalog] {
+      --catalog-background: #F8FAFC;
+      --catalog-label: #0F172A;
+      --catalog-accent-label: #475569;
+      --catalog-hint: #64748B;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      [data-provider-glyph-catalog] {
+        --catalog-background: #111820;
+        --catalog-label: #F1F5F9;
+        --catalog-accent-label: #AAB4C2;
+        --catalog-hint: #7E8A9A;
+      }
+    }
+
+    .catalog-background {
+      fill: var(--catalog-background);
+    }
+
     .label {
-      fill: #F1F5F9;
+      fill: var(--catalog-label);
       font: 700 14px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       text-anchor: middle;
       letter-spacing: 0;
     }
 
     .accent-label {
-      fill: #AAB4C2;
+      fill: var(--catalog-accent-label);
       font: 10px ui-monospace, SFMono-Regular, Menlo, monospace;
       text-anchor: middle;
       letter-spacing: 0;
     }
 
     .hint {
-      fill: #7E8A9A;
+      fill: var(--catalog-hint);
       font: 9px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       text-anchor: middle;
       letter-spacing: 0;
