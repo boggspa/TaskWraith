@@ -166,10 +166,11 @@ struct RemoteNoticeCard: View {
 }
 
 /// "New Additions" grouped content — provider heading + its newly-added
-/// models, each model name bold+hued and its blurb the same hue at regular
-/// weight. Hue comes from `TWTheme.providerAccent`, matching the same tokens
-/// the Electron notification card uses (one card spans several providers
-/// here, so this ignores the card's own single accentColor).
+/// models. The provider heading and model NAME are bold and hued (from
+/// `TWTheme.providerAccent`, matching the Electron card's provider tokens;
+/// one card spans several providers, so this ignores the card's own single
+/// accentColor), while each model's marketing blurb is neutral secondary
+/// text — hue signposts identity, the description reads as plain body copy.
 private struct RemoteNoticeGroupsView: View {
     let groups: [FirstLaunchNoticeGroup]
 
@@ -182,10 +183,10 @@ private struct RemoteNoticeGroupsView: View {
                         .font(.caption.weight(.bold))
                         .foregroundStyle(accent)
                     ForEach(group.models, id: \.name) { model in
-                        (Text(model.name).fontWeight(.bold)
-                            + Text(" - \(model.blurb)").fontWeight(.regular))
+                        (Text(model.name).fontWeight(.bold).foregroundStyle(accent)
+                            + Text(" - \(model.blurb)").fontWeight(.regular)
+                                .foregroundStyle(TWTheme.textSecondary))
                             .font(.caption2)
-                            .foregroundStyle(accent)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }

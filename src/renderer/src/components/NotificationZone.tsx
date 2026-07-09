@@ -103,9 +103,7 @@ function NotificationGroups({
                 <span className={`notification-newadditions-model provider-${group.provider}`}>
                   {model.name}
                 </span>{' '}
-                <span className={`notification-newadditions-blurb provider-${group.provider}`}>
-                  - {model.blurb}
-                </span>
+                <span className="notification-newadditions-blurb">- {model.blurb}</span>
               </li>
             ))}
           </ul>

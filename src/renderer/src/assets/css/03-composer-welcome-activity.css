@@ -12968,11 +12968,12 @@ button.diff-file-row {
   color: var(--text-primary, inherit);
 }
 
-/* "New Additions" grouped content — provider heading + its newly-added models,
- * each model name bold+hued and its blurb the same hue at normal weight. Hue
- * comes straight from the theme's --provider-<id>-color tokens (falling back
- * to the same hex the sidebar provider labels use) rather than the card's own
- * --notification-accent, since one card spans several providers here. */
+/* "New Additions" grouped content — provider heading + its newly-added models.
+ * The provider heading and model NAME are bold and hued (from the theme's
+ * --provider-<id>-color tokens, falling back to the same hex the sidebar
+ * provider labels use), while each model's marketing blurb is neutral,
+ * theme-aware secondary text — hue signposts identity, the description reads
+ * as plain body copy. */
 .notification-newadditions-groups {
   display: flex;
   flex-direction: column;
@@ -13005,30 +13006,26 @@ button.diff-file-row {
 }
 .notification-newadditions-blurb {
   font-weight: 400;
+  color: var(--text-secondary);
 }
 .notification-newadditions-provider.provider-claude,
-.notification-newadditions-model.provider-claude,
-.notification-newadditions-blurb.provider-claude {
+.notification-newadditions-model.provider-claude {
   color: var(--provider-claude-color, #d97706);
 }
 .notification-newadditions-provider.provider-codex,
-.notification-newadditions-model.provider-codex,
-.notification-newadditions-blurb.provider-codex {
+.notification-newadditions-model.provider-codex {
   color: var(--provider-codex-color, #6366f1);
 }
 .notification-newadditions-provider.provider-cursor,
-.notification-newadditions-model.provider-cursor,
-.notification-newadditions-blurb.provider-cursor {
+.notification-newadditions-model.provider-cursor {
   color: var(--provider-cursor-color, #e3b91e);
 }
 .notification-newadditions-provider.provider-grok,
-.notification-newadditions-model.provider-grok,
-.notification-newadditions-blurb.provider-grok {
+.notification-newadditions-model.provider-grok {
   color: var(--provider-grok-color, var(--text-primary));
 }
 .notification-newadditions-provider.provider-ollama,
-.notification-newadditions-model.provider-ollama,
-.notification-newadditions-blurb.provider-ollama {
+.notification-newadditions-model.provider-ollama {
   color: var(--provider-ollama-color, #20a77a);
 }
 
