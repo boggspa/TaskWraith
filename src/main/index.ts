@@ -23158,6 +23158,9 @@ if (isGeminiMcpBridgeProcess) {
         grokReasoningEffort?: string | null
         cursorReasoningEffort?: string | null
         cursorFastMode?: boolean
+        claudeFastMode?: boolean
+        codexServiceTier?: string | null
+        kimiThinkingEnabled?: boolean
         contextTurns?: number
         extraWorkspaceIds?: string[]
         imageAttachments?: unknown[]
@@ -23227,6 +23230,9 @@ if (isGeminiMcpBridgeProcess) {
           provider === 'cursor' && isCursorGrok45ModelId(selectedModelType)
             ? action.cursorFastMode
             : undefined
+        const queueClaudeFastMode = provider === 'claude' ? action.claudeFastMode : undefined
+        const queueCodexServiceTier = provider === 'codex' ? action.codexServiceTier : undefined
+        const queueKimiThinkingEnabled = provider === 'kimi' ? action.kimiThinkingEnabled : undefined
         const permissionPosture = buildRemoteComposerQueuePermissionPosture({
           provider,
           scope,
@@ -23273,6 +23279,15 @@ if (isGeminiMcpBridgeProcess) {
               ? { cursorReasoningEffort: queueCursorReasoning }
               : {}),
             ...(queueCursorFastMode !== undefined ? { cursorFastMode: queueCursorFastMode } : {}),
+            ...(queueClaudeFastMode !== undefined
+              ? { claudeFastMode: queueClaudeFastMode }
+              : {}),
+            ...(queueCodexServiceTier !== undefined
+              ? { codexServiceTier: queueCodexServiceTier }
+              : {}),
+            ...(queueKimiThinkingEnabled !== undefined
+              ? { kimiThinkingEnabled: queueKimiThinkingEnabled }
+              : {}),
             ...(action.claudeReasoningEffort !== undefined
               ? { claudeReasoningEffort: action.claudeReasoningEffort }
               : {}),
@@ -23303,6 +23318,15 @@ if (isGeminiMcpBridgeProcess) {
                 ? { cursorReasoningEffort: action.cursorReasoningEffort }
                 : {}),
               ...(action.cursorFastMode !== undefined ? { cursorFastMode: action.cursorFastMode } : {}),
+              ...(action.claudeFastMode !== undefined
+                ? { claudeFastMode: action.claudeFastMode }
+                : {}),
+              ...(action.codexServiceTier !== undefined
+                ? { codexServiceTier: action.codexServiceTier }
+                : {}),
+              ...(action.kimiThinkingEnabled !== undefined
+                ? { kimiThinkingEnabled: action.kimiThinkingEnabled }
+                : {}),
               ...(action.contextTurns !== undefined ? { contextTurns: action.contextTurns } : {}),
               ...(schedule.scheduledRunAt ? { scheduledRunAt: schedule.scheduledRunAt } : {}),
               ...(action.extraWorkspaceIds?.length

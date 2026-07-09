@@ -558,6 +558,7 @@ function sanitizeRemoteComposer(value: unknown): RunQueueRequestSnapshot['remote
   const claudeReasoningEffort = optionalStringOrNull(value.claudeReasoningEffort)
   const grokReasoningEffort = optionalStringOrNull(value.grokReasoningEffort)
   const cursorReasoningEffort = optionalStringOrNull(value.cursorReasoningEffort)
+  const codexServiceTier = optionalStringOrNull(value.codexServiceTier)
   const scheduledRunAt = optionalString(value.scheduledRunAt)
   return {
     workspaceId: optionalString(value.workspaceId) || '',
@@ -573,6 +574,11 @@ function sanitizeRemoteComposer(value: unknown): RunQueueRequestSnapshot['remote
     ...(grokReasoningEffort !== undefined ? { grokReasoningEffort } : {}),
     ...(cursorReasoningEffort !== undefined ? { cursorReasoningEffort } : {}),
     ...(typeof value.cursorFastMode === 'boolean' ? { cursorFastMode: value.cursorFastMode } : {}),
+    ...(codexServiceTier !== undefined ? { codexServiceTier } : {}),
+    ...(typeof value.claudeFastMode === 'boolean' ? { claudeFastMode: value.claudeFastMode } : {}),
+    ...(typeof value.kimiThinkingEnabled === 'boolean'
+      ? { kimiThinkingEnabled: value.kimiThinkingEnabled }
+      : {}),
     ...(typeof value.contextTurns === 'number' ? { contextTurns: value.contextTurns } : {}),
     ...(scheduledRunAt ? { scheduledRunAt } : {}),
     ...(Array.isArray(value.extraWorkspaceIds)

@@ -103,6 +103,22 @@ export function buildRemoteComposerQueueDispatchAction(
       ...(remote.claudeReasoningEffort !== undefined
         ? { claudeReasoningEffort: remote.claudeReasoningEffort }
         : {}),
+      // Re-add the reasoning/fast/thinking fields that were previously dropped on
+      // queued-prompt promotion (fixes the pre-existing cursorFastMode loss too).
+      ...(remote.grokReasoningEffort !== undefined
+        ? { grokReasoningEffort: remote.grokReasoningEffort }
+        : {}),
+      ...(remote.cursorReasoningEffort !== undefined
+        ? { cursorReasoningEffort: remote.cursorReasoningEffort }
+        : {}),
+      ...(remote.cursorFastMode !== undefined ? { cursorFastMode: remote.cursorFastMode } : {}),
+      ...(remote.claudeFastMode !== undefined ? { claudeFastMode: remote.claudeFastMode } : {}),
+      ...(remote.codexServiceTier !== undefined
+        ? { codexServiceTier: remote.codexServiceTier }
+        : {}),
+      ...(remote.kimiThinkingEnabled !== undefined
+        ? { kimiThinkingEnabled: remote.kimiThinkingEnabled }
+        : {}),
       ...(typeof remote.contextTurns === 'number' ? { contextTurns: remote.contextTurns } : {}),
       ...(remote.extraWorkspaceIds?.length ? { extraWorkspaceIds: remote.extraWorkspaceIds } : {})
     }

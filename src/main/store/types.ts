@@ -4732,6 +4732,9 @@ export interface RunQueueRequestSnapshot {
     grokReasoningEffort?: string | null
     cursorReasoningEffort?: string | null
     cursorFastMode?: boolean
+    claudeFastMode?: boolean
+    codexServiceTier?: string | null
+    kimiThinkingEnabled?: boolean
     contextTurns?: number
     extraWorkspaceIds?: string[]
     scheduledRunAt?: string
