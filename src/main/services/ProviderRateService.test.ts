@@ -127,6 +127,28 @@ describe('BAKED_IN_RATES', () => {
   })
 
   it('tracks current published API-equivalent rates for visible model defaults', () => {
+    // GPT-5.6 trio — official model pages (developers.openai.com), 2026-07-10.
+    expect(
+      BAKED_IN_RATES.codex.models.find((model) => model.modelId === 'gpt-5.6-sol')
+    ).toMatchObject({
+      inputUsdPerMillion: 5,
+      cachedInputUsdPerMillion: 0.5,
+      outputUsdPerMillion: 30
+    })
+    expect(
+      BAKED_IN_RATES.codex.models.find((model) => model.modelId === 'gpt-5.6-terra')
+    ).toMatchObject({
+      inputUsdPerMillion: 2.5,
+      cachedInputUsdPerMillion: 0.25,
+      outputUsdPerMillion: 15
+    })
+    expect(
+      BAKED_IN_RATES.codex.models.find((model) => model.modelId === 'gpt-5.6-luna')
+    ).toMatchObject({
+      inputUsdPerMillion: 1,
+      cachedInputUsdPerMillion: 0.1,
+      outputUsdPerMillion: 6
+    })
     expect(BAKED_IN_RATES.codex.models.find((model) => model.modelId === 'gpt-5.5')).toMatchObject({
       inputUsdPerMillion: 5,
       cachedInputUsdPerMillion: 0.5,
@@ -137,43 +159,59 @@ describe('BAKED_IN_RATES', () => {
       cachedInputUsdPerMillion: 0.25,
       outputUsdPerMillion: 15
     })
-    expect(BAKED_IN_RATES.codex.models.find((model) => model.modelId === 'gpt-5.4-mini')).toMatchObject({
+    expect(
+      BAKED_IN_RATES.codex.models.find((model) => model.modelId === 'gpt-5.4-mini')
+    ).toMatchObject({
       inputUsdPerMillion: 0.75,
       cachedInputUsdPerMillion: 0.075,
       outputUsdPerMillion: 4.5
     })
-    expect(BAKED_IN_RATES.cursor.models.find((model) => model.modelId === 'composer-2.5')).toMatchObject({
+    expect(
+      BAKED_IN_RATES.cursor.models.find((model) => model.modelId === 'composer-2.5')
+    ).toMatchObject({
       inputUsdPerMillion: 0.5,
       outputUsdPerMillion: 2.5
     })
-    expect(BAKED_IN_RATES.kimi.models.find((model) => model.modelId === 'kimi-k2.7-code')).toMatchObject({
+    expect(
+      BAKED_IN_RATES.kimi.models.find((model) => model.modelId === 'kimi-k2.7-code')
+    ).toMatchObject({
       inputUsdPerMillion: 0.95,
       cachedInputUsdPerMillion: 0.19,
       outputUsdPerMillion: 4
     })
-    expect(BAKED_IN_RATES.kimi.models.find((model) => model.modelId === 'kimi-k2.6')).toMatchObject({
-      inputUsdPerMillion: 0.95,
-      cachedInputUsdPerMillion: 0.16,
-      outputUsdPerMillion: 4
-    })
+    expect(BAKED_IN_RATES.kimi.models.find((model) => model.modelId === 'kimi-k2.6')).toMatchObject(
+      {
+        inputUsdPerMillion: 0.95,
+        cachedInputUsdPerMillion: 0.16,
+        outputUsdPerMillion: 4
+      }
+    )
     for (const modelId of ['claude-fable-5', 'claude-mythos-5']) {
-      expect(BAKED_IN_RATES.claude.models.find((model) => model.modelId === modelId)).toMatchObject({
-        inputUsdPerMillion: 10,
-        cachedInputUsdPerMillion: 1,
-        outputUsdPerMillion: 50
-      })
+      expect(BAKED_IN_RATES.claude.models.find((model) => model.modelId === modelId)).toMatchObject(
+        {
+          inputUsdPerMillion: 10,
+          cachedInputUsdPerMillion: 1,
+          outputUsdPerMillion: 50
+        }
+      )
     }
-    expect(BAKED_IN_RATES.gemini.models.find((model) => model.modelId === 'gemini-3.1-pro-preview')).toMatchObject({
+    expect(
+      BAKED_IN_RATES.gemini.models.find((model) => model.modelId === 'gemini-3.1-pro-preview')
+    ).toMatchObject({
       inputUsdPerMillion: 2,
       cachedInputUsdPerMillion: 0.2,
       outputUsdPerMillion: 12
     })
-    expect(BAKED_IN_RATES.gemini.models.find((model) => model.modelId === 'gemini-3-flash-preview')).toMatchObject({
+    expect(
+      BAKED_IN_RATES.gemini.models.find((model) => model.modelId === 'gemini-3-flash-preview')
+    ).toMatchObject({
       inputUsdPerMillion: 0.5,
       cachedInputUsdPerMillion: 0.05,
       outputUsdPerMillion: 3
     })
-    expect(BAKED_IN_RATES.gemini.models.find((model) => model.modelId === 'gemini-3.1-flash-lite')).toMatchObject({
+    expect(
+      BAKED_IN_RATES.gemini.models.find((model) => model.modelId === 'gemini-3.1-flash-lite')
+    ).toMatchObject({
       inputUsdPerMillion: 0.25,
       cachedInputUsdPerMillion: 0.025,
       outputUsdPerMillion: 1.5
@@ -274,7 +312,9 @@ describe('applyManualProviderRateOverrides', () => {
 
     expect(out.summary.applied).toEqual([{ provider: 'gemini', modelId: 'gemini-3-flash-preview' }])
     expect(out.summary.rejected).toEqual([])
-    const model = out.baseline.gemini.models.find((entry) => entry.modelId === 'gemini-3-flash-preview')
+    const model = out.baseline.gemini.models.find(
+      (entry) => entry.modelId === 'gemini-3-flash-preview'
+    )
     expect(model?.inputUsdPerMillion).toBe(0.31)
     expect(model?.outputUsdPerMillion).toBe(2.55)
     expect(model?.cachedInputUsdPerMillion).toBe(0.08)
@@ -322,8 +362,9 @@ describe('applyManualProviderRateOverrides', () => {
       'output-below-input',
       'invalid-cached-input-rate'
     ])
-    expect(out.baseline.gemini.models.find((entry) => entry.modelId === 'gemini-3-flash-preview'))
-      .toMatchObject({ inputUsdPerMillion: 0.5, outputUsdPerMillion: 3 })
+    expect(
+      out.baseline.gemini.models.find((entry) => entry.modelId === 'gemini-3-flash-preview')
+    ).toMatchObject({ inputUsdPerMillion: 0.5, outputUsdPerMillion: 3 })
   })
 })
 
@@ -332,7 +373,10 @@ describe('shouldRefreshProviderRateProbe', () => {
     const now = Date.parse('2026-05-31T12:00:00.000Z')
 
     expect(
-      shouldRefreshProviderRateProbe({ rateTableVersion: RATE_TABLE_VERSION, baseline: BAKED_IN_RATES }, now)
+      shouldRefreshProviderRateProbe(
+        { rateTableVersion: RATE_TABLE_VERSION, baseline: BAKED_IN_RATES },
+        now
+      )
     ).toBe(true)
     expect(
       shouldRefreshProviderRateProbe(

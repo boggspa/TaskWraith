@@ -15,6 +15,10 @@ describe('resolveContextWindow', () => {
 
   it('resolves representative model ids across providers', () => {
     expect(resolveContextWindow('gemini', 'pro')).toBe(1_048_576)
+    // GPT-5.6 trio — official raw API window (GA 2026-07-09).
+    expect(resolveContextWindow('codex', 'gpt-5.6-sol')).toBe(1_050_000)
+    expect(resolveContextWindow('codex', 'gpt-5.6-terra')).toBe(1_050_000)
+    expect(resolveContextWindow('codex', 'gpt-5.6-luna')).toBe(1_050_000)
     expect(resolveContextWindow('codex', 'gpt-5.5')).toBe(1_050_000)
     expect(resolveContextWindow('codex', 'gpt-5.4')).toBe(1_050_000)
     expect(resolveContextWindow('codex', 'gpt-5.4-mini')).toBe(400_000)

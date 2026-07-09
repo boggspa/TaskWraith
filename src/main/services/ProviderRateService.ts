@@ -44,7 +44,7 @@ import type { ProviderId } from '../store/types'
 
 /** Snapshot date for the baked-in rate values. Bump alongside the
  * rate values themselves when the manual diligence cycle runs. */
-export const RATE_TABLE_VERSION = '2026-07-08'
+export const RATE_TABLE_VERSION = '2026-07-10'
 
 /**
  * Per-model rate entry. Rates are USD per 1,000,000 tokens (so
@@ -218,6 +218,35 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
     provider: 'codex',
     pricingUrl: 'https://openai.com/api/pricing',
     models: [
+      // GPT-5.6 trio — GA 2026-07-09, verified against the official model
+      // pages (developers.openai.com/api/docs/models/gpt-5.6-*). Note: prompts
+      // >272K input tokens are billed at 2x input / 1.5x output for the full
+      // request (not modelled here — estimates undercount very long prompts).
+      {
+        modelId: 'gpt-5.6-sol',
+        inputUsdPerMillion: 5.0,
+        outputUsdPerMillion: 30.0,
+        cachedInputUsdPerMillion: 0.5,
+        sourceUrl: 'https://developers.openai.com/api/docs/models/gpt-5.6-sol',
+        lastVerified: RATE_TABLE_VERSION,
+        notes: 'Codex CLI typically billed via ChatGPT subscription, not per-token.'
+      },
+      {
+        modelId: 'gpt-5.6-terra',
+        inputUsdPerMillion: 2.5,
+        outputUsdPerMillion: 15.0,
+        cachedInputUsdPerMillion: 0.25,
+        sourceUrl: 'https://developers.openai.com/api/docs/models/gpt-5.6-terra',
+        lastVerified: RATE_TABLE_VERSION
+      },
+      {
+        modelId: 'gpt-5.6-luna',
+        inputUsdPerMillion: 1.0,
+        outputUsdPerMillion: 6.0,
+        cachedInputUsdPerMillion: 0.1,
+        sourceUrl: 'https://developers.openai.com/api/docs/models/gpt-5.6-luna',
+        lastVerified: RATE_TABLE_VERSION
+      },
       {
         modelId: 'gpt-5.5',
         inputUsdPerMillion: 5.0,
@@ -453,7 +482,8 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         cachedInputUsdPerMillion: 0.19,
         sourceUrl: 'https://platform.kimi.ai/docs/pricing/chat-k27-code',
         lastVerified: RATE_TABLE_VERSION,
-        notes: 'Current Kimi Code CLI default; automatic context cache hit pricing recorded as cached input.'
+        notes:
+          'Current Kimi Code CLI default; automatic context cache hit pricing recorded as cached input.'
       },
       {
         modelId: 'kimi-k2.6',
@@ -485,7 +515,8 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         outputUsdPerMillion: 0,
         sourceUrl: 'local://ollama',
         lastVerified: RATE_TABLE_VERSION,
-        notes: 'Qwen 3.5 9B running through local Ollama. TaskWraith does not charge per token for local inference.',
+        notes:
+          'Qwen 3.5 9B running through local Ollama. TaskWraith does not charge per token for local inference.',
         confidence: 'baked-in'
       },
       {
@@ -494,7 +525,8 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         outputUsdPerMillion: 0,
         sourceUrl: 'local://ollama',
         lastVerified: RATE_TABLE_VERSION,
-        notes: 'Qwen 3.6 35B running through local Ollama. TaskWraith does not charge per token for local inference.',
+        notes:
+          'Qwen 3.6 35B running through local Ollama. TaskWraith does not charge per token for local inference.',
         confidence: 'baked-in'
       },
       {
@@ -503,7 +535,8 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         outputUsdPerMillion: 0,
         sourceUrl: 'local://ollama',
         lastVerified: RATE_TABLE_VERSION,
-        notes: 'Google Gemma 4 12B running through local Ollama. TaskWraith does not charge per token for local inference.',
+        notes:
+          'Google Gemma 4 12B running through local Ollama. TaskWraith does not charge per token for local inference.',
         confidence: 'baked-in'
       },
       {
@@ -512,7 +545,8 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         outputUsdPerMillion: 0,
         sourceUrl: 'local://ollama',
         lastVerified: RATE_TABLE_VERSION,
-        notes: 'Ornith 1.0 9B alias running through local Ollama. TaskWraith does not charge per token for local inference.',
+        notes:
+          'Ornith 1.0 9B alias running through local Ollama. TaskWraith does not charge per token for local inference.',
         confidence: 'baked-in'
       },
       {
@@ -521,7 +555,8 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         outputUsdPerMillion: 0,
         sourceUrl: 'local://ollama',
         lastVerified: RATE_TABLE_VERSION,
-        notes: 'Ornith 1.0 9B alias running through local Ollama. TaskWraith does not charge per token for local inference.',
+        notes:
+          'Ornith 1.0 9B alias running through local Ollama. TaskWraith does not charge per token for local inference.',
         confidence: 'baked-in'
       },
       {
@@ -530,7 +565,8 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         outputUsdPerMillion: 0,
         sourceUrl: 'local://ollama',
         lastVerified: RATE_TABLE_VERSION,
-        notes: 'Ornith 1.0 9B running through local Ollama. TaskWraith does not charge per token for local inference.',
+        notes:
+          'Ornith 1.0 9B running through local Ollama. TaskWraith does not charge per token for local inference.',
         confidence: 'baked-in'
       },
       {
@@ -539,7 +575,8 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         outputUsdPerMillion: 0,
         sourceUrl: 'local://ollama',
         lastVerified: RATE_TABLE_VERSION,
-        notes: 'Ornith 1.0 35B running through local Ollama. TaskWraith does not charge per token for local inference.',
+        notes:
+          'Ornith 1.0 35B running through local Ollama. TaskWraith does not charge per token for local inference.',
         confidence: 'baked-in'
       },
       {
@@ -548,7 +585,8 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         outputUsdPerMillion: 0,
         sourceUrl: 'local://ollama',
         lastVerified: RATE_TABLE_VERSION,
-        notes: 'Poolside Laguna XS 2.1 Q8 running through local Ollama. TaskWraith does not charge per token for local inference.',
+        notes:
+          'Poolside Laguna XS 2.1 Q8 running through local Ollama. TaskWraith does not charge per token for local inference.',
         confidence: 'baked-in'
       },
       {
@@ -557,7 +595,8 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         outputUsdPerMillion: 0,
         sourceUrl: 'local://ollama',
         lastVerified: RATE_TABLE_VERSION,
-        notes: 'Google Gemma 4 12B running through local Ollama. TaskWraith does not charge per token for local inference.',
+        notes:
+          'Google Gemma 4 12B running through local Ollama. TaskWraith does not charge per token for local inference.',
         confidence: 'baked-in'
       },
       {
@@ -566,7 +605,8 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         outputUsdPerMillion: 0,
         sourceUrl: 'local://ollama',
         lastVerified: RATE_TABLE_VERSION,
-        notes: 'OpenAI gpt-oss 20B running through local Ollama. TaskWraith does not charge per token for local inference.',
+        notes:
+          'OpenAI gpt-oss 20B running through local Ollama. TaskWraith does not charge per token for local inference.',
         confidence: 'baked-in'
       },
       {
@@ -575,7 +615,8 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         outputUsdPerMillion: 0,
         sourceUrl: 'local://ollama',
         lastVerified: RATE_TABLE_VERSION,
-        notes: 'OpenAI gpt-oss 20B running through local Ollama. TaskWraith does not charge per token for local inference.',
+        notes:
+          'OpenAI gpt-oss 20B running through local Ollama. TaskWraith does not charge per token for local inference.',
         confidence: 'baked-in'
       },
       {
@@ -584,7 +625,8 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         outputUsdPerMillion: 0,
         sourceUrl: 'local://ollama',
         lastVerified: RATE_TABLE_VERSION,
-        notes: 'OpenAI gpt-oss 20B running through local Ollama. TaskWraith does not charge per token for local inference.',
+        notes:
+          'OpenAI gpt-oss 20B running through local Ollama. TaskWraith does not charge per token for local inference.',
         confidence: 'baked-in'
       },
       {
@@ -593,7 +635,8 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         outputUsdPerMillion: 0,
         sourceUrl: 'local://ollama',
         lastVerified: RATE_TABLE_VERSION,
-        notes: 'MiniCPM-V 4.5 8B running through local Ollama. TaskWraith does not charge per token for local inference.',
+        notes:
+          'MiniCPM-V 4.5 8B running through local Ollama. TaskWraith does not charge per token for local inference.',
         confidence: 'baked-in'
       },
       {
@@ -602,7 +645,8 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         outputUsdPerMillion: 0,
         sourceUrl: 'local://ollama',
         lastVerified: RATE_TABLE_VERSION,
-        notes: 'IBM Granite 4.1 3B running through local Ollama. TaskWraith does not charge per token for local inference.',
+        notes:
+          'IBM Granite 4.1 3B running through local Ollama. TaskWraith does not charge per token for local inference.',
         confidence: 'baked-in'
       },
       {
@@ -611,7 +655,8 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         outputUsdPerMillion: 0,
         sourceUrl: 'local://ollama',
         lastVerified: RATE_TABLE_VERSION,
-        notes: 'IBM Granite 4.1 30B running through local Ollama. TaskWraith does not charge per token for local inference.',
+        notes:
+          'IBM Granite 4.1 30B running through local Ollama. TaskWraith does not charge per token for local inference.',
         confidence: 'baked-in'
       },
       {
@@ -620,7 +665,8 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         outputUsdPerMillion: 0,
         sourceUrl: 'local://ollama',
         lastVerified: RATE_TABLE_VERSION,
-        notes: 'NVIDIA Nemotron 3 Nano Omni 33B running through local Ollama. TaskWraith does not charge per token for local inference.',
+        notes:
+          'NVIDIA Nemotron 3 Nano Omni 33B running through local Ollama. TaskWraith does not charge per token for local inference.',
         confidence: 'baked-in'
       },
       {
@@ -629,7 +675,8 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         outputUsdPerMillion: 0,
         sourceUrl: 'local://ollama',
         lastVerified: RATE_TABLE_VERSION,
-        notes: 'OpenAI gpt-oss 20B running through local Ollama. TaskWraith does not charge per token for local inference.',
+        notes:
+          'OpenAI gpt-oss 20B running through local Ollama. TaskWraith does not charge per token for local inference.',
         confidence: 'baked-in'
       }
     ]
@@ -801,7 +848,9 @@ function cloneRateTables(
   tables: Record<ProviderId, ProviderRateTable>
 ): Record<ProviderId, ProviderRateTable> {
   const out = {} as Record<ProviderId, ProviderRateTable>
-  for (const [provider, table] of Object.entries(tables) as Array<[ProviderId, ProviderRateTable]>) {
+  for (const [provider, table] of Object.entries(tables) as Array<
+    [ProviderId, ProviderRateTable]
+  >) {
     out[provider] = {
       ...table,
       models: table.models.map((model) => ({ ...model }))
@@ -883,7 +932,10 @@ export function applyManualProviderRateOverrides(
       inputUsdPerMillion: entry.inputUsdPerMillion,
       outputUsdPerMillion: entry.outputUsdPerMillion,
       ...(cachedInput !== undefined ? { cachedInputUsdPerMillion: cachedInput } : {}),
-      sourceUrl: typeof entry.sourceUrl === 'string' && entry.sourceUrl ? entry.sourceUrl : current.sourceUrl,
+      sourceUrl:
+        typeof entry.sourceUrl === 'string' && entry.sourceUrl
+          ? entry.sourceUrl
+          : current.sourceUrl,
       lastVerified:
         typeof entry.lastVerified === 'string' && Number.isFinite(Date.parse(entry.lastVerified))
           ? entry.lastVerified
@@ -910,7 +962,9 @@ export function shouldRefreshProviderRateProbe(
   return now - runAtMs > PROBE_REFRESH_INTERVAL_MS
 }
 
-export function parsePersistedProviderRateProbe(raw: string): ProviderRatesSnapshot['probe'] | null {
+export function parsePersistedProviderRateProbe(
+  raw: string
+): ProviderRatesSnapshot['probe'] | null {
   let parsed: unknown
   try {
     parsed = JSON.parse(raw)

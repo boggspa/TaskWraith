@@ -20,6 +20,12 @@ const CONTEXT_WINDOWS_BY_MODEL: Record<string, number> = {
   auto: 1_048_576,
   'cli-default': 1_048_576,
   // Codex
+  // GPT-5.6 trio (GA 2026-07-09): official raw API window is 1,050,000 on all
+  // three (developers.openai.com; TaskWraith's context-config override raises
+  // the CLI working window to match — see CODEX_MODEL_CONTEXT_CONFIGS).
+  'gpt-5.6-sol': 1_050_000,
+  'gpt-5.6-terra': 1_050_000,
+  'gpt-5.6-luna': 1_050_000,
   'gpt-5.5': 1_050_000,
   'gpt-5.4': 1_050_000,
   'gpt-5.4-mini': 400_000,
