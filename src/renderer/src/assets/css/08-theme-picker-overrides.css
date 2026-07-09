@@ -10180,6 +10180,204 @@
 }
 
 /* ============================================================
+ * Blackboard quick-access — satellite icon button + popover.
+ *
+ * A read-only glance at the ensemble Blackboard from the composer
+ * telemetry icon row. The trigger is an icon-only "hint pill" (mirrors
+ * the Copy / Goal / Plan siblings); the popover reuses the frosted
+ * `.composer-combined-picker-popover` chrome + per-shell theme-immunity
+ * (it carries that base class) and just swaps in a scrollable,
+ * category-grouped list. The full post / delete / seen-by surface stays
+ * in the right-dock Notes pane (PinnedMessagesPanel).
+ *
+ * Co-located here (not in the 03 telemetry-button shard) so the whole
+ * feature is one CSS block next to its sibling `.composer-multiview-*`.
+ * ============================================================ */
+.composer-blackboard-trigger {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3px 4px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: color-mix(in srgb, var(--text-secondary) 58%, transparent);
+  cursor: pointer;
+  transition:
+    color 120ms ease,
+    background 120ms ease,
+    border-color 120ms ease,
+    box-shadow 120ms ease;
+}
+
+.composer-blackboard-trigger:hover:not(:disabled),
+.composer-blackboard-trigger[aria-expanded='true'] {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.composer-blackboard-trigger:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 56%, transparent);
+  outline-offset: 2px;
+}
+
+.composer-blackboard-trigger:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.composer-blackboard-trigger .composer-control-icon {
+  width: 14px;
+  height: 14px;
+}
+
+/* Static presence dot — the Blackboard has at least one entry. Quieter
+ * than the Screen Watch pulse (this is a "there's content" hint, not a
+ * live-capture alarm). */
+.composer-blackboard-trigger-dot {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  width: 5px;
+  height: 5px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 82%, transparent);
+  box-shadow: 0 0 0 1.5px var(--composer-bg, var(--surface-base));
+}
+
+.composer-blackboard-popover {
+  flex-direction: column;
+  gap: 8px;
+  min-width: min(360px, calc(100vw - 16px));
+  max-width: calc(100vw - 16px);
+  box-sizing: border-box;
+  padding: 10px;
+}
+
+.composer-blackboard-popover-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 2px;
+  color: color-mix(in srgb, var(--text-secondary) 82%, transparent);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.composer-blackboard-popover-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: color-mix(in srgb, var(--text-primary) 88%, transparent);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0;
+}
+
+.composer-blackboard-popover-empty {
+  padding: 16px 8px;
+  color: color-mix(in srgb, var(--text-secondary) 66%, transparent);
+  font-size: var(--font-size-xs);
+  text-align: center;
+}
+
+.composer-blackboard-list {
+  min-height: 0;
+  max-height: min(52vh, 420px);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 2px;
+}
+
+.composer-blackboard-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.composer-blackboard-category {
+  color: color-mix(in srgb, var(--text-secondary) 78%, transparent);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.composer-blackboard-entry {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 8px;
+  border: 1px solid color-mix(in srgb, var(--panel-border) 70%, transparent);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--text-primary) 4%, transparent);
+}
+
+.composer-blackboard-entry-meta {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+}
+
+.composer-blackboard-entry-meta strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--text-primary);
+  font-weight: 700;
+}
+
+.composer-blackboard-entry-scope {
+  flex: 0 0 auto;
+  color: color-mix(in srgb, var(--text-secondary) 68%, transparent);
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.composer-blackboard-entry-body {
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+/* The value renders through MarkdownMessage; keep block spacing tight so a
+ * short note doesn't tower inside the compact popover. */
+.composer-blackboard-entry-body > :first-child {
+  margin-top: 0;
+}
+.composer-blackboard-entry-body > :last-child {
+  margin-bottom: 0;
+}
+
+.composer-blackboard-entry-author {
+  color: color-mix(in srgb, var(--text-secondary) 62%, transparent);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.composer-blackboard-list::-webkit-scrollbar {
+  width: 8px;
+}
+.composer-blackboard-list::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text-primary) 16%, transparent);
+}
+
+/* ============================================================
  * 1.0.6-EW67 — Theme-immune composer picker popovers.
  *
  * The combined model / permission / "+" pickers, the slash menu,

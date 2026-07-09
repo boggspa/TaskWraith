@@ -21,7 +21,7 @@ interface PinnedMessagesPanelProps {
   onAddPinnedMessageToWorkspaceBoard?: (message: PinnedMessageSummary) => void
 }
 
-const BLACKBOARD_CATEGORY_ORDER: BlackboardEntry['category'][] = [
+export const BLACKBOARD_CATEGORY_ORDER: BlackboardEntry['category'][] = [
   'decision',
   'fact',
   'risk',
@@ -29,7 +29,7 @@ const BLACKBOARD_CATEGORY_ORDER: BlackboardEntry['category'][] = [
   'note'
 ]
 
-const BLACKBOARD_CATEGORY_LABELS: Record<BlackboardEntry['category'], string> = {
+export const BLACKBOARD_CATEGORY_LABELS: Record<BlackboardEntry['category'], string> = {
   decision: 'Decisions',
   fact: 'Facts',
   risk: 'Risks',
@@ -37,7 +37,7 @@ const BLACKBOARD_CATEGORY_LABELS: Record<BlackboardEntry['category'], string> = 
   note: 'Notes'
 }
 
-function sortBlackboardEntries(a: BlackboardEntry, b: BlackboardEntry): number {
+export function sortBlackboardEntries(a: BlackboardEntry, b: BlackboardEntry): number {
   const categoryRank =
     BLACKBOARD_CATEGORY_ORDER.indexOf(a.category) - BLACKBOARD_CATEGORY_ORDER.indexOf(b.category)
   if (categoryRank !== 0) return categoryRank

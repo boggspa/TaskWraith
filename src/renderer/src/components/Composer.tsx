@@ -101,6 +101,7 @@ import {
   isPdfAttachmentPath
 } from '../lib/imageAttachments'
 import { ComposerImageThumb } from './ComposerImageThumb'
+import { ComposerBlackboardButton } from './ComposerBlackboardButton'
 import { ComposerEnsembleToggleButton } from './ComposerEnsembleToggleButton'
 import { ComposerPlanImportCard } from './ComposerPlanImportCard'
 import { ComposerPlanPopoverButton } from './ComposerPlanPopoverButton'
@@ -4641,6 +4642,17 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
 	                  chat={currentChat}
 	                  composerStyle={appearance.composerStyle}
 	                />
+	                {/* Blackboard quick-access — a read-only glance at the ensemble
+	                    Blackboard (the full post/delete surface stays in the
+	                    right-dock Notes pane). Ensemble-only: solo chats have no
+	                    blackboard. */}
+	                {isCurrentEnsembleChat && (
+	                  <ComposerBlackboardButton
+	                    chat={currentChat}
+	                    provider={currentProvider}
+	                    composerStyle={appearance.composerStyle}
+	                  />
+	                )}
 	                <CopyTranscriptButton
 	                  disabled={!currentChat || currentChat.archived || currentChat.messages.length === 0}
 	                  resetKey={currentChat?.appChatId || null}
