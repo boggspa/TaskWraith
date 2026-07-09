@@ -310,16 +310,36 @@ const LADDER_MAX_INDEX = 6
 const LADDER_TRACK_INSET = 11
 
 // Sparkle positions (within the top sparkle layer) + staggered twinkle delays.
-// Scattered top-heavy; the layer's mask fades them out toward the middle.
+// Dense + top-heavy; the layer's mask fades them out toward the middle.
 const LADDER_SPARKLES: ReadonlyArray<{ left: string; top: string; delay: string }> = [
-  { left: '30%', top: '6%', delay: '0s' },
-  { left: '64%', top: '13%', delay: '0.5s' },
-  { left: '44%', top: '21%', delay: '1.1s' },
-  { left: '20%', top: '29%', delay: '0.8s' },
-  { left: '74%', top: '37%', delay: '1.6s' },
-  { left: '52%', top: '45%', delay: '0.3s' },
-  { left: '34%', top: '57%', delay: '1.3s' },
-  { left: '60%', top: '69%', delay: '2s' }
+  { left: '30%', top: '4%', delay: '0s' },
+  { left: '64%', top: '8%', delay: '0.6s' },
+  { left: '18%', top: '12%', delay: '1.9s' },
+  { left: '48%', top: '15%', delay: '1.1s' },
+  { left: '78%', top: '19%', delay: '2.8s' },
+  { left: '34%', top: '23%', delay: '0.4s' },
+  { left: '60%', top: '27%', delay: '2.2s' },
+  { left: '22%', top: '31%', delay: '1.5s' },
+  { left: '72%', top: '35%', delay: '3.4s' },
+  { left: '44%', top: '39%', delay: '0.9s' },
+  { left: '30%', top: '44%', delay: '4s' },
+  { left: '64%', top: '48%', delay: '2.5s' },
+  { left: '48%', top: '54%', delay: '3s' },
+  { left: '24%', top: '60%', delay: '0.2s' },
+  { left: '70%', top: '64%', delay: '4.3s' },
+  { left: '44%', top: '72%', delay: '1.7s' }
+]
+
+// Sparkles scattered over the composer chip's "Ultra/Ultracode" suffix text.
+const CHIP_SPARKLES: ReadonlyArray<{ left: string; top: string; delay: string }> = [
+  { left: '8%', top: '12%', delay: '0s' },
+  { left: '26%', top: '68%', delay: '1.6s' },
+  { left: '40%', top: '22%', delay: '0.7s' },
+  { left: '54%', top: '74%', delay: '2.6s' },
+  { left: '68%', top: '28%', delay: '1.1s' },
+  { left: '82%', top: '62%', delay: '3.3s' },
+  { left: '93%', top: '18%', delay: '2.1s' },
+  { left: '16%', top: '84%', delay: '3.8s' }
 ]
 
 function normalizeLadderEffort(effort: string): string {
@@ -570,6 +590,34 @@ function ReasoningLadderSlider({
         />
       </div>
     </div>
+  )
+}
+
+/** The chip's reasoning suffix ("Ultra" / "Ultracode" …). At the Ultracode tier
+ * it carries the provider-hued shimmer sweep (CSS, keyed off the trigger's
+ * data-selected-reasoning) plus a twinkling sparkle overlay. */
+function TriggerReasoningSuffix({
+  text,
+  sparkle
+}: {
+  text: string
+  sparkle: boolean
+}): React.JSX.Element {
+  return (
+    <span className="composer-combined-picker-trigger-suffix">
+      {text}
+      {sparkle && (
+        <span className="composer-combined-picker-trigger-sparkles" aria-hidden>
+          {CHIP_SPARKLES.map((s, index) => (
+            <span
+              key={index}
+              className="composer-combined-picker-trigger-sparkle"
+              style={{ left: s.left, top: s.top, animationDelay: s.delay }}
+            />
+          ))}
+        </span>
+      )}
+    </span>
   )
 }
 
@@ -1157,6 +1205,13 @@ export function CombinedModelPicker({
         data-provider={provider}
         data-selected-reasoning={selectedReasoning || ''}
         data-fast-mode-active={fastModeEnabled && fastModeCapable ? 'true' : 'false'}
+        // Provider brand hue for the Ultra/Ultracode shimmer + sparkles (the
+        // popover's --accent is generic — see the ladder's --ladder-accent).
+        style={
+          {
+            '--chip-accent': `var(--provider-${provider}-color, var(--accent))`
+          } as React.CSSProperties
+        }
         onClick={() => setOpen((prev) => !prev)}
         disabled={disabled}
         aria-haspopup="dialog"
@@ -1180,9 +1235,10 @@ export function CombinedModelPicker({
                 <span className="composer-combined-picker-trigger-fast-reasoning">
                   <span className="composer-combined-picker-trigger-fast">{claudeChipSegments.fast}</span>
                   {claudeChipSegments.reasoning && (
-                    <span className="composer-combined-picker-trigger-suffix">
-                      {claudeChipSegments.reasoning}
-                    </span>
+                    <TriggerReasoningSuffix
+                      text={claudeChipSegments.reasoning}
+                      sparkle={selectedReasoning === 'ultracode'}
+                    />
                   )}
                 </span>
               </span>
@@ -1191,9 +1247,10 @@ export function CombinedModelPicker({
                 <span className="composer-combined-picker-trigger-separator" aria-hidden>
                   {'  '}
                 </span>
-                <span className="composer-combined-picker-trigger-suffix">
-                  {claudeChipSegments.reasoning}
-                </span>
+                <TriggerReasoningSuffix
+                  text={claudeChipSegments.reasoning}
+                  sparkle={selectedReasoning === 'ultracode'}
+                />
               </span>
             ) : null}
           </>
@@ -1201,7 +1258,10 @@ export function CombinedModelPicker({
           <>
             <span className="composer-combined-picker-trigger-primary">{chipPieces.primary}</span>
             {chipPieces.suffix && (
-              <span className="composer-combined-picker-trigger-suffix">{chipPieces.suffix}</span>
+              <TriggerReasoningSuffix
+                text={chipPieces.suffix}
+                sparkle={selectedReasoning === 'ultracode'}
+              />
             )}
           </>
         )}

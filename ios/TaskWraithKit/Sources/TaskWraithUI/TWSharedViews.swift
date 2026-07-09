@@ -1454,17 +1454,26 @@ private struct ReasoningLadder: View {
     @State private var twinkle = false
 
     // Sparkle spots over the ultracode zone: (dx from centre, y-fraction of the
-    // top 55%, dim/bright opacity, twinkle delay). `hi` tapers with depth so the
-    // sparkles fade DOWN the track.
+    // top 55%, dim/bright opacity, twinkle delay). Dense but dim; `hi` tapers
+    // with depth so the sparkles fade DOWN the track.
     private static let sparkleSpots:
         [(dx: CGFloat, y: CGFloat, lo: Double, hi: Double, delay: Double)] = [
-            (-6, 0.05, 0.15, 1.0, 0.0),
-            (7, 0.13, 0.15, 0.95, 0.4),
-            (0, 0.22, 0.1, 0.9, 0.9),
-            (-8, 0.32, 0.12, 0.75, 0.6),
-            (9, 0.42, 0.08, 0.6, 1.3),
-            (3, 0.52, 0.06, 0.45, 0.2),
-            (-4, 0.62, 0.04, 0.3, 1.6),
+            (-6, 0.03, 0.1, 0.65, 0.0),
+            (7, 0.07, 0.1, 0.62, 0.6),
+            (-9, 0.11, 0.09, 0.58, 1.9),
+            (3, 0.15, 0.09, 0.6, 1.1),
+            (10, 0.19, 0.07, 0.5, 2.8),
+            (-4, 0.23, 0.09, 0.55, 0.4),
+            (6, 0.27, 0.07, 0.48, 2.2),
+            (-8, 0.31, 0.08, 0.45, 1.5),
+            (9, 0.35, 0.05, 0.4, 3.4),
+            (0, 0.39, 0.07, 0.42, 0.9),
+            (-5, 0.44, 0.05, 0.35, 4.0),
+            (7, 0.48, 0.05, 0.33, 2.5),
+            (2, 0.54, 0.04, 0.28, 3.0),
+            (-7, 0.6, 0.04, 0.24, 0.2),
+            (8, 0.64, 0.03, 0.2, 4.3),
+            (-3, 0.72, 0.03, 0.18, 1.7),
         ]
 
     private var currentIndex: Int {
@@ -1526,7 +1535,7 @@ private struct ReasoningLadder: View {
                             .position(x: cx + spot.dx, y: 6 + h * 0.55 * spot.y)
                             .opacity(twinkle ? spot.hi : spot.lo)
                             .animation(
-                                .easeInOut(duration: 1.2).repeatForever(autoreverses: true)
+                                .easeInOut(duration: 1.8).repeatForever(autoreverses: true)
                                     .delay(spot.delay),
                                 value: twinkle
                             )
