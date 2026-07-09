@@ -3583,6 +3583,14 @@ public final class RemoteSessionModel: ObservableObject {
             streamingRunIds[threadId] = runId
         }
 
+        func seedThreadSnapshotForTesting(_ snapshot: RemoteThreadSnapshot, key: String) {
+            threadSnapshots[key] = snapshot
+        }
+
+        func seedEnsembleStateForTesting(_ state: RemoteEnsembleState, key: String) {
+            ensembleStates[key] = state
+        }
+
         func appendStreamingDeltasForTesting(
             threadId: String, data: String, runId: String? = "run-test", provider: String = "codex"
         ) {

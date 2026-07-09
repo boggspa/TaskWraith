@@ -153,8 +153,17 @@ func twShouldRenderAfterLiveBlock(
 }
 
 struct ThreadDetailView: View {
-    @ObservedObject var model: RemoteSessionModel
+    // Plain reference (NOT @ObservedObject): the transcript's re-renders are gated
+    // by `store` below, not by the monolithic RemoteSessionModel's whole-object
+    // publish. `model` is still read directly (fresh each render) and used for
+    // method calls; it just no longer drives invalidation.
+    let model: RemoteSessionModel
     let taskId: String
+    /// Per-thread re-render gate. Observing THIS instead of the raw model means a
+    /// different thread's streamed token / a global refresh no longer re-evaluates
+    /// the whole transcript body — only the open thread's own slices do. Bound to
+    /// `taskId` synchronously via `.onAppear` + `.onChange(of: taskId)` in `body`.
+    @StateObject private var store = ThreadTranscriptStore()
     /// Slice 5 (RC4): the wake generation this view last honored with a refetch.
     /// When the model's per-thread generation advances past this, needsRefresh
     /// forces a refresh even over a cached, non-empty transcript.
@@ -200,22 +209,12 @@ struct ThreadDetailView: View {
     private var card: RemoteTaskCard? {
         model.taskCards.first { $0.id == taskId || $0.threadId == taskId }
     }
+    // Single alias-resolution algorithm, shared with `ThreadTranscriptStore` so
+    // the per-thread re-render gate can never fire on a different key set than the
+    // view actually reads (see ThreadTranscriptStore.resolvedThreadKeys).
     private var resolvedThreadKeys: [String] {
-        var seen: Set<String> = []
-        var keys: [String] = []
-        func append(_ key: String?) {
-            guard let key = key?.trimmingCharacters(in: .whitespacesAndNewlines),
-                !key.isEmpty, !seen.contains(key)
-            else { return }
-            seen.insert(key)
-            keys.append(key)
-        }
-        append(taskId)
-        append(card?.id)
-        append(card?.threadId)
-        append(model.threadSnapshots[taskId]?.taskId)
-        append(model.threadSnapshots[taskId]?.threadId)
-        return keys
+        ThreadTranscriptStore.resolvedThreadKeys(
+            taskId: taskId, cards: model.taskCards, snapshots: model.threadSnapshots)
     }
     private func threadValue<T>(_ values: [String: T]) -> T? {
         for key in resolvedThreadKeys {
@@ -878,6 +877,18 @@ struct ThreadDetailView: View {
         // `followUp`). Send clears `followUp` → onChange prunes the stored draft.
         .onAppear {
             if followUp.isEmpty { followUp = TWDraftPersistence.draft(for: taskId) }
+        }
+        // Bind the per-thread re-render gate SYNCHRONOUSLY. `.onAppear` covers the
+        // first mount (iPad recreate, compact push); `.onChange(of: taskId)` covers
+        // the in-place `selectedTaskId` swap where the same view instance is reused.
+        // Both run inside the SwiftUI update pass (no async `Task` hop), so no model
+        // mutation can land in a gap between the view's first render and the wire-up
+        // — closing the cold-start race where an early change was silently absorbed.
+        .onAppear {
+            store.bind(model: model, taskId: taskId)
+        }
+        .onChange(of: taskId) { _, newTaskId in
+            store.bind(model: model, taskId: newTaskId)
         }
         .onChange(of: followUp) { _, newValue in
             TWDraftPersistence.setDraft(newValue, for: taskId)
@@ -1997,7 +2008,7 @@ struct ThreadDetailView: View {
                 .accessibilityHint("Opens the thread inspector sidebar.")
             }
         }
-        .sheet(isPresented: $model.rosterPresented) {
+        .sheet(isPresented: Binding(get: { model.rosterPresented }, set: { model.rosterPresented = $0 })) {
             if let wsId = card?.workspaceId {
                 EnsembleRosterSheet(model: model, threadId: taskId, workspaceId: wsId)
                     .twSheetLiquidGlass(detents: [.large])

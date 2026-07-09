@@ -722,7 +722,12 @@ struct IosParityFixesTests {
         model.rememberThreadWorkspace("thread-1", workspaceId: "ws-1")
         model.scheduleThreadRefreshForTesting(
             "thread-1", debounceMs: 20_000_000, bypassVisibleStreamSuppression: true)
-        try await Task.sleep(nanoseconds: 50_000_000)
+        // Poll (bounded), don't fix-sleep: the debounced pull resumes on the
+        // MainActor, which a parallel @MainActor suite contends for, so a tight
+        // budget flakes under load. Exits as soon as the pull lands.
+        for _ in 0..<100 where model.threadSnapshotPullAttemptsForTesting == 0 {
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
         #expect(model.threadSnapshotPullAttemptsForTesting == 1)
         model.cancelPendingThreadRefreshForTesting()
     }
