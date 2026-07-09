@@ -36,9 +36,9 @@ const IOS_RESOURCES = join(
 const SIZE = 512
 
 /**
- * Remove the theme-aware contrast pass and force the foreground accent to
- * white so the PNG remains a pure template mask. iOS paints its black/white
- * contrast silhouette separately at runtime.
+ * Remove the black contrast pass and force the foreground accent to white so
+ * the PNG remains a pure template mask. iOS paints the black silhouette
+ * separately at runtime.
  */
 const whitened = (svg) =>
   svg

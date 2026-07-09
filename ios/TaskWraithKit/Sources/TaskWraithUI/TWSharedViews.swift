@@ -3031,9 +3031,8 @@ func twParticipantsSignature(_ participants: [RemoteEnsembleState.Participant]) 
 
 /// Monoline provider glyph — the sidebar's upgrade from the plain colored
 /// dot. Loads a white-on-alpha template PNG from the app asset catalog or
-/// package resources and paints it twice at runtime: a theme-aware contrast
-/// silhouette (black on light, white on dark) behind the provider accent. One
-/// master still serves every theme.
+/// package resources and paints it twice at runtime: a black contrast
+/// silhouette behind the provider accent. One master still serves every theme.
 /// Ensembles and providers with a baked glyph use the monoline PNG;
 /// providers without one (qwen, unknown) keep the original dot.
 public struct ProviderGlyphIcon: View {

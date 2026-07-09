@@ -128,11 +128,8 @@ public enum TWTheme {
                 provider: provider, modelId: modelId, modelLabel: modelLabel))
     }
 
-    /// High-contrast silhouette painted behind provider glyph linework.
-    /// Mirrors desktop `--provider-glyph-contrast-color`.
-    @MainActor public static var providerGlyphContrast: Color {
-        TWThemeStore.shared.systemTheme.isLight ? .black : .white
-    }
+    /// Black silhouette painted behind provider glyph linework in every theme.
+    public static let providerGlyphContrast = Color.black
 
     /// Display label matching the desktop's provider naming.
     public static func providerLabel(_ provider: String?) -> String {

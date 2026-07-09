@@ -15,18 +15,9 @@ describe('provider glyph contrast CSS', () => {
     expect(css).toContain('stroke-width: 2.85')
   })
 
-  it('switches between white dark-mode and black light-mode contrast tokens', () => {
+  it('keeps the outline black in every theme and surface', () => {
+    const glyphCss = readRepoFile('src/renderer/src/assets/css/02-transcript-messages-fx.css')
     const theme = readRepoFile('src/renderer/src/styles/theme.css')
-
-    expect(theme).toContain('--provider-glyph-contrast-color: #FFFFFF')
-    expect(theme).toContain('[data-theme="light"]')
-    expect(theme).toContain('--provider-glyph-contrast-color: #000000')
-    expect(theme).toMatch(
-      /@media \(prefers-color-scheme: light\)\s*{\s*:root\[data-theme="system"\][^{]*{[^}]*--provider-glyph-contrast-color: #000000/s
-    )
-  })
-
-  it('tracks inverted composer surface polarity', () => {
     const themePicker = readRepoFile(
       'src/renderer/src/assets/css/08-theme-picker-overrides.css'
     )
@@ -34,9 +25,9 @@ describe('provider glyph contrast CSS', () => {
       'src/renderer/src/assets/css/10-provider-shell-overrides.css'
     )
 
-    expect(themePicker).toContain('--provider-glyph-contrast-color: #FFFFFF')
-    expect(themePicker).toContain('--provider-glyph-contrast-color: #000000')
-    expect(providerShells).toContain('--provider-glyph-contrast-color: #FFFFFF')
-    expect(providerShells).toContain('--provider-glyph-contrast-color: #000000')
+    expect(glyphCss.match(/(?:fill|stroke): #000000/g)?.length).toBeGreaterThanOrEqual(5)
+    for (const css of [glyphCss, theme, themePicker, providerShells]) {
+      expect(css).not.toContain('--provider-glyph-contrast-color')
+    }
   })
 })

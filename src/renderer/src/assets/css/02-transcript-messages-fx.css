@@ -3067,20 +3067,19 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
 
 /* Contrast pass: a 1-unit wider silhouette behind the accent linework.
  * That is the SVG equivalent of a 1px centred outline at the native 24px
- * size. Theme tokens choose white on dark surfaces and black on light
- * surfaces. */
+ * size. The outline stays black in every theme. */
 .provider-glyph-contrast-outline {
   pointer-events: none;
 }
 
 .provider-glyph-contrast-outline .provider-glyph-line {
-  stroke: var(--provider-glyph-contrast-color, #FFFFFF);
+  stroke: #000000;
   stroke-width: 2.75;
   opacity: 1;
 }
 
 .provider-glyph-contrast-outline .provider-glyph-accent {
-  stroke: var(--provider-glyph-contrast-color, #FFFFFF);
+  stroke: #000000;
   stroke-width: 2.85;
   opacity: 1;
 }
@@ -3092,14 +3091,14 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
 
 .provider-glyph-contrast-outline .provider-glyph-soft {
   fill: none;
-  stroke: var(--provider-glyph-contrast-color, #FFFFFF);
+  stroke: #000000;
   stroke-width: 1;
   opacity: 1;
 }
 
 .provider-glyph-contrast-outline .provider-glyph-dot {
-  fill: var(--provider-glyph-contrast-color, #FFFFFF);
-  stroke: var(--provider-glyph-contrast-color, #FFFFFF);
+  fill: #000000;
+  stroke: #000000;
   stroke-width: 1;
   opacity: 1;
 }

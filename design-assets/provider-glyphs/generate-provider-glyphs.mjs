@@ -138,18 +138,6 @@ const providers = [
 ]
 
 const style = `
-  [data-provider-glyph],
-  [data-provider-glyph-catalog] {
-    --provider-glyph-contrast: var(--provider-glyph-contrast-color, #000000);
-  }
-
-  @media (prefers-color-scheme: dark) {
-    [data-provider-glyph],
-    [data-provider-glyph-catalog] {
-      --provider-glyph-contrast: var(--provider-glyph-contrast-color, #FFFFFF);
-    }
-  }
-
   .line {
     fill: none;
     stroke: var(--provider-accent);
@@ -187,13 +175,13 @@ const style = `
   }
 
   .contrast-outline .line {
-    stroke: var(--provider-glyph-contrast);
+    stroke: #000000;
     stroke-width: ${contrastLineWidth};
     opacity: 1;
   }
 
   .contrast-outline .accent {
-    stroke: var(--provider-glyph-contrast);
+    stroke: #000000;
     stroke-width: ${contrastAccentWidth};
     opacity: 1;
   }
@@ -205,14 +193,14 @@ const style = `
 
   .contrast-outline .soft {
     fill: none;
-    stroke: var(--provider-glyph-contrast);
+    stroke: #000000;
     stroke-width: ${contrastStrokeWidth};
     opacity: 1;
   }
 
   .contrast-outline .dot {
-    fill: var(--provider-glyph-contrast);
-    stroke: var(--provider-glyph-contrast);
+    fill: #000000;
+    stroke: #000000;
     stroke-width: ${contrastStrokeWidth};
     opacity: 1;
   }

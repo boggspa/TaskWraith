@@ -3,18 +3,6 @@
   <desc id="provider-glyph-cursor-desc">Original monoline pointer with insertion caret mnemonic for Cursor. Not an official logo.</desc>
   <style>
 
-  [data-provider-glyph],
-  [data-provider-glyph-catalog] {
-    --provider-glyph-contrast: var(--provider-glyph-contrast-color, #000000);
-  }
-
-  @media (prefers-color-scheme: dark) {
-    [data-provider-glyph],
-    [data-provider-glyph-catalog] {
-      --provider-glyph-contrast: var(--provider-glyph-contrast-color, #FFFFFF);
-    }
-  }
-
   .line {
     fill: none;
     stroke: var(--provider-accent);
@@ -52,13 +40,13 @@
   }
 
   .contrast-outline .line {
-    stroke: var(--provider-glyph-contrast);
+    stroke: #000000;
     stroke-width: 2.75;
     opacity: 1;
   }
 
   .contrast-outline .accent {
-    stroke: var(--provider-glyph-contrast);
+    stroke: #000000;
     stroke-width: 2.85;
     opacity: 1;
   }
@@ -70,14 +58,14 @@
 
   .contrast-outline .soft {
     fill: none;
-    stroke: var(--provider-glyph-contrast);
+    stroke: #000000;
     stroke-width: 1;
     opacity: 1;
   }
 
   .contrast-outline .dot {
-    fill: var(--provider-glyph-contrast);
-    stroke: var(--provider-glyph-contrast);
+    fill: #000000;
+    stroke: #000000;
     stroke-width: 1;
     opacity: 1;
   }
