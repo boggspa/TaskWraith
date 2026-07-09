@@ -2328,25 +2328,32 @@
    * jump-to-latest pill / composer are .app-transcript siblings, so only
    * .transcript-inner is masked. A mask is paint-only — it never changes
    * scrollTop/scrollHeight, so the auto-follow / scroll-override logic is untouched. */
-  --transcript-composer-fade: 88px;
+  --transcript-composer-fade: 176px;
   --transcript-composer-fade-anchor: calc(
     var(--composer-reserved-height) + var(--composer-bottom-gap) +
       env(safe-area-inset-bottom, 0px)
   );
+  /* Easing stops are a FRACTION of the fade band (not fixed px), so growing
+   * --transcript-composer-fade stretches the whole ease-out — broader AND
+   * smoother — instead of just starting higher with the same hard near-edge. */
   -webkit-mask-image: linear-gradient(
     to bottom,
     #000 0,
     #000 calc(100% - var(--transcript-composer-fade-anchor) - var(--transcript-composer-fade)),
-    rgba(0, 0, 0, 0.72) calc(100% - var(--transcript-composer-fade-anchor) - 32px),
-    rgba(0, 0, 0, 0.18) calc(100% - var(--transcript-composer-fade-anchor) - 10px),
+    rgba(0, 0, 0, 0.72)
+      calc(100% - var(--transcript-composer-fade-anchor) - var(--transcript-composer-fade) * 0.36),
+    rgba(0, 0, 0, 0.18)
+      calc(100% - var(--transcript-composer-fade-anchor) - var(--transcript-composer-fade) * 0.11),
     transparent calc(100% - var(--transcript-composer-fade-anchor))
   );
   mask-image: linear-gradient(
     to bottom,
     #000 0,
     #000 calc(100% - var(--transcript-composer-fade-anchor) - var(--transcript-composer-fade)),
-    rgba(0, 0, 0, 0.72) calc(100% - var(--transcript-composer-fade-anchor) - 32px),
-    rgba(0, 0, 0, 0.18) calc(100% - var(--transcript-composer-fade-anchor) - 10px),
+    rgba(0, 0, 0, 0.72)
+      calc(100% - var(--transcript-composer-fade-anchor) - var(--transcript-composer-fade) * 0.36),
+    rgba(0, 0, 0, 0.18)
+      calc(100% - var(--transcript-composer-fade-anchor) - var(--transcript-composer-fade) * 0.11),
     transparent calc(100% - var(--transcript-composer-fade-anchor))
   );
 }
