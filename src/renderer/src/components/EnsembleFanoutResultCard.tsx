@@ -20,6 +20,11 @@ import {
 } from './EnsembleFanoutResultCardModel'
 
 const COLLAPSED_FANOUT_PART_LIMIT = 24
+// Collapsed height cap for the outer result body. Longer outputs scroll within
+// this window (with an edge fade) until the card is expanded; shorter ones size
+// to fit. 288 = the prior 240 grown ~20% so more of a long lane is visible at
+// rest without dominating the transcript.
+const COLLAPSED_FANOUT_RESULT_VIEWPORT_HEIGHT = 288
 const COLLAPSED_FANOUT_TOOL_VIEWPORT_HEIGHT = 184
 const COLLAPSED_FANOUT_MARKDOWN_LIMIT = 6_000
 const COLLAPSED_FANOUT_PREVIEW_CHARS = 2_400
@@ -251,7 +256,7 @@ export function EnsembleFanoutResultCard({
         <LiveActivityViewport
           className="ensemble-fanout-result-viewport"
           revision={revision}
-          collapsedMaxHeight={240}
+          collapsedMaxHeight={COLLAPSED_FANOUT_RESULT_VIEWPORT_HEIGHT}
           expanded={expanded}
           onExpandedChange={onExpandedChange}
           label={`${role} fan-out result`}

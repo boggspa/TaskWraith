@@ -5759,7 +5759,10 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
 .ensemble-fanout-result-viewport {
   margin: 0;
   padding-left: 12px;
-  --live-activity-edge-fade-size: 44px;
+  /* Softer, more gracious top/bottom fade to match the taller collapsed window
+     (COLLAPSED_FANOUT_RESULT_VIEWPORT_HEIGHT) — the longer mask band eases long
+     lanes into the scroll edges instead of clipping them abruptly. */
+  --live-activity-edge-fade-size: 60px;
 }
 
 .ensemble-fanout-result-viewport .live-activity-viewport-rail {
