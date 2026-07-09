@@ -443,11 +443,58 @@ describe('resolveEffectiveRunPermissions', () => {
     expect(resolved.externalPathGrants).toEqual([grant])
   })
 
-  it('clamps preview-risk Codex models to explicit approvals and denies network access', () => {
+  // GA GPT-5.6 (concrete slugs) is no longer preview-risk — full GPT-5.5 parity,
+  // no clamp. The preview-risk CLAMP machinery is exercised by the placeholder
+  // test below (and the Claude placeholder test further down).
+  it('gives GA GPT-5.6 Codex models full permissions (5.5 parity, no preview-risk clamp)', () => {
     const resolved = resolveEffectiveRunPermissions({
       provider: 'codex',
       workspacePath: '/repo',
       model: 'gpt-5.6-sol',
+      settings: settings({
+        agenticServices: {
+          shellCommands: 'ask',
+          fileChanges: 'ask',
+          mcpTools: 'ask',
+          subThreadDelegation: 'ask',
+          canvasInteraction: 'ask',
+          canvasEval: 'ask',
+          mediaEditing: 'ask',
+          mediaRecording: 'deny',
+          networkAccess: 'allow'
+        },
+        agenticWorkspaceGrants: [
+          {
+            id: 'workspace-grant-shell',
+            provider: 'codex',
+            workspacePath: '/repo',
+            service: 'shellCommands',
+            createdAt: '2026-06-29T00:00:00.000Z',
+            updatedAt: '2026-06-29T00:00:00.000Z'
+          }
+        ]
+      }),
+      presetId: 'full_access'
+    })
+
+    expect(resolved.approvalMode).toBe('auto_edit')
+    expect(resolved.networkAccess).toBe('allow')
+    expect(resolved.workspaceGrantServiceIds).toEqual(['shellCommands'])
+    expect(resolved.agenticServices.shellCommands).toBe('allow')
+    expect(resolved.agenticServices.fileChanges).toBe('allow')
+    expect(resolved.agenticServices.mcpTools).toBe('allow')
+    expect(resolved.agenticServices.subThreadDelegation).toBe('allow')
+    expect(resolved.agenticServices.canvasInteraction).toBe('allow')
+    expect(resolved.agenticServices.mediaEditing).toBe('allow')
+  })
+
+  it('clamps preview-risk Codex PLACEHOLDER models to explicit approvals and denies network', () => {
+    // Legacy preview:… placeholder ids stay preview-risk (isPreviewModelPlaceholder)
+    // so the clamp machinery is still covered for the next codex preview family.
+    const resolved = resolveEffectiveRunPermissions({
+      provider: 'codex',
+      workspacePath: '/repo',
+      model: 'preview:openai:gpt-5.6:sol',
       settings: settings({
         agenticServices: {
           shellCommands: 'ask',

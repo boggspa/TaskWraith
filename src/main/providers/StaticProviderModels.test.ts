@@ -19,6 +19,10 @@ describe('codexModelContextConfig', () => {
   it('returns the explicit 1M config for long-context Codex models', () => {
     expect(codexModelContextConfig('gpt-5.5')).toEqual(longContextConfig)
     expect(codexModelContextConfig('gpt-5.4')).toEqual(longContextConfig)
+    // GPT-5.6 trio (GA) — same long-context override as gpt-5.5 for parity.
+    expect(codexModelContextConfig('gpt-5.6-sol')).toEqual(longContextConfig)
+    expect(codexModelContextConfig('gpt-5.6-terra')).toEqual(longContextConfig)
+    expect(codexModelContextConfig('gpt-5.6-luna')).toEqual(longContextConfig)
   })
 
   it('maps TaskWraith default aliases to GPT-5.5 context config', () => {
@@ -198,6 +202,10 @@ describe('getStaticProviderModels (provider-specific catalogs)', () => {
       includePreviewModels: true
     }) as StaticModelShape[]
     expect(models.find((model) => model.isDefault)?.id).toBe('gpt-5.5')
+    // GPT-5.6 trio leads the codex list (above 5.5) without changing the default.
+    const ids = models.map((model) => model.id)
+    expect(ids.slice(0, 3)).toEqual(['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna'])
+    expect(ids.indexOf('gpt-5.6-sol')).toBeLessThan(ids.indexOf('gpt-5.5'))
     const sol = models.find((model) => model.id === 'gpt-5.6-sol')
     const terra = models.find((model) => model.id === 'gpt-5.6-terra')
     const luna = models.find((model) => model.id === 'gpt-5.6-luna')
@@ -211,7 +219,8 @@ describe('getStaticProviderModels (provider-specific catalogs)', () => {
       'medium',
       'high',
       'xhigh',
-      'max'
+      'max',
+      'ultracode'
     ])
     expect(terra).toMatchObject({ disabled: false, runnable: true })
     expect(terra?.supportedReasoningEfforts?.map((option) => option.reasoningEffort)).toEqual([
@@ -241,14 +250,14 @@ describe('getStaticProviderModels (provider-specific catalogs)', () => {
     expect(isPreviewCatalogModelId('preview:openai:gpt-5.6:sol')).toBe(false)
   })
 
-  it('adds Max reasoning only for GPT-5.6 Sol Codex rows', () => {
+  it('adds Max + Ultracode reasoning only for GPT-5.6 Sol Codex rows', () => {
     expect(
       codexReasoningEffortsForModel('gpt-5.6-sol', [
         { reasoningEffort: 'medium' },
         { reasoningEffort: 'high' },
         { reasoningEffort: 'xhigh' }
       ]).map((option) => option.reasoningEffort)
-    ).toEqual(['low', 'medium', 'high', 'xhigh', 'max'])
+    ).toEqual(['low', 'medium', 'high', 'xhigh', 'max', 'ultracode'])
     expect(
       codexReasoningEffortsForModel('gpt-5.6-terra', [
         { reasoningEffort: 'medium' },

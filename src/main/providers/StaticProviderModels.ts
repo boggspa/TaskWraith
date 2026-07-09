@@ -65,6 +65,21 @@ const CODEX_MODEL_CONTEXT_CONFIGS: Readonly<Record<string, CodexModelContextConf
   'gpt-5.4': {
     model_context_window: CODEX_LONG_CONTEXT_WINDOW,
     model_auto_compact_token_limit: CODEX_LONG_CONTEXT_AUTO_COMPACT_LIMIT
+  },
+  // GPT-5.6 trio (GA) — same long-context override as gpt-5.5/5.4 for parity.
+  // CONFIRM against the live Codex CLI `model/list` model_context_window once
+  // gpt-5.6 ships, in case OpenAI publishes a different window.
+  'gpt-5.6-sol': {
+    model_context_window: CODEX_LONG_CONTEXT_WINDOW,
+    model_auto_compact_token_limit: CODEX_LONG_CONTEXT_AUTO_COMPACT_LIMIT
+  },
+  'gpt-5.6-terra': {
+    model_context_window: CODEX_LONG_CONTEXT_WINDOW,
+    model_auto_compact_token_limit: CODEX_LONG_CONTEXT_AUTO_COMPACT_LIMIT
+  },
+  'gpt-5.6-luna': {
+    model_context_window: CODEX_LONG_CONTEXT_WINDOW,
+    model_auto_compact_token_limit: CODEX_LONG_CONTEXT_AUTO_COMPACT_LIMIT
   }
 }
 

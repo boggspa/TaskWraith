@@ -196,13 +196,14 @@ describe('ProviderPreflightService', () => {
     }
   })
 
-  it('allows preview-risk model ids when access has been proven by the caller', () => {
+  it('runs GA GPT-5.6 concrete ids with no preview-access gate (5.5 parity)', () => {
+    // gpt-5.6-sol/terra/luna are GA now — not preview-risk — so dispatch is ready
+    // WITHOUT any previewModelAccessProven flag (unlike a stale preview:… placeholder).
     const result = service.evaluate(
       {
         provider: 'codex',
         workspacePath: '/repo',
-        model: 'gpt-5.6-sol',
-        previewModelAccessProven: true
+        model: 'gpt-5.6-sol'
       },
       contract(),
       defaultProviderDescriptor('codex')

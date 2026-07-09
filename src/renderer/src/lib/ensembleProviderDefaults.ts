@@ -166,7 +166,16 @@ const OLLAMA_MODELS: CombinedModelPickerModelOption[] = [
   { id: 'nemotron3:33b', label: 'Nemotron 3 Nano Omni (33B Param)' }
 ]
 
-const CODEX_FAST_CAPABLE = new Set<string>(['gpt-5.5', 'gpt-5.4'])
+const CODEX_FAST_CAPABLE = new Set<string>([
+  'gpt-5.5',
+  'gpt-5.4',
+  // GPT-5.6 trio (GA, 5.5 parity) — all expose the Fast speed tier
+  // (additionalSpeedTiers:['fast'] in the preview catalog); the solo composer
+  // derives Fast dynamically from that field, so mirror it here for ensemble seats.
+  'gpt-5.6-sol',
+  'gpt-5.6-terra',
+  'gpt-5.6-luna'
+])
 // Fast mode is Opus/Fable-only, and the default picker exposes the 1M Opus rows.
 const CLAUDE_FAST_CAPABLE = new Set<string>([
   'claude-opus-4-8-1m',

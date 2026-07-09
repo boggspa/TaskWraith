@@ -44,12 +44,19 @@ const OPENAI_GPT56_SOL_REASONING_EFFORTS = [
   { reasoningEffort: 'ultracode' }
 ]
 
-// 2026-07-07 — GPT-5.6 launch-day un-gate. The trio is selectable and
-// runnable with concrete slugs; the run-time safety net is unchanged:
-// ProviderPreflightService still treats every gpt-5.6* id as preview-risk and
-// blocks dispatch with "Requires OpenAI preview access" until the live Codex
-// CLI `model/list` returns the id (previewModelAccessProvenForPayload), so a
-// not-yet-released model errors cleanly instead of failing mid-run.
+// 2026-07-07 — GPT-5.6 launch-day un-gate: the trio became selectable and
+// runnable with concrete slugs (59357640e), but isPreviewRiskModel still flagged
+// every gpt-5.6* id, so ProviderPreflightService blocked dispatch until the live
+// Codex CLI `model/list` echoed the id back.
+// 2026-07-09 — GPT-5.6 full parity: isPreviewRiskModel('codex', <concrete
+// gpt-5.6* id>) now returns false, so NONE of the 5 preview-risk clamps apply —
+// not the preflight block, not EffectiveRunPermissions' service/network/
+// approvalMode caps, not ComposerService's attended/unattended caps, not
+// EnsembleOrchestrator's unattended read_only force. The trio behaves exactly
+// like gpt-5.5. Stale `preview:openai:gpt-5.6:*` PLACEHOLDER ids still resolve
+// preview-risk via isPreviewModelPlaceholder — harmless: they're legacy persisted
+// ids only, rewritten to a concrete slug by normalizeCodexModel on read, so no
+// live run reaches a clamp carrying the placeholder string.
 export const PREVIEW_MODEL_CATALOG: PreviewModelCatalogEntry[] = [
   {
     id: 'gpt-5.6-sol',
@@ -149,7 +156,12 @@ export function isPreviewRiskModel(provider: string, model?: string | null): boo
   if (!id) return false
   if (isPreviewModelPlaceholder(id)) return true
   if (provider === 'codex') {
-    return /^gpt-5\.6(?:$|[^0-9])/i.test(id)
+    // GPT-5.6 (sol/terra/luna) is GA now: concrete gpt-5.6* ids are runnable
+    // models with full GPT-5.5 parity, NOT preview-risk. This branch is kept as
+    // the structural slot for the NEXT codex preview family — add its regex here
+    // when one ships gated behind explicit access (mirrors the claude branch
+    // below, narrowed the same way when claude-sonnet-5 went GA in e7b906273).
+    return false
   }
   if (provider === 'claude') {
     // Concrete Claude 5 family ids are runnable model ids now; only explicit

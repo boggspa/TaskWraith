@@ -963,7 +963,7 @@ describe('composeRun effectivePermissions (single-run read-only enforcement)', (
     )
   })
 
-  it('forces preview-risk interactive runs down to prompt-first permissions', () => {
+  it('runs GA GPT-5.6 interactive runs with full user-chosen permissions (5.5 parity)', () => {
     const payload = compose(
       { provider: 'codex', providerMetadata: { approvalMode: 'auto_edit' } },
       {
@@ -974,13 +974,13 @@ describe('composeRun effectivePermissions (single-run read-only enforcement)', (
       }
     )
 
-    expect(payload.approvalMode).toBe('default')
+    expect(payload.approvalMode).toBe('auto_edit')
     expect(payload.effectivePermissions?.readOnly).toBe(false)
-    expect(payload.effectivePermissions?.approvalMode).toBe('default')
-    expect(payload.effectivePermissions?.agenticServices.shellCommands).toBe('ask')
-    expect(payload.effectivePermissions?.agenticServices.fileChanges).toBe('ask')
+    expect(payload.effectivePermissions?.approvalMode).toBe('auto_edit')
+    expect(payload.effectivePermissions?.agenticServices.shellCommands).toBe('workspace')
+    expect(payload.effectivePermissions?.agenticServices.fileChanges).toBe('workspace')
     expect(payload.effectivePermissions?.agenticServices.mcpTools).toBe('ask')
-    expect(payload.effectivePermissions?.networkAccess).toBe('deny')
+    expect(payload.effectivePermissions?.networkAccess).toBe('allow')
   })
 })
 
@@ -1336,16 +1336,16 @@ describe('composeRun unattended ELEVATION (P2 verified ack honoring)', () => {
     ).toBe(true)
   })
 
-  it('keeps preview-risk scheduled runs read-only even with a verified full-access ack', () => {
+  it('honors a verified full-access ack for GA GPT-5.6 scheduled runs (5.5 parity)', () => {
     const payload = composeUnattended({ level: 'full_access', mode: 'auto_edit' }, undefined, {
       selectedModelType: 'gpt-5.6-sol'
     })
 
-    expect(payload.approvalMode).toBe('plan')
-    expect(payload.effectivePermissions?.presetId).toBe('read_only')
-    expect(payload.effectivePermissions?.readOnly).toBe(true)
-    expect(payload.effectivePermissions?.agenticServices.shellCommands).toBe('deny')
-    expect(payload.effectivePermissions?.agenticServices.fileChanges).toBe('deny')
+    expect(payload.approvalMode).toBe('auto_edit')
+    expect(payload.effectivePermissions?.presetId).toBe('workspace_write')
+    expect(payload.effectivePermissions?.readOnly).toBe(false)
+    expect(payload.effectivePermissions?.agenticServices.shellCommands).toBe('workspace')
+    expect(payload.effectivePermissions?.agenticServices.fileChanges).toBe('workspace')
   })
 
   it('rechecks current service policy for a verified elevated scheduled run', () => {

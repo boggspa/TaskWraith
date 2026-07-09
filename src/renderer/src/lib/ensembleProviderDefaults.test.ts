@@ -259,6 +259,10 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
     expect(codex.modelOptions.map((option) => option.id)).toEqual(
       expect.arrayContaining(['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna'])
     )
+    // GA parity: ensemble seats get the Fast toggle the trio already gets solo.
+    expect(codex.fastModeCapableModelIds.has('gpt-5.6-sol')).toBe(true)
+    expect(codex.fastModeCapableModelIds.has('gpt-5.6-terra')).toBe(true)
+    expect(codex.fastModeCapableModelIds.has('gpt-5.6-luna')).toBe(true)
   })
 
   it('does not expose Default or CLI Default as ensemble picker model rows', () => {
