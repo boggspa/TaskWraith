@@ -337,9 +337,9 @@
   display: grid;
   grid-auto-flow: column;
   grid-auto-columns: minmax(270px, 1fr);
+  align-items: start;
   gap: 12px;
-  overflow-x: auto;
-  overflow-y: hidden;
+  overflow: auto;
   padding-bottom: 8px;
 }
 
