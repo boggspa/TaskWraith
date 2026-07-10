@@ -424,6 +424,7 @@ import { hydrateParticipantsWithPooledAgentIdentity } from './lib/ensembleAgentP
 import {
   buildProviderChangeParticipantPatch,
   getDefaultEnsembleParticipantConfig,
+  normalizeProviderModelSelection,
   resolveEnsembleParticipantSettings
 } from './lib/ensembleProviderDefaults'
 import {
@@ -5283,6 +5284,40 @@ function App(): React.JSX.Element {
   }
   const sideWorkspace = sideChat ? getWorkspaceForChat(sideChat) : null
 
+  const refreshProviderModelCatalog = async (provider: ProviderId): Promise<void> => {
+    if (isRetiredProvider(provider) || typeof window.api.getAgentModels !== 'function') return
+    try {
+      const models = await window.api.getAgentModels(provider)
+      const normalized =
+        provider === 'kimi'
+          ? KIMI_DEFAULT_MODELS
+          : provider === 'ollama'
+            ? mergeOllamaModelCatalog(
+                Array.isArray(models)
+                  ? models.map((model) => ({ ...model, label: model.label || model.id }))
+                  : []
+              )
+            : Array.isArray(models) && models.length > 0
+              ? models.map((model) => ({ ...model, label: model.label || model.id }))
+              : provider === 'claude'
+                ? CLAUDE_DEFAULT_MODELS
+                : CODEX_DEFAULT_MODELS
+      if (provider === 'codex') {
+        setCodexModels(normalized)
+      } else {
+        setAgentModelsByProvider((prev) => ({ ...prev, [provider]: normalized }))
+      }
+    } catch {
+      if (provider === 'codex') setCodexModels(CODEX_DEFAULT_MODELS)
+      if (provider === 'claude')
+        setAgentModelsByProvider((prev) => ({ ...prev, claude: CLAUDE_DEFAULT_MODELS }))
+      if (provider === 'kimi')
+        setAgentModelsByProvider((prev) => ({ ...prev, kimi: KIMI_DEFAULT_MODELS }))
+      if (provider === 'ollama')
+        setAgentModelsByProvider((prev) => ({ ...prev, ollama: mergeOllamaModelCatalog([]) }))
+    }
+  }
+
   const refreshProviderMetadata = async (
     provider: ProviderId,
     workspacePath: string | null | undefined = currentWorkspace?.path
@@ -5301,40 +5336,7 @@ function App(): React.JSX.Element {
     if (provider === 'gemini' || typeof window.api.getAgentStatus !== 'function') {
       return
     }
-    if (typeof window.api.getAgentModels === 'function') {
-      window.api
-        .getAgentModels(provider)
-        .then((models) => {
-          const normalized =
-            provider === 'kimi'
-              ? KIMI_DEFAULT_MODELS
-              : provider === 'ollama'
-                ? mergeOllamaModelCatalog(
-                    Array.isArray(models)
-                      ? models.map((model) => ({ ...model, label: model.label || model.id }))
-                      : []
-                  )
-              : Array.isArray(models) && models.length > 0
-                ? models.map((model) => ({ ...model, label: model.label || model.id }))
-                : provider === 'claude'
-                  ? CLAUDE_DEFAULT_MODELS
-                  : CODEX_DEFAULT_MODELS
-          if (provider === 'codex') {
-            setCodexModels(normalized)
-          } else {
-            setAgentModelsByProvider((prev) => ({ ...prev, [provider]: normalized }))
-          }
-        })
-        .catch(() => {
-          if (provider === 'codex') setCodexModels(CODEX_DEFAULT_MODELS)
-          if (provider === 'claude')
-            setAgentModelsByProvider((prev) => ({ ...prev, claude: CLAUDE_DEFAULT_MODELS }))
-          if (provider === 'kimi')
-            setAgentModelsByProvider((prev) => ({ ...prev, kimi: KIMI_DEFAULT_MODELS }))
-          if (provider === 'ollama')
-            setAgentModelsByProvider((prev) => ({ ...prev, ollama: mergeOllamaModelCatalog([]) }))
-        })
-    }
+    void refreshProviderModelCatalog(provider)
     window.api
       .getAgentStatus(provider)
       .then((status) => {
@@ -5614,7 +5616,11 @@ function App(): React.JSX.Element {
     }
     setChatContextTurns(clampContextTurns(s.chatContextTurns))
     setGeminiCheckpointingEnabled(Boolean(s.geminiCheckpointingEnabled))
-    void refreshProviderMetadata(coerceLiveProvider(s.activeProvider))
+    const initialProvider = coerceLiveProvider(s.activeProvider)
+    void refreshProviderMetadata(initialProvider)
+    for (const provider of ['codex', 'claude', 'kimi', 'ollama'] as ProviderId[]) {
+      if (provider !== initialProvider) void refreshProviderModelCatalog(provider)
+    }
     // 1.0.6-G3d — derive Grok availability from the registered adapters (the
     // registry includes 'grok' only when the experimental gate is on).
     if (typeof window.api.getProviderAdapters === 'function') {
@@ -6311,6 +6317,7 @@ function App(): React.JSX.Element {
       options: {
         approvalMode: string
         workflowMode?: ChatWorkflowMode
+        model?: string
       }
     ): {
       change: PendingProviderChange
@@ -6318,17 +6325,26 @@ function App(): React.JSX.Element {
       nextRuntimeProfileId: string
     } => {
       const defaults = buildProviderChangeParticipantPatch(provider)
+      const requestedModel = options.model?.trim()
       const nextModel =
-        typeof defaults.model === 'string' && defaults.model
+        requestedModel ||
+        (typeof defaults.model === 'string' && defaults.model
           ? defaults.model
-          : getDefaultModelForProvider(provider)
+          : getDefaultModelForProvider(provider))
       const nextRuntimeProfileId = defaultRuntimeProfileIdForProvider(provider)
-      const claudeModelOption =
-        provider === 'claude'
-          ? (agentModelsByProvider.claude || CLAUDE_DEFAULT_MODELS).find(
-              (model) => model.id === nextModel
-            )
-          : undefined
+      const modelMetadata =
+        provider === 'codex'
+          ? codexModels.find((model) => model.id === nextModel)
+          : provider === 'claude'
+            ? (agentModelsByProvider.claude || CLAUDE_DEFAULT_MODELS).find(
+                (model) => model.id === nextModel
+              )
+            : undefined
+      const normalizedSelection = normalizeProviderModelSelection(
+        provider,
+        nextModel,
+        modelMetadata
+      )
       const providerMetadata: Record<string, unknown> = {
         selectedModelType: nextModel,
         customModel: '',
@@ -6337,27 +6353,20 @@ function App(): React.JSX.Element {
         runtimeProfileId: nextRuntimeProfileId,
         geminiAuthProfileId: provider === 'gemini' ? null : undefined,
         codexReasoningEffort:
-          provider === 'codex' ? defaults.reasoningEffort || 'medium' : undefined,
-        codexServiceTier:
-          provider === 'codex'
-            ? defaults.serviceTier || (defaults.fastModeEnabled ? 'fast' : '')
-            : undefined,
+          provider === 'codex' ? normalizedSelection.reasoningEffort || '' : undefined,
+        codexServiceTier: provider === 'codex' ? normalizedSelection.serviceTier || '' : undefined,
         claudeReasoningEffort:
-          provider === 'claude'
-            ? defaults.reasoningEffort || resolveClaudeDefaultReasoningEffort(claudeModelOption)
-            : undefined,
-        claudeFastMode: provider === 'claude' ? Boolean(defaults.fastModeEnabled) : undefined,
+          provider === 'claude' ? normalizedSelection.reasoningEffort || '' : undefined,
+        claudeFastMode:
+          provider === 'claude' ? Boolean(normalizedSelection.fastModeEnabled) : undefined,
         kimiThinkingEnabled:
-          provider === 'kimi' ? (defaults.thinkingEnabled ?? true) : undefined,
+          provider === 'kimi' ? Boolean(normalizedSelection.thinkingEnabled) : undefined,
         grokReasoningEffort:
-          provider === 'grok'
-            ? defaults.reasoningEffort || GROK_45_DEFAULT_REASONING_EFFORT
-            : undefined,
+          provider === 'grok' ? normalizedSelection.reasoningEffort || '' : undefined,
         cursorReasoningEffort:
-          provider === 'cursor'
-            ? defaults.reasoningEffort || GROK_45_DEFAULT_REASONING_EFFORT
-            : undefined,
-        cursorFastMode: provider === 'cursor' ? Boolean(defaults.fastModeEnabled) : undefined
+          provider === 'cursor' ? normalizedSelection.reasoningEffort || '' : undefined,
+        cursorFastMode:
+          provider === 'cursor' ? Boolean(normalizedSelection.fastModeEnabled) : undefined
       }
       return {
         change: {
@@ -6369,17 +6378,23 @@ function App(): React.JSX.Element {
         nextRuntimeProfileId
       }
     },
-    [agentModelsByProvider.claude, defaultRuntimeProfileIdForProvider, getDefaultModelForProvider]
+    [
+      agentModelsByProvider.claude,
+      codexModels,
+      defaultRuntimeProfileIdForProvider,
+      getDefaultModelForProvider
+    ]
   )
 
-  const handleProviderChange = async (provider: ProviderId) => {
+  const handleProviderChange = async (provider: ProviderId, model?: string) => {
     const pendingProvider =
       currentChat && currentChat.chatKind !== 'ensemble'
         ? readPendingProviderChange(currentChat)?.provider
         : null
     if (provider === (pendingProvider || currentProvider)) return
     const { change, nextModel, nextRuntimeProfileId } = buildQueuedProviderChange(provider, {
-      approvalMode
+      approvalMode,
+      model
     })
     const queueAtTurnEnd = Boolean(currentChat && isCurrentChatRunning)
     if (currentChat) {
@@ -6407,12 +6422,24 @@ function App(): React.JSX.Element {
         })
       }
     } else {
+      const metadata = change.providerMetadata || {}
       setActiveProvider(provider)
       setSelectedModelType(nextModel)
-      setLastNonCustomModelType(nextModel)
+      if (nextModel !== 'custom') setLastNonCustomModelType(nextModel)
       setCustomModel('')
-      if (provider === 'kimi') {
-        setKimiThinkingEnabled(true)
+      if (provider === 'codex') {
+        setCodexReasoningEffort(String(metadata.codexReasoningEffort || 'medium'))
+        setCodexServiceTier(String(metadata.codexServiceTier || ''))
+      } else if (provider === 'claude') {
+        setClaudeReasoningEffort(String(metadata.claudeReasoningEffort || ''))
+        setClaudeFastMode(Boolean(metadata.claudeFastMode))
+      } else if (provider === 'kimi') {
+        setKimiThinkingEnabled(metadata.kimiThinkingEnabled !== false)
+      } else if (provider === 'grok') {
+        setGrokReasoningEffort(String(metadata.grokReasoningEffort || ''))
+      } else if (provider === 'cursor') {
+        setCursorReasoningEffort(String(metadata.cursorReasoningEffort || ''))
+        setCursorFastMode(Boolean(metadata.cursorFastMode))
       }
       if (provider === 'gemini') {
         syncPersistentModelSelection(nextModel)
@@ -18663,7 +18690,7 @@ function App(): React.JSX.Element {
     if (!sideChat || isSideEnsembleComposerLocked) return
     rememberChatComposerSelectionById(sideChat.appChatId, patch)
   }
-  const handleSideProviderChange = (provider: ProviderId): void => {
+  const handleSideProviderChange = (provider: ProviderId, model?: string): void => {
     const pendingProvider = sidePendingProviderChange?.provider || sideComposerProvider
     if (
       !sideChat ||
@@ -18674,7 +18701,8 @@ function App(): React.JSX.Element {
     }
     const { change, nextModel, nextRuntimeProfileId } = buildQueuedProviderChange(provider, {
       approvalMode: sideSelectedApprovalMode,
-      workflowMode: sideComposerWorkflowMode
+      workflowMode: sideComposerWorkflowMode,
+      model
     })
     updateChatById(sideChat.appChatId, (source) => {
       const nextChat = isSideChatRunning
@@ -23260,7 +23288,7 @@ function App(): React.JSX.Element {
     [rememberChatComposerSelectionById]
   )
   const handleMultiviewPaneProviderChange = useCallback(
-    (_paneIndex: number, chatId: string, provider: ProviderId) => {
+    (_paneIndex: number, chatId: string, provider: ProviderId, model?: string) => {
       const paneChat = chatByIdRef.current.get(chatId)
       const pendingProvider =
         paneChat && paneChat.chatKind !== 'ensemble'
@@ -23276,7 +23304,8 @@ function App(): React.JSX.Element {
       const paneSelection = getChatComposerSelection(paneChat)
       const { change, nextModel, nextRuntimeProfileId } = buildQueuedProviderChange(provider, {
         approvalMode: paneSelection.approvalMode,
-        workflowMode: paneSelection.workflowMode
+        workflowMode: paneSelection.workflowMode,
+        model
       })
       const paneWorkspace = getWorkspaceForChat(paneChat)
       const paneBusy = isChatBusy(chatId)
@@ -24196,8 +24225,8 @@ function App(): React.JSX.Element {
     // ensemble dmTarget arg is a focused-only nicety here (TODO(per-pane)).
     const paneHandleRun = (): void => handleRunMultiviewPane(viewerPaneIndex, viewerChatId)
     const paneHandleCancel = (): void => handleCancelMultiviewPane(viewerPaneIndex, viewerChatId)
-    const paneHandleProviderChange = (provider: ProviderId): void =>
-      handleMultiviewPaneProviderChange(viewerPaneIndex, viewerChatId, provider)
+    const paneHandleProviderChange = (provider: ProviderId, model?: string): void =>
+      handleMultiviewPaneProviderChange(viewerPaneIndex, viewerChatId, provider, model)
     const paneRememberComposerSelection = (patch: Record<string, unknown>): void =>
       rememberMultiviewPaneComposerSelection(viewerChatId, patch)
     const focusPaneForGoalControl = (): void =>
@@ -25169,8 +25198,8 @@ function App(): React.JSX.Element {
       // ensemble dmTarget arg is a focused-only nicety here (TODO(per-pane)).
       const paneHandleRun = (): void => handleRunMultiviewPane(viewerPaneIndex, viewerChatId)
       const paneHandleCancel = (): void => handleCancelMultiviewPane(viewerPaneIndex, viewerChatId)
-      const paneHandleProviderChange = (provider: ProviderId): void =>
-        handleMultiviewPaneProviderChange(viewerPaneIndex, viewerChatId, provider)
+      const paneHandleProviderChange = (provider: ProviderId, model?: string): void =>
+        handleMultiviewPaneProviderChange(viewerPaneIndex, viewerChatId, provider, model)
       const paneRememberComposerSelection = (patch: Record<string, unknown>): void =>
         rememberMultiviewPaneComposerSelection(viewerChatId, patch)
       const focusPaneForGoalControl = (): void =>
