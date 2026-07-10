@@ -1845,6 +1845,7 @@ function App(): React.JSX.Element {
   // Right Panel Tabs
   const [rightTab, setRightTab] = useState<InspectorRightTab>('diff')
   const [rightDockTab, setRightDockTab] = useState<RightDockTab>('run')
+  const [showRightDockHome, setShowRightDockHome] = useState(false)
 
   // Version Preflight
   const [geminiVersion, setGeminiVersion] = useState<string>('unknown')
@@ -2811,6 +2812,8 @@ function App(): React.JSX.Element {
   }
   const isRightDockPanelOpen = (panelId: RightDockTab): boolean => {
     switch (panelId) {
+      case 'home':
+        return showRightDockHome
       case 'run':
         return showCockpit
       case 'media':
@@ -21237,6 +21240,7 @@ function App(): React.JSX.Element {
   )
   const isTerminalDockAvailable = showGeminiTerminal && currentProvider === 'gemini' && hasWorkspaceContext
   const rightDockTabs = buildRightDockTabs({
+    showHome: showRightDockHome,
     showCockpit,
     hasSideChat: Boolean(sideChat),
     isSideChatDockPanelOpen,
@@ -21284,6 +21288,14 @@ function App(): React.JSX.Element {
     group: 'session' | 'work' | 'inspect'
     hint?: string
   }> = [
+    {
+      id: 'home',
+      label: 'Home',
+      icon: <SidebarCornerIcon direction="right" isOpen={showRightDockHome} />,
+      enabled: true,
+      group: 'session',
+      hint: 'All sidebar destinations'
+    },
     {
       id: 'chat',
       label: 'Chat',
@@ -21347,6 +21359,9 @@ function App(): React.JSX.Element {
   }
   const closeRightDockPanel = (panelId: RightDockTab) => {
     switch (panelId) {
+      case 'home':
+        setShowRightDockHome(false)
+        break
       case 'run':
         setShowCockpit(false)
         break
@@ -21372,6 +21387,9 @@ function App(): React.JSX.Element {
   }
   const openRightDockPanel = (panelId: RightDockTab) => {
     switch (panelId) {
+      case 'home':
+        setShowRightDockHome(true)
+        break
       case 'run':
         setShowCockpit(true)
         break
@@ -23657,6 +23675,9 @@ function App(): React.JSX.Element {
       // shows exactly one section and the next click on it dismisses the dock.
       closeOtherRightDockPanels(panelId)
       switch (panelId) {
+        case 'home':
+          setShowRightDockHome(true)
+          break
         case 'run':
           setShowCockpit(true)
           break

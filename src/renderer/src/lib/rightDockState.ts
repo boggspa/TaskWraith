@@ -1,6 +1,15 @@
-export type RightDockTab = 'run' | 'chat' | 'inspector' | 'files' | 'media' | 'pins' | 'terminal'
+export type RightDockTab =
+  | 'home'
+  | 'run'
+  | 'chat'
+  | 'inspector'
+  | 'files'
+  | 'media'
+  | 'pins'
+  | 'terminal'
 
 export interface RightDockTabAvailabilityInput {
+  showHome?: boolean
   showCockpit: boolean
   hasSideChat: boolean
   isSideChatDockPanelOpen: boolean
@@ -18,6 +27,7 @@ export interface RightDockTabDescriptor {
 }
 
 export const RIGHT_DOCK_PANEL_IDS: readonly RightDockTab[] = [
+  'home',
   'chat',
   'run',
   'media',
@@ -29,6 +39,7 @@ export const RIGHT_DOCK_PANEL_IDS: readonly RightDockTab[] = [
 
 export function buildRightDockTabs(input: RightDockTabAvailabilityInput): RightDockTabDescriptor[] {
   return [
+    { id: 'home' as const, label: 'Home', available: input.showHome },
     { id: 'run' as const, label: 'Run', available: input.showCockpit },
     {
       id: 'chat' as const,

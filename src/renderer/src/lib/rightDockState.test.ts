@@ -107,6 +107,7 @@ describe('rightDockState', () => {
   describe('RIGHT_DOCK_PANEL_IDS', () => {
     it('preserves the exclusive-close order from App', () => {
       expect(RIGHT_DOCK_PANEL_IDS).toEqual([
+        'home',
         'chat',
         'run',
         'media',

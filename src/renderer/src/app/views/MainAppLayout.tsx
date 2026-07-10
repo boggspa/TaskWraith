@@ -7,7 +7,6 @@ import {
   NOOP_PLAN_CHOICE_SUBMIT,
   NOOP_PROPOSED_PLAN_CUSTOM
 } from '../../lib/stableEmpties'
-import { isRetiredProvider } from '../../../../shared/retiredProviders'
 import { handleSideChatComposerKeyDown } from '../../lib/sideChatComposer'
 import {
   MIN_RIGHT_PANEL_WIDTH,
@@ -25,30 +24,22 @@ import { CollapsedSidebarCornerPill } from '../../components/CollapsedSidebarCor
 import { WorkspaceBoardView } from '../../components/WorkspaceBoardView'
 import { Inspector, INSPECTOR_TAB_META } from '../../components/Inspector'
 import { RightDockSurfaceSwitcher } from '../../components/RightDockSurfaceSwitcher'
+import { MainPaneActionPill } from '../../components/MainPaneActionPill'
+import { RightDockHome } from '../../components/RightDockHome'
 import { SettingsPanel } from '../../components/SettingsPanel'
 import { SettingsSidebar } from '../../components/SettingsSidebar'
 import {
   ArrowUpSendIcon,
   AppleTerminalIcon,
   BackToParentIcon,
-  ChatMediaIcon,
   ChatPopoutIcon,
   ClaudeReturnSymbolIcon,
   DockDrawerIcon,
   EndSideChatIcon,
-  ExclamationShieldIcon,
-  FileMenuSelectionIcon,
-  GhostCompanionIcon,
-  InfoCircleIcon,
   LinkCircleSymbolIcon,
-  PinnedMessagesIcon,
-  PreviewSymbolIcon,
-  QuestionCircleIcon,
   QueueSymbolIcon,
-  RunRailSymbolIcon,
   RunSymbolIcon,
   SidebarCornerIcon,
-  SkyWeatherIcon,
   SplitChatIcon,
   StopSymbolIcon,
   XSymbolIcon
@@ -69,7 +60,6 @@ import { ComposerProviderPicker } from '../../components/ComposerProviderPicker'
 import { ComposerTextareaContextMenu } from '../../components/ComposerTextareaContextMenu'
 import { EnsembleParticipantsAboveRow } from '../../components/EnsembleParticipantsAboveRow'
 import type { RawLogEntry } from '../../lib/rawLogEntry'
-import { launchPreviewActionTitle } from '../../lib/launchPreviewTargets'
 import { EMPTY_AGENT_QUESTION_QUEUE } from '../../lib/agentQuestionQueue'
 import {
   AgentAuraLayer,
@@ -165,8 +155,6 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   currentChatMediaRefs,
   currentGeminiWorktree,
   currentPinnedMessages,
-  currentPreviewMenuOpen,
-  currentPreviewTargets,
   currentProvider,
   currentProviderCapabilities,
   currentProviderLabel,
@@ -185,7 +173,6 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   dockTabDefs,
   effectiveInspectorWidth,
   effectiveIsThinking,
-  ensembleEnabledParticipantsForCurrent,
   exportProductDiagnostics,
   exportProductAuditBundle,
   verifyProductAuditBundle,
@@ -264,11 +251,8 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   handleOpenLinkedChatInSidePanelById,
   handleOpenLinkedChatInSidePanelFromSidebar,
   handleOpenPinnedMessageFromSettings,
-  handleOpenSideChatFromLatestRunResult,
   handleOpenSideChatFromMessage,
   handleOpenSideChatFromRunResult,
-  handleOpenSideChatFromSelectedMessage,
-  handleOpenSideChatFromSummary,
   handleOpenPluginWorkflowTemplate,
   handleOpenWorkflowCompose,
   handleOpenWorkspaceBoard,
@@ -349,7 +333,6 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   jumpToTranscriptMessage,
   kimiAuthStatus,
   kimiBinaryPath,
-  latestSideChatRunResultSeed,
   logsEndRef,
   manualUsageRefreshInFlight,
   managedPolicyStatus,
@@ -357,7 +340,6 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   ollamaBaseUrl,
   ollamaDefaultModel,
   openChatPopoutWindow,
-  openCurrentSideChatPresentation,
   openFileChangeInWorkbench,
   openLinkedChatAsMain,
   openMediaPane,
@@ -394,8 +376,6 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   dryRunAuditRetention,
   rememberSideChatComposerSelection,
   renderMultiviewPaneCell,
-  renderPreviewLaunchError,
-  renderPreviewTargetMenu,
   repairProductInstall,
   purgeAuditRetention,
   rightDockStyle,
@@ -406,14 +386,11 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   runDiff,
   runFxStatus,
   runLanes,
-  runPreviewTargetAction,
   runQueueJobs,
   runningChatIds,
   runningChatIdsArray,
   scheduledTasks,
   selectThreadSearchMatch,
-  selectedParticipant,
-  selectedSideChatSeedMessage,
   selectedSideChatTypeOption,
   sessionTrust,
   setChatMediaPanelOpenPreservingTranscript,
@@ -425,7 +402,6 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   setPendingElevation,
   setPopoutMenuOpen,
   setPreviewChatMediaRef,
-  setPreviewMenuTarget,
   setRawFilter,
   setRightTab,
   setSessionTrust,
@@ -438,7 +414,6 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   setShowSkyVisualFx,
   setShowTerminal,
   setShowWorkspaceSidebar,
-  setSideChatMenuOpen,
   setSubThreadCreatorParent,
   setThreadRawLogs,
   setThreadSearchActiveIndex,
@@ -454,7 +429,6 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   showCockpit,
   showFileEditor,
   showFirstLaunchSheet,
-  showGeminiTerminal,
   showJumpToLatestPill,
   showOnboardingHint,
   showWorkspaceBoardCreatorSheet,
@@ -466,11 +440,8 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   sideCanRun,
   sideChat,
   sideChatIsWelcome,
-  sideChatMenuOpen,
-  sideChatMenuRef,
   sideChatSeedMessageId,
   sideChatStatusLabel,
-  sideChatSummarySeed,
   sideChatTokenTally,
   sideChatTypePickerOptions,
   sideChatWelcomeThreadLabel,
@@ -1214,465 +1185,67 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
           )}
 
           {!isChatPopoutWindow && (
-            <div className="chat-corner-controls chat-corner-controls-right">
-            <button
-              className={`chat-corner-btn ${focusedPaneSkyEnabled ? 'active' : ''}`}
-              type="button"
-              onClick={() => {
-                // Single: toggle the persisted global. Split: toggle THIS (focused)
-                // pane's override to the negation of its current effective value
-                // (so the first click flips visibly even when no override exists).
-                if (isMultiviewSplit) {
-                  multiview.setPaneFxFlag(multiview.focusedPaneIndex, 'sky', !focusedPaneSkyEnabled)
-                } else {
-                  setShowSkyVisualFx((current) => !current)
-                }
-              }}
-              title={`${focusedPaneSkyEnabled ? 'Hide' : isFxEnabled ? 'Show' : 'Enable Epic FX'} sky weather effects${hostWeather?.description ? ` · ${hostWeather.description}` : ''}`}
-              aria-label="Toggle sky weather effects"
-              aria-pressed={focusedPaneSkyEnabled}
-              disabled={!isFxEnabled}
-            >
-              <SkyWeatherIcon />
-            </button>
-            <button
-              className={`chat-corner-btn ${focusedPaneGhostEnabled ? 'active' : ''}`}
-              type="button"
-              onClick={() => {
-                if (isMultiviewSplit) {
-                  multiview.setPaneFxFlag(
-                    multiview.focusedPaneIndex,
-                    'ghost',
-                    !focusedPaneGhostEnabled
-                  )
-                } else {
-                  setShowGhostCompanion((current) => !current)
-                }
-              }}
-              title={`${focusedPaneGhostEnabled ? 'Hide' : isFxEnabled ? 'Show' : 'Enable Epic FX'} ghost companion`}
-              aria-label="Toggle ghost companion"
-              aria-pressed={focusedPaneGhostEnabled}
-              disabled={!isFxEnabled}
-            >
-              <GhostCompanionIcon />
-            </button>
-            <button
-              className={`chat-corner-btn chat-corner-btn-changelog ${showChangelogSheet ? 'active' : ''}`}
-              type="button"
-              onClick={handleOpenChangelogSheet}
-              title={showChangelogSheet ? 'Hide changelog sheet' : 'Open changelog sheet'}
-              aria-label="Toggle changelog sheet"
-              aria-pressed={showChangelogSheet}
-            >
-              <InfoCircleIcon />
-            </button>
-            <button
-              className={`chat-corner-btn ${showFirstLaunchSheet ? 'active' : ''}`}
-              type="button"
-              onClick={() => setShowFirstLaunchSheet((current) => !current)}
-              title={showFirstLaunchSheet ? 'Hide onboarding sheet' : 'Open onboarding sheet'}
-              aria-label="Toggle onboarding sheet"
-              aria-pressed={showFirstLaunchSheet}
-            >
-              <QuestionCircleIcon />
-            </button>
-            <button
-              className={`chat-corner-btn chat-corner-btn-bug-report ${showBugReportSheet ? 'active' : ''}`}
-              type="button"
-              onClick={() => setShowBugReportSheet((current) => !current)}
-              title="Report a bug or issue"
-              aria-label="Report a bug or issue"
-              aria-pressed={showBugReportSheet}
-            >
-              <ExclamationShieldIcon />
-            </button>
-            <div className="chat-popout-menu-wrap" ref={popoutMenuRef}>
-              <button
-                className={`chat-corner-btn ${popoutMenuOpen ? 'active' : ''}`}
-                type="button"
-                onClick={() => {
-                  setSideChatMenuOpen(false)
-                  setPopoutMenuOpen((open) => !open)
-                }}
-                title="Open popout tools"
-                aria-label="Open popout tools"
-                aria-haspopup="menu"
-                aria-expanded={popoutMenuOpen}
-                disabled={!canOpenWorkspacePopout && !currentChat}
-              >
-                <ChatPopoutIcon />
-              </button>
-              {popoutMenuOpen && (
-                <div
-                  className="side-chat-layout-menu chat-popout-menu"
-                  role="menu"
-                  aria-label="Popout tools"
-                >
-                  <button
-                    type="button"
-                    role="menuitem"
-                    onClick={() => {
-                      setPopoutMenuOpen(false)
-                      openWorkspacePopoutWindow('workbench')
-                    }}
-                    disabled={!canOpenWorkspacePopout}
-                  >
-                    <span>Workbench</span>
-                    <small>Open files and diffs together</small>
-                  </button>
-                  <button
-                    type="button"
-                    role="menuitem"
-                    onClick={() => {
-                      setPopoutMenuOpen(false)
-                      openWorkspacePopoutWindow('diff-studio')
-                    }}
-                    disabled={!canOpenWorkspacePopout}
-                  >
-                    <span>Diff Studio</span>
-                    <small>Open workspace diff tools</small>
-                  </button>
-                  <button
-                    type="button"
-                    role="menuitem"
-                    onClick={() => {
-                      setPopoutMenuOpen(false)
-                      openWorkspacePopoutWindow('file-editor')
-                    }}
-                    disabled={!canOpenWorkspacePopout}
-                  >
-                    <span>File Editor</span>
-                    <small>Open workspace files</small>
-                  </button>
-                  <button
-                    type="button"
-                    role="menuitem"
-                    onClick={() => {
-                      setPopoutMenuOpen(false)
-                      openChatPopoutWindow()
-                    }}
-                    disabled={!currentChat}
-                  >
-                    <span>Pop-Out Chat</span>
-                    <small>Open this thread in a separate window</small>
-                  </button>
-                </div>
-              )}
-            </div>
-            <div className="side-chat-menu-wrap" ref={sideChatMenuRef}>
-              <button
-                className={`chat-corner-btn side-chat-primary-btn ${isSideSplitOpen ? 'active' : ''}`}
-                type="button"
-                onClick={() => {
-                  setSideChatMenuOpen(false)
-                  if (isSideSplitOpen) {
-                    hideSideChatPane()
-                    return
-                  }
-                  void openCurrentSideChatPresentation('split')
-                }}
-                title={isSideSplitOpen ? 'Hide linked chat pane' : 'Open isolated side chat'}
-                aria-label={isSideSplitOpen ? 'Hide linked chat pane' : 'Open isolated side chat'}
-                disabled={!currentChat}
-              >
-                <SplitChatIcon />
-              </button>
-              <button
-                className={`chat-corner-btn side-chat-menu-trigger ${sideChatMenuOpen ? 'active' : ''}`}
-                type="button"
-                onClick={() => {
-                  setPopoutMenuOpen(false)
-                  setSideChatMenuOpen((open) => !open)
-                }}
-                title="Choose linked chat"
-                aria-label="Choose linked chat"
-                aria-haspopup="menu"
-                aria-expanded={sideChatMenuOpen}
-                disabled={!currentChat}
-              >
-                <span className="side-chat-menu-chevron" aria-hidden>
-                  ▾
-                </span>
-              </button>
-              {sideChatMenuOpen && (
-                <div className="side-chat-layout-menu" role="menu" aria-label="Linked chat options">
-                  <div className="side-chat-layout-menu-section" role="presentation">
-                    Isolated side chat
-                  </div>
-                  <button
-                    type="button"
-                    role="menuitem"
-                    onClick={() => void openCurrentSideChatPresentation('split', 'singleProvider')}
-                  >
-                    <span>Open isolated side split</span>
-                    <small>Separate sidecar with a copied parent snapshot</small>
-                  </button>
-                  <button
-                    type="button"
-                    role="menuitem"
-                    onClick={() => void openCurrentSideChatPresentation('drawer', 'singleProvider')}
-                  >
-                    <span>Open isolated side drawer</span>
-                    <small>Right overlay sidecar</small>
-                  </button>
-                  <button
-                    type="button"
-                    role="menuitem"
-                    onClick={() => void openCurrentSideChatPresentation('popout')}
-                  >
-                    <span>Pop out linked chat</span>
-                    <small>Separate window for the current linked chat</small>
-                  </button>
-                  <button
-                    type="button"
-                    role="menuitem"
-                    onClick={() => void openCurrentSideChatPresentation('main')}
-                  >
-                    <span>Open linked chat as main</span>
-                    <small>Navigate to linked chat</small>
-                  </button>
-                  {canCreateSideChatFromCurrent && currentChat && (
-                    <>
-                      <div className="side-chat-layout-menu-section" role="presentation">
-                        Sub-thread
-                      </div>
-                      <button
-                        type="button"
-                        role="menuitem"
-                        onClick={() => {
-                          setSideChatMenuOpen(false)
-                          setSubThreadCreatorParent(currentChat)
-                        }}
-                      >
-                        <span>Delegate sub-thread</span>
-                        <small>New child agent with a delegated prompt</small>
-                      </button>
-                    </>
-                  )}
-                  {isCurrentEnsembleChat && (
-                    <>
-                      <div className="side-chat-layout-menu-section" role="presentation">
-                        Ensemble shape
-                      </div>
-                      <button
-                        type="button"
-                        role="menuitem"
-                        onClick={() =>
-                          void openCurrentSideChatPresentation('split', 'ensembleClone')
-                        }
-                      >
-                        <span>Side ensemble clone</span>
-                        <small>Same participants</small>
-                      </button>
-                      <button
-                        type="button"
-                        role="menuitem"
-                        onClick={() =>
-                          void openCurrentSideChatPresentation('split', 'singleProvider')
-                        }
-                      >
-                        <span>Isolated participant side chat</span>
-                        <small>
-                          {selectedParticipant
-                            ? selectedParticipant.role ||
-                              getProviderLabel(selectedParticipant.provider)
-                            : 'Selected provider'}
-                        </small>
-                      </button>
-                      {ensembleEnabledParticipantsForCurrent.map((participant) => {
-                        const participantLabel =
-                          participant.role || getProviderLabel(participant.provider)
-                        return (
-                          <button
-                            key={`side-chat-participant-${participant.id}`}
-                            type="button"
-                            role="menuitem"
-                            onClick={() =>
-                              void openCurrentSideChatPresentation(
-                                'split',
-                                'singleProvider',
-                                participant
-                              )
-                            }
-                          >
-                            <span>Open {participantLabel} isolated side chat</span>
-                            <small>{getProviderLabel(participant.provider)}</small>
-                          </button>
-                        )
-                      })}
-                      <button
-                        type="button"
-                        role="menuitem"
-                        onClick={() => void openCurrentSideChatPresentation('split', 'fanOut')}
-                      >
-                        <span>Fan-out side chat</span>
-                        <small>Participants answer in parallel</small>
-                      </button>
-                    </>
-                  )}
-                  <div className="side-chat-layout-menu-section" role="presentation">
-                    Start from context
-                  </div>
-                  <button
-                    type="button"
-                    role="menuitem"
-                    onClick={handleOpenSideChatFromSelectedMessage}
-                    disabled={!canCreateSideChatFromCurrent || !selectedSideChatSeedMessage}
-                  >
-                    <span>Open from selected message</span>
-                    <small>
-                      {selectedSideChatSeedMessage
-                        ? `${selectedSideChatSeedMessage.role} message`
-                        : 'Hover or focus a message'}
-                    </small>
-                  </button>
-                  <button
-                    type="button"
-                    role="menuitem"
-                    onClick={handleOpenSideChatFromLatestRunResult}
-                    disabled={!canCreateSideChatFromCurrent || !latestSideChatRunResultSeed}
-                  >
-                    <span>Open from latest run result</span>
-                    <small>{latestSideChatRunResultSeed?.label || 'No completed run yet'}</small>
-                  </button>
-                  <button
-                    type="button"
-                    role="menuitem"
-                    onClick={handleOpenSideChatFromSummary}
-                    disabled={!canCreateSideChatFromCurrent || !sideChatSummarySeed}
-                  >
-                    <span>Open from summary</span>
-                    <small>{sideChatSummarySeed?.label || 'No summary yet'}</small>
-                  </button>
-                </div>
-              )}
-            </div>
-            <div className="side-chat-menu-wrap pane-preview-menu-wrap" data-preview-menu-root="true">
-              <button
-                className={`chat-corner-btn ${currentPreviewMenuOpen ? 'active' : ''}`}
-                type="button"
-                onClick={() => {
-                  if (!currentChat) return
-                  setSideChatMenuOpen(false)
-                  setPopoutMenuOpen(false)
-                  if (currentPreviewTargets.length === 1) {
-                    const target = currentPreviewTargets[0]
-                    if (target) void runPreviewTargetAction(target, currentChat)
-                    return
-                  }
-                  if (currentPreviewTargets.length > 1) {
-                    const paneId = multiview.focusedPaneId
-                    const chatId = currentChat.appChatId
-                    if (!paneId) return
-                    setPreviewMenuTarget((current) =>
-                      current?.paneId === paneId && current.chatId === chatId
-                        ? null
-                        : { paneId, chatId }
+            <>
+              <MainPaneActionPill
+                fxEnabled={isFxEnabled}
+                skyEnabled={focusedPaneSkyEnabled}
+                ghostEnabled={focusedPaneGhostEnabled}
+                weatherDescription={hostWeather?.description}
+                onToggleSky={() => {
+                  if (isMultiviewSplit) {
+                    multiview.setPaneFxFlag(
+                      multiview.focusedPaneIndex,
+                      'sky',
+                      !focusedPaneSkyEnabled
                     )
+                  } else {
+                    setShowSkyVisualFx((current) => !current)
                   }
                 }}
-                title={launchPreviewActionTitle(currentPreviewTargets, hasWorkspaceContext)}
-                aria-label="Open preview"
-                aria-haspopup={currentPreviewTargets.length > 1 ? 'menu' : undefined}
-                aria-expanded={currentPreviewTargets.length > 1 ? currentPreviewMenuOpen : undefined}
-                aria-pressed={currentPreviewMenuOpen}
-                disabled={currentPreviewTargets.length === 0}
-              >
-                <PreviewSymbolIcon />
-              </button>
-              {currentChat &&
-                renderPreviewTargetMenu(
-                  currentPreviewTargets,
-                  multiview.focusedPaneId,
-                  currentChat.appChatId,
-                  currentChat
-                )}
-              {renderPreviewLaunchError(currentChat?.appChatId)}
-            </div>
-            <button
-              className={`chat-corner-btn ${showCockpit ? 'active' : ''}`}
-              type="button"
-              onClick={() => toggleRightDockPanel('run')}
-              title={showCockpit ? 'Hide Run rail' : 'Open Run rail'}
-              aria-label="Toggle Run rail"
-              aria-pressed={showCockpit}
-            >
-              <RunRailSymbolIcon />
-            </button>
-            <button
-              className={`chat-corner-btn ${isChatMediaPanelOpen ? 'active' : ''}`}
-              type="button"
-              onClick={() => toggleRightDockPanel('media')}
-              title="Show chat uploads and paths"
-              aria-label="Show chat uploads and paths"
-              aria-pressed={isChatMediaPanelOpen}
-            >
-              <ChatMediaIcon />
-              {currentChatMediaRefs.length > 0 && (
-                <span className="chat-corner-count">
-                  {currentChatMediaRefs.length > 99 ? '99+' : currentChatMediaRefs.length}
-                </span>
-              )}
-            </button>
-            <button
-              className={`chat-corner-btn ${isPinnedMessagesPanelOpen ? 'active' : ''}`}
-              type="button"
-              onClick={() => toggleRightDockPanel('pins')}
-              title={
-                isPinnedMessagesPanelOpen
-                  ? 'Hide notes and pinned messages'
-                  : 'Show notes and pinned messages'
-              }
-              aria-label="Toggle notes and pinned messages"
-              aria-pressed={isPinnedMessagesPanelOpen}
-              disabled={!currentChat}
-            >
-              <PinnedMessagesIcon />
-              {currentPinnedMessages.length > 0 && (
-                <span className="chat-corner-count">
-                  {currentPinnedMessages.length > 99 ? '99+' : currentPinnedMessages.length}
-                </span>
-              )}
-            </button>
-            {currentProvider === 'gemini' && !isRetiredProvider(currentProvider) && hasWorkspaceContext && (
-              <button
-                className={`chat-corner-btn ${showGeminiTerminal ? 'active' : ''}`}
-                type="button"
-                onClick={() => toggleRightDockPanel('terminal')}
-                title={`${showGeminiTerminal ? 'Hide' : 'Show'} Gemini terminal`}
-                aria-label="Toggle Gemini terminal"
-                aria-pressed={showGeminiTerminal}
-              >
-                <AppleTerminalIcon />
-              </button>
-            )}
-            <button
-              className={`chat-corner-btn ${showFileEditor ? 'active' : ''}`}
-              type="button"
-              onClick={() => {
-                if (!hasWorkspaceContext) return
-                toggleRightDockPanel('files')
-              }}
-              title={`${showFileEditor ? 'Hide' : 'Show'} file editor`}
-              aria-label="Toggle file editor"
-              aria-pressed={showFileEditor}
-              disabled={!hasWorkspaceContext}
-            >
-              <FileMenuSelectionIcon />
-            </button>
-            {/* Pop-out buttons (file editor ↗ / Diff Studio Δ / pop-out chat)
-              live in the top-center pill now — see chat-corner-controls-center. */}
-              <button
-                className="chat-corner-btn"
-                type="button"
-                onClick={() => toggleRightDockPanel('inspector')}
-                title={`${appearance.showInspector ? 'Hide' : 'Show'} inspector`}
-                aria-label="Toggle inspector"
-                aria-pressed={appearance.showInspector}
-              >
-                <SidebarCornerIcon direction="right" isOpen={appearance.showInspector} />
-              </button>
-            </div>
+                onToggleGhost={() => {
+                  if (isMultiviewSplit) {
+                    multiview.setPaneFxFlag(
+                      multiview.focusedPaneIndex,
+                      'ghost',
+                      !focusedPaneGhostEnabled
+                    )
+                  } else {
+                    setShowGhostCompanion((current) => !current)
+                  }
+                }}
+                changelogOpen={showChangelogSheet}
+                firstLaunchOpen={showFirstLaunchSheet}
+                bugReportOpen={showBugReportSheet}
+                onToggleChangelog={handleOpenChangelogSheet}
+                onToggleFirstLaunch={() => setShowFirstLaunchSheet((current) => !current)}
+                onToggleBugReport={() => setShowBugReportSheet((current) => !current)}
+                popoutMenuOpen={popoutMenuOpen}
+                setPopoutMenuOpen={setPopoutMenuOpen}
+                popoutMenuRef={popoutMenuRef}
+                canOpenWorkspacePopout={Boolean(canOpenWorkspacePopout)}
+                hasCurrentChat={Boolean(currentChat)}
+                onOpenWorkbench={() => {
+                  setPopoutMenuOpen(false)
+                  openWorkspacePopoutWindow('workbench')
+                }}
+                onOpenDiffStudio={() => {
+                  setPopoutMenuOpen(false)
+                  openWorkspacePopoutWindow('diff-studio')
+                }}
+                onOpenFileEditor={() => {
+                  setPopoutMenuOpen(false)
+                  openWorkspacePopoutWindow('file-editor')
+                }}
+                onOpenChatPopout={() => {
+                  setPopoutMenuOpen(false)
+                  openChatPopoutWindow()
+                }}
+                runOpen={showCockpit}
+                onToggleRun={() => toggleRightDockPanel('run')}
+                homeOpen={activeRightDockTab === 'home'}
+                onToggleHome={() => toggleRightDockPanel('home')}
+              />
+            </>
           )}
 
           {/*
@@ -2043,6 +1616,20 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                 }}
               />
               <div className="right-dock-body">
+                {activeRightDockTab === 'home' && (
+                  <RightDockHome
+                    mediaCount={currentChatMediaRefs.length}
+                    pinnedCount={currentPinnedMessages.length}
+                    hasCurrentChat={Boolean(currentChat)}
+                    hasWorkspaceContext={hasWorkspaceContext}
+                    onOpenSurface={activateRightDockTab}
+                    onOpenInspector={(destination) => {
+                      setRightTab(destination)
+                      activateRightDockTab('inspector')
+                    }}
+                  />
+                )}
+
                 {activeRightDockTab === 'chat' && sideChat && (
                   <div className="right-dock-side-chat">
               <aside
