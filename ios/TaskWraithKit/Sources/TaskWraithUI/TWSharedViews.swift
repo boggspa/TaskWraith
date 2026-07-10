@@ -1474,40 +1474,64 @@ private func twLadderLabel(for effort: String?, provider: String?) -> String? {
     return twLadderStopLabel(index, provider: provider)
 }
 
+/// Pure visual profile for the ladder's provider-hued effects. Stop 0 (`Off`)
+/// remains neutral; ordinal stop 2 (index 1, Low / Kimi Thinking) starts a
+/// smooth ramp that reaches full strength and density at the top stop.
+struct TWReasoningLadderEffectProfile: Equatable, Sendable {
+    let intensity: Double
+    let sparkleCount: Int
+    let shimmerBandCount: Int
+
+    var isActive: Bool { intensity > 0 }
+
+    static func forIndex(_ index: Int) -> Self {
+        let clamped = max(0, min(6, index))
+        let sparkleCounts = [0, 3, 5, 8, 11, 13, 16]
+        let shimmerBandCounts = [0, 1, 1, 2, 2, 3, 3]
+        return Self(
+            intensity: Double(clamped) / 6,
+            sparkleCount: sparkleCounts[clamped],
+            shimmerBandCount: shimmerBandCounts[clamped])
+    }
+}
+
 /// Vertical gradient "ladder" reasoning slider: 7 fixed stops from Off (bottom,
-/// faint gray) to the top 'ultracode' stop (shimmering purple; labelled
+/// faint gray) to the top 'ultracode' stop (shimmering provider hue; labelled
 /// "Ultracode" on Claude, "Ultra" on Codex), mirroring the Electron reasoning
-/// picker's gray→silver→purple ramp. The metallic-rect thumb snaps only to the
+/// picker's gray→provider ramp. The metallic-rect thumb snaps only to the
 /// stops the current model actually supports (`enabledIndices`).
 private struct ReasoningLadder: View {
     let enabledIndices: Set<Int>
     @Binding var reasoningEffort: String?
     let accent: Color
     let provider: String
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var shimmer: CGFloat = 0
     @State private var twinkle = false
+    @State private var pulse = false
 
-    // Sparkle spots over the ultracode zone: (dx from centre, y-fraction of the
-    // top 55%, dim/bright opacity, twinkle delay). Dense but dim; `hi` tapers
-    // with depth so the sparkles fade DOWN the track.
+    // Sparkle spots inside the active fill: (dx from centre, fraction rising
+    // from its bottom, twinkle delay). Prefixes are deliberately well-spread so
+    // the sparse Low/Thinking field still spans its short filled region; each
+    // higher tier adds density without changing the slow twinkle cadence.
     private static let sparkleSpots:
-        [(dx: CGFloat, y: CGFloat, lo: Double, hi: Double, delay: Double)] = [
-            (-6, 0.03, 0.1, 0.65, 0.0),
-            (7, 0.07, 0.1, 0.62, 0.6),
-            (-9, 0.11, 0.09, 0.58, 1.9),
-            (3, 0.15, 0.09, 0.6, 1.1),
-            (10, 0.19, 0.07, 0.5, 2.8),
-            (-4, 0.23, 0.09, 0.55, 0.4),
-            (6, 0.27, 0.07, 0.48, 2.2),
-            (-8, 0.31, 0.08, 0.45, 1.5),
-            (9, 0.35, 0.05, 0.4, 3.4),
-            (0, 0.39, 0.07, 0.42, 0.9),
-            (-5, 0.44, 0.05, 0.35, 4.0),
-            (7, 0.48, 0.05, 0.33, 2.5),
-            (2, 0.54, 0.04, 0.28, 3.0),
-            (-7, 0.6, 0.04, 0.24, 0.2),
-            (8, 0.64, 0.03, 0.2, 4.3),
-            (-3, 0.72, 0.03, 0.18, 1.7),
+        [(dx: CGFloat, rise: CGFloat, delay: Double)] = [
+            (-6, 0.18, 0.0),
+            (7, 0.54, 0.6),
+            (-9, 0.84, 1.9),
+            (3, 0.34, 1.1),
+            (10, 0.72, 2.8),
+            (-4, 0.08, 0.4),
+            (6, 0.45, 2.2),
+            (-8, 0.94, 1.5),
+            (9, 0.25, 3.4),
+            (0, 0.64, 0.9),
+            (-5, 0.13, 4.0),
+            (7, 0.78, 2.5),
+            (2, 0.39, 3.0),
+            (-7, 0.89, 0.2),
+            (8, 0.59, 4.3),
+            (-3, 0.29, 1.7),
         ]
 
     private var currentIndex: Int {
@@ -1538,6 +1562,7 @@ private struct ReasoningLadder: View {
             // Coloured fill reaches up to the thumb (its centre offset from the
             // bottom); above that stays the neutral empty rail.
             let fillH = 11 + max(1, h - 22) * CGFloat(currentIndex) / 6
+            let effects = TWReasoningLadderEffectProfile.forIndex(currentIndex)
             ZStack {
                 // Empty base track (unfilled rail above the thumb).
                 RoundedRectangle(cornerRadius: 4, style: .continuous)
@@ -1550,32 +1575,46 @@ private struct ReasoningLadder: View {
                 RoundedRectangle(cornerRadius: 4, style: .continuous)
                     .fill(ladderGradient)
                     .frame(width: trackW, height: h)
+                    .overlay {
+                        // A slow in-fill brightness pulse. It shares the fill's
+                        // bottom mask, so no glow leaks into the neutral rail.
+                        RoundedRectangle(cornerRadius: 4, style: .continuous)
+                            .fill(
+                                accent.opacity(
+                                    effects.intensity
+                                        * (pulse && !reduceMotion ? 0.14 : 0.035)))
+                    }
                     .mask(alignment: .bottom) {
                         Rectangle().frame(width: trackW, height: fillH)
                     }
-                    .overlay(alignment: .top) {
-                        if currentIndex == 6 { shimmerBand(height: h, trackW: trackW) }
-                    }
                     .position(x: cx, y: h / 2)
                     .animation(.spring(response: 0.28, dampingFraction: 0.8), value: currentIndex)
+                    .animation(
+                        reduceMotion
+                            ? nil : .easeInOut(duration: 1.8).repeatForever(autoreverses: true),
+                        value: pulse
+                    )
 
-                if currentIndex == 6 {
-                    ForEach(Array(Self.sparkleSpots.enumerated()), id: \.offset) { _, spot in
-                        Circle()
-                            .fill(Color.white)
-                            .frame(width: 2.5, height: 2.5)
-                            .shadow(color: accent.opacity(0.9), radius: 2)
-                            .shadow(color: accent.opacity(0.5), radius: 3)
-                            .position(x: cx + spot.dx, y: 6 + h * 0.55 * spot.y)
-                            .opacity(twinkle ? spot.hi : spot.lo)
-                            .animation(
-                                .easeInOut(duration: 1.8).repeatForever(autoreverses: true)
-                                    .delay(spot.delay),
-                                value: twinkle
-                            )
-                            .allowsHitTesting(false)
-                    }
+                // Keep every animated layer mounted from first appearance. If
+                // the user opens at Off then slides upward, repeatForever is
+                // already running instead of mounting at its completed phase.
+                ForEach(0..<3, id: \.self) { bandIndex in
+                    let isVisible = bandIndex < effects.shimmerBandCount
+                    shimmerBand(
+                        fillHeight: fillH, trackW: trackW, bandIndex: bandIndex
+                    )
+                    .position(x: cx, y: h - fillH / 2)
+                    .opacity(
+                        isVisible ? effects.intensity * (reduceMotion ? 0.35 : 1) : 0
+                    )
+                    .animation(.easeOut(duration: 0.3), value: isVisible)
+                    .animation(.easeOut(duration: 0.3), value: effects.intensity)
                 }
+
+                sparkleField(
+                    width: geo.size.width, fillHeight: fillH, effects: effects
+                )
+                .position(x: cx, y: h - fillH / 2)
 
                 metallicThumb
                     .position(x: cx, y: yFor(currentIndex, height: h))
@@ -1589,10 +1628,14 @@ private struct ReasoningLadder: View {
             )
         }
         .onAppear {
-            withAnimation(.linear(duration: 3.2).repeatForever(autoreverses: false)) {
+            if reduceMotion {
+                shimmer = 0.5
+                twinkle = true
+            } else {
                 shimmer = 1
+                twinkle = true
+                pulse = true
             }
-            twinkle = true
         }
         .accessibilityElement()
         .accessibilityLabel("Reasoning effort")
@@ -1653,10 +1696,58 @@ private struct ReasoningLadder: View {
             .shadow(color: .black.opacity(0.32), radius: 1.5, y: 0.5)
     }
 
+    private func sparkleField(
+        width: CGFloat, fillHeight: CGFloat, effects: TWReasoningLadderEffectProfile
+    ) -> some View {
+        ZStack {
+            ForEach(Array(Self.sparkleSpots.enumerated()), id: \.offset) {
+                sparkleIndex, spot in
+                let sparkleInset: CGFloat = 3
+                let sparkleSpan = max(0, fillHeight - sparkleInset * 2)
+                let isVisible = sparkleIndex < effects.sparkleCount
+                Circle()
+                    .fill(Color.white)
+                    .frame(width: 2.5, height: 2.5)
+                    .shadow(color: accent.opacity(0.72), radius: 2)
+                    .shadow(color: accent.opacity(0.4), radius: 3)
+                    .position(
+                        x: width / 2 + spot.dx,
+                        y: fillHeight - sparkleInset - sparkleSpan * spot.rise
+                    )
+                    // Full-strength sparkles peak at exactly 50%; lower tiers
+                    // taper that peak by their shared intensity.
+                    .opacity(
+                        isVisible
+                            ? (reduceMotion ? 0.22 : (twinkle ? 0.5 : 0.05))
+                                * effects.intensity
+                            : 0)
+                    .animation(
+                        reduceMotion
+                            ? nil
+                            : .easeInOut(duration: 1.8)
+                                .repeatForever(autoreverses: true)
+                                .delay(spot.delay),
+                        value: twinkle
+                    )
+                    .animation(.easeOut(duration: 0.3), value: isVisible)
+                    .animation(.easeOut(duration: 0.3), value: effects.intensity)
+                    .allowsHitTesting(false)
+            }
+        }
+        .frame(width: width, height: fillHeight)
+        // Clip the sparkle core and its provider-coloured shadows at the thumb.
+        // The neutral rail above is always completely untouched.
+        .clipped()
+        .allowsHitTesting(false)
+    }
+
     @ViewBuilder
-    private func shimmerBand(height: CGFloat, trackW: CGFloat) -> some View {
-        if enabledIndices.contains(6) {
-            let zoneH = height / 6 + 8
+    private func shimmerBand(
+        fillHeight: CGFloat, trackW: CGFloat, bandIndex: Int
+    ) -> some View {
+        if fillHeight > 0 {
+            let bandH = max(14, min(30, fillHeight * 0.34))
+            let progress = reduceMotion ? CGFloat(bandIndex + 1) / 4 : shimmer
             RoundedRectangle(cornerRadius: 4, style: .continuous)
                 .fill(
                     LinearGradient(
@@ -1668,26 +1759,35 @@ private struct ReasoningLadder: View {
                         startPoint: .top, endPoint: .bottom
                     )
                 )
-                .frame(width: trackW, height: zoneH * 0.55)
-                .offset(y: -zoneH * 0.55 + shimmer * (zoneH * 1.1))
-                .frame(width: trackW, height: zoneH, alignment: .top)
+                .frame(width: trackW, height: bandH)
+                .offset(y: -bandH + progress * (fillHeight + bandH))
+                .frame(width: trackW, height: fillHeight, alignment: .top)
                 .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+                .animation(
+                    reduceMotion
+                        ? nil
+                        : .linear(duration: 3.2)
+                            .repeatForever(autoreverses: false)
+                            .delay(Double(bandIndex) * (3.2 / 3)),
+                    value: shimmer
+                )
                 .allowsHitTesting(false)
         }
     }
 
-    // Provider-hued ramp: neutral grey at the bottom (low effort) climbing to
-    // the provider accent at the top. Instance member so it can read `accent`
-    // (Color.mix is macOS 15+, so we compose with .opacity only).
+    // Provider-hued ramp: neutral grey at Off, a faint accent at Low/Thinking,
+    // then progressively richer provider colour through the top stop. Instance
+    // member so it can read `accent` (Color.mix is macOS 15+, so we compose
+    // with .opacity only).
     private var ladderGradient: LinearGradient {
         LinearGradient(
             stops: [
                 Gradient.Stop(color: Color(white: 0.62).opacity(0.40), location: 0.0),
-                Gradient.Stop(color: Color(white: 0.56).opacity(0.55), location: 0.1666),
-                Gradient.Stop(color: Color(white: 0.46).opacity(0.78), location: 0.3333),
-                Gradient.Stop(color: accent.opacity(0.40), location: 0.50),
-                Gradient.Stop(color: accent.opacity(0.70), location: 0.6666),
-                Gradient.Stop(color: accent, location: 0.8333),
+                Gradient.Stop(color: accent.opacity(0.20), location: 0.1666),
+                Gradient.Stop(color: accent.opacity(0.36), location: 0.3333),
+                Gradient.Stop(color: accent.opacity(0.54), location: 0.50),
+                Gradient.Stop(color: accent.opacity(0.72), location: 0.6666),
+                Gradient.Stop(color: accent.opacity(0.90), location: 0.8333),
                 Gradient.Stop(color: accent, location: 1.0),
             ],
             startPoint: .bottom, endPoint: .top
