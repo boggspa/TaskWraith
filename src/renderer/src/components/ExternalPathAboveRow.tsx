@@ -29,6 +29,7 @@ import { ComposerBranchWorktreePopover } from './ComposerBranchWorktreePopover'
 import type { GitPrSummary, GitRepositorySnapshot } from '../../../main/services/GitService'
 import { GitCommitSymbolIcon } from './AppChromeSymbols'
 import { composerGitActionUsesCommitIcon } from '../lib/composerGitActionIcon'
+import { resolveWorkspaceDisplayName } from '../../../shared/workspaceDisplayName'
 
 /**
  * 1.0.5-EW42b — Derive a human-readable "where did this grant
@@ -104,6 +105,8 @@ interface ExternalPathAboveRowProps {
   /** Best-effort PR lifecycle for this path, when GitHub/gh can resolve it. */
   pr?: GitPrSummary | null
   repoMetadata: ExternalPathGitMetadata | null
+  /** Saved workspace label for this path, when it is registered in TaskWraith. */
+  workspaceDisplayName?: string | null
   /**
    * Per-repo diff stats from `externalPathDiffStatsByGrant` (slice 6).
    * Optional — omitted when nothing's been touched in this grant's
@@ -192,6 +195,7 @@ export function ExternalPathAboveRow({
   snapshot,
   pr,
   repoMetadata,
+  workspaceDisplayName,
   diffStats,
   onRevoke,
   createPrState,
@@ -202,6 +206,12 @@ export function ExternalPathAboveRow({
   composerStyle
 }: ExternalPathAboveRowProps): React.JSX.Element {
   const descriptor = describeExternalPath(grant.path, { gitMetadata: repoMetadata })
+  const displayName = resolveWorkspaceDisplayName({
+    displayName: workspaceDisplayName,
+    path: grant.path,
+    repoRoot: snapshot?.repoRoot || descriptor.repoRoot,
+    remoteUrl: snapshot?.remoteUrl
+  })
   // 1.0.6-EW66-1d — repo rows get a Create-PR action matching the
   // primary workspace row, scoped to this grant's path. Mirror the
   // primary's label/state machine.
@@ -250,7 +260,7 @@ export function ExternalPathAboveRow({
           : createPrLabel
   const useGitIconAction = composerGitActionUsesCommitIcon(composerStyle)
   const actionTitle =
-    createPrState?.message || `Review, commit, push, or open a PR for ${descriptor.basename}`
+    createPrState?.message || `Review, commit, push, or open a PR for ${displayName}`
   // 1.0.5-EW42b — Build a rich tooltip that explains what created
   // this grant (composer-proactive vs. agent-approval vs. legacy
   // manual picker), which provider it's scoped to, and when it
@@ -356,7 +366,7 @@ export function ExternalPathAboveRow({
         <span className="composer-above-bar-branch">
           {descriptor.isRepo ? <BranchGlyph /> : <FileGlyph />}
           <span>
-            {descriptor.basename}
+            {displayName}
             {descriptor.isRepo && (snapshot || descriptor.branch) ? (
               <>
                 {' · '}

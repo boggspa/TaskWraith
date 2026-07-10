@@ -138,6 +138,7 @@ import {
 import { composerGitActionUsesCommitIcon } from '../lib/composerGitActionIcon'
 import { composerVoicePlacementForStyle } from '../lib/composerVoicePlacement'
 import { composerPermissionOptions } from '../lib/planModeLabels'
+import { pathComparisonKey } from '../lib/pathDisplay'
 import { WORKSPACE_POLICY_SERVICES } from '../lib/workspacePolicyServices'
 import { createPortal } from 'react-dom'
 
@@ -2055,6 +2056,13 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                           grant={group.representative}
                           providers={group.providers}
                           repoMetadata={externalPathRepoMetadata[group.representative.id] || null}
+                          workspaceDisplayName={
+                            workspaces.find(
+                              (workspace) =>
+                                workspace.path &&
+                                pathComparisonKey(workspace.path) === pathComparisonKey(group.path)
+                            )?.displayName
+                          }
                           snapshot={externalGitSnapshots[group.path] ?? null}
                           pr={externalPrByPath?.[group.path] ?? null}
                           diffStats={(() => {

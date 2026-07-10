@@ -1,6 +1,9 @@
+import { createElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
+import type { GitRepositorySnapshot } from '../../../main/services/GitService'
 import type { ExternalPathGrant } from '../../../main/store/types'
-import { buildExternalPathOriginTooltip } from './ExternalPathAboveRow'
+import { buildExternalPathOriginTooltip, ExternalPathAboveRow } from './ExternalPathAboveRow'
 
 // 1.0.5-EW42b — Pure-helper coverage for the banner origin
 // tooltip. Verifies each grant-id prefix maps to the correct
@@ -22,6 +25,46 @@ function makeGrant(overrides: Partial<ExternalPathGrant> = {}): ExternalPathGran
     createdAt: '2026-05-27T22:00:00.000Z',
     ...overrides
   }
+}
+
+function makeSnapshot(overrides: Partial<GitRepositorySnapshot> = {}): GitRepositorySnapshot {
+  return {
+    requestedPath: '/Users/me/Documents/AGBench',
+    repoRoot: '/Users/me/Documents/AGBench',
+    branch: 'master',
+    commit: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    detached: false,
+    upstream: 'origin/master',
+    remoteName: 'origin',
+    remoteUrl: 'https://github.com/boggspa/TaskWraith.git',
+    ahead: 0,
+    behind: 0,
+    files: [],
+    counts: { changed: 0, staged: 0, unstaged: 0, untracked: 0 },
+    clean: true,
+    mergeState: null,
+    conflicts: 0,
+    lineStats: { additions: 0, deletions: 0 },
+    ...overrides
+  }
+}
+
+function renderWorkspaceRow(overrides: {
+  workspaceDisplayName?: string
+  snapshot?: GitRepositorySnapshot
+} = {}): string {
+  const props = {
+    grant: makeGrant({ path: '/Users/me/Documents/AGBench', kind: 'directory' }),
+    repoMetadata: {
+      isRepo: true,
+      repoRoot: '/Users/me/Documents/AGBench',
+      branch: 'master'
+    },
+    snapshot: overrides.snapshot ?? makeSnapshot(),
+    workspaceDisplayName: overrides.workspaceDisplayName,
+    onRevoke: () => {}
+  }
+  return renderToStaticMarkup(createElement(ExternalPathAboveRow, props))
 }
 
 describe('buildExternalPathOriginTooltip', () => {
@@ -89,5 +132,21 @@ describe('buildExternalPathOriginTooltip', () => {
     )
     expect(tooltip).toMatch(/Kimi requested access during a tool call/)
     expect(tooltip.split('\n')[0]).toMatch(/secondary workspace/)
+  })
+})
+
+describe('ExternalPathAboveRow workspace name', () => {
+  it('uses the git remote project instead of a default folder-derived label', () => {
+    const html = renderWorkspaceRow()
+
+    expect(html).toContain('>TaskWraith · <button')
+    expect(html).not.toContain('>AGBench · <button')
+  })
+
+  it('preserves a registered custom workspace label over the git project name', () => {
+    const html = renderWorkspaceRow({ workspaceDisplayName: 'Client demo' })
+
+    expect(html).toContain('>Client demo · <button')
+    expect(html).not.toContain('>TaskWraith · <button')
   })
 })
