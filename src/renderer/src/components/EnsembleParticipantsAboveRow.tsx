@@ -105,6 +105,31 @@ const ENSEMBLE_CHIP_ROW_MAX = 5
 export const ENSEMBLE_CHIP_GRID_TRACKS = 60
 
 export type EnsembleParticipantAuthority = 'boss' | 'captain' | 'agent'
+export type EnsembleParticipantStageChoice =
+  | 'any'
+  | NonNullable<EnsembleParticipant['stageRole']>
+
+const ENSEMBLE_PARTICIPANT_STAGE_OPTIONS: ReadonlyArray<{
+  value: EnsembleParticipantStageChoice
+  label: string
+  title: string
+}> = [
+  {
+    value: 'any',
+    label: 'Any',
+    title: 'Infer this participant\'s stage from its permissions.'
+  },
+  ...ENSEMBLE_STAGE_ROLE_OPTIONS.map((option) => ({
+    value: option.id,
+    label:
+      option.id === 'scout'
+        ? 'Scout'
+        : option.id === 'worker'
+          ? 'Work'
+          : 'Review',
+    title: option.description
+  }))
+]
 
 type EnsembleAuthorityPatch = Pick<
   NonNullable<ChatRecord['ensemble']>,
@@ -1892,6 +1917,36 @@ export function EnsembleParticipantAuthorityControls({
   )
 }
 
+interface EnsembleParticipantStageControlProps {
+  participantLabel: string
+  stageRole?: EnsembleParticipant['stageRole']
+  locked: boolean
+  onStageRoleChange: (stageRole: EnsembleParticipant['stageRole'] | undefined) => void
+}
+
+/** Shared four-way staged-dispatch selector for the participant popover. */
+export function EnsembleParticipantStageControl({
+  participantLabel,
+  stageRole,
+  locked,
+  onStageRoleChange
+}: EnsembleParticipantStageControlProps): React.JSX.Element {
+  return (
+    <div className="ensemble-above-overflow-stage" title={ENSEMBLE_STAGE_ROLE_HINT}>
+      <span className="ensemble-above-overflow-label">Stage</span>
+      <SegmentedControl
+        className="ensemble-above-overflow-stage-control"
+        size="compact"
+        value={stageRole || 'any'}
+        ariaLabel={`Stage for ${participantLabel}`}
+        disabled={locked}
+        options={ENSEMBLE_PARTICIPANT_STAGE_OPTIONS}
+        onValueChange={(value) => onStageRoleChange(normalizeEnsembleStageRole(value))}
+      />
+    </div>
+  )
+}
+
 export function EnsembleParticipantOverflowPopover({
   anchor,
   participant,
@@ -2046,6 +2101,12 @@ export function EnsembleParticipantOverflowPopover({
         onAuthorityChange={(authority) => onSetAuthority(participant.id, authority)}
         onAutoApprovalsChange={onToggleBossmanAutoApprovals}
       />
+      <EnsembleParticipantStageControl
+        participantLabel={getProviderName(participant.provider)}
+        stageRole={participant.stageRole}
+        locked={locked}
+        onStageRoleChange={(stageRole) => onPatch({ stageRole })}
+      />
       <label className="ensemble-above-overflow-role">
         <span className="ensemble-above-overflow-label">Role</span>
         <select
@@ -2078,28 +2139,6 @@ export function EnsembleParticipantOverflowPopover({
             placeholder={`${getProviderName(participant.provider)} role`}
           />
         ) : null}
-      </label>
-      <label className="ensemble-above-overflow-role" title={ENSEMBLE_STAGE_ROLE_HINT}>
-        <span className="ensemble-above-overflow-label">Stage</span>
-        <select
-          className="ensemble-above-overflow-role-picker"
-          value={participant.stageRole || ''}
-          disabled={locked}
-          onChange={(event) => {
-            const next = normalizeEnsembleStageRole(event.target.value)
-            // Spike-4 stage roles — a discrete select (no draft buffering
-            // needed); undefined clears the stage back to permission-
-            // inferred scheduling.
-            onPatch({ stageRole: next })
-          }}
-        >
-          <option value="">Any (by permissions)</option>
-          {ENSEMBLE_STAGE_ROLE_OPTIONS.map((option) => (
-            <option key={option.id} value={option.id} title={option.description}>
-              {option.label}
-            </option>
-          ))}
-        </select>
       </label>
       <EnsembleBriefEditor
         label="Goal / brief"

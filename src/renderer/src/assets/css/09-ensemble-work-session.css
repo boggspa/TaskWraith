@@ -1827,7 +1827,19 @@
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
-.ensemble-above-overflow-authority .segmented-control-segment {
+.ensemble-above-overflow-stage {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ensemble-above-overflow-stage-control {
+  width: 100%;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.ensemble-above-overflow-authority .segmented-control-segment,
+.ensemble-above-overflow-stage-control .segmented-control-segment {
   display: inline-flex;
   align-items: center;
   justify-content: center;

@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   ENSEMBLE_CHIP_GRID_TRACKS,
   EnsembleParticipantAuthorityControls,
+  EnsembleParticipantStageControl,
   EnsembleParticipantsAboveRow,
   computeEnsembleChipGridSpans,
   computeEnsembleChipRowDistribution,
@@ -188,6 +189,30 @@ describe('EnsembleParticipantsAboveRow', () => {
       expect(html).toContain('aria-pressed="false"')
       expect(html).toContain('Assign a Boss or Captain before enabling Auto Approvals.')
       expect(html).toMatch(/aria-label="Thread-wide Auto Approvals"[^>]*disabled=""/)
+    })
+
+    it('renders Stage as a four-way shared control with compact labels', () => {
+      const html = renderToStaticMarkup(
+        <EnsembleParticipantStageControl
+          participantLabel="Claude Fable 5"
+          stageRole="worker"
+          locked={false}
+          onStageRoleChange={() => undefined}
+        />
+      )
+
+      expect(html).not.toContain('<select')
+      expect(html).toContain('>Stage</span>')
+      expect(html).toContain('role="radiogroup"')
+      expect(html).toContain('aria-label="Stage for Claude Fable 5"')
+      expect(html.match(/role="radio"/g) || []).toHaveLength(4)
+      expect(html).toContain('>Any</button>')
+      expect(html).toContain('>Scout</button>')
+      expect(html).toContain('>Work</button>')
+      expect(html).toContain('>Review</button>')
+      expect(html).toMatch(
+        /aria-checked="true"[^>]*data-segmented-control-value="worker"/
+      )
     })
   })
 
