@@ -1914,35 +1914,33 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                       {primaryGitSnapshot && <GitMergeBadge snapshot={primaryGitSnapshot} />}
                       {primaryGitSnapshot && <GitSyncChip snapshot={primaryGitSnapshot} />}
                       </div>
-                      <div className="composer-above-bar-pill composer-above-bar-pill--changes">
-                      <span className="composer-above-bar-files-cluster">
-                        <span
-                          className="composer-above-bar-files"
-                          title={
-                            workspaceDiffStats.filesChanged > 0
-                              ? `${workspaceDiffStats.filesChanged} uncommitted ${workspaceDiffStats.filesChanged === 1 ? 'file' : 'files'} in the working tree`
-                              : 'Working tree clean — nothing to commit'
-                          }
-                        >
-                          <AnimatedDiffNumber value={workspaceDiffStats.filesChanged} strong />{' '}
-                          {workspaceDiffStats.filesChanged === 1 ? 'file changed' : 'files changed'}
-                        </span>
-                        {(workspaceDiffStats.additions > 0 || workspaceDiffStats.deletions > 0) && (
-                          <span className="composer-above-bar-stats">
-                            <AnimatedDiffNumber
-                              value={workspaceDiffStats.additions}
-                              prefix="+"
-                              className="composer-diff-add"
-                            />
-                            <AnimatedDiffNumber
-                              value={workspaceDiffStats.deletions}
-                              prefix="-"
-                              className="composer-diff-del"
-                            />
+                      {workspaceDiffStats.filesChanged > 0 && (
+                        <div className="composer-above-bar-pill composer-above-bar-pill--changes">
+                        <span className="composer-above-bar-files-cluster">
+                          <span
+                            className="composer-above-bar-files"
+                            title={`${workspaceDiffStats.filesChanged} uncommitted ${workspaceDiffStats.filesChanged === 1 ? 'file' : 'files'} in the working tree`}
+                          >
+                            <AnimatedDiffNumber value={workspaceDiffStats.filesChanged} strong />{' '}
+                            {workspaceDiffStats.filesChanged === 1 ? 'file changed' : 'files changed'}
                           </span>
-                        )}
-                      </span>
-                      </div>
+                          {(workspaceDiffStats.additions > 0 || workspaceDiffStats.deletions > 0) && (
+                            <span className="composer-above-bar-stats">
+                              <AnimatedDiffNumber
+                                value={workspaceDiffStats.additions}
+                                prefix="+"
+                                className="composer-diff-add"
+                              />
+                              <AnimatedDiffNumber
+                                value={workspaceDiffStats.deletions}
+                                prefix="-"
+                                className="composer-diff-del"
+                              />
+                            </span>
+                          )}
+                        </span>
+                        </div>
+                      )}
                       <div className="composer-above-bar-pill composer-above-bar-pill--action">
                       {(() => {
                         const hasReviewableDiff = workspaceDiffStats.filesChanged > 0
