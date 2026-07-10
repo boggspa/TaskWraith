@@ -36,8 +36,8 @@ export interface KimiWireCloseDecision {
   emitResultLine: boolean
   /** True iff the handler should emit `agent-exit` (gated by idempotence). */
   emitExit: boolean
-  /** Terminal status to report to `RunManager.finish`. */
-  terminalStatus: 'completed' | 'failed'
+  /** Terminal status to report to `RunManager.finish`, absent for a retryable startup failure. */
+  terminalStatus?: 'completed' | 'failed'
   /** Value to resolve the wire-mode promise with. */
   resolveWire: boolean
 }
@@ -98,7 +98,6 @@ export function decideKimiWireClose(inputs: KimiWireCloseInputs): KimiWireCloseD
       ignore: false,
       emitResultLine: false,
       emitExit: false,
-      terminalStatus: 'failed',
       resolveWire: false
     }
   }

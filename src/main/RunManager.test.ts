@@ -1,7 +1,16 @@
 import { describe, expect, it, vi } from 'vitest'
-import { RunManager } from './RunManager'
+import { RunManager, canStartRunTransport } from './RunManager'
 
 describe('RunManager', () => {
+  it('requires live ownership before a provider fallback transport may start', () => {
+    expect(canStartRunTransport('running', true)).toBe(true)
+    expect(canStartRunTransport('starting', true)).toBe(true)
+    expect(canStartRunTransport('cancelled', true)).toBe(false)
+    expect(canStartRunTransport('completed', true)).toBe(false)
+    expect(canStartRunTransport(undefined, true)).toBe(false)
+    expect(canStartRunTransport(undefined, false)).toBe(true)
+  })
+
   it('indexes sessions by run id, provider, chat, and provider session id', () => {
     const manager = new RunManager()
     const first = manager.create({
@@ -79,6 +88,23 @@ describe('RunManager', () => {
     expect(manager.getByProviderSession('codex', 'thread-new')?.runId).toBe('run-1')
   })
 
+  it('resolves provider sessions as active only while their app run is live', () => {
+    const manager = new RunManager()
+    manager.create({
+      runId: 'run-1',
+      provider: 'codex',
+      providerSessionId: 'thread-1',
+      status: 'running'
+    })
+
+    expect(manager.getActiveByProviderSession('codex', 'thread-1')?.runId).toBe('run-1')
+    manager.finish('run-1', 'completed')
+
+    expect(manager.getByProviderSession('codex', 'thread-1')?.runId).toBe('run-1')
+    expect(manager.getActiveByProviderSession('codex', 'thread-1')).toBeUndefined()
+    expect(manager.resolve('codex', { appRunId: 'run-1' })?.status).toBe('completed')
+  })
+
   it('does not fall back to latest when a routed run or chat is unknown', () => {
     const manager = new RunManager()
     manager.create({ runId: 'run-1', provider: 'gemini', appChatId: 'chat-1', status: 'running' })
@@ -128,5 +154,41 @@ describe('RunManager', () => {
     manager.finish('run-1', 'failed')
 
     expect(manager.get('run-1')?.status).toBe('cancelled')
+  })
+
+  it.each(['completed', 'failed', 'cancelled'] as const)(
+    'makes %s sessions absorbing and contains late resources',
+    (terminalStatus) => {
+      const manager = new RunManager()
+      const lateKill = vi.fn()
+      const lateAbort = vi.fn()
+      manager.create({ runId: 'run-1', provider: 'claude', status: 'running' })
+      manager.finish('run-1', terminalStatus)
+
+      manager.update('run-1', { status: 'running', providerSessionId: 'late-session' })
+      manager.attachProcess('run-1', { kill: lateKill })
+      manager.attachAbortController('run-1', { abort: lateAbort })
+      manager.registerApproval('run-1', 'late-approval')
+      manager.addSessionGrant('run-1', 'shellCommands')
+
+      expect(manager.get('run-1')?.status).toBe(terminalStatus)
+      expect(manager.get('run-1')?.providerSessionId).toBeUndefined()
+      expect(manager.get('run-1')?.process).toBeUndefined()
+      expect(manager.get('run-1')?.abortController).toBeUndefined()
+      expect(lateKill).toHaveBeenCalledTimes(1)
+      expect(lateAbort).toHaveBeenCalledTimes(1)
+      expect(manager.resolveApproval('late-approval')).toBeUndefined()
+      expect(manager.hasSessionGrant('run-1', 'shellCommands')).toBe(false)
+    }
+  )
+
+  it('rejects duplicate app-run ids instead of replacing their lifecycle', () => {
+    const manager = new RunManager()
+    manager.create({ runId: 'run-1', provider: 'claude', status: 'running' })
+
+    expect(() => manager.create({ runId: 'run-1', provider: 'claude' })).toThrow(
+      /already exists/
+    )
+    expect(manager.get('run-1')?.status).toBe('running')
   })
 })

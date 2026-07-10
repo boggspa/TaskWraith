@@ -61,7 +61,7 @@ describe('decideKimiWireClose', () => {
     expect(decision.ignore).toBe(false)
     expect(decision.emitExit).toBe(false)
     expect(decision.emitResultLine).toBe(false)
-    expect(decision.terminalStatus).toBe('failed')
+    expect(decision.terminalStatus).toBeUndefined()
     expect(decision.resolveWire).toBe(false)
   })
 

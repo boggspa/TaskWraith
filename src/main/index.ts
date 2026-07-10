@@ -860,7 +860,17 @@ import {
 } from './DiffService'
 import { isCodexSandboxToolingFailure, isSwiftPmNestedSandboxFailure } from './SandboxFallback'
 import { isPathInsideWorkspace } from './AgenticPolicy'
-import { RunManager } from './RunManager'
+import {
+  RunManager,
+  canStartRunTransport,
+  isTerminalRunSessionStatus
+} from './RunManager'
+import { decideClaudeSdkFailure } from './ClaudeSdkFallbackDecision'
+import {
+  decideCodexEnsembleFence,
+  resolveCodexExplicitThreadRoute,
+  shouldRouteCodexRunSession
+} from './CodexRunRouting'
 import {
   decideKimiContentFilterRetry,
   decideKimiWireClose,
@@ -1054,6 +1064,7 @@ import { isRetiredExternalChannelInboundMessage } from './LegacyExternalChannelH
 import {
   createActiveGoal,
   normalizeActiveGoalObjective,
+  resolveActiveGoalForEnsemble,
   resolveActiveGoalMode,
   updateActiveGoalLifecycle
 } from './GoalState'
@@ -1061,8 +1072,9 @@ import {
   CODEX_THREAD_GOAL_CLEAR_METHOD,
   CODEX_THREAD_GOAL_SET_METHOD,
   activeGoalFromCodexThreadGoal,
-  codexThreadGoalSetParams,
-  isCodexNativeGoalUnsupportedError
+  codexNativeGoalSyncIntent,
+  isCodexNativeGoalUnsupportedError,
+  mustFailClosedAfterCodexGoalSyncError
 } from './CodexNativeGoal'
 import {
   MEDIA_EDITING_TOOLS,
@@ -6015,10 +6027,15 @@ async function resolveAudioSource(
 }
 
 const pendingCodexNativeGoalSyncTimers = new Map<string, ReturnType<typeof setTimeout>>()
+// Threads in this set are owned by TaskWraith's Ensemble scheduler. They stay
+// marked between participant turns so an orphan native-goal turn can be
+// interrupted even when no active RunManager session currently owns the thread.
+const taskWraithSteeredCodexThreadIds = new Set<string>()
 
 function codexNativeGoalSyncStateKey(chat: ChatRecord | null | undefined): string {
   return JSON.stringify({
     activeGoal: chat?.activeGoal || null,
+    chatKind: chat?.chatKind === 'ensemble' ? 'ensemble' : 'single',
     nativeAvailable: Boolean(chat?.providerMetadata?.codexGoalNativeAvailable)
   })
 }
@@ -10778,12 +10795,32 @@ function runCliProviderProcess(
   payload: AgentRunPayload,
   options: {
     fallback: boolean
+    requireExistingRun?: boolean
     warning?: string
     extraEnv?: Record<string, string>
     onComplete?: () => Promise<void> | void
   } = { fallback: true }
 ) {
   const route = routeWithRunId(provider, payload)
+  let onCompleteFired = false
+  const runOnComplete = (): void => {
+    if (onCompleteFired) return
+    onCompleteFired = true
+    if (!options.onComplete) return
+    try {
+      const result = options.onComplete()
+      if (result && typeof (result as Promise<void>).then === 'function') {
+        ;(result as Promise<void>).catch(() => {})
+      }
+    } catch {
+      // onComplete is best-effort cleanup; never let it crash the run.
+    }
+  }
+  const existingSession = runManager.get(route.appRunId)
+  if (!canStartRunTransport(existingSession?.status, options.requireExistingRun)) {
+    runOnComplete()
+    return
+  }
   const cwd = payload.workspace!
   const model = normalizeCliProviderModel(provider, payload.model)
   const state: CliProviderStreamState = {
@@ -10805,14 +10842,19 @@ function runCliProviderProcess(
     ensembleRun: payload.ensembleRun,
     ...route
   }
-  registerRunSession(
+  const registeredSession = registerRunSession(
     provider,
     event.sender,
     route,
     payload.scope === 'global' ? undefined : payload.workspace,
     state,
-    payload.providerSessionId || null
+    payload.providerSessionId || null,
+    options.requireExistingRun
   )
+  if (!registeredSession) {
+    runOnComplete()
+    return
+  }
   void emitProviderCapabilityWarnings(
     event.sender,
     provider,
@@ -10944,21 +10986,6 @@ function runCliProviderProcess(
     }
     sendAgentCompatError(event.sender, provider, text, state)
   })
-
-  let onCompleteFired = false
-  const runOnComplete = (): void => {
-    if (onCompleteFired) return
-    onCompleteFired = true
-    if (!options.onComplete) return
-    try {
-      const result = options.onComplete()
-      if (result && typeof (result as Promise<void>).then === 'function') {
-        ;(result as Promise<void>).catch(() => {})
-      }
-    } catch {
-      // onComplete is best-effort cleanup; never let it crash the run.
-    }
-  }
 
   child.on('error', (error) => {
     sendAgentCompatError(
@@ -11304,6 +11331,13 @@ async function canUseClaudeSdkTool(
   | { behavior: 'allow'; updatedInput: Record<string, unknown> }
   | { behavior: 'deny'; message: string }
 > {
+  const denyInactiveRun = (): { behavior: 'deny'; message: string } => ({
+    behavior: 'deny',
+    message: 'TaskWraith denied this Claude tool because the run is no longer active.'
+  })
+  if (!canStartRunTransport(runManager.get(route.appRunId)?.status, true)) {
+    return denyInactiveRun()
+  }
   const { toolName, input: normalizedInput } = normalizeClaudeCanUseToolArgs(
     toolNameOrRequest,
     input
@@ -11333,6 +11367,9 @@ async function canUseClaudeSdkTool(
     normalizedInput,
     updatedInput
   )
+  if (!canStartRunTransport(runManager.get(route.appRunId)?.status, true)) {
+    return denyInactiveRun()
+  }
   if (nativeSubAgentDecision) return nativeSubAgentDecision
   // Auto-allow side-effect-free TaskWraith tools before the agentic-
   // service gate. The MCP dispatcher already skips approval for
@@ -11387,6 +11424,9 @@ async function canUseClaudeSdkTool(
       externalPathDetection
     }
   )
+  if (!canStartRunTransport(runManager.get(route.appRunId)?.status, true)) {
+    return denyInactiveRun()
+  }
   return allowed
     ? { behavior: 'allow', updatedInput }
     : { behavior: 'deny', message: `TaskWraith denied Claude tool ${toolName}.` }
@@ -11422,6 +11462,7 @@ async function tryRunClaudeSdk(
       return false
     }
   }
+  if (!canStartRunTransport(runManager.get(route.appRunId)?.status, true)) return true
   const controller = new AbortController()
   cliProviderAbortControllers.set('claude', controller)
   const state: CliProviderStreamState = {
@@ -11443,14 +11484,22 @@ async function tryRunClaudeSdk(
     ensembleRun: payload.ensembleRun,
     ...route
   }
-  registerRunSession(
+  const registeredSession = registerRunSession(
     'claude',
     event.sender,
     route,
     payload.scope === 'global' ? undefined : payload.workspace,
     state,
-    payload.providerSessionId || null
+    payload.providerSessionId || null,
+    true
   )
+  if (!registeredSession) {
+    controller.abort()
+    if (cliProviderAbortControllers.get('claude') === controller) {
+      cliProviderAbortControllers.delete('claude')
+    }
+    return true
+  }
   runManager.attachAbortController(route.appRunId!, controller)
   void emitProviderCapabilityWarnings(
     event.sender,
@@ -11538,9 +11587,17 @@ async function tryRunClaudeSdk(
       console.error('[mcp-bridge] broker ensure failed before Claude run', error)
     })
   }
-  const stream = query({
-    prompt: payload.prompt,
-    options: {
+  if (!canStartRunTransport(runManager.get(route.appRunId)?.status, true)) {
+    controller.abort()
+    if (cliProviderAbortControllers.get('claude') === controller) {
+      cliProviderAbortControllers.delete('claude')
+    }
+    return true
+  }
+  try {
+    const stream = query({
+      prompt: payload.prompt,
+      options: {
       cwd: payload.workspace!,
       model: model === 'default' ? undefined : model,
       // Spike 8 (docs/ensemble-posture-fanout-preamble-design.md) —
@@ -11584,38 +11641,68 @@ async function tryRunClaudeSdk(
         : {}),
       ...(claudeSdkSettings ? { settings: claudeSdkSettings } : {}),
       env: claudeSdkEnv
+      }
+    })
+
+    for await (const message of stream) {
+      handleCliProviderJsonEvent(state, message)
     }
-  })
 
-  for await (const message of stream) {
-    handleCliProviderJsonEvent(state, message)
+    if (!state.completed) {
+      sendAgentCompatLine(
+        event.sender,
+        'claude',
+        {
+          type: 'result',
+          status: 'success',
+          stats: { ...(state.tokenUsage || {}), duration_ms: Date.now() - state.startedAt },
+          provider: 'claude',
+          providerThreadId: state.providerSessionId || undefined,
+          fallback: false
+        },
+        state
+      )
+    }
+    sendAgentCompatExit(event.sender, 'claude', 0, state)
+    runManager.finish(route.appRunId, 'completed')
+    return true
+  } catch (error) {
+    const decision = decideClaudeSdkFailure({
+      error,
+      signalAborted: controller.signal.aborted,
+      runStatus: runManager.get(route.appRunId)?.status,
+      abortErrorConstructor: sdk?.AbortError || sdk?.default?.AbortError
+    })
+    if (decision === 'cancelled') {
+      runManager.finish(route.appRunId, 'cancelled')
+      // Preserve the cancelled RunManager status, but still publish the provider
+      // exit so scheduled-run, audit, bridge-transcript, and budget cleanup all
+      // settle through the shared terminal path.
+      sendAgentCompatExit(event.sender, 'claude', 130, state)
+      return true
+    }
+    if (decision === 'terminal') return true
+    throw error
+  } finally {
+    if (cliProviderAbortControllers.get('claude') === controller) {
+      cliProviderAbortControllers.delete('claude')
+    }
   }
-
-  if (!state.completed) {
-    sendAgentCompatLine(
-      event.sender,
-      'claude',
-      {
-        type: 'result',
-        status: 'success',
-        stats: { ...(state.tokenUsage || {}), duration_ms: Date.now() - state.startedAt },
-        provider: 'claude',
-        providerThreadId: state.providerSessionId || undefined,
-        fallback: false
-      },
-      state
-    )
-  }
-  sendAgentCompatExit(event.sender, 'claude', 0, state)
-  if (cliProviderAbortControllers.get('claude') === controller)
-    cliProviderAbortControllers.delete('claude')
-  runManager.finish(route.appRunId, 'completed')
-  return true
 }
 
 async function runClaudeProvider(event: Electron.IpcMainInvokeEvent, payload: AgentRunPayload) {
   const route = routeWithRunId('claude', payload)
+  const startingSession = registerRunSession(
+    'claude',
+    event.sender,
+    route,
+    payload.scope === 'global' ? undefined : payload.workspace,
+    undefined,
+    payload.providerSessionId || null
+  )
+  if (!startingSession) return
   const sdk = await loadOptionalClaudeSdk()
+  if (!canStartRunTransport(runManager.get(route.appRunId)?.status, true)) return
   if (sdk) {
     try {
       if (await tryRunClaudeSdk(event, payload, sdk, route)) return
@@ -11626,8 +11713,6 @@ async function runClaudeProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
         `Claude Agent SDK failed; falling back to Claude Code CLI. Reason: ${error instanceof Error ? error.message : String(error)}`,
         route
       )
-    } finally {
-      cliProviderAbortControllers.delete('claude')
     }
     // RC2 — per-occurrence budget kill: if the SDK run was aborted BY the budget
     // kill (cancelProviderRun aborts the SDK controller), tryRunClaudeSdk throws /
@@ -11652,6 +11737,7 @@ async function runClaudeProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
   }
 
   const resolved = await resolveCliProviderBinary('claude', payload.runtimeProfile)
+  if (!canStartRunTransport(runManager.get(route.appRunId)?.status, true)) return
   if (!resolved.binaryPath) {
     runManager.finish(route.appRunId, 'failed')
     sendAgentCompatError(
@@ -11751,8 +11837,15 @@ async function runClaudeProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
   const claudeFallbackWarning = sdk
     ? 'Using Claude Code CLI fallback for this run.'
     : 'Claude Agent SDK is not bundled in this app build; using Claude Code CLI stream-json fallback for this run.'
+  if (!canStartRunTransport(runManager.get(route.appRunId)?.status, true)) {
+    if (mcpConfigPath) {
+      await fs.unlink(mcpConfigPath).catch(() => {})
+    }
+    return
+  }
   runCliProviderProcess(event, 'claude', resolved.binaryPath, args, payload, {
     fallback: true,
+    requireExistingRun: true,
     warning: claudeUsageWarning
       ? `${claudeFallbackWarning} ${claudeUsageWarning}`
       : claudeFallbackWarning,
@@ -12796,14 +12889,16 @@ async function runKimiWireProvider(
     ensembleRun: payload.ensembleRun,
     ...route
   }
-  registerRunSession(
+  const registeredSession = registerRunSession(
     'kimi',
     event.sender,
     route,
     payload.scope === 'global' ? undefined : payload.workspace,
     state,
-    payload.providerSessionId || null
+    payload.providerSessionId || null,
+    true
   )
+  if (!registeredSession) return false
   void emitProviderCapabilityWarnings(
     event.sender,
     'kimi',
@@ -12919,7 +13014,9 @@ async function runKimiWireProvider(
       settled = true
       child.kill()
       if (cliProviderProcesses.get('kimi') === child) cliProviderProcesses.delete('kimi')
-      runManager.finish(route.appRunId, 'failed')
+      // Wire startup is a transport attempt, not the app-run outcome. Keep the
+      // app run live so the guarded print-mode fallback can reuse it.
+      runManager.update(route.appRunId!, { process: undefined })
       resolveWire(false)
     }, 7_000)
 
@@ -13406,7 +13503,8 @@ async function runKimiWireProvider(
       if (state.completed && promptSent) {
         emitKimiExit(1)
       }
-      runManager.finish(route.appRunId, 'failed')
+      if (promptSent) runManager.finish(route.appRunId, 'failed')
+      else runManager.update(route.appRunId!, { process: undefined })
       resolveWire(false)
     })
 
@@ -13433,7 +13531,8 @@ async function runKimiWireProvider(
       if (decision.emitExit) {
         emitKimiExit(code)
       }
-      runManager.finish(route.appRunId, decision.terminalStatus)
+      if (decision.terminalStatus) runManager.finish(route.appRunId, decision.terminalStatus)
+      else runManager.update(route.appRunId!, { process: undefined })
       settled = true
       resolveWire(decision.resolveWire)
     })
@@ -13454,6 +13553,16 @@ async function runKimiWireProvider(
 }
 
 async function runKimiProvider(event: Electron.IpcMainInvokeEvent, payload: AgentRunPayload) {
+  const route = routeWithRunId('kimi', payload)
+  const startingSession = registerRunSession(
+    'kimi',
+    event.sender,
+    route,
+    payload.scope === 'global' ? undefined : payload.workspace,
+    undefined,
+    payload.providerSessionId || null
+  )
+  if (!startingSession) return
   // 1.0.5-EW26 — Kimi compatibility filter. When enabled in
   // Settings, ensemble-mode Kimi participants get their prompt
   // pre-sanitised: sentences containing keywords known to trip
@@ -13496,12 +13605,16 @@ async function runKimiProvider(event: Electron.IpcMainInvokeEvent, payload: Agen
       setupRequired: true
     })
     sendAgentCompatExit(event.sender, 'kimi', 1)
+    runManager.finish(route.appRunId, 'failed')
     return
   }
 
   if (await runKimiWireProvider(event, payload, resolved.binaryPath)) {
     return
   }
+
+  const kimiSessionAfterWire = runManager.get(route.appRunId)
+  if (kimiSessionAfterWire && isTerminalRunSessionStatus(kimiSessionAfterWire.status)) return
 
   if (payload.approvalMode !== 'plan') {
     sendAgentCompatError(
@@ -13517,6 +13630,7 @@ async function runKimiProvider(event: Electron.IpcMainInvokeEvent, payload: Agen
       fallback: true
     })
     sendAgentCompatExit(event.sender, 'kimi', 1)
+    runManager.finish(route.appRunId, 'failed')
     return
   }
 
@@ -13567,6 +13681,7 @@ async function runKimiProvider(event: Electron.IpcMainInvokeEvent, payload: Agen
   const fallbackRoute = routeWithRunId('kimi', payload)
   runCliProviderProcess(event, 'kimi', resolved.binaryPath, args, payload, {
     fallback: true,
+    requireExistingRun: true,
     warning:
       'Kimi Wire mode did not complete startup; using print-mode stream-json fallback for this one-shot run.',
     // Phase I4: belt-and-braces parent-provider env stamp on the
@@ -13717,11 +13832,13 @@ function registerRunSession(
   route: AgentRunRoute | null | undefined,
   workspacePath?: string,
   state?: any,
-  providerSessionId?: string | null
+  providerSessionId?: string | null,
+  requireExistingRun = false
 ) {
   const routed = routeWithRunId(provider, route)
   const existing = runManager.get(routed.appRunId)
   if (existing) {
+    if (isTerminalRunSessionStatus(existing.status)) return undefined
     runManager.update(existing.runId, {
       sender,
       workspacePath,
@@ -13732,6 +13849,7 @@ function registerRunSession(
     })
     return runManager.get(existing.runId)!
   }
+  if (requireExistingRun) return undefined
   return runManager.create({
     runId: routed.appRunId!,
     provider,
@@ -13760,6 +13878,30 @@ function getCodexStateFromSession(
   return state && typeof state === 'object' && (state as CodexRunState).threadId
     ? (state as CodexRunState)
     : null
+}
+
+function isEnsembleCodexRunSession(
+  session: ReturnType<typeof runManager.get> | undefined
+): boolean {
+  if (!session) return false
+  const state = getCodexStateFromSession(session)
+  if (state?.ensembleRun) return true
+  return session.appChatId
+    ? AppStore.getChat(session.appChatId)?.chatKind === 'ensemble'
+    : false
+}
+
+function allowsTerminalCodexNativeGoalSession(
+  session: ReturnType<typeof runManager.get> | undefined
+): boolean {
+  if (!session || session.provider !== 'codex' || session.status !== 'completed') return false
+  const chat = session.appChatId ? AppStore.getChat(session.appChatId) : null
+  return Boolean(
+    chat &&
+      chat.chatKind !== 'ensemble' &&
+      chat.activeGoal?.mode === 'codex_native' &&
+      (chat.activeGoal.status === 'active' || chat.activeGoal.status === 'blocked')
+  )
 }
 
 function getActiveCodexRunState(): CodexRunState | null {
@@ -13827,10 +13969,29 @@ function findCodexRunStateForMessage(message: any): CodexRunState | null {
   const threadId =
     params.threadId || params.thread?.id || params.item?.threadId || params.turn?.threadId
   if (threadId) {
-    const byThread = getCodexStateFromSession(
-      runManager.getByProviderSession('codex', String(threadId))
+    const session = runManager.getByProviderSession('codex', String(threadId))
+    const byThread = getCodexStateFromSession(session)
+    const exactSessionRoutable = Boolean(
+      byThread &&
+        session &&
+      shouldRouteCodexRunSession({
+        ensemble: isEnsembleCodexRunSession(session),
+        status: session.status,
+        stateCompleted: byThread.completed,
+        allowTerminalNativeGoal: allowsTerminalCodexNativeGoalSession(session)
+      })
     )
-    if (byThread) return byThread
+    const childOwner = !session ? findCodexMultiAgentOwnerState(String(threadId)) : null
+    const explicitRoute = resolveCodexExplicitThreadRoute({
+      hasExplicitThreadId: true,
+      exactSessionRoutable,
+      registeredChildOwner: Boolean(childOwner)
+    })
+    if (explicitRoute === 'session') return byThread
+    if (explicitRoute === 'child_owner') return childOwner
+    // An explicit thread id is authoritative. Never route an orphaned or
+    // terminal ensemble event into some other active Codex participant.
+    return null
   }
   return getActiveCodexRunState()
 }
@@ -13884,6 +14045,13 @@ function getAgentToolContext(
     return getGeminiToolContext(route)
   }
   const session = getRuntimeSession(parentProvider, route)
+  if (
+    session &&
+    isTerminalRunSessionStatus(session.status) &&
+    !allowsTerminalCodexNativeGoalSession(session)
+  ) {
+    return null
+  }
   const sender = session?.sender as Electron.WebContents | undefined
   if (!sender || !session) {
     return null
@@ -14072,6 +14240,9 @@ function sendAgentCompatExit(
     exitStats ? { code, stats: exitStats } : { code },
     route
   )
+  const runCancelled = Boolean(
+    routed.appRunId && runManager.get(routed.appRunId)?.status === 'cancelled'
+  )
   const exitRunItemEvents = runItemEventsForDrafts(provider, routed, [
     {
       kind: 'run/completed',
@@ -14109,7 +14280,9 @@ function sendAgentCompatExit(
     )
     // Auto-failover: on a terminal FAILED exit with a stashed quota-wall signal,
     // pause the throttled provider and re-dispatch the request to a healthy one.
-    maybeTriggerProviderAutoFailover(routed.appRunId, provider, routed.appChatId, code)
+    if (!runCancelled) {
+      maybeTriggerProviderAutoFailover(routed.appRunId, provider, routed.appChatId, code)
+    }
     // A failover-rerouted run exits MAIN-side; mark its scheduled task terminal
     // (the renderer never registered a context for it). Idempotent: updateScheduledTask
     // guards invalid terminal->terminal transitions, so a stale renderer mark is a no-op.
@@ -14135,7 +14308,6 @@ function sendAgentCompatExit(
     // run has no renderer, so main owns it. (A budget kill also routes through
     // cancelProviderRun, but triggerKill already marked the task 'failed' first, so
     // the transition guard no-ops this 'cancelled' write — the 'failed' stands.)
-    const runCancelled = runManager.get(routed.appRunId)?.status === 'cancelled'
     const failoverScheduledTaskId = scheduledTaskIdByFailoverRun.get(routed.appRunId)
     if (failoverScheduledTaskId) {
       scheduledTaskIdByFailoverRun.delete(routed.appRunId)
@@ -15651,6 +15823,35 @@ function handleCodexNotification(message: any) {
     handleCodexManualCompactionNotification(message)
     return
   }
+  const exactThreadSession = notificationThreadId
+    ? runManager.getByProviderSession('codex', notificationThreadId)
+    : undefined
+  const fenceDecision = decideCodexEnsembleFence({
+    taskWraithSteeredThread: Boolean(
+      notificationThreadId && taskWraithSteeredCodexThreadIds.has(notificationThreadId)
+    ),
+    sessionStatus: exactThreadSession?.status,
+    sessionIsEnsemble: isEnsembleCodexRunSession(exactThreadSession),
+    method: String(message?.method || ''),
+    turnId: String(message?.params?.turn?.id || message?.params?.turnId || '') || undefined
+  })
+  if (fenceDecision.action !== 'route') {
+    if (fenceDecision.action === 'interrupt' && notificationThreadId) {
+      // Defense in depth: clearing the native goal before every ensemble turn
+      // prevents this scheduler path. If a stale/racing goal still starts a
+      // turn after the app run ended, interrupt it before any tool item lands.
+      void issueCodexTurnInterrupt(notificationThreadId, fenceDecision.turnId)
+    } else if (
+      fenceDecision.action === 'clear_native_goal' &&
+      notificationThreadId &&
+      codexClient
+    ) {
+      void codexClient
+        .request(CODEX_THREAD_GOAL_CLEAR_METHOD, { threadId: notificationThreadId }, 15_000)
+        .catch(() => {})
+    }
+    return
+  }
   if (!state) {
     // Multi-agent subagent lifecycle events carry the SUBAGENT's own threadId,
     // which is never a registered run session — and with >1 codex run active
@@ -16216,7 +16417,13 @@ function formatCodexApprovalRequest(method: string, params: any, state?: CodexRu
 
 function handleCodexServerRequest(message: any) {
   const state = findCodexRunStateForMessage(message)
-  if (!state || !codexClient) return
+  if (!codexClient) return
+  if (!state) {
+    if (message?.id !== undefined && message?.id !== null) {
+      codexClient.reject(message.id, 'TaskWraith run is no longer active; approval denied.')
+    }
+    return
+  }
   const method = message.method || 'approval/request'
   const params = message.params || {}
   const approvalId = Date.now() + '-' + Math.random().toString(36).slice(2)
@@ -16780,9 +16987,19 @@ function syncCodexGoalCapabilityMetadata(
     ...(chat.providerMetadata || {}),
     codexGoalNativeAvailable: nativeAvailable
   }
-  const activeGoalSource = goalOverride !== undefined ? goalOverride : chat.activeGoal
-  const activeGoal =
-    activeGoalSource?.provider === 'codex'
+  const taskWraithOwnsGoal = chat.chatKind === 'ensemble'
+  // Native goal notifications are untrusted scheduling input for an ensemble:
+  // preserve the shared TaskWraith record even when Codex reports a clear or a
+  // stale native update from a reused participant thread.
+  const nativeGoalOverrideApplied = !taskWraithOwnsGoal && goalOverride !== undefined
+  const activeGoalSource = taskWraithOwnsGoal
+    ? chat.activeGoal
+    : nativeGoalOverrideApplied
+      ? goalOverride
+      : chat.activeGoal
+  const activeGoal = taskWraithOwnsGoal
+    ? resolveActiveGoalForEnsemble(activeGoalSource)
+    : activeGoalSource?.provider === 'codex'
       ? {
           ...activeGoalSource,
           mode: resolveActiveGoalMode('codex', { codexNativeAvailable: nativeAvailable })
@@ -16791,7 +17008,7 @@ function syncCodexGoalCapabilityMetadata(
   const metadataUnchanged =
     Boolean(chat.providerMetadata?.codexGoalNativeAvailable) === nativeAvailable
   const goalUnchanged =
-    goalOverride === undefined
+    !nativeGoalOverrideApplied
       ? activeGoal === chat.activeGoal || activeGoal?.mode === chat.activeGoal?.mode
       : JSON.stringify(activeGoal || null) === JSON.stringify(chat.activeGoal || null)
   if (metadataUnchanged && goalUnchanged) return
@@ -16801,7 +17018,7 @@ function syncCodexGoalCapabilityMetadata(
     updatedAt: Date.now()
   }
   if (activeGoal) updated.activeGoal = activeGoal
-  else if (goalOverride !== undefined) delete updated.activeGoal
+  else if (nativeGoalOverrideApplied) delete updated.activeGoal
   AppStore.saveChat(updated)
   broadcastChatUpdated(updated)
   try {
@@ -16813,21 +17030,35 @@ function syncCodexGoalCapabilityMetadata(
   }
 }
 
+class CodexEnsembleGoalIsolationError extends Error {
+  override name = 'CodexEnsembleGoalIsolationError'
+}
+
 async function syncCodexNativeGoalForRun(
   client: CodexAppServerClient,
   appChatId: string | undefined,
-  threadId: string
+  threadId: string,
+  ensembleRun = false
 ): Promise<void> {
   if (!appChatId || !threadId) return
   const chat = AppStore.getChat(appChatId)
-  if (!chat || chat.provider !== 'codex') return
+  if (!chat) return
+  const intent = codexNativeGoalSyncIntent({
+    threadId,
+    chatKind: chat.chatKind,
+    ensembleRun,
+    activeGoal: chat.activeGoal
+  })
+  if (intent.preserveTaskWraithGoal) taskWraithSteeredCodexThreadIds.add(threadId)
+  else taskWraithSteeredCodexThreadIds.delete(threadId)
+  // A Codex seat may live in a Claude-canonical ensemble. Clearing the seat's
+  // stale native scheduler must therefore happen before the canonical-provider
+  // guard used by solo native-goal mirroring.
+  if (!intent.preserveTaskWraithGoal && chat.provider !== 'codex') return
   try {
-    if (chat.activeGoal) {
-      const response: any = await client.request(
-        CODEX_THREAD_GOAL_SET_METHOD,
-        codexThreadGoalSetParams(threadId, chat.activeGoal),
-        15_000
-      )
+    if (intent.method === CODEX_THREAD_GOAL_SET_METHOD) {
+      if (!chat.activeGoal) return
+      const response: any = await client.request(intent.method, intent.params, 15_000)
       const nativeGoal = response?.goal
       syncCodexGoalCapabilityMetadata(
         appChatId,
@@ -16839,10 +17070,12 @@ async function syncCodexNativeGoalForRun(
       return
     }
 
-    await client.request(CODEX_THREAD_GOAL_CLEAR_METHOD, { threadId }, 15_000)
-    syncCodexGoalCapabilityMetadata(appChatId, true, null)
+    await client.request(intent.method, intent.params, 15_000)
+    if (intent.preserveTaskWraithGoal) syncCodexGoalCapabilityMetadata(appChatId, true)
+    else syncCodexGoalCapabilityMetadata(appChatId, true, null)
   } catch (error) {
-    if (isCodexNativeGoalUnsupportedError(error)) {
+    const unsupportedNativeGoalControl = isCodexNativeGoalUnsupportedError(error)
+    if (unsupportedNativeGoalControl) {
       syncCodexGoalCapabilityMetadata(appChatId, false)
       return
     }
@@ -16851,6 +17084,13 @@ async function syncCodexNativeGoalForRun(
         error instanceof Error ? error.message : String(error)
       }`
     )
+    if (mustFailClosedAfterCodexGoalSyncError(intent, unsupportedNativeGoalControl)) {
+      throw new CodexEnsembleGoalIsolationError(
+        `Cannot start an Ensemble Codex turn while its provider-native goal may still be active: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      )
+    }
   }
 }
 
@@ -16885,10 +17125,23 @@ async function syncCodexNativeGoalForSavedChat(
 
 function syncCodexNativeGoalNotification(state: CodexRunState, message: any): boolean {
   if (!state.appChatId) return false
+  const chat = AppStore.getChat(state.appChatId)
+  const taskWraithOwnsGoal = Boolean(state.ensembleRun) || chat?.chatKind === 'ensemble'
+  if (
+    taskWraithOwnsGoal &&
+    (message.method === 'thread/goal/updated' || message.method === 'thread/goal/cleared')
+  ) {
+    if (message.method === 'thread/goal/updated' && state.threadId && codexClient) {
+      void codexClient
+        .request(CODEX_THREAD_GOAL_CLEAR_METHOD, { threadId: state.threadId }, 15_000)
+        .catch(() => {})
+    }
+    syncCodexGoalCapabilityMetadata(state.appChatId, true)
+    return true
+  }
   if (message.method === 'thread/goal/updated') {
     const nativeGoal = message.params?.goal
     if (!nativeGoal) return true
-    const chat = AppStore.getChat(state.appChatId)
     if (!chat) return true
     syncCodexGoalCapabilityMetadata(
       state.appChatId,
@@ -16915,6 +17168,29 @@ async function runCodexAppServer(event: Electron.IpcMainInvokeEvent, payload: Ag
     }
   })
 
+  const persistedChat = payload.appChatId ? AppStore.getChat(payload.appChatId) : null
+  const taskWraithOwnsThisRun = Boolean(payload.ensembleRun) || persistedChat?.chatKind === 'ensemble'
+  const resumableThreadId =
+    payload.providerSessionId && isCodexAppServerThreadId(payload.providerSessionId)
+      ? payload.providerSessionId
+      : null
+  if (persistedChat?.chatKind === 'ensemble') {
+    for (const participant of persistedChat.ensemble?.participants || []) {
+      if (
+        participant.provider === 'codex' &&
+        participant.linkedProviderSessionId &&
+        isCodexAppServerThreadId(participant.linkedProviderSessionId)
+      ) {
+        taskWraithSteeredCodexThreadIds.add(participant.linkedProviderSessionId)
+      }
+    }
+  }
+  if (resumableThreadId && taskWraithOwnsThisRun) {
+    // Mark before ensureStarted/thread-resume: app-server startup itself can
+    // resume emitting an already-armed native goal before a RunManager owner exists.
+    taskWraithSteeredCodexThreadIds.add(resumableThreadId)
+  }
+
   await client.ensureStarted(app.getVersion())
   syncCodexGoalCapabilityMetadata(payload.appChatId, client.supportsNativeGoalControl())
 
@@ -16939,10 +17215,6 @@ async function runCodexAppServer(event: Electron.IpcMainInvokeEvent, payload: Ag
   }
 
   let threadResponse: any
-  const resumableThreadId =
-    payload.providerSessionId && isCodexAppServerThreadId(payload.providerSessionId)
-      ? payload.providerSessionId
-      : null
   // Review fix (critical): a turn dispatched while a manual compaction turn is
   // in flight on this thread would register its run state and then adopt the
   // COMPACTION turn's lifecycle — turn/started stamps the compaction turnId
@@ -16984,7 +17256,12 @@ async function runCodexAppServer(event: Electron.IpcMainInvokeEvent, payload: Ag
     throw new Error('Codex app-server did not return a thread id.')
   }
 
-  await syncCodexNativeGoalForRun(client, payload.appChatId, threadId)
+  await syncCodexNativeGoalForRun(
+    client,
+    payload.appChatId,
+    threadId,
+    Boolean(payload.ensembleRun)
+  )
 
   const route = routeWithRunId('codex', payload)
   const codexState = createCodexRunState(
@@ -17340,6 +17617,13 @@ async function runCodexProvider(
     await runCodexAppServer(event, payload)
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
+    if (error instanceof CodexEnsembleGoalIsolationError) {
+      const route = routeWithRunId('codex', payload)
+      sendAgentCompatError(event.sender, 'codex', message, route)
+      sendAgentCompatExit(event.sender, 'codex', -1, route)
+      runManager.finish(route.appRunId, 'failed')
+      return
+    }
     // If the app-server failed because the codex CLI couldn't parse
     // ~/.codex/config.toml (e.g. a value only the newer Codex.app CLI accepts),
     // surface a clear, actionable message instead of only the cryptic

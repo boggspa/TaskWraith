@@ -64,8 +64,20 @@ function sessionGrantKey(
   return `${provider}:${service}:${workspacePath || 'global'}`
 }
 
-function isTerminalRunSessionStatus(status: RunSessionStatus): boolean {
+export function isTerminalRunSessionStatus(status: RunSessionStatus): boolean {
   return status === 'completed' || status === 'failed' || status === 'cancelled'
+}
+
+export function isActiveRunSessionStatus(status: RunSessionStatus): boolean {
+  return status === 'starting' || status === 'running'
+}
+
+export function canStartRunTransport(
+  status: RunSessionStatus | undefined,
+  requireExistingRun = false
+): boolean {
+  if (status === undefined) return !requireExistingRun
+  return isActiveRunSessionStatus(status)
 }
 
 export class RunManager<TState = unknown> {
@@ -85,7 +97,7 @@ export class RunManager<TState = unknown> {
   create(input: CreateRunSessionInput<TState>): RunSession<TState> {
     const existing = this.sessionsByRunId.get(input.runId)
     if (existing) {
-      this.remove(input.runId)
+      throw new Error(`Run session already exists: ${input.runId}`)
     }
 
     const now = Date.now()
@@ -125,9 +137,7 @@ export class RunManager<TState = unknown> {
   }
 
   getActiveByProvider(provider: ProviderId): RunSession<TState>[] {
-    return this.getByProvider(provider).filter(
-      (session) => session.status === 'starting' || session.status === 'running'
-    )
+    return this.getByProvider(provider).filter((session) => isActiveRunSessionStatus(session.status))
   }
 
   getLatestByProvider(provider: ProviderId): RunSession<TState> | undefined {
@@ -143,6 +153,14 @@ export class RunManager<TState = unknown> {
     return this.get(
       this.runIdByProviderSession.get(providerSessionKey(provider, providerSessionId))
     )
+  }
+
+  getActiveByProviderSession(
+    provider: ProviderId,
+    providerSessionId?: string | null
+  ): RunSession<TState> | undefined {
+    const session = this.getByProviderSession(provider, providerSessionId)
+    return session && isActiveRunSessionStatus(session.status) ? session : undefined
   }
 
   resolve(provider: ProviderId, route?: RunRoute | null): RunSession<TState> | undefined {
@@ -170,6 +188,10 @@ export class RunManager<TState = unknown> {
   ): RunSession<TState> | undefined {
     const session = this.sessionsByRunId.get(runId)
     if (!session) return undefined
+    // An app-run id represents one lifecycle. Provider fallbacks are transport
+    // attempts within that lifecycle; once the app run is terminal, late
+    // callbacks must not revive it or replace its ownership metadata.
+    if (isTerminalRunSessionStatus(session.status)) return session
 
     const previousProviderSessionId = session.providerSessionId
     Object.assign(session, partial, { updatedAt: Date.now() })
@@ -193,6 +215,15 @@ export class RunManager<TState = unknown> {
   }
 
   attachProcess(runId: string, process: KillableProcess): RunSession<TState> | undefined {
+    const session = this.sessionsByRunId.get(runId)
+    if (session && isTerminalRunSessionStatus(session.status)) {
+      try {
+        process.kill()
+      } catch {
+        // The run remains terminal even if the late process already exited.
+      }
+      return session
+    }
     return this.update(runId, { process, status: 'running' })
   }
 
@@ -200,6 +231,15 @@ export class RunManager<TState = unknown> {
     runId: string,
     abortController: AbortableController
   ): RunSession<TState> | undefined {
+    const session = this.sessionsByRunId.get(runId)
+    if (session && isTerminalRunSessionStatus(session.status)) {
+      try {
+        abortController.abort()
+      } catch {
+        // The run remains terminal even if the controller was already disposed.
+      }
+      return session
+    }
     return this.update(runId, { abortController, status: 'running' })
   }
 
@@ -217,7 +257,7 @@ export class RunManager<TState = unknown> {
   registerApproval(runId: string | undefined, approvalId: string): void {
     if (!runId || !approvalId) return
     const session = this.sessionsByRunId.get(runId)
-    if (!session) return
+    if (!session || isTerminalRunSessionStatus(session.status)) return
     session.approvalIds.add(approvalId)
     this.approvalIdToRunId.set(approvalId, runId)
   }
@@ -237,7 +277,7 @@ export class RunManager<TState = unknown> {
   addSessionGrant(runId: string | undefined, service: AgenticServiceId): void {
     if (!runId) return
     const session = this.sessionsByRunId.get(runId)
-    if (!session) return
+    if (!session || isTerminalRunSessionStatus(session.status)) return
     session.sessionGrants.add(sessionGrantKey(session.provider, session.workspacePath, service))
   }
 
