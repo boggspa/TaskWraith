@@ -76,6 +76,82 @@ enum HomeSearchRanker {
     }
 }
 
+/// Immutable, one-pass inputs for the home list's repeated card lookups.
+///
+/// `HomeView` is intentionally still the single observer of
+/// `RemoteSessionModel`, but it builds this projection once per body update and
+/// passes scalar attention counts into its rows. That keeps every `TaskRow`
+/// from subscribing to the entire session model and avoids rescanning all
+/// approvals + questions for every visible row (twice, before this projection).
+struct HomeListProjection {
+    let listedCards: [RemoteTaskCard]
+    let cardsByWorkspace: [String: [RemoteTaskCard]]
+    let childrenByParent: [String: [RemoteTaskCard]]
+    let orphanCards: [RemoteTaskCard]
+
+    private let attentionCountsByThreadId: [String: Int]
+
+    init(
+        taskCards: [RemoteTaskCard],
+        workflowThreadIds: Set<String>,
+        knownWorkspaceIds: Set<String>,
+        approvals: [MobileApprovalCard],
+        questions: [MobileQuestionCard]
+    ) {
+        var listedCards: [RemoteTaskCard] = []
+        var cardsByWorkspace: [String: [RemoteTaskCard]] = [:]
+        var childrenByParent: [String: [RemoteTaskCard]] = [:]
+        var orphanCards: [RemoteTaskCard] = []
+
+        for card in taskCards {
+            if let parentId = card.parentChatId, !(card.archived ?? false) {
+                childrenByParent[parentId, default: []].append(card)
+            }
+
+            guard
+                !(card.isDraft ?? false),
+                !(card.archived ?? false),
+                !workflowThreadIds.contains(card.id)
+            else { continue }
+
+            listedCards.append(card)
+            guard card.parentChatId == nil else { continue }
+
+            let workspaceId = card.workspaceId ?? ""
+            cardsByWorkspace[workspaceId, default: []].append(card)
+            if !knownWorkspaceIds.contains(workspaceId) {
+                orphanCards.append(card)
+            }
+        }
+
+        var attentionCountsByThreadId: [String: Int] = [:]
+        for approval in approvals {
+            if let threadId = approval.threadId {
+                attentionCountsByThreadId[threadId, default: 0] += 1
+            }
+        }
+        for question in questions {
+            if let threadId = question.threadId {
+                attentionCountsByThreadId[threadId, default: 0] += 1
+            }
+        }
+
+        self.listedCards = listedCards
+        self.cardsByWorkspace = cardsByWorkspace
+        self.childrenByParent = childrenByParent
+        self.orphanCards = orphanCards
+        self.attentionCountsByThreadId = attentionCountsByThreadId
+    }
+
+    func pendingAttentionCount(for card: RemoteTaskCard) -> Int {
+        let cardIdCount = attentionCountsByThreadId[card.id, default: 0]
+        guard let threadId = card.threadId, threadId != card.id else {
+            return cardIdCount
+        }
+        return cardIdCount + attentionCountsByThreadId[threadId, default: 0]
+    }
+}
+
 #if canImport(UIKit)
     import PhotosUI
     import UIKit
@@ -200,33 +276,6 @@ struct HomeView: View {
         nonmutating set { model.collapsedSections = newValue }
     }
 
-    /// Top-level threads per workspace; sub-threads/side chats nest under
-    /// their parent like the desktop sidebar.
-    /// Top-level cards minus unstarted welcome-card drafts. The active draft
-    /// stays in `model.taskCards` so its in-progress welcome screen still
-    /// resolves, but it must never appear as a real chat row in any list section.
-    private var listedCards: [RemoteTaskCard] {
-        let workflowThreadIds = Set(model.workflows.compactMap(\.threadId))
-        return model.taskCards.filter {
-            !($0.isDraft ?? false) && !($0.archived ?? false) && !workflowThreadIds.contains($0.id)
-        }
-    }
-    private var cardsByWorkspace: [String: [RemoteTaskCard]] {
-        Dictionary(grouping: listedCards.filter { $0.parentChatId == nil }) {
-            $0.workspaceId ?? ""
-        }
-    }
-    private var childrenByParent: [String: [RemoteTaskCard]] {
-        Dictionary(grouping: model.taskCards.filter { $0.parentChatId != nil && !($0.archived ?? false) }) {
-            $0.parentChatId ?? ""
-        }
-    }
-    private var orphanCards: [RemoteTaskCard] {
-        let known = Set(model.workspaces.map(\.workspaceId))
-        return listedCards.filter {
-            $0.parentChatId == nil && !known.contains($0.workspaceId ?? "")
-        }
-    }
     /// Workflows scoped to workspaces the phone already knows (allowlisted) —
     /// mirrors the workspace-folder gating so a workflow never references a
     /// workspace the user can't see.
@@ -275,7 +324,7 @@ struct HomeView: View {
     }
 
     @ViewBuilder
-    private var searchResultsSections: some View {
+    private func searchResultsSections(projection: HomeListProjection) -> some View {
         if !model.projectionGraceExpired {
             // Never claim "No results" over state that hasn't arrived yet —
             // the hydration ticker gate wins (ios-batch1-ux-spec). Keyed on the
@@ -295,7 +344,7 @@ struct HomeView: View {
             } else {
                 Section("Results") {
                     ForEach(results, id: \.id) { card in
-                        threadRow(card)
+                        threadRow(card, projection: projection)
                             .opacity((card.archived ?? false) ? 0.55 : 1)
                     }
                 }
@@ -326,14 +375,21 @@ struct HomeView: View {
     }
 
     var body: some View {
+        let projection = HomeListProjection(
+            taskCards: model.taskCards,
+            workflowThreadIds: Set(model.workflows.compactMap(\.threadId)),
+            knownWorkspaceIds: Set(model.workspaces.map(\.workspaceId)),
+            approvals: model.approvals,
+            questions: model.questions)
+
         Group {
             // One list for both widths — iPad selection is explicit Buttons
             // (List(selection:) needs edit mode on .plain-style iPadOS lists).
             List {
                 if searchActive {
-                    searchResultsSections
+                    searchResultsSections(projection: projection)
                 } else {
-                    sections
+                    sections(projection: projection)
                 }
             }
         }
@@ -507,7 +563,7 @@ struct HomeView: View {
     }
 
     @ViewBuilder
-    private var sections: some View {
+    private func sections(projection: HomeListProjection) -> some View {
         Section {
             MastheadRow()
         }
@@ -592,7 +648,7 @@ struct HomeView: View {
             Section {
                 if !collapsedSections.contains("activeRuns") {
                     ForEach(activeCards, id: \.id) { card in
-                        threadRow(card)
+                        threadRow(card, projection: projection)
                     }
                 }
             } header: {
@@ -604,12 +660,12 @@ struct HomeView: View {
             }
         }
 
-        let pinnedCards = listedCards.filter { $0.pinned == true }
+        let pinnedCards = projection.listedCards.filter { $0.pinned == true }
         if !pinnedCards.isEmpty {
             Section {
                 if !collapsedSections.contains("pinned") {
                     ForEach(pinnedCards, id: \.id) { card in
-                        threadRow(card)
+                        threadRow(card, projection: projection)
                     }
                 }
             } header: {
@@ -620,7 +676,7 @@ struct HomeView: View {
                 ) { toggleSection("pinned") }
             }
         }
-        let recentCards = listedCards
+        let recentCards = projection.listedCards
             .filter { $0.parentChatId == nil }
             .sorted { ($0.updatedAt ?? "") > ($1.updatedAt ?? "") }
             .prefix(4)
@@ -628,7 +684,7 @@ struct HomeView: View {
             Section {
                 if !collapsedSections.contains("recents") {
                     ForEach(Array(recentCards), id: \.id) { card in
-                        threadRow(card)
+                        threadRow(card, projection: projection)
                     }
                 }
             } header: {
@@ -642,12 +698,14 @@ struct HomeView: View {
         // ── Ensembles — every ensemble in one place (desktop parity).
         //    They ALSO stay listed inside their workspace folders below;
         //    this is the cross-cutting view, like Pinned/Recents. ─────────
-        let ensembleCards = listedCards.filter { $0.isEnsemble && $0.parentChatId == nil }
+        let ensembleCards = projection.listedCards.filter {
+            $0.isEnsemble && $0.parentChatId == nil
+        }
         if !ensembleCards.isEmpty {
             Section {
                 if !collapsedSections.contains("ensembles") {
                     ForEach(ensembleCards, id: \.id) { card in
-                        threadRow(card)
+                        threadRow(card, projection: projection)
                     }
                 }
             } header: {
@@ -699,12 +757,14 @@ struct HomeView: View {
         // ── Shared — existing People/collaboration chats only. iOS does not
         //    create invites; it simply continues already-visible shared chats
         //    projected by the Mac under the normal workspace allowlist. ─────
-        let sharedCards = listedCards.filter { ($0.isShared ?? false) && $0.parentChatId == nil }
+        let sharedCards = projection.listedCards.filter {
+            ($0.isShared ?? false) && $0.parentChatId == nil
+        }
         if !sharedCards.isEmpty {
             Section {
                 if !collapsedSections.contains("shared") {
                     ForEach(sharedCards, id: \.id) { card in
-                        threadRow(card)
+                        threadRow(card, projection: projection)
                     }
                 }
             } header: {
@@ -733,7 +793,7 @@ struct HomeView: View {
         if !collapsedSections.contains("workspaces") {
             ForEach(model.workspaces) { workspace in
                 Section {
-                    let cards = cardsByWorkspace[workspace.workspaceId] ?? []
+                    let cards = projection.cardsByWorkspace[workspace.workspaceId] ?? []
                     if !expandedWorkspaces.contains(workspace.workspaceId) {
                         EmptyView()
                     } else if cards.isEmpty {
@@ -742,16 +802,17 @@ struct HomeView: View {
                             .listRowBackground(TWTheme.surface1)
                     } else {
                         ForEach(cards, id: \.id) { card in
-                            parentRow(card)
+                            parentRow(card, projection: projection)
                             if !collapsedParents.contains(card.id) {
-                                ForEach(childrenByParent[card.id] ?? [], id: \.id) { child in
-                                    threadRow(child, nested: true)
+                                ForEach(projection.childrenByParent[card.id] ?? [], id: \.id) { child in
+                                    threadRow(child, nested: true, projection: projection)
                                 }
                             }
                         }
                     }
                 } header: {
-                    let count = (cardsByWorkspace[workspace.workspaceId] ?? []).count
+                    let count =
+                        (projection.cardsByWorkspace[workspace.workspaceId] ?? []).count
                     Button {
                         toggleWorkspace(workspace.workspaceId)
                     } label: {
@@ -776,14 +837,14 @@ struct HomeView: View {
         // ── General Chats — scope-global chats. They keep the full composer
         //    on the phone (T72); the Mac clamps phone-origin turns to plan
         //    mode (no file mutation) since there's no workspace bound. ─────
-        let globalCards = listedCards.filter {
+        let globalCards = projection.listedCards.filter {
             $0.parentChatId == nil && $0.isGlobalScope
         }
         if !globalCards.isEmpty {
             Section {
                 if !collapsedSections.contains("globalChats") {
                     ForEach(globalCards, id: \.id) { card in
-                        threadRow(card)
+                        threadRow(card, projection: projection)
                     }
                 }
             } header: {
@@ -805,7 +866,7 @@ struct HomeView: View {
             Section {
                 if archivedExpanded {
                     ForEach(archivedCards, id: \.id) { card in
-                        threadRow(card)
+                        threadRow(card, projection: projection)
                             .opacity(0.55)
                     }
                 }
@@ -821,14 +882,14 @@ struct HomeView: View {
         // Defensive fallback only: cards whose workspace id isn't in the
         // workspace list yet (a mid-hydration race). The Mac hides chats
         // from stale/unknown workspaces, so this should stay empty.
-        let strayCards = orphanCards.filter { !($0.workspaceId ?? "").isEmpty }
+        let strayCards = projection.orphanCards.filter { !($0.workspaceId ?? "").isEmpty }
         if !strayCards.isEmpty {
             Section {
                 ForEach(strayCards, id: \.id) { card in
-                    parentRow(card)
+                    parentRow(card, projection: projection)
                     if !collapsedParents.contains(card.id) {
-                        ForEach(childrenByParent[card.id] ?? [], id: \.id) { child in
-                            threadRow(child, nested: true)
+                        ForEach(projection.childrenByParent[card.id] ?? [], id: \.id) { child in
+                            threadRow(child, nested: true, projection: projection)
                         }
                     }
                 }
@@ -860,12 +921,12 @@ struct HomeView: View {
     /// sub-thread / side-chat children — collapses the whole tree to just
     /// the parent (desktop sidebar parity).
     @ViewBuilder
-    private func parentRow(_ card: RemoteTaskCard) -> some View {
-        let children = childrenByParent[card.id] ?? []
+    private func parentRow(_ card: RemoteTaskCard, projection: HomeListProjection) -> some View {
+        let children = projection.childrenByParent[card.id] ?? []
         if children.isEmpty {
-            threadRow(card)
+            threadRow(card, projection: projection)
         } else {
-            threadRow(card)
+            threadRow(card, projection: projection)
                 .safeAreaInset(edge: .leading, spacing: 0) {
                     Button {
                         withAnimation(.easeInOut(duration: 0.18)) {
@@ -891,7 +952,11 @@ struct HomeView: View {
     }
 
     @ViewBuilder
-    private func threadRow(_ card: RemoteTaskCard, nested: Bool = false) -> some View {
+    private func threadRow(
+        _ card: RemoteTaskCard,
+        nested: Bool = false,
+        projection: HomeListProjection
+    ) -> some View {
         let accent = card.isEnsemble
             ? TWTheme.chroma2 : TWTheme.providerAccent(card.provider)
         let rowInsets = EdgeInsets(
@@ -905,7 +970,8 @@ struct HomeView: View {
         // selection — so a live run is never confused with the open thread. A
         // thread still waiting on the user keeps a faint fill wash (no rim) so
         // "needs you" work stays easy to spot.
-        let needsAttention = model.pendingAttentionCount(for: card) > 0
+        let pendingAttentionCount = projection.pendingAttentionCount(for: card)
+        let needsAttention = pendingAttentionCount > 0
         let rowChrome = Group {
             if needsAttention {
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
@@ -949,7 +1015,8 @@ struct HomeView: View {
                 }
             } label: {
                 HStack(spacing: 6) {
-                    TaskRow(model: model, card: card, nested: nested)
+                    TaskRow(
+                        card: card, pendingAttentionCount: pendingAttentionCount, nested: nested)
                     Image(systemName: "chevron.right")
                         .font(.caption2)
                         .foregroundStyle(TWTheme.textMuted)
@@ -969,7 +1036,8 @@ struct HomeView: View {
                 selection = card.id
             } label: {
                 HStack(spacing: 6) {
-                    TaskRow(model: model, card: card, nested: nested)
+                    TaskRow(
+                        card: card, pendingAttentionCount: pendingAttentionCount, nested: nested)
                     Image(systemName: "chevron.right")
                         .font(.caption2)
                         .foregroundStyle(TWTheme.textMuted)
@@ -1203,8 +1271,8 @@ private struct ThreadRunningGhost: View {
 }
 
 struct TaskRow: View {
-    @ObservedObject var model: RemoteSessionModel
     let card: RemoteTaskCard
+    let pendingAttentionCount: Int
     var nested: Bool = false
     @Environment(\.appScale) private var appScale
 
@@ -1213,10 +1281,6 @@ struct TaskRow: View {
             return "arrow.left.arrow.right"
         }
         return "arrow.turn.down.right"
-    }
-
-    private var pendingAttentionCount: Int {
-        model.pendingAttentionCount(for: card)
     }
 
     private var accent: Color {
