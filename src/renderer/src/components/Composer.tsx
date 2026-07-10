@@ -603,7 +603,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     handlePickImages,
     handleProviderChange,
     handleRemoveWorkspace,
-    handleRemoveExternalPathGrant,
     handleRemoveExternalPathGrantsByPath,
     handleRemoveImageAttachment,
     handleReorderExternalPathGrants,
@@ -2596,22 +2595,22 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                   <div className="composer-control-footer">
                     {currentProvider === 'codex' &&
                       !isCurrentGlobalChat &&
-                      externalPathGrants.length > 0 && (
+                      externalWorkspaceGroups.length > 0 && (
                         <div className="composer-image-strip composer-external-grant-strip">
-                          {externalPathGrants.map((grant) => (
+                          {externalWorkspaceGroups.map((group) => (
                             <div
-                              key={grant.id}
-                              className={`composer-image-item external-grant access-${grant.access}`}
+                              key={group.path}
+                              className={`composer-image-item external-grant access-${group.representative.access}`}
                             >
                               <PermissionSymbolIcon />
-                              <span className="composer-image-name" title={grant.path}>
-                                {grant.access === 'write' ? 'Edit' : 'Read'} {grant.kind}:{' '}
-                                {grant.path}
+                              <span className="composer-image-name" title={group.path}>
+                                {group.representative.access === 'write' ? 'Edit' : 'Read'}{' '}
+                                {group.representative.kind}: {group.path}
                               </span>
                               <button
                                 className="composer-image-remove"
                                 type="button"
-                                onClick={() => handleRemoveExternalPathGrant(grant.id)}
+                                onClick={() => handleRemoveExternalPathGrantsByPath(group.path)}
                                 disabled={isCurrentComposerLocked}
                                 title="Revoke external path grant"
                               >

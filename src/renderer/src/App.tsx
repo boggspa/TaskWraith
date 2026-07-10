@@ -140,7 +140,6 @@ import {
 import type { HumanCollaborationShare } from '../../main/collaboration/HumanCollaborationStore'
 import type { LocalServerEntry } from '../../main/localServers/types'
 import {
-  canonicalizeExternalPathGrantMetadata,
   collectExternalPathGrantsFromMetadata,
   reorderExternalPathGrantsByPath
 } from '../../main/store/ExternalPathGrants'
@@ -311,7 +310,7 @@ import { type WelcomeHeatmapSlot } from './components/WelcomeHeatmaps'
 import { TokenUsageChart } from './components/TokenUsageChart'
 import { useAppearance } from './hooks/useAppearance'
 import { usePanelPresence } from './hooks/usePanelPresence'
-import { useExternalPathRepoMetadata } from './hooks/useExternalPathRepoMetadata'
+import { useExternalPathRepoMetadataByPath } from './hooks/useExternalPathRepoMetadata'
 import { useUpdateStatus } from './hooks/useUpdateStatus'
 import { useHostWeather } from './hooks/useHostWeather'
 import { useAppVersion } from './hooks/useAppVersion'
@@ -328,6 +327,13 @@ import {
   missingExternalPathGrantProviders,
   type ExternalPathGrantGap
 } from './lib/externalPathGrantPreflight'
+import {
+  applyExternalPathGrantsToChat,
+  deriveChatExternalWorkspaceState,
+  deriveExternalWorkspaceStateFromGrants,
+  externalPathGrantsForChat,
+  groupExternalPathGrants
+} from './lib/multiviewWorkspaceIsolation'
 import type {
   GitCiStatusSummary,
   GitPrSummary,
@@ -2164,7 +2170,11 @@ function App(): React.JSX.Element {
       } | null
     >
   >({})
-  const [externalPathGrantPromptBusy, setExternalPathGrantPromptBusy] = useState(false)
+  const externalPathGrantPromptByChatIdRef = useRef(externalPathGrantPromptByChatId)
+  externalPathGrantPromptByChatIdRef.current = externalPathGrantPromptByChatId
+  const executeExternalPathGrantRunRef = useRef<(request: QueuedRunRequest) => void>(() => {})
+  const [externalPathGrantPromptBusyCountByChatId, setExternalPathGrantPromptBusyCountByChatId] =
+    useState<Record<string, number>>({})
   const [
     pendingAgentApprovalByChatId,
     setPendingAgentApprovalForChatId,
@@ -2218,7 +2228,34 @@ function App(): React.JSX.Element {
     (path && createPrStateByPath[path]) || { status: 'idle' }
   const setCreatePrStateFor = (path: string, next: CreatePrState): void =>
     setCreatePrStateByPath((prev) => ({ ...prev, [path]: next }))
-  const [diffActionMenuOpen, setDiffActionMenuOpen] = useState(false)
+  const [diffActionMenuOpenByChatId, setDiffActionMenuOpenByChatId] = useState<
+    Record<string, boolean>
+  >({})
+  const diffActionMenuOpen = currentChat?.appChatId
+    ? Boolean(diffActionMenuOpenByChatId[currentChat.appChatId])
+    : false
+  const setDiffActionMenuOpenForChat = useCallback(
+    (chatId: string, next: boolean | ((open: boolean) => boolean)): void => {
+      if (!chatId) return
+      setDiffActionMenuOpenByChatId((prev) => {
+        const current = Boolean(prev[chatId])
+        const resolved = typeof next === 'function' ? next(current) : next
+        if (resolved === current) return prev
+        if (resolved) return { ...prev, [chatId]: true }
+        const updated = { ...prev }
+        delete updated[chatId]
+        return updated
+      })
+    },
+    []
+  )
+  const setDiffActionMenuOpen = useCallback(
+    (next: boolean | ((open: boolean) => boolean)): void => {
+      const chatId = currentChatIdRef.current
+      if (chatId) setDiffActionMenuOpenForChat(chatId, next)
+    },
+    [setDiffActionMenuOpenForChat]
+  )
   // Live git snapshot lifted out of the GitCommitControls menu so the
   // above-bar header can surface real repo state (branch, changed-file
   // count, staged/unstaged, push/PR readiness) sourced from
@@ -2564,15 +2601,25 @@ function App(): React.JSX.Element {
     wasStreaming: boolean
   } | null>(null)
   useEffect(() => {
+    const chatId = currentChat?.appChatId
+    setDiffActionMenuOpenByChatId((current) => {
+      const keepCurrent = Boolean(chatId && current[chatId])
+      const keys = Object.keys(current)
+      if (keepCurrent && keys.length === 1 && keys[0] === chatId) return current
+      if (!keepCurrent && keys.length === 0) return current
+      return keepCurrent && chatId ? { [chatId]: true } : {}
+    })
+  }, [currentChat?.appChatId])
+  useEffect(() => {
     if (!diffActionMenuOpen) return
     const closeFromPointer = (event: MouseEvent): void => {
       const target = event.target as HTMLElement | null
       if (target?.closest('.composer-diff-action-menu-wrap')) return
-      setDiffActionMenuOpen(false)
+      setDiffActionMenuOpenByChatId({})
     }
     const closeFromEscape = (event: KeyboardEvent): void => {
       if (event.key === 'Escape') {
-        setDiffActionMenuOpen(false)
+        setDiffActionMenuOpenByChatId({})
       }
     }
     document.addEventListener('mousedown', closeFromPointer, true)
@@ -3024,12 +3071,32 @@ function App(): React.JSX.Element {
         : [],
     [currentChat?.providerMetadata, isCurrentGlobalChat]
   )
+  // Probe metadata for every secondary workspace visible in Multiview. The
+  // cache is path-keyed; each composer later projects it back onto only its own
+  // grant ids. This avoids both repeated probes and focused-chat grant leakage.
+  const visibleExternalPathGrants = useMemo(() => {
+    const result = [...externalPathGrants]
+    const seenChatIds = new Set<string>()
+    if (currentChat?.appChatId) seenChatIds.add(currentChat.appChatId)
+    if (!isMultiviewSplit) return result
+    for (const paneChatId of multiview.paneChatIds) {
+      if (!paneChatId || seenChatIds.has(paneChatId)) continue
+      seenChatIds.add(paneChatId)
+      const paneChat =
+        chatByIdRef.current.get(paneChatId) ||
+        chats.find((candidate) => candidate.appChatId === paneChatId)
+      result.push(...externalPathGrantsForChat(paneChat))
+    }
+    return result
+  }, [chats, currentChat?.appChatId, externalPathGrants, isMultiviewSplit, multiview.paneChatIds])
   // Slice 3 of the external-path-redesign arc. Per-grant repo
   // metadata (isRepo / branch) drives the stacked secondary rows
   // rendered alongside the primary above-bar. Probe results are
   // cached in the hook so re-renders are free; only changes to the
   // grant set trigger new probes.
-  const externalPathRepoMetadata = useExternalPathRepoMetadata(externalPathGrants)
+  const externalPathRepoMetadataByPath = useExternalPathRepoMetadataByPath(
+    visibleExternalPathGrants
+  )
   const currentComposerChatId = currentChat?.appChatId || null
   useEffect(() => {
     setPreviewChatMediaRef(null)
@@ -3655,6 +3722,9 @@ function App(): React.JSX.Element {
   const externalPathGrantPrompt = currentComposerChatId
     ? externalPathGrantPromptByChatId[currentComposerChatId] || null
     : null
+  const externalPathGrantPromptBusy = currentComposerChatId
+    ? (externalPathGrantPromptBusyCountByChatId[currentComposerChatId] || 0) > 0
+    : false
   const pendingPlanChoice = currentComposerChatId
     ? pendingPlanChoiceByChatId[currentComposerChatId] || null
     : null
@@ -7210,34 +7280,42 @@ function App(): React.JSX.Element {
    * Claude/Kimi `--add-dir` + approval gate), so no main-process
    * change is needed — write is free parameterization here.
    */
-  const clearExternalPathGrantPrompt = (chatId?: string | null) => {
-    const targetChatId = chatId || currentChat?.appChatId
-    if (!targetChatId) return
-    setExternalPathGrantPromptByChatId((prev) => ({ ...prev, [targetChatId]: null }))
-  }
+  const clearExternalPathGrantPrompt = useCallback(
+    (chatId?: string | null) => {
+      const targetChatId = chatId || currentChatIdRef.current
+      if (!targetChatId) return
+      setExternalPathGrantPromptByChatId((prev) => ({ ...prev, [targetChatId]: null }))
+    },
+    []
+  )
 
-  const openExternalPathGrantPrompt = (input: {
-    chatId: string
-    gaps: ExternalPathGrantGap[]
-    pendingRun?: QueuedRunRequest | null
-    trigger: 'preflight' | 'attach'
-  }) => {
-    if (input.gaps.length === 0) return
-    setExternalPathGrantPromptByChatId((prev) => ({
-      ...prev,
-      [input.chatId]: {
-        gaps: input.gaps,
-        pendingRun: input.pendingRun ?? null,
-        trigger: input.trigger
-      }
-    }))
-  }
+  const openExternalPathGrantPrompt = useCallback(
+    (input: {
+      chatId: string
+      gaps: ExternalPathGrantGap[]
+      pendingRun?: QueuedRunRequest | null
+      trigger: 'preflight' | 'attach'
+    }) => {
+      if (input.gaps.length === 0) return
+      setExternalPathGrantPromptByChatId((prev) => ({
+        ...prev,
+        [input.chatId]: {
+          gaps: input.gaps,
+          pendingRun: input.pendingRun ?? null,
+          trigger: input.trigger
+        }
+      }))
+    },
+    []
+  )
 
-  const persistExternalPathGrantPrompt = async () => {
-    const chatId = currentChat?.appChatId
-    const prompt = chatId ? externalPathGrantPromptByChatId[chatId] : null
+  const persistExternalPathGrantPromptForChat = useCallback(async (chatId: string) => {
+    const prompt = externalPathGrantPromptByChatIdRef.current[chatId] || null
     if (!chatId || !prompt || prompt.gaps.length === 0) return
-    setExternalPathGrantPromptBusy(true)
+    setExternalPathGrantPromptBusyCountByChatId((prev) => ({
+      ...prev,
+      [chatId]: (prev[chatId] || 0) + 1
+    }))
     try {
       for (const gap of prompt.gaps) {
         const result = await window.api.pickAndPersistExternalPathGrant({
@@ -7248,47 +7326,65 @@ function App(): React.JSX.Element {
         if (!result.ok) return
       }
       const resumeRun = prompt.pendingRun
-      clearExternalPathGrantPrompt(chatId)
-      if (resumeRun) {
-        void executeRun(resumeRun)
-      }
+      setExternalPathGrantPromptByChatId((prev) => ({ ...prev, [chatId]: null }))
+      if (resumeRun) executeExternalPathGrantRunRef.current(resumeRun)
     } catch (err) {
       console.warn('[external-path:pick-and-persist] prompt grant failed', err)
     } finally {
-      setExternalPathGrantPromptBusy(false)
+      setExternalPathGrantPromptBusyCountByChatId((prev) => {
+        const nextCount = Math.max(0, (prev[chatId] || 0) - 1)
+        if (nextCount > 0) return { ...prev, [chatId]: nextCount }
+        const next = { ...prev }
+        delete next[chatId]
+        return next
+      })
     }
+  }, [])
+
+  const persistExternalPathGrantPrompt = async () => {
+    const chatId = currentChat?.appChatId
+    if (!chatId) return
+    await persistExternalPathGrantPromptForChat(chatId)
   }
+
+  const handleAddWorkspaceFolderForChat = useCallback(
+    async (chatId: string, access: ExternalPathGrant['access']) => {
+      const chat = chatByIdRef.current.get(chatId)
+      if (!chat || isGlobalChat(chat)) return
+      try {
+        const result = await window.api.pickAndPersistExternalPathGrant({
+          chatId,
+          access,
+          deferPersist: true
+        })
+        if (!result.ok || !result.path) {
+          return
+        }
+        const liveChat = chatByIdRef.current.get(chatId) || chat
+        const grants = externalPathGrantsForChat(liveChat)
+        const missingProviders = missingExternalPathGrantProviders({
+          chat: liveChat,
+          grants,
+          path: result.path,
+          access
+        })
+        if (missingProviders.length === 0) return
+        openExternalPathGrantPrompt({
+          chatId,
+          gaps: [{ path: result.path, access, missingProviders }],
+          trigger: 'attach'
+        })
+      } catch (err) {
+        console.warn('[external-path:pick-and-persist] failed', err)
+      }
+    },
+    [openExternalPathGrantPrompt]
+  )
 
   const handleAddWorkspaceFolder = async (access: ExternalPathGrant['access']) => {
     const chatId = currentChat?.appChatId
-    if (!chatId || !currentChat) return
-    try {
-      const result = await window.api.pickAndPersistExternalPathGrant({
-        chatId,
-        access,
-        deferPersist: true
-      })
-      if (!result.ok || !result.path) {
-        return
-      }
-      const grants = normalizeExternalPathGrants(
-        collectExternalPathGrantsFromMetadata(currentChat.providerMetadata)
-      )
-      const missingProviders = missingExternalPathGrantProviders({
-        chat: currentChat,
-        grants,
-        path: result.path,
-        access
-      })
-      if (missingProviders.length === 0) return
-      openExternalPathGrantPrompt({
-        chatId,
-        gaps: [{ path: result.path, access, missingProviders }],
-        trigger: 'attach'
-      })
-    } catch (err) {
-      console.warn('[external-path:pick-and-persist] failed', err)
-    }
+    if (!chatId) return
+    await handleAddWorkspaceFolderForChat(chatId, access)
   }
 
   /**
@@ -7297,27 +7393,34 @@ function App(): React.JSX.Element {
    * so the user explicitly confirms signed grants for dispatch-capable
    * panelists before grants are issued.
    */
+  const handleAddKnownWorkspaceAsSecondaryForChat = useCallback(
+    (chatId: string, workspacePath: string, access: ExternalPathGrant['access']) => {
+      const chat = chatByIdRef.current.get(chatId)
+      if (!chatId || !workspacePath || !chat || isGlobalChat(chat)) return
+      const grants = externalPathGrantsForChat(chat)
+      const missingProviders = missingExternalPathGrantProviders({
+        chat,
+        grants,
+        path: workspacePath,
+        access
+      })
+      if (missingProviders.length === 0) return
+      openExternalPathGrantPrompt({
+        chatId,
+        gaps: [{ path: workspacePath, access, missingProviders }],
+        trigger: 'attach'
+      })
+    },
+    [openExternalPathGrantPrompt]
+  )
+
   const handleAddKnownWorkspaceAsSecondary = (
     workspacePath: string,
     access: ExternalPathGrant['access']
   ) => {
     const chatId = currentChat?.appChatId
-    if (!chatId || !workspacePath || !currentChat) return
-    const grants = normalizeExternalPathGrants(
-      collectExternalPathGrantsFromMetadata(currentChat.providerMetadata)
-    )
-    const missingProviders = missingExternalPathGrantProviders({
-      chat: currentChat,
-      grants,
-      path: workspacePath,
-      access
-    })
-    if (missingProviders.length === 0) return
-    openExternalPathGrantPrompt({
-      chatId,
-      gaps: [{ path: workspacePath, access, missingProviders }],
-      trigger: 'attach'
-    })
+    if (!chatId) return
+    handleAddKnownWorkspaceAsSecondaryForChat(chatId, workspacePath, access)
   }
 
   const handleRemoveWorkspace = async (id: string, e: React.MouseEvent) => {
@@ -8100,21 +8203,17 @@ function App(): React.JSX.Element {
     setImageAttachments((prev) => prev.filter((item) => item.id !== id))
   }
 
+  const updateExternalPathGrantsForChat = useCallback(
+    (chatId: string, nextGrants: ExternalPathGrant[]) => {
+      updateChatById(chatId, (source) => applyExternalPathGrantsToChat(source, nextGrants))
+    },
+    [updateChatById]
+  )
+
   const updateExternalPathGrants = (nextGrants: ExternalPathGrant[]) => {
-    if (!currentChat) return
-    const normalized = normalizeExternalPathGrants(nextGrants).map((grant) => ({
-      ...grant,
-      workspaceId: currentWorkspace?.id || grant.workspaceId,
-      chatId: currentChat.appChatId
-    }))
-    updateChatById(currentChat.appChatId, (source) => ({
-      ...source,
-      providerMetadata: canonicalizeExternalPathGrantMetadata(
-        source.providerMetadata,
-        normalized
-      ),
-      updatedAt: Date.now()
-    }))
+    const chatId = currentChat?.appChatId
+    if (!chatId) return
+    updateExternalPathGrantsForChat(chatId, nextGrants)
   }
 
   // `handlePickExternalPathGrant` was the entry point for the
@@ -12777,6 +12876,9 @@ function App(): React.JSX.Element {
 
   const executeRunRef = useRef(executeRun)
   executeRunRef.current = executeRun
+  executeExternalPathGrantRunRef.current = (request) => {
+    void executeRunRef.current(request)
+  }
 
   const handleReviewCurrentDiff = async () => {
     if (!currentWorkspace || !currentChat || isPreparingDiffReview) {
@@ -19069,41 +19171,16 @@ function App(): React.JSX.Element {
   // "N files changed +A -B" reflects the working tree and resets on commit —
   // the same git grounding as the primary row, instead of summing tool activity
   // across the whole transcript.
-  // P1 — collapse the per-provider grants (an ensemble mints one grant per
-  // participant-provider for the same folder) into ONE group per unique path,
-  // so the composer shows one native row per workspace instead of N duplicates.
-  // Map insertion order follows externalPathGrants (already sorted by
-  // order/path), so first-seen path order is preserved. providers = the
-  // distinct list for the merged tooltip.
-  const externalWorkspaceGroups = useMemo(() => {
-    const byPath = new Map<
-      string,
-      {
-        path: string
-        representative: ExternalPathGrant
-        providers: ExternalPathGrant['provider'][]
-      }
-    >()
-    for (const grant of externalPathGrants) {
-      const existing = byPath.get(grant.path)
-      if (existing) {
-        if (!existing.providers.includes(grant.provider)) existing.providers.push(grant.provider)
-      } else {
-        byPath.set(grant.path, {
-          path: grant.path,
-          representative: grant,
-          providers: [grant.provider]
-        })
-      }
-    }
-    return Array.from(byPath.values())
-  }, [externalPathGrants])
-  // Live git snapshot per unique external path. Normal builds use the
-  // subscription handshake as the initial read; the fetch effect below is only a
-  // fallback for hosts without live snapshot subscriptions.
+  // Live git snapshot per unique external path across every VISIBLE chat. Each
+  // composer receives a path-filtered projection below, so the shared cache is
+  // an I/O optimisation rather than a source of cross-pane UI state.
   const externalWorkspacePathsKey = useMemo(
-    () => externalWorkspaceGroups.map((group) => group.path).join('\n'),
-    [externalWorkspaceGroups]
+    () =>
+      groupExternalPathGrants(visibleExternalPathGrants)
+        .map((group) => group.path)
+        .sort()
+        .join('\n'),
+    [visibleExternalPathGrants]
   )
   useEffect(() => {
     const paths = externalWorkspacePathsKey ? externalWorkspacePathsKey.split('\n') : []
@@ -19294,6 +19371,21 @@ function App(): React.JSX.Element {
       void window.api.gitInvalidateSnapshot?.({ workspacePath: path, reason: 'run-diff' })
     })
   }, [multiviewPaneWorkspacePathsKey, runCompleteNotice?.timestamp])
+
+  const currentExternalWorkspaceState = useMemo(
+    () =>
+      deriveExternalWorkspaceStateFromGrants(externalPathGrants, {
+        repoMetadataByPath: externalPathRepoMetadataByPath,
+        gitSnapshotsByPath: externalGitSnapshots,
+        prByPath: externalPrByPath
+      }),
+    [
+      externalGitSnapshots,
+      externalPathGrants,
+      externalPathRepoMetadataByPath,
+      externalPrByPath
+    ]
+  )
 
   const currentProviderModelOptions = getProviderModelOptions(currentProvider)
   const composerTokenTally = chatTokenTally
@@ -23197,6 +23289,73 @@ function App(): React.JSX.Element {
     },
     []
   )
+  const handleMultiviewPaneAddWorkspaceFolder = useCallback(
+    (chatId: string, access: ExternalPathGrant['access']) =>
+      handleAddWorkspaceFolderForChat(chatId, access),
+    [handleAddWorkspaceFolderForChat]
+  )
+  const handleMultiviewPaneAddKnownWorkspaceAsSecondary = useCallback(
+    (chatId: string, workspacePath: string, access: ExternalPathGrant['access']) =>
+      handleAddKnownWorkspaceAsSecondaryForChat(chatId, workspacePath, access),
+    [handleAddKnownWorkspaceAsSecondaryForChat]
+  )
+  const handleMultiviewPaneRemoveExternalPathGrant = useCallback(
+    (chatId: string, grantId: string) => {
+      const paneChat = chatByIdRef.current.get(chatId)
+      if (!paneChat) return
+      updateExternalPathGrantsForChat(
+        chatId,
+        externalPathGrantsForChat(paneChat).filter((grant) => grant.id !== grantId)
+      )
+    },
+    [updateExternalPathGrantsForChat]
+  )
+  const handleMultiviewPaneRemoveExternalPathGrantsByPath = useCallback(
+    (chatId: string, path: string) => {
+      const paneChat = chatByIdRef.current.get(chatId)
+      if (!paneChat) return
+      updateExternalPathGrantsForChat(
+        chatId,
+        externalPathGrantsForChat(paneChat).filter((grant) => grant.path !== path)
+      )
+    },
+    [updateExternalPathGrantsForChat]
+  )
+  const handleMultiviewPaneReorderExternalPathGrants = useCallback(
+    (chatId: string, orderedPaths: string[]) => {
+      const paneChat = chatByIdRef.current.get(chatId)
+      if (!paneChat) return
+      updateExternalPathGrantsForChat(
+        chatId,
+        reorderExternalPathGrantsByPath(externalPathGrantsForChat(paneChat), orderedPaths)
+      )
+    },
+    [updateExternalPathGrantsForChat]
+  )
+  const handleMultiviewPanePrimaryGitSnapshot = useCallback(
+    (chatId: string, snapshot: GitRepositorySnapshot | null) => {
+      const paneChat = chatByIdRef.current.get(chatId)
+      const path = paneChat?.workspacePath
+      if (!path) return
+      setGitSnapshotByWorkspace((prev) => ({ ...prev, [path]: snapshot }))
+    },
+    []
+  )
+  const handleMultiviewPaneComposerWorktreeChange = useCallback(
+    (
+      chatId: string,
+      selection: ComposerWorktreeSelection | null,
+      snapshot: GitRepositorySnapshot | null
+    ) => {
+      const paneChat = chatByIdRef.current.get(chatId)
+      const basePath =
+        selection?.baseWorkspacePath || snapshot?.repoRoot || paneChat?.workspacePath || ''
+      const key = normalizeWorkspacePath(basePath)
+      if (!key) return
+      setComposerWorktreeByWorkspace((prev) => ({ ...prev, [key]: selection }))
+    },
+    []
+  )
   const handleMultiviewPaneDeleteMessage = useCallback(
     (_paneIndex: number, chatId: string, messageId: string) => {
       const paneChat = chatByIdRef.current.get(chatId)
@@ -23984,6 +24143,16 @@ function App(): React.JSX.Element {
     const paneWorkflowForChat =
       workflowDefinitions.find((wf) => wf.template.chatId === viewerChatId) ?? null
     const paneIsWorkflowChatWelcome = paneIsWorkflowComposeChat || paneWorkflowForChat != null
+    const paneExternalWorkspaceState = deriveChatExternalWorkspaceState(viewerChat, {
+      repoMetadataByPath: externalPathRepoMetadataByPath,
+      gitSnapshotsByPath: externalGitSnapshots,
+      prByPath: externalPrByPath
+    })
+    const paneExternalPathGrantPrompt =
+      externalPathGrantPromptByChatId[viewerChatId] || null
+    const paneExternalPathGrantPromptBusy =
+      (externalPathGrantPromptBusyCountByChatId[viewerChatId] || 0) > 0
+    const paneDiffActionMenuOpen = Boolean(diffActionMenuOpenByChatId[viewerChatId])
     // Adapter: <Composer> calls handleRun()/handleRun(_, _, dmTarget) with no
     // chat context (it operates on `currentComposerChatId` in the focused case).
     // For a pane we delegate to the pane runner scoped to this pane's chat. The
@@ -24086,6 +24255,11 @@ function App(): React.JSX.Element {
       },
       currentWorkspace: viewerWorkspace,
       currentWorkspacePath: viewerWorkspace?.path,
+      externalPathGrants: paneExternalWorkspaceState.externalPathGrants,
+      externalWorkspaceGroups: paneExternalWorkspaceState.externalWorkspaceGroups,
+      externalPathRepoMetadata: paneExternalWorkspaceState.externalPathRepoMetadata,
+      externalGitSnapshots: paneExternalWorkspaceState.externalGitSnapshots,
+      externalPrByPath: paneExternalWorkspaceState.externalPrByPath,
       // Per-pane git diff stats: read THIS pane's own workspace snapshot so the
       // above-row "N files changed +A −B" reflects the pane's workspace, not the
       // focused one (workspaceDiffStats otherwise comes from composerStableBase =
@@ -24182,6 +24356,21 @@ function App(): React.JSX.Element {
         handleMultiviewPanePickWorkspace(viewerPaneIndex, viewerChatId, workspace),
       handleSelectWorkspace: () => handleMultiviewPaneAddWorkspace(viewerPaneIndex, viewerChatId),
       handleNewGlobalChat: () => handleMultiviewPaneSelectNoWorkspace(viewerPaneIndex, viewerChatId),
+      handleAddWorkspaceFolder: (access: ExternalPathGrant['access']) =>
+        handleMultiviewPaneAddWorkspaceFolder(viewerChatId, access),
+      handleAddKnownWorkspaceAsSecondary: (
+        workspacePath: string,
+        access: ExternalPathGrant['access']
+      ) =>
+        handleMultiviewPaneAddKnownWorkspaceAsSecondary(viewerChatId, workspacePath, access),
+      handleRemoveExternalPathGrant: (grantId: string) =>
+        handleMultiviewPaneRemoveExternalPathGrant(viewerChatId, grantId),
+      handleRemoveExternalPathGrantsByPath: (path: string) =>
+        handleMultiviewPaneRemoveExternalPathGrantsByPath(viewerChatId, path),
+      handleReorderExternalPathGrants: (orderedPaths: string[]) =>
+        handleMultiviewPaneReorderExternalPathGrants(viewerChatId, orderedPaths),
+      clearExternalPathGrantPrompt: () => clearExternalPathGrantPrompt(viewerChatId),
+      persistExternalPathGrantPrompt: () => persistExternalPathGrantPromptForChat(viewerChatId),
       // setState setters (focused-only) → no-op for panes; persistence routed
       // through rememberCurrentChatComposerSelection (overridden above). Each
       // matching display field above keeps the picker's selection accurate.
@@ -24208,13 +24397,9 @@ function App(): React.JSX.Element {
       // External slash-menu requests target the focused composer; pane-local
       // plus-menu clicks open each pane's slash menu directly.
       openSlashCommandsRequestId: 0,
-      // ── focused-only state that would otherwise LEAK into resting panes
-      //    (adversarial review D1/D2): these fields are keyed to the FOCUSED chat
-      //    in composerCtx, so rendering them in a non-focused pane shows that
-      //    chat's pending-approval card (was even actionable-wrong), queued-
-      //    message bubbles, git/PR branch+CI, and plan-import/path-grant cards in
-      //    the WRONG pane. Force empty for panes — the focused/active pane still
-      //    surfaces them via composerCtx. Per-pane derivations are a later slice.
+      // ── focused-only state that would otherwise LEAK into resting panes.
+      // Pending approvals, queued-message bubbles, and plan import remain hidden;
+      // git/worktree + secondary-workspace fields are derived per pane below.
       pendingAgentApproval: null,
       permissionRequestPaths: [],
       permissionRequestTitle: '',
@@ -24225,17 +24410,24 @@ function App(): React.JSX.Element {
       // read THIS pane's snapshot (was hard-null, which dropped ahead/behind + merge
       // for panes). Branch label still falls back to currentWorkspace.branch if absent.
       primaryGitSnapshot: gitSnapshotByWorkspace[viewerWorkspace?.path ?? ''] ?? null,
+      setPrimaryGitSnapshot: (snapshot: GitRepositorySnapshot | null) =>
+        handleMultiviewPanePrimaryGitSnapshot(viewerChatId, snapshot),
       composerWorktreeSelection: viewerWorkspace?.path
         ? composerWorktreeByWorkspace[normalizeWorkspacePath(viewerWorkspace.path)] || null
         : null,
-      onComposerWorktreeChange: handleComposerWorktreeChange,
+      onComposerWorktreeChange: (
+        selection: ComposerWorktreeSelection | null,
+        snapshot: GitRepositorySnapshot | null
+      ) => handleMultiviewPaneComposerWorktreeChange(viewerChatId, selection, snapshot),
+      diffActionMenuOpen: paneDiffActionMenuOpen,
+      setDiffActionMenuOpen: (next: boolean | ((open: boolean) => boolean)) =>
+        setDiffActionMenuOpenForChat(viewerChatId, next),
       // Pane PR/CI rollup stays focused-only for now (no per-pane gh fetch).
       primaryPr: null,
       primaryCi: null,
-      externalPrByPath: {},
       pendingPlanImport: null,
-      externalPathGrantPrompt: null,
-      externalPathGrantPromptBusy: false,
+      externalPathGrantPrompt: paneExternalPathGrantPrompt,
+      externalPathGrantPromptBusy: paneExternalPathGrantPromptBusy,
       // custom-model "clear" reverts to THIS pane's model, not the focused chat's.
       lastNonCustomModelType: viewerSelectedModel,
       // screen-watch: the composer-row button reflects THIS pane's ownership; the
@@ -24523,12 +24715,12 @@ function App(): React.JSX.Element {
       ensembleConcurrentWriteLanesAvailable,
       ensembleEnabledParticipantsForCurrent,
       ensembleOllamaContextWarning,
-      externalGitSnapshots,
+      externalGitSnapshots: currentExternalWorkspaceState.externalGitSnapshots,
       onExternalGitSnapshotRefresh: handleExternalGitSnapshotRefresh,
-      externalPrByPath,
-      externalPathGrants,
-      externalPathRepoMetadata,
-      externalWorkspaceGroups,
+      externalPrByPath: currentExternalWorkspaceState.externalPrByPath,
+      externalPathGrants: currentExternalWorkspaceState.externalPathGrants,
+      externalPathRepoMetadata: currentExternalWorkspaceState.externalPathRepoMetadata,
+      externalWorkspaceGroups: currentExternalWorkspaceState.externalWorkspaceGroups,
       formatPlanImportCostEstimate,
       formatPlanImportRunConstraintValue,
       formatPlanImportTokenEstimate,
@@ -24656,11 +24848,7 @@ function App(): React.JSX.Element {
       ensembleConcurrentWriteLanesAvailable,
       ensembleEnabledParticipantsForCurrent,
       ensembleOllamaContextWarning,
-      externalGitSnapshots,
-      externalPrByPath,
-      externalPathGrants,
-      externalPathRepoMetadata,
-      externalWorkspaceGroups,
+      currentExternalWorkspaceState,
       geminiTrustWriteBusy,
       geminiTrustWriteError,
       geminiWorkspaceTrustReady,
@@ -24928,6 +25116,16 @@ function App(): React.JSX.Element {
       const paneWorkflowForChat =
         workflowDefinitions.find((wf) => wf.template.chatId === viewerChatId) ?? null
       const paneIsWorkflowChatWelcome = paneIsWorkflowComposeChat || paneWorkflowForChat != null
+      const paneExternalWorkspaceState = deriveChatExternalWorkspaceState(viewerChat, {
+        repoMetadataByPath: externalPathRepoMetadataByPath,
+        gitSnapshotsByPath: externalGitSnapshots,
+        prByPath: externalPrByPath
+      })
+      const paneExternalPathGrantPrompt =
+        externalPathGrantPromptByChatId[viewerChatId] || null
+      const paneExternalPathGrantPromptBusy =
+        (externalPathGrantPromptBusyCountByChatId[viewerChatId] || 0) > 0
+      const paneDiffActionMenuOpen = Boolean(diffActionMenuOpenByChatId[viewerChatId])
       // Adapter: <Composer> calls handleRun()/handleRun(_, _, dmTarget) with no
       // chat context (it operates on `currentComposerChatId` in the focused case).
       // For a pane we delegate to the pane runner scoped to this pane's chat. The
@@ -25137,6 +25335,11 @@ function App(): React.JSX.Element {
         },
         currentWorkspace: viewerWorkspace,
         currentWorkspacePath: viewerWorkspace?.path,
+        externalPathGrants: paneExternalWorkspaceState.externalPathGrants,
+        externalWorkspaceGroups: paneExternalWorkspaceState.externalWorkspaceGroups,
+        externalPathRepoMetadata: paneExternalWorkspaceState.externalPathRepoMetadata,
+        externalGitSnapshots: paneExternalWorkspaceState.externalGitSnapshots,
+        externalPrByPath: paneExternalWorkspaceState.externalPrByPath,
         // Per-pane git diff stats: read THIS pane's own workspace snapshot so the
         // above-row "N files changed +A −B" reflects the pane's workspace, not the
         // focused one (workspaceDiffStats otherwise comes from composerStableBase =
@@ -25236,6 +25439,21 @@ function App(): React.JSX.Element {
           handleMultiviewPanePickWorkspace(viewerPaneIndex, viewerChatId, workspace),
         handleSelectWorkspace: () => handleMultiviewPaneAddWorkspace(viewerPaneIndex, viewerChatId),
         handleNewGlobalChat: () => handleMultiviewPaneSelectNoWorkspace(viewerPaneIndex, viewerChatId),
+        handleAddWorkspaceFolder: (access: ExternalPathGrant['access']) =>
+          handleMultiviewPaneAddWorkspaceFolder(viewerChatId, access),
+        handleAddKnownWorkspaceAsSecondary: (
+          workspacePath: string,
+          access: ExternalPathGrant['access']
+        ) =>
+          handleMultiviewPaneAddKnownWorkspaceAsSecondary(viewerChatId, workspacePath, access),
+        handleRemoveExternalPathGrant: (grantId: string) =>
+          handleMultiviewPaneRemoveExternalPathGrant(viewerChatId, grantId),
+        handleRemoveExternalPathGrantsByPath: (path: string) =>
+          handleMultiviewPaneRemoveExternalPathGrantsByPath(viewerChatId, path),
+        handleReorderExternalPathGrants: (orderedPaths: string[]) =>
+          handleMultiviewPaneReorderExternalPathGrants(viewerChatId, orderedPaths),
+        clearExternalPathGrantPrompt: () => clearExternalPathGrantPrompt(viewerChatId),
+        persistExternalPathGrantPrompt: () => persistExternalPathGrantPromptForChat(viewerChatId),
         // setState setters (focused-only) → no-op for panes; persistence routed
         // through rememberCurrentChatComposerSelection (overridden above). Each
         // matching display field above keeps the picker's selection accurate.
@@ -25262,13 +25480,9 @@ function App(): React.JSX.Element {
         // External slash-menu requests target the focused composer; pane-local
         // plus-menu clicks open each pane's slash menu directly.
         openSlashCommandsRequestId: 0,
-        // ── focused-only state that would otherwise LEAK into resting panes
-        //    (adversarial review D1/D2): these fields are keyed to the FOCUSED chat
-        //    in composerCtx, so rendering them in a non-focused pane shows that
-        //    chat's pending-approval card (was even actionable-wrong), queued-
-        //    message bubbles, git/PR branch+CI, and plan-import/path-grant cards in
-        //    the WRONG pane. Force empty for panes — the focused/active pane still
-        //    surfaces them via composerCtx. Per-pane derivations are a later slice.
+        // ── focused-only state that would otherwise LEAK into resting panes.
+        // Pending approvals, queued-message bubbles, and plan import remain hidden;
+        // git/worktree + secondary-workspace fields are derived per pane below.
         pendingAgentApproval: null,
         permissionRequestPaths: [],
         permissionRequestTitle: '',
@@ -25279,17 +25493,24 @@ function App(): React.JSX.Element {
         // read THIS pane's snapshot (was hard-null, which dropped ahead/behind + merge
         // for panes). Branch label still falls back to currentWorkspace.branch if absent.
         primaryGitSnapshot: gitSnapshotByWorkspace[viewerWorkspace?.path ?? ''] ?? null,
+        setPrimaryGitSnapshot: (snapshot: GitRepositorySnapshot | null) =>
+          handleMultiviewPanePrimaryGitSnapshot(viewerChatId, snapshot),
         composerWorktreeSelection: viewerWorkspace?.path
           ? composerWorktreeByWorkspace[normalizeWorkspacePath(viewerWorkspace.path)] || null
           : null,
-        onComposerWorktreeChange: handleComposerWorktreeChange,
+        onComposerWorktreeChange: (
+          selection: ComposerWorktreeSelection | null,
+          snapshot: GitRepositorySnapshot | null
+        ) => handleMultiviewPaneComposerWorktreeChange(viewerChatId, selection, snapshot),
+        diffActionMenuOpen: paneDiffActionMenuOpen,
+        setDiffActionMenuOpen: (next: boolean | ((open: boolean) => boolean)) =>
+          setDiffActionMenuOpenForChat(viewerChatId, next),
         // Pane PR/CI rollup stays focused-only for now (no per-pane gh fetch).
         primaryPr: null,
         primaryCi: null,
-        externalPrByPath: {},
         pendingPlanImport: null,
-        externalPathGrantPrompt: null,
-        externalPathGrantPromptBusy: false,
+        externalPathGrantPrompt: paneExternalPathGrantPrompt,
+        externalPathGrantPromptBusy: paneExternalPathGrantPromptBusy,
         // custom-model "clear" reverts to THIS pane's model, not the focused chat's.
         lastNonCustomModelType: viewerSelectedModel,
         // screen-watch: the composer-row button reflects THIS pane's ownership; the
@@ -25310,6 +25531,8 @@ function App(): React.JSX.Element {
     },
     [
       activeHumanCollaborationShareByChatId,
+      clearExternalPathGrantPrompt,
+      composerWorktreeByWorkspace,
       connectedCollaborationChatIds,
       copyHumanCollaborationInvitePayload,
       createFreshHumanCollaborationInvite,
@@ -25320,15 +25543,28 @@ function App(): React.JSX.Element {
       composerDraftsByChatId,
       composerStableBase,
       buildPaneComposerSlashCommands,
+      externalGitSnapshots,
+      diffActionMenuOpenByChatId,
+      externalPathGrantPromptBusyCountByChatId,
+      externalPathGrantPromptByChatId,
+      externalPathRepoMetadataByPath,
+      externalPrByPath,
       handleCancelMultiviewPane,
       handleFocusMultiviewPane,
       handlePanePaletteCommand,
+      handleMultiviewPaneAddKnownWorkspaceAsSecondary,
+      handleMultiviewPaneAddWorkspaceFolder,
       handleMultiviewPaneAddWorkspace,
+      handleMultiviewPaneComposerWorktreeChange,
       handleMultiviewPaneCopyTranscript,
       handleMultiviewPanePickAttachments,
       handleMultiviewPanePickWorkspace,
+      handleMultiviewPanePrimaryGitSnapshot,
       handleMultiviewPaneProviderChange,
+      handleMultiviewPaneRemoveExternalPathGrant,
+      handleMultiviewPaneRemoveExternalPathGrantsByPath,
       handleMultiviewPaneRemoveAttachment,
+      handleMultiviewPaneReorderExternalPathGrants,
       handleMultiviewPaneSelectNoWorkspace,
       handleMultiviewPaneToggleGrant,
       handleRunMultiviewPane,
@@ -25338,10 +25574,12 @@ function App(): React.JSX.Element {
       isMultiviewSplit,
       openHumanCollaborationRemoteSetup,
       pendingHumanCollaborationInviteChatIds,
+      persistExternalPathGrantPromptForChat,
       readHumanCollaborationInviteHealth,
       rememberMultiviewPaneComposerSelection,
       runQueueJobs,
       runningChatIds,
+      setDiffActionMenuOpenForChat,
       stopHumanCollaborationSharingForChat,
       usageInitialized,
       usageRecords,

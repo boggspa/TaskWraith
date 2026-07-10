@@ -15,7 +15,7 @@
  * persistence layer.
  */
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ExternalPathGrant } from '../../../main/store/types'
 import type { ExternalPathGitMetadata } from '../lib/ExternalPathRepoDetect'
 
@@ -23,53 +23,61 @@ interface RepoMetadataMap {
   [grantId: string]: ExternalPathGitMetadata | null
 }
 
+interface RepoMetadataByPath {
+  [path: string]: ExternalPathGitMetadata | null
+}
+
+function repoMetadataMapsEqual(a: RepoMetadataByPath, b: RepoMetadataByPath): boolean {
+  const aKeys = Object.keys(a)
+  const bKeys = Object.keys(b)
+  return aKeys.length === bKeys.length && aKeys.every((key) => a[key] === b[key])
+}
+
 /**
- * Probe each grant's path and return a metadata map keyed by grant.id.
+ * Probe each grant's path and return a metadata map keyed by path.
  * Re-probes when a grant is added/removed. Already-probed paths are
  * served from cache.
  *
  * Returns `null` for paths that don't exist or aren't repos — the
  * descriptor helper handles the null branch gracefully.
  */
-export function useExternalPathRepoMetadata(grants: ExternalPathGrant[]): RepoMetadataMap {
-  const [metadata, setMetadata] = useState<RepoMetadataMap>({})
+export function useExternalPathRepoMetadataByPath(grants: ExternalPathGrant[]): RepoMetadataByPath {
+  const [metadata, setMetadata] = useState<RepoMetadataByPath>({})
   const cacheRef = useRef<Map<string, ExternalPathGitMetadata | null>>(new Map())
+  const pathsKey = [...new Set(grants.map((grant) => grant.path))].sort().join('\u0000')
 
   useEffect(() => {
     let cancelled = false
-    const grantsByKey = new Map<string, ExternalPathGrant>()
-    for (const grant of grants) {
-      // Cache key is the path itself (not grant.id) so repeated grants
-      // to the same path don't re-probe. Branch changes are caught by
-      // the unmount-mount cycle (chat switch / app reload).
-      grantsByKey.set(grant.path, grant)
+    const paths = pathsKey ? pathsKey.split('\u0000') : []
+    const commitMetadata = (next: RepoMetadataByPath): void => {
+      setMetadata((current) => (repoMetadataMapsEqual(current, next) ? current : next))
     }
 
     async function refresh() {
-      const next: RepoMetadataMap = {}
-      const pending: Array<{ id: string; path: string }> = []
-      for (const grant of grants) {
-        const cached = cacheRef.current.get(grant.path)
+      const next: RepoMetadataByPath = {}
+      const pending: string[] = []
+      for (const path of paths) {
+        const cached = cacheRef.current.get(path)
         if (cached !== undefined) {
-          next[grant.id] = cached
+          next[path] = cached
         } else {
-          pending.push({ id: grant.id, path: grant.path })
+          pending.push(path)
         }
       }
       // Render with whatever we already have cached, then top-up
       // asynchronously for newly-added grants.
       if (Object.keys(next).length > 0 || pending.length === 0) {
-        if (!cancelled) setMetadata(next)
+        if (!cancelled) commitMetadata(next)
       }
       if (pending.length === 0) return
 
       const probeResults = await Promise.all(
-        pending.map(async ({ id, path }) => {
+        pending.map(async (path) => {
           try {
             const result = await window.api.probeExternalPath(path)
-            return { id, path, result: result || null }
+            return { path, result: result || null }
           } catch {
-            return { id, path, result: null }
+            return { path, result: null }
           }
         })
       )
@@ -78,22 +86,35 @@ export function useExternalPathRepoMetadata(grants: ExternalPathGrant[]): RepoMe
         cacheRef.current.set(path, result)
       }
       // Rebuild the full map from cache after async probes settle.
-      const settled: RepoMetadataMap = {}
-      for (const grant of grants) {
-        const cached = cacheRef.current.get(grant.path)
-        settled[grant.id] = cached !== undefined ? cached : null
+      const settled: RepoMetadataByPath = {}
+      for (const path of paths) {
+        const cached = cacheRef.current.get(path)
+        settled[path] = cached !== undefined ? cached : null
       }
-      setMetadata(settled)
+      commitMetadata(settled)
     }
 
     void refresh()
     return () => {
       cancelled = true
     }
-    // Stable identity over grant ids + paths — re-runs only when the
-    // grant set actually changes.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [grants.map((g) => `${g.id}:${g.path}`).join('|')])
+  }, [pathsKey])
 
   return metadata
+}
+
+/**
+ * Backward-compatible grant-id view used by composer callers. The underlying
+ * probe/cache is path-keyed so multiple visible Multiview chats can safely
+ * share probe results without grant-id collisions or focused-chat state.
+ */
+export function useExternalPathRepoMetadata(grants: ExternalPathGrant[]): RepoMetadataMap {
+  const byPath = useExternalPathRepoMetadataByPath(grants)
+  return useMemo(
+    () =>
+      Object.fromEntries(
+        grants.map((grant) => [grant.id, byPath[grant.path] ?? null])
+      ) as RepoMetadataMap,
+    [byPath, grants]
+  )
 }
