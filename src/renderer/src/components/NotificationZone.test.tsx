@@ -121,7 +121,7 @@ describe('NotificationZone', () => {
 
   it('renders grouped "New Additions" content instead of the plain body paragraph', () => {
     const newAdditions: AppNotification = {
-      id: 'new-additions-2026-07-09',
+      id: 'new-additions-2026-07-10',
       kind: 'addition',
       title: 'New Additions',
       body: 'Fallback summary text.',
@@ -142,6 +142,11 @@ describe('NotificationZone', () => {
               name: 'Deep Reinforce - Ornith 9B + Ornith 35B',
               blurb: 'Local coding models.',
               accentProvider: 'deep-reinforce'
+            },
+            {
+              name: 'Poolside - Laguna XS 2.1 33B-A3B Q8',
+              blurb: 'Local coding model with tool use and thinking.',
+              accentProvider: 'poolside'
             }
           ]
         }
@@ -154,9 +159,11 @@ describe('NotificationZone', () => {
     expect(html).toContain('Fable 5')
     expect(html).toContain('notification-newadditions-provider provider-ollama')
     expect(html).toContain('Deep Reinforce - Ornith 9B + Ornith 35B')
-    // The Ollama-backed model name wears its spoofed brand hue (deep-reinforce);
-    // the "Ollama" group heading keeps the Ollama hue.
+    expect(html).toContain('Poolside - Laguna XS 2.1 33B-A3B Q8')
+    // Ollama-backed model names wear their spoofed brand hues; the "Ollama"
+    // group heading keeps the Ollama hue.
     expect(html).toContain('notification-newadditions-model provider-deep-reinforce')
+    expect(html).toContain('notification-newadditions-model provider-poolside')
     expect(html).not.toContain('notification-newadditions-model provider-ollama')
     // The plain body fallback paragraph is not rendered when groups are present.
     expect(html).not.toContain('Fallback summary text.')

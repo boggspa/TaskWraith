@@ -171,7 +171,13 @@ describe('notification registry', () => {
     const ollama = groups.find((g) => g.provider === 'ollama')
     expect(ollama?.models.map((m) => m.name)).toEqual([
       'Deep Reinforce - Ornith 9B + Ornith 35B',
-      'Liquid - LFM 2.5 8B-1A'
+      'Liquid - LFM 2.5 8B-1A',
+      'Poolside - Laguna XS 2.1 33B-A3B Q8'
+    ])
+    expect(ollama?.models.map((model) => model.accentProvider)).toEqual([
+      'deep-reinforce',
+      'liquid',
+      'poolside'
     ])
 
     for (const group of groups) {

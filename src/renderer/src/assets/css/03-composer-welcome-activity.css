@@ -13081,6 +13081,9 @@ button.diff-file-row {
 .notification-newadditions-model.provider-liquid {
   color: var(--provider-liquid-color, #f7d5e6);
 }
+.notification-newadditions-model.provider-poolside {
+  color: var(--provider-poolside-color, #86e5f5);
+}
 
 .notification-card-dismiss {
   flex: 0 0 auto;

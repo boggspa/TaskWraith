@@ -251,7 +251,7 @@ describe('buildRemoteFirstLaunchState', () => {
       usage: {}
     })
 
-    expect(state.notifications.map((notice) => notice.id)).toContain('new-additions-2026-07-09')
+    expect(state.notifications.map((notice) => notice.id)).toContain('new-additions-2026-07-10')
     expect(state.notifications.map((notice) => notice.id)).not.toContain(
       'gemini-retirement-2026-06-18'
     )
@@ -260,7 +260,7 @@ describe('buildRemoteFirstLaunchState', () => {
     )
 
     const newAdditions = state.notifications.find(
-      (notice) => notice.id === 'new-additions-2026-07-09'
+      (notice) => notice.id === 'new-additions-2026-07-10'
     )
     expect(newAdditions?.tone).toBe('default')
     expect(newAdditions?.accent).toBe('default')
@@ -276,6 +276,11 @@ describe('buildRemoteFirstLaunchState', () => {
     const claudeGroup = newAdditions?.groups?.find((group) => group.provider === 'claude')
     expect(claudeGroup?.models.map((model) => model.name)).toEqual(['Sonnet 5', 'Fable 5'])
     expect(claudeGroup?.models.every((model) => model.blurb.length > 0)).toBe(true)
+    const ollamaGroup = newAdditions?.groups?.find((group) => group.provider === 'ollama')
+    expect(ollamaGroup?.models.at(-1)).toMatchObject({
+      name: 'Poolside - Laguna XS 2.1 33B-A3B Q8',
+      accentProvider: 'poolside'
+    })
   })
 
   it('surfaces stale usage snapshots and no-workspace access without leaking setup internals', () => {

@@ -127,7 +127,7 @@ export function activeAppNotifications(args: {
 /** Stable id for the current "New Additions" card — bump the date suffix (and
  *  never reuse this exact id) when the lineup below changes, so a user who
  *  already dismissed the old lineup sees the refreshed one. */
-export const NEW_ADDITIONS_NOTIFICATION_ID = 'new-additions-2026-07-09'
+export const NEW_ADDITIONS_NOTIFICATION_ID = 'new-additions-2026-07-10'
 
 /** Always-on carousel notices. Currently just the "New Additions" model-launch
  *  card — replace/extend this list the next time a significant provider or
@@ -137,7 +137,7 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
     id: NEW_ADDITIONS_NOTIFICATION_ID,
     kind: 'addition',
     title: 'New Additions',
-    body: 'Claude Sonnet 5 and Fable 5, the GPT-5.6 Luna/Terra/Sol trio, Cursor Grok 4.5, Grok 4.5 Fast, and two new local Ollama models are all available now.',
+    body: 'Claude Sonnet 5 and Fable 5, the GPT-5.6 Luna/Terra/Sol trio, Cursor Grok 4.5, Grok 4.5 Fast, and four new local Ollama models are all available now.',
     dismissible: true,
     groups: [
       {
@@ -212,6 +212,12 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
             blurb:
               'A 131K-context local tool/thinking model for agentic coding — no cloud account required.',
             accentProvider: 'liquid'
+          },
+          {
+            name: 'Poolside - Laguna XS 2.1 33B-A3B Q8',
+            blurb:
+              'A 262K-context local coding model with tool use and thinking — no cloud account required.',
+            accentProvider: 'poolside'
           }
         ]
       }
