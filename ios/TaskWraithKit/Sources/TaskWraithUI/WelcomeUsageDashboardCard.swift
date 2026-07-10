@@ -422,11 +422,12 @@ public struct WelcomeUsageDashboardCard: View {
     }
 }
 
-// MARK: - Fixture (preview + pre-live placeholder)
+// MARK: - Fixture (SwiftUI preview seed)
 
 extension WelcomeDashboard {
-    /// Representative sample mirroring the Electron screenshots — used as the
-    /// SwiftUI preview seed and the placeholder before the live broadcast lands.
+    /// Representative sample mirroring the Electron screenshots. Xcode-preview
+    /// seed only — every real card passes the live `model.welcomeDashboard`
+    /// (and renders nothing until it lands), so this never reaches users.
     public static var fixture: WelcomeDashboard {
         let daily: [DailyBucket] = (0..<30).map { i in
             // A gently varying series with one spike, no Date dependency.
@@ -461,7 +462,7 @@ extension WelcomeDashboard {
                     inputTokens: 4_900_000, outputTokens: 46_600, percent: 27.1),
                 .init(id: "gem-pro", provider: "gemini", label: "Gemini Pro",
                     inputTokens: 2_200_000, outputTokens: 10_600, percent: 12.3),
-                .init(id: "kimi", provider: "kimi", label: "Kimi K2.6",
+                .init(id: "kimi", provider: "kimi", label: "Kimi K2.7 Code",
                     inputTokens: 572_000, outputTokens: 27_600, percent: 5.2),
                 .init(id: "comp-fast", provider: "cursor", label: "Composer 2.5 Fast",
                     inputTokens: 852_000, outputTokens: 57_800, percent: 4.9),
