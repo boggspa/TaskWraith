@@ -3,6 +3,7 @@ import type { AppIconVariant } from '../../shared/iconVariants'
 import type { DiffStatColors } from '../../shared/diffStatColors'
 import type { ClaudeWorkflowTelemetry } from '../../shared/claudeWorkflow'
 import type { CodexReviewTelemetry } from '../../shared/codexReview'
+import type { CodexMultiAgentTelemetry } from '../../shared/codexMultiAgent'
 import type { UnattendedElevationAck } from '../UnattendedPostureGate'
 import type {
   TaskWraithPluginResourceProvenance,
@@ -5002,6 +5003,13 @@ export interface ToolActivity {
    * card. Coarse run-status only (target/status/duration/tokens/model) — Codex
    * emits no structured findings. Absent for every other tool. */
   reviewSummary?: CodexReviewTelemetry
+  /** Live status of a Codex native Multi-agent episode (parallel subagent
+   * delegation), when this activity IS the synthesized `codex_multi_agent`
+   * anchor. Populated strictly from explicit provider events
+   * (`subAgentActivity`/`collabAgentToolCall` items + registered child-thread
+   * turn lifecycle) — never inferred from model or effort choice — and read by
+   * the transcript's Codex Multi-agent card. Absent for every other tool. */
+  multiAgentSummary?: CodexMultiAgentTelemetry
   // Legacy fields preserved for backward compatibility
   affectedFilePath?: string
   operationCategory?: 'update_topic' | 'read_file' | 'edit_file' | 'search' | 'shell' | 'unknown'

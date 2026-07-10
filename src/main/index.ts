@@ -233,6 +233,15 @@ import {
   codexReviewCompletionTelemetry,
   codexReviewStartTelemetry
 } from '../shared/codexReview'
+import {
+  CODEX_MULTI_AGENT_TOOL_NAME,
+  applyCodexChildTurnEvent,
+  applyCodexCollabToolCall,
+  applyCodexSubAgentActivity,
+  codexMultiAgentEpisodeId,
+  codexMultiAgentStartTelemetry,
+  finalizeCodexMultiAgent
+} from '../shared/codexMultiAgent'
 import { BridgeBroadcaster } from './BridgeBroadcaster'
 import {
   REMOTE_QUESTION_MAX_ANSWER_CHARS,
@@ -15394,6 +15403,175 @@ async function compactProviderContextForRequest(payload: {
   })
 }
 
+/** Emit the current Multi-agent episode telemetry onto its synthesized anchor
+ * (`multi_agent_event` compat line — same side-channel pattern as
+ * `review_event`/`workflow_event`, so it never renders as a generic tool row
+ * and is durably persisted by sendAgentCompatLine's raw lane). */
+function emitCodexMultiAgentEvent(state: CodexRunState): void {
+  if (!state.multiAgentActivityId || !state.multiAgentTelemetry) return
+  sendAgentCompatLine(
+    state.sender,
+    'codex',
+    {
+      type: 'multi_agent_event',
+      tool_id: state.multiAgentActivityId,
+      multiAgent: state.multiAgentTelemetry,
+      provider: 'codex'
+    },
+    state
+  )
+}
+
+/** Lazily synthesize the `codex_multi_agent` anchor activity on the FIRST
+ * explicit Multi-agent provider event of a turn (Codex emits no natural anchor
+ * tool-call for the episode — mirrors the `codex_review` anchor). Returns false
+ * when a native review owns this run: the review card semantically outranks a
+ * standalone Multi-agent card for the same episode, so no second anchor is
+ * created (the raw events remain durably persisted either way). */
+function ensureCodexMultiAgentEpisode(state: CodexRunState, atMs: number): boolean {
+  if (state.reviewActivityId) return false
+  if (state.multiAgentActivityId && state.multiAgentTelemetry) return true
+  const activityId = `codex-multi-agent-${randomUUID()}`
+  state.multiAgentActivityId = activityId
+  state.multiAgentTelemetry = codexMultiAgentStartTelemetry({
+    episodeId: codexMultiAgentEpisodeId(state.threadId, state.turnId),
+    startedAtMs: atMs
+  })
+  sendAgentCompatLine(
+    state.sender,
+    'codex',
+    {
+      type: 'tool_use',
+      tool_id: activityId,
+      tool_name: CODEX_MULTI_AGENT_TOOL_NAME,
+      parameters: {},
+      provider: 'codex'
+    },
+    state
+  )
+  emitCodexMultiAgentEvent(state)
+  return true
+}
+
+/** Fold a parent-thread Multi-agent coordination item (`subAgentActivity` /
+ * `collabAgentToolCall`) into the episode telemetry. Detection is strictly
+ * event-driven — never inferred from model or reasoning-effort choice. */
+function handleCodexMultiAgentItem(
+  state: CodexRunState,
+  params: any,
+  phase: 'started' | 'completed'
+): void {
+  const item = params?.item
+  if (!item || typeof item !== 'object') return
+  const atMs = Number(params?.completedAtMs) || Date.now()
+  if (!ensureCodexMultiAgentEpisode(state, atMs)) return
+  const telemetry = state.multiAgentTelemetry!
+  state.multiAgentTelemetry =
+    item.type === 'subAgentActivity'
+      ? applyCodexSubAgentActivity(telemetry, item, atMs)
+      : applyCodexCollabToolCall(telemetry, item, phase)
+  emitCodexMultiAgentEvent(state)
+}
+
+/** Find the run state whose in-flight Multi-agent episode REGISTERED this
+ * child threadId — the correct owner for subagent lifecycle events, which
+ * arrive under the subagent's own (never session-registered) threadId. Scans
+ * ALL managed Codex runs: with more than one codex run active the
+ * single-active-run heuristic in getActiveCodexRunState resolves nothing (or
+ * the wrong run), so relying on it would orphan every subagent of a concurrent
+ * run and leave the settled card claiming its subagents never ran. */
+function findCodexMultiAgentOwnerState(childThreadId: string): CodexRunState | null {
+  if (!childThreadId) return null
+  const candidates = runManager
+    .getActiveByProvider('codex')
+    .map((session) => getCodexStateFromSession(session))
+    .filter((candidate): candidate is CodexRunState => Boolean(candidate))
+  if (activeCodexRunState && !candidates.includes(activeCodexRunState)) {
+    candidates.push(activeCodexRunState)
+  }
+  for (const candidate of candidates) {
+    if (!candidate.multiAgentActivityId || !candidate.multiAgentTelemetry) continue
+    const subagents = candidate.multiAgentTelemetry.subagents ?? []
+    if (subagents.some((agent) => agent.agentThreadId === childThreadId)) return candidate
+  }
+  return null
+}
+
+/** Tee a foreign-thread notification into the Multi-agent episode when the
+ * thread is a REGISTERED subagent's own thread — the only way a subagent's
+ * lifecycle is observable (no terminal subAgentActivity kind is emitted).
+ * Anything else from a foreign thread stays dropped, exactly as before. */
+function handleCodexMultiAgentChildEvent(
+  state: CodexRunState,
+  message: any,
+  childThreadId: string
+): void {
+  const telemetry = state.multiAgentTelemetry
+  if (!state.multiAgentActivityId || !telemetry) return
+  if (!(telemetry.subagents || []).some((agent) => agent.agentThreadId === childThreadId)) return
+  const params = message?.params || {}
+  let kind: 'started' | 'completed' | 'failed' | 'interrupted'
+  if (message.method === 'turn/started') {
+    kind = 'started'
+  } else if (message.method === 'turn/completed' || message.method === 'turn/failed') {
+    const status = codexString(params.turn?.status || params.status).toLowerCase()
+    kind =
+      message.method === 'turn/failed' || status === 'failed' || status === 'error'
+        ? 'failed'
+        : status === 'interrupted' || status === 'cancelled'
+          ? 'interrupted'
+          : 'completed'
+  } else {
+    return
+  }
+  const next = applyCodexChildTurnEvent(telemetry, {
+    agentThreadId: childThreadId,
+    kind,
+    atMs: Date.now()
+  })
+  if (next === telemetry) return
+  state.multiAgentTelemetry = next
+  emitCodexMultiAgentEvent(state)
+}
+
+/** Finalize + settle the Multi-agent anchor when the parent turn (or the run
+ * itself) reaches a terminal state. Clears the per-turn episode fields. */
+function settleCodexMultiAgentEpisode(
+  state: CodexRunState,
+  input: { rawStatus?: unknown; durationMs?: number; error?: unknown }
+): void {
+  if (!state.multiAgentActivityId || !state.multiAgentTelemetry) return
+  const rawStatus = codexString(input.rawStatus).toLowerCase()
+  const outcome =
+    rawStatus === 'failed' || rawStatus === 'error'
+      ? 'failed'
+      : rawStatus === 'interrupted' || rawStatus === 'cancelled'
+        ? 'interrupted'
+        : 'completed'
+  const stats = codexUsageToStats(state.tokenUsage, input.durationMs || 0)
+  state.multiAgentTelemetry = finalizeCodexMultiAgent(state.multiAgentTelemetry, {
+    outcome,
+    durationMs: input.durationMs,
+    totalTokens: Number(stats.total_tokens) || undefined,
+    error: codexString((input.error as any)?.message ?? input.error)
+  })
+  emitCodexMultiAgentEvent(state)
+  sendAgentCompatLine(
+    state.sender,
+    'codex',
+    {
+      type: 'tool_result',
+      tool_id: state.multiAgentActivityId,
+      status: outcome === 'completed' ? 'success' : 'error',
+      output: '',
+      provider: 'codex'
+    },
+    state
+  )
+  state.multiAgentActivityId = undefined
+  state.multiAgentTelemetry = undefined
+}
+
 function handleCodexNotification(message: any) {
   const state = findCodexRunStateForMessage(message)
   const notificationThreadId = String(
@@ -15419,6 +15597,15 @@ function handleCodexNotification(message: any) {
     return
   }
   if (!state) {
+    // Multi-agent subagent lifecycle events carry the SUBAGENT's own threadId,
+    // which is never a registered run session — and with >1 codex run active
+    // the single-active fallback above resolves nothing. Route them to the
+    // episode that registered the child before the compaction fallback.
+    const childOwner = findCodexMultiAgentOwnerState(notificationThreadId)
+    if (childOwner) {
+      handleCodexMultiAgentChildEvent(childOwner, message, notificationThreadId)
+      return
+    }
     // Between-turns manual compactions still stream item/turn notifications —
     // route them to the pending manual-compaction registry instead of
     // dropping them with the state guard.
@@ -15428,8 +15615,19 @@ function handleCodexNotification(message: any) {
 
   const params = message.params || {}
   const messageThreadId = params.threadId || params.thread?.id
-  if (messageThreadId && params.threadId !== state.threadId && messageThreadId !== state.threadId)
+  if (messageThreadId && params.threadId !== state.threadId && messageThreadId !== state.threadId) {
+    // Multi-agent subagents stream their own turn lifecycle over the same
+    // connection under their OWN threadId — tee registered child threads'
+    // turn events into the OWNING episode's telemetry before the drop. The
+    // owner scan (not `state`) matters: with concurrent codex runs the active
+    // fallback above can resolve a different run than the one that spawned
+    // this subagent.
+    const childOwner = findCodexMultiAgentOwnerState(String(messageThreadId))
+    if (childOwner) {
+      handleCodexMultiAgentChildEvent(childOwner, message, String(messageThreadId))
+    }
     return
+  }
 
   if (syncCodexNativeGoalNotification(state, message)) {
     return
@@ -15550,6 +15748,13 @@ function handleCodexNotification(message: any) {
     }
     if (item?.type === 'plan') {
       emitCodexPlanItem(state, item)
+      return
+    }
+    if (item?.type === 'subAgentActivity' || item?.type === 'collabAgentToolCall') {
+      // Native Multi-agent coordination — routed to the orchestration card,
+      // never to the generic tool viewport. (Distinct from the legacy
+      // 'collabToolCall' item type below.)
+      handleCodexMultiAgentItem(state, params, 'started')
       return
     }
     if (item?.type === 'collabToolCall') {
@@ -15720,6 +15925,12 @@ function handleCodexNotification(message: any) {
       )
       return
     }
+    if (item?.type === 'subAgentActivity' || item?.type === 'collabAgentToolCall') {
+      // Spawn markers land via item/completed (kind:'started'); wait/send
+      // settle here too. Same routing as item/started — card, not tool row.
+      handleCodexMultiAgentItem(state, params, 'completed')
+      return
+    }
     if (item?.type === 'collabToolCall') {
       const itemId = codexTimelineItemId(params, 'codex-collab-tool-call')
       sendAgentCompatLine(
@@ -15827,6 +16038,11 @@ function handleCodexNotification(message: any) {
         state
       )
     }
+    settleCodexMultiAgentEpisode(state, {
+      rawStatus: turn.status || params.status,
+      durationMs,
+      error: turn.error || params.error
+    })
     sendAgentCompatExit(state.sender, 'codex', 0, state)
     runManager.finish(state.appRunId, 'completed')
     if (activeCodexRunState === state) {
@@ -15837,6 +16053,7 @@ function handleCodexNotification(message: any) {
 
   if (message.method === 'error') {
     const error = params.message || params.error || 'Codex app-server error.'
+    settleCodexMultiAgentEpisode(state, { rawStatus: 'failed', error })
     sendAgentCompatError(state.sender, 'codex', error, state)
     sendAgentCompatExit(state.sender, 'codex', 1, state)
     runManager.finish(state.appRunId, 'failed')

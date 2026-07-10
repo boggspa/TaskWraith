@@ -1,5 +1,6 @@
 import type Electron from 'electron'
 import type { CliProviderThinkingSegmentsState } from './providers/CliProviderThinking'
+import type { CodexMultiAgentTelemetry } from '../shared/codexMultiAgent'
 import type {
   ChatScope,
   ChatWorkflowMode,
@@ -23,6 +24,16 @@ export interface CodexRunState {
   reviewActivityId?: string
   reviewTarget?: string
   reviewModel?: string
+  /** When a native Codex Multi-agent episode is detected in the current turn
+   * (from explicit `subAgentActivity`/`collabAgentToolCall` items — never
+   * inferred from model/effort), the id of the synthesized `codex_multi_agent`
+   * anchor activity the orchestration card attaches its telemetry to. Cleared
+   * when the parent turn settles (episodes are per-turn). When
+   * `reviewActivityId` is set the review card outranks — no separate
+   * multi-agent anchor is synthesized for the same episode. */
+  multiAgentActivityId?: string
+  /** Accumulated telemetry for the in-flight Multi-agent episode. */
+  multiAgentTelemetry?: CodexMultiAgentTelemetry
   model: string
   approvalMode?: string
   workflowMode?: ChatWorkflowMode
