@@ -4,7 +4,8 @@ import {
   ChatMediaIcon,
   FileMenuSelectionIcon,
   PinnedMessagesIcon,
-  RunRailSymbolIcon
+  RunRailSymbolIcon,
+  SplitChatIcon
 } from './AppChromeSymbols'
 import { PillCard } from './PillCard'
 
@@ -17,7 +18,10 @@ export type RightDockHomeInspectorDestination =
   | 'safety'
   | 'capabilities'
 
-export type RightDockHomeSurface = Extract<RightDockTab, 'run' | 'media' | 'pins' | 'files'>
+export type RightDockHomeSurface = Extract<
+  RightDockTab,
+  'run' | 'chat' | 'media' | 'pins' | 'files'
+>
 
 type RightDockHomeTarget =
   | { surface: RightDockHomeSurface }
@@ -40,6 +44,14 @@ export const RIGHT_DOCK_HOME_DESTINATIONS: readonly RightDockHomeDestination[] =
     description: 'Runs, handoffs, and active work',
     group: 'session',
     target: { surface: 'run' }
+  },
+  {
+    id: 'chat',
+    label: 'Side Chats',
+    description: 'Linked branches and focused follow-ups',
+    group: 'session',
+    target: { surface: 'chat' },
+    requires: 'chat'
   },
   {
     id: 'media',
@@ -175,6 +187,7 @@ function HomeGlyph({
 
 function destinationIcon(id: string): ReactNode {
   if (id === 'run') return <RunRailSymbolIcon />
+  if (id === 'chat') return <SplitChatIcon />
   if (id === 'media') return <ChatMediaIcon />
   if (id === 'pins') return <PinnedMessagesIcon />
   if (id === 'files') return <FileMenuSelectionIcon />

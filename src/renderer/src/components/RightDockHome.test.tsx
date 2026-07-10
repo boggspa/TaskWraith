@@ -14,6 +14,7 @@ describe('RightDockHome', () => {
       ])
     ).toEqual([
       ['run', 'Live Lanes', 'run', undefined],
+      ['chat', 'Side Chats', 'chat', undefined],
       ['media', 'Media Attachments', 'media', undefined],
       ['pins', 'Pinned Messages', 'pins', undefined],
       ['files', 'File Editor', 'files', undefined],
@@ -46,11 +47,13 @@ describe('RightDockHome', () => {
     expect(html).toContain('<nav')
     expect(html).toContain('aria-labelledby="right-dock-home-title"')
     expect(destinationIds).toEqual(RIGHT_DOCK_HOME_DESTINATIONS.map(({ id }) => id))
-    expect(html.match(/<button/g)).toHaveLength(11)
-    expect(html.match(/class="pill-card right-dock-home-card/g)).toHaveLength(11)
-    expect(html.match(/class="pill-card-inner right-dock-home-card-inner"/g)).toHaveLength(11)
+    expect(html.match(/<button/g)).toHaveLength(12)
+    expect(html.match(/class="pill-card right-dock-home-card/g)).toHaveLength(12)
+    expect(html.match(/class="pill-card-inner right-dock-home-card-inner"/g)).toHaveLength(12)
     expect(html).toContain('class="right-dock-home-content"')
-    expect(html.match(/ disabled=""/g)).toHaveLength(2)
+    expect(html.match(/ disabled=""/g)).toHaveLength(3)
+    expect(html).toMatch(/data-right-dock-home-destination="chat"[^>]*disabled=""/)
+    expect(html).toContain('Side Chats. Linked branches and focused follow-ups')
     expect(html).toContain('Media Attachments. Images, audio, video, and paths. 3 items')
     expect(html).toContain('Pinned Messages. Notes and saved transcript items. 2 items')
   })
