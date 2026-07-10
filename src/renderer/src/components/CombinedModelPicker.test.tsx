@@ -5,7 +5,8 @@ import {
   CombinedModelPicker,
   flattenUnifiedProviderModels,
   getCombinedModelPickerResetSignature,
-  resolveCombinedModelPickerResetState
+  resolveCombinedModelPickerResetState,
+  resolveCombinedPickerPosition
 } from './CombinedModelPicker'
 
 describe('CombinedModelPicker', () => {
@@ -124,6 +125,40 @@ describe('CombinedModelPicker', () => {
     expect(css).toMatch(
       /\.composer-combined-picker-models\.is-unified-model-list\s*\{[\s\S]*?overflow-y:\s*auto;/
     )
+  })
+
+  it('opens below a high trigger and above a low trigger without leaving the viewport', () => {
+    expect(
+      resolveCombinedPickerPosition({
+        triggerRect: { right: 500, top: 96, bottom: 124 },
+        popoverWidth: 420,
+        popoverHeight: 322,
+        viewportWidth: 800,
+        viewportHeight: 800
+      })
+    ).toEqual({ left: 80, top: 132 })
+
+    expect(
+      resolveCombinedPickerPosition({
+        triggerRect: { right: 500, top: 700, bottom: 728 },
+        popoverWidth: 420,
+        popoverHeight: 322,
+        viewportWidth: 800,
+        viewportHeight: 800
+      })
+    ).toEqual({ left: 80, top: 370 })
+  })
+
+  it('clamps the picker when neither side has its full fixed height', () => {
+    expect(
+      resolveCombinedPickerPosition({
+        triggerRect: { right: 390, top: 290, bottom: 318 },
+        popoverWidth: 420,
+        popoverHeight: 322,
+        viewportWidth: 400,
+        viewportHeight: 600
+      })
+    ).toEqual({ left: 8, top: 8 })
   })
 
   it('initializes the Ollama provider column from the selected model only', () => {

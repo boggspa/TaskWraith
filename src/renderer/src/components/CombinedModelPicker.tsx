@@ -45,6 +45,14 @@ export interface CombinedModelPickerModelOption {
   label: string
   disabled?: boolean
   disabledReason?: string
+  /** Provider metadata retained for atomic cross-provider/new-seat defaults. */
+  supportedReasoningEfforts?: Array<{
+    reasoningEffort: string
+    disabled?: boolean
+    disabledReason?: string
+  }>
+  defaultReasoningEffort?: string | null
+  additionalSpeedTiers?: string[]
   /** 1.0.7-mini — ISO date (YYYY-MM-DD) when the provider is retiring this
    * model. When present, the picker row renders a small clock + ordinal-
    * date pill in red to flag the deprecation without baking it into the
@@ -184,7 +192,7 @@ interface CombinedModelPickerProps {
    * "Fast Mode" toggle below the Reasoning column. Pass an empty set
    * to hide the toggle row entirely (e.g. Gemini / Kimi).
    */
-  fastModeCapableModelIds?: Set<string>
+  fastModeCapableModelIds?: ReadonlySet<string>
   /**
    * Current fast-mode state. Renders the toggle as "on" when true.
    */
@@ -247,6 +255,38 @@ export function getCombinedModelPickerResetSignature(params: {
   selectedModelId: string
 }): string {
   return `${params.provider}\u0000${params.isOllamaProviderPicker ? 'ollama' : 'standard'}\u0000${params.selectedModelId}`
+}
+
+export function resolveCombinedPickerPosition(params: {
+  triggerRect: Pick<DOMRect, 'right' | 'top' | 'bottom'>
+  popoverWidth: number
+  popoverHeight: number
+  viewportWidth: number
+  viewportHeight: number
+  viewportMargin?: number
+  triggerGap?: number
+}): { left: number; top: number } {
+  const viewportMargin = params.viewportMargin ?? 8
+  const triggerGap = params.triggerGap ?? 8
+  const left = Math.max(
+    viewportMargin,
+    Math.min(
+      params.triggerRect.right - params.popoverWidth,
+      params.viewportWidth - params.popoverWidth - viewportMargin
+    )
+  )
+  const topAbove = params.triggerRect.top - triggerGap - params.popoverHeight
+  const topBelow = params.triggerRect.bottom + triggerGap
+  const top =
+    topAbove >= viewportMargin
+      ? topAbove
+      : topBelow + params.popoverHeight <= params.viewportHeight - viewportMargin
+        ? topBelow
+        : Math.max(
+            viewportMargin,
+            Math.min(topAbove, params.viewportHeight - params.popoverHeight - viewportMargin)
+          )
+  return { left, top }
 }
 
 const OLLAMA_CUSTOM_PROVIDER_GROUP = {
@@ -675,6 +715,7 @@ export function ReasoningLadderSlider({
           } as React.CSSProperties
         }
         role="slider"
+        tabIndex={interactive ? 0 : -1}
         aria-label="Reasoning effort"
         aria-valuemin={0}
         aria-valuemax={LADDER_MAX_INDEX}
@@ -684,6 +725,7 @@ export function ReasoningLadderSlider({
         title={
           interactive ? undefined : (ladder.disabledReason ?? 'Reasoning is fixed for this model')
         }
+        onFocus={onInteract}
         onPointerDown={(event) => {
           if (!interactive) return
           onInteract()
@@ -848,6 +890,8 @@ export function CombinedModelPicker({
   )
   const triggerRef = useRef<HTMLButtonElement | null>(null)
   const popoverRef = useRef<HTMLDivElement | null>(null)
+  const onOpenChangeRef = useRef(onOpenChange)
+  const unifiedModelRowRefs = useRef<Map<number, HTMLButtonElement>>(new Map())
   const [open, setOpen] = useState(false)
   const [position, setPosition] = useState<{ left: number; top: number } | null>(null)
   const [focusedColumn, setFocusedColumn] = useState<CombinedModelPickerColumn>('model')
@@ -866,8 +910,22 @@ export function CombinedModelPicker({
   }, [disabled, open])
 
   useEffect(() => {
-    onOpenChange?.(open)
-  }, [onOpenChange, open])
+    onOpenChangeRef.current = onOpenChange
+  }, [onOpenChange])
+
+  useEffect(() => {
+    onOpenChangeRef.current?.(open)
+  }, [open])
+
+  useEffect(() => {
+    if (!open || !isUnifiedProviderPicker || focusedColumn !== 'model') return
+    const frame = window.requestAnimationFrame(() => {
+      unifiedModelRowRefs.current
+        .get(modelHighlight)
+        ?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [focusedColumn, isUnifiedProviderPicker, modelHighlight, open])
 
   const ollamaProviderGroups = useMemo(
     () =>
@@ -1032,18 +1090,33 @@ export function CombinedModelPicker({
           : showReasoningSidecar
             ? 360
             : 200
-      const left = Math.max(8, rect.right - popoverWidth)
-      // Anchor ABOVE the chip with a small gap.
-      const top = rect.top - 8
-      setPosition({ left, top })
+      const measuredPopover = popoverRef.current?.getBoundingClientRect()
+      const effectiveWidth = measuredPopover?.width || popoverWidth
+      const effectiveHeight =
+        measuredPopover?.height || Math.min(322, Math.max(1, window.innerHeight - 24))
+      setPosition(
+        resolveCombinedPickerPosition({
+          triggerRect: rect,
+          popoverWidth: effectiveWidth,
+          popoverHeight: effectiveHeight,
+          viewportWidth: window.innerWidth,
+          viewportHeight: window.innerHeight
+        })
+      )
     }
     let cancelled = false
+    let remeasureFrame: number | null = null
     queueMicrotask(() => {
-      if (!cancelled) computePosition()
+      if (cancelled) return
+      computePosition()
+      remeasureFrame = window.requestAnimationFrame(() => {
+        if (!cancelled) computePosition()
+      })
     })
     if (!repositionOnScroll) {
       return () => {
         cancelled = true
+        if (remeasureFrame != null) window.cancelAnimationFrame(remeasureFrame)
       }
     }
     // Re-anchor to the trigger while the user scrolls the surrounding list.
@@ -1051,6 +1124,7 @@ export function CombinedModelPicker({
     window.addEventListener('resize', computePosition)
     return () => {
       cancelled = true
+      if (remeasureFrame != null) window.cancelAnimationFrame(remeasureFrame)
       window.removeEventListener('scroll', computePosition, true)
       window.removeEventListener('resize', computePosition)
     }
@@ -1149,6 +1223,20 @@ export function CombinedModelPicker({
   useEffect(() => {
     if (!open) return
     const handleArrowKey = (event: KeyboardEvent) => {
+      const target = event.target
+      const targetInsidePopover =
+        target instanceof Node && Boolean(popoverRef.current?.contains(target))
+      if (target !== triggerRef.current && !targetInsidePopover) return
+      if (
+        target instanceof Element &&
+        targetInsidePopover &&
+        target.closest('button')
+      ) {
+        // Once focus has moved into the popover, let native button keyboard
+        // activation win. In particular, Enter on the Ensemble Add confirm or
+        // Fast toggle must not be intercepted as a model-row selection.
+        return
+      }
       if (event.key === 'ArrowDown') {
         event.preventDefault()
         if (focusedColumn === 'provider') {
@@ -1257,8 +1345,7 @@ export function CombinedModelPicker({
       style={{
         position: 'fixed',
         left: `${position.left}px`,
-        top: `${position.top}px`,
-        transform: 'translateY(-100%)'
+        top: `${position.top}px`
       }}
       role="dialog"
       aria-label="Choose provider, model, reasoning level, and speed"
@@ -1355,6 +1442,10 @@ export function CombinedModelPicker({
                   const supportsFast = Boolean(group.fastModeCapableModelIds?.has(option.id))
                   return (
                     <button
+                      ref={(node) => {
+                        if (node) unifiedModelRowRefs.current.set(rowIndex, node)
+                        else unifiedModelRowRefs.current.delete(rowIndex)
+                      }}
                       key={`${group.provider}:${option.id}`}
                       type="button"
                       className={`composer-combined-picker-row ${
@@ -1366,6 +1457,7 @@ export function CombinedModelPicker({
                       }`}
                       data-provider-model={`${group.provider}:${option.id}`}
                       disabled={Boolean(disabled || option.disabled)}
+                      aria-pressed={selected}
                       title={option.disabled ? option.disabledReason || 'Unavailable' : undefined}
                       onMouseEnter={() => {
                         setFocusedColumn('model')
@@ -1441,6 +1533,7 @@ export function CombinedModelPicker({
                     idx === modelHighlight && focusedColumn === 'model' ? 'is-highlighted' : ''
                   }`}
                   disabled={Boolean(disabled || option.disabled)}
+                  aria-pressed={option.id === selectedModelId}
                   title={option.disabled ? option.disabledReason || 'Unavailable' : undefined}
                   onMouseEnter={() => {
                     setFocusedColumn('model')
