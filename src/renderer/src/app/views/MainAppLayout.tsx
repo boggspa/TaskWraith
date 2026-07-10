@@ -29,7 +29,7 @@ import {
 import { getProviderLabel } from '../../lib/providerLabels'
 import { isGlobalChat } from '../../lib/chatScope'
 import { RunRailPanel } from '../../components/RunRailPanel'
-import { Sidebar } from '../../components/Sidebar'
+import { ProviderBadgeIcon, Sidebar } from '../../components/Sidebar'
 import { CollapsedSidebarCornerPill } from '../../components/CollapsedSidebarCornerPill'
 import { WorkspaceBoardView } from '../../components/WorkspaceBoardView'
 import { Inspector, INSPECTOR_TAB_META } from '../../components/Inspector'
@@ -1091,6 +1091,12 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
       } satisfies Partial<ComposerProps>) as ComposerProps)
     : null
 
+  const mainPaneThreadTitle = currentChat?.title || currentWorkspace?.displayName || 'New chat'
+  const mainPaneWorkspaceLabel = isCurrentGlobalChat ? null : currentWorkspace?.displayName || null
+  const mainPaneProvider = isCurrentEnsembleChat
+    ? 'ensemble'
+    : currentChat?.provider || currentProvider
+
   return (
       <div
         className={`app-main ${isChatExpanded ? 'chat-expanded' : ''} ${providerShellClass} ${
@@ -1610,12 +1616,17 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
               >
                 <SidebarCornerIcon direction="left" isOpen={showWorkspaceSidebar} />
               </button>
-              <span
-                className="chat-corner-thread-title"
-                title={currentChat?.title || currentWorkspace?.displayName || 'New chat'}
-              >
-                {currentChat?.title || currentWorkspace?.displayName || 'New chat'}
-              </span>
+              <div className="chat-corner-thread-context">
+                <ProviderBadgeIcon provider={mainPaneProvider} />
+                <span className="chat-corner-thread-title" title={mainPaneThreadTitle}>
+                  {mainPaneThreadTitle}
+                </span>
+                {mainPaneWorkspaceLabel && (
+                  <span className="chat-corner-workspace-name" title={mainPaneWorkspaceLabel}>
+                    {mainPaneWorkspaceLabel}
+                  </span>
+                )}
+              </div>
             </div>
           )}
 
