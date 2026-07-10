@@ -22,9 +22,13 @@ import {
   WORKSPACE_WRITE_LABEL
 } from '../lib/planModeLabels'
 import { WORKSPACE_POLICY_SERVICES } from '../lib/workspacePolicyServices'
-import { CombinedModelPicker, type CombinedModelPickerModelOption } from './CombinedModelPicker'
+import {
+  CombinedModelPicker,
+  type CombinedModelPickerModelOption,
+  type CombinedModelPickerProviderGroup
+} from './CombinedModelPicker'
 import { CombinedPermissionsPicker, type PermissionOption } from './CombinedPermissionsPicker'
-import { ComposerProviderPicker } from './ComposerProviderPicker'
+import { resolveProviderRows } from './ComposerProviderPicker'
 import { isCursorGrok45ModelId } from '../../../shared/grok45Models'
 
 // Lossless permission options: the values ARE the PermissionPresetId, so
@@ -35,6 +39,78 @@ export const PERMISSION_PRESET_OPTIONS: PermissionOption[] = [
   { value: 'default', label: 'Default approval' },
   { value: 'workspace_write', label: WORKSPACE_WRITE_LABEL }
 ]
+
+/**
+ * Build one lossless provider+model patch for the roster and Agent Pool.
+ *
+ * A cross-provider choice starts from the canonical provider-change patch so
+ * runtime profiles, linked sessions, permission presets, and tool-grant
+ * overrides cannot leak across providers. A same-provider model choice leaves
+ * those fields absent from the patch, preserving the row's existing runtime
+ * and permission configuration. In both cases reasoning and Fast are then
+ * normalized against the selected model before the caller shallow-merges the
+ * patch into the participant.
+ */
+export function buildParticipantProviderModelPatch(
+  participant: EnsembleParticipant,
+  provider: ProviderId,
+  model: string
+): Partial<EnsembleParticipant> {
+  const providerChanged = provider !== participant.provider
+  const providerPatch = providerChanged ? buildProviderChangeParticipantPatch(provider) : {}
+  const defaults = getEnsembleModelDefaults(provider)
+  const patch: Partial<EnsembleParticipant> = {
+    ...providerPatch,
+    provider,
+    model
+  }
+
+  if (provider !== 'kimi') {
+    const enabledReasoning = getEnsembleReasoningOptions(provider, model).filter(
+      (option) => !option.disabled
+    )
+    const enabledReasoningValues = new Set(enabledReasoning.map((option) => option.value))
+    const seededReasoning = providerChanged
+      ? providerPatch.reasoningEffort
+      : participant.reasoningEffort
+    patch.reasoningEffort =
+      enabledReasoning.length === 0
+        ? undefined
+        : seededReasoning && enabledReasoningValues.has(seededReasoning)
+          ? seededReasoning
+          : enabledReasoningValues.has(defaults.defaultReasoning)
+            ? defaults.defaultReasoning
+            : enabledReasoning[0]?.value
+  }
+
+  if (provider === 'codex') {
+    const seededFast = providerChanged
+      ? providerPatch.serviceTier === 'fast' ||
+        (providerPatch.serviceTier == null && providerPatch.fastModeEnabled === true)
+      : participant.serviceTier === 'fast' ||
+        (participant.serviceTier == null && participant.fastModeEnabled === true)
+    const nextFast = defaults.fastModeCapableModelIds.has(model) && seededFast
+    patch.fastModeEnabled = nextFast
+    patch.serviceTier = nextFast ? 'fast' : ''
+  } else if (provider === 'claude') {
+    const seededFast = providerChanged
+      ? providerPatch.fastModeEnabled === true
+      : participant.fastModeEnabled === true
+    patch.fastModeEnabled = defaults.fastModeCapableModelIds.has(model) && seededFast
+  } else if (provider === 'cursor') {
+    const seededFast = providerChanged
+      ? providerPatch.fastModeEnabled === true
+      : participant.fastModeEnabled === true
+    patch.fastModeEnabled =
+      model === 'composer-2.5-fast'
+        ? true
+        : model === 'composer-2.5'
+          ? false
+          : defaults.fastModeCapableModelIds.has(model) && seededFast
+  }
+
+  return patch
+}
 
 interface ParticipantPickerClusterProps {
   participant: EnsembleParticipant
@@ -50,10 +126,10 @@ interface ParticipantPickerClusterProps {
 }
 
 /**
- * The provider + model/reasoning + permissions picker trio shared by the
+ * The provider/model/reasoning/Fast + permissions picker pair shared by the
  * Settings → Roster participant row AND the Agent-Pool editor. Extracted so the
  * non-trivial provider→model→reasoning→fast-mode interplay lives in ONE place
- * and can't drift between the two surfaces. Renders exactly the three pickers;
+ * and can't drift between the two surfaces. Renders exactly the two pickers;
  * the caller supplies the surrounding row chrome (enable / boss / remove) and
  * the role / brief text fields, which have surface-specific commit semantics.
  */
@@ -75,6 +151,20 @@ export function ParticipantPickerCluster({
   // the churning AgenticServicesSettings shape.
   const services = agenticServices ?? ({} as AgenticServicesSettings)
   const modelOptions: CombinedModelPickerModelOption[] = defaults.modelOptions
+  const providerGroups: CombinedModelPickerProviderGroup[] = resolveProviderRows(
+    grokAvailable,
+    cursorAvailable
+  ).map((row) => {
+    const providerDefaults = getEnsembleModelDefaults(row.id)
+    return {
+      provider: row.id,
+      label: row.label,
+      modelOptions: providerDefaults.modelOptions,
+      fastModeCapableModelIds: providerDefaults.fastModeCapableModelIds,
+      ...(row.pauseLabel ? { pauseLabel: row.pauseLabel } : {}),
+      ...(row.rerouteLabel ? { rerouteLabel: row.rerouteLabel } : {})
+    }
+  })
   // Display the participant's model, mapping the agnostic 'cli-default' seed to
   // the provider's preferred id so the chip reads cleanly. The stored value is
   // untouched until the user actually picks a model.
@@ -83,34 +173,8 @@ export function ParticipantPickerCluster({
       ? participant.model
       : defaults.defaultModelId
 
-  const onSelectModel = (nextModel: string): void => {
-    const patch: Partial<EnsembleParticipant> = { model: nextModel }
-    if (
-      participant.provider === 'claude' ||
-      participant.provider === 'cursor' ||
-      participant.provider === 'grok'
-    ) {
-      const nextReasoningOptions = getEnsembleReasoningOptions(participant.provider, nextModel)
-      const enabledReasoningOptions = nextReasoningOptions.filter((option) => !option.disabled)
-      const nextReasoningValues = new Set(enabledReasoningOptions.map((option) => option.value))
-      patch.reasoningEffort =
-        enabledReasoningOptions.length === 0
-          ? undefined
-          : nextReasoningValues.has(defaults.defaultReasoning)
-            ? defaults.defaultReasoning
-            : enabledReasoningOptions[0]?.value
-    }
-    // Drop fast mode when the new model can't support it (mirrors composer).
-    if (
-      (participant.provider === 'codex' ||
-        participant.provider === 'claude' ||
-        participant.provider === 'cursor') &&
-      !defaults.fastModeCapableModelIds.has(nextModel)
-    ) {
-      patch.fastModeEnabled = false
-      if (participant.provider === 'codex') patch.serviceTier = ''
-    }
-    onPatch(patch)
+  const onSelectProviderModel = (provider: ProviderId, model: string): void => {
+    onPatch(buildParticipantProviderModelPatch(participant, provider, model))
   }
 
   const selectedReasoning =
@@ -176,22 +240,14 @@ export function ParticipantPickerCluster({
 
   return (
     <>
-      <ComposerProviderPicker
-        provider={participant.provider}
-        composerStyle={composerStyle}
-        grokAvailable={grokAvailable}
-        cursorAvailable={cursorAvailable}
-        onSelect={(next: ProviderId) => onPatch(buildProviderChangeParticipantPatch(next))}
-        activeModelId={selectedModelId}
-        title="Participant provider"
-        repositionOnScroll
-      />
       <CombinedModelPicker
         provider={participant.provider}
         composerStyle={composerStyle}
         modelOptions={modelOptions}
         selectedModelId={selectedModelId}
-        onSelectModel={onSelectModel}
+        onSelectModel={(model) => onSelectProviderModel(participant.provider, model)}
+        providerGroups={providerGroups}
+        onSelectProviderModel={onSelectProviderModel}
         reasoningOptions={reasoningOptions}
         selectedReasoning={selectedReasoning}
         onSelectReasoning={onSelectReasoning}
