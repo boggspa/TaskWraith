@@ -8,7 +8,7 @@ import type {
 import { canonicalModelIdForProvider, humaniseModelId } from './modelDisplayName'
 import { resolveOllamaDisplayBrand } from './ollamaDisplayBrand'
 
-export type WelcomeUsageTab = 'overview' | 'models' | 'workspaces' | 'providers'
+export type WelcomeUsageTab = 'overview' | 'models' | 'workspaces' | 'providers' | 'agents'
 
 /**
  * 1.0.5-EW51 — Per-workspace cumulative cost + token breakdown

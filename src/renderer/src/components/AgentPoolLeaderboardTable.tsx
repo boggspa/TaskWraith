@@ -2,6 +2,7 @@ import type { JSX } from 'react'
 import type { PooledAgentStatsSummary } from '../../../main/store/types'
 import { getProviderLabel } from '../lib/providerLabels'
 import { type PooledAgent } from '../lib/ensembleAgentPool'
+import { rankAgentPoolLeaderboard } from '../lib/agentPoolLeaderboard'
 import { formatTokenCount } from '../lib/UsageHeatmap'
 import { PooledAgentIcon } from './icons/PooledAgentIcon'
 import './ModelUsageSettingsTable.css'
@@ -145,20 +146,14 @@ function buildRows(
   agents: PooledAgent[],
   stats: Record<string, PooledAgentStatsSummary>
 ): LeaderboardRow[] {
-  return agents
-    .map((agent) => {
-      const summary = stats[agent.agentId] as AgentPoolLeaderboardStats | undefined
-      const score =
-        (summary?.tokensTotal ?? 0) +
-        (summary?.durationMs ?? 0) / 1000 +
-        (summary?.runs ?? 0) * 100 +
-        numberField(summary, 'toolCalls') * 25
-      return { agent, stats: summary, score }
-    })
-    .sort((a, b) => {
-      if (b.score !== a.score) return b.score - a.score
-      return a.agent.identity.nickname.localeCompare(b.agent.identity.nickname)
-    })
+  // Ranking (score + tiebreak) is shared with the dashboard's Agents tab —
+  // see lib/agentPoolLeaderboard.ts. This table only re-brands the row type
+  // to its wider stats view.
+  return rankAgentPoolLeaderboard(agents, stats).map((row) => ({
+    agent: row.agent,
+    stats: row.stats as AgentPoolLeaderboardStats | undefined,
+    score: row.score
+  }))
 }
 
 function scopeCell(stats: AgentPoolLeaderboardStats | undefined): string {

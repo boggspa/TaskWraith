@@ -9,6 +9,7 @@ import {
   type WelcomeUsageTab
 } from '../lib/welcomeUsageDashboard'
 import { isDashboardStatVisible } from '../lib/dashboardStatRegistry'
+import { WelcomeUsageAgentsTab } from './WelcomeUsageAgentsTab'
 import {
   ClockSymbolIcon,
   FolderSymbolIcon,
@@ -46,7 +47,14 @@ const WELCOME_USAGE_TABS: Array<{
   // Workspaces (which has a 30d chart underneath) — the
   // timecode emphasises "how much agent-time happened today"
   // as a single legible glyph.
-  { value: 'providers', label: 'Providers', Icon: ProviderTabIcon }
+  { value: 'providers', label: 'Providers', Icon: ProviderTabIcon },
+  // Agents tab — the Settings → Agent pool leaderboard re-dressed
+  // in dashboard chrome: #1-agent hero chips above a scrollable
+  // standings list. Data is self-contained inside the tab body
+  // (localStorage pool + async stats IPC), so this entry needs no
+  // new dashboard props. Always visible, like Statistics / Model
+  // Comparisons.
+  { value: 'agents', label: 'Agents', Icon: AgentsTabIcon }
 ]
 
 // 1.0.5-EW52 — Lightweight icon for the Providers tab. Same
@@ -69,6 +77,30 @@ function ProviderTabIcon(): React.JSX.Element {
       <rect x="2" y="3.5" width="12" height="2" rx="1" />
       <rect x="2" y="7" width="9" height="2" rx="1" />
       <rect x="2" y="10.5" width="11" height="2" rx="1" />
+    </svg>
+  )
+}
+
+// Agents-tab icon. Same stroke language as the other tab icons
+// (1.4 weight, rounded caps/joins): two head-and-shoulders figures,
+// echoing the Agent-pool "reusable roster" identity.
+function AgentsTabIcon(): React.JSX.Element {
+  return (
+    <svg
+      width="13"
+      height="13"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.4"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <circle cx="5.6" cy="5.6" r="2.3" />
+      <path d="M2 13c.4-2.2 1.9-3.4 3.6-3.4S8.8 10.8 9.2 13" />
+      <path d="M10.4 4a2 2 0 1 1 1.4 3.6" />
+      <path d="M11.4 9.4c1.5.2 2.4 1.3 2.7 2.9" />
     </svg>
   )
 }
@@ -382,8 +414,21 @@ export function WelcomeUsageDashboard({
       {/* Welcome L6/L7 — empty-state when the 30-day rolling window has
           no activity. The dashboard still mounts (lifetimeHasActivity
           is true) so the user sees the headline shape; this card
-          replaces the stat grid / chart inside. */}
-      {!data.hasActivity ? (
+          replaces the stat grid / chart inside. The Agents tab is
+          exempt: pool standings are ALL-TIME (forward-only ledger),
+          so a quiet month must not blank the leaderboard — it renders
+          ahead of the hasActivity gate and carries its own empty
+          states. */}
+      {tab === 'agents' ? (
+        /*
+          Agents tab — Agent-pool leaderboard in dashboard chrome.
+          Hero row (#1 agent identity + its headline stats) above a
+          scrollable standings chip. The component owns its own data
+          (localStorage pool + async stats IPC), so the dashboard
+          passes nothing through.
+        */
+        <WelcomeUsageAgentsTab />
+      ) : !data.hasActivity ? (
         <div className="welcome-usage-empty welcome-usage-empty--range">
           <MascotGhost size={34} />
           <strong>No activity in the last 30 days.</strong>

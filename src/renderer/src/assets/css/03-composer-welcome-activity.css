@@ -1819,7 +1819,8 @@
 .welcome-usage-dashboard > .welcome-usage-footnote,
 .welcome-usage-dashboard > .welcome-usage-model-meters,
 .welcome-usage-dashboard > .welcome-usage-workspaces,
-.welcome-usage-dashboard > .welcome-usage-providers {
+.welcome-usage-dashboard > .welcome-usage-providers,
+.welcome-usage-dashboard > .welcome-usage-agents {
   animation: welcome-slide-over 280ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
   will-change: transform;
 }
@@ -2465,6 +2466,222 @@
   font-size: var(--font-size-xs);
   color: color-mix(in srgb, var(--text-secondary) 75%, transparent);
   text-align: center;
+}
+
+/* Agents tab — the Settings → Agent pool leaderboard re-dressed in the
+ * dashboard chrome (the Settings variant keeps its dense Model-Usage table
+ * styling). Three stacked masses inside the fixed-height card:
+ *   1. Hero row: #1-agent identity chip (left, spotlight-tinted with the
+ *      agent's own accent) + its five headline stats (right).
+ *   2. One scrollable leaderboard chip — rank / icon / name rows with
+ *      self-describing counts and a 2px token-share meter riding each
+ *      row's bottom hairline (echoes the Workspaces-tab meter language).
+ *   3. Provenance footnote (pool stats are all-time forward-only, unlike
+ *      the card's 30-day window chip).
+ * Same fill contract as the other tabs (CRUX35/38): the list flex-fills
+ * and scrolls inside the 680px card, hero + footnote stay fixed. */
+.welcome-usage-agents {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.welcome-usage-agents > .welcome-usage-empty {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.welcome-usage-agents-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.7fr);
+  gap: 8px;
+}
+.welcome-usage-agents-champion {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--panel-border) 42%, transparent);
+  background:
+    radial-gradient(circle at 16% 0%, color-mix(in srgb, var(--agents-champion-accent, var(--accent)) 18%, transparent), transparent 62%),
+    linear-gradient(160deg, color-mix(in srgb, var(--text-primary) 10%, transparent), color-mix(in srgb, var(--agents-champion-accent, var(--accent)) 5%, transparent)),
+    color-mix(in srgb, var(--panel-bg) 22%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--text-primary) 16%, transparent);
+}
+.welcome-usage-agents-champion-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.welcome-usage-agents-champion-kicker {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: calc(var(--font-size-xs) - 1px);
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: color-mix(in srgb, var(--text-secondary) 85%, transparent);
+  white-space: nowrap;
+}
+.welcome-usage-agents-champion-rank {
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--agents-champion-accent, var(--accent)) 24%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--agents-champion-accent, var(--accent)) 45%, transparent);
+  color: var(--text-primary);
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+.welcome-usage-agents-champion-name {
+  font-size: var(--font-size-md);
+  font-weight: 700;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.welcome-usage-agents-champion-meta {
+  font-size: var(--font-size-xs);
+  color: color-mix(in srgb, var(--text-secondary) 88%, transparent);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.welcome-usage-agents-champion-stats {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--panel-border) 42%, transparent);
+  background:
+    linear-gradient(160deg, color-mix(in srgb, var(--text-primary) 8%, transparent), color-mix(in srgb, var(--accent) 4%, transparent)),
+    color-mix(in srgb, var(--panel-bg) 18%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--text-primary) 14%, transparent);
+  overflow: hidden;
+}
+.welcome-usage-agents-stat-cell {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 3px;
+  min-width: 0;
+  padding: 10px;
+}
+.welcome-usage-agents-stat-cell + .welcome-usage-agents-stat-cell {
+  border-left: 1px solid color-mix(in srgb, var(--panel-border) 32%, transparent);
+}
+.welcome-usage-agents-stat-cell strong {
+  font-size: var(--font-size-sm);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Labels keep the full stat names and WRAP (max two lines) instead of
+ * ellipsizing — "TOOL CALLS" / "WORK TIME" don't fit one line in the
+ * narrow fifth-width cells at dashboard scale. */
+.welcome-usage-agents-stat-cell span {
+  font-size: calc(var(--font-size-xs) - 1px);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  line-height: 1.25;
+  color: color-mix(in srgb, var(--text-secondary) 82%, transparent);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+.welcome-usage-agents-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--panel-border) 42%, transparent);
+  background:
+    linear-gradient(160deg, color-mix(in srgb, var(--text-primary) 8%, transparent), color-mix(in srgb, var(--accent) 4%, transparent)),
+    color-mix(in srgb, var(--panel-bg) 18%, transparent);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--text-primary) 14%, transparent),
+    0 10px 24px color-mix(in srgb, #000000 10%, transparent);
+}
+.welcome-usage-agents-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: 26px 24px minmax(0, 1fr) repeat(4, minmax(58px, auto));
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  border-bottom: 1px solid color-mix(in srgb, var(--panel-border) 30%, transparent);
+  transition: background-color 140ms ease;
+}
+.welcome-usage-agents-row:last-child {
+  border-bottom: 0;
+}
+.welcome-usage-agents-row:hover {
+  background: color-mix(in srgb, var(--text-primary) 5%, transparent);
+}
+.welcome-usage-agents-row.is-idle {
+  opacity: 0.55;
+}
+.welcome-usage-agents-row-rank {
+  font-size: var(--font-size-xs);
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  color: color-mix(in srgb, var(--text-secondary) 85%, transparent);
+  text-align: center;
+}
+.welcome-usage-agents-row-icon {
+  flex-shrink: 0;
+}
+.welcome-usage-agents-row-id {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.welcome-usage-agents-row-name {
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.welcome-usage-agents-row-meta {
+  font-size: calc(var(--font-size-xs) - 1px);
+  color: color-mix(in srgb, var(--text-secondary) 78%, transparent);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.welcome-usage-agents-row-stat {
+  font-size: var(--font-size-xs);
+  font-variant-numeric: tabular-nums;
+  color: color-mix(in srgb, var(--text-secondary) 92%, transparent);
+  text-align: right;
+  white-space: nowrap;
+}
+/* Token-share meter: a 2px accent strip riding the row's bottom hairline,
+ * width = the agent's share of pool tokens (min 2% so any activity reads). */
+.welcome-usage-agents-row-meter {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 2px;
+  border-radius: 0 2px 2px 0;
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--accent-color) 45%, transparent),
+    color-mix(in srgb, var(--accent-color) 90%, transparent)
+  );
+  pointer-events: none;
 }
 
 .welcome-usage-cell {
