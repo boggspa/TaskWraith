@@ -5,6 +5,7 @@ import {
   createCliSpawnPlan,
   resolveCliProviderBinary
 } from './providers/CliProviderRuntime'
+import { withCodexCodeModeHostEnv } from './CodexCodeModeHost'
 import type { RuntimeProfile } from './store/types'
 import { collectUserMcpProviderEnv, type UserMcpLaunchServer } from './UserMcpServers'
 
@@ -561,10 +562,14 @@ export class CodexAppServerClient {
       throw new Error(resolvedCodex.error || 'Codex CLI was not found.')
     }
     const spawnPlan = createCliSpawnPlan(resolvedCodex.binaryPath, codexArgs)
+    const spawnEnv = await withCodexCodeModeHostEnv(
+      createCliEnv(codexEnv, resolvedCodex.binaryPath),
+      resolvedCodex.binaryPath
+    )
     const proc = spawn(spawnPlan.command, spawnPlan.args, {
       shell: spawnPlan.shell,
       stdio: 'pipe',
-      env: createCliEnv(codexEnv, resolvedCodex.binaryPath)
+      env: spawnEnv
     })
     this.proc = proc
 
