@@ -1038,7 +1038,7 @@
 }
 .composer-workspace-known-row {
   display: grid;
-  grid-template-columns: 24px minmax(0, 1fr) auto auto auto 24px;
+  grid-template-columns: minmax(0, 1fr) auto auto auto 24px;
   align-items: center;
   gap: 8px;
   min-height: 34px;
@@ -1052,7 +1052,6 @@
 .composer-workspace-known-row.is-primary {
   background: color-mix(in srgb, var(--accent) 8%, transparent);
 }
-.composer-workspace-known-add,
 .composer-workspace-known-remove {
   appearance: none;
   -webkit-appearance: none;
@@ -1071,21 +1070,8 @@
   line-height: 1;
   cursor: pointer;
 }
-.composer-workspace-known-add:hover:not(:disabled),
-.composer-workspace-known-add:focus-visible {
-  outline: none;
-  color: color-mix(in srgb, var(--accent) 92%, var(--text-primary));
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
-}
-.composer-workspace-known-add:disabled {
-  cursor: default;
-  opacity: 0.36;
-}
-.composer-workspace-known-add {
-  grid-column: 1;
-}
 .composer-workspace-known-remove {
-  grid-column: 6;
+  grid-column: 5;
   color: color-mix(in srgb, var(--text-secondary) 66%, transparent);
 }
 .composer-workspace-known-remove .sf-symbol-icon {
@@ -1099,11 +1085,29 @@
   background: color-mix(in srgb, var(--danger, #e5484d) 14%, transparent);
 }
 .composer-workspace-known-main {
-  grid-column: 2;
+  appearance: none;
+  -webkit-appearance: none;
+  grid-column: 1;
   min-width: 0;
   display: flex;
   align-items: center;
   gap: 7px;
+  align-self: stretch;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.composer-workspace-known-main:disabled {
+  cursor: default;
+}
+.composer-workspace-known-main:focus-visible {
+  outline: 1px solid color-mix(in srgb, var(--accent) 70%, transparent);
+  outline-offset: 2px;
+  border-radius: 4px;
 }
 .composer-workspace-known-name {
   flex: 1 1 auto;
@@ -1114,7 +1118,7 @@
   color: var(--text-primary);
   font-weight: 600;
 }
-.composer-workspace-switch-action,
+.composer-workspace-known-add,
 .composer-workspace-known-detach {
   --segmented-action-foreground: var(--text-primary);
   --segmented-action-border: color-mix(in srgb, var(--text-primary) 16%, var(--panel-border));
@@ -1123,16 +1127,28 @@
   font-weight: 650;
 }
 .composer-workspace-known-detach {
+  grid-column: 2;
+}
+.composer-workspace-known-add {
+  --segmented-action-foreground: var(--accent);
+  --segmented-action-border: color-mix(in srgb, var(--accent) 38%, var(--panel-border));
+  --segmented-action-bg: color-mix(in srgb, var(--accent) 10%, transparent);
+  --segmented-action-hover-bg: color-mix(in srgb, var(--accent) 18%, transparent);
   grid-column: 3;
+  min-width: 34px;
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1;
 }
-.composer-workspace-switch-action {
-  grid-column: 4;
+.composer-workspace-known-add:focus-visible {
+  outline: 1px solid color-mix(in srgb, var(--accent) 70%, transparent);
+  outline-offset: 2px;
 }
-.composer-workspace-switch-action:disabled {
-  opacity: 0.4;
+.composer-workspace-known-add:disabled {
+  opacity: 0.36;
 }
 .composer-workspace-known-remote {
-  grid-column: 5;
+  grid-column: 4;
   display: inline-flex;
   align-items: center;
   justify-content: flex-end;
@@ -1225,7 +1241,11 @@
 }
 @media (max-width: 760px) {
   .composer-workspace-known-row {
-    grid-template-columns: 24px minmax(0, 1fr) auto auto 24px;
+    grid-template-columns: minmax(0, 1fr) auto auto 24px;
+  }
+
+  .composer-workspace-known-remove {
+    grid-column: 4;
   }
 
   .composer-workspace-known-remote {

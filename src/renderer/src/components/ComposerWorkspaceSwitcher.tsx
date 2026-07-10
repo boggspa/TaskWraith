@@ -136,6 +136,119 @@ function WorkspaceRevealButton({
   )
 }
 
+export interface ComposerWorkspaceKnownRowProps {
+  workspace: WorkspaceRecord
+  isPrimary: boolean
+  isAttached: boolean
+  remoteEntries: RemoteWorkspaceEntry[]
+  onMakePrimary: () => void
+  onAddSecondary?: () => void
+  onRemoteChanged: () => void
+  onDetach?: () => void
+  onRemove?: (event: React.MouseEvent<HTMLButtonElement>) => void
+}
+
+/**
+ * One registered-workspace row in the composer picker. Switching primary is
+ * deliberately the large, default name-button action; adding the folder as a
+ * secondary workspace stays behind the explicit trailing `+` action.
+ */
+export function ComposerWorkspaceKnownRow({
+  workspace,
+  isPrimary,
+  isAttached,
+  remoteEntries,
+  onMakePrimary,
+  onAddSecondary,
+  onRemoteChanged,
+  onDetach,
+  onRemove
+}: ComposerWorkspaceKnownRowProps): React.JSX.Element {
+  const label = workspace.displayName || workspace.path.split('/').pop() || 'Workspace'
+  const canAdd = Boolean(onAddSecondary && workspace.path && !isPrimary && !isAttached)
+
+  return (
+    <div
+      className={`composer-workspace-known-row${isPrimary ? ' is-primary' : ''}${
+        isAttached ? ' is-attached' : ''
+      }`}
+      title={workspace.path}
+    >
+      <button
+        type="button"
+        className="composer-workspace-known-main"
+        onClick={onMakePrimary}
+        disabled={isPrimary}
+        title={isPrimary ? 'Already the primary workspace' : `Make ${label} primary`}
+        aria-label={
+          isPrimary ? `${label}, primary workspace` : `Switch primary workspace to ${label}`
+        }
+        aria-current={isPrimary ? 'true' : undefined}
+      >
+        <span className="composer-workspace-known-name">{label}</span>
+        {isPrimary && (
+          <span className="composer-workspace-badge composer-workspace-badge-primary">primary</span>
+        )}
+        {!isPrimary && isAttached && (
+          <span className="composer-workspace-badge composer-workspace-badge-attached">
+            attached
+          </span>
+        )}
+      </button>
+      {isAttached && onDetach ? (
+        <button
+          type="button"
+          className="segmented-control-action segmented-control-action--compact composer-workspace-known-detach"
+          onClick={onDetach}
+          title={`Detach ${label} from this chat`}
+        >
+          Detach
+        </button>
+      ) : null}
+      <button
+        type="button"
+        className="segmented-control-action segmented-control-action--compact composer-workspace-known-add"
+        onClick={onAddSecondary}
+        disabled={!canAdd}
+        title={
+          isPrimary
+            ? 'This is already the primary workspace'
+            : isAttached
+              ? 'Already attached to this chat'
+              : onAddSecondary
+                ? `Attach ${label} as an additional workspace`
+                : 'Open a saved chat to attach secondary workspaces'
+        }
+        aria-label={`Add ${label} as secondary workspace`}
+      >
+        +
+      </button>
+      <span className="composer-workspace-known-remote">
+        <span className="composer-workspace-known-remote-label">Remote:</span>
+        <WorkspaceRemoteAccessToggle
+          workspace={workspace}
+          entries={remoteEntries}
+          onChanged={onRemoteChanged}
+        />
+      </span>
+      {onRemove && (
+        <button
+          type="button"
+          className="composer-workspace-known-remove"
+          onClick={(event) => {
+            event.stopPropagation()
+            onRemove(event)
+          }}
+          title={`Remove ${label} from TaskWraith`}
+          aria-label={`Remove ${label} from TaskWraith`}
+        >
+          <XSymbolIcon />
+        </button>
+      )}
+    </div>
+  )
+}
+
 export function ComposerWorkspaceSwitcher({
   workspaces,
   currentWorkspace,
@@ -420,91 +533,27 @@ export function ComposerWorkspaceSwitcher({
             <div className="welcome-workspace-popover-section composer-workspace-known">
               <div className="welcome-workspace-popover-header">Workspaces</div>
               {registeredWorkspaces.map((ws) => {
-                const label = ws.displayName || ws.path.split('/').pop() || 'Workspace'
                 const isPrimary = ws.id === currentWorkspace?.id
                 const isAttached = Boolean(ws.path && attachedPaths.has(ws.path))
-                const canAdd = Boolean(onAddKnownWorkspace && ws.path && !isPrimary && !isAttached)
                 return (
-                  <div
+                  <ComposerWorkspaceKnownRow
                     key={ws.id}
-                    className={`composer-workspace-known-row${isPrimary ? ' is-primary' : ''}${
-                      isAttached ? ' is-attached' : ''
-                    }`}
-                    title={ws.path}
-                  >
-                    <button
-                      type="button"
-                      className="composer-workspace-known-add"
-                      onClick={() => handleAddKnown(ws)}
-                      disabled={!canAdd}
-                      title={
-                        isPrimary
-                          ? 'This is already the primary workspace'
-                          : isAttached
-                            ? 'Already attached to this chat'
-                            : onAddKnownWorkspace
-                              ? `Attach ${label} as an additional workspace`
-                              : 'Open a saved chat to attach secondary workspaces'
-                      }
-                      aria-label={`Add ${label} as secondary workspace`}
-                    >
-                      +
-                    </button>
-                    <span className="composer-workspace-known-main">
-                      <span className="composer-workspace-known-name">{label}</span>
-                      {isPrimary && (
-                        <span className="composer-workspace-badge composer-workspace-badge-primary">
-                          primary
-                        </span>
-                      )}
-                      {!isPrimary && isAttached && (
-                        <span className="composer-workspace-badge composer-workspace-badge-attached">
-                          attached
-                        </span>
-                      )}
-                    </span>
-                    {isAttached && onRemoveWorkspacePath ? (
-                      <button
-                        type="button"
-                        className="segmented-control-action segmented-control-action--compact composer-workspace-known-detach"
-                        onClick={() => onRemoveWorkspacePath(ws.path)}
-                        title={`Detach ${label} from this chat`}
-                      >
-                        Detach
-                      </button>
-                    ) : null}
-                    <button
-                      type="button"
-                      className="segmented-control-action segmented-control-action--compact composer-workspace-switch-action"
-                      onClick={() => handleSelectFromPopover(() => onPickExisting(ws))}
-                      disabled={isPrimary}
-                      title={isPrimary ? 'Already the primary workspace' : `Make ${label} primary`}
-                    >
-                      Switch
-                    </button>
-                    <span className="composer-workspace-known-remote">
-                      <span className="composer-workspace-known-remote-label">Remote:</span>
-                      <WorkspaceRemoteAccessToggle
-                        workspace={ws}
-                        entries={remoteAllowlist}
-                        onChanged={refreshRemoteAllowlist}
-                      />
-                    </span>
-                    {onRemoveWorkspace && (
-                      <button
-                        type="button"
-                        className="composer-workspace-known-remove"
-                        onClick={(event) => {
-                          event.stopPropagation()
-                          onRemoveWorkspace(ws.id, event)
-                        }}
-                        title={`Remove ${label} from TaskWraith`}
-                        aria-label={`Remove ${label} from TaskWraith`}
-                      >
-                        <XSymbolIcon />
-                      </button>
-                    )}
-                  </div>
+                    workspace={ws}
+                    isPrimary={isPrimary}
+                    isAttached={isAttached}
+                    remoteEntries={remoteAllowlist}
+                    onMakePrimary={() => handleSelectFromPopover(() => onPickExisting(ws))}
+                    onAddSecondary={
+                      onAddKnownWorkspace && ws.path ? () => handleAddKnown(ws) : undefined
+                    }
+                    onRemoteChanged={refreshRemoteAllowlist}
+                    onDetach={
+                      isAttached && onRemoveWorkspacePath
+                        ? () => onRemoveWorkspacePath(ws.path)
+                        : undefined
+                    }
+                    onRemove={onRemoveWorkspace ? (event) => onRemoveWorkspace(ws.id, event) : undefined}
+                  />
                 )
               })}
               {registeredWorkspaces.length === 0 && (
