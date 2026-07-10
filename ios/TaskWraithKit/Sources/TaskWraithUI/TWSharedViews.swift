@@ -966,7 +966,8 @@ struct ProviderModelPicker: View {
         else { return nil }
         // Ladder terminology on the chip too (low -> "Light"), falling back to
         // the generic label for anything off-ladder.
-        return twLadderLabel(for: effort) ?? twReasoningDisplayLabel(effort)
+        return twLadderLabel(for: effort, provider: provider)
+            ?? twReasoningDisplayLabel(effort, provider: provider)
     }
 
     var body: some View {
@@ -1232,7 +1233,7 @@ struct ProviderModelPicker: View {
         // mislabel the sidecar header (matches the thumb's clamped position).
         let idx = ReasoningLadder.clampedIndex(
             for: ladderEffortBinding.wrappedValue, enabled: enabledLadderIndices)
-        return twReasoningStops[idx].label
+        return twLadderStopLabel(idx, provider: provider)
     }
 
     private var reasoningSidecar: some View {
@@ -1247,7 +1248,8 @@ struct ProviderModelPicker: View {
                 ReasoningLadder(
                     enabledIndices: enabledLadderIndices,
                     reasoningEffort: ladderEffortBinding,
-                    accent: TWTheme.providerAccent(provider)
+                    accent: TWTheme.providerAccent(provider),
+                    provider: provider
                 )
             } else {
                 Spacer(minLength: 0)
@@ -1391,7 +1393,9 @@ struct ProviderModelPicker: View {
 
 /// One fixed stop on the 7-position reasoning ladder. `effort` is the wire value
 /// (off/low/medium/high/xhigh/max/ultracode); `label` is the composer's display
-/// term (Off/Light/Medium/High/Extra/Max/Ultracode).
+/// term (Off/Light/Medium/High/Extra/Max/Ultracode). The top stop's label is
+/// the Claude term — Codex renders the same wire token as "Ultra" (the official
+/// OpenAI GPT-5.6 tier id), resolved per-provider via `twLadderStopLabel`.
 private struct TWReasoningStop: Identifiable {
     let index: Int
     let effort: String
@@ -1437,19 +1441,29 @@ private func twLadderIndex(for effort: String?) -> Int? {
     let normalized = twNormalizeLadderEffort(effort)
     return twReasoningStops.first(where: { $0.effort == normalized })?.index
 }
-private func twLadderLabel(for effort: String?) -> String? {
+/// Display label for a ladder stop, resolving the top stop's provider-specific
+/// name ("Ultra" on Codex, "Ultracode" elsewhere). Display-only — the wire
+/// token stays 'ultracode' for every provider.
+private func twLadderStopLabel(_ index: Int, provider: String?) -> String {
+    let stop = twReasoningStops[index]
+    guard stop.effort == "ultracode" else { return stop.label }
+    return twReasoningDisplayLabel(stop.effort, provider: provider)
+}
+private func twLadderLabel(for effort: String?, provider: String?) -> String? {
     guard let index = twLadderIndex(for: effort) else { return nil }
-    return twReasoningStops[index].label
+    return twLadderStopLabel(index, provider: provider)
 }
 
 /// Vertical gradient "ladder" reasoning slider: 7 fixed stops from Off (bottom,
-/// faint gray) to Ultracode (top, shimmering purple), mirroring the Electron
-/// reasoning picker's gray→silver→purple ramp. The metallic-rect thumb snaps
-/// only to the stops the current model actually supports (`enabledIndices`).
+/// faint gray) to the top 'ultracode' stop (shimmering purple; labelled
+/// "Ultracode" on Claude, "Ultra" on Codex), mirroring the Electron reasoning
+/// picker's gray→silver→purple ramp. The metallic-rect thumb snaps only to the
+/// stops the current model actually supports (`enabledIndices`).
 private struct ReasoningLadder: View {
     let enabledIndices: Set<Int>
     @Binding var reasoningEffort: String?
     let accent: Color
+    let provider: String
     @State private var shimmer: CGFloat = 0
     @State private var twinkle = false
 
@@ -1562,7 +1576,7 @@ private struct ReasoningLadder: View {
         }
         .accessibilityElement()
         .accessibilityLabel("Reasoning effort")
-        .accessibilityValue(twReasoningStops[currentIndex].label)
+        .accessibilityValue(twLadderStopLabel(currentIndex, provider: provider))
         .accessibilityAdjustableAction { direction in
             let sorted = enabledIndices.sorted()
             guard !sorted.isEmpty else { return }
@@ -1711,7 +1725,7 @@ private func twNormalizeReasoningSelection(
     reasoningEffort = twDefaultReasoningEffort(for: option)
 }
 
-private func twReasoningDisplayLabel(_ effort: String) -> String {
+private func twReasoningDisplayLabel(_ effort: String, provider: String?) -> String {
     switch effort.lowercased() {
     case "off": return "Off"
     case "low": return "Low"
@@ -1719,7 +1733,12 @@ private func twReasoningDisplayLabel(_ effort: String) -> String {
     case "high": return "High"
     case "xhigh", "extra": return "Extra"
     case "max": return "Max"
-    case "ultracode": return "Ultracode"
+    // Wire token is 'ultracode' for every provider; only the wording is
+    // per-provider — OpenAI's official GPT-5.6 tier id is 'ultra', so Codex
+    // seats read "Ultra" while Claude keeps "Ultracode" (mirrors Electron's
+    // codexReasoningDisplayLabel / claudeReasoningDisplayLabel split).
+    case "ultracode":
+        return provider?.lowercased() == "codex" ? "Ultra" : "Ultracode"
     default:
         return effort.prefix(1).uppercased() + String(effort.dropFirst())
     }
@@ -1887,7 +1906,7 @@ private struct ProviderModelPickerSheet: View {
         } label: {
             HStack(spacing: 10) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(twReasoningDisplayLabel(option.reasoningEffort))
+                    Text(twReasoningDisplayLabel(option.reasoningEffort, provider: provider))
                         .foregroundStyle(disabled ? TWTheme.textSecondary : TWTheme.textPrimary)
                     let sublabel = disabled
                         ? option.disabledReason ?? option.description
@@ -3029,11 +3048,11 @@ func twParticipantsSignature(_ participants: [RemoteEnsembleState.Participant]) 
 // AttributedString and @mentions tinted by participant provider accent.
 // Deliberately dependency-free and bounded (preview text is ≤ a few KB).
 
-/// Monoline provider glyph — the sidebar's upgrade from the plain colored
+/// Provider mnemonic glyph — the sidebar's upgrade from the plain colored
 /// dot. Loads a white-on-alpha template PNG from the app asset catalog or
 /// package resources and paints it twice at runtime: a black contrast
 /// silhouette behind the provider accent. One master still serves every theme.
-/// Ensembles and providers with a baked glyph use the monoline PNG;
+/// Ensembles and providers with a baked glyph use the template PNG;
 /// providers without one (qwen, unknown) keep the original dot.
 public struct ProviderGlyphIcon: View {
     let provider: String?
@@ -5696,7 +5715,8 @@ struct RosterChipEditor: View {
                     Section("Reasoning") {
                         Picker("Effort", selection: reasoningBinding) {
                             ForEach(reasoningEfforts, id: \.self) { effort in
-                                Text(twReasoningDisplayLabel(effort)).tag(effort)
+                                Text(twReasoningDisplayLabel(effort, provider: entry.provider))
+                                    .tag(effort)
                             }
                         }
                         .pickerStyle(.menu)

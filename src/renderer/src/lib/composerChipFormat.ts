@@ -245,9 +245,10 @@ export function codexReasoningDisplayLabel(effortValue?: string | null): string 
   if (effort === 'low' || effort === 'light') return 'Light'
   if (effort === 'medium') return 'Medium'
   if (effort === 'high') return 'High'
-  // GPT-5.6 Sol only — the top two Codex tiers. Codex names its top mode "Ultra"
-  // (OpenAI terminology); it still coalesces onto Claude's shared "Ultracode"
-  // ladder stop on the iOS reasoning slider.
+  // The top two Codex tiers — as of GPT-5.6 GA, `max` exists on all three
+  // models and `ultra` on Sol + Terra. Codex names its top mode "Ultra"
+  // (official OpenAI tier id); it still coalesces onto Claude's shared
+  // "ultracode" ladder stop on the iOS reasoning slider.
   if (effort === 'max') return 'Max'
   if (effort === 'ultracode') return 'Ultra'
   return effort.charAt(0).toUpperCase() + effort.slice(1)
