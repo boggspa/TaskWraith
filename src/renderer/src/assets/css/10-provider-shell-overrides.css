@@ -4635,3 +4635,26 @@
   animation: none !important;
   opacity: 0 !important;
 }
+
+/* Unified provider | model | reasoning trigger refinements. Claude flattens
+ * the model button's generic gap for native parity, so restore only the tiny
+ * provider→model separator. Gemini/Cursor previously capped this control at
+ * 172px when it held model+reasoning alone; the unified identity needs its
+ * intrinsic width while retaining a narrow-window safety clamp. */
+[data-composer-style="claude"]
+  [data-composer-control="model"]
+  .composer-combined-picker-trigger-provider {
+  margin-right: 6px;
+}
+
+:is([data-composer-style="gemini"], [data-composer-style="cursor"])
+  [data-composer-control="model"] {
+  width: max-content;
+  max-width: min(260px, calc(100% - 96px));
+}
+
+:is([data-composer-style="gemini"], [data-composer-style="cursor"])
+  [data-composer-control="model"]
+  .composer-combined-picker-trigger-provider {
+  flex: 0 0 auto;
+}
