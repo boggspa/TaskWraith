@@ -95,6 +95,7 @@ function NotificationGroups({
       {groups.map((group) => (
         <div key={group.provider} className="notification-newadditions-group">
           <div className={`notification-newadditions-provider provider-${group.provider}`}>
+            <ProviderGlyph provider={group.provider} />
             {group.label}
           </div>
           <ul className="notification-newadditions-models">

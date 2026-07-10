@@ -1689,9 +1689,9 @@ public final class RemoteSessionModel: ObservableObject {
               {"name":"Grok 4.5 Fast","blurb":"xAI's 500K-context coding model behind Grok Build, with Low/Medium/High reasoning."}
             ]},
             {"provider":"ollama","label":"Ollama","models":[
-              {"name":"Deep Reinforce - Ornith 9B + Ornith 35B","blurb":"Open-source 262K-context coding models — local inference, no per-token cost.","accentProvider":"deep-reinforce"},
-              {"name":"Liquid - LFM 2.5 8B-1A","blurb":"A 131K-context local tool/thinking model for agentic coding — no cloud account required.","accentProvider":"liquid"},
-              {"name":"Poolside - Laguna XS 2.1 33B-A3B Q8","blurb":"A 262K-context local coding model with tool use and thinking — no cloud account required.","accentProvider":"poolside"}
+              {"name":"Deep Reinforce - Ornith 9B + Ornith 35B","blurb":"Open-source 262K-context coding models — local inference.","accentProvider":"deep-reinforce"},
+              {"name":"Liquid - LFM 2.5 8B-1A","blurb":"A 131K-context local tool/thinking model for agentic coding — local inference.","accentProvider":"liquid"},
+              {"name":"Poolside - Laguna XS 2.1 33B-A3B Q8","blurb":"A 262K-context local coding model with tool use and thinking — local inference.","accentProvider":"poolside"}
             ]}
           ]}
          ],

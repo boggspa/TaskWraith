@@ -245,9 +245,15 @@ private struct RemoteNoticeGroupsView: View {
             ForEach(groups, id: \.provider) { group in
                 let accent = TWTheme.providerAccent(group.provider)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(group.label)
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(accent)
+                    // Provider glyph signpost next to the heading — same
+                    // template assets the pickers use, tinted the group hue
+                    // (mirrors the Electron card's heading glyph).
+                    HStack(spacing: 5) {
+                        ProviderGlyphIcon(provider: group.provider, size: 12)
+                        Text(group.label)
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(accent)
+                    }
                     ForEach(group.models, id: \.name) { model in
                         // Ollama-backed models wear their spoofed brand hue
                         // (accentProvider); everything else falls back to the

@@ -13030,8 +13030,20 @@ button.diff-file-row {
   gap: 2px;
 }
 .notification-newadditions-provider {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   font-weight: 720;
   font-size: 12px;
+}
+/* Provider glyph signpost next to each group heading. The glyph resolves its
+ * own --provider-accent from the provider id and its strokes fall back to
+ * currentColor, so it naturally wears the heading's hue — no per-provider
+ * rules needed here. */
+.notification-newadditions-provider .provider-glyph {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
 }
 .notification-newadditions-models {
   list-style: none;

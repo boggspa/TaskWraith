@@ -204,19 +204,18 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
         models: [
           {
             name: 'Deep Reinforce - Ornith 9B + Ornith 35B',
-            blurb: 'Open-source 262K-context coding models — local inference, no per-token cost.',
+            blurb: 'Open-source 262K-context coding models — local inference.',
             accentProvider: 'deep-reinforce'
           },
           {
             name: 'Liquid - LFM 2.5 8B-1A',
-            blurb:
-              'A 131K-context local tool/thinking model for agentic coding — no cloud account required.',
+            blurb: 'A 131K-context local tool/thinking model for agentic coding — local inference.',
             accentProvider: 'liquid'
           },
           {
             name: 'Poolside - Laguna XS 2.1 33B-A3B Q8',
             blurb:
-              'A 262K-context local coding model with tool use and thinking — no cloud account required.',
+              'A 262K-context local coding model with tool use and thinking — local inference.',
             accentProvider: 'poolside'
           }
         ]

@@ -179,6 +179,12 @@ describe('notification registry', () => {
       'liquid',
       'poolside'
     ])
+    // Local models advertise "local inference" — not account/billing framing.
+    for (const model of ollama?.models ?? []) {
+      expect(model.blurb).toMatch(/local inference\.$/)
+      expect(model.blurb).not.toContain('no cloud account')
+      expect(model.blurb).not.toContain('per-token')
+    }
 
     for (const group of groups) {
       for (const model of group.models) {
