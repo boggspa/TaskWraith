@@ -217,7 +217,12 @@ function resolveExternalFileCachePath(override?: string): string {
 
 /** Serve a file's parsed events from the per-file cache when its mtime+size
  * are unchanged; otherwise parse and cache. Parse failures are not cached so
- * a transient error retries on the next scan. */
+ * a transient error retries on the next scan.
+ *
+ * SCHEMA LANDMINE: cached events are opaque JSON keyed only by
+ * (provider, path, mtime, size). If you change what any parse*File fn emits
+ * (new fields, changed semantics), bump EXTERNAL_ACTIVITY_FILE_CACHE_VERSION
+ * or existing installs will serve old-shape events until files churn. */
 async function readFileEventsThroughCache(
   provider: ExternalActivityProvider,
   file: CollectedSessionFile,
