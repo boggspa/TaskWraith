@@ -6,46 +6,634 @@ history, and workspace state stay on your machine throughout.
 
 ## Unreleased
 
+### Added
+- **Unified provider, model, and reasoning picker.** The composer, side chats,
+  and the Ensemble roster now share one combined picker that chooses provider,
+  model, and reasoning tier as a single atomic selection instead of juggling
+  separate controls. Side chats render the exact same full composer as the main
+  pane, so they inherit the same picker, attachments, and controls, and adding a
+  new Ensemble participant via the "+" chip now opens an inline "configure and
+  add" picker for its provider, model, reasoning, and role up front rather than
+  always cloning a default. Popovers stay clamped inside the viewport, with
+  label-truncation fixes on the Gemini and Cursor composer styles.
+- **Reasoning-effort ladder slider.** The old hierarchical list of reasoning
+  levels is replaced by a vertical gradient slider with up to seven stops from
+  Off to Ultracode, snapping only to the levels a given model actually supports.
+  The track, shimmer, and sparkle glow in the selected provider's own brand
+  color and now ramp up smoothly stop-by-stop from Low through Ultra instead of
+  igniting abruptly at the top, and a drag commits only on release — fixing
+  slider lag and ensemble notification spam. On iOS the selector moves out of
+  the model list into the same ladder, with a Fast toggle for capable models
+  (Codex, Claude, Cursor, Grok) and a thinking toggle for Kimi; those choices
+  round-trip fully to the Mac and persist on reopen.
+- **GitHub PR and CI status above the composer.** A new icon-only row shows the
+  PR's lifecycle glyph and a live CI status dot whenever the current workspace
+  has a real GitHub remote, replacing the older inline text chips. Hovering
+  opens a popover with fuller PR/CI detail including failing-check logs, and the
+  row keeps polling CI in the background so the dot updates as checks finish. A
+  "Notify thread" button can post the status into the Blackboard (ensemble) or
+  the transcript (solo chats) as an explicitly external, unverified note.
+- **GPT-5.6 (Sol, Terra, Luna) reaches general availability.** OpenAI's GPT-5.6
+  trio graduates from preview to a first-class choice with official names,
+  descriptions, and a confirmed ~1.05M-token context window — no more "requires
+  preview access" blocks, permission downgrades, or forced read-only caps. Sol
+  and Terra gain the Ultra reasoning tier (Codex's own top mode, including its
+  proactive multi-agent delegation) alongside Max; Luna tops out at Max. The
+  trio now leads the model picker above GPT-5.5, which stays the default, and
+  the Fast toggle is available on desktop to match iOS.
+- **Grok 4.5.** Adds Grok 4.5 to both the Grok and Cursor providers, wired into
+  the composer, side-chat, and ensemble/roster model pickers on desktop and iOS.
+  Grok's own CLI models always run in Fast mode, so that seat reads "Grok 4.5
+  Fast" everywhere; Cursor's Grok 4.5 keeps its own separate Fast toggle.
+- **New Additions card replaces the notification carousel.** The old carousel of
+  pinned/changelog notifications is gone, replaced by a single structured card
+  that groups every newly added model by provider — Claude Sonnet 5, the GPT-5.6
+  trio, Cursor Grok 4.5, Grok 4.5 Fast, and the new local Ollama models
+  including Poolside Laguna XS 2.1 (a 262K-context coding model with tool use
+  and thinking, no cloud account required). Model names are bold in their
+  provider's hue (Ollama-hosted models show their real upstream brand color),
+  each provider heading carries its glyph, and on the desktop welcome screen the
+  card floats at the bottom so it no longer pushes the composer upward.
+- **Set a goal without leaving the keyboard.** Typing `/goal ...` in the
+  composer and pressing Enter/Run now sets, updates, pauses, or clears the goal
+  directly instead of opening the goal picker for a second step, so steering a
+  chat toward an objective is as fast as sending a normal message.
+- **"This round" vs. session changes in the Task-complete card.** The
+  Task-complete file list now leads with a "This round" section showing only the
+  files touched by the round that just finished — with its own +/- totals —
+  followed by a divider and the deduped "Earlier in session" list, so you can
+  see exactly what an agent just did without scrolling the whole session. Side
+  chats, panes, and the run inspector keep the original flat list.
+- **On-device AI close-out summaries.** Run and ensemble-round close-out cards
+  no longer quote the agent's final message verbatim (a plain "ok, done" used to
+  become the whole summary). They now show readable prose plus a clear pass/fail
+  validation line, and on Macs with Apple Foundation Models available, that
+  prose is generated on-device from a digest of the run — prompt, file changes,
+  commits, tool counts, warnings — badged "via Foundation Models." A
+  deterministic summary remains the fallback whenever the on-device model is
+  unavailable.
+- **Codex Multi-agent transcript card.** Codex's native Multi-agent mode — a
+  root agent that spawns parallel subagents and synthesizes their results — now
+  gets its own honest transcript card instead of rendering as generic tool
+  activity, walking through Delegating, Working in parallel, Synthesizing, and
+  Completed states with per-subagent chips and a progress meter. It's built on a
+  shared orchestration-card chassis also used by the Workflow and code-review
+  cards.
+- **Home tab for the right dock.** The main pane's action pill is consolidated
+  to five clear actions (effects, info, popout, run, and a new Home), and Home
+  opens a calm directory of the dock's destinations — Live Lanes, Media, Pins,
+  Files, a Side Chats shortcut that opens or creates the chat's linked side
+  conversation, plus deeper inspector views like Diff, Delegation, Timeline,
+  Background Tasks, Safety, and Capabilities — grouped for quick navigation
+  instead of hunting through tabs. The Inspector's own redundant tab strip was
+  removed now that Home handles that navigation.
+- **Agents tab on the welcome dashboard.** A fifth dashboard tab surfaces your
+  Agent Pool leaderboard: a spotlighted #1 agent with its
+  runs/threads/tokens/tool-calls/work-time stats, plus a scrollable standings
+  list with per-agent token-share meters. It's driven by the same ranking as
+  Settings → Agent pool so the two can't disagree, and shows all-time stats so a
+  quiet month doesn't blank the leaderboard.
+- **Quick-access Blackboard popover in the composer (ensemble).** A new
+  Blackboard icon sits alongside Plan/Copy/Multiview in the composer's icon row
+  for ensemble chats, opening a read-only, category-grouped view of the
+  ensemble's Blackboard entries without leaving the composer, with a quiet dot
+  marking unread entries. Full posting and deleting still happen in the
+  right-dock Notes pane.
+- **Delete Blackboard entries.** Entries pinned to a chat's Blackboard/Notes
+  panel can now be removed, not just added — a delete affordance was added to
+  each entry card and wired through IPC alongside the existing creation path.
+- **Smarter diff hover previews for file-change bubbles.** Task-complete
+  file-change bubbles now wait roughly 0.9s before opening or closing on hover
+  instead of popping open instantly and slamming shut, while keyboard focus and
+  clicks still respond immediately. When a row has no captured git diff, the
+  preview now synthesizes one from the run's own write-tool payloads
+  (Edit/MultiEdit/Write/patches) and labels it "tool snapshot" instead of
+  showing an empty "No inline diff captured" message.
+- **Transcript softly fades under the floating composer.** While scrolling,
+  transcript content now dissolves smoothly as it passes behind the floating
+  composer and reappears just as smoothly on the way back up, instead of getting
+  cut off abruptly. The gradient is roughly twice as wide as the first pass and
+  eases out more gradually so the newest message stays legible longer, and it
+  automatically tracks a growing composer (ensemble rows, wrapped input).
+- **Copy just the highlighted selection.** The transcript message context menu
+  now offers a "Copy selection" action alongside "Copy message" whenever you've
+  highlighted text within a message, so you can grab a snippet without copying
+  the whole message.
+- **Collapsed-sidebar pill shows who and where.** When you collapse the sidebar,
+  the pill naming the current chat now also shows the provider's glyph and, for
+  workspace chats, the workspace name, so a background thread's agent and
+  project are identifiable at a glance without reopening the sidebar.
+- **Mid-round provider/model swaps now queue instead of blocking (ensemble).**
+  Changing a participant's provider or model while they're mid-round used to
+  require the round to stop or the participant to be idle. Those edits are now
+  accepted immediately and queued to take effect at the start of the next round,
+  so you can line up a swap without interrupting an active run.
+- **Compacting state on ensemble participant indicators.** When a participant is
+  compacting its context — whether automatic or a maintenance compaction — its
+  working indicator now shows a distinct "compacting" state instead of the
+  generic spinner, making it clear the pause is intentional housekeeping rather
+  than the agent being stuck.
+- **iOS Home gains search, pin/rename/archive, and transcript export.** The
+  companion app's Home list now supports search across Active/Archived scopes, a
+  pin/rename/archive context menu, an "add to prompt" append action, and
+  host-backed transcript copy/export that reuses the desktop's markdown builder
+  for a byte-identical copy. Roster ordering was also tightened with
+  provider-label search matching and a deterministic tie-break so a shuffled
+  roster always renders in the same order.
+- **Schedule composer messages for later (iOS).** The iOS composer now has a
+  schedule sheet — pick a date and time or use quick presets (15m, 1h, tonight,
+  tomorrow) — so a message queues up and sends automatically at the chosen time
+  instead of needing to be sent by hand.
+- **Collapsible thinking/reasoning viewport on iOS.** The companion app can now
+  show a bounded preview of an agent's thinking/reasoning trace with an 8-line
+  collapsed fade and in-place expand, instead of needing the full thought text
+  streamed on every update. The remote bridge caps how much reasoning text it
+  sends per row so this stays bandwidth-friendly.
+- **Dismiss individual notices on iOS.** The remote notice carousel on the
+  new-chat welcome screen and first-launch sheet gained a per-notice close
+  button. Dismissing a notice persists across launches and is shared between
+  both surfaces, matching how the desktop app already handles per-notice
+  dismissal.
+
+### Changed
+- **Composer and sidebar redressed for Claude-shell and iOS parity.** The Claude
+  composer skin's above-composer rows (Create PR, ensemble/roster/queued rows)
+  were restyled to match the real Claude app's chrome, with squared chips, a
+  shared card frame, and a split Create-PR button. The workspace sidebar got a
+  companion pass to line up with the iOS app: pill-style section headers with
+  count badges, flatter selection highlighting, trailing disclosure chevrons,
+  and a contrast/ink cleanup across light and dark themes.
+- **Sidebar chrome stays solid, and starts calmer.** The sidebar's top band
+  (logo, workspace/thread tabs, search), the Model Usage panel, the
+  footer/status area, and the strip behind the traffic-light buttons now render
+  at a fixed near-opaque fill independent of the sidebar-transparency slider, so
+  navigation chrome stays legible in glass and aurora themes while the
+  thread/workspace list still honors your chosen opacity. On first load the
+  model-usage card now begins collapsed, the section order was retuned (Pinned,
+  Recents, Workspaces, Chats, and Shared above Local
+  servers/Workflows/Ensembles/Workspace boards, with Local servers itself
+  collapsed), the "N models" count badge was dropped from each Model Usage
+  provider heading, and masthead/chrome opacity and spacing were tuned so the
+  fill no longer double-composites into an almost-solid block.
+- **Consistent control styling across the app.** A broad visual pass replaced
+  ad-hoc buttons and toggles with one shared control system throughout: the
+  composer's workspace pickers, Diff Studio's inline/split toggle, the run-rail
+  and workspace-file action buttons, the Settings panels, the Inspector (Diff
+  Studio toolbar, Raw Events filters), the file editor, and the
+  bug-report/changelog/first-launch sheets now share the same look and behavior.
+  Right dock panel surfaces were unified, the Cursor composer shell got a
+  flatter dark surface with its git action relabeled to Commit, the Grok
+  composer's workspace rows lost their pill backgrounds, and composer controls
+  tighten up automatically in narrow or split panes.
+- **Under-the-hood performance sweep.** A broad set of fixes cuts disk I/O and
+  CPU overhead: settings are cached instead of re-read and re-parsed on roughly
+  200 internal call sites; usage tracking stops re-fetching the same data three
+  times per update and rotates records older than 200 days into an archive so
+  the file no longer grows forever; the 90-day external-activity scan for
+  Codex/Claude/Gemini/Kimi usage now re-parses only session files that actually
+  changed instead of the whole multi-gigabyte history; and Codex usage lookups,
+  local-server detection, the welcome dashboard's usage heatmap and token chart
+  (now skipped and cached while off-screen), and tool-file summary rendering all
+  skip redundant work when nothing relevant has changed. Nothing looks
+  different, but heavy ensemble sessions, long streaming runs, and older
+  accounts should feel noticeably lighter.
+- **Smoother multiview and background transcript panes during streaming.** Side
+  and background transcript panes (multiview split panes, auxiliary chats) no
+  longer re-render on every token from an unrelated chat streaming elsewhere;
+  they now update only in response to changes that actually affect what they're
+  displaying, cutting stutter when several chats are active side by side.
+- **More efficient, lighter iOS companion.** While a run is streaming, the app
+  filters and coalesces what it pushes to your phone: only the thread you're
+  actively watching gets full updates, redundant git and full-projection
+  snapshots are replaced with smaller deltas, agent-exit updates ship as
+  targeted diffs, projection snapshots are prepared off the main thread, very
+  large synced threads hydrate in batches, and the home list and duplicate
+  refresh projections were collapsed to do less work. Actions you take yourself
+  — sending a message, approving a request, nudging an ensemble — still refresh
+  instantly; only passive background chatter is throttled. Expect snappier
+  scrolling and lower battery/network use, especially with big threads or
+  multiple devices connected.
+- **Provider and model switch atomically.** Switching a participant's provider
+  used to leave a brief window where the model, reasoning effort, and fast-mode
+  toggle could reflect the old provider's defaults. The composer and ensemble
+  participant pickers now change provider and model as one atomic action, and
+  every provider's model catalog is pre-fetched at startup instead of only the
+  active one, so switching feels instant.
+- **Redesigned ensemble participant chips.** Chips now lead with each provider's
+  glyph, moved the inline token-usage badge into a 500ms hover tooltip that
+  consolidates three previously stacked tooltips into one card, and made the
+  role name glow — breathing in the provider's hue while a participant is
+  speaking or running, steady red when it fails or goes unreachable. The old
+  per-provider corner dots were dropped since the glyph already identifies the
+  provider, and chip/role-name widths were eased so longer names survive before
+  truncating.
+- **Redesigned ensemble participant authority controls.** The participant
+  popover's Boss/Captain assignment and Scout/Work/Review stage picker are now
+  single-click segmented controls instead of separate dropdown menus.
+  Auto-approval consent is now scoped to the thread rather than to whichever
+  participant currently holds Boss or Captain, so reassigning either role
+  mid-ensemble no longer silently resets your approval settings.
+- **Close-out round summaries reorganized into tables.** The commit list,
+  participant breakdown, and token totals shown after an ensemble round now
+  render as clean markdown tables instead of dense semicolon- and comma-packed
+  lines, with an overflow note past eight commits. Participants are attributed
+  by their actual @-mention rather than provider name, tagged with a turn count
+  and — for non-contributors, including seats that took zero turns and
+  previously vanished — a status like yielded/skipped/failed.
+  Deterministic-fallback close-outs also drop the "· deterministic" badge that
+  read as noise, so the header just says "TaskWraith" while provider-generated
+  close-outs still note their source.
+- **Blackboard entries look consistent everywhere.** The composer's quick-glance
+  Blackboard popover and the Notes-pane Blackboard now render through the same
+  unified entry-card component: raw internal author strings become provider-hued
+  role-name chips (with Bossman/Captain marks), plus category accent stripes,
+  scope badges, and timestamps.
+- **Consistent pill styling and taller cards for fan-out results.** The
+  Provider/Role/Model/Participant chips in ensemble fan-out results and the
+  Cancel/Set buttons in the Max Handoff Turns popup now use the same
+  segmented-control pill treatment as other composer controls, and collapsed
+  fan-out lane results grew about 38% taller with a more gradual fade at the top
+  and bottom edges, making longer agent outputs easier to read without expanding
+  the card.
+- **Reasoning-tier visual polish.** The composer's model-trigger chip now shades
+  its reasoning-effort suffix progressively — a bare whisper of provider color
+  at Low up through a full hued sweep at High — and the provider-hued
+  shimmer-and-sparkle treatment, once reserved for the very top Ultra/Ultracode
+  stop, now also ignites at Max (a notch subtler so Ultra still reads as the
+  peak). Models whose reasoning level isn't configurable (like Cursor Composer
+  2.5's implicit Medium) now keep the slider in place showing a fixed reading
+  with an explanatory tooltip instead of hiding it and shifting the layout, and
+  a couple of styling bugs were fixed along the way (Cursor's trailing " Fast"
+  suffix breaking the color, and the Fast lightning-bolt icon now appearing on
+  every provider's chip).
+- **Codex glyph and accent refreshed; provider glyphs gain a contrast outline.**
+  Codex's mnemonic glyph switches from a prompt-box-and-cursor icon to a filled
+  command-cloud shape with a terminal cutout, and its accent moves from indigo
+  to a brighter purple, propagating through the composer, sidebar, settings, and
+  the iOS app. Every provider's glyph (Claude, Codex, Grok, Kimi, Gemini,
+  Cursor, Ollama, Ensemble) now sits on a black contrast outline so it stays
+  legible on any theme or background.
+- **Kimi's color changed from olive-green to blue.** Kimi's provider color
+  across chips, glows, the roster icon, and transcript accents now uses a blue
+  palette anchored on #1A8CFF on both desktop and iOS.
+- **Composer telemetry row reorganized; timecode moves to its own bar.** The
+  cramped composer telemetry row is decluttered by moving the run/thread
+  timecode into its own bar glued under the composer — current turn's elapsed
+  time on the left, total thread time on the right — leaving the freed row to
+  split cleanly into workspace switcher, icon cluster, and token tally. The
+  run-duration popover was also resized and repositioned to match other composer
+  popovers instead of using its own fixed-width box.
+- **Composer toolbar simplified.** The dedicated Queue and Steer buttons on the
+  run cluster are gone, leaving just Run and Stop; queuing a follow-up or
+  steering the active turn now happens through the queued message's own Steer
+  menu (Steer now / Add to Blackboard), so the toolbar is less cluttered while
+  streaming. The Add participant and Goal buttons also picked up the shared
+  composer pill styling (with Add participant shortened to "Add"), and the
+  Model/Reasoning chip dropped its middle-dot divider for a wider gap between
+  the two labels.
+- **iOS model picker redesigned as a glass popover.** The native menu for
+  choosing model/reasoning is replaced by an anchored Liquid Glass popover that
+  stays open after you pick a model so you can adjust reasoning without
+  reopening it, dismissing on reasoning selection, tap-away, or a swipe-down
+  gesture, and blurring the real app content behind it. When the composer
+  collapses to give the transcript room, the model/reasoning picker now surfaces
+  as a small pill in the input's top-left corner instead of disappearing, and
+  the redundant "Default" model row was removed from the pickers.
+- **iOS transcript rendering scoped to the open thread.** Viewing a thread no
+  longer re-renders on every unrelated background update — another thread
+  streaming, a git pull, a usage refresh. A per-thread invalidation gate means
+  the transcript only redraws when something relevant to the open thread
+  changes, improving scroll and streaming smoothness.
+- **Streaming text reveal adapts to arrival speed.** The transcript's type-out
+  reveal now measures each assistant stream's actual arrival cadence — chunk
+  size, gaps, jitter — and adjusts its pacing and visual treatment accordingly,
+  so a fast model doesn't look artificially slow and a bursty one doesn't look
+  jerky. A companion fix stops plain sentences that merely contain a "|"
+  character from being mistaken for an unfinished markdown table and getting
+  stuck mid-reveal.
+- **Compact composer pill launches builds directly.** The composer corner pill's
+  Run button no longer just toggles a rail panel — it launches your project's
+  detected build or preview target directly, opens a picker when there's more
+  than one target, and surfaces launch errors inline. The pill and Home cards
+  also picked up accessibility polish: reduced-motion and reduced-transparency
+  compliance, forced-colors-mode outlines, and a light-theme hairline that no
+  longer relies on a hardcoded white value.
+- **Workspace switching is now the default click.** In the composer's workspace
+  popover, clicking a known workspace's name now switches your primary workspace
+  to it directly — previously that row was just a label and switching required a
+  small leading icon button. Attaching the folder as an additional (secondary)
+  workspace moves to its own explicit "+" button.
+- **Paired-device workspace access moved out of the Devices tab.** The
+  "Paired-device workspace access" card no longer appears on Settings → Devices;
+  per-workspace access for paired iPhones/iPads is now configured directly from
+  Settings → Workspaces via each workspace's own remote-access toggle, removing
+  the duplicate control.
+- **A touch more breathing room around the transcript.** The reserved scroll
+  clearance beneath the transcript was trimmed from 110px to 10px so recent
+  messages sit closer to the composer, while the clearance kept above the
+  composer during auto-scroll widened slightly so the last line of a message no
+  longer sits flush against the composer's top edge.
+- **Per-participant compaction control in the context meter.** The context-meter
+  popover's flaky "Compact" text pill is replaced by an always-present monoline
+  icon on each participant row that shifts hue by usage risk — the provider's
+  own tint when healthy, orange past 60%, red past 85% — so you can trigger a
+  context compaction and read each seat's pressure at a glance.
+
 ### Fixed
-- **Zero-setup Cellular iOS pairing over Tailscale.** Pairing now advertises the
+- **Zero-setup cellular iOS pairing over Tailscale.** Pairing now advertises the
   Mac's direct `100.64.0.0/10` Tailscale relay door alongside LAN, so devices on
-  the same tailnet no longer need Tailscale Serve or a WSS override. Serve stays
-  available as optional TLS defense-in-depth. Finder/login-item launches also
-  force Tailscale's documented CLI mode for status, optional Serve, and auth-key
-  commands, avoiding `Tailscale.CLIError error 3`; relay changes/tests refresh
-  the visible pairing session immediately.
+  the same tailnet no longer need Tailscale Serve or a WSS override to pair and
+  run over cellular; Serve stays available as optional TLS defense-in-depth.
+  Finder/login-item launches also force Tailscale's documented CLI mode for
+  status, Serve, and auth-key commands, avoiding a stray `Tailscale.CLIError`,
+  and relay changes/tests refresh the visible pairing session immediately.
 - **Claude composer shell: visible Stop button on light themes.** While a run
   was active, the Claude shell's Stop glyph kept its dark-native white ink on
-  the Light, Mist, and Sage themes — an invisible white square in the send
-  slot. It now uses the same dark-neutral ink as the shell's other light-mode
+  the Light, Mist, and Sage themes — an invisible white square in the send slot.
+  It now uses the same dark-neutral ink as the shell's other light-mode
   controls, with a dimmed disabled state and a soft hover fill.
 - **The phone's git pill no longer lags the Mac.** Paired phones now ride the
   same git watcher lane as the desktop pill: while at least one phone is
   connected, the Mac lands every filesystem/run-driven git recompute (terminal
   commits, edits from other sessions or editors, branch switches) in the remote
-  snapshot cache and pushes it immediately, at the watcher's existing 250ms
-  debounce / 1.2s-per-repo cadence. Previously the phone refreshed only on its
-  own pulls — opening a thread, foregrounding the app, a run finishing — and on
-  run events, so git changes with no run attached never arrived until some
-  unrelated event fired. Connecting a phone also lands a fresh snapshot per
-  workspace up front, and zero connected phones means zero extra watchers or
-  git work on an idle Mac.
-- **Roster, approval, and rename sheets render their liquid glass too (iOS).**
-  Same root cause as the Diff Studio sheet below: the ensemble roster sheet, its
-  nested participant editor, the approval detail sheet, and the chat rename
-  sheet all painted opaque canvases or default grouped list fills over their
-  glass backdrop. Glass-hosted content now clears its canvas and washes rows
-  with the shared translucent chrome tier (`TWGlassSheetSurfacePolicy` — the
-  Diff Studio policy delegates to it), staying fully opaque under Reduce
-  Transparency.
-- **Diff Studio sheet now renders its liquid glass (iOS).** The composer diff
-  sheet applied the shared `twSheetLiquidGlass` chrome, but its panes painted a
-  full-bleed opaque canvas over the backdrop, so the sheet read as flat gray.
-  Sheet-hosted panes now keep their canvas transparent, with translucent row and
-  header washes over the glass — the hunk grid keeps a darker wash so diff text
-  stays readable — while the full-screen Diff Studio hosts (iPad split view and
-  the phone cover) keep their opaque app canvas. Reduce Transparency keeps every
-  surface opaque, matching the sheet chrome's opaque tier.
+  snapshot cache and pushes it immediately. Previously the phone refreshed only
+  on its own pulls — opening a thread, foregrounding the app, a run finishing —
+  so git changes with no run attached never arrived until some unrelated event
+  fired. Connecting a phone also lands a fresh snapshot per workspace up front,
+  and zero connected phones means zero extra watchers on an idle Mac.
+- **iOS sheets render their liquid glass.** The Diff Studio, roster (and its
+  nested participant editor), approval, and rename sheets all requested the
+  shared liquid-glass backdrop, but their own content painted a full opaque
+  canvas and default list/form fills on top, so the glass never showed through.
+  Sheet-hosted content now clears its canvas and uses translucent surface washes
+  (with a darker wash kept for the diff hunk grid's monospace contrast), while
+  full-screen hosts (iPad split view, phone cover) and Reduce Transparency still
+  get solid fills; a same-day follow-up lightened the wash further for
+  readability.
+- **iOS companion streaming stalls smoothed out.** A multi-part pass eliminated
+  stalls and lag during active runs: full-state pushes coalesce and send only
+  what changed, live thread/diff updates are capped and throttled while
+  streaming, projection decoding moved off the main thread, and markdown
+  rendering picked up an LRU cache. Several remaining causes of transcript
+  scroll stutter during a live ensemble round — touch tracking, growing
+  tool-call bursts, and media previews all forcing full-view re-renders — were
+  also fixed. Net effect is a noticeably more responsive phone app while an
+  agent works, with no loss of live detail.
+- **iOS companion recovers stale content after reconnecting.** Coming back from
+  the background or a push notification usually found the socket still
+  "connected," so the app took a fast "still alive" path and served
+  pre-background cached content instead of refreshing — the main cause of the
+  reconnect-blank/stale-content bug. The phone can now pull a fresh copy of the
+  home list and the visible thread on foreground or notification wake without
+  disturbing an in-progress live turn, no longer flashes a false "no threads"
+  empty state during the initial grace window (distinguishing still-checking
+  from confirmed-empty, with a Check Now retry), and the Mac can now tell a
+  silently-dropped phone from a merely-backgrounded one so it stops serving
+  updates to a gone device and doesn't needlessly keep itself awake.
+- **Transcript chronology: no more duplicated or misordered messages.** Several
+  related bugs could make a tool result, an assistant reply, or a queued-run
+  card render in the wrong place or twice: a tool result arriving after other
+  messages could duplicate into a new stack while the original spun "running"
+  forever (Codex was hit hardest); a full-turn restatement landing after a
+  system card could re-append the entire answer below the card instead of just
+  its new tail; and a queued card popping in between two tool bursts could make
+  them visibly regroup once it resolved. All are fixed so results settle in
+  their true chronological position.
+- **Long-thinking traces no longer jerk the transcript.** Streaming a long
+  chain-of-thought could make the transcript jump and flash: a tool row's
+  estimated height scaled with the raw uncapped thinking text instead of its
+  bounded collapsed viewport, and a still-growing thinking row behind a later
+  system event kept missing its cached measurement, snapping between measured
+  and wildly-estimated heights on every update. Both are fixed, the live
+  viewport no longer remounts and flashes when the streaming window's tail
+  slides past its cap, a giant thinking trace renders only its visible tail
+  while streaming, and the Raw log panel caps how much of an oversized payload
+  it retains per line — cutting the memory and CPU cost of long thinking streams
+  without losing the meaningful head/tail.
+- **Transcript auto-follow stays disengaged.** A couple of edge cases could
+  silently re-engage follow after you'd scrolled up to read history during a
+  live stream — a coalesced content reflow, or dragging the scrollbar itself.
+  Both are now recognized correctly, so the viewport only snaps back to the live
+  edge on a genuine downward scroll. The same fix shipped to iOS, where an
+  automatic follow-to-bottom pass could jump the scroll position out from under
+  an active drag.
+- **Light-theme legibility fixes.** Several controls that referenced
+  non-theme-aware or missing CSS tokens rendered dark-on-dark under the Light,
+  Mist, and Sage themes and are now scoped correctly: the "jump to latest" pill
+  in live activity views, the Settings roster/pool picker popover, the
+  Codex/Claude approval and discovery card (text, countdown, note field, and
+  buttons), and a stray navy fallback behind the side-chat composer under the
+  Codex style. On iOS, roster and other glass-sheet rows that were nearly
+  indistinguishable from their backdrop in Light, Alabaster, and Mist now use a
+  darker row wash so cards are clearly separated again.
+- **Transcript side rails no longer misposition or bleed through modals.** The
+  go-to-message gutter and the participant-filter rail could render
+  mispositioned on first load, correcting only after an incidental scroll; both
+  now re-measure against composer/roster growth and font loading so they land
+  correctly from the first paint. Because they float above the whole app,
+  they're now also hidden automatically behind every full-screen dialog
+  (first-launch, bug-report, changelog, sub-thread creator, work-session setup,
+  Discord picker, creative approval, media preview) instead of showing through.
+- **Ensemble fan-out no longer reorders or yanks the transcript.** Re-flushing a
+  participant's streaming output used to strip its messages and re-append them
+  at the end, shuffling the reading order; reflushes now reinsert at the
+  timeline's original position. A fan-out lane that completed while the Boss or
+  next serial participant was still mid-turn could leapfrog above the live
+  speaker — lane placement is now anchored below the live turn. And a collapsed
+  lane card's badly overestimated on-screen height was inflating the scroll
+  range and snapping auto-follow into empty space below the content (a linked
+  side chat had the same gap); both are fixed so the transcript stays put while
+  agents work in their collapsed windows.
+- **Ensemble fan-out tool no longer times out on longer runs.** The fan-out tool
+  used to wait for every dispatched lane to fully finish before returning
+  control to the calling agent, which could exceed the provider's MCP call
+  timeout. It now returns a dispatch receipt as soon as lanes are launched,
+  while results still stream into the transcript as each lane completes.
+- **Fan-out result cards show their own participant's color.** Cards previously
+  inherited the whole pane's accent instead of their own participant's, and
+  model-spoofed providers (e.g. a different model run through Ollama) showed the
+  wrong brand color; each card now themes itself after its actual participant.
+- **Ensemble close-out summaries capture accurate per-participant info.**
+  Close-out messages now record each participant's model, reasoning effort, and
+  permission preset as a snapshot taken at the start of their turn, so editing
+  the roster mid-round no longer rewrites earlier history. A participant removed
+  from the roster mid-round previously vanished from the audit trail entirely;
+  it's now retained with a "removed from the active roster" status so the
+  close-out and round history stay complete.
+- **Ensemble goals stay steered by TaskWraith, not Codex.** On Codex-backed
+  ensemble threads, Codex's own native goal-tracking could run alongside
+  TaskWraith's ensemble goal scheduler, risking two schedulers acting on the
+  same thread. TaskWraith's ensemble goal now always takes ownership and clears
+  the provider-native copy.
+- **Working indicator no longer vanishes partway through a solo run.** In
+  non-ensemble chats the "working" ghost cleared as soon as the first assistant
+  text streamed in, but nothing turned it back on when the agent moved into tool
+  use, so a run doing tool work after its first reply showed no indicator until
+  it finished. It now re-arms on tool activity so the indicator stays accurate
+  for the whole run.
+- **Activity group collapse flicker.** Tool-call activity groups could rapidly
+  expand and collapse as new tool calls arrived, producing a visible flicker.
+  Collapses are now briefly debounced so a group holds still through the churn.
+- **Kimi live tool-row measurement.** Fixed incorrect height measurement of
+  live-streaming tool-call rows for Kimi, which could cause the transcript to
+  jump or clip while a tool call was still in progress.
+- **Agent questions recognized under any tool-name alias.** Some providers call
+  the ask-a-question tool by slightly different names (case, spacing, or dashes)
+  that weren't always normalized to TaskWraith's internal `ask_user_question`,
+  so a model's question could be rejected or dropped instead of prompting you.
+  Tool-name normalization now happens consistently across the MCP bridge, Codex
+  routing, and Ollama's native and text-based tool calls.
+- **Composer file drag-and-drop is back.** Dropping files onto the composer had
+  silently stopped attaching anything after an Electron update removed the old
+  file-path API; drag-and-drop attachments and the drop-zone highlight both work
+  again.
+- **Thread Introspection no longer freezes the app.** Opening Settings →
+  Automation → Thread Introspection triggered an infinite mount-refresh-remount
+  loop that pegged the renderer and hung the window. The refresh wiring was
+  untangled so a panel's initial load can no longer re-trigger its own remount.
+- **Completed or cancelled runs can no longer resurrect.** A late-arriving
+  callback from a fallback transport attempt, a delayed process attach, or a
+  stale abort controller could reactivate a run that had already reached a
+  terminal state, making it appear to start running again. Terminal runs are now
+  final: late callbacks are cleaned up without reviving the run or overwriting
+  its state.
+- **Multiview panes no longer leak each other's workspace state.** In split-pane
+  Multiview, one pane's external workspace context — granted external folders,
+  git status snapshots, and PR summaries — could bleed into another pane. Each
+  pane's workspace state is now derived and isolated per pane.
+- **Markdown tables render consistently regardless of provider.** Tables used to
+  pick up the emitting model's provider accent, so the same table rendered
+  differently depending on who wrote it; they now always render in a neutral
+  silver. Dense tables with many columns — like the ensemble close-out's
+  eight-column breakdown — also no longer squeeze and wrap their headers into
+  illegible fragments, keeping labels on a single line at a fixed width with the
+  existing horizontal scroller handling overflow.
+- **Wide system messages no longer overflow the transcript.** A system message
+  containing a wide element (such as a large markdown table) could push past the
+  transcript column's edge instead of staying contained within it.
+- **Codex reasoning traces render cleanly.** Codex's streamed reasoning
+  summaries could show stray internal markers, and the trace rendered in the
+  transcript wasn't fully sanitized; both are cleaned up so Codex thinking reads
+  as prose.
+- **@-mention links render as chips again.** TaskWraith's internal `agent://`
+  and `ensemble-dm://` mention-link schemes were being silently blanked by
+  react-markdown's default URL sanitizer, so @-mentions in the transcript
+  rendered as plain unstyled anchors instead of provider-tinted chips. Those
+  schemes are now allowed through, restoring the styled mention chips.
+- **Cursor + Grok 4.5 reliability.** Cursor's Grok 4.5 route was rejecting
+  TaskWraith's full MCP tool catalogue outright (it caps out around 80 tools); a
+  curated, capped tool profile now keeps core coding/orchestration tools
+  available for tool-constrained models. Separately, the assistant's text after
+  a tool call could go missing entirely on Grok 4.5 routes when its post-tool
+  snapshot didn't line up with the pre-tool text — that text is now preserved
+  instead of silently dropped.
+- **Grok recon runs no longer hard-cancel on read-only shell commands.** A
+  read-only or recon Grok turn denied every shell tool call outright, and Grok
+  treats a denied tool as a fatal cancellation, so asking it to "investigate
+  this repo" failed the instant it tried a plain `ls` or `git log`. The
+  permission gate now recognizes provably read-only shell commands and allows
+  them under read-only posture while continuing to block anything that could
+  write or execute arbitrary code.
+- **Codex code mode works with standalone CLI installs.** Codex's "code mode"
+  tool relies on a companion helper binary that ships next to the ChatGPT/Codex
+  apps but not always next to a standalone `codex` CLI install. TaskWraith now
+  also checks the known app-bundle locations (or an explicit path override) so
+  code mode resolves either way.
+- **Claude Fast Mode no longer offered on Fable 5.** Fable 5 doesn't support
+  Anthropic's paid Fast mode, but the model picker still showed a Fast tier for
+  it. Fast mode is now correctly scoped to only the Opus models that support it.
+- **Roster Presets popover no longer runs off-screen.** A long list of saved
+  presets could grow the popover tall enough to push its Save/Save As buttons
+  above the top of the window. The preset list now has a capped height with its
+  own scrollbar.
+- **Workspace boards scroll vertically again.** Board columns taller than the
+  visible area were clipped with no way to reach the cards below the fold
+  because only horizontal overflow was enabled; both directions now scroll.
+- **No more "0 files changed" clutter.** The composer's workspace status row no
+  longer shows a changes pill when the working tree is clean — it only appears
+  once there's something to review.
+- **External workspace rows show their real names.** When a Full Access agent
+  touches a folder outside your current workspace, the composer's
+  secondary-workspace row now resolves it to that folder's saved workspace name
+  when it's registered in TaskWraith, instead of the raw folder name.
+- **Welcome-screen composer centers correctly.** The welcome composer column
+  (General, Workspace, Workflow, Shared, and their Ensemble variants) was
+  rendering off-center rather than at the shared width used elsewhere, because
+  its layout grid lacked an explicit column track; it now centers to match the
+  started-transcript composer, and the gap to the 90-day activity heatmap below
+  was tightened so the taller Workflow composer has room before the two collide.
+- **iOS Fast/thinking toggle no longer resets unexpectedly.** Approving a
+  proposed plan, or sending a composer prompt while a run was already active,
+  could silently force Fast off and reset Kimi's thinking mode regardless of the
+  thread's actual settings. Both paths now carry your Fast and reasoning
+  selections through correctly, including threads that don't yet have a cached
+  model card.
+- **iOS reasoning labels, tool icons, and multi-step reasoning match Electron.**
+  The collapsed reasoning chip routed every provider through generic ladder
+  vocabulary ("Light", "Extra") and showed nothing for Kimi; labels now branch
+  per provider the same way Electron does (Codex "Light"/"Extra High", Claude
+  "Low"/"Extra", Kimi "Thinking" when on), which also corrects the model picker
+  and Roster rows. The transcript tool-call glyph resolver, which had drifted so
+  GitHub PR/CI/merge, background processes, launch/IDE-open, fan-out, canvas,
+  web-fetch, and several brokered MCP calls fell through to a generic wrench,
+  now mirrors Electron's tool-family mapping. And a multi-step turn that
+  reasoned between several tool calls kept only the final reasoning segment on
+  iOS — every segment is now concatenated in order.
+- **iOS close-out row now appears before its Task-complete card.** An ensemble
+  round's close-out summary could render after the round's
+  Task-complete/run-summary card because it wasn't tagged with the round it
+  belonged to; it's now correctly ordered ahead of the card, matching desktop.
+
+### Security
+- **Closed a cross-instance MCP write path.** A mutating MCP tool call could
+  execute against the wrong TaskWraith instance — for example, a dev build's
+  write landing in the release app — via stale registrations or an unrouted
+  fallback. Mutating calls now require an explicit run/chat route whose caller
+  workspace matches the resolved run's workspace, and stale TaskWraith MCP
+  registrations left behind by Grok are swept up automatically.
+- **Ensemble participant permission raises go through the same confirmation
+  gate.** Raising an ensemble participant's permission preset (for example
+  Read-Only/Recon to Workspace Write) from the composer picker used to apply
+  silently, while the identical raise in a solo chat warned first. Participant
+  raises now route through the same two-tier elevation flow — a confirmation
+  sheet with an acknowledgement gate — so every permission increase in an
+  ensemble thread gets checked. Lowering a preset still applies immediately, and
+  Trusted Session keeps its own dedicated confirmation sheet.
+- **Prompt-injection defense for on-device AI summaries.** The on-device AI
+  features that summarize run telemetry (close-out summaries and run analysis)
+  now run their output through a deterministic echo guard: if the model's
+  response verbatim-echoes text drawn from agent/tool output rather than
+  composing its own summary, TaskWraith treats it as a hijacked response and
+  withholds it, falling back to the deterministic summary. This closes off a
+  class of attack where text embedded in commit messages or tool output tries to
+  get the local model to parrot it back as "analysis."
+
+### Accessibility
+- **Finer app-size control on iOS.** The app display-scale setting now offers
+  five steps in each direction (60% to 150%) instead of just one, letting you
+  dial in text and UI size more precisely. Existing saved choices are
+  unaffected.
+
+### Removed
+- **Duplicate workspace pickers removed from the welcome screens.** The "Work in
+  folder" row of recent-workspace chips on the solo, ensemble, and workflow
+  welcome screens duplicated the workspace switcher already in the composer's
+  bottom bar and has been removed from all three. The ensemble welcome screen
+  also drops the ordered provider chip chain below its copy, which duplicated
+  the speaking-order information already shown in the composer's chip strip;
+  participant editing still happens from that chip strip.
+- **iOS composer orchestration-mode chip removed.** The orchestration-mode chip
+  in the iOS composer was pulled out along with its supporting view code,
+  simplifying the composer bar.
+
+### Documentation
+- **How-to manual gains verified screenshots and corrected permission docs.**
+  The in-app how-to manual now embeds 59 of its 83 planned screenshots, each
+  visually checked against the feature it documents, with the remaining
+  dynamic/onboarding-only shots tracked for later. The permission-preset pages
+  were corrected to match the live app: the composer picker's only elevation
+  confirmation is the Trusted Session sheet, and the current preset list is Plan
+  / Read-Only-Recon / Default Approval / Workspace Write / Trusted Session.
 
 ## 1.7.9 - 2026-07-07
 
