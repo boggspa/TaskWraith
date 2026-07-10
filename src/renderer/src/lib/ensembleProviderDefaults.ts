@@ -28,6 +28,11 @@ import type {
 import type { EnsembleParticipant, PermissionPresetId, ProviderId } from '../../../main/store/types'
 import { codexReasoningDisplayLabel, claudeReasoningDisplayLabel } from './composerChipFormat'
 import {
+  CLAUDE_DEFAULT_MODELS,
+  CODEX_DEFAULT_MODELS,
+  type CodexModelOption
+} from './providerModelDefaults'
+import {
   CURSOR_GROK_45_BASE_MODEL_ID,
   GROK_45_DEFAULT_REASONING_EFFORT,
   GROK_45_MODEL_ID,
@@ -415,6 +420,164 @@ export function buildProviderChangeParticipantPatch(
     thinkingEnabled: defaults.thinkingEnabled,
     serviceTier: defaults.serviceTier,
     linkedProviderSessionId: null
+  }
+}
+
+/**
+ * The model-level metadata needed to seed a freshly selected model. The live
+ * Codex/Claude catalogs use this same shape; callers selecting a static model
+ * may omit it and the renderer fallbacks are consulted instead.
+ */
+export type ProviderModelSelectionMetadata = Pick<
+  CodexModelOption,
+  'supportedReasoningEfforts' | 'defaultReasoningEffort' | 'additionalSpeedTiers'
+>
+
+/**
+ * Provider-scoped participant fields normalized for one explicit model.
+ * Irrelevant settings are intentionally present as `undefined`: this object is
+ * also a shallow-merge patch, so those keys must clear values left by the
+ * previously selected provider/model rather than silently preserving them.
+ */
+export type ProviderModelSelectionFields = Pick<
+  Partial<EnsembleParticipant>,
+  'model' | 'reasoningEffort' | 'fastModeEnabled' | 'thinkingEnabled' | 'serviceTier'
+>
+
+function normalizeReasoningEffortToken(value?: string | null): string {
+  const normalized = String(value || '')
+    .trim()
+    .toLowerCase()
+  if (normalized === 'light') return 'low'
+  if (normalized === 'extra') return 'xhigh'
+  if (normalized === 'ultra') return 'ultracode'
+  return normalized
+}
+
+function fallbackModelSelectionMetadata(
+  provider: ProviderId,
+  model: string
+): ProviderModelSelectionMetadata | undefined {
+  if (provider === 'codex') {
+    return CODEX_DEFAULT_MODELS.find((option) => option.id === model)
+  }
+  if (provider === 'claude') {
+    return CLAUDE_DEFAULT_MODELS.find((option) => option.id === model)
+  }
+  return undefined
+}
+
+function enabledReasoningEffortsForModel(
+  provider: ProviderId,
+  model: string,
+  metadata?: ProviderModelSelectionMetadata | null
+): string[] {
+  const source = metadata?.supportedReasoningEfforts
+  const values = source
+    ? source
+        .filter((option) => !option.disabled)
+        .map((option) => normalizeReasoningEffortToken(option.reasoningEffort))
+    : getEnsembleReasoningOptions(provider, model)
+        .filter((option) => !option.disabled)
+        .map((option) => normalizeReasoningEffortToken(option.value))
+  return [...new Set(values.filter(Boolean))]
+}
+
+function defaultReasoningEffortForModel(
+  provider: ProviderId,
+  model: string,
+  modelMetadata?: ProviderModelSelectionMetadata | null
+): string | undefined {
+  const fallbackMetadata = fallbackModelSelectionMetadata(provider, model)
+  const metadata = modelMetadata ? { ...fallbackMetadata, ...modelMetadata } : fallbackMetadata
+  const enabled = enabledReasoningEffortsForModel(provider, model, metadata)
+  if (enabled.length === 0) return undefined
+
+  const modelDefault = normalizeReasoningEffortToken(metadata?.defaultReasoningEffort)
+  if (modelDefault && enabled.includes(modelDefault)) return modelDefault
+
+  const providerDefault = normalizeReasoningEffortToken(
+    getDefaultEnsembleParticipantConfig(provider).reasoningEffort
+  )
+  if (providerDefault && enabled.includes(providerDefault)) return providerDefault
+  if (enabled.includes('medium')) return 'medium'
+  return enabled[0]
+}
+
+/**
+ * Canonical fresh/provider-switch state for an explicit provider + model pair.
+ * This encodes the same model-sensitive rules as the composer:
+ *
+ * - Codex/Claude start with Fast off and the model's enabled default reasoning.
+ * - Kimi starts with thinking on and has no reasoning effort field.
+ * - Grok's Fast posture is encoded by its provider/model route, not a toggle;
+ *   only Grok 4.5 carries a reasoning effort.
+ * - Cursor Composer 2.5 expresses Fast through the model id, while Cursor Grok
+ *   starts with its reasoning default and the optional Fast toggle off.
+ */
+export function normalizeProviderModelSelection(
+  provider: ProviderId,
+  model: string,
+  modelMetadata?: ProviderModelSelectionMetadata | null
+): ProviderModelSelectionFields {
+  const cleared: ProviderModelSelectionFields = {
+    model,
+    reasoningEffort: undefined,
+    fastModeEnabled: undefined,
+    thinkingEnabled: undefined,
+    serviceTier: undefined
+  }
+
+  switch (provider) {
+    case 'codex':
+      return {
+        ...cleared,
+        reasoningEffort: defaultReasoningEffortForModel(provider, model, modelMetadata),
+        fastModeEnabled: false,
+        serviceTier: ''
+      }
+    case 'claude':
+      return {
+        ...cleared,
+        reasoningEffort: defaultReasoningEffortForModel(provider, model, modelMetadata),
+        fastModeEnabled: false
+      }
+    case 'kimi':
+      return { ...cleared, thinkingEnabled: true }
+    case 'grok':
+      return {
+        ...cleared,
+        reasoningEffort: isGrok45ReasoningModelId(model)
+          ? GROK_45_DEFAULT_REASONING_EFFORT
+          : undefined
+      }
+    case 'cursor':
+      if (model === CURSOR_GROK_45_BASE_MODEL_ID) {
+        return {
+          ...cleared,
+          reasoningEffort: GROK_45_DEFAULT_REASONING_EFFORT,
+          fastModeEnabled: false
+        }
+      }
+      return { ...cleared, fastModeEnabled: model === 'composer-2.5-fast' }
+    default:
+      return cleared
+  }
+}
+
+/**
+ * One atomic participant patch for selecting a model from any provider group.
+ * Provider/session/grant hygiene comes from `buildProviderChangeParticipantPatch`;
+ * the explicit model fields then override that provider's generic seed values.
+ */
+export function buildProviderModelChangeParticipantPatch(
+  provider: ProviderId,
+  model: string,
+  modelMetadata?: ProviderModelSelectionMetadata | null
+): Partial<EnsembleParticipant> {
+  return {
+    ...buildProviderChangeParticipantPatch(provider),
+    ...normalizeProviderModelSelection(provider, model, modelMetadata)
   }
 }
 

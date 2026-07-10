@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import type { EnsembleParticipant } from '../../../main/store/types'
 import {
+  buildProviderModelChangeParticipantPatch,
   getDefaultEnsembleParticipantConfig,
   getDefaultEnsembleRoleName,
   getEnsembleModelDefaults,
   getEnsembleReasoningOptions,
+  normalizeProviderModelSelection,
   resolveEnsembleParticipantSettings
 } from './ensembleProviderDefaults'
 
@@ -100,6 +102,129 @@ describe('getDefaultEnsembleRoleName', () => {
     expect(getDefaultEnsembleRoleName('cursor')).toBe('Cursor')
     // Ollama seats read "Local" — mirrors the seeded default panel.
     expect(getDefaultEnsembleRoleName('ollama')).toBe('Local')
+  })
+})
+
+describe('normalizeProviderModelSelection', () => {
+  it('uses the selected Codex model default reasoning and starts Fast off', () => {
+    expect(normalizeProviderModelSelection('codex', 'gpt-5.6-sol')).toEqual({
+      model: 'gpt-5.6-sol',
+      reasoningEffort: 'low',
+      fastModeEnabled: false,
+      thinkingEnabled: undefined,
+      serviceTier: ''
+    })
+
+    expect(
+      normalizeProviderModelSelection('codex', 'gpt-live', {
+        supportedReasoningEfforts: [
+          { reasoningEffort: 'low' },
+          { reasoningEffort: 'medium' },
+          { reasoningEffort: 'high' }
+        ],
+        defaultReasoningEffort: 'high',
+        additionalSpeedTiers: ['fast']
+      })
+    ).toEqual({
+      model: 'gpt-live',
+      reasoningEffort: 'high',
+      fastModeEnabled: false,
+      thinkingEnabled: undefined,
+      serviceTier: ''
+    })
+  })
+
+  it('clears reasoning for a Claude model with no enabled efforts and starts Fast off', () => {
+    expect(normalizeProviderModelSelection('claude', 'claude-haiku-4-5')).toEqual({
+      model: 'claude-haiku-4-5',
+      reasoningEffort: undefined,
+      fastModeEnabled: false,
+      thinkingEnabled: undefined,
+      serviceTier: undefined
+    })
+
+    expect(
+      normalizeProviderModelSelection('claude', 'claude-live-no-reasoning', {
+        supportedReasoningEfforts: [],
+        defaultReasoningEffort: 'medium',
+        additionalSpeedTiers: ['fast']
+      })
+    ).toEqual({
+      model: 'claude-live-no-reasoning',
+      reasoningEffort: undefined,
+      fastModeEnabled: false,
+      thinkingEnabled: undefined,
+      serviceTier: undefined
+    })
+  })
+
+  it('seeds Kimi thinking without leaking reasoning or Fast fields', () => {
+    expect(normalizeProviderModelSelection('kimi', 'kimi-k2.7-code')).toEqual({
+      model: 'kimi-k2.7-code',
+      reasoningEffort: undefined,
+      fastModeEnabled: undefined,
+      thinkingEnabled: true,
+      serviceTier: undefined
+    })
+  })
+
+  it('keeps Grok 4.5 reasoning but treats permanent Fast as model/provider encoded', () => {
+    expect(normalizeProviderModelSelection('grok', 'grok-4.5')).toEqual({
+      model: 'grok-4.5',
+      reasoningEffort: 'high',
+      fastModeEnabled: undefined,
+      thinkingEnabled: undefined,
+      serviceTier: undefined
+    })
+    expect(normalizeProviderModelSelection('grok', 'grok-composer-2.5-fast')).toEqual({
+      model: 'grok-composer-2.5-fast',
+      reasoningEffort: undefined,
+      fastModeEnabled: undefined,
+      thinkingEnabled: undefined,
+      serviceTier: undefined
+    })
+  })
+
+  it('normalizes Cursor Composer variants and Cursor Grok independently', () => {
+    expect(normalizeProviderModelSelection('cursor', 'composer-2.5')).toEqual({
+      model: 'composer-2.5',
+      reasoningEffort: undefined,
+      fastModeEnabled: false,
+      thinkingEnabled: undefined,
+      serviceTier: undefined
+    })
+    expect(normalizeProviderModelSelection('cursor', 'composer-2.5-fast')).toEqual({
+      model: 'composer-2.5-fast',
+      reasoningEffort: undefined,
+      fastModeEnabled: true,
+      thinkingEnabled: undefined,
+      serviceTier: undefined
+    })
+    expect(normalizeProviderModelSelection('cursor', 'grok-4.5')).toEqual({
+      model: 'grok-4.5',
+      reasoningEffort: 'high',
+      fastModeEnabled: false,
+      thinkingEnabled: undefined,
+      serviceTier: undefined
+    })
+  })
+})
+
+describe('buildProviderModelChangeParticipantPatch', () => {
+  it('atomically applies provider hygiene then overrides its generic model seed', () => {
+    expect(buildProviderModelChangeParticipantPatch('cursor', 'composer-2.5')).toEqual({
+      provider: 'cursor',
+      model: 'composer-2.5',
+      runtimeProfileId: undefined,
+      geminiAuthProfileId: null,
+      permissionPresetId: 'default',
+      permissionOverrides: undefined,
+      reasoningEffort: undefined,
+      fastModeEnabled: false,
+      thinkingEnabled: undefined,
+      serviceTier: undefined,
+      linkedProviderSessionId: null
+    })
   })
 })
 
