@@ -42,6 +42,35 @@ describe('LocalServersService', () => {
   beforeEach(() => vi.useFakeTimers())
   afterEach(() => vi.useRealTimers())
 
+  it('drops to the inactive cadence while hidden and refreshes on reactivation', async () => {
+    const detector = new FakeDetector()
+    const service = new LocalServersService({
+      getWorkspaces: () => [],
+      detector,
+      pollIntervalMs: 1000,
+      inactivePollIntervalMs: 10_000
+    })
+    service.start()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(detector.calls).toBe(1)
+
+    service.setWindowActive(false)
+    // Two active-cadence periods pass without a tick at the slow cadence.
+    await vi.advanceTimersByTimeAsync(2_000)
+    expect(detector.calls).toBe(1)
+    // The inactive cadence still samples eventually.
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(detector.calls).toBe(2)
+
+    // Reactivating refreshes immediately and restores the fast cadence.
+    service.setWindowActive(true)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(detector.calls).toBe(3)
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(detector.calls).toBe(4)
+    service.stop()
+  })
+
   it('samples immediately on start and publishes the first snapshot', async () => {
     const detector = new FakeDetector()
     detector.servers = [entry(100, [3000])]

@@ -22360,7 +22360,11 @@ function isMainWindowStatsActive(): boolean {
 }
 
 function updateAppShellStatsPollingMode(): void {
-  appShellStatsService.setWindowActive(isMainWindowStatsActive())
+  const active = isMainWindowStatsActive()
+  appShellStatsService.setWindowActive(active)
+  // LocalServers shares the same active/inactive cadence contract — its 5s
+  // lsof/ps sampling drops to 60s while the window can't be seen.
+  localServersServiceRef?.setWindowActive(active)
 }
 
 function attachSpellcheckContextTracking(targetWindow: BrowserWindow): void {
@@ -28186,6 +28190,9 @@ if (isGeminiMcpBridgeProcess) {
       }
     })
     localServersService.start()
+    // Seed the cadence from the real window state — start() assumes active,
+    // but the service may boot while the window is hidden/minimized.
+    localServersService.setWindowActive(isMainWindowStatsActive())
     registerLocalServersHandlers({ localServersService: mainRuntimeContext.requireLocalServers() })
     const pluginHost = new PluginHost({
       userDataPath: app.getPath('userData'),

@@ -24,8 +24,14 @@ import type {
   TrackedSpawn
 } from './localServers/types'
 
-/** Servers are long-lived; a 5s cadence is plenty and cheap. */
+/** Servers are long-lived; a 5s cadence is plenty and cheap while the window
+ * is active. Hidden/blurred/minimized windows drop to the inactive cadence:
+ * every tick spawns lsof (plus a full ps when listeners exist), which is pure
+ * battery/CPU-wakeup drain when nobody can see the panel. No remote/iOS
+ * surface consumes this feed (verified 2026-07-10); on-demand callers use
+ * snapshot()/refreshNow() and stay fresh regardless of cadence. */
 export const LOCAL_SERVERS_POLL_INTERVAL_MS = 5_000
+export const LOCAL_SERVERS_INACTIVE_POLL_INTERVAL_MS = 60_000
 const DECLARED_SERVICE_HEALTH_TIMEOUT_MS = 750
 
 type Listener = (snapshot: LocalServersSnapshot) => void
@@ -41,6 +47,7 @@ export interface LocalServersServiceOptions {
   detector?: LocalServerDetector
   log?: (line: string) => void
   pollIntervalMs?: number
+  inactivePollIntervalMs?: number
   /** Injectable for tests; defaults to a platform-appropriate kill controller. */
   createController?: (pid: number, pgid?: number) => KillController
 }
@@ -53,6 +60,8 @@ export class LocalServersService {
   private probeDeclaredServiceHealth: DeclaredServiceHealthProbe
   private log: (line: string) => void
   private pollIntervalMs: number
+  private inactivePollIntervalMs: number
+  private windowActive = true
   private listeners = new Set<Listener>()
   private timer: ReturnType<typeof setInterval> | null = null
   private current: LocalServersSnapshot
@@ -70,6 +79,8 @@ export class LocalServersService {
       options.probeDeclaredServiceHealth || probeDeclaredLocalServiceHealth
     this.log = options.log ?? (() => {})
     this.pollIntervalMs = options.pollIntervalMs ?? LOCAL_SERVERS_POLL_INTERVAL_MS
+    this.inactivePollIntervalMs =
+      options.inactivePollIntervalMs ?? LOCAL_SERVERS_INACTIVE_POLL_INTERVAL_MS
     this.createController =
       options.createController ||
       ((pid, pgid) =>
@@ -97,9 +108,7 @@ export class LocalServersService {
   start(): void {
     if (this.timer) return
     void this.refreshNow()
-    this.timer = setInterval(() => {
-      void this.refreshNow()
-    }, this.pollIntervalMs)
+    this.armTimer()
   }
 
   stop(): void {
@@ -107,6 +116,24 @@ export class LocalServersService {
       clearInterval(this.timer)
       this.timer = null
     }
+  }
+
+  /** Swap cadence with window focus/visibility (AppShellStatsService
+   * pattern). Returning to active refreshes immediately so the panel is
+   * fresh the moment the user could be looking at it. */
+  setWindowActive(active: boolean): void {
+    if (this.windowActive === active) return
+    this.windowActive = active
+    if (!this.timer) return
+    this.armTimer()
+    if (active) void this.refreshNow()
+  }
+
+  private armTimer(): void {
+    if (this.timer) clearInterval(this.timer)
+    this.timer = setInterval(() => {
+      void this.refreshNow()
+    }, this.windowActive ? this.pollIntervalMs : this.inactivePollIntervalMs)
   }
 
   /** Sample once now. Publishes only when the server set changed (or first). */
