@@ -10061,6 +10061,10 @@
 }
 
 .composer-combined-picker-confirm {
+  --segmented-action-foreground: var(--accent);
+  --segmented-action-border: color-mix(in srgb, var(--accent) 38%, var(--panel-border));
+  --segmented-action-bg: color-mix(in srgb, var(--accent) 10%, transparent);
+  --segmented-action-hover-bg: color-mix(in srgb, var(--accent) 18%, transparent);
   width: calc(100% - 12px);
   margin: auto 6px 2px;
 }

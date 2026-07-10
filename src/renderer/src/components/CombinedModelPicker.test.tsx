@@ -19,8 +19,9 @@ describe('CombinedModelPicker', () => {
     )
 
     expect(html).toContain(
-      'class="segmented-control-action segmented-control-action--compact segmented-control-action--primary composer-combined-picker-confirm"'
+      'class="segmented-control-action segmented-control-action--compact composer-combined-picker-confirm"'
     )
+    expect(html).not.toContain('segmented-control-action--primary')
     expect(html).toContain('>Add participant</button>')
 
     const css = readFileSync(
@@ -29,7 +30,13 @@ describe('CombinedModelPicker', () => {
     )
     const confirmLayoutRule = css.match(/\.composer-combined-picker-confirm\s*\{([^}]*)\}/)?.[1]
     expect(confirmLayoutRule).toBeDefined()
-    expect(confirmLayoutRule).not.toMatch(/\b(?:background|border|padding|min-height)\s*:/)
+    expect(confirmLayoutRule).toContain('--segmented-action-foreground: var(--accent)')
+    expect(confirmLayoutRule).toContain('var(--accent) 38%')
+    expect(confirmLayoutRule).toContain('var(--accent) 10%')
+    expect(confirmLayoutRule).toContain('var(--accent) 18%')
+    expect(confirmLayoutRule).not.toMatch(
+      /(?:^|\n)\s*(?:background|border|padding|min-height)\s*:/
+    )
   })
 
   it('exposes Ultracode reasoning hooks for Claude composer styling', () => {

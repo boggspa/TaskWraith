@@ -168,7 +168,7 @@ export function CombinedModelPickerConfirmButton({
   const buttonDisabled = Boolean(disabled || action.disabled)
   return (
     <PillButton
-      variant="primary"
+      variant="secondary"
       size="compact"
       className="composer-combined-picker-confirm"
       disabled={buttonDisabled}
