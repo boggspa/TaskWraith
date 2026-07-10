@@ -61,12 +61,11 @@ targets:
           - UIInterfaceOrientationLandscapeRight
         NSCameraUsageDescription: "TaskWraith uses the camera to scan the pairing QR code shown on your Mac."
         NSLocalNetworkUsageDescription: "TaskWraith connects to the pairing relay on your local network to reach your Mac."
-        # ATS: NO global bypass (TestFlight blocker — removed). The scoped
-        # local-networking exception covers LAN-relay dev workflows; remote
-        # use must be wss:// (e.g. `tailscale cert` for a Tailnet relay).
-        # The E2EE layer protects payloads regardless — this is about not
-        # exposing handshake metadata + the confirm code to on-path
-        # observers, and about App Store policy.
+        # ATS: NO global bypass. Apple's scoped local-networking exception
+        # covers LAN, unqualified/.local names, and IPv4/IPv6 literals. The
+        # client further restricts ws:// to LAN + Tailscale's 100.64/10 range;
+        # other remote relays must use wss://. Tailscale supplies WireGuard and
+        # TaskWraith independently authenticates/encrypts the session.
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
     entitlements:

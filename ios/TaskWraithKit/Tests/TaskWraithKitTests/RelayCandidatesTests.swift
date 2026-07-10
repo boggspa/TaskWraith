@@ -12,18 +12,32 @@ struct RelayCandidatesTests {
     @Test("orders LAN doors before remote doors regardless of input order")
     func lanFirst() {
         let ordered = RelayCandidates.ordered(
-            from: ["wss://mac.tailnet.ts.net", "ws://192.168.0.147:8787"],
+            from: [
+                "ws://192.168.0.147:8787", "ws://100.99.131.73:8787",
+                "wss://mac.tailnet.ts.net",
+            ],
             fallback: "wss://mac.tailnet.ts.net")
-        #expect(ordered == ["ws://192.168.0.147:8787", "wss://mac.tailnet.ts.net"])
+        #expect(
+            ordered == [
+                "ws://192.168.0.147:8787", "ws://100.99.131.73:8787",
+                "wss://mac.tailnet.ts.net",
+            ])
     }
 
     @Test("can prefer remote doors before LAN doors on cellular")
     func remoteFirst() {
         let ordered = RelayCandidates.ordered(
-            from: ["ws://192.168.0.147:8787", "wss://mac.tailnet.ts.net"],
+            from: [
+                "ws://192.168.0.147:8787", "ws://100.99.131.73:8787",
+                "wss://mac.tailnet.ts.net",
+            ],
             fallback: "wss://mac.tailnet.ts.net",
             preferRemoteFirst: true)
-        #expect(ordered == ["wss://mac.tailnet.ts.net", "ws://192.168.0.147:8787"])
+        #expect(
+            ordered == [
+                "ws://100.99.131.73:8787", "wss://mac.tailnet.ts.net",
+                "ws://192.168.0.147:8787",
+            ])
     }
 
     @Test("promotes the last successful relay before generic LAN/remote ordering")
@@ -80,6 +94,7 @@ struct RelayCandidatesTests {
     func budgets() {
         #expect(RelayCandidates.dialTimeoutMs(for: "ws://192.168.0.147:8787") == 5_000)
         #expect(RelayCandidates.dialTimeoutMs(for: "ws://chriss-mac.local:8787") == 5_000)
+        #expect(RelayCandidates.dialTimeoutMs(for: "ws://100.99.131.73:8787") == 12_000)
         #expect(RelayCandidates.dialTimeoutMs(for: "wss://mac.tailnet.ts.net") == 12_000)
         #expect(RelayCandidates.dialTimeoutMs(for: "wss://relay.example.com") == 12_000)
     }
@@ -93,6 +108,17 @@ struct RelayCandidatesTests {
         }
         for host in ["172.32.0.1", "100.99.131.73", "mac.tailnet.ts.net", "example.com"] {
             #expect(!RelayCandidates.isLocalNetworkHost(host), "expected non-local: \(host)")
+        }
+    }
+
+    @Test("Tailscale CGNAT classification is narrow and remains remote")
+    func tailscaleHosts() {
+        for host in ["100.64.0.0", "100.99.131.73", "100.127.255.255"] {
+            #expect(RelayCandidates.isTailscaleIPv4Host(host), "expected tailnet IP: \(host)")
+            #expect(!RelayCandidates.isLocalNetworkHost(host), "must remain remote: \(host)")
+        }
+        for host in ["100.63.255.255", "100.128.0.0", "192.168.1.2", "example.com"] {
+            #expect(!RelayCandidates.isTailscaleIPv4Host(host), "not tailnet IP: \(host)")
         }
     }
 

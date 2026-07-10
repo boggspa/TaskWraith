@@ -831,7 +831,7 @@ public final class RemoteSessionModel: ObservableObject {
     private func preferRemoteRelayFirst(relayUrls: [String]?, fallback: String) -> Bool {
         guard let path = pathMonitor?.currentPath, path.status == .satisfied else { return false }
         // Cellular / expensive non-Wi-Fi paths: a LAN ws:// door is unreachable,
-        // so the wss front door goes first — no LAN timeout to burn.
+        // so the direct/WSS Tailscale doors go first — no LAN timeout to burn.
         if path.usesInterfaceType(.cellular) { return true }
         if path.isExpensive && !path.usesInterfaceType(.wifi)
             && !path.usesInterfaceType(.wiredEthernet) {
@@ -841,9 +841,9 @@ public final class RemoteSessionModel: ObservableObject {
         // door is actually on THIS network. A Mac advertising 192.168.0.x while
         // the phone is on a different SSID/subnet (guest Wi-Fi, a separate site)
         // can't be reached on that ws:// URL; dialing it first stalls on a long
-        // TCP timeout — the "~5 min to connect off-LAN" delay — before the wss
-        // door is even tried. If there ARE local candidates and none is in this
-        // device's subnet, prefer the remote door first. If we can't read the
+        // TCP timeout — the "~5 min to connect off-LAN" delay — before a remote
+        // Tailscale door is even tried. If there ARE local candidates and none
+        // is in this device's subnet, prefer the remote door first. If we can't read the
         // interfaces (nil), keep LAN-first — never hard-skip a door that may route.
         let candidates = RelayCandidates.ordered(from: relayUrls, fallback: fallback)
         let localHosts = candidates
@@ -969,8 +969,8 @@ public final class RemoteSessionModel: ObservableObject {
         let label = host.macDisplayName ?? "that host"
         var lastError = "Couldn't reach \(label) to start pairing."
         for relay in candidates {
-            // ATS blocks cleartext to non-local hosts (ws→http alike); skip
-            // a LAN-only door when we're off that network, try the next.
+            // Preflight keeps cleartext limited to LAN + numeric Tailscale IPs;
+            // skip anything else and try the next advertised door.
             if let problem = Self.cleartextRelayProblem(relay) {
                 lastError = problem
                 continue
@@ -1031,21 +1031,18 @@ public final class RemoteSessionModel: ObservableObject {
         return text.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    /// ATS (NSAllowsLocalNetworking) permits cleartext ws:// only to hosts
-    /// on the local network — a remote ws:// relay dies with an opaque ATS
-    /// error deep in the socket. Catch it up front with an actionable
-    /// message. wss:// is always fine. Conservative: anything we can't
-    /// positively identify as local (public DNS names, public IPs, and
-    /// Tailscale's 100.64/10 CGNAT range) gets the warning.
+    /// Keep cleartext ws:// constrained to LAN or Tailscale's numeric CGNAT
+    /// range. NSAllowsLocalNetworking permits IP-literal loads on current iOS;
+    /// the 100.64/10 route is WireGuard-encrypted by Tailscale and the session
+    /// remains independently E2EE. Arbitrary public IP/DNS relays stay blocked.
     static func cleartextRelayProblem(_ relayUrl: String) -> String? {
         guard let url = URL(string: relayUrl), url.scheme?.lowercased() == "ws" else {
             return nil
         }
         let host = (url.host ?? "").lowercased()
-        if isLocalNetworkHost(host) { return nil }
+        if isLocalNetworkHost(host) || RelayCandidates.isTailscaleIPv4Host(host) { return nil }
         return "“\(host)” is a cleartext ws:// relay outside your local network — iOS blocks "
-            + "that. Use a wss:// relay for remote access (e.g. a Tailscale cert), or connect "
-            + "from the Mac's own network. If this address IS local, use its LAN IP instead."
+            + "that. Use a LAN address, this Mac's 100.x Tailscale IP, or a wss:// relay."
     }
 
     static func isLocalNetworkHost(_ host: String) -> Bool {

@@ -181,8 +181,8 @@ public struct PairingBootstrapPayload: Codable, Sendable {
 
 /// Candidate ordering for multi-door relay dials. Pure + unit-tested.
 public enum RelayCandidates {
-    /// Hosts reachable only on the local network (ATS also allows
-    /// cleartext ws:// to exactly these).
+    /// Hosts reachable only on the local network. Direct Tailscale IPs stay
+    /// classified as remote so cellular ordering promotes them ahead of LAN.
     public static func isLocalNetworkHost(_ host: String) -> Bool {
         if host == "localhost" || host == "127.0.0.1" || host == "::1" { return true }
         if host.hasSuffix(".local") { return true }
@@ -199,9 +199,18 @@ public enum RelayCandidates {
         return false
     }
 
+    /// Tailscale's stable IPv4 node range (100.64.0.0/10). The iOS target's
+    /// NSAllowsLocalNetworking ATS declaration permits IP-literal loads; this
+    /// narrow classifier prevents that allowance from admitting arbitrary
+    /// public cleartext WebSocket hosts.
+    public static func isTailscaleIPv4Host(_ host: String) -> Bool {
+        guard let address = ipv4ToUInt32(host) else { return false }
+        return (address & 0xFFC0_0000) == 0x6440_0000
+    }
+
     /// The ordered, deduped dial list: the multi-URL set when present,
     /// else the single legacy URL. LAN-first is fastest at home; remote-first
-    /// avoids burning a LAN timeout on cellular before trying the WSS door.
+    /// avoids burning a LAN timeout on cellular before trying Tailscale doors.
     public static func ordered(
         from relayUrls: [String]?,
         fallback: String,
