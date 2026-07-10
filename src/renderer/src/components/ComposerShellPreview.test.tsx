@@ -109,6 +109,18 @@ describe('ComposerShellPreview — single metadata source', () => {
     expect(html).toContain('Plan')
     expect(html).toContain('Claude')
   })
+
+  it('merges provider identity into the model control for every shell', () => {
+    for (const style of ALL_SHELLS) {
+      const html = render(style)
+      expect(html, style).not.toContain('data-composer-control="provider"')
+      expect(html, style).toContain('data-composer-control="model"')
+      const providerIdentity = html.indexOf('composer-combined-picker-trigger-provider')
+      const modelIdentity = html.indexOf('composer-combined-picker-trigger-primary')
+      expect(providerIdentity, style).toBeGreaterThan(-1)
+      expect(modelIdentity, style).toBeGreaterThan(providerIdentity)
+    }
+  })
 })
 
 describe('ComposerShellPreview — per-shell send glyph', () => {
@@ -161,7 +173,9 @@ describe('ComposerShellPreview — per-shell send glyph', () => {
   it('renders the above-row branch label without italic emphasis markup', () => {
     const html = render('codex')
 
-    expect(html).toContain('<span class="composer-above-bar-secondary-branch git-tone-main">main</span>')
+    expect(html).toContain(
+      '<span class="composer-above-bar-secondary-branch git-tone-main">main</span>'
+    )
     expect(html).not.toContain('<em class="composer-above-bar-secondary-branch')
   })
 

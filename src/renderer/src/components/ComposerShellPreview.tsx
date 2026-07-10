@@ -330,12 +330,7 @@ export function ComposerShellPreview({
               </span>
             </div>
             <div className="composer-above-bar-pill composer-above-bar-pill--action">
-              <button
-                type="button"
-                className={actionClassName}
-                tabIndex={-1}
-                aria-hidden="true"
-              >
+              <button type="button" className={actionClassName} tabIndex={-1} aria-hidden="true">
                 {useGitIconAction ? <GitCommitSymbolIcon /> : previewActionLabel}
               </button>
             </div>
@@ -392,23 +387,6 @@ export function ComposerShellPreview({
                     >
                       +
                     </button>
-                    <button
-                      type="button"
-                      className={`composer-picker-label composer-provider-button settings-composer-preview-control provider-${previewProviderHueClass}`}
-                      data-composer-control="provider"
-                      tabIndex={-1}
-                      aria-hidden="true"
-                      style={
-                        {
-                          '--composer-provider-accent': `var(--provider-${previewProviderHueClass}-color, currentColor)`
-                        } as React.CSSProperties
-                      }
-                    >
-                      <span className="composer-provider-button-icon" aria-hidden="true">
-                        <ProviderBadgeIcon provider={previewProviderId} />
-                      </span>
-                      <span className="composer-provider-button-label">{meta.providerLabel}</span>
-                    </button>
                     <span
                       className="composer-picker-label settings-composer-preview-control"
                       data-composer-control="permission"
@@ -416,12 +394,34 @@ export function ComposerShellPreview({
                       {meta.permissionLabel}
                     </span>
                     {composerStyle === 'codex' && <PreviewContextWheel control />}
-                    <span
-                      className="composer-picker-label settings-composer-preview-control"
+                    <button
+                      type="button"
+                      className="composer-combined-picker-trigger settings-composer-preview-control"
                       data-composer-control="model"
+                      data-provider={previewProviderId}
+                      tabIndex={-1}
+                      aria-hidden="true"
+                      style={
+                        {
+                          '--chip-accent': `var(--provider-${previewProviderHueClass}-color, currentColor)`
+                        } as React.CSSProperties
+                      }
                     >
-                      {meta.modelLabel}
-                    </span>
+                      <span className="composer-combined-picker-trigger-provider">
+                        <span
+                          className="composer-combined-picker-trigger-provider-icon"
+                          aria-hidden="true"
+                        >
+                          <ProviderBadgeIcon provider={previewProviderId} />
+                        </span>
+                        <span className="composer-combined-picker-trigger-provider-label">
+                          {meta.providerLabel}
+                        </span>
+                      </span>
+                      <span className="composer-combined-picker-trigger-primary">
+                        {meta.modelLabel}
+                      </span>
+                    </button>
                   </div>
                   <div className="composer-inline-actions" aria-hidden="true">
                     {composerStyle !== 'codex' && <PreviewContextWheel />}
