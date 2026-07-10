@@ -5,6 +5,9 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
   CURSOR_LEGACY_WEB_MCP_SERVER_NAME,
+  CURSOR_BROKER_MCP_ALLOW_RULES,
+  CURSOR_BROKER_PLAN_MCP_ALLOW_RULES,
+  CURSOR_BROKER_READONLY_MCP_ALLOW_RULES,
   CURSOR_MCP_ALLOW_RULES,
   CURSOR_MCP_SERVER_NAME,
   CURSOR_READONLY_MCP_ALLOW_RULES,
@@ -19,7 +22,10 @@ import {
   mergeCursorMcpConfig,
   mergeGlobalCursorMcpServers
 } from './CursorMcpBridge'
-import { READ_ONLY_MCP_ADVERTISE_TOOLS } from '../mcp/McpAutoAllowedTools'
+import {
+  PLAN_INSTRUMENT_ADVERTISE_TOOLS,
+  READ_ONLY_MCP_ADVERTISE_TOOLS
+} from '../mcp/McpAutoAllowedTools'
 
 // 1.0.6-CRUX34 (OQ#2) — the Cursor MCP bridge. The live spike proved that a
 // TaskWraith MCP server registered via workspace `.cursor/mcp.json` + Cursor
@@ -56,6 +62,40 @@ describe('CURSOR_MCP_ALLOW_RULES', () => {
     expect(isReservedCursorMcpServerName('taskwraith-evil')).toBe(true)
     expect(isReservedCursorMcpServerName('taskwraith_backup')).toBe(false)
     expect(isReservedCursorMcpServerName('user_taskwraith')).toBe(false)
+  })
+})
+
+describe('canonical global broker allow rules', () => {
+  it('never grants permissions to the preserved user-owned taskwraith server', () => {
+    expect(CURSOR_BROKER_MCP_ALLOW_RULES).toContain(
+      `Mcp(${CURSOR_MCP_SERVER_NAME}:run_shell_command)`
+    )
+    expect(CURSOR_BROKER_MCP_ALLOW_RULES).not.toContain(
+      `Mcp(${CURSOR_LEGACY_WEB_MCP_SERVER_NAME}:run_shell_command)`
+    )
+    expect(CURSOR_BROKER_READONLY_MCP_ALLOW_RULES).not.toContain(
+      `Mcp(${CURSOR_LEGACY_WEB_MCP_SERVER_NAME}:read_file)`
+    )
+    expect(CURSOR_BROKER_PLAN_MCP_ALLOW_RULES).not.toContain(
+      `Mcp(${CURSOR_LEGACY_WEB_MCP_SERVER_NAME}:canvas_click)`
+    )
+  })
+
+  it('uses exact safe/plan rules without a canonical wildcard', () => {
+    expect(CURSOR_BROKER_READONLY_MCP_ALLOW_RULES).toContain(
+      `Mcp(${CURSOR_MCP_SERVER_NAME}:read_file)`
+    )
+    expect(CURSOR_BROKER_READONLY_MCP_ALLOW_RULES).not.toContain(
+      `Mcp(${CURSOR_MCP_SERVER_NAME}:write_file)`
+    )
+    expect(CURSOR_BROKER_READONLY_MCP_ALLOW_RULES).not.toContain(
+      `Mcp(${CURSOR_MCP_SERVER_NAME}:*)`
+    )
+    for (const tool of PLAN_INSTRUMENT_ADVERTISE_TOOLS) {
+      expect(CURSOR_BROKER_PLAN_MCP_ALLOW_RULES).toContain(
+        `Mcp(${CURSOR_MCP_SERVER_NAME}:${tool})`
+      )
+    }
   })
 })
 
@@ -130,6 +170,24 @@ describe('B-mode global broker helpers', () => {
     expect(servers[CURSOR_MCP_SERVER_NAME]).toBeDefined()
   })
 
+  it('prunes only an explicitly named obsolete TaskWraith registration', () => {
+    const existing = {
+      mcpServers: {
+        taskwraith: { command: 'node', args: ['/user-web.cjs'] },
+        agbench: { command: 'node', args: ['/user-tools.cjs'] },
+        [CURSOR_SCOPED_MCP_SERVER_NAME]: { command: 'node', args: ['/old-readonly.cjs'] }
+      }
+    }
+    const entry = buildCursorBrokerMcpServerEntry(invocation)
+    const merged = mergeGlobalCursorMcpServers(existing, entry, [CURSOR_SCOPED_MCP_SERVER_NAME])
+    const servers = (merged.mcpServers ?? {}) as Record<string, unknown>
+
+    expect(servers[CURSOR_SCOPED_MCP_SERVER_NAME]).toBeUndefined()
+    expect(servers.taskwraith).toEqual({ command: 'node', args: ['/user-web.cjs'] })
+    expect(servers.agbench).toEqual({ command: 'node', args: ['/user-tools.cjs'] })
+    expect(servers[CURSOR_MCP_SERVER_NAME]).toBeDefined()
+  })
+
   it('globalCursorMcpNeedsUpdate detects a token refresh (repair-on-stale) but skips a no-op', () => {
     const entry = buildCursorBrokerMcpServerEntry(invocation)
     const registered = mergeGlobalCursorMcpServers({ mcpServers: {} }, entry)
@@ -141,6 +199,22 @@ describe('B-mode global broker helpers', () => {
       args: ['/tmp/s.cjs', '--socket', '/sock', '--token', 'T2']
     })
     expect(globalCursorMcpNeedsUpdate(registered, rotated)).toBe(true)
+  })
+
+  it('globalCursorMcpNeedsUpdate detects an obsolete registration that must be pruned', () => {
+    const entry = buildCursorBrokerMcpServerEntry(invocation)
+    const registered = mergeGlobalCursorMcpServers(
+      {
+        mcpServers: {
+          [CURSOR_SCOPED_MCP_SERVER_NAME]: { command: 'node', args: ['/old-readonly.cjs'] }
+        }
+      },
+      entry
+    )
+
+    expect(
+      globalCursorMcpNeedsUpdate(registered, entry, [CURSOR_SCOPED_MCP_SERVER_NAME])
+    ).toBe(true)
   })
 })
 

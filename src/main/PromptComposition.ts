@@ -22,6 +22,7 @@ import {
   taskWraithToolNamespaceHint
 } from './TaskWraithMcpPromptNames'
 import { isTaskWraithCloseoutMessage } from '../shared/taskWraithCloseout'
+import { shouldUseCoreMcpProfile } from './mcp/McpToolProfiles'
 
 /**
  * Prompt-composition utilities (Phase B3 step 1).
@@ -116,7 +117,7 @@ export const TASKWRAITH_RECON_STEER_NOTE = [
  * Cursor/Cline/Codex/Devin do: read first, verify after, never fake a pass.
  */
 const CLOUD_EDIT_DISCIPLINE_NOTE = [
-  'Read before you edit: before you replace or apply_patch an existing file — or write_file over one that already exists — open it with read_file (or open_workspace_file) so you edit against its current contents, especially for a partial edit. Never modify a file you have not read this run. Creating a genuinely new file with write_file needs no prior read.',
+  'Read before you edit: before you replace or apply_patch an existing file — or write_file over one that already exists — open it with read_file so you edit against its current contents, especially for a partial edit. Never modify a file you have not read this run. Creating a genuinely new file with write_file needs no prior read.',
   'After making code changes, verify them when the project has checks: use get_diagnostics for structured type/lint problems, and if run_task exposes a relevant lint/build/test task, run it and summarize the outcome with test_result_summary before declaring the task done. If no such task exists, say so plainly rather than inventing a result.',
   'Never claim tests, builds, or lint passed without actually running them — report real tool output, not a fabricated success.'
 ].join('\n')
@@ -178,6 +179,7 @@ function buildTaskWraithRuntimePreamble(args: {
   providerLabel: string
   finalPrompt: string
   nativeSubAgentInstruction: string | null
+  coreMcpProfile: boolean
 }): string {
   const delegateTool = taskWraithToolNameForProvider(args.provider, 'delegate_to_subthread')
   const searchTool = taskWraithToolNameForProvider(args.provider, 'workspace_search')
@@ -190,7 +192,11 @@ function buildTaskWraithRuntimePreamble(args: {
     `TaskWraith runtime note (${TASKWRAITH_RUNTIME_PREAMBLE_VERSION}): this ${args.providerLabel} workspace run has access to the TaskWraith MCP server.`,
     'Use TaskWraith MCP tools for workspace reads/search, edits, git, task/test verification, user questions, diagnostics, and sub-thread control.',
     `${taskWraithToolNamespaceHint(args.provider)} Key examples: ${searchTool}, ${patchTool}, ${statusTool}, ${taskTool}, ${delegateTool}.`,
-    'Image tools are also available over MCP: image_edit (blur/redact/crop/resize), svg_rasterize (preview an SVG you produced as a PNG — the transcript does not render SVG inline), and image_generate (text-to-image, only when the user has enabled it with a key in Settings). Prefer them over shelling out or pasting data URLs.',
+    ...(args.coreMcpProfile
+      ? []
+      : [
+          'Image tools are also available over MCP: image_edit (blur/redact/crop/resize), svg_rasterize (preview an SVG you produced as a PNG — the transcript does not render SVG inline), and image_generate (text-to-image, only when the user has enabled it with a key in Settings). Prefer them over shelling out or pasting data URLs.'
+        ]),
     CLOUD_EDIT_DISCIPLINE_NOTE,
     `For CROSS-PROVIDER delegation, call ${delegateTool}({ provider, prompt, returnResult }) through TaskWraith; do not use provider-native Task/invoke_agent/subagent paths for cross-provider work because they cannot reach other TaskWraith providers.`,
     `For asking the user a question, ALWAYS call ${questionTool} instead of a provider-native question/elicitation tool (e.g. Claude Code's built-in AskUserQuestion). The native tool has no attached interactive terminal in this harness — it silently auto-resolves with an empty answer and is never shown to the user, on desktop OR the iOS companion app. ${questionTool} is the only path wired end-to-end (Electron picker UI + the iOS remote question card), so it is the one that actually reaches the user, including on a paired phone.`,
@@ -738,7 +744,7 @@ export function composeRunPrompt(input: ComposeRunPromptInput): ComposeRunPrompt
   }
 
   // (3) Write-capable cloud/runtime preamble. Keep this compact and invariant:
-  // the full MCP catalog is available through tool metadata, while the prompt
+  // the active MCP catalog is available through tool metadata, while the prompt
   // only carries the provider namespace, edit discipline, and cross-provider
   // delegation guardrails. Gemini/Claude/Codex skip on resumable sessions;
   // Kimi/Cursor/Grok keep injecting until their session retention is verified.
@@ -757,7 +763,8 @@ export function composeRunPrompt(input: ComposeRunPromptInput): ComposeRunPrompt
       provider,
       providerLabel: providerDisplayName(provider),
       finalPrompt,
-      nativeSubAgentInstruction
+      nativeSubAgentInstruction,
+      coreMcpProfile: shouldUseCoreMcpProfile(provider, nextModel)
     })
     contextualPrompt = `${taskWraithRuntimePreamble}\n\n${contextualPrompt}`
     runtimePreambleInjected = true
@@ -788,6 +795,7 @@ export function composeRunPrompt(input: ComposeRunPromptInput): ComposeRunPrompt
     !runtimePreambleInjected &&
     !isGlobalRun &&
     approvalMode !== 'plan' &&
+    !shouldUseCoreMcpProfile(provider, nextModel) &&
     promptNeedsImageToolsHint(finalPrompt)
   ) {
     contextualPrompt = `${TASKWRAITH_IMAGE_TOOLS_NOTE}\n\n${contextualPrompt}`

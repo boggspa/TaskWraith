@@ -843,11 +843,13 @@ import {
   brokerRequest as mcpBridgeBrokerRequest,
   createMcpBridgeRuntime,
   GEMINI_MCP_AUDIT_SUBSET_ARG,
+  GEMINI_MCP_CORE_SUBSET_ARG,
   GEMINI_MCP_PLAN_SUBSET_ARG,
   GEMINI_MCP_SAFE_SUBSET_ARG,
   mcpToolCallResponseFromBrokerResult as mcpBridgeToolCallResponseFromBrokerResult,
   startGeminiMcpBridgeProcess as startGeminiMcpBridgeProcessWithDeps
 } from './mcp/McpBridgeRuntime'
+import { shouldUseCoreMcpProfile } from './mcp/McpToolProfiles'
 import { createGeminiDiscoveryHelpers } from './gemini/GeminiDiscovery'
 import { TrustStatusService } from './TrustStatusService'
 import {
@@ -899,6 +901,9 @@ import {
   buildCursorBrokerMcpServerEntry,
   buildCursorMcpServerEntry,
   buildCursorReadOnlyMcpServerEntry,
+  CURSOR_BROKER_MCP_ALLOW_RULES,
+  CURSOR_BROKER_PLAN_MCP_ALLOW_RULES,
+  CURSOR_BROKER_READONLY_MCP_ALLOW_RULES,
   CURSOR_LEGACY_WEB_MCP_SERVER_NAME,
   CURSOR_MCP_ALLOW_RULES,
   CURSOR_MCP_SERVER_NAME,
@@ -1753,9 +1758,15 @@ const {
 function taskwraithMcpBridgeArgs(
   socketPath: string = geminiMcpSocketPath(),
   safeSubset = false,
-  planSubset = false
+  planSubset = false,
+  coreSubset = false
 ): string[] {
-  return mcpBridgeRuntime.taskwraithMcpBridgeArgs(socketPath, safeSubset, planSubset)
+  return mcpBridgeRuntime.taskwraithMcpBridgeArgs(
+    socketPath,
+    safeSubset,
+    planSubset,
+    coreSubset
+  )
 }
 
 // Late-bound APNs handles. Constructed inside `app.whenReady()` (because
@@ -11930,9 +11941,12 @@ async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
         throw new Error(taskwraithMcpBridgeUnavailableMessage(bridgeCommandStatus))
       }
       await mcpBridgeRuntime.startGeminiMcpBroker()
+      const coreSubset = shouldUseCoreMcpProfile('cursor', payload.model)
       const brokerInvocation = {
         command: bridgeCommandStatus.command,
-        args: taskwraithMcpBridgeArgs(geminiMcpSocketPath()),
+        // Cursor Composer 2.5 keeps the full surface; Grok 4.5 receives the
+        // budgeted core profile so Cursor accepts the MCP catalogue.
+        args: taskwraithMcpBridgeArgs(geminiMcpSocketPath(), false, false, coreSubset),
         env: {
           [GEMINI_MCP_BRIDGE_ENV]: '1',
           TASKWRAITH_PARENT_PROVIDER: 'cursor',
@@ -11945,13 +11959,18 @@ async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
       // the only registration cursor-agent durably approves (`mcp list` → "ready");
       // a per-run WORKSPACE server is never approved, so headless -p rejects its
       // every call ("User rejected MCP"). No colliding legacy `taskwraith` alias.
-      const useGlobalBroker = cursorGlobalBrokerEnabled()
+      // Grok 4.5 must use the one-server global path: legacy workspace mode
+      // registers a duplicate alias, and Cursor counts tools across aliases.
+      const useGlobalBroker = cursorGlobalBrokerEnabled() || coreSubset
       if (useGlobalBroker) {
         ensureGlobalCursorBrokerRegistered(
           fsSync,
           globalCursorMcpPath(),
           globalCursorMcpDir(),
-          buildCursorBrokerMcpServerEntry(brokerInvocation)
+          buildCursorBrokerMcpServerEntry(brokerInvocation),
+          // Migrate the old global read-only registration. Cursor's headless
+          // CLI can load it even when Home UI says disabled, adding 54 tools.
+          [CURSOR_SCOPED_MCP_SERVER_NAME]
         )
       }
       // Workspace cli.json always denies native shell/write + allows the broker's
@@ -11962,13 +11981,20 @@ async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
         ? userServerEntry
         : { ...buildCursorMcpServerEntry(brokerInvocation), ...userServerEntry }
       const hasWorkspaceServers = Object.keys(workspaceServers).length > 0
+      const taskWraithAllowRules = useGlobalBroker
+        ? CURSOR_BROKER_MCP_ALLOW_RULES
+        : CURSOR_MCP_ALLOW_RULES
       restoreCursorConfig = applyCursorWriteModeConfig(
         fsSync,
         cliPath,
         cursorDir,
         {
-          allowRules: [...CURSOR_MCP_ALLOW_RULES, ...buildUserMcpCursorAllowRules(userMcpServers)],
-          ...(hasWorkspaceServers ? { mcpConfigPath: mcpPath, serverEntry: workspaceServers } : {})
+          allowRules: [...taskWraithAllowRules, ...buildUserMcpCursorAllowRules(userMcpServers)],
+          // Even B-mode writes a transient workspace config so reserved names
+          // cannot shadow the canonical global broker during this --force run.
+          ...(hasWorkspaceServers || useGlobalBroker
+            ? { mcpConfigPath: mcpPath, serverEntry: workspaceServers }
+            : {})
         },
         // Full Workspace Access → drop the native shell/write deny-list (see
         // applyCursorWriteModeConfig). Gated on the post-clamp signed full_access
@@ -12045,12 +12071,18 @@ async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
       // broker. A read_only seat keeps the strict subset. This block only runs for a
       // non-write-capable seat, so presetId distinguishes plan from read_only.
       const cursorPlanSeat = payload.effectivePermissions?.presetId === 'plan'
-      const scopedEntry = buildCursorReadOnlyMcpServerEntry({
+      const coreSubset = shouldUseCoreMcpProfile('cursor', payload.model)
+      const brokerInvocation = {
         command: bridgeCommandStatus.command,
         // --safe-subset (+ --plan-subset for a plan seat): the broker advertises +
         // executes ONLY the read-only tool set (fail-closed), widened to the
         // host-gated plan instruments when the seat is on the plan preset.
-        args: taskwraithMcpBridgeArgs(geminiMcpSocketPath(), true, cursorPlanSeat),
+        args: taskwraithMcpBridgeArgs(
+          geminiMcpSocketPath(),
+          true,
+          cursorPlanSeat,
+          coreSubset
+        ),
         env: {
           [GEMINI_MCP_BRIDGE_ENV]: '1',
           TASKWRAITH_PARENT_PROVIDER: 'cursor',
@@ -12058,26 +12090,43 @@ async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
           TASKWRAITH_CHAT_ID: route.appChatId || '',
           TASKWRAITH_WORKSPACE_PATH: payload.scope === 'global' ? '' : payload.workspace || ''
         }
-      })
-      // "B" mode (default): durable GLOBAL registration so the scoped read-only
-      // broker reaches cursor-agent's "ready" approval; else per-run workspace.
-      const useGlobalBroker = cursorGlobalBrokerEnabled()
+      }
+      const scopedEntry = buildCursorReadOnlyMcpServerEntry(brokerInvocation)
+      // "B" mode (default): durable GLOBAL registration under the canonical
+      // broker name so cursor-agent reaches "ready" approval; else per-run scoped.
+      const useGlobalBroker = cursorGlobalBrokerEnabled() || coreSubset
       if (useGlobalBroker) {
         ensureGlobalCursorBrokerRegistered(
           fsSync,
           globalCursorMcpPath(),
           globalCursorMcpDir(),
-          scopedEntry
+          // Reuse the canonical broker name for read-only runs. A second global
+          // server would make Cursor add both tool catalogues together.
+          buildCursorBrokerMcpServerEntry(brokerInvocation),
+          [CURSOR_SCOPED_MCP_SERVER_NAME]
         )
       }
       restoreCursorConfig = applyCursorWriteModeConfig(fsSync, cliPath, cursorDir, {
-        allowRules: [...CURSOR_READONLY_MCP_ALLOW_RULES],
-        ...(useGlobalBroker ? {} : { mcpConfigPath: mcpPath, serverEntry: scopedEntry })
+        // Global rules name only the canonical TaskWraith-owned broker; the
+        // --safe-subset bridge also filters tools/list AND rejects non-safe
+        // tools/call before the main approval executor.
+        allowRules: [
+          ...(useGlobalBroker
+            ? cursorPlanSeat
+              ? CURSOR_BROKER_PLAN_MCP_ALLOW_RULES
+              : CURSOR_BROKER_READONLY_MCP_ALLOW_RULES
+            : CURSOR_READONLY_MCP_ALLOW_RULES)
+        ],
+        // Global mode still writes an empty broker entry map transiently: the
+        // merge strips reserved workspace names that could shadow the global
+        // TaskWraith broker, while preserving unrelated workspace servers.
+        mcpConfigPath: mcpPath,
+        serverEntry: useGlobalBroker ? {} : scopedEntry
       })
       await ensureCursorMcpApproved(
         resolved.binaryPath,
         payload.workspace,
-        CURSOR_SCOPED_MCP_SERVER_NAME
+        useGlobalBroker ? CURSOR_MCP_SERVER_NAME : CURSOR_SCOPED_MCP_SERVER_NAME
       )
       cursorTaskWraithReadOnlyMcpActive = true
     } catch (error) {
@@ -12341,7 +12390,13 @@ async function runGrokAcpProvider(event: Electron.IpcMainInvokeEvent, payload: A
       // the matching env entry. (Read-only Grok shares the plan-mode bridge gap;
       // this only takes effect when the bridge is actually advertised above.)
       const grokAuditRun = Boolean(payload.auditRun)
-      const grokBridgeArgs = taskwraithMcpBridgeArgs(geminiMcpSocketPath(), safeSubset, grokPlanSeat)
+      const coreSubset = shouldUseCoreMcpProfile('grok', model)
+      const grokBridgeArgs = taskwraithMcpBridgeArgs(
+        geminiMcpSocketPath(),
+        safeSubset,
+        grokPlanSeat,
+        coreSubset
+      )
       grokMcpServers = [
         {
           // ACP McpServer is an UNTAGGED enum: the stdio variant is
@@ -21704,6 +21759,12 @@ function startGeminiMcpBridgeProcess(): void {
   // atomic with the spawn (does not depend on env forwarding to the MCP child).
   if (process.argv.includes(GEMINI_MCP_PLAN_SUBSET_ARG)) {
     process.env.TASKWRAITH_MCP_PLAN_SUBSET = '1'
+  }
+  // Tool-count constrained model profile: the bridge advertises and accepts
+  // only the explicit general-purpose core list. Unlike safe-subset this still
+  // includes write tools, which retain their normal TaskWraith approval gates.
+  if (process.argv.includes(GEMINI_MCP_CORE_SUBSET_ARG)) {
+    process.env.TASKWRAITH_MCP_CORE_SUBSET = '1'
   }
   // Audit role-run scope: a bridge launched with --audit-subset additionally
   // advertises the audit_* tool namespace. Mirrors the safe-subset translation

@@ -739,6 +739,40 @@ describe('image-tool discoverability (PR5)', () => {
     expect(result.contextualPrompt).toContain('Image tools are also available over MCP')
   })
 
+  it('does not promise tools omitted from the Grok 4.5 core profile', () => {
+    const coldCursor = composeRunPrompt({
+      provider: 'cursor',
+      finalPrompt: 'blur the screenshot',
+      messages: [],
+      chatContextTurns: 6,
+      codexHandoffsApplied: [],
+      isGlobalRun: false,
+      approvalMode: 'default',
+      providerLabel: 'Cursor',
+      nextModel: 'grok-4.5'
+    })
+    expect(coldCursor.contextualPrompt).not.toContain('Image tools are also available over MCP')
+    expect(coldCursor.contextualPrompt).not.toContain('open_workspace_file')
+    expect(coldCursor.contextualPrompt).toContain('read_file')
+
+    const resumedGrok = composeRunPrompt({
+      provider: 'grok',
+      finalPrompt: 'blur the screenshot',
+      messages: [],
+      chatContextTurns: 6,
+      codexHandoffsApplied: [],
+      isGlobalRun: false,
+      approvalMode: 'default',
+      providerLabel: 'Grok',
+      resumeSessionId: 'sess-grok',
+      runtimePreambleVersion: TASKWRAITH_RUNTIME_PREAMBLE_VERSION,
+      runtimePreambleProvider: 'grok'
+    })
+    expect(resumedGrok.contextualPrompt).not.toContain(
+      'TaskWraith image tools are available over MCP'
+    )
+  })
+
   it('re-injects only the image note on a resumed session when the prompt is image-related', () => {
     const result = composeRunPrompt({
       provider: 'claude',

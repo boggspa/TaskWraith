@@ -15,7 +15,10 @@
 // allow, pass --approve-mcps, restore) lives in index.ts / CursorWorkspaceConfig.
 
 import { TASKWRAITH_MCP_TOOLS } from '../TaskWraithMcpTools'
-import { READ_ONLY_MCP_ADVERTISE_TOOLS } from '../mcp/McpAutoAllowedTools'
+import {
+  PLAN_MCP_ADVERTISE_TOOLS,
+  READ_ONLY_MCP_ADVERTISE_TOOLS
+} from '../mcp/McpAutoAllowedTools'
 import type { CursorCliConfig } from './CursorWorkspaceConfig'
 
 /** Cursor's older Home MCP bridge used the plain `taskwraith` id for a web-only
@@ -44,12 +47,39 @@ export const CURSOR_SCOPED_MCP_SERVER_NAME = 'taskwraith-cursor'
  *  Never add a broad prefix wildcard rule: a workspace MCP server with a similar
  *  name must not ride TaskWraith's approval. This does NOT touch the native
  *  Shell/Write deny rules. */
-export const CURSOR_MCP_ALLOW_RULES: readonly string[] = [
+/** Rules for the canonical TaskWraith-owned broker only. Global B-mode must use
+ * this set so a preserved user server named `taskwraith` never inherits broker
+ * approval. */
+export const CURSOR_BROKER_MCP_ALLOW_RULES: readonly string[] = [
   `Mcp(${CURSOR_MCP_SERVER_NAME}:*)`,
   ...TASKWRAITH_MCP_TOOLS.map((tool) => `Mcp(${CURSOR_MCP_SERVER_NAME}:${tool})`),
-  ...TASKWRAITH_MCP_TOOLS.map((tool) => `Mcp(${CURSOR_MCP_SERVER_NAME}-${tool})`),
+  ...TASKWRAITH_MCP_TOOLS.map((tool) => `Mcp(${CURSOR_MCP_SERVER_NAME}-${tool})`)
+]
+
+const CURSOR_LEGACY_MCP_ALLOW_RULES: readonly string[] = [
   ...TASKWRAITH_MCP_TOOLS.map((tool) => `Mcp(${CURSOR_LEGACY_WEB_MCP_SERVER_NAME}:${tool})`),
   ...TASKWRAITH_MCP_TOOLS.map((tool) => `Mcp(${CURSOR_LEGACY_WEB_MCP_SERVER_NAME}-${tool})`)
+]
+
+/** Combined rules are only for legacy workspace A-mode, where TaskWraith owns
+ * both registered aliases and removes/restores them around the run. */
+export const CURSOR_MCP_ALLOW_RULES: readonly string[] = [
+  ...CURSOR_BROKER_MCP_ALLOW_RULES,
+  ...CURSOR_LEGACY_MCP_ALLOW_RULES
+]
+
+/** Exact read-only rules for the canonical global broker name. Server approval
+ * is handled separately by `cursor-agent mcp enable`; no wildcard is needed. */
+export const CURSOR_BROKER_READONLY_MCP_ALLOW_RULES: readonly string[] = [
+  ...READ_ONLY_MCP_ADVERTISE_TOOLS.map((tool) => `Mcp(${CURSOR_MCP_SERVER_NAME}:${tool})`),
+  ...READ_ONLY_MCP_ADVERTISE_TOOLS.map((tool) => `Mcp(${CURSOR_MCP_SERVER_NAME}-${tool})`)
+]
+
+/** Plan-seat variant: exact canonical-broker rules for the read tools plus the
+ * host-gated Canvas/media plan instruments. */
+export const CURSOR_BROKER_PLAN_MCP_ALLOW_RULES: readonly string[] = [
+  ...PLAN_MCP_ADVERTISE_TOOLS.map((tool) => `Mcp(${CURSOR_MCP_SERVER_NAME}:${tool})`),
+  ...PLAN_MCP_ADVERTISE_TOOLS.map((tool) => `Mcp(${CURSOR_MCP_SERVER_NAME}-${tool})`)
 ]
 
 /** Allow rules that pre-approve the READ-ONLY scoped broker's tools. The bridge
@@ -298,14 +328,18 @@ export function buildCursorBrokerMcpServerEntry(
  * names), this PRESERVES every existing server — including the user's own global
  * `taskwraith` web server and `agbench` — and only adds/refreshes the exact
  * broker entries passed (repair-on-stale, since the socket token rotates each
- * launch). Never removes a server. Pure.
+ * launch). Optional removals are reserved for obsolete TaskWraith-owned aliases;
+ * callers must never pass user-owned server names. Pure.
  */
 export function mergeGlobalCursorMcpServers(
   existing: unknown,
-  brokerEntries: Record<string, unknown>
+  brokerEntries: Record<string, unknown>,
+  removeServerNames: readonly string[] = []
 ): Record<string, unknown> {
   const base = asRecord(existing)
-  const servers: Record<string, unknown> = { ...asRecord(base.mcpServers), ...brokerEntries }
+  const servers: Record<string, unknown> = { ...asRecord(base.mcpServers) }
+  for (const name of removeServerNames) delete servers[name]
+  Object.assign(servers, brokerEntries)
   return { ...base, mcpServers: servers }
 }
 
@@ -316,9 +350,13 @@ export function mergeGlobalCursorMcpServers(
  */
 export function globalCursorMcpNeedsUpdate(
   existing: unknown,
-  brokerEntries: Record<string, unknown>
+  brokerEntries: Record<string, unknown>,
+  removeServerNames: readonly string[] = []
 ): boolean {
   const servers = asRecord(asRecord(existing).mcpServers)
+  for (const name of removeServerNames) {
+    if (name in servers && !(name in brokerEntries)) return true
+  }
   for (const [name, entry] of Object.entries(brokerEntries)) {
     if (JSON.stringify(servers[name]) !== JSON.stringify(entry)) return true
   }

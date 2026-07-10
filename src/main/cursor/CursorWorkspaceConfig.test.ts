@@ -338,4 +338,25 @@ describe('ensureGlobalCursorBrokerRegistered (B mode)', () => {
     const rotated = { 'taskwraith-broker': { command: '/x/electron', args: ['/s.cjs', '--token', 'T2'] } }
     expect(ensureGlobalCursorBrokerRegistered(fs, GLOBAL_MCP, GLOBAL_DIR, rotated)).toBe(true)
   })
+
+  it('migrates an obsolete app-owned scoped broker without touching user servers', () => {
+    const { fs, files } = makeFakeFs({
+      [GLOBAL_MCP]: JSON.stringify({
+        mcpServers: {
+          taskwraith: { command: 'node', args: ['/user-web.cjs'] },
+          'taskwraith-cursor': { command: 'node', args: ['/old-readonly.cjs'] }
+        }
+      })
+    })
+
+    expect(
+      ensureGlobalCursorBrokerRegistered(fs, GLOBAL_MCP, GLOBAL_DIR, brokerOnly, [
+        'taskwraith-cursor'
+      ])
+    ).toBe(true)
+    const cfg = JSON.parse(files.get(GLOBAL_MCP)!)
+    expect(cfg.mcpServers['taskwraith-cursor']).toBeUndefined()
+    expect(cfg.mcpServers.taskwraith).toEqual({ command: 'node', args: ['/user-web.cjs'] })
+    expect(cfg.mcpServers['taskwraith-broker']).toBeDefined()
+  })
 })

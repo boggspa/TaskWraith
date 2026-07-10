@@ -97,10 +97,12 @@ export interface CursorMcpBridgeOptions {
  * "B" mode: durably register the TaskWraith broker entries in the GLOBAL
  * `~/.cursor/mcp.json` so `cursor-agent mcp enable` gives them the persistent
  * "ready" approval a per-run workspace server never gets. PERSISTENT (never
- * restored — the whole point is durability) and ADDITIVE (preserves every other
- * server, incl the user's own). Idempotent: only writes when the broker entries
- * changed (the socket token rotates each launch, so this refreshes them —
- * "ready" is keyed on the server NAME, so it survives an args refresh).
+ * restored — the whole point is durability) and user-server preserving.
+ * `removeServerNames` is only for obsolete TaskWraith-owned registrations that
+ * would otherwise add their tools to Cursor's aggregate model catalogue.
+ * Idempotent: only writes when the broker entries or removals changed (the socket
+ * token rotates each launch, so this refreshes them — "ready" is keyed on the
+ * server NAME, so it survives an args refresh).
  *
  * `globalMcpDir` = the user's `~/.cursor` (created if missing). Returns whether a
  * write happened. Best-effort by design at the caller; throws only on a real fs
@@ -110,11 +112,12 @@ export function ensureGlobalCursorBrokerRegistered(
   fs: CursorConfigFs,
   globalMcpPath: string,
   globalMcpDir: string,
-  brokerEntries: Record<string, unknown>
+  brokerEntries: Record<string, unknown>,
+  removeServerNames: readonly string[] = []
 ): boolean {
   const cap = captureFile(fs, globalMcpPath)
-  if (!globalCursorMcpNeedsUpdate(cap.parsed, brokerEntries)) return false
-  const merged = mergeGlobalCursorMcpServers(cap.parsed, brokerEntries)
+  if (!globalCursorMcpNeedsUpdate(cap.parsed, brokerEntries, removeServerNames)) return false
+  const merged = mergeGlobalCursorMcpServers(cap.parsed, brokerEntries, removeServerNames)
   if (!fs.existsSync(globalMcpDir)) fs.mkdirSync(globalMcpDir, { recursive: true })
   fs.writeFileSync(globalMcpPath, `${JSON.stringify(merged, null, 2)}\n`)
   return true

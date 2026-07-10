@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
+  GEMINI_MCP_CORE_SUBSET_ARG,
   McpBridgeRuntime,
   handleMcpJsonRpcMessage,
   safeMcpStreamWrite,
@@ -180,5 +181,274 @@ describe('MCP bridge stream writes', () => {
       'claude',
       {}
     )
+  })
+
+  it('advertises only the explicit core profile to tool-constrained models', () => {
+    const chunks: string[] = []
+    const stream = {
+      write: vi.fn((chunk: string) => {
+        chunks.push(chunk)
+        return true
+      })
+    }
+
+    handleMcpJsonRpcMessage(
+      {
+        getDefaultSocketPath: () => '/tmp/taskwraith.sock',
+        getAppVersion: () => '1.0.0',
+        getMcpToolDefinitions: () => [
+          { name: 'read_file' },
+          { name: 'apply_patch' },
+          { name: 'canvas_eval' }
+        ],
+        env: { TASKWRAITH_MCP_CORE_SUBSET: '1' },
+        stdout: stream as never
+      },
+      '/tmp/taskwraith.sock',
+      'token-1',
+      { jsonrpc: '2.0', id: 9, method: 'tools/list' },
+      'line'
+    )
+
+    const response = JSON.parse(chunks.join('').trim()) as {
+      result: { tools: Array<{ name: string }> }
+    }
+    expect(response.result.tools.map((tool) => tool.name)).toEqual(['read_file', 'apply_patch'])
+  })
+
+  it('intersects the core profile with the existing read-only safety scope', () => {
+    const chunks: string[] = []
+    const stream = {
+      write: vi.fn((chunk: string) => {
+        chunks.push(chunk)
+        return true
+      })
+    }
+
+    handleMcpJsonRpcMessage(
+      {
+        getDefaultSocketPath: () => '/tmp/taskwraith.sock',
+        getAppVersion: () => '1.0.0',
+        getMcpToolDefinitions: () => [
+          { name: 'read_file' },
+          { name: 'prompt_task_normalize' },
+          { name: 'write_file' }
+        ],
+        env: {
+          TASKWRAITH_MCP_SAFE_SUBSET: '1',
+          TASKWRAITH_MCP_CORE_SUBSET: '1'
+        },
+        stdout: stream as never
+      },
+      '/tmp/taskwraith.sock',
+      'token-1',
+      { jsonrpc: '2.0', id: 11, method: 'tools/list' },
+      'line'
+    )
+
+    const response = JSON.parse(chunks.join('').trim()) as {
+      result: { tools: Array<{ name: string }> }
+    }
+    // prompt_task_normalize is safe but not core; write_file is core but not
+    // read-only. Only tools present in both profiles may be advertised.
+    expect(response.result.tools.map((tool) => tool.name)).toEqual(['read_file'])
+  })
+
+  it('layers the host-gated plan instruments over a constrained core profile', async () => {
+    const brokerRequest = vi.fn(async () => ({ ok: true, text: 'approved' }))
+    const chunks: string[] = []
+    const stream = {
+      write: vi.fn((chunk: string) => {
+        chunks.push(chunk)
+        return true
+      })
+    }
+    const deps = {
+      getDefaultSocketPath: () => '/tmp/taskwraith.sock',
+      getAppVersion: () => '1.0.0',
+      getMcpToolDefinitions: () => [
+        { name: 'read_file' },
+        { name: 'canvas_click' },
+        { name: 'video_probe' },
+        { name: 'write_file' }
+      ],
+      brokerRequest,
+      env: {
+        TASKWRAITH_MCP_SAFE_SUBSET: '1',
+        TASKWRAITH_MCP_PLAN_SUBSET: '1',
+        TASKWRAITH_MCP_CORE_SUBSET: '1'
+      },
+      stdout: stream as never
+    }
+
+    handleMcpJsonRpcMessage(
+      deps,
+      '/tmp/taskwraith.sock',
+      'token-1',
+      { jsonrpc: '2.0', id: 14, method: 'tools/list' },
+      'line'
+    )
+    const listResponse = JSON.parse(chunks.join('').trim()) as {
+      result: { tools: Array<{ name: string }> }
+    }
+    expect(listResponse.result.tools.map((tool) => tool.name)).toEqual([
+      'read_file',
+      'canvas_click',
+      'video_probe'
+    ])
+
+    chunks.length = 0
+    handleMcpJsonRpcMessage(
+      deps,
+      '/tmp/taskwraith.sock',
+      'token-1',
+      {
+        jsonrpc: '2.0',
+        id: 15,
+        method: 'tools/call',
+        params: { name: 'canvas_click', arguments: { ref: 'e1' } }
+      },
+      'line'
+    )
+    await new Promise((resolve) => setImmediate(resolve))
+
+    expect(brokerRequest).toHaveBeenCalledWith(
+      '/tmp/taskwraith.sock',
+      expect.objectContaining({ tool: 'canvas_click' })
+    )
+  })
+
+  it('rejects a stale direct call outside the advertised core profile', async () => {
+    const brokerRequest = vi.fn(async () => ({ ok: true, text: 'unexpected' }))
+    const chunks: string[] = []
+    const stream = {
+      write: vi.fn((chunk: string) => {
+        chunks.push(chunk)
+        return true
+      })
+    }
+
+    handleMcpJsonRpcMessage(
+      {
+        getDefaultSocketPath: () => '/tmp/taskwraith.sock',
+        getAppVersion: () => '1.0.0',
+        getMcpToolDefinitions: () => [],
+        brokerRequest,
+        env: { TASKWRAITH_MCP_CORE_SUBSET: '1' },
+        stdout: stream as never
+      },
+      '/tmp/taskwraith.sock',
+      'token-1',
+      {
+        jsonrpc: '2.0',
+        id: 10,
+        method: 'tools/call',
+        params: { name: 'canvas_eval', arguments: { expression: '1 + 1' } }
+      },
+      'line'
+    )
+    await new Promise((resolve) => setImmediate(resolve))
+
+    expect(brokerRequest).not.toHaveBeenCalled()
+    const response = JSON.parse(chunks.join('').trim()) as { error: { code: number; message: string } }
+    expect(response.error.code).toBe(-32601)
+    expect(response.error.message).toContain('core MCP profile')
+  })
+
+  it('keeps run-scoped audit tools callable when the core profile is active', async () => {
+    const brokerRequest = vi.fn(async () => ({ ok: true, text: 'recorded' }))
+    const chunks: string[] = []
+    const stream = {
+      write: vi.fn((chunk: string) => {
+        chunks.push(chunk)
+        return true
+      })
+    }
+    const deps = {
+      getDefaultSocketPath: () => '/tmp/taskwraith.sock',
+      getAppVersion: () => '1.0.0',
+      getMcpToolDefinitions: () => [{ name: 'read_file' }],
+      brokerRequest,
+      env: {
+        TASKWRAITH_MCP_CORE_SUBSET: '1',
+        TASKWRAITH_MCP_AUDIT: '1'
+      },
+      stdout: stream as never
+    }
+
+    handleMcpJsonRpcMessage(
+      deps,
+      '/tmp/taskwraith.sock',
+      'token-1',
+      { jsonrpc: '2.0', id: 12, method: 'tools/list' },
+      'line'
+    )
+    const listResponse = JSON.parse(chunks.join('').trim()) as {
+      result: { tools: Array<{ name: string }> }
+    }
+    expect(listResponse.result.tools.map((tool) => tool.name)).toEqual([
+      'read_file',
+      'audit_set_profile',
+      'audit_record_finding',
+      'audit_record_verdict'
+    ])
+
+    chunks.length = 0
+    handleMcpJsonRpcMessage(
+      deps,
+      '/tmp/taskwraith.sock',
+      'token-1',
+      {
+        jsonrpc: '2.0',
+        id: 13,
+        method: 'tools/call',
+        params: { name: 'audit_record_finding', arguments: { claim: 'Finding' } }
+      },
+      'line'
+    )
+    await new Promise((resolve) => setImmediate(resolve))
+
+    expect(brokerRequest).toHaveBeenCalledWith(
+      '/tmp/taskwraith.sock',
+      expect.objectContaining({ tool: 'audit_record_finding' })
+    )
+  })
+
+  it('routes run-scoped audit tools through the main executor', async () => {
+    const executeGeminiMcpTool = vi.fn(async () => ({ text: 'recorded' }))
+    const runtime = new McpBridgeRuntime({
+      getGeminiMcpBrokerToken: () => 'token-1',
+      executeGeminiMcpTool
+    } as never)
+
+    await runtime.handleGeminiMcpBrokerRequest({
+      token: 'token-1',
+      tool: 'audit_record_finding',
+      arguments: { claim: 'Finding' },
+      parentProvider: 'grok',
+      appRunId: 'run-audit-1',
+      appChatId: 'chat-1'
+    })
+
+    expect(executeGeminiMcpTool).toHaveBeenCalledWith(
+      'audit_record_finding',
+      { claim: 'Finding' },
+      { appRunId: 'run-audit-1', appChatId: 'chat-1' },
+      'grok',
+      {}
+    )
+  })
+
+  it('carries the core profile atomically in bridge argv', () => {
+    const runtime = new McpBridgeRuntime({
+      getGeminiMcpSocketPath: () => '/tmp/taskwraith.sock',
+      getGeminiMcpBrokerToken: () => 'token-1',
+      isDev: () => false
+    } as never)
+
+    const args = runtime.taskwraithMcpBridgeArgs('/tmp/taskwraith.sock', false, false, true)
+
+    expect(args).toContain(GEMINI_MCP_CORE_SUBSET_ARG)
+    expect(args[args.length - 1]).toBe(GEMINI_MCP_CORE_SUBSET_ARG)
   })
 })

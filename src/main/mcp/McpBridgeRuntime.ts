@@ -12,13 +12,18 @@ import {
   TASKWRAITH_MCP_TOOLS,
   type TaskWraithMcpToolName
 } from '../TaskWraithMcpTools'
-import { isPlanAdvertisedTool, isReadOnlyAdvertisedTool } from './McpAutoAllowedTools'
+import {
+  PLAN_INSTRUMENT_ADVERTISE_TOOLS,
+  isPlanAdvertisedTool,
+  isReadOnlyAdvertisedTool
+} from './McpAutoAllowedTools'
+import { isCoreMcpAdvertisedTool } from './McpToolProfiles'
 import type { McpCallerContext } from './McpRouteGuards'
 // Audit MCP tool definitions — advertised ONLY to audit role-runs (the bridge
 // child carries TASKWRAITH_MCP_AUDIT=1, set per-run at the provider spawn site).
 // AuditToolExecutors imports McpToolDefinition from here as `import type` (erased
 // at runtime), so this value import introduces no runtime require cycle.
-import { auditToolDefinitions } from './AuditToolExecutors'
+import { AUDIT_MCP_TOOL_NAMES, auditToolDefinitions } from './AuditToolExecutors'
 import {
   KIMI_LEGACY_TASKWRAITH_SERVER_NAMES,
   KIMI_TASKWRAITH_SERVER_NAME,
@@ -67,6 +72,11 @@ export const GEMINI_MCP_SAFE_SUBSET_ARG = '--safe-subset'
 // translates it to TASKWRAITH_MCP_PLAN_SUBSET=1 (read by the tools/list + call
 // guard). Absent → the seat stays scoped to the strict read-only subset.
 export const GEMINI_MCP_PLAN_SUBSET_ARG = '--plan-subset'
+// Model-capability scope flag. Cursor's Grok 4.5 catalogue currently rejects
+// the full TaskWraith MCP surface before a turn starts, so write-capable Grok
+// 4.5 seats advertise the explicit general-purpose core profile instead.
+// Carried in argv so each transient bridge process owns its immutable profile.
+export const GEMINI_MCP_CORE_SUBSET_ARG = '--core-subset'
 // Audit scope flag. Carried in the bridge ARGV (atomic with the spawn, like
 // safe-subset) AND/OR inherited via env: a bridge launched for an audit role-run
 // also advertises the audit_* tool namespace. The bootstrap translates this arg
@@ -289,6 +299,17 @@ let bridgeLogResolved = false
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value))
+}
+
+function isBridgeAuditMcpToolName(value: string): boolean {
+  return (AUDIT_MCP_TOOL_NAMES as readonly string[]).includes(value)
+}
+
+function isCoreMcpAdvertisedForSeat(name: string, planSubset: boolean): boolean {
+  return (
+    isCoreMcpAdvertisedTool(name) ||
+    (planSubset && (PLAN_INSTRUMENT_ADVERTISE_TOOLS as readonly string[]).includes(name))
+  )
 }
 
 function defaultAppendLimitedOutput(
@@ -575,6 +596,11 @@ export function handleMcpJsonRpcMessage(
     const planSubset =
       (deps.env?.TASKWRAITH_MCP_PLAN_SUBSET ?? process.env.TASKWRAITH_MCP_PLAN_SUBSET) === '1'
     const isAdvertisedForSeat = planSubset ? isPlanAdvertisedTool : isReadOnlyAdvertisedTool
+    // Tool-count constrained model profile (currently Cursor/Grok 4.5). Unlike
+    // the read-only scope this includes mutating coding tools, which still pass
+    // through the normal main-side approvals and path/workspace guards.
+    const coreSubsetOnly =
+      (deps.env?.TASKWRAITH_MCP_CORE_SUBSET ?? process.env.TASKWRAITH_MCP_CORE_SUBSET) === '1'
     // Audit role-run bridge (TASKWRAITH_MCP_AUDIT=1): additionally advertise the
     // audit_* tool namespace so the role-run can record findings/verdicts/profile.
     // The flag is set per-run at the provider spawn site and never on a normal
@@ -582,9 +608,14 @@ export function handleMcpJsonRpcMessage(
     // (audit tools route via the registered audit context in the broker).
     const auditSubset = (deps.env?.TASKWRAITH_MCP_AUDIT ?? process.env.TASKWRAITH_MCP_AUDIT) === '1'
     const allTools = deps.getMcpToolDefinitions()
-    const baseTools = safeSubsetOnly
-      ? allTools.filter((tool) => isAdvertisedForSeat(tool.name))
-      : allTools
+    const baseTools =
+      safeSubsetOnly || coreSubsetOnly
+        ? allTools.filter(
+            (tool) =>
+              (!safeSubsetOnly || isAdvertisedForSeat(tool.name)) &&
+              (!coreSubsetOnly || isCoreMcpAdvertisedForSeat(tool.name, planSubset))
+          )
+        : allTools
     const tools = auditSubset ? [...baseTools, ...auditToolDefinitions()] : baseTools
     writeMcpResponse(id, { tools }, transport, stdout)
     return
@@ -594,6 +625,9 @@ export function handleMcpJsonRpcMessage(
     const rawName = params.name
     const name = canonicalTaskWraithToolName(String(rawName || ''))
     const args = params.arguments || {}
+    const auditSubset =
+      (deps.env?.TASKWRAITH_MCP_AUDIT ?? process.env.TASKWRAITH_MCP_AUDIT) === '1'
+    const auditToolRequested = auditSubset && isBridgeAuditMcpToolName(String(name))
     // Read-only scoped bridge (TASKWRAITH_MCP_SAFE_SUBSET=1): refuse any tool
     // outside the non-mutating safe subset rather than routing it to the broker.
     // This is the ENFORCEMENT — a read-only Grok seat auto-runs MCP tools with no
@@ -608,7 +642,7 @@ export function handleMcpJsonRpcMessage(
     const planSubset =
       (deps.env?.TASKWRAITH_MCP_PLAN_SUBSET ?? process.env.TASKWRAITH_MCP_PLAN_SUBSET) === '1'
     const isAdvertisedForSeat = planSubset ? isPlanAdvertisedTool : isReadOnlyAdvertisedTool
-    if (safeSubsetOnly && !isAdvertisedForSeat(String(name))) {
+    if (safeSubsetOnly && !isAdvertisedForSeat(String(name)) && !auditToolRequested) {
       bridgeLog(
         `tools/call REJECTED (${planSubset ? 'plan' : 'read-only'} scope) ` +
           `name=${String(rawName)} canonical=${String(name)} id=${String(id)}`
@@ -617,6 +651,29 @@ export function handleMcpJsonRpcMessage(
         id,
         -32601,
         `Tool '${String(rawName || name)}' is not available to a read-only TaskWraith seat.`,
+        transport,
+        stdout
+      )
+      return
+    }
+    // Keep direct tools/call requests inside the same model-constrained profile
+    // advertised by tools/list. This is defense-in-depth and prevents a stale
+    // model/tool cache from reaching a capability omitted from the current run.
+    const coreSubsetOnly =
+      (deps.env?.TASKWRAITH_MCP_CORE_SUBSET ?? process.env.TASKWRAITH_MCP_CORE_SUBSET) === '1'
+    if (
+      coreSubsetOnly &&
+      !isCoreMcpAdvertisedForSeat(String(name), planSubset) &&
+      !auditToolRequested
+    ) {
+      bridgeLog(
+        `tools/call REJECTED (core scope) name=${String(rawName)} ` +
+          `canonical=${String(name)} id=${String(id)}`
+      )
+      writeMcpError(
+        id,
+        -32601,
+        `Tool '${String(rawName || name)}' is not available in the TaskWraith core MCP profile.`,
         transport,
         stdout
       )
@@ -843,7 +900,8 @@ export class McpBridgeRuntime {
   taskwraithMcpBridgeArgs(
     socketPath: string = this.deps.getGeminiMcpSocketPath(),
     safeSubset = false,
-    planSubset = false
+    planSubset = false,
+    coreSubset = false
   ): string[] {
     return [
       ...(this.deps.isDev() ? [this.deps.getAppPath()] : []),
@@ -859,7 +917,11 @@ export class McpBridgeRuntime {
       // Plan-tier seat: widen the safe-subset to the plan instruments. Appended
       // after --safe-subset, still index-safe; default false keeps the persistent
       // Gemini/Kimi launch args byte-identical (bridgeArgsMatchCurrentLaunch).
-      ...(planSubset ? [GEMINI_MCP_PLAN_SUBSET_ARG] : [])
+      ...(planSubset ? [GEMINI_MCP_PLAN_SUBSET_ARG] : []),
+      // Tool-count constrained model seat: advertise the explicit coding/core
+      // profile while retaining normal write approvals. Appended last so the
+      // socket/token index parsing remains unchanged.
+      ...(coreSubset ? [GEMINI_MCP_CORE_SUBSET_ARG] : [])
     ]
   }
 
@@ -882,7 +944,7 @@ export class McpBridgeRuntime {
     }
     const rawToolName = brokerRequestRecord.tool || brokerRequestRecord.name
     const toolName = canonicalTaskWraithToolName(String(rawToolName || ''))
-    if (!isTaskWraithMcpToolName(toolName)) {
+    if (!isTaskWraithMcpToolName(toolName) && !isBridgeAuditMcpToolName(toolName)) {
       return { ok: false, error: `Unknown TaskWraith MCP tool: ${String(rawToolName || 'unknown')}` }
     }
     const parentProvider = normalizeBrokerParentProvider(brokerRequestRecord.parentProvider)
@@ -895,7 +957,9 @@ export class McpBridgeRuntime {
         : {})
     }
     const result = await this.deps.executeGeminiMcpTool(
-      toolName,
+      // Audit tools are a deliberately run-scoped extension to the canonical
+      // catalog. The main executor validates the active audit registry/role.
+      toolName as TaskWraithMcpToolName,
       brokerRequestRecord.arguments ?? brokerRequestRecord.args ?? brokerRequestRecord.input,
       normalizeRunRoute(brokerRequestRecord),
       parentProvider,

@@ -120,7 +120,7 @@ export function buildCursorCliArgs(input: BuildCursorCliArgsInput): string[] {
     // --force is REQUIRED for the MCP tool CALLS to execute headlessly: proven
     // live, `-p` mode rejects every un-interactively-approved MCP tool call
     // ("User rejected MCP", isReadonly:false) even when the server is enabled
-    // (137 tools) and `--approve-mcps` is set. `--force` = "allow commands
+    // (the full broker catalog) and `--approve-mcps` is set. `--force` = "allow commands
     // UNLESS EXPLICITLY DENIED"; the caller has written a `.cursor/cli.json`
     // that explicitly denies `Shell(**)`/`Write(**)` (proven to block native
     // writes/edits/shell), so --force allows ONLY the TaskWraith broker's MCP
