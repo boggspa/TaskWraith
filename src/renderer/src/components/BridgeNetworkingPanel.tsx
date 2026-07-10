@@ -55,7 +55,14 @@ interface BridgeNetworkingStatus {
   }
 }
 
-export function BridgeNetworkingPanel(): React.JSX.Element {
+export function BridgeNetworkingPanel({
+  onRemoteBridgeChanged
+}: {
+  /** Bridge restarts invalidate the rendered pairing session, while a
+   * successful relay test can make a previously omitted WSS door advertisable.
+   * Let the owner mint a fresh bootstrap after either change. */
+  onRemoteBridgeChanged?: () => void
+} = {}): React.JSX.Element {
   const [status, setStatus] = useState<BridgeNetworkingStatus | null>(null)
   const [loading, setLoading] = useState(true)
   const [savingDaemon, setSavingDaemon] = useState(false)
@@ -159,7 +166,10 @@ export function BridgeNetworkingPanel(): React.JSX.Element {
         </div>
       </section>
 
-      <IosRemoteBridgeSection refreshSignal={iosRemoteRefreshSignal} />
+      <IosRemoteBridgeSection
+        refreshSignal={iosRemoteRefreshSignal}
+        onRemoteBridgeChanged={onRemoteBridgeChanged}
+      />
 
       <section className="bridge-networking-section">
         <header className="bridge-networking-section-header">
@@ -289,6 +299,9 @@ interface IosRemoteTailscaleStatus {
   manualRelayInput: string
   manualRelayUrl: string | null
   active: boolean
+  directRelayUrl?: string | null
+  directAvailable?: boolean
+  cellularReady?: boolean
   runtimeActive: boolean
   usingSavedRelayFallback?: boolean
 }
@@ -300,21 +313,25 @@ interface TailscaleOAuthStatus {
 }
 
 /** iOS remote bridge (relay + E2EE) — settings-first gating so login-item
- * launches keep the bridge alive without shell env. Runtime constructs at
- * startup, so changes prompt a restart. */
+ * launches keep the bridge alive without shell env. Main applies settings
+ * changes immediately by restarting the bridge runtime. */
 function IosRemoteBridgeSection({
-  refreshSignal
+  refreshSignal,
+  onRemoteBridgeChanged
 }: {
   refreshSignal: number
+  onRemoteBridgeChanged?: () => void
 }): React.JSX.Element {
   const [config, setConfig] = useState<IosRemoteConfig | null>(null)
   const [saving, setSaving] = useState(false)
-  const [needsRestart, setNeedsRestart] = useState(false)
   const [sectionError, setSectionError] = useState<string | null>(null)
   const [tailscale, setTailscale] = useState<IosRemoteTailscaleStatus | null>(null)
   const [tailscaleBusy, setTailscaleBusy] = useState(false)
   const [tailscaleTestBusy, setTailscaleTestBusy] = useState(false)
-  const [tailscaleMessage, setTailscaleMessage] = useState<string | null>(null)
+  const [tailscaleMessage, setTailscaleMessage] = useState<{
+    kind: 'ok' | 'error'
+    text: string
+  } | null>(null)
   const [tailscaleCopied, setTailscaleCopied] = useState(false)
   // QR-optional discovery: host-side Tailscale OAuth credential so a paired
   // phone can ask this host to enumerate the tailnet. The secret is write-only
@@ -365,19 +382,29 @@ function IosRemoteBridgeSection({
       setTailscaleMessage(null)
       const result = await window.api.iosRemoteTailscaleEnable?.()
       if (result?.status) setTailscale(result.status as unknown as IosRemoteTailscaleStatus)
+      // This action can restart the bridge before a later Serve/probe step
+      // reports failure. Refresh config + the pairing bootstrap regardless of
+      // the final readiness result so the QR never points at the disposed
+      // pre-action session.
+      const refreshed = (await window.api.getIosRemoteConfig?.()) as IosRemoteConfig | undefined
+      if (refreshed) setConfig(refreshed)
+      onRemoteBridgeChanged?.()
       if (!result?.ok) {
-        setTailscaleMessage(result?.message || 'Tailscale command failed.')
+        setTailscaleMessage({
+          kind: 'error',
+          text: result?.message || 'Tailscale command failed.'
+        })
       } else {
-        // The relay URL setting changed; the runtime picks it up on the
-        // next launch (same restart semantics as the toggle above).
-        setNeedsRestart(true)
-        const refreshed = (await window.api.getIosRemoteConfig?.()) as
-          | IosRemoteConfig
-          | undefined
-        if (refreshed) setConfig(refreshed)
+        setTailscaleMessage({
+          kind: 'ok',
+          text: 'The optional WSS door is ready. The pairing QR above was refreshed.'
+        })
       }
     } catch (err) {
-      setTailscaleMessage(err instanceof Error ? err.message : String(err))
+      setTailscaleMessage({
+        kind: 'error',
+        text: err instanceof Error ? err.message : String(err)
+      })
     } finally {
       setTailscaleBusy(false)
     }
@@ -390,15 +417,19 @@ function IosRemoteBridgeSection({
       const result = await window.api.iosRemoteTailscaleDisable?.()
       if (result?.status) setTailscale(result.status as unknown as IosRemoteTailscaleStatus)
       if (!result?.ok) {
-        setTailscaleMessage(result?.message || 'Tailscale command failed.')
+        setTailscaleMessage({
+          kind: 'error',
+          text: result?.message || 'Tailscale command failed.'
+        })
       } else {
-        const refreshed = (await window.api.getIosRemoteConfig?.()) as
-          | IosRemoteConfig
-          | undefined
+        const refreshed = (await window.api.getIosRemoteConfig?.()) as IosRemoteConfig | undefined
         if (refreshed) setConfig(refreshed)
       }
     } catch (err) {
-      setTailscaleMessage(err instanceof Error ? err.message : String(err))
+      setTailscaleMessage({
+        kind: 'error',
+        text: err instanceof Error ? err.message : String(err)
+      })
     } finally {
       setTailscaleBusy(false)
     }
@@ -410,9 +441,21 @@ function IosRemoteBridgeSection({
       setTailscaleMessage(null)
       const result = await window.api.iosRemoteTailscaleTest?.()
       if (result?.status) setTailscale(result.status as unknown as IosRemoteTailscaleStatus)
-      setTailscaleMessage(result?.message || (result?.ok ? 'Ready for cellular.' : 'Test failed.'))
+      setTailscaleMessage({
+        kind: result?.ok ? 'ok' : 'error',
+        text: result?.ok
+          ? 'Cellular is ready. The pairing QR above was refreshed.'
+          : result?.message || 'Test failed.'
+      })
+      // A user may have fixed Serve outside TaskWraith while the visible QR
+      // still contains the earlier LAN-only candidate set. A successful live
+      // test is the proof needed to mint a Cellular-ready bootstrap now.
+      if (result?.ok) onRemoteBridgeChanged?.()
     } catch (err) {
-      setTailscaleMessage(err instanceof Error ? err.message : String(err))
+      setTailscaleMessage({
+        kind: 'error',
+        text: err instanceof Error ? err.message : String(err)
+      })
     } finally {
       setTailscaleTestBusy(false)
     }
@@ -426,7 +469,7 @@ function IosRemoteBridgeSection({
       setTailscaleCopied(true)
       window.setTimeout(() => setTailscaleCopied(false), 1200)
     } catch {
-      setTailscaleMessage('Could not copy the detected relay door.')
+      setTailscaleMessage({ kind: 'error', text: 'Could not copy the detected relay door.' })
     }
   }
 
@@ -485,7 +528,10 @@ function IosRemoteBridgeSection({
       const result = (await window.api.setIosRemoteConfig?.(patch)) as IosRemoteConfig | undefined
       if (result) {
         setConfig(result)
-        setNeedsRestart(result.effectiveEnabled !== result.runtimeActive)
+        // set-ios-remote-config applies the change immediately by restarting
+        // (or stopping) the bridge. Its old pairing session is therefore no
+        // longer valid even when the resulting settings values look unchanged.
+        onRemoteBridgeChanged?.()
         const ts = (await window.api.iosRemoteTailscaleStatus?.()) as
           | IosRemoteTailscaleStatus
           | undefined
@@ -515,11 +561,11 @@ function IosRemoteBridgeSection({
   const switchChecked = config?.envOverride
     ? Boolean(config.effectiveEnabled)
     : (config?.enabled ?? false)
+  const configuredWssUrl = config?.relayUrl.trim().startsWith('wss://')
+    ? config.relayUrl.trim()
+    : null
   const relayDoorExample =
-    tailscale?.suggestedUrl ||
-    (tailscale?.dnsName
-      ? `wss://${tailscale.dnsName}:${tailscale.relayPort || 8443}`
-      : 'wss://<this-mac-magicdns-name>:8443')
+    tailscale?.suggestedUrl || configuredWssUrl || 'wss://<this-mac-magicdns-name>'
 
   return (
     <section className="bridge-networking-section">
@@ -549,28 +595,35 @@ function IosRemoteBridgeSection({
       </label>
       <div className="settings-service-row bridge-networking-detected-relay-row">
         <span>
-          Detected Tailscale relay door
+          Tailscale remote access
           <small>
             {tailscale === null
               ? 'Checking Tailscale…'
               : !tailscale.tailscaleAvailable
                 ? tailscale.tailscaleReason ||
                   'Tailscale not detected — install it and sign in to enable off-LAN access.'
-                : tailscale.usingSavedRelayFallback
-                  ? tailscale.tailscaleReason ||
-                    'Using the saved Tailscale relay door while TaskWraith rechecks Tailscale.'
-                : tailscale.active
-                  ? 'Ready for cellular when the phone has Tailscale connected.'
-                  : 'Use this for off-LAN iOS pairing. TaskWraith will configure Tailscale Serve and test the WSS front door.'}
+                : tailscale.directAvailable
+                  ? 'Ready for Cellular directly over Tailscale — no Serve setup required. WSS is optional defense-in-depth.'
+                  : tailscale.active
+                    ? 'Ready for Cellular through the optional Tailscale Serve WSS door.'
+                    : tailscale.usingSavedRelayFallback
+                      ? tailscale.tailscaleReason ||
+                        'The optional WSS address is saved but not live. Direct Tailscale IP remains the preferred zero-setup route when available.'
+                      : 'Connect Tailscale on the Mac and phone for zero-setup Cellular access. You can optionally add a WSS front door.'}
           </small>
-          {tailscale?.suggestedUrl && (
+          {tailscale?.directRelayUrl && (
+            <code className="bridge-networking-detected-relay-url">
+              {tailscale.directRelayUrl}
+            </code>
+          )}
+          {!tailscale?.directRelayUrl && tailscale?.suggestedUrl && (
             <code className="bridge-networking-detected-relay-url">{tailscale.suggestedUrl}</code>
           )}
         </span>
         <span className="bridge-networking-detected-relay-actions">
-          {tailscale?.active && <StatusPill kind="ok" label="Active" />}
-          {tailscale && tailscale.serveConfigured && !tailscale.relayUrlMatches && (
-            <StatusPill kind="warn" label="Serve on, URL differs" />
+          {tailscale?.cellularReady && <StatusPill kind="ok" label="Cellular ready" />}
+          {tailscale && !tailscale.cellularReady && tailscale.suggestedUrl && (
+            <StatusPill kind="warn" label="Cellular not ready" />
           )}
           <button
             className="btn btn-sm btn-primary"
@@ -583,7 +636,11 @@ function IosRemoteBridgeSection({
             }
             onClick={() => void enableDetectedTailscaleRelay()}
           >
-            {tailscaleBusy ? 'Working…' : tailscale?.active ? 'Repair' : 'Use this'}
+            {tailscaleBusy
+              ? 'Working…'
+              : tailscale?.active || tailscale?.relayUrlMatches
+                ? 'Repair WSS'
+                : 'Add WSS'}
           </button>
           <button
             className="btn btn-sm"
@@ -591,12 +648,14 @@ function IosRemoteBridgeSection({
             disabled={!tailscale?.suggestedUrl}
             onClick={() => void copyDetectedTailscaleRelay()}
           >
-            {tailscaleCopied ? 'Copied' : 'Copy'}
+            {tailscaleCopied ? 'Copied' : 'Copy WSS'}
           </button>
           <button
             className="btn btn-sm"
             type="button"
-            disabled={tailscaleTestBusy || !tailscale?.suggestedUrl}
+            disabled={
+              tailscaleTestBusy || (!tailscale?.directRelayUrl && !tailscale?.suggestedUrl)
+            }
             onClick={() => void testDetectedTailscaleRelay()}
           >
             {tailscaleTestBusy ? 'Testing…' : 'Test'}
@@ -613,27 +672,36 @@ function IosRemoteBridgeSection({
           )}
         </span>
       </div>
-      {tailscaleMessage && <div className="settings-error">{tailscaleMessage}</div>}
+      {tailscaleMessage && (
+        <div
+          className={`tailscale-link-message is-${tailscaleMessage.kind}`}
+          role="status"
+          aria-live="polite"
+        >
+          {tailscaleMessage.text}
+        </div>
+      )}
       <div className="bridge-networking-relay-help">
         <div className="bridge-networking-relay-help-title">
           Phone ready but still cannot connect?
         </div>
         <p>
-          Confirm the Mac and phone are signed into the same Tailscale account, then find this Mac
-          in the Tailscale app or on the{' '}
+          Confirm the Mac and phone can see each other on the same tailnet (or through a device
+          share), then find this Mac in the Tailscale app or on the{' '}
           <a href={TAILSCALE_MACHINES_URL} target="_blank" rel="noreferrer">
             Machines page
           </a>
-          . Copy the Mac&apos;s MagicDNS name and map it to the relay door as{' '}
-          <code>{relayDoorExample}</code>.
+          . TaskWraith normally connects directly to the Mac&apos;s Tailscale IP at{' '}
+          <code>{tailscale?.directRelayUrl || 'ws://100.x.y.z:8787'}</code>; no Serve setup is
+          required.
         </p>
         <p>
-          If Repair or Test fails because the Tailscale CLI cannot configure Serve, open{' '}
+          Optional: add a TLS/hostname WSS door with Add WSS. If that setup fails, open{' '}
           <a href={TAILSCALE_DNS_URL} target="_blank" rel="noreferrer">
             Tailscale DNS
           </a>{' '}
-          to check MagicDNS/HTTPS, then paste the same <code>wss://...:8443</code> value into
-          Advanced relay settings below.
+          to enable HTTPS, then return here and press Repair WSS. The optional address is{' '}
+          <code>{relayDoorExample}</code>.
         </p>
         <div className="bridge-networking-relay-help-links">
           <a href={TAILSCALE_MAGICDNS_HELP_URL} target="_blank" rel="noreferrer">
@@ -648,10 +716,10 @@ function IosRemoteBridgeSection({
         <summary>Advanced relay settings</summary>
         <label className="settings-service-row">
           <span>
-            Configured relay URL
+            Optional WSS relay URL
             <small>
-              Usually managed by Use this above. Edit only for a separate hosted relay or a
-              custom Tailscale Serve address.
+              Usually managed by Add WSS above. Direct Tailscale IP access does not need this.
+              Edit only for a separate hosted relay or custom Tailscale Serve address.
             </small>
           </span>
           <input
@@ -698,7 +766,8 @@ function IosRemoteBridgeSection({
         <span>
           Let phones find this host on your tailnet
           <small>
-            Optional. Add a Tailscale OAuth client (scope <code>devices:core:read</code>) and an
+            Discovery only — this does not enable Cellular access or configure Tailscale Serve. Add
+            an optional Tailscale OAuth client (scope <code>devices:core:read</code>) and an
             already-paired phone can discover your other TaskWraith computers and pair with them
             without scanning each QR. The secret is stored encrypted on this Mac and never sent to
             the phone — the host enumerates the tailnet on its behalf.
@@ -787,11 +856,6 @@ function IosRemoteBridgeSection({
           onChange={(event) => void save({ openAtLogin: event.target.checked })}
         />
       </label>
-      {needsRestart && (
-        <div className="settings-hint bridge-networking-reason">
-          Restart TaskWraith to apply the new bridge configuration.
-        </div>
-      )}
     </section>
   )
 }

@@ -22,9 +22,9 @@ const KIND_LABEL: Record<LinkMessage['kind'], string> = {
  * (B) For users who already run a Tailscale fleet, a guided auth-key flow that
  *     brings THIS Mac onto their tailnet without the interactive browser
  *     sign-in. Important scope: linking the Mac is only one piece — the phone
- *     still needs its own Tailscale sign-in to the SAME tailnet, and off-LAN
- *     (cellular) reach additionally needs the "Remote access via Tailscale"
- *     control in Bridge networking. The key is sent once to the main process
+ *     still needs its own Tailscale sign-in to the SAME tailnet. Direct
+ *     Cellular access then uses the Mac's stable 100.x address automatically;
+ *     the Bridge networking WSS control is optional. The key is sent once to the main process
  *     (used immediately for `tailscale up`, written to a 0600 file off the
  *     argv, never stored or logged) and cleared from the field on success.
  *
@@ -101,9 +101,8 @@ export function TailscaleSetupPanel(): JSX.Element {
             <strong>same account</strong>.
           </li>
           <li>
-            Both devices now share a private, encrypted network. To reach this Mac from cellular
-            (off-LAN), also enable <strong>Remote access via Tailscale</strong> in Bridge
-            networking above.
+            Both devices now share a private, encrypted network. TaskWraith uses the Mac&apos;s
+            stable Tailscale IP automatically for Cellular access; no Serve setup is required.
           </li>
         </ol>
         <div className="settings-hint">

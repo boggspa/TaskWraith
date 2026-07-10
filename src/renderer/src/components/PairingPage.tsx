@@ -121,6 +121,13 @@ export function PairingPage(): JSX.Element {
     }
   }, [])
 
+  const refreshAfterRemoteBridgeChange = useCallback(() => {
+    // Relay/config actions may dispose the pending pairing client or make a
+    // previously omitted WSS door reachable. Replace the visible QR so camera
+    // and manual setup always receive the current session + candidate set.
+    void refresh(displayName, { force: true })
+  }, [displayName, refresh])
+
   useEffect(() => {
     let cancelled = false
     queueMicrotask(() => {
@@ -315,7 +322,7 @@ export function PairingPage(): JSX.Element {
             reach the Mac over Tailscale.
           </p>
         </header>
-        <BridgeNetworkingPanel />
+        <BridgeNetworkingPanel onRemoteBridgeChanged={refreshAfterRemoteBridgeChange} />
         {APNS_PANEL_ENABLED && <ApnsConfigPanel />}
       </section>
 
