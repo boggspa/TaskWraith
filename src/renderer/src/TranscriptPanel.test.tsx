@@ -938,7 +938,7 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
     expect(html).toContain('Run cancelled')
   })
 
-  it('uses the reveal renderer only for the tail assistant segment in the active run', () => {
+  it('preserves the reveal renderer across assistant lifecycle and activates only the live tail', () => {
     const html = renderToStaticMarkup(
       <TranscriptPanel
         {...makeProps({
@@ -969,7 +969,7 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
               id: 'active-assistant-2',
               role: 'assistant',
               content: 'active segment after tool',
-              timestamp: '2026-01-01T00:00:03.000Z',
+              timestamp: '2999-01-01T00:00:03.000Z',
               runId: 'active-run'
             }
           ],
@@ -986,6 +986,8 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
     expect(html).toContain('settled assistant text')
     expect(html).toContain('active segment before tool')
     expect(html).not.toContain('active segment after tool')
+    expect((html.match(/stream-reveal-message/g) || []).length).toBe(1)
+    expect(html).toContain('data-reveal-active="true"')
   })
 
   it('suppresses run-complete summary when runCompleteNotice requests suppression', () => {

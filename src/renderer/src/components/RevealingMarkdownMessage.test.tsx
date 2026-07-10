@@ -1,6 +1,14 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
-import { RevealingMarkdownMessage, safeTailSlice } from './RevealingMarkdownMessage'
+import { graphemeCount } from '../lib/advanceReveal'
+import {
+  RevealingMarkdownMessage,
+  activeCodeTailStart,
+  fencedCodeRanges,
+  safeMessageSlice,
+  safeTailSlice
+} from './RevealingMarkdownMessage'
+import { StableMarkdownBlock } from './StableMarkdownBlock'
 
 describe('safeTailSlice', () => {
   it('reveals code blocks instantly (never a partial fence)', () => {
@@ -31,6 +39,131 @@ describe('safeTailSlice', () => {
   })
 })
 
+describe('safeMessageSlice', () => {
+  it('does not expose a newly stable block before the message-global cursor reaches it', () => {
+    const content = 'First paragraph is visible.\n\nSecond paragraph is still buffered.'
+    const cursor = graphemeCount('First paragraph')
+    const visible = safeMessageSlice(content, cursor)
+
+    expect(visible).toBe('First paragraph')
+    expect(visible).not.toContain('Second paragraph')
+  })
+
+  it('keeps the active list on a completed-line boundary', () => {
+    const content = '- one\n- two\n- partial item'
+    const cursor = graphemeCount('- one\n- two\n- part')
+    expect(safeMessageSlice(content, cursor)).toBe('- one\n- two\n')
+  })
+
+  it('keeps a caught-up live list row hidden until its newline arrives', () => {
+    const partial = '- one\n- two'
+    expect(safeMessageSlice(partial, graphemeCount(partial))).toBe('- one\n')
+
+    const completed = `${partial}\n`
+    expect(safeMessageSlice(completed, graphemeCount(completed))).toBe(completed)
+  })
+
+  it('holds a partial prose word and reveals the terminal word whole', () => {
+    const content = 'Smooth leg'
+    expect(safeMessageSlice(content, graphemeCount(content))).toBe('Smooth ')
+    expect(safeMessageSlice(content, graphemeCount(content), true)).toBe(content)
+  })
+
+  it('preserves the literal trailing newline discarded by the block splitter', () => {
+    const content = '- one\n- two\nX'
+    const cursor = graphemeCount('- one\n- two\n')
+    expect(safeMessageSlice(content, cursor)).toBe('- one\n- two\n')
+  })
+
+  it('never retracts an ambiguous list marker when the item begins', () => {
+    for (const content of ['- ', '- o', '1. ', '1. o']) {
+      expect(safeMessageSlice(content, graphemeCount(content))).toBe('')
+    }
+    expect(safeMessageSlice('- one\n', graphemeCount('- one\n'))).toBe('- one\n')
+  })
+
+  it('holds a table until its header and separator rows are complete', () => {
+    const header = '| a | b |\n'
+    const partial = `${header}| --- | `
+    const complete = `${header}| --- | --- |\n`
+
+    expect(safeMessageSlice(header, graphemeCount(header))).toBe('')
+    expect(safeMessageSlice(partial, graphemeCount(partial))).toBe('')
+    expect(safeMessageSlice(complete, graphemeCount(complete))).toBe(complete)
+  })
+
+  it('holds unfinished inline markdown until it can mount in its final structure', () => {
+    expect(safeMessageSlice('This is **bold ', graphemeCount('This is **bold '))).toBe(
+      'This is '
+    )
+    const bold = 'This is **bold text** '
+    expect(safeMessageSlice(bold, graphemeCount(bold))).toBe(bold)
+    expect(safeMessageSlice('This is *italic ', graphemeCount('This is *italic '))).toBe(
+      'This is '
+    )
+    const italic = 'This is *italic text* '
+    expect(safeMessageSlice(italic, graphemeCount(italic))).toBe(italic)
+
+    expect(safeMessageSlice('[Open AI', graphemeCount('[Open AI'))).toBe('')
+    const link = '[Open AI](https://example.com) '
+    expect(safeMessageSlice(link, graphemeCount(link))).toBe(link)
+    expect(safeMessageSlice('![Alt text', graphemeCount('![Alt text'))).toBe('')
+  })
+
+  it('uses grapheme progression for scripts that do not separate words with spaces', () => {
+    const content = 'こんにちは世界'
+    expect(safeMessageSlice(content, graphemeCount(content))).toBe(content)
+  })
+
+  it('does not let the quiet-fragment release expose ambiguous markdown prefixes', () => {
+    const projectQuiet = (content: string) =>
+      safeMessageSlice(content, graphemeCount(content), false, undefined, true)
+
+    expect(projectQuiet('This is **')).toBe('This is ')
+    expect(projectQuiet('This is **b')).toBe('This is ')
+    expect(projectQuiet('1')).toBe('')
+    expect(projectQuiet('1. ')).toBe('')
+    expect(projectQuiet('Use `')).toBe('Use ')
+    expect(projectQuiet('Use `i')).toBe('Use ')
+    expect(projectQuiet('[label]')).toBe('')
+    expect(projectQuiet('[label](')).toBe('')
+    expect(projectQuiet('!')).toBe('')
+    expect(projectQuiet('![')).toBe('')
+  })
+
+  it('holds pipe-table and CJK-link frontiers until their final structure is known', () => {
+    for (const content of ['| a ', '| a |', 'a | b', 'a | b\n--- | ']) {
+      expect(safeMessageSlice(content, graphemeCount(content))).toBe('')
+    }
+    expect(safeMessageSlice('[リンク]', graphemeCount('[リンク]'))).toBe('')
+    expect(safeMessageSlice('[リンク](', graphemeCount('[リンク]('))).toBe('')
+    const completeLink = '[リンク](https://example.com)'
+    expect(safeMessageSlice(completeLink, graphemeCount(completeLink))).toBe(completeLink)
+  })
+
+  it('reports the active fenced-code start so code can stay atomic', () => {
+    const content = 'Intro paragraph.\n\n```ts\nconst value = 1'
+    expect(activeCodeTailStart(content)).toBe(graphemeCount('Intro paragraph.\n\n'))
+    expect(activeCodeTailStart('```ts\nconst value = 1\n```')).toBeNull()
+    expect(activeCodeTailStart('Plain text only')).toBeNull()
+  })
+
+  it('maps both closed and active fences to atomic grapheme ranges', () => {
+    const content = 'Before 👋\n\n```ts\nconst x = 1\n```\n\nAfter\n\n~~~\nopen'
+    const ranges = fencedCodeRanges(content)
+
+    expect(ranges).toHaveLength(2)
+    expect(ranges[0]).toEqual({
+      start: graphemeCount('Before 👋\n\n'),
+      end: graphemeCount('Before 👋\n\n```ts\nconst x = 1\n```\n')
+    })
+    expect(ranges[1]).toEqual({
+      start: graphemeCount('Before 👋\n\n```ts\nconst x = 1\n```\n\nAfter\n\n'),
+      end: graphemeCount(content)
+    })
+  })
+})
+
 describe('RevealingMarkdownMessage (smoke)', () => {
   it('renders the full content when not live (non-animated path)', () => {
     const html = renderToStaticMarkup(
@@ -46,5 +179,28 @@ describe('RevealingMarkdownMessage (smoke)', () => {
       <RevealingMarkdownMessage content={'Settled block.\n\ntail growing'} isLive reduceMotion />
     )
     expect(html).toContain('Settled block.')
+  })
+
+  it('does not replay temporal fades over an already-painted reattached tail', () => {
+    const html = renderToStaticMarkup(
+      <RevealingMarkdownMessage
+        content={'A smoothly revealed assistant message.'}
+        isLive
+        messageTimestamp="2020-01-01T00:00:00.000Z"
+        provider="codex"
+        model="gpt-5.5"
+      />
+    )
+    expect(html).not.toContain('stream-reveal-token')
+    expect(html).toContain('data-reveal-speed=')
+    expect(html).toContain('A')
+  })
+
+  it('bounds fade spans to one frontier container even in a mixed list block', () => {
+    const mixed = `intro\n${Array.from({ length: 240 }, (_, index) => `- item${index}`).join('\n')}`
+    const html = renderToStaticMarkup(
+      <StableMarkdownBlock raw={mixed} revealTokens animatedWordWindow={48} />
+    )
+    expect((html.match(/stream-reveal-token/g) || []).length).toBeLessThanOrEqual(48)
   })
 })

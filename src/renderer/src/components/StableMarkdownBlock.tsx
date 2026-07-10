@@ -1,8 +1,10 @@
 import {
+  createContext,
   Fragment,
   Profiler,
   memo,
   useContext,
+  useRef,
   useState,
   type MouseEvent,
   type ReactElement,
@@ -40,6 +42,24 @@ import type { ChatRecord } from '../../../main/store/types'
  * short-circuit when the parent chat reference changes for unrelated
  * reasons (e.g. settings toggle).
  */
+
+interface MarkdownRevealContextValue {
+  enabled: boolean
+  animatedWordWindow: number
+  existingWordCount: number
+  existingDelayMs: number
+  rawEndOffset: number
+}
+
+const STATIC_MARKDOWN_REVEAL: MarkdownRevealContextValue = {
+  enabled: false,
+  animatedWordWindow: 0,
+  existingWordCount: 0,
+  existingDelayMs: 0,
+  rawEndOffset: 0
+}
+
+const MarkdownRevealContext = createContext<MarkdownRevealContextValue>(STATIC_MARKDOWN_REVEAL)
 
 function MarkdownCodeBlock({ content, language }: { content: string; language?: string }) {
   const [wrap, setWrap] = useState(false)
@@ -91,8 +111,52 @@ function MarkdownCodeBlock({ content, language }: { content: string; language?: 
  *   - `input` is forced read-only so transcript checkboxes can't be
  *     ticked by the user.
  */
-function tokeniseParticipantMentions(value: string, chat: ChatRecord | undefined): ReactNode {
-  if (!value || !value.includes('@')) return value
+function revealWordCount(value: string): number {
+  return value.split(/(\s+)/).reduce(
+    (count, piece) => count + (piece.length > 0 && !/^\s+$/.test(piece) ? 1 : 0),
+    0
+  )
+}
+
+function revealNewestWords(
+  value: string,
+  reveal: MarkdownRevealContextValue,
+  wordOffset: number,
+  firstAnimatedWord: number
+): ReactNode {
+  if (!reveal.enabled || !value || reveal.animatedWordWindow <= 0) return value
+  const pieces = value.split(/(\s+)/)
+  let wordIndex = wordOffset
+  return pieces.map((piece, pieceIndex) => {
+    if (!piece || /^\s+$/.test(piece)) return piece
+    const currentWordIndex = wordIndex++
+    if (currentWordIndex < firstAnimatedWord) return piece
+    return (
+      <span
+        className="stream-reveal-token"
+        key={`reveal-word-${currentWordIndex}-${pieceIndex}`}
+        style={
+          currentWordIndex < reveal.existingWordCount && reveal.existingDelayMs < 0
+            ? { animationDelay: `${reveal.existingDelayMs}ms` }
+            : undefined
+        }
+      >
+        {piece}
+      </span>
+    )
+  })
+}
+
+function tokeniseParticipantMentions(
+  value: string,
+  chat: ChatRecord | undefined,
+  reveal: MarkdownRevealContextValue,
+  wordOffset: number,
+  firstAnimatedWord: number
+): ReactNode {
+  if (!value || !value.includes('@')) {
+    return revealNewestWords(value, reveal, wordOffset, firstAnimatedWord)
+  }
   const segments = tokeniseMentions(value, chat?.ensemble?.participants ?? [])
   if (segments.length === 1 && segments[0].kind === 'text') return value
   const parts = segments.map((segment, index) => {
@@ -130,25 +194,57 @@ function tokeniseParticipantMentions(value: string, chat: ChatRecord | undefined
 
 function processMarkdownMentionChildren(
   children: ReactNode,
-  chat: ChatRecord | undefined
+  chat: ChatRecord | undefined,
+  reveal: MarkdownRevealContextValue
 ): ReactNode {
   if (children === null || children === undefined) return children
-  if (typeof children === 'string') return tokeniseParticipantMentions(children, chat)
+  const childArray = Array.isArray(children) ? children : [children]
+  const totalWords = childArray.reduce(
+    (count, child) => count + (typeof child === 'string' ? revealWordCount(child) : 0),
+    0
+  )
+  const firstAnimatedWord = Math.max(0, totalWords - reveal.animatedWordWindow)
+  let wordOffset = 0
+  if (typeof children === 'string') {
+    return tokeniseParticipantMentions(children, chat, reveal, 0, firstAnimatedWord)
+  }
   if (Array.isArray(children)) {
-    return children.map((child, idx) =>
-      typeof child === 'string' ? (
-        <Fragment key={idx}>{tokeniseParticipantMentions(child, chat)}</Fragment>
-      ) : (
-        <Fragment key={idx}>{child}</Fragment>
+    return children.map((child, idx) => {
+      if (typeof child !== 'string') return <Fragment key={idx}>{child}</Fragment>
+      const childOffset = wordOffset
+      wordOffset += revealWordCount(child)
+      return (
+        <Fragment key={idx}>
+          {tokeniseParticipantMentions(
+            child,
+            chat,
+            reveal,
+            childOffset,
+            firstAnimatedWord
+          )}
+        </Fragment>
       )
-    )
+    })
   }
   return children
 }
 
-function ProcessedMarkdownChildren({ children }: { children: ReactNode }): ReactElement {
+function ProcessedMarkdownChildren({
+  children,
+  allowReveal = false,
+  nodeEndOffset = -1
+}: {
+  children: ReactNode
+  allowReveal?: boolean
+  nodeEndOffset?: number
+}): ReactElement {
   const chat = useContext(AgentIdentityContext)
-  return <>{processMarkdownMentionChildren(children, chat)}</>
+  const reveal = useContext(MarkdownRevealContext)
+  const effectiveReveal =
+    allowReveal && nodeEndOffset >= reveal.rawEndOffset ? reveal : STATIC_MARKDOWN_REVEAL
+  return (
+    <>{processMarkdownMentionChildren(children, chat, effectiveReveal)}</>
+  )
 }
 
 /**
@@ -401,8 +497,17 @@ const MARKDOWN_COMPONENTS: Components = {
   // participant tags in transcript bodies render with the matching
   // provider tint. Unresolved references fall through to plain text
   // (the chip's own fallback) so non-ensemble content is unaffected.
-  p({ children }) {
-    return <p><ProcessedMarkdownChildren>{children}</ProcessedMarkdownChildren></p>
+  p({ children, node }) {
+    return (
+      <p>
+        <ProcessedMarkdownChildren
+          allowReveal
+          nodeEndOffset={node?.position?.end.offset}
+        >
+          {children}
+        </ProcessedMarkdownChildren>
+      </p>
+    )
   },
   li({ children }) {
     return <li><ProcessedMarkdownChildren>{children}</ProcessedMarkdownChildren></li>
@@ -416,23 +521,23 @@ const MARKDOWN_COMPONENTS: Components = {
   // Headings tokenise `@Role` / `@user` too, so a mention in a
   // heading gets the same chip as body text (1.0.72 markdown-audit gap-fix —
   // previously only p/li/td/th tokenised, leaving @-tags in headings bare).
-  h1({ children }) {
-    return <h1><ProcessedMarkdownChildren>{children}</ProcessedMarkdownChildren></h1>
+  h1({ children, node }) {
+    return <h1><ProcessedMarkdownChildren allowReveal nodeEndOffset={node?.position?.end.offset}>{children}</ProcessedMarkdownChildren></h1>
   },
-  h2({ children }) {
-    return <h2><ProcessedMarkdownChildren>{children}</ProcessedMarkdownChildren></h2>
+  h2({ children, node }) {
+    return <h2><ProcessedMarkdownChildren allowReveal nodeEndOffset={node?.position?.end.offset}>{children}</ProcessedMarkdownChildren></h2>
   },
-  h3({ children }) {
-    return <h3><ProcessedMarkdownChildren>{children}</ProcessedMarkdownChildren></h3>
+  h3({ children, node }) {
+    return <h3><ProcessedMarkdownChildren allowReveal nodeEndOffset={node?.position?.end.offset}>{children}</ProcessedMarkdownChildren></h3>
   },
-  h4({ children }) {
-    return <h4><ProcessedMarkdownChildren>{children}</ProcessedMarkdownChildren></h4>
+  h4({ children, node }) {
+    return <h4><ProcessedMarkdownChildren allowReveal nodeEndOffset={node?.position?.end.offset}>{children}</ProcessedMarkdownChildren></h4>
   },
-  h5({ children }) {
-    return <h5><ProcessedMarkdownChildren>{children}</ProcessedMarkdownChildren></h5>
+  h5({ children, node }) {
+    return <h5><ProcessedMarkdownChildren allowReveal nodeEndOffset={node?.position?.end.offset}>{children}</ProcessedMarkdownChildren></h5>
   },
-  h6({ children }) {
-    return <h6><ProcessedMarkdownChildren>{children}</ProcessedMarkdownChildren></h6>
+  h6({ children, node }) {
+    return <h6><ProcessedMarkdownChildren allowReveal nodeEndOffset={node?.position?.end.offset}>{children}</ProcessedMarkdownChildren></h6>
   }
 }
 
@@ -460,17 +565,66 @@ interface StableMarkdownBlockProps {
    * the streaming path — kept for type compatibility / future direct
    * callers. */
   chat?: ChatRecord
+  /** Animate only newly inserted words in this active streaming block. */
+  revealTokens?: boolean
+  /** Maximum number of newest words wrapped in animation spans. */
+  animatedWordWindow?: number
+  /** Used to resume old words at their prior fade progress after a Markdown reparse. */
+  revealDurationMs?: number
 }
 
-function StableMarkdownBlockImpl({ raw, streamRunId }: StableMarkdownBlockProps) {
+function StableMarkdownBlockImpl({
+  raw,
+  streamRunId,
+  revealTokens = false,
+  animatedWordWindow = 0,
+  revealDurationMs = 175
+}: StableMarkdownBlockProps) {
+  const previousRawRef = useRef(raw)
+  const transitionRef = useRef({ existingWordCount: 0, existingDelayMs: 0 })
+  const previousRaw = previousRawRef.current
+  if (previousRaw !== raw) {
+    const limit = Math.min(previousRaw.length, raw.length)
+    let commonPrefixLength = 0
+    while (
+      commonPrefixLength < limit &&
+      previousRaw[commonPrefixLength] === raw[commonPrefixLength]
+    ) {
+      commonPrefixLength += 1
+    }
+    const changedSuffix = `${previousRaw.slice(commonPrefixLength)}${raw.slice(commonPrefixLength)}`
+    const changesMarkdownTopology =
+      /[*_~`()]/u.test(changedSuffix) ||
+      changedSuffix.includes('[') ||
+      changedSuffix.includes(']')
+    transitionRef.current = changesMarkdownTopology
+      ? {
+          existingWordCount: revealWordCount(previousRaw.slice(0, commonPrefixLength)),
+          existingDelayMs: -Math.max(0, revealDurationMs)
+        }
+      : { existingWordCount: 0, existingDelayMs: 0 }
+  }
+  previousRawRef.current = raw
+
+  const revealContext: MarkdownRevealContextValue = revealTokens
+    ? {
+        enabled: true,
+        animatedWordWindow: Math.max(0, animatedWordWindow),
+        existingWordCount: transitionRef.current.existingWordCount,
+        existingDelayMs: transitionRef.current.existingDelayMs,
+        rawEndOffset: raw.trimEnd().length
+      }
+    : STATIC_MARKDOWN_REVEAL
   const markdown = (
-    <ReactMarkdown
-      remarkPlugins={REMARK_PLUGINS}
-      components={MARKDOWN_COMPONENTS}
-      urlTransform={markdownUrlTransform}
-    >
-      {raw}
-    </ReactMarkdown>
+    <MarkdownRevealContext.Provider value={revealContext}>
+      <ReactMarkdown
+        remarkPlugins={REMARK_PLUGINS}
+        components={MARKDOWN_COMPONENTS}
+        urlTransform={markdownUrlTransform}
+      >
+        {raw}
+      </ReactMarkdown>
+    </MarkdownRevealContext.Provider>
   )
   if (!streamRunId) return markdown
   return (
@@ -494,5 +648,10 @@ function StableMarkdownBlockImpl({ raw, streamRunId }: StableMarkdownBlockProps)
  */
 export const StableMarkdownBlock = memo(
   StableMarkdownBlockImpl,
-  (prev, next) => prev.raw === next.raw && prev.streamRunId === next.streamRunId
+  (prev, next) =>
+    prev.raw === next.raw &&
+    prev.streamRunId === next.streamRunId &&
+    prev.revealTokens === next.revealTokens &&
+    prev.animatedWordWindow === next.animatedWordWindow &&
+    prev.revealDurationMs === next.revealDurationMs
 )

@@ -6965,3 +6965,41 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   background: rgba(255, 255, 255, 0.08);
   color: var(--text-primary);
 }
+
+/* Adaptive assistant reveal -------------------------------------------------
+ * Newly introduced WORDS (never every grapheme) get a short temporal fade.
+ * The renderer bounds these spans to the active block's frontier, so long
+ * answers do not accumulate animation DOM. Cadence-derived custom properties
+ * make slow streams settle gently and shorten the veil for bursty providers. */
+.stream-reveal-message {
+  --stream-reveal-duration: 175ms;
+}
+
+.stream-reveal-token {
+  animation: stream-reveal-token-in var(--stream-reveal-duration) cubic-bezier(0.22, 1, 0.36, 1)
+    backwards;
+}
+
+@keyframes stream-reveal-token-in {
+  from {
+    opacity: 0.32;
+  }
+  58% {
+    opacity: 0.9;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+:root[data-reduce-motion='true'] .stream-reveal-token {
+  animation: none;
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stream-reveal-token {
+    animation: none;
+    opacity: 1;
+  }
+}

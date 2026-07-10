@@ -2466,6 +2466,32 @@ export const TranscriptPanel = memo(
       )
     }, [displayMessages.length, liveMeasurementMessageId, projectedRows])
     const liveRevealRowKey = liveRevealMessageId ? liveMeasurementRowKey : null
+    const liveRevealLifecycleKey = liveRevealRowKey
+      ? `${revealChatId || 'chat'}:${liveRevealRowKey}`
+      : null
+    const [revealLifecycleRowKeys, setRevealLifecycleRowKeys] = useState<Set<string>>(
+      () => new Set()
+    )
+    useEffect(() => {
+      setRevealLifecycleRowKeys(new Set())
+    }, [revealChatId])
+    useEffect(() => {
+      if (!liveRevealLifecycleKey) return
+      setRevealLifecycleRowKeys((current) => {
+        if (current.has(liveRevealLifecycleKey)) return current
+        const next = new Set(current)
+        next.add(liveRevealLifecycleKey)
+        return next
+      })
+    }, [liveRevealLifecycleKey])
+    const finishRevealLifecycle = useCallback((lifecycleKey: string) => {
+      setRevealLifecycleRowKeys((current) => {
+        if (!current.has(lifecycleKey)) return current
+        const next = new Set(current)
+        next.delete(lifecycleKey)
+        return next
+      })
+    }, [])
     // Geometry companion to `expandedLiveViewportStacks`: the virtualizer's
     // measurement cache keys on rowKey + an expanded bit, so rows with an
     // expanded live viewport must resolve their CURRENT rowKey each render
@@ -3053,7 +3079,14 @@ export const TranscriptPanel = memo(
               .filter(Boolean)
               .join('|')
             const isLiveRevealRow = rowKey === liveRevealRowKey
-            const revealKey = isLiveRevealRow ? `live:${revealRunId || msg.id}` : 'plain'
+            const revealLifecycleKey = `${revealChatId || 'chat'}:${rowKey}`
+            const usesRevealLifecycle =
+              revealEnabled &&
+              (msg.role === 'assistant' || isGuestReply) &&
+              (isLiveRevealRow || revealLifecycleRowKeys.has(revealLifecycleKey))
+            const revealKey = usesRevealLifecycle
+              ? `reveal:${revealRunId || msg.runId || msg.id}:${isLiveRevealRow ? 'live' : 'drain'}`
+              : 'plain'
             const assistantRun =
               msg.runId && currentChat?.runs
                 ? currentChat.runs.find((run) => run.runId === msg.runId) ||
@@ -3062,6 +3095,16 @@ export const TranscriptPanel = memo(
                   ? currentRun
                   : null
             const assistantRunModel = assistantRun?.actualModel || assistantRun?.requestedModel || null
+            const assistantRevealProvider =
+              providerIdFromUnknown(msg.metadata?.ensembleProvider) ||
+              providerIdFromUnknown(msg.metadata?.guestProvider) ||
+              providerIdFromUnknown(assistantRun?.provider) ||
+              currentProvider
+            const assistantRevealModel =
+              stringFromUnknown(msg.metadata?.ensembleModel) ||
+              stringFromUnknown(msg.metadata?.guestModel) ||
+              stringFromUnknown(msg.metadata?.providerModel) ||
+              assistantRunModel
             const activityStackHeader = isToolActivityStack ? (
               <ActivityStackSpeakerHeader
                 message={msg}
@@ -3659,15 +3702,22 @@ export const TranscriptPanel = memo(
                             }
                           >
                             {msg.role === 'assistant' || msg.role === 'system' || isGuestReply ? (
-                              isLiveRevealRow ? (
+                              usesRevealLifecycle ? (
                                 <RevealingMarkdownMessage
                                   content={msg.content}
                                   chat={currentChat || undefined}
-                                  isLive
+                                  isLive={isLiveRevealRow}
+                                  messageId={rowKey}
+                                  messageTimestamp={msg.timestamp}
+                                  provider={assistantRevealProvider}
+                                  model={assistantRevealModel}
                                   mediaRefs={mediaRefs}
                                   workspacePath={currentChat?.workspacePath}
                                   onPreviewImage={onPreviewImage}
                                   streamRunId={messageStreamRunId}
+                                  onRevealUnmounted={() =>
+                                    finishRevealLifecycle(revealLifecycleKey)
+                                  }
                                 />
                               ) : (
                                 <MarkdownMessage
