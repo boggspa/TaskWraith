@@ -857,6 +857,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
               currency={displayCurrency}
               currencyOverestimatePercent={overestimatePercent}
               showRunCompleteSummary={settings?.showRunCompleteSummary}
+              closeoutAiSummaryEnabled={settings?.closeoutAiSummaryEnabled}
               hostAutoCompactEnabled={settings?.hostAutoCompactEnabled}
               ensembleCollapseOlderRounds={settings?.ensembleCollapseOlderRounds}
               dashboardStatPrefs={settings?.dashboardStatPrefs}

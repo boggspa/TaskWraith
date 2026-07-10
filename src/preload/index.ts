@@ -6,6 +6,8 @@ import type {
   ProviderId,
   RunAnalystRequest,
   RunAnalystSnapshot,
+  CloseoutSummaryRequest,
+  CloseoutSummarySnapshot,
   CapabilityLedgerSnapshot,
   EvidencePackRecord,
   RepoConventionIndexSnapshot,
@@ -1388,6 +1390,8 @@ const api = {
   getRunEventReplay: (runId: string) => ipcRenderer.invoke('get-run-event-replay', runId),
   analyzeRun: (request: RunAnalystRequest) =>
     ipcRenderer.invoke('run-analyst:analyze', request) as Promise<RunAnalystSnapshot>,
+  summarizeCloseout: (request: CloseoutSummaryRequest) =>
+    ipcRenderer.invoke('closeout:summarize', request) as Promise<CloseoutSummarySnapshot>,
   getApprovalLedger: (filter: any = {}) => ipcRenderer.invoke('get-approval-ledger', filter),
   recordApprovalElevationAck: (input: {
     provider: string

@@ -1,4 +1,9 @@
 import { ipcMain } from 'electron'
+import {
+  buildCloseoutSummaryUnavailableSnapshot,
+  normalizeCloseoutSummaryResult,
+  sanitizeCloseoutSummaryRequest
+} from '../CloseoutSummarizer'
 import type {
   FallbackPromotedSteerInput,
   FallbackPromotedSteerJobResult,
@@ -68,6 +73,7 @@ export interface RunQueueHandlersDeps {
 }
 
 const RUN_ANALYST_TIMEOUT_MS = 45_000
+const CLOSEOUT_SUMMARY_TIMEOUT_MS = 30_000
 
 export function registerRunQueueHandlers(deps: RunQueueHandlersDeps): void {
   ipcMain.handle('get-run-queue-jobs', (_, filter?: RunQueueJobFilter) => deps.getRunQueueJobs(filter))
@@ -160,6 +166,30 @@ export function registerRunQueueHandlers(deps: RunQueueHandlersDeps): void {
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err)
       return deps.buildRunAnalystUnavailableSnapshot(request, reason)
+    }
+  })
+
+  // On-device close-out summarization (Apple Foundation Models via the bridge
+  // daemon). Unavailable is a normal outcome — the renderer keeps its
+  // deterministic close-out prose — so every failure path returns an
+  // 'unavailable' snapshot instead of throwing across the IPC boundary.
+  ipcMain.handle('closeout:summarize', async (_, input: unknown) => {
+    const request = sanitizeCloseoutSummaryRequest(input)
+    const daemon = deps.getBridgeDaemon()
+    if (!daemon?.status().running) {
+      return buildCloseoutSummaryUnavailableSnapshot(
+        request,
+        'TaskWraith bridge daemon is not running.'
+      )
+    }
+    try {
+      const result = await daemon.request('closeout.summarize', request, {
+        timeoutMs: CLOSEOUT_SUMMARY_TIMEOUT_MS
+      })
+      return normalizeCloseoutSummaryResult(request, result, new Date().toISOString())
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err)
+      return buildCloseoutSummaryUnavailableSnapshot(request, reason)
     }
   })
 }

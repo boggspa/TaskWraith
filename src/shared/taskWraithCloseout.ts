@@ -21,6 +21,22 @@ export function isTaskWraithCloseoutMessage(
   return message?.metadata?.kind === TASKWRAITH_CLOSEOUT_KIND
 }
 
+/** AI-authored close-out prose persisted on the message, if any. Lets the
+ *  rebuild effect re-consume the summary instead of clobbering it back to the
+ *  deterministic fallback after restart/chat-reselect. */
+export function closeoutAiSummaryFromMetadata(
+  metadata: ChatMessage['metadata'] | null | undefined
+): { text: string; model?: string } | null {
+  const text = typeof metadata?.closeoutAiSummary === 'string' ? metadata.closeoutAiSummary : ''
+  if (!text.trim()) return null
+  return {
+    text,
+    ...(typeof metadata?.closeoutModel === 'string' && metadata.closeoutModel.trim()
+      ? { model: metadata.closeoutModel }
+      : {})
+  }
+}
+
 export function closeoutProviderFromMetadata(
   metadata: ChatMessage['metadata'] | null | undefined
 ): ProviderId | null {

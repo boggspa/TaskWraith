@@ -36,14 +36,25 @@ type CloseoutPlacement = {
   closeoutRoundId?: string
 }
 
+/** AI-authored close-out prose (from the bridge daemon's on-device summarizer).
+ *  `text` is raw model output — the builders sanitize/escape/cap it the same
+ *  way as extracted assistant prose before it reaches the transcript. */
+export type CloseoutAiSummary = {
+  text: string
+  model?: string
+}
+
 export function buildTaskWraithRunCloseoutMessage(input: {
   chat: ChatRecord
   run: ChatRun
   completedAt: string
   exitCode?: number
+  aiSummary?: CloseoutAiSummary
   now?: Date
 }): ChatMessage {
   const { chat, run, completedAt, exitCode } = input
+  const aiSummary = normalizeCloseoutAiSummary(input.aiSummary)
+  const aiSummaryProse = aiSummary ? aiCloseoutSummaryProse(aiSummary.text) : null
   const durationMs = durationBetween(run.startedAt, completedAt)
   const runIds = new Set([run.runId])
   const lines = [
@@ -55,7 +66,9 @@ export function buildTaskWraithRunCloseoutMessage(input: {
   ]
   appendCloseoutProse(
     lines,
-    latestAssistantSummary(chat.messages, run.runId) || missingRunSummary(run.status, exitCode)
+    aiSummaryProse ||
+      latestAssistantSummary(chat.messages, run.runId) ||
+      missingRunSummary(run.status, exitCode)
   )
   appendCloseoutProse(lines, tokenUsageSentence('run', [run]))
   appendCloseoutProse(lines, validationSummarySentence(chat.messages, runIds))
@@ -77,7 +90,7 @@ export function buildTaskWraithRunCloseoutMessage(input: {
     runId: run.runId,
     metadata: {
       kind: TASKWRAITH_CLOSEOUT_KIND,
-      closeoutSource: 'deterministicFallback',
+      ...closeoutSummaryProvenance(aiSummaryProse ? aiSummary : null),
       closeoutScope: 'run',
       sourceRunId: run.runId,
       closeoutStatus: run.status || (exitCode === 0 ? 'success' : 'failed'),
@@ -92,9 +105,12 @@ export function buildTaskWraithRoundCloseoutMessage(input: {
   chat: ChatRecord
   round: EnsembleRoundState
   completedAt: string
+  aiSummary?: CloseoutAiSummary
   now?: Date
 }): ChatMessage {
   const { chat, round, completedAt } = input
+  const aiSummary = normalizeCloseoutAiSummary(input.aiSummary)
+  const aiSummaryProse = aiSummary ? aiCloseoutSummaryProse(aiSummary.text) : null
   const roundRuns = (chat.runs || []).filter((run) => run.ensembleRoundId === round.roundId)
   const roundRunIds = new Set(roundRuns.map((run) => run.runId))
   const closeoutParticipants = resolveCloseoutParticipants(chat, round, roundRuns)
@@ -102,7 +118,8 @@ export function buildTaskWraithRoundCloseoutMessage(input: {
   const lines = [formatWorkedFor(durationMs), '', 'Close-out:', '', formatRoundStatus(round.status)]
   appendCloseoutProse(
     lines,
-    roundSummaryProse(chat, round, roundRunIds) ||
+    aiSummaryProse ||
+      roundSummaryProse(chat, round, roundRunIds) ||
       missingRoundSummary(round.status, closeoutParticipants)
   )
   appendCloseoutProse(lines, tokenUsageSentence('round', roundRuns))
@@ -125,7 +142,7 @@ export function buildTaskWraithRoundCloseoutMessage(input: {
     timestamp: completedAt,
     metadata: {
       kind: TASKWRAITH_CLOSEOUT_KIND,
-      closeoutSource: 'deterministicFallback',
+      ...closeoutSummaryProvenance(aiSummaryProse ? aiSummary : null),
       closeoutScope: 'ensembleRound',
       closeoutRoundId: round.roundId,
       closeoutStatus: round.status,
@@ -289,6 +306,45 @@ const ROUND_SUMMARY_SECTION_LABELS = [
   ['open risks', 'Open risks'],
   ['next action', 'Next action']
 ] as const
+
+function normalizeCloseoutAiSummary(
+  aiSummary: CloseoutAiSummary | undefined
+): CloseoutAiSummary | null {
+  const text = aiSummary?.text?.trim()
+  if (!text) return null
+  const model = aiSummary?.model?.trim()
+  return {
+    text: Array.from(text).slice(0, CLOSEOUT_SUMMARY_MAX_CHARS).join(''),
+    ...(model ? { model } : {})
+  }
+}
+
+/** AI prose goes through the same neutralisation pipeline as extracted
+ *  assistant prose: code fences dropped, per-line list/heading/quote markers
+ *  stripped, markdown/links/emails flattened, sentence-capped, then
+ *  markdown-escaped for the system-authored row. */
+function aiCloseoutSummaryProse(text: string): string | null {
+  const lines = stripFencedCodeBlocks(text.replace(/\r\n/g, '\n'))
+    .split('\n')
+    .map((line) => plainInlineText(stripSummaryLineStructure(line)))
+    .filter(Boolean)
+  if (lines.length === 0) return null
+  return finalizeSummaryProse([lines.join(' ')])
+}
+
+function closeoutSummaryProvenance(
+  aiSummary: CloseoutAiSummary | null
+): Pick<
+  NonNullable<ChatMessage['metadata']>,
+  'closeoutSource' | 'closeoutModel' | 'closeoutAiSummary'
+> {
+  if (!aiSummary) return { closeoutSource: 'deterministicFallback' }
+  return {
+    closeoutSource: 'summaryProvider',
+    closeoutAiSummary: aiSummary.text,
+    ...(aiSummary.model ? { closeoutModel: aiSummary.model } : {})
+  }
+}
 
 function assistantSummaryProse(content: string): string | null {
   const blocks = stripFencedCodeBlocks(content.replace(/\r\n/g, '\n'))
@@ -522,7 +578,7 @@ const CLOSEOUT_VALIDATION_LABELS: Record<CloseoutValidationKind, string> = {
   diagnostics: 'diagnostics'
 }
 
-function validationSummarySentence(
+export function validationSummarySentence(
   messages: ChatMessage[],
   runIds: ReadonlySet<string>
 ): string | null {
@@ -1221,13 +1277,13 @@ function formatParticipantTokenCell(totalTokens: number): string {
 
 const CLOSEOUT_COMMIT_TABLE_LIMIT = 8
 
-type CloseoutCommit = {
+export type CloseoutCommit = {
   hash: string
   subject?: string
   stats?: string
 }
 
-function collectCloseoutCommits(
+export function collectCloseoutCommits(
   messages: ChatMessage[],
   includeMessage: (message: ChatMessage) => boolean
 ): CloseoutCommit[] {
@@ -1336,9 +1392,11 @@ function collectCommitTextFragments(value: unknown, fragments: string[], depth =
 function extractCommitsFromText(text: string): CloseoutCommit[] {
   const normalized = normalizeCommitText(text)
   const commits = new Map<string, CloseoutCommit>()
+  const claimedSpans: Array<[number, number]> = []
   const bracketPattern = /\[([^\]\n]*)\s([0-9a-f]{7,40})\]\s*([^\n]+)(?:\n([^\n[]+))?/gi
   let match: RegExpExecArray | null
   while ((match = bracketPattern.exec(normalized)) !== null) {
+    claimedSpans.push([match.index, match.index + match[0].length])
     const hash = match[2]
     const subject = cleanCommitSubject(match[3] || '')
     const nextLine = match[4]?.trim()
@@ -1352,10 +1410,18 @@ function extractCommitsFromText(text: string): CloseoutCommit[] {
   }
   const commitLinePattern = /^commit\s+([0-9a-f]{7,40})\b.*$/gim
   while ((match = commitLinePattern.exec(normalized)) !== null) {
+    claimedSpans.push([match.index, match.index + match[0].length])
     mergeCloseoutCommit(commits, { hash: match[1] })
   }
-  const genericHashPattern = /\b([0-9a-f]{7,40})\b/gi
-  while ((match = genericHashPattern.exec(normalized)) !== null) {
+  // Bare hash on its own line only (rev-parse / log --format=%H style output).
+  // Scanning for hex substrings ANYWHERE minted phantom "commits" out of blob
+  // SHAs in diff hunk headers ("index 89e6c98..fa3d112") and hashes referenced
+  // inside commit subjects ("Revert 9f8e7d6: ..."), which then fed fabricated
+  // entries to the commit table and the close-out summarizer.
+  const bareHashLinePattern = /^\s*([0-9a-f]{7,40})\s*$/gim
+  while ((match = bareHashLinePattern.exec(normalized)) !== null) {
+    const start = match.index
+    if (claimedSpans.some(([from, to]) => start >= from && start < to)) continue
     mergeCloseoutCommit(commits, { hash: match[1] })
   }
   return Array.from(commits.values())

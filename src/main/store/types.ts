@@ -2028,6 +2028,13 @@ export interface AppSettings {
    * cards. Defaults to true; optional so older settings files keep showing the
    * card until the user explicitly disables it. */
   showRunCompleteSummary?: boolean
+  /** Settings → General toggle for on-device AI close-out summaries: when a
+   * run/round finishes, the bridge daemon summarizes what happened into prose
+   * via Apple Foundation Models and the close-out row swaps in that paragraph
+   * (falling back to the deterministic close-out text when unavailable).
+   * Defaults to true; requires the bridge daemon + macOS 26 Foundation
+   * Models, so on older hosts it is silently inert. */
+  closeoutAiSummaryEnabled?: boolean
   /** Settings → General toggle for host auto-compaction: when a Cursor/Kimi
    * solo chat crosses ~90% context after a turn, the host dispatches a
    * summarize turn and compacts the session automatically (Claude/Codex
@@ -2915,6 +2922,10 @@ export interface ChatMessage {
     closeoutSource?: 'currentProvider' | 'summaryProvider' | 'deterministicFallback'
     closeoutProvider?: ProviderId
     closeoutModel?: string
+    /** Raw AI-authored close-out prose (pre-markdown-escape). Persisted so the
+     *  App.tsx rebuild effect can re-consume it after restart/chat-reselect
+     *  instead of clobbering the summary back to the deterministic fallback. */
+    closeoutAiSummary?: string
     closeoutScope?: 'run' | 'ensembleRound'
     sourceRunId?: string
     closeoutRoundId?: string
@@ -3130,6 +3141,44 @@ export interface RunAnalystSnapshot {
   risks: string[]
   nextSteps: string[]
   signals: RunAnalystSignal[]
+  model?: string
+  error?: string
+}
+
+/** Token-bounded digest of a finished run/round, summarized on-device into
+ *  close-out prose by the bridge daemon (`closeout.summarize`). Every field is
+ *  length-capped by `sanitizeCloseoutSummaryRequest` before it leaves the main
+ *  process — the daemon prompt is assembled verbatim from these strings. */
+export interface CloseoutSummaryRequest {
+  /** Run id (solo) or round id (ensemble) — used only for logging/traceability. */
+  targetId: string
+  scope: 'run' | 'ensembleRound'
+  status?: string
+  durationMs?: number
+  provider?: string
+  model?: string
+  promptText?: string
+  finalText?: string
+  fileChanges?: Array<{ path: string; additions?: number; deletions?: number }>
+  commits?: Array<{ hash: string; subject?: string }>
+  toolCounts?: Partial<Record<string, number>>
+  validations?: string[]
+  warnings?: string[]
+  participants?: Array<{
+    label: string
+    provider?: string
+    model?: string
+    status?: string
+    finalText?: string
+  }>
+}
+
+export interface CloseoutSummarySnapshot {
+  targetId: string
+  generatedAt: string
+  status: 'ready' | 'unavailable' | 'error'
+  /** Single prose paragraph. Empty when status is not 'ready'. */
+  summary: string
   model?: string
   error?: string
 }

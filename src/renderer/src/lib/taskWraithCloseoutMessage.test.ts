@@ -1028,4 +1028,248 @@ Next action:
     )
     expect(closeout.content).toContain('| **Round Total** | — | — | — | — | 3 | — | **1** |')
   })
+
+  it('prefers an AI summary over the final assistant text and records provenance', () => {
+    const run: ChatRun = {
+      runId: 'run-ai',
+      provider: 'codex',
+      startedAt: '2026-07-07T12:00:00.000Z',
+      endedAt: '2026-07-07T12:00:07.000Z',
+      status: 'success'
+    }
+    const closeout = buildTaskWraithRunCloseoutMessage({
+      chat: chat({
+        messages: [
+          { ...message('a1', 'assistant', 'Hello! How can I help you today?'), runId: run.runId }
+        ],
+        runs: [run]
+      }),
+      run,
+      completedAt: '2026-07-07T12:00:07.000Z',
+      exitCode: 0,
+      aiSummary: {
+        text: 'The run greeted the user and confirmed the workspace was ready, without making any changes.',
+        model: 'Apple Foundation Models'
+      }
+    })
+
+    expect(closeout.content).toContain(
+      'The run greeted the user and confirmed the workspace was ready, without making any changes.'
+    )
+    expect(closeout.content).not.toContain('Hello! How can I help you today?')
+    expect(closeout.metadata?.closeoutSource).toBe('summaryProvider')
+    expect(closeout.metadata?.closeoutModel).toBe('Apple Foundation Models')
+    expect(closeout.metadata?.closeoutAiSummary).toBe(
+      'The run greeted the user and confirmed the workspace was ready, without making any changes.'
+    )
+  })
+
+  it('neutralises markdown, links, and code fences in AI summary prose', () => {
+    const run: ChatRun = {
+      runId: 'run-ai-md',
+      provider: 'codex',
+      startedAt: '2026-07-07T12:00:00.000Z',
+      status: 'success'
+    }
+    const closeout = buildTaskWraithRunCloseoutMessage({
+      chat: chat({ runs: [run] }),
+      run,
+      completedAt: '2026-07-07T12:00:30.000Z',
+      exitCode: 0,
+      aiSummary: {
+        text: 'The run **edited** `foo.ts` per [the docs](https://example.com/docs).\n\n```js\nconsole.log(1)\n```'
+      }
+    })
+
+    expect(closeout.content).toContain('The run edited foo.ts per the docs.')
+    expect(closeout.content).not.toContain('https://example.com/docs')
+    expect(closeout.content).not.toContain('console.log')
+    expect(closeout.metadata?.closeoutSource).toBe('summaryProvider')
+    expect(closeout.metadata?.closeoutModel).toBeUndefined()
+  })
+
+  it('strips heading, bullet, and quote markers from multi-line AI summaries', () => {
+    const run: ChatRun = {
+      runId: 'run-ai-structure',
+      provider: 'codex',
+      startedAt: '2026-07-07T12:00:00.000Z',
+      status: 'success'
+    }
+    const closeout = buildTaskWraithRunCloseoutMessage({
+      chat: chat({ runs: [run] }),
+      run,
+      completedAt: '2026-07-07T12:00:30.000Z',
+      exitCode: 0,
+      aiSummary: {
+        text: '# Summary\n\n- Fixed the login bug\n- Added regression tests\n\n> Everything passed'
+      }
+    })
+
+    expect(closeout.content).toContain(
+      'Summary Fixed the login bug Added regression tests Everything passed.'
+    )
+    expect(closeout.content).not.toContain('\\#')
+    expect(closeout.content).not.toContain('- Fixed')
+    expect(closeout.content).not.toContain('>')
+  })
+
+  it('ignores hex tokens inside commit subjects and diff hunk headers', () => {
+    const run: ChatRun = {
+      runId: 'run-phantom-hash',
+      provider: 'codex',
+      startedAt: '2026-07-07T12:00:00.000Z',
+      endedAt: '2026-07-07T12:00:39.000Z',
+      status: 'success'
+    }
+    const closeout = buildTaskWraithRunCloseoutMessage({
+      chat: chat({
+        messages: [
+          {
+            ...message('t1', 'tool', ''),
+            runId: run.runId,
+            toolActivities: [
+              activity({
+                toolName: 'git_commit',
+                outputPreview:
+                  '[master 1a2b3c4d5] Revert 9f8e7d6c1: fix regression\n 2 files changed\nindex 89e6c9812..fa3d11234 100644'
+              })
+            ]
+          }
+        ],
+        runs: [run]
+      }),
+      run,
+      completedAt: '2026-07-07T12:00:39.000Z',
+      exitCode: 0
+    })
+
+    expect(closeout.content).toContain('`1a2b3c4d5`')
+    expect(closeout.content).not.toContain('`9f8e7d6c1`')
+    expect(closeout.content).not.toContain('`89e6c9812`')
+    expect(closeout.content).not.toContain('`fa3d11234`')
+  })
+
+  it('still extracts bare hashes printed on their own line', () => {
+    const run: ChatRun = {
+      runId: 'run-bare-hash',
+      provider: 'codex',
+      startedAt: '2026-07-07T12:00:00.000Z',
+      endedAt: '2026-07-07T12:00:39.000Z',
+      status: 'success'
+    }
+    const closeout = buildTaskWraithRunCloseoutMessage({
+      chat: chat({
+        messages: [
+          {
+            ...message('t1', 'tool', ''),
+            runId: run.runId,
+            toolActivities: [
+              activity({ toolName: 'git_commit', outputPreview: 'abc1234def567\n' })
+            ]
+          }
+        ],
+        runs: [run]
+      }),
+      run,
+      completedAt: '2026-07-07T12:00:39.000Z',
+      exitCode: 0
+    })
+
+    expect(closeout.content).toContain('`abc1234de`')
+  })
+
+  it('falls back to deterministic provenance when the AI summary is blank', () => {
+    const run: ChatRun = {
+      runId: 'run-ai-blank',
+      provider: 'codex',
+      startedAt: '2026-07-07T12:00:00.000Z',
+      status: 'success'
+    }
+    const closeout = buildTaskWraithRunCloseoutMessage({
+      chat: chat({
+        messages: [{ ...message('a1', 'assistant', 'Implemented the feature.'), runId: run.runId }],
+        runs: [run]
+      }),
+      run,
+      completedAt: '2026-07-07T12:00:30.000Z',
+      exitCode: 0,
+      aiSummary: { text: '   ', model: 'Apple Foundation Models' }
+    })
+
+    expect(closeout.content).toContain('Implemented the feature.')
+    expect(closeout.metadata?.closeoutSource).toBe('deterministicFallback')
+    expect(closeout.metadata?.closeoutAiSummary).toBeUndefined()
+    expect(closeout.metadata?.closeoutModel).toBeUndefined()
+  })
+
+  it('rebuilds byte-identical content when the same AI summary is re-supplied', () => {
+    const run: ChatRun = {
+      runId: 'run-ai-idem',
+      provider: 'codex',
+      startedAt: '2026-07-07T12:00:00.000Z',
+      endedAt: '2026-07-07T12:00:07.000Z',
+      status: 'success'
+    }
+    const input = {
+      chat: chat({ runs: [run] }),
+      run,
+      completedAt: '2026-07-07T12:00:07.000Z',
+      exitCode: 0,
+      aiSummary: { text: 'The run tidied the workspace.', model: 'Apple Foundation Models' }
+    }
+    const first = buildTaskWraithRunCloseoutMessage(input)
+    const second = buildTaskWraithRunCloseoutMessage(input)
+
+    expect(second.content).toBe(first.content)
+    expect(second.timestamp).toBe(first.timestamp)
+    expect(second.metadata?.closeoutAiSummary).toBe(first.metadata?.closeoutAiSummary)
+  })
+
+  it('prefers an AI round summary over the canonical synthesizer block', () => {
+    const round: EnsembleRoundState = {
+      roundId: 'round-ai',
+      prompt: 'Compare approaches',
+      status: 'completed',
+      startedAt: '2026-07-07T12:00:00.000Z',
+      endedAt: '2026-07-07T12:03:00.000Z',
+      participants: []
+    }
+    const closeout = buildTaskWraithRoundCloseoutMessage({
+      chat: chat({
+        chatKind: 'ensemble',
+        ensemble: {
+          participants: [],
+          roundSummaries: {
+            'round-ai': {
+              roundId: 'round-ai',
+              participantId: 'seat',
+              provider: 'codex',
+              role: 'Lead',
+              runId: 'seat-run-1',
+              summary:
+                'Round summary: Structured block.\nDecisions: keep.\nCorrections: none.\nOpen risks: none.\nNext action: ship.',
+              capturedAt: '2026-07-07T12:03:00.000Z'
+            }
+          }
+        } as unknown as ChatRecord['ensemble'],
+        runs: []
+      }),
+      round,
+      completedAt: round.endedAt!,
+      aiSummary: {
+        text: 'Two participants compared approaches and converged on the simpler fix.',
+        model: 'Apple Foundation Models'
+      }
+    })
+
+    expect(closeout.content).toContain(
+      'Two participants compared approaches and converged on the simpler fix.'
+    )
+    expect(closeout.content).not.toContain('Structured block.')
+    expect(closeout.metadata?.closeoutSource).toBe('summaryProvider')
+    expect(closeout.metadata?.closeoutScope).toBe('ensembleRound')
+    expect(closeout.metadata?.closeoutAiSummary).toBe(
+      'Two participants compared approaches and converged on the simpler fix.'
+    )
+  })
 })

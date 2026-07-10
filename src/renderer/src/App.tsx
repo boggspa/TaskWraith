@@ -35,7 +35,12 @@ import {
 import { classifyError, redactLog } from './lib/ErrorClassifier'
 import { shouldBackfillRunStats } from './lib/RunStatsBackfill'
 import { backfillRunDiffCounts, toolEvidenceFromActivities } from '../../shared/runDiffBackfill'
-import { TASKWRAITH_CLOSEOUT_KIND } from '../../shared/taskWraithCloseout'
+import {
+  TASKWRAITH_CLOSEOUT_KIND,
+  closeoutAiSummaryFromMetadata,
+  taskWraithRoundCloseoutId,
+  taskWraithRunCloseoutId
+} from '../../shared/taskWraithCloseout'
 import { coerceLiveProvider, DEFAULT_PROVIDER, isRetiredProvider } from '../../shared/retiredProviders'
 import { sanitizeRawProviderMediaRefs } from '../../shared/transcriptMediaRefSanitize'
 import { normalizeThreadTitle } from '../../shared/threadTitles'
@@ -620,8 +625,13 @@ import { formatWorkDuration } from './lib/runCompleteSummary'
 import {
   buildTaskWraithRoundCloseoutMessage,
   buildTaskWraithRunCloseoutMessage,
-  upsertTaskWraithCloseoutMessage
+  upsertTaskWraithCloseoutMessage,
+  type CloseoutAiSummary
 } from './lib/taskWraithCloseoutMessage'
+import {
+  buildRoundCloseoutSummaryDigest,
+  buildRunCloseoutSummaryDigest
+} from './lib/closeoutSummaryDigest'
 import { ollamaMemoryUsageFields } from './lib/ollamaMemoryDisplay'
 import { fetchProviderRates, type RendererProviderRates } from './lib/providerRateEstimate'
 import {
@@ -5771,6 +5781,9 @@ function App(): React.JSX.Element {
     }
     if (next.showRunCompleteSummary !== undefined) {
       settingsPatch.showRunCompleteSummary = next.showRunCompleteSummary
+    }
+    if (next.closeoutAiSummaryEnabled !== undefined) {
+      settingsPatch.closeoutAiSummaryEnabled = next.closeoutAiSummaryEnabled
     }
     if (next.hostAutoCompactEnabled !== undefined) {
       settingsPatch.hostAutoCompactEnabled = next.hostAutoCompactEnabled
@@ -20919,6 +20932,20 @@ function App(): React.JSX.Element {
     visibleRunCompleteNotice && !isWelcomeChat
       ? formatWorkDuration(visibleRunCompleteNotice.startedAt, visibleRunCompleteNotice.timestamp)
       : null
+  // AI close-out prose keyed by closeout message id, produced by the bridge
+  // daemon's on-device summarizer. The build effect below re-consumes these
+  // (or the copy persisted on the message metadata) so its deterministic
+  // rebuild can never clobber an AI summary back to fallback text.
+  const [closeoutAiSummaries, setCloseoutAiSummaries] = useState<Record<string, CloseoutAiSummary>>(
+    {}
+  )
+  const closeoutAiPendingRef = useRef<Set<string>>(new Set())
+  const closeoutAiAttemptedRef = useRef<Set<string>>(new Set())
+  // Read at IPC-resolve time so a mid-flight Settings toggle-off is honored.
+  const closeoutAiEnabledRef = useRef(true)
+  useEffect(() => {
+    closeoutAiEnabledRef.current = settings?.closeoutAiSummaryEnabled !== false
+  }, [settings?.closeoutAiSummaryEnabled])
   useEffect(() => {
     if (
       !currentChat?.appChatId ||
@@ -20935,12 +20962,24 @@ function App(): React.JSX.Element {
         if (!round || (round.status !== 'completed' && round.status !== 'cancelled' && round.status !== 'failed')) {
           return source
         }
+        const closeoutId = taskWraithRoundCloseoutId(round.roundId)
+        const roundCompletedAt = round.endedAt || completedAt
+        const existing = source.messages.find((message) => message.id === closeoutId)
+        // A reopened round (Steer/Resume) re-completes under the SAME roundId,
+        // so both the in-memory cache key and the persisted-metadata reseed are
+        // scoped to this completion's timestamp — a stale AI summary from an
+        // earlier completion never survives into the rebuilt close-out.
         const closeout = buildTaskWraithRoundCloseoutMessage({
           chat: source,
           round,
-          completedAt: round.endedAt || completedAt
+          completedAt: roundCompletedAt,
+          aiSummary:
+            closeoutAiSummaries[`${closeoutId}@${roundCompletedAt}`] ||
+            (existing?.timestamp === roundCompletedAt
+              ? closeoutAiSummaryFromMetadata(existing?.metadata)
+              : null) ||
+            undefined
         })
-        const existing = source.messages.find((message) => message.id === closeout.id)
         if (existing?.content === closeout.content && existing.timestamp === closeout.timestamp) {
           return source
         }
@@ -20957,13 +20996,21 @@ function App(): React.JSX.Element {
         ? (source.runs || []).find((item) => item.runId === currentRun.runId) || currentRun
         : currentRun
       if (!run?.runId || !run.endedAt) return source
+      const closeoutId = taskWraithRunCloseoutId(run.runId)
+      const existing = source.messages.find((message) => message.id === closeoutId)
+      // Solo runs never re-complete (run ids are unique), so a persisted AI
+      // summary is always valid for its run — reseed unconditionally. Only
+      // rounds need the timestamp scoping above.
       const closeout = buildTaskWraithRunCloseoutMessage({
         chat: source,
         run,
         completedAt,
-        exitCode: visibleRunCompleteNotice.exitCode
+        exitCode: visibleRunCompleteNotice.exitCode,
+        aiSummary:
+          closeoutAiSummaries[closeoutId] ||
+          closeoutAiSummaryFromMetadata(existing?.metadata) ||
+          undefined
       })
-      const existing = source.messages.find((message) => message.id === closeout.id)
       if (existing?.content === closeout.content && existing.timestamp === closeout.timestamp) {
         return source
       }
@@ -20977,6 +21024,7 @@ function App(): React.JSX.Element {
       }
     })
   }, [
+    closeoutAiSummaries,
     currentChat?.appChatId,
     currentChat?.chatKind,
     currentChat?.ensemble?.activeRound?.roundId,
@@ -20985,6 +21033,191 @@ function App(): React.JSX.Element {
     currentRun?.endedAt,
     currentRun?.status,
     isWelcomeChat,
+    settings?.showRunCompleteSummary,
+    updateChatById,
+    visibleRunCompleteNotice
+  ])
+  // Kick off the on-device AI close-out summary for a just-finished run/round.
+  // Fire-and-forget with single-flight per closeout id; 'unavailable' (older
+  // macOS, daemon off, Foundation Models missing) simply leaves the
+  // deterministic close-out in place. Persisted AI summaries (metadata on the
+  // closeout message) are never regenerated.
+  useEffect(() => {
+    if (
+      !currentChat?.appChatId ||
+      isWelcomeChat ||
+      !visibleRunCompleteNotice ||
+      settings?.showRunCompleteSummary === false ||
+      settings?.closeoutAiSummaryEnabled === false
+    ) {
+      return
+    }
+    const chat = currentChat
+    const chatId = chat.appChatId
+    const completedAt = visibleRunCompleteNotice.timestamp
+    const exitCode = visibleRunCompleteNotice.exitCode
+    // Cache key: solo close-outs key by run id alone (run ids never
+    // re-complete); round close-outs append the completion timestamp because a
+    // reopened round (Steer/Resume) re-completes under the same roundId and
+    // must get a fresh summary.
+    let summaryKey: string
+    let closeoutId: string
+    // Non-null for rounds: a persisted AI summary only counts as "already
+    // done" when the closeout message's timestamp matches THIS completion.
+    let reseedTimestamp: string | null = null
+    let buildDigest: () => ReturnType<typeof buildRunCloseoutSummaryDigest>
+    // Persist at resolve time, keyed to the CAPTURED chat/run/round — by the
+    // time the daemon answers, a follow-up run may have superseded this one
+    // and the build effect (which only ever rebuilds the latest close-out)
+    // would otherwise orphan the summary forever.
+    let persistSummary: (aiSummary: CloseoutAiSummary) => void
+    if (chat.chatKind === 'ensemble') {
+      const round = chat.ensemble?.activeRound
+      if (
+        !round ||
+        (round.status !== 'completed' && round.status !== 'cancelled' && round.status !== 'failed')
+      ) {
+        return
+      }
+      const roundCompletedAt = round.endedAt || completedAt
+      closeoutId = taskWraithRoundCloseoutId(round.roundId)
+      summaryKey = `${closeoutId}@${roundCompletedAt}`
+      reseedTimestamp = roundCompletedAt
+      buildDigest = () =>
+        buildRoundCloseoutSummaryDigest({ chat, round, completedAt: roundCompletedAt })
+      persistSummary = (aiSummary) => {
+        updateChatById(chatId, (source) => {
+          const existing = source.messages.find((message) => message.id === closeoutId)
+          // Skip when the round re-completed (message re-stamped with a newer
+          // completion) or is live again — this summary describes a superseded
+          // completion.
+          if (!existing || existing.timestamp !== roundCompletedAt) return source
+          const liveRound = source.ensemble?.activeRound
+          if (
+            liveRound?.roundId === round.roundId &&
+            liveRound.status !== 'completed' &&
+            liveRound.status !== 'cancelled' &&
+            liveRound.status !== 'failed'
+          ) {
+            return source
+          }
+          const closeout = buildTaskWraithRoundCloseoutMessage({
+            chat: source,
+            round,
+            completedAt: roundCompletedAt,
+            aiSummary
+          })
+          if (existing.content === closeout.content && existing.timestamp === closeout.timestamp) {
+            return source
+          }
+          return {
+            ...source,
+            messages: upsertTaskWraithCloseoutMessage(source.messages, closeout, {
+              closeoutRoundId: round.roundId
+            }),
+            updatedAt: Date.now()
+          }
+        })
+      }
+    } else {
+      const run = currentRun?.runId
+        ? (chat.runs || []).find((item) => item.runId === currentRun.runId) || currentRun
+        : currentRun
+      if (!run?.runId || !run.endedAt) return
+      closeoutId = taskWraithRunCloseoutId(run.runId)
+      summaryKey = closeoutId
+      buildDigest = () => buildRunCloseoutSummaryDigest({ chat, run, completedAt })
+      persistSummary = (aiSummary) => {
+        updateChatById(chatId, (source) => {
+          const existing = source.messages.find((message) => message.id === closeoutId)
+          if (!existing) return source
+          const sourceRun = (source.runs || []).find((item) => item.runId === run.runId) || run
+          const closeout = buildTaskWraithRunCloseoutMessage({
+            chat: source,
+            run: sourceRun,
+            completedAt,
+            exitCode,
+            aiSummary
+          })
+          if (existing.content === closeout.content && existing.timestamp === closeout.timestamp) {
+            return source
+          }
+          return {
+            ...source,
+            messages: upsertTaskWraithCloseoutMessage(source.messages, closeout, {
+              sourceRunId: run.runId,
+              promptMessageId: run.promptMessageId
+            }),
+            updatedAt: Date.now()
+          }
+        })
+      }
+    }
+    if (closeoutAiSummaries[summaryKey]) return
+    if (
+      closeoutAiPendingRef.current.has(summaryKey) ||
+      closeoutAiAttemptedRef.current.has(summaryKey)
+    ) {
+      return
+    }
+    const existing = chat.messages.find((message) => message.id === closeoutId)
+    if (
+      existing &&
+      closeoutAiSummaryFromMetadata(existing.metadata) &&
+      (reseedTimestamp === null || existing.timestamp === reseedTimestamp)
+    ) {
+      return
+    }
+    let digest: ReturnType<typeof buildRunCloseoutSummaryDigest>
+    try {
+      digest = buildDigest()
+    } catch {
+      closeoutAiAttemptedRef.current.add(summaryKey)
+      return
+    }
+    closeoutAiPendingRef.current.add(summaryKey)
+    void window.api
+      .summarizeCloseout(digest)
+      .then((snapshot) => {
+        // Honor a mid-flight toggle-off: don't surface a summary the user just
+        // disabled.
+        if (closeoutAiEnabledRef.current === false) return
+        if (snapshot?.status === 'ready' && snapshot.summary?.trim()) {
+          const aiSummary: CloseoutAiSummary = {
+            text: snapshot.summary,
+            ...(snapshot.model ? { model: snapshot.model } : {})
+          }
+          setCloseoutAiSummaries((prev) => {
+            const next = { ...prev, [summaryKey]: aiSummary }
+            const keys = Object.keys(next)
+            // Session-lifetime bound: entries also persist on the message
+            // metadata, so evicting old cache entries loses nothing.
+            for (const stale of keys.slice(0, Math.max(0, keys.length - 100))) {
+              delete next[stale]
+            }
+            return next
+          })
+          persistSummary(aiSummary)
+        }
+      })
+      .catch(() => {
+        // Unavailable/timeout — the deterministic close-out stays.
+      })
+      .finally(() => {
+        closeoutAiPendingRef.current.delete(summaryKey)
+        closeoutAiAttemptedRef.current.add(summaryKey)
+        while (closeoutAiAttemptedRef.current.size > 500) {
+          const oldest = closeoutAiAttemptedRef.current.values().next().value
+          if (oldest === undefined) break
+          closeoutAiAttemptedRef.current.delete(oldest)
+        }
+      })
+  }, [
+    closeoutAiSummaries,
+    currentChat,
+    currentRun,
+    isWelcomeChat,
+    settings?.closeoutAiSummaryEnabled,
     settings?.showRunCompleteSummary,
     updateChatById,
     visibleRunCompleteNotice

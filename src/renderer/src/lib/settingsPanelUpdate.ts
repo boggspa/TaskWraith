@@ -42,6 +42,8 @@ export type SettingsPanelUpdate = {
   currencyOverestimatePercent?: AppSettings['currencyOverestimatePercent']
   /** Settings → General toggle for Task Complete / Final Summary cards. */
   showRunCompleteSummary?: AppSettings['showRunCompleteSummary']
+  /** Settings → General toggle for on-device AI close-out summaries. */
+  closeoutAiSummaryEnabled?: AppSettings['closeoutAiSummaryEnabled']
   hostAutoCompactEnabled?: AppSettings['hostAutoCompactEnabled']
   /** Settings → General toggle: collapse older Ensemble rounds into cards. */
   ensembleCollapseOlderRounds?: AppSettings['ensembleCollapseOlderRounds']

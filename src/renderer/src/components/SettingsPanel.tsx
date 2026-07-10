@@ -266,6 +266,8 @@ interface SettingsPanelProps {
   currencyOverestimatePercent?: number
   /** Settings → General toggle for Task Complete / Final Summary cards. */
   showRunCompleteSummary?: AppSettings['showRunCompleteSummary']
+  /** Settings → General toggle for on-device AI close-out summaries. */
+  closeoutAiSummaryEnabled?: AppSettings['closeoutAiSummaryEnabled']
   hostAutoCompactEnabled?: AppSettings['hostAutoCompactEnabled']
   /** Settings → General toggle: collapse older Ensemble rounds into cards. */
   ensembleCollapseOlderRounds?: AppSettings['ensembleCollapseOlderRounds']
@@ -386,6 +388,8 @@ interface SettingsPanelProps {
     currencyOverestimatePercent?: number
     /** Settings → General toggle for Task Complete / Final Summary cards. */
     showRunCompleteSummary?: AppSettings['showRunCompleteSummary']
+    /** Settings → General toggle for on-device AI close-out summaries. */
+    closeoutAiSummaryEnabled?: AppSettings['closeoutAiSummaryEnabled']
     hostAutoCompactEnabled?: AppSettings['hostAutoCompactEnabled']
     /** Settings → General toggle: collapse older Ensemble rounds into cards. */
     ensembleCollapseOlderRounds?: AppSettings['ensembleCollapseOlderRounds']
@@ -3715,6 +3719,7 @@ export function SettingsPanel({
   currency,
   currencyOverestimatePercent,
   showRunCompleteSummary,
+  closeoutAiSummaryEnabled,
   hostAutoCompactEnabled,
   ensembleCollapseOlderRounds,
   dashboardStatPrefs,
@@ -6116,6 +6121,23 @@ export function SettingsPanel({
                 <p className="settings-hint">
                   Controls the Final Summary / Task Complete section after a run finishes. Turning
                   this off hides the completion card while keeping the transcript and run telemetry.
+                </p>
+              </div>
+
+              <div className="settings-group">
+                <label className="settings-checkbox">
+                  <input
+                    type="checkbox"
+                    checked={closeoutAiSummaryEnabled !== false}
+                    onChange={(e) => onChange({ closeoutAiSummaryEnabled: e.target.checked })}
+                  />
+                  <span>Summarize close-outs with Foundation Models</span>
+                </label>
+                <p className="settings-hint">
+                  When a run or Ensemble round finishes, writes the close-out paragraph with
+                  on-device Apple Foundation Models instead of quoting the final reply. Requires
+                  macOS 26; the deterministic close-out text is used when unavailable. Nothing
+                  leaves this Mac.
                 </p>
               </div>
 

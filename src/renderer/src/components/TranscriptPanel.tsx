@@ -3386,13 +3386,19 @@ export const TranscriptPanel = memo(
                         // Deterministic-fallback close-outs render "TaskWraith"
                         // with no source badge — the "deterministic" chip read as
                         // noise. Provider-generated close-outs still note their
-                        // source ("via Claude" / "generated").
+                        // source ("via Claude" / "via Foundation Models").
+                        const closeoutModel =
+                          typeof msg.metadata?.closeoutModel === 'string'
+                            ? msg.metadata.closeoutModel.replace(/^Apple\s+/, '').trim()
+                            : ''
                         const badge =
                           source === 'deterministicFallback'
                             ? null
                             : closeoutProvider
                               ? `via ${getProviderLabel(closeoutProvider)}`
-                              : 'generated'
+                              : closeoutModel
+                                ? `via ${closeoutModel}`
+                                : 'generated'
                         return (
                           <div className="message-meta taskwraith-closeout-meta">
                             <span className="message-meta-label">TaskWraith</span>
@@ -3404,7 +3410,9 @@ export const TranscriptPanel = memo(
                                 title={
                                   closeoutProvider
                                     ? `Close-out generated via ${getProviderLabel(closeoutProvider)}`
-                                    : 'TaskWraith close-out'
+                                    : closeoutModel
+                                      ? `Close-out summarized on-device by ${msg.metadata?.closeoutModel}`
+                                      : 'TaskWraith close-out'
                                 }
                               >
                                 {badge}

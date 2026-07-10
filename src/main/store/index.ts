@@ -1014,6 +1014,7 @@ const defaultSettings: AppSettings = {
   // before FX conversion so the bias is currency-agnostic.
   currencyOverestimatePercent: 0,
   showRunCompleteSummary: true,
+  closeoutAiSummaryEnabled: true,
   hostAutoCompactEnabled: true,
   ensembleCollapseOlderRounds: true,
   dashboardStatPrefs: {

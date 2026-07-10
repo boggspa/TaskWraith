@@ -56,6 +56,8 @@ import {
   HandoffCardFilter,
   RunAnalystRequest,
   RunAnalystSnapshot,
+  CloseoutSummaryRequest,
+  CloseoutSummarySnapshot,
   AgenticServiceId,
   EffectiveRunPermissions,
   AuditRunRecord,
@@ -1764,6 +1766,7 @@ declare global {
       getRunEvents: (filter?: RunEventFilter) => Promise<RunEventRecord[]>
       getRunEventReplay: (runId: string) => Promise<RunEventReplay>
       analyzeRun: (request: RunAnalystRequest) => Promise<RunAnalystSnapshot>
+      summarizeCloseout: (request: CloseoutSummaryRequest) => Promise<CloseoutSummarySnapshot>
       getApprovalLedger: (filter?: ApprovalLedgerFilter) => Promise<ApprovalLedgerRecord[]>
       recordApprovalElevationAck: (input: {
         provider: string

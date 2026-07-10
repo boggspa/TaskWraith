@@ -178,6 +178,14 @@ dispatcher.register("runAnalyst.analyze") { params in
     return try RunAnalyst.analyze(params)
 }
 
+/// `closeout.summarize` — optional on-device close-out prose for a finished
+/// run or ensemble round, through Apple Foundation Models. Same availability
+/// gating as `runAnalyst.analyze`; Electron falls back to its deterministic
+/// close-out text when this returns a bridge-unavailable error.
+dispatcher.register("closeout.summarize") { params in
+    return try CloseoutSummarizer.summarize(params)
+}
+
 // MARK: - Attached window RPCs (Appshots-equivalent)
 
 // In-memory handle table for windows the user has attached via the macOS
