@@ -1064,12 +1064,26 @@ function shareUnchangedMessageObjects(
   return changed ? shared : (next as ChatMessage[])
 }
 
+// Per-message chunk cache for the live tool-file signature. Safe because
+// every toolActivities writer replaces the MESSAGE OBJECT rather than
+// mutating in place (applyAssistantDelta slice-preserve + the solo/multi-
+// agent/review/workflow telemetry reducers all spread - audited 2026-07-10),
+// so message identity keys the cache. During text streaming only the
+// streaming bubble changes identity; every other message skips its
+// JSON.stringify - O(all tool messages) -> O(changed) per coalesced flush.
+const liveToolFileSummaryChunkCache = new WeakMap<ChatMessage, string>()
+
 function buildLiveToolFileSummarySignature(messages: readonly ChatMessage[]): string {
   const chunks: string[] = []
   for (const message of messages) {
     if (message.metadata?.kind === TASKWRAITH_CLOSEOUT_KIND) continue
     if (!message.toolActivities?.length) continue
-    chunks.push(`${message.id}:${JSON.stringify(message.toolActivities)}`)
+    let chunk = liveToolFileSummaryChunkCache.get(message)
+    if (chunk === undefined) {
+      chunk = `${message.id}:${JSON.stringify(message.toolActivities)}`
+      liveToolFileSummaryChunkCache.set(message, chunk)
+    }
+    chunks.push(chunk)
   }
   return chunks.join('\u0001')
 }
@@ -20914,6 +20928,27 @@ function App(): React.JSX.Element {
     usageInitialized,
     isMultiviewSplit
   })
+  // `chats` gets a NEW array identity on every coalesced streaming flush
+  // (~60fps during any run, foreground or background), but the dashboard
+  // builder consumes only appChatId + per-message timestamps + message
+  // COUNTS (plus summary-chat messageCount) — none of which move when a
+  // delta appends text to an existing message. Keying the memo on this
+  // signature instead of the raw array skips the O(chats × messages)
+  // rebuild while a workspace welcome screen sits over a streaming run;
+  // a genuinely new message/chat (or summary-count change) still bumps it.
+  // (Timestamps of EXISTING messages are assumed immutable — true for the
+  // transcript model; token/run stats live in usageRecords, a separate dep.)
+  const welcomeUsageDashboardChatsSignature = useMemo(() => {
+    if (!shouldBuildWelcomeUsageDashboardDataNow) return ''
+    return chats
+      .map((chat) => {
+        const summary = chat as { summaryOnly?: boolean; messageCount?: number }
+        return `${chat.appChatId}:${chat.messages?.length ?? 0}:${
+          summary.summaryOnly ? (summary.messageCount ?? 0) : 0
+        }`
+      })
+      .join('|')
+  }, [shouldBuildWelcomeUsageDashboardDataNow, chats])
   const welcomeUsageDashboardData = useMemo(() => {
     if (!shouldBuildWelcomeUsageDashboardDataNow) return EMPTY_WELCOME_USAGE_DASHBOARD_DATA
     return buildWelcomeUsageDashboardData(
@@ -20924,10 +20959,14 @@ function App(): React.JSX.Element {
       workspaces,
       dashboardStatResetAt
     )
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `chats` is
+    // deliberately represented by welcomeUsageDashboardChatsSignature (see
+    // comment above); adding the raw array would reintroduce the per-flush
+    // rebuild this exists to prevent.
   }, [
     shouldBuildWelcomeUsageDashboardDataNow,
     usageRecords,
-    chats,
+    welcomeUsageDashboardChatsSignature,
     workspaces,
     dashboardStatResetAt
   ])
