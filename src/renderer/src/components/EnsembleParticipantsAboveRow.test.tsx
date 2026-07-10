@@ -1,7 +1,9 @@
 import { renderToStaticMarkup } from 'react-dom/server'
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import {
   ENSEMBLE_CHIP_GRID_TRACKS,
+  EnsembleAddParticipantFields,
   EnsembleParticipantAuthorityControls,
   EnsembleParticipantStageControl,
   EnsembleParticipantsAboveRow,
@@ -14,7 +16,8 @@ import {
   resolveEnsembleAddProviderGroups,
   resolveEnsembleParticipantAddAuthorityPatch,
   resolveEnsembleParticipantAuthorityPatch,
-  resolveParticipantSelectionAfterRemoval
+  resolveParticipantSelectionAfterRemoval,
+  retargetEnsembleParticipantAddDetails
 } from './EnsembleParticipantsAboveRow'
 import type { ChatRecord, EnsembleParticipant } from '../../../main/store/types'
 
@@ -268,6 +271,103 @@ describe('EnsembleParticipantsAboveRow', () => {
         role: 'Claude 2',
         instructions: 'Contribute as Claude for this ensemble.'
       })
+    })
+
+    it('retargets untouched provider defaults without erasing authored details', () => {
+      const participants = [
+        makeParticipant({ id: 'claude-1', provider: 'claude', role: 'Claude', order: 1 })
+      ]
+      const defaults = createEnsembleParticipantAddDetails('claude', participants)
+      expect(
+        retargetEnsembleParticipantAddDetails(
+          defaults,
+          'claude',
+          'codex',
+          participants
+        )
+      ).toMatchObject({
+        role: 'Codex',
+        instructions: 'Contribute as Codex for this ensemble.'
+      })
+
+      expect(
+        retargetEnsembleParticipantAddDetails(
+          {
+            ...defaults,
+            stageRole: 'reviewer',
+            role: 'Release reviewer',
+            instructions: 'Review the final diff.'
+          },
+          'claude',
+          'codex',
+          participants
+        )
+      ).toMatchObject({
+        stageRole: 'reviewer',
+        role: 'Release reviewer',
+        instructions: 'Review the final diff.'
+      })
+    })
+
+    it('renders every participant field in the Add-only top section', () => {
+      const participants = [makeParticipant({ id: 'claude-1', order: 1 })]
+      const html = renderToStaticMarkup(
+        <EnsembleAddParticipantFields
+          provider="claude"
+          participants={participants}
+          details={{
+            enabled: true,
+            authority: 'agent',
+            autoApprovalsEnabled: false,
+            stageRole: undefined,
+            role: 'Release reviewer',
+            instructions: 'Review the final diff.'
+          }}
+          rolePresetId="custom"
+          hasLeadership={false}
+          disabled={false}
+          onDetailsChange={() => undefined}
+          onRolePresetIdChange={() => undefined}
+          onAutoApprovalsChange={() => undefined}
+        />
+      )
+
+      expect(html).toContain('class="ensemble-add-participant-fields"')
+      expect(html).toContain('>Enabled</button>')
+      expect(html).toContain('>Auto</button>')
+      expect(html.match(/role="radio"/g) || []).toHaveLength(7)
+      expect(html).toContain('>Boss</span>')
+      expect(html).toContain('>Captain</span>')
+      expect(html).toContain('>Any</button>')
+      expect(html).toContain('>Scout</button>')
+      expect(html).toContain('>Work</button>')
+      expect(html).toContain('>Review</button>')
+      expect(html).toContain('<option value="custom" selected="">Custom…</option>')
+      expect(html).toContain('value="Release reviewer"')
+      expect(html).toContain('Brief preset…')
+      expect(html).toContain('>Save preset</button>')
+      expect(html).toContain('>Rename</button>')
+      expect(html).toContain('Review the final diff.')
+      expect(html).not.toContain('>Save</button>')
+      expect(html).not.toContain('Model, provider, reasoning, fast mode')
+    })
+
+    it('scopes the three-part layout to the Ensemble Add picker', () => {
+      const css = readFileSync(
+        new URL('../assets/css/09-ensemble-work-session.css', import.meta.url),
+        'utf8'
+      )
+      expect(css).toContain(
+        '.composer-combined-picker-popover.is-unified-provider-picker.has-top-content.is-ensemble-add-participant'
+      )
+      expect(css).toContain('grid-template-columns: minmax(0, 1fr) 124px')
+      expect(css).toContain('height: min(570px, calc(100dvh - 16px))')
+      expect(css).toContain('.is-ensemble-add-participant > .composer-combined-picker-top-content')
+      expect(css).toContain('border-bottom: 1px solid')
+      expect(css).toContain('.ensemble-add-participant-fields-primary')
+      expect(css).toContain('border-right: 1px solid')
+      expect(css).toContain('.ensemble-add-participant-brief .ensemble-brief-textarea-wrap')
+      expect(css).toContain('height: 100%')
     })
 
     it('uses the existing provider order and omits synthetic custom models', () => {

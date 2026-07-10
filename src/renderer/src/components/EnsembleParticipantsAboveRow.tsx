@@ -369,6 +369,33 @@ export function createEnsembleParticipantAddDetails(
   }
 }
 
+export function retargetEnsembleParticipantAddDetails(
+  current: EnsembleParticipantAddDetails,
+  previousProvider: ProviderId,
+  nextProvider: ProviderId,
+  participants: EnsembleParticipant[],
+  autoApprovals?: NonNullable<ChatRecord['ensemble']>['bossmanAutoApprovals']
+): EnsembleParticipantAddDetails {
+  const previousDefaults = createEnsembleParticipantAddDetails(
+    previousProvider,
+    participants,
+    autoApprovals
+  )
+  const nextDefaults = createEnsembleParticipantAddDetails(
+    nextProvider,
+    participants,
+    autoApprovals
+  )
+  return {
+    ...current,
+    role: current.role === previousDefaults.role ? nextDefaults.role : current.role,
+    instructions:
+      current.instructions === previousDefaults.instructions
+        ? nextDefaults.instructions
+        : current.instructions
+  }
+}
+
 export function resolveEnsembleParticipantAddAuthorityPatch(
   state: EnsembleAuthorityPatch,
   participantId: string,
@@ -982,7 +1009,10 @@ export function EnsembleParticipantsAboveRow({
     })
   }
 
-  const persist = (nextParticipants: EnsembleParticipant[]): void => {
+  const persist = (
+    nextParticipants: EnsembleParticipant[],
+    authorityOverride?: EnsembleAuthorityPatch
+  ): void => {
     // 1.0.4-AR2 — preserve any existing per-chat `maxParticipants`
     // override that's already in range [MIN, MAX]. Pre-AR2 every
     // persist clobbered the cap to the global ceiling, silently
@@ -1015,13 +1045,18 @@ export function EnsembleParticipantsAboveRow({
       MAX_ENSEMBLE_PARTICIPANTS,
       Math.max(preservedMax, nextParticipants.length)
     )
-    const existingBossmanParticipantId = chat.ensemble?.bossmanParticipantId
+    const authorityState = authorityOverride || {
+      bossmanParticipantId: chat.ensemble?.bossmanParticipantId,
+      secondInCommandParticipantId: chat.ensemble?.secondInCommandParticipantId,
+      bossmanAutoApprovals: chat.ensemble?.bossmanAutoApprovals
+    }
+    const existingBossmanParticipantId = authorityState.bossmanParticipantId
     const bossmanParticipantId =
       existingBossmanParticipantId &&
       nextParticipants.some((participant) => participant.id === existingBossmanParticipantId)
         ? existingBossmanParticipantId
         : undefined
-    const existingSecondInCommandParticipantId = chat.ensemble?.secondInCommandParticipantId
+    const existingSecondInCommandParticipantId = authorityState.secondInCommandParticipantId
     const secondInCommandParticipantId =
       existingSecondInCommandParticipantId &&
       existingSecondInCommandParticipantId !== bossmanParticipantId &&
@@ -1037,7 +1072,7 @@ export function EnsembleParticipantsAboveRow({
         bossmanParticipantId,
         secondInCommandParticipantId,
         bossmanAutoApprovals: bossmanParticipantId || secondInCommandParticipantId
-          ? chat.ensemble?.bossmanAutoApprovals
+          ? authorityState.bossmanAutoApprovals
           : undefined,
         updatedAt: new Date().toISOString()
       }
@@ -1045,7 +1080,7 @@ export function EnsembleParticipantsAboveRow({
     onChatChange(withSessionActivityLedger(chat, nextChat))
   }
 
-  const addParticipant = (configuration: EnsembleParticipantAddConfiguration): void => {
+  const addParticipant = (configuration: EnsembleParticipantAddDraft): void => {
     if (!canAddParticipant) return
     // The selected (or last) chip decides only WHERE the new chip is
     // inserted — never what it contains. Cloning it used to leak
@@ -1062,7 +1097,25 @@ export function EnsembleParticipantsAboveRow({
     )
     const next = [...participants]
     next.splice(insertIndex, 0, newParticipant)
-    persist(next)
+    const desiredAutoApprovals =
+      configuration.autoApprovalsEnabled && configuration.autoApprovalsConfirmedAt
+        ? {
+            enabled: true as const,
+            mode: 'permission_preset_once' as const,
+            confirmedAt: configuration.autoApprovalsConfirmedAt
+          }
+        : undefined
+    const authorityPatch = resolveEnsembleParticipantAddAuthorityPatch(
+      {
+        bossmanParticipantId: chat.ensemble?.bossmanParticipantId,
+        secondInCommandParticipantId: chat.ensemble?.secondInCommandParticipantId,
+        bossmanAutoApprovals: chat.ensemble?.bossmanAutoApprovals
+      },
+      newParticipant.id,
+      configuration.authority,
+      desiredAutoApprovals
+    )
+    persist(next, authorityPatch)
     onSelectParticipant(newParticipant.id)
   }
 
@@ -1403,6 +1456,9 @@ export function EnsembleParticipantsAboveRow({
         grokAvailable={grokAvailable}
         cursorAvailable={cursorAvailable}
         providerGroups={providerGroups}
+        participants={participants}
+        hasLeadership={hasLeadership}
+        bossmanAutoApprovals={chat.ensemble?.bossmanAutoApprovals}
         initialProvider={
           participants.find((participant) => participant.id === selectedParticipantId)?.provider ||
           participants[participants.length - 1]?.provider ||
@@ -1519,6 +1575,9 @@ function EnsembleAddParticipantButton({
   grokAvailable,
   cursorAvailable,
   providerGroups,
+  participants,
+  hasLeadership,
+  bossmanAutoApprovals,
   initialProvider,
   onAdd
 }: {
@@ -1528,8 +1587,11 @@ function EnsembleAddParticipantButton({
   grokAvailable: boolean
   cursorAvailable: boolean
   providerGroups?: readonly CombinedModelPickerProviderGroup[]
+  participants: EnsembleParticipant[]
+  hasLeadership: boolean
+  bossmanAutoApprovals?: NonNullable<ChatRecord['ensemble']>['bossmanAutoApprovals']
   initialProvider: ProviderId
-  onAdd: (configuration: EnsembleParticipantAddConfiguration) => void
+  onAdd: (configuration: EnsembleParticipantAddDraft) => void
 }): React.JSX.Element {
   const availableProviderGroups = useMemo(
     () => resolveEnsembleAddProviderGroups(providerGroups, grokAvailable, cursorAvailable),
@@ -1547,6 +1609,13 @@ function EnsembleAddParticipantButton({
       availableProviderGroups
     )
   )
+  const initialDetails = createEnsembleParticipantAddDetails(
+    resolvedInitialProvider,
+    participants,
+    bossmanAutoApprovals
+  )
+  const [detailsDraft, setDetailsDraft] = useState<EnsembleParticipantAddDetails>(initialDetails)
+  const [rolePresetId, setRolePresetId] = useState(() => resolveRolePresetId(initialDetails.role))
   const selectedGroup =
     availableProviderGroups.find((group) => group.provider === draft.provider) ||
     availableProviderGroups[0]
@@ -1568,6 +1637,11 @@ function EnsembleAddParticipantButton({
   const handleOpenChange = useCallback(
     (open: boolean) => {
       if (open) {
+        const nextDetails = createEnsembleParticipantAddDetails(
+          resolvedInitialProvider,
+          participants,
+          bossmanAutoApprovals
+        )
         setDraft(
           createEnsembleParticipantAddConfiguration(
             resolvedInitialProvider,
@@ -1575,17 +1649,30 @@ function EnsembleAddParticipantButton({
             availableProviderGroups
           )
         )
+        setDetailsDraft(nextDetails)
+        setRolePresetId(resolveRolePresetId(nextDetails.role))
       }
     },
-    [availableProviderGroups, resolvedInitialProvider]
+    [availableProviderGroups, bossmanAutoApprovals, participants, resolvedInitialProvider]
   )
   const handleProviderModelSelection = useCallback(
     (provider: ProviderId, model: string) => {
+      if (provider !== draft.provider) {
+        setDetailsDraft((current) =>
+          retargetEnsembleParticipantAddDetails(
+            current,
+            draft.provider,
+            provider,
+            participants,
+            bossmanAutoApprovals
+          )
+        )
+      }
       setDraft(
         createEnsembleParticipantAddConfiguration(provider, model, availableProviderGroups)
       )
     },
-    [availableProviderGroups]
+    [availableProviderGroups, bossmanAutoApprovals, draft.provider, participants]
   )
   const handleReasoningSelection = useCallback((value: string) => {
     setDraft((current) =>
@@ -1620,6 +1707,32 @@ function EnsembleAddParticipantButton({
     })
   }, [availableProviderGroups])
 
+  const patchDetails = useCallback((patch: Partial<EnsembleParticipantAddDetails>) => {
+    setDetailsDraft((current) => ({ ...current, ...patch }))
+  }, [])
+
+  const handleAutoApprovalsChange = useCallback(
+    (enabled: boolean) => {
+      if (!enabled) {
+        patchDetails({ autoApprovalsEnabled: false })
+        return
+      }
+      if (detailsDraft.autoApprovalsConfirmedAt) {
+        patchDetails({ autoApprovalsEnabled: true })
+        return
+      }
+      const confirmed = window.confirm(
+        'Allow Boss/Captain Auto Approvals for this Ensemble? Boss remains primary; Captain can only use this consent when Boss is unavailable. Approvals stay one-shot and limited to the selected participant permission preset and workspace policy. This will not grant session/workspace approval, YOLO, policy changes, external-path escapes, or unclassified requests.'
+      )
+      if (!confirmed) return
+      patchDetails({
+        autoApprovalsEnabled: true,
+        autoApprovalsConfirmedAt: new Date().toISOString()
+      })
+    },
+    [detailsDraft.autoApprovalsConfirmedAt, patchDetails]
+  )
+
   return (
     <CombinedModelPicker
       provider={draft.provider}
@@ -1648,6 +1761,21 @@ function EnsembleAddParticipantButton({
       }
       disabled={disabled}
       repositionOnScroll
+      topContent={
+        <EnsembleAddParticipantFields
+          provider={draft.provider}
+          participants={participants}
+          details={detailsDraft}
+          rolePresetId={rolePresetId}
+          hasLeadership={hasLeadership || detailsDraft.authority !== 'agent'}
+          disabled={disabled}
+          onDetailsChange={patchDetails}
+          onRolePresetIdChange={setRolePresetId}
+          onAutoApprovalsChange={handleAutoApprovalsChange}
+        />
+      }
+      popoverClassName="is-ensemble-add-participant"
+      dialogAriaLabel="Configure and add Ensemble participant"
       customTrigger={{
         className: 'ensemble-above-add-participant',
         content: '+',
@@ -1656,10 +1784,113 @@ function EnsembleAddParticipantButton({
       }}
       confirmAction={{
         label: 'Add',
-        onConfirm: () => onAdd({ ...draft })
+        onConfirm: () => onAdd({ ...draft, ...detailsDraft })
       }}
       onOpenChange={handleOpenChange}
     />
+  )
+}
+
+export function EnsembleAddParticipantFields({
+  provider,
+  participants,
+  details,
+  rolePresetId,
+  hasLeadership,
+  disabled,
+  onDetailsChange,
+  onRolePresetIdChange,
+  onAutoApprovalsChange
+}: {
+  provider: ProviderId
+  participants: EnsembleParticipant[]
+  details: EnsembleParticipantAddDetails
+  rolePresetId: string
+  hasLeadership: boolean
+  disabled: boolean
+  onDetailsChange: (patch: Partial<EnsembleParticipantAddDetails>) => void
+  onRolePresetIdChange: (presetId: string) => void
+  onAutoApprovalsChange: (enabled: boolean) => void
+}): React.JSX.Element {
+  const instructionsTextareaRef = useRef<HTMLTextAreaElement | null>(null)
+  const instructionsContextMenu = useComposerTextareaContextMenu()
+  const participantLabel = getProviderName(provider)
+
+  return (
+    <div className="ensemble-add-participant-fields">
+      <div className="ensemble-add-participant-fields-primary">
+        <EnsembleParticipantAuthorityControls
+          participantLabel={participantLabel}
+          enabled={details.enabled}
+          authority={details.authority}
+          hasLeadership={hasLeadership}
+          autoApprovalsEnabled={details.autoApprovalsEnabled}
+          locked={disabled}
+          onEnabledChange={(enabled) => onDetailsChange({ enabled })}
+          onAuthorityChange={(authority) => onDetailsChange({ authority })}
+          onAutoApprovalsChange={onAutoApprovalsChange}
+        />
+        <EnsembleParticipantStageControl
+          participantLabel={participantLabel}
+          stageRole={details.stageRole}
+          locked={disabled}
+          onStageRoleChange={(stageRole) => onDetailsChange({ stageRole })}
+        />
+        <label className="ensemble-above-overflow-role">
+          <span className="ensemble-above-overflow-label">Role</span>
+          <select
+            className="ensemble-above-overflow-role-picker"
+            value={rolePresetId}
+            disabled={disabled}
+            onChange={(event) => {
+              const nextPresetId = event.target.value
+              onRolePresetIdChange(nextPresetId)
+              const presetLabel = roleLabelForPresetId(nextPresetId)
+              if (presetLabel) onDetailsChange({ role: presetLabel })
+            }}
+          >
+            {ENSEMBLE_ROLE_PRESETS.map((preset) => (
+              <option key={preset.id} value={preset.id} title={preset.description}>
+                {preset.label}
+              </option>
+            ))}
+            <option value={ENSEMBLE_ROLE_PRESET_CUSTOM}>Custom…</option>
+          </select>
+          {rolePresetId === ENSEMBLE_ROLE_PRESET_CUSTOM ? (
+            <input
+              type="text"
+              value={details.role}
+              disabled={disabled}
+              onChange={(event) => onDetailsChange({ role: event.target.value })}
+              placeholder={`${participantLabel} role`}
+            />
+          ) : null}
+        </label>
+      </div>
+      <EnsembleBriefEditor
+        label="Goal / brief"
+        value={details.instructions}
+        participants={participants}
+        disabled={disabled}
+        rows={5}
+        editorClassName="ensemble-above-overflow-instructions ensemble-add-participant-brief"
+        labelClassName="ensemble-above-overflow-label"
+        textareaClassName="ensemble-above-overflow-instructions-field"
+        textareaRef={instructionsTextareaRef}
+        syncEpoch={`add:${provider}:${participants.length}`}
+        onChange={(instructions) => onDetailsChange({ instructions })}
+        onContextMenu={instructionsContextMenu.handleContextMenu}
+        placeholder="Optional focus for this participant's turns…"
+      />
+      <ComposerTextareaContextMenu
+        anchor={instructionsContextMenu.anchor}
+        spellcheckContext={instructionsContextMenu.spellcheckContext}
+        textareaRef={instructionsTextareaRef}
+        onValueChange={(instructions) => onDetailsChange({ instructions })}
+        onOpenFromElectron={instructionsContextMenu.openContextMenu}
+        onClose={() => instructionsContextMenu.setAnchor(null)}
+      />
+    </div>
   )
 }
 
