@@ -711,6 +711,60 @@
   padding-right: 12px;
 }
 
+/* Main-transcript identity segment. The provider/ensemble glyph carries the
+ * same meaning as its sidebar counterpart, while a compact workspace chip
+ * keeps context visible without letting a long thread name own the chrome. */
+.chat-corner-controls-left:not(.multiview-pane-corner-controls) {
+  max-width: min(420px, calc(100% - 160px));
+}
+
+.chat-corner-controls-left:not(.multiview-pane-corner-controls) .chat-corner-thread-context {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  overflow: hidden;
+  padding: 0 11px;
+}
+
+.chat-corner-controls-left:not(.multiview-pane-corner-controls)
+  .chat-corner-thread-context
+  > .sidebar-provider-icon,
+.chat-corner-controls-left:not(.multiview-pane-corner-controls)
+  .chat-corner-thread-context
+  > .sidebar-provider-icon
+  svg {
+  width: 14px;
+  height: 14px;
+}
+
+.chat-corner-controls-left:not(.multiview-pane-corner-controls) .chat-corner-thread-title {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 32ch;
+  overflow: hidden;
+  padding: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-corner-workspace-name {
+  display: block;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 16ch;
+  overflow: hidden;
+  padding: 3px 7px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--text-primary) 9%, transparent);
+  color: color-mix(in srgb, var(--text-primary) 68%, transparent);
+  font-size: calc(var(--font-size-sm) * 0.76);
+  font-weight: 640;
+  line-height: 1.15;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .chat-corner-controls .chat-corner-count {
   min-width: 12px;
   height: 12px;
