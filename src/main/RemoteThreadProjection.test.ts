@@ -1050,6 +1050,45 @@ describe('RemoteThreadProjection', () => {
       expect(snap.rows[0].thinking?.truncated).toBe(false)
       expect(snap.rows[0].thinking?.preview).toContain('tail sentinel')
     })
+
+    it('merges every thinking segment in order instead of keeping only the last', () => {
+      const snap = project(
+        { kind: 'aroundRow', rowId: 'multi-think', radius: 0 },
+        [
+          msg(1, {
+            id: 'multi-think',
+            role: 'tool',
+            content: '',
+            toolActivities: [
+              activity({
+                id: 'think-1',
+                toolName: 'grok_thinking',
+                displayName: 'Grok thinking',
+                resultSummary: 'First segment alpha-sentinel'
+              }),
+              activity({
+                id: 'think-2',
+                toolName: 'grok_thinking',
+                displayName: 'Grok thinking',
+                resultSummary: 'Second segment beta-sentinel'
+              })
+            ]
+          })
+        ],
+        [],
+        { previewMaxChars: REMOTE_IOS_ROW_EXPAND_MAX }
+      )
+
+      const thinking = snap.rows[0].thinking
+      // Reasoning that happened between tool calls must survive — the old
+      // `.slice(-1)` kept only 'beta-sentinel' and silently dropped the rest.
+      expect(thinking?.preview).toContain('alpha-sentinel')
+      expect(thinking?.preview).toContain('beta-sentinel')
+      // ...and stay in chronological order.
+      expect(thinking?.preview.indexOf('alpha-sentinel') ?? -1).toBeLessThan(
+        thinking?.preview.indexOf('beta-sentinel') ?? -1
+      )
+    })
   })
 
   describe('buildRunSummary', () => {

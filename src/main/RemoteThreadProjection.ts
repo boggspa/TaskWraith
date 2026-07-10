@@ -1095,26 +1095,38 @@ function buildThinkingTrace(
   previewMax: number
 ): RemoteThreadRow['thinking'] | undefined {
   if (message.role !== 'tool') return undefined
-  const activity = (message.toolActivities || [])
-    .filter((entry) => isThinkingTraceToolName(entry.toolName))
-    .slice(-1)[0]
-  const raw = activity?.resultSummary || activity?.outputPreview
-  if (!activity || !raw?.trim()) return undefined
+  const activities = (message.toolActivities || []).filter((entry) =>
+    isThinkingTraceToolName(entry.toolName)
+  )
+  if (activities.length === 0) return undefined
+  // Concatenate EVERY thinking segment in order. A turn that reasons between
+  // tool calls emits several; taking only the last (`.slice(-1)`) silently
+  // dropped all the earlier reasoning on iOS. Desktop renders each as its own
+  // chronological segment — the phone still shows one merged viewport, but no
+  // longer loses the earlier thinking. The 32k expand budget holds the full
+  // trace when the row is expanded; collapsed rows truncate as before.
+  const raw = activities
+    .map((entry) => (entry.resultSummary || entry.outputPreview || '').trim())
+    .filter(Boolean)
+    .join('\n\n')
+  if (!raw.trim()) return undefined
   const limit =
     previewMax >= REMOTE_IOS_ROW_EXPAND_MAX ? REMOTE_IOS_ROW_EXPAND_MAX : REMOTE_IOS_THINKING_MAX
   const { preview, truncated } = sanitizePreview(raw, limit)
   if (!preview) return undefined
-  const status =
-    activity.status === 'running' || activity.status === 'pending'
-      ? 'running'
-      : activity.status === 'error'
-        ? 'error'
-        : 'success'
+  // Title/toolName from the latest segment (matches the single-segment case);
+  // status aggregates so a still-streaming segment keeps the row "running".
+  const last = activities[activities.length - 1]
+  const status = activities.some((a) => a.status === 'running' || a.status === 'pending')
+    ? 'running'
+    : activities.some((a) => a.status === 'error')
+      ? 'error'
+      : 'success'
   return {
-    title: activity.displayName || 'Thinking',
+    title: last.displayName || 'Thinking',
     preview,
     truncated,
-    toolName: activity.toolName,
+    toolName: last.toolName,
     status
   }
 }
