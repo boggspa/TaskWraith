@@ -31,7 +31,6 @@ import QRCode from 'qrcode'
 import ghostMarkRaw from '../assets/taskwraith-ghost-mark.svg?raw'
 import { embedQrCenterLogo } from '../lib/qrGhostLogo'
 import { PairedDevicesPanel } from './PairedDevicesPanel'
-import { RemoteWorkspacesPanel } from './RemoteWorkspacesPanel'
 import { BridgeNetworkingPanel } from './BridgeNetworkingPanel'
 import { ApnsConfigPanel } from './ApnsConfigPanel'
 import { TailscaleSetupPanel } from './TailscaleSetupPanel'
@@ -287,23 +286,6 @@ export function PairingPage(): JSX.Element {
           </p>
         </header>
         <PairedDevicesPanel />
-      </section>
-
-      {/*
-        Workspace allowlist. Lives in the same tab as pairing because granting
-        a paired device access to a specific workspace is the natural follow-up
-        to scanning the QR.
-      */}
-      <section className="pairing-page__section pairing-page__allowlist">
-        <header className="pairing-page__section-header">
-          <h3 className="pairing-page__section-title">Paired-device workspace access</h3>
-          <p className="pairing-page__section-subtitle">
-            Choose which workspaces a paired iPhone / iPad can run agents against. Empty list = all
-            iOS-initiated runs are denied. Per-action revalidation is enforced — revoking an entry
-            takes effect on the next iOS request.
-          </p>
-        </header>
-        <RemoteWorkspacesPanel />
       </section>
 
       <section className="pairing-page__section pairing-page__tailscale">

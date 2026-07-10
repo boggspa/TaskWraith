@@ -87,17 +87,14 @@ import {
   type KeyCommandId
 } from '../lib/keyCommands'
 import { IOS_REMOTE_ENABLED } from '../lib/featureFlags'
-// RemoteWorkspacesPanel was previously rendered here under the
-// `remote-workspaces` tab. It now lives inside `PairingPage` (the
-// "Devices" tab) so paired-device QR + workspace allowlist sit
-// together as a single device-management page.
+// Paired-device workspace access is configured per workspace via
+// `WorkspaceRemoteAccessToggle` in Settings → Workspaces.
 import { ApprovalLedgerPanel } from './ApprovalLedgerPanel'
 import { ThreadIntrospectionSettingsPanel } from './ThreadIntrospectionSettingsPanel'
 // BridgeNetworkingPanel + ApnsConfigPanel were previously rendered
 // under the "Bridge Networking" tab. They now live inside `PairingPage`
-// (the "Devices" tab) so the iOS pair flow + workspace allowlist +
-// daemon/APNs configuration sit together as a single device-management
-// page.
+// (the "Devices" tab) so the iOS pair flow + daemon/APNs configuration
+// sit together as a single device-management page.
 import { PairingPage } from './PairingPage'
 import { SharesPanel } from './SharesPanel'
 import { CommittedDraftField } from './CommittedDraftField'
@@ -2925,7 +2922,7 @@ export const SETTINGS_TABS: SettingsTabDefinition[] = [
     id: 'pairing',
     label: 'Devices',
     group: 'integrations',
-    description: 'iPhone and iPad pairing, remote workspace access, Tailscale, bridge networking, and push wake.',
+    description: 'iPhone and iPad pairing, Tailscale, bridge networking, and push wake.',
     aliases: ['ios', 'iphone', 'ipad', 'remote', 'pairing', 'tailscale', 'apns', 'mobile', 'bridge'],
     scope: 'device'
   },
@@ -10478,17 +10475,6 @@ export function SettingsPanel({
             </>
           ) /* end system */
         }
-
-        {/* ── Remote Workspaces (Phase C4) ─────────────────────────────── */}
-        {/*
-          Remote Workspaces moved into the Devices tab below — it was
-          a paired-device allowlist all along, so it lives next to the
-          QR pair flow now. Activating the `remote-workspaces` tab id
-          (legacy bookmark / restore path) falls through to no render
-          here; the sidebar no longer surfaces the tab so this branch
-          is effectively dead, but kept defensively until the type
-          union sheds the id.
-        */}
 
         {/* ── Workspaces (Codex Environments-style list) ───────────────── */}
         {activeTab === 'workspaces' && (

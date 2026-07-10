@@ -1365,9 +1365,8 @@
   color: color-mix(in srgb, var(--accent) 90%, var(--text-primary) 10%);
 }
 
-/* Pairing tab — the merged Devices page: pair-flow on top, paired-
- * device workspace allowlist below. Vertical flex column with a
- * proper section separator between the two. */
+/* Pairing tab — Devices page sections use a vertical flex column with
+ * separators between pairing, device, and networking controls. */
 .pairing-page__section {
   display: flex;
   flex-direction: column;
