@@ -1,18 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
 import { createPortal } from 'react-dom'
-import type {
-  BlackboardEntry,
-  ChatRecord,
-  ComposerStyle,
-  ProviderId
-} from '../../../main/store/types'
+import type { ChatRecord, ComposerStyle, ProviderId } from '../../../main/store/types'
 import { resolveComposerSurfacePopoverPosition } from '../lib/composerSurfacePopover'
-import {
-  BLACKBOARD_CATEGORY_LABELS,
-  BLACKBOARD_CATEGORY_ORDER,
-  sortBlackboardEntries
-} from './PinnedMessagesPanel'
-import { MarkdownMessage } from './MarkdownMessage'
+import { BlackboardGroupedList, buildBlackboardGroups } from './BlackboardEntryCard'
 
 /**
  * Quick-access Blackboard popover — a satellite icon button in the composer's
@@ -21,7 +11,11 @@ import { MarkdownMessage } from './MarkdownMessage'
  * pickers in this row use) that lets you scroll the ensemble Blackboard
  * READ-ONLY, without opening the right-dock "Notes" pane. Posting, deleting,
  * and the "seen by" rail stay in the full panel — this is a glance surface.
+ * Entries render through the shared BlackboardEntryCard so the popover and
+ * the panel stay visually in lockstep (provider-hued author chips included).
  */
+
+export { buildBlackboardGroups }
 
 /** Standing chalkboard glyph (easel legs + two chalk lines) — matches the
  * 16×16 / stroke-1.3 family used by the sibling composer-control icons. */
@@ -51,21 +45,6 @@ export interface ComposerBlackboardButtonProps {
   provider: ProviderId
   composerStyle: ComposerStyle
   disabled?: boolean
-}
-
-/** Read-only, category-grouped view of the chat's Blackboard entries. Mirrors
- * the panel's ordering/labelling (shared helpers) but drops the author/seen-by
- * chrome to stay a quick glance. */
-export function buildBlackboardGroups(
-  entries: BlackboardEntry[]
-): Array<{ category: BlackboardEntry['category']; entries: BlackboardEntry[] }> {
-  const visible = entries
-    .filter((entry) => entry.key.trim() && entry.value.trim())
-    .sort(sortBlackboardEntries)
-  return BLACKBOARD_CATEGORY_ORDER.map((category) => ({
-    category,
-    entries: visible.filter((entry) => entry.category === category)
-  })).filter((group) => group.entries.length > 0)
 }
 
 export function ComposerBlackboardButton(props: ComposerBlackboardButtonProps): ReactElement {
@@ -170,33 +149,7 @@ export function ComposerBlackboardButton(props: ComposerBlackboardButtonProps): 
               <div className="composer-blackboard-popover-empty">No blackboard entries yet.</div>
             ) : (
               <div className="composer-blackboard-list" role="list">
-                {groups.map((group) => (
-                  <div key={group.category} className="composer-blackboard-group">
-                    <div className="composer-blackboard-category">
-                      {BLACKBOARD_CATEGORY_LABELS[group.category]}
-                    </div>
-                    {group.entries.map((entry) => (
-                      <article
-                        key={entry.id}
-                        role="listitem"
-                        className={`composer-blackboard-entry category-${entry.category}`}
-                      >
-                        <div className="composer-blackboard-entry-meta">
-                          <strong>{entry.key}</strong>
-                          <span className="composer-blackboard-entry-scope">{entry.scope}</span>
-                        </div>
-                        <div className="composer-blackboard-entry-body">
-                          <MarkdownMessage content={entry.value} chat={props.chat || undefined} />
-                        </div>
-                        {entry.participantId && (
-                          <div className="composer-blackboard-entry-author">
-                            {entry.participantId}
-                          </div>
-                        )}
-                      </article>
-                    ))}
-                  </div>
-                ))}
+                <BlackboardGroupedList chat={props.chat} groups={groups} variant="popover" />
               </div>
             )}
           </div>,

@@ -10590,74 +10590,9 @@
   padding-right: 2px;
 }
 
-.composer-blackboard-group {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.composer-blackboard-category {
-  color: color-mix(in srgb, var(--text-secondary) 78%, transparent);
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-
-.composer-blackboard-entry {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  padding: 8px;
-  border: 1px solid color-mix(in srgb, var(--panel-border) 70%, transparent);
-  border-radius: 7px;
-  background: color-mix(in srgb, var(--text-primary) 4%, transparent);
-}
-
-.composer-blackboard-entry-meta {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 8px;
-  font-size: 11px;
-}
-
-.composer-blackboard-entry-meta strong {
-  min-width: 0;
-  overflow-wrap: anywhere;
-  color: var(--text-primary);
-  font-weight: 700;
-}
-
-.composer-blackboard-entry-scope {
-  flex: 0 0 auto;
-  color: color-mix(in srgb, var(--text-secondary) 68%, transparent);
-  font-size: 10px;
-  font-weight: 800;
-  text-transform: uppercase;
-}
-
-.composer-blackboard-entry-body {
-  color: var(--text-primary);
-  font-size: var(--font-size-sm);
-  line-height: 1.45;
-  overflow-wrap: anywhere;
-}
-
-/* The value renders through MarkdownMessage; keep block spacing tight so a
- * short note doesn't tower inside the compact popover. */
-.composer-blackboard-entry-body > :first-child {
-  margin-top: 0;
-}
-.composer-blackboard-entry-body > :last-child {
-  margin-bottom: 0;
-}
-
-.composer-blackboard-entry-author {
-  color: color-mix(in srgb, var(--text-secondary) 62%, transparent);
-  font-size: 10px;
-  font-weight: 700;
-}
+/* Entry cards render through the shared BlackboardEntryCard component —
+ * unified `.blackboard-card` styles live in 11-side-chat.css next to the
+ * right-dock Notes pane variant. Only the popover chrome stays here. */
 
 .composer-blackboard-list::-webkit-scrollbar {
   width: 8px;
