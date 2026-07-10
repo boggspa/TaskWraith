@@ -226,3 +226,109 @@ describe('reduceSoloToolEventMessages', () => {
     expect(result.isResult).toBe(true)
   })
 })
+
+describe('chronology-preserving result pairing', () => {
+  const assistant = (id: string, content: string): ChatMessage => ({
+    id,
+    role: 'assistant',
+    content,
+    timestamp: NOW
+  })
+  const system = (id: string, content: string): ChatMessage => ({
+    id,
+    role: 'system',
+    content,
+    timestamp: NOW
+  })
+  const user = (id: string): ChatMessage => ({
+    id,
+    role: 'user',
+    content: 'go',
+    timestamp: NOW
+  })
+
+  it('pairs a result to its ORIGINAL stack across an intervening assistant bubble', () => {
+    const afterUse = reduce([], {
+      type: 'tool_event',
+      isUse: true,
+      data: { type: 'tool_use', tool_id: 'call-1', tool_name: 'run_shell_command', parameters: {} }
+    })
+    const withText = [...afterUse.messages, assistant('a-1', 'meanwhile, some prose')]
+    const afterResult = reduce(withText, {
+      type: 'tool_event',
+      isResult: true,
+      data: { type: 'tool_result', tool_id: 'call-1', content: 'done' }
+    })
+
+    // No new tool row after the text — the result settles the ORIGINAL
+    // activity in place, exactly where the call rendered.
+    expect(afterResult.messages).toHaveLength(2)
+    expect(afterResult.messages[0].toolActivities?.[0]).toMatchObject({
+      id: 'call-1',
+      status: 'success'
+    })
+    expect(afterResult.messages[1]).toBe(withText[1])
+    expect(afterResult.isResult).toBe(true)
+  })
+
+  it('pairs across an intervening system card too', () => {
+    const afterUse = reduce([], {
+      type: 'tool_event',
+      isUse: true,
+      data: { type: 'tool_use', tool_id: 'call-1', tool_name: 'read_file', parameters: {} }
+    })
+    const withSystem = [...afterUse.messages, system('s-1', 'Context compacted.')]
+    const afterResult = reduce(withSystem, {
+      type: 'tool_event',
+      isResult: true,
+      data: { type: 'tool_result', tool_id: 'call-1', content: 'file body' }
+    })
+
+    expect(afterResult.messages).toHaveLength(2)
+    expect(afterResult.messages[0].toolActivities?.[0]).toMatchObject({
+      id: 'call-1',
+      status: 'success',
+      resultSummary: 'file body'
+    })
+  })
+
+  it('never reaches back across a USER message (turn boundary)', () => {
+    const previousTurn = reduce([], {
+      type: 'tool_event',
+      isUse: true,
+      data: { type: 'tool_use', tool_id: 'stale-call', tool_name: 'grep', parameters: {} }
+    })
+    const nextTurn = [...previousTurn.messages, user('u-1')]
+    const result = reduce(nextTurn, {
+      type: 'tool_event',
+      name: 'grep',
+      isResult: true,
+      data: { type: 'tool_result', tool_id: 'stale-call', content: 'late' }
+    })
+
+    // The previous turn's activity is untouched; the late result orphans
+    // into a fresh tail row instead of rewriting history.
+    expect(result.messages[0].toolActivities?.[0].status).toBe('running')
+    expect(result.messages).toHaveLength(3)
+    expect(result.messages[2].role).toBe('tool')
+    expect(result.messages[2].toolActivities?.[0]).toMatchObject({ id: 'stale-call' })
+  })
+
+  it('keeps a NEW tool burst after text in its own row (interleaving preserved)', () => {
+    const afterUse = reduce([], {
+      type: 'tool_event',
+      isUse: true,
+      data: { type: 'tool_use', tool_id: 'call-1', tool_name: 'read_file', parameters: {} }
+    })
+    const withText = [...afterUse.messages, assistant('a-1', 'prose between bursts')]
+    const secondBurst = reduce(withText, {
+      type: 'tool_event',
+      isUse: true,
+      data: { type: 'tool_use', tool_id: 'call-2', tool_name: 'grep', parameters: {} }
+    })
+
+    expect(secondBurst.messages).toHaveLength(3)
+    expect(secondBurst.messages[2].role).toBe('tool')
+    expect(secondBurst.messages[2].toolActivities?.map((a) => a.id)).toEqual(['call-2'])
+  })
+})
