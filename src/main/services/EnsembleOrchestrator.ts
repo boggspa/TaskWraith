@@ -4773,11 +4773,18 @@ export class EnsembleOrchestrator {
           ...roundParticipantDisplayFields(participant)
         }
       })
+    const removed = round.participants
+      .filter((state) => !nextById.has(state.participantId))
+      .map((state) => ({
+        ...state,
+        status: state.status === 'idle' ? ('skipped' as const) : state.status,
+        reason: state.reason || 'Removed from the active roster during this round.'
+      }))
     const existingIds = new Set(existing.map((state) => state.participantId))
     const added = nextParticipants
       .filter((participant) => !existingIds.has(participant.id))
       .map((participant) => roundParticipantStateFromParticipant(participant, 'idle'))
-    const participantStates = [...existing, ...added].sort((a, b) => a.order - b.order)
+    const participantStates = [...existing, ...removed, ...added].sort((a, b) => a.order - b.order)
     return {
       ...round,
       activeParticipantId:

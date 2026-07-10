@@ -5406,6 +5406,44 @@ Next action:
     ).toBe(true)
   })
 
+  it('retains a removed no-turn participant as a skipped round audit row', async () => {
+    const initialChat = makeChat()
+    initialChat.ensemble!.bossmanParticipantId = 'claude'
+    initialChat.ensemble!.bossmanAutoApprovals = {
+      enabled: true,
+      mode: 'permission_preset_once',
+      confirmedAt: '2026-05-24T00:00:00.000Z'
+    }
+    initialChat.ensemble!.participants[0].permissionPresetId = 'workspace_write'
+    const harness = makeHarness({ initialChat })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Plan and execute.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    const result = await harness.orchestrator.rosterEditForRun(harness.dispatched[0].appRunId, {
+      action: 'remove_participant',
+      targetParticipantId: 'codex'
+    })
+
+    expect(result).toMatchObject({ ok: true, participantId: 'codex' })
+    expect(
+      harness.chat.ensemble!.participants.some((participant) => participant.id === 'codex')
+    ).toBe(false)
+    expect(
+      harness.chat.ensemble!.activeRound?.participants.find(
+        (participant) => participant.participantId === 'codex'
+      )
+    ).toMatchObject({
+      provider: 'codex',
+      role: 'Worker',
+      status: 'skipped',
+      reason: 'Removed from the active roster during this round.'
+    })
+  })
+
   it('queues a Boss pending participant provider/model swap until round end', async () => {
     const initialChat = makeChat()
     initialChat.ensemble!.bossmanParticipantId = 'claude'
