@@ -4712,6 +4712,17 @@ button.sidebar-footer-approval-row.is-clickable:focus-visible {
   overflow-wrap: anywhere;
 }
 
+/* Dense generated tables (the Ensemble close-out currently has eight columns)
+ * keep short header labels intact. Fixed-layout tables honor the explicit
+ * first-row width, so eight 7rem columns expand to 56rem and the existing
+ * local table scroller handles narrow transcripts. Body cells retain the
+ * generic wrapping rules above. */
+.message-markdown-pro .markdown-table-scroll > table:has(thead > tr > th:nth-child(8)) thead > tr > th {
+  width: 7rem;
+  white-space: nowrap;
+  overflow-wrap: normal;
+}
+
 .message-markdown-pro .markdown-table-scroll code:not(.cm-content code) {
   font-size: 0.9em;
   white-space: normal;

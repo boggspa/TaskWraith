@@ -24,7 +24,10 @@ describe('markdown table CSS', () => {
       css,
       '.message-markdown-pro .markdown-table-scroll > table {'
     )
-    const cellBlock = cssBlockStartingAt(css, '.message-markdown-pro th,\n.message-markdown-pro td {')
+    const cellBlock = cssBlockStartingAt(
+      css,
+      '.message-markdown-pro th,\n.message-markdown-pro td {'
+    )
     const headerBlock = cssBlockStartingAt(css, '.message-markdown-pro th {')
 
     expect(tableBlock).toContain('table-layout: fixed')
@@ -32,5 +35,24 @@ describe('markdown table CSS', () => {
     expect(headerBlock).toContain('white-space: normal')
     expect(headerBlock).toContain('overflow-wrap: anywhere')
     expect(headerBlock).not.toContain('white-space: nowrap')
+  })
+
+  it('keeps eight-column table headers whole and delegates overflow to the local scroller', () => {
+    const css = readCss()
+    const scrollBlock = cssBlockStartingAt(css, '.message-markdown-pro .markdown-table-scroll {')
+    const denseHeaderBlock = cssBlockStartingAt(
+      css,
+      '.message-markdown-pro .markdown-table-scroll > table:has(thead > tr > th:nth-child(8)) thead > tr > th {'
+    )
+    const cellBlock = cssBlockStartingAt(
+      css,
+      '.message-markdown-pro th,\n.message-markdown-pro td {'
+    )
+
+    expect(scrollBlock).toContain('overflow-x: auto')
+    expect(denseHeaderBlock).toContain('width: 7rem')
+    expect(denseHeaderBlock).toContain('white-space: nowrap')
+    expect(denseHeaderBlock).toContain('overflow-wrap: normal')
+    expect(cellBlock).toContain('overflow-wrap: break-word')
   })
 })
