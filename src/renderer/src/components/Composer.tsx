@@ -23,14 +23,18 @@ import { AgentMentionMenu } from '../components/AgentMentionMenu'
 import { ArrowUpSendIcon, ChatMediaIcon, ClaudeReturnSymbolIcon, ClockSymbolIcon, CommandSymbolIcon, FileMenuSelectionIcon, GitCommitSymbolIcon, GoalSymbolIcon, ModelSymbolIcon, PermissionSymbolIcon, PlusSymbolIcon, ReviewSymbolIcon, RunSymbolIcon, ScreenWatchSymbolIcon, StopSymbolIcon, TrustSymbolIcon, WorkflowGlyphIcon, XSymbolIcon } from '../components/AppChromeSymbols'
 import { ContextMeterPopover } from './ContextMeterPopover'
 import { CombinedModelPicker } from '../components/CombinedModelPicker'
-import type { CombinedModelPickerModelOption, CombinedModelPickerReasoningOption } from '../components/CombinedModelPicker'
+import type {
+  CombinedModelPickerModelOption,
+  CombinedModelPickerProviderGroup,
+  CombinedModelPickerReasoningOption
+} from '../components/CombinedModelPicker'
 import { CombinedPermissionsPicker } from '../components/CombinedPermissionsPicker'
 import type { PermissionOption } from '../components/CombinedPermissionsPicker'
 import { ComposerHighlightOverlay } from '../components/ComposerHighlightOverlay'
 import { ComposerLinkPreviewStrip } from '../components/ComposerLinkPreviewStrip'
 import { ComposerPlusPicker } from '../components/ComposerPlusPicker'
 import type { ComposerPlusPickerSection } from '../components/ComposerPlusPicker'
-import { ComposerProviderPicker } from '../components/ComposerProviderPicker'
+import { resolveProviderRows } from '../components/ComposerProviderPicker'
 import { ComposerSlashMenu } from '../components/ComposerSlashMenu'
 import { TrustedSessionConfirmSheet } from '../components/TrustedSessionConfirmSheet'
 import { AnimatedDiffNumber } from '../components/AnimatedDiffNumber'
@@ -85,10 +89,9 @@ import { isNativeSubAgentPreferenceApproval } from '../lib/agentApprovalTypes'
 import { decideApprovalElevation } from '../lib/approvalElevation'
 import { formatScheduledRunTime } from '../lib/dateTimeFormat'
 import { formatScheduledTaskCountdown } from '../lib/scheduledCountdown'
-import { resolveEnsembleParticipantSeatMutationState } from '../lib/ensembleParticipantSeatLock'
 import { buildParticipantToolGrantPatch, getParticipantToolGrantIds } from '../lib/ensembleParticipantToolGrants'
 import {
-  getDefaultEnsembleParticipantConfig,
+  buildProviderModelChangeParticipantPatch,
   getEnsembleReasoningOptions,
   resolveEnsembleParticipantSettings
 } from '../lib/ensembleProviderDefaults'
@@ -630,7 +633,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     interfaceStyle,
     isAttachingWindow,
     openSlashCommandsRequestId,
-    isCurrentChatProviderLocked,
     isCurrentChatRunning,
     isCurrentChatLinkedChild,
     isCurrentComposerLocked,
@@ -692,7 +694,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     scheduleControls,
     screenWatchUnavailableReason,
     selectedComposerModelType,
-    selectedModelType,
     selectedRuntimeProfileId,
     selectedParticipant,
     sessionRestartReason,
@@ -780,6 +781,109 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
       setSeatChangeNoticeRoundKey(activeSeatChangeNoticeRoundKey)
     }
     updateSelectedParticipant(patch)
+  }
+  const buildPickerModelOptions = (
+    targetProvider: ProviderId,
+    models: CodexModelOption[],
+    includeCustom: boolean
+  ): CombinedModelPickerModelOption[] => [
+    ...models.map((model) => {
+      const retiresAtRaw = (model as { retiresAt?: unknown }).retiresAt
+      const retiresAt = typeof retiresAtRaw === 'string' ? retiresAtRaw : undefined
+      const disabledReason =
+        typeof model.disabledReason === 'string' ? model.disabledReason : undefined
+      return {
+        id: model.id,
+        label: model.label || model.id,
+        ...(model.disabled ? { disabled: true } : {}),
+        ...(disabledReason ? { disabledReason } : {}),
+        ...(model.supportedReasoningEfforts
+          ? { supportedReasoningEfforts: model.supportedReasoningEfforts }
+          : {}),
+        ...(model.defaultReasoningEffort !== undefined
+          ? { defaultReasoningEffort: model.defaultReasoningEffort }
+          : {}),
+        ...(model.additionalSpeedTiers
+          ? { additionalSpeedTiers: model.additionalSpeedTiers }
+          : {}),
+        ...(retiresAt ? { retiresAt } : {})
+      }
+    }),
+    ...(includeCustom &&
+    targetProvider !== 'kimi' &&
+    !models.some((model) => model.id === 'custom')
+      ? [{ id: 'custom', label: 'Custom…' }]
+      : [])
+  ]
+  const fastModeCapableModelIdsForProvider = (
+    targetProvider: ProviderId,
+    models: CodexModelOption[] = getProviderModelOptions(targetProvider)
+  ): Set<string> => {
+    if (targetProvider === 'codex' || targetProvider === 'claude') {
+      return new Set(
+        models
+          .filter((model) => model.additionalSpeedTiers?.includes('fast'))
+          .map((model) => model.id)
+      )
+    }
+    if (targetProvider === 'cursor') {
+      return new Set(['composer-2.5', 'composer-2.5-fast', CURSOR_GROK_45_BASE_MODEL_ID])
+    }
+    if (targetProvider === 'grok') {
+      return new Set([GROK_45_MODEL_ID, 'grok-composer-2.5-fast'])
+    }
+    return new Set<string>()
+  }
+  const buildUnifiedProviderModelGroups = (
+    includeCustom: boolean
+  ): CombinedModelPickerProviderGroup[] =>
+    resolveProviderRows(
+      grokProviderAvailable,
+      cursorProviderAvailable,
+      settings?.providerRunPauses
+    ).map((row) => {
+      const models: CodexModelOption[] = getProviderModelOptions(row.id)
+      return {
+        provider: row.id,
+        label: row.label,
+        modelOptions: buildPickerModelOptions(row.id, models, includeCustom),
+        fastModeCapableModelIds: fastModeCapableModelIdsForProvider(row.id, models),
+        ...(row.pauseLabel ? { pauseLabel: row.pauseLabel } : {}),
+        ...(row.rerouteLabel ? { rerouteLabel: row.rerouteLabel } : {})
+      }
+    })
+  const reasoningOptionsForEffectiveModel = (
+    targetProvider: ProviderId,
+    modelId: string,
+    models: CodexModelOption[]
+  ): CombinedModelPickerReasoningOption[] => {
+    const model = models.find((option) => option.id === modelId)
+    if (
+      (targetProvider === 'codex' || targetProvider === 'claude') &&
+      model?.supportedReasoningEfforts
+    ) {
+      return model.supportedReasoningEfforts.map((option) => {
+        const rawValue = option.reasoningEffort.trim().toLowerCase()
+        const value =
+          rawValue === 'light'
+            ? 'low'
+            : rawValue === 'extra'
+              ? 'xhigh'
+              : rawValue === 'ultra'
+                ? 'ultracode'
+                : rawValue
+        return {
+          value,
+          label:
+            targetProvider === 'codex'
+              ? codexReasoningDisplayLabel(value)
+              : claudeReasoningDisplayLabel(value),
+          ...(option.disabled ? { disabled: true } : {}),
+          ...(option.disabledReason ? { disabledReason: option.disabledReason } : {})
+        }
+      })
+    }
+    return getEnsembleReasoningOptions(targetProvider, modelId)
   }
 
   useEffect(() => {
@@ -2108,6 +2212,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                     composerStyle={appearance.composerStyle}
                     grokAvailable={grokProviderAvailable}
                     cursorAvailable={cursorProviderAvailable}
+                    providerGroups={buildUnifiedProviderModelGroups(false)}
                   />
                 )}
                 {/*
@@ -3150,101 +3255,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                           the labeled second row of the roster-presets
                           above-row section; see EnsembleOrchestrationRow.tsx
                           and `renderEnsembleOrchestrationRow` above. */}
-                        {/* Provider picker. In solo chats this remains the
-                          chat-level provider switch. In Ensemble chats it
-                          retargets to the selected participant so users can
-                          build same-provider panels without leaving the
-                          composer. */}
-                        {(() => {
-                          const ensembleBinding =
-                            isCurrentEnsembleChat && selectedParticipant
-                              ? selectedParticipant
-                              : null
-                          const participantSeatMutation = ensembleBinding
-                            ? resolveEnsembleParticipantSeatMutationState(
-                                currentChat?.ensemble?.activeRound,
-                                ensembleBinding.id
-                              )
-                            : null
-                          const participantControlsLocked = Boolean(participantSeatMutation?.locked)
-                          const soloPendingProviderChange =
-                            !ensembleBinding && currentChat
-                              ? readPendingProviderChange(currentChat)
-                              : null
-                          const pendingProviderModelId =
-                            typeof soloPendingProviderChange?.providerMetadata?.selectedModelType ===
-                            'string'
-                              ? soloPendingProviderChange.providerMetadata.selectedModelType
-                              : null
-                          const pickerProvider =
-                            ensembleBinding?.provider ||
-                            soloPendingProviderChange?.provider ||
-                            currentProvider
-                          const handleComposerProviderChange = (provider: ProviderId): void => {
-                            if (ensembleBinding) {
-                              const defaults = getDefaultEnsembleParticipantConfig(provider)
-                              updateSelectedParticipantWithNotice({
-                                provider,
-                                model: defaults.model,
-                                runtimeProfileId: undefined,
-                                geminiAuthProfileId: provider === 'gemini' ? null : undefined,
-                                permissionPresetId: defaults.permissionPresetId,
-                                reasoningEffort: defaults.reasoningEffort,
-                                fastModeEnabled: defaults.fastModeEnabled,
-                                thinkingEnabled: defaults.thinkingEnabled,
-                                serviceTier: defaults.serviceTier,
-                                linkedProviderSessionId: null
-                              })
-                              return
-                            }
-                            void handleProviderChange(provider)
-                          }
-                          // Rich popover provider picker (1.0.6-CRUX24).
-                          // Replaces the old native <select> with the same
-                          // body-portaled `composer-combined-picker-popover`
-                          // pattern the model / permission / "+" pickers use.
-                          // All prior behaviour is preserved verbatim:
-                          //   - `pickerProvider` (chat-level OR the bound
-                          //     ensemble participant's provider) drives the
-                          //     trigger + the active checkmark,
-                          //   - `handleComposerProviderChange` is the same
-                          //     handler the <select>'s onChange called, so
-                          //     the ensemble retarget vs solo provider-switch
-                          //     side effects are unchanged,
-                          //   - the disabled expression + the gated grok /
-                          //     cursor visibility + the title text are passed
-                          //     through identically,
-                          //   - `shell-${composerStyle}` (inside the
-                          //     component) makes the popover theme per shell
-                          //     with no per-shell branches here.
-                          return (
-                            <ComposerProviderPicker
-                              provider={pickerProvider}
-                              composerStyle={appearance.composerStyle}
-                              grokAvailable={grokProviderAvailable}
-                              cursorAvailable={cursorProviderAvailable}
-                              providerRunPauses={settings?.providerRunPauses}
-                              onSelect={handleComposerProviderChange}
-                              disabled={Boolean(ensembleBinding && participantControlsLocked)}
-                              activeModelId={
-                                ensembleBinding?.model ??
-                                pendingProviderModelId ??
-                                selectedComposerModelType
-                              }
-                              title={
-                                participantControlsLocked
-                                  ? participantSeatMutation?.message || 'Seat change applies at turn end'
-                                  : ensembleBinding
-                                    ? 'Selected participant provider'
-                                    : soloPendingProviderChange || isCurrentChatProviderLocked
-                                      ? 'Provider change applies at turn end'
-                                      : isCurrentChatRunning
-                                        ? 'Choose a provider to queue for turn end'
-                                    : 'Provider'
-                              }
-                            />
-                          )
-                        })()}
                         {/* 1.0.5-AR12c — Workspace switcher previously
                          lived here in the top inline-pickers row but
                          crowded the approval / provider / model
@@ -3318,6 +3328,10 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                             : hasValidPendingSelectedModel
                               ? pendingSelectedModel!
                               : selectedComposerModelType
+                          const effectiveCustomModel =
+                            typeof soloPendingProviderMetadata?.customModel === 'string'
+                              ? soloPendingProviderMetadata.customModel
+                              : customModel
                           const effectiveCodexReasoning =
                             ensembleResolved?.provider === 'codex'
                               ? ensembleResolved.reasoningEffort
@@ -3375,36 +3389,13 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                             !ensembleBinding &&
                             (!soloPendingProviderChange ||
                               soloPendingProviderChange.provider === currentProvider)
-                          const shouldAppendCustomModelOption =
-                            effectiveProvider !== 'kimi' &&
-                            !effectiveModelOptionsRaw.some((model) => model.id === 'custom')
-
-                          const combinedModelOptions: CombinedModelPickerModelOption[] = [
-                            ...effectiveModelOptionsRaw.map((model) => {
-                              // 1.0.7-mini — forward the optional retiresAt only
-                              // when it's actually a string. Non-Codex provider
-                              // model shapes don't carry the field; the cast
-                              // narrows safely via the runtime typeof guard so
-                              // bad data can't leak into the picker.
-                              const retiresAtRaw = (model as { retiresAt?: unknown }).retiresAt
-                              const retiresAt =
-                                typeof retiresAtRaw === 'string' ? retiresAtRaw : undefined
-                              const disabledReason =
-                                typeof model.disabledReason === 'string'
-                                  ? model.disabledReason
-                                  : undefined
-                              return {
-                                id: model.id,
-                                label: model.label || model.id,
-                                ...(model.disabled ? { disabled: true } : {}),
-                                ...(disabledReason ? { disabledReason } : {}),
-                                ...(retiresAt ? { retiresAt } : {})
-                              }
-                            }),
-                            ...(shouldAppendCustomModelOption
-                              ? [{ id: 'custom', label: 'Custom…' }]
-                              : [])
-                          ]
+                          const combinedModelOptions = buildPickerModelOptions(
+                            effectiveProvider,
+                            effectiveModelOptionsRaw,
+                            !ensembleBinding
+                          )
+                          const unifiedProviderGroups =
+                            buildUnifiedProviderModelGroups(!ensembleBinding)
 
                           let combinedReasoningOptions: CombinedModelPickerReasoningOption[] = []
                           let combinedSelectedReasoning = ''
@@ -3413,8 +3404,13 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                             // from the selected model (so GPT-5.6 Sol keeps its Max
                             // + Ultra tiers), mirroring the Claude branch below;
                             // the chat-level path uses the live `codexReasoningOptions`.
-                            combinedReasoningOptions = ensembleBinding
-                              ? getEnsembleReasoningOptions('codex', effectiveSelectedModel)
+                            combinedReasoningOptions =
+                              ensembleBinding || soloPendingProviderChange
+                              ? reasoningOptionsForEffectiveModel(
+                                  'codex',
+                                  effectiveSelectedModel,
+                                  effectiveModelOptionsRaw
+                                )
                               : codexReasoningOptions
                                   .filter((option) => option?.reasoningEffort)
                                   .map((option) => ({
@@ -3423,8 +3419,13 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                   }))
                             combinedSelectedReasoning = effectiveCodexReasoning
                           } else if (effectiveProvider === 'claude') {
-                            combinedReasoningOptions = ensembleBinding
-                              ? getEnsembleReasoningOptions('claude', effectiveSelectedModel)
+                            combinedReasoningOptions =
+                              ensembleBinding || soloPendingProviderChange
+                              ? reasoningOptionsForEffectiveModel(
+                                  'claude',
+                                  effectiveSelectedModel,
+                                  effectiveModelOptionsRaw
+                                )
                               : claudeReasoningOptions
                                   .filter((option) => option?.reasoningEffort)
                                   .map((option) => ({
@@ -3601,6 +3602,30 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                             rememberCurrentChatComposerSelection(metadataPatch)
                           }
 
+                          const handleCombinedProviderModelChange = (
+                            nextProvider: ProviderId,
+                            nextModel: string
+                          ): void => {
+                            if (nextProvider === effectiveProvider) {
+                              handleCombinedModelChange(nextModel)
+                              return
+                            }
+                            if (ensembleBinding) {
+                              const nextModelMetadata = getProviderModelOptions(nextProvider).find(
+                                (model: CodexModelOption) => model.id === nextModel
+                              )
+                              updateSelectedParticipantWithNotice(
+                                buildProviderModelChangeParticipantPatch(
+                                  nextProvider,
+                                  nextModel,
+                                  nextModelMetadata
+                                )
+                              )
+                              return
+                            }
+                            void handleProviderChange(nextProvider, nextModel)
+                          }
+
                           /*
                            * Fast Mode toggle inside the picker. Replaces
                            * the standalone Codex-only speed `<select>`
@@ -3609,40 +3634,11 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                            * Model+Reasoning popover so the user finds it
                            * where they're already adjusting reasoning.
                            */
-                          const fastModeCapableModelIds = (() => {
-                            if (effectiveProvider === 'codex') {
-                              return new Set(
-                                codexModels
-                                  .filter((model) => model.additionalSpeedTiers?.includes('fast'))
-                                  .map((model) => model.id)
-                              )
-                            }
-                            if (effectiveProvider === 'claude') {
-                              return new Set(
-                                (agentModelsByProvider.claude || CLAUDE_DEFAULT_MODELS)
-                                  .filter((model) => model.additionalSpeedTiers?.includes('fast'))
-                                  .map((model) => model.id)
-                              )
-                            }
-                            if (effectiveProvider === 'cursor') {
-                              return new Set([
-                                'composer-2.5',
-                                'composer-2.5-fast',
-                                CURSOR_GROK_45_BASE_MODEL_ID
-                              ])
-                            }
-                            if (effectiveProvider === 'grok') {
-                              // Both Grok models are permanently Fast-mode, so
-                              // both picker rows get the Fast ⚡ glyph. Grok
-                              // passes no onToggleFastMode, so no toggle row
-                              // renders (Fast isn't user-switchable here).
-                              return new Set([GROK_45_MODEL_ID, 'grok-composer-2.5-fast'])
-                            }
-                            // Gemini + Kimi: no Fast tier — hide the toggle
-                            // by passing an empty set (CombinedModelPicker
-                            // skips rendering the row in that case).
-                            return new Set<string>()
-                          })()
+                          const fastModeCapableModelIds =
+                            fastModeCapableModelIdsForProvider(
+                              effectiveProvider,
+                              effectiveModelOptionsRaw
+                            )
                           const fastModeEnabledForProvider =
                             effectiveProvider === 'codex'
                               ? effectiveCodexServiceTier === 'fast'
@@ -3781,6 +3777,8 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                 modelOptions={combinedModelOptions}
                                 selectedModelId={effectiveSelectedModel}
                                 onSelectModel={handleCombinedModelChange}
+                                providerGroups={unifiedProviderGroups}
+                                onSelectProviderModel={handleCombinedProviderModelChange}
                                 reasoningOptions={combinedReasoningOptions}
                                 selectedReasoning={combinedSelectedReasoning}
                                 onSelectReasoning={handleCombinedReasoningChange}
@@ -3795,19 +3793,21 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                 disabled={false}
                               />
                               {!ensembleBinding &&
-                                selectedModelType === 'custom' &&
-                                currentProvider !== 'kimi' && (
+                                effectiveSelectedModel === 'custom' &&
+                                effectiveProvider !== 'kimi' && (
                                   <span className="composer-inline-custom-model">
                                     <input
                                       className="composer-inline-input"
                                       type="text"
-                                      value={customModel}
+                                      value={effectiveCustomModel}
                                       onChange={(e) => {
-                                        setCustomModel(e.target.value)
+                                        if (shouldUpdateLiveComposerState) {
+                                          setCustomModel(e.target.value)
+                                        }
                                         rememberCurrentChatComposerSelection({
                                           customModel: e.target.value
                                         })
-                                        if (currentProvider === 'gemini') {
+                                        if (effectiveProvider === 'gemini') {
                                           markPersistentSessionRestartNeeded(
                                             'Gemini custom model changed. Restart the persistent session to apply the new model.'
                                           )
@@ -3820,14 +3820,24 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                       className="composer-inline-clear"
                                       type="button"
                                       onClick={() => {
-                                        setCustomModel('')
-                                        setSelectedModelType(lastNonCustomModelType)
-                                        rememberCurrentChatComposerSelection({
-                                          customModel: '',
-                                          selectedModelType: lastNonCustomModelType
-                                        })
-                                        if (currentProvider === 'gemini') {
-                                          syncPersistentModelSelection(lastNonCustomModelType)
+                                        const fallbackModel =
+                                          effectiveModelOptionsRaw.find(
+                                            (option) =>
+                                              option.id === lastNonCustomModelType &&
+                                              !option.disabled
+                                          )?.id ||
+                                          effectiveModelOptionsRaw.find(
+                                            (option) => !option.disabled
+                                          )?.id
+                                        if (shouldUpdateLiveComposerState) {
+                                          setCustomModel('')
+                                        }
+                                        rememberCurrentChatComposerSelection({ customModel: '' })
+                                        if (fallbackModel) {
+                                          handleCombinedModelChange(fallbackModel)
+                                        }
+                                        if (effectiveProvider === 'gemini' && fallbackModel) {
+                                          syncPersistentModelSelection(fallbackModel)
                                         }
                                       }}
                                       disabled={isCurrentComposerLocked}
