@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import type { ChatRecord, ProviderId, WorkspaceRecord } from './store/types'
 import { normalizeThreadTitle } from '../shared/threadTitles'
 import type { AllowlistDecision, PrepareStartTurnEvaluation } from './RemoteWorkspaceAllowlist'
@@ -140,6 +141,15 @@ export interface BridgeBroadcasterOptions {
   remoteProjectionSnapshotMaxBytes?: number
   /** Maximum UTF-8 JSON bytes for one single-envelope remote projection. */
   remoteProjectionEnvelopeMaxBytes?: number
+  /** Injectable batch id factory for deterministic oversized-snapshot tests. */
+  snapshotBatchIdFactory?: () => string
+}
+
+interface RemoteProjectionSnapshotBatchParams {
+  envelope: RemoteProjectionEnvelope
+  snapshotBatchId: string
+  snapshotIndex: number
+  snapshotCount: number
 }
 
 export interface ProviderModelOption {
@@ -312,6 +322,7 @@ export class BridgeBroadcaster {
   private readonly now: () => number
   private readonly remoteProjectionSnapshotMaxBytes: number
   private readonly remoteProjectionEnvelopeMaxBytes: number
+  private readonly snapshotBatchIdFactory: () => string
   private readonly canonicalChatWorkspaceId?: (
     workspaceId: string | null | undefined
   ) => string | null
@@ -335,6 +346,7 @@ export class BridgeBroadcaster {
       options.remoteProjectionSnapshotMaxBytes ?? DEFAULT_REMOTE_PROJECTION_SNAPSHOT_MAX_BYTES
     this.remoteProjectionEnvelopeMaxBytes =
       options.remoteProjectionEnvelopeMaxBytes ?? DEFAULT_REMOTE_PROJECTION_ENVELOPE_MAX_BYTES
+    this.snapshotBatchIdFactory = options.snapshotBatchIdFactory ?? (() => randomUUID())
     this.canonicalChatWorkspaceId = options.canonicalChatWorkspaceId
   }
 
@@ -547,12 +559,49 @@ export class BridgeBroadcaster {
       return
     }
 
+    const batch = this.buildRemoteProjectionSnapshotBatch(built.projections)
     this.log?.(
-      `[BridgeBroadcaster] ${method} ${bytes}B exceeds ${maxBytes}B; sending ${built.projections.length} single projection envelopes`
+      `[BridgeBroadcaster] ${method} ${bytes}B exceeds ${maxBytes}B; sending ${batch.length} single projection envelopes`
     )
-    for (const envelope of built.projections) {
-      this.broadcastRemoteProjection(envelope)
+    for (const batchParams of batch) {
+      this.sendNotify(BRIDGE_BROADCAST_METHODS.remoteProjection, batchParams)
     }
+  }
+
+  /** Build ordered single-envelope frames for an oversized full snapshot.
+   * Filtering happens before indices/count are assigned so every emitted frame
+   * describes only envelopes that pass the existing per-envelope budget. */
+  private buildRemoteProjectionSnapshotBatch(
+    projections: RemoteProjectionEnvelope[]
+  ): RemoteProjectionSnapshotBatchParams[] {
+    if (projections.length === 0) return []
+    const snapshotBatchId = this.snapshotBatchIdFactory()
+    // Use the original length/index as a conservative metadata-size probe.
+    // Filtering can only reduce their digit counts, so every final frame stays
+    // under the same per-envelope wire budget after indices are compacted.
+    const sendable = projections.filter((envelope) => {
+      const params: RemoteProjectionSnapshotBatchParams = {
+        envelope,
+        snapshotBatchId,
+        snapshotIndex: projections.length - 1,
+        snapshotCount: projections.length
+      }
+      const bytes = Buffer.byteLength(JSON.stringify(params), 'utf8')
+      if (bytes <= this.remoteProjectionEnvelopeMaxBytes) return true
+      this.log?.(
+        `[BridgeBroadcaster] ${BRIDGE_BROADCAST_METHODS.remoteProjection} ${bytes}B exceeds ${this.remoteProjectionEnvelopeMaxBytes}B; skipped ${envelope.kind} envelope ${envelope.envelopeId}`
+      )
+      return false
+    })
+    if (sendable.length === 0) return []
+
+    const snapshotCount = sendable.length
+    return sendable.map((envelope, snapshotIndex) => ({
+      envelope,
+      snapshotBatchId,
+      snapshotIndex,
+      snapshotCount
+    }))
   }
 
   /** Pure builder for the remote-projection-snapshot payload. Returns null
@@ -614,20 +663,12 @@ export class BridgeBroadcaster {
         sink(method, params)
         sentEnvelopes += 1
       } else {
-        // Oversized: fan EACH envelope to the SINK (never broadcastRemoteProjection,
-        // which hits the daemon / all devices). Per-envelope guard mirrors
-        // broadcastRemoteProjection's size check.
+        // Oversized: fan EACH envelope to the SINK (never the daemon).
         const remoteMethod = BRIDGE_BROADCAST_METHODS.remoteProjection
-        for (const envelope of projectionBuilt.projections) {
-          const envParams = { envelope }
-          const envBytes = Buffer.byteLength(JSON.stringify(envParams), 'utf8')
-          if (envBytes > this.remoteProjectionEnvelopeMaxBytes) {
-            this.log?.(
-              `[BridgeBroadcaster] emitSnapshotTo skipped oversized ${envelope.kind} envelope ${envelope.envelopeId}`
-            )
-            continue
-          }
-          sink(remoteMethod, envParams)
+        for (const batchParams of this.buildRemoteProjectionSnapshotBatch(
+          projectionBuilt.projections
+        )) {
+          sink(remoteMethod, batchParams)
           sentEnvelopes += 1
         }
       }

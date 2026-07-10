@@ -804,6 +804,34 @@ struct IosParityFixesTests {
         var count = 0
     }
 
+    private func taskCardProjectionFrame(
+        index: Int,
+        count: Int? = nil,
+        batchId: String? = nil,
+        title: String? = nil
+    ) throws -> Data {
+        var frame: [String: Any] = [
+            "envelope": [
+                "schemaVersion": 1,
+                "source": "mac",
+                "kind": "taskCard",
+                "envelopeId": "task-\(index)",
+                "threadId": "thread-\(index)",
+                "payload": [
+                    "id": "task-\(index)",
+                    "threadId": "thread-\(index)",
+                    "title": title ?? "Task \(index)",
+                ],
+            ]
+        ]
+        if let batchId, let count {
+            frame["snapshotBatchId"] = batchId
+            frame["snapshotIndex"] = index
+            frame["snapshotCount"] = count
+        }
+        return try JSONSerialization.data(withJSONObject: frame)
+    }
+
     @MainActor
     @Test func projectionSnapshotBurstAppliesOnlyNewestEnvelope() async {
         let applied = AppliedLabels()
@@ -937,6 +965,103 @@ struct IosParityFixesTests {
 
         #expect(model.threadSnapshots["task-1"]?.rows?.first?.preview == "One publish")
         #expect(model.threadSnapshots["thread-1"]?.rows?.first?.preview == "One publish")
+        #expect(publishes == 1)
+        withExtendedLifetime(subscription) {}
+    }
+
+    @Test func snapshotBatchAssemblerCompletesInIndexOrderAndIgnoresReplay() throws {
+        var assembler = ProjectionSnapshotBatchAssembler()
+        let second = try JSONDecoder().decode(
+            DecodedProjectionMessage.self,
+            from: taskCardProjectionFrame(index: 1, count: 2, batchId: "batch-1"))
+        let first = try JSONDecoder().decode(
+            DecodedProjectionMessage.self,
+            from: taskCardProjectionFrame(index: 0, count: 2, batchId: "batch-1"))
+
+        guard case .waiting = assembler.ingest(second) else {
+            Issue.record("A partial snapshot batch must wait for every index")
+            return
+        }
+        guard case .waiting = assembler.ingest(second) else {
+            Issue.record("A duplicate index must be idempotent")
+            return
+        }
+        guard case .complete(let snapshot) = assembler.ingest(first) else {
+            Issue.record("The final missing index must complete the batch")
+            return
+        }
+        #expect(snapshot.projections.count == 2)
+        if let firstProjection = snapshot.projections.first,
+            case .taskCard(let card, _, _) = firstProjection
+        {
+            #expect(card.id == "task-0")
+        } else {
+            Issue.record("Batch projections were not restored in index order")
+        }
+        guard case .waiting = assembler.ingest(second) else {
+            Issue.record("A replay from a completed batch must be ignored")
+            return
+        }
+    }
+
+    @MainActor
+    @Test func oversizedSnapshotBatchDecodesOffMainAndPublishesAuthoritativelyOnce() async throws {
+        let model = makeRemoteSessionModel()
+        let stale = try decode(
+            RemoteProjectionSnapshot.self,
+            """
+            {"projections":[{
+              "schemaVersion":1,
+              "source":"mac",
+              "kind":"taskCard",
+              "envelopeId":"stale",
+              "payload":{"id":"stale","title":"Must disappear"}
+            }]}
+            """)
+        model.applySnapshot(stale)
+
+        var taskCardPublishes = 0
+        let subscription = model.$taskCards.dropFirst().sink { _ in taskCardPublishes += 1 }
+        let decodeThreadBox = DecodeThreadBox()
+        let coalescer = RemoteSessionModel.ProjectionEnvelopeBatchCoalescer(
+            trailingWindowNs: 1_000_000_000,
+            decode: { frames in
+                decodeThreadBox.onMain = Thread.isMainThread
+                return frames.compactMap {
+                    try? JSONDecoder().decode(DecodedProjectionMessage.self, from: $0)
+                }
+            },
+            apply: { messages in model.applyDecodedProjectionMessages(messages) })
+        for index in 0..<200 {
+            coalescer.enqueue(
+                try taskCardProjectionFrame(
+                    index: index, count: 200, batchId: "oversized-snapshot"))
+        }
+
+        await coalescer.drainForTesting()
+
+        #expect(!decodeThreadBox.onMain)
+        #expect(coalescer.applyCount == 1)
+        #expect(model.taskCards.count == 200)
+        #expect(!model.taskCards.contains(where: { $0.id == "stale" }))
+        #expect(taskCardPublishes == 1)
+        withExtendedLifetime(subscription) {}
+    }
+
+    @MainActor
+    @Test func projectionBarrierFlushesIncompleteBatchAsOneIncrementalUpdate() throws {
+        let model = makeRemoteSessionModel()
+        let message = try JSONDecoder().decode(
+            DecodedProjectionMessage.self,
+            from: taskCardProjectionFrame(index: 0, count: 2, batchId: "incomplete"))
+        var publishes = 0
+        let subscription = model.$taskCards.dropFirst().sink { _ in publishes += 1 }
+
+        model.applyDecodedProjectionMessages([message])
+        #expect(model.taskCards.isEmpty)
+        model.flushIncompleteProjectionBatches()
+
+        #expect(model.taskCards.map(\.id) == ["task-0"])
         #expect(publishes == 1)
         withExtendedLifetime(subscription) {}
     }

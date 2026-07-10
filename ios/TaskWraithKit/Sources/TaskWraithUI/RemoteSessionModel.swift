@@ -95,6 +95,10 @@ struct DecodedProjectionSnapshot: Decodable, Sendable {
         projections = snapshot.projections.map(DecodedProjection.init)
     }
 
+    init(projections: [DecodedProjection]) {
+        self.projections = projections
+    }
+
     private enum CodingKeys: String, CodingKey {
         case projections
     }
@@ -259,6 +263,93 @@ enum DecodedProjection: Decodable, Sendable {
 struct EmbeddedTaskCardMetadata: Decodable, Sendable {
     let ensembleState: RemoteEnsembleState?
     let diffSummary: MobileDiffSummary?
+}
+
+/// Wrapper used by the oversized-snapshot fallback. New hosts add the three
+/// batch fields; old hosts and ordinary low-latency pushes omit them.
+struct DecodedProjectionMessage: Decodable, Sendable {
+    let envelope: DecodedProjection
+    let snapshotBatchId: String?
+    let snapshotIndex: Int?
+    let snapshotCount: Int?
+}
+
+/// Reassembles explicitly identified oversized full snapshots without ever
+/// holding their raw JSON on the MainActor. Duplicate indices are idempotent;
+/// incomplete batches can be drained as ordered incremental updates at an
+/// event-stream barrier so a malformed/old host cannot block later run events.
+struct ProjectionSnapshotBatchAssembler {
+    enum IngestResult {
+        case incremental(DecodedProjection)
+        case waiting
+        case complete(DecodedProjectionSnapshot)
+    }
+
+    private struct PendingBatch {
+        let count: Int
+        let order: Int
+        var projectionsByIndex: [Int: DecodedProjection]
+    }
+
+    private var pendingById: [String: PendingBatch] = [:]
+    private var nextOrder = 0
+    private var completedIds: Set<String> = []
+    private var completedOrder: [String] = []
+    private static let completedIdLimit = 8
+
+    mutating func ingest(_ message: DecodedProjectionMessage) -> IngestResult {
+        guard let id = message.snapshotBatchId, !id.isEmpty,
+            let index = message.snapshotIndex,
+            let count = message.snapshotCount,
+            count > 0, index >= 0, index < count
+        else {
+            return .incremental(message.envelope)
+        }
+        guard !completedIds.contains(id) else { return .waiting }
+
+        if pendingById[id]?.count != count {
+            pendingById[id] = PendingBatch(
+                count: count, order: nextOrder, projectionsByIndex: [:])
+            nextOrder += 1
+        }
+        pendingById[id]?.projectionsByIndex[index] = message.envelope
+        guard let pending = pendingById[id], pending.projectionsByIndex.count == count else {
+            return .waiting
+        }
+
+        pendingById[id] = nil
+        rememberCompleted(id)
+        let projections = (0..<count).compactMap { pending.projectionsByIndex[$0] }
+        guard projections.count == count else { return .waiting }
+        return .complete(DecodedProjectionSnapshot(projections: projections))
+    }
+
+    mutating func drainIncomplete() -> [DecodedProjection] {
+        let projections = pendingById.values
+            .sorted { $0.order < $1.order }
+            .flatMap { pending in
+                pending.projectionsByIndex.keys.sorted().compactMap {
+                    pending.projectionsByIndex[$0]
+                }
+            }
+        pendingById.removeAll(keepingCapacity: true)
+        return projections
+    }
+
+    mutating func reset() {
+        pendingById.removeAll()
+        nextOrder = 0
+        completedIds.removeAll()
+        completedOrder.removeAll()
+    }
+
+    private mutating func rememberCompleted(_ id: String) {
+        completedIds.insert(id)
+        completedOrder.append(id)
+        if completedOrder.count > Self.completedIdLimit {
+            completedIds.remove(completedOrder.removeFirst())
+        }
+    }
 }
 
 // ── Paired-host persistence ─────────────────────────────────────────────────
@@ -2538,6 +2629,8 @@ public final class RemoteSessionModel: ObservableObject {
         eventTask?.cancel()
         eventTask = nil
         projectionSnapshotCoalescer.reset()
+        projectionEnvelopeBatchCoalescer.reset()
+        projectionBatchAssembler.reset()
         let client = self.client
         self.client = nil
         Task { await client?.close() }
@@ -2588,6 +2681,18 @@ public final class RemoteSessionModel: ObservableObject {
         eventTask = Task { [weak self] in
             for await event in client.events {
                 guard let self else { return }
+                guard self.client === client else { return }
+                let isProjectionEnvelope: Bool
+                if case .message(let method, _) = event {
+                    isProjectionEnvelope = method == "bridge.broadcastRemoteProjection"
+                } else {
+                    isProjectionEnvelope = false
+                }
+                if !isProjectionEnvelope {
+                    await self.projectionEnvelopeBatchCoalescer.flushForBarrier()
+                    guard self.client === client else { return }
+                    self.flushIncompleteProjectionBatches()
+                }
                 // Each handler re-checks that THIS client is still the live one:
                 // teardown() (switch/forget/disconnect/next candidate) nils or
                 // replaces self.client, so a late event from a superseded client
@@ -2842,10 +2947,138 @@ public final class RemoteSessionModel: ObservableObject {
         }
     }
 
+    /// Consecutive single-envelope projections are the wire fallback for a
+    /// full snapshot above the host's 700 KB frame cap. Older iOS code decoded
+    /// and published each one independently on MainActor (hundreds of whole-
+    /// shell invalidations on a mature workspace). This gate batches their raw
+    /// frames briefly, prepares every typed payload off-main, and preserves all
+    /// envelope ordering. A non-projection event calls `flushForBarrier`.
+    @MainActor
+    final class ProjectionEnvelopeBatchCoalescer {
+        static let trailingWindowNs: UInt64 = 12_000_000
+
+        private var pending: [Data] = []
+        private var scheduledDrain: Task<Void, Never>?
+        private var decodeInFlight = false
+        private var generation = 0
+        private(set) var applyCount = 0
+        private let trailingWindowNs: UInt64
+        private let decode: @Sendable ([Data]) throws -> [DecodedProjectionMessage]
+        private let apply: ([DecodedProjectionMessage]) -> Void
+        private var idleWaiters: [CheckedContinuation<Void, Never>] = []
+
+        init(
+            trailingWindowNs: UInt64 = ProjectionEnvelopeBatchCoalescer.trailingWindowNs,
+            decode: @escaping @Sendable ([Data]) throws -> [DecodedProjectionMessage] = {
+                frames in
+                frames.compactMap {
+                    try? JSONDecoder().decode(DecodedProjectionMessage.self, from: $0)
+                }
+            },
+            apply: @escaping ([DecodedProjectionMessage]) -> Void
+        ) {
+            self.trailingWindowNs = trailingWindowNs
+            self.decode = decode
+            self.apply = apply
+        }
+
+        func reset() {
+            pending.removeAll()
+            scheduledDrain?.cancel()
+            scheduledDrain = nil
+            generation += 1
+            if !decodeInFlight { signalIdleIfReady() }
+        }
+
+        func enqueue(_ data: Data) {
+            pending.append(data)
+            guard !decodeInFlight, scheduledDrain == nil else { return }
+            scheduledDrain = Task { @MainActor [weak self] in
+                guard let self else { return }
+                try? await Task.sleep(nanoseconds: self.trailingWindowNs)
+                guard !Task.isCancelled else { return }
+                self.scheduledDrain = nil
+                self.drainIfIdle()
+            }
+        }
+
+        private func drainIfIdle() {
+            guard !decodeInFlight, !pending.isEmpty else {
+                signalIdleIfReady()
+                return
+            }
+            let frames = pending
+            pending.removeAll(keepingCapacity: true)
+            decodeInFlight = true
+            let gen = generation
+            let decodeFn = decode
+            Task.detached(priority: .userInitiated) {
+                let result = Result { try decodeFn(frames) }
+                await MainActor.run { [weak self] in
+                    self?.finishDecode(result: result, generation: gen)
+                }
+            }
+        }
+
+        private func finishDecode(
+            result: Result<[DecodedProjectionMessage], Error>, generation gen: Int
+        ) {
+            decodeInFlight = false
+            if gen == generation {
+                switch result {
+                case .success(let messages):
+                    if !messages.isEmpty {
+                        applyCount += 1
+                        apply(messages)
+                    }
+                case .failure:
+                    print("[tw] DECODE FAILED: projection envelope batch")
+                }
+            }
+            if pending.isEmpty {
+                signalIdleIfReady()
+            } else {
+                drainIfIdle()
+            }
+        }
+
+        /// Ordering barrier used before every non-projection transport event.
+        func flushForBarrier() async {
+            scheduledDrain?.cancel()
+            scheduledDrain = nil
+            drainIfIdle()
+            guard !isIdle else { return }
+            await withCheckedContinuation { continuation in
+                idleWaiters.append(continuation)
+            }
+        }
+
+        func drainForTesting() async {
+            await flushForBarrier()
+        }
+
+        private var isIdle: Bool {
+            pending.isEmpty && !decodeInFlight && scheduledDrain == nil
+        }
+
+        private func signalIdleIfReady() {
+            guard isIdle else { return }
+            let waiters = idleWaiters
+            idleWaiters.removeAll()
+            for waiter in waiters { waiter.resume() }
+        }
+    }
+
     private lazy var projectionSnapshotCoalescer = ProjectionSnapshotCoalescer {
         [weak self] snapshot in
         guard let self else { return }
         self.applyDecodedSnapshot(snapshot)
+    }
+
+    private var projectionBatchAssembler = ProjectionSnapshotBatchAssembler()
+    private lazy var projectionEnvelopeBatchCoalescer = ProjectionEnvelopeBatchCoalescer {
+        [weak self] messages in
+        self?.applyDecodedProjectionMessages(messages)
     }
 
     private func handle(method: String, params: Data?) async {
@@ -2913,11 +3146,10 @@ public final class RemoteSessionModel: ObservableObject {
             providerModels = Dictionary(
                 uniqueKeysWithValues: message.providers.map { ($0.provider, $0.models) })
         case "bridge.broadcastRemoteProjection":
-            // Single-envelope push — on-demand thread snapshots + low-latency
-            // approval/question card changes.
-            struct One: Codable { let envelope: RemoteProjectionEnvelope }
-            guard let one = try? JSONDecoder().decode(One.self, from: params) else { return }
-            merge(envelope: one.envelope)
+            // Both low-latency one-offs and the host's oversized full-snapshot
+            // fallback use this method. Batch/decode off-main; a following
+            // non-projection transport event is an ordering barrier.
+            projectionEnvelopeBatchCoalescer.enqueue(params)
         case "bridge.runEvent":
             struct WirePayload: Codable {
                 let data: String?
@@ -3167,98 +3399,160 @@ public final class RemoteSessionModel: ObservableObject {
             .joined(separator: "\n\n")
     }
 
-    /// Merge one pushed envelope into the published state.
-    func merge(envelope: RemoteProjectionEnvelope) {
-        switch envelope.kind {
-        case "threadSnapshot":
-            if let thread = envelope.decodePayload(RemoteThreadSnapshot.self),
-                let key = thread.taskId ?? thread.threadId ?? envelope.threadId
-            {
-                mergeThreadSnapshot(thread, key: key)
+    func applyDecodedProjectionMessages(_ messages: [DecodedProjectionMessage]) {
+        var incremental: [DecodedProjection] = []
+        func flushIncremental() {
+            guard !incremental.isEmpty else { return }
+            mergeDecodedProjections(incremental)
+            incremental.removeAll(keepingCapacity: true)
+        }
+
+        for message in messages {
+            switch projectionBatchAssembler.ingest(message) {
+            case .incremental(let projection):
+                incremental.append(projection)
+            case .waiting:
+                break
+            case .complete(let snapshot):
+                flushIncremental()
+                applyDecodedSnapshot(snapshot)
             }
-        case "ensembleState":
-            if let state = envelope.decodePayload(RemoteEnsembleState.self) {
-                for key in keys(for: state, envelopeThreadId: envelope.threadId) {
-                    ensembleStates[key] = state
-                }
-            }
-        case "diffSummary":
-            if let diff = envelope.decodePayload(MobileDiffSummary.self) {
-                for key in keys(for: diff, envelopeThreadId: envelope.threadId) {
-                    diffSummaries[key] = diff
-                }
-            }
-        case "gitSnapshot":
-            if let git = envelope.decodePayload(GitWorkspaceSnapshot.self),
-                let workspaceId = envelope.workspaceId
-            {
-                gitSnapshots[workspaceId] = git
-            }
-        case "approvalCard":
-            if let card = envelope.decodePayload(MobileApprovalCard.self) {
-                mergeApprovalCard(card)
-            }
-        case "questionCard":
-            if let card = envelope.decodePayload(MobileQuestionCard.self) {
-                mergeQuestionCard(card)
-            }
-        case "taskCard":
-            if let card = envelope.decodePayload(RemoteTaskCard.self) {
-                let card = cardResolvingPendingThreadTitle(card)
-                let cardKeys = Set(keys(for: card))
-                if let index = taskCards.firstIndex(where: {
-                    !cardKeys.isDisjoint(with: keys(for: $0))
-                }) {
-                    taskCards[index] = card
+        }
+        flushIncremental()
+    }
+
+    func flushIncompleteProjectionBatches() {
+        let projections = projectionBatchAssembler.drainIncomplete()
+        if !projections.isEmpty {
+            mergeDecodedProjections(projections)
+        }
+    }
+
+    /// Merge pushed projections in arrival order, but publish each collection at
+    /// most once. This is the compatibility path for old hosts without explicit
+    /// batch metadata and for genuine low-latency one-off deltas.
+    private func mergeDecodedProjections(_ projections: [DecodedProjection]) {
+        var existingCards = taskCards
+        var insertedCards: [RemoteTaskCard] = []
+        var existingCardIndexByKey: [String: Int] = [:]
+        var insertedCardIndexByKey: [String: Int] = [:]
+        for (index, card) in existingCards.enumerated() {
+            for key in keys(for: card) { existingCardIndexByKey[key] = index }
+        }
+
+        var nextApprovals = approvals
+        var nextQuestions = questions
+        var nextWorkflows = workflows
+        var nextBoards = workspaceBoards
+        var nextPresets = ensemblePresets
+        var nextThreadSnapshots = threadSnapshots
+        var nextEnsembleStates = ensembleStates
+        var nextDiffSummaries = diffSummaries
+        var nextGitSnapshots = gitSnapshots
+        var shellAppearances: [TWRemoteShellAppearance] = []
+
+        for projection in projections {
+            switch projection {
+            case .taskCard(let decodedCard, let embedded, let envelopeThreadId):
+                let card = cardResolvingPendingThreadTitle(decodedCard)
+                let cardKeys = keys(for: card)
+                if let index = cardKeys.compactMap({ insertedCardIndexByKey[$0] }).max() {
+                    let oldCard = insertedCards[index]
+                    for key in keys(for: oldCard) where insertedCardIndexByKey[key] == index {
+                        insertedCardIndexByKey[key] = nil
+                    }
+                    insertedCards[index] = card
+                    for key in cardKeys { insertedCardIndexByKey[key] = index }
+                } else if let index = cardKeys.compactMap({ existingCardIndexByKey[$0] }).min() {
+                    let oldCard = existingCards[index]
+                    for key in keys(for: oldCard) where existingCardIndexByKey[key] == index {
+                        existingCardIndexByKey[key] = nil
+                    }
+                    existingCards[index] = card
+                    for key in cardKeys { existingCardIndexByKey[key] = index }
                 } else {
-                    taskCards.insert(card, at: 0)
+                    let index = insertedCards.count
+                    insertedCards.append(card)
+                    for key in cardKeys { insertedCardIndexByKey[key] = index }
                 }
                 rememberWorkspace(for: card)
-                publishEmbeddedTaskCardMetadata(envelope: envelope, card: card)
-                // C.iOS: an incremental card that is no longer an ensemble (e.g.
-                // an ensemble→solo collapse) must not keep a stale ensembleState —
-                // otherwise the composer's @-mention chips linger until the next
-                // full snapshot re-sync. Clear it now so the collapse is pristine
-                // immediately. card.id is the key the composer reads
-                // (`ensembleStates[card.id]`), and equals threadId on the
-                // top-level threads where the ensemble toggle is allowed.
-                if !card.isEnsemble {
-                    for key in keys(for: card) {
-                        ensembleStates[key] = nil
+                if let state = embedded?.ensembleState {
+                    for key in keys(
+                        for: state, envelopeThreadId: envelopeThreadId, fallbackKey: card.id)
+                    {
+                        nextEnsembleStates[key] = state
                     }
                 }
-            }
-        case "workflows":
-            if let workflow = envelope.decodePayload(RemoteWorkflow.self) {
-                if let index = workflows.firstIndex(where: { $0.id == workflow.id }) {
-                    workflows[index] = workflow
-                } else {
-                    workflows.append(workflow)
+                if let diff = embedded?.diffSummary {
+                    for key in keys(
+                        for: diff, envelopeThreadId: envelopeThreadId, fallbackKey: card.id)
+                    {
+                        nextDiffSummaries[key] = diff
+                    }
                 }
-            }
-        case "workspaceBoards":
-            if let board = envelope.decodePayload(RemoteWorkspaceBoard.self) {
-                if let index = workspaceBoards.firstIndex(where: { $0.id == board.id }) {
-                    workspaceBoards[index] = board
-                } else {
-                    workspaceBoards.append(board)
+                if !card.isEnsemble {
+                    for key in cardKeys { nextEnsembleStates[key] = nil }
                 }
-            }
-        case "ensemblePresets":
-            if let preset = envelope.decodePayload(RemoteEnsemblePreset.self) {
-                if let index = ensemblePresets.firstIndex(where: { $0.id == preset.id }) {
-                    ensemblePresets[index] = preset
+            case .workflow(let workflow):
+                if let index = nextWorkflows.firstIndex(where: { $0.id == workflow.id }) {
+                    nextWorkflows[index] = workflow
                 } else {
-                    ensemblePresets.append(preset)
+                    nextWorkflows.append(workflow)
                 }
+            case .workspaceBoard(let board):
+                if let index = nextBoards.firstIndex(where: { $0.id == board.id }) {
+                    nextBoards[index] = board
+                } else {
+                    nextBoards.append(board)
+                }
+            case .ensemblePreset(let preset):
+                if let index = nextPresets.firstIndex(where: { $0.id == preset.id }) {
+                    nextPresets[index] = preset
+                } else {
+                    nextPresets.append(preset)
+                }
+            case .approval(let card):
+                mergeApprovalCard(card, into: &nextApprovals)
+            case .question(let card):
+                mergeQuestionCard(card, into: &nextQuestions)
+            case .threadSnapshot(let snapshot, let fallbackKey):
+                if let fallbackKey {
+                    mergeThreadSnapshot(snapshot, key: fallbackKey, into: &nextThreadSnapshots)
+                }
+            case .ensembleState(let state, let envelopeThreadId):
+                for key in keys(for: state, envelopeThreadId: envelopeThreadId) {
+                    nextEnsembleStates[key] = state
+                }
+            case .diffSummary(let diff, let envelopeThreadId):
+                for key in keys(for: diff, envelopeThreadId: envelopeThreadId) {
+                    nextDiffSummaries[key] = diff
+                }
+            case .gitSnapshot(let snapshot, let workspaceId):
+                nextGitSnapshots[workspaceId] = snapshot
+            case .shellAppearance(let appearance):
+                shellAppearances.append(appearance)
+            case .ignored:
+                break
             }
-        case "shellAppearance":
-            if let appearance = envelope.decodePayload(TWRemoteShellAppearance.self) {
-                applyShellAppearance(appearance)
-            }
-        default:
-            break
         }
+
+        let nextTaskCards = Array(insertedCards.reversed()) + existingCards
+        if nextTaskCards != taskCards { taskCards = nextTaskCards }
+        if nextApprovals != approvals { approvals = nextApprovals }
+        if nextQuestions != questions { questions = nextQuestions }
+        if nextWorkflows != workflows { workflows = nextWorkflows }
+        if nextBoards != workspaceBoards { workspaceBoards = nextBoards }
+        if nextPresets != ensemblePresets { ensemblePresets = nextPresets }
+        if nextThreadSnapshots != threadSnapshots { threadSnapshots = nextThreadSnapshots }
+        if nextEnsembleStates != ensembleStates { ensembleStates = nextEnsembleStates }
+        if nextDiffSummaries != diffSummaries { diffSummaries = nextDiffSummaries }
+        if nextGitSnapshots != gitSnapshots { gitSnapshots = nextGitSnapshots }
+        for appearance in shellAppearances { applyShellAppearance(appearance) }
+    }
+
+    /// Direct-test/local seam. Relay pushes are decoded by the envelope batcher.
+    func merge(envelope: RemoteProjectionEnvelope) {
+        mergeDecodedProjections([DecodedProjection(envelope)])
     }
 
     /// Apply a projected composer shellAppearance, ignoring stale re-broadcasts.
@@ -3665,37 +3959,43 @@ public final class RemoteSessionModel: ObservableObject {
         }
     }
 
-    private func mergeApprovalCard(_ card: MobileApprovalCard) {
+    private func mergeApprovalCard(
+        _ card: MobileApprovalCard,
+        into approvalCards: inout [MobileApprovalCard]
+    ) {
         guard let id = card.toolCallId else { return }
         if let status = card.status, status != "pending" {
-            approvals.removeAll { $0.toolCallId == id }
+            approvalCards.removeAll { $0.toolCallId == id }
             repliedApprovalToolCallIds.remove(id)
             return
         }
         // Honor an optimistic dismissal: a pending delta for an approval the
         // user just answered must not flash it back while the ack is in flight.
         if repliedApprovalToolCallIds.contains(id) { return }
-        if let index = approvals.firstIndex(where: { $0.toolCallId == id }) {
-            approvals[index] = card
+        if let index = approvalCards.firstIndex(where: { $0.toolCallId == id }) {
+            approvalCards[index] = card
         } else {
-            approvals.insert(card, at: 0)
+            approvalCards.insert(card, at: 0)
         }
     }
 
-    private func mergeQuestionCard(_ card: MobileQuestionCard) {
+    private func mergeQuestionCard(
+        _ card: MobileQuestionCard,
+        into questionCards: inout [MobileQuestionCard]
+    ) {
         guard let id = card.resolvedId else { return }
         if let status = card.status, status != "pending" {
-            questions.removeAll { $0.resolvedId == id }
+            questionCards.removeAll { $0.resolvedId == id }
             repliedQuestionIds.remove(id)
             return
         }
         // Honor an optimistic dismissal: a pending delta for a question the user
         // just answered (reply still in flight) must not flash it back.
         if repliedQuestionIds.contains(id) { return }
-        if let index = questions.firstIndex(where: { $0.resolvedId == id }) {
-            questions[index] = card
+        if let index = questionCards.firstIndex(where: { $0.resolvedId == id }) {
+            questionCards[index] = card
         } else {
-            questions.insert(card, at: 0)
+            questionCards.insert(card, at: 0)
         }
     }
 
@@ -3873,41 +4173,6 @@ public final class RemoteSessionModel: ObservableObject {
         let workspaceId = card.workspaceId?.isEmpty == false ? card.workspaceId! : "global"
         for key in keys(for: card) {
             rememberThreadWorkspace(key, workspaceId: workspaceId)
-        }
-    }
-
-    private func publishEmbeddedTaskCardMetadata(
-        envelope: RemoteProjectionEnvelope,
-        card: RemoteTaskCard,
-        intoEnsembleSnapshots ensembleSnapshots: inout [String: RemoteEnsembleState],
-        intoDiffSnapshots diffSnapshots: inout [String: MobileDiffSummary]
-    ) {
-        guard let embedded = envelope.decodePayload(EmbeddedTaskCardMetadata.self) else { return }
-        if let state = embedded.ensembleState {
-            for key in keys(for: state, envelopeThreadId: envelope.threadId, fallbackKey: card.id) {
-                ensembleSnapshots[key] = state
-            }
-        }
-        if let diff = embedded.diffSummary {
-            for key in keys(for: diff, envelopeThreadId: envelope.threadId, fallbackKey: card.id) {
-                diffSnapshots[key] = diff
-            }
-        }
-    }
-
-    private func publishEmbeddedTaskCardMetadata(envelope: RemoteProjectionEnvelope, card: RemoteTaskCard) {
-        var ensembleSnapshots: [String: RemoteEnsembleState] = [:]
-        var diffSnapshots: [String: MobileDiffSummary] = [:]
-        publishEmbeddedTaskCardMetadata(
-            envelope: envelope,
-            card: card,
-            intoEnsembleSnapshots: &ensembleSnapshots,
-            intoDiffSnapshots: &diffSnapshots)
-        for (key, state) in ensembleSnapshots {
-            ensembleStates[key] = state
-        }
-        for (key, diff) in diffSnapshots {
-            diffSummaries[key] = diff
         }
     }
 

@@ -652,6 +652,10 @@ describe('BridgeBroadcaster', () => {
     broadcaster.broadcastRemoteProjection(envelope)
 
     expect(notify).toHaveBeenCalledWith(BRIDGE_BROADCAST_METHODS.remoteProjection, { envelope })
+    const params = notify.mock.calls[0]?.[1] as Record<string, unknown>
+    expect(params).not.toHaveProperty('snapshotBatchId')
+    expect(params).not.toHaveProperty('snapshotIndex')
+    expect(params).not.toHaveProperty('snapshotCount')
   })
 
   it('skips a single remote projection envelope over the byte budget', () => {
@@ -753,6 +757,7 @@ describe('BridgeBroadcaster', () => {
 
   it('fans out oversized remote projection snapshots as single envelopes', () => {
     const notify = vi.fn()
+    const snapshotBatchIdFactory = vi.fn(() => 'snapshot-batch-1')
     const store = makeFakeStore([makeWorkspace()], [makeChat()])
     const first = buildRemoteProjectionEnvelope({
       kind: 'questionCard',
@@ -773,6 +778,7 @@ describe('BridgeBroadcaster', () => {
         listRemoteProjectionEnvelopes: () => [first, second]
       },
       remoteProjectionSnapshotMaxBytes: 1,
+      snapshotBatchIdFactory,
       now: () => 1000
     })
 
@@ -785,11 +791,75 @@ describe('BridgeBroadcaster', () => {
       BRIDGE_BROADCAST_METHODS.remoteProjection
     ])
     expect(notify).toHaveBeenNthCalledWith(3, BRIDGE_BROADCAST_METHODS.remoteProjection, {
-      envelope: first
+      envelope: first,
+      snapshotBatchId: 'snapshot-batch-1',
+      snapshotIndex: 0,
+      snapshotCount: 2
     })
     expect(notify).toHaveBeenNthCalledWith(4, BRIDGE_BROADCAST_METHODS.remoteProjection, {
-      envelope: second
+      envelope: second,
+      snapshotBatchId: 'snapshot-batch-1',
+      snapshotIndex: 1,
+      snapshotCount: 2
     })
+    expect(snapshotBatchIdFactory).toHaveBeenCalledOnce()
+  })
+
+  it('filters oversized envelopes before assigning snapshot indices and count', () => {
+    const notify = vi.fn()
+    const store = makeFakeStore([makeWorkspace()], [makeChat()])
+    const first = buildRemoteProjectionEnvelope({
+      kind: 'questionCard',
+      payload: { promptId: 'first' },
+      generatedAt: '2026-05-30T12:00:00.000Z',
+      envelopeId: 'env-first'
+    })
+    const skipped = buildRemoteProjectionEnvelope({
+      kind: 'questionCard',
+      payload: { promptId: 'skipped', detail: 'x'.repeat(2_000) },
+      generatedAt: '2026-05-30T12:00:01.000Z',
+      envelopeId: 'env-skipped'
+    })
+    const last = buildRemoteProjectionEnvelope({
+      kind: 'approvalCard',
+      payload: { requestId: 'last' },
+      generatedAt: '2026-05-30T12:00:02.000Z',
+      envelopeId: 'env-last'
+    })
+    const broadcaster = new BridgeBroadcaster({
+      daemon: { notify },
+      appStore: store,
+      projectionSource: {
+        listRemoteProjectionEnvelopes: () => [first, skipped, last]
+      },
+      remoteProjectionSnapshotMaxBytes: 1,
+      remoteProjectionEnvelopeMaxBytes: 1_000,
+      snapshotBatchIdFactory: () => 'snapshot-batch-filtered',
+      now: () => 1000
+    })
+
+    broadcaster.broadcastRemoteProjectionSnapshot()
+
+    expect(notify.mock.calls).toEqual([
+      [
+        BRIDGE_BROADCAST_METHODS.remoteProjection,
+        {
+          envelope: first,
+          snapshotBatchId: 'snapshot-batch-filtered',
+          snapshotIndex: 0,
+          snapshotCount: 2
+        }
+      ],
+      [
+        BRIDGE_BROADCAST_METHODS.remoteProjection,
+        {
+          envelope: last,
+          snapshotBatchId: 'snapshot-batch-filtered',
+          snapshotIndex: 1,
+          snapshotCount: 2
+        }
+      ]
+    ])
   })
 
   it('filters workspace and thread lists through the remote allowlist', () => {
@@ -1010,6 +1080,7 @@ describe('BridgeBroadcaster.emitSnapshotTo (Slice 1 targeted resync)', () => {
       appStore: store,
       projectionSource: { listRemoteProjectionEnvelopes: () => [first, second] },
       remoteProjectionSnapshotMaxBytes: 1, // force the per-envelope fan path
+      snapshotBatchIdFactory: () => 'targeted-snapshot-batch',
       now: () => 1000
     })
     broadcaster.emitSnapshotTo(sink)
@@ -1017,6 +1088,25 @@ describe('BridgeBroadcaster.emitSnapshotTo (Slice 1 targeted resync)', () => {
     const remoteCalls = sink.mock.calls.filter(
       (c) => c[0] === BRIDGE_BROADCAST_METHODS.remoteProjection
     )
-    expect(remoteCalls).toHaveLength(2)
+    expect(remoteCalls).toEqual([
+      [
+        BRIDGE_BROADCAST_METHODS.remoteProjection,
+        {
+          envelope: first,
+          snapshotBatchId: 'targeted-snapshot-batch',
+          snapshotIndex: 0,
+          snapshotCount: 2
+        }
+      ],
+      [
+        BRIDGE_BROADCAST_METHODS.remoteProjection,
+        {
+          envelope: second,
+          snapshotBatchId: 'targeted-snapshot-batch',
+          snapshotIndex: 1,
+          snapshotCount: 2
+        }
+      ]
+    ])
   })
 })
