@@ -46,6 +46,7 @@ export interface IosRemoteTailscaleStatusDeps {
     httpsPort?: number
   }) => Promise<TailscaleServeStatus>
   getIosRemoteRuntimeActive: () => boolean
+  probeRelayFrontDoor: (relayUrl: string) => Promise<RelayProbeResult>
 }
 
 export interface BridgeRemoteHandlersDeps extends IosRemoteTailscaleStatusDeps {
@@ -60,7 +61,6 @@ export interface BridgeRemoteHandlersDeps extends IosRemoteTailscaleStatusDeps {
   getIosRemoteTailscaleStatus: () => Promise<Record<string, unknown>>
   restartIosRemoteBridge: (reason: string) => Promise<void>
   stopIosRemoteBridge: () => Promise<void>
-  probeRelayFrontDoor: (relayUrl: string) => Promise<RelayProbeResult>
   enableTailscaleServe: (input: {
     cliPath: string
     relayPort: number
@@ -119,10 +119,21 @@ export function createIosRemoteTailscaleStatusGetter(
       : { configured: false as const }
     const dnsName = tailscale.dnsName ?? serve.dnsName ?? configuredCandidate?.dnsName
     const suggestedUrl = dnsName ? deps.serveWssUrl(dnsName, httpsPort) : null
+    const runtimeActive = deps.getIosRemoteRuntimeActive()
+    const directRelayUrl = tailscale.tailnetIPv4
+      ? `ws://${tailscale.tailnetIPv4}:${relayPort}`
+      : null
+    const directProbe =
+      runtimeActive && directRelayUrl ? await deps.probeRelayFrontDoor(directRelayUrl) : null
+    const directAvailable = directProbe?.reachable === true
     const relayUrlMatches = Boolean(suggestedUrl && currentRelayUrl === suggestedUrl)
     const usingSavedRelayFallback = Boolean(
       configuredCandidate && !tailscale.available && !(serve.configured && dnsName)
     )
+    const unavailableReason = tailscale.reason ?? 'Tailscale status is not ready.'
+    const unavailableSentence = /[.!?](?:[)'"’”]*)$/.test(unavailableReason)
+      ? unavailableReason
+      : `${unavailableReason}.`
     return {
       tailscaleAvailable:
         tailscale.available || Boolean(serve.configured && dnsName) || usingSavedRelayFallback,
@@ -130,7 +141,7 @@ export function createIosRemoteTailscaleStatusGetter(
         tailscale.available || (serve.configured && dnsName)
           ? null
           : usingSavedRelayFallback
-            ? `${tailscale.reason ?? 'Tailscale status is not ready.'} Using the saved relay door for Copy/Test.`
+            ? `${unavailableSentence} The optional WSS address is saved but not live, and no direct Tailscale IP route was detected.`
             : (tailscale.reason ?? null),
       dnsName: dnsName ?? null,
       suggestedUrl,
@@ -142,7 +153,10 @@ export function createIosRemoteTailscaleStatusGetter(
       manualRelayInput,
       manualRelayUrl,
       active: relayUrlMatches && serve.configured,
-      runtimeActive: deps.getIosRemoteRuntimeActive(),
+      directRelayUrl,
+      directAvailable,
+      cellularReady: directAvailable || (relayUrlMatches && serve.configured),
+      runtimeActive,
       usingSavedRelayFallback
     }
   }
@@ -257,9 +271,10 @@ export function registerBridgeRemoteHandlers(deps: BridgeRemoteHandlersDeps): vo
 
   ipcMain.handle('ios-remote-tailscale-test', async () => {
     const status = await deps.getIosRemoteTailscaleStatus()
-    const relayUrl =
-      typeof status.suggestedUrl === 'string' && status.suggestedUrl ? status.suggestedUrl : null
-    if (!relayUrl) {
+    const relayUrls = [status.directRelayUrl, status.suggestedUrl].filter(
+      (value): value is string => typeof value === 'string' && Boolean(value)
+    )
+    if (relayUrls.length === 0) {
       return {
         ok: false,
         message:
@@ -268,14 +283,24 @@ export function registerBridgeRemoteHandlers(deps: BridgeRemoteHandlersDeps): vo
         status
       }
     }
-    const probe = await deps.probeRelayFrontDoor(relayUrl)
+    const failures: string[] = []
+    for (const relayUrl of relayUrls) {
+      const probe = await deps.probeRelayFrontDoor(relayUrl)
+      if (probe.reachable) {
+        return {
+          ok: true,
+          message: `Ready for cellular: ${relayUrl}`,
+          relayUrl,
+          reachable: true,
+          status
+        }
+      }
+      failures.push(`${relayUrl}: ${probe.detail}`)
+    }
     return {
-      ok: probe.reachable,
-      message: probe.reachable
-        ? `Ready for cellular: ${relayUrl}`
-        : `${relayUrl} is not reachable yet: ${probe.detail}`,
-      relayUrl,
-      reachable: probe.reachable,
+      ok: false,
+      message: `No off-LAN Tailscale route is reachable yet: ${failures.join('; ')}`,
+      reachable: false,
       status
     }
   })

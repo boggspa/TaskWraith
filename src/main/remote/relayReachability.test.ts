@@ -26,6 +26,10 @@ describe('probeUrlForRelay', () => {
     const url = probeUrlForRelay('ws://192.168.1.20:8787')
     expect(url?.protocol).toBe('http:')
     expect(url?.host).toBe('192.168.1.20:8787')
+
+    const tailnet = probeUrlForRelay('ws://100.99.131.73:8787')
+    expect(tailnet?.protocol).toBe('http:')
+    expect(tailnet?.host).toBe('100.99.131.73:8787')
   })
 
   it('rejects non-websocket and unparseable URLs', () => {
@@ -120,12 +124,17 @@ describe('selectAdvertisableRelayUrls', () => {
     expect(selection.warnings).toEqual([])
   })
 
-  it('drops a dead wss front door with a warning, keeping LAN pairing alive', async () => {
+  it('drops dead optional WSS while keeping LAN and direct Tailscale pairing alive', async () => {
     const selection = await selectAdvertisableRelayUrls(
-      ['ws://192.168.0.147:8787', 'wss://mac.tailnet.ts.net'],
+      [
+        'ws://192.168.0.147:8787',
+        'ws://100.99.131.73:8787',
+        'wss://mac.tailnet.ts.net'
+      ],
       {
         probe: probeMap({
           'ws://192.168.0.147:8787': { reachable: true, detail: 'HTTP 404' },
+          'ws://100.99.131.73:8787': { reachable: true, detail: 'HTTP 404' },
           'wss://mac.tailnet.ts.net': {
             reachable: false,
             detail: 'ECONNREFUSED: connect ECONNREFUSED 100.99.131.73:443'
@@ -133,7 +142,10 @@ describe('selectAdvertisableRelayUrls', () => {
         })
       }
     )
-    expect(selection.advertisable).toEqual(['ws://192.168.0.147:8787'])
+    expect(selection.advertisable).toEqual([
+      'ws://192.168.0.147:8787',
+      'ws://100.99.131.73:8787'
+    ])
     expect(selection.warnings).toEqual([
       "wss://mac.tailnet.ts.net isn't answering (ECONNREFUSED: connect ECONNREFUSED 100.99.131.73:443)"
     ])

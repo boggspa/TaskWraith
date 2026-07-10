@@ -3,19 +3,16 @@
  * the pairing QR. The URL is consumed by the PHONE, so it must be an address
  * the phone can actually reach AND that iOS App Transport Security permits.
  *
- * The embedded relay is ALWAYS cleartext ws:// (no TLS). iOS ATS only allows
- * cleartext to local-network hosts (NSAllowsLocalNetworking), so:
+ * The embedded relay is cleartext ws:// at the URL layer, but TaskWraith's iOS
+ * target declares NSAllowsLocalNetworking and admits only LAN addresses or the
+ * Tailscale CGNAT range. Tailscale then supplies WireGuard transport encryption
+ * and TaskWraith supplies its own authenticated E2EE session.
  *
  *   1. The first non-internal private LAN IPv4 (192.168/10/172.16-31) —
- *      same-Wi-Fi pairing. ATS treats it as local, so cleartext ws:// works.
- *   2. Otherwise the Mac's Tailscale IP (100.64.0.0/10 CGNAT) — reachable
- *      across networks BUT ATS blocks cleartext to it, so a real device can't
- *      use the embedded relay there; it's a last-ditch hint and the pairing
- *      UI warns that remote use needs a wss:// relay (`tailscale cert`).
+ *      the fastest same-Wi-Fi path.
+ *   2. The Mac's Tailscale IP (100.64.0.0/10 CGNAT) — the zero-configuration
+ *      cellular/off-LAN path when the phone is on the same tailnet.
  *   3. Otherwise loopback — only the simulator can reach that; we log it.
- *
- * (Tailscale used to be #1 — wrong once ATS stopped permitting cleartext to
- * CGNAT: the QR advertised an address the iOS preflight correctly refuses.)
  *
  * Pure given an interface map (injectable for tests).
  */
@@ -24,10 +21,16 @@ import os from 'os'
 
 type InterfaceMap = NodeJS.Dict<os.NetworkInterfaceInfo[]>
 
-function isTailscaleAddress(address: string): boolean {
+export function isTailscaleAddress(address: string): boolean {
   // 100.64.0.0/10 — second octet 64..127.
   const octets = address.split('.').map(Number)
-  return octets.length === 4 && octets[0] === 100 && octets[1] >= 64 && octets[1] <= 127
+  return (
+    octets.length === 4 &&
+    octets.every((octet) => Number.isInteger(octet) && octet >= 0 && octet <= 255) &&
+    octets[0] === 100 &&
+    octets[1] >= 64 &&
+    octets[1] <= 127
+  )
 }
 
 function isPrivateAddress(address: string): boolean {
@@ -42,6 +45,15 @@ function isPrivateAddress(address: string): boolean {
 export function pickRelayAdvertiseHost(
   interfaces: InterfaceMap = os.networkInterfaces()
 ): { host: string; kind: 'tailscale' | 'lan' | 'loopback' } {
+  return listRelayAdvertiseHosts(interfaces)[0]
+}
+
+/** Every useful embedded-relay address, ordered for a phone on home Wi-Fi.
+ * The iOS client promotes remote candidates on cellular, so retaining LAN-first
+ * here gives both networks their fast path without requiring Tailscale Serve. */
+export function listRelayAdvertiseHosts(
+  interfaces: InterfaceMap = os.networkInterfaces()
+): Array<{ host: string; kind: 'tailscale' | 'lan' | 'loopback' }> {
   const candidates: os.NetworkInterfaceInfo[] = []
   for (const list of Object.values(interfaces)) {
     for (const info of list ?? []) {
@@ -49,14 +61,12 @@ export function pickRelayAdvertiseHost(
       candidates.push(info)
     }
   }
-  // LAN first: ATS permits cleartext ws:// only to local-network hosts, so a
-  // same-Wi-Fi LAN IP is the only address a real device can use against the
-  // embedded (always-cleartext) relay.
+  const result: Array<{ host: string; kind: 'tailscale' | 'lan' }> = []
   const lan = candidates.find((info) => isPrivateAddress(info.address))
-  if (lan) return { host: lan.address, kind: 'lan' }
+  if (lan) result.push({ host: lan.address, kind: 'lan' })
   const tailscale = candidates.find((info) => isTailscaleAddress(info.address))
-  if (tailscale) return { host: tailscale.address, kind: 'tailscale' }
-  return { host: '127.0.0.1', kind: 'loopback' }
+  if (tailscale) result.push({ host: tailscale.address, kind: 'tailscale' })
+  return result.length > 0 ? result : [{ host: '127.0.0.1', kind: 'loopback' }]
 }
 
 export function embeddedRelayUrl(port: number, interfaces?: InterfaceMap): string {

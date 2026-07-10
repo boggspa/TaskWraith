@@ -4,6 +4,7 @@ import {
   embeddedRelayUrl,
   isLocalPlainRelayUrl,
   isPlainTailscaleRelayUrl,
+  listRelayAdvertiseHosts,
   mergeRelayUrls,
   normalizeManualRelayUrl,
   parseTailscaleWssRelayUrl,
@@ -22,7 +23,7 @@ function iface(address: string, internal = false): os.NetworkInterfaceInfo {
 }
 
 describe('pickRelayAdvertiseHost', () => {
-  it('prefers a LAN address over Tailscale (ATS blocks cleartext to CGNAT)', () => {
+  it('prefers a LAN address for the primary same-Wi-Fi path', () => {
     const picked = pickRelayAdvertiseHost({
       en0: [iface('192.168.1.50')],
       utun4: [iface('100.99.131.73')]
@@ -53,12 +54,27 @@ describe('pickRelayAdvertiseHost', () => {
       en0: [iface('100.20.1.1'), iface('192.168.1.9')]
     })
     expect(picked).toEqual({ host: '192.168.1.9', kind: 'lan' })
+    expect(
+      listRelayAdvertiseHosts({ utun4: [iface('100.99.999.1')] })
+    ).toEqual([{ host: '127.0.0.1', kind: 'loopback' }])
   })
 
   it('embeddedRelayUrl composes ws://host:port', () => {
     expect(embeddedRelayUrl(8787, { utun4: [iface('100.99.131.73')] })).toBe(
       'ws://100.99.131.73:8787'
     )
+  })
+
+  it('lists LAN and direct Tailscale doors so Serve is not required', () => {
+    expect(
+      listRelayAdvertiseHosts({
+        en0: [iface('192.168.1.50')],
+        utun4: [iface('100.99.131.73')]
+      })
+    ).toEqual([
+      { host: '192.168.1.50', kind: 'lan' },
+      { host: '100.99.131.73', kind: 'tailscale' }
+    ])
   })
 })
 
@@ -121,7 +137,7 @@ describe('normalizeManualRelayUrl', () => {
 })
 
 describe('isPlainTailscaleRelayUrl', () => {
-  it('flags cleartext Tailscale IP relay doors that iOS cannot use off-LAN', () => {
+  it('recognises direct Tailscale IP relay doors', () => {
     expect(isPlainTailscaleRelayUrl('ws://100.99.131.73:8787')).toBe(true)
     expect(isPlainTailscaleRelayUrl('wss://100.99.131.73:8787')).toBe(false)
     expect(isPlainTailscaleRelayUrl('ws://192.168.1.50:8787')).toBe(false)

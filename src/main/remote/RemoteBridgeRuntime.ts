@@ -122,12 +122,12 @@ export interface RemoteBridgeRuntimeOptions {
   /** The relay URL PHONES should use, when it differs from `relayUrl` (the
    * Mac's own connection). The self-hosted Tailscale shape: the Mac talks
    * to its embedded relay over loopback ws:// while the QR advertises the
-   * wss://<dnsName> front door `tailscale serve` puts on the same port —
-   * iOS ATS only allows cleartext to local-network hosts, so off-LAN
-   * phones need the TLS address. Defaults to `relayUrl`. */
+   * wss://<dnsName> front door `tailscale serve` puts on the same port.
+   * This is optional defense-in-depth; direct Tailscale IP candidates work
+   * without Serve. Defaults to `relayUrl`. */
   advertiseRelayUrl?: string
-  /** Ordered candidate list for the bootstrap's `relayUrls` (LAN first,
-   * wss front door second). Defaults to the single advertised URL. The
+  /** Ordered candidate list for the bootstrap's `relayUrls` (LAN, direct
+   * Tailscale IP, then optional WSS). Defaults to the single advertised URL. The
    * begin-pairing caller may override per call with the live-probed set. */
   advertiseRelayUrls?: string[]
   /** Shown on the iPhone's pairing sheet ("Pair with <macDisplayName>"). */

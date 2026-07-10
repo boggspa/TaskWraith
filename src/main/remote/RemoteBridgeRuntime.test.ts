@@ -186,11 +186,16 @@ describe('RemoteBridgeRuntime pairing', () => {
   it('advertises the per-call candidate list, preferring wss for the v1 relayUrl field', () => {
     const h = harness()
     const { bootstrapPayload } = h.runtime.beginPairing('My iPad', {
-      advertiseRelayUrls: ['ws://192.168.0.147:8787', 'wss://mac.tailnet.ts.net']
+      advertiseRelayUrls: [
+        'ws://192.168.0.147:8787',
+        'ws://100.99.131.73:8787',
+        'wss://mac.tailnet.ts.net'
+      ]
     }).bootstrap
-    // New phones walk the ordered list LAN-first…
+    // New phones receive LAN + zero-setup direct tailnet + optional WSS…
     expect(bootstrapPayload.relayUrls).toEqual([
       'ws://192.168.0.147:8787',
+      'ws://100.99.131.73:8787',
       'wss://mac.tailnet.ts.net'
     ])
     // …old phones read the single field, which keeps the works-anywhere door.

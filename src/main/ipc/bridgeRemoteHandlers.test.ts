@@ -58,7 +58,8 @@ function createDeps(overrides: Partial<BridgeRemoteHandlersDeps> = {}) {
     detectTailscale: vi.fn(async () => ({
       available: true,
       cliPath: '/usr/bin/tailscale',
-      dnsName: 'mac.tail.ts.net'
+      dnsName: 'mac.tail.ts.net',
+      tailnetIPv4: '100.99.131.73'
     })),
     getTailscaleServeStatus: vi.fn(async () => ({
       configured: true,
@@ -94,6 +95,21 @@ function createDeps(overrides: Partial<BridgeRemoteHandlersDeps> = {}) {
 }
 
 describe('createIosRemoteTailscaleStatusGetter', () => {
+  it('reports a live direct Tailscale IP route without requiring Serve', async () => {
+    const { deps } = createDeps({
+      getTailscaleServeStatus: vi.fn(async () => ({ configured: false }))
+    })
+    const getStatus = createIosRemoteTailscaleStatusGetter(deps)
+
+    await expect(getStatus()).resolves.toMatchObject({
+      directRelayUrl: 'ws://100.99.131.73:8788',
+      directAvailable: true,
+      cellularReady: true,
+      serveConfigured: false
+    })
+    expect(deps.probeRelayFrontDoor).toHaveBeenCalledWith('ws://100.99.131.73:8788')
+  })
+
   it('reports a saved Tailscale relay door as a copy/test fallback', async () => {
     const { deps } = createDeps({
       detectTailscale: vi.fn(async () => ({
@@ -107,7 +123,7 @@ describe('createIosRemoteTailscaleStatusGetter', () => {
     await expect(getStatus()).resolves.toMatchObject({
       tailscaleAvailable: true,
       tailscaleReason:
-        'Tailscale is not connected Using the saved relay door for Copy/Test.',
+        'Tailscale is not connected. The optional WSS address is saved but not live, and no direct Tailscale IP route was detected.',
       dnsName: 'mac.tail.ts.net',
       suggestedUrl: 'wss://mac.tail.ts.net:8443',
       serveConfigured: false,
@@ -213,6 +229,25 @@ describe('registerBridgeRemoteHandlers', () => {
     })
     expect(deps.getIosRemoteTailscaleStatus).toHaveBeenCalledOnce()
     expect(deps.probeRelayFrontDoor).toHaveBeenCalledWith('wss://mac.tail.ts.net:8443')
+  })
+
+  it('tests the zero-config direct Tailscale route before optional WSS', async () => {
+    const { deps } = createDeps({
+      getIosRemoteTailscaleStatus: vi.fn(async () => ({
+        directRelayUrl: 'ws://100.99.131.73:8788',
+        suggestedUrl: 'wss://mac.tail.ts.net:8443',
+        tailscaleReason: null
+      }))
+    })
+    registerBridgeRemoteHandlers(deps)
+
+    await expect(handlerFor('ios-remote-tailscale-test')({})).resolves.toMatchObject({
+      ok: true,
+      relayUrl: 'ws://100.99.131.73:8788',
+      reachable: true
+    })
+    expect(deps.probeRelayFrontDoor).toHaveBeenCalledWith('ws://100.99.131.73:8788')
+    expect(deps.probeRelayFrontDoor).not.toHaveBeenCalledWith('wss://mac.tail.ts.net:8443')
   })
 
   it('disables the Tailscale front door and clears the matching saved relay URL', async () => {

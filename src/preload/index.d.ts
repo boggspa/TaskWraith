@@ -1073,6 +1073,9 @@ declare global {
         manualRelayUrl: string | null
         manualRelayInput: string
         active: boolean
+        directRelayUrl: string | null
+        directAvailable: boolean
+        cellularReady: boolean
         runtimeActive: boolean
         usingSavedRelayFallback?: boolean
       }>

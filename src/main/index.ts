@@ -306,10 +306,10 @@ import { wsTransportSocketFactory } from './remote/wsTransportSocket'
 import {
   isLocalPlainRelayUrl,
   isPlainTailscaleRelayUrl,
+  listRelayAdvertiseHosts,
   mergeRelayUrls,
   normalizeManualRelayUrl,
-  parseTailscaleWssRelayUrl,
-  pickRelayAdvertiseHost
+  parseTailscaleWssRelayUrl
 } from './remote/relayAdvertise'
 import { createRelayServer, type RelayServerHandle } from '../../relay/src/server'
 import {
@@ -26832,14 +26832,7 @@ if (isGeminiMcpBridgeProcess) {
     }
       const advertisableManualRelayUrl = (relayPort: number): string | null => {
         const manualRelayUrl = configuredManualRelayUrl(relayPort)
-        if (!manualRelayUrl) return null
-        if (isPlainTailscaleRelayUrl(manualRelayUrl)) {
-          console.warn(
-            `[remote-bridge] manual relay ${manualRelayUrl} is a cleartext Tailscale IP; not advertising it to iOS. Use the MagicDNS wss:// door for cellular/off-LAN access.`
-          )
-          return null
-        }
-        return manualRelayUrl
+        return manualRelayUrl || null
       }
       const resolveTailscaleWssLane = async (
         preferredUrl: string | null
@@ -26885,6 +26878,8 @@ if (isGeminiMcpBridgeProcess) {
           return relayUrl.replace(/\/$/, '')
         }
       }
+      const automaticEmbeddedRelayUrls = (port: number): string[] =>
+        listRelayAdvertiseHosts().map(({ host }) => `ws://${host}:${port}`)
       // QR-optional discovery (multi-host): the embedded relay advertises this
       // host on the tailnet. `hostInfo` is a read-only self-description an
       // oracle peer probes (GET /v1/hostinfo) to learn the machine runs
@@ -26903,9 +26898,12 @@ if (isGeminiMcpBridgeProcess) {
       const relayHostInfoProvider = (): Record<string, unknown> | null => {
         if (!iosRemoteRuntime) return null
         const info = iosRemoteRuntime.describeHost()
+        const liveRelayUrls = embeddedRelayHandle
+          ? mergeRelayUrls(info.relayUrls, automaticEmbeddedRelayUrls(embeddedRelayHandle.port))
+          : info.relayUrls
         return {
           ...info,
-          relayUrls: advertisableRelayCache.readSync(info.relayUrls)
+          relayUrls: advertisableRelayCache.readSync(liveRelayUrls)
         } as unknown as Record<string, unknown>
       }
       const relayBeginPairProvider = async (): Promise<Record<string, unknown> | null> => {
@@ -26933,21 +26931,26 @@ if (isGeminiMcpBridgeProcess) {
             beginPair: relayBeginPairProvider
           })
           embeddedRelayHandle = handle
-          const advertised = advertiseRelayUrl ? null : pickRelayAdvertiseHost()
-          const relayUrl = advertiseRelayUrl
+          const advertisedHosts = listRelayAdvertiseHosts()
+          const automaticRelayUrls = automaticEmbeddedRelayUrls(handle.port)
+          const configuredRelayUrl = advertiseRelayUrl
             ? relayOriginWithPort(advertiseRelayUrl, handle.port)
-            : `ws://${advertised?.host ?? '127.0.0.1'}:${handle.port}`
+            : null
           const manualRelayUrl = advertisableManualRelayUrl(handle.port)
-          const relayCandidates = mergeRelayUrls([relayUrl], [manualRelayUrl])
-          if (advertised?.kind === 'loopback') {
+          const relayCandidates = mergeRelayUrls(
+            [configuredRelayUrl],
+            automaticRelayUrls,
+            [manualRelayUrl]
+          )
+          if (advertisedHosts[0]?.kind === 'loopback') {
             console.warn(
               '[remote-bridge] no Tailscale/LAN address found — the pairing QR will only be reachable from this machine'
             )
           }
           console.log(
-            `[remote-bridge] embedded relay listening on :${handle.port} — advertising ${relayCandidates.join(' → ')} (${advertised?.kind ?? 'configured-local'})`
+            `[remote-bridge] embedded relay listening on :${handle.port} — advertising ${relayCandidates.join(' → ')} (${advertisedHosts.map(({ kind }) => kind).join('+')})`
           )
-          startRuntime(relayUrl, undefined, relayCandidates)
+          startRuntime(`ws://127.0.0.1:${handle.port}`, undefined, relayCandidates)
           reopenCollaborationRooms()
         } catch (err: unknown) {
           iosRemoteRuntimeError = err instanceof Error ? err.message : String(err)
@@ -26963,19 +26966,13 @@ if (isGeminiMcpBridgeProcess) {
       // serve". The relay still runs in-process and answers on loopback for
       // Tailscale Serve's proxy target, while also answering on LAN for the
       // same-Wi-Fi fast path. The QR advertises the wss:// front door for
-      // off-LAN access because iOS ATS blocks cleartext to anything outside
-      // the local network (incl. Tailscale's 100.64/10). Enabled from
-      // Settings → Devices → Remote access.
+      // an optional TLS/hostname front door. Direct ws://100.64/10 remains the
+      // zero-configuration off-LAN path; Serve is defense-in-depth and is
+      // enabled explicitly from Settings → Devices → Remote access.
       //
-      // WATERTIGHT (T69): the lane self-heals + self-verifies. `tailscale
-      // serve --bg` is meant to persist, but it can be lost (serve reset,
-      // tailscaled reinstall, never enabled because the panel was broken) —
-      // and nothing on the Mac notices, because the Mac talks to the relay
-      // over loopback. So: (1) at lane start, re-assert the serve mapping
-      // when it's missing (restoring the user's own chosen config, keyed to
-      // the ACTUAL relay port), and (2) `bridge-begin-pairing` refuses to
-      // hand out a bootstrap until a live self-dial of the wss front door
-      // answers — the QR can never advertise a dead door again.
+      // The WSS door is verified before it enters a QR. Missing/dead Serve is
+      // simply omitted; users can explicitly add or repair this optional door
+      // in Settings without affecting the direct tailnet route.
       const startSelfHostedWssRelay = async (
         wssUrl: string,
         dnsName: string,
@@ -26992,21 +26989,16 @@ if (isGeminiMcpBridgeProcess) {
             beginPair: relayBeginPairProvider
           })
           embeddedRelayHandle = handle
-            // T70 — the QR advertises BOTH doors: the LAN ws:// URL (fast
-            // path at home, no Tailscale needed on the phone) and the wss
-            // front door (works from anywhere with Tailscale). The phone
-            // tries them in this order.
-            const lanHost = pickRelayAdvertiseHost()
-            const lanCandidate =
-              lanHost && lanHost.kind !== 'loopback'
-                ? `ws://${lanHost.host}:${handle.port}`
-                : null
-            const manualRelayUrl = advertisableManualRelayUrl(handle.port)
-            const candidates = mergeRelayUrls([wssUrl], [lanCandidate], [manualRelayUrl])
-            selfHostedWssLane = { wssUrl, cliPath, relayPort: handle.port, candidates }
-            console.log(
-              `[remote-bridge] embedded relay on :${handle.port} behind tailscale serve — Mac via loopback, phones via ${candidates.join(' → ')} (${dnsName})`
-            )
+          // Advertise LAN + direct Tailscale IP even when the optional WSS
+          // door is configured. If Serve is unavailable, pairing still has
+          // a zero-configuration cellular route through WireGuard.
+          const automaticRelayUrls = automaticEmbeddedRelayUrls(handle.port)
+          const manualRelayUrl = advertisableManualRelayUrl(handle.port)
+          const candidates = mergeRelayUrls(automaticRelayUrls, [wssUrl], [manualRelayUrl])
+          selfHostedWssLane = { wssUrl, cliPath, relayPort: handle.port, candidates }
+          console.log(
+            `[remote-bridge] embedded relay on :${handle.port} behind tailscale serve — Mac via loopback, phones via ${candidates.join(' → ')} (${dnsName})`
+          )
           if (cliPath) {
               // Confirm the relay actually answers on its loopback port BEFORE we
               // (re)assert a serve door over it. `tailscale serve --bg` PERSISTS
@@ -27029,17 +27021,7 @@ if (isGeminiMcpBridgeProcess) {
                 console.warn(
                   `[remote-bridge] tailscale serve is NOT fronting :${handle.port} on :${httpsPort}${
                     serve.error ? ` (status error: ${serve.error})` : ''
-                  } — re-asserting the front door`
-                )
-                const enabled = await enableTailscaleServe({
-                  cliPath,
-                  relayPort: handle.port,
-                  httpsPort
-                })
-                console[enabled.ok ? 'log' : 'error'](
-                  enabled.ok
-                    ? `[remote-bridge] tailscale serve re-enabled for :${handle.port} on :${httpsPort}`
-                    : `[remote-bridge] tailscale serve enable FAILED: ${enabled.message ?? 'unknown'} — phones cannot reach ${wssUrl} until this is fixed (pairing will refuse to advertise it)`
+                  } — leaving optional WSS off; direct Tailscale IP remains available`
                 )
               }
             }
@@ -27112,7 +27094,6 @@ if (isGeminiMcpBridgeProcess) {
             // Unparseable URL → fall through to the existing lanes.
           }
         }
-        if (!envRelayUrl && (await startTailscaleLane(null))) return
         if (settingsRelayUrl && !envRelayUrl && isLocalPlainRelayUrl(settingsRelayUrl)) {
           console.log(
             `[remote-bridge] iOS remote transport enabled — settings relay URL points at this Mac, starting embedded relay for ${settingsRelayUrl}`
@@ -27143,7 +27124,9 @@ if (isGeminiMcpBridgeProcess) {
 
     const maybeUpgradeIosRemoteToTailscaleLane = async (reason: string): Promise<void> => {
       if (envRelayUrl || selfHostedWssLane || iosRemoteStartPromise) return
-      const lane = await resolveTailscaleWssLane(configuredSettingsRelayUrl() || null)
+      const configuredRelayUrl = configuredSettingsRelayUrl()
+      if (!parseTailscaleWssRelayUrl(configuredRelayUrl)) return
+      const lane = await resolveTailscaleWssLane(configuredRelayUrl)
       if (!lane) return
       if (configuredSettingsRelayUrl() !== lane.wssUrl) {
         AppStore.updateSettings({ iosRemoteRelayUrl: lane.wssUrl })
@@ -27999,6 +27982,7 @@ if (isGeminiMcpBridgeProcess) {
       serveWssUrl,
       detectTailscale,
       getTailscaleServeStatus,
+      probeRelayFrontDoor,
       getIosRemoteRuntimeActive: () => iosRemoteRuntime !== null
     })
     registerBridgeRemoteHandlers({
@@ -28067,43 +28051,16 @@ if (isGeminiMcpBridgeProcess) {
               ' Check Settings → Devices → iOS remote bridge and try again.'
           }
         }
-        // T69/T70 — never hand the QR a dead door. When the self-hosted
-        // Tailscale wss lane is active, dial every advertised candidate the
-        // way the phone would. A dead wss front door gets the one known
-        // repair (re-assert the serve mapping) and a re-dial; whatever is
-        // still dead is DROPPED from this bootstrap with a warning the
-        // pairing page shows, and only when NOTHING answers does pairing
-        // refuse outright — so a broken tailnet degrades to home-Wi-Fi
-        // pairing instead of a bare NSURLError -1004 on the phone.
+        // Never hand the QR a dead door. Probe LAN, direct Tailscale IP and
+        // optional WSS exactly as the phone will use them; omit failures and
+        // refuse only when nothing answers.
         let pairingWarning: string | null = null
         const runtimeRelayUrls = iosRemoteRuntime.describeHost().relayUrls
-        const relayCandidates =
-          selfHostedWssLane?.candidates.length ? selfHostedWssLane.candidates : runtimeRelayUrls
-        let selection = await selectAdvertisableRelayUrls(relayCandidates)
-        if (selfHostedWssLane) {
-          const lane = selfHostedWssLane
-          if (!selection.advertisable.includes(lane.wssUrl) && lane.cliPath) {
-            const httpsPort = iosRemoteServeHttpsPort()
-            const serve = await getTailscaleServeStatus({
-              cliPath: lane.cliPath,
-              relayPort: lane.relayPort,
-              httpsPort
-            })
-            if (!serve.configured) {
-              const enabled = await enableTailscaleServe({
-                cliPath: lane.cliPath,
-                relayPort: lane.relayPort,
-                httpsPort
-              })
-              console[enabled.ok ? 'warn' : 'error'](
-                `[remote-bridge] pairing self-heal: tailscale serve was off — re-enable ${
-                  enabled.ok ? 'succeeded' : `FAILED: ${enabled.message ?? 'unknown'}`
-                }`
-              )
-              if (enabled.ok) selection = await selectAdvertisableRelayUrls(lane.candidates)
-            }
-          }
-        }
+        const relayCandidates = mergeRelayUrls(
+          selfHostedWssLane?.candidates.length ? selfHostedWssLane.candidates : runtimeRelayUrls,
+          embeddedRelayHandle ? automaticEmbeddedRelayUrls(embeddedRelayHandle.port) : []
+        )
+        const selection = await selectAdvertisableRelayUrls(relayCandidates)
         if (selection.advertisable.length === 0) {
           console.error(
             `[remote-bridge] refusing to pair — no advertised relay door answers: ${selection.warnings.join('; ')}`
@@ -28117,24 +28074,21 @@ if (isGeminiMcpBridgeProcess) {
           }
         }
         const advertiseRelayUrls = selection.advertisable
+        const hasOffLanTailscaleDoor = advertiseRelayUrls.some(
+          (url) => url.startsWith('wss:') || isPlainTailscaleRelayUrl(url)
+        )
         if (selection.warnings.length > 0) {
-          const detected = await resolveTailscaleWssLane(configuredSettingsRelayUrl() || null)
-          const setupHint = detected
-            ? ` Cellular pairing needs Tailscale remote access. Use detected door: ${detected.wssUrl}.`
-            : ''
           pairingWarning =
             `Pairing will work, but a relay door was left out of the QR: ` +
             `${selection.warnings.join('; ')}. ` +
-            (selection.advertisable.some((url) => url.startsWith('wss:'))
-              ? 'Phones may need Tailscale for this pairing until the other door is fixed.'
-              : `This pairing is home-Wi-Fi only until the Tailscale front door is fixed.${setupHint}`)
+            (hasOffLanTailscaleDoor
+              ? 'The remaining QR still includes an off-LAN Tailscale route.'
+              : 'This QR is home-Wi-Fi only. Connect Tailscale on this Mac and the phone, then refresh it.')
           console.warn(`[remote-bridge] ${pairingWarning}`)
-        } else if (!selection.advertisable.some((url) => url.startsWith('wss:'))) {
-          const detected = await resolveTailscaleWssLane(configuredSettingsRelayUrl() || null)
-          if (detected) {
-            pairingWarning = `Cellular pairing needs Tailscale remote access. Use detected door: ${detected.wssUrl}.`
-            console.warn(`[remote-bridge] ${pairingWarning}`)
-          }
+        } else if (!hasOffLanTailscaleDoor) {
+          pairingWarning =
+            'This QR is home-Wi-Fi only. Connect Tailscale on this Mac and the phone, then refresh it.'
+          console.warn(`[remote-bridge] ${pairingWarning}`)
         }
         const result = iosRemoteRuntime.beginPairing(
           typeof displayName === 'string' ? displayName : undefined,
