@@ -5,8 +5,12 @@ import {
   EnsembleParticipantAuthorityControls,
   EnsembleParticipantStageControl,
   EnsembleParticipantsAboveRow,
+  buildEnsembleAddProviderGroups,
+  buildEnsembleParticipantAddition,
   computeEnsembleChipGridSpans,
   computeEnsembleChipRowDistribution,
+  createEnsembleParticipantAddConfiguration,
+  resolveEnsembleAddProviderGroups,
   resolveEnsembleParticipantAuthorityPatch,
   resolveParticipantSelectionAfterRemoval
 } from './EnsembleParticipantsAboveRow'
@@ -239,6 +243,196 @@ describe('EnsembleParticipantsAboveRow', () => {
       expect(
         resolveParticipantSelectionAfterRemoval(participants, 'ensemble-codex', 'ensemble-kimi')
       ).toBe('ensemble-kimi')
+    })
+  })
+
+  describe('unified add-participant draft', () => {
+    it('uses the existing provider order and omits synthetic custom models', () => {
+      expect(buildEnsembleAddProviderGroups(false, false).map((group) => group.provider)).toEqual([
+        'codex',
+        'claude',
+        'kimi',
+        'ollama'
+      ])
+      const expanded = buildEnsembleAddProviderGroups(true, true)
+      expect(expanded.map((group) => group.provider)).toEqual([
+        'codex',
+        'claude',
+        'kimi',
+        'grok',
+        'cursor',
+        'ollama'
+      ])
+      expect(
+        expanded.every((group) => group.modelOptions.every((model) => model.id !== 'custom'))
+      ).toBe(true)
+    })
+
+    it('normalizes provider-specific reasoning, thinking, and Fast defaults', () => {
+      expect(
+        createEnsembleParticipantAddConfiguration('codex', 'gpt-5.6-sol')
+      ).toMatchObject({
+        provider: 'codex',
+        model: 'gpt-5.6-sol',
+        reasoningEffort: 'low',
+        fastModeEnabled: false,
+        serviceTier: ''
+      })
+      expect(
+        createEnsembleParticipantAddConfiguration('cursor', 'composer-2.5-fast')
+      ).toMatchObject({
+        provider: 'cursor',
+        model: 'composer-2.5-fast',
+        fastModeEnabled: true
+      })
+      expect(createEnsembleParticipantAddConfiguration('cursor', 'composer-2.5')).toMatchObject({
+        provider: 'cursor',
+        model: 'composer-2.5',
+        fastModeEnabled: false
+      })
+      expect(createEnsembleParticipantAddConfiguration('kimi')).toMatchObject({
+        provider: 'kimi',
+        model: 'kimi-k2.7-code',
+        thinkingEnabled: true,
+        reasoningEffort: undefined
+      })
+      expect(createEnsembleParticipantAddConfiguration('claude', 'claude-haiku-4-5')).toMatchObject(
+        {
+          model: 'claude-haiku-4-5',
+          reasoningEffort: undefined,
+          fastModeEnabled: false
+        }
+      )
+    })
+
+    it('keeps live models and honors their reasoning metadata', () => {
+      const providerGroups = [
+        {
+          provider: 'codex' as const,
+          label: 'Codex',
+          modelOptions: [
+            {
+              id: 'gpt-next-live',
+              label: 'GPT Next Live',
+              supportedReasoningEfforts: [
+                { reasoningEffort: 'low' },
+                {
+                  reasoningEffort: 'high',
+                  disabled: true,
+                  disabledReason: 'Not available for this account'
+                }
+              ],
+              defaultReasoningEffort: 'high',
+              additionalSpeedTiers: ['fast']
+            }
+          ],
+          fastModeCapableModelIds: new Set(['gpt-next-live'])
+        }
+      ]
+
+      expect(
+        createEnsembleParticipantAddConfiguration(
+          'codex',
+          'gpt-next-live',
+          providerGroups
+        )
+      ).toEqual({
+        provider: 'codex',
+        model: 'gpt-next-live',
+        reasoningEffort: 'low',
+        fastModeEnabled: false,
+        thinkingEnabled: undefined,
+        serviceTier: ''
+      })
+    })
+
+    it('preserves supplied live provider order and Fast sets while removing custom rows', () => {
+      const fastModels = new Set(['claude-live'])
+      const groups = resolveEnsembleAddProviderGroups(
+        [
+          {
+            provider: 'claude',
+            label: 'Claude',
+            modelOptions: [
+              { id: 'custom', label: 'Custom…' },
+              { id: 'claude-live', label: 'Claude Live' }
+            ],
+            fastModeCapableModelIds: fastModels
+          },
+          {
+            provider: 'codex',
+            label: 'Codex',
+            modelOptions: [{ id: 'gpt-live', label: 'GPT Live' }]
+          }
+        ],
+        false,
+        false
+      )
+
+      expect(groups.map((group) => group.provider)).toEqual(['claude', 'codex'])
+      expect(groups[0].modelOptions.map((model) => model.id)).toEqual(['claude-live'])
+      expect(groups[0].fastModeCapableModelIds).toBe(fastModels)
+    })
+
+    it('materializes the chosen execution settings without inheriting seat identity or grants', () => {
+      const participants = [
+        makeParticipant({
+          id: 'ensemble-claude',
+          provider: 'claude',
+          role: 'Claude',
+          order: 1
+        }),
+        makeParticipant({
+          id: 'ensemble-codex',
+          provider: 'codex',
+          role: 'Builder',
+          order: 2,
+          runtimeProfileId: 'codex-runtime',
+          permissionPresetId: 'read_only',
+          permissionOverrides: { approvalMode: 'never' },
+          linkedProviderSessionId: 'codex-session'
+        }),
+        makeParticipant({ id: 'ensemble-kimi', provider: 'kimi', role: 'Reviewer', order: 3 })
+      ]
+      const { participant, insertIndex } = buildEnsembleParticipantAddition(
+        participants,
+        'ensemble-codex',
+        {
+          provider: 'claude',
+          model: 'claude-opus-4-8-1m',
+          reasoningEffort: 'high',
+          fastModeEnabled: true
+        }
+      )
+
+      expect(insertIndex).toBe(2)
+      expect(participant).toMatchObject({
+        id: 'ensemble-participant-4',
+        provider: 'claude',
+        enabled: true,
+        role: 'Claude 2',
+        instructions: 'Contribute as Claude for this ensemble.',
+        order: 4,
+        model: 'claude-opus-4-8-1m',
+        permissionPresetId: 'default',
+        reasoningEffort: 'high',
+        fastModeEnabled: true,
+        geminiAuthProfileId: null
+      })
+      expect(participant.runtimeProfileId).toBeUndefined()
+      expect(participant.permissionOverrides).toBeUndefined()
+      expect(participant.linkedProviderSessionId).toBeUndefined()
+      expect(participant.stageRole).toBeUndefined()
+    })
+
+    it('materializes Codex Fast as both the participant flag and service tier', () => {
+      const config = createEnsembleParticipantAddConfiguration('codex', 'gpt-5.5')
+      config.fastModeEnabled = true
+      config.serviceTier = 'fast'
+      const { participant } = buildEnsembleParticipantAddition([], null, config)
+      expect(participant.fastModeEnabled).toBe(true)
+      expect(participant.serviceTier).toBe('fast')
+      expect(participant.permissionPresetId).toBe('default')
     })
   })
 
@@ -532,6 +726,63 @@ describe('EnsembleParticipantsAboveRow', () => {
 
     expect(html).toContain('ensemble-above-add-participant')
     expect(html).toContain('Add Ensemble participant')
+  })
+
+  it('keeps the unified add trigger disabled at the roster cap', () => {
+    const chat = makeChat(
+      Array.from({ length: 20 }, (_, index) =>
+        makeParticipant({
+          id: `ensemble-participant-${index + 1}`,
+          provider: 'codex',
+          role: `Agent ${index + 1}`,
+          order: index + 1
+        })
+      )
+    )
+    const html = renderToStaticMarkup(
+      <EnsembleParticipantsAboveRow
+        chat={chat}
+        selectedParticipantId="ensemble-participant-20"
+        onSelectParticipant={() => undefined}
+        onChatChange={() => undefined}
+      />
+    )
+
+    expect(html).toMatch(/class="ensemble-above-add-participant"[^>]*disabled=""/)
+    expect(html).toContain('Ensembles support up to 20 participants.')
+  })
+
+  it('keeps the unified add trigger disabled while an Ensemble round is live', () => {
+    const chat = makeChat([
+      makeParticipant({ id: 'ensemble-claude', provider: 'claude', role: 'Explorer', order: 1 }),
+      makeParticipant({ id: 'ensemble-codex', provider: 'codex', role: 'Worker', order: 2 })
+    ])
+    chat.ensemble!.activeRound = {
+      roundId: 'round-live',
+      status: 'running',
+      prompt: 'Work together.',
+      startedAt: '2026-07-10T10:00:00.000Z',
+      participants: [
+        {
+          participantId: 'ensemble-claude',
+          provider: 'claude',
+          role: 'Explorer',
+          order: 1,
+          status: 'running'
+        }
+      ]
+    }
+    const html = renderToStaticMarkup(
+      <EnsembleParticipantsAboveRow
+        chat={chat}
+        selectedParticipantId="ensemble-claude"
+        onSelectParticipant={() => undefined}
+        onChatChange={() => undefined}
+      />
+    )
+
+    expect(html).toMatch(/class="ensemble-above-add-participant"[^>]*disabled=""/)
+    expect(html).toContain('Participant changes are locked while a round is running.')
   })
 
   // Boss — a gold crown renders before the assigned participant's role,

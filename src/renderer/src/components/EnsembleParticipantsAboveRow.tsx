@@ -29,7 +29,7 @@
  * upstream — this component is otherwise display-only beyond click +
  * drag + the overflow editor.
  */
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type {
   ChatRecord,
@@ -40,7 +40,10 @@ import type {
 } from '../../../main/store/types'
 import {
   getDefaultEnsembleParticipantConfig,
-  getDefaultEnsembleRoleName
+  getDefaultEnsembleRoleName,
+  getEnsembleModelDefaults,
+  getEnsembleReasoningOptions,
+  normalizeProviderModelSelection
 } from '../lib/ensembleProviderDefaults'
 import {
   ENSEMBLE_STAGE_ROLE_HINT,
@@ -58,9 +61,16 @@ import { resolveProviderBrandLabel, resolveProviderHueClass } from '../lib/ollam
 import { withSessionActivityLedger } from '../lib/sessionActivityLedger'
 import { isEnsembleActiveRoundDispatchLive } from '../lib/chatBusyState'
 import {
-  ComposerProviderPickerRows,
-  resolveProviderRows
-} from './ComposerProviderPicker'
+  claudeReasoningDisplayLabel,
+  codexReasoningDisplayLabel,
+  grokReasoningDisplayLabel
+} from '../lib/composerChipFormat'
+import { resolveProviderRows } from './ComposerProviderPicker'
+import {
+  CombinedModelPicker,
+  type CombinedModelPickerProviderGroup,
+  type CombinedModelPickerReasoningOption
+} from './CombinedModelPicker'
 import {
   ComposerTextareaContextMenu,
   useComposerTextareaContextMenu
@@ -202,6 +212,164 @@ export function computeEnsembleChipGridSpans(count: number): number[] {
   return computeEnsembleChipRowDistribution(count).flatMap((rowLength) =>
     Array.from({ length: rowLength }, () => ENSEMBLE_CHIP_GRID_TRACKS / rowLength)
   )
+}
+
+/**
+ * Draft payload owned by the add-participant picker. It intentionally contains
+ * only provider/model execution settings: identity, role, permissions, order,
+ * and session linkage remain the roster's responsibility when the draft is
+ * committed.
+ */
+export interface EnsembleParticipantAddConfiguration {
+  provider: ProviderId
+  model: string
+  reasoningEffort?: string
+  fastModeEnabled?: boolean
+  thinkingEnabled?: boolean
+  serviceTier?: string
+}
+
+/** Ordered, synthetic-custom-free catalogs for the Ensemble `+` picker. */
+export function buildEnsembleAddProviderGroups(
+  grokAvailable: boolean,
+  cursorAvailable: boolean
+): CombinedModelPickerProviderGroup[] {
+  return resolveProviderRows(grokAvailable, cursorAvailable).map((row) => {
+    const defaults = getEnsembleModelDefaults(row.id)
+    return {
+      provider: row.id,
+      label: row.label,
+      modelOptions: defaults.modelOptions.filter((option) => option.id !== 'custom'),
+      fastModeCapableModelIds: defaults.fastModeCapableModelIds,
+      ...(row.pauseLabel ? { pauseLabel: row.pauseLabel } : {}),
+      ...(row.rerouteLabel ? { rerouteLabel: row.rerouteLabel } : {})
+    }
+  })
+}
+
+export function resolveEnsembleAddProviderGroups(
+  providerGroups: readonly CombinedModelPickerProviderGroup[] | undefined,
+  grokAvailable: boolean,
+  cursorAvailable: boolean
+): CombinedModelPickerProviderGroup[] {
+  const source = providerGroups?.length
+    ? providerGroups
+    : buildEnsembleAddProviderGroups(grokAvailable, cursorAvailable)
+  return source.map((group) => ({
+    ...group,
+    modelOptions: group.modelOptions.filter((option) => option.id !== 'custom')
+  }))
+}
+
+function normalizeReasoningOptionValue(value: string): string {
+  const normalized = value.trim().toLowerCase()
+  if (normalized === 'light') return 'low'
+  if (normalized === 'extra') return 'xhigh'
+  if (normalized === 'ultra') return 'ultracode'
+  return normalized
+}
+
+function reasoningOptionLabel(provider: ProviderId, value: string): string {
+  if (provider === 'codex') return codexReasoningDisplayLabel(value)
+  if (provider === 'claude') return claudeReasoningDisplayLabel(value)
+  if (provider === 'grok' || provider === 'cursor') return grokReasoningDisplayLabel(value)
+  return value.charAt(0).toUpperCase() + value.slice(1)
+}
+
+function getEnsembleAddReasoningOptions(
+  provider: ProviderId,
+  model: string,
+  providerGroups: readonly CombinedModelPickerProviderGroup[]
+): CombinedModelPickerReasoningOption[] {
+  const modelOption = providerGroups
+    .find((group) => group.provider === provider)
+    ?.modelOptions.find((option) => option.id === model)
+  if (modelOption?.supportedReasoningEfforts) {
+    return modelOption.supportedReasoningEfforts.map((option) => {
+      const value = normalizeReasoningOptionValue(option.reasoningEffort)
+      return {
+        value,
+        label: reasoningOptionLabel(provider, value),
+        ...(option.disabled ? { disabled: true } : {}),
+        ...(option.disabledReason ? { disabledReason: option.disabledReason } : {})
+      }
+    })
+  }
+  return getEnsembleReasoningOptions(provider, model)
+}
+
+/**
+ * Resolve a fresh provider/model choice to canonical execution defaults. A
+ * model switch starts clean instead of carrying reasoning/Fast state from the
+ * previously previewed provider. The user can then tune this draft before the
+ * single Add confirmation persists it.
+ */
+export function createEnsembleParticipantAddConfiguration(
+  provider: ProviderId,
+  requestedModel?: string,
+  providerGroups?: readonly CombinedModelPickerProviderGroup[]
+): EnsembleParticipantAddConfiguration {
+  const participantDefaults = getDefaultEnsembleParticipantConfig(provider)
+  const modelDefaults = getEnsembleModelDefaults(provider)
+  const providerGroup = providerGroups?.find((group) => group.provider === provider)
+  const modelOptions = providerGroup?.modelOptions.length
+    ? providerGroup.modelOptions
+    : modelDefaults.modelOptions
+  const requestedOption = modelOptions.find(
+    (option) => option.id === requestedModel && option.id !== 'custom' && !option.disabled
+  )
+  const defaultOption =
+    modelOptions.find(
+      (option) => option.id === participantDefaults.model && option.id !== 'custom' && !option.disabled
+    ) ||
+    modelOptions.find(
+      (option) =>
+        option.id === modelDefaults.defaultModelId && option.id !== 'custom' && !option.disabled
+    ) ||
+    modelOptions.find((option) => option.id !== 'custom' && !option.disabled)
+  const model = requestedOption?.id || defaultOption?.id || participantDefaults.model
+  const modelOption = requestedOption || defaultOption
+  const normalized = normalizeProviderModelSelection(provider, model, modelOption)
+
+  return {
+    provider,
+    ...normalized,
+    model
+  }
+}
+
+/** Pure roster materialization used by the live add flow and focused tests. */
+export function buildEnsembleParticipantAddition(
+  participants: EnsembleParticipant[],
+  selectedParticipantId: string | null,
+  configuration: EnsembleParticipantAddConfiguration
+): { participant: EnsembleParticipant; insertIndex: number } {
+  const source =
+    participants.find((participant) => participant.id === selectedParticipantId) ||
+    participants[participants.length - 1]
+  const defaults = getDefaultEnsembleParticipantConfig(configuration.provider)
+  const roleName = getDefaultEnsembleRoleName(configuration.provider)
+  const sourceIndex = source
+    ? participants.findIndex((participant) => participant.id === source.id)
+    : participants.length - 1
+  return {
+    participant: {
+      id: nextParticipantId(participants),
+      provider: configuration.provider,
+      enabled: true,
+      role: nextRoleLabel(roleName, participants),
+      instructions: `Contribute as ${roleName} for this ensemble.`,
+      order: participants.length + 1,
+      model: configuration.model || defaults.model,
+      geminiAuthProfileId: null,
+      permissionPresetId: defaults.permissionPresetId,
+      reasoningEffort: configuration.reasoningEffort,
+      fastModeEnabled: configuration.fastModeEnabled,
+      thinkingEnabled: configuration.thinkingEnabled,
+      serviceTier: configuration.serviceTier
+    },
+    insertIndex: Math.max(0, sourceIndex + 1)
+  }
 }
 
 function laneStatusToParticipantLabel(status: ConcurrentLane['status']): string {
@@ -519,6 +687,8 @@ interface EnsembleParticipantsAboveRowProps {
   composerStyle?: ComposerStyle
   grokAvailable?: boolean
   cursorAvailable?: boolean
+  /** Live ordered provider/model catalog shared with the main composer picker. */
+  providerGroups?: readonly CombinedModelPickerProviderGroup[]
   /** Slide the row up from behind the composer on mount (workflow Run-as-ensemble
    *  toggle) — scoped so the row doesn't animate on every ensemble chat. */
   animateEntrance?: boolean
@@ -619,6 +789,7 @@ export function EnsembleParticipantsAboveRow({
   composerStyle = 'default',
   grokAvailable = false,
   cursorAvailable = false,
+  providerGroups,
   animateEntrance = false
 }: EnsembleParticipantsAboveRowProps): React.JSX.Element | null {
   const chipsContainerRef = useRef<HTMLDivElement | null>(null)
@@ -816,41 +987,23 @@ export function EnsembleParticipantsAboveRow({
     onChatChange(withSessionActivityLedger(chat, nextChat))
   }
 
-  const addParticipant = (chosenProvider?: ProviderId): void => {
+  const addParticipant = (configuration: EnsembleParticipantAddConfiguration): void => {
     if (!canAddParticipant) return
     // The selected (or last) chip decides only WHERE the new chip is
     // inserted — never what it contains. Cloning it used to leak
     // cross-provider config onto the new seat (a Grok model id on a Codex
     // participant, the previous chip's role name, its permission preset,
-    // its runtime profile). Every field below comes from the chosen
-    // provider's canonical defaults; roster presets and the Agent Pool are
-    // the only inheritance paths.
-    const source =
-      participants.find((participant) => participant.id === selectedParticipantId) ||
-      participants[participants.length - 1]
-    const provider: ProviderId = chosenProvider || source?.provider || 'codex'
-    const defaults = getDefaultEnsembleParticipantConfig(provider)
-    const roleName = getDefaultEnsembleRoleName(provider)
-    const sourceIndex = source
-      ? participants.findIndex((participant) => participant.id === source.id)
-      : participants.length - 1
-    const newParticipant: EnsembleParticipant = {
-      id: nextParticipantId(participants),
-      provider,
-      enabled: true,
-      role: nextRoleLabel(roleName, participants),
-      instructions: `Contribute as ${roleName} for this ensemble.`,
-      order: participants.length + 1,
-      model: defaults.model,
-      geminiAuthProfileId: null,
-      permissionPresetId: defaults.permissionPresetId,
-      reasoningEffort: defaults.reasoningEffort,
-      fastModeEnabled: defaults.fastModeEnabled,
-      thinkingEnabled: defaults.thinkingEnabled,
-      serviceTier: defaults.serviceTier
-    }
+    // its runtime profile). Identity/permission fields come from canonical
+    // provider defaults while model/reasoning/Fast settings come from the
+    // explicit add-picker draft; roster presets and the Agent Pool remain the
+    // only inheritance paths.
+    const { participant: newParticipant, insertIndex } = buildEnsembleParticipantAddition(
+      participants,
+      selectedParticipantId,
+      configuration
+    )
     const next = [...participants]
-    next.splice(Math.max(0, sourceIndex + 1), 0, newParticipant)
+    next.splice(insertIndex, 0, newParticipant)
     persist(next)
     onSelectParticipant(newParticipant.id)
   }
@@ -1191,6 +1344,12 @@ export function EnsembleParticipantsAboveRow({
         composerStyle={composerStyle}
         grokAvailable={grokAvailable}
         cursorAvailable={cursorAvailable}
+        providerGroups={providerGroups}
+        initialProvider={
+          participants.find((participant) => participant.id === selectedParticipantId)?.provider ||
+          participants[participants.length - 1]?.provider ||
+          'codex'
+        }
         onAdd={addParticipant}
       />
       {dragGhost
@@ -1293,6 +1452,8 @@ function EnsembleAddParticipantButton({
   composerStyle,
   grokAvailable,
   cursorAvailable,
+  providerGroups,
+  initialProvider,
   onAdd
 }: {
   disabled: boolean
@@ -1300,101 +1461,139 @@ function EnsembleAddParticipantButton({
   composerStyle: ComposerStyle
   grokAvailable: boolean
   cursorAvailable: boolean
-  onAdd: (provider: ProviderId) => void
+  providerGroups?: readonly CombinedModelPickerProviderGroup[]
+  initialProvider: ProviderId
+  onAdd: (configuration: EnsembleParticipantAddConfiguration) => void
 }): React.JSX.Element {
-  const triggerRef = useRef<HTMLButtonElement | null>(null)
-  const popoverRef = useRef<HTMLDivElement | null>(null)
-  const [open, setOpen] = useState(false)
-  const [position, setPosition] = useState<{ left: number; top: number } | null>(null)
-  const rows = resolveProviderRows(grokAvailable, cursorAvailable)
+  const availableProviderGroups = useMemo(
+    () => resolveEnsembleAddProviderGroups(providerGroups, grokAvailable, cursorAvailable),
+    [cursorAvailable, grokAvailable, providerGroups]
+  )
+  const resolvedInitialProvider = availableProviderGroups.some(
+    (group) => group.provider === initialProvider
+  )
+    ? initialProvider
+    : availableProviderGroups[0]?.provider || 'codex'
+  const [draft, setDraft] = useState<EnsembleParticipantAddConfiguration>(() =>
+    createEnsembleParticipantAddConfiguration(
+      resolvedInitialProvider,
+      undefined,
+      availableProviderGroups
+    )
+  )
+  const selectedGroup =
+    availableProviderGroups.find((group) => group.provider === draft.provider) ||
+    availableProviderGroups[0]
+  const selectedDefaults = getEnsembleModelDefaults(draft.provider)
+  const reasoningOptions = useMemo(
+    () =>
+      getEnsembleAddReasoningOptions(
+        draft.provider,
+        draft.model,
+        availableProviderGroups
+      ),
+    [availableProviderGroups, draft.model, draft.provider]
+  )
+  const selectedReasoning =
+    draft.provider === 'kimi' ? (draft.thinkingEnabled ? 'on' : 'off') : draft.reasoningEffort || ''
+  const fastModeEnabled =
+    draft.provider === 'codex' ? draft.serviceTier === 'fast' : Boolean(draft.fastModeEnabled)
 
-  useEffect(() => {
-    let cancelled = false
-    queueMicrotask(() => {
-      if (cancelled) return
-      if (!open) {
-        setPosition(null)
-        return
-      }
-      const trigger = triggerRef.current
-      if (!trigger) return
-      const rect = trigger.getBoundingClientRect()
-      const left = Math.max(8, Math.min(rect.left, window.innerWidth - 340))
-      const top = rect.top - 8
-      setPosition({ left, top })
-    })
-    return () => {
-      cancelled = true
-    }
-  }, [open, rows.length])
-
-  useEffect(() => {
-    if (!open) return
-    const handleClick = (event: MouseEvent) => {
-      const target = event.target as Node
-      if (popoverRef.current?.contains(target)) return
-      if (triggerRef.current?.contains(target)) return
-      setOpen(false)
-    }
-    const handleKey = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return
-      event.preventDefault()
-      setOpen(false)
-      triggerRef.current?.focus()
-    }
-    document.addEventListener('mousedown', handleClick, true)
-    document.addEventListener('keydown', handleKey, true)
-    return () => {
-      document.removeEventListener('mousedown', handleClick, true)
-      document.removeEventListener('keydown', handleKey, true)
-    }
-  }, [open])
-
-  const popover =
-    open && position
-      ? createPortal(
-          <div
-            ref={popoverRef}
-            className={`composer-combined-picker-popover composer-plus-picker-popover shell-${composerStyle}`}
-            style={{
-              position: 'fixed',
-              left: `${position.left}px`,
-              top: `${position.top}px`,
-              transform: 'translateY(-100%)'
-            }}
-            role="dialog"
-            aria-label="Choose provider for new participant"
-          >
-            <ComposerProviderPickerRows
-              rows={rows}
-              activeProvider={rows[0]?.id || 'codex'}
-              onSelect={(provider) => {
-                onAdd(provider)
-                setOpen(false)
-              }}
-            />
-          </div>,
-          document.body
+  const handleOpenChange = useCallback(
+    (open: boolean) => {
+      if (open) {
+        setDraft(
+          createEnsembleParticipantAddConfiguration(
+            resolvedInitialProvider,
+            undefined,
+            availableProviderGroups
+          )
         )
-      : null
+      }
+    },
+    [availableProviderGroups, resolvedInitialProvider]
+  )
+  const handleProviderModelSelection = useCallback(
+    (provider: ProviderId, model: string) => {
+      setDraft(
+        createEnsembleParticipantAddConfiguration(provider, model, availableProviderGroups)
+      )
+    },
+    [availableProviderGroups]
+  )
+  const handleReasoningSelection = useCallback((value: string) => {
+    setDraft((current) =>
+      current.provider === 'kimi'
+        ? { ...current, thinkingEnabled: value !== 'off' }
+        : { ...current, reasoningEffort: value }
+    )
+  }, [])
+  const handleToggleFastMode = useCallback(() => {
+    setDraft((current) => {
+      if (current.provider === 'codex') {
+        const nextFast = current.serviceTier !== 'fast'
+        return {
+          ...current,
+          fastModeEnabled: nextFast,
+          serviceTier: nextFast ? 'fast' : ''
+        }
+      }
+      if (current.provider === 'cursor') {
+        if (current.model === 'composer-2.5' || current.model === 'composer-2.5-fast') {
+          const nextModel =
+            current.model === 'composer-2.5-fast' ? 'composer-2.5' : 'composer-2.5-fast'
+          return createEnsembleParticipantAddConfiguration(
+            'cursor',
+            nextModel,
+            availableProviderGroups
+          )
+        }
+        return { ...current, fastModeEnabled: !current.fastModeEnabled }
+      }
+      return { ...current, fastModeEnabled: !current.fastModeEnabled }
+    })
+  }, [availableProviderGroups])
 
   return (
-    <>
-      <button
-        ref={triggerRef}
-        type="button"
-        className="ensemble-above-add-participant"
-        onClick={() => setOpen((current) => !current)}
-        disabled={disabled}
-        title={title}
-        aria-label="Add Ensemble participant"
-        aria-haspopup="dialog"
-        aria-expanded={open}
-      >
-        +
-      </button>
-      {popover}
-    </>
+    <CombinedModelPicker
+      provider={draft.provider}
+      composerStyle={composerStyle}
+      modelOptions={selectedGroup?.modelOptions || selectedDefaults.modelOptions}
+      selectedModelId={draft.model}
+      onSelectModel={(model) => handleProviderModelSelection(draft.provider, model)}
+      providerGroups={availableProviderGroups}
+      onSelectProviderModel={handleProviderModelSelection}
+      reasoningOptions={reasoningOptions}
+      selectedReasoning={selectedReasoning}
+      onSelectReasoning={handleReasoningSelection}
+      codexReasoningEffort={draft.provider === 'codex' ? draft.reasoningEffort : undefined}
+      claudeReasoningEffort={draft.provider === 'claude' ? draft.reasoningEffort : undefined}
+      grokReasoningEffort={draft.provider === 'grok' ? draft.reasoningEffort : undefined}
+      cursorReasoningEffort={draft.provider === 'cursor' ? draft.reasoningEffort : undefined}
+      kimiThinkingEnabled={draft.provider === 'kimi' ? draft.thinkingEnabled : undefined}
+      fastModeCapableModelIds={
+        selectedGroup?.fastModeCapableModelIds || selectedDefaults.fastModeCapableModelIds
+      }
+      fastModeEnabled={fastModeEnabled}
+      onToggleFastMode={
+        draft.provider === 'codex' || draft.provider === 'claude' || draft.provider === 'cursor'
+          ? handleToggleFastMode
+          : undefined
+      }
+      disabled={disabled}
+      repositionOnScroll
+      customTrigger={{
+        className: 'ensemble-above-add-participant',
+        content: '+',
+        title,
+        ariaLabel: 'Add Ensemble participant'
+      }}
+      confirmAction={{
+        label: 'Add participant',
+        onConfirm: () => onAdd({ ...draft })
+      }}
+      onOpenChange={handleOpenChange}
+    />
   )
 }
 
