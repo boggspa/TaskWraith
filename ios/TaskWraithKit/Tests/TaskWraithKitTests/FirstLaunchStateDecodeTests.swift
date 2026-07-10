@@ -50,14 +50,16 @@ struct FirstLaunchStateDecodeTests {
     @Test("decodes a \"New Additions\" notice's grouped provider/model content")
     func decodesNewAdditionsGroups() throws {
         let json = """
-        {"id":"new-additions-2026-07-09","kind":"addition","title":"New Additions","body":"Summary fallback.","tone":"default","dismissible":true,
+        {"id":"new-additions-2026-07-10","kind":"addition","title":"New Additions","body":"Summary fallback.","tone":"default","dismissible":true,
          "groups":[
           {"provider":"claude","label":"Claude","models":[
             {"name":"Sonnet 5","blurb":"Fast model for coding and professional work."},
             {"name":"Fable 5","blurb":"Frontier tier above Opus."}
           ]},
           {"provider":"ollama","label":"Ollama","models":[
-            {"name":"Deep Reinforce - Ornith 9B + Ornith 35B","blurb":"Open-source models for agentic coding."}
+            {"name":"Deep Reinforce - Ornith 9B + Ornith 35B","blurb":"Open-source models for agentic coding.","accentProvider":"deep-reinforce"},
+            {"name":"Liquid - LFM 2.5 8B-1A","blurb":"Local tool/thinking model.","accentProvider":"liquid"},
+            {"name":"Poolside - Laguna XS 2.1 33B-A3B Q8","blurb":"Local coding model with tool use and thinking.","accentProvider":"poolside"}
           ]}
          ]}
         """
@@ -70,6 +72,8 @@ struct FirstLaunchStateDecodeTests {
         #expect(notice.groups?.first?.models.first?.blurb == "Fast model for coding and professional work.")
         #expect(notice.groups?.last?.provider == "ollama")
         #expect(notice.groups?.last?.models.first?.name == "Deep Reinforce - Ornith 9B + Ornith 35B")
+        #expect(notice.groups?.last?.models.map(\.accentProvider) == ["deep-reinforce", "liquid", "poolside"])
+        #expect(notice.groups?.last?.models.last?.name == "Poolside - Laguna XS 2.1 33B-A3B Q8")
     }
 
     @Test("a notice without groups decodes groups as nil")

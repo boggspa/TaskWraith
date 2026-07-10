@@ -47,7 +47,7 @@ struct RemoteNoticeDismissalStoreTests {
 
     @Test("the key format matches the tw.*.dismissed convention")
     func keyFormat() {
-        #expect(RemoteNoticeDismissalStore.key("new-additions-2026-07-09")
-            == "tw.appNotice.new-additions-2026-07-09.dismissed")
+        #expect(RemoteNoticeDismissalStore.key("new-additions-2026-07-10")
+            == "tw.appNotice.new-additions-2026-07-10.dismissed")
     }
 }
