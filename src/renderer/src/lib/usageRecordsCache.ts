@@ -13,10 +13,16 @@ const usageRecordsCache = new Map<
 >()
 const usageRecordsInFlight = new Map<RendererUsageSource, Promise<UsageRecord[]>>()
 
-function loaderForUsageSource(source: RendererUsageSource): (() => Promise<UsageRecord[]>) | null {
+function loaderForUsageSource(
+  source: RendererUsageSource,
+  force: boolean
+): (() => Promise<UsageRecord[]>) | null {
   if (typeof window === 'undefined') return null
   if (source === 'external' && typeof window.api.getExternalUsage === 'function') {
-    return () => window.api.getExternalUsage()
+    // force propagates to the main process (bypasses its result cache and
+    // re-stats the provider corpus) so a forced load keeps the manual ↻
+    // refresh contract instead of silently serving main-side cache.
+    return () => window.api.getExternalUsage(force ? { force: true } : undefined)
   }
   if (typeof window.api.getUsage === 'function') {
     return () => window.api.getUsage()
@@ -55,7 +61,7 @@ export function loadRendererUsageRecords(
   const inFlight = usageRecordsInFlight.get(source)
   if (options.force !== true && inFlight) return inFlight
 
-  const loader = loaderForUsageSource(source)
+  const loader = loaderForUsageSource(source, options.force === true)
   if (!loader) return Promise.resolve(cached?.records ?? [])
 
   const request = loader()

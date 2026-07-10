@@ -51,6 +51,7 @@ import {
   type ModelUsageWindowTotals
 } from '../lib/modelUsageTable'
 import { fetchProviderRates, type RendererProviderRates } from '../lib/providerRateEstimate'
+import { loadRendererUsageRecords } from '../lib/usageRecordsCache'
 import type { DisplayCurrency } from '../lib/formatCost'
 import { buildProviderApiRateGroups, type ProviderApiRateGroup, type ProviderApiRateRow } from '../lib/providerApiRatesTable'
 import { humaniseModelIdCompact, humaniseModelIdTableCell } from '../lib/modelDisplayName'
@@ -816,11 +817,13 @@ export function ModelUsageSettingsTable({
   }, [refreshTick])
 
   // Fetch TaskWraith's own usage records (+ refetch on usage-changed).
+  // Routed through the shared renderer cache: App's usage-changed handler
+  // force-refreshes and seeds it, so this join is usually a free cache hit
+  // instead of a second identical getUsage IPC round trip.
   useEffect(() => {
-    if (typeof window === 'undefined' || typeof window.api?.getUsage !== 'function') return
+    if (typeof window === 'undefined') return
     let cancelled = false
-    window.api
-      .getUsage()
+    loadRendererUsageRecords('taskwraith')
       .then((latest) => {
         if (!cancelled) setInternalRecords(Array.isArray(latest) ? latest : [])
       })
@@ -840,10 +843,9 @@ export function ModelUsageSettingsTable({
   // instant). This keeps the effect free of a synchronous in-body setState.
   useEffect(() => {
     if (!includeExternal) return
-    if (typeof window === 'undefined' || typeof window.api?.getExternalUsage !== 'function') return
+    if (typeof window === 'undefined') return
     let cancelled = false
-    window.api
-      .getExternalUsage()
+    loadRendererUsageRecords('external')
       .then((latest) => {
         if (!cancelled) setExternalRecords(Array.isArray(latest) ? latest : [])
       })
@@ -946,18 +948,19 @@ export function ModelUsageSettingsTable({
   const manualRefresh = () => {
     if (isRefreshing || typeof window === 'undefined') return
     setIsRefreshing(true)
-    const usagePromise =
-      typeof window.api?.getUsage === 'function'
-        ? window.api.getUsage().catch(() => [] as UsageRecord[])
-        : Promise.resolve([] as UsageRecord[])
+    // force: bypass the shared renderer cache AND (for external) the main-
+    // process cache — the ↻ button's contract is "fetch the freshest now".
+    // The results seed the shared cache for every other consumer.
+    const usagePromise = loadRendererUsageRecords('taskwraith', { force: true }).catch(
+      () => [] as UsageRecord[]
+    )
     const chatsPromise =
       typeof window.api?.getChats === 'function'
         ? window.api.getChats().catch(() => [] as ChatRecord[])
         : Promise.resolve([] as ChatRecord[])
-    const externalPromise =
-      includeExternal && typeof window.api?.getExternalUsage === 'function'
-        ? window.api.getExternalUsage({ force: true }).catch(() => [] as UsageRecord[])
-        : Promise.resolve(null)
+    const externalPromise = includeExternal
+      ? loadRendererUsageRecords('external', { force: true }).catch(() => [] as UsageRecord[])
+      : Promise.resolve(null)
     void Promise.all([usagePromise, chatsPromise, externalPromise])
       .then(([usage, chatList, external]) => {
         setInternalRecords(Array.isArray(usage) ? usage : [])

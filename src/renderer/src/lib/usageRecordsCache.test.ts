@@ -67,4 +67,33 @@ describe('usageRecordsCache', () => {
     await expect(loadRendererUsageRecords('external', { maxAgeMs: 60_000 })).resolves.toBe(records)
     expect(getExternalUsage).not.toHaveBeenCalled()
   })
+
+  it('forwards force to the external IPC so manual refresh bypasses the main cache', async () => {
+    const fresh = [usageRecord('forced-1')]
+    setCachedRendererUsageRecords('external', [usageRecord('stale-1')], Date.now())
+    const getExternalUsage = vi.fn(() => Promise.resolve(fresh))
+    vi.stubGlobal('window', {
+      api: {
+        getExternalUsage,
+        getUsage: vi.fn()
+      }
+    })
+
+    await expect(loadRendererUsageRecords('external', { force: true })).resolves.toBe(fresh)
+    expect(getExternalUsage).toHaveBeenCalledWith({ force: true })
+  })
+
+  it('does not pass force to the external IPC on ordinary loads', async () => {
+    const records = [usageRecord('plain-1')]
+    const getExternalUsage = vi.fn(() => Promise.resolve(records))
+    vi.stubGlobal('window', {
+      api: {
+        getExternalUsage,
+        getUsage: vi.fn()
+      }
+    })
+
+    await expect(loadRendererUsageRecords('external')).resolves.toBe(records)
+    expect(getExternalUsage).toHaveBeenCalledWith(undefined)
+  })
 })

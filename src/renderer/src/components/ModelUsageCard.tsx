@@ -46,6 +46,7 @@ import {
   type OllamaMemoryWindowTotals
 } from '../lib/ollamaMemoryAggregation'
 import { computeQuotaPace } from '../lib/QuotaPace'
+import { loadRendererUsageRecords } from '../lib/usageRecordsCache'
 import type { RendererProviderRates } from '../lib/providerRateEstimate'
 import { formatResetShort } from '../lib/UsageFormat'
 import { formatTokenCount } from '../lib/UsageHeatmap'
@@ -733,10 +734,10 @@ function ApiSpendView({ options }: { options: ModelUsageApiSpendOptions | undefi
   useEffect(() => {
     if (typeof window === 'undefined') return
     let cancelled = false
-    const usagePromise =
-      typeof window.api?.getUsage === 'function'
-        ? window.api.getUsage().catch(() => [] as UsageRecord[])
-        : Promise.resolve([] as UsageRecord[])
+    // Shared renderer cache: the refreshKey bump follows a usage-changed
+    // broadcast, and App's handler has already force-seeded the cache — this
+    // join is a cache hit instead of a third identical getUsage IPC call.
+    const usagePromise = loadRendererUsageRecords('taskwraith').catch(() => [] as UsageRecord[])
     const chatsPromise =
       typeof window.api?.getChats === 'function'
         ? window.api.getChats().catch(() => [] as ChatRecord[])

@@ -2,6 +2,7 @@ import { startTransition, useState, useEffect, useLayoutEffect, useMemo, useRef,
 import type { CSSProperties, ReactNode } from 'react'
 import { GeminiStreamAdapter, NormalizedEvent } from './lib/GeminiAdapter'
 import { applyAssistantDelta } from './lib/applyAssistantDelta'
+import { loadRendererUsageRecords } from './lib/usageRecordsCache'
 import {
   legacyToolEventProjectionKey,
   legacyToolEventProjectionNameKey,
@@ -2141,7 +2142,7 @@ function App(): React.JSX.Element {
       _workspaceId?: string,
       _providerHint?: ProviderId,
       codexStatusHint?: any,
-      options?: { force?: boolean }
+      options?: { force?: boolean; forceUsageRecords?: boolean }
     ) => Promise<void>
   >(async () => {})
   const usageRefreshInFlightRef = useRef(false)
@@ -6869,7 +6870,12 @@ function App(): React.JSX.Element {
     _workspaceId?: string,
     _providerHint?: ProviderId,
     codexStatusHint?: any,
-    options: { force?: boolean } = {}
+    // `force` bypasses BOTH the records cache and the provider quota-meter
+    // caches (manual ↻). `forceUsageRecords` bypasses only the shared usage-
+    // records cache — the usage-changed handler uses it so post-run data is
+    // immediate WITHOUT hammering the provider quota endpoints (whose
+    // fetchers deliberately TTL, e.g. the Codex 429 guard) on every run.
+    options: { force?: boolean; forceUsageRecords?: boolean } = {}
   ) => {
     const now = Date.now()
     const effectiveCodexStatus = codexStatusHint ?? codexStatus
@@ -6877,6 +6883,9 @@ function App(): React.JSX.Element {
 
     // gemini retired — no live quota fetch, and omitted from the Model Usage
     // card's quota meters below (its historical token usage is still shown).
+    // Usage records route through the shared renderer cache (30s TTL,
+    // in-flight dedup) so the settings table / API-spend view join this
+    // fetch instead of issuing their own identical IPC calls.
     const [codexSnap, claudeSnap, kimiSnap, cursorSnap, allUsageRecords] =
       await Promise.all([
         typeof window.api.getCodexUsageSnapshot === 'function'
@@ -6885,7 +6894,9 @@ function App(): React.JSX.Element {
         window.api.getAgentRateLimits('claude', quotaRefreshOptions).catch(() => null),
         window.api.getAgentRateLimits('kimi', quotaRefreshOptions).catch(() => null),
         window.api.getAgentRateLimits('cursor', quotaRefreshOptions).catch(() => null),
-        window.api.getUsage().catch(() => [])
+        loadRendererUsageRecords('taskwraith', {
+          force: options.force === true || options.forceUsageRecords === true
+        }).catch(() => [])
       ])
 
     const normalizedUsageRecords = Array.isArray(allUsageRecords) ? allUsageRecords : []
@@ -9980,7 +9991,17 @@ function App(): React.JSX.Element {
           if (!usageRefreshInFlightRef.current) {
             usageRefreshInFlightRef.current = true
             usageRefreshLastFiredAtRef.current = Date.now()
-            void refreshUsageSummaryRef.current?.(currentWorkspaceIdRef.current || undefined)
+            // forceUsageRecords (NOT force): the just-recorded run must show
+            // up now — bypass the 30s records cache and seed it fresh for
+            // the other consumers reacting to this same broadcast — but do
+            // not force the provider quota meters (their TTLs guard against
+            // per-run endpoint hammering).
+            void refreshUsageSummaryRef.current?.(
+              currentWorkspaceIdRef.current || undefined,
+              undefined,
+              undefined,
+              { forceUsageRecords: true }
+            )
               .catch(() => {})
               .finally(() => {
                 usageRefreshInFlightRef.current = false
