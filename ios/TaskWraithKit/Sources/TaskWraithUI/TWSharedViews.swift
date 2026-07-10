@@ -913,35 +913,83 @@ func twSettledRowModelChip(from speaker: String?) -> String? {
     twSettledRowSpeakerSplit(from: speaker).chip
 }
 
-/// Hierarchical provider → model menu for phone-sized composer surfaces.
-/// Rounded-rect Liquid Glass panel for the compact model/reasoning popover —
-/// real glass on iOS/macOS 26, an ultra-thin material with a rim stroke below
-/// (mirrors `GlassPillBackground`, just a rounded-rect instead of a capsule).
-private struct GlassPopoverPanel: ViewModifier {
-    // A popover presents in its own context, so glassEffect/material can't blur
-    // the app behind it and renders close to opaque. Apply the glass/material as
-    // a BACKGROUND layer at reduced opacity so the picker reads as translucent
-    // rather than a solid slab (tunable — lower = more see-through).
-    private static let backgroundOpacity: Double = 0.85
+/// House surface for custom picker panels.
+///
+/// iOS/macOS 26 gets the compositor-backed clear Liquid Glass variant applied
+/// directly to the picker content. Applying glass to a translucent background
+/// subview and then lowering that subview's opacity flattens the refraction into
+/// the grey plate this primitive is intended to avoid. Older systems use the
+/// real system ultra-thin material; Reduce Transparency gets an opaque theme
+/// surface instead of blur.
+///
+/// `tint` is deliberately optional. Picker call sites can attach semantic
+/// accent colour without inventing another material implementation.
+private struct TWPickerGlassSurfaceModifier: ViewModifier {
+    var tint: Color?
+    var cornerRadius: CGFloat
+    var interactive: Bool
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorSchemeContrast) private var colorSchemeContrast
 
+    @ViewBuilder
     func body(content: Content) -> some View {
-        let shape = RoundedRectangle(cornerRadius: 18, style: .continuous)
-        return
+        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+        let isLight = TWThemeStore.shared.systemTheme.isLight
+        let scrimOpacity = colorSchemeContrast == .increased ? 0.18 : 0.10
+        let legibilityScrim =
+            isLight ? Color.white.opacity(scrimOpacity) : Color.black.opacity(scrimOpacity)
+        let rimWidth: CGFloat = colorSchemeContrast == .increased ? 1.5 : 1
+
+        if reduceTransparency || !TWTheme.composerGlassEnabled {
             content
-            .background {
-                Group {
-                    if #available(iOS 26.0, macOS 26.0, *) {
-                        shape.fill(Color.clear).glassEffect(.regular, in: shape)
-                    } else {
-                        shape.fill(.ultraThinMaterial)
-                    }
+                .background {
+                    shape
+                        .fill(TWTheme.surface2)
+                        .overlay {
+                            if let tint {
+                                shape.fill(tint.opacity(0.12))
+                            }
+                        }
                 }
-                .opacity(Self.backgroundOpacity)
-            }
-            .overlay(shape.strokeBorder(TWTheme.border))
+                .overlay(shape.strokeBorder(TWTheme.border, lineWidth: rimWidth))
+        } else if #available(iOS 26.0, macOS 26.0, *) {
+            content
+                .glassEffect(.clear.tint(tint).interactive(interactive), in: shape)
+                .background(legibilityScrim, in: shape)
+                .overlay(shape.strokeBorder(TWTheme.border, lineWidth: rimWidth))
+        } else {
+            content
+                .background {
+                    shape
+                        .fill(.ultraThinMaterial)
+                        .overlay {
+                            if let tint {
+                                shape.fill(tint.opacity(0.10))
+                            }
+                        }
+                }
+                .background(legibilityScrim, in: shape)
+                .overlay(shape.strokeBorder(TWTheme.border, lineWidth: rimWidth))
+        }
     }
 }
 
+extension View {
+    /// Reusable material/accent surface for custom picker panels.
+    func twPickerGlassSurface(
+        tint: Color? = nil,
+        cornerRadius: CGFloat = 18,
+        interactive: Bool = false
+    ) -> some View {
+        modifier(
+            TWPickerGlassSurfaceModifier(
+                tint: tint,
+                cornerRadius: cornerRadius,
+                interactive: interactive))
+    }
+}
+
+/// Hierarchical provider → model menu for phone-sized composer surfaces.
 struct ProviderModelPicker: View {
     let catalogs: [ProviderModelCatalog]
     @Binding var provider: String
@@ -961,13 +1009,19 @@ struct ProviderModelPicker: View {
         catalogs.first { $0.provider.lowercased() == provider.lowercased() }
     }
     private var reasoningLabel: String? {
+        // Kimi has no reasoning-effort ladder — its "Thinking" toggle IS the
+        // reasoning state and defaults on, so surface it on the collapsed chip
+        // (the ladder sidecar already does), matching Electron's
+        // reasoningDisplayLabel → "Thinking".
+        if isKimiProvider { return kimiThinkingEnabled ? "Thinking" : nil }
         guard let effort = reasoningEffort,
             !twReasoningOptions(in: currentCatalog, modelId: modelId).isEmpty
         else { return nil }
-        // Ladder terminology on the chip too (low -> "Light"), falling back to
-        // the generic label for anything off-ladder.
-        return twLadderLabel(for: effort, provider: provider)
-            ?? twReasoningDisplayLabel(effort, provider: provider)
+        // Provider-idiomatic wording on the chip (Claude "Low" vs Codex "Light";
+        // Codex "Extra High" vs Claude "Extra") — mirrors Electron's chip
+        // reasoningSuffix. The in-popover ladder keeps its unified Off→Ultracode
+        // terms; only this collapsed summary speaks each provider's vocabulary.
+        return twReasoningDisplayLabel(effort, provider: provider)
     }
 
     var body: some View {
@@ -1126,7 +1180,7 @@ struct ProviderModelPicker: View {
             .frame(maxHeight: 360)
         }
         .frame(width: showsReasoningSidecar ? 312 : 240)
-        .modifier(GlassPopoverPanel())
+        .twPickerGlassSurface()
         .offset(y: dragOffset)
         .opacity(dragOffset > 0 ? max(0.55, 1 - dragOffset / 320) : 1)
     }
@@ -1468,10 +1522,6 @@ private func twLadderStopLabel(_ index: Int, provider: String?) -> String {
     let stop = twReasoningStops[index]
     guard stop.effort == "ultracode" else { return stop.label }
     return twReasoningDisplayLabel(stop.effort, provider: provider)
-}
-private func twLadderLabel(for effort: String?, provider: String?) -> String? {
-    guard let index = twLadderIndex(for: effort) else { return nil }
-    return twLadderStopLabel(index, provider: provider)
 }
 
 /// Pure visual profile for the ladder's provider-hued effects. Stop 0 (`Off`)
@@ -1846,19 +1896,25 @@ private func twNormalizeReasoningSelection(
 }
 
 private func twReasoningDisplayLabel(_ effort: String, provider: String?) -> String {
+    let isCodex = provider?.lowercased() == "codex"
     switch effort.lowercased() {
     case "off": return "Off"
-    case "low": return "Low"
+    // Codex names its lowest tier "Light" (both `low` and `light` wire tokens
+    // land here); Claude, Grok and Cursor Grok call it "Low". Mirrors Electron's
+    // codexReasoningDisplayLabel vs claude/grokReasoningDisplayLabel.
+    case "low", "light": return isCodex ? "Light" : "Low"
     case "medium": return "Medium"
     case "high": return "High"
-    case "xhigh", "extra": return "Extra"
+    // Codex's fourth tier is "Extra High"; Claude renders the same wire token
+    // ('xhigh') as "Extra".
+    case "xhigh", "extra": return isCodex ? "Extra High" : "Extra"
     case "max": return "Max"
     // Wire token is 'ultracode' for every provider; only the wording is
     // per-provider — OpenAI's official GPT-5.6 tier id is 'ultra', so Codex
     // seats read "Ultra" while Claude keeps "Ultracode" (mirrors Electron's
     // codexReasoningDisplayLabel / claudeReasoningDisplayLabel split).
     case "ultracode":
-        return provider?.lowercased() == "codex" ? "Ultra" : "Ultracode"
+        return isCodex ? "Ultra" : "Ultracode"
     default:
         return effort.prefix(1).uppercased() + String(effort.dropFirst())
     }
