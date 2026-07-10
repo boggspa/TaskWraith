@@ -623,7 +623,7 @@
   font: inherit;
   text-align: left;
   cursor: pointer;
-  box-shadow: 0 1px 0 color-mix(in srgb, #fff 3%, transparent);
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--rightdock-text) 6%, transparent);
   transition:
     background 0.14s ease,
     border-color 0.14s ease,
@@ -2139,8 +2139,8 @@
   text-align: left;
 }
 
-.side-chat-layout-menu button:hover:not(:disabled),
-.side-chat-layout-menu button:focus-visible {
+.side-chat-layout-menu button:hover:not(:disabled):not(.is-disabled),
+.side-chat-layout-menu button:focus-visible:not(.is-disabled) {
   background: color-mix(in srgb, var(--accent) 14%, transparent);
   outline: none;
 }
@@ -2160,7 +2160,14 @@
   opacity: 0.52;
 }
 
-.chat-corner-picker-item:focus-visible {
+/* Compose active accent bar with focus ring (do not replace). */
+.chat-corner-picker-item.is-active:focus-visible {
+  box-shadow:
+    inset 2px 0 0 color-mix(in srgb, var(--accent) 66%, transparent),
+    inset 0 0 0 1.5px color-mix(in srgb, var(--accent) 58%, transparent);
+}
+
+.chat-corner-picker-item:focus-visible:not(.is-active) {
   box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--accent) 58%, transparent);
 }
 
@@ -2184,6 +2191,17 @@
 @media (forced-colors: active) {
   .right-dock-home-card:focus-visible,
   .chat-corner-picker-item:focus-visible {
+    outline: 2px solid CanvasText;
+    outline-offset: 2px;
+  }
+
+  .chat-corner-picker-item.is-active {
+    outline: 2px solid Highlight;
+    outline-offset: 0;
+    forced-color-adjust: none;
+  }
+
+  .chat-corner-picker-item.is-active:focus-visible {
     outline: 2px solid CanvasText;
     outline-offset: 2px;
   }
