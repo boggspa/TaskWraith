@@ -466,7 +466,7 @@ public struct WorkspaceSummary: Codable, Sendable, Identifiable, Hashable {
 /// GLOBAL (not workspace-bound). Participants reuse the roster-entry shape so
 /// the phone can apply a preset by replaying them through the existing
 /// roster-update action.
-public struct RemoteEnsemblePreset: Codable, Sendable, Identifiable {
+public struct RemoteEnsemblePreset: Codable, Sendable, Identifiable, Equatable {
     public let id: String
     public let name: String?
     public let orchestrationMode: String?
@@ -978,7 +978,7 @@ public struct WorkspaceDiffLine: Codable, Sendable, Hashable {
 /// Compact git status for a workspace repo — the Mac's GitService snapshot
 /// with a capped file list (the bridge compacts before the ack rides the
 /// relay). All fields optional-decode so older Macs can't break the phone.
-public struct GitWorkspaceSnapshot: Codable, Sendable {
+public struct GitWorkspaceSnapshot: Codable, Sendable, Equatable {
     public let repoRoot: String?
     public let branch: String?
     public let commit: String?
@@ -1049,7 +1049,7 @@ public struct GitPrReadinessResult: Codable, Sendable {
     public let pr: GitPullRequestSummary?
 }
 
-public struct MobileApprovalCard: Codable, Sendable {
+public struct MobileApprovalCard: Codable, Sendable, Equatable {
     public let toolCallId: String?
     public let title: String?
     /// Legacy field — the Mac never sent it (title+body are the text
@@ -1070,7 +1070,7 @@ public struct MobileApprovalCard: Codable, Sendable {
     public let runId: String?
 }
 
-public struct MobileQuestionCard: Codable, Sendable {
+public struct MobileQuestionCard: Codable, Sendable, Equatable {
     /// Canonical id (the Mac projects promptId; questionId is a legacy
     /// alias kept for old snapshots).
     public let promptId: String?
@@ -1262,8 +1262,8 @@ public struct RemoteEnsembleState: Codable, Sendable, Equatable {
 
 /// `diffSummary` projection payload — run file changes for the inspector
 /// diff tab + the above-composer changes row.
-public struct MobileDiffSummary: Codable, Sendable {
-    public struct File: Codable, Sendable, Identifiable {
+public struct MobileDiffSummary: Codable, Sendable, Equatable {
+    public struct File: Codable, Sendable, Identifiable, Equatable {
         public let path: String
         public let status: String?
         public let additions: Int?
@@ -1285,7 +1285,7 @@ public struct MobileDiffSummary: Codable, Sendable {
     /** Per-workspace breakdown (stats-only on the wire). */
     public let workspaces: [WorkspaceBreakdown]?
 
-    public struct WorkspaceBreakdown: Codable, Sendable, Identifiable {
+    public struct WorkspaceBreakdown: Codable, Sendable, Identifiable, Equatable {
         public let workspaceId: String?
         public let workspacePath: String
         public let filesChanged: Int?

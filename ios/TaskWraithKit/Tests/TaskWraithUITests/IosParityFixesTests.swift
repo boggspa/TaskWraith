@@ -1,4 +1,5 @@
 import Foundation
+import Combine
 import Testing
 import TaskWraithKit
 
@@ -789,7 +790,7 @@ struct IosParityFixesTests {
                     Thread.sleep(forTimeInterval: 0.08)
                 }
                 label.value = String(decoding: data, as: UTF8.self)
-                return try JSONDecoder().decode(RemoteProjectionSnapshot.self, from: emptySnapshot)
+                return try JSONDecoder().decode(DecodedProjectionSnapshot.self, from: emptySnapshot)
             },
             apply: { _ in applied.values.append(label.value) })
         return (coalescer, label)
@@ -828,6 +829,116 @@ struct IosParityFixesTests {
         #expect(applied.values == ["env-5"])
         #expect(coalescer.applyCount == 1)
         #expect(!decodeThreadBox.onMain)
+    }
+
+    @MainActor
+    @Test func projectionSnapshotPreparesTwoHundredCardsOffMainAndPublishesOnce() async throws {
+        let model = makeRemoteSessionModel()
+        var taskCardPublishes = 0
+        let subscription = model.$taskCards.dropFirst().sink { _ in
+            taskCardPublishes += 1
+        }
+        let projections: [[String: Any]] = (0..<200).map { index in
+            [
+                "schemaVersion": 1,
+                "source": "mac",
+                "kind": "taskCard",
+                "envelopeId": "task-\(index)",
+                "threadId": "thread-\(index)",
+                "payload": [
+                    "id": "task-\(index)",
+                    "threadId": "thread-\(index)",
+                    "title": "Task \(index)",
+                ],
+            ]
+        }
+        let data = try JSONSerialization.data(withJSONObject: ["projections": projections])
+        let decodeThreadBox = DecodeThreadBox()
+        let coalescer = RemoteSessionModel.ProjectionSnapshotCoalescer(
+            decode: { data in
+                decodeThreadBox.onMain = Thread.isMainThread
+                return try JSONDecoder().decode(DecodedProjectionSnapshot.self, from: data)
+            },
+            apply: { snapshot in model.applyDecodedSnapshot(snapshot) })
+
+        coalescer.enqueue(data)
+        await coalescer.drainForTesting()
+
+        #expect(!decodeThreadBox.onMain)
+        #expect(model.taskCards.count == 200)
+        #expect(taskCardPublishes == 1)
+        withExtendedLifetime(subscription) {}
+    }
+
+    @MainActor
+    @Test func identicalFullSnapshotDoesNotRepublishSessionState() throws {
+        let model = makeRemoteSessionModel()
+        let snapshot = try decode(
+            RemoteProjectionSnapshot.self,
+            """
+            {
+              "projections":[
+                {
+                  "schemaVersion":1,
+                  "source":"mac",
+                  "kind":"taskCard",
+                  "envelopeId":"task-1",
+                  "threadId":"thread-1",
+                  "payload":{"id":"task-1","threadId":"thread-1","title":"Stable"}
+                },
+                {
+                  "schemaVersion":1,
+                  "source":"mac",
+                  "kind":"threadSnapshot",
+                  "envelopeId":"snapshot-1",
+                  "threadId":"thread-1",
+                  "payload":{"threadId":"thread-1","rows":[{"id":"r1","preview":"Stable"}]}
+                }
+              ]
+            }
+            """)
+        model.applySnapshot(snapshot)
+        var publishes = 0
+        let subscription = model.objectWillChange.sink { _ in publishes += 1 }
+
+        model.applySnapshot(snapshot)
+
+        #expect(publishes == 0)
+        withExtendedLifetime(subscription) {}
+    }
+
+    @MainActor
+    @Test func fullSnapshotPublishesAllThreadAliasesInOneDictionaryUpdate() throws {
+        let model = makeRemoteSessionModel()
+        var publishes = 0
+        let subscription = model.$threadSnapshots.dropFirst().sink { _ in publishes += 1 }
+        let snapshot = try decode(
+            RemoteProjectionSnapshot.self,
+            """
+            {
+              "projections":[
+                {
+                  "schemaVersion":1,
+                  "source":"mac",
+                  "kind":"threadSnapshot",
+                  "envelopeId":"snapshot-1",
+                  "threadId":"thread-1",
+                  "payload":{
+                    "taskId":"task-1",
+                    "threadId":"thread-1",
+                    "rows":[{"id":"r1","preview":"One publish"}]
+                  }
+                }
+              ]
+            }
+            """)
+
+        model.applySnapshot(snapshot)
+
+        #expect(model.threadSnapshots["task-1"]?.rows?.first?.preview == "One publish")
+        #expect(model.threadSnapshots["thread-1"]?.rows?.first?.preview == "One publish")
+        #expect(publishes == 1)
+        withExtendedLifetime(subscription) {}
     }
 
     @MainActor
@@ -891,7 +1002,7 @@ struct IosParityFixesTests {
                 let token = String(decoding: data, as: UTF8.self)
                 if token == "bad" { throw NSError(domain: "test", code: 1) }
                 label.value = token
-                return try JSONDecoder().decode(RemoteProjectionSnapshot.self, from: goodSnapshot)
+                return try JSONDecoder().decode(DecodedProjectionSnapshot.self, from: goodSnapshot)
             },
             apply: { _ in applied.values.append(label.value) })
         coalescer.enqueue(Data("bad".utf8))
@@ -986,9 +1097,9 @@ struct IosParityFixesTests {
             decode: { data in
                 decodeCalls.count += 1
                 if decodeCalls.count == 1 { Thread.sleep(forTimeInterval: 0.08) }
-                return try JSONDecoder().decode(RemoteProjectionSnapshot.self, from: data)
+                return try JSONDecoder().decode(DecodedProjectionSnapshot.self, from: data)
             },
-            apply: { snapshot in model.applySnapshot(snapshot) })
+            apply: { snapshot in model.applyDecodedSnapshot(snapshot) })
         coalescer.enqueue(staleFull)
         try? await Task.sleep(nanoseconds: 5_000_000)
         model.merge(envelope: midDecodeDelta)

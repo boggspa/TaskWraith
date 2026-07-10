@@ -80,6 +80,187 @@ public enum SessionPhase: Equatable, Sendable {
     case error(String)
 }
 
+/// Fully typed form of a full projection snapshot. The relay payload is decoded
+/// directly into this batch on a detached task, so the MainActor never has to
+/// re-parse each envelope's `RawJSON` payload during first-connect hydration.
+struct DecodedProjectionSnapshot: Decodable, Sendable {
+    let projections: [DecodedProjection]
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        projections = try container.decode([DecodedProjection].self, forKey: .projections)
+    }
+
+    init(_ snapshot: RemoteProjectionSnapshot) {
+        projections = snapshot.projections.map(DecodedProjection.init)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case projections
+    }
+}
+
+enum DecodedProjection: Decodable, Sendable {
+    case taskCard(
+        RemoteTaskCard, embedded: EmbeddedTaskCardMetadata?, envelopeThreadId: String?)
+    case workflow(RemoteWorkflow)
+    case workspaceBoard(RemoteWorkspaceBoard)
+    case ensemblePreset(RemoteEnsemblePreset)
+    case approval(MobileApprovalCard)
+    case question(MobileQuestionCard)
+    case threadSnapshot(RemoteThreadSnapshot, fallbackKey: String?)
+    case ensembleState(RemoteEnsembleState, envelopeThreadId: String?)
+    case diffSummary(MobileDiffSummary, envelopeThreadId: String?)
+    case gitSnapshot(GitWorkspaceSnapshot, workspaceId: String)
+    case shellAppearance(TWRemoteShellAppearance)
+    case ignored
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let kind = (try? container.decode(String.self, forKey: .kind)) ?? ""
+        let threadId = try? container.decode(String.self, forKey: .threadId)
+        let workspaceId = try? container.decode(String.self, forKey: .workspaceId)
+
+        switch kind {
+        case "taskCard":
+            guard let card = try? container.decode(RemoteTaskCard.self, forKey: .payload) else {
+                self = .ignored
+                return
+            }
+            let embedded = try? container.decode(
+                EmbeddedTaskCardMetadata.self, forKey: .payload)
+            self = .taskCard(card, embedded: embedded, envelopeThreadId: threadId)
+        case "workflows":
+            self = Self.decode(RemoteWorkflow.self, from: container).map(Self.workflow) ?? .ignored
+        case "workspaceBoards":
+            self = Self.decode(RemoteWorkspaceBoard.self, from: container).map(Self.workspaceBoard)
+                ?? .ignored
+        case "ensemblePresets":
+            self = Self.decode(RemoteEnsemblePreset.self, from: container).map(Self.ensemblePreset)
+                ?? .ignored
+        case "approvalCard":
+            self = Self.decode(MobileApprovalCard.self, from: container).map(Self.approval)
+                ?? .ignored
+        case "questionCard":
+            self = Self.decode(MobileQuestionCard.self, from: container).map(Self.question)
+                ?? .ignored
+        case "threadSnapshot":
+            guard let snapshot = try? container.decode(
+                RemoteThreadSnapshot.self, forKey: .payload)
+            else {
+                self = .ignored
+                return
+            }
+            self = .threadSnapshot(
+                snapshot, fallbackKey: snapshot.taskId ?? snapshot.threadId ?? threadId)
+        case "ensembleState":
+            guard let state = try? container.decode(RemoteEnsembleState.self, forKey: .payload)
+            else {
+                self = .ignored
+                return
+            }
+            self = .ensembleState(state, envelopeThreadId: threadId)
+        case "diffSummary":
+            guard let diff = try? container.decode(MobileDiffSummary.self, forKey: .payload) else {
+                self = .ignored
+                return
+            }
+            self = .diffSummary(diff, envelopeThreadId: threadId)
+        case "gitSnapshot":
+            guard let workspaceId,
+                let git = try? container.decode(GitWorkspaceSnapshot.self, forKey: .payload)
+            else {
+                self = .ignored
+                return
+            }
+            self = .gitSnapshot(git, workspaceId: workspaceId)
+        case "shellAppearance":
+            self = Self.decode(TWRemoteShellAppearance.self, from: container)
+                .map(Self.shellAppearance) ?? .ignored
+        default:
+            self = .ignored
+        }
+    }
+
+    init(_ envelope: RemoteProjectionEnvelope) {
+        switch envelope.kind {
+        case "taskCard":
+            guard let card = envelope.decodePayload(RemoteTaskCard.self) else {
+                self = .ignored
+                return
+            }
+            self = .taskCard(
+                card,
+                embedded: envelope.decodePayload(EmbeddedTaskCardMetadata.self),
+                envelopeThreadId: envelope.threadId)
+        case "workflows":
+            self = envelope.decodePayload(RemoteWorkflow.self).map(Self.workflow) ?? .ignored
+        case "workspaceBoards":
+            self = envelope.decodePayload(RemoteWorkspaceBoard.self).map(Self.workspaceBoard)
+                ?? .ignored
+        case "ensemblePresets":
+            self = envelope.decodePayload(RemoteEnsemblePreset.self).map(Self.ensemblePreset)
+                ?? .ignored
+        case "approvalCard":
+            self = envelope.decodePayload(MobileApprovalCard.self).map(Self.approval) ?? .ignored
+        case "questionCard":
+            self = envelope.decodePayload(MobileQuestionCard.self).map(Self.question) ?? .ignored
+        case "threadSnapshot":
+            guard let snapshot = envelope.decodePayload(RemoteThreadSnapshot.self) else {
+                self = .ignored
+                return
+            }
+            self = .threadSnapshot(
+                snapshot,
+                fallbackKey: snapshot.taskId ?? snapshot.threadId ?? envelope.threadId)
+        case "ensembleState":
+            guard let state = envelope.decodePayload(RemoteEnsembleState.self) else {
+                self = .ignored
+                return
+            }
+            self = .ensembleState(state, envelopeThreadId: envelope.threadId)
+        case "diffSummary":
+            guard let diff = envelope.decodePayload(MobileDiffSummary.self) else {
+                self = .ignored
+                return
+            }
+            self = .diffSummary(diff, envelopeThreadId: envelope.threadId)
+        case "gitSnapshot":
+            guard let workspaceId = envelope.workspaceId,
+                let git = envelope.decodePayload(GitWorkspaceSnapshot.self)
+            else {
+                self = .ignored
+                return
+            }
+            self = .gitSnapshot(git, workspaceId: workspaceId)
+        case "shellAppearance":
+            self = envelope.decodePayload(TWRemoteShellAppearance.self).map(Self.shellAppearance)
+                ?? .ignored
+        default:
+            self = .ignored
+        }
+    }
+
+    private static func decode<T: Decodable>(
+        _ type: T.Type,
+        from container: KeyedDecodingContainer<CodingKeys>
+    ) -> T? {
+        try? container.decode(type, forKey: .payload)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case kind
+        case workspaceId
+        case threadId
+        case payload
+    }
+}
+
+struct EmbeddedTaskCardMetadata: Decodable, Sendable {
+    let ensembleState: RemoteEnsembleState?
+    let diffSummary: MobileDiffSummary?
+}
+
 // ── Paired-host persistence ─────────────────────────────────────────────────
 // After the first pairing the phone remembers WHO it paired with so app
 // relaunches and host restarts reconnect silently via the relay's resolve
@@ -1446,8 +1627,8 @@ public final class RemoteSessionModel: ObservableObject {
     /// state (`projectionGraceExpired`) in the SAME pass so the UI never renders a
     /// frame with only one flag flipped.
     private func markProjectionContentHydrated() {
-        projectionHydrated = true
-        projectionGraceExpired = true
+        if !projectionHydrated { projectionHydrated = true }
+        if !projectionGraceExpired { projectionGraceExpired = true }
     }
 
     /// The empty-state presentations for the home list.
@@ -2554,15 +2735,15 @@ public final class RemoteSessionModel: ObservableObject {
         private var generation = 0
         /// Observability + tests: how many drains actually applied.
         private(set) var applyCount = 0
-        private let apply: (RemoteProjectionSnapshot) -> Void
-        private let decode: @Sendable (Data) throws -> RemoteProjectionSnapshot
+        private let apply: (DecodedProjectionSnapshot) -> Void
+        private let decode: @Sendable (Data) throws -> DecodedProjectionSnapshot
         private var idleWaiters: [CheckedContinuation<Void, Never>] = []
 
         init(
-            decode: @escaping @Sendable (Data) throws -> RemoteProjectionSnapshot = { data in
-                try JSONDecoder().decode(RemoteProjectionSnapshot.self, from: data)
+            decode: @escaping @Sendable (Data) throws -> DecodedProjectionSnapshot = { data in
+                try JSONDecoder().decode(DecodedProjectionSnapshot.self, from: data)
             },
-            apply: @escaping (RemoteProjectionSnapshot) -> Void
+            apply: @escaping (DecodedProjectionSnapshot) -> Void
         ) {
             self.decode = decode
             self.apply = apply
@@ -2611,7 +2792,7 @@ public final class RemoteSessionModel: ObservableObject {
         }
 
         private func finishDecode(
-            result: Result<RemoteProjectionSnapshot, Error>, generation gen: Int
+            result: Result<DecodedProjectionSnapshot, Error>, generation gen: Int
         ) {
             decodeInFlight = false
             guard gen == generation else {
@@ -2664,7 +2845,7 @@ public final class RemoteSessionModel: ObservableObject {
     private lazy var projectionSnapshotCoalescer = ProjectionSnapshotCoalescer {
         [weak self] snapshot in
         guard let self else { return }
-        self.applySnapshot(snapshot)
+        self.applyDecodedSnapshot(snapshot)
     }
 
     private func handle(method: String, params: Data?) async {
@@ -3101,12 +3282,26 @@ public final class RemoteSessionModel: ObservableObject {
     }
 
     private func mergeThreadSnapshot(_ incoming: RemoteThreadSnapshot, key: String) {
+        var nextSnapshots = threadSnapshots
+        mergeThreadSnapshot(incoming, key: key, into: &nextSnapshots)
+        if nextSnapshots != threadSnapshots {
+            threadSnapshots = nextSnapshots
+        }
+    }
+
+    /// Merge into caller-owned storage so a full/fan-out batch can fold every
+    /// thread window before publishing the dictionary once.
+    private func mergeThreadSnapshot(
+        _ incoming: RemoteThreadSnapshot,
+        key: String,
+        into snapshots: inout [String: RemoteThreadSnapshot]
+    ) {
         let aliasKeys = keys(for: incoming, fallbackKey: key)
         guard let primaryKey = aliasKeys.first else { return }
-        mergeThreadSnapshotSingle(incoming, key: primaryKey)
-        guard let merged = threadSnapshots[primaryKey] else { return }
+        mergeThreadSnapshotSingle(incoming, key: primaryKey, into: &snapshots)
+        guard let merged = snapshots[primaryKey] else { return }
         for alias in aliasKeys.dropFirst() {
-            threadSnapshots[alias] = merged
+            snapshots[alias] = merged
         }
         for alias in aliasKeys {
             if let workspaceId = incoming.workspaceId, !workspaceId.isEmpty {
@@ -3116,7 +3311,11 @@ public final class RemoteSessionModel: ObservableObject {
         }
     }
 
-    private func mergeThreadSnapshotSingle(_ incoming: RemoteThreadSnapshot, key: String) {
+    private func mergeThreadSnapshotSingle(
+        _ incoming: RemoteThreadSnapshot,
+        key: String,
+        into snapshots: inout [String: RemoteThreadSnapshot]
+    ) {
         let filteredIncoming = snapshotFilteringHiddenRunSummaries(incoming, key: key)
         let incomingRows = filteredIncoming.rows ?? []
         // Recover a backgrounded-missed completion: if this snapshot shows the
@@ -3131,21 +3330,24 @@ public final class RemoteSessionModel: ObservableObject {
         if !incomingRows.isEmpty {
             reconcileStreamingState(against: incoming, key: key)
         }
-        guard let current = threadSnapshots[key] else {
-            threadSnapshots[key] = filteredIncoming
+        guard let current = snapshots[key] else {
+            snapshots[key] = filteredIncoming
             return
         }
         let filteredCurrent = snapshotFilteringHiddenRunSummaries(current, key: key)
+        if filteredIncoming == filteredCurrent {
+            return
+        }
 
         let currentRows = filteredCurrent.rows ?? []
         if incomingRows.isEmpty {
-            threadSnapshots[key] = ThreadSnapshotMerge.applyingMetadata(
+            snapshots[key] = ThreadSnapshotMerge.applyingMetadata(
                 from: filteredIncoming, onto: filteredCurrent)
             reconcileStreamingState(against: filteredIncoming, key: key)
             return
         }
         guard !currentRows.isEmpty else {
-            threadSnapshots[key] = mergedSnapshot(
+            snapshots[key] = mergedSnapshot(
                 base: filteredIncoming, fallback: filteredCurrent, rows: incomingRows,
                 windowStartIndex: windowStart(for: filteredIncoming),
                 totalRows: bestTotalRows(filteredIncoming, filteredCurrent))
@@ -3170,7 +3372,7 @@ public final class RemoteSessionModel: ObservableObject {
         let rows = orderedPairs.map(\.row)
         let start = orderedPairs.map(\.index).min() ?? min(incomingStart, currentStart)
         let totalRows = bestTotalRows(filteredIncoming, filteredCurrent)
-        threadSnapshots[key] = mergedSnapshot(
+        snapshots[key] = mergedSnapshot(
             base: filteredIncoming, fallback: filteredCurrent, rows: rows, windowStartIndex: start,
             totalRows: totalRows)
     }
@@ -3707,11 +3909,6 @@ public final class RemoteSessionModel: ObservableObject {
         for (key, diff) in diffSnapshots {
             diffSummaries[key] = diff
         }
-    }
-
-    private struct EmbeddedTaskCardMetadata: Decodable {
-        let ensembleState: RemoteEnsembleState?
-        let diffSummary: MobileDiffSummary?
     }
 
     /// The workspace scope an action presents for this thread: the chat's
@@ -4867,82 +5064,76 @@ public final class RemoteSessionModel: ObservableObject {
         }
     }
 
+    /// Synchronous compatibility seam for direct model tests and locally built
+    /// snapshots. Relay snapshots use `applyDecodedSnapshot` after their entire
+    /// typed payload batch has already been prepared off the MainActor.
     func applySnapshot(_ snapshot: RemoteProjectionSnapshot) {
+        applyDecodedSnapshot(DecodedProjectionSnapshot(snapshot))
+    }
+
+    func applyDecodedSnapshot(_ snapshot: DecodedProjectionSnapshot) {
         var tasks: [RemoteTaskCard] = []
         var approvalCards: [MobileApprovalCard] = []
         var questionCards: [MobileQuestionCard] = []
-        var snapshots: [String: RemoteThreadSnapshot] = [:]
+        var snapshots: [(snapshot: RemoteThreadSnapshot, fallbackKey: String)] = []
         var ensembleSnapshots: [String: RemoteEnsembleState] = [:]
         var diffSnapshots: [String: MobileDiffSummary] = [:]
         var incomingGitSnapshots: [String: GitWorkspaceSnapshot] = [:]
         var workflowCards: [RemoteWorkflow] = []
         var boardCards: [RemoteWorkspaceBoard] = []
         var presetCards: [RemoteEnsemblePreset] = []
-        for envelope in snapshot.projections {
-            switch envelope.kind {
-            case "taskCard":
-                if let card = envelope.decodePayload(RemoteTaskCard.self) {
-                    let card = cardResolvingPendingThreadTitle(card)
-                    tasks.append(card)
-                    publishEmbeddedTaskCardMetadata(
-                        envelope: envelope,
-                        card: card,
-                        intoEnsembleSnapshots: &ensembleSnapshots,
-                        intoDiffSnapshots: &diffSnapshots)
-                }
-            case "workflows":
-                if let workflow = envelope.decodePayload(RemoteWorkflow.self) {
-                    workflowCards.append(workflow)
-                }
-            case "workspaceBoards":
-                if let board = envelope.decodePayload(RemoteWorkspaceBoard.self) {
-                    boardCards.append(board)
-                }
-            case "ensemblePresets":
-                if let preset = envelope.decodePayload(RemoteEnsemblePreset.self) {
-                    presetCards.append(preset)
-                }
-            case "approvalCard":
-                if let card = envelope.decodePayload(MobileApprovalCard.self) {
-                    approvalCards.append(card)
-                }
-            case "questionCard":
-                if let card = envelope.decodePayload(MobileQuestionCard.self) {
-                    questionCards.append(card)
-                }
-            case "threadSnapshot":
-                if let thread = envelope.decodePayload(RemoteThreadSnapshot.self),
-                    let key = thread.taskId ?? thread.threadId ?? envelope.threadId
-                {
-                    for alias in keys(for: thread, fallbackKey: key) {
-                        snapshots[alias] = thread
-                    }
-                }
-            case "ensembleState":
-                if let state = envelope.decodePayload(RemoteEnsembleState.self) {
-                    for key in keys(for: state, envelopeThreadId: envelope.threadId) {
+        var shellAppearances: [TWRemoteShellAppearance] = []
+        for projection in snapshot.projections {
+            switch projection {
+            case .taskCard(let decodedCard, let embedded, let envelopeThreadId):
+                let card = cardResolvingPendingThreadTitle(decodedCard)
+                tasks.append(card)
+                if let state = embedded?.ensembleState {
+                    for key in keys(
+                        for: state, envelopeThreadId: envelopeThreadId, fallbackKey: card.id)
+                    {
                         ensembleSnapshots[key] = state
                     }
                 }
-            case "diffSummary":
-                if let diff = envelope.decodePayload(MobileDiffSummary.self) {
-                    for key in keys(for: diff, envelopeThreadId: envelope.threadId) {
+                if let diff = embedded?.diffSummary {
+                    for key in keys(
+                        for: diff, envelopeThreadId: envelopeThreadId, fallbackKey: card.id)
+                    {
                         diffSnapshots[key] = diff
                     }
                 }
-            case "gitSnapshot":
-                if let git = envelope.decodePayload(GitWorkspaceSnapshot.self),
-                    let workspaceId = envelope.workspaceId
-                {
-                    incomingGitSnapshots[workspaceId] = git
+            case .workflow(let workflow):
+                workflowCards.append(workflow)
+            case .workspaceBoard(let board):
+                boardCards.append(board)
+            case .ensemblePreset(let preset):
+                presetCards.append(preset)
+            case .approval(let card):
+                approvalCards.append(card)
+            case .question(let card):
+                questionCards.append(card)
+            case .threadSnapshot(let thread, let fallbackKey):
+                if let fallbackKey {
+                    snapshots.append((thread, fallbackKey))
                 }
-            case "shellAppearance":
-                if let appearance = envelope.decodePayload(TWRemoteShellAppearance.self) {
-                    applyShellAppearance(appearance)
+            case .ensembleState(let state, let envelopeThreadId):
+                for key in keys(for: state, envelopeThreadId: envelopeThreadId) {
+                    ensembleSnapshots[key] = state
                 }
-            default:
+            case .diffSummary(let diff, let envelopeThreadId):
+                for key in keys(for: diff, envelopeThreadId: envelopeThreadId) {
+                    diffSnapshots[key] = diff
+                }
+            case .gitSnapshot(let git, let workspaceId):
+                incomingGitSnapshots[workspaceId] = git
+            case .shellAppearance(let appearance):
+                shellAppearances.append(appearance)
+            case .ignored:
                 break
             }
+        }
+        for appearance in shellAppearances {
+            applyShellAppearance(appearance)
         }
         // Non-destructive empty-snapshot guard (Codex-diagnosed): a Mac
         // mid-restart can emit an establish snapshot BEFORE its state has
@@ -4952,7 +5143,9 @@ public final class RemoteSessionModel: ObservableObject {
         if tasks.isEmpty, !taskCards.isEmpty {
             print("[tw] ignoring empty snapshot (have \(taskCards.count) cards)")
         } else {
-            taskCards = tasks
+            if taskCards != tasks {
+                taskCards = tasks
+            }
             for card in tasks {
                 rememberWorkspace(for: card)
             }
@@ -4970,12 +5163,16 @@ public final class RemoteSessionModel: ObservableObject {
         if workflowCards.isEmpty, !workflows.isEmpty, tasks.isEmpty {
             // Settling snapshot — keep cached workflows.
         } else {
-            workflows = workflowCards
+            if workflows != workflowCards {
+                workflows = workflowCards
+            }
         }
         if boardCards.isEmpty, !workspaceBoards.isEmpty, tasks.isEmpty {
             // Settling snapshot — keep cached boards.
         } else {
-            workspaceBoards = boardCards
+            if workspaceBoards != boardCards {
+                workspaceBoards = boardCards
+            }
         }
         // Roster presets: keep the cached list only DURING first-connect settling
         // (before the projection has hydrated). Unlike workflows we can't key this
@@ -4984,7 +5181,9 @@ public final class RemoteSessionModel: ObservableObject {
         if presetCards.isEmpty, !ensemblePresets.isEmpty, !projectionHydrated {
             // Pre-hydration settling snapshot — keep cached presets.
         } else {
-            ensemblePresets = presetCards
+            if ensemblePresets != presetCards {
+                ensemblePresets = presetCards
+            }
         }
         // Real content ends the first-connect "Syncing…" state immediately;
         // an empty settling snapshot does NOT (the grace timer or the Mac's
@@ -4998,29 +5197,52 @@ public final class RemoteSessionModel: ObservableObject {
         // longer suppressed re-appears (e.g. a reply the Mac rejected).
         let incomingApprovalIds = Set(approvalCards.compactMap { $0.toolCallId })
         repliedApprovalToolCallIds.formIntersection(incomingApprovalIds)
-        approvals = approvalCards.filter { card in
+        let nextApprovals = approvalCards.filter { card in
             guard let tid = card.toolCallId else { return true }
             return !repliedApprovalToolCallIds.contains(tid)
         }
+        if approvals != nextApprovals {
+            approvals = nextApprovals
+        }
         let incomingQuestionIds = Set(questionCards.compactMap { $0.resolvedId })
         repliedQuestionIds.formIntersection(incomingQuestionIds)
-        questions = questionCards.filter { card in
+        let nextQuestions = questionCards.filter { card in
             guard let qid = card.resolvedId else { return true }
             return !repliedQuestionIds.contains(qid)
         }
+        if questions != nextQuestions {
+            questions = nextQuestions
+        }
         // Merge — don't wipe on-demand snapshots for threads outside the
         // recent-N window when a full periodic snapshot lands.
-        for (key, snapshot) in snapshots {
-            mergeThreadSnapshot(snapshot, key: key)
+        var nextThreadSnapshots = threadSnapshots
+        for incoming in snapshots {
+            mergeThreadSnapshot(
+                incoming.snapshot, key: incoming.fallbackKey, into: &nextThreadSnapshots)
         }
+        if threadSnapshots != nextThreadSnapshots {
+            threadSnapshots = nextThreadSnapshots
+        }
+        var nextEnsembleStates = ensembleStates
         for (key, state) in ensembleSnapshots {
-            ensembleStates[key] = state
+            nextEnsembleStates[key] = state
         }
+        if ensembleStates != nextEnsembleStates {
+            ensembleStates = nextEnsembleStates
+        }
+        var nextDiffSummaries = diffSummaries
         for (key, diff) in diffSnapshots {
-            diffSummaries[key] = diff
+            nextDiffSummaries[key] = diff
         }
+        if diffSummaries != nextDiffSummaries {
+            diffSummaries = nextDiffSummaries
+        }
+        var nextGitSnapshots = gitSnapshots
         for (workspaceId, git) in incomingGitSnapshots {
-            gitSnapshots[workspaceId] = git
+            nextGitSnapshots[workspaceId] = git
+        }
+        if gitSnapshots != nextGitSnapshots {
+            gitSnapshots = nextGitSnapshots
         }
     }
 
