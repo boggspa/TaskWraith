@@ -42,6 +42,7 @@ import type {
   EnsembleRunIdentity,
   EnsembleRoundParticipantState,
   EnsembleRoundState,
+  EnsembleSeatSnapshot,
   EnsembleStageRole,
   EnsembleWakeupRecord,
   ExternalPathGrant,
@@ -1713,7 +1714,12 @@ function roundParticipantDisplayFields(
   Partial<
     Pick<
       EnsembleRoundParticipantState,
-      'model' | 'reasoningEffort' | 'fastModeEnabled' | 'thinkingEnabled' | 'serviceTier'
+      | 'model'
+      | 'reasoningEffort'
+      | 'fastModeEnabled'
+      | 'thinkingEnabled'
+      | 'serviceTier'
+      | 'permissionPresetId'
     >
   > {
   return {
@@ -1724,7 +1730,29 @@ function roundParticipantDisplayFields(
     reasoningEffort: participant.reasoningEffort,
     fastModeEnabled: participant.fastModeEnabled,
     thinkingEnabled: participant.thinkingEnabled,
-    serviceTier: participant.serviceTier
+    serviceTier: participant.serviceTier,
+    permissionPresetId: participant.permissionPresetId
+  }
+}
+
+function ensembleSeatSnapshot(participant: EnsembleParticipant): EnsembleSeatSnapshot {
+  return {
+    schemaVersion: 1,
+    provider: participant.provider,
+    ...(participant.model ? { model: participant.model } : {}),
+    ...(participant.reasoningEffort !== undefined
+      ? { reasoningEffort: participant.reasoningEffort }
+      : {}),
+    ...(participant.fastModeEnabled !== undefined
+      ? { fastModeEnabled: participant.fastModeEnabled }
+      : {}),
+    ...(participant.provider === 'kimi'
+      ? { thinkingEnabled: participant.thinkingEnabled ?? true }
+      : participant.thinkingEnabled !== undefined
+        ? { thinkingEnabled: participant.thinkingEnabled }
+        : {}),
+    ...(participant.serviceTier ? { serviceTier: participant.serviceTier } : {}),
+    configuredPermissionPresetId: participant.permissionPresetId || 'default'
   }
 }
 
@@ -1735,6 +1763,7 @@ export function roundParticipantStateFromParticipant(
   return {
     participantId: participant.id,
     ...roundParticipantDisplayFields(participant),
+    initialSeatSnapshot: ensembleSeatSnapshot(participant),
     status
   }
 }
@@ -4741,21 +4770,13 @@ export class EnsembleOrchestrator {
         const participant = nextById.get(state.participantId)!
         return {
           ...state,
-          provider: participant.provider,
-          role: participant.role,
-          order: participant.order
+          ...roundParticipantDisplayFields(participant)
         }
       })
     const existingIds = new Set(existing.map((state) => state.participantId))
     const added = nextParticipants
       .filter((participant) => !existingIds.has(participant.id))
-      .map((participant): EnsembleRoundState['participants'][number] => ({
-        participantId: participant.id,
-        provider: participant.provider,
-        role: participant.role,
-        order: participant.order,
-        status: 'idle'
-      }))
+      .map((participant) => roundParticipantStateFromParticipant(participant, 'idle'))
     const participantStates = [...existing, ...added].sort((a, b) => a.order - b.order)
     return {
       ...round,
@@ -8725,13 +8746,9 @@ export class EnsembleOrchestrator {
       bossmanBaselineParticipantCount: ordered.length,
       ...(effectiveConcurrentMode ? { concurrentMode: true } : {}),
       fanoutPolicy: effectiveFanoutPolicy,
-      participants: ordered.map((participant) => ({
-        participantId: participant.id,
-        provider: participant.provider,
-        role: participant.role,
-        order: participant.order,
-        status: 'idle'
-      })),
+      participants: ordered.map((participant) =>
+        roundParticipantStateFromParticipant(participant, 'idle')
+      ),
       // Surface any carry-over queue on the chat record so the
       // renderer's queued-messages above-row reflects everything
       // still pending. Mirrors `runtime.queuedPrompts` below.
@@ -10397,6 +10414,7 @@ export class EnsembleOrchestrator {
       ensembleRole: participant.role,
       ...(participant.stageRole ? { ensembleStageRole: participant.stageRole } : {}),
       ensembleOrder: participant.order,
+      ensembleSeatSnapshot: ensembleSeatSnapshot(participant),
       ...pooledAgentTranscriptMetadata(participant),
       runtimeProfileId: participant.runtimeProfileId,
       ...(participant.provider === 'gemini' && participant.geminiAuthProfileId

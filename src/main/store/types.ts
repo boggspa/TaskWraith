@@ -717,6 +717,23 @@ export interface EnsembleParticipant {
   }
 }
 
+/**
+ * Immutable participant configuration captured for an Ensemble dispatch.
+ * `configuredPermissionPresetId` records what the seat requested; a run's
+ * signed `permissionPosture.presetId` remains authoritative for what actually
+ * executed after work-session clamps, unattended policy, and trust checks.
+ */
+export interface EnsembleSeatSnapshot {
+  schemaVersion: 1
+  provider: ProviderId
+  model?: string
+  reasoningEffort?: string
+  fastModeEnabled?: boolean
+  thinkingEnabled?: boolean
+  serviceTier?: string
+  configuredPermissionPresetId: PermissionPresetId
+}
+
 export type PooledAgentIconKind = 'named' | 'seed' | 'asset'
 
 export interface PooledAgentIdentitySnapshot {
@@ -744,14 +761,18 @@ export interface EnsembleRoundParticipantState {
   order: number
   status: EnsembleParticipantStatus
   /**
-   * Frozen display/runtime knobs captured when the round starts. These keep the
-   * active-round UI truthful if the live roster is edited for the next round.
+   * Display/runtime knobs captured when the round starts and updated only when
+   * an authoritative seat change takes effect for a future turn. Historical
+   * turns use ChatRun.ensembleSeatSnapshot instead of these mutable fields.
    */
   model?: string
   reasoningEffort?: string
   fastModeEnabled?: boolean
   thinkingEnabled?: boolean
   serviceTier?: string
+  permissionPresetId?: PermissionPresetId
+  /** Immutable round-entry fallback for seats that never dispatch a turn. */
+  initialSeatSnapshot?: EnsembleSeatSnapshot
   runId?: string
   reason?: string
   startedAt?: string
@@ -3029,6 +3050,8 @@ export interface ChatRun {
   ensembleRole?: string
   ensembleStageRole?: EnsembleStageRole
   ensembleOrder?: number
+  /** Per-turn immutable seat configuration for accurate round close-outs. */
+  ensembleSeatSnapshot?: EnsembleSeatSnapshot
   pooledAgentId?: string
   pooledAgentIdentity?: PooledAgentIdentitySnapshot
   ensembleSleepWakeupId?: string

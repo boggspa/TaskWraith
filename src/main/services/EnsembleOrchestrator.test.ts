@@ -505,6 +505,46 @@ describe('EnsembleOrchestrator', () => {
     expect(harness.dispatched[1].provider).toBe('codex')
   })
 
+  it('freezes participant model, reasoning, and permissions in the round snapshot', async () => {
+    const initialChat = makeChat()
+    Object.assign(initialChat.ensemble!.participants[0], {
+      model: 'claude-fable-5',
+      reasoningEffort: 'max',
+      fastModeEnabled: true,
+      permissionPresetId: 'read_only'
+    })
+    const harness = makeHarness({ initialChat })
+
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Preserve the participant setup.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    expect(
+      harness.chat.ensemble?.activeRound?.participants.find(
+        (participant) => participant.participantId === 'claude'
+      )
+    ).toMatchObject({
+      provider: 'claude',
+      role: 'Reviewer',
+      model: 'claude-fable-5',
+      reasoningEffort: 'max',
+      fastModeEnabled: true,
+      permissionPresetId: 'read_only',
+      status: 'running'
+    })
+    expect(harness.chat.runs[0]?.ensembleSeatSnapshot).toEqual({
+      schemaVersion: 1,
+      provider: 'claude',
+      model: 'claude-fable-5',
+      reasoningEffort: 'max',
+      fastModeEnabled: true,
+      configuredPermissionPresetId: 'read_only'
+    })
+  })
+
   it('emits participant progress for native provider context compaction events', async () => {
     const progressEvents: ContextCompactionProgressEvent[] = []
     const harness = makeHarness({
@@ -5348,6 +5388,15 @@ Next action:
           participantId: result.participantId,
           provider: 'kimi',
           role: 'Verifier',
+          model: 'kimi-k2',
+          permissionPresetId: 'plan',
+          initialSeatSnapshot: {
+            schemaVersion: 1,
+            provider: 'kimi',
+            model: 'kimi-k2',
+            thinkingEnabled: true,
+            configuredPermissionPresetId: 'plan'
+          },
           status: 'idle'
         })
       ])
