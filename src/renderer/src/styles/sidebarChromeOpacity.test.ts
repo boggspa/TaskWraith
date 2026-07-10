@@ -16,7 +16,7 @@ const cssBlockStartingAt = (source: string, selector: string, fromIndex = 0): st
   return source.slice(start, end + 1)
 }
 
-// The top masthead band, model-usage pane, and footer/status keep a FIXED 95%
+// The top masthead band, model-usage pane, and footer/status keep a FIXED 60%
 // fill independent of the user's Settings -> Appearance sidebar-opacity slider,
 // while the workspace/threads list keeps riding the factor-scaled .app-sidebar
 // surface. See --sidebar-chrome-fixed-bg in theme.css.
@@ -27,7 +27,7 @@ describe('sidebar chrome fixed opacity CSS', () => {
     expect(fillLine, 'Missing --sidebar-chrome-fixed-bg token').toBeTruthy()
     // Derived from --sidebar-chrome-color, NOT --sidebar-bg-solid (which stays the
     // list surface colour) and NOT --sidebar-bg (transparent in native_glass).
-    expect(fillLine).toContain('var(--sidebar-chrome-color) 95%')
+    expect(fillLine).toContain('var(--sidebar-chrome-color) 60%')
     expect(fillLine).not.toContain('--sidebar-bg-solid')
     expect(fillLine).not.toContain('var(--sidebar-bg)')
     // Dark default is the requested #1D1D1C.

@@ -40,11 +40,11 @@
    * obsidian below). Its own token (not --sidebar-border, which is tuned for list
    * dividers) so one rim is shared identically across all three chrome regions. */
   --sidebar-chrome-rim: rgba(255, 255, 255, 0.08);
-  /* Fixed 95% fill derived from the chrome colour, held independent of the user's
+  /* Fixed 60% fill derived from the chrome colour, held independent of the user's
    * sidebar-opacity slider (that governs only the .app-sidebar list surface).
    * color-mix on the always-opaque chrome colour, NOT --sidebar-bg (which is
    * literally `transparent` in native_glass). */
-  --sidebar-chrome-fixed-bg: color-mix(in srgb, var(--sidebar-chrome-color) 95%, transparent);
+  --sidebar-chrome-fixed-bg: color-mix(in srgb, var(--sidebar-chrome-color) 60%, transparent);
   --sidebar-border: rgba(255, 255, 255, 0.06);
   --sidebar-text: rgba(255, 255, 255, 0.85);
   --sidebar-text-secondary: rgba(255, 255, 255, 0.5);
