@@ -880,6 +880,40 @@ function isCallMcpToolActivity(activity: ToolActivity): boolean {
   return false
 }
 
+/**
+ * Display cap for a thinking-trace body while its run is still streaming.
+ * A very long trace otherwise renders as ONE ever-growing text node inside
+ * the collapsed ~168px LiveActivityViewport — every delta re-lays-out the
+ * entire accumulated text (100KB+ at high reasoning tiers) to show four
+ * visible lines, which is a large per-token main-thread cost right where the
+ * user is watching. While live, only the tail renders (prefixed with an
+ * ellipsis); the FULL body renders once the run settles, and copy/actions
+ * always operate on the untrimmed text. 6000 chars is several expanded
+ * screens' worth — the trim is unreachable by scrolling during follow.
+ */
+export const LIVE_THINKING_TRACE_RENDER_CHAR_CAP = 6000
+
+export function liveThinkingTraceRenderBody(
+  body: string,
+  liveStreamActive: boolean
+): { text: string; trimmed: boolean } {
+  if (!liveStreamActive || body.length <= LIVE_THINKING_TRACE_RENDER_CHAR_CAP) {
+    return { text: body, trimmed: false }
+  }
+  let tail = body.slice(-LIVE_THINKING_TRACE_RENDER_CHAR_CAP)
+  // A UTF-16 slice can open on the low half of a surrogate pair — drop the
+  // orphan so the tail never renders a replacement glyph.
+  if (/^[\uDC00-\uDFFF]/.test(tail)) tail = tail.slice(1)
+  // Start at the next line or sentence break when one is near, so the tail
+  // doesn't open mid-word. A bare newline (the most common trace break) counts
+  // even without trailing whitespace.
+  const breakMatch = /\n|[.!?]\s/.exec(tail.slice(0, 400))
+  const text = breakMatch
+    ? tail.slice(breakMatch.index + breakMatch[0].length).trimStart()
+    : tail
+  return { text: `\u2026 ${text}`, trimmed: true }
+}
+
 function isThinkingTraceActivity(activity: ToolActivity): boolean {
   if (isReasoningToolName(activity.toolName || '')) return true
   const kind = activity.parameters?.kind
@@ -1509,6 +1543,43 @@ export function buildTimelineSegments(items: ActivityTimelineItem[]): ActivityTi
   return segments
 }
 
+/**
+ * Trim already-built segments to the last `limit` timeline items while
+ * PRESERVING each surviving segment's full-timeline id. Segment ids derive
+ * from a segment's first constituent activity, so slicing the raw item list
+ * BEFORE grouping (the old approach) renamed the window's leading segment on
+ * every item that scrolled past the collapsed cap — React keyed the
+ * per-segment LiveActivityViewports off those ids, remounting them mid-stream
+ * (visible flash + follow/scroll state reset) on each arrival. Trimming after
+ * grouping keeps ids stable: streaming only ever APPENDS items to the tail
+ * segments, and a fully-scrolled-out segment retires its own id (a real
+ * removal of the oldest viewport, never a rename of survivors).
+ */
+export function sliceTimelineSegmentsToTail(
+  segments: ActivityTimelineSegment[],
+  limit: number
+): ActivityTimelineSegment[] {
+  if (!(limit > 0)) return []
+  const out: ActivityTimelineSegment[] = []
+  let remaining = limit
+  for (let i = segments.length - 1; i >= 0 && remaining > 0; i -= 1) {
+    const segment = segments[i]
+    if (segment.items.length <= remaining) {
+      out.unshift(segment)
+      remaining -= segment.items.length
+      continue
+    }
+    const items = segment.items.slice(-remaining)
+    out.unshift({
+      ...segment,
+      items,
+      activities: activitiesForTimelineItems(items)
+    })
+    remaining = 0
+  }
+  return out
+}
+
 function activityIdsForTimelineItems(items: ActivityTimelineItem[]): string[] {
   return items.flatMap((item) =>
     item.type === 'compact-group'
@@ -1577,13 +1648,22 @@ function thinkingTraceActionContent(note: { title: string; body?: string }): str
 function ActivityProgressNote({
   activity,
   provider,
-  thinkingTraceActions
+  thinkingTraceActions,
+  liveThinkingTrim = false,
+  note: precomputedNote
 }: {
   activity: ToolActivity
   provider?: ProviderId
   thinkingTraceActions?: ThinkingTraceActionsConfig
+  /** True while the surrounding run is streaming — enables the tail-only
+   * render of very long thinking bodies (display-only; copy stays full). */
+  liveThinkingTrim?: boolean
+  /** Pass the caller's getProgressNote result to avoid computing it twice —
+   * its cleanProgressText chain regex-scans the FULL body (~7 passes), which
+   * is expensive per delta on a 100KB thinking trace. */
+  note?: { title: string; body?: string } | null
 }) {
-  const note = getProgressNote(activity)
+  const note = precomputedNote !== undefined ? precomputedNote : getProgressNote(activity)
   if (!note) return null
   const isThinkingTrace = isThinkingTraceActivity(activity)
   const noteProvider = activityProvider(activity, provider)
@@ -1620,7 +1700,12 @@ function ActivityProgressNote({
             </span>
           )}
         </div>
-        {note.body && <p>{note.body}</p>}
+        {note.body &&
+          (isThinkingTrace ? (
+            <p>{liveThinkingTraceRenderBody(note.body, liveThinkingTrim).text}</p>
+          ) : (
+            <p>{note.body}</p>
+          ))}
       </div>
     </div>
   )
@@ -2527,20 +2612,30 @@ export function ActivityStack({
   )
   const timelineItems = useCollapseDebouncedTimelineItems(immediateTimelineItems)
   const liveViewportEnabled = Boolean(liveActivityViewport && topLevelActivities.length > 0)
-  const renderedTimelineItems = useMemo(
-    () =>
-      liveViewportEnabled &&
-      !liveViewportExpanded &&
-      timelineItems.length > COLLAPSED_LIVE_ACTIVITY_ITEM_LIMIT
-        ? timelineItems.slice(-COLLAPSED_LIVE_ACTIVITY_ITEM_LIMIT)
-        : timelineItems,
-    [liveViewportEnabled, liveViewportExpanded, timelineItems]
+  // Segment FIRST, then trim to the collapsed tail cap. Order matters:
+  // slicing the raw item list before grouping renamed the leading segment's
+  // id (derived from its first constituent) on every item that slid past the
+  // cap, remounting the keyed per-segment viewports mid-stream — the
+  // long-thinking "flash". sliceTimelineSegmentsToTail keeps full-timeline
+  // segment identity while capping rendered items.
+  const fullTimelineSegments = useMemo(
+    () => (liveViewportEnabled ? buildTimelineSegments(timelineItems) : []),
+    [liveViewportEnabled, timelineItems]
   )
-  const hiddenTimelineItemCount = timelineItems.length - renderedTimelineItems.length
+  const collapseCapActive =
+    liveViewportEnabled &&
+    !liveViewportExpanded &&
+    timelineItems.length > COLLAPSED_LIVE_ACTIVITY_ITEM_LIMIT
   const timelineSegments = useMemo(
-    () => (liveViewportEnabled ? buildTimelineSegments(renderedTimelineItems) : []),
-    [liveViewportEnabled, renderedTimelineItems]
+    () =>
+      collapseCapActive
+        ? sliceTimelineSegmentsToTail(fullTimelineSegments, COLLAPSED_LIVE_ACTIVITY_ITEM_LIMIT)
+        : fullTimelineSegments,
+    [collapseCapActive, fullTimelineSegments]
   )
+  const hiddenTimelineItemCount = collapseCapActive
+    ? timelineItems.length - COLLAPSED_LIVE_ACTIVITY_ITEM_LIMIT
+    : 0
 
   if (!activities || activities.length === 0) return null
 
@@ -2664,10 +2759,14 @@ export function ActivityStack({
         shimmerNow={shimmerNow}
         onOpenFileChangeInWorkbench={onOpenFileChangeInWorkbench}
         thinkingTraceActions={thinkingTraceActions}
+        liveThinkingTrim={liveViewportEnabled && liveActivityViewportActive}
       />
     )
   }
-  const timelineNodes = renderedTimelineItems.map(renderTimelineItem)
+  // Non-live path only (the live path renders per-segment viewports below and
+  // early-returns) — don't eagerly build + discard the full element list on
+  // every live delta flush. The collapsed item cap never applied here.
+  const timelineNodes = liveViewportEnabled ? [] : timelineItems.map(renderTimelineItem)
   const pinnedLiveContent =
     planLanes.length > 1 ? (
       <div className="plan-rail-lanes">
@@ -2973,11 +3072,15 @@ function ActivityRow({
   onToggleExpand,
   shimmerNow,
   onOpenFileChangeInWorkbench,
-  thinkingTraceActions
+  thinkingTraceActions,
+  liveThinkingTrim = false
 }: {
   activity: ToolActivity
   workspacePath?: string
   forceCompact?: boolean
+  /** True while the surrounding run streams — tail-only render of very long
+   * thinking bodies (see liveThinkingTraceRenderBody). */
+  liveThinkingTrim?: boolean
   childThread?: ChildAgentThread
   childActivities?: ToolActivity[]
   /** 1.4.2 — merged goal-step checklist state at this activity. */
@@ -3209,6 +3312,8 @@ function ActivityRow({
           activity={activity}
           provider={provider}
           thinkingTraceActions={thinkingTraceActions}
+          liveThinkingTrim={liveThinkingTrim}
+          note={progressNote}
         />
         {childThread && (
           <ChildAgentThreadCard

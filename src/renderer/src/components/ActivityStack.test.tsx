@@ -4,7 +4,11 @@ import {
   ActivityStack,
   buildActivityWorkbenchDiffSummary,
   buildTimelineItems,
-  shouldDebounceActivityTimelineCollapse
+  buildTimelineSegments,
+  LIVE_THINKING_TRACE_RENDER_CHAR_CAP,
+  liveThinkingTraceRenderBody,
+  shouldDebounceActivityTimelineCollapse,
+  sliceTimelineSegmentsToTail
 } from './ActivityStack'
 import type { ChatRecord, EnsembleParticipant, ToolActivity } from '../../../main/store/types'
 
@@ -1481,5 +1485,121 @@ describe('ActivityStack todo_write rendering', () => {
     expect(html).toContain('Builder / Codex')
     expect(html).toContain('Review the patch')
     expect(html).toContain('Apply the fix')
+  })
+})
+
+describe('sliceTimelineSegmentsToTail (stable viewport identity under the collapsed cap)', () => {
+  const thinking = (id: string): ToolActivity =>
+    ({
+      id,
+      toolName: 'codex_reasoning',
+      displayName: 'Reasoning summary',
+      category: 'unknown',
+      status: 'success',
+      outputPreview: `trace ${id}`,
+      parameters: { kind: 'reasoning' }
+    }) as ToolActivity
+  const tool = (id: string): ToolActivity =>
+    ({
+      id,
+      toolName: 'read_file',
+      displayName: 'Read',
+      category: 'read',
+      status: 'success',
+      outputPreview: `out ${id}`
+    }) as ToolActivity
+
+  const activities = [
+    thinking('t-0'),
+    thinking('t-1'),
+    tool('r-0'),
+    tool('r-1'),
+    tool('r-2'),
+    thinking('t-2'),
+    thinking('t-3')
+  ]
+  const segments = buildTimelineSegments(buildTimelineItems(activities))
+
+  it('keeps every surviving segment id identical to the full-timeline id', () => {
+    const sliced = sliceTimelineSegmentsToTail(segments, 4)
+    const fullIds = segments.map((segment) => segment.id)
+    for (const segment of sliced) {
+      expect(fullIds).toContain(segment.id)
+    }
+  })
+
+  it('trims the earliest included segment WITHOUT renaming it', () => {
+    // The 3 consecutive reads compact-group into ONE timeline item, so the
+    // full item list is [t-0, t-1, group(r-0..2), t-2, t-3]. Limit 4 drops
+    // t-0 — the leading thinking segment is trimmed to one item but keeps
+    // its full-timeline id (first constituent t-0) even though t-0 itself
+    // is no longer rendered.
+    const sliced = sliceTimelineSegmentsToTail(segments, 4)
+    expect(sliced.map((segment) => segment.kind)).toEqual(['thinking', 'tools', 'thinking'])
+    expect(sliced[0].id).toBe(segments[0].id)
+    expect(sliced[0].items.length).toBe(1)
+    expect(sliced[1].id).toBe(segments[1].id)
+    expect(sliced[2].items.length).toBe(2)
+  })
+
+  it('is id-stable as new items append past the cap (the mid-stream flash)', () => {
+    const grown = [...activities, thinking('t-4')]
+    const grownSegments = buildTimelineSegments(buildTimelineItems(grown))
+    const before = sliceTimelineSegmentsToTail(segments, 4)
+    const after = sliceTimelineSegmentsToTail(grownSegments, 4)
+    // The trailing thinking segment keeps its identity when it grows.
+    expect(after[after.length - 1].id).toBe(before[before.length - 1].id)
+  })
+
+  it('returns everything when the limit covers the list, nothing at limit 0', () => {
+    expect(sliceTimelineSegmentsToTail(segments, 99)).toEqual(segments)
+    expect(sliceTimelineSegmentsToTail(segments, 0)).toEqual([])
+  })
+})
+
+describe('liveThinkingTraceRenderBody (bounded live thinking render)', () => {
+  it('passes short bodies and settled runs through untouched', () => {
+    expect(liveThinkingTraceRenderBody('short trace', true)).toEqual({
+      text: 'short trace',
+      trimmed: false
+    })
+    const huge = 'x'.repeat(LIVE_THINKING_TRACE_RENDER_CHAR_CAP + 5_000)
+    // Settled run (liveStreamActive false): full body renders once.
+    expect(liveThinkingTraceRenderBody(huge, false)).toEqual({ text: huge, trimmed: false })
+  })
+
+  it('renders only the tail of a huge live body, with an ellipsis marker', () => {
+    const head = 'HEAD-SHOULD-NOT-RENDER '.repeat(600)
+    const tail = 'visible tail sentence. '.repeat(400)
+    const out = liveThinkingTraceRenderBody(head + tail, true)
+    expect(out.trimmed).toBe(true)
+    expect(out.text.startsWith('\u2026 ')).toBe(true)
+    expect(out.text.length).toBeLessThanOrEqual(LIVE_THINKING_TRACE_RENDER_CHAR_CAP + 2)
+    expect(out.text).not.toContain('HEAD-SHOULD-NOT-RENDER')
+    expect(out.text).toContain('visible tail sentence.')
+  })
+
+  it('opens the tail at a nearby break instead of mid-word', () => {
+    // The newline sits ~100 chars into the 6000-char tail (well inside the
+    // 400-char re-anchor window) and is immediately followed by text — the
+    // common trace shape. The visible body must re-anchor at the paragraph,
+    // dropping the mid-word 'a' fragment entirely.
+    const body = `${'a'.repeat(LIVE_THINKING_TRACE_RENDER_CHAR_CAP - 5_900 + 20_000)}\nClean paragraph start ${'b'.repeat(5_800)}`
+    const out = liveThinkingTraceRenderBody(body, true)
+    expect(out.trimmed).toBe(true)
+    expect(out.text.startsWith('\u2026 Clean paragraph start')).toBe(true)
+    expect(out.text).not.toContain('aaa')
+  })
+
+  it('never opens the tail on an orphaned surrogate half', () => {
+    // An astral char straddles the slice boundary: cap+1 chars of prose after
+    // it means slice(-cap) starts on the low surrogate.
+    const body = `${'x'.repeat(500)}\u{1F600}${'y'.repeat(LIVE_THINKING_TRACE_RENDER_CHAR_CAP - 1)}`
+    const out = liveThinkingTraceRenderBody(body, true)
+    expect(out.trimmed).toBe(true)
+    // Well-formed: no lone surrogate anywhere in the rendered text.
+    expect(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(out.text)).toBe(
+      false
+    )
   })
 })
