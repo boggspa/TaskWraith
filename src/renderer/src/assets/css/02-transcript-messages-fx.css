@@ -712,8 +712,8 @@
 }
 
 /* Main-transcript identity segment. The provider/ensemble glyph carries the
- * same meaning as its sidebar counterpart, while a compact workspace chip
- * keeps context visible without letting a long thread name own the chrome. */
+ * same meaning as its sidebar counterpart, while the workspace stays visible
+ * as a quiet, full-height segment without letting it own the chrome. */
 .chat-corner-controls-left:not(.multiview-pane-corner-controls) {
   max-width: min(420px, calc(100% - 160px));
 }
@@ -749,20 +749,32 @@
 }
 
 .chat-corner-workspace-name {
-  display: block;
+  position: relative;
+  display: flex;
+  align-self: stretch;
+  align-items: center;
   flex: 0 1 auto;
   min-width: 0;
   max-width: 16ch;
   overflow: hidden;
-  padding: 3px 7px;
-  border-radius: 6px;
-  background: color-mix(in srgb, var(--text-primary) 9%, transparent);
-  color: color-mix(in srgb, var(--text-primary) 68%, transparent);
-  font-size: calc(var(--font-size-sm) * 0.76);
-  font-weight: 640;
-  line-height: 1.15;
+  padding: 0 11px;
+  color: color-mix(in srgb, var(--text-primary) 62%, transparent);
+  font-size: calc(var(--font-size-sm) * 0.85);
+  font-weight: 750;
+  letter-spacing: 0;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.chat-corner-workspace-name::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 1px;
+  background: var(--chat-corner-segment-divider);
+  pointer-events: none;
 }
 
 .chat-corner-controls .chat-corner-count {

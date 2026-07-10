@@ -28,6 +28,7 @@ import {
 } from '../../lib/panelWidths'
 import { getProviderLabel } from '../../lib/providerLabels'
 import { isGlobalChat } from '../../lib/chatScope'
+import { resolveWorkspaceDisplayName } from '../../../../shared/workspaceDisplayName'
 import { RunRailPanel } from '../../components/RunRailPanel'
 import { ProviderBadgeIcon, Sidebar } from '../../components/Sidebar'
 import { CollapsedSidebarCornerPill } from '../../components/CollapsedSidebarCornerPill'
@@ -1092,7 +1093,15 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
     : null
 
   const mainPaneThreadTitle = currentChat?.title || currentWorkspace?.displayName || 'New chat'
-  const mainPaneWorkspaceLabel = isCurrentGlobalChat ? null : currentWorkspace?.displayName || null
+  const mainPaneWorkspaceLabel =
+    isCurrentGlobalChat || !currentWorkspace
+      ? null
+      : resolveWorkspaceDisplayName({
+          displayName: currentWorkspace.displayName,
+          path: currentWorkspace.path,
+          repoRoot: composerCtx?.primaryGitSnapshot?.repoRoot,
+          remoteUrl: composerCtx?.primaryGitSnapshot?.remoteUrl || currentWorkspace.remoteOriginUrl
+        })
   const mainPaneProvider = isCurrentEnsembleChat
     ? 'ensemble'
     : currentChat?.provider || currentProvider
