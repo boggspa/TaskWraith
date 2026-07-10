@@ -701,7 +701,7 @@
   color: color-mix(in srgb, #ffffff 70%, transparent);
   font-size: calc(var(--font-size-xs) + 1px);
 }
-[data-composer-style="claude"] [data-composer-control="model"] svg {
+[data-composer-style="claude"] [data-composer-control="model"] svg:not(.composer-combined-picker-trigger-fast-bolt) {
   display: none;
 }
 
@@ -2730,7 +2730,7 @@
 [data-composer-style="gemini"] [data-composer-control="model"]:hover {
   background: color-mix(in srgb, #5a8cff 28%, transparent);
 }
-[data-composer-style="gemini"] [data-composer-control="model"] svg {
+[data-composer-style="gemini"] [data-composer-control="model"] svg:not(.composer-combined-picker-trigger-fast-bolt) {
   display: none;
 }
 
@@ -3000,7 +3000,7 @@
   background: color-mix(in srgb, #ffffff 6%, transparent);
   border-color: color-mix(in srgb, #ffffff 28%, transparent);
 }
-[data-composer-style="kimi"] [data-composer-control="model"] svg {
+[data-composer-style="kimi"] [data-composer-control="model"] svg:not(.composer-combined-picker-trigger-fast-bolt) {
   display: none;
 }
 [data-composer-style="kimi"] [data-composer-control="model"]::after {

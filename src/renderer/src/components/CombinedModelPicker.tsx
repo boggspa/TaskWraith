@@ -270,13 +270,14 @@ export function resolveCombinedModelPickerResetState(params: {
  * Accent-filled bolt for non-Codex shells (Claude picker rows, etc.).
  * Codex shell uses {@link CodexFastBoltIcon} for the real monoline glyph.
  */
-function FastBoltIcon(): React.JSX.Element {
+function FastBoltIcon({ className }: { className?: string } = {}): React.JSX.Element {
   return (
     <svg
       width="13"
       height="13"
       viewBox="0 0 12 12"
       fill="currentColor"
+      className={className}
       aria-hidden
       focusable="false"
       style={{ flexShrink: 0 }}
@@ -312,6 +313,61 @@ const LADDER_TRACK_INSET = 11
 // Reasoning efforts that carry the provider-hued shimmer sweep + sparkles on
 // the compact trigger chip. The ladder itself uses a separate Low→Ultra taper.
 const TOP_TIER_SPARKLE_EFFORTS: ReadonlySet<string> = new Set(['max', 'ultracode'])
+// Extra (xhigh) wears the same treatment at a fraction of the intensity — a
+// gentler sweep (CSS, keyed off data-selected-reasoning) plus a smaller,
+// dimmer sparkle field. Tiers below it are hue-only (pure CSS, no overlay).
+const FAINT_SPARKLE_EFFORTS: ReadonlySet<string> = new Set(['xhigh'])
+// Every-other CHIP_SPARKLES pick so the 4-dot faint field still spans the
+// whole suffix (the array is ordered left→right; a plain slice(0,4) would
+// cluster every dot left of 54% and read as a glitch).
+const FAINT_SPARKLE_INDICES: ReadonlyArray<number> = [0, 2, 4, 6]
+
+export type ChipSparkleTier = 'full' | 'faint' | null
+
+/**
+ * Split the formatted chip text into model / reasoning / trailing-"Fast"
+ * pieces so each gets its own span (the reasoning suffix carries the tiered
+ * provider-hue treatment; the Fast tail must NOT — it isn't a reasoning
+ * level). Cursor (and the default shell's cursor format) appends " Fast"
+ * AFTER the reasoning ("Cursor Grok 4.5 · High Fast"), which used to defeat
+ * the plain endsWith split and dissolve the suffix span entirely.
+ */
+export function splitChipReasoningPieces(
+  chipText: string,
+  reasoningSuffix: string
+): { primary: string; suffix: string; tail: string } {
+  if (!reasoningSuffix) return { primary: chipText, suffix: '', tail: '' }
+  const strip = (value: string): string => value.trimEnd().replace(/[\s·]+$/, '')
+  if (chipText.endsWith(reasoningSuffix)) {
+    // Trim trailing separator (`·` or space) so the suffix renders
+    // as its own visual unit with its own styling.
+    return {
+      primary: strip(chipText.slice(0, chipText.length - reasoningSuffix.length)),
+      suffix: reasoningSuffix,
+      tail: ''
+    }
+  }
+  const fastTail = `${reasoningSuffix} Fast`
+  if (chipText.endsWith(fastTail)) {
+    return {
+      primary: strip(chipText.slice(0, chipText.length - fastTail.length)),
+      suffix: reasoningSuffix,
+      tail: 'Fast'
+    }
+  }
+  return { primary: chipText, suffix: '', tail: '' }
+}
+
+/** Sparkle overlay tier for the trigger chip's reasoning suffix. Max and
+ * Ultra/Ultracode keep the full field; Extra (xhigh) gets the faint one;
+ * everything below (High/Medium/Low/Thinking/Off) renders no overlay — those
+ * tiers are signalled by progressively stronger provider hue in CSS alone. */
+export function chipReasoningSparkleTier(selectedReasoning: string): ChipSparkleTier {
+  const value = selectedReasoning.trim().toLowerCase()
+  if (TOP_TIER_SPARKLE_EFFORTS.has(value)) return 'full'
+  if (FAINT_SPARKLE_EFFORTS.has(value)) return 'faint'
+  return null
+}
 
 // Sparkle positions (within the Low→Ultra effect zone) + staggered twinkle
 // delays. The first few points deliberately span the whole zone; higher effort
@@ -649,22 +705,34 @@ export function ReasoningLadderSlider({
   )
 }
 
-/** The chip's reasoning suffix ("Ultra" / "Ultracode" …). At the Ultracode tier
- * it carries the provider-hued shimmer sweep (CSS, keyed off the trigger's
- * data-selected-reasoning) plus a twinkling sparkle overlay. */
+/** The chip's reasoning suffix ("Ultra" / "Max" / "Extra" …). The hue/shimmer
+ * treatment rides CSS keyed off the trigger's data-selected-reasoning; this
+ * component only adds the twinkling sparkle overlay — the full field at
+ * Max/Ultra, a smaller dimmer one at Extra, none below. */
 function TriggerReasoningSuffix({
   text,
   sparkle
 }: {
   text: string
-  sparkle: boolean
+  sparkle: ChipSparkleTier
 }): React.JSX.Element {
+  const sparkles =
+    sparkle === 'full'
+      ? CHIP_SPARKLES
+      : sparkle === 'faint'
+        ? FAINT_SPARKLE_INDICES.map((index) => CHIP_SPARKLES[index])
+        : []
   return (
     <span className="composer-combined-picker-trigger-suffix">
       {text}
-      {sparkle && (
-        <span className="composer-combined-picker-trigger-sparkles" aria-hidden>
-          {CHIP_SPARKLES.map((s, index) => (
+      {sparkles.length > 0 && (
+        <span
+          className={`composer-combined-picker-trigger-sparkles${
+            sparkle === 'faint' ? ' is-faint' : ''
+          }`}
+          aria-hidden
+        >
+          {sparkles.map((s, index) => (
             <span
               key={index}
               className="composer-combined-picker-trigger-sparkle"
@@ -769,7 +837,10 @@ export function CombinedModelPicker({
   const useClaudeShellChipLayout = composerStyle === 'claude'
   const showShellFastLabel =
     (useClaudeShellChipLayout || provider === 'cursor') && fastModeEnabled && fastModeCapable
-  const showCodexShellFastBolt = composerStyle === 'codex' && fastModeEnabled && fastModeCapable
+  // Fast tier active → lightning bolt left of the model label, on EVERY shell
+  // (Codex/Claude/Cursor toggles). The Codex shell keeps its bespoke monoline
+  // glyph; everything else uses the app's accent-filled bolt.
+  const showTriggerFastBolt = Boolean(fastModeEnabled && fastModeCapable)
   const useCodexMonolineFastBolt = composerStyle === 'codex'
 
   const chipText = useMemo(
@@ -830,17 +901,10 @@ export function CombinedModelPicker({
   // style them differently (model normal, reasoning muted/dimmed —
   // mirrors real Codex's `5.5 Extra High` rendering where "Extra
   // High" reads softer than "5.5").
-  const chipPieces = useMemo(() => {
-    if (!reasoningSuffix) return { primary: chipText, suffix: '' }
-    if (chipText.endsWith(reasoningSuffix)) {
-      const primary = chipText.slice(0, chipText.length - reasoningSuffix.length).trimEnd()
-      // Trim trailing separator (`·` or space) so the suffix renders
-      // as its own visual unit with its own styling.
-      const cleaned = primary.replace(/[\s·]+$/, '')
-      return { primary: cleaned, suffix: reasoningSuffix }
-    }
-    return { primary: chipText, suffix: '' }
-  }, [chipText, reasoningSuffix])
+  const chipPieces = useMemo(
+    () => splitChipReasoningPieces(chipText, reasoningSuffix),
+    [chipText, reasoningSuffix]
+  )
 
   const claudeChipSegments = useMemo(() => {
     if (!useClaudeShellChipLayout) return null
@@ -1270,9 +1334,12 @@ export function CombinedModelPicker({
         aria-expanded={open}
         title="Model and reasoning"
       >
-        {showCodexShellFastBolt && (
-          <CodexFastBoltIcon className="composer-combined-picker-trigger-fast-bolt" />
-        )}
+        {showTriggerFastBolt &&
+          (useCodexMonolineFastBolt ? (
+            <CodexFastBoltIcon className="composer-combined-picker-trigger-fast-bolt" />
+          ) : (
+            <FastBoltIcon className="composer-combined-picker-trigger-fast-bolt" />
+          ))}
         {claudeChipSegments ? (
           <>
             <span className="composer-combined-picker-trigger-primary">
@@ -1293,7 +1360,7 @@ export function CombinedModelPicker({
                   {claudeChipSegments.reasoning && (
                     <TriggerReasoningSuffix
                       text={claudeChipSegments.reasoning}
-                      sparkle={TOP_TIER_SPARKLE_EFFORTS.has(selectedReasoning || '')}
+                      sparkle={chipReasoningSparkleTier(selectedReasoning || '')}
                     />
                   )}
                 </span>
@@ -1305,7 +1372,7 @@ export function CombinedModelPicker({
                 </span>
                 <TriggerReasoningSuffix
                   text={claudeChipSegments.reasoning}
-                  sparkle={TOP_TIER_SPARKLE_EFFORTS.has(selectedReasoning || '')}
+                  sparkle={chipReasoningSparkleTier(selectedReasoning || '')}
                 />
               </span>
             ) : null}
@@ -1316,8 +1383,11 @@ export function CombinedModelPicker({
             {chipPieces.suffix && (
               <TriggerReasoningSuffix
                 text={chipPieces.suffix}
-                sparkle={TOP_TIER_SPARKLE_EFFORTS.has(selectedReasoning || '')}
+                sparkle={chipReasoningSparkleTier(selectedReasoning || '')}
               />
+            )}
+            {chipPieces.tail && (
+              <span className="composer-combined-picker-trigger-fast">{chipPieces.tail}</span>
             )}
           </>
         )}

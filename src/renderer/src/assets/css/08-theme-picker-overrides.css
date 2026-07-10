@@ -8882,6 +8882,26 @@
   font-weight: 400;
 }
 
+/* Fast-tier lightning bolt left of the model label — every shell. The Codex
+ * shell's bespoke monoline sizing in 07-composer-shells.css wins there via
+ * its higher-specificity [data-composer-style="codex"] rule. */
+.composer-combined-picker-trigger-fast-bolt {
+  flex-shrink: 0;
+  width: 12px;
+  height: 12px;
+  margin-right: -3px;
+  color: color-mix(in srgb, var(--text-primary) 62%, transparent);
+}
+
+/* Trailing "Fast" tail after the reasoning suffix (Cursor formats) — plain
+ * chip text, never the reasoning tier hue. Direct-child only: the Claude
+ * shell's "Fast" segment nests inside -fast-reasoning and keeps its own
+ * treatment. Margin collapses the trigger's 9px flex gap so the tail hugs
+ * its reasoning label like the source string. */
+.composer-combined-picker-trigger > .composer-combined-picker-trigger-fast {
+  margin-left: -5px;
+}
+
 /* Top reasoning tiers (Max + Ultra/Ultracode) — provider-hued shimmer sweep on
  * the effort label (chip suffix), for ANY provider whose ladder reaches them.
  * `--chip-accent` is the provider brand hue (set inline on the trigger); reuses
@@ -8944,6 +8964,192 @@
 [data-reduce-motion="true"] .composer-combined-picker-trigger-sparkle {
   animation: none;
   opacity: 0;
+}
+
+/* Sub-Max reasoning tiers — the suffix takes on the provider hue progressively
+ * as effort rises. Off ('' / 'off') and unknown values deliberately match
+ * nothing and keep the plain muted suffix; Max and Ultra/Ultracode keep the
+ * full shimmer treatment above. "on" is Kimi's thinking toggle (its Low
+ * analog); "light" is Codex's inbound alias for low. */
+.composer-combined-picker-trigger[data-selected-reasoning="low"]
+  .composer-combined-picker-trigger-suffix,
+.composer-combined-picker-trigger[data-selected-reasoning="light"]
+  .composer-combined-picker-trigger-suffix,
+.composer-combined-picker-trigger[data-selected-reasoning="on"]
+  .composer-combined-picker-trigger-suffix {
+  /* text-fill-color (not just color) so the hue survives the per-shell /
+   * per-theme suffix `color` rules further down — the same mechanism the
+   * Max/Ultra gradient uses. Epic-FX shells that set text-fill-color
+   * !important override this AND the Max/Ultra sweep uniformly. */
+  color: color-mix(
+    in srgb,
+    var(--chip-accent, #8e6fd8) 38%,
+    color-mix(in srgb, var(--text-primary) 58%, transparent)
+  );
+  -webkit-text-fill-color: color-mix(
+    in srgb,
+    var(--chip-accent, #8e6fd8) 38%,
+    color-mix(in srgb, var(--text-primary) 58%, transparent)
+  );
+}
+.composer-combined-picker-trigger[data-selected-reasoning="medium"]
+  .composer-combined-picker-trigger-suffix {
+  color: color-mix(
+    in srgb,
+    var(--chip-accent, #8e6fd8) 62%,
+    color-mix(in srgb, var(--text-primary) 62%, transparent)
+  );
+  -webkit-text-fill-color: color-mix(
+    in srgb,
+    var(--chip-accent, #8e6fd8) 62%,
+    color-mix(in srgb, var(--text-primary) 62%, transparent)
+  );
+}
+.composer-combined-picker-trigger[data-selected-reasoning="high"]
+  .composer-combined-picker-trigger-suffix {
+  color: color-mix(in srgb, var(--chip-accent, #8e6fd8) 84%, var(--text-primary) 16%);
+  -webkit-text-fill-color: color-mix(
+    in srgb,
+    var(--chip-accent, #8e6fd8) 84%,
+    var(--text-primary) 16%
+  );
+  font-weight: 500;
+}
+/* Extra (xhigh) — the Max/Ultra sweep at a fraction of the contrast: hue base
+ * blended toward the resting text, a much softer highlight, slower cadence,
+ * and (from the JSX) a 4-point sparkle field at reduced brilliance. */
+.composer-combined-picker-trigger[data-selected-reasoning="xhigh"]
+  .composer-combined-picker-trigger-suffix {
+  position: relative;
+  display: inline-block;
+  font-weight: 500;
+  background-image: linear-gradient(
+    100deg,
+    color-mix(in srgb, var(--chip-accent, #8e6fd8) 80%, var(--text-primary) 20%) 0%,
+    color-mix(in srgb, var(--chip-accent, #8e6fd8) 80%, var(--text-primary) 20%) 34%,
+    color-mix(in srgb, var(--chip-accent, #8e6fd8) 78%, #ffffff) 50%,
+    color-mix(in srgb, var(--chip-accent, #8e6fd8) 80%, var(--text-primary) 20%) 66%,
+    color-mix(in srgb, var(--chip-accent, #8e6fd8) 80%, var(--text-primary) 20%) 100%
+  );
+  background-size: 240% 100%;
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  animation: text-shimmer-sweep 4.6s linear infinite;
+}
+/* Faint sparkle field for the Extra tier — same slow twinkle, smaller + dimmer
+ * (container opacity scales the animated per-dot opacity). */
+.composer-combined-picker-trigger-sparkles.is-faint {
+  opacity: 0.4;
+}
+.composer-combined-picker-trigger-sparkles.is-faint .composer-combined-picker-trigger-sparkle {
+  width: 2px;
+  height: 2px;
+}
+[data-reduce-motion="true"]
+  .composer-combined-picker-trigger[data-selected-reasoning="xhigh"]
+  .composer-combined-picker-trigger-suffix {
+  animation: none;
+  background-image: none;
+  color: color-mix(in srgb, var(--chip-accent, #b088e8) 80%, var(--text-primary) 20%);
+  -webkit-text-fill-color: color-mix(
+    in srgb,
+    var(--chip-accent, #b088e8) 80%,
+    var(--text-primary) 20%
+  );
+}
+
+/* Epic-FX shells (obsidian / alabaster) flatten every suffix background with
+ * `background-image: none !important` — which would strand the shimmer tiers'
+ * `-webkit-text-fill-color: transparent` with no gradient behind it and erase
+ * the label outright. Give those shells the reduce-motion treatment instead:
+ * static provider hue, no sweep. (Also cures the same pre-existing
+ * invisibility for Max/Ultra there.) */
+:is([data-composer-style="obsidian"], [data-composer-style="alabaster"])
+  .composer-combined-picker-trigger[data-selected-reasoning="xhigh"]
+  .composer-combined-picker-trigger-suffix,
+:is([data-composer-style="obsidian"], [data-composer-style="alabaster"])
+  .composer-combined-picker-trigger[data-selected-reasoning="max"]
+  .composer-combined-picker-trigger-suffix,
+:is([data-composer-style="obsidian"], [data-composer-style="alabaster"])
+  .composer-combined-picker-trigger[data-selected-reasoning="ultracode"]
+  .composer-combined-picker-trigger-suffix {
+  animation: none !important;
+  color: color-mix(in srgb, var(--chip-accent, #b088e8) 80%, var(--text-primary) 20%) !important;
+  -webkit-text-fill-color: color-mix(
+    in srgb,
+    var(--chip-accent, #b088e8) 80%,
+    var(--text-primary) 20%
+  ) !important;
+}
+
+/* Light themes — bright brand hues (Cursor gold, Codex lavender) fall below
+ * WCAG 4.5:1 on the near-white chip at the dark-theme mixes above, so the
+ * light mixes lean much harder on theme ink: the hue reads as a cast, the
+ * label stays legible. (Dark themes keep the richer mixes — bright accents
+ * on dark pass comfortably.) */
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])
+  .composer-combined-picker-trigger[data-selected-reasoning="low"]
+  .composer-combined-picker-trigger-suffix,
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])
+  .composer-combined-picker-trigger[data-selected-reasoning="light"]
+  .composer-combined-picker-trigger-suffix,
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])
+  .composer-combined-picker-trigger[data-selected-reasoning="on"]
+  .composer-combined-picker-trigger-suffix {
+  color: color-mix(
+    in srgb,
+    var(--chip-accent, #8e6fd8) 14%,
+    color-mix(in srgb, var(--text-primary) 62%, transparent)
+  );
+  -webkit-text-fill-color: color-mix(
+    in srgb,
+    var(--chip-accent, #8e6fd8) 14%,
+    color-mix(in srgb, var(--text-primary) 62%, transparent)
+  );
+}
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])
+  .composer-combined-picker-trigger[data-selected-reasoning="medium"]
+  .composer-combined-picker-trigger-suffix {
+  color: color-mix(in srgb, var(--chip-accent, #8e6fd8) 20%, var(--text-primary) 80%);
+  -webkit-text-fill-color: color-mix(
+    in srgb,
+    var(--chip-accent, #8e6fd8) 20%,
+    var(--text-primary) 80%
+  );
+}
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])
+  .composer-combined-picker-trigger[data-selected-reasoning="high"]
+  .composer-combined-picker-trigger-suffix {
+  color: color-mix(in srgb, var(--chip-accent, #8e6fd8) 26%, var(--text-primary) 74%);
+  -webkit-text-fill-color: color-mix(
+    in srgb,
+    var(--chip-accent, #8e6fd8) 26%,
+    var(--text-primary) 74%
+  );
+}
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])
+  .composer-combined-picker-trigger[data-selected-reasoning="xhigh"]
+  .composer-combined-picker-trigger-suffix {
+  background-image: linear-gradient(
+    100deg,
+    color-mix(in srgb, var(--chip-accent, #8e6fd8) 28%, var(--text-primary) 72%) 0%,
+    color-mix(in srgb, var(--chip-accent, #8e6fd8) 28%, var(--text-primary) 72%) 34%,
+    color-mix(in srgb, var(--chip-accent, #8e6fd8) 38%, var(--text-primary) 62%) 50%,
+    color-mix(in srgb, var(--chip-accent, #8e6fd8) 28%, var(--text-primary) 72%) 66%,
+    color-mix(in srgb, var(--chip-accent, #8e6fd8) 28%, var(--text-primary) 72%) 100%
+  );
+}
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-reduce-motion="true"]
+  .composer-combined-picker-trigger[data-selected-reasoning="xhigh"]
+  .composer-combined-picker-trigger-suffix {
+  color: color-mix(in srgb, var(--chip-accent, #8e6fd8) 28%, var(--text-primary) 72%);
+  -webkit-text-fill-color: color-mix(
+    in srgb,
+    var(--chip-accent, #8e6fd8) 28%,
+    var(--text-primary) 72%
+  );
 }
 
 /* Ollama Tier-4 "selected but not granted → runs read-only" indicator on the

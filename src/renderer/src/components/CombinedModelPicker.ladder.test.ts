@@ -2,9 +2,12 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import {
+  CombinedModelPicker,
   ReasoningLadderSlider,
   buildLadderModel,
+  chipReasoningSparkleTier,
   clampedLadderIndex,
+  splitChipReasoningPieces,
   ladderIndexForOption,
   nearestEnabledLadderIndex,
   reasoningLadderFxProfile
@@ -187,5 +190,136 @@ describe('reasoning ladder visual taper', () => {
     expect(low).toContain('composer-combined-picker-ladder-pulse')
     expect(low.match(/class="composer-combined-picker-ladder-sparkle"/g)).toHaveLength(3)
     expect(low.match(/class="composer-combined-picker-ladder-shimmer-band"/g)).toHaveLength(1)
+  })
+})
+
+describe('chipReasoningSparkleTier', () => {
+  it('keeps the full sparkle field for Max and Ultra/Ultracode', () => {
+    expect(chipReasoningSparkleTier('max')).toBe('full')
+    expect(chipReasoningSparkleTier('ultracode')).toBe('full')
+    expect(chipReasoningSparkleTier(' Max ')).toBe('full')
+  })
+
+  it('gives Extra (xhigh) the faint field only', () => {
+    expect(chipReasoningSparkleTier('xhigh')).toBe('faint')
+  })
+
+  it('renders no overlay for hue-only and plain tiers', () => {
+    // High/Medium/Low/Thinking are provider-hue-only (pure CSS); Off and
+    // unknown values stay entirely plain.
+    for (const value of ['high', 'medium', 'low', 'light', 'on', 'off', '', 'mystery']) {
+      expect(chipReasoningSparkleTier(value)).toBeNull()
+    }
+  })
+})
+
+describe('splitChipReasoningPieces', () => {
+  it('splits a plain trailing reasoning suffix', () => {
+    expect(splitChipReasoningPieces('GPT-5.6-Sol Light', 'Light')).toEqual({
+      primary: 'GPT-5.6-Sol',
+      suffix: 'Light',
+      tail: ''
+    })
+    expect(splitChipReasoningPieces('Cursor Grok 4.5 \u00b7 High', 'High')).toEqual({
+      primary: 'Cursor Grok 4.5',
+      suffix: 'High',
+      tail: ''
+    })
+  })
+
+  it('keeps the reasoning suffix span when Cursor appends " Fast" after it', () => {
+    expect(splitChipReasoningPieces('Cursor Grok 4.5 \u00b7 High Fast', 'High')).toEqual({
+      primary: 'Cursor Grok 4.5',
+      suffix: 'High',
+      tail: 'Fast'
+    })
+    expect(splitChipReasoningPieces('Cursor Grok 4.5 High Fast', 'High')).toEqual({
+      primary: 'Cursor Grok 4.5',
+      suffix: 'High',
+      tail: 'Fast'
+    })
+  })
+
+  it('degrades to an unsplit chip when the suffix is absent or unmatched', () => {
+    expect(splitChipReasoningPieces('Composer 2.5 \u00b7 Fast', '')).toEqual({
+      primary: 'Composer 2.5 \u00b7 Fast',
+      suffix: '',
+      tail: ''
+    })
+    expect(splitChipReasoningPieces('Some Chip', 'High')).toEqual({
+      primary: 'Some Chip',
+      suffix: '',
+      tail: ''
+    })
+  })
+})
+
+describe('trigger chip fast-mode rendering', () => {
+  const cursorFastProps = {
+    provider: 'cursor' as const,
+    composerStyle: 'taskwraith' as never,
+    modelOptions: [{ id: 'grok-4.5', label: 'Cursor Grok 4.5' }],
+    selectedModelId: 'grok-4.5',
+    onSelectModel: () => {},
+    reasoningOptions: [
+      { value: 'low', label: 'Low' },
+      { value: 'medium', label: 'Medium' },
+      { value: 'high', label: 'High' }
+    ],
+    selectedReasoning: 'high',
+    onSelectReasoning: () => {},
+    cursorReasoningEffort: 'high',
+    fastModeCapableModelIds: new Set(['grok-4.5']),
+    fastModeEnabled: true,
+    onToggleFastMode: () => {}
+  }
+
+  it('renders the bolt + hued reasoning suffix + plain Fast tail for Cursor Fast', () => {
+    const html = renderToStaticMarkup(createElement(CombinedModelPicker, cursorFastProps))
+    // Bolt to the left of the model label on a non-Codex shell.
+    expect(html).toContain('composer-combined-picker-trigger-fast-bolt')
+    // The reasoning suffix keeps its own span (tier hue hooks onto it)…
+    expect(html).toMatch(/composer-combined-picker-trigger-suffix[^>]*>High</)
+    // …and "Fast" renders as its own plain tail, not inside the suffix.
+    expect(html).toMatch(/composer-combined-picker-trigger-fast[^-][^>]*>Fast</)
+    expect(html).toContain('data-selected-reasoning="high"')
+  })
+
+  it('spreads the faint Extra sparkle field across the whole suffix', () => {
+    const codexXhighProps = {
+      ...cursorFastProps,
+      provider: 'codex' as const,
+      modelOptions: [{ id: 'gpt-5.6-sol', label: 'GPT-5.6-Sol' }],
+      selectedModelId: 'gpt-5.6-sol',
+      reasoningOptions: [
+        { value: 'xhigh', label: 'Extra High' },
+        { value: 'max', label: 'Max' }
+      ],
+      selectedReasoning: 'xhigh',
+      codexReasoningEffort: 'xhigh',
+      cursorReasoningEffort: undefined,
+      fastModeEnabled: false
+    }
+    const html = renderToStaticMarkup(createElement(CombinedModelPicker, codexXhighProps))
+    expect(html).toContain('composer-combined-picker-trigger-sparkles is-faint')
+    // 4 dots spanning the field — including one right of 54% (the plain
+    // slice(0,4) regression clustered every dot on the left half).
+    const dots = html.match(/composer-combined-picker-trigger-sparkle"/g) ?? []
+    expect(dots.length).toBe(4)
+    expect(html).toContain('left:93%')
+  })
+
+  it('renders no bolt when fast mode is off or the model is not capable', () => {
+    const off = renderToStaticMarkup(
+      createElement(CombinedModelPicker, { ...cursorFastProps, fastModeEnabled: false })
+    )
+    expect(off).not.toContain('composer-combined-picker-trigger-fast-bolt')
+    const incapable = renderToStaticMarkup(
+      createElement(CombinedModelPicker, {
+        ...cursorFastProps,
+        fastModeCapableModelIds: new Set<string>()
+      })
+    )
+    expect(incapable).not.toContain('composer-combined-picker-trigger-fast-bolt')
   })
 })

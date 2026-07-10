@@ -1947,7 +1947,7 @@
 [data-composer-style="grok"] [data-composer-control="model"] .composer-combined-picker-trigger-suffix {
   color: var(--grok-muted) !important;
 }
-[data-composer-style="grok"] [data-composer-control="model"] svg {
+[data-composer-style="grok"] [data-composer-control="model"] svg:not(.composer-combined-picker-trigger-fast-bolt) {
   display: none;
 }
 /* Dropdown chevron — drawn with borders (no extra DOM), monochrome.
@@ -2924,7 +2924,7 @@
 [data-composer-style="cursor"] [data-composer-control="model"]:hover {
   background: var(--cursor-shell-hover);
 }
-[data-composer-style="cursor"] [data-composer-control="model"] svg {
+[data-composer-style="cursor"] [data-composer-control="model"] svg:not(.composer-combined-picker-trigger-fast-bolt) {
   display: none;
 }
 /* Dropdown chevron — drawn with borders (no extra DOM), neutral gray; sits
