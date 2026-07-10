@@ -189,6 +189,8 @@ export interface ComposerProps {
   composerAboveBarStackAuraClass: any
   composerAgentAuraClass: any
   composerAreaRef: any
+  /** Optional host bridge for focusing a secondary Composer after it mounts. */
+  externalComposerTextareaRef?: { current: HTMLTextAreaElement | null }
   composerAriaLabel: any
   composerFileAttachments: any
   composerImageAttachments: any
@@ -446,6 +448,8 @@ export interface ComposerProps {
   workflowMode?: ChatWorkflowMode
   workflowIntervalMinutes: any
   workspaceDiffStats: any
+  /** Hide git/branch above-rows when this Composer has no scoped git state. */
+  showWorkspaceGitAboveRows?: boolean
   workspaces: any
 }
 
@@ -507,6 +511,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     composerAboveBarStackAuraClass,
     composerAgentAuraClass,
     composerAreaRef,
+    externalComposerTextareaRef,
     composerAriaLabel,
     composerFileAttachments,
     composerImageAttachments,
@@ -746,6 +751,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     workflowMode,
     workflowIntervalMinutes,
     workspaceDiffStats,
+    showWorkspaceGitAboveRows = true,
     workspaces
   } = props
   const hasSendablePromptContent = hasAttachmentPromptContent(prompt, imageAttachments)
@@ -963,6 +969,13 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
   // instance. Used by the caret-restore layout effect, the mention/slash
   // popovers (anchor), the context menu, and the slash-token machinery.
   const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null)
+  const bindComposerTextareaRef = React.useCallback(
+    (node: HTMLTextAreaElement | null): void => {
+      composerTextareaRef.current = node
+      if (externalComposerTextareaRef) externalComposerTextareaRef.current = node
+    },
+    [externalComposerTextareaRef]
+  )
   const composerContextMenu = useComposerTextareaContextMenu()
   // Slash-command picker state. Same shape as the mention menu — visibility
   // flag, current filter substring (what comes after the leading `/`), and an
@@ -1520,14 +1533,15 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
   }
 
   const canRenderComposerAboveRowStack = Boolean(
-    (!isCurrentGlobalChat &&
-      currentWorkspace &&
-      (!isWelcomeChat || isCurrentEnsembleChat)) ||
+    queuedMessagesAboveRowEntries.length > 0 ||
+      (!isCurrentGlobalChat &&
+        currentWorkspace &&
+        ((showWorkspaceGitAboveRows && !isWelcomeChat) || isCurrentEnsembleChat)) ||
       (isCurrentGlobalChat && isCurrentEnsembleChat)
   )
   const hasComposerAboveRows =
     canRenderComposerAboveRowStack &&
-    ((!isWelcomeChat && Boolean(currentWorkspace)) ||
+    ((showWorkspaceGitAboveRows && !isWelcomeChat && Boolean(currentWorkspace)) ||
       isCurrentEnsembleChat ||
       queuedMessagesAboveRowEntries.length > 0)
   const nativeNoAboveRowsClass =
@@ -1719,10 +1733,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
               render with empty data), AND global ensemble chats
               get in for the participants strip via the explicit
               second branch. */}
-            {((!isCurrentGlobalChat &&
-              currentWorkspace &&
-              (!isWelcomeChat || isCurrentEnsembleChat)) ||
-              (isCurrentGlobalChat && isCurrentEnsembleChat)) &&
+            {canRenderComposerAboveRowStack &&
               (() => {
                 /* Cursor shell — Create-PR / git / files-changed row sits
                  * ABOVE the merged stack (roster / ensemble / queue), not
@@ -1738,7 +1749,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                 // pinned at the top of the above-composer area. Renders null
                 // unless there's a remote + PR/CI worth surfacing.
                 const githubSatelliteRow =
-                  !isWelcomeChat && currentWorkspace ? (
+                  !isWelcomeChat && currentWorkspace && showWorkspaceGitAboveRows ? (
                     <GitHubSatelliteRow
                       pr={primaryPr}
                       ci={primaryCi}
@@ -1747,7 +1758,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                     />
                   ) : null
                 const primaryWorkspaceAboveBar =
-                  !isWelcomeChat && currentWorkspace ? (
+                  !isWelcomeChat && currentWorkspace && showWorkspaceGitAboveRows ? (
                     <div
                       className={`composer-above-bar style-unified${
                         aboveRowsFloatAboveStack ? ' composer-above-bar--cursor-lead' : ''
@@ -2340,7 +2351,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                       )}
                       <textarea
                         className={`composer-textarea${composerHasMention ? ' has-mention-overlay' : ''}`}
-                        ref={composerTextareaRef}
+                        ref={bindComposerTextareaRef}
                         value={prompt}
                         onContextMenu={composerContextMenu.handleContextMenu}
                         onPaste={(event) => {
@@ -3038,7 +3049,10 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                     : 'Read recent channel messages',
                                   icon: <ChatMediaIcon />,
                                   active: Boolean(currentDiscordContextSelection),
-                                  disabled: isCurrentComposerLocked || !currentChat,
+                                  disabled:
+                                    isCurrentComposerLocked ||
+                                    !currentChat ||
+                                    typeof openDiscordContextPicker !== 'function',
                                   onSelect: openDiscordContextPicker
                                 }
                               ]
@@ -3054,7 +3068,9 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                       label: 'Status',
                                       description: `${currentProviderLabel} safety and setup`,
                                       icon: <TrustSymbolIcon />,
-                                      disabled: workspaceActionDisabled,
+                                      disabled:
+                                        workspaceActionDisabled ||
+                                        typeof openInspectorTab !== 'function',
                                       onSelect: () => openInspectorTab('safety')
                                     },
                                     {
@@ -3062,7 +3078,9 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                       label: 'Diff Studio',
                                       description: `${currentProviderLabel} workspace changes`,
                                       icon: <FileMenuSelectionIcon />,
-                                      disabled: workspaceActionDisabled,
+                                      disabled:
+                                        workspaceActionDisabled ||
+                                        typeof openInspectorTab !== 'function',
                                       onSelect: () => openInspectorTab('diff')
                                     },
                                     {
@@ -3070,7 +3088,9 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                       label: 'Models',
                                       description: `${currentProviderLabel} capability state`,
                                       icon: <ModelSymbolIcon />,
-                                      disabled: workspaceActionDisabled,
+                                      disabled:
+                                        workspaceActionDisabled ||
+                                        typeof openInspectorTab !== 'function',
                                       onSelect: () => openInspectorTab('capabilities')
                                     }
                                   ]
@@ -3087,7 +3107,8 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                       description: `${currentProviderLabel} slash command menu`,
                                       icon: <CommandSymbolIcon />,
                                       active: slashMenuOpen,
-                                      disabled: workspaceActionDisabled,
+                                      disabled:
+                                        workspaceActionDisabled || composerSlashCommands.length === 0,
                                       onSelect: () => openSlashCommandsMenu()
                                     },
                                     {
@@ -3097,7 +3118,10 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                         : 'Review diff',
                                       description: 'Read-only plan-mode review',
                                       icon: <ReviewSymbolIcon />,
-                                      disabled: workspaceActionDisabled || isPreparingDiffReview,
+                                      disabled:
+                                        workspaceActionDisabled ||
+                                        isPreparingDiffReview ||
+                                        typeof handleReviewCurrentDiff !== 'function',
                                       onSelect: () => void handleReviewCurrentDiff()
                                     }
                                   ]

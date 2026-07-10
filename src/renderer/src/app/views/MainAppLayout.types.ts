@@ -343,6 +343,8 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   handleSetWorkflowUnattended: MainAppLayoutSidebarProps['handleSetWorkflowUnattended']
   handleSettingsChange: MainAppLayoutSidebarProps['handleSettingsChange']
   handleSideCancel: any
+  handleSideAgentApprovalAction: any
+  handleRemoveSideImageAttachment: any
   handleSideChatChange: any
   handleSideModelChange: any
   handleSideProviderChange: any
@@ -419,6 +421,7 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   pendingPlanChoice: any
   pendingProposedPlan: any
   pendingQueuedAppRunIds: any
+  patchSideParticipantWithSeatGate: any
   popOutLinkedChat: any
   popoutMenuOpen: any
   popoutMenuRef: any
@@ -552,6 +555,7 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   sideFastModeEnabled: any
   sideGrantServices: any
   sideKimiThinking: any
+  sideImageAttachments: any
   sideLiveRunOutputTokens: any
   sideLogsEndRef: any
   sidePanelAgentIdentity: any

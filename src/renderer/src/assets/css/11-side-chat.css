@@ -2405,7 +2405,7 @@ body.is-resizing-side-chat * {
   top: 56px;
   left: 18px;
   right: 18px;
-  bottom: 208px;
+  bottom: calc(var(--side-chat-composer-height, 218px) + 18px);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -2441,7 +2441,11 @@ body.is-resizing-side-chat * {
 }
 
 .side-chat-type-picker {
-  position: relative;
+  /* Let the open menu anchor to the full side-welcome box rather than this
+   * narrow inline pill. Centering a 320px menu on the pill pushed it left of a
+   * narrow right dock, where `.side-chat-pane { overflow: hidden }` clipped it
+   * under the main pane. */
+  position: static;
   display: inline-block;
   pointer-events: auto;
 }
@@ -2481,12 +2485,16 @@ body.is-resizing-side-chat * {
   background: color-mix(in srgb, var(--accent) 12%, var(--surface-elevated));
 }
 
+.side-chat-welcome:has(.side-chat-type-picker[open]) {
+  z-index: 12;
+}
+
 .side-chat-type-picker-menu {
   position: absolute;
   z-index: 30;
-  top: calc(100% + 8px);
+  top: calc(50% + 28px);
   left: 50%;
-  width: min(320px, 76vw);
+  width: min(320px, calc(100% - 24px));
   transform: translateX(-50%);
   display: grid;
   gap: 4px;
@@ -2548,146 +2556,62 @@ body.is-resizing-side-chat * {
 }
 
 .side-chat-pane .transcript-scroll {
-  padding: 48px 16px 218px;
+  padding: 48px 16px calc(var(--side-chat-composer-height, 218px) + 30px);
 }
 
 .side-chat-pane .transcript-inner {
   max-width: 100%;
 }
 
-.side-chat-composer.composer-surface {
-  position: absolute;
-  z-index: 9;
-  left: 14px;
-  right: 14px;
+/* Linked chats now mount the same Composer component as the main and
+ * Multiview panes. Only the outer docking geometry is side-pane-specific;
+ * model, permission, attachment, roster, workspace and telemetry chrome all
+ * retain the shared shell's native styling and behavior. */
+.side-chat-pane .composer-area {
+  --composer-content-max-width: 100%;
+  left: 0;
+  right: 0;
   bottom: 14px;
-  width: auto;
-  max-width: none;
-  min-height: 0;
-  gap: 6px;
-  overflow: visible;
-}
-
-.side-chat-above-bar-stack.composer-above-bar-stack {
   width: 100%;
-  max-width: none;
-  display: flex;
-  flex-direction: column;
+  padding: 0 14px;
   gap: 6px;
-  margin: 0;
-  pointer-events: auto;
 }
 
-.side-chat-above-bar-stack .queued-messages-above-row {
-  padding: 7px 10px;
-  border-radius: 14px;
-  box-shadow: none;
+.side-chat-pane .composer-surface,
+.side-chat-pane .composer-primary-stack,
+.side-chat-pane .composer-above-bar-stack,
+.side-chat-pane .composer-above-bar {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
 }
 
-.side-chat-above-bar-stack .queued-messages-above-row-list {
+.side-chat-pane .composer-inline-pickers,
+.side-chat-pane .composer-inline-pickers-left,
+.side-chat-pane .composer-telemetry-row {
+  min-width: 0;
+}
+
+.side-chat-pane .composer-inline-pickers-left {
+  flex-wrap: wrap;
+}
+
+/* Multiview changes the central chat grid, not the linked side pane. Keep the
+ * shared Composer control hidden here and retain a no-op handler in the side
+ * context as defense against future CSS changes. */
+.side-chat-pane .composer-multiview-trigger {
+  display: none;
+}
+
+/* Approval decisions from the linked pane deliberately submit a blank intent
+ * override so the focused parent's draft note can never leak across chats.
+ * Hide the note field until note state is keyed per linked chat. */
+.side-chat-pane .composer-permission-note {
+  display: none;
+}
+
+.side-chat-pane .queued-messages-above-row-list {
   max-height: 132px;
-}
-
-.side-chat-inner-module.composer-inner-module {
-  gap: 8px;
-  padding: 10px;
-}
-
-.side-chat-bottom-controls.composer-bottom-controls {
-  min-width: 0;
-}
-
-.side-chat-control-footer.composer-control-footer {
-  gap: 7px;
-  padding-left: 0;
-}
-
-.side-chat-textarea-wrap.composer-textarea-wrap {
-  min-height: 0;
-}
-
-.side-chat-textarea.composer-textarea {
-  width: 100%;
-  min-height: 54px;
-  max-height: 136px;
-  resize: none;
-  font-size: var(--font-size-sm);
-  line-height: 1.42;
-}
-
-.side-chat-textarea.composer-textarea:disabled {
-  cursor: not-allowed;
-  opacity: 0.6;
-}
-
-.side-chat-inline-pickers.composer-inline-pickers {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  min-width: 0;
-}
-
-.side-chat-inline-pickers .composer-inline-pickers-left {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  flex-wrap: wrap;
-}
-
-.side-chat-inline-actions.composer-inline-actions {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  flex: 0 0 auto;
-}
-
-.side-chat-custom-model .composer-inline-input {
-  max-width: 130px;
-}
-
-.side-chat-composer .composer-action-btn {
-  position: static;
-  inset: auto;
-  transform: none;
-  width: 32px;
-  height: 32px;
-  min-width: 32px;
-}
-
-.side-chat-composer .composer-picker-label,
-.side-chat-composer .composer-picker-command,
-.side-chat-composer .composer-provider-button,
-.side-chat-composer .composer-image-picker-btn {
-  min-height: 28px;
-  font-size: var(--font-size-xs);
-}
-
-.side-chat-status {
-  color: var(--text-secondary);
-  font-size: var(--font-size-xs);
-  font-weight: 600;
-}
-
-.side-chat-telemetry-row.composer-telemetry-row {
-  gap: 8px;
-  margin: -1px 4px 0;
-  padding: 1px 2px 0;
-  min-height: 16px;
-  min-width: 0;
-  flex-wrap: wrap;
-  row-gap: 4px;
-}
-
-.side-chat-telemetry-row.composer-telemetry-row .composer-run-timecode {
-  min-width: 0;
-  font-size: var(--font-size-xs);
-}
-
-.side-chat-telemetry-row.composer-telemetry-row .composer-thread-token-tally {
-  min-width: 0;
-  max-width: min(170px, 42%);
 }
 
 @media (max-width: 980px) {
@@ -2716,18 +2640,17 @@ body.is-resizing-side-chat * {
   }
 
   .side-chat-pane .transcript-scroll {
-    padding: 48px 14px 206px;
+    padding: 48px 14px calc(var(--side-chat-composer-height, 206px) + 26px);
   }
 
-  .side-chat-composer.composer-surface {
-    left: 12px;
-    right: 12px;
+  .side-chat-pane .composer-area {
     bottom: 12px;
+    padding-inline: 12px;
   }
 
   .side-chat-welcome {
     top: 54px;
-    bottom: 196px;
+    bottom: calc(var(--side-chat-composer-height, 206px) + 16px);
   }
 }
 

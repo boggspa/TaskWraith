@@ -1,4 +1,4 @@
-import { useCallback, type CSSProperties, type ReactNode } from 'react'
+import { useCallback, useLayoutEffect, useRef, type CSSProperties, type ReactNode } from 'react'
 import {
   EMPTY_CHAT_MESSAGES,
   EMPTY_TRANSCRIPT_FILE_SUMMARIES,
@@ -7,7 +7,19 @@ import {
   NOOP_PLAN_CHOICE_SUBMIT,
   NOOP_PROPOSED_PLAN_CUSTOM
 } from '../../lib/stableEmpties'
-import { handleSideChatComposerKeyDown } from '../../lib/sideChatComposer'
+import { buildSideChatComposerProps } from '../../lib/sideChatComposer'
+import { resolveSlashParticipantForChat } from '../../lib/resolveSlashParticipant'
+import { SIDE_CHAT_SELECTED_PARTICIPANT_ID_METADATA_KEY } from '../../lib/sideChatLifecycle'
+import {
+  MAX_ROSTER_PRESET_PARTICIPANTS,
+  materializeParticipantsFromPresetWithBossman
+} from '../../lib/ensembleRosterPresets'
+import { hydrateParticipantsWithPooledAgentIdentity } from '../../lib/ensembleAgentPool'
+import {
+  ensembleFanoutPolicyEnabled,
+  normalizeEnsembleFanoutPolicy
+} from '../../lib/ensembleFanoutPolicy'
+import { isImageAttachmentPath } from '../../lib/imageAttachments'
 import {
   MIN_RIGHT_PANEL_WIDTH,
   MAX_RIGHT_PANEL_WIDTH,
@@ -16,9 +28,7 @@ import {
 } from '../../lib/panelWidths'
 import { getProviderLabel } from '../../lib/providerLabels'
 import { isGlobalChat } from '../../lib/chatScope'
-import { readPendingProviderChange } from '../../../../main/providerChangeQueue'
 import { RunRailPanel } from '../../components/RunRailPanel'
-import { decideApprovalElevation } from '../../lib/approvalElevation'
 import { Sidebar } from '../../components/Sidebar'
 import { CollapsedSidebarCornerPill } from '../../components/CollapsedSidebarCornerPill'
 import { WorkspaceBoardView } from '../../components/WorkspaceBoardView'
@@ -29,19 +39,14 @@ import { RightDockHome } from '../../components/RightDockHome'
 import { SettingsPanel } from '../../components/SettingsPanel'
 import { SettingsSidebar } from '../../components/SettingsSidebar'
 import {
-  ArrowUpSendIcon,
   AppleTerminalIcon,
   BackToParentIcon,
   ChatPopoutIcon,
-  ClaudeReturnSymbolIcon,
   DockDrawerIcon,
   EndSideChatIcon,
   LinkCircleSymbolIcon,
-  QueueSymbolIcon,
-  RunSymbolIcon,
   SidebarCornerIcon,
   SplitChatIcon,
-  StopSymbolIcon,
   XSymbolIcon
 } from '../../components/AppChromeSymbols'
 import { PinnedMessagesPanel } from '../../components/PinnedMessagesPanel'
@@ -50,15 +55,7 @@ import {
   ChatMediaPreviewOverlay
 } from '../../components/ChatMediaPanel'
 import { FileEditorPanel } from '../../components/FileEditorPanel'
-import { QueuedMessagesAboveRow } from '../../components/QueuedMessagesAboveRow'
-import { ComposerLinkPreviewStrip } from '../../components/ComposerLinkPreviewStrip'
-import { ComposerHighlightOverlay } from '../../components/ComposerHighlightOverlay'
 import { AgentIdentityIcon } from '../../components/icons/AgentIdentityIcon'
-import { CombinedModelPicker } from '../../components/CombinedModelPicker'
-import { CombinedPermissionsPicker } from '../../components/CombinedPermissionsPicker'
-import { ComposerProviderPicker } from '../../components/ComposerProviderPicker'
-import { ComposerTextareaContextMenu } from '../../components/ComposerTextareaContextMenu'
-import { EnsembleParticipantsAboveRow } from '../../components/EnsembleParticipantsAboveRow'
 import type { RawLogEntry } from '../../lib/rawLogEntry'
 import { launchPreviewActionTitle } from '../../lib/launchPreviewTargets'
 import { EMPTY_AGENT_QUESTION_QUEUE } from '../../lib/agentQuestionQueue'
@@ -70,11 +67,6 @@ import {
   SkyFogFilterDefs,
   SkyWeatherVisual
 } from '../../components/FxLayers'
-import { CanvasComposerButton } from '../../components/CanvasComposerButton'
-import { ComposerTimecode } from '../../components/ComposerTimecodes'
-import { ComposerPlanPopoverButton } from '../../components/ComposerPlanPopoverButton'
-import { CopyTranscriptButton } from '../../components/CopyTranscriptButton'
-import { LiveThreadTokenTally } from '../../components/LiveThreadTokenTally'
 import { WelcomeUsageDashboard } from '../../components/WelcomeUsageDashboard'
 import { TranscriptPanel } from '../../components/TranscriptPanel'
 import { ThreadSearchBar } from '../../components/ThreadSearchBar'
@@ -84,14 +76,14 @@ import { MultiviewPaneGrid } from '../../components/MultiviewPaneGrid'
 import { MediaPane } from '../../components/MediaPane'
 import { CanvasPane } from '../../components/CanvasPane'
 import { CanvasPaneLauncher } from '../../components/CanvasPaneLauncher'
-import { Composer } from '../../components/Composer'
+import { Composer, type ComposerProps } from '../../components/Composer'
 import { WorkspaceBoardCreatorSheet } from '../../components/WorkspaceBoardCreatorSheet'
+import { withSessionActivityLedger } from '../../lib/sessionActivityLedger'
 
 import type { MainAppLayoutProps } from './MainAppLayout.types'
 
 export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   const {
-  acknowledgedElevationDefaults,
   activateRightDockTab,
   activeDiff,
   activeRightDockTab,
@@ -164,7 +156,6 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   currentProviderModelOptions,
   currentRun,
   currentWorkspace,
-  currentWorkspacePath,
   cursorProviderAvailable,
   deleteMessageFromChat,
   diffRefreshStatus,
@@ -284,12 +275,11 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   handleSetWorkflowUnattended,
   handleSettingsChange,
   handleSideCancel,
-  handleSideModelChange,
+  handleSideAgentApprovalAction,
+  handleRemoveSideImageAttachment,
   handleSideChatChange,
   handleSideProviderChange,
-  handleSideReasoningChange,
   handleSideRun,
-  handleSideToggleFastMode,
   handleSidebarQuickUpdate,
   handleStartSharedChat,
   handleBlackboardQueuedMessage,
@@ -357,6 +347,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   pendingPlanChoice,
   pendingProposedPlan,
   pendingQueuedAppRunIds,
+  patchSideParticipantWithSeatGate,
   popOutLinkedChat,
   popoutMenuOpen,
   popoutMenuRef,
@@ -401,12 +392,10 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   selectedSideChatTypeOption,
   sessionTrust,
   setChatMediaPanelOpenPreservingTranscript,
-  setChatPromptDraft,
   setDiffView,
   setGeminiTerminalInput,
   setInspectingRunId,
   setJoinSharedChatOpen,
-  setPendingElevation,
   setPopoutMenuOpen,
   setPreviewChatMediaRef,
   setPreviewMenuTarget,
@@ -444,11 +433,9 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   showTerminal,
   showWorkspaceSidebar,
   sideAutoFollowRef,
-  sideCanRun,
   sideChat,
   sideChatIsWelcome,
   sideChatSeedMessageId,
-  sideChatStatusLabel,
   sideChatTokenTally,
   sideChatTypePickerOptions,
   sideChatWelcomeThreadLabel,
@@ -457,24 +444,18 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   sideCodexReasoning,
   sideGrokReasoning,
   sideCursorReasoning,
-  sideComposerContextMenu,
-  sideComposerHasMention,
   sideComposerModelOptions,
   sideComposerProvider,
   sideComposerReasoningOptions,
   sideComposerRunTimecodeStartedAt,
   sideComposerSelectedModel,
-  sideComposerSelectedReasoning,
   sideComposerSelection,
   sideComposerTextareaRef,
   sideContextModelId,
   sideCumulativeRunBaseMs,
   sideDualComposerTelemetry,
-  sideEnabledGrantIds,
-  sideFastModeCapableModelIds,
-  sideFastModeEnabled,
-  sideGrantServices,
   sideKimiThinking,
+  sideImageAttachments,
   sideLiveRunOutputTokens,
   sideLogsEndRef,
   sidePanelAgentIdentity,
@@ -482,7 +463,6 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   sidePanelLayoutClass,
   sidePanelParentChat,
   sidePanelRelation,
-  sidePermissionOptions,
   sidePrompt,
   sideProvider,
   sideQueuedMessagesAboveRowEntries,
@@ -547,12 +527,6 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   workspaceSidebarWidth,
   workspaces
   } = props
-  const sidePendingProviderChange =
-    sideChat && sideChat.chatKind !== 'ensemble' ? readPendingProviderChange(sideChat) : null
-  const sidePendingProviderModelId =
-    typeof sidePendingProviderChange?.providerMetadata?.selectedModelType === 'string'
-      ? sidePendingProviderChange.providerMetadata.selectedModelType
-      : null
   const currentChatAppChatId = currentChat?.appChatId || null
   const handleTranscriptInspectRun = useCallback(
     (runId: string) => {
@@ -628,6 +602,494 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
     },
     [handlePromoteCollaboratorComment, sideChat]
   )
+
+  const sidePaneRef = useRef<HTMLElement | null>(null)
+  const sideComposerAreaRef = useRef<HTMLDivElement | null>(null)
+  const sideGoalButtonRef = useRef<HTMLButtonElement | null>(null)
+  const sideGoalPopoverRef = useRef<HTMLDivElement | null>(null)
+  const sideComposerChatIdRef = useRef<string | null>(sideChat?.appChatId || null)
+  sideComposerChatIdRef.current = sideChat?.appChatId || null
+
+  // The focused composer has an App-owned ResizeObserver. The linked pane is a
+  // simultaneous second surface, so measure it independently and reserve the
+  // matching transcript/welcome clearance without mutating the parent's CSS
+  // variables.
+  useLayoutEffect(() => {
+    if (activeRightDockTab !== 'chat') return
+    const pane = sidePaneRef.current
+    const composer = sideComposerAreaRef.current
+    if (!pane || !composer || typeof ResizeObserver === 'undefined') return
+    const syncHeight = (): void => {
+      pane.style.setProperty(
+        '--side-chat-composer-height',
+        `${Math.ceil(composer.getBoundingClientRect().height)}px`
+      )
+    }
+    syncHeight()
+    const observer = new ResizeObserver(syncHeight)
+    observer.observe(composer)
+    return () => {
+      observer.disconnect()
+      pane.style.removeProperty('--side-chat-composer-height')
+    }
+  }, [activeRightDockTab, sideChat?.appChatId])
+
+  const sideParticipants = sideChat?.ensemble?.participants || []
+  const sideSelectedParticipant = resolveSlashParticipantForChat(sideChat)
+  const sideEnabledParticipants = sideParticipants
+    .filter((participant: any) => participant.enabled !== false)
+    .sort((a: any, b: any) => a.order - b.order)
+  const sideCurrentOrchestrationMode =
+    sideChat?.ensemble?.orchestrationMode === 'continuous' ? 'continuous' : 'turn_bound'
+  const sideActiveOrchestrationMode =
+    sideChat?.ensemble?.activeRound?.orchestrationMode === 'continuous'
+      ? 'continuous'
+      : sideCurrentOrchestrationMode
+  const sideCurrentFanoutPolicy = normalizeEnsembleFanoutPolicy(
+    sideChat?.ensemble?.fanoutPolicy,
+    sideChat?.ensemble?.concurrentModeEnabled
+  )
+  const sideActiveRound = sideChat?.ensemble?.activeRound
+  const sideActiveFanoutPolicy =
+    sideActiveRound?.fanoutPolicy !== undefined || sideActiveRound?.concurrentMode !== undefined
+      ? normalizeEnsembleFanoutPolicy(
+          sideActiveRound?.fanoutPolicy,
+          sideActiveRound?.concurrentMode
+        )
+      : sideCurrentFanoutPolicy
+  const sideComposerAttachments = Array.isArray(sideImageAttachments)
+    ? sideImageAttachments
+    : []
+  const sideComposerImageAttachments = sideComposerAttachments.filter((attachment: any) =>
+    isImageAttachmentPath(attachment.path)
+  )
+  const sideComposerFileAttachments = sideComposerAttachments.filter(
+    (attachment: any) => !isImageAttachmentPath(attachment.path)
+  )
+  const sideRawModelOptions = Array.isArray(sideComposerModelOptions)
+    ? sideComposerModelOptions.filter((option: any) => option.id !== 'custom')
+    : []
+  const sideRawReasoningOptions = Array.isArray(sideComposerReasoningOptions)
+    ? sideComposerReasoningOptions.map((option: any) => ({
+        reasoningEffort: option.value,
+        ...(option.disabled ? { disabled: true } : {}),
+        ...(option.disabledReason ? { disabledReason: option.disabledReason } : {})
+      }))
+    : []
+
+  const persistSideChat = (nextChat: any): void => {
+    chatByIdRef.current.set(nextChat.appChatId, nextChat)
+    if (nextChat.parentChatRelation === 'sideChat') {
+      handleSideChatChange(nextChat)
+    } else {
+      composerCtx.setChats((current: any[]) =>
+        current.map((chat: any) => (chat.appChatId === nextChat.appChatId ? nextChat : chat))
+      )
+    }
+    void window.api.saveChat(nextChat)
+  }
+  const persistSideChatActivity = (nextChat: any): void => {
+    if (!sideChat) return
+    persistSideChat(withSessionActivityLedger(sideChat, nextChat))
+  }
+  const patchSideEnsemble = (patch: Record<string, unknown>): void => {
+    if (!sideChat?.ensemble) return
+    persistSideChatActivity({
+      ...sideChat,
+      ensemble: {
+        ...sideChat.ensemble,
+        ...patch,
+        updatedAt: new Date().toISOString()
+      },
+      updatedAt: new Date().getTime()
+    })
+  }
+  const patchSideParticipant = (
+    participantId: string,
+    patch: Record<string, unknown>
+  ): void => {
+    if (!sideChat?.ensemble) return
+    const nextChat = patchSideParticipantWithSeatGate(sideChat, participantId, patch)
+    if (!nextChat) return
+    persistSideChat(nextChat)
+  }
+  const selectSideParticipant = (participantId: string): void => {
+    if (!sideChat) return
+    persistSideChat({
+      ...sideChat,
+      providerMetadata: {
+        ...(sideChat.providerMetadata || {}),
+        [SIDE_CHAT_SELECTED_PARTICIPANT_ID_METADATA_KEY]: participantId
+      },
+      updatedAt: new Date().getTime()
+    })
+  }
+  const applySideRosterPreset = (preset: any): void => {
+    if (!sideChat?.ensemble || isSideChatRunning) return
+    const materialized = materializeParticipantsFromPresetWithBossman(preset.participants)
+    const participants = hydrateParticipantsWithPooledAgentIdentity(materialized.participants)
+    const firstEnabled =
+      participants.find((participant: any) => participant.enabled !== false) || participants[0]
+    const fanoutPolicy = normalizeEnsembleFanoutPolicy(
+      preset.fanoutPolicy,
+      preset.concurrentModeEnabled
+    )
+    persistSideChatActivity({
+      ...sideChat,
+      providerMetadata: {
+        ...(sideChat.providerMetadata || {}),
+        ...(firstEnabled
+          ? { [SIDE_CHAT_SELECTED_PARTICIPANT_ID_METADATA_KEY]: firstEnabled.id }
+          : {})
+      },
+      ensemble: {
+        ...sideChat.ensemble,
+        orchestrationMode: preset.orchestrationMode,
+        maxParticipants: Math.min(
+          MAX_ROSTER_PRESET_PARTICIPANTS,
+          Math.max(preset.maxParticipants, participants.length, 2)
+        ),
+        ...(typeof preset.maxContinuationHops === 'number'
+          ? { maxContinuationHops: preset.maxContinuationHops }
+          : {}),
+        fanoutPolicy,
+        concurrentModeEnabled: ensembleFanoutPolicyEnabled(fanoutPolicy),
+        ...(typeof preset.ensembleContextChars === 'number'
+          ? { ensembleContextChars: preset.ensembleContextChars }
+          : {}),
+        participants,
+        bossmanParticipantId: materialized.bossmanParticipantId,
+        secondInCommandParticipantId: materialized.secondInCommandParticipantId,
+        bossmanAutoApprovals: undefined,
+        updatedAt: new Date().toISOString()
+      },
+      updatedAt: new Date().getTime()
+    })
+  }
+  const applySidePermissionsToAllParticipants = (): void => {
+    if (!sideChat?.ensemble || !sideSelectedParticipant) return
+    const sourceOverrides = sideSelectedParticipant.permissionOverrides
+    const clonedOverrides = sourceOverrides
+      ? {
+          ...sourceOverrides,
+          ...(sourceOverrides.agenticServices
+            ? { agenticServices: { ...sourceOverrides.agenticServices } }
+            : {}),
+          ...(sourceOverrides.externalPathGrants
+            ? { externalPathGrants: [...sourceOverrides.externalPathGrants] }
+            : {})
+        }
+      : undefined
+    patchSideEnsemble({
+      participants: sideChat.ensemble.participants.map((participant: any) => ({
+        ...participant,
+        permissionPresetId: sideSelectedParticipant.permissionPresetId,
+        permissionOverrides: clonedOverrides
+      }))
+    })
+  }
+  const rebindSideChatWorkspace = (workspace: any): void => {
+    if (!sideChat || !workspace) return
+    persistSideChatActivity({
+      ...sideChat,
+      scope: 'workspace',
+      workspaceId: workspace.id,
+      workspacePath: workspace.path,
+      updatedAt: new Date().getTime()
+    })
+    void refreshProviderMetadata(sideComposerProvider, workspace.path)
+  }
+  const selectNewSideChatWorkspace = async (): Promise<void> => {
+    const workspace = await window.api.selectWorkspace()
+    if (workspace) rebindSideChatWorkspace(workspace)
+  }
+  const makeSideChatGlobal = (): void => {
+    if (!sideChat) return
+    const { workspaceId: _workspaceId, workspacePath: _workspacePath, ...rest } = sideChat
+    persistSideChatActivity({ ...rest, scope: 'global', updatedAt: new Date().getTime() })
+  }
+  const noSideComposerAction = (): void => {}
+
+  const sideComposerCtx = sideChat
+    ? (buildSideChatComposerProps(composerCtx, {
+        prompt: sidePrompt,
+        currentChat: sideChat,
+        currentChatIdRef: sideComposerChatIdRef,
+        currentComposerChatId: sideChat.appChatId,
+        currentComposerMentionParticipants: sideParticipants,
+        currentProvider: sideComposerProvider,
+        currentProviderLabel: getProviderLabel(sideComposerProvider),
+        currentProviderModelOptions: sideRawModelOptions,
+        currentProviderCapabilityWarning: null,
+        composerSlashCommands: [],
+        currentWorkspace: sideWorkspace,
+        currentWorkspacePath: sideWorkspace?.path || sideChat.workspacePath,
+        isCurrentGlobalChat: isGlobalChat(sideChat),
+        isCurrentChatRunning: isSideChatRunning,
+        isCurrentChatLinkedChild: true,
+        isCurrentChatProviderLocked: isSideChatProviderLocked,
+        isCurrentComposerLocked: isSideComposerLocked,
+        isCurrentEnsembleChat: sideChat.chatKind === 'ensemble',
+        isCurrentEnsembleRoundRunning:
+          sideChat.chatKind === 'ensemble' && isSideChatRunning,
+        // Preserve the side pane's purpose-built welcome heading; only the
+        // composer shell is shared, so Composer must not add a second hero.
+        isWelcomeChat: false,
+        isWorkflowChatWelcome: false,
+        isWorkflowComposeChat: false,
+        shouldShowWelcomeStandaloneHeatmaps: false,
+        welcomeHeatmapSlots: [],
+        composerAreaRef: sideComposerAreaRef,
+        externalComposerTextareaRef: sideComposerTextareaRef,
+        composerAriaLabel: 'Linked chat prompt',
+        composerPlaceholder:
+          sideChat.chatKind === 'ensemble'
+            ? 'Ask the side ensemble. @ to direct a participant.'
+            : `Ask ${sidePanelKindLabel.toLowerCase()}`,
+        composerAboveBarStackAuraClass: '',
+        composerAgentAuraClass: '',
+        selectedParticipant: sideSelectedParticipant,
+        effectiveSelectedParticipantId: sideSelectedParticipant?.id || null,
+        ensembleEnabledParticipantsForCurrent: sideEnabledParticipants,
+        ensembleBlendStyle: sideEnabledParticipants.reduce(
+          (style: Record<string, string>, participant: any, index: number) => {
+            if (index < 4) {
+              style[`--ensemble-provider-${index + 1}`] =
+                `var(--provider-${participant.provider}-color)`
+            }
+            return style
+          },
+          {}
+        ),
+        currentEnsembleOrchestrationMode: sideCurrentOrchestrationMode,
+        activeEnsembleOrchestrationMode: sideActiveOrchestrationMode,
+        currentEnsembleFanoutPolicy: sideCurrentFanoutPolicy,
+        activeEnsembleFanoutPolicy: sideActiveFanoutPolicy,
+        currentEnsembleConcurrentMode: ensembleFanoutPolicyEnabled(sideCurrentFanoutPolicy),
+        activeEnsembleConcurrentMode: ensembleFanoutPolicyEnabled(sideActiveFanoutPolicy),
+        currentEnsembleContinuationHops: sideActiveRound?.continuationHops || 0,
+        currentEnsembleMaxContinuationHops: sideChat.ensemble?.maxContinuationHops || 6,
+        currentEnsembleRoundStatus: sideActiveRound?.status,
+        currentEnsembleActiveGoalStatus: sideChat.activeGoal?.status || null,
+        ensembleOllamaContextWarning: null,
+        selectedModelType: sideComposerSelectedModel,
+        selectedComposerModelType: sideComposerSelectedModel,
+        lastNonCustomModelType:
+          sideComposerSelectedModel === 'custom'
+            ? getDefaultModelForProvider(sideComposerProvider)
+            : sideComposerSelectedModel,
+        customModel: sideComposerSelection?.customModel || '',
+        selectedRuntimeProfileId: sideComposerSelection?.runtimeProfileId || null,
+        codexReasoningEffort: sideCodexReasoning,
+        codexReasoningOptions: sideRawReasoningOptions,
+        claudeReasoningEffort: sideClaudeReasoning,
+        claudeReasoningOptions: sideRawReasoningOptions,
+        kimiThinkingEnabled: sideKimiThinking,
+        grokReasoningEffort: sideGrokReasoning,
+        cursorReasoningEffort: sideCursorReasoning,
+        cursorFastMode: Boolean(sideComposerSelection?.cursorFastMode),
+        codexServiceTier: sideComposerSelection?.codexServiceTier || '',
+        claudeFastMode: Boolean(sideComposerSelection?.claudeFastMode),
+        approvalMode: sideComposerSelection?.approvalMode || 'default',
+        workflowMode:
+          sideComposerSelection?.workflowMode ||
+          sideChat.workflowMode ||
+          (sideComposerSelection?.approvalMode === 'plan' ? 'plan' : 'normal'),
+        imageAttachments: sideComposerAttachments,
+        composerImageAttachments: sideComposerImageAttachments,
+        composerFileAttachments: sideComposerFileAttachments,
+        currentActiveGoal: sideChat.activeGoal || null,
+        currentGoalStatus: sideChat.activeGoal?.status || 'empty',
+        currentGoalButtonTitle: sideChat.activeGoal
+          ? `${sideChat.activeGoal.status}: ${sideChat.activeGoal.objective}`
+          : 'Set active goal',
+        goalControlDisabledReason: 'Open this linked chat as the main thread to manage its goal.',
+        goalButtonRef: sideGoalButtonRef,
+        goalPopoverRef: sideGoalPopoverRef,
+        goalPopoverPosition: null,
+        contextMeter: null,
+        contextUsedPercent: 0,
+        contextLabel: 'Linked chat context',
+        onCompactContext: undefined,
+        onCompactParticipant: undefined,
+        compactableParticipantIds: undefined,
+        speakingParticipantId: undefined,
+        contextModelId: sideContextModelId,
+        composerTokenTally: sideChatTokenTally,
+        threadTokenTallyHasValue: sideThreadTokenTallyHasValue,
+        threadTokenTallyTooltip: 'Linked chat token usage',
+        liveRunOutputTokens: sideLiveRunOutputTokens,
+        composerRunTimecodeStartedAt: sideComposerRunTimecodeStartedAt,
+        cumulativeRunBaseMs: sideCumulativeRunBaseMs,
+        dualComposerTelemetry: sideDualComposerTelemetry,
+        workspaceDiffStats: { filesChanged: 0, additions: 0, deletions: 0 },
+        showWorkspaceGitAboveRows: false,
+        composerWorktreeSelection: null,
+        onComposerWorktreeChange: undefined,
+        diffActionMenuOpen: false,
+        setDiffActionMenuOpen: noSideComposerAction,
+        setPrimaryGitSnapshot: noSideComposerAction,
+        handleCreateGithubPr: noSideComposerAction,
+        getCreatePrState: () => ({ status: 'idle' }),
+        onNotifyThreadOfCi: undefined,
+        pendingAgentApproval:
+          pendingAgentApprovalByChatId?.[sideChat.appChatId] || null,
+        queuedMessagesAboveRowEntries: sideQueuedMessagesAboveRowEntries,
+        queuedRunQueueCount: runQueueJobs.filter(
+          (job: any) => job.chatId === sideChat.appChatId && job.status === 'queued'
+        ).length,
+        isCurrentChatBusyForSteer: isSideChatRunning,
+        isSteerBusyForCurrentChat: false,
+        steerIndicatorMessage: null,
+        pendingPlanImport: null,
+        visibleScheduledTasks: [],
+        scheduleControls: null,
+        runtimeProfileControl: null,
+        currentDiscordContextSelection: null,
+        externalPathGrants: [],
+        externalPathRepoMetadata: {},
+        externalGitSnapshots: {},
+        externalPrByPath: {},
+        externalWorkspaceGroups: [],
+        primaryGitSnapshot: null,
+        primaryPr: null,
+        primaryCi: null,
+        humanCollaborationInviteActive: false,
+        humanCollaborationShare: null,
+        humanCollaborationInviteHealth: null,
+        humanCollaborationInviteBusy: false,
+        humanCollaborationInviteLive: false,
+        onCopyHumanCollaborationInvite: undefined,
+        onCopyHumanCollaborationInviteText: undefined,
+        onStopHumanCollaborationSharing: undefined,
+        onOpenHumanCollaborationRemoteSetup: undefined,
+        onRefreshHumanCollaborationInviteHealth: undefined,
+        attachedWindow: null,
+        isAttachingWindow: false,
+        resumeAppWatchSnapshot: null,
+        screenWatchUnavailableReason:
+          'Open this linked chat as the main thread to attach an app window.',
+        handleRun: handleSideRun,
+        handleCancel: handleSideCancel,
+        handleAgentApprovalAction: handleSideAgentApprovalAction,
+        handleProviderChange: handleSideProviderChange,
+        rememberCurrentChatComposerSelection: rememberSideChatComposerSelection,
+        handlePickImages: async () => {
+          const selected = await window.api.selectImageFiles()
+          if (selected?.length) {
+            await composerCtx.addImageAttachmentsToChat(sideChat.appChatId, selected)
+          }
+        },
+        handleRemoveImageAttachment: handleRemoveSideImageAttachment,
+        handleCopyCurrentTranscript: () =>
+          window.api.copyChatMarkdownTranscript(sideChat.appChatId),
+        handleSetAgenticWorkspaceGrant: (service: any, enabled: boolean) =>
+          handleSetSideAgenticWorkspaceGrant(service, enabled),
+        handleEditQueuedMessage: (entryId: string) =>
+          handleEditQueuedMessage(entryId, sideChat),
+        handleDeleteQueuedMessage: (entryId: string) =>
+          handleDeleteQueuedMessage(entryId, sideChat),
+        handleSteerToQueuedMessage: (entryId: string) =>
+          handleSteerToQueuedMessage(entryId, sideChat),
+        handleBlackboardQueuedMessage: (entryId: string) =>
+          handleBlackboardQueuedMessage(entryId, sideChat),
+        handleReorderQueuedMessages,
+        handleSelectExistingWorkspace: rebindSideChatWorkspace,
+        handleSelectWorkspace: selectNewSideChatWorkspace,
+        handleNewGlobalChat: makeSideChatGlobal,
+        handleAddKnownWorkspaceAsSecondary: undefined,
+        handleAddWorkspaceFolder: undefined,
+        handleRemoveExternalPathGrant: undefined,
+        handleRemoveExternalPathGrantsByPath: undefined,
+        handleReorderExternalPathGrants: undefined,
+        handleReviewCurrentDiff: undefined,
+        handleAttachWindow: noSideComposerAction,
+        handleDetachWindow: noSideComposerAction,
+        openDiscordContextPicker: undefined,
+        openInspectorTab: undefined,
+        isEnsembleModeEnabled: false,
+        handleToggleWelcomeEnsemble: noSideComposerAction,
+        handleSelectMultiviewLayout: noSideComposerAction,
+        handlePaletteCommand: () => false,
+        openSideChatFromSlashCommand: () => {
+          window.alert('Nested side chats are unavailable from a linked chat.')
+          return false
+        },
+        setRawLogs: noSideComposerAction,
+        clearImagePermissions: noSideComposerAction,
+        clearPlanImportIfDraftChanged: noSideComposerAction,
+        openPlanImportReview: noSideComposerAction,
+        openGoalPopover: noSideComposerAction,
+        setGoalPopoverOpen: noSideComposerAction,
+        setGoalFromObjective: noSideComposerAction,
+        updateCurrentGoalStatus: noSideComposerAction,
+        markCurrentGoalBlocked: noSideComposerAction,
+        clearCurrentGoal: noSideComposerAction,
+        handleStopWorkSession: noSideComposerAction,
+        setShowWorkSessionSheet: noSideComposerAction,
+        applyEnsembleRosterPreset: applySideRosterPreset,
+        applyEnsemblePermissionsToAllParticipants: applySidePermissionsToAllParticipants,
+        handleSelectParticipant: selectSideParticipant,
+        updateSelectedParticipant: (patch: Record<string, unknown>) => {
+          if (sideSelectedParticipant) patchSideParticipant(sideSelectedParticipant.id, patch)
+        },
+        patchEnsembleParticipantById: patchSideParticipant,
+        updateCurrentEnsembleOrchestrationMode: (mode: string) =>
+          patchSideEnsemble({ orchestrationMode: mode }),
+        updateCurrentEnsembleFanoutPolicy: (policy: any) => {
+          const normalized = normalizeEnsembleFanoutPolicy(policy)
+          patchSideEnsemble({
+            fanoutPolicy: normalized,
+            concurrentModeEnabled: ensembleFanoutPolicyEnabled(normalized)
+          })
+        },
+        updateCurrentEnsembleContextChars: (value: number) =>
+          patchSideEnsemble({
+            ensembleContextChars: Math.max(
+              5_000,
+              Math.min(256_000, Math.round(Number(value) || 0))
+            )
+          }),
+        updateCurrentEnsembleMaxContinuationHops: (value: number) =>
+          patchSideEnsemble({
+            maxContinuationHops: Math.max(1, Math.min(500, Math.round(Number(value) || 0)))
+          }),
+        setCurrentChat: (next: any) => {
+          const updated = typeof next === 'function' ? next(sideChat) : next
+          if (updated) persistSideChat(updated)
+        },
+        setSelectedModelType: noSideComposerAction,
+        setLastNonCustomModelType: noSideComposerAction,
+        setCustomModel: (value: string) =>
+          rememberSideChatComposerSelection({ customModel: value }),
+        setCodexReasoningEffort: noSideComposerAction,
+        setClaudeReasoningEffort: noSideComposerAction,
+        setKimiThinkingEnabled: noSideComposerAction,
+        setGrokReasoningEffort: noSideComposerAction,
+        setCursorReasoningEffort: noSideComposerAction,
+        setCursorFastMode: noSideComposerAction,
+        setCodexServiceTier: noSideComposerAction,
+        setClaudeFastMode: noSideComposerAction,
+        setApprovalMode: noSideComposerAction,
+        setSessionTrust: noSideComposerAction,
+        sessionTrust: sideSelectedPermission === 'full_access',
+        sessionYoloMode: { enabled: false },
+        trustResult: null,
+        trustSelectValue: 'untrusted',
+        geminiWorkspaceTrustReady: true,
+        geminiTrustWriteBusy: false,
+        geminiTrustWriteError: null,
+        persistentSessionNeedsRestart: false,
+        sessionRestartReason: '',
+        markPersistentSessionRestartNeeded: noSideComposerAction,
+        handleTrustWorkspaceClick: noSideComposerAction,
+        handleBridgeCommand: noSideComposerAction,
+        syncPersistentModelSelection: noSideComposerAction,
+        intentNote: '',
+        setIntentNote: noSideComposerAction,
+        openSlashCommandsRequestId: 0
+      } satisfies Partial<ComposerProps>) as ComposerProps)
+    : null
 
   return (
       <div
@@ -1676,6 +2138,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                 {activeRightDockTab === 'chat' && sideChat && (
                   <div className="right-dock-side-chat">
               <aside
+                ref={sidePaneRef}
                 className={`side-chat-pane app-transcript provider-${sideProvider} interface-${interfaceStyle} ${
                   sideChat.chatKind === 'ensemble' ? 'chat-kind-ensemble' : ''
                 } ${sidePanelAgentIdentity ? 'has-linked-agent-identity' : ''}`}
@@ -1873,382 +2336,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
               collapseOlderRounds={settings?.ensembleCollapseOlderRounds}
               providerRates={providerRates}
             />
-            <form
-              className={`side-chat-composer composer-surface side-chat-compact-composer interface-${interfaceStyle}`}
-              onSubmit={(event) => {
-                event.preventDefault()
-                handleSideRun()
-              }}
-            >
-              {(sideQueuedMessagesAboveRowEntries.length > 0 || sideChat.chatKind === 'ensemble') && (
-                <div className="composer-above-bar-stack side-chat-above-bar-stack">
-                  {sideQueuedMessagesAboveRowEntries.length > 0 && (
-                    <QueuedMessagesAboveRow
-                      chat={sideChat}
-                      entries={sideQueuedMessagesAboveRowEntries}
-                      onEdit={(entryId) => handleEditQueuedMessage(entryId, sideChat)}
-                      onDelete={(entryId) => handleDeleteQueuedMessage(entryId, sideChat)}
-                      onSteer={(entryId) => handleSteerToQueuedMessage(entryId, sideChat)}
-                      onAddToBlackboard={(entryId) => handleBlackboardQueuedMessage(entryId, sideChat)}
-                      onReorder={handleReorderQueuedMessages}
-                    />
-                  )}
-                  {sideChat.chatKind === 'ensemble' && (
-                    <EnsembleParticipantsAboveRow
-                      chat={sideChat}
-                      selectedParticipantId={null}
-                      onSelectParticipant={() => {}}
-                      onChatChange={handleSideChatChange}
-                      composerStyle={appearance.composerStyle}
-                      grokAvailable={grokProviderAvailable}
-                      cursorAvailable={cursorProviderAvailable}
-                    />
-                  )}
-                </div>
-              )}
-              <div className="composer-inner-module side-chat-inner-module">
-                <div className="composer-textarea-wrap side-chat-textarea-wrap">
-                  {sideComposerHasMention && (
-                    <ComposerHighlightOverlay
-                      value={sidePrompt}
-                      participants={sideChat.ensemble?.participants}
-                      textareaRef={sideComposerTextareaRef}
-                      syncEpoch={`${appearance.composerStyle}|side|${sideChat.appChatId}`}
-                    />
-                  )}
-                  <textarea
-                    ref={sideComposerTextareaRef}
-                    className={`composer-textarea side-chat-textarea${
-                      sideComposerHasMention ? ' has-mention-overlay' : ''
-                    }`}
-                    value={sidePrompt}
-                    onContextMenu={sideComposerContextMenu.handleContextMenu}
-                    onChange={(event) => setChatPromptDraft(sideChat.appChatId, event.target.value)}
-                    onKeyDown={(event) => handleSideChatComposerKeyDown(event, handleSideRun)}
-                    placeholder={`Ask ${sidePanelKindLabel.toLowerCase()}`}
-                    aria-label="Linked chat prompt"
-                    rows={2}
-                    disabled={!sideCanRun}
-                  />
-                </div>
-                <ComposerTextareaContextMenu
-                  anchor={sideComposerContextMenu.anchor}
-                  spellcheckContext={sideComposerContextMenu.spellcheckContext}
-                  textareaRef={sideComposerTextareaRef}
-                  onValueChange={(value) => setChatPromptDraft(sideChat.appChatId, value)}
-                  onOpenFromElectron={sideComposerContextMenu.openContextMenu}
-                  onClose={() => sideComposerContextMenu.setAnchor(null)}
-                />
-                <ComposerLinkPreviewStrip text={sidePrompt} />
-                <div className="composer-bottom-controls side-chat-bottom-controls">
-                  <div className="composer-control-footer side-chat-control-footer">
-                    <div className="composer-inline-pickers side-chat-inline-pickers">
-                      <div className="composer-inline-pickers-left">
-                        {sideChat.chatKind === 'ensemble' ? (
-                          <span
-                            className="composer-ensemble-mode side-chat-ensemble-mode"
-                            role="group"
-                            aria-label="Side ensemble participants"
-                            title="Side ensemble providers, models, and permissions are configured on the participant row."
-                          >
-                            Ensemble participants
-                          </span>
-                        ) : (
-                          <>
-                            <ComposerProviderPicker
-                              provider={sidePendingProviderChange?.provider || sideComposerProvider}
-                              composerStyle={appearance.composerStyle}
-                              grokAvailable={grokProviderAvailable}
-                              cursorAvailable={cursorProviderAvailable}
-                              providerRunPauses={settings?.providerRunPauses}
-                              onSelect={handleSideProviderChange}
-                              disabled={false}
-                              activeModelId={sidePendingProviderModelId || sideComposerSelectedModel}
-                              title={
-                                sidePendingProviderChange || isSideChatProviderLocked
-                                  ? 'Provider change applies at turn end'
-                                  : isSideChatRunning
-                                    ? 'Choose a provider to queue for turn end'
-                                    : sidePanelRelation === 'subThread'
-                                      ? 'Sub-thread provider'
-                                      : `${sidePanelKindLabel} provider`
-                              }
-                            />
-                            <CombinedModelPicker
-                              provider={sideComposerProvider}
-                              composerStyle={appearance.composerStyle}
-                              modelOptions={sideComposerModelOptions}
-                              selectedModelId={sideComposerSelectedModel}
-                              onSelectModel={handleSideModelChange}
-                              reasoningOptions={sideComposerReasoningOptions}
-                              selectedReasoning={sideComposerSelectedReasoning}
-                              onSelectReasoning={handleSideReasoningChange}
-                              codexReasoningEffort={sideCodexReasoning}
-                              claudeReasoningEffort={sideClaudeReasoning}
-                              grokReasoningEffort={sideGrokReasoning}
-                              cursorReasoningEffort={sideCursorReasoning}
-                              kimiThinkingEnabled={sideKimiThinking}
-                              fastModeCapableModelIds={sideFastModeCapableModelIds}
-                              fastModeEnabled={sideFastModeEnabled}
-                              onToggleFastMode={handleSideToggleFastMode}
-                              disabled={false}
-                            />
-                            {sideComposerSelectedModel === 'custom' &&
-                              sideComposerProvider !== 'kimi' && (
-                                <span className="composer-inline-custom-model side-chat-custom-model">
-                                  <input
-                                    className="composer-inline-input"
-                                    type="text"
-                                    value={sideComposerSelection?.customModel || ''}
-                                    onChange={(event) =>
-                                      rememberSideChatComposerSelection({
-                                        customModel: event.target.value
-                                      })
-                                    }
-                                    placeholder="Model ID"
-                                    disabled={isSideComposerLocked}
-                                  />
-                                  <button
-                                    className="composer-inline-clear"
-                                    type="button"
-                                    onClick={() =>
-                                      rememberSideChatComposerSelection({
-                                        customModel: '',
-                                        selectedModelType: getDefaultModelForProvider(sideComposerProvider)
-                                      })
-                                    }
-                                    disabled={isSideComposerLocked}
-                                    title="Cancel custom model"
-                                    aria-label="Cancel custom model"
-                                  >
-                                    <XSymbolIcon />
-                                  </button>
-                                </span>
-                              )}
-                            <CombinedPermissionsPicker
-                              provider={sideComposerProvider}
-                              composerStyle={appearance.composerStyle}
-                              permissionOptions={sidePermissionOptions}
-                              selectedPermission={sideSelectedPermission}
-                              onSelectPermission={(nextPermissionValue) => {
-                                if (nextPermissionValue === 'full_access') return
-                                const nextPermissionPreset =
-                                  nextPermissionValue === 'plan' ||
-                                  nextPermissionValue === 'read_only' ||
-                                  nextPermissionValue === 'workspace_write'
-                                    ? nextPermissionValue
-                                    : 'default'
-                                const nextApprovalMode =
-                                  nextPermissionPreset === 'plan' ||
-                                  nextPermissionPreset === 'read_only'
-                                    ? 'plan'
-                                    : nextPermissionPreset === 'workspace_write'
-                                      ? 'auto_edit'
-                                      : 'default'
-                                const nextWorkflowMode =
-                                  nextPermissionPreset === 'plan' ? 'plan' : 'normal'
-                                const applySideSelection = (): void => {
-                                  rememberSideChatComposerSelection({
-                                    approvalMode: nextApprovalMode,
-                                    workflowMode: nextWorkflowMode,
-                                    permissionPresetId: nextPermissionPreset
-                                  })
-                                }
-                                const currentApprovalMode =
-                                  sideSelectedPermission === 'plan' ||
-                                  sideSelectedPermission === 'read_only'
-                                    ? 'plan'
-                                    : sideSelectedPermission === 'workspace_write' ||
-                                        sideSelectedPermission === 'full_access'
-                                      ? 'auto_edit'
-                                      : 'default'
-                                const elevation = decideApprovalElevation({
-                                  from: currentApprovalMode,
-                                  to: nextApprovalMode,
-                                  provider: sideComposerProvider,
-                                  workspacePath: currentWorkspacePath,
-                                  acknowledgedDefault: acknowledgedElevationDefaults
-                                })
-                                if (!elevation) {
-                                  applySideSelection()
-                                  return
-                                }
-                                setPendingElevation({
-                                  tier: elevation.tier,
-                                  provider: sideComposerProvider,
-                                  workspaceLabel: currentWorkspace?.displayName ?? null,
-                                  ackKey: elevation.ackKey,
-                                  persistAck: elevation.persistAckOnConfirm,
-                                  toMode: nextApprovalMode,
-                                  permissionPresetId: nextPermissionPreset,
-                                  apply: applySideSelection
-                                })
-                              }}
-                              grantServices={sideGrantServices}
-                              enabledGrantIds={sideEnabledGrantIds}
-                              agenticServices={agenticServices}
-                              onToggleGrant={(service, enabled) =>
-                                void handleSetSideAgenticWorkspaceGrant(service, enabled)
-                              }
-                              onStartTrustedSession={() => {
-                                const applySideTrustedSession = (): void => {
-                                  void window.api
-                                    .trustedSessionSet(
-                                      {
-                                        chatId: sideChat.appChatId,
-                                        provider: sideComposerProvider,
-                                        workspacePath:
-                                          sideWorkspace?.path || sideChat.workspacePath || null,
-                                        runtimeProfileId:
-                                          sideComposerSelection?.runtimeProfileId || null
-                                      },
-                                      true
-                                    )
-                                    .then((result) => {
-                                      if (!result?.enabled) {
-                                        window.alert(
-                                          result?.error ||
-                                            'Trusted Session could not be started for this side chat.'
-                                        )
-                                        return
-                                      }
-                                      rememberSideChatComposerSelection({
-                                        approvalMode: 'auto_edit',
-                                        workflowMode: 'normal',
-                                        permissionPresetId: 'full_access'
-                                      })
-                                    })
-                                }
-                                setPendingElevation({
-                                  tier: 2,
-                                  provider: sideComposerProvider,
-                                  workspaceLabel: currentWorkspace?.displayName ?? null,
-                                  ackKey: `${currentWorkspacePath || '__global__'}|${sideComposerProvider}`,
-                                  persistAck: false,
-                                  toMode: 'auto_edit',
-                                  permissionPresetId: 'full_access',
-                                  apply: applySideTrustedSession
-                                })
-                              }}
-                              onStopTrustedSession={() => {
-                                void window.api.trustedSessionSet(
-                                  {
-                                    chatId: sideChat.appChatId,
-                                    provider: sideComposerProvider,
-                                    workspacePath: sideWorkspace?.path || sideChat.workspacePath || null,
-                                    runtimeProfileId:
-                                      sideComposerSelection?.runtimeProfileId || null
-                                  },
-                                  false
-                                )
-                                rememberSideChatComposerSelection({
-                                  approvalMode: 'auto_edit',
-                                  workflowMode: 'normal',
-                                  permissionPresetId: 'workspace_write'
-                                })
-                              }}
-                              disabled={isSideComposerLocked}
-                            />
-                          </>
-                        )}
-                      </div>
-                      <div className="composer-inline-actions side-chat-inline-actions">
-                        <span className="side-chat-status" aria-live="polite">
-                          {sideChatStatusLabel}
-                        </span>
-                        <span className="composer-send-cluster side-chat-send-cluster">
-                          {isSideChatRunning && (
-                            <button
-                              type="button"
-                              className="composer-action-btn stop-btn"
-                              onClick={() => void handleSideCancel()}
-                              title="Stop linked chat run"
-                              aria-label="Stop linked chat run"
-                            >
-                              <StopSymbolIcon />
-                            </button>
-                          )}
-                          {(!isSideChatRunning || appearance.composerStyle === 'default') && (
-                            <button
-                              type="submit"
-                              className={`composer-action-btn run-btn${
-                                isSideChatRunning ? ' queue' : ''
-                              }`}
-                              disabled={!sideCanRun || !sidePrompt.trim()}
-                              title={
-                                sideCanRun
-                                  ? isSideChatRunning
-                                    ? 'Queue linked chat prompt'
-                                    : 'Run linked chat prompt'
-                                  : 'Linked chat workspace is unavailable'
-                              }
-                              aria-label={
-                                isSideChatRunning
-                                  ? 'Queue linked chat prompt'
-                                  : 'Run linked chat prompt'
-                              }
-                            >
-                              {isSideChatRunning ? (
-                                <QueueSymbolIcon />
-                              ) : appearance.composerStyle === 'claude' ? (
-                                <ClaudeReturnSymbolIcon />
-                              ) : appearance.composerStyle === 'codex' ||
-                                appearance.composerStyle === 'gemini' ||
-                                appearance.composerStyle === 'cursor' ||
-                                appearance.composerStyle === 'grok' ||
-                                appearance.composerStyle === 'kimi' ? (
-                                <ArrowUpSendIcon />
-                              ) : (
-                                <RunSymbolIcon />
-                              )}
-                            </button>
-                          )}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-              <div
-                className="composer-telemetry-row side-chat-telemetry-row"
-                data-has-token-tally={sideThreadTokenTallyHasValue ? 'true' : 'false'}
-              >
-                <ComposerTimecode
-                  running={isSideChatRunning}
-                  startedAt={sideComposerRunTimecodeStartedAt}
-                  cumulativeBaseMs={sideCumulativeRunBaseMs}
-                  composerStyle={appearance.composerStyle}
-                />
-                <ComposerPlanPopoverButton
-                  key={sideChat.appChatId}
-                  chat={sideChat}
-                  composerStyle={appearance.composerStyle}
-                />
-                <CopyTranscriptButton
-                  disabled={sideChat.archived || (sideChat.messages?.length || 0) === 0}
-                  resetKey={sideChat.appChatId}
-                  onCopy={() => window.api.copyChatMarkdownTranscript(sideChat.appChatId)}
-                />
-                <CanvasComposerButton
-                  disabled={!window.api.canvas?.openWindow}
-                  chatId={sideChat.appChatId}
-                />
-                {sideThreadTokenTallyHasValue && (
-                  <LiveThreadTokenTally
-                    baseTally={sideChatTokenTally}
-                    currency={displayCurrency}
-                    dualCostAndRam={sideDualComposerTelemetry}
-                    model={sideContextModelId}
-                    overestimatePercent={overestimatePercent}
-                    provider={sideProvider}
-                    providerRates={providerRates}
-                    running={isSideChatRunning}
-                    liveOutputTokens={sideLiveRunOutputTokens}
-                    title="Linked chat token usage"
-                  />
-                )}
-              </div>
-            </form>
+            {sideComposerCtx && <Composer {...sideComposerCtx} />}
               </aside>
                   </div>
                 )}

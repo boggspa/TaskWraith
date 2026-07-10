@@ -4856,7 +4856,11 @@ function App(): React.JSX.Element {
     return run?.requestedModel || run?.actualModel || chat.requestedModel
   }
 
-  const getChatComposerSelection = (chat: ChatRecord, providerOverride?: ProviderId) => {
+  const getChatComposerSelection = (
+    chat: ChatRecord,
+    providerOverride?: ProviderId,
+    fallbackApprovalMode?: string
+  ) => {
     const provider = providerOverride || getChatProvider(chat)
     const metadata = chat.providerMetadata || {}
     const metadataModel =
@@ -4902,7 +4906,9 @@ function App(): React.JSX.Element {
     const resolvedApprovalMode =
       typeof metadata.approvalMode === 'string'
         ? metadata.approvalMode
-        : chat.settingsSnapshot?.approvalMode || approvalMode
+        : chat.settingsSnapshot?.approvalMode ||
+          fallbackApprovalMode ||
+          (isSubThreadChat(chat) ? 'default' : approvalMode)
     const derivedPermissionPresetId = approvalModeToPermissionPreset(
       resolvedApprovalMode,
       workflowMode
@@ -13619,8 +13625,22 @@ function App(): React.JSX.Element {
     return unsubscribe
   }, [isChatPopoutWindow, setChatPromptDraft])
 
-  const handleSideRun = () => {
-    if (!sideChat || !sidePrompt.trim()) return
+  const handleSideRun = (
+    _overrideModel?: unknown,
+    _existingPrompt?: unknown,
+    dmTargetParticipantId?: string
+  ) => {
+    if (!sideChat) return
+    const sideRunAttachments =
+      imageAttachmentsByChatIdRef.current[sideChat.appChatId] || EMPTY_IMAGE_ATTACHMENTS
+    if (
+      !runRequestHasContent({
+        prompt: sidePrompt,
+        imageAttachments: sideRunAttachments
+      })
+    ) {
+      return
+    }
     const hiddenContextPrompt = getPendingSideChatHiddenContextPrompt(sideChat)
     const requestPrompt = hiddenContextPrompt
       ? buildHiddenSideChatInitialPrompt(hiddenContextPrompt, sidePrompt)
@@ -13639,10 +13659,18 @@ function App(): React.JSX.Element {
     const request = buildRunRequest(undefined, undefined, {
       chat: sideChatForRequest,
       prompt: requestPrompt,
-      imageAttachments: imageAttachmentsByChatIdRef.current[sideChat.appChatId] || EMPTY_IMAGE_ATTACHMENTS
+      imageAttachments: sideRunAttachments,
+      approvalMode: sideSelectedApprovalMode,
+      workflowMode: sideComposerWorkflowMode
     })
+    if (dmTargetParticipantId) request.dmTargetParticipantId = dmTargetParticipantId
     if (hiddenContextPrompt) {
-      request.displayPrompt = sidePrompt
+      request.displayPrompt =
+        sidePrompt.trim() ||
+        attachmentSummary(sideRunAttachments) ||
+        (sideRunAttachments.length === 1
+          ? 'Attached file'
+          : `Attached ${sideRunAttachments.length} files`)
       updateChatById(sideChat.appChatId, (source) => ({
         ...source,
         providerMetadata: {
@@ -16528,12 +16556,17 @@ function App(): React.JSX.Element {
     return null
   }
 
-  const handleAgentApprovalAction = async (requestId: string, action: AgentApprovalAction) => {
+  const handleAgentApprovalAction = async (
+    requestId: string,
+    action: AgentApprovalAction,
+    intentNoteOverride?: string
+  ) => {
     // Order-4 — capture the optional intent note (trimmed) at decision
     // time and pass it down to the IPC, which stamps it onto the ledger
     // row's metadata. Empty stays undefined so we never persist a blank
     // note. Always optional — never gates the decision.
-    const noteForDecision = intentNote.trim() || undefined
+    const noteForDecision = (intentNoteOverride ?? intentNote).trim() || undefined
+    const usesIntentNoteOverride = intentNoteOverride !== undefined
     const pendingRoute = findPendingApprovalRoute(requestId)
     try {
       await window.api.respondAgentApproval(requestId, action, noteForDecision)
@@ -16567,7 +16600,7 @@ function App(): React.JSX.Element {
       const targetChatId = pendingRoute?.chatId || getCurrentComposerStateChatId()
       // Order-4 — reset the intent note so the next queued approval
       // (or the next request entirely) starts with an empty field.
-      setIntentNote('')
+      if (!usesIntentNoteOverride) setIntentNote('')
       if (!targetChatId) {
         setPendingAgentApproval((prev) => (prev?.id === requestId ? null : prev))
       } else if (pendingRoute?.location === 'queue') {
@@ -17318,7 +17351,7 @@ function App(): React.JSX.Element {
           return true
         }
         if (commandId === 'command-palette') {
-          if (target?.closest('.side-chat-composer')) return false
+          if (target?.closest('.side-chat-pane')) return false
           return keyboardActions.requestOpenSlashCommands()
         }
         if (commandId === 'settings') {
@@ -18428,7 +18461,11 @@ function App(): React.JSX.Element {
   const sideComposerSourceChat =
     sideChat && sidePendingProviderChange ? applyProviderChange(sideChat, sidePendingProviderChange) : sideChat
   const sideComposerSelection = sideComposerSourceChat
-    ? getChatComposerSelection(sideComposerSourceChat, getChatProvider(sideComposerSourceChat))
+    ? getChatComposerSelection(
+        sideComposerSourceChat,
+        getChatProvider(sideComposerSourceChat),
+        'default'
+      )
     : null
   const sideComposerProvider =
     sideComposerSelection?.provider ||
@@ -25947,6 +25984,12 @@ function App(): React.JSX.Element {
     handleSetWorkflowUnattended,
     handleSettingsChange,
     handleSideCancel,
+    handleSideAgentApprovalAction: (requestId: string, action: AgentApprovalAction) =>
+      handleAgentApprovalAction(requestId, action, ''),
+    handleRemoveSideImageAttachment: (attachmentId: string) => {
+      if (!sideChat) return
+      handleMultiviewPaneRemoveAttachment(-1, sideChat.appChatId, attachmentId)
+    },
     handleSideChatChange,
     handleSideModelChange,
     handleSideProviderChange,
@@ -26022,6 +26065,7 @@ function App(): React.JSX.Element {
     pendingPlanChoice,
     pendingProposedPlan,
     pendingQueuedAppRunIds,
+    patchSideParticipantWithSeatGate: patchParticipantWithSeatGate,
     popOutLinkedChat,
     popoutMenuOpen,
     popoutMenuRef,
@@ -26158,6 +26202,9 @@ function App(): React.JSX.Element {
     sideCursorFastMode,
     sideGrantServices,
     sideKimiThinking,
+    sideImageAttachments: sideChat
+      ? imageAttachmentsByChatId[sideChat.appChatId] || EMPTY_IMAGE_ATTACHMENTS
+      : EMPTY_IMAGE_ATTACHMENTS,
     sideLiveRunOutputTokens,
     sideLogsEndRef,
     sidePanelAgentIdentity,
