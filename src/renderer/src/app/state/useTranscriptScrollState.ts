@@ -6,6 +6,7 @@ import {
   captureChatScrollState,
   expectedBottomScrollTop,
   hasRecentTranscriptDownwardIntent,
+  isEditableTranscriptKeyTarget,
   isExpectedProgrammaticScroll,
   isTranscriptScrollbarPointer,
   restoreChatScrollStateWhenReady,
@@ -16,6 +17,7 @@ import {
   shouldRepinAfterFrame,
   shouldRepinAfterTranscriptResize,
   shouldRecordScrollbarDownwardIntent,
+  shouldClearScrollbarDownwardIntent,
   shouldShowJumpToLatestPill,
   shouldSnapAfterChatSwitch,
   shouldTreatScrollAsUserScrollAway,
@@ -66,6 +68,9 @@ export function useTranscriptScrollState({
   const scrollbarPointerActiveRef = useRef(false)
   const repinRafIdRef = useRef<number | null>(null)
   const lastTranscriptScrollTopRef = useRef(0)
+  // Updated for every native `scroll` event (not just the coalesced rAF) so a
+  // scrollbar drag that reverses within one frame clears its downward voucher.
+  const lastNativeScrollTopRef = useRef(0)
   const programmaticScrollTargetRef = useRef<number | null>(null)
   const programmaticScrollClearRafRef = useRef<number | null>(null)
   const [unreadFromBottomCount, setUnreadFromBottomCount] = useState(0)
@@ -209,6 +214,7 @@ export function useTranscriptScrollState({
       jumpInFlightRef.current = false
       downwardIntentAtRef.current = 0
       lastTranscriptScrollTopRef.current = nextScrollTop
+      lastNativeScrollTopRef.current = nextScrollTop
       return true
     },
     [clearProgrammaticScrollTarget]
@@ -302,6 +308,7 @@ export function useTranscriptScrollState({
     }
     const onScroll = () => {
       const nextScrollTop = scroller.scrollTop
+      const previousNativeScrollTop = lastNativeScrollTopRef.current
       const expectedProgrammatic = isExpectedProgrammaticScroll({
         expectedScrollTop: programmaticScrollTargetRef.current,
         nextScrollTop
@@ -310,12 +317,22 @@ export function useTranscriptScrollState({
         shouldRecordScrollbarDownwardIntent({
           pointerActive: scrollbarPointerActiveRef.current,
           isProgrammatic: expectedProgrammatic,
-          previousScrollTop: lastTranscriptScrollTopRef.current,
+          previousScrollTop: previousNativeScrollTop,
           nextScrollTop
         })
       ) {
         downwardIntentAtRef.current = Date.now()
+      } else if (
+        shouldClearScrollbarDownwardIntent({
+          pointerActive: scrollbarPointerActiveRef.current,
+          isProgrammatic: expectedProgrammatic,
+          previousScrollTop: previousNativeScrollTop,
+          nextScrollTop
+        })
+      ) {
+        downwardIntentAtRef.current = 0
       }
+      lastNativeScrollTopRef.current = nextScrollTop
       if (
         shouldTreatScrollAsUserScrollAway({
           previousScrollTop: lastTranscriptScrollTopRef.current,
@@ -334,6 +351,7 @@ export function useTranscriptScrollState({
       rafId = requestAnimationFrame(evaluate)
     }
     lastTranscriptScrollTopRef.current = scroller.scrollTop
+    lastNativeScrollTopRef.current = scroller.scrollTop
     scroller.addEventListener('scroll', onScroll, { passive: true })
     return () => {
       scroller.removeEventListener('scroll', onScroll)
@@ -388,6 +406,7 @@ export function useTranscriptScrollState({
         return
       }
       scrollbarPointerActiveRef.current = true
+      lastNativeScrollTopRef.current = scroller.scrollTop
       // Direction is not known until scrollTop moves. Clear any stale wheel /
       // touch / key voucher so the pointer gesture must earn its own intent.
       downwardIntentAtRef.current = 0
@@ -411,6 +430,7 @@ export function useTranscriptScrollState({
     }
 
     const onKeyDown = (event: KeyboardEvent) => {
+      if (isEditableTranscriptKeyTarget(event.target)) return
       if (event.key === 'PageUp' || event.key === 'ArrowUp' || event.key === 'Home') {
         handleScrollIntent(-1)
         return
@@ -420,15 +440,8 @@ export function useTranscriptScrollState({
         return
       }
       if (event.key === 'End') {
-        const focused = event.target as Element | null
-        const isEditable =
-          focused instanceof HTMLInputElement ||
-          focused instanceof HTMLTextAreaElement ||
-          (focused instanceof HTMLElement && focused.isContentEditable)
-        if (!isEditable) {
-          event.preventDefault()
-          handleJumpToLatestRef.current()
-        }
+        event.preventDefault()
+        handleJumpToLatestRef.current()
       }
     }
 

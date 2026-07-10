@@ -8,6 +8,7 @@ import {
   captureChatScrollState,
   expectedBottomScrollTop,
   hasRecentTranscriptDownwardIntent,
+  isEditableTranscriptKeyTarget,
   isExpectedProgrammaticScroll,
   isTranscriptScrollbarPointer,
   normalizeChatScrollState,
@@ -22,6 +23,7 @@ import {
   shouldRepinAfterCodeBlockResize,
   shouldRepinAfterTranscriptResize,
   shouldRecordScrollbarDownwardIntent,
+  shouldClearScrollbarDownwardIntent,
   shouldSnapAfterChatSwitch,
   shouldShowJumpToLatestPill,
   buildCodeBlockResizeEventInit,
@@ -429,6 +431,35 @@ describe('TranscriptScroll', () => {
         ).toBe(false)
       })
 
+      it('clears a downward voucher when the scrollbar reverses in the same frame', () => {
+        let previous = 260
+        let hasDownwardVoucher = false
+        for (const next of [320, 300]) {
+          if (
+            shouldRecordScrollbarDownwardIntent({
+              pointerActive: true,
+              isProgrammatic: false,
+              previousScrollTop: previous,
+              nextScrollTop: next
+            })
+          ) {
+            hasDownwardVoucher = true
+          } else if (
+            shouldClearScrollbarDownwardIntent({
+              pointerActive: true,
+              isProgrammatic: false,
+              previousScrollTop: previous,
+              nextScrollTop: next
+            })
+          ) {
+            hasDownwardVoucher = false
+          }
+          previous = next
+        }
+
+        expect(hasDownwardVoucher).toBe(false)
+      })
+
       it('keeps the verified pointer movement alive for the short post-pointerup grace', () => {
         const intentAt = 10_000
         expect(
@@ -549,6 +580,28 @@ describe('TranscriptScroll', () => {
           })
         ).toBe(false)
       })
+    })
+  })
+
+  describe('editable keyboard targets', () => {
+    it('keeps transcript navigation keys inside text inputs and nested contenteditable nodes', () => {
+      const textarea = {
+        matches: (selector: string) => selector.includes('textarea'),
+        closest: () => null
+      } as unknown as EventTarget
+      const nestedEditable = {
+        matches: () => false,
+        closest: (selector: string) =>
+          selector.includes('[contenteditable="true"]') ? ({} as Element) : null
+      } as unknown as EventTarget
+      const button = {
+        matches: () => false,
+        closest: () => null
+      } as unknown as EventTarget
+
+      expect(isEditableTranscriptKeyTarget(textarea)).toBe(true)
+      expect(isEditableTranscriptKeyTarget(nestedEditable)).toBe(true)
+      expect(isEditableTranscriptKeyTarget(button)).toBe(false)
     })
   })
 

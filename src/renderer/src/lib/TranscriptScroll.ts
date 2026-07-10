@@ -365,6 +365,43 @@ export function shouldRecordScrollbarDownwardIntent(input: {
   return input.nextScrollTop > input.previousScrollTop + 0.5
 }
 
+/**
+ * A scrollbar drag can reverse within one animation frame. Clear the voucher
+ * from its immediately preceding native position, not the older rAF position,
+ * so a `260 → 320 → 300` gesture cannot be mistaken for a downward return.
+ */
+export function shouldClearScrollbarDownwardIntent(input: {
+  pointerActive: boolean
+  isProgrammatic: boolean
+  previousScrollTop: number
+  nextScrollTop: number
+}): boolean {
+  if (!input.pointerActive || input.isProgrammatic) return false
+  if (!Number.isFinite(input.previousScrollTop) || !Number.isFinite(input.nextScrollTop)) {
+    return false
+  }
+  return input.nextScrollTop < input.previousScrollTop - 0.5
+}
+
+/** Keyboard navigation inside transcript-owned editors must stay in the editor. */
+export function isEditableTranscriptKeyTarget(target: EventTarget | null): boolean {
+  const element = target as
+    | (EventTarget & {
+        isContentEditable?: boolean
+        matches?: (selector: string) => boolean
+        closest?: (selector: string) => Element | null
+      })
+    | null
+  if (!element || typeof element.matches !== 'function') return false
+  if (element.matches('input, textarea, select, [role="textbox"]')) return true
+  if (element.isContentEditable) return true
+  return Boolean(
+    element.closest?.(
+      'input, textarea, select, [role="textbox"], [contenteditable=""], [contenteditable="true"], [contenteditable="plaintext-only"]'
+    )
+  )
+}
+
 export function expectedBottomScrollTop(input: {
   scrollHeight: number
   clientHeight: number
