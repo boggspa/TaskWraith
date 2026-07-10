@@ -206,10 +206,53 @@ describe('taskWraithCloseoutMessage', () => {
       startedAt: '2026-07-07T12:00:00.000Z',
       endedAt: '2026-07-07T12:01:00.000Z',
       participants: [
-        { participantId: 'p1', provider: 'codex', role: 'Builder', order: 1, status: 'answered' },
-        { participantId: 'p2', provider: 'claude', role: 'Reviewer', order: 2, status: 'yielded' },
-        { participantId: 'p3', provider: 'cursor', role: '', order: 3, status: 'skipped' },
-        { participantId: 'p4', provider: 'kimi', role: '', order: 4, status: 'failed' }
+        {
+          participantId: 'p1',
+          provider: 'codex',
+          role: 'Builder',
+          order: 1,
+          status: 'answered',
+          model: 'gpt-5.5',
+          reasoningEffort: 'ultracode',
+          permissionPresetId: 'read_only'
+        },
+        {
+          participantId: 'p2',
+          provider: 'claude',
+          role: 'Reviewer',
+          order: 2,
+          status: 'yielded',
+          model: 'claude-fable-5',
+          reasoningEffort: 'max',
+          permissionPresetId: 'read_only'
+        },
+        {
+          participantId: 'p3',
+          provider: 'cursor',
+          role: '',
+          order: 3,
+          status: 'skipped',
+          initialSeatSnapshot: {
+            schemaVersion: 1,
+            provider: 'cursor',
+            model: 'composer-2.5-fast',
+            configuredPermissionPresetId: 'default'
+          }
+        },
+        {
+          participantId: 'p4',
+          provider: 'kimi',
+          role: '',
+          order: 4,
+          status: 'failed',
+          initialSeatSnapshot: {
+            schemaVersion: 1,
+            provider: 'kimi',
+            model: 'kimi-k2.7-code',
+            thinkingEnabled: true,
+            configuredPermissionPresetId: 'plan'
+          }
+        }
       ]
     }
     const runs: ChatRun[] = [
@@ -227,6 +270,14 @@ describe('taskWraithCloseoutMessage', () => {
         startedAt: '2026-07-07T12:00:10.000Z',
         ensembleRoundId: 'round-2',
         ensembleParticipantId: 'p1',
+        actualModel: 'gpt-5.6-sol',
+        permissionPosture: {
+          schemaVersion: 1,
+          presetId: 'workspace_write',
+          externalPathGrantCount: 0,
+          postureHash: 'posture-p1b',
+          signaturePresent: true
+        },
         stats: { input_tokens: 300, output_tokens: 50 }
       },
       {
@@ -249,7 +300,54 @@ describe('taskWraithCloseoutMessage', () => {
     const closeout = buildTaskWraithRoundCloseoutMessage({
       chat: chat({
         chatKind: 'ensemble',
-        ensemble: { activeRound: round } as ChatRecord['ensemble'],
+        ensemble: {
+          activeRound: round,
+          participants: [
+            {
+              id: 'p1',
+              provider: 'codex',
+              enabled: true,
+              role: 'Builder',
+              instructions: '',
+              order: 1,
+              model: 'gpt-5.4',
+              reasoningEffort: 'medium',
+              permissionPresetId: 'default'
+            },
+            {
+              id: 'p2',
+              provider: 'claude',
+              enabled: true,
+              role: 'Reviewer',
+              instructions: '',
+              order: 2,
+              model: 'claude-opus-4-8',
+              reasoningEffort: 'high',
+              permissionPresetId: 'default'
+            },
+            {
+              id: 'p3',
+              provider: 'cursor',
+              enabled: true,
+              role: '',
+              instructions: '',
+              order: 3,
+              model: 'composer-2.5-fast',
+              permissionPresetId: 'default'
+            },
+            {
+              id: 'p4',
+              provider: 'kimi',
+              enabled: true,
+              role: '',
+              instructions: '',
+              order: 4,
+              model: 'kimi-k2.7-code',
+              thinkingEnabled: true,
+              permissionPresetId: 'plan'
+            }
+          ]
+        } as ChatRecord['ensemble'],
         runs
       }),
       round,
@@ -257,14 +355,167 @@ describe('taskWraithCloseoutMessage', () => {
     })
 
     expect(closeout.content).toContain('**Participants**')
-    expect(closeout.content).toContain('| Participant | Turns | Tokens | Status |')
-    expect(closeout.content).toContain('| [@Builder](ensemble-dm://p1) | 2 | 2k | answered |')
-    expect(closeout.content).toContain('| [@Reviewer](ensemble-dm://p2) | 1 | 500 | yielded |')
-    expect(closeout.content).toContain('| [@Cursor](ensemble-dm://p3) | 0 | — | skipped |')
-    expect(closeout.content).toContain('| [@Kimi](ensemble-dm://p4) | 1 | 300 | failed |')
     expect(closeout.content).toContain(
-      '| **Round Total** | 4 | 2k | 1 answered, 1 yielded, 1 skipped, 1 failed |'
+      '| Participant | Provider | Model | Reasoning | Permissions | Turns | Tokens | Status |'
     )
+    expect(closeout.content).toContain(
+      '| [@Builder](ensemble-dm://p1) | Codex | GPT-5.6-Sol | Ultra | Workspace Write | 2 | 2k | ✅ |'
+    )
+    expect(closeout.content).toContain(
+      '| [@Reviewer](ensemble-dm://p2) | Claude | Fable 5 | Max | Read-Only/Recon | 1 | 500 | ✅ |'
+    )
+    expect(closeout.content).toContain(
+      '| [@Cursor](ensemble-dm://p3) | Cursor | Composer 2.5 Fast | — | Default Approval | 0 | — | 💤 |'
+    )
+    expect(closeout.content).toContain(
+      '| [@Kimi](ensemble-dm://p4) | Kimi | K2.7 Code | Thinking | Plan | 1 | 300 | ❌ |'
+    )
+    expect(closeout.content).toContain('| **Round Total** | — | — | — | — | 4 | 2k | **4** |')
     expect(closeout.content).not.toContain('- Tokens:')
+  })
+
+  it('uses compact status icons while retaining the textual round summary', () => {
+    const round: EnsembleRoundState = {
+      roundId: 'round-status-icons',
+      status: 'completed',
+      prompt: 'Exercise every status family',
+      startedAt: '2026-07-07T12:00:00.000Z',
+      endedAt: '2026-07-07T12:01:00.000Z',
+      participants: [
+        { participantId: 'ok', provider: 'codex', role: 'Answered', order: 1, status: 'answered' },
+        {
+          participantId: 'warn',
+          provider: 'claude',
+          role: 'Cancelled',
+          order: 2,
+          status: 'cancelled'
+        },
+        {
+          participantId: 'bad',
+          provider: 'grok',
+          role: 'Unreachable',
+          order: 3,
+          status: 'unreachable'
+        },
+        { participantId: 'idle', provider: 'kimi', role: 'Sleeping', order: 4, status: 'sleeping' }
+      ]
+    }
+    const closeout = buildTaskWraithRoundCloseoutMessage({
+      chat: chat({
+        chatKind: 'ensemble',
+        ensemble: { activeRound: round } as ChatRecord['ensemble']
+      }),
+      round,
+      completedAt: round.endedAt!
+    })
+
+    expect(closeout.content).toContain('[@Answered](ensemble-dm://ok) | Codex |')
+    expect(closeout.content).toMatch(/\[@Answered\].*\| ✅ \|/)
+    expect(closeout.content).toMatch(/\[@Cancelled\].*\| ⚠️ \|/)
+    expect(closeout.content).toMatch(/\[@Unreachable\].*\| ❌ \|/)
+    expect(closeout.content).toMatch(/\[@Sleeping\].*\| 💤 \|/)
+    expect(closeout.content).toContain(
+      '- Participants: 1 contributed; 1 cancelled; 1 unreachable; 1 sleeping.'
+    )
+    expect(closeout.content).toContain('| **Round Total** | — | — | — | — | 0 | — | **4** |')
+  })
+
+  it('reports per-turn seat changes and keeps contributors removed from the live round', () => {
+    const round: EnsembleRoundState = {
+      roundId: 'round-seat-history',
+      status: 'completed',
+      prompt: 'Exercise seat changes',
+      startedAt: '2026-07-07T12:00:00.000Z',
+      endedAt: '2026-07-07T12:03:00.000Z',
+      participants: []
+    }
+    const runs: ChatRun[] = [
+      {
+        runId: 'seat-run-1',
+        provider: 'claude',
+        startedAt: '2026-07-07T12:00:00.000Z',
+        status: 'success',
+        requestedModel: 'claude-fable-5',
+        ensembleRoundId: round.roundId,
+        ensembleParticipantId: 'seat',
+        ensembleRole: 'Lead',
+        ensembleOrder: 1,
+        ensembleSeatSnapshot: {
+          schemaVersion: 1,
+          provider: 'claude',
+          model: 'claude-fable-5',
+          reasoningEffort: 'ultracode',
+          configuredPermissionPresetId: 'default'
+        },
+        permissionPosture: {
+          schemaVersion: 1,
+          presetId: 'default',
+          externalPathGrantCount: 0,
+          postureHash: 'seat-posture-1',
+          signaturePresent: true
+        }
+      },
+      {
+        runId: 'seat-run-2',
+        provider: 'codex',
+        startedAt: '2026-07-07T12:01:00.000Z',
+        status: 'success',
+        actualModel: 'gpt-5.6-sol',
+        ensembleRoundId: round.roundId,
+        ensembleParticipantId: 'seat',
+        ensembleRole: 'Lead',
+        ensembleOrder: 1,
+        ensembleSeatSnapshot: {
+          schemaVersion: 1,
+          provider: 'codex',
+          model: 'gpt-5.6-sol',
+          reasoningEffort: 'high',
+          configuredPermissionPresetId: 'workspace_write'
+        },
+        permissionPosture: {
+          schemaVersion: 1,
+          presetId: 'workspace_write',
+          externalPathGrantCount: 0,
+          postureHash: 'seat-posture-2',
+          signaturePresent: true
+        }
+      },
+      {
+        runId: 'seat-run-3',
+        provider: 'codex',
+        startedAt: '2026-07-07T12:02:00.000Z',
+        status: 'success',
+        actualModel: 'gpt-5.6-sol',
+        ensembleRoundId: round.roundId,
+        ensembleParticipantId: 'seat',
+        ensembleRole: 'Lead',
+        ensembleOrder: 1,
+        ensembleSeatSnapshot: {
+          schemaVersion: 1,
+          provider: 'codex',
+          model: 'gpt-5.6-sol',
+          reasoningEffort: 'high',
+          configuredPermissionPresetId: 'read_only'
+        },
+        permissionPosture: {
+          schemaVersion: 1,
+          presetId: 'read_only',
+          externalPathGrantCount: 0,
+          postureHash: 'seat-posture-3',
+          signaturePresent: true
+        }
+      }
+    ]
+    const closeout = buildTaskWraithRoundCloseoutMessage({
+      chat: chat({ chatKind: 'ensemble', runs }),
+      round,
+      completedAt: round.endedAt!
+    })
+
+    expect(closeout.content).toContain('- Participants: 1 contributed.')
+    expect(closeout.content).toContain(
+      '| [@Lead](ensemble-dm://seat) | Claude → Codex | Fable 5 → GPT-5.6-Sol | Ultracode → High | Default Approval → Workspace Write → Read-Only/Recon | 3 | — | ✅ |'
+    )
+    expect(closeout.content).toContain('| **Round Total** | — | — | — | — | 3 | — | **1** |')
   })
 })

@@ -3,7 +3,12 @@ import type {
   ChatMessage,
   ChatRecord,
   ChatRun,
+  EnsembleParticipantStatus,
+  EnsembleRoundParticipantState,
   EnsembleRoundState,
+  EnsembleSeatSnapshot,
+  PermissionPresetId,
+  ProviderId,
   ToolActivity
 } from '../../../main/store/types'
 import { computeGoalRuntimeTiming } from '../../../main/GoalState'
@@ -13,6 +18,15 @@ import {
   taskWraithRunCloseoutId
 } from '../../../shared/taskWraithCloseout'
 import { formatContextTokens } from './contextWindows'
+import { reasoningDisplayLabel } from './composerChipFormat'
+import { humaniseModelIdCompact } from './modelDisplayName'
+import {
+  DEFAULT_APPROVAL_LABEL,
+  PLAN_LABEL,
+  READ_ONLY_RECON_LABEL,
+  TRUSTED_SESSION_LABEL,
+  WORKSPACE_WRITE_LABEL
+} from './planModeLabels'
 import { getProviderLabel } from './providerLabels'
 import { extractUsageCountsFromCandidate } from './usageStats'
 
@@ -79,6 +93,7 @@ export function buildTaskWraithRoundCloseoutMessage(input: {
 }): ChatMessage {
   const { chat, round, completedAt } = input
   const roundRuns = (chat.runs || []).filter((run) => run.ensembleRoundId === round.roundId)
+  const closeoutParticipants = resolveCloseoutParticipants(chat, round, roundRuns)
   const durationMs = durationBetween(round.startedAt, completedAt)
   const lines = [
     formatWorkedFor(durationMs),
@@ -86,14 +101,14 @@ export function buildTaskWraithRoundCloseoutMessage(input: {
     'Close-out:',
     `- Status: ${formatRoundStatus(round.status)}.`
   ]
-  const participantLine = participantSummaryLine(round)
+  const participantLine = participantSummaryLine(closeoutParticipants)
   if (participantLine) lines.push(`- Participants: ${participantLine}.`)
   const summaryLine = roundSummaryLine(chat, round.roundId)
   if (summaryLine) lines.push(`- Summary: ${summaryLine}`)
   const goalLine = goalSummaryLine(chat.activeGoal, input.now)
   if (goalLine) lines.push(`- Goal: ${goalLine}`)
   lines.push(
-    ...formatParticipantTableSection(round, roundRuns),
+    ...formatParticipantTableSection(chat, closeoutParticipants, roundRuns),
     ...formatCommitTableSection(
       collectCloseoutCommits(
         chat.messages,
@@ -232,8 +247,7 @@ function tokenSummaryLine(runs: ChatRun[]): string | null {
   return total > 0 ? `${formatContextTokens(total)} total` : null
 }
 
-function participantSummaryLine(round: EnsembleRoundState): string | null {
-  const participants = round.participants || []
+function participantSummaryLine(participants: EnsembleRoundParticipantState[]): string | null {
   if (participants.length === 0) return null
   const contributed = participants.filter(
     (participant) => participant.status === 'answered' || participant.status === 'yielded'
@@ -250,11 +264,100 @@ function participantSummaryLine(round: EnsembleRoundState): string | null {
   return parts.join('; ')
 }
 
-function formatParticipantTableSection(round: EnsembleRoundState, roundRuns: ChatRun[]): string[] {
-  const participants = round.participants || []
+const ENSEMBLE_PARTICIPANT_STATUS_SET = new Set<EnsembleParticipantStatus>([
+  'idle',
+  'running',
+  'answered',
+  'yielded',
+  'failed',
+  'skipped',
+  'cancelled',
+  'sleeping',
+  'unreachable'
+])
+
+function resolveCloseoutParticipants(
+  chat: ChatRecord,
+  round: EnsembleRoundState,
+  roundRuns: ChatRun[]
+): EnsembleRoundParticipantState[] {
+  const roundParticipantIds = new Set(
+    (round.participants || []).map((participant) => participant.participantId)
+  )
+  const byId = new Map(
+    (round.participants || []).map((participant) => [participant.participantId, participant])
+  )
+  for (const run of roundRuns) {
+    const participantId = run.ensembleParticipantId
+    if (!participantId) continue
+    const existing = byId.get(participantId)
+    if (existing) {
+      if (!roundParticipantIds.has(participantId)) {
+        byId.set(participantId, {
+          ...existing,
+          status: participantStatusFromRun(chat, run),
+          runId: run.runId
+        })
+      }
+      continue
+    }
+    const snapshot = run.ensembleSeatSnapshot
+    byId.set(participantId, {
+      participantId,
+      provider: snapshot?.provider || run.provider || 'gemini',
+      role: run.ensembleRole || '',
+      order: run.ensembleOrder ?? Number.MAX_SAFE_INTEGER,
+      status: participantStatusFromRun(chat, run),
+      ...(snapshot?.model ? { model: snapshot.model } : {}),
+      ...(snapshot?.reasoningEffort !== undefined
+        ? { reasoningEffort: snapshot.reasoningEffort }
+        : {}),
+      ...(snapshot?.fastModeEnabled !== undefined
+        ? { fastModeEnabled: snapshot.fastModeEnabled }
+        : {}),
+      ...(snapshot?.thinkingEnabled !== undefined
+        ? { thinkingEnabled: snapshot.thinkingEnabled }
+        : {}),
+      ...(snapshot?.serviceTier ? { serviceTier: snapshot.serviceTier } : {}),
+      ...(snapshot
+        ? {
+            permissionPresetId: snapshot.configuredPermissionPresetId,
+            initialSeatSnapshot: snapshot
+          }
+        : {}),
+      runId: run.runId
+    })
+  }
+  return Array.from(byId.values()).sort((left, right) => left.order - right.order)
+}
+
+function participantStatusFromRun(chat: ChatRecord, run: ChatRun): EnsembleParticipantStatus {
+  for (let index = chat.messages.length - 1; index >= 0; index -= 1) {
+    const message = chat.messages[index]
+    if (message.runId !== run.runId) continue
+    const status = message.metadata?.ensembleStatus
+    if (
+      typeof status === 'string' &&
+      ENSEMBLE_PARTICIPANT_STATUS_SET.has(status as EnsembleParticipantStatus)
+    ) {
+      return status as EnsembleParticipantStatus
+    }
+  }
+  if (run.status === 'failed') return 'failed'
+  if (run.status === 'cancelled') return 'cancelled'
+  if (run.status === 'running') return 'running'
+  return 'answered'
+}
+
+function formatParticipantTableSection(
+  chat: ChatRecord,
+  participants: EnsembleRoundParticipantState[],
+  roundRuns: ChatRun[]
+): string[] {
   if (participants.length === 0) return []
   const turnCounts = new Map<string, number>()
   const tokenCounts = new Map<string, number>()
+  const runsByParticipant = new Map<string, ChatRun[]>()
   for (const run of roundRuns) {
     if (!run.ensembleParticipantId) continue
     turnCounts.set(run.ensembleParticipantId, (turnCounts.get(run.ensembleParticipantId) || 0) + 1)
@@ -263,6 +366,10 @@ function formatParticipantTableSection(round: EnsembleRoundState, roundRuns: Cha
       (tokenCounts.get(run.ensembleParticipantId) || 0) +
         extractUsageCountsFromCandidate(run.stats).totalTokens
     )
+    runsByParticipant.set(run.ensembleParticipantId, [
+      ...(runsByParticipant.get(run.ensembleParticipantId) || []),
+      run
+    ])
   }
   const totalTurns = Array.from(turnCounts.values()).reduce((sum, count) => sum + count, 0)
   const totalTokens = Array.from(tokenCounts.values()).reduce((sum, count) => sum + count, 0)
@@ -273,35 +380,212 @@ function formatParticipantTableSection(round: EnsembleRoundState, roundRuns: Cha
     const turns = turnCounts.get(participant.participantId) || 0
     const tokens = tokenCounts.get(participant.participantId) || 0
     const tokenCell = formatParticipantTokenCell(tokens)
-    return `| [@${label}](ensemble-dm://${participant.participantId}) | ${turns} | ${tokenCell} | ${participant.status} |`
+    const participantRuns = [...(runsByParticipant.get(participant.participantId) || [])].sort(
+      (left, right) => Date.parse(left.startedAt) - Date.parse(right.startedAt)
+    )
+    const fallbackSnapshot = participantFallbackSeatSnapshot(participant)
+    const turnConfigurations = participantRuns.map((run) =>
+      participantTurnConfiguration(chat, participant, run)
+    )
+    const providerCell = escapeMarkdownTableCell(
+      formatCellSequence(
+        turnConfigurations.map((configuration) => getProviderLabel(configuration.provider)),
+        getProviderLabel(fallbackSnapshot.provider)
+      )
+    )
+    const modelCell = escapeMarkdownTableCell(
+      formatCellSequence(
+        turnConfigurations.map((configuration) =>
+          configuration.modelId
+            ? formatParticipantModel(configuration.provider, configuration.modelId)
+            : null
+        ),
+        formatParticipantModel(fallbackSnapshot.provider, fallbackSnapshot.model)
+      )
+    )
+    const reasoningCell = escapeMarkdownTableCell(
+      formatCellSequence(
+        turnConfigurations.map((configuration) =>
+          configuration.reasoningCaptured ? formatParticipantReasoning(configuration) : null
+        ),
+        formatParticipantReasoning({
+          provider: fallbackSnapshot.provider,
+          modelId: fallbackSnapshot.model || '',
+          reasoningEffort: fallbackSnapshot.reasoningEffort,
+          thinkingEnabled: fallbackSnapshot.thinkingEnabled
+        })
+      )
+    )
+    const permissionCell = escapeMarkdownTableCell(
+      formatCellSequence(
+        turnConfigurations.map((configuration) =>
+          configuration.permissionPresetId
+            ? formatPermissionPreset(configuration.permissionPresetId)
+            : null
+        ),
+        formatPermissionPreset(fallbackSnapshot.configuredPermissionPresetId)
+      )
+    )
+    const statusCell = formatParticipantStatusIcon(participant.status)
+    return `| [@${label}](ensemble-dm://${participant.participantId}) | ${providerCell} | ${modelCell} | ${reasoningCell} | ${permissionCell} | ${turns} | ${tokenCell} | ${statusCell} |`
   })
   const totalTokenCell = formatParticipantTokenCell(totalTokens)
-  const totalStatusCell = formatStatusCountSummary(participants)
+  const totalStatusCell = `**${participants.length}**`
   rows.push(
-    `| **Round Total** | ${totalTurns} | ${totalTokenCell} | ${totalStatusCell} |`
+    `| **Round Total** | — | — | — | — | ${totalTurns} | ${totalTokenCell} | ${totalStatusCell} |`
   )
   return [
     '',
     '**Participants**',
     '',
-    '| Participant | Turns | Tokens | Status |',
-    '| --- | --- | --- | --- |',
+    '| Participant | Provider | Model | Reasoning | Permissions | Turns | Tokens | Status |',
+    '| --- | --- | --- | --- | --- | --- | --- | --- |',
     ...rows
   ]
 }
 
-function formatParticipantTokenCell(totalTokens: number): string {
-  return totalTokens > 0 ? formatContextTokens(totalTokens) : '—'
+type ParticipantTurnConfiguration = {
+  provider: ProviderId
+  modelId: string
+  reasoningEffort?: string
+  thinkingEnabled?: boolean
+  reasoningCaptured: boolean
+  permissionPresetId?: PermissionPresetId
 }
 
-function formatStatusCountSummary(participants: EnsembleRoundState['participants']): string {
-  const counts = new Map<string, number>()
-  for (const participant of participants) {
-    counts.set(participant.status, (counts.get(participant.status) || 0) + 1)
+function participantFallbackSeatSnapshot(
+  participant: EnsembleRoundParticipantState
+): EnsembleSeatSnapshot {
+  if (participant.initialSeatSnapshot) return participant.initialSeatSnapshot
+  return {
+    schemaVersion: 1,
+    provider: participant.provider,
+    ...(participant.model ? { model: participant.model } : {}),
+    ...(participant.reasoningEffort !== undefined
+      ? { reasoningEffort: participant.reasoningEffort }
+      : {}),
+    ...(participant.fastModeEnabled !== undefined
+      ? { fastModeEnabled: participant.fastModeEnabled }
+      : {}),
+    ...(participant.thinkingEnabled !== undefined
+      ? { thinkingEnabled: participant.thinkingEnabled }
+      : {}),
+    ...(participant.serviceTier ? { serviceTier: participant.serviceTier } : {}),
+    configuredPermissionPresetId: participant.permissionPresetId || 'default'
   }
-  return Array.from(counts.entries())
-    .map(([status, count]) => `${count} ${status}`)
-    .join(', ')
+}
+
+function participantTurnConfiguration(
+  chat: ChatRecord,
+  participant: EnsembleRoundParticipantState,
+  run: ChatRun
+): ParticipantTurnConfiguration {
+  const snapshot = run.ensembleSeatSnapshot
+  const metadata = latestEnsembleMetadataForRun(chat, run.runId)
+  const metadataReasoning =
+    typeof metadata?.ensembleReasoningEffort === 'string'
+      ? metadata.ensembleReasoningEffort
+      : undefined
+  const metadataThinking =
+    typeof metadata?.ensembleThinkingEnabled === 'boolean'
+      ? metadata.ensembleThinkingEnabled
+      : undefined
+  const metadataModel =
+    typeof metadata?.ensembleModel === 'string' ? metadata.ensembleModel : undefined
+  const provider =
+    run.providerReroute?.to || snapshot?.provider || run.provider || participant.provider
+  return {
+    provider,
+    modelId: run.actualModel || snapshot?.model || run.requestedModel || metadataModel || '',
+    reasoningEffort: snapshot?.reasoningEffort ?? metadataReasoning,
+    thinkingEnabled: snapshot?.thinkingEnabled ?? metadataThinking,
+    reasoningCaptured:
+      Boolean(snapshot) ||
+      metadataReasoning !== undefined ||
+      metadataThinking !== undefined ||
+      typeof metadata?.ensembleProvider === 'string',
+    permissionPresetId: run.permissionPosture?.presetId || snapshot?.configuredPermissionPresetId
+  }
+}
+
+function latestEnsembleMetadataForRun(
+  chat: ChatRecord,
+  runId: string
+): ChatMessage['metadata'] | undefined {
+  for (let index = chat.messages.length - 1; index >= 0; index -= 1) {
+    const message = chat.messages[index]
+    if (message.runId === runId && message.metadata) return message.metadata
+  }
+  return undefined
+}
+
+function formatParticipantModel(provider: ProviderId, modelId?: string): string {
+  if (!modelId) return '—'
+  return humaniseModelIdCompact(provider, modelId) || modelId
+}
+
+function formatCellSequence(values: Array<string | null | undefined>, fallback: string): string {
+  const compact: string[] = []
+  for (const rawValue of values) {
+    const value = rawValue?.trim()
+    if (!value || compact[compact.length - 1] === value) continue
+    compact.push(value)
+  }
+  return compact.length > 0 ? compact.join(' → ') : fallback
+}
+
+function formatParticipantReasoning(input: {
+  provider: ProviderId
+  modelId: string
+  reasoningEffort?: string
+  thinkingEnabled?: boolean
+}): string {
+  const label = reasoningDisplayLabel({
+    provider: input.provider,
+    composerStyle: 'default',
+    modelId: input.modelId,
+    modelLabel: '',
+    codexReasoningEffort: input.provider === 'codex' ? input.reasoningEffort : undefined,
+    claudeReasoningEffort: input.provider === 'claude' ? input.reasoningEffort : undefined,
+    grokReasoningEffort: input.provider === 'grok' ? input.reasoningEffort : undefined,
+    cursorReasoningEffort: input.provider === 'cursor' ? input.reasoningEffort : undefined,
+    kimiThinkingEnabled: input.provider === 'kimi' ? input.thinkingEnabled : undefined
+  })
+  if (label) return label
+
+  if (input.provider === 'kimi') {
+    return input.thinkingEnabled === false ? 'Off' : 'Default'
+  }
+  if (input.provider === 'codex' || input.provider === 'claude') {
+    return input.reasoningEffort?.toLowerCase() === 'off' ? 'Off' : 'Default'
+  }
+  if ((input.provider === 'grok' || input.provider === 'cursor') && input.reasoningEffort) {
+    if (input.reasoningEffort.toLowerCase() === 'off') return 'Off'
+    return input.reasoningEffort
+      .replace(/[_-]+/g, ' ')
+      .replace(/\b\w/g, (character) => character.toUpperCase())
+  }
+  return '—'
+}
+
+function formatPermissionPreset(presetId: PermissionPresetId): string {
+  if (presetId === 'read_only') return READ_ONLY_RECON_LABEL
+  if (presetId === 'plan') return PLAN_LABEL
+  if (presetId === 'workspace_write') return WORKSPACE_WRITE_LABEL
+  if (presetId === 'full_access') return TRUSTED_SESSION_LABEL
+  if (presetId === 'custom') return 'Custom'
+  return DEFAULT_APPROVAL_LABEL
+}
+
+function formatParticipantStatusIcon(status: EnsembleParticipantStatus): string {
+  if (status === 'answered' || status === 'yielded') return '✅'
+  if (status === 'failed' || status === 'unreachable') return '❌'
+  if (status === 'idle' || status === 'skipped' || status === 'sleeping') return '💤'
+  return '⚠️'
+}
+
+function formatParticipantTokenCell(totalTokens: number): string {
+  return totalTokens > 0 ? formatContextTokens(totalTokens) : '—'
 }
 
 const CLOSEOUT_COMMIT_TABLE_LIMIT = 8
