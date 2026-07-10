@@ -14,6 +14,7 @@ import { anchorPendingAgentQuestionMarkers } from './lib/agentQuestionMarkerAnch
 import { mergeWorkflowTelemetryIntoMessages } from './lib/workflowTelemetryMessages'
 import { mergeReviewTelemetryIntoMessages } from './lib/reviewTelemetryMessages'
 import { mergeMultiAgentTelemetryIntoMessages } from './lib/multiAgentTelemetryMessages'
+import { rawLogPayloadForStringify } from './lib/rawLogPayload'
 import { resolveAssistantDeltaTarget } from './lib/assistantDeltaTarget'
 import { mergeTranscriptMediaRefs } from './lib/transcriptMediaRefs'
 import { shouldPreferLiveAssistantContent } from './lib/chatUpdatedAssistantMerge'
@@ -11980,7 +11981,11 @@ function App(): React.JSX.Element {
         }
 
         if (event.type === 'raw_event') {
-          const redacted = redactLog(JSON.stringify(event.data, null, 2))
+          // Truncate pathological string fields (100KB+ cumulative thinking
+          // re-sends) BEFORE the pretty stringify + redact pass — the raw
+          // panel keeps head+tail with an elision marker, and the per-line
+          // cost stops growing with accumulated trace length.
+          const redacted = redactLog(JSON.stringify(rawLogPayloadForStringify(event.data), null, 2))
           handleGeminiCapacityExhaustion(
             effectiveRunProvider,
             runContext,
@@ -12048,7 +12053,10 @@ function App(): React.JSX.Element {
           return
         }
         if (event.type === 'malformed_json') {
-          appendThreadRawLog(runChatId, { type: 'stdout', content: redactLog(event.text) })
+          appendThreadRawLog(runChatId, {
+            type: 'stdout',
+            content: redactLog(rawLogPayloadForStringify(event.text) as string)
+          })
           return
         }
         if (event.type === 'assistant_media_refs') {
