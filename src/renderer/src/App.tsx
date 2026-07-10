@@ -13,6 +13,7 @@ import { deepEqual, messagesRenderEqual } from './lib/messagesRenderEqual'
 import { anchorPendingAgentQuestionMarkers } from './lib/agentQuestionMarkerAnchor'
 import { mergeWorkflowTelemetryIntoMessages } from './lib/workflowTelemetryMessages'
 import { mergeReviewTelemetryIntoMessages } from './lib/reviewTelemetryMessages'
+import { mergeMultiAgentTelemetryIntoMessages } from './lib/multiAgentTelemetryMessages'
 import { resolveAssistantDeltaTarget } from './lib/assistantDeltaTarget'
 import { mergeTranscriptMediaRefs } from './lib/transcriptMediaRefs'
 import { shouldPreferLiveAssistantContent } from './lib/chatUpdatedAssistantMerge'
@@ -12531,6 +12532,17 @@ function App(): React.JSX.Element {
             // `codex_review` anchor activity so the review card updates in place.
             if (event.toolUseId) {
               updated.messages = mergeReviewTelemetryIntoMessages(
+                updated.messages,
+                event.toolUseId,
+                event.telemetry
+              )
+            }
+          } else if (event.type === 'multi_agent_telemetry') {
+            // Codex native Multi-agent live status. Merge onto the synthesized
+            // `codex_multi_agent` anchor so the orchestration card updates in
+            // place; coordination never becomes a generic tool row.
+            if (event.toolUseId) {
+              updated.messages = mergeMultiAgentTelemetryIntoMessages(
                 updated.messages,
                 event.toolUseId,
                 event.telemetry

@@ -785,4 +785,36 @@ describe('GeminiStreamAdapter', () => {
     )
     expect(events).not.toContainEqual(expect.objectContaining({ type: 'tool_event' }))
   })
+
+  it('converts a multi_agent_event compat line into a multi_agent_telemetry event', () => {
+    const events: unknown[] = []
+    const adapter = new GeminiStreamAdapter((event) => events.push(event))
+
+    adapter.appendChunk(
+      JSON.stringify({
+        type: 'multi_agent_event',
+        tool_id: 'ma_1',
+        provider: 'codex',
+        multiAgent: {
+          status: 'working',
+          detailLevel: 'full',
+          subagents: [{ id: 'call_a', agentThreadId: 'thread-a', status: 'working' }]
+        }
+      }) + '\n'
+    )
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'multi_agent_telemetry',
+        toolUseId: 'ma_1',
+        telemetry: expect.objectContaining({
+          status: 'working',
+          detailLevel: 'full',
+          provider: 'codex'
+        })
+      })
+    )
+    // Coordination never leaks into the generic tool viewport.
+    expect(events).not.toContainEqual(expect.objectContaining({ type: 'tool_event' }))
+  })
 })

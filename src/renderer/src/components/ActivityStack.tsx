@@ -32,8 +32,10 @@ import {
 import { deriveChildAgentThreadsFromActivities } from '../lib/ChildAgentThreads'
 import { isClaudeWorkflowToolName } from '../../../shared/claudeWorkflow'
 import { isCodexReviewToolName } from '../../../shared/codexReview'
+import { isCodexMultiAgentToolName } from '../../../shared/codexMultiAgent'
 import { WorkflowCard } from './WorkflowCard'
 import { ReviewCard } from './ReviewCard'
+import { CodexMultiAgentCard } from './CodexMultiAgentCard'
 import { hasExpandableDetail } from '../lib/ActivityRenderMode'
 import { inlineStatsForActivity } from '../lib/ActivityInlineStats'
 import { displayPathRelativeToWorkspace } from '../lib/ActivityPathDisplay'
@@ -1421,6 +1423,7 @@ function isGroupableActivity(activity: ToolActivity): boolean {
   // accumulated workflow telemetry (how non-Claude providers surface).
   if (activity.workflowSummary || isClaudeWorkflowToolName(activity.toolName)) return false
   if (activity.reviewSummary || isCodexReviewToolName(activity.toolName)) return false
+  if (activity.multiAgentSummary || isCodexMultiAgentToolName(activity.toolName)) return false
   return true
 }
 
@@ -2607,6 +2610,22 @@ export function ActivityStack({
     ) {
       return (
         <ReviewCard key={item.activity.id} activity={item.activity} provider={workflowProvider} />
+      )
+    }
+    // Codex native Multi-agent episodes get their orchestration card in the
+    // same slot, anchored to the synthesized `codex_multi_agent` activity
+    // (presence of multiAgentSummary telemetry) or its tool name (pinned to
+    // codex). Coordination events never render as generic tool rows.
+    if (
+      item.activity.multiAgentSummary ||
+      (isCodexMultiAgentToolName(item.activity.toolName) && workflowProvider === 'codex')
+    ) {
+      return (
+        <CodexMultiAgentCard
+          key={item.activity.id}
+          activity={item.activity}
+          provider={workflowProvider}
+        />
       )
     }
     const thread = threadByParentId.get(item.activity.id)

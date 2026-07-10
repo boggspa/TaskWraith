@@ -3327,6 +3327,52 @@
   color: var(--text-secondary);
 }
 
+/* Native orchestration — determinate progress (Codex Multi-agent). Width is
+ * driven inline from REAL observed subagent transitions (settled/observed);
+ * the indeterminate sweep above stays the honest default when no counts are
+ * available. Provider-tinted like the rest of the card chrome. */
+.claude-workflow-card-progress span.determinate {
+  background: linear-gradient(
+    90deg,
+    var(--provider-accent, var(--accent)),
+    color-mix(in srgb, var(--provider-accent, var(--accent)) 45%, white)
+  );
+  transition: width 0.35s ease;
+}
+
+/* Codex Multi-agent card — subagent chips reuse the phase-chip shape with a
+ * per-subagent lifecycle tint + a small state suffix. */
+.multi-agent-card-agent {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.multi-agent-card-agent.status-working {
+  color: color-mix(in srgb, var(--tool-running) 70%, var(--text-primary) 30%);
+  background: color-mix(in srgb, var(--tool-running) 12%, transparent);
+}
+.multi-agent-card-agent.status-completed {
+  color: color-mix(in srgb, var(--success) 70%, var(--text-primary) 30%);
+  background: color-mix(in srgb, var(--success) 12%, transparent);
+}
+.multi-agent-card-agent.status-failed,
+.multi-agent-card-agent.status-interrupted {
+  color: color-mix(in srgb, var(--danger) 70%, var(--text-primary) 30%);
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+}
+.multi-agent-card-agent-state {
+  font-size: calc(var(--font-size-xs) - 2px);
+  opacity: 0.75;
+}
+
+/* Evidence-level note ("delegation detected…" / "synthesized their results"). */
+.multi-agent-card-note {
+  margin-top: 7px;
+  font-size: calc(var(--font-size-xs) - 1px);
+  color: var(--text-tertiary);
+  line-height: 1.45;
+}
+
 .child-agent-thread {
   margin: 6px 0 4px 24px;
   border-radius: var(--radius-md);

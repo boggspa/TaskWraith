@@ -1,6 +1,7 @@
 import { coerceRunItemEvents, type RunItemEvent } from '../../../shared/runItemEvents'
 import type { ClaudeWorkflowTelemetry } from '../../../shared/claudeWorkflow'
 import type { CodexReviewTelemetry } from '../../../shared/codexReview'
+import type { CodexMultiAgentTelemetry } from '../../../shared/codexMultiAgent'
 import type {
   ContextCompactionSignalKind,
   ContextCompactionTelemetry
@@ -40,6 +41,14 @@ export type NormalizedEvent =
   // Codex native-review status, keyed back to the synthesized `codex_review`
   // anchor by tool_use id. Merged onto that activity's `reviewSummary`.
   | { type: 'review_telemetry'; toolUseId?: string; telemetry: Partial<CodexReviewTelemetry> }
+  // Codex native Multi-agent episode status, keyed back to the synthesized
+  // `codex_multi_agent` anchor by tool_use id. Merged onto that activity's
+  // `multiAgentSummary` to drive the Codex Multi-agent card.
+  | {
+      type: 'multi_agent_telemetry'
+      toolUseId?: string
+      telemetry: Partial<CodexMultiAgentTelemetry>
+    }
   // Provider context-window compaction (src/shared/contextCompaction.ts) —
   // rides its own compat line so it can never enter the assistant-text lanes.
   // The renderer appends a persisted `contextCompaction` system card for
@@ -159,6 +168,29 @@ export class GeminiStreamAdapter {
           typeof parsed.provider === 'string' && parsed.provider && !review.provider
             ? { ...review, provider: parsed.provider }
             : review
+      })
+      return
+    }
+
+    // Codex native Multi-agent episode status rides its own compat line, same
+    // shape/pattern as workflow_event/review_event — intercept before the
+    // tool-event paths so coordination never becomes a generic tool row.
+    if (parsed.type === 'multi_agent_event') {
+      const multiAgent =
+        parsed.multiAgent &&
+        typeof parsed.multiAgent === 'object' &&
+        !Array.isArray(parsed.multiAgent)
+          ? parsed.multiAgent
+          : {}
+      this.onEvent({
+        type: 'multi_agent_telemetry',
+        ...(typeof parsed.tool_id === 'string' && parsed.tool_id
+          ? { toolUseId: parsed.tool_id }
+          : {}),
+        telemetry:
+          typeof parsed.provider === 'string' && parsed.provider && !multiAgent.provider
+            ? { ...multiAgent, provider: parsed.provider }
+            : multiAgent
       })
       return
     }

@@ -367,6 +367,67 @@ describe('ActivityStack Codex review card', () => {
   })
 })
 
+describe('ActivityStack Codex Multi-agent card', () => {
+  function makeMultiAgentActivity(overrides: Partial<ToolActivity> = {}): ToolActivity {
+    return {
+      id: 'ma_1',
+      toolName: 'codex_multi_agent',
+      displayName: 'Codex Multi-agent',
+      category: 'task',
+      status: 'running',
+      multiAgentSummary: {
+        provider: 'codex',
+        status: 'working',
+        detailLevel: 'full',
+        subagents: [
+          {
+            id: 'call_a',
+            agentThreadId: 'thread-a',
+            agentPath: '/root/audit_css',
+            taskName: 'audit_css',
+            status: 'working'
+          }
+        ]
+      },
+      ...overrides
+    }
+  }
+
+  it('renders the Multi-agent card for a codex_multi_agent activity with telemetry', () => {
+    const html = renderToStaticMarkup(
+      <ActivityStack activities={[makeMultiAgentActivity()]} provider="codex" />
+    )
+    expect(html).toContain('multi-agent-card')
+    expect(html).toContain('Codex Multi-agent')
+    expect(html).toContain('audit_css')
+    expect(html).toContain('data-provider="codex"')
+  })
+
+  it('does not render a Multi-agent card for a non-codex provider on name alone', () => {
+    const html = renderToStaticMarkup(
+      <ActivityStack
+        activities={[makeMultiAgentActivity({ multiAgentSummary: undefined })]}
+        provider="claude"
+      />
+    )
+    expect(html).not.toContain('multi-agent-card')
+  })
+
+  it('keeps the Multi-agent card inline (not swept into a compact group)', () => {
+    const html = renderToStaticMarkup(
+      <ActivityStack
+        activities={[
+          makeMultiAgentActivity({ id: 'ma_1', status: 'success' }),
+          makeMultiAgentActivity({ id: 'ma_2', status: 'success' })
+        ]}
+        provider="codex"
+      />
+    )
+    expect(html.split('multi-agent-card"').length - 1 + html.split('multi-agent-card ').length - 1).toBeGreaterThanOrEqual(2)
+    expect(html).not.toContain('used 2 tools')
+  })
+})
+
 describe('ActivityStack live activity viewport', () => {
   it('wraps settled tool stacks in the viewport when enabled', () => {
     const html = renderToStaticMarkup(
