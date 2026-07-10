@@ -2,9 +2,11 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import {
   ENSEMBLE_CHIP_GRID_TRACKS,
+  EnsembleParticipantAuthorityControls,
   EnsembleParticipantsAboveRow,
   computeEnsembleChipGridSpans,
   computeEnsembleChipRowDistribution,
+  resolveEnsembleParticipantAuthorityPatch,
   resolveParticipantSelectionAfterRemoval
 } from './EnsembleParticipantsAboveRow'
 import type { ChatRecord, EnsembleParticipant } from '../../../main/store/types'
@@ -46,6 +48,149 @@ function makeChat(participants: EnsembleParticipant[]): ChatRecord {
 }
 
 describe('EnsembleParticipantsAboveRow', () => {
+  describe('participant authority controls', () => {
+    const autoApprovals = {
+      enabled: true,
+      mode: 'permission_preset_once' as const,
+      confirmedAt: '2026-07-10T03:00:00.000Z'
+    }
+
+    it('moves Boss and Captain atomically while preserving thread-wide consent', () => {
+      expect(
+        resolveEnsembleParticipantAuthorityPatch(
+          {
+            bossmanParticipantId: 'boss',
+            secondInCommandParticipantId: 'captain',
+            bossmanAutoApprovals: autoApprovals
+          },
+          'captain',
+          'boss'
+        )
+      ).toEqual({
+        bossmanParticipantId: 'captain',
+        secondInCommandParticipantId: undefined,
+        bossmanAutoApprovals: autoApprovals
+      })
+
+      expect(
+        resolveEnsembleParticipantAuthorityPatch(
+          {
+            bossmanParticipantId: 'boss',
+            secondInCommandParticipantId: 'captain',
+            bossmanAutoApprovals: autoApprovals
+          },
+          'boss',
+          'captain'
+        )
+      ).toEqual({
+        bossmanParticipantId: undefined,
+        secondInCommandParticipantId: 'boss',
+        bossmanAutoApprovals: autoApprovals
+      })
+    })
+
+    it('clears only this participant authority and drops consent after the final leader', () => {
+      expect(
+        resolveEnsembleParticipantAuthorityPatch(
+          {
+            bossmanParticipantId: 'boss',
+            secondInCommandParticipantId: 'captain',
+            bossmanAutoApprovals: autoApprovals
+          },
+          'boss',
+          'agent'
+        )
+      ).toEqual({
+        bossmanParticipantId: undefined,
+        secondInCommandParticipantId: 'captain',
+        bossmanAutoApprovals: autoApprovals
+      })
+
+      expect(
+        resolveEnsembleParticipantAuthorityPatch(
+          {
+            bossmanParticipantId: undefined,
+            secondInCommandParticipantId: 'captain',
+            bossmanAutoApprovals: autoApprovals
+          },
+          'captain',
+          'agent'
+        )
+      ).toEqual({
+        bossmanParticipantId: undefined,
+        secondInCommandParticipantId: undefined,
+        bossmanAutoApprovals: undefined
+      })
+    })
+
+    it('normalizes malformed legacy authority overlap', () => {
+      expect(
+        resolveEnsembleParticipantAuthorityPatch(
+          {
+            bossmanParticipantId: 'leader',
+            secondInCommandParticipantId: 'leader',
+            bossmanAutoApprovals: autoApprovals
+          },
+          'agent',
+          'agent'
+        )
+      ).toEqual({
+        bossmanParticipantId: 'leader',
+        secondInCommandParticipantId: undefined,
+        bossmanAutoApprovals: autoApprovals
+      })
+    })
+
+    it('renders shared pill toggles and one three-way radio control without checkboxes', () => {
+      const html = renderToStaticMarkup(
+        <EnsembleParticipantAuthorityControls
+          participantLabel="Claude Fable 5"
+          enabled
+          authority="agent"
+          hasLeadership
+          autoApprovalsEnabled
+          locked={false}
+          onEnabledChange={() => undefined}
+          onAuthorityChange={() => undefined}
+          onAutoApprovalsChange={() => undefined}
+        />
+      )
+
+      expect(html).not.toContain('type="checkbox"')
+      expect(html).toContain('segmented-control-action')
+      expect(html).toContain('>Enabled</button>')
+      expect(html).toContain('>Auto</button>')
+      expect(html.match(/aria-pressed="true"/g) || []).toHaveLength(2)
+      expect(html).toContain('role="radiogroup"')
+      expect(html.match(/role="radio"/g) || []).toHaveLength(3)
+      expect(html).toContain('>Boss</span>')
+      expect(html).toContain('>Captain</span>')
+      expect(html).toContain('aria-checked="true"')
+      expect(html).toContain('>Agent</button>')
+    })
+
+    it('disables and visually normalizes global Auto when no leader exists', () => {
+      const html = renderToStaticMarkup(
+        <EnsembleParticipantAuthorityControls
+          participantLabel="Codex"
+          enabled={false}
+          authority="agent"
+          hasLeadership={false}
+          autoApprovalsEnabled
+          locked={false}
+          onEnabledChange={() => undefined}
+          onAuthorityChange={() => undefined}
+          onAutoApprovalsChange={() => undefined}
+        />
+      )
+
+      expect(html).toContain('aria-label="Thread-wide Auto Approvals"')
+      expect(html).toContain('aria-pressed="false"')
+      expect(html).toContain('Assign a Boss or Captain before enabling Auto Approvals.')
+      expect(html).toMatch(/aria-label="Thread-wide Auto Approvals"[^>]*disabled=""/)
+    })
+  })
+
   describe('resolveParticipantSelectionAfterRemoval', () => {
     const participants = [
       makeParticipant({ id: 'ensemble-claude', provider: 'claude', role: 'Planner', order: 1 }),

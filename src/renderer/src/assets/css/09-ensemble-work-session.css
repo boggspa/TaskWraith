@@ -1726,9 +1726,11 @@
   color: var(--text-primary);
 }
 
-/* Overflow popover (enabled toggle + role rename for the selected chip). */
+/* Overflow popover for participant participation, authority, and role details. */
 .ensemble-above-overflow {
-  width: 296px;
+  width: min(296px, calc(100vw - 16px));
+  max-height: calc(100dvh - 16px);
+  overflow-y: auto;
   padding: 12px;
   border-radius: 12px;
   background: color-mix(
@@ -1769,29 +1771,75 @@
   color: var(--surface-text);
 }
 
-.ensemble-above-overflow-enable {
-  display: inline-flex;
-  align-items: center;
+.ensemble-above-overflow-control-stack {
+  display: flex;
+  flex-direction: column;
   gap: 8px;
-  font-size: var(--font-size-sm);
-  cursor: pointer;
-  user-select: none;
 }
 
-.ensemble-above-overflow-bossman,
-.ensemble-above-overflow-auto-approval {
-  display: inline-flex;
-  align-items: center;
+.ensemble-above-overflow-quick-toggles {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
-  font-size: var(--font-size-sm);
-  cursor: pointer;
-  user-select: none;
 }
 
-.ensemble-above-overflow-bossman-label {
+.ensemble-above-overflow-toggle {
+  width: 100%;
+  min-width: 0;
+}
+
+.ensemble-above-overflow-toggle.is-enabled[aria-pressed='true'] {
+  --segmented-action-foreground: var(--success, #34d399);
+  --segmented-action-border: color-mix(
+    in srgb,
+    var(--success, #34d399) 48%,
+    var(--panel-border)
+  );
+  --segmented-action-bg: color-mix(in srgb, var(--success, #34d399) 16%, transparent);
+  --segmented-action-hover-bg: color-mix(
+    in srgb,
+    var(--success, #34d399) 24%,
+    transparent
+  );
+  color: var(--segmented-action-foreground);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--success, #34d399) 24%, transparent);
+}
+
+.ensemble-above-overflow-toggle.is-auto[aria-pressed='true'] {
+  --segmented-action-foreground: var(--warning, #f5b14c);
+  --segmented-action-border: color-mix(
+    in srgb,
+    var(--warning, #f5b14c) 52%,
+    var(--panel-border)
+  );
+  --segmented-action-bg: color-mix(in srgb, var(--warning, #f5b14c) 17%, transparent);
+  --segmented-action-hover-bg: color-mix(
+    in srgb,
+    var(--warning, #f5b14c) 26%,
+    transparent
+  );
+  color: var(--segmented-action-foreground);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--warning, #f5b14c) 25%, transparent);
+}
+
+.ensemble-above-overflow-authority {
+  width: 100%;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.ensemble-above-overflow-authority .segmented-control-segment {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  justify-content: center;
+  gap: 4px;
+  width: 100%;
+}
+
+.ensemble-above-overflow-authority-label {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
   font-weight: 650;
 }
 
@@ -1799,21 +1847,8 @@
   color: color-mix(in srgb, var(--warning, #e6b450) 90%, #ffffff);
 }
 
-.ensemble-above-overflow-crown.is-second-in-command {
-  color: color-mix(in srgb, var(--text-secondary, #aeb4c0) 78%, #ffffff);
-}
-
 .ensemble-above-overflow-captain-hat {
   color: color-mix(in srgb, var(--text-secondary, #aeb4c0) 78%, #ffffff);
-}
-
-.ensemble-above-overflow-auto-approval {
-  color: var(--text-secondary);
-}
-
-.ensemble-above-overflow-auto-approval.is-disabled {
-  opacity: 0.55;
-  cursor: default;
 }
 
 .ensemble-above-overflow-role {

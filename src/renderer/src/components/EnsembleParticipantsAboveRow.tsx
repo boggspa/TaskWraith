@@ -68,6 +68,7 @@ import {
 import { getProviderName } from './Sidebar'
 import { EnsembleBriefEditor } from './EnsembleBriefEditor'
 import { PillButton } from './PillButton'
+import { SegmentedControl } from './SegmentedControl'
 
 // 1.0.4-AR2 — global ceiling raised from 6 → 8 so the panel can host
 // the broader four-provider roster plus alternates (e.g. two Claudes
@@ -102,6 +103,57 @@ const ENSEMBLE_CHIP_ROW_MAX = 5
 // grid — the drag-reorder hit-testing (`resolveReorderDropTarget`) and
 // the per-chip `@container ensemble-chip` queries carry over untouched.
 export const ENSEMBLE_CHIP_GRID_TRACKS = 60
+
+export type EnsembleParticipantAuthority = 'boss' | 'captain' | 'agent'
+
+type EnsembleAuthorityPatch = Pick<
+  NonNullable<ChatRecord['ensemble']>,
+  'bossmanParticipantId' | 'secondInCommandParticipantId' | 'bossmanAutoApprovals'
+>
+
+/**
+ * Atomically moves one participant between the three exclusive authority
+ * roles. The ensemble stores singular Boss/Captain ids, so assigning either
+ * role replaces its previous owner and Agent clears this participant's special
+ * role. Thread-wide auto approval consent survives while any leader remains.
+ */
+export function resolveEnsembleParticipantAuthorityPatch(
+  state: EnsembleAuthorityPatch,
+  participantId: string,
+  authority: EnsembleParticipantAuthority
+): EnsembleAuthorityPatch {
+  let bossmanParticipantId = state.bossmanParticipantId
+  let secondInCommandParticipantId = state.secondInCommandParticipantId
+
+  // Normalize any malformed legacy overlap before applying the next choice.
+  // Boss remains authoritative when both ids point at the same participant.
+  if (
+    bossmanParticipantId &&
+    secondInCommandParticipantId === bossmanParticipantId
+  ) {
+    secondInCommandParticipantId = undefined
+  }
+
+  if (authority === 'boss') {
+    bossmanParticipantId = participantId
+    if (secondInCommandParticipantId === participantId) secondInCommandParticipantId = undefined
+  } else if (authority === 'captain') {
+    secondInCommandParticipantId = participantId
+    if (bossmanParticipantId === participantId) bossmanParticipantId = undefined
+  } else {
+    if (bossmanParticipantId === participantId) bossmanParticipantId = undefined
+    if (secondInCommandParticipantId === participantId) secondInCommandParticipantId = undefined
+  }
+
+  return {
+    bossmanParticipantId,
+    secondInCommandParticipantId,
+    bossmanAutoApprovals:
+      bossmanParticipantId || secondInCommandParticipantId
+        ? state.bossmanAutoApprovals
+        : undefined
+  }
+}
 
 /**
  * Balanced row distribution for the wrapped chip strip: rows hold at
@@ -590,6 +642,11 @@ export function EnsembleParticipantsAboveRow({
 
   const activeRound = chat.ensemble.activeRound
   const isRoundRunning = isEnsembleActiveRoundDispatchLive(activeRound)
+  const hasLeadership = participants.some(
+    (participant) =>
+      participant.id === chat.ensemble?.bossmanParticipantId ||
+      participant.id === chat.ensemble?.secondInCommandParticipantId
+  )
   const liveFanoutLanes = Object.values(activeRound?.lanes || {}).filter(isLiveFanoutLane)
   const canSkipReadFanout =
     isRoundRunning &&
@@ -627,52 +684,31 @@ export function EnsembleParticipantsAboveRow({
     onChatChange(withSessionActivityLedger(source, nextChat))
   }
 
-  const setBossmanParticipant = (participantId: string | undefined): void => {
-    if (isRoundRunning) return
-    const nextBossmanParticipantId =
-      participantId && participants.some((participant) => participant.id === participantId)
-        ? participantId
-        : undefined
-    const existingSecondInCommandParticipantId = chat.ensemble?.secondInCommandParticipantId
-    const nextSecondInCommandParticipantId =
-      existingSecondInCommandParticipantId &&
-      existingSecondInCommandParticipantId !== nextBossmanParticipantId
-        ? existingSecondInCommandParticipantId
-        : undefined
-    patchEnsemble({
-      bossmanParticipantId: nextBossmanParticipantId,
-      secondInCommandParticipantId: nextSecondInCommandParticipantId,
-      bossmanAutoApprovals:
-        (nextBossmanParticipantId &&
-          nextBossmanParticipantId === chat.ensemble?.bossmanParticipantId) ||
-        (!nextBossmanParticipantId && nextSecondInCommandParticipantId)
-          ? chat.ensemble?.bossmanAutoApprovals
-          : undefined
-    })
-  }
-
-  const setSecondInCommandParticipant = (participantId: string | undefined): void => {
-    if (isRoundRunning) return
-    const nextSecondInCommandParticipantId =
-      participantId &&
-      participantId !== chat.ensemble?.bossmanParticipantId &&
-      participants.some((participant) => participant.id === participantId)
-        ? participantId
-        : undefined
-    patchEnsemble({
-      secondInCommandParticipantId: nextSecondInCommandParticipantId,
-      bossmanAutoApprovals:
-        chat.ensemble?.bossmanParticipantId || nextSecondInCommandParticipantId
-          ? chat.ensemble?.bossmanAutoApprovals
-          : undefined
-    })
+  const setParticipantAuthority = (
+    participantId: string,
+    authority: EnsembleParticipantAuthority
+  ): void => {
+    if (
+      isRoundRunning ||
+      !participants.some((participant) => participant.id === participantId)
+    ) {
+      return
+    }
+    patchEnsemble(
+      resolveEnsembleParticipantAuthorityPatch(
+        {
+          bossmanParticipantId: chat.ensemble?.bossmanParticipantId,
+          secondInCommandParticipantId: chat.ensemble?.secondInCommandParticipantId,
+          bossmanAutoApprovals: chat.ensemble?.bossmanAutoApprovals
+        },
+        participantId,
+        authority
+      )
+    )
   }
 
   const setBossmanAutoApprovals = (enabled: boolean): void => {
-    if (
-      isRoundRunning ||
-      (!chat.ensemble?.bossmanParticipantId && !chat.ensemble?.secondInCommandParticipantId)
-    ) {
+    if (isRoundRunning || !hasLeadership) {
       return
     }
     if (enabled) {
@@ -1040,14 +1076,9 @@ export function EnsembleParticipantsAboveRow({
                 chat.ensemble?.secondInCommandParticipantId === participant.id &&
                 chat.ensemble?.bossmanParticipantId !== participant.id
               }
-              autoApprovalsEnabled={
-                (chat.ensemble?.bossmanParticipantId === participant.id ||
-                  (chat.ensemble?.secondInCommandParticipantId === participant.id &&
-                    chat.ensemble?.bossmanParticipantId !== participant.id)) &&
-                chat.ensemble?.bossmanAutoApprovals?.enabled === true
-              }
-              onSetBossman={setBossmanParticipant}
-              onSetSecondInCommand={setSecondInCommandParticipant}
+              hasLeadership={hasLeadership}
+              autoApprovalsEnabled={chat.ensemble?.bossmanAutoApprovals?.enabled === true}
+              onSetAuthority={setParticipantAuthority}
               onToggleBossmanAutoApprovals={setBossmanAutoApprovals}
               locked={isRoundRunning}
               onDragStart={(info) => {
@@ -1373,9 +1404,12 @@ interface ParticipantChipProps {
   onPatch: (patch: Partial<EnsembleParticipant>) => void
   isBossman: boolean
   isSecondInCommand: boolean
+  hasLeadership: boolean
   autoApprovalsEnabled: boolean
-  onSetBossman: (participantId: string | undefined) => void
-  onSetSecondInCommand: (participantId: string | undefined) => void
+  onSetAuthority: (
+    participantId: string,
+    authority: EnsembleParticipantAuthority
+  ) => void
   onToggleBossmanAutoApprovals: (enabled: boolean) => void
   locked: boolean
   /**
@@ -1435,9 +1469,9 @@ function ParticipantChip({
   onPatch,
   isBossman,
   isSecondInCommand,
+  hasLeadership,
   autoApprovalsEnabled,
-  onSetBossman,
-  onSetSecondInCommand,
+  onSetAuthority,
   onToggleBossmanAutoApprovals,
   locked,
   onDragStart,
@@ -1706,9 +1740,9 @@ function ParticipantChip({
           onPatch={onPatch}
           isBossman={isBossman}
           isSecondInCommand={isSecondInCommand}
+          hasLeadership={hasLeadership}
           autoApprovalsEnabled={autoApprovalsEnabled}
-          onSetBossman={onSetBossman}
-          onSetSecondInCommand={onSetSecondInCommand}
+          onSetAuthority={onSetAuthority}
           onToggleBossmanAutoApprovals={onToggleBossmanAutoApprovals}
           locked={locked}
           onClose={onCloseOverflow}
@@ -1729,9 +1763,12 @@ interface OverflowPopoverProps {
   onPatch: (patch: Partial<EnsembleParticipant>) => void
   isBossman: boolean
   isSecondInCommand: boolean
+  hasLeadership: boolean
   autoApprovalsEnabled: boolean
-  onSetBossman: (participantId: string | undefined) => void
-  onSetSecondInCommand: (participantId: string | undefined) => void
+  onSetAuthority: (
+    participantId: string,
+    authority: EnsembleParticipantAuthority
+  ) => void
   onToggleBossmanAutoApprovals: (enabled: boolean) => void
   /* 1.0.5-EW22 — `onRemove` / `canRemove` removed. Remove gesture
    * moved to the row's "-" sibling button. */
@@ -1747,6 +1784,114 @@ interface OverflowPopoverProps {
   wakeAt?: string
 }
 
+interface EnsembleParticipantAuthorityControlsProps {
+  participantLabel: string
+  enabled: boolean
+  authority: EnsembleParticipantAuthority
+  hasLeadership: boolean
+  autoApprovalsEnabled: boolean
+  locked: boolean
+  onEnabledChange: (enabled: boolean) => void
+  onAuthorityChange: (authority: EnsembleParticipantAuthority) => void
+  onAutoApprovalsChange: (enabled: boolean) => void
+}
+
+/**
+ * The compact, reusable-control cluster at the top of the participant popover.
+ * Enabled and Auto are independent actions; authority is one exclusive value.
+ */
+export function EnsembleParticipantAuthorityControls({
+  participantLabel,
+  enabled,
+  authority,
+  hasLeadership,
+  autoApprovalsEnabled,
+  locked,
+  onEnabledChange,
+  onAuthorityChange,
+  onAutoApprovalsChange
+}: EnsembleParticipantAuthorityControlsProps): React.JSX.Element {
+  const effectiveAutoApprovalsEnabled = hasLeadership && autoApprovalsEnabled
+
+  return (
+    <div className="ensemble-above-overflow-control-stack">
+      <div
+        className="ensemble-above-overflow-quick-toggles"
+        role="group"
+        aria-label={`Round participation and approvals for ${participantLabel}`}
+      >
+        <PillButton
+          size="compact"
+          className="ensemble-above-overflow-toggle is-enabled"
+          aria-label={`Enabled in ensemble rounds for ${participantLabel}`}
+          aria-pressed={enabled}
+          title={
+            enabled
+              ? 'Included in Ensemble rounds.'
+              : 'Excluded from Ensemble rounds.'
+          }
+          disabled={locked}
+          onClick={() => onEnabledChange(!enabled)}
+        >
+          Enabled
+        </PillButton>
+        <PillButton
+          size="compact"
+          className="ensemble-above-overflow-toggle is-auto"
+          aria-label="Thread-wide Auto Approvals"
+          aria-pressed={effectiveAutoApprovalsEnabled}
+          title={
+            hasLeadership
+              ? effectiveAutoApprovalsEnabled
+                ? 'Disable thread-wide Boss/Captain Auto Approvals.'
+                : 'Enable thread-wide Boss/Captain Auto Approvals.'
+              : 'Assign a Boss or Captain before enabling Auto Approvals.'
+          }
+          disabled={locked || !hasLeadership}
+          onClick={() => onAutoApprovalsChange(!effectiveAutoApprovalsEnabled)}
+        >
+          Auto
+        </PillButton>
+      </div>
+      <SegmentedControl
+        className="ensemble-above-overflow-authority"
+        size="compact"
+        value={authority}
+        ariaLabel={`Authority role for ${participantLabel}`}
+        disabled={locked}
+        onValueChange={onAuthorityChange}
+        options={[
+          {
+            value: 'boss',
+            title: 'Assign as the thread\'s only Boss.',
+            label: (
+              <span className="ensemble-above-overflow-authority-label">
+                <BossmanCrownIcon className="ensemble-above-overflow-crown" />
+                Boss
+              </span>
+            )
+          },
+          {
+            value: 'captain',
+            title: 'Assign as the thread\'s only Captain.',
+            label: (
+              <span className="ensemble-above-overflow-authority-label">
+                <CaptainHatIcon className="ensemble-above-overflow-captain-hat" />
+                Captain
+              </span>
+            )
+          },
+          {
+            value: 'agent',
+            title: 'Use standard Agent authority.',
+            label: 'Agent'
+          }
+        ]}
+      />
+    </div>
+  )
+}
+
 export function EnsembleParticipantOverflowPopover({
   anchor,
   participant,
@@ -1754,9 +1899,9 @@ export function EnsembleParticipantOverflowPopover({
   onPatch,
   isBossman,
   isSecondInCommand,
+  hasLeadership,
   autoApprovalsEnabled,
-  onSetBossman,
-  onSetSecondInCommand,
+  onSetAuthority,
   onToggleBossmanAutoApprovals,
   locked,
   onClose,
@@ -1830,7 +1975,7 @@ export function EnsembleParticipantOverflowPopover({
     queueMicrotask(() => {
       if (cancelled || !anchor) return
       const rect = anchor.getBoundingClientRect()
-      const flyoutWidth = 260
+      const flyoutWidth = Math.min(296, window.innerWidth - 16)
       const left = Math.max(8, Math.min(window.innerWidth - flyoutWidth - 8, rect.left))
       const top = rect.top - 8
       setPosition({ left, top })
@@ -1890,68 +2035,17 @@ export function EnsembleParticipantOverflowPopover({
         isBossman ? 'Boss ' : isSecondInCommand ? 'Captain ' : ''
       }${getProviderName(participant.provider)} role and enabled state`}
     >
-      <label className="ensemble-above-overflow-enable">
-        <input
-          type="checkbox"
-          checked={participant.enabled}
-          disabled={locked}
-          onChange={(event) => onPatch({ enabled: event.target.checked })}
-        />
-        <span>Enabled in ensemble rounds</span>
-      </label>
-      <label className="ensemble-above-overflow-bossman">
-        <input
-          type="checkbox"
-          checked={isBossman}
-          disabled={locked}
-          onChange={(event) => onSetBossman(event.target.checked ? participant.id : undefined)}
-        />
-        <span className="ensemble-above-overflow-bossman-label">
-          <BossmanCrownIcon className="ensemble-above-overflow-crown" />
-          Boss
-        </span>
-      </label>
-      <label
-        className={`ensemble-above-overflow-bossman${isBossman ? ' is-disabled' : ''}`}
-        title={
-          isBossman
-            ? 'Boss cannot also be Captain.'
-            : 'Captain can use Boss controls only when Boss is unavailable.'
-        }
-      >
-        <input
-          type="checkbox"
-          checked={isSecondInCommand}
-          disabled={locked || isBossman}
-          onChange={(event) =>
-            onSetSecondInCommand(event.target.checked ? participant.id : undefined)
-          }
-        />
-        <span className="ensemble-above-overflow-bossman-label">
-          <CaptainHatIcon className="ensemble-above-overflow-captain-hat" />
-          Captain
-        </span>
-      </label>
-      <label
-        className={`ensemble-above-overflow-auto-approval${
-          isBossman || isSecondInCommand ? '' : ' is-disabled'
-        }`}
-        title={
-          isBossman
-            ? 'Allow Boss to resolve preset-limited one-shot approvals.'
-            : isSecondInCommand
-              ? 'Allow Captain to use preset-limited one-shot approval consent only when Boss is unavailable.'
-              : 'Assign this participant as Boss or Captain before enabling auto approvals.'
-        }
-      >
-        <input
-          type="checkbox"
-          checked={autoApprovalsEnabled}
-          disabled={locked || (!isBossman && !isSecondInCommand)}
-          onChange={(event) => onToggleBossmanAutoApprovals(event.target.checked)}
-        />
-        <span>Allow Auto Approvals</span>
-      </label>
+      <EnsembleParticipantAuthorityControls
+        participantLabel={getProviderName(participant.provider)}
+        enabled={participant.enabled}
+        authority={isBossman ? 'boss' : isSecondInCommand ? 'captain' : 'agent'}
+        hasLeadership={hasLeadership}
+        autoApprovalsEnabled={autoApprovalsEnabled}
+        locked={locked}
+        onEnabledChange={(enabled) => onPatch({ enabled })}
+        onAuthorityChange={(authority) => onSetAuthority(participant.id, authority)}
+        onAutoApprovalsChange={onToggleBossmanAutoApprovals}
+      />
       <label className="ensemble-above-overflow-role">
         <span className="ensemble-above-overflow-label">Role</span>
         <select
