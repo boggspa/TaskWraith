@@ -3576,10 +3576,39 @@ public final class RemoteSessionModel: ObservableObject {
     }
 
     private func mergeThreadSnapshot(_ incoming: RemoteThreadSnapshot, key: String) {
+        let aliasKeys = keys(for: incoming, fallbackKey: key)
+        if threadSnapshotIsExactlyCurrent(incoming, aliasKeys: aliasKeys, in: threadSnapshots) {
+            reconcileThreadSnapshotAliases(incoming, aliasKeys: aliasKeys)
+            return
+        }
         var nextSnapshots = threadSnapshots
         mergeThreadSnapshot(incoming, key: key, into: &nextSnapshots)
         if nextSnapshots != threadSnapshots {
             threadSnapshots = nextSnapshots
+        }
+    }
+
+    /// A request snapshot normally arrives once as a projection and once in the
+    /// action ack. Skip only when every alias is provably the same snapshot.
+    /// Non-identical acks (notably older-page windows) still merge, preserving
+    /// the ack as convergence fallback when a request broadcast is dropped.
+    private func threadSnapshotIsExactlyCurrent(
+        _ incoming: RemoteThreadSnapshot, aliasKeys: [String],
+        in snapshots: [String: RemoteThreadSnapshot]
+    ) -> Bool {
+        guard let primaryKey = aliasKeys.first else { return false }
+        let filteredIncoming = snapshotFilteringHiddenRunSummaries(incoming, key: primaryKey)
+        return aliasKeys.allSatisfy { snapshots[$0] == filteredIncoming }
+    }
+
+    private func reconcileThreadSnapshotAliases(
+        _ incoming: RemoteThreadSnapshot, aliasKeys: [String]
+    ) {
+        for alias in aliasKeys {
+            if let workspaceId = incoming.workspaceId, !workspaceId.isEmpty {
+                rememberThreadWorkspace(alias, workspaceId: workspaceId)
+            }
+            reconcileStreamingState(against: incoming, key: alias)
         }
     }
 
@@ -3592,17 +3621,19 @@ public final class RemoteSessionModel: ObservableObject {
     ) {
         let aliasKeys = keys(for: incoming, fallbackKey: key)
         guard let primaryKey = aliasKeys.first else { return }
+        if threadSnapshotIsExactlyCurrent(incoming, aliasKeys: aliasKeys, in: snapshots) {
+            reconcileThreadSnapshotAliases(incoming, aliasKeys: aliasKeys)
+            return
+        }
+        #if DEBUG
+            threadSnapshotMergeWorkCountForTesting += 1
+        #endif
         mergeThreadSnapshotSingle(incoming, key: primaryKey, into: &snapshots)
         guard let merged = snapshots[primaryKey] else { return }
         for alias in aliasKeys.dropFirst() {
             snapshots[alias] = merged
         }
-        for alias in aliasKeys {
-            if let workspaceId = incoming.workspaceId, !workspaceId.isEmpty {
-                rememberThreadWorkspace(alias, workspaceId: workspaceId)
-            }
-            reconcileStreamingState(against: incoming, key: alias)
-        }
+        reconcileThreadSnapshotAliases(incoming, aliasKeys: aliasKeys)
     }
 
     private func mergeThreadSnapshotSingle(
@@ -4031,6 +4062,7 @@ public final class RemoteSessionModel: ObservableObject {
     #if DEBUG
         private(set) var threadSnapshotPullAttemptsForTesting = 0
         private(set) var lastWatchedThreadAssertionAppChatIdForTesting: String? = nil
+        private(set) var threadSnapshotMergeWorkCountForTesting = 0
     #endif
 
     private func scheduleThreadRefresh(
@@ -4102,6 +4134,24 @@ public final class RemoteSessionModel: ObservableObject {
 
         func seedThreadSnapshotForTesting(_ snapshot: RemoteThreadSnapshot, key: String) {
             threadSnapshots[key] = snapshot
+        }
+
+        func mergeThreadSnapshotProjectionForTesting(
+            _ snapshot: RemoteThreadSnapshot, key: String
+        ) {
+            var nextSnapshots = threadSnapshots
+            mergeThreadSnapshot(snapshot, key: key, into: &nextSnapshots)
+            if nextSnapshots != threadSnapshots {
+                threadSnapshots = nextSnapshots
+            }
+        }
+
+        func mergeThreadSnapshotAckForTesting(_ snapshot: RemoteThreadSnapshot, key: String) {
+            mergeThreadSnapshot(snapshot, key: key)
+        }
+
+        func cacheGitSnapshotForTesting(_ snapshot: GitWorkspaceSnapshot, workspaceId: String) {
+            cacheGitSnapshot(snapshot, workspaceId: workspaceId)
         }
 
         func seedEnsembleStateForTesting(_ state: RemoteEnsembleState, key: String) {
@@ -4382,10 +4432,9 @@ public final class RemoteSessionModel: ObservableObject {
         guard let workspaceId, !workspaceId.isEmpty, workspaceCanReviewDiffs(workspaceId)
         else { return }
         do {
-            let snapshot = try await fetchGitSnapshot(workspaceId: workspaceId)
-            gitSnapshots[workspaceId] = snapshot
+            _ = try await fetchGitSnapshot(workspaceId: workspaceId)
         } catch {
-            gitSnapshots.removeValue(forKey: workspaceId)
+            removeCachedGitSnapshot(workspaceId: workspaceId)
         }
     }
 
@@ -4400,7 +4449,7 @@ public final class RemoteSessionModel: ObservableObject {
         guard let workspaceId, !workspaceId.isEmpty else { return }
         guard let git = try? await fetchGitSnapshotWithoutPublishing(workspaceId: workspaceId)
         else { return }
-        gitSnapshots[workspaceId] = git
+        cacheGitSnapshot(git, workspaceId: workspaceId)
     }
 
     public enum RemoteFileActionError: LocalizedError {
@@ -4524,15 +4573,28 @@ public final class RemoteSessionModel: ObservableObject {
 
     public func fetchGitSnapshot(workspaceId: String) async throws -> GitWorkspaceSnapshot {
         let git = try await fetchGitSnapshotPayload(workspaceId: workspaceId, publish: true)
-        gitSnapshots[workspaceId] = git
+        cacheGitSnapshot(git, workspaceId: workspaceId)
         return git
+    }
+
+    /// A git action can arrive as a projection broadcast before or after its
+    /// ack. `@Published` emits even for an equal dictionary subscript write, so
+    /// every ack-side cache update must pass through this equality gate.
+    private func cacheGitSnapshot(_ snapshot: GitWorkspaceSnapshot, workspaceId: String) {
+        guard gitSnapshots[workspaceId] != snapshot else { return }
+        gitSnapshots[workspaceId] = snapshot
+    }
+
+    private func removeCachedGitSnapshot(workspaceId: String) {
+        guard gitSnapshots[workspaceId] != nil else { return }
+        gitSnapshots.removeValue(forKey: workspaceId)
     }
 
     public func stageAllChanges(workspaceId: String) async throws -> GitWorkspaceSnapshot {
         let ack = try await requestFileAction(
             BridgeAction.gitStageAll(workspaceId: workspaceId), timeoutMs: 20_000)
         guard let git = ack.data?.git else { throw RemoteFileActionError.malformedAck }
-        gitSnapshots[workspaceId] = git
+        cacheGitSnapshot(git, workspaceId: workspaceId)
         return git
     }
 
@@ -4540,7 +4602,7 @@ public final class RemoteSessionModel: ObservableObject {
         let ack = try await requestFileAction(
             BridgeAction.gitStagePaths(workspaceId: workspaceId, paths: paths), timeoutMs: 20_000)
         guard let git = ack.data?.git else { throw RemoteFileActionError.malformedAck }
-        gitSnapshots[workspaceId] = git
+        cacheGitSnapshot(git, workspaceId: workspaceId)
         return git
     }
 
@@ -4548,7 +4610,7 @@ public final class RemoteSessionModel: ObservableObject {
         let ack = try await requestFileAction(
             BridgeAction.gitUnstagePaths(workspaceId: workspaceId, paths: paths), timeoutMs: 20_000)
         guard let git = ack.data?.git else { throw RemoteFileActionError.malformedAck }
-        gitSnapshots[workspaceId] = git
+        cacheGitSnapshot(git, workspaceId: workspaceId)
         return git
     }
 
@@ -4561,7 +4623,7 @@ public final class RemoteSessionModel: ObservableObject {
             BridgeAction.gitCommit(workspaceId: workspaceId, message: message, stageAll: stageAll),
             timeoutMs: 30_000)
         guard let git = ack.data?.git else { throw RemoteFileActionError.malformedAck }
-        gitSnapshots[workspaceId] = git
+        cacheGitSnapshot(git, workspaceId: workspaceId)
         return git
     }
 
@@ -4574,7 +4636,7 @@ public final class RemoteSessionModel: ObservableObject {
             BridgeAction.gitPush(workspaceId: workspaceId, setUpstream: setUpstream),
             timeoutMs: 60_000)
         guard let git = ack.data?.git else { throw RemoteFileActionError.malformedAck }
-        gitSnapshots[workspaceId] = git
+        cacheGitSnapshot(git, workspaceId: workspaceId)
         return git
     }
 
