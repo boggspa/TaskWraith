@@ -3,21 +3,22 @@ import type { EnsembleParticipant } from '../../../main/store/types'
 /**
  * 1.0.4-AV2 — compact per-participant token-spend chip.
  *
- * Renders a short numeric badge next to each participant's status
- * icon showing how many total tokens THAT participant has
- * consumed in THIS chat. Pre-AV2 token totals lived only in the
- * chat-level thread-token-tally pill at the bottom of the
- * composer — useful but didn't tell the user WHICH participant
- * was burning the budget.
+ * Originally rendered as a short numeric badge inside each
+ * participant chip. 2026-07 chip polish moved the estimate off the
+ * chip face and into the chip's 500ms hover tooltip
+ * (`buildParticipantTokenChipTooltipLine` below) so the strip stays
+ * lean and role names get the reclaimed width. Pre-AV2 token totals
+ * lived only in the chat-level thread-token-tally pill at the bottom
+ * of the composer — useful but didn't tell the user WHICH
+ * participant was burning the budget.
  *
- * Format:
- *   < 1k         → omit (chip hidden — keeps the strip lean when
- *                  a participant hasn't spoken yet)
+ * Compact format:
+ *   < 1k         → omit (model returns empty label)
  *   1k–999k      → "Nk"   (e.g. "12k", "847k")
  *   ≥ 1,000k     → "N.Nm" (e.g. "1.2m", "14m")
  *
- * Tooltip carries the precise breakdown (input / output / total)
- * so power users can hover for the unrounded numbers.
+ * The tooltip line carries the precise breakdown (input / output /
+ * total / duration) so power users still get unrounded numbers.
  *
  * Cost-in-dollars is deferred — accurate $-per-token rates differ
  * by model + provider tier, and we don't currently persist
@@ -26,27 +27,23 @@ import type { EnsembleParticipant } from '../../../main/store/types'
  * model-rate registry.
  */
 
-export interface ParticipantTokenChipModel {
-  /** Compact label shown on the chip, e.g. "12k" or "1.2m". Empty
-   * string when the participant has no recorded tokens — caller
-   * should not render the chip in that case. */
-  label: string
-  /** Full hover-text breakdown. Empty string when no tokens. */
-  tooltip: string
-}
-
-export function buildParticipantTokenChipModel(
-  participant: EnsembleParticipant
-): ParticipantTokenChipModel {
+/**
+ * 2026-07 chip polish — the full token-estimate line for the chip's
+ * hover tooltip. Unlike the retired inline badge it has no 1k display
+ * floor: any recorded spend gets a line (sub-1k shows the exact
+ * count), and a participant with no spend gets an explicit
+ * "No token usage yet" so the tooltip never renders a blank row.
+ */
+export function buildParticipantTokenChipTooltipLine(participant: EnsembleParticipant): string {
   const totals = participant.tokenTotals
   const total = typeof totals?.total_tokens === 'number' ? totals.total_tokens : 0
-  if (!Number.isFinite(total) || total < 1000 || !totals) {
-    return { label: '', tooltip: '' }
+  if (!totals || !Number.isFinite(total) || total <= 0) {
+    return 'No token usage yet'
   }
-  return {
-    label: formatCompactTokens(total),
-    tooltip: formatTokenTooltip(totals)
-  }
+  const lead =
+    total >= 1000 ? `≈ ${formatCompactTokens(total)} tokens` : `≈ ${total.toLocaleString()} tokens`
+  const breakdown = formatTokenTooltip(totals)
+  return breakdown ? `${lead} — ${breakdown}` : lead
 }
 
 function formatCompactTokens(total: number): string {

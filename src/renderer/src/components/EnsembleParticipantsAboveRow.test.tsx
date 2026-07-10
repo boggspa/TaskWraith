@@ -612,7 +612,10 @@ describe('EnsembleParticipantsAboveRow', () => {
       />
     )
     expect(html).toContain('status-sleeping')
-    expect(html).toContain('sleeping — [wakeup:wakeup-1')
+    // The wakeup reason rides the status pill's accessible name (the
+    // visual tooltip moved to the chip's custom 500ms hover card,
+    // which is hover-state-gated and thus absent from static markup).
+    expect(html).toContain('sleeping: [wakeup:wakeup-1')
   })
 
   it('dims disabled participants but still renders them', () => {

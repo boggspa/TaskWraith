@@ -56,7 +56,7 @@ import {
   resolveRolePresetId,
   roleLabelForPresetId
 } from '../lib/ensembleRolePresets'
-import { buildParticipantTokenChipModel } from '../lib/participantTokenChip'
+import { buildParticipantTokenChipTooltipLine } from '../lib/participantTokenChip'
 import { resolveProviderBrandLabel, resolveProviderHueClass } from '../lib/ollamaDisplayBrand'
 import { withSessionActivityLedger } from '../lib/sessionActivityLedger'
 import { isEnsembleActiveRoundDispatchLive } from '../lib/chatBusyState'
@@ -66,6 +66,7 @@ import {
   grokReasoningDisplayLabel
 } from '../lib/composerChipFormat'
 import { resolveProviderRows } from './ComposerProviderPicker'
+import { ProviderGlyph } from './icons/ProviderGlyph'
 import {
   CombinedModelPicker,
   type CombinedModelPickerProviderGroup,
@@ -1372,6 +1373,14 @@ export function EnsembleParticipantsAboveRow({
               >
                 <div className="ensemble-above-chip-body">
                   <span className="ensemble-above-chip-role">
+                    <ProviderGlyph
+                      provider={ghostParticipant.provider}
+                      accentProvider={resolveProviderHueClass(
+                        ghostParticipant.provider,
+                        ghostParticipant.model
+                      )}
+                      className="ensemble-above-chip-provider-glyph"
+                    />
                     {ghostParticipant.role || getProviderName(ghostParticipant.provider)}
                   </span>
                 </div>
@@ -1707,10 +1716,54 @@ function ParticipantChip({
   wakeAt
 }: ParticipantChipProps): React.JSX.Element {
   const [chipAnchor, setChipAnchor] = useState<HTMLDivElement | null>(null)
+  // Custom hover tooltip (2026-07 chip polish). Replaces BOTH the
+  // native `title` on the chip wrapper AND the inline token-spend
+  // badge: hovering the chip for 500ms surfaces one portaled card
+  // with the participant identity, current status (incl. failure
+  // reason), the token-spend estimate, and linked-session id. A
+  // custom implementation (vs native title) because the 0.5s delay
+  // is part of the spec and native tooltip timing isn't controllable
+  // — and because chips previously grew THREE stacked native titles
+  // (wrapper, role, status pill) that fired inconsistently.
+  const [tooltipPosition, setTooltipPosition] = useState<{ x: number; y: number } | null>(null)
+  const tooltipTimerRef = useRef<number | null>(null)
+  const clearTooltipTimer = useCallback(() => {
+    if (tooltipTimerRef.current !== null) {
+      window.clearTimeout(tooltipTimerRef.current)
+      tooltipTimerRef.current = null
+    }
+  }, [])
+  const dismissTooltip = useCallback(() => {
+    clearTooltipTimer()
+    setTooltipPosition(null)
+  }, [clearTooltipTimer])
+  useEffect(() => clearTooltipTimer, [clearTooltipTimer])
+  const handleTooltipPointerEnter = useCallback(
+    (event: React.PointerEvent) => {
+      const chipElement = event.currentTarget as HTMLElement
+      clearTooltipTimer()
+      tooltipTimerRef.current = window.setTimeout(() => {
+        tooltipTimerRef.current = null
+        const rect = chipElement.getBoundingClientRect()
+        setTooltipPosition({ x: rect.left + rect.width / 2, y: rect.top })
+      }, 500)
+    },
+    [clearTooltipTimer]
+  )
   // Slug the status onto the class so CSS can colour-code the pill
   // (running=warm, yielded=amber, answered=green, cancelled=muted, etc.).
   const statusClass = `status-${statusLabel.toLowerCase().replace(/\s+/g, '-')}`
   const providerClass = resolveProviderHueClass(participant.provider, participant.model)
+  // 2026-07 chip polish — the actively-working participant's role
+  // name glows in its provider hue (Ollama chips inherit the spoofed
+  // upstream brand hue via `providerClass`, same as the role tint);
+  // a failed/unreachable turn glows red instead. The round state
+  // holding these statuses is replaced wholesale when the next round
+  // starts, so the red glow naturally resets — the failure may be
+  // fixed or irrelevant by the next turn.
+  const normalizedStatus = statusLabel.toLowerCase()
+  const isLiveGlow = !dimmed && (normalizedStatus === 'speaking' || normalizedStatus === 'running')
+  const isFailedGlow = normalizedStatus === 'failed' || normalizedStatus === 'unreachable'
   const providerDisplayName =
     resolveProviderBrandLabel(participant.provider, participant.model) ||
     getProviderName(participant.provider)
@@ -1723,11 +1776,6 @@ function ParticipantChip({
     ? 'Boss '
     : isSecondInCommand
       ? 'Captain '
-      : ''
-  const authorityTitle = isBossman
-    ? 'Boss'
-    : isSecondInCommand
-      ? 'Captain'
       : ''
   const handlePointerDown = useCallback(
     (event: React.PointerEvent) => {
@@ -1749,6 +1797,9 @@ function ParticipantChip({
       // with everything else in the strip.
       const target = event.target as HTMLElement | null
       if (target?.closest('.ensemble-above-overflow')) return
+      // A press means the user is selecting/dragging — the hover
+      // tooltip (pending or shown) would just get in the way.
+      dismissTooltip()
       // 1.0.5-EW22 — Pre-EW22 there was a guard here for the inline
       // `⋯` overflow button. With that button removed (the popover
       // is now opened by clicking the selected chip a second time),
@@ -1802,7 +1853,7 @@ function ParticipantChip({
       document.addEventListener('pointerup', handleUp)
       document.addEventListener('pointercancel', handleUp)
     },
-    [locked, onClick, onDragStart, onDragMove, onDragEnd]
+    [dismissTooltip, locked, onClick, onDragStart, onDragMove, onDragEnd]
   )
 
   return (
@@ -1811,18 +1862,14 @@ function ParticipantChip({
       data-participant-id={participant.id}
       data-linked-session={participant.linkedProviderSessionId ? 'true' : undefined}
       onPointerDown={handlePointerDown}
-      className={`ensemble-above-chip provider-${providerClass} ${isSelected ? 'is-selected' : ''} ${dimmed ? 'is-dimmed' : ''} ${isDragOver ? 'is-drag-over' : ''} ${isDragging ? 'is-dragging' : ''}`}
+      onPointerEnter={handleTooltipPointerEnter}
+      onPointerLeave={dismissTooltip}
+      className={`ensemble-above-chip provider-${providerClass} ${isSelected ? 'is-selected' : ''} ${dimmed ? 'is-dimmed' : ''} ${isDragOver ? 'is-drag-over' : ''} ${isDragging ? 'is-dragging' : ''} ${isLiveGlow ? 'is-live-glow' : ''} ${isFailedGlow ? 'is-failed-glow' : ''}`}
       style={gridSpan !== undefined ? { gridColumn: `span ${gridSpan}` } : undefined}
-      // 1.0.4-AT1 — surface the participant's linked provider
-      // session in the tooltip so the user can verify which thread
-      // the next dispatch will resume against. Pre-AT1 there was
-      // no chip-level signal at all; users had to dig into the
-      // participant's detail popover to see linkage state.
-      title={
-        participant.linkedProviderSessionId
-          ? `${authorityPrefix}${providerDisplayName} — ${participant.role || 'Participant'} · Linked session: ${participant.linkedProviderSessionId}`
-          : `${authorityPrefix}${providerDisplayName} — ${participant.role || 'Participant'}`
-      }
+      // 1.0.4-AT1 surfaced identity + linked-session via a native
+      // `title` here. 2026-07 chip polish — that (and the role /
+      // status-pill titles) folded into the single custom hover
+      // tooltip below so the chip never shows two tooltips at once.
     >
       {/*
         Body is a `<div role="button">`, not a `<button>` element.
@@ -1847,54 +1894,34 @@ function ParticipantChip({
         }}
       >
         {/*
-          1.0.5-EW24 — Removed the leading `<ProviderBadgeIcon>`.
-          the maintainer flagged that the left-side icon read as ambiguous
-          (users couldn't tell at a glance what it meant), while
-          the right-side `ParticipantStatusIcon` carries
-          unambiguous round-status semantics. The role text + its
-          provider-tinted colour (from `.provider-${provider}` on
-          the chip wrapper) is enough to identify the panelist
-          without the redundant glyph. Token chip + status icon
-          stay on the right edge.
+          1.0.5-EW24 removed the old leading `<ProviderBadgeIcon>` as
+          ambiguous. 2026-07 chip polish reinstates a leading provider
+          mark — but as the shared `<ProviderGlyph>` (the hue-accurate
+          mnemonic used by the transcript filter rail), sized to the
+          role text. It replaces the identification job the removed
+          token badge's colouring incidentally helped with, and
+          `accentProvider` keeps Ollama-backed display brands on their
+          spoofed upstream hue.
         */}
-        <span
-          className="ensemble-above-chip-role"
-          title={
-            authorityTitle
-              ? `${authorityTitle} — ${participant.role || providerDisplayName}`
-              : participant.role || providerDisplayName
-          }
-        >
+        <span className="ensemble-above-chip-role">
           {isBossman ? <BossmanCrownIcon className="ensemble-above-chip-crown" /> : null}
           {isSecondInCommand ? (
             <CaptainHatIcon className="ensemble-above-chip-captain-hat" />
           ) : null}
+          <ProviderGlyph
+            provider={participant.provider}
+            accentProvider={providerClass}
+            className="ensemble-above-chip-provider-glyph"
+          />
           {participant.role || getProviderName(participant.provider)}
         </span>
-        {/* 1.0.4-AV2 — per-participant token-spend chip. Renders
-          inline between the role label and the status icon when
-          the participant has accumulated 1k+ total tokens in this
-          chat. Hidden below the 1k threshold so unspoken / freshly-
-          spawned participants don't get a "0k" badge that reads as
-          noise. Tooltip carries the precise input/output/duration
-          breakdown for power users who hover. */}
-        {(() => {
-          const tokenChip = buildParticipantTokenChipModel(participant)
-          if (!tokenChip.label) return null
-          return (
-            <span
-              className="ensemble-above-chip-tokens"
-              title={tokenChip.tooltip}
-              aria-label={`${tokenChip.label} tokens — ${tokenChip.tooltip}`}
-            >
-              {tokenChip.label}
-            </span>
-          )
-        })()}
+        {/* 1.0.4-AV2's inline token-spend badge lived here between the
+          role label and the status icon. 2026-07 chip polish moved the
+          estimate into the chip's 500ms hover tooltip (below) so the
+          strip stays lean and role names get the reclaimed width. */}
         <span
           className={`ensemble-above-chip-status ${statusClass}`}
           aria-label={statusTooltip ? `${statusLabel}: ${statusTooltip}` : statusLabel}
-          title={statusTooltip ? `${statusLabel} — ${statusTooltip}` : statusLabel}
         >
           <ParticipantStatusIcon status={statusLabel} />
         </span>
@@ -1976,6 +2003,43 @@ function ParticipantChip({
           wakeAt={wakeAt}
         />
       )}
+      {/*
+        2026-07 chip polish — single custom hover tooltip (500ms
+        delay, armed in handleTooltipPointerEnter). Consolidates what
+        used to be three separate native titles plus the inline token
+        badge: identity, status (+ failure reason), token-spend
+        estimate, linked session. Suppressed while the overflow
+        popover is open or a drag is in flight — both would fight it
+        for the same screen space. Portaled to <body> (fixed
+        positioning above the chip) so it can't be clipped by the
+        strip's overflow — app-global CSS tokens only, per the other
+        body-portaled composer popovers.
+      */}
+      {tooltipPosition && !overflowOpen && !isDragging
+        ? createPortal(
+            <div
+              className={`ensemble-above-chip-tooltip provider-${providerClass}`}
+              style={{ left: `${tooltipPosition.x}px`, top: `${tooltipPosition.y}px` }}
+              role="tooltip"
+            >
+              <span className="ensemble-above-chip-tooltip-title">
+                {`${authorityPrefix}${providerDisplayName} — ${participant.role || 'Participant'}`}
+              </span>
+              <span className="ensemble-above-chip-tooltip-line">
+                {buildParticipantTokenChipTooltipLine(participant)}
+              </span>
+              <span className="ensemble-above-chip-tooltip-line is-muted">
+                {statusTooltip ? `${statusLabel} — ${statusTooltip}` : statusLabel}
+              </span>
+              {participant.linkedProviderSessionId ? (
+                <span className="ensemble-above-chip-tooltip-line is-muted">
+                  {`Linked session: ${participant.linkedProviderSessionId}`}
+                </span>
+              ) : null}
+            </div>,
+            document.body
+          )
+        : null}
     </div>
   )
 }

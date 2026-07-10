@@ -1519,39 +1519,26 @@
   }
 }
 
-.ensemble-above-chip-tokens,
 .ensemble-above-chip-status,
 .ensemble-above-chip-retry {
   flex-shrink: 0;
 }
 
-/* 1.0.4-AV2 — Per-participant token-spend badge.
- *
- * Sits between the role label and the status icon when the
- * participant has accumulated >= 1k tokens this chat. Compact
- * numeric format ("12k", "1.2m"); tooltip carries the precise
- * input/output/duration breakdown. Below 1k the chip is hidden
- * so unspoken participants don't get a "0k" badge that reads as
- * noise (logic in `buildParticipantTokenChipModel`).
- *
- * Styled as a quiet mono-numeric badge — neutral background +
- * smaller font than the role label so the role stays primary
- * and the cost-meter reads as secondary metadata. */
-.ensemble-above-chip-tokens {
-  display: inline-flex;
-  align-items: center;
-  padding: 1px 5px;
-  margin-left: 0;
-  border-radius: 5px;
-  background: color-mix(in srgb, var(--text-secondary) 12%, transparent);
-  color: color-mix(in srgb, var(--text-secondary) 90%, transparent);
-  font-family: var(--font-mono);
-  font-size: 10px;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-  line-height: 1.25;
-  letter-spacing: 0.01em;
-  user-select: none;
+/* 1.0.4-AV2's inline token-spend badge (`.ensemble-above-chip-tokens`)
+ * lived here. 2026-07 chip polish moved the estimate into the chip's
+ * custom hover tooltip (`.ensemble-above-chip-tooltip` below) so the
+ * chip face stays lean; the role max-widths above absorb the
+ * reclaimed width. */
+
+/* 2026-07 chip polish — tiny provider mark leading the role name.
+ * Shares the `ProviderGlyph` component with the transcript filter
+ * rail; em-sizing tracks the role text through the wrapped-grid
+ * container-query font steps (12 → 11 → 10px) so the mark never
+ * outweighs the name it introduces. */
+.ensemble-above-chip-role .provider-glyph {
+  flex: 0 0 auto;
+  width: 1.05em;
+  height: 1.05em;
 }
 
 /* Per-provider role text colouring. The chip container stays
@@ -1612,6 +1599,164 @@
   color: var(--provider-openbmb-color);
 }
 .ensemble-above-chip.provider-poolside .ensemble-above-chip-role {
+  color: var(--provider-poolside-color);
+}
+
+/* 2026-07 chip polish — live/failed role-name glow.
+ *
+ * `.is-live-glow` (speaking / running, incl. awaiting-approval lanes)
+ * breathes the role name in its provider hue. The glow rides
+ * `currentColor`, so it inherits whatever the per-provider role
+ * rules above resolved — including Ollama-backed display brands'
+ * spoofed upstream hues (provider-alibaba, provider-google, …)
+ * without needing its own per-provider fan-out.
+ *
+ * `.is-failed-glow` (failed / unreachable) holds a steady red glow
+ * on the still-provider-tinted name. It persists after the round
+ * ends and clears when the NEXT round starts (fresh round state
+ * resets the participant status) — deliberate: the failure may be
+ * fixed or irrelevant by the next turn. Failed wins over live by
+ * source order below (a chip is never both in practice). */
+.ensemble-above-chip.is-live-glow .ensemble-above-chip-role {
+  animation: ensemble-chip-role-live-glow 1.8s ease-in-out infinite;
+}
+
+.ensemble-above-chip.is-failed-glow .ensemble-above-chip-role {
+  animation: none;
+  text-shadow:
+    0 0 5px color-mix(in srgb, #e5484d 75%, transparent),
+    0 0 12px color-mix(in srgb, #e5484d 40%, transparent);
+}
+
+@keyframes ensemble-chip-role-live-glow {
+  0%,
+  100% {
+    text-shadow:
+      0 0 4px color-mix(in srgb, currentColor 45%, transparent),
+      0 0 10px color-mix(in srgb, currentColor 22%, transparent);
+  }
+  50% {
+    text-shadow:
+      0 0 6px color-mix(in srgb, currentColor 85%, transparent),
+      0 0 14px color-mix(in srgb, currentColor 45%, transparent);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ensemble-above-chip.is-live-glow .ensemble-above-chip-role {
+    animation: none;
+    text-shadow:
+      0 0 5px color-mix(in srgb, currentColor 70%, transparent),
+      0 0 12px color-mix(in srgb, currentColor 35%, transparent);
+  }
+}
+
+/* 2026-07 chip polish — custom chip hover tooltip (500ms delay,
+ * armed in ParticipantChip). Body-portaled with fixed positioning
+ * (the inline coords are the chip's top-centre), so app-global CSS
+ * tokens only — same constraint as the other body-portaled composer
+ * popovers. Pointer-events off: it's pure annotation and must never
+ * steal the hover from the chip that anchors it. Surface treatment
+ * mirrors `.ensemble-above-overflow` so the two read as one family. */
+.ensemble-above-chip-tooltip {
+  position: fixed;
+  z-index: 10060;
+  transform: translate(-50%, calc(-100% - 8px));
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  max-width: 320px;
+  padding: 7px 10px;
+  border-radius: 9px;
+  background: color-mix(
+    in srgb,
+    var(--surface-2, var(--panel-bg-solid, var(--surface-1, #24242a))) 92%,
+    transparent
+  );
+  border: 1px solid color-mix(in srgb, var(--panel-border) 90%, transparent);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--text-primary) 8%, transparent),
+    0 10px 28px rgba(0, 0, 0, 0.32);
+  backdrop-filter: blur(14px) saturate(140%);
+  pointer-events: none;
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--text-primary);
+}
+
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .ensemble-above-chip-tooltip {
+  background: color-mix(in srgb, var(--surface-1, #ffffff) 92%, transparent);
+  border-color: var(--surface-border);
+  box-shadow:
+    0 1px 0 inset rgba(255, 255, 255, 0.72),
+    0 10px 28px rgba(0, 0, 0, 0.14);
+}
+
+.ensemble-above-chip-tooltip-title {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ensemble-above-chip-tooltip-line {
+  font-variant-numeric: tabular-nums;
+}
+
+.ensemble-above-chip-tooltip-line.is-muted {
+  color: var(--text-secondary);
+}
+
+/* Tooltip title picks up the provider hue so the card visibly
+ * belongs to the chip that spawned it (portal breaks DOM
+ * inheritance, hence the chip re-stamps `provider-*` on the
+ * tooltip root). */
+.ensemble-above-chip-tooltip.provider-codex .ensemble-above-chip-tooltip-title {
+  color: var(--provider-codex-color);
+}
+.ensemble-above-chip-tooltip.provider-claude .ensemble-above-chip-tooltip-title {
+  color: var(--provider-claude-color);
+}
+.ensemble-above-chip-tooltip.provider-gemini .ensemble-above-chip-tooltip-title {
+  color: var(--provider-gemini-color);
+}
+.ensemble-above-chip-tooltip.provider-kimi .ensemble-above-chip-tooltip-title {
+  color: var(--provider-kimi-color);
+}
+.ensemble-above-chip-tooltip.provider-grok .ensemble-above-chip-tooltip-title {
+  color: var(--provider-grok-color);
+}
+.ensemble-above-chip-tooltip.provider-cursor .ensemble-above-chip-tooltip-title {
+  color: var(--provider-cursor-color);
+}
+.ensemble-above-chip-tooltip.provider-ollama .ensemble-above-chip-tooltip-title {
+  color: var(--provider-ollama-color);
+}
+.ensemble-above-chip-tooltip.provider-alibaba .ensemble-above-chip-tooltip-title {
+  color: var(--provider-alibaba-color);
+}
+.ensemble-above-chip-tooltip.provider-deep-reinforce .ensemble-above-chip-tooltip-title {
+  color: var(--provider-deep-reinforce-color);
+}
+.ensemble-above-chip-tooltip.provider-google .ensemble-above-chip-tooltip-title {
+  color: var(--provider-google-color);
+}
+.ensemble-above-chip-tooltip.provider-ibm .ensemble-above-chip-tooltip-title {
+  color: var(--provider-ibm-color);
+}
+.ensemble-above-chip-tooltip.provider-liquid .ensemble-above-chip-tooltip-title {
+  color: var(--provider-liquid-color);
+}
+.ensemble-above-chip-tooltip.provider-nvidia .ensemble-above-chip-tooltip-title {
+  color: var(--provider-nvidia-color);
+}
+.ensemble-above-chip-tooltip.provider-openai .ensemble-above-chip-tooltip-title {
+  color: var(--provider-openai-color);
+}
+.ensemble-above-chip-tooltip.provider-openbmb .ensemble-above-chip-tooltip-title {
+  color: var(--provider-openbmb-color);
+}
+.ensemble-above-chip-tooltip.provider-poolside .ensemble-above-chip-tooltip-title {
   color: var(--provider-poolside-color);
 }
 
