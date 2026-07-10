@@ -2,11 +2,12 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 
 import {
   CODE_BLOCK_RESIZE_EVENT,
-  DOWNWARD_INTENT_WINDOW_MS,
   STICK_ENGAGE_PX,
   captureChatScrollState,
   expectedBottomScrollTop,
+  hasRecentTranscriptDownwardIntent,
   isExpectedProgrammaticScroll,
+  isTranscriptScrollbarPointer,
   restoreChatScrollStateWhenReady,
   shouldAbortAutoFollowSnap,
   shouldDisengageAutoFollow,
@@ -14,6 +15,7 @@ import {
   shouldRepinAfterCodeBlockResize,
   shouldRepinAfterFrame,
   shouldRepinAfterTranscriptResize,
+  shouldRecordScrollbarDownwardIntent,
   shouldShowJumpToLatestPill,
   shouldSnapAfterChatSwitch,
   shouldTreatScrollAsUserScrollAway,
@@ -51,12 +53,17 @@ export function useTranscriptScrollState({
   // just armed, and a mid-flight content growth would strand the jump short
   // of the bottom with the pill re-appearing.
   const jumpInFlightRef = useRef(false)
-  // Timestamp of the last downward wheel/touch/key gesture; zeroed by any
-  // upward gesture or scroll-away. Vouches for the wide re-engage band
-  // (STICK_REENGAGE_DOWNWARD_PX) — scroll events alone can't distinguish a
+  // Timestamp of the last verified downward gesture (wheel/touch/key or a
+  // tracked scrollbar pointer); zeroed by any upward gesture or scroll-away.
+  // Vouches for both re-engage bands — scroll events alone cannot distinguish a
   // real downward return from an unarmed restore write or a coalesced frame
   // whose last input was upward.
   const downwardIntentAtRef = useRef(0)
+  // Native/overlay scrollbar drags do not emit wheel/touch/key intent. Mark a
+  // pointer that starts on the scrollbar, then vouch for it only after its
+  // scrollTop actually moves downward. The normal 400ms timestamp window gives
+  // the final scroll event a short grace after pointerup.
+  const scrollbarPointerActiveRef = useRef(false)
   const repinRafIdRef = useRef<number | null>(null)
   const lastTranscriptScrollTopRef = useRef(0)
   const programmaticScrollTargetRef = useRef<number | null>(null)
@@ -258,12 +265,18 @@ export function useTranscriptScrollState({
       if (
         shouldReengageAutoFollowAfterScroll({
           distanceFromBottom,
-          userScrolledAwayInThisFrame: userScrolledAwayInFrameRef.current,
+          // Treat an already-off follow latch as sticky even if an unusual
+          // scroll path did not set the companion intent flag (for example a
+          // coalesced assistant-delta reflow racing the first scroll event).
+          // Once follow is off, only verified downward input may re-arm it.
+          userScrolledAwayInThisFrame: userScrolledAwayInFrameRef.current || !autoFollowRef.current,
           previousScrollTop,
           nextScrollTop,
           isProgrammatic: false,
-          recentDownwardIntent:
-            Date.now() - downwardIntentAtRef.current < DOWNWARD_INTENT_WINDOW_MS
+          recentDownwardIntent: hasRecentTranscriptDownwardIntent({
+            intentAt: downwardIntentAtRef.current,
+            now: Date.now()
+          })
         })
       ) {
         autoFollowRef.current = true
@@ -293,6 +306,16 @@ export function useTranscriptScrollState({
         expectedScrollTop: programmaticScrollTargetRef.current,
         nextScrollTop
       })
+      if (
+        shouldRecordScrollbarDownwardIntent({
+          pointerActive: scrollbarPointerActiveRef.current,
+          isProgrammatic: expectedProgrammatic,
+          previousScrollTop: lastTranscriptScrollTopRef.current,
+          nextScrollTop
+        })
+      ) {
+        downwardIntentAtRef.current = Date.now()
+      }
       if (
         shouldTreatScrollAsUserScrollAway({
           previousScrollTop: lastTranscriptScrollTopRef.current,
@@ -329,7 +352,7 @@ export function useTranscriptScrollState({
     const handleScrollIntent = (deltaY: number) => {
       if (deltaY > 0) {
         // Downward gesture — vouches for the wide re-engage band for a
-        // short window (see DOWNWARD_INTENT_WINDOW_MS).
+        // short window (see hasRecentTranscriptDownwardIntent).
         downwardIntentAtRef.current = Date.now()
         return
       }
@@ -345,6 +368,33 @@ export function useTranscriptScrollState({
     }
 
     const onWheel = (event: WheelEvent) => handleScrollIntent(event.deltaY)
+
+    const onPointerDown = (event: PointerEvent) => {
+      if (event.button !== 0) return
+      const rect = scroller.getBoundingClientRect()
+      const direction = getComputedStyle(scroller).direction === 'rtl' ? 'rtl' : 'ltr'
+      if (
+        !isTranscriptScrollbarPointer({
+          clientX: event.clientX,
+          rectLeft: rect.left,
+          rectRight: rect.right,
+          offsetWidth: scroller.offsetWidth,
+          clientWidth: scroller.clientWidth,
+          scrollHeight: scroller.scrollHeight,
+          clientHeight: scroller.clientHeight,
+          direction
+        })
+      ) {
+        return
+      }
+      scrollbarPointerActiveRef.current = true
+      // Direction is not known until scrollTop moves. Clear any stale wheel /
+      // touch / key voucher so the pointer gesture must earn its own intent.
+      downwardIntentAtRef.current = 0
+    }
+    const endScrollbarPointer = () => {
+      scrollbarPointerActiveRef.current = false
+    }
 
     let lastTouchY: number | null = null
     const onTouchStart = (event: TouchEvent) => {
@@ -383,17 +433,26 @@ export function useTranscriptScrollState({
     }
 
     scroller.addEventListener('wheel', onWheel, { passive: true })
+    scroller.addEventListener('pointerdown', onPointerDown, { passive: true })
     scroller.addEventListener('touchstart', onTouchStart, { passive: true })
     scroller.addEventListener('touchmove', onTouchMove, { passive: true })
     scroller.addEventListener('touchend', onTouchEnd, { passive: true })
     scroller.addEventListener('keydown', onKeyDown)
+    window.addEventListener('pointerup', endScrollbarPointer, { passive: true })
+    window.addEventListener('pointercancel', endScrollbarPointer, { passive: true })
+    window.addEventListener('blur', endScrollbarPointer)
 
     return () => {
       scroller.removeEventListener('wheel', onWheel)
+      scroller.removeEventListener('pointerdown', onPointerDown)
       scroller.removeEventListener('touchstart', onTouchStart)
       scroller.removeEventListener('touchmove', onTouchMove)
       scroller.removeEventListener('touchend', onTouchEnd)
       scroller.removeEventListener('keydown', onKeyDown)
+      window.removeEventListener('pointerup', endScrollbarPointer)
+      window.removeEventListener('pointercancel', endScrollbarPointer)
+      window.removeEventListener('blur', endScrollbarPointer)
+      scrollbarPointerActiveRef.current = false
     }
   }, [chatId])
 

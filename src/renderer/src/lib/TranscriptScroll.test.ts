@@ -1,12 +1,15 @@
 import { afterEach, describe, it, expect, vi } from 'vitest'
 import {
+  DOWNWARD_INTENT_WINDOW_MS,
   STICK_ENGAGE_PX,
   STICK_REENGAGE_DOWNWARD_PX,
   STICK_DISENGAGE_PX,
   PROGRAMMATIC_SCROLL_EPSILON_PX,
   captureChatScrollState,
   expectedBottomScrollTop,
+  hasRecentTranscriptDownwardIntent,
   isExpectedProgrammaticScroll,
+  isTranscriptScrollbarPointer,
   normalizeChatScrollState,
   restoreChatScrollAnchor,
   restoreChatScrollState,
@@ -18,6 +21,7 @@ import {
   shouldRepinAfterFrame,
   shouldRepinAfterCodeBlockResize,
   shouldRepinAfterTranscriptResize,
+  shouldRecordScrollbarDownwardIntent,
   shouldSnapAfterChatSwitch,
   shouldShowJumpToLatestPill,
   buildCodeBlockResizeEventInit,
@@ -277,7 +281,7 @@ describe('TranscriptScroll', () => {
           previousScrollTop: 300,
           nextScrollTop: 300,
           isProgrammatic: false,
-            recentDownwardIntent: false
+          recentDownwardIntent: false
         })
       ).toBe(true)
     })
@@ -290,23 +294,26 @@ describe('TranscriptScroll', () => {
           previousScrollTop: 300,
           nextScrollTop: 260,
           isProgrammatic: false,
-            recentDownwardIntent: false
+          recentDownwardIntent: false
         })
       ).toBe(false)
     })
 
-    it('re-engages when the user scrolls downward back to the live edge', () => {
-      expect(
-        shouldReengageAutoFollowAfterScroll({
-          distanceFromBottom: 1,
-          userScrolledAwayInThisFrame: true,
-          previousScrollTop: 260,
-          nextScrollTop: 300,
-          isProgrammatic: false,
-            recentDownwardIntent: false
-        })
-      ).toBe(true)
-    })
+    it.each(['wheel', 'touch', 'keyboard', 'scrollbar pointer'])(
+      're-engages on a verified downward %s return to the live edge',
+      () => {
+        expect(
+          shouldReengageAutoFollowAfterScroll({
+            distanceFromBottom: 1,
+            userScrolledAwayInThisFrame: true,
+            previousScrollTop: 260,
+            nextScrollTop: 300,
+            isProgrammatic: false,
+            recentDownwardIntent: true
+          })
+        ).toBe(true)
+      }
+    )
 
     it('does not re-engage from app-owned scroll writes', () => {
       expect(
@@ -316,25 +323,127 @@ describe('TranscriptScroll', () => {
           previousScrollTop: 260,
           nextScrollTop: 300,
           isProgrammatic: true,
-            recentDownwardIntent: false
+          recentDownwardIntent: true
         })
       ).toBe(false)
     })
 
-    it('re-engages on anchor-correction-like downward movement when guard is not pre-armed', () => {
-      // Virtual-window Phase-1 anchor correction can move scrollTop down toward
-      // the live edge while the user is reading history. Without a pre-armed
-      // programmatic guard the synchronous scroll event trips the 2px band.
+    it.each([
+      ['ordinary assistant delta reflow', 1600, 1998],
+      ['Thinking/tool viewport layout', 2600, 3198],
+      ['virtual-window anchor correction', 2600, 5198]
+    ])('does not re-engage on an unguarded %s landing at the live edge', (_, previous, next) => {
+      // Provider deltas and transcript layout can move scrollTop down while the
+      // user reads history. Even if a write is not classified as programmatic,
+      // direction + position are not user intent and must not trip the strict
+      // 2px band.
       expect(
         shouldReengageAutoFollowAfterScroll({
           distanceFromBottom: STICK_ENGAGE_PX,
           userScrolledAwayInThisFrame: true,
-          previousScrollTop: 2600,
-          nextScrollTop: 5198,
+          previousScrollTop: previous,
+          nextScrollTop: next,
           isProgrammatic: false,
           recentDownwardIntent: false
         })
-      ).toBe(true)
+      ).toBe(false)
+    })
+
+    describe('scrollbar pointer hit testing', () => {
+      const base = {
+        rectLeft: 0,
+        rectRight: 1000,
+        offsetWidth: 1000,
+        clientWidth: 1000,
+        scrollHeight: 1600,
+        clientHeight: 600
+      }
+
+      it('recognises the macOS overlay-scrollbar edge strip', () => {
+        expect(isTranscriptScrollbarPointer({ ...base, clientX: 992 })).toBe(true)
+        expect(isTranscriptScrollbarPointer({ ...base, clientX: 970 })).toBe(false)
+      })
+
+      it('recognises a layout-consuming native scrollbar gutter', () => {
+        expect(
+          isTranscriptScrollbarPointer({
+            ...base,
+            clientX: 988,
+            clientWidth: 982
+          })
+        ).toBe(true)
+      })
+
+      it('supports an inline-start scrollbar in RTL', () => {
+        expect(
+          isTranscriptScrollbarPointer({
+            ...base,
+            clientX: 8,
+            direction: 'rtl'
+          })
+        ).toBe(true)
+      })
+
+      it('does not arm pointer intent when the transcript does not overflow', () => {
+        expect(
+          isTranscriptScrollbarPointer({
+            ...base,
+            clientX: 992,
+            scrollHeight: 600
+          })
+        ).toBe(false)
+      })
+
+      it('records only a real, user-owned downward scrollbar movement', () => {
+        expect(
+          shouldRecordScrollbarDownwardIntent({
+            pointerActive: true,
+            isProgrammatic: false,
+            previousScrollTop: 260,
+            nextScrollTop: 300
+          })
+        ).toBe(true)
+        expect(
+          shouldRecordScrollbarDownwardIntent({
+            pointerActive: true,
+            isProgrammatic: true,
+            previousScrollTop: 260,
+            nextScrollTop: 300
+          })
+        ).toBe(false)
+        expect(
+          shouldRecordScrollbarDownwardIntent({
+            pointerActive: false,
+            isProgrammatic: false,
+            previousScrollTop: 260,
+            nextScrollTop: 300
+          })
+        ).toBe(false)
+        expect(
+          shouldRecordScrollbarDownwardIntent({
+            pointerActive: true,
+            isProgrammatic: false,
+            previousScrollTop: 300,
+            nextScrollTop: 260
+          })
+        ).toBe(false)
+      })
+
+      it('keeps the verified pointer movement alive for the short post-pointerup grace', () => {
+        const intentAt = 10_000
+        expect(
+          hasRecentTranscriptDownwardIntent({
+            intentAt,
+            now: intentAt + DOWNWARD_INTENT_WINDOW_MS
+          })
+        ).toBe(true)
+        expect(
+          hasRecentTranscriptDownwardIntent({
+            intentAt,
+            now: intentAt + DOWNWARD_INTENT_WINDOW_MS + 1
+          })
+        ).toBe(false)
+      })
     })
 
     it('does not re-engage anchor-correction writes when guard is pre-armed before scrollTop write', () => {
@@ -391,9 +500,9 @@ describe('TranscriptScroll', () => {
       })
 
       it('requires a recent verified downward gesture — scroll events alone cannot arm the band', () => {
-        // Scrollbar scrubs, unarmed restore writes, and a coalesced frame
-        // whose last input was upward all present as net-downward scroll
-        // movement; only wheel/touch/key gestures vouch for the band.
+        // Unarmed restore writes and a coalesced frame whose last input was
+        // upward both present as net-downward movement; only verified
+        // wheel/touch/key or tracked-scrollbar gestures vouch for the band.
         expect(
           shouldReengageAutoFollowAfterScroll({
             distanceFromBottom: 30,

@@ -62,24 +62,44 @@ export const STICK_DISENGAGE_PX = 4
  * metrics they are tens of pixels short — follow never re-arms and the
  * transcript runs away (Claude/Codex re-lock in this gesture). A landing
  * inside this band re-engages ONLY under a recent, verified downward input
- * gesture (`recentDownwardIntent`: wheel/touch/keys — the signals scroll
- * EVENTS cannot fake); the caller then snaps the remaining distance so the
- * gesture completes at the live edge. Scrollbar scrubs, shrink clamps, and
- * unarmed restore writes produce no input gesture and keep the strict 2px
- * path — so pausing a drag near the bottom to read is never captured, and
+ * gesture (`recentDownwardIntent`: wheel/touch/keys or a tracked scrollbar
+ * pointer — signals scroll EVENTS cannot fake); the caller then snaps the
+ * remaining distance so the gesture completes at the live edge. Shrink clamps
+ * and unarmed restore writes produce no input gesture and keep follow off — so
  * an app-owned reflow can never convert a reading position into a re-lock.
  */
 export const STICK_REENGAGE_DOWNWARD_PX = 48
 
 /**
- * How long a downward wheel/touch/key gesture vouches for a near-bottom
- * landing. Long enough to cover the gesture's own momentum and the rAF
- * evaluate that follows it; short enough that a stale flick can't hand the
- * band to an unrelated later layout shift.
+ * How long a verified downward input vouches for a near-bottom landing. Long
+ * enough to cover wheel/touch momentum, key scrolling, a scrollbar pointerup,
+ * and the rAF evaluate that follows; short enough that stale intent cannot hand
+ * the band to an unrelated later layout shift.
  */
 export const DOWNWARD_INTENT_WINDOW_MS = 400
 
+/**
+ * Width of the pointer hit strip used for overlay scrollbars. macOS overlay
+ * scrollbars do not consume layout width (`offsetWidth - clientWidth === 0`),
+ * so the native gutter alone cannot identify a thumb drag. Pointer events that
+ * start inside this narrow inline-end strip are treated as scrollbar gestures
+ * only while the transcript actually overflows.
+ */
+export const OVERLAY_SCROLLBAR_HIT_PX = 14
+
 export const PROGRAMMATIC_SCROLL_EPSILON_PX = 1
+
+/** Whether a recorded user-input voucher is still fresh enough to re-arm follow. */
+export function hasRecentTranscriptDownwardIntent(input: {
+  intentAt: number
+  now: number
+}): boolean {
+  if (!Number.isFinite(input.intentAt) || !Number.isFinite(input.now) || input.intentAt <= 0) {
+    return false
+  }
+  const elapsed = input.now - input.intentAt
+  return elapsed >= 0 && elapsed <= DOWNWARD_INTENT_WINDOW_MS
+}
 
 export interface ChatScrollState {
   scrollTop: number
@@ -245,8 +265,8 @@ export function shouldEngageAutoFollow(distanceFromBottom: number): boolean {
  * Being numerically near the bottom is not enough after upward user intent.
  * During fast streaming the transcript can grow under the viewport and keep
  * `distanceFromBottom` inside the tiny engage band while the user is trying to
- * move upward. In that case, only a real downward movement back to the live
- * edge should clear the scroll-away guard.
+ * move upward. In that case, only a verified downward gesture plus movement
+ * back to the live edge should clear the scroll-away guard.
  */
 export function shouldReengageAutoFollowAfterScroll(input: {
   distanceFromBottom: number
@@ -254,11 +274,11 @@ export function shouldReengageAutoFollowAfterScroll(input: {
   previousScrollTop: number
   nextScrollTop: number
   isProgrammatic: boolean
-  /** True when a downward wheel/touch/key gesture happened within
-   *  DOWNWARD_INTENT_WINDOW_MS and no upward gesture followed it. Scroll
-   *  EVENTS can't prove a gesture (scrollbar scrubs, restore writes, and a
-   *  frame-coalesced net movement all look alike), so the wide band demands
-   *  this out-of-band evidence. */
+  /** True when a downward wheel/touch/key gesture or scrollbar-pointer drag
+   *  happened within DOWNWARD_INTENT_WINDOW_MS and no upward gesture followed
+   *  it. Scroll EVENTS alone can't prove a gesture (restore writes and a
+   *  frame-coalesced net movement look identical), so both the strict and wide
+   *  re-engage bands demand this out-of-band evidence after scroll-away. */
   recentDownwardIntent: boolean
 }): boolean {
   const movedDown =
@@ -268,6 +288,13 @@ export function shouldReengageAutoFollowAfterScroll(input: {
   if (shouldEngageAutoFollow(input.distanceFromBottom)) {
     if (!input.userScrolledAwayInThisFrame) return true
     if (input.isProgrammatic) return false
+    // Once a USER has released sticky-bottom, position + direction alone are
+    // not proof that they came back. Assistant/reasoning layout, browser clamps,
+    // and virtual-window anchor corrections can all move scrollTop downward
+    // without a gesture. Require an out-of-band wheel/touch/key or scrollbar-
+    // drag signal even inside the strict 2px band so an unclassified landing can
+    // never re-arm follow and let the next stream frame yank the reader to tail.
+    if (!input.recentDownwardIntent) return false
     return movedDown
   }
   // Deliberate downward return that lands NEAR the live edge (see
@@ -281,6 +308,61 @@ export function shouldReengageAutoFollowAfterScroll(input: {
   if (!input.userScrolledAwayInThisFrame) return false
   if (!input.recentDownwardIntent) return false
   return movedDown && input.distanceFromBottom <= STICK_REENGAGE_DOWNWARD_PX
+}
+
+/**
+ * Whether a pointer-down landed in the transcript's vertical scrollbar hit
+ * area. Handles both layout-consuming scrollbars and macOS overlay scrollbars.
+ * The caller still waits for an actual downward scrollTop movement before
+ * recording intent, so merely clicking near the edge cannot re-arm follow.
+ */
+export function isTranscriptScrollbarPointer(input: {
+  clientX: number
+  rectLeft: number
+  rectRight: number
+  offsetWidth: number
+  clientWidth: number
+  scrollHeight: number
+  clientHeight: number
+  direction?: 'ltr' | 'rtl'
+}): boolean {
+  const values = [
+    input.clientX,
+    input.rectLeft,
+    input.rectRight,
+    input.offsetWidth,
+    input.clientWidth,
+    input.scrollHeight,
+    input.clientHeight
+  ]
+  if (values.some((value) => !Number.isFinite(value))) return false
+  if (input.rectRight <= input.rectLeft) return false
+  if (input.scrollHeight <= input.clientHeight) return false
+
+  const nativeGutterWidth = Math.max(0, input.offsetWidth - input.clientWidth)
+  const hitWidth = Math.max(nativeGutterWidth, OVERLAY_SCROLLBAR_HIT_PX)
+  if (input.direction === 'rtl') {
+    return input.clientX >= input.rectLeft && input.clientX <= input.rectLeft + hitWidth
+  }
+  return input.clientX <= input.rectRight && input.clientX >= input.rectRight - hitWidth
+}
+
+/**
+ * A scrollbar pointer-down becomes verified downward intent only after the
+ * thumb/track actually moves scrollTop down. App-owned writes are explicitly
+ * excluded so holding the pointer near the gutter cannot bless a layout snap.
+ */
+export function shouldRecordScrollbarDownwardIntent(input: {
+  pointerActive: boolean
+  isProgrammatic: boolean
+  previousScrollTop: number
+  nextScrollTop: number
+}): boolean {
+  if (!input.pointerActive || input.isProgrammatic) return false
+  if (!Number.isFinite(input.previousScrollTop) || !Number.isFinite(input.nextScrollTop)) {
+    return false
+  }
+  return input.nextScrollTop > input.previousScrollTop + 0.5
 }
 
 export function expectedBottomScrollTop(input: {
