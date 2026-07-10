@@ -921,9 +921,54 @@ export async function resolveCodexUsageImportPath(
   return result.filePaths[0]
 }
 
+/*
+ * Mirrors fetchClaudeUsageSnapshot's fresh-TTL + failure backoff (added there
+ * after the shared-account 429 incident — see the comment above
+ * CLAUDE_USAGE_FRESH_TTL_MS). The ChatGPT wham/usage endpoint is driven by
+ * the renderer's 90s foreground usage poll for every desktop user; without a
+ * TTL every poll was a live third-party network round trip, and without a
+ * backoff an outage/429 streak retried at full poll cadence. An explicit
+ * force (manual ↻ refresh) still bypasses both gates.
+ */
+const CODEX_USAGE_FRESH_TTL_MS = 10 * 60_000
+const CODEX_USAGE_STALE_TTL_MS = 4 * 60 * 60_000
+const CODEX_USAGE_FAILURE_BACKOFF_MS = 90_000
+let codexUsageCache: { snapshot: NormalizedProviderUsageSnapshot; fetchedAt: number } | null = null
+let codexUsageLastFailureAt = 0
+
 export async function fetchCodexUsageSnapshot(
-  _options: ProviderUsageSnapshotOptions = {}
+  options: ProviderUsageSnapshotOptions = {}
 ): Promise<NormalizedProviderUsageSnapshot> {
+  const now = Date.now()
+  if (
+    !options.force &&
+    codexUsageCache &&
+    now - codexUsageCache.fetchedAt < CODEX_USAGE_FRESH_TTL_MS
+  ) {
+    return codexUsageCache.snapshot
+  }
+  // Recent failure → don't re-hit the endpoint yet; serve the last snapshot
+  // as stale. Force bypasses (explicit user refresh).
+  if (
+    !options.force &&
+    codexUsageLastFailureAt &&
+    now - codexUsageLastFailureAt < CODEX_USAGE_FAILURE_BACKOFF_MS
+  ) {
+    if (codexUsageCache && now - codexUsageCache.fetchedAt < CODEX_USAGE_STALE_TTL_MS) {
+      return {
+        ...codexUsageCache.snapshot,
+        stale: true,
+        error: 'Codex usage fetch is backing off after a recent failure.'
+      }
+    }
+    return usageSnapshotWithPersistedFallback('codex', {
+      provider: 'codex',
+      source: 'chatgpt-wham',
+      configured: true,
+      error: 'Codex usage fetch is backing off after a recent failure.'
+    })
+  }
+
   // Prefer the live, CLI-rotated token from ~/.codex/auth.json; fall back to the
   // one-time encrypted import only when the file is missing/unreadable.
   const credential = (await readCodexUsageCredentialLive()) ?? storedCodexUsageCredential()
@@ -962,9 +1007,12 @@ export async function fetchCodexUsageSnapshot(
     }
     const payload = await response.json()
     const snapshot = normalizeCodexUsagePayload(payload, credential)
+    codexUsageCache = { snapshot, fetchedAt: Date.now() }
+    codexUsageLastFailureAt = 0
     cacheProviderUsageSnapshot('codex', snapshot)
     return snapshot
   } catch (error) {
+    codexUsageLastFailureAt = Date.now()
     const fallback = usageSnapshotWithPersistedFallback('codex', {
       provider: 'codex',
       configured: true,
