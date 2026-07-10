@@ -9993,12 +9993,21 @@ function App(): React.JSX.Element {
               m.metadata?.kind === TASKWRAITH_CLOSEOUT_KIND &&
               !incomingIds.has(m.id)
           )
-          const orphans = [
-            ...orphanedLiveAssistants,
-            ...orphanedAgentQuestionMarkers,
-            ...orphanedContextCompactionCards,
-            ...orphanedTaskWraithCloseouts
-          ]
+          // Preserve orphans in their ORIGINAL relative order (a single
+          // ordered pass over liveChat.messages, not category concatenation).
+          // Grouping by category re-sorted the tail — an orphaned system card
+          // (compaction/closeout) landed BELOW assistant text that actually
+          // streamed after it, and the inversion persisted via chatByIdRef +
+          // the next saveChat.
+          const orphanIds = new Set(
+            [
+              ...orphanedLiveAssistants,
+              ...orphanedAgentQuestionMarkers,
+              ...orphanedContextCompactionCards,
+              ...orphanedTaskWraithCloseouts
+            ].map((m) => m.id)
+          )
+          const orphans = liveChat.messages.filter((m) => orphanIds.has(m.id))
           if (
             mergedMessages.length !== chat.messages.length ||
             orphans.length > 0 ||
@@ -12207,7 +12216,12 @@ function App(): React.JSX.Element {
             // duplicate full-turn bubble below the tools.
             const completeTarget = resolveAssistantDeltaTarget(updated.messages, {
               incoming: event.content,
-              cumulative: true
+              cumulative: true,
+              // A system card (queued-run record, question marker, terminal
+              // compaction card) landing after the last delta must not hide
+              // the streamed bubbles from the dedupe — without this the full
+              // turn re-appends below the card.
+              spanTrailingSystemCards: true
             })
             // The complete event restates the FULL turn. A `merge`/`replaceText`
             // targets an existing bubble; `skip` means the streamed deltas

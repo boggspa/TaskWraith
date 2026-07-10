@@ -239,3 +239,97 @@ describe('resolveAssistantDeltaTarget', () => {
     })
   })
 })
+
+describe('spanTrailingSystemCards (complete-event dedupe across a tail system card)', () => {
+  const asst = (id: string, content: string): ChatMessage => ({
+    id,
+    role: 'assistant',
+    content,
+    timestamp: '2026-07-10T00:00:00.000Z'
+  })
+  const tool = (id: string): ChatMessage => ({
+    id,
+    role: 'tool',
+    content: '',
+    timestamp: '2026-07-10T00:00:00.000Z',
+    toolActivities: [
+      {
+        id: `${id}-act`,
+        toolName: 'read_file',
+        displayName: 'Read',
+        category: 'read',
+        status: 'success'
+      } as never
+    ]
+  })
+  const sys = (id: string, content = 'Message queued for after this run.'): ChatMessage => ({
+    id,
+    role: 'system',
+    content,
+    timestamp: '2026-07-10T00:00:00.000Z',
+    metadata: { kind: 'queuedRunRequest' } as never
+  })
+
+  it('skips a full-turn restatement whose text already streamed above the card', () => {
+    const messages = [asst('a-1', 'the whole answer'), sys('s-1')]
+    const target = resolveAssistantDeltaTarget(messages, {
+      incoming: 'the whole answer',
+      cumulative: true,
+      spanTrailingSystemCards: true
+    })
+    expect(target).toEqual({ action: 'skip' })
+  })
+
+  it('WITHOUT the option the same shape duplicates (regression pin of the defect)', () => {
+    const messages = [asst('a-1', 'the whole answer'), sys('s-1')]
+    const target = resolveAssistantDeltaTarget(messages, {
+      incoming: 'the whole answer',
+      cumulative: true
+    })
+    expect(target).toEqual({ action: 'append' })
+  })
+
+  it('appends only the genuinely-new tail AFTER the card', () => {
+    const messages = [asst('a-1', 'partial answer'), sys('s-1')]
+    const target = resolveAssistantDeltaTarget(messages, {
+      incoming: 'partial answer plus a final sentence.',
+      cumulative: true,
+      spanTrailingSystemCards: true
+    })
+    expect(target).toEqual({ action: 'appendText', text: ' plus a final sentence.' })
+  })
+
+  it('handles a tool boundary + trailing card: restatement covered by pre/post-tool bubbles skips', () => {
+    const messages = [asst('a-1', 'before tools. '), tool('t-1'), asst('a-2', 'after tools.'), sys('s-1')]
+    const target = resolveAssistantDeltaTarget(messages, {
+      incoming: 'before tools. after tools.',
+      cumulative: true,
+      spanTrailingSystemCards: true
+    })
+    expect(target).toEqual({ action: 'skip' })
+  })
+
+  it('skips a divergent (normalized) restatement instead of duplicating it', () => {
+    const messages = [asst('a-1', 'the  whole   answer'), sys('s-1')]
+    const target = resolveAssistantDeltaTarget(messages, {
+      incoming: 'the whole answer',
+      cumulative: true,
+      spanTrailingSystemCards: true
+    })
+    expect(target).toEqual({ action: 'skip' })
+  })
+
+  it('is inert when the tail is not a system card', () => {
+    const messages = [asst('a-1', 'streaming text')]
+    const withOption = resolveAssistantDeltaTarget(messages, {
+      incoming: 'streaming text',
+      cumulative: true,
+      spanTrailingSystemCards: true
+    })
+    const without = resolveAssistantDeltaTarget(messages, {
+      incoming: 'streaming text',
+      cumulative: true
+    })
+    expect(withOption).toEqual(without)
+  })
+})

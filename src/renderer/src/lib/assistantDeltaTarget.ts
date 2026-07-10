@@ -66,6 +66,14 @@ interface ResolveAssistantDeltaTargetInput {
    *  current text SEGMENT rather than the whole turn. Preserve a divergent
    *  post-tool frame instead of applying Claude's safe-to-skip rule. */
   preserveDivergentSnapshot?: boolean
+  /** Complete-restatement path only: when a SYSTEM card is the trailing
+   *  message, reach the dedupe window back ACROSS it (stop at user/error).
+   *  A card landing at the tail between the last streamed delta and the
+   *  complete event otherwise empties the turn window, so none of the
+   *  skip/merge dedupe fires and the FULL turn re-appends below the card —
+   *  the whole answer rendered twice. Streamed DELTAS keep the system
+   *  boundary (text after a card correctly opens a new bubble). */
+  spanTrailingSystemCards?: boolean
 }
 
 /** The current turn's trailing maximal run of assistant|tool messages (stops
@@ -80,10 +88,61 @@ function trailingTurn(messages: ChatMessage[]): { start: number } {
   return { start }
 }
 
+/** The trailing run of system-role messages (0 when the tail isn't system). */
+function trailingSystemCount(messages: ChatMessage[]): number {
+  let count = 0
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role === 'system') count += 1
+    else break
+  }
+  return count
+}
+
 export function resolveAssistantDeltaTarget(
   messages: ChatMessage[],
   input: ResolveAssistantDeltaTargetInput
 ): AssistantDeltaTarget {
+  // Complete-path dedupe across a trailing system card: resolve routing as if
+  // the trailing card(s) were absent, then translate the outcome. Only skip /
+  // append-shaped actions can result (the turn's bubbles are not trailing, so
+  // merge/replace never targets across the card) — and an append lands AFTER
+  // the card, which is exactly the chronological position it should occupy.
+  if (input.spanTrailingSystemCards === true) {
+    const systemTail = trailingSystemCount(messages)
+    if (systemTail > 0) {
+      const target = resolveAssistantDeltaTarget(messages.slice(0, messages.length - systemTail), {
+        ...input,
+        spanTrailingSystemCards: false
+      })
+      if (target.action === 'skip') return target
+      if (target.action === 'appendText') return target
+      if (target.action === 'append') return target
+      if (target.action === 'merge' || target.action === 'replaceText') {
+        // The restatement folds into a bubble ABOVE the system card. Its
+        // content is already rendered there (the merge helper would settle
+        // increments) — but rather than rewrite history behind a card, treat
+        // covered content as rendered and place only a genuinely new tail.
+        // resolveAssistantDeltaMerge-style dedupe: exact/prefix coverage is
+        // a skip; anything else appends after the card (never duplicating
+        // the full turn).
+        const bubble = messages[target.index]
+        if (bubble && typeof bubble.content === 'string') {
+          if (bubble.content === input.incoming) return { action: 'skip' }
+          if (bubble.content.startsWith(input.incoming)) return { action: 'skip' }
+          if (input.incoming.startsWith(bubble.content)) {
+            const tail = input.incoming.slice(bubble.content.length)
+            if (tail.trim().length === 0) return { action: 'skip' }
+            return { action: 'appendText', text: tail }
+          }
+        }
+        // Divergent restatement (e.g. whitespace-normalized envelope) — the
+        // streamed deltas already rendered the turn; skip, as the bridge does.
+        return { action: 'skip' }
+      }
+      return target
+    }
+  }
+
   const lastIndex = messages.length - 1
   const last = lastIndex >= 0 ? messages[lastIndex] : null
 
