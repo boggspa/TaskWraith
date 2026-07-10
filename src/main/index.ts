@@ -183,6 +183,7 @@ import {
   codexCommandFileEditMetadata,
   codexCommandText,
   codexPatchPreviewFromValue,
+  codexReasoningSummaryDisplayText,
   codexReasoningSummaryModeForEffort,
   codexReasoningSummaryText,
   codexString,
@@ -14654,9 +14655,13 @@ function emitCodexReasoningDelta(state: CodexRunState, params: any, label: strin
     params?.delta ?? params?.text ?? params?.summary ?? params?.part
   )
   if (!delta) return
+  const previousRaw = state.reasoningTextByItemId.get(itemId) || ''
+  const previous = codexReasoningSummaryDisplayText(previousRaw)
+  const nextRaw = previousRaw + delta
+  const next = codexReasoningSummaryDisplayText(nextRaw)
+  state.reasoningTextByItemId.set(itemId, nextRaw)
+  if (!next || next === previous) return
   ensureCodexTimelineTool(state, itemId, 'codex_reasoning', { title: label, kind: 'reasoning' })
-  const next = (state.reasoningTextByItemId.get(itemId) || '') + delta
-  state.reasoningTextByItemId.set(itemId, next)
   sendCodexSyntheticToolResult(state, itemId, next, 'running', {
     toolName: 'codex_reasoning',
     kind: 'reasoning'
@@ -16122,8 +16127,10 @@ function handleCodexNotification(message: any) {
     }
     if (item?.type === 'reasoning') {
       const itemId = codexTimelineItemId(params, 'codex-reasoning')
-      const streamed = state.reasoningTextByItemId.get(itemId) || ''
-      const summary = codexReasoningSummaryText(item.summary)
+      const streamed = codexReasoningSummaryDisplayText(
+        state.reasoningTextByItemId.get(itemId) || ''
+      )
+      const summary = codexReasoningSummaryDisplayText(codexReasoningSummaryText(item.summary))
       const text = summary && summary.length >= streamed.length ? summary : streamed
       if (!text.trim()) return
       ensureCodexTimelineTool(state, itemId, 'codex_reasoning', {
