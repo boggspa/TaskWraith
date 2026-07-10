@@ -91,6 +91,8 @@ describe('agent pool icon assets', () => {
     expect(providerOut).toContain('stroke-width: 2.05')
     expect(providerOut).toContain('stroke: #000000')
     expect(providerOut).not.toContain('--provider-glyph-contrast-color')
+    expect(providerOut).not.toMatch(/(^|\s)\.line\s*{/m)
+    expect(providerOut).not.toMatch(/(^|\s)\.dot\s*{/m)
     expect(providerOut).not.toContain('stroke-width: 1.75')
     expect(providerOut).not.toContain('stroke-width: 2.75')
   })

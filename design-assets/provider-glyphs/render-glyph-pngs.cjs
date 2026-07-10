@@ -1,5 +1,5 @@
 /*
- * Bake the monoline provider glyphs into white-on-transparent template PNGs
+ * Bake the provider glyphs into white-on-transparent template PNGs
  * for platforms that can't consume the SVGs directly. The iOS package tints
  * them at runtime (`renderingMode(.template)` + provider accent), so ONE
  * white master per provider replaces per-color exports.

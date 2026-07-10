@@ -29,13 +29,10 @@ const providers = [
     id: 'codex',
     label: 'Codex',
     accent: '#A070F2',
-    hint: 'prompt box and bracket cursor',
+    hint: 'asymmetric command cloud with terminal cutout',
+    description: 'Original filled asymmetric command cloud with a terminal cutout for Codex. Not an official logo.',
     body: `
-      <path class="line" d="M4.6 6.2h14.8v11.6H4.6Z" />
-      <path class="accent" d="m8.1 9.3 2.7 2.7-2.7 2.7" />
-      <path class="line fine" d="M12.2 14.7h4" />
-      <path class="line fine" d="M6.7 4.4 4.6 6.2" />
-      <path class="line fine" d="M17.3 19.6l2.1-1.8" />
+      <path class="dot" fill-rule="evenodd" clip-rule="evenodd" d="M5.2 18.9C2.9 18.9 1.2 17.2 1.2 15c0-2 1.3-3.6 3.2-4.2-.1-.4-.1-.8-.1-1.2 0-2.8 2.3-5 5.1-5 1.4 0 2.6.5 3.5 1.4 1-1.2 2.5-1.9 4.2-1.9 3.1 0 5.5 2.5 5.5 5.6 0 .9-.2 1.7-.6 2.4.8.7 1.3 1.8 1.3 3 0 2.1-1.7 3.8-3.9 3.8H5.2ZM7 10.4l1.1-1.2 3 2.8-3 2.8L7 13.6 8.7 12 7 10.4Zm5.2 3h4.3V15h-4.3v-1.6Z" />
     `
   },
   {
@@ -239,9 +236,12 @@ function stripTrailingWhitespace(value) {
 
 function buildGlyph(provider) {
   const id = `provider-glyph-${provider.id}`
+  const description =
+    provider.description ??
+    `Original monoline ${provider.hint} mnemonic for ${provider.label}. Not an official logo.`
   return stripTrailingWhitespace(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" role="img" aria-labelledby="${id}-title ${id}-desc" data-provider="${provider.id}" data-provider-glyph="true" style="color: ${provider.accent}; --provider-accent: ${provider.accent};">
   <title id="${id}-title">${escapeXml(provider.label)} provider glyph</title>
-  <desc id="${id}-desc">Original monoline ${escapeXml(provider.hint)} mnemonic for ${escapeXml(provider.label)}. Not an official logo.</desc>
+  <desc id="${id}-desc">${escapeXml(description)}</desc>
   <style>
 ${style}
   </style>
@@ -276,7 +276,7 @@ ${buildLayeredBody(provider.body, '      ')}
 
   return stripTrailingWhitespace(`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" data-provider-glyph-catalog="true">
   <title>TaskWraith provider mnemonic glyph catalog</title>
-  <desc>Original monoline provider mnemonics. These are deliberately simplified and are not official provider logos.</desc>
+  <desc>Original provider mnemonics. These are deliberately simplified and are not official provider logos.</desc>
   <rect class="catalog-background" width="${width}" height="${height}" rx="18" />
   <style>
 ${style}

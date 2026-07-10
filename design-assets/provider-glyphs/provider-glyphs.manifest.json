@@ -9,7 +9,8 @@
     "id": "codex",
     "label": "Codex",
     "accent": "#A070F2",
-    "hint": "prompt box and bracket cursor"
+    "hint": "asymmetric command cloud with terminal cutout",
+    "description": "Original filled asymmetric command cloud with a terminal cutout for Codex. Not an official logo."
   },
   {
     "id": "claude",

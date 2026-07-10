@@ -38,13 +38,12 @@ function glyphBody(provider: string): ReactElement {
       )
     case 'codex':
       return (
-        <>
-          <path className="provider-glyph-line" d="M4.6 6.2h14.8v11.6H4.6Z" />
-          <path className="provider-glyph-accent" d="m8.1 9.3 2.7 2.7-2.7 2.7" />
-          <path className="provider-glyph-line provider-glyph-fine" d="M12.2 14.7h4" />
-          <path className="provider-glyph-line provider-glyph-fine" d="M6.7 4.4 4.6 6.2" />
-          <path className="provider-glyph-line provider-glyph-fine" d="M17.3 19.6l2.1-1.8" />
-        </>
+        <path
+          className="provider-glyph-dot"
+          fillRule="evenodd"
+          clipRule="evenodd"
+          d="M5.2 18.9C2.9 18.9 1.2 17.2 1.2 15c0-2 1.3-3.6 3.2-4.2-.1-.4-.1-.8-.1-1.2 0-2.8 2.3-5 5.1-5 1.4 0 2.6.5 3.5 1.4 1-1.2 2.5-1.9 4.2-1.9 3.1 0 5.5 2.5 5.5 5.6 0 .9-.2 1.7-.6 2.4.8.7 1.3 1.8 1.3 3 0 2.1-1.7 3.8-3.9 3.8H5.2ZM7 10.4l1.1-1.2 3 2.8-3 2.8L7 13.6 8.7 12 7 10.4Zm5.2 3h4.3V15h-4.3v-1.6Z"
+        />
       )
     case 'claude':
       return (

@@ -29,7 +29,15 @@ describe('ProviderGlyph', () => {
     expect(html.indexOf('provider-glyph-contrast-outline')).toBeLessThan(
       html.indexOf('provider-glyph-foreground')
     )
-    expect(html.match(/M4\.6 6\.2h14\.8v11\.6H4\.6Z/g)).toHaveLength(2)
+    expect(html.match(/fill-rule="evenodd"/g)).toHaveLength(2)
+  })
+
+  it('renders Codex as the approved filled command cloud', () => {
+    const html = renderToStaticMarkup(<ProviderGlyph provider="codex" />)
+
+    expect(html).toContain('fill-rule="evenodd"')
+    expect(html.match(/M5\.2 18\.9C2\.9 18\.9/g)).toHaveLength(2)
+    expect(html).not.toContain('M4.6 6.2h14.8v11.6H4.6Z')
   })
 
   it('falls back to a generic prompt glyph for future providers', () => {

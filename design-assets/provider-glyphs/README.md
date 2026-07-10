@@ -1,6 +1,6 @@
 # Provider Glyphs
 
-Original monoline mnemonic glyphs for representing providers without bundling official logo PNGs.
+Original mnemonic glyphs for representing providers without bundling official logo PNGs.
 
 These are deliberately simplified and slightly "wrong" visual hints. The provider label remains the actual product identifier; the glyph is only supporting iconography.
 Gemini glyphs remain in the set for historical chats and usage history even

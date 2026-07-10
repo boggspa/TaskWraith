@@ -228,6 +228,24 @@ function namespaceInlineSvgClasses(raw: string, key: string): string {
     return ` class="${classes.map((name) => `${prefix}${name}`).join(' ')}"`
   })
 
+  // Embedded SVG styles often define a shared class vocabulary even when a
+  // particular glyph uses only a subset (the filled Codex cloud, for example,
+  // uses `.dot` but not `.line`). Scope those unused selectors too so generic
+  // rules can never leak from an inline pool icon into the host document.
+  withNamespacedClassAttrs.replace(
+    /<style\b[^>]*>([\s\S]*?)<\/style>/g,
+    (_match, css: string) => {
+      for (const rule of css.matchAll(/([^{}]+)\{/g)) {
+        const prelude = rule[1].trim()
+        if (prelude.startsWith('@')) continue
+        for (const selector of prelude.matchAll(/\.(-?[_a-zA-Z][\w-]*)/g)) {
+          classNames.add(selector[1])
+        }
+      }
+      return _match
+    }
+  )
+
   if (classNames.size === 0) return withNamespacedClassAttrs
 
   const classSelectorReplacements = Array.from(classNames)
