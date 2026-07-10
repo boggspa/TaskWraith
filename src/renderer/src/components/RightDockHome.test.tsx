@@ -48,8 +48,8 @@ describe('RightDockHome', () => {
     expect(destinationIds).toEqual(RIGHT_DOCK_HOME_DESTINATIONS.map(({ id }) => id))
     expect(html.match(/<button/g)).toHaveLength(11)
     expect(html.match(/ disabled=""/g)).toHaveLength(2)
-    expect(html).toContain('aria-label="3 items"')
-    expect(html).toContain('aria-label="2 items"')
+    expect(html).toContain('Media Attachments. Images, audio, video, and paths. 3 items')
+    expect(html).toContain('Pinned Messages. Notes and saved transcript items. 2 items')
   })
 
   it('enables chat and workspace cards when their context exists', () => {

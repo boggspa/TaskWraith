@@ -4,6 +4,7 @@ import {
   useState,
   type Dispatch,
   type KeyboardEvent as ReactKeyboardEvent,
+  type ReactNode,
   type RefObject,
   type SetStateAction
 } from 'react'
@@ -11,7 +12,7 @@ import {
   ChatPopoutIcon,
   GhostCompanionIcon,
   InfoCircleIcon,
-  RunRailSymbolIcon,
+  PreviewSymbolIcon,
   SidebarCornerIcon
 } from './AppChromeSymbols'
 
@@ -50,8 +51,13 @@ interface MainPaneActionPillProps {
   onOpenDiffStudio: () => void
   onOpenFileEditor: () => void
   onOpenChatPopout: () => void
-  runOpen: boolean
-  onToggleRun: () => void
+  runTitle: string
+  runMenuOpen: boolean
+  runHasMenu: boolean
+  runDisabled: boolean
+  runMenu?: ReactNode
+  runError?: ReactNode
+  onRun: () => void
   homeOpen: boolean
   onToggleHome: () => void
 }
@@ -79,8 +85,13 @@ export function MainPaneActionPill({
   onOpenDiffStudio,
   onOpenFileEditor,
   onOpenChatPopout,
-  runOpen,
-  onToggleRun,
+  runTitle,
+  runMenuOpen,
+  runHasMenu,
+  runDisabled,
+  runMenu,
+  runError,
+  onRun,
   homeOpen,
   onToggleHome
 }: MainPaneActionPillProps) {
@@ -123,9 +134,13 @@ export function MainPaneActionPill({
     setMenu((current) => (current === next ? null : next))
   }
 
-  const runMenuAction = (action: () => void): void => {
+  const runMenuAction = (
+    action: () => void,
+    returnFocusTo?: RefObject<HTMLButtonElement | null>
+  ): void => {
     setMenu(null)
     action()
+    if (returnFocusTo) window.setTimeout(() => returnFocusTo.current?.focus(), 0)
   }
 
   const handleMenuKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>): void => {
@@ -185,7 +200,7 @@ export function MainPaneActionPill({
               aria-checked={skyEnabled}
               aria-disabled={!fxEnabled}
               onClick={() => {
-                if (fxEnabled) runMenuAction(onToggleSky)
+                if (fxEnabled) runMenuAction(onToggleSky, fxTriggerRef)
               }}
             >
               <span>{FX_MENU_ITEMS[0].label}</span>
@@ -201,7 +216,7 @@ export function MainPaneActionPill({
               aria-checked={ghostEnabled}
               aria-disabled={!fxEnabled}
               onClick={() => {
-                if (fxEnabled) runMenuAction(onToggleGhost)
+                if (fxEnabled) runMenuAction(onToggleGhost, fxTriggerRef)
               }}
             >
               <span>{FX_MENU_ITEMS[1].label}</span>
@@ -332,20 +347,28 @@ export function MainPaneActionPill({
         )}
       </div>
 
-      <button
-        data-main-pane-action="run"
-        className={`chat-corner-btn ${runOpen ? 'active' : ''}`}
-        type="button"
-        onClick={() => {
-          setMenu(null)
-          onToggleRun()
-        }}
-        title={runOpen ? 'Hide Run rail' : 'Open Run rail'}
-        aria-label="Toggle Run rail"
-        aria-pressed={runOpen}
-      >
-        <RunRailSymbolIcon />
-      </button>
+      <div className="side-chat-menu-wrap pane-preview-menu-wrap" data-preview-menu-root="true">
+        <button
+          data-main-pane-action="run"
+          className={`chat-corner-btn ${runMenuOpen ? 'active' : ''}`}
+          type="button"
+          onClick={() => {
+            setMenu(null)
+            setPopoutMenuOpen(false)
+            onRun()
+          }}
+          title={runTitle}
+          aria-label="Run build or preview"
+          aria-haspopup={runHasMenu ? 'menu' : undefined}
+          aria-expanded={runHasMenu ? runMenuOpen : undefined}
+          aria-pressed={runMenuOpen}
+          disabled={runDisabled}
+        >
+          <PreviewSymbolIcon />
+        </button>
+        {runMenu}
+        {runError}
+      </div>
 
       <button
         data-main-pane-action="home"

@@ -201,7 +201,7 @@ function HomeCard({
       className={`right-dock-home-card${nested ? ' right-dock-home-card--nested' : ''}`}
       onClick={onClick}
       disabled={disabled}
-      aria-label={`${label}. ${description}`}
+      aria-label={`${label}. ${description}${typeof badge === 'number' && badge > 0 ? `. ${badge} items` : ''}`}
     >
       <span className="right-dock-home-card-icon" aria-hidden>
         {icon}
@@ -211,7 +211,7 @@ function HomeCard({
         <span className="right-dock-home-card-description">{description}</span>
       </span>
       {typeof badge === 'number' && badge > 0 && (
-        <span className="right-dock-home-card-badge" aria-label={`${badge} items`}>
+        <span className="right-dock-home-card-badge" aria-hidden>
           {badge > 99 ? '99+' : badge}
         </span>
       )}

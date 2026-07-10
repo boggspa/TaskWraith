@@ -60,6 +60,7 @@ import { ComposerProviderPicker } from '../../components/ComposerProviderPicker'
 import { ComposerTextareaContextMenu } from '../../components/ComposerTextareaContextMenu'
 import { EnsembleParticipantsAboveRow } from '../../components/EnsembleParticipantsAboveRow'
 import type { RawLogEntry } from '../../lib/rawLogEntry'
+import { launchPreviewActionTitle } from '../../lib/launchPreviewTargets'
 import { EMPTY_AGENT_QUESTION_QUEUE } from '../../lib/agentQuestionQueue'
 import {
   AgentAuraLayer,
@@ -155,6 +156,8 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   currentChatMediaRefs,
   currentGeminiWorktree,
   currentPinnedMessages,
+  currentPreviewMenuOpen,
+  currentPreviewTargets,
   currentProvider,
   currentProviderCapabilities,
   currentProviderLabel,
@@ -376,6 +379,8 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   dryRunAuditRetention,
   rememberSideChatComposerSelection,
   renderMultiviewPaneCell,
+  renderPreviewLaunchError,
+  renderPreviewTargetMenu,
   repairProductInstall,
   purgeAuditRetention,
   rightDockStyle,
@@ -386,6 +391,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   runDiff,
   runFxStatus,
   runLanes,
+  runPreviewTargetAction,
   runQueueJobs,
   runningChatIds,
   runningChatIdsArray,
@@ -402,6 +408,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   setPendingElevation,
   setPopoutMenuOpen,
   setPreviewChatMediaRef,
+  setPreviewMenuTarget,
   setRawFilter,
   setRightTab,
   setSessionTrust,
@@ -426,7 +433,6 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   showAgentAuraFx,
   showBugReportSheet,
   showChangelogSheet,
-  showCockpit,
   showFileEditor,
   showFirstLaunchSheet,
   showJumpToLatestPill,
@@ -1240,8 +1246,38 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                   setPopoutMenuOpen(false)
                   openChatPopoutWindow()
                 }}
-                runOpen={showCockpit}
-                onToggleRun={() => toggleRightDockPanel('run')}
+                runTitle={launchPreviewActionTitle(currentPreviewTargets, hasWorkspaceContext)}
+                runMenuOpen={currentPreviewMenuOpen}
+                runHasMenu={currentPreviewTargets.length > 1}
+                runDisabled={currentPreviewTargets.length === 0}
+                runMenu={
+                  currentChat
+                    ? renderPreviewTargetMenu(
+                        currentPreviewTargets,
+                        multiview.focusedPaneId,
+                        currentChat.appChatId,
+                        currentChat
+                      )
+                    : null
+                }
+                runError={renderPreviewLaunchError(currentChat?.appChatId)}
+                onRun={() => {
+                  if (!currentChat) return
+                  if (currentPreviewTargets.length === 1) {
+                    const target = currentPreviewTargets[0]
+                    if (target) void runPreviewTargetAction(target, currentChat)
+                    return
+                  }
+                  if (currentPreviewTargets.length > 1) {
+                    const paneId = multiview.focusedPaneId
+                    if (!paneId) return
+                    setPreviewMenuTarget((current) =>
+                      current?.paneId === paneId && current.chatId === currentChat.appChatId
+                        ? null
+                        : { paneId, chatId: currentChat.appChatId }
+                    )
+                  }
+                }}
                 homeOpen={activeRightDockTab === 'home'}
                 onToggleHome={() => toggleRightDockPanel('home')}
               />

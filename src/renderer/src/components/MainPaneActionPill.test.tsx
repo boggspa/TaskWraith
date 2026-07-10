@@ -34,8 +34,11 @@ function renderPill(popoutMenuOpen = false): string {
       onOpenDiffStudio={noop}
       onOpenFileEditor={noop}
       onOpenChatPopout={noop}
-      runOpen={false}
-      onToggleRun={noop}
+      runTitle="Start local server"
+      runMenuOpen={false}
+      runHasMenu={false}
+      runDisabled={false}
+      onRun={noop}
       homeOpen={false}
       onToggleHome={noop}
     />
@@ -55,7 +58,7 @@ describe('MainPaneActionPill', () => {
     expect(html).toContain('aria-label="Choose visual effects"')
     expect(html).toContain('aria-label="Choose product information"')
     expect(html).toContain('aria-label="Open popout tools"')
-    expect(html).toContain('aria-label="Toggle Run rail"')
+    expect(html).toContain('aria-label="Run build or preview"')
     expect(html).toContain('aria-label="Toggle sidebar home"')
   })
 
