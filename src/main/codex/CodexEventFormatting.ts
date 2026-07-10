@@ -56,6 +56,20 @@ export function codexReasoningSummaryText(value: any): string {
   return ''
 }
 
+/**
+ * Codex 5.6 summary parts can end with an empty HTML comment marker. The
+ * app-server streams that marker across multiple deltas, so forwarding the
+ * accumulated raw text briefly exposes prefixes such as `<!--` / `<!---` in
+ * the thinking trace. Clean the accumulated value (rather than each delta)
+ * so split markers never leak and meaningful HTML comments remain intact.
+ */
+export function codexReasoningSummaryDisplayText(value: string): string {
+  return value
+    .replace(/<!--[\s-]*-->/g, '')
+    .replace(/\s*<!--[\s-]*$/, '')
+    .trimEnd()
+}
+
 export function codexCommandText(command: any): string {
   if (Array.isArray(command)) return command.map(codexString).join(' ')
   return codexString(command)

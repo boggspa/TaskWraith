@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  codexReasoningSummaryDisplayText,
   codexReasoningSummaryModeForEffort,
   codexReasoningSummaryText
 } from './CodexEventFormatting'
@@ -35,5 +36,38 @@ describe('codexReasoningSummaryText', () => {
       })
     ).toBe('')
     expect(codexReasoningSummaryText({ type: 'reasoning_text', delta: 'raw delta' })).toBe('')
+  })
+})
+
+describe('codexReasoningSummaryDisplayText', () => {
+  it('removes Codex empty-comment separators without joining summary parts', () => {
+    expect(
+      codexReasoningSummaryDisplayText(
+        '**Planning the fix**\n\n<!-- -->**Checking the fix**\n\n<!---->'
+      )
+    ).toBe('**Planning the fix**\n\n**Checking the fix**')
+  })
+
+  it('hides an empty-comment marker while its closing delta is incomplete', () => {
+    const deltas = ['**Planning the fix**', '\n\n<!--', '-', ' -->']
+    let raw = ''
+
+    expect(
+      deltas.map((delta) => {
+        raw += delta
+        return codexReasoningSummaryDisplayText(raw)
+      })
+    ).toEqual([
+      '**Planning the fix**',
+      '**Planning the fix**',
+      '**Planning the fix**',
+      '**Planning the fix**'
+    ])
+  })
+
+  it('preserves meaningful HTML comments in reasoning about markup', () => {
+    expect(codexReasoningSummaryDisplayText('Inspect `<!-- TODO -->` next.')).toBe(
+      'Inspect `<!-- TODO -->` next.'
+    )
   })
 })
