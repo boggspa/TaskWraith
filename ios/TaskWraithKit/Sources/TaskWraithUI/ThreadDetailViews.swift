@@ -44,6 +44,23 @@ enum TranscriptTouchTrackingPolicy {
     }
 }
 
+/// Decides whether a deferred transcript follow-pin pass may move the scroll
+/// position. `force` repairs a stale bottom-sentinel / auto-follow reading after
+/// a large layout update, but it must never override an active user gesture.
+enum TranscriptFollowPolicy {
+    static let userTouchQuietPeriod: TimeInterval = 0.25
+
+    static func shouldScroll(
+        autoFollow: Bool,
+        force: Bool,
+        lastUserTouchAt: Date,
+        now: Date = Date()
+    ) -> Bool {
+        guard force || autoFollow else { return false }
+        return now.timeIntervalSince(lastUserTouchAt) >= userTouchQuietPeriod
+    }
+}
+
 private extension View {
     @ViewBuilder
     func transcriptTouchTracking(enabled: Bool, onTouch: @escaping () -> Void) -> some View {
@@ -1841,20 +1858,24 @@ struct ThreadDetailView: View {
             // which is a cooperative suspension that can resume before SwiftUI
             // has materialized the new sentinel row for this update.
             await awaitNextMainRunloop()
-            guard force || autoFollow else { return }
+            guard TranscriptFollowPolicy.shouldScroll(
+                autoFollow: autoFollow,
+                force: force,
+                lastUserTouchAt: followPin.lastUserTouchAt
+            ) else { return }
             scrollSentinelToBottomNow(proxy)
             // Settle pass: a big layout (long message / a new participant's
             // block) can land the first scroll a hair short — re-pin a runloop
-            // later, again after the layout has committed. Unlike the pass
-            // above, this one is a cosmetic correction rather than the pin
-            // that guarantees reaching bottom on a real content change, so —
-            // ONLY here — also back off if the user has a live touch on the
-            // transcript (dragging to read older text), even when `force` is
-            // true. `force` means "don't trust a possibly-stale `autoFollow`",
-            // not "override the user's finger."
+            // later, again after the layout has committed. Re-check the same
+            // policy so a touch that begins between passes suppresses this
+            // correction too. `force` means "don't trust a possibly-stale
+            // `autoFollow`", not "override the user's finger."
             await awaitNextMainRunloop()
-            guard force || autoFollow else { return }
-            if Date().timeIntervalSince(followPin.lastUserTouchAt) < 0.25 { return }
+            guard TranscriptFollowPolicy.shouldScroll(
+                autoFollow: autoFollow,
+                force: force,
+                lastUserTouchAt: followPin.lastUserTouchAt
+            ) else { return }
             scrollSentinelToBottomNow(proxy)
         }
     }
