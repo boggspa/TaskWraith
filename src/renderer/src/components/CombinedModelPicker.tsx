@@ -38,6 +38,7 @@ import {
   resolveProviderBrandLabel
 } from '../lib/ollamaDisplayBrand'
 import { CodexFastBoltIcon } from './icons/CodexFastBoltIcon'
+import { PillButton } from './PillButton'
 import { getProviderName, ProviderBadgeIcon } from './Sidebar'
 
 export interface CombinedModelPickerModelOption {
@@ -153,6 +154,33 @@ export interface CombinedModelPickerConfirmAction {
   label: string
   onConfirm: () => void
   disabled?: boolean
+}
+
+export function CombinedModelPickerConfirmButton({
+  action,
+  disabled = false,
+  onConfirmed
+}: {
+  action: CombinedModelPickerConfirmAction
+  disabled?: boolean
+  onConfirmed?: () => void
+}): React.JSX.Element {
+  const buttonDisabled = Boolean(disabled || action.disabled)
+  return (
+    <PillButton
+      variant="primary"
+      size="compact"
+      className="composer-combined-picker-confirm"
+      disabled={buttonDisabled}
+      onClick={() => {
+        if (buttonDisabled) return
+        action.onConfirm()
+        onConfirmed?.()
+      }}
+    >
+      {action.label}
+    </PillButton>
+  )
 }
 
 interface CombinedModelPickerProps {
@@ -1648,18 +1676,11 @@ export function CombinedModelPicker({
             </button>
           )}
           {confirmAction && (
-            <button
-              type="button"
-              className="composer-combined-picker-confirm"
-              disabled={Boolean(disabled || confirmAction.disabled)}
-              onClick={() => {
-                if (disabled || confirmAction.disabled) return
-                confirmAction.onConfirm()
-                setOpen(false)
-              }}
-            >
-              {confirmAction.label}
-            </button>
+            <CombinedModelPickerConfirmButton
+              action={confirmAction}
+              disabled={disabled}
+              onConfirmed={() => setOpen(false)}
+            />
           )}
         </div>
       )}

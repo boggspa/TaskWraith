@@ -10062,24 +10062,7 @@
 
 .composer-combined-picker-confirm {
   width: calc(100% - 12px);
-  min-height: 28px;
   margin: auto 6px 2px;
-  padding: 5px 8px;
-  border: 1px solid color-mix(in srgb, var(--accent) 48%, transparent);
-  border-radius: 7px;
-  background: color-mix(in srgb, var(--accent) 20%, transparent);
-  color: var(--text-primary);
-  font: inherit;
-  font-weight: 650;
-  cursor: pointer;
-}
-.composer-combined-picker-confirm:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--accent) 30%, transparent);
-  border-color: color-mix(in srgb, var(--accent) 68%, transparent);
-}
-.composer-combined-picker-confirm:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
 }
 
 /* Reasoning ladder slider — replaces the hierarchical reasoning row list with a

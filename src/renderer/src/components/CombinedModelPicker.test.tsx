@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import {
   CombinedModelPicker,
+  CombinedModelPickerConfirmButton,
   flattenUnifiedProviderModels,
   getCombinedModelPickerResetSignature,
   resolveCombinedModelPickerResetState,
@@ -10,6 +11,27 @@ import {
 } from './CombinedModelPicker'
 
 describe('CombinedModelPicker', () => {
+  it('uses shared compact primary chrome for confirmation actions', () => {
+    const html = renderToStaticMarkup(
+      <CombinedModelPickerConfirmButton
+        action={{ label: 'Add participant', onConfirm: () => undefined }}
+      />
+    )
+
+    expect(html).toContain(
+      'class="segmented-control-action segmented-control-action--compact segmented-control-action--primary composer-combined-picker-confirm"'
+    )
+    expect(html).toContain('>Add participant</button>')
+
+    const css = readFileSync(
+      new URL('../assets/css/08-theme-picker-overrides.css', import.meta.url),
+      'utf8'
+    )
+    const confirmLayoutRule = css.match(/\.composer-combined-picker-confirm\s*\{([^}]*)\}/)?.[1]
+    expect(confirmLayoutRule).toBeDefined()
+    expect(confirmLayoutRule).not.toMatch(/\b(?:background|border|padding|min-height)\s*:/)
+  })
+
   it('exposes Ultracode reasoning hooks for Claude composer styling', () => {
     const html = renderToStaticMarkup(
       <CombinedModelPicker
