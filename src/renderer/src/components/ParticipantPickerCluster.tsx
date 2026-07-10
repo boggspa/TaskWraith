@@ -7,7 +7,7 @@ import type {
   ProviderId
 } from '../../../main/store/types'
 import {
-  buildProviderChangeParticipantPatch,
+  buildProviderModelChangeParticipantPatch,
   getEnsembleModelDefaults,
   getEnsembleReasoningOptions,
   resolveEnsembleParticipantSettings
@@ -57,10 +57,11 @@ export function buildParticipantProviderModelPatch(
   model: string
 ): Partial<EnsembleParticipant> {
   const providerChanged = provider !== participant.provider
-  const providerPatch = providerChanged ? buildProviderChangeParticipantPatch(provider) : {}
+  if (providerChanged) {
+    return buildProviderModelChangeParticipantPatch(provider, model)
+  }
   const defaults = getEnsembleModelDefaults(provider)
   const patch: Partial<EnsembleParticipant> = {
-    ...providerPatch,
     provider,
     model
   }
@@ -70,9 +71,7 @@ export function buildParticipantProviderModelPatch(
       (option) => !option.disabled
     )
     const enabledReasoningValues = new Set(enabledReasoning.map((option) => option.value))
-    const seededReasoning = providerChanged
-      ? providerPatch.reasoningEffort
-      : participant.reasoningEffort
+    const seededReasoning = participant.reasoningEffort
     patch.reasoningEffort =
       enabledReasoning.length === 0
         ? undefined
@@ -84,23 +83,17 @@ export function buildParticipantProviderModelPatch(
   }
 
   if (provider === 'codex') {
-    const seededFast = providerChanged
-      ? providerPatch.serviceTier === 'fast' ||
-        (providerPatch.serviceTier == null && providerPatch.fastModeEnabled === true)
-      : participant.serviceTier === 'fast' ||
-        (participant.serviceTier == null && participant.fastModeEnabled === true)
+    const seededFast =
+      participant.serviceTier === 'fast' ||
+      (participant.serviceTier == null && participant.fastModeEnabled === true)
     const nextFast = defaults.fastModeCapableModelIds.has(model) && seededFast
     patch.fastModeEnabled = nextFast
     patch.serviceTier = nextFast ? 'fast' : ''
   } else if (provider === 'claude') {
-    const seededFast = providerChanged
-      ? providerPatch.fastModeEnabled === true
-      : participant.fastModeEnabled === true
+    const seededFast = participant.fastModeEnabled === true
     patch.fastModeEnabled = defaults.fastModeCapableModelIds.has(model) && seededFast
   } else if (provider === 'cursor') {
-    const seededFast = providerChanged
-      ? providerPatch.fastModeEnabled === true
-      : participant.fastModeEnabled === true
+    const seededFast = participant.fastModeEnabled === true
     patch.fastModeEnabled =
       model === 'composer-2.5-fast'
         ? true

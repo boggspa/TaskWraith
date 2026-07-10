@@ -72,6 +72,18 @@ describe('buildParticipantProviderModelPatch', () => {
     expect(patch).not.toHaveProperty('permissionOverrides')
   })
 
+  it('uses the selected model default when switching providers', () => {
+    expect(
+      buildParticipantProviderModelPatch(participant(), 'codex', 'gpt-5.6-sol')
+    ).toMatchObject({
+      provider: 'codex',
+      model: 'gpt-5.6-sol',
+      reasoningEffort: 'low',
+      fastModeEnabled: false,
+      serviceTier: ''
+    })
+  })
+
   it('treats Cursor Composer plain and Fast model rows as explicit speed choices', () => {
     const source = participant({ provider: 'cursor', model: 'composer-2.5-fast' })
 
