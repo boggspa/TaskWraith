@@ -1,9 +1,13 @@
+import { createElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import {
+  ReasoningLadderSlider,
   buildLadderModel,
   clampedLadderIndex,
   ladderIndexForOption,
-  nearestEnabledLadderIndex
+  nearestEnabledLadderIndex,
+  reasoningLadderFxProfile
 } from './CombinedModelPicker'
 
 describe('reasoning ladder mapping', () => {
@@ -115,5 +119,73 @@ describe('clampedLadderIndex (thumb parking)', () => {
 
   it('falls back to the lowest enabled stop for an unmappable effort', () => {
     expect(clampedLadderIndex('grok', 'turbo', grokLadder)).toBe(1)
+  })
+})
+
+describe('reasoning ladder visual taper', () => {
+  it('ramps intensity and density from Low/Thinking through Ultra', () => {
+    expect(
+      Array.from({ length: 7 }, (_, index) => reasoningLadderFxProfile(index).sparkleCount)
+    ).toEqual([0, 3, 5, 8, 11, 13, 16])
+    expect(
+      Array.from({ length: 7 }, (_, index) => reasoningLadderFxProfile(index).shimmerBandCount)
+    ).toEqual([0, 1, 1, 2, 2, 3, 3])
+    expect(reasoningLadderFxProfile(0)).toEqual({
+      active: false,
+      strength: 0,
+      sparkleCount: 0,
+      shimmerBandCount: 0
+    })
+    expect(reasoningLadderFxProfile(1)).toEqual({
+      active: true,
+      strength: 1 / 6,
+      sparkleCount: 3,
+      shimmerBandCount: 1
+    })
+    expect(reasoningLadderFxProfile(3)).toEqual({
+      active: true,
+      strength: 1 / 2,
+      sparkleCount: 8,
+      shimmerBandCount: 2
+    })
+    expect(reasoningLadderFxProfile(6)).toEqual({
+      active: true,
+      strength: 1,
+      sparkleCount: 16,
+      shimmerBandCount: 3
+    })
+  })
+
+  it('mounts sparse Low FX inside the active fill and keeps Off neutral', () => {
+    const ladder = buildLadderModel('codex', [
+      { value: 'off', label: 'Off' },
+      { value: 'low', label: 'Light' },
+      { value: 'medium', label: 'Medium' },
+      { value: 'high', label: 'High' },
+      { value: 'xhigh', label: 'Extra' },
+      { value: 'max', label: 'Max' },
+      { value: 'ultracode', label: 'Ultra' }
+    ])
+    const render = (selectedReasoning: string) =>
+      renderToStaticMarkup(
+        createElement(ReasoningLadderSlider, {
+          provider: 'codex',
+          ladder,
+          selectedReasoning,
+          onSelectReasoning: () => undefined,
+          onInteract: () => undefined
+        })
+      )
+
+    const off = render('off')
+    expect(off).not.toContain('data-fx-active')
+    expect(off).not.toContain('composer-combined-picker-ladder-pulse')
+
+    const low = render('low')
+    expect(low).toContain('data-fx-active="true"')
+    expect(low).toContain('--ladder-fill-height:calc(')
+    expect(low).toContain('composer-combined-picker-ladder-pulse')
+    expect(low.match(/class="composer-combined-picker-ladder-sparkle"/g)).toHaveLength(3)
+    expect(low.match(/class="composer-combined-picker-ladder-shimmer-band"/g)).toHaveLength(1)
   })
 })

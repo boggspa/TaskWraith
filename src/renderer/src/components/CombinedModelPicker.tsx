@@ -310,30 +310,30 @@ const LADDER_MAX_INDEX = 6
 const LADDER_TRACK_INSET = 11
 
 // Reasoning efforts that carry the provider-hued shimmer sweep + sparkles on
-// the trigger chip (and the ladder's top-zone FX): the top two tiers, for ANY
-// provider whose ladder reaches them — Claude's Max/Ultracode, Codex's
-// Max/Ultra, and any future provider with a 'max' setting.
+// the compact trigger chip. The ladder itself uses a separate Low→Ultra taper.
 const TOP_TIER_SPARKLE_EFFORTS: ReadonlySet<string> = new Set(['max', 'ultracode'])
 
-// Sparkle positions (within the top sparkle layer) + staggered twinkle delays.
-// Dense + top-heavy; the layer's mask fades them out toward the middle.
+// Sparkle positions (within the Low→Ultra effect zone) + staggered twinkle
+// delays. The first few points deliberately span the whole zone; higher effort
+// reveals progressively more points between them, increasing density without
+// changing the slow twinkle speed.
 const LADDER_SPARKLES: ReadonlyArray<{ left: string; top: string; delay: string }> = [
   { left: '30%', top: '4%', delay: '0s' },
-  { left: '64%', top: '8%', delay: '0.6s' },
-  { left: '18%', top: '12%', delay: '1.9s' },
-  { left: '48%', top: '15%', delay: '1.1s' },
-  { left: '78%', top: '19%', delay: '2.8s' },
-  { left: '34%', top: '23%', delay: '0.4s' },
-  { left: '60%', top: '27%', delay: '2.2s' },
-  { left: '22%', top: '31%', delay: '1.5s' },
-  { left: '72%', top: '35%', delay: '3.4s' },
-  { left: '44%', top: '39%', delay: '0.9s' },
-  { left: '30%', top: '44%', delay: '4s' },
-  { left: '64%', top: '48%', delay: '2.5s' },
-  { left: '48%', top: '54%', delay: '3s' },
-  { left: '24%', top: '60%', delay: '0.2s' },
-  { left: '70%', top: '64%', delay: '4.3s' },
-  { left: '44%', top: '72%', delay: '1.7s' }
+  { left: '66%', top: '47%', delay: '1.9s' },
+  { left: '24%', top: '76%', delay: '0.6s' },
+  { left: '74%', top: '18%', delay: '2.8s' },
+  { left: '32%', top: '68%', delay: '1.1s' },
+  { left: '62%', top: '73%', delay: '3.4s' },
+  { left: '18%', top: '31%', delay: '0.4s' },
+  { left: '78%', top: '78%', delay: '2.2s' },
+  { left: '47%', top: '56%', delay: '1.5s' },
+  { left: '55%', top: '10%', delay: '4s' },
+  { left: '28%', top: '50%', delay: '0.9s' },
+  { left: '58%', top: '70%', delay: '2.5s' },
+  { left: '20%', top: '14%', delay: '3s' },
+  { left: '72%', top: '37%', delay: '0.2s' },
+  { left: '40%', top: '64%', delay: '4.3s' },
+  { left: '46%', top: '27%', delay: '1.7s' }
 ]
 
 // Sparkles scattered over the composer chip's "Ultra/Ultracode" suffix text.
@@ -384,6 +384,35 @@ export interface LadderModel {
   /** First disabled option's reason, surfaced as the track tooltip (mirrors the
    * old per-row `disabledReason` when reasoning is fixed for a model). */
   disabledReason?: string
+}
+
+export interface ReasoningLadderFxProfile {
+  active: boolean
+  /** Linear Low→Ultra intensity ramp, 1/6 through 1. */
+  strength: number
+  /** More points appear as effort rises; every point keeps the same cadence. */
+  sparkleCount: number
+  /** Additional staggered sweeps raise shimmer density without speeding it up. */
+  shimmerBandCount: number
+}
+
+/**
+ * Visual treatment for a ladder stop. Off is deliberately still; every stop
+ * from Low/Thinking upward participates in the provider-hued effect and ramps
+ * linearly to the full Ultra treatment.
+ */
+export function reasoningLadderFxProfile(index: number): ReasoningLadderFxProfile {
+  const clampedIndex = Math.max(0, Math.min(LADDER_MAX_INDEX, Math.round(index)))
+  if (clampedIndex === 0) {
+    return { active: false, strength: 0, sparkleCount: 0, shimmerBandCount: 0 }
+  }
+  const strength = clampedIndex / LADDER_MAX_INDEX
+  return {
+    active: true,
+    strength,
+    sparkleCount: Math.max(1, Math.round(LADDER_SPARKLES.length * strength)),
+    shimmerBandCount: Math.max(1, Math.round(3 * strength))
+  }
 }
 
 export function buildLadderModel(
@@ -458,7 +487,7 @@ function ladderStopBottom(index: number): string {
   })`
 }
 
-function ReasoningLadderSlider({
+export function ReasoningLadderSlider({
   provider,
   ladder,
   selectedReasoning,
@@ -483,11 +512,10 @@ function ReasoningLadderSlider({
   const currentIndex = clampedLadderIndex(provider, selectedReasoning, ladder)
   const displayIndex = dragIndex ?? currentIndex
   const currentLabel = ladder.labelByIndex[displayIndex] ?? '—'
-  // Shimmer + sparkles ignite at the top TWO stops — Max (index 5) and
-  // Ultra/Ultracode (index 6) — emerging with effort like the coloured fill
-  // below. `data-tier` lets the CSS render Max a touch subtler so the very top
-  // stop still reads as the peak. Provider-agnostic: any provider/model whose
-  // ladder reaches 'max' gets the treatment in its own brand hue.
+  // Provider hue, pulse, shimmer, and sparkles begin at Low/Thinking (index 1)
+  // and taper smoothly to full intensity/density at Ultra/Ultracode (index 6).
+  const fxProfile = reasoningLadderFxProfile(displayIndex)
+  const fillHeight = ladderStopBottom(displayIndex)
   const fxTier = displayIndex === LADDER_MAX_INDEX ? 'ultracode' : displayIndex === 5 ? 'max' : null
   const interactive = !disabled && ladder.enabledIndices.length > 0
 
@@ -526,6 +554,13 @@ function ReasoningLadderSlider({
         ref={trackRef}
         className="composer-combined-picker-ladder-track"
         data-dragging={dragIndex !== null ? 'true' : undefined}
+        data-fx-active={fxProfile.active ? 'true' : undefined}
+        style={
+          {
+            '--ladder-fx-strength': fxProfile.strength,
+            '--ladder-fill-height': fillHeight
+          } as React.CSSProperties
+        }
         role="slider"
         aria-label="Reasoning effort"
         aria-valuemin={0}
@@ -576,22 +611,25 @@ function ReasoningLadderSlider({
             as effort climbs; above the thumb stays the neutral empty rail. */}
         <div
           className="composer-combined-picker-ladder-fill"
-          style={{ height: ladderStopBottom(displayIndex) }}
+          style={{ height: fillHeight }}
           aria-hidden
         />
-        {fxTier && (
+        {fxProfile.active && (
           <>
-            <div
-              className="composer-combined-picker-ladder-shimmer"
-              data-tier={fxTier}
-              aria-hidden
-            />
-            <div
-              className="composer-combined-picker-ladder-sparkles"
-              data-tier={fxTier}
-              aria-hidden
-            >
-              {LADDER_SPARKLES.map((sparkle, index) => (
+            <div className="composer-combined-picker-ladder-pulse" aria-hidden />
+            <div className="composer-combined-picker-ladder-shimmer" aria-hidden>
+              {Array.from({ length: fxProfile.shimmerBandCount }, (_, index) => (
+                <span
+                  key={index}
+                  className="composer-combined-picker-ladder-shimmer-band"
+                  style={{
+                    animationDelay: `${(-3.2 * index) / fxProfile.shimmerBandCount}s`
+                  }}
+                />
+              ))}
+            </div>
+            <div className="composer-combined-picker-ladder-sparkles" aria-hidden>
+              {LADDER_SPARKLES.slice(0, fxProfile.sparkleCount).map((sparkle, index) => (
                 <span
                   key={index}
                   className="composer-combined-picker-ladder-sparkle"
@@ -603,7 +641,7 @@ function ReasoningLadderSlider({
         )}
         <span
           className="composer-combined-picker-ladder-thumb"
-          style={{ bottom: ladderStopBottom(displayIndex) }}
+          style={{ bottom: fillHeight }}
           aria-hidden
         />
       </div>

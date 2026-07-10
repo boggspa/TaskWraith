@@ -9774,7 +9774,10 @@
 /* While dragging, the thumb + fill track the finger 1:1 (the slide animation is
  * for keyboard/click stop-to-stop moves only). */
 .composer-combined-picker-ladder-track[data-dragging='true'] .composer-combined-picker-ladder-thumb,
-.composer-combined-picker-ladder-track[data-dragging='true'] .composer-combined-picker-ladder-fill {
+.composer-combined-picker-ladder-track[data-dragging='true'] .composer-combined-picker-ladder-fill,
+.composer-combined-picker-ladder-track[data-dragging='true'] .composer-combined-picker-ladder-pulse,
+.composer-combined-picker-ladder-track[data-dragging='true'] .composer-combined-picker-ladder-shimmer,
+.composer-combined-picker-ladder-track[data-dragging='true'] .composer-combined-picker-ladder-sparkles {
   transition: none;
 }
 .composer-combined-picker-ladder-track[aria-disabled='true'] {
@@ -9797,7 +9800,8 @@
 }
 /* Coloured gradient fill, anchored to the FULL track height (so a given height
  * always maps to the same hue) but clipped to the thumb via its inline height —
- * faint grey at the bottom climbing to the provider hue near the top. */
+ * neutral at Off, picking up the provider hue at Low, then strengthening
+ * smoothly through Ultra. */
 .composer-combined-picker-ladder-fill {
   position: absolute;
   bottom: 0;
@@ -9810,12 +9814,12 @@
   background: linear-gradient(
     to top,
     rgba(158, 158, 158, 0.4) 0%,
-    rgba(143, 143, 143, 0.55) 16.66%,
-    rgba(117, 117, 117, 0.78) 33.33%,
-    color-mix(in srgb, var(--ladder-accent, var(--accent)) 24%, rgba(150, 150, 158, 0.85)) 50%,
-    color-mix(in srgb, var(--ladder-accent, var(--accent)) 62%, #ffffff) 66.66%,
-    var(--ladder-accent, var(--accent)) 83.33%,
-    color-mix(in srgb, var(--ladder-accent, var(--accent)) 55%, #ffffff) 100%
+    color-mix(in srgb, var(--ladder-accent, var(--accent)) 16%, rgba(143, 143, 143, 0.55)) 16.66%,
+    color-mix(in srgb, var(--ladder-accent, var(--accent)) 32%, rgba(132, 132, 138, 0.72)) 33.33%,
+    color-mix(in srgb, var(--ladder-accent, var(--accent)) 50%, rgba(150, 150, 158, 0.82)) 50%,
+    color-mix(in srgb, var(--ladder-accent, var(--accent)) 68%, #ffffff) 66.66%,
+    color-mix(in srgb, var(--ladder-accent, var(--accent)) 86%, #ffffff) 83.33%,
+    color-mix(in srgb, var(--ladder-accent, var(--accent)) 88%, #ffffff) 100%
   );
   background-size: 100% var(--ladder-track-h);
   background-position: center bottom;
@@ -9846,23 +9850,97 @@
   border-radius: 1px;
   background: rgba(255, 255, 255, 0.65);
 }
-.composer-combined-picker-ladder-shimmer {
+/* Active FX use the exact fill height as their upper gate. At any intermediate
+ * stop the neutral rail above the thumb stays completely untouched; inside the
+ * filled region the field fades DOWN toward Off. */
+.composer-combined-picker-ladder-pulse,
+.composer-combined-picker-ladder-shimmer,
+.composer-combined-picker-ladder-sparkles {
   position: absolute;
-  top: 2px;
+  bottom: 0;
   left: 50%;
-  width: 30px;
-  height: 40px;
-  overflow: hidden;
-  border-radius: 4px;
+  height: var(--ladder-fill-height, 0px);
   transform: translateX(-50%);
   pointer-events: none;
+  opacity: var(--ladder-fx-strength, 0);
+  transition:
+    height 0.16s cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 0.24s ease-out;
+  animation: tw-ladder-emerge 0.3s ease-out both;
 }
-.composer-combined-picker-ladder-shimmer::before {
+
+/* A gentle provider-hued breathing glow. The wrapper supplies the effort
+ * intensity; the pseudo-element keeps the cadence constant at every stop. */
+.composer-combined-picker-ladder-pulse {
+  width: 30px;
+  /* Keep the breathing glow inside the same hard upper gate as the shimmer
+   * and sparkles, including in engines that ignore CSS masks. */
+  overflow: hidden;
+  border-radius: 0 0 4px 4px;
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    #000 0%,
+    rgba(0, 0, 0, 0.55) 62%,
+    rgba(0, 0, 0, 0.08) 100%
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    #000 0%,
+    rgba(0, 0, 0, 0.55) 62%,
+    rgba(0, 0, 0, 0.08) 100%
+  );
+}
+.composer-combined-picker-ladder-pulse::before {
   content: '';
   position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(
+    to bottom,
+    color-mix(in srgb, var(--ladder-accent, var(--accent)) 26%, transparent),
+    color-mix(in srgb, var(--ladder-accent, var(--accent)) 9%, transparent)
+  );
+  box-shadow: 0 0 7px
+    color-mix(in srgb, var(--ladder-accent, var(--accent)) 44%, transparent);
+  transform-origin: center top;
+  animation: tw-ladder-provider-pulse 3.6s ease-in-out infinite;
+}
+@keyframes tw-ladder-provider-pulse {
+  0%,
+  100% {
+    opacity: 0.26;
+    transform: scaleX(0.94);
+  }
+  50% {
+    opacity: 0.72;
+    transform: scaleX(1.04);
+  }
+}
+
+.composer-combined-picker-ladder-shimmer {
+  width: 30px;
+  overflow: hidden;
+  border-radius: 0 0 4px 4px;
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    #000 0%,
+    rgba(0, 0, 0, 0.62) 62%,
+    rgba(0, 0, 0, 0.12) 100%
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    #000 0%,
+    rgba(0, 0, 0, 0.62) 62%,
+    rgba(0, 0, 0, 0.12) 100%
+  );
+}
+.composer-combined-picker-ladder-shimmer-band {
+  position: absolute;
+  top: 0;
   left: 0;
   right: 0;
-  height: 60%;
+  height: 22%;
+  min-height: 9px;
   border-radius: 4px;
   background: linear-gradient(
     to bottom,
@@ -9877,34 +9955,33 @@
     transform: translateY(-110%);
   }
   100% {
-    transform: translateY(180%);
+    transform: translateY(560%);
   }
 }
-[data-reduce-motion='true'] .composer-combined-picker-ladder-shimmer::before {
+[data-reduce-motion='true'] .composer-combined-picker-ladder-shimmer-band {
   animation: none;
+  opacity: 0.42;
+  transform: translateY(20%);
 }
 
-/* Sparkles — twinkling points layered over the ultracode shimmer at the TOP of
- * the track, fading down via a soft mask so the effect dissolves toward Max. */
+/* Sparkles span the active fill and taper toward Off. The component reveals
+ * 3/5/8/11/13/16 points from Low→Ultra, so density rises with effort while
+ * every point retains the same slow 3.6s twinkle. */
 .composer-combined-picker-ladder-sparkles {
-  position: absolute;
-  top: 0;
-  left: 50%;
   width: 46px;
-  height: 58%;
-  transform: translateX(-50%);
-  pointer-events: none;
+  overflow: hidden;
+  border-radius: 0 0 4px 4px;
   -webkit-mask-image: linear-gradient(
     to bottom,
     rgba(0, 0, 0, 1) 0%,
-    rgba(0, 0, 0, 0.7) 40%,
-    rgba(0, 0, 0, 0) 100%
+    rgba(0, 0, 0, 0.72) 52%,
+    rgba(0, 0, 0, 0.14) 100%
   );
   mask-image: linear-gradient(
     to bottom,
     rgba(0, 0, 0, 1) 0%,
-    rgba(0, 0, 0, 0.7) 40%,
-    rgba(0, 0, 0, 0) 100%
+    rgba(0, 0, 0, 0.72) 52%,
+    rgba(0, 0, 0, 0.14) 100%
   );
 }
 .composer-combined-picker-ladder-sparkle {
@@ -9927,43 +10004,32 @@
     transform: scale(0.3);
   }
   50% {
-    opacity: 0.65;
+    opacity: 0.5;
     transform: scale(1);
   }
 }
 [data-reduce-motion='true'] .composer-combined-picker-ladder-sparkle {
   animation: none;
-  opacity: 0.55;
-}
-/* Fade the shimmer + sparkles in when the thumb reaches a top tier, instead of
- * a hard pop, so they feel connected to the thumb's slide. */
-.composer-combined-picker-ladder-shimmer,
-.composer-combined-picker-ladder-sparkles {
-  animation: tw-ladder-emerge 0.3s ease-out both;
-}
-/* Max (index 5) wears the same treatment a touch subtler than Ultra/Ultracode
- * (index 6), so the very top stop still reads as the peak. The emerge keyframe
- * fills forwards, so the resting opacity must flow through its `to` frame via
- * this custom property rather than a static `opacity` (which the fill-mode
- * would override). */
-.composer-combined-picker-ladder-shimmer[data-tier='max'] {
-  --ladder-fx-opacity: 0.82;
-}
-.composer-combined-picker-ladder-sparkles[data-tier='max'] {
-  --ladder-fx-opacity: 0.78;
+  opacity: 0.5;
 }
 @keyframes tw-ladder-emerge {
   from {
     opacity: 0;
   }
   to {
-    opacity: var(--ladder-fx-opacity, 1);
+    opacity: var(--ladder-fx-strength, 0);
   }
 }
-[data-reduce-motion='true'] .composer-combined-picker-ladder-shimmer,
-[data-reduce-motion='true'] .composer-combined-picker-ladder-sparkles {
+[data-reduce-motion='true'] .composer-combined-picker-ladder-pulse::before {
   animation: none;
-  opacity: var(--ladder-fx-opacity, 1);
+  opacity: 0.4;
+  transform: none;
+}
+[data-reduce-motion='true'] .composer-combined-picker-ladder-shimmer,
+[data-reduce-motion='true'] .composer-combined-picker-ladder-sparkles,
+[data-reduce-motion='true'] .composer-combined-picker-ladder-pulse {
+  animation: none;
+  opacity: var(--ladder-fx-strength, 0);
 }
 
 .composer-combined-picker-apply-all {
