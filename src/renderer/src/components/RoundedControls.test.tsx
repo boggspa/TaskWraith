@@ -1,7 +1,24 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
+import { PillCard } from './PillCard'
 import { PillButton } from './PillButton'
 import { SegmentedControl } from './SegmentedControl'
+
+describe('PillCard', () => {
+  it('renders shared outer-rim and inset-capsule chrome on a native button', () => {
+    const html = renderToStaticMarkup(
+      <PillCard innerClassName="destination-layout" data-destination="files">
+        File Editor
+      </PillCard>
+    )
+
+    expect(html).toContain('type="button"')
+    expect(html).toContain('class="pill-card"')
+    expect(html).toContain('class="pill-card-inner destination-layout"')
+    expect(html).toContain('data-destination="files"')
+    expect(html).toContain('>File Editor</span></button>')
+  })
+})
 
 describe('PillButton', () => {
   it('uses the shared pill chrome, defaults to a button, and preserves its name', () => {

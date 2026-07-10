@@ -6,6 +6,7 @@ import {
   PinnedMessagesIcon,
   RunRailSymbolIcon
 } from './AppChromeSymbols'
+import { PillCard } from './PillCard'
 
 export type RightDockHomeInspectorDestination =
   | 'diff'
@@ -195,10 +196,10 @@ function HomeCard({
   nested
 }: HomeCardProps) {
   return (
-    <button
-      type="button"
+    <PillCard
       data-right-dock-home-destination={id}
       className={`right-dock-home-card${nested ? ' right-dock-home-card--nested' : ''}`}
+      innerClassName="right-dock-home-card-inner"
       onClick={onClick}
       disabled={disabled}
       aria-label={`${label}. ${description}${typeof badge === 'number' && badge > 0 ? `. ${badge} items` : ''}`}
@@ -218,7 +219,7 @@ function HomeCard({
       <span className="right-dock-home-card-arrow" aria-hidden>
         ›
       </span>
-    </button>
+    </PillCard>
   )
 }
 
@@ -241,47 +242,49 @@ export function RightDockHome({
 
   return (
     <nav className="right-dock-home" aria-labelledby="right-dock-home-title">
-      <header className="right-dock-home-header">
-        <span className="right-dock-home-eyebrow">Sidebar</span>
-        <h2 id="right-dock-home-title">Home</h2>
-        <p>Open a workspace tool or inspect the current session.</p>
-      </header>
+      <div className="right-dock-home-content">
+        <header className="right-dock-home-header">
+          <span className="right-dock-home-eyebrow">Sidebar</span>
+          <h2 id="right-dock-home-title">Home</h2>
+          <p>Open a workspace tool or inspect the current session.</p>
+        </header>
 
-      {RIGHT_DOCK_HOME_GROUPS.map((group) => (
-        <section
-          key={group.id}
-          className={`right-dock-home-section${group.id === 'invocations' ? ' right-dock-home-section--nested' : ''}`}
-          aria-labelledby={`right-dock-home-${group.id}`}
-        >
-          <h3 id={`right-dock-home-${group.id}`}>{group.label}</h3>
-          <div className="right-dock-home-card-stack">
-            {RIGHT_DOCK_HOME_DESTINATIONS.filter(
-              (destination) => destination.group === group.id
-            ).map((destination) => (
-              <HomeCard
-                key={destination.id}
-                id={destination.id}
-                label={destination.label}
-                description={destination.description}
-                icon={destinationIcon(destination.id)}
-                nested={destination.nested}
-                badge={
-                  destination.id === 'media'
-                    ? mediaCount
-                    : destination.id === 'pins'
-                      ? pinnedCount
-                      : undefined
-                }
-                disabled={
-                  (destination.requires === 'chat' && !hasCurrentChat) ||
-                  (destination.requires === 'workspace' && !hasWorkspaceContext)
-                }
-                onClick={() => openDestination(destination)}
-              />
-            ))}
-          </div>
-        </section>
-      ))}
+        {RIGHT_DOCK_HOME_GROUPS.map((group) => (
+          <section
+            key={group.id}
+            className={`right-dock-home-section${group.id === 'invocations' ? ' right-dock-home-section--nested' : ''}`}
+            aria-labelledby={`right-dock-home-${group.id}`}
+          >
+            <h3 id={`right-dock-home-${group.id}`}>{group.label}</h3>
+            <div className="right-dock-home-card-stack">
+              {RIGHT_DOCK_HOME_DESTINATIONS.filter(
+                (destination) => destination.group === group.id
+              ).map((destination) => (
+                <HomeCard
+                  key={destination.id}
+                  id={destination.id}
+                  label={destination.label}
+                  description={destination.description}
+                  icon={destinationIcon(destination.id)}
+                  nested={destination.nested}
+                  badge={
+                    destination.id === 'media'
+                      ? mediaCount
+                      : destination.id === 'pins'
+                        ? pinnedCount
+                        : undefined
+                  }
+                  disabled={
+                    (destination.requires === 'chat' && !hasCurrentChat) ||
+                    (destination.requires === 'workspace' && !hasWorkspaceContext)
+                  }
+                  onClick={() => openDestination(destination)}
+                />
+              ))}
+            </div>
+          </section>
+        ))}
+      </div>
     </nav>
   )
 }

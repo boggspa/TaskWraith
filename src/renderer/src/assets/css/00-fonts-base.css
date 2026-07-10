@@ -197,6 +197,100 @@ body {
   opacity: 0.42;
 }
 
+/* Reusable nested card chrome. This is the large-format sibling to the shared
+   SegmentedControl and PillButton: an outer glass rim containing one inset
+   capsule. Feature classes provide content layout and can override the tokens. */
+.pill-card {
+  --pill-card-foreground: var(--text-primary);
+  --pill-card-border: color-mix(
+    in srgb,
+    var(--pill-card-foreground) 18%,
+    var(--panel-border, transparent)
+  );
+  --pill-card-bg: color-mix(in srgb, var(--pill-card-foreground) 7%, transparent);
+  --pill-card-inner-bg: color-mix(in srgb, var(--pill-card-foreground) 7%, transparent);
+  --pill-card-inner-hover-bg: color-mix(in srgb, var(--pill-card-foreground) 11%, transparent);
+  --pill-card-inner-ring: color-mix(in srgb, var(--pill-card-foreground) 13%, transparent);
+  --pill-card-focus-surface: var(--app-bg, transparent);
+  --pill-card-radius: 18px;
+  --pill-card-padding: 3px;
+  --pill-card-inner-padding: 10px 11px;
+  --pill-card-min-height: 68px;
+  appearance: none;
+  -webkit-appearance: none;
+  display: block;
+  width: 100%;
+  min-height: var(--pill-card-min-height);
+  padding: var(--pill-card-padding);
+  border: 1px solid var(--pill-card-border);
+  border-radius: var(--pill-card-radius);
+  background:
+    linear-gradient(
+      145deg,
+      color-mix(in srgb, var(--pill-card-foreground) 10%, transparent),
+      transparent 46%
+    ),
+    var(--pill-card-bg);
+  color: var(--pill-card-foreground);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--pill-card-foreground) 17%, transparent),
+    0 1px 2px rgba(0, 0, 0, 0.2),
+    0 3px 10px rgba(0, 0, 0, 0.12);
+  transition:
+    border-color 0.14s ease,
+    box-shadow 0.14s ease,
+    transform 0.14s ease;
+}
+
+.pill-card-inner {
+  display: block;
+  width: 100%;
+  min-height: calc(
+    var(--pill-card-min-height) - var(--pill-card-padding) - var(--pill-card-padding) - 2px
+  );
+  padding: var(--pill-card-inner-padding);
+  border-radius: calc(var(--pill-card-radius) - var(--pill-card-padding) - 1px);
+  background: var(--pill-card-inner-bg);
+  box-shadow:
+    inset 0 0 0 1px var(--pill-card-inner-ring),
+    inset 0 1px 0 color-mix(in srgb, var(--pill-card-foreground) 12%, transparent);
+  transition:
+    background 0.14s ease,
+    box-shadow 0.14s ease;
+}
+
+.pill-card:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--pill-card-foreground) 26%, var(--pill-card-border));
+  transform: translateY(-1px);
+}
+
+.pill-card:hover:not(:disabled) .pill-card-inner {
+  background: var(--pill-card-inner-hover-bg);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--pill-card-foreground) 20%, transparent),
+    inset 0 1px 0 color-mix(in srgb, var(--pill-card-foreground) 18%, transparent);
+}
+
+.pill-card:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+.pill-card:focus-visible {
+  outline: none;
+  box-shadow:
+    0 0 0 2px var(--pill-card-focus-surface),
+    0 0 0 3.5px color-mix(in srgb, var(--accent) 60%, transparent),
+    inset 0 1px 0 color-mix(in srgb, var(--pill-card-foreground) 17%, transparent);
+}
+
+.pill-card:disabled {
+  cursor: not-allowed;
+  opacity: 0.46;
+}
+
 :root[data-appearance='native_glass'] body,
 :root[data-appearance='native_glass'] #root,
 :root[data-appearance='native_glass'] html,
