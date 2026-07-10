@@ -17,6 +17,8 @@ import {
   measurementKey,
   measurementContentVersion,
   getRowHeight,
+  geometryKey,
+  ACTIVITY_OUTPUT_ESTIMATE_CHAR_CAP,
   buildHeightOffsets,
   sumHeights,
   sumHeightOffsets,
@@ -776,5 +778,75 @@ describe('TranscriptVirtualWindow', () => {
       // reachable via the `virtualize={false}` prop until post-soak.
       expect(TRANSCRIPT_VIRTUALIZATION_ENABLED).toBe(true)
     })
+  })
+})
+
+describe('activity output estimate cap (long-thinking phantom height)', () => {
+  const bigThinking = (chars: number): ToolActivity =>
+    ({
+      id: 'think-1',
+      toolName: 'codex_reasoning',
+      displayName: 'Reasoning',
+      category: 'unknown',
+      status: 'success',
+      outputPreview: 'x'.repeat(chars)
+    }) as ToolActivity
+
+  it('caps a single massive activity output instead of scaling toward the 1400px ceiling', () => {
+    const row = projectRows([
+      msg({ id: 'm1', role: 'tool', content: '', toolActivities: [bigThinking(100_000)] })
+    ])[0]
+    // One activity: count term + CAPPED output term, never the raw 100k chars.
+    const cappedChars = 180 + ACTIVITY_OUTPUT_ESTIMATE_CHAR_CAP
+    expect(row.estimatedHeight).toBe(
+      Math.max(ESTIMATED_ROW_HEIGHT_PX.tool, Math.round(cappedChars * CONTENT_PX_PER_CHAR))
+    )
+    expect(row.estimatedHeight).toBeLessThan(CONTENT_SCALE_CAP_PX / 2)
+  })
+
+  it('still scales with activity COUNT (real height driver for tool rows)', () => {
+    const many = Array.from({ length: 10 }, (_, i) => ({
+      ...bigThinking(1_000),
+      id: `a-${i}`
+    }))
+    const one = projectRows([
+      msg({ id: 'm1', role: 'tool', content: '', toolActivities: many.slice(0, 1) })
+    ])[0]
+    const ten = projectRows([
+      msg({ id: 'm2', role: 'tool', content: '', toolActivities: many })
+    ])[0]
+    expect(ten.estimatedHeight).toBeGreaterThan(one.estimatedHeight)
+  })
+})
+
+describe('getRowHeight geometry fallback (mid-transcript updating rows)', () => {
+  const row: VirtualRow = {
+    id: 'm1',
+    rowKey: 'm1#3',
+    index: 3,
+    rowType: 'tool',
+    contentVersion: 't:1:running|:5000',
+    estimatedHeight: 1200,
+    hasRunBoundary: false
+  }
+
+  it('prefers the exact content-version measurement', () => {
+    const measurements = new Map([[measurementKey('m1#3', row.contentVersion, 900, false), 260]])
+    const geometry = new Map([[geometryKey('m1#3', 900, false), 240]])
+    expect(getRowHeight(row, measurements, 900, false, row.contentVersion, geometry)).toBe(260)
+  })
+
+  it('falls back to the last height at this geometry on a content-version miss', () => {
+    // The row's thinking grew (new contentVersion) while it was NOT the live
+    // tail — reuse its previous real height, never the 1200px estimate.
+    const measurements = new Map([[measurementKey('m1#3', 'stale-version', 900, false), 260]])
+    const geometry = new Map([[geometryKey('m1#3', 900, false), 260]])
+    expect(getRowHeight(row, measurements, 900, false, row.contentVersion, geometry)).toBe(260)
+  })
+
+  it('uses the estimate only when the row was never measured at this geometry', () => {
+    const geometry = new Map([[geometryKey('m1#3', 820, false), 260]]) // other bucket
+    expect(getRowHeight(row, new Map(), 900, false, row.contentVersion, geometry)).toBe(1200)
+    expect(getRowHeight(row, new Map(), 900, false, row.contentVersion, undefined)).toBe(1200)
   })
 })

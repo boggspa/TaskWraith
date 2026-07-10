@@ -41,6 +41,7 @@ import {
   sumHeights,
   sumHeightOffsets,
   totalHeightFromOffsets,
+  geometryKey,
   getRowHeight,
   measurementKey,
   measurementContentVersion,
@@ -653,16 +654,21 @@ export function toolStackStateKey(message: ChatMessage): string {
 
 function useProjectedTranscriptRows(
   messages: ChatMessage[],
-  runBoundaryIds: ReadonlySet<string> | null | undefined
+  runBoundaryIds: ReadonlySet<string> | null | undefined,
+  unboundedActivityBodies = false
 ): VirtualRow[] {
   const cacheRef = useRef<{
     messages: ChatMessage[]
     rows: VirtualRow[]
     rowByMessageIndex: Map<number, VirtualRow>
+    unboundedActivityBodies: boolean
   } | null>(null)
 
   return useMemo(() => {
-    const cached = cacheRef.current
+    const cached =
+      cacheRef.current?.unboundedActivityBodies === unboundedActivityBodies
+        ? cacheRef.current
+        : null
     if (cached && Array.isArray(messages)) {
       const minLength = Math.min(cached.messages.length, messages.length)
       let sharedPrefix = 0
@@ -682,20 +688,20 @@ function useProjectedTranscriptRows(
       if (sharedPrefix > 0 && sharedPrefix >= minLength - 1) {
         const rows = cached.rows.filter((row) => row.index < sharedPrefix)
         for (let index = sharedPrefix; index < messages.length; index += 1) {
-          const row = projectRow(messages[index], index, runBoundaryIds)
+          const row = projectRow(messages[index], index, runBoundaryIds, unboundedActivityBodies)
           if (row) rows.push(row)
         }
         const rowByMessageIndex = new Map<number, VirtualRow>()
         for (const row of rows) rowByMessageIndex.set(row.index, row)
-        cacheRef.current = { messages, rows, rowByMessageIndex }
+        cacheRef.current = { messages, rows, rowByMessageIndex, unboundedActivityBodies }
         return rows
       }
     }
 
-    const rows = projectRows(messages, runBoundaryIds)
+    const rows = projectRows(messages, runBoundaryIds, unboundedActivityBodies)
     const rowByMessageIndex = new Map<number, VirtualRow>()
     for (const row of rows) rowByMessageIndex.set(row.index, row)
-    cacheRef.current = { messages, rows, rowByMessageIndex }
+    cacheRef.current = { messages, rows, rowByMessageIndex, unboundedActivityBodies }
     return rows
   }, [messages, runBoundaryIds])
 }
@@ -1162,6 +1168,9 @@ function useTranscriptVirtualization(params: {
   } = params
 
   const measurementsRef = useRef<Map<string, number>>(new Map())
+  /** Last measured height per rowKey|bucket|expanded — the content-version-miss
+   * fallback (see getRowHeight). Cleared with measurementsRef. */
+  const geometryHeightsRef = useRef<Map<string, number>>(new Map())
   const scrollTopRef = useRef(0)
   const viewportRef = useRef(0)
   const bucketRef = useRef(0)
@@ -1229,6 +1238,7 @@ function useTranscriptVirtualization(params: {
     if (measurementChatIdRef.current === chatId) return
     measurementChatIdRef.current = chatId
     measurementsRef.current.clear()
+    geometryHeightsRef.current.clear()
     blockElsRef.current.clear()
     anchorRef.current = null
     hasScrolledRef.current = false
@@ -1267,7 +1277,8 @@ function useTranscriptVirtualization(params: {
         m,
         bucket,
         expandedRowIds?.has(row.rowKey) ?? false,
-        measurementContentVersion(row, activeLiveRowKey)
+        measurementContentVersion(row, activeLiveRowKey),
+        geometryHeightsRef.current
       )
     )
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1480,6 +1491,7 @@ function useTranscriptVirtualization(params: {
   useEffect(() => {
     if (!enabled) return
     measurementsRef.current.clear()
+    geometryHeightsRef.current.clear()
     const frame = window.requestAnimationFrame(() => bumpMeasure())
     return () => window.cancelAnimationFrame(frame)
   }, [enabled, compactDensity, bumpMeasure])
@@ -1575,6 +1587,10 @@ function useTranscriptVirtualization(params: {
         measurementContentVersion(row, activeLiveRowKey),
         bucket,
         expandedRowIds?.has(row.rowKey) ?? false
+      )
+      geometryHeightsRef.current.set(
+        geometryKey(row.rowKey, bucket, expandedRowIds?.has(row.rowKey) ?? false),
+        slot
       )
       const prev = measurements.get(key)
       if (prev === undefined) {
@@ -2439,7 +2455,11 @@ export const TranscriptPanel = memo(
       return map
     }, [displayMessages, runBoundaryByMessageId])
 
-    const projectedRows = useProjectedTranscriptRows(displayMessages, null)
+    const projectedRows = useProjectedTranscriptRows(
+      displayMessages,
+      null,
+      liveActivityViewport === false
+    )
     const projectedRowLookup = useMemo(() => {
       const byRowKey = new Map<string, VirtualRow>()
       const byMessageId = new Map<string, VirtualRow>()

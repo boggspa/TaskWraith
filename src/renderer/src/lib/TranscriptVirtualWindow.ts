@@ -286,6 +286,22 @@ const TOOL_ACTIVITY_ESTIMATE_CHARS = 180
 export const VIEWPORT_CLAMPED_ESTIMATE_CAP_PX = 360
 const VIEWPORT_CLAMPED_TYPES: ReadonlySet<VirtualRowType> = new Set(['fanoutResult'])
 
+/**
+ * Per-activity ceiling on how many output characters feed a row's height
+ * estimate. An ActivityStack's rendered height scales with activity COUNT —
+ * every activity body (thinking traces especially) sits inside a bounded
+ * collapsed LiveActivityViewport or a click-to-expand row, so ONE activity
+ * accumulating 100KB of un-truncated thinking must not scale the estimate
+ * toward CONTENT_SCALE_CAP_PX (1400) when its real clamped contribution is
+ * ~200px. The uncapped sum was the long-thinking analog of the fanoutResult
+ * phantom height: any content-version cache miss (the row updating while NOT
+ * the active live tail — e.g. thinking still growing above a system event)
+ * snapped the row from its measured ~250px to the ballooned estimate and back
+ * every delta flush — the "transcript jerking". 480 chars ≈ 200px at
+ * CONTENT_PX_PER_CHAR, roughly one collapsed viewport.
+ */
+export const ACTIVITY_OUTPUT_ESTIMATE_CHAR_CAP = 480
+
 export function estimatedHeightFor(
   rowType: VirtualRowType,
   hasRunBoundary: boolean,
@@ -313,13 +329,14 @@ export function estimatedHeightFor(
  */
 export function projectRows(
   messages: ChatMessage[],
-  runBoundaryIds?: ReadonlySet<string> | null
+  runBoundaryIds?: ReadonlySet<string> | null,
+  unboundedActivityBodies = false
 ): VirtualRow[] {
   if (!Array.isArray(messages)) return []
   const rows: VirtualRow[] = []
   for (let index = 0; index < messages.length; index++) {
     const message = messages[index]
-    const row = projectRow(message, index, runBoundaryIds)
+    const row = projectRow(message, index, runBoundaryIds, unboundedActivityBodies)
     if (row) rows.push(row)
   }
   return rows
@@ -328,7 +345,12 @@ export function projectRows(
 export function projectRow(
   message: ChatMessage | null | undefined,
   index: number,
-  runBoundaryIds?: ReadonlySet<string> | null
+  runBoundaryIds?: ReadonlySet<string> | null,
+  /** True when the live-activity viewport appearance setting is OFF: activity
+   * bodies (thinking traces) then render UNBOUNDED in the transcript flow, so
+   * the per-activity char cap would badly undershoot — keep the raw lengths
+   * (the generic CONTENT_SCALE_CAP_PX still bounds the estimate). */
+  unboundedActivityBodies = false
 ): VirtualRow | null {
   if (!message || typeof message.id !== 'string') return null
   const rowType = classifyRowType(message)
@@ -344,7 +366,13 @@ export function projectRow(
     (message.toolActivities?.length || 0) * TOOL_ACTIVITY_ESTIMATE_CHARS +
     (message.toolActivities || []).reduce(
       (total, activity) =>
-        total + (activity.resultSummary?.length || activity.outputPreview?.length || 0),
+        total +
+        (unboundedActivityBodies
+          ? activity.resultSummary?.length || activity.outputPreview?.length || 0
+          : Math.min(
+              ACTIVITY_OUTPUT_ESTIMATE_CHAR_CAP,
+              activity.resultSummary?.length || activity.outputPreview?.length || 0
+            )),
       0
     )
   const contentLength =
@@ -408,19 +436,47 @@ export function measurementContentVersion(
 }
 
 /**
- * Resolve a row's height: its measured value (looked up by
- * `measurementKey`) when known, else the type estimate. The caller owns
- * the measurement `Map` (per-chat, in a ref).
+ * Geometry-only cache key: the row's identity + width bucket + expansion,
+ * WITHOUT the content version. The "last height this row measured at this
+ * geometry" fallback lives under it (see getRowHeight).
+ */
+export function geometryKey(rowKey: string, bucket: number, expanded: boolean): string {
+  return `${rowKey}|${bucket}|${expanded ? 1 : 0}`
+}
+
+/**
+ * Resolve a row's height, in fidelity order:
+ *   1. the exact measured value for this content version (`measurementKey`);
+ *   2. the row's LAST measured height at this geometry (`geometryKey`) — a
+ *      content-version miss means the row's body just changed (a growing
+ *      thinking trace, a status flip, streamed tool output), and its previous
+ *      real height is off by at most that delta. Falling all the way back to
+ *      the type estimate instead snapped mid-transcript updating rows between
+ *      real (~250px) and estimated (up to 1400px) heights on every flush —
+ *      the long-thinking "jerking". The stale-by-one-flush value is corrected
+ *      by the next measure pass without an excursion.
+ *   3. the type estimate (never measured at this geometry — first mount or a
+ *      width/expansion change).
+ * The caller owns both `Map`s (per-chat, in refs).
  */
 export function getRowHeight(
   row: VirtualRow,
   measurements: ReadonlyMap<string, number>,
   bucket: number,
   expanded: boolean,
-  rowContentVersion: string = row.contentVersion
+  rowContentVersion: string = row.contentVersion,
+  geometryHeights?: ReadonlyMap<string, number>
 ): number {
   const measured = measurements.get(measurementKey(row.rowKey, rowContentVersion, bucket, expanded))
   if (typeof measured === 'number' && Number.isFinite(measured) && measured >= 0) return measured
+  const lastAtGeometry = geometryHeights?.get(geometryKey(row.rowKey, bucket, expanded))
+  if (
+    typeof lastAtGeometry === 'number' &&
+    Number.isFinite(lastAtGeometry) &&
+    lastAtGeometry >= 0
+  ) {
+    return lastAtGeometry
+  }
   return row.estimatedHeight
 }
 
