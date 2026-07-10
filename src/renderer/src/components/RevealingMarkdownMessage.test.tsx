@@ -202,5 +202,11 @@ describe('RevealingMarkdownMessage (smoke)', () => {
       <StableMarkdownBlock raw={mixed} revealTokens animatedWordWindow={48} />
     )
     expect((html.match(/stream-reveal-token/g) || []).length).toBeLessThanOrEqual(48)
+
+    const prose = Array.from({ length: 80 }, (_, index) => `word${index}`).join(' ')
+    const proseHtml = renderToStaticMarkup(
+      <StableMarkdownBlock raw={prose} revealTokens animatedWordWindow={48} />
+    )
+    expect((proseHtml.match(/stream-reveal-token/g) || []).length).toBe(48)
   })
 })
