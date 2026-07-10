@@ -2529,6 +2529,10 @@
   gap: 6px;
 }
 
+.app-sidebar .sidebar-projects-view {
+  padding-top: 8px;
+}
+
 .sidebar-projects-header .sidebar-section-header-toggle:disabled {
   opacity: 1;
   cursor: default;
