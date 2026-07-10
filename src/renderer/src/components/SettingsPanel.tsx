@@ -7689,10 +7689,10 @@ export function SettingsPanel({
                 </p>
 
                 <label className="settings-label">Kimi CLI binary</label>
-                <input
+                <CommittedDraftField
                   className="settings-select"
-                  value={kimiBinaryPath}
-                  onChange={(e) => onChange({ kimiBinaryPath: e.target.value })}
+                  committed={kimiBinaryPath}
+                  onCommit={(value) => onChange({ kimiBinaryPath: value })}
                   placeholder="Auto-detect, or /path/to/kimi"
                 />
                 <p className="settings-hint">
@@ -7741,10 +7741,10 @@ export function SettingsPanel({
                 {renderProviderPauseControls('ollama')}
 
                 <label className="settings-label">Ollama endpoint</label>
-                <input
+                <CommittedDraftField
                   className="settings-select"
-                  value={ollamaBaseUrl}
-                  onChange={(e) => onChange({ ollamaBaseUrl: e.target.value })}
+                  committed={ollamaBaseUrl}
+                  onCommit={(value) => onChange({ ollamaBaseUrl: value })}
                   placeholder="http://127.0.0.1:11434"
                 />
                 <p className="settings-hint">
@@ -7816,10 +7816,10 @@ export function SettingsPanel({
                     })}
                   </div>
                 ) : (
-                  <input
+                  <CommittedDraftField
                     className="settings-select"
-                    value={ollamaDefaultModel}
-                    onChange={(e) => onChange({ ollamaDefaultModel: e.target.value })}
+                    committed={ollamaDefaultModel}
+                    onCommit={(value) => onChange({ ollamaDefaultModel: value })}
                     placeholder={ollamaStatus?.defaultModel || 'qwen3:4b-instruct'}
                   />
                 )}
