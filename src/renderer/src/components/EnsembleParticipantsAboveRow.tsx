@@ -1589,7 +1589,7 @@ function EnsembleAddParticipantButton({
         ariaLabel: 'Add Ensemble participant'
       }}
       confirmAction={{
-        label: 'Add participant',
+        label: 'Add',
         onConfirm: () => onAdd({ ...draft })
       }}
       onOpenChange={handleOpenChange}
