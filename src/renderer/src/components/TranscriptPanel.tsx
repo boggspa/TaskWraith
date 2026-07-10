@@ -1788,18 +1788,14 @@ export const TranscriptPanel = memo(
         pendingQueuedAppRunIds,
         queuedRunStatusByAppRunId
       })
-      // Dedup: when a queued-message system card's job is still in
-      // the `queued` set, suppress the card here — the queued-
-      // messages above-row is the live representation. Once the job
-      // dispatches, the card resurfaces as a historical "this was
-      // queued" record. Untagged messages always pass through.
-      if (!pendingQueuedAppRunIds || pendingQueuedAppRunIds.size === 0) return projected
-      return projected.filter((msg) => {
-        if (msg.metadata?.kind !== 'queuedRunRequest') return true
-        const appRunId = typeof msg.metadata?.appRunId === 'string' ? msg.metadata.appRunId : null
-        if (!appRunId) return true
-        return !pendingQueuedAppRunIds.has(appRunId)
-      })
+      // NOTE: pending queuedRunRequest cards are NOT filtered here — they are
+      // suppressed AFTER adjacency grouping (see queuedSuppressedMessages),
+      // like the participant filter. Filtering pre-grouping made two tool
+      // bursts flanking a hidden queued card array-adjacent, merging them
+      // into one ActivityStack across a real system-event boundary; when the
+      // job dispatched and the card resurfaced, the stack retroactively split
+      // — content visibly regrouping "in blocks".
+      return projected
     }, [isWelcomeChat, messages, pendingQueuedAppRunIds, queuedRunStatusByAppRunId])
     const hasLiveContextCompactionProgress = useMemo(
       () => contextCompactionProgress.some((event) => event.status === 'started'),
@@ -2270,9 +2266,27 @@ export const TranscriptPanel = memo(
       }
       return map
     }, [visibleMessages])
+    // Dedup: while a queued-message card's job is still in the `queued` set,
+    // the queued-messages above-row is the live representation — hide the
+    // card. Post-grouping (unlike the old visibleMessages filter) so the
+    // hidden card still breaks tool-burst adjacency at its true position;
+    // once the job dispatches it resurfaces as a historical record.
+    const queuedSuppressedMessages = useMemo(() => {
+      if (!pendingQueuedAppRunIds || pendingQueuedAppRunIds.size === 0) return groupedMessages
+      return groupedMessages.filter((msg) => {
+        if (msg.metadata?.kind !== 'queuedRunRequest') return true
+        const appRunId = typeof msg.metadata?.appRunId === 'string' ? msg.metadata.appRunId : null
+        if (!appRunId) return true
+        return !pendingQueuedAppRunIds.has(appRunId)
+      })
+    }, [groupedMessages, pendingQueuedAppRunIds])
     const participantFilteredMessages = useMemo(
-      () => filterTranscriptMessagesByParticipantKeys(groupedMessages, activeParticipantFilterKeys),
-      [activeParticipantFilterKeys, groupedMessages]
+      () =>
+        filterTranscriptMessagesByParticipantKeys(
+          queuedSuppressedMessages,
+          activeParticipantFilterKeys
+        ),
+      [activeParticipantFilterKeys, queuedSuppressedMessages]
     )
     const participantFilterActive = activeParticipantFilterKeys.size > 0
     const roundCardChat = useMemo(
