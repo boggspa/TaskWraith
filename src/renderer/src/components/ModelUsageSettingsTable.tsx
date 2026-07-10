@@ -37,7 +37,7 @@
  * populated render can be SSR-tested by feeding aggregator output directly.
  */
 import { Fragment, useEffect, useMemo, useState } from 'react'
-import type { UsageRecord, ChatRecord } from '../../../main/store/types'
+import type { UsageRecord, ChatListItem } from '../../../main/store/types'
 import {
   MODEL_USAGE_WINDOW_LABEL,
   MODEL_USAGE_WINDOW_ORDER,
@@ -740,7 +740,7 @@ export function ModelUsageSettingsTable({
   onExternalUsageChange
 }: ModelUsageSettingsTableProps) {
   const [internalRecords, setInternalRecords] = useState<UsageRecord[]>([])
-  const [chats, setChats] = useState<ChatRecord[]>([])
+  const [chats, setChats] = useState<ChatListItem[]>([])
   const [externalRecords, setExternalRecords] = useState<UsageRecord[]>([])
   const [rates, setRates] = useState<RendererProviderRates>({})
   // Whether the toggle's initial value is controlled by the caller. When the
@@ -799,12 +799,15 @@ export function ModelUsageSettingsTable({
     }
   }, [])
 
-  // Fetch TaskWraith chats so Ollama RAM can backfill from historical run stats.
+  // Fetch the lean chat list so Ollama RAM + the workspace matrix can
+  // backfill from run summaries — getChatList ships runsSummary (per-run
+  // stats + precomputed diff counts) without serializing every chat's full
+  // transcript over IPC the way getChats() did.
   useEffect(() => {
-    if (typeof window === 'undefined' || typeof window.api?.getChats !== 'function') return
+    if (typeof window === 'undefined' || typeof window.api?.getChatList !== 'function') return
     let cancelled = false
     window.api
-      .getChats()
+      .getChatList()
       .then((latest) => {
         if (!cancelled) setChats(Array.isArray(latest) ? latest : [])
       })
@@ -955,9 +958,9 @@ export function ModelUsageSettingsTable({
       () => [] as UsageRecord[]
     )
     const chatsPromise =
-      typeof window.api?.getChats === 'function'
-        ? window.api.getChats().catch(() => [] as ChatRecord[])
-        : Promise.resolve([] as ChatRecord[])
+      typeof window.api?.getChatList === 'function'
+        ? window.api.getChatList().catch(() => [] as ChatListItem[])
+        : Promise.resolve([] as ChatListItem[])
     const externalPromise = includeExternal
       ? loadRendererUsageRecords('external', { force: true }).catch(() => [] as UsageRecord[])
       : Promise.resolve(null)

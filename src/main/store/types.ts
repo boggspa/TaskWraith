@@ -3349,11 +3349,35 @@ export interface ChatRecord {
   }
 }
 
+/** Lean per-run projection carried on ChatListItem so list consumers (the
+ * model-usage workspace matrix, the Ollama RAM views) never need the full
+ * getChats() transcript payload. Deliberately tiny: a run's diff structures
+ * collapse to one precomputed file count. */
+export interface ChatListRunSummary {
+  runId: string
+  provider?: string
+  startedAt?: string
+  endedAt?: string
+  requestedModel?: string
+  actualModel?: string
+  /** Distinct changed-file count across the run's diff structures.
+   * Precomputed main-side — mirrors modelUsageTable.runDiffFileCount. */
+  diffFileCount: number
+  /** Ollama RAM stats subset (ollamaMemory* keys + hardware.ram subtree) —
+   * exactly the paths ollamaMemoryDisplay's extractors read. */
+  stats?: Record<string, unknown>
+}
+
 export interface ChatListItem extends ChatRecord {
   summaryOnly: true
   messageCount: number
   runCount: number
   lastRun?: ChatRun
+  /** Present on all freshly-built items (getChatList rebuilds index entries
+   * that lack it, so its presence doubles as the index freshness marker).
+   * Optional in the type so pre-existing fixtures/merge shapes stay valid —
+   * consumers must handle absence (`item.runsSummary ?? item.runs`). */
+  runsSummary?: ChatListRunSummary[]
   searchText?: string
   searchPreview?: string
   sourceChatMtimeMs?: number

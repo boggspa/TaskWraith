@@ -20,6 +20,7 @@ import {
   ChatRun,
   ChatWorkflowMode,
   ChatListItem,
+  ChatListRunSummary,
   PooledAgentStatsSummary,
   UsageRecord,
   ScheduledTask,
@@ -2405,6 +2406,57 @@ export class AppStore {
     }
   }
 
+  /** Mirrors renderer modelUsageTable.runDiffFileCount — keep in sync. */
+  private static runDiffFileCountForSummary(run: ChatRun): number {
+    const paths = new Set<string>()
+    const addFile = (filePath: unknown): void => {
+      if (typeof filePath === 'string' && filePath.trim()) paths.add(filePath.trim())
+    }
+    const diff = (run as { runDiff?: Record<string, Array<{ path?: unknown }>> }).runDiff
+    for (const key of ['createdFiles', 'modifiedFiles', 'deletedFiles', 'preExistingFiles']) {
+      for (const file of diff?.[key] || []) addFile(file?.path)
+    }
+    const byPath = (run as { runDiffByPath?: Record<string, Array<{ path?: unknown }>> })
+      .runDiffByPath
+    for (const files of Object.values(byPath || {})) {
+      for (const file of files || []) addFile(file?.path)
+    }
+    return paths.size
+  }
+
+  /** Ollama RAM stats subset for ChatListRunSummary — copies the ollamaMemory*
+   * top-level keys and the hardware.ram subtree, the exact paths the renderer
+   * extractors (ollamaMemoryDisplay OLLAMA_*_PATHS) read. Keep in sync. */
+  private static ollamaStatsSubsetForChatList(stats: unknown): Record<string, unknown> | undefined {
+    if (!stats || typeof stats !== 'object') return undefined
+    const source = stats as Record<string, unknown>
+    const subset: Record<string, unknown> = {}
+    for (const key of Object.keys(source)) {
+      if (key.startsWith('ollamaMemory')) subset[key] = source[key]
+    }
+    const hardware = source.hardware
+    if (hardware && typeof hardware === 'object') {
+      const ram = (hardware as Record<string, unknown>).ram
+      if (ram && typeof ram === 'object') subset.hardware = { ram }
+    }
+    return Object.keys(subset).length > 0 ? subset : undefined
+  }
+
+  private static summarizeRunForChatList(run: ChatRun): ChatListRunSummary {
+    const stats =
+      run.provider === 'ollama' ? this.ollamaStatsSubsetForChatList(run.stats) : undefined
+    return {
+      runId: run.runId,
+      ...(run.provider ? { provider: run.provider } : {}),
+      ...(run.startedAt ? { startedAt: run.startedAt } : {}),
+      ...(run.endedAt ? { endedAt: run.endedAt } : {}),
+      ...(run.requestedModel ? { requestedModel: run.requestedModel } : {}),
+      ...(run.actualModel ? { actualModel: run.actualModel } : {}),
+      diffFileCount: this.runDiffFileCountForSummary(run),
+      ...(stats ? { stats } : {})
+    }
+  }
+
   static toChatListItem(chat: ChatRecord, sourceStat?: Pick<fs.Stats, 'mtimeMs' | 'size'>): ChatListItem {
     const normalizedChat = this.normalizeChatRecord(chat)
     const messages = Array.isArray(normalizedChat.messages)
@@ -2427,6 +2479,7 @@ export class AppStore {
       summaryOnly: true,
       messageCount: messages.length,
       runCount: runs.length,
+      runsSummary: runs.filter((run) => run?.runId).map((run) => this.summarizeRunForChatList(run)),
       ...(lastRun ? { lastRun } : {}),
       ...(sourceStat
         ? { sourceChatMtimeMs: sourceStat.mtimeMs, sourceChatSize: sourceStat.size }
@@ -2454,6 +2507,7 @@ export class AppStore {
       summaryOnly: true,
       messageCount: typeof item.messageCount === 'number' ? item.messageCount : 0,
       runCount: typeof item.runCount === 'number' ? item.runCount : 0,
+      runsSummary: Array.isArray(item.runsSummary) ? item.runsSummary : [],
       ...(item.lastRun ? { lastRun: summarizeLastRun(item.lastRun) || item.lastRun } : {}),
       ...(typeof item.sourceChatMtimeMs === 'number'
         ? { sourceChatMtimeMs: item.sourceChatMtimeMs }
@@ -2484,7 +2538,14 @@ export class AppStore {
       }
       let item: ChatListItem | undefined
       const indexed = existingIndex[chatId]
-      if (indexed?.summaryOnly === true && this.chatListItemMatchesSource(indexed, sourceStat)) {
+      // runsSummary doubles as the index-entry freshness marker: entries
+      // persisted before the field existed rebuild from the chat file once,
+      // instead of silently serving items without run summaries.
+      if (
+        indexed?.summaryOnly === true &&
+        Array.isArray(indexed.runsSummary) &&
+        this.chatListItemMatchesSource(indexed, sourceStat)
+      ) {
         item = this.normalizeChatListItem(indexed)
       } else {
         const chat = readJson<ChatRecord | null>(chatPath, null)

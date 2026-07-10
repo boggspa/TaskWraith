@@ -259,7 +259,18 @@ function workspaceBasename(value: string): string {
   return parts[parts.length - 1] || trimmed
 }
 
-function workspaceLabelFor(workspaceId: string, chats: ChatRecord[]): string {
+/** Structural chat shape for the workspace matrix so BOTH full ChatRecords
+ * (getChats) and lean ChatListItems (getChatList — runs stripped, precomputed
+ * runsSummary carried) satisfy it without adapters. */
+export interface ModelUsageChatContext {
+  appChatId: string
+  workspaceId?: string
+  workspacePath?: string
+  runs?: ChatRecord['runs']
+  runsSummary?: Array<{ runId: string; diffFileCount?: number }> | null
+}
+
+function workspaceLabelFor(workspaceId: string, chats: ModelUsageChatContext[]): string {
   if (workspaceId === '__taskwraith_global_chats__') return 'Global'
   if (workspaceId === '__unknown_workspace__') return 'Unknown'
   const chat = chats.find((candidate) => candidate.workspaceId === workspaceId)
@@ -267,6 +278,7 @@ function workspaceLabelFor(workspaceId: string, chats: ChatRecord[]): string {
   return workspaceBasename(path) || workspaceId
 }
 
+/** Mirrored main-side as Store.runDiffFileCountForSummary — keep in sync. */
 function runDiffFileCount(run: NonNullable<ChatRecord['runs']>[number] | undefined): number {
   if (!run) return 0
   const paths = new Set<string>()
@@ -283,9 +295,18 @@ function runDiffFileCount(run: NonNullable<ChatRecord['runs']>[number] | undefin
   return paths.size
 }
 
-function buildRunDiffFileCountMap(chats: ChatRecord[]): Map<string, number> {
+function buildRunDiffFileCountMap(chats: ModelUsageChatContext[]): Map<string, number> {
   const result = new Map<string, number>()
   for (const chat of chats || []) {
+    // Lean list items carry precomputed counts; full records compute here.
+    if (Array.isArray(chat.runsSummary)) {
+      for (const run of chat.runsSummary) {
+        if (!run?.runId) continue
+        const count = Number(run.diffFileCount)
+        result.set(`${chat.appChatId}:${run.runId}`, Number.isFinite(count) ? count : 0)
+      }
+      continue
+    }
     for (const run of chat.runs || []) {
       if (!run?.runId) continue
       result.set(`${chat.appChatId}:${run.runId}`, runDiffFileCount(run))
@@ -668,7 +689,7 @@ function modelUsageRecordsForSettingsMatrix(
 export function buildModelUsageWorkspaceMatrix(
   internalRecords: UsageRecord[],
   externalRecords: UsageRecord[],
-  chats: ChatRecord[],
+  chats: ModelUsageChatContext[],
   rates: RendererProviderRates,
   options: ModelUsageTableOptions = {},
   now: number = Date.now(),

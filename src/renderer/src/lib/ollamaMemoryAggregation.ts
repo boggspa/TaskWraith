@@ -7,7 +7,7 @@
  * periodic sample counts (not cumulative token totals).
  */
 
-import type { ChatRecord, UsageRecord } from '../../../main/store/types'
+import type { UsageRecord } from '../../../main/store/types'
 import {
   extractOllamaPeakRssGb,
   extractOllamaSampleCount,
@@ -24,6 +24,28 @@ import {
   type ModelUsageWindowKey
 } from './modelUsageTable'
 import { canonicalModelIdForProvider } from './modelDisplayName'
+
+/** Structural chat/run shapes so BOTH full ChatRecords (getChats) and lean
+ * ChatListItems (getChatList, runs stripped but runsSummary carried) satisfy
+ * the aggregation without adapters. */
+export interface OllamaMemoryRunSource {
+  runId: string
+  provider?: string
+  startedAt?: string
+  endedAt?: string
+  requestedModel?: string
+  actualModel?: string
+  stats?: unknown
+}
+
+export interface OllamaMemoryChatSource {
+  workspaceId?: string
+  appChatId: string
+  runs?: OllamaMemoryRunSource[] | null
+  /** ChatListItem's lean projection — preferred over runs when present
+   * (list items hard-code runs: []). */
+  runsSummary?: OllamaMemoryRunSource[] | null
+}
 
 interface MemoryAccumulator {
   peakSumGb: number
@@ -135,12 +157,14 @@ const chatRunTimestampMs = (endedAt?: string, startedAt?: string): number | null
  * long before `usage.json` learned those fields — this lets the RAM views
  * populate from existing threads without waiting for new runs.
  */
-export function deriveOllamaMemoryUsageFromChats(chats: ChatRecord[]): UsageRecord[] {
+export function deriveOllamaMemoryUsageFromChats(chats: OllamaMemoryChatSource[]): UsageRecord[] {
   const derived: UsageRecord[] = []
   if (!Array.isArray(chats)) return derived
 
   for (const chat of chats) {
-    const runs = chat?.runs
+    // ChatListItems always carry runsSummary (and hard-code runs: []);
+    // full ChatRecords carry runs. Prefer the summary when present.
+    const runs = chat?.runsSummary ?? chat?.runs
     if (!Array.isArray(runs) || runs.length === 0) continue
     const workspaceId = chat.workspaceId || 'global'
     const chatId = chat.appChatId
@@ -179,7 +203,7 @@ export function deriveOllamaMemoryUsageFromChats(chats: ChatRecord[]): UsageReco
  */
 export function mergeOllamaMemoryUsageRecords(
   usageRecords: UsageRecord[],
-  chats: ChatRecord[]
+  chats: OllamaMemoryChatSource[]
 ): UsageRecord[] {
   const merged = [...usageRecords]
   const indexByRunId = new Map<string, number>()

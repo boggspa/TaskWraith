@@ -28,7 +28,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent
 } from 'react'
-import type { ProviderId, UsageRecord, ChatRecord } from '../../../main/store/types'
+import type { ProviderId, UsageRecord, ChatListItem } from '../../../main/store/types'
 import type { ModelUsageAggregate, UsageWindowAggregate } from '../lib/usageAggregateTypes'
 import {
   API_SPEND_WINDOW_ORDER,
@@ -728,7 +728,7 @@ export function ContextLengthsView() {
  */
 function ApiSpendView({ options }: { options: ModelUsageApiSpendOptions | undefined }) {
   const [records, setRecords] = useState<UsageRecord[]>([])
-  const [chats, setChats] = useState<ChatRecord[]>([])
+  const [chats, setChats] = useState<ChatListItem[]>([])
   const refreshKey = options?.refreshKey ?? 0
 
   useEffect(() => {
@@ -738,10 +738,12 @@ function ApiSpendView({ options }: { options: ModelUsageApiSpendOptions | undefi
     // broadcast, and App's handler has already force-seeded the cache — this
     // join is a cache hit instead of a third identical getUsage IPC call.
     const usagePromise = loadRendererUsageRecords('taskwraith').catch(() => [] as UsageRecord[])
+    // Lean chat list: runsSummary carries the Ollama RAM stats this view
+    // derives from — no need to ship every chat's full transcript.
     const chatsPromise =
-      typeof window.api?.getChats === 'function'
-        ? window.api.getChats().catch(() => [] as ChatRecord[])
-        : Promise.resolve([] as ChatRecord[])
+      typeof window.api?.getChatList === 'function'
+        ? window.api.getChatList().catch(() => [] as ChatListItem[])
+        : Promise.resolve([] as ChatListItem[])
     void Promise.all([usagePromise, chatsPromise]).then(([latestUsage, latestChats]) => {
       if (cancelled) return
       setRecords(Array.isArray(latestUsage) ? latestUsage : [])
