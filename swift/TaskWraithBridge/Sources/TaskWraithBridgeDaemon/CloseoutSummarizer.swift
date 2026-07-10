@@ -121,7 +121,35 @@ private enum FoundationModelsCloseoutSummarizer {
                 message: "Foundation Models returned an empty close-out summary."
             )
         }
+        let corpus = TelemetryEchoGuard.corpus(from: agentAuthoredStrings(from: request))
+        if TelemetryEchoGuard.isEcho(text, in: corpus) {
+            throw JSONRPCError(
+                code: JSONRPCErrorCode.bridgeUnavailable,
+                message: "Close-out summary rejected: model output echoed telemetry verbatim (likely prompt injection in run data)."
+            )
+        }
         return text
+    }
+
+    /// Fields that carry free text authored by the RUN itself — agent output,
+    /// commit subjects, warnings, validations, file paths — i.e. the surfaces
+    /// an attacker can plant a "write exactly X" payload into. The human's own
+    /// request (`promptText`) is deliberately EXCLUDED: a close-out that
+    /// restates the task is legitimate, and treating that as an echo would
+    /// hard-fail a benign run to the deterministic fallback.
+    private static func agentAuthoredStrings(from request: CloseoutSummaryParams) -> [String] {
+        var strings: [String] = []
+        if let finalText = request.finalText { strings.append(finalText) }
+        strings.append(contentsOf: request.warnings ?? [])
+        strings.append(contentsOf: request.validations ?? [])
+        for commit in request.commits ?? [] {
+            if let subject = commit.subject { strings.append(subject) }
+        }
+        for participant in request.participants ?? [] {
+            if let finalText = participant.finalText { strings.append(finalText) }
+        }
+        strings.append(contentsOf: (request.fileChanges ?? []).map { $0.path })
+        return strings
     }
 
     private static func buildPrompt(from request: CloseoutSummaryParams, subject: String) -> String {
