@@ -9,6 +9,7 @@ import {
   resolveSystemThemeAppearance
 } from '../../shared/systemThemeAppearance'
 import { isRetiredExternalChannelInboundMessage } from '../LegacyExternalChannelHistory'
+import { resolveActiveGoalForEnsemble } from '../GoalState'
 import type { TaskWraithPluginResourceProvenance } from '../../shared/plugins/PluginTypes'
 import type { UnattendedElevationAck } from '../UnattendedPostureGate'
 import {
@@ -2308,6 +2309,8 @@ export class AppStore {
                     .participants
           }
         : undefined
+    const activeGoal =
+      chatKind === 'ensemble' ? resolveActiveGoalForEnsemble(chat.activeGoal) : chat.activeGoal
     if (scope === 'global') {
       const { workspaceId: _workspaceId, workspacePath: _workspacePath, ...rest } = chat
       return {
@@ -2317,6 +2320,7 @@ export class AppStore {
         parentChatRelation,
         sideChatContext,
         workflowMode,
+        ...(activeGoal ? { activeGoal } : {}),
         ...(ensemble ? { ensemble } : {}),
         providerMetadata
       }
@@ -2328,6 +2332,7 @@ export class AppStore {
       parentChatRelation,
       sideChatContext,
       workflowMode,
+      ...(activeGoal ? { activeGoal } : {}),
       ...(ensemble ? { ensemble } : {}),
       providerMetadata,
       workspaceId: chat.workspaceId || '',

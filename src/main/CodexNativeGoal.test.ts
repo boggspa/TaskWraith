@@ -2,9 +2,11 @@ import { describe, expect, it } from 'vitest'
 import {
   activeGoalFromCodexThreadGoal,
   activeGoalStatusFromCodexGoal,
+  codexNativeGoalSyncIntent,
   codexGoalStatusFromActiveGoal,
   codexThreadGoalSetParams,
-  isCodexNativeGoalUnsupportedError
+  isCodexNativeGoalUnsupportedError,
+  mustFailClosedAfterCodexGoalSyncError
 } from './CodexNativeGoal'
 import type { ActiveGoal } from './store/types'
 
@@ -39,6 +41,55 @@ describe('CodexNativeGoal', () => {
       status: 'complete',
       tokenBudget: null
     })
+  })
+
+  it('keeps solo Codex goals in the provider-native goal engine', () => {
+    expect(
+      codexNativeGoalSyncIntent({
+        threadId: 'thread-1',
+        chatKind: 'single',
+        activeGoal: baseGoal
+      })
+    ).toEqual({
+      method: 'thread/goal/set',
+      params: {
+        threadId: 'thread-1',
+        objective: 'Ship the native goal bridge',
+        status: 'active',
+        tokenBudget: null
+      },
+      preserveTaskWraithGoal: false
+    })
+  })
+
+  it('clears provider-native goals for ensembles while preserving the TaskWraith goal', () => {
+    expect(
+      codexNativeGoalSyncIntent({
+        threadId: 'thread-1',
+        chatKind: 'ensemble',
+        activeGoal: baseGoal
+      })
+    ).toEqual({
+      method: 'thread/goal/clear',
+      params: { threadId: 'thread-1' },
+      preserveTaskWraithGoal: true
+    })
+  })
+
+  it('uses the signed ensemble run identity even when the persisted chat kind is stale', () => {
+    const intent = codexNativeGoalSyncIntent({
+      threadId: 'thread-1',
+      chatKind: 'single',
+      ensembleRun: true,
+      activeGoal: baseGoal
+    })
+    expect(intent).toEqual({
+      method: 'thread/goal/clear',
+      params: { threadId: 'thread-1' },
+      preserveTaskWraithGoal: true
+    })
+    expect(mustFailClosedAfterCodexGoalSyncError(intent, false)).toBe(true)
+    expect(mustFailClosedAfterCodexGoalSyncError(intent, true)).toBe(false)
   })
 
   it('mirrors native Codex thread goals into TaskWraith goal state', () => {

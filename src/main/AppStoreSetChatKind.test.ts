@@ -83,6 +83,36 @@ describe('AppStore.setChatKind (Slice C — mid-thread ensemble toggle)', () => 
     expect(reloaded?.messages).toHaveLength(1)
   })
 
+  it('makes TaskWraith authoritative when a native-goal chat becomes an ensemble', () => {
+    const solo = AppStore.createGlobalChat()
+    AppStore.saveChat({
+      ...solo,
+      provider: 'codex',
+      activeGoal: {
+        id: 'goal-1',
+        objective: 'Keep the ensemble coordinated',
+        status: 'active',
+        mode: 'codex_native',
+        provider: 'codex',
+        createdAt: '2026-07-10T10:00:00.000Z',
+        updatedAt: '2026-07-10T10:00:00.000Z'
+      }
+    } as ChatRecord)
+
+    const converted = AppStore.setChatKind(solo.appChatId, 'ensemble', {
+      seedParticipant: seedParticipant()
+    })
+
+    expect(converted.activeGoal).toMatchObject({
+      id: 'goal-1',
+      objective: 'Keep the ensemble coordinated',
+      status: 'active',
+      provider: 'codex',
+      mode: 'taskwraith_steered'
+    })
+    expect(AppStore.getChat(solo.appChatId)?.activeGoal?.mode).toBe('taskwraith_steered')
+  })
+
   it('converts ensemble→solo in place, stripping the ensemble block and setting the canonical provider', () => {
     const ensemble = AppStore.createEnsembleChat()
     AppStore.saveChat({

@@ -1,4 +1,4 @@
-import type { ActiveGoal, ActiveGoalStatus } from './store/types'
+import type { ActiveGoal, ActiveGoalStatus, ChatKind } from './store/types'
 import { transitionGoalRuntimeLedger } from './GoalState'
 
 export const CODEX_THREAD_GOAL_SET_METHOD = 'thread/goal/set'
@@ -29,6 +29,53 @@ export interface CodexThreadGoalSetParams {
   objective?: string | null
   status?: CodexThreadGoalStatus | null
   tokenBudget?: number | null
+}
+
+export type CodexNativeGoalSyncIntent =
+  | {
+      method: typeof CODEX_THREAD_GOAL_SET_METHOD
+      params: CodexThreadGoalSetParams
+      preserveTaskWraithGoal: false
+    }
+  | {
+      method: typeof CODEX_THREAD_GOAL_CLEAR_METHOD
+      params: { threadId: string }
+      preserveTaskWraithGoal: boolean
+    }
+
+/**
+ * Decide what state may live in Codex's provider-native goal engine.
+ *
+ * Ensemble goals are owned and scheduled by TaskWraith. Mirroring one into
+ * Codex would arm a second scheduler on the same thread, so an ensemble run
+ * always clears the provider copy while retaining the TaskWraith record.
+ */
+export function codexNativeGoalSyncIntent(input: {
+  threadId: string
+  chatKind?: ChatKind
+  ensembleRun?: boolean
+  activeGoal?: ActiveGoal | null
+}): CodexNativeGoalSyncIntent {
+  const taskWraithOwnsGoal = input.ensembleRun === true || input.chatKind === 'ensemble'
+  if (taskWraithOwnsGoal || !input.activeGoal) {
+    return {
+      method: CODEX_THREAD_GOAL_CLEAR_METHOD,
+      params: { threadId: input.threadId },
+      preserveTaskWraithGoal: taskWraithOwnsGoal
+    }
+  }
+  return {
+    method: CODEX_THREAD_GOAL_SET_METHOD,
+    params: codexThreadGoalSetParams(input.threadId, input.activeGoal),
+    preserveTaskWraithGoal: false
+  }
+}
+
+export function mustFailClosedAfterCodexGoalSyncError(
+  intent: CodexNativeGoalSyncIntent,
+  unsupportedNativeGoalControl: boolean
+): boolean {
+  return intent.preserveTaskWraithGoal && !unsupportedNativeGoalControl
 }
 
 export function codexGoalStatusFromActiveGoal(status: ActiveGoalStatus): CodexThreadGoalStatus {
