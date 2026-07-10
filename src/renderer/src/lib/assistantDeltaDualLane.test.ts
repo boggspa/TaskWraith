@@ -43,6 +43,7 @@ function wireLine(input: {
   text: string
   itemId?: string
   cumulative?: boolean
+  provider?: 'claude' | 'cursor'
   sidecars?: WireSidecar[]
   sequenceStart?: number
 }): string {
@@ -51,7 +52,7 @@ function wireLine(input: {
     JSON.stringify({
       type: 'content',
       text: input.text,
-      provider: 'claude',
+      provider: input.provider || 'claude',
       appRunId: input.runId,
       appChatId: input.chatId,
       ...(input.itemId ? { itemId: input.itemId } : {}),
@@ -62,7 +63,7 @@ function wireLine(input: {
               protocolVersion: 1,
               chatId: input.chatId,
               runId: input.runId,
-              provider: 'claude',
+              provider: input.provider || 'claude',
               source: 'adapter',
               sequence: sequence++,
               createdAt: '2026-07-01T23:07:22.957Z',
@@ -87,8 +88,12 @@ function wireLine(input: {
   )
 }
 
-function createDualLaneHarness(chatId: string, runId: string) {
-  let messages: ChatMessage[] = []
+function createDualLaneHarness(
+  chatId: string,
+  runId: string,
+  initialMessages: ChatMessage[] = []
+) {
+  let messages: ChatMessage[] = [...initialMessages]
   let nextId = 0
   const deps = {
     createMessageId: () => `msg-${++nextId}`,
@@ -129,6 +134,48 @@ const ASSISTANT_ITEM = `${RUN}:assistant`
 const ASSISTANT_ITEM_2 = `${RUN}:assistant-2`
 
 describe('assistant delta dual-lane dedupe', () => {
+  it('keeps a divergent Cursor final snapshot after a tool-heavy turn', () => {
+    const initialMessages: ChatMessage[] = [
+      {
+        id: 'pre-tool',
+        role: 'assistant',
+        content: 'Creating three smoke-test files in the existing style.',
+        timestamp: '2026-07-01T23:07:22.957Z'
+      },
+      {
+        id: 'tool-burst',
+        role: 'tool',
+        content: '',
+        timestamp: '2026-07-01T23:07:22.957Z'
+      }
+    ]
+    const { adapter, messages } = createDualLaneHarness(CHAT, RUN, initialMessages)
+    const finalText = 'Created three sample files. Verification ran 9 tests, all OK.'
+
+    adapter.appendChunk(
+      wireLine({
+        chatId: CHAT,
+        runId: RUN,
+        provider: 'cursor',
+        text: finalText,
+        cumulative: true,
+        sidecars: [
+          {
+            kind: 'item/delta',
+            itemId: ASSISTANT_ITEM,
+            delta: finalText,
+            cumulative: true
+          }
+        ]
+      })
+    )
+
+    const result = messages()
+    expect(result).toHaveLength(3)
+    expect(result[2].role).toBe('assistant')
+    expect(result[2].content).toBe(finalText)
+  })
+
   it('applies each Claude-shaped dual-emission delta exactly once (D1+D2+D2+D3+D3 regression)', () => {
     // The exact shape from the observed bug: legacy content lines with NO
     // itemId, sidecar deltas under the compat-synthesized `<runId>:assistant`.

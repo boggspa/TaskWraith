@@ -51,6 +51,22 @@ describe('runItemProjection', () => {
     })
   })
 
+  it('marks only cumulative Cursor deltas as per-segment snapshots', () => {
+    const cursor = projectRunItemAssistantDelta(
+      event({ provider: 'cursor', cumulative: true })
+    )
+    const cursorIncrement = projectRunItemAssistantDelta(
+      event({ provider: 'cursor', cumulative: false })
+    )
+    const claude = projectRunItemAssistantDelta(
+      event({ provider: 'claude', cumulative: true })
+    )
+
+    expect(cursor?.input.preserveDivergentSnapshot).toBe(true)
+    expect(cursorIncrement?.input).not.toHaveProperty('preserveDivergentSnapshot')
+    expect(claude?.input).not.toHaveProperty('preserveDivergentSnapshot')
+  })
+
   it('ignores non-assistant and empty deltas', () => {
     expect(projectRunItemAssistantDelta(event({ channel: 'stdout' }))).toBeNull()
     expect(projectRunItemAssistantDelta(event({ delta: '' }))).toBeNull()

@@ -44,6 +44,8 @@ export interface AssistantDeltaInput {
    *  verbatim, bypassing restatement shape detection. Never set on the
    *  legacy lane. */
   trustedIncremental?: boolean
+  /** Preserve Cursor snapshots that diverge from already-rendered pre-tool text. */
+  preserveDivergentSnapshot?: boolean
   /** Codex `itemId`, when present — drives the inter-item `---` separator. */
   itemId?: string
   /** Pre-resolved provider model metadata (Ollama), stamped onto the bubble. */
@@ -81,7 +83,8 @@ export function applyAssistantDelta(
   const deltaTarget = resolveAssistantDeltaTarget(messages, {
     incoming: input.incoming,
     cumulative: input.cumulative === true,
-    trustedIncremental: input.trustedIncremental === true
+    trustedIncremental: input.trustedIncremental === true,
+    preserveDivergentSnapshot: input.preserveDivergentSnapshot === true
   })
 
   if (deltaTarget.action === 'skip') {

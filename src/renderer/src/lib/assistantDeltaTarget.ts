@@ -14,8 +14,9 @@ import type { ChatMessage } from '../../../main/store/types'
  *
  * The hard case is the CUMULATIVE-RESTATEMENT providers, which re-send the
  * WHOLE turn (not an increment):
- *   - Cursor (cursor-agent stream-json, no --stream-partial-output): EVERY
- *     `assistant` frame is a full-turn snapshot, untagged.
+ *   - Cursor (cursor-agent stream-json, no --stream-partial-output): tagged
+ *     snapshots may cover the whole current segment, and newer model paths
+ *     can restart that segment after each tool burst.
  *   - Claude (Agent SDK): incremental deltas PLUS a trailing cumulative
  *     envelope that re-states the turn (tagged `cumulative` when it diverges
  *     from the streamed deltas).
@@ -61,6 +62,10 @@ interface ResolveAssistantDeltaTargetInput {
    *  restatement — an untagged delta is then a verbatim increment and must
    *  never be shape-detected as a restatement (see assistantDeltaMerge). */
   trustedIncremental?: boolean
+  /** Cursor's tagged assistant frames may be authoritative snapshots of the
+   *  current text SEGMENT rather than the whole turn. Preserve a divergent
+   *  post-tool frame instead of applying Claude's safe-to-skip rule. */
+  preserveDivergentSnapshot?: boolean
 }
 
 /** The current turn's trailing maximal run of assistant|tool messages (stops
@@ -137,12 +142,31 @@ export function resolveAssistantDeltaTarget(
     return { action: 'append' }
   }
   if (!input.incoming.startsWith(preBurst)) {
+    if (input.preserveDivergentSnapshot === true) {
+      // Cursor sealed the pre-tool segment and started a new snapshot after
+      // the tool. Preserve chronology by treating the divergent frame as the
+      // complete post-tool segment; loss is worse than a rare duplicate if a
+      // future Cursor build changes its snapshot scope.
+      if (trailingAssistant) {
+        if (last && last.content === input.incoming) return { action: 'skip' }
+        // Never let a delayed shorter snapshot erase text from the newer one.
+        // This mirrors resolveAssistantDeltaMerge's stale-prefix guard, which
+        // replaceText intentionally bypasses.
+        if (last && last.content.startsWith(input.incoming)) return { action: 'skip' }
+        return { action: 'replaceText', index: lastIndex, text: input.incoming }
+      }
+      return { action: 'appendText', text: input.incoming }
+    }
     // Diverges in the already-rendered pre-tool region (e.g. Claude's
     // whitespace-normalized envelope) — the tail can't be cleanly extracted.
     // The streamed deltas already produced the correct interleaving; skip,
     // exactly as the bridge does (src/main/index.ts post-stream restatement).
     return { action: 'skip' }
   }
+  // Prefix-matching Cursor snapshots retain the established whole-turn
+  // behavior: strip the pre-tool portion and place only the tail. The
+  // segment-specific path above is reserved for the divergent shape observed
+  // on Cursor's Grok 4.5 route, where no clean whole-turn tail exists.
   const tail = input.incoming.slice(preBurst.length)
   if (tail.trim().length === 0) {
     // Restatement only re-covers the pre-burst text; nothing new to place.

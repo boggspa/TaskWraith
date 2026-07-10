@@ -61,6 +61,13 @@ export function projectRunItemAssistantDelta(
       incoming: event.delta,
       runId: event.runId,
       cumulative: event.cumulative === true,
+      // Cursor's `assistant` frames restart at each post-tool prose segment;
+      // they are cumulative within that segment, not guaranteed whole-turn
+      // restatements. Preserve divergent post-tool snapshots instead of using
+      // Claude's safe-to-skip divergent-envelope rule.
+      ...(event.provider === 'cursor' && event.cumulative === true
+        ? { preserveDivergentSnapshot: true }
+        : {}),
       // The sidecar lane's compat mapper tags every restatement
       // (cumulative || runItemCumulative || snapshot), so an untagged
       // item/delta is a verbatim increment — append it even when it

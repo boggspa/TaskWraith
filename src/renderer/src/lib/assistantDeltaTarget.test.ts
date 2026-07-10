@@ -99,6 +99,72 @@ describe('resolveAssistantDeltaTarget', () => {
     ).toEqual({ action: 'skip' })
   })
 
+  it('appends a divergent Cursor segment snapshot after a tool burst', () => {
+    const messages = [
+      assistant('a1', 'Creating three smoke-test files.'),
+      tool('t1')
+    ]
+    expect(
+      resolveAssistantDeltaTarget(messages, {
+        incoming: 'Created three sample smoke-test files. All nine tests passed.',
+        cumulative: true,
+        trustedIncremental: true,
+        preserveDivergentSnapshot: true
+      })
+    ).toEqual({
+      action: 'appendText',
+      text: 'Created three sample smoke-test files. All nine tests passed.'
+    })
+  })
+
+  it('replaces the trailing post-tool bubble with a newer Cursor segment snapshot', () => {
+    const messages = [
+      assistant('a1', 'Creating files.'),
+      tool('t1'),
+      assistant('a2', 'Created three files.')
+    ]
+    expect(
+      resolveAssistantDeltaTarget(messages, {
+        incoming: 'Created three files. All checks passed.',
+        cumulative: true,
+        trustedIncremental: true,
+        preserveDivergentSnapshot: true
+      })
+    ).toEqual({
+      action: 'replaceText',
+      index: 2,
+      text: 'Created three files. All checks passed.'
+    })
+  })
+
+  it('ignores a stale shorter Cursor segment snapshot', () => {
+    const messages = [
+      assistant('a1', 'Creating files.'),
+      tool('t1'),
+      assistant('a2', 'Created three files. All checks passed.')
+    ]
+    expect(
+      resolveAssistantDeltaTarget(messages, {
+        incoming: 'Created three files.',
+        cumulative: true,
+        trustedIncremental: true,
+        preserveDivergentSnapshot: true
+      })
+    ).toEqual({ action: 'skip' })
+  })
+
+  it('still extracts the post-tool tail from a clean whole-turn Cursor snapshot', () => {
+    const messages = [assistant('a1', 'Creating files.'), tool('t1')]
+    expect(
+      resolveAssistantDeltaTarget(messages, {
+        incoming: 'Creating files. Created three files.',
+        cumulative: true,
+        trustedIncremental: true,
+        preserveDivergentSnapshot: true
+      })
+    ).toEqual({ action: 'appendText', text: ' Created three files.' })
+  })
+
   it('SKIPS a cumulative restatement that only re-covers the pre-tool text', () => {
     const messages = [assistant('a1', 'Hello'), tool('t1')]
     expect(

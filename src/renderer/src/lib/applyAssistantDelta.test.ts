@@ -150,4 +150,30 @@ describe('applyAssistantDelta — tool-boundary interleaving', () => {
     const m2 = applyAssistantDelta(m1, { incoming: 'Hello world', cumulative: true }, deps)
     expect(m2).toBe(m1)
   })
+
+  it('keeps a divergent Cursor final segment after tools instead of dropping it', () => {
+    const base = [
+      msg('user', 'q'),
+      msg('assistant', 'Creating three smoke-test files.'),
+      msg('tool', '[tool]')
+    ]
+    const out = applyAssistantDelta(
+      base,
+      {
+        incoming: 'Created three sample smoke-test files. All nine tests passed.',
+        runId: 'run-cursor',
+        cumulative: true,
+        trustedIncremental: true,
+        preserveDivergentSnapshot: true
+      },
+      deps
+    )
+
+    expect(out).toHaveLength(4)
+    expect(trailing(out).role).toBe('assistant')
+    expect(trailing(out).content).toBe(
+      'Created three sample smoke-test files. All nine tests passed.'
+    )
+    expect(trailing(out).runId).toBe('run-cursor')
+  })
 })
