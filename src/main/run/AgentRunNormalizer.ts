@@ -16,6 +16,7 @@ import {
 } from '../RunPermissionPosture'
 import { resolveEffectiveRunPermissions } from '../EffectiveRunPermissions'
 import { normalizeActiveGoalObjective } from '../GoalState'
+import { claudeModelSupportsFastMode } from '../providers/StaticProviderModels'
 import {
   assertLiveProviderId,
   assertProviderId,
@@ -178,7 +179,11 @@ export function normalizeAgentRunPayload(
     serviceTier: optionalStringOrNull(payload.serviceTier),
     claudeReasoningEffort: optionalStringOrNull(payload.claudeReasoningEffort),
     claudeFastMode:
-      typeof payload.claudeFastMode === 'boolean' ? payload.claudeFastMode : undefined,
+      provider === 'claude' &&
+      claudeModelSupportsFastMode(optionalString(payload.model)) &&
+      typeof payload.claudeFastMode === 'boolean'
+        ? payload.claudeFastMode
+        : undefined,
     kimiThinking: typeof payload.kimiThinking === 'boolean' ? payload.kimiThinking : undefined,
     approvalMode: clampedPosture.approvalMode,
     workflowMode: clampedPosture.downgraded ? 'normal' : requestedWorkflowMode,

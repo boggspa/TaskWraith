@@ -6,6 +6,12 @@ import TaskWraithKit
 
 @Suite("iOS parity fixes")
 struct IosParityFixesTests {
+    @Test func fableFiveDoesNotExposeClaudeFastMode() {
+        #expect(!twModelUsesFastToggle("claude-fable-5"))
+        #expect(!twModelUsesFastToggle("claude-fable-5-1m"))
+        #expect(twModelUsesFastToggle("claude-opus-4-8-1m"))
+    }
+
     @Test func transcriptTouchTrackerDoesNotInstallZeroDistanceDragOnIPad() {
         #expect(
             TranscriptTouchTrackingPolicy.usesZeroDistanceDragTracker(isPadInterface: false))

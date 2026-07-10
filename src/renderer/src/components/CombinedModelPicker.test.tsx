@@ -28,6 +28,31 @@ describe('CombinedModelPicker', () => {
     expect(html).toContain('Ultracode')
   })
 
+  it('does not surface stale Fast state for Fable 5', () => {
+    const renderPicker = (selectedModelId: string) =>
+      renderToStaticMarkup(
+        <CombinedModelPicker
+          provider="claude"
+          composerStyle="claude"
+          modelOptions={[
+            { id: 'claude-opus-4-8-1m', label: 'Claude Opus 4.8 1M' },
+            { id: 'claude-fable-5', label: 'Claude Fable 5' }
+          ]}
+          selectedModelId={selectedModelId}
+          onSelectModel={() => undefined}
+          reasoningOptions={[{ value: 'medium', label: 'Medium' }]}
+          selectedReasoning="medium"
+          onSelectReasoning={() => undefined}
+          fastModeCapableModelIds={new Set(['claude-opus-4-8-1m'])}
+          fastModeEnabled
+          onToggleFastMode={() => undefined}
+        />
+      )
+
+    expect(renderPicker('claude-fable-5')).toContain('data-fast-mode-active="false"')
+    expect(renderPicker('claude-opus-4-8-1m')).toContain('data-fast-mode-active="true"')
+  })
+
   it('initializes the Ollama provider column from the selected model only', () => {
     const resetState = resolveCombinedModelPickerResetState({
       isOllamaProviderPicker: true,

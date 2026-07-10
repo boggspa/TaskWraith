@@ -180,6 +180,26 @@ describe('normalizeAgentRunPayload — wrapper-level invariants (faked deps)', (
     expect(vi.mocked(deps.canonicalWorkspacePath)).not.toHaveBeenCalled()
   })
 
+  it('drops stale Claude Fast mode for Fable while preserving it for supported Opus models', () => {
+    const deps = makeDeps()
+    const normalizeClaude = (model: string) =>
+      normalizeAgentRunPayload(
+        {
+          provider: 'claude',
+          scope: 'workspace',
+          workspace: '/repo',
+          prompt: 'do work',
+          model,
+          claudeFastMode: true
+        },
+        deps
+      )
+
+    expect(normalizeClaude('claude-fable-5').claudeFastMode).toBeUndefined()
+    expect(normalizeClaude('claude-fable-5-1m').claudeFastMode).toBeUndefined()
+    expect(normalizeClaude('claude-opus-4-8-1m').claudeFastMode).toBe(true)
+  })
+
   // Invariant 5 (coverage): the global-scope branch threads requireGlobalChat +
   // globalRunCwd (and skips the workspace canonicalizer). Combined with the tests
   // above, all 7 deps are asserted "called where expected":

@@ -183,12 +183,11 @@ const CODEX_FAST_CAPABLE = new Set<string>([
   'gpt-5.6-terra',
   'gpt-5.6-luna'
 ])
-// Fast mode is Opus/Fable-only, and the default picker exposes the 1M Opus rows.
+// Claude Fast mode is limited to supported Opus models. Fable 5 deliberately
+// keeps its full reasoning ladder but does not expose the paid Fast toggle.
 const CLAUDE_FAST_CAPABLE = new Set<string>([
   'claude-opus-4-8-1m',
-  'claude-opus-4-7-1m',
-  'claude-fable-5',
-  'claude-fable-5-1m'
+  'claude-opus-4-7-1m'
 ])
 const CURSOR_FAST_CAPABLE = new Set<string>([
   'composer-2.5',

@@ -174,8 +174,7 @@ const CLAUDE_DEFAULT_MODELS = [
     label: 'Claude Fable 5',
     description: '1M context window — adaptive thinking',
     supportedReasoningEfforts: CLAUDE_OPUS_REASONING_EFFORTS,
-    defaultReasoningEffort: 'medium',
-    additionalSpeedTiers: ['fast']
+    defaultReasoningEffort: 'medium'
   },
   {
     id: CLAUDE_DEFAULT_MODEL,

@@ -381,6 +381,24 @@ export const CLAUDE_THINKING_BUDGET: Record<string, number> = {
   ultracode: 64000
 }
 const CLAUDE_DEFAULT_MODEL = 'claude-sonnet-5'
+const CLAUDE_FAST_MODE_MODEL_IDS: ReadonlySet<string> = new Set([
+  'opus',
+  'claude-opus-4-8',
+  'claude-opus-4-7',
+  'claude-opus-4-6'
+])
+
+/**
+ * Canonical run-boundary guard for Claude's paid Fast mode. Picker metadata is
+ * still model-specific, but persisted, remote, or forged payloads must pass
+ * this allow-list before TaskWraith forwards the setting to Claude.
+ */
+export function claudeModelSupportsFastMode(modelId?: string | null): boolean {
+  return CLAUDE_FAST_MODE_MODEL_IDS.has(
+    normalizeCliProviderModel('claude', modelId).trim().toLowerCase()
+  )
+}
+
 // NOTE: keep in sync with the renderer's CLAUDE_DEFAULT_MODELS (App.tsx).
 // This list is served to the renderer via `getAgentModels('claude')` and
 // becomes `agentModelsByProvider.claude`, which OVERRIDES the renderer's own
@@ -401,8 +419,7 @@ const CLAUDE_STATIC_MODELS = [
     label: 'Claude Fable 5',
     description: '1M context window — adaptive thinking',
     supportedReasoningEfforts: CLAUDE_OPUS_REASONING_EFFORTS,
-    defaultReasoningEffort: 'medium',
-    additionalSpeedTiers: ['fast']
+    defaultReasoningEffort: 'medium'
   },
   {
     id: CLAUDE_DEFAULT_MODEL,

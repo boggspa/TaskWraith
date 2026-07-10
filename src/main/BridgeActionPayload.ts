@@ -129,7 +129,7 @@ export interface BridgeComposerPromptAction extends BridgeActionMetadata {
   cursorReasoningEffort?: string | null
   /** Cursor Fast tier toggle. Valid only for Cursor Grok 4.5. */
   cursorFastMode?: boolean
-  /** Claude Fast-mode toggle (SDK/CLI `--settings {fastMode}`). Opus/Fable only. */
+  /** Claude Fast-mode toggle (SDK/CLI `--settings {fastMode}`). Supported Opus models only. */
   claudeFastMode?: boolean
   /** Codex service-tier override, e.g. `'fast'`. */
   codexServiceTier?: string | null

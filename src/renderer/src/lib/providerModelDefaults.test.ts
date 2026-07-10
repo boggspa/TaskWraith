@@ -103,6 +103,13 @@ describe('Claude provider model defaults', () => {
     expect(ids).not.toContain('claude-mythos-5')
   })
 
+  it('offers Fast mode on supported Opus rows but not Fable 5', () => {
+    const byId = new Map(CLAUDE_DEFAULT_MODELS.map((model) => [model.id, model]))
+    expect(byId.get('claude-opus-4-8-1m')?.additionalSpeedTiers).toContain('fast')
+    expect(byId.get('claude-opus-4-7-1m')?.additionalSpeedTiers).toContain('fast')
+    expect(byId.get('claude-fable-5')?.additionalSpeedTiers ?? []).not.toContain('fast')
+  })
+
   it('resolves family-specific Claude reasoning defaults', () => {
     const byId = new Map(CLAUDE_DEFAULT_MODELS.map((model) => [model.id, model]))
     const sonnet5Reasoning = resolveClaudeReasoningEfforts(byId.get('claude-sonnet-5'))

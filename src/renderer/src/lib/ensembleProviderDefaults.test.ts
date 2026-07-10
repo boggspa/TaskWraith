@@ -337,6 +337,10 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
       'claude-haiku-4-5'
     ])
     expect(claude.defaultModelId).toBe('claude-sonnet-5')
+    expect(claude.fastModeCapableModelIds.has('claude-opus-4-8-1m')).toBe(true)
+    expect(claude.fastModeCapableModelIds.has('claude-opus-4-7-1m')).toBe(true)
+    expect(claude.fastModeCapableModelIds.has('claude-fable-5')).toBe(false)
+    expect(claude.fastModeCapableModelIds.has('claude-fable-5-1m')).toBe(false)
   })
 
   it('returns model-aware Claude reasoning options for ensemble pickers', () => {

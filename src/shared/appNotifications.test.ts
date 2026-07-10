@@ -152,6 +152,7 @@ describe('notification registry', () => {
 
     const claude = groups.find((g) => g.provider === 'claude')
     expect(claude?.models.map((m) => m.name)).toEqual(['Sonnet 5', 'Fable 5'])
+    expect(claude?.models.find((m) => m.name === 'Fable 5')?.blurb).not.toContain('Fast tier')
 
     const codex = groups.find((g) => g.provider === 'codex')
     // Official hyphenated display names (GA 2026-07-09).

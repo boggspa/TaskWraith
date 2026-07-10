@@ -415,7 +415,7 @@ describe('ComposerService', () => {
     const payload = compose(
       { provider: 'claude' },
       {
-        selectedModelType: 'claude-sonnet-4-6',
+        selectedModelType: 'claude-opus-4-8-1m',
         userInput: '/discuss what would the panel say about ensemble pacing?'
       }
     )

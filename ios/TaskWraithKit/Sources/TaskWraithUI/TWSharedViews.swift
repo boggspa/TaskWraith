@@ -993,23 +993,27 @@ struct ProviderModelPicker: View {
             // on new ones, resolved Mac-side). Never force-pick a default:
             // that stamped the catalog default over the chat's real model
             // before the snapshot could land.
-            guard modelId != nil else { return }
             let catalog = catalogs.first {
                 $0.provider.lowercased() == newProvider.lowercased()
             }
-            if catalog == nil || !(catalog!.models.contains { $0.id == modelId }) {
+            if modelId != nil
+                && (catalog == nil || !(catalog!.models.contains { $0.id == modelId }))
+            {
                 modelId = nil
             }
             twNormalizeReasoningSelection(
                 catalog: catalog, modelId: modelId, reasoningEffort: &reasoningEffort)
+            normalizeFastModeSelection(catalog: catalog, modelId: modelId)
         }
         .onChange(of: modelId) { _, _ in
             twNormalizeReasoningSelection(
                 catalog: currentCatalog, modelId: modelId, reasoningEffort: &reasoningEffort)
+            normalizeFastModeSelection(catalog: currentCatalog, modelId: modelId)
         }
         .onAppear {
             twNormalizeReasoningSelection(
                 catalog: currentCatalog, modelId: modelId, reasoningEffort: &reasoningEffort)
+            normalizeFastModeSelection(catalog: currentCatalog, modelId: modelId)
         }
     }
 
@@ -1285,7 +1289,7 @@ struct ProviderModelPicker: View {
             return .modelSwap(
                 on: mid == "composer-2.5-fast", fastId: "composer-2.5-fast", plainId: "composer-2.5")
         }
-        return twFastToggleModelIds.contains(mid) ? .toggle(on: fastModeEnabled) : nil
+        return twModelUsesFastToggle(mid) ? .toggle(on: fastModeEnabled) : nil
     }
 
     @ViewBuilder
@@ -1323,7 +1327,6 @@ struct ProviderModelPicker: View {
         .accessibilityValue(on ? "On" : "Off")
     }
 
-    @ViewBuilder
     /// Models that expose the paid Fast tier — mirrors the Electron picker's
     /// per-model lightning bolt (Grok is always Fast; Cursor Composer 2.5 has a
     /// Fast variant; otherwise the shared twFastToggleModelIds set).
@@ -1332,7 +1335,7 @@ struct ProviderModelPicker: View {
         let mid = modelId.lowercased()
         if p == "grok" { return true }
         if p == "cursor" && (mid == "composer-2.5" || mid == "composer-2.5-fast") { return true }
-        return twFastToggleModelIds.contains(mid)
+        return twModelUsesFastToggle(mid)
     }
 
     private func pickerRow(
@@ -1376,6 +1379,18 @@ struct ProviderModelPicker: View {
         modelId = option.id
         twNormalizeReasoningSelection(
             catalog: catalog, modelId: option.id, reasoningEffort: &reasoningEffort)
+        normalizeFastModeSelection(catalog: catalog, modelId: option.id)
+    }
+
+    private func normalizeFastModeSelection(
+        catalog: ProviderModelCatalog?, modelId: String?
+    ) {
+        let resolvedModelId = modelId
+            ?? catalog?.models.first(where: { $0.isDefault == true })?.id
+            ?? catalog?.models.first?.id
+        if !twModelUsesFastToggle(resolvedModelId) {
+            fastModeEnabled = false
+        }
     }
 
     private func shortModelLabel(_ id: String) -> String {
@@ -1409,14 +1424,19 @@ private struct TWReasoningStop: Identifiable {
 private let twFastToggleModelIds: Set<String> = [
     // Codex
     "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5", "gpt-5.4",
-    // Claude (base + 1M variants)
-    "claude-fable-5", "claude-fable-5-1m",
+    // Claude (supported Opus base + 1M variants; Fable 5 has no Fast tier)
     "claude-opus-4-8", "claude-opus-4-8-1m",
     "claude-opus-4-7", "claude-opus-4-7-1m",
     "claude-opus-4-6", "claude-opus-4-6-1m",
     // Cursor Grok 4.5
     "cursor-grok-4.5", "grok-4.5",
 ]
+
+func twModelUsesFastToggle(_ modelId: String?) -> Bool {
+    guard let modelId else { return false }
+    return twFastToggleModelIds.contains(
+        modelId.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())
+}
 
 private let twReasoningStops: [TWReasoningStop] = [
     TWReasoningStop(index: 0, effort: "off", label: "Off"),
@@ -5603,6 +5623,14 @@ struct RosterChipEditor: View {
             }
         )
     }
+    private var selectedModelSupportsFastMode: Bool {
+        let catalog = catalogs.first {
+            $0.provider.lowercased() == entry.provider.lowercased()
+        }
+        let selectedModel = entry.model
+            ?? catalog?.models.first(where: { $0.isDefault == true })?.id
+        return twModelUsesFastToggle(selectedModel)
+    }
 
     var body: some View {
         NavigationStack {
@@ -5639,6 +5667,7 @@ struct RosterChipEditor: View {
                                 entry.provider = provider
                                 entry.model = nil
                                 entry.reasoningEffort = nil
+                                entry.fastModeEnabled = false
                             }
                         }
                     } label: {
@@ -5652,7 +5681,10 @@ struct RosterChipEditor: View {
                         }
                     }
                     Menu {
-                        Button("CLI Default") { entry.model = nil }
+                        Button("CLI Default") {
+                            entry.model = nil
+                            entry.fastModeEnabled = false
+                        }
                         ForEach(
                             catalogs.first {
                                 $0.provider.lowercased() == entry.provider.lowercased()
@@ -5660,6 +5692,9 @@ struct RosterChipEditor: View {
                         ) { modelOption in
                             Button(modelOption.label ?? modelOption.id) {
                                 entry.model = modelOption.id
+                                if !twModelUsesFastToggle(modelOption.id) {
+                                    entry.fastModeEnabled = false
+                                }
                             }
                         }
                     } label: {
@@ -5720,8 +5755,9 @@ struct RosterChipEditor: View {
                             }
                         }
                         .pickerStyle(.menu)
-                        if entry.provider.lowercased() == "codex"
-                            || entry.provider.lowercased() == "claude"
+                        if (entry.provider.lowercased() == "codex"
+                            || entry.provider.lowercased() == "claude")
+                            && selectedModelSupportsFastMode
                         {
                             Toggle("Fast mode", isOn: $entry.fastModeEnabled)
                                 .tint(TWTheme.providerAccent(entry.provider))

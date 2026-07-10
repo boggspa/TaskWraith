@@ -4,6 +4,7 @@ import {
   codexReasoningEffortsForModel,
   codexModelContextConfig,
   codexWireReasoningEffort,
+  claudeModelSupportsFastMode,
   getStaticProviderModels,
   mergeCodexLiveModelRows,
   normalizeCliProviderModel
@@ -86,6 +87,15 @@ describe('normalizeCliProviderModel (claude)', () => {
 
   it('keeps the legacy Sonnet 4.6 id runnable for historical selections', () => {
     expect(normalizeCliProviderModel('claude', 'claude-sonnet-4-6')).toBe('claude-sonnet-4-6')
+  })
+})
+
+describe('claudeModelSupportsFastMode', () => {
+  it('allows supported Opus variants but rejects Fable 5', () => {
+    expect(claudeModelSupportsFastMode('claude-opus-4-8-1m')).toBe(true)
+    expect(claudeModelSupportsFastMode('claude-opus-4-7')).toBe(true)
+    expect(claudeModelSupportsFastMode('claude-fable-5')).toBe(false)
+    expect(claudeModelSupportsFastMode('claude-fable-5-1m')).toBe(false)
   })
 })
 
@@ -442,10 +452,10 @@ describe('getStaticProviderModels (claude)', () => {
     })
   })
 
-  it('keeps the paid Fast tier on the default 1M Opus rows', () => {
+  it('keeps the paid Fast tier on supported Opus rows but not Fable 5', () => {
     expect(byId.get('claude-opus-4-8-1m')?.additionalSpeedTiers).toContain('fast')
     expect(byId.get('claude-opus-4-7-1m')?.additionalSpeedTiers).toContain('fast')
-    expect(byId.get('claude-fable-5')?.additionalSpeedTiers).toContain('fast')
+    expect(byId.get('claude-fable-5')?.additionalSpeedTiers ?? []).not.toContain('fast')
   })
 
   it('offers family-specific Claude reasoning efforts', () => {

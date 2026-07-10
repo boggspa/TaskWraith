@@ -152,7 +152,7 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
           {
             name: 'Fable 5',
             blurb:
-              "Anthropic's frontier tier above Opus — 1M context, 128K max output, adaptive thinking, and a Fast tier."
+              "Anthropic's frontier tier above Opus — 1M context, 128K max output, and adaptive thinking."
           }
         ]
       },
