@@ -2393,7 +2393,9 @@ export const TranscriptPanel = memo(
 
     // Phase 3 — type-out reveal (Variant B), default ON. The
     // live last-assistant bubble of a running chat reveals progressively via
-    // RevealingMarkdownMessage; everything else stays the plain MarkdownMessage.
+    // RevealingMarkdownMessage. Its mounted subtree survives terminal settling
+    // (preserving focus/code state) and returns to the plain renderer only after
+    // virtualization naturally unmounts it; untouched history stays plain.
     // Keep the old localStorage flag as an escape hatch for debugging:
     // `taskwraith.experimentalReveal=false` restores the plain renderer.
     const revealEnabled = useMemo(() => {

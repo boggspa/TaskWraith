@@ -6968,9 +6968,10 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
 
 /* Adaptive assistant reveal -------------------------------------------------
  * Newly introduced WORDS (never every grapheme) get a short temporal fade.
- * The renderer bounds these spans to the active block's frontier, so long
- * answers do not accumulate animation DOM. Cadence-derived custom properties
- * make slow streams settle gently and shorten the veil for bursty providers. */
+ * The renderer bounds these spans to 48 words in each of the two frontier
+ * prose blocks, so long answers do not accumulate animation DOM.
+ * Cadence-derived custom properties make slow streams settle gently and
+ * shorten the veil for bursty providers. */
 .stream-reveal-message {
   --stream-reveal-duration: 175ms;
 }

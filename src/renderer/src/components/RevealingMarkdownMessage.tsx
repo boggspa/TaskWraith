@@ -316,7 +316,10 @@ function fenceMarker(line: string): string | null {
 }
 
 /** Grapheme ranges for every closed or active fenced block in the target. */
-export function fencedCodeRanges(content: string): FencedCodeRange[] {
+export function fencedCodeRanges(
+  content: string,
+  cachedGraphemes?: readonly string[]
+): FencedCodeRange[] {
   const codeUnitRanges: Array<{ start: number; end: number }> = []
   let lineStart = 0
   let fenceStart: number | null = null
@@ -348,9 +351,16 @@ export function fencedCodeRanges(content: string): FencedCodeRange[] {
     codeUnitRanges.push({ start: fenceStart, end: content.length })
   }
 
+  const graphemes = cachedGraphemes ?? toGraphemes(content)
+  const graphemeByCodeUnit = new Map<number, number>([[0, 0]])
+  let codeUnitOffset = 0
+  for (let index = 0; index < graphemes.length; index += 1) {
+    codeUnitOffset += graphemes[index].length
+    graphemeByCodeUnit.set(codeUnitOffset, index + 1)
+  }
   return codeUnitRanges.map((range) => ({
-    start: graphemeCount(content.slice(0, range.start)),
-    end: graphemeCount(content.slice(0, range.end))
+    start: graphemeByCodeUnit.get(range.start) ?? 0,
+    end: graphemeByCodeUnit.get(range.end) ?? graphemes.length
   }))
 }
 
@@ -383,7 +393,10 @@ function RevealingMarkdownMessageImpl({
 }: RevealingMarkdownMessageProps) {
   const targetGraphemes = useMemo(() => toGraphemes(content), [content])
   const targetLen = targetGraphemes.length
-  const codeRanges = useMemo(() => fencedCodeRanges(content), [content])
+  const codeRanges = useMemo(
+    () => fencedCodeRanges(content, targetGraphemes),
+    [content, targetGraphemes]
+  )
   const cadencePrior = useMemo(() => readRevealCadencePrior(provider, model), [provider, model])
   const sessionKey = useMemo(
     () => revealSessionKey({ chatId: chat?.appChatId, messageId, streamRunId }),
