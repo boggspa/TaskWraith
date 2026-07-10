@@ -5867,55 +5867,16 @@
   margin-top: 8px;
 }
 
-.composer-goal-action {
-  appearance: none;
-  -webkit-appearance: none;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 25px;
-  padding: 5px 10px;
-  border: 0;
-  border-radius: 7px;
-  background: transparent;
-  color: color-mix(in srgb, var(--text-primary) 82%, transparent);
-  font: inherit;
-  font-size: var(--font-size-xs);
-  font-weight: 650;
-  cursor: pointer;
-  transition: background 120ms ease, color 120ms ease, box-shadow 120ms ease;
+.composer-goal-popover .segmented-control-action--primary {
+  --segmented-action-border: color-mix(in srgb, var(--accent) 38%, var(--panel-border));
+  --segmented-action-bg: color-mix(in srgb, var(--accent) 10%, transparent);
+  --segmented-action-hover-bg: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: color-mix(in srgb, var(--accent) 88%, var(--text-primary));
 }
 
-.composer-goal-action:hover,
-.composer-goal-action:focus-visible {
-  outline: none;
-  color: var(--text-primary);
-  background: color-mix(in srgb, var(--text-primary) 9%, transparent);
-}
-
-.composer-goal-action.primary {
-  color: var(--text-primary);
-  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text-primary) 14%, transparent);
-}
-
-.composer-goal-action.primary:hover,
-.composer-goal-action.primary:focus-visible {
-  color: var(--text-primary);
-  background: color-mix(in srgb, var(--text-primary) 11%, transparent);
-  box-shadow:
-    inset 0 0 0 1px color-mix(in srgb, var(--text-primary) 20%, transparent),
-    0 0 0 2px color-mix(in srgb, var(--text-primary) 7%, transparent);
-}
-
-.composer-goal-action.danger {
-  color: color-mix(in srgb, var(--danger) 82%, var(--text-primary));
-}
-
-.composer-goal-action.danger:hover,
-.composer-goal-action.danger:focus-visible {
-  color: color-mix(in srgb, var(--danger) 92%, var(--text-primary));
-  background: color-mix(in srgb, var(--danger) 12%, transparent);
+.composer-goal-popover .segmented-control-action--primary:hover:not(:disabled),
+.composer-goal-popover .segmented-control-action--primary:focus-visible {
+  color: var(--accent);
 }
 
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .composer-goal-popover {

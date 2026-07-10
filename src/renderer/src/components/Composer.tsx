@@ -2075,7 +2075,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                 }
                               : undefined
                           })()}
-                          onRevoke={() => handleRemoveExternalPathGrantsByPath(group.path)}
                           createPrState={getCreatePrState(group.path)}
                           onCreatePr={() => handleCreateGithubPr(group.path)}
                           onReviewChanges={() =>
@@ -4577,16 +4576,16 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
 	                            maxLength={MAX_ACTIVE_GOAL_OBJECTIVE_CHARS}
 	                          />
 	                          <div className="composer-goal-popover-actions">
-	                            <button
-	                              type="button"
-	                              className="composer-goal-action primary"
+	                            <PillButton
+	                              size="compact"
+	                              variant="primary"
 	                              onClick={() => setGoalFromObjective(goalDraft)}
 	                            >
 	                              {currentActiveGoal ? 'Save' : 'Set goal'}
-	                            </button>
-	                            <button
-	                              type="button"
-	                              className="composer-goal-action"
+	                            </PillButton>
+	                            <PillButton
+	                              size="compact"
+	                              variant="secondary"
 	                              onClick={() => {
 	                                setGoalEditing(false)
 	                                setGoalDraft(currentActiveGoal?.objective || '')
@@ -4594,7 +4593,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
 	                              }}
 	                            >
 	                              Cancel
-	                            </button>
+	                            </PillButton>
 	                          </div>
 	                        </>
 	                      ) : (
@@ -4612,60 +4611,60 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
 	                            <p className="composer-goal-runtime">{goalRuntimeLabel}</p>
 	                          )}
 	                          <div className="composer-goal-popover-actions">
-	                            <button
-	                              type="button"
-	                              className="composer-goal-action"
+	                            <PillButton
+	                              size="compact"
+	                              variant="secondary"
 	                              onClick={() => {
 	                                setGoalDraft(currentActiveGoal.objective)
 	                                setGoalEditing(true)
 	                              }}
 	                            >
 	                              Edit
-	                            </button>
+	                            </PillButton>
 	                            {currentActiveGoal.status === 'paused' ||
 	                            currentActiveGoal.status === 'blocked' ? (
-	                              <button
-	                                type="button"
-	                                className="composer-goal-action"
+	                              <PillButton
+	                                size="compact"
+	                                variant="secondary"
 	                                onClick={() => updateCurrentGoalStatus('active')}
 	                              >
 	                                Resume
-	                              </button>
+	                              </PillButton>
 	                            ) : currentActiveGoal.status !== 'completed' ? (
-	                              <button
-	                                type="button"
-	                                className="composer-goal-action"
+	                              <PillButton
+	                                size="compact"
+	                                variant="secondary"
 	                                onClick={() => updateCurrentGoalStatus('paused')}
 	                              >
 	                                Pause
-	                              </button>
+	                              </PillButton>
 	                            ) : null}
 	                            {currentActiveGoal.status !== 'blocked' &&
 	                              currentActiveGoal.status !== 'completed' && (
-	                                <button
-	                                  type="button"
-	                                  className="composer-goal-action"
+	                                <PillButton
+	                                  size="compact"
+	                                  variant="secondary"
 	                                  onClick={markCurrentGoalBlocked}
 	                                >
 	                                  Mark blocked
-	                                </button>
+	                                </PillButton>
 	                              )}
 	                            {currentActiveGoal.status !== 'completed' && (
-	                              <button
-	                                type="button"
-	                                className="composer-goal-action primary"
+	                              <PillButton
+	                                size="compact"
+	                                variant="primary"
 	                                onClick={() => updateCurrentGoalStatus('completed')}
 	                              >
 	                                Mark complete
-	                              </button>
+	                              </PillButton>
 	                            )}
-	                            <button
-	                              type="button"
-	                              className="composer-goal-action danger"
+	                            <PillButton
+	                              size="compact"
+	                              variant="danger"
 	                              onClick={clearCurrentGoal}
 	                            >
 	                              Clear
-	                            </button>
+	                            </PillButton>
 	                          </div>
 	                        </>
 	                      )}
