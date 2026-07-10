@@ -64,8 +64,8 @@ cleartext `ws://` to a LAN/Tailscale relay. Checklist:
 
 > ATS is already scoped to `NSAllowsLocalNetworking` only (no global
 > `NSAllowsArbitraryLoads`). LAN relays use cleartext `ws://` on the local
-> network; off-LAN/remote use requires a `wss://` (TLS) relay — the Tailscale
-> serve path documented for desktop 1.5+.
+> network; off-LAN/remote use works directly through the Mac's Tailscale
+> `100.x` address. Tailscale Serve adds an optional `wss://` TLS/hostname door.
 
 ## Pairing locally
 

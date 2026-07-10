@@ -7,6 +7,13 @@ history, and workspace state stay on your machine throughout.
 ## Unreleased
 
 ### Fixed
+- **Zero-setup Cellular iOS pairing over Tailscale.** Pairing now advertises the
+  Mac's direct `100.64.0.0/10` Tailscale relay door alongside LAN, so devices on
+  the same tailnet no longer need Tailscale Serve or a WSS override. Serve stays
+  available as optional TLS defense-in-depth. Finder/login-item launches also
+  force Tailscale's documented CLI mode for status, optional Serve, and auth-key
+  commands, avoiding `Tailscale.CLIError error 3`; relay changes/tests refresh
+  the visible pairing session immediately.
 - **Claude composer shell: visible Stop button on light themes.** While a run
   was active, the Claude shell's Stop glyph kept its dark-native white ink on
   the Light, Mist, and Sage themes — an invisible white square in the send
