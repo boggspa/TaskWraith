@@ -2,11 +2,8 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
-const readCss = (): string =>
-  readFileSync(
-    join(process.cwd(), 'src/renderer/src/assets/css/05-polish-fx-layouts.css'),
-    'utf8'
-  ).replace(/\r\n/g, '\n')
+const readCss = (cssPath = 'src/renderer/src/assets/css/05-polish-fx-layouts.css'): string =>
+  readFileSync(join(process.cwd(), cssPath), 'utf8').replace(/\r\n/g, '\n')
 
 const cssBlockStartingAt = (source: string, selector: string): string => {
   const start = source.indexOf(selector)
@@ -54,5 +51,13 @@ describe('markdown table CSS', () => {
     expect(denseHeaderBlock).toContain('white-space: nowrap')
     expect(denseHeaderBlock).toContain('overflow-wrap: normal')
     expect(cellBlock).toContain('overflow-wrap: break-word')
+  })
+
+  it('keeps wide tables inside system-message transcript bounds', () => {
+    const transcriptCss = readCss('src/renderer/src/assets/css/02-transcript-messages-fx.css')
+    const systemBubbleBlock = cssBlockStartingAt(transcriptCss, '\n.message-bubble.system {')
+
+    expect(systemBubbleBlock).toContain('min-width: 0')
+    expect(systemBubbleBlock).toContain('max-width: 100%')
   })
 })

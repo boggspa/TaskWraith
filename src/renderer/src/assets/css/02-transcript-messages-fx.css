@@ -5080,6 +5080,8 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
 
 .message-bubble.system {
   align-self: flex-start;
+  min-width: 0;
+  max-width: 100%;
   margin-right: auto;
   color: var(--text-secondary);
   font-size: var(--font-size-sm);
