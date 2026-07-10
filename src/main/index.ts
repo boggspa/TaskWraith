@@ -24189,15 +24189,9 @@ if (isGeminiMcpBridgeProcess) {
             ensemble: {
               ...chat.ensemble,
               participants: next,
-              ...(bossmanResolution.bossmanParticipantId
-                ? {
-                    bossmanParticipantId: bossmanResolution.bossmanParticipantId,
-                    bossmanAutoApprovals: bossmanResolution.bossmanAutoApprovals
-                  }
-                : { bossmanParticipantId: undefined, bossmanAutoApprovals: undefined }),
-              ...(bossmanResolution.secondInCommandParticipantId
-                ? { secondInCommandParticipantId: bossmanResolution.secondInCommandParticipantId }
-                : { secondInCommandParticipantId: undefined })
+              bossmanParticipantId: bossmanResolution.bossmanParticipantId,
+              secondInCommandParticipantId: bossmanResolution.secondInCommandParticipantId,
+              bossmanAutoApprovals: bossmanResolution.bossmanAutoApprovals
             },
             updatedAt: Date.now()
           }

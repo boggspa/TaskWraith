@@ -2,19 +2,25 @@ import { describe, expect, it } from 'vitest'
 import { resolveRosterUpdateBossmanAssignment } from './EnsembleRosterUpdate'
 
 const participants = [{ id: 'claude' }, { id: 'codex' }, { id: 'kimi' }]
+const autoApprovals = {
+  enabled: true,
+  mode: 'permission_preset_once' as const,
+  confirmedAt: '2026-06-26T00:00:00.000Z'
+}
 
 describe('resolveRosterUpdateBossmanAssignment', () => {
-  it('clears an existing Boss when the roster explicitly sends all false markers', () => {
+  it('clears thread-wide auto approval consent only when all leadership markers are explicitly cleared', () => {
     const result = resolveRosterUpdateBossmanAssignment(
-      [{ isBossman: false }, { isBossman: false }, { isBossman: false }],
+      [
+        { isBossman: false, isSecondInCommand: false },
+        { isBossman: false, isSecondInCommand: false },
+        { isBossman: false, isSecondInCommand: false }
+      ],
       participants,
       {
         bossmanParticipantId: 'claude',
-        bossmanAutoApprovals: {
-          enabled: true,
-          mode: 'permission_preset_once' as const,
-          confirmedAt: '2026-06-26T00:00:00.000Z'
-        }
+        secondInCommandParticipantId: 'codex',
+        bossmanAutoApprovals: autoApprovals
       }
     )
 
@@ -28,11 +34,7 @@ describe('resolveRosterUpdateBossmanAssignment', () => {
       {
         bossmanParticipantId: 'claude',
         secondInCommandParticipantId: 'codex',
-        bossmanAutoApprovals: {
-          enabled: true,
-          mode: 'permission_preset_once' as const,
-          confirmedAt: '2026-06-26T00:00:00.000Z'
-        }
+        bossmanAutoApprovals: autoApprovals
       }
     )
 
@@ -55,11 +57,7 @@ describe('resolveRosterUpdateBossmanAssignment', () => {
       {
         bossmanParticipantId: 'claude',
         secondInCommandParticipantId: 'codex',
-        bossmanAutoApprovals: {
-          enabled: true,
-          mode: 'permission_preset_once' as const,
-          confirmedAt: '2026-06-26T00:00:00.000Z'
-        }
+        bossmanAutoApprovals: autoApprovals
       }
     )
 
@@ -67,32 +65,86 @@ describe('resolveRosterUpdateBossmanAssignment', () => {
       ok: true,
       bossmanParticipantId: 'claude',
       secondInCommandParticipantId: 'kimi',
-      bossmanAutoApprovals: {
-        enabled: true,
-        mode: 'permission_preset_once',
-        confirmedAt: '2026-06-26T00:00:00.000Z'
-      }
+      bossmanAutoApprovals: autoApprovals
     })
   })
 
-  it('moves Boss to the single true marker and drops stale auto-approval consent', () => {
+  it('keeps thread-global auto approval consent when Boss is reassigned', () => {
     const result = resolveRosterUpdateBossmanAssignment(
       [{ isBossman: false }, { isBossman: true }, { isBossman: false }],
       participants,
       {
         bossmanParticipantId: 'claude',
-        bossmanAutoApprovals: {
-          enabled: true,
-          mode: 'permission_preset_once' as const,
-          confirmedAt: '2026-06-26T00:00:00.000Z'
-        }
+        bossmanAutoApprovals: autoApprovals
       }
     )
 
     expect(result).toEqual({
       ok: true,
       bossmanParticipantId: 'codex',
-      bossmanAutoApprovals: undefined
+      bossmanAutoApprovals: autoApprovals
+    })
+  })
+
+  it('keeps thread-global auto approval consent when only Captain remains', () => {
+    const result = resolveRosterUpdateBossmanAssignment(
+      [
+        { isBossman: false, isSecondInCommand: false },
+        { isBossman: false, isSecondInCommand: true },
+        { isBossman: false, isSecondInCommand: false }
+      ],
+      participants,
+      {
+        bossmanParticipantId: 'claude',
+        secondInCommandParticipantId: 'codex',
+        bossmanAutoApprovals: autoApprovals
+      }
+    )
+
+    expect(result).toEqual({
+      ok: true,
+      secondInCommandParticipantId: 'codex',
+      bossmanAutoApprovals: autoApprovals
+    })
+  })
+
+  it('normalizes a dual-marked participant to Boss without retaining a Captain overlap', () => {
+    const result = resolveRosterUpdateBossmanAssignment(
+      [
+        { isBossman: true, isSecondInCommand: true },
+        { isBossman: false, isSecondInCommand: false },
+        { isBossman: false, isSecondInCommand: false }
+      ],
+      participants,
+      {
+        bossmanParticipantId: 'claude',
+        secondInCommandParticipantId: 'codex',
+        bossmanAutoApprovals: autoApprovals
+      }
+    )
+
+    expect(result).toEqual({
+      ok: true,
+      bossmanParticipantId: 'claude',
+      bossmanAutoApprovals: autoApprovals
+    })
+  })
+
+  it('normalizes a legacy stored Boss/Captain overlap to Boss only', () => {
+    const result = resolveRosterUpdateBossmanAssignment(
+      [{}, {}, {}],
+      participants,
+      {
+        bossmanParticipantId: 'claude',
+        secondInCommandParticipantId: 'claude',
+        bossmanAutoApprovals: autoApprovals
+      }
+    )
+
+    expect(result).toEqual({
+      ok: true,
+      bossmanParticipantId: 'claude',
+      bossmanAutoApprovals: autoApprovals
     })
   })
 

@@ -68,18 +68,23 @@ export function resolveRosterUpdateBossmanAssignment<TAutoApprovals>(
       ? previous.secondInCommandParticipantId
       : undefined
   const secondInCommandParticipantId =
-    markedSecondInCommandParticipantId &&
-    markedSecondInCommandParticipantId !== bossmanParticipantId
-      ? markedSecondInCommandParticipantId
+    secondMarkerWasSpecified
+      ? markedSecondInCommandParticipantId !== bossmanParticipantId
+        ? markedSecondInCommandParticipantId
+        : undefined
       : preservedSecondInCommandParticipantId
+  // Auto-approval consent belongs to the Ensemble, rather than to the
+  // participant currently holding either leadership role. Keep it while a
+  // valid Boss or Captain remains in the submitted roster; only clearing the
+  // last leadership role revokes the thread-wide consent.
+  const hasLeadership = Boolean(bossmanParticipantId || secondInCommandParticipantId)
   const bossmanAutoApprovals =
-    bossmanParticipantId && bossmanParticipantId === previous.bossmanParticipantId
-      ? previous.bossmanAutoApprovals
-      : undefined
+    hasLeadership ? previous.bossmanAutoApprovals : undefined
 
   return {
     ok: true,
-    ...(bossmanParticipantId ? { bossmanParticipantId, bossmanAutoApprovals } : {}),
-    ...(secondInCommandParticipantId ? { secondInCommandParticipantId } : {})
+    ...(bossmanParticipantId ? { bossmanParticipantId } : {}),
+    ...(secondInCommandParticipantId ? { secondInCommandParticipantId } : {}),
+    ...(hasLeadership ? { bossmanAutoApprovals } : {})
   }
 }
