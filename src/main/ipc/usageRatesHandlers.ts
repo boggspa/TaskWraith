@@ -123,6 +123,11 @@ export function registerUsageRatesHandlers(deps: UsageRatesHandlerDeps): void {
   ipcMain.handle('providerRates:probe', async () => deps.probeAllProviderRates())
 
   const broadcastUsageRollupToRemote = (): void => {
+    // Same early-bail as broadcastModelUsageToRemote/broadcastFirstLaunchState:
+    // building the rollup + two 90-day daily series + the remote welcome
+    // dashboard is pure waste when no device has ever paired — the result was
+    // silently dropped by optional chaining at the broadcast seam.
+    if (!deps.hasRemoteBroadcaster()) return
     void deps
       .getExternalUsageCached()
       .then((externalRecords) => {
@@ -298,8 +303,13 @@ export function registerUsageRatesHandlers(deps: UsageRatesHandlerDeps): void {
     void deps.getExternalUsageCached().then(() => broadcastUsageRollupToRemote())
   }, 4_000).unref?.()
   setInterval(() => {
+    // Bounded, NON-forced refresh: rescan only when the cache is older than
+    // 90 minutes, so every 2h tick refreshes (same ≤2h freshness as before)
+    // but through the incremental per-file cache. The old maxAgeMs:0 forced
+    // a full multi-GB reparse AND reset the Cursor incremental cache every
+    // 2h, forever, even with no remote device paired.
     void deps
-      .getExternalUsageCached({ maxAgeMs: 0 })
+      .getExternalUsageCached({ maxAgeMs: 90 * 60 * 1000 })
       .then(() => broadcastUsageRollupToRemote())
   }, 2 * 60 * 60 * 1000).unref?.()
 }

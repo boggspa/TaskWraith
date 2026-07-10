@@ -59,9 +59,12 @@ describe('loadCursorIdeUsageEvents incremental cache', () => {
       expect(first).toHaveLength(1)
       expect(readCount).toBe(1)
 
+      // Production sinceMs is a rolling now-90d recomputed per scan — it
+      // DRIFTS FORWARD between calls. The cache must survive that drift
+      // (exact-sinceMs keying silently defeated it for months).
       const second = await loadCursorIdeUsageEvents({
         homeDir,
-        sinceMs,
+        sinceMs: sinceMs + 5 * 60 * 1000,
         cachePath,
         transcriptParseBudget: 10,
         readTextFile: async () => {
@@ -84,6 +87,31 @@ describe('loadCursorIdeUsageEvents incremental cache', () => {
 
       const disk = await readCursorExternalActivityDiskCache(cachePath)
       expect(disk?.transcriptEntries[transcriptPath]?.event.totalTokens).toBe(150)
+
+      // A WIDENED window (requested sinceMs earlier than coverage) is the one
+      // case that must rebuild from empty and re-parse.
+      const widened = await loadCursorIdeUsageEvents({
+        homeDir,
+        sinceMs: sinceMs - 1000,
+        cachePath,
+        transcriptParseBudget: 10,
+        readTextFile: async () => {
+          readCount += 1
+          return transcript
+        },
+        statFile: async () => ({ mtimeMs: Date.parse('2026-06-13T10:00:00.000Z'), size: transcript.length }),
+        listTranscriptFileStats: async () => [
+          {
+            path: transcriptPath,
+            mtimeMs: Date.parse('2026-06-13T10:00:00.000Z'),
+            size: transcript.length
+          }
+        ],
+        querySqlite: async () => [],
+        now: Date.parse('2026-06-13T12:10:00.000Z')
+      })
+      expect(widened).toHaveLength(1)
+      expect(readCount).toBe(2)
     } finally {
       await rm(homeDir, { recursive: true, force: true })
     }

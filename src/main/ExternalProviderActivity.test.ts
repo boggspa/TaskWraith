@@ -1,7 +1,7 @@
 import { mkdtemp, mkdir, writeFile, rm, utimes, open } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('electron', () => ({
   app: {
@@ -10,6 +10,11 @@ vi.mock('electron', () => ({
 }))
 
 import { loadExternalProviderUsageRecords } from './ExternalProviderActivity'
+import { resetExternalActivityFileCacheForTests } from './ExternalActivityFileCache'
+
+beforeEach(() => {
+  resetExternalActivityFileCacheForTests()
+})
 
 describe('loadExternalProviderUsageRecords', () => {
   it('normalizes external provider logs into UsageRecord rows', async () => {
@@ -464,6 +469,193 @@ describe('loadExternalProviderUsageRecords', () => {
       expect(cursor?.totalTokens).toBe(150)
       expect(cursor?.model).toBe('composer-2.5-fast')
       expect(cursor?.workspaceId).toBe('external')
+    } finally {
+      await rm(homeDir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('external activity per-file incremental cache', () => {
+  const CODEX_MTIME = new Date('2026-05-31T09:30:00.000Z')
+  const CLAUDE_MTIME = new Date('2026-05-31T10:30:00.000Z')
+
+  async function writeFixtures(homeDir: string): Promise<{
+    codexPath: string
+    claudePath: string
+    codexContent: string
+    claudeContent: string
+  }> {
+    const codexDir = join(homeDir, '.codex', 'sessions', '2026', '05', '31')
+    const claudeDir = join(homeDir, '.claude', 'projects', 'sample')
+    await mkdir(codexDir, { recursive: true })
+    await mkdir(claudeDir, { recursive: true })
+    const codexPath = join(codexDir, 'rollout.jsonl')
+    const claudePath = join(claudeDir, 'thread.jsonl')
+    const codexContent = JSON.stringify({
+      timestamp: '2026-05-31T09:00:00.000Z',
+      payload: {
+        type: 'token_count',
+        info: { last_token_usage: { input_tokens: 10, output_tokens: 7, total_tokens: 17 } }
+      }
+    })
+    const claudeContent = JSON.stringify({
+      timestamp: '2026-05-31T10:00:00.000Z',
+      requestId: 'req-1',
+      message: {
+        id: 'msg-1',
+        model: 'claude-sonnet',
+        usage: { input_tokens: 11, output_tokens: 5 }
+      }
+    })
+    await writeFile(codexPath, codexContent)
+    await writeFile(claudePath, claudeContent)
+    await utimes(codexPath, CODEX_MTIME, CODEX_MTIME)
+    await utimes(claudePath, CLAUDE_MTIME, CLAUDE_MTIME)
+    return { codexPath, claudePath, codexContent, claudeContent }
+  }
+
+  /** Overwrite with same-length garbage and restore mtime, so a RE-PARSE
+   * would yield nothing while mtime+size still match the cache entry. */
+  async function corruptKeepingStat(path: string, content: string, mtime: Date): Promise<void> {
+    await writeFile(path, 'x'.repeat(content.length))
+    await utimes(path, mtime, mtime)
+  }
+
+  it('serves unchanged files from the cache across scans and sinceMs drift', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'taskwraith-external-filecache-'))
+    try {
+      const cachePath = join(homeDir, 'external-file-cache.jsonl')
+      const fx = await writeFixtures(homeDir)
+
+      const first = await loadExternalProviderUsageRecords({
+        homeDir,
+        now: new Date('2026-05-31T13:00:00.000Z'),
+        externalFileCachePath: cachePath
+      })
+      expect(first.find((record) => record.provider === 'codex')?.totalTokens).toBe(17)
+      expect(first.find((record) => record.provider === 'claude')?.totalTokens).toBe(16)
+
+      await corruptKeepingStat(fx.codexPath, fx.codexContent, CODEX_MTIME)
+      await corruptKeepingStat(fx.claudePath, fx.claudeContent, CLAUDE_MTIME)
+
+      // One hour later — the rolling 90-day window has drifted forward, the
+      // exact scenario that used to defeat sinceMs-keyed caching.
+      const second = await loadExternalProviderUsageRecords({
+        homeDir,
+        now: new Date('2026-05-31T14:00:00.000Z'),
+        externalFileCachePath: cachePath
+      })
+      expect(second.find((record) => record.provider === 'codex')?.totalTokens).toBe(17)
+      expect(second.find((record) => record.provider === 'claude')?.totalTokens).toBe(16)
+    } finally {
+      await rm(homeDir, { recursive: true, force: true })
+    }
+  })
+
+  it('persists the per-file cache across process restarts', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'taskwraith-external-filecache-boot-'))
+    try {
+      const cachePath = join(homeDir, 'external-file-cache.jsonl')
+      const fx = await writeFixtures(homeDir)
+
+      await loadExternalProviderUsageRecords({
+        homeDir,
+        now: new Date('2026-05-31T13:00:00.000Z'),
+        externalFileCachePath: cachePath
+      })
+      await corruptKeepingStat(fx.codexPath, fx.codexContent, CODEX_MTIME)
+      await corruptKeepingStat(fx.claudePath, fx.claudeContent, CLAUDE_MTIME)
+
+      // Simulate a fresh app launch: in-memory state gone, disk cache remains.
+      resetExternalActivityFileCacheForTests()
+
+      const afterRestart = await loadExternalProviderUsageRecords({
+        homeDir,
+        now: new Date('2026-05-31T15:00:00.000Z'),
+        externalFileCachePath: cachePath
+      })
+      expect(afterRestart.find((record) => record.provider === 'codex')?.totalTokens).toBe(17)
+      expect(afterRestart.find((record) => record.provider === 'claude')?.totalTokens).toBe(16)
+    } finally {
+      await rm(homeDir, { recursive: true, force: true })
+    }
+  })
+
+  it('re-parses files whose mtime or size changed', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'taskwraith-external-filecache-change-'))
+    try {
+      const cachePath = join(homeDir, 'external-file-cache.jsonl')
+      const fx = await writeFixtures(homeDir)
+
+      const first = await loadExternalProviderUsageRecords({
+        homeDir,
+        now: new Date('2026-05-31T13:00:00.000Z'),
+        externalFileCachePath: cachePath
+      })
+      expect(first.filter((record) => record.provider === 'codex')).toHaveLength(1)
+
+      const appended = [
+        fx.codexContent,
+        JSON.stringify({
+          timestamp: '2026-05-31T11:00:00.000Z',
+          payload: {
+            type: 'token_count',
+            info: { last_token_usage: { input_tokens: 20, output_tokens: 5, total_tokens: 25 } }
+          }
+        })
+      ].join('\n')
+      await writeFile(fx.codexPath, appended)
+      const bumped = new Date('2026-05-31T11:30:00.000Z')
+      await utimes(fx.codexPath, bumped, bumped)
+
+      const second = await loadExternalProviderUsageRecords({
+        homeDir,
+        now: new Date('2026-05-31T13:30:00.000Z'),
+        externalFileCachePath: cachePath
+      })
+      const codexRecords = second.filter((record) => record.provider === 'codex')
+      expect(codexRecords).toHaveLength(2)
+      expect(codexRecords.some((record) => record.totalTokens === 25)).toBe(true)
+    } finally {
+      await rm(homeDir, { recursive: true, force: true })
+    }
+  })
+
+  it('dedupes duplicate Claude events across files through the cache', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'taskwraith-external-filecache-dedupe-'))
+    try {
+      const cachePath = join(homeDir, 'external-file-cache.jsonl')
+      const claudeDir = join(homeDir, '.claude', 'projects', 'sample')
+      await mkdir(claudeDir, { recursive: true })
+      const duplicate = JSON.stringify({
+        timestamp: '2026-05-31T10:00:00.000Z',
+        requestId: 'req-dup',
+        message: {
+          id: 'msg-dup',
+          model: 'claude-sonnet',
+          usage: { input_tokens: 11, output_tokens: 5 }
+        }
+      })
+      const mtime = new Date('2026-05-31T10:30:00.000Z')
+      for (const name of ['thread-a.jsonl', 'thread-b.jsonl']) {
+        await writeFile(join(claudeDir, name), duplicate)
+        await utimes(join(claudeDir, name), mtime, mtime)
+      }
+
+      const first = await loadExternalProviderUsageRecords({
+        homeDir,
+        now: new Date('2026-05-31T13:00:00.000Z'),
+        externalFileCachePath: cachePath
+      })
+      expect(first.filter((record) => record.provider === 'claude')).toHaveLength(1)
+
+      // Second scan served from cache must apply the same cross-file dedupe.
+      const second = await loadExternalProviderUsageRecords({
+        homeDir,
+        now: new Date('2026-05-31T14:00:00.000Z'),
+        externalFileCachePath: cachePath
+      })
+      expect(second.filter((record) => record.provider === 'claude')).toHaveLength(1)
     } finally {
       await rm(homeDir, { recursive: true, force: true })
     }

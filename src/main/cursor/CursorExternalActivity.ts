@@ -318,14 +318,25 @@ async function ensureDiskCache(
   options: CursorExternalActivityOptions
 ): Promise<CursorExternalActivityDiskCache> {
   const cachePath = options.cachePath
+  // Reuse whenever the cache COVERS the requested window (cache.sinceMs <=
+  // requested sinceMs). Production sinceMs is a rolling now-90d recomputed
+  // per scan, so the old exact-equality key discarded this cache on every
+  // scan — silently defeating the incremental path. Transcript entries and
+  // merged events are pruned/filtered by the caller's sinceMs on each pass,
+  // so advancing the window is always safe; only a WIDENED window (requested
+  // sinceMs earlier than coverage) requires a rebuild from empty.
   if (memoryDiskCache && memoryDiskCachePath === (cachePath || '')) {
-    if (memoryDiskCache.sinceMs === options.sinceMs) return memoryDiskCache
+    if (memoryDiskCache.sinceMs <= options.sinceMs) {
+      memoryDiskCache.sinceMs = options.sinceMs
+      return memoryDiskCache
+    }
   }
 
   let cache = cachePath ? await readCursorExternalActivityDiskCache(cachePath) : null
-  if (!cache || cache.sinceMs !== options.sinceMs) {
+  if (!cache || cache.sinceMs > options.sinceMs) {
     cache = emptyCursorExternalActivityDiskCache(options.sinceMs)
   }
+  cache.sinceMs = options.sinceMs
 
   memoryDiskCache = cache
   memoryDiskCachePath = cachePath || ''

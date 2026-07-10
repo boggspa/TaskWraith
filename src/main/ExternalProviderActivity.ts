@@ -13,6 +13,13 @@ import {
   setCursorExternalActivityUpdateListener
 } from './cursor/CursorExternalActivity'
 import { CURSOR_TRANSCRIPT_CHUNK_SIZE } from './cursor/CursorExternalActivityCache'
+import {
+  ensureExternalActivityFileCacheLoaded,
+  getCachedExternalFileEvents,
+  persistExternalActivityFileCacheIfDirty,
+  pruneExternalActivityFileCache,
+  setCachedExternalFileEvents
+} from './ExternalActivityFileCache'
 
 type ExternalActivityProvider = Extract<
   ProviderId,
@@ -23,10 +30,13 @@ interface ExternalProviderActivityOptions {
   homeDir?: string
   now?: Date
   lookbackDays?: number
-  /** Bypass cached external usage (still incremental for Cursor transcripts). */
+  /** Bypass the in-memory result cache. Per-file caches still apply — an
+   * unchanged file (same mtime+size) is never re-parsed, even when forced. */
   force?: boolean
   /** Override persisted Cursor incremental cache path (tests). */
   cursorCachePath?: string
+  /** Override persisted per-file event cache path (tests). */
+  externalFileCachePath?: string
 }
 
 interface ExternalUsageEvent {
@@ -39,6 +49,15 @@ interface ExternalUsageEvent {
   cacheReadInputTokens?: number
   cacheCreationInputTokens?: number
   sourceKey: string
+  /** Cross-file dedupe key (claude/gemini). Stored with cached per-file
+   * events so assembly-time dedupe survives the incremental cache. */
+  dedupeKey?: string
+}
+
+interface CollectedSessionFile {
+  path: string
+  mtimeMs: number
+  size: number
 }
 
 const DEFAULT_LOOKBACK_DAYS = 90
@@ -50,13 +69,16 @@ const MAX_EXPANDED_SESSION_TEXT_BYTES = 128 * 1024 * 1024
 const MAX_CODEX_SQLITE_MARKERS_PER_BUCKET = 8
 
 // ── Cached front door ───────────────────────────────────────────────────────
-// A full load re-scans up to ~5k provider session files (multi-second on a
-// busy machine) — far too heavy to run on every heatmap mount, and the data
-// only meaningfully changes over hours. Serve-stale-while-revalidate with a
-// 2h freshness window; index.ts prewarms at startup so the FIRST open is
-// hydrated too.
+// A full load walks up to ~5k provider session files. The per-file
+// ExternalActivityFileCache makes that walk incremental (stat sweep + parse
+// of changed files only, persisted across launches), and this in-memory
+// layer serves repeat callers for 6h without re-walking at all.
+// Serve-stale-while-revalidate; a bounded non-forced 2h interval in
+// usageRatesHandlers keeps remote rollups fresh; index.ts prewarms at
+// startup so the FIRST open is hydrated too.
 
 const EXTERNAL_USAGE_CACHE_MAX_AGE_MS = 6 * 60 * 60 * 1000
+const EXTERNAL_FILE_CACHE_FILENAME = 'external-activity-file-cache.jsonl'
 
 export interface ExternalUsageRollup {
   providers: Array<{ provider: string; h24: number; d7: number; d90: number }>
@@ -188,6 +210,31 @@ export function prewarmExternalUsageCache(): void {
   void getExternalUsageCached()
 }
 
+function resolveExternalFileCachePath(override?: string): string {
+  if (override) return override
+  return join(app.getPath('userData'), EXTERNAL_FILE_CACHE_FILENAME)
+}
+
+/** Serve a file's parsed events from the per-file cache when its mtime+size
+ * are unchanged; otherwise parse and cache. Parse failures are not cached so
+ * a transient error retries on the next scan. */
+async function readFileEventsThroughCache(
+  provider: ExternalActivityProvider,
+  file: CollectedSessionFile,
+  parse: () => Promise<ExternalUsageEvent[]>
+): Promise<ExternalUsageEvent[]> {
+  const cached = getCachedExternalFileEvents(provider, file.path, file.mtimeMs, file.size)
+  if (cached) return cached as ExternalUsageEvent[]
+  let events: ExternalUsageEvent[]
+  try {
+    events = await parse()
+  } catch {
+    return []
+  }
+  setCachedExternalFileEvents(provider, file.path, file.mtimeMs, file.size, events)
+  return events
+}
+
 export async function loadExternalProviderUsageRecords(
   options: ExternalProviderActivityOptions = {}
 ): Promise<UsageRecord[]> {
@@ -195,6 +242,9 @@ export async function loadExternalProviderUsageRecords(
   const now = options.now || new Date()
   const lookbackDays = options.lookbackDays || DEFAULT_LOOKBACK_DAYS
   const sinceMs = now.getTime() - lookbackDays * 24 * 60 * 60 * 1000
+
+  const fileCachePath = resolveExternalFileCachePath(options.externalFileCachePath)
+  await ensureExternalActivityFileCacheLoaded(fileCachePath)
 
   const readers = [
     readCodexActivity,
@@ -204,6 +254,7 @@ export async function loadExternalProviderUsageRecords(
     (homeDir: string, sinceMs: number) => readCursorActivity(homeDir, sinceMs, options)
   ]
   const nested = await Promise.all(readers.map((reader) => safeRead(reader, homeDir, sinceMs)))
+  await persistExternalActivityFileCacheIfDirty(fileCachePath)
   const byId = new Map<string, UsageRecord>()
   for (const event of nested.flat()) {
     const record = eventToUsageRecord(event)
@@ -291,40 +342,54 @@ async function readCodexActivity(homeDir: string, sinceMs: number): Promise<Exte
       MAX_CODEX_SESSION_FILES
     ))
   ]
+  pruneExternalActivityFileCache('codex', new Set(files.map((file) => file.path)))
   const events: ExternalUsageEvent[] = []
-  for (const filePath of files) {
-    const text = await readTextTail(filePath)
-    let lineIndex = 0
-    let sessionModel = ''
-    for (const json of parseJsonLines(text)) {
-      lineIndex += 1
-      const turnModel = extractCodexSessionModel(json)
-      if (turnModel) sessionModel = turnModel
-      if (json?.payload?.type !== 'token_count') continue
-      const timestamp = parseTimestamp(json.timestamp)
-      if (!timestamp || timestamp < sinceMs) continue
-      const usage = json.payload?.info?.last_token_usage || json.payload?.info?.total_token_usage
-      const totalTokens = tokenTotal(usage)
-      if (totalTokens <= 0) continue
-      const cacheReadInputTokens =
-        numberValue(usage?.cache_read_input_tokens) + numberValue(usage?.cached_input_tokens)
-      const cacheCreationInputTokens = numberValue(usage?.cache_creation_input_tokens)
-      events.push({
-        provider: 'codex',
-        timestamp,
-        model: sessionModel || 'codex',
-        totalTokens,
-        inputTokens: numberValue(usage?.input_tokens),
-        cacheReadInputTokens,
-        cacheCreationInputTokens,
-        outputTokens:
-          numberValue(usage?.output_tokens) + numberValue(usage?.reasoning_output_tokens),
-        sourceKey: `${filePath}:${lineIndex}`
-      })
+  for (const file of files) {
+    const fileEvents = await readFileEventsThroughCache('codex', file, () =>
+      parseCodexSessionFile(file.path)
+    )
+    for (const event of fileEvents) {
+      if (event.timestamp >= sinceMs) events.push(event)
     }
   }
   events.push(...(await readCodexSessionIndexActivity(codexRoot, sinceMs)))
   events.push(...(await readCodexSqliteActivity(codexRoot, sinceMs)))
+  return events
+}
+
+/** Parse one Codex session file into events. No window filtering here — the
+ * result is cached per file and filtered by the caller's sinceMs. */
+async function parseCodexSessionFile(filePath: string): Promise<ExternalUsageEvent[]> {
+  const events: ExternalUsageEvent[] = []
+  const text = await readTextTail(filePath)
+  let lineIndex = 0
+  let sessionModel = ''
+  for (const json of parseJsonLines(text)) {
+    lineIndex += 1
+    const turnModel = extractCodexSessionModel(json)
+    if (turnModel) sessionModel = turnModel
+    if (json?.payload?.type !== 'token_count') continue
+    const timestamp = parseTimestamp(json.timestamp)
+    if (!timestamp) continue
+    const usage = json.payload?.info?.last_token_usage || json.payload?.info?.total_token_usage
+    const totalTokens = tokenTotal(usage)
+    if (totalTokens <= 0) continue
+    const cacheReadInputTokens =
+      numberValue(usage?.cache_read_input_tokens) + numberValue(usage?.cached_input_tokens)
+    const cacheCreationInputTokens = numberValue(usage?.cache_creation_input_tokens)
+    events.push({
+      provider: 'codex',
+      timestamp,
+      model: sessionModel || 'codex',
+      totalTokens,
+      inputTokens: numberValue(usage?.input_tokens),
+      cacheReadInputTokens,
+      cacheCreationInputTokens,
+      outputTokens:
+        numberValue(usage?.output_tokens) + numberValue(usage?.reasoning_output_tokens),
+      sourceKey: `${filePath}:${lineIndex}`
+    })
+  }
   return events
 }
 
@@ -340,27 +405,33 @@ async function readClaudeActivity(homeDir: string, sinceMs: number): Promise<Ext
     // pre-truncate source files for Claude.
     null
   )
+  pruneExternalActivityFileCache('claude', new Set(files.map((file) => file.path)))
   const events: ExternalUsageEvent[] = []
   const seen = new Set<string>()
-  for (const filePath of files) {
-    try {
-      events.push(...(await readClaudeActivityFile(filePath, sinceMs, seen)))
-    } catch {
-      continue
+  for (const file of files) {
+    const fileEvents = await readFileEventsThroughCache('claude', file, () =>
+      parseClaudeSessionFile(file.path)
+    )
+    for (const event of fileEvents) {
+      if (event.timestamp < sinceMs) continue
+      if (event.dedupeKey) {
+        if (seen.has(event.dedupeKey)) continue
+        seen.add(event.dedupeKey)
+      }
+      events.push(event)
     }
   }
   return events
 }
 
-async function readClaudeActivityFile(
-  filePath: string,
-  sinceMs: number,
-  seen: Set<string>
-): Promise<ExternalUsageEvent[]> {
+/** Parse one Claude session file into events. No window filtering or
+ * cross-file dedupe here — events carry their dedupeKey and are cached per
+ * file; the caller filters and dedupes at assembly time. */
+async function parseClaudeSessionFile(filePath: string): Promise<ExternalUsageEvent[]> {
   const events: ExternalUsageEvent[] = []
   for await (const { json, lineIndex } of parseJsonLineFile(filePath)) {
     const timestamp = parseTimestamp(json?.timestamp)
-    if (!timestamp || timestamp < sinceMs) continue
+    if (!timestamp) continue
     const usage = json?.usage || json?.message?.usage
     if (!usage || typeof usage !== 'object') continue
     const inputTokens = numberValue(usage.input_tokens) + numberValue(usage.input_audio_tokens)
@@ -371,9 +442,6 @@ async function readClaudeActivityFile(
     if (totalTokens <= 0) continue
     const messageId = String(json?.message?.id || '')
     const requestId = String(json?.requestId || json?.request_id || '')
-    const dedupeKey = `${requestId}|${messageId}|${timestamp}|${totalTokens}`
-    if (seen.has(dedupeKey)) continue
-    seen.add(dedupeKey)
     events.push({
       provider: 'claude',
       timestamp,
@@ -383,7 +451,8 @@ async function readClaudeActivityFile(
       cacheCreationInputTokens,
       outputTokens,
       totalTokens,
-      sourceKey: `${filePath}:${lineIndex}`
+      sourceKey: `${filePath}:${lineIndex}`,
+      dedupeKey: `${requestId}|${messageId}|${timestamp}|${totalTokens}`
     })
   }
   return events
@@ -397,33 +466,51 @@ async function readGeminiActivity(homeDir: string, sinceMs: number): Promise<Ext
     sinceMs,
     MAX_GEMINI_SESSION_FILES
   )
+  pruneExternalActivityFileCache('gemini', new Set(files.map((file) => file.path)))
   const events: ExternalUsageEvent[] = []
   const seen = new Set<string>()
-  for (const filePath of files) {
-    const text = await readTextTail(filePath, MAX_EXPANDED_SESSION_TEXT_BYTES)
-    const entries = parseGeminiSessionEntries(text)
-    for (const { json, sourceIndex } of entries) {
-      const timestamp = parseTimestamp(json?.timestamp)
-      if (!timestamp || timestamp < sinceMs) continue
-      const tokens = json?.tokens
-      if (!tokens || typeof tokens !== 'object') continue
-      const inputTokens = numberValue(tokens.input)
-      const outputTokens = numberValue(tokens.output)
-      const totalTokens = inputTokens + outputTokens || numberValue(tokens.total)
-      if (totalTokens <= 0) continue
-      const dedupeKey = `${json?.id || ''}|${timestamp}|${totalTokens}`
-      if (seen.has(dedupeKey)) continue
-      seen.add(dedupeKey)
-      events.push({
-        provider: 'gemini',
-        timestamp,
-        model: String(json?.model || 'Gemini'),
-        inputTokens,
-        outputTokens: outputTokens || Math.max(0, totalTokens - inputTokens),
-        totalTokens,
-        sourceKey: `${filePath}:${sourceIndex}`
-      })
+  for (const file of files) {
+    const fileEvents = await readFileEventsThroughCache('gemini', file, () =>
+      parseGeminiSessionFile(file.path)
+    )
+    for (const event of fileEvents) {
+      if (event.timestamp < sinceMs) continue
+      if (event.dedupeKey) {
+        if (seen.has(event.dedupeKey)) continue
+        seen.add(event.dedupeKey)
+      }
+      events.push(event)
     }
+  }
+  return events
+}
+
+/** Parse one Gemini session file into events. Keeps the 128MB tail cap —
+ * legacy Gemini sessions are single big JSON documents, so a smaller cap
+ * would head-truncate and silently drop the whole file's usage. */
+async function parseGeminiSessionFile(filePath: string): Promise<ExternalUsageEvent[]> {
+  const events: ExternalUsageEvent[] = []
+  const text = await readTextTail(filePath, MAX_EXPANDED_SESSION_TEXT_BYTES)
+  const entries = parseGeminiSessionEntries(text)
+  for (const { json, sourceIndex } of entries) {
+    const timestamp = parseTimestamp(json?.timestamp)
+    if (!timestamp) continue
+    const tokens = json?.tokens
+    if (!tokens || typeof tokens !== 'object') continue
+    const inputTokens = numberValue(tokens.input)
+    const outputTokens = numberValue(tokens.output)
+    const totalTokens = inputTokens + outputTokens || numberValue(tokens.total)
+    if (totalTokens <= 0) continue
+    events.push({
+      provider: 'gemini',
+      timestamp,
+      model: String(json?.model || 'Gemini'),
+      inputTokens,
+      outputTokens: outputTokens || Math.max(0, totalTokens - inputTokens),
+      totalTokens,
+      sourceKey: `${filePath}:${sourceIndex}`,
+      dedupeKey: `${json?.id || ''}|${timestamp}|${totalTokens}`
+    })
   }
   return events
 }
@@ -509,36 +596,50 @@ async function readCodexSqliteActivity(
 async function readKimiActivity(homeDir: string, sinceMs: number): Promise<ExternalUsageEvent[]> {
   const root = join(homeDir, '.kimi', 'sessions')
   const files = await collectFiles(root, isKimiWireActivityPath, sinceMs)
+  pruneExternalActivityFileCache('kimi', new Set(files.map((file) => file.path)))
   const events: ExternalUsageEvent[] = []
-  for (const filePath of files) {
-    const text = await readTextTail(filePath)
-    let lineIndex = 0
-    for (const json of parseJsonLines(text)) {
-      lineIndex += 1
-      const timestamp = parseTimestamp(json?.timestamp)
-      if (!timestamp || timestamp < sinceMs) continue
-      const message = json?.message
-      if (message?.type !== 'StatusUpdate') continue
-      const usage = message?.payload?.token_usage
-      const inputTokens = numberValue(usage?.input_other)
-      const cacheReadInputTokens = numberValue(usage?.input_cache_read)
-      const cacheCreationInputTokens = numberValue(usage?.input_cache_creation)
-      const outputTokens = numberValue(usage?.output)
-      const totalTokens =
-        inputTokens + cacheReadInputTokens + cacheCreationInputTokens + outputTokens
-      if (totalTokens <= 0) continue
-      events.push({
-        provider: 'kimi',
-        timestamp,
-        model: 'Kimi',
-        inputTokens,
-        cacheReadInputTokens,
-        cacheCreationInputTokens,
-        outputTokens,
-        totalTokens,
-        sourceKey: `${filePath}:${lineIndex}`
-      })
+  for (const file of files) {
+    const fileEvents = await readFileEventsThroughCache('kimi', file, () =>
+      parseKimiWireFile(file.path)
+    )
+    for (const event of fileEvents) {
+      if (event.timestamp >= sinceMs) events.push(event)
     }
+  }
+  return events
+}
+
+/** Parse one Kimi wire file into events. No window filtering here — cached
+ * per file and filtered by the caller's sinceMs. */
+async function parseKimiWireFile(filePath: string): Promise<ExternalUsageEvent[]> {
+  const events: ExternalUsageEvent[] = []
+  const text = await readTextTail(filePath)
+  let lineIndex = 0
+  for (const json of parseJsonLines(text)) {
+    lineIndex += 1
+    const timestamp = parseTimestamp(json?.timestamp)
+    if (!timestamp) continue
+    const message = json?.message
+    if (message?.type !== 'StatusUpdate') continue
+    const usage = message?.payload?.token_usage
+    const inputTokens = numberValue(usage?.input_other)
+    const cacheReadInputTokens = numberValue(usage?.input_cache_read)
+    const cacheCreationInputTokens = numberValue(usage?.input_cache_creation)
+    const outputTokens = numberValue(usage?.output)
+    const totalTokens =
+      inputTokens + cacheReadInputTokens + cacheCreationInputTokens + outputTokens
+    if (totalTokens <= 0) continue
+    events.push({
+      provider: 'kimi',
+      timestamp,
+      model: 'Kimi',
+      inputTokens,
+      cacheReadInputTokens,
+      cacheCreationInputTokens,
+      outputTokens,
+      totalTokens,
+      sourceKey: `${filePath}:${lineIndex}`
+    })
   }
   return events
 }
@@ -585,7 +686,7 @@ async function collectFiles(
   accepts: (path: string) => boolean,
   sinceMs: number,
   maxFiles: number | null = MAX_FILES_PER_PROVIDER
-): Promise<string[]> {
+): Promise<CollectedSessionFile[]> {
   try {
     const rootStat = await fs.stat(root)
     if (!rootStat.isDirectory()) return []
@@ -593,7 +694,7 @@ async function collectFiles(
     return []
   }
 
-  const files: Array<{ path: string; mtimeMs: number }> = []
+  const files: CollectedSessionFile[] = []
   const stack = [root]
   while (stack.length > 0) {
     const dir = stack.pop()!
@@ -613,14 +714,14 @@ async function collectFiles(
       try {
         const stat = await fs.stat(entryPath)
         if (stat.mtimeMs < sinceMs) continue
-        files.push({ path: entryPath, mtimeMs: stat.mtimeMs })
+        files.push({ path: entryPath, mtimeMs: stat.mtimeMs, size: stat.size })
       } catch {
         continue
       }
     }
   }
   const sorted = files.sort((a, b) => b.mtimeMs - a.mtimeMs)
-  return (maxFiles === null ? sorted : sorted.slice(0, maxFiles)).map((file) => file.path)
+  return maxFiles === null ? sorted : sorted.slice(0, maxFiles)
 }
 
 async function readTextTail(filePath: string, maxBytes = MAX_TEXT_BYTES): Promise<string> {
