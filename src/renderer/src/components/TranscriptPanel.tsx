@@ -1997,20 +1997,35 @@ export const TranscriptPanel = memo(
           copyOnly?: boolean
         } = {}
       ): void => {
+        const browserSelection = window.getSelection()
+        const selectedText =
+          browserSelection &&
+          !browserSelection.isCollapsed &&
+          browserSelection.anchorNode &&
+          browserSelection.focusNode &&
+          contentRef.current?.contains(browserSelection.anchorNode) &&
+          contentRef.current?.contains(browserSelection.focusNode)
+            ? browserSelection.toString()
+            : ''
         event.preventDefault()
         event.stopPropagation()
         setMessageContextMenu({
           anchor: { x: event.clientX, y: event.clientY },
           message,
           copyContent,
+          selectedText,
           copySource: options.copySource || 'message-content',
           label,
           pinned: typeof message.metadata?.pinnedAt === 'number',
           copyOnly: options.copyOnly
         })
       },
-      []
+      [contentRef]
     )
+    const copyTranscriptSelection = useCallback((text: string): void => {
+      if (!text || typeof navigator === 'undefined' || !navigator.clipboard?.writeText) return
+      void navigator.clipboard.writeText(text).catch(() => undefined)
+    }, [])
     const activeMessageContextMenu = useMemo(() => {
       if (!messageContextMenu) return null
       const latestMessage =
@@ -4211,6 +4226,7 @@ export const TranscriptPanel = memo(
         <TranscriptMessageContextMenu
           selection={activeMessageContextMenu}
           onCopyMessage={onCopyMessage}
+          onCopySelection={copyTranscriptSelection}
           onAddMessageToPrompt={onAddMessageToPrompt}
           onTogglePinMessage={onTogglePinMessage}
           onMessageFeedback={onMessageFeedback}

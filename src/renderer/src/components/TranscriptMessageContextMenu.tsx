@@ -10,6 +10,7 @@ export interface TranscriptMessageContextMenuSelection {
   anchor: { x: number; y: number }
   message: ChatMessage
   copyContent: string
+  selectedText?: string
   copySource?: 'message-content' | 'subthread-return-body' | 'static'
   label: string
   pinned: boolean
@@ -19,6 +20,7 @@ export interface TranscriptMessageContextMenuSelection {
 export interface TranscriptMessageContextMenuItem {
   id:
     | 'copy'
+    | 'copy-selection'
     | 'add-to-prompt'
     | 'pin'
     | 'thumbs-up'
@@ -36,6 +38,7 @@ export interface TranscriptMessageContextMenuItem {
 interface TranscriptMessageContextMenuProps {
   selection: TranscriptMessageContextMenuSelection | null
   onCopyMessage: (messageId: string, content: string) => void
+  onCopySelection: (content: string) => void
   onAddMessageToPrompt?: (messageId: string, content: string) => void
   onDeleteMessage?: (messageId: string) => void
   onTogglePinMessage?: (messageId: string) => void
@@ -75,6 +78,7 @@ function canOpenSideChatFromMessage(message: ChatMessage): boolean {
 export function buildTranscriptMessageContextMenuItems({
   selection,
   onCopyMessage,
+  onCopySelection,
   onAddMessageToPrompt,
   onDeleteMessage,
   onTogglePinMessage,
@@ -83,13 +87,19 @@ export function buildTranscriptMessageContextMenuItems({
 }: Omit<TranscriptMessageContextMenuProps, 'onClose'> & {
   selection: TranscriptMessageContextMenuSelection
 }): TranscriptMessageContextMenuItem[] {
-  const { message, copyContent, pinned } = selection
+  const { message, copyContent, pinned, selectedText = '' } = selection
   const items: TranscriptMessageContextMenuItem[] = [
     {
       id: 'copy',
       label: 'Copy message',
       disabled: copyContent.length === 0,
       onSelect: () => onCopyMessage(message.id, copyContent)
+    },
+    {
+      id: 'copy-selection',
+      label: 'Copy selection',
+      disabled: selectedText.length === 0,
+      onSelect: () => onCopySelection(selectedText)
     }
   ]
   if (!selection.copyOnly && onAddMessageToPrompt) {
@@ -152,6 +162,7 @@ export function buildTranscriptMessageContextMenuItems({
 export function TranscriptMessageContextMenu({
   selection,
   onCopyMessage,
+  onCopySelection,
   onAddMessageToPrompt,
   onDeleteMessage,
   onTogglePinMessage,
@@ -195,6 +206,7 @@ export function TranscriptMessageContextMenu({
   const items = buildTranscriptMessageContextMenuItems({
     selection,
     onCopyMessage,
+    onCopySelection,
     onAddMessageToPrompt,
     onDeleteMessage,
     onTogglePinMessage,

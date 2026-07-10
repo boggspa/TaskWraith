@@ -37,6 +37,7 @@ describe('TranscriptMessageContextMenu', () => {
       <TranscriptMessageContextMenu
         selection={selection({ pinned: true })}
         onCopyMessage={() => {}}
+        onCopySelection={() => {}}
         onAddMessageToPrompt={() => {}}
         onTogglePinMessage={() => {}}
         onOpenSideChatFromMessage={() => {}}
@@ -47,6 +48,7 @@ describe('TranscriptMessageContextMenu', () => {
 
     expect(html).toContain('Actions for assistant message')
     expect(html).toContain('Copy message')
+    expect(html).toContain('Copy selection')
     expect(html).toContain('Add to prompt')
     expect(html).toContain('Unpin message')
     expect(html).toContain('Open side chat')
@@ -57,13 +59,19 @@ describe('TranscriptMessageContextMenu', () => {
   it('routes selected actions through transcript callbacks', () => {
     const selectedMessage = message()
     const onCopyMessage = vi.fn()
+    const onCopySelection = vi.fn()
     const onAddMessageToPrompt = vi.fn()
     const onTogglePinMessage = vi.fn()
     const onOpenSideChatFromMessage = vi.fn()
     const onDeleteMessage = vi.fn()
     const items = buildTranscriptMessageContextMenuItems({
-      selection: selection({ message: selectedMessage, copyContent: 'copy body' }),
+      selection: selection({
+        message: selectedMessage,
+        copyContent: 'copy body',
+        selectedText: 'copy selection across messages'
+      }),
       onCopyMessage,
+      onCopySelection,
       onAddMessageToPrompt,
       onTogglePinMessage,
       onOpenSideChatFromMessage,
@@ -71,12 +79,14 @@ describe('TranscriptMessageContextMenu', () => {
     })
 
     items.find((item) => item.id === 'copy')?.onSelect()
+    items.find((item) => item.id === 'copy-selection')?.onSelect()
     items.find((item) => item.id === 'add-to-prompt')?.onSelect()
     items.find((item) => item.id === 'pin')?.onSelect()
     items.find((item) => item.id === 'side-chat')?.onSelect()
     items.find((item) => item.id === 'delete')?.onSelect()
 
     expect(onCopyMessage).toHaveBeenCalledWith('message-1', 'copy body')
+    expect(onCopySelection).toHaveBeenCalledWith('copy selection across messages')
     expect(onAddMessageToPrompt).toHaveBeenCalledWith('message-1', 'copy body')
     expect(onTogglePinMessage).toHaveBeenCalledWith('message-1')
     expect(onOpenSideChatFromMessage).toHaveBeenCalledWith(selectedMessage)
@@ -88,6 +98,7 @@ describe('TranscriptMessageContextMenu', () => {
     const items = buildTranscriptMessageContextMenuItems({
       selection: selection(),
       onCopyMessage: () => {},
+      onCopySelection: () => {},
       onMessageFeedback
     })
 
@@ -106,30 +117,55 @@ describe('TranscriptMessageContextMenu', () => {
         message: message({ role: 'user', metadata: { kind: 'channelInbound' } })
       }),
       onCopyMessage: () => {},
+      onCopySelection: () => {},
       onOpenSideChatFromMessage: () => {}
     })
 
-    expect(items.map((item) => item.id)).toEqual(['copy'])
+    expect(items.map((item) => item.id)).toEqual(['copy', 'copy-selection'])
   })
 
   it('omits actions whose callbacks are not available', () => {
     const items = buildTranscriptMessageContextMenuItems({
       selection: selection(),
-      onCopyMessage: () => {}
+      onCopyMessage: () => {},
+      onCopySelection: () => {}
     })
 
-    expect(items.map((item) => item.id)).toEqual(['copy'])
+    expect(items.map((item) => item.id)).toEqual(['copy', 'copy-selection'])
   })
 
   it('supports copy-only surfaces such as provider failure cards', () => {
     const items = buildTranscriptMessageContextMenuItems({
       selection: selection({ label: 'provider failure', copyOnly: true }),
       onCopyMessage: () => {},
+      onCopySelection: () => {},
       onTogglePinMessage: () => {},
       onOpenSideChatFromMessage: () => {},
       onDeleteMessage: () => {}
     })
 
-    expect(items.map((item) => item.id)).toEqual(['copy'])
+    expect(items.map((item) => item.id)).toEqual(['copy', 'copy-selection'])
+  })
+
+  it('places Copy selection above Add to prompt and disables it without a selection', () => {
+    const onCopySelection = vi.fn()
+    const items = buildTranscriptMessageContextMenuItems({
+      selection: selection({ selectedText: '' }),
+      onCopyMessage: () => {},
+      onCopySelection,
+      onAddMessageToPrompt: () => {}
+    })
+
+    expect(items.map((item) => item.id)).toEqual(['copy', 'copy-selection', 'add-to-prompt'])
+    expect(items.find((item) => item.id === 'copy-selection')?.disabled).toBe(true)
+
+    const selectedItems = buildTranscriptMessageContextMenuItems({
+      selection: selection({ selectedText: 'Selected transcript text' }),
+      onCopyMessage: () => {},
+      onCopySelection,
+      onAddMessageToPrompt: () => {}
+    })
+
+    expect(selectedItems.find((item) => item.id === 'copy-selection')?.disabled).toBe(false)
   })
 })
