@@ -1,6 +1,7 @@
 import React, { useCallback } from 'react'
 import type { UpdateStateSnapshot } from '../../../main/UpdateService'
 import { useUpdateStatus } from '../hooks/useUpdateStatus'
+import { PillButton } from './PillButton'
 
 /**
  * UpdateStatusPane — Phase G2 sub-section of Settings → System.
@@ -71,35 +72,34 @@ export function UpdateStatusPane({
       )}
 
       <div className="update-status-actions">
-        <button
-          type="button"
-          className="btn btn-sm"
+        <PillButton
+          size="compact"
           disabled={
             busy || !snap.enabled || snap.status === 'checking' || snap.status === 'downloading'
           }
           onClick={() => void checkForUpdates()}
         >
           {snap.status === 'checking' ? 'Checking…' : 'Check for updates'}
-        </button>
+        </PillButton>
         {snap.status === 'available' && (
-          <button
-            type="button"
-            className="btn btn-sm btn-primary"
+          <PillButton
+            variant="primary"
+            size="compact"
             disabled={busy}
             onClick={() => void downloadUpdate()}
           >
             Download
-          </button>
+          </PillButton>
         )}
         {snap.status === 'downloaded' && (
-          <button
-            type="button"
-            className="btn btn-sm btn-primary"
+          <PillButton
+            variant="primary"
+            size="compact"
             disabled={busy}
             onClick={() => void handleInstall()}
           >
             Install and restart
-          </button>
+          </PillButton>
         )}
       </div>
 

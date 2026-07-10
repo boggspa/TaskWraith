@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react'
+import { PillButton } from './PillButton'
 
 const TAILSCALE_MACHINES_URL = 'https://login.tailscale.com/admin/machines'
 const TAILSCALE_DNS_URL = 'https://login.tailscale.com/admin/dns'
@@ -260,14 +261,13 @@ export function BridgeNetworkingPanel({
       </section>
 
       <div className="bridge-networking-actions">
-        <button
-          type="button"
-          className="btn btn-sm btn-ghost"
+        <PillButton
+          size="compact"
           onClick={() => void refresh()}
           disabled={loading}
         >
           {loading ? 'Refreshing…' : 'Refresh'}
-        </button>
+        </PillButton>
       </div>
     </div>
   )
@@ -625,9 +625,9 @@ function IosRemoteBridgeSection({
           {tailscale && !tailscale.cellularReady && tailscale.suggestedUrl && (
             <StatusPill kind="warn" label="Cellular not ready" />
           )}
-          <button
-            className="btn btn-sm btn-primary"
-            type="button"
+          <PillButton
+            variant="primary"
+            size="compact"
             disabled={
               tailscaleBusy ||
               tailscale === null ||
@@ -641,34 +641,32 @@ function IosRemoteBridgeSection({
               : tailscale?.active || tailscale?.relayUrlMatches
                 ? 'Repair WSS'
                 : 'Add WSS'}
-          </button>
-          <button
-            className="btn btn-sm"
-            type="button"
+          </PillButton>
+          <PillButton
+            size="compact"
             disabled={!tailscale?.suggestedUrl}
             onClick={() => void copyDetectedTailscaleRelay()}
           >
             {tailscaleCopied ? 'Copied' : 'Copy WSS'}
-          </button>
-          <button
-            className="btn btn-sm"
-            type="button"
+          </PillButton>
+          <PillButton
+            size="compact"
             disabled={
               tailscaleTestBusy || (!tailscale?.directRelayUrl && !tailscale?.suggestedUrl)
             }
             onClick={() => void testDetectedTailscaleRelay()}
           >
             {tailscaleTestBusy ? 'Testing…' : 'Test'}
-          </button>
+          </PillButton>
           {tailscale?.active && (
-            <button
-              className="btn btn-sm btn-ghost"
-              type="button"
+            <PillButton
+              variant="danger"
+              size="compact"
               disabled={tailscaleBusy}
               onClick={() => void disableTailscaleRemote()}
             >
               Disable
-            </button>
+            </PillButton>
           )}
         </span>
       </div>
@@ -817,18 +815,18 @@ function IosRemoteBridgeSection({
       </label>
       <div className="settings-service-row" style={{ justifyContent: 'flex-end', gap: 8 }}>
         {oauthStatus?.configured && (
-          <button
-            className="btn btn-sm"
-            type="button"
+          <PillButton
+            variant="danger"
+            size="compact"
             disabled={oauthBusy}
             onClick={() => void clearOauth()}
           >
             Clear
-          </button>
+          </PillButton>
         )}
-        <button
-          className="btn btn-sm btn-primary"
-          type="button"
+        <PillButton
+          variant="primary"
+          size="compact"
           disabled={
             oauthBusy ||
             !oauthClientId.trim() ||
@@ -838,7 +836,7 @@ function IosRemoteBridgeSection({
           onClick={() => void saveOauth()}
         >
           {oauthBusy ? 'Saving…' : 'Save'}
-        </button>
+        </PillButton>
       </div>
       {oauthMessage && <div className="settings-error">{oauthMessage}</div>}
       <label className="settings-service-row settings-fx-toggle">

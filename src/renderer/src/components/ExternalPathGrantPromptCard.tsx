@@ -1,6 +1,7 @@
 import type { ProviderId } from '../../../main/store/types'
 import { getProviderLabel } from '../lib/providerLabels'
 import type { ExternalPathGrantGap } from '../lib/externalPathGrantPreflight'
+import { PillButton } from './PillButton'
 
 export interface ExternalPathGrantPromptCardProps {
   gaps: ExternalPathGrantGap[]
@@ -51,17 +52,17 @@ export function ExternalPathGrantPromptCard({
         ))}
       </div>
       <div className="composer-permission-actions">
-        <button
-          className="btn btn-sm btn-primary"
-          type="button"
+        <PillButton
+          variant="primary"
+          size="compact"
           disabled={busy}
           onClick={onGrant}
         >
           {trigger === 'attach' ? 'Attach workspace' : 'Grant workspace access'}
-        </button>
-        <button className="btn btn-sm btn-ghost" type="button" disabled={busy} onClick={onDismiss}>
+        </PillButton>
+        <PillButton size="compact" disabled={busy} onClick={onDismiss}>
           {trigger === 'attach' ? 'Cancel' : 'Dismiss'}
-        </button>
+        </PillButton>
       </div>
     </div>
   )

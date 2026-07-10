@@ -3982,7 +3982,7 @@
  * (04-settings-controls.css). Hardcoding #151515 for every theme turned the
  * approval card into a dark-on-dark modal in light mode: its own text
  * (--text-secondary / --text-muted resolve dark), the countdown, and the
- * translucent note-field / .btn fills all composited against a forced
+ * translucent note-field / action fills all composited against a forced
  * near-black surface. Same trap as the welcome-suggestion cards below —
  * but scoped here with :not() instead of a stacked light override, because
  * a (0,3,0) light override on the bare card class would out-rank the

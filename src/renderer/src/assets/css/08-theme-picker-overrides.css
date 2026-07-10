@@ -5138,8 +5138,7 @@
   .sidebar-masthead,
   .sidebar-empty-state,
   .run-summary,
-  .model-usage-summary,
-  .sidebar-footer .btn
+  .model-usage-summary
 ) {
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.46), rgba(255, 255, 255, 0.22)),

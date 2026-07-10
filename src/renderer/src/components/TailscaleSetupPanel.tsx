@@ -1,5 +1,6 @@
 import { useState, type JSX } from 'react'
 import { looksLikeTailscaleAuthKey } from '../../../shared/tailscaleAuthKey'
+import { PillButton } from './PillButton'
 
 const TAILSCALE_DOWNLOAD_URL = 'https://tailscale.com/download'
 const TAILSCALE_AUTHKEY_URL = 'https://login.tailscale.com/admin/settings/keys'
@@ -156,9 +157,9 @@ export function TailscaleSetupPanel(): JSX.Element {
               aria-label="Tailscale auth key"
               disabled={busy}
             />
-            <button type="submit" className="btn btn-sm btn-primary" disabled={busy || !keyLooksValid}>
+            <PillButton type="submit" variant="primary" size="compact" disabled={busy || !keyLooksValid}>
               {busy ? 'Linking…' : 'Link this Mac'}
-            </button>
+            </PillButton>
           </div>
           {showFormatHint && (
             <div className="tailscale-link-message is-warn">

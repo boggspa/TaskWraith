@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { MarkdownMessage } from './MarkdownMessage'
+import { PillButton } from './PillButton'
 
 /**
  * Collaborator-side "Join shared chat" flow (L5-2 / L6-2). Three steps:
@@ -444,14 +445,14 @@ export function JoinSharedChatModal({
               /* Slice 5: pinned-identity reconnect to the previous shared chat —
                * no new invite, no code re-compare (identity was verified once). */
               <div className="join-reconnect-row">
-                <button
-                  type="button"
-                  className="btn btn-sm btn-secondary join-reconnect-btn"
+                <PillButton
+                  size="compact"
+                  className="join-reconnect-btn"
                   onClick={() => void handleReconnect()}
                   disabled={busy || step === 'connecting'}
                 >
                   Reconnect to your last shared chat
-                </button>
+                </PillButton>
               </div>
             )}
             <label className="join-field-label" htmlFor="join-shared-chat-display-name">
@@ -479,17 +480,17 @@ export function JoinSharedChatModal({
             />
             {error && <div className="join-error" role="alert">{error}</div>}
             <div className="join-actions">
-              <button type="button" className="btn btn-sm btn-ghost" onClick={leaveAndClose}>
+              <PillButton size="compact" onClick={leaveAndClose}>
                 Cancel
-              </button>
-              <button
-                type="button"
-                className="btn btn-sm btn-primary"
+              </PillButton>
+              <PillButton
+                variant="primary"
+                size="compact"
                 onClick={handleJoin}
                 disabled={busy || step === 'connecting' || !inviteText.trim()}
               >
                 {step === 'connecting' ? 'Connecting…' : 'Connect'}
-              </button>
+              </PillButton>
             </div>
           </>
         ) : null}
@@ -505,12 +506,12 @@ export function JoinSharedChatModal({
             <div className="join-sas-code" aria-label="Security code">{sasCode}</div>
             {error && <div className="join-error" role="alert">{error}</div>}
             <div className="join-actions">
-              <button type="button" className="btn btn-sm btn-ghost" onClick={requestLeave} disabled={busy}>
+              <PillButton size="compact" onClick={requestLeave} disabled={busy}>
                 Codes don&apos;t match
-              </button>
-              <button type="button" className="btn btn-sm btn-primary" onClick={handleSasMatch} disabled={busy}>
+              </PillButton>
+              <PillButton variant="primary" size="compact" onClick={handleSasMatch} disabled={busy}>
                 {busy ? 'Joining…' : 'Codes match — join'}
-              </button>
+              </PillButton>
             </div>
           </>
         ) : null}
@@ -525,14 +526,14 @@ export function JoinSharedChatModal({
                * pinned-identity reconnect (no fresh invite needed). */
               <div className="join-offline-hint" role="status">
                 Connection lost — you&apos;re offline. You can keep reading what already loaded.
-                <button
-                  type="button"
-                  className="btn btn-sm btn-secondary join-reconnect-btn"
+                <PillButton
+                  size="compact"
+                  className="join-reconnect-btn"
                   onClick={() => void handleReconnect()}
                   disabled={busy}
                 >
                   Reconnect
-                </button>
+                </PillButton>
               </div>
             )}
             <p className="creative-approval-modal-description">
@@ -588,20 +589,20 @@ export function JoinSharedChatModal({
                   placeholder="Leave a comment for the host to review…"
                   rows={2}
                 />
-                <button
-                  type="button"
-                  className="btn btn-sm btn-primary"
+                <PillButton
+                  variant="primary"
+                  size="compact"
                   onClick={handleSendComment}
                   disabled={!comment.trim()}
                 >
                   Send
-                </button>
+                </PillButton>
               </div>
             ) : null}
             <div className="join-actions">
-              <button type="button" className="btn btn-sm btn-ghost" onClick={requestLeave}>
+              <PillButton size="compact" onClick={requestLeave}>
                 Leave
-              </button>
+              </PillButton>
             </div>
           </>
         ) : null}

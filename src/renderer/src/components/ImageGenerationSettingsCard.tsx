@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { PillButton } from './PillButton'
 
 /*
  * ImageGenerationSettingsCard — the renderer key-entry UI for the image_generate
@@ -134,9 +135,9 @@ export function ImageGenerationSettingsCard() {
           onChange={(e) => setKeyDraft(e.target.value)}
           style={{ flex: 1, minWidth: 180 }}
         />
-        <button
-          type="button"
-          className="btn btn-sm"
+        <PillButton
+          variant="primary"
+          size="compact"
           disabled={busy || !keyDraft.trim() || !status.encryptionAvailable}
           onClick={() =>
             void run(async () => {
@@ -147,16 +148,15 @@ export function ImageGenerationSettingsCard() {
           }
         >
           Save key
-        </button>
+        </PillButton>
         {configured && (
-          <button
-            type="button"
-            className="btn btn-sm btn-ghost"
+          <PillButton
+            size="compact"
             disabled={busy}
             onClick={() => void run(() => api.imageGenerationClearKey({ provider }), 'Key cleared.')}
           >
             Clear
-          </button>
+          </PillButton>
         )}
       </div>
 

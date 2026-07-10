@@ -25,6 +25,7 @@ import { WaveformAudioPlayer } from './WaveformAudioPlayer'
 import { useCopyFeedback } from '../lib/useCopyFeedback'
 import { formatBytes } from '../lib/formatBytes'
 import { twMediaUrl } from '../../../shared/twMedia'
+import { PillButton } from './PillButton'
 
 export type ChatMediaSource = TranscriptMediaRef['source'] | 'external_path'
 export type ChatMediaKind = 'image' | 'audio' | 'video' | 'file' | 'folder'
@@ -1309,16 +1310,15 @@ export function ChatMediaPreviewOverlay({
 
         <footer className="chat-media-preview-actions">
           {canDetach && (
-            <button
-              type="button"
-              className="btn btn-sm"
+            <PillButton
+              size="compact"
               onClick={() => {
                 onDetachToPane?.(mediaRef)
                 onClose()
               }}
             >
               Detach to pane
-            </button>
+            </PillButton>
           )}
           {hasAssetChannels && (
             <MediaActionMenu
@@ -1328,18 +1328,18 @@ export function ChatMediaPreviewOverlay({
             />
           )}
           {mediaRef.path && (
-            <button type="button" className="btn btn-sm" onClick={() => copy(copyId, mediaRef.path)}>
+            <PillButton size="compact" onClick={() => copy(copyId, mediaRef.path)}>
               {isCopied ? 'Copied' : 'Copy path'}
-            </button>
+            </PillButton>
           )}
           {mediaRef.path && (
-            <button type="button" className="btn btn-sm btn-ghost" onClick={openPath}>
+            <PillButton size="compact" onClick={openPath}>
               Open file
-            </button>
+            </PillButton>
           )}
-          <button type="button" className="btn btn-sm btn-ghost" onClick={onClose}>
+          <PillButton size="compact" onClick={onClose}>
             Close
-          </button>
+          </PillButton>
         </footer>
       </section>
     </div>

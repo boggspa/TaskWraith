@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { ProviderId } from '../../../main/store/types'
 import { getProviderName } from './Sidebar'
 import { ProviderLogoTile } from './ProviderLogoTile'
+import { PillButton } from './PillButton'
 import {
   CACHE_GUARANTEE_DETAILS,
   DEFAULT_PROMPT_CACHE_POLICY,
@@ -119,9 +120,9 @@ export function PromptCacheSettingsSection(): React.JSX.Element {
             a billing invoice.
           </p>
         </div>
-        <button type="button" className="btn btn-sm btn-ghost" onClick={() => void refresh()} disabled={loading}>
+        <PillButton size="compact" onClick={() => void refresh()} disabled={loading}>
           Refresh
-        </button>
+        </PillButton>
       </div>
 
       <label className="prompt-cache-settings-global settings-effects-check-row">

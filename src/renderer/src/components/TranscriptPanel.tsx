@@ -106,6 +106,7 @@ import { RevealingMarkdownMessage } from './RevealingMarkdownMessage'
 import { ProposedPlanCard } from './ProposedPlanCard'
 import type { ProposedPlanState } from '../lib/proposedPlan'
 import { MessageActionsChip } from './MessageActionsChip'
+import { PillButton } from './PillButton'
 import {
   TranscriptMessageContextMenu,
   type TranscriptMessageContextMenuSelection
@@ -3938,8 +3939,9 @@ export const TranscriptPanel = memo(
                       : null
                     const isCopied = latestCopyId !== null && copiedId === latestCopyId
                     return (
-                      <button
-                        className={`btn btn-sm btn-ghost run-copy-btn${isCopied ? ' is-copied' : ''}`}
+                      <PillButton
+                        size="compact"
+                        className={`run-copy-btn${isCopied ? ' is-copied' : ''}`}
                         onClick={() => {
                           if (latestAssistantMessage?.content && latestCopyId) {
                             copy(latestCopyId, latestAssistantMessage.content)
@@ -3952,30 +3954,28 @@ export const TranscriptPanel = memo(
                         }
                       >
                         {isCopied ? 'Copied' : 'Copy'}
-                      </button>
+                      </PillButton>
                     )
                   })()}
                   {isGlobal && currentRun?.runId && onInspectRun && (
-                    <button
-                      className="btn btn-sm btn-ghost"
-                      type="button"
+                    <PillButton
+                      size="compact"
                       onClick={() => onInspectRun(currentRun.runId)}
                       title="Inspect this run"
                       aria-label="Inspect this run"
                     >
                       Inspect
-                    </button>
+                    </PillButton>
                   )}
                   {!isGlobal && currentRun?.runId && onOpenSideChatFromRun && (
-                    <button
-                      className="btn btn-sm btn-ghost"
-                      type="button"
+                    <PillButton
+                      size="compact"
                       onClick={() => onOpenSideChatFromRun(currentRun.runId)}
                       title="Open side chat seeded from this run result"
                       aria-label="Open side chat from run result"
                     >
                       Side chat
-                    </button>
+                    </PillButton>
                   )}
                 </div>
               </div>

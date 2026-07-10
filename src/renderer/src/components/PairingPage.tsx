@@ -34,6 +34,7 @@ import { PairedDevicesPanel } from './PairedDevicesPanel'
 import { BridgeNetworkingPanel } from './BridgeNetworkingPanel'
 import { ApnsConfigPanel } from './ApnsConfigPanel'
 import { TailscaleSetupPanel } from './TailscaleSetupPanel'
+import { PillButton } from './PillButton'
 
 interface BootstrapState {
   /** Pretty-printed JSON for display + copy. */
@@ -204,14 +205,15 @@ export function PairingPage(): JSX.Element {
             disabled={loading}
           />
         </label>
-        <button
+        <PillButton
           type="submit"
-          className="btn btn-sm"
+          variant="primary"
+          size="compact"
           disabled={loading || !displayName.trim()}
           title="Generate a fresh pairing QR for this device label"
         >
           {loading ? 'Generating…' : 'Refresh QR'}
-        </button>
+        </PillButton>
       </form>
 
       {error && <div className="settings-error pairing-page__error">{error}</div>}
@@ -259,14 +261,14 @@ export function PairingPage(): JSX.Element {
               onFocus={(e) => e.currentTarget.select()}
             />
             <div className="pairing-page__fallback-actions">
-              <button
-                type="button"
-                className="btn btn-sm"
+              <PillButton
+                variant="primary"
+                size="compact"
                 onClick={() => void onCopyJson()}
                 disabled={!bootstrap}
               >
                 {copied ? 'Copied' : 'Copy setup payload'}
-              </button>
+              </PillButton>
               <div className="pairing-page__hint pairing-page__hint--inline">
                 Paste this into the iOS Manual setup field. Do not paste the 6-digit verification
                 code here.

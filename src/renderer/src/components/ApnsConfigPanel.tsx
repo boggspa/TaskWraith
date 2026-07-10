@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react'
+import { PillButton } from './PillButton'
 
 /**
  * ApnsConfigPanel — Phase E1 (iOS bridge gap #1) Settings UI for the
@@ -244,14 +245,13 @@ export function ApnsConfigPanel(): React.JSX.Element {
           <label className="apns-config-field">
             <span className="apns-config-field-label">Auth Key (.p8)</span>
             <div className="apns-config-file-row">
-              <button
-                type="button"
-                className="btn btn-sm"
+              <PillButton
+                size="compact"
                 onClick={() => void pickFile()}
                 disabled={saving || !status?.encryptionAvailable}
               >
                 Choose .p8…
-              </button>
+              </PillButton>
               <span className="apns-config-file-path">
                 {selectedPath
                   ? selectedPath
@@ -302,17 +302,16 @@ export function ApnsConfigPanel(): React.JSX.Element {
         </div>
 
         <div className="bridge-networking-actions apns-config-actions">
-          <button
-            type="button"
-            className="btn btn-sm btn-primary"
+          <PillButton
+            variant="primary"
+            size="compact"
             onClick={() => void save()}
             disabled={saving || !canSave}
           >
             {saving ? 'Saving…' : 'Save credentials'}
-          </button>
-          <button
-            type="button"
-            className="btn btn-sm"
+          </PillButton>
+          <PillButton
+            size="compact"
             onClick={() => void testPush()}
             disabled={testing || !status?.configured}
             title={
@@ -324,23 +323,22 @@ export function ApnsConfigPanel(): React.JSX.Element {
             }
           >
             {testing ? 'Sending…' : 'Send test push'}
-          </button>
-          <button
-            type="button"
-            className="btn btn-sm btn-ghost"
+          </PillButton>
+          <PillButton
+            variant="danger"
+            size="compact"
             onClick={() => void clear()}
             disabled={clearing || !status?.configured}
           >
             {clearing ? 'Clearing…' : 'Clear'}
-          </button>
-          <button
-            type="button"
-            className="btn btn-sm btn-ghost"
+          </PillButton>
+          <PillButton
+            size="compact"
             onClick={() => void refresh()}
             disabled={loading}
           >
             {loading ? 'Refreshing…' : 'Refresh'}
-          </button>
+          </PillButton>
         </div>
       </section>
     </div>

@@ -29,7 +29,6 @@
  * upstream — this component is otherwise display-only beyond click +
  * drag + the overflow editor.
  */
-
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type {
@@ -68,6 +67,7 @@ import {
 } from './ComposerTextareaContextMenu'
 import { getProviderName } from './Sidebar'
 import { EnsembleBriefEditor } from './EnsembleBriefEditor'
+import { PillButton } from './PillButton'
 
 // 1.0.4-AR2 — global ceiling raised from 6 → 8 so the panel can host
 // the broader four-provider roster plus alternates (e.g. two Claudes
@@ -1207,24 +1207,24 @@ export function EnsembleParticipantsAboveRow({
             `queuedMessagesAboveRowEntries` builder in App.tsx for
             the ensemble-queued branch. */}
         {isRoundRunning && activeRound?.activeParticipantId && onSkipActive && (
-          <button
-            type="button"
-            className="btn btn-sm btn-ghost ensemble-above-row-skip"
+          <PillButton
+            size="compact"
+            className="ensemble-above-row-skip"
             onClick={onSkipActive}
             title="Skip the currently-speaking participant and let the round continue with the next one. The composer's Stop button still cancels the whole round."
           >
             Skip
-          </button>
+          </PillButton>
         )}
         {canSkipReadFanout && onSkipReadFanout && (
-          <button
-            type="button"
-            className="btn btn-sm btn-ghost ensemble-above-row-skip"
+          <PillButton
+            size="compact"
+            className="ensemble-above-row-skip"
             onClick={onSkipReadFanout}
             title="Stop the active read-only fan-out lanes and continue the round with the remaining serial step. Parallel writer lanes cannot be skipped here."
           >
             Skip reads
-          </button>
+          </PillButton>
         )}
       </div>
     </div>

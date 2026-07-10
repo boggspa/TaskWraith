@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState, type JSX } from 'react'
+import { PillButton } from './PillButton'
 
 interface PairedDeviceRow {
   iphoneIdentityPubKey: string
@@ -110,14 +111,14 @@ export function PairedDevicesPanel(): JSX.Element {
                   </span>
                 </div>
               </div>
-              <button
-                type="button"
-                className="btn btn-sm btn-danger"
+              <PillButton
+                variant="danger"
+                size="compact"
                 disabled={busyKey === device.iphoneIdentityPubKey}
                 onClick={() => void onRemove(device)}
               >
                 Remove
-              </button>
+              </PillButton>
             </li>
           ))}
         </ul>

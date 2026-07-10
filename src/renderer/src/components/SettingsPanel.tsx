@@ -96,6 +96,8 @@ import { ThreadIntrospectionSettingsPanel } from './ThreadIntrospectionSettingsP
 // (the "Devices" tab) so the iOS pair flow + daemon/APNs configuration
 // sit together as a single device-management page.
 import { PairingPage } from './PairingPage'
+import { PillButton } from './PillButton'
+import { SegmentedControl } from './SegmentedControl'
 import { SharesPanel } from './SharesPanel'
 import { CommittedDraftField } from './CommittedDraftField'
 import { ImageGenerationSettingsCard } from './ImageGenerationSettingsCard'
@@ -4726,14 +4728,14 @@ export function SettingsPanel({
   const renderProviderUpgradeButton = (provider: ProviderId) => {
     const state = providerUpgradeState(provider)
     return (
-      <button
-        type="button"
-        className="btn btn-sm btn-ghost"
+      <PillButton
+        size="compact"
+        variant="secondary"
         onClick={() => onProviderUpgrade?.(provider)}
         disabled={!onProviderUpgrade || state === 'opening'}
       >
         {state === 'opening' ? 'Opening…' : 'Upgrade CLI…'}
-      </button>
+      </PillButton>
     )
   }
   const renderProviderUpgradeHint = (provider: ProviderId) => {
@@ -5320,9 +5322,9 @@ export function SettingsPanel({
               </button>
             ))}
           </div>
-          <button className="btn btn-sm btn-ghost" onClick={onClose}>
+          <PillButton size="compact" variant="secondary" onClick={onClose}>
             Done
-          </button>
+          </PillButton>
         </div>
       )}
 
@@ -5629,14 +5631,14 @@ export function SettingsPanel({
                   </div>
                 </div>
                 <div className="settings-font-actions">
-                  <button
-                    className="btn btn-sm btn-ghost"
-                    type="button"
+                  <PillButton
+                    size="compact"
+                    variant="secondary"
                     disabled={!canLoadInstalledFonts}
                     onClick={() => void handleLoadInstalledFonts()}
                   >
                     Load installed fonts
-                  </button>
+                  </PillButton>
                   <span className="settings-font-status">
                     {installedFontStatus ||
                       (canLoadInstalledFonts
@@ -5661,21 +5663,24 @@ export function SettingsPanel({
                 <div className="settings-effects-grid">
                   <section className="settings-effects-card">
                     <span className="settings-field-label">Window material</span>
-                    <div className="settings-option-list settings-option-list-inline">
-                      {(['solid', 'soft_glass', 'native_glass'] as AppearanceMode[]).map((m) => (
-                        <button
-                          key={m}
-                          className={`btn btn-sm ${mode === m ? '' : 'btn-ghost'}`}
-                          onClick={() => onChange({ mode: m })}
-                        >
-                          {m === 'soft_glass'
-                            ? 'Soft Glass'
-                            : m === 'native_glass'
-                              ? 'Native Glass'
-                              : 'Solid'}
-                        </button>
-                      ))}
-                    </div>
+                    <SegmentedControl
+                      ariaLabel="Window material"
+                      className="settings-option-list settings-option-list-inline"
+                      size="compact"
+                      value={mode}
+                      options={(['solid', 'soft_glass', 'native_glass'] as AppearanceMode[]).map(
+                        (value) => ({
+                          value,
+                          label:
+                            value === 'soft_glass'
+                              ? 'Soft Glass'
+                              : value === 'native_glass'
+                                ? 'Native Glass'
+                                : 'Solid'
+                        })
+                      )}
+                      onValueChange={(value) => onChange({ mode: value })}
+                    />
                   </section>
 
                   <section className="settings-effects-card">
@@ -5834,17 +5839,17 @@ export function SettingsPanel({
                         </small>
                       </span>
                     </label>
-                    <div className="settings-option-list settings-option-list-inline">
-                      {FUN_FX_MODES.map((option) => (
-                        <button
-                          key={option.value}
-                          className={`btn btn-sm ${funFxMode === option.value ? '' : 'btn-ghost'}`}
-                          onClick={() => onChange({ funFxMode: option.value })}
-                        >
-                          {option.label}
-                        </button>
-                      ))}
-                    </div>
+                    <SegmentedControl
+                      ariaLabel="Epic FX mode"
+                      className="settings-option-list settings-option-list-inline"
+                      size="compact"
+                      value={funFxMode}
+                      options={FUN_FX_MODES.map((option) => ({
+                        value: option.value,
+                        label: option.label
+                      }))}
+                      onValueChange={(value) => onChange({ funFxMode: value })}
+                    />
                   </section>
 
                   <section className="settings-effects-card settings-fx-labs settings-effects-labs">
@@ -5918,22 +5923,20 @@ export function SettingsPanel({
                         />
                       </label>
                     </div>
-                    <div className="settings-option-list settings-option-list-inline">
-                      {FUN_FX_MODES.filter((option) => option.value !== 'off').map((option) => (
-                        <button
-                          key={option.value}
-                          className={`btn btn-sm ${advancedFx.intensity === option.value ? '' : 'btn-ghost'}`}
-                          disabled={reduceMotion || !funFxEnabled}
-                          onClick={() =>
-                            updateAdvancedFx({
-                              intensity: option.value as AppSettings['advancedFx']['intensity']
-                            })
-                          }
-                        >
-                          {option.label}
-                        </button>
-                      ))}
-                    </div>
+                    <SegmentedControl
+                      ariaLabel="FX Labs intensity"
+                      className="settings-option-list settings-option-list-inline"
+                      size="compact"
+                      value={advancedFx.intensity}
+                      disabled={reduceMotion || !funFxEnabled}
+                      options={FUN_FX_MODES.filter((option) => option.value !== 'off').map(
+                        (option) => ({
+                          value: option.value as AppSettings['advancedFx']['intensity'],
+                          label: option.label
+                        })
+                      )}
+                      onValueChange={(value) => updateAdvancedFx({ intensity: value })}
+                    />
                     <p className="settings-hint">
                       {reduceMotion
                         ? 'Reduce motion is active, so FX Labs animations stay off.'
@@ -6040,14 +6043,14 @@ export function SettingsPanel({
                   }}
                 >
                   <label className="settings-label">Exchange rates</label>
-                  <button
-                    type="button"
-                    className="btn btn-sm btn-ghost"
+                  <PillButton
+                    size="compact"
+                    variant="secondary"
                     onClick={() => void refreshExchangeRates()}
                     disabled={fxRefreshing}
                   >
                     {fxRefreshing ? 'Refreshing...' : 'Refresh exchange rates'}
-                  </button>
+                  </PillButton>
                 </div>
                 <p className="settings-hint">
                   Confidence: {fxConfidenceLabel(fxSnapshot?.source)}. Last updated:{' '}
@@ -6821,39 +6824,35 @@ export function SettingsPanel({
                     </div>
                     <div className="settings-provider-auth-action-row">
                       {onProviderLogin && (
-                        <button
-                          type="button"
-                          className="btn btn-sm btn-primary"
+                        <PillButton
+                          size="compact"
+                          variant="primary"
                           onClick={() => onProviderLogin('codex')}
                         >
                           Open Terminal to sign in
-                        </button>
+                        </PillButton>
                       )}
                       {onProviderLogout && (
-                        <button
-                          type="button"
-                          className="btn btn-sm btn-ghost"
+                        <PillButton
+                          size="compact"
+                          variant="danger"
                           onClick={() => onProviderLogout('codex')}
                         >
                           Open Terminal to sign out
-                        </button>
+                        </PillButton>
                       )}
                       {renderProviderUpgradeButton('codex')}
-                      <button
-                        type="button"
-                        className="btn btn-sm"
-                        onClick={onImportCodexUsageCredential}
-                      >
+                      <PillButton size="compact" variant="primary" onClick={onImportCodexUsageCredential}>
                         Import usage session
-                      </button>
+                      </PillButton>
                       {codexUsageConfigured && (
-                        <button
-                          type="button"
-                          className="btn btn-sm btn-ghost"
+                        <PillButton
+                          size="compact"
+                          variant="danger"
                           onClick={onClearCodexUsageCredential}
                         >
                           Clear usage session
-                        </button>
+                        </PillButton>
                       )}
                     </div>
                     <p className="settings-provider-auth-footnote">
@@ -6871,34 +6870,34 @@ export function SettingsPanel({
                     description="Claude Code / Anthropic API for careful edits and long reasoning."
                   >
                     <div className="settings-provider-auth-action-row">
-                      <button
-                        type="button"
-                        className="btn btn-sm"
+                      <PillButton
+                        size="compact"
+                        variant="primary"
                         disabled={claudeLoginState === 'loading'}
                         onClick={onTriggerClaudeLogin}
                       >
                         {claudeLoginState === 'loading'
                           ? 'Opening browser...'
                           : 'Login with Claude'}
-                      </button>
+                      </PillButton>
                       {onProviderLogout && (
-                        <button
-                          type="button"
-                          className="btn btn-sm btn-ghost"
+                        <PillButton
+                          size="compact"
+                          variant="danger"
                           onClick={() => onProviderLogout('claude')}
                         >
                           Sign out
-                        </button>
+                        </PillButton>
                       )}
                       {renderProviderUpgradeButton('claude')}
                       {claudeAuthStatus?.apiKeyConfigured && onClearClaudeApiKey && (
-                        <button
-                          type="button"
-                          className="btn btn-sm btn-ghost"
+                        <PillButton
+                          size="compact"
+                          variant="danger"
                           onClick={onClearClaudeApiKey}
                         >
                           Clear API key
-                        </button>
+                        </PillButton>
                       )}
                     </div>
                     <p className="settings-provider-auth-footnote">
@@ -6917,32 +6916,32 @@ export function SettingsPanel({
                   >
                     <div className="settings-provider-auth-action-row">
                       {onProviderLogin && (
-                        <button
-                          type="button"
-                          className="btn btn-sm"
+                        <PillButton
+                          size="compact"
+                          variant="primary"
                           onClick={() => onProviderLogin('kimi')}
                         >
                           Open Terminal to sign in
-                        </button>
+                        </PillButton>
                       )}
                       {onProviderLogout && (
-                        <button
-                          type="button"
-                          className="btn btn-sm btn-ghost"
+                        <PillButton
+                          size="compact"
+                          variant="danger"
                           onClick={() => onProviderLogout('kimi')}
                         >
                           Sign out
-                        </button>
+                        </PillButton>
                       )}
                       {renderProviderUpgradeButton('kimi')}
                       {kimiAuthStatus?.apiKeyConfigured && onClearKimiApiKey && (
-                        <button
-                          type="button"
-                          className="btn btn-sm btn-ghost"
+                        <PillButton
+                          size="compact"
+                          variant="danger"
                           onClick={onClearKimiApiKey}
                         >
                           Clear API key
-                        </button>
+                        </PillButton>
                       )}
                     </div>
                     <p className="settings-provider-auth-footnote">
@@ -6963,22 +6962,22 @@ export function SettingsPanel({
                       <span>Run once in Terminal for official Cursor CLI runtime auth.</span>
                     </div>
                     <div className="settings-provider-auth-action-row">
-                      <button
-                        type="button"
-                        className="btn btn-sm btn-primary"
+                      <PillButton
+                        size="compact"
+                        variant="primary"
                         onClick={() => onProviderLogin?.('cursor')}
                         disabled={!onProviderLogin}
                       >
                         Open Terminal to sign in
-                      </button>
-                      <button
-                        type="button"
-                        className="btn btn-sm btn-ghost"
+                      </PillButton>
+                      <PillButton
+                        size="compact"
+                        variant="danger"
                         onClick={() => onProviderLogout?.('cursor')}
                         disabled={!onProviderLogout}
                       >
                         Open Terminal to sign out
-                      </button>
+                      </PillButton>
                       {renderProviderUpgradeButton('cursor')}
                     </div>
                     <p className="settings-provider-auth-footnote">
@@ -7003,22 +7002,22 @@ export function SettingsPanel({
                       </span>
                     </div>
                     <div className="settings-provider-auth-action-row">
-                      <button
-                        type="button"
-                        className="btn btn-sm btn-primary"
+                      <PillButton
+                        size="compact"
+                        variant="primary"
                         onClick={() => onProviderLogin?.('grok')}
                         disabled={!onProviderLogin}
                       >
                         Open Terminal to sign in
-                      </button>
-                      <button
-                        type="button"
-                        className="btn btn-sm btn-ghost"
+                      </PillButton>
+                      <PillButton
+                        size="compact"
+                        variant="danger"
                         onClick={() => onProviderLogout?.('grok')}
                         disabled={!onProviderLogout}
                       >
                         Open Terminal to sign out
-                      </button>
+                      </PillButton>
                       {renderProviderUpgradeButton('grok')}
                     </div>
                     <p className="settings-provider-auth-footnote">
@@ -7042,22 +7041,22 @@ export function SettingsPanel({
                       </span>
                     </div>
                     <div className="settings-provider-auth-action-row">
-                      <button
-                        type="button"
-                        className="btn btn-sm btn-primary"
+                      <PillButton
+                        size="compact"
+                        variant="primary"
                         onClick={() => onProviderLogin?.('ollama')}
                         disabled={!onProviderLogin}
                       >
                         Open Terminal to sign in
-                      </button>
-                      <button
-                        type="button"
-                        className="btn btn-sm btn-ghost"
+                      </PillButton>
+                      <PillButton
+                        size="compact"
+                        variant="danger"
                         onClick={() => onProviderLogout?.('ollama')}
                         disabled={!onProviderLogout}
                       >
                         Open Terminal to sign out
-                      </button>
+                      </PillButton>
                     </div>
                     <p className="settings-provider-auth-footnote">
                       Local models (configured in the Ollama section below) work without signing in
@@ -7397,14 +7396,14 @@ export function SettingsPanel({
                         </span>
                       </label>
                     ))}
-                    <button
-                      className="btn btn-sm"
-                      type="button"
+                    <PillButton
+                      size="compact"
+                      variant="primary"
                       disabled={auditProviderAllowlist.length === 0}
                       onClick={() => updateAuditOrchestration({ providerAllowlist: [] })}
                     >
                       Use parent provider only
-                    </button>
+                    </PillButton>
                   </div>
                 </div>
 
@@ -7562,8 +7561,9 @@ export function SettingsPanel({
                     }
                     style={{ flex: 1 }}
                   />
-                  <button
-                    className="btn btn-sm"
+                  <PillButton
+                    size="compact"
+                    variant="primary"
                     disabled={!claudeKeyInput.trim() || claudeApiKeyStorageUnavailable}
                     onClick={() => {
                       onStoreClaudeApiKey?.(claudeKeyInput)
@@ -7571,11 +7571,11 @@ export function SettingsPanel({
                     }}
                   >
                     Save
-                  </button>
+                  </PillButton>
                   {claudeAuthStatus?.apiKeyConfigured && (
-                    <button className="btn btn-sm btn-ghost" onClick={onClearClaudeApiKey}>
+                    <PillButton size="compact" variant="danger" onClick={onClearClaudeApiKey}>
                       Clear
-                    </button>
+                    </PillButton>
                   )}
                 </div>
                 <p className="settings-hint">
@@ -7643,8 +7643,9 @@ export function SettingsPanel({
                     }
                     style={{ flex: 1 }}
                   />
-                  <button
-                    className="btn btn-sm"
+                  <PillButton
+                    size="compact"
+                    variant="primary"
                     disabled={!kimiKeyInput.trim() || kimiApiKeyStorageUnavailable}
                     onClick={() => {
                       onStoreKimiApiKey?.(kimiKeyInput)
@@ -7652,11 +7653,11 @@ export function SettingsPanel({
                     }}
                   >
                     Save
-                  </button>
+                  </PillButton>
                   {kimiAuthStatus?.apiKeyConfigured && (
-                    <button className="btn btn-sm btn-ghost" onClick={onClearKimiApiKey}>
+                    <PillButton size="compact" variant="danger" onClick={onClearKimiApiKey}>
                       Clear
-                    </button>
+                    </PillButton>
                   )}
                 </div>
                 <p className="settings-hint">
@@ -7707,13 +7708,13 @@ export function SettingsPanel({
                       {ollamaStatus.modelCount === 1 ? '' : 's'}
                     </span>
                   )}
-                  <button
-                    className="btn btn-sm btn-ghost"
-                    type="button"
+                  <PillButton
+                    size="compact"
+                    variant="secondary"
                     onClick={() => onRefreshProviderMcpStatus?.('ollama')}
                   >
                     Refresh
-                  </button>
+                  </PillButton>
                 </div>
                 {renderProviderPauseControls('ollama')}
 
@@ -7836,9 +7837,9 @@ export function SettingsPanel({
                   </p>
                 </div>
                 <div className="settings-mcp-header-actions">
-                  <button
-                    type="button"
-                    className="btn btn-sm"
+                  <PillButton
+                    size="compact"
+                    variant="primary"
                     onClick={() => {
                       SETTINGS_PROVIDER_ORDER.forEach((provider) =>
                         onRefreshProviderMcpStatus?.(provider)
@@ -7847,21 +7848,21 @@ export function SettingsPanel({
                     }}
                   >
                     Refresh
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn-sm btn-ghost"
+                  </PillButton>
+                  <PillButton
+                    size="compact"
+                    variant="secondary"
                     onClick={openImportMcpServersPage}
                   >
                     Import config
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn-sm btn-ghost"
+                  </PillButton>
+                  <PillButton
+                    size="compact"
+                    variant="secondary"
                     onClick={openCreateMcpServerPage}
                   >
                     Add server
-                  </button>
+                  </PillButton>
                 </div>
               </div>
 
@@ -7978,14 +7979,14 @@ export function SettingsPanel({
                       </span>
                     </div>
                     <p className="settings-hint">{entry.message}</p>
-                    <button
-                      type="button"
-                      className="btn btn-sm btn-ghost"
+                    <PillButton
+                      size="compact"
+                      variant="secondary"
                       onClick={() => onRefreshProviderMcpStatus?.(entry.provider)}
                       disabled={!onRefreshProviderMcpStatus}
                     >
                       Refresh provider
-                    </button>
+                    </PillButton>
                   </article>
                 ))}
               </div>
@@ -8018,16 +8019,16 @@ export function SettingsPanel({
                   </p>
                 )}
                 <div className="settings-mcp-bridge-actions">
-                  <button type="button" className="btn btn-sm" onClick={onInstallGeminiMcpBridge}>
+                  <PillButton size="compact" variant="primary" onClick={onInstallGeminiMcpBridge}>
                     Install / repair
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn-sm btn-ghost"
+                  </PillButton>
+                  <PillButton
+                    size="compact"
+                    variant="secondary"
                     onClick={onRefreshGeminiMcpBridgeStatus}
                   >
                     Test
-                  </button>
+                  </PillButton>
                 </div>
               </div>
 
@@ -8060,13 +8061,13 @@ export function SettingsPanel({
                     {filteredMcpToolCatalog.length} of {MCP_TOOL_CATALOG.length} tools
                   </span>
                   {mcpToolSearch && (
-                    <button
-                      type="button"
-                      className="btn btn-sm btn-ghost"
+                    <PillButton
+                      size="compact"
+                      variant="secondary"
                       onClick={() => setMcpToolQuery('')}
                     >
                       Clear
-                    </button>
+                    </PillButton>
                   )}
                 </div>
               </div>
@@ -8253,9 +8254,9 @@ export function SettingsPanel({
                                         }
                                         aria-label={`${secret.label} secret`}
                                       />
-                                      <button
-                                        type="button"
-                                        className="btn btn-sm"
+                                      <PillButton
+                                        size="compact"
+                                        variant="primary"
                                         disabled={busy || !encryptionAvailable || !secret.installed}
                                         onClick={() =>
                                           savePluginConnectorSecret(
@@ -8265,10 +8266,10 @@ export function SettingsPanel({
                                         }
                                       >
                                         {busy ? 'Saving' : 'Store'}
-                                      </button>
-                                      <button
-                                        type="button"
-                                        className="btn btn-sm btn-ghost"
+                                      </PillButton>
+                                      <PillButton
+                                        size="compact"
+                                        variant="danger"
                                         disabled={busy || !secret.configured}
                                         onClick={() =>
                                           clearPluginConnectorSecret(
@@ -8278,7 +8279,7 @@ export function SettingsPanel({
                                         }
                                       >
                                         Clear
-                                      </button>
+                                      </PillButton>
                                     </div>
                                   )
                                 })}
@@ -8349,13 +8350,13 @@ export function SettingsPanel({
                   <p>
                     Add, edit, enable, and remove app-managed external MCP server definitions.
                   </p>
-                  <button
-                    type="button"
-                    className="btn btn-sm btn-ghost"
+                  <PillButton
+                    size="compact"
+                    variant="secondary"
                     onClick={() => setActiveTab('mcp-servers')}
                   >
                     Open MCP Servers
-                  </button>
+                  </PillButton>
                 </article>
                 <article className="settings-mcp-management-card">
                   <strong>Skills</strong>
@@ -8363,9 +8364,9 @@ export function SettingsPanel({
                     Provider-owned skills should be visible here with their enabled state and tool
                     names.
                   </p>
-                  <button type="button" className="btn btn-sm btn-ghost" disabled>
+                  <PillButton size="compact" variant="secondary" disabled>
                     Audit surface planned
-                  </button>
+                  </PillButton>
                 </article>
               </div>
             </div>
@@ -8395,54 +8396,54 @@ export function SettingsPanel({
                   </p>
                 </div>
                 <div className="settings-mcp-header-actions">
-                  <button
-                    type="button"
-                    className="btn btn-sm btn-ghost"
+                  <PillButton
+                    size="compact"
+                    variant="secondary"
                     onClick={copyAllMcpServersAuditJson}
                     disabled={userMcpServers.length === 0}
                   >
                     {copiedMcpServersJson ? 'Copied audit' : 'Copy audit JSON'}
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn-sm btn-ghost"
+                  </PillButton>
+                  <PillButton
+                    size="compact"
+                    variant="secondary"
                     onClick={copyAllMcpServersClaudeJson}
                     disabled={claudeExportableUserMcpServerCount === 0}
                   >
                     {copiedMcpServersClaudeJson ? 'Copied Claude' : 'Copy Claude JSON'}
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn-sm btn-ghost"
+                  </PillButton>
+                  <PillButton
+                    size="compact"
+                    variant="secondary"
                     onClick={copyAllMcpServersCursorJson}
                     disabled={cursorExportableUserMcpServerCount === 0}
                   >
                     {copiedMcpServersCursorJson ? 'Copied Cursor' : 'Copy Cursor JSON'}
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn-sm btn-ghost"
+                  </PillButton>
+                  <PillButton
+                    size="compact"
+                    variant="secondary"
                     onClick={copyAllMcpServersCodexToml}
                     disabled={codexExportableUserMcpServerCount === 0}
                   >
                     {copiedMcpServersCodexToml ? 'Copied TOML' : 'Copy Codex TOML'}
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn-sm btn-ghost"
+                  </PillButton>
+                  <PillButton
+                    size="compact"
+                    variant="secondary"
                     onClick={startImportMcpServers}
                     disabled={userMcpServersManagedLocked}
                   >
                     Import config
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn-sm"
+                  </PillButton>
+                  <PillButton
+                    size="compact"
+                    variant="primary"
                     onClick={startCreateMcpServer}
                     disabled={userMcpServersManagedLocked}
                   >
                     Add server
-                  </button>
+                  </PillButton>
                 </div>
               </div>
 
@@ -8581,21 +8582,21 @@ export function SettingsPanel({
                     {mcpImportError && (
                       <span className="settings-user-mcp-error">{mcpImportError}</span>
                     )}
-                    <button
-                      type="button"
-                      className="btn btn-sm"
+                    <PillButton
+                      size="compact"
+                      variant="primary"
                       onClick={() => void importMcpServersFromConfig()}
                       disabled={userMcpServersManagedLocked}
                     >
                       Import
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn-sm btn-ghost"
+                    </PillButton>
+                    <PillButton
+                      size="compact"
+                      variant="secondary"
                       onClick={cancelImportMcpServers}
                     >
                       Cancel
-                    </button>
+                    </PillButton>
                   </div>
                 </div>
               </div>
@@ -8629,13 +8630,13 @@ export function SettingsPanel({
                       {filteredUserMcpServers.length} of {userMcpServers.length} servers
                     </span>
                     {mcpServerSearch && (
-                      <button
-                        type="button"
-                        className="btn btn-sm btn-ghost"
+                      <PillButton
+                        size="compact"
+                        variant="secondary"
                         onClick={() => setMcpServerQuery('')}
                       >
                         Clear
-                      </button>
+                      </PillButton>
                     )}
                   </div>
                 </div>
@@ -8648,22 +8649,22 @@ export function SettingsPanel({
                     Add a local stdio server, remote HTTP/SSE endpoint, or import existing Claude,
                     Cursor, or Codex config.
                   </p>
-                  <button
-                    type="button"
-                    className="btn btn-sm"
+                  <PillButton
+                    size="compact"
+                    variant="primary"
                     onClick={startCreateMcpServer}
                     disabled={userMcpServersManagedLocked}
                   >
                     Add server
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn-sm btn-ghost"
+                  </PillButton>
+                  <PillButton
+                    size="compact"
+                    variant="secondary"
                     onClick={startImportMcpServers}
                     disabled={userMcpServersManagedLocked}
                   >
                     Import config
-                  </button>
+                  </PillButton>
                 </div>
               ) : filteredUserMcpServers.length === 0 ? (
                 <div className="settings-audit-empty">No MCP servers match that search.</div>
@@ -8757,9 +8758,9 @@ export function SettingsPanel({
                                   <section>
                                     <div className="settings-user-mcp-snippet-heading">
                                       <strong>Claude JSON</strong>
-                                      <button
-                                        type="button"
-                                        className="btn btn-sm btn-ghost"
+                                      <PillButton
+                                        size="compact"
+                                        variant="secondary"
                                         onClick={() =>
                                           copyMcpServerProviderSnippet(
                                             server.id,
@@ -8771,7 +8772,7 @@ export function SettingsPanel({
                                         {copiedMcpServerSnippetKey === `${server.id}:claude`
                                           ? 'Copied Claude'
                                           : 'Copy Claude'}
-                                      </button>
+                                      </PillButton>
                                     </div>
                                     <pre>
                                       <code>{claudeSnippetPreview}</code>
@@ -8782,9 +8783,9 @@ export function SettingsPanel({
                                   <section>
                                     <div className="settings-user-mcp-snippet-heading">
                                       <strong>Cursor mcp.json</strong>
-                                      <button
-                                        type="button"
-                                        className="btn btn-sm btn-ghost"
+                                      <PillButton
+                                        size="compact"
+                                        variant="secondary"
                                         onClick={() =>
                                           copyMcpServerProviderSnippet(
                                             server.id,
@@ -8796,7 +8797,7 @@ export function SettingsPanel({
                                         {copiedMcpServerSnippetKey === `${server.id}:cursor`
                                           ? 'Copied Cursor'
                                           : 'Copy Cursor'}
-                                      </button>
+                                      </PillButton>
                                     </div>
                                     <pre>
                                       <code>{cursorSnippetPreview}</code>
@@ -8807,9 +8808,9 @@ export function SettingsPanel({
                                   <section>
                                     <div className="settings-user-mcp-snippet-heading">
                                       <strong>Codex TOML</strong>
-                                      <button
-                                        type="button"
-                                        className="btn btn-sm btn-ghost"
+                                      <PillButton
+                                        size="compact"
+                                        variant="secondary"
                                         onClick={() =>
                                           copyMcpServerProviderSnippet(
                                             server.id,
@@ -8821,7 +8822,7 @@ export function SettingsPanel({
                                         {copiedMcpServerSnippetKey === `${server.id}:codex`
                                           ? 'Copied Codex'
                                           : 'Copy Codex'}
-                                      </button>
+                                      </PillButton>
                                     </div>
                                     <pre>
                                       <code>{codexSnippetPreview}</code>
@@ -8844,29 +8845,29 @@ export function SettingsPanel({
                               disabled={userMcpServersManagedLocked}
                             />
                           </label>
-                          <button
-                            type="button"
-                            className="btn btn-sm btn-ghost"
+                          <PillButton
+                            size="compact"
+                            variant="secondary"
                             onClick={() => copyMcpServerAuditJson(server)}
                           >
                             {copiedMcpServerId === server.id ? 'Copied audit' : 'Copy audit JSON'}
-                          </button>
-                          <button
-                            type="button"
-                            className="btn btn-sm btn-ghost"
+                          </PillButton>
+                          <PillButton
+                            size="compact"
+                            variant="secondary"
                             onClick={() => startEditMcpServer(server)}
                             disabled={userMcpServersManagedLocked}
                           >
                             Edit
-                          </button>
-                          <button
-                            type="button"
-                            className="btn btn-sm btn-ghost"
+                          </PillButton>
+                          <PillButton
+                            size="compact"
+                            variant="danger"
                             onClick={() => deleteUserMcpServer(server.id)}
                             disabled={userMcpServersManagedLocked}
                           >
                             Delete
-                          </button>
+                          </PillButton>
                         </div>
                       </article>
                     )
@@ -9069,21 +9070,21 @@ export function SettingsPanel({
                     {mcpServerFormError && (
                       <span className="settings-user-mcp-error">{mcpServerFormError}</span>
                     )}
-                    <button
-                      type="button"
-                      className="btn btn-sm btn-ghost"
+                    <PillButton
+                      size="compact"
+                      variant="secondary"
                       onClick={resetMcpServerForm}
                     >
                       Cancel
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn-sm"
+                    </PillButton>
+                    <PillButton
+                      size="compact"
+                      variant="primary"
                       onClick={() => void saveMcpServerForm()}
                       disabled={userMcpServersManagedLocked}
                     >
                       Save server
-                    </button>
+                    </PillButton>
                   </div>
                 </div>
               </div>
@@ -9110,17 +9111,17 @@ export function SettingsPanel({
                   </p>
                 </div>
                 <div className="settings-mcp-header-actions">
-                  <button
-                    type="button"
-                    className="btn btn-sm btn-ghost"
+                  <PillButton
+                    size="compact"
+                    variant="secondary"
                     onClick={refreshRuntimeProfiles}
                     disabled={runtimeProfileLoading}
                   >
                     Refresh
-                  </button>
-                  <button type="button" className="btn btn-sm" onClick={startCreateRuntimeProfile}>
+                  </PillButton>
+                  <PillButton size="compact" variant="primary" onClick={startCreateRuntimeProfile}>
                     Add profile
-                  </button>
+                  </PillButton>
                 </div>
               </div>
 
@@ -9162,14 +9163,14 @@ export function SettingsPanel({
                 <div className="settings-user-mcp-empty">
                   <strong>No runtime profiles loaded</strong>
                   <p>Refresh to read provider runtime profiles from the main process.</p>
-                  <button
-                    type="button"
-                    className="btn btn-sm"
+                  <PillButton
+                    size="compact"
+                    variant="primary"
                     onClick={refreshRuntimeProfiles}
                     disabled={runtimeProfileLoading}
                   >
                     Refresh profiles
-                  </button>
+                  </PillButton>
                 </div>
               ) : (
                 <div className="settings-user-mcp-list">
@@ -9204,22 +9205,22 @@ export function SettingsPanel({
                           </div>
                         </div>
                         <div className="settings-user-mcp-actions">
-                          <button
-                            type="button"
-                            className="btn btn-sm btn-ghost"
+                          <PillButton
+                            size="compact"
+                            variant="secondary"
                             onClick={() => startEditRuntimeProfile(profile)}
                             disabled={Boolean(readOnlyReason)}
                           >
                             Edit
-                          </button>
-                          <button
-                            type="button"
-                            className="btn btn-sm btn-ghost"
+                          </PillButton>
+                          <PillButton
+                            size="compact"
+                            variant="danger"
                             onClick={() => void deleteRuntimeProfile(profile)}
                             disabled={Boolean(readOnlyReason)}
                           >
                             Delete
-                          </button>
+                          </PillButton>
                         </div>
                       </article>
                     )
@@ -9408,21 +9409,21 @@ export function SettingsPanel({
                     {runtimeProfileError && (
                       <span className="settings-user-mcp-error">{runtimeProfileError}</span>
                     )}
-                    <button
-                      type="button"
-                      className="btn btn-sm btn-ghost"
+                    <PillButton
+                      size="compact"
+                      variant="secondary"
                       onClick={resetRuntimeProfileForm}
                     >
                       Cancel
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn-sm"
+                    </PillButton>
+                    <PillButton
+                      size="compact"
+                      variant="primary"
                       onClick={() => void saveRuntimeProfileForm()}
                       disabled={runtimeProfileLoading}
                     >
                       Save profile
-                    </button>
+                    </PillButton>
                   </div>
                 </div>
               </div>
@@ -9519,13 +9520,13 @@ export function SettingsPanel({
                     {filteredPluginEntries.length} of {pluginEntries.length} plugins
                   </span>
                   {pluginSearch && (
-                    <button
-                      type="button"
-                      className="btn btn-sm btn-ghost"
+                    <PillButton
+                      size="compact"
+                      variant="secondary"
                       onClick={() => setPluginQuery('')}
                     >
                       Clear
-                    </button>
+                    </PillButton>
                   )}
                 </div>
               </div>
@@ -9612,10 +9613,10 @@ export function SettingsPanel({
                               {mcpPresets.map((preset) => {
                                 const presetState = actionState.mcpPresets[preset.id]
                                 return (
-                                  <button
+                                  <PillButton
                                     key={preset.id}
-                                    type="button"
-                                    className="btn btn-sm btn-ghost"
+                                    size="compact"
+                                    variant="secondary"
                                     disabled={
                                       userMcpServersManagedLocked ||
                                       (presetState?.disabled ?? true)
@@ -9632,7 +9633,7 @@ export function SettingsPanel({
                                       : presetState?.busy
                                         ? `Adding ${preset.name}`
                                         : `Add MCP preset: ${preset.name}`}
-                                  </button>
+                                  </PillButton>
                                 )
                               })}
                             </div>
@@ -9673,34 +9674,34 @@ export function SettingsPanel({
                             </label>
                           )}
                           {!entry.installed ? (
-                            <button
-                              type="button"
-                              className="btn btn-sm"
+                            <PillButton
+                              size="compact"
+                              variant="primary"
                               disabled={actionState.installDisabled}
                               onClick={() => installPlugin(pluginId)}
                             >
                               {busy ? 'Installing' : 'Install'}
-                            </button>
+                            </PillButton>
                           ) : (
                             <>
                               {updateAvailable && (
-                                <button
-                                  type="button"
-                                  className="btn btn-sm"
+                                <PillButton
+                                  size="compact"
+                                  variant="primary"
                                   disabled={actionState.updateDisabled}
                                   onClick={() => updatePlugin(pluginId)}
                                 >
                                   {busy ? 'Accepting' : 'Review & accept'}
-                                </button>
+                                </PillButton>
                               )}
-                              <button
-                                type="button"
-                                className="btn btn-sm btn-ghost"
+                              <PillButton
+                                size="compact"
+                                variant="danger"
                                 disabled={actionState.uninstallDisabled}
                                 onClick={() => uninstallPlugin(pluginId)}
                               >
                                 {busy ? 'Updating' : 'Uninstall'}
-                              </button>
+                              </PillButton>
                             </>
                           )}
                         </div>
@@ -9777,22 +9778,22 @@ export function SettingsPanel({
                     {filteredKeyCommands.length} of {KEY_COMMAND_DEFINITIONS.length} commands
                   </span>
                   {customizedKeyCommandCount > 0 && (
-                    <button
-                      type="button"
-                      className="btn btn-sm btn-ghost"
+                    <PillButton
+                      size="compact"
+                      variant="secondary"
                       onClick={() => updateKeyCommandOverrides({})}
                     >
                       Reset all
-                    </button>
+                    </PillButton>
                   )}
                   {keyCommandSearch && (
-                    <button
-                      type="button"
-                      className="btn btn-sm btn-ghost"
+                    <PillButton
+                      size="compact"
+                      variant="secondary"
                       onClick={() => setKeyCommandQuery('')}
                     >
                       Clear
-                    </button>
+                    </PillButton>
                   )}
                 </div>
               </div>
@@ -9829,32 +9830,32 @@ export function SettingsPanel({
                               ))}
                             </div>
                             <div className="settings-key-command-actions">
-                              <button
-                                type="button"
-                                className="btn btn-sm btn-ghost"
+                              <PillButton
+                                size="compact"
+                                variant="secondary"
                                 onClick={() => {
                                   setRecordingKeyCommandId(command.id)
                                   setKeyCommandRecordError('')
                                 }}
                               >
                                 {recordingKeyCommandId === command.id ? 'Press keys' : 'Record'}
-                              </button>
-                              <button
-                                type="button"
-                                className="btn btn-sm btn-ghost"
+                              </PillButton>
+                              <PillButton
+                                size="compact"
+                                variant="secondary"
                                 onClick={() => resetKeyCommand(command.id)}
                                 disabled={!command.customized}
                               >
                                 Reset
-                              </button>
-                              <button
-                                type="button"
-                                className="btn btn-sm btn-ghost"
+                              </PillButton>
+                              <PillButton
+                                size="compact"
+                                variant="danger"
                                 onClick={() => unassignKeyCommand(command.id)}
                                 disabled={command.binding === null}
                               >
                                 Unassign
-                              </button>
+                              </PillButton>
                             </div>
                             <span
                               className={`settings-key-command-status ${
@@ -9915,20 +9916,20 @@ export function SettingsPanel({
                   </p>
                 </div>
                 <div className="settings-safety-header-actions">
-                  <button
-                    type="button"
-                    className="btn btn-sm btn-ghost"
+                  <PillButton
+                    size="compact"
+                    variant="secondary"
                     onClick={() => setActiveTab('approval-ledger')}
                   >
                     Open grants
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn-sm btn-ghost"
+                  </PillButton>
+                  <PillButton
+                    size="compact"
+                    variant="secondary"
                     onClick={() => setActiveTab('providers')}
                   >
                     Edit policies
-                  </button>
+                  </PillButton>
                 </div>
               </div>
 
@@ -10021,13 +10022,13 @@ export function SettingsPanel({
                       <span className="settings-scope-pill">{row.scope}</span>
                     </div>
                     <p>{row.detail}</p>
-                    <button
-                      type="button"
-                      className="btn btn-sm btn-ghost"
+                    <PillButton
+                      size="compact"
+                      variant="secondary"
                       onClick={() => setActiveTab(row.tab)}
                     >
                       {row.action}
-                    </button>
+                    </PillButton>
                   </article>
                 ))}
               </div>
@@ -10143,67 +10144,67 @@ export function SettingsPanel({
                   </select>
                 </label>
                 <div className="settings-option-list settings-option-list-inline">
-                  <button
-                    className="btn btn-sm"
-                    type="button"
+                  <PillButton
+                    size="compact"
+                    variant="primary"
                     onClick={onRefreshProductOperationsStatus}
                   >
                     Refresh health
-                  </button>
-                  <button
-                    className="btn btn-sm btn-ghost"
-                    type="button"
+                  </PillButton>
+                  <PillButton
+                    size="compact"
+                    variant="secondary"
                     onClick={onExportProductDiagnostics}
                   >
                     Export diagnostics
-                  </button>
-                  <button
-                    className="btn btn-sm btn-ghost"
-                    type="button"
+                  </PillButton>
+                  <PillButton
+                    size="compact"
+                    variant="secondary"
                     onClick={() => onExportProductAuditBundle('all')}
                   >
                     Export full audit bundle
-                  </button>
-                  <button
-                    className="btn btn-sm btn-ghost"
-                    type="button"
+                  </PillButton>
+                  <PillButton
+                    size="compact"
+                    variant="secondary"
                     onClick={onVerifyProductAuditBundle}
                   >
                     Verify audit bundle
-                  </button>
-                  <button
-                    className="btn btn-sm btn-ghost"
-                    type="button"
+                  </PillButton>
+                  <PillButton
+                    size="compact"
+                    variant="secondary"
                     onClick={onRepairProductInstall}
                   >
                     Repair install
-                  </button>
+                  </PillButton>
                 </div>
                 <div className="settings-option-list settings-option-list-inline">
-                  <button
-                    className="btn btn-sm btn-ghost"
-                    type="button"
+                  <PillButton
+                    size="compact"
+                    variant="secondary"
                     onClick={() => onExportProductAuditBundle('workspace')}
                     disabled={!auditBundleExportAvailability?.workspace}
                   >
                     Export workspace bundle
-                  </button>
-                  <button
-                    className="btn btn-sm btn-ghost"
-                    type="button"
+                  </PillButton>
+                  <PillButton
+                    size="compact"
+                    variant="secondary"
                     onClick={() => onExportProductAuditBundle('chat')}
                     disabled={!auditBundleExportAvailability?.chat}
                   >
                     Export thread bundle
-                  </button>
-                  <button
-                    className="btn btn-sm btn-ghost"
-                    type="button"
+                  </PillButton>
+                  <PillButton
+                    size="compact"
+                    variant="secondary"
                     onClick={() => onExportProductAuditBundle('run')}
                     disabled={!auditBundleExportAvailability?.run}
                   >
                     Export run bundle
-                  </button>
+                  </PillButton>
                 </div>
                 {auditBundleVerificationResult && (
                   <div
@@ -10327,13 +10328,13 @@ export function SettingsPanel({
                           {recentAuditBundleVerificationReceipts.length} receipts
                         </span>
                         {auditReceiptSearch && (
-                          <button
-                            type="button"
-                            className="btn btn-sm btn-ghost"
+                          <PillButton
+                            size="compact"
+                            variant="secondary"
                             onClick={() => setAuditReceiptQuery('')}
                           >
                             Clear
-                          </button>
+                          </PillButton>
                         )}
                       </div>
                     </div>
@@ -10452,20 +10453,20 @@ export function SettingsPanel({
                   ))}
                 </div>
                 <div className="settings-option-list settings-option-list-inline">
-                  <button
-                    className="btn btn-sm btn-ghost"
-                    type="button"
+                  <PillButton
+                    size="compact"
+                    variant="secondary"
                     onClick={onDryRunAuditRetention}
                   >
                     Dry-run retention
-                  </button>
-                  <button
-                    className="btn btn-sm btn-ghost"
-                    type="button"
+                  </PillButton>
+                  <PillButton
+                    size="compact"
+                    variant="danger"
                     onClick={onPurgeAuditRetention}
                   >
                     Purge expired evidence
-                  </button>
+                  </PillButton>
                 </div>
                 <p className="settings-hint">
                   Retention purges are opt-in. Dry-runs and purges write capped purge receipts that
@@ -10489,14 +10490,15 @@ export function SettingsPanel({
                 </p>
               </div>
               {onSelectWorkspaceDialog && (
-                <button
-                  type="button"
-                  className="btn btn-sm settings-workspaces-add"
+                <PillButton
+                  size="compact"
+                  variant="primary"
+                  className="settings-workspaces-add"
                   onClick={onSelectWorkspaceDialog}
                   title="Add a new workspace folder"
                 >
                   Add workspace
-                </button>
+                </PillButton>
               )}
             </div>
             {workspaces.length === 0 ? (
@@ -10558,24 +10560,25 @@ export function SettingsPanel({
                           onChanged={refreshRemoteAllowlist}
                         />
                         {onTogglePinWorkspace && (
-                          <button
-                            type="button"
-                            className={`btn btn-sm btn-ghost ${workspace.pinned ? 'is-pinned' : ''}`}
+                          <PillButton
+                            size="compact"
+                            variant="secondary"
+                            className={workspace.pinned ? 'is-pinned' : undefined}
                             onClick={() => onTogglePinWorkspace(workspace.id)}
                             title={workspace.pinned ? 'Unpin workspace' : 'Pin workspace'}
                           >
                             {workspace.pinned ? 'Unpin' : 'Pin'}
-                          </button>
+                          </PillButton>
                         )}
                         {onRemoveWorkspace && (
-                          <button
-                            type="button"
-                            className="btn btn-sm btn-ghost"
+                          <PillButton
+                            size="compact"
+                            variant="danger"
                             onClick={() => onRemoveWorkspace(workspace.id)}
                             title="Remove this workspace from the list"
                           >
                             Remove
-                          </button>
+                          </PillButton>
                         )}
                       </div>
                     </li>

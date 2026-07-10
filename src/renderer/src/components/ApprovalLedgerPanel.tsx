@@ -6,6 +6,7 @@ import type {
   ProviderId
 } from '../../../main/store/types'
 import { getWorkspacePolicyServiceLabel } from '../lib/workspacePolicyServices'
+import { PillButton } from './PillButton'
 
 /**
  * ApprovalLedgerPanel — Phase E2 admin UI for the durable approval ledger.
@@ -315,15 +316,16 @@ export function ApprovalLedgerPanel({
         */}
         {subThreadGrantsHere.length > 0 && (
           <div className="approval-grant-bulk-actions">
-            <button
-              type="button"
-              className="btn btn-sm btn-ghost approval-grant-bulk-forget"
+            <PillButton
+              variant="danger"
+              size="compact"
+              className="approval-grant-bulk-forget"
               onClick={() => setBulkForgetPending(subThreadGrantsHere)}
               disabled={!onRevokeWorkspaceGrant || bulkRevoking}
               title="Revoke every sub-thread delegation grant in this workspace"
             >
               Forget all sub-thread delegations for this workspace ({subThreadGrantsHere.length})
-            </button>
+            </PillButton>
           </div>
         )}
         {sortedWorkspaceGrants.length === 0 ? (
@@ -344,14 +346,15 @@ export function ApprovalLedgerPanel({
                       {workspaceBasename(grant.workspacePath)} · Granted {createdAt}
                     </span>
                   </div>
-                  <button
-                    type="button"
-                    className="btn btn-sm btn-ghost approval-grant-revoke"
+                  <PillButton
+                    variant="danger"
+                    size="compact"
+                    className="approval-grant-revoke"
                     onClick={() => void handleRevokeWorkspaceGrant(grant)}
                     disabled={!onRevokeWorkspaceGrant || isRevoking}
                   >
                     {isRevoking ? 'Revoking…' : 'Revoke'}
-                  </button>
+                  </PillButton>
                 </li>
               )
             })}
@@ -416,22 +419,20 @@ export function ApprovalLedgerPanel({
       </div>
 
       <div className="approval-ledger-actions">
-        <button
-          type="button"
-          className="btn btn-sm btn-ghost"
+        <PillButton
+          size="compact"
           onClick={() => void refresh()}
           disabled={loading}
         >
           {loading ? 'Refreshing…' : 'Refresh'}
-        </button>
-        <button
-          type="button"
-          className="btn btn-sm btn-ghost"
+        </PillButton>
+        <PillButton
+          size="compact"
           onClick={handleExport}
           disabled={visibleRecords.length === 0}
         >
           Export JSON ({visibleRecords.length})
-        </button>
+        </PillButton>
       </div>
 
       <div className="approval-ledger-list">
@@ -498,22 +499,20 @@ export function ApprovalLedgerPanel({
               ))}
             </ul>
             <div className="modal-actions">
-              <button
-                type="button"
-                className="btn btn-ghost"
+              <PillButton
                 onClick={() => setBulkForgetPending(null)}
                 disabled={bulkRevoking}
               >
                 Cancel
-              </button>
-              <button
-                type="button"
-                className="btn btn-primary approval-grant-bulk-confirm"
+              </PillButton>
+              <PillButton
+                variant="danger"
+                className="approval-grant-bulk-confirm"
                 onClick={() => void handleConfirmBulkForget()}
                 disabled={bulkRevoking}
               >
                 {bulkRevoking ? 'Revoking…' : `Forget ${bulkForgetPending.length}`}
-              </button>
+              </PillButton>
             </div>
           </div>
         </div>

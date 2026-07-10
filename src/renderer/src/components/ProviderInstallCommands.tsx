@@ -8,6 +8,7 @@ import type {
   TaskWraithPluginActivatedProviderSetup,
   TaskWraithPluginActivationSnapshot
 } from '../../../shared/plugins/PluginTypes'
+import { PillButton } from './PillButton'
 
 /**
  * Official, copy-pasteable CLI install commands — one per provider, each
@@ -91,14 +92,14 @@ export function ProviderInstallCommands({
             >
               {entry.command}
             </code>
-            <button
-              type="button"
-              className="btn btn-sm provider-install-copy"
+            <PillButton
+              size="compact"
+              className="provider-install-copy"
               onClick={() => copy(entry.id, entry.command)}
               aria-label={`Copy ${rowLabel} install command`}
             >
               {copiedId === entry.id ? 'Copied' : 'Copy'}
-            </button>
+            </PillButton>
           </div>
         )
       })}
@@ -154,14 +155,14 @@ export function ProviderInstallCommands({
           >
             {model.command}
           </code>
-          <button
-            type="button"
-            className="btn btn-sm provider-install-copy"
+          <PillButton
+            size="compact"
+            className="provider-install-copy"
             onClick={() => copy(model.id, model.command)}
             aria-label={`Copy ${model.label} install command`}
           >
             {copiedId === model.id ? 'Copied' : 'Copy'}
-          </button>
+          </PillButton>
         </div>
       ))}
     </div>

@@ -61,6 +61,7 @@ import { GitHubSatelliteRow } from '../components/GitHubSatelliteRow'
 import { LiveThreadTokenTally } from '../components/LiveThreadTokenTally'
 import { MultiviewLayoutPicker } from '../components/MultiviewLayoutPicker'
 import { CanvasComposerButton } from '../components/CanvasComposerButton'
+import { PillButton } from './PillButton'
 import { QueuedMessagesAboveRow } from '../components/QueuedMessagesAboveRow'
 import { WelcomeHeatmaps } from '../components/WelcomeHeatmaps'
 import { WorkflowComposeControls } from '../components/WorkflowComposeControls'
@@ -915,7 +916,9 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     agentApprovalAppearedAtRef.current = Date.now()
     const focusTimer = window.setTimeout(() => {
       agentApprovalCardRef.current
-        ?.querySelector<HTMLButtonElement>('.composer-permission-actions .btn:not(.btn-ghost)')
+        ?.querySelector<HTMLButtonElement>(
+          '.composer-permission-actions .segmented-control-action--primary'
+        )
         ?.focus()
     }, 0)
     return () => window.clearTimeout(focusTimer)
@@ -2650,20 +2653,22 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                           ))}
                         </div>
                         <div className="composer-permission-actions">
-                          <button
-                            className="btn btn-sm"
+                          <PillButton
+                            variant="primary"
+                            size="compact"
                             type="button"
                             onClick={handlePermissionRetry}
                           >
                             Add paths and rerun
-                          </button>
-                          <button
-                            className="btn btn-sm btn-ghost"
+                          </PillButton>
+                          <PillButton
+                            variant="ghost"
+                            size="compact"
                             type="button"
                             onClick={clearImagePermissions}
                           >
                             Dismiss
-                          </button>
+                          </PillButton>
                         </div>
                       </div>
                     )}
@@ -2801,8 +2806,9 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                         />
                         <div className="composer-permission-actions">
                           {(pendingAgentApproval.actions || ['accept']).includes('accept') && (
-                            <button
-                              className="btn btn-sm"
+                            <PillButton
+                              variant="primary"
+                              size="compact"
                               type="button"
                               title={
                                 pendingAgentApproval.method === 'hostCommand/rerun'
@@ -2816,11 +2822,12 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               {pendingAgentApproval.method === 'hostCommand/rerun'
                                 ? 'Rerun outside sandbox'
                                 : 'Allow once'}
-                            </button>
+                            </PillButton>
                           )}
                           {(pendingAgentApproval.actions || []).includes('useProviderNative') && (
-                            <button
-                              className="btn btn-sm"
+                            <PillButton
+                              variant="primary"
+                              size="compact"
                               type="button"
                               title="Use the provider CLI or SDK native approval flow for this request instead of TaskWraith handling it."
                               onClick={() =>
@@ -2831,11 +2838,12 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               }
                             >
                               Use Provider Native
-                            </button>
+                            </PillButton>
                           )}
                           {(pendingAgentApproval.actions || []).includes('useTaskWraithSubthread') && (
-                            <button
-                              className="btn btn-sm btn-ghost"
+                            <PillButton
+                              variant="ghost"
+                              size="compact"
                               type="button"
                               title="Move this work into a TaskWraith sub-thread so it can continue with isolated context and its own approval handling."
                               onClick={() =>
@@ -2846,11 +2854,12 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               }
                             >
                               Use TaskWraith Sub-thread
-                            </button>
+                            </PillButton>
                           )}
                           {(pendingAgentApproval.actions || []).includes('acceptForWorkspace') && (
-                            <button
-                              className="btn btn-sm btn-ghost"
+                            <PillButton
+                              variant="ghost"
+                              size="compact"
                               type="button"
                               title="Allow this kind of request for this workspace. The grant persists until revoked in Approvals & Grants."
                               onClick={() =>
@@ -2861,13 +2870,14 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               }
                             >
                               Allow in workspace
-                            </button>
+                            </PillButton>
                           )}
                           {(pendingAgentApproval.actions || ['acceptForSession']).includes(
                             'acceptForSession'
                           ) && (
-                            <button
-                              className="btn btn-sm btn-ghost"
+                            <PillButton
+                              variant="ghost"
+                              size="compact"
                               type="button"
                               title="Allow matching requests for the rest of this app session. Restarting the app clears the grant."
                               onClick={() =>
@@ -2878,7 +2888,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               }
                             >
                               Allow for session
-                            </button>
+                            </PillButton>
                           )}
                           {/* Trusted Session is lane-scoped: the current ensemble participant or solo
                             chat receives the signed full_access preset, then this request is
@@ -2887,8 +2897,9 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                           {!isNativeSubAgentPreferenceApproval(pendingAgentApproval) &&
                             pendingAgentApproval.preview?.requestOnly !== true &&
                             !pendingAgentApproval.preview?.externalPathDetection && (
-                              <button
-                                className="btn btn-sm btn-ghost"
+                              <PillButton
+                                variant="ghost"
+                                size="compact"
                                 type="button"
                                 title="Raise only this chat or selected participant to Trusted Session, then approve this request once. Other lanes are unchanged."
                                 onClick={() => {
@@ -2897,11 +2908,12 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                 }}
                               >
                                 Start Trusted Session...
-                              </button>
+                              </PillButton>
                             )}
                           {(pendingAgentApproval.actions || ['decline']).includes('decline') && (
-                            <button
-                              className="btn btn-sm btn-ghost"
+                            <PillButton
+                              variant="ghost"
+                              size="compact"
                               type="button"
                               title="Deny this request and let the current run continue or fail according to the provider."
                               onClick={() =>
@@ -2909,11 +2921,12 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               }
                             >
                               Deny
-                            </button>
+                            </PillButton>
                           )}
                           {(pendingAgentApproval.actions || ['cancel']).includes('cancel') && (
-                            <button
-                              className="btn btn-sm btn-ghost"
+                            <PillButton
+                              variant="ghost"
+                              size="compact"
                               type="button"
                               title="Cancel the run that is waiting on this approval."
                               onClick={() =>
@@ -2921,7 +2934,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               }
                             >
                               Cancel run
-                            </button>
+                            </PillButton>
                           )}
                           {/* Slice 4 external-path actions — only render when
                             the runtime detector emitted the new action
@@ -2932,8 +2945,9 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                           {(pendingAgentApproval.actions || []).includes(
                             'grantExternalPathRead'
                           ) && (
-                            <button
-                              className="btn btn-sm btn-primary"
+                            <PillButton
+                              variant="primary"
+                              size="compact"
                               type="button"
                               title="Grant read-only access to the detected external path for this request."
                               onClick={() =>
@@ -2944,13 +2958,14 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               }
                             >
                               Grant read access
-                            </button>
+                            </PillButton>
                           )}
                           {(pendingAgentApproval.actions || []).includes(
                             'grantExternalPathEdit'
                           ) && (
-                            <button
-                              className="btn btn-sm"
+                            <PillButton
+                              variant="primary"
+                              size="compact"
                               type="button"
                               title="Grant edit access to the detected external path for this request."
                               onClick={() =>
@@ -2961,11 +2976,12 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               }
                             >
                               Grant edit access
-                            </button>
+                            </PillButton>
                           )}
                           {(pendingAgentApproval.actions || []).includes('declineExternalPath') && (
-                            <button
-                              className="btn btn-sm btn-ghost"
+                            <PillButton
+                              variant="ghost"
+                              size="compact"
                               type="button"
                               title="Deny this external path request once. The agent may ask again if it still needs the path."
                               onClick={() =>
@@ -2976,7 +2992,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               }
                             >
                               Deny once
-                            </button>
+                            </PillButton>
                           )}
                         </div>
                       </div>

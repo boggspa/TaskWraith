@@ -10,6 +10,8 @@ import { DiffViewer } from './DiffViewer'
 import { TerminalPanel } from './TerminalPanel'
 import { BackgroundTasksPanel } from './BackgroundTasksPanel'
 import { ReadOnlyToolClassBreakdown } from './ToolClassBreakdown'
+import { PillButton } from './PillButton'
+import { SegmentedControl } from './SegmentedControl'
 import { AgentIdentityIcon } from './icons/AgentIdentityIcon'
 import type { GitRepositorySnapshot } from '../../../main/services/GitService'
 import { assignAgentIdentityFromSeed } from '../lib/agentIdentitySeed'
@@ -634,19 +636,20 @@ function DiffTab(props: InspectorProps) {
     <div className="diff-studio">
       <div className="diff-studio-toolbar">
         <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
-          <button
-            className={`btn btn-sm ${props.diffView === 'this_run' ? '' : 'btn-ghost'}`}
-            onClick={() => props.setDiffView('this_run')}
-            disabled={!props.runDiff && !hasWorkspaceDiffs}
-          >
-            This run
-          </button>
-          <button
-            className={`btn btn-sm ${props.diffView === 'workspace' ? '' : 'btn-ghost'}`}
-            onClick={() => props.setDiffView('workspace')}
-          >
-            Workspace
-          </button>
+          <SegmentedControl
+            ariaLabel="Diff view"
+            value={props.diffView}
+            options={[
+              {
+                value: 'this_run',
+                label: 'This run',
+                disabled: !props.runDiff && !hasWorkspaceDiffs
+              },
+              { value: 'workspace', label: 'Workspace' }
+            ]}
+            onValueChange={props.setDiffView}
+            size="compact"
+          />
           {props.diffView === 'this_run' && hasWorkspaceDiffs && (
             <select
               className="diff-workspace-select"
@@ -674,13 +677,14 @@ function DiffTab(props: InspectorProps) {
             </span>
           )}
         </div>
-        <button
-          className="btn btn-sm btn-ghost"
+        <PillButton
+          variant="ghost"
+          size="compact"
           onClick={props.refreshDiff}
           disabled={!props.currentWorkspace}
         >
           Refresh
-        </button>
+        </PillButton>
       </div>
       <div style={{ flex: 1, overflow: 'hidden' }}>
         <DiffViewer
@@ -760,15 +764,16 @@ function RawTab(props: InspectorProps) {
     <div className="diff-studio raw-events-panel">
       <div className="diff-studio-toolbar">
         <div style={{ display: 'flex', gap: '4px' }}>
-          {(['all', 'stdout', 'stderr', 'tool'] as const).map((f) => (
-            <button
-              key={f}
-              className={`btn btn-sm ${rawFilter === f ? '' : 'btn-ghost'}`}
-              onClick={() => setRawFilter(f)}
-            >
-              {f}
-            </button>
-          ))}
+          <SegmentedControl
+            ariaLabel="Raw event filter"
+            value={rawFilter}
+            options={(['all', 'stdout', 'stderr', 'tool'] as const).map((filter) => ({
+              value: filter,
+              label: filter
+            }))}
+            onValueChange={setRawFilter}
+            size="compact"
+          />
         </div>
         {/* 1.4.1 — Copy/Clear pill, mirroring the transcript message
             actions chip. Copy serialises the WHOLE buffer (with the
@@ -1043,9 +1048,9 @@ function DelegationTab(props: InspectorProps) {
             detected from raw/tool events
           </div>
         </div>
-        <button className="btn btn-sm btn-ghost" onClick={openFloatingAudit}>
+        <PillButton variant="ghost" size="compact" onClick={openFloatingAudit}>
           Floating audit
-        </button>
+        </PillButton>
       </div>
 
       <div className="safety-card">
@@ -2072,13 +2077,14 @@ function CapabilitiesTab(props: InspectorProps) {
             }}
           >
             <h4>Codex threads</h4>
-            <button
-              className="btn btn-sm btn-ghost"
+            <PillButton
+              variant="ghost"
+              size="compact"
               onClick={props.onRefreshCodexThreads}
               disabled={!props.onRefreshCodexThreads}
             >
               Refresh
-            </button>
+            </PillButton>
           </div>
           {(props.codexThreads || []).length === 0 ? (
             <p
@@ -2135,26 +2141,29 @@ function CapabilitiesTab(props: InspectorProps) {
                       marginTop: 'var(--space-sm)'
                     }}
                   >
-                    <button
-                      className="btn btn-sm"
+                    <PillButton
+                      variant="primary"
+                      size="compact"
                       onClick={() => props.onResumeCodexThread?.(thread.id)}
                     >
                       Resume
-                    </button>
-                    <button
-                      className="btn btn-sm btn-ghost"
+                    </PillButton>
+                    <PillButton
+                      variant="ghost"
+                      size="compact"
                       onClick={() => props.onForkCodexThread?.(thread.id)}
                       title="Native Codex thread/fork"
                     >
                       Fork (native)
-                    </button>
-                    <button
-                      className="btn btn-sm btn-ghost"
+                    </PillButton>
+                    <PillButton
+                      variant="ghost"
+                      size="compact"
                       onClick={() => props.onRollbackCodexThread?.(thread.id)}
                       title="Rollback Codex thread history only. This does not revert workspace files."
                     >
                       Rollback thread
-                    </button>
+                    </PillButton>
                   </div>
                 </div>
               ))}
@@ -2220,13 +2229,14 @@ function CapabilitiesTab(props: InspectorProps) {
             Rollback stays disabled until {label} exposes stable structured session IDs. Diff
             Studio remains shared for file changes.
           </p>
-          <button
-            className="btn btn-sm"
+          <PillButton
+            variant="primary"
+            size="compact"
             onClick={() => props.onForkAgentThread?.(props.provider)}
             disabled={!props.onForkAgentThread}
           >
             Fork (emulated)
-          </button>
+          </PillButton>
         </div>
       </div>
     )
@@ -2251,13 +2261,15 @@ function CapabilitiesTab(props: InspectorProps) {
             {workspacePath || 'No workspace selected'}
           </div>
         </div>
-        <button
-          className="btn btn-sm btn-ghost"
+        <PillButton
+          variant="ghost"
+          size="compact"
           onClick={refreshCapabilities}
           disabled={!workspacePath || isLoading}
+          loading={isLoading}
         >
           {isLoading ? 'Refreshing...' : 'Refresh'}
-        </button>
+        </PillButton>
       </div>
 
       <ToolingContractCard contract={props.providerCapabilities} />
@@ -2273,20 +2285,22 @@ function CapabilitiesTab(props: InspectorProps) {
         >
           <h4>TaskWraith MCP bridge</h4>
           <div style={{ display: 'flex', gap: 'var(--space-xs)' }}>
-            <button
-              className="btn btn-sm btn-ghost"
+            <PillButton
+              variant="ghost"
+              size="compact"
               onClick={props.onRefreshGeminiMcpBridgeStatus}
               disabled={!props.onRefreshGeminiMcpBridgeStatus}
             >
               Test
-            </button>
-            <button
-              className="btn btn-sm"
+            </PillButton>
+            <PillButton
+              variant="primary"
+              size="compact"
               onClick={props.onInstallGeminiMcpBridge}
               disabled={!props.onInstallGeminiMcpBridge}
             >
               Install / repair
-            </button>
+            </PillButton>
           </div>
         </div>
         <div className="safety-row">
@@ -2809,21 +2823,21 @@ function SafetyTab(props: InspectorProps) {
             </p>
           )}
           <div style={{ display: 'flex', gap: 'var(--space-sm)', marginBottom: 'var(--space-md)' }}>
-            <button
-              className="btn"
+            <PillButton
+              variant="primary"
               style={{ flex: 1 }}
               onClick={onImportCodexUsageCredential}
               disabled={!onImportCodexUsageCredential}
             >
               Import Codex usage session
-            </button>
-            <button
-              className="btn btn-ghost"
+            </PillButton>
+            <PillButton
+              variant="ghost"
               onClick={onClearCodexUsageCredential}
               disabled={!onClearCodexUsageCredential}
             >
               Clear
-            </button>
+            </PillButton>
           </div>
         </div>
         <div className="safety-card">
@@ -2840,9 +2854,13 @@ function SafetyTab(props: InspectorProps) {
             handled by the Codex CLI.
           </p>
           {currentWorkspace && !showTerminal && (
-            <button className="btn" style={{ width: '100%' }} onClick={() => setShowTerminal(true)}>
+            <PillButton
+              variant="primary"
+              style={{ width: '100%' }}
+              onClick={() => setShowTerminal(true)}
+            >
               Open Codex login terminal...
-            </button>
+            </PillButton>
           )}
           {currentWorkspace && showTerminal && (
             <div className="trust-assistant-panel">
@@ -2934,9 +2952,13 @@ function SafetyTab(props: InspectorProps) {
             Use a scoped terminal for provider login/setup. For binary overrides, open Settings.
           </p>
           {currentWorkspace && !showTerminal && (
-            <button className="btn" style={{ width: '100%' }} onClick={() => setShowTerminal(true)}>
+            <PillButton
+              variant="primary"
+              style={{ width: '100%' }}
+              onClick={() => setShowTerminal(true)}
+            >
               Open {label} setup terminal...
-            </button>
+            </PillButton>
           )}
           {currentWorkspace && showTerminal && (
             <div className="trust-assistant-panel">
@@ -2976,13 +2998,13 @@ function SafetyTab(props: InspectorProps) {
           trustResult?.status !== 'inherited' && (
             <div style={{ marginBottom: 'var(--space-md)' }}>
               {!showTerminal ? (
-                <button
-                  className="btn"
+                <PillButton
+                  variant="primary"
                   style={{ width: '100%', marginBottom: 'var(--space-sm)' }}
                   onClick={() => setShowTerminal(true)}
                 >
                   Open Trust Assistant...
-                </button>
+                </PillButton>
               ) : (
                 <div className="trust-assistant-panel">
                   <div className="trust-assistant-copy">
@@ -3000,13 +3022,14 @@ function SafetyTab(props: InspectorProps) {
               )}
             </div>
           )}
-        <button
-          className="btn btn-sm btn-ghost"
+        <PillButton
+          variant="ghost"
+          size="compact"
           style={{ width: '100%' }}
           onClick={() => copy('permissions-trust', '/permissions trust')}
         >
           {copiedId === 'permissions-trust' ? 'Copied' : 'Copy /permissions trust'}
-        </button>
+        </PillButton>
       </div>
 
       <div className="safety-card">

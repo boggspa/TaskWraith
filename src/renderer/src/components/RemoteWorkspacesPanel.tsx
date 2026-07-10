@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { ReactElement } from 'react'
 import { PROVIDER_OPTIONS } from '../../../shared/remoteWorkspaceDefaults'
+import { PillButton } from './PillButton'
 
 /**
  * RemoteWorkspacesPanel — Phase C4 admin UI for the iOS remote allowlist.
@@ -176,9 +177,9 @@ export function RemoteWorkspacesPanel(): ReactElement {
 
       {entries.length > 0 && (
         <div className="remote-workspaces-footer">
-          <button
-            type="button"
-            className="btn btn-sm btn-ghost remote-workspaces-clear"
+          <PillButton
+            size="compact"
+            className="remote-workspaces-clear"
             onClick={async () => {
               if (!confirm('Remove all remote workspace allowlist entries?')) return
               await window.api.bridgeAllowlistClear()
@@ -186,7 +187,7 @@ export function RemoteWorkspacesPanel(): ReactElement {
             }}
           >
             Clear all entries
-          </button>
+          </PillButton>
         </div>
       )}
     </section>
@@ -249,18 +250,18 @@ function EntryRow({
         </div>
         <div className="remote-workspaces-entry-actions">
           {canEnableFiles ? (
-            <button
-              type="button"
-              className="btn btn-sm btn-ghost remote-workspaces-enable-files"
+            <PillButton
+              size="compact"
+              className="remote-workspaces-enable-files"
               onClick={() => void onEnableFiles()}
               title="Explicitly grant browse, read, and write access for iOS Files mode."
             >
               Enable files
-            </button>
+            </PillButton>
           ) : null}
-          <button
-            type="button"
-            className={`btn btn-sm btn-ghost remote-workspaces-toggle-publish ${publishEnabled ? 'is-enabled' : ''}`}
+          <PillButton
+            size="compact"
+            className={`remote-workspaces-toggle-publish ${publishEnabled ? 'is-enabled' : ''}`}
             onClick={() => void onTogglePublish()}
             title={
               publishEnabled
@@ -269,14 +270,14 @@ function EntryRow({
             }
           >
             {publishEnabled ? 'Disable publish' : 'Enable publish'}
-          </button>
-          <button
-            type="button"
-            className="btn btn-sm btn-ghost remote-workspaces-remove"
+          </PillButton>
+          <PillButton
+            size="compact"
+            className="remote-workspaces-remove"
             onClick={() => void onRemove()}
           >
             Remove
-          </button>
+          </PillButton>
         </div>
       </div>
     </li>
@@ -543,14 +544,14 @@ function AddEntryForm({ onAdded }: { onAdded: () => void | Promise<void> }): Rea
 
       {formError && <div className="settings-error remote-workspaces-error">{formError}</div>}
 
-      <button
-        type="button"
-        className="btn btn-sm btn-primary"
+      <PillButton
+        variant="primary"
+        size="compact"
         onClick={() => void submit()}
         disabled={submitting || !workspaceId.trim() || !path.trim()}
       >
         {submitting ? 'Adding…' : 'Add to allowlist'}
-      </button>
+      </PillButton>
     </div>
   )
 }

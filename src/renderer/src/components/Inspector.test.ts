@@ -214,6 +214,21 @@ describe('buildDelegationTree', () => {
 })
 
 describe('Inspector capabilities', () => {
+  it('uses shared segmented controls for mutually exclusive inspector views and filters', () => {
+    const diffHtml = renderInspector({ rightTab: 'diff', runDiff: [] })
+    expect(diffHtml).toContain('aria-label="Diff view"')
+    expect(diffHtml).toContain('role="radiogroup"')
+    expect(diffHtml).toContain('aria-checked="true"')
+    expect(diffHtml).toContain('segmented-control--compact')
+
+    const rawHtml = renderInspector({ rightTab: 'raw' })
+    expect(rawHtml).toContain('aria-label="Raw event filter"')
+    expect(rawHtml).toContain('data-segmented-control-value="all"')
+    expect(rawHtml).toContain('data-segmented-control-value="stdout"')
+    expect(rawHtml).toContain('data-segmented-control-value="stderr"')
+    expect(rawHtml).toContain('data-segmented-control-value="tool"')
+  })
+
   it('renders an Ensemble-wide capability summary instead of the Codex-only panel', () => {
     const html = renderInspector()
 

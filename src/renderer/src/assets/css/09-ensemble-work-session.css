@@ -3152,20 +3152,24 @@
 }
 
 .popout-root:is([data-popout-kind="file-editor"], [data-popout-kind="diff-studio"])
-  :is(.file-editor-filter, .btn-ghost, .diff-file-badge) {
+  :is(
+    .file-editor-filter,
+    .segmented-control-action:not(.segmented-control-action--primary):not(.segmented-control-action--danger),
+    .diff-file-badge
+  ) {
   color: var(--text-primary);
   background-color: var(--popout-control-bg) !important;
   border-color: var(--popout-border);
 }
 
 .popout-root:is([data-popout-kind="file-editor"], [data-popout-kind="diff-studio"])
-  .btn:not(.btn-ghost) {
+  .segmented-control-action--primary {
   color: var(--popout-primary-action-text);
   border-color: color-mix(in srgb, var(--accent) 72%, var(--popout-border));
 }
 
 .popout-root:is([data-popout-kind="file-editor"], [data-popout-kind="diff-studio"])
-  .btn-ghost:hover {
+  .segmented-control-action:not(.segmented-control-action--primary):not(.segmented-control-action--danger):hover {
   background-color: color-mix(in srgb, var(--accent) 12%, var(--popout-control-bg)) !important;
   color: var(--text-primary);
 }
@@ -3542,7 +3546,7 @@
   :is(
     .file-editor-filter,
     .diff-file-filter,
-    .btn-ghost,
+    .segmented-control-action:not(.segmented-control-action--primary):not(.segmented-control-action--danger),
     .diff-file-badge,
     .diff-toolbar-count,
     .diff-stage-count-chip,
@@ -3700,7 +3704,7 @@
   color: var(--text-primary);
 }
 
-.popout-root[data-popout-family="workspace"] .btn:not(.btn-ghost) {
+.popout-root[data-popout-family="workspace"] .segmented-control-action--primary {
   color: var(--popout-primary-action-text);
   border-color: color-mix(in srgb, var(--accent) 70%, var(--popout-rim));
 }

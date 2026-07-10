@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react'
 import type { ChatRecord, ProviderId } from '../../../main/store/types'
 import { isSubThreadChat } from '../lib/chatScope'
 import { isRetiredProvider } from '../../../shared/retiredProviders'
+import { PillButton } from './PillButton'
 
 /**
  * SubThreadCreator — Phase F1 modal for delegating to a sub-thread.
@@ -201,19 +202,18 @@ export function SubThreadCreator({
         )}
 
         <footer className="sub-thread-creator-footer">
-          <button type="button" className="btn btn-ghost" onClick={onCancel} disabled={submitting}>
+          <PillButton onClick={onCancel} disabled={submitting}>
             Cancel
-          </button>
-          <button
-            type="button"
-            className="btn btn-primary"
+          </PillButton>
+          <PillButton
+            variant="primary"
             onClick={() => void submit()}
             disabled={submitting || isParentItselfSubThread}
           >
             {submitting
               ? 'Creating…'
               : `Spawn ${PROVIDER_OPTIONS.find((o) => o.value === provider)?.label} sub-thread`}
-          </button>
+          </PillButton>
         </footer>
       </div>
     </div>

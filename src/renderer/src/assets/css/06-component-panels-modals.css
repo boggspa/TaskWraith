@@ -723,8 +723,7 @@
   .sidebar-masthead,
   .sidebar-empty-state,
   .run-summary,
-  .model-usage-summary,
-  .sidebar-footer .btn
+  .model-usage-summary
 ) {
   /* Glass-mode tile chrome — intentionally excludes
    * .sidebar-workspace-item, .sidebar-chat-item, and

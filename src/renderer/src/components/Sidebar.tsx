@@ -4877,7 +4877,7 @@ export function Sidebar({
                         {totalChats > 0 ? (
                           <button
                             type="button"
-                            className="btn btn-sm btn-ghost sidebar-tree-toggle"
+                            className="sidebar-tree-toggle"
                             onClick={(event) => toggleWorkspaceExpanded(event, ws.id)}
                             title={expanded ? 'Collapse chats' : 'Expand chats'}
                             aria-label={expanded ? 'Collapse chats' : 'Expand chats'}

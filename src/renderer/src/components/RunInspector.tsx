@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { RunEventReplay } from '../../../main/store/types'
 import { classifyEventsForInspector, type InspectorRow } from '../lib/RunEventClassifier'
+import { PillButton } from './PillButton'
 
 /**
  * RunInspector — Phase K1 Slice 1B.
@@ -262,25 +263,23 @@ function RunInspectorHeader({
         <Pill kind="idle">{replay?.count ?? 0} events</Pill>
       </div>
       <div className="run-inspector__header-actions">
-        <button
-          type="button"
-          className="btn btn-sm btn-ghost"
+        <PillButton
+          size="compact"
           onClick={onRefresh}
           disabled={loading}
           title="Refresh replay"
         >
           {loading ? '…' : '↻'}
-        </button>
+        </PillButton>
         {onClose && (
-          <button
-            type="button"
-            className="btn btn-sm btn-ghost"
+          <PillButton
+            size="compact"
             onClick={onClose}
             title="Close inspector (Esc)"
             aria-label="Close inspector"
           >
             ×
-          </button>
+          </PillButton>
         )}
       </div>
     </header>

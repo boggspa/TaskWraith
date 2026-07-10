@@ -7,6 +7,7 @@ import {
   entryHasFileCapabilities,
   type WorkspaceRemoteSegment
 } from './workspaceRemoteAccess'
+import { SegmentedControl } from './SegmentedControl'
 
 /**
  * Per-workspace remote-access control for the Settings → Workspaces card. Reads
@@ -16,9 +17,9 @@ import {
  * Off → remove the allowlist entry. Read → read-only grant. Read/Write →
  * read-write grant WITH file editing (gated behind a confirm). External
  * publishing (git push / PR creation) is an explicit admin capability managed
- * separately in the Devices remote-workspace panel. Flipping is read-modify-
+ * separately from the per-workspace access tier. Flipping is read-modify-
  * write (buildAllowlistUpsertForSegment) so it never widens providers/approval/
- * expiry a user narrowed in the Devices tab.
+ * expiry a user narrowed through the workspace controls.
  *
  * Selecting a segment APPLIES immediately, so this is an honest segmented button
  * group (role="group" + aria-pressed), not an ARIA radiogroup (whose arrow-key
@@ -113,7 +114,7 @@ export function WorkspaceRemoteAccessToggle({
       setBusy(true)
       try {
         // Read the LIVE allowlist right before writing: a stale or still-loading
-        // `entries` prop (seeded []) must never make a Devices-narrowed entry look
+        // `entries` prop (seeded []) must never make a user-narrowed entry look
         // absent and get widened to first-grant defaults. read-modify-write only
         // holds if `existing` reflects truth at write time, not at render time.
         const fresh = ((await window.api.bridgeAllowlistList()) ?? []) as RemoteWorkspaceEntry[]
@@ -123,7 +124,7 @@ export function WorkspaceRemoteAccessToggle({
         if (target === 'read-write') {
           warnings.push(
             `Allow your paired iPhone to read AND write files in "${workspace.displayName}"? ` +
-              'It can also stage and commit local git changes. Git push and PR creation are granted separately in Settings → Devices.'
+              'It can also stage and commit local git changes. Git push and PR creation are granted separately from this access tier.'
           )
         }
         if (isFirstGrant) {
@@ -149,42 +150,34 @@ export function WorkspaceRemoteAccessToggle({
   )
 
   return (
-    <div
-      className="segmented-control segmented-control--compact settings-workspace-remote"
-      role="group"
-      aria-label={`Remote access for ${workspace.displayName}`}
-      aria-busy={busy ? 'true' : undefined}
-      aria-disabled={busy ? 'true' : undefined}
-    >
-      {SEGMENTS.map((seg) => {
+    <SegmentedControl
+      className="settings-workspace-remote"
+      ariaLabel={`Remote access for ${workspace.displayName}`}
+      ariaMode="pressed"
+      size="compact"
+      value={segment}
+      options={SEGMENTS.map((seg) => {
         const active = seg.value === segment
         const isWrite = seg.value === 'read-write'
-        return (
-          <button
-            key={seg.value}
-            type="button"
-            // Honest segmented control: one button is "pressed" (the active tier).
-            // Not role="radio" — selection applies immediately, so the radio
-            // arrow-key contract would fire IPC/confirms on every arrow press.
-            aria-pressed={active}
-            aria-label={seg.aria}
-            data-segment={seg.value}
-            title={seg.title}
-            // No `disabled={busy}`: disabling the focused button mid-change drops
-            // keyboard focus to <body>. The handleSelect busy-guard blocks
-            // re-activation; aria-disabled + CSS pointer-events block the mouse.
-            className={`segmented-control-segment settings-workspace-remote-segment ${
-              active ? 'is-active' : ''
-            } ${isWrite ? 'is-write' : ''} ${
-              active && isWrite && filesOff ? 'is-files-off' : ''
-            }`}
-            onClick={() => void handleSelect(seg.value)}
-          >
-            {seg.label}
-            {active && isWrite && filesOff ? ' · files off' : ''}
-          </button>
-        )
+        return {
+          value: seg.value,
+          label: (
+            <>
+              {seg.label}
+              {active && isWrite && filesOff ? ' · files off' : ''}
+            </>
+          ),
+          ariaLabel: seg.aria,
+          dataSegment: seg.value,
+          title: seg.title,
+          className: `settings-workspace-remote-segment ${isWrite ? 'is-write' : ''} ${
+            active && isWrite && filesOff ? 'is-files-off' : ''
+          }`
+        }
       })}
-    </div>
+      busy={busy}
+      disableWhileBusy={false}
+      onValueChange={(next) => void handleSelect(next)}
+    />
   )
 }

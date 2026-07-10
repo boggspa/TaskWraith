@@ -14,6 +14,7 @@ import {
   RunSymbolIcon,
   XSymbolIcon
 } from './AppChromeSymbols'
+import { PillButton } from './PillButton'
 import './ComposerPlanImportCard.css'
 
 export interface ComposerPlanImportCardProps {
@@ -164,15 +165,16 @@ export function ComposerPlanImportCard({
             <ReviewSymbolIcon />
             {reviewOpen ? 'Hide review' : 'Review'}
           </button>
-          <button
-            className="btn btn-sm plan-import-primary-action"
-            type="button"
+          <PillButton
+            variant="primary"
+            size="compact"
+            className="plan-import-primary-action"
             onClick={handleRunImportedPlan}
             disabled={disabled || planImportGroundingBusy}
           >
             <RunSymbolIcon />
             Import & run
-          </button>
+          </PillButton>
           <button
             className="composer-inline-clear plan-import-dismiss"
             type="button"
@@ -354,18 +356,19 @@ export function ComposerPlanImportCard({
           </div>
 
           <div className="plan-import-review-actions">
-            <button
-              className="btn btn-sm plan-import-primary-action"
-              type="button"
+            <PillButton
+              variant="primary"
+              size="compact"
+              className="plan-import-primary-action"
               onClick={handleRunImportedPlan}
               disabled={disabled || planImportGroundingBusy}
             >
               <RunSymbolIcon />
               Import & run
-            </button>
-            <button className="btn btn-sm btn-ghost" type="button" onClick={handleRunRawPrompt} disabled={disabled}>
+            </PillButton>
+            <PillButton size="compact" onClick={handleRunRawPrompt} disabled={disabled}>
               Send as-is
-            </button>
+            </PillButton>
           </div>
         </div>
       )}

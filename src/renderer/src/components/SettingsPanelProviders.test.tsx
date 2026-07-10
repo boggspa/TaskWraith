@@ -162,6 +162,31 @@ describe('SettingsPanel provider cards', () => {
     expect(html).toContain('HSL')
   })
 
+  it('uses shared segmented controls for appearance mode choices', () => {
+    const html = renderToStaticMarkup(
+      <SettingsPanel
+        {...makeSettingsProps({
+          activeTab: 'appearance',
+          mode: 'soft_glass',
+          funFxMode: 'cinematic',
+          advancedFx: {
+            agentAura: false,
+            livingWorkspace: false,
+            dataViz: false,
+            refraction: false,
+            intensity: 'cinematic'
+          }
+        })}
+      />
+    )
+
+    expect(html).toContain('class="segmented-control segmented-control--compact settings-option-list settings-option-list-inline"')
+    expect(html).toContain('role="radiogroup" aria-label="Window material"')
+    expect(html).toContain('role="radio" aria-checked="true"')
+    expect(html).toContain('aria-label="Epic FX mode"')
+    expect(html).toContain('aria-label="FX Labs intensity"')
+  })
+
   it('renders available Cursor and Grok cards without raw env flags and with ready LEDs', () => {
     const html = renderToStaticMarkup(<SettingsPanel {...makeSettingsProps()} />)
 
@@ -858,15 +883,15 @@ describe('SettingsPanel provider cards', () => {
     expect(html).toContain('User MCP server editing is managed by organization policy.')
     expect(html).toContain('<span class="settings-editable-pill">Managed</span>')
     expect(html).toMatch(
-      /<button type="button" class="btn btn-sm btn-ghost" disabled="">Import config<\/button>/
+      /<button type="button" class="segmented-control-action segmented-control-action--compact" disabled="">Import config<\/button>/
     )
     expect(html).toMatch(
-      /<button type="button" class="btn btn-sm" disabled="">Add server<\/button>/
+      /<button type="button" class="segmented-control-action segmented-control-action--compact segmented-control-action--primary" disabled="">Add server<\/button>/
     )
     expect(html).toMatch(/<input type="checkbox" disabled="" checked=""/)
-    expect(html).toMatch(/<button type="button" class="btn btn-sm btn-ghost" disabled="">Edit<\/button>/)
+    expect(html).toMatch(/<button type="button" class="segmented-control-action segmented-control-action--compact" disabled="">Edit<\/button>/)
     expect(html).toMatch(
-      /<button type="button" class="btn btn-sm btn-ghost" disabled="">Delete<\/button>/
+      /<button type="button" class="segmented-control-action segmented-control-action--compact segmented-control-action--danger" disabled="">Delete<\/button>/
     )
     expect(html).toContain('Copy audit JSON')
   })

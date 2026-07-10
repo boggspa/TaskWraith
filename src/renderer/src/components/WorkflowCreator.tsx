@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ChatRecord, WorkflowDefinition, WorkspaceRecord } from '../../../main/store/types'
 import { getChatProvider } from '../lib/chatScope'
 import { getProviderLabel } from '../lib/providerLabels'
+import { PillButton } from './PillButton'
 
 export interface WorkflowCreatorSubmitInput {
   name: string
@@ -273,17 +274,16 @@ export function WorkflowCreator({
         </div>
 
         <footer className="workflow-creator-footer">
-          <button type="button" className="btn btn-ghost" onClick={onCancel} disabled={submitting}>
+          <PillButton onClick={onCancel} disabled={submitting}>
             Cancel
-          </button>
-          <button
-            type="button"
-            className="btn btn-primary"
+          </PillButton>
+          <PillButton
+            variant="primary"
             onClick={() => void submit()}
             disabled={submitting || !workspace || !localHistoryEnabled}
           >
             {submitting ? 'Creating...' : 'Create workflow'}
-          </button>
+          </PillButton>
         </footer>
       </section>
     </div>

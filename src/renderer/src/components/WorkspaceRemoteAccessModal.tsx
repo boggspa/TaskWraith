@@ -3,11 +3,12 @@ import { createPortal } from 'react-dom'
 import type { WorkspaceRecord } from '../../../main/store/types'
 import type { RemoteWorkspaceEntry } from '../../../shared/remoteWorkspaceDefaults'
 import { buildAllowlistUpsertForSegment, deriveWorkspaceRemoteSegment } from './workspaceRemoteAccess'
+import { PillButton } from './PillButton'
 
 /**
  * Shown right after a NEW workspace is added (folder picker), so users grant
- * remote access in the same breath instead of forgetting the separate Devices
- * tab. The workspace is already persisted by the time this opens — this is
+ * remote access in the same breath instead of forgetting the Workspace
+ * setting. The workspace is already persisted by the time this opens — this is
  * purely the remote-allowlist choice.
  *
  * Three options. "This Computer Only" is the default + safe choice. For a fresh
@@ -213,7 +214,7 @@ export function WorkspaceRemoteAccessModal({
         </h2>
         <p id={DESC_ID} className="creative-approval-modal-description">
           Can your paired iPhone / iPad reach this workspace? You can change this anytime in
-          Settings → Workspaces or Devices.
+          Settings → Workspaces.
         </p>
 
         <div className="workspace-remote-access-options" role="radiogroup" aria-label="Remote access">
@@ -257,24 +258,23 @@ export function WorkspaceRemoteAccessModal({
         )}
 
         <div className="workspace-remote-access-actions">
-          <button
-            type="button"
-            className="btn btn-sm btn-ghost"
+          <PillButton
+            size="compact"
             disabled={busy}
             onClick={() => {
               if (!busy) closeOnce()
             }}
           >
             Cancel
-          </button>
-          <button
-            type="button"
-            className="btn btn-sm btn-primary"
+          </PillButton>
+          <PillButton
+            variant="primary"
+            size="compact"
             disabled={busy}
             onClick={() => void apply()}
           >
             {primaryLabel}
-          </button>
+          </PillButton>
         </div>
       </div>
     </div>,

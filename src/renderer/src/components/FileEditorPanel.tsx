@@ -7,6 +7,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent
 } from 'react'
 import { createPortal } from 'react-dom'
+import { PillButton } from './PillButton'
 import { keymap, EditorView, type ViewUpdate } from '@codemirror/view'
 import type { Extension } from '@codemirror/state'
 import { HighlightStyle, StreamLanguage, syntaxHighlighting } from '@codemirror/language'
@@ -1988,21 +1989,20 @@ export function FileEditorPanel({
                 {selectedPath} will be removed from this workspace.
               </span>
               <div className="file-editor-unsaved-actions">
-                <button
-                  className="btn btn-sm btn-danger"
-                  type="button"
+                <PillButton
+                  variant="danger"
+                  size="compact"
                   onClick={() => void deleteSelectedFile()}
                 >
                   Delete
-                </button>
-                <button
-                  className="btn btn-sm btn-ghost"
-                  type="button"
+                </PillButton>
+                <PillButton
+                  size="compact"
                   onClick={() => setShowDeleteConfirm(false)}
                   autoFocus
                 >
                   Cancel
-                </button>
+                </PillButton>
               </div>
             </div>
           </div>
@@ -2041,9 +2041,9 @@ export function FileEditorPanel({
                 autoFocus
               />
               <div className="file-editor-unsaved-actions">
-                <button
-                  className="btn btn-sm"
-                  type="button"
+                <PillButton
+                  variant="primary"
+                  size="compact"
                   onClick={() => void commitStagedChanges()}
                   disabled={
                     !commitMessage.trim() ||
@@ -2053,14 +2053,13 @@ export function FileEditorPanel({
                   }
                 >
                   Commit
-                </button>
-                <button
-                  className="btn btn-sm btn-ghost"
-                  type="button"
+                </PillButton>
+                <PillButton
+                  size="compact"
                   onClick={() => setShowCommitDialog(false)}
                 >
                   Cancel
-                </button>
+                </PillButton>
               </div>
             </div>
           </div>
@@ -2095,28 +2094,27 @@ export function FileEditorPanel({
               Save or discard changes before closing {pendingClosePath}.
             </span>
             <div className="file-editor-unsaved-actions">
-              <button
-                className="btn btn-sm"
-                type="button"
+              <PillButton
+                variant="primary"
+                size="compact"
                 onClick={() => void saveAndClosePendingBuffer()}
               >
                 Save
-              </button>
-              <button
-                className="btn btn-sm btn-ghost"
-                type="button"
+              </PillButton>
+              <PillButton
+                variant="danger"
+                size="compact"
                 onClick={() => closeEditorBuffer(pendingClosePath)}
               >
                 Discard
-              </button>
-              <button
-                className="btn btn-sm btn-ghost"
-                type="button"
+              </PillButton>
+              <PillButton
+                size="compact"
                 onClick={() => setPendingClosePath('')}
                 autoFocus
               >
                 Cancel
-              </button>
+              </PillButton>
             </div>
           </div>
         )}
@@ -2134,21 +2132,20 @@ export function FileEditorPanel({
             <strong id="file-editor-dirty-action-title">{pendingDirtyActionCopy.title}</strong>
             <span id="file-editor-dirty-action-body">{pendingDirtyActionCopy.body}</span>
             <div className="file-editor-unsaved-actions">
-              <button
-                className={`btn btn-sm${pendingDirtyActionCopy.danger ? ' btn-danger' : ''}`}
-                type="button"
+              <PillButton
+                variant={pendingDirtyActionCopy.danger ? 'danger' : 'primary'}
+                size="compact"
                 onClick={confirmPendingDirtyAction}
               >
                 {pendingDirtyActionCopy.confirmLabel}
-              </button>
-              <button
-                className="btn btn-sm btn-ghost"
-                type="button"
+              </PillButton>
+              <PillButton
+                size="compact"
                 onClick={() => setPendingDirtyAction(null)}
                 autoFocus
               >
                 Cancel
-              </button>
+              </PillButton>
             </div>
           </div>
         )}

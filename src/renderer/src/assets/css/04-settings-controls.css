@@ -1361,7 +1361,7 @@
   flex: 0 0 auto;
 }
 
-.settings-workspace-actions .btn.is-pinned {
+.settings-workspace-actions .segmented-control-action.is-pinned {
   color: color-mix(in srgb, var(--accent) 90%, var(--text-primary) 10%);
 }
 
@@ -2842,7 +2842,7 @@
   justify-content: space-between;
 }
 
-.settings-safety-surface-card .btn {
+.settings-safety-surface-card .segmented-control-action {
   justify-self: start;
 }
 
@@ -3620,46 +3620,6 @@
   color: var(--text-muted);
 }
 
-/* Buttons */
-.btn {
-  font-family: var(--font-sans);
-  font-size: var(--font-size-sm);
-  padding: 6px 12px;
-  border-radius: var(--radius-sm);
-  border: 1px solid transparent;
-  cursor: pointer;
-  background: var(--accent);
-  color: #fff;
-  font-weight: 500;
-  transition: opacity 0.12s ease;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-xs);
-}
-
-.btn:hover { opacity: 0.9; }
-.btn:disabled { opacity: 0.45; cursor: not-allowed; }
-
-.btn-ghost {
-  background: transparent;
-  color: var(--text-secondary);
-  border-color: rgba(255,255,255,0.08);
-}
-
-.btn-ghost:hover { background: rgba(255,255,255,0.05); color: var(--text-primary); }
-
-.btn.btn-icon.sidebar-item-action {
-  border: 0;
-  outline: none;
-  box-shadow: none;
-}
-
-.btn.btn-ghost.sidebar-item-action:hover,
-.btn.btn-ghost.sidebar-item-action:focus-visible {
-  background: transparent;
-}
-
 /* ============================================================
  * Sidebar tile overflow menu (… ⇒ popover with chat/workspace
  * actions). Trigger sits inline with other sidebar-item-actions;
@@ -3768,17 +3728,6 @@
   height: 1px;
   margin: 4px 6px;
   background: color-mix(in srgb, #ffffff 7%, transparent);
-}
-
-.btn-danger { background: var(--danger); }
-
-.btn-sm { padding: 3px 8px; font-size: var(--font-size-xs); }
-
-.btn-icon {
-  padding: 4px;
-  width: 28px;
-  height: 28px;
-  border-radius: var(--radius-sm);
 }
 
 /* Inputs */
