@@ -1153,63 +1153,15 @@
   overflow: auto;
 }
 
-.pinned-blackboard-group {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.pinned-blackboard-category {
-  color: var(--text-muted);
-  font-size: 11px;
-  font-weight: 800;
-  letter-spacing: 0;
-  text-transform: uppercase;
-}
-
-.pinned-blackboard-entry {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 8px;
-  border: 1px solid var(--rightdock-border);
-  border-radius: 7px;
-  background: var(--rightdock-surface-raised);
-}
-
-.pinned-blackboard-entry-meta {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 8px;
-  color: var(--text-secondary);
-  font-size: 11px;
-}
-
-.pinned-blackboard-entry-meta strong {
-  min-width: 0;
-  overflow-wrap: anywhere;
-  color: var(--text-primary);
-}
-
-.pinned-blackboard-entry-meta span {
-  flex: 0 0 auto;
-  color: var(--text-muted);
-  font-weight: 800;
-  text-transform: uppercase;
-}
-
-.pinned-blackboard-entry-actions {
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
+/* Entry cards, category headings, author chips, and the seen rail render
+ * through the shared BlackboardEntryCard component — unified
+ * `.blackboard-card` styles below. Only the scroll container, compose
+ * form, and delete button (slotted into the card header) stay here. */
 
 .pinned-blackboard-entry-delete {
   flex: 0 0 auto;
-  width: 24px;
-  height: 24px;
+  width: 22px;
+  height: 22px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1229,79 +1181,6 @@
 .pinned-blackboard-entry-delete:disabled {
   cursor: default;
   opacity: 0.5;
-}
-
-.pinned-blackboard-entry-body {
-  color: var(--text-primary);
-  font-size: var(--font-size-sm);
-  line-height: 1.45;
-  overflow-wrap: anywhere;
-}
-
-.pinned-blackboard-seen-rail {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  min-width: 0;
-}
-
-.pinned-blackboard-seen-chip,
-.pinned-blackboard-seen-more {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  min-width: 0;
-  max-width: 100%;
-  padding: 2px 6px 2px 4px;
-  border: 1px solid color-mix(in srgb, var(--blackboard-seen-color, var(--accent)) 40%, transparent);
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--blackboard-seen-color, var(--accent)) 11%, transparent);
-  color: var(--blackboard-seen-color, var(--accent));
-  font-size: 10px;
-  font-weight: 800;
-  line-height: 1.2;
-}
-
-.pinned-blackboard-seen-chip > span:not(.pinned-blackboard-seen-initial) {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.pinned-blackboard-seen-chip.is-user {
-  --blackboard-seen-color: var(--text-secondary);
-}
-
-.pinned-blackboard-seen-glyph,
-.pinned-blackboard-seen-initial {
-  flex: 0 0 auto;
-  width: 14px;
-  height: 14px;
-}
-
-.pinned-blackboard-seen-initial {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 50%;
-  background: color-mix(in srgb, var(--blackboard-seen-color, var(--accent)) 18%, transparent);
-  font-size: 9px;
-}
-
-.pinned-blackboard-seen-chip svg {
-  flex: 0 0 auto;
-}
-
-.pinned-blackboard-seen-more {
-  padding: 2px 6px;
-  --blackboard-seen-color: var(--text-muted);
-}
-
-.pinned-blackboard-author {
-  color: var(--text-muted);
-  font-size: 11px;
-  font-weight: 700;
 }
 
 /* ============================================================

@@ -2,12 +2,18 @@ import { useEffect, useRef, useState } from 'react'
 import type {
   BlackboardEntry,
   ChatRecord,
-  EnsembleParticipant,
   PinnedMessageSummary
 } from '../../../main/store/types'
-import { resolveProviderBrandLabel, resolveProviderHueClass } from '../lib/ollamaDisplayBrand'
-import { ProviderGlyph } from './icons/ProviderGlyph'
+import { BlackboardGroupedList, buildBlackboardGroups } from './BlackboardEntryCard'
 import { MarkdownMessage } from './MarkdownMessage'
+
+// Grouping/order/sort helpers moved to the shared BlackboardEntryCard module
+// (the composer popover renders the same cards); re-exported for compat.
+export {
+  BLACKBOARD_CATEGORY_LABELS,
+  BLACKBOARD_CATEGORY_ORDER,
+  sortBlackboardEntries
+} from './BlackboardEntryCard'
 
 interface PinnedMessagesPanelProps {
   chat: ChatRecord | null
@@ -19,29 +25,6 @@ interface PinnedMessagesPanelProps {
   onJumpToMessage: (messageId: string) => void
   onUnpinMessage: (messageId: string) => void
   onAddPinnedMessageToWorkspaceBoard?: (message: PinnedMessageSummary) => void
-}
-
-export const BLACKBOARD_CATEGORY_ORDER: BlackboardEntry['category'][] = [
-  'decision',
-  'fact',
-  'risk',
-  'do-not-repeat',
-  'note'
-]
-
-export const BLACKBOARD_CATEGORY_LABELS: Record<BlackboardEntry['category'], string> = {
-  decision: 'Decisions',
-  fact: 'Facts',
-  risk: 'Risks',
-  'do-not-repeat': 'Do not repeat',
-  note: 'Notes'
-}
-
-export function sortBlackboardEntries(a: BlackboardEntry, b: BlackboardEntry): number {
-  const categoryRank =
-    BLACKBOARD_CATEGORY_ORDER.indexOf(a.category) - BLACKBOARD_CATEGORY_ORDER.indexOf(b.category)
-  if (categoryRank !== 0) return categoryRank
-  return (b.createdAt || '').localeCompare(a.createdAt || '')
 }
 
 function formatPinnedTimestamp(value: number): string {
@@ -137,125 +120,6 @@ function TrashMiniIcon(): React.JSX.Element {
   )
 }
 
-function BossmanCrownIcon(): React.JSX.Element {
-  return (
-    <svg viewBox="0 0 24 24" width="12" height="12" aria-hidden focusable="false">
-      <path
-        d="M4.7 17.8h14.6l1.2-9.1-4.8 3.4-3.7-6-3.7 6-4.8-3.4 1.2 9.1Z"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinejoin="round"
-      />
-      <path d="M5.4 20h13.2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-    </svg>
-  )
-}
-
-function CaptainHatIcon(): React.JSX.Element {
-  return (
-    <svg viewBox="0 0 24 24" width="12" height="12" aria-hidden focusable="false">
-      <path
-        d="M5.2 15.8c2.3 1.2 11.3 1.2 13.6 0"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.9"
-        strokeLinecap="round"
-      />
-      <path
-        d="M6.8 14.8 8 9.7c.3-1.1 1.2-1.8 2.3-1.8h3.4c1.1 0 2 .7 2.3 1.8l1.2 5.1"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.9"
-        strokeLinejoin="round"
-      />
-      <path
-        d="M9.3 8c.7-1.2 1.6-1.9 2.7-1.9s2 .7 2.7 1.9M10.1 11.4h3.8"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.6"
-        strokeLinecap="round"
-      />
-      <path
-        d="M4 16.4c1.9 1.3 4.6 2 8 2s6.1-.7 8-2"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.9"
-        strokeLinecap="round"
-      />
-    </svg>
-  )
-}
-
-function participantLabel(participant: EnsembleParticipant | undefined, participantId: string): string {
-  if (participantId === 'user') return 'You'
-  if (!participant) return participantId
-  return (
-    participant.role ||
-    resolveProviderBrandLabel(participant.provider, participant.model) ||
-    participant.provider
-  )
-}
-
-function SeenByRail({
-  chat,
-  entry
-}: {
-  chat: ChatRecord | null
-  entry: BlackboardEntry
-}): React.JSX.Element | null {
-  const seenBy = entry.seenBy || []
-  if (seenBy.length === 0) return null
-  const participants = chat?.ensemble?.participants || []
-  const bossmanId = chat?.ensemble?.bossmanParticipantId
-  const captainId = chat?.ensemble?.secondInCommandParticipantId
-  const byId = new Map(participants.map((participant) => [participant.id, participant]))
-
-  return (
-    <div className="pinned-blackboard-seen-rail" aria-label="Seen by">
-      {seenBy.slice(0, 12).map((participantId) => {
-        const participant = byId.get(participantId)
-        const providerClass = participant
-          ? resolveProviderHueClass(participant.provider, participant.model)
-          : participantId === 'user'
-            ? 'user'
-            : 'ensemble'
-        const label = participantLabel(participant, participantId)
-        const isBossman = participantId === bossmanId
-        const isCaptain = participantId === captainId && !isBossman
-        return (
-          <span
-            key={participantId}
-            className={`pinned-blackboard-seen-chip provider-${providerClass}${
-              participantId === 'user' ? ' is-user' : ''
-            }`}
-            style={{
-              '--blackboard-seen-color': `var(--provider-${providerClass}-color, var(--accent))`
-            } as React.CSSProperties}
-            title={`${label} has seen this entry`}
-            aria-label={`${label} has seen this entry`}
-          >
-            {participant ? (
-              <ProviderGlyph
-                provider={participant.provider}
-                className="pinned-blackboard-seen-glyph"
-              />
-            ) : (
-              <span className="pinned-blackboard-seen-initial" aria-hidden>
-                {label.slice(0, 1).toUpperCase()}
-              </span>
-            )}
-            <span>{label}</span>
-            {isBossman && <BossmanCrownIcon />}
-            {isCaptain && <CaptainHatIcon />}
-          </span>
-        )
-      })}
-      {seenBy.length > 12 && <span className="pinned-blackboard-seen-more">+{seenBy.length - 12}</span>}
-    </div>
-  )
-}
-
 function BlackboardSection({
   chat,
   entries
@@ -268,14 +132,8 @@ function BlackboardSection({
   const [deletingEntryId, setDeletingEntryId] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
   const canPost = Boolean(chat?.appChatId && chat?.ensemble)
-  const visibleEntries = entries
-    .filter((entry) => entry.key.trim() && entry.value.trim())
-    .sort(sortBlackboardEntries)
-
-  const grouped = BLACKBOARD_CATEGORY_ORDER.map((category) => ({
-    category,
-    entries: visibleEntries.filter((entry) => entry.category === category)
-  })).filter((group) => group.entries.length > 0)
+  const grouped = buildBlackboardGroups(entries)
+  const visibleCount = grouped.reduce((total, group) => total + group.entries.length, 0)
   const draftValue = draft.trim()
   const submitPost = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -318,7 +176,7 @@ function BlackboardSection({
     <section className="pinned-blackboard-block" aria-label="Blackboard">
       <div className="pinned-section-heading">
         <span>Blackboard</span>
-        {visibleEntries.length > 0 && <small>{visibleEntries.length}</small>}
+        {visibleCount > 0 && <small>{visibleCount}</small>}
       </div>
       {canPost && (
         <form className="pinned-blackboard-compose" onSubmit={submitPost}>
@@ -337,53 +195,30 @@ function BlackboardSection({
       {!canPost && actionError && (
         <small className="pinned-blackboard-post-error">{actionError}</small>
       )}
-      {visibleEntries.length === 0 ? (
+      {visibleCount === 0 ? (
         <div className="right-dock-empty pinned-blackboard-empty">No blackboard entries.</div>
       ) : (
         <div className="pinned-blackboard-list">
-          {grouped.map((group) => (
-            <div key={group.category} className="pinned-blackboard-group">
-              <div className="pinned-blackboard-category">
-                {BLACKBOARD_CATEGORY_LABELS[group.category]}
-              </div>
-              {group.entries.map((entry) => (
-                <article
-                  key={entry.id}
-                  className={`pinned-blackboard-entry category-${entry.category}`}
+          <BlackboardGroupedList
+            chat={chat}
+            groups={grouped}
+            variant="panel"
+            showSeenBy
+            renderEntryActions={(entry) =>
+              canPost ? (
+                <button
+                  type="button"
+                  className="pinned-blackboard-entry-delete"
+                  onClick={() => deleteEntry(entry)}
+                  disabled={deletingEntryId !== null}
+                  title={deletingEntryId === entry.id ? 'Deleting...' : 'Delete blackboard entry'}
+                  aria-label={`Delete blackboard entry ${entry.key}`}
                 >
-                  <div className="pinned-blackboard-entry-meta">
-                    <strong>{entry.key}</strong>
-                    <div className="pinned-blackboard-entry-actions">
-                      <span>{entry.scope}</span>
-                      {canPost && (
-                        <button
-                          type="button"
-                          className="pinned-blackboard-entry-delete"
-                          onClick={() => deleteEntry(entry)}
-                          disabled={deletingEntryId !== null}
-                          title={
-                            deletingEntryId === entry.id
-                              ? 'Deleting...'
-                              : 'Delete blackboard entry'
-                          }
-                          aria-label={`Delete blackboard entry ${entry.key}`}
-                        >
-                          <TrashMiniIcon />
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                  <div className="pinned-blackboard-entry-body">
-                    <MarkdownMessage content={entry.value} chat={chat || undefined} />
-                  </div>
-                  <SeenByRail chat={chat} entry={entry} />
-                  {entry.participantId && (
-                    <div className="pinned-blackboard-author">{entry.participantId}</div>
-                  )}
-                </article>
-              ))}
-            </div>
-          ))}
+                  <TrashMiniIcon />
+                </button>
+              ) : null
+            }
+          />
         </div>
       )}
     </section>
