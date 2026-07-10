@@ -1197,7 +1197,9 @@
   display: flex;
   flex-direction: column;
   gap: 6px;
-  --blackboard-cat-color: var(--text-muted);
+  /* --text-muted is NOT app-global (popout/dock-scoped) and the popover is
+   * portaled to <body> — always give it a --text-secondary escape hatch. */
+  --blackboard-cat-color: var(--text-muted, var(--text-secondary));
 }
 
 /* Category accent — one hue drives the group heading dot/label and the
@@ -1277,7 +1279,7 @@
 }
 
 .blackboard-card-time {
-  color: color-mix(in srgb, var(--text-muted) 88%, transparent);
+  color: color-mix(in srgb, var(--text-muted, var(--text-secondary)) 88%, transparent);
   font-size: 10px;
   font-weight: 700;
   white-space: nowrap;
@@ -1408,7 +1410,7 @@
 }
 
 .blackboard-seen-kicker {
-  color: color-mix(in srgb, var(--text-muted) 82%, transparent);
+  color: color-mix(in srgb, var(--text-muted, var(--text-secondary)) 82%, transparent);
   font-size: 9px;
   font-weight: 800;
   letter-spacing: 0.07em;
@@ -1419,7 +1421,7 @@
   padding: 1px 6px;
   border: 1px solid color-mix(in srgb, var(--panel-border) 62%, transparent);
   border-radius: 999px;
-  color: var(--text-muted);
+  color: var(--text-muted, var(--text-secondary));
   font-size: 10px;
   font-weight: 800;
 }
