@@ -197,8 +197,8 @@ interface CombinedModelPickerProps {
   /** Atomic cross-provider selection. Required when providerGroups is set. */
   onSelectProviderModel?: (provider: ProviderId, modelId: string) => void
   /**
-   * Reasoning options for the current provider. Pass an empty array
-   * to hide the reasoning column entirely (e.g. Gemini today).
+   * Reasoning options for the current provider. An empty or fixed catalog
+   * renders the shared disabled placeholder ladder.
    */
   reasoningOptions: CombinedModelPickerReasoningOption[]
   selectedReasoning: string
@@ -244,6 +244,12 @@ interface CombinedModelPickerProps {
   customTrigger?: CombinedModelPickerCustomTrigger
   /** Optional footer action for draft-based picker flows. */
   confirmAction?: CombinedModelPickerConfirmAction
+  /** Optional full-width content above the existing picker columns. */
+  topContent?: ReactNode
+  /** Internal surface hook for a caller-specific popover layout. */
+  popoverClassName?: string
+  /** Accessible name override for caller-specific picker compositions. */
+  dialogAriaLabel?: string
   onOpenChange?: (open: boolean) => void
 }
 
@@ -953,6 +959,9 @@ export function CombinedModelPicker({
   repositionOnScroll,
   customTrigger,
   confirmAction,
+  topContent,
+  popoverClassName,
+  dialogAriaLabel,
   onOpenChange
 }: CombinedModelPickerProps): React.JSX.Element {
   const unifiedProviderGroups = providerGroups || []
@@ -969,6 +978,7 @@ export function CombinedModelPicker({
     selectedFastModeCapableModelIds && selectedFastModeCapableModelIds.size > 0 && onToggleFastMode
   )
   const showReasoningSidecar = true
+  const hasTopContent = Boolean(topContent)
   const ladder = useMemo(
     () => buildLadderModel(provider, reasoningOptions),
     [provider, reasoningOptions]
@@ -1172,17 +1182,20 @@ export function CombinedModelPicker({
       const trigger = triggerRef.current
       if (!trigger) return
       const rect = trigger.getBoundingClientRect()
-      const popoverWidth = isUnifiedProviderPicker
-        ? 420
-        : isOllamaProviderPicker
-          ? 500
-          : showReasoningSidecar
-            ? 360
-            : 200
+      const popoverWidth = hasTopContent
+        ? 520
+        : isUnifiedProviderPicker
+          ? 420
+          : isOllamaProviderPicker
+            ? 500
+            : showReasoningSidecar
+              ? 360
+              : 200
       const measuredPopover = popoverRef.current?.getBoundingClientRect()
       const effectiveWidth = measuredPopover?.width || popoverWidth
       const effectiveHeight =
-        measuredPopover?.height || Math.min(322, Math.max(1, window.innerHeight - 24))
+        measuredPopover?.height ||
+        Math.min(hasTopContent ? 570 : 322, Math.max(1, window.innerHeight - 16))
       setPosition(
         resolveCombinedPickerPosition({
           triggerRect: rect,
@@ -1220,6 +1233,7 @@ export function CombinedModelPicker({
   }, [
     isOllamaProviderPicker,
     isUnifiedProviderPicker,
+    hasTopContent,
     open,
     showReasoningSidecar,
     repositionOnScroll
@@ -1291,6 +1305,9 @@ export function CombinedModelPicker({
       const target = event.target as Node
       if (popoverRef.current?.contains(target)) return
       if (triggerRef.current?.contains(target)) return
+      if (target instanceof Element && target.closest('.composer-textarea-context-menu')) {
+        return
+      }
       setOpen(false)
     }
     const handleKey = (event: KeyboardEvent) => {
@@ -1319,11 +1336,11 @@ export function CombinedModelPicker({
       if (
         target instanceof Element &&
         targetInsidePopover &&
-        target.closest('button')
+        target.closest('button, input, select, textarea, [contenteditable="true"]')
       ) {
-        // Once focus has moved into the popover, let native button keyboard
-        // activation win. In particular, Enter on the Ensemble Add confirm or
-        // Fast toggle must not be intercepted as a model-row selection.
+        // Once focus has moved into an interactive child, let its native
+        // keyboard behavior win. This covers the Add-participant detail fields
+        // as well as the existing confirm and Fast buttons.
         return
       }
       if (event.key === 'ArrowDown') {
@@ -1432,15 +1449,20 @@ export function CombinedModelPicker({
       ref={popoverRef}
       className={`composer-combined-picker-popover provider-${provider} shell-${composerStyle} ${
         isOllamaProviderPicker ? 'is-ollama-model-picker' : ''
-      } ${isUnifiedProviderPicker ? 'is-unified-provider-picker' : ''}`}
+      } ${isUnifiedProviderPicker ? 'is-unified-provider-picker' : ''} ${
+        hasTopContent ? 'has-top-content' : ''
+      } ${popoverClassName || ''}`}
       style={{
         position: 'fixed',
         left: `${position.left}px`,
         top: `${position.top}px`
       }}
       role="dialog"
-      aria-label="Choose provider, model, reasoning level, and speed"
+      aria-label={dialogAriaLabel || 'Choose provider, model, reasoning level, and speed'}
     >
+      {hasTopContent && (
+        <div className="composer-combined-picker-top-content">{topContent}</div>
+      )}
       {isOllamaProviderPicker && (
         <div
           className={`composer-combined-picker-column composer-combined-picker-providers ${focusedColumn === 'provider' ? 'is-focused' : ''}`}
