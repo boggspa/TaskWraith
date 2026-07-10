@@ -131,7 +131,8 @@ baseline.
 - **Workspace Safety**: Workspace selection, trust-state visibility, approval
   modes, and run-scoped safety state before agents operate on local files.
 - **Provider Runs**: Integrated run surfaces for Codex, Claude, Kimi, Grok,
-  Cursor, and **local Ollama** (curated Qwen, Gemma, and GPT-OSS presets).
+  Cursor, and **local Ollama** (curated Qwen, Gemma, GPT-OSS, and Poolside
+  presets).
   Historical Gemini chats remain readable, but Gemini is retired for new runs.
   Provider names describe compatible integrations only — CLIs and accounts stay
   user-installed.
@@ -156,8 +157,14 @@ baseline.
   carve-out.
 - **Ensemble Threads**: Multi-agent shared work sessions with named provider
   participants, role/order control, turn-bound or continuous orchestration,
-  optional parallel fan-out, cross-provider handoffs, and TaskWraith MCP tools
-  shared under one auditable workspace policy.
+  optional parallel fan-out, cross-provider handoffs, a shared Blackboard for
+  cross-agent notes (composer quick-access popover plus full add/delete in the
+  Notes pane), and TaskWraith MCP tools shared under one auditable workspace
+  policy.
+- **Agent Pool**: Save reusable agents in Settings, each with a linked
+  provider/model/reasoning configuration and running contribution stats (runs,
+  threads, tokens, tool calls, work time), then drag them into ensemble rosters.
+  A welcome-dashboard leaderboard ranks pool agents by contribution.
 - **Audit Runs**: `/audit` can coordinate provider-backed review passes with
   live progress, structured findings, verdicts, and dismissible run banners.
 - **Local Ollama**: Full TaskWraith tool-surface parity where local capability is
@@ -169,18 +176,28 @@ baseline.
   provider-specific JSON/TOML snippets and readiness checks.
 - **Activity Review**: Live activity viewport for in-flight tools and thinking,
   compact timelines, durations, and raw event inspection.
+- **AI Close-Out Summaries**: Run and ensemble-round close-out cards show
+  readable prose plus a pass/fail line instead of quoting an agent's last
+  message verbatim. On Macs with Apple Foundation Models available, that prose is
+  generated on-device (badged "via Foundation Models") behind a prompt-injection
+  guard; a deterministic summary is the fallback everywhere else.
 - **Diff Studio**: File-list and diff-detail review for run-scoped changes and
   current workspace changes, including previews for newly created text files.
+- **GitHub PR & CI Awareness**: When the workspace has a GitHub remote, an icon
+  row above the composer shows live PR lifecycle and CI status; hovering opens a
+  popover with fuller detail (including failing-check logs), and a "Notify
+  thread" action can post the status into the Blackboard or transcript.
 - **Local History and Usage**: Local-only chat, run, usage, approval-ledger, and
   audit state for repeat work without a hosted backend.
 - **iOS Companion**: TestFlight companion surfaces Demo Mode, Workflows,
   first-launch/provider readiness, usage snapshots, approvals, questions,
-  transcript streaming, thread renaming, inline images, and remote file/diff
-  inspection.
+  transcript streaming, thread renaming, inline images, remote file/diff
+  inspection, home search and pin/rename/archive, scheduled sending, and
+  transcript export.
 - **Release Tooling**: Security, dependency, packaging, and signing hooks for
   reproducible local release work.
 
-Latest tagged public release: **v1.7.0**. See [CHANGELOG.md](CHANGELOG.md) for
+Latest tagged public release: **v1.7.9**. See [CHANGELOG.md](CHANGELOG.md) for
 release notes. The changelog's **Unreleased - source-ahead** section, when
 populated, describes repository changes only. The checkout may be ahead of that
 tag; newer commits should not be treated as shipped until those source-ahead notes
