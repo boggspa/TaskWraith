@@ -2363,7 +2363,6 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                 {activeRightDockTab === 'inspector' && appearance.showInspector && (
             <Inspector
               rightTab={rightTab}
-              setRightTab={setRightTab}
               activeDiff={activeDiff}
               refreshDiff={refreshDiff}
               currentWorkspace={currentWorkspace}

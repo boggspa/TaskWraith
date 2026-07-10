@@ -142,7 +142,6 @@ function renderInspector(overrides: Partial<Parameters<typeof Inspector>[0]> = {
   return renderToStaticMarkup(
     createElement(Inspector, {
       rightTab: 'capabilities',
-      setRightTab: () => {},
       activeDiff: null,
       refreshDiff: () => {},
       currentWorkspace: { id: 'ws', path: '/repo' },
@@ -214,6 +213,14 @@ describe('buildDelegationTree', () => {
 })
 
 describe('Inspector capabilities', () => {
+  it('renders the selected surface without the redundant destination header', () => {
+    const html = renderInspector({ rightTab: 'raw' })
+
+    expect(html).not.toContain('class="inspector-tabs"')
+    expect(html).not.toContain('class="inspector-tab')
+    expect(html).toContain('class="inspector-body"')
+  })
+
   it('uses shared segmented controls for mutually exclusive inspector views and filters', () => {
     const diffHtml = renderInspector({ rightTab: 'diff', runDiff: [] })
     expect(diffHtml).toContain('aria-label="Diff view"')
