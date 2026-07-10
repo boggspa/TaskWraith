@@ -10,6 +10,7 @@ import {
 } from '../../shared/systemThemeAppearance'
 import { isRetiredExternalChannelInboundMessage } from '../LegacyExternalChannelHistory'
 import { resolveActiveGoalForEnsemble } from '../GoalState'
+import { partitionUsageRecordsForRotation } from './usageRotation'
 import type { TaskWraithPluginResourceProvenance } from '../../shared/plugins/PluginTypes'
 import type { UnattendedElevationAck } from '../UnattendedPostureGate'
 import {
@@ -257,6 +258,21 @@ const userDataPath = electron.app.getPath('userData')
 const settingsPath = path.join(userDataPath, 'settings.json')
 const workspacesPath = path.join(userDataPath, 'workspaces.json')
 const usagePath = path.join(userDataPath, 'usage.json')
+const usageArchivePath = path.join(userDataPath, 'usage-archive.jsonl')
+
+/** Append rotated usage records to the JSONL archive. Returns false on any
+ * failure so the caller keeps the records in the hot file instead — archive
+ * failure must degrade to grow-forever, never to data loss. Append-only
+ * (O_APPEND) keeps concurrent writers (second instance) line-safe. */
+function appendUsageArchiveRecords(records: UsageRecord[]): boolean {
+  try {
+    const lines = records.map((record) => JSON.stringify(record)).join('\n')
+    fs.appendFileSync(usageArchivePath, `${lines}\n`, { encoding: 'utf-8', mode: 0o600 })
+    return true
+  } catch {
+    return false
+  }
+}
 const providerUsageSnapshotsPath = path.join(userDataPath, 'provider-usage-snapshots.json')
 const scheduledTasksPath = path.join(userDataPath, 'scheduled-tasks.json')
 const workflowsPath = path.join(userDataPath, 'workflows.json')
@@ -3387,6 +3403,9 @@ export class AppStore {
 
   // Usage
   static getUsage(workspaceId?: string, chatId?: string) {
+    // NOTE: reads only the hot usage.json. Records older than the rotation
+    // retention window (see usageRotation.ts — well past every live surface's
+    // window) live in usage-archive.jsonl and are not served here.
     const records = readJson<UsageRecord[]>(usagePath, [])
     return records.filter((record) => {
       if (workspaceId && record.workspaceId !== workspaceId) return false
@@ -3411,6 +3430,18 @@ export class AppStore {
     }
 
     records.push(record)
+
+    // Bound the hot file: rotate records past the retention window into the
+    // append-only archive, and only drop them from usage.json AFTER the
+    // archive append succeeded — a failed archive degrades to the old
+    // grow-forever behavior, never to data loss. (A crash between append and
+    // rewrite can duplicate a batch into the archive; records carry unique
+    // ids, so archive consumers dedupe by id.)
+    const { keep, rotate } = partitionUsageRecordsForRotation(records, record.timestamp)
+    if (rotate.length > 0 && appendUsageArchiveRecords(rotate)) {
+      writeJson(usagePath, keep)
+      return
+    }
     writeJson(usagePath, records)
   }
 
