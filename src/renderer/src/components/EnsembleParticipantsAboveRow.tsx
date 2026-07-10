@@ -230,6 +230,19 @@ export interface EnsembleParticipantAddConfiguration {
   serviceTier?: string
 }
 
+export interface EnsembleParticipantAddDetails {
+  enabled: boolean
+  authority: EnsembleParticipantAuthority
+  autoApprovalsEnabled: boolean
+  autoApprovalsConfirmedAt?: string
+  stageRole?: EnsembleParticipant['stageRole']
+  role: string
+  instructions: string
+}
+
+export type EnsembleParticipantAddDraft = EnsembleParticipantAddConfiguration &
+  EnsembleParticipantAddDetails
+
 /** Ordered, synthetic-custom-free catalogs for the Ensemble `+` picker. */
 export function buildEnsembleAddProviderGroups(
   grokAvailable: boolean,
@@ -339,11 +352,48 @@ export function createEnsembleParticipantAddConfiguration(
   }
 }
 
+export function createEnsembleParticipantAddDetails(
+  provider: ProviderId,
+  participants: EnsembleParticipant[],
+  autoApprovals?: NonNullable<ChatRecord['ensemble']>['bossmanAutoApprovals']
+): EnsembleParticipantAddDetails {
+  const roleName = getDefaultEnsembleRoleName(provider)
+  return {
+    enabled: true,
+    authority: 'agent',
+    autoApprovalsEnabled: autoApprovals?.enabled === true,
+    autoApprovalsConfirmedAt: autoApprovals?.confirmedAt,
+    stageRole: undefined,
+    role: nextRoleLabel(roleName, participants),
+    instructions: `Contribute as ${roleName} for this ensemble.`
+  }
+}
+
+export function resolveEnsembleParticipantAddAuthorityPatch(
+  state: EnsembleAuthorityPatch,
+  participantId: string,
+  authority: EnsembleParticipantAuthority,
+  autoApprovals: NonNullable<ChatRecord['ensemble']>['bossmanAutoApprovals']
+): EnsembleAuthorityPatch {
+  const authorityPatch = resolveEnsembleParticipantAuthorityPatch(
+    state,
+    participantId,
+    authority
+  )
+  const hasLeadership = Boolean(
+    authorityPatch.bossmanParticipantId || authorityPatch.secondInCommandParticipantId
+  )
+  return {
+    ...authorityPatch,
+    bossmanAutoApprovals: hasLeadership ? autoApprovals : undefined
+  }
+}
+
 /** Pure roster materialization used by the live add flow and focused tests. */
 export function buildEnsembleParticipantAddition(
   participants: EnsembleParticipant[],
   selectedParticipantId: string | null,
-  configuration: EnsembleParticipantAddConfiguration
+  configuration: EnsembleParticipantAddConfiguration & Partial<EnsembleParticipantAddDetails>
 ): { participant: EnsembleParticipant; insertIndex: number } {
   const source =
     participants.find((participant) => participant.id === selectedParticipantId) ||
@@ -357,13 +407,20 @@ export function buildEnsembleParticipantAddition(
     participant: {
       id: nextParticipantId(participants),
       provider: configuration.provider,
-      enabled: true,
-      role: nextRoleLabel(roleName, participants),
-      instructions: `Contribute as ${roleName} for this ensemble.`,
+      enabled: configuration.enabled ?? true,
+      role:
+        configuration.role !== undefined
+          ? configuration.role
+          : nextRoleLabel(roleName, participants),
+      instructions:
+        configuration.instructions !== undefined
+          ? configuration.instructions
+          : `Contribute as ${roleName} for this ensemble.`,
       order: participants.length + 1,
       model: configuration.model || defaults.model,
       geminiAuthProfileId: null,
       permissionPresetId: defaults.permissionPresetId,
+      stageRole: configuration.stageRole,
       reasoningEffort: configuration.reasoningEffort,
       fastModeEnabled: configuration.fastModeEnabled,
       thinkingEnabled: configuration.thinkingEnabled,

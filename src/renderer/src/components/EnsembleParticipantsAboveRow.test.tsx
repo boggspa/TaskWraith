@@ -10,7 +10,9 @@ import {
   computeEnsembleChipGridSpans,
   computeEnsembleChipRowDistribution,
   createEnsembleParticipantAddConfiguration,
+  createEnsembleParticipantAddDetails,
   resolveEnsembleAddProviderGroups,
+  resolveEnsembleParticipantAddAuthorityPatch,
   resolveEnsembleParticipantAuthorityPatch,
   resolveParticipantSelectionAfterRemoval
 } from './EnsembleParticipantsAboveRow'
@@ -247,6 +249,27 @@ describe('EnsembleParticipantsAboveRow', () => {
   })
 
   describe('unified add-participant draft', () => {
+    it('creates unique participant details without losing existing Auto consent', () => {
+      const participants = [
+        makeParticipant({ id: 'claude-1', provider: 'claude', role: 'Claude', order: 1 })
+      ]
+      const details = createEnsembleParticipantAddDetails('claude', participants, {
+        enabled: true,
+        mode: 'permission_preset_once',
+        confirmedAt: '2026-07-10T16:00:00.000Z'
+      })
+
+      expect(details).toEqual({
+        enabled: true,
+        authority: 'agent',
+        autoApprovalsEnabled: true,
+        autoApprovalsConfirmedAt: '2026-07-10T16:00:00.000Z',
+        stageRole: undefined,
+        role: 'Claude 2',
+        instructions: 'Contribute as Claude for this ensemble.'
+      })
+    })
+
     it('uses the existing provider order and omits synthetic custom models', () => {
       expect(buildEnsembleAddProviderGroups(false, false).map((group) => group.provider)).toEqual([
         'codex',
@@ -433,6 +456,68 @@ describe('EnsembleParticipantsAboveRow', () => {
       expect(participant.fastModeEnabled).toBe(true)
       expect(participant.serviceTier).toBe('fast')
       expect(participant.permissionPresetId).toBe('default')
+    })
+
+    it('materializes the participant fields chosen in the Add picker', () => {
+      const { participant } = buildEnsembleParticipantAddition([], null, {
+        provider: 'claude',
+        model: 'claude-sonnet-5',
+        enabled: false,
+        authority: 'agent',
+        autoApprovalsEnabled: false,
+        stageRole: 'reviewer',
+        role: 'Release reviewer',
+        instructions: 'Review the final diff and call out regressions.'
+      })
+
+      expect(participant).toMatchObject({
+        enabled: false,
+        stageRole: 'reviewer',
+        role: 'Release reviewer',
+        instructions: 'Review the final diff and call out regressions.'
+      })
+    })
+
+    it('applies new authority and Auto consent as one ensemble patch', () => {
+      const existingConsent = {
+        enabled: true,
+        mode: 'permission_preset_once' as const,
+        confirmedAt: '2026-07-10T16:00:00.000Z'
+      }
+
+      expect(
+        resolveEnsembleParticipantAddAuthorityPatch(
+          {
+            bossmanParticipantId: 'old-boss',
+            secondInCommandParticipantId: 'captain',
+            bossmanAutoApprovals: existingConsent
+          },
+          'new-boss',
+          'boss',
+          existingConsent
+        )
+      ).toEqual({
+        bossmanParticipantId: 'new-boss',
+        secondInCommandParticipantId: 'captain',
+        bossmanAutoApprovals: existingConsent
+      })
+
+      expect(
+        resolveEnsembleParticipantAddAuthorityPatch(
+          {
+            bossmanParticipantId: undefined,
+            secondInCommandParticipantId: undefined,
+            bossmanAutoApprovals: undefined
+          },
+          'new-agent',
+          'agent',
+          existingConsent
+        )
+      ).toEqual({
+        bossmanParticipantId: undefined,
+        secondInCommandParticipantId: undefined,
+        bossmanAutoApprovals: undefined
+      })
     })
   })
 
