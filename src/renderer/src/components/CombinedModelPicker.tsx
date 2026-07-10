@@ -24,7 +24,7 @@
  *   - Click-outside dismisses.
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import type { ProviderId, ComposerStyle } from '../../../main/store/types'
 import {
@@ -32,8 +32,13 @@ import {
   reasoningDisplayLabel,
   resolveClaudeShellModelLabel
 } from '../lib/composerChipFormat'
-import { OLLAMA_DISPLAY_BRANDS, resolveOllamaDisplayBrand } from '../lib/ollamaDisplayBrand'
+import {
+  OLLAMA_DISPLAY_BRANDS,
+  resolveOllamaDisplayBrand,
+  resolveProviderBrandLabel
+} from '../lib/ollamaDisplayBrand'
 import { CodexFastBoltIcon } from './icons/CodexFastBoltIcon'
+import { getProviderName, ProviderBadgeIcon } from './Sidebar'
 
 export interface CombinedModelPickerModelOption {
   id: string
@@ -115,12 +120,46 @@ export interface CombinedModelPickerReasoningOption {
   disabledReason?: string
 }
 
+/**
+ * One provider section in the unified catalog. The caller owns availability
+ * and ordering; the picker renders the groups verbatim so every surface uses
+ * the same provider order as the existing provider picker.
+ */
+export interface CombinedModelPickerProviderGroup {
+  provider: ProviderId
+  label?: string
+  modelOptions: CombinedModelPickerModelOption[]
+  fastModeCapableModelIds?: ReadonlySet<string>
+  pauseLabel?: string
+  rerouteLabel?: string
+}
+
+export interface CombinedModelPickerCustomTrigger {
+  className: string
+  content: ReactNode
+  title: string
+  ariaLabel: string
+}
+
+export interface CombinedModelPickerConfirmAction {
+  label: string
+  onConfirm: () => void
+  disabled?: boolean
+}
+
 interface CombinedModelPickerProps {
   provider: ProviderId
   composerStyle: ComposerStyle
   modelOptions: CombinedModelPickerModelOption[]
   selectedModelId: string
   onSelectModel: (modelId: string) => void
+  /**
+   * Ordered provider catalogs for the all-models view. Omit to retain the
+   * legacy provider-scoped picker (used by compatibility/test surfaces).
+   */
+  providerGroups?: CombinedModelPickerProviderGroup[]
+  /** Atomic cross-provider selection. Required when providerGroups is set. */
+  onSelectProviderModel?: (provider: ProviderId, modelId: string) => void
   /**
    * Reasoning options for the current provider. Pass an empty array
    * to hide the reasoning column entirely (e.g. Gemini today).
@@ -165,6 +204,11 @@ interface CombinedModelPickerProps {
    * because its pickers live inside a scrolling list.
    */
   repositionOnScroll?: boolean
+  /** Alternate trigger chrome, used by the Ensemble add-participant `+`. */
+  customTrigger?: CombinedModelPickerCustomTrigger
+  /** Optional footer action for draft-based picker flows. */
+  confirmAction?: CombinedModelPickerConfirmAction
+  onOpenChange?: (open: boolean) => void
 }
 
 type CombinedModelPickerColumn = 'provider' | 'model' | 'reasoning'
@@ -174,6 +218,19 @@ type OllamaProviderGroup = {
   label: string
   providerClass: string
   models: CombinedModelPickerModelOption[]
+}
+
+export type UnifiedModelEntry = {
+  provider: ProviderId
+  option: CombinedModelPickerModelOption
+}
+
+export function flattenUnifiedProviderModels(
+  groups: readonly CombinedModelPickerProviderGroup[]
+): UnifiedModelEntry[] {
+  return groups.flatMap((group) =>
+    group.modelOptions.map((option) => ({ provider: group.provider, option }))
+  )
 }
 
 export type CombinedModelPickerResetState = {
@@ -751,6 +808,8 @@ export function CombinedModelPicker({
   modelOptions,
   selectedModelId,
   onSelectModel,
+  providerGroups,
+  onSelectProviderModel,
   reasoningOptions,
   selectedReasoning,
   onSelectReasoning,
@@ -763,14 +822,26 @@ export function CombinedModelPicker({
   fastModeEnabled,
   onToggleFastMode,
   disabled,
-  repositionOnScroll
+  repositionOnScroll,
+  customTrigger,
+  confirmAction,
+  onOpenChange
 }: CombinedModelPickerProps): React.JSX.Element {
+  const unifiedProviderGroups = providerGroups || []
+  const isUnifiedProviderPicker = unifiedProviderGroups.length > 0
+  const selectedProviderGroup = isUnifiedProviderPicker
+    ? unifiedProviderGroups.find((group) => group.provider === provider)
+    : undefined
+  const selectedFastModeCapableModelIds =
+    selectedProviderGroup?.fastModeCapableModelIds || fastModeCapableModelIds
   const fastModeCapable = Boolean(
-    fastModeCapableModelIds && fastModeCapableModelIds.has(selectedModelId)
+    selectedFastModeCapableModelIds && selectedFastModeCapableModelIds.has(selectedModelId)
   )
   const fastModeRowVisible = Boolean(
-    fastModeCapableModelIds && fastModeCapableModelIds.size > 0 && onToggleFastMode
+    selectedFastModeCapableModelIds && selectedFastModeCapableModelIds.size > 0 && onToggleFastMode
   )
+  const showReasoningSidecar =
+    reasoningOptions.length > 0 || fastModeRowVisible || Boolean(confirmAction)
   const ladder = useMemo(
     () => buildLadderModel(provider, reasoningOptions),
     [provider, reasoningOptions]
@@ -785,13 +856,25 @@ export function CombinedModelPicker({
   const [activeOllamaProviderId, setActiveOllamaProviderId] = useState<string | null>(null)
   const resetSignatureRef = useRef<string | null>(null)
 
+  const unifiedModelEntries = useMemo<UnifiedModelEntry[]>(
+    () => flattenUnifiedProviderModels(unifiedProviderGroups),
+    [unifiedProviderGroups]
+  )
+
   useEffect(() => {
     if (disabled && open) setOpen(false)
   }, [disabled, open])
 
+  useEffect(() => {
+    onOpenChange?.(open)
+  }, [onOpenChange, open])
+
   const ollamaProviderGroups = useMemo(
-    () => (provider === 'ollama' ? buildOllamaProviderGroups(modelOptions) : []),
-    [modelOptions, provider]
+    () =>
+      !isUnifiedProviderPicker && provider === 'ollama'
+        ? buildOllamaProviderGroups(modelOptions)
+        : [],
+    [isUnifiedProviderPicker, modelOptions, provider]
   )
   const isOllamaProviderPicker = provider === 'ollama' && ollamaProviderGroups.length > 0
 
@@ -829,8 +912,9 @@ export function CombinedModelPicker({
     selectedOllamaProviderId
   ])
 
-  const visibleModelOptions =
-    isOllamaProviderPicker && activeOllamaProviderGroup
+  const visibleModelOptions = isUnifiedProviderPicker
+    ? unifiedModelEntries.map((entry) => entry.option)
+    : isOllamaProviderPicker && activeOllamaProviderGroup
       ? activeOllamaProviderGroup.models
       : modelOptions
 
@@ -926,6 +1010,10 @@ export function CombinedModelPicker({
     showShellFastLabel,
     reasoningSuffix
   ])
+  const providerDisplayLabel =
+    resolveProviderBrandLabel(provider, selectedModelOption.id) ||
+    selectedProviderGroup?.label ||
+    getProviderName(provider)
 
   // Position the popover above-right of the chip when opened.
   useEffect(() => {
@@ -937,7 +1025,13 @@ export function CombinedModelPicker({
       const trigger = triggerRef.current
       if (!trigger) return
       const rect = trigger.getBoundingClientRect()
-      const popoverWidth = isOllamaProviderPicker ? 500 : reasoningOptions.length > 0 ? 360 : 200
+      const popoverWidth = isUnifiedProviderPicker
+        ? 420
+        : isOllamaProviderPicker
+          ? 500
+          : showReasoningSidecar
+            ? 360
+            : 200
       const left = Math.max(8, rect.right - popoverWidth)
       // Anchor ABOVE the chip with a small gap.
       const top = rect.top - 8
@@ -960,7 +1054,13 @@ export function CombinedModelPicker({
       window.removeEventListener('scroll', computePosition, true)
       window.removeEventListener('resize', computePosition)
     }
-  }, [isOllamaProviderPicker, open, reasoningOptions.length, repositionOnScroll])
+  }, [
+    isOllamaProviderPicker,
+    isUnifiedProviderPicker,
+    open,
+    showReasoningSidecar,
+    repositionOnScroll
+  ])
 
   // Reset model/provider highlights only when the popover opens or the committed
   // model/provider selection changes. Parent catalog refreshes recreate
@@ -978,15 +1078,28 @@ export function CombinedModelPicker({
     })
     if (resetSignatureRef.current === resetSignature) return
     resetSignatureRef.current = resetSignature
-    const resetState = resolveCombinedModelPickerResetState({
-      isOllamaProviderPicker,
-      ollamaProviderGroups,
-      modelOptions,
-      selectedModelId,
-      selectedOllamaProviderId,
-      reasoningOptions,
-      selectedReasoning
-    })
+    const resetState = isUnifiedProviderPicker
+      ? {
+          providerIndex: 0,
+          activeOllamaProviderId: null,
+          modelIndex: Math.max(
+            0,
+            unifiedModelEntries.findIndex(
+              (entry) => entry.provider === provider && entry.option.id === selectedModelId
+            )
+          ),
+          reasoningIndex: 0,
+          focusedColumn: 'model' as CombinedModelPickerColumn
+        }
+      : resolveCombinedModelPickerResetState({
+          isOllamaProviderPicker,
+          ollamaProviderGroups,
+          modelOptions,
+          selectedModelId,
+          selectedOllamaProviderId,
+          reasoningOptions,
+          selectedReasoning
+        })
     const frame = window.requestAnimationFrame(() => {
       setProviderHighlight(resetState.providerIndex)
       setActiveOllamaProviderId(resetState.activeOllamaProviderId)
@@ -996,13 +1109,16 @@ export function CombinedModelPicker({
     return () => window.cancelAnimationFrame(frame)
   }, [
     isOllamaProviderPicker,
+    isUnifiedProviderPicker,
     modelOptions,
     ollamaProviderGroups,
     open,
     selectedModelId,
     selectedOllamaProviderId,
     reasoningOptions,
-    selectedReasoning
+    selectedReasoning,
+    unifiedModelEntries,
+    provider
   ])
 
   // Click-outside + Escape dismiss.
@@ -1068,7 +1184,7 @@ export function CombinedModelPicker({
         event.preventDefault()
         if (focusedColumn === 'provider') {
           setFocusedColumn('model')
-        } else if (focusedColumn === 'model' && reasoningOptions.length > 0) {
+        } else if (focusedColumn === 'model' && showReasoningSidecar) {
           setFocusedColumn('reasoning')
         }
       } else if (event.key === 'ArrowLeft') {
@@ -1089,8 +1205,15 @@ export function CombinedModelPicker({
             setFocusedColumn('model')
           }
         } else if (focusedColumn === 'model') {
-          const option = visibleModelOptions[modelHighlight]
-          if (option && !option.disabled) onSelectModel(option.id)
+          const unifiedEntry = isUnifiedProviderPicker ? unifiedModelEntries[modelHighlight] : null
+          const option = unifiedEntry?.option || visibleModelOptions[modelHighlight]
+          if (option && !option.disabled) {
+            if (unifiedEntry) {
+              onSelectProviderModel?.(unifiedEntry.provider, option.id)
+            } else {
+              onSelectModel(option.id)
+            }
+          }
         } else {
           // Reasoning ladder: Enter confirms exactly what the thumb shows (the
           // clamped stop), never a stale row index. Up/Down/drag already commit
@@ -1108,17 +1231,21 @@ export function CombinedModelPicker({
     open,
     focusedColumn,
     isOllamaProviderPicker,
+    isUnifiedProviderPicker,
     ollamaProviderGroups,
     reasoningOptions,
+    showReasoningSidecar,
     modelHighlight,
     providerHighlight,
     onSelectModel,
+    onSelectProviderModel,
     onSelectReasoning,
     visibleModelOptions,
     disabled,
     ladder,
     provider,
-    selectedReasoning
+    selectedReasoning,
+    unifiedModelEntries
   ])
 
   const popoverContent = open && position && (
@@ -1126,7 +1253,7 @@ export function CombinedModelPicker({
       ref={popoverRef}
       className={`composer-combined-picker-popover provider-${provider} shell-${composerStyle} ${
         isOllamaProviderPicker ? 'is-ollama-model-picker' : ''
-      }`}
+      } ${isUnifiedProviderPicker ? 'is-unified-provider-picker' : ''}`}
       style={{
         position: 'fixed',
         left: `${position.left}px`,
@@ -1134,7 +1261,7 @@ export function CombinedModelPicker({
         transform: 'translateY(-100%)'
       }}
       role="dialog"
-      aria-label="Choose model and reasoning level"
+      aria-label="Choose provider, model, reasoning level, and speed"
     >
       {isOllamaProviderPicker && (
         <div
@@ -1175,94 +1302,215 @@ export function CombinedModelPicker({
         </div>
       )}
       <div
-        className={`composer-combined-picker-column composer-combined-picker-models ${focusedColumn === 'model' ? 'is-focused' : ''}`}
+        className={`composer-combined-picker-column composer-combined-picker-models ${
+          isUnifiedProviderPicker ? 'is-unified-model-list' : ''
+        } ${focusedColumn === 'model' ? 'is-focused' : ''}`}
       >
-        <div className="composer-combined-picker-column-header">Model</div>
-        {visibleModelOptions.length === 0 && (
-          <div
-            className="composer-combined-picker-row"
-            style={{ cursor: 'default', color: 'var(--text-tertiary)', fontStyle: 'italic' }}
-          >
-            <span className="composer-combined-picker-row-label">Loading models&hellip;</span>
-          </div>
+        {!isUnifiedProviderPicker && (
+          <div className="composer-combined-picker-column-header">Model</div>
         )}
-        {visibleModelOptions.map((option, idx) => {
-          const supportsFast = Boolean(
-            fastModeCapableModelIds && fastModeCapableModelIds.has(option.id)
-          )
-          return (
-            <button
-              key={option.id}
-              type="button"
-              className={`composer-combined-picker-row ${option.id === selectedModelId ? 'is-selected' : ''} ${option.disabled ? 'is-disabled' : ''} ${idx === modelHighlight && focusedColumn === 'model' ? 'is-highlighted' : ''}`}
-              disabled={Boolean(disabled || option.disabled)}
-              title={option.disabled ? option.disabledReason || 'Unavailable' : undefined}
-              onMouseEnter={() => {
-                setFocusedColumn('model')
-                setModelHighlight(idx)
-              }}
-              onClick={() => {
-                if (disabled || option.disabled) return
-                onSelectModel(option.id)
-                if (isOllamaProviderPicker) {
-                  const parentGroup = ollamaProviderGroups.find((group) =>
-                    group.models.some((model) => model.id === option.id)
-                  )
-                  if (parentGroup) setActiveOllamaProviderId(parentGroup.id)
+        {isUnifiedProviderPicker ? (
+          unifiedProviderGroups.map((group, groupIndex) => {
+            const modelOffset = unifiedProviderGroups
+              .slice(0, groupIndex)
+              .reduce((count, item) => count + item.modelOptions.length, 0)
+            const groupSelected = group.provider === provider
+            return (
+              <section
+                key={group.provider}
+                className={`composer-combined-picker-provider-group ${
+                  groupSelected ? 'is-current' : ''
+                }`}
+                data-provider={group.provider}
+                style={
+                  {
+                    '--model-provider-accent': `var(--provider-${group.provider}-color, var(--accent))`
+                  } as React.CSSProperties
                 }
-                // Keep the popover open so the user can also tweak
-                // reasoning without re-clicking the chip. Real Codex
-                // behaves the same way.
-              }}
-            >
-              <span className="composer-combined-picker-row-label">{option.label}</span>
-              {option.retiresAt && (
-                <span
-                  className="composer-combined-picker-retirement-pill"
-                  title={`Retiring ${formatRetirementLabel(option.retiresAt)}`}
-                  aria-label={`Retiring ${formatRetirementLabel(option.retiresAt)}`}
-                >
-                  <RetirementClockIcon />
-                  <span className="composer-combined-picker-retirement-date">
-                    {formatRetirementLabel(option.retiresAt)}
+              >
+                <div className="composer-combined-picker-provider-header">
+                  <span className="composer-combined-picker-provider-header-icon" aria-hidden>
+                    <ProviderBadgeIcon provider={group.provider} />
                   </span>
-                </span>
-              )}
-              {supportsFast && (
-                <span
-                  className="composer-combined-picker-fast-indicator"
-                  title="Supports Fast mode"
-                  aria-label="Supports Fast mode"
-                >
-                  {useCodexMonolineFastBolt ? (
-                    <CodexFastBoltIcon className="codex-fast-bolt-icon" />
-                  ) : (
-                    <FastBoltIcon />
+                  <span className="composer-combined-picker-provider-header-label">
+                    {group.label || getProviderName(group.provider)}
+                  </span>
+                  {group.pauseLabel && (
+                    <span
+                      className="composer-provider-paused-pill"
+                      title={[group.pauseLabel, group.rerouteLabel].filter(Boolean).join('\n')}
+                    >
+                      Paused
+                    </span>
                   )}
-                </span>
-              )}
-              {option.id === selectedModelId && (
-                <span className="composer-combined-picker-check" aria-hidden>
-                  ✓
-                </span>
-              )}
-            </button>
-          )
-        })}
+                </div>
+                {group.modelOptions.length === 0 && (
+                  <div className="composer-combined-picker-empty-provider">
+                    Loading models&hellip;
+                  </div>
+                )}
+                {group.modelOptions.map((option, optionIndex) => {
+                  const rowIndex = modelOffset + optionIndex
+                  const selected = group.provider === provider && option.id === selectedModelId
+                  const supportsFast = Boolean(group.fastModeCapableModelIds?.has(option.id))
+                  return (
+                    <button
+                      key={`${group.provider}:${option.id}`}
+                      type="button"
+                      className={`composer-combined-picker-row ${
+                        selected ? 'is-selected' : ''
+                      } ${option.disabled ? 'is-disabled' : ''} ${
+                        rowIndex === modelHighlight && focusedColumn === 'model'
+                          ? 'is-highlighted'
+                          : ''
+                      }`}
+                      data-provider-model={`${group.provider}:${option.id}`}
+                      disabled={Boolean(disabled || option.disabled)}
+                      title={option.disabled ? option.disabledReason || 'Unavailable' : undefined}
+                      onMouseEnter={() => {
+                        setFocusedColumn('model')
+                        setModelHighlight(rowIndex)
+                      }}
+                      onClick={() => {
+                        if (disabled || option.disabled) return
+                        onSelectProviderModel?.(group.provider, option.id)
+                      }}
+                    >
+                      <span className="composer-combined-picker-row-label">{option.label}</span>
+                      {option.retiresAt && (
+                        <span
+                          className="composer-combined-picker-retirement-pill"
+                          title={`Retiring ${formatRetirementLabel(option.retiresAt)}`}
+                          aria-label={`Retiring ${formatRetirementLabel(option.retiresAt)}`}
+                        >
+                          <RetirementClockIcon />
+                          <span className="composer-combined-picker-retirement-date">
+                            {formatRetirementLabel(option.retiresAt)}
+                          </span>
+                        </span>
+                      )}
+                      {supportsFast && (
+                        <span
+                          className="composer-combined-picker-fast-indicator"
+                          title="Supports Fast mode"
+                          aria-label="Supports Fast mode"
+                        >
+                          {useCodexMonolineFastBolt ? (
+                            <CodexFastBoltIcon className="codex-fast-bolt-icon" />
+                          ) : (
+                            <FastBoltIcon />
+                          )}
+                        </span>
+                      )}
+                      {selected && (
+                        <span className="composer-combined-picker-check" aria-hidden>
+                          ✓
+                        </span>
+                      )}
+                    </button>
+                  )
+                })}
+              </section>
+            )
+          })
+        ) : (
+          <>
+            {visibleModelOptions.length === 0 && (
+              <div
+                className="composer-combined-picker-row"
+                style={{
+                  cursor: 'default',
+                  color: 'var(--text-tertiary)',
+                  fontStyle: 'italic'
+                }}
+              >
+                <span className="composer-combined-picker-row-label">Loading models&hellip;</span>
+              </div>
+            )}
+            {visibleModelOptions.map((option, idx) => {
+              const supportsFast = Boolean(
+                fastModeCapableModelIds && fastModeCapableModelIds.has(option.id)
+              )
+              return (
+                <button
+                  key={option.id}
+                  type="button"
+                  className={`composer-combined-picker-row ${
+                    option.id === selectedModelId ? 'is-selected' : ''
+                  } ${option.disabled ? 'is-disabled' : ''} ${
+                    idx === modelHighlight && focusedColumn === 'model' ? 'is-highlighted' : ''
+                  }`}
+                  disabled={Boolean(disabled || option.disabled)}
+                  title={option.disabled ? option.disabledReason || 'Unavailable' : undefined}
+                  onMouseEnter={() => {
+                    setFocusedColumn('model')
+                    setModelHighlight(idx)
+                  }}
+                  onClick={() => {
+                    if (disabled || option.disabled) return
+                    onSelectModel(option.id)
+                    if (isOllamaProviderPicker) {
+                      const parentGroup = ollamaProviderGroups.find((group) =>
+                        group.models.some((model) => model.id === option.id)
+                      )
+                      if (parentGroup) setActiveOllamaProviderId(parentGroup.id)
+                    }
+                  }}
+                >
+                  <span className="composer-combined-picker-row-label">{option.label}</span>
+                  {option.retiresAt && (
+                    <span
+                      className="composer-combined-picker-retirement-pill"
+                      title={`Retiring ${formatRetirementLabel(option.retiresAt)}`}
+                      aria-label={`Retiring ${formatRetirementLabel(option.retiresAt)}`}
+                    >
+                      <RetirementClockIcon />
+                      <span className="composer-combined-picker-retirement-date">
+                        {formatRetirementLabel(option.retiresAt)}
+                      </span>
+                    </span>
+                  )}
+                  {supportsFast && (
+                    <span
+                      className="composer-combined-picker-fast-indicator"
+                      title="Supports Fast mode"
+                      aria-label="Supports Fast mode"
+                    >
+                      {useCodexMonolineFastBolt ? (
+                        <CodexFastBoltIcon className="codex-fast-bolt-icon" />
+                      ) : (
+                        <FastBoltIcon />
+                      )}
+                    </span>
+                  )}
+                  {option.id === selectedModelId && (
+                    <span className="composer-combined-picker-check" aria-hidden>
+                      ✓
+                    </span>
+                  )}
+                </button>
+              )
+            })}
+          </>
+        )}
       </div>
-      {reasoningOptions.length > 0 && (
+      {showReasoningSidecar && (
         <div
           className={`composer-combined-picker-column composer-combined-picker-reasoning ${focusedColumn === 'reasoning' ? 'is-focused' : ''}`}
         >
-          <div className="composer-combined-picker-column-header">Reasoning</div>
-          <ReasoningLadderSlider
-            provider={provider}
-            ladder={ladder}
-            selectedReasoning={selectedReasoning}
-            onSelectReasoning={onSelectReasoning}
-            disabled={disabled}
-            onInteract={() => setFocusedColumn('reasoning')}
-          />
+          <div className="composer-combined-picker-column-header">
+            {reasoningOptions.length > 0 ? 'Reasoning' : 'Options'}
+          </div>
+          {reasoningOptions.length > 0 && (
+            <ReasoningLadderSlider
+              provider={provider}
+              ladder={ladder}
+              selectedReasoning={selectedReasoning}
+              onSelectReasoning={onSelectReasoning}
+              disabled={disabled}
+              onInteract={() => setFocusedColumn('reasoning')}
+            />
+          )}
           {/*
             Fast Mode toggle. Tucked under the Reasoning column so
             it reads as a Reasoning-adjacent capability rather than
@@ -1306,6 +1554,20 @@ export function CombinedModelPicker({
               </span>
             </button>
           )}
+          {confirmAction && (
+            <button
+              type="button"
+              className="composer-combined-picker-confirm"
+              disabled={Boolean(disabled || confirmAction.disabled)}
+              onClick={() => {
+                if (disabled || confirmAction.disabled) return
+                confirmAction.onConfirm()
+                setOpen(false)
+              }}
+            >
+              {confirmAction.label}
+            </button>
+          )}
         </div>
       )}
     </div>
@@ -1316,8 +1578,8 @@ export function CombinedModelPicker({
       <button
         ref={triggerRef}
         type="button"
-        className="composer-combined-picker-trigger"
-        data-composer-control="model"
+        className={customTrigger?.className || 'composer-combined-picker-trigger'}
+        data-composer-control={customTrigger ? undefined : 'model'}
         data-provider={provider}
         data-selected-reasoning={selectedReasoning || ''}
         data-fast-mode-active={fastModeEnabled && fastModeCapable ? 'true' : 'false'}
@@ -1332,62 +1594,87 @@ export function CombinedModelPicker({
         disabled={disabled}
         aria-haspopup="dialog"
         aria-expanded={open}
-        title="Model and reasoning"
+        aria-label={customTrigger?.ariaLabel || 'Provider, model, reasoning, and speed'}
+        title={customTrigger?.title || 'Provider, model, reasoning, and speed'}
       >
-        {showTriggerFastBolt &&
-          (useCodexMonolineFastBolt ? (
-            <CodexFastBoltIcon className="composer-combined-picker-trigger-fast-bolt" />
-          ) : (
-            <FastBoltIcon className="composer-combined-picker-trigger-fast-bolt" />
-          ))}
-        {claudeChipSegments ? (
+        {customTrigger ? (
+          customTrigger.content
+        ) : (
           <>
-            <span className="composer-combined-picker-trigger-primary">
-              {claudeChipSegments.model}
+            {showTriggerFastBolt &&
+              (useCodexMonolineFastBolt ? (
+                <CodexFastBoltIcon className="composer-combined-picker-trigger-fast-bolt" />
+              ) : (
+                <FastBoltIcon className="composer-combined-picker-trigger-fast-bolt" />
+              ))}
+            <span className="composer-combined-picker-trigger-provider">
+              <span className="composer-combined-picker-trigger-provider-icon" aria-hidden>
+                <ProviderBadgeIcon provider={provider} />
+              </span>
+              <span className="composer-combined-picker-trigger-provider-label">
+                {providerDisplayLabel}
+              </span>
+              {selectedProviderGroup?.pauseLabel && (
+                <span
+                  className="composer-provider-button-paused"
+                  title={selectedProviderGroup.pauseLabel}
+                >
+                  Paused
+                </span>
+              )}
             </span>
-            {claudeChipSegments.fast ? (
-              <span className="composer-combined-picker-trigger-tail">
-                {/* No dot glyph — a couple of non-breaking spaces stand in as
+            {claudeChipSegments ? (
+              <>
+                <span className="composer-combined-picker-trigger-primary">
+                  {claudeChipSegments.model}
+                </span>
+                {claudeChipSegments.fast ? (
+                  <span className="composer-combined-picker-trigger-tail">
+                    {/* No dot glyph — a couple of non-breaking spaces stand in as
                     the model/reasoning gap (nbsp so it survives whitespace
                     collapsing). */}
-                <span className="composer-combined-picker-trigger-separator" aria-hidden>
-                  {'  '}
-                </span>
-                <span className="composer-combined-picker-trigger-fast-reasoning">
-                  <span className="composer-combined-picker-trigger-fast">
-                    {claudeChipSegments.fast}
+                    <span className="composer-combined-picker-trigger-separator" aria-hidden>
+                      {'  '}
+                    </span>
+                    <span className="composer-combined-picker-trigger-fast-reasoning">
+                      <span className="composer-combined-picker-trigger-fast">
+                        {claudeChipSegments.fast}
+                      </span>
+                      {claudeChipSegments.reasoning && (
+                        <TriggerReasoningSuffix
+                          text={claudeChipSegments.reasoning}
+                          sparkle={chipReasoningSparkleTier(selectedReasoning || '')}
+                        />
+                      )}
+                    </span>
                   </span>
-                  {claudeChipSegments.reasoning && (
+                ) : claudeChipSegments.reasoning ? (
+                  <span className="composer-combined-picker-trigger-tail">
+                    <span className="composer-combined-picker-trigger-separator" aria-hidden>
+                      {'  '}
+                    </span>
                     <TriggerReasoningSuffix
                       text={claudeChipSegments.reasoning}
                       sparkle={chipReasoningSparkleTier(selectedReasoning || '')}
                     />
-                  )}
+                  </span>
+                ) : null}
+              </>
+            ) : (
+              <>
+                <span className="composer-combined-picker-trigger-primary">
+                  {chipPieces.primary}
                 </span>
-              </span>
-            ) : claudeChipSegments.reasoning ? (
-              <span className="composer-combined-picker-trigger-tail">
-                <span className="composer-combined-picker-trigger-separator" aria-hidden>
-                  {'  '}
-                </span>
-                <TriggerReasoningSuffix
-                  text={claudeChipSegments.reasoning}
-                  sparkle={chipReasoningSparkleTier(selectedReasoning || '')}
-                />
-              </span>
-            ) : null}
-          </>
-        ) : (
-          <>
-            <span className="composer-combined-picker-trigger-primary">{chipPieces.primary}</span>
-            {chipPieces.suffix && (
-              <TriggerReasoningSuffix
-                text={chipPieces.suffix}
-                sparkle={chipReasoningSparkleTier(selectedReasoning || '')}
-              />
-            )}
-            {chipPieces.tail && (
-              <span className="composer-combined-picker-trigger-fast">{chipPieces.tail}</span>
+                {chipPieces.suffix && (
+                  <TriggerReasoningSuffix
+                    text={chipPieces.suffix}
+                    sparkle={chipReasoningSparkleTier(selectedReasoning || '')}
+                  />
+                )}
+                {chipPieces.tail && (
+                  <span className="composer-combined-picker-trigger-fast">{chipPieces.tail}</span>
+                )}
+              </>
             )}
           </>
         )}

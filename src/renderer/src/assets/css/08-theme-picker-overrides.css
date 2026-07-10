@@ -8893,6 +8893,42 @@
   color: color-mix(in srgb, var(--text-primary) 62%, transparent);
 }
 
+/* Unified provider identity. The Fast bolt remains the trigger's first child;
+ * provider glyph + label come next, immediately before model/reasoning. This is
+ * one inline cluster inside the shell's EXISTING model-control chrome, so
+ * containerless Satellite/Grok/Cursor treatments remain containerless. */
+.composer-combined-picker-trigger-provider {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  flex: 0 1 auto;
+  color: color-mix(in srgb, var(--chip-accent, currentColor) 82%, var(--text-primary));
+  font-weight: 600;
+}
+.composer-combined-picker-trigger-provider-icon,
+.composer-combined-picker-trigger-provider-icon .sidebar-provider-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  flex: 0 0 14px;
+}
+/* Several native shell skins intentionally hide decorative SVGs inside the
+ * model button. The provider glyph is semantic identity, so explicitly keep
+ * this one visible while leaving their other icon rules untouched. */
+.composer-combined-picker-trigger-provider-icon .sidebar-provider-icon svg {
+  display: block !important;
+  width: 13px;
+  height: 13px;
+}
+.composer-combined-picker-trigger-provider-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* Trailing "Fast" tail after the reasoning suffix (Cursor formats) — plain
  * chip text, never the reasoning tier hue. Direct-child only: the Claude
  * shell's "Fast" segment nests inside -fast-reasoning and keeps its own
@@ -9230,6 +9266,37 @@
   width: min(500px, calc(100vw - 16px));
   min-width: min(500px, calc(100vw - 16px));
   max-width: min(500px, calc(100vw - 16px));
+}
+
+/* iOS-parity all-provider model picker: a fixed-height, independently
+ * scrollable grouped model rail on the left; the current model's reasoning /
+ * Fast sidecar stays fixed on the right. */
+.composer-combined-picker-popover.is-unified-provider-picker {
+  width: min(420px, calc(100vw - 16px));
+  min-width: min(420px, calc(100vw - 16px));
+  max-width: min(420px, calc(100vw - 16px));
+  height: min(322px, calc(100vh - 24px));
+  max-height: min(322px, calc(100vh - 24px));
+  box-sizing: border-box;
+  overflow: hidden;
+}
+.composer-combined-picker-popover.is-unified-provider-picker
+  .composer-combined-picker-models.is-unified-model-list {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--text-primary) 20%, transparent) transparent;
+}
+.composer-combined-picker-popover.is-unified-provider-picker
+  .composer-combined-picker-reasoning {
+  flex: 0 0 112px;
+  min-width: 112px;
+  height: 100%;
+  overflow: hidden;
 }
 
 /* Light-theme variant of the model/permission picker popover.
@@ -9658,6 +9725,59 @@
   color: color-mix(in srgb, var(--text-secondary) 72%, transparent);
 }
 
+.composer-combined-picker-provider-group {
+  padding: 2px 0 6px;
+}
+.composer-combined-picker-provider-group + .composer-combined-picker-provider-group {
+  border-top: 1px solid color-mix(in srgb, var(--panel-border) 58%, transparent);
+  margin-top: 4px;
+  padding-top: 6px;
+}
+.composer-combined-picker-provider-header {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 24px;
+  padding: 3px 10px 4px;
+  color: color-mix(in srgb, var(--text-secondary) 82%, transparent);
+}
+.composer-combined-picker-provider-group.is-current .composer-combined-picker-provider-header {
+  color: color-mix(in srgb, var(--model-provider-accent, var(--accent)) 76%, var(--text-primary));
+}
+.composer-combined-picker-provider-header-icon,
+.composer-combined-picker-provider-header-icon .sidebar-provider-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  flex: 0 0 14px;
+}
+.composer-combined-picker-provider-header-icon .sidebar-provider-icon svg {
+  display: block;
+  width: 13px;
+  height: 13px;
+}
+.composer-combined-picker-provider-header-label {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.065em;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.composer-combined-picker-provider-header .composer-provider-paused-pill {
+  margin-left: auto;
+}
+.composer-combined-picker-empty-provider {
+  padding: 5px 10px 6px 31px;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-style: italic;
+}
+
 .composer-combined-picker-column-header {
   font-size: 10px;
   font-weight: 600;
@@ -9938,6 +10058,28 @@
 }
 .composer-combined-picker-fast-switch.is-on .composer-combined-picker-fast-switch-thumb {
   transform: translateX(12px);
+}
+
+.composer-combined-picker-confirm {
+  width: calc(100% - 12px);
+  min-height: 28px;
+  margin: auto 6px 2px;
+  padding: 5px 8px;
+  border: 1px solid color-mix(in srgb, var(--accent) 48%, transparent);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+  color: var(--text-primary);
+  font: inherit;
+  font-weight: 650;
+  cursor: pointer;
+}
+.composer-combined-picker-confirm:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 30%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 68%, transparent);
+}
+.composer-combined-picker-confirm:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 /* Reasoning ladder slider — replaces the hierarchical reasoning row list with a
