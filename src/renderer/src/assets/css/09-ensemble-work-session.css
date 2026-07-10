@@ -1110,10 +1110,14 @@
  * `container-type` note on the base `.ensemble-above-chip`. The
  * `min-width: auto` lines below are harmless redundancy retained to keep
  * this fix minimal. */
+/* 2026-07 chip polish — max-widths eased 10.5 → 11rem (chip) and
+ * 7.5 → 8.5rem (role): dropping the inline token badge freed more
+ * width than the new provider glyph consumes, so longer role names
+ * survive before the ellipsis. */
 .ensemble-above-row-chips:not(.is-wrapped) .ensemble-above-chip {
   flex: 0 0 auto;
   min-width: auto;
-  max-width: 10.5rem;
+  max-width: 11rem;
 }
 .ensemble-above-row-chips:not(.is-wrapped) .ensemble-above-chip-body {
   min-width: auto;
@@ -1122,7 +1126,7 @@
 .ensemble-above-row-chips:not(.is-wrapped) .ensemble-above-chip-role {
   flex: 0 1 auto;
   min-width: auto;
-  max-width: 7.5rem;
+  max-width: 8.5rem;
 }
 
 /* 1.0.5-EW2 — The "+ add participant" button is now a SIBLING of
@@ -1212,84 +1216,16 @@
    * ring) actually read as drag affordances. */
   user-select: none;
   -webkit-user-select: none;
-  /* 1.0.4-AT1 — establish positioning context for the linked-
-   * session dot indicator (`::after`) so participants with an
-   * active provider thread show a small accent dot at the
-   * chip's top-right corner. */
   position: relative;
 }
 
-/* 1.0.4-AT1 — linked-session indicator. When a participant has a
- * resumable provider session id stored (`linkedProviderSessionId`),
- * the chip's `data-linked-session="true"` attribute is set by
- * EnsembleParticipantsAboveRow. The ::after dot floats at the
- * chip's top-right corner, ~5px tall, in the chip's provider tint.
- * Subtle by design — the chip's primary visual job stays role +
- * status, and the dot just adds a quiet "this participant has
- * persistent context" signal. The tooltip carries the actual
- * session id for users who hover. */
-.ensemble-above-chip[data-linked-session="true"]::after {
-  content: '';
-  position: absolute;
-  top: 2px;
-  right: 4px;
-  width: 5px;
-  height: 5px;
-  border-radius: 999px;
-  background: var(--provider-color, var(--accent));
-  box-shadow: 0 0 0 1.5px var(--background, var(--surface-base));
-  pointer-events: none;
-}
-.ensemble-above-chip.provider-codex[data-linked-session="true"]::after {
-  background: var(--provider-codex-color, var(--accent));
-}
-.ensemble-above-chip.provider-claude[data-linked-session="true"]::after {
-  background: var(--provider-claude-color, var(--accent));
-}
-.ensemble-above-chip.provider-gemini[data-linked-session="true"]::after {
-  background: var(--provider-gemini-color, var(--accent));
-}
-.ensemble-above-chip.provider-kimi[data-linked-session="true"]::after {
-  background: var(--provider-kimi-color, var(--accent));
-}
-.ensemble-above-chip.provider-grok[data-linked-session="true"]::after {
-  background: var(--provider-grok-color, var(--accent));
-}
-.ensemble-above-chip.provider-cursor[data-linked-session="true"]::after {
-  background: var(--provider-cursor-color, var(--accent));
-}
-.ensemble-above-chip.provider-ollama[data-linked-session="true"]::after {
-  background: var(--provider-ollama-color, var(--accent));
-}
-/* Ollama-backed display brands — linked-session dot uses the spoofed
- * upstream hue (e.g. Qwen → Alibaba purple), not generic Ollama green. */
-.ensemble-above-chip.provider-alibaba[data-linked-session="true"]::after {
-  background: var(--provider-alibaba-color, var(--accent));
-}
-.ensemble-above-chip.provider-deep-reinforce[data-linked-session="true"]::after {
-  background: var(--provider-deep-reinforce-color, var(--accent));
-}
-.ensemble-above-chip.provider-google[data-linked-session="true"]::after {
-  background: var(--provider-google-color, var(--accent));
-}
-.ensemble-above-chip.provider-ibm[data-linked-session="true"]::after {
-  background: var(--provider-ibm-color, var(--accent));
-}
-.ensemble-above-chip.provider-liquid[data-linked-session="true"]::after {
-  background: var(--provider-liquid-color, var(--accent));
-}
-.ensemble-above-chip.provider-nvidia[data-linked-session="true"]::after {
-  background: var(--provider-nvidia-color, var(--accent));
-}
-.ensemble-above-chip.provider-openai[data-linked-session="true"]::after {
-  background: var(--provider-openai-color, var(--accent));
-}
-.ensemble-above-chip.provider-openbmb[data-linked-session="true"]::after {
-  background: var(--provider-openbmb-color, var(--accent));
-}
-.ensemble-above-chip.provider-poolside[data-linked-session="true"]::after {
-  background: var(--provider-poolside-color, var(--accent));
-}
+/* 1.0.4-AT1's linked-session corner dot (`[data-linked-session]
+ * ::after`, one rule per provider hue) lived here. 2026-07 chip
+ * polish removed it — the maintainer flagged the corner dots as
+ * noise now that every chip leads with a provider glyph. The
+ * `data-linked-session` attribute survives on the chip (harmless,
+ * and still useful as a DOM hook), and the linked-session id moved
+ * into the chip's custom hover tooltip. */
 
 .ensemble-above-chip-body {
   display: flex;
