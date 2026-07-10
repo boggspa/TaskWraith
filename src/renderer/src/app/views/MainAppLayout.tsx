@@ -343,6 +343,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   ollamaBaseUrl,
   ollamaDefaultModel,
   openChatPopoutWindow,
+  openCurrentSideChatPresentation,
   openFileChangeInWorkbench,
   openLinkedChatAsMain,
   openMediaPane,
@@ -1658,7 +1659,13 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                     pinnedCount={currentPinnedMessages.length}
                     hasCurrentChat={Boolean(currentChat)}
                     hasWorkspaceContext={hasWorkspaceContext}
-                    onOpenSurface={activateRightDockTab}
+                    onOpenSurface={(surface) => {
+                      if (surface === 'chat') {
+                        void openCurrentSideChatPresentation('split')
+                        return
+                      }
+                      activateRightDockTab(surface)
+                    }}
                     onOpenInspector={(destination) => {
                       setRightTab(destination)
                       activateRightDockTab('inspector')
