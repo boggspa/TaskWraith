@@ -1,0 +1,69 @@
+import { renderToStaticMarkup } from 'react-dom/server'
+import { describe, expect, it, vi } from 'vitest'
+
+import { RIGHT_DOCK_HOME_DESTINATIONS, RightDockHome } from './RightDockHome'
+
+describe('RightDockHome', () => {
+  it('defines every requested destination and route in order', () => {
+    expect(
+      RIGHT_DOCK_HOME_DESTINATIONS.map((destination) => [
+        destination.id,
+        destination.label,
+        destination.target.surface,
+        destination.target.surface === 'inspector' ? destination.target.inspectorTab : undefined
+      ])
+    ).toEqual([
+      ['run', 'Live Lanes', 'run', undefined],
+      ['media', 'Media Attachments', 'media', undefined],
+      ['pins', 'Pinned Messages', 'pins', undefined],
+      ['files', 'File Editor', 'files', undefined],
+      ['diff', 'Diff Studio', 'inspector', 'diff'],
+      ['raw', 'Raw Events', 'inspector', 'raw'],
+      ['invocations', 'Invocations', 'inspector', 'delegation'],
+      ['timeline', 'Invocation Timeline', 'inspector', 'timeline'],
+      ['live', 'Live Invocations', 'inspector', 'background-tasks'],
+      ['safety', 'Safety', 'inspector', 'safety'],
+      ['capabilities', 'Capabilities', 'inspector', 'capabilities']
+    ])
+  })
+
+  it('renders a navigation landmark with all cards and contextual disabled states', () => {
+    const html = renderToStaticMarkup(
+      <RightDockHome
+        mediaCount={3}
+        pinnedCount={2}
+        hasCurrentChat={false}
+        hasWorkspaceContext={false}
+        onOpenSurface={vi.fn()}
+        onOpenInspector={vi.fn()}
+      />
+    )
+    const destinationIds = Array.from(
+      html.matchAll(/data-right-dock-home-destination="([^"]+)"/g),
+      (match) => match[1]
+    )
+
+    expect(html).toContain('<nav')
+    expect(html).toContain('aria-labelledby="right-dock-home-title"')
+    expect(destinationIds).toEqual(RIGHT_DOCK_HOME_DESTINATIONS.map(({ id }) => id))
+    expect(html.match(/<button/g)).toHaveLength(11)
+    expect(html.match(/ disabled=""/g)).toHaveLength(2)
+    expect(html).toContain('aria-label="3 items"')
+    expect(html).toContain('aria-label="2 items"')
+  })
+
+  it('enables chat and workspace cards when their context exists', () => {
+    const html = renderToStaticMarkup(
+      <RightDockHome
+        mediaCount={0}
+        pinnedCount={0}
+        hasCurrentChat
+        hasWorkspaceContext
+        onOpenSurface={vi.fn()}
+        onOpenInspector={vi.fn()}
+      />
+    )
+
+    expect(html).not.toContain(' disabled=""')
+  })
+})

@@ -9,6 +9,7 @@ import {
 } from './rightDockState'
 
 const allClosed: RightDockTabAvailabilityInput = {
+  showHome: false,
   showCockpit: false,
   hasSideChat: false,
   isSideChatDockPanelOpen: false,
@@ -25,6 +26,7 @@ describe('rightDockState', () => {
     it('preserves dock tab availability order', () => {
       expect(
         buildRightDockTabs({
+          showHome: true,
           showCockpit: true,
           hasSideChat: true,
           isSideChatDockPanelOpen: true,
@@ -36,6 +38,7 @@ describe('rightDockState', () => {
           isTerminalDockAvailable: true
         })
       ).toEqual([
+        { id: 'home', label: 'Home' },
         { id: 'run', label: 'Run' },
         { id: 'chat', label: 'Chat' },
         { id: 'inspector', label: 'Inspect' },
@@ -55,6 +58,19 @@ describe('rightDockState', () => {
           isChatMediaPanelOpen: true
         })
       ).toEqual([{ id: 'media', label: 'Media' }])
+    })
+
+    it('keeps the dock visible when Home is the only open surface', () => {
+      const tabs = buildRightDockTabs({ ...allClosed, showHome: true })
+
+      expect(tabs).toEqual([{ id: 'home', label: 'Home' }])
+      expect(
+        shouldShowRightDock({
+          isChatPopoutWindow: false,
+          showSettings: false,
+          availableTabCount: tabs.length
+        })
+      ).toBe(true)
     })
   })
 
@@ -101,6 +117,7 @@ describe('rightDockState', () => {
       expect(resolveActiveRightDockTab(availableTabs, 'pins')).toBe('pins')
       expect(resolveActiveRightDockTab(availableTabs, 'media')).toBe('run')
       expect(resolveActiveRightDockTab([], 'media')).toBe('run')
+      expect(resolveActiveRightDockTab([{ id: 'home' }], 'home')).toBe('home')
     })
   })
 

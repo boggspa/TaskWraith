@@ -133,6 +133,7 @@ interface RightDockHomeProps {
 }
 
 interface HomeCardProps {
+  id: string
   label: string
   description: string
   icon: ReactNode
@@ -183,10 +184,20 @@ function destinationIcon(id: string): ReactNode {
   )
 }
 
-function HomeCard({ label, description, icon, onClick, disabled, badge, nested }: HomeCardProps) {
+function HomeCard({
+  id,
+  label,
+  description,
+  icon,
+  onClick,
+  disabled,
+  badge,
+  nested
+}: HomeCardProps) {
   return (
     <button
       type="button"
+      data-right-dock-home-destination={id}
       className={`right-dock-home-card${nested ? ' right-dock-home-card--nested' : ''}`}
       onClick={onClick}
       disabled={disabled}
@@ -249,6 +260,7 @@ export function RightDockHome({
             ).map((destination) => (
               <HomeCard
                 key={destination.id}
+                id={destination.id}
                 label={destination.label}
                 description={destination.description}
                 icon={destinationIcon(destination.id)}
