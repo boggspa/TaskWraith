@@ -47,12 +47,20 @@ enum TWToolFamilyResolver {
             return familyForCategory(category)
         }
 
+        // Did the name carry an MCP / TaskWraith-broker namespace? A brokered
+        // MCP call whose inner tool name can't be unwrapped still reads better as
+        // "an MCP tool" (the plug) than as an undecorated wrench — mirrors
+        // Electron toolNameToFamily's `strippedMcp` fallback.
+        var strippedMcp = false
+
         if normalized.hasPrefix("mcp__") {
+            strippedMcp = true
             let rest = normalized.dropFirst(5)
             if let range = rest.range(of: "__") {
                 normalized = String(rest[range.upperBound...])
             }
         } else if normalized.hasPrefix("mcp_") {
+            strippedMcp = true
             let prefixes = [
                 "mcp_taskwraith-broker_",
                 "mcp_taskwraith-broker-",
@@ -66,58 +74,124 @@ enum TWToolFamilyResolver {
                 }
             }
         } else if normalized.hasPrefix("taskwraith-broker__") {
+            strippedMcp = true
             normalized = String(normalized.dropFirst("taskwraith-broker__".count))
         } else if normalized.hasPrefix("taskwraith_broker__") {
+            strippedMcp = true
             normalized = String(normalized.dropFirst("taskwraith_broker__".count))
         } else if normalized.hasPrefix("taskwraith-broker_") {
+            strippedMcp = true
             normalized = String(normalized.dropFirst("taskwraith-broker_".count))
         } else if normalized.hasPrefix("taskwraith_broker_") {
+            strippedMcp = true
             normalized = String(normalized.dropFirst("taskwraith_broker_".count))
         } else if normalized.hasPrefix("taskwraith__") {
+            strippedMcp = true
             normalized = String(normalized.dropFirst("taskwraith__".count))
         } else if normalized.hasPrefix("taskwraith_") {
+            strippedMcp = true
             normalized = String(normalized.dropFirst("taskwraith_".count))
         }
 
+        // Exact-name buckets (most specific first). iOS carries a 16-glyph
+        // subset of Electron's 34 tool families (ToolFamilyIcon.tsx); families
+        // with no dedicated iOS glyph route to their closest existing one so the
+        // row reads at a glance instead of dropping to the generic wrench:
+        //   patch → edit · pull-request/merge/ci → git · process/launch → shell
+        //   fanout/roster → delegate · memory → search · audit/approval/status →
+        //   diagnostic · canvas → browser (it IS a headless web surface).
+        // image / audio / video / blackboard / wakeup have no near-match glyph
+        // yet and stay on the wrench until dedicated shapes are drawn.
         switch normalized {
         case "delegate_to_subthread":
             return .delegate
         case "ensemble_yield":
             return .yield
+        case "ensemble_send", "ensemble_fanout", "scout_brief":
+            return .delegate
         case "list_subthreads", "read_subthread_result", "cancel_subthread", "collabtoolcall":
             return .subthread
         case "attached_window_capture", "attached_window_status":
             return .windowContext
-        case "create_handoff_card":
+        case "create_handoff_card", "open_in_ide", "open_in_ide_at_position",
+            "reveal_in_finder", "ide_app_status", "ide_app_capabilities", "list_running_ides":
             return .handoff
-        case "run_task", "test_result_summary", "ask_user_question", "askuserquestion":
+        case "run_task", "list_active_runs", "cancel_active_run", "test_result_summary",
+            "ask_user_question", "askuserquestion":
             return .task
-        case "workspace_search", "workspace_symbols":
+        case "start_background_process", "list_background_processes",
+            "read_background_process", "kill_background_process",
+            "launch_list_targets", "launch_start", "launch_stop", "launch_status":
+            return .shell
+        case "list_chat_attachments", "inspect_chat_attachment":
+            return .file
+        case "web_fetch":
+            return .browser
+        case "scope_radar", "repo_convention_scan":
             return .search
-        case "codex_plan", "goal_read", "goal_update", "goal_complete", "goal_blocked",
-            "todo_write", "todowrite", "update_todo_list", "updatetodolist", "plan",
-            "exit_plan_mode", "exitplanmode", "exitplan_mode", "exit_planmode":
+        case "codex_plan", "goal_read", "goal_update", "update_goal", "goal_complete",
+            "goal_blocked", "todo_write", "todowrite", "update_todo_list", "updatetodolist",
+            "plan", "exit_plan_mode", "exitplanmode", "exitplan_mode", "exit_planmode",
+            "prompt_task_normalize":
             return .plan
-        case "codex_reasoning", "reasoning":
+        case "codex_reasoning", "reasoning", "thinking":
             return .reasoning
-        case "approval_status", "provider_auth_status", "run_timeline", "raw_provider_events",
-            "switch_auth_profile", "agent_delegation_role", "creative_app_status",
-            "creative_app_capabilities", "creative_project_snapshot",
-            "creative_timeline_validate", "creative_timeline_ir", "creative_timeline_diff":
+        case "approval_status", "provider_auth_status", "provider_usage_status", "run_timeline",
+            "raw_provider_events", "get_diagnostics", "switch_auth_profile", "agent_delegation_role",
+            "coherence_gate_check", "completion_claim_check", "evidence_pack_write",
+            "creative_app_status", "creative_app_capabilities", "creative_project_snapshot",
+            "creative_timeline_validate", "creative_timeline_ir", "creative_timeline_diff",
+            "creative_timeline_import", "creative_applescript_dispatch", "creative_blender_python",
+            "creative_midi_dispatch":
             return .diagnostic
-        case "mcp_tool", "dynamic_tool":
+        case "mcp_tool", "dynamic_tool", "mcp", "callmcptool", "call_mcp_tool", "use_tool":
             return .mcp
         default:
             break
         }
 
-        if normalized.hasPrefix("git_") || normalized == "git" { return .git }
+        // Pattern buckets — order matters (more-specific first).
+        if normalized.hasSuffix("_thinking") || normalized.hasSuffix("_reasoning") { return .reasoning }
+        if normalized.hasPrefix("git_") || normalized == "git" || normalized == "github_ci_status"
+            || normalized == "githubcistatus" || normalized == "ci_status" || normalized == "cistatus"
+            || normalized == "pull_request" || normalized == "pullrequest" || normalized == "merge"
+        {
+            return .git
+        }
         if normalized.hasPrefix("browser_") { return .browser }
-        if normalized == "run_shell_command" || normalized == "shell" { return .shell }
+        // Canvas is TaskWraith's headless-web preview surface (render_html /
+        // screenshot / click / eval); with no dedicated iOS glyph it borrows the
+        // browser icon rather than the generic wrench.
+        if normalized.hasPrefix("canvas_") { return .browser }
+        if normalized.hasPrefix("tw_recall_") { return .search }
+        if normalized.hasPrefix("tw_introspection_") { return .diagnostic }
+        if normalized.hasPrefix("workspace_board_") { return .plan }
+        if normalized.hasPrefix("appwatch_") { return .windowContext }
+        if normalized.hasPrefix("ensemble_") || normalized == "list_ensemble_participants" {
+            return .delegate
+        }
+        if normalized == "run_shell_command" || normalized == "runshellcommand"
+            || normalized == "shell" || normalized == "bash"
+            || normalized == "run_terminal_command" || normalized == "runterminalcommand"
+            || normalized == "terminal"
+        {
+            return .shell
+        }
+
+        if [
+            "grep_search", "grepsearch", "glob", "search", "grep", "rg",
+            "google_web_search", "googlewebsearch", "web_search", "websearch",
+            "workspace_search", "file_search", "tw_recall_find", "workspace_symbols",
+            "find_files", "findfiles",
+        ].contains(normalized) {
+            return .search
+        }
 
         if [
             "write_file", "writefile", "replace", "edit_file", "editfile", "edit",
-            "create_file", "createfile", "delete_file", "deletefile", "apply_patch",
+            "create_file", "createfile", "delete_file", "deletefile",
+            "create_directory", "createdirectory", "delete_path", "deletepath",
+            "move_path", "movepath", "rename_path", "renamepath", "apply_patch",
             "applypatch", "str_replace", "strreplace", "str_replace_editor",
             "strreplaceeditor", "multiedit", "notebookedit",
         ].contains(normalized) {
@@ -130,6 +204,10 @@ enum TWToolFamilyResolver {
         ].contains(normalized) {
             return .file
         }
+
+        // A namespaced-but-unmatched MCP / broker tool still gets the plug icon —
+        // it IS an MCP call, so that reads better than the undecorated wrench.
+        if strippedMcp { return .mcp }
 
         return familyForCategory(category)
     }
