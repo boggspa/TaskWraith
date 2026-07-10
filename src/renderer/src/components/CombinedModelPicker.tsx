@@ -567,6 +567,43 @@ export interface LadderModel {
   disabledReason?: string
 }
 
+export interface UnavailableReasoningPresentation {
+  index: number
+  label: string
+  disabledReason: string
+}
+
+export interface ReasoningLadderAvailability {
+  mutable: boolean
+  unavailablePresentation?: UnavailableReasoningPresentation
+}
+
+const CURSOR_IMPLICIT_MEDIUM_MODELS = new Set(['composer-2.5', 'composer-2.5-fast'])
+
+export function resolveReasoningLadderAvailability(
+  provider: ProviderId,
+  modelId: string,
+  ladder: LadderModel
+): ReasoningLadderAvailability {
+  if (ladder.enabledIndices.length > 1) return { mutable: true }
+  const cursorImplicitMedium =
+    provider === 'cursor' && CURSOR_IMPLICIT_MEDIUM_MODELS.has(modelId.trim().toLowerCase())
+  return {
+    mutable: false,
+    unavailablePresentation: cursorImplicitMedium
+      ? {
+          index: 2,
+          label: 'Medium',
+          disabledReason: 'Cursor Composer 2.5 uses implicit Medium reasoning; it is not configurable.'
+        }
+      : {
+          index: 0,
+          label: '—',
+          disabledReason: 'Reasoning is not configurable for this model.'
+        }
+  }
+}
+
 export interface ReasoningLadderFxProfile {
   active: boolean
   /** Linear Low→Ultra intensity ramp, 1/6 through 1. */
@@ -674,6 +711,7 @@ export function ReasoningLadderSlider({
   selectedReasoning,
   onSelectReasoning,
   disabled,
+  unavailablePresentation,
   onInteract
 }: {
   provider: ProviderId
@@ -681,6 +719,7 @@ export function ReasoningLadderSlider({
   selectedReasoning: string
   onSelectReasoning: (value: string) => void
   disabled?: boolean
+  unavailablePresentation?: UnavailableReasoningPresentation
   onInteract: () => void
 }): React.JSX.Element {
   const trackRef = useRef<HTMLDivElement | null>(null)
@@ -690,15 +729,27 @@ export function ReasoningLadderSlider({
   // parent re-render / ensemble notice), not one per stop crossed. Keyboard/
   // click paths still commit directly.
   const [dragIndex, setDragIndex] = useState<number | null>(null)
-  const currentIndex = clampedLadderIndex(provider, selectedReasoning, ladder)
-  const displayIndex = dragIndex ?? currentIndex
-  const currentLabel = ladder.labelByIndex[displayIndex] ?? '—'
+  const interactive =
+    !disabled && !unavailablePresentation && ladder.enabledIndices.length > 1
+  const currentIndex =
+    unavailablePresentation?.index ?? clampedLadderIndex(provider, selectedReasoning, ladder)
+  const displayIndex = interactive && dragIndex != null ? dragIndex : currentIndex
+  const currentLabel =
+    unavailablePresentation?.label ??
+    ladder.labelByIndex[displayIndex] ??
+    LADDER_STOPS[displayIndex]?.label ??
+    '—'
   // Provider hue, pulse, shimmer, and sparkles begin at Low/Thinking (index 1)
   // and taper smoothly to full intensity/density at Ultra/Ultracode (index 6).
-  const fxProfile = reasoningLadderFxProfile(displayIndex)
+  const fxProfile = reasoningLadderFxProfile(interactive ? displayIndex : 0)
   const fillHeight = ladderStopBottom(displayIndex)
-  const fxTier = displayIndex === LADDER_MAX_INDEX ? 'ultracode' : displayIndex === 5 ? 'max' : null
-  const interactive = !disabled && ladder.enabledIndices.length > 0
+  const fxTier = interactive
+    ? displayIndex === LADDER_MAX_INDEX
+      ? 'ultracode'
+      : displayIndex === 5
+        ? 'max'
+        : null
+    : null
 
   const indexFromClientY = (clientY: number): number | null => {
     const el = trackRef.current
@@ -712,7 +763,8 @@ export function ReasoningLadderSlider({
   return (
     <div
       className="composer-combined-picker-ladder"
-      onMouseEnter={onInteract}
+      data-disabled={interactive ? undefined : 'true'}
+      onMouseEnter={interactive ? onInteract : undefined}
       // The popover's `--accent` is the generic theme accent (only shell-grok/
       // shell-cursor re-point it, to monochrome) — it is NOT the provider brand
       // hue. Bind a scoped `--ladder-accent` to the provider's `:root` brand
@@ -720,7 +772,9 @@ export function ReasoningLadderSlider({
       // the theme accent for any unknown provider.
       style={
         {
-          '--ladder-accent': `var(--provider-${provider}-color, var(--accent))`
+          '--ladder-accent': interactive
+            ? `var(--provider-${provider}-color, var(--accent))`
+            : 'var(--text-secondary)'
         } as React.CSSProperties
       }
     >
@@ -751,9 +805,13 @@ export function ReasoningLadderSlider({
         aria-valuetext={currentLabel}
         aria-disabled={interactive ? undefined : true}
         title={
-          interactive ? undefined : (ladder.disabledReason ?? 'Reasoning is fixed for this model')
+          interactive
+            ? undefined
+            : (ladder.disabledReason ??
+              unavailablePresentation?.disabledReason ??
+              'Reasoning is fixed for this model')
         }
-        onFocus={onInteract}
+        onFocus={interactive ? onInteract : undefined}
         onPointerDown={(event) => {
           if (!interactive) return
           onInteract()
@@ -910,11 +968,14 @@ export function CombinedModelPicker({
   const fastModeRowVisible = Boolean(
     selectedFastModeCapableModelIds && selectedFastModeCapableModelIds.size > 0 && onToggleFastMode
   )
-  const showReasoningSidecar =
-    reasoningOptions.length > 0 || fastModeRowVisible || Boolean(confirmAction)
+  const showReasoningSidecar = true
   const ladder = useMemo(
     () => buildLadderModel(provider, reasoningOptions),
     [provider, reasoningOptions]
+  )
+  const reasoningAvailability = useMemo(
+    () => resolveReasoningLadderAvailability(provider, selectedModelId, ladder),
+    [ladder, provider, selectedModelId]
   )
   const triggerRef = useRef<HTMLButtonElement | null>(null)
   const popoverRef = useRef<HTMLDivElement | null>(null)
@@ -1274,7 +1335,7 @@ export function CombinedModelPicker({
         } else {
           // Reasoning ladder: down = lower effort. The slider commits on move.
           const enabled = ladder.enabledIndices
-          if (enabled.length > 0 && !disabled) {
+          if (reasoningAvailability.mutable && !disabled) {
             const pos = enabled.indexOf(clampedLadderIndex(provider, selectedReasoning, ladder))
             const value = ladder.valueByIndex[enabled[Math.max(0, pos - 1)]]
             if (value) onSelectReasoning(value)
@@ -1289,7 +1350,7 @@ export function CombinedModelPicker({
         } else {
           // Reasoning ladder: up = higher effort.
           const enabled = ladder.enabledIndices
-          if (enabled.length > 0 && !disabled) {
+          if (reasoningAvailability.mutable && !disabled) {
             const cur = enabled.indexOf(clampedLadderIndex(provider, selectedReasoning, ladder))
             const pos = cur < 0 ? 0 : cur
             const value = ladder.valueByIndex[enabled[Math.min(enabled.length - 1, pos + 1)]]
@@ -1300,7 +1361,7 @@ export function CombinedModelPicker({
         event.preventDefault()
         if (focusedColumn === 'provider') {
           setFocusedColumn('model')
-        } else if (focusedColumn === 'model' && showReasoningSidecar) {
+        } else if (focusedColumn === 'model' && reasoningAvailability.mutable) {
           setFocusedColumn('reasoning')
         }
       } else if (event.key === 'ArrowLeft') {
@@ -1331,6 +1392,7 @@ export function CombinedModelPicker({
             }
           }
         } else {
+          if (!reasoningAvailability.mutable) return
           // Reasoning ladder: Enter confirms exactly what the thumb shows (the
           // clamped stop), never a stale row index. Up/Down/drag already commit
           // on every move, so this is effectively a no-op re-commit.
@@ -1350,6 +1412,7 @@ export function CombinedModelPicker({
     isUnifiedProviderPicker,
     ollamaProviderGroups,
     reasoningOptions,
+    reasoningAvailability,
     showReasoningSidecar,
     modelHighlight,
     providerHighlight,
@@ -1619,19 +1682,16 @@ export function CombinedModelPicker({
         <div
           className={`composer-combined-picker-column composer-combined-picker-reasoning ${focusedColumn === 'reasoning' ? 'is-focused' : ''}`}
         >
-          <div className="composer-combined-picker-column-header">
-            {reasoningOptions.length > 0 ? 'Reasoning' : 'Options'}
-          </div>
-          {reasoningOptions.length > 0 && (
-            <ReasoningLadderSlider
-              provider={provider}
-              ladder={ladder}
-              selectedReasoning={selectedReasoning}
-              onSelectReasoning={onSelectReasoning}
-              disabled={disabled}
-              onInteract={() => setFocusedColumn('reasoning')}
-            />
-          )}
+          <div className="composer-combined-picker-column-header">Reasoning</div>
+          <ReasoningLadderSlider
+            provider={provider}
+            ladder={ladder}
+            selectedReasoning={selectedReasoning}
+            onSelectReasoning={onSelectReasoning}
+            disabled={Boolean(disabled || !reasoningAvailability.mutable)}
+            unavailablePresentation={reasoningAvailability.unavailablePresentation}
+            onInteract={() => setFocusedColumn('reasoning')}
+          />
           {/*
             Fast Mode toggle. Tucked under the Reasoning column so
             it reads as a Reasoning-adjacent capability rather than

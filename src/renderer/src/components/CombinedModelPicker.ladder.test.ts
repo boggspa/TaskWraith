@@ -10,6 +10,7 @@ import {
   splitChipReasoningPieces,
   ladderIndexForOption,
   nearestEnabledLadderIndex,
+  resolveReasoningLadderAvailability,
   reasoningLadderFxProfile
 } from './CombinedModelPicker'
 
@@ -125,6 +126,82 @@ describe('clampedLadderIndex (thumb parking)', () => {
   })
 })
 
+describe('unavailable reasoning presentation', () => {
+  const emptyLadder = buildLadderModel('ollama', [])
+
+  it('uses disabled Medium only for Cursor Composer 2.5 variants', () => {
+    for (const modelId of ['composer-2.5', 'composer-2.5-fast']) {
+      expect(resolveReasoningLadderAvailability('cursor', modelId, emptyLadder)).toMatchObject({
+        mutable: false,
+        unavailablePresentation: { index: 2, label: 'Medium' }
+      })
+    }
+
+    for (const [provider, modelId] of [
+      ['cursor', 'grok-4.5'],
+      ['cursor', 'unknown-cursor-model'],
+      ['grok', 'grok-composer-2.5-fast'],
+      ['gemini', 'gemini-3.1-pro'],
+      ['ollama', 'qwen3.5:9b']
+    ] as const) {
+      expect(resolveReasoningLadderAvailability(provider, modelId, emptyLadder)).toMatchObject({
+        mutable: false,
+        unavailablePresentation: { index: 0, label: '—' }
+      })
+    }
+  })
+
+  it('treats zero or one enabled stop as fixed and two stops as mutable', () => {
+    const fixed = buildLadderModel('codex', [{ value: 'medium', label: 'Medium' }])
+    const mutable = buildLadderModel('kimi', [
+      { value: 'off', label: 'Thinking off' },
+      { value: 'on', label: 'Thinking on' }
+    ])
+
+    expect(resolveReasoningLadderAvailability('codex', 'fixed-live-model', fixed).mutable).toBe(
+      false
+    )
+    expect(resolveReasoningLadderAvailability('kimi', 'kimi-k2.7', mutable)).toEqual({
+      mutable: true
+    })
+  })
+
+  it('renders inert generic zero and Cursor Medium ladders without active FX', () => {
+    const renderUnavailable = (provider: 'cursor' | 'ollama', modelId: string) => {
+      const ladder = buildLadderModel(provider, [])
+      const availability = resolveReasoningLadderAvailability(provider, modelId, ladder)
+      return renderToStaticMarkup(
+        createElement(ReasoningLadderSlider, {
+          provider,
+          ladder,
+          selectedReasoning: '',
+          onSelectReasoning: () => undefined,
+          unavailablePresentation: availability.unavailablePresentation,
+          onInteract: () => undefined
+        })
+      )
+    }
+
+    const generic = renderUnavailable('ollama', 'qwen3.5:9b')
+    expect(generic).toContain('data-disabled="true"')
+    expect(generic).toContain('aria-disabled="true"')
+    expect(generic).toContain('tabindex="-1"')
+    expect(generic).toContain('aria-valuenow="0"')
+    expect(generic).toContain('aria-valuetext="—"')
+    expect(generic).toContain('--ladder-accent:var(--text-secondary)')
+
+    for (const modelId of ['composer-2.5', 'composer-2.5-fast']) {
+      const cursor = renderUnavailable('cursor', modelId)
+      expect(cursor).toContain('aria-valuenow="2"')
+      expect(cursor).toContain('aria-valuetext="Medium"')
+      expect(cursor).not.toContain('data-fx-active')
+      expect(cursor).not.toContain('composer-combined-picker-ladder-pulse')
+      expect(cursor).not.toContain('composer-combined-picker-ladder-shimmer')
+      expect(cursor).not.toContain('composer-combined-picker-ladder-sparkles')
+    }
+  })
+})
+
 describe('reasoning ladder visual taper', () => {
   it('ramps intensity and density from Low/Thinking through Ultra', () => {
     expect(
@@ -185,6 +262,7 @@ describe('reasoning ladder visual taper', () => {
     expect(off).not.toContain('composer-combined-picker-ladder-pulse')
 
     const low = render('low')
+    expect(low).not.toContain('aria-disabled')
     expect(low).toContain('data-fx-active="true"')
     expect(low).toContain('--ladder-fill-height:calc(')
     expect(low).toContain('composer-combined-picker-ladder-pulse')
