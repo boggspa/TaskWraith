@@ -18,6 +18,8 @@ describe('RemoteBridgeRunEventInterestFilter', () => {
 
     expect(filter.shouldForward(event({ payload: { appChatId: 'chat-a' } }))).toBe(true)
     expect(filter.shouldForward(event({ payload: { appChatId: 'chat-b' } }))).toBe(true)
+    expect(filter.shouldForwardLiveSnapshot('chat-a')).toBe(true)
+    expect(filter.shouldForwardLiveSnapshot('chat-b')).toBe(true)
   })
 
   it('forwards classifiable agent-output only for the watched thread after assertion', () => {
@@ -26,6 +28,8 @@ describe('RemoteBridgeRunEventInterestFilter', () => {
 
     expect(filter.shouldForward(event({ payload: { appChatId: 'chat-a' } }))).toBe(true)
     expect(filter.shouldForward(event({ payload: { appChatId: 'chat-b' } }))).toBe(false)
+    expect(filter.shouldForwardLiveSnapshot('chat-a')).toBe(true)
+    expect(filter.shouldForwardLiveSnapshot('chat-b')).toBe(false)
   })
 
   it('treats null watch as home screen and filters classifiable agent-output', () => {
@@ -33,6 +37,7 @@ describe('RemoteBridgeRunEventInterestFilter', () => {
     filter.setWatchedThread(null)
 
     expect(filter.shouldForward(event({ payload: { appChatId: 'chat-a' } }))).toBe(false)
+    expect(filter.shouldForwardLiveSnapshot('chat-a')).toBe(false)
   })
 
   it('passes unclassifiable agent-output and non-output channels', () => {
@@ -54,6 +59,7 @@ describe('RemoteBridgeRunEventInterestFilter', () => {
 
     expect(filter.state).toMatchObject({ watchedAppChatId: null, hasWatchCapability: false })
     expect(filter.shouldForward(event({ payload: { appChatId: 'chat-b' } }))).toBe(true)
+    expect(filter.shouldForwardLiveSnapshot('chat-b')).toBe(true)
   })
 
   it('fails open while multiple devices are connected', () => {
@@ -62,5 +68,6 @@ describe('RemoteBridgeRunEventInterestFilter', () => {
     filter.setConnectedDeviceCount(2)
 
     expect(filter.shouldForward(event({ payload: { appChatId: 'chat-b' } }))).toBe(true)
+    expect(filter.shouldForwardLiveSnapshot('chat-b')).toBe(true)
   })
 })

@@ -17,6 +17,7 @@ export interface RemoteLiveSnapshotScheduler {
 export interface RemoteLiveSnapshotSchedulerOptions {
   intervalMs?: number
   now?: () => number
+  shouldPush?: (threadId: string) => boolean
   push: (threadId: string) => boolean
 }
 
@@ -66,12 +67,20 @@ export function createRemoteLiveSnapshotScheduler(
   }
 
   const push = (threadId: string): void => {
+    // Interest can change while a trailing timer is pending (for example when
+    // iOS navigates to another thread), so check immediately before the costly
+    // projection build rather than only when the timer was scheduled.
+    if (options.shouldPush && !options.shouldPush(threadId)) return
     if (options.push(threadId)) {
       lastPushMs.set(threadId, now())
     }
   }
 
   const schedule = (threadId: string): void => {
+    if (options.shouldPush && !options.shouldPush(threadId)) {
+      clear(threadId)
+      return
+    }
     const delayMs = remoteLiveSnapshotDelayMs(now(), lastPushMs.get(threadId), intervalMs)
     if (delayMs <= 0) {
       clear(threadId)

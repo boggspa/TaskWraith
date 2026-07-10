@@ -71,6 +71,34 @@ describe('RemoteBridgePerfTuning', () => {
     expect(pushes).toEqual(['thread-a'])
   })
 
+  it('drops unwatched live snapshots before scheduling and before a trailing push', async () => {
+    vi.useFakeTimers()
+    let nowMs = 1000
+    let watchedThreadId = 'thread-a'
+    const pushes: string[] = []
+    const scheduler = createRemoteLiveSnapshotScheduler({
+      now: () => nowMs,
+      shouldPush: (threadId) => threadId === watchedThreadId,
+      push: (threadId) => {
+        pushes.push(threadId)
+        return true
+      }
+    })
+
+    scheduler.schedule('thread-a')
+    nowMs = 1200
+    scheduler.schedule('thread-a')
+    scheduler.schedule('thread-b')
+    watchedThreadId = 'thread-b'
+    nowMs = 1600
+    await vi.advanceTimersByTimeAsync(400)
+
+    expect(pushes).toEqual(['thread-a'])
+
+    scheduler.schedule('thread-b')
+    expect(pushes).toEqual(['thread-a', 'thread-b'])
+  })
+
   it('forgets the last live snapshot cadence when clearing a thread', () => {
     let nowMs = 1000
     const pushes: Array<{ threadId: string; nowMs: number }> = []

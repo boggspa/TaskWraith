@@ -26315,6 +26315,8 @@ if (isGeminiMcpBridgeProcess) {
       return true
     }
     const remoteLiveSnapshotScheduler = createRemoteLiveSnapshotScheduler({
+      shouldPush: (threadId) =>
+        remoteBridgeRunEventFilter.shouldForwardLiveSnapshot(threadId),
       push: pushRemoteLiveSnapshotDeltas
     })
     runEventBus.subscribe({

@@ -12,6 +12,7 @@ export interface RemoteBridgeRunEventInterestFilter {
   setConnectedDeviceCount(count: number): void
   setWatchedThread(appChatId: string | null): void
   resetOnDeviceEstablished(): void
+  shouldForwardLiveSnapshot(appChatId: string): boolean
   shouldForward(event: RunEvent): boolean
 }
 
@@ -20,6 +21,15 @@ export function createRemoteBridgeRunEventInterestFilter(): RemoteBridgeRunEvent
     watchedAppChatId: null,
     hasWatchCapability: false,
     connectedDeviceCount: 0
+  }
+  const shouldForwardLiveSnapshot = (appChatId: string): boolean => {
+    // Older clients never assert a watch, so keep the legacy fan-out until
+    // the connected phone proves it understands this capability. A single
+    // assertion may only describe one phone; multiple live devices therefore
+    // remain fail-open until watch state is tracked per connection.
+    if (!state.hasWatchCapability) return true
+    if (state.connectedDeviceCount > 1) return true
+    return appChatId === state.watchedAppChatId
   }
 
   return {
@@ -35,13 +45,12 @@ export function createRemoteBridgeRunEventInterestFilter(): RemoteBridgeRunEvent
       state.watchedAppChatId = null
       state.hasWatchCapability = false
     },
+    shouldForwardLiveSnapshot,
     shouldForward(event) {
       if (event.channel !== 'agent-output') return true
-      if (!state.hasWatchCapability) return true
-      if (state.connectedDeviceCount > 1) return true
       const threadId = extractThreadId(event.payload)
       if (threadId === null) return true
-      return threadId === state.watchedAppChatId
+      return shouldForwardLiveSnapshot(threadId)
     }
   }
 }
