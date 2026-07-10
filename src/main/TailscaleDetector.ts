@@ -1,9 +1,6 @@
-import { execFile } from 'child_process'
 import { existsSync } from 'fs'
-import { promisify } from 'util'
 import { isTailscaleDnsName } from './remote/relayAdvertise'
-
-const execFileAsync = promisify(execFile)
+import { execTailscaleCli } from './TailscaleCli'
 
 /**
  * TailscaleDetector — Phase E3 detection helper for the bridge daemon.
@@ -236,8 +233,7 @@ export async function detectTailscale(
   const exec =
     options.execFn ??
     (async (cmd: string, args: string[]) => {
-      const result = await execFileAsync(cmd, args, { timeout: options.timeoutMs ?? 3000 })
-      return { stdout: String(result.stdout), stderr: String(result.stderr) }
+      return execTailscaleCli(cmd, args, { timeoutMs: options.timeoutMs ?? 3000 })
     })
 
   // CLI discovery. Prefer an explicit app-bundled binary on macOS because the

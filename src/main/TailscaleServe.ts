@@ -2,9 +2,9 @@
  * TailscaleServe — thin wrapper over `tailscale serve` so the app can put a
  * TLS front door on the embedded relay with one click.
  *
- * Why: the embedded relay is plain ws:// and iOS ATS only permits cleartext
- * to local-network hosts — so off-LAN (cellular) phones need wss://.
- * `tailscale serve` terminates HTTPS at tailscaled using the tailnet's
+ * Why: direct Tailscale IP access is the zero-setup path, while some users may
+ * prefer an additional CA-authenticated TLS/hostname door. `tailscale serve`
+ * terminates HTTPS at tailscaled using the tailnet's
  * managed *.ts.net certificate and reverse-proxies (WebSocket-aware) to a
  * local port. The app then advertises wss://<dnsName> in the pairing QR
  * while the relay itself keeps listening on loopback.
@@ -15,10 +15,7 @@
  * e.g. the "HTTPS is not enabled on this tailnet" guidance).
  */
 
-import { execFile } from 'child_process'
-import { promisify } from 'util'
-
-const execFileAsync = promisify(execFile)
+import { execTailscaleCli } from './TailscaleCli'
 
 export type ServeExec = (
   cmd: string,
@@ -26,8 +23,7 @@ export type ServeExec = (
 ) => Promise<{ stdout: string; stderr: string }>
 
 const defaultExec: ServeExec = async (cmd, args) => {
-  const result = await execFileAsync(cmd, args, { timeout: 15_000 })
-  return { stdout: String(result.stdout), stderr: String(result.stderr) }
+  return execTailscaleCli(cmd, args, { timeoutMs: 15_000 })
 }
 
 export interface TailscaleServeStatus {

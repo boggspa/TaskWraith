@@ -23,22 +23,18 @@
  * --accept-routes/--reset/--ssh) precisely because we only run on a fresh node.
  */
 
-import { execFile } from 'child_process'
 import { mkdtemp, rm, writeFile } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { promisify } from 'util'
 import type { ServeExec } from './TailscaleServe'
 import { looksLikeTailscaleAuthKey } from '../shared/tailscaleAuthKey'
+import { execTailscaleCli } from './TailscaleCli'
 
 export { looksLikeTailscaleAuthKey } from '../shared/tailscaleAuthKey'
 
-const execFileAsync = promisify(execFile)
-
 const defaultExec: ServeExec = async (cmd, args) => {
   // `tailscale up` can take a little while to register a fresh node.
-  const result = await execFileAsync(cmd, args, { timeout: 40_000 })
-  return { stdout: String(result.stdout), stderr: String(result.stderr) }
+  return execTailscaleCli(cmd, args, { timeoutMs: 40_000 })
 }
 
 export interface TailscaleAuthResult {
