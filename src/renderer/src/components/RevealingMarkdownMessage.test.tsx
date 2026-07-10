@@ -98,11 +98,10 @@ describe('safeMessageSlice', () => {
     )
     const bold = 'This is **bold text** '
     expect(safeMessageSlice(bold, graphemeCount(bold))).toBe(bold)
-    expect(safeMessageSlice('This is *italic ', graphemeCount('This is *italic '))).toBe(
-      'This is '
-    )
     const italic = 'This is *italic text* '
     expect(safeMessageSlice(italic, graphemeCount(italic))).toBe(italic)
+    const identifier = 'Use _private variable and *args safely '
+    expect(safeMessageSlice(identifier, graphemeCount(identifier))).toBe(identifier)
 
     expect(safeMessageSlice('[Open AI', graphemeCount('[Open AI'))).toBe('')
     const link = '[Open AI](https://example.com) '
@@ -132,13 +131,17 @@ describe('safeMessageSlice', () => {
   })
 
   it('holds pipe-table and CJK-link frontiers until their final structure is known', () => {
-    for (const content of ['| a ', '| a |', 'a | b', 'a | b\n--- | ']) {
+    for (const content of ['| a ', '| a |', 'a | b\n--- | ']) {
       expect(safeMessageSlice(content, graphemeCount(content))).toBe('')
     }
+    expect(safeMessageSlice('a | b', graphemeCount('a | b'))).toBe('a | ')
     expect(safeMessageSlice('[リンク]', graphemeCount('[リンク]'))).toBe('')
     expect(safeMessageSlice('[リンク](', graphemeCount('[リンク]('))).toBe('')
     const completeLink = '[リンク](https://example.com)'
     expect(safeMessageSlice(completeLink, graphemeCount(completeLink))).toBe(completeLink)
+
+    const pipeProse = 'Use foo | bar and `git log | head` safely '
+    expect(safeMessageSlice(pipeProse, graphemeCount(pipeProse))).toBe(pipeProse)
   })
 
   it('reports the active fenced-code start so code can stay atomic', () => {

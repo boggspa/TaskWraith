@@ -157,23 +157,6 @@ function markerOpener(value: string, marker: string): number | null {
   return opener
 }
 
-function singleEmphasisOpener(value: string, marker: '*' | '_'): number | null {
-  let opener: number | null = null
-  for (let index = 0; index < value.length; index += 1) {
-    if (value[index] !== marker || value[index - 1] === '\\') continue
-    if (value[index - 1] === marker || value[index + 1] === marker) continue
-    const previous = value[index - 1]
-    const next = value[index + 1]
-    const canOpen =
-      (next === undefined || !/\s/u.test(next)) &&
-      (previous === undefined || /[\s([{>"']/u.test(previous))
-    const canClose = previous !== undefined && !/\s/u.test(previous)
-    if (opener === null && canOpen) opener = index
-    else if (opener !== null && canClose) opener = null
-  }
-  return opener
-}
-
 /** Hold inline constructs until their closer arrives, avoiding a DOM reparse flash. */
 function trimIncompleteInlineMarkdown(value: string): string {
   let cutoff = value.length
@@ -211,10 +194,6 @@ function trimIncompleteInlineMarkdown(value: string): string {
 
   for (const marker of ['**', '__', '~~', '`']) {
     const opener = markerOpener(value, marker)
-    if (opener !== null) cutoff = Math.min(cutoff, opener)
-  }
-  for (const marker of ['*', '_'] as const) {
-    const opener = singleEmphasisOpener(value, marker)
     if (opener !== null) cutoff = Math.min(cutoff, opener)
   }
   return value.slice(0, cutoff)
@@ -260,8 +239,12 @@ export function safeMessageSlice(
 
   if (tail.type === 'paragraph' || tail.type === 'heading') {
     if (AMBIGUOUS_LIST_MARKER_RE.test(literalTail)) return candidate.slice(0, tailStart)
-    const firstLine = literalTail.split('\n', 1)[0]
-    if (tail.type === 'paragraph' && firstLine.includes('|')) {
+    const proseLines = literalTail.split('\n')
+    const firstLine = proseLines[0]
+    const tableShapedFrontier =
+      /^\s*\|/u.test(firstLine) ||
+      (firstLine.includes('|') && /^\s*\|?\s*:?-{2,}/u.test(proseLines[1] ?? ''))
+    if (tail.type === 'paragraph' && tableShapedFrontier) {
       return candidate.slice(0, tailStart)
     }
 
