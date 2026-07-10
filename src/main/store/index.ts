@@ -273,6 +273,33 @@ function appendUsageArchiveRecords(records: UsageRecord[]): boolean {
     return false
   }
 }
+
+// getSettings() used to re-read + re-parse + re-normalize settings.json on
+// EVERY call — ~214 call sites across the main process, including per-tool-
+// call permission/network gates, i.e. death by frequency. The cache is
+// validated by mtime+size (one statSync instead of read+parse), so external
+// writers (a second TaskWraith instance) still invalidate it; every
+// in-process writer funnels through writeJson(settingsPath), which
+// invalidates explicitly, keeping same-tick write-then-read correct
+// regardless of filesystem mtime granularity.
+//
+// SHARED-REFERENCE CONTRACT: callers must never mutate the returned object.
+// Audited 2026-07-10: all call sites are read-only (spread-before-merge
+// discipline throughout). New code must copy before mutating.
+let settingsFileCache: { value: AppSettings; mtimeMs: number; size: number } | null = null
+
+function invalidateSettingsFileCache(): void {
+  settingsFileCache = null
+}
+
+function statSettingsFile(): { mtimeMs: number; size: number } | null {
+  try {
+    const stat = fs.statSync(settingsPath)
+    return { mtimeMs: stat.mtimeMs, size: stat.size }
+  } catch {
+    return null
+  }
+}
 const providerUsageSnapshotsPath = path.join(userDataPath, 'provider-usage-snapshots.json')
 const scheduledTasksPath = path.join(userDataPath, 'scheduled-tasks.json')
 const workflowsPath = path.join(userDataPath, 'workflows.json')
@@ -1435,6 +1462,7 @@ function writeJson<T>(filePath: string, data: T) {
     fs.closeSync(fd)
     fd = null
     fs.renameSync(tempPath, filePath)
+    if (filePath === settingsPath) invalidateSettingsFileCache()
     try {
       fs.chmodSync(filePath, 0o600)
     } catch {
@@ -1925,6 +1953,19 @@ export class AppStore {
   // Settings
   static getSettings(): AppSettings {
     migrateLegacySettingsIfMissing()
+    // Stat BEFORE the read (and after the migration write above): if the
+    // file changes between stat and read, the cache holds newer content
+    // under an older stat and self-heals with one extra parse on the next
+    // call — never the reverse (stale-served-as-fresh).
+    const statBefore = statSettingsFile()
+    if (
+      statBefore &&
+      settingsFileCache &&
+      settingsFileCache.mtimeMs === statBefore.mtimeMs &&
+      settingsFileCache.size === statBefore.size
+    ) {
+      return settingsFileCache.value
+    }
     let stored = stripRetiredSettingsKeys(
       readJson<Partial<AppSettings> & Record<string, unknown>>(settingsPath, {})
     )
@@ -1951,7 +1992,7 @@ export class AppStore {
       stored.themeAppearance,
       defaultSettings.themeAppearance
     ) as AppSettings['themeAppearance']
-    return {
+    const built: AppSettings = {
       ...defaultSettings,
       ...stored,
       themeAppearance,
@@ -2050,6 +2091,14 @@ export class AppStore {
         }
       }
     }
+    // Keyed to the pre-read stat: if the mid-body userMcpServers migration
+    // rewrote the file, that write already invalidated the cache and this
+    // repopulation carries a stale stat, forcing one extra re-parse on the
+    // next call — cheap and always in the safe direction.
+    if (statBefore) {
+      settingsFileCache = { value: built, mtimeMs: statBefore.mtimeMs, size: statBefore.size }
+    }
+    return built
   }
 
   static updateSettings(partial: Partial<AppSettings>) {
