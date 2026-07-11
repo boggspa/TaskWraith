@@ -12,9 +12,10 @@ import {
 
 const noop = (): void => undefined
 
-function renderPill(popoutMenuOpen = false): string {
+function renderPill(popoutMenuOpen = false, idScope?: string): string {
   return renderToStaticMarkup(
     <MainPaneActionPill
+      idScope={idScope}
       fxEnabled
       skyEnabled={false}
       ghostEnabled={false}
@@ -89,5 +90,15 @@ describe('MainPaneActionPill', () => {
       'side-chat-layout-menu',
       'composer-combined-picker-popover'
     ])
+  })
+
+  it('scopes trigger and menu ids when several pane pills are mounted', () => {
+    const html = renderPill(false, 'multiview-pane-2')
+
+    expect(html).toContain('id="multiview-pane-2-fx-trigger"')
+    expect(html).toContain('aria-controls="multiview-pane-2-fx-menu"')
+    expect(html).toContain('id="multiview-pane-2-info-trigger"')
+    expect(html).toContain('aria-controls="multiview-pane-2-info-menu"')
+    expect(html).not.toContain('id="chat-corner-fx-trigger"')
   })
 })

@@ -209,17 +209,39 @@
   display: none;
 }
 
-.multiview-pane-corner-controls.chat-corner-controls-right {
-  max-width: calc(100% - 150px);
-  overflow: hidden;
+.multiview-pane-corner-controls.chat-corner-controls-left {
+  max-width: calc(100% - 220px);
 }
 
-.multiview-pane-corner-controls.chat-corner-controls-right:has(.pane-preview-menu) {
-  overflow: visible;
+.multiview-pane-corner-controls .chat-corner-thread-context {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  overflow: hidden;
+  padding: 0 11px;
+}
+
+.multiview-pane-corner-controls
+  .chat-corner-thread-context
+  > :is(.sidebar-provider-icon, .sidebar-provider-icon svg) {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
 }
 
 .multiview-pane-corner-controls .chat-corner-thread-title {
+  flex: 0 1 auto;
   min-width: 0;
+  max-width: 22ch;
+  overflow: hidden;
+  padding: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.multiview-pane-corner-controls .chat-corner-workspace-name {
+  max-width: 10ch;
 }
 
 .multiview-pane-bottom-controls.composer-bottom-controls {

@@ -6,6 +6,8 @@ import { Composer, type ComposerProps } from './Composer'
 import { buildChatViewProps, type BuildChatViewPropsInput } from '../lib/buildChatViewProps'
 import type { MessageFeedbackDetails } from '../lib/messageFeedback'
 import { FileMenuSelectionIcon } from './AppChromeSymbols'
+import { MainPaneActionPill } from './MainPaneActionPill'
+import { ProviderBadgeIcon } from './Sidebar'
 import { WelcomeUsageDashboard } from './WelcomeUsageDashboard'
 import type { WelcomeUsageDashboardData, WelcomeUsageTab } from '../lib/welcomeUsageDashboard'
 import {
@@ -210,6 +212,8 @@ export function chatViewPanePropsEqual(a: ChatViewPaneProps, b: ChatViewPaneProp
 }
 
 function ChatViewPaneChrome(props: ChatViewPaneProps) {
+  const [panePopoutMenuOpen, setPanePopoutMenuOpen] = useState(false)
+  const panePopoutMenuRef = useRef<HTMLDivElement>(null)
   if (props.topLeftChrome || props.topRightChrome) {
     return (
       <>
@@ -220,14 +224,30 @@ function ChatViewPaneChrome(props: ChatViewPaneProps) {
   }
   const chatId = props.chat?.appChatId ?? ''
   const title = props.chat?.title || props.welcomeWorkspaceName || 'New Chat'
+  const workspaceLabel = props.welcomeIsGlobalChat ? null : props.welcomeWorkspaceName
   const defaultLeftAction: ChatViewPaneChromeAction = {
     id: 'pane-chat',
-    title: 'Pane chat',
-    ariaLabel: 'Pane chat',
+    title: 'Focus pane',
+    ariaLabel: 'Focus pane',
     icon: <FileMenuSelectionIcon />,
     onClick: props.onFocusPane
   }
   const leftAction = props.topLeftChromeAction || defaultLeftAction
+  const actionById = new Map(
+    (props.topRightChromeActions || []).map((action) => [action.id, action] as const)
+  )
+  const invokeAction = (action: ChatViewPaneChromeAction | undefined): void => {
+    if (!action || action.disabled || !action.onClick || !chatId) return
+    action.onClick(props.paneIndex, chatId)
+  }
+  const skyAction = actionById.get('sky-weather')
+  const ghostAction = actionById.get('ghost-companion')
+  const changelogAction = actionById.get('changelog')
+  const firstLaunchAction = actionById.get('help')
+  const bugReportAction = actionById.get('bug-report')
+  const popoutAction = actionById.get('popout-chat')
+  const runAction = actionById.get('preview')
+  const homeAction = actionById.get('inspector')
   const renderAction = (action: ChatViewPaneChromeAction) => {
     const button = (
       <button
@@ -290,14 +310,53 @@ function ChatViewPaneChrome(props: ChatViewPaneProps) {
     <>
       <div className="chat-corner-controls chat-corner-controls-left multiview-pane-corner-controls">
         {renderAction(leftAction)}
-        <span className="chat-corner-thread-title" title={title}>
-          {title}
-        </span>
+        <div className="chat-corner-thread-context">
+          <ProviderBadgeIcon provider={props.isEnsemble ? 'ensemble' : props.provider} />
+          <span className="chat-corner-thread-title" title={title}>
+            {title}
+          </span>
+          {workspaceLabel && workspaceLabel !== title && (
+            <span className="chat-corner-workspace-name" title={workspaceLabel}>
+              {workspaceLabel}
+            </span>
+          )}
+        </div>
       </div>
       {props.topRightChromeActions && props.topRightChromeActions.length > 0 && (
-        <div className="chat-corner-controls chat-corner-controls-right multiview-pane-corner-controls">
-          {props.topRightChromeActions.map(renderAction)}
-        </div>
+        <MainPaneActionPill
+          idScope={`multiview-pane-${props.paneIndex}`}
+          className="multiview-pane-corner-controls"
+          fxEnabled={Boolean(
+            (skyAction || ghostAction) && !(skyAction?.disabled && ghostAction?.disabled)
+          )}
+          skyEnabled={Boolean(skyAction?.active)}
+          ghostEnabled={Boolean(ghostAction?.active)}
+          onToggleSky={() => invokeAction(skyAction)}
+          onToggleGhost={() => invokeAction(ghostAction)}
+          changelogOpen={Boolean(changelogAction?.active)}
+          firstLaunchOpen={Boolean(firstLaunchAction?.active)}
+          bugReportOpen={Boolean(bugReportAction?.active)}
+          onToggleChangelog={() => invokeAction(changelogAction)}
+          onToggleFirstLaunch={() => invokeAction(firstLaunchAction)}
+          onToggleBugReport={() => invokeAction(bugReportAction)}
+          popoutMenuOpen={panePopoutMenuOpen}
+          setPopoutMenuOpen={setPanePopoutMenuOpen}
+          popoutMenuRef={panePopoutMenuRef}
+          canOpenWorkspacePopout={false}
+          hasCurrentChat={Boolean(chatId)}
+          onOpenWorkbench={() => undefined}
+          onOpenDiffStudio={() => undefined}
+          onOpenFileEditor={() => undefined}
+          onOpenChatPopout={() => invokeAction(popoutAction)}
+          runTitle={runAction?.title || 'Preview unavailable'}
+          runMenuOpen={Boolean(runAction?.menuOpen)}
+          runHasMenu={Boolean(runAction?.menu)}
+          runDisabled={!runAction || Boolean(runAction.disabled)}
+          runMenu={runAction?.menu}
+          onRun={() => invokeAction(runAction)}
+          homeOpen={Boolean(homeAction?.active)}
+          onToggleHome={() => invokeAction(homeAction)}
+        />
       )}
     </>
   )

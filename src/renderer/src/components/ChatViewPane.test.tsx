@@ -146,6 +146,10 @@ describe('ChatViewPane welcome viewer', () => {
     // ChatViewPane still owns the pane chrome + the welcome spacer (the
     // transcript is replaced, not rendered, on a welcome chat).
     expect(html).toContain('multiview-pane-corner-controls')
+    expect(html).toContain('chat-corner-thread-context')
+    expect(html).toContain('sidebar-provider-icon')
+    expect(html).toContain('chat-corner-workspace-name')
+    expect(html).toContain('>AGBench</span>')
     expect(html).toContain('multiview-pane-welcome-spacer')
     expect(html).not.toContain('transcript-scroll')
     // The welcome hero / starters / composer now belong to the shared
@@ -179,7 +183,7 @@ describe('ChatViewPane shared composer', () => {
 })
 
 describe('ChatViewPane chrome actions', () => {
-  it('renders menu-backed top-right actions for split-pane preview controls', () => {
+  it('renders the same five primary actions as the focused pane with pane-scoped ids', () => {
     const html = renderToStaticMarkup(
       <ChatViewPane
         {...makeProps({
@@ -205,6 +209,13 @@ describe('ChatViewPane chrome actions', () => {
       />
     )
 
+    const actionIds = Array.from(
+      html.matchAll(/data-main-pane-action="([^"]+)"/g),
+      (match) => match[1]
+    )
+    expect(actionIds).toEqual(['fx', 'info', 'popout', 'run', 'home'])
+    expect(html).toContain('id="multiview-pane-1-fx-trigger"')
+    expect(html).toContain('id="multiview-pane-1-info-trigger"')
     expect(html).toContain('data-preview-menu-root="true"')
     expect(html).toContain('aria-haspopup="menu"')
     expect(html).toContain('aria-expanded="true"')

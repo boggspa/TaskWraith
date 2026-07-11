@@ -31,7 +31,11 @@ export const INFO_MENU_ITEMS = [
 export const MAIN_PANE_GLASS_POPOVER_CLASS =
   'side-chat-layout-menu composer-combined-picker-popover'
 
-interface MainPaneActionPillProps {
+export interface MainPaneActionPillProps {
+  /** Stable DOM-id scope. Multiview supplies one per pane to avoid duplicate
+   * trigger/menu ids while the single focused pane keeps the legacy ids. */
+  idScope?: string
+  className?: string
   fxEnabled: boolean
   skyEnabled: boolean
   ghostEnabled: boolean
@@ -64,8 +68,10 @@ interface MainPaneActionPillProps {
   onToggleHome: () => void
 }
 
-/** The main-pane glass pill intentionally exposes exactly five primary actions. */
+/** The shared pane glass pill intentionally exposes exactly five primary actions. */
 export function MainPaneActionPill({
+  idScope = 'chat-corner',
+  className,
   fxEnabled,
   skyEnabled,
   ghostEnabled,
@@ -102,18 +108,27 @@ export function MainPaneActionPill({
   const menuRef = useRef<HTMLDivElement>(null)
   const fxTriggerRef = useRef<HTMLButtonElement>(null)
   const infoTriggerRef = useRef<HTMLButtonElement>(null)
+  const popoutTriggerRef = useRef<HTMLButtonElement>(null)
+  const fxTriggerId = `${idScope}-fx-trigger`
+  const fxMenuId = `${idScope}-fx-menu`
+  const infoTriggerId = `${idScope}-info-trigger`
+  const infoMenuId = `${idScope}-info-menu`
 
   useEffect(() => {
-    if (!menu) return
+    if (!menu && !popoutMenuOpen) return
     const handlePointerDown = (event: MouseEvent): void => {
-      if (!rootRef.current?.contains(event.target as Node)) setMenu(null)
+      if (rootRef.current?.contains(event.target as Node)) return
+      setMenu(null)
+      setPopoutMenuOpen(false)
     }
     const handleKeyDown = (event: KeyboardEvent): void => {
       if (event.key !== 'Escape') return
       const closingMenu = menu
       setMenu(null)
+      setPopoutMenuOpen(false)
       if (closingMenu === 'fx') fxTriggerRef.current?.focus()
-      else infoTriggerRef.current?.focus()
+      else if (closingMenu === 'info') infoTriggerRef.current?.focus()
+      else popoutTriggerRef.current?.focus()
     }
     document.addEventListener('mousedown', handlePointerDown)
     document.addEventListener('keydown', handleKeyDown)
@@ -121,7 +136,7 @@ export function MainPaneActionPill({
       document.removeEventListener('mousedown', handlePointerDown)
       document.removeEventListener('keydown', handleKeyDown)
     }
-  }, [menu])
+  }, [menu, popoutMenuOpen, setPopoutMenuOpen])
 
   useEffect(() => {
     if (!menu) return
@@ -148,6 +163,7 @@ export function MainPaneActionPill({
   const handleMenuKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>): void => {
     if (event.key === 'Tab') {
       setMenu(null)
+      setPopoutMenuOpen(false)
       return
     }
     if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return
@@ -169,11 +185,14 @@ export function MainPaneActionPill({
   }
 
   return (
-    <div ref={rootRef} className="chat-corner-controls chat-corner-controls-right">
+    <div
+      ref={rootRef}
+      className={`chat-corner-controls chat-corner-controls-right${className ? ` ${className}` : ''}`}
+    >
       <div className="side-chat-menu-wrap chat-corner-picker-wrap">
         <button
           ref={fxTriggerRef}
-          id="chat-corner-fx-trigger"
+          id={fxTriggerId}
           data-main-pane-action="fx"
           className={`chat-corner-btn ${menu === 'fx' || skyEnabled || ghostEnabled ? 'active' : ''}`}
           type="button"
@@ -181,7 +200,7 @@ export function MainPaneActionPill({
           title="Visual effects"
           aria-label="Choose visual effects"
           aria-haspopup="menu"
-          aria-controls="chat-corner-fx-menu"
+          aria-controls={fxMenuId}
           aria-expanded={menu === 'fx'}
         >
           <GhostCompanionIcon />
@@ -189,10 +208,10 @@ export function MainPaneActionPill({
         {menu === 'fx' && (
           <div
             ref={menuRef}
-            id="chat-corner-fx-menu"
+            id={fxMenuId}
             className={`${MAIN_PANE_GLASS_POPOVER_CLASS} chat-corner-picker-menu`}
             role="menu"
-            aria-labelledby="chat-corner-fx-trigger"
+            aria-labelledby={fxTriggerId}
             onKeyDown={handleMenuKeyDown}
           >
             <button
@@ -233,7 +252,7 @@ export function MainPaneActionPill({
       <div className="side-chat-menu-wrap chat-corner-picker-wrap">
         <button
           ref={infoTriggerRef}
-          id="chat-corner-info-trigger"
+          id={infoTriggerId}
           data-main-pane-action="info"
           className={`chat-corner-btn ${menu === 'info' || changelogOpen || firstLaunchOpen || bugReportOpen ? 'active' : ''}`}
           type="button"
@@ -241,7 +260,7 @@ export function MainPaneActionPill({
           title="Product information"
           aria-label="Choose product information"
           aria-haspopup="menu"
-          aria-controls="chat-corner-info-menu"
+          aria-controls={infoMenuId}
           aria-expanded={menu === 'info'}
         >
           <InfoCircleIcon />
@@ -249,10 +268,10 @@ export function MainPaneActionPill({
         {menu === 'info' && (
           <div
             ref={menuRef}
-            id="chat-corner-info-menu"
+            id={infoMenuId}
             className={`${MAIN_PANE_GLASS_POPOVER_CLASS} chat-corner-picker-menu`}
             role="menu"
-            aria-labelledby="chat-corner-info-trigger"
+            aria-labelledby={infoTriggerId}
             onKeyDown={handleMenuKeyDown}
           >
             <button
@@ -288,6 +307,7 @@ export function MainPaneActionPill({
 
       <div className="chat-popout-menu-wrap" ref={popoutMenuRef}>
         <button
+          ref={popoutTriggerRef}
           data-main-pane-action="popout"
           className={`chat-corner-btn ${popoutMenuOpen ? 'active' : ''}`}
           type="button"
@@ -378,6 +398,7 @@ export function MainPaneActionPill({
         type="button"
         onClick={() => {
           setMenu(null)
+          setPopoutMenuOpen(false)
           onToggleHome()
         }}
         title={homeOpen ? 'Hide sidebar home' : 'Open sidebar home'}
