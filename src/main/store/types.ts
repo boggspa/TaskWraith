@@ -2958,6 +2958,11 @@ export interface ChatMessage {
     guestRunId?: string
     /** Parent chat id that received the mirrored guest reply. */
     parentChatId?: string
+    /** Durable mailbox receipt for a returned sub-thread result. When present,
+     * the transcript row is UI/audit projection only; provider context receives
+     * the payload through the mailbox continuation instead. */
+    mailboxEventId?: string
+    providerContextVisibility?: 'projection-only'
     /** TaskWraith-authored, transcript-native close-out row. */
     closeoutSource?: 'currentProvider' | 'summaryProvider' | 'deterministicFallback'
     closeoutProvider?: ProviderId

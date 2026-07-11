@@ -226,6 +226,27 @@ describe('chatMessagesToGeminiContents', () => {
     expect(textOf(out[0])).toContain(nested)
   })
 
+  it('keeps mailbox-owned return cards out of provider history', () => {
+    const out = chatMessagesToGeminiContents([
+      msg('assistant', 'I delegated this.'),
+      msg('tool', 'Delivered exactly once.', {
+        metadata: {
+          kind: 'subThreadReturn',
+          subThreadId: 'sub-1',
+          subThreadTitle: 'Build check',
+          mailboxEventId: 'mailbox-event-1',
+          providerContextVisibility: 'projection-only'
+        }
+      }),
+      msg('user', 'Continue.')
+    ])
+
+    expect(out).toHaveLength(2)
+    expect(textOf(out[0])).toBe('I delegated this.')
+    expect(textOf(out[1])).toBe('Continue.')
+    expect(JSON.stringify(out)).not.toContain('Delivered exactly once.')
+  })
+
   it('replays guest participant replies as untrusted user-role peer data', () => {
     const out = chatMessagesToGeminiContents([
       msg('system', 'Guest says this needs tests.', {

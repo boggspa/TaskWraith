@@ -376,7 +376,12 @@ export function sanitizeContextText(value: string, maxLength: number): string {
 }
 
 function isSubThreadReturnMessage(message: ChatMessage): boolean {
-  return message.metadata?.kind === 'subThreadReturn' && Boolean(message.content?.trim())
+  return (
+    message.metadata?.kind === 'subThreadReturn' &&
+    message.metadata.providerContextVisibility !== 'projection-only' &&
+    typeof message.metadata.mailboxEventId !== 'string' &&
+    Boolean(message.content?.trim())
+  )
 }
 
 const MAX_PENDING_SUBTHREAD_RESULTS = 5

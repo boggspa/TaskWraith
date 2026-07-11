@@ -19,12 +19,12 @@
  *   - `system` → skipped by default (synthetic delegation cards / "↩ Result
  *     from X" wrappers would confuse the model when replayed verbatim);
  *     opt in with `includeSystem: true`
- *   - `tool` and `error` → skipped, except TaskWraith sub-thread returns
- *     (`metadata.kind === 'subThreadReturn'`) and guest participant replies
- *     (`metadata.kind === 'guestParticipantReply'`). Those are local peer /
- *     child outputs from another provider, and the Gemini API history has no
- *     matching functionCall to pair with a functionResponse, so we replay
- *     them as user-role untrusted data.
+ *   - `tool` and `error` → skipped, except legacy TaskWraith sub-thread
+ *     returns that predate the durable mailbox and guest participant replies.
+ *     Mailbox-owned sub-thread cards are projection-only because their content
+ *     is delivered exactly once in the mailbox continuation prompt. Legacy
+ *     returns and guest replies have no matching functionCall to pair with a
+ *     functionResponse, so we replay them as user-role untrusted data.
  *   - empty content → skipped
  *   - same-role adjacent messages → merged with `\n\n` joiner so the
  *     resulting array strictly alternates user/model (Gemini's API
@@ -44,7 +44,12 @@ import { isRetiredExternalChannelInboundMessage } from './LegacyExternalChannelH
 import { isTaskWraithCloseoutMessage } from '../shared/taskWraithCloseout'
 
 function isSubThreadReturnMessage(message: ChatMessage): boolean {
-  return message.metadata?.kind === 'subThreadReturn' && Boolean(message.content?.trim())
+  return (
+    message.metadata?.kind === 'subThreadReturn' &&
+    message.metadata.providerContextVisibility !== 'projection-only' &&
+    typeof message.metadata.mailboxEventId !== 'string' &&
+    Boolean(message.content?.trim())
+  )
 }
 
 function isGuestParticipantReplyMessage(message: ChatMessage): boolean {

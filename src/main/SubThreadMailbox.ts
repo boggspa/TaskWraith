@@ -1,0 +1,395 @@
+import { createHash } from 'crypto'
+import type { ProviderId } from './store/types'
+
+export const SUBTHREAD_MAILBOX_SCHEMA_VERSION = 1 as const
+export const MAX_SUBTHREAD_MAILBOX_PAYLOAD_CHARS = 12_000
+export const MAX_RETAINED_PROCESSED_SUBTHREAD_MAILBOX_EVENTS = 256
+
+export type SubThreadMailboxOutcome = 'done' | 'requires_action' | 'failed' | 'cancelled'
+export type SubThreadMailboxPriority = 'normal' | 'interrupt'
+
+export interface SubThreadMailboxEvent {
+  schemaVersion: typeof SUBTHREAD_MAILBOX_SCHEMA_VERSION
+  id: string
+  sequence: number
+  parentChatId: string
+  kind: 'subthread_result'
+  createdAt: string
+  /** Managed-event acknowledgement: null until a parent delivery accepts it. */
+  processedAt: string | null
+  outcome: SubThreadMailboxOutcome
+  required: boolean
+  priority: SubThreadMailboxPriority
+  trust: 'untrusted-child-output'
+  source: {
+    subThreadId: string
+    subThreadProvider?: ProviderId
+    subThreadTitle: string
+    sourceAssistantMessageId: string
+    sourceRunId?: string
+  }
+  payload: {
+    content: string
+    truncated?: boolean
+    originalChars?: number
+  }
+  /** Stable parent run that currently owns delivery of this event. */
+  deliveryRunId?: string
+  claimedAt?: string
+  deliveryAttempts: number
+  lastDeliveryError?: {
+    at: string
+    message: string
+  }
+}
+
+export interface SubThreadMailbox {
+  schemaVersion: typeof SUBTHREAD_MAILBOX_SCHEMA_VERSION
+  parentChatId: string
+  nextSequence: number
+  events: SubThreadMailboxEvent[]
+}
+
+export interface SubThreadMailboxEventInput {
+  id?: string
+  parentChatId: string
+  subThreadId: string
+  subThreadProvider?: ProviderId
+  subThreadTitle: string
+  sourceAssistantMessageId: string
+  sourceRunId?: string
+  outcome: SubThreadMailboxOutcome
+  required?: boolean
+  priority?: SubThreadMailboxPriority
+  content: string
+  createdAt?: string
+}
+
+export interface SubThreadMailboxLedger {
+  schemaVersion: typeof SUBTHREAD_MAILBOX_SCHEMA_VERSION
+  mailboxes: Record<string, SubThreadMailbox>
+}
+
+const PROVIDERS = new Set<ProviderId>([
+  'gemini',
+  'codex',
+  'claude',
+  'kimi',
+  'grok',
+  'cursor',
+  'ollama'
+])
+const OUTCOMES = new Set<SubThreadMailboxOutcome>([
+  'done',
+  'requires_action',
+  'failed',
+  'cancelled'
+])
+
+function recordOrNull(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null
+}
+
+function nonEmptyString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined
+}
+
+function positiveInteger(value: unknown, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0
+    ? Math.floor(value)
+    : fallback
+}
+
+function normalizeEvent(value: unknown, parentChatId: string): SubThreadMailboxEvent | null {
+  const event = recordOrNull(value)
+  if (!event) return null
+  const id = nonEmptyString(event.id)
+  const source = recordOrNull(event.source)
+  const payload = recordOrNull(event.payload)
+  const subThreadId = nonEmptyString(source?.subThreadId)
+  const subThreadTitle = nonEmptyString(source?.subThreadTitle)
+  const sourceAssistantMessageId = nonEmptyString(source?.sourceAssistantMessageId)
+  const content = typeof payload?.content === 'string' ? payload.content : undefined
+  if (!id || !source || !payload || !subThreadId || !subThreadTitle || !sourceAssistantMessageId) {
+    return null
+  }
+  if (content === undefined) return null
+  const outcome = OUTCOMES.has(event.outcome as SubThreadMailboxOutcome)
+    ? (event.outcome as SubThreadMailboxOutcome)
+    : 'done'
+  const createdAt = nonEmptyString(event.createdAt) || new Date(0).toISOString()
+  const processedAt = nonEmptyString(event.processedAt) || null
+  const provider = PROVIDERS.has(source.subThreadProvider as ProviderId)
+    ? (source.subThreadProvider as ProviderId)
+    : undefined
+  const lastError = recordOrNull(event.lastDeliveryError)
+  const lastErrorAt = nonEmptyString(lastError?.at)
+  const lastErrorMessage = nonEmptyString(lastError?.message)
+  const deliveryRunId = nonEmptyString(event.deliveryRunId)
+  const claimedAt = deliveryRunId ? nonEmptyString(event.claimedAt) : undefined
+  const originalChars = positiveInteger(payload.originalChars, content.length)
+
+  return {
+    schemaVersion: SUBTHREAD_MAILBOX_SCHEMA_VERSION,
+    id,
+    sequence: positiveInteger(event.sequence, 1),
+    parentChatId,
+    kind: 'subthread_result',
+    createdAt,
+    processedAt,
+    outcome,
+    required: event.required !== false,
+    priority: event.priority === 'interrupt' ? 'interrupt' : 'normal',
+    trust: 'untrusted-child-output',
+    source: {
+      subThreadId,
+      ...(provider ? { subThreadProvider: provider } : {}),
+      subThreadTitle,
+      sourceAssistantMessageId,
+      ...(nonEmptyString(source.sourceRunId)
+        ? { sourceRunId: nonEmptyString(source.sourceRunId) }
+        : {})
+    },
+    payload: {
+      content: content.slice(0, MAX_SUBTHREAD_MAILBOX_PAYLOAD_CHARS),
+      ...(payload.truncated === true || content.length > MAX_SUBTHREAD_MAILBOX_PAYLOAD_CHARS
+        ? { truncated: true, originalChars }
+        : {})
+    },
+    ...(deliveryRunId ? { deliveryRunId } : {}),
+    ...(claimedAt ? { claimedAt } : {}),
+    deliveryAttempts: Math.max(0, positiveInteger(event.deliveryAttempts, 0)),
+    ...(lastErrorAt && lastErrorMessage
+      ? { lastDeliveryError: { at: lastErrorAt, message: lastErrorMessage } }
+      : {})
+  }
+}
+
+function capMailboxEvents(events: SubThreadMailboxEvent[]): SubThreadMailboxEvent[] {
+  const pending = events.filter((event) => event.processedAt === null)
+  const processed = events
+    .filter((event) => event.processedAt !== null)
+    .slice(-MAX_RETAINED_PROCESSED_SUBTHREAD_MAILBOX_EVENTS)
+  return [...pending, ...processed].sort((a, b) => a.sequence - b.sequence)
+}
+
+export function emptySubThreadMailbox(parentChatId: string): SubThreadMailbox {
+  return {
+    schemaVersion: SUBTHREAD_MAILBOX_SCHEMA_VERSION,
+    parentChatId,
+    nextSequence: 1,
+    events: []
+  }
+}
+
+export function normalizeSubThreadMailbox(
+  value: unknown,
+  parentChatId: string
+): SubThreadMailbox {
+  const input = recordOrNull(value)
+  const seen = new Set<string>()
+  const events = (Array.isArray(input?.events) ? input.events : [])
+    .map((event) => normalizeEvent(event, parentChatId))
+    .filter((event): event is SubThreadMailboxEvent => Boolean(event))
+    .sort((a, b) => a.sequence - b.sequence)
+    .filter((event) => {
+      if (seen.has(event.id)) return false
+      seen.add(event.id)
+      return true
+    })
+  const maxSequence = events.reduce((max, event) => Math.max(max, event.sequence), 0)
+  return {
+    schemaVersion: SUBTHREAD_MAILBOX_SCHEMA_VERSION,
+    parentChatId,
+    nextSequence: Math.max(maxSequence + 1, positiveInteger(input?.nextSequence, 1)),
+    events: capMailboxEvents(events)
+  }
+}
+
+export function normalizeSubThreadMailboxLedger(value: unknown): SubThreadMailboxLedger {
+  const input = recordOrNull(value)
+  const rawMailboxes = recordOrNull(input?.mailboxes) || {}
+  const normalizedMailboxes: Record<string, SubThreadMailbox> = Object.create(null)
+  const mailboxes = Object.entries(rawMailboxes).reduce<Record<string, SubThreadMailbox>>(
+    (result, [parentChatId, mailbox]) => {
+      if (!parentChatId.trim()) return result
+      result[parentChatId] = normalizeSubThreadMailbox(mailbox, parentChatId)
+      return result
+    },
+    normalizedMailboxes
+  )
+  return { schemaVersion: SUBTHREAD_MAILBOX_SCHEMA_VERSION, mailboxes }
+}
+
+export function createSubThreadMailboxEventId(
+  parentChatId: string,
+  subThreadId: string,
+  sourceAssistantMessageId: string
+): string {
+  const hash = createHash('sha256')
+    .update(`${parentChatId}\0${subThreadId}\0${sourceAssistantMessageId}`)
+    .digest('hex')
+    .slice(0, 32)
+  return `subthread-result-${hash}`
+}
+
+export function createSubThreadMailboxDeliveryRunId(
+  parentChatId: string,
+  orderedEventIds: readonly string[]
+): string {
+  const hash = createHash('sha256')
+    .update(`${parentChatId}\0${orderedEventIds.join('\0')}`)
+    .digest('hex')
+    .slice(0, 32)
+  return `subthread-mailbox-${hash}`
+}
+
+export function enqueueSubThreadMailboxEvent(
+  current: SubThreadMailbox | undefined,
+  input: SubThreadMailboxEventInput,
+  options: { now?: string } = {}
+): { mailbox: SubThreadMailbox; event: SubThreadMailboxEvent; inserted: boolean } {
+  const mailbox = normalizeSubThreadMailbox(current, input.parentChatId)
+  const id =
+    nonEmptyString(input.id) ||
+    createSubThreadMailboxEventId(
+      input.parentChatId,
+      input.subThreadId,
+      input.sourceAssistantMessageId
+    )
+  const existing = mailbox.events.find((event) => event.id === id)
+  if (existing) return { mailbox, event: existing, inserted: false }
+
+  const originalContent = String(input.content || '')
+  const content = originalContent.slice(0, MAX_SUBTHREAD_MAILBOX_PAYLOAD_CHARS)
+  const event: SubThreadMailboxEvent = {
+    schemaVersion: SUBTHREAD_MAILBOX_SCHEMA_VERSION,
+    id,
+    sequence: mailbox.nextSequence,
+    parentChatId: input.parentChatId,
+    kind: 'subthread_result',
+    createdAt: input.createdAt || options.now || new Date().toISOString(),
+    processedAt: null,
+    outcome: input.outcome,
+    required: input.required !== false,
+    priority: input.priority === 'interrupt' ? 'interrupt' : 'normal',
+    trust: 'untrusted-child-output',
+    source: {
+      subThreadId: input.subThreadId,
+      ...(input.subThreadProvider ? { subThreadProvider: input.subThreadProvider } : {}),
+      subThreadTitle: input.subThreadTitle,
+      sourceAssistantMessageId: input.sourceAssistantMessageId,
+      ...(input.sourceRunId ? { sourceRunId: input.sourceRunId } : {})
+    },
+    payload: {
+      content,
+      ...(content.length < originalContent.length
+        ? { truncated: true, originalChars: originalContent.length }
+        : {})
+    },
+    deliveryAttempts: 0
+  }
+  return {
+    mailbox: {
+      ...mailbox,
+      nextSequence: event.sequence + 1,
+      events: capMailboxEvents([...mailbox.events, event])
+    },
+    event,
+    inserted: true
+  }
+}
+
+export function pendingSubThreadMailboxEvents(
+  mailbox: SubThreadMailbox | undefined
+): SubThreadMailboxEvent[] {
+  return mailbox
+    ? [...mailbox.events]
+        .filter((event) => event.processedAt === null)
+        .sort((a, b) => a.sequence - b.sequence)
+    : []
+}
+
+export function claimPendingSubThreadMailboxEvents(
+  current: SubThreadMailbox,
+  input: {
+    deliveryRunId: string
+    claimedAt?: string
+    eventIds?: string[]
+    limit?: number
+  }
+): { mailbox: SubThreadMailbox; events: SubThreadMailboxEvent[] } {
+  const mailbox = normalizeSubThreadMailbox(current, current.parentChatId)
+  const eventIdSet = input.eventIds?.length ? new Set(input.eventIds) : null
+  const limit = Math.max(1, Math.floor(input.limit || Number.MAX_SAFE_INTEGER))
+  const candidates = mailbox.events
+    .filter(
+      (event) =>
+        event.processedAt === null &&
+        (!eventIdSet || eventIdSet.has(event.id)) &&
+        (!event.deliveryRunId || event.deliveryRunId === input.deliveryRunId)
+    )
+    .slice(0, limit)
+  const candidateIds = new Set(candidates.map((event) => event.id))
+  const claimedAt = input.claimedAt || new Date().toISOString()
+  const events = mailbox.events.map((event) => {
+    if (!candidateIds.has(event.id) || event.deliveryRunId === input.deliveryRunId) return event
+    return {
+      ...event,
+      deliveryRunId: input.deliveryRunId,
+      claimedAt,
+      deliveryAttempts: event.deliveryAttempts + 1,
+      lastDeliveryError: undefined
+    }
+  })
+  const nextMailbox = { ...mailbox, events }
+  return {
+    mailbox: nextMailbox,
+    events: candidates.map(
+      (candidate) => events.find((event) => event.id === candidate.id) || candidate
+    )
+  }
+}
+
+export function acknowledgeSubThreadMailboxDelivery(
+  current: SubThreadMailbox,
+  deliveryRunId: string,
+  options: { processedAt?: string } = {}
+): { mailbox: SubThreadMailbox; acknowledgedEventIds: string[] } {
+  const mailbox = normalizeSubThreadMailbox(current, current.parentChatId)
+  const processedAt = options.processedAt || new Date().toISOString()
+  const acknowledgedEventIds: string[] = []
+  const events = mailbox.events.map((event) => {
+    if (event.processedAt !== null || event.deliveryRunId !== deliveryRunId) return event
+    acknowledgedEventIds.push(event.id)
+    return { ...event, processedAt }
+  })
+  return {
+    mailbox: { ...mailbox, events: capMailboxEvents(events) },
+    acknowledgedEventIds
+  }
+}
+
+export function releaseSubThreadMailboxDelivery(
+  current: SubThreadMailbox,
+  deliveryRunId: string,
+  options: { failedAt?: string; error: string }
+): { mailbox: SubThreadMailbox; releasedEventIds: string[] } {
+  const mailbox = normalizeSubThreadMailbox(current, current.parentChatId)
+  const failedAt = options.failedAt || new Date().toISOString()
+  const message = options.error.trim() || 'Mailbox delivery failed.'
+  const releasedEventIds: string[] = []
+  const events = mailbox.events.map((event) => {
+    if (event.processedAt !== null || event.deliveryRunId !== deliveryRunId) return event
+    releasedEventIds.push(event.id)
+    const {
+      deliveryRunId: _deliveryRunId,
+      claimedAt: _claimedAt,
+      ...rest
+    } = event
+    return { ...rest, lastDeliveryError: { at: failedAt, message } }
+  })
+  return { mailbox: { ...mailbox, events }, releasedEventIds }
+}

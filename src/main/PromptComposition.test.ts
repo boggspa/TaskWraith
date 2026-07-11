@@ -31,7 +31,10 @@ function message(overrides: Partial<ChatMessage>): ChatMessage {
   }
 }
 
-function subThreadReturn(content = 'Child says tests passed.'): ChatMessage {
+function subThreadReturn(
+  content = 'Child says tests passed.',
+  options: { mailboxEventId?: string } = {}
+): ChatMessage {
   return message({
     id: 'sub-return-1',
     role: 'tool',
@@ -40,7 +43,13 @@ function subThreadReturn(content = 'Child says tests passed.'): ChatMessage {
       kind: 'subThreadReturn',
       subThreadId: 'sub-1',
       subThreadProvider: 'codex',
-      subThreadTitle: 'Build check'
+      subThreadTitle: 'Build check',
+      ...(options.mailboxEventId
+        ? {
+            mailboxEventId: options.mailboxEventId,
+            providerContextVisibility: 'projection-only' as const
+          }
+        : {})
     }
   })
 }
@@ -227,6 +236,18 @@ describe('buildPendingSubThreadResultContextBlock', () => {
 
     expect(block).toBe('')
   })
+
+  it('does not replay mailbox-owned UI projections', () => {
+    const block = buildPendingSubThreadResultContextBlock(
+      [
+        message({ role: 'assistant', content: 'Delegated.' }),
+        subThreadReturn('Delivered exactly once.', { mailboxEventId: 'mailbox-event-1' })
+      ],
+      'continue'
+    )
+
+    expect(block).toBe('')
+  })
 })
 
 describe('composeRunPrompt sub-thread returns', () => {
@@ -246,6 +267,27 @@ describe('composeRunPrompt sub-thread returns', () => {
     expect(result.contextualPrompt).toContain('Pending sub-thread result context')
     expect(result.contextualPrompt).toContain('Child says tests passed.')
     expect(result.contextualPrompt).toContain('Current user request:\nContinue.')
+  })
+
+  it('keeps mailbox-owned return cards out of resumed provider prompts', () => {
+    const result = composeRunPrompt({
+      provider: 'codex',
+      finalPrompt: 'Continue.',
+      messages: [
+        message({ role: 'assistant', content: 'Delegated.' }),
+        subThreadReturn('Delivered exactly once.', { mailboxEventId: 'mailbox-event-1' })
+      ],
+      chatContextTurns: 6,
+      resumeSessionId: 'codex-session-1',
+      codexHandoffsApplied: [],
+      isGlobalRun: false,
+      approvalMode: 'default',
+      providerLabel: 'Codex'
+    })
+
+    expect(result.contextualPrompt).toMatch(/Continue\.$/)
+    expect(result.contextualPrompt).not.toContain('Delivered exactly once.')
+    expect(result.contextualPrompt).not.toContain('Pending sub-thread result context')
   })
 
   it('replays compact Codex history when no app-server thread can be resumed', () => {

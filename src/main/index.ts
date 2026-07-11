@@ -1185,10 +1185,15 @@ import {
 } from './DelegationApprovalBudgetGuard'
 import { classifyShellOpenTarget } from './ShellOpenPolicy'
 import {
-  AUTO_RESUME_CONTINUATION_KIND,
-  buildAutoResumeContinuationPrompt,
+  MAX_SUBTHREAD_MAILBOX_PROMPT_EVENTS,
+  attachSubThreadMailboxToParentPrompt,
+  buildSubThreadMailboxContinuationPrompt,
   shouldAutoResumeParent
 } from './AutoResumeParent'
+import {
+  createSubThreadMailboxDeliveryRunId,
+  pendingSubThreadMailboxEvents
+} from './SubThreadMailbox'
 import {
   buildClaudeTaskWraithAllowedToolNames,
   buildClaudeTaskWraithMcpConfigJson,
@@ -1881,6 +1886,7 @@ let approvalService: ApprovalService | null = null
 // the newly-created sub-thread without going through the renderer.
 // Stays null until whenReady; the consumer null-checks.
 let runCoordinatorRef: RunCoordinator | null = null
+const subThreadMailboxDeliveriesInFlight = new Set<string>()
 // Provider auto-failover (quota-wall kill-switch) — module-scope state.
 // `dispatchRunWithProviderPauseRef` is assigned inside whenReady so the
 // failover orchestrator (module scope) can re-dispatch through the same
@@ -5346,6 +5352,20 @@ runManager.onChange((event) => {
       )
     })
   }
+  if (
+    event.type === 'updated' &&
+    (event.session.status === 'completed' ||
+      event.session.status === 'failed' ||
+      event.session.status === 'cancelled') &&
+    event.session.appChatId
+  ) {
+    void maybeDrainParentSubThreadMailbox(event.session.appChatId).catch((err) => {
+      console.warn(
+        `[SubThreadMailbox] terminal-run drain failed for parentChatId=${event.session.appChatId}:`,
+        err instanceof Error ? err.message : String(err)
+      )
+    })
+  }
 })
 
 function buildSubThreadReturnContent(args: {
@@ -5399,13 +5419,66 @@ async function maybePropagateSubThreadResult(chatId: string | undefined): Promis
       message.metadata.subThreadId === subThread.appChatId &&
       message.metadata.sourceAssistantMessageId === lastAssistant.id
   )
-  if (existingReturnForAssistant) return
   const previousReturnedAt = subThread.delegationContext.resultReturnedAt
-  if (previousReturnedAt) {
+  if (!existingReturnForAssistant && previousReturnedAt) {
     const assistantTimestamp = Date.parse(lastAssistant.timestamp)
     if (!Number.isFinite(assistantTimestamp) || assistantTimestamp <= previousReturnedAt) {
       return
     }
+  }
+  // Persist the parent-bound result before transcript projection or wake-up.
+  // A crash after this write can lose presentation, but never loses delivery;
+  // re-entry deduplicates on parent+child+assistant-message identity.
+  const mailboxResult = AppStore.enqueueSubThreadMailboxEvent({
+    parentChatId: parent.appChatId,
+    subThreadId: subThread.appChatId,
+    subThreadProvider: subThread.provider,
+    subThreadTitle: subThread.title,
+    sourceAssistantMessageId: lastAssistant.id,
+    sourceRunId: lastAssistant.runId,
+    outcome: 'done',
+    required: true,
+    priority: 'normal',
+    content: lastAssistant.content
+  })
+  // Upgrade/recovery path: an older build may already have projected the
+  // transcript card without a durable mailbox event. The enqueue above repairs
+  // that gap. Mark the existing card projection-only so later prompt/history
+  // composition cannot replay the same payload after mailbox delivery.
+  if (existingReturnForAssistant) {
+    let projectionChanged = false
+    const projectedMessages = parent.messages.map((message) => {
+      const matchesProjection =
+        message.metadata?.kind === 'subThreadReturn' &&
+        message.metadata.subThreadId === subThread.appChatId &&
+        message.metadata.sourceAssistantMessageId === lastAssistant.id
+      if (!matchesProjection) return message
+      if (
+        message.metadata?.mailboxEventId === mailboxResult.event.id &&
+        message.metadata.providerContextVisibility === 'projection-only'
+      ) {
+        return message
+      }
+      projectionChanged = true
+      return {
+        ...message,
+        metadata: {
+          ...message.metadata,
+          mailboxEventId: mailboxResult.event.id,
+          providerContextVisibility: 'projection-only' as const
+        }
+      }
+    })
+    if (projectionChanged) {
+      const projectedParent = {
+        ...parent,
+        messages: projectedMessages
+      }
+      AppStore.saveChat(projectedParent)
+      broadcastChatUpdated(projectedParent)
+    }
+    await maybeDrainParentSubThreadMailbox(parent.appChatId)
+    return
   }
   const label = subThread.provider ? providerLabel(subThread.provider) : 'Sub-thread'
   const returnedAt = Date.now()
@@ -5430,6 +5503,8 @@ async function maybePropagateSubThreadResult(chatId: string | undefined): Promis
       subThreadTitle: subThread.title,
       sourceAssistantMessageId: lastAssistant.id,
       sourceRunId: lastAssistant.runId,
+      mailboxEventId: mailboxResult.event.id,
+      providerContextVisibility: 'projection-only',
       resultTrust: 'untrusted-child-output',
       lifecycleState: 'returned',
       returnedAt,
@@ -5463,6 +5538,7 @@ async function maybePropagateSubThreadResult(chatId: string | undefined): Promis
       {
         subThreadId: subThread.appChatId,
         subThreadProvider: subThread.provider,
+        mailboxEventId: mailboxResult.event.id,
         finalMessagePreview: lastAssistant.content.slice(0, 200)
       }
     )
@@ -5474,211 +5550,329 @@ async function maybePropagateSubThreadResult(chatId: string | undefined): Promis
   // shows the "returned" timestamp).
   broadcastChatUpdated(updatedParent)
   broadcastChatUpdated(updatedSubThread)
-  // Auto-resume the parent agent if the user has opted in. Without
-  // this the back-propagated result above just sits in the parent
-  // transcript forever — the parent's run already finished (usually
-  // right after it called `delegate_to_subthread`) so there's no
-  // event for the agent to wake up on. The user previously had to
-  // type "ok, continue" manually; the auto-resume dispatch closes
-  // that loop.
-  //
-  // Gating lives in the pure `shouldAutoResumeParent` helper so the
-  // five preconditions are testable in isolation. If any condition
-  // fails we silently skip — the back-propagation itself already
-  // succeeded, and "skipped auto-resume" is the prior behaviour
-  // (manual nudge still works).
+  // Drain the durable mailbox. Busy parents simply retain processedAt=null;
+  // their terminal run event (or startup recovery) replays this drain later.
   try {
-    await maybeAutoResumeParentAgent({
-      subThread: updatedSubThread,
-      parent: updatedParent,
-      resultContent: lastAssistant.content
-    })
+    await maybeDrainParentSubThreadMailbox(updatedParent.appChatId)
   } catch (err) {
-    // Best-effort: a failed auto-resume must NOT undo the
-    // back-propagation. Log and move on; the user can always nudge
-    // manually.
-
     console.warn(
-      `[AutoResumeParent] dispatch attempt failed for parentChatId=${updatedParent.appChatId}:`,
+      `[SubThreadMailbox] drain attempt failed for parentChatId=${updatedParent.appChatId}:`,
       err instanceof Error ? err.message : String(err)
     )
   }
 }
 
-/**
- * Auto-resume implementation — separated from `maybePropagateSubThreadResult`
- * so the propagation path stays linear / readable, and so the
- * dispatch logic has a single home for the side effects (transcript
- * append, audit event, RunCoordinator dispatch).
- *
- * Returns early if the gating helper says no. Otherwise:
- *   1. Append a synthetic continuation message (user-role, since the
- *      run-payload semantics expect a user prompt; tagged with
- *      `metadata.kind = AUTO_RESUME_CONTINUATION_KIND` so the renderer
- *      can later render it differently if desired).
- *   2. Dispatch a fresh run on the parent chat via the same
- *      RunCoordinator path that sub-thread delegation uses.
- *   3. Emit a durable `subthread_autoresume_dispatched` run event so
- *      the audit timeline shows the auto-resume happened.
- *
- * No infinite-loop risk: the continuation run is on the PARENT chat,
- * not the sub-thread, so it doesn't re-trigger `maybePropagateSubThreadResult`
- * (that only fires for sub-threads with `parentChatId` set + the
- * back-prop flag). The only way to recurse is if the continuation
- * run *itself* delegates to a new sub-thread with
- * `returnResultToParent: true` — which is fine: each delegation is
- * one level, and the user wanted that delegation.
- */
-async function maybeAutoResumeParentAgent(args: {
-  subThread: ChatRecord
-  parent: ChatRecord
-  resultContent?: string
-}): Promise<void> {
-  const { subThread, parent } = args
-  const settings = AppStore.getSettings()
+const SUBTHREAD_MAILBOX_DELIVERY_BATCH_LIMIT = MAX_SUBTHREAD_MAILBOX_PROMPT_EVENTS
 
-  // Determine the run state of the parent chat: if there's any active
-  // RunManager session whose appChatId matches the parent, treat the
-  // parent as "currently running" and skip auto-resume. This avoids
-  // clashing with the existing run-queue / steer behaviour (the user
-  // is already doing something on the parent; let that finish first).
-  //
-  // The RunManager indexes sessions by provider, so we sweep across
-  // every provider's active sessions — a cross-provider auto-resume
-  // would still be skipped if any provider has the parent live.
-  // 1.0.6-CRUX27 — sweep all available providers (incl. gated grok/cursor) so a
-  // grok/cursor-active parent also defers auto-resume, matching the core four.
-  const providers = availableProviderIds()
-  const parentChatIsRunning = providers.some((p) =>
-    runManager.getActiveByProvider(p).some((session) => session.appChatId === parent.appChatId)
+function parentChatHasActiveRun(parentChatId: string): boolean {
+  return availableProviderIds().some((provider) =>
+    runManager
+      .getActiveByProvider(provider)
+      .some((session) => session.appChatId === parentChatId)
   )
+}
 
+/** Reconcile a durable claim left by a prior process. A persisted/run-manager
+ * lifecycle proves the stable delivery run crossed the dispatch boundary, so
+ * acknowledge it rather than replaying child output. A claim with no run is an
+ * uncommitted outbox write and is released for retry. */
+function reconcileSubThreadMailboxClaims(parent: ChatRecord): void {
+  const mailbox = AppStore.getSubThreadMailbox(parent.appChatId)
+  const deliveryRunIds = new Set(
+    pendingSubThreadMailboxEvents(mailbox)
+      .map((event) => event.deliveryRunId)
+      .filter((runId): runId is string => Boolean(runId))
+  )
+  for (const deliveryRunId of deliveryRunIds) {
+    if (subThreadMailboxDeliveriesInFlight.has(deliveryRunId)) continue
+    const lifecycleExists =
+      Boolean(runManager.get(deliveryRunId)) ||
+      (parent.runs || []).some((run) => run.runId === deliveryRunId)
+    if (lifecycleExists) {
+      AppStore.acknowledgeSubThreadMailboxDelivery(parent.appChatId, deliveryRunId)
+    } else {
+      AppStore.releaseSubThreadMailboxDelivery(parent.appChatId, deliveryRunId, {
+        error: 'Recovered an uncommitted mailbox delivery claim after restart.'
+      })
+    }
+  }
+}
+
+/** Drain one ordered mailbox batch into one parent continuation. No synthetic
+ * prompt/card is appended to the local transcript: the existing sub-thread
+ * return card is the user-facing receipt, while this delivery stays under the
+ * hood and is visible through durable mailbox/audit state. */
+async function maybeDrainParentSubThreadMailbox(parentChatId: string): Promise<void> {
+  let parent = AppStore.getChat(parentChatId)
+  if (!parent) return
+  reconcileSubThreadMailboxClaims(parent)
+
+  const mailbox = AppStore.getSubThreadMailbox(parentChatId)
+  const pending = pendingSubThreadMailboxEvents(mailbox)
+  if (pending.length === 0) return
+  // Another drain owns a claimed batch. Its completion or recovery path will
+  // acknowledge/release it before a later terminal-run drain proceeds.
+  if (pending.some((event) => event.deliveryRunId)) return
+
+  const settings = AppStore.getSettings()
   const decision = shouldAutoResumeParent({
     setting: settings.autoResumeParentOnSubThreadCompletion,
-    returnResultToParent: Boolean(subThread.delegationContext?.returnResultToParent),
-    parentChatExists: true, // we already loaded the parent above
-    parentChatIsRunning,
+    returnResultToParent: true,
+    parentChatExists: true,
+    parentChatIsRunning: parentChatHasActiveRun(parentChatId),
     parentChatHasProvider: Boolean(parent.provider),
     parentChatIsEnsemble: parent.chatKind === 'ensemble'
   })
-  if (!decision) return
-
-  // Defensive: the gate has already cleared parent.provider, but
-  // TypeScript needs the explicit narrowing for the payload below.
-  if (!parent.provider) return
+  if (!decision || !parent.provider) return
 
   const sender = mainWindow?.webContents
-  if (!sender || sender.isDestroyed()) {
-    // No renderer to stream events to. RunCoordinator dispatch
-    // requires a sender; skip rather than dispatch into the void.
+  if (!sender || sender.isDestroyed() || !dispatchRunWithProviderPauseRef) return
+
+  const batch = pending.slice(0, SUBTHREAD_MAILBOX_DELIVERY_BATCH_LIMIT)
+  const deliveryRunId = createSubThreadMailboxDeliveryRunId(
+    parentChatId,
+    batch.map((event) => event.id)
+  )
+  if (subThreadMailboxDeliveriesInFlight.has(deliveryRunId)) return
+  subThreadMailboxDeliveriesInFlight.add(deliveryRunId)
+  const claimed = AppStore.claimSubThreadMailboxEvents(parentChatId, {
+    deliveryRunId,
+    eventIds: batch.map((event) => event.id)
+  })
+  if (claimed.events.length === 0) {
+    subThreadMailboxDeliveriesInFlight.delete(deliveryRunId)
     return
   }
-  if (!runCoordinatorRef) {
-    // App still starting — propagation can fire from a recovered
-    // sub-thread before whenReady completes. Skip; the user will see
-    // the back-propagated result and can nudge manually.
-    return
-  }
 
-  const continuationPrompt = buildAutoResumeContinuationPrompt(subThread.title, args.resultContent)
-  const continuationRunId = createFallbackRunId(parent.provider)
-  const timestamp = new Date().toISOString()
-
-  // Append a synthetic user message to the parent transcript so the
-  // run has a corresponding prompt entry (matches the shape the rest
-  // of the codebase expects: every run gets a promptMessageId on a
-  // user-role message). The `metadata.kind` tag lets the renderer
-  // distinguish this from a human-typed prompt if it cares to.
-  //
-  // We use 'user' role rather than 'system' because the run payload
-  // path treats the prompt as a user turn — using 'system' would
-  // leave the run without a user prompt and confuse the transcript
-  // diff for provider replay. The metadata tag is the structural
-  // hook; visual styling can follow later.
-  const continuationPromptMessage: ChatMessage = {
-    id: `autoresume-prompt-${parent.appChatId}-${Date.now()}`,
-    role: 'user',
-    content: continuationPrompt,
-    timestamp,
-    runId: continuationRunId,
-    metadata: {
-      kind: AUTO_RESUME_CONTINUATION_KIND,
-      subThreadId: subThread.appChatId,
-      subThreadProvider: subThread.provider,
-      subThreadTitle: subThread.title
-    }
-  }
-  const reloadedParent = AppStore.getChat(parent.appChatId) ?? parent
-  const parentWithPrompt: ChatRecord = {
-    ...reloadedParent,
-    messages: [...reloadedParent.messages, continuationPromptMessage],
-    updatedAt: Date.now()
-  }
-  AppStore.saveChat(parentWithPrompt)
-  broadcastChatUpdated(parentWithPrompt)
-
-  // Audit before dispatch so the timeline shows the intent even if
-  // dispatch fails on a transient preflight error.
   try {
-    appendDurableRunEventForRoute(
-      parent.provider,
-      { appRunId: continuationRunId, appChatId: parent.appChatId },
-      'subthread_autoresume_dispatched',
-      'control',
-      `Auto-resumed parent agent after ${subThread.provider ? providerLabel(subThread.provider) : 'sub-thread'} sub-thread completed`,
-      {
-        subThreadId: subThread.appChatId,
-        parentChatId: parent.appChatId,
-        continuationRunId,
-        subThreadTitle: subThread.title,
-        subThreadProvider: subThread.provider
-      }
+    parent = AppStore.getChat(parentChatId)
+    if (!parent?.provider) {
+      AppStore.releaseSubThreadMailboxDelivery(parentChatId, deliveryRunId, {
+        error: 'Parent chat disappeared before mailbox delivery.'
+      })
+      return
+    }
+    const continuationPrompt = buildSubThreadMailboxContinuationPrompt(claimed.events)
+    const parentLastRun = [...(parent.runs || [])]
+      .reverse()
+      .find((run) => run.provider === parent?.provider)
+    const continuationApprovalMode = parentLastRun?.approvalMode === 'plan' ? 'plan' : 'default'
+    const continuationEffectivePermissions =
+      continuationApprovalMode === 'plan'
+        ? resolveEffectiveRunPermissions({
+            provider: parent.provider,
+            workspacePath: parent.workspacePath,
+            settings,
+            presetId: 'read_only'
+          })
+        : undefined
+    const payload: AgentRunPayload = {
+      provider: parent.provider,
+      scope: parent.workspacePath ? 'workspace' : 'global',
+      workspace: parent.workspacePath,
+      prompt: continuationPrompt,
+      appRunId: deliveryRunId,
+      appChatId: parent.appChatId,
+      approvalMode: continuationApprovalMode,
+      model: parent.requestedModel || 'cli-default',
+      providerSessionId:
+        parent.provider === 'gemini'
+          ? parent.linkedGeminiSessionId ?? null
+          : parent.linkedProviderSessionId ?? null,
+      // Automatic coordination is never a Trusted Session.
+      sessionTrust: false,
+      ...(continuationEffectivePermissions
+        ? { effectivePermissions: continuationEffectivePermissions }
+        : {})
+    }
+    payload.effectivePermissionsSignature = signRunPosture(
+      payload.approvalMode,
+      payload.effectivePermissions,
+      runPostureContextFromPayload(payload)
     )
-  } catch {
-    // Best-effort — audit is observability, not correctness.
+    try {
+      appendDurableRunEventForRoute(
+        parent.provider,
+        { appRunId: deliveryRunId, appChatId: parent.appChatId },
+        'subthread_autoresume_dispatched',
+        'control',
+        `Dispatched ${claimed.events.length} queued sub-thread mailbox event(s)`,
+        {
+          parentChatId,
+          continuationRunId: deliveryRunId,
+          mailboxEventIds: claimed.events.map((event) => event.id),
+          subThreadIds: claimed.events.map((event) => event.source.subThreadId)
+        }
+      )
+    } catch {
+      // Audit is observability; the durable mailbox remains authoritative.
+    }
+    const dispatchResult = await dispatchRunWithProviderPauseRef(payload, { sender })
+    if (!dispatchResult.dispatched) {
+      AppStore.releaseSubThreadMailboxDelivery(parentChatId, deliveryRunId, {
+        error: 'RunCoordinator rejected mailbox delivery during preflight.'
+      })
+      return
+    }
+    AppStore.acknowledgeSubThreadMailboxDelivery(parentChatId, deliveryRunId)
+  } catch (error) {
+    const latestParent = AppStore.getChat(parentChatId)
+    const lifecycleExists =
+      Boolean(runManager.get(deliveryRunId)) ||
+      Boolean(latestParent?.runs?.some((run) => run.runId === deliveryRunId))
+    if (lifecycleExists) {
+      AppStore.acknowledgeSubThreadMailboxDelivery(parentChatId, deliveryRunId)
+    } else {
+      AppStore.releaseSubThreadMailboxDelivery(parentChatId, deliveryRunId, {
+        error: error instanceof Error ? error.message : String(error)
+      })
+    }
+    throw error
+  } finally {
+    subThreadMailboxDeliveriesInFlight.delete(deliveryRunId)
   }
 
-  // Dispatch via the same RunCoordinator that the renderer and
-  // sub-thread delegation paths use. Fire-and-forget: we don't await
-  // the run's completion (which could take minutes), we just kick it
-  // off. Errors bubble to the caller's try/catch.
-  const parentLastRun = [...(parentWithPrompt.runs || [])]
-    .reverse()
-    .find((run) => run.provider === parent.provider)
-  const continuationApprovalMode = parentLastRun?.approvalMode === 'plan' ? 'plan' : 'default'
-  const continuationEffectivePermissions =
-    continuationApprovalMode === 'plan'
-      ? resolveEffectiveRunPermissions({
-          provider: parent.provider,
-          workspacePath: parent.workspacePath,
-          settings: AppStore.getSettings(),
-          presetId: 'read_only'
-        })
-      : undefined
-  const payload: AgentRunPayload = {
-    provider: parent.provider,
-    scope: parent.workspacePath ? 'workspace' : 'global',
-    workspace: parent.workspacePath,
-    prompt: continuationPrompt,
-    appRunId: continuationRunId,
-    appChatId: parent.appChatId,
-    approvalMode: continuationApprovalMode,
-    model: parent.requestedModel || 'cli-default',
-    providerSessionId:
-      parent.provider === 'gemini'
-        ? parentWithPrompt.linkedGeminiSessionId ?? null
-        : parentWithPrompt.linkedProviderSessionId ?? null,
-    ...(continuationEffectivePermissions
-      ? { effectivePermissions: continuationEffectivePermissions }
-      : {})
+  // If more than one bounded batch accumulated while the parent was idle,
+  // allow the first continuation lifecycle to settle before attempting next.
+  if (pendingSubThreadMailboxEvents(AppStore.getSubThreadMailbox(parentChatId)).length > 0) {
+    setTimeout(() => {
+      void maybeDrainParentSubThreadMailbox(parentChatId).catch((error) => {
+        console.warn(
+          `[SubThreadMailbox] follow-up drain failed for parentChatId=${parentChatId}:`,
+          error instanceof Error ? error.message : String(error)
+        )
+      })
+    }, 0)
   }
-  payload.effectivePermissionsSignature = signRunPosture(
+}
+
+function recoverPendingSubThreadMailboxes(): void {
+  for (const mailbox of AppStore.getPendingSubThreadMailboxes()) {
+    void maybeDrainParentSubThreadMailbox(mailbox.parentChatId).catch((error) => {
+      console.warn(
+        `[SubThreadMailbox] startup recovery failed for parentChatId=${mailbox.parentChatId}:`,
+        error instanceof Error ? error.message : String(error)
+      )
+    })
+  }
+}
+
+type ParentRunDispatch = (
+  payload: AgentRunPayload,
+  event: Electron.IpcMainInvokeEvent | { sender: Electron.WebContents }
+) => Promise<{ dispatched: boolean; appRunId: string }>
+
+/** Attach pending child results to the next ordinary parent turn. This is the
+ * manual-turn complement to the idle auto-wake above: disabling auto-resume
+ * never makes the durable mailbox invisible to the parent, and an already
+ * composed prompt still receives each result through one explicit envelope.
+ *
+ * This wrapper stays outside RunCoordinator's trust boundary. It only re-signs
+ * the prompt-bound posture when the incoming posture was already valid; forged
+ * renderer authority therefore remains invalid and is clamped by normalization.
+ */
+async function dispatchParentRunWithPendingSubThreadMailbox(
+  payload: AgentRunPayload,
+  event: Electron.IpcMainInvokeEvent | { sender: Electron.WebContents },
+  dispatch: ParentRunDispatch
+): Promise<{ dispatched: boolean; appRunId: string }> {
+  const parentChatId = payload.appChatId
+  const parentPrompt =
+    typeof payload.prompt === 'string' ? payload.prompt : String(payload.prompt ?? '')
+  if (
+    !parentChatId ||
+    payload.ensembleRun ||
+    payload.auditRun ||
+    parentPrompt.trimStart().startsWith('/') ||
+    parentPrompt.includes('<subthread_mailbox_event ')
+  ) {
+    return dispatch(payload, event)
+  }
+  const parent = AppStore.getChat(parentChatId)
+  if (!parent || parent.chatKind === 'ensemble') return dispatch(payload, event)
+
+  const pending = pendingSubThreadMailboxEvents(AppStore.getSubThreadMailbox(parentChatId))
+  if (pending.length === 0 || pending.some((mailboxEvent) => mailboxEvent.deliveryRunId)) {
+    return dispatch(payload, event)
+  }
+
+  const originalPostureWasValid = verifyRunPosture(
     payload.approvalMode,
     payload.effectivePermissions,
+    payload.effectivePermissionsSignature,
     runPostureContextFromPayload(payload)
   )
-  const dispatchEvent: { sender: Electron.WebContents } = { sender }
-  await runCoordinatorRef.dispatch(payload, dispatchEvent)
+  const deliveryRunId = routeWithRunId(payload.provider, payload).appRunId
+  if (!deliveryRunId || subThreadMailboxDeliveriesInFlight.has(deliveryRunId)) {
+    return dispatch(payload, event)
+  }
+
+  const batch = pending.slice(0, SUBTHREAD_MAILBOX_DELIVERY_BATCH_LIMIT)
+  subThreadMailboxDeliveriesInFlight.add(deliveryRunId)
+  const claimed = AppStore.claimSubThreadMailboxEvents(parentChatId, {
+    deliveryRunId,
+    eventIds: batch.map((mailboxEvent) => mailboxEvent.id)
+  })
+  if (claimed.events.length === 0) {
+    subThreadMailboxDeliveriesInFlight.delete(deliveryRunId)
+    return dispatch(payload, event)
+  }
+
+  const mailboxPrompt = buildSubThreadMailboxContinuationPrompt(claimed.events)
+  const mailboxPayload: AgentRunPayload = {
+    ...payload,
+    appRunId: deliveryRunId,
+    prompt: attachSubThreadMailboxToParentPrompt(parentPrompt, mailboxPrompt)
+  }
+  if (originalPostureWasValid) {
+    mailboxPayload.effectivePermissionsSignature = signRunPosture(
+      mailboxPayload.approvalMode,
+      mailboxPayload.effectivePermissions,
+      runPostureContextFromPayload(mailboxPayload)
+    )
+  }
+
+  try {
+    const result = await dispatch(mailboxPayload, event)
+    if (result.dispatched) {
+      AppStore.acknowledgeSubThreadMailboxDelivery(parentChatId, deliveryRunId)
+      if (pendingSubThreadMailboxEvents(AppStore.getSubThreadMailbox(parentChatId)).length > 0) {
+        setTimeout(() => {
+          void maybeDrainParentSubThreadMailbox(parentChatId).catch((error) => {
+            console.warn(
+              `[SubThreadMailbox] post-parent-run drain failed for parentChatId=${parentChatId}:`,
+              error instanceof Error ? error.message : String(error)
+            )
+          })
+        }, 0)
+      }
+    } else {
+      AppStore.releaseSubThreadMailboxDelivery(parentChatId, deliveryRunId, {
+        error: 'Parent run rejected attached mailbox delivery during preflight.'
+      })
+    }
+    return result
+  } catch (error) {
+    const latestParent = AppStore.getChat(parentChatId)
+    const lifecycleExists =
+      Boolean(runManager.get(deliveryRunId)) ||
+      Boolean(latestParent?.runs?.some((run) => run.runId === deliveryRunId))
+    if (lifecycleExists) {
+      AppStore.acknowledgeSubThreadMailboxDelivery(parentChatId, deliveryRunId)
+      if (pendingSubThreadMailboxEvents(AppStore.getSubThreadMailbox(parentChatId)).length > 0) {
+        setTimeout(() => {
+          void maybeDrainParentSubThreadMailbox(parentChatId).catch(() => {})
+        }, 0)
+      }
+    } else {
+      AppStore.releaseSubThreadMailboxDelivery(parentChatId, deliveryRunId, {
+        error: error instanceof Error ? error.message : String(error)
+      })
+    }
+    throw error
+  } finally {
+    subThreadMailboxDeliveriesInFlight.delete(deliveryRunId)
+  }
 }
 
 /**
@@ -31625,7 +31819,13 @@ if (isGeminiMcpBridgeProcess) {
       getScheduledTasks: () => AppStore.getScheduledTasks(),
       getWorkflowDefinitions: () => AppStore.getWorkflowDefinitions()
     }
-    const dispatchRunWithProviderPause = createRunDispatchFacade(runDispatchFacadeDeps)
+    const baseDispatchRunWithProviderPause = createRunDispatchFacade(runDispatchFacadeDeps)
+    const dispatchRunWithProviderPause: ParentRunDispatch = (payload, event) =>
+      dispatchParentRunWithPendingSubThreadMailbox(
+        payload,
+        event,
+        baseDispatchRunWithProviderPause
+      )
     dispatchRunWithProviderPauseRef = dispatchRunWithProviderPause
     // Stage 0b-dispatch: expose the composer + dispatcher to the module-scope
     // scheduler so a windowless app can compose + fire a due SOLO run itself.
@@ -31947,6 +32147,7 @@ if (isGeminiMcpBridgeProcess) {
       // together.
       recoverPersistedSoloChatWakeups()
     }
+    recoverPendingSubThreadMailboxes()
     const dispatchAgentRun = async (
       payload: AgentRunPayload,
       event: Electron.IpcMainInvokeEvent

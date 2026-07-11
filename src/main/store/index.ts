@@ -201,6 +201,18 @@ import { createProductCrashRecord, filterProductCrashRecords } from '../ProductO
 import { chatPathForId, isSafeChatId } from '../ChatPath'
 import { compactChatForPersist } from './ChatCompaction'
 import {
+  acknowledgeSubThreadMailboxDelivery as acknowledgeMailboxDelivery,
+  claimPendingSubThreadMailboxEvents,
+  emptySubThreadMailbox,
+  enqueueSubThreadMailboxEvent as enqueueMailboxEvent,
+  normalizeSubThreadMailboxLedger,
+  pendingSubThreadMailboxEvents,
+  releaseSubThreadMailboxDelivery as releaseMailboxDelivery,
+  type SubThreadMailbox,
+  type SubThreadMailboxEventInput,
+  type SubThreadMailboxLedger
+} from '../SubThreadMailbox'
+import {
   isTerminalWorkflowExecutionStatus,
   nextLocalDayBoundaryIso,
   normalizeWorkflowTrigger,
@@ -357,6 +369,7 @@ const legacyUserDataDirs = ['TaskWraith'].map((dirName) =>
 )
 const chatsDir = path.join(userDataPath, 'chats')
 const chatListIndexPath = path.join(userDataPath, 'chat-list-index.json')
+const subThreadMailboxesPath = path.join(userDataPath, 'subthread-mailboxes.json')
 const CHAT_LIST_INDEX_VOLATILE_REFRESH_INTERVAL_MS = 2000
 const auditRunsPath = path.join(userDataPath, 'audit-runs.json')
 const introspectionRunsPath = path.join(userDataPath, 'introspection-runs.json')
@@ -1504,6 +1517,14 @@ function writeJson<T>(filePath: string, data: T) {
     }
     throw e
   }
+}
+
+function readSubThreadMailboxLedger(): SubThreadMailboxLedger {
+  return normalizeSubThreadMailboxLedger(readJson<unknown>(subThreadMailboxesPath, {}))
+}
+
+function writeSubThreadMailboxLedger(ledger: SubThreadMailboxLedger): void {
+  writeJson(subThreadMailboxesPath, normalizeSubThreadMailboxLedger(ledger))
 }
 
 /** Atomic raw-text write (temp + rename), for the jsonl-line compaction rewrite
@@ -3504,6 +3525,7 @@ export class AppStore {
       this.writeChatListIndex(index)
     }
     this.removeMessageFeedbackReceipts({ chatIds: [chatId] })
+    this.deleteSubThreadMailbox(chatId)
   }
 
   static clearChats(workspaceId?: string) {
@@ -3532,6 +3554,7 @@ export class AppStore {
       deletePathBestEffort(runQueuePath, 'run queue history')
       deletePathBestEffort(runRecoveryPath, 'run recovery history')
       deletePathBestEffort(messageFeedbackLedgerPath, 'message feedback receipt ledger')
+      deletePathBestEffort(subThreadMailboxesPath, 'sub-thread mailbox ledger')
       this.chatRecordCache.clear()
       this.chatListIndexCache = null
       this.chatListIndexWriteAtByChatId.clear()
@@ -3544,6 +3567,88 @@ export class AppStore {
     for (const chat of chats) {
       this.deleteChat(chat.appChatId)
     }
+  }
+
+  // Durable parent-bound sub-thread event mailbox. Kept outside ChatRecord so
+  // result payloads do not inflate chat-list projections or transcript files.
+  static getSubThreadMailbox(parentChatId: string): SubThreadMailbox {
+    const ledger = readSubThreadMailboxLedger()
+    return ledger.mailboxes[parentChatId] || emptySubThreadMailbox(parentChatId)
+  }
+
+  static getPendingSubThreadMailboxes(): SubThreadMailbox[] {
+    const ledger = readSubThreadMailboxLedger()
+    return Object.values(ledger.mailboxes)
+      .filter((mailbox) => pendingSubThreadMailboxEvents(mailbox).length > 0)
+      .sort((a, b) => a.parentChatId.localeCompare(b.parentChatId))
+  }
+
+  static enqueueSubThreadMailboxEvent(
+    input: SubThreadMailboxEventInput,
+    options: { now?: string } = {}
+  ): ReturnType<typeof enqueueMailboxEvent> {
+    const ledger = readSubThreadMailboxLedger()
+    const result = enqueueMailboxEvent(ledger.mailboxes[input.parentChatId], input, options)
+    if (result.inserted) {
+      ledger.mailboxes[input.parentChatId] = result.mailbox
+      writeSubThreadMailboxLedger(ledger)
+    }
+    return result
+  }
+
+  static claimSubThreadMailboxEvents(
+    parentChatId: string,
+    input: Parameters<typeof claimPendingSubThreadMailboxEvents>[1]
+  ): ReturnType<typeof claimPendingSubThreadMailboxEvents> {
+    const ledger = readSubThreadMailboxLedger()
+    const mailbox = ledger.mailboxes[parentChatId] || emptySubThreadMailbox(parentChatId)
+    const result = claimPendingSubThreadMailboxEvents(mailbox, input)
+    if (result.events.length > 0) {
+      ledger.mailboxes[parentChatId] = result.mailbox
+      writeSubThreadMailboxLedger(ledger)
+    }
+    return result
+  }
+
+  static acknowledgeSubThreadMailboxDelivery(
+    parentChatId: string,
+    deliveryRunId: string,
+    options: Parameters<typeof acknowledgeMailboxDelivery>[2] = {}
+  ): ReturnType<typeof acknowledgeMailboxDelivery> {
+    const ledger = readSubThreadMailboxLedger()
+    const mailbox = ledger.mailboxes[parentChatId] || emptySubThreadMailbox(parentChatId)
+    const result = acknowledgeMailboxDelivery(mailbox, deliveryRunId, options)
+    if (result.acknowledgedEventIds.length > 0) {
+      ledger.mailboxes[parentChatId] = result.mailbox
+      writeSubThreadMailboxLedger(ledger)
+    }
+    return result
+  }
+
+  static releaseSubThreadMailboxDelivery(
+    parentChatId: string,
+    deliveryRunId: string,
+    options: Parameters<typeof releaseMailboxDelivery>[2]
+  ): ReturnType<typeof releaseMailboxDelivery> {
+    const ledger = readSubThreadMailboxLedger()
+    const mailbox = ledger.mailboxes[parentChatId] || emptySubThreadMailbox(parentChatId)
+    const result = releaseMailboxDelivery(mailbox, deliveryRunId, options)
+    if (result.releasedEventIds.length > 0) {
+      ledger.mailboxes[parentChatId] = result.mailbox
+      writeSubThreadMailboxLedger(ledger)
+    }
+    return result
+  }
+
+  static deleteSubThreadMailbox(parentChatId: string): void {
+    const ledger = readSubThreadMailboxLedger()
+    if (!ledger.mailboxes[parentChatId]) return
+    delete ledger.mailboxes[parentChatId]
+    if (Object.keys(ledger.mailboxes).length === 0) {
+      deletePathBestEffort(subThreadMailboxesPath, 'sub-thread mailbox ledger')
+      return
+    }
+    writeSubThreadMailboxLedger(ledger)
   }
 
   // Usage
