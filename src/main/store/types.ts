@@ -243,6 +243,46 @@ export interface PromptCacheCapabilitySummary {
   capabilities: PromptCacheCapability[]
 }
 
+export type ProviderSeatCacheImpact = 'none' | 'partial' | 'full' | 'unknown' | 'unsupported'
+export type ProviderSeatCacheEvidenceState =
+  | 'observed_hit'
+  | 'observed_write'
+  | 'observed_miss'
+
+export interface ProviderSeatGenerationConfig {
+  provider: ProviderId
+  model: string
+  transport: PromptCacheTransport
+  systemPromptFingerprint: string
+  toolsFingerprint: string
+  taskWraithMcpProfileId?: TaskWraithMcpProfileId
+  thinkingMode?: string
+  reasoningEffort?: string
+  serviceTier?: string
+}
+
+export interface ProviderSeatCacheEvidence {
+  state: ProviderSeatCacheEvidenceState
+  observedAt: string
+  runId?: string
+  guaranteeTier: PromptCacheGuaranteeTier
+  cacheReadInputTokens: number
+  cacheCreationInputTokens: number
+}
+
+/** Main-owned continuity generation. A new generation means a fresh native
+ * provider session; cache evidence remains observational and transport-honest. */
+export interface ProviderSeatGeneration {
+  schemaVersion: 1
+  id: string
+  ordinal: number
+  createdAt: string
+  updatedAt: string
+  config: ProviderSeatGenerationConfig
+  guaranteeTier: PromptCacheGuaranteeTier
+  cacheEvidence?: ProviderSeatCacheEvidence
+}
+
 export type AgentThreadForkCapabilityKind = 'native' | 'emulated' | 'unsupported'
 export type AgentThreadForkKind = 'native' | 'emulated'
 
@@ -673,6 +713,8 @@ export interface EnsembleParticipant {
   linkedProviderSessionId?: string | null
   /** TaskWraith MCP profile pinned to linkedProviderSessionId. */
   taskWraithMcpProfileReceipt?: TaskWraithMcpProfileReceipt
+  /** Provider-specific continuity generation and honest cache evidence. */
+  seatGeneration?: ProviderSeatGeneration
   /**
    * Host-side SEAT compaction (src/shared/contextCompaction.ts) — the stored
    * session summary for cursor/kimi participants (no native compaction lever).
@@ -3268,6 +3310,8 @@ export interface ChatRecord {
   linkedProviderSessionId?: string
   /** TaskWraith MCP profile pinned to linkedProviderSessionId. */
   taskWraithMcpProfileReceipt?: TaskWraithMcpProfileReceipt
+  /** Provider-specific continuity generation and honest cache evidence. */
+  seatGeneration?: ProviderSeatGeneration
   /**
    * Host-side context compaction (src/shared/contextCompaction.ts) — the
    * stored session summary for providers with no native compaction lever.
