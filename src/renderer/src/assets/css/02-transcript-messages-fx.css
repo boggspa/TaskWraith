@@ -5067,6 +5067,56 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   isolation: isolate;
 }
 
+/* Per-turn timer + token accumulator. Its React state lives in a memoized
+ * leaf, so the frequent number updates never re-render App or the virtualized
+ * transcript. Keep it typographic rather than pill-shaped so it remains part
+ * of the quiet Claude-style working readout. */
+.message-working-telemetry {
+  position: relative;
+  z-index: 2;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  min-width: 0;
+  color: color-mix(in srgb, var(--message-working-accent) 45%, var(--text-secondary));
+  font-size: calc(var(--font-size-xs) - 1px);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.01em;
+  line-height: 1;
+  opacity: 0.9;
+  white-space: nowrap;
+}
+
+.message-working-elapsed {
+  color: color-mix(in srgb, var(--message-working-accent) 38%, var(--text-secondary));
+}
+
+.message-working-telemetry-separator {
+  color: color-mix(in srgb, var(--message-working-accent) 40%, transparent);
+}
+
+.message-working-token-count {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.14em;
+  color: color-mix(in srgb, var(--message-working-accent) 58%, var(--text-primary));
+}
+
+.message-working-token-count .digit-odometer {
+  color: inherit;
+  font-weight: 600;
+}
+
+.message-working-token-estimate {
+  margin-right: -0.04em;
+  color: color-mix(in srgb, var(--message-working-accent) 42%, var(--text-secondary));
+}
+
+.message-working-token-suffix {
+  color: color-mix(in srgb, var(--message-working-accent) 38%, var(--text-secondary));
+}
+
 .message-working-text::before {
   content: '';
   position: absolute;
@@ -5115,6 +5165,10 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   color: var(--message-working-accent, var(--text-primary));
   -webkit-text-fill-color: var(--message-working-accent, var(--text-primary));
   filter: none;
+}
+
+[data-reduce-motion='true'] .message-working-telemetry {
+  opacity: 1;
 }
 
 .message-working .thinking-dots {

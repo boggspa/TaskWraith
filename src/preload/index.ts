@@ -50,6 +50,7 @@ import type {
   TaskWraithPluginSecretStatusSnapshot
 } from '../shared/plugins/PluginTypes'
 import type { ContextCompactionProgressEvent } from '../shared/contextCompaction'
+import type { ParticipantWorkingTelemetryEvent } from '../shared/participantWorkingTelemetry'
 
 type ComposerImageAttachment = {
   id?: string
@@ -1616,6 +1617,12 @@ const api = {
     ipcRenderer.on('context-compaction-progress', wrapped)
     return () => ipcRenderer.removeListener('context-compaction-progress', wrapped)
   },
+  onParticipantWorkingTelemetry: (callback: (event: ParticipantWorkingTelemetryEvent) => void) => {
+    const wrapped = (_event: unknown, event: ParticipantWorkingTelemetryEvent): void =>
+      callback(event)
+    ipcRenderer.on('participant-working-telemetry', wrapped)
+    return () => ipcRenderer.removeListener('participant-working-telemetry', wrapped)
+  },
   onHumanCollaborationUpdated: (callback: (payload: { chatId: string }) => void) => {
     const wrapped = (_event: unknown, payload: { chatId: string }): void => callback(payload)
     ipcRenderer.on('human-collaboration-updated', wrapped)
@@ -1804,6 +1811,7 @@ const api = {
     ipcRenderer.removeAllListeners('audit-run-changed')
     ipcRenderer.removeAllListeners('usage-changed')
     ipcRenderer.removeAllListeners('chat-updated')
+    ipcRenderer.removeAllListeners('participant-working-telemetry')
     ipcRenderer.removeAllListeners('human-collaboration-updated')
     ipcRenderer.removeAllListeners('human-collaboration-runtime-projection-update')
     ipcRenderer.removeAllListeners('human-collaboration-runtime-encrypted-frame')

@@ -1,5 +1,7 @@
 import type {
   ChatRecord,
+  ChatRun,
+  ConcurrentLane,
   EnsembleParticipant,
   EnsembleParticipantStatus,
   EnsembleRoundParticipantState,
@@ -14,6 +16,14 @@ import { getProviderLabel } from './providerLabels'
 export type WorkingIndicatorActivity = 'working' | 'compacting'
 
 export type WorkingIndicatorPresentation = {
+  /** Stable seat identity; null only for a non-Ensemble fallback row. */
+  participantId: string | null
+  /** The specific active turn/lane, so retries reset timer + token telemetry. */
+  runId: string | null
+  /** Per-turn anchor. Fan-out lanes deliberately do not use round.startedAt. */
+  startedAt: string | null
+  /** Durable accumulator from completed participant turns. */
+  tokenAccumulatorBase: number
   providerLabel: string
   provider: ProviderId | null
   providerClass: string | null
@@ -114,6 +124,52 @@ function roundParticipantForId(
   )
 }
 
+function latestLiveLaneForParticipant(
+  chat: ChatRecord,
+  participantId: string
+): ConcurrentLane | undefined {
+  const lanes = Object.values(chat.ensemble?.activeRound?.lanes || {}).filter(
+    (lane) => lane.participantId === participantId && LIVE_LANE_STATUSES.has(lane.status)
+  )
+  if (lanes.length === 0) return undefined
+  return lanes.reduce((latest, lane) => {
+    const latestTime = Date.parse(latest.startedAt || '')
+    const laneTime = Date.parse(lane.startedAt || '')
+    return Number.isFinite(laneTime) && (!Number.isFinite(latestTime) || laneTime > latestTime)
+      ? lane
+      : latest
+  })
+}
+
+function activeRunForParticipant(
+  chat: ChatRecord,
+  participantId: string,
+  preferredRunId?: string
+): ChatRun | undefined {
+  if (preferredRunId) {
+    const preferred = chat.runs.find((run) => run.runId === preferredRunId)
+    if (preferred) return preferred
+  }
+  const runs = chat.runs.filter(
+    (run) =>
+      run.ensembleParticipantId === participantId &&
+      (!run.endedAt || run.status === 'running' || run.status === 'queued')
+  )
+  return runs.reduce<ChatRun | undefined>((latest, run) => {
+    if (!latest) return run
+    const latestTime = Date.parse(latest.startedAt || '')
+    const runTime = Date.parse(run.startedAt || '')
+    return Number.isFinite(runTime) && (!Number.isFinite(latestTime) || runTime > latestTime)
+      ? run
+      : latest
+  }, undefined)
+}
+
+function participantTokenAccumulatorBase(participant: EnsembleParticipant | undefined): number {
+  const value = Number(participant?.tokenTotals?.total_tokens)
+  return Number.isFinite(value) && value > 0 ? Math.trunc(value) : 0
+}
+
 function modelDisplayForParticipant(
   provider: ProviderId,
   roundParticipant: EnsembleRoundParticipantState | undefined,
@@ -160,6 +216,8 @@ function workingPresentationForParticipant(
 ): WorkingIndicatorPresentation | null {
   const participant = chat.ensemble?.participants.find((item) => item.id === participantId)
   const roundParticipant = roundParticipantForId(chat, participantId)
+  const lane = latestLiveLaneForParticipant(chat, participantId)
+  const run = activeRunForParticipant(chat, participantId, lane?.runId || roundParticipant?.runId)
   const provider = roundParticipant?.provider || participant?.provider || null
   if (!provider) return null
 
@@ -172,6 +230,15 @@ function workingPresentationForParticipant(
       : null
 
   return {
+    participantId,
+    runId: lane?.runId || roundParticipant?.runId || run?.runId || null,
+    startedAt:
+      lane?.startedAt ||
+      roundParticipant?.startedAt ||
+      run?.startedAt ||
+      chat.ensemble?.activeRound?.startedAt ||
+      null,
+    tokenAccumulatorBase: participantTokenAccumulatorBase(participant),
     providerLabel: brand?.providerLabel || getProviderLabel(provider),
     provider,
     providerClass: brand?.providerClass || provider,

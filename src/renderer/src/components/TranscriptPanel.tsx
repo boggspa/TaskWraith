@@ -29,6 +29,7 @@ import {
   deriveActiveEnsembleWorkingPresentations,
   type WorkingIndicatorPresentation
 } from '../lib/workingIndicatorPresentation'
+import { buildWorkingIndicatorTokenTargets } from '../lib/workingIndicatorTelemetry'
 import {
   TRANSCRIPT_VIRTUALIZATION_ENABLED,
   DEFAULT_OVERSCAN_PX,
@@ -117,6 +118,7 @@ import { FileTypeIcon } from './FileTypeIcon'
 import { PooledAgentIcon } from './icons/PooledAgentIcon'
 import { ProviderGlyph } from './icons/ProviderGlyph'
 import { ThinkingIndicator } from './AppChromeSymbols'
+import { MemoizedParticipantWorkingTelemetry } from './ParticipantWorkingTelemetry'
 import {
   humanCollaboratorMetadata,
   isHumanCollaboratorComment
@@ -868,6 +870,9 @@ function workingIndicatorKey(
   index: number
 ): string {
   return [
+    presentation.participantId || '',
+    presentation.runId || '',
+    presentation.startedAt || '',
     presentation.providerClass || presentation.provider || 'agent',
     presentation.roleLabel || '',
     presentation.modelBadge || '',
@@ -1802,6 +1807,10 @@ export const TranscriptPanel = memo(
           ? ensembleWorkingPresentations
           : [
               {
+                participantId: ensembleWorkingPresentation?.participantId ?? null,
+                runId: ensembleWorkingPresentation?.runId ?? currentRun?.runId ?? null,
+                startedAt: ensembleWorkingPresentation?.startedAt ?? currentRun?.startedAt ?? null,
+                tokenAccumulatorBase: ensembleWorkingPresentation?.tokenAccumulatorBase ?? 0,
                 providerLabel: workingProviderLabel || currentProviderLabel || 'Agent',
                 provider: workingProvider ?? null,
                 providerClass: workingProviderClass || (workingProvider ? String(workingProvider) : null),
@@ -1816,6 +1825,8 @@ export const TranscriptPanel = memo(
             ],
       [
         contextCompactionProgress,
+        currentRun?.runId,
+        currentRun?.startedAt,
         currentProviderLabel,
         ensembleWorkingPresentations,
         workingModelBadge,
@@ -1824,6 +1835,18 @@ export const TranscriptPanel = memo(
         workingProviderLabel,
         workingRoleLabel
       ]
+    )
+    const workingTokenTargets = useMemo(
+      () =>
+        buildWorkingIndicatorTokenTargets(
+          currentChat?.runs || [],
+          currentChat?.messages || [],
+          workingPresentations.map((presentation) => ({
+            runId: presentation.runId,
+            tokenAccumulatorBase: presentation.tokenAccumulatorBase
+          }))
+        ),
+      [currentChat?.messages, currentChat?.runs, workingPresentations]
     )
     const [messageContextMenu, setMessageContextMenu] =
       useState<TranscriptMessageContextMenuSelection | null>(null)
@@ -3892,6 +3915,7 @@ export const TranscriptPanel = memo(
               </span>
               {workingPresentations.map((presentation, index) => {
                 const providerClass = presentation.providerClass || presentation.provider
+                const tokenTarget = workingTokenTargets.get(presentation.runId)
                 return (
                   <div
                     key={workingIndicatorKey(presentation, index)}
@@ -3928,6 +3952,25 @@ export const TranscriptPanel = memo(
                     <ThinkingIndicator
                       label={workingIndicatorLabel(presentation)}
                       ariaLabel={workingStatusLabel(presentation)}
+                      telemetry={
+                        <MemoizedParticipantWorkingTelemetry
+                          key={
+                            presentation.runId ||
+                            presentation.startedAt ||
+                            presentation.participantId ||
+                            `working-${index}`
+                          }
+                          runId={presentation.runId}
+                          startedAt={presentation.startedAt}
+                          tokenAccumulatorBase={presentation.tokenAccumulatorBase}
+                          fallbackTargetTokens={
+                            tokenTarget?.targetTokens ?? presentation.tokenAccumulatorBase
+                          }
+                          estimatedCurrentTurnTokens={
+                            tokenTarget?.estimatedCurrentTurnTokens ?? 0
+                          }
+                        />
+                      }
                     />
                   </div>
                 )

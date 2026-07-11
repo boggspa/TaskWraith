@@ -96,6 +96,7 @@ import type {
   TaskWraithPluginSecretStatusSnapshot
 } from '../shared/plugins/PluginTypes'
 import type { ContextCompactionProgressEvent } from '../shared/contextCompaction'
+import type { ParticipantWorkingTelemetryEvent } from '../shared/participantWorkingTelemetry'
 import type {
   LaunchSnapshot,
   LaunchStartInput,
@@ -1931,6 +1932,9 @@ declare global {
       onChatUpdated: (callback: (chat: ChatRecord) => void) => () => void
       onContextCompactionProgress: (
         callback: (event: ContextCompactionProgressEvent) => void
+      ) => () => void
+      onParticipantWorkingTelemetry: (
+        callback: (event: ParticipantWorkingTelemetryEvent) => void
       ) => () => void
       onHumanCollaborationUpdated: (callback: (payload: { chatId: string }) => void) => () => void
       onHumanCollaborationActionRequest: (

@@ -130,4 +130,14 @@ describe('DigitOdometer markup', () => {
 
     expect(html).toContain('<span class="sr-only">-23</span>')
   })
+
+  it('supports a fixed decimal separator without giving up rolling digit slots', () => {
+    const html = renderToStaticMarkup(
+      createElement(DigitOdometer, { value: 2851, decimalPlaces: 1, ariaLabel: '285.1k tokens' })
+    )
+
+    expect(html).toContain('<span class="sr-only">285.1k tokens</span>')
+    expect(html).toContain('digit-odometer__decimal')
+    expect(html).toContain('digit-odometer__slot')
+  })
 })

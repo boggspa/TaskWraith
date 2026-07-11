@@ -18,11 +18,13 @@ export interface DigitSlotTransition {
  * Negative values are flipped to positive; the caller controls sign
  * via the `sign` prop. Extracted so the model is unit-testable
  * without a DOM. */
-export function digitSlotsForValue(value: number): number[] {
+export function digitSlotsForValue(value: number, minimumDigits = 1): number[] {
   const abs = Math.abs(Math.trunc(Number.isFinite(value) ? value : 0))
-  return String(abs)
+  const digits = String(abs)
     .split('')
     .map((c) => Number.parseInt(c, 10))
+  const safeMinimum = Math.max(1, Math.trunc(Number.isFinite(minimumDigits) ? minimumDigits : 1))
+  return digits.length >= safeMinimum ? digits : [...Array(safeMinimum - digits.length).fill(0), ...digits]
 }
 
 export function digitRollDirection(previous: number, next: number): DigitRollDirection {
@@ -35,9 +37,13 @@ export function digitFromRight(digits: number[], place: number): number | undefi
   return index >= 0 ? digits[index] : undefined
 }
 
-export function digitSlotTransitions(previousValue: number, nextValue: number): DigitSlotTransition[] {
-  const digits = digitSlotsForValue(nextValue)
-  const previousDigits = digitSlotsForValue(previousValue)
+export function digitSlotTransitions(
+  previousValue: number,
+  nextValue: number,
+  minimumDigits = 1
+): DigitSlotTransition[] {
+  const digits = digitSlotsForValue(nextValue, minimumDigits)
+  const previousDigits = digitSlotsForValue(previousValue, minimumDigits)
   return digits.map((digit, index) => {
     const place = digits.length - 1 - index
     return {

@@ -232,6 +232,7 @@ import {
   type ContextCompactionTelemetry
 } from '../shared/contextCompaction'
 import { isEnsembleRoundDispatchLive } from '../shared/ensembleRoundLifecycle'
+import type { ParticipantWorkingTelemetryEvent } from '../shared/participantWorkingTelemetry'
 import { resolveHealthEntryPresentation } from '../shared/ollamaBrandTable'
 import {
   CODEX_REVIEW_TOOL_NAME,
@@ -6609,6 +6610,19 @@ function broadcastContextCompactionProgress(event: ContextCompactionProgressEven
 }
 
 /**
+ * Live participant-token updates deliberately bypass `chat-updated`: the
+ * renderer consumes this tiny in-memory event in the working-indicator leaf,
+ * avoiding a chat merge and full transcript invalidation for every snapshot.
+ */
+function broadcastParticipantWorkingTelemetry(event: ParticipantWorkingTelemetryEvent): void {
+  safeSendToWebContents(mainWindow, 'participant-working-telemetry', event)
+  if (!event.chatId || workspacePopoutWindows.size === 0) return
+  const win = workspacePopoutWindows.get(`chat:${event.chatId}`)
+  if (!win || win.isDestroyed()) return
+  safeSendToWebContents(win, 'participant-working-telemetry', event)
+}
+
+/**
  * Deliver a TRUSTED (main-constructed) run media ref to the renderer over a
  * DEDICATED main→renderer channel. Used only for a foreground Codex SOLO run,
  * whose transcript is persisted renderer-side and which no main-side run-state
@@ -11554,7 +11568,14 @@ function handleCliProviderJsonEvent(state: CliProviderStreamState, event: any) {
   const sessionId = extractProviderSessionId(event)
   updateCliProviderSession(state, sessionId)
   const usage = extractProviderUsage(state.provider, event)
-  if (usage) state.tokenUsage = mergeProviderUsage(state.provider, state.tokenUsage, usage)
+  if (usage) {
+    state.tokenUsage = mergeProviderUsage(state.provider, state.tokenUsage, usage)
+    ensembleOrchestratorRef?.reportParticipantTokenUsage(
+      state.appRunId,
+      state.tokenUsage as Record<string, unknown> | undefined,
+      { provider: state.provider, chatId: state.appChatId }
+    )
+  }
   // Per-occurrence budget kill: feed the LIVE token snapshot. No-op unless this
   // run was registered (solo scheduled run with a budget). Covers Claude (SDK +
   // CLI — both stream through this handler) and Kimi. grok/cursor early-return
@@ -17356,6 +17377,11 @@ function handleCodexNotification(message: any) {
     state.tokenUsage = params.tokenUsage || params.usage || params
     // Per-occurrence budget kill: Codex's live token signal.
     if (state.appRunId) workflowBudgetRegistry.onUsage(state.appRunId, state.tokenUsage)
+    ensembleOrchestratorRef?.reportParticipantTokenUsage(
+      state.appRunId,
+      codexUsageToStats(state.tokenUsage),
+      { provider: 'codex', chatId: state.appChatId }
+    )
     return
   }
 
@@ -32113,6 +32139,7 @@ if (isGeminiMcpBridgeProcess) {
       compactSeatContext: ({ chatId, participantId, provider, trigger }) =>
         compactProviderContextForRequest({ chatId, provider, participantId, trigger }),
       onContextCompactionProgress: broadcastContextCompactionProgress,
+      onParticipantWorkingTelemetry: broadcastParticipantWorkingTelemetry,
       getProviderUsageSnapshot: (provider) => AppStore.getProviderUsageSnapshot(provider),
       scheduleWakeupTimer: (wakeup) => wakeupTimerServiceRef?.schedule(wakeup),
       cancelWakeupTimer: (wakeupId) => wakeupTimerServiceRef?.cancel(wakeupId),

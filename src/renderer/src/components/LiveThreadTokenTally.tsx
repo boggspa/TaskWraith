@@ -6,7 +6,6 @@ import { estimateRunCostUsd, type RendererProviderRates } from '../lib/providerR
 import { formatTallySuffix, tallyCostUsd, type ChatTokenTally } from '../lib/threadTokenTally'
 
 const LIVE_TICK_MS = 1000
-const APPROX_CHARS_PER_TOKEN = 4
 
 export type LiveThreadTokenTallyProps = {
   baseTally: ChatTokenTally
@@ -22,10 +21,7 @@ export type LiveThreadTokenTallyProps = {
   title: string
 }
 
-export function estimateLiveOutputTokensFromChars(charCount: number): number {
-  if (!Number.isFinite(charCount) || charCount <= 0) return 0
-  return Math.ceil(charCount / APPROX_CHARS_PER_TOKEN)
-}
+export { estimateLiveOutputTokensFromChars } from '../lib/liveOutputTokens'
 
 export const LiveThreadTokenTally = memo(function LiveThreadTokenTally({
   baseTally,

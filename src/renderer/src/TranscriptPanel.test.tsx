@@ -294,6 +294,8 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
     expect(html).toContain('Builder')
     expect(html).toContain('5.5 Extra High')
     expect(html).toContain('provider-codex')
+    expect(html).toContain('message-working-telemetry')
+    expect(html).toContain('digit-odometer')
     expect(html).not.toContain('message-working-sparkles')
   })
 

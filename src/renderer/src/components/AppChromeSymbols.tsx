@@ -1,4 +1,5 @@
 import taskwraithGhostMonolineSvg from '../assets/taskwraith-ghost-monoline.svg?raw'
+import type { ReactNode } from 'react'
 
 export function SidebarCornerIcon({
   direction,
@@ -656,10 +657,14 @@ export function SteerSymbolIcon() {
 
 export function ThinkingIndicator({
   label = 'Working',
-  ariaLabel = label
+  ariaLabel = label,
+  telemetry
 }: {
   label?: string
   ariaLabel?: string
+  /** Visual-only live telemetry. The parent supplies the stable status text
+   * for assistive tech, so ticking digits are never announced repeatedly. */
+  telemetry?: ReactNode
 } = {}) {
   // Participant name + model badge live in TranscriptPanel's `.message-meta`.
   // This bubble mirrors iOS LiveActivityAnchor: ghost + glow + "Working" + dots.
@@ -695,6 +700,7 @@ export function ThinkingIndicator({
           <span className="thinking-dot" />
           <span className="thinking-dot" />
         </span>
+        {telemetry}
       </span>
     </div>
   )

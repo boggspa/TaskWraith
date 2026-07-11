@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, type CSSProperties, type JSX } from 'react'
+import { Fragment, useEffect, useMemo, useRef, type CSSProperties, type JSX } from 'react'
 import {
   digitRollDirection,
   digitRollFrame,
@@ -38,25 +38,41 @@ export interface DigitOdometerProps {
   ariaLabel?: string
   /** Forward an extra class for layout / colour treatments. */
   className?: string
+  /** Render a fixed decimal separator before the final N digits. `value`
+   * remains an integer, so `value={2851} decimalPlaces={1}` displays 285.1. */
+  decimalPlaces?: number
 }
 
 export function DigitOdometer({
   value,
   sign,
   ariaLabel,
-  className
+  className,
+  decimalPlaces = 0
 }: DigitOdometerProps): JSX.Element {
   const numericValue = Number.isFinite(value) ? Math.trunc(value) : 0
   const displayValue = Math.abs(numericValue)
-  const digits = useMemo(() => digitSlotsForValue(displayValue), [displayValue])
+  const safeDecimalPlaces = Math.max(
+    0,
+    Math.min(6, Math.trunc(Number.isFinite(decimalPlaces) ? decimalPlaces : 0))
+  )
+  const minimumDigits = safeDecimalPlaces > 0 ? safeDecimalPlaces + 1 : 1
+  const digits = useMemo(
+    () => digitSlotsForValue(displayValue, minimumDigits),
+    [displayValue, minimumDigits]
+  )
   const previousDisplayValueRef = useRef(displayValue)
   const transitions = useMemo(
-    () => digitSlotTransitions(previousDisplayValueRef.current, displayValue),
-    [displayValue]
+    () => digitSlotTransitions(previousDisplayValueRef.current, displayValue, minimumDigits),
+    [displayValue, minimumDigits]
   )
   const direction = digitRollDirection(previousDisplayValueRef.current, displayValue)
   const effectiveSign = sign ?? (numericValue < 0 ? '-' : undefined)
-  const label = ariaLabel ?? `${effectiveSign ?? ''}${digits.join('')}`
+  const digitLabel =
+    safeDecimalPlaces > 0
+      ? `${digits.slice(0, -safeDecimalPlaces).join('')}.${digits.slice(-safeDecimalPlaces).join('')}`
+      : digits.join('')
+  const label = ariaLabel ?? `${effectiveSign ?? ''}${digitLabel}`
 
   useEffect(() => {
     previousDisplayValueRef.current = displayValue
@@ -67,15 +83,19 @@ export function DigitOdometer({
       <span className="sr-only">{label}</span>
       <span className="digit-odometer__visual" aria-hidden>
         {effectiveSign && <span className="digit-odometer__sign">{effectiveSign}</span>}
-        {transitions.map(({ digit, previousDigit, place }) => {
+        {transitions.map(({ digit, previousDigit, place }, index) => {
           return (
-            <DigitSlot
-              key={`place-${place}`}
-              digit={digit}
-              place={place}
-              previousDigit={previousDigit}
-              direction={direction}
-            />
+            <Fragment key={`place-${place}`}>
+              <DigitSlot
+                digit={digit}
+                place={place}
+                previousDigit={previousDigit}
+                direction={direction}
+              />
+              {safeDecimalPlaces > 0 && index === transitions.length - safeDecimalPlaces - 1 && (
+                <span className="digit-odometer__decimal">.</span>
+              )}
+            </Fragment>
           )
         })}
       </span>

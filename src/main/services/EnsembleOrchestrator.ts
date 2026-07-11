@@ -135,6 +135,7 @@ import {
 } from '../channels/DiscordContextService'
 import { contextPercent, resolveContextWindow } from '../../shared/contextWindows'
 import { isEnsembleRoundDispatchLive } from '../../shared/ensembleRoundLifecycle'
+import type { ParticipantWorkingTelemetryEvent } from '../../shared/participantWorkingTelemetry'
 import { isCursorGrok45ModelId, isGrok45ReasoningModelId } from '../../shared/grok45Models'
 import { isPreviewRiskModel } from '../../shared/previewModelCatalog'
 import type { NormalizedProviderUsageSnapshot } from '../ProviderQuotaSnapshots'
@@ -228,6 +229,10 @@ const MAX_CONTINUATION_HOP_LIMIT = 500
 const MAX_BOSSMAN_CONTROL_ITEMS = 40
 const MAX_BOSSMAN_POLL_OPTIONS = 6
 const ENSEMBLE_IMAGE_ATTACHMENT_EXT = /\.(png|jpe?g|gif|webp|bmp|heic|avif|tiff|tif|svg|jfif)(\?.*)?$/i
+// The visual Odometer roll takes 430ms. Coalescing provider usage snapshots to
+// roughly two per second lets each roll finish, while keeping the event lane
+// ephemeral and far below the transcript's streaming cadence.
+const PARTICIPANT_WORKING_TELEMETRY_MIN_INTERVAL_MS = 450
 
 export interface EnsembleDispatchEvent {
   sender: Electron.WebContents
@@ -323,6 +328,11 @@ export interface EnsembleOrchestratorDeps {
     trigger: 'auto'
   }) => Promise<{ ok: boolean; error?: string }>
   onContextCompactionProgress?: (event: ContextCompactionProgressEvent) => void
+  /**
+   * High-frequency, in-memory participant usage snapshots for the renderer's
+   * working indicator. Deliberately not persisted or folded into ChatRecord.
+   */
+  onParticipantWorkingTelemetry?: (event: ParticipantWorkingTelemetryEvent) => void
   getProviderUsageSnapshot?: (
     provider: ProviderId
   ) => NormalizedProviderUsageSnapshot | null | undefined
@@ -2715,6 +2725,12 @@ interface ActiveRoundRuntime {
 export class EnsembleOrchestrator {
   private roundsByChatId = new Map<string, ActiveRoundRuntime>()
   private runsByRunId = new Map<string, ActiveParticipantRun>()
+  /** Last emitted monotonic usage value per active seat. Keeps the renderer
+   * animation smooth without putting a timer or write loop in main. */
+  private participantWorkingTelemetryByRunId = new Map<
+    string,
+    { sentAt: number; inputTokens: number; outputTokens: number; totalTokens: number }
+  >()
   /**
    * Serial drains deferred because a detached `ensemble_fanout` lane was
    * still active when the serial queue emptied. Keyed by chatId; the value
@@ -8506,6 +8522,75 @@ export class EnsembleOrchestrator {
   }
 
   /**
+   * Forward a provider's live usage signal to the active participant's working
+   * indicator. This is intentionally a best-effort UI lane: it neither writes
+   * ChatRun.stats nor flushes/broadcasts a ChatRecord. The per-run maxima make
+   * the counter an accumulator even when a provider reports a context snapshot
+   * that shrinks after compaction.
+   */
+  reportParticipantTokenUsage(
+    runId: string | undefined,
+    stats: Record<string, unknown> | null | undefined,
+    source?: { provider?: ProviderId; chatId?: string }
+  ): boolean {
+    if (!runId || !stats || typeof stats !== 'object' || Array.isArray(stats)) return false
+    const run = this.runsByRunId.get(runId)
+    if (!run) return false
+    if (source?.provider && run.participant.provider !== source.provider) return false
+    if (source?.chatId && run.chatId !== source.chatId) return false
+
+    const previous = this.participantWorkingTelemetryByRunId.get(runId)
+    const inputTokens = Math.max(
+      previous?.inputTokens || 0,
+      numericRunStat(stats, 'input_tokens', 'inputTokens')
+    )
+    const outputTokens = Math.max(
+      previous?.outputTokens || 0,
+      numericRunStat(stats, 'output_tokens', 'outputTokens')
+    )
+    const totalTokens = Math.max(
+      previous?.totalTokens || 0,
+      numericRunStat(stats, 'total_tokens', 'totalTokens'),
+      inputTokens + outputTokens
+    )
+    if (inputTokens <= 0 && outputTokens <= 0 && totalTokens <= 0) return false
+
+    const telemetry = this.deps.onParticipantWorkingTelemetry
+    if (!telemetry) return true
+    const now = this.deps.now()
+    const changed =
+      !previous ||
+      inputTokens !== previous.inputTokens ||
+      outputTokens !== previous.outputTokens ||
+      totalTokens !== previous.totalTokens
+    if (!changed) return true
+    if (previous && now - previous.sentAt < PARTICIPANT_WORKING_TELEMETRY_MIN_INTERVAL_MS) {
+      return true
+    }
+
+    this.participantWorkingTelemetryByRunId.set(runId, {
+      sentAt: now,
+      inputTokens,
+      outputTokens,
+      totalTokens
+    })
+    telemetry({
+      type: 'snapshot',
+      chatId: run.chatId,
+      roundId: run.roundId,
+      participantId: run.participant.id,
+      runId,
+      startedAt: run.startedAt,
+      provider: run.participant.provider,
+      inputTokens,
+      outputTokens,
+      totalTokens,
+      estimated: false
+    })
+    return true
+  }
+
+  /**
    * Record provider-authored context-overflow evidence for an ACTIVE ensemble
    * run. The route and provider checks keep solo/stale/cross-provider stderr
    * from influencing a seat. Classification is intentionally delegated only
@@ -11189,6 +11274,14 @@ export class EnsembleOrchestrator {
     this.flushRun(run, true, reason)
     this.reconcileBossmanControlAfterRun(run, status)
     this.transitionParticipantRunQueueJob(run, status, reason)
+    this.participantWorkingTelemetryByRunId.delete(run.runId)
+    this.deps.onParticipantWorkingTelemetry?.({
+      type: 'clear',
+      chatId: run.chatId,
+      roundId: run.roundId,
+      participantId: run.participant.id,
+      runId: run.runId
+    })
     if (run.laneId) {
       try {
         this.deps.releaseWriteIntentsForLane?.(run.laneId)

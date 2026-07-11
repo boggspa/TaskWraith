@@ -1,0 +1,32 @@
+import type { ProviderId } from '../main/store/types'
+
+/**
+ * Ephemeral, display-only usage telemetry for one active Ensemble seat.
+ *
+ * These events intentionally never enter ChatRecord, run-event storage, or
+ * provider transcripts. The working indicator consumes them through a tiny
+ * renderer-side store, so frequent token snapshots do not replace the chat or
+ * invalidate the transcript tree.
+ */
+export type ParticipantWorkingTelemetryEvent =
+  | {
+      type: 'snapshot'
+      chatId: string
+      roundId: string
+      participantId: string
+      runId: string
+      startedAt: string
+      provider: ProviderId
+      inputTokens: number
+      outputTokens: number
+      totalTokens: number
+      /** `false` means the provider supplied a normalized usage snapshot. */
+      estimated: false
+    }
+  | {
+      type: 'clear'
+      chatId: string
+      roundId: string
+      participantId: string
+      runId: string
+    }

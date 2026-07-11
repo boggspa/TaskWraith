@@ -37,6 +37,7 @@ import {
   CONTEXT_AUTO_COMPACT_COOLDOWN_MS,
   type ContextCompactionProgressEvent
 } from '../../shared/contextCompaction'
+import type { ParticipantWorkingTelemetryEvent } from '../../shared/participantWorkingTelemetry'
 
 const ensemble: EnsembleConfig = {
   enabled: true,
@@ -270,6 +271,7 @@ function makeHarness(
       trigger: 'auto'
     }) => Promise<{ ok: boolean; error?: string }>
     onContextCompactionProgress?: (event: ContextCompactionProgressEvent) => void
+    onParticipantWorkingTelemetry?: (event: ParticipantWorkingTelemetryEvent) => void
     scheduleWakeupTimer?: (wakeup: EnsembleWakeupRecord) => void
     cancelWakeupTimer?: (wakeupId: string) => void
     signRunPermissionPosture?: (
@@ -343,6 +345,9 @@ function makeHarness(
     ...(options.compactSeatContext ? { compactSeatContext: options.compactSeatContext } : {}),
     ...(options.onContextCompactionProgress
       ? { onContextCompactionProgress: options.onContextCompactionProgress }
+      : {}),
+    ...(options.onParticipantWorkingTelemetry
+      ? { onParticipantWorkingTelemetry: options.onParticipantWorkingTelemetry }
       : {}),
     createRunId: (provider) => `${provider}-run-${++counter}`,
     now: options.now ?? (() => counter),
@@ -625,6 +630,96 @@ describe('EnsembleOrchestrator', () => {
     expect(harness.chat.messages.at(-1)?.metadata).toMatchObject({
       kind: 'contextCompaction',
       ensembleParticipantId: 'claude'
+    })
+  })
+
+  it('emits coalesced ephemeral usage snapshots for the active participant turn', async () => {
+    let now = 1_000
+    const telemetryEvents: ParticipantWorkingTelemetryEvent[] = []
+    const harness = makeHarness({
+      now: () => now,
+      onParticipantWorkingTelemetry: (event) => telemetryEvents.push(event)
+    })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Track this participant turn.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const runId = harness.dispatched[0].appRunId!
+
+    expect(
+      harness.orchestrator.reportParticipantTokenUsage(
+        runId,
+        { input_tokens: 20, output_tokens: 5, total_tokens: 25 },
+        { provider: 'claude', chatId: 'ensemble-chat' }
+      )
+    ).toBe(true)
+    now += 200
+    expect(
+      harness.orchestrator.reportParticipantTokenUsage(
+        runId,
+        { input_tokens: 30, output_tokens: 10, total_tokens: 40 },
+        { provider: 'claude', chatId: 'ensemble-chat' }
+      )
+    ).toBe(true)
+    now += 500
+    expect(
+      harness.orchestrator.reportParticipantTokenUsage(
+        runId,
+        { input_tokens: 50, output_tokens: 15, total_tokens: 65 },
+        { provider: 'claude', chatId: 'ensemble-chat' }
+      )
+    ).toBe(true)
+
+    expect(telemetryEvents).toEqual([
+      expect.objectContaining({
+        type: 'snapshot',
+        chatId: 'ensemble-chat',
+        participantId: 'claude',
+        runId,
+        inputTokens: 20,
+        outputTokens: 5,
+        totalTokens: 25,
+        estimated: false
+      }),
+      expect.objectContaining({
+        type: 'snapshot',
+        chatId: 'ensemble-chat',
+        participantId: 'claude',
+        runId,
+        inputTokens: 50,
+        outputTokens: 15,
+        totalTokens: 65,
+        estimated: false
+      })
+    ])
+    expect(
+      harness.orchestrator.reportParticipantTokenUsage(
+        runId,
+        { total_tokens: 999 },
+        { provider: 'codex', chatId: 'ensemble-chat' }
+      )
+    ).toBe(false)
+    expect(
+      harness.orchestrator.reportParticipantTokenUsage(
+        runId,
+        { total_tokens: 999 },
+        { provider: 'claude', chatId: 'different-chat' }
+      )
+    ).toBe(false)
+
+    harness.orchestrator.handleProviderOutput(
+      'claude',
+      { appRunId: runId, appChatId: 'ensemble-chat' },
+      { type: 'result', status: 'success' }
+    )
+    expect(telemetryEvents.at(-1)).toEqual({
+      type: 'clear',
+      chatId: 'ensemble-chat',
+      roundId: expect.any(String),
+      participantId: 'claude',
+      runId
     })
   })
 

@@ -63,6 +63,10 @@ function ensembleChat(
 describe('deriveActiveEnsembleWorkingPresentation', () => {
   it('includes the active participant role and model reasoning badge', () => {
     expect(deriveActiveEnsembleWorkingPresentation(ensembleChat([participant()]))).toEqual({
+      participantId: 'codex-builder',
+      runId: null,
+      startedAt: '2026-07-01T00:00:00.000Z',
+      tokenAccumulatorBase: 0,
       providerLabel: 'Codex',
       provider: 'codex',
       providerClass: 'codex',
@@ -85,6 +89,10 @@ describe('deriveActiveEnsembleWorkingPresentation', () => {
         ])
       )
     ).toEqual({
+      participantId: 'local-scout',
+      runId: null,
+      startedAt: '2026-07-01T00:00:00.000Z',
+      tokenAccumulatorBase: 0,
       providerLabel: 'Alibaba',
       provider: 'ollama',
       providerClass: 'alibaba',
@@ -109,6 +117,10 @@ describe('deriveActiveEnsembleWorkingPresentation', () => {
     )
 
     expect(deriveActiveEnsembleWorkingPresentation(chat)).toEqual({
+      participantId: 'codex-builder',
+      runId: null,
+      startedAt: '2026-07-01T00:00:00.000Z',
+      tokenAccumulatorBase: 0,
       providerLabel: 'Codex',
       provider: 'codex',
       providerClass: 'codex',
@@ -207,6 +219,69 @@ describe('deriveActiveEnsembleWorkingPresentation', () => {
     expect(deriveActiveEnsembleWorkingPresentations(chat).map((item) => item.roleLabel)).toEqual([
       'Planner',
       'Builder'
+    ])
+  })
+
+  it('uses each live fan-out lane turn anchor and participant accumulator', () => {
+    const chat = ensembleChat([
+      participant({
+        id: 'claude-planner',
+        provider: 'claude',
+        role: 'Planner',
+        order: 1,
+        tokenTotals: { total_tokens: 28_500 }
+      }),
+      participant({
+        id: 'codex-builder',
+        provider: 'codex',
+        role: 'Builder',
+        order: 2,
+        tokenTotals: { total_tokens: 14_000 }
+      })
+    ])
+    chat.ensemble!.activeRound!.concurrentMode = true
+    chat.ensemble!.activeRound!.fanoutPolicy = 'read_only'
+    chat.ensemble!.activeRound!.lanes = {
+      planner: {
+        laneId: 'planner',
+        participantId: 'claude-planner',
+        runId: 'claude-live',
+        provider: 'claude',
+        status: 'running',
+        intent: 'read',
+        startedAt: '2026-07-01T00:04:00.000Z'
+      },
+      builder: {
+        laneId: 'builder',
+        participantId: 'codex-builder',
+        runId: 'codex-live',
+        provider: 'codex',
+        status: 'running',
+        intent: 'read',
+        startedAt: '2026-07-01T00:05:00.000Z'
+      }
+    }
+
+    expect(
+      deriveActiveEnsembleWorkingPresentations(chat).map((item) => ({
+        participantId: item.participantId,
+        runId: item.runId,
+        startedAt: item.startedAt,
+        tokenAccumulatorBase: item.tokenAccumulatorBase
+      }))
+    ).toEqual([
+      {
+        participantId: 'claude-planner',
+        runId: 'claude-live',
+        startedAt: '2026-07-01T00:04:00.000Z',
+        tokenAccumulatorBase: 28_500
+      },
+      {
+        participantId: 'codex-builder',
+        runId: 'codex-live',
+        startedAt: '2026-07-01T00:05:00.000Z',
+        tokenAccumulatorBase: 14_000
+      }
     ])
   })
 
