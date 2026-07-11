@@ -58,6 +58,19 @@ describe('workspace above-row parity', () => {
     expect(block).not.toContain('data-composer-style="grok"')
   })
 
+  it('keeps detached Codex workspace rows compact without changing other shells', () => {
+    const css = readSource('src/renderer/src/assets/css/10-provider-shell-overrides.css')
+    const selector =
+      '[data-composer-style="codex"]\n  :is(.composer-area, .composer-primary-stack)\n  > .composer-workspace-above-row.style-unified.composer-above-bar--cursor-lead'
+    const start = css.indexOf(selector)
+    const end = css.indexOf('}', start)
+    const block = css.slice(start, end + 1)
+
+    expect(start).toBeGreaterThan(-1)
+    expect(block).toContain('display: flex !important')
+    expect(block).not.toContain('data-composer-style="grok"')
+  })
+
   it('uses amber for behind-only branches and red for true divergence', () => {
     const base = readSource('src/renderer/src/assets/css/07-composer-shells.css')
     const shellOverrides = readSource('src/renderer/src/assets/css/10-provider-shell-overrides.css')

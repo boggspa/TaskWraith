@@ -4476,6 +4476,16 @@
   grid-column: 2;
 }
 
+/* Codex primary and secondary workspace rows float as detached, shrink-wrapped
+ * pills. Keep those rows out of the shared Codex/Grok three-zone grid: its
+ * flexible side tracks create a large empty spacer before the action. The
+ * detached pill chrome and centered fit-content width remain owned by shard 07. */
+[data-composer-style="codex"]
+  :is(.composer-area, .composer-primary-stack)
+  > .composer-workspace-above-row.style-unified.composer-above-bar--cursor-lead {
+  display: flex !important;
+}
+
 /* Grok tucked workspace rows need more left-column budget than the symmetric
  * Codex grid: the git pill also carries the sync chip, so equal side columns
  * make the workspace/branch label collapse before the center stats need to. */
