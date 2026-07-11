@@ -353,9 +353,10 @@
    * that read as a dull grey pane). The transcript, sky-reveal floor, and
    * pane-opacity override all funnel through --content-bg, so this single
    * value keeps the whole light-mode reading surface a fresh white sheet.
-   * Nudged to 0.985 so barely any of the underlying app-bg / desktop tints
-   * it — reads as a touch lighter/whiter. */
-  --content-bg: rgba(255, 255, 255, 0.985);
+   * Fully opaque pure white by default — no underlying app-bg / desktop tint
+   * bleeds through. The pane-opacity slider still scales it, so a user who
+   * wants glass back can dial it down. */
+  --content-bg: #ffffff;
   --bg-primary: var(--content-bg);
   --bg-secondary: var(--app-bg-elevated);
   /* Sidebar matches the transcript's clean white (was the cool blue #eef2f7 /
