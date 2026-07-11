@@ -47,6 +47,7 @@ describe('Settings tabs', () => {
     )
 
     expect(html).not.toContain('Channels')
+    expect(html).not.toContain('sidebar-titlebar-fill')
     expect(html).toContain('Devices')
     expect(html).toContain('Search settings...')
     expect(html).toContain('aria-selected="true"')

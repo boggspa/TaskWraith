@@ -213,7 +213,6 @@ export function SettingsSidebar({
       className={`app-sidebar settings-sidebar${animationClassName ? ` ${animationClassName}` : ''}`}
       aria-label="Settings navigation"
     >
-      <div className="sidebar-titlebar-fill" aria-hidden />
       <div className="settings-sidebar-inner">
         <button
           type="button"
