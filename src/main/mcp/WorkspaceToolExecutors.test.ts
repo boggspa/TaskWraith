@@ -20,6 +20,7 @@ import {
   executeListActiveRuns,
   executeListBackgroundProcesses,
   executeListChatAttachments,
+  executeListSubthreads,
   executeReadSubthreadResult,
   executeMovePath,
   executeReadBackgroundProcess,
@@ -893,6 +894,62 @@ describe('chat attachment workspace tools', () => {
 })
 
 describe('subthread workspace tools', () => {
+  it('projects worker attachment and queue status through existing read tools only', () => {
+    const queued = enqueueSubThreadWorkerEvent(undefined, {
+      sourceToolCallId: 'tool-queued',
+      parentChatId: 'parent-1',
+      subThreadId: 'child-1',
+      targetProvider: 'codex',
+      parentProvider: 'claude',
+      prompt: 'Queued follow-up',
+      returnResultToParent: true,
+      approvalMode: 'plan'
+    })
+    const chat = {
+      appChatId: 'child-1',
+      parentChatId: 'parent-1',
+      provider: 'codex',
+      title: 'Child',
+      archived: false,
+      createdAt: 1,
+      updatedAt: 2,
+      messages: [],
+      runs: [{ runId: 'run-live', provider: 'codex', startedAt: 't', status: 'running' }],
+      delegationContext: {
+        createdAt: 1,
+        parentProvider: 'claude',
+        delegationPrompt: 'Start',
+        returnResultToParent: true,
+        workerControl: queued.control
+      }
+    } as any
+    const deps = makeDeps(async () => commandResult(''))
+    deps.store.getChat = (chatId) => (chatId === 'child-1' ? chat : undefined)
+    deps.store.getChildChats = () => [chat]
+
+    const context = {
+      scope: 'workspace' as const,
+      cwd: '/tmp/ws',
+      workspacePath: '/tmp/ws',
+      appChatId: 'parent-1'
+    }
+    const listed = executeListSubthreads(deps, context, {}) as any
+    const read = executeReadSubthreadResult(deps, context, {
+      subThreadId: 'child-1',
+      depth: 'summary'
+    }) as any
+
+    expect(listed.subthreads[0].workerControl).toMatchObject({
+      attachedAt: expect.any(String),
+      pending: 1,
+      active: 0,
+      terminal: 0,
+      nextPriority: 'normal'
+    })
+    expect(read.workerControl).toEqual(listed.subthreads[0].workerControl)
+    expect(JSON.stringify(read)).not.toContain('Queued follow-up')
+  })
+
   it('hard-cancels the live turn and every queued worker follow-up', async () => {
     const first = enqueueSubThreadWorkerEvent(undefined, {
       sourceToolCallId: 'tool-1',

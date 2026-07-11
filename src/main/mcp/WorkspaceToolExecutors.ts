@@ -6,7 +6,10 @@ import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } 
 import { isPathInsideWorkspace } from '../AgenticPolicy'
 import { isRetiredExternalChannelInboundMessage } from '../LegacyExternalChannelHistory'
 import { getSubThreadResumeSessionId as defaultGetSubThreadResumeSessionId } from '../SubThreadRecall'
-import { cancelPendingSubThreadWorkerEvents } from '../SubThreadWorkerControl'
+import {
+  cancelPendingSubThreadWorkerEvents,
+  summarizeSubThreadWorkerControl
+} from '../SubThreadWorkerControl'
 import type {
   ChatMessage,
   ChatRecord,
@@ -1860,6 +1863,9 @@ export function executeListSubthreads(
     .map((chat) => {
       const lifecycle = subThreadLifecycle(deps, chat)
       const latestAssistant = latestAssistantMessage(chat)
+      const workerControl = chat.delegationContext?.workerControl
+        ? summarizeSubThreadWorkerControl(chat.delegationContext.workerControl)
+        : undefined
       return {
         id: chat.appChatId,
         title: chat.title,
@@ -1874,6 +1880,7 @@ export function executeListSubthreads(
         updatedAt: chat.updatedAt,
         workspaceId: chat.workspaceId,
         workspacePath: chat.workspacePath,
+        workerControl,
         delegationContext: chat.delegationContext
           ? {
               createdAt: chat.delegationContext.createdAt,
@@ -1919,6 +1926,9 @@ export function executeReadSubthreadResult(
   const includeResult = depth !== 'summary' && depth !== 'events-only'
   const eventLimit = clampInteger(args.eventLimit, 50, 1, 500)
   const lifecycle = subThreadLifecycle(deps, chat)
+  const workerControl = chat.delegationContext?.workerControl
+    ? summarizeSubThreadWorkerControl(chat.delegationContext.workerControl)
+    : undefined
   const runEvents = includeEvents
     ? (chat.runs || [])
         .flatMap((run) => deps.runs.getRunEvents({ runId: run.runId, limit: eventLimit }))
@@ -1938,6 +1948,7 @@ export function executeReadSubthreadResult(
     archived: chat.archived,
     createdAt: chat.createdAt,
     updatedAt: chat.updatedAt,
+    workerControl,
     delegationContext: chat.delegationContext
       ? {
           createdAt: chat.delegationContext.createdAt,
