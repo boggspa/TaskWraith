@@ -10578,7 +10578,7 @@ button.composer-run-timecode.is-open {
   display: grid;
   grid-template-columns:
     minmax(260px, var(--workbench-editor-split, 52%))
-    10px
+    1px
     minmax(280px, 1fr);
 }
 
@@ -10587,35 +10587,50 @@ button.composer-run-timecode.is-open {
 }
 
 .workbench-split-resizer {
-  width: 10px;
-  min-width: 10px;
+  width: 9px;
+  min-width: 9px;
   height: 100%;
   display: grid;
   place-items: center;
   align-self: stretch;
-  border-inline: 1px solid color-mix(in srgb, var(--panel-border) 80%, transparent);
-  background: color-mix(in srgb, var(--panel-elevated-bg) 52%, transparent);
+  justify-self: center;
+  border: 0;
+  background: transparent;
   cursor: col-resize;
   touch-action: none;
 }
 
 .workbench-split-resizer > span {
-  width: 2px;
-  height: 38px;
-  border-radius: 99px;
-  background: color-mix(in srgb, var(--text-muted) 46%, transparent);
+  width: 1px;
+  height: 100%;
+  border-radius: 0;
+  background: linear-gradient(
+    180deg,
+    var(--pane-divider-metal-highlight),
+    var(--pane-divider-metal-base) 18% 82%,
+    var(--pane-divider-metal-shadow)
+  );
+  box-shadow:
+    -0.5px 0 0 var(--pane-divider-metal-highlight),
+    0.5px 0 0 var(--pane-divider-metal-shadow);
+  pointer-events: none;
+  transition:
+    background 120ms ease,
+    box-shadow 120ms ease;
 }
 
 .workbench-split-resizer:hover,
 .workbench-split-resizer:focus-visible {
   outline: 0;
-  border-color: color-mix(in srgb, var(--accent) 46%, var(--panel-border));
-  background: color-mix(in srgb, var(--accent) 10%, var(--panel-elevated-bg));
 }
 
 .workbench-split-resizer:hover > span,
 .workbench-split-resizer:focus-visible > span {
-  background: color-mix(in srgb, var(--accent) 68%, var(--text-primary));
+  background: var(--pane-divider-metal-active);
+  box-shadow:
+    -0.5px 0 0 var(--pane-divider-metal-highlight),
+    0.5px 0 0 var(--pane-divider-metal-shadow),
+    0 0 5px color-mix(in srgb, var(--accent) 24%, transparent);
 }
 
 .workbench-stage.split .app-file-editor {
@@ -10643,7 +10658,7 @@ button.composer-run-timecode.is-open {
   .workbench-stage.split {
     grid-template-columns:
       minmax(0, var(--workbench-editor-split, 52%))
-      10px
+      1px
       minmax(0, 1fr);
   }
 

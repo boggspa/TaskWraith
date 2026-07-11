@@ -18,7 +18,9 @@
   height: 100%;
   min-width: 0;
   min-height: 0;
-  gap: 8px;
+  /* Pane tracks meet at a metallic hairline; the draggable gutters overlay a
+     wider hit target without reopening a translucent structural gap. */
+  gap: 1px;
   padding: 6px;
   box-sizing: border-box;
   /* Positioning context + own stacking context so the draggable gutters
@@ -335,10 +337,10 @@
    Resizable gutters — draggable dividers on internal track
    boundaries (geometry computed in multiviewLayouts.ts). A gutter
    is placed on the track AFTER its boundary line and translated
-   back by half the 8px grid gap so its hit area straddles the gap.
+   back by half the 1px grid gap so its hit area straddles the seam.
    It sits above the cells (z-index:2 > the cells' z-index:1) so the
    handle is always grabbable; the cells themselves keep full pointer access because
-   the gutter only covers the ~6px gap strip, not the cell bodies.
+   the gutter only covers the 9px interaction strip around the seam.
    ============================================================ */
 .multiview-gutter {
   position: relative;
@@ -355,12 +357,12 @@
 /* Vertical divider between two columns: the segment is placed on the track
    AFTER its boundary line and stretched to that track's row-span; pin it to the
    left edge (the line position, just past the gap) and pull left by half the
-   8px gap + half the 6px hit width so the strip is centred on the gap. */
+   1px gap + half the 9px hit width so the strip is centred on the seam. */
 .multiview-gutter-column {
   align-self: stretch;
   justify-self: start;
-  width: 6px;
-  margin-left: -7px; /* -(gap/2 + width/2) = -(4 + 3) */
+  width: 9px;
+  margin-left: -5px; /* -(gap/2 + width/2) = -(0.5 + 4.5) */
   cursor: col-resize;
 }
 
@@ -368,42 +370,75 @@
 .multiview-gutter-row {
   justify-self: stretch;
   align-self: start;
-  height: 6px;
-  margin-top: -7px;
+  height: 9px;
+  margin-top: -5px;
   cursor: row-resize;
 }
 
-/* The visible affordance — a faint hairline that brightens on hover/drag.
-   Pointer events live on the parent .multiview-gutter; the handle is decor. */
+/* The visible affordance is an always-on, full-span metallic hairline.
+   Pointer events live on the wider parent; the handle is decoration only. */
 .multiview-gutter-handle {
   pointer-events: none;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--surface-border) 60%, transparent);
-  opacity: 0;
+  border-radius: 0;
   transition:
-    opacity 0.12s ease,
-    background 0.12s ease;
+    background 120ms ease,
+    box-shadow 120ms ease;
 }
 
 .multiview-gutter-column .multiview-gutter-handle {
-  width: 2px;
-  height: min(46px, 60%);
+  width: 1px;
+  height: 100%;
+  background: linear-gradient(
+    180deg,
+    var(--pane-divider-metal-highlight),
+    var(--pane-divider-metal-base) 18% 82%,
+    var(--pane-divider-metal-shadow)
+  );
+  box-shadow:
+    -0.5px 0 0 var(--pane-divider-metal-highlight),
+    0.5px 0 0 var(--pane-divider-metal-shadow);
 }
 
 .multiview-gutter-row .multiview-gutter-handle {
-  height: 2px;
-  width: min(46px, 60%);
+  width: 100%;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    var(--pane-divider-metal-highlight),
+    var(--pane-divider-metal-base) 18% 82%,
+    var(--pane-divider-metal-shadow)
+  );
+  box-shadow:
+    0 -0.5px 0 var(--pane-divider-metal-highlight),
+    0 0.5px 0 var(--pane-divider-metal-shadow);
+}
+
+.multiview-gutter:focus-visible {
+  outline: 0;
 }
 
 .multiview-gutter:hover .multiview-gutter-handle,
 .multiview-gutter:active .multiview-gutter-handle,
 .multiview-gutter:focus-visible .multiview-gutter-handle {
-  opacity: 1;
-  background: color-mix(in srgb, var(--accent) 70%, transparent);
+  background: var(--pane-divider-metal-active);
 }
 
-.multiview-gutter:active .multiview-gutter-handle {
-  background: var(--accent);
+.multiview-gutter-column:hover .multiview-gutter-handle,
+.multiview-gutter-column:active .multiview-gutter-handle,
+.multiview-gutter-column:focus-visible .multiview-gutter-handle {
+  box-shadow:
+    -0.5px 0 0 var(--pane-divider-metal-highlight),
+    0.5px 0 0 var(--pane-divider-metal-shadow),
+    0 0 5px color-mix(in srgb, var(--accent) 24%, transparent);
+}
+
+.multiview-gutter-row:hover .multiview-gutter-handle,
+.multiview-gutter-row:active .multiview-gutter-handle,
+.multiview-gutter-row:focus-visible .multiview-gutter-handle {
+  box-shadow:
+    0 -0.5px 0 var(--pane-divider-metal-highlight),
+    0 0.5px 0 var(--pane-divider-metal-shadow),
+    0 0 5px color-mix(in srgb, var(--accent) 24%, transparent);
 }
 
 /* The single sidebar / composer / Copy / Goal all act on the focused

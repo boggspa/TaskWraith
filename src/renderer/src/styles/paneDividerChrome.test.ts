@@ -57,4 +57,36 @@ describe('pane divider chrome', () => {
     expect(block).toContain('flex-basis: 0;')
     expect(block).toContain('margin-inline: 0;')
   })
+
+  it('collapses Multiview tracks to a hairline while retaining a wide overlaid gutter', () => {
+    const css = readCss('14-multiview.css')
+    const grid = cssBlockStartingAt(css, '.multiview-grid {')
+    const columnGutter = cssBlockStartingAt(css, '.multiview-gutter-column {')
+    const columnRim = cssBlockStartingAt(css, '.multiview-gutter-column .multiview-gutter-handle {')
+    const rowRim = cssBlockStartingAt(css, '.multiview-gutter-row .multiview-gutter-handle {')
+
+    expect(grid).toContain('gap: 1px;')
+    expect(columnGutter).toContain('width: 9px;')
+    expect(columnGutter).toContain('margin-left: -5px;')
+    expect(columnRim).toContain('width: 1px;')
+    expect(columnRim).toContain('height: 100%;')
+    expect(rowRim).toContain('width: 100%;')
+    expect(rowRim).toContain('height: 1px;')
+  })
+
+  it('collapses the Workbench split track while retaining a wide overlaid target', () => {
+    const css = readCss('03-composer-welcome-activity.css')
+    const stage = cssBlockStartingAt(css, '.workbench-stage.split {')
+    const resizer = cssBlockStartingAt(css, '.workbench-split-resizer {')
+    const rim = cssBlockStartingAt(css, '.workbench-split-resizer > span {')
+
+    expect(stage).toContain('1px')
+    expect(stage).not.toContain('10px')
+    expect(resizer).toContain('width: 9px;')
+    expect(resizer).toContain('justify-self: center;')
+    expect(resizer).toContain('background: transparent;')
+    expect(rim).toContain('width: 1px;')
+    expect(rim).toContain('height: 100%;')
+    expect(rim).toContain('var(--pane-divider-metal-base)')
+  })
 })
