@@ -98,6 +98,12 @@ describe('buildKimiMcpBridgeAddArgs', () => {
     expect(KIMI_TASKWRAITH_TOOL_NAMES).toContain('delegate_to_subthread')
   })
 
+  it('publishes the compact gateway profile rather than every hidden first-party schema', () => {
+    expect(KIMI_TASKWRAITH_TOOL_NAMES).toContain('capability_search')
+    expect(KIMI_TASKWRAITH_TOOL_NAMES).toContain('capability_invoke')
+    expect(KIMI_TASKWRAITH_TOOL_NAMES).not.toContain('video_encode_clip')
+  })
+
   it('handles bridges with no extra args (degenerate but valid input shape)', () => {
     const args = buildKimiMcpBridgeAddArgs({
       bridgeBinaryPath: '/usr/local/bin/taskwraith',

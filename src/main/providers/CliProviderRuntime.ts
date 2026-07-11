@@ -2,7 +2,7 @@ import { spawn } from 'child_process'
 import { delimiter, dirname, extname, join } from 'path'
 import { promises as fs } from 'fs'
 import os from 'os'
-import { TASKWRAITH_MCP_TOOLS } from '../TaskWraithMcpTools'
+import { GATEWAY_MCP_ADVERTISE_TOOLS } from '../mcp/McpToolProfiles'
 import { buildProviderCapabilityContract } from '../ProviderCapabilities'
 import { providerLabel } from '../ProviderAdapters'
 import { AppStore } from '../store'
@@ -611,7 +611,7 @@ export function getCliProviderMcpStatus(
     source: bridgeEnabled ? 'bridge' : userServerCount > 0 ? 'provider' : 'bridge',
     serverName:
       bridgeEnabled || userServerCount === 0 ? GEMINI_MCP_SERVER_NAME : 'User MCP servers',
-    tools: bridgeEnabled ? [...TASKWRAITH_MCP_TOOLS] : [],
+    tools: bridgeEnabled ? [...GATEWAY_MCP_ADVERTISE_TOOLS] : [],
     sections: [],
     message: bridgeEnabled
       ? userServerCount > 0

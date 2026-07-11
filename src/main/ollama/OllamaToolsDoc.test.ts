@@ -11,6 +11,7 @@ vi.mock('electron', () => ({
 
 import { buildOllamaToolDocSection, buildOllamaToolsMarkdown } from './OllamaToolsDoc'
 import { TASKWRAITH_MCP_TOOLS } from '../TaskWraithMcpTools'
+import { GATEWAY_MCP_DIRECT_TOOLS } from '../mcp/McpToolProfiles'
 
 const TOOLS_MD = resolve(__dirname, '../../../resources/Tools.md')
 const generated = buildOllamaToolsMarkdown()
@@ -36,9 +37,14 @@ describe('resources/Tools.md', () => {
     expect(sectionCount).toBe(TASKWRAITH_MCP_TOOLS.length)
   })
 
-  it('gives every tool a copyable taskwraith_tool call example', () => {
+  it('uses direct examples only for the compact profile and gateway examples for the tail', () => {
+    const directNames = new Set<string>(GATEWAY_MCP_DIRECT_TOOLS)
     for (const name of TASKWRAITH_MCP_TOOLS) {
-      expect(generated).toContain(`{"taskwraith_tool":{"name":"${name}"`)
+      expect(generated).toContain(
+        directNames.has(name)
+          ? `{"taskwraith_tool":{"name":"${name}"`
+          : `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"${name}"`
+      )
     }
   })
 })
@@ -51,16 +57,18 @@ describe('buildOllamaToolDocSection (tool_help runtime lookup)', () => {
     expect(section).toContain('{"taskwraith_tool":{"name":"write_file"')
     // The single-tool section is a substring of the full generated doc.
     expect(buildOllamaToolsMarkdown()).toContain(section)
-    // It is targeted, not the whole 143-tool dump.
+    // It is targeted, not the whole catalogue dump.
     expect(section).not.toContain('## read_file')
   })
 
   it('serves a real section for a NON-advertised tail tool (the tool_help promise)', () => {
-    // git_blame is deliberately NOT in the curated advertised set — the whole
+    // git_blame is deliberately NOT in the gateway direct set — the whole
     // point of tool_help is that the tail is still discoverable on demand.
     const section = buildOllamaToolDocSection('git_blame')
     expect(section.startsWith('## git_blame')).toBe(true)
-    expect(section).toContain('{"taskwraith_tool":{"name":"git_blame"')
+    expect(section).toContain(
+      '{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"git_blame"'
+    )
     expect(buildOllamaToolsMarkdown()).toContain(section)
   })
 

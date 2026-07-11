@@ -93,7 +93,7 @@ describe('ollamaLocalToolSystemPrompt', () => {
     )
   })
 
-  it('advertises the curated ~22-tool working set, not the full catalog', () => {
+  it('advertises the immutable gateway working set, not the full catalog', () => {
     const prompt = ollamaLocalToolSystemPrompt('read_only', 'qwen3.5:9b')
     // Detailed inline: only the protocol-critical few.
     expect(prompt).toContain('- read_file:')
@@ -122,15 +122,15 @@ describe('ollamaLocalToolSystemPrompt', () => {
     expect(prompt).not.toContain('The current user message is conversational')
   })
 
-  it('name-lists advertised coordination tools and keeps the lifecycle mutators in the tool_help tail', () => {
+  it('name-lists the gateway profile goal lifecycle tools', () => {
     const prompt = ollamaLocalToolSystemPrompt('provider_parity', 'ornith:9b')
-    // Curated taxonomy (2026-07): goal_read is advertised (name-listed); the goal
-    // lifecycle MUTATORS (goal_update/complete/blocked) are NOT advertised — they
-    // are the tool_help tail, reachable on demand but out of the preamble.
+    // Exact gateway-v1 membership includes the lifecycle mutators required by
+    // long-horizon work; the older goal_update alias remains in the tail.
     expect(prompt).toContain('goal_read')
+    expect(prompt).toContain('update_goal')
+    expect(prompt).toContain('goal_complete')
+    expect(prompt).toContain('goal_blocked')
     expect(prompt).not.toContain('goal_update')
-    expect(prompt).not.toContain('goal_complete')
-    expect(prompt).not.toContain('goal_blocked')
     // Ornith family delegation guidance still rides along.
     expect(prompt).toContain('instead of defaulting to another provider')
   })
@@ -138,7 +138,7 @@ describe('ollamaLocalToolSystemPrompt', () => {
   it('advertises ask_user_question by name but keeps tail tools (git_blame) out of the preamble', () => {
     const prompt = ollamaLocalToolSystemPrompt('read_only', 'qwen3.5:9b')
     expect(prompt).toContain('ask_user_question')
-    // git_blame is not in the curated advertised set — it lives in the tool_help tail.
+    // git_blame is not in the gateway direct set — it lives in the discovered tail.
     expect(prompt).not.toContain('git_blame')
   })
 

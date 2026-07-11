@@ -14,9 +14,9 @@ import type {
   ProviderToolingCapabilityId
 } from './store/types'
 import { TASKWRAITH_MCP_TOOLS } from './TaskWraithMcpTools'
+import { GATEWAY_MCP_ADVERTISE_TOOLS } from './mcp/McpToolProfiles'
 import { providerLabel } from './ProviderAdapters'
 import { CURSOR_MCP_SERVER_NAME } from './cursor/CursorMcpBridge'
-import { ollamaToolNamesForTier } from './ollama/OllamaToolTiers'
 import { buildUserMcpLaunchServers } from './UserMcpServers'
 
 export const TASKWRAITH_GEMINI_MCP_TOOLS = TASKWRAITH_MCP_TOOLS
@@ -337,7 +337,7 @@ function codexMcpCapability(
     enabled: true,
     installed: true,
     serverName: 'TaskWraith',
-    tools: tools.length > 0 ? tools : [...TASKWRAITH_MCP_TOOLS],
+    tools: tools.length > 0 ? tools : [...GATEWAY_MCP_ADVERTISE_TOOLS],
     message:
       serverCount > 0
         ? `${serverCount} Codex MCP server${serverCount === 1 ? '' : 's'} reported by app-server.`
@@ -456,7 +456,7 @@ function cursorMcpCapability(input: {
     enabled,
     installed: enabled,
     serverName: CURSOR_MCP_SERVER_NAME,
-    tools: enabled ? [...TASKWRAITH_MCP_TOOLS] : [],
+    tools: enabled ? [...GATEWAY_MCP_ADVERTISE_TOOLS] : [],
     message:
       input.requiredForRun
         ? 'TaskWraith will register a transient brokered MCP server for this Cursor write-mode run. Native Cursor shell/write tools are constrained so workspace side effects go through TaskWraith approvals; no manual Cursor MCP install is required.'
@@ -481,7 +481,7 @@ function grokMcpCapability(input: {
     enabled,
     installed: enabled,
     serverName: 'TaskWraith',
-    tools: enabled ? [...TASKWRAITH_MCP_TOOLS] : [],
+    tools: enabled ? [...GATEWAY_MCP_ADVERTISE_TOOLS] : [],
     message:
       input.requiredForRun
         ? 'TaskWraith will advertise a brokered MCP server through Grok ACP for this write-capable run. Mutating MCP tools are executed by TaskWraith after approval and workspace/path checks; no manual Grok MCP install is required.'
@@ -533,16 +533,16 @@ function approvalContract(
   effectiveMode: string
 ): ProviderApprovalCapability {
   if (provider === 'ollama') {
-    // Tier retirement (2026-07): Ollama gets the full tool surface, governed by
-    // the standard permission role like every provider (no tier ladder).
+    // Ollama receives the same compact gateway profile as remote providers;
+    // canonical targets still use the standard permission role and approvals.
     return {
       requestedMode,
       effectiveMode,
-      providerMode: 'local TaskWraith-controlled full tool surface',
+      providerMode: 'local TaskWraith-controlled gateway tool surface',
       inAppApprovals: true,
       supportsWorkspaceGrants: true,
       notes: [
-        'Ollama runs through TaskWraith local HTTP with the full tool surface. File edits and shell commands route through TaskWraith intent checks, the run permission role, approval policy, and audit events.'
+        'Ollama runs through TaskWraith local HTTP with the compact gateway surface and on-demand access to hidden first-party capabilities. Canonical targets retain TaskWraith intent checks, the run permission role, approval policy, and audit events.'
       ]
     }
   }
@@ -801,9 +801,9 @@ export function buildProviderCapabilityContract({
       )
     }
   } else if (provider === 'ollama') {
-    // Tier retirement (2026-07): Ollama advertises the full tool surface (the tier
-    // no longer narrows it); approval is governed by the run's permission role.
-    const ollamaTierTools = ollamaToolNamesForTier('provider_parity')
+    // Ollama advertises the same compact gateway profile as remote providers;
+    // hidden canonical tools remain reachable on demand through the gateway.
+    const ollamaTierTools = [...GATEWAY_MCP_ADVERTISE_TOOLS]
     const ollamaFileTools = ollamaTierTools.filter((tool) =>
       [
         'write_file',
@@ -823,7 +823,7 @@ export function buildProviderCapabilityContract({
       blocked: services.mcpTools === 'deny',
       hasWorkspace: Boolean(workspacePath),
       tools: ollamaTierTools,
-      tierLabel: 'full tool surface'
+      tierLabel: 'gateway tool surface'
     })
     shellCommands =
       mcp.available && ollamaShellTools.length > 0

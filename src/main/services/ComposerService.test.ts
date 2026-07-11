@@ -173,13 +173,13 @@ function makeGrant(overrides: Partial<ExternalPathGrant> = {}): ExternalPathGran
 }
 
 describe('ComposerService', () => {
-  it('composes a truthful core note for fresh opted-in Claude sessions', () => {
+  it('defaults fresh Claude sessions to gateway even when the deprecated core flag is set', () => {
     const previous = process.env.TASKWRAITH_CORE_MCP_PROFILE
     process.env.TASKWRAITH_CORE_MCP_PROFILE = '1'
     try {
       const payload = compose({ provider: 'claude' }, {}, { geminiMcpBridgeEnabled: true })
-      expect(payload.taskWraithMcpProfileId).toBe('taskwraith-core-v1')
-      expect(payload.prompt).toContain('TaskWraith core MCP profile is active')
+      expect(payload.taskWraithMcpProfileId).toBe('taskwraith-gateway-v1')
+      expect(payload.prompt).toContain('TaskWraith gateway MCP profile is active')
       expect(payload.prompt).not.toContain('Image tools are also available over MCP')
     } finally {
       if (previous === undefined) delete process.env.TASKWRAITH_CORE_MCP_PROFILE
@@ -187,7 +187,7 @@ describe('ComposerService', () => {
     }
   })
 
-  it('does not claim MCP/core is active when the Claude bridge setting is disabled', () => {
+  it('does not claim MCP/gateway is active when the Claude bridge setting is disabled', () => {
     const previous = process.env.TASKWRAITH_CORE_MCP_PROFILE
     process.env.TASKWRAITH_CORE_MCP_PROFILE = '1'
     try {
@@ -198,6 +198,7 @@ describe('ComposerService', () => {
       )
       expect(payload.taskWraithMcpAdvertised).toBe(false)
       expect(payload.prompt).not.toContain('TaskWraith core MCP profile is active')
+      expect(payload.prompt).not.toContain('TaskWraith gateway MCP profile is active')
       expect(payload.prompt).not.toContain('Image tools are also available over MCP')
     } finally {
       if (previous === undefined) delete process.env.TASKWRAITH_CORE_MCP_PROFILE
@@ -264,8 +265,8 @@ describe('ComposerService', () => {
         { provider: 'grok' },
         { selectedModelType: 'cli-default', userInput: 'blur the screenshot' }
       )
-      expect(payload.taskWraithMcpProfileId).toBe('taskwraith-core-v1')
-      expect(payload.prompt).toContain('TaskWraith core MCP profile is active')
+      expect(payload.taskWraithMcpProfileId).toBe('taskwraith-gateway-v1')
+      expect(payload.prompt).toContain('TaskWraith gateway MCP profile is active')
       expect(payload.prompt).not.toContain('Image tools are also available over MCP')
       expect(payload.prompt).not.toContain('TaskWraith image tools are available over MCP')
     } finally {

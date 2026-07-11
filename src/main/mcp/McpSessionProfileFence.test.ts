@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   TASKWRAITH_CORE_MCP_PROFILE_ID,
   TASKWRAITH_FULL_MCP_PROFILE_ID,
+  TASKWRAITH_GATEWAY_MCP_PROFILE_ID,
   createTaskWraithMcpProfileReceipt,
   isTaskWraithMcpProfileReceiptForSession,
   isTaskWraithMcpEnsembleLanePresent,
@@ -17,26 +18,26 @@ import {
 } from './McpSessionProfileFence'
 
 describe('resolveTaskWraithMcpProfile', () => {
-  it('opts a fresh Claude session into core while defaulting fresh sessions to full', () => {
-    expect(
-      resolveTaskWraithMcpProfile({
-        provider: 'claude',
-        providerSessionId: null,
-        coreProfileOptIn: true
+  it('defaults a fresh persistable Claude session to gateway without a feature flag', () => {
+    for (const coreProfileOptIn of [false, true]) {
+      expect(
+        resolveTaskWraithMcpProfile({
+          provider: 'claude',
+          providerSessionId: null,
+          coreProfileOptIn
+        })
+      ).toEqual({
+        profileId: TASKWRAITH_GATEWAY_MCP_PROFILE_ID,
+        source: 'fresh_gateway_default'
       })
-    ).toEqual({ profileId: TASKWRAITH_CORE_MCP_PROFILE_ID, source: 'fresh_claude_opt_in' })
+    }
+  })
+
+  it('keeps an unpersistable fresh Claude run full to avoid an unfenced resumable birth', () => {
     expect(
       resolveTaskWraithMcpProfile({
         provider: 'claude',
         providerSessionId: null,
-        coreProfileOptIn: false
-      }).profileId
-    ).toBe(TASKWRAITH_FULL_MCP_PROFILE_ID)
-    expect(
-      resolveTaskWraithMcpProfile({
-        provider: 'claude',
-        providerSessionId: null,
-        coreProfileOptIn: true,
         profileReceiptCanPersist: false
       }).profileId
     ).toBe(TASKWRAITH_FULL_MCP_PROFILE_ID)
@@ -60,73 +61,57 @@ describe('resolveTaskWraithMcpProfile', () => {
     }
   })
 
-  it('preserves a pinned Claude profile across rollout-flag changes', () => {
-    const coreReceipt = createTaskWraithMcpProfileReceipt({
-      provider: 'claude',
-      providerSessionId: 'claude-a',
-      profileId: TASKWRAITH_CORE_MCP_PROFILE_ID
-    })
-    expect(
-      resolveTaskWraithMcpProfile({
+  it('preserves exact existing full, core, and gateway Claude receipts', () => {
+    for (const profileId of [
+      TASKWRAITH_FULL_MCP_PROFILE_ID,
+      TASKWRAITH_CORE_MCP_PROFILE_ID,
+      TASKWRAITH_GATEWAY_MCP_PROFILE_ID
+    ]) {
+      const receipt = createTaskWraithMcpProfileReceipt({
         provider: 'claude',
         providerSessionId: 'claude-a',
-        receipt: coreReceipt,
-        coreProfileOptIn: false
+        profileId
       })
-    ).toEqual({ profileId: TASKWRAITH_CORE_MCP_PROFILE_ID, source: 'pinned_receipt' })
-
-    expect(
-      resolveTaskWraithMcpProfile({
-        provider: 'claude',
-        providerSessionId: null,
-        storeProviderSessionId: 'claude-a',
-        receipt: coreReceipt,
-        coreProfileOptIn: false
-      })
-    ).toEqual({ profileId: TASKWRAITH_CORE_MCP_PROFILE_ID, source: 'pinned_receipt' })
-  })
-
-  it('uses core for fresh Grok when model-constrained or opted in', () => {
-    expect(
-      resolveTaskWraithMcpProfile({
-        provider: 'grok',
-        modelId: 'grok-4.5',
-        coreProfileOptIn: false,
-        grokMcpAdvertised: true
-      }).source
-    ).toBe('grok_model_constraint')
-    expect(
-      resolveTaskWraithMcpProfile({
-        provider: 'grok',
-        modelId: 'grok-composer-2.5-fast',
-        coreProfileOptIn: true,
-        grokMcpAdvertised: true
-      })
-    ).toEqual({ profileId: TASKWRAITH_CORE_MCP_PROFILE_ID, source: 'fresh_grok_opt_in' })
-  })
-
-  it('normalizes Grok aliases before choosing the constrained profile', () => {
-    for (const modelId of ['cli-default', 'flash', 'composer-2.5-fast']) {
       expect(
         resolveTaskWraithMcpProfile({
-          provider: 'grok',
-          modelId,
-          coreProfileOptIn: false,
-          grokMcpAdvertised: true
+          provider: 'claude',
+          providerSessionId: 'claude-a',
+          receipt,
+          coreProfileOptIn: false
+        })
+      ).toEqual({ profileId, source: 'pinned_receipt' })
+
+      expect(
+        resolveTaskWraithMcpProfile({
+          provider: 'claude',
+          providerSessionId: null,
+          storeProviderSessionId: 'claude-a',
+          receipt,
+          coreProfileOptIn: true
+        })
+      ).toEqual({ profileId, source: 'pinned_receipt' })
+    }
+  })
+
+  it('defaults every fresh tool-capable provider to gateway', () => {
+    for (const provider of ['codex', 'kimi', 'cursor', 'ollama'] as const) {
+      expect(
+        resolveTaskWraithMcpProfile({
+          provider,
+          modelId: 'ordinary-model'
         }).profileId
-      ).toBe(TASKWRAITH_CORE_MCP_PROFILE_ID)
+      ).toBe(TASKWRAITH_GATEWAY_MCP_PROFILE_ID)
     }
     expect(
       resolveTaskWraithMcpProfile({
         provider: 'grok',
-        modelId: 'grok-composer-2.5-fast',
-        coreProfileOptIn: false,
+        modelId: 'grok-4.5',
         grokMcpAdvertised: true
       }).profileId
-    ).toBe(TASKWRAITH_FULL_MCP_PROFILE_ID)
+    ).toBe(TASKWRAITH_GATEWAY_MCP_PROFILE_ID)
   })
 
-  it('does not activate core for headless or toolless Grok runs', () => {
+  it('does not claim a gateway surface for headless or toolless Grok runs', () => {
     for (const grokMcpAdvertised of [false, undefined]) {
       expect(
         resolveTaskWraithMcpProfile({
@@ -134,18 +119,6 @@ describe('resolveTaskWraithMcpProfile', () => {
           modelId: 'cli-default',
           coreProfileOptIn: true,
           grokMcpAdvertised
-        }).profileId
-      ).toBe(TASKWRAITH_FULL_MCP_PROFILE_ID)
-    }
-  })
-
-  it('does not apply the opt-in to Codex, Kimi, or Cursor', () => {
-    for (const provider of ['codex', 'kimi', 'cursor'] as const) {
-      expect(
-        resolveTaskWraithMcpProfile({
-          provider,
-          modelId: 'ordinary-model',
-          coreProfileOptIn: true
         }).profileId
       ).toBe(TASKWRAITH_FULL_MCP_PROFILE_ID)
     }

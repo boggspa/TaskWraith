@@ -5,13 +5,13 @@
 
 # TaskWraith tools reference
 
-Local Ollama models call any tool by emitting exactly one JSON object per turn:
+Local Ollama models call a directly advertised tool by emitting exactly one JSON object per turn:
 
 ```
 {"taskwraith_tool":{"name":"<tool>","arguments":{ ... }}}
 ```
 
-The 155 tools below are the full TaskWraith surface, generated from the tool catalog so this reference cannot drift from what the app actually grants. Every mutating tool (file edits, shell, publishing) is gated by your run's permission role, and paths must stay inside the active workspace.
+The 155 tools below are the full TaskWraith surface. 38 common tools are callable directly; every other example uses capability_invoke so the top-level tool surface stays compact. Every mutating target (file edits, shell, publishing) is gated by your run's permission role, and paths must stay inside the active workspace.
 
 ## run_shell_command
 
@@ -73,7 +73,7 @@ Rename a file or directory within its current parent directory inside the active
 - Access: mutating — governed by your run permission role (denied under Read-Only/Plan; prompts under Default unless granted)
 - Required args: path, newName
 - Optional args: overwrite, intent
-- Example: `{"taskwraith_tool":{"name":"rename_path","arguments":{"path":"text","newName":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"rename_path","arguments":{"path":"text","newName":"text"}}}}`
 
 ## read_file
 
@@ -116,7 +116,7 @@ Search the web for current online information and return top result titles and U
 
 - Access: read-only (no approval needed)
 - Required args: query
-- Example: `{"taskwraith_tool":{"name":"web_search","arguments":{"query":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"web_search","arguments":{"query":"text"}}}}`
 
 ## web_fetch
 
@@ -124,7 +124,7 @@ Fetch the text contents of an absolute http(s) URL. Read-only network access.
 
 - Access: read-only (no approval needed)
 - Required args: url
-- Example: `{"taskwraith_tool":{"name":"web_fetch","arguments":{"url":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"web_fetch","arguments":{"url":"text"}}}}`
 
 ## apply_patch
 
@@ -159,7 +159,7 @@ Return bounded structured commit history for the active workspace, optionally sc
 - Access: read-only (no approval needed)
 - Required args: none
 - Optional args: ref, path, maxCount, grep, author
-- Example: `{"taskwraith_tool":{"name":"git_log","arguments":{"ref":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"git_log","arguments":{"ref":"text"}}}}`
 
 ## git_show
 
@@ -168,7 +168,7 @@ Show bounded metadata, stats, and optionally patch output for a single git ref.
 - Access: read-only (no approval needed)
 - Required args: ref
 - Optional args: path, includePatch, stat
-- Example: `{"taskwraith_tool":{"name":"git_show","arguments":{"ref":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"git_show","arguments":{"ref":"text"}}}}`
 
 ## git_blame
 
@@ -177,7 +177,7 @@ Return bounded structured git blame information for a workspace file and line ra
 - Access: read-only (no approval needed)
 - Required args: path
 - Optional args: startLine, endLine, maxLines
-- Example: `{"taskwraith_tool":{"name":"git_blame","arguments":{"path":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"git_blame","arguments":{"path":"text"}}}}`
 
 ## git_stage
 
@@ -203,7 +203,7 @@ Push the current git branch for the active workspace.
 - Access: mutating — governed by your run permission role (denied under Read-Only/Plan; prompts under Default unless granted)
 - Required args: none
 - Optional args: remote, setUpstream
-- Example: `{"taskwraith_tool":{"name":"git_push","arguments":{"remote":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"git_push","arguments":{"remote":"text"}}}}`
 
 ## git_create_pr
 
@@ -212,7 +212,7 @@ Create a GitHub pull request for the active workspace branch using gh.
 - Access: mutating — governed by your run permission role (denied under Read-Only/Plan; prompts under Default unless granted)
 - Required args: none
 - Optional args: title, body, draft, base, head, fill
-- Example: `{"taskwraith_tool":{"name":"git_create_pr","arguments":{"title":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"git_create_pr","arguments":{"title":"text"}}}}`
 
 ## github_ci_status
 
@@ -221,7 +221,7 @@ Read GitHub Actions / pull request check state for the active workspace using gh
 - Access: read-only (no approval needed)
 - Required args: none
 - Optional args: pr, branch, commitSha, includeFailedLogs, maxRuns, maxFailedLogs, maxLogChars, repairAttempt, maxRepairPushes
-- Example: `{"taskwraith_tool":{"name":"github_ci_status","arguments":{"pr":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"github_ci_status","arguments":{"pr":"text"}}}}`
 
 ## run_task
 
@@ -239,7 +239,7 @@ Start a long-running workspace command such as a dev server or watcher and retur
 - Access: mutating — governed by your run permission role (denied under Read-Only/Plan; prompts under Default unless granted)
 - Required args: command
 - Optional args: name, cwd, initialWaitMs, maxInitialChars
-- Example: `{"taskwraith_tool":{"name":"start_background_process","arguments":{"command":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"start_background_process","arguments":{"command":"text"}}}}`
 
 ## list_background_processes
 
@@ -247,7 +247,7 @@ List long-running processes started by TaskWraith MCP tools in this chat.
 
 - Access: read-only (no approval needed)
 - Required args: none
-- Example: `{"taskwraith_tool":{"name":"list_background_processes","arguments":{}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"list_background_processes","arguments":{}}}}`
 
 ## read_background_process
 
@@ -256,7 +256,7 @@ Read bounded stdout/stderr from a background process started by TaskWraith MCP t
 - Access: read-only (no approval needed)
 - Required args: processId
 - Optional args: stdoutOffset, stderrOffset, maxChars, stream
-- Example: `{"taskwraith_tool":{"name":"read_background_process","arguments":{"processId":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"read_background_process","arguments":{"processId":"text"}}}}`
 
 ## kill_background_process
 
@@ -265,7 +265,7 @@ Stop a background process previously started by TaskWraith MCP tools in this cha
 - Access: mutating — governed by your run permission role (denied under Read-Only/Plan; prompts under Default unless granted)
 - Required args: processId
 - Optional args: signal
-- Example: `{"taskwraith_tool":{"name":"kill_background_process","arguments":{"processId":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"kill_background_process","arguments":{"processId":"text"}}}}`
 
 ## get_diagnostics
 
@@ -274,7 +274,7 @@ Run fixed workspace diagnostic tools and return structured TypeScript/ESLint pro
 - Access: governed by your run permission role
 - Required args: none
 - Optional args: source, path, project, maxDiagnostics, timeoutMs
-- Example: `{"taskwraith_tool":{"name":"get_diagnostics","arguments":{"source":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"get_diagnostics","arguments":{"source":"text"}}}}`
 
 ## list_active_runs
 
@@ -283,7 +283,7 @@ List TaskWraith-owned active provider runs and queued run jobs, with optional re
 - Access: read-only (no approval needed)
 - Required args: none
 - Optional args: provider, chatId, includeEvents, eventLimit
-- Example: `{"taskwraith_tool":{"name":"list_active_runs","arguments":{"provider":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"list_active_runs","arguments":{"provider":"text"}}}}`
 
 ## cancel_active_run
 
@@ -292,7 +292,7 @@ Request cancellation of one TaskWraith-owned active provider run. Requires provi
 - Access: mutating — governed by your run permission role (denied under Read-Only/Plan; prompts under Default unless granted)
 - Required args: provider, intent
 - Optional args: runId, chatId
-- Example: `{"taskwraith_tool":{"name":"cancel_active_run","arguments":{"provider":"text","intent":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"cancel_active_run","arguments":{"provider":"text","intent":"text"}}}}`
 
 ## list_chat_attachments
 
@@ -301,7 +301,7 @@ List attachments and transcript media visible in the active chat: uploaded image
 - Access: read-only (no approval needed)
 - Required args: none
 - Optional args: kind, kinds, includePaths, limit
-- Example: `{"taskwraith_tool":{"name":"list_chat_attachments","arguments":{"kind":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"list_chat_attachments","arguments":{"kind":"text"}}}}`
 
 ## inspect_chat_attachment
 
@@ -310,7 +310,7 @@ Inspect one attachment/media item from the active chat by attachmentId. Returns 
 - Access: read-only (no approval needed)
 - Required args: attachmentId
 - Optional args: includeImage, includePath, maxBytes
-- Example: `{"taskwraith_tool":{"name":"inspect_chat_attachment","arguments":{"attachmentId":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"inspect_chat_attachment","arguments":{"attachmentId":"text"}}}}`
 
 ## workspace_board_snapshot
 
@@ -319,7 +319,7 @@ Return a bounded snapshot of workspace boards and cards for the active TaskWrait
 - Access: read-only (no approval needed)
 - Required args: none
 - Optional args: boardId, includeArchived, limit
-- Example: `{"taskwraith_tool":{"name":"workspace_board_snapshot","arguments":{"boardId":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"workspace_board_snapshot","arguments":{"boardId":"text"}}}}`
 
 ## workspace_board_preview_plan
 
@@ -328,7 +328,7 @@ Preview a declarative Workspace Board plan without mutating state. TaskWraith wi
 - Access: read-only (no approval needed)
 - Required args: none
 - Optional args: boardId, name, description, sourceKind, sourceId, sourceTitle, note, cards, plan
-- Example: `{"taskwraith_tool":{"name":"workspace_board_preview_plan","arguments":{"boardId":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"workspace_board_preview_plan","arguments":{"boardId":"text"}}}}`
 
 ## workspace_board_apply_plan
 
@@ -337,7 +337,7 @@ Apply a declarative Workspace Board plan by creating/updating a board and cards 
 - Access: governed by your run permission role
 - Required args: none
 - Optional args: boardId, name, description, sourceKind, sourceId, sourceTitle, note, cards, plan
-- Example: `{"taskwraith_tool":{"name":"workspace_board_apply_plan","arguments":{"boardId":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"workspace_board_apply_plan","arguments":{"boardId":"text"}}}}`
 
 ## test_result_summary
 
@@ -346,7 +346,7 @@ Summarize test failures from supplied output or a durable run id.
 - Access: read-only (no approval needed)
 - Required args: none
 - Optional args: output, runId
-- Example: `{"taskwraith_tool":{"name":"test_result_summary","arguments":{"output":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"test_result_summary","arguments":{"output":"text"}}}}`
 
 ## prompt_task_normalize
 
@@ -355,7 +355,7 @@ Convert messy user intent into a task contract before implementation: current st
 - Access: read-only (no approval needed)
 - Required args: prompt
 - Optional args: task, userPrompt, currentState, repoConventionIndex
-- Example: `{"taskwraith_tool":{"name":"prompt_task_normalize","arguments":{"prompt":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"prompt_task_normalize","arguments":{"prompt":"text"}}}}`
 
 ## scope_radar
 
@@ -364,7 +364,7 @@ Normalize a messy user prompt into a pre-work capability map: desired capability
 - Access: governed by your run permission role
 - Required args: prompt
 - Optional args: task, userPrompt, currentState, record
-- Example: `{"taskwraith_tool":{"name":"scope_radar","arguments":{"prompt":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"scope_radar","arguments":{"prompt":"text"}}}}`
 
 ## repo_convention_scan
 
@@ -373,7 +373,7 @@ Scan the active workspace file tree and build a deterministic Repo Convention In
 - Access: governed by your run permission role
 - Required args: none
 - Optional args: record, maxFiles, includeHidden
-- Example: `{"taskwraith_tool":{"name":"repo_convention_scan","arguments":{"record":false}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"repo_convention_scan","arguments":{"record":false}}}}`
 
 ## coherence_gate_check
 
@@ -382,7 +382,7 @@ Run a deterministic coherence gate over planned or actual changed files. Compare
 - Access: read-only (no approval needed)
 - Required args: none
 - Optional args: prompt, scopeRadar, repoConventionIndex, touchedFiles, changedFiles, diffTouchedFiles, newFiles, placeholderFiles, validationCommands, validationEvidenceRefs, pack
-- Example: `{"taskwraith_tool":{"name":"coherence_gate_check","arguments":{"prompt":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"coherence_gate_check","arguments":{"prompt":"text"}}}}`
 
 ## evidence_pack_write
 
@@ -391,7 +391,7 @@ Persist a structured Evidence Pack for the active run: capability cells, complet
 - Access: governed by your run permission role
 - Required args: none
 - Optional args: title, mapEntries, capabilityCells, cells, completionClaims, claims, diffTouchedFiles, changedFiles, finalAnswer, pack
-- Example: `{"taskwraith_tool":{"name":"evidence_pack_write","arguments":{"title":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"evidence_pack_write","arguments":{"title":"text"}}}}`
 
 ## completion_claim_check
 
@@ -400,7 +400,7 @@ Check whether completion-style language in a planned final answer is backed by t
 - Access: read-only (no approval needed)
 - Required args: none
 - Optional args: finalText, finalAnswer, runId, chatId
-- Example: `{"taskwraith_tool":{"name":"completion_claim_check","arguments":{"finalText":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"completion_claim_check","arguments":{"finalText":"text"}}}}`
 
 ## list_subthreads
 
@@ -409,7 +409,7 @@ List lifecycle-aware sub-threads under the active parent chat, including readine
 - Access: read-only (no approval needed)
 - Required args: none
 - Optional args: parentChatId, includeArchived, includePrompt
-- Example: `{"taskwraith_tool":{"name":"list_subthreads","arguments":{"parentChatId":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"list_subthreads","arguments":{"parentChatId":"text"}}}}`
 
 ## read_subthread_result
 
@@ -418,7 +418,7 @@ Read lifecycle, final result, transcript slices, and/or run events from a sub-th
 - Access: read-only (no approval needed)
 - Required args: subThreadId
 - Optional args: depth, includeRuns, includeMessages, includeEvents, messageLimit, eventLimit
-- Example: `{"taskwraith_tool":{"name":"read_subthread_result","arguments":{"subThreadId":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"read_subthread_result","arguments":{"subThreadId":"text"}}}}`
 
 ## cancel_subthread
 
@@ -427,7 +427,7 @@ Cancel an active run in a sub-thread owned by the active parent chat.
 - Access: mutating — governed by your run permission role (denied under Read-Only/Plan; prompts under Default unless granted)
 - Required args: subThreadId
 - Optional args: reason
-- Example: `{"taskwraith_tool":{"name":"cancel_subthread","arguments":{"subThreadId":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"cancel_subthread","arguments":{"subThreadId":"text"}}}}`
 
 ## workspace_symbols
 
@@ -445,7 +445,7 @@ Open a URL or workspace file in the dedicated MCP browser window.
 - Access: governed by your run permission role
 - Required args: none
 - Optional args: url, path, show, width, height
-- Example: `{"taskwraith_tool":{"name":"browser_open","arguments":{"url":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"browser_open","arguments":{"url":"text"}}}}`
 
 ## browser_click
 
@@ -454,7 +454,7 @@ Click in the dedicated MCP browser window by selector or viewport coordinates.
 - Access: governed by your run permission role
 - Required args: none
 - Optional args: selector, x, y
-- Example: `{"taskwraith_tool":{"name":"browser_click","arguments":{"selector":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"browser_click","arguments":{"selector":"text"}}}}`
 
 ## browser_screenshot
 
@@ -463,7 +463,7 @@ Capture the dedicated MCP browser window and optionally write the PNG inside the
 - Access: read-only (no approval needed)
 - Required args: none
 - Optional args: path
-- Example: `{"taskwraith_tool":{"name":"browser_screenshot","arguments":{"path":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"browser_screenshot","arguments":{"path":"text"}}}}`
 
 ## browser_console
 
@@ -472,7 +472,7 @@ Return recent MCP browser console messages, or app renderer console messages wit
 - Access: read-only (no approval needed)
 - Required args: none
 - Optional args: target, clear, limit
-- Example: `{"taskwraith_tool":{"name":"browser_console","arguments":{"target":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"browser_console","arguments":{"target":"text"}}}}`
 
 ## attached_window_capture
 
@@ -481,7 +481,7 @@ Capture one frame of the macOS window the user attached via the TaskWraith picke
 - Access: read-only (no approval needed)
 - Required args: none
 - Optional args: include_ocr, max_dimension_px
-- Example: `{"taskwraith_tool":{"name":"attached_window_capture","arguments":{"include_ocr":false}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"attached_window_capture","arguments":{"include_ocr":false}}}}`
 
 ## attached_window_status
 
@@ -489,7 +489,7 @@ Return whether a user-picked window is currently attached, and if so just its ti
 
 - Access: read-only (no approval needed)
 - Required args: none
-- Example: `{"taskwraith_tool":{"name":"attached_window_status","arguments":{}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"attached_window_status","arguments":{}}}}`
 
 ## appwatch_start
 
@@ -498,7 +498,7 @@ Start a continuous low-fps capture stream of the attached window into a daemon-s
 - Access: read-only (no approval needed)
 - Required args: none
 - Optional args: fps, buffer_seconds, max_dimension_px
-- Example: `{"taskwraith_tool":{"name":"appwatch_start","arguments":{"fps":0}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"appwatch_start","arguments":{"fps":0}}}}`
 
 ## appwatch_stop
 
@@ -506,7 +506,7 @@ Stop the Appwatch stream for the attached window and free the ring buffer. Safe 
 
 - Access: governed by your run permission role
 - Required args: none
-- Example: `{"taskwraith_tool":{"name":"appwatch_stop","arguments":{}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"appwatch_stop","arguments":{}}}}`
 
 ## appwatch_status
 
@@ -514,7 +514,7 @@ Read-only Appwatch stream status — fps, bufferSeconds, current frameCount, old
 
 - Access: read-only (no approval needed)
 - Required args: none
-- Example: `{"taskwraith_tool":{"name":"appwatch_status","arguments":{}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"appwatch_status","arguments":{}}}}`
 
 ## appwatch_latest_frame
 
@@ -522,7 +522,7 @@ Return the most recent frame from the Appwatch ring buffer as a PNG (image conte
 
 - Access: read-only (no approval needed)
 - Required args: none
-- Example: `{"taskwraith_tool":{"name":"appwatch_latest_frame","arguments":{}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"appwatch_latest_frame","arguments":{}}}}`
 
 ## appwatch_frames
 
@@ -531,7 +531,7 @@ Return a chronological batch of recent Appwatch frames from the attached-window 
 - Access: read-only (no approval needed)
 - Required args: none
 - Optional args: since, count, format, include_ocr, includeOCR
-- Example: `{"taskwraith_tool":{"name":"appwatch_frames","arguments":{"since":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"appwatch_frames","arguments":{"since":"text"}}}}`
 
 ## approval_status
 
@@ -540,7 +540,7 @@ Return approval policies, workspace grants, and recent approval ledger records. 
 - Access: read-only (no approval needed)
 - Required args: none
 - Optional args: provider, service, approvalId, runId, chatId, statuses, scopes, includeExpired, includePreview, all, limit
-- Example: `{"taskwraith_tool":{"name":"approval_status","arguments":{"provider":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"approval_status","arguments":{"provider":"text"}}}}`
 
 ## provider_auth_status
 
@@ -549,7 +549,7 @@ Return sanitized provider authentication status. Tokens and secrets are never in
 - Access: read-only (no approval needed)
 - Required args: none
 - Optional args: provider
-- Example: `{"taskwraith_tool":{"name":"provider_auth_status","arguments":{"provider":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"provider_auth_status","arguments":{"provider":"text"}}}}`
 
 ## provider_usage_status
 
@@ -558,7 +558,7 @@ Return a coarse quota-band view of the requested provider (or all providers when
 - Access: read-only (no approval needed)
 - Required args: none
 - Optional args: provider
-- Example: `{"taskwraith_tool":{"name":"provider_usage_status","arguments":{"provider":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"provider_usage_status","arguments":{"provider":"text"}}}}`
 
 ## run_timeline
 
@@ -567,7 +567,7 @@ Return structured durable run timeline events for a run.
 - Access: read-only (no approval needed)
 - Required args: none
 - Optional args: runId, limit, includeEvents, includePayload
-- Example: `{"taskwraith_tool":{"name":"run_timeline","arguments":{"runId":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"run_timeline","arguments":{"runId":"text"}}}}`
 
 ## raw_provider_events
 
@@ -576,7 +576,7 @@ Return raw provider durable events for parser debugging.
 - Access: read-only (no approval needed)
 - Required args: none
 - Optional args: runId, chatId, provider, includeArtifacts, limit
-- Example: `{"taskwraith_tool":{"name":"raw_provider_events","arguments":{"runId":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"raw_provider_events","arguments":{"runId":"text"}}}}`
 
 ## open_workspace_file
 
@@ -585,7 +585,7 @@ Open or reveal a workspace file on the host.
 - Access: governed by your run permission role
 - Required args: path
 - Optional args: reveal
-- Example: `{"taskwraith_tool":{"name":"open_workspace_file","arguments":{"path":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"open_workspace_file","arguments":{"path":"text"}}}}`
 
 ## creative_app_status
 
@@ -594,7 +594,7 @@ Return the supported creative app adapters, install hints, attached-window match
 - Access: read-only (no approval needed)
 - Required args: none
 - Optional args: appId
-- Example: `{"taskwraith_tool":{"name":"creative_app_status","arguments":{"appId":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"creative_app_status","arguments":{"appId":"text"}}}}`
 
 ## creative_app_capabilities
 
@@ -603,7 +603,7 @@ Return detailed TaskWraith creative app adapter capabilities for Final Cut Pro, 
 - Access: read-only (no approval needed)
 - Required args: none
 - Optional args: appId
-- Example: `{"taskwraith_tool":{"name":"creative_app_capabilities","arguments":{"appId":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"creative_app_capabilities","arguments":{"appId":"text"}}}}`
 
 ## creative_project_snapshot
 
@@ -611,7 +611,7 @@ Read a workspace creative project or interchange file and return a bounded, read
 
 - Access: read-only (no approval needed)
 - Required args: path
-- Example: `{"taskwraith_tool":{"name":"creative_project_snapshot","arguments":{"path":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"creative_project_snapshot","arguments":{"path":"text"}}}}`
 
 ## creative_timeline_validate
 
@@ -619,7 +619,7 @@ Validate a workspace FCPXML timeline/interchange document with lightweight read-
 
 - Access: read-only (no approval needed)
 - Required args: path
-- Example: `{"taskwraith_tool":{"name":"creative_timeline_validate","arguments":{"path":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"creative_timeline_validate","arguments":{"path":"text"}}}}`
 
 ## creative_timeline_ir
 
@@ -627,7 +627,7 @@ Parse a workspace FCPXML document into the compact TaskWraith timeline IR for pr
 
 - Access: read-only (no approval needed)
 - Required args: path
-- Example: `{"taskwraith_tool":{"name":"creative_timeline_ir","arguments":{"path":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"creative_timeline_ir","arguments":{"path":"text"}}}}`
 
 ## creative_timeline_diff
 
@@ -635,7 +635,7 @@ Compare an original FCPXML and a drafted FCPXML into a read-only timeline diff p
 
 - Access: read-only (no approval needed)
 - Required args: beforePath, afterPath
-- Example: `{"taskwraith_tool":{"name":"creative_timeline_diff","arguments":{"beforePath":"text","afterPath":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"creative_timeline_diff","arguments":{"beforePath":"text","afterPath":"text"}}}}`
 
 ## creative_timeline_import
 
@@ -644,7 +644,7 @@ Write a timeline IR to .fcpxml and hand it to Final Cut Pro via NSWorkspace.open
 - Access: governed by your run permission role
 - Required args: ir
 - Optional args: bundleId
-- Example: `{"taskwraith_tool":{"name":"creative_timeline_import","arguments":{"ir":{}}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"creative_timeline_import","arguments":{"ir":{}}}}}`
 
 ## creative_applescript_dispatch
 
@@ -653,7 +653,7 @@ Dispatch an AppleScript class against Final Cut Pro or Logic Pro. Two modes: pas
 - Access: governed by your run permission role
 - Required args: none
 - Optional args: className, params, source
-- Example: `{"taskwraith_tool":{"name":"creative_applescript_dispatch","arguments":{"className":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"creative_applescript_dispatch","arguments":{"className":"text"}}}}`
 
 ## creative_blender_python
 
@@ -662,7 +662,7 @@ Run a Python script inside `Blender --background --python` in a per-invocation s
 - Access: mutating — governed by your run permission role (denied under Read-Only/Plan; prompts under Default unless granted)
 - Required args: none
 - Optional args: className, params, pythonSource, inputBlendPath
-- Example: `{"taskwraith_tool":{"name":"creative_blender_python","arguments":{"className":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"creative_blender_python","arguments":{"className":"text"}}}}`
 
 ## creative_midi_dispatch
 
@@ -671,7 +671,7 @@ Send a MIDI event through TaskWraith's virtual "TaskWraith" Core MIDI source. Lo
 - Access: governed by your run permission role
 - Required args: eventType
 - Optional args: channel, note, velocity, controller, value, program
-- Example: `{"taskwraith_tool":{"name":"creative_midi_dispatch","arguments":{"eventType":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"creative_midi_dispatch","arguments":{"eventType":"text"}}}}`
 
 ## open_in_ide
 
@@ -680,7 +680,7 @@ Open a file in the user's editor of choice via NSWorkspace. Optional `ide` arg p
 - Access: governed by your run permission role
 - Required args: path
 - Optional args: ide
-- Example: `{"taskwraith_tool":{"name":"open_in_ide","arguments":{"path":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"open_in_ide","arguments":{"path":"text"}}}}`
 
 ## open_in_ide_at_position
 
@@ -689,7 +689,7 @@ Open a file at a specific line and column via the editor's CLI shim (code -g, cu
 - Access: governed by your run permission role
 - Required args: path, line
 - Optional args: column, ide
-- Example: `{"taskwraith_tool":{"name":"open_in_ide_at_position","arguments":{"path":"text","line":0}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"open_in_ide_at_position","arguments":{"path":"text","line":0}}}}`
 
 ## reveal_in_finder
 
@@ -697,7 +697,7 @@ Reveal a file in macOS Finder with the file selected. Wraps NSWorkspace.selectFi
 
 - Access: governed by your run permission role
 - Required args: path
-- Example: `{"taskwraith_tool":{"name":"reveal_in_finder","arguments":{"path":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"reveal_in_finder","arguments":{"path":"text"}}}}`
 
 ## ide_app_status
 
@@ -705,7 +705,7 @@ Snapshot of every recognised editor / IDE with installedHint + runningHint per e
 
 - Access: read-only (no approval needed)
 - Required args: none
-- Example: `{"taskwraith_tool":{"name":"ide_app_status","arguments":{}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"ide_app_status","arguments":{}}}}`
 
 ## ide_app_capabilities
 
@@ -713,7 +713,7 @@ Same shape as ide_app_status plus per-editor notes + a positionalArgsSample show
 
 - Access: read-only (no approval needed)
 - Required args: none
-- Example: `{"taskwraith_tool":{"name":"ide_app_capabilities","arguments":{}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"ide_app_capabilities","arguments":{}}}}`
 
 ## list_running_ides
 
@@ -721,7 +721,7 @@ Return just the editors currently running (filter of ide_app_status). Use when h
 
 - Access: read-only (no approval needed)
 - Required args: none
-- Example: `{"taskwraith_tool":{"name":"list_running_ides","arguments":{}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"list_running_ides","arguments":{}}}}`
 
 ## create_handoff_card
 
@@ -730,7 +730,7 @@ Create an TaskWraith handoff card from the active chat/run.
 - Access: governed by your run permission role
 - Required args: none
 - Optional args: summary, finalPrompt, recommendedProvider, selectedFiles
-- Example: `{"taskwraith_tool":{"name":"create_handoff_card","arguments":{"summary":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"create_handoff_card","arguments":{"summary":"text"}}}}`
 
 ## switch_auth_profile
 
@@ -739,7 +739,7 @@ Switch the active provider auth profile. Currently supports Gemini profiles.
 - Access: governed by your run permission role
 - Required args: none
 - Optional args: provider, profileId
-- Example: `{"taskwraith_tool":{"name":"switch_auth_profile","arguments":{"provider":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"switch_auth_profile","arguments":{"provider":"text"}}}}`
 
 ## agent_delegation_role
 
@@ -748,7 +748,7 @@ Store a preferred delegation role/instructions for a provider on the active chat
 - Access: governed by your run permission role
 - Required args: provider, role
 - Optional args: instructions
-- Example: `{"taskwraith_tool":{"name":"agent_delegation_role","arguments":{"provider":"text","role":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"agent_delegation_role","arguments":{"provider":"text","role":"text"}}}}`
 
 ## ensemble_yield
 
@@ -863,7 +863,7 @@ Update the lifecycle status of the existing active TaskWraith goal without chang
 - Access: read-only (no approval needed)
 - Required args: status
 - Optional args: reason
-- Example: `{"taskwraith_tool":{"name":"goal_update","arguments":{"status":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"goal_update","arguments":{"status":"text"}}}}`
 
 ## update_goal
 
@@ -925,7 +925,7 @@ Emit a structured brief from a parallel fan-out lane. The next serial writer/syn
 - Access: read-only (no approval needed)
 - Required args: findings, confidence
 - Optional args: blockers, recommendations, tags
-- Example: `{"taskwraith_tool":{"name":"scout_brief","arguments":{"findings":"text","confidence":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"scout_brief","arguments":{"findings":"text","confidence":"text"}}}}`
 
 ## blackboard_post
 
@@ -960,7 +960,7 @@ List the runnable "Run Button" targets TaskWraith discovered for this workspace 
 
 - Access: read-only (no approval needed)
 - Required args: none
-- Example: `{"taskwraith_tool":{"name":"launch_list_targets","arguments":{}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"launch_list_targets","arguments":{}}}}`
 
 ## launch_start
 
@@ -968,7 +968,7 @@ Start a discovered Run-Button target by `targetId` (from launch_list_targets) �
 
 - Access: governed by your run permission role
 - Required args: targetId
-- Example: `{"taskwraith_tool":{"name":"launch_start","arguments":{"targetId":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"launch_start","arguments":{"targetId":"text"}}}}`
 
 ## launch_stop
 
@@ -976,7 +976,7 @@ Stop a running launch attempt by `attemptId` (from launch_start / launch_status)
 
 - Access: mutating — governed by your run permission role (denied under Read-Only/Plan; prompts under Default unless granted)
 - Required args: attemptId
-- Example: `{"taskwraith_tool":{"name":"launch_stop","arguments":{"attemptId":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"launch_stop","arguments":{"attemptId":"text"}}}}`
 
 ## launch_status
 
@@ -985,7 +985,7 @@ Return launch attempts (status, detected http://localhost URLs, errors). Pass `a
 - Access: read-only (no approval needed)
 - Required args: none
 - Optional args: attemptId
-- Example: `{"taskwraith_tool":{"name":"launch_status","arguments":{"attemptId":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"launch_status","arguments":{"attemptId":"text"}}}}`
 
 ## canvas_open
 
@@ -994,7 +994,7 @@ Open a TaskWraith Canvas: a sandboxed preview of a running app the agent can ins
 - Access: governed by your run permission role
 - Required args: none
 - Optional args: driver, url, bundleId, appPath, udid, width, height, originAllowlist
-- Example: `{"taskwraith_tool":{"name":"canvas_open","arguments":{"driver":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"canvas_open","arguments":{"driver":"text"}}}}`
 
 ## canvas_render_html
 
@@ -1003,7 +1003,7 @@ Render agent-authored HTML (or SVG markup) as a TaskWraith Canvas and return a s
 - Access: governed by your run permission role
 - Required args: html
 - Optional args: width, height
-- Example: `{"taskwraith_tool":{"name":"canvas_render_html","arguments":{"html":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"canvas_render_html","arguments":{"html":"text"}}}}`
 
 ## canvas_open_attachment
 
@@ -1012,7 +1012,7 @@ Open an EXISTING image attachment in a TaskWraith Canvas and return it as an ima
 - Access: governed by your run permission role
 - Required args: sha256, mimeType
 - Optional args: width, height
-- Example: `{"taskwraith_tool":{"name":"canvas_open_attachment","arguments":{"sha256":"text","mimeType":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"canvas_open_attachment","arguments":{"sha256":"text","mimeType":"text"}}}}`
 
 ## canvas_open_launch
 
@@ -1021,7 +1021,7 @@ Open an existing Run-Button launch attempt in TaskWraith Canvas. Pass an `attemp
 - Access: governed by your run permission role
 - Required args: attemptId
 - Optional args: width, height
-- Example: `{"taskwraith_tool":{"name":"canvas_open_launch","arguments":{"attemptId":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"canvas_open_launch","arguments":{"attemptId":"text"}}}}`
 
 ## canvas_sketch_open
 
@@ -1030,7 +1030,7 @@ Open a bidirectional Sketch Canvas for quick visual communication between the hu
 - Access: governed by your run permission role
 - Required args: none
 - Optional args: width, height
-- Example: `{"taskwraith_tool":{"name":"canvas_sketch_open","arguments":{"width":0}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"canvas_sketch_open","arguments":{"width":0}}}}`
 
 ## canvas_sketch_get
 
@@ -1038,7 +1038,7 @@ Return the current Sketch Canvas document: title, viewport, and structured shape
 
 - Access: read-only (no approval needed)
 - Required args: canvasId
-- Example: `{"taskwraith_tool":{"name":"canvas_sketch_get","arguments":{"canvasId":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"canvas_sketch_get","arguments":{"canvasId":"text"}}}}`
 
 ## canvas_sketch_update
 
@@ -1047,7 +1047,7 @@ Edit a Sketch Canvas using structured primitives, not arbitrary JavaScript. Mode
 - Access: governed by your run permission role
 - Required args: canvasId
 - Optional args: mode, title, elementIds, elements
-- Example: `{"taskwraith_tool":{"name":"canvas_sketch_update","arguments":{"canvasId":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"canvas_sketch_update","arguments":{"canvasId":"text"}}}}`
 
 ## canvas_list
 
@@ -1055,7 +1055,7 @@ List currently open Canvas sessions (canvasId, driver, url, status). Read-only; 
 
 - Access: read-only (no approval needed)
 - Required args: none
-- Example: `{"taskwraith_tool":{"name":"canvas_list","arguments":{}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"canvas_list","arguments":{}}}}`
 
 ## canvas_status
 
@@ -1063,7 +1063,7 @@ Return metadata for one Canvas session (status, url, viewport). Read-only; carri
 
 - Access: read-only (no approval needed)
 - Required args: canvasId
-- Example: `{"taskwraith_tool":{"name":"canvas_status","arguments":{"canvasId":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"canvas_status","arguments":{"canvasId":"text"}}}}`
 
 ## canvas_snapshot
 
@@ -1071,7 +1071,7 @@ Return the Canvas as a structured element tree with stable refs (e.g. ref "e7"),
 
 - Access: read-only (no approval needed)
 - Required args: canvasId
-- Example: `{"taskwraith_tool":{"name":"canvas_snapshot","arguments":{"canvasId":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"canvas_snapshot","arguments":{"canvasId":"text"}}}}`
 
 ## canvas_screenshot
 
@@ -1079,7 +1079,7 @@ Capture the Canvas as a PNG (image content block) plus dimensions. Use as a VISU
 
 - Access: read-only (no approval needed)
 - Required args: canvasId
-- Example: `{"taskwraith_tool":{"name":"canvas_screenshot","arguments":{"canvasId":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"canvas_screenshot","arguments":{"canvasId":"text"}}}}`
 
 ## canvas_inspect
 
@@ -1088,7 +1088,7 @@ Inspect ONE element — by `ref` (from canvas_snapshot) or CSS `selector` — re
 - Access: read-only (no approval needed)
 - Required args: canvasId
 - Optional args: ref, selector, styles
-- Example: `{"taskwraith_tool":{"name":"canvas_inspect","arguments":{"canvasId":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"canvas_inspect","arguments":{"canvasId":"text"}}}}`
 
 ## canvas_network
 
@@ -1097,7 +1097,7 @@ List network requests observed by the Canvas (url, method, status). Pass `reques
 - Access: read-only (no approval needed)
 - Required args: canvasId
 - Optional args: requestId, filter
-- Example: `{"taskwraith_tool":{"name":"canvas_network","arguments":{"canvasId":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"canvas_network","arguments":{"canvasId":"text"}}}}`
 
 ## canvas_console
 
@@ -1106,7 +1106,7 @@ Return Canvas console output (log/info/warn/error). `level:"error"` or `"warn"` 
 - Access: read-only (no approval needed)
 - Required args: canvasId
 - Optional args: level, lines
-- Example: `{"taskwraith_tool":{"name":"canvas_console","arguments":{"canvasId":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"canvas_console","arguments":{"canvasId":"text"}}}}`
 
 ## canvas_resize
 
@@ -1115,7 +1115,7 @@ Resize the Canvas viewport to test responsive layouts. Use `preset` (mobile 375x
 - Access: governed by your run permission role
 - Required args: canvasId
 - Optional args: preset, width, height
-- Example: `{"taskwraith_tool":{"name":"canvas_resize","arguments":{"canvasId":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"canvas_resize","arguments":{"canvasId":"text"}}}}`
 
 ## canvas_click
 
@@ -1124,7 +1124,7 @@ Click an element in the Canvas by `ref` (from canvas_snapshot — preferred), CS
 - Access: governed by your run permission role
 - Required args: canvasId
 - Optional args: ref, selector, x, y
-- Example: `{"taskwraith_tool":{"name":"canvas_click","arguments":{"canvasId":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"canvas_click","arguments":{"canvasId":"text"}}}}`
 
 ## canvas_fill
 
@@ -1133,7 +1133,7 @@ Set the value of an input/textarea/select in the Canvas by `ref` or CSS `selecto
 - Access: governed by your run permission role
 - Required args: canvasId, value
 - Optional args: ref, selector
-- Example: `{"taskwraith_tool":{"name":"canvas_fill","arguments":{"canvasId":"text","value":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"canvas_fill","arguments":{"canvasId":"text","value":"text"}}}}`
 
 ## canvas_annotate
 
@@ -1141,7 +1141,7 @@ Overlay numbered Set-of-Mark boxes on the Canvas to flag elements for the human 
 
 - Access: governed by your run permission role
 - Required args: canvasId, marks
-- Example: `{"taskwraith_tool":{"name":"canvas_annotate","arguments":{"canvasId":"text","marks":[]}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"canvas_annotate","arguments":{"canvasId":"text","marks":[]}}}}`
 
 ## canvas_eval
 
@@ -1149,7 +1149,7 @@ Run arbitrary JavaScript in the Canvas page and return its (size-capped) complet
 
 - Access: mutating — governed by your run permission role (denied under Read-Only/Plan; prompts under Default unless granted)
 - Required args: canvasId, script
-- Example: `{"taskwraith_tool":{"name":"canvas_eval","arguments":{"canvasId":"text","script":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"canvas_eval","arguments":{"canvasId":"text","script":"text"}}}}`
 
 ## canvas_close
 
@@ -1157,7 +1157,7 @@ Close a Canvas session and free its preview window. Gated.
 
 - Access: mutating — governed by your run permission role (denied under Read-Only/Plan; prompts under Default unless granted)
 - Required args: canvasId
-- Example: `{"taskwraith_tool":{"name":"canvas_close","arguments":{"canvasId":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"canvas_close","arguments":{"canvasId":"text"}}}}`
 
 ## tw_recall_find
 
@@ -1166,7 +1166,7 @@ Find past runs on OTHER threads to answer "how far did <provider> get with <task
 - Access: read-only (no approval needed)
 - Required args: none
 - Optional args: provider, workspace, timeApprox, taskQuery, freeText, limit
-- Example: `{"taskwraith_tool":{"name":"tw_recall_find","arguments":{"provider":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"tw_recall_find","arguments":{"provider":"text"}}}}`
 
 ## tw_recall_read
 
@@ -1175,7 +1175,7 @@ Read how far a specific past run got: a durable timeline rollup (start/end, stat
 - Access: read-only (no approval needed)
 - Required args: runId
 - Optional args: depth
-- Example: `{"taskwraith_tool":{"name":"tw_recall_read","arguments":{"runId":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"tw_recall_read","arguments":{"runId":"text"}}}}`
 
 ## tw_recall_read_events
 
@@ -1184,7 +1184,7 @@ Read the raw tool/diff/timeline event bodies for a specific past run, truncated.
 - Access: read-only (no approval needed)
 - Required args: runId
 - Optional args: kind, limit
-- Example: `{"taskwraith_tool":{"name":"tw_recall_read_events","arguments":{"runId":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"tw_recall_read_events","arguments":{"runId":"text"}}}}`
 
 ## tw_introspection_run
 
@@ -1193,7 +1193,7 @@ Run a manual Thread Introspection pass over recent chats/runs and persist a revi
 - Access: governed by your run permission role
 - Required args: none
 - Optional args: hoursBack, windowStart, windowEnd, workspaceId, workspacePath, minConfidence, summary
-- Example: `{"taskwraith_tool":{"name":"tw_introspection_run","arguments":{"hoursBack":0}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"tw_introspection_run","arguments":{"hoursBack":0}}}}`
 
 ## tw_introspection_list
 
@@ -1202,7 +1202,7 @@ List recent Memory Proposal Packs produced by Thread Introspection. Returns boun
 - Access: read-only (no approval needed)
 - Required args: none
 - Optional args: workspaceId, limit
-- Example: `{"taskwraith_tool":{"name":"tw_introspection_list","arguments":{"workspaceId":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"tw_introspection_list","arguments":{"workspaceId":"text"}}}}`
 
 ## tw_introspection_read
 
@@ -1210,7 +1210,7 @@ Read a full Memory Proposal Pack by id, including proposals, evidence refs, and 
 
 - Access: read-only (no approval needed)
 - Required args: packId
-- Example: `{"taskwraith_tool":{"name":"tw_introspection_read","arguments":{"packId":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"tw_introspection_read","arguments":{"packId":"text"}}}}`
 
 ## tw_introspection_review
 
@@ -1219,7 +1219,7 @@ Update review status for a Memory Proposal (approve, reject, or expire). Whiteli
 - Access: governed by your run permission role
 - Required args: packId, proposalId
 - Optional args: status, reviewNote, expiresAt
-- Example: `{"taskwraith_tool":{"name":"tw_introspection_review","arguments":{"packId":"text","proposalId":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"tw_introspection_review","arguments":{"packId":"text","proposalId":"text"}}}}`
 
 ## image_edit
 
@@ -1228,7 +1228,7 @@ Edit an EXISTING image and return the result as a PNG attachment shown inline in
 - Access: mutating — governed by your run permission role (denied under Read-Only/Plan; prompts under Default unless granted)
 - Required args: op
 - Optional args: sourceMediaId, sourcePath, region, radius, width, height
-- Example: `{"taskwraith_tool":{"name":"image_edit","arguments":{"op":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"image_edit","arguments":{"op":"text"}}}}`
 
 ## svg_rasterize
 
@@ -1237,7 +1237,7 @@ Rasterize SVG markup to a PNG, returned as an attachment shown inline in the cha
 - Access: governed by your run permission role
 - Required args: svg
 - Optional args: width, height
-- Example: `{"taskwraith_tool":{"name":"svg_rasterize","arguments":{"svg":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"svg_rasterize","arguments":{"svg":"text"}}}}`
 
 ## image_generate
 
@@ -1246,7 +1246,7 @@ Generate an image from a text prompt via a configured paid API (OpenAI or xAI), 
 - Access: governed by your run permission role
 - Required args: prompt
 - Optional args: provider, size
-- Example: `{"taskwraith_tool":{"name":"image_generate","arguments":{"prompt":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"image_generate","arguments":{"prompt":"text"}}}}`
 
 ## audio_render_wav
 
@@ -1255,7 +1255,7 @@ Synthesize a short tone with the Web Audio API and return its WAVEFORM as a PNG 
 - Access: governed by your run permission role
 - Required args: none
 - Optional args: frequencyHz, durationMs, waveform, gain, sampleRate, width, height
-- Example: `{"taskwraith_tool":{"name":"audio_render_wav","arguments":{"frequencyHz":0}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"audio_render_wav","arguments":{"frequencyHz":0}}}}`
 
 ## audio_analyze
 
@@ -1264,7 +1264,7 @@ Decode a REAL audio file from the workspace and return its waveform as an inline
 - Access: governed by your run permission role
 - Required args: sourcePath
 - Optional args: width, height
-- Example: `{"taskwraith_tool":{"name":"audio_analyze","arguments":{"sourcePath":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"audio_analyze","arguments":{"sourcePath":"text"}}}}`
 
 ## inspect_audio_segment
 
@@ -1272,7 +1272,7 @@ Extract a TIME WINDOW of a workspace audio file as an INTERACTIVE, PLAYABLE clip
 
 - Access: read-only (no approval needed)
 - Required args: sourcePath, startMs, endMs
-- Example: `{"taskwraith_tool":{"name":"inspect_audio_segment","arguments":{"sourcePath":"text","startMs":0,"endMs":0}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"inspect_audio_segment","arguments":{"sourcePath":"text","startMs":0,"endMs":0}}}}`
 
 ## video_probe
 
@@ -1280,7 +1280,7 @@ Analyze a media file (video or audio) in the workspace with ffprobe and return i
 
 - Access: read-only (no approval needed)
 - Required args: sourcePath
-- Example: `{"taskwraith_tool":{"name":"video_probe","arguments":{"sourcePath":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"video_probe","arguments":{"sourcePath":"text"}}}}`
 
 ## video_thumbnail
 
@@ -1289,7 +1289,7 @@ Capture a single PNG frame from a workspace video as an inline thumbnail, using 
 - Access: governed by your run permission role
 - Required args: sourcePath
 - Optional args: atMs, width
-- Example: `{"taskwraith_tool":{"name":"video_thumbnail","arguments":{"sourcePath":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"video_thumbnail","arguments":{"sourcePath":"text"}}}}`
 
 ## video_decode_frame
 
@@ -1298,7 +1298,7 @@ Decode a single frame from a video at a precise timestamp using the OS's built-i
 - Access: read-only (no approval needed)
 - Required args: inputPath
 - Optional args: timestampSeconds, preferHardware
-- Example: `{"taskwraith_tool":{"name":"video_decode_frame","arguments":{"inputPath":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"video_decode_frame","arguments":{"inputPath":"text"}}}}`
 
 ## inspect_video_frames
 
@@ -1307,7 +1307,7 @@ Decode SEVERAL frames from a video in one call using the OS's built-in VideoTool
 - Access: read-only (no approval needed)
 - Required args: inputPath
 - Optional args: timestamps, everyNSeconds, maxFrames
-- Example: `{"taskwraith_tool":{"name":"inspect_video_frames","arguments":{"inputPath":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"inspect_video_frames","arguments":{"inputPath":"text"}}}}`
 
 ## video_encode_clip
 
@@ -1316,7 +1316,7 @@ Re-encode a segment of a workspace video to H.264 MP4 using the OS's built-in Vi
 - Access: governed by your run permission role
 - Required args: inputPath
 - Optional args: scaleWidth, targetBitrateKbps, startSeconds, durationSeconds, overlayPath, overlayX, overlayY, overlayWidth, overlayOpacity
-- Example: `{"taskwraith_tool":{"name":"video_encode_clip","arguments":{"inputPath":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"video_encode_clip","arguments":{"inputPath":"text"}}}}`
 
 ## video_concat_clips
 
@@ -1325,7 +1325,7 @@ Concatenate N video segments into one H.264 MP4 using the OS's built-in VideoToo
 - Access: governed by your run permission role
 - Required args: segments
 - Optional args: scaleWidth, targetBitrateKbps
-- Example: `{"taskwraith_tool":{"name":"video_concat_clips","arguments":{"segments":[]}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"video_concat_clips","arguments":{"segments":[]}}}}`
 
 ## audio_extract
 
@@ -1334,7 +1334,7 @@ Extract the audio track from a workspace VIDEO to a standalone audio file via ff
 - Access: governed by your run permission role
 - Required args: sourcePath, format
 - Optional args: bitrateKbps
-- Example: `{"taskwraith_tool":{"name":"audio_extract","arguments":{"sourcePath":"text","format":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"audio_extract","arguments":{"sourcePath":"text","format":"text"}}}}`
 
 ## transcode_audio
 
@@ -1343,7 +1343,7 @@ Transcode a workspace audio/video file’s audio to the chosen format via ffmpeg
 - Access: governed by your run permission role
 - Required args: sourcePath, format
 - Optional args: bitrateKbps
-- Example: `{"taskwraith_tool":{"name":"transcode_audio","arguments":{"sourcePath":"text","format":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"transcode_audio","arguments":{"sourcePath":"text","format":"text"}}}}`
 
 ## audio_mix
 
@@ -1352,7 +1352,7 @@ Mix N workspace audio tracks into one file using the OS's native audio engine (n
 - Access: governed by your run permission role
 - Required args: tracks, format
 - Optional args: sampleRate, channels, bitrateKbps
-- Example: `{"taskwraith_tool":{"name":"audio_mix","arguments":{"tracks":[],"format":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"audio_mix","arguments":{"tracks":[],"format":"text"}}}}`
 
 ## transcribe_audio
 
@@ -1361,7 +1361,7 @@ Transcribe a workspace audio file to text ON-DEVICE using the Mac’s built-in S
 - Access: read-only (no approval needed)
 - Required args: sourcePath
 - Optional args: localeIdentifier
-- Example: `{"taskwraith_tool":{"name":"transcribe_audio","arguments":{"sourcePath":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"transcribe_audio","arguments":{"sourcePath":"text"}}}}`
 
 ## transcode_video
 
@@ -1370,4 +1370,4 @@ Transcode a workspace VIDEO to H.264/AAC MP4 (faststart) via ffmpeg. Params: sou
 - Access: governed by your run permission role
 - Required args: sourcePath
 - Optional args: crf, scaleWidth, fps
-- Example: `{"taskwraith_tool":{"name":"transcode_video","arguments":{"sourcePath":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"transcode_video","arguments":{"sourcePath":"text"}}}}`

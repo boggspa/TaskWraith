@@ -2,13 +2,20 @@ import { describe, expect, it } from 'vitest'
 import {
   CLAUDE_TASKWRAITH_TOOL_NAMES,
   CLAUDE_TASKWRAITH_SERVER_NAME,
+  TASKWRAITH_MCP_GATEWAY_SUBSET_ARG,
   buildClaudeTaskWraithAllowedToolNames,
   buildClaudeTaskWraithMcpConfigJson,
   buildClaudeTaskWraithMcpServers,
   extendClaudeCliArgsWithTaskWraithMcp
 } from './ClaudeTaskWraithMcp'
-import { CORE_MCP_ADVERTISE_TOOLS } from './mcp/McpToolProfiles'
-import { TASKWRAITH_CORE_MCP_PROFILE_ID } from './mcp/McpSessionProfileFence'
+import {
+  CORE_MCP_ADVERTISE_TOOLS,
+  GATEWAY_MCP_ADVERTISE_TOOLS
+} from './mcp/McpToolProfiles'
+import {
+  TASKWRAITH_CORE_MCP_PROFILE_ID,
+  TASKWRAITH_GATEWAY_MCP_PROFILE_ID
+} from './mcp/McpSessionProfileFence'
 
 // Phase I3 (Claude initiator): the Claude SDK + CLI fallback gain the
 // same TaskWraith MCP server that Gemini/Codex already use. Pin the
@@ -117,15 +124,35 @@ describe('buildClaudeTaskWraithMcpServers', () => {
     expect(allowed).not.toContain('mcp__TaskWraith__image_generate')
   })
 
-  it('strips a stale core bridge flag when the pinned profile is full', () => {
+  it('uses the exact gateway profile for both the bridge argv and allowed-tool surface', () => {
+    const input = { ...fixture, profileId: TASKWRAITH_GATEWAY_MCP_PROFILE_ID }
+    const servers = buildClaudeTaskWraithMcpServers(input)
+    const taskWraith = servers?.TaskWraith
+    expect(taskWraith?.type).toBe('stdio')
+    if (!taskWraith || taskWraith.type !== 'stdio') throw new Error('TaskWraith server missing')
+    expect(taskWraith.args.at(-1)).toBe(TASKWRAITH_MCP_GATEWAY_SUBSET_ARG)
+    expect(taskWraith.args).not.toContain('--core-subset')
+
+    const allowed = buildClaudeTaskWraithAllowedToolNames(TASKWRAITH_GATEWAY_MCP_PROFILE_ID)
+    expect(allowed).toHaveLength(GATEWAY_MCP_ADVERTISE_TOOLS.length * 2)
+    for (const tool of GATEWAY_MCP_ADVERTISE_TOOLS) {
+      expect(allowed).toContain(tool)
+      expect(allowed).toContain(`mcp__TaskWraith__${tool}`)
+    }
+    expect(allowed).not.toContain('image_generate')
+    expect(allowed).not.toContain('mcp__TaskWraith__image_generate')
+  })
+
+  it('strips stale subset flags when the pinned profile is full', () => {
     const servers = buildClaudeTaskWraithMcpServers({
       ...fixture,
-      bridgeArgs: [...fixture.bridgeArgs, '--core-subset']
+      bridgeArgs: [...fixture.bridgeArgs, '--core-subset', '--gateway-subset']
     })
     const taskWraith = servers?.TaskWraith
     expect(taskWraith?.type).toBe('stdio')
     if (!taskWraith || taskWraith.type !== 'stdio') throw new Error('TaskWraith server missing')
     expect(taskWraith.args).not.toContain('--core-subset')
+    expect(taskWraith.args).not.toContain('--gateway-subset')
   })
 
   it('adds user-managed stdio servers beside the TaskWraith bridge', () => {
@@ -354,6 +381,21 @@ describe('extendClaudeCliArgsWithTaskWraithMcp', () => {
     expect(out[allowedIndex + 1].split(',')).toEqual(
       buildClaudeTaskWraithAllowedToolNames(TASKWRAITH_CORE_MCP_PROFILE_ID)
     )
+    expect(out[allowedIndex + 1]).not.toContain('image_generate')
+  })
+
+  it('uses the gateway allowedTools set when the CLI config bridge is gateway-filtered', () => {
+    const out = extendClaudeCliArgsWithTaskWraithMcp(baseArgs, {
+      ...fixture,
+      profileId: TASKWRAITH_GATEWAY_MCP_PROFILE_ID
+    })
+    const allowedIndex = out.indexOf('--allowedTools')
+    expect(allowedIndex).toBeGreaterThan(-1)
+    expect(out[allowedIndex + 1].split(',')).toEqual(
+      buildClaudeTaskWraithAllowedToolNames(TASKWRAITH_GATEWAY_MCP_PROFILE_ID)
+    )
+    expect(out[allowedIndex + 1]).toContain('capability_search')
+    expect(out[allowedIndex + 1]).toContain('capability_invoke')
     expect(out[allowedIndex + 1]).not.toContain('image_generate')
   })
 

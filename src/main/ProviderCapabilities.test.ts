@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { CURSOR_MCP_SERVER_NAME } from './cursor/CursorMcpBridge'
+import { GATEWAY_MCP_ADVERTISE_TOOLS } from './mcp/McpToolProfiles'
 import { buildProviderCapabilityContract } from './ProviderCapabilities'
 import type { AgenticServicesSettings, AppSettings } from './store/types'
 
@@ -315,7 +316,7 @@ describe('ProviderCapabilities', () => {
     }
   })
 
-  it('advertises Ollama as a TaskWraith-local full tool surface in workspace chats', () => {
+  it('advertises Ollama with the compact TaskWraith gateway surface in workspace chats', () => {
     const contract = buildProviderCapabilityContract({
       provider: 'ollama',
       settings: settings(),
@@ -325,40 +326,7 @@ describe('ProviderCapabilities', () => {
 
     expect(contract.mcp.state).toBe('available')
     expect(contract.mcp.serverName).toBe('TaskWraith-local')
-    for (const tool of [
-      'read_file',
-      'list_directory',
-      'find_files',
-      'workspace_search',
-      'workspace_symbols',
-      'git_status',
-      'git_diff',
-      'git_log',
-      'git_show',
-      'git_blame',
-      'test_result_summary',
-      'list_active_runs',
-      'web_search',
-      'web_fetch',
-      'ask_user_question',
-      'goal_read',
-      'goal_update',
-      'goal_complete',
-      'goal_blocked',
-      'tw_recall_find',
-      'tw_recall_read',
-      'tw_recall_read_events',
-      'write_file',
-      'replace',
-      'apply_patch',
-      'run_shell_command',
-      'get_diagnostics',
-      'git_push',
-      'git_create_pr',
-      'delegate_to_subthread'
-    ] as const) {
-      expect(contract.mcp.tools).toContain(tool)
-    }
+    expect(contract.mcp.tools).toEqual([...GATEWAY_MCP_ADVERTISE_TOOLS])
     expect(contract.tools.mcpTools.state).toBe('gated')
     expect(contract.tools.mcpTools.enforcedByTaskWraith).toBe(true)
     expect(contract.tools.elicit.state).toBe('available')
@@ -367,7 +335,7 @@ describe('ProviderCapabilities', () => {
     expect(contract.tools.fileChanges.state).toBe('gated')
     expect(contract.tools.shellCommands.enforcedByTaskWraith).toBe(true)
     expect(contract.tools.fileChanges.enforcedByTaskWraith).toBe(true)
-    expect(contract.approvals.providerMode).toContain('full tool surface')
+    expect(contract.approvals.providerMode).toContain('gateway tool surface')
     expect(contract.approvals.notes.join(' ')).toContain('run permission role')
   })
 

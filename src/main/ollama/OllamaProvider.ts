@@ -3,6 +3,12 @@ import { promisify } from 'util'
 import { normalizeProviderUsage } from '../ProviderRunStats'
 import { buildProviderCapabilityContract } from '../ProviderCapabilities'
 import { canonicalTaskWraithToolName } from '../TaskWraithMcpTools'
+import {
+  CAPABILITY_GATEWAY_TOOL_NAMES,
+  gatewayToolDefinitions,
+  isCapabilityGatewayToolName,
+  type CapabilityGatewayToolName
+} from '../mcp/McpToolGateway'
 import type { AgentRunPayload, AgentRunRoute } from '../run/AgentRunTypes'
 import type { RunManager, RunSessionStatus } from '../RunManager'
 import type { AppSettings, OllamaToolControlTier, ProviderCapabilityContract } from '../store/types'
@@ -57,9 +63,9 @@ import {
 
 export { ollamaLocalToolSystemPrompt } from './OllamaModelProfiles'
 import {
+  OLLAMA_ADVERTISED_TOOL_NAMES,
   OLLAMA_KNOWN_TOOL_NAMES,
   ollamaAdvertisedToolNames,
-  ollamaCallableToolNames,
   ollamaToolIntent,
   ollamaToolNamesForTier,
   type OllamaToolName
@@ -289,10 +295,26 @@ interface OllamaChatRetryCallbackInput {
 // `tool_help` is a virtual, Ollama-only meta tool (NOT in the shared catalog):
 // it returns one catalog tool's arg schema on demand so a text-protocol local
 // model can look up a long-tail tool's exact arguments without the full doc.
-// Native-calling models already receive full schemas inline, so this is a
-// text-protocol aid only. Callable names are the catalog tools plus this one.
+// Native-calling models receive the compact direct schemas inline. Legacy
+// tool_help remains a schema lookup, but hidden targets execute through
+// capability_invoke rather than widening the callable name surface.
 export const OLLAMA_TOOL_HELP_NAME = 'tool_help'
-export type OllamaCallableToolName = OllamaToolName | typeof OLLAMA_TOOL_HELP_NAME
+type OllamaDirectToolName = (typeof OLLAMA_ADVERTISED_TOOL_NAMES)[number]
+export type OllamaCallableToolName =
+  | OllamaDirectToolName
+  | typeof OLLAMA_TOOL_HELP_NAME
+  | CapabilityGatewayToolName
+
+const OLLAMA_CAPABILITY_GATEWAY_PROMPT =
+  'For an uncommon capability, call capability_search with {"query":"what you need","limit":4}; then call capability_invoke with {"name":"exact_tool_name","arguments":{...}}. The target keeps its own permissions and approval policy. The legacy tool_help lookup remains available.'
+
+function isOllamaCallableToolName(name: string): name is OllamaCallableToolName {
+  return (
+    (OLLAMA_ADVERTISED_TOOL_NAMES as readonly string[]).includes(name) ||
+    name === OLLAMA_TOOL_HELP_NAME ||
+    isCapabilityGatewayToolName(name)
+  )
+}
 
 export interface OllamaToolExecutionRequest {
   toolName: OllamaCallableToolName
@@ -355,11 +377,14 @@ export function buildOllamaOpeningMessages(input: OllamaOpeningMessagesInput): O
   const workspaceIntent = input.promptIntent === 'workspace'
   const systemPromptParts = [
     input.toolProtocolEnabled
-      ? ollamaLocalToolSystemPrompt(input.toolControlTier, input.model, {
-          intent: input.promptIntent,
-          networkAccess: input.networkAccess,
-          readOnly: input.readOnly
-        })
+      ? [
+          ollamaLocalToolSystemPrompt(input.toolControlTier, input.model, {
+            intent: input.promptIntent,
+            networkAccess: input.networkAccess,
+            readOnly: input.readOnly
+          }),
+          OLLAMA_CAPABILITY_GATEWAY_PROMPT
+        ].join('\n')
       : '',
     // Prompt economy (2026-07): the explore→read→edit workflow line used to live
     // here AND in the harness kickoff message below — triplicated with the family
@@ -478,6 +503,7 @@ export function ollamaRepeatedToolCallNudge(
 
 const OLLAMA_GOAL_LIFECYCLE_TOOL_NAMES = new Set([
   'goal_update',
+  'update_goal',
   'goal_complete',
   'goal_blocked'
 ])
@@ -502,7 +528,7 @@ export function ollamaNoActiveGoalToolNudge(
     : `TaskWraith reported there is no active thread goal, so \`${toolName}\` cannot help this request.`
   return [
     prefix,
-    'Do NOT call goal_update, goal_complete, or goal_blocked again in this run.',
+    'Do NOT call update_goal, goal_update, goal_complete, or goal_blocked again in this run.',
     'Those tools only change the lifecycle of an existing TaskWraith goal; they are not todo lists, progress notes, or planning tools.',
     ...ollamaEnsembleRetryReminder(options),
     options.ensembleRun
@@ -1170,12 +1196,12 @@ export function parseOllamaToolRequest(text: string): OllamaToolRequest | null {
     if (!wrapper) continue
     const rawName = typeof wrapper.name === 'string' ? wrapper.name.trim() : ''
     const name = canonicalTaskWraithToolName(rawName)
-    if (!OLLAMA_KNOWN_TOOL_NAMES.has(name as OllamaToolName) && name !== OLLAMA_TOOL_HELP_NAME) {
+    if (!isOllamaCallableToolName(name)) {
       continue
     }
     const args = recordFromUnknown(wrapper.arguments) || recordFromUnknown(wrapper.args) || {}
     return {
-      toolName: name as OllamaCallableToolName,
+      toolName: name,
       arguments: args
     }
   }
@@ -1512,11 +1538,10 @@ export function ollamaNativeToolDefinitions(
   options?: { compact?: boolean; networkAccess?: string | null; readOnly?: boolean }
 ): OllamaNativeToolDefinition[] {
   const compact = Boolean(options?.compact)
-  // Advertise only the curated working set as native function defs (not the full
-  // catalog) — a small model degrades when handed too many tools. The tail is
-  // still executable at the gate; the model discovers it via tool_help. Under a
-  // read-only/plan posture, edit + shell tools are also dropped (they'd only be
-  // denied), so the native surface matches what the seat can actually run.
+  // Advertise the immutable gateway-v1 direct set as native function defs (not
+  // the full catalogue). The tail remains executable through capability_invoke
+  // and discoverable through the gateway or legacy tool_help. A read-only
+  // posture receives the exact intersection with the shared safe advertise set.
   const defs: OllamaNativeToolDefinition[] = ollamaAdvertisedToolNames({
     networkAccess: options?.networkAccess,
     readOnly: options?.readOnly
@@ -1531,14 +1556,35 @@ export function ollamaNativeToolDefinitions(
       }
     }
   })
-  // tool_help is a virtual meta-tool (not in the catalog) — advertise it so
-  // native-calling models can also fetch any tail tool's schema on demand.
+  // Progressive-disclosure tools are virtual (not in the canonical catalogue)
+  // but native Ollama models still need their exact function schemas.
+  for (const definition of gatewayToolDefinitions()) {
+    const schema = recordFromUnknown(definition.inputSchema) || {}
+    const properties = recordFromUnknown(schema.properties) || {}
+    const required = Array.isArray(schema.required)
+      ? schema.required.filter((name): name is string => typeof name === 'string')
+      : []
+    defs.push({
+      type: 'function',
+      function: {
+        name: definition.name,
+        description: definition.description || `Invoke the ${definition.name} gateway tool.`,
+        parameters: {
+          type: 'object',
+          properties,
+          ...(required.length ? { required } : {})
+        }
+      }
+    })
+  }
+  // tool_help remains as a backwards-compatible Ollama-only lookup alongside
+  // the provider-neutral capability gateway.
   defs.push({
     type: 'function',
     function: {
       name: OLLAMA_TOOL_HELP_NAME,
       description:
-        'Get the exact arguments/schema for any TaskWraith tool (or pass an empty name to list every tool). Use before calling an unfamiliar tool.',
+        'Get the exact arguments/schema for any TaskWraith tool (or pass an empty name to list every tool). Invoke a hidden result through capability_invoke.',
       parameters: {
         type: 'object',
         properties: {
@@ -1555,7 +1601,7 @@ export function ollamaNativeToolDefinitions(
 export function normalizeOllamaNativeToolCall(call: OllamaNativeToolCall): OllamaToolRequest | null {
   const rawName = typeof call.function?.name === 'string' ? call.function.name.trim() : ''
   const name = canonicalTaskWraithToolName(rawName)
-  if (!OLLAMA_KNOWN_TOOL_NAMES.has(name as OllamaToolName) && name !== OLLAMA_TOOL_HELP_NAME) {
+  if (!isOllamaCallableToolName(name)) {
     return null
   }
   const rawArgs = call.function?.arguments
@@ -1565,7 +1611,7 @@ export function normalizeOllamaNativeToolCall(call: OllamaNativeToolCall): Ollam
   } else if (typeof rawArgs === 'string' && rawArgs.trim()) {
     args = recordFromUnknown(parseJsonObjectLoose(rawArgs)) || {}
   }
-  return { toolName: name as OllamaCallableToolName, arguments: args }
+  return { toolName: name, arguments: args }
 }
 
 export function ollamaToolResultFollowUpPrompt(input: {
@@ -1745,9 +1791,9 @@ export function ollamaToolIntentNudgePrompt(
 }
 
 /** Nudge for a model that emitted a native tool call naming a tool that does
- * not exist (hallucinated name) — the call is dropped before execution, so
- * instead of misreading the turn as empty we tell the model the name is invalid,
- * list what IS available, and point at tool_help for the tail. */
+ * is not directly callable — the call is dropped before execution, so instead
+ * of misreading the turn as empty we list the compact surface and point at the
+ * gateway for the hidden tail. */
 export function ollamaUnknownToolNameNudgePrompt(
   droppedNames: string[],
   toolNames: string[] = [],
@@ -1757,11 +1803,11 @@ export function ollamaUnknownToolNameNudgePrompt(
   const available = toolNames.filter(Boolean)
   return [
     invalid.length
-      ? `The tool ${invalid.map((n) => `"${n}"`).join(', ')} is not a TaskWraith tool, so that call did nothing.`
-      : 'That tool call named a tool that does not exist, so it did nothing.',
+      ? `The tool ${invalid.map((n) => `"${n}"`).join(', ')} is not directly callable in this compact TaskWraith profile, so that call did nothing.`
+      : 'That tool call is not directly callable in this compact TaskWraith profile, so it did nothing.',
     available.length ? `Available tools: ${available.join(', ')}.` : '',
-    'Call tool_help with an empty name to list every tool, or with a name to get its exact arguments.',
-    'Re-issue a call to a REAL tool now, or answer in normal prose if no tool is needed.',
+    'Use capability_search for a hidden capability, then capability_invoke with its exact name and arguments. Legacy tool_help can also fetch one schema.',
+    'Re-issue a call through an available direct tool or capability_invoke, or answer in normal prose if no tool is needed.',
     ...ollamaEnsembleRetryReminder(options)
   ]
     .filter(Boolean)
@@ -2263,10 +2309,8 @@ async function runOllamaChatTurn(input: {
   keepAlive?: string
   toolProtocolEnabled?: boolean
   availableToolNames?: string[]
-  // The full network-aware callable catalog (+ tool_help) used ONLY to build the
-  // constrained-decoding grammar — wider than availableToolNames (which is the
-  // curated advertised set used for prose/heuristics) so the grammar never locks
-  // out a tail tool the model discovered via tool_help.
+  // Exact compact callable names used by constrained decoding. Hidden target
+  // names live inside capability_invoke arguments rather than this enum.
   formatToolNames?: string[]
   onRetry?: (input: OllamaChatRetryCallbackInput) => void
   onContentDelta?: (input: OllamaChatTurnStreamCallbackInput) => void
@@ -2295,10 +2339,8 @@ async function runOllamaChatTurn(input: {
       // model then cannot emit a wrong wrapper key or an invalid tool name.
       ...(input.jsonToolFallback
         ? {
-            // Grammar allows the full EXECUTABLE catalog (formatToolNames), not
-            // the curated advertised set — otherwise a model can never emit a
-            // tail tool it discovered via tool_help. Falls back to
-            // availableToolNames only if the caller didn't supply the wider set.
+            // Grammar and direct advertisement share the same immutable profile;
+            // capability_invoke carries hidden target names as ordinary args.
             format:
               input.formatToolNames?.length
                 ? ollamaToolCallFormatSchema(input.formatToolNames)
@@ -2522,7 +2564,8 @@ export async function runOllamaProvider(
         : payload.effectivePermissions?.networkAccess || settings.agenticServices?.networkAccess
     // Read-only/plan seats hard-deny file-edit + shell tools (deny wins even over
     // a grant), so drop them from the ADVERTISED surface — the model shouldn't be
-    // handed tools it can only get denied. The grammar/gate keep the full catalog.
+    // handed tools it can only get denied. The gateway still exposes eligible
+    // hidden read/plan targets on demand.
     const runtimeReadOnly = payload.effectivePermissions?.readOnly === true
     const nativeToolDefs = toolProtocolEnabled && nativeToolsSupported && runProfile.protocolMode !== 'json_only'
       ? ollamaNativeToolDefinitions(toolControlTier, {
@@ -2537,14 +2580,15 @@ export async function runOllamaProvider(
         : toolProtocolEnabled
           ? [
               ...ollamaAdvertisedToolNames({ networkAccess: runtimeNetworkAccess, readOnly: runtimeReadOnly }),
+              ...CAPABILITY_GATEWAY_TOOL_NAMES,
               OLLAMA_TOOL_HELP_NAME
             ]
           : []
-    // The constrained-decoding grammar must permit the FULL executable catalog
-    // (+ tool_help), not just the advertised set above — otherwise a json-path
-    // model can never emit a tail tool it discovered via tool_help.
+    // Keep constrained decoding on the same stable compact surface. Hidden
+    // names discovered through search/tool_help are arguments to
+    // capability_invoke, never new top-level callable names.
     const formatToolNames = toolProtocolEnabled
-      ? [...ollamaCallableToolNames({ networkAccess: runtimeNetworkAccess }), OLLAMA_TOOL_HELP_NAME]
+      ? [...availableToolNames]
       : []
     const modelTemperature = ollamaModelFamilyTemperature(model)
     const thinkingLevel = resolveOllamaThinkingLevel(model, runProfile)

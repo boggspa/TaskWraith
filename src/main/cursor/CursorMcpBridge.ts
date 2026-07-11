@@ -14,11 +14,12 @@
 // rule. The Electron-side lifecycle (write temp server, write mcp.json, merge
 // allow, pass --approve-mcps, restore) lives in index.ts / CursorWorkspaceConfig.
 
-import { TASKWRAITH_MCP_TOOLS } from '../TaskWraithMcpTools'
 import {
-  PLAN_MCP_ADVERTISE_TOOLS,
-  READ_ONLY_MCP_ADVERTISE_TOOLS
+  isPlanAdvertisedTool,
+  isReadOnlyAdvertisedTool
 } from '../mcp/McpAutoAllowedTools'
+import { isCapabilityGatewayToolName } from '../mcp/McpToolGateway'
+import { GATEWAY_MCP_ADVERTISE_TOOLS } from '../mcp/McpToolProfiles'
 import type { CursorCliConfig } from './CursorWorkspaceConfig'
 
 /** Cursor's older Home MCP bridge used the plain `taskwraith` id for a web-only
@@ -28,7 +29,7 @@ import type { CursorCliConfig } from './CursorWorkspaceConfig'
  *  entries with the same reserved name. */
 export const CURSOR_LEGACY_WEB_MCP_SERVER_NAME = 'taskwraith'
 
-/** The MCP server name used for the full per-run broker. */
+/** The MCP server name used for the TaskWraith-owned per-run broker. */
 export const CURSOR_MCP_SERVER_NAME = 'taskwraith-broker'
 
 /** The MCP server name used for the READ-ONLY per-run broker (Grok parity —
@@ -38,7 +39,17 @@ export const CURSOR_MCP_SERVER_NAME = 'taskwraith-broker'
  *  read-only and write brokers from colliding in the workspace config. */
 export const CURSOR_SCOPED_MCP_SERVER_NAME = 'taskwraith-cursor'
 
-/** Allow rules that pre-approve every tool from the full TaskWraith MCP server.
+export const CURSOR_GATEWAY_MCP_TOOL_NAMES = GATEWAY_MCP_ADVERTISE_TOOLS
+
+export const CURSOR_GATEWAY_READONLY_MCP_TOOL_NAMES = GATEWAY_MCP_ADVERTISE_TOOLS.filter(
+  (tool) => isCapabilityGatewayToolName(tool) || isReadOnlyAdvertisedTool(tool)
+)
+
+export const CURSOR_GATEWAY_PLAN_MCP_TOOL_NAMES = GATEWAY_MCP_ADVERTISE_TOOLS.filter(
+  (tool) => isCapabilityGatewayToolName(tool) || isPlanAdvertisedTool(tool)
+)
+
+/** Allow rules for the compact TaskWraith gateway profile.
  *  Cursor's documented permission token is `Mcp(server:tool)`, while stream-json
  *  and rejection messages display brokered calls as `server-tool`. Keep the
  *  documented wildcard for the real namespace, enumerate documented exact
@@ -52,13 +63,17 @@ export const CURSOR_SCOPED_MCP_SERVER_NAME = 'taskwraith-cursor'
  * approval. */
 export const CURSOR_BROKER_MCP_ALLOW_RULES: readonly string[] = [
   `Mcp(${CURSOR_MCP_SERVER_NAME}:*)`,
-  ...TASKWRAITH_MCP_TOOLS.map((tool) => `Mcp(${CURSOR_MCP_SERVER_NAME}:${tool})`),
-  ...TASKWRAITH_MCP_TOOLS.map((tool) => `Mcp(${CURSOR_MCP_SERVER_NAME}-${tool})`)
+  ...CURSOR_GATEWAY_MCP_TOOL_NAMES.map((tool) => `Mcp(${CURSOR_MCP_SERVER_NAME}:${tool})`),
+  ...CURSOR_GATEWAY_MCP_TOOL_NAMES.map((tool) => `Mcp(${CURSOR_MCP_SERVER_NAME}-${tool})`)
 ]
 
 const CURSOR_LEGACY_MCP_ALLOW_RULES: readonly string[] = [
-  ...TASKWRAITH_MCP_TOOLS.map((tool) => `Mcp(${CURSOR_LEGACY_WEB_MCP_SERVER_NAME}:${tool})`),
-  ...TASKWRAITH_MCP_TOOLS.map((tool) => `Mcp(${CURSOR_LEGACY_WEB_MCP_SERVER_NAME}-${tool})`)
+  ...CURSOR_GATEWAY_MCP_TOOL_NAMES.map(
+    (tool) => `Mcp(${CURSOR_LEGACY_WEB_MCP_SERVER_NAME}:${tool})`
+  ),
+  ...CURSOR_GATEWAY_MCP_TOOL_NAMES.map(
+    (tool) => `Mcp(${CURSOR_LEGACY_WEB_MCP_SERVER_NAME}-${tool})`
+  )
 ]
 
 /** Combined rules are only for legacy workspace A-mode, where TaskWraith owns
@@ -71,29 +86,40 @@ export const CURSOR_MCP_ALLOW_RULES: readonly string[] = [
 /** Exact read-only rules for the canonical global broker name. Server approval
  * is handled separately by `cursor-agent mcp enable`; no wildcard is needed. */
 export const CURSOR_BROKER_READONLY_MCP_ALLOW_RULES: readonly string[] = [
-  ...READ_ONLY_MCP_ADVERTISE_TOOLS.map((tool) => `Mcp(${CURSOR_MCP_SERVER_NAME}:${tool})`),
-  ...READ_ONLY_MCP_ADVERTISE_TOOLS.map((tool) => `Mcp(${CURSOR_MCP_SERVER_NAME}-${tool})`)
+  ...CURSOR_GATEWAY_READONLY_MCP_TOOL_NAMES.map(
+    (tool) => `Mcp(${CURSOR_MCP_SERVER_NAME}:${tool})`
+  ),
+  ...CURSOR_GATEWAY_READONLY_MCP_TOOL_NAMES.map(
+    (tool) => `Mcp(${CURSOR_MCP_SERVER_NAME}-${tool})`
+  )
 ]
 
 /** Plan-seat variant: exact canonical-broker rules for the read tools plus the
  * host-gated Canvas/media plan instruments. */
 export const CURSOR_BROKER_PLAN_MCP_ALLOW_RULES: readonly string[] = [
-  ...PLAN_MCP_ADVERTISE_TOOLS.map((tool) => `Mcp(${CURSOR_MCP_SERVER_NAME}:${tool})`),
-  ...PLAN_MCP_ADVERTISE_TOOLS.map((tool) => `Mcp(${CURSOR_MCP_SERVER_NAME}-${tool})`)
+  ...CURSOR_GATEWAY_PLAN_MCP_TOOL_NAMES.map(
+    (tool) => `Mcp(${CURSOR_MCP_SERVER_NAME}:${tool})`
+  ),
+  ...CURSOR_GATEWAY_PLAN_MCP_TOOL_NAMES.map(
+    (tool) => `Mcp(${CURSOR_MCP_SERVER_NAME}-${tool})`
+  )
 ]
 
-/** Allow rules that pre-approve the READ-ONLY scoped broker's tools. The bridge
- *  is launched `--safe-subset`, so it advertises ONLY READ_ONLY_MCP_ADVERTISE_TOOLS
- *  (TASKWRAITH_MCP_TOOLS ∩ the gate-skip safe set); enumerate exactly those under
- *  the scoped server name, with the documented wildcard + the observed hyphen
- *  spelling as a belt-and-braces fallback. Never lists a mutating tool (the
- *  safe-subset set is DERIVED and test-guarded), so a read-only seat cannot ride
- *  this rule to a write. Kept separate from CURSOR_MCP_ALLOW_RULES (the full
- *  write broker) so the two brokers' approvals never overlap. */
+/** Allow rules for the READ-ONLY gateway broker. The bridge combines
+ *  `--gateway-subset` with `--safe-subset`, so direct tools are the intersection
+ *  of the stable gateway profile and the gate-skip safe set. The two virtual
+ *  gateway tools remain visible: the bridge inspects capability_invoke's inner
+ *  target against the safe ceiling before main performs normal target policy.
+ *  The wildcard is retained only for Cursor's older server-approval behavior;
+ *  it cannot widen the bridge's fail-closed tools/call guard. */
 export const CURSOR_READONLY_MCP_ALLOW_RULES: readonly string[] = [
   `Mcp(${CURSOR_SCOPED_MCP_SERVER_NAME}:*)`,
-  ...READ_ONLY_MCP_ADVERTISE_TOOLS.map((tool) => `Mcp(${CURSOR_SCOPED_MCP_SERVER_NAME}:${tool})`),
-  ...READ_ONLY_MCP_ADVERTISE_TOOLS.map((tool) => `Mcp(${CURSOR_SCOPED_MCP_SERVER_NAME}-${tool})`)
+  ...CURSOR_GATEWAY_READONLY_MCP_TOOL_NAMES.map(
+    (tool) => `Mcp(${CURSOR_SCOPED_MCP_SERVER_NAME}:${tool})`
+  ),
+  ...CURSOR_GATEWAY_READONLY_MCP_TOOL_NAMES.map(
+    (tool) => `Mcp(${CURSOR_SCOPED_MCP_SERVER_NAME}-${tool})`
+  )
 ]
 
 export function isReservedCursorMcpServerName(name: string): boolean {
@@ -252,7 +278,7 @@ export interface CursorMcpServerInvocation {
 }
 
 /**
- * Build the `mcpServers` entry for the full TaskWraith broker server. Pure — the caller
+ * Build the `mcpServers` entry for the TaskWraith gateway broker server. Pure — the caller
  * merges it into the workspace `.cursor/mcp.json` via {@link mergeCursorMcpConfig}.
  */
 export function buildCursorMcpServerEntry(
@@ -276,8 +302,8 @@ export function buildCursorMcpServerEntry(
 /**
  * Build the `mcpServers` entry for the READ-ONLY scoped broker (Grok parity).
  * Registers ONLY the scoped server name (no legacy alias) — the invocation's
- * args must include the `--safe-subset` flag so the broker advertises only the
- * non-mutating read tools. Pure; the caller merges it via
+ * args must include `--gateway-subset` and `--safe-subset` so the broker
+ * advertises only the read-safe direct tools plus the guarded gateway. Pure; the caller merges it via
  * {@link mergeCursorMcpConfig}.
  */
 export function buildCursorReadOnlyMcpServerEntry(
@@ -307,8 +333,11 @@ export function buildCursorReadOnlyMcpServerEntry(
 // server.
 
 /**
- * Build the GLOBAL broker `mcpServers` entry (full tool surface) WITHOUT the
- * legacy alias. Pure; merged via {@link mergeGlobalCursorMcpServers}.
+ * Build the GLOBAL gateway broker `mcpServers` entry WITHOUT the legacy alias.
+ * This global registration cannot honestly fence an already-running native
+ * Cursor session: refreshes may become visible on the provider's schedule.
+ * User-owned MCP servers remain separate and are preserved by the merge helper.
+ * Pure; merged via {@link mergeGlobalCursorMcpServers}.
  */
 export function buildCursorBrokerMcpServerEntry(
   invocation: CursorMcpServerInvocation

@@ -12,7 +12,11 @@
 // bridge subprocess (e.g. `--socket`, `--token`) reach the subprocess
 // rather than being eaten by Kimi.
 //
-// Config file: `~/.kimi/mcp.json`. The broker subprocess inherits the
+// Config file: `~/.kimi/mcp.json`. This is provider-global rather than bound to
+// one native Kimi session, so registration repair cannot honestly guarantee
+// birth-pinned catalogue membership to an already-running session. TaskWraith
+// refreshes only its named registration; user MCP servers remain untouched.
+// The broker subprocess inherits the
 // `TASKWRAITH_PARENT_PROVIDER=kimi` stamp from the per-server env block
 // and the bridge subprocess uses it to route broker requests with the
 // right provider key.
@@ -20,13 +24,14 @@
 // Kept free of Electron / fs / IPC imports so it can be unit-tested
 // directly against fixed inputs.
 
-import { TASKWRAITH_MCP_TOOLS } from './TaskWraithMcpTools'
+import { GATEWAY_MCP_ADVERTISE_TOOLS } from './mcp/McpToolProfiles'
 
 /**
- * TaskWraith MCP tool name list. Re-exported under the Kimi-specific name
- * for tests and prompt/runtime checks.
+ * Compact first-party surface advertised by TaskWraith's Kimi registration.
+ * Hidden canonical tools remain available through capability_search/invoke;
+ * user-installed Kimi MCP servers are outside this list and remain untouched.
  */
-export const KIMI_TASKWRAITH_TOOL_NAMES = TASKWRAITH_MCP_TOOLS
+export const KIMI_TASKWRAITH_TOOL_NAMES = GATEWAY_MCP_ADVERTISE_TOOLS
 
 /**
  * Server name used as the registration key in `~/.kimi/mcp.json`.

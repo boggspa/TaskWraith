@@ -1,4 +1,6 @@
 import { TASKWRAITH_MCP_TOOLS, type TaskWraithMcpToolName } from '../TaskWraithMcpTools'
+import { READ_ONLY_MCP_ADVERTISE_TOOLS } from '../mcp/McpAutoAllowedTools'
+import { GATEWAY_MCP_DIRECT_TOOLS } from '../mcp/McpToolProfiles'
 import type { OllamaToolControlTier } from '../store/types'
 
 export type OllamaToolName = TaskWraithMcpToolName
@@ -68,87 +70,28 @@ export const OLLAMA_TIER3_COORDINATION_TOOL_NAMES = [
   'todo_write'
 ] as const satisfies readonly OllamaToolName[]
 
-const OLLAMA_TIER4_EXTRA_TOOL_NAMES = TASKWRAITH_MCP_TOOLS.filter(
-  (toolName) =>
-    !OLLAMA_READ_TOOL_NAMES.includes(toolName as (typeof OLLAMA_READ_TOOL_NAMES)[number]) &&
-    !OLLAMA_FILE_EDIT_TOOL_NAMES.includes(
-      toolName as (typeof OLLAMA_FILE_EDIT_TOOL_NAMES)[number]
-    ) &&
-    !OLLAMA_SHELL_TOOL_NAMES.includes(toolName as (typeof OLLAMA_SHELL_TOOL_NAMES)[number]) &&
-    !OLLAMA_REMOTE_GIT_TOOL_NAMES.includes(
-      toolName as (typeof OLLAMA_REMOTE_GIT_TOOL_NAMES)[number]
-    ) &&
-    !OLLAMA_PROCESS_CONTROL_TOOL_NAMES.includes(
-      toolName as (typeof OLLAMA_PROCESS_CONTROL_TOOL_NAMES)[number]
-    ) &&
-    !OLLAMA_TIER3_COORDINATION_TOOL_NAMES.includes(
-      toolName as (typeof OLLAMA_TIER3_COORDINATION_TOOL_NAMES)[number]
-    )
-) as OllamaToolName[]
-
 export const OLLAMA_KNOWN_TOOL_NAMES = new Set<OllamaToolName>(TASKWRAITH_MCP_TOOLS)
 
 /**
- * The CURATED working set a local model is ADVERTISED (preamble prose + native
- * function defs). Deliberately small (~22) — small local models degrade badly
- * when shown the full tool catalog ("too many tool names"). The EXECUTABLE
- * surface is unchanged and stays at full parity (executeOllamaLocalTool routes
- * any known tool through the role-governed gate); the long tail is reachable via
- * `tool_help` (schema on demand) and, for the text protocol, by naming a known
- * tool directly. Keep this list minimal + deterministic; add a tool here only
- * when a local model needs it as a FIRST-CLASS default, not for completeness.
+ * Ollama shares the exact immutable direct membership of
+ * `taskwraith-gateway-v1`. Keep this as an alias, not a copied list: the profile
+ * declaration is the single authority for the 38 canonical tools every fresh
+ * gateway session sees. The full catalogue remains callable through the two
+ * capability gateway tools, with Ollama's legacy `tool_help` kept alongside.
  */
-export const OLLAMA_ADVERTISED_TOOL_NAMES = [
-  // Read / navigate
-  'read_file',
-  'list_directory',
-  'find_files',
-  'workspace_search',
-  'workspace_symbols',
-  'git_status',
-  'git_diff',
-  // Edit (role-gated: prompts/denies by permission role)
-  'write_file',
-  'replace',
-  'apply_patch',
-  'create_directory',
-  'delete_path',
-  'move_path',
-  'rename_path',
-  // Shell / verify (role-gated)
-  'run_shell_command',
-  'run_task',
-  'get_diagnostics',
-  // Web (read-only)
-  'web_search',
-  'web_fetch',
-  'github_ci_status',
-  // Coordination
-  'todo_write',
-  'ask_user_question',
-  'goal_read'
-] as const satisfies readonly OllamaToolName[]
+export const OLLAMA_ADVERTISED_TOOL_NAMES = GATEWAY_MCP_DIRECT_TOOLS
 
 const OLLAMA_ADVERTISED_TOOL_NAME_SET = new Set<OllamaToolName>(OLLAMA_ADVERTISED_TOOL_NAMES)
-
-// File-edit + shell tools are HARD-denied under a read-only/plan posture (the
-// gate denies fileChanges + shellCommands, and deny wins even over a standing
-// grant — see OllamaRoleGovernance.test.ts). Advertising them to such a seat
-// just hands a weak local model tools it can only ever get denied, wasting its
-// tool-selection budget — the opposite of what curation is for. So they are
-// stripped from the ADVERTISEMENT (not the executable grammar) for read-only runs.
-const OLLAMA_MUTATION_TOOL_NAME_SET = new Set<OllamaToolName>([
-  ...OLLAMA_FILE_EDIT_TOOL_NAMES,
-  ...OLLAMA_SHELL_TOOL_NAMES
-])
+const READ_ONLY_MCP_ADVERTISE_TOOL_SET = new Set<OllamaToolName>(
+  READ_ONLY_MCP_ADVERTISE_TOOLS
+)
 
 /**
  * The tool NAMES advertised to a local model, honoring the run's networkAccess
  * (web tools stripped when networkAccess is 'deny') AND its permission posture
- * (file-edit + shell tools stripped when the run is read-only/plan, matching the
- * gate). This is the curated ~22-tool surface, NOT the full catalog — see
- * OLLAMA_ADVERTISED_TOOL_NAMES. Curation lives here, in the advertisement; the
- * full catalog stays executable at the gate and decodable by the grammar.
+ * (the immutable gateway set intersected with the shared read-only advertise
+ * set for a read-only/plan run). Hidden tools stay reachable only as targets of
+ * capability_invoke, not as extra top-level names in the fallback grammar.
  */
 export function ollamaAdvertisedToolNames(
   options: { networkAccess?: string | null; readOnly?: boolean } = {}
@@ -158,29 +101,25 @@ export function ollamaAdvertisedToolNames(
     names = names.filter((toolName) => !OLLAMA_NETWORK_TOOL_NAMES.has(toolName))
   }
   if (options.readOnly) {
-    names = names.filter((toolName) => !OLLAMA_MUTATION_TOOL_NAME_SET.has(toolName))
+    names = names.filter((toolName) => READ_ONLY_MCP_ADVERTISE_TOOL_SET.has(toolName))
   }
   return names
 }
 
-/** Is this tool part of the curated advertised default set (vs the tool_help tail)? */
+/** Is this tool part of the immutable gateway direct set (vs the discovered tail)? */
 export function isOllamaAdvertisedTool(toolName: string): boolean {
   return OLLAMA_ADVERTISED_TOOL_NAME_SET.has(toolName as OllamaToolName)
 }
 
 /**
- * Every tool name the run loop's parser/executor will ACCEPT — the full catalog
- * (OLLAMA_KNOWN_TOOL_NAMES == the 143 TASKWRAITH_MCP_TOOLS), network-aware. This
- * is the EXECUTABLE surface, deliberately WIDER than the advertised ~22: the
- * constrained-decoding grammar must allow all of it, or a model that discovers a
- * tail tool via tool_help could never emit its name (the GBNF enum would reject
- * it). Curation lives in the ADVERTISEMENT (preamble prose + native tool defs),
- * never in the grammar.
+ * Canonical top-level names accepted by the local parser. This intentionally
+ * matches the immutable gateway direct set; hidden targets are passed as the
+ * `name` argument of capability_invoke and do not widen the grammar.
  */
 export function ollamaCallableToolNames(
   options: { networkAccess?: string | null } = {}
 ): OllamaToolName[] {
-  const names = [...OLLAMA_KNOWN_TOOL_NAMES]
+  const names: OllamaToolName[] = [...OLLAMA_ADVERTISED_TOOL_NAMES]
   return options.networkAccess === 'deny'
     ? names.filter((toolName) => !OLLAMA_NETWORK_TOOL_NAMES.has(toolName))
     : names
@@ -211,24 +150,10 @@ export function ollamaToolNamesForTier(
   _tier: OllamaToolControlTier | string | undefined | null,
   options: { networkAccess?: string | null } = {}
 ): OllamaToolName[] {
-  // Tier retirement (2026-07): local Ollama models now get the SAME full tool
-  // surface as every first-party provider, governed by the standard permission
-  // ROLE at the approval gate (read_only/plan DENY writes+shell; default
-  // PROMPTS; workspace_write/full_access honor grants) — not by an Ollama-only
-  // tier ladder. The `_tier` arg is retained for call-site compatibility but no
-  // longer narrows the surface. The ONLY remaining filter is networkAccess:
-  // web_search/web_fetch are stripped when the run's networkAccess is 'deny'
-  // (global kill switch or a preview-risk model), matching the gate's
-  // networkAccessBlockedToolName check so advertised == executable.
-  const names: OllamaToolName[] = [
-    ...OLLAMA_READ_TOOL_NAMES,
-    ...OLLAMA_FILE_EDIT_TOOL_NAMES,
-    ...OLLAMA_SHELL_TOOL_NAMES,
-    ...OLLAMA_REMOTE_GIT_TOOL_NAMES,
-    ...OLLAMA_PROCESS_CONTROL_TOOL_NAMES,
-    ...OLLAMA_TIER3_COORDINATION_TOOL_NAMES,
-    ...OLLAMA_TIER4_EXTRA_TOOL_NAMES
-  ]
+  // The retired tier argument no longer changes membership. Ollama shares the
+  // compact gateway direct profile; hidden capabilities are invoked through the
+  // gateway and retain their standard run-role policy at main's executor.
+  const names: OllamaToolName[] = [...OLLAMA_ADVERTISED_TOOL_NAMES]
   return options.networkAccess === 'deny'
     ? names.filter((toolName) => !OLLAMA_NETWORK_TOOL_NAMES.has(toolName))
     : names

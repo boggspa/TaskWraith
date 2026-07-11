@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   TASKWRAITH_CORE_MCP_PROFILE_NOTE,
+  TASKWRAITH_GATEWAY_MCP_PROFILE_NOTE,
   TASKWRAITH_IMAGE_TOOLS_NOTE,
   TASKWRAITH_RUNTIME_IMAGE_TOOLS_NOTE,
   TASKWRAITH_RUNTIME_PREAMBLE_VERSION,
@@ -12,7 +13,10 @@ import {
   promptNeedsImageToolsHint,
   sanitizeTaskWraithMcpPromptClaims
 } from './PromptComposition'
-import { TASKWRAITH_CORE_MCP_PROFILE_ID } from './mcp/McpSessionProfileFence'
+import {
+  TASKWRAITH_CORE_MCP_PROFILE_ID,
+  TASKWRAITH_GATEWAY_MCP_PROFILE_ID
+} from './mcp/McpSessionProfileFence'
 import { resolveOllamaContextBudget } from './ollama/OllamaContextBudget'
 import type { ChatMessage } from './store/types'
 import { makeHumanCollaboratorComment } from './collaboration/HumanCollaboratorMessages'
@@ -74,6 +78,31 @@ describe('sanitizeTaskWraithMcpPromptClaims', () => {
       sanitizeTaskWraithMcpPromptClaims(
         `${TASKWRAITH_CORE_MCP_PROFILE_NOTE}\n\nUser work.`,
         { advertised: true, coreProfile: true, injectCoreNote: false }
+      )
+    ).toBe('User work.')
+  })
+
+  it('replaces stale core and image claims with the discoverable gateway contract', () => {
+    const sanitized = sanitizeTaskWraithMcpPromptClaims(
+      `${TASKWRAITH_CORE_MCP_PROFILE_NOTE}\n\n${TASKWRAITH_IMAGE_TOOLS_NOTE}\n\nUser work.`,
+      { advertised: true, coreProfile: false, gatewayProfile: true }
+    )
+    expect(sanitized).toBe(`${TASKWRAITH_GATEWAY_MCP_PROFILE_NOTE}\n\nUser work.`)
+    expect(sanitized).toContain('hidden specialized tools remain available on demand')
+    expect(sanitized).not.toContain('unavailable in this session')
+    expect(sanitized).not.toContain(TASKWRAITH_IMAGE_TOOLS_NOTE)
+  })
+
+  it('does not re-inject the gateway note on a resumed pinned Claude session', () => {
+    expect(
+      sanitizeTaskWraithMcpPromptClaims(
+        `${TASKWRAITH_GATEWAY_MCP_PROFILE_NOTE}\n\nUser work.`,
+        {
+          advertised: true,
+          coreProfile: false,
+          gatewayProfile: true,
+          injectGatewayNote: false
+        }
       )
     ).toBe('User work.')
   })
@@ -1047,6 +1076,27 @@ describe('image-tool discoverability (PR5)', () => {
     })
     expect(result.contextualPrompt).toContain('TaskWraith core MCP profile is active')
     expect(result.contextualPrompt).toContain('specialized media')
+    expect(result.contextualPrompt).not.toContain('Image tools are also available over MCP')
+    expect(result.contextualPrompt).not.toContain('TaskWraith image tools are available over MCP')
+  })
+
+  it('states that gateway-hidden tools remain discoverable and does not claim they are absent', () => {
+    const result = composeRunPrompt({
+      provider: 'claude',
+      finalPrompt: 'trim the video and make a thumbnail',
+      messages: [],
+      chatContextTurns: 6,
+      codexHandoffsApplied: [],
+      isGlobalRun: false,
+      approvalMode: 'default',
+      providerLabel: 'Claude',
+      taskWraithMcpProfileId: TASKWRAITH_GATEWAY_MCP_PROFILE_ID
+    })
+    expect(result.contextualPrompt).toContain(TASKWRAITH_GATEWAY_MCP_PROFILE_NOTE)
+    expect(result.contextualPrompt).toContain('capability_search({ query, limit? })')
+    expect(result.contextualPrompt).toContain('capability_invoke({ name, arguments })')
+    expect(result.contextualPrompt).toContain('hidden specialized tools remain available on demand')
+    expect(result.contextualPrompt).not.toContain('unavailable in this session')
     expect(result.contextualPrompt).not.toContain('Image tools are also available over MCP')
     expect(result.contextualPrompt).not.toContain('TaskWraith image tools are available over MCP')
   })

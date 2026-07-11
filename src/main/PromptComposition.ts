@@ -24,7 +24,10 @@ import {
 } from './TaskWraithMcpPromptNames'
 import { isTaskWraithCloseoutMessage } from '../shared/taskWraithCloseout'
 import { shouldUseCoreMcpProfile } from './mcp/McpToolProfiles'
-import { isCoreTaskWraithMcpProfile } from './mcp/McpSessionProfileFence'
+import {
+  isCoreTaskWraithMcpProfile,
+  isGatewayTaskWraithMcpProfile
+} from './mcp/McpSessionProfileFence'
 import { normalizeCliProviderModel } from './providers/StaticProviderModels'
 import {
   pruneContiguousCompactionPrefix,
@@ -130,13 +133,18 @@ export const TASKWRAITH_RUNTIME_IMAGE_TOOLS_NOTE =
 export const TASKWRAITH_CORE_MCP_PROFILE_NOTE =
   'TaskWraith core MCP profile is active for this provider session; specialized media, creative-app, attached-window, and introspection tools are unavailable in this session. A full-profile session is required to use them.'
 
+export const TASKWRAITH_GATEWAY_MCP_PROFILE_NOTE =
+  'TaskWraith gateway MCP profile is active for this provider session. Common tools are directly available; hidden specialized tools remain available on demand. Use capability_search({ query, limit? }) to discover matching tools and their exact schemas, then capability_invoke({ name, arguments }) to execute one through its original permission checks, workspace and network guards, write locks, call budgets, media handling, and audit identity.'
+
 /** Reconcile claims in a previously composed prompt after a main-side reroute. */
 export function sanitizeTaskWraithMcpPromptClaims(
   prompt: string,
   input: {
     advertised: boolean
     coreProfile: boolean
+    gatewayProfile?: boolean
     injectCoreNote?: boolean
+    injectGatewayNote?: boolean
     /** A different provider must never inherit the source provider's tool aliases or posture. */
     crossProviderReroute?: boolean
     targetProvider?: ProviderId
@@ -147,7 +155,10 @@ export function sanitizeTaskWraithMcpPromptClaims(
   // later in the user's request and is essential transcript content.
   const leadingClaims = [
     TASKWRAITH_CORE_MCP_PROFILE_NOTE,
-    ...(!input.advertised || input.coreProfile ? [TASKWRAITH_IMAGE_TOOLS_NOTE] : [])
+    TASKWRAITH_GATEWAY_MCP_PROFILE_NOTE,
+    ...(!input.advertised || input.coreProfile || input.gatewayProfile
+      ? [TASKWRAITH_IMAGE_TOOLS_NOTE]
+      : [])
   ]
   let removedLeadingClaim = true
   while (removedLeadingClaim) {
@@ -178,7 +189,10 @@ export function sanitizeTaskWraithMcpPromptClaims(
       } else {
         const removeFromRuntimeBlock = new Set([
           TASKWRAITH_CORE_MCP_PROFILE_NOTE,
-          ...(input.coreProfile ? [TASKWRAITH_RUNTIME_IMAGE_TOOLS_NOTE] : [])
+          TASKWRAITH_GATEWAY_MCP_PROFILE_NOTE,
+          ...(input.coreProfile || input.gatewayProfile
+            ? [TASKWRAITH_RUNTIME_IMAGE_TOOLS_NOTE]
+            : [])
         ])
         const runtimeBlock = sanitized
           .slice(0, blockEnd)
@@ -197,6 +211,15 @@ export function sanitizeTaskWraithMcpPromptClaims(
     !sanitized.trimStart().startsWith('/')
   ) {
     sanitized = `${TASKWRAITH_CORE_MCP_PROFILE_NOTE}\n\n${sanitized}`
+  }
+  if (
+    input.advertised &&
+    input.gatewayProfile &&
+    input.injectGatewayNote !== false &&
+    sanitized.trimStart() &&
+    !sanitized.trimStart().startsWith('/')
+  ) {
+    sanitized = `${TASKWRAITH_GATEWAY_MCP_PROFILE_NOTE}\n\n${sanitized}`
   }
   return sanitized
 }
@@ -292,6 +315,7 @@ function buildTaskWraithRuntimePreamble(args: {
   finalPrompt: string
   nativeSubAgentInstruction: string | null
   coreMcpProfile: boolean
+  gatewayMcpProfile: boolean
 }): string {
   const delegateTool = taskWraithToolNameForProvider(args.provider, 'delegate_to_subthread')
   const searchTool = taskWraithToolNameForProvider(args.provider, 'workspace_search')
@@ -307,10 +331,11 @@ function buildTaskWraithRuntimePreamble(args: {
     ...(args.coreMcpProfile
       ? [TASKWRAITH_CORE_MCP_PROFILE_NOTE]
       : []),
-    ...(!args.coreMcpProfile && promptNeedsImageToolsHint(args.finalPrompt)
-      ? [
-          TASKWRAITH_RUNTIME_IMAGE_TOOLS_NOTE
-        ]
+    ...(args.gatewayMcpProfile ? [TASKWRAITH_GATEWAY_MCP_PROFILE_NOTE] : []),
+    ...(!args.coreMcpProfile &&
+      !args.gatewayMcpProfile &&
+      promptNeedsImageToolsHint(args.finalPrompt)
+      ? [TASKWRAITH_RUNTIME_IMAGE_TOOLS_NOTE]
       : []),
     CLOUD_EDIT_DISCIPLINE_NOTE,
     `For CROSS-PROVIDER delegation, call ${delegateTool}({ provider, prompt, returnResult }) through TaskWraith; do not use provider-native Task/invoke_agent/subagent paths.`,
@@ -857,6 +882,7 @@ export function composeRunPrompt(input: ComposeRunPromptInput): ComposeRunPrompt
   const coreMcpProfile = input.taskWraithMcpProfileId
     ? isCoreTaskWraithMcpProfile(input.taskWraithMcpProfileId)
     : shouldUseCoreMcpProfile(provider, normalizeCliProviderModel(provider, nextModel))
+  const gatewayMcpProfile = isGatewayTaskWraithMcpProfile(input.taskWraithMcpProfileId)
   const taskWraithMcpAdvertised = input.taskWraithMcpAdvertised !== false
 
   const pendingSubThreadResultContext = buildPendingSubThreadResultContextBlock(
@@ -1049,7 +1075,8 @@ export function composeRunPrompt(input: ComposeRunPromptInput): ComposeRunPrompt
       providerLabel: providerDisplayName(provider),
       finalPrompt,
       nativeSubAgentInstruction,
-      coreMcpProfile
+      coreMcpProfile,
+      gatewayMcpProfile
     })
     contextualPrompt = `${taskWraithRuntimePreamble}\n\n${contextualPrompt}`
     runtimePreambleInjected = true
@@ -1082,6 +1109,7 @@ export function composeRunPrompt(input: ComposeRunPromptInput): ComposeRunPrompt
     approvalMode !== 'plan' &&
     taskWraithMcpAdvertised &&
     !coreMcpProfile &&
+    !gatewayMcpProfile &&
     promptNeedsImageToolsHint(finalPrompt)
   ) {
     contextualPrompt = `${TASKWRAITH_IMAGE_TOOLS_NOTE}\n\n${contextualPrompt}`

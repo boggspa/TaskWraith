@@ -850,18 +850,20 @@ import {
 } from './RecallCitationGuard'
 import {
   brokerRequest as mcpBridgeBrokerRequest,
+  applyMcpBridgeProfileArgvToEnv,
   createMcpBridgeRuntime,
   GEMINI_MCP_AUDIT_SUBSET_ARG,
-  GEMINI_MCP_CORE_SUBSET_ARG,
-  GEMINI_MCP_PLAN_SUBSET_ARG,
-  GEMINI_MCP_SAFE_SUBSET_ARG,
   mcpToolCallResponseFromBrokerResult as mcpBridgeToolCallResponseFromBrokerResult,
   startGeminiMcpBridgeProcess as startGeminiMcpBridgeProcessWithDeps
 } from './mcp/McpBridgeRuntime'
-import { shouldUseCoreMcpProfile } from './mcp/McpToolProfiles'
+import {
+  FULL_MCP_ADVERTISE_TOOLS,
+  GATEWAY_MCP_DIRECT_TOOLS
+} from './mcp/McpToolProfiles'
 import {
   TASKWRAITH_FULL_MCP_PROFILE_ID,
   isCoreTaskWraithMcpProfile,
+  isGatewayTaskWraithMcpProfile,
   isTaskWraithMcpAuthorizedEphemeralReroute,
   isTaskWraithMcpEnsembleLanePresent,
   isTaskWraithMcpProfileReceiptForSession,
@@ -979,7 +981,7 @@ import {
   type OllamaToolExecutionResult
 } from './ollama/OllamaProvider'
 import { buildOllamaToolDocSection } from './ollama/OllamaToolsDoc'
-import { ollamaToolNamesForTier } from './ollama/OllamaToolTiers'
+import { OLLAMA_ADVERTISED_TOOL_NAMES } from './ollama/OllamaToolTiers'
 import {
   normalizeOllamaSessionMemory,
   normalizeOllamaSessionMemoryMap,
@@ -1138,8 +1140,19 @@ import {
 import { createTaskWraithMcpToolDefinitions } from './McpToolCatalog'
 import {
   MCP_AUTO_ALLOWED_TOOLS,
+  PLAN_MCP_ADVERTISE_TOOLS,
+  READ_ONLY_MCP_ADVERTISE_TOOLS,
   isReadOnlyAdvertisedTool
 } from './mcp/McpAutoAllowedTools'
+import {
+  CAPABILITY_GATEWAY_TOOL_NAMES,
+  isCapabilityGatewayToolName,
+  resolveGatewayInvocation,
+  selectGatewayHiddenToolNames,
+  shouldEmitCanonicalTargetTranscript,
+  searchGatewayCapabilities,
+  type CapabilityGatewayToolName
+} from './mcp/McpToolGateway'
 import {
   validateMcpCallerWorkspace,
   validateMutatingMcpRoute,
@@ -1812,17 +1825,23 @@ const {
   discoverGeminiMemory
 } = geminiDiscoveryHelpers
 
+interface TaskWraithMcpBridgeArgOptions {
+  safeSubset?: boolean
+  planSubset?: boolean
+  coreSubset?: boolean
+  gatewaySubset?: boolean
+}
+
 function taskwraithMcpBridgeArgs(
   socketPath: string = geminiMcpSocketPath(),
-  safeSubset = false,
-  planSubset = false,
-  coreSubset = false
+  options: TaskWraithMcpBridgeArgOptions = {}
 ): string[] {
   return mcpBridgeRuntime.taskwraithMcpBridgeArgs(
     socketPath,
-    safeSubset,
-    planSubset,
-    coreSubset
+    options.safeSubset === true,
+    options.planSubset === true,
+    options.coreSubset === true,
+    options.gatewaySubset === true
   )
 }
 
@@ -10113,7 +10132,9 @@ function applyRuntimeProfileToPayload(payload: AgentRunPayload): AgentRunPayload
   const truthfulPrompt = sanitizeTaskWraithMcpPromptClaims(applied.prompt, {
     advertised: applied.taskWraithMcpAdvertised === true,
     coreProfile: isCoreTaskWraithMcpProfile(applied.taskWraithMcpProfileId),
+    gatewayProfile: isGatewayTaskWraithMcpProfile(applied.taskWraithMcpProfileId),
     injectCoreNote: applied.provider !== 'claude' || !applied.providerSessionId,
+    injectGatewayNote: applied.provider !== 'claude' || !applied.providerSessionId,
     crossProviderReroute: storeState.ephemeralProviderReroute,
     targetProvider: applied.provider
   })
@@ -12558,12 +12579,14 @@ async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
         throw new Error(taskwraithMcpBridgeUnavailableMessage(bridgeCommandStatus))
       }
       await mcpBridgeRuntime.startGeminiMcpBroker()
-      const coreSubset = shouldUseCoreMcpProfile('cursor', payload.model)
+      const coreSubset = isCoreTaskWraithMcpProfile(payload.taskWraithMcpProfileId)
+      const gatewaySubset = isGatewayTaskWraithMcpProfile(payload.taskWraithMcpProfileId)
       const brokerInvocation = {
         command: bridgeCommandStatus.command,
-        // Cursor Composer 2.5 keeps the full surface; Grok 4.5 receives the
-        // budgeted core profile so Cursor accepts the MCP catalogue.
-        args: taskwraithMcpBridgeArgs(geminiMcpSocketPath(), false, false, coreSubset),
+        args: taskwraithMcpBridgeArgs(geminiMcpSocketPath(), {
+          coreSubset,
+          gatewaySubset
+        }),
         env: {
           [GEMINI_MCP_BRIDGE_ENV]: '1',
           TASKWRAITH_PARENT_PROVIDER: 'cursor',
@@ -12578,7 +12601,7 @@ async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
       // every call ("User rejected MCP"). No colliding legacy `taskwraith` alias.
       // Grok 4.5 must use the one-server global path: legacy workspace mode
       // registers a duplicate alias, and Cursor counts tools across aliases.
-      const useGlobalBroker = cursorGlobalBrokerEnabled() || coreSubset
+      const useGlobalBroker = cursorGlobalBrokerEnabled() || coreSubset || gatewaySubset
       if (useGlobalBroker) {
         ensureGlobalCursorBrokerRegistered(
           fsSync,
@@ -12688,18 +12711,19 @@ async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
       // broker. A read_only seat keeps the strict subset. This block only runs for a
       // non-write-capable seat, so presetId distinguishes plan from read_only.
       const cursorPlanSeat = payload.effectivePermissions?.presetId === 'plan'
-      const coreSubset = shouldUseCoreMcpProfile('cursor', payload.model)
+      const coreSubset = isCoreTaskWraithMcpProfile(payload.taskWraithMcpProfileId)
+      const gatewaySubset = isGatewayTaskWraithMcpProfile(payload.taskWraithMcpProfileId)
       const brokerInvocation = {
         command: bridgeCommandStatus.command,
         // --safe-subset (+ --plan-subset for a plan seat): the broker advertises +
         // executes ONLY the read-only tool set (fail-closed), widened to the
         // host-gated plan instruments when the seat is on the plan preset.
-        args: taskwraithMcpBridgeArgs(
-          geminiMcpSocketPath(),
-          true,
-          cursorPlanSeat,
-          coreSubset
-        ),
+        args: taskwraithMcpBridgeArgs(geminiMcpSocketPath(), {
+          safeSubset: true,
+          planSubset: cursorPlanSeat,
+          coreSubset,
+          gatewaySubset
+        }),
         env: {
           [GEMINI_MCP_BRIDGE_ENV]: '1',
           TASKWRAITH_PARENT_PROVIDER: 'cursor',
@@ -12711,7 +12735,7 @@ async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
       const scopedEntry = buildCursorReadOnlyMcpServerEntry(brokerInvocation)
       // "B" mode (default): durable GLOBAL registration under the canonical
       // broker name so cursor-agent reaches "ready" approval; else per-run scoped.
-      const useGlobalBroker = cursorGlobalBrokerEnabled() || coreSubset
+      const useGlobalBroker = cursorGlobalBrokerEnabled() || coreSubset || gatewaySubset
       if (useGlobalBroker) {
         ensureGlobalCursorBrokerRegistered(
           fsSync,
@@ -12765,6 +12789,16 @@ async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
         route
       )
     }
+  }
+  const cursorTaskWraithMcpAdvertised = writeCapable
+    ? cursorTaskWraithMcpActive
+    : cursorTaskWraithReadOnlyMcpActive
+  if (!cursorTaskWraithMcpAdvertised) {
+    payload.taskWraithMcpAdvertised = false
+    payload.prompt = sanitizeTaskWraithMcpPromptClaims(payload.prompt, {
+      advertised: false,
+      coreProfile: false
+    })
   }
   const args = buildCursorProviderCliArgs({
     prompt: payload.prompt,
@@ -12820,7 +12854,11 @@ function grokScopedBridgeSafeToolRequested(request: {
   const raw = request.rawToolCall as { rawInput?: { tool_name?: unknown } } | undefined
   for (const candidate of [request.toolName, raw?.rawInput?.tool_name]) {
     if (typeof candidate === 'string' && candidate.startsWith(prefix)) {
-      return isReadOnlyAdvertisedTool(candidate.slice(prefix.length))
+      const scopedToolName = candidate.slice(prefix.length)
+      return (
+        isReadOnlyAdvertisedTool(scopedToolName) ||
+        isCapabilityGatewayToolName(scopedToolName)
+      )
     }
   }
   return false
@@ -13010,12 +13048,13 @@ async function runGrokAcpProvider(event: Electron.IpcMainInvokeEvent, payload: A
       // this only takes effect when the bridge is actually advertised above.)
       const grokAuditRun = Boolean(payload.auditRun)
       const coreSubset = isCoreTaskWraithMcpProfile(payload.taskWraithMcpProfileId)
-      const grokBridgeArgs = taskwraithMcpBridgeArgs(
-        geminiMcpSocketPath(),
+      const gatewaySubset = isGatewayTaskWraithMcpProfile(payload.taskWraithMcpProfileId)
+      const grokBridgeArgs = taskwraithMcpBridgeArgs(geminiMcpSocketPath(), {
         safeSubset,
-        grokPlanSeat,
-        coreSubset
-      )
+        planSubset: grokPlanSeat,
+        coreSubset,
+        gatewaySubset
+      })
       grokMcpServers = [
         {
           // ACP McpServer is an UNTAGGED enum: the stdio variant is
@@ -13481,7 +13520,15 @@ async function runKimiWireProvider(
   // surfaced as a non-fatal warning chip; the Kimi run still launches
   // so the agent can do single-provider work even when cross-provider
   // delegation isn't wired up.
-  await prepareKimiMcpBridgeForRun(event.sender)
+  const kimiMcpReady = await prepareKimiMcpBridgeForRun(event.sender)
+  if (!kimiMcpReady) {
+    payload.taskWraithMcpAdvertised = false
+    state.taskWraithMcpAdvertised = false
+    payload.prompt = sanitizeTaskWraithMcpPromptClaims(payload.prompt, {
+      advertised: false,
+      coreProfile: false
+    })
+  }
 
   const kimiKey = getStoredKimiApiKey()
   return new Promise((resolveWire) => {
@@ -13748,10 +13795,14 @@ async function runKimiWireProvider(
               // signals like `ensemble_yield` (which only tells the
               // orchestrator the participant is passing their turn —
               // no files, no shell; web reads are network-gated before
-              // this fast path). Reuses the same `MCP_AUTO_ALLOWED_TOOLS`
-              // set so the two layers stay in sync as we expand or
-              // contract the allowlist.
-              if (isMcpAutoAllowedForRun(kimiCanonicalToolName, state.effectivePermissions)) {
+              // this fast path). Gateway wrappers also pass this provider-only
+              // prompt: main unwraps capability_invoke and applies the target's
+              // real approval policy, so the wrapper itself is never granted.
+              // Reuses `MCP_AUTO_ALLOWED_TOOLS` for the ordinary safe set.
+              if (
+                isCapabilityGatewayToolName(kimiCanonicalToolName) ||
+                isMcpAutoAllowedForRun(kimiCanonicalToolName, state.effectivePermissions)
+              ) {
                 respondToKimiWireRequest(child, message.id, {
                   request_id: message.params?.payload?.id || message.id,
                   response: 'approve'
@@ -14167,6 +14218,17 @@ async function runKimiProvider(event: Electron.IpcMainInvokeEvent, payload: Agen
   }
 
   const model = normalizeCliProviderModel('kimi', payload.model)
+  // The print-mode fallback also needs the TaskWraith registration. Resolve it
+  // before copying payload.prompt into argv so a failed attachment can remove
+  // gateway claims from the exact bytes sent to Kimi.
+  const kimiMcpReady = await prepareKimiMcpBridgeForRun(event.sender)
+  if (!kimiMcpReady) {
+    payload.taskWraithMcpAdvertised = false
+    payload.prompt = sanitizeTaskWraithMcpPromptClaims(payload.prompt, {
+      advertised: false,
+      coreProfile: false
+    })
+  }
   // `--plan` stays UNCONDITIONAL here — including for recon seats that the
   // wire path deliberately runs without plan mode (isReconRunPosture). Print
   // mode is non-interactive and auto-approves Kimi's provider tool calls, so
@@ -14202,13 +14264,6 @@ async function runKimiProvider(event: Electron.IpcMainInvokeEvent, payload: Agen
   // translation as the wire-mode spawn path above.
   args.push(...externalPathGrantsToCliAddDirArgs(payload.externalPathGrants))
   if (payload.providerSessionId) args.push('--resume', payload.providerSessionId)
-  // Phase I4 (Kimi initiator): the print-mode fallback also gets the
-  // TaskWraith MCP registration so a plan-mode read-only Kimi run can
-  // still call delegate_to_subthread when the user explicitly asks
-  // for cross-provider work. (Wire mode already ran prepare; if that
-  // returned without setting the installed-flag — e.g. broker failure —
-  // this second call is the belt; harmless when already installed.)
-  await prepareKimiMcpBridgeForRun(event.sender)
   const kimiKey = getStoredKimiApiKey()
   const fallbackRoute = routeWithRunId('kimi', payload)
   runCliProviderProcess(event, 'kimi', resolved.binaryPath, args, payload, {
@@ -14236,10 +14291,9 @@ function getCodexClient(runtimeProfile?: RuntimeProfile | null): CodexAppServerC
   }
   // Phase I2: refresh the MCP config on every accessor call so the
   // toggle in Settings → MCP Bridge takes effect on the NEXT Codex
-  // app-server start. We don't restart the running app-server when
-  // the toggle flips (that would tear down in-flight threads); the
-  // user reopens Codex (or relaunches TaskWraith) to pick up the new
-  // setting. The TaskWraith bridge mirrors the existing Gemini gate
+  // app-server start. A stale idle daemon is restarted below, while an
+  // app-server with a transport-owned in-flight turn is never torn down.
+  // The TaskWraith bridge mirrors the existing Gemini gate
   // (geminiMcpBridgeEnabled); user-managed stdio/HTTP servers can
   // attach independently through the MCP Servers settings page.
   const settings = AppStore.getSettings()
@@ -14257,14 +14311,20 @@ function getCodexClient(runtimeProfile?: RuntimeProfile | null): CodexAppServerC
     codexClient.setMcpConfig({
       enabled: taskWraithBridgeEnabled,
       bridgeBinaryPath: bridgeCommandStatus.command,
-      bridgeArgs: taskwraithMcpBridgeArgs(),
+      bridgeArgs: taskwraithMcpBridgeArgs(geminiMcpSocketPath(), {
+        gatewaySubset: true
+      }),
       parentProvider: 'codex',
       userMcpServers
     })
   } else {
     codexClient.setMcpConfig(null)
   }
-  if (codexClient.hasStaleMcpConfig() && runManager.getActiveByProvider('codex').length === 0) {
+  const codexTransportInFlight = runManager.getActiveByProvider('codex').some((session) => {
+    const state = session.state as Partial<CodexRunState> | null | undefined
+    return Boolean(state?.threadId && state.completed !== true)
+  })
+  if (codexClient.hasStaleMcpConfig() && !codexTransportInFlight) {
     console.log('[codex] restarting idle app-server to apply MCP configuration changes')
     codexClient.dispose()
   }
@@ -18092,6 +18152,17 @@ function syncCodexNativeGoalNotification(state: CodexRunState, message: any): bo
 }
 
 async function runCodexAppServer(event: Electron.IpcMainInvokeEvent, payload: AgentRunPayload) {
+  const codexTaskWraithMcpAdvertised = Boolean(
+    AppStore.getSettings().geminiMcpBridgeEnabled &&
+      taskwraithMcpBridgeCommandStatus().available
+  )
+  if (!codexTaskWraithMcpAdvertised) {
+    payload.taskWraithMcpAdvertised = false
+    payload.prompt = sanitizeTaskWraithMcpPromptClaims(payload.prompt, {
+      advertised: false,
+      coreProfile: false
+    })
+  }
   const client = getCodexClient(payload.runtimeProfile ?? null)
   client.setNotificationHandler(handleCodexNotification)
   client.setRequestHandler(handleCodexServerRequest)
@@ -18288,6 +18359,14 @@ async function runCodexExecFallback(
   reason: string
 ) {
   const route = routeWithRunId('codex', payload)
+  // The one-shot exec fallback does not own a route-stamped TaskWraith MCP
+  // registration. Never retain gateway claims from the primary app-server path
+  // or rely on a possibly stale user-global Codex MCP entry.
+  payload.taskWraithMcpAdvertised = false
+  payload.prompt = sanitizeTaskWraithMcpPromptClaims(payload.prompt, {
+    advertised: false,
+    coreProfile: false
+  })
   const settings = runtimeSettings(AppStore.getSettings(), payload.runtimeProfile)
   if (payload.scope === 'global') {
     sendAgentCompatError(
@@ -18775,6 +18854,20 @@ async function executeOllamaLocalTool(
       return { ok: false, output: argCheck.message, validationError: true }
     }
 
+    if (isCapabilityGatewayToolName(request.toolName)) {
+      const result = await executeGeminiMcpTool(
+        request.toolName,
+        request.arguments,
+        { appRunId: request.appRunId, appChatId: request.appChatId },
+        'ollama'
+      )
+      return {
+        ok: result.isError !== true,
+        output: result.text,
+        structuredContent: result.structuredContent
+      }
+    }
+
     assertOllamaMutationIntent(request.toolName, request.arguments)
     assertOllamaProtectedWritePaths(request.toolName, request.arguments, context, workspacePath)
 
@@ -18860,45 +18953,6 @@ async function executeOllamaLocalTool(
       }
     }
 
-    if (request.toolName === 'git_log') {
-      const result = await workspaceToolExecutors.executeGitLog(
-        request.arguments,
-        context,
-        workspacePath
-      )
-      return {
-        ok: isRecord(result) ? result.exitCode === 0 && result.timedOut !== true : true,
-        output: mcpJson(result),
-        structuredContent: result
-      }
-    }
-
-    if (request.toolName === 'git_show') {
-      const result = await workspaceToolExecutors.executeGitShow(
-        request.arguments,
-        context,
-        workspacePath
-      )
-      return {
-        ok: isRecord(result) ? result.exitCode === 0 && result.timedOut !== true : true,
-        output: mcpJson(result),
-        structuredContent: result
-      }
-    }
-
-    if (request.toolName === 'git_blame') {
-      const result = await workspaceToolExecutors.executeGitBlame(
-        request.arguments,
-        context,
-        workspacePath
-      )
-      return {
-        ok: isRecord(result) ? result.exitCode === 0 && result.timedOut !== true : true,
-        output: mcpJson(result),
-        structuredContent: result
-      }
-    }
-
     if (request.toolName === 'read_file') {
       const rawPath = String(request.arguments.path || request.arguments.file_path || '')
       const runContext = getAgentToolContext('ollama', {
@@ -18933,19 +18987,14 @@ async function executeOllamaLocalTool(
     }
 
     if (
-      request.toolName === 'web_search' ||
-      request.toolName === 'web_fetch' ||
       request.toolName === 'write_file' ||
       request.toolName === 'replace' ||
       request.toolName === 'create_directory' ||
       request.toolName === 'delete_path' ||
       request.toolName === 'move_path' ||
-      request.toolName === 'rename_path' ||
       request.toolName === 'apply_patch' ||
       request.toolName === 'run_shell_command' ||
       request.toolName === 'run_task' ||
-      request.toolName === 'get_diagnostics' ||
-      request.toolName === 'test_result_summary' ||
       request.toolName === 'todo_write'
     ) {
       const result = await executeGeminiMcpTool(
@@ -19089,6 +19138,18 @@ async function runOllamaProviderAdapter(
   event: Electron.IpcMainInvokeEvent,
   payload: AgentRunPayload
 ): Promise<void> {
+  const ollamaTaskWraithMcpAdvertised = Boolean(
+    payload.scope !== 'global' &&
+      payload.workspace &&
+      AppStore.getSettings().agenticServices?.mcpTools !== 'deny'
+  )
+  if (!ollamaTaskWraithMcpAdvertised) {
+    payload.taskWraithMcpAdvertised = false
+    payload.prompt = sanitizeTaskWraithMcpPromptClaims(payload.prompt, {
+      advertised: false,
+      coreProfile: false
+    })
+  }
   const route = routeWithRunId('ollama', payload)
   registerRunSession(
     'ollama',
@@ -19967,10 +20028,16 @@ const providerAdapters = createProviderAdapterRegistry<
         enabled,
         installed: true,
         serverName: 'TaskWraith-local',
-        tools: enabled ? ollamaToolNamesForTier('read_only') : [],
+        tools: enabled
+          ? [
+              ...OLLAMA_ADVERTISED_TOOL_NAMES,
+              ...CAPABILITY_GATEWAY_TOOL_NAMES,
+              OLLAMA_TOOL_HELP_NAME
+            ]
+          : [],
         message: enabled
-          ? 'Ollama uses a TaskWraith-controlled read-only tool loop for workspace reads and web lookups.'
-          : 'Ollama read-only tools are blocked by TaskWraith MCP/tool settings.'
+          ? 'Ollama uses the compact TaskWraith gateway tool loop; hidden first-party capabilities are discoverable and invoked on demand.'
+          : 'Ollama tools are blocked by TaskWraith MCP/tool settings.'
       }
     },
     getCapabilityContract: (request = {}) =>
@@ -21169,18 +21236,240 @@ async function executeSwitchAuthProfile(args: Record<string, any>) {
   }
 }
 
+const GATEWAY_V1_FULL_TOOL_SET: ReadonlySet<string> = new Set(FULL_MCP_ADVERTISE_TOOLS)
+
+/**
+ * Canonical definitions reachable through the immutable gateway-v1 profile.
+ * Membership comes from the frozen full-v1 snapshot rather than the live
+ * catalogue, so adding a future TaskWraith tool cannot silently expand an
+ * already-observed gateway session.
+ */
+function gatewayV1CatalogDefinitions() {
+  return mcpToolDefinitions().filter((definition) =>
+    GATEWAY_V1_FULL_TOOL_SET.has(definition.name)
+  )
+}
+
+/**
+ * Hidden targets available to this run. Read-only and plan seats retain their
+ * existing hard ceilings, and network-disabled tools never appear in discovery
+ * or resolve through invocation.
+ */
+function gatewayEligibleHiddenToolNames(context: GeminiToolContext): TaskWraithMcpToolName[] {
+  const posture = context.effectivePermissions
+  return selectGatewayHiddenToolNames({
+    fullToolNames: FULL_MCP_ADVERTISE_TOOLS,
+    directToolNames: GATEWAY_MCP_DIRECT_TOOLS,
+    ...(posture?.readOnly
+      ? {
+          permissionEligibleToolNames:
+            posture.presetId === 'plan'
+              ? PLAN_MCP_ADVERTISE_TOOLS
+              : READ_ONLY_MCP_ADVERTISE_TOOLS
+        }
+      : {}),
+    isBlocked: (name) => Boolean(networkAccessBlockedToolName(name, posture))
+  }) as TaskWraithMcpToolName[]
+}
+
+function recordCapabilityGatewayEvent(
+  parentProvider: ProviderId,
+  route: AgentRunRoute | null | undefined,
+  summary: string,
+  payload: Record<string, unknown>
+): void {
+  try {
+    appendDurableRunEventForRoute(
+      parentProvider,
+      route,
+      'tool',
+      'control',
+      summary,
+      payload
+    )
+  } catch (error) {
+    console.error('Failed to record capability gateway event', error)
+  }
+}
+
+/**
+ * Non-Codex providers rely on main for MCP transcript events. Codex emits the
+ * wrapper call natively, so only canonical target dispatches are synthesized
+ * for Codex (see GatewayTargetDispatch below).
+ */
+function emitCapabilityGatewayWrapperResult(
+  context: GeminiToolContext,
+  parentProvider: ProviderId,
+  toolName: CapabilityGatewayToolName,
+  args: Record<string, unknown>,
+  result: McpToolExecutionResult
+): void {
+  if (parentProvider === 'codex') return
+  const toolId = `${parentProvider}-mcp-${toolName}-${Date.now()}-${Math.random().toString(36).slice(2)}`
+  sendAgentCompatLine(context.sender, parentProvider, {
+    type: 'tool_use',
+    tool_id: toolId,
+    tool_name: toolName,
+    parameters: args,
+    provider: parentProvider,
+    server: GEMINI_MCP_SERVER_NAME
+  })
+  sendAgentCompatLine(context.sender, parentProvider, {
+    type: 'tool_result',
+    tool_id: toolId,
+    tool_name: toolName,
+    status: result.isError ? 'error' : 'success',
+    output: result.text,
+    provider: parentProvider,
+    server: GEMINI_MCP_SERVER_NAME
+  })
+}
+
+interface GatewayTargetDispatch {
+  viaGateway: true
+  gatewayToolName: 'capability_invoke'
+}
+
 async function executeGeminiMcpTool(
-  toolName: TaskWraithMcpToolName,
+  toolName: TaskWraithMcpToolName | CapabilityGatewayToolName,
   rawArgs: unknown,
   route?: AgentRunRoute | null,
   parentProvider: ProviderId = 'gemini',
-  callerContext?: McpCallerContext
+  callerContext?: McpCallerContext,
+  gatewayDispatch?: GatewayTargetDispatch
 ): Promise<McpToolExecutionResult> {
   const args = normalizeMcpToolArguments(rawArgs)
   const effectiveRoute =
     parentProvider === 'codex' && !route?.appRunId && !route?.appChatId
       ? resolveCodexMcpRouteFromHints(toolName, args) || route
       : route
+
+  if (isCapabilityGatewayToolName(toolName)) {
+    const context = getAgentToolContext(parentProvider, effectiveRoute)
+    if (!context) {
+      const hasExplicitRoute = Boolean(effectiveRoute?.appRunId || effectiveRoute?.appChatId)
+      const activeCount = runManager.getActiveByProvider(parentProvider).length
+      const error =
+        !hasExplicitRoute && activeCount > 1
+          ? `TaskWraith received an unrouted ${providerLabel(parentProvider)} MCP tool call while ${activeCount} ${providerLabel(parentProvider)} runs are active. Tool execution was blocked to avoid applying it to the wrong run.`
+          : `TaskWraith has no active ${providerLabel(parentProvider)} workspace context for this MCP tool call.`
+      const result = {
+        ...mcpStructuredJsonResult({ ok: false, tool: toolName, error }),
+        isError: true
+      }
+      return result
+    }
+
+    const eligibleHiddenToolNames = gatewayEligibleHiddenToolNames(context)
+    const definitions = gatewayV1CatalogDefinitions()
+    if (toolName === 'capability_search') {
+      const searchResult = searchGatewayCapabilities({
+        query: args.query,
+        limit: args.limit,
+        definitions,
+        eligibleToolNames: eligibleHiddenToolNames
+      })
+      const result: McpToolExecutionResult = {
+        ...mcpStructuredJsonResult(searchResult),
+        ...(!searchResult.ok ? { isError: true } : {})
+      }
+      recordCapabilityGatewayEvent(
+        parentProvider,
+        effectiveRoute,
+        searchResult.ok
+          ? `Capability search returned ${searchResult.matches.length} match${searchResult.matches.length === 1 ? '' : 'es'}`
+          : 'Capability search was rejected',
+        {
+          kind: 'capability_gateway_search',
+          viaGateway: true,
+          query: typeof args.query === 'string' ? args.query : null,
+          requestedLimit: args.limit ?? null,
+          ok: searchResult.ok,
+          matches: searchResult.matches.map((match) => match.name),
+          ...(searchResult.ok
+            ? { totalMatches: searchResult.totalMatches, truncated: searchResult.truncated }
+            : { errorCode: searchResult.code })
+        }
+      )
+      emitCapabilityGatewayWrapperResult(context, parentProvider, toolName, args, result)
+      return result
+    }
+
+    const resolution = resolveGatewayInvocation({
+      name: args.name,
+      arguments: args.arguments,
+      definitions,
+      eligibleToolNames: eligibleHiddenToolNames
+    })
+    if (!resolution.ok || !isTaskWraithMcpToolName(resolution.name)) {
+      const error = resolution.ok
+        ? 'The resolved capability is not a canonical TaskWraith tool.'
+        : resolution.message
+      const result: McpToolExecutionResult = {
+        ...mcpStructuredJsonResult({
+          ok: false,
+          tool: toolName,
+          ...(resolution.ok ? {} : { code: resolution.code, issues: resolution.issues }),
+          error
+        }),
+        isError: true
+      }
+      recordCapabilityGatewayEvent(
+        parentProvider,
+        effectiveRoute,
+        'Capability invocation was rejected before dispatch',
+        {
+          kind: 'capability_gateway_invoke_rejected',
+          viaGateway: true,
+          requestedTarget: typeof args.name === 'string' ? args.name : null,
+          error
+        }
+      )
+      emitCapabilityGatewayWrapperResult(context, parentProvider, toolName, args, result)
+      return result
+    }
+
+    if (parentProvider === 'ollama' && context.workspacePath) {
+      const ollamaWorkspacePath = resolve(context.workspacePath)
+      const ollamaContext: WorkspaceToolContext = {
+        scope: 'workspace',
+        cwd: ollamaWorkspacePath,
+        workspacePath: ollamaWorkspacePath,
+        appChatId: context.appChatId
+      }
+      assertOllamaMutationIntent(resolution.name, resolution.arguments)
+      assertOllamaProtectedWritePaths(
+        resolution.name,
+        resolution.arguments,
+        ollamaContext,
+        ollamaWorkspacePath
+      )
+    }
+
+    recordCapabilityGatewayEvent(
+      parentProvider,
+      effectiveRoute,
+      `Capability gateway resolved ${resolution.name}`,
+      {
+        kind: 'capability_gateway_invoke_resolved',
+        viaGateway: true,
+        gatewayTool: toolName,
+        targetTool: resolution.name
+      }
+    )
+    // Re-enter the canonical dispatcher with the target identity. No approval,
+    // route guard, lock, budget, media handler, or audit decision is made for
+    // the wrapper; every one is made below for the real tool exactly once.
+    return executeGeminiMcpTool(
+      resolution.name,
+      resolution.arguments,
+      effectiveRoute,
+      parentProvider,
+      callerContext,
+      { viaGateway: true, gatewayToolName: toolName }
+    )
+  }
+
   const routeGuard = validateMutatingMcpRoute(toolName, effectiveRoute)
   if (!routeGuard.ok) {
     return {
@@ -21314,12 +21603,26 @@ async function executeGeminiMcpTool(
   // these renderer-only emissions — so suppression is purely visual
   // and does not affect what Codex sees. For Gemini/Claude/Kimi the
   // synthetic emissions are still the authoritative source: those
-  // providers don't natively stream `mcpToolCall` items.
-  const emitMcpToolTranscriptEvent =
-    parentProvider === 'codex'
-      ? (_payload: Record<string, unknown>) => {}
-      : (payload: Record<string, unknown>) =>
-          sendAgentCompatLine(context.sender, parentProvider, payload)
+  // providers don't natively stream `mcpToolCall` items. Gateway target
+  // dispatch is the Codex exception: its native row names the outer wrapper,
+  // so main emits one canonical target row carrying `via_gateway` metadata.
+  const emitMcpToolTranscriptEvent = shouldEmitCanonicalTargetTranscript(
+    parentProvider,
+    Boolean(gatewayDispatch)
+  )
+    ? (payload: Record<string, unknown>) =>
+        sendAgentCompatLine(
+          context.sender,
+          parentProvider,
+          gatewayDispatch
+            ? {
+                ...payload,
+                via_gateway: true,
+                gateway_tool_name: gatewayDispatch.gatewayToolName
+              }
+            : payload
+        )
+    : (_payload: Record<string, unknown>) => {}
 
   emitMcpToolTranscriptEvent({
     type: 'tool_use',
@@ -23096,34 +23399,9 @@ function mcpToolDefinitions() {
 }
 
 function startGeminiMcpBridgeProcess(): void {
-  // Fail-closed read-only scope: a bridge launched with --safe-subset (the Grok
-  // read-only seat) advertises + executes ONLY the non-mutating safe subset.
-  // Translate the argv flag to the env the tools/list + tools/call guard reads,
-  // so the scope is atomic with the spawn (argv travels with the process; we do
-  // not depend on the parent forwarding env to the MCP child).
-  if (process.argv.includes(GEMINI_MCP_SAFE_SUBSET_ARG)) {
-    process.env.TASKWRAITH_MCP_SAFE_SUBSET = '1'
-  }
-  // Plan-tier scope: a bridge launched with --plan-subset (a plan-preset Grok/
-  // Cursor seat) widens the safe subset to the plan instruments. Translate the
-  // argv flag to the env the tools/list + tools/call guard reads, so the scope is
-  // atomic with the spawn (does not depend on env forwarding to the MCP child).
-  if (process.argv.includes(GEMINI_MCP_PLAN_SUBSET_ARG)) {
-    process.env.TASKWRAITH_MCP_PLAN_SUBSET = '1'
-  }
-  // Tool-count constrained model profile: the bridge advertises and accepts
-  // only the explicit general-purpose core list. Unlike safe-subset this still
-  // includes write tools, which retain their normal TaskWraith approval gates.
-  if (process.argv.includes(GEMINI_MCP_CORE_SUBSET_ARG)) {
-    process.env.TASKWRAITH_MCP_CORE_SUBSET = '1'
-  }
-  // Audit role-run scope: a bridge launched with --audit-subset additionally
-  // advertises the audit_* tool namespace. Mirrors the safe-subset translation
-  // so the scope is atomic with the spawn even when env is not forwarded to the
-  // MCP child (stdio providers also set the env directly; this is the belt).
-  if (process.argv.includes(GEMINI_MCP_AUDIT_SUBSET_ARG)) {
-    process.env.TASKWRAITH_MCP_AUDIT = '1'
-  }
+  // Profile/safety flags travel atomically in argv. Translate them once into the
+  // environment consumed by tools/list and tools/call before the child starts.
+  applyMcpBridgeProfileArgvToEnv(process.argv, process.env)
   startGeminiMcpBridgeProcessWithDeps({
     getDefaultSocketPath: () => geminiMcpSocketPath(),
     getAppVersion: () => app.getVersion(),
@@ -23172,7 +23450,7 @@ async function prepareGeminiMcpBridgeForRun(
   ) as Promise<AgentRunRoute>
 }
 
-async function prepareKimiMcpBridgeForRun(sender: Electron.WebContents): Promise<void> {
+async function prepareKimiMcpBridgeForRun(sender: Electron.WebContents): Promise<boolean> {
   return mcpBridgeRuntime.prepareKimiMcpBridgeForRun(sender)
 }
 

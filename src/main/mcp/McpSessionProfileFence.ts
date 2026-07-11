@@ -4,23 +4,19 @@ import type {
   TaskWraithMcpProfileId,
   TaskWraithMcpProfileReceipt
 } from '../store/types'
-import { normalizeCliProviderModel } from '../providers/StaticProviderModels'
-import { shouldUseCoreMcpProfile } from './McpToolProfiles'
 
-// These v1 ids fence core-vs-full membership within the current catalog build;
-// they are not immutable historical snapshots. Any future membership/schema
-// change must preserve the old mapping and mint a new id before old receipts can
-// safely resume across an upgrade.
+// Each v1 id maps to a literal membership snapshot in McpToolProfiles. Never
+// mutate an existing mapping: mint a new id for any membership/schema change so
+// a resumable native provider session retains the surface it observed at birth.
 export const TASKWRAITH_FULL_MCP_PROFILE_ID: TaskWraithMcpProfileId = 'taskwraith-full-v1'
 export const TASKWRAITH_CORE_MCP_PROFILE_ID: TaskWraithMcpProfileId = 'taskwraith-core-v1'
+export const TASKWRAITH_GATEWAY_MCP_PROFILE_ID: TaskWraithMcpProfileId =
+  'taskwraith-gateway-v1'
 
 export type TaskWraithMcpProfileResolutionSource =
   | 'pinned_receipt'
-  | 'fresh_claude_opt_in'
+  | 'fresh_gateway_default'
   | 'legacy_claude_full'
-  | 'grok_model_constraint'
-  | 'fresh_grok_opt_in'
-  | 'cursor_model_constraint'
   | 'default_full'
 
 export interface TaskWraithMcpProfileResolution {
@@ -47,7 +43,11 @@ function isProviderId(value: unknown): value is ProviderId {
 }
 
 export function isTaskWraithMcpProfileId(value: unknown): value is TaskWraithMcpProfileId {
-  return value === TASKWRAITH_FULL_MCP_PROFILE_ID || value === TASKWRAITH_CORE_MCP_PROFILE_ID
+  return (
+    value === TASKWRAITH_FULL_MCP_PROFILE_ID ||
+    value === TASKWRAITH_CORE_MCP_PROFILE_ID ||
+    value === TASKWRAITH_GATEWAY_MCP_PROFILE_ID
+  )
 }
 
 export function isTaskWraithMcpProfileReceipt(
@@ -104,12 +104,11 @@ export function taskWraithCoreMcpProfileOptInEnabled(
 /**
  * Resolve the exact TaskWraith MCP catalog for a run.
  *
- * Claude is birth-pinned: a valid receipt wins even if the rollout flag later
- * changes. A resumed session without an exact receipt is grandfathered to full
- * because it may already have observed that catalog. A fresh Claude session may
- * opt into core. Grok ACP sessions are fresh per run, so the model constraint or
- * opt-in can be evaluated for each run. Cursor retains its existing constrained-
- * model workaround but does not participate in opt-in or persistence yet.
+ * Claude is birth-pinned: an exact full/core/gateway receipt always wins. A
+ * resumed session without an exact receipt is grandfathered to full because it
+ * may already have observed that catalog. Every fresh, tool-capable session
+ * defaults to gateway without a user flag; a fresh Claude session only does so
+ * when its birth receipt can be persisted authoritatively.
  */
 export function resolveTaskWraithMcpProfile(input: {
   provider: ProviderId
@@ -118,7 +117,8 @@ export function resolveTaskWraithMcpProfile(input: {
   /** Current main-owned store session, which may outlive a stale null payload. */
   storeProviderSessionId?: string | null
   receipt?: unknown
-  coreProfileOptIn: boolean
+  /** @deprecated Gateway is the unconditional fresh-session default. */
+  coreProfileOptIn?: boolean
   /** False when no canonical chat exists to persist a Claude birth receipt. */
   profileReceiptCanPersist?: boolean
   /** Exact ACP session/new eligibility; false for headless or toolless Grok. */
@@ -126,7 +126,6 @@ export function resolveTaskWraithMcpProfile(input: {
 }): TaskWraithMcpProfileResolution {
   const providerSessionId = nonEmptyString(input.providerSessionId)
   const storeProviderSessionId = nonEmptyString(input.storeProviderSessionId)
-  const runtimeModelId = normalizeCliProviderModel(input.provider, input.modelId)
 
   if (input.provider === 'claude') {
     if (
@@ -151,29 +150,23 @@ export function resolveTaskWraithMcpProfile(input: {
     if (providerSessionId) {
       return { profileId: TASKWRAITH_FULL_MCP_PROFILE_ID, source: 'legacy_claude_full' }
     }
-    if (input.coreProfileOptIn && input.profileReceiptCanPersist !== false) {
-      return { profileId: TASKWRAITH_CORE_MCP_PROFILE_ID, source: 'fresh_claude_opt_in' }
+    if (input.profileReceiptCanPersist !== false) {
+      return {
+        profileId: TASKWRAITH_GATEWAY_MCP_PROFILE_ID,
+        source: 'fresh_gateway_default'
+      }
     }
     return { profileId: TASKWRAITH_FULL_MCP_PROFILE_ID, source: 'default_full' }
   }
 
-  if (input.provider === 'grok') {
-    if (input.grokMcpAdvertised !== true) {
-      return { profileId: TASKWRAITH_FULL_MCP_PROFILE_ID, source: 'default_full' }
-    }
-    if (shouldUseCoreMcpProfile('grok', runtimeModelId)) {
-      return { profileId: TASKWRAITH_CORE_MCP_PROFILE_ID, source: 'grok_model_constraint' }
-    }
-    if (input.coreProfileOptIn) {
-      return { profileId: TASKWRAITH_CORE_MCP_PROFILE_ID, source: 'fresh_grok_opt_in' }
-    }
+  if (input.provider === 'grok' && input.grokMcpAdvertised !== true) {
+    return { profileId: TASKWRAITH_FULL_MCP_PROFILE_ID, source: 'default_full' }
   }
 
-  if (input.provider === 'cursor' && shouldUseCoreMcpProfile('cursor', runtimeModelId)) {
-    return { profileId: TASKWRAITH_CORE_MCP_PROFILE_ID, source: 'cursor_model_constraint' }
+  return {
+    profileId: TASKWRAITH_GATEWAY_MCP_PROFILE_ID,
+    source: 'fresh_gateway_default'
   }
-
-  return { profileId: TASKWRAITH_FULL_MCP_PROFILE_ID, source: 'default_full' }
 }
 
 /** A receipted Claude store identity is authoritative over a stale run payload. */
@@ -377,4 +370,10 @@ export function isCoreTaskWraithMcpProfile(
   profileId: TaskWraithMcpProfileId | null | undefined
 ): boolean {
   return profileId === TASKWRAITH_CORE_MCP_PROFILE_ID
+}
+
+export function isGatewayTaskWraithMcpProfile(
+  profileId: TaskWraithMcpProfileId | null | undefined
+): boolean {
+  return profileId === TASKWRAITH_GATEWAY_MCP_PROFILE_ID
 }

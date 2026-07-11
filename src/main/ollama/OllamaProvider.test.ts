@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { CAPABILITY_GATEWAY_TOOL_NAMES } from '../mcp/McpToolGateway'
+import { GATEWAY_MCP_DIRECT_TOOLS } from '../mcp/McpToolProfiles'
 import type { AgentRunPayload, AgentRunRoute } from '../run/AgentRunTypes'
 import {
   buildOllamaOpeningMessages,
@@ -1384,7 +1386,7 @@ describe('runOllamaProvider streaming', () => {
     const executeTool = vi.fn(async () => ({
       ok: false,
       output:
-        '{"ok":false,"tool":"goal_update","error":"No active TaskWraith goal is set for this chat."}'
+        '{"ok":false,"tool":"update_goal","error":"No active TaskWraith goal is set for this chat."}'
     }))
     const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
       if (String(url).endsWith('/api/tags')) {
@@ -1413,7 +1415,7 @@ describe('runOllamaProvider streaming', () => {
                 tool_calls: [
                   {
                     function: {
-                      name: 'goal_update',
+                      name: 'update_goal',
                       arguments: { status: 'active', reason: 'Setting up test environment.' }
                     }
                   }
@@ -1450,12 +1452,12 @@ describe('runOllamaProvider streaming', () => {
 
     expect(executeTool).toHaveBeenCalledTimes(1)
     const rawToolResults = lines
-      .filter((line) => line.payload.type === 'tool_result' && line.payload.tool_name === 'goal_update')
+      .filter((line) => line.payload.type === 'tool_result' && line.payload.tool_name === 'update_goal')
       .map((line) => line.payload.output)
     expect(rawToolResults).toEqual([
-      '{"ok":false,"tool":"goal_update","error":"No active TaskWraith goal is set for this chat."}'
+      '{"ok":false,"tool":"update_goal","error":"No active TaskWraith goal is set for this chat."}'
     ])
-    expect(JSON.stringify(chatBodies[1].messages)).toContain('Do NOT call goal_update')
+    expect(JSON.stringify(chatBodies[1].messages)).toContain('Do NOT call update_goal')
     expect(JSON.stringify(chatBodies[1].messages)).toContain('not todo lists')
     expect(
       lines
@@ -1477,7 +1479,7 @@ describe('runOllamaProvider streaming', () => {
     const executeTool = vi.fn(async () => ({
       ok: false,
       output:
-        '{"ok":false,"tool":"goal_update","error":"No active TaskWraith goal is set for this chat."}'
+        '{"ok":false,"tool":"update_goal","error":"No active TaskWraith goal is set for this chat."}'
     }))
     const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
       if (String(url).endsWith('/api/tags')) {
@@ -1504,7 +1506,7 @@ describe('runOllamaProvider streaming', () => {
               message: {
                 role: 'assistant',
                 content:
-                  '{"taskwraith_tool":{"name":"goal_update","arguments":{"status":"active","reason":"Setting up test environment."}}}'
+                  '{"taskwraith_tool":{"name":"update_goal","arguments":{"status":"active","reason":"Setting up test environment."}}}'
               }
             }),
             JSON.stringify({ done: true, prompt_eval_count: 12, eval_count: 8 })
@@ -1557,7 +1559,7 @@ describe('runOllamaProvider streaming', () => {
 
     expect(executeTool).toHaveBeenCalledTimes(1)
     expect(chatBodies).toHaveLength(2)
-    expect(chatBodies[1]).toContain('Do NOT call goal_update')
+    expect(chatBodies[1]).toContain('Do NOT call update_goal')
     expect(chatBodies[1]).toContain('assigned ensemble slice')
     expect(chatBodies[1]).toContain('Boss/Bossman/Lead routing')
     expect(
@@ -1853,10 +1855,10 @@ describe('runOllamaProvider streaming', () => {
     expect(contentTexts[0]).toContain('stopping instead of looping')
   }, 10000)
 
-  it('constrains json-fallback decoding to the FULL catalog, not just advertised tools', async () => {
+  it('constrains json-fallback decoding to the compact gateway surface', async () => {
     // Regression: the constrained-decoding grammar must allow every EXECUTABLE
     // tool (so a model can name a tail tool discovered via tool_help), even
-    // though only the curated ~22 are ADVERTISED. If the grammar enum were the
+    // though only the gateway direct set is ADVERTISED. If the grammar enum were the
     // advertised set, a json-path model could never emit e.g. git_blame.
     // A model without native 'tools' support is pinned to the json-fallback path.
     const chatBodies: string[] = []
@@ -1896,13 +1898,12 @@ describe('runOllamaProvider streaming', () => {
     const format = JSON.parse(chatBodies[0]).format
     const enumNames: string[] = format?.properties?.taskwraith_tool?.properties?.name?.enum
     expect(Array.isArray(enumNames)).toBe(true)
-    // Advertised tools are present...
-    expect(enumNames).toContain('read_file')
-    // ...but so are non-advertised tail tools + tool_help (the whole point).
-    expect(enumNames).toContain('git_blame')
-    expect(enumNames).toContain('tool_help')
-    // The advertised set is ~22; the executable catalog is far larger.
-    expect(enumNames.length).toBeGreaterThan(40)
+    expect(enumNames).toEqual([
+      ...GATEWAY_MCP_DIRECT_TOOLS,
+      ...CAPABILITY_GATEWAY_TOOL_NAMES,
+      'tool_help'
+    ])
+    expect(enumNames).not.toContain('git_blame')
   })
 
   it('does not advertise edit/shell native tools to a read-only seat', async () => {
@@ -2385,12 +2386,20 @@ describe('parseOllamaToolRequest', () => {
   it('accepts TaskWraith read-only tool requests', () => {
     expect(
       parseOllamaToolRequest(
-        '{"taskwraith_tool":{"name":"web_search","arguments":{"query":"Cambridge UK weather"}}}'
+        '{"taskwraith_tool":{"name":"workspace_search","arguments":{"query":"gateway"}}}'
       )
     ).toEqual({
-      toolName: 'web_search',
-      arguments: { query: 'Cambridge UK weather' }
+      toolName: 'workspace_search',
+      arguments: { query: 'gateway' }
     })
+  })
+
+  it('rejects hidden canonical names as direct calls', () => {
+    expect(
+      parseOllamaToolRequest(
+        '{"taskwraith_tool":{"name":"web_search","arguments":{"query":"weather"}}}'
+      )
+    ).toBeNull()
   })
 
   it('canonicalizes AskUserQuestion aliases', () => {
@@ -2461,14 +2470,14 @@ describe('parseOllamaToolRequest', () => {
       toolName: 'write_file',
       arguments: { path: 'x', content: 'y' }
     })
-    // Curated preamble (2026-07): only the ~7 protocol-critical tools are detailed
-    // inline (concrete arg shapes); web tools are advertised by NAME, and full
-    // schemas come from tool_help on demand.
+    // Only protocol-critical direct tools are detailed inline. Long-tail tools
+    // such as web search are reached through capability discovery or tool_help.
     expect(ollamaLocalToolSystemPrompt()).toContain(
       '- write_file: {"path":"relative/path.txt","content":"...","intent":"short reason before changing files"}'
     )
-    expect(ollamaLocalToolSystemPrompt()).toContain('web_search')
-    expect(ollamaLocalToolSystemPrompt()).toContain('web_fetch')
+    expect(ollamaLocalToolSystemPrompt()).not.toContain('web_search')
+    expect(ollamaLocalToolSystemPrompt()).not.toContain('web_fetch')
+    expect(ollamaLocalToolSystemPrompt()).toContain('tool_help')
   })
 
   it('encourages local models to chain multi-step work after a tool result', () => {
@@ -2591,13 +2600,12 @@ describe('parseOllamaToolRequest', () => {
     )
   })
 
-  it('tells local models they can reach the live internet via web tools', () => {
+  it('keeps web tools in the discoverable tail instead of the direct profile', () => {
     const prompt = ollamaLocalToolSystemPrompt('read_only')
-    // Slim preamble (2026-07): the concise web-flow line replaces the old hype
-    // paragraph; web tools are always present under read_only now (networkAccess
-    // allows web reads), so the flow guidance appears.
-    expect(prompt).toContain('web_search to find sources')
-    expect(prompt).toContain('web_fetch a chosen URL and summarize its readable text')
+    expect(prompt).not.toContain('web_search to find sources')
+    expect(prompt).not.toContain('web_fetch a chosen URL')
+    expect(prompt).toContain('More TaskWraith tools exist beyond these')
+    expect(prompt).toContain('tool_help')
   })
 
   it('omits live internet copy when the resolved run posture denies network access', () => {
@@ -2823,27 +2831,16 @@ describe('ollamaNativeToolDefinitions', () => {
     expect(compact.length).toBeLessThan(full.length)
     expect(compact).not.toContain('maxResults')
   })
-  it('exposes tools as OpenAI-style function schemas (full surface)', () => {
+  it('exposes the exact gateway-v1 canonical surface plus virtual helpers', () => {
     const defs = ollamaNativeToolDefinitions('read_only')
     const names = defs.map((def) => def.function.name)
-    // Tier retirement (2026-07): native defs advertise the full surface for every
-    // tier value — the gate governs approval by the standard role, so read, write,
-    // and shell tools all appear regardless of the (retired) tier arg.
-    for (const tool of [
-      'read_file',
-      'workspace_search',
-      'web_search',
-      'web_fetch',
-      'github_ci_status',
-      'write_file',
-      'run_shell_command'
-    ]) {
-      expect(names).toContain(tool)
-    }
-    const webSearch = defs.find((def) => def.function.name === 'web_search')
-    expect(webSearch?.type).toBe('function')
-    expect(webSearch?.function.parameters.required).toEqual(['query'])
-    expect(webSearch?.function.parameters.properties).toHaveProperty('query')
+    expect(names.slice(0, GATEWAY_MCP_DIRECT_TOOLS.length)).toEqual([
+      ...GATEWAY_MCP_DIRECT_TOOLS
+    ])
+    expect(names.slice(GATEWAY_MCP_DIRECT_TOOLS.length)).toEqual([
+      ...CAPABILITY_GATEWAY_TOOL_NAMES,
+      'tool_help'
+    ])
   })
 
   it('omits native web schemas when the resolved run posture denies network access', () => {
@@ -2855,16 +2852,14 @@ describe('ollamaNativeToolDefinitions', () => {
     expect(names).not.toContain('github_ci_status')
   })
 
-  it('expands with the tier and marks mutating tool intents as required', () => {
+  it('keeps the legacy tier inert and marks direct shell mutation intent required', () => {
     const defs = ollamaNativeToolDefinitions('approved_shell')
     const names = defs.map((def) => def.function.name)
     expect(names).toContain('write_file')
     expect(names).toContain('run_shell_command')
-    expect(names).toContain('get_diagnostics')
+    expect(names).not.toContain('get_diagnostics')
     const shell = defs.find((def) => def.function.name === 'run_shell_command')
     expect(shell?.function.parameters.required).toEqual(['command', 'intent'])
-    const diagnostics = defs.find((def) => def.function.name === 'get_diagnostics')
-    expect(diagnostics?.function.parameters.required).toEqual(['intent'])
   })
 })
 
@@ -2872,17 +2867,25 @@ describe('normalizeOllamaNativeToolCall', () => {
   it('accepts object arguments for known tools', () => {
     expect(
       normalizeOllamaNativeToolCall({
-        function: { name: 'web_search', arguments: { query: 'Cambridge weather' } }
+        function: { name: 'workspace_search', arguments: { query: 'gateway' } }
       })
-    ).toEqual({ toolName: 'web_search', arguments: { query: 'Cambridge weather' } })
+    ).toEqual({ toolName: 'workspace_search', arguments: { query: 'gateway' } })
   })
 
   it('parses stringified JSON arguments', () => {
     expect(
       normalizeOllamaNativeToolCall({
-        function: { name: 'web_fetch', arguments: '{"url":"https://example.com"}' }
+        function: { name: 'read_file', arguments: '{"path":"README.md"}' }
       })
-    ).toEqual({ toolName: 'web_fetch', arguments: { url: 'https://example.com' } })
+    ).toEqual({ toolName: 'read_file', arguments: { path: 'README.md' } })
+  })
+
+  it('rejects hidden canonical native calls', () => {
+    expect(
+      normalizeOllamaNativeToolCall({
+        function: { name: 'web_fetch', arguments: { url: 'https://example.com' } }
+      })
+    ).toBeNull()
   })
 
   it('canonicalizes AskUserQuestion aliases', () => {
@@ -2899,26 +2902,16 @@ describe('normalizeOllamaNativeToolCall', () => {
 })
 
 describe('Ollama tool surface (tier retired)', () => {
-  it('advertises the full surface for every tier value', () => {
+  it('advertises the immutable gateway direct surface for every tier value', () => {
     // Tier retirement (2026-07): the tier arg no longer narrows the surface — the
     // read_only list equals the full provider-parity list, and governance moves to
     // the standard permission role at the approval gate.
     expect(normalizeOllamaToolControlTier('bad-value')).toBe('read_only')
     const readOnly = ollamaToolNamesForTier('read_only')
     expect(readOnly).toEqual(ollamaToolNamesForTier('provider_parity'))
-    for (const tool of [
-      'read_file',
-      'git_status',
-      'web_search',
-      'web_fetch',
-      'write_file',
-      'run_shell_command',
-      'git_push',
-      'cancel_active_run',
-      'delegate_to_subthread'
-    ]) {
-      expect(readOnly).toContain(tool)
-    }
+    expect(readOnly).toEqual([...GATEWAY_MCP_DIRECT_TOOLS])
+    expect(readOnly).not.toContain('web_search')
+    expect(readOnly).not.toContain('git_push')
   })
 
   it('still marks mutating / remote-git / process-control tools as intent-required', () => {
@@ -2931,11 +2924,9 @@ describe('Ollama tool surface (tier retired)', () => {
     expect(ollamaToolRequiresIntent('cancel_active_run')).toBe(true)
   })
 
-  it('advertises the full TaskWraith tool surface for every legacy tier value', () => {
+  it('keeps every legacy tier value on the same compact direct profile', () => {
     const tools = ollamaToolNamesForTier('provider_parity')
-    expect(tools).toContain('write_file')
-    expect(tools).toContain('run_shell_command')
-    expect(tools).toContain('delegate_to_subthread')
+    expect(tools).toEqual([...GATEWAY_MCP_DIRECT_TOOLS])
     expect(ollamaToolNamesForTier('read_only')).toEqual(tools)
   })
 })
@@ -3115,7 +3106,7 @@ describe('repeated-tool-call guard', () => {
     expect(isOllamaNoActiveGoalToolResult('goal_update', result)).toBe(true)
     expect(isOllamaNoActiveGoalToolResult('read_file', result)).toBe(false)
     const nudge = ollamaNoActiveGoalToolNudge('goal_update')
-    expect(nudge).toContain('Do NOT call goal_update')
+    expect(nudge).toContain('Do NOT call update_goal')
     expect(nudge).toContain('not todo lists')
     expect(ollamaNoActiveGoalToolNudge('goal_update', { repeated: true })).toContain(
       'already retried'

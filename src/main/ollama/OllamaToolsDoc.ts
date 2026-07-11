@@ -2,6 +2,9 @@ import {
   createTaskWraithMcpToolDefinitions,
   type TaskWraithMcpToolDefinition
 } from '../McpToolCatalog'
+import { GATEWAY_MCP_DIRECT_TOOLS } from '../mcp/McpToolProfiles'
+
+const OLLAMA_DIRECT_TOOL_NAMES: ReadonlySet<string> = new Set(GATEWAY_MCP_DIRECT_TOOLS)
 
 /**
  * Reproducible generator for `resources/Tools.md` — a full, drift-checked
@@ -80,7 +83,11 @@ function summarizeToolArgs(def: TaskWraithMcpToolDefinition): ToolArgSummary {
   const exampleKeys = required.length ? required : allKeys.slice(0, 1)
   const args: Record<string, unknown> = {}
   for (const key of exampleKeys) args[key] = schemaPlaceholder(props[key])
-  const example = JSON.stringify({ taskwraith_tool: { name: def.name, arguments: args } })
+  const example = JSON.stringify({
+    taskwraith_tool: OLLAMA_DIRECT_TOOL_NAMES.has(def.name)
+      ? { name: def.name, arguments: args }
+      : { name: 'capability_invoke', arguments: { name: def.name, arguments: args } }
+  })
   return { example, required, optional }
 }
 
@@ -123,13 +130,13 @@ export function buildOllamaToolsMarkdown(): string {
     '',
     '# TaskWraith tools reference',
     '',
-    'Local Ollama models call any tool by emitting exactly one JSON object per turn:',
+    'Local Ollama models call a directly advertised tool by emitting exactly one JSON object per turn:',
     '',
     '```',
     '{"taskwraith_tool":{"name":"<tool>","arguments":{ ... }}}',
     '```',
     '',
-    `The ${defs.length} tools below are the full TaskWraith surface, generated from the tool catalog so this reference cannot drift from what the app actually grants. Every mutating tool (file edits, shell, publishing) is gated by your run's permission role, and paths must stay inside the active workspace.`,
+    `The ${defs.length} tools below are the full TaskWraith surface. ${GATEWAY_MCP_DIRECT_TOOLS.length} common tools are callable directly; every other example uses capability_invoke so the top-level tool surface stays compact. Every mutating target (file edits, shell, publishing) is gated by your run's permission role, and paths must stay inside the active workspace.`,
     ''
   ]
   for (const def of defs) {
@@ -152,7 +159,7 @@ export function buildOllamaToolDocSection(name: string): string {
   const defs = createTaskWraithMcpToolDefinitions()
   const allNames = defs.map((entry) => entry.name).join(', ')
   if (!wanted) {
-    return `All ${defs.length} TaskWraith tools (call tool_help with a name for its schema): ${allNames}.`
+    return `All ${defs.length} TaskWraith tools (prefer capability_search; call tool_help with an exact name for its schema, then use capability_invoke for hidden tools): ${allNames}.`
   }
   const def = defs.find((entry) => entry.name === wanted)
   if (!def) {

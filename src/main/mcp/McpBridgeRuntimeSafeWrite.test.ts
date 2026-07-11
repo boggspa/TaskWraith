@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
+  applyMcpBridgeProfileArgvToEnv,
   GEMINI_MCP_CORE_SUBSET_ARG,
+  GEMINI_MCP_GATEWAY_SUBSET_ARG,
   McpBridgeRuntime,
   handleMcpJsonRpcMessage,
   safeMcpStreamWrite,
@@ -183,6 +185,32 @@ describe('MCP bridge stream writes', () => {
     )
   })
 
+  it('preserves gateway calls for main-side target resolution and approval', async () => {
+    const executeGeminiMcpTool = vi.fn(async () => ({ text: 'ok' }))
+    const runtime = new McpBridgeRuntime({
+      getGeminiMcpBrokerToken: () => 'token-1',
+      executeGeminiMcpTool
+    } as never)
+    const args = { name: 'video_encode_clip', arguments: { path: 'clip.mp4' } }
+
+    await runtime.handleGeminiMcpBrokerRequest({
+      token: 'token-1',
+      tool: 'capability_invoke',
+      arguments: args,
+      parentProvider: 'codex',
+      appRunId: 'run-1',
+      appChatId: 'chat-1'
+    })
+
+    expect(executeGeminiMcpTool).toHaveBeenCalledWith(
+      'capability_invoke',
+      args,
+      { appRunId: 'run-1', appChatId: 'chat-1' },
+      'codex',
+      {}
+    )
+  })
+
   it('advertises only the explicit core profile to tool-constrained models', () => {
     const chunks: string[] = []
     const stream = {
@@ -215,6 +243,218 @@ describe('MCP bridge stream writes', () => {
     }
     expect(response.result.tools.map((tool) => tool.name)).toEqual(['read_file', 'apply_patch'])
   })
+
+  it('advertises only the gateway direct set plus gateway and audit tools', () => {
+    const chunks: string[] = []
+    const stream = {
+      write: vi.fn((chunk: string) => {
+        chunks.push(chunk)
+        return true
+      })
+    }
+
+    handleMcpJsonRpcMessage(
+      {
+        getDefaultSocketPath: () => '/tmp/taskwraith.sock',
+        getAppVersion: () => '1.0.0',
+        getMcpToolDefinitions: () => [
+          { name: 'read_file' },
+          { name: 'tw_introspection_read' },
+          { name: 'video_encode_clip' }
+        ],
+        env: {
+          TASKWRAITH_MCP_GATEWAY_SUBSET: '1',
+          TASKWRAITH_MCP_AUDIT: '1'
+        },
+        stdout: stream as never
+      },
+      '/tmp/taskwraith.sock',
+      'token-1',
+      { jsonrpc: '2.0', id: 16, method: 'tools/list' },
+      'line'
+    )
+
+    const response = JSON.parse(chunks.join('').trim()) as {
+      result: { tools: Array<{ name: string }> }
+    }
+    expect(response.result.tools.map((tool) => tool.name)).toEqual([
+      'read_file',
+      'capability_search',
+      'capability_invoke',
+      'audit_set_profile',
+      'audit_record_finding',
+      'audit_record_verdict'
+    ])
+  })
+
+  it('allows a hidden read-only target through capability_invoke without unwrapping it', async () => {
+    const brokerRequest = vi.fn(async () => ({ ok: true, text: 'found' }))
+    const chunks: string[] = []
+    const stream = {
+      write: vi.fn((chunk: string) => {
+        chunks.push(chunk)
+        return true
+      })
+    }
+
+    handleMcpJsonRpcMessage(
+      {
+        getDefaultSocketPath: () => '/tmp/taskwraith.sock',
+        getAppVersion: () => '1.0.0',
+        getMcpToolDefinitions: () => [],
+        brokerRequest,
+        env: {
+          TASKWRAITH_MCP_GATEWAY_SUBSET: '1',
+          TASKWRAITH_MCP_SAFE_SUBSET: '1'
+        },
+        stdout: stream as never
+      },
+      '/tmp/taskwraith.sock',
+      'token-1',
+      {
+        jsonrpc: '2.0',
+        id: 17,
+        method: 'tools/call',
+        params: {
+          name: 'capability_invoke',
+          arguments: { name: 'tw_introspection_read', arguments: { packId: 'pack-1' } }
+        }
+      },
+      'line'
+    )
+    await new Promise((resolve) => setImmediate(resolve))
+
+    expect(brokerRequest).toHaveBeenCalledWith(
+      '/tmp/taskwraith.sock',
+      expect.objectContaining({
+        tool: 'capability_invoke',
+        arguments: {
+          name: 'tw_introspection_read',
+          arguments: { packId: 'pack-1' }
+        }
+      })
+    )
+  })
+
+  it('allows capability_search in a read-only gateway seat', async () => {
+    const brokerRequest = vi.fn(async () => ({ ok: true, text: 'matches' }))
+    const stream = {
+      write: vi.fn((_chunk: string, callback?: (error?: Error | null) => void) => callback?.())
+    }
+
+    handleMcpJsonRpcMessage(
+      {
+        getDefaultSocketPath: () => '/tmp/taskwraith.sock',
+        getAppVersion: () => '1.0.0',
+        getMcpToolDefinitions: () => [],
+        brokerRequest,
+        env: {
+          TASKWRAITH_MCP_GATEWAY_SUBSET: '1',
+          TASKWRAITH_MCP_SAFE_SUBSET: '1'
+        },
+        stdout: stream as never
+      },
+      '/tmp/taskwraith.sock',
+      'token-1',
+      {
+        jsonrpc: '2.0',
+        id: 20,
+        method: 'tools/call',
+        params: { name: 'capability_search', arguments: { query: 'edit video' } }
+      },
+      'line'
+    )
+    await new Promise((resolve) => setImmediate(resolve))
+
+    expect(brokerRequest).toHaveBeenCalledWith(
+      '/tmp/taskwraith.sock',
+      expect.objectContaining({ tool: 'capability_search' })
+    )
+  })
+
+  it('rejects a hidden mutating target wrapped by a read-only gateway call', async () => {
+    const brokerRequest = vi.fn(async () => ({ ok: true, text: 'unexpected' }))
+    const chunks: string[] = []
+    const stream = {
+      write: vi.fn((chunk: string) => {
+        chunks.push(chunk)
+        return true
+      })
+    }
+
+    handleMcpJsonRpcMessage(
+      {
+        getDefaultSocketPath: () => '/tmp/taskwraith.sock',
+        getAppVersion: () => '1.0.0',
+        getMcpToolDefinitions: () => [],
+        brokerRequest,
+        env: {
+          TASKWRAITH_MCP_GATEWAY_SUBSET: '1',
+          TASKWRAITH_MCP_SAFE_SUBSET: '1'
+        },
+        stdout: stream as never
+      },
+      '/tmp/taskwraith.sock',
+      'token-1',
+      {
+        jsonrpc: '2.0',
+        id: 18,
+        method: 'tools/call',
+        params: {
+          name: 'capability_invoke',
+          arguments: { name: 'video_encode_clip', arguments: { path: 'clip.mp4' } }
+        }
+      },
+      'line'
+    )
+    await new Promise((resolve) => setImmediate(resolve))
+
+    expect(brokerRequest).not.toHaveBeenCalled()
+    const response = JSON.parse(chunks.join('').trim()) as { error: { code: number } }
+    expect(response.error.code).toBe(-32601)
+  })
+
+  it.each(['missing_capability', 'capability_invoke', 'capability_search'])(
+    'rejects invalid capability_invoke target %s before broker dispatch',
+    async (target) => {
+      const brokerRequest = vi.fn(async () => ({ ok: true, text: 'unexpected' }))
+      const chunks: string[] = []
+      const stream = {
+        write: vi.fn((chunk: string) => {
+          chunks.push(chunk)
+          return true
+        })
+      }
+
+      handleMcpJsonRpcMessage(
+        {
+          getDefaultSocketPath: () => '/tmp/taskwraith.sock',
+          getAppVersion: () => '1.0.0',
+          getMcpToolDefinitions: () => [],
+          brokerRequest,
+          env: { TASKWRAITH_MCP_GATEWAY_SUBSET: '1' },
+          stdout: stream as never
+        },
+        '/tmp/taskwraith.sock',
+        'token-1',
+        {
+          jsonrpc: '2.0',
+          id: 19,
+          method: 'tools/call',
+          params: {
+            name: 'capability_invoke',
+            arguments: { name: target, arguments: {} }
+          }
+        },
+        'line'
+      )
+      await new Promise((resolve) => setImmediate(resolve))
+
+      expect(brokerRequest).not.toHaveBeenCalled()
+      const response = JSON.parse(chunks.join('').trim()) as { error: { code: number } }
+      expect(response.error.code).toBe(-32602)
+    }
+  )
 
   it('intersects the core profile with the existing read-only safety scope', () => {
     const chunks: string[] = []
@@ -448,5 +688,89 @@ describe('MCP bridge stream writes', () => {
 
     expect(args).toContain(GEMINI_MCP_CORE_SUBSET_ARG)
     expect(args[args.length - 1]).toBe(GEMINI_MCP_CORE_SUBSET_ARG)
+  })
+
+  it('carries the gateway profile atomically in bridge argv', () => {
+    const runtime = new McpBridgeRuntime({
+      getGeminiMcpSocketPath: () => '/tmp/taskwraith.sock',
+      getGeminiMcpBrokerToken: () => 'token-1',
+      isDev: () => false
+    } as never)
+
+    const args = runtime.taskwraithMcpBridgeArgs(
+      '/tmp/taskwraith.sock',
+      false,
+      false,
+      false,
+      true
+    )
+
+    expect(args).toContain(GEMINI_MCP_GATEWAY_SUBSET_ARG)
+    expect(args[args.length - 1]).toBe(GEMINI_MCP_GATEWAY_SUBSET_ARG)
+  })
+
+  it('translates the gateway argv receipt into the child catalogue guard', () => {
+    const gatewayEnv: Record<string, string | undefined> = {}
+    applyMcpBridgeProfileArgvToEnv(
+      ['taskwraith', GEMINI_MCP_GATEWAY_SUBSET_ARG],
+      gatewayEnv
+    )
+    expect(gatewayEnv).toEqual({ TASKWRAITH_MCP_GATEWAY_SUBSET: '1' })
+
+    const fullEnv: Record<string, string | undefined> = {}
+    applyMcpBridgeProfileArgvToEnv(['taskwraith'], fullEnv)
+    expect(fullEnv).toEqual({})
+  })
+
+  it('registers Kimi global MCP on the gateway profile', async () => {
+    const captureProcessOutput = vi.fn(
+      async (_command: string, _args: string[]) => ({
+        stdout: '',
+        stderr: '',
+        code: 0,
+        timedOut: false
+      })
+    )
+    const runtime = new McpBridgeRuntime({
+      getGeminiMcpBrokerToken: () => 'token-1',
+      isDev: () => false,
+      getProcessExecPath: () => '/Applications/TaskWraith.app/TaskWraith',
+      captureProcessOutput
+    } as never)
+
+    await runtime.addKimiMcpBridgeRegistration('/usr/local/bin/kimi', '/tmp/taskwraith.sock')
+
+    expect(captureProcessOutput).toHaveBeenCalledOnce()
+    const addArgs = captureProcessOutput.mock.calls[0][1]
+    expect(addArgs).toContain(GEMINI_MCP_GATEWAY_SUBSET_ARG)
+    expect(addArgs[addArgs.length - 1]).toBe(GEMINI_MCP_GATEWAY_SUBSET_ARG)
+  })
+
+  it('reports whether Kimi actually attached the TaskWraith gateway', async () => {
+    const sendAgentCompatLine = vi.fn()
+    const runtime = new McpBridgeRuntime({
+      getSettings: () => ({ geminiMcpBridgeEnabled: true }),
+      sendAgentCompatLine
+    } as never)
+    vi.spyOn(runtime, 'startGeminiMcpBroker').mockResolvedValue()
+    vi.spyOn(runtime, 'repairKimiMcpBridge').mockResolvedValue()
+
+    await expect(runtime.prepareKimiMcpBridgeForRun({} as never)).resolves.toBe(true)
+    expect(sendAgentCompatLine).not.toHaveBeenCalled()
+
+    vi.spyOn(runtime, 'startGeminiMcpBroker').mockRejectedValueOnce(new Error('socket down'))
+    await expect(runtime.prepareKimiMcpBridgeForRun({} as never)).resolves.toBe(false)
+    expect(sendAgentCompatLine).toHaveBeenCalledWith(
+      {},
+      'kimi',
+      expect.objectContaining({ title: 'Kimi MCP bridge registration failed' })
+    )
+  })
+
+  it('reports Kimi gateway unavailable when the bridge setting is disabled', async () => {
+    const runtime = new McpBridgeRuntime({
+      getSettings: () => ({ geminiMcpBridgeEnabled: false })
+    } as never)
+    await expect(runtime.prepareKimiMcpBridgeForRun({} as never)).resolves.toBe(false)
   })
 })

@@ -19,12 +19,15 @@
 // Kept free of Electron / fs / IPC imports so it can be unit-tested
 // directly against fixed inputs.
 
-import { TASKWRAITH_MCP_TOOLS } from './TaskWraithMcpTools'
 import { buildUserMcpRemoteHeaders, type UserMcpLaunchServer } from './UserMcpServers'
-import { CORE_MCP_ADVERTISE_TOOLS } from './mcp/McpToolProfiles'
+import {
+  FULL_MCP_ADVERTISE_TOOLS,
+  taskWraithMcpAdvertisedToolNamesForProfile
+} from './mcp/McpToolProfiles'
 import {
   TASKWRAITH_FULL_MCP_PROFILE_ID,
-  isCoreTaskWraithMcpProfile
+  isCoreTaskWraithMcpProfile,
+  isGatewayTaskWraithMcpProfile
 } from './mcp/McpSessionProfileFence'
 import type { TaskWraithMcpProfileId } from './store/types'
 
@@ -32,7 +35,7 @@ import type { TaskWraithMcpProfileId } from './store/types'
  * TaskWraith MCP tool name list. Re-exported under the Claude-specific name
  * for tests and call sites that validate Claude's `allowedTools` wiring.
  */
-export const CLAUDE_TASKWRAITH_TOOL_NAMES = TASKWRAITH_MCP_TOOLS
+export const CLAUDE_TASKWRAITH_TOOL_NAMES = FULL_MCP_ADVERTISE_TOOLS
 
 /**
  * Server name used as the key in `mcpServers` and as the prefix for
@@ -156,23 +159,28 @@ export function buildClaudeTaskWraithMcpServers(
   return Object.keys(servers).length > 0 ? servers : null
 }
 
-const TASKWRAITH_MCP_CORE_SUBSET_ARG = '--core-subset'
+export const TASKWRAITH_MCP_CORE_SUBSET_ARG = '--core-subset'
+export const TASKWRAITH_MCP_GATEWAY_SUBSET_ARG = '--gateway-subset'
 
 function claudeTaskWraithBridgeArgsForProfile(
   bridgeArgs: readonly string[],
   profileId: TaskWraithMcpProfileId | null | undefined
 ): string[] {
-  const args = bridgeArgs.filter((arg) => arg !== TASKWRAITH_MCP_CORE_SUBSET_ARG)
+  const args = bridgeArgs.filter(
+    (arg) =>
+      arg !== TASKWRAITH_MCP_CORE_SUBSET_ARG && arg !== TASKWRAITH_MCP_GATEWAY_SUBSET_ARG
+  )
   if (isCoreTaskWraithMcpProfile(profileId)) args.push(TASKWRAITH_MCP_CORE_SUBSET_ARG)
+  if (isGatewayTaskWraithMcpProfile(profileId)) args.push(TASKWRAITH_MCP_GATEWAY_SUBSET_ARG)
   return args
 }
 
 function claudeTaskWraithToolNamesForProfile(
   profileId: TaskWraithMcpProfileId | null | undefined
 ): readonly string[] {
-  return isCoreTaskWraithMcpProfile(profileId)
-    ? CORE_MCP_ADVERTISE_TOOLS
-    : CLAUDE_TASKWRAITH_TOOL_NAMES
+  return taskWraithMcpAdvertisedToolNamesForProfile(
+    profileId ?? TASKWRAITH_FULL_MCP_PROFILE_ID
+  )
 }
 
 function buildClaudeTaskWraithMcpEnv(input: ClaudeTaskWraithMcpInput): Record<string, string> {

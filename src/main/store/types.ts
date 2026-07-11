@@ -636,7 +636,10 @@ export type EnsembleStageRole = 'scout' | 'worker' | 'reviewer'
  * persisted value deliberately: changing profile membership is a session
  * boundary, never an in-place mutation of a provider-native session.
  */
-export type TaskWraithMcpProfileId = 'taskwraith-full-v1' | 'taskwraith-core-v1'
+export type TaskWraithMcpProfileId =
+  | 'taskwraith-full-v1'
+  | 'taskwraith-core-v1'
+  | 'taskwraith-gateway-v1'
 
 /**
  * Main-owned proof of the TaskWraith MCP catalog a provider session was born

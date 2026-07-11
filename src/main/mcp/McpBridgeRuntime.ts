@@ -16,7 +16,15 @@ import {
   isPlanAdvertisedTool,
   isReadOnlyAdvertisedTool
 } from './McpAutoAllowedTools'
-import { isCoreMcpAdvertisedTool } from './McpToolProfiles'
+import {
+  gatewayToolDefinitions,
+  isCapabilityGatewayToolName,
+  type CapabilityGatewayToolName
+} from './McpToolGateway'
+import {
+  isCoreMcpAdvertisedTool,
+  isGatewayMcpAdvertisedTool
+} from './McpToolProfiles'
 import type { McpCallerContext } from './McpRouteGuards'
 // Audit MCP tool definitions — advertised ONLY to audit role-runs (the bridge
 // child carries TASKWRAITH_MCP_AUDIT=1, set per-run at the provider spawn site).
@@ -76,6 +84,11 @@ export const GEMINI_MCP_PLAN_SUBSET_ARG = '--plan-subset'
 // 4.5 seats advertise the explicit general-purpose core profile instead.
 // Carried in argv so each transient bridge process owns its immutable profile.
 export const GEMINI_MCP_CORE_SUBSET_ARG = '--core-subset'
+// Progressive-disclosure profile flag. A bridge launched with this flag has an
+// immutable, cache-stable direct catalogue plus the two virtual capability
+// gateway tools. Hidden first-party tools remain reachable only through the
+// gateway and retain their underlying host-side approval and routing policy.
+export const GEMINI_MCP_GATEWAY_SUBSET_ARG = '--gateway-subset'
 // Audit scope flag. Carried in the bridge ARGV (atomic with the spawn, like
 // safe-subset) AND/OR inherited via env: a bridge launched for an audit role-run
 // also advertises the audit_* tool namespace. The bootstrap translates this arg
@@ -84,6 +97,24 @@ export const GEMINI_MCP_CORE_SUBSET_ARG = '--core-subset'
 // this does NOT restrict tools/call — audit tools route through the registered
 // audit context, and non-audit runs never set the flag.
 export const GEMINI_MCP_AUDIT_SUBSET_ARG = '--audit-subset'
+
+/**
+ * Translate immutable bridge launch flags into the environment read by the
+ * JSON-RPC catalogue/call guard. Keeping this pure and exported lets tests prove
+ * that a provider cannot launch a gateway-profile child which accidentally
+ * serves the full catalogue because an argv flag was forgotten at bootstrap.
+ */
+export function applyMcpBridgeProfileArgvToEnv(
+  argv: readonly string[],
+  env: Record<string, string | undefined>
+): void {
+  if (argv.includes(GEMINI_MCP_SAFE_SUBSET_ARG)) env.TASKWRAITH_MCP_SAFE_SUBSET = '1'
+  if (argv.includes(GEMINI_MCP_PLAN_SUBSET_ARG)) env.TASKWRAITH_MCP_PLAN_SUBSET = '1'
+  if (argv.includes(GEMINI_MCP_CORE_SUBSET_ARG)) env.TASKWRAITH_MCP_CORE_SUBSET = '1'
+  if (argv.includes(GEMINI_MCP_GATEWAY_SUBSET_ARG)) env.TASKWRAITH_MCP_GATEWAY_SUBSET = '1'
+  if (argv.includes(GEMINI_MCP_AUDIT_SUBSET_ARG)) env.TASKWRAITH_MCP_AUDIT = '1'
+}
+
 export const GEMINI_MCP_ALLOWED_TOOL_NAMES = [
   ...TASKWRAITH_MCP_TOOLS,
   ...TASKWRAITH_MCP_TOOLS.map((tool) => `${GEMINI_MCP_SERVER_NAME}__${tool}`)
@@ -239,7 +270,7 @@ export interface McpBridgeRuntimeDeps {
   createCliEnv: (extra: Record<string, string>, binaryPath?: string | null) => Record<string, string>
   appendLimitedOutput?: (current: string, chunk: Buffer) => { value: string; truncated: boolean }
   executeGeminiMcpTool: (
-    toolName: TaskWraithMcpToolName,
+    toolName: TaskWraithMcpToolName | CapabilityGatewayToolName,
     args: unknown,
     route: McpBridgeAgentRunRoute,
     parentProvider: ProviderId,
@@ -306,6 +337,34 @@ function isBridgeAuditMcpToolName(value: string): boolean {
 
 function isCoreMcpAdvertisedForSeat(name: string): boolean {
   return isCoreMcpAdvertisedTool(name)
+}
+
+function isGatewayMcpAdvertisedForSeat(name: string): boolean {
+  return isGatewayMcpAdvertisedTool(name)
+}
+
+type GatewayInvocationTarget =
+  | { ok: true; name: TaskWraithMcpToolName }
+  | { ok: false; error: string }
+
+/**
+ * Resolve only the wrapped target identity needed by the bridge's catalogue and
+ * permission ceilings. Argument-schema validation and execution stay on the
+ * main side so capability_invoke cannot become a second, blanket-approved
+ * execution path.
+ */
+function resolveBridgeGatewayInvocationTarget(args: unknown): GatewayInvocationTarget {
+  if (!isRecord(args) || typeof args.name !== 'string' || !args.name.trim()) {
+    return { ok: false, error: 'capability_invoke requires a non-empty tool name.' }
+  }
+  const name = canonicalTaskWraithToolName(args.name)
+  if (isCapabilityGatewayToolName(name)) {
+    return { ok: false, error: 'Capability gateway tools cannot invoke themselves.' }
+  }
+  if (!isTaskWraithMcpToolName(name)) {
+    return { ok: false, error: `Unknown TaskWraith MCP capability: ${args.name}` }
+  }
+  return { ok: true, name }
 }
 
 function defaultAppendLimitedOutput(
@@ -597,6 +656,12 @@ export function handleMcpJsonRpcMessage(
     // through the normal main-side approvals and path/workspace guards.
     const coreSubsetOnly =
       (deps.env?.TASKWRAITH_MCP_CORE_SUBSET ?? process.env.TASKWRAITH_MCP_CORE_SUBSET) === '1'
+    // Progressive-disclosure profile. The direct catalogue stays fixed while
+    // hidden first-party tools are discovered/invoked through the two virtual
+    // gateway tools appended below.
+    const gatewaySubsetOnly =
+      (deps.env?.TASKWRAITH_MCP_GATEWAY_SUBSET ??
+        process.env.TASKWRAITH_MCP_GATEWAY_SUBSET) === '1'
     // Audit role-run bridge (TASKWRAITH_MCP_AUDIT=1): additionally advertise the
     // audit_* tool namespace so the role-run can record findings/verdicts/profile.
     // The flag is set per-run at the provider spawn site and never on a normal
@@ -604,14 +669,18 @@ export function handleMcpJsonRpcMessage(
     // (audit tools route via the registered audit context in the broker).
     const auditSubset = (deps.env?.TASKWRAITH_MCP_AUDIT ?? process.env.TASKWRAITH_MCP_AUDIT) === '1'
     const allTools = deps.getMcpToolDefinitions()
-    const baseTools =
-      safeSubsetOnly || coreSubsetOnly
+    const directTools =
+      safeSubsetOnly || coreSubsetOnly || gatewaySubsetOnly
         ? allTools.filter(
             (tool) =>
               (!safeSubsetOnly || isAdvertisedForSeat(tool.name)) &&
-              (!coreSubsetOnly || isCoreMcpAdvertisedForSeat(tool.name))
+              (!coreSubsetOnly || isCoreMcpAdvertisedForSeat(tool.name)) &&
+              (!gatewaySubsetOnly || isGatewayMcpAdvertisedForSeat(tool.name))
           )
         : allTools
+    const baseTools = gatewaySubsetOnly
+      ? [...directTools, ...gatewayToolDefinitions()]
+      : directTools
     const tools = auditSubset ? [...baseTools, ...auditToolDefinitions()] : baseTools
     writeMcpResponse(id, { tools }, transport, stdout)
     return
@@ -621,6 +690,31 @@ export function handleMcpJsonRpcMessage(
     const rawName = params.name
     const name = canonicalTaskWraithToolName(String(rawName || ''))
     const args = params.arguments || {}
+    const gatewaySubsetOnly =
+      (deps.env?.TASKWRAITH_MCP_GATEWAY_SUBSET ??
+        process.env.TASKWRAITH_MCP_GATEWAY_SUBSET) === '1'
+    const gatewayToolRequested = isCapabilityGatewayToolName(name)
+    const gatewayInvocationTarget =
+      name === 'capability_invoke' ? resolveBridgeGatewayInvocationTarget(args) : null
+    if (gatewayInvocationTarget && !gatewayInvocationTarget.ok) {
+      bridgeLog(
+        `tools/call REJECTED (gateway target) name=${String(rawName)} ` +
+          `id=${String(id)} reason=${gatewayInvocationTarget.error}`
+      )
+      writeMcpError(id, -32602, gatewayInvocationTarget.error, transport, stdout)
+      return
+    }
+    const policyToolName = gatewayInvocationTarget?.ok ? gatewayInvocationTarget.name : name
+    if (gatewayToolRequested && !gatewaySubsetOnly) {
+      writeMcpError(
+        id,
+        -32601,
+        `Tool '${String(rawName || name)}' is available only in the TaskWraith gateway MCP profile.`,
+        transport,
+        stdout
+      )
+      return
+    }
     const auditSubset =
       (deps.env?.TASKWRAITH_MCP_AUDIT ?? process.env.TASKWRAITH_MCP_AUDIT) === '1'
     const auditToolRequested = auditSubset && isBridgeAuditMcpToolName(String(name))
@@ -638,7 +732,9 @@ export function handleMcpJsonRpcMessage(
     const planSubset =
       (deps.env?.TASKWRAITH_MCP_PLAN_SUBSET ?? process.env.TASKWRAITH_MCP_PLAN_SUBSET) === '1'
     const isAdvertisedForSeat = planSubset ? isPlanAdvertisedTool : isReadOnlyAdvertisedTool
-    if (safeSubsetOnly && !isAdvertisedForSeat(String(name)) && !auditToolRequested) {
+    const safeScopedToolAllowed =
+      name === 'capability_search' || isAdvertisedForSeat(String(policyToolName))
+    if (safeSubsetOnly && !safeScopedToolAllowed && !auditToolRequested) {
       bridgeLog(
         `tools/call REJECTED (${planSubset ? 'plan' : 'read-only'} scope) ` +
           `name=${String(rawName)} canonical=${String(name)} id=${String(id)}`
@@ -647,6 +743,30 @@ export function handleMcpJsonRpcMessage(
         id,
         -32601,
         `Tool '${String(rawName || name)}' is not available to a read-only TaskWraith seat.`,
+        transport,
+        stdout
+      )
+      return
+    }
+    // A gateway-profile seat may call its compact direct catalogue normally.
+    // Hidden tools are reachable only through capability_invoke; importantly,
+    // the broker payload below remains the OUTER gateway call so main can
+    // resolve route hints and execute the target through its normal approval,
+    // guard, lock, budget, transcript, and audit seams.
+    if (
+      gatewaySubsetOnly &&
+      !gatewayToolRequested &&
+      !isGatewayMcpAdvertisedForSeat(String(name)) &&
+      !auditToolRequested
+    ) {
+      bridgeLog(
+        `tools/call REJECTED (gateway scope) name=${String(rawName)} ` +
+          `canonical=${String(name)} id=${String(id)}`
+      )
+      writeMcpError(
+        id,
+        -32601,
+        `Tool '${String(rawName || name)}' is not directly available in the TaskWraith gateway MCP profile. Use capability_search and capability_invoke.`,
         transport,
         stdout
       )
@@ -897,7 +1017,8 @@ export class McpBridgeRuntime {
     socketPath: string = this.deps.getGeminiMcpSocketPath(),
     safeSubset = false,
     planSubset = false,
-    coreSubset = false
+    coreSubset = false,
+    gatewaySubset = false
   ): string[] {
     return [
       ...(this.deps.isDev() ? [this.deps.getAppPath()] : []),
@@ -917,7 +1038,11 @@ export class McpBridgeRuntime {
       // Tool-count constrained model seat: advertise the explicit coding/core
       // profile while retaining normal write approvals. Appended last so the
       // socket/token index parsing remains unchanged.
-      ...(coreSubset ? [GEMINI_MCP_CORE_SUBSET_ARG] : [])
+      ...(coreSubset ? [GEMINI_MCP_CORE_SUBSET_ARG] : []),
+      // Progressive-disclosure profile. Kept in argv so the child process owns
+      // a fixed profile for its entire lifetime; provider env forwarding is not
+      // part of the profile boundary.
+      ...(gatewaySubset ? [GEMINI_MCP_GATEWAY_SUBSET_ARG] : [])
     ]
   }
 
@@ -940,7 +1065,11 @@ export class McpBridgeRuntime {
     }
     const rawToolName = brokerRequestRecord.tool || brokerRequestRecord.name
     const toolName = canonicalTaskWraithToolName(String(rawToolName || ''))
-    if (!isTaskWraithMcpToolName(toolName) && !isBridgeAuditMcpToolName(toolName)) {
+    if (
+      !isTaskWraithMcpToolName(toolName) &&
+      !isCapabilityGatewayToolName(toolName) &&
+      !isBridgeAuditMcpToolName(toolName)
+    ) {
       return { ok: false, error: `Unknown TaskWraith MCP tool: ${String(rawToolName || 'unknown')}` }
     }
     const parentProvider = normalizeBrokerParentProvider(brokerRequestRecord.parentProvider)
@@ -955,7 +1084,7 @@ export class McpBridgeRuntime {
     const result = await this.deps.executeGeminiMcpTool(
       // Audit tools are a deliberately run-scoped extension to the canonical
       // catalog. The main executor validates the active audit registry/role.
-      toolName as TaskWraithMcpToolName,
+      toolName as TaskWraithMcpToolName | CapabilityGatewayToolName,
       brokerRequestRecord.arguments ?? brokerRequestRecord.args ?? brokerRequestRecord.input,
       normalizeRunRoute(brokerRequestRecord),
       parentProvider,
@@ -1676,7 +1805,12 @@ export class McpBridgeRuntime {
   async addKimiMcpBridgeRegistration(kimiBinaryPath: string, socketPath: string): Promise<void> {
     const addArgs = buildKimiMcpBridgeAddArgs({
       bridgeBinaryPath: this.processExecPath(),
-      bridgeArgs: this.taskwraithMcpBridgeArgs(socketPath)
+      // Kimi owns one global MCP registration rather than a receipted,
+      // session-scoped tool surface. Keep that TaskWraith-owned registration on
+      // the compact gateway profile by default, while leaving user MCP servers
+      // and Kimi-native tools untouched. Native sessions may observe a repaired
+      // registration on Kimi's own refresh schedule; do not claim a session fence.
+      bridgeArgs: this.taskwraithMcpBridgeArgs(socketPath, false, false, false, true)
     })
     const addResult = await this.deps.captureProcessOutput(kimiBinaryPath, addArgs, undefined, 15_000)
     if (addResult.code !== 0) {
@@ -1747,16 +1881,17 @@ export class McpBridgeRuntime {
     await this.kimiMcpBridgeRepairPromise
   }
 
-  async prepareKimiMcpBridgeForRun(sender: WebContents): Promise<void> {
+  async prepareKimiMcpBridgeForRun(sender: WebContents): Promise<boolean> {
     const settings = this.deps.getSettings()
     if (!settings.geminiMcpBridgeEnabled) {
-      return
+      return false
     }
     try {
       await this.startGeminiMcpBroker()
       if (!this.kimiMcpBridgeInstalledForCurrentToken) {
         await this.repairKimiMcpBridge()
       }
+      return true
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       this.deps.sendAgentCompatLine(sender, 'kimi', {
@@ -1766,6 +1901,7 @@ export class McpBridgeRuntime {
         title: 'Kimi MCP bridge registration failed',
         message: `TaskWraith could not register the TaskWraith MCP server with Kimi: ${message}. Cross-provider delegation tools will not be available for this run.`
       })
+      return false
     }
   }
 

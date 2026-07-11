@@ -132,11 +132,11 @@ export function ollamaModelFamilyTemperature(modelId: string): number | undefine
   return undefined
 }
 
-// Tier retirement (2026-07): Ollama gets the full tool surface, but a local
-// model only needs the handful it actually drives spelled out. The preamble
+// Ollama gets the compact gateway surface and only needs the handful it actually
+// drives spelled out. The preamble
 // details ONLY these ~7 protocol-critical tools inline (concrete JSON arg shapes
 // the text protocol's first moves depend on); every other advertised tool is
-// name-listed, and full schemas for ANY tool come from `tool_help` on demand —
+// name-listed, and hidden schemas come from capability_search/tool_help on demand —
 // so the inline block does not re-duplicate what tool_help already serves.
 const OLLAMA_PREAMBLE_DETAILED_TOOLS = new Set<OllamaToolName>([
   'read_file',
@@ -249,11 +249,10 @@ export function ollamaLocalToolSystemPrompt(
 ): string {
   const intent = options.intent ?? 'workspace'
   const normalizedTier = normalizeOllamaToolControlTier(tier)
-  // Advertise only the CURATED working set (~22), not the full catalog — small
-  // local models degrade badly when shown too many tool names. The tail stays
-  // executable at the gate and reachable via tool_help. Under a read-only/plan
-  // posture, edit + shell tools are also dropped from the advertisement (they'd
-  // only be denied), so the seat isn't handed tools it can't run.
+  // Advertise the immutable gateway-v1 direct set, not the full catalogue. The
+  // tail stays executable through capability_invoke and is reachable through
+  // progressive discovery or legacy tool_help. A read-only/plan posture receives the exact
+  // intersection with the shared safe advertise set.
   const tools = ollamaAdvertisedToolNames({
     networkAccess: options.networkAccess,
     readOnly: options.readOnly
@@ -263,8 +262,8 @@ export function ollamaLocalToolSystemPrompt(
     ? ollamaModelFamilyPromptLines(modelId, intent, normalizedTier)
     : []
   // Detail ONLY the ~7 protocol-critical tools inline (concrete JSON arg shapes);
-  // name-list the rest of the advertised set. Full schemas for any tool come from
-  // tool_help — the inline block does not re-duplicate what tool_help serves.
+  // name-list the rest of the advertised set. Hidden schemas come from
+  // capability_search/tool_help, so the inline block does not duplicate them.
   const detailed: string[] = []
   const named: string[] = []
   for (const toolName of tools) {
@@ -303,7 +302,7 @@ export function ollamaLocalToolSystemPrompt(
     )
   }
   lines.push(
-    'More TaskWraith tools exist beyond these. For any tool\'s exact arguments — or to list them all — call tool_help: {"taskwraith_tool":{"name":"tool_help","arguments":{"name":"<tool or empty to list>"}}}.',
+    'More TaskWraith tools exist beyond these. Use capability_search with a short task query to get the best exact schemas, then capability_invoke with the returned tool name and arguments. Legacy tool_help can still fetch one exact schema (or list names) with {"taskwraith_tool":{"name":"tool_help","arguments":{"name":"<tool or empty to list>"}}}, but hidden tools must be executed through capability_invoke.',
     'Paths must stay inside the active workspace.',
     options.readOnly
       ? 'This run is READ-ONLY: file edits, shell, and publishing are unavailable and not listed above. Do not attempt them — read, search, and answer, and say plainly if the task would require a write you cannot make.'

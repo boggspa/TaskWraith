@@ -8,6 +8,9 @@ import {
   CURSOR_BROKER_MCP_ALLOW_RULES,
   CURSOR_BROKER_PLAN_MCP_ALLOW_RULES,
   CURSOR_BROKER_READONLY_MCP_ALLOW_RULES,
+  CURSOR_GATEWAY_MCP_TOOL_NAMES,
+  CURSOR_GATEWAY_PLAN_MCP_TOOL_NAMES,
+  CURSOR_GATEWAY_READONLY_MCP_TOOL_NAMES,
   CURSOR_MCP_ALLOW_RULES,
   CURSOR_MCP_SERVER_NAME,
   CURSOR_READONLY_MCP_ALLOW_RULES,
@@ -23,9 +26,10 @@ import {
   mergeGlobalCursorMcpServers
 } from './CursorMcpBridge'
 import {
-  PLAN_INSTRUMENT_ADVERTISE_TOOLS,
-  READ_ONLY_MCP_ADVERTISE_TOOLS
+  isPlanAdvertisedTool,
+  isReadOnlyAdvertisedTool
 } from '../mcp/McpAutoAllowedTools'
+import { isCapabilityGatewayToolName } from '../mcp/McpToolGateway'
 
 // 1.0.6-CRUX34 (OQ#2) — the Cursor MCP bridge. The live spike proved that a
 // TaskWraith MCP server registered via workspace `.cursor/mcp.json` + Cursor
@@ -39,6 +43,15 @@ describe('CURSOR_MCP_ALLOW_RULES', () => {
     expect(CURSOR_MCP_ALLOW_RULES).toContain(`Mcp(${CURSOR_MCP_SERVER_NAME}:*)`)
     expect(CURSOR_MCP_ALLOW_RULES).toContain(`Mcp(${CURSOR_MCP_SERVER_NAME}:run_shell_command)`)
     expect(CURSOR_MCP_ALLOW_RULES).toContain(`Mcp(${CURSOR_MCP_SERVER_NAME}:apply_patch)`)
+    expect(CURSOR_MCP_ALLOW_RULES).toContain(
+      `Mcp(${CURSOR_MCP_SERVER_NAME}:capability_search)`
+    )
+    expect(CURSOR_MCP_ALLOW_RULES).toContain(
+      `Mcp(${CURSOR_MCP_SERVER_NAME}:capability_invoke)`
+    )
+    expect(CURSOR_MCP_ALLOW_RULES).not.toContain(
+      `Mcp(${CURSOR_MCP_SERVER_NAME}:video_encode_clip)`
+    )
     expect(CURSOR_MCP_ALLOW_RULES).toContain(`Mcp(${CURSOR_MCP_SERVER_NAME}-run_shell_command)`)
     expect(CURSOR_MCP_ALLOW_RULES).toContain(`Mcp(${CURSOR_MCP_SERVER_NAME}-apply_patch)`)
     expect(CURSOR_MCP_ALLOW_RULES).not.toContain(`Mcp(${CURSOR_MCP_SERVER_NAME}-*)`)
@@ -91,10 +104,31 @@ describe('canonical global broker allow rules', () => {
     expect(CURSOR_BROKER_READONLY_MCP_ALLOW_RULES).not.toContain(
       `Mcp(${CURSOR_MCP_SERVER_NAME}:*)`
     )
-    for (const tool of PLAN_INSTRUMENT_ADVERTISE_TOOLS) {
+    for (const tool of CURSOR_GATEWAY_PLAN_MCP_TOOL_NAMES) {
       expect(CURSOR_BROKER_PLAN_MCP_ALLOW_RULES).toContain(
         `Mcp(${CURSOR_MCP_SERVER_NAME}:${tool})`
       )
+    }
+    expect(CURSOR_BROKER_READONLY_MCP_ALLOW_RULES).toContain(
+      `Mcp(${CURSOR_MCP_SERVER_NAME}:capability_search)`
+    )
+    expect(CURSOR_BROKER_READONLY_MCP_ALLOW_RULES).toContain(
+      `Mcp(${CURSOR_MCP_SERVER_NAME}:capability_invoke)`
+    )
+    // Hidden plan instruments are reached through capability_invoke, not
+    // directly advertised or pre-approved as individual Cursor MCP tools.
+    expect(CURSOR_BROKER_PLAN_MCP_ALLOW_RULES).not.toContain(
+      `Mcp(${CURSOR_MCP_SERVER_NAME}:canvas_click)`
+    )
+  })
+
+  it('derives scoped lists from the gateway ceiling plus permission overlays', () => {
+    expect(CURSOR_GATEWAY_MCP_TOOL_NAMES).toHaveLength(40)
+    for (const tool of CURSOR_GATEWAY_READONLY_MCP_TOOL_NAMES) {
+      expect(isCapabilityGatewayToolName(tool) || isReadOnlyAdvertisedTool(tool)).toBe(true)
+    }
+    for (const tool of CURSOR_GATEWAY_PLAN_MCP_TOOL_NAMES) {
+      expect(isCapabilityGatewayToolName(tool) || isPlanAdvertisedTool(tool)).toBe(true)
     }
   })
 })
@@ -121,8 +155,10 @@ describe('CURSOR_READONLY_MCP_ALLOW_RULES (read-only safe-subset broker)', () =>
         `Mcp(${CURSOR_SCOPED_MCP_SERVER_NAME}-${mutating})`
       )
     }
-    // Exactly one exact-rule per safe-subset tool (plus the wildcard + hyphen forms).
-    for (const tool of READ_ONLY_MCP_ADVERTISE_TOOLS) {
+    // Exactly one exact-rule per gateway/read-only tool (plus the wildcard +
+    // hyphen forms). Safe capabilities outside the compact direct set are
+    // available through capability_invoke instead of individual rules.
+    for (const tool of CURSOR_GATEWAY_READONLY_MCP_TOOL_NAMES) {
       expect(CURSOR_READONLY_MCP_ALLOW_RULES).toContain(
         `Mcp(${CURSOR_SCOPED_MCP_SERVER_NAME}:${tool})`
       )
