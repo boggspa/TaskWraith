@@ -490,6 +490,12 @@ const clampPaneOpacity = (value: unknown): number => {
   const parsed = typeof value === 'number' ? value : Number(value)
   return Number.isFinite(parsed) ? Math.max(0, Math.min(100, Math.round(parsed))) : 100
 }
+const rangeFillStyle = (value: number, min: number, max: number): React.CSSProperties => {
+  const fill = max > min ? ((value - min) / (max - min)) * 100 : 0
+  return {
+    '--ensemble-context-slider-fill': `${Math.max(0, Math.min(100, fill))}%`
+  } as React.CSSProperties
+}
 const VISUAL_EFFECT_OPTIONS: Array<{ value: VisualEffectStyle; label: string }> = [
   { value: 'auto', label: 'Auto' },
   { value: 'liquid_glass', label: 'LiquidGlass' },
@@ -3645,33 +3651,39 @@ function SettingsDiffStatColorControl({
           <span className="agent-pool-hue-label">Hue</span>
           <input
             type="range"
+            className="composer-ensemble-context-slider"
             min={0}
             max={359}
             value={safeHue}
             onChange={(event) => applyColor({ hue: Number(event.target.value) })}
             aria-label={`${label} hue`}
+            style={rangeFillStyle(safeHue, 0, 359)}
           />
         </label>
         <label className="agent-pool-color-slider">
           <span className="agent-pool-hue-label">Saturation</span>
           <input
             type="range"
+            className="composer-ensemble-context-slider"
             min={0}
             max={100}
             value={safeSaturation}
             onChange={(event) => applyColor({ saturation: Number(event.target.value) })}
             aria-label={`${label} saturation`}
+            style={rangeFillStyle(safeSaturation, 0, 100)}
           />
         </label>
         <label className="agent-pool-color-slider">
           <span className="agent-pool-hue-label">Luma</span>
           <input
             type="range"
+            className="composer-ensemble-context-slider"
             min={0}
             max={100}
             value={safeBrightness}
             onChange={(event) => applyColor({ brightness: Number(event.target.value) })}
             aria-label={`${label} luma`}
+            style={rangeFillStyle(safeBrightness, 0, 100)}
           />
         </label>
         <div className="agent-pool-color-fields">
@@ -5720,6 +5732,7 @@ export function SettingsPanel({
                       </span>
                       <input
                         type="range"
+                        className="composer-ensemble-context-slider"
                         min={0}
                         max={100}
                         step={1}
@@ -5730,7 +5743,7 @@ export function SettingsPanel({
                             sidebarOpacityOverride: true
                           })
                         }
-                        style={{ width: '100%' }}
+                        style={{ width: '100%', ...rangeFillStyle(sidebarOpacityValue, 0, 100) }}
                       />
                     </label>
                     <label className="settings-effects-field">
@@ -5742,6 +5755,7 @@ export function SettingsPanel({
                       </span>
                       <input
                         type="range"
+                        className="composer-ensemble-context-slider"
                         min={0}
                         max={100}
                         step={1}
@@ -5752,7 +5766,7 @@ export function SettingsPanel({
                             mainPaneOpacityOverride: true
                           })
                         }
-                        style={{ width: '100%' }}
+                        style={{ width: '100%', ...rangeFillStyle(mainPaneOpacityValue, 0, 100) }}
                       />
                     </label>
                   </section>
@@ -6109,6 +6123,7 @@ export function SettingsPanel({
                 </label>
                 <input
                   type="range"
+                  className="composer-ensemble-context-slider"
                   min={0}
                   max={25}
                   step={1}
@@ -6121,7 +6136,14 @@ export function SettingsPanel({
                       )
                     })
                   }
-                  style={{ width: '100%' }}
+                  style={{
+                    width: '100%',
+                    ...rangeFillStyle(
+                      Math.max(0, Math.min(25, currencyOverestimatePercent ?? 0)),
+                      0,
+                      25
+                    )
+                  }}
                 />
                 <p className="settings-hint">
                   {(currencyOverestimatePercent ?? 0) > 0
@@ -6451,6 +6473,7 @@ export function SettingsPanel({
                   </label>
                   <input
                     type="range"
+                    className="composer-ensemble-context-slider"
                     min={4}
                     max={20}
                     step={1}
@@ -6467,7 +6490,17 @@ export function SettingsPanel({
                         }
                       })
                     }}
-                    style={{ width: '100%' }}
+                    style={{
+                      width: '100%',
+                      ...rangeFillStyle(
+                        Math.max(
+                          4,
+                          Math.min(20, Number(dashboardStatPrefs?.workspacesShown ?? 8) || 8)
+                        ),
+                        4,
+                        20
+                      )
+                    }}
                     aria-label="Maximum workspace cards shown on the Workspaces tab"
                   />
                   <p className="settings-hint">
@@ -6562,6 +6595,7 @@ export function SettingsPanel({
                             </label>
                             <input
                               type="range"
+                              className="composer-ensemble-context-slider"
                               min={30}
                               max={600}
                               step={30}
@@ -6578,7 +6612,7 @@ export function SettingsPanel({
                                   }
                                 })
                               }}
-                              style={{ width: '100%' }}
+                              style={{ width: '100%', ...rangeFillStyle(sliderValue, 30, 600) }}
                               aria-label="Dashboard tab auto-cycle interval in seconds"
                             />
                           </>
