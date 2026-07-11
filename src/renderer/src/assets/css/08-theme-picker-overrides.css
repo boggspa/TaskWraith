@@ -4903,12 +4903,17 @@
   border-color: var(--unified-soft-surface-border);
 }
 
-/* User message bubble. Already #ffffff in light mode — settle it
- * onto the same unified surface so all bubble-shaped chrome reads
- * as the same card material. */
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .message-bubble.user {
+/* The Default user-bubble choice gets a soft gray card in light themes,
+ * matching the native conversation treatment. Keep this explicitly keyed to
+ * `system`: named selections in Settings remain intentional color overrides
+ * rather than winning only as an incidental specificity side effect. */
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]):is(
+  [data-user-bubble-color="system"],
+  :not([data-user-bubble-color])
+) .message-bubble.user {
   background: var(--unified-soft-surface-bg);
   border-color: var(--unified-soft-surface-border);
+  color: var(--text-primary);
 }
 
 /* Sidebar info cards (Run Summary + Model Usage list). */
