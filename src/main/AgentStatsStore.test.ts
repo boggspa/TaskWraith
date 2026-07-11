@@ -78,6 +78,24 @@ describe('token + cost extraction', () => {
     ).toBe(10)
   })
 
+  it('does not add historical cache-inclusive aliases to input again', () => {
+    expect(
+      extractRunTokens({
+        input_tokens: 100,
+        cachedInputTokens: 80,
+        output_tokens: 5
+      })
+    ).toEqual({ inputTokens: 100, outputTokens: 5, totalTokens: 105 })
+    expect(
+      extractRunTokens({
+        input_tokens: 100,
+        cache_read_input_tokens: 80,
+        _agentbench_input_includes_cache: true,
+        output_tokens: 5
+      })
+    ).toEqual({ inputTokens: 100, outputTokens: 5, totalTokens: 105 })
+  })
+
   it('extracts cost in common spellings, 0 otherwise', () => {
     expect(extractRunCostUsd({ cost_usd: 0.42 })).toBeCloseTo(0.42)
     expect(extractRunCostUsd({ usage: { costUsd: 1.5 } })).toBeCloseTo(1.5)

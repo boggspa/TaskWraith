@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   codexUsageToStats,
+  cursorUsageToStats,
   extractProviderUsage,
   geminiUsageMetadataToStats,
   mergeProviderUsage
@@ -22,6 +23,66 @@ describe('ProviderRunStats', () => {
       total_tokens: 20,
       totalTokenLimit: 200_000,
       duration_ms: 1500
+    })
+  })
+
+  it('recognizes Codex cachedInputTokens as a subset of canonical input', () => {
+    expect(
+      codexUsageToStats({
+        last: {
+          inputTokens: 100,
+          cachedInputTokens: 40,
+          outputTokens: 10,
+          totalTokens: 110
+        }
+      })
+    ).toMatchObject({
+      input_tokens: 100,
+      output_tokens: 10,
+      total_tokens: 110,
+      cachedInputTokens: 40,
+      _taskwraith_input_includes_cache: true
+    })
+  })
+
+  it('recognizes the Codex snake_case cached-input subset alias', () => {
+    expect(
+      codexUsageToStats({
+        last: {
+          input_tokens: 100,
+          cached_input_tokens: 40,
+          output_tokens: 10,
+          total_tokens: 110
+        }
+      })
+    ).toMatchObject({
+      input_tokens: 100,
+      output_tokens: 10,
+      total_tokens: 110,
+      cache_read_input_tokens: 40,
+      _taskwraith_input_includes_cache: true
+    })
+  })
+
+  it('normalizes Cursor fresh and cached input into cache-inclusive canonical totals', () => {
+    expect(
+      cursorUsageToStats(
+        {
+          inputTokens: 8_129,
+          outputTokens: 834,
+          cacheReadTokens: 29_056,
+          cacheWriteTokens: 12
+        },
+        900
+      )
+    ).toMatchObject({
+      input_tokens: 37_197,
+      output_tokens: 834,
+      total_tokens: 38_031,
+      cache_read_input_tokens: 29_056,
+      cache_creation_input_tokens: 12,
+      duration_ms: 900,
+      _taskwraith_input_includes_cache: true
     })
   })
 
@@ -79,6 +140,25 @@ describe('ProviderRunStats', () => {
     })
   })
 
+  it('honors the legacy cache-inclusive marker and promotes it to the current marker', () => {
+    expect(
+      extractProviderUsage('claude', {
+        stats: {
+          input_tokens: 17,
+          cache_read_input_tokens: 7,
+          output_tokens: 2,
+          _agentbench_input_includes_cache: true
+        }
+      })
+    ).toMatchObject({
+      input_tokens: 17,
+      output_tokens: 2,
+      total_tokens: 19,
+      _agentbench_input_includes_cache: true,
+      _taskwraith_input_includes_cache: true
+    })
+  })
+
   it('extracts and canonicalizes Kimi input_other payloads', () => {
     expect(
       extractProviderUsage('kimi', {
@@ -93,6 +173,32 @@ describe('ProviderRunStats', () => {
       input_tokens: 31,
       output_tokens: 11,
       total_tokens: 42,
+      _taskwraith_input_includes_cache: true
+    })
+  })
+
+  it('keeps Kimi canonical input stable across extract then merge normalization', () => {
+    const extracted = extractProviderUsage('kimi', {
+      params: {
+        token_usage: {
+          input_other: 31,
+          input_cache_read: 7,
+          output_tokens: 11
+        }
+      }
+    })
+    const merged = mergeProviderUsage('kimi', undefined, extracted)
+
+    expect(extracted).toMatchObject({
+      input_tokens: 38,
+      output_tokens: 11,
+      total_tokens: 49,
+      _taskwraith_input_includes_cache: true
+    })
+    expect(merged).toMatchObject({
+      input_tokens: 38,
+      output_tokens: 11,
+      total_tokens: 49,
       _taskwraith_input_includes_cache: true
     })
   })
@@ -115,6 +221,31 @@ describe('ProviderRunStats', () => {
       input_tokens: 12,
       output_tokens: 3,
       total_tokens: 15
+    })
+  })
+
+  it('keeps the peak cache snapshots alongside peak canonical usage', () => {
+    const first = mergeProviderUsage('claude', undefined, {
+      input_tokens: 100,
+      output_tokens: 20,
+      cache_read_input_tokens: 80,
+      cache_creation_input_tokens: 10,
+      _taskwraith_input_includes_cache: true
+    })
+    const merged = mergeProviderUsage('claude', first, {
+      input_tokens: 90,
+      output_tokens: 25,
+      cache_read_input_tokens: 20,
+      cache_creation_input_tokens: 5,
+      _taskwraith_input_includes_cache: true
+    })
+
+    expect(merged).toMatchObject({
+      input_tokens: 100,
+      output_tokens: 25,
+      total_tokens: 125,
+      cache_read_input_tokens: 80,
+      cache_creation_input_tokens: 10
     })
   })
 
@@ -155,6 +286,20 @@ describe('ProviderRunStats', () => {
       total_tokens: 110,
       cache_read_input_tokens: 40,
       _taskwraith_input_includes_cache: true
+    })
+  })
+
+  it('includes Gemini thinking tokens when deriving a missing total', () => {
+    expect(
+      geminiUsageMetadataToStats({
+        promptTokenCount: 100,
+        candidatesTokenCount: 10,
+        thoughtsTokenCount: 25
+      })
+    ).toMatchObject({
+      input_tokens: 100,
+      output_tokens: 10,
+      total_tokens: 135
     })
   })
 })

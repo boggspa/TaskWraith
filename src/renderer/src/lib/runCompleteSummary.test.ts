@@ -370,6 +370,26 @@ describe('buildEnsembleRoundCostRow', () => {
     expect(row?.value).toBe('~$1.75 est. API-equiv')
   })
 
+  it('does not add historical Codex cache-subset aliases twice', () => {
+    const row = buildEnsembleRoundCostRow(
+      [
+        run({
+          provider: 'codex',
+          actualModel: 'gpt-5.5',
+          stats: {
+            input_tokens: 1_000_000,
+            cachedInputTokens: 800_000,
+            cached_input_tokens: 800_000,
+            output_tokens: 0
+          }
+        })
+      ],
+      { currency: 'USD', providerRates: ESTIMATE_RATES }
+    )
+
+    expect(row?.value).toBe('~$0.35 est. API-equiv')
+  })
+
   it('never estimates a seat that already reported cost_usd', () => {
     // Even with a rate table present + tokens, an explicit cost wins and no
     // "est." badge appears.

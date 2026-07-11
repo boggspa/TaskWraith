@@ -22,6 +22,11 @@ import {
   extractUsageCostUsd,
   extractUsageCountsFromCandidate
 } from './usageStats'
+import {
+  usageCacheCreationInputTokens,
+  usageCacheReadInputTokens,
+  usageInputIncludesCache
+} from '../../../shared/usageAccounting'
 
 export type RunCompleteSummaryRow = {
   label: string
@@ -114,7 +119,7 @@ export const buildEnsembleRoundCostRow = (
     const counts = extractUsageCountsFromCandidate(run.stats)
     const cacheCounts = extractCacheUsageCounts(run.stats)
     const inputIncludesCache =
-      run.stats?._taskwraith_input_includes_cache === true ||
+      usageInputIncludesCache(run.stats) ||
       cacheCounts.cacheReadInputTokens > 0 ||
       cacheCounts.cacheCreationInputTokens > 0
     const model = run.actualModel || run.requestedModel
@@ -242,31 +247,12 @@ const readPositiveNumber = (obj: any, paths: Array<string | string[]>): number =
   return 0
 }
 
-const readPositiveNumberPair = (
-  obj: any,
-  primaryPaths: Array<string | string[]>,
-  secondaryPaths: Array<string | string[]> = []
-): number => readPositiveNumber(obj, primaryPaths) + readPositiveNumber(obj, secondaryPaths)
-
 const extractCacheUsageCounts = (
   stats: any
 ): { cacheReadInputTokens: number; cacheCreationInputTokens: number } => {
   return {
-    cacheReadInputTokens: readPositiveNumberPair(
-      stats,
-      [
-        ['cacheReadInputTokens'],
-        ['cache_read_input_tokens'],
-        ['input_cache_read'],
-        ['cacheReadTokens']
-      ],
-      [['cached_input_tokens'], ['cachedInputTokens']]
-    ),
-    cacheCreationInputTokens: readPositiveNumber(stats, [
-      ['cacheCreationInputTokens'],
-      ['cache_creation_input_tokens'],
-      ['input_cache_creation']
-    ])
+    cacheReadInputTokens: usageCacheReadInputTokens(stats),
+    cacheCreationInputTokens: usageCacheCreationInputTokens(stats)
   }
 }
 

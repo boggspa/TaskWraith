@@ -8,6 +8,11 @@ import {
 } from './usageStats'
 import { estimateRunCostUsd, type RendererProviderRates } from './providerRateEstimate'
 import type { ChatRun, EnsembleParticipant, ProviderId } from '../../../main/store/types'
+import {
+  usageCacheCreationInputTokens,
+  usageCacheReadInputTokens,
+  usageInputIncludesCache
+} from '../../../shared/usageAccounting'
 
 type ChatTokenTally = {
   inputTokens: number
@@ -24,9 +29,6 @@ type ChatTokenTallyOptions = {
   providerRates?: RendererProviderRates
 }
 
-const sumUsageCounts = (stats: any, keys: Array<string | string[]>): number =>
-  keys.reduce((total, key) => total + extractUsageCount(stats, [key]), 0)
-
 const estimateCompletedRunCostUsd = (
   run: ChatRun | undefined,
   counts: { inputTokens: number; outputTokens: number },
@@ -35,7 +37,7 @@ const estimateCompletedRunCostUsd = (
 ): number => {
   if (explicitCostUsd > 0 || !run?.stats || !providerRates) return 0
   const stats = run.stats
-  const inputIncludesCache = stats?._taskwraith_input_includes_cache === true
+  const inputIncludesCache = usageInputIncludesCache(stats)
   const inputBaseTokens = extractUsageCount(stats, [
     ['input_tokens'],
     ['inputTokens'],
@@ -48,19 +50,8 @@ const estimateCompletedRunCostUsd = (
     ['tokenCounts', 'input'],
     ['token_counts', 'input']
   ])
-  const cacheReadInputTokens = sumUsageCounts(stats, [
-    ['cacheReadInputTokens'],
-    ['cache_read_input_tokens'],
-    ['input_cache_read'],
-    ['cacheReadTokens'],
-    ['cachedInputTokens'],
-    ['cached_input_tokens']
-  ])
-  const cacheCreationInputTokens = extractUsageCount(stats, [
-    ['cacheCreationInputTokens'],
-    ['cache_creation_input_tokens'],
-    ['input_cache_creation']
-  ])
+  const cacheReadInputTokens = usageCacheReadInputTokens(stats)
+  const cacheCreationInputTokens = usageCacheCreationInputTokens(stats)
   const inputAudioTokens = inputIncludesCache
     ? 0
     : extractUsageCount(stats, [['input_audio_tokens'], ['inputAudioTokens']])

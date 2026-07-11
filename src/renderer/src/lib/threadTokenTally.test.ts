@@ -92,6 +92,27 @@ describe('buildChatTokenTally', () => {
     expect(tally.inputTokens).toBe(5_000_000)
     expect(tally.estimatedCostUsd).toBeCloseTo(7, 6)
   })
+
+  it('prices historical Codex cache-subset stats without adding aliases again', () => {
+    const tally = buildChatTokenTally(
+      [
+        run(
+          {
+            input_tokens: 1_000_000,
+            cachedInputTokens: 800_000,
+            cached_input_tokens: 800_000,
+            output_tokens: 0
+          },
+          { provider: 'codex', actualModel: 'gpt-5.5' }
+        )
+      ],
+      { providerRates: RATES }
+    )
+
+    expect(tally.inputTokens).toBe(1_000_000)
+    expect(tally.totalTokens).toBe(1_000_000)
+    expect(tally.estimatedCostUsd).toBeCloseTo(1.4, 6)
+  })
 })
 
 describe('formatTallySuffix', () => {

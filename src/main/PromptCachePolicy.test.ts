@@ -119,7 +119,7 @@ describe('PromptCachePolicy', () => {
               runId: 'codex-run',
               provider: 'codex',
               startedAt: '2026-07-04T12:00:00.000Z',
-              stats: { input_tokens: 25, input_cache_read: 5 }
+              stats: { input_tokens: 25, cachedInputTokens: 5 }
             }
           ]
         }

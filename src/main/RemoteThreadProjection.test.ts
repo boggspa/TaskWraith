@@ -1452,6 +1452,46 @@ describe('RemoteThreadProjection', () => {
       expect(summary?.costText).toBe('~$1.75')
     })
 
+    it('does not double-count historical Codex cache-subset aliases on iOS', () => {
+      const summary = buildRunSummary(
+        [
+          {
+            runId: 'run-historical-codex-cost',
+            provider: 'codex',
+            actualModel: 'gpt-5.5',
+            stats: {
+              input_tokens: 1_000_000,
+              cachedInputTokens: 800_000,
+              cached_input_tokens: 800_000,
+              output_tokens: 0,
+              total_tokens: 1_000_000
+            }
+          } as unknown as ChatRun
+        ],
+        {
+          currency: 'USD',
+          providerRates: {
+            baseline: {
+              codex: {
+                models: [
+                  {
+                    modelId: 'gpt-5.5',
+                    inputUsdPerMillion: 1.25,
+                    outputUsdPerMillion: 10,
+                    cachedInputUsdPerMillion: 0.125
+                  }
+                ]
+              }
+            }
+          }
+        }
+      )
+
+      expect(summary?.tokensIn).toBe(1_000_000)
+      expect(summary?.totalTokens).toBe(1_000_000)
+      expect(summary?.costText).toBe('~$0.35')
+    })
+
     it('prices cli-default runs against the provider default model instead of the first rate row', () => {
       const summary = buildRunSummary(
         [

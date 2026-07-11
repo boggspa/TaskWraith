@@ -21,6 +21,11 @@ import type {
   PooledAgentStatsBreakdown,
   PooledAgentStatsSummary
 } from './store/types'
+import {
+  usageCacheCreationInputTokens,
+  usageCacheReadInputTokens,
+  usageInputIncludesCache
+} from '../shared/usageAccounting'
 
 export const AGENT_STATS_SCHEMA_VERSION = 1
 /** Raw per-run records tolerated before a file is compacted into one rollup. */
@@ -142,7 +147,7 @@ export function extractRunTokens(stats: unknown): {
   outputTokens: number
   totalTokens: number
 } {
-  const includesCache = Boolean((stats as Record<string, unknown>)?._taskwraith_input_includes_cache)
+  const includesCache = usageInputIncludesCache(stats)
   const inputBase = nestedNumber(stats, [
     ['input_tokens'],
     ['inputTokens'],
@@ -157,13 +162,7 @@ export function extractRunTokens(stats: unknown): {
   ])
   const cacheInput = includesCache
     ? 0
-    : sumNumbers(stats, [
-        ['cache_creation_input_tokens'],
-        ['cache_read_input_tokens'],
-        ['cached_input_tokens'],
-        ['input_cache_creation'],
-        ['input_cache_read']
-      ])
+    : usageCacheReadInputTokens(stats) + usageCacheCreationInputTokens(stats)
   const inputAudio = includesCache ? 0 : sumNumbers(stats, [['input_audio_tokens']])
   const inputTokens = inputBase + cacheInput + inputAudio
 

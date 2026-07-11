@@ -54,6 +54,11 @@ import {
 import { isRetiredExternalChannelInboundMessage } from './LegacyExternalChannelHistory'
 import { matchOllamaBrand } from '../shared/ollamaBrandTable'
 import { TASKWRAITH_CLOSEOUT_KIND } from '../shared/taskWraithCloseout'
+import {
+  usageCacheCreationInputTokens,
+  usageCacheReadInputTokens,
+  usageInputIncludesCache
+} from '../shared/usageAccounting'
 
 export type RemoteDisplayCurrency = 'USD' | 'GBP' | 'EUR'
 
@@ -175,10 +180,6 @@ function firstNumberFromStats(source: Record<string, unknown>, keys: string[]): 
   return 0
 }
 
-function sumNumberGroups(source: Record<string, unknown>, groups: string[][]): number {
-  return groups.reduce((total, keys) => total + firstNumberFromStats(source, keys), 0)
-}
-
 function normalizeRemoteProviderRates(raw: unknown): RemoteProviderRates {
   if (!raw || typeof raw !== 'object') return {}
   const envelope = raw as Record<string, unknown>
@@ -287,16 +288,9 @@ function extractRemoteUsageCounts(stats: Record<string, unknown>): RemoteUsageCo
     'input',
     'prompt'
   ])
-  const inputAlreadyIncludesCache = stats._taskwraith_input_includes_cache === true
-  const cacheReadInputTokens = sumNumberGroups(stats, [
-    ['cacheReadInputTokens', 'cache_read_input_tokens', 'input_cache_read', 'cacheReadTokens'],
-    ['cachedInputTokens', 'cached_input_tokens']
-  ])
-  const cacheCreationInputTokens = firstNumberFromStats(stats, [
-    'cacheCreationInputTokens',
-    'cache_creation_input_tokens',
-    'input_cache_creation'
-  ])
+  const inputAlreadyIncludesCache = usageInputIncludesCache(stats)
+  const cacheReadInputTokens = usageCacheReadInputTokens(stats)
+  const cacheCreationInputTokens = usageCacheCreationInputTokens(stats)
   const audioInputTokens = firstNumberFromStats(stats, ['input_audio_tokens', 'inputAudioTokens'])
   const outputTokens =
     firstNumberFromStats(stats, [

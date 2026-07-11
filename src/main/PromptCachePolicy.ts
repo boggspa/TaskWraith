@@ -211,13 +211,15 @@ const CACHE_READ_KEYS = [
   'cache_read_input_tokens',
   'input_cache_read',
   'cacheReadTokens',
+  'cachedInputTokens',
   'cached_input_tokens'
 ]
 
 const CACHE_CREATION_KEYS = [
   'cacheCreationInputTokens',
   'cache_creation_input_tokens',
-  'input_cache_creation'
+  'input_cache_creation',
+  'cacheWriteTokens'
 ]
 
 const INPUT_TOKEN_KEYS = ['input_tokens', 'inputTokens', 'prompt_tokens', 'promptTokens', 'input']

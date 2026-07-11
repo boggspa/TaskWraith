@@ -1,5 +1,10 @@
 import type { AgentRunRoute } from './run/AgentRunTypes'
 import type { ProviderId } from './store/types'
+import {
+  usageCacheCreationInputTokens,
+  usageCacheReadInputTokens,
+  usageInputIncludesCache
+} from '../shared/usageAccounting'
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
@@ -41,8 +46,9 @@ export function normalizeProviderUsage(
 ): Record<string, unknown> {
   if (!isRecord(usage)) return usage
 
+  const inputAlreadyIncludesCache = usageInputIncludesCache(usage)
   const inputBase =
-    provider === 'kimi'
+    provider === 'kimi' && !inputAlreadyIncludesCache
       ? firstProviderUsageNumber(usage, [
           'input_other',
           'input_tokens',
@@ -59,15 +65,10 @@ export function normalizeProviderUsage(
           'input',
           'input_other'
         ])
-  const cacheInput = sumProviderUsageNumbers(usage, [
-    'cache_creation_input_tokens',
-    'cache_read_input_tokens',
-    'cached_input_tokens',
-    'input_cache_creation',
-    'input_cache_read'
-  ])
+  const cacheReadInput = usageCacheReadInputTokens(usage)
+  const cacheCreationInput = usageCacheCreationInputTokens(usage)
+  const cacheInput = cacheReadInput + cacheCreationInput
   const audioInput = sumProviderUsageNumbers(usage, ['input_audio_tokens'])
-  const inputAlreadyIncludesCache = usage._taskwraith_input_includes_cache === true
   const outputBase = firstProviderUsageNumber(usage, [
     'output_tokens',
     'outputTokens',
@@ -117,6 +118,8 @@ export function normalizeProviderUsage(
     input_tokens: inputTokens,
     output_tokens: outputTokens,
     total_tokens: totalTokens,
+    ...(cacheReadInput > 0 ? { cache_read_input_tokens: cacheReadInput } : {}),
+    ...(cacheCreationInput > 0 ? { cache_creation_input_tokens: cacheCreationInput } : {}),
     ...(limits.inputTokenLimit ? { inputTokenLimit: limits.inputTokenLimit } : {}),
     ...(limits.outputTokenLimit ? { outputTokenLimit: limits.outputTokenLimit } : {}),
     ...(limits.totalTokenLimit ? { totalTokenLimit: limits.totalTokenLimit } : {}),
@@ -172,6 +175,8 @@ export function mergeProviderUsage(
     'input_tokens',
     'output_tokens',
     'total_tokens',
+    'cache_read_input_tokens',
+    'cache_creation_input_tokens',
     'inputTokenLimit',
     'outputTokenLimit',
     'totalTokenLimit'
@@ -179,6 +184,10 @@ export function mergeProviderUsage(
     const value = positiveMax(previous[key], normalized[key])
     if (value !== undefined) merged[key] = value
   }
+  const mergedInput = canonicalUsageCount(merged, 'input_tokens')
+  const mergedOutput = canonicalUsageCount(merged, 'output_tokens')
+  const coherentTotal = positiveMax(merged.total_tokens, mergedInput + mergedOutput)
+  if (coherentTotal !== undefined) merged.total_tokens = coherentTotal
   return merged
 }
 
@@ -195,6 +204,20 @@ export function codexUsageToStats(
   })
 }
 
+export function cursorUsageToStats(
+  tokenUsage: unknown,
+  fallbackDurationMs = 0
+): Record<string, unknown> {
+  const raw = isRecord(tokenUsage) ? tokenUsage : {}
+  return normalizeProviderUsage('cursor', {
+    input_tokens: canonicalUsageCount(raw, 'inputTokens'),
+    output_tokens: canonicalUsageCount(raw, 'outputTokens'),
+    cache_read_input_tokens: canonicalUsageCount(raw, 'cacheReadTokens'),
+    cache_creation_input_tokens: canonicalUsageCount(raw, 'cacheWriteTokens'),
+    duration_ms: fallbackDurationMs
+  })
+}
+
 export function geminiUsageMetadataToStats(
   usage: Record<string, unknown> | null | undefined,
   durationMs = 0,
@@ -202,10 +225,13 @@ export function geminiUsageMetadataToStats(
 ): Record<string, unknown> {
   const raw = usage || {}
   const cachedContentTokenCount = canonicalUsageCount(raw, 'cachedContentTokenCount')
+  const promptTokenCount = canonicalUsageCount(raw, 'promptTokenCount')
+  const candidatesTokenCount = canonicalUsageCount(raw, 'candidatesTokenCount')
+  const thoughtsTokenCount = canonicalUsageCount(raw, 'thoughtsTokenCount')
   return normalizeProviderUsage('gemini', {
     ...raw,
-    input_tokens: canonicalUsageCount(raw, 'promptTokenCount'),
-    output_tokens: canonicalUsageCount(raw, 'candidatesTokenCount'),
+    input_tokens: promptTokenCount,
+    output_tokens: candidatesTokenCount,
     ...(cachedContentTokenCount > 0
       ? {
           cache_read_input_tokens: cachedContentTokenCount,
@@ -214,8 +240,7 @@ export function geminiUsageMetadataToStats(
       : {}),
     total_tokens:
       canonicalUsageCount(raw, 'totalTokenCount') ||
-      canonicalUsageCount(raw, 'promptTokenCount') +
-        canonicalUsageCount(raw, 'candidatesTokenCount'),
+      promptTokenCount + candidatesTokenCount + thoughtsTokenCount,
     duration_ms: durationMs,
     ...(options.alreadyRecorded ? { _taskwraith_usage_recorded: true } : {})
   })
