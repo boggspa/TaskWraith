@@ -130,6 +130,39 @@ export interface ChatViewPaneChromeAction {
 }
 
 /**
+ * App rebuilds the pane action registry while rendering the Multiview grid.
+ * Compare the visible/actionable model instead of array, icon, and callback
+ * identities so unrelated streaming frames can still hit ChatViewPane's memo
+ * boundary. An open menu keeps node-identity comparison for correctness because
+ * its target rows may change while visible.
+ */
+export function chatViewPaneChromeActionsEqual(
+  a: ChatViewPaneChromeAction[] | undefined,
+  b: ChatViewPaneChromeAction[] | undefined
+): boolean {
+  if (a === b) return true
+  if (!a || !b || a.length !== b.length) return false
+  return a.every((left, index) => {
+    const right = b[index]
+    if (!right) return false
+    const menuContentEqual =
+      !left.menuOpen && !right.menuOpen
+        ? Boolean(left.menu) === Boolean(right.menu)
+        : left.menu === right.menu
+    return (
+      left.id === right.id &&
+      left.title === right.title &&
+      left.ariaLabel === right.ariaLabel &&
+      left.active === right.active &&
+      left.disabled === right.disabled &&
+      left.count === right.count &&
+      left.menuOpen === right.menuOpen &&
+      menuContentEqual
+    )
+  })
+}
+
+/**
  * Skip re-render unless something this pane actually displays changed. We
  * deliberately ignore the high-churn shared props (chats, runningChatIds)
  * and the stable App callbacks — see the component
@@ -188,7 +221,7 @@ export function chatViewPanePropsEqual(a: ChatViewPaneProps, b: ChatViewPaneProp
     a.topLeftChrome === b.topLeftChrome &&
     a.topRightChrome === b.topRightChrome &&
     a.topLeftChromeAction === b.topLeftChromeAction &&
-    a.topRightChromeActions === b.topRightChromeActions &&
+    chatViewPaneChromeActionsEqual(a.topRightChromeActions, b.topRightChromeActions) &&
     // Transcript handlers (the composer's own handlers moved into <Composer>).
     a.onAgentQuestionSubmit === b.onAgentQuestionSubmit &&
     a.onAgentQuestionDismiss === b.onAgentQuestionDismiss &&

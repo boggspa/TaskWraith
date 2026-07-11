@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { ChatViewPane, chatViewPanePropsEqual, type ChatViewPaneProps } from './ChatViewPane'
+import {
+  ChatViewPane,
+  chatViewPaneChromeActionsEqual,
+  chatViewPanePropsEqual,
+  type ChatViewPaneProps
+} from './ChatViewPane'
 
 // The pane composer is now the SAME first-class <Composer> the focused main
 // pane renders (built by App from `composerCtx` with per-pane overrides). It
@@ -122,6 +127,44 @@ describe('chatViewPanePropsEqual', () => {
     expect(
       chatViewPanePropsEqual(makeProps(), makeProps({ composerProps: stubComposerProps('x') }))
     ).toBe(false)
+  })
+
+  it('ignores rebuilt chrome callbacks and icons when the visible action model is unchanged', () => {
+    const first = [
+      {
+        id: 'preview',
+        title: 'Preview',
+        icon: <span>first icon</span>,
+        active: false,
+        disabled: false,
+        onClick: vi.fn()
+      }
+    ]
+    const second = [
+      {
+        id: 'preview',
+        title: 'Preview',
+        icon: <span>second icon</span>,
+        active: false,
+        disabled: false,
+        onClick: vi.fn()
+      }
+    ]
+
+    expect(chatViewPaneChromeActionsEqual(first, second)).toBe(true)
+    expect(
+      chatViewPanePropsEqual(
+        makeProps({ topRightChromeActions: first }),
+        makeProps({ topRightChromeActions: second })
+      )
+    ).toBe(true)
+  })
+
+  it('re-renders when a pane chrome action changes visible state', () => {
+    const first = [{ id: 'preview', title: 'Preview', icon: <span />, active: false }]
+    const second = [{ id: 'preview', title: 'Preview', icon: <span />, active: true }]
+
+    expect(chatViewPaneChromeActionsEqual(first, second)).toBe(false)
   })
 })
 
