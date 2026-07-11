@@ -4201,6 +4201,60 @@
     0 0 0 1px rgba(29, 29, 31, 0.06) !important;
 }
 
+/* Codex light shell — mirror the real Codex app's pure-white editor and
+ * detached status rows over its exact neutral utility bed. The telemetry row
+ * is a sibling of `.composer-inner-module`, so changing only the outer surface
+ * fill recolors the exposed workspace/tools/token strip without touching its
+ * geometry or the white editor above it. */
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"]
+  .app-transcript
+  .composer-surface {
+  background: #f5f5f5 !important;
+}
+
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"]
+  .app-transcript
+  .composer-inner-module {
+  background: #ffffff !important;
+  background-image: none !important;
+}
+
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"]
+  .app-transcript
+  .composer-area.interface-codex
+  .composer-above-bar-stack:has(.ensemble-above-row),
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"]
+  .app-transcript
+  .composer-area.interface-codex
+  :is(
+    .composer-workspace-above-row,
+    .ensemble-above-row,
+    .queued-messages-above-row,
+    .composer-create-pr-row,
+    .ensemble-roster-preset-picker.is-compact
+  ) {
+  background: #ffffff !important;
+  background-image: none !important;
+}
+
+/* The unified ensemble stack owns the white fill; its joined children stay
+ * transparent so the existing hairline dividers and tucked-tab geometry are
+ * preserved as one continuous Codex container. */
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"]
+  .app-transcript
+  .composer-area.interface-codex
+  .composer-above-bar-stack:has(.ensemble-above-row)
+  > :is(
+    .composer-above-bar,
+    .ensemble-above-row,
+    .queued-messages-above-row,
+    .composer-create-pr-row,
+    .ensemble-roster-preset-picker.is-compact
+  ) {
+  background: transparent !important;
+  background-image: none !important;
+}
+
 /* The compact uppercase orchestration labels were keyed to `--text-muted`,
  * which is too faint on light roster rows. This semantic bump is shared by
  * every composer shell; higher-specificity shell identity rules can still opt
