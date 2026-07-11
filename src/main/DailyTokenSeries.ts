@@ -83,7 +83,14 @@ export function buildDailyTokenSeries(
     if (record.timestamp < startMs || record.timestamp > endMs) continue
     const tokens = Math.max(
       0,
-      Number(record.totalTokens || (record.inputTokens ?? 0) + (record.outputTokens ?? 0) || 0)
+      Number(
+        record.totalTokens ||
+          (record.inputTokens ?? 0) +
+            (record.cacheReadInputTokens ?? 0) +
+            (record.cacheCreationInputTokens ?? 0) +
+            (record.outputTokens ?? 0) ||
+          0
+      )
     )
     if (tokens <= 0) continue
     const bucket = byDay.get(dayKey(new Date(record.timestamp)))

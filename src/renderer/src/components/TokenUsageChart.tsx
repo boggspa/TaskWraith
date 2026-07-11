@@ -12,6 +12,7 @@ import {
   setCachedRendererUsageRecords,
   type RendererUsageSource
 } from '../lib/usageRecordsCache'
+import { usageRecordTotalTokens } from '../lib/providerRateEstimate'
 import './TokenUsageChart.css'
 
 type TokenUsageSource = RendererUsageSource
@@ -98,10 +99,7 @@ export function buildTokenUsageChartData(
     if (record.usageKind === 'reset_hint') continue
     if (!Number.isFinite(record.timestamp)) continue
     if (record.timestamp < startMs || record.timestamp > endMs) continue
-    const tokens = Math.max(
-      0,
-      Number(record.totalTokens || record.inputTokens + record.outputTokens || 0)
-    )
+    const tokens = usageRecordTotalTokens(record)
     if (tokens <= 0) continue
     const day = byDay.get(dayKeyForDate(new Date(record.timestamp)))
     if (!day) continue

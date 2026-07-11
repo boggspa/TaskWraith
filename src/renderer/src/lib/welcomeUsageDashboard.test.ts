@@ -108,6 +108,35 @@ describe('buildWelcomeUsageDashboardData model breakdown — range scoping (Welc
   const HOUR = 60 * 60 * 1000
   const DAY = 24 * HOUR
 
+  it('uses cache-inclusive input and fallback totals in dashboard aggregates', () => {
+    const data = buildWelcomeUsageDashboardData(
+      [
+        baseRecord({
+          timestamp: NOW - HOUR,
+          provider: 'claude',
+          model: 'claude-sonnet-4-7',
+          inputTokens: 10,
+          outputTokens: 5,
+          totalTokens: 0,
+          cacheReadInputTokens: 50,
+          cacheCreationInputTokens: 10
+        })
+      ],
+      [],
+      '24h',
+      NOW
+    )
+
+    expect(data.totalTokens).toBe(75)
+    expect(data.tokens24h).toBe(75)
+    expect(data.providerCostBreakdown.find((row) => row.provider === 'claude')?.tokens).toBe(75)
+    expect(data.modelBreakdown[0]).toMatchObject({
+      inputTokens: 70,
+      outputTokens: 5,
+      totalTokens: 75
+    })
+  })
+
   it('computes model percentages against the selected range, not the lifetime aggregate', () => {
     // Two records: gpt-5-codex 90 days ago (200k tokens), gemini-flash today (50k tokens).
     // Under `'all'` the older gpt entry dominates the percentages.

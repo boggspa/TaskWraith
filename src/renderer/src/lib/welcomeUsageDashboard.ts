@@ -7,6 +7,7 @@ import type {
 } from '../../../main/store/types'
 import { canonicalModelIdForProvider, humaniseModelId } from './modelDisplayName'
 import { resolveOllamaDisplayBrand } from './ollamaDisplayBrand'
+import { usageRecordInputTokens, usageRecordTotalTokens } from './providerRateEstimate'
 
 export type WelcomeUsageTab = 'overview' | 'models' | 'workspaces' | 'providers' | 'agents'
 
@@ -665,7 +666,8 @@ export const buildWelcomeUsageDashboardData = (
     // adjusted zero from `formatCost`).
     const wsKey = record.workspaceId || NO_WORKSPACE_KEY
     const wsBucket = workspaceAggregate.get(wsKey) || { tokens: 0, costUsd: 0 }
-    wsBucket.tokens += Number(record.totalTokens) || 0
+    const recordTotalTokens = usageRecordTotalTokens(record)
+    wsBucket.tokens += recordTotalTokens
     if (hasCost) wsBucket.costUsd += cost
     workspaceAggregate.set(wsKey, wsBucket)
     // EW51 daily bucket — only the last 30 days contribute to
@@ -674,7 +676,7 @@ export const buildWelcomeUsageDashboardData = (
     if (record.timestamp >= dailyCostCutoff) {
       const dayKey = dayKeyFromTimestamp(record.timestamp)
       const dayBucket = dailyCostAggregate.get(dayKey) || { tokens: 0, costUsd: 0 }
-      dayBucket.tokens += Number(record.totalTokens) || 0
+      dayBucket.tokens += recordTotalTokens
       if (hasCost) dayBucket.costUsd += cost
       dailyCostAggregate.set(dayKey, dayBucket)
     }
@@ -693,7 +695,7 @@ export const buildWelcomeUsageDashboardData = (
       recordProvider === 'cursor' ||
       recordProvider === 'ollama'
     ) {
-      providerCostAggregate[recordProvider].tokens += Number(record.totalTokens) || 0
+      providerCostAggregate[recordProvider].tokens += recordTotalTokens
       if (hasCost) providerCostAggregate[recordProvider].costUsd += cost
     }
   }
@@ -760,11 +762,8 @@ export const buildWelcomeUsageDashboardData = (
   for (const record of runRecords) {
     const provider = record.provider || inferProviderFromModelName(record.model || '')
     const model = canonicalModelIdForProvider(provider, record.model || 'unknown') || 'unknown'
-    const totalTokens = Math.max(
-      0,
-      Number(record.totalTokens || record.inputTokens + record.outputTokens || 0)
-    )
-    const inputTokens = Math.max(0, Number(record.inputTokens || 0))
+    const totalTokens = usageRecordTotalTokens(record)
+    const inputTokens = usageRecordInputTokens(record)
     const outputTokens = Math.max(0, Number(record.outputTokens || 0))
     const dayKey = dayKeyFromTimestamp(record.timestamp)
     const hour = new Date(record.timestamp).getHours()
@@ -834,9 +833,7 @@ export const buildWelcomeUsageDashboardData = (
   }
 
   const totalTokens = runRecords.reduce(
-    (sum, record) =>
-      sum +
-      Math.max(0, Number(record.totalTokens || record.inputTokens + record.outputTokens || 0)),
+    (sum, record) => sum + usageRecordTotalTokens(record),
     0
   )
   // Welcome L4/L8 — model breakdown is range-scoped AND filtered to

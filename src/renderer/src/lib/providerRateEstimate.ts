@@ -215,7 +215,8 @@ type UsageCostRecord = Pick<
   | 'outputTokens'
   | 'cacheReadInputTokens'
   | 'cacheCreationInputTokens'
->
+> &
+  Partial<Pick<UsageRecord, 'totalTokens'>>
 
 const toNonNeg = (value: unknown): number => (isFiniteNonNeg(value) ? value : 0)
 
@@ -226,6 +227,17 @@ export function usageRecordInputTokens(record: UsageCostRecord): number {
   const cacheCreation = toNonNeg(record.cacheCreationInputTokens)
   if (cacheRead > 0 || cacheCreation > 0) return base + cacheRead + cacheCreation
   return base
+}
+
+/**
+ * Return the persisted total when available, otherwise reconstruct an
+ * inclusive total from fresh + cached input and output. The fallback matters
+ * for legacy or partially-populated rows whose `totalTokens` is zero.
+ */
+export function usageRecordTotalTokens(record: UsageCostRecord): number {
+  const total = toNonNeg(record.totalTokens)
+  if (total > 0) return total
+  return usageRecordInputTokens(record) + toNonNeg(record.outputTokens)
 }
 
 /**

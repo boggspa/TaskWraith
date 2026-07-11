@@ -70,6 +70,24 @@ describe('buildDailyTokenSeries', () => {
     expect(series.buckets[6].tokens).toBe(20)
   })
 
+  it('includes cache reads and creation in fallback totals', () => {
+    const series = buildDailyTokenSeries(
+      [
+        rec({
+          timestamp: NOW,
+          totalTokens: 0,
+          inputTokens: 12,
+          cacheReadInputTokens: 30,
+          cacheCreationInputTokens: 3,
+          outputTokens: 5
+        })
+      ],
+      NOW,
+      7
+    )
+    expect(series.buckets[6].tokens).toBe(50)
+  })
+
   it('labels the window start and end', () => {
     const series = buildDailyTokenSeries([], NOW, 7)
     expect(series.endLabel).toBe('16 Jun')

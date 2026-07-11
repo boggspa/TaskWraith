@@ -38,8 +38,10 @@ describe('buildTokenUsageChartData', () => {
           id: 'yesterday',
           timestamp: new Date(2026, 5, 14, 11).getTime(),
           provider: 'claude',
-          inputTokens: 40,
-          outputTokens: 35
+          inputTokens: 10,
+          outputTokens: 5,
+          cacheReadInputTokens: 50,
+          cacheCreationInputTokens: 10
         }),
         record({
           id: 'old',

@@ -5,6 +5,7 @@ import {
   normalizeProviderRates,
   resolveModelRate,
   usageRecordInputTokens,
+  usageRecordTotalTokens,
   type RendererProviderRates
 } from './providerRateEstimate'
 
@@ -233,6 +234,35 @@ describe('usageRecordInputTokens', () => {
         outputTokens: 5
       })
     ).toBe(14)
+  })
+})
+
+describe('usageRecordTotalTokens', () => {
+  it('prefers a persisted total when one is available', () => {
+    expect(
+      usageRecordTotalTokens({
+        provider: 'claude',
+        model: 'claude-opus-4-7',
+        inputTokens: 11,
+        outputTokens: 5,
+        totalTokens: 20,
+        cacheReadInputTokens: 3
+      })
+    ).toBe(20)
+  })
+
+  it('reconstructs a cache-inclusive total for partially-populated rows', () => {
+    expect(
+      usageRecordTotalTokens({
+        provider: 'claude',
+        model: 'claude-opus-4-7',
+        inputTokens: 11,
+        outputTokens: 5,
+        totalTokens: 0,
+        cacheReadInputTokens: 3,
+        cacheCreationInputTokens: 2
+      })
+    ).toBe(21)
   })
 })
 
