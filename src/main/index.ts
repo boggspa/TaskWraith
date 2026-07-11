@@ -15312,6 +15312,7 @@ async function compactCliSeatContext(payload: {
     const previousSummary = seat.contextCompactionSummary
     const previousSummaryText = previousSummary?.text?.trim() ? previousSummary.text : undefined
     let provenance: ContextCompactionProvenance
+    let boundedCoverageComplete = false
     const progressBase: Omit<ContextCompactionProgressEvent, 'status'> = {
       chatId: payload.chatId,
       participantId: payload.participantId,
@@ -15363,6 +15364,14 @@ async function compactCliSeatContext(payload: {
           maxBlockChars: 12_000
         }
       )
+      // Grok's live ACP seat may be discarded only after the replacement
+      // summary demonstrably represents the entire eligible transcript
+      // snapshot. A partial oldest-window summary is useful progress for the
+      // next maintenance pass, but resetting here would strand the uncovered
+      // middle outside both the durable summary and the recent prompt window.
+      boundedCoverageComplete =
+        material.remainingUncoveredMessageCount === 0 &&
+        material.carriedForwardMessageIds.length + material.suppliedMessageIds.length > 0
       provenance = {
         kind: 'bounded_prompt_window',
         suppliedMessageIds: [...material.suppliedMessageIds],
@@ -15510,7 +15519,7 @@ async function compactCliSeatContext(payload: {
         broadcastChatUpdated(updated)
         summaryPersisted = true
       }
-      if (payload.provider === 'grok' && summaryPersisted) {
+      if (payload.provider === 'grok' && summaryPersisted && boundedCoverageComplete) {
         // Grok's reset arm: the accumulated context lives in the live per-seat
         // ACP process (seat sessions), which no `--resume` can shrink. Dispose
         // it so the next turn respawns a fresh `session/new` seeded only by the

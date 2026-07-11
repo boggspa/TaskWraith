@@ -171,6 +171,7 @@ describe('composeRunPrompt sub-thread returns', () => {
     const first = buildConversationCompactionProjection(messages, 1, undefined, budget)
     expect(first.suppliedMessageIds).toEqual(['m1', 'm2'])
     expect(first.carriedForwardMessageIds).toEqual([])
+    expect(first.remainingUncoveredMessageCount).toBe(4)
     expect(first.block).toContain('oldest user')
     expect(first.block).not.toContain('newest user')
 
@@ -182,6 +183,7 @@ describe('composeRunPrompt sub-thread returns', () => {
     )
     expect(second.carriedForwardMessageIds).toEqual(['m1', 'm2'])
     expect(second.suppliedMessageIds).toEqual(['m3', 'm4'])
+    expect(second.remainingUncoveredMessageCount).toBe(2)
     expect(second.block).toContain('middle user')
     expect(second.block).not.toContain('oldest user')
 
@@ -197,6 +199,7 @@ describe('composeRunPrompt sub-thread returns', () => {
     )
     expect(third.carriedForwardMessageIds).toEqual(['m1', 'm2', 'm3', 'm4'])
     expect(third.suppliedMessageIds).toEqual(['m5', 'm6'])
+    expect(third.remainingUncoveredMessageCount).toBe(0)
     expect(third.block).toContain('newest user')
   })
 
@@ -232,7 +235,23 @@ describe('composeRunPrompt sub-thread returns', () => {
     )
     expect(projection.block).toContain('[context truncated]')
     expect(projection.suppliedMessageIds).toEqual(['m1'])
+    expect(projection.remainingUncoveredMessageCount).toBe(1)
     expect(projection.block).not.toContain('B')
+  })
+
+  it('reports uncovered rows when the maintenance chunk size is disabled', () => {
+    const projection = buildConversationCompactionProjection(
+      [
+        message({ id: 'm1', content: 'oldest' }),
+        message({ id: 'm2', role: 'assistant', content: 'newest' })
+      ],
+      0,
+      undefined
+    )
+
+    expect(projection.suppliedMessageIds).toEqual([])
+    expect(projection.carriedForwardMessageIds).toEqual([])
+    expect(projection.remainingUncoveredMessageCount).toBe(2)
   })
 
   it('does not replay TaskWraith closeouts as assistant context', () => {

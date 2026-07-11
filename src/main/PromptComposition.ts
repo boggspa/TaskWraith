@@ -80,6 +80,12 @@ export interface ConversationCompactionProjection extends ConversationContextPro
    * transcript pruning.
    */
   carriedForwardMessageIds: string[]
+  /**
+   * Eligible transcript rows that remain after this projection's exact
+   * carried + supplied prefix. A host may reset provider-native context only
+   * when this reaches zero after the replacement summary was persisted.
+   */
+  remainingUncoveredMessageCount: number
 }
 
 const DEFAULT_CONTEXT_BUDGET: ContextBudget = {
@@ -472,11 +478,14 @@ export function buildConversationCompactionProjection(
   previousProvenance: ContextCompactionProvenance | null | undefined,
   budget: ContextBudget = DEFAULT_CONTEXT_BUDGET
 ): ConversationCompactionProjection {
-  const empty = { block: '', suppliedMessageIds: [], carriedForwardMessageIds: [] }
-  if (maxTurns <= 0) return empty
-
   const relevantMessages = eligibleConversationMessages(messages)
-  if (relevantMessages.length === 0) return empty
+  const empty = {
+    block: '',
+    suppliedMessageIds: [],
+    carriedForwardMessageIds: [],
+    remainingUncoveredMessageCount: relevantMessages.length
+  }
+  if (maxTurns <= 0 || relevantMessages.length === 0) return empty
 
   let carriedForwardMessageIds: string[] = []
   const provenanceRecord =
@@ -512,15 +521,29 @@ export function buildConversationCompactionProjection(
     carriedForwardMessageIds.length + maxMessages
   )
   if (windowedMessages.length === 0) {
-    return { ...empty, carriedForwardMessageIds }
+    return {
+      ...empty,
+      carriedForwardMessageIds,
+      remainingUncoveredMessageCount: Math.max(
+        0,
+        relevantMessages.length - carriedForwardMessageIds.length
+      )
+    }
   }
   const header = `\n\nOldest uncovered conversation context (up to ${Math.min(
     maxTurns,
     Math.ceil(windowedMessages.length / 2)
   )} turn(s)):`
+  const rendered = renderConversationProjection(windowedMessages, header, budget, true)
   return {
-    ...renderConversationProjection(windowedMessages, header, budget, true),
-    carriedForwardMessageIds
+    ...rendered,
+    carriedForwardMessageIds,
+    remainingUncoveredMessageCount: Math.max(
+      0,
+      relevantMessages.length -
+        carriedForwardMessageIds.length -
+        rendered.suppliedMessageIds.length
+    )
   }
 }
 
