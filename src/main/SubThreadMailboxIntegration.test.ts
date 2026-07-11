@@ -22,7 +22,9 @@ describe('sub-thread mailbox main-process integration', () => {
 
     expect(enqueue).toBeGreaterThanOrEqual(0)
     expect(existingReturn).toBeGreaterThan(enqueue)
-    expect(producer).toContain('sourceAssistantMessageId: lastAssistant.id')
+    expect(producer).toContain('sourceAssistantMessageId,')
+    expect(producer).toContain('outcome: terminal.outcome')
+    expect(producer).toContain('joinPolicy: subThread.delegationContext.joinPolicy')
     expect(producer).toContain("resultTrust: 'untrusted-child-output'")
     expect(producer).toContain("providerContextVisibility: 'projection-only'")
   })
@@ -85,5 +87,23 @@ describe('sub-thread mailbox main-process integration', () => {
     )
     expect(runtimeProfile).toContain('resolveTaskWraithMcpProfile({')
     expect(runtimeProfile).toContain('applied.taskWraithMcpProfileId = resolution.profileId')
+  })
+
+  it('gates automatic wake by durable join readiness and preserves worker trust caps', () => {
+    const drain = sourceBetween(
+      'async function maybeDrainParentSubThreadMailbox(',
+      'function recoverPendingSubThreadMailboxes()'
+    )
+    const delegation = sourceBetween(
+      "} else if (toolName === 'delegate_to_subthread') {",
+      'const finalRichResult = richResult as McpToolExecutionResult | null'
+    )
+
+    expect(drain).toContain('deliverableSubThreadMailboxEvents(parentChatId, pending)')
+    expect(indexSource).toContain('scheduleSubThreadJoinEvaluation(')
+    expect(indexSource).toContain("outcome: 'requires_action'")
+    expect(delegation).toContain('joinPolicy')
+    expect(delegation).toContain('sessionTrust: false')
+    expect(delegation).toContain('inheritedSubThreadPermissions(context)')
   })
 })

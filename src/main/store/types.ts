@@ -2963,6 +2963,7 @@ export interface ChatMessage {
      * the payload through the mailbox continuation instead. */
     mailboxEventId?: string
     providerContextVisibility?: 'projection-only'
+    subThreadOutcome?: 'done' | 'requires_action' | 'failed' | 'cancelled'
     /** TaskWraith-authored, transcript-native close-out row. */
     closeoutSource?: 'currentProvider' | 'summaryProvider' | 'deterministicFallback'
     closeoutProvider?: ProviderId
@@ -3383,6 +3384,9 @@ export interface ChatRecord {
      * NOT auto-propagate yet (manual navigation only); F2 will wire
      * the back-propagation. */
     returnResultToParent: boolean
+    /** Durable join/wake policy for the currently dispatched child turn. Calls
+     * from one parent run share groupId so their terminal results can coalesce. */
+    joinPolicy?: SubThreadJoinPolicy
     /** Last time a sub-thread assistant result was returned to the parent (F2+). */
     resultReturnedAt?: number
     /** Populated when the agent-driven dispatch that should have
@@ -3401,6 +3405,17 @@ export interface ChatRecord {
       message: string
     }
   }
+}
+
+export interface SubThreadJoinPolicy {
+  schemaVersion: 1
+  groupId: string
+  required: boolean
+  quorum?: number
+  debounceMs: number
+  armedAt: string
+  deadlineAt: string
+  workerRunId?: string
 }
 
 /** Lean per-run projection carried on ChatListItem so list consumers (the

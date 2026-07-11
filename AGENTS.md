@@ -84,6 +84,7 @@ delegationContext?: {
   parentProvider: ProviderId;
   delegationPrompt: string;
   returnResultToParent: boolean;
+  joinPolicy?: SubThreadJoinPolicy; // required/optional + quorum/deadline/debounce
   resultReturnedAt?: number;    // set when F2+ propagates back
 };
 ```
@@ -105,10 +106,11 @@ sub-thread's agent) types in.
 
 ### Phase F2 — auto-propagation of sub-thread results
 
-When `returnResultToParent: true` was selected at spawn time AND the
-sub-thread's run completes successfully, the sub-thread's final
-assistant message is automatically appended to the parent transcript
-as an untrusted synthetic `role: 'tool'` ChatMessage with:
+When `returnResultToParent: true` was selected, every terminal child outcome
+(`done`, `requires_action`, `failed`, or `cancelled`) is first persisted in the
+parent's durable mailbox. A projection-only synthetic `role: 'tool'` message is
+appended to the parent transcript for UI/audit visibility, while provider
+context receives the result exactly once through the mailbox delivery prompt.
 
 ```
 ↩ Result from <Provider> sub-thread (<title>):
@@ -123,9 +125,9 @@ The synthetic message carries `metadata.kind = 'subThreadReturn'`,
 `delegationContext.resultReturnedAt` is set on the sub-thread record and the
 helper short-circuits on re-invocation.
 
-The trigger is the run-completion event from `RunManager.onChange`.
-Failed or cancelled sub-thread runs don't propagate (the parent
-agent should infer "no answer came back" and respond accordingly).
+The trigger is the terminal run event from `RunManager.onChange` (or the
+background transcript's final flush). Failed and cancelled workers propagate a
+typed terminal result even when they produced no assistant text.
 
 A `subthread_returned` durable run-event is written under the
 **parent** chat for audit.
@@ -143,6 +145,12 @@ declined.
 `model`, `reasoningEffort`, and `kimiThinking` configure a **fresh** delegated
 seat. They are spawn-only: recalls inherit the existing seat controls and reject
 attempts to change them, preserving the provider session and cache continuity.
+TaskWraith-owned orchestration assigns a durable join policy to returned
+results. Delegations from one parent run share a join group; required workers
+gate quorum, optional workers do not, and the bounded debounce produces one
+coalesced parent wake. These controls remain internal so the advertised MCP
+catalogue and seat prompt prefix stay stable. Async delegated runs inherit a
+capped permission posture but never inherit Trusted Session.
 
 ### Audit trail
 
@@ -318,7 +326,8 @@ demands):**
 
 - `delegate_to_subthread` — Phase F3 agent-driven sub-thread spawn,
   with **Phase J2 recall mode**.
-  Inputs: `{ provider: ProviderId, prompt: string, returnResult?: boolean,
+  Inputs: `{ provider: ProviderId, prompt: string, model?: string,
+  reasoningEffort?: string, kimiThinking?: boolean, returnResult?: boolean,
   subThreadId?: string }`, constrained to live selectable providers. By default
   (when `subThreadId` is omitted) the call spawns a fresh
   context-isolated sub-thread under the current parent. The
@@ -336,10 +345,10 @@ demands):**
   session id into the dispatched run so the target provider's native
   session resumes where that provider supports resume.
 
-  When `returnResult` is true (default), the sub-thread's final
-  assistant message auto-appends to the parent transcript on
-  completion as untrusted child output (Phase F2 back-propagation) —
-  works for both spawn and recall paths.
+  When `returnResult` is true (default), the sub-thread's typed terminal result
+  enters the durable parent mailbox and appears as an untrusted, projection-only
+  transcript card. Join-ready results are coalesced into one parent wake; failed
+  and cancelled workers are terminal evidence rather than silent non-returns.
 
   **Approval gate (Phase I1):** every call routes through TaskWraith's
   `subThreadDelegation` agentic-service policy before any sub-thread
@@ -425,6 +434,8 @@ demands):**
       a model plus provider-compatible reasoning controls at spawn. Recall
       inherits those controls and rejects model/effort mutation. The rest of
       the composer surface is not exposed as delegation tool args.
+    - Async delegated runs can never become Trusted Session, even when the
+      invoking parent currently has a Trusted Session grant.
     - Codex, Claude, and Kimi register the full TaskWraith MCP surface with
       their native runtimes where available. Cursor and Grok receive a brokered
       `taskwraith` MCP surface alongside their native shell/file tooling.

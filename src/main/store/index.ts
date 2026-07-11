@@ -90,7 +90,8 @@ import {
   IntrospectionScheduleRecord,
   IntrospectionScheduleSettings,
   MemoryProposalPack,
-  MemoryProposal
+  MemoryProposal,
+  SubThreadJoinPolicy
 } from './types'
 import { canonicalizeExternalPathGrantMetadata } from './ExternalPathGrants'
 import { createDefaultEnsembleConfig } from '../EnsembleDefaults'
@@ -3329,6 +3330,7 @@ export class AppStore {
     provider: ProviderId
     delegationPrompt: string
     returnResultToParent: boolean
+    joinPolicy?: SubThreadJoinPolicy
     /** Override the workspace if the user explicitly picked a
      * different one. Defaults to inheriting the parent's workspace. */
     workspaceId?: string
@@ -3369,7 +3371,8 @@ export class AppStore {
         createdAt: Date.now(),
         parentProvider: coerceLiveProvider(parent.provider ?? settings.activeProvider),
         delegationPrompt: args.delegationPrompt,
-        returnResultToParent: args.returnResultToParent
+        returnResultToParent: args.returnResultToParent,
+        ...(args.joinPolicy ? { joinPolicy: { ...args.joinPolicy } } : {})
       }
     }
     if (settings.storeLocalChatHistory) {

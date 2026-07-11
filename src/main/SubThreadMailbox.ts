@@ -1,5 +1,5 @@
 import { createHash } from 'crypto'
-import type { ProviderId } from './store/types'
+import type { ProviderId, SubThreadJoinPolicy } from './store/types'
 
 export const SUBTHREAD_MAILBOX_SCHEMA_VERSION = 1 as const
 export const MAX_SUBTHREAD_MAILBOX_PAYLOAD_CHARS = 12_000
@@ -28,6 +28,7 @@ export interface SubThreadMailboxEvent {
     sourceAssistantMessageId: string
     sourceRunId?: string
   }
+  join?: SubThreadJoinPolicy
   payload: {
     content: string
     truncated?: boolean
@@ -58,6 +59,7 @@ export interface SubThreadMailboxEventInput {
   subThreadTitle: string
   sourceAssistantMessageId: string
   sourceRunId?: string
+  joinPolicy?: SubThreadJoinPolicy
   outcome: SubThreadMailboxOutcome
   required?: boolean
   priority?: SubThreadMailboxPriority
@@ -102,6 +104,34 @@ function positiveInteger(value: unknown, fallback: number): number {
     : fallback
 }
 
+function nonNegativeInteger(value: unknown, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0
+    ? Math.floor(value)
+    : fallback
+}
+
+function normalizeJoinPolicy(value: unknown): SubThreadJoinPolicy | undefined {
+  const join = recordOrNull(value)
+  const groupId = nonEmptyString(join?.groupId)
+  const armedAt = nonEmptyString(join?.armedAt)
+  const deadlineAt = nonEmptyString(join?.deadlineAt)
+  if (!join || !groupId || !armedAt || !deadlineAt) return undefined
+  return {
+    schemaVersion: 1,
+    groupId,
+    required: join.required !== false,
+    ...(typeof join.quorum === 'number' && Number.isFinite(join.quorum) && join.quorum > 0
+      ? { quorum: Math.floor(join.quorum) }
+      : {}),
+    debounceMs: nonNegativeInteger(join.debounceMs, 0),
+    armedAt,
+    deadlineAt,
+    ...(nonEmptyString(join.workerRunId)
+      ? { workerRunId: nonEmptyString(join.workerRunId) }
+      : {})
+  }
+}
+
 function normalizeEvent(value: unknown, parentChatId: string): SubThreadMailboxEvent | null {
   const event = recordOrNull(value)
   if (!event) return null
@@ -130,6 +160,7 @@ function normalizeEvent(value: unknown, parentChatId: string): SubThreadMailboxE
   const deliveryRunId = nonEmptyString(event.deliveryRunId)
   const claimedAt = deliveryRunId ? nonEmptyString(event.claimedAt) : undefined
   const originalChars = positiveInteger(payload.originalChars, content.length)
+  const join = normalizeJoinPolicy(event.join)
 
   return {
     schemaVersion: SUBTHREAD_MAILBOX_SCHEMA_VERSION,
@@ -152,6 +183,7 @@ function normalizeEvent(value: unknown, parentChatId: string): SubThreadMailboxE
         ? { sourceRunId: nonEmptyString(source.sourceRunId) }
         : {})
     },
+    ...(join ? { join } : {}),
     payload: {
       content: content.slice(0, MAX_SUBTHREAD_MAILBOX_PAYLOAD_CHARS),
       ...(payload.truncated === true || content.length > MAX_SUBTHREAD_MAILBOX_PAYLOAD_CHARS
@@ -283,6 +315,7 @@ export function enqueueSubThreadMailboxEvent(
       sourceAssistantMessageId: input.sourceAssistantMessageId,
       ...(input.sourceRunId ? { sourceRunId: input.sourceRunId } : {})
     },
+    ...(input.joinPolicy ? { join: { ...input.joinPolicy } } : {}),
     payload: {
       content,
       ...(content.length < originalContent.length

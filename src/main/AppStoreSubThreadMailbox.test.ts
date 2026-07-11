@@ -69,6 +69,29 @@ describe('AppStore sub-thread mailbox ledger', () => {
     expect(fs.existsSync(join(userDataPath, 'chats', 'parent-1.json'))).toBe(false)
   })
 
+  it('persists the delegated worker join policy on the child record', () => {
+    saveParent()
+    const joinPolicy = {
+      schemaVersion: 1 as const,
+      groupId: 'parent-run-1',
+      required: false,
+      quorum: 1,
+      debounceMs: 350,
+      armedAt: '2026-07-11T12:00:00.000Z',
+      deadlineAt: '2026-07-11T12:05:00.000Z'
+    }
+    const child = AppStore.createSubThread({
+      parentChatId: 'parent-1',
+      provider: 'codex',
+      delegationPrompt: 'Review the diff.',
+      returnResultToParent: true,
+      joinPolicy
+    })
+
+    expect(child.delegationContext?.joinPolicy).toEqual(joinPolicy)
+    expect(AppStore.getChat(child.appChatId)?.delegationContext?.joinPolicy).toEqual(joinPolicy)
+  })
+
   it('persists claim, release, retry, and acknowledgement transitions', () => {
     AppStore.enqueueSubThreadMailboxEvent(eventInput())
     const claimed = AppStore.claimSubThreadMailboxEvents('parent-1', {

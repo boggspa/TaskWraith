@@ -30,6 +30,17 @@ function eventInput(overrides: Record<string, unknown> = {}) {
   }
 }
 
+const joinPolicy = {
+  schemaVersion: 1 as const,
+  groupId: 'parent-run-1',
+  required: true,
+  quorum: 2,
+  debounceMs: 350,
+  armedAt: '2026-07-11T12:00:00.000Z',
+  deadlineAt: '2026-07-11T12:05:00.000Z',
+  workerRunId: 'run-child-1'
+}
+
 describe('SubThreadMailbox', () => {
   it('derives a stable event id from the parent, child, and source assistant message', () => {
     const first = createSubThreadMailboxEventId(parentChatId, 'child-1', 'assistant-1')
@@ -75,6 +86,18 @@ describe('SubThreadMailbox', () => {
       'Tests passed.',
       'Second result.'
     ])
+  })
+
+  it('persists the bounded join identity with the terminal event', () => {
+    const result = enqueueSubThreadMailboxEvent(
+      undefined,
+      eventInput({ joinPolicy })
+    )
+
+    expect(result.event.join).toEqual(joinPolicy)
+    expect(normalizeSubThreadMailbox(result.mailbox, parentChatId).events[0].join).toEqual(
+      joinPolicy
+    )
   })
 
   it('caps durable payload size while retaining the original length', () => {
