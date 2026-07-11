@@ -3488,6 +3488,9 @@ export interface SubThreadWorkerEvent {
   priority: SubThreadWorkerEventPriority
   status: SubThreadWorkerEventStatus
   enqueuedAt: string
+  /** Stable before dispatch so transcript seeding + queue binding can commit
+   * atomically before awaiting the provider runtime. */
+  plannedRunId: string
   approvalMode: string
   runtimeProfileId?: string
   effectivePermissions?: EffectiveRunPermissions

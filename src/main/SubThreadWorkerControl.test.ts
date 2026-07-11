@@ -5,7 +5,9 @@ import {
   cancelPendingSubThreadWorkerEvents,
   claimNextSubThreadWorkerEvent,
   createSubThreadWorkerEventId,
+  createSubThreadWorkerRunId,
   enqueueSubThreadWorkerEvent,
+  failClaimedSubThreadWorkerEvent,
   normalizeSubThreadWorkerControl,
   pendingSubThreadWorkerEvents,
   recoverSubThreadWorkerControl,
@@ -37,6 +39,7 @@ describe('SubThreadWorkerControl', () => {
     const replay = enqueueSubThreadWorkerEvent(first.control, input('tool-1'), now)
 
     expect(first.event.id).toBe(id)
+    expect(first.event.plannedRunId).toBe(createSubThreadWorkerRunId(id, 'codex'))
     expect(first.added).toBe(true)
     expect(replay.added).toBe(false)
     expect(replay.control.events).toHaveLength(1)
@@ -73,18 +76,18 @@ describe('SubThreadWorkerControl', () => {
       claimed.control,
       claimed.event!.id,
       'claim-1',
-      'child-run-2',
+      claimed.event!.plannedRunId,
       '2026-07-11T12:00:02.000Z'
     )
     const bound = dispatched.events[0]
     expect(bound).toMatchObject({
       status: 'dispatched',
-      dispatchRunId: 'child-run-2',
+      dispatchRunId: claimed.event!.plannedRunId,
       processedAt: '2026-07-11T12:00:02.000Z'
     })
     expect(claimNextSubThreadWorkerEvent(dispatched, 'claim-2').event).toBeUndefined()
 
-    const settled = settleSubThreadWorkerEvent(dispatched, 'child-run-2', 'completed', {
+    const settled = settleSubThreadWorkerEvent(dispatched, claimed.event!.plannedRunId, 'completed', {
       now: '2026-07-11T12:00:03.000Z'
     })
     expect(settled.event).toMatchObject({
@@ -115,7 +118,7 @@ describe('SubThreadWorkerControl', () => {
       claimed.control,
       claimed.event!.id,
       'claim-1',
-      'run-1'
+      claimed.event!.plannedRunId
     )
     const cancelled = cancelPendingSubThreadWorkerEvents(dispatched, {
       now: '2026-07-11T12:00:05.000Z',
@@ -137,7 +140,7 @@ describe('SubThreadWorkerControl', () => {
       claimed.control,
       claimed.event!.id,
       'claim-1',
-      'run-missing'
+      claimed.event!.plannedRunId
     )
     const claimedSecond = {
       ...dispatched,
@@ -160,14 +163,42 @@ describe('SubThreadWorkerControl', () => {
       claimed.control,
       claimed.event!.id,
       'claim-1',
-      'run-1'
+      claimed.event!.plannedRunId
     )
 
     expect(
       recoverSubThreadWorkerControl(dispatched, [
-        { runId: 'run-1', status: 'cancelled', cancelled: true }
+        { runId: claimed.event!.plannedRunId, status: 'cancelled', cancelled: true }
       ]).events[0].status
     ).toBe('cancelled')
+  })
+
+  it('refuses run-id substitution and can fail a claimed event without processing it', () => {
+    const queued = enqueueSubThreadWorkerEvent(undefined, input('tool-1'), now)
+    const claimed = claimNextSubThreadWorkerEvent(queued.control, 'claim-1')
+
+    expect(() =>
+      bindSubThreadWorkerEventToRun(
+        claimed.control,
+        claimed.event!.id,
+        'claim-1',
+        'different-run-id'
+      )
+    ).toThrow(/planned run id/i)
+
+    const failed = failClaimedSubThreadWorkerEvent(
+      claimed.control,
+      claimed.event!.id,
+      'claim-1',
+      'No resumable provider session.',
+      '2026-07-11T12:00:05.000Z'
+    ).events[0]
+    expect(failed).toMatchObject({
+      status: 'failed',
+      terminalAt: '2026-07-11T12:00:05.000Z',
+      error: 'No resumable provider session.'
+    })
+    expect(failed.processedAt).toBeUndefined()
   })
 
   it('enforces a strict aggregate pending prompt budget', () => {

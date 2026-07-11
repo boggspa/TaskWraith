@@ -27,6 +27,7 @@ export interface SubThreadWorkerEventInput {
   prompt: string
   returnResultToParent: boolean
   priority?: SubThreadWorkerEventPriority
+  plannedRunId?: string
   approvalMode: string
   runtimeProfileId?: string
   effectivePermissions?: EffectiveRunPermissions
@@ -155,6 +156,8 @@ function normalizeEvent(value: unknown): SubThreadWorkerEvent | null {
   ) {
     return null
   }
+  const plannedRunId =
+    nonEmptyString(value.plannedRunId) || createSubThreadWorkerRunId(id, targetProvider)
   return {
     schemaVersion: SUBTHREAD_WORKER_CONTROL_SCHEMA_VERSION,
     id,
@@ -171,6 +174,7 @@ function normalizeEvent(value: unknown): SubThreadWorkerEvent | null {
     priority: value.priority === 'interrupt' ? 'interrupt' : 'normal',
     status,
     enqueuedAt,
+    plannedRunId,
     approvalMode,
     ...(nonEmptyString(value.runtimeProfileId)
       ? { runtimeProfileId: nonEmptyString(value.runtimeProfileId) }
@@ -238,6 +242,14 @@ export function createSubThreadWorkerEventId(
   return `subthread-worker-${digest}`
 }
 
+export function createSubThreadWorkerRunId(eventId: string, provider: ProviderId): string {
+  const digest = createHash('sha256')
+    .update(`${provider}\0${eventId}`)
+    .digest('hex')
+    .slice(0, 24)
+  return `${provider}-worker-${digest}`
+}
+
 export function enqueueSubThreadWorkerEvent(
   current: SubThreadWorkerControl | null | undefined,
   input: SubThreadWorkerEventInput,
@@ -286,6 +298,8 @@ export function enqueueSubThreadWorkerEvent(
     priority: input.priority === 'interrupt' ? 'interrupt' : 'normal',
     status: 'pending',
     enqueuedAt: now,
+    plannedRunId:
+      input.plannedRunId?.trim() || createSubThreadWorkerRunId(id, input.targetProvider),
     approvalMode: input.approvalMode,
     ...(input.runtimeProfileId ? { runtimeProfileId: input.runtimeProfileId } : {}),
     ...(input.effectivePermissions
@@ -380,6 +394,9 @@ export function bindSubThreadWorkerEventToRun(
   if (!event || event.status !== 'claimed' || event.claimId !== claimId) {
     throw new Error('Sub-thread worker event claim no longer owns this dispatch.')
   }
+  if (event.plannedRunId !== runId) {
+    throw new Error('Sub-thread worker dispatch run id does not match its durable planned run id.')
+  }
   return {
     ...control,
     events: control.events.map((candidate) =>
@@ -391,6 +408,33 @@ export function bindSubThreadWorkerEventToRun(
             processedAt: candidate.processedAt || now
           }
         : candidate
+    )
+  }
+}
+
+export function failClaimedSubThreadWorkerEvent(
+  current: SubThreadWorkerControl | null | undefined,
+  eventId: string,
+  claimId: string,
+  error: string,
+  now: string = new Date().toISOString()
+): SubThreadWorkerControl {
+  const control = normalizeSubThreadWorkerControl(current, now)
+  return {
+    ...control,
+    events: compactTerminalHistory(
+      control.events.map((event) =>
+        event.id === eventId && event.status === 'claimed' && event.claimId === claimId
+          ? {
+              ...event,
+              status: 'failed' as const,
+              terminalAt: now,
+              error: error.replace(/\s+/g, ' ').trim().slice(0, 1_000),
+              claimId: undefined,
+              claimedAt: undefined
+            }
+          : event
+      )
     )
   }
 }
