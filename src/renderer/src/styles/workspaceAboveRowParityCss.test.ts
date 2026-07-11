@@ -41,4 +41,18 @@ describe('workspace above-row parity', () => {
     expect(css).not.toContain('composer-above-bar-center-cluster')
     expect(css).not.toContain('composer-above-bar-trailing-cluster')
   })
+
+  it('collapses the empty Codex changes track without changing other shells', () => {
+    const css = readSource('src/renderer/src/assets/css/10-provider-shell-overrides.css')
+    const selector =
+      '[data-composer-style="codex"]\n  .composer-workspace-above-row.style-unified:not('
+    const start = css.indexOf(selector)
+    const end = css.indexOf('}', start)
+    const block = css.slice(start, end + 1)
+
+    expect(start).toBeGreaterThan(-1)
+    expect(block).toContain(':has(> .composer-above-bar-pill--changes)')
+    expect(block).toContain('grid-template-columns: minmax(0, max-content) max-content')
+    expect(block).not.toContain('data-composer-style="grok"')
+  })
 })

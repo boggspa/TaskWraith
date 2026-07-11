@@ -4452,6 +4452,23 @@
   margin-right: 0 !important;
 }
 
+/* Codex detached rows are shrink-wrapped. When there is no changes pill,
+ * collapse the otherwise-empty centre track so workspace + action sit together
+ * instead of reserving space for data that is not present. */
+[data-composer-style="codex"]
+  .composer-workspace-above-row.style-unified:not(
+    :has(> .composer-above-bar-pill--changes)
+  ) {
+  grid-template-columns: minmax(0, max-content) max-content;
+}
+[data-composer-style="codex"]
+  .composer-workspace-above-row.style-unified:not(
+    :has(> .composer-above-bar-pill--changes)
+  )
+  > .composer-above-bar-pill--action {
+  grid-column: 2;
+}
+
 /* Grok tucked workspace rows need more left-column budget than the symmetric
  * Codex grid: the git pill also carries the sync chip, so equal side columns
  * make the workspace/branch label collapse before the center stats need to. */
