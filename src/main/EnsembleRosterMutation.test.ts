@@ -609,7 +609,8 @@ describe('evaluateRosterEdit', () => {
             ollamaRunProfile: 'approved_patcher',
             reasoningEffort: 'high',
             serviceTier: 'fast',
-            linkedProviderSessionId: 'codex-session'
+            linkedProviderSessionId: 'codex-session',
+            promptDynamicStateVersion: 'ensemble-dynamic-v1:old-worker-receipt'
           })
         ]
       })
@@ -626,6 +627,47 @@ describe('evaluateRosterEdit', () => {
     expect(worker?.reasoningEffort).toBeUndefined()
     expect(worker?.serviceTier).toBeUndefined()
     expect(worker?.linkedProviderSessionId).toBeUndefined()
+    expect(worker?.promptDynamicStateVersion).toBeUndefined()
+  })
+
+  it('clears a dynamic receipt when model or explicit linked-session changes', () => {
+    const ctx = makeContext({
+      participants: [
+        participant({ id: 'boss', provider: 'claude', role: 'Boss', order: 1 }),
+        participant({
+          id: 'worker',
+          provider: 'codex',
+          role: 'Worker',
+          order: 2,
+          model: 'gpt-5.5',
+          linkedProviderSessionId: 'codex-session-a',
+          promptDynamicStateVersion: 'ensemble-dynamic-v1:old-worker-receipt'
+        })
+      ]
+    })
+    const modelChanged = evaluateRosterEdit(
+      {
+        action: 'edit_participant',
+        targetParticipantId: 'worker',
+        participant: { model: 'gpt-5.6' }
+      },
+      ctx
+    )
+    expect(modelChanged).toMatchObject({ ok: true })
+    if (!modelChanged.ok) throw new Error(modelChanged.message)
+    expect(modelChanged.nextParticipants[1].promptDynamicStateVersion).toBeUndefined()
+
+    const sessionRelinked = evaluateRosterEdit(
+      {
+        action: 'edit_participant',
+        targetParticipantId: 'worker',
+        participant: { linkedProviderSessionId: 'codex-session-b' }
+      },
+      ctx
+    )
+    expect(sessionRelinked).toMatchObject({ ok: true })
+    if (!sessionRelinked.ok) throw new Error(sessionRelinked.message)
+    expect(sessionRelinked.nextParticipants[1].promptDynamicStateVersion).toBeUndefined()
   })
 })
 

@@ -28,7 +28,10 @@ import type {
 } from '../store/types'
 import type { RunPermissionPostureContext } from '../RunPermissionPosture'
 import { MAX_ENSEMBLE_PARTICIPANTS } from '../EnsembleRosterMutation'
-import { computeEnsemblePromptShellStamp } from '../EnsemblePrompt'
+import {
+  buildEnsembleDynamicStateSnapshot,
+  computeEnsemblePromptShellStamp
+} from '../EnsemblePrompt'
 import {
   CONTEXT_AUTO_COMPACT_COOLDOWN_MS,
   type ContextCompactionProgressEvent
@@ -5517,6 +5520,8 @@ Next action:
     }
     initialChat.ensemble!.participants[0].role = 'Boss'
     initialChat.ensemble!.participants[0].permissionPresetId = 'workspace_write'
+    initialChat.ensemble!.participants[1].promptDynamicStateVersion =
+      'ensemble-dynamic-v1:old-codex-receipt'
     const harness = makeHarness({
       initialChat,
       probeParticipant: async () => ({ reachable: true })
@@ -5600,6 +5605,10 @@ Next action:
         reasoningEffort: 'medium'
       })
     )
+    expect(
+      harness.chat.ensemble!.participants.find((participant) => participant.id === 'codex')
+        ?.promptDynamicStateVersion
+    ).toBeUndefined()
     expect(
       harness.chat.ensemble!.activeRound?.participants.find(
         (participant) => participant.participantId === 'codex'
@@ -12425,6 +12434,7 @@ describe('slim resumed-turn prompts', () => {
     try {
       const chat = makeChat()
       const stamp = computeEnsemblePromptShellStamp(chat.ensemble!)
+      const dynamicStateVersion = buildEnsembleDynamicStateSnapshot(chat, chat.ensemble!).version
       chat.ensemble!.participants = chat.ensemble!.participants.map((participant) =>
         participant.id === 'claude'
           ? {
@@ -12457,6 +12467,16 @@ describe('slim resumed-turn prompts', () => {
         { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' },
         { type: 'result', status: 'success', stats: { total_tokens: 5 } }
       )
+      await vi.waitFor(() => {
+        const claudeSeat = harness.chat.ensemble?.participants.find(
+          (participant) => participant.id === 'claude'
+        )
+        const claudeRun = harness.chat.runs.find(
+          (run) => run.runId === harness.dispatched[0].appRunId
+        )
+        expect(claudeSeat?.promptDynamicStateVersion).toBe(dynamicStateVersion)
+        expect(claudeRun?.promptDynamicStateVersion).toBe(dynamicStateVersion)
+      })
       await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
       expect(harness.dispatched[1].prompt).toContain('Participant roster:')
       // Complete the codex run — flushRun persists the stamp so codex's
@@ -12611,7 +12631,90 @@ describe('shell stamp persistence requires a successful dispatch', () => {
     )
     for (const participant of harness.chat.ensemble?.participants || []) {
       expect(participant.promptShellVersion).toBeUndefined()
+      expect(participant.promptDynamicStateVersion).toBeUndefined()
     }
+    expect(
+      harness.chat.runs.some((run) => typeof run.promptDynamicStateVersion === 'string')
+    ).toBe(false)
+  })
+})
+
+describe('dynamic-state receipt invalidation', () => {
+  it('does not persist a candidate when a dispatched run ends skipped without an answer', async () => {
+    const harness = makeHarness()
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Try a no-output turn.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const runId = harness.dispatched[0].appRunId
+    harness.orchestrator.handleProviderOutput(
+      'claude',
+      { appRunId: runId, appChatId: 'ensemble-chat' },
+      { type: 'result', status: 'success', stats: { total_tokens: 5 } }
+    )
+    await vi.waitFor(() => {
+      const run = harness.chat.runs.find((entry) => entry.runId === runId)
+      expect(run?.status).toBe('success')
+      expect(run?.promptDynamicStateVersion).toBeUndefined()
+      expect(
+        harness.chat.ensemble?.participants.find((participant) => participant.id === 'claude')
+          ?.promptDynamicStateVersion
+      ).toBeUndefined()
+    })
+  })
+
+  it('clears a receipt on completed native compaction and never re-acknowledges it at final flush', async () => {
+    const chat = makeChat()
+    chat.ensemble!.participants = chat.ensemble!.participants.map((participant) =>
+      participant.id === 'claude'
+        ? {
+            ...participant,
+            linkedProviderSessionId: 'claude-session-1',
+            promptDynamicStateVersion: 'ensemble-dynamic-v1:old-receipt'
+          }
+        : participant
+    )
+    const harness = makeHarness({ initialChat: chat })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Continue safely.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const runId = harness.dispatched[0].appRunId
+    harness.orchestrator.handleProviderOutput(
+      'claude',
+      { appRunId: runId, appChatId: 'ensemble-chat' },
+      {
+        type: 'compaction_event',
+        compaction: { kind: 'completed', telemetry: { provider: 'claude', trigger: 'auto' } }
+      }
+    )
+    expect(
+      harness.chat.ensemble?.participants.find((participant) => participant.id === 'claude')
+        ?.promptDynamicStateVersion
+    ).toBeUndefined()
+
+    harness.orchestrator.handleProviderOutput(
+      'claude',
+      { appRunId: runId, appChatId: 'ensemble-chat' },
+      { type: 'message', role: 'assistant', delta: true, content: 'Compacted and continued.' }
+    )
+    harness.orchestrator.handleProviderOutput(
+      'claude',
+      { appRunId: runId, appChatId: 'ensemble-chat' },
+      { type: 'result', status: 'success', stats: { total_tokens: 5 } }
+    )
+    await vi.waitFor(() => {
+      const run = harness.chat.runs.find((entry) => entry.runId === runId)
+      expect(run?.promptDynamicStateVersion).toBeUndefined()
+      expect(
+        harness.chat.ensemble?.participants.find((participant) => participant.id === 'claude')
+          ?.promptDynamicStateVersion
+      ).toBeUndefined()
+    })
   })
 })
 

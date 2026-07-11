@@ -107,9 +107,23 @@ export interface BuildEnsemblePromptInput {
    * current config (roster/rules unchanged since its last full briefing).
    */
   slimTurn?: boolean
+  /**
+   * Optional precomputed state snapshot. The orchestrator passes the exact
+   * snapshot whose version it will receipt after a successful dispatch; direct
+   * prompt-builder callers may omit it and get the canonical calculation.
+   */
+  dynamicStateSnapshot?: EnsembleDynamicStateSnapshot
 }
 
 export const ENSEMBLE_PROMPT_SHELL_VERSION = 'ensemble-shell-v1'
+export const ENSEMBLE_DYNAMIC_STATE_VERSION = 'ensemble-dynamic-v1'
+
+export interface EnsembleDynamicStateSnapshot {
+  /** Stable content-derived version; deliberately does not use Node crypto. */
+  version: string
+  /** Replacement snapshot with explicit tombstones for every dynamic slot. */
+  block: string
+}
 
 /**
  * Spike 5 — stamp identifying the invariant prompt-shell a seat has seen.
@@ -138,19 +152,21 @@ export function computeEnsemblePromptShellStamp(config: EnsembleConfig): string 
     )
     .sort()
     .join('\n')
-  // Review F2: the Work Session stanza is part of the full shell; hash its
-  // IDENTITY fields only (round-usage counters churn every round and would
-  // defeat slim turns entirely).
+  // Work Session routing/authority belongs to the shell. Its descriptive
+  // objective and acceptance criteria are dynamic state, so changing ordinary
+  // work-session detail no longer forces every resumed seat through a full
+  // briefing. Round counters remain intentionally absent too.
   const workSession = config.workSession
   const workSessionIdentity = workSession
     ? [
         workSession.enabled ? '1' : '0',
         workSession.status || '',
-        workSession.objective || '',
-        workSession.acceptanceCriteria || '',
-        (workSession.allowedParticipantIds || []).join(','),
+        workSession.allowedParticipantIds === null
+          ? 'all'
+          : [...(workSession.allowedParticipantIds || [])].sort().join(','),
         workSession.permissionPresetId || '',
-        workSession.leadParticipantId || ''
+        workSession.leadParticipantId || '',
+        workSession.managerParticipantId || ''
       ].join('|')
     : ''
   const shellIdentity = [
@@ -392,30 +408,31 @@ function isPlanWorkflowChat(chat: ChatRecord): boolean {
   return chat.workflowMode === 'plan'
 }
 
-function resolveEnsemblePlanOwnerId(
-  config: EnsembleConfig,
-  orderedParticipants: EnsembleParticipant[]
-): string | null {
+function resolveEnsemblePlanOwnerId(config: EnsembleConfig): string | null {
+  // Do not let a one-round @mention reorder choose a different plan owner.
+  // Keep the durable roster semantics (chair placement + active Work Session
+  // eligibility/lead) though: an excluded seat must never own a plan that no
+  // dispatched participant can emit. Slim sessions retain this rule, so all
+  // full and dynamic surfaces share this canonical effective roster.
+  const stableParticipants = getCanonicalEffectiveEnsembleParticipants(config)
   const bossmanId = sanitizeText(config.bossmanParticipantId)
-  if (
-    bossmanId &&
-    orderedParticipants.some((participant) => participant.id === bossmanId)
-  ) {
+  if (bossmanId && stableParticipants.some((participant) => participant.id === bossmanId)) {
     return bossmanId
   }
-  return orderedParticipants[orderedParticipants.length - 1]?.id || null
+  return stableParticipants[stableParticipants.length - 1]?.id || null
 }
 
 function formatEnsemblePlanOwnerLines(
   chat: ChatRecord,
   config: EnsembleConfig,
-  orderedParticipants: EnsembleParticipant[],
   participant: EnsembleParticipant
 ): string[] {
   if (!isPlanWorkflowChat(chat)) return []
-  const planOwnerId = resolveEnsemblePlanOwnerId(config, orderedParticipants)
+  const planOwnerId = resolveEnsemblePlanOwnerId(config)
   if (!planOwnerId) return []
-  const owner = orderedParticipants.find((candidate) => candidate.id === planOwnerId)
+  const owner = getCanonicalEffectiveEnsembleParticipants(config).find(
+    (candidate) => candidate.id === planOwnerId
+  )
   const ownerLabel = owner ? formatParticipantScopeName(owner) : planOwnerId
   if (participant.id === planOwnerId) {
     return [
@@ -482,7 +499,8 @@ function formatWorkSessionStanza(
   const allowed =
     workSession.allowedParticipantIds === null
       ? 'all enabled participants'
-      : workSession.allowedParticipantIds
+      : [...workSession.allowedParticipantIds]
+          .sort()
           .map((id) => orderedParticipants.find((participant) => participant.id === id))
           .filter((participant): participant is EnsembleParticipant => Boolean(participant))
           .map(formatParticipantScopeName)
@@ -636,6 +654,103 @@ function formatBossmanControlStanza(
   }
   if (!lines.length) return ''
   return ['Boss/Captain control state:', ...lines].join('\n')
+}
+
+/**
+ * The prompt roster may be mention-reordered for a particular round. Dynamic
+ * state must never inherit that incidental ordering: the same persisted state
+ * needs the same receipt version for every participant and every dispatch
+ * shape. Keep this roster complete (all enabled seats) and stable.
+ */
+function getStableEnabledEnsembleParticipants(config: EnsembleConfig): EnsembleParticipant[] {
+  return [...(config.participants || [])]
+    .filter((participant) => participant.enabled)
+    .sort(
+      (a, b) =>
+        a.order - b.order ||
+        a.id.localeCompare(b.id) ||
+        a.provider.localeCompare(b.provider) ||
+        a.role.localeCompare(b.role)
+    )
+}
+
+function getCanonicalEffectiveEnsembleParticipants(config: EnsembleConfig): EnsembleParticipant[] {
+  return applyActiveWorkSessionRoster(
+    applyChairSummaryOrder(getStableEnabledEnsembleParticipants(config), config),
+    config
+  )
+}
+
+function formatDynamicPlanWorkflowSlot(
+  chat: ChatRecord,
+  config: EnsembleConfig,
+  stableParticipants: EnsembleParticipant[]
+): string {
+  if (!isPlanWorkflowChat(chat)) return 'Plan workflow owner: <none>'
+  const ownerId = resolveEnsemblePlanOwnerId(config)
+  if (!ownerId) return 'Plan workflow owner: <none>'
+  const owner = stableParticipants.find((participant) => participant.id === ownerId)
+  const ownerLabel = owner ? formatParticipantScopeName(owner) : ownerId
+  return [
+    'Plan workflow owner:',
+    `Designated participant: ${ownerLabel}.`,
+    'Only this participant may emit the single `<proposed_plan>...</proposed_plan>` block; all other participants contribute findings, risks, or review only.'
+  ].join('\n')
+}
+
+function promptStateHash(value: string): string {
+  // Two compact, independent rolling hashes plus length keep accidental
+  // receipt collisions vanishingly unlikely without importing Node crypto.
+  // This is renderer-safe and is a cache receipt identifier, not a security
+  // boundary, so a portable content stamp is preferable to crypto coupling.
+  let primary = 0x811c9dc5
+  let secondary = 0x9e3779b9
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index)
+    primary = Math.imul(primary ^ code, 0x01000193) >>> 0
+    secondary = Math.imul(secondary ^ (code + index), 0x27d4eb2d) >>> 0
+  }
+  return `${value.length.toString(36)}-${primary.toString(36)}-${secondary.toString(36)}`
+}
+
+/**
+ * Canonical replacement snapshot for ensemble state that can change while a
+ * provider session remains valid. Every slot has an explicit tombstone so a
+ * slim resumed turn can safely learn that previously-present state was cleared
+ * instead of retaining stale session memory.
+ */
+export function buildEnsembleDynamicStateSnapshot(
+  chat: ChatRecord,
+  config: EnsembleConfig
+): EnsembleDynamicStateSnapshot {
+  const stableParticipants = getCanonicalEffectiveEnsembleParticipants(config)
+  const activeGoal = resolveActiveGoalForEnsemble(chat.activeGoal)
+  const activeGoalSlot = shouldInjectActiveGoal(activeGoal)
+    ? ['Active goal:', formatActiveGoalPromptBlock(activeGoal)].join('\n')
+    : 'Active goal: <none>'
+  const workSessionSlot =
+    formatWorkSessionStanza(config, stableParticipants) || 'Work Session: <none>'
+  const bossmanSlot =
+    formatBossmanControlStanza(config, stableParticipants) || 'Boss/Captain control state: <none>'
+  const sessionEventsSlot = formatSessionEventsStanza(config) || 'Recent session events: <none>'
+  const priorRoundSummary = sanitizeText(config.lastRoundSummary).slice(0, 2_000)
+  const priorRoundSummarySlot = priorRoundSummary
+    ? ['Prior round summary (from the panel synthesizer):', priorRoundSummary].join('\n')
+    : 'Prior round summary: <none>'
+  const planWorkflowSlot = formatDynamicPlanWorkflowSlot(chat, config, stableParticipants)
+  const block = [
+    'Dynamic ensemble state (replacement snapshot — later snapshots supersede this one):',
+    activeGoalSlot,
+    workSessionSlot,
+    bossmanSlot,
+    sessionEventsSlot,
+    priorRoundSummarySlot,
+    planWorkflowSlot
+  ].join('\n\n')
+  return {
+    version: `${ENSEMBLE_DYNAMIC_STATE_VERSION}:${promptStateHash(block)}`,
+    block
+  }
 }
 
 export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput): string {
@@ -797,13 +912,13 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
   // dependent deictic rule that references "Round subject:" is also
   // skipped. Either both ship together or neither does.
   const hasWorkspaceStanza = workspaceStanza !== null
-  const sessionEventsStanza = formatSessionEventsStanza(input.config)
-  const workSessionStanza = formatWorkSessionStanza(input.config, orderedParticipants)
-  const bossmanControlStanza = formatBossmanControlStanza(input.config, orderedParticipants)
-  const activeGoal = resolveActiveGoalForEnsemble(input.chat.activeGoal)
-  const activeGoalStanza = shouldInjectActiveGoal(activeGoal)
-    ? formatActiveGoalPromptBlock(activeGoal)
-    : ''
+  const dynamicStateSnapshot =
+    input.dynamicStateSnapshot || buildEnsembleDynamicStateSnapshot(input.chat, input.config)
+  // A full briefing always carries a replacement snapshot. A slim resumed
+  // turn sends it only when this seat's durable receipt differs, which also
+  // makes clears explicit via the snapshot's tombstones.
+  const includeDynamicState =
+    !input.slimTurn || input.participant.promptDynamicStateVersion !== dynamicStateSnapshot.version
   const roleBoundaryLines = formatRoleBoundaryContract(
     input.config,
     input.participant,
@@ -814,7 +929,6 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
   const planOwnerLines = formatEnsemblePlanOwnerLines(
     input.chat,
     input.config,
-    orderedParticipants,
     input.participant
   )
   // Recon-aware ollama workflow hint: the local-scout hint used to say
@@ -825,7 +939,7 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
   // seat gets the findings-shaped recon hint.
   const ollamaHintIntent: OllamaWorkflowHintIntent =
     isPlanWorkflowChat(input.chat) &&
-    resolveEnsemblePlanOwnerId(input.config, orderedParticipants) === input.participant.id
+    resolveEnsemblePlanOwnerId(input.config) === input.participant.id
       ? 'plan'
       : 'recon'
   // Threaded into the tagged-transcript builder so every
@@ -900,6 +1014,7 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
       ...(input.participant.stageRole
         ? [`Stage role: ${input.participant.stageRole} (unchanged).`]
         : []),
+      ...(includeDynamicState ? ['', dynamicStateSnapshot.block] : []),
       ...(input.scoutBriefs && input.scoutBriefs.length > 0
         ? ['', formatScoutBriefsForPrompt(input.scoutBriefs)]
         : []),
@@ -968,10 +1083,8 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
         : 'Parallel policy: read-only fan-out lanes may run concurrently. Writer-capable participants still run serially unless locked writer lanes are explicitly enabled.'
       : 'Parallel policy: use ensemble_fanout for targeted read-only fan-out when another participant can investigate in parallel.',
     ...(workspaceStanza ? [workspaceStanza] : []),
-    ...(sessionEventsStanza ? [sessionEventsStanza] : []),
-    ...(workSessionStanza ? [workSessionStanza] : []),
-    ...(bossmanControlStanza ? [bossmanControlStanza] : []),
-    ...(activeGoalStanza ? [activeGoalStanza] : []),
+    '',
+    dynamicStateSnapshot.block,
     '',
     'Participant roster:',
     roster || '- No other enabled participants.',
@@ -1196,19 +1309,6 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
           : []
       return ['', digest, ...nudge]
     })(),
-    // 1.0.4-AT8 — prior round summary block. When the config has a
-    // non-empty `lastRoundSummary` from the previous round's
-    // synthesizer, prepend it so every participant sees the same
-    // canonical picture of what already happened. Skipped on the
-    // first round (no prior summary) and when the synthesizer is
-    // unconfigured.
-    ...(input.config.lastRoundSummary && input.config.lastRoundSummary.trim().length > 0
-      ? [
-          '',
-          'Prior round summary (from the panel synthesizer):',
-          sanitizeText(input.config.lastRoundSummary).slice(0, 2000)
-        ]
-      : []),
     // Wave 3 — this seat's own compaction summary (older material than the
     // tagged transcript window below; messages it covers are filtered out of
     // that window for this seat).
@@ -1246,7 +1346,10 @@ function formatSessionEventsStanza(config: EnsembleConfig): string {
 function formatSessionEventTime(timestamp: string): string {
   const date = new Date(timestamp)
   if (Number.isNaN(date.getTime())) return 'time unknown'
-  return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
+  // This text participates in the dynamic-state receipt hash. Use UTC rather
+  // than host-local time so the same persisted ledger has one canonical
+  // snapshot version across desktop hosts and tests.
+  return `${String(date.getUTCHours()).padStart(2, '0')}:${String(date.getUTCMinutes()).padStart(2, '0')}Z`
 }
 
 function formatSessionValue(value: string | null | undefined): string {

@@ -15479,23 +15479,28 @@ async function compactCliSeatContext(payload: {
           participant.id === payload.participantId && participant.provider === payload.provider
       )
       if (fresh?.ensemble && freshParticipant) {
-        const participants = (fresh.ensemble.participants || []).map((participant) =>
-          participant.id === payload.participantId
-            ? {
-                ...participant,
-                contextCompactionSummary: {
-                  text: trimmedSummary,
-                  createdAt: new Date().toISOString(),
-                  provider: payload.provider,
-                  ...(preTokens !== undefined ? { preTokens } : {}),
-                  provenance
-                },
-                // Cursor: abandon the bloated seat session — next round starts
-                // fresh, seeded once by the injected summary block.
-                ...(payload.provider === 'cursor' ? { linkedProviderSessionId: null } : {})
-              }
-            : participant
-        )
+        const participants = (fresh.ensemble.participants || []).map((participant) => {
+          if (participant.id !== payload.participantId) return participant
+          const next = {
+            ...participant,
+            contextCompactionSummary: {
+              text: trimmedSummary,
+              createdAt: new Date().toISOString(),
+              provider: payload.provider,
+              ...(preTokens !== undefined ? { preTokens } : {}),
+              provenance
+            },
+            // Cursor: abandon the bloated seat session — next round starts
+            // fresh, seeded once by the injected summary block.
+            ...(payload.provider === 'cursor' ? { linkedProviderSessionId: null } : {})
+          }
+          // A host-side compaction either resets the native session or
+          // replaces its bounded working context. Do not let a later slim turn
+          // assume this seat still remembers the dynamic snapshot it received
+          // before compaction.
+          delete next.promptDynamicStateVersion
+          return next
+        })
         const updated: ChatRecord = {
           ...fresh,
           ensemble: { ...fresh.ensemble, participants },

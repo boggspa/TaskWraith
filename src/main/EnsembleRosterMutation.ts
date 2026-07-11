@@ -332,11 +332,13 @@ function applyParticipantPatch(
 ): EnsembleParticipant {
   const next: EnsembleParticipant = { ...target }
   let providerChanged = false
+  let dynamicStateReceiptInvalidated = false
   if (hasOwn.call(patch, 'provider') && isNonEmptyString(patch.provider)) {
     const provider = patch.provider as ProviderId
     providerChanged = provider !== target.provider
     next.provider = provider
     if (providerChanged) {
+      dynamicStateReceiptInvalidated = true
       delete next.runtimeProfileId
       delete next.geminiAuthProfileId
       delete next.ollamaRunProfile
@@ -347,6 +349,10 @@ function applyParticipantPatch(
     }
   }
   if (hasOwn.call(patch, 'model')) {
+    const nextModel = patch.model || undefined
+    if ((target.model || '') !== (nextModel || '')) {
+      dynamicStateReceiptInvalidated = true
+    }
     if (patch.model) next.model = patch.model
     else delete next.model
   }
@@ -406,7 +412,11 @@ function applyParticipantPatch(
     } else {
       delete next.linkedProviderSessionId
     }
+    if ((next.linkedProviderSessionId || '') !== (target.linkedProviderSessionId || '')) {
+      dynamicStateReceiptInvalidated = true
+    }
   }
+  if (dynamicStateReceiptInvalidated) delete next.promptDynamicStateVersion
   return next
 }
 

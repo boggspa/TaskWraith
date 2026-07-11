@@ -681,6 +681,15 @@ export interface EnsembleParticipant {
    */
   promptShellVersion?: string
   /**
+   * Dynamic-state delivery receipt for slim resumed turns. This is the
+   * version emitted by `buildEnsembleDynamicStateSnapshot` that the seat
+   * successfully received and then completed a terminal turn for. It is
+   * intentionally separate from `promptShellVersion`: changing a goal,
+   * Boss state, Work Session detail, or summary should re-send only the
+   * small state snapshot rather than the entire prompt shell.
+   */
+  promptDynamicStateVersion?: string
+  /**
    * Slice D — per-participant reasoning + speed + thinking settings.
    * All optional; orchestrator dispatch falls back to provider
    * defaults when absent so existing ensemble chats remain valid.
@@ -3068,6 +3077,12 @@ export interface ChatRun {
   ensembleOrder?: number
   /** Per-turn immutable seat configuration for accurate round close-outs. */
   ensembleSeatSnapshot?: EnsembleSeatSnapshot
+  /**
+   * Dynamic-state delivery receipt persisted for this completed participant
+   * run. This is an audit companion to the participant-level receipt; it is
+   * written only after a successful answered/yielded/sleeping terminal flush.
+   */
+  promptDynamicStateVersion?: string
   pooledAgentId?: string
   pooledAgentIdentity?: PooledAgentIdentitySnapshot
   ensembleSleepWakeupId?: string

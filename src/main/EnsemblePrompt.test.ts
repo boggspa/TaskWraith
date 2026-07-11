@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  buildEnsembleDynamicStateSnapshot,
   buildDupProviderModelLabels,
   buildEnsembleParticipantPrompt,
   buildParticipantTokenMap,
@@ -14,7 +15,13 @@ import {
   OLLAMA_ENSEMBLE_MAX_TRANSCRIPT_CHARS,
   resolveOllamaEnsembleTranscriptBudget
 } from './EnsemblePrompt'
-import type { ChatRecord, EnsembleConfig, EnsembleParticipant, ToolActivity } from './store/types'
+import type {
+  ActiveGoal,
+  ChatRecord,
+  EnsembleConfig,
+  EnsembleParticipant,
+  ToolActivity
+} from './store/types'
 
 const ensemble: EnsembleConfig = {
   enabled: true,
@@ -1012,6 +1019,60 @@ describe('Ensemble prompt composition', () => {
     expect(prompt).toContain('<proposed_plan>...</proposed_plan>')
   })
 
+  it('keeps the plan owner canonical when a mention reorders this round', () => {
+    // With no Boss the stable last enabled seat (Gemini) owns plan synthesis.
+    // @gemini moves that seat to the front only for speaking order; it must
+    // not make Codex the owner in the full-shell rule while the dynamic
+    // snapshot says Gemini.
+    const planChat = { ...chat(), workflowMode: 'plan' as const }
+    const prompt = buildEnsembleParticipantPrompt({
+      chat: planChat,
+      config: ensemble,
+      participant: ensemble.participants[1],
+      currentPrompt: '@gemini please investigate before we plan.',
+      roundId: 'round-plan-mention'
+    })
+    expect(prompt).toContain('Gemini / Researcher is responsible')
+    expect(prompt).toContain('Designated participant: Gemini / Researcher.')
+    expect(prompt).not.toContain('you are the designated plan synthesizer')
+  })
+
+  it('chooses a plan owner from the stable effective Work Session roster', () => {
+    const workSession = {
+      enabled: true,
+      status: 'active' as const,
+      objective: 'Plan the safe implementation.',
+      acceptanceCriteria: 'A reviewed plan is ready.',
+      allowedParticipantIds: ['claude', 'codex'],
+      // The lead moves to the front, making Claude the canonical last/effective
+      // owner. Gemini is deliberately excluded even though it is last in the
+      // global enabled roster and is configured as Boss.
+      leadParticipantId: 'codex',
+      permissionPresetId: 'workspace_write' as const,
+      maxRoundsPerProvider: 4,
+      maxDurationMs: 60_000,
+      enableScoutPass: false,
+      roundsUsed: { codex: 0, claude: 0, gemini: 0, kimi: 0, grok: 0, cursor: 0, ollama: 0 },
+      totalRoundsUsed: 0
+    }
+    const config: EnsembleConfig = {
+      ...ensemble,
+      bossmanParticipantId: 'gemini',
+      workSession
+    }
+    const planChat = { ...chat(), workflowMode: 'plan' as const, ensemble: config }
+    const prompt = buildEnsembleParticipantPrompt({
+      chat: planChat,
+      config,
+      participant: config.participants[1],
+      currentPrompt: '@codex please plan this safely.',
+      roundId: 'round-plan-session'
+    })
+    expect(prompt).toContain('Claude / Reviewer is responsible')
+    expect(prompt).toContain('Designated participant: Claude / Reviewer.')
+    expect(prompt).not.toContain('Gemini / Researcher is responsible')
+  })
+
   it('1.0.4-AF: inverts the deictic rule and rewrites the workspace stanza in selfReflective mode', () => {
     const reflectiveEnsemble: EnsembleConfig = { ...ensemble, selfReflective: true }
     const prompt = buildEnsembleParticipantPrompt({
@@ -1669,7 +1730,7 @@ describe('Ensemble synthesizer + last-round summary (AT8)', () => {
     expect(claudePrompt).toContain('ship the X module')
   })
 
-  it('skips the prior-summary block when lastRoundSummary is empty / whitespace', () => {
+  it('writes an explicit prior-summary tombstone when lastRoundSummary is empty / whitespace', () => {
     const empty: EnsembleConfig = {
       ...ensemble,
       synthesizerParticipantId: 'codex',
@@ -1682,7 +1743,7 @@ describe('Ensemble synthesizer + last-round summary (AT8)', () => {
       currentPrompt: 'Continue.',
       roundId: 'round-2'
     })
-    expect(prompt).not.toContain('Prior round summary')
+    expect(prompt).toContain('Prior round summary: <none>')
   })
 
   it('caps the prior-round summary at 2000 characters', () => {
@@ -1701,7 +1762,7 @@ describe('Ensemble synthesizer + last-round summary (AT8)', () => {
     // Should contain a truncated chunk, NOT the full 3000-char blob.
     const summaryBlock = prompt
       .split('Prior round summary (from the panel synthesizer):\n')[1]
-      ?.split('\n\nRecent tagged transcript:')[0]
+      ?.split('\n\nPlan workflow owner:')[0]
     expect(summaryBlock).toBeDefined()
     expect(summaryBlock).toContain('xxxxxxxxxx')
     expect(summaryBlock?.length).toBe(2000)
@@ -2141,6 +2202,164 @@ describe('computeEnsemblePromptShellStamp', () => {
     expect(
       computeEnsemblePromptShellStamp({ ...base, fanoutPolicy: 'read_only' as const })
     ).not.toBe(stamp)
+  })
+})
+
+describe('dynamic ensemble-state snapshots', () => {
+  it('is deterministic over the full enabled stable roster and carries all six tombstones', () => {
+    const base = chat()
+    const snapshot = buildEnsembleDynamicStateSnapshot(base, ensemble)
+    expect(snapshot.block).toContain('Active goal: <none>')
+    expect(snapshot.block).toContain('Work Session: <none>')
+    expect(snapshot.block).toContain('Boss/Captain control state: <none>')
+    expect(snapshot.block).toContain('Recent session events: <none>')
+    expect(snapshot.block).toContain('Prior round summary: <none>')
+    expect(snapshot.block).toContain('Plan workflow owner: <none>')
+
+    const reordered: EnsembleConfig = {
+      ...ensemble,
+      participants: [...ensemble.participants].reverse()
+    }
+    expect(buildEnsembleDynamicStateSnapshot(base, reordered).version).toBe(snapshot.version)
+  })
+
+  it('changes version for state changes and renders event times canonically in UTC', () => {
+    const base = chat()
+    const before = buildEnsembleDynamicStateSnapshot(base, ensemble)
+    const changed: EnsembleConfig = {
+      ...ensemble,
+      lastRoundSummary: 'Carry the verification finding into the next round.',
+      sessionActivityLedger: [
+        {
+          id: 'event-1',
+          timestamp: '2026-05-24T12:34:56.000Z',
+          changedBy: 'user',
+          scope: 'session',
+          target: 'session',
+          oldValue: 'idle',
+          newValue: 'active'
+        }
+      ]
+    }
+    const after = buildEnsembleDynamicStateSnapshot(base, changed)
+    expect(after.version).not.toBe(before.version)
+    expect(after.block).toContain('12:34Z')
+    expect(after.block).toContain('Carry the verification finding')
+  })
+
+  it('keeps Work Session routing in the shell while objective detail stays dynamic', () => {
+    const workSession = {
+      enabled: true,
+      status: 'active' as const,
+      objective: 'Ship the first safe slice.',
+      acceptanceCriteria: 'Focused checks pass.',
+      allowedParticipantIds: ['codex'],
+      leadParticipantId: 'codex',
+      permissionPresetId: 'workspace_write' as const,
+      maxRoundsPerProvider: 4,
+      maxDurationMs: 60_000,
+      enableScoutPass: false,
+      roundsUsed: { codex: 0, claude: 0, gemini: 0, kimi: 0, grok: 0, cursor: 0, ollama: 0 },
+      totalRoundsUsed: 0
+    }
+    const initial: EnsembleConfig = { ...ensemble, workSession }
+    const revised: EnsembleConfig = {
+      ...initial,
+      workSession: {
+        ...workSession,
+        objective: 'Ship the next safe slice.',
+        acceptanceCriteria: 'Focused checks and a smoke run pass.'
+      }
+    }
+    expect(computeEnsemblePromptShellStamp(revised)).toBe(
+      computeEnsemblePromptShellStamp(initial)
+    )
+    expect(buildEnsembleDynamicStateSnapshot(chat(), revised).version).not.toBe(
+      buildEnsembleDynamicStateSnapshot(chat(), initial).version
+    )
+  })
+
+  it('changes version for active-goal, Boss-state, and plan-workflow slots', () => {
+    const base = chat()
+    const initial = buildEnsembleDynamicStateSnapshot(base, ensemble).version
+    const activeGoal: ActiveGoal = {
+      id: 'goal-state-test',
+      objective: 'Finish the verified context optimization.',
+      status: 'active',
+      mode: 'taskwraith_steered',
+      provider: 'claude',
+      createdAt: '2026-05-24T00:00:00.000Z',
+      updatedAt: '2026-05-24T00:00:00.000Z'
+    }
+    const variants: Array<{ chat: ChatRecord; config: EnsembleConfig }> = [
+      { chat: { ...base, activeGoal }, config: ensemble },
+      {
+        chat: base,
+        config: {
+          ...ensemble,
+          bossmanControlState: {
+            decisions: [
+              {
+                id: 'decision-1',
+                decision: 'Use a receipt before omitting dynamic state.',
+                createdAt: '2026-05-24T00:00:00.000Z'
+              }
+            ]
+          }
+        }
+      },
+      { chat: { ...base, workflowMode: 'plan' }, config: ensemble }
+    ]
+    for (const variant of variants) {
+      expect(buildEnsembleDynamicStateSnapshot(variant.chat, variant.config).version).not.toBe(
+        initial
+      )
+    }
+  })
+
+  it('always puts the snapshot in a full prompt and sends it in a slim prompt only on receipt mismatch', () => {
+    const base = chat()
+    const current = buildEnsembleDynamicStateSnapshot(base, ensemble)
+    const acknowledged = {
+      ...ensemble.participants[0],
+      promptDynamicStateVersion: current.version
+    }
+    const full = buildEnsembleParticipantPrompt({
+      chat: base,
+      config: ensemble,
+      participant: acknowledged,
+      currentPrompt: 'Continue.',
+      roundId: 'round-dynamic'
+    })
+    expect(full).toContain('Dynamic ensemble state (replacement snapshot')
+
+    const slim = buildEnsembleParticipantPrompt({
+      chat: base,
+      config: ensemble,
+      participant: acknowledged,
+      currentPrompt: 'Continue.',
+      roundId: 'round-dynamic',
+      slimTurn: true,
+      dynamicStateSnapshot: current
+    })
+    expect(slim).not.toContain('Dynamic ensemble state (replacement snapshot')
+
+    const changed: EnsembleConfig = {
+      ...ensemble,
+      lastRoundSummary: 'A new summary must replace the stale memory.'
+    }
+    const changedSnapshot = buildEnsembleDynamicStateSnapshot(base, changed)
+    const staleSlim = buildEnsembleParticipantPrompt({
+      chat: { ...base, ensemble: changed },
+      config: changed,
+      participant: acknowledged,
+      currentPrompt: 'Continue.',
+      roundId: 'round-dynamic',
+      slimTurn: true,
+      dynamicStateSnapshot: changedSnapshot
+    })
+    expect(staleSlim).toContain('Dynamic ensemble state (replacement snapshot')
+    expect(staleSlim).toContain('A new summary must replace the stale memory.')
   })
 })
 
