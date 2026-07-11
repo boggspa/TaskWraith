@@ -17,7 +17,7 @@ const readClaudeLightSection = (): string => {
 }
 
 describe('Claude composer light chrome', () => {
-  it('paints every requested detached above-row with the reference gray', () => {
+  it('paints every requested detached above-row with crisp reference-gray chrome', () => {
     const section = readClaudeLightSection()
 
     expect(section).toContain(
@@ -28,6 +28,10 @@ describe('Claude composer light chrome', () => {
     expect(section).toContain('.queued-messages-above-row,')
     expect(section).toContain('.ensemble-roster-preset-picker.is-compact')
     expect(section).toContain('background: #f4f4f3 !important;')
+    expect(section).toContain('border-color: transparent !important;')
+    expect(section).toContain('box-shadow: none !important;')
+    expect(section).toContain('-webkit-backdrop-filter: none !important;')
+    expect(section).toContain('backdrop-filter: none !important;')
   })
 
   it('gives the textarea/send frame a light-mode rim and subtle shadow', () => {
