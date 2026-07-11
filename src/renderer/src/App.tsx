@@ -9071,7 +9071,6 @@ function App(): React.JSX.Element {
     provider: ProviderId,
     context: ActiveRunContext | null,
     message: string,
-    runChatId: string | null | undefined,
     isVisibleRun: boolean
   ): boolean => {
     if (
@@ -9097,20 +9096,6 @@ function App(): React.JSX.Element {
         .catch(() => window.api.cancelGemini(context.runId))
       clearActiveRunContext(context)
       if (isVisibleRun) setIsThinking(false)
-      if (runChatId) {
-        updateChatById(runChatId, (source) => {
-          const msgs = [
-            ...source.messages,
-            {
-              id: createMessageId(),
-              role: 'system',
-              content: `Run auto-stopped due to repeated Gemini model capacity exhaustion (${context.errorCount} retries). Try Flash or Flash Lite for this request.`,
-              timestamp: new Date().toISOString()
-            }
-          ] as ChatMessage[]
-          return { ...source, messages: msgs }
-        })
-      }
     }
 
     return true
@@ -9329,7 +9314,6 @@ function App(): React.JSX.Element {
           provider,
           context,
           text,
-          context.chatId,
           !context.chatId || currentChatIdRef.current === context.chatId
         )
         context.adapter.appendChunk(text)
@@ -9374,7 +9358,6 @@ function App(): React.JSX.Element {
           provider,
           context,
           error,
-          errorRunChatId,
           isVisibleErrorRun
         )
       }
@@ -12147,7 +12130,6 @@ function App(): React.JSX.Element {
             effectiveRunProvider,
             runContext,
             redacted,
-            runChatId,
             isVisibleRunChat()
           )
           const permissionRequest = parseGeminiPermissionRequest(event.data)
@@ -15345,13 +15327,7 @@ function App(): React.JSX.Element {
         ...prev,
         messages: [
           ...prev.messages,
-          { id: `${createMessageId()}-bridge-user`, role: 'user', content: commandText, timestamp },
-          {
-            id: `${createMessageId()}-bridge-system`,
-            role: 'system',
-            content: `Command bridge queued because persistent Gemini session is ${reason}.`,
-            timestamp: new Date().toISOString()
-          }
+          { id: `${createMessageId()}-bridge-user`, role: 'user', content: commandText, timestamp }
         ] as ChatMessage[]
       }
       window.api.saveChat(updated)
