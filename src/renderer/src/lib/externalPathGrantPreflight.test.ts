@@ -39,7 +39,8 @@ function ensembleChat(): ChatRecord {
       participants: [
         { id: 'p1', provider: 'codex', role: 'Codex', order: 1, enabled: true, model: 'cli-default', instructions: '' },
         { id: 'p2', provider: 'ollama', role: 'Local', order: 2, enabled: true, model: 'cli-default', instructions: '' },
-        { id: 'p3', provider: 'claude', role: 'Claude', order: 3, enabled: true, model: 'cli-default', instructions: '' }
+        { id: 'p3', provider: 'gemini', role: 'Historical', order: 3, enabled: true, model: 'cli-default', instructions: '' },
+        { id: 'p4', provider: 'claude', role: 'Claude', order: 4, enabled: true, model: 'cli-default', instructions: '' }
       ],
       updatedAt: new Date().toISOString()
     }
@@ -47,11 +48,15 @@ function ensembleChat(): ChatRecord {
 }
 
 describe('externalPathGrantPreflight', () => {
-  it('targets dispatch providers only (excludes Ollama)', () => {
-    expect(externalPathGrantTargetsForChat(ensembleChat())).toEqual(['codex', 'claude'])
+  it('targets every active live provider and excludes retired Gemini', () => {
+    expect(externalPathGrantTargetsForChat(ensembleChat())).toEqual([
+      'codex',
+      'ollama',
+      'claude'
+    ])
   })
 
-  it('reports gaps when additional workspace lacks grants for panelists', () => {
+  it('reports gaps when an additional workspace lacks active-provider grants', () => {
     const chat = ensembleChat()
     const grants = [grant({ provider: 'codex', path: '/extra/repo' })]
     const result = findExternalPathGrantGaps({
@@ -61,10 +66,10 @@ describe('externalPathGrantPreflight', () => {
     })
     expect(result.paths).toEqual(['/extra/repo'])
     expect(result.gaps).toHaveLength(1)
-    expect(result.gaps[0]?.missingProviders).toEqual(['claude'])
+    expect(result.gaps[0]?.missingProviders).toEqual(['ollama', 'claude'])
   })
 
-  it('reports all dispatch panelists missing for a newly attached path', () => {
+  it('reports every active live provider missing for a newly attached path', () => {
     const chat = ensembleChat()
     expect(
       missingExternalPathGrantProviders({
@@ -72,7 +77,7 @@ describe('externalPathGrantPreflight', () => {
         grants: [],
         path: '/new/workspace'
       })
-    ).toEqual(['codex', 'claude'])
+    ).toEqual(['codex', 'ollama', 'claude'])
   })
 
   it('treats read grants as missing when a write grant is requested', () => {
@@ -82,6 +87,7 @@ describe('externalPathGrantPreflight', () => {
         chat,
         grants: [
           grant({ provider: 'codex', path: '/new/workspace', access: 'read' }),
+          grant({ provider: 'ollama', path: '/new/workspace', access: 'write' }),
           grant({ provider: 'claude', path: '/new/workspace', access: 'write' })
         ],
         path: '/new/workspace',
@@ -96,6 +102,7 @@ describe('externalPathGrantPreflight', () => {
       chat,
       grants: [
         grant({ provider: 'codex', path: '/extra/repo', access: 'read' }),
+        grant({ provider: 'ollama', path: '/extra/repo', access: 'write' }),
         grant({ provider: 'claude', path: '/extra/repo', access: 'write' })
       ],
       primaryWorkspacePath: '/primary'
@@ -105,7 +112,7 @@ describe('externalPathGrantPreflight', () => {
     ])
   })
 
-  it('returns no gaps when every dispatch panelist has a grant', () => {
+  it('returns no gaps when every active live provider has a grant', () => {
     const chat = ensembleChat()
     const grants = [
       grant({ provider: 'codex', path: '/extra/repo' }),

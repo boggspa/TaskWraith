@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { AgenticServiceId, AppSettings, PermissionPresetId } from '../store/types'
+import type {
+  AgenticServiceId,
+  AppSettings,
+  ExternalPathGrant,
+  PermissionPresetId
+} from '../store/types'
 
 // PermissionService transitively loads the store, which reads electron.app on
 // import (mirrors PermissionService.test.ts).
@@ -91,6 +96,41 @@ function gateDecision(
 }
 
 describe('Ollama role governance (tier retired) — write/shell approval matrix', () => {
+  it('adds a secondary workspace without changing the selected permission role', () => {
+    const grant: ExternalPathGrant = {
+      id: 'ollama-secondary',
+      provider: 'ollama',
+      path: '/secondary',
+      kind: 'directory',
+      access: 'write',
+      duration: 'thisThread',
+      issuedBy: 'main',
+      signature: 'signed',
+      createdAt: '2026-07-11T00:00:00.000Z'
+    }
+    const readOnly = resolveEffectiveRunPermissions({
+      provider: 'ollama',
+      workspacePath: WORKSPACE,
+      settings: baseSettings(),
+      presetId: 'read_only',
+      explicitExternalPathGrants: [grant]
+    })
+    const workspaceWrite = resolveEffectiveRunPermissions({
+      provider: 'ollama',
+      workspacePath: WORKSPACE,
+      settings: baseSettings(),
+      presetId: 'workspace_write',
+      explicitExternalPathGrants: [grant]
+    })
+
+    expect(readOnly.externalPathGrants).toEqual([grant])
+    expect(readOnly.agenticServices.fileChanges).toBe('deny')
+    expect(readOnly.readOnly).toBe(true)
+    expect(workspaceWrite.externalPathGrants).toEqual([grant])
+    expect(workspaceWrite.agenticServices.fileChanges).toBe('workspace')
+    expect(workspaceWrite.readOnly).toBe(false)
+  })
+
   it('DENIES file edits and shell under read_only and plan', () => {
     for (const presetId of ['read_only', 'plan'] as const) {
       expect(gateDecision(presetId, 'fileChanges')).toBe('deny')

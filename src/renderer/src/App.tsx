@@ -7342,12 +7342,10 @@ function App(): React.JSX.Element {
   /**
    * 1.0.6-EW66-1c — Attach an *additional* workspace folder with a
    * caller-chosen access level (read OR write). Generalizes the old
-   * read-only `handleGrantReadAccessFolder`. The IPC
-   * (`external-path:pick-and-persist`) + the per-provider write
-   * enforcement already honour `access: 'write'` (Codex
-   * `writableRoots`, Gemini `hasExternalPathGrantForTarget`,
-   * Claude/Kimi `--add-dir` + approval gate), so no main-process
-   * change is needed — write is free parameterization here.
+   * read-only `handleGrantReadAccessFolder`. The signed grant expands
+   * each active provider's path scope; that participant's existing
+   * permission preset and tool policies still govern what it may do
+   * inside the additional workspace.
    */
   const clearExternalPathGrantPrompt = useCallback(
     (chatId?: string | null) => {
@@ -7460,7 +7458,7 @@ function App(): React.JSX.Element {
    * 1.0.6-EW69 — Attach an EXISTING known workspace as an additional
    * (secondary) workspace. Surfaces the composer permission card first
    * so the user explicitly confirms signed grants for dispatch-capable
-   * panelists before grants are issued.
+   * active providers before grants are issued.
    */
   const handleAddKnownWorkspaceAsSecondaryForChat = useCallback(
     (chatId: string, workspacePath: string, access: ExternalPathGrant['access']) => {

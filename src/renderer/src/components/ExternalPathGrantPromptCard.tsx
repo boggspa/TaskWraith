@@ -1,5 +1,3 @@
-import type { ProviderId } from '../../../main/store/types'
-import { getProviderLabel } from '../lib/providerLabels'
 import type { ExternalPathGrantGap } from '../lib/externalPathGrantPreflight'
 import { PillButton } from './PillButton'
 
@@ -9,10 +7,6 @@ export interface ExternalPathGrantPromptCardProps {
   onGrant: () => void
   onDismiss: () => void
   busy?: boolean
-}
-
-function formatMissingProviders(providers: ProviderId[]): string {
-  return providers.map((provider) => getProviderLabel(provider)).join(', ')
 }
 
 export function ExternalPathGrantPromptCard({
@@ -31,22 +25,19 @@ export function ExternalPathGrantPromptCard({
 
   const message =
     trigger === 'attach'
-      ? 'Confirm this workspace for the active panelists before it is attached to the chat.'
-      : 'Some panelists still need signed grants for additional workspaces before this round can run.'
+      ? 'Confirm access before attaching this workspace to the chat.'
+      : 'Confirm access to the additional workspace before this run can start.'
 
   return (
     <div className="composer-permission-card provider-external-path">
       <div className="composer-permission-title">
         <span>{title}</span>
-        <span className="composer-permission-source">Secondary workspace</span>
+        <span className="composer-permission-source">Additional workspace</span>
       </div>
       <div className="composer-permission-message">{message}</div>
       <div className="composer-permission-paths">
         {gaps.map((gap) => (
           <div key={gap.path} className="composer-permission-external-path">
-            <span className="composer-permission-external-path-label">
-              Needs {formatMissingProviders(gap.missingProviders)}
-            </span>
             <code className="composer-permission-external-path-value">{gap.path}</code>
           </div>
         ))}

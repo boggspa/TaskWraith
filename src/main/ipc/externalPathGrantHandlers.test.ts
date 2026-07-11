@@ -106,8 +106,8 @@ function createDeps() {
     canonicalizeExternalPathGrantMetadata: vi.fn((_metadata, nextGrants) => ({
       externalPathGrants: nextGrants
     })),
-    isExternalPathGrantDispatchProvider: vi.fn((provider: ProviderId) =>
-      ['codex', 'gemini', 'claude', 'kimi'].includes(provider)
+    isExternalPathGrantDispatchProvider: vi.fn((provider: ProviderId | string) =>
+      ['codex', 'claude', 'kimi', 'grok', 'cursor', 'ollama'].includes(provider)
     ),
     resolveRegisteredExplicitExternalPath,
     findRegisteredWorkspace: vi.fn(() => undefined),
@@ -140,7 +140,7 @@ describe('registerExternalPathGrantHandlers', () => {
     expect(handlerFor('probe-external-path')).toBeTypeOf('function')
   })
 
-  it('legacy select returns null on no window or cancelled dialog and falls back provider to codex', async () => {
+  it('legacy select returns null on no window or cancellation and defaults a missing provider to Codex', async () => {
     const { deps, setMainWindow } = createDeps()
     registerExternalPathGrantHandlers(deps)
 
@@ -149,9 +149,9 @@ describe('registerExternalPathGrantHandlers', () => {
 
     setMainWindow({ id: 1 } as unknown as BrowserWindow)
     deps.showOpenDialog.mockResolvedValueOnce({ canceled: true, filePaths: [] })
-    await expect(handlerFor('select-external-path-grant')({}, 'read', 'bad')).resolves.toBeNull()
+    await expect(handlerFor('select-external-path-grant')({}, 'read')).resolves.toBeNull()
 
-    await handlerFor('select-external-path-grant')({}, 'read', 'bad')
+    await handlerFor('select-external-path-grant')({}, 'read')
     expect(deps.providerLabel).toHaveBeenCalledWith('codex')
     expect(deps.showOpenDialog).toHaveBeenCalledWith(
       expect.anything(),
@@ -161,16 +161,25 @@ describe('registerExternalPathGrantHandlers', () => {
         securityScopedBookmarks: process.platform === 'darwin'
       })
     )
+
+    const dialogCalls = deps.showOpenDialog.mock.calls.length
+    await expect(
+      handlerFor('select-external-path-grant')({}, 'read', 'gemini')
+    ).resolves.toBeNull()
+    await expect(
+      handlerFor('select-external-path-grant')({}, 'read', 'unknown')
+    ).resolves.toBeNull()
+    expect(deps.showOpenDialog).toHaveBeenCalledTimes(dialogCalls)
   })
 
-  it('legacy select preserves stat fallback, read-default access, and issueExternalPathGrant fields', async () => {
+  it('legacy select accepts modern dispatch providers and preserves grant fields', async () => {
     const { deps } = createDeps()
     registerExternalPathGrantHandlers(deps)
 
     deps.stat.mockRejectedValueOnce(new Error('stat failed'))
-    await expect(handlerFor('select-external-path-grant')({}, 'nope' as any, 'gemini')).resolves.toEqual(
+    await expect(handlerFor('select-external-path-grant')({}, 'nope' as any, 'ollama')).resolves.toEqual(
       expect.objectContaining({
-        provider: 'gemini',
+        provider: 'ollama',
         path: '/resolved/tmp/workspace',
         kind: 'file',
         access: 'read',
@@ -180,7 +189,7 @@ describe('registerExternalPathGrantHandlers', () => {
     )
     expect(deps.issueExternalPathGrant).toHaveBeenCalledWith(
       expect.objectContaining({
-        provider: 'gemini',
+        provider: 'ollama',
         path: '/resolved/tmp/workspace',
         kind: 'file',
         access: 'read',
@@ -277,7 +286,7 @@ describe('registerExternalPathGrantHandlers', () => {
       expect.anything(),
       expect.objectContaining({
         title: 'Select folder agents in this chat can edit',
-        message: 'Issues a read+write grant scoped to this chat. ',
+        message: 'Issues a read+write grant scoped to this chat.',
         properties: ['openFile', 'openDirectory', 'createDirectory'],
         securityScopedBookmarks: process.platform === 'darwin'
       })
@@ -306,7 +315,8 @@ describe('registerExternalPathGrantHandlers', () => {
             createParticipant('claude', 0),
             createParticipant('codex', 1),
             createParticipant('claude', 2),
-            createParticipant('grok', 3)
+            createParticipant('grok', 3),
+            createParticipant('ollama', 4)
           ]
         }
       })
@@ -342,6 +352,20 @@ describe('registerExternalPathGrantHandlers', () => {
       expect.objectContaining({
         id: 'proactive-12345-codex-a1b2c3d4',
         provider: 'codex'
+      })
+    )
+    expect(deps.issueExternalPathGrant).toHaveBeenNthCalledWith(
+      3,
+      expect.objectContaining({
+        id: 'proactive-12345-grok-a1b2c3d4',
+        provider: 'grok'
+      })
+    )
+    expect(deps.issueExternalPathGrant).toHaveBeenNthCalledWith(
+      4,
+      expect.objectContaining({
+        id: 'proactive-12345-ollama-a1b2c3d4',
+        provider: 'ollama'
       })
     )
     expect(deps.saveChat).toHaveBeenCalledTimes(1)

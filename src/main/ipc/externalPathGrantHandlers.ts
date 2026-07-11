@@ -49,7 +49,7 @@ export interface ExternalPathGrantHandlersDeps {
     metadata: Record<string, unknown> | null | undefined,
     nextGrants?: ExternalPathGrant[]
   ) => Record<string, unknown>
-  isExternalPathGrantDispatchProvider: (provider: ProviderId) => boolean
+  isExternalPathGrantDispatchProvider: (provider: ProviderId | string) => boolean
   resolveRegisteredExplicitExternalPath: (input: {
     explicitPath: string
     findRegisteredWorkspace: (workspacePath: string) => WorkspaceRecord | undefined
@@ -69,13 +69,14 @@ export function registerExternalPathGrantHandlers(deps: ExternalPathGrantHandler
     async (_, access: 'read' | 'write' = 'read', provider?: unknown) => {
       const mainWindow = deps.getMainWindow()
       if (!mainWindow) return null
-      const grantProvider: ProviderId =
-        provider === 'gemini' ||
-        provider === 'codex' ||
-        provider === 'claude' ||
-        provider === 'kimi'
-          ? provider
-          : 'codex'
+      const requestedProvider =
+        typeof provider === 'string' && provider.trim() ? provider.trim() : undefined
+      // Missing provider is the only legacy shape that defaults to Codex. An
+      // explicit retired/unknown provider must not silently mint a Codex grant.
+      if (requestedProvider && !deps.isExternalPathGrantDispatchProvider(requestedProvider)) {
+        return null
+      }
+      const grantProvider = (requestedProvider || 'codex') as ProviderId
       const providerLabelText = deps.providerLabel(grantProvider)
       const result = await deps.showOpenDialog(mainWindow, {
         title:
@@ -168,17 +169,17 @@ export function registerExternalPathGrantHandlers(deps: ExternalPathGrantHandler
         bookmark = undefined
       } else {
         const accessVerb = access === 'write' ? 'can edit' : 'can read'
+        const providerSummary =
+          dispatchProviders.length > 1
+            ? ` One grant per active provider (${dispatchProviders
+                .map((provider) => deps.providerLabel(provider))
+                .join(', ')}).`
+            : ''
         const dialogResult = await deps.showOpenDialog(mainWindow, {
           title: `Select folder agents in this chat ${accessVerb}`,
           message: `Issues a ${
             access === 'write' ? 'read+write' : 'read-only'
-          } grant scoped to this chat. ${
-            dispatchProviders.length > 1
-              ? `One grant per panelist provider (${dispatchProviders
-                  .map((provider) => deps.providerLabel(provider))
-                  .join(', ')}).`
-              : ''
-          }`,
+          } grant scoped to this chat.${providerSummary}`,
           properties: ['openFile', 'openDirectory', 'createDirectory'],
           securityScopedBookmarks: deps.securityScopedBookmarks
         } as OpenDialogOptions)

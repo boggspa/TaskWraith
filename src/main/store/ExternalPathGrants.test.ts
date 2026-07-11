@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import {
+  EXTERNAL_PATH_GRANT_DISPATCH_PROVIDERS,
   assignExternalPathGrantOrder,
   canonicalizeExternalPathGrantMetadata,
   coalesceExternalPathGrants,
   collectExternalPathGrantsFromMetadata,
+  isExternalPathGrantDispatchProvider,
   reorderExternalPathGrantsByPath
 } from './ExternalPathGrants'
 import type { ExternalPathGrant, ProviderId } from './types'
@@ -28,6 +30,18 @@ function grant(
 }
 
 describe('ExternalPathGrants metadata helpers', () => {
+  it('dispatches grants to every live provider and keeps retired Gemini historical-only', () => {
+    expect([...EXTERNAL_PATH_GRANT_DISPATCH_PROVIDERS]).toEqual([
+      'codex',
+      'claude',
+      'cursor',
+      'grok',
+      'kimi',
+      'ollama'
+    ])
+    expect(isExternalPathGrantDispatchProvider('gemini')).toBe(false)
+  })
+
   it('reads canonical and legacy grant keys into one coalesced list', () => {
     const metadata = {
       externalPathGrants: [grant('gemini', '/tmp/a.txt')],

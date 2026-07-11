@@ -12412,7 +12412,7 @@ function externalPathGrantPromptAppendix(grants: ExternalPathGrant[] | undefined
       return `${index + 1}. ${access} ${kind}: "${grant.path.trim().replace(/"/g, '\\"')}"`
     })
   if (lines.length === 0) return ''
-  return `\n\nUser-approved external path grants for this Ensemble participant:\n${lines.join('\n')}\nUse only these paths outside the workspace.`
+  return `\n\nUser-approved additional workspace access for this participant turn:\n${lines.join('\n')}\nUse only these paths outside the primary workspace.`
 }
 
 function numericRunStat(stats: Record<string, unknown>, ...paths: Array<string | string[]>): number {

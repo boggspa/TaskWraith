@@ -7,13 +7,10 @@ const normalizeExternalPathGrants = (value: unknown): ExternalPathGrant[] => {
   // Slice 2 of the external-path-redesign arc: the previous hard
   // filter `grant.provider !== 'codex'` was a leftover from the
   // era when only Codex CLI consumed external-path grants. The
-  // CLI translation layer (`externalPathGrantsToCliAddDirArgs` in
-  // main/index.ts) has been provider-agnostic for a while now —
-  // Gemini, Claude, and Kimi all consume the same grant list via
-  // `--add-dir <path>`. Loosen the filter so runtime-issued grants
-  // for any provider can persist into chat metadata.
-  // 1.0.6-CRUX21 — grok + cursor are first-class; their signed grants must
-  // persist into chat metadata too (integrity still guarded by issuedBy/sig).
+  // Runtime dispatch is provider-aware, while metadata decoding must retain
+  // grants for every known provider (including historical Gemini records).
+  // Integrity is still guarded by issuedBy/signature; live eligibility is
+  // enforced separately by EXTERNAL_PATH_GRANT_DISPATCH_PROVIDERS.
   const VALID_PROVIDERS: ReadonlySet<ProviderId> = new Set([
     'codex',
     'claude',

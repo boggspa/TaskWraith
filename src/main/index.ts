@@ -8133,18 +8133,18 @@ function resolveGeminiMcpScopedPath(context: GeminiToolContext, filePath: string
   return resolveGeminiMcpPath(context.workspacePath || context.cwd, filePath)
 }
 
-function hasExternalPathGrantForTarget(
+function externalPathGrantForTarget(
   context: GeminiToolContext,
   provider: ProviderId,
   targetPath: string,
   access: 'read' | 'write'
-): boolean {
+): ExternalPathGrant | undefined {
   const grants = normalizeExternalPathGrants([
     ...(context.externalPathGrants || []),
     ...externalPathGrantsForProvider(context.appChatId, provider)
   ]).filter((grant) => grant.provider === provider)
   const target = (canonicalExternalGrantPath(targetPath) || resolve(targetPath)).replace(/\/+$/, '')
-  return grants.some((grant) => {
+  return grants.find((grant) => {
     const grantPath = (canonicalExternalGrantPath(grant.path) || resolve(grant.path)).replace(
       /\/+$/,
       ''
@@ -8179,7 +8179,7 @@ function resolveGeminiMcpGrantAwarePath(
   }
   if (
     isAbsolute(filePath) &&
-    hasExternalPathGrantForTarget(context, provider, targetPath, access)
+    externalPathGrantForTarget(context, provider, targetPath, access)
   ) {
     return targetPath
   }
@@ -17711,6 +17711,61 @@ function sliceOllamaReadFileOutput(
   }
 }
 
+function resolveOllamaReadToolScope(
+  request: OllamaToolExecutionRequest,
+  context: WorkspaceToolContext,
+  rawTarget: unknown
+): {
+  args: Record<string, unknown>
+  context: WorkspaceToolContext
+  cwd: string
+} {
+  const target = typeof rawTarget === 'string' && rawTarget.trim() ? rawTarget.trim() : '.'
+  const primaryCwd = context.workspacePath || context.cwd
+  if (!isAbsolute(target)) {
+    return { args: { ...request.arguments }, context, cwd: primaryCwd }
+  }
+
+  const runContext = getAgentToolContext('ollama', {
+    appRunId: request.appRunId,
+    appChatId: request.appChatId
+  })
+  if (!runContext) {
+    return { args: { ...request.arguments }, context, cwd: primaryCwd }
+  }
+
+  const targetPath = resolveGeminiMcpGrantAwarePath(
+    runContext,
+    'ollama',
+    target,
+    'read',
+    { allowWorkspaceRoot: true }
+  )
+  if (isPathInsideRoot(context.workspacePath || context.cwd, targetPath)) {
+    return {
+      args: { ...request.arguments, path: targetPath },
+      context,
+      cwd: primaryCwd
+    }
+  }
+
+  const grant = externalPathGrantForTarget(runContext, 'ollama', targetPath, 'read')
+  if (!grant) {
+    throw new Error('Path is outside the workspace and has no matching Ollama grant.')
+  }
+  const grantRoot = resolve(grant.path)
+  const scopedWorkspace = grant.kind === 'directory' ? grantRoot : targetPath
+  return {
+    args: { ...request.arguments, path: targetPath },
+    context: {
+      ...context,
+      cwd: grant.kind === 'directory' ? grantRoot : dirname(targetPath),
+      workspacePath: scopedWorkspace
+    },
+    cwd: grant.kind === 'directory' ? grantRoot : dirname(targetPath)
+  }
+}
+
 async function executeOllamaLocalTool(
   request: OllamaToolExecutionRequest
 ): Promise<OllamaToolExecutionResult> {
@@ -17749,10 +17804,15 @@ async function executeOllamaLocalTool(
     assertOllamaProtectedWritePaths(request.toolName, request.arguments, context, workspacePath)
 
     if (request.toolName === 'find_files') {
-      const result = await workspaceToolExecutors.executeFindFiles(
-        request.arguments,
+      const scope = resolveOllamaReadToolScope(
+        request,
         context,
-        workspacePath
+        request.arguments.path || request.arguments.directory || '.'
+      )
+      const result = await workspaceToolExecutors.executeFindFiles(
+        scope.args,
+        scope.context,
+        scope.cwd
       )
       return {
         ok:
@@ -17765,10 +17825,15 @@ async function executeOllamaLocalTool(
     }
 
     if (request.toolName === 'workspace_search') {
-      const result = await workspaceToolExecutors.executeWorkspaceSearch(
-        request.arguments,
+      const scope = resolveOllamaReadToolScope(
+        request,
         context,
-        workspacePath
+        request.arguments.path || request.arguments.directory || '.'
+      )
+      const result = await workspaceToolExecutors.executeWorkspaceSearch(
+        scope.args,
+        scope.context,
+        scope.cwd
       )
       return {
         ok:
@@ -17781,10 +17846,15 @@ async function executeOllamaLocalTool(
     }
 
     if (request.toolName === 'workspace_symbols') {
-      const result = await workspaceToolExecutors.executeWorkspaceSymbols(
-        request.arguments,
+      const scope = resolveOllamaReadToolScope(
+        request,
         context,
-        workspacePath
+        request.arguments.path || '.'
+      )
+      const result = await workspaceToolExecutors.executeWorkspaceSymbols(
+        scope.args,
+        scope.context,
+        scope.cwd
       )
       return {
         ok: true,
@@ -17855,10 +17925,14 @@ async function executeOllamaLocalTool(
     }
 
     if (request.toolName === 'read_file') {
-      const targetPath = resolveWorkspaceToolScopedPath(
-        context,
-        String(request.arguments.path || request.arguments.file_path || '')
-      )
+      const rawPath = String(request.arguments.path || request.arguments.file_path || '')
+      const runContext = getAgentToolContext('ollama', {
+        appRunId: request.appRunId,
+        appChatId: request.appChatId
+      })
+      const targetPath = runContext
+        ? resolveGeminiMcpGrantAwarePath(runContext, 'ollama', rawPath, 'read')
+        : resolveWorkspaceToolScopedPath(context, rawPath)
       const stat = await fs.stat(targetPath)
       if (!stat.isFile()) throw new Error('Selected path is not a file.')
       if (stat.size > MAX_EDITOR_FILE_BYTES) {
@@ -17913,11 +17987,16 @@ async function executeOllamaLocalTool(
     }
 
     if (request.toolName === 'list_directory') {
-      const targetPath = resolveWorkspaceToolScopedPath(
-        context,
-        String(request.arguments.path || request.arguments.directory || '.'),
-        { allowWorkspaceRoot: true }
-      )
+      const rawPath = String(request.arguments.path || request.arguments.directory || '.')
+      const runContext = getAgentToolContext('ollama', {
+        appRunId: request.appRunId,
+        appChatId: request.appChatId
+      })
+      const targetPath = runContext
+        ? resolveGeminiMcpGrantAwarePath(runContext, 'ollama', rawPath, 'read', {
+            allowWorkspaceRoot: true
+          })
+        : resolveWorkspaceToolScopedPath(context, rawPath, { allowWorkspaceRoot: true })
       const stat = await fs.stat(targetPath)
       if (!stat.isDirectory()) throw new Error('Selected path is not a directory.')
       const entries = await fs.readdir(targetPath, { withFileTypes: true })
@@ -18055,8 +18134,13 @@ async function runOllamaProviderAdapter(
       // grants. approvalMode is not itself consulted by the gate; it drives the
       // plan→read_only clamp (index.ts ~l.9700) and provider-native posture.
       approvalMode: payload.approvalMode,
+      workflowMode: payload.workflowMode,
+      sessionTrust: Boolean(payload.sessionTrust),
+      externalPathGrants: payload.externalPathGrants,
+      runtimeProfileId: payload.runtimeProfileId,
       effectivePermissions: payload.effectivePermissions,
       effectivePermissionsSignature: payload.effectivePermissionsSignature,
+      ensembleRun: payload.ensembleRun,
       ...route
     }
   )

@@ -2222,6 +2222,69 @@ describe('EnsembleOrchestrator', () => {
     expect(harness.dispatched[1].prompt).not.toContain('/tmp/claude-notes.pdf')
   })
 
+  it('keeps each participant permission and tool posture on an attached workspace', async () => {
+    const secondaryPath = '/tmp/secondary-workspace'
+    const providerPostures = [
+      { provider: 'codex', permissionPresetId: 'read_only' },
+      { provider: 'claude', permissionPresetId: 'workspace_write' },
+      { provider: 'cursor', permissionPresetId: 'read_only' },
+      { provider: 'grok', permissionPresetId: 'workspace_write' },
+      { provider: 'kimi', permissionPresetId: 'read_only' },
+      { provider: 'ollama', permissionPresetId: 'workspace_write' }
+    ] as const
+    const initialChat = makeChat()
+    initialChat.ensemble = {
+      ...initialChat.ensemble!,
+      maxParticipants: providerPostures.length,
+      participants: providerPostures.map((entry, index) => ({
+        id: entry.provider,
+        provider: entry.provider,
+        enabled: true,
+        role: `${entry.provider} participant`,
+        instructions: '',
+        order: index + 1,
+        model: 'cli-default',
+        permissionPresetId: entry.permissionPresetId,
+        permissionOverrides: { agenticServices: { mcpTools: 'deny' } }
+      }))
+    }
+    const harness = makeHarness({ initialChat })
+
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Inspect the attached workspace.',
+      externalPathGrants: providerPostures.map(({ provider }) =>
+        externalGrant(provider, secondaryPath, {
+          kind: 'directory',
+          access: 'write',
+          duration: 'thisThread'
+        })
+      ),
+      event: { sender: {} as Electron.WebContents }
+    })
+
+    for (const [index, entry] of providerPostures.entries()) {
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(index + 1))
+      const readOnly = entry.permissionPresetId === 'read_only'
+      expect(harness.dispatched[index]).toMatchObject({
+        provider: entry.provider,
+        approvalMode: readOnly ? 'plan' : 'auto_edit',
+        externalPathGrants: [
+          { provider: entry.provider, path: secondaryPath, access: 'write' }
+        ],
+        effectivePermissions: {
+          presetId: entry.permissionPresetId,
+          readOnly,
+          agenticServices: {
+            fileChanges: readOnly ? 'deny' : 'workspace',
+            mcpTools: 'deny'
+          }
+        }
+      })
+      if (index < providerPostures.length - 1) completeDispatchedRun(harness, index)
+    }
+  })
+
   it('forwards Discord context to ensemble participants without persisting raw messages', async () => {
     const harness = makeHarness()
     const snapshot = makeDiscordSnapshot()
@@ -3034,7 +3097,7 @@ Next action:
     expect(harness.dispatched[1].provider).toBe('claude')
     expect(harness.dispatched[1].imagePaths).toEqual([])
     expect(harness.dispatched[1].prompt).toContain('/tmp/queued-spec.pdf')
-    expect(harness.dispatched[1].prompt).toContain('User-approved external path grants')
+    expect(harness.dispatched[1].prompt).toContain('User-approved additional workspace access')
     expect(harness.dispatched[1].externalPathGrants).toMatchObject([
       { provider: 'claude', path: '/tmp/queued-spec.pdf', access: 'read' }
     ])

@@ -315,7 +315,7 @@ export class ComposerService {
         ? normalizeComposerExternalPathGrants(effectiveInput.externalPathGrants || [], provider)
         : []
     const discordContextSnapshots = normalizeDiscordContextSnapshots(input.discordContextSnapshots)
-    const finalPrompt = `${basePrompt}${attachmentPromptAppendix(imagePaths)}${provider === 'codex' ? externalPathGrantPromptAppendix(externalPathGrants) : ''}`
+    const finalPrompt = `${basePrompt}${attachmentPromptAppendix(imagePaths)}${externalPathGrantPromptAppendix(externalPathGrants)}`
     const contextualFinalPrompt = `${finalPrompt}${formatDiscordContextPromptAppendix(discordContextSnapshots)}`
     const geminiAuthProfileId =
       provider === 'gemini'
@@ -832,7 +832,7 @@ function externalPathGrantPromptAppendix(grants: ExternalPathGrant[] = []): stri
     const access = grant.access === 'write' ? 'view and edit' : 'view'
     return `${index + 1}. ${access} ${grant.kind}: "${grant.path.replace(/"/g, '\\"')}"`
   })
-  return `\n\nUser-approved external path grants for this Codex request:\n${lines.join('\n')}\nUse only these paths outside the workspace.`
+  return `\n\nUser-approved additional workspace access for this request:\n${lines.join('\n')}\nUse only these paths outside the primary workspace.`
 }
 
 /**

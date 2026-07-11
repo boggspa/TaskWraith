@@ -1,4 +1,5 @@
 import type { ExternalPathGrant, ProviderId } from './types'
+import { isRetiredProvider } from '../../shared/retiredProviders'
 
 export const EXTERNAL_PATH_GRANT_METADATA_KEYS = [
   'externalPathGrants',
@@ -12,25 +13,28 @@ export const EXTERNAL_PATH_GRANT_METADATA_KEYS = [
 // 1.0.6-CRUX21 — grok + cursor are first-class providers; their signed grants
 // must survive coalescing like the others. (Integrity is enforced separately by
 // the main-issued signature check, not by this membership set.)
-const KNOWN_PROVIDERS = new Set<ProviderId>([
+const KNOWN_PROVIDER_IDS: ProviderId[] = [
   'gemini',
   'codex',
   'claude',
-  'kimi',
-  'grok',
   'cursor',
-  'ollama'
-])
-
-/** Providers whose CLI/MCP runtimes consume signed external-path grants at dispatch. */
-export const EXTERNAL_PATH_GRANT_DISPATCH_PROVIDERS = new Set<ProviderId>([
-  'gemini',
-  'codex',
-  'claude',
-  'kimi',
   'grok',
-  'cursor'
-])
+  'kimi',
+  'ollama'
+]
+const KNOWN_PROVIDERS = new Set<ProviderId>(KNOWN_PROVIDER_IDS)
+
+/**
+ * Live providers whose runtimes consume signed external-path grants at dispatch.
+ *
+ * Keep historical providers in `KNOWN_PROVIDERS` so old chat metadata still
+ * decodes, but never put a retired provider here. Ollama belongs in this set now
+ * that its local tool loop uses the same signed run posture and path-grant
+ * checks as the brokered provider runtimes.
+ */
+export const EXTERNAL_PATH_GRANT_DISPATCH_PROVIDERS = new Set<ProviderId>(
+  KNOWN_PROVIDER_IDS.filter((provider) => !isRetiredProvider(provider))
+)
 
 export function isExternalPathGrantDispatchProvider(
   provider: ProviderId | string | null | undefined

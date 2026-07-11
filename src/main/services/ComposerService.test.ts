@@ -525,7 +525,7 @@ describe('ComposerService', () => {
       }
     )
     expect(payload.prompt).toContain('Attachment references for this request')
-    expect(payload.prompt).toContain('User-approved external path grants for this Codex request')
+    expect(payload.prompt).toContain('User-approved additional workspace access for this request')
     expect(payload.imagePaths).toEqual(['/tmp/screen.png'])
     expect(payload.reasoningEffort).toBe('xhigh')
     expect(payload.serviceTier).toBe('fast')
@@ -619,12 +619,12 @@ describe('ComposerService', () => {
     expect(payload.model).toBe('grok-4.5')
   })
 
-  it('passes provider-filtered external grants for non-Codex providers without Codex prompt text', () => {
-    const geminiGrant = makeGrant({
-      id: 'gemini-grant',
-      provider: 'gemini',
+  it('passes provider-filtered workspace access and path context to non-Codex providers', () => {
+    const ollamaGrant = makeGrant({
+      id: 'ollama-grant',
+      provider: 'ollama',
       access: 'read',
-      path: '/outside/gemini.txt'
+      path: '/outside/ollama-workspace'
     })
     const claudeGrant = makeGrant({
       id: 'claude-grant',
@@ -633,14 +633,14 @@ describe('ComposerService', () => {
       path: '/outside/claude.txt'
     })
     const payload = compose(
-      { provider: 'gemini' },
-      { externalPathGrants: [geminiGrant, claudeGrant] }
+      { provider: 'ollama' },
+      { externalPathGrants: [ollamaGrant, claudeGrant] }
     )
 
-    expect(payload.externalPathGrants).toEqual([geminiGrant])
-    expect(payload.prompt).not.toContain(
-      'User-approved external path grants for this Codex request'
-    )
+    expect(payload.externalPathGrants).toEqual([ollamaGrant])
+    expect(payload.prompt).toContain('User-approved additional workspace access for this request')
+    expect(payload.prompt).toContain('/outside/ollama-workspace')
+    expect(payload.prompt).not.toContain('/outside/claude.txt')
   })
 
   it('applies Codex model-handoff context once and returns providerMetadata patch data', () => {
