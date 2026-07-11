@@ -37,31 +37,18 @@ import {
   resolveOllamaDisplayBrand,
   resolveProviderBrandLabel
 } from '../lib/ollamaDisplayBrand'
+import type {
+  CombinedModelPickerModelOption,
+  CombinedModelPickerReasoningOption
+} from '../lib/combinedModelPickerTypes'
 import { CodexFastBoltIcon } from './icons/CodexFastBoltIcon'
 import { PillButton } from './PillButton'
 import { getProviderName, ProviderBadgeIcon } from './Sidebar'
 
-export interface CombinedModelPickerModelOption {
-  id: string
-  label: string
-  disabled?: boolean
-  disabledReason?: string
-  /** Provider metadata retained for atomic cross-provider/new-seat defaults. */
-  supportedReasoningEfforts?: Array<{
-    reasoningEffort: string
-    disabled?: boolean
-    disabledReason?: string
-  }>
-  defaultReasoningEffort?: string | null
-  additionalSpeedTiers?: string[]
-  /** 1.0.7-mini — ISO date (YYYY-MM-DD) when the provider is retiring this
-   * model. When present, the picker row renders a small clock + ordinal-
-   * date pill in red to flag the deprecation without baking it into the
-   * label string (which previously flashed on first paint then resolved
-   * away via modelDisplayName, and wasn't machine-readable). Optional;
-   * non-retiring models pass undefined. */
-  retiresAt?: string
-}
+export type {
+  CombinedModelPickerModelOption,
+  CombinedModelPickerReasoningOption
+} from '../lib/combinedModelPickerTypes'
 
 /** Format an ISO date (YYYY-MM-DD) as an English ordinal day + month name,
  * e.g. '2026-06-02' → '2nd June'. Returns the input unchanged on a malformed
@@ -118,15 +105,6 @@ function RetirementClockIcon(): React.JSX.Element {
       <path d="M8 4.6 V8 L10.2 9.4" />
     </svg>
   )
-}
-
-export interface CombinedModelPickerReasoningOption {
-  /** Internal token (e.g. 'low' | 'medium' | 'high' | 'xhigh' | 'off'). */
-  value: string
-  /** Human-readable label as it should appear in the popover row. */
-  label: string
-  disabled?: boolean
-  disabledReason?: string
 }
 
 /**

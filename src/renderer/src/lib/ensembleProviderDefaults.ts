@@ -24,7 +24,7 @@
 import type {
   CombinedModelPickerModelOption,
   CombinedModelPickerReasoningOption
-} from '../components/CombinedModelPicker'
+} from './combinedModelPickerTypes'
 import type { EnsembleParticipant, PermissionPresetId, ProviderId } from '../../../main/store/types'
 import { codexReasoningDisplayLabel, claudeReasoningDisplayLabel } from './composerChipFormat'
 import {
