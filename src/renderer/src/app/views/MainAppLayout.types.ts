@@ -420,7 +420,6 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   pendingApprovalQueueByChatId: MainAppLayoutSidebarProps['pendingApprovalQueueByChatId']
   pendingPlanChoice: any
   pendingProposedPlan: any
-  pendingQueuedAppRunIds: any
   patchSideParticipantWithSeatGate: any
   popOutLinkedChat: any
   popoutMenuOpen: any
@@ -433,7 +432,6 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   providerRates: MainAppLayoutSidebarProps['providerRates']
   providerShellClass: any
   queuedRunQueueCount: any
-  queuedRunStatusByAppRunId: any
   rawFilter: any
   rawLogs: any
   rawLogsEndRef: any

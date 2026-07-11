@@ -78,7 +78,6 @@ function makeProps(overrides: Record<string, any> = {}): any {
     onOpenSubThread: () => {},
     onInspectRun: () => {},
     compactDensity: false,
-    pendingQueuedAppRunIds: undefined,
     onCopyMessage: () => {},
     onDeleteMessage: () => {},
     ...overrides

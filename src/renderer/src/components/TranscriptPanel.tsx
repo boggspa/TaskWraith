@@ -391,14 +391,6 @@ export type TranscriptPanelProps = {
    * forwarded to every `ActivityStack` so in-flight thinking + tool activity
    * streams inside the masked auto-following region. */
   liveActivityViewport?: boolean
-  /** Set of `appRunId`s whose run-queue job is still in `'queued'`
-   * status. Used to hide the in-transcript "Queued (#N): …" system
-   * card while the queued-messages above-row is showing the same
-   * item live. Once the job dispatches (status leaves `'queued'`),
-   * the appRunId drops from this set and the transcript card
-   * reappears as the historical "this run was queued" record. */
-  pendingQueuedAppRunIds?: Set<string>
-  queuedRunStatusByAppRunId?: Partial<Record<string, string>>
   /**
    * 1.0.4-AQ4 — per-message actions on hover.
    *
@@ -4342,8 +4334,6 @@ export const TranscriptPanel = memo(
     transcriptRunningChatIdsSignature(previous.runningChatIds) ===
       transcriptRunningChatIdsSignature(next.runningChatIds) &&
     previous.onOpenFileChangeInWorkbench === next.onOpenFileChangeInWorkbench &&
-    previous.pendingQueuedAppRunIds === next.pendingQueuedAppRunIds &&
-    previous.queuedRunStatusByAppRunId === next.queuedRunStatusByAppRunId &&
     previous.onCopyMessage === next.onCopyMessage &&
     previous.onAddMessageToPrompt === next.onAddMessageToPrompt &&
     previous.onDeleteMessage === next.onDeleteMessage &&

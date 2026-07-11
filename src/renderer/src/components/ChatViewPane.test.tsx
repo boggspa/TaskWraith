@@ -88,12 +88,6 @@ describe('chatViewPanePropsEqual', () => {
         makeProps({ runCompleteNotice: { timestamp: 't', exitCode: 0 } })
       )
     ).toBe(false)
-    expect(
-      chatViewPanePropsEqual(
-        makeProps(),
-        makeProps({ queuedRunStatusByAppRunId: { 'run-1': 'steer_promoting' } })
-      )
-    ).toBe(false)
     expect(chatViewPanePropsEqual(makeProps(), makeProps({ copiedId: 'm1' }))).toBe(false)
     expect(chatViewPanePropsEqual(makeProps(), makeProps({ interfaceStyle: 'codex' }))).toBe(false)
     expect(chatViewPanePropsEqual(makeProps(), makeProps({ providerClass: 'claude' }))).toBe(false)

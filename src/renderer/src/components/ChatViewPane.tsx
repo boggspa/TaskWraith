@@ -129,8 +129,8 @@ export interface ChatViewPaneChromeAction {
 
 /**
  * Skip re-render unless something this pane actually displays changed. We
- * deliberately ignore the high-churn shared props (chats, runningChatIds,
- * pendingQueuedAppRunIds) and the stable App callbacks — see the component
+ * deliberately ignore the high-churn shared props (chats, runningChatIds)
+ * and the stable App callbacks — see the component
  * doc for the tradeoff. EVERY render-affecting per-pane prop must be listed.
  */
 export function chatViewPanePropsEqual(a: ChatViewPaneProps, b: ChatViewPaneProps): boolean {
@@ -154,7 +154,6 @@ export function chatViewPanePropsEqual(a: ChatViewPaneProps, b: ChatViewPaneProp
     a.copiedId === b.copiedId &&
     a.compactDensity === b.compactDensity &&
     a.liveActivityViewport === b.liveActivityViewport &&
-    a.queuedRunStatusByAppRunId === b.queuedRunStatusByAppRunId &&
     a.interfaceStyle === b.interfaceStyle &&
     a.providerClass === b.providerClass &&
     a.isEnsemble === b.isEnsemble &&

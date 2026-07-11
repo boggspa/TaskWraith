@@ -347,7 +347,6 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   pendingApprovalQueueByChatId,
   pendingPlanChoice,
   pendingProposedPlan,
-  pendingQueuedAppRunIds,
   patchSideParticipantWithSeatGate,
   popOutLinkedChat,
   popoutMenuOpen,
@@ -359,7 +358,6 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   providerRates,
   providerShellClass,
   queuedRunQueueCount,
-  queuedRunStatusByAppRunId,
   rawFilter,
   rawLogs,
   rawLogsEndRef,
@@ -1966,7 +1964,6 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                 onAgentQuestionDismiss={handleAgentQuestionDismiss}
                 runCompleteNotice={visibleRunCompleteNotice}
                 runCompleteDurationText={runCompleteDurationText}
-                queuedRunStatusByAppRunId={queuedRunStatusByAppRunId}
                 currentChat={currentChat}
                 isGlobal={isGlobalChat(currentChat)}
                 currentRun={currentRun}
@@ -1999,7 +1996,6 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                 }
                 compactDensity={appearance.compactDensity}
                 liveActivityViewport={appearance.liveActivityViewport}
-                pendingQueuedAppRunIds={pendingQueuedAppRunIds}
                 onCopyMessage={handleCopyMessage}
                 onAddMessageToPrompt={
                   currentChatAppChatId ? handleTranscriptAddMessageToPrompt : undefined
@@ -2305,7 +2301,6 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
               onAgentQuestionDismiss={NOOP_MESSAGE_ACTION}
               runCompleteNotice={sideRunCompleteNotice}
               runCompleteDurationText={null}
-              queuedRunStatusByAppRunId={queuedRunStatusByAppRunId}
               currentChat={sideChat}
               isGlobal={isGlobalChat(sideChat)}
               currentRun={sideRun}
@@ -2333,7 +2328,6 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
               onInspectRun={handleSideTranscriptInspectRun}
               compactDensity={appearance.compactDensity}
               liveActivityViewport={appearance.liveActivityViewport}
-              pendingQueuedAppRunIds={pendingQueuedAppRunIds}
               onCopyMessage={handleCopyMessage}
               onAddMessageToPrompt={handleSideTranscriptAddMessageToPrompt}
               onDeleteMessage={handleSideTranscriptDeleteMessage}

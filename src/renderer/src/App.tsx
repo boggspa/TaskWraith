@@ -19327,23 +19327,6 @@ function App(): React.JSX.Element {
   // messages above-row is showing it live. Once the job dispatches
   // or is reserved for steer (status leaves `queued`), the card
   // resurfaces as historical lifecycle context.
-  const pendingQueuedAppRunIds = useMemo(() => {
-    const set = new Set<string>()
-    for (const job of runQueueJobs) {
-      if (job.status !== 'queued') continue
-      if (typeof job.runId === 'string' && job.runId) set.add(job.runId)
-    }
-    return set
-  }, [runQueueJobs])
-  const queuedRunStatusByAppRunId = useMemo(() => {
-    const statusByRunId: Partial<Record<string, string>> = {}
-    for (const job of runQueueJobs) {
-      if (typeof job.runId === 'string' && job.runId) {
-        statusByRunId[job.runId] = job.status
-      }
-    }
-    return statusByRunId
-  }, [runQueueJobs])
   // Composer above-row stack input: queued requests targeting the
   // active chat, projected to the row component's narrow display
   // shape. Two sources merge here:
@@ -24329,7 +24312,6 @@ function App(): React.JSX.Element {
         isWelcomeChat={viewerIsWelcomeChat}
         isThinking={viewerIsRunning}
         runCompleteNotice={deriveChatRunCompleteNotice(viewerChat, viewerIsRunning)}
-        queuedRunStatusByAppRunId={queuedRunStatusByAppRunId}
         currentRun={viewerRun}
         currentWorkspacePath={viewerWorkspace?.path}
         welcomeUsageDashboardData={welcomeUsageDashboardData}
@@ -24367,7 +24349,6 @@ function App(): React.JSX.Element {
         runningChatIds={runningChatIdsArray}
         compactDensity={appearance.compactDensity}
         liveActivityViewport={appearance.liveActivityViewport}
-        pendingQueuedAppRunIds={pendingQueuedAppRunIds}
         copiedId={copiedId}
         copy={copy}
         onOpenSubThread={handleOpenCockpitThread}
@@ -25877,7 +25858,6 @@ function App(): React.JSX.Element {
     pendingApprovalQueueByChatId,
     pendingPlanChoice,
     pendingProposedPlan,
-    pendingQueuedAppRunIds,
     patchSideParticipantWithSeatGate: patchParticipantWithSeatGate,
     popOutLinkedChat,
     popoutMenuOpen,
@@ -25890,7 +25870,6 @@ function App(): React.JSX.Element {
     providerRates,
     providerShellClass,
     queuedRunQueueCount,
-    queuedRunStatusByAppRunId,
     rawFilter,
     rawLogs,
     rawLogsEndRef,
