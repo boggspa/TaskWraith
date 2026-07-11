@@ -46,6 +46,22 @@ describe('CORE_MCP_ADVERTISE_TOOLS', () => {
     }
   })
 
+  it('keeps long-horizon coordination and every Boss/Captain control tool', () => {
+    for (const tool of ['ensemble_poll_response', 'schedule_wakeup', 'cancel_wakeup']) {
+      expect(isCoreMcpAdvertisedTool(tool)).toBe(true)
+    }
+
+    for (const tool of [
+      'ensemble_fanout',
+      'ensemble_bossman_control',
+      'ensemble_roster_edit',
+      'ensemble_brief_update',
+      'list_ensemble_participants'
+    ]) {
+      expect(isCoreMcpAdvertisedTool(tool)).toBe(true)
+    }
+  })
+
   it('leaves specialized families on the full profile', () => {
     for (const tool of [
       'canvas_eval',

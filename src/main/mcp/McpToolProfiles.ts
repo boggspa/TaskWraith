@@ -33,14 +33,12 @@ export const CORE_MCP_ADVERTISE_TOOLS = [
   'git_diff',
   'web_search',
   'web_fetch',
-  'github_ci_status',
   // Workspace edits.
   'write_file',
   'replace',
   'apply_patch',
   'create_directory',
   'move_path',
-  'rename_path',
   'delete_path',
   // Run and verify.
   'run_shell_command',
@@ -63,7 +61,6 @@ export const CORE_MCP_ADVERTISE_TOOLS = [
   'browser_console',
   // Run and account status.
   'list_active_runs',
-  'cancel_active_run',
   'approval_status',
   // Task UX. update_goal is the exact alias required by Grok's native /goal.
   'ask_user_question',
@@ -82,8 +79,11 @@ export const CORE_MCP_ADVERTISE_TOOLS = [
   'ensemble_send',
   'ensemble_fanout',
   'ensemble_bossman_control',
+  'ensemble_poll_response',
   'ensemble_roster_edit',
   'ensemble_brief_update',
+  'schedule_wakeup',
+  'cancel_wakeup',
   'list_ensemble_participants',
   'ensemble_continue',
   'scout_brief',
