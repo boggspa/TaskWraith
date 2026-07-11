@@ -41,7 +41,6 @@ import {
   DEFAULT_DIFF_STAT_COLORS,
   normalizeDiffStatColors
 } from '../../../shared/diffStatColors'
-import { humaniseModelId } from '../lib/modelDisplayName'
 import { getDashboardStatsByGroup, isDashboardStatVisible } from '../lib/dashboardStatRegistry'
 import {
   summariseCliProviderEnabled,
@@ -108,6 +107,7 @@ import { PinnedMessagesSettingsPage } from './PinnedMessagesSettingsPage'
 import { UpdateStatusPane } from './UpdateStatusPane'
 import { ModelUsageCard } from './ModelUsageCard'
 import { ModelUsageSettingsTable, ProviderApiRatesSettingsTable, ModelContextLengthsSettingsTable } from './ModelUsageSettingsTable'
+import { SettingsModelComparisonsTable } from './SettingsModelComparisonsTable'
 import { PromptCacheSettingsSection } from './PromptCacheSettingsSection'
 import { TokenUsageChart } from './TokenUsageChart'
 import { UsageHeatmap } from './UsageHeatmap'
@@ -10669,13 +10669,6 @@ export function SettingsPanel({
             const totalRuns = allRunEntries.reduce((sum, entry) => sum + (entry.runs || 0), 0)
             const providerCount = new Set(allRunEntries.map((entry) => entry.provider)).size
             const modelCount = allRunEntries.length
-            const comparisonEntries = [...allRunEntries].sort(
-              (a, b) => b.totalTokens - a.totalTokens || b.runs - a.runs
-            )
-            const comparisonTokenTotal = comparisonEntries.reduce(
-              (sum, entry) => sum + (entry.totalTokens || 0),
-              0
-            )
             const quotaEntries = usageSummary.filter((entry) => entry.model === 'usage limits')
             const telemetryEntries = quotaEntries.filter(
               (entry) => (entry.windows?.length || 0) > 0 || (entry.balances?.length || 0) > 0
@@ -10782,73 +10775,7 @@ export function SettingsPanel({
                   overestimatePercent={currencyOverestimatePercent}
                 />
 
-                {comparisonEntries.length > 0 && (
-                  <section className="settings-model-comparisons" aria-label="Model comparisons">
-                    <div className="settings-model-comparisons-header">
-                      <span>Model Comparisons</span>
-                      <span>Last 30 days</span>
-                    </div>
-                    <div className="settings-model-comparison-list">
-                      {comparisonEntries.map((entry) => {
-                        const percent =
-                          comparisonTokenTotal > 0
-                            ? Math.max(
-                                0,
-                                Math.min(100, (entry.totalTokens / comparisonTokenTotal) * 100)
-                              )
-                            : 0
-                        const fillWidth = `${Math.max(2, percent)}%`
-                        return (
-                          <div
-                            key={`${entry.provider}-${entry.model}`}
-                            className={`settings-model-comparison-row provider-${entry.provider}`}
-                          >
-                            <div className="settings-model-comparison-header">
-                              <span
-                                className={`settings-model-comparison-dot provider-${entry.provider}`}
-                                aria-hidden
-                              />
-                              {/*
-                              1.0.5-EW50 — Humanise the CLI/API model id via
-                              the shared `humaniseModelId` resolver so the
-                              Settings → Model Usage list reads as
-                              "Gemini 3 Flash Preview" instead of
-                              "gemini-3-flash-preview". Tooltip keeps the
-                              raw id for power-users who want the canonical
-                              CLI name. Falls back to the raw id when no
-                              mapping exists (e.g. brand-new models the
-                              table hasn't been extended for yet).
-                            */}
-                              <span className="settings-model-comparison-name" title={entry.model}>
-                                {humaniseModelId(entry.provider, entry.model)}
-                              </span>
-                              <span className="settings-model-comparison-tokens">
-                                {formatLargeNumber(entry.inputTokens)} in ·{' '}
-                                {formatLargeNumber(entry.outputTokens)} out
-                              </span>
-                              <strong className="settings-model-comparison-percent">
-                                {percent.toFixed(1)}%
-                              </strong>
-                            </div>
-                            <div
-                              className="settings-model-comparison-track"
-                              role="progressbar"
-                              aria-valuemin={0}
-                              aria-valuemax={100}
-                              aria-valuenow={percent}
-                              aria-label={`${humaniseModelId(entry.provider, entry.model)} accounts for ${percent.toFixed(1)}% of model usage in the last 30 days`}
-                            >
-                              <span
-                                className={`settings-model-comparison-fill provider-${entry.provider}`}
-                                style={{ width: fillWidth }}
-                              />
-                            </div>
-                          </div>
-                        )
-                      })}
-                    </div>
-                  </section>
-                )}
+                <SettingsModelComparisonsTable entries={allRunEntries} />
 
                 {(telemetryEntries.length > 0 || grokProviderAvailable) && (
                   <section
