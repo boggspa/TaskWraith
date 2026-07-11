@@ -43,18 +43,20 @@ describe('General Chat composer width CSS', () => {
   })
 
   it('keeps Codex and Grok tucked rows narrower than the composer cap', () => {
+    // Settings' composer preview no longer mirrors the tucked-tab width in its
+    // own CSS: it renders a first-class composer preview reusing the real
+    // composer/transcript (which carries the cap), so 04-settings-controls.css
+    // dropped its bespoke `tuckedWidth` block. This test now covers only the
+    // live Codex + Grok tucked rows.
     const codexCss = readCss('src/renderer/src/assets/css/08-theme-picker-overrides.css')
     const grokCss = readCss('src/renderer/src/assets/css/10-provider-shell-overrides.css')
-    const settingsCss = readCss('src/renderer/src/assets/css/04-settings-controls.css')
     const tuckedWidth = 'min(calc(100% - 80px), calc(var(--composer-content-max-width, 850px) - 80px))'
     const staleFallback = 'calc(var(--composer-content-max-width, 980px) - 80px)'
 
     expect(literalMatchCount(codexCss, tuckedWidth)).toBe(4)
     expect(literalMatchCount(grokCss, tuckedWidth)).toBe(4)
-    expect(literalMatchCount(settingsCss, tuckedWidth)).toBe(2)
     expect(codexCss).not.toContain(staleFallback)
     expect(grokCss).not.toContain(staleFallback)
-    expect(settingsCss).not.toContain(staleFallback)
   })
 
   it('keeps the legacy narrower General Chat reading column scoped to transcript content', () => {
