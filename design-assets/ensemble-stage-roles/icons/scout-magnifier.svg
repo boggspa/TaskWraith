@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" role="img" aria-labelledby="ensemble-stage-scout-title ensemble-stage-scout-desc" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+  <title id="ensemble-stage-scout-title">Scout stage role</title>
+  <desc id="ensemble-stage-scout-desc">Monoline magnifying glass for discovery and reconnaissance.</desc>
+  <circle cx="10.1" cy="10.1" r="5.8"/>
+  <path d="m14.4 14.4 5.8 5.8"/>
+</svg>
