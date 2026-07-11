@@ -2,10 +2,16 @@ import { describe, expect, it } from 'vitest'
 import {
   ASSIGNABLE_PERMISSION_PRESETS,
   evaluateRosterEdit,
+  invalidatePromptReceiptsForMatchingEnsembleSession,
   MAX_ENSEMBLE_PARTICIPANTS,
   type RosterEditContext
 } from './EnsembleRosterMutation'
-import type { AgenticServicePolicy, EnsembleParticipant, ExternalPathGrant } from './store/types'
+import type {
+  AgenticServicePolicy,
+  ChatRecord,
+  EnsembleParticipant,
+  ExternalPathGrant
+} from './store/types'
 
 function participant(overrides: Partial<EnsembleParticipant>): EnsembleParticipant {
   return {
@@ -44,6 +50,66 @@ function makeContext(overrides: Partial<RosterEditContext> = {}): RosterEditCont
     ...overrides
   }
 }
+
+describe('invalidatePromptReceiptsForMatchingEnsembleSession', () => {
+  function chat(): ChatRecord {
+    return {
+      appChatId: 'chat-1',
+      chatKind: 'ensemble',
+      scope: 'workspace',
+      provider: 'claude',
+      title: 'Ensemble',
+      workspaceId: 'ws-1',
+      workspacePath: '/repo',
+      createdAt: 1,
+      updatedAt: 1,
+      archived: false,
+      messages: [],
+      runs: [],
+      ensemble: {
+        enabled: true,
+        maxParticipants: 2,
+        participants: [
+          participant({
+            id: 'worker',
+            provider: 'codex',
+            linkedProviderSessionId: 'codex-session-a',
+            promptShellVersion: 'shell-a',
+            promptDynamicStateVersion: 'dynamic-a'
+          })
+        ]
+      }
+    }
+  }
+
+  it('clears both receipts only for the exact participant/provider/session tuple', () => {
+    const initial = chat()
+    const next = invalidatePromptReceiptsForMatchingEnsembleSession(initial, {
+      participantId: 'worker',
+      provider: 'codex',
+      linkedProviderSessionId: 'codex-session-a'
+    })
+    expect(next).not.toBeNull()
+    expect(next?.ensemble?.participants[0].promptShellVersion).toBeUndefined()
+    expect(next?.ensemble?.participants[0].promptDynamicStateVersion).toBeUndefined()
+    expect(next?.ensemble?.participants[0].linkedProviderSessionId).toBe('codex-session-a')
+
+    expect(
+      invalidatePromptReceiptsForMatchingEnsembleSession(initial, {
+        participantId: 'worker',
+        provider: 'claude',
+        linkedProviderSessionId: 'codex-session-a'
+      })
+    ).toBeNull()
+    expect(
+      invalidatePromptReceiptsForMatchingEnsembleSession(initial, {
+        participantId: 'worker',
+        provider: 'codex',
+        linkedProviderSessionId: 'codex-session-b'
+      })
+    ).toBeNull()
+  })
+})
 
 function externalGrant(): ExternalPathGrant {
   return {
@@ -610,6 +676,7 @@ describe('evaluateRosterEdit', () => {
             reasoningEffort: 'high',
             serviceTier: 'fast',
             linkedProviderSessionId: 'codex-session',
+            promptShellVersion: 'ensemble-shell-v1:old-worker-receipt',
             promptDynamicStateVersion: 'ensemble-dynamic-v1:old-worker-receipt'
           })
         ]
@@ -627,10 +694,11 @@ describe('evaluateRosterEdit', () => {
     expect(worker?.reasoningEffort).toBeUndefined()
     expect(worker?.serviceTier).toBeUndefined()
     expect(worker?.linkedProviderSessionId).toBeUndefined()
+    expect(worker?.promptShellVersion).toBeUndefined()
     expect(worker?.promptDynamicStateVersion).toBeUndefined()
   })
 
-  it('clears a dynamic receipt when model or explicit linked-session changes', () => {
+  it('clears both prompt receipts when model or explicit linked-session changes', () => {
     const ctx = makeContext({
       participants: [
         participant({ id: 'boss', provider: 'claude', role: 'Boss', order: 1 }),
@@ -641,6 +709,7 @@ describe('evaluateRosterEdit', () => {
           order: 2,
           model: 'gpt-5.5',
           linkedProviderSessionId: 'codex-session-a',
+          promptShellVersion: 'ensemble-shell-v1:old-worker-receipt',
           promptDynamicStateVersion: 'ensemble-dynamic-v1:old-worker-receipt'
         })
       ]
@@ -655,6 +724,7 @@ describe('evaluateRosterEdit', () => {
     )
     expect(modelChanged).toMatchObject({ ok: true })
     if (!modelChanged.ok) throw new Error(modelChanged.message)
+    expect(modelChanged.nextParticipants[1].promptShellVersion).toBeUndefined()
     expect(modelChanged.nextParticipants[1].promptDynamicStateVersion).toBeUndefined()
 
     const sessionRelinked = evaluateRosterEdit(
@@ -667,6 +737,7 @@ describe('evaluateRosterEdit', () => {
     )
     expect(sessionRelinked).toMatchObject({ ok: true })
     if (!sessionRelinked.ok) throw new Error(sessionRelinked.message)
+    expect(sessionRelinked.nextParticipants[1].promptShellVersion).toBeUndefined()
     expect(sessionRelinked.nextParticipants[1].promptDynamicStateVersion).toBeUndefined()
   })
 })

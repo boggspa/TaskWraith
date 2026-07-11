@@ -980,6 +980,8 @@ export interface SessionActivityLedgerEntry {
 export interface EnsembleRunIdentity {
   roundId: string
   participantId: string
+  /** Whether this dispatch carries the complete ensemble shell or relies on native session memory. */
+  promptMode?: 'full' | 'slim'
   laneId?: string
   provider: ProviderId
   role: string

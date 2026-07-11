@@ -560,6 +560,9 @@ export function normalizeEnsembleRunIdentity(value: unknown): EnsembleRunIdentit
   return {
     roundId: requireNonEmptyString(value.roundId, 'Ensemble round id'),
     participantId: requireNonEmptyString(value.participantId, 'Ensemble participant id'),
+    ...(value.promptMode === 'full' || value.promptMode === 'slim'
+      ? { promptMode: value.promptMode }
+      : {}),
     ...(optionalString(value.laneId) ? { laneId: optionalString(value.laneId) } : {}),
     provider: assertProviderId(value.provider),
     role: optionalString(value.role) || 'Participant',

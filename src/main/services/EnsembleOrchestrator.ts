@@ -148,6 +148,7 @@ import {
 import { getStaticProviderModels } from '../providers/StaticProviderModels'
 import { selectableProviderIds } from '../settings/MainSanitizers'
 import { buildRunQueueDispatchReceipt } from '../RunQueueDispatchReceipt'
+import { isCodexAppServerThreadId } from '../CodexSessionIdentity'
 
 export type EnsembleRunMode = 'normal' | 'queue' | 'steer'
 export type EnsembleQueuedSteerResult = {
@@ -447,8 +448,9 @@ interface ActiveParticipantRun {
   promptDynamicStateVersion?: string
   /**
    * A provider-native compaction replaced the seat's session context after the
-   * prompt was dispatched. Never acknowledge that old receipt at final flush.
+   * prompt was dispatched. Never acknowledge either old receipt at final flush.
    */
+  invalidatePromptShellReceipt?: boolean
   invalidatePromptDynamicStateReceipt?: boolean
   /**
    * Blackboard entry ids injected into THIS run's prompt (full board on a
@@ -1850,7 +1852,7 @@ function applySeatChangePatch(
   patch: RosterEditParticipantInput
 ): EnsembleParticipant {
   const next: EnsembleParticipant = { ...target, linkedProviderSessionId: target.linkedProviderSessionId }
-  let dynamicStateReceiptInvalidated = false
+  let promptReceiptsInvalidated = false
   if (
     Object.prototype.hasOwnProperty.call(patch, 'provider') &&
     typeof patch.provider === 'string' &&
@@ -1859,14 +1861,14 @@ function applySeatChangePatch(
     next.provider = patch.provider as ProviderId
     next.linkedProviderSessionId = null
     // The edit path deliberately abandons the previous native session even
-    // when the provider value is repeated, so its dynamic-state receipt is no
-    // longer evidence of what the next session remembers.
-    dynamicStateReceiptInvalidated = true
+    // when the provider value is repeated, so neither prompt receipt remains
+    // evidence of what the next session remembers.
+    promptReceiptsInvalidated = true
   }
   if (Object.prototype.hasOwnProperty.call(patch, 'model')) {
     const nextModel = patch.model || undefined
     if ((target.model || '') !== (nextModel || '')) {
-      dynamicStateReceiptInvalidated = true
+      promptReceiptsInvalidated = true
     }
     if (patch.model) next.model = patch.model
     else delete next.model
@@ -1939,10 +1941,13 @@ function applySeatChangePatch(
       delete next.linkedProviderSessionId
     }
     if ((next.linkedProviderSessionId || '') !== (target.linkedProviderSessionId || '')) {
-      dynamicStateReceiptInvalidated = true
+      promptReceiptsInvalidated = true
     }
   }
-  if (dynamicStateReceiptInvalidated) delete next.promptDynamicStateVersion
+  if (promptReceiptsInvalidated) {
+    delete next.promptShellVersion
+    delete next.promptDynamicStateVersion
+  }
   return next
 }
 
@@ -8498,6 +8503,7 @@ export class EnsembleOrchestrator {
           // any prior dynamic-state acknowledgement immediately and prevent
           // this run's final flush from re-acknowledging the pre-compaction
           // candidate. The next resumed turn will carry a replacement snapshot.
+          run.invalidatePromptShellReceipt = true
           run.invalidatePromptDynamicStateReceipt = true
           this.flushRun(run)
         }
@@ -9256,6 +9262,7 @@ export class EnsembleOrchestrator {
         ...participant,
         linkedProviderSessionId: refreshedParticipant.linkedProviderSessionId,
         contextCompactionSummary: refreshedParticipant.contextCompactionSummary,
+        promptShellVersion: refreshedParticipant.promptShellVersion,
         promptDynamicStateVersion: refreshedParticipant.promptDynamicStateVersion
       }
       // 1.0.5-N6 — A wakeup-resume run with no linked provider session is
@@ -9305,6 +9312,10 @@ export class EnsembleOrchestrator {
         ensembleSlimResumeEnabled() &&
         SLIM_RESUME_PROVIDERS.has(participant.provider) &&
         Boolean(run.providerSessionId || participant.linkedProviderSessionId) &&
+        (participant.provider !== 'codex' ||
+          isCodexAppServerThreadId(
+            run.providerSessionId || participant.linkedProviderSessionId
+          )) &&
         !resumeWakeup &&
         participant.promptShellVersion === promptShellStamp
       // Blackboard delta bookkeeping: same selection the prompt builder makes
@@ -9412,7 +9423,8 @@ export class EnsembleOrchestrator {
           participant,
           undefined,
           ensembleConfigForRound,
-          chatContextTurns
+          chatContextTurns,
+          slimTurn ? 'slim' : 'full'
         ),
         ...(sharedReasoning !== undefined ? { reasoningEffort: sharedReasoning } : {}),
         ...(sharedServiceTier !== undefined ? { serviceTier: sharedServiceTier } : {}),
@@ -10374,7 +10386,8 @@ export class EnsembleOrchestrator {
           participant,
           run.laneId,
           dispatchChat.ensemble,
-          chatContextTurns
+          chatContextTurns,
+          'full'
         ),
         ...(sharedReasoning !== undefined ? { reasoningEffort: sharedReasoning } : {}),
         ...(sharedServiceTier !== undefined ? { serviceTier: sharedServiceTier } : {}),
@@ -11279,15 +11292,19 @@ export class EnsembleOrchestrator {
       }
     }
 
-    // Dynamic-state receipts are deliberately stricter than shell stamps:
-    // the provider must have accepted the prompt AND the run must finish in a
-    // state where its session is safe to resume. A cancellation/failure cannot
-    // acknowledge the state snapshot, and a compaction event invalidates even
-    // an otherwise successful completion because it replaced native memory.
+    // Prompt receipts require both adapter acceptance and a terminal state
+    // where the provider session is safe to resume. Cancellation/failure cannot
+    // acknowledge either the shell or dynamic snapshot, and compaction
+    // invalidates both even after an otherwise successful completion.
     const shouldPersistDynamicStateReceipt =
       final &&
       !run.invalidatePromptDynamicStateReceipt &&
       Boolean(run.promptDynamicStateVersion) &&
+      isDynamicStateReceiptTerminalStatus(run.status)
+    const shouldPersistPromptShellReceipt =
+      final &&
+      !run.invalidatePromptShellReceipt &&
+      Boolean(run.promptShellStamp) &&
       isDynamicStateReceiptTerminalStatus(run.status)
 
     const runs = chat.runs.map((existingRun) => {
@@ -11325,11 +11342,12 @@ export class EnsembleOrchestrator {
       const next: EnsembleParticipant = {
         ...participant,
         ...(run.providerSessionId ? { linkedProviderSessionId: run.providerSessionId } : {}),
-        // Spike 5 — record which prompt-shell stamp this seat has now seen,
-        // enabling the slim resumed-turn prompt on its NEXT dispatch (as
-        // long as the config still hashes to the same stamp).
-        ...(run.promptShellStamp ? { promptShellVersion: run.promptShellStamp } : {}),
         ...(tokenTotals ? { tokenTotals } : {})
+      }
+      if (run.invalidatePromptShellReceipt) {
+        delete next.promptShellVersion
+      } else if (shouldPersistPromptShellReceipt) {
+        next.promptShellVersion = run.promptShellStamp
       }
       if (run.invalidatePromptDynamicStateReceipt) {
         delete next.promptDynamicStateVersion
@@ -11792,6 +11810,7 @@ export class EnsembleOrchestrator {
       if (refreshed) {
         participant.linkedProviderSessionId = refreshed.linkedProviderSessionId
         participant.contextCompactionSummary = refreshed.contextCompactionSummary
+        participant.promptShellVersion = refreshed.promptShellVersion
         participant.promptDynamicStateVersion = refreshed.promptDynamicStateVersion
       }
     }
@@ -11825,6 +11844,7 @@ export class EnsembleOrchestrator {
     if (refreshed) {
       participant.linkedProviderSessionId = refreshed.linkedProviderSessionId
       participant.contextCompactionSummary = refreshed.contextCompactionSummary
+      participant.promptShellVersion = refreshed.promptShellVersion
       participant.promptDynamicStateVersion = refreshed.promptDynamicStateVersion
     }
   }
@@ -12182,7 +12202,8 @@ function ensembleRunIdentity(
   participant: EnsembleParticipant,
   laneId?: string,
   config?: EnsembleConfig,
-  contextTurns?: number
+  contextTurns?: number,
+  promptMode?: EnsembleRunIdentity['promptMode']
 ): EnsembleRunIdentity {
   const ollamaContextBudget =
     participant.provider === 'ollama'
@@ -12196,6 +12217,7 @@ function ensembleRunIdentity(
   return {
     roundId,
     participantId: participant.id,
+    ...(promptMode ? { promptMode } : {}),
     ...(laneId ? { laneId } : {}),
     provider: participant.provider,
     role: participant.role,

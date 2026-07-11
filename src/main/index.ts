@@ -173,6 +173,10 @@ import {
   isCodexConfigParseError
 } from './CodexAppServerClient'
 import {
+  isSameCodexAppServerThreadId,
+  shouldBlockCodexExecFallbackForSlimEnsemblePrompt
+} from './CodexSessionIdentity'
+import {
   buildUserMcpCursorAllowRules,
   buildUserMcpCursorServerEntry,
   buildUserMcpLaunchServers,
@@ -428,7 +432,10 @@ import {
   formatSessionCheckpointResumePrompt,
   type SessionCheckpointStore
 } from './checkpoints/SessionCheckpoint'
-import type { RosterEditParticipantInput } from './EnsembleRosterMutation'
+import {
+  invalidatePromptReceiptsForMatchingEnsembleSession,
+  type RosterEditParticipantInput
+} from './EnsembleRosterMutation'
 import { appendBugReport } from './services/BugReportService'
 import { RunCoordinator } from './services/RunCoordinator'
 import { RunLifecycleCoordinator } from './services/RunLifecycleCoordinator'
@@ -14991,6 +14998,29 @@ function broadcastContextCompactionSignalProgress(input: {
   })
 }
 
+function invalidateEnsemblePromptReceiptsForSession(input: {
+  chatId: string
+  participantId?: string
+  provider: 'claude' | 'codex'
+  linkedProviderSessionId: string
+}): boolean {
+  if (!input.participantId) return false
+  const fresh = AppStore.getChat(input.chatId)
+  if (!fresh) return false
+  const next = invalidatePromptReceiptsForMatchingEnsembleSession(fresh, {
+    participantId: input.participantId,
+    provider: input.provider,
+    linkedProviderSessionId: input.linkedProviderSessionId
+  })
+  if (!next) return false
+  if (next !== fresh) {
+    const updated = { ...next, updatedAt: Date.now() }
+    AppStore.saveChat(updated)
+    broadcastChatUpdated(updated)
+  }
+  return true
+}
+
 /**
  * Host-triggered Codex context compaction ("compact now"). Claude's manual
  * compaction is dispatched renderer-side as a normal `/compact` run (the CLI
@@ -15003,6 +15033,7 @@ function broadcastContextCompactionSignalProgress(input: {
 async function compactCodexProviderContext(payload: {
   chatId: string
   providerSessionId?: string
+  participantId?: string
   /** Frozen ensemble-participant presentation for the card (see
    * resolveEnsembleCompactionTarget); absent on solo chats. */
   cardMetadata?: Record<string, unknown>
@@ -15107,6 +15138,14 @@ async function compactCodexProviderContext(payload: {
     kind: result.ok ? 'completed' : 'failed',
     telemetry
   }
+  if (result.ok) {
+    invalidateEnsemblePromptReceiptsForSession({
+      chatId: payload.chatId,
+      participantId: payload.participantId,
+      provider: 'codex',
+      linkedProviderSessionId: threadId
+    })
+  }
   appendContextCompactionMessageToChat(
     payload.chatId,
     signal,
@@ -15145,6 +15184,7 @@ const activeClaudeManualCompactions = new Set<string>()
 async function compactClaudeProviderContext(payload: {
   chatId: string
   providerSessionId: string
+  participantId?: string
   model?: string
   cardMetadata?: Record<string, unknown>
 }): Promise<{ ok: boolean; error?: string }> {
@@ -15220,6 +15260,14 @@ async function compactClaudeProviderContext(payload: {
     provider: 'claude',
     trigger: signal.telemetry.trigger || 'manual',
     durationMs: signal.telemetry.durationMs ?? Date.now() - startedAtMs
+  }
+  if (signal.kind === 'completed') {
+    invalidateEnsemblePromptReceiptsForSession({
+      chatId: payload.chatId,
+      participantId: payload.participantId,
+      provider: 'claude',
+      linkedProviderSessionId: payload.providerSessionId
+    })
   }
   appendContextCompactionMessageToChat(
     payload.chatId,
@@ -15505,8 +15553,9 @@ async function compactCliSeatContext(payload: {
           }
           // A host-side compaction either resets the native session or
           // replaces its bounded working context. Do not let a later slim turn
-          // assume this seat still remembers the dynamic snapshot it received
-          // before compaction.
+          // assume this seat still remembers either the static shell or the
+          // dynamic snapshot it received before compaction.
+          delete next.promptShellVersion
           delete next.promptDynamicStateVersion
           return next
         })
@@ -15682,6 +15731,7 @@ async function compactProviderContextForRequest(payload: {
     return compactClaudeProviderContext({
       chatId: payload.chatId,
       providerSessionId,
+      participantId: payload.participantId,
       model,
       cardMetadata
     })
@@ -15689,6 +15739,7 @@ async function compactProviderContextForRequest(payload: {
   return compactCodexProviderContext({
     chatId: payload.chatId,
     providerSessionId,
+    participantId: payload.participantId,
     cardMetadata
   })
 }
@@ -17320,6 +17371,21 @@ async function runCodexAppServer(event: Electron.IpcMainInvokeEvent, payload: Ag
   if (!threadId) {
     throw new Error('Codex app-server did not return a thread id.')
   }
+  if (
+    payload.ensembleRun?.promptMode === 'slim' &&
+    resumableThreadId &&
+    !isSameCodexAppServerThreadId(threadId, resumableThreadId)
+  ) {
+    invalidateEnsemblePromptReceiptsForSession({
+      chatId: payload.appChatId || '',
+      participantId: payload.ensembleRun.participantId,
+      provider: 'codex',
+      linkedProviderSessionId: resumableThreadId
+    })
+    throw new Error(
+      'Codex app-server returned a different thread for a slim resumed prompt; refusing a context-poor fresh-session turn.'
+    )
+  }
 
   await syncCodexNativeGoalForRun(
     client,
@@ -17685,6 +17751,39 @@ async function runCodexProvider(
     if (error instanceof CodexEnsembleGoalIsolationError) {
       const route = routeWithRunId('codex', payload)
       sendAgentCompatError(event.sender, 'codex', message, route)
+      sendAgentCompatExit(event.sender, 'codex', -1, route)
+      runManager.finish(route.appRunId, 'failed')
+      return
+    }
+    if (shouldBlockCodexExecFallbackForSlimEnsemblePrompt(payload)) {
+      if (payload.providerSessionId) {
+        invalidateEnsemblePromptReceiptsForSession({
+          chatId: payload.appChatId || '',
+          participantId: payload.ensembleRun?.participantId,
+          provider: 'codex',
+          linkedProviderSessionId: payload.providerSessionId
+        })
+      }
+      const route = routeWithRunId('codex', payload)
+      sendAgentCompatError(
+        event.sender,
+        'codex',
+        `Codex app-server unavailable during a slim resumed Ensemble turn; one-shot exec fallback was blocked because it has no native session context. The next turn will send a full briefing. Reason: ${message}`,
+        route
+      )
+      sendAgentCompatLine(
+        event.sender,
+        'codex',
+        {
+          type: 'result',
+          status: 'failed',
+          stats: {},
+          timestamp: new Date().toISOString(),
+          provider: 'codex',
+          fallback: false
+        },
+        route
+      )
       sendAgentCompatExit(event.sender, 'codex', -1, route)
       runManager.finish(route.appRunId, 'failed')
       return

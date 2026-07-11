@@ -1,10 +1,51 @@
 import type {
+  ChatRecord,
   EnsembleParticipant,
   EnsembleStageRole,
   PermissionOverrides,
   PermissionPresetId,
   ProviderId
 } from './store/types'
+
+/**
+ * Clear slim-prompt delivery receipts only when the participant still names
+ * the exact provider session that was compacted or abandoned. Returning null
+ * means the roster changed while the maintenance operation was in flight and
+ * the caller must leave the newer seat untouched.
+ */
+export function invalidatePromptReceiptsForMatchingEnsembleSession(
+  chat: ChatRecord,
+  input: {
+    participantId: string
+    provider: ProviderId
+    linkedProviderSessionId: string
+  }
+): ChatRecord | null {
+  const participants = chat.ensemble?.participants
+  if (!participants) return null
+  const target = participants.find((participant) => participant.id === input.participantId)
+  if (
+    !target ||
+    target.provider !== input.provider ||
+    target.linkedProviderSessionId !== input.linkedProviderSessionId
+  ) {
+    return null
+  }
+  if (!target.promptShellVersion && !target.promptDynamicStateVersion) return chat
+  return {
+    ...chat,
+    ensemble: {
+      ...chat.ensemble!,
+      participants: participants.map((participant) => {
+        if (participant.id !== input.participantId) return participant
+        const next = { ...participant }
+        delete next.promptShellVersion
+        delete next.promptDynamicStateVersion
+        return next
+      })
+    }
+  }
+}
 
 const ENSEMBLE_STAGE_ROLES = new Set<string>(['scout', 'worker', 'reviewer'])
 
@@ -332,13 +373,13 @@ function applyParticipantPatch(
 ): EnsembleParticipant {
   const next: EnsembleParticipant = { ...target }
   let providerChanged = false
-  let dynamicStateReceiptInvalidated = false
+  let promptReceiptsInvalidated = false
   if (hasOwn.call(patch, 'provider') && isNonEmptyString(patch.provider)) {
     const provider = patch.provider as ProviderId
     providerChanged = provider !== target.provider
     next.provider = provider
     if (providerChanged) {
-      dynamicStateReceiptInvalidated = true
+      promptReceiptsInvalidated = true
       delete next.runtimeProfileId
       delete next.geminiAuthProfileId
       delete next.ollamaRunProfile
@@ -351,7 +392,7 @@ function applyParticipantPatch(
   if (hasOwn.call(patch, 'model')) {
     const nextModel = patch.model || undefined
     if ((target.model || '') !== (nextModel || '')) {
-      dynamicStateReceiptInvalidated = true
+      promptReceiptsInvalidated = true
     }
     if (patch.model) next.model = patch.model
     else delete next.model
@@ -413,10 +454,13 @@ function applyParticipantPatch(
       delete next.linkedProviderSessionId
     }
     if ((next.linkedProviderSessionId || '') !== (target.linkedProviderSessionId || '')) {
-      dynamicStateReceiptInvalidated = true
+      promptReceiptsInvalidated = true
     }
   }
-  if (dynamicStateReceiptInvalidated) delete next.promptDynamicStateVersion
+  if (promptReceiptsInvalidated) {
+    delete next.promptShellVersion
+    delete next.promptDynamicStateVersion
+  }
   return next
 }
 

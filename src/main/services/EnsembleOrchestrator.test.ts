@@ -5521,6 +5521,8 @@ Next action:
     }
     initialChat.ensemble!.participants[0].role = 'Boss'
     initialChat.ensemble!.participants[0].permissionPresetId = 'workspace_write'
+    initialChat.ensemble!.participants[1].promptShellVersion =
+      'ensemble-shell-v1:old-codex-receipt'
     initialChat.ensemble!.participants[1].promptDynamicStateVersion =
       'ensemble-dynamic-v1:old-codex-receipt'
     const harness = makeHarness({
@@ -5606,6 +5608,10 @@ Next action:
         reasoningEffort: 'medium'
       })
     )
+    expect(
+      harness.chat.ensemble!.participants.find((participant) => participant.id === 'codex')
+        ?.promptShellVersion
+    ).toBeUndefined()
     expect(
       harness.chat.ensemble!.participants.find((participant) => participant.id === 'codex')
         ?.promptDynamicStateVersion
@@ -12454,6 +12460,7 @@ describe('slim resumed-turn prompts', () => {
       await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
       // Claude (stamped + resumable) gets the slim shell.
       expect(harness.dispatched[0].provider).toBe('claude')
+      expect(harness.dispatched[0].ensembleRun?.promptMode).toBe('slim')
       expect(harness.dispatched[0].prompt).toContain('TaskWraith Ensemble Mode — resumed turn')
       expect(harness.dispatched[0].prompt).not.toContain('Participant roster:')
       expect(harness.dispatched[0].prompt).toContain('Current user request:')
@@ -12527,6 +12534,77 @@ describe('slim resumed-turn prompts', () => {
     try {
       await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
       expect(harness.dispatched[0].prompt).toContain('Participant roster:')
+    } finally {
+      if (previous === undefined) delete process.env.TASKWRAITH_ENSEMBLE_SLIM_RESUME
+      else process.env.TASKWRAITH_ENSEMBLE_SLIM_RESUME = previous
+    }
+  })
+
+  it.each(['codex-exec-1780439561126', 'not-a-codex-thread'])(
+    'keeps a stamped Codex seat on the full prompt for non-app-server session %s',
+    async (linkedProviderSessionId) => {
+      const previous = process.env.TASKWRAITH_ENSEMBLE_SLIM_RESUME
+      process.env.TASKWRAITH_ENSEMBLE_SLIM_RESUME = '1'
+      try {
+        const chat = makeChat()
+        chat.ensemble!.participants = chat.ensemble!.participants
+          .filter((participant) => participant.id === 'codex')
+          .map((participant) => ({
+            ...participant,
+            order: 1,
+            linkedProviderSessionId,
+            promptShellVersion: computeEnsemblePromptShellStamp({
+              ...chat.ensemble!,
+              participants: [{ ...participant, order: 1 }]
+            })
+          }))
+        // The stamp must reflect the final one-seat roster.
+        chat.ensemble!.participants[0].promptShellVersion =
+          computeEnsemblePromptShellStamp(chat.ensemble!)
+        const harness = makeHarness({ initialChat: chat })
+        harness.orchestrator.startRound({
+          chatId: 'ensemble-chat',
+          prompt: 'Continue.',
+          event: { sender: {} as Electron.WebContents }
+        })
+        await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+        expect(harness.dispatched[0].provider).toBe('codex')
+        expect(harness.dispatched[0].ensembleRun?.promptMode).toBe('full')
+        expect(harness.dispatched[0].prompt).toContain('Participant roster:')
+        expect(harness.dispatched[0].prompt).not.toContain(
+          'TaskWraith Ensemble Mode — resumed turn'
+        )
+      } finally {
+        if (previous === undefined) delete process.env.TASKWRAITH_ENSEMBLE_SLIM_RESUME
+        else process.env.TASKWRAITH_ENSEMBLE_SLIM_RESUME = previous
+      }
+    }
+  )
+
+  it('allows a stamped Codex seat with a real app-server UUID to use a slim prompt', async () => {
+    const previous = process.env.TASKWRAITH_ENSEMBLE_SLIM_RESUME
+    process.env.TASKWRAITH_ENSEMBLE_SLIM_RESUME = '1'
+    try {
+      const chat = makeChat()
+      chat.ensemble!.participants = chat.ensemble!.participants
+        .filter((participant) => participant.id === 'codex')
+        .map((participant) => ({
+          ...participant,
+          order: 1,
+          linkedProviderSessionId: '7b057c8b-33fa-4eca-9efe-3313a83669f4'
+        }))
+      chat.ensemble!.participants[0].promptShellVersion =
+        computeEnsemblePromptShellStamp(chat.ensemble!)
+      const harness = makeHarness({ initialChat: chat })
+      harness.orchestrator.startRound({
+        chatId: 'ensemble-chat',
+        prompt: 'Continue.',
+        event: { sender: {} as Electron.WebContents }
+      })
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+      expect(harness.dispatched[0].ensembleRun?.promptMode).toBe('slim')
+      expect(harness.dispatched[0].prompt).toContain('TaskWraith Ensemble Mode — resumed turn')
+      expect(harness.dispatched[0].prompt).not.toContain('Participant roster:')
     } finally {
       if (previous === undefined) delete process.env.TASKWRAITH_ENSEMBLE_SLIM_RESUME
       else process.env.TASKWRAITH_ENSEMBLE_SLIM_RESUME = previous
@@ -12641,6 +12719,29 @@ describe('shell stamp persistence requires a successful dispatch', () => {
 })
 
 describe('dynamic-state receipt invalidation', () => {
+  it('does not persist either prompt receipt when an accepted dispatch later fails', async () => {
+    const harness = makeHarness()
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Try a failing turn.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const runId = harness.dispatched[0].appRunId
+    harness.orchestrator.handleProviderOutput(
+      'claude',
+      { appRunId: runId, appChatId: 'ensemble-chat' },
+      { type: 'result', status: 'failed', stats: { total_tokens: 5 } }
+    )
+    await vi.waitFor(() => {
+      const participant = harness.chat.ensemble?.participants.find(
+        (entry) => entry.id === 'claude'
+      )
+      expect(participant?.promptShellVersion).toBeUndefined()
+      expect(participant?.promptDynamicStateVersion).toBeUndefined()
+    })
+  })
+
   it('does not persist a candidate when a dispatched run ends skipped without an answer', async () => {
     const harness = makeHarness()
     harness.orchestrator.startRound({
@@ -12673,6 +12774,7 @@ describe('dynamic-state receipt invalidation', () => {
         ? {
             ...participant,
             linkedProviderSessionId: 'claude-session-1',
+            promptShellVersion: computeEnsemblePromptShellStamp(chat.ensemble!),
             promptDynamicStateVersion: 'ensemble-dynamic-v1:old-receipt'
           }
         : participant
@@ -12695,6 +12797,10 @@ describe('dynamic-state receipt invalidation', () => {
     )
     expect(
       harness.chat.ensemble?.participants.find((participant) => participant.id === 'claude')
+        ?.promptShellVersion
+    ).toBeUndefined()
+    expect(
+      harness.chat.ensemble?.participants.find((participant) => participant.id === 'claude')
         ?.promptDynamicStateVersion
     ).toBeUndefined()
 
@@ -12711,6 +12817,10 @@ describe('dynamic-state receipt invalidation', () => {
     await vi.waitFor(() => {
       const run = harness.chat.runs.find((entry) => entry.runId === runId)
       expect(run?.promptDynamicStateVersion).toBeUndefined()
+      expect(
+        harness.chat.ensemble?.participants.find((participant) => participant.id === 'claude')
+          ?.promptShellVersion
+      ).toBeUndefined()
       expect(
         harness.chat.ensemble?.participants.find((participant) => participant.id === 'claude')
           ?.promptDynamicStateVersion
