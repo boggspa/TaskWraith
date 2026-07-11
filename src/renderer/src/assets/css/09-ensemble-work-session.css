@@ -4616,9 +4616,9 @@
  * Collapsible header bar injected before each COMPLETED round in the
  * transcript (see `lib/ensembleRoundCards.ts` +
  * `components/EnsembleRoundCardHeader.tsx`). Collapsed rounds show only
- * this bar; expanding it re-inserts the round's message bubbles beneath.
- * The bar reads as transcript chrome — an accent-tinted, clickable rail
- * that anchors each round without competing with the message bubbles. */
+ * this row; expanding it re-inserts the round's message bubbles beneath.
+ * The contents sit directly on the transcript as satellite controls, without
+ * a surrounding card surface competing with the message bubbles. */
 .ensemble-round-card-header {
   margin: 6px 0;
 }
@@ -4629,21 +4629,13 @@
   gap: 10px;
   width: 100%;
   padding: 8px 12px;
-  border: 1px solid color-mix(in srgb, var(--accent-color, #d6a23a) 26%, transparent);
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--accent-color, #d6a23a) 6%, transparent);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
   color: var(--text-primary);
   font: inherit;
   text-align: left;
   cursor: pointer;
-  transition:
-    background 120ms ease,
-    border-color 120ms ease;
-}
-
-.ensemble-round-card-toggle:hover {
-  background: color-mix(in srgb, var(--accent-color, #d6a23a) 12%, transparent);
-  border-color: color-mix(in srgb, var(--accent-color, #d6a23a) 42%, transparent);
 }
 
 .ensemble-round-card-toggle:focus-visible {
@@ -4656,16 +4648,6 @@
 .ensemble-round-card-header.is-expanded .ensemble-round-card-toggle {
   padding-top: 5px;
   padding-bottom: 5px;
-  background: color-mix(in srgb, var(--accent-color, #d6a23a) 3%, transparent);
-  border-color: color-mix(in srgb, var(--accent-color, #d6a23a) 16%, transparent);
-}
-
-.ensemble-round-card-chevron {
-  flex-shrink: 0;
-  width: 12px;
-  font-size: 11px;
-  line-height: 1;
-  color: var(--accent-color, #d6a23a);
 }
 
 .ensemble-round-card-index {

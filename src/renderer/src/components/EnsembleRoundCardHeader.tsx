@@ -13,12 +13,13 @@ import { getProviderName, ProviderBadgeIcon } from './Sidebar'
  * message block; this component only owns the bar's markup + the
  * expand/collapse affordance.
  *
- * Collapsed: chevron ▸, "Round N / M", participant provider pills, body
- * message count, and a one-line summary (synthesizer summary when
- * available, else the round's prompt preview).
+ * Collapsed: "Round N / M", participant provider pills, body message count,
+ * and a one-line summary (synthesizer summary when available, else the round's
+ * prompt preview). The row stays visually satellite; `aria-expanded` carries
+ * the disclosure state without a decorative leading marker.
  *
- * Expanded: a slim ▾ bar that anchors the round and offers a way to
- * collapse it again; the round's body messages render below it.
+ * Expanded: the same slim row anchors the round and offers a way to collapse
+ * it again; the round's body messages render below it.
  */
 
 interface EnsembleRoundCardHeaderProps {
@@ -55,9 +56,6 @@ export function EnsembleRoundCardHeader({
         aria-label={ariaLabel}
         title={expanded ? 'Collapse round' : 'Expand round'}
       >
-        <span className="ensemble-round-card-chevron" aria-hidden="true">
-          {expanded ? '\u25BE' : '\u25B8'}
-        </span>
         <span className="ensemble-round-card-index">
           Round {roundIndex}
           {roundCount > 1 && (
