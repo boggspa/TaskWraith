@@ -9,8 +9,11 @@ import { ChatViewPane, chatViewPanePropsEqual, type ChatViewPaneProps } from './
 // `composerProps` context is supplied. Composer's own markup is covered by its
 // dedicated tests.
 vi.mock('./Composer', () => ({
-  Composer: (props: { prompt?: string }) => (
-    <div data-testid="pane-composer-stub">{`pane-composer:${props.prompt ?? ''}`}</div>
+  Composer: (props: { prompt?: string; showWelcomeNotifications?: boolean }) => (
+    <div
+      data-testid="pane-composer-stub"
+      data-show-welcome-notifications={String(props.showWelcomeNotifications)}
+    >{`pane-composer:${props.prompt ?? ''}`}</div>
   )
 }))
 
@@ -123,7 +126,7 @@ describe('chatViewPanePropsEqual', () => {
 })
 
 describe('ChatViewPane welcome viewer', () => {
-  it('renders the pane chrome + welcome spacer (not an empty transcript) and hosts the shared composer', () => {
+  it('renders current pane chrome and hosts the shared welcome composer without a duplicate notice', () => {
     const html = renderToStaticMarkup(
       <ChatViewPane
         {...makeProps({
@@ -143,18 +146,37 @@ describe('ChatViewPane welcome viewer', () => {
         })}
       />
     )
-    // ChatViewPane still owns the pane chrome + the welcome spacer (the
-    // transcript is replaced, not rendered, on a welcome chat).
+    // A welcome pane has no clone-era spacer/transcript. Shared Composer owns
+    // the welcome layout, while app-global notices stay with the focused pane.
     expect(html).toContain('multiview-pane-corner-controls')
     expect(html).toContain('chat-corner-thread-context')
     expect(html).toContain('sidebar-provider-icon')
     expect(html).toContain('chat-corner-workspace-name')
     expect(html).toContain('>AGBench</span>')
-    expect(html).toContain('multiview-pane-welcome-spacer')
+    expect(html).not.toContain('multiview-pane-welcome-spacer')
     expect(html).not.toContain('transcript-scroll')
     // The welcome hero / starters / composer now belong to the shared
     // <Composer> (stubbed here) — the pane simply hosts it.
     expect(html).toContain('data-testid="pane-composer-stub"')
+    expect(html).toContain('data-show-welcome-notifications="false"')
+  })
+
+  it('marks a resting General Chat with the same scope class as the focused pane', () => {
+    const html = renderToStaticMarkup(
+      <ChatViewPane
+        {...makeProps({
+          chat: {
+            appChatId: 'global-chat',
+            scope: 'global',
+            title: 'General Chat'
+          } as unknown as ChatViewPaneProps['chat'],
+          welcomeIsGlobalChat: true,
+          composerProps: stubComposerProps()
+        })}
+      />
+    )
+
+    expect(html).toContain('chat-scope-global')
   })
 })
 

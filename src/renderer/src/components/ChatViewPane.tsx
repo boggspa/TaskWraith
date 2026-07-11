@@ -1,4 +1,4 @@
-import { memo, useLayoutEffect, useRef, useState } from 'react'
+import { memo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { ComposerStyle } from '../../../main/store/types'
 import { TranscriptPanel } from './TranscriptPanel'
@@ -364,45 +364,22 @@ function ChatViewPaneChrome(props: ChatViewPaneProps) {
 
 function ChatViewPaneInner(props: ChatViewPaneProps) {
   const rootRef = useRef<HTMLDivElement | null>(null)
-  const [welcomeSizeClass, setWelcomeSizeClass] = useState<'normal' | 'compact' | 'tight'>('normal')
   const chatId = props.chat?.appChatId ?? ''
   // The composer is now the shared <Composer> (rendered below via
   // `props.composerProps`); all of this pane's composer state/handlers live in
-  // that component. The retained body only drives the pane shell: the
-  // `.app-transcript` className, the welcome size-class observer, and the
-  // transcript/chrome render.
+  // that component. The retained body only drives the pane shell className,
+  // transcript, shared welcome dashboard, and pane chrome.
   const className = [
     'app-transcript',
     'multiview-pane-transcript',
     `provider-${props.providerClass}`,
     `interface-${props.interfaceStyle}`,
     props.isEnsemble ? 'chat-kind-ensemble' : '',
-    props.isWelcomeChat ? 'welcome-mode' : '',
-    props.isWelcomeChat && welcomeSizeClass === 'compact' ? 'welcome-compact-height' : '',
-    props.isWelcomeChat && welcomeSizeClass === 'tight' ? 'welcome-tight-height' : ''
+    props.welcomeIsGlobalChat ? 'chat-scope-global' : '',
+    props.isWelcomeChat ? 'welcome-mode' : ''
   ]
     .filter(Boolean)
     .join(' ')
-
-  useLayoutEffect(() => {
-    if (!props.isWelcomeChat) {
-      setWelcomeSizeClass('normal')
-      return
-    }
-    const target = rootRef.current
-    if (!target || typeof window === 'undefined' || typeof window.ResizeObserver !== 'function') {
-      return
-    }
-    const updateSizeClass = () => {
-      const height = target.getBoundingClientRect().height
-      const nextClass = height <= 560 ? 'tight' : height <= 900 ? 'compact' : 'normal'
-      setWelcomeSizeClass((current) => (current === nextClass ? current : nextClass))
-    }
-    updateSizeClass()
-    const observer = new window.ResizeObserver(updateSizeClass)
-    observer.observe(target)
-    return () => observer.disconnect()
-  }, [props.isWelcomeChat])
 
   return (
     <div
@@ -471,10 +448,8 @@ function ChatViewPaneInner(props: ChatViewPaneProps) {
           aria-hidden
         />
       )}
-      <div className="multiview-pane-content">
-        {props.isWelcomeChat ? (
-          <div className="multiview-pane-welcome-spacer" aria-hidden />
-        ) : (
+      {!props.isWelcomeChat && (
+        <div className="multiview-pane-content">
           <TranscriptPanel
             {...buildChatViewProps({
               ...props,
@@ -496,9 +471,11 @@ function ChatViewPaneInner(props: ChatViewPaneProps) {
                 : undefined
             })}
           />
-        )}
-      </div>
-      {props.composerProps && <Composer {...props.composerProps} />}
+        </div>
+      )}
+      {props.composerProps && (
+        <Composer {...props.composerProps} showWelcomeNotifications={false} />
+      )}
     </div>
   )
 }

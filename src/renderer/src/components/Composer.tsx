@@ -334,6 +334,9 @@ export interface ComposerProps {
   isPreparingDiffReview: any
   isSteerBusyForCurrentChat: any
   isWelcomeChat: any
+  /** App-global welcome notices belong to the focused pane. Resting Multiview
+   * panes render the same Composer but suppress this singleton surface. */
+  showWelcomeNotifications?: boolean
   isWorkflowChatWelcome: any
   isWorkflowComposeChat: any
   kimiThinkingEnabled: any
@@ -470,6 +473,13 @@ function ComposerPrimaryStack({
 
 const normalizeComposerWorkflowMode = (value: unknown): ChatWorkflowMode | null =>
   value === 'plan' || value === 'normal' ? value : null
+
+export function shouldRenderWelcomeNotifications(
+  isWelcomeChat: boolean,
+  showWelcomeNotifications = true
+): boolean {
+  return isWelcomeChat && showWelcomeNotifications
+}
 
 function patchTouchesProviderOrModel(patch: Partial<EnsembleParticipant>): boolean {
   return (
@@ -644,6 +654,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     isPreparingDiffReview,
     isSteerBusyForCurrentChat,
     isWelcomeChat,
+    showWelcomeNotifications = true,
     isWorkflowChatWelcome,
     isWorkflowComposeChat,
     kimiThinkingEnabled,
@@ -4842,7 +4853,9 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
             {shouldShowWelcomeStandaloneHeatmaps && (
               <WelcomeHeatmaps slots={welcomeHeatmapSlots} layout="single" />
             )}
-            {isWelcomeChat && <NotificationZone />}
+            {shouldRenderWelcomeNotifications(isWelcomeChat, showWelcomeNotifications) && (
+              <NotificationZone />
+            )}
             {trustedSessionConfirmOpen && (
               <TrustedSessionConfirmSheet
                 subjectLabel={
