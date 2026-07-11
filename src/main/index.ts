@@ -1155,6 +1155,10 @@ import {
   type CapabilityGatewayToolName
 } from './mcp/McpToolGateway'
 import {
+  dispatchResolvedGatewayTarget,
+  type GatewayTargetDispatchMarker
+} from './mcp/McpGatewayTargetDispatch'
+import {
   validateMcpCallerWorkspace,
   validateMutatingMcpRoute,
   type McpCallerContext
@@ -21343,18 +21347,13 @@ function emitCapabilityGatewayWrapperResult(
   })
 }
 
-interface GatewayTargetDispatch {
-  viaGateway: true
-  gatewayToolName: 'capability_invoke'
-}
-
 async function executeGeminiMcpTool(
   toolName: TaskWraithMcpToolName | CapabilityGatewayToolName,
   rawArgs: unknown,
   route?: AgentRunRoute | null,
   parentProvider: ProviderId = 'gemini',
   callerContext?: McpCallerContext,
-  gatewayDispatch?: GatewayTargetDispatch
+  gatewayDispatch?: GatewayTargetDispatchMarker
 ): Promise<McpToolExecutionResult> {
   const args = normalizeMcpToolArguments(rawArgs)
   const effectiveRoute =
@@ -21478,14 +21477,14 @@ async function executeGeminiMcpTool(
     // Re-enter the canonical dispatcher with the target identity. No approval,
     // route guard, lock, budget, media handler, or audit decision is made for
     // the wrapper; every one is made below for the real tool exactly once.
-    return executeGeminiMcpTool(
-      resolution.name,
-      resolution.arguments,
-      effectiveRoute,
+    return dispatchResolvedGatewayTarget({
+      targetName: resolution.name,
+      targetArguments: resolution.arguments,
+      route: effectiveRoute,
       parentProvider,
       callerContext,
-      { viaGateway: true, gatewayToolName: toolName }
-    )
+      executeCanonical: executeGeminiMcpTool
+    })
   }
 
   const routeGuard = validateMutatingMcpRoute(toolName, effectiveRoute)

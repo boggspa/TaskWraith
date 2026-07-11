@@ -593,6 +593,47 @@ describe('MCP bridge stream writes', () => {
     expect(response.error.message).toContain('core MCP profile')
   })
 
+  it('rejects a hidden direct call outside the advertised gateway profile', async () => {
+    const brokerRequest = vi.fn(async () => ({ ok: true, text: 'unexpected' }))
+    const chunks: string[] = []
+    const stream = {
+      write: vi.fn((chunk: string) => {
+        chunks.push(chunk)
+        return true
+      })
+    }
+
+    handleMcpJsonRpcMessage(
+      {
+        getDefaultSocketPath: () => '/tmp/taskwraith.sock',
+        getAppVersion: () => '1.0.0',
+        getMcpToolDefinitions: () => [],
+        brokerRequest,
+        env: { TASKWRAITH_MCP_GATEWAY_SUBSET: '1' },
+        stdout: stream as never
+      },
+      '/tmp/taskwraith.sock',
+      'token-1',
+      {
+        jsonrpc: '2.0',
+        id: 21,
+        method: 'tools/call',
+        params: {
+          name: 'video_encode_clip',
+          arguments: { inputPath: 'clip.mp4', outputPath: 'trimmed.mp4' }
+        }
+      },
+      'line'
+    )
+    await new Promise((resolve) => setImmediate(resolve))
+
+    expect(brokerRequest).not.toHaveBeenCalled()
+    const response = JSON.parse(chunks.join('').trim()) as { error: { code: number; message: string } }
+    expect(response.error.code).toBe(-32601)
+    expect(response.error.message).toContain('gateway MCP profile')
+    expect(response.error.message).toContain('capability_search and capability_invoke')
+  })
+
   it('keeps run-scoped audit tools callable when the core profile is active', async () => {
     const brokerRequest = vi.fn(async () => ({ ok: true, text: 'recorded' }))
     const chunks: string[] = []

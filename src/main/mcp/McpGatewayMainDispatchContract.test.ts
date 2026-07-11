@@ -23,9 +23,9 @@ describe('main capability gateway dispatch contract', () => {
     expect(gatewayDispatchSource).not.toContain('acquireMcpWorkspaceWriteLocks(')
   })
 
-  it('re-enters the canonical executor with the exact target route and caller context', () => {
+  it('hands the exact target route and caller context to the executable dispatch seam', () => {
     expect(gatewayDispatchSource).toMatch(
-      /return executeGeminiMcpTool\(\s*resolution\.name,\s*resolution\.arguments,\s*effectiveRoute,\s*parentProvider,\s*callerContext,\s*\{ viaGateway: true, gatewayToolName: toolName \}\s*\)/s
+      /return dispatchResolvedGatewayTarget\(\{\s*targetName: resolution\.name,\s*targetArguments: resolution\.arguments,\s*route: effectiveRoute,\s*parentProvider,\s*callerContext,\s*executeCanonical: executeGeminiMcpTool\s*\}\)/s
     )
   })
 
