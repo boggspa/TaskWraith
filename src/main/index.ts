@@ -1178,6 +1178,7 @@ import {
 } from './NativeSubAgentPolicy'
 import { buildClaudeCliArgs, normalizeClaudeEffortFlagForModel } from './ClaudeCliArgs'
 import { getSubThreadResumeSessionId, resolveSubThreadRecall } from './SubThreadRecall'
+import { resolveSubThreadDelegationRunSettings } from './SubThreadDelegationRunSettings'
 import {
   delegationApprovalBudget,
   delegationApprovalBudgetExhaustedMessage
@@ -6457,6 +6458,7 @@ function seedAgentDrivenSubThreadTranscript(args: {
   prompt: string
   returnResultToParent: boolean
   requestedModel?: string
+  providerMetadataPatch?: Record<string, unknown>
   approvalMode?: string
   runtimeProfileId?: string
 }): string {
@@ -6492,11 +6494,23 @@ function seedAgentDrivenSubThreadTranscript(args: {
     requestedModel,
     approvalMode,
     status: 'running',
+    ...(args.providerMetadataPatch
+      ? { providerMetadata: { ...args.providerMetadataPatch } }
+      : {}),
     ...(args.runtimeProfileId ? { runtimeProfileId: args.runtimeProfileId } : {})
   }
   const current = AppStore.getChat(subThread.appChatId) || subThread
   const seeded: ChatRecord = {
     ...current,
+    requestedModel,
+    ...(args.providerMetadataPatch
+      ? {
+          providerMetadata: {
+            ...(current.providerMetadata || {}),
+            ...args.providerMetadataPatch
+          }
+        }
+      : {}),
     messages: current.messages.some((message) => message.id === promptMessageId)
       ? current.messages
       : [...current.messages, promptMessage],
@@ -22924,6 +22938,25 @@ async function executeGeminiMcpTool(
           )
         }
       }
+      const delegationSettings = resolveSubThreadDelegationRunSettings({
+        provider: providerArg,
+        model: args.model,
+        reasoningEffort: args.reasoningEffort,
+        kimiThinking: args.kimiThinking,
+        recallChat: recalledChat
+      })
+      if (!delegationSettings.ok) {
+        emitMcpToolTranscriptEvent({
+          type: 'tool_result',
+          tool_id: toolId,
+          tool_name: toolName,
+          status: 'error',
+          output: delegationSettings.message,
+          provider: parentProvider,
+          server: GEMINI_MCP_SERVER_NAME
+        })
+        return { text: delegationSettings.message, isError: true }
+      }
       // Phase I1.b + I2: approval gate. Every delegation prompts the
       // user (or auto-allows/declines per workspace/session policy)
       // before any sub-thread is created. The 'ask' default means an
@@ -22946,6 +22979,17 @@ async function executeGeminiMcpTool(
       // authorising (new sub-thread vs continued conversation).
       const targetProviderLabel = providerLabel(providerArg)
       const parentProviderLabel = providerLabel(parentProvider)
+      const delegatedRunDescription = [
+        `model=${delegationSettings.requestedModel}`,
+        delegationSettings.reasoningEffort
+          ? `reasoningEffort=${delegationSettings.reasoningEffort}`
+          : null,
+        typeof delegationSettings.kimiThinking === 'boolean'
+          ? `kimiThinking=${delegationSettings.kimiThinking}`
+          : null
+      ]
+        .filter((value): value is string => Boolean(value))
+        .join(', ')
       const promptPreview =
         promptArg.length > 500
           ? `${promptArg.slice(0, 500)}\n…(${promptArg.length - 500} more chars)`
@@ -22956,10 +23000,12 @@ async function executeGeminiMcpTool(
       const approvalBody = isRecall
         ? `Continue prompt:\n${promptPreview}\n\n` +
           `Sending this as a follow-up turn to the existing "${recalledChat?.title || 'sub-thread'}" ` +
-          `runs another ${targetProviderLabel} turn by resuming the existing provider session. ` +
+          `runs another ${targetProviderLabel} turn by resuming the existing provider session ` +
+          `with its fixed seat controls (${delegatedRunDescription}). ` +
           `This consumes ${targetProviderLabel} usage allowances.`
         : `Delegation prompt:\n${promptPreview}\n\n` +
-          `Spawning this sub-thread starts a new run on ${targetProviderLabel} using its current model. ` +
+          `Spawning this sub-thread starts a new run on ${targetProviderLabel} ` +
+          `with ${delegatedRunDescription}. ` +
           `This consumes ${targetProviderLabel} usage allowances.`
       // Anti-spam: cap how many sub-thread delegation approvals a single
       // parent run may generate. A runaway agent that calls
@@ -23001,6 +23047,9 @@ async function executeGeminiMcpTool(
             kind: 'subthread-delegation',
             parentProvider,
             targetProvider: providerArg,
+            targetModel: delegationSettings.requestedModel,
+            reasoningEffort: delegationSettings.reasoningEffort,
+            kimiThinking: delegationSettings.kimiThinking,
             delegationPrompt: promptArg,
             returnResultToParent: returnResult,
             workspacePath: context.scope === 'global' ? undefined : context.workspacePath,
@@ -23076,6 +23125,9 @@ async function executeGeminiMcpTool(
               delegationPrompt: promptArg,
               delegationPromptPreview: promptCardPreview,
               returnResultToParent: returnResult,
+              requestedModel: delegationSettings.requestedModel,
+              reasoningEffort: delegationSettings.reasoningEffort,
+              kimiThinking: delegationSettings.kimiThinking,
               recall: isRecall
             }
           }
@@ -23115,6 +23167,9 @@ async function executeGeminiMcpTool(
             provider: providerArg,
             delegationPrompt: promptArg,
             returnResultToParent: returnResult,
+            requestedModel: delegationSettings.requestedModel,
+            reasoningEffort: delegationSettings.reasoningEffort,
+            kimiThinking: delegationSettings.kimiThinking,
             source: 'mcp:delegate_to_subthread',
             recall: isRecall,
             recallHadLinkedSession: isRecall ? true : undefined
@@ -23131,7 +23186,7 @@ async function executeGeminiMcpTool(
         subThread,
         prompt: promptArg,
         approvalMode: delegatedApprovalMode,
-        model: 'cli-default',
+        model: delegationSettings.requestedModel,
         resumeSessionId: recalledProviderSessionId
       })
       // Runtime profiles are PER-PROVIDER (resolveRuntimeProfileForPayload
@@ -23153,7 +23208,8 @@ async function executeGeminiMcpTool(
         provider: providerArg,
         prompt: promptArg,
         returnResultToParent: returnResult,
-        requestedModel: 'cli-default',
+        requestedModel: delegationSettings.requestedModel,
+        providerMetadataPatch: delegationSettings.providerMetadataPatch,
         approvalMode: delegatedApprovalMode,
         runtimeProfileId: inheritableRuntimeProfileId
       })
@@ -23169,7 +23225,7 @@ async function executeGeminiMcpTool(
         appRunId: subThreadRunId,
         appChatId: subThread.appChatId,
         approvalMode: delegatedApprovalMode,
-        model: 'cli-default',
+        ...delegationSettings.runPayload,
         sessionTrust: Boolean(context.sessionTrust),
         externalPathGrants: context.externalPathGrants,
         runtimeProfileId: inheritableRuntimeProfileId,
@@ -23247,16 +23303,19 @@ async function executeGeminiMcpTool(
           })
         }
       })()
-      broadcastChatUpdated(subThread)
+      // seedAgentDrivenSubThreadTranscript persisted the selected model controls;
+      // do not immediately overwrite its renderer projection with the stale
+      // pre-seed createSubThread record.
+      broadcastChatUpdated(AppStore.getChat(subThread.appChatId) ?? subThread)
       // Phase J2: tool_result text honestly describes spawn vs recall.
       text = isRecall
         ? `Continued ${providerArg} sub-thread "${subThread.title}" (id=${subThread.appChatId}). ` +
-          `Sent your prompt as a follow-up turn` +
+          `Sent your prompt as a follow-up turn with ${delegatedRunDescription}` +
           (returnResult
             ? '; the next assistant message will return to this parent transcript as an untrusted sub-thread result on completion.'
             : '. Navigate to the sub-thread in the sidebar to follow progress.')
         : `Spawned ${providerArg} sub-thread "${subThread.title}" (id=${subThread.appChatId}). ` +
-          `Running in the background` +
+          `Running in the background with ${delegatedRunDescription}` +
           (returnResult
             ? '; its final result will return to this parent transcript as an untrusted sub-thread result on completion.'
             : '. Navigate to the sub-thread in the sidebar to follow progress.') +

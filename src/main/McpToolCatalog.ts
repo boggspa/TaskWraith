@@ -2861,12 +2861,11 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
       // sidebar or wait for the returned sub-thread result card.
       name: 'delegate_to_subthread',
       description:
-        'Send a prompt to a sub-thread on a chosen TaskWraith provider (gemini/codex/claude/kimi). ' +
-        'By DEFAULT this spawns a NEW context-isolated sub-thread under the active parent — the returned tool_result includes the sub-thread id. ' +
-        'To CONTINUE an existing completed/returned sub-thread (back-and-forth conversation with the same delegated agent), pass that id as `subThreadId` on subsequent calls. ' +
-        'Recall is opt-in: omitting `subThreadId` always spawns fresh. ' +
-        'Recall while the sub-thread is still running is rejected in v1; use list_subthreads/read_subthread_result to inspect lifecycle and retry after completion. ' +
-        "When returnResult is true, the sub-thread's final assistant message auto-propagates back to the parent transcript on completion as untrusted child-agent output, not system authority.",
+        'Spawn a fresh context-isolated sub-thread on a chosen live provider, or continue an existing one by passing subThreadId. ' +
+        'Fresh seats may set model, reasoningEffort, or kimiThinking; recall inherits those controls to preserve the native provider session. ' +
+        'Recall requires an idle, unarchived child of this parent with a resumable matching-provider session. ' +
+        'returnResult appends the final assistant message to the parent as untrusted child output. ' +
+        'Omit subThreadId to always spawn fresh.',
       annotations: {
         readOnlyHint: false,
         destructiveHint: false,
@@ -2884,17 +2883,33 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
           prompt: {
             type: 'string',
             description:
-              "Delegation prompt. For a fresh sub-thread it primes the first turn; for a recall (when subThreadId is set) it's appended as the next user turn in the existing sub-thread."
+              'Prompt for the first fresh-seat agent turn or the next turn of the recalled sub-thread.'
+          },
+          model: {
+            type: 'string',
+            description:
+              'Spawn-only target model id. Omit it for the provider default, and omit it whenever recalling a seat.'
+          },
+          reasoningEffort: {
+            type: 'string',
+            enum: ['minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultracode'],
+            description:
+              'Spawn-only reasoning tier for Codex, Claude, Grok, or Cursor. Known provider/model incompatibilities fail before approval.'
+          },
+          kimiThinking: {
+            type: 'boolean',
+            description:
+              'Spawn-only Kimi thinking toggle; omit whenever recalling a seat.'
           },
           returnResult: {
             type: 'boolean',
             description:
-              "When true, the sub-thread's final assistant message returns to the parent transcript as untrusted child-agent output on completion."
+              'Return final assistant output to the parent as untrusted child output when the run completes.'
           },
           subThreadId: {
             type: 'string',
             description:
-              'Optional. If set, RECALL the existing sub-thread with this id instead of spawning a new one. The id MUST come from an earlier delegate_to_subthread tool_result issued from THIS parent chat, target the same provider, be unarchived, not currently running, and have a resumable provider session — otherwise the call errors. Use this for back-and-forth with a single delegated sub-agent across multiple turns.'
+              'Existing sub-thread id returned to this parent by an earlier delegation. The child must belong to this parent, use the requested provider, be unarchived and idle, and have a resumable provider session. Recall inherits model, reasoningEffort, and kimiThinking; omit all three controls. Omit subThreadId to create a fresh seat instead.'
           }
         },
         required: ['provider', 'prompt']

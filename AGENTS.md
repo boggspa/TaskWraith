@@ -133,11 +133,16 @@ A `subthread_returned` durable run-event is written under the
 ### How a parent-thread agent should think about delegation
 
 Agents can request delegation with
-`delegate_to_subthread({ provider, prompt, returnResult, subThreadId? })`.
+`delegate_to_subthread({ provider, prompt, model?, reasoningEffort?,
+kimiThinking?, returnResult, subThreadId? })`.
 That request is approval-gated by the current workspace's agentic-service
 policy. Treat the tool result as fallible: if policy declines or recall fails,
 do not loop or retry; continue the parent turn and tell the user what was
 declined.
+
+`model`, `reasoningEffort`, and `kimiThinking` configure a **fresh** delegated
+seat. They are spawn-only: recalls inherit the existing seat controls and reject
+attempts to change them, preserving the provider session and cache continuity.
 
 ### Audit trail
 
@@ -365,6 +370,8 @@ demands):**
 
       tools.delegate_to_subthread({
         provider: 'codex',
+        model: 'gpt-5.6-terra',
+        reasoningEffort: 'high',
         prompt: 'Run `swift test` in this workspace and summarise the
                  first 5 failures, if any.',
         returnResult: true
@@ -414,9 +421,10 @@ demands):**
     - Max depth 1 (sub-threads can't themselves delegate).
     - Workspace inherited from parent — no cross-workspace
       delegation in v1.
-    - The sub-thread runs with `approvalMode: 'default'` and
-      `model: 'cli-default'`. Future revs may expose the full
-      composer surface as additional tool args.
+    - A fresh sub-thread defaults to `model: 'cli-default'`; callers may select
+      a model plus provider-compatible reasoning controls at spawn. Recall
+      inherits those controls and rejects model/effort mutation. The rest of
+      the composer surface is not exposed as delegation tool args.
     - Codex, Claude, and Kimi register the full TaskWraith MCP surface with
       their native runtimes where available. Cursor and Grok receive a brokered
       `taskwraith` MCP surface alongside their native shell/file tooling.
