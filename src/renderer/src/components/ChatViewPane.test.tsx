@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import {
   ChatViewPane,
+  chatViewPaneCanOpenWorkspacePopout,
   chatViewPaneChromeActionEqual,
   chatViewPaneChromeActionsEqual,
   chatViewPanePropsEqual,
@@ -178,6 +179,24 @@ describe('chatViewPanePropsEqual', () => {
     const second = [{ id: 'preview', title: 'Preview', icon: <span />, active: true }]
 
     expect(chatViewPaneChromeActionsEqual(first, second)).toBe(false)
+  })
+
+  it('enables workspace popouts only when every shared menu target is actionable', () => {
+    const actions = ['popout-workbench', 'popout-diff-studio', 'popout-file-editor'].map((id) => ({
+      id,
+      title: id,
+      icon: <span />,
+      onClick: vi.fn()
+    }))
+
+    expect(chatViewPaneCanOpenWorkspacePopout(actions)).toBe(true)
+    expect(
+      chatViewPaneCanOpenWorkspacePopout(
+        actions.map((action) =>
+          action.id === 'popout-diff-studio' ? { ...action, disabled: true } : action
+        )
+      )
+    ).toBe(false)
   })
 })
 

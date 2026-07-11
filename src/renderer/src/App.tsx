@@ -23912,6 +23912,17 @@ function App(): React.JSX.Element {
         workspacePath: paneChat.workspacePath
       })
     }
+    const openPaneWorkspacePopout = (
+      kind: 'workbench' | 'diff-studio' | 'file-editor',
+      paneIndex: number,
+      chatId: string
+    ): void => {
+      const paneChat = chatByIdRef.current.get(chatId)
+      const workspacePath = viewerWorkspace?.path || paneChat?.workspacePath
+      if (!paneChat || !workspacePath) return
+      focusPaneForChromeAction(paneIndex, chatId)
+      void window.api.openWorkspacePopout({ kind, workspacePath })
+    }
     const openPaneSideChat = async (paneIndex: number, chatId: string): Promise<void> => {
       const paneChat = chatByIdRef.current.get(chatId)
       if (!paneChat) return
@@ -23987,6 +23998,33 @@ function App(): React.JSX.Element {
         icon: <ChatPopoutIcon />,
         disabled: !viewerChat,
         onClick: openPaneChatPopout
+      },
+      {
+        id: 'popout-workbench',
+        title: 'Open workspace Workbench',
+        ariaLabel: 'Open workspace Workbench',
+        icon: <FileMenuSelectionIcon />,
+        disabled: !viewerWorkspace,
+        onClick: (paneIndex, chatId) =>
+          openPaneWorkspacePopout('workbench', paneIndex, chatId)
+      },
+      {
+        id: 'popout-diff-studio',
+        title: 'Open workspace Diff Studio',
+        ariaLabel: 'Open workspace Diff Studio',
+        icon: <FileMenuSelectionIcon />,
+        disabled: !viewerWorkspace,
+        onClick: (paneIndex, chatId) =>
+          openPaneWorkspacePopout('diff-studio', paneIndex, chatId)
+      },
+      {
+        id: 'popout-file-editor',
+        title: 'Open workspace File Editor',
+        ariaLabel: 'Open workspace File Editor',
+        icon: <FileMenuSelectionIcon />,
+        disabled: !viewerWorkspace,
+        onClick: (paneIndex, chatId) =>
+          openPaneWorkspacePopout('file-editor', paneIndex, chatId)
       },
       {
         id: 'side-chat',

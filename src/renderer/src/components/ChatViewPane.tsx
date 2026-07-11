@@ -167,6 +167,21 @@ export function chatViewPaneChromeActionEqual(
   )
 }
 
+const WORKSPACE_POPOUT_ACTION_IDS = [
+  'popout-workbench',
+  'popout-diff-studio',
+  'popout-file-editor'
+] as const
+
+export function chatViewPaneCanOpenWorkspacePopout(
+  actions: ChatViewPaneChromeAction[] | undefined
+): boolean {
+  return WORKSPACE_POPOUT_ACTION_IDS.every((id) => {
+    const action = actions?.find((candidate) => candidate.id === id)
+    return Boolean(action?.onClick && !action.disabled)
+  })
+}
+
 /**
  * Skip re-render unless something this pane actually displays changed. We
  * deliberately ignore the high-churn shared props (chats, runningChatIds)
@@ -278,12 +293,19 @@ function ChatViewPaneChrome(props: ChatViewPaneProps) {
     if (!action || action.disabled || !action.onClick || !chatId) return
     action.onClick(props.paneIndex, chatId)
   }
+  const invokePopoutAction = (action: ChatViewPaneChromeAction | undefined): void => {
+    setPanePopoutMenuOpen(false)
+    invokeAction(action)
+  }
   const skyAction = actionById.get('sky-weather')
   const ghostAction = actionById.get('ghost-companion')
   const changelogAction = actionById.get('changelog')
   const firstLaunchAction = actionById.get('help')
   const bugReportAction = actionById.get('bug-report')
   const popoutAction = actionById.get('popout-chat')
+  const workbenchPopoutAction = actionById.get('popout-workbench')
+  const diffStudioPopoutAction = actionById.get('popout-diff-studio')
+  const fileEditorPopoutAction = actionById.get('popout-file-editor')
   const runAction = actionById.get('preview')
   const homeAction = actionById.get('home')
   const renderAction = (action: ChatViewPaneChromeAction) => {
@@ -381,12 +403,14 @@ function ChatViewPaneChrome(props: ChatViewPaneProps) {
           popoutMenuOpen={panePopoutMenuOpen}
           setPopoutMenuOpen={setPanePopoutMenuOpen}
           popoutMenuRef={panePopoutMenuRef}
-          canOpenWorkspacePopout={false}
+          canOpenWorkspacePopout={chatViewPaneCanOpenWorkspacePopout(
+            props.topRightChromeActions
+          )}
           hasCurrentChat={Boolean(chatId)}
-          onOpenWorkbench={() => undefined}
-          onOpenDiffStudio={() => undefined}
-          onOpenFileEditor={() => undefined}
-          onOpenChatPopout={() => invokeAction(popoutAction)}
+          onOpenWorkbench={() => invokePopoutAction(workbenchPopoutAction)}
+          onOpenDiffStudio={() => invokePopoutAction(diffStudioPopoutAction)}
+          onOpenFileEditor={() => invokePopoutAction(fileEditorPopoutAction)}
+          onOpenChatPopout={() => invokePopoutAction(popoutAction)}
           runTitle={runAction?.title || 'Preview unavailable'}
           runMenuOpen={Boolean(runAction?.menuOpen)}
           runHasMenu={Boolean(runAction?.menu)}
