@@ -1545,7 +1545,7 @@
   color: color-mix(in srgb, var(--sidebar-text) 88%, transparent);
 }
 
-.sidebar-section-header > :is(.workspace-add-pointer, .sidebar-new-menu-wrap) {
+.sidebar-section-header > .sidebar-new-menu-wrap {
   flex: 0 0 var(--sidebar-section-action-size);
   width: var(--sidebar-section-action-size);
 }

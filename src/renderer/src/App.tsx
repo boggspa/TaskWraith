@@ -791,15 +791,6 @@ function contextCompactionProgressKey(event: Pick<ContextCompactionProgressEvent
   return `${event.chatId}:${event.participantId || event.provider || 'chat'}`
 }
 
-/**
- * Lifetime of the post-dismissal pointer animation on the sidebar
- * `+` workspace button. After the sheet closes for the first
- * time, the pointer pulses for this many milliseconds so the user
- * can see exactly which control adds their first workspace. The
- * animation also dismisses on click anywhere — the timer is the
- * fallback floor. Kept under 7s so it never lingers if the user
- * tabs away. */
-const WORKSPACE_ADD_POINTER_DURATION_MS = 6000
 // Per-provider palette CORE constants live in
 // src/renderer/src/lib/ComposerSlashCommands.ts and are resolved through
 // paletteCoreForProvider() so App routing stays aligned with the slash menu.
@@ -2079,60 +2070,12 @@ function App(): React.JSX.Element {
   const [showFirstLaunchSheet, setShowFirstLaunchSheet] = useState<boolean>(
     () => !getStoredFirstLaunchSheetDismissed()
   )
-  /**
-   * Transient "this is the button" pointer that pulses around the
-   * sidebar `+` workspace button after the FirstLaunchSheet
-   * dismisses for the very first time. Lifetime is bounded by
-   * `WORKSPACE_ADD_POINTER_DURATION_MS` and an early-click escape
-   * hatch — never persists across launches. */
-  const [workspaceAddPointerActive, setWorkspaceAddPointerActive] = useState(false)
-  const workspaceAddPointerTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const handleDismissFirstLaunchSheet = useCallback(() => {
     setShowFirstLaunchSheet(false)
-    let wasFirstDismissal = false
     try {
-      wasFirstDismissal =
-        window.localStorage.getItem(FIRST_LAUNCH_SHEET_DISMISSED_STORAGE_KEY) !== 'true'
       window.localStorage.setItem(FIRST_LAUNCH_SHEET_DISMISSED_STORAGE_KEY, 'true')
     } catch {
-      /* localStorage may be disabled — treat as not-first-dismissal so
-       * the pointer animation doesn't kick in spuriously every time
-       * the user re-opens and closes the sheet. */
-      wasFirstDismissal = false
-    }
-    if (!wasFirstDismissal) return
-    // First-time dismissal: light up the sidebar `+` pointer for
-    // the configured window. A subsequent click anywhere on the
-    // app surface fires the cleanup branch below to dismiss early.
-    setWorkspaceAddPointerActive(true)
-    if (workspaceAddPointerTimerRef.current) {
-      clearTimeout(workspaceAddPointerTimerRef.current)
-    }
-    workspaceAddPointerTimerRef.current = setTimeout(() => {
-      setWorkspaceAddPointerActive(false)
-      workspaceAddPointerTimerRef.current = null
-    }, WORKSPACE_ADD_POINTER_DURATION_MS)
-  }, [])
-  // Pointer dismisses early on any user click. Stays out of the
-  // way once `setWorkspaceAddPointerActive(false)` runs.
-  useEffect(() => {
-    if (!workspaceAddPointerActive) return
-    const dismissPointer = (): void => {
-      setWorkspaceAddPointerActive(false)
-      if (workspaceAddPointerTimerRef.current) {
-        clearTimeout(workspaceAddPointerTimerRef.current)
-        workspaceAddPointerTimerRef.current = null
-      }
-    }
-    window.addEventListener('pointerdown', dismissPointer, { once: true })
-    return () => window.removeEventListener('pointerdown', dismissPointer)
-  }, [workspaceAddPointerActive])
-  // Cleanup on unmount — never leave a stray timer.
-  useEffect(() => {
-    return () => {
-      if (workspaceAddPointerTimerRef.current) {
-        clearTimeout(workspaceAddPointerTimerRef.current)
-      }
+      /* localStorage may be disabled — non-fatal. */
     }
   }, [])
 
@@ -26233,7 +26176,6 @@ function App(): React.JSX.Element {
     welcomeUsageTab,
     pluginWorkflowTemplates: pluginActivation?.workflowTemplates ?? [],
     workflowDefinitions,
-    workspaceAddPointerActive,
     workspaceBoardApiReady,
     workspaceBoardCards,
     workspaceBoards,

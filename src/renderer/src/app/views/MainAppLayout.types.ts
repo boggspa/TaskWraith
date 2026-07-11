@@ -130,7 +130,6 @@ type MainAppLayoutSidebarProps = {
   usageSummary: SidebarProps['usageSummary']
   pluginWorkflowTemplates: NonNullable<SidebarProps['pluginWorkflowTemplates']>
   workflowDefinitions: NonNullable<SidebarProps['workflows']>
-  workspaceAddPointerActive: SidebarProps['workspaceAddPointerActive']
   workspaceBoardApiReady: boolean
   workspaceBoardCards: SidebarProps['workspaceBoardCards']
   workspaceBoards: SidebarProps['workspaceBoards']
@@ -618,7 +617,6 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   welcomeUsageDashboardData: any
   welcomeUsageTab: any
   workflowDefinitions: MainAppLayoutSidebarProps['workflowDefinitions']
-  workspaceAddPointerActive: MainAppLayoutSidebarProps['workspaceAddPointerActive']
   workspaceBoardApiReady: MainAppLayoutSidebarProps['workspaceBoardApiReady']
   workspaceBoardCards: MainAppLayoutSidebarProps['workspaceBoardCards']
   workspaceBoards: MainAppLayoutSidebarProps['workspaceBoards']

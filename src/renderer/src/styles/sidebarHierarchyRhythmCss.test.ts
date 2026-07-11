@@ -61,7 +61,7 @@ describe('sidebar hierarchy rhythm CSS', () => {
     const toggleBlock = cssBlockStartingAt(css, '\n.sidebar-section-header-toggle {')
     const wrapBlock = cssBlockStartingAt(
       css,
-      '.sidebar-section-header > :is(.workspace-add-pointer, .sidebar-new-menu-wrap) {'
+      '.sidebar-section-header > .sidebar-new-menu-wrap {'
     )
     const actionBlock = cssBlockStartingAt(css, '.sidebar-section-header-action {')
 

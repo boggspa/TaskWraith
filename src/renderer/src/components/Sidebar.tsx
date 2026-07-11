@@ -173,14 +173,6 @@ interface SidebarProps {
    */
   showOnboardingHint?: boolean
   onDismissOnboardingHint?: () => void
-  /**
-   * When true, the `+` workspace button renders an extra "Start here"
-   * pointer + pulsing ring on top of its normal appearance. Flipped on
-   * by the host (App.tsx) for ~6s after the FirstLaunchSheet dismisses
-   * for the first time, so the user immediately sees which control
-   * adds their first workspace. Visual-only; the click handler stays
-   * the same. */
-  workspaceAddPointerActive?: boolean
   onSelectWorkspace: (ws: WorkspaceRecord) => void
   onRemoveWorkspace: (id: string, e: MouseEvent<HTMLButtonElement>) => void
   onSelectWorkspaceDialog: () => void
@@ -2520,7 +2512,6 @@ export function Sidebar({
   initialExpandedSubThreadParentIds = [],
   showOnboardingHint = false,
   onDismissOnboardingHint,
-  workspaceAddPointerActive = false,
   onSelectWorkspace,
   onRemoveWorkspace,
   onSelectWorkspaceDialog,
@@ -5068,36 +5059,22 @@ export function Sidebar({
                 )}
               </button>
               {/*
-                `+` workspace button. The wrapping span carries the
-                `workspace-add-pointer` class when the host has flipped
-                the post-onboarding pointer flag — CSS handles the pulse
-                + label. Span-not-button-class because we want the
-                animated ring to sit OUTSIDE the button's hover/focus
-                rectangle so it doesn't clash with the normal hover ring.
-
                 Sits OUTSIDE the section-header toggle so clicking `+`
                 opens the workspace picker without ever collapsing the
                 section. Keeping the `+` reachable when the section is
                 collapsed lets the user add a workspace even while their
                 list is folded away.
               */}
-              <span className={workspaceAddPointerActive ? 'workspace-add-pointer' : undefined}>
-                <button
-                  type="button"
-                  className="sidebar-section-header-action sidebar-workspace-create"
-                  onClick={onSelectWorkspaceDialog}
-                  title="Add workspace"
-                  aria-label="Add workspace"
-                  id="sidebar-add-workspace-btn"
-                >
-                  <PlusSymbolIcon />
-                </button>
-                {workspaceAddPointerActive && (
-                  <span className="workspace-add-pointer-label" aria-hidden="true">
-                    Start here
-                  </span>
-                )}
-              </span>
+              <button
+                type="button"
+                className="sidebar-section-header-action sidebar-workspace-create"
+                onClick={onSelectWorkspaceDialog}
+                title="Add workspace"
+                aria-label="Add workspace"
+                id="sidebar-add-workspace-btn"
+              >
+                <PlusSymbolIcon />
+              </button>
             </div>
             {/*
               First-launch onboarding hint. Renders only when the

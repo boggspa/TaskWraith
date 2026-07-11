@@ -68,11 +68,6 @@ type OnboardingProviderId =
  *      empty workspaces. Its dismissal X persists independently
  *      from the sheet's dismissal flag. This gives users two surfaces
  *      for the same prompt without coupling them.
- *
- * Pointer animation: handled by the host (App.tsx) — when the sheet
- * dismisses for the first time, the host flips a transient flag that
- * tells the sidebar's `+` workspace button to render a pulsing
- * highlight + a small "Start here" label for ~6 seconds.
  */
 
 export interface FirstLaunchSheetProps {
@@ -80,8 +75,7 @@ export interface FirstLaunchSheetProps {
    * state so we don't double-source it. */
   open: boolean
   /** Called when the user dismisses via "Got it", Skip, Esc, or
-   * click-outside. The host persists the dismissal flag AND triggers
-   * the first-time pointer animation. */
+   * click-outside. The host persists the dismissal flag. */
   onDismiss: () => void
   /** Deep-link callback. Closes the sheet and opens the Settings
    * panel — the user finishes provider sign-in there. */
