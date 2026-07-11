@@ -23,6 +23,13 @@ interface CommittedDraftBase {
   committed: string
   /** Persist the draft. Called on blur and on unmount — only when it changed. */
   onCommit: (value: string) => void
+  /**
+   * Optional per-keystroke callback for a LIVE, NON-PERSISTING preview (e.g.
+   * applying a font to the document as the user types) — decoupled from the
+   * heavy `onCommit` write. Fires on every keystroke; must never persist.
+   * Omitted by most callers → the field behaves as pure commit-on-blur.
+   */
+  onDraftChange?: (value: string) => void
 }
 
 type CommittedDraftInputProps = CommittedDraftBase & {
@@ -42,7 +49,7 @@ type CommittedDraftTextareaProps = CommittedDraftBase & {
 export type CommittedDraftFieldProps = CommittedDraftInputProps | CommittedDraftTextareaProps
 
 export function CommittedDraftField(props: CommittedDraftFieldProps): React.JSX.Element {
-  const { committed, onCommit, as, ...rest } = props
+  const { committed, onCommit, onDraftChange, as, ...rest } = props
   const [draft, setDraft] = useState(committed)
   useEffect(() => {
     setDraft(committed)
@@ -68,7 +75,11 @@ export function CommittedDraftField(props: CommittedDraftFieldProps): React.JSX.
       <textarea
         {...(rest as React.ComponentPropsWithoutRef<'textarea'>)}
         value={draft}
-        onChange={(event) => setDraft(event.target.value)}
+        onChange={(event) => {
+          const value = event.target.value
+          setDraft(value)
+          onDraftChange?.(value)
+        }}
         onBlur={flush}
       />
     )
@@ -77,7 +88,11 @@ export function CommittedDraftField(props: CommittedDraftFieldProps): React.JSX.
     <input
       {...(rest as React.ComponentPropsWithoutRef<'input'>)}
       value={draft}
-      onChange={(event) => setDraft(event.target.value)}
+      onChange={(event) => {
+        const value = event.target.value
+        setDraft(value)
+        onDraftChange?.(value)
+      }}
       onBlur={flush}
     />
   )

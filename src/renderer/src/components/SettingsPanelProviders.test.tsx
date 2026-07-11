@@ -41,6 +41,8 @@ function makeSettingsProps(overrides: Partial<SettingsPanelProps> = {}): Setting
     composerStyle: 'default',
     transcriptFontFamily: 'system',
     composerFontFamily: 'system',
+    persistedTranscriptFontFamily: 'system',
+    persistedComposerFontFamily: 'system',
     keyCommandBindings: {},
     reduceTransparency: false,
     reduceMotion: false,
@@ -160,6 +162,37 @@ describe('SettingsPanel provider cards', () => {
     expect(html).toContain('#2DB777')
     expect(html).toContain('#EC3D35')
     expect(html).toContain('HSL')
+  })
+
+  it('binds the custom transcript-font input to the PERSISTED value (not appearance state)', () => {
+    // Custom appearance value forces the <select> to "Custom…" so the
+    // CommittedDraftField input renders; its initial value must mirror the
+    // normalized PERSISTED setting so an in-progress draft is never clobbered.
+    const html = renderToStaticMarkup(
+      <SettingsPanel
+        {...makeSettingsProps({
+          activeTab: 'appearance',
+          transcriptFontFamily: 'ZZCustomStack, sans-serif',
+          persistedTranscriptFontFamily: 'ZZCustomStack, sans-serif'
+        })}
+      />
+    )
+    expect(html).toContain('settings-font-custom-input')
+    expect(html).toContain('ZZCustomStack, sans-serif')
+  })
+
+  it('resets the custom-font input to the default stack when the persisted value is empty', () => {
+    const html = renderToStaticMarkup(
+      <SettingsPanel
+        {...makeSettingsProps({
+          activeTab: 'appearance',
+          transcriptFontFamily: 'ZZCustomStack, sans-serif',
+          persistedTranscriptFontFamily: ''
+        })}
+      />
+    )
+    // normalizeFontFamily('', taskwraith) → the TaskWraith default stack.
+    expect(html).toContain('Avenir Next')
   })
 
   it('uses shared segmented controls for appearance mode choices', () => {

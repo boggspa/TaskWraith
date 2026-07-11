@@ -62,6 +62,8 @@ import {
   FONT_STACKS,
   TRANSCRIPT_FONT_OPTIONS,
   getFontSelectValue,
+  normalizeComposerFontFamily,
+  normalizeFontFamily,
   quoteInstalledFontFamily,
   type TypefaceOption
 } from '../lib/typefaceOptions'
@@ -245,6 +247,17 @@ interface SettingsPanelProps {
   composerStyle: ComposerStyle
   transcriptFontFamily: string
   composerFontFamily: string
+  /**
+   * PERSISTED font values (settings.json), distinct from the appearance-state
+   * `transcriptFontFamily`/`composerFontFamily` above which move live during a
+   * draft. The custom-font inputs mirror THESE (stable while typing) so the
+   * draft buffer isn't clobbered; live preview is driven via `onFontPreview`.
+   */
+  persistedTranscriptFontFamily: string
+  persistedComposerFontFamily: string
+  /** Live, non-persisting font preview (per keystroke). Persist happens via
+   * `onChange` on blur/commit. */
+  onFontPreview?: (partial: { transcriptFontFamily?: string; composerFontFamily?: string }) => void
   keyCommandBindings?: AppSettings['keyCommandBindings']
   reduceTransparency: boolean
   reduceMotion: boolean
@@ -3707,6 +3720,9 @@ export function SettingsPanel({
   composerStyle,
   transcriptFontFamily,
   composerFontFamily,
+  persistedTranscriptFontFamily,
+  persistedComposerFontFamily,
+  onFontPreview,
   keyCommandBindings,
   reduceTransparency,
   reduceMotion,
@@ -5583,10 +5599,14 @@ export function SettingsPanel({
                       )}
                     </select>
                     {transcriptFontSelectValue === CUSTOM_FONT_SELECT_VALUE && (
-                      <input
+                      <CommittedDraftField
                         className="settings-input settings-font-custom-input"
-                        value={transcriptFontFamily}
-                        onChange={(e) => onChange({ transcriptFontFamily: e.target.value })}
+                        committed={normalizeFontFamily(
+                          persistedTranscriptFontFamily,
+                          FONT_STACKS.taskwraith
+                        )}
+                        onDraftChange={(value) => onFontPreview?.({ transcriptFontFamily: value })}
+                        onCommit={(value) => onChange({ transcriptFontFamily: value })}
                         placeholder='"Avenir Next", system-ui, sans-serif'
                       />
                     )}
@@ -5626,10 +5646,11 @@ export function SettingsPanel({
                       )}
                     </select>
                     {composerFontSelectValue === CUSTOM_FONT_SELECT_VALUE && (
-                      <input
+                      <CommittedDraftField
                         className="settings-input settings-font-custom-input"
-                        value={composerFontFamily}
-                        onChange={(e) => onChange({ composerFontFamily: e.target.value })}
+                        committed={normalizeComposerFontFamily(persistedComposerFontFamily)}
+                        onDraftChange={(value) => onFontPreview?.({ composerFontFamily: value })}
+                        onCommit={(value) => onChange({ composerFontFamily: value })}
                         placeholder='"Avenir Next", system-ui, sans-serif'
                       />
                     )}

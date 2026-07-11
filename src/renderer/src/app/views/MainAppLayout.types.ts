@@ -46,6 +46,8 @@ type MainAppLayoutSettingsTakeoverAppearanceProps = Pick<
 type MainAppLayoutAppearanceProps = MainAppLayoutSettingsTakeoverAppearanceProps &
   Pick<AppearanceState, 'showInspector' | 'inspectorWidth'> & {
     update: AppearanceUpdateHandler
+    /** Non-persisting live preview (font drafts) — same shape as `update`. */
+    applyPreview: AppearanceUpdateHandler
   }
 
 type MainAppLayoutSidebarProps = {

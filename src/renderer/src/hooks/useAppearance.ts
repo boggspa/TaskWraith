@@ -479,6 +479,22 @@ export function useAppearance() {
     [applyToDocument]
   )
 
+  // Non-persisting sibling of `update`: moves appearance STATE + document vars
+  // for a live preview WITHOUT the settings.json write (and native IPC) that
+  // `update` always issues. Used for per-keystroke font previews where the
+  // draft commits to disk only on blur — so typing stays live but doesn't
+  // thrash the disk. Never call this for values that must persist.
+  const applyPreview = useCallback(
+    (partial: Partial<AppearanceState>) => {
+      setState((prev) => {
+        const next = { ...prev, ...partial }
+        applyToDocument(next)
+        return next
+      })
+    },
+    [applyToDocument]
+  )
+
   useEffect(() => {
     const motionQuery = window.matchMedia?.('(prefers-reduced-motion: reduce)')
     const transparencyQuery = window.matchMedia?.('(prefers-reduced-transparency: reduce)')
@@ -520,5 +536,5 @@ export function useAppearance() {
     }
   }, [])
 
-  return { ...state, update, loaded }
+  return { ...state, update, applyPreview, loaded }
 }

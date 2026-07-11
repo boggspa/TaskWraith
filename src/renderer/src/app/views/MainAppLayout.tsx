@@ -1298,6 +1298,9 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
               composerStyle={appearance.composerStyle}
               transcriptFontFamily={appearance.transcriptFontFamily}
               composerFontFamily={appearance.composerFontFamily}
+              persistedTranscriptFontFamily={settings?.transcriptFontFamily ?? ''}
+              persistedComposerFontFamily={settings?.composerFontFamily ?? ''}
+              onFontPreview={(partial) => appearance.applyPreview(partial)}
               keyCommandBindings={settings?.keyCommandBindings}
               reduceTransparency={appearance.reduceTransparency}
               reduceMotion={appearance.reduceMotion}
