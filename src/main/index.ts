@@ -228,7 +228,6 @@ import {
   isCodexContextCompactionItem,
   normalizeClaudeContextCompactionEvent,
   type ContextCompactionProgressEvent,
-  type ContextCompactionProvenance,
   type ContextCompactionSignal,
   type ContextCompactionTelemetry
 } from '../shared/contextCompaction'
@@ -1075,7 +1074,17 @@ import {
   parseCustomKeywords,
   sanitiseForKimi
 } from './lib/kimiSanitiser'
-import { buildConversationCompactionProjection, composeRunPrompt } from './PromptComposition'
+import { composeRunPrompt, conversationCompactionEligibleRows } from './PromptComposition'
+import {
+  canDisposeGrokSeatAfterCompaction,
+  convergeHostSeatCompaction,
+  HOST_SEAT_COMPACTION_DEADLINE_MS,
+  hostSeatCompactionRequestSucceeded,
+  validateHostSeatCheckpointFreshness,
+  type HostSeatCompactionChunkResult,
+  type HostSeatCompactionIdentity,
+  type HostSeatContextSummary
+} from './HostSeatCompactionConvergence'
 import { isRetiredExternalChannelInboundMessage } from './LegacyExternalChannelHistory'
 import {
   createActiveGoal,
@@ -15354,7 +15363,7 @@ async function compactClaudeProviderContext(payload: {
 }
 
 /**
- * Host-side SEAT compaction for ensemble cursor/kimi participants (wave 3) —
+ * Host-side SEAT compaction for ensemble cursor/kimi/grok participants (wave 3) —
  * the providers with no native compaction lever. A maintenance-lane one-shot
  * CLI spawn OUTSIDE the run registry (mirrors compactClaudeProviderContext):
  *  - cursor: `-p --mode plan --resume <seatSession>` with the summarize
@@ -15363,13 +15372,12 @@ async function compactClaudeProviderContext(payload: {
  *    why cursor seats bloat). On success the seat's linkedProviderSessionId
  *    is CLEARED so the next round starts a fresh session, seeded by the
  *    summary block EnsemblePrompt now injects.
- *  - kimi: `--print --plan` with bounded transcript material built in-prompt
- *    (its --resume token restores no usable history) — the seat keeps its
- *    token; the summary becomes durable memory without claiming that the
- *    bounded window covered a contiguous transcript prefix.
- * Repeated compactions carry the prior durable summary into the replacement
- * summarize turn. Provenance records exact represented message ids, but only
- * a future exact contiguous-prefix producer may authorize transcript pruning.
+ *  - kimi/grok: sequential fresh read-only children carry bounded transcript
+ *    material in-prompt, chain and checkpoint the rolling summary after every
+ *    exact-prefix advance, and stop at the shared deadline/source cap. Grok's
+ *    persistent ACP seat is disposed only after fresh complete-coverage proof.
+ * Bounded provenance is progress metadata only and never authorizes transcript
+ * pruning.
  * The pending registry is awaited by the orchestrator's dispatch path so a
  * round started mid-compaction can't race the session reset.
  */
@@ -15388,6 +15396,156 @@ function seatRunPreTokens(chat: ChatRecord, participantId: string): number | und
   const output = typeof stats?.output_tokens === 'number' ? stats.output_tokens : 0
   const total = input + output
   return Number.isFinite(total) && total > 0 ? total : undefined
+}
+
+async function runHostSeatSummaryProcess(input: {
+  provider: 'cursor' | 'kimi' | 'grok'
+  binaryPath: string
+  args: string[]
+  timeoutMs: number
+}): Promise<HostSeatCompactionChunkResult> {
+  const plan = createCliSpawnPlan(input.binaryPath, input.args)
+  let summaryText = ''
+  let timedOut = false
+  let processError: string | undefined
+  let exitCode = -1
+  try {
+    exitCode = await new Promise<number>((resolve) => {
+      const child = spawn(plan.command, plan.args, {
+        shell: plan.shell,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: createCliEnv({}, input.binaryPath)
+      })
+      // Provider banners/warnings are not summary material, but the pipe must
+      // still be drained or a noisy CLI can backpressure itself into a hang.
+      child.stderr?.resume()
+      let settled = false
+      const settle = (code: number): void => {
+        if (settled) return
+        settled = true
+        clearTimeout(killTimer)
+        resolve(code)
+      }
+      const killTimer = setTimeout(() => {
+        timedOut = true
+        try {
+          child.kill()
+        } catch {
+          // Already gone.
+        }
+        // A wedged child may never emit `close` after SIGTERM. End the accepted
+        // maintenance request at its hard deadline; timedOut prevents another
+        // chunk from spawning, and a later close is ignored by settle().
+        settle(-1)
+      }, Math.max(1, Math.trunc(input.timeoutMs)))
+      let buffer = ''
+      const handleLine = (line: string): void => {
+        const trimmed = line.trim()
+        if (!trimmed) return
+        let parsed: Record<string, unknown> | null = null
+        try {
+          parsed = JSON.parse(trimmed)
+        } catch {
+          return // banners / non-JSON noise — never summary material
+        }
+        if (input.provider === 'cursor') {
+          for (const event of cursorEventToRunEvents({ json: parsed ?? undefined })) {
+            if (event.type !== 'content' || !event.text) continue
+            const rawType =
+              event.raw && typeof event.raw === 'object'
+                ? (event.raw as { type?: unknown }).type
+                : undefined
+            // Full-turn `assistant` frames are cumulative snapshots (replace);
+            // `text` frames are streamed deltas (append).
+            if (rawType === 'assistant') summaryText = event.text
+            else summaryText += event.text
+          }
+        } else if (input.provider === 'grok') {
+          for (const event of grokEventToRunEvents({ json: parsed ?? undefined })) {
+            if (event.type === 'content' && event.text) summaryText += event.text
+          }
+        } else {
+          const text = extractProviderText(parsed)
+          if (text) summaryText += text
+        }
+      }
+      child.stdout?.on('data', (chunk: Buffer) => {
+        buffer += chunk.toString('utf8')
+        const lines = buffer.split('\n')
+        buffer = lines.pop() || ''
+        for (const line of lines) handleLine(line)
+      })
+      child.on('error', (error) => {
+        processError = error instanceof Error ? error.message : String(error)
+        settle(-1)
+      })
+      child.on('close', (code) => {
+        if (buffer.trim()) handleLine(buffer)
+        settle(typeof code === 'number' ? code : -1)
+      })
+    })
+  } catch (error) {
+    processError = error instanceof Error ? error.message : String(error)
+  }
+  return {
+    ok: exitCode === 0 && !timedOut,
+    text: summaryText,
+    ...(timedOut ? { timedOut: true } : {}),
+    ...(exitCode !== 0 || timedOut
+      ? {
+          error: timedOut
+            ? 'Timed out waiting for the seat summarize turn.'
+            : processError || `Seat summarize turn failed (exit ${exitCode}).`
+        }
+      : {})
+  }
+}
+
+function persistHostSeatCompactionCheckpoint(input: {
+  chatId: string
+  identity: HostSeatCompactionIdentity
+  snapshotEligibleRows: ReturnType<typeof conversationCompactionEligibleRows>
+  expectedPreviousSummary: HostSeatContextSummary | undefined
+  nextSummary: HostSeatContextSummary
+  claimedMessageIds?: readonly string[]
+  clearProviderSession?: boolean
+}): { ok: true } | { ok: false; error: string } {
+  const fresh = AppStore.getChat(input.chatId)
+  if (!fresh?.ensemble) return { ok: false, error: 'The chat or ensemble no longer exists.' }
+  const currentWorkspace = fresh.workspacePath || globalRunCwd()
+  const freshness = validateHostSeatCheckpointFreshness({
+    chat: fresh,
+    currentWorkspace,
+    identity: input.identity,
+    snapshotEligibleRows: input.snapshotEligibleRows,
+    expectedPreviousSummary: input.expectedPreviousSummary,
+    nextSummary: input.nextSummary,
+    ...(input.claimedMessageIds ? { claimedMessageIds: input.claimedMessageIds } : {})
+  })
+  if (!freshness.ok) return freshness
+
+  const participants = fresh.ensemble.participants.map((participant) => {
+    if (participant.id !== input.identity.participantId) return participant
+    const next: EnsembleParticipant = {
+      ...participant,
+      // Keep the controller's expected-next summary detached from the object
+      // handed to AppStore, preserving the next chunk's exact-summary CAS even
+      // if a downstream cache mutates its stored record in place.
+      contextCompactionSummary: structuredClone(input.nextSummary),
+      ...(input.clearProviderSession ? { linkedProviderSessionId: null } : {})
+    }
+    delete next.promptShellVersion
+    delete next.promptDynamicStateVersion
+    return next
+  })
+  const updated: ChatRecord = {
+    ...fresh,
+    ensemble: { ...fresh.ensemble, participants },
+    updatedAt: Date.now()
+  }
+  AppStore.saveChat(updated)
+  broadcastChatUpdated(updated)
+  return { ok: true }
 }
 
 async function compactCliSeatContext(payload: {
@@ -15409,14 +15567,32 @@ async function compactCliSeatContext(payload: {
       (participant) => participant.id === payload.participantId
     )
     if (!seat) return { ok: false, error: 'Participant not found on this ensemble.' }
+    if (seat.provider !== payload.provider) {
+      return { ok: false, error: 'Participant provider does not match the compaction request.' }
+    }
     const startedAtMs = Date.now()
     const trigger = payload.trigger || 'manual'
     const preTokens = seatRunPreTokens(chat, payload.participantId)
     const workspace = chat.workspacePath || globalRunCwd()
+    // Freeze every input that gives the maintenance turn authority. The
+    // controller never re-selects from a moving transcript, and checkpoint CAS
+    // compares against this detached summary rather than an AppStore alias.
+    const snapshotEligibleRows = conversationCompactionEligibleRows(chat.messages || [])
+    const snapshotMessages: ChatMessage[] = snapshotEligibleRows.map((row) => ({
+      ...row,
+      timestamp: ''
+    }))
     const previousSummary = seat.contextCompactionSummary
+      ? (structuredClone(seat.contextCompactionSummary) as HostSeatContextSummary)
+      : undefined
     const previousSummaryText = previousSummary?.text?.trim() ? previousSummary.text : undefined
-    let provenance: ContextCompactionProvenance
-    let boundedCoverageComplete = false
+    const identity: HostSeatCompactionIdentity = {
+      participantId: payload.participantId,
+      provider: payload.provider,
+      model: seat.model,
+      linkedProviderSessionId: seat.linkedProviderSessionId,
+      workspace
+    }
     const progressBase: Omit<ContextCompactionProgressEvent, 'status'> = {
       chatId: payload.chatId,
       participantId: payload.participantId,
@@ -15429,83 +15605,6 @@ async function compactCliSeatContext(payload: {
         ? { hueClass: payload.cardMetadata.displayHueClass }
         : {})
     }
-    let args: string[]
-    if (payload.provider === 'cursor') {
-      if (!payload.providerSessionId) {
-        return { ok: false, error: 'This cursor seat has no provider session to compact yet.' }
-      }
-      // The maintenance prompt resumes a provider-native session; it does not
-      // directly supply any canonical TaskWraith transcript row. Record no
-      // row-level claim rather than inferring coverage from chat timestamps.
-      provenance = {
-        kind: 'provider_session',
-        providerSessionId: payload.providerSessionId,
-        observedMessageIds: [],
-        ...(previousSummaryText && previousSummary?.createdAt
-          ? { previousSummaryCreatedAt: previousSummary.createdAt }
-          : {})
-      }
-      args = buildCursorCliArgs({
-        approvalMode: 'plan',
-        workspace,
-        providerSessionId: payload.providerSessionId,
-        model: payload.model,
-        prompt: buildHostCompactionSummaryPrompt({ previousSummaryText })
-      })
-    } else {
-      // Kimi + Grok: no re-openable session to resume against (Kimi's --resume
-      // token restores no usable history; a Grok ensemble seat's context lives
-      // in its LIVE ACP process, not a resumable id). So carry the material
-      // in-prompt and run a fresh read-only summarize turn. A generous block:
-      // the summary is only as good as its input.
-      const material = buildConversationCompactionProjection(
-        chat.messages || [],
-        20,
-        previousSummaryText ? previousSummary?.provenance : undefined,
-        {
-          maxTurns: 20,
-          maxCharsPerTurn: 800,
-          maxBlockChars: 12_000
-        }
-      )
-      // Grok's live ACP seat may be discarded only after the replacement
-      // summary demonstrably represents the entire eligible transcript
-      // snapshot. A partial oldest-window summary is useful progress for the
-      // next maintenance pass, but resetting here would strand the uncovered
-      // middle outside both the durable summary and the recent prompt window.
-      boundedCoverageComplete =
-        material.remainingUncoveredMessageCount === 0 &&
-        material.carriedForwardMessageIds.length + material.suppliedMessageIds.length > 0
-      provenance = {
-        kind: 'bounded_prompt_window',
-        suppliedMessageIds: [...material.suppliedMessageIds],
-        ...(material.carriedForwardMessageIds.length > 0
-          ? { carriedForwardMessageIds: [...material.carriedForwardMessageIds] }
-          : {}),
-        ...(previousSummaryText && previousSummary?.createdAt
-          ? { previousSummaryCreatedAt: previousSummary.createdAt }
-          : {})
-      }
-      const seatPrompt = buildHostCompactionSummaryPrompt({
-        previousSummaryText,
-        materialBlock: material.block
-      })
-      if (payload.provider === 'grok') {
-        // Read-only headless summarize (`-p ... --permission-mode plan`), fully
-        // independent of the live seat session (which is disposed on success).
-        args = buildGrokCliArgs({
-          prompt: seatPrompt,
-          workspace,
-          model: payload.model,
-          approvalMode: 'plan'
-        })
-      } else {
-        args = ['--print', '--plan', '--output-format', 'stream-json', '--work-dir', workspace]
-        appendKimiModelArgs(args, normalizeCliProviderModel('kimi', payload.model))
-        args.push('--prompt', seatPrompt)
-        if (payload.providerSessionId) args.push('--resume', payload.providerSessionId)
-      }
-    }
     const resolved = await resolveCliProviderBinary(payload.provider, undefined)
     if (!resolved.binaryPath) {
       return {
@@ -15514,145 +15613,159 @@ async function compactCliSeatContext(payload: {
       }
     }
     broadcastContextCompactionProgress({ ...progressBase, status: 'started' })
-    const plan = createCliSpawnPlan(resolved.binaryPath, args)
-    let summaryText = ''
-    let timedOut = false
-    const exitCode = await new Promise<number>((resolve) => {
-      const child = spawn(plan.command, plan.args, {
-        shell: plan.shell,
-        stdio: ['ignore', 'pipe', 'pipe'],
-        env: createCliEnv({}, resolved.binaryPath)
-      })
-      const killTimer = setTimeout(() => {
-        timedOut = true
-        try {
-          child.kill()
-        } catch {
-          // Already gone.
-        }
-      }, 240_000)
-      let buffer = ''
-      const handleLine = (line: string): void => {
-        const trimmed = line.trim()
-        if (!trimmed) return
-        let parsed: Record<string, unknown> | null = null
-        try {
-          parsed = JSON.parse(trimmed)
-        } catch {
-          return // banners / non-JSON noise — never summary material
-        }
-        if (payload.provider === 'cursor') {
-          for (const event of cursorEventToRunEvents({ json: parsed ?? undefined })) {
-            if (event.type !== 'content' || !event.text) continue
-            const rawType =
-              event.raw && typeof event.raw === 'object'
-                ? (event.raw as { type?: unknown }).type
-                : undefined
-            // Full-turn `assistant` frames are cumulative snapshots (replace);
-            // `text` frames are streamed deltas (append).
-            if (rawType === 'assistant') summaryText = event.text
-            else summaryText += event.text
-          }
-        } else if (payload.provider === 'grok') {
-          // Grok streaming-json answer tokens (`{type:'text',data}`) map to
-          // pure `content` deltas — no cumulative snapshots to de-dupe.
-          for (const event of grokEventToRunEvents({ json: parsed ?? undefined })) {
-            if (event.type === 'content' && event.text) summaryText += event.text
-          }
-        } else {
-          const text = extractProviderText(parsed)
-          if (text) summaryText += text
-        }
-      }
-      child.stdout?.on('data', (chunk: Buffer) => {
-        buffer += chunk.toString('utf8')
-        const lines = buffer.split('\n')
-        buffer = lines.pop() || ''
-        for (const line of lines) handleLine(line)
-      })
-      child.on('error', () => {
-        clearTimeout(killTimer)
-        resolve(-1)
-      })
-      child.on('close', (code) => {
-        clearTimeout(killTimer)
-        if (buffer.trim()) handleLine(buffer)
-        resolve(typeof code === 'number' ? code : -1)
-      })
-    })
-    const trimmedSummary = summaryText.trim().slice(0, CONTEXT_COMPACTION_SUMMARY_MAX_CHARS)
-    const summaryGenerated = exitCode === 0 && !timedOut && trimmedSummary.length > 0
-    let summaryPersisted = false
-    if (summaryGenerated) {
-      // Read-modify-write against the FRESH record (idle-only + the
-      // orchestrator dispatch-wait keep this from racing round flushes).
-      const fresh = AppStore.getChat(payload.chatId)
-      const freshParticipant = fresh?.ensemble?.participants?.find(
-        (participant) =>
-          participant.id === payload.participantId && participant.provider === payload.provider
-      )
-      if (fresh?.ensemble && freshParticipant) {
-        const participants = (fresh.ensemble.participants || []).map((participant) => {
-          if (participant.id !== payload.participantId) return participant
-          const next = {
-            ...participant,
-            contextCompactionSummary: {
-              text: trimmedSummary,
-              createdAt: new Date().toISOString(),
-              provider: payload.provider,
-              ...(preTokens !== undefined ? { preTokens } : {}),
-              provenance
-            },
-            // Cursor: abandon the bloated seat session — next round starts
-            // fresh, seeded once by the injected summary block.
-            ...(payload.provider === 'cursor' ? { linkedProviderSessionId: null } : {})
-          }
-          // A host-side compaction either resets the native session or
-          // replaces its bounded working context. Do not let a later slim turn
-          // assume this seat still remembers either the static shell or the
-          // dynamic snapshot it received before compaction.
-          delete next.promptShellVersion
-          delete next.promptDynamicStateVersion
-          return next
+    let succeeded = false
+    let failureError: string | undefined
+    let checkpointCount = 0
+    let coverageComplete = false
+    let finalSummary: HostSeatContextSummary | undefined
+    let maintenanceStopReason = payload.provider === 'cursor' ? 'cursor_one_shot' : 'no_progress'
+    let maintenanceStopError: string | undefined
+
+    if (payload.provider === 'cursor') {
+      const providerSessionId = identity.linkedProviderSessionId || ''
+      if (!providerSessionId) {
+        failureError = 'This cursor seat has no provider session to compact yet.'
+        maintenanceStopReason = 'no_progress'
+      } else {
+        const run = await runHostSeatSummaryProcess({
+          provider: 'cursor',
+          binaryPath: resolved.binaryPath,
+          args: buildCursorCliArgs({
+            approvalMode: 'plan',
+            workspace,
+            providerSessionId,
+            model: identity.model,
+            prompt: buildHostCompactionSummaryPrompt({ previousSummaryText })
+          }),
+          timeoutMs: HOST_SEAT_COMPACTION_DEADLINE_MS
         })
-        const updated: ChatRecord = {
-          ...fresh,
-          ensemble: { ...fresh.ensemble, participants },
-          updatedAt: Date.now()
+        const summaryText = (run.text || '')
+          .trim()
+          .slice(0, CONTEXT_COMPACTION_SUMMARY_MAX_CHARS)
+        if (!run.ok || run.timedOut) {
+          failureError = run.error || 'The cursor seat summarize turn failed.'
+          maintenanceStopReason = run.timedOut ? 'deadline' : 'summarizer_failed'
+        } else if (!summaryText) {
+          failureError = 'Seat summarize turn returned no summary.'
+          maintenanceStopReason = 'summarizer_failed'
+        } else {
+          const nextSummary: HostSeatContextSummary = {
+            text: summaryText,
+            createdAt: new Date().toISOString(),
+            provider: 'cursor',
+            ...(preTokens !== undefined ? { preTokens } : {}),
+            provenance: {
+              kind: 'provider_session',
+              providerSessionId,
+              observedMessageIds: [],
+              ...(previousSummaryText && previousSummary?.createdAt
+                ? { previousSummaryCreatedAt: previousSummary.createdAt }
+                : {})
+            }
+          }
+          const persisted = persistHostSeatCompactionCheckpoint({
+            chatId: payload.chatId,
+            identity,
+            snapshotEligibleRows,
+            expectedPreviousSummary: previousSummary,
+            nextSummary,
+            clearProviderSession: true
+          })
+          if (persisted.ok) {
+            succeeded = true
+            checkpointCount = 1
+            finalSummary = nextSummary
+            maintenanceStopReason = 'complete'
+          } else {
+            failureError = persisted.error
+            maintenanceStopReason = 'mutation'
+          }
         }
-        AppStore.saveChat(updated)
-        broadcastChatUpdated(updated)
-        summaryPersisted = true
       }
-      if (payload.provider === 'grok' && summaryPersisted && boundedCoverageComplete) {
-        // Grok's reset arm: the accumulated context lives in the live per-seat
-        // ACP process (seat sessions), which no `--resume` can shrink. Dispose
-        // it so the next turn respawns a fresh `session/new` seeded only by the
-        // injected summary block + the bounded tagged transcript.
-        // Never dispose if the chat/seat/provider changed while summarization
-        // was running: without a durably stored replacement summary that
-        // would turn a benign roster race into context loss.
-        // Keyed exactly as the seat-session acquire site (`chatId:participantId`).
-        grokSeatSessionRegistry.disposeSeat(`${payload.chatId}:${payload.participantId}`)
+      maintenanceStopError = failureError
+    } else {
+      const boundedProvider = payload.provider
+      const convergence = await convergeHostSeatCompaction({
+        provider: boundedProvider,
+        snapshotMessages,
+        initialSummary: previousSummary,
+        preTokens,
+        startedAtMs,
+        now: () => Date.now(),
+        nowIso: () => new Date().toISOString(),
+        summarize: async ({ prompt, timeoutMs }) => {
+          let args: string[]
+          if (boundedProvider === 'grok') {
+            args = buildGrokCliArgs({
+              prompt,
+              workspace,
+              model: identity.model,
+              approvalMode: 'plan'
+            })
+          } else {
+            args = ['--print', '--plan', '--output-format', 'stream-json', '--work-dir', workspace]
+            appendKimiModelArgs(args, normalizeCliProviderModel('kimi', identity.model))
+            args.push('--prompt', prompt)
+            if (identity.linkedProviderSessionId) {
+              // Deliberate: Kimi's verified Wire contract treats --resume as a
+              // session identity token, not transcript restoration (the same
+              // invariant behind PromptComposition's unconditional Kimi
+              // context injection). Each fresh child therefore depends only on
+              // this prompt's prior durable summary + new material.
+              args.push('--resume', identity.linkedProviderSessionId)
+            }
+          }
+          return runHostSeatSummaryProcess({
+            provider: boundedProvider,
+            binaryPath: resolved.binaryPath!,
+            args,
+            timeoutMs
+          })
+        },
+        checkpoint: ({ expectedPreviousSummary, nextSummary, claimedMessageIds }) =>
+          persistHostSeatCompactionCheckpoint({
+            chatId: payload.chatId,
+            identity,
+            snapshotEligibleRows,
+            expectedPreviousSummary,
+            nextSummary,
+            claimedMessageIds
+          })
+      })
+      checkpointCount = convergence.checkpointCount
+      coverageComplete = convergence.coverageComplete
+      finalSummary = convergence.finalSummary
+      maintenanceStopReason = convergence.stopReason
+      maintenanceStopError = convergence.error
+      succeeded = hostSeatCompactionRequestSucceeded(convergence)
+      if (!succeeded) failureError = convergence.error || 'The seat summary made no durable progress.'
+
+      if (boundedProvider === 'grok' && coverageComplete && finalSummary) {
+        // Re-read after the controller returns. No await occurs between this
+        // exact-current-coverage fence and registry disposal, so a new eligible
+        // row, seat relink, or summary replacement blocks destructive reset.
+        const fresh = AppStore.getChat(payload.chatId)
+        if (
+          fresh &&
+          canDisposeGrokSeatAfterCompaction({
+            chat: fresh,
+            currentWorkspace: fresh.workspacePath || globalRunCwd(),
+            identity,
+            snapshotEligibleRows,
+            finalSummary
+          })
+        ) {
+          grokSeatSessionRegistry.disposeSeat(`${payload.chatId}:${payload.participantId}`)
+        }
       }
     }
-    const succeeded = summaryGenerated && summaryPersisted
+
     const telemetry: ContextCompactionTelemetry = {
       provider: payload.provider,
       trigger,
       durationMs: Date.now() - startedAtMs,
       ...(preTokens !== undefined ? { preTokens } : {}),
-      ...(succeeded
-        ? {}
-        : {
-            error: timedOut
-              ? 'Timed out waiting for the seat summarize turn.'
-              : exitCode !== 0
-                ? `Seat summarize turn failed (exit ${exitCode}).`
-                : !trimmedSummary
-                  ? 'Seat summarize turn returned no summary.'
-                  : 'Seat summary was generated but could not be persisted because the chat or participant changed.'
-          })
+      ...(!succeeded && failureError ? { error: failureError } : {})
     }
     const signal: ContextCompactionSignal = {
       kind: succeeded ? 'completed' : 'failed',
@@ -15679,7 +15792,14 @@ async function compactCliSeatContext(payload: {
         'context_compaction',
         'control',
         formatContextCompactionSummary(signal, providerLabel(payload.provider)),
-        { compaction: signal, seat: payload.participantId }
+        {
+          compaction: signal,
+          seat: payload.participantId,
+          checkpointCount,
+          coverageComplete,
+          maintenanceStopReason,
+          ...(maintenanceStopError ? { maintenanceStopError } : {})
+        }
       )
     }
     return signal.kind === 'completed'

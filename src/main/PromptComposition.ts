@@ -88,6 +88,12 @@ export interface ConversationCompactionProjection extends ConversationContextPro
   remainingUncoveredMessageCount: number
 }
 
+export interface ConversationCompactionEligibleRow {
+  id: string
+  role: 'user' | 'assistant'
+  content: string
+}
+
 const DEFAULT_CONTEXT_BUDGET: ContextBudget = {
   maxTurns: MAX_CONTEXT_TURNS,
   maxCharsPerTurn: MAX_CONTEXT_CHARS_PER_TURN,
@@ -378,6 +384,22 @@ function eligibleConversationMessages(messages: ChatMessage[]): ChatMessage[] {
 /** Exact ids eligible for host compaction material, in canonical transcript order. */
 export function conversationCompactionEligibleMessageIds(messages: ChatMessage[]): string[] {
   return eligibleConversationMessages(messages).map((message) => message.id)
+}
+
+/**
+ * Detached semantic rows used to freeze host-compaction source identity across
+ * asynchronous summarize children. Metadata is intentionally omitted once it
+ * has served the eligibility filter; id/role/content are the bytes whose
+ * mutation would make a checkpoint describe a different transcript.
+ */
+export function conversationCompactionEligibleRows(
+  messages: ChatMessage[]
+): ConversationCompactionEligibleRow[] {
+  return eligibleConversationMessages(messages).map((message) => ({
+    id: message.id,
+    role: message.role as 'user' | 'assistant',
+    content: message.content
+  }))
 }
 
 /**
