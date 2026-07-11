@@ -28,6 +28,8 @@ export const INFO_MENU_ITEMS = [
   { id: 'first-launch', label: 'First Launch' },
   { id: 'bug-report', label: 'Bug Report' }
 ] as const
+export const MAIN_PANE_GLASS_POPOVER_CLASS =
+  'side-chat-layout-menu composer-combined-picker-popover'
 
 interface MainPaneActionPillProps {
   fxEnabled: boolean
@@ -188,7 +190,7 @@ export function MainPaneActionPill({
           <div
             ref={menuRef}
             id="chat-corner-fx-menu"
-            className="side-chat-layout-menu chat-corner-picker-menu"
+            className={`${MAIN_PANE_GLASS_POPOVER_CLASS} chat-corner-picker-menu`}
             role="menu"
             aria-labelledby="chat-corner-fx-trigger"
             onKeyDown={handleMenuKeyDown}
@@ -248,7 +250,7 @@ export function MainPaneActionPill({
           <div
             ref={menuRef}
             id="chat-corner-info-menu"
-            className="side-chat-layout-menu chat-corner-picker-menu"
+            className={`${MAIN_PANE_GLASS_POPOVER_CLASS} chat-corner-picker-menu`}
             role="menu"
             aria-labelledby="chat-corner-info-trigger"
             onKeyDown={handleMenuKeyDown}
@@ -303,7 +305,7 @@ export function MainPaneActionPill({
         </button>
         {popoutMenuOpen && (
           <div
-            className="side-chat-layout-menu chat-popout-menu"
+            className={`${MAIN_PANE_GLASS_POPOVER_CLASS} chat-popout-menu`}
             role="menu"
             aria-label="Popout tools"
           >

@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   FX_MENU_ITEMS,
   INFO_MENU_ITEMS,
+  MAIN_PANE_GLASS_POPOVER_CLASS,
   MAIN_PANE_PRIMARY_ACTION_IDS,
   MainPaneActionPill
 } from './MainPaneActionPill'
@@ -75,10 +76,18 @@ describe('MainPaneActionPill', () => {
     const html = renderPill(true)
 
     expect(html).toContain('aria-label="Popout tools"')
+    expect(html).toContain(`class="${MAIN_PANE_GLASS_POPOVER_CLASS} chat-popout-menu"`)
     expect(html).toContain('>Workbench<')
     expect(html).toContain('>Diff Studio<')
     expect(html).toContain('>File Editor<')
     expect(html).toContain('>Pop-Out Chat<')
     expect(html.match(/role="menuitem"/g)).toHaveLength(4)
+  })
+
+  it('uses the app-wide glass popover chrome for every top-right picker', () => {
+    expect(MAIN_PANE_GLASS_POPOVER_CLASS.split(' ')).toEqual([
+      'side-chat-layout-menu',
+      'composer-combined-picker-popover'
+    ])
   })
 })
