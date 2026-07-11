@@ -4240,40 +4240,6 @@ function App(): React.JSX.Element {
     return contexts[0] || null
   }
 
-  const markCapacityStoppedRun = (context: ActiveRunContext, message: string) => {
-    const stoppedAt = new Date().toISOString()
-    updateRunQueueJobStatus(context.runId, 'failed', message, 'Gemini model capacity exhausted.')
-    updateChatById(context.chatId, (source) => ({
-      ...source,
-      runs: (source.runs || []).map((run) =>
-        run.runId === context.runId
-          ? {
-              ...run,
-              status: 'failed',
-              endedAt: stoppedAt,
-              warnings: [...context.warnings]
-            }
-          : run
-      )
-    }))
-  }
-
-  const clearQueuedRunsForProvider = (provider: ProviderId, reason: string) => {
-    const removedRunIds = new Set(
-      runQueueJobsRef.current
-        .filter((job) => isQueuedDesktopRunQueueJob(job) && job.provider === provider)
-        .map((job) => job.runId || job.id)
-    )
-    for (const runId of removedRunIds) {
-      updateRunQueueJobStatus(runId, 'cancelled', reason)
-    }
-    if (removedRunIds.size > 0) {
-      setQueuedRuns((current) =>
-        current.filter((request) => !request.appRunId || !removedRunIds.has(request.appRunId))
-      )
-    }
-  }
-
   const getRouteProvider = (value: unknown, fallback: ProviderId): ProviderId => {
     if (value && typeof value === 'object') {
       const provider = (value as RunRouteEventPayload).provider
@@ -9067,40 +9033,6 @@ function App(): React.JSX.Element {
     return () => window.removeEventListener('resize', resizeSession)
   }, [isPersistentSessionEnabled])
 
-  const handleGeminiCapacityExhaustion = (
-    provider: ProviderId,
-    context: ActiveRunContext | null,
-    message: string,
-    isVisibleRun: boolean
-  ): boolean => {
-    if (
-      provider !== 'gemini' ||
-      !context ||
-      classifyError(message) !== 'model_capacity_exhausted'
-    ) {
-      return false
-    }
-
-    const redacted = redactLog(message)
-    context.warnings.push({ message: redacted, timestamp: new Date().toISOString() })
-    context.errorCount += 1
-    triggerFxBurst('warning')
-
-    if (context.errorCount >= 3 && context.toolCallsCount === 0 && !context.capacityFallbackShown) {
-      context.capacityFallbackShown = true
-      const stopReason = `Stopped after repeated Gemini model capacity exhaustion (${context.errorCount} retries).`
-      markCapacityStoppedRun(context, stopReason)
-      clearQueuedRunsForProvider('gemini', 'Cancelled because Gemini Pro capacity is exhausted.')
-      void window.api
-        .cancelAgentRun('gemini', context.runId)
-        .catch(() => window.api.cancelGemini(context.runId))
-      clearActiveRunContext(context)
-      if (isVisibleRun) setIsThinking(false)
-    }
-
-    return true
-  }
-
   const refreshDiff = async () => {
     if (currentWorkspace) {
       const worktree =
@@ -9264,7 +9196,6 @@ function App(): React.JSX.Element {
     appendThreadRawLog,
     clearActiveRunContext,
     getRunFileDiffSummaries,
-    handleGeminiCapacityExhaustion,
     refreshDiff,
     refreshUsageSummary,
     resolveActiveRunContext,
@@ -9282,7 +9213,6 @@ function App(): React.JSX.Element {
     appendThreadRawLog,
     clearActiveRunContext,
     getRunFileDiffSummaries,
-    handleGeminiCapacityExhaustion,
     refreshDiff,
     refreshUsageSummary,
     resolveActiveRunContext,
@@ -9310,12 +9240,6 @@ function App(): React.JSX.Element {
         getRouteChatId(payload)
       )
       if (context) {
-        handlers.handleGeminiCapacityExhaustion(
-          provider,
-          context,
-          text,
-          !context.chatId || currentChatIdRef.current === context.chatId
-        )
         context.adapter.appendChunk(text)
       } else {
         handlers.appendThreadRawLog(getRouteChatId(payload) || currentChatIdRef.current, {
@@ -9353,14 +9277,6 @@ function App(): React.JSX.Element {
         handlers.triggerFxBurst('warning')
       }
 
-      if (provider === 'gemini' && context && category === 'model_capacity_exhausted') {
-        handlers.handleGeminiCapacityExhaustion(
-          provider,
-          context,
-          error,
-          isVisibleErrorRun
-        )
-      }
       if (
         provider === 'gemini' &&
         isVisibleErrorRun &&
@@ -11167,21 +11083,6 @@ function App(): React.JSX.Element {
     const queuedRequest = request.appRunId ? request : { ...request, appRunId: createAppRunId() }
     const targetChatId = queuedRequest.chatRecord?.appChatId
     const targetProvider = queuedRequest.provider
-    const capacityContext =
-      targetProvider === 'gemini' ? getActiveRunContextForProvider('gemini') : null
-    if (capacityContext?.capacityFallbackShown) {
-      updateRunQueueJobStatus(
-        queuedRequest.appRunId,
-        'cancelled',
-        'Gemini Pro capacity fallback is active.'
-      )
-      appendThreadRawLog(targetChatId, {
-        type: 'info',
-        content:
-          'Gemini run was not queued because the active Pro run hit model capacity. Retry with Flash or Flash Lite instead.'
-      })
-      return
-    }
     const duplicateQueuedRun = getQueuedDesktopRunJobs().some(
       (job) =>
         job.provider === targetProvider &&
@@ -12084,12 +11985,6 @@ function App(): React.JSX.Element {
           // panel keeps head+tail with an elision marker, and the per-line
           // cost stops growing with accumulated trace length.
           const redacted = redactLog(JSON.stringify(rawLogPayloadForStringify(event.data), null, 2))
-          handleGeminiCapacityExhaustion(
-            effectiveRunProvider,
-            runContext,
-            redacted,
-            isVisibleRunChat()
-          )
           const permissionRequest = parseGeminiPermissionRequest(event.data)
           if (permissionRequest && isVisibleRunChat()) {
             showAttachmentPermissionRequest({
@@ -15273,26 +15168,6 @@ function App(): React.JSX.Element {
     void dispatchScheduledTaskRef.current(nextTask)
   }, [dueScheduledTasks, runningChatIds, workspacesHydrated, workspaces])
 
-  const appendBridgeFallback = (commandText: string, reason: string) => {
-    const timestamp = new Date().toISOString()
-    setRawLogs((prev) => [
-      ...prev,
-      { type: 'info', content: `Queued Gemini command bridge text (${reason}): ${commandText}` }
-    ])
-    setCurrentChat((prev) => {
-      if (!prev) return prev
-      const updated = {
-        ...prev,
-        messages: [
-          ...prev.messages,
-          { id: `${createMessageId()}-bridge-user`, role: 'user', content: commandText, timestamp }
-        ] as ChatMessage[]
-      }
-      window.api.saveChat(updated)
-      return updated
-    })
-  }
-
   const appendRawInfoOnce = (content: string) => {
     setRawLogs((prev) =>
       prev[prev.length - 1]?.content === content ? prev : [...prev, { type: 'info', content }]
@@ -15454,13 +15329,10 @@ function App(): React.JSX.Element {
     const geminiSessionApi = window.api as any
     const sessionReady = await startPersistentGeminiSession()
     if (!sessionReady || typeof geminiSessionApi.writeGeminiSession !== 'function') {
-      appendBridgeFallback(commandText, sessionReady ? 'write-unavailable' : 'session-unavailable')
       return
     }
 
-    geminiSessionApi
-      .writeGeminiSession(`${commandText}\n`)
-      .catch(() => appendBridgeFallback(commandText, 'write-unavailable'))
+    geminiSessionApi.writeGeminiSession(`${commandText}\n`).catch(() => {})
     openInspectorTab('raw')
     setRawLogs((prev) => [
       ...prev,

@@ -86,7 +86,6 @@ export interface ActiveRunContext {
   warnings: RunWarning[]
   usageResetHints: Map<string, { resetAt?: string; resetText?: string }>
   errorCount: number
-  capacityFallbackShown?: boolean
   toolCallsCount: number
   preSnapshot: any
   baseWorkspacePath: string | null
