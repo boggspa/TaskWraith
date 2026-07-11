@@ -1057,12 +1057,13 @@ describe('EnsembleParticipantsAboveRow', () => {
     )
 
     expect(html.match(/ensemble-above-chip-stage-icon/g) || []).toHaveLength(3)
-    expect(html).toContain('ensemble-above-chip-stage-icon is-file')
-    expect(html).toContain('ensemble-above-chip-stage-icon is-edit')
-    expect(html).toContain('ensemble-above-chip-stage-icon is-search')
+    expect(html).toContain('ensemble-above-chip-stage-icon is-scout')
+    expect(html).toContain('ensemble-above-chip-stage-icon is-worker')
+    expect(html).toContain('ensemble-above-chip-stage-icon is-reviewer')
+    expect(html).not.toMatch(/ensemble-above-chip-stage-icon is-(?:file|edit|search)/)
     expect(
       html.match(
-        /ensemble-above-chip-stage-icon is-(?:file|edit|search)" width="14" height="14"/g
+        /ensemble-above-chip-stage-icon is-(?:scout|worker|reviewer)" width="14" height="14"[^>]*fill="none" stroke="currentColor"[^>]*aria-hidden="true" focusable="false"/g
       ) || []
     ).toHaveLength(3)
 
@@ -1073,6 +1074,24 @@ describe('EnsembleParticipantsAboveRow', () => {
     expect(css).toMatch(
       /\.ensemble-above-chip-stage-icon\s*\{[^}]*flex: 0 0 auto;[^}]*color: var\(--text-primary\);/
     )
+  })
+
+  it('keeps the three stage-role design sources theme-aware and monoline', () => {
+    const assets = ['scout-magnifier.svg', 'worker-wrench.svg', 'reviewer-glasses.svg']
+
+    for (const asset of assets) {
+      const svg = readFileSync(
+        new URL(`../../../../design-assets/ensemble-stage-roles/icons/${asset}`, import.meta.url),
+        'utf8'
+      )
+      expect(svg).toContain('viewBox="0 0 24 24"')
+      expect(svg).toContain('fill="none"')
+      expect(svg).toContain('stroke="currentColor"')
+      expect(svg).toContain('stroke-linecap="round"')
+      expect(svg).toContain('stroke-linejoin="round"')
+      expect(svg).toContain('<title')
+      expect(svg).toContain('<desc')
+    }
   })
 
   it('renders a silver Captain hat separately from Boss', () => {

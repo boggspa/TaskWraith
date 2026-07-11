@@ -67,7 +67,6 @@ import {
 } from '../lib/composerChipFormat'
 import { resolveProviderRows } from './ComposerProviderPicker'
 import { ProviderGlyph } from './icons/ProviderGlyph'
-import { ToolFamilyIcon, type ToolFamily } from './icons/ToolFamilyIcon'
 import {
   CombinedModelPicker,
   type CombinedModelPickerProviderGroup,
@@ -717,11 +716,58 @@ function CaptainHatIcon({ className }: { className?: string }): React.JSX.Elemen
   )
 }
 
-const ENSEMBLE_STAGE_ROLE_ICON_FAMILY = {
-  scout: 'file',
-  worker: 'edit',
-  reviewer: 'search'
-} as const satisfies Record<NonNullable<EnsembleParticipant['stageRole']>, ToolFamily>
+/**
+ * Runtime copies of the designer SVGs in
+ * `design-assets/ensemble-stage-roles/icons`. These intentionally do not use
+ * ToolFamilyIcon: stage roles need distinct silhouettes at the chip's 14px
+ * size and are a separate visual concept from transcript tool calls.
+ */
+function EnsembleStageRoleIcon({
+  stageRole,
+  className
+}: {
+  stageRole: NonNullable<EnsembleParticipant['stageRole']>
+  className?: string
+}): React.JSX.Element {
+  const baseSvgProps = {
+    className,
+    width: 14,
+    height: 14,
+    viewBox: '0 0 24 24',
+    fill: 'none',
+    stroke: 'currentColor',
+    strokeWidth: 1.9,
+    strokeLinecap: 'round' as const,
+    strokeLinejoin: 'round' as const,
+    'aria-hidden': true as const,
+    focusable: 'false' as const
+  }
+
+  if (stageRole === 'scout') {
+    return (
+      <svg {...baseSvgProps}>
+        <circle cx="10.1" cy="10.1" r="5.8" />
+        <path d="m14.4 14.4 5.8 5.8" />
+      </svg>
+    )
+  }
+  if (stageRole === 'worker') {
+    return (
+      <svg {...baseSvgProps}>
+        <path d="M15.2 4.1a5 5 0 0 0-6.1 6.4l-5.3 5.3a2.7 2.7 0 0 0 3.8 3.8l5.3-5.3a5 5 0 0 0 6.4-6.1" />
+        <path d="m15.2 4.1-3.1 3.1.9 3.3 3.3.9 3-3.2" />
+      </svg>
+    )
+  }
+  return (
+    <svg {...baseSvgProps}>
+      <circle cx="7.3" cy="13.1" r="3.6" />
+      <circle cx="16.7" cy="13.1" r="3.6" />
+      <path d="M10.9 12.4c.7-.8 1.5-.8 2.2 0" />
+      <path d="m3.8 11.7-1.3-3.2M20.2 11.7l1.3-3.2" />
+    </svg>
+  )
+}
 
 function ParticipantLeadingRoleIcon({
   stageRole,
@@ -740,12 +786,10 @@ function ParticipantLeadingRoleIcon({
   }
   if (!stageRole) return null
 
-  const family = ENSEMBLE_STAGE_ROLE_ICON_FAMILY[stageRole]
   return (
-    <ToolFamilyIcon
-      family={family}
-      size={14}
-      className={`ensemble-above-chip-stage-icon is-${family}`}
+    <EnsembleStageRoleIcon
+      stageRole={stageRole}
+      className={`ensemble-above-chip-stage-icon is-${stageRole}`}
     />
   )
 }
