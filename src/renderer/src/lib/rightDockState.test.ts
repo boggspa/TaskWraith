@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   buildRightDockTabs,
   resolveActiveRightDockTab,
+  resolveRightDockRestore,
   RIGHT_DOCK_PANEL_IDS,
   shouldShowRightDock,
   type RightDockTabAvailabilityInput
@@ -118,6 +119,42 @@ describe('rightDockState', () => {
       expect(resolveActiveRightDockTab(availableTabs, 'media')).toBe('run')
       expect(resolveActiveRightDockTab([], 'media')).toBe('run')
       expect(resolveActiveRightDockTab([{ id: 'home' }], 'home')).toBe('home')
+    })
+  })
+
+  describe('resolveRightDockRestore', () => {
+    it('restores the selected destination without opening a closed dock', () => {
+      expect(
+        resolveRightDockRestore({
+          savedTab: 'home',
+          selectedTab: 'run',
+          enabledTabs: ['home', 'run', 'inspector'],
+          dockIsOpen: false
+        })
+      ).toEqual({ tab: 'home', shouldOpen: false })
+    })
+
+    it('switches an already-open dock to the remembered surface', () => {
+      expect(
+        resolveRightDockRestore({
+          savedTab: 'inspector',
+          selectedTab: 'home',
+          enabledTabs: ['home', 'run', 'inspector'],
+          dockIsOpen: true
+        })
+      ).toEqual({ tab: 'inspector', shouldOpen: true })
+    })
+
+    it('ignores missing, current, or disabled destinations', () => {
+      const base = {
+        selectedTab: 'run' as const,
+        enabledTabs: ['home', 'run'] as const,
+        dockIsOpen: false
+      }
+
+      expect(resolveRightDockRestore({ ...base, savedTab: null })).toBeNull()
+      expect(resolveRightDockRestore({ ...base, savedTab: 'run' })).toBeNull()
+      expect(resolveRightDockRestore({ ...base, savedTab: 'inspector' })).toBeNull()
     })
   })
 

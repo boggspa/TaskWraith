@@ -574,6 +574,7 @@ import { applyChatMessageFeedback, type MessageFeedbackDetails } from './lib/mes
 import {
   buildRightDockTabs,
   resolveActiveRightDockTab,
+  resolveRightDockRestore,
   RIGHT_DOCK_PANEL_IDS,
   shouldShowRightDock,
   type RightDockTab
@@ -21378,25 +21379,27 @@ function App(): React.JSX.Element {
     }
     activateRightDockTab(panelId)
   }
-  // Per-chat memory of the active dock surface. RESTORE is declared before
+  // Per-chat memory of the selected dock surface. RESTORE is declared before
   // PERSIST on purpose: on mount the saved value must be read into memory before
   // the persist effect can write the initial 'run' over it.
   //
-  // Restore: when the focused chat changes (and on first mount), reopen that
-  // thread's last-used surface. Validated against the DEFINED + ENABLED surfaces
-  // (dockTabDefs), NOT the currently-open set, so it fires even when arriving at
-  // a chat before the saved panel is open. No-op if none saved / unavailable.
+  // Restore: when the focused chat changes, recover that thread's destination.
+  // Visibility remains session chrome: selecting a chat while the dock is closed
+  // updates the destination without opening anything; an already-open dock may
+  // switch to the remembered surface. Saved tabs are validated against the
+  // DEFINED + ENABLED surfaces (dockTabDefs), not the currently-open set.
   useEffect(() => {
     const chatId = currentChat?.appChatId
     if (!chatId) return
-    const saved = readDockSurface(chatId)
-    if (
-      saved &&
-      saved !== rightDockTab &&
-      dockTabDefs.some((tab) => tab.id === saved && tab.enabled)
-    ) {
-      activateRightDockTab(saved)
-    }
+    const restore = resolveRightDockRestore({
+      savedTab: readDockSurface(chatId),
+      selectedTab: rightDockTab,
+      enabledTabs: dockTabDefs.filter((tab) => tab.enabled).map((tab) => tab.id),
+      dockIsOpen: rightDockTabs.length > 0
+    })
+    if (!restore) return
+    if (restore.shouldOpen) activateRightDockTab(restore.tab)
+    else setRightDockTab(restore.tab)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentChat?.appChatId])
   // Persist EVERY surface change — the switcher, ⌘K, and the imperative

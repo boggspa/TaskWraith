@@ -76,3 +76,26 @@ export function resolveActiveRightDockTab(
     ? selectedTab
     : availableTabs[0]?.id || 'run'
 }
+
+export interface RightDockRestoreDecision {
+  tab: RightDockTab
+  shouldOpen: boolean
+}
+
+/**
+ * Restores a chat's remembered destination without treating that destination
+ * as persisted visibility. A closed dock stays closed; an already-open dock
+ * may switch surfaces as the user moves between chats in the same session.
+ */
+export function resolveRightDockRestore(input: {
+  savedTab: RightDockTab | null
+  selectedTab: RightDockTab
+  enabledTabs: readonly RightDockTab[]
+  dockIsOpen: boolean
+}): RightDockRestoreDecision | null {
+  const { savedTab, selectedTab, enabledTabs, dockIsOpen } = input
+  if (!savedTab || savedTab === selectedTab || !enabledTabs.includes(savedTab)) {
+    return null
+  }
+  return { tab: savedTab, shouldOpen: dockIsOpen }
+}
