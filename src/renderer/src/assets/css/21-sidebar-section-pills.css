@@ -1,0 +1,22 @@
+/* Sidebar hierarchy section-header capsules.
+ *
+ * Keep the alpha on the background itself so the disclosure icon, title, and
+ * count remain fully opaque. The late, attribute-qualified selectors match the
+ * specificity of the native-glass hover rules defined in shard 08. */
+.app-sidebar {
+  --sidebar-section-header-pill-bg: rgba(0, 0, 0, 0.9);
+}
+
+:is([data-theme='light'], [data-theme='citrus'], [data-theme='mist'], [data-theme='sage'])
+  .app-sidebar {
+  --sidebar-section-header-pill-bg: rgba(255, 255, 255, 0.9);
+}
+
+.app-sidebar .sidebar-section-header-toggle,
+.app-sidebar .sidebar-section-header-toggle:is(:hover, :focus-visible),
+[data-appearance][data-reduce-transparency] .app-sidebar .sidebar-section-header-toggle,
+[data-appearance][data-reduce-transparency]
+  .app-sidebar
+  .sidebar-section-header-toggle:is(:hover, :focus-visible) {
+  background: var(--sidebar-section-header-pill-bg) !important;
+}
