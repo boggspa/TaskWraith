@@ -18,9 +18,7 @@ describe('Multiview shared-surface CSS', () => {
     const css = readMultiviewCss()
     const paneRootBlock = cssBlockStartingAt(css, '.multiview-pane-transcript {')
 
-    expect(paneRootBlock).toContain(
-      '--composer-content-max-width: min(850px, calc(100% - 28px))'
-    )
+    expect(paneRootBlock).toContain('--composer-content-max-width: min(850px, calc(100% - 28px))')
     expect(paneRootBlock).not.toContain('--composer-reserved-height')
     expect(css).not.toContain('--composer-reserved-height: 150px')
   })

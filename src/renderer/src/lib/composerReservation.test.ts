@@ -9,10 +9,7 @@ import {
 const fakeStack = (rows: number): Element =>
   ({ querySelectorAll: () => ({ length: rows }) }) as unknown as Element
 
-const fakeComposer = (
-  getHeight: () => number,
-  getRows: () => number
-): HTMLElement =>
+const fakeComposer = (getHeight: () => number, getRows: () => number): HTMLElement =>
   ({
     getBoundingClientRect: () => ({ height: getHeight() }) as DOMRect,
     querySelector: () => fakeStack(getRows())
@@ -61,7 +58,10 @@ function observerHarness() {
       mutationDisconnects.push(this.disconnectSpy)
     }
 
-    observe() {}
+    observe(target: Element, options: MutationObserverInit) {
+      void target
+      void options
+    }
 
     disconnect() {
       this.disconnectSpy()
@@ -84,7 +84,10 @@ describe('bindComposerReservation', () => {
     let height = 287.2
     let rows = 3
     const transcript = fakeTranscript()
-    const composer = fakeComposer(() => height, () => rows)
+    const composer = fakeComposer(
+      () => height,
+      () => rows
+    )
     const observers = observerHarness()
     const windowTarget = {
       addEventListener: vi.fn(),
@@ -125,21 +128,27 @@ describe('bindComposerReservation', () => {
 
   it('keeps simultaneous pane bindings isolated', () => {
     let heightA = 181.2
-    let heightB = 314.1
+    const heightB = 314.1
     const paneA = fakeTranscript()
     const paneB = fakeTranscript()
     const observers = observerHarness()
 
     const cleanupA = bindComposerReservation({
       transcript: paneA.element,
-      composerArea: fakeComposer(() => heightA, () => 0),
+      composerArea: fakeComposer(
+        () => heightA,
+        () => 0
+      ),
       resizeObserverCtor: observers.ResizeObserverCtor,
       mutationObserverCtor: null,
       windowTarget: null
     })
     const cleanupB = bindComposerReservation({
       transcript: paneB.element,
-      composerArea: fakeComposer(() => heightB, () => 0),
+      composerArea: fakeComposer(
+        () => heightB,
+        () => 0
+      ),
       resizeObserverCtor: observers.ResizeObserverCtor,
       mutationObserverCtor: null,
       windowTarget: null
@@ -169,7 +178,10 @@ describe('bindComposerReservation', () => {
 
     const cleanup = bindComposerReservation({
       transcript: transcript.element,
-      composerArea: fakeComposer(() => height, () => 0),
+      composerArea: fakeComposer(
+        () => height,
+        () => 0
+      ),
       resizeObserverCtor: null,
       mutationObserverCtor: null,
       windowTarget

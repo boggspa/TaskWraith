@@ -1,7 +1,4 @@
-import {
-  composerAboveRowClearancePx,
-  countComposerAboveRowStrips
-} from './composerScrollClearance'
+import { composerAboveRowClearancePx, countComposerAboveRowStrips } from './composerScrollClearance'
 
 interface ReservationObserver {
   observe(target: Element): void
@@ -13,9 +10,7 @@ interface ReservationMutationObserver {
   disconnect(): void
 }
 
-export type ComposerResizeObserverConstructor = new (
-  callback: () => void
-) => ReservationObserver
+export type ComposerResizeObserverConstructor = new (callback: () => void) => ReservationObserver
 
 export type ComposerMutationObserverConstructor = new (
   callback: () => void
@@ -93,9 +88,7 @@ export function bindComposerReservation({
 
   // Row strips can appear/disappear without changing the outer height in the
   // same frame. Observe structure as well as geometry so clearance stays exact.
-  const mutationObserver = MutationObserverCtor
-    ? new MutationObserverCtor(updateReservation)
-    : null
+  const mutationObserver = MutationObserverCtor ? new MutationObserverCtor(updateReservation) : null
   mutationObserver?.observe(composerArea, {
     attributes: true,
     attributeFilter: ['class', 'hidden', 'style'],

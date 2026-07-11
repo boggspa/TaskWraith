@@ -430,12 +430,13 @@ function ChatViewPaneInner(props: ChatViewPaneProps) {
   const rootRef = useRef<HTMLDivElement | null>(null)
   const paneComposerAreaRef = useRef<HTMLDivElement | null>(null)
   const chatId = props.chat?.appChatId ?? ''
+  const hasComposerProps = Boolean(props.composerProps)
   useEffect(() => {
     const transcript = rootRef.current
     const composerArea = paneComposerAreaRef.current
     if (!transcript || !composerArea) return
     return bindComposerReservation({ transcript, composerArea })
-  }, [chatId, Boolean(props.composerProps)])
+  }, [chatId, hasComposerProps])
   // The composer is now the shared <Composer> (rendered below via
   // `props.composerProps`); all of this pane's composer state/handlers live in
   // that component. The retained body only drives the pane shell className,
