@@ -663,6 +663,7 @@ import {
   type AgentAuraStatus
 } from './components/FxLayers'
 import { estimateLiveOutputTokensFromChars } from './components/LiveThreadTokenTally'
+import { createChatWalkCache, noWalkDepsEqual } from './lib/chatWalkCache'
 import { ChatViewPane, type ChatViewPaneChromeAction } from './components/ChatViewPane'
 import { type ComposerProps } from './components/Composer'
 import { removedCanvasIds, useMultiviewState } from './hooks/useMultiviewState'
@@ -1098,6 +1099,67 @@ function buildLiveToolFileSummarySignature(messages: readonly ChatMessage[]): st
   }
   return chunks.join('\u0001')
 }
+
+// ── Multiview per-pane walk caches ─────────────────────────────────────────
+// renderMultiviewPaneCell runs for every NON-focused pane on every App render
+// (~60fps during any stream). These O(messages)/O(runs) derivations are keyed
+// on the pane's ChatRecord identity so a non-streaming pane computes each once
+// and reuses it every frame — the streaming pane's chat identity changes each
+// frame → recompute (correct). This is the multiview counterpart of
+// ChatViewPane's own memo, which already skips DOM reconciliation for an
+// unchanged pane; here we also skip the per-frame recompute that ran BEFORE
+// the memo boundary. See chatWalkCache.ts for the invariant.
+const cachedPaneTokenTally = createChatWalkCache(
+  (chat, deps: { providerRates: RendererProviderRates }) =>
+    buildChatTokenTally(chat.runs || [], { providerRates: deps.providerRates }),
+  (a, b) => a.providerRates === b.providerRates
+)
+const cachedPanePinnedCount = createChatWalkCache(
+  (chat) => countMessagesWithPinnedMetadata(chat.messages),
+  noWalkDepsEqual
+)
+const cachedPaneMediaRefs = createChatWalkCache(
+  (chat, deps: { attachments: Parameters<typeof collectChatMediaRefs>[1] }) =>
+    collectChatMediaRefs(chat, deps.attachments, []),
+  (a, b) => a.attachments === b.attachments
+)
+const cachedPaneRunCompleteNotice = createChatWalkCache(
+  (chat, deps: { isRunning: boolean }) => deriveChatRunCompleteNotice(chat, deps.isRunning),
+  (a, b) => a.isRunning === b.isRunning
+)
+const cachedPaneLiveOutputTokens = createChatWalkCache(
+  (chat, deps: { isRunning: boolean; runId: string | null }) => {
+    if (!deps.isRunning) return 0
+    const activeRunIds = new Set(
+      (chat.runs || [])
+        .filter((run) => !run.endedAt || run.status === 'running' || run.status === 'queued')
+        .map((run) => run.runId)
+        .filter((runId): runId is string => Boolean(runId))
+    )
+    if (activeRunIds.size === 0 && deps.runId) {
+      activeRunIds.add(deps.runId)
+    }
+    const activeRoundStartedAt = isEnsembleActiveRoundDispatchLive(chat.ensemble?.activeRound)
+      ? Date.parse(chat.ensemble!.activeRound!.startedAt || '')
+      : Number.NaN
+    let liveChars = 0
+    for (const message of chat.messages || []) {
+      if (message.role !== 'assistant') continue
+      if (message.runId && activeRunIds.has(message.runId)) {
+        liveChars += message.content?.length || 0
+        continue
+      }
+      if (Number.isFinite(activeRoundStartedAt)) {
+        const messageTime = Date.parse(message.timestamp || '')
+        if (Number.isFinite(messageTime) && messageTime >= activeRoundStartedAt) {
+          liveChars += message.content?.length || 0
+        }
+      }
+    }
+    return estimateLiveOutputTokensFromChars(liveChars)
+  },
+  (a, b) => a.isRunning === b.isRunning && a.runId === b.runId
+)
 
 interface LiveToolFileSummaryState {
   chatId: string
@@ -23682,39 +23744,11 @@ function App(): React.JSX.Element {
       refreshKey: welcomeHeatmapRefreshKey,
       usageRecords
     })
-    const viewerTokenTally = buildChatTokenTally(viewerChat.runs || [], { providerRates })
-    const viewerLiveOutputTokens = (() => {
-      if (!viewerIsRunning) return 0
-      const activeRunIds = new Set(
-        (viewerChat.runs || [])
-          .filter((run) => !run.endedAt || run.status === 'running' || run.status === 'queued')
-          .map((run) => run.runId)
-          .filter((runId): runId is string => Boolean(runId))
-      )
-      if (activeRunIds.size === 0 && viewerRun?.runId) {
-        activeRunIds.add(viewerRun.runId)
-      }
-      const activeRoundStartedAt = isEnsembleActiveRoundDispatchLive(
-        viewerChat.ensemble?.activeRound
-      )
-        ? Date.parse(viewerChat.ensemble!.activeRound!.startedAt || '')
-        : Number.NaN
-      let liveChars = 0
-      for (const message of viewerChat.messages || []) {
-        if (message.role !== 'assistant') continue
-        if (message.runId && activeRunIds.has(message.runId)) {
-          liveChars += message.content?.length || 0
-          continue
-        }
-        if (Number.isFinite(activeRoundStartedAt)) {
-          const messageTime = Date.parse(message.timestamp || '')
-          if (Number.isFinite(messageTime) && messageTime >= activeRoundStartedAt) {
-            liveChars += message.content?.length || 0
-          }
-        }
-      }
-      return estimateLiveOutputTokensFromChars(liveChars)
-    })()
+    const viewerTokenTally = cachedPaneTokenTally(viewerChat, { providerRates })
+    const viewerLiveOutputTokens = cachedPaneLiveOutputTokens(viewerChat, {
+      isRunning: viewerIsRunning,
+      runId: viewerRun?.runId ?? null
+    })
     const viewerContextModelId =
       viewerRun?.actualModel || viewerRun?.requestedModel || viewerSelectedModel
     const viewerDualTelemetry = Boolean(viewerChat.chatKind === 'ensemble')
@@ -23729,12 +23763,10 @@ function App(): React.JSX.Element {
     const viewerGoalTitle = viewerChat.activeGoal
       ? `${viewerChat.activeGoal.status}: ${viewerChat.activeGoal.objective}`
       : 'Set active goal'
-    const viewerMediaRefs = collectChatMediaRefs(
-      viewerChat,
-      imageAttachmentsByChatId[viewerChatId] || EMPTY_IMAGE_ATTACHMENTS,
-      []
-    )
-    const viewerPinnedMessageCount = countMessagesWithPinnedMetadata(viewerChat.messages)
+    const viewerMediaRefs = cachedPaneMediaRefs(viewerChat, {
+      attachments: imageAttachmentsByChatId[viewerChatId] || EMPTY_IMAGE_ATTACHMENTS
+    })
+    const viewerPinnedMessageCount = cachedPanePinnedCount(viewerChat, undefined)
     const focusPaneForChromeAction = (paneIndex: number, chatId: string): void => {
       handleFocusMultiviewPane(paneIndex, chatId)
     }
@@ -24378,7 +24410,7 @@ function App(): React.JSX.Element {
         welcomeIsGlobalChat={viewerIsGlobalChat}
         isWelcomeChat={viewerIsWelcomeChat}
         isThinking={viewerIsRunning}
-        runCompleteNotice={deriveChatRunCompleteNotice(viewerChat, viewerIsRunning)}
+        runCompleteNotice={cachedPaneRunCompleteNotice(viewerChat, { isRunning: viewerIsRunning })}
         currentRun={viewerRun}
         currentWorkspacePath={viewerWorkspace?.path}
         welcomeUsageDashboardData={welcomeUsageDashboardData}
