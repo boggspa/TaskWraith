@@ -27,6 +27,15 @@ describe('sidebar section header pill surfaces', () => {
     expect(css).toContain('--sidebar-section-header-pill-bg: rgba(255, 255, 255, 0.9)')
   })
 
+  it('adds a small unpainted gap between the search chrome and first section', () => {
+    const css = readRepoFile(cssPath)
+    const spacerBlock = css.match(/\.app-sidebar \.sidebar-hierarchy-scroll \{([^}]*)\}/)?.[1]
+
+    expect(spacerBlock).toContain('padding-top: 12px')
+    expect(spacerBlock).not.toContain('background')
+    expect(spacerBlock).not.toContain('margin')
+  })
+
   it('targets only the header toggle background without fading its contents or sidebar rows', () => {
     const css = readRepoFile(cssPath)
     const themedStateSelectors = css.match(

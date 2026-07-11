@@ -12,6 +12,13 @@
   --sidebar-section-header-pill-bg: rgba(255, 255, 255, 0.9);
 }
 
+/* A small breath below the fixed search chrome. This inset belongs to the
+ * transparent scrolling zone, so it does not extend the top chrome's fill or
+ * alter the rhythm between hierarchy sections. */
+.app-sidebar .sidebar-hierarchy-scroll {
+  padding-top: 12px;
+}
+
 .app-sidebar .sidebar-section-header-toggle,
 .app-sidebar .sidebar-section-header-toggle:is(:hover, :focus-visible),
 [data-theme][data-appearance][data-reduce-transparency] .app-sidebar .sidebar-section-header-toggle,
