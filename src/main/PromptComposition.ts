@@ -94,10 +94,10 @@ export function resolveContextBudget(provider: ProviderId, modelId?: string): Co
   return DEFAULT_CONTEXT_BUDGET
 }
 
-// Bumped v2 -> v3 to add the image-tools mention: existing resumable
-// gemini/claude/codex sessions re-inject the preamble once so they learn the
-// image tools exist.
-export const TASKWRAITH_RUNTIME_PREAMBLE_VERSION = 'taskwraith-runtime-v3'
+// Bumped v3 -> v4 when the always-on image-tools paragraph became an
+// image-intent hint. Existing resumable gemini/claude/codex sessions re-inject
+// once so they receive the smaller, current contract.
+export const TASKWRAITH_RUNTIME_PREAMBLE_VERSION = 'taskwraith-runtime-v4'
 
 /**
  * Standalone one-shot hint re-injected on a RESUMED session (where the full
@@ -136,9 +136,8 @@ export const TASKWRAITH_RECON_STEER_NOTE = [
  * Cursor/Cline/Codex/Devin do: read first, verify after, never fake a pass.
  */
 const CLOUD_EDIT_DISCIPLINE_NOTE = [
-  'Read before you edit: before you replace or apply_patch an existing file — or write_file over one that already exists — open it with read_file so you edit against its current contents, especially for a partial edit. Never modify a file you have not read this run. Creating a genuinely new file with write_file needs no prior read.',
-  'After making code changes, verify them when the project has checks: use get_diagnostics for structured type/lint problems, and if run_task exposes a relevant lint/build/test task, run it and summarize the outcome with test_result_summary before declaring the task done. If no such task exists, say so plainly rather than inventing a result.',
-  'Never claim tests, builds, or lint passed without actually running them — report real tool output, not a fabricated success.'
+  'Read existing files with read_file before editing them; a genuinely new file may be created with write_file.',
+  'After code changes, use get_diagnostics and any relevant run_task, then report test_result_summary. Say when no check exists; never claim unrun checks passed.'
 ].join('\n')
 
 const DELEGATION_INTENT_PATTERN =
@@ -209,21 +208,16 @@ function buildTaskWraithRuntimePreamble(args: {
   const followupProvider = exampleDelegationProvider(args.provider)
   const lines = [
     `TaskWraith runtime note (${TASKWRAITH_RUNTIME_PREAMBLE_VERSION}): this ${args.providerLabel} workspace run has access to the TaskWraith MCP server.`,
-    'Use TaskWraith MCP tools for workspace reads/search, edits, git, task/test verification, user questions, diagnostics, and sub-thread control.',
-    `${taskWraithToolNamespaceHint(args.provider)} Key examples: ${searchTool}, ${patchTool}, ${statusTool}, ${taskTool}, ${delegateTool}.`,
-    ...(args.coreMcpProfile
-      ? []
-      : [
-          'Image tools are also available over MCP: image_edit (blur/redact/crop/resize), svg_rasterize (preview an SVG you produced as a PNG — the transcript does not render SVG inline), and image_generate (text-to-image, only when the user has enabled it with a key in Settings). Prefer them over shelling out or pasting data URLs.'
-        ]),
-    CLOUD_EDIT_DISCIPLINE_NOTE,
-    `For CROSS-PROVIDER delegation, call ${delegateTool}({ provider, prompt, returnResult }) through TaskWraith; do not use provider-native Task/invoke_agent/subagent paths for cross-provider work because they cannot reach other TaskWraith providers.`,
-    `For asking the user a question, ALWAYS call ${questionTool} instead of a provider-native question/elicitation tool (e.g. Claude Code's built-in AskUserQuestion). The native tool has no attached interactive terminal in this harness — it silently auto-resolves with an empty answer and is never shown to the user, on desktop OR the iOS companion app. ${questionTool} is the only path wired end-to-end (Electron picker UI + the iOS remote question card), so it is the one that actually reaches the user, including on a paired phone.`,
-    ...(args.provider === 'codex'
+    'Route workspace reads, edits, git, and checks through TaskWraith MCP so its approval, path checks, and audit logging govern side effects.',
+    `${taskWraithToolNamespaceHint(args.provider)} Examples: ${searchTool}, ${patchTool}, ${statusTool}, ${taskTool}, ${delegateTool}.`,
+    ...(!args.coreMcpProfile && promptNeedsImageToolsHint(args.finalPrompt)
       ? [
-          'Codex may also surface the same MCP entrypoints as bare tool names, such as delegate_to_subthread.'
+          'Image tools are also available over MCP: image_edit (blur/redact/crop/resize), svg_rasterize (preview an SVG you produced as a PNG — the transcript does not render SVG inline), and image_generate (text-to-image, only when the user has enabled it with a key in Settings). Prefer them over shelling out or pasting data URLs.'
         ]
       : []),
+    CLOUD_EDIT_DISCIPLINE_NOTE,
+    `For CROSS-PROVIDER delegation, call ${delegateTool}({ provider, prompt, returnResult }) through TaskWraith; do not use provider-native Task/invoke_agent/subagent paths.`,
+    `To ask the user, call ${questionTool}; native question/elicitation UI is not connected here. This is the route that reaches desktop and iOS.`,
     ...(args.provider === 'cursor' || args.provider === 'grok'
       ? [
           args.provider === 'cursor'
@@ -244,7 +238,7 @@ function buildTaskWraithRuntimePreamble(args: {
   }
 
   lines.push(
-    'If TaskWraith MCP tools are unavailable, stop and report the exact missing tool names instead of pasting full replacement files for manual application.'
+    'If a required TaskWraith MCP tool is unavailable, report its exact name instead of pasting a replacement file.'
   )
 
   return lines.join('\n')

@@ -422,7 +422,7 @@ describe('composeRunPrompt sub-thread returns', () => {
     expect(result.contextualPrompt).toContain('Native provider write/shell paths are constrained')
   })
 
-  it('keeps write-mode runtime preambles compact across providers', () => {
+  it('keeps the compact runtime contract intact across providers', () => {
     const cases = [
       ['gemini', 'TaskWraith__delegate_to_subthread'],
       ['claude', 'mcp__TaskWraith__delegate_to_subthread'],
@@ -448,10 +448,14 @@ describe('composeRunPrompt sub-thread returns', () => {
       expect(result.runtimePreambleVersion).toBe(TASKWRAITH_RUNTIME_PREAMBLE_VERSION)
       expect(result.runtimePreambleProvider).toBe(provider)
       expect(result.contextualPrompt).toContain(delegateTool)
+      expect(result.contextualPrompt).toContain('TaskWraith tools as')
+      expect(result.contextualPrompt).toContain('approval, path checks, and audit logging')
       expect(result.contextualPrompt).toContain('CROSS-PROVIDER delegation')
       expect(result.contextualPrompt).toContain(
         'do not use provider-native Task/invoke_agent/subagent paths'
       )
+      expect(result.contextualPrompt).toContain('native question/elicitation UI is not connected')
+      expect(result.contextualPrompt).toContain('reaches desktop and iOS')
       expect(result.contextualPrompt).not.toContain('Complete TaskWraith tool list')
       expect(result.contextualPrompt).not.toContain('workspace/file tools:')
       expect(result.contextualPrompt).not.toContain('creative_midi_dispatch')
@@ -558,7 +562,7 @@ describe('composeRunPrompt sub-thread returns', () => {
     expect(result.contextualPrompt).not.toContain('TaskWraith runtime note')
   })
 
-  it('injects the read-before-edit + verify discipline into edit-capable cloud runs', () => {
+  it('preserves the read → edit → verify contract in compact cloud preambles', () => {
     for (const provider of ['gemini', 'claude', 'kimi', 'codex', 'cursor', 'grok'] as const) {
       const result = composeRunPrompt({
         provider,
@@ -571,17 +575,14 @@ describe('composeRunPrompt sub-thread returns', () => {
         providerLabel: provider
       })
 
-      expect(result.contextualPrompt).toContain('Read before you edit')
-      expect(result.contextualPrompt).toContain('Never modify a file you have not read this run')
+      expect(result.contextualPrompt).toContain('Read existing files with read_file before editing')
       // Creating a new file must NOT require a prior read (write_file create path).
-      expect(result.contextualPrompt).toContain(
-        'Creating a genuinely new file with write_file needs no prior read'
-      )
-      expect(result.contextualPrompt).toContain('After making code changes, verify them')
+      expect(result.contextualPrompt).toContain('genuinely new file may be created with write_file')
+      expect(result.contextualPrompt).toContain('After code changes, use get_diagnostics')
       expect(result.contextualPrompt).toContain('test_result_summary')
       // Verify step degrades gracefully when the repo has no configured task.
-      expect(result.contextualPrompt).toContain('If no such task exists')
-      expect(result.contextualPrompt).toContain('not a fabricated success')
+      expect(result.contextualPrompt).toContain('Say when no check exists')
+      expect(result.contextualPrompt).toContain('never claim unrun checks passed')
     }
   })
 
@@ -596,7 +597,7 @@ describe('composeRunPrompt sub-thread returns', () => {
       approvalMode: 'plan',
       providerLabel: 'Claude'
     })
-    expect(planRun.contextualPrompt).not.toContain('Read before you edit')
+    expect(planRun.contextualPrompt).not.toContain('Read existing files with read_file')
 
     const globalRun = composeRunPrompt({
       provider: 'claude',
@@ -608,7 +609,7 @@ describe('composeRunPrompt sub-thread returns', () => {
       approvalMode: 'default',
       providerLabel: 'Claude'
     })
-    expect(globalRun.contextualPrompt).not.toContain('Read before you edit')
+    expect(globalRun.contextualPrompt).not.toContain('Read existing files with read_file')
   })
 
   it('applies compact Ollama context budget and scout workflow hint', () => {
@@ -826,10 +827,10 @@ describe('image-tool discoverability (PR5)', () => {
     }
   })
 
-  it('names the image tools in the cold-run preamble', () => {
+  it('names image tools in a cold-run preamble only for image work', () => {
     const result = composeRunPrompt({
       provider: 'claude',
-      finalPrompt: 'do some work',
+      finalPrompt: 'blur the screenshot',
       messages: [],
       chatContextTurns: 6,
       codexHandoffsApplied: [],
@@ -837,8 +838,20 @@ describe('image-tool discoverability (PR5)', () => {
       approvalMode: 'default',
       providerLabel: 'Claude'
     })
-    // Cold run (no resume) → full preamble injected, which now names image tools.
+    // Cold run (no resume) + image intent → full preamble carries the hint.
     expect(result.contextualPrompt).toContain('Image tools are also available over MCP')
+
+    const ordinary = composeRunPrompt({
+      provider: 'claude',
+      finalPrompt: 'fix the failing test',
+      messages: [],
+      chatContextTurns: 6,
+      codexHandoffsApplied: [],
+      isGlobalRun: false,
+      approvalMode: 'default',
+      providerLabel: 'Claude'
+    })
+    expect(ordinary.contextualPrompt).not.toContain('Image tools are also available over MCP')
   })
 
   it('does not promise tools omitted from the Grok 4.5 core profile', () => {
