@@ -766,9 +766,8 @@
 /* Welcome workspace popover (1.0.3) — opens below the "Browse…" chip.
  * Styling mirrors `.composer-combined-picker-popover` (the model /
  * permission menu language) so users see a consistent "this is a
- * picker" mental model. Frosted dark backing in dark themes,
- * frosted near-white in light themes via the `color-mix` against
- * solid `--surface-2` / `--surface-1` tokens. */
+ * picker" mental model. Its shared glass bed is black at 80% in dark
+ * themes and white at 80% in light themes. */
 .welcome-workspace-popover {
   /* 1.0.5-W1 — Portaled through document.body. Pre-1.0.5 this lived
    * as an absolutely-positioned child of the welcome picker and got
@@ -787,11 +786,7 @@
   flex-direction: column;
   gap: 0;
   border-radius: var(--radius-md, 10px);
-  background: color-mix(
-    in srgb,
-    var(--surface-2, var(--panel-bg-solid, var(--surface-1, #24242a))) 85%,
-    transparent
-  );
+  background: var(--tw-popover-glass-bg);
   border: 1px solid color-mix(in srgb, var(--panel-border) 90%, transparent);
   box-shadow:
     inset 0 1px 0 color-mix(in srgb, var(--text-primary) 10%, transparent),
@@ -829,7 +824,7 @@
   flex: 0 0 auto;
 }
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .welcome-workspace-popover {
-  background: color-mix(in srgb, var(--surface-1) 85%, transparent);
+  background: var(--tw-popover-glass-bg);
   border-color: var(--surface-border);
   box-shadow:
     0 1px 0 inset rgba(255, 255, 255, 0.72),
@@ -5602,11 +5597,7 @@
   padding: 12px;
   border: 1px solid color-mix(in srgb, var(--panel-border, var(--border)) 88%, var(--text-primary) 12%);
   border-radius: 10px;
-  background: color-mix(
-    in srgb,
-    var(--surface-2, var(--panel-bg-solid, var(--surface-1, #24242a))) 85%,
-    transparent
-  );
+  background: var(--tw-popover-glass-bg);
   box-shadow:
     inset 0 1px 0 color-mix(in srgb, var(--text-primary) 10%, transparent),
     0 18px 44px rgba(0, 0, 0, 0.34);
@@ -5733,11 +5724,7 @@
   padding: 10px;
   border: 1px solid color-mix(in srgb, var(--panel-border) 90%, transparent);
   border-radius: var(--radius-md, 10px);
-  background: color-mix(
-    in srgb,
-    var(--surface-2, var(--panel-bg-solid, var(--surface-1, #24242a))) 85%,
-    transparent
-  );
+  background: var(--tw-popover-glass-bg);
   box-shadow:
     inset 0 1px 0 color-mix(in srgb, var(--text-primary) 10%, transparent),
     0 18px 44px rgba(0, 0, 0, 0.34);
@@ -5880,7 +5867,7 @@
 }
 
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .composer-goal-popover {
-  background: color-mix(in srgb, var(--surface-1) 85%, transparent);
+  background: var(--tw-popover-glass-bg);
   border-color: var(--surface-border);
   box-shadow:
     0 1px 0 inset rgba(255, 255, 255, 0.72),
@@ -5898,11 +5885,7 @@
   transform: translate(-50%, -100%);
   border: 1px solid color-mix(in srgb, var(--panel-border) 90%, transparent);
   border-radius: var(--radius-md, 10px);
-  background: color-mix(
-    in srgb,
-    var(--surface-2, var(--panel-bg-solid, var(--surface-1, #24242a))) 85%,
-    transparent
-  );
+  background: var(--tw-popover-glass-bg);
   box-shadow:
     inset 0 1px 0 color-mix(in srgb, var(--text-primary) 10%, transparent),
     0 18px 44px rgba(0, 0, 0, 0.34);
@@ -5972,7 +5955,7 @@
 }
 
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .composer-ensemble-toggle-popover {
-  background: color-mix(in srgb, var(--surface-1) 85%, transparent);
+  background: var(--tw-popover-glass-bg);
   border-color: var(--surface-border);
   box-shadow:
     0 1px 0 inset rgba(255, 255, 255, 0.72),
@@ -5991,11 +5974,7 @@
   transform: translateY(-100%);
   border: 1px solid color-mix(in srgb, var(--panel-border) 90%, transparent);
   border-radius: var(--radius-md, 10px);
-  background: color-mix(
-    in srgb,
-    var(--surface-2, var(--panel-bg-solid, var(--surface-1, #24242a))) 85%,
-    transparent
-  );
+  background: var(--tw-popover-glass-bg);
   box-shadow:
     inset 0 1px 0 color-mix(in srgb, var(--text-primary) 10%, transparent),
     0 18px 44px rgba(0, 0, 0, 0.34);
@@ -6134,7 +6113,7 @@
 }
 
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .composer-plan-popover {
-  background: color-mix(in srgb, var(--surface-1) 85%, transparent);
+  background: var(--tw-popover-glass-bg);
   border-color: var(--surface-border);
   box-shadow:
     0 1px 0 inset rgba(255, 255, 255, 0.72),

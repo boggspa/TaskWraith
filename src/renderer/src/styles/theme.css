@@ -160,12 +160,16 @@
    *   --tw-glass-rim-light  : the top-edge specular highlight colour
    *                           for the always-on CSS-fake rim (survives
    *                           every fallback; no SVG involved).
+   *   --tw-popover-glass-bg : the shared 80%-opaque material bed for
+   *                           every picker / popover (black in dark mode,
+   *                           white in light mode).
    *   --tw-glass-solid      : the opaque bed used by the
    *                           reduce-transparency / no-backdrop-filter
    *                           degrade so the popover stays legible. */
   --tw-glass-sheen: rgba(196, 200, 208, 0.14);
   --tw-glass-rim-light: rgba(255, 255, 255, 0.58);
-  --tw-glass-solid: #0f1830;
+  --tw-popover-glass-bg: rgba(0, 0, 0, 0.8);
+  --tw-glass-solid: #000;
 
   /* Text */
   --text-primary: rgba(255, 255, 255, 0.92);
@@ -329,6 +333,8 @@
 :is([data-theme="light"], [data-theme="citrus"], [data-theme="mist"], [data-theme="sage"]) {
   --sidebar-chrome-color: var(--sidebar-bg-solid);
   --sidebar-chrome-rim: rgba(18, 21, 27, 0.08);
+  --tw-popover-glass-bg: rgba(255, 255, 255, 0.8);
+  --tw-glass-solid: #fff;
 }
 
 /* Theme palettes ported from the Swift shared theme choices */
@@ -368,7 +374,7 @@
    * near-white solid bed for the degrade fallbacks. */
   --tw-glass-sheen: rgba(255, 255, 255, 0.55);
   --tw-glass-rim-light: rgba(255, 255, 255, 0.85);
-  --tw-glass-solid: #f4f6fb;
+  --tw-glass-solid: #fff;
   --text-primary: rgba(18, 21, 27, 0.92);
   --text-secondary: rgba(18, 21, 27, 0.62);
   --text-tertiary: rgba(18, 21, 27, 0.45);
@@ -409,6 +415,13 @@
   --cm-gutter-border: rgba(18, 21, 27, 0.10);
   --cm-active-line: rgba(18, 21, 27, 0.045);
   --cm-bracket-match: rgba(18, 21, 27, 0.12);
+}
+
+@media (prefers-color-scheme: light) {
+  [data-theme="system"] {
+    --tw-popover-glass-bg: rgba(255, 255, 255, 0.8);
+    --tw-glass-solid: #fff;
+  }
 }
 
 [data-theme="midnight"] {
@@ -951,6 +964,8 @@
   --composer-glass-border: rgba(18, 21, 27, 0.18);
   --composer-glass-highlight: rgba(0, 0, 0, 0.04);
   --composer-glass-vignette: rgba(140, 145, 160, 0.10);
+  --tw-popover-glass-bg: rgba(255, 255, 255, 0.8);
+  --tw-glass-solid: #fff;
   --text-primary: rgba(18, 21, 27, 0.92);
   --text-secondary: rgba(18, 21, 27, 0.62);
   --text-tertiary: rgba(18, 21, 27, 0.45);

@@ -312,11 +312,7 @@
 
 /* ----- AgentMentionMenu autocomplete popover ----- */
 .agent-mention-menu {
-  background: color-mix(
-    in srgb,
-    var(--surface-2, var(--panel-bg-solid, var(--surface-1, #24242a))) 85%,
-    transparent
-  );
+  background: var(--tw-popover-glass-bg);
   border: 1px solid color-mix(in srgb, var(--panel-border) 82%, transparent);
   border-radius: 10px;
   box-shadow:
@@ -334,24 +330,15 @@
   -webkit-backdrop-filter: blur(18px) saturate(150%);
   isolation: isolate;
 }
-/* Light themes: floor to an opaque surface token + a soft light shadow (mirrors
-   the picker's light variant). backdrop-filter inherits from the base rule. */
+/* Light themes use the same shared 80%-opaque white glass bed. */
 :is([data-theme='light'], [data-theme='citrus'], [data-theme='mist'], [data-theme='sage'])
   .agent-mention-menu {
-  background: color-mix(in srgb, var(--surface-1) 85%, transparent);
+  background: var(--tw-popover-glass-bg);
   border-color: var(--surface-border);
   box-shadow:
     0 1px 0 inset rgba(255, 255, 255, 0.72),
     0 18px 44px rgba(0, 0, 0, 0.14);
   color: var(--surface-text);
-}
-/* native_glass dark: --panel-elevated-bg collapses to ~0.02 alpha (see-through
-   even blurred) — floor to a dark surface token so the frost still reads. */
-[data-appearance='native_glass']:not(
-    :is([data-theme='light'], [data-theme='citrus'], [data-theme='mist'], [data-theme='sage'])
-  )
-  .agent-mention-menu {
-  background: color-mix(in srgb, var(--surface-2) 85%, transparent);
 }
 .agent-mention-menu-list {
   list-style: none;
@@ -424,11 +411,7 @@
  * Sectioned by group with subtle headers and a monospace pill for the
  * literal slash command. */
 .composer-slash-menu {
-  background: color-mix(
-    in srgb,
-    var(--surface-2, var(--panel-bg-solid, var(--surface-1, #24242a))) 85%,
-    transparent
-  );
+  background: var(--tw-popover-glass-bg);
   border: 1px solid color-mix(in srgb, var(--panel-border) 82%, transparent);
   border-radius: 10px;
   box-sizing: border-box;
@@ -445,24 +428,15 @@
   -webkit-backdrop-filter: blur(18px) saturate(150%);
   isolation: isolate;
 }
-/* Light themes: floor to an opaque surface token + a soft light shadow (mirrors
-   the picker's light variant). backdrop-filter inherits from the base rule. */
+/* Light themes use the same shared 80%-opaque white glass bed. */
 :is([data-theme='light'], [data-theme='citrus'], [data-theme='mist'], [data-theme='sage'])
   .composer-slash-menu {
-  background: color-mix(in srgb, var(--surface-1) 85%, transparent);
+  background: var(--tw-popover-glass-bg);
   border-color: var(--surface-border);
   box-shadow:
     0 1px 0 inset rgba(255, 255, 255, 0.72),
     0 18px 44px rgba(0, 0, 0, 0.14);
   color: var(--surface-text);
-}
-/* native_glass dark: --panel-elevated-bg collapses to ~0.02 alpha (see-through
-   even blurred) — floor to a dark surface token so the frost still reads. */
-[data-appearance='native_glass']:not(
-    :is([data-theme='light'], [data-theme='citrus'], [data-theme='mist'], [data-theme='sage'])
-  )
-  .composer-slash-menu {
-  background: color-mix(in srgb, var(--surface-2) 85%, transparent);
 }
 .composer-slash-menu-list {
   display: flex;
@@ -9242,11 +9216,7 @@
   max-width: 420px;
   padding: 6px;
   border-radius: var(--radius-md, 10px);
-  background: color-mix(
-    in srgb,
-    var(--surface-2, var(--panel-bg-solid, var(--surface-1, #24242a))) 85%,
-    transparent
-  );
+  background: var(--tw-popover-glass-bg);
   border: 1px solid color-mix(in srgb, var(--panel-border) 90%, transparent);
   box-shadow:
     inset 0 1px 0 color-mix(in srgb, var(--text-primary) 10%, transparent),
@@ -9300,12 +9270,12 @@
 /* Light-theme variant of the model/permission picker popover.
  * `--panel-elevated-bg` resolves dark in light themes through
  * the cascade for legacy reasons, so the popover read as a dark
- * sheet on a light backdrop. Switch to a frosted near-white
- * fill (light-themed surface tokens) with a softer shadow and
+ * sheet on a light backdrop. Switch to the shared 80%-opaque white
+ * glass bed with a softer shadow and
  * a higher-mix backdrop blur — closer to the macOS
  * liquid-glass aesthetic real Codex / Claude use for menus. */
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .composer-combined-picker-popover {
-  background: color-mix(in srgb, var(--surface-1) 85%, transparent);
+  background: var(--tw-popover-glass-bg);
   border-color: var(--surface-border);
   box-shadow:
     0 1px 0 inset rgba(255, 255, 255, 0.72),
@@ -9510,7 +9480,7 @@
     .sidebar-new-menu,
     .ensemble-above-overflow
   ) {
-  background: var(--tw-glass-solid, var(--panel-bg-solid, #0f1830));
+  background: var(--tw-glass-solid);
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }
@@ -9554,7 +9524,7 @@
     .sidebar-new-menu,
     .ensemble-above-overflow
   ) {
-  background: var(--surface-1, #f4f6fb);
+  background: var(--tw-glass-solid);
   color: var(--surface-text);
 }
 
@@ -9579,7 +9549,7 @@
     .sidebar-new-menu,
     .ensemble-above-overflow
   ) {
-    background: var(--tw-glass-solid, var(--panel-bg-solid, #0f1830));
+    background: var(--tw-glass-solid);
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
   }
@@ -9619,7 +9589,7 @@
       .sidebar-new-menu,
       .ensemble-above-overflow
     ) {
-    background: var(--surface-1, #f4f6fb);
+    background: var(--tw-glass-solid);
     color: var(--surface-text);
   }
 }
@@ -10777,7 +10747,9 @@
   --surface-1: var(--obsidian-composer-fill);
   --surface-2: var(--obsidian-composer-fill);
   --surface-border: var(--obsidian-composer-border);
-  background: color-mix(in srgb, var(--surface-2) 85%, transparent);
+  --tw-popover-glass-bg: rgba(0, 0, 0, 0.8);
+  --tw-glass-solid: #000;
+  background: var(--tw-popover-glass-bg);
   border-color: var(--obsidian-composer-border);
   color: rgba(255, 255, 255, 0.92);
   color-scheme: dark;
@@ -10803,7 +10775,9 @@
   --surface-1: var(--alabaster-composer-fill);
   --surface-2: var(--alabaster-composer-fill);
   --surface-border: var(--alabaster-composer-border);
-  background: color-mix(in srgb, var(--surface-1) 85%, transparent);
+  --tw-popover-glass-bg: rgba(255, 255, 255, 0.8);
+  --tw-glass-solid: #fff;
+  background: var(--tw-popover-glass-bg);
   border-color: var(--alabaster-composer-border);
   color: rgba(18, 21, 27, 0.92);
   color-scheme: light;

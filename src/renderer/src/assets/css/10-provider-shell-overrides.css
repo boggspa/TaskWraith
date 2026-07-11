@@ -2235,11 +2235,7 @@
 
 /* Inline Review-changes / Create-PR menu (not portaled). */
 [data-composer-style="grok"] .composer-diff-action-menu {
-  background: color-mix(
-    in srgb,
-    var(--surface-2, var(--panel-bg-solid, var(--surface-1, #24242a))) 85%,
-    transparent
-  ) !important;
+  background: var(--tw-popover-glass-bg) !important;
   background-image: none !important;
   border: 1px solid color-mix(in srgb, var(--panel-border) 90%, transparent) !important;
   color: var(--text-primary) !important;
@@ -2354,7 +2350,7 @@
   --surface-2: var(--grok-bg);
   --surface-border: var(--grok-border);
   --accent: var(--grok-fg);
-  background: color-mix(in srgb, var(--surface-2) 85%, transparent) !important;
+  background: var(--tw-popover-glass-bg) !important;
   background-image: none !important;
   border: 1px solid var(--grok-border) !important;
   color: var(--grok-fg) !important;
@@ -3221,11 +3217,7 @@
 
 /* Inline Review-changes / Create-PR menu (not portaled). */
 [data-composer-style="cursor"] .composer-diff-action-menu {
-  background: color-mix(
-    in srgb,
-    var(--surface-2, var(--panel-bg-solid, var(--surface-1, #24242a))) 85%,
-    transparent
-  ) !important;
+  background: var(--tw-popover-glass-bg) !important;
   background-image: none !important;
   border: 1px solid color-mix(in srgb, var(--panel-border) 90%, transparent) !important;
   color: var(--text-primary) !important;
@@ -3343,7 +3335,7 @@
   --surface-2: var(--cursor-shell-bg);
   --surface-border: var(--cursor-shell-border);
   --accent: var(--cursor-shell-fg);
-  background: color-mix(in srgb, var(--surface-2) 85%, transparent) !important;
+  background: var(--tw-popover-glass-bg) !important;
   background-image: none !important;
   border: 1px solid var(--cursor-shell-border) !important;
   color: var(--cursor-shell-fg) !important;
