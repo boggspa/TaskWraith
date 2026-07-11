@@ -29,8 +29,12 @@ describe('sidebar section header pill surfaces', () => {
 
   it('targets only the header toggle background without fading its contents or sidebar rows', () => {
     const css = readRepoFile(cssPath)
+    const themedStateSelectors = css.match(
+      /\[data-theme\]\[data-appearance\]\[data-reduce-transparency\]/g
+    )
 
     expect(css).toContain('.sidebar-section-header-toggle:is(:hover, :focus-visible)')
+    expect(themedStateSelectors).toHaveLength(2)
     expect(css).toContain('background: var(--sidebar-section-header-pill-bg) !important')
     expect(css).not.toContain('opacity:')
     expect(css).not.toContain('.sidebar-view-tabs')
