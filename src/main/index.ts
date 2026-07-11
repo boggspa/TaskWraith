@@ -596,6 +596,8 @@ import {
   PooledAgentIdentitySnapshot,
   RunPermissionPostureSnapshot,
   SubThreadJoinPolicy,
+  SubThreadWorkerControl,
+  SubThreadWorkerEvent,
   UserMcpServerConfig
 } from './store/types'
 import type { AgentRunPayload, AgentRunRoute } from './run/AgentRunTypes'
@@ -1166,7 +1168,7 @@ import {
   type McpCallerContext
 } from './mcp/McpRouteGuards'
 import { executeWebMcpTool, isWebMcpToolName } from './mcp/WebTools'
-import { inheritedSubThreadPermissions } from './SubThreadPermissions'
+import { resolveSubThreadWorkerPermissions } from './SubThreadPermissions'
 import { isNetworkAccessBlockedTool, isReadOnlyBlockedTool } from './ToolClassTaxonomy'
 import {
   detectCrossProviderDelegationMisuse,
@@ -1179,7 +1181,11 @@ import {
   previewNativeSubAgentTask
 } from './NativeSubAgentPolicy'
 import { buildClaudeCliArgs, normalizeClaudeEffortFlagForModel } from './ClaudeCliArgs'
-import { getSubThreadResumeSessionId, resolveSubThreadRecall } from './SubThreadRecall'
+import {
+  getSubThreadResumeSessionId,
+  isActiveSubThreadRunStatus,
+  resolveSubThreadRecall
+} from './SubThreadRecall'
 import { resolveSubThreadDelegationRunSettings } from './SubThreadDelegationRunSettings'
 import {
   delegationApprovalBudget,
@@ -1204,6 +1210,14 @@ import {
   type SubThreadJoinWorkerState,
   type SubThreadJoinPolicyRequest
 } from './SubThreadJoinPolicy'
+import {
+  bindSubThreadWorkerEventToRun,
+  claimNextSubThreadWorkerEvent,
+  enqueueSubThreadWorkerEvent,
+  failClaimedSubThreadWorkerEvent,
+  recoverSubThreadWorkerControl,
+  settleSubThreadWorkerEvent
+} from './SubThreadWorkerControl'
 import {
   buildClaudeTaskWraithAllowedToolNames,
   buildClaudeTaskWraithMcpConfigJson,
@@ -1898,6 +1912,7 @@ let approvalService: ApprovalService | null = null
 let runCoordinatorRef: RunCoordinator | null = null
 const subThreadMailboxDeliveriesInFlight = new Set<string>()
 const subThreadJoinWakeTimers = new Map<string, ReturnType<typeof setTimeout>>()
+const subThreadWorkerDrainsInFlight = new Set<string>()
 // Provider auto-failover (quota-wall kill-switch) — module-scope state.
 // `dispatchRunWithProviderPauseRef` is assigned inside whenReady so the
 // failover orchestrator (module scope) can re-dispatch through the same
@@ -5377,6 +5392,26 @@ runManager.onChange((event) => {
         err instanceof Error ? err.message : String(err)
       )
     })
+    settleSubThreadWorkerRun(
+      event.session.appChatId || undefined,
+      event.session.runId,
+      event.session.status === 'completed'
+        ? 'completed'
+        : event.session.status === 'cancelled'
+          ? 'cancelled'
+          : 'failed'
+    )
+    if (
+      event.session.appChatId &&
+      AppStore.getChat(event.session.appChatId)?.delegationContext?.workerControl
+    ) {
+      void maybeDrainSubThreadWorkerQueue(event.session.appChatId).catch((err) => {
+        console.warn(
+          `[SubThreadWorker] terminal drain failed for subThreadId=${event.session.appChatId}:`,
+          err instanceof Error ? err.message : String(err)
+        )
+      })
+    }
   }
   if (
     event.type === 'updated' &&
@@ -5645,17 +5680,47 @@ function collectSubThreadJoinWorkers(
   const workers = new Map<string, SubThreadJoinWorkerState>()
   for (const child of AppStore.getChildChats(parentChatId)) {
     const policy = child.delegationContext?.joinPolicy
-    if (!policy || policy.groupId !== groupId) continue
-    const key = policy.workerRunId || `child:${child.appChatId}`
-    workers.set(key, {
-      subThreadId: child.appChatId,
-      ...(policy.workerRunId ? { workerRunId: policy.workerRunId } : {}),
-      policy
-    })
+    if (policy?.groupId === groupId) {
+      const key = policy.workerRunId || `child:${child.appChatId}`
+      workers.set(key, {
+        subThreadId: child.appChatId,
+        ...(policy.workerRunId ? { workerRunId: policy.workerRunId } : {}),
+        policy
+      })
+    }
+    for (const event of child.delegationContext?.workerControl?.events || []) {
+      const workerPolicy = event.joinPolicy
+      if (!workerPolicy || workerPolicy.groupId !== groupId) continue
+      const workerRunId = event.plannedRunId
+      const terminalOutcome =
+        event.status === 'completed'
+          ? 'done'
+          : event.status === 'failed'
+            ? 'failed'
+            : event.status === 'cancelled'
+              ? 'cancelled'
+              : undefined
+      workers.set(workerRunId, {
+        subThreadId: child.appChatId,
+        workerRunId,
+        policy: workerPolicy.workerRunId
+          ? workerPolicy
+          : bindSubThreadJoinPolicyToRun(workerPolicy, workerRunId),
+        ...(terminalOutcome
+          ? {
+              terminal: {
+                at: event.terminalAt || event.processedAt || event.enqueuedAt,
+                outcome: terminalOutcome
+              }
+            }
+          : {})
+      })
+    }
   }
   for (const event of AppStore.getSubThreadMailbox(parentChatId).events) {
     if (!event.join || event.join.groupId !== groupId) continue
-    const key = event.join.workerRunId || event.source.sourceRunId || `child:${event.source.subThreadId}`
+    const key =
+      event.join.workerRunId || event.source.sourceRunId || `child:${event.source.subThreadId}`
     workers.set(key, {
       subThreadId: event.source.subThreadId,
       ...(event.join.workerRunId
@@ -5952,14 +6017,20 @@ async function maybeDrainParentSubThreadMailbox(parentChatId: string): Promise<v
 }
 
 function recoverPendingSubThreadMailboxes(): void {
+  recoverSubThreadWorkerQueues()
   const joinGroups = new Set<string>()
   for (const chat of AppStore.getChats()) {
-    const policy = chat.delegationContext?.joinPolicy
-    if (!chat.parentChatId || !policy) continue
-    const key = subThreadJoinTimerKey(chat.parentChatId, policy.groupId)
-    if (joinGroups.has(key)) continue
-    joinGroups.add(key)
-    scheduleSubThreadJoinEvaluation(chat.parentChatId, policy.groupId)
+    if (!chat.parentChatId) continue
+    const policies = [
+      chat.delegationContext?.joinPolicy,
+      ...(chat.delegationContext?.workerControl?.events || []).map((event) => event.joinPolicy)
+    ].filter((policy): policy is SubThreadJoinPolicy => Boolean(policy))
+    for (const policy of policies) {
+      const key = subThreadJoinTimerKey(chat.parentChatId, policy.groupId)
+      if (joinGroups.has(key)) continue
+      joinGroups.add(key)
+      scheduleSubThreadJoinEvaluation(chat.parentChatId, policy.groupId)
+    }
   }
   for (const mailbox of AppStore.getPendingSubThreadMailboxes()) {
     void maybeDrainParentSubThreadMailbox(mailbox.parentChatId).catch((error) => {
@@ -6804,17 +6875,6 @@ function recoverPersistedSoloChatWakeups(): void {
   }
 }
 
-function resolveDelegatedApprovalMode(context: GeminiToolContext, parentChatId: string): string {
-  if (context.approvalMode) return context.approvalMode
-  const parentChat = AppStore.getChat(parentChatId)
-  const matchingRun = parentChat?.runs?.find((run) => run.runId === context.appRunId)
-  return (
-    matchingRun?.approvalMode ||
-    parentChat?.runs?.[parentChat.runs.length - 1]?.approvalMode ||
-    'default'
-  )
-}
-
 function composeDelegatedProviderPrompt(args: {
   provider: ProviderId
   subThread: ChatRecord
@@ -6883,11 +6943,13 @@ function seedAgentDrivenSubThreadTranscript(args: {
   approvalMode?: string
   runtimeProfileId?: string
   joinPolicy?: SubThreadJoinPolicy
+  plannedRunId?: string
+  workerEventClaim?: { eventId: string; claimId: string }
 }): string {
   const { subThread, parentProvider, provider, prompt, returnResultToParent } = args
   const requestedModel = args.requestedModel || 'cli-default'
   const approvalMode = args.approvalMode || 'default'
-  const runId = createFallbackRunId(provider)
+  const runId = args.plannedRunId || createFallbackRunId(provider)
   const boundJoinPolicy = args.joinPolicy
     ? bindSubThreadJoinPolicyToRun(args.joinPolicy, runId)
     : undefined
@@ -6925,6 +6987,16 @@ function seedAgentDrivenSubThreadTranscript(args: {
     ...(args.runtimeProfileId ? { runtimeProfileId: args.runtimeProfileId } : {})
   }
   const current = AppStore.getChat(subThread.appChatId) || subThread
+  const boundWorkerControl =
+    args.workerEventClaim && current.delegationContext?.workerControl
+      ? bindSubThreadWorkerEventToRun(
+          current.delegationContext.workerControl,
+          args.workerEventClaim.eventId,
+          args.workerEventClaim.claimId,
+          runId,
+          startedAt
+        )
+      : current.delegationContext?.workerControl
   const seeded: ChatRecord = {
     ...current,
     ...(current.delegationContext
@@ -6932,7 +7004,8 @@ function seedAgentDrivenSubThreadTranscript(args: {
           delegationContext: {
             ...current.delegationContext,
             returnResultToParent,
-            joinPolicy: boundJoinPolicy
+            joinPolicy: boundJoinPolicy,
+            ...(boundWorkerControl ? { workerControl: boundWorkerControl } : {})
           }
         }
       : {}),
@@ -7028,6 +7101,7 @@ function flushBackgroundSubThreadTranscript(runId: string, final = false): void 
   const runs = [...current.runs]
   const runIndex = runs.findIndex((run) => run.runId === state.runId)
   const existingRun = runIndex >= 0 ? runs[runIndex] : undefined
+  const finalStatus = final && existingRun?.cancelled ? 'cancelled' : state.status
   const updatedRun: ChatRun = {
     ...(existingRun || {
       runId: state.runId,
@@ -7040,9 +7114,9 @@ function flushBackgroundSubThreadTranscript(runId: string, final = false): void 
     actualModel: state.actualModel || existingRun?.actualModel,
     providerThreadId: state.providerSessionId || existingRun?.providerThreadId,
     stats: state.stats || existingRun?.stats,
-    status: final ? state.status : 'running',
+    status: final ? finalStatus : 'running',
     endedAt: final ? timestamp : existingRun?.endedAt,
-    exitCode: final && state.status === 'failed' ? 1 : existingRun?.exitCode
+    exitCode: final && finalStatus === 'failed' ? 1 : existingRun?.exitCode
   }
   if (runIndex >= 0) {
     runs[runIndex] = updatedRun
@@ -7072,13 +7146,36 @@ function flushBackgroundSubThreadTranscript(runId: string, final = false): void 
   if (final) {
     backgroundSubThreadTranscripts.delete(runId)
     releaseProviderSessionPersistenceDecision(runId)
+    settleSubThreadWorkerRun(
+      state.chatId,
+      state.runId,
+      finalStatus === 'success'
+        ? 'completed'
+        : finalStatus === 'cancelled'
+          ? 'cancelled'
+          : 'failed',
+      state.errorMessage
+    )
     if (state.returnResultToParent) {
       void maybePropagateSubThreadResult(state.chatId, {
-        outcome: state.status === 'success' ? 'done' : 'failed',
+        outcome:
+          finalStatus === 'success'
+            ? 'done'
+            : finalStatus === 'cancelled'
+              ? 'cancelled'
+              : 'failed',
         sourceRunId: state.runId,
         errorMessage: state.errorMessage
       }).catch((err) => {
         console.warn(`[SubThreadReturn] propagation failed for chatId=${state.chatId}:`, err)
+      })
+    }
+    if (AppStore.getChat(state.chatId)?.delegationContext?.workerControl) {
+      void maybeDrainSubThreadWorkerQueue(state.chatId).catch((error) => {
+        console.warn(
+          `[SubThreadWorker] terminal drain failed for subThreadId=${state.chatId}:`,
+          error instanceof Error ? error.message : String(error)
+        )
       })
     }
   }
@@ -7103,6 +7200,327 @@ function finalizeBackgroundSubThreadTranscript(
   state.status = status
   state.errorMessage = errorMessage
   flushBackgroundSubThreadTranscript(runId, true)
+}
+
+function saveSubThreadWorkerControl(
+  chat: ChatRecord,
+  workerControl: SubThreadWorkerControl
+): ChatRecord {
+  if (!chat.delegationContext) return chat
+  const updated: ChatRecord = {
+    ...chat,
+    delegationContext: {
+      ...chat.delegationContext,
+      workerControl
+    },
+    updatedAt: Date.now()
+  }
+  saveAndBroadcastChat(updated)
+  return updated
+}
+
+function subThreadWorkerHasActiveRun(chat: ChatRecord): boolean {
+  if (
+    [...backgroundSubThreadTranscripts.values()].some(
+      (state) => state.chatId === chat.appChatId && state.status === 'running'
+    )
+  ) {
+    return true
+  }
+  if (
+    chat.provider &&
+    runManager
+      .getActiveByProvider(chat.provider)
+      .some((session) => session.appChatId === chat.appChatId)
+  ) {
+    return true
+  }
+  // A persisted `running` ChatRun is only a projection, not liveness proof.
+  // BackgroundSubThreadTranscripts covers pre-registration startup and
+  // RunManager covers registered runs; trusting the stored row here would
+  // wedge every durable queue after an app restart.
+  return false
+}
+
+function failClaimedSubThreadWorker(
+  chat: ChatRecord,
+  event: SubThreadWorkerEvent,
+  claimId: string,
+  reason: string
+): void {
+  const current = AppStore.getChat(chat.appChatId) || chat
+  const control = current.delegationContext?.workerControl
+  if (!control) return
+  saveSubThreadWorkerControl(
+    current,
+    failClaimedSubThreadWorkerEvent(control, event.id, claimId, reason)
+  )
+  AppStore.enqueueSubThreadMailboxEvent({
+    parentChatId: event.parentChatId,
+    subThreadId: event.subThreadId,
+    subThreadProvider: event.targetProvider,
+    subThreadTitle: current.title,
+    sourceAssistantMessageId: `worker-requires-action:${event.id}`,
+    sourceRunId: event.plannedRunId,
+    joinPolicy: event.joinPolicy,
+    outcome: 'requires_action',
+    required: event.joinPolicy?.required !== false,
+    priority: 'normal',
+    content: `Queued worker follow-up could not be dispatched: ${reason}`
+  })
+  if (event.joinPolicy) {
+    scheduleSubThreadJoinEvaluation(event.parentChatId, event.joinPolicy.groupId)
+  }
+  void maybeDrainParentSubThreadMailbox(event.parentChatId).catch((error) => {
+    console.warn(
+      `[SubThreadWorker] requires-action wake failed for parentChatId=${event.parentChatId}:`,
+      error instanceof Error ? error.message : String(error)
+    )
+  })
+}
+
+function settleSubThreadWorkerRun(
+  chatId: string | undefined,
+  runId: string,
+  status: 'completed' | 'failed' | 'cancelled',
+  error?: string
+): boolean {
+  if (!chatId) return false
+  const chat = AppStore.getChat(chatId)
+  const control = chat?.delegationContext?.workerControl
+  if (!chat || !control) return false
+  const settled = settleSubThreadWorkerEvent(control, runId, status, { error })
+  if (!settled.event) return false
+  saveSubThreadWorkerControl(chat, settled.control)
+  return true
+}
+
+async function maybeDrainSubThreadWorkerQueue(subThreadId: string): Promise<void> {
+  if (subThreadWorkerDrainsInFlight.has(subThreadId)) return
+  subThreadWorkerDrainsInFlight.add(subThreadId)
+  let redrain = false
+  try {
+    for (;;) {
+      let chat = AppStore.getChat(subThreadId)
+      const currentControl = chat?.delegationContext?.workerControl
+      if (!chat || !chat.parentChatId || !chat.provider || !currentControl || chat.archived) return
+      if (subThreadWorkerHasActiveRun(chat)) return
+
+      const claimId = `worker-claim-${subThreadId}-${Date.now()}`
+      const claimed = claimNextSubThreadWorkerEvent(currentControl, claimId)
+      if (!claimed.event) return
+      chat = saveSubThreadWorkerControl(chat, claimed.control)
+      const event = claimed.event
+
+      if (
+        event.subThreadId !== chat.appChatId ||
+        event.parentChatId !== chat.parentChatId ||
+        event.targetProvider !== chat.provider
+      ) {
+        failClaimedSubThreadWorker(
+          chat,
+          event,
+          claimId,
+          'Durable worker identity no longer matches the attached child.'
+        )
+        continue
+      }
+      const resumeSessionId = getSubThreadResumeSessionId(chat)
+      if (!resumeSessionId) {
+        failClaimedSubThreadWorker(
+          chat,
+          event,
+          claimId,
+          'The child has no resumable provider session.'
+        )
+        continue
+      }
+      const delegationSettings = resolveSubThreadDelegationRunSettings({
+        provider: chat.provider,
+        recallChat: chat
+      })
+      if (!delegationSettings.ok) {
+        failClaimedSubThreadWorker(chat, event, claimId, delegationSettings.message)
+        continue
+      }
+
+      const settings = AppStore.getSettings()
+      const readOnlyPermissions = resolveEffectiveRunPermissions({
+        provider: chat.provider,
+        workspacePath: chat.workspacePath,
+        model: delegationSettings.requestedModel,
+        settings,
+        presetId: 'read_only'
+      })
+      const workerPermissions = resolveSubThreadWorkerPermissions({
+        parentPermissions: event.effectivePermissions,
+        readOnlyPermissions
+      })
+      if (!workerPermissions.ok) {
+        failClaimedSubThreadWorker(chat, event, claimId, workerPermissions.reason)
+        continue
+      }
+      const approvalMode = workerPermissions.effectivePermissions.approvalMode
+      let providerPrompt: string
+      try {
+        providerPrompt = composeDelegatedProviderPrompt({
+          provider: chat.provider,
+          subThread: chat,
+          prompt: event.prompt,
+          approvalMode,
+          model: delegationSettings.requestedModel,
+          resumeSessionId
+        })
+      } catch (error) {
+        failClaimedSubThreadWorker(
+          chat,
+          event,
+          claimId,
+          error instanceof Error ? error.message : String(error)
+        )
+        continue
+      }
+      let subThreadRunId: string
+      try {
+        subThreadRunId = seedAgentDrivenSubThreadTranscript({
+          subThread: chat,
+          parentProvider: event.parentProvider,
+          provider: chat.provider,
+          prompt: event.prompt,
+          returnResultToParent: event.returnResultToParent,
+          requestedModel: delegationSettings.requestedModel,
+          providerMetadataPatch: delegationSettings.providerMetadataPatch,
+          approvalMode,
+          runtimeProfileId: event.runtimeProfileId,
+          joinPolicy: event.joinPolicy,
+          plannedRunId: claimed.event.plannedRunId,
+          workerEventClaim: { eventId: event.id, claimId }
+        })
+      } catch (error) {
+        failClaimedSubThreadWorker(
+          chat,
+          event,
+          claimId,
+          error instanceof Error ? error.message : String(error)
+        )
+        continue
+      }
+      if (event.joinPolicy) {
+        scheduleSubThreadJoinEvaluation(event.parentChatId, event.joinPolicy.groupId)
+      }
+      const runPayload: AgentRunPayload = {
+        provider: chat.provider,
+        scope: chat.scope ?? (chat.workspacePath ? 'workspace' : 'global'),
+        workspace: chat.workspacePath,
+        prompt: providerPrompt,
+        appRunId: subThreadRunId,
+        appChatId: chat.appChatId,
+        approvalMode,
+        ...delegationSettings.runPayload,
+        sessionTrust: false,
+        externalPathGrants: workerPermissions.effectivePermissions.externalPathGrants,
+        runtimeProfileId: event.runtimeProfileId,
+        effectivePermissions: workerPermissions.effectivePermissions,
+        providerSessionId: resumeSessionId
+      }
+      try {
+        runPayload.effectivePermissionsSignature = signRunPosture(
+          runPayload.approvalMode,
+          runPayload.effectivePermissions,
+          runPostureContextFromPayload(runPayload)
+        )
+      } catch (error) {
+        finalizeBackgroundSubThreadTranscript(
+          subThreadRunId,
+          'failed',
+          error instanceof Error ? error.message : String(error)
+        )
+        redrain = true
+        return
+      }
+      const sender = mainWindow?.webContents
+      if (!sender || sender.isDestroyed() || !runCoordinatorRef) {
+        const reason = !runCoordinatorRef
+          ? 'RunCoordinator is not initialised.'
+          : 'The main renderer is unavailable for provider dispatch.'
+        finalizeBackgroundSubThreadTranscript(subThreadRunId, 'failed', reason)
+        redrain = true
+        return
+      }
+      try {
+        const result = await runCoordinatorRef.dispatch(runPayload, { sender })
+        if (!result.dispatched) {
+          finalizeBackgroundSubThreadTranscript(
+            subThreadRunId,
+            'failed',
+            'RunCoordinator completed preflight without dispatching the provider run.'
+          )
+          redrain = true
+        }
+      } catch (error) {
+        finalizeBackgroundSubThreadTranscript(
+          subThreadRunId,
+          'failed',
+          error instanceof Error ? error.message : String(error)
+        )
+        redrain = true
+      }
+      return
+    }
+  } finally {
+    subThreadWorkerDrainsInFlight.delete(subThreadId)
+    if (redrain) {
+      queueMicrotask(() => {
+        void maybeDrainSubThreadWorkerQueue(subThreadId)
+      })
+    }
+  }
+}
+
+function recoverSubThreadWorkerQueues(): void {
+  for (const chat of AppStore.getChats()) {
+    const control = chat.delegationContext?.workerControl
+    if (!chat.parentChatId || !control) continue
+    const recoveredAt = new Date().toISOString()
+    const recoveredRuns = (chat.runs || []).map((run) => {
+      const live =
+        Boolean(run.runId && runManager.get(run.runId)) ||
+        Boolean(
+          run.runId &&
+            [...backgroundSubThreadTranscripts.values()].some(
+              (state) => state.chatId === chat.appChatId && state.runId === run.runId
+            )
+        )
+      return !live && isActiveSubThreadRunStatus(run.status)
+        ? { ...run, status: 'failed', endedAt: recoveredAt, exitCode: run.exitCode ?? 1 }
+        : run
+    })
+    const runSnapshots = recoveredRuns.flatMap((run) =>
+      typeof run.runId === 'string' && typeof run.status === 'string'
+        ? [{ runId: run.runId, status: run.status, ...(run.cancelled ? { cancelled: true } : {}) }]
+        : []
+    )
+    const recovered = recoverSubThreadWorkerControl(control, runSnapshots, recoveredAt)
+    const controlChanged = JSON.stringify(control) !== JSON.stringify(recovered)
+    const runsChanged = JSON.stringify(chat.runs || []) !== JSON.stringify(recoveredRuns)
+    if (controlChanged || runsChanged) {
+      saveAndBroadcastChat({
+        ...chat,
+        runs: recoveredRuns,
+        delegationContext: {
+          ...chat.delegationContext!,
+          workerControl: recovered
+        },
+        updatedAt: Date.now()
+      })
+    }
+    void maybeDrainSubThreadWorkerQueue(chat.appChatId).catch((error) => {
+      console.warn(
+        `[SubThreadWorker] recovery drain failed for subThreadId=${chat.appChatId}:`,
+        error instanceof Error ? error.message : String(error)
+      )
+    })
+  }
 }
 
 function registerBridgeRunTranscript(args: {
@@ -23327,6 +23745,10 @@ async function executeGeminiMcpTool(
       const providerArgRaw = String(args.provider || '').trim()
       const promptArg = String(args.prompt || '').trim()
       const returnResult = args.returnResult !== false
+      const workerPriority =
+        args.workerPriority === 'interrupt' || args.controlMode === 'interrupt'
+          ? 'interrupt'
+          : 'normal'
       const rawJoin = args.join
       if (rawJoin !== undefined && (!isRecord(rawJoin) || Array.isArray(rawJoin))) {
         throw new Error('delegate_to_subthread: join must be an object when provided.')
@@ -23366,7 +23788,8 @@ async function executeGeminiMcpTool(
         {
           subThreadId: requestedSubThreadId || undefined,
           parentChatId,
-          targetProvider: providerArg
+          targetProvider: providerArg,
+          allowActiveWorker: true
         },
         // AppStore.getChat returns `ChatRecord | null`; the resolver
         // expects `| undefined`. Normalise null to undefined here.
@@ -23384,8 +23807,9 @@ async function executeGeminiMcpTool(
         })
         return { text: recallResolution.message, isError: true }
       }
-      const isRecall = recallResolution.mode === 'recall'
-      const recalledChat = recallResolution.mode === 'recall' ? recallResolution.chat : null
+      const isActiveRecall = recallResolution.mode === 'active'
+      const isRecall = recallResolution.mode === 'recall' || isActiveRecall
+      const recalledChat = isRecall ? recallResolution.chat : null
       if (!isRecall) {
         const parentChatForDelegation = AppStore.getChat(parentChatId)
         if (!parentChatForDelegation) {
@@ -23461,19 +23885,28 @@ async function executeGeminiMcpTool(
         promptArg.length > 500
           ? `${promptArg.slice(0, 500)}\n…(${promptArg.length - 500} more chars)`
           : promptArg
-      const approvalTitle = isRecall
-        ? `${parentProviderLabel} wants to continue its ${targetProviderLabel} sub-thread`
-        : `${parentProviderLabel} wants to delegate to ${targetProviderLabel} sub-thread`
-      const approvalBody = isRecall
-        ? `Continue prompt:\n${promptPreview}\n\n` +
-          `Sending this as a follow-up turn to the existing "${recalledChat?.title || 'sub-thread'}" ` +
-          `runs another ${targetProviderLabel} turn by resuming the existing provider session ` +
-          `with its fixed seat controls (${delegatedRunDescription}). ` +
-          `This consumes ${targetProviderLabel} usage allowances.`
-        : `Delegation prompt:\n${promptPreview}\n\n` +
-          `Spawning this sub-thread starts a new run on ${targetProviderLabel} ` +
-          `with ${delegatedRunDescription}. ` +
-          `This consumes ${targetProviderLabel} usage allowances.`
+      const approvalTitle = isActiveRecall
+        ? `${parentProviderLabel} wants to ${workerPriority === 'interrupt' ? 'interrupt and queue' : 'queue'} work for its ${targetProviderLabel} sub-thread`
+        : isRecall
+          ? `${parentProviderLabel} wants to continue its ${targetProviderLabel} sub-thread`
+          : `${parentProviderLabel} wants to delegate to ${targetProviderLabel} sub-thread`
+      const approvalBody = isActiveRecall
+        ? `Queued prompt:\n${promptPreview}\n\n` +
+          `The existing "${recalledChat?.title || 'sub-thread'}" is still ${recallResolution.activeStatus}. ` +
+          `TaskWraith will durably queue this follow-up behind the live turn` +
+          (workerPriority === 'interrupt' ? ' and cancel that live turn first' : '') +
+          `, then resume the same ${targetProviderLabel} seat with its fixed controls ` +
+          `(${delegatedRunDescription}). This consumes ${targetProviderLabel} usage allowances.`
+        : isRecall
+          ? `Continue prompt:\n${promptPreview}\n\n` +
+            `Sending this as a follow-up turn to the existing "${recalledChat?.title || 'sub-thread'}" ` +
+            `runs another ${targetProviderLabel} turn by resuming the existing provider session ` +
+            `with its fixed seat controls (${delegatedRunDescription}). ` +
+            `This consumes ${targetProviderLabel} usage allowances.`
+          : `Delegation prompt:\n${promptPreview}\n\n` +
+            `Spawning this sub-thread starts a new run on ${targetProviderLabel} ` +
+            `with ${delegatedRunDescription}. ` +
+            `This consumes ${targetProviderLabel} usage allowances.`
       // Anti-spam: cap how many sub-thread delegation approvals a single
       // parent run may generate. A runaway agent that calls
       // delegate_to_subthread in a tight loop would otherwise flood the
@@ -23525,7 +23958,13 @@ async function executeGeminiMcpTool(
               ? {
                   subThreadId: recalledChat?.appChatId,
                   title: recalledChat?.title,
-                  hasLinkedSession: true
+                  hasLinkedSession: Boolean(
+                    recallResolution.mode === 'recall'
+                      ? recallResolution.resumeSessionId
+                      : recallResolution.mode === 'active'
+                        ? recallResolution.resumeSessionId
+                        : undefined
+                  )
                 }
               : undefined
           },
@@ -23564,6 +24003,48 @@ async function executeGeminiMcpTool(
           returnResultToParent: returnResult,
           joinPolicy
         })
+      const readOnlyPermissions = resolveEffectiveRunPermissions({
+        provider: providerArg,
+        workspacePath: subThread.workspacePath,
+        model: delegationSettings.requestedModel,
+        settings: AppStore.getSettings(),
+        presetId: 'read_only'
+      })
+      const workerPermissions = resolveSubThreadWorkerPermissions({
+        parentPermissions: context.effectivePermissions,
+        readOnlyPermissions
+      })
+      if (!workerPermissions.ok) {
+        throw new Error(`delegate_to_subthread: ${workerPermissions.reason}`)
+      }
+      const subThreadEffectivePermissions = workerPermissions.effectivePermissions
+      const delegatedApprovalMode = subThreadEffectivePermissions.approvalMode
+      // Runtime profiles are provider-owned. A same-provider child may reuse
+      // the parent's profile; cross-provider workers must resolve their own
+      // profile through the normal RunCoordinator preflight.
+      const inheritableRuntimeProfileId =
+        providerArg === parentProvider ? context.runtimeProfileId : undefined
+      const queuedWorker = isActiveRecall
+        ? enqueueSubThreadWorkerEvent(subThread.delegationContext?.workerControl, {
+            sourceToolCallId: toolId,
+            parentChatId,
+            subThreadId: subThread.appChatId,
+            targetProvider: providerArg,
+            parentProvider,
+            parentRunId: context.appRunId,
+            prompt: promptArg,
+            returnResultToParent: returnResult,
+            priority: workerPriority,
+            approvalMode: delegatedApprovalMode,
+            runtimeProfileId: inheritableRuntimeProfileId,
+            effectivePermissions: subThreadEffectivePermissions,
+            externalPathGrants: subThreadEffectivePermissions.externalPathGrants,
+            joinPolicy
+          })
+        : null
+      if (queuedWorker?.added) {
+        saveSubThreadWorkerControl(subThread, queuedWorker.control)
+      }
       // Phase I3.2 — drop a synthetic "delegation card" message into the
       // parent transcript so the user sees an inline visual marker the
       // moment the sub-thread spawns (instead of finding out only when
@@ -23573,83 +24054,137 @@ async function executeGeminiMcpTool(
       // Phase J2: the card content differs for recall vs spawn so the
       // user transcript reads "↪ Continued <provider> sub-thread" on
       // recall instead of "↪ Delegated to <provider> sub-thread".
-      try {
-        const parentChat = AppStore.getChat(parentChatId)
-        if (parentChat) {
-          const promptCardPreview =
-            promptArg.length > 240 ? `${promptArg.slice(0, 240)}…` : promptArg
-          const cardMessage: ChatMessage = {
-            id: `subthread-delegation-${subThread.appChatId}-${Date.now()}`,
-            role: 'system',
-            content: isRecall
-              ? `↪ Continued ${providerLabel(providerArg)} sub-thread (${subThread.title}).`
-              : `↪ Delegated to ${providerLabel(providerArg)} sub-thread (${subThread.title}).`,
-            timestamp: new Date().toISOString(),
-            metadata: {
-              kind: 'subThreadDelegation',
+      if (!queuedWorker || queuedWorker.added) {
+        try {
+          const parentChat = AppStore.getChat(parentChatId)
+          if (parentChat) {
+            const promptCardPreview =
+              promptArg.length > 240 ? `${promptArg.slice(0, 240)}…` : promptArg
+            const cardMessage: ChatMessage = {
+              id: `subthread-delegation-${subThread.appChatId}-${Date.now()}`,
+              role: 'system',
+              content: isActiveRecall
+                ? `↪ Queued ${workerPriority === 'interrupt' ? 'interrupting ' : ''}work for ${providerLabel(providerArg)} sub-thread (${subThread.title}).`
+                : isRecall
+                  ? `↪ Continued ${providerLabel(providerArg)} sub-thread (${subThread.title}).`
+                  : `↪ Delegated to ${providerLabel(providerArg)} sub-thread (${subThread.title}).`,
+              timestamp: new Date().toISOString(),
+              metadata: {
+                kind: 'subThreadDelegation',
+                subThreadId: subThread.appChatId,
+                subThreadProvider: providerArg,
+                subThreadTitle: subThread.title,
+                parentProvider,
+                delegationPrompt: promptArg,
+                delegationPromptPreview: promptCardPreview,
+                returnResultToParent: returnResult,
+                joinPolicy,
+                requestedModel: delegationSettings.requestedModel,
+                reasoningEffort: delegationSettings.reasoningEffort,
+                kimiThinking: delegationSettings.kimiThinking,
+                recall: isRecall,
+                workerQueued: isActiveRecall,
+                workerEventId: queuedWorker?.event.id,
+                workerPriority: isActiveRecall ? workerPriority : undefined,
+                providerContextVisibility: 'projection-only'
+              }
+            }
+            const updatedParent: ChatRecord = {
+              ...parentChat,
+              messages: [...parentChat.messages, cardMessage],
+              updatedAt: Date.now()
+            }
+            AppStore.saveChat(updatedParent)
+            broadcastChatUpdated(updatedParent)
+          }
+        } catch {
+          // Best-effort; missing card is non-fatal vs missing run.
+        }
+      }
+      if (!queuedWorker || queuedWorker.added) {
+        try {
+          // Phase I2: the audit event records the actual parent provider
+          // (could be Gemini, Codex, Claude or Kimi), so cross-provider
+          // delegation chains are traceable. Source stays
+          // 'mcp:delegate_to_subthread' since the tool lives on the
+          // shared TaskWraith MCP server across all CLIs.
+          //
+          // Phase J2: same event kind for spawn AND recall to avoid
+          // adding a new RunEventKind (which would ripple through the
+          // schema / typecheck). The metadata's `recall: true` flag
+          // distinguishes them in the audit timeline.
+          appendDurableRunEventForRoute(
+            parentProvider,
+            { appRunId: context.appRunId, appChatId: parentChatId },
+            'subthread_spawned',
+            'control',
+            isActiveRecall
+              ? `${parentProviderLabel} agent queued work for ${providerArg} sub-thread`
+              : isRecall
+                ? `${parentProviderLabel} agent continued ${providerArg} sub-thread`
+                : `${parentProviderLabel} agent delegated to ${providerArg} sub-thread`,
+            {
               subThreadId: subThread.appChatId,
-              subThreadProvider: providerArg,
-              subThreadTitle: subThread.title,
               parentProvider,
+              provider: providerArg,
               delegationPrompt: promptArg,
-              delegationPromptPreview: promptCardPreview,
               returnResultToParent: returnResult,
               joinPolicy,
               requestedModel: delegationSettings.requestedModel,
               reasoningEffort: delegationSettings.reasoningEffort,
               kimiThinking: delegationSettings.kimiThinking,
-              recall: isRecall
+              source: 'mcp:delegate_to_subthread',
+              recall: isRecall,
+              recallHadLinkedSession: isRecall
+                ? Boolean(
+                    recallResolution.mode === 'recall'
+                      ? recallResolution.resumeSessionId
+                      : recallResolution.mode === 'active'
+                        ? recallResolution.resumeSessionId
+                        : undefined
+                  )
+                : undefined,
+              workerQueued: isActiveRecall,
+              workerEventId: queuedWorker?.event.id,
+              workerPriority: isActiveRecall ? workerPriority : undefined
             }
-          }
-          const updatedParent: ChatRecord = {
-            ...parentChat,
-            messages: [...parentChat.messages, cardMessage],
-            updatedAt: Date.now()
-          }
-          AppStore.saveChat(updatedParent)
-          broadcastChatUpdated(updatedParent)
+          )
+        } catch {
+          // Best-effort.
         }
-      } catch {
-        // Best-effort; missing card is non-fatal vs missing run.
       }
-      try {
-        // Phase I2: the audit event records the actual parent provider
-        // (could be Gemini, Codex, Claude or Kimi), so cross-provider
-        // delegation chains are traceable. Source stays
-        // 'mcp:delegate_to_subthread' since the tool lives on the
-        // shared TaskWraith MCP server across all CLIs.
-        //
-        // Phase J2: same event kind for spawn AND recall to avoid
-        // adding a new RunEventKind (which would ripple through the
-        // schema / typecheck). The metadata's `recall: true` flag
-        // distinguishes them in the audit timeline.
-        appendDurableRunEventForRoute(
-          parentProvider,
-          { appRunId: context.appRunId, appChatId: parentChatId },
-          'subthread_spawned',
-          'control',
-          isRecall
-            ? `${parentProviderLabel} agent continued ${providerArg} sub-thread`
-            : `${parentProviderLabel} agent delegated to ${providerArg} sub-thread`,
-          {
-            subThreadId: subThread.appChatId,
-            parentProvider,
-            provider: providerArg,
-            delegationPrompt: promptArg,
-            returnResultToParent: returnResult,
-            joinPolicy,
-            requestedModel: delegationSettings.requestedModel,
-            reasoningEffort: delegationSettings.reasoningEffort,
-            kimiThinking: delegationSettings.kimiThinking,
-            source: 'mcp:delegate_to_subthread',
-            recall: isRecall,
-            recallHadLinkedSession: isRecall ? true : undefined
-          }
-        )
-      } catch {
-        // Best-effort.
+      if (isActiveRecall && queuedWorker) {
+        if (joinPolicy) scheduleSubThreadJoinEvaluation(parentChatId, joinPolicy.groupId)
+        let interrupted = false
+        if (queuedWorker.added && workerPriority === 'interrupt') {
+          interrupted = await cancelProviderRun(providerArg, recallResolution.activeRunId)
+        }
+        void maybeDrainSubThreadWorkerQueue(subThread.appChatId).catch((error) => {
+          console.warn(
+            `[SubThreadWorker] queued drain failed for subThreadId=${subThread.appChatId}:`,
+            error instanceof Error ? error.message : String(error)
+          )
+        })
+        broadcastChatUpdated(AppStore.getChat(subThread.appChatId) ?? subThread)
+        const queuedText =
+          `${queuedWorker.added ? 'Queued' : 'Already queued'} ${workerPriority} follow-up for ` +
+          `${providerArg} sub-thread "${subThread.title}" (id=${subThread.appChatId}, event=${queuedWorker.event.id}). ` +
+          (workerPriority === 'interrupt'
+            ? interrupted
+              ? 'The live child turn was cancelled; the durable follow-up will resume the same seat next.'
+              : 'The live child turn could not be cancelled immediately; the durable follow-up remains queued.'
+            : 'The durable follow-up will resume the same seat after its live turn becomes terminal.')
+        emitMcpToolTranscriptEvent({
+          type: 'tool_result',
+          tool_id: toolId,
+          tool_name: toolName,
+          status: 'success',
+          output: queuedText,
+          provider: parentProvider,
+          server: GEMINI_MCP_SERVER_NAME
+        })
+        return { text: queuedText }
       }
-      const delegatedApprovalMode = resolveDelegatedApprovalMode(context, parentChatId)
       const recalledProviderSessionId =
         recallResolution.mode === 'recall' ? recallResolution.resumeSessionId : undefined
       const providerPrompt = composeDelegatedProviderPrompt({
@@ -23660,19 +24195,6 @@ async function executeGeminiMcpTool(
         model: delegationSettings.requestedModel,
         resumeSessionId: recalledProviderSessionId
       })
-      // Runtime profiles are PER-PROVIDER (resolveRuntimeProfileForPayload
-      // throws "Runtime profile is for X, not Y" on mismatch). When the
-      // sub-thread targets a DIFFERENT provider than the parent (the
-      // overwhelming common case: Codex → Gemini, Codex → Claude, etc.),
-      // inheriting the parent's runtime profile id guarantees a preflight
-      // throw → dispatched:false → the sub-thread surfacing the generic
-      // "RunCoordinator completed preflight without dispatching" failure.
-      // Only inherit when the target provider matches the parent (rare,
-      // but legitimate — e.g. parallel Codex sub-threads sharing one
-      // runtime profile). Otherwise the sub-thread gets the target
-      // provider's defaults.
-      const inheritableRuntimeProfileId =
-        providerArg === parentProvider ? context.runtimeProfileId : undefined
       const subThreadRunId = seedAgentDrivenSubThreadTranscript({
         subThread,
         parentProvider,
@@ -23686,10 +24208,6 @@ async function executeGeminiMcpTool(
         joinPolicy
       })
       if (joinPolicy) scheduleSubThreadJoinEvaluation(parentChatId, joinPolicy.groupId)
-      // SECURITY: a delegated sub-thread inherits the parent's resolved
-      // posture so a read-only participant can't escalate to write via
-      // delegation (see inheritedSubThreadPermissions for the full rationale).
-      const subThreadEffectivePermissions = inheritedSubThreadPermissions(context)
       const runPayload: AgentRunPayload = {
         provider: providerArg,
         scope: context.scope ?? 'workspace',
@@ -23702,7 +24220,7 @@ async function executeGeminiMcpTool(
         // Async workers inherit/cap permissions below, but never inherit a
         // Trusted Session grant from the invoking parent.
         sessionTrust: false,
-        externalPathGrants: context.externalPathGrants,
+        externalPathGrants: subThreadEffectivePermissions.externalPathGrants,
         runtimeProfileId: inheritableRuntimeProfileId,
         effectivePermissions: subThreadEffectivePermissions,
         // Phase J2: on recall, inject the existing sub-thread's
@@ -23714,8 +24232,8 @@ async function executeGeminiMcpTool(
         // a fresh provider-side session.
         ...(recalledProviderSessionId ? { providerSessionId: recalledProviderSessionId } : {})
       }
-      // Stamp the posture so the normalize-time clamp trusts this
-      // main-built inheritance instead of downgrading it.
+      // Stamp the main-derived read-only posture so normalize-time clamping
+      // cannot interpret this background worker as an untrusted renderer grant.
       runPayload.effectivePermissionsSignature = signRunPosture(
         delegatedApprovalMode,
         subThreadEffectivePermissions,

@@ -1,0 +1,70 @@
+import fs from 'node:fs'
+import { describe, expect, it } from 'vitest'
+
+const indexSource = fs.readFileSync(new URL('./index.ts', import.meta.url), 'utf8')
+
+function sourceBetween(startMarker: string, endMarker: string): string {
+  const start = indexSource.indexOf(startMarker)
+  const end = indexSource.indexOf(endMarker, start + startMarker.length)
+  expect(start, `Missing start marker: ${startMarker}`).toBeGreaterThanOrEqual(0)
+  expect(end, `Missing end marker: ${endMarker}`).toBeGreaterThan(start)
+  return indexSource.slice(start, end)
+}
+
+function expectContains(source: string, needle: string): void {
+  expect(source.includes(needle), `Missing source contract: ${needle}`).toBe(true)
+}
+
+describe('sub-thread long-lived worker main-process integration', () => {
+  it('opts active recall into the durable queue without seeding the child transcript early', () => {
+    const delegation = sourceBetween(
+      "} else if (toolName === 'delegate_to_subthread') {",
+      'const finalRichResult = richResult as McpToolExecutionResult | null'
+    )
+
+    expectContains(delegation, 'allowActiveWorker: true')
+    expectContains(delegation, "recallResolution.mode === 'active'")
+    expectContains(delegation, 'enqueueSubThreadWorkerEvent(')
+    expectContains(delegation, 'sourceToolCallId: toolId')
+    expectContains(delegation, 'priority: workerPriority')
+    expectContains(delegation, 'cancelProviderRun(providerArg, recallResolution.activeRunId)')
+    expectContains(delegation, 'workerPermissions.effectivePermissions')
+    expectContains(delegation, "presetId: 'read_only'")
+    expectContains(delegation, "providerContextVisibility: 'projection-only'")
+    expect(delegation.indexOf('enqueueSubThreadWorkerEvent(')).toBeLessThan(
+      delegation.indexOf('seedAgentDrivenSubThreadTranscript({')
+    )
+  })
+
+  it('claims and prebinds the stable run identity before normal RunCoordinator dispatch', () => {
+    const drain = sourceBetween(
+      'async function maybeDrainSubThreadWorkerQueue(',
+      'function recoverSubThreadWorkerQueues()'
+    )
+
+    expectContains(drain, 'claimNextSubThreadWorkerEvent(')
+    expectContains(drain, 'plannedRunId: claimed.event.plannedRunId')
+    expectContains(drain, 'workerEventClaim:')
+    expectContains(drain, 'resolveSubThreadWorkerPermissions(')
+    expectContains(drain, "presetId: 'read_only'")
+    expectContains(drain, 'runCoordinatorRef.dispatch(')
+    expectContains(drain, 'sessionTrust: false')
+  })
+
+  it('settles terminal worker events, drains the next item, and recovers queues on startup', () => {
+    expectContains(indexSource, 'settleSubThreadWorkerEvent(')
+    expectContains(indexSource, 'recoverSubThreadWorkerControl(')
+    expectContains(indexSource, 'recoverSubThreadWorkerQueues()')
+    expectContains(indexSource, 'maybeDrainSubThreadWorkerQueue(')
+    expectContains(indexSource, 'child.delegationContext?.workerControl?.events')
+    expectContains(indexSource, 'isActiveSubThreadRunStatus(run.status)')
+    expectContains(indexSource, 'runManager.get(run.runId)')
+  })
+
+  it('preserves the frozen Codex startup lease and canonical gateway target dispatch', () => {
+    expectContains(indexSource, 'codexAppServerStartupLeaseCount')
+    expectContains(indexSource, 'shouldRestartCodexAppServerForMcpConfig')
+    expectContains(indexSource, 'dispatchResolvedGatewayTarget({')
+    expectContains(indexSource, 'executeCanonical: executeGeminiMcpTool')
+  })
+})
