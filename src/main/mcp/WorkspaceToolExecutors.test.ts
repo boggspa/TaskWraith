@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { describe, expect, it } from 'vitest'
 import {
   executeCreateDirectory,
+  executeCancelSubthread,
   executeCancelActiveRun,
   executeDeletePath,
   executeFindFiles,
@@ -30,6 +31,7 @@ import {
   type HostCommandResult,
   type WorkspaceToolExecutorDependencies
 } from './WorkspaceToolExecutors'
+import { enqueueSubThreadWorkerEvent } from '../SubThreadWorkerControl'
 
 function makeDeps(
   runHostCommand: WorkspaceToolExecutorDependencies['host']['runHostCommand']
@@ -891,6 +893,72 @@ describe('chat attachment workspace tools', () => {
 })
 
 describe('subthread workspace tools', () => {
+  it('hard-cancels the live turn and every queued worker follow-up', async () => {
+    const first = enqueueSubThreadWorkerEvent(undefined, {
+      sourceToolCallId: 'tool-1',
+      parentChatId: 'parent-1',
+      subThreadId: 'child-1',
+      targetProvider: 'codex',
+      parentProvider: 'claude',
+      prompt: 'First queued follow-up',
+      returnResultToParent: true,
+      approvalMode: 'plan'
+    })
+    const second = enqueueSubThreadWorkerEvent(first.control, {
+      sourceToolCallId: 'tool-2',
+      parentChatId: 'parent-1',
+      subThreadId: 'child-1',
+      targetProvider: 'codex',
+      parentProvider: 'claude',
+      prompt: 'Second queued follow-up',
+      returnResultToParent: true,
+      approvalMode: 'plan'
+    })
+    const chat = {
+      appChatId: 'child-1',
+      parentChatId: 'parent-1',
+      provider: 'codex',
+      title: 'Child',
+      archived: false,
+      createdAt: 1,
+      updatedAt: 2,
+      messages: [],
+      runs: [{ runId: 'run-live', provider: 'codex', startedAt: 't', status: 'running' }],
+      delegationContext: {
+        createdAt: 1,
+        parentProvider: 'claude',
+        delegationPrompt: 'Start',
+        returnResultToParent: true,
+        workerControl: second.control
+      }
+    } as any
+    const saved: any[] = []
+    const deps = makeDeps(async () => commandResult(''))
+    deps.store.getChat = (chatId) => (chatId === 'child-1' ? chat : undefined)
+    deps.runs.getActiveByProvider = () => [
+      { appChatId: 'child-1', runId: 'run-live', status: 'running' }
+    ]
+    deps.runs.cancelProviderRun = async () => true
+    deps.runs.saveAndBroadcastChat = (next) => saved.push(next)
+
+    const result = await executeCancelSubthread(
+      deps,
+      { scope: 'workspace', cwd: '/tmp/ws', workspacePath: '/tmp/ws', appChatId: 'parent-1' },
+      { subThreadId: 'child-1', reason: 'User stop.' }
+    )
+
+    expect(result).toMatchObject({
+      ok: true,
+      runId: 'run-live',
+      cancelledQueuedFollowUps: 2
+    })
+    const final = saved.at(-1)
+    expect(final.runs[0]).toMatchObject({ status: 'cancelled', cancelled: true })
+    expect(
+      final.delegationContext.workerControl.events.map((event: any) => event.status)
+    ).toEqual(['cancelled', 'cancelled'])
+  })
+
   it('excludes retired external-channel inbound rows from included subthread messages', () => {
     const deps = makeDeps(async () => commandResult(''))
     deps.store.getChat = (chatId) =>

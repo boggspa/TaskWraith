@@ -6,6 +6,7 @@ import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } 
 import { isPathInsideWorkspace } from '../AgenticPolicy'
 import { isRetiredExternalChannelInboundMessage } from '../LegacyExternalChannelHistory'
 import { getSubThreadResumeSessionId as defaultGetSubThreadResumeSessionId } from '../SubThreadRecall'
+import { cancelPendingSubThreadWorkerEvents } from '../SubThreadWorkerControl'
 import type {
   ChatMessage,
   ChatRecord,
@@ -1991,18 +1992,39 @@ export async function executeCancelSubthread(
   args: Record<string, any>
 ) {
   const chat = assertOwnedSubThread(deps, context, String(args.subThreadId || args.id || ''))
-  const provider = chat.provider || 'gemini'
+  const cancellationReason = optionalString(args.reason) || 'Sub-thread cancellation requested.'
+  const queuedCancellation = chat.delegationContext?.workerControl
+    ? cancelPendingSubThreadWorkerEvents(chat.delegationContext.workerControl, {
+        reason: cancellationReason
+      })
+    : null
+  const chatWithQueueCancelled: ChatRecord = queuedCancellation?.cancelledEventIds.length
+    ? {
+        ...chat,
+        delegationContext: chat.delegationContext
+          ? {
+              ...chat.delegationContext,
+              workerControl: queuedCancellation.control
+            }
+          : chat.delegationContext,
+        updatedAt: Date.now()
+      }
+    : chat
+  if (chatWithQueueCancelled !== chat) {
+    deps.runs.saveAndBroadcastChat(chatWithQueueCancelled)
+  }
+  const provider = chatWithQueueCancelled.provider || 'gemini'
   const activeSession = deps.runs
     .getActiveByProvider(provider)
-    .find((session) => session.appChatId === chat.appChatId)
-  const activeQueueJob = deps.store.getRunQueueJobs({ chatId: chat.appChatId }).find(
+    .find((session) => session.appChatId === chatWithQueueCancelled.appChatId)
+  const activeQueueJob = deps.store.getRunQueueJobs({ chatId: chatWithQueueCancelled.appChatId }).find(
     (job) =>
       job.status === 'queued' ||
       job.status === 'paused' ||
       job.status === 'starting' ||
       job.status === 'active'
   )
-  const activeRun = [...(chat.runs || [])]
+  const activeRun = [...(chatWithQueueCancelled.runs || [])]
     .reverse()
     .find(
       (run) =>
@@ -2013,18 +2035,27 @@ export async function executeCancelSubthread(
     )
   const runId = activeSession?.runId || activeQueueJob?.runId || activeRun?.runId
   if (!runId) {
+    if (queuedCancellation?.cancelledEventIds.length) {
+      return {
+        ok: true,
+        message: 'Cancelled queued sub-thread follow-ups; there was no live provider turn to stop.',
+        subThreadId: chatWithQueueCancelled.appChatId,
+        cancelledQueuedFollowUps: queuedCancellation.cancelledEventIds.length
+      }
+    }
     return {
       ok: false,
       message: 'Sub-thread has no active running run.',
-      subThreadId: chat.appChatId
+      subThreadId: chatWithQueueCancelled.appChatId,
+      cancelledQueuedFollowUps: 0
     }
   }
   const ok = await deps.runs.cancelProviderRun(provider, runId)
   if (ok) {
     const endedAt = new Date().toISOString()
     const updated: ChatRecord = {
-      ...chat,
-      runs: (chat.runs || []).map((run) =>
+      ...chatWithQueueCancelled,
+      runs: (chatWithQueueCancelled.runs || []).map((run) =>
         run.runId === runId
           ? { ...run, status: 'cancelled', cancelled: true, endedAt: run.endedAt || endedAt }
           : run
@@ -2035,10 +2066,11 @@ export async function executeCancelSubthread(
   }
   return {
     ok,
-    subThreadId: chat.appChatId,
+    subThreadId: chatWithQueueCancelled.appChatId,
     runId,
     provider,
-    previousStatus: activeSession?.status || activeQueueJob?.status || activeRun?.status || 'unknown'
+    previousStatus: activeSession?.status || activeQueueJob?.status || activeRun?.status || 'unknown',
+    cancelledQueuedFollowUps: queuedCancellation?.cancelledEventIds.length || 0
   }
 }
 

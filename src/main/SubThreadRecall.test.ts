@@ -120,7 +120,7 @@ describe('resolveSubThreadRecall', () => {
   })
 
   it.each(['running', 'queued', 'starting', 'active', 'paused', 'cancelling', 'steer_promoting'])(
-    'rejects recall while the sub-thread has a %s run',
+    'resolves a validated active worker while the sub-thread has a %s run',
     (status) => {
       const sub = makeChat({
         appChatId: `sub-${status}`,
@@ -130,16 +130,67 @@ describe('resolveSubThreadRecall', () => {
         runs: [{ runId: 'run-1', provider: 'kimi', startedAt: 't', status }]
       })
       const result = resolveSubThreadRecall(
-        { subThreadId: `sub-${status}`, parentChatId: parent, targetProvider: 'kimi' },
+        {
+          subThreadId: `sub-${status}`,
+          parentChatId: parent,
+          targetProvider: 'kimi',
+          allowActiveWorker: true
+        },
         makeLookup([sub])
       )
-      expect(result.mode).toBe('error')
-      if (result.mode === 'error') {
-        expect(result.message).toContain(`still ${status}`)
-        expect(result.message).toMatch(/rejected in v1/i)
+      expect(result.mode).toBe('active')
+      if (result.mode === 'active') {
+        expect(result.activeRunId).toBe('run-1')
+        expect(result.activeStatus).toBe(status)
+        expect(result.resumeSessionId).toBe('kimi-session-99')
       }
     }
   )
+
+  it('allows an active worker to attach before its provider session id is known', () => {
+    const sub = makeChat({
+      appChatId: 'sub-starting-no-session',
+      parentChatId: parent,
+      provider: 'kimi',
+      runs: [{ runId: 'run-starting', provider: 'kimi', startedAt: 't', status: 'starting' }]
+    })
+    const result = resolveSubThreadRecall(
+      {
+        subThreadId: 'sub-starting-no-session',
+        parentChatId: parent,
+        targetProvider: 'kimi',
+        allowActiveWorker: true
+      },
+      makeLookup([sub])
+    )
+
+    expect(result).toMatchObject({
+      mode: 'active',
+      activeRunId: 'run-starting',
+      activeStatus: 'starting'
+    })
+    if (result.mode === 'active') expect(result.resumeSessionId).toBeUndefined()
+  })
+
+  it('keeps legacy callers safe until they opt into the durable active-worker queue', () => {
+    const sub = makeChat({
+      appChatId: 'sub-running-legacy-caller',
+      parentChatId: parent,
+      provider: 'kimi',
+      runs: [{ runId: 'run-live', provider: 'kimi', startedAt: 't', status: 'running' }]
+    })
+    const result = resolveSubThreadRecall(
+      {
+        subThreadId: 'sub-running-legacy-caller',
+        parentChatId: parent,
+        targetProvider: 'kimi'
+      },
+      makeLookup([sub])
+    )
+
+    expect(result.mode).toBe('error')
+    if (result.mode === 'error') expect(result.message).toMatch(/has not enabled/i)
+  })
 
   it('errors when subThreadId does not match any chat', () => {
     const result = resolveSubThreadRecall(

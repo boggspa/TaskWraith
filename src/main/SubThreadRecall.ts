@@ -18,6 +18,11 @@
  *    session to resume. The caller dispatches a new turn against that
  *    chat and injects `resumeSessionId` as `providerSessionId`.
  *
+ *  - `{ mode: 'active', chat, activeRunId, activeStatus }` — ownership and
+ *    provider checks passed, but the worker already has a live turn. The
+ *    caller may durably queue a follow-up (or enqueue an interrupt event)
+ *    without inserting it into the child transcript ahead of the live turn.
+ *
  *  - `{ mode: 'error', message }` — the supplied id was missing /
  *    wrong parent / wrong provider / archived. The caller returns
  *    the message as the tool_result so the agent learns what went
@@ -34,16 +39,26 @@ export interface SubThreadRecallRequest {
   subThreadId?: string | null
   parentChatId: string
   targetProvider: ProviderId
+  /** Opt in only when the caller has a durable active-worker queue ready.
+   * Older callers keep the v1 rejection instead of accidentally spawning. */
+  allowActiveWorker?: boolean
 }
 
 export type SubThreadRecallResolution =
   | { mode: 'spawn' }
   | { mode: 'recall'; chat: ChatRecord; resumeSessionId: string }
+  | {
+      mode: 'active'
+      chat: ChatRecord
+      activeRunId: string
+      activeStatus: string
+      resumeSessionId?: string
+    }
   | { mode: 'error'; message: string }
 
 export type SubThreadRecallChatLookup = (chatId: string) => ChatRecord | undefined
 
-function isActiveRunStatus(status: unknown): boolean {
+export function isActiveSubThreadRunStatus(status: unknown): boolean {
   return (
     status === 'running' ||
     status === 'queued' ||
@@ -55,10 +70,26 @@ function isActiveRunStatus(status: unknown): boolean {
   )
 }
 
+export function getActiveSubThreadRun(
+  chat: ChatRecord
+): { runId: string; status: string } | undefined {
+  const run = [...(chat.runs || [])]
+    .reverse()
+    .find(
+      (candidate) =>
+        typeof candidate.runId === 'string' &&
+        candidate.runId.trim() &&
+        isActiveSubThreadRunStatus(candidate.status)
+    )
+  return run
+    ? { runId: run.runId.trim(), status: typeof run.status === 'string' ? run.status : 'running' }
+    : undefined
+}
+
 function isSubThreadChat(chat: ChatRecord): boolean {
   return Boolean(
     chat.parentChatId &&
-      (chat.parentChatRelation === undefined || chat.parentChatRelation === 'subThread')
+    (chat.parentChatRelation === undefined || chat.parentChatRelation === 'subThread')
   )
 }
 
@@ -114,17 +145,26 @@ export function resolveSubThreadRecall(
         `Recall requires the provider to match the existing sub-thread.`
     }
   }
-  const latestRun = [...(chat.runs || [])].reverse()[0]
-  if (isActiveRunStatus(latestRun?.status)) {
+  const resumeSessionId = getSubThreadResumeSessionId(chat)
+  const activeRun = getActiveSubThreadRun(chat)
+  if (activeRun) {
+    if (request.allowActiveWorker !== true) {
+      return {
+        mode: 'error',
+        message:
+          `delegate_to_subthread: sub-thread "${requestedId}" is still ${activeRun.status}. ` +
+          `This caller has not enabled the durable active-worker queue, so recall is rejected ` +
+          `rather than risking a duplicate child run.`
+      }
+    }
     return {
-      mode: 'error',
-      message:
-        `delegate_to_subthread: sub-thread "${requestedId}" is still ${latestRun?.status}. ` +
-        `Recall while a sub-thread is running is rejected in v1 to avoid task inversions. ` +
-        `Wait for it to complete, inspect lifecycle with list_subthreads/read_subthread_result, then retry.`
+      mode: 'active',
+      chat,
+      activeRunId: activeRun.runId,
+      activeStatus: activeRun.status,
+      ...(resumeSessionId ? { resumeSessionId } : {})
     }
   }
-  const resumeSessionId = getSubThreadResumeSessionId(chat)
   if (!resumeSessionId) {
     return {
       mode: 'error',

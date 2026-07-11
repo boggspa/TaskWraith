@@ -3387,6 +3387,9 @@ export interface ChatRecord {
     /** Durable join/wake policy for the currently dispatched child turn. Calls
      * from one parent run share groupId so their terminal results can coalesce. */
     joinPolicy?: SubThreadJoinPolicy
+    /** Durable long-lived worker control lane. Presence means the child is
+     * attached to its parent as an async worker, never as an Ensemble seat. */
+    workerControl?: SubThreadWorkerControl
     /** Last time a sub-thread assistant result was returned to the parent (F2+). */
     resultReturnedAt?: number
     /** Populated when the agent-driven dispatch that should have
@@ -3416,6 +3419,51 @@ export interface SubThreadJoinPolicy {
   armedAt: string
   deadlineAt: string
   workerRunId?: string
+}
+
+export type SubThreadWorkerEventPriority = 'normal' | 'interrupt'
+export type SubThreadWorkerEventStatus =
+  | 'pending'
+  | 'claimed'
+  | 'dispatched'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+
+export interface SubThreadWorkerEvent {
+  schemaVersion: 1
+  id: string
+  sourceToolCallId: string
+  parentChatId: string
+  subThreadId: string
+  targetProvider: ProviderId
+  parentProvider: ProviderId
+  parentRunId?: string
+  prompt: string
+  returnResultToParent: boolean
+  priority: SubThreadWorkerEventPriority
+  status: SubThreadWorkerEventStatus
+  enqueuedAt: string
+  approvalMode: string
+  runtimeProfileId?: string
+  effectivePermissions?: EffectiveRunPermissions
+  externalPathGrants?: ExternalPathGrant[]
+  joinPolicy?: SubThreadJoinPolicy
+  attempts: number
+  claimId?: string
+  claimedAt?: string
+  dispatchRunId?: string
+  processedAt?: string
+  terminalAt?: string
+  error?: string
+}
+
+export interface SubThreadWorkerControl {
+  schemaVersion: 1
+  /** Attachment is topology/control only; it never enrolls the child in an
+   * Ensemble round or its speaking rotation. */
+  attachedAt: string
+  events: SubThreadWorkerEvent[]
 }
 
 /** Lean per-run projection carried on ChatListItem so list consumers (the
