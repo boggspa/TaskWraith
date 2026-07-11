@@ -1084,7 +1084,13 @@
 [data-theme="alabaster"][data-composer-style="codex"]
   .composer-above-bar
   .git-status-behind {
-  color: #4b84ff !important;
+  color: #ffc248 !important;
+}
+
+[data-theme="alabaster"][data-composer-style="codex"]
+  .composer-above-bar
+  .git-status-behind.git-status-diverged {
+  color: #ff6b7a !important;
 }
 
 [data-theme="alabaster"][data-composer-style="codex"]

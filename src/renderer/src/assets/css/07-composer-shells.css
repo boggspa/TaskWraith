@@ -1857,11 +1857,26 @@
   font-variant-numeric: tabular-nums;
   font-weight: 600;
 }
+.git-status-ahead,
+.git-status-behind {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
 .git-status-ahead {
   color: #ffc248;
 }
 .git-status-behind {
-  color: #4b84ff;
+  color: #ffc248;
+}
+.git-status-behind.git-status-diverged {
+  color: #ff6b7a;
+}
+.git-status-drift-glyph {
+  width: 13px;
+  height: 13px;
+  flex: 0 0 auto;
+  overflow: visible;
 }
 .git-status-ci {
   display: inline-flex;
@@ -1993,7 +2008,10 @@
   color: #c38b00;
 }
 :is([data-theme="light"], [data-theme="citrus"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"]) .git-status-behind {
-  color: #1a5ceb;
+  color: #c38b00;
+}
+:is([data-theme="light"], [data-theme="citrus"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"]) .git-status-behind.git-status-diverged {
+  color: #d23b4e;
 }
 :is([data-theme="light"], [data-theme="citrus"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"]) .git-status-ci.git-ci-pass {
   color: #138a59;

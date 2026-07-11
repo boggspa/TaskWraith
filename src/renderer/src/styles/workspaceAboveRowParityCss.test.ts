@@ -58,6 +58,22 @@ describe('workspace above-row parity', () => {
     expect(block).not.toContain('data-composer-style="grok"')
   })
 
+  it('uses amber for behind-only branches and red for true divergence', () => {
+    const base = readSource('src/renderer/src/assets/css/07-composer-shells.css')
+    const shellOverrides = readSource(
+      'src/renderer/src/assets/css/10-provider-shell-overrides.css'
+    )
+
+    expect(base).toContain('.git-status-behind {\n  color: #ffc248;')
+    expect(base).toContain('.git-status-behind.git-status-diverged {\n  color: #ff6b7a;')
+    expect(base).toContain(
+      '.git-status-behind.git-status-diverged {\n  color: #d23b4e;'
+    )
+    expect(shellOverrides).toContain(
+      '.git-status-behind.git-status-diverged {\n  color: #ff6b7a !important;'
+    )
+  })
+
   it('lets preview shells inherit live geometry instead of rebuilding it locally', () => {
     const css = readSource('src/renderer/src/assets/css/04-settings-controls.css')
 
