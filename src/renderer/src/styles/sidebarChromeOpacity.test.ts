@@ -16,25 +16,27 @@ const cssBlockStartingAt = (source: string, selector: string, fromIndex = 0): st
   return source.slice(start, end + 1)
 }
 
-// The top masthead band, model-usage pane, and footer/status keep a FIXED 60%
-// fill independent of the user's Settings -> Appearance sidebar-opacity slider,
-// while the workspace/threads list keeps riding the factor-scaled .app-sidebar
-// surface. See --sidebar-chrome-fixed-bg in theme.css.
+// The top masthead band, model-usage pane, and footer/status derive their fill
+// from --sidebar-chrome-color (decoupled from the .app-sidebar list surface,
+// which rides the sidebar-opacity slider) and tie its ALPHA 1:1 to the MAIN-PANE
+// opacity setting via --main-pane-opacity-100 — fully opaque at the default 100%,
+// fading in lockstep with the Main-Pane slider. See --sidebar-chrome-fixed-bg.
 describe('sidebar chrome fixed opacity CSS', () => {
-  it('derives the fixed chrome fill from the decoupled --sidebar-chrome-color token', () => {
+  it('derives the chrome fill from --sidebar-chrome-color, alpha tied to the Main-Pane slider', () => {
     const lines = readRepoFile('src/renderer/src/styles/theme.css').split('\n')
     const fillLine = lines.find((line) => line.includes('--sidebar-chrome-fixed-bg:'))
     expect(fillLine, 'Missing --sidebar-chrome-fixed-bg token').toBeTruthy()
     // Derived from --sidebar-chrome-color, NOT --sidebar-bg-solid (which stays the
     // list surface colour) and NOT --sidebar-bg (transparent in native_glass).
-    expect(fillLine).toContain('var(--sidebar-chrome-color) 60%')
+    // Alpha rides the Main-Pane opacity 1:1 via --main-pane-opacity-100.
+    expect(fillLine).toContain('var(--sidebar-chrome-color) var(--main-pane-opacity-100)')
     expect(fillLine).not.toContain('--sidebar-bg-solid')
     expect(fillLine).not.toContain('var(--sidebar-bg)')
-    // Dark default is the requested #1D1D1C.
+    // Dark default matches the dark transcript (#161616).
     const darkColor = lines.find(
-      (line) => line.includes('--sidebar-chrome-color:') && line.includes('#1d1d1c')
+      (line) => line.includes('--sidebar-chrome-color:') && line.includes('#161616')
     )
-    expect(darkColor, 'Missing dark --sidebar-chrome-color: #1d1d1c').toBeTruthy()
+    expect(darkColor, 'Missing dark --sidebar-chrome-color: #161616').toBeTruthy()
   })
 
   it('shares one theme-adaptive rim token across the chrome sections', () => {

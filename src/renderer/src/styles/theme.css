@@ -26,25 +26,31 @@
   --sidebar-alpha-010: 0.10;
   --sidebar-alpha-006: 0.06;
   --sidebar-alpha-002: 0.02;
-  --sidebar-bg: rgba(30, 30, 34, 0.72);
-  --sidebar-bg-solid: #1e1e22;
+  /* Sidebar matches the dark transcript (#161616) — was the slightly lighter,
+   * faintly-blue #1e1e22 / rgb(30,30,34). */
+  --sidebar-bg: rgba(22, 22, 22, 0.72);
+  --sidebar-bg-solid: #161616;
   /* Ingredient colour for the sidebar's non-list chrome (masthead band,
-   * model-usage pane, footer/status). Dark default is #1D1D1C; light-family
-   * themes point it at their own (light) --sidebar-bg-solid via the override
-   * below, and obsidian/alabaster flip with their sidebar. Kept SEPARATE from
-   * --sidebar-bg-solid because that also colours the workspace/threads list
-   * surface, which must stay on the user's opacity. */
-  --sidebar-chrome-color: #1d1d1c; /* rgb(29, 29, 28) */
+   * model-usage pane, footer/status). Dark default matches the transcript
+   * (#161616); light-family themes point it at their own (light)
+   * --sidebar-bg-solid via the override below, and obsidian/alabaster flip with
+   * their sidebar. Kept SEPARATE from --sidebar-bg-solid because that also
+   * colours the workspace/threads list surface, which must stay on the user's
+   * opacity. */
+  --sidebar-chrome-color: #161616; /* match the dark transcript */
   /* Subtle rim-highlight paired with --sidebar-chrome-color: a light inset edge on
    * the dark default, flipped dark wherever the chrome flips light (light-family +
    * obsidian below). Its own token (not --sidebar-border, which is tuned for list
    * dividers) so one rim is shared identically across all three chrome regions. */
   --sidebar-chrome-rim: rgba(255, 255, 255, 0.08);
-  /* Fixed 60% fill derived from the chrome colour, held independent of the user's
-   * sidebar-opacity slider (that governs only the .app-sidebar list surface).
-   * color-mix on the always-opaque chrome colour, NOT --sidebar-bg (which is
-   * literally `transparent` in native_glass). */
-  --sidebar-chrome-fixed-bg: color-mix(in srgb, var(--sidebar-chrome-color) 60%, transparent);
+  /* Chrome fill derived from the chrome colour, with its alpha tied 1:1 to the
+   * MAIN-PANE opacity setting via --main-pane-opacity-100 (= 100% × the Main-Pane
+   * slider factor, emitted by useAppearance; also folds in reduce-transparency).
+   * At the default 100% it's fully opaque, and dialling the Main-Pane opacity down
+   * fades this chrome in lockstep with the transcript. Independent of the SIDEBAR
+   * slider, which governs only the .app-sidebar list surface. color-mix on the
+   * always-opaque chrome colour, NOT --sidebar-bg (`transparent` in native_glass). */
+  --sidebar-chrome-fixed-bg: color-mix(in srgb, var(--sidebar-chrome-color) var(--main-pane-opacity-100), transparent);
   --sidebar-border: rgba(255, 255, 255, 0.06);
   --sidebar-text: rgba(255, 255, 255, 0.85);
   --sidebar-text-secondary: rgba(255, 255, 255, 0.5);
@@ -343,11 +349,19 @@
   --app-bg: #f4f6f8;
   --app-bg-elevated: #ffffff;
   --app-bg-sunken: #e9edf2;
-  --content-bg: rgba(246, 248, 251, 0.96);
+  /* Reading surface = clean white (was the cool grey rgba(246,248,251);
+   * that read as a dull grey pane). The transcript, sky-reveal floor, and
+   * pane-opacity override all funnel through --content-bg, so this single
+   * value keeps the whole light-mode reading surface a fresh white sheet. */
+  --content-bg: rgba(255, 255, 255, 0.96);
   --bg-primary: var(--content-bg);
   --bg-secondary: var(--app-bg-elevated);
-  --sidebar-bg: rgba(238, 242, 247, 0.64);
-  --sidebar-bg-solid: #eef2f7;
+  /* Sidebar matches the transcript's clean white (was the cool blue #eef2f7 /
+   * rgb(238,242,247)). --sidebar-chrome-color follows --sidebar-bg-solid in the
+   * light-family override, so the masthead / footer / model-usage chrome go
+   * white too. */
+  --sidebar-bg: rgba(255, 255, 255, 0.64);
+  --sidebar-bg-solid: #ffffff;
   --panel-bg: rgba(239, 243, 248, 0.68);
   --panel-bg-solid: #eef2f7;
   --panel-elevated-bg: rgba(255, 255, 255, 0.72);
@@ -530,7 +544,8 @@
   --app-bg: #eef4f6;
   --app-bg-elevated: #fbfdfe;
   --app-bg-sunken: #dfe9ed;
-  --content-bg: rgba(244, 249, 251, 0.96);
+  /* Clean white reading surface with a whisper of mist's cool cast. */
+  --content-bg: rgba(251, 253, 255, 0.96);
   --bg-primary: var(--content-bg);
   --bg-secondary: var(--app-bg-elevated);
   --sidebar-bg: rgba(229, 238, 242, 0.70);
@@ -601,7 +616,8 @@
   --app-bg: #f0f5f0;
   --app-bg-elevated: #fcfefb;
   --app-bg-sunken: #e3ece2;
-  --content-bg: rgba(247, 250, 246, 0.96);
+  /* Clean white reading surface with a whisper of sage's green cast. */
+  --content-bg: rgba(252, 255, 251, 0.96);
   --bg-primary: var(--content-bg);
   --bg-secondary: var(--app-bg-elevated);
   --sidebar-bg: rgba(231, 240, 229, 0.70);
