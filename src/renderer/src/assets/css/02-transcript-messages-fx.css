@@ -5711,18 +5711,26 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   white-space: nowrap;
 }
 
-.subthread-return-provider {
+.provider-satellite-label {
   display: inline-flex;
   align-items: center;
-  min-height: 22px;
-  border: 1px solid rgb(var(--agent-accent-rgb) / 0.24);
-  border-radius: 7px;
-  background: rgb(var(--agent-accent-rgb) / 0.11);
-  color: var(--text-primary);
+  gap: 0.28rem;
+  min-width: 0;
   font-size: var(--font-size-xs);
   font-weight: 700;
   line-height: 1;
-  padding: 0.26rem 0.45rem;
+  white-space: nowrap;
+}
+
+.provider-satellite-label-glyph {
+  width: 1rem;
+  height: 1rem;
+  flex: 0 0 auto;
+}
+
+.provider-satellite-label-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .subthread-return-title {
@@ -5743,24 +5751,8 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   flex-wrap: wrap;
 }
 
-.subthread-return-open,
-.subthread-delegation-open {
+.subthread-side-chat-button {
   flex: 0 0 auto;
-  border: 1px solid rgb(var(--agent-accent-rgb) / 0.26);
-  border-radius: 7px;
-  background: rgb(255 255 255 / 0.045);
-  color: var(--text-primary);
-  cursor: pointer;
-  font-size: var(--font-size-xs);
-  font-weight: 700;
-  line-height: 1;
-  padding: 0.46rem 0.58rem;
-}
-
-.subthread-return-open:hover,
-.subthread-delegation-open:hover {
-  border-color: rgb(var(--agent-accent-rgb) / 0.42);
-  background: rgb(var(--agent-accent-rgb) / 0.12);
 }
 
 .subthread-return-body {
@@ -6019,51 +6011,11 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   text-transform: uppercase;
 }
 
-.agent-invocation-source-chip {
-  display: inline-flex;
-  align-items: center;
-  min-height: 20px;
-  border: 1px solid rgb(255 255 255 / 0.12);
-  border-radius: 999px;
-  color: var(--text-secondary);
-  background: rgb(255 255 255 / 0.045);
-  font-size: calc(var(--font-size-xs) - 1px);
-  font-weight: 700;
-  line-height: 1;
-  padding: 0.2rem 0.45rem;
-  white-space: nowrap;
-}
-
-.agent-invocation-source-chip.source-provider-native {
-  color: color-mix(in srgb, var(--accent) 78%, var(--text-primary) 22%);
-  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
-  background: color-mix(in srgb, var(--accent) 10%, transparent);
-}
-
-.agent-invocation-source-chip.source-taskwraith-subthread {
-  color: var(--success);
-  border-color: color-mix(in srgb, var(--success) 28%, transparent);
-  background: color-mix(in srgb, var(--success) 10%, transparent);
-}
-
 .subthread-delegation-arc {
   display: inline-flex;
   align-items: center;
   gap: 0.4rem;
   min-width: 0;
-}
-
-.subthread-delegation-chip {
-  display: inline-flex;
-  align-items: center;
-  min-height: 22px;
-  border-radius: 7px;
-  color: #ffffff;
-  font-size: var(--font-size-xs);
-  font-weight: 700;
-  line-height: 1;
-  padding: 0.26rem 0.5rem;
-  letter-spacing: 0.01em;
 }
 
 .subthread-delegation-arc-arrow {

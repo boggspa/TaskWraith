@@ -1,15 +1,12 @@
 import type { CSSProperties } from 'react'
 import type { ChatMessage, ChatRecord } from '../../../main/store/types'
-import {
-  agentInvocationSourceClassName,
-  agentInvocationSourceLabel,
-  providerDisplayName
-} from '../lib/AgentInvocationPresentation'
 import { AgentIdentityIcon } from './icons/AgentIdentityIcon'
 import { assignAgentIdentityFromSeed } from '../lib/agentIdentitySeed'
 import { LiveActivityViewport } from './LiveActivityViewport'
 import { MarkdownMessage } from './MarkdownMessage'
 import { MessageActionsChip } from './MessageActionsChip'
+import { PillButton } from './PillButton'
+import { ProviderSatelliteLabel } from './ProviderSatelliteLabel'
 import { subThreadReturnBody } from './SubThreadReturnCardModel'
 
 interface SubThreadReturnCardProps {
@@ -52,7 +49,6 @@ export function SubThreadReturnCard({
 }: SubThreadReturnCardProps) {
   const metadata = message.metadata || {}
   const provider = metadata.subThreadProvider
-  const providerName = providerDisplayName(typeof provider === 'string' ? provider : undefined)
   const title = textValue(metadata.subThreadTitle) || 'Untitled sub-thread'
   const subThreadId = textValue(metadata.subThreadId)
   // Deterministic per-sub-thread identity (same id -> same character on
@@ -65,6 +61,14 @@ export function SubThreadReturnCard({
     body.length > COLLAPSED_RESULT_PREVIEW_CHARS
       ? `${body.slice(0, COLLAPSED_RESULT_PREVIEW_CHARS).trimEnd()}\n...`
       : body
+  const handleOpen = () => {
+    if (!subThreadId) return
+    if (onOpenSubThreadInSidePanel) {
+      onOpenSubThreadInSidePanel(subThreadId)
+      return
+    }
+    onOpenSubThread?.(subThreadId)
+  }
 
   return (
     <article
@@ -79,11 +83,6 @@ export function SubThreadReturnCard({
             ↩
           </span>
           <span className="subthread-return-label">Invocation result from</span>
-          <span
-            className={`agent-invocation-source-chip ${agentInvocationSourceClassName('taskwraith-subthread')}`}
-          >
-            {agentInvocationSourceLabel('taskwraith-subthread')}
-          </span>
           {agentIdentity && (
             <span className="subthread-return-agent" title={agentIdentity.name}>
               <AgentIdentityIcon
@@ -96,40 +95,23 @@ export function SubThreadReturnCard({
               <span className="subthread-return-agent-name">{agentIdentity.name}</span>
             </span>
           )}
-          <span className={`subthread-return-provider provider-${provider || 'unknown'}`}>
-            {providerName}
-          </span>
+          <ProviderSatelliteLabel
+            provider={typeof provider === 'string' ? provider : undefined}
+            className="subthread-return-provider"
+          />
           <strong className="subthread-return-title">{title}</strong>
         </div>
         {subThreadId && (onOpenSubThread || onOpenSubThreadInSidePanel) && (
           <div className="subthread-return-actions">
-            {onOpenSubThreadInSidePanel && (
-              <button
-                type="button"
-                className="subthread-return-open"
-                onClick={() => onOpenSubThreadInSidePanel(subThreadId)}
-              >
-                Open beside
-              </button>
-            )}
-            {onOpenSubThreadInSidePanel && (
-              <button
-                type="button"
-                className="subthread-return-open"
-                onClick={() => onOpenSubThreadInSidePanel(subThreadId, 'drawer')}
-              >
-                Open drawer
-              </button>
-            )}
-            {onOpenSubThread && (
-              <button
-                type="button"
-                className="subthread-return-open"
-                onClick={() => onOpenSubThread(subThreadId)}
-              >
-                Open sub-thread
-              </button>
-            )}
+            <PillButton
+              size="compact"
+              className="subthread-side-chat-button"
+              onClick={handleOpen}
+              title="Open this sub-thread as a side chat"
+              aria-label="Open side chat"
+            >
+              Side chat
+            </PillButton>
           </div>
         )}
       </header>

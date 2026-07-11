@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
 import type { ChatMessage } from '../../../main/store/types'
-import { findButtonByText } from '../test/reactElementTree'
+import { findClickableByClassName } from '../test/reactElementTree'
 import { isSubThreadReturnMessage, subThreadReturnBody } from './SubThreadReturnCardModel'
 import { SubThreadReturnCard } from './SubThreadReturnCard'
 
@@ -39,7 +39,7 @@ describe('SubThreadReturnCard', () => {
     expect(subThreadReturnBody('plain body')).toBe('plain body')
   })
 
-  it('renders provider, title, markdown body, and open controls', () => {
+  it('renders provider satellite identity, title, markdown body, and one side-chat control', () => {
     const html = renderToStaticMarkup(
       <SubThreadReturnCard
         message={subThreadMessage()}
@@ -50,16 +50,19 @@ describe('SubThreadReturnCard', () => {
 
     expect(html).toContain('subthread-return-card')
     expect(html).toContain('Invocation result from')
-    expect(html).toContain('TaskWraith Sub-thread')
+    expect(html).not.toContain('TaskWraith Sub-thread')
     expect(html).toContain('Codex')
+    expect(html).toContain('provider-satellite-label provider-codex')
+    expect(html).toContain('provider-glyph-codex')
     expect(html).toContain('Build agent')
     expect(html).toContain('live-activity-viewport')
     expect(html).toContain('subthread-return-viewport')
     expect(html).toContain('Expand result')
     expect(html).toContain('<strong>Done</strong>')
-    expect(html).toContain('Open beside')
-    expect(html).toContain('Open drawer')
-    expect(html).toContain('Open sub-thread')
+    expect(html).toContain('Side chat')
+    expect(html).not.toContain('Open beside')
+    expect(html).not.toContain('Open drawer')
+    expect(html).not.toContain('Open sub-thread')
   })
 
   it('renders the return viewport with controlled expanded copy', () => {
@@ -126,7 +129,7 @@ describe('SubThreadReturnCard', () => {
     expect(html).toContain('message-actions-chip-button--delete')
   })
 
-  it('routes the drawer action through the side-panel presentation callback', () => {
+  it('routes the side-chat action through the side-panel callback', () => {
     const onOpenSubThreadInSidePanel = vi.fn()
     const tree = SubThreadReturnCard({
       message: subThreadMessage(),
@@ -134,8 +137,8 @@ describe('SubThreadReturnCard', () => {
       onOpenSubThreadInSidePanel
     })
 
-    findButtonByText(tree, 'Open drawer').props.onClick?.()
+    findClickableByClassName(tree, 'subthread-side-chat-button').props.onClick?.()
 
-    expect(onOpenSubThreadInSidePanel).toHaveBeenCalledWith('chat-child-1', 'drawer')
+    expect(onOpenSubThreadInSidePanel).toHaveBeenCalledWith('chat-child-1')
   })
 })

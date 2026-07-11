@@ -1,13 +1,10 @@
 import type { CSSProperties } from 'react'
 import type { ChatMessage, ChatRecord, ProviderId } from '../../../main/store/types'
-import {
-  agentInvocationRouteLabel,
-  agentInvocationSourceClassName,
-  agentInvocationSourceLabel,
-  providerDisplayName
-} from '../lib/AgentInvocationPresentation'
+import { agentInvocationRouteLabel } from '../lib/AgentInvocationPresentation'
 import { assignAgentIdentityFromSeed } from '../lib/agentIdentitySeed'
 import { AgentIdentityIcon } from './icons/AgentIdentityIcon'
+import { PillButton } from './PillButton'
+import { ProviderSatelliteLabel } from './ProviderSatelliteLabel'
 import { resolveDelegationStatus, type DelegationCardStatus } from './SubThreadDelegationCardModel'
 
 interface SubThreadDelegationCardProps {
@@ -97,9 +94,6 @@ export function SubThreadDelegationCard({
   const status = resolveDelegationStatus(subThread, runningSet)
   const dispatchErrorMessage = textValue(subThread?.delegationContext?.dispatchError?.message)
 
-  const parentColorVar = `var(--provider-${parentProvider || 'gemini'}-color)`
-  const targetColorVar = `var(--provider-${targetProvider || 'gemini'}-color)`
-
   const handleOpen = () => {
     if (!subThreadId) return
     if (onOpenSubThreadInSidePanel) {
@@ -126,16 +120,11 @@ export function SubThreadDelegationCard({
           handleOpen()
         }
       }}
-      title={isClickable ? 'Open sub-thread' : undefined}
+      title={isClickable ? 'Open side chat' : undefined}
     >
       <header className="subthread-delegation-header">
         <div className="subthread-delegation-heading">
           <span className="agent-invocation-label">Agent Invocation</span>
-          <span
-            className={`agent-invocation-source-chip ${agentInvocationSourceClassName('taskwraith-subthread')}`}
-          >
-            {agentInvocationSourceLabel('taskwraith-subthread')}
-          </span>
           {agentIdentity && (
             <span className="subthread-delegation-agent" title={agentIdentity.name}>
               <AgentIdentityIcon
@@ -148,20 +137,10 @@ export function SubThreadDelegationCard({
               <span className="subthread-delegation-agent-name">{agentIdentity.name}</span>
             </span>
           )}
-          <div className="subthread-delegation-arc" aria-hidden="true">
-            <span
-              className={`subthread-delegation-chip provider-${parentProvider || 'unknown'}`}
-              style={{ background: parentColorVar }}
-            >
-              {providerDisplayName(parentProvider)}
-            </span>
+          <div className="subthread-delegation-arc">
+            <ProviderSatelliteLabel provider={parentProvider} />
             <span className="subthread-delegation-arc-arrow">→</span>
-            <span
-              className={`subthread-delegation-chip provider-${targetProvider || 'unknown'}`}
-              style={{ background: targetColorVar }}
-            >
-              {providerDisplayName(targetProvider)}
-            </span>
+            <ProviderSatelliteLabel provider={targetProvider} />
           </div>
         </div>
         <span className={`subthread-delegation-status status-${status.kind}`}>
@@ -180,45 +159,23 @@ export function SubThreadDelegationCard({
         )}
         <div className="agent-invocation-route-note">
           {agentInvocationRouteLabel('taskwraith-subthread')}
-          {isClickable
-            ? onOpenSubThreadInSidePanel
-              ? ' · opens beside parent'
-              : ' · opens as linked chat'
-            : ''}
+          {isClickable ? ' · opens as side chat' : ''}
         </div>
       </div>
-      {subThreadId && onOpenSubThread && onOpenSubThreadInSidePanel && (
+      {subThreadId && (onOpenSubThread || onOpenSubThreadInSidePanel) && (
         <div className="subthread-delegation-footer subthread-delegation-actions">
-          <button
-            type="button"
-            className="subthread-delegation-open"
+          <PillButton
+            size="compact"
+            className="subthread-side-chat-button"
             onClick={(event) => {
               event.stopPropagation()
-              onOpenSubThreadInSidePanel(subThreadId)
+              handleOpen()
             }}
+            title="Open this sub-thread as a side chat"
+            aria-label="Open side chat"
           >
-            Open beside
-          </button>
-          <button
-            type="button"
-            className="subthread-delegation-open"
-            onClick={(event) => {
-              event.stopPropagation()
-              onOpenSubThreadInSidePanel(subThreadId, 'drawer')
-            }}
-          >
-            Open drawer
-          </button>
-          <button
-            type="button"
-            className="subthread-delegation-open"
-            onClick={(event) => {
-              event.stopPropagation()
-              onOpenSubThread(subThreadId)
-            }}
-          >
-            Open main
-          </button>
+            Side chat
+          </PillButton>
         </div>
       )}
       {resultReturned && (

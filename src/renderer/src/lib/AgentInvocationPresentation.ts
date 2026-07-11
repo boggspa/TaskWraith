@@ -12,16 +12,9 @@ export function providerDisplayName(provider?: ProviderId | string): string {
   if (provider === 'kimi') return 'Kimi'
   if (provider === 'grok') return 'Grok'
   if (provider === 'cursor') return 'Cursor'
+  if (provider === 'ollama') return 'Ollama'
   if (provider === 'gemini') return 'Gemini'
   return 'Agent'
-}
-
-export function agentInvocationSourceLabel(source: AgentInvocationSource): string {
-  return source === 'taskwraith-subthread' ? 'TaskWraith Sub-thread' : 'Provider Native'
-}
-
-export function agentInvocationSourceClassName(source: AgentInvocationSource): string {
-  return source === 'taskwraith-subthread' ? 'source-taskwraith-subthread' : 'source-provider-native'
 }
 
 export function agentInvocationRouteLabel(source: AgentInvocationSource): string {

@@ -5,7 +5,7 @@ import {
   isSubThreadDelegationMessage
 } from './SubThreadDelegationCardModel'
 import type { ChatMessage, ChatRecord } from '../../../main/store/types'
-import { findButtonByText } from '../test/reactElementTree'
+import { findClickableByClassName } from '../test/reactElementTree'
 import { SubThreadDelegationCard } from './SubThreadDelegationCard'
 
 function makeChat(overrides: Partial<ChatRecord> = {}): ChatRecord {
@@ -157,13 +157,18 @@ describe('SubThreadDelegationCard', () => {
     )
 
     expect(html).toContain('Agent Invocation')
-    expect(html).toContain('TaskWraith Sub-thread')
+    expect(html).not.toContain('TaskWraith Sub-thread')
     expect(html).toContain('Durable sub-thread')
-    expect(html).toContain('opens as linked chat')
+    expect(html).toContain('opens as side chat')
     expect(html).toContain('Review helper')
+    expect(html).toContain('provider-satellite-label provider-claude')
+    expect(html).toContain('provider-glyph-claude')
+    expect(html).toContain('provider-satellite-label provider-kimi')
+    expect(html).toContain('provider-glyph-kimi')
+    expect(html).toContain('Side chat')
   })
 
-  it('labels side-panel-enabled sub-thread cards as opening beside the parent', () => {
+  it('replaces the three legacy actions with one side-chat button', () => {
     const msg: ChatMessage = {
       id: 'm',
       role: 'system',
@@ -186,13 +191,14 @@ describe('SubThreadDelegationCard', () => {
       />
     )
 
-    expect(html).toContain('opens beside parent')
-    expect(html).toContain('Open beside')
-    expect(html).toContain('Open drawer')
-    expect(html).toContain('Open main')
+    expect(html).toContain('opens as side chat')
+    expect(html).toContain('Side chat')
+    expect(html).not.toContain('Open beside')
+    expect(html).not.toContain('Open drawer')
+    expect(html).not.toContain('Open main')
   })
 
-  it('routes the drawer action through the side-panel presentation callback', () => {
+  it('routes the side-chat action through the side-panel callback', () => {
     const msg: ChatMessage = {
       id: 'm',
       role: 'system',
@@ -215,9 +221,11 @@ describe('SubThreadDelegationCard', () => {
       onOpenSubThreadInSidePanel
     })
 
-    findButtonByText(tree, 'Open drawer').props.onClick?.({ stopPropagation })
+    findClickableByClassName(tree, 'subthread-side-chat-button').props.onClick?.({
+      stopPropagation
+    })
 
     expect(stopPropagation).toHaveBeenCalledOnce()
-    expect(onOpenSubThreadInSidePanel).toHaveBeenCalledWith('sub-1', 'drawer')
+    expect(onOpenSubThreadInSidePanel).toHaveBeenCalledWith('sub-1')
   })
 })

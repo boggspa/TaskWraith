@@ -1129,7 +1129,7 @@ describe('ActivityStack agent invocation presentation', () => {
     expect(html).toContain('MCP')
   })
 
-  it('labels provider-native child-agent threads with unified invocation copy', () => {
+  it('keeps provider-native child-agent cards free of source chips', () => {
     const html = renderToStaticMarkup(
       <ActivityStack
         provider="claude"
@@ -1156,7 +1156,7 @@ describe('ActivityStack agent invocation presentation', () => {
       />
     )
 
-    expect(html).toContain('Provider Native')
+    expect(html).not.toContain('Provider Native')
     expect(html).toContain('Provider tool call in this transcript')
     expect(html).toContain('Invocation prompt')
     expect(html).toContain('Provider-native activity')

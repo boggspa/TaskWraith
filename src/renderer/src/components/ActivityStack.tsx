@@ -66,8 +66,6 @@ import { getProviderLabel } from '../lib/providerLabels'
 import { resolveProviderHueClass } from '../lib/ollamaDisplayBrand'
 import {
   agentInvocationRouteLabel,
-  agentInvocationSourceClassName,
-  agentInvocationSourceLabel,
   childAgentInteractivityLabel,
   childAgentStateLabel
 } from '../lib/AgentInvocationPresentation'
@@ -2284,11 +2282,6 @@ function ChildAgentSpawnBlock({ threads }: { threads: ChildAgentThread[] }) {
         <span className="child-agent-spawn-block-title">
           Agent Invocations <strong>{threads.length}</strong>
         </span>
-        <span
-          className={`agent-invocation-source-chip ${agentInvocationSourceClassName('provider-native')}`}
-        >
-          {agentInvocationSourceLabel('provider-native')}
-        </span>
         {!expanded && (
           <span className="child-agent-spawn-block-collapsed-pills" aria-hidden>
             {threads.map((thread) => (
@@ -2984,11 +2977,6 @@ function ChildAgentThreadCard({
           {displayName}
         </span>
         {identityRole && <span className="child-agent-thread-role">{identityRole}</span>}
-        <span
-          className={`agent-invocation-source-chip ${agentInvocationSourceClassName('provider-native')}`}
-        >
-          {agentInvocationSourceLabel('provider-native')}
-        </span>
         <span className={`child-agent-thread-state state-${thread.state}`}>{stateLabel}</span>
         <span className="child-agent-thread-interactivity">{interactivityLabel}</span>
         {durationLabel(thread.durationMs) && (
