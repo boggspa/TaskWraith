@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import {
   ChatViewPane,
+  chatViewPaneChromeActionEqual,
   chatViewPaneChromeActionsEqual,
   chatViewPanePropsEqual,
   type ChatViewPaneProps
@@ -152,10 +153,22 @@ describe('chatViewPanePropsEqual', () => {
     ]
 
     expect(chatViewPaneChromeActionsEqual(first, second)).toBe(true)
+    const firstLeft = {
+      id: 'workspace-sidebar',
+      title: 'Hide workspace sidebar',
+      icon: <span>first sidebar icon</span>,
+      onClick: vi.fn()
+    }
+    const secondLeft = {
+      ...firstLeft,
+      icon: <span>second sidebar icon</span>,
+      onClick: vi.fn()
+    }
+    expect(chatViewPaneChromeActionEqual(firstLeft, secondLeft)).toBe(true)
     expect(
       chatViewPanePropsEqual(
-        makeProps({ topRightChromeActions: first }),
-        makeProps({ topRightChromeActions: second })
+        makeProps({ topLeftChromeAction: firstLeft, topRightChromeActions: first }),
+        makeProps({ topLeftChromeAction: secondLeft, topRightChromeActions: second })
       )
     ).toBe(true)
   })
@@ -253,6 +266,13 @@ describe('ChatViewPane chrome actions', () => {
       <ChatViewPane
         {...makeProps({
           chat: { appChatId: 'chat-1' } as unknown as ChatViewPaneProps['chat'],
+          topLeftChromeAction: {
+            id: 'workspace-sidebar',
+            title: 'Hide workspace sidebar',
+            ariaLabel: 'Toggle workspace sidebar',
+            icon: <span>sidebar-toggle</span>,
+            onClick: vi.fn()
+          },
           topRightChromeActions: [
             {
               id: 'preview',
@@ -287,6 +307,8 @@ describe('ChatViewPane chrome actions', () => {
       (match) => match[1]
     )
     expect(actionIds).toEqual(['fx', 'info', 'popout', 'run', 'home'])
+    expect(html).toContain('title="Hide workspace sidebar"')
+    expect(html).toContain('sidebar-toggle')
     expect(html).toContain('id="multiview-pane-1-fx-trigger"')
     expect(html).toContain('id="multiview-pane-1-info-trigger"')
     expect(html).toContain('data-preview-menu-root="true"')

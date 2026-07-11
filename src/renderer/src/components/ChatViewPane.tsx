@@ -142,24 +142,29 @@ export function chatViewPaneChromeActionsEqual(
 ): boolean {
   if (a === b) return true
   if (!a || !b || a.length !== b.length) return false
-  return a.every((left, index) => {
-    const right = b[index]
-    if (!right) return false
-    const menuContentEqual =
-      !left.menuOpen && !right.menuOpen
-        ? Boolean(left.menu) === Boolean(right.menu)
-        : left.menu === right.menu
-    return (
-      left.id === right.id &&
-      left.title === right.title &&
-      left.ariaLabel === right.ariaLabel &&
-      left.active === right.active &&
-      left.disabled === right.disabled &&
-      left.count === right.count &&
-      left.menuOpen === right.menuOpen &&
-      menuContentEqual
-    )
-  })
+  return a.every((left, index) => chatViewPaneChromeActionEqual(left, b[index]))
+}
+
+export function chatViewPaneChromeActionEqual(
+  left: ChatViewPaneChromeAction | undefined,
+  right: ChatViewPaneChromeAction | undefined
+): boolean {
+  if (left === right) return true
+  if (!left || !right) return false
+  const menuContentEqual =
+    !left.menuOpen && !right.menuOpen
+      ? Boolean(left.menu) === Boolean(right.menu)
+      : left.menu === right.menu
+  return (
+    left.id === right.id &&
+    left.title === right.title &&
+    left.ariaLabel === right.ariaLabel &&
+    left.active === right.active &&
+    left.disabled === right.disabled &&
+    left.count === right.count &&
+    left.menuOpen === right.menuOpen &&
+    menuContentEqual
+  )
 }
 
 /**
@@ -220,7 +225,7 @@ export function chatViewPanePropsEqual(a: ChatViewPaneProps, b: ChatViewPaneProp
     // Chrome.
     a.topLeftChrome === b.topLeftChrome &&
     a.topRightChrome === b.topRightChrome &&
-    a.topLeftChromeAction === b.topLeftChromeAction &&
+    chatViewPaneChromeActionEqual(a.topLeftChromeAction, b.topLeftChromeAction) &&
     chatViewPaneChromeActionsEqual(a.topRightChromeActions, b.topRightChromeActions) &&
     // Transcript handlers (the composer's own handlers moved into <Composer>).
     a.onAgentQuestionSubmit === b.onAgentQuestionSubmit &&
@@ -364,6 +369,7 @@ function ChatViewPaneChrome(props: ChatViewPaneProps) {
           )}
           skyEnabled={Boolean(skyAction?.active)}
           ghostEnabled={Boolean(ghostAction?.active)}
+          weatherDescription={props.weather?.description}
           onToggleSky={() => invokeAction(skyAction)}
           onToggleGhost={() => invokeAction(ghostAction)}
           changelogOpen={Boolean(changelogAction?.active)}

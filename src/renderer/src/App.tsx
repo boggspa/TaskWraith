@@ -24553,6 +24553,16 @@ function App(): React.JSX.Element {
         dashboardWorkspacesShown={settings?.dashboardStatPrefs?.workspacesShown}
         dashboardProvidersTabEnabled={settings?.dashboardStatPrefs?.providersTabEnabled}
         dashboardAutoCycleSeconds={settings?.dashboardStatPrefs?.autoCycleSeconds}
+        topLeftChromeAction={{
+          id: 'workspace-sidebar',
+          title: `${showWorkspaceSidebar ? 'Hide' : 'Show'} workspace sidebar`,
+          ariaLabel: 'Toggle workspace sidebar',
+          icon: <SidebarCornerIcon direction="left" isOpen={showWorkspaceSidebar} />,
+          onClick: (paneIndex, chatId) => {
+            focusPaneForChromeAction(paneIndex, chatId)
+            setShowWorkspaceSidebar((current) => !current)
+          }
+        }}
         topRightChromeActions={viewerChromeActions}
         pendingPlanChoice={pendingPlanChoiceByChatId[viewerChatId] || null}
         pendingAgentQuestions={
