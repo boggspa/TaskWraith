@@ -1522,7 +1522,12 @@ struct IosParityFixesTests {
         try await Task.sleep(nanoseconds: StreamingPublishGate.streamingPublishCoalesceWindowNs + 70_000_000)
         #expect(model.streamingTexts["t1"] == "z!")
         let elapsed = start.duration(to: .now)
-        #expect(elapsed <= .milliseconds(200))
+        // Bound is a "does not hang / staleness stays bounded" guard, not a tight
+        // perf assertion. The body sleeps coalesceWindow + 70ms (~170-190ms), so a
+        // 200ms ceiling left only ~10-30ms for CI scheduling jitter and flaked
+        // (observed 211ms on a loaded runner). 500ms keeps the guard meaningful
+        // (catches a real hang / doubled window) without flaking.
+        #expect(elapsed <= .milliseconds(500))
     }
 
     private func remoteTaskCard(_ json: String) throws -> RemoteTaskCard {
