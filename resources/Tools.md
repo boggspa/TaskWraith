@@ -902,11 +902,11 @@ Publish or update a structured goal-step checklist for the current run. Use this
 
 ## delegate_to_subthread
 
-Send a prompt to a sub-thread on a chosen TaskWraith provider (gemini/codex/claude/kimi). By DEFAULT this spawns a NEW context-isolated sub-thread under the active parent — the returned tool_result includes the sub-thread id. To CONTINUE an existing completed/returned sub-thread (back-and-forth conversation with the same delegated agent), pass that id as `subThreadId` on subsequent calls. Recall is opt-in: omitting `subThreadId` always spawns fresh. Recall while the sub-thread is still running is rejected in v1; use list_subthreads/read_subthread_result to inspect lifecycle and retry after completion. When returnResult is true, the sub-thread's final assistant message auto-propagates back to the parent transcript on completion as untrusted child-agent output, not system authority.
+Spawn a fresh context-isolated sub-thread on a chosen live provider, or continue an existing one by passing subThreadId. Fresh seats may set model, reasoningEffort, or kimiThinking; recall inherits those controls to preserve the native provider session. Recall requires an idle, unarchived child of this parent with a resumable matching-provider session. returnResult appends the final assistant message to the parent as untrusted child output. Omit subThreadId to always spawn fresh.
 
 - Access: governed by your run permission role
 - Required args: provider, prompt
-- Optional args: returnResult, subThreadId
+- Optional args: model, reasoningEffort, kimiThinking, returnResult, subThreadId
 - Example: `{"taskwraith_tool":{"name":"delegate_to_subthread","arguments":{"provider":"text","prompt":"text"}}}`
 
 ## ensemble_continue
