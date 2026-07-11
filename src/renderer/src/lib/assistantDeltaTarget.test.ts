@@ -267,7 +267,7 @@ describe('spanTrailingSystemCards (complete-event dedupe across a tail system ca
     role: 'system',
     content,
     timestamp: '2026-07-10T00:00:00.000Z',
-    metadata: { kind: 'queuedRunRequest' } as never
+    metadata: { kind: 'ciNotice' } as never
   })
 
   it('skips a full-turn restatement whose text already streamed above the card', () => {

@@ -24,7 +24,6 @@ import { deriveParticipantRenameContinuity } from '../lib/sessionActivityLedger'
 import { shouldCollapseUserMessage, truncateUserMessagePreview } from '../lib/UserMessageCollapse'
 import { buildEscalationChips } from '../lib/runCompleteSummary'
 import { decideMeasurePass, MAX_MEASURE_REWRITE_PASSES } from '../lib/transcriptMeasureConvergence'
-import { deriveQueuedLifecycleProjection } from '../lib/queuedMessageRows'
 import {
   deriveActiveEnsembleWorkingPresentation,
   deriveActiveEnsembleWorkingPresentations,
@@ -1755,8 +1754,6 @@ export const TranscriptPanel = memo(
     onOpenSideChatFromRun,
     compactDensity,
     liveActivityViewport,
-    pendingQueuedAppRunIds,
-    queuedRunStatusByAppRunId,
     onCopyMessage,
     onAddMessageToPrompt,
     onDeleteMessage,
@@ -1782,21 +1779,11 @@ export const TranscriptPanel = memo(
     isGlobal
   }: TranscriptPanelProps) {
     const visibleMessages = useMemo(() => {
-      const source = isWelcomeChat ? EMPTY_CHAT_MESSAGES : messages
-      const projected = deriveQueuedLifecycleProjection({
-        messages: source,
-        pendingQueuedAppRunIds,
-        queuedRunStatusByAppRunId
-      })
-      // NOTE: pending queuedRunRequest cards are NOT filtered here — they are
-      // suppressed AFTER adjacency grouping (see queuedSuppressedMessages),
-      // like the participant filter. Filtering pre-grouping made two tool
-      // bursts flanking a hidden queued card array-adjacent, merging them
-      // into one ActivityStack across a real system-event boundary; when the
-      // job dispatched and the card resurfaced, the stack retroactively split
-      // — content visibly regrouping "in blocks".
-      return projected
-    }, [isWelcomeChat, messages, pendingQueuedAppRunIds, queuedRunStatusByAppRunId])
+      if (isWelcomeChat) return EMPTY_CHAT_MESSAGES
+      // Queued-run cards were removed from the transcript; drop any historical
+      // `queuedRunRequest` system messages so they no longer surface.
+      return messages.filter((message) => message?.metadata?.kind !== 'queuedRunRequest')
+    }, [isWelcomeChat, messages])
     const hasLiveContextCompactionProgress = useMemo(
       () => contextCompactionProgress.some((event) => event.status === 'started'),
       [contextCompactionProgress]
@@ -2266,27 +2253,10 @@ export const TranscriptPanel = memo(
       }
       return map
     }, [visibleMessages])
-    // Dedup: while a queued-message card's job is still in the `queued` set,
-    // the queued-messages above-row is the live representation — hide the
-    // card. Post-grouping (unlike the old visibleMessages filter) so the
-    // hidden card still breaks tool-burst adjacency at its true position;
-    // once the job dispatches it resurfaces as a historical record.
-    const queuedSuppressedMessages = useMemo(() => {
-      if (!pendingQueuedAppRunIds || pendingQueuedAppRunIds.size === 0) return groupedMessages
-      return groupedMessages.filter((msg) => {
-        if (msg.metadata?.kind !== 'queuedRunRequest') return true
-        const appRunId = typeof msg.metadata?.appRunId === 'string' ? msg.metadata.appRunId : null
-        if (!appRunId) return true
-        return !pendingQueuedAppRunIds.has(appRunId)
-      })
-    }, [groupedMessages, pendingQueuedAppRunIds])
     const participantFilteredMessages = useMemo(
       () =>
-        filterTranscriptMessagesByParticipantKeys(
-          queuedSuppressedMessages,
-          activeParticipantFilterKeys
-        ),
-      [activeParticipantFilterKeys, queuedSuppressedMessages]
+        filterTranscriptMessagesByParticipantKeys(groupedMessages, activeParticipantFilterKeys),
+      [activeParticipantFilterKeys, groupedMessages]
     )
     const participantFilterActive = activeParticipantFilterKeys.size > 0
     const roundCardChat = useMemo(

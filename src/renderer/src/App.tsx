@@ -11165,7 +11165,6 @@ function App(): React.JSX.Element {
     reason = 'Another task is currently active.'
   ) => {
     const queuedRequest = request.appRunId ? request : { ...request, appRunId: createAppRunId() }
-    const queuedAt = new Date().toISOString()
     const targetChatId = queuedRequest.chatRecord?.appChatId
     const targetProvider = queuedRequest.provider
     const capacityContext =
@@ -11232,47 +11231,6 @@ function App(): React.JSX.Element {
       type: 'info',
       content: `${getProviderLabel(targetProvider)} run queued (${queuePosition} waiting). ${reason}`
     })
-    if (targetChatId) {
-      // Phase J3: surface the actual queued prompt + a clear delivery
-      // state. Previously the system note was a generic "Queued behind
-      // the active task" line that buried what the user typed — they
-      // couldn't tell which queued message was theirs vs. an internal
-      // permission-retry queue card. Now the card shows the prompt
-      // preview, the queue position, and a `queuedRunRequest` metadata
-      // ref so the UI can later render this as a dedicated queued-
-      // message component (follow-up). The metadata.appRunId lets a
-      // dispatched run replace this card in place.
-      const promptPreview = runRequestPromptPreview(queuedRequest)
-      const promptOneLiner =
-        promptPreview.length > 240 ? `${promptPreview.slice(0, 240)}…` : promptPreview
-      const scheduledRunAt = queuedRequest.scheduledRunAt
-      const deliveryLine = scheduledRunAt
-        ? `— Scheduled for ${formatScheduledRunTime(scheduledRunAt)}.`
-        : `— Will dispatch when this chat's current ${getProviderLabel(targetProvider)} turn finishes.`
-      updateChatById(targetChatId, (source) => ({
-        ...source,
-        messages: [
-          ...source.messages,
-          {
-            id: `queued-${queuedRequest.appRunId || createMessageId()}`,
-            role: 'system',
-            content: promptPreview
-              ? `Queued (#${queuePosition}): ${promptOneLiner}\n${deliveryLine}`
-              : `Queued (#${queuePosition}). ${deliveryLine}`,
-            timestamp: queuedAt,
-            metadata: {
-              kind: 'queuedRunRequest',
-              appRunId: queuedRequest.appRunId,
-              queuePosition,
-              provider: targetProvider,
-              promptPreview: promptOneLiner,
-              ...(scheduledRunAt ? { scheduledRunAt } : {})
-            }
-          }
-        ],
-        updatedAt: Date.now()
-      }))
-    }
   }
   const queueRunRequestRef = useRef(queueRunRequest)
   queueRunRequestRef.current = queueRunRequest

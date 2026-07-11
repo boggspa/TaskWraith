@@ -1008,36 +1008,6 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
     expect(html).not.toContain('Awaiting your next prompt.')
   })
 
-  it('shows a promoted queued lifecycle card instead of hiding it as pending', () => {
-    const html = renderToStaticMarkup(
-      <TranscriptPanel
-        {...makeProps({
-          virtualize: false,
-          messages: [
-            {
-              id: 'queued-run-1',
-              role: 'system',
-              content:
-                "Queued (#1): Inspect queue state\n— Will dispatch when this chat's current Codex turn finishes.",
-              timestamp: '2026-01-01T00:00:00.000Z',
-              metadata: {
-                kind: 'queuedRunRequest',
-                appRunId: 'run-1'
-              }
-            }
-          ],
-          pendingQueuedAppRunIds: new Set(),
-          queuedRunStatusByAppRunId: {
-            'run-1': 'steer_promoting'
-          }
-        })}
-      />
-    )
-
-    expect(html).toContain('Promoted to dispatch')
-    expect(html).not.toContain('Will dispatch')
-  })
-
   it.each(
     RENDERER_PROVIDERS.flatMap((provider) =>
       (['single', 'ensemble'] as const).map((chatKind) => [provider, chatKind] as const)
