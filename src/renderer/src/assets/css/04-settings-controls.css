@@ -229,359 +229,36 @@
   font-weight: 650;
 }
 
+/* Local live-composer scope. This wrapper intentionally carries the same
+ * `.app-transcript provider-* interface-*` contract as a real chat so every
+ * first-class shell rule participates. Only pane layout/backdrop behaviour is
+ * reset for the embedded card. */
+.settings-composer-preview-chat.app-transcript {
+  width: 100%;
+  min-height: 0;
+  flex: none;
+  overflow: visible;
+  background: transparent;
+}
+
+.settings-composer-preview-chat.app-transcript::before,
+.settings-composer-preview-chat.app-transcript::after {
+  content: none;
+  display: none;
+}
+
 .settings-composer-preview-area.composer-area {
   position: relative;
   inset: auto;
   z-index: 1;
   width: 100%;
-  max-width: none;
   padding: 0;
-  align-items: stretch;
-  justify-content: flex-start;
-  gap: 6px;
   pointer-events: auto;
   transform: none;
 }
 
-.settings-composer-preview-area .composer-above-bar-stack {
-  width: 100%;
-}
-
-.settings-composer-preview-area .composer-above-bar {
-  margin-bottom: 6px;
-  min-width: 0;
-}
-
-/* Codex + Grok previews — mirror the live tucked-tab stack (narrower row
- * nested under the composer lip). Generic preview rules above force full
- * width + a 6px gap; undo those for shells that tuck the above-row. */
-.settings-composer-preview-card[data-composer-style="codex"]
-  .settings-composer-preview-area.composer-area,
-.settings-composer-preview-card[data-composer-style="grok"]
-  .settings-composer-preview-area.composer-area {
-  gap: 0;
-  align-items: center;
-}
-.settings-composer-preview-card[data-composer-style="codex"]
-  .settings-composer-preview-area
-  .composer-above-bar-stack,
-.settings-composer-preview-card[data-composer-style="grok"]
-  .settings-composer-preview-area
-  .composer-above-bar-stack {
-  width: min(calc(100% - 80px), calc(var(--composer-content-max-width, 850px) - 80px));
-  max-width: min(calc(100% - 80px), calc(var(--composer-content-max-width, 850px) - 80px));
-  align-self: center;
-}
-.settings-composer-preview-card[data-composer-style="codex"]
-  .settings-composer-preview-area
-  .composer-above-bar,
-.settings-composer-preview-card[data-composer-style="grok"]
-  .settings-composer-preview-area
-  .composer-above-bar {
-  margin-bottom: -10px;
-  width: 100%;
-  max-width: 100%;
-}
-.settings-composer-preview-card[data-composer-style="codex"]
-  .settings-composer-preview-area
-  .composer-surface,
-.settings-composer-preview-card[data-composer-style="grok"]
-  .settings-composer-preview-area
-  .composer-surface {
-  position: relative;
-  z-index: 2;
-  width: 100%;
-}
-
-.settings-composer-preview-area .composer-above-bar-branch,
-.settings-composer-preview-area .composer-above-bar-files,
-.settings-composer-preview-area .composer-above-bar-stats,
-.settings-composer-preview-area .composer-above-bar-action {
-  white-space: nowrap;
-}
-
-.settings-composer-preview-area .composer-above-bar-branch {
-  min-width: 0;
-}
-
-.settings-composer-preview-area .composer-above-bar-branch > span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.settings-composer-preview-area .composer-surface {
-  max-width: none;
-}
-
-.settings-composer-preview-area .composer-textarea {
-  min-height: 76px;
-}
-
-.settings-composer-preview-area .composer-inline-pickers-left {
-  min-width: 0;
-}
-
-.settings-composer-preview-control {
-  user-select: none;
-}
-
-.settings-composer-preview-area .composer-action-btn {
-  flex-shrink: 0;
-}
-
-.settings-composer-preview-area .composer-action-btn,
-.settings-composer-preview-area .composer-above-bar-action,
-.settings-composer-preview-area .composer-picker-label {
-  cursor: default;
-}
-
-.settings-composer-preview-area .composer-action-btn:hover,
-.settings-composer-preview-area .composer-above-bar-action:hover,
-.settings-composer-preview-area .composer-picker-label:hover {
-  transform: none;
-}
-
-/* Telemetry-rail glyphs added to the composer preview are inert static
-   stand-ins for the live run timer / screen-watch / goal / copy / workspace
-   controls — render them non-interactive like the rest of the preview. */
-.settings-composer-preview-area .composer-telemetry-row .composer-screen-watch-button,
-.settings-composer-preview-area .composer-telemetry-row .composer-goal-button,
-.settings-composer-preview-area .composer-telemetry-row .composer-copy-transcript-button,
-.settings-composer-preview-area .composer-telemetry-row .composer-workspace-button,
-.settings-composer-preview-area .composer-telemetry-row .composer-run-timecode {
-  cursor: default;
+.settings-composer-preview-area [inert] {
   pointer-events: none;
-}
-
-.settings-composer-preview-area .composer-telemetry-row .composer-screen-watch-button:hover,
-.settings-composer-preview-area .composer-telemetry-row .composer-goal-button:hover,
-.settings-composer-preview-area .composer-telemetry-row .composer-copy-transcript-button:hover,
-.settings-composer-preview-area .composer-telemetry-row .composer-workspace-button:hover,
-.settings-composer-preview-area .composer-telemetry-row .composer-run-timecode:hover {
-  transform: none;
-}
-
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])
-  .settings-composer-preview-card[data-composer-style="codex"]
-  .composer-above-bar,
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])
-  .settings-composer-preview-card[data-composer-style="claude"]
-  .composer-above-bar {
-  background: var(--unified-soft-surface-bg) !important;
-  border-color: var(--unified-soft-surface-border) !important;
-  color: var(--text-primary) !important;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.06) !important;
-}
-
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])
-  .settings-composer-preview-card[data-composer-style="codex"]
-  .composer-above-bar::before,
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])
-  .settings-composer-preview-card[data-composer-style="claude"]
-  .composer-above-bar::before {
-  background: none !important;
-}
-
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])
-  .settings-composer-preview-card[data-interface-style="codex"]
-  .composer-surface {
-  background: var(--surface-3) !important;
-  border-color: color-mix(in srgb, var(--surface-border) 70%, var(--surface-text) 8%) !important;
-  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.08) !important;
-}
-
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])
-  .settings-composer-preview-card[data-interface-style="claude"]
-  .composer-textarea {
-  background: var(--surface-3) !important;
-  border-color: color-mix(in srgb, var(--surface-border) 70%, var(--surface-text) 8%) !important;
-  color: var(--text-primary) !important;
-}
-
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])
-  .settings-composer-preview-card
-  .composer-picker-label,
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])
-  .settings-composer-preview-card
-  .composer-above-bar-action {
-  color: var(--text-primary);
-  border-color: color-mix(in srgb, var(--surface-border, var(--panel-border)) 78%, transparent);
-}
-
-/* ── DEFAULT preview — mirror the console redesign ───────────────────
- * The TaskWraith-native ("default") composer was reskinned to the console
- * look in shards 03 + 07: a SOLID black/white OUTER frame (vignette
- * killed) with a theme-tone INNER module sitting inside it. Those real
- * rules are scoped to `.app-transcript`, so they never reach these
- * static preview cards (no `.app-transcript` ancestor) — the previews
- * kept rendering the OLD theme-tinted look. Re-create the console look
- * HERE, scoped strictly to the `default` style so the codex / claude /
- * gemini / kimi / grok / cursor / obsidian / alabaster previews are
- * untouched. The card carries both `data-composer-style` and
- * `data-theme`, so the light-theme split keys off the same card. */
-
-/* OUTER FRAME — merge the above-bar-stack + surface into ONE native-instrument
- * frame, mirroring the live composer (03:3240-3303). Those real rules are
- * `.app-transcript`-gated, so they never reach the static preview card — without
- * them the above-bar rendered as a detached bezel instead of the rounded TOP of
- * the shell. The --native-instrument-* vars are theme-adaptive, so a single set
- * of rules covers light + dark (no per-theme variants needed). Stack = rounded
- * TOP of the frame; each above-row is flush + chrome-less inside it; the surface
- * is pulled flush as the rounded BOTTOM with a hairline seam. */
-/* The --native-instrument-* frame vars are defined on
- * `[data-composer-style="default"] .app-transcript` (shard 03) — an ancestor the
- * static preview card does NOT have, so without re-declaring them here the merge
- * rules below resolved `var(--native-instrument-glass-bg / -border / -outer-shadow)`
- * to NOTHING and the whole frame rendered invisible (transparent stack + surface),
- * leaving the above-bar floating over a detached inner panel. Re-declare them on
- * the card — it carries its own data-theme, so --surface-2 / --text-primary adapt. */
-.settings-composer-preview-card[data-composer-style="default"] {
-  --native-instrument-outer-rim: color-mix(in srgb, var(--text-primary) 22%, rgba(255, 255, 255, 0.1));
-  --native-instrument-outer-rim-glow: color-mix(in srgb, var(--text-primary) 5%, transparent);
-  --native-instrument-glass-bg: color-mix(in srgb, var(--surface-2) 46%, transparent);
-  --native-instrument-glass-border: color-mix(in srgb, var(--text-primary) 11%, transparent);
-  --native-instrument-outer-shadow:
-    inset 0 0 0 1px var(--native-instrument-outer-rim),
-    inset 0 0 14px var(--native-instrument-outer-rim-glow),
-    inset 0 1px 0 color-mix(in srgb, var(--text-primary) 8%, transparent),
-    0 18px 46px color-mix(in srgb, #000000 20%, transparent);
-}
-:is(
-    [data-theme="light"],
-    [data-theme="citrus"],
-    [data-theme="mist"],
-    [data-theme="sage"],
-    [data-theme="alabaster"]
-  )
-  .settings-composer-preview-card[data-composer-style="default"],
-.settings-composer-preview-card[data-composer-style="default"]:is(
-    [data-theme="light"],
-    [data-theme="citrus"],
-    [data-theme="mist"],
-    [data-theme="sage"],
-    [data-theme="alabaster"]
-  ) {
-  --native-instrument-outer-rim: color-mix(in srgb, var(--text-primary) 18%, rgba(255, 255, 255, 0.12));
-  --native-instrument-outer-rim-glow: color-mix(in srgb, var(--text-primary) 4%, transparent);
-  --native-instrument-glass-bg: color-mix(in srgb, var(--surface-2) 58%, transparent);
-  --native-instrument-glass-border: color-mix(in srgb, var(--text-primary) 9%, transparent);
-  --native-instrument-outer-shadow:
-    inset 0 0 0 1px var(--native-instrument-outer-rim),
-    inset 0 0 14px var(--native-instrument-outer-rim-glow),
-    inset 0 1px 0 color-mix(in srgb, var(--text-primary) 7%, transparent),
-    0 18px 46px color-mix(in srgb, #000000 14%, transparent);
-}
-.settings-composer-preview-card[data-composer-style="default"] .composer-above-bar-stack {
-  gap: 0;
-  background: var(--native-instrument-glass-bg);
-  border: 1px solid var(--native-instrument-glass-border);
-  border-bottom: none;
-  border-radius: calc(var(--radius-lg) * 2.45) calc(var(--radius-lg) * 2.45) 0 0;
-  box-shadow: var(--native-instrument-outer-shadow, var(--composer-shadow));
-}
-.settings-composer-preview-card[data-composer-style="default"] .composer-above-bar-stack > * {
-  margin: 0;
-  border: none;
-  border-radius: 0;
-  background: transparent;
-  box-shadow: none;
-}
-.settings-composer-preview-card[data-composer-style="default"]
-  .composer-above-bar-stack
-  > * + * {
-  border-top: 1px solid color-mix(in srgb, var(--text-primary) 12%, transparent);
-}
-.settings-composer-preview-card[data-composer-style="default"] .composer-above-bar::before {
-  background: none !important;
-  box-shadow: none !important;
-}
-/* SURFACE — rounded BOTTOM of the merged frame: same instrument tone, pulled
- * flush under the stack with squared top corners + a hairline seam divider. */
-.settings-composer-preview-card[data-composer-style="default"] .composer-surface {
-  background: var(--native-instrument-glass-bg);
-  border-color: var(--native-instrument-glass-border);
-  box-shadow: var(--native-instrument-outer-shadow, var(--composer-shadow));
-  margin-top: calc(-1 * var(--space-sm));
-  border-top-left-radius: 0;
-  border-top-right-radius: 0;
-  border-top: 1px solid color-mix(in srgb, var(--text-primary) 12%, transparent);
-}
-.settings-composer-preview-card[data-composer-style="default"] .composer-surface::before {
-  background: none !important;
-  box-shadow: none !important;
-}
-/* FIRST-CHILD corner fix — mirror the live rule (03:3491-3498). The merged
- * frame (.composer-above-bar-stack) is rounded to calc(--radius-lg * 2.45) on
- * top, but its first child (.composer-above-bar) is flattened to radius:0 by the
- * `> *` chrome-less rule above WHILE shard 07's ungated base rule still applies
- * `overflow: hidden` to it — so it becomes a SQUARE clip box whose corners poke
- * past the frame's rounded top, reading as a detached/misaligned bar. Round the
- * first child's top corners to match the frame so the radius shows through (its
- * own overflow-clip then rounds with it). Scoped to the default preview card —
- * cannot reach other shells' previews or the live composer. The ensemble
- * `::before` companion (03:3499) isn't needed: the preview renders only the
- * single-provider above-bar, which kills its ::before tint. */
-.settings-composer-preview-card[data-composer-style="default"]
-  .composer-above-bar-stack
-  > *:first-child {
-  border-top-left-radius: calc(var(--radius-lg) * 2.45);
-  border-top-right-radius: calc(var(--radius-lg) * 2.45);
-}
-
-/* INNER module — the theme-tone typing panel. Mirror the live
- * `[data-composer-style="default"] .composer-inner-module` (shard 03:3562):
- * full-bleed across the surface's 14px frame padding + square corners, so it
- * reads as the instrument's edge-to-edge bottom rather than a rounded inset card
- * floating inside the frame. The surface keeps `overflow: hidden`, so the bleed
- * clips cleanly to the frame's rounded outer corners (the earlier note here
- * claimed full-bleed overflowed the cramped preview — it does not; verified
- * against the live composer in an Electron screenshot harness). The flex column +
- * gap are restated so the layout holds regardless of cascade order. */
-.settings-composer-preview-card[data-composer-style="default"] .composer-inner-module {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-sm);
-  width: calc(100% + 28px);
-  max-width: none;
-  margin: 0 -14px;
-  padding: 10px 10px 6px;
-  border-radius: 0;
-  background: #141418;
-  box-shadow:
-    inset 0 0 0 1px color-mix(in srgb, var(--text-primary) 24%, rgba(255, 255, 255, 0.1)),
-    inset 0 0 14px color-mix(in srgb, var(--text-primary) 6%, transparent),
-    inset 0 1px 0 color-mix(in srgb, var(--text-primary) 9%, transparent);
-}
-:is(
-    [data-theme="light"],
-    [data-theme="citrus"],
-    [data-theme="mist"],
-    [data-theme="sage"],
-    [data-theme="alabaster"]
-  )
-  .settings-composer-preview-card[data-composer-style="default"]
-  .composer-inner-module {
-  background: #f0f0f3;
-  box-shadow:
-    inset 0 0 0 1px color-mix(in srgb, var(--text-primary) 20%, rgba(255, 255, 255, 0.14)),
-    inset 0 0 14px color-mix(in srgb, var(--text-primary) 5%, transparent),
-    inset 0 1px 0 color-mix(in srgb, var(--text-primary) 9%, transparent);
-}
-
-/* TELEMETRY ROW — the live native composer relocates the row to a transparent,
- * border-less seamless bar (the `[data-composer-style="default"] .app-transcript
- * .composer-telemetry-row` rule in shard 03). That selector is .app-transcript-
- * gated, so it never reaches the preview card — the row otherwise falls back to
- * the global base rule's top divider + wider margins, which reads as a stray
- * line under the controls. Re-create the relocated treatment here so the native
- * preview's telemetry rail flows seamlessly like the real shell. */
-.settings-composer-preview-card[data-composer-style="default"] .composer-telemetry-row {
-  background: transparent;
-  border-top: 0;
-  margin: 0 6px;
-  padding: 2px 4px 0;
 }
 
 /* ── Refractive "liquid glass" lens — preview parity ─────────────────────────
@@ -655,18 +332,6 @@
   .composer-refraction-lens {
   display: none !important;
 }
-/* Keep the composer content layered ABOVE the z-index:0 lens. The shared
- * `[data-composer-style="default"] .composer-inner-module` rule (shard 03) already
- * gives the inner module `z-index:2` and DOES reach this card (the card carries the
- * attribute) — but the sibling telemetry rail gets no such z-index, so restate both
- * here for one explicit, self-contained guarantee; without it the absolutely-
- * positioned lens would paint over the telemetry controls. */
-.settings-composer-preview-card[data-composer-style="default"] .composer-inner-module,
-.settings-composer-preview-card[data-composer-style="default"] .composer-telemetry-row {
-  position: relative;
-  z-index: 2;
-}
-
 /* Model usage tab — cross-provider quota dashboard.
  *
  * Headline-tile strip up top (Total tokens / Runs / Providers), then
@@ -3267,6 +2932,7 @@
 .settings-composer-preview-controls {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: start;
   gap: var(--space-md);
 }
 

@@ -2,18 +2,37 @@ import React from 'react'
 import {
   ArrowUpSendIcon,
   ClaudeReturnSymbolIcon,
-  CopyResponseIcon,
-  FolderSymbolIcon,
   GitCommitSymbolIcon,
   GoalSymbolIcon,
+  PlusSymbolIcon,
   RunSymbolIcon,
   ScreenWatchSymbolIcon
 } from './AppChromeSymbols'
-import { ComposerTimecode } from './ComposerTimecodes'
+import { ComposerThreadTimecodeBar } from './ComposerTimecodes'
 import { FONT_STACKS, resolveComposerFontFamily } from '../lib/typefaceOptions'
 import { composerGitActionUsesCommitIcon } from '../lib/composerGitActionIcon'
-import type { ComposerStyle, ProviderId, ThemeAppearance } from '../../../main/store/types'
-import { ProviderBadgeIcon } from './Sidebar'
+import type {
+  AgenticServiceId,
+  ComposerStyle,
+  ExternalPathGrant,
+  ProviderId,
+  ThemeAppearance,
+  WorkspaceRecord
+} from '../../../main/store/types'
+import { ComposerPlusPicker, type ComposerPlusPickerSection } from './ComposerPlusPicker'
+import {
+  CombinedModelPicker,
+  type CombinedModelPickerProviderGroup
+} from './CombinedModelPicker'
+import {
+  CombinedPermissionsPicker,
+  type PermissionOption
+} from './CombinedPermissionsPicker'
+import { ContextMeterPopover } from './ContextMeterPopover'
+import type { ContextMeterModel } from '../lib/contextMeter'
+import { DEFAULT_AGENTIC_SERVICES } from '../lib/agenticServicesDefaults'
+import { ComposerWorkspaceSwitcher } from './ComposerWorkspaceSwitcher'
+import { CopyTranscriptButton, type CopyTranscriptResult } from './CopyTranscriptButton'
 
 /**
  * ComposerShellPreview — the single source of truth for the inert composer
@@ -29,13 +48,11 @@ import { ProviderBadgeIcon } from './Sidebar'
  * copy was missing the `terminal` case and carried stale codex/kimi copy).
  *
  * This collapses the two replicas + two metadata tables into ONE component and
- * ONE metadata source, so the previews can no longer drift apart, and renders
- * the EXACT same class contract the live composer uses (so the real
- * `data-composer-style`-keyed shell CSS in 07-composer-shells.css et al paints
- * it identically to the chosen variant). It is purely presentational and inert
- * — it never touches the active chat. Every interactive-looking control is
- * `tabIndex={-1}` / `aria-hidden`, matching the prior hand-built previews so the
- * onboarding focus-trap traversal still skips it.
+ * ONE metadata source, so the previews can no longer drift apart. The preview
+ * mounts the live composer's first-class picker, context, workspace, transcript
+ * copy, and timecode primitives beneath the same `.app-transcript` provider
+ * scope as a real chat. Interactive regions are `inert`, so the real visual
+ * implementations can render without touching active chat state.
  */
 
 export interface ComposerPreviewMeta {
@@ -154,6 +171,81 @@ function previewProviderIdForStyle(style: ComposerStyle): ProviderId {
   }
 }
 
+function previewModelIdForStyle(style: ComposerStyle): string {
+  switch (style) {
+    case 'codex':
+      return 'gpt-5.5'
+    case 'claude':
+      return 'claude-opus-4-8'
+    case 'cursor':
+      return 'composer-2.5'
+    case 'grok':
+      return 'grok-composer-2.5-fast'
+    case 'gemini':
+      return 'pro'
+    case 'kimi':
+      return 'kimi-k2.7-code'
+    case 'terminal':
+      return 'preview-shell'
+    default:
+      return 'preview-auto'
+  }
+}
+
+function previewPermissionValueForStyle(style: ComposerStyle): string {
+  if (style === 'codex') return 'full_access'
+  if (style === 'claude') return 'plan'
+  if (style === 'kimi') return 'read_only'
+  return 'default'
+}
+
+const NOOP = (): void => {}
+const EMPTY_GRANT_IDS = new Set<AgenticServiceId>()
+const PREVIEW_PLUS_SECTIONS: ComposerPlusPickerSection[] = [
+  {
+    id: 'preview-add',
+    title: 'Add',
+    items: [
+      {
+        id: 'preview-attachment',
+        label: 'Attachment',
+        description: 'Add files or images',
+        icon: <PlusSymbolIcon />,
+        onSelect: NOOP
+      }
+    ]
+  }
+]
+const PREVIEW_WORKSPACE: WorkspaceRecord = {
+  id: 'preview-workspace',
+  path: '/preview/workspace',
+  displayName: 'Preview workspace',
+  lastOpenedAt: 1,
+  createdAt: 1,
+  isGitRepo: true,
+  branch: 'main',
+  pinned: false
+}
+const PREVIEW_ADDITIONAL_GRANTS: ExternalPathGrant[] = [
+  {
+    id: 'preview-secondary-workspace',
+    provider: 'codex',
+    path: '/preview/secondary-workspace',
+    kind: 'directory',
+    access: 'write',
+    duration: 'workspace',
+    createdAt: '2026-07-11T00:00:00.000Z',
+    order: 0
+  }
+]
+const PREVIEW_COPY_RESULT: CopyTranscriptResult = {
+  ok: true,
+  messageCount: 2,
+  charCount: 128,
+  omissions: []
+}
+const copyPreviewTranscript = async (): Promise<CopyTranscriptResult> => PREVIEW_COPY_RESULT
+
 /**
  * The send-button glyph mirrors the live composer's switch
  * (Composer.tsx — `claude` → return arrow, the pill-layout branded shells →
@@ -173,34 +265,6 @@ function PreviewSendGlyph({ composerStyle }: { composerStyle: ComposerStyle }): 
   return <RunSymbolIcon />
 }
 
-function PreviewContextWheel({ control = false }: { control?: boolean }): React.ReactElement {
-  return (
-    <span
-      className="context-wheel settings-composer-preview-context"
-      data-composer-control={control ? 'context' : undefined}
-    >
-      <svg viewBox="0 0 18 18" width="18" height="18">
-        <circle
-          cx="9"
-          cy="9"
-          r="6.6"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          opacity="0.22"
-        />
-        <path
-          d="M9 2.4a6.6 6.6 0 0 1 5.4 10.4"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-        />
-      </svg>
-    </span>
-  )
-}
-
 export interface ComposerShellPreviewProps {
   composerStyle: ComposerStyle
   /** Theme is scoped onto the card via `data-theme` so the preview reflects the
@@ -216,10 +280,10 @@ export interface ComposerShellPreviewProps {
    *  textarea via `resolveComposerFontFamily`. */
   composerFontFamily?: string
   /**
-   * `editable` (Settings) renders a real, focusable `<textarea>` so the user
-   * can type sample text AND see the `:focus-within` shell styling. Onboarding
-   * leaves this off → an inert `aria-hidden` placeholder `<div>` (keeps the
-   * onboarding focus-trap traversal clean).
+   * `editable` (Settings) keeps the live `<textarea>` focusable so the user can
+   * type sample text AND see `:focus-within` shell styling. Onboarding renders
+   * the same textarea read-only beneath `inert`, preserving exact geometry
+   * without adding controls to the sheet's focus trap.
    */
   editable?: boolean
   value?: string
@@ -242,7 +306,32 @@ export function ComposerShellPreview({
 }: ComposerShellPreviewProps): React.ReactElement {
   const meta = getComposerPreviewMeta(composerStyle)
   const previewProviderId = previewProviderIdForStyle(composerStyle)
-  const previewProviderHueClass = previewProviderId
+  const previewModelId = previewModelIdForStyle(composerStyle)
+  const previewPermissionValue = previewPermissionValueForStyle(composerStyle)
+  const previewModelOptions = [{ id: previewModelId, label: meta.modelLabel }]
+  const previewProviderGroups: CombinedModelPickerProviderGroup[] = [
+    {
+      provider: previewProviderId,
+      label: meta.providerLabel,
+      modelOptions: previewModelOptions
+    }
+  ]
+  const previewPermissionOptions: PermissionOption[] = [
+    { value: previewPermissionValue, label: meta.permissionLabel }
+  ]
+  const previewContextPercent = 24
+  const previewContextLabel = '48k / 200k context'
+  const previewContextMeter: ContextMeterModel = {
+    solo: {
+      id: 'solo',
+      provider: previewProviderId,
+      modelId: previewModelId,
+      usedTokens: 48_000,
+      windowTokens: 200_000,
+      percent: previewContextPercent
+    }
+  }
+  const aboveRowsFloatAboveStack = composerStyle === 'cursor' || composerStyle === 'codex'
   const useGitIconAction = composerGitActionUsesCommitIcon(composerStyle)
   const actionClassName = [
     'composer-above-bar-action',
@@ -256,6 +345,56 @@ export function ComposerShellPreview({
       : composerStyle === 'codex' || composerStyle === 'grok' || composerStyle === 'claude'
         ? 'Create PR'
         : 'Review changes'
+  const workspaceAboveRow = (
+    <div
+      className={`composer-above-bar style-unified composer-workspace-above-row${
+        aboveRowsFloatAboveStack ? ' composer-above-bar--cursor-lead' : ''
+      }`}
+      inert
+      aria-hidden="true"
+    >
+      <div className="composer-above-bar-pill composer-above-bar-pill--git">
+        <span className="composer-above-bar-branch">
+          <svg
+            width="13"
+            height="13"
+            viewBox="0 0 16 16"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.4"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden
+          >
+            <circle cx="4" cy="3.5" r="1.6" />
+            <circle cx="4" cy="12.5" r="1.6" />
+            <circle cx="12" cy="7" r="1.6" />
+            <path d="M4 5.1v5.8M5.6 7c2 0 4.8 0 4.8-1.5" />
+          </svg>
+          <span>
+            Preview workspace ·{' '}
+            <span className="composer-above-bar-secondary-branch git-tone-main">main</span>
+          </span>
+        </span>
+      </div>
+      <div className="composer-above-bar-pill composer-above-bar-pill--changes">
+        <span className="composer-above-bar-files-cluster">
+          <span className="composer-above-bar-files">
+            <strong>2</strong> files changed
+          </span>
+          <span className="composer-above-bar-stats">
+            <span className="composer-diff-add">+42</span>
+            <span className="composer-diff-del">-8</span>
+          </span>
+        </span>
+      </div>
+      <div className="composer-above-bar-pill composer-above-bar-pill--action">
+        <button type="button" className={actionClassName}>
+          {useGitIconAction ? <GitCommitSymbolIcon /> : previewActionLabel}
+        </button>
+      </div>
+    </div>
+  )
 
   // Font injection mirrors the prior SettingsPanel preview: only inject when the
   // caller actually supplies the font (onboarding omits both → inherit).
@@ -289,205 +428,157 @@ export function ComposerShellPreview({
         </div>
       </div>
       <div
-        className={`composer-area settings-composer-preview-area interface-${composerStyle}`}
-        aria-label={`${meta.providerLabel} composer preview`}
+        className={`settings-composer-preview-chat app-transcript provider-${previewProviderId} interface-${composerStyle}`}
       >
-        <div className="composer-above-bar-stack">
-          <div className="composer-above-bar style-unified composer-workspace-above-row">
-            <div className="composer-above-bar-pill composer-above-bar-pill--git">
-              <span className="composer-above-bar-branch">
-                <svg
-                  width="13"
-                  height="13"
-                  viewBox="0 0 16 16"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.4"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden
-                >
-                  <circle cx="4" cy="3.5" r="1.6" />
-                  <circle cx="4" cy="12.5" r="1.6" />
-                  <circle cx="12" cy="7" r="1.6" />
-                  <path d="M4 5.1v5.8M5.6 7c2 0 4.8 0 4.8-1.5" />
-                </svg>
-                <span>
-                  Preview workspace ·{' '}
-                  <span className="composer-above-bar-secondary-branch git-tone-main">main</span>
-                </span>
-              </span>
-            </div>
-            <div className="composer-above-bar-pill composer-above-bar-pill--changes">
-              <span className="composer-above-bar-files-cluster">
-                <span className="composer-above-bar-files">
-                  <strong>2</strong> files changed
-                </span>
-                <span className="composer-above-bar-stats">
-                  <span className="composer-diff-add">+42</span>
-                  <span className="composer-diff-del">-8</span>
-                </span>
-              </span>
-            </div>
-            <div className="composer-above-bar-pill composer-above-bar-pill--action">
-              <button type="button" className={actionClassName} tabIndex={-1} aria-hidden="true">
-                {useGitIconAction ? <GitCommitSymbolIcon /> : previewActionLabel}
-              </button>
-            </div>
+        <div
+          className={`composer-area settings-composer-preview-area interface-${composerStyle}`}
+          aria-label={`${meta.providerLabel} composer preview`}
+        >
+          {aboveRowsFloatAboveStack && workspaceAboveRow}
+          <div className="composer-above-bar-stack">
+            {!aboveRowsFloatAboveStack && workspaceAboveRow}
           </div>
-        </div>
-        <div className="composer-surface settings-composer-preview-surface">
-          {/* Refractive "liquid glass" lens — aria-hidden first child of the
-              surface, exactly as the live composer renders it (Composer.tsx).
-              Inert (display:none) unless refraction is enabled AND this card is
-              previewing the native `default` shell; the preview-scoped lighting
-              rule in 04-settings-controls.css re-keys it onto the CARD's
-              data-composer-style so the lens follows the PREVIEWED shell rather
-              than the user's own global shell. */}
-          <div className="composer-refraction-lens" aria-hidden />
-          {/*
-            The textarea + control rows are wrapped in
-            .composer-textarea-wrap / .composer-bottom-controls, both inside
-            .composer-inner-module, mirroring the real default composer (the
-            Obsidian/Alabaster two-rect split + the default-shell inset panel
-            CSS keys off these wrappers; layout-neutral for the other shells via
-            the base `.composer-inner-module { display: contents }` rule).
-          */}
-          <div className="composer-inner-module">
-            <div className="composer-textarea-wrap">
-              {editable ? (
+          <div className="composer-surface settings-composer-preview-surface">
+            {/* The same always-mounted lens node as the live composer. Preview
+                CSS only re-keys its optional lighting to this card's style. */}
+            <div className="composer-refraction-lens" aria-hidden />
+            <div className="composer-inner-module">
+              <div
+                className="composer-textarea-wrap"
+                inert={editable ? undefined : true}
+                aria-hidden={editable ? undefined : 'true'}
+              >
                 <textarea
                   className="composer-textarea settings-composer-preview-textarea"
                   value={value ?? ''}
-                  onChange={(e) => onValueChange?.(e.target.value)}
+                  onChange={editable ? (event) => onValueChange?.(event.target.value) : undefined}
                   placeholder={meta.placeholder}
-                  rows={3}
-                  aria-label="Composer font preview text"
+                  rows={1}
+                  readOnly={!editable}
+                  tabIndex={editable ? undefined : -1}
+                  aria-label={editable ? 'Composer font preview text' : undefined}
                   style={composerFontStyle}
                 />
-              ) : (
-                <div
-                  className="composer-textarea settings-composer-preview-textarea"
-                  aria-hidden="true"
-                  style={{ minHeight: '60px', ...composerFontStyle }}
-                >
-                  {meta.placeholder}
-                </div>
-              )}
-            </div>
-            <div className="composer-bottom-controls">
-              <div className="composer-control-footer settings-composer-preview-footer">
-                <div className="composer-inline-pickers">
-                  <div className="composer-inline-pickers-left" aria-hidden="true">
-                    <button
-                      type="button"
-                      className="composer-picker-label settings-composer-preview-control"
-                      data-composer-control="attach"
-                      tabIndex={-1}
-                    >
-                      +
-                    </button>
-                    <span
-                      className="composer-picker-label settings-composer-preview-control"
-                      data-composer-control="permission"
-                    >
-                      {meta.permissionLabel}
-                    </span>
-                    {composerStyle === 'codex' && <PreviewContextWheel control />}
-                    <button
-                      type="button"
-                      className="composer-combined-picker-trigger settings-composer-preview-control"
-                      data-composer-control="model"
-                      data-provider={previewProviderId}
-                      tabIndex={-1}
-                      aria-hidden="true"
-                      style={
-                        {
-                          '--chip-accent': `var(--provider-${previewProviderHueClass}-color, currentColor)`
-                        } as React.CSSProperties
-                      }
-                    >
-                      <span className="composer-combined-picker-trigger-provider">
-                        <span
-                          className="composer-combined-picker-trigger-provider-icon"
-                          aria-hidden="true"
+              </div>
+              <div className="composer-bottom-controls">
+                <div className="composer-control-footer settings-composer-preview-footer">
+                  <div className="composer-inline-pickers" inert aria-hidden="true">
+                    <div className="composer-inline-pickers-left">
+                      <ComposerPlusPicker
+                        provider={previewProviderId}
+                        composerStyle={composerStyle}
+                        sections={PREVIEW_PLUS_SECTIONS}
+                        triggerIcon={<PlusSymbolIcon />}
+                      />
+                      {composerStyle === 'codex' && (
+                        <ContextMeterPopover
+                          meter={previewContextMeter}
+                          percent={previewContextPercent}
+                          label={previewContextLabel}
+                          provider={previewProviderId}
+                          composerStyle={composerStyle}
+                        />
+                      )}
+                      <CombinedModelPicker
+                        provider={previewProviderId}
+                        composerStyle={composerStyle}
+                        modelOptions={previewModelOptions}
+                        selectedModelId={previewModelId}
+                        onSelectModel={NOOP}
+                        providerGroups={previewProviderGroups}
+                        onSelectProviderModel={NOOP}
+                        reasoningOptions={[]}
+                        selectedReasoning={composerStyle === 'kimi' ? 'on' : ''}
+                        onSelectReasoning={NOOP}
+                        kimiThinkingEnabled={composerStyle === 'kimi'}
+                      />
+                      <CombinedPermissionsPicker
+                        provider={previewProviderId}
+                        composerStyle={composerStyle}
+                        permissionOptions={previewPermissionOptions}
+                        selectedPermission={previewPermissionValue}
+                        onSelectPermission={NOOP}
+                        grantServices={[]}
+                        enabledGrantIds={EMPTY_GRANT_IDS}
+                        agenticServices={DEFAULT_AGENTIC_SERVICES}
+                        onToggleGrant={NOOP}
+                      />
+                    </div>
+                    <div className="composer-inline-actions">
+                      {composerStyle !== 'codex' && (
+                        <ContextMeterPopover
+                          meter={previewContextMeter}
+                          percent={previewContextPercent}
+                          label={previewContextLabel}
+                          provider={previewProviderId}
+                          composerStyle={composerStyle}
+                        />
+                      )}
+                      <span className="composer-send-cluster">
+                        <button
+                          type="button"
+                          className="composer-action-btn run-btn"
+                          title="Run"
+                          aria-label="Preview send button"
                         >
-                          <ProviderBadgeIcon provider={previewProviderId} />
-                        </span>
-                        <span className="composer-combined-picker-trigger-provider-label">
-                          {meta.providerLabel}
-                        </span>
+                          <PreviewSendGlyph composerStyle={composerStyle} />
+                        </button>
                       </span>
-                      <span className="composer-combined-picker-trigger-primary">
-                        {meta.modelLabel}
-                      </span>
-                    </button>
-                  </div>
-                  <div className="composer-inline-actions" aria-hidden="true">
-                    {composerStyle !== 'codex' && <PreviewContextWheel />}
-                    <span className="composer-send-cluster">
-                      <button
-                        type="button"
-                        className="composer-action-btn run-btn"
-                        tabIndex={-1}
-                        aria-label="Preview send button"
-                      >
-                        <PreviewSendGlyph composerStyle={composerStyle} />
-                      </button>
-                    </span>
+                    </div>
                   </div>
                 </div>
               </div>
             </div>
-          </div>
-          {/* Composer telemetry rail (coalesced timecode, Screen-Watch,
-              goal, copy-transcript, the workspace switcher chip, and the
-              token/cost tally) — a sibling of .composer-inner-module inside
-              .composer-surface, matching the live composer. Static/inert. */}
-          <div className="composer-telemetry-row" data-has-token-tally="true" aria-hidden="true">
-            <ComposerTimecode
-              running={false}
-              startedAt={null}
-              cumulativeBaseMs={0}
-              composerStyle={composerStyle}
-              interactive={false}
-            />
-            <button
-              type="button"
-              className="composer-screen-watch-button settings-composer-preview-control"
-              tabIndex={-1}
+            {/* Match the live three-zone telemetry row: centre tools in DOM
+                first, then the CSS-positioned left workspace and right tally. */}
+            <div
+              className="composer-telemetry-row"
+              data-has-token-tally="true"
+              inert
+              aria-hidden="true"
             >
-              <ScreenWatchSymbolIcon />
-            </button>
-            <span className="composer-goal-control-wrap">
-              <button
-                type="button"
-                className="composer-goal-button is-idle settings-composer-preview-control"
-                tabIndex={-1}
-              >
-                <GoalSymbolIcon />
-              </button>
-            </span>
-            <span className="composer-copy-transcript-wrap">
-              <button
-                type="button"
-                className="composer-copy-transcript-button settings-composer-preview-control"
-                tabIndex={-1}
-              >
-                <CopyResponseIcon />
-              </button>
-            </span>
-            <button
-              type="button"
-              className="composer-picker-label composer-workspace-button settings-composer-preview-control"
-              data-composer-control="workspace"
-              tabIndex={-1}
-            >
-              <FolderSymbolIcon />
-              <span className="composer-workspace-button-label">Preview workspace +1</span>
-            </button>
-            <span className="composer-thread-token-tally">1.2M in / 5k out</span>
+              <div className="composer-telemetry-cluster">
+                <button
+                  type="button"
+                  className="composer-screen-watch-button composer-hint-pill"
+                  data-hint-label="Screen Watch"
+                  aria-label="Open Screen Watch picker"
+                >
+                  <ScreenWatchSymbolIcon />
+                </button>
+                <span className="composer-goal-control-wrap">
+                  <button
+                    type="button"
+                    className="composer-goal-button composer-hint-pill is-idle"
+                    data-hint-label="Goal"
+                    aria-label="Set active goal"
+                  >
+                    <GoalSymbolIcon />
+                  </button>
+                </span>
+                <CopyTranscriptButton
+                  resetKey="composer-shell-preview"
+                  composerStyle={composerStyle}
+                  onCopy={copyPreviewTranscript}
+                />
+              </div>
+              <div className="composer-telemetry-side composer-telemetry-side--left">
+                <ComposerWorkspaceSwitcher
+                  workspaces={[PREVIEW_WORKSPACE]}
+                  currentWorkspace={PREVIEW_WORKSPACE}
+                  onPickExisting={NOOP}
+                  onAddNewWorkspace={NOOP}
+                  onSelectNoWorkspace={NOOP}
+                  additionalGrants={PREVIEW_ADDITIONAL_GRANTS}
+                  composerStyle={composerStyle}
+                />
+              </div>
+              <div className="composer-telemetry-side composer-telemetry-side--right">
+                <span className="composer-thread-token-tally">1.2M in / 5k out</span>
+              </div>
+            </div>
           </div>
+          <ComposerThreadTimecodeBar running={false} startedAt={null} cumulativeBaseMs={0} />
         </div>
       </div>
     </div>

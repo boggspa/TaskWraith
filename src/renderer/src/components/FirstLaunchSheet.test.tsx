@@ -514,6 +514,14 @@ describe('FirstLaunchSheet', () => {
     // The composer-area className is now intentional, scoped via
     // the settings-composer-preview-area override.
     expect(html).toMatch(/composer-area[^"]*settings-composer-preview-area/)
+    // The preview now enters the real live-composer provider scope and mounts
+    // the canonical controls beneath inert regions, rather than hand-drawn
+    // lookalikes that can drift from Composer.tsx.
+    expect(html).toContain('settings-composer-preview-chat app-transcript provider-claude interface-claude')
+    expect(html).toContain('composer-image-picker-btn composer-plus-picker-trigger')
+    expect(html).toContain('data-composer-control="model"')
+    expect(html).toContain('data-composer-control="permission"')
+    expect(html).toMatch(/composer-inline-pickers"[^>]*inert=""/)
   })
 
   it('renders the footer Skip + Got it buttons', () => {

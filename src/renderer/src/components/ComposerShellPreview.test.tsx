@@ -42,6 +42,11 @@ function render(style: ComposerStyle, extra: Record<string, unknown> = {}): stri
   )
 }
 
+function previewProvider(style: ComposerStyle): string {
+  if (['codex', 'claude', 'cursor', 'grok', 'gemini', 'kimi'].includes(style)) return style
+  return 'codex'
+}
+
 // The inner markup of the run/send button — lets us assert the glyph differs by
 // shell without coupling to specific SVG path data.
 function sendGlyph(html: string): string {
@@ -58,6 +63,9 @@ describe('ComposerShellPreview — shell parity', () => {
       expect(html).toContain('class="settings-composer-preview-card"')
       expect(html).toContain(`data-composer-style="${style}"`)
       expect(html).toContain(`data-interface-style="${style}"`)
+      expect(html).toContain(
+        `settings-composer-preview-chat app-transcript provider-${previewProvider(style)} interface-${style}`
+      )
       // The composer-area carries the dual class the prior previews + the live
       // composer use; the tightly-coupled FirstLaunchSheet test asserts this too.
       expect(html).toContain(`composer-area settings-composer-preview-area interface-${style}`)
@@ -68,7 +76,11 @@ describe('ComposerShellPreview — shell parity', () => {
       expect(html).toContain('class="composer-inner-module"')
       expect(html).toContain('class="composer-bottom-controls"')
       expect(html).toContain('class="composer-telemetry-row"')
-      expect(html.match(/composer-run-timecode/g)?.length).toBe(1)
+      expect(html).toContain('class="composer-telemetry-cluster"')
+      expect(html).toContain('composer-telemetry-side composer-telemetry-side--left')
+      expect(html).toContain('composer-telemetry-side composer-telemetry-side--right')
+      expect(html).not.toContain('composer-run-timecode')
+      expect(html.match(/class="composer-thread-timecodes"/g)?.length).toBe(1)
       // The refractive-glass lens the live composer renders as the first child of
       // the surface — previously absent from both replicas.
       expect(html).toContain('class="composer-refraction-lens"')
@@ -121,6 +133,50 @@ describe('ComposerShellPreview — single metadata source', () => {
       expect(providerIdentity, style).toBeGreaterThan(-1)
       expect(modelIdentity, style).toBeGreaterThan(providerIdentity)
     }
+  })
+
+  it('mounts the live picker primitives instead of generic preview controls', () => {
+    for (const style of ALL_SHELLS) {
+      const html = render(style)
+      expect(html, style).toContain('composer-image-picker-btn composer-plus-picker-trigger')
+      expect(html, style).toContain('data-composer-control="model"')
+      expect(html, style).toContain('data-composer-control="permission"')
+      expect(html, style).toContain('class="composer-context-trigger')
+      expect(html, style).toContain('class="composer-copy-transcript-button')
+      expect(html, style).toContain('data-composer-control="workspace"')
+      expect(html, style).not.toContain('settings-composer-preview-control')
+      expect(html, style).not.toContain('settings-composer-preview-context')
+    }
+  })
+
+  it('feeds the canonical controls each shell\'s sample selections', () => {
+    const samples: Array<
+      [ComposerStyle, string, string, string, string]
+    > = [
+      ['codex', 'codex', '5.5', 'full_access', 'Full Workspace Access'],
+      ['claude', 'claude', 'Opus 4.8', 'plan', 'Plan'],
+      ['cursor', 'cursor', 'Composer 2.5', 'default', 'Default Approval'],
+      ['grok', 'grok', 'Grok Composer 2.5 Fast', 'default', 'Default Approval'],
+      ['gemini', 'gemini', 'Pro 3.1', 'default', 'Default Approval'],
+      ['kimi', 'kimi', 'K2.7 Code', 'read_only', 'Read workspace'],
+      ['default', 'codex', 'Auto', 'default', 'Default Approval'],
+      ['terminal', 'codex', 'Shell', 'default', 'Ask before tools']
+    ]
+
+    for (const [style, provider, model, permission, permissionLabel] of samples) {
+      const html = render(style)
+      expect(html, style).toContain(`data-provider="${provider}"`)
+      expect(html, style).toContain(model)
+      expect(html, style).toContain(`data-permission-value="${permission}"`)
+      expect(html, style).toContain(permissionLabel)
+    }
+
+    const kimi = render('kimi')
+    expect(kimi).toContain('data-selected-reasoning="on"')
+    expect(kimi).toContain('Thinking')
+
+    const native = render('default')
+    expect(native).toContain('composer-combined-picker-trigger-provider-label">TaskWraith')
   })
 })
 
@@ -188,35 +244,61 @@ describe('ComposerShellPreview — per-shell send glyph', () => {
     expect(codexContext).toBeLessThan(codexModel)
 
     const claude = render('claude')
-    expect(claude).not.toContain('data-composer-control="context"')
     const claudeActions = claude.indexOf('class="composer-inline-actions"')
-    const claudeContext = claude.indexOf('settings-composer-preview-context', claudeActions)
+    const claudeContext = claude.indexOf('data-composer-control="context"', claudeActions)
     const claudeModel = claude.indexOf('data-composer-control="model"')
     expect(claudeActions).toBeGreaterThan(-1)
     expect(claudeContext).toBeGreaterThan(claudeActions)
     expect(claudeContext).toBeGreaterThan(claudeModel)
+
+    const cursor = render('cursor')
+    expect(cursor).toContain('composer-context-trigger composer-context-trigger--cursor')
+    expect(cursor).toContain('composer-context-trigger-pct')
+    expect(cursor).toContain('24%')
+  })
+
+  it('matches live workspace-row placement for floated and stacked shells', () => {
+    for (const style of ['codex', 'cursor'] satisfies ComposerStyle[]) {
+      const html = render(style)
+      const row = html.indexOf('composer-workspace-above-row')
+      const stack = html.indexOf('class="composer-above-bar-stack"')
+      expect(row, style).toBeGreaterThan(-1)
+      expect(row, style).toBeLessThan(stack)
+      expect(html, style).toContain('composer-above-bar--cursor-lead')
+    }
+
+    const grok = render('grok')
+    const grokStack = grok.indexOf('class="composer-above-bar-stack"')
+    const grokRow = grok.indexOf('composer-workspace-above-row')
+    expect(grokRow).toBeGreaterThan(grokStack)
+    expect(grok).not.toContain('composer-above-bar--cursor-lead')
   })
 })
 
 describe('ComposerShellPreview — inertness + modes', () => {
-  it('renders a focusable textarea when editable, an inert placeholder otherwise', () => {
+  it('renders the same first-class textarea as editable or inert', () => {
     const editable = render('claude', { editable: true, value: 'hello' })
     expect(editable).toContain('<textarea')
     expect(editable).toContain('hello')
+    expect(editable).not.toMatch(/composer-textarea-wrap"[^>]*inert/)
 
     const inert = render('claude')
-    expect(inert).not.toContain('<textarea')
-    // The placeholder text is rendered into an aria-hidden div instead.
-    expect(inert).toContain('Describe a task or ask a question')
+    expect(inert).toContain('<textarea')
+    expect(inert).toMatch(/composer-textarea-wrap"[^>]*inert=""[^>]*aria-hidden="true"/)
+    expect(inert).toContain('placeholder="Describe a task or ask a question"')
+    expect(inert).toContain('readOnly=""')
+    expect(inert).toContain('tabindex="-1"')
   })
 
-  it('marks every control inert (tabindex -1 + aria-hidden regions)', () => {
+  it('marks live controls inert without disabled-state chrome', () => {
     const html = render('claude')
-    expect(html).toContain('tabindex="-1"')
-    expect(html).toContain('aria-hidden="true"')
-    // No live click handlers can be asserted via SSR, but the send button must
-    // carry the inert tabindex.
-    expect(html).toMatch(/composer-action-btn run-btn"[^>]*tabindex="-1"/)
+    expect(html).toMatch(/composer-inline-pickers"[^>]*inert=""[^>]*aria-hidden="true"/)
+    expect(html).toMatch(/composer-telemetry-row"[^>]*inert=""[^>]*aria-hidden="true"/)
+    expect(html).toMatch(/composer-workspace-above-row[^>]*inert=""[^>]*aria-hidden="true"/)
+    expect(html).not.toMatch(/composer-plus-picker-trigger[^>]*disabled/)
+    expect(html).not.toMatch(/data-composer-control="model"[^>]*disabled/)
+    expect(html).not.toMatch(/data-composer-control="permission"[^>]*disabled/)
+    expect(html).not.toMatch(/composer-action-btn run-btn[^>]*disabled/)
   })
 
   it('injects the transcript + composer fonts only when provided', () => {

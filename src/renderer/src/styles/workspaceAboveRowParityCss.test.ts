@@ -55,4 +55,21 @@ describe('workspace above-row parity', () => {
     expect(block).toContain('grid-template-columns: minmax(0, max-content) max-content')
     expect(block).not.toContain('data-composer-style="grok"')
   })
+
+  it('lets preview shells inherit live geometry instead of rebuilding it locally', () => {
+    const css = readSource('src/renderer/src/assets/css/04-settings-controls.css')
+
+    expect(css).toContain('.settings-composer-preview-chat.app-transcript {')
+    expect(css).not.toContain(
+      '.settings-composer-preview-card[data-composer-style="grok"]\n  .settings-composer-preview-area'
+    )
+    expect(css).not.toContain('.settings-composer-preview-area .composer-textarea {')
+    expect(css).not.toContain(
+      '.settings-composer-preview-card[data-composer-style="default"] .composer-inner-module {'
+    )
+
+    const controlsStart = css.indexOf('.settings-composer-preview-controls {')
+    const controlsEnd = css.indexOf('}', controlsStart)
+    expect(css.slice(controlsStart, controlsEnd + 1)).toContain('align-items: start')
+  })
 })
