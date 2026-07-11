@@ -12,6 +12,8 @@ import {
   ApprovalsFooterPopover,
   SharesFooterPopover,
   getSharedChatCreateOptions,
+  sidebarChatRowPropsAreEqual,
+  sidebarCompactChatRowPropsAreEqual,
   type SharedChatCreateVariant,
   type WorkspaceBoardCreateInput
 } from './Sidebar'
@@ -367,6 +369,102 @@ describe('Sidebar startup hygiene', () => {
 
     expect(html).toContain('Active workspace chat')
     expect(html).not.toContain('Older workspace chat')
+  })
+})
+
+describe('sidebar row memo comparators', () => {
+  const noop = () => {}
+  const chatA = makeChat({ appChatId: 'a' })
+  const chatB = makeChat({ appChatId: 'b' })
+
+  const fullBase = {
+    chat: chatA,
+    variant: 'workspace' as const,
+    surfaceId: 'workspace-ws-1-a',
+    isSelected: false,
+    isRunning: false,
+    isEditing: false,
+    isCollaborating: false,
+    subThreadCount: 0,
+    liveSubThreadCount: 0,
+    subThreadsExpanded: false,
+    query: '',
+    onSelect: noop,
+    onRowKeyDown: noop,
+    onToggleSubThreads: noop,
+    onStartRename: noop,
+    onSubmitRename: noop,
+    onCancelRename: noop,
+    buildMenuItems: () => []
+  }
+
+  it('SidebarChatRow: ignores function-prop identity but reacts to every data prop', () => {
+    // Only the (recreated-each-render) function props differ → skip re-render.
+    expect(
+      sidebarChatRowPropsAreEqual(fullBase, {
+        ...fullBase,
+        onSelect: () => {},
+        onRowKeyDown: () => {},
+        buildMenuItems: () => []
+      })
+    ).toBe(true)
+
+    // A changed chat OBJECT (the streaming crux) → must re-render.
+    expect(sidebarChatRowPropsAreEqual(fullBase, { ...fullBase, chat: chatB })).toBe(false)
+
+    // Every mutable primitive flips the comparator.
+    for (const patch of [
+      { variant: 'global' as const },
+      { surfaceId: 'global-a' },
+      { isSelected: true },
+      { isRunning: true },
+      { isEditing: true },
+      { isCollaborating: true },
+      { subThreadCount: 1 },
+      { liveSubThreadCount: 1 },
+      { subThreadsExpanded: true },
+      { query: 'x' }
+    ]) {
+      expect(sidebarChatRowPropsAreEqual(fullBase, { ...fullBase, ...patch })).toBe(false)
+    }
+  })
+
+  it('SidebarCompactChatRow: ignores function props, reacts to data + drag proxies', () => {
+    const compactBase = {
+      chat: chatA,
+      variant: 'recents' as const,
+      surfaceId: 'recent-a',
+      isSelected: false,
+      isRunning: false,
+      isEditing: false,
+      query: '',
+      draggable: true,
+      isDragging: false,
+      onSelect: noop,
+      onStartRename: noop,
+      onSubmitRename: noop,
+      onCancelRename: noop,
+      buildMenuItems: () => []
+    }
+    expect(
+      sidebarCompactChatRowPropsAreEqual(compactBase, { ...compactBase, onSelect: () => {} })
+    ).toBe(true)
+    expect(sidebarCompactChatRowPropsAreEqual(compactBase, { ...compactBase, chat: chatB })).toBe(
+      false
+    )
+    for (const patch of [
+      { variant: 'pinned' as const },
+      { isSelected: true },
+      { isRunning: true },
+      { isEditing: true },
+      { draggable: false },
+      { isDragging: true },
+      { query: 'x' }
+    ]) {
+      expect(sidebarCompactChatRowPropsAreEqual(compactBase, { ...compactBase, ...patch })).toBe(
+        false
+      )
+    }
   })
 })
 

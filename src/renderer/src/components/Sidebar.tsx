@@ -1,10 +1,12 @@
 import {
+  memo,
   useCallback,
   useMemo,
   useRef,
   useState,
   useEffect,
   type CSSProperties,
+  type DragEvent as ReactDragEvent,
   type KeyboardEvent,
   type MouseEvent,
   type PointerEvent as ReactPointerEvent,
@@ -1299,6 +1301,343 @@ export function ProviderBadgeIcon({ provider }: { provider?: SidebarProviderBadg
     </span>
   )
 }
+
+/** Provider mnemonic id for a chat's badge — ensembles get their own glyph.
+ * Module scope so the memoized row components can call it without a
+ * per-render Sidebar closure. */
+function getChatProviderBadgeId(chat: ChatRecord): SidebarProviderBadgeId {
+  return chat.chatKind === 'ensemble' ? 'ensemble' : chat.provider || 'gemini'
+}
+
+/** Prop bag spread onto a draggable recents row — the exact shape
+ * `getChatTileDragProps` returns. */
+type SidebarChatTileDragProps = {
+  draggable: boolean
+  onDragStart?: (event: ReactDragEvent<HTMLElement>) => void
+  onDragEnd?: () => void
+  'data-dragging'?: 'true' | undefined
+}
+
+interface SidebarCompactChatRowProps {
+  chat: ChatRecord
+  variant: 'pinned' | 'recents'
+  surfaceId: string
+  isSelected: boolean
+  isRunning: boolean
+  isEditing: boolean
+  query: string
+  /** Comparator proxies for the SSR-relevant fields of `dragHandlers`
+   * (recents only). `dragHandlers` itself is a fresh object each render and
+   * is intentionally NOT compared — these primitives gate re-render. */
+  draggable: boolean
+  isDragging: boolean
+  dragHandlers?: SidebarChatTileDragProps
+  onSelect: (chat: ChatRecord) => void
+  onStartRename: (chat: ChatRecord, surfaceId: string) => void
+  onSubmitRename: (chat: ChatRecord, next: string) => void
+  onCancelRename: () => void
+  buildMenuItems: (chat: ChatRecord, surfaceId: string) => SidebarOverflowMenuItem[]
+}
+
+/**
+ * Memoized compact chat row (Pinned + Recents). Extracted so a background
+ * stream — which churns the `chats` array identity ~60fps but keeps every
+ * NON-streaming ChatRecord object identity stable — re-renders only the
+ * streaming chat's row instead of reconciling every row each frame. All
+ * mutable state is threaded as PRIMITIVES so the comparator can skip.
+ * Markup is byte-identical to the former inline rows (verified via a
+ * before/after SSR diff).
+ */
+function SidebarCompactChatRowInner({
+  chat,
+  variant,
+  surfaceId,
+  isSelected,
+  isRunning,
+  isEditing,
+  query,
+  dragHandlers,
+  onSelect,
+  onStartRename,
+  onSubmitRename,
+  onCancelRename,
+  buildMenuItems
+}: SidebarCompactChatRowProps): ReactNode {
+  const badgeId = getChatProviderBadgeId(chat)
+  const baseClass = variant === 'pinned' ? 'sidebar-pinned-item' : 'sidebar-recents-item'
+  const labelClass = variant === 'pinned' ? 'sidebar-pinned-label' : 'sidebar-recents-label'
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      className={`${baseClass} provider-${badgeId} ${isSelected ? 'active' : ''}`}
+      onClick={() => onSelect(chat)}
+      onKeyDown={(event) => {
+        if (event.target !== event.currentTarget) return
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault()
+          onSelect(chat)
+        }
+      }}
+      title={chat.title}
+      aria-busy={isRunning || undefined}
+      {...(variant === 'recents' && dragHandlers ? dragHandlers : {})}
+    >
+      <ProviderBadgeIcon provider={badgeId} />
+      <SidebarChatTitleEditable
+        chat={chat}
+        className={labelClass}
+        query={query}
+        isEditing={isEditing}
+        onStartEdit={() => onStartRename(chat, surfaceId)}
+        onSubmit={(next) => onSubmitRename(chat, next)}
+        onCancel={onCancelRename}
+      />
+      {variant === 'pinned' ? (
+        isRunning && <SidebarRunningGhost />
+      ) : isRunning ? (
+        <SidebarRunningGhost />
+      ) : (
+        <ChatAgeLabel timestamp={chat.updatedAt || chat.createdAt} />
+      )}
+      <SidebarOverflowMenu triggerLabel="Chat actions" items={buildMenuItems(chat, surfaceId)} />
+    </div>
+  )
+}
+
+export function sidebarCompactChatRowPropsAreEqual(
+  a: SidebarCompactChatRowProps,
+  b: SidebarCompactChatRowProps
+): boolean {
+  return (
+    a.chat === b.chat &&
+    a.variant === b.variant &&
+    a.surfaceId === b.surfaceId &&
+    a.isSelected === b.isSelected &&
+    a.isRunning === b.isRunning &&
+    a.isEditing === b.isEditing &&
+    a.draggable === b.draggable &&
+    a.isDragging === b.isDragging &&
+    a.query === b.query
+  )
+}
+
+const SidebarCompactChatRow = memo(SidebarCompactChatRowInner, sidebarCompactChatRowPropsAreEqual)
+
+interface SidebarChatRowProps {
+  chat: ChatRecord
+  variant: 'workspace' | 'global' | 'shared'
+  surfaceId: string
+  isSelected: boolean
+  isRunning: boolean
+  isEditing: boolean
+  /** Workspace subline "People" badge. Always false for global/shared. */
+  isCollaborating: boolean
+  /** Linked sub-thread counts (workspace only; 0 for global/shared). */
+  subThreadCount: number
+  liveSubThreadCount: number
+  subThreadsExpanded: boolean
+  query: string
+  onSelect: (chat: ChatRecord) => void
+  onRowKeyDown: (event: KeyboardEvent<HTMLDivElement>, chat: ChatRecord) => void
+  onToggleSubThreads: (
+    event: MouseEvent<HTMLSpanElement> | KeyboardEvent<HTMLSpanElement>,
+    parentChatId: string
+  ) => void
+  onStartRename: (chat: ChatRecord, surfaceId: string) => void
+  onSubmitRename: (chat: ChatRecord, next: string) => void
+  onCancelRename: () => void
+  buildMenuItems: (chat: ChatRecord, surfaceId: string) => SidebarOverflowMenuItem[]
+}
+
+/**
+ * Memoized full chat row with subline (Workspace-grouped + Global + Shared).
+ * Same win as SidebarCompactChatRow: only the streaming chat's row re-renders
+ * during a run instead of every row reconciling ~60fps. All mutable state is
+ * threaded as PRIMITIVES; `lastRunStatus`/a11y are derived INSIDE from the
+ * stable `chat` object (never passed — they'd be fresh objects and bust the
+ * memo). Markup is byte-identical per variant to the former inline rows
+ * (verified via a before/after SSR diff). The workspace variant's
+ * `.sidebar-chat-family` wrapper + children block stay at the map site.
+ */
+function SidebarChatRowInner({
+  chat,
+  variant,
+  surfaceId,
+  isSelected,
+  isRunning,
+  isEditing,
+  isCollaborating,
+  subThreadCount,
+  liveSubThreadCount,
+  subThreadsExpanded,
+  query,
+  onSelect,
+  onRowKeyDown,
+  onToggleSubThreads,
+  onStartRename,
+  onSubmitRename,
+  onCancelRename,
+  buildMenuItems
+}: SidebarChatRowProps): ReactNode {
+  const provider = chat.provider || 'gemini'
+  const lastRunStatus = getLastRunStatus(chat)
+  const branchedBadgeTone = liveSubThreadCount > 0 ? 'active' : 'dim'
+  const a11y = buildSidebarChatRowA11y(
+    variant === 'shared'
+      ? {
+          chatId: chat.appChatId,
+          title: chat.title || 'Shared chat',
+          provider: chat.provider,
+          selected: isSelected,
+          isRunning,
+          lastRunStatus,
+          prefix: 'Shared'
+        }
+      : {
+          chatId: chat.appChatId,
+          title: chat.title,
+          provider: chat.provider,
+          selected: isSelected,
+          isRunning,
+          lastRunStatus
+        }
+  )
+  // Per-variant className construction — preserved EXACTLY: workspace/global
+  // use ` ${x ? 'active' : ''}` (space-before-slot, so empty slots leave
+  // trailing/double spaces); shared uses `${x ? ' active' : ''}` (no trailing
+  // space). These strings must stay byte-identical.
+  const className =
+    variant === 'workspace'
+      ? `sidebar-item sidebar-chat-item provider-${provider} ${isSelected ? 'active' : ''} ${isRunning ? 'running' : ''}`
+      : variant === 'global'
+        ? `sidebar-item sidebar-chat-item sidebar-global-chat-item provider-${provider} ${isSelected ? 'active' : ''} ${isRunning ? 'running' : ''}`
+        : `sidebar-item sidebar-chat-item sidebar-shared-chat-item provider-${provider}${isSelected ? ' active' : ''}${isRunning ? ' running' : ''}`
+  const showStatus =
+    lastRunStatus && lastRunStatus.tone !== 'success' && lastRunStatus.tone !== 'muted'
+  const showSubline =
+    variant === 'workspace'
+      ? isRunning || showStatus || subThreadCount > 0 || isCollaborating
+      : isRunning || showStatus
+  const copyTitle = variant === 'shared' ? chat.title || 'Shared chat' : chat.title
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      className={className}
+      onClick={() => onSelect(chat)}
+      onKeyDown={(event) => onRowKeyDown(event, chat)}
+      aria-label={a11y.ariaLabel}
+      aria-current={a11y.ariaCurrent}
+      aria-describedby={a11y.statusDescribedById}
+    >
+      {a11y.statusDescription && (
+        <span id={a11y.statusDescribedById} className="sr-only">
+          {a11y.statusDescription}
+        </span>
+      )}
+      {variant === 'workspace' && subThreadCount > 0 && (
+        <span
+          role="button"
+          tabIndex={0}
+          className="sidebar-tree-toggle sidebar-chat-tree-toggle"
+          onClick={(event) => onToggleSubThreads(event, chat.appChatId)}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter' || event.key === ' ') {
+              onToggleSubThreads(event, chat.appChatId)
+            }
+          }}
+          title={subThreadsExpanded ? 'Collapse sub-threads' : 'Expand sub-threads'}
+          aria-label={subThreadsExpanded ? 'Collapse sub-threads' : 'Expand sub-threads'}
+          aria-expanded={subThreadsExpanded}
+        >
+          <ChevronSymbolIcon isExpanded={subThreadsExpanded} />
+        </span>
+      )}
+      <span className="sidebar-chat-copy" title={copyTitle}>
+        <span className="sidebar-chat-title-line">
+          {variant === 'shared' ? (
+            <ProviderBadgeIcon provider={getChatProviderBadgeId(chat)} />
+          ) : (
+            <SidebarProviderLabel provider={chat.provider} />
+          )}
+          <SidebarChatTitleEditable
+            chat={chat}
+            className="sidebar-chat-title"
+            query={query}
+            isEditing={isEditing}
+            onStartEdit={() => onStartRename(chat, surfaceId)}
+            onSubmit={(next) => onSubmitRename(chat, next)}
+            onCancel={onCancelRename}
+          />
+        </span>
+        {showSubline && (
+          <span className="sidebar-chat-subline">
+            {isRunning ? (
+              <span className="sidebar-run-status tone-running">Running</span>
+            ) : lastRunStatus ? (
+              <span className={`sidebar-run-status tone-${lastRunStatus.tone}`}>
+                {lastRunStatus.label}
+              </span>
+            ) : null}
+            {variant === 'workspace' && subThreadCount > 0 && (
+              <span
+                className={`sidebar-branched-badge sidebar-branched-${branchedBadgeTone}`}
+                title={`${liveSubThreadCount} of ${subThreadCount} linked chat${subThreadCount === 1 ? '' : 's'} running`}
+                aria-label={`linked ${subThreadCount} chat${subThreadCount === 1 ? '' : 's'}`}
+              >
+                linked · {subThreadCount}
+              </span>
+            )}
+            {variant === 'workspace' && isCollaborating && (
+              <span
+                className="sidebar-branched-badge sidebar-shared-badge"
+                title="Shared with collaborators"
+              >
+                People
+              </span>
+            )}
+          </span>
+        )}
+      </span>
+      {variant === 'shared' && (
+        <span
+          className="sidebar-branched-badge sidebar-shared-badge"
+          title="Shared with collaborators"
+        >
+          People
+        </span>
+      )}
+      {isRunning && <SidebarRunningGhost />}
+      {!isRunning && <ChatAgeLabel timestamp={chat.updatedAt || chat.createdAt} />}
+      <SidebarOverflowMenu
+        triggerLabel={variant === 'shared' ? 'Shared chat actions' : 'Chat actions'}
+        items={buildMenuItems(chat, surfaceId)}
+      />
+    </div>
+  )
+}
+
+export function sidebarChatRowPropsAreEqual(
+  a: SidebarChatRowProps,
+  b: SidebarChatRowProps
+): boolean {
+  return (
+    a.chat === b.chat &&
+    a.variant === b.variant &&
+    a.surfaceId === b.surfaceId &&
+    a.isSelected === b.isSelected &&
+    a.isRunning === b.isRunning &&
+    a.isEditing === b.isEditing &&
+    a.isCollaborating === b.isCollaborating &&
+    a.subThreadCount === b.subThreadCount &&
+    a.liveSubThreadCount === b.liveSubThreadCount &&
+    a.subThreadsExpanded === b.subThreadsExpanded &&
+    a.query === b.query
+  )
+}
+
+const SidebarChatRow = memo(SidebarChatRowInner, sidebarChatRowPropsAreEqual)
 
 function SidebarProviderLabel({
   provider,
@@ -2729,13 +3068,13 @@ export function Sidebar({
     visiblePinnedChats.length === 0 &&
     chats.find((c) => c.appChatId === draggedChatId)?.pinned !== true
 
-  const getChatProviderBadgeId = (chat: ChatRecord): SidebarProviderBadgeId => {
-    return chat.chatKind === 'ensemble' ? 'ensemble' : chat.provider || 'gemini'
-  }
-
+  // getChatProviderBadgeId is hoisted to module scope (used by the memoized
+  // row components); renderChatProviderBadge stays local (used by rows still
+  // inline in the Sidebar body).
   const renderChatProviderBadge = (chat: ChatRecord): ReactNode => {
     return <ProviderBadgeIcon provider={getChatProviderBadgeId(chat)} />
   }
+  const cancelChatRename = useCallback(() => setEditingChatTarget(null), [])
   // Linked child chats (agent sub-threads + user side chats) render directly
   // under their parent so the sidebar preserves relationship continuity.
   const subThreadsByParentId = useMemo(() => {
@@ -4415,40 +4754,24 @@ export function Sidebar({
                   ))}
                   {visiblePinnedChats.map((chat) => {
                     const renameSurfaceId = `pinned-${chat.appChatId}`
-                    const isChatRunning = runningChatIdSet.has(chat.appChatId)
                     return (
-                      <div
+                      <SidebarCompactChatRow
                         key={`pinned-chat-${chat.appChatId}`}
-                        role="button"
-                        tabIndex={0}
-                        className={`sidebar-pinned-item provider-${getChatProviderBadgeId(chat)} ${selectedChatId === chat.appChatId ? 'active' : ''}`}
-                        onClick={() => onSelectChat(chat)}
-                        onKeyDown={(event) => {
-                          if (event.target !== event.currentTarget) return
-                          if (event.key === 'Enter' || event.key === ' ') {
-                            event.preventDefault()
-                            onSelectChat(chat)
-                          }
-                        }}
-                        title={chat.title}
-                        aria-busy={isChatRunning || undefined}
-                      >
-                        {renderChatProviderBadge(chat)}
-                        <SidebarChatTitleEditable
-                          chat={chat}
-                          className="sidebar-pinned-label"
-                          query={sidebarSearchQuery}
-                          isEditing={isChatRenameTarget(chat, renameSurfaceId)}
-                          onStartEdit={() => startChatRename(chat, renameSurfaceId)}
-                          onSubmit={(next) => commitChatRename(chat, next)}
-                          onCancel={() => setEditingChatTarget(null)}
-                        />
-                        {isChatRunning && <SidebarRunningGhost />}
-                        <SidebarOverflowMenu
-                          triggerLabel="Chat actions"
-                          items={buildChatMenuItems(chat, renameSurfaceId)}
-                        />
-                      </div>
+                        chat={chat}
+                        variant="pinned"
+                        surfaceId={renameSurfaceId}
+                        isSelected={selectedChatId === chat.appChatId}
+                        isRunning={runningChatIdSet.has(chat.appChatId)}
+                        isEditing={isChatRenameTarget(chat, renameSurfaceId)}
+                        query={sidebarSearchQuery}
+                        draggable={false}
+                        isDragging={false}
+                        onSelect={onSelectChat}
+                        onStartRename={startChatRename}
+                        onSubmitRename={commitChatRename}
+                        onCancelRename={cancelChatRename}
+                        buildMenuItems={buildChatMenuItems}
+                      />
                     )
                   })}
                 </div>
@@ -4501,47 +4824,27 @@ export function Sidebar({
               {!isSectionCollapsed('recents') && (
                 <div className="sidebar-recents-list">
                   {previewSidebarList('recents', visibleRecentChats).map((chat) => {
-                    const chatAgeTimestamp = chat.updatedAt || chat.createdAt
                     const renameSurfaceId = `recent-${chat.appChatId}`
-                    const isChatRunning = runningChatIdSet.has(chat.appChatId)
+                    const dragHandlers = getChatTileDragProps(chat)
                     return (
-                      <div
+                      <SidebarCompactChatRow
                         key={`recent-${chat.appChatId}`}
-                        role="button"
-                        tabIndex={0}
-                        className={`sidebar-recents-item provider-${getChatProviderBadgeId(chat)} ${selectedChatId === chat.appChatId ? 'active' : ''}`}
-                        onClick={() => onSelectChat(chat)}
-                        onKeyDown={(event) => {
-                          if (event.target !== event.currentTarget) return
-                          if (event.key === 'Enter' || event.key === ' ') {
-                            event.preventDefault()
-                            onSelectChat(chat)
-                          }
-                        }}
-                        title={chat.title}
-                        aria-busy={isChatRunning || undefined}
-                        {...getChatTileDragProps(chat)}
-                      >
-                        {renderChatProviderBadge(chat)}
-                        <SidebarChatTitleEditable
-                          chat={chat}
-                          className="sidebar-recents-label"
-                          query={sidebarSearchQuery}
-                          isEditing={isChatRenameTarget(chat, renameSurfaceId)}
-                          onStartEdit={() => startChatRename(chat, renameSurfaceId)}
-                          onSubmit={(next) => commitChatRename(chat, next)}
-                          onCancel={() => setEditingChatTarget(null)}
-                        />
-                        {isChatRunning ? (
-                          <SidebarRunningGhost />
-                        ) : (
-                          <ChatAgeLabel timestamp={chatAgeTimestamp} />
-                        )}
-                        <SidebarOverflowMenu
-                          triggerLabel="Chat actions"
-                          items={buildChatMenuItems(chat, renameSurfaceId)}
-                        />
-                      </div>
+                        chat={chat}
+                        variant="recents"
+                        surfaceId={renameSurfaceId}
+                        isSelected={selectedChatId === chat.appChatId}
+                        isRunning={runningChatIdSet.has(chat.appChatId)}
+                        isEditing={isChatRenameTarget(chat, renameSurfaceId)}
+                        query={sidebarSearchQuery}
+                        draggable={dragHandlers.draggable}
+                        isDragging={dragHandlers['data-dragging'] === 'true'}
+                        dragHandlers={dragHandlers}
+                        onSelect={onSelectChat}
+                        onStartRename={startChatRename}
+                        onSubmitRename={commitChatRename}
+                        onCancelRename={cancelChatRename}
+                        buildMenuItems={buildChatMenuItems}
+                      />
                     )
                   })}
                   {renderSidebarShowMore('recents', visibleRecentChats.length)}
@@ -4929,9 +5232,6 @@ export function Sidebar({
                         <div className="sidebar-chat-list">
                           {previewSidebarList(workspaceListId, workspaceTopLevelChats)
                             .map((chat) => {
-                              const chatAgeTimestamp = chat.updatedAt || chat.createdAt
-                              const isChatRunning = runningChatIdSet.has(chat.appChatId)
-                              const lastRunStatus = getLastRunStatus(chat)
                               const subThreads = subThreadsByParentId.get(chat.appChatId) ?? []
                               // Linked-child badge. Bright while any child is
                               // running, dim once they settle.
@@ -4944,121 +5244,29 @@ export function Sidebar({
                                   count + (runningChatIdSet.has(sub.appChatId) ? 1 : 0),
                                 0
                               )
-                              const branchedBadgeTone = liveSubThreadCount > 0 ? 'active' : 'dim'
                               const renameSurfaceId = `workspace-${ws.id}-${chat.appChatId}`
-                              const workspaceRowA11y = buildSidebarChatRowA11y({
-                                chatId: chat.appChatId,
-                                title: chat.title,
-                                provider: chat.provider,
-                                selected: selectedChatId === chat.appChatId,
-                                isRunning: isChatRunning,
-                                lastRunStatus
-                              })
                               return (
                                 <div key={chat.appChatId} className="sidebar-chat-family">
-                                  <div
-                                    role="button"
-                                    tabIndex={0}
-                                    className={`sidebar-item sidebar-chat-item provider-${chat.provider || 'gemini'} ${selectedChatId === chat.appChatId ? 'active' : ''} ${isChatRunning ? 'running' : ''}`}
-                                    onClick={() => onSelectChat(chat)}
-                                    onKeyDown={(event) => handleChatRowKeyDown(event, chat)}
-                                    aria-label={workspaceRowA11y.ariaLabel}
-                                    aria-current={workspaceRowA11y.ariaCurrent}
-                                    aria-describedby={workspaceRowA11y.statusDescribedById}
-                                  >
-                                    {workspaceRowA11y.statusDescription && (
-                                      <span id={workspaceRowA11y.statusDescribedById} className="sr-only">
-                                        {workspaceRowA11y.statusDescription}
-                                      </span>
-                                    )}
-                                    {subThreadCount > 0 && (
-                                      <span
-                                        role="button"
-                                        tabIndex={0}
-                                        className="sidebar-tree-toggle sidebar-chat-tree-toggle"
-                                        onClick={(event) =>
-                                          toggleSubThreadsExpanded(event, chat.appChatId)
-                                        }
-                                        onKeyDown={(event) => {
-                                          if (event.key === 'Enter' || event.key === ' ') {
-                                            toggleSubThreadsExpanded(event, chat.appChatId)
-                                          }
-                                        }}
-                                        title={
-                                          subThreadsExpanded
-                                            ? 'Collapse sub-threads'
-                                            : 'Expand sub-threads'
-                                        }
-                                        aria-label={
-                                          subThreadsExpanded
-                                            ? 'Collapse sub-threads'
-                                            : 'Expand sub-threads'
-                                        }
-                                        aria-expanded={subThreadsExpanded}
-                                      >
-                                        <ChevronSymbolIcon isExpanded={subThreadsExpanded} />
-                                      </span>
-                                    )}
-                                    <span className="sidebar-chat-copy" title={chat.title}>
-                                      <span className="sidebar-chat-title-line">
-                                        <SidebarProviderLabel provider={chat.provider} />
-                                        <SidebarChatTitleEditable
-                                          chat={chat}
-                                          className="sidebar-chat-title"
-                                          query={sidebarSearchQuery}
-                                          isEditing={isChatRenameTarget(chat, renameSurfaceId)}
-                                          onStartEdit={() => startChatRename(chat, renameSurfaceId)}
-                                          onSubmit={(next) => commitChatRename(chat, next)}
-                                          onCancel={() => setEditingChatTarget(null)}
-                                        />
-                                      </span>
-                                      {(isChatRunning ||
-                                        (lastRunStatus &&
-                                          lastRunStatus.tone !== 'success' &&
-                                          lastRunStatus.tone !== 'muted') ||
-                                        subThreadCount > 0 ||
-                                        collaboratingChatIds.has(chat.appChatId)) && (
-                                        <span className="sidebar-chat-subline">
-                                          {isChatRunning ? (
-                                            <span className="sidebar-run-status tone-running">
-                                              Running
-                                            </span>
-                                          ) : lastRunStatus ? (
-                                            <span
-                                              className={`sidebar-run-status tone-${lastRunStatus.tone}`}
-                                            >
-                                              {lastRunStatus.label}
-                                            </span>
-                                          ) : null}
-                                          {subThreadCount > 0 && (
-                                            <span
-                                              className={`sidebar-branched-badge sidebar-branched-${branchedBadgeTone}`}
-                                              title={`${liveSubThreadCount} of ${subThreadCount} linked chat${subThreadCount === 1 ? '' : 's'} running`}
-                                              aria-label={`linked ${subThreadCount} chat${subThreadCount === 1 ? '' : 's'}`}
-                                            >
-                                              linked · {subThreadCount}
-                                            </span>
-                                          )}
-                                          {collaboratingChatIds.has(chat.appChatId) && (
-                                            <span
-                                              className="sidebar-branched-badge sidebar-shared-badge"
-                                              title="Shared with collaborators"
-                                            >
-                                              People
-                                            </span>
-                                          )}
-                                        </span>
-                                      )}
-                                    </span>
-                                    {isChatRunning && <SidebarRunningGhost />}
-                                    {!isChatRunning && (
-                                      <ChatAgeLabel timestamp={chatAgeTimestamp} />
-                                    )}
-                                    <SidebarOverflowMenu
-                                      triggerLabel="Chat actions"
-                                      items={buildChatMenuItems(chat, renameSurfaceId)}
-                                    />
-                                  </div>
+                                  <SidebarChatRow
+                                    chat={chat}
+                                    variant="workspace"
+                                    surfaceId={renameSurfaceId}
+                                    isSelected={selectedChatId === chat.appChatId}
+                                    isRunning={runningChatIdSet.has(chat.appChatId)}
+                                    isEditing={isChatRenameTarget(chat, renameSurfaceId)}
+                                    isCollaborating={collaboratingChatIds.has(chat.appChatId)}
+                                    subThreadCount={subThreadCount}
+                                    liveSubThreadCount={liveSubThreadCount}
+                                    subThreadsExpanded={subThreadsExpanded}
+                                    query={sidebarSearchQuery}
+                                    onSelect={onSelectChat}
+                                    onRowKeyDown={handleChatRowKeyDown}
+                                    onToggleSubThreads={toggleSubThreadsExpanded}
+                                    onStartRename={startChatRename}
+                                    onSubmitRename={commitChatRename}
+                                    onCancelRename={cancelChatRename}
+                                    buildMenuItems={buildChatMenuItems}
+                                  />
                                   {subThreads.length > 0 && subThreadsExpanded && (
                                     <div className="sidebar-chat-children">
                                       {subThreads.map(renderLinkedChildChat)}
@@ -5115,70 +5323,29 @@ export function Sidebar({
               {!isSectionCollapsed('chats') && (
                 <div className="sidebar-chat-list sidebar-global-chat-list">
                   {previewSidebarList('chats', visibleGlobalChats).map((chat) => {
-                    const chatAgeTimestamp = chat.updatedAt || chat.createdAt
-                    const isChatRunning = runningChatIdSet.has(chat.appChatId)
-                    const lastRunStatus = getLastRunStatus(chat)
                     const renameSurfaceId = `global-${chat.appChatId}`
-                    const globalRowA11y = buildSidebarChatRowA11y({
-                      chatId: chat.appChatId,
-                      title: chat.title,
-                      provider: chat.provider,
-                      selected: selectedChatId === chat.appChatId,
-                      isRunning: isChatRunning,
-                      lastRunStatus
-                    })
                     return (
-                      <div
-                        role="button"
-                        tabIndex={0}
+                      <SidebarChatRow
                         key={chat.appChatId}
-                        className={`sidebar-item sidebar-chat-item sidebar-global-chat-item provider-${chat.provider || 'gemini'} ${selectedChatId === chat.appChatId ? 'active' : ''} ${isChatRunning ? 'running' : ''}`}
-                        onClick={() => onSelectChat(chat)}
-                        onKeyDown={(event) => handleChatRowKeyDown(event, chat)}
-                        aria-label={globalRowA11y.ariaLabel}
-                        aria-current={globalRowA11y.ariaCurrent}
-                        aria-describedby={globalRowA11y.statusDescribedById}
-                      >
-                        {globalRowA11y.statusDescription && (
-                          <span id={globalRowA11y.statusDescribedById} className="sr-only">
-                            {globalRowA11y.statusDescription}
-                          </span>
-                        )}
-                        <span className="sidebar-chat-copy" title={chat.title}>
-                          <span className="sidebar-chat-title-line">
-                            <SidebarProviderLabel provider={chat.provider} />
-                            <SidebarChatTitleEditable
-                              chat={chat}
-                              className="sidebar-chat-title"
-                              query={sidebarSearchQuery}
-                              isEditing={isChatRenameTarget(chat, renameSurfaceId)}
-                              onStartEdit={() => startChatRename(chat, renameSurfaceId)}
-                              onSubmit={(next) => commitChatRename(chat, next)}
-                              onCancel={() => setEditingChatTarget(null)}
-                            />
-                          </span>
-                          {(isChatRunning ||
-                            (lastRunStatus &&
-                              lastRunStatus.tone !== 'success' &&
-                              lastRunStatus.tone !== 'muted')) && (
-                            <span className="sidebar-chat-subline">
-                              {isChatRunning ? (
-                                <span className="sidebar-run-status tone-running">Running</span>
-                              ) : lastRunStatus ? (
-                                <span className={`sidebar-run-status tone-${lastRunStatus.tone}`}>
-                                  {lastRunStatus.label}
-                                </span>
-                              ) : null}
-                            </span>
-                          )}
-                        </span>
-                        {isChatRunning && <SidebarRunningGhost />}
-                        {!isChatRunning && <ChatAgeLabel timestamp={chatAgeTimestamp} />}
-                        <SidebarOverflowMenu
-                          triggerLabel="Chat actions"
-                          items={buildChatMenuItems(chat, renameSurfaceId)}
-                        />
-                      </div>
+                        chat={chat}
+                        variant="global"
+                        surfaceId={renameSurfaceId}
+                        isSelected={selectedChatId === chat.appChatId}
+                        isRunning={runningChatIdSet.has(chat.appChatId)}
+                        isEditing={isChatRenameTarget(chat, renameSurfaceId)}
+                        isCollaborating={false}
+                        subThreadCount={0}
+                        liveSubThreadCount={0}
+                        subThreadsExpanded={false}
+                        query={sidebarSearchQuery}
+                        onSelect={onSelectChat}
+                        onRowKeyDown={handleChatRowKeyDown}
+                        onToggleSubThreads={toggleSubThreadsExpanded}
+                        onStartRename={startChatRename}
+                        onSubmitRename={commitChatRename}
+                        onCancelRename={cancelChatRename}
+                        buildMenuItems={buildChatMenuItems}
+                      />
                     )
                   })}
                   {renderSidebarShowMore('chats', visibleGlobalChats.length)}
@@ -5255,81 +5422,29 @@ export function Sidebar({
               {!isSectionCollapsed('shared') && (
                 <div className="sidebar-chat-list sidebar-shared-chat-list">
                   {previewSidebarList('shared', visibleSharedChats).map((chat) => {
-                    const chatAgeTimestamp = chat.updatedAt || chat.createdAt
-                    const isChatRunning = runningChatIdSet.has(chat.appChatId)
-                    const lastRunStatus = getLastRunStatus(chat)
                     const renameSurfaceId = `shared-${chat.appChatId}`
-                    const sharedRowA11y = buildSidebarChatRowA11y({
-                      chatId: chat.appChatId,
-                      title: chat.title || 'Shared chat',
-                      provider: chat.provider,
-                      selected: selectedChatId === chat.appChatId,
-                      isRunning: isChatRunning,
-                      lastRunStatus,
-                      prefix: 'Shared'
-                    })
                     return (
-                      <div
-                        role="button"
-                        tabIndex={0}
+                      <SidebarChatRow
                         key={chat.appChatId}
-                        className={`sidebar-item sidebar-chat-item sidebar-shared-chat-item provider-${
-                          chat.provider || 'gemini'
-                        }${selectedChatId === chat.appChatId ? ' active' : ''}${
-                          isChatRunning ? ' running' : ''
-                        }`}
-                        onClick={() => onSelectChat(chat)}
-                        onKeyDown={(event) => handleChatRowKeyDown(event, chat)}
-                        aria-label={sharedRowA11y.ariaLabel}
-                        aria-current={sharedRowA11y.ariaCurrent}
-                        aria-describedby={sharedRowA11y.statusDescribedById}
-                      >
-                        {sharedRowA11y.statusDescription && (
-                          <span id={sharedRowA11y.statusDescribedById} className="sr-only">
-                            {sharedRowA11y.statusDescription}
-                          </span>
-                        )}
-                        <span className="sidebar-chat-copy" title={chat.title || 'Shared chat'}>
-                          <span className="sidebar-chat-title-line">
-                            {renderChatProviderBadge(chat)}
-                            <SidebarChatTitleEditable
-                              chat={chat}
-                              className="sidebar-chat-title"
-                              query={sidebarSearchQuery}
-                              isEditing={isChatRenameTarget(chat, renameSurfaceId)}
-                              onStartEdit={() => startChatRename(chat, renameSurfaceId)}
-                              onSubmit={(next) => commitChatRename(chat, next)}
-                              onCancel={() => setEditingChatTarget(null)}
-                            />
-                          </span>
-                          {(isChatRunning ||
-                            (lastRunStatus &&
-                              lastRunStatus.tone !== 'success' &&
-                              lastRunStatus.tone !== 'muted')) && (
-                            <span className="sidebar-chat-subline">
-                              {isChatRunning ? (
-                                <span className="sidebar-run-status tone-running">Running</span>
-                              ) : lastRunStatus ? (
-                                <span className={`sidebar-run-status tone-${lastRunStatus.tone}`}>
-                                  {lastRunStatus.label}
-                                </span>
-                              ) : null}
-                            </span>
-                          )}
-                        </span>
-                        <span
-                          className="sidebar-branched-badge sidebar-shared-badge"
-                          title="Shared with collaborators"
-                        >
-                          People
-                        </span>
-                        {isChatRunning && <SidebarRunningGhost />}
-                        {!isChatRunning && <ChatAgeLabel timestamp={chatAgeTimestamp} />}
-                        <SidebarOverflowMenu
-                          triggerLabel="Shared chat actions"
-                          items={buildChatMenuItems(chat, renameSurfaceId)}
-                        />
-                      </div>
+                        chat={chat}
+                        variant="shared"
+                        surfaceId={renameSurfaceId}
+                        isSelected={selectedChatId === chat.appChatId}
+                        isRunning={runningChatIdSet.has(chat.appChatId)}
+                        isEditing={isChatRenameTarget(chat, renameSurfaceId)}
+                        isCollaborating={false}
+                        subThreadCount={0}
+                        liveSubThreadCount={0}
+                        subThreadsExpanded={false}
+                        query={sidebarSearchQuery}
+                        onSelect={onSelectChat}
+                        onRowKeyDown={handleChatRowKeyDown}
+                        onToggleSubThreads={toggleSubThreadsExpanded}
+                        onStartRename={startChatRename}
+                        onSubmitRename={commitChatRename}
+                        onCancelRename={cancelChatRename}
+                        buildMenuItems={buildChatMenuItems}
+                      />
                     )
                   })}
                   {renderSidebarShowMore('shared', visibleSharedChats.length)}
