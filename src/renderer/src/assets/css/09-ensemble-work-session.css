@@ -3174,11 +3174,10 @@
 }
 
 /* Light + native-glass paints the theme gradient overlay (`none` for the
- * light palettes) on the transcript. When Sky/Weather FX is ON this MUST NOT
- * clobber the light-mode sky-reveal gradient (08) — otherwise the message
- * transcript loses its sky top-fade (the welcome screen kept it only because
- * its `.welcome-mode` rule out-specified this one). Skip it while FX is on. */
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-appearance="native_glass"][data-reduce-transparency="false"]:not([data-fx-enabled="true"]) .app-transcript,
+ * light palettes) whenever this transcript has no mounted sky layer. Keep the
+ * overlay out of the way only for the pane that actually owns Sky/Weather —
+ * the master FX switch can stay on while an individual pane's sky is off. */
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-appearance="native_glass"][data-reduce-transparency="false"] .app-transcript:not(:has(> .sky-visual-fx)),
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-appearance="native_glass"][data-reduce-transparency="false"] .app-settings-pane {
   background-image: var(--theme-gradient-transcript) !important;
 }

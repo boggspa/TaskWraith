@@ -3263,11 +3263,12 @@
   background-image: none !important;
 }
 
-/* Flatten transcript fill when the user dials pane opacity — except
- * light-mode sky reveal, which keeps the top gradient and only scales
- * the solid floor via --transcript-sky-reveal-solid. */
-:root[data-main-pane-opacity-override="true"]:not([data-fx-enabled="true"]) .app-transcript,
-:root[data-main-pane-opacity-override="true"][data-fx-enabled="true"]:not(
+/* Flatten transcript fill when the user dials pane opacity. A light-family
+ * transcript that actually mounts Sky/Weather keeps its top reveal and only
+ * scales the solid floor via --transcript-sky-reveal-solid; every sky-off pane
+ * flattens independently, even while the master FX switch remains enabled. */
+:root[data-main-pane-opacity-override="true"] .app-transcript:not(:has(> .sky-visual-fx)),
+:root[data-main-pane-opacity-override="true"]:not(
     :is([data-theme="light"], [data-theme="citrus"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"])
   )
   .app-transcript {
