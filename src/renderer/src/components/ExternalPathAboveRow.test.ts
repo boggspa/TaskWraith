@@ -49,10 +49,12 @@ function makeSnapshot(overrides: Partial<GitRepositorySnapshot> = {}): GitReposi
   }
 }
 
-function renderWorkspaceRow(overrides: {
-  workspaceDisplayName?: string
-  snapshot?: GitRepositorySnapshot
-} = {}): string {
+function renderWorkspaceRow(
+  overrides: {
+    workspaceDisplayName?: string
+    snapshot?: GitRepositorySnapshot
+  } = {}
+): string {
   const props = {
     grant: makeGrant({ path: '/Users/me/Documents/AGBench', kind: 'directory' }),
     repoMetadata: {
@@ -61,8 +63,7 @@ function renderWorkspaceRow(overrides: {
       branch: 'master'
     },
     snapshot: overrides.snapshot ?? makeSnapshot(),
-    workspaceDisplayName: overrides.workspaceDisplayName,
-    onRevoke: () => {}
+    workspaceDisplayName: overrides.workspaceDisplayName
   }
   return renderToStaticMarkup(createElement(ExternalPathAboveRow, props))
 }
@@ -148,5 +149,34 @@ describe('ExternalPathAboveRow workspace name', () => {
 
     expect(html).toContain('>Client demo · <button')
     expect(html).not.toContain('>TaskWraith · <button')
+  })
+
+  it('uses the same direct three-pill contract as the primary workspace row', () => {
+    const html = renderToStaticMarkup(
+      createElement(ExternalPathAboveRow, {
+        grant: makeGrant({ path: '/Users/me/Documents/AGBench', kind: 'directory' }),
+        repoMetadata: {
+          isRepo: true,
+          repoRoot: '/Users/me/Documents/AGBench',
+          branch: 'master'
+        },
+        snapshot: makeSnapshot(),
+        diffStats: { filesChanged: 2, additions: 7, deletions: 3 },
+        createPrState: { status: 'idle' },
+        onCreatePr: () => undefined,
+        composerStyle: 'cursor'
+      })
+    )
+
+    expect(html).toContain('composer-workspace-above-row')
+    expect(html).not.toContain('composer-above-bar-center-cluster')
+    expect(html).not.toContain('composer-above-bar-trailing-cluster')
+
+    const gitPill = html.indexOf('composer-above-bar-pill--git')
+    const changesPill = html.indexOf('composer-above-bar-pill--changes')
+    const actionPill = html.indexOf('composer-above-bar-pill--action')
+    expect(gitPill).toBeGreaterThan(-1)
+    expect(changesPill).toBeGreaterThan(gitPill)
+    expect(actionPill).toBeGreaterThan(changesPill)
   })
 })

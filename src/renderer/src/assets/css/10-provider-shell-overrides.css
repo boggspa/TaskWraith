@@ -3080,23 +3080,31 @@
 }
 [data-composer-style="cursor"]
   .composer-area
-  > .composer-above-bar--cursor-lead:not(.composer-above-bar-secondary)
+  > .composer-workspace-above-row.composer-above-bar--cursor-lead
   > .composer-above-bar-pill--git,
 [data-composer-style="cursor"]
   .composer-primary-stack
-  > .composer-above-bar--cursor-lead:not(.composer-above-bar-secondary)
+  > .composer-workspace-above-row.composer-above-bar--cursor-lead
   > .composer-above-bar-pill--git {
   flex: 0 1 auto;
   max-width: min(100%, 38rem);
 }
 [data-composer-style="cursor"]
   .composer-area
-  > .composer-above-bar--cursor-lead:not(.composer-above-bar-secondary)
+  > .composer-workspace-above-row.composer-above-bar--cursor-lead
   > .composer-above-bar-pill--changes,
 [data-composer-style="cursor"]
   .composer-primary-stack
-  > .composer-above-bar--cursor-lead:not(.composer-above-bar-secondary)
+  > .composer-workspace-above-row.composer-above-bar--cursor-lead
   > .composer-above-bar-pill--changes {
+  margin-left: auto;
+}
+[data-composer-style="cursor"]
+  :is(.composer-area, .composer-primary-stack)
+  > .composer-workspace-above-row.composer-above-bar--cursor-lead:not(
+    :has(> .composer-above-bar-pill--changes)
+  )
+  > .composer-above-bar-pill--action {
   margin-left: auto;
 }
 [data-composer-style="cursor"] .composer-above-bar-pill--changes {
@@ -3189,48 +3197,11 @@
   align-items: center;
 }
 
-/* Secondary workspace rows — reuse `.composer-above-bar--cursor-lead`
- * (set in JSX) for detached satellite pills above the merged stack. */
+/* Secondary workspace rows reuse the same detached satellite geometry as
+ * the primary row; only the row-to-row gap is specific here. */
 [data-composer-style="cursor"] .composer-area > .composer-above-bar--cursor-lead.composer-above-bar-secondary,
 [data-composer-style="cursor"] .composer-primary-stack > .composer-above-bar--cursor-lead.composer-above-bar-secondary {
   margin-bottom: 6px !important;
-}
-[data-composer-style="cursor"] .composer-above-bar-secondary .composer-above-bar-pill--git {
-  order: 10;
-  flex: 0 1 auto;
-  min-width: 0;
-  max-width: min(100%, 38rem);
-  /* Right-align the trailing group (Commit / Push / Review + revoke)
-   * unconditionally. The changes cluster carried `margin-left: auto`, but it
-   * only renders when there's a diff — with a clean tree the action + revoke
-   * collapsed left against the branch pill. `margin-right: auto` on the git
-   * pill absorbs the free space in EITHER case (it's a no-op next to the
-   * cluster's own auto-margin when a diff is present). */
-  margin-right: auto;
-}
-[data-composer-style="cursor"] .composer-above-bar-secondary .composer-above-bar-center-cluster {
-  order: 30;
-  margin-left: auto;
-}
-[data-composer-style="cursor"] .composer-above-bar-secondary > .composer-above-bar-pill--action {
-  /* Flatten so Review-changes / Push renders as its own pill, then
-   * access + revoke icons sit after it at the far right of the row. */
-  display: contents;
-}
-[data-composer-style="cursor"] .composer-above-bar-secondary .composer-above-bar-trailing-cluster {
-  display: contents;
-}
-[data-composer-style="cursor"] .composer-above-bar-secondary .composer-diff-action-menu-wrap {
-  order: 70 !important;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 10px;
-  border-radius: 999px;
-  background: var(--cursor-shell-fill) !important;
-  border: 1px solid var(--cursor-shell-border) !important;
-  color: var(--cursor-shell-fg) !important;
-  box-shadow: none !important;
 }
 
 /* Inline Review-changes / Create-PR menu (not portaled). */
@@ -4404,8 +4375,7 @@
  * primary and secondary workspace metadata. The center zone is only the
  * files-changed + diff group; left/right zones absorb the spacer. */
 :is([data-composer-style="codex"], [data-composer-style="grok"])
-  .composer-above-bar-stack
-  > .composer-above-bar.style-unified {
+  .composer-workspace-above-row.style-unified {
   display: grid !important;
   grid-template-columns: minmax(0, 1fr) max-content minmax(0, 1fr);
   align-items: center;
@@ -4413,8 +4383,7 @@
 }
 
 :is([data-composer-style="codex"], [data-composer-style="grok"])
-  .composer-above-bar-stack
-  > .composer-above-bar.style-unified
+  .composer-workspace-above-row.style-unified
   > .composer-above-bar-pill {
   display: flex;
   align-items: center;
@@ -4424,8 +4393,7 @@
 }
 
 :is([data-composer-style="codex"], [data-composer-style="grok"])
-  .composer-above-bar-stack
-  > .composer-above-bar.style-unified
+  .composer-workspace-above-row.style-unified
   > .composer-above-bar-pill--git {
   grid-column: 1;
   grid-row: 1;
@@ -4435,8 +4403,7 @@
 }
 
 :is([data-composer-style="codex"], [data-composer-style="grok"])
-  .composer-above-bar-stack
-  > .composer-above-bar.style-unified
+  .composer-workspace-above-row.style-unified
   > .composer-above-bar-pill--git
   .composer-above-bar-branch {
   min-width: 0;
@@ -4444,8 +4411,7 @@
 }
 
 :is([data-composer-style="codex"], [data-composer-style="grok"])
-  .composer-above-bar-stack
-  > .composer-above-bar.style-unified
+  .composer-workspace-above-row.style-unified
   > .composer-above-bar-pill--git
   .composer-above-bar-branch
   > span {
@@ -4456,9 +4422,8 @@
 }
 
 :is([data-composer-style="codex"], [data-composer-style="grok"])
-  .composer-above-bar-stack
-  > .composer-above-bar.style-unified
-  > :is(.composer-above-bar-pill--changes, .composer-above-bar-center-cluster) {
+  .composer-workspace-above-row.style-unified
+  > .composer-above-bar-pill--changes {
   grid-column: 2;
   grid-row: 1;
   justify-self: center;
@@ -4471,8 +4436,7 @@
 }
 
 :is([data-composer-style="codex"], [data-composer-style="grok"])
-  .composer-above-bar-stack
-  > .composer-above-bar.style-unified
+  .composer-workspace-above-row.style-unified
   > .composer-above-bar-pill--action {
   grid-column: 3;
   grid-row: 1;
@@ -4482,12 +4446,7 @@
 }
 
 :is([data-composer-style="codex"], [data-composer-style="grok"])
-  .composer-above-bar-stack
-  > .composer-above-bar.style-unified
-  .composer-above-bar-trailing-cluster,
-:is([data-composer-style="codex"], [data-composer-style="grok"])
-  .composer-above-bar-stack
-  > .composer-above-bar.style-unified
+  .composer-workspace-above-row.style-unified
   .composer-diff-action-menu-wrap {
   margin-left: 0 !important;
   margin-right: 0 !important;
@@ -4496,30 +4455,25 @@
 /* Grok tucked workspace rows need more left-column budget than the symmetric
  * Codex grid: the git pill also carries the sync chip, so equal side columns
  * make the workspace/branch label collapse before the center stats need to. */
-[data-composer-style="grok"]
-  .composer-above-bar-stack
-  > .composer-above-bar.style-unified {
+[data-composer-style="grok"] .composer-workspace-above-row.style-unified {
   grid-template-columns: minmax(0, 1.35fr) max-content minmax(max-content, 0.65fr);
 }
 
 [data-composer-style="grok"]
-  .composer-above-bar-stack
-  > .composer-above-bar.style-unified
+  .composer-workspace-above-row.style-unified
   > .composer-above-bar-pill--git {
   max-width: none;
 }
 
 [data-composer-style="grok"]
-  .composer-above-bar-stack
-  > .composer-above-bar.style-unified
+  .composer-workspace-above-row.style-unified
   > .composer-above-bar-pill--git
   .composer-above-bar-branch {
   flex: 1 1 auto;
 }
 
 [data-composer-style="grok"]
-  .composer-above-bar-stack
-  > .composer-above-bar.style-unified
+  .composer-workspace-above-row.style-unified
   > .composer-above-bar-pill--git
   .git-status-push {
   flex: 0 0 auto;

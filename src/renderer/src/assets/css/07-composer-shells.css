@@ -1082,43 +1082,6 @@
 :not([data-composer-style="cursor"]) .composer-above-bar > .composer-diff-action-menu-wrap {
   order: 80;
 }
-:not([data-composer-style="cursor"]) .composer-above-bar-secondary .composer-diff-action-menu-wrap {
-  margin-left: 0;
-}
-
-.composer-above-bar-center-cluster,
-.composer-above-bar-trailing-cluster {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-.composer-above-bar-center-cluster {
-  order: 30;
-}
-.composer-above-bar-trailing-cluster {
-  order: 70;
-}
-.composer-above-bar-center-cluster .composer-above-bar-files,
-.composer-above-bar-center-cluster .composer-above-bar-stats {
-  margin-left: 0;
-  margin-right: 0;
-}
-/* DOM order inside trailing cluster: the git action leads. !important beats
- * the global 70/80 order ladder when it flattens onto the secondary row. */
-.composer-above-bar-trailing-cluster > * {
-  margin-left: 0;
-  margin-right: 0;
-}
-.composer-above-bar-trailing-cluster .composer-diff-action-menu-wrap {
-  order: 1 !important;
-}
-.composer-above-bar-center-cluster > .composer-above-bar-pill--changes,
-.composer-above-bar-center-cluster > .composer-above-bar-pill--stats {
-  margin-left: 0;
-  margin-right: 0;
-}
-
 .composer-above-bar-files {
   /* New (Phase J1): file-count chip pulled out of the codex-only
    * summary span so the unified above-bar can show file/add/del/branch

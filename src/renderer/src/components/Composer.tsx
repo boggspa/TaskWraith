@@ -1865,7 +1865,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                 const primaryWorkspaceAboveBar =
                   !isWelcomeChat && currentWorkspace && showWorkspaceGitAboveRows ? (
                     <div
-                      className={`composer-above-bar style-unified${
+                      className={`composer-above-bar style-unified composer-workspace-above-row${
                         aboveRowsFloatAboveStack ? ' composer-above-bar--cursor-lead' : ''
                       }`}
                     >

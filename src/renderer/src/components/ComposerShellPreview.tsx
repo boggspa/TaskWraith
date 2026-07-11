@@ -293,7 +293,7 @@ export function ComposerShellPreview({
         aria-label={`${meta.providerLabel} composer preview`}
       >
         <div className="composer-above-bar-stack">
-          <div className="composer-above-bar style-unified">
+          <div className="composer-above-bar style-unified composer-workspace-above-row">
             <div className="composer-above-bar-pill composer-above-bar-pill--git">
               <span className="composer-above-bar-branch">
                 <svg

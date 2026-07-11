@@ -4,17 +4,10 @@
  * repo (per the runtime probe from slice 1); falls back to the path's
  * basename when it's a single file or non-repo folder.
  *
- * Slice 3 of the external-path-redesign arc. Per-repo diff stats and
- * per-repo Create-PR are deferred to slice 6 — this slice ships the
- * scaffolding (row layout + branch label + revoke affordance) so the
- * stack shape is in place before the runtime detector (slice 5)
- * starts producing new grants.
- *
- * The wrapping `.composer-above-bar` class lets this row inherit ALL
- * the per-shell above-bar styling that the primary row already uses
- * (Codex tucked tab, Claude bare-text, Modular floating, Stub
- * parchment, etc.). The stack container in App.tsx renders both the
- * primary row and any number of these secondary rows back-to-back.
+ * The wrapping `.composer-workspace-above-row` contract deliberately
+ * mirrors the primary workspace's three direct pills (git, changes,
+ * action), so every composer shell can apply identical alignment and
+ * spacing to the first and subsequent rows.
  */
 
 import type { ComposerStyle, ExternalPathGrant } from '../../../main/store/types'
@@ -219,10 +212,10 @@ export function ExternalPathAboveRow({
   const [diffMenuOpen, setDiffMenuOpen] = useState(false)
   const needsPush = Boolean(
     snapshot &&
-      !snapshot.detached &&
-      snapshot.branch &&
-      snapshot.remoteUrl &&
-      (!snapshot.upstream || (snapshot.ahead ?? 0) > 0)
+    !snapshot.detached &&
+    snapshot.branch &&
+    snapshot.remoteUrl &&
+    (!snapshot.upstream || (snapshot.ahead ?? 0) > 0)
   )
   // Claude + Cursor shells mirror their desktop apps: the headline is always
   // the single git-action label (Cursor → "Commit"), so the secondary
@@ -252,81 +245,73 @@ export function ExternalPathAboveRow({
       : getProviderName(grant.provider)
   const originTooltip = buildExternalPathOriginTooltip(grant, { providerLabel })
 
-  const diffCluster = hasDiff ? (
-    <span className="composer-above-bar-center-cluster">
-      {/* Single changes pill — files-changed + add/del live in ONE
-          `.composer-above-bar-files-cluster` container, matching the primary
-          workspace row (Composer.tsx) rather than splitting them into two
-          separate pills. */}
-      <div className="composer-above-bar-pill composer-above-bar-pill--changes">
-        <span className="composer-above-bar-files-cluster">
-          <span
-            className="composer-above-bar-files"
-            title={`${diffStats!.filesChanged} ${
-              diffStats!.filesChanged === 1 ? 'file' : 'files'
-            } changed in this path`}
-          >
-            <AnimatedDiffNumber value={diffStats!.filesChanged} strong />{' '}
-            {diffStats!.filesChanged === 1 ? 'file changed' : 'files changed'}
-          </span>
-          {(diffStats!.additions > 0 || diffStats!.deletions > 0) && (
-            <span className="composer-above-bar-stats">
-              <AnimatedDiffNumber
-                value={diffStats!.additions}
-                prefix="+"
-                className="composer-diff-add"
-              />
-              <AnimatedDiffNumber
-                value={diffStats!.deletions}
-                prefix="-"
-                className="composer-diff-del"
-              />
-            </span>
-          )}
+  const diffPill = hasDiff ? (
+    <div className="composer-above-bar-pill composer-above-bar-pill--changes">
+      {/* Match the primary workspace row exactly: one direct changes pill
+          containing the file count and add/del stats. */}
+      <span className="composer-above-bar-files-cluster">
+        <span
+          className="composer-above-bar-files"
+          title={`${diffStats!.filesChanged} ${
+            diffStats!.filesChanged === 1 ? 'file' : 'files'
+          } changed in this path`}
+        >
+          <AnimatedDiffNumber value={diffStats!.filesChanged} strong />{' '}
+          {diffStats!.filesChanged === 1 ? 'file changed' : 'files changed'}
         </span>
-      </div>
-    </span>
+        {(diffStats!.additions > 0 || diffStats!.deletions > 0) && (
+          <span className="composer-above-bar-stats">
+            <AnimatedDiffNumber
+              value={diffStats!.additions}
+              prefix="+"
+              className="composer-diff-add"
+            />
+            <AnimatedDiffNumber
+              value={diffStats!.deletions}
+              prefix="-"
+              className="composer-diff-del"
+            />
+          </span>
+        )}
+      </span>
+    </div>
   ) : null
 
-  const trailingCluster = (
-    <span className="composer-above-bar-trailing-cluster">
-      {showRepoActions && (
-        <span className="composer-diff-action-menu-wrap">
-          <button
-            type="button"
-            className={`composer-above-bar-action ${useGitIconAction ? 'composer-above-bar-action--git-commit-icon' : ''} ${prStatus === 'pending' ? 'is-pending' : ''} ${
-              prStatus === 'error' ? 'is-error' : ''
-            } ${prStatus === 'success' ? 'is-success' : ''}`}
-            onClick={() => setDiffMenuOpen((open) => !open)}
-            disabled={prStatus === 'pending'}
-            aria-haspopup="menu"
-            aria-expanded={diffMenuOpen}
-            aria-label={useGitIconAction ? `${actionLabel}. ${actionTitle}` : undefined}
-            title={actionTitle}
-          >
-            {useGitIconAction ? <GitCommitSymbolIcon /> : actionLabel}
-          </button>
-          {diffMenuOpen && (
-            <div className="composer-diff-action-menu" role="menu">
-              <GitCommitControls
-                workspacePath={grant.path}
-                open={diffMenuOpen}
-                hasReviewableDiff={Boolean(hasDiff)}
-                onReviewChanges={() => onReviewChanges?.()}
-                onClose={() => setDiffMenuOpen(false)}
-                onCreatePr={() => onCreatePr?.(grant)}
-                prState={createPrState ?? { status: 'idle' }}
-              />
-            </div>
-          )}
-        </span>
+  const actionMenu = (
+    <span className="composer-diff-action-menu-wrap">
+      <button
+        type="button"
+        className={`composer-above-bar-action ${useGitIconAction ? 'composer-above-bar-action--git-commit-icon' : ''} ${prStatus === 'pending' ? 'is-pending' : ''} ${
+          prStatus === 'error' ? 'is-error' : ''
+        } ${prStatus === 'success' ? 'is-success' : ''}`}
+        onClick={() => setDiffMenuOpen((open) => !open)}
+        disabled={prStatus === 'pending'}
+        aria-haspopup="menu"
+        aria-expanded={diffMenuOpen}
+        aria-label={useGitIconAction ? `${actionLabel}. ${actionTitle}` : undefined}
+        title={actionTitle}
+      >
+        {useGitIconAction ? <GitCommitSymbolIcon /> : actionLabel}
+      </button>
+      {diffMenuOpen && (
+        <div className="composer-diff-action-menu" role="menu">
+          <GitCommitControls
+            workspacePath={grant.path}
+            open={diffMenuOpen}
+            hasReviewableDiff={Boolean(hasDiff)}
+            onReviewChanges={() => onReviewChanges?.()}
+            onClose={() => setDiffMenuOpen(false)}
+            onCreatePr={() => onCreatePr?.(grant)}
+            prState={createPrState ?? { status: 'idle' }}
+          />
+        </div>
       )}
     </span>
   )
 
   return (
     <div
-      className={`composer-above-bar composer-above-bar-secondary style-unified${
+      className={`composer-above-bar composer-above-bar-secondary style-unified composer-workspace-above-row${
         cursorLeadDetached ? ' composer-above-bar--cursor-lead' : ''
       }`}
       data-external-path-grant-id={grant.id}
@@ -357,11 +342,9 @@ export function ExternalPathAboveRow({
         {snapshot && <GitSyncChip snapshot={snapshot} />}
         <GitPrLifecycleChip pr={pr ?? null} snapshot={snapshot} />
       </div>
-      {diffCluster}
+      {diffPill}
       {showRepoActions && (
-        <div className="composer-above-bar-pill composer-above-bar-pill--action">
-          {trailingCluster}
-        </div>
+        <div className="composer-above-bar-pill composer-above-bar-pill--action">{actionMenu}</div>
       )}
     </div>
   )

@@ -8721,10 +8721,8 @@
 }
 
 /* Even 8px rhythm across files → diff → action. The shared shell rules
- * give the flattened stats chip a legacy 4px margin on top of the row's
- * 10px gap (14px total); -2px matches the action's 8px pairing below.
- * Scoped to the files-cluster so the secondary row's center-cluster
- * (already an 8px gap) is untouched. */
+ * give the stats chip a legacy 4px margin on top of the row's 10px gap;
+ * -2px brings both primary and secondary rows back to the same pairing. */
 [data-composer-style="claude"] .composer-above-bar-files-cluster .composer-above-bar-stats {
   margin-left: -2px;
 }
@@ -11258,10 +11256,8 @@
  * Modular floating, Stub parchment, etc.) apply uniformly to
  * every row in the stack.
  *
- * Secondary rows are slightly less prominent than the primary —
- * tighter padding, dimmed text — so the primary row visually
- * "owns" the workspace identity while secondary rows read as
- * grants attached to the same thread.
+ * Primary and secondary rows deliberately share one geometry contract;
+ * their order communicates hierarchy without shifting text or controls.
  * ============================================================ */
 
 .composer-above-bar-stack {
@@ -11273,12 +11269,10 @@
 }
 
 .composer-above-bar-secondary {
-  /* Secondary rows are visually quieter than the primary — they
-   * represent attached grants, not the main workspace identity. */
-  opacity: 0.92;
-  font-size: calc(var(--font-size-xs) + 0.5px);
-  min-height: 34px;
-  box-sizing: border-box;
+  /* Secondary workspaces use the same geometry and type metrics as the
+   * primary workspace. Hierarchy comes from row order, not a shifted inset. */
+  opacity: 1;
+  font-size: calc(var(--font-size-xs) + 1px);
 }
 
 .composer-above-bar-secondary-branch {
@@ -11287,75 +11281,41 @@
   opacity: 0.78;
 }
 
-/*
- * 1.0.6-EW66-1d — Create-PR action on a secondary row. Tightened
- * padding/size keeps it in proportion with the quieter secondary row
- * while reusing the same pill chrome as the primary workspace's
- * Create-PR button.
- */
-.composer-above-bar-secondary .composer-above-bar-action {
-  margin-left: 0;
-  margin-right: 8px;
-  padding: 2px 9px;
-  font-size: calc(var(--font-size-xs) - 0.5px);
-}
-
-.composer-above-bar-secondary .composer-above-bar-action--git-commit-icon {
-  padding: 0;
-}
-
 /* ============================================================
- * Above-bar zone alignment — primary + secondary workspace rows
+ * Workspace above-row alignment
  * --------------------------------------------------------------
- * Default native: secondary row centers files+diff; trailing
- * (access · revoke · action) hugs the right edge.
- *
- * Claude-family shells: primary row right-anchors files+diff before
- * Create PR; secondary row right-anchors files+diff + trailing
- * cluster as one block. Codex + Grok unchanged.
+ * Primary and secondary workspaces share the same three direct pills:
+ * git identity, changes, and action. Shell rules key off that common
+ * contract so adding a second workspace cannot change chip geometry.
  * ============================================================ */
 
-[data-composer-style="default"] .composer-above-bar-secondary .composer-above-bar-center-cluster {
-  margin-left: auto;
-  margin-right: auto;
-}
-[data-composer-style="default"] .composer-above-bar-secondary .composer-above-bar-trailing-cluster {
-  margin-left: auto;
-}
-
-/* Default native primary — branch/files left, Create-PR action last.
- * Resets stray pill-order / margin-left:auto overrides that were
- * right-aligning the whole row with the action leading. */
+/* Default native — centre the changes group between the workspace identity
+ * and the right-anchored action. Two auto margins mirror the primary row. */
 [data-composer-style="default"]
-  .composer-above-bar:not(.composer-above-bar-secondary)
+  .composer-workspace-above-row
   :is(.composer-above-bar-files, .composer-above-bar-stats, .composer-above-bar-files-cluster) {
   margin-left: 0;
   margin-right: 0;
 }
-[data-composer-style="default"]
-  .composer-above-bar:not(.composer-above-bar-secondary)
-  .composer-above-bar-branch {
+[data-composer-style="default"] .composer-workspace-above-row .composer-above-bar-branch {
   flex: 0 1 auto;
   min-width: 0;
   max-width: min(42%, 28rem);
 }
 [data-composer-style="default"]
-  .composer-above-bar:not(.composer-above-bar-secondary)
-  .composer-above-bar-branch
-  > span {
+  .composer-workspace-above-row
+  .composer-above-bar-branch > span {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 [data-composer-style="default"]
-  .composer-above-bar:not(.composer-above-bar-secondary)
+  .composer-workspace-above-row
   :is(.git-status-merge, .git-status-push, .git-status-ci) {
   flex: 0 0 auto;
 }
-[data-composer-style="default"]
-  .composer-above-bar:not(.composer-above-bar-secondary)
-  .composer-above-bar-files-cluster {
+[data-composer-style="default"] .composer-workspace-above-row .composer-above-bar-files-cluster {
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -11364,19 +11324,19 @@
   white-space: nowrap;
 }
 [data-composer-style="default"]
-  .composer-above-bar:not(.composer-above-bar-secondary)
+  .composer-workspace-above-row
   .composer-above-bar-files-cluster
   :is(.composer-above-bar-files, .composer-above-bar-stats) {
   margin-left: 0;
   margin-right: 0;
 }
-[data-composer-style="default"]
-  .composer-above-bar:not(.composer-above-bar-secondary)
-  .composer-diff-action-menu-wrap {
+[data-composer-style="default"] .composer-workspace-above-row .composer-diff-action-menu-wrap {
   order: 80;
   margin-left: auto;
 }
 
+/* Claude-family shells keep changes + Create PR together at the right edge.
+ * When the tree is clean, the action itself absorbs the free space. */
 :is(
     [data-composer-style="claude"],
     [data-composer-style="gemini"],
@@ -11388,7 +11348,7 @@
     [data-composer-style="obsidian"],
     [data-composer-style="alabaster"]
   )
-  .composer-above-bar:not(.composer-above-bar-secondary)
+  .composer-workspace-above-row
   :is(.composer-above-bar-files-cluster, .composer-above-bar-files) {
   margin-left: auto;
   margin-right: 0;
@@ -11404,7 +11364,7 @@
     [data-composer-style="obsidian"],
     [data-composer-style="alabaster"]
   )
-  .composer-above-bar:not(.composer-above-bar-secondary)
+  .composer-workspace-above-row
   .composer-diff-action-menu-wrap {
   margin-left: 0;
   order: 80 !important;
@@ -11420,110 +11380,62 @@
     [data-composer-style="obsidian"],
     [data-composer-style="alabaster"]
   )
-  .composer-above-bar-secondary
-  .composer-above-bar-center-cluster {
-  margin-left: auto;
-  margin-right: 0;
-}
-:is(
-    [data-composer-style="claude"],
-    [data-composer-style="gemini"],
-    [data-composer-style="kimi"],
-    [data-composer-style="modular"],
-    [data-composer-style="terminal"],
-    [data-composer-style="stub"],
-    [data-composer-style="satellite"],
-    [data-composer-style="obsidian"],
-    [data-composer-style="alabaster"]
-  )
-  .composer-above-bar-secondary
-  .composer-above-bar-trailing-cluster {
-  margin-left: 0;
-}
-:is(
-    [data-composer-style="claude"],
-    [data-composer-style="gemini"],
-    [data-composer-style="kimi"],
-    [data-composer-style="modular"],
-    [data-composer-style="terminal"],
-    [data-composer-style="stub"],
-    [data-composer-style="satellite"],
-    [data-composer-style="obsidian"],
-    [data-composer-style="alabaster"]
-  )
-  .composer-above-bar-secondary:not(:has(.composer-above-bar-center-cluster))
-  .composer-above-bar-trailing-cluster {
+  .composer-workspace-above-row:not(:has(> .composer-above-bar-pill--changes))
+  .composer-diff-action-menu-wrap {
   margin-left: auto;
 }
 
-/* Codex + Grok — primary row three-zone layout: branch/upstream left,
+/* Codex + Grok — shared three-zone layout: branch/upstream left,
  * files+diff centred, Create-PR / Review action right.
  * Pill wrappers are real flex items here (override `display: contents`). */
-[data-composer-style="codex"]
-  .composer-above-bar:not(.composer-above-bar-secondary)
-  > .composer-above-bar-pill,
-[data-composer-style="grok"]
-  .composer-above-bar:not(.composer-above-bar-secondary)
-  > .composer-above-bar-pill {
+[data-composer-style="codex"] .composer-workspace-above-row > .composer-above-bar-pill,
+[data-composer-style="grok"] .composer-workspace-above-row > .composer-above-bar-pill {
   display: flex;
   align-items: center;
   gap: 8px;
   min-width: 0;
 }
 [data-composer-style="codex"]
-  .composer-above-bar:not(.composer-above-bar-secondary)
-  > .composer-above-bar-pill--git,
+  .composer-workspace-above-row > .composer-above-bar-pill--git,
 [data-composer-style="grok"]
-  .composer-above-bar:not(.composer-above-bar-secondary)
-  > .composer-above-bar-pill--git {
+  .composer-workspace-above-row > .composer-above-bar-pill--git {
   flex: 1 1 auto;
   order: 10;
 }
 [data-composer-style="codex"]
-  .composer-above-bar:not(.composer-above-bar-secondary)
-  > .composer-above-bar-pill--changes,
+  .composer-workspace-above-row > .composer-above-bar-pill--changes,
 [data-composer-style="grok"]
-  .composer-above-bar:not(.composer-above-bar-secondary)
-  > .composer-above-bar-pill--changes {
+  .composer-workspace-above-row > .composer-above-bar-pill--changes {
   flex: 0 0 auto;
   order: 30;
   margin-left: auto !important;
   margin-right: auto !important;
 }
 [data-composer-style="codex"]
-  .composer-above-bar:not(.composer-above-bar-secondary)
-  > .composer-above-bar-pill--changes
-  .composer-above-bar-files-cluster {
+  .composer-workspace-above-row
+  > .composer-above-bar-pill--changes .composer-above-bar-files-cluster {
   display: inline-flex;
   align-items: center;
   gap: 8px;
 }
 [data-composer-style="codex"]
-  .composer-above-bar:not(.composer-above-bar-secondary)
-  > .composer-above-bar-pill--action,
+  .composer-workspace-above-row > .composer-above-bar-pill--action,
 [data-composer-style="grok"]
-  .composer-above-bar:not(.composer-above-bar-secondary)
-  > .composer-above-bar-pill--action {
+  .composer-workspace-above-row > .composer-above-bar-pill--action {
   flex: 0 0 auto;
   order: 80;
   margin-left: auto !important;
 }
 [data-composer-style="grok"]
-  .composer-above-bar:not(.composer-above-bar-secondary)
-  > .composer-above-bar-pill--git
-  .composer-above-bar-branch {
+  .composer-workspace-above-row
+  > .composer-above-bar-pill--git .composer-above-bar-branch {
   flex: 0 1 auto;
 }
 
-/* Codex + Grok — secondary external-path rows: strip the unified tray
- * chrome, flex layout, and centre files+diff with trailing controls right. */
+/* Merged Codex/Grok stacks keep chrome on their outer frame. Geometry stays
+ * inherited from the shared workspace row instead of shrinking secondaries. */
 [data-composer-style="codex"] .composer-above-bar-secondary.style-unified,
 [data-composer-style="grok"] .composer-above-bar-secondary.style-unified {
-  display: flex;
-  flex-wrap: nowrap;
-  align-items: center;
-  gap: 8px;
-  padding: 0 !important;
   margin: 0 !important;
   background: transparent !important;
   box-shadow: none !important;
@@ -11536,8 +11448,6 @@
 }
 [data-composer-style="grok"] .composer-above-bar-secondary.style-unified {
   border: none !important;
-  min-height: 40px;
-  padding: 4px 14px !important;
 }
 /* Codex — hairline above the external-path (2nd workspace) row only. */
 [data-composer-style="codex"] .composer-above-bar-stack > .composer-above-bar-secondary {
@@ -11546,47 +11456,6 @@
 [data-composer-style="codex"] .composer-above-bar-secondary::before,
 [data-composer-style="grok"] .composer-above-bar-secondary::before {
   display: none !important;
-}
-[data-composer-style="codex"] .composer-above-bar-secondary .composer-above-bar-center-cluster,
-[data-composer-style="grok"] .composer-above-bar-secondary .composer-above-bar-center-cluster {
-  margin-left: auto;
-  margin-right: auto;
-}
-[data-composer-style="codex"] .composer-above-bar-secondary .composer-above-bar-trailing-cluster,
-[data-composer-style="grok"] .composer-above-bar-secondary .composer-above-bar-trailing-cluster {
-  margin-left: auto;
-}
-[data-composer-style="codex"]
-  .composer-above-bar-secondary:not(:has(.composer-above-bar-center-cluster))
-  .composer-above-bar-trailing-cluster,
-[data-composer-style="grok"]
-  .composer-above-bar-secondary:not(:has(.composer-above-bar-center-cluster))
-  .composer-above-bar-trailing-cluster {
-  margin-left: auto;
-}
-/* Grok secondary — files-changed and diff stats as separate satellites
- * (pill wrappers are layout-transparent; chrome lives on the chips). */
-[data-composer-style="grok"] .composer-above-bar-secondary > .composer-above-bar-pill--git {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  flex: 0 1 auto;
-  min-width: 0;
-  max-width: min(42%, 28rem);
-}
-[data-composer-style="grok"] .composer-above-bar-secondary .composer-above-bar-center-cluster {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  background: transparent !important;
-  border: none !important;
-  padding: 0 !important;
-  box-shadow: none !important;
-}
-[data-composer-style="grok"] .composer-above-bar-secondary > .composer-above-bar-pill--changes,
-[data-composer-style="grok"] .composer-above-bar-secondary > .composer-above-bar-pill--stats,
-[data-composer-style="grok"] .composer-above-bar-secondary .composer-above-bar-center-cluster > .composer-above-bar-pill {
-  display: contents;
 }
 
 /* Tucked Codex tab — when secondary rows are present, the bottom
@@ -11644,13 +11513,8 @@
  * on a single line; let the branch summary ellipsize so nothing wraps. */
 [data-composer-style="codex"] .composer-above-bar-stack:has(.ensemble-above-row)
   > :is(.composer-above-bar, .composer-above-bar-secondary) {
-  /* THE root fix: the Codex shell makes .composer-above-bar a 3-column grid
-   * (1fr auto 1fr) for the solo primary row. The merged ensemble rows inherit
-   * it, which centered the middle chips (col 2 justify-self:center) and
-   * auto-placed the unplaced revoke × onto a new implicit grid row — and a grid
-   * ignores flex-wrap / margin:auto, so the nowrap below did nothing. Force flex
-   * (higher specificity than the grid rule) so the row flows left→right, one
-   * line, with a tighter gap so it fits the reduced-width tucked tab. */
+  /* The compact ensemble stack intentionally switches the shared three-zone
+   * grid to one-line flex, with a tighter gap for the reduced-width tucked tab. */
   display: flex;
   align-items: center;
   flex-wrap: nowrap;

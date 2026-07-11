@@ -63,6 +63,7 @@ describe('ComposerShellPreview — shell parity', () => {
       expect(html).toContain(`composer-area settings-composer-preview-area interface-${style}`)
       // Structural skeleton that the shell CSS targets.
       expect(html).toContain('composer-above-bar style-unified')
+      expect(html).toContain('composer-workspace-above-row')
       expect(html).toContain('class="composer-surface settings-composer-preview-surface"')
       expect(html).toContain('class="composer-inner-module"')
       expect(html).toContain('class="composer-bottom-controls"')
