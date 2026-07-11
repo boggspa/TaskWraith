@@ -208,7 +208,7 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
             accentProvider: 'deep-reinforce'
           },
           {
-            name: 'Liquid - LFM 2.5 8B-1A',
+            name: 'Liquid - LFM 2.5 8B-A1B',
             blurb: 'A 131K-context local tool/thinking model for agentic coding — local inference.',
             accentProvider: 'liquid'
           },

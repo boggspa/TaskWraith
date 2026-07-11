@@ -53,7 +53,7 @@ export const OLLAMA_DISPLAY_BRANDS: readonly OllamaDisplayBrandDefinition[] = [
     providerLabel: 'Liquid',
     providerClass: 'liquid',
     needles: ['lfm2.5', 'lfm 2.5', 'lfm'],
-    fallbackModelLabel: 'LFM 2.5 (8B-1A)'
+    fallbackModelLabel: 'LFM 2.5 (8B-A1B)'
   },
   {
     id: 'nvidia',

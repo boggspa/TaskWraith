@@ -1444,7 +1444,7 @@ published.
   estimates, setup hints, preflight checks, run profiles, rate estimates, and
   iOS companion metadata wired through the desktop and companion surfaces.
 - **Liquid LFM local Ollama model.** Local / Ollama now includes Liquid LFM 2.5
-  (8B-1A) with model labels, context-window estimates, setup hints, and iOS
+  (8B-A1B) with model labels, context-window estimates, setup hints, and iOS
   companion metadata alongside the existing local-model picker surfaces.
 - **Model usage workspace matrix.** Settings -> Model Usage now adds a
   provider/model by workspace matrix for the busiest workspaces, showing diffs,

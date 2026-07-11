@@ -1962,7 +1962,7 @@ public final class RemoteSessionModel: ObservableObject {
             ]},
             {"provider":"ollama","label":"Ollama","models":[
               {"name":"Deep Reinforce - Ornith 9B + Ornith 35B","blurb":"Open-source 262K-context coding models — local inference.","accentProvider":"deep-reinforce"},
-              {"name":"Liquid - LFM 2.5 8B-1A","blurb":"A 131K-context local tool/thinking model for agentic coding — local inference.","accentProvider":"liquid"},
+              {"name":"Liquid - LFM 2.5 8B-A1B","blurb":"A 131K-context local tool/thinking model for agentic coding — local inference.","accentProvider":"liquid"},
               {"name":"Poolside - Laguna XS 2.1 33B-A3B Q8","blurb":"A 262K-context local coding model with tool use and thinking — local inference.","accentProvider":"poolside"}
             ]}
           ]}

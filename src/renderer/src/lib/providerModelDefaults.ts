@@ -301,8 +301,8 @@ const OLLAMA_DEFAULT_MODELS = [
   },
   {
     id: 'lfm2.5:8b',
-    label: 'LFM 2.5 (8B-1A)',
-    description: 'Liquid LFM2.5 8B-1A via Ollama · 131k context · tools/thinking'
+    label: 'LFM 2.5 (8B-A1B)',
+    description: 'Liquid LFM2.5 8B-A1B via Ollama · 131k context · tools/thinking'
   },
   {
     id: 'minicpm-v4.5:8b',

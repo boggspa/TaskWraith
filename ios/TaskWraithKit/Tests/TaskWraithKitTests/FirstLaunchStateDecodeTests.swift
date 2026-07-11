@@ -58,7 +58,7 @@ struct FirstLaunchStateDecodeTests {
           ]},
           {"provider":"ollama","label":"Ollama","models":[
             {"name":"Deep Reinforce - Ornith 9B + Ornith 35B","blurb":"Open-source models for agentic coding.","accentProvider":"deep-reinforce"},
-            {"name":"Liquid - LFM 2.5 8B-1A","blurb":"Local tool/thinking model.","accentProvider":"liquid"},
+            {"name":"Liquid - LFM 2.5 8B-A1B","blurb":"Local tool/thinking model.","accentProvider":"liquid"},
             {"name":"Poolside - Laguna XS 2.1 33B-A3B Q8","blurb":"Local coding model with tool use and thinking.","accentProvider":"poolside"}
           ]}
          ]}

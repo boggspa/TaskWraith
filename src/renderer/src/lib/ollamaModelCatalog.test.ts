@@ -6,7 +6,7 @@ describe('mergeOllamaModelCatalog', () => {
     const models = mergeOllamaModelCatalog([{ id: 'lfm2.5:8b', label: 'lfm2.5:8b' }])
 
     expect(models.find((model) => model.id === 'lfm2.5:8b')?.label).toBe(
-      'LFM 2.5 (8B-1A)'
+      'LFM 2.5 (8B-A1B)'
     )
   })
 
