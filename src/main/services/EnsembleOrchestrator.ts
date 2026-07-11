@@ -77,6 +77,7 @@ import {
   contextCompactionMessageId,
   contextPressureSeverity,
   formatContextCompactionSummary,
+  isContextOverflowErrorText,
   shouldAutoCompactHostContext,
   type ContextCompactionProgressEvent,
   type ContextCompactionSignal,
@@ -163,8 +164,16 @@ const SESSION_ACTIVITY_LEDGER_LIMIT = 40
 const MAX_BOSSMAN_BRIEF_CHARS = 4000
 const BRIEF_SEAT_VALUE_PREVIEW_CHARS = 160
 type HostSeatCompactionProvider = 'cursor' | 'kimi' | 'grok'
+interface PendingSeatOverflowEvidence {
+  provider: HostSeatCompactionProvider
+  model: string
+  linkedProviderSessionId: string | null
+}
 function isHostSeatCompactionProvider(provider: ProviderId): provider is HostSeatCompactionProvider {
   return provider === 'cursor' || provider === 'kimi' || provider === 'grok'
+}
+function seatOverflowEvidenceKey(chatId: string, participantId: string): string {
+  return `${chatId}:${participantId}`
 }
 const CONTINUATION_BLOCKED_PARTICIPANT_STATUSES = new Set<EnsembleParticipantStatus>([
   'answered',
@@ -452,6 +461,13 @@ interface ActiveParticipantRun {
    */
   invalidatePromptShellReceipt?: boolean
   invalidatePromptDynamicStateReceipt?: boolean
+  /**
+   * A provider error channel carried a narrowly-classified context-window
+   * overflow for this active run. This is evidence only: callbacks never
+   * compact inline, and only a failed terminal outcome may promote it to the
+   * per-seat maintenance queue.
+   */
+  classifiedContextOverflow?: boolean
   /**
    * Blackboard entry ids injected into THIS run's prompt (full board on a
    * full briefing; unseen-only on a slim resumed turn). flushRun merges the
@@ -2658,6 +2674,9 @@ export class EnsembleOrchestrator {
   private runsByRunId = new Map<string, ActiveParticipantRun>()
   private bossmanPollTimeoutsById = new Map<string, ReturnType<typeof setTimeout>>()
   private queuedPromptIdCounter = 0
+
+  /** Failed-run overflow evidence waiting for the seat's settled maintenance seam. */
+  private pendingSeatOverflowEvidence = new Map<string, PendingSeatOverflowEvidence>()
 
   constructor(private deps: EnsembleOrchestratorDeps) {}
 
@@ -8418,6 +8437,28 @@ export class EnsembleOrchestrator {
     if (waiter) waiter()
   }
 
+  /**
+   * Record provider-authored context-overflow evidence for an ACTIVE ensemble
+   * run. The route and provider checks keep solo/stale/cross-provider stderr
+   * from influencing a seat. Classification is intentionally delegated only
+   * to the shared narrow matcher (quota and generic token errors stay out).
+   */
+  noteProviderFailureText(
+    provider: ProviderId,
+    routed: AgentRunRoute,
+    text: string | undefined | null
+  ): boolean {
+    if (!isHostSeatCompactionProvider(provider)) return false
+    const runId = routed.appRunId
+    if (!runId) return false
+    const run = this.runsByRunId.get(runId)
+    if (!run || run.participant.provider !== provider) return false
+    if (routed.appChatId && routed.appChatId !== run.chatId) return false
+    if (!isContextOverflowErrorText(text)) return false
+    run.classifiedContextOverflow = true
+    return true
+  }
+
   markRunExited(runId: string | undefined, exitCode: number): boolean {
     if (!runId) return false
     const run = this.runsByRunId.get(runId)
@@ -10449,6 +10490,13 @@ export class EnsembleOrchestrator {
         }
         return
       }
+      // Consume overflow evidence against the exact failed seat snapshot
+      // before queued roster changes can relink that participant id.
+      for (const run of laneRuns) {
+        if (run.status === 'failed' && run.classifiedContextOverflow) {
+          this.maybeAutoCompactSeatAfterTurn(runtime.chatId, run.participant.id)
+        }
+      }
       for (const run of laneRuns) {
         this.applyPendingParticipantSeatChangeFor(runtime, run.participant.id)
       }
@@ -10967,6 +11015,10 @@ export class EnsembleOrchestrator {
     status: EnsembleParticipantStatus,
     reason?: string
   ): void {
+    const promoteOverflowEvidence =
+      status === 'failed' &&
+      run.classifiedContextOverflow === true &&
+      isHostSeatCompactionProvider(run.participant.provider)
     run.status = status
     const runtime = this.roundsByChatId.get(run.chatId)
     if (runtime?.roundId === run.roundId) {
@@ -10979,7 +11031,6 @@ export class EnsembleOrchestrator {
     this.flushRun(run, true, reason)
     this.reconcileBossmanControlAfterRun(run, status)
     this.transitionParticipantRunQueueJob(run, status, reason)
-    run.completion?.(status)
     if (run.laneId) {
       try {
         this.deps.releaseWriteIntentsForLane?.(run.laneId)
@@ -10988,6 +11039,22 @@ export class EnsembleOrchestrator {
       }
     }
     this.runsByRunId.delete(run.runId)
+    // Promote only after the terminal transcript/queue flush and active-run
+    // deletion. Resolving completion last guarantees serial/fanout maintenance
+    // cannot observe the evidence while the failed provider callback is still
+    // unwinding.
+    if (promoteOverflowEvidence) {
+      this.pendingSeatOverflowEvidence.set(
+        seatOverflowEvidenceKey(run.chatId, run.participant.id),
+        {
+          provider: run.participant.provider as HostSeatCompactionProvider,
+          model: run.participant.model || '',
+          linkedProviderSessionId:
+            run.providerSessionId || run.participant.linkedProviderSessionId || null
+        }
+      )
+    }
+    run.completion?.(status)
   }
 
   private transitionParticipantRunQueueJob(
@@ -11878,6 +11945,10 @@ export class EnsembleOrchestrator {
     if (!isHostSeatCompactionProvider(participant.provider)) return null
     if (participant.enabled === false) return null
     if (participant.provider === 'cursor' && !participant.linkedProviderSessionId) return null
+    // Preserve fresh evidence while another summarize/reset is already in
+    // flight. The dispatch barrier will await that work; a later settled check
+    // can decide whether the new overflow still needs its own attempt.
+    if (this.deps.awaitPendingSeatCompaction?.(chatId, participant.id)) return null
     const lastAttempt = this.seatAutoCompactLastAttemptAt.get(participant.id)
     if (
       lastAttempt !== undefined &&
@@ -11887,6 +11958,41 @@ export class EnsembleOrchestrator {
     }
     const chat = this.deps.getChat(chatId)
     if (!chat?.ensemble) return null
+    const evidenceKey = seatOverflowEvidenceKey(chatId, participant.id)
+    const overflowEvidence = this.pendingSeatOverflowEvidence.get(evidenceKey)
+    const currentSeatFingerprint = {
+      provider: participant.provider,
+      model: participant.model || '',
+      linkedProviderSessionId: participant.linkedProviderSessionId || null
+    }
+    if (
+      overflowEvidence &&
+      (overflowEvidence.provider !== currentSeatFingerprint.provider ||
+        overflowEvidence.model !== currentSeatFingerprint.model ||
+        overflowEvidence.linkedProviderSessionId !== currentSeatFingerprint.linkedProviderSessionId)
+    ) {
+      // Provider/model/session relinks replace the context that produced the
+      // failure. Drop stale evidence fail-open rather than compacting the new
+      // seat merely because it reuses the participant id.
+      this.pendingSeatOverflowEvidence.delete(evidenceKey)
+    } else if (
+      overflowEvidence &&
+      shouldAutoCompactHostContext(participant.provider, {
+        kind: 'classified_context_overflow'
+      })
+    ) {
+      // Consume on acceptance, before invoking the async maintenance lane.
+      // Repeated stderr/result/exit observations therefore collapse to one
+      // attempt, and the cooldown contains a failed summarize turn.
+      this.pendingSeatOverflowEvidence.delete(evidenceKey)
+      this.seatAutoCompactLastAttemptAt.set(participant.id, this.deps.now())
+      return {
+        chatId,
+        participantId: participant.id,
+        provider: participant.provider,
+        trigger: 'auto'
+      }
+    }
     if (participant.provider === 'kimi') {
       const messageIds = findUncoveredEnsemblePromptMessageIds({
         chat,

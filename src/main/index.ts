@@ -911,7 +911,13 @@ import {
   cursorReadOnlyMcpEnabled
 } from './cursorGate'
 import { buildCursorCliArgs, buildCursorProviderCliArgs, cursorWriteCapable } from './cursor/CursorCliArgs'
-import { cursorEventToRunEvents, type NormalizedCursorRunEvent } from './cursor/CursorStreamJson'
+import {
+  cursorEffectiveExitCode,
+  cursorEventToRunEvents,
+  cursorTerminalCompatOutcome,
+  cursorTerminalFailureText,
+  type NormalizedCursorRunEvent
+} from './cursor/CursorStreamJson'
 import {
   applyCursorWriteModeConfig,
   cursorWriteModeSetupFailureMessage,
@@ -10512,6 +10518,50 @@ function applyCursorRunEvent(state: CliProviderStreamState, evt: NormalizedCurso
         total_cost_usd: 0
       }
     }
+    const outcome = cursorTerminalCompatOutcome(evt)
+    if (!outcome) return
+    if (outcome.failed) {
+      // Cursor may return `is_error:true` and still exit the process with code
+      // 0. Feed its terminal text through the same error chokepoint as stderr
+      // so ensemble overflow classification sees it before the failed result
+      // settles the run.
+      sendAgentCompatError(state.sender, 'cursor', cursorTerminalFailureText(evt), state)
+    } else if (outcome.text) {
+      // The terminal `result` is Cursor's authoritative full answer. Re-emit it
+      // as a tagged cumulative snapshot: the shared fold drops an exact repeat,
+      // appends only a missing tail, and preserves result-only answers.
+      state.assistantText = outcome.text
+      sendAgentCompatLine(
+        state.sender,
+        'cursor',
+        {
+          type: 'content',
+          text: outcome.text,
+          provider: 'cursor',
+          runItemCumulative: true
+        },
+        state
+      )
+    }
+    state.terminalResultFailed = outcome.failed
+    state.completed = true
+    sendAgentCompatLine(
+      state.sender,
+      'cursor',
+      {
+        type: 'result',
+        status: outcome.status,
+        subtype: outcome.subtype,
+        stats: {
+          ...(state.tokenUsage || {}),
+          duration_ms: Date.now() - state.startedAt
+        },
+        provider: 'cursor',
+        providerThreadId: state.providerSessionId || undefined,
+        fallback: state.fallback
+      },
+      state
+    )
   } else if (evt.type === 'provider_warning' && evt.text) {
     sendAgentCompatError(state.sender, 'cursor', evt.text, state)
   }
@@ -11031,6 +11081,10 @@ function runCliProviderProcess(
     // "Task complete / success". Surface the real reason + a short note instead.
     const grokStopped =
       provider === 'grok' && !!state.grokStopReason && state.grokStopReason !== 'success'
+    const effectiveExitCode =
+      provider === 'cursor'
+        ? cursorEffectiveExitCode(code, state.terminalResultFailed === true)
+        : code
     if (grokStopped && !state.completed) {
       sendAgentCompatLine(
         event.sender,
@@ -11051,7 +11105,8 @@ function runCliProviderProcess(
         provider,
         {
           type: 'result',
-          status: grokStopped ? state.grokStopReason! : code === 0 ? 'success' : 'failed',
+          status:
+            grokStopped ? state.grokStopReason! : effectiveExitCode === 0 ? 'success' : 'failed',
           stats: {
             ...(state.tokenUsage || {}),
             duration_ms: Date.now() - state.startedAt
@@ -11063,9 +11118,9 @@ function runCliProviderProcess(
         state
       )
     }
-    sendAgentCompatExit(event.sender, provider, code, state)
+    sendAgentCompatExit(event.sender, provider, effectiveExitCode, state)
     if (cliProviderProcesses.get(provider) === child) cliProviderProcesses.delete(provider)
-    runManager.finish(route.appRunId, code === 0 ? 'completed' : 'failed')
+    runManager.finish(route.appRunId, effectiveExitCode === 0 ? 'completed' : 'failed')
     runOnComplete()
   })
 }
@@ -14202,6 +14257,7 @@ function sendAgentCompatError(
   route?: AgentRunRoute | null
 ) {
   const routed = enrichAgentPayload(provider, { error }, route)
+  ensembleOrchestratorRef?.noteProviderFailureText(provider, routed, error)
   appendDurableRunEventForRoute(
     provider,
     routed,

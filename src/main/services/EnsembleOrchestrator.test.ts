@@ -263,6 +263,12 @@ function makeHarness(
       chatId: string,
       participantId: string
     ) => Promise<unknown> | undefined
+    compactSeatContext?: (input: {
+      chatId: string
+      participantId: string
+      provider: 'cursor' | 'kimi' | 'grok'
+      trigger: 'auto'
+    }) => Promise<{ ok: boolean; error?: string }>
     onContextCompactionProgress?: (event: ContextCompactionProgressEvent) => void
     scheduleWakeupTimer?: (wakeup: EnsembleWakeupRecord) => void
     cancelWakeupTimer?: (wakeupId: string) => void
@@ -287,6 +293,8 @@ function makeHarness(
       partial?: { statusReason?: string; lastError?: string }
     ) => unknown
     nowIso?: () => string
+    now?: () => number
+    getSettings?: () => AppSettings
     getProviderUsageSnapshot?: (provider: EnsembleParticipant['provider']) => any
     recordUsage?: (entry: Omit<UsageRecord, 'id' | 'timestamp'>) => void
     recordBossmanControlRejection?: (rejection: {
@@ -324,17 +332,18 @@ function makeHarness(
     saveChat: (next) => {
       chat = next
     },
-    getSettings: makeSettings,
+    getSettings: options.getSettings ?? makeSettings,
     dispatch,
     cancelRun,
     ...(options.awaitPendingSeatCompaction
       ? { awaitPendingSeatCompaction: options.awaitPendingSeatCompaction }
       : {}),
+    ...(options.compactSeatContext ? { compactSeatContext: options.compactSeatContext } : {}),
     ...(options.onContextCompactionProgress
       ? { onContextCompactionProgress: options.onContextCompactionProgress }
       : {}),
     createRunId: (provider) => `${provider}-run-${++counter}`,
-    now: () => counter,
+    now: options.now ?? (() => counter),
     nowIso: options.nowIso ?? (() => `2026-05-24T00:00:0${counter}.000Z`),
     ...(options.signRunPermissionPosture
       ? { signRunPermissionPosture: options.signRunPermissionPosture }
@@ -12825,6 +12834,328 @@ describe('dynamic-state receipt invalidation', () => {
         harness.chat.ensemble?.participants.find((participant) => participant.id === 'claude')
           ?.promptDynamicStateVersion
       ).toBeUndefined()
+    })
+  })
+})
+
+describe('classified context-overflow seat relief', () => {
+  const overflowText = "This model's maximum context length is 128000 tokens"
+
+  function hostSeatChat(
+    provider: 'cursor' | 'kimi' | 'grok',
+    id = provider
+  ): ChatRecord {
+    const chat = makeChat()
+    chat.ensemble!.participants = [
+      {
+        id,
+        provider,
+        enabled: true,
+        role: 'Worker',
+        instructions: 'Work.',
+        order: 1,
+        model: `${provider}-model`,
+        permissionPresetId: 'read_only',
+        ...(provider === 'cursor' ? { linkedProviderSessionId: 'cursor-session' } : {})
+      }
+    ]
+    return chat
+  }
+
+  it('compacts once only after a matching failed serial run settles', async () => {
+    const compactSeatContext = vi.fn(async () => ({ ok: true }))
+    const harness = makeHarness({
+      initialChat: hostSeatChat('cursor'),
+      compactSeatContext
+    })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Use the Cursor worker.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const route = {
+      appRunId: harness.dispatched[0].appRunId,
+      appChatId: 'ensemble-chat'
+    }
+
+    expect(
+      harness.orchestrator.noteProviderFailureText('cursor', { ...route, appChatId: 'wrong' }, overflowText)
+    ).toBe(false)
+    expect(harness.orchestrator.noteProviderFailureText('kimi', route, overflowText)).toBe(false)
+    expect(
+      harness.orchestrator.noteProviderFailureText('cursor', route, 'Too many tokens for team')
+    ).toBe(false)
+    expect(harness.orchestrator.noteProviderFailureText('cursor', route, overflowText)).toBe(true)
+    expect(harness.orchestrator.noteProviderFailureText('cursor', route, overflowText)).toBe(true)
+    expect(compactSeatContext).not.toHaveBeenCalled()
+
+    harness.orchestrator.handleProviderOutput('cursor', route, {
+      type: 'result',
+      status: 'failed'
+    })
+
+    await vi.waitFor(() => expect(compactSeatContext).toHaveBeenCalledTimes(1))
+    expect(compactSeatContext).toHaveBeenCalledWith({
+      chatId: 'ensemble-chat',
+      participantId: 'cursor',
+      provider: 'cursor',
+      trigger: 'auto'
+    })
+    expect(harness.orchestrator.noteProviderFailureText('cursor', route, overflowText)).toBe(false)
+  })
+
+  it('does not promote classified text from successful or cancelled runs', async () => {
+    const successCompact = vi.fn(async () => ({ ok: true }))
+    const success = makeHarness({
+      initialChat: hostSeatChat('kimi'),
+      compactSeatContext: successCompact
+    })
+    success.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Try the shorter request.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(success.dispatched).toHaveLength(1))
+    const successRoute = {
+      appRunId: success.dispatched[0].appRunId,
+      appChatId: 'ensemble-chat'
+    }
+    expect(success.orchestrator.noteProviderFailureText('kimi', successRoute, overflowText)).toBe(true)
+    success.orchestrator.handleProviderOutput('kimi', successRoute, {
+      type: 'result',
+      status: 'success'
+    })
+    await vi.waitFor(() => expect(success.chat.ensemble?.activeRound?.status).toBe('completed'))
+    expect(successCompact).not.toHaveBeenCalled()
+
+    const cancelledCompact = vi.fn(async () => ({ ok: true }))
+    const cancelled = makeHarness({
+      initialChat: hostSeatChat('grok'),
+      compactSeatContext: cancelledCompact
+    })
+    cancelled.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Start then cancel.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(cancelled.dispatched).toHaveLength(1))
+    const cancelledRoute = {
+      appRunId: cancelled.dispatched[0].appRunId,
+      appChatId: 'ensemble-chat'
+    }
+    expect(
+      cancelled.orchestrator.noteProviderFailureText('grok', cancelledRoute, overflowText)
+    ).toBe(true)
+    await cancelled.orchestrator.cancelRound('ensemble-chat')
+    expect(cancelledCompact).not.toHaveBeenCalled()
+  })
+
+  it('keeps evidence behind an in-flight barrier and drops it after a seat relink', async () => {
+    let compactionBarrierActive = false
+    const compactSeatContext = vi.fn(async () => ({ ok: true }))
+    const harness = makeHarness({
+      initialChat: hostSeatChat('cursor'),
+      compactSeatContext,
+      awaitPendingSeatCompaction: () =>
+        compactionBarrierActive ? Promise.resolve({ ok: true }) : undefined
+    })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Overflow the original seat.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const route = {
+      appRunId: harness.dispatched[0].appRunId,
+      appChatId: 'ensemble-chat'
+    }
+    expect(harness.orchestrator.noteProviderFailureText('cursor', route, overflowText)).toBe(true)
+    compactionBarrierActive = true
+    harness.orchestrator.handleProviderOutput('cursor', route, {
+      type: 'result',
+      status: 'failed'
+    })
+    await vi.waitFor(() => expect(harness.chat.ensemble?.activeRound?.status).toBe('completed'))
+    expect(compactSeatContext).not.toHaveBeenCalled()
+
+    const seat = harness.chat.ensemble!.participants[0]
+    seat.model = 'cursor-relinked-model'
+    seat.linkedProviderSessionId = 'cursor-relinked-session'
+    compactionBarrierActive = false
+    ;(
+      harness.orchestrator as unknown as {
+        maybeAutoCompactSeatAfterTurn: (chatId: string, participantId: string) => void
+      }
+    ).maybeAutoCompactSeatAfterTurn('ensemble-chat', seat.id)
+
+    expect(compactSeatContext).not.toHaveBeenCalled()
+    const pending = (
+      harness.orchestrator as unknown as {
+        pendingSeatOverflowEvidence: Map<string, unknown>
+      }
+    ).pendingSeatOverflowEvidence
+    expect(pending.size).toBe(0)
+  })
+
+  it('honors the host auto-compaction kill switch for classified overflow', async () => {
+    let hostAutoCompactEnabled = false
+    const compactSeatContext = vi.fn(async () => ({ ok: true }))
+    const harness = makeHarness({
+      initialChat: hostSeatChat('grok'),
+      compactSeatContext,
+      getSettings: () => ({ ...makeSettings(), hostAutoCompactEnabled })
+    })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Keep automatic recovery disabled.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const route = {
+      appRunId: harness.dispatched[0].appRunId,
+      appChatId: 'ensemble-chat'
+    }
+    expect(harness.orchestrator.noteProviderFailureText('grok', route, overflowText)).toBe(true)
+    harness.orchestrator.handleProviderOutput('grok', route, {
+      type: 'result',
+      status: 'failed'
+    })
+    await vi.waitFor(() => expect(harness.chat.ensemble?.activeRound?.status).toBe('completed'))
+    expect(compactSeatContext).not.toHaveBeenCalled()
+
+    hostAutoCompactEnabled = true
+    ;(
+      harness.orchestrator as unknown as {
+        maybeAutoCompactSeatAfterTurn: (chatId: string, participantId: string) => void
+      }
+    ).maybeAutoCompactSeatAfterTurn('ensemble-chat', 'grok')
+    await vi.waitFor(() => expect(compactSeatContext).toHaveBeenCalledTimes(1))
+  })
+
+  it('retains new classified evidence until the per-seat cooldown expires', async () => {
+    let clock = 1_000
+    const compactSeatContext = vi.fn(async () => ({ ok: true }))
+    const harness = makeHarness({
+      initialChat: hostSeatChat('cursor'),
+      compactSeatContext,
+      now: () => clock
+    })
+    const failRoundWithOverflow = async (prompt: string): Promise<void> => {
+      const expectedDispatchCount = harness.dispatched.length + 1
+      harness.orchestrator.startRound({
+        chatId: 'ensemble-chat',
+        prompt,
+        event: { sender: {} as Electron.WebContents }
+      })
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(expectedDispatchCount))
+      const payload = harness.dispatched.at(-1)!
+      const route = { appRunId: payload.appRunId, appChatId: 'ensemble-chat' }
+      expect(harness.orchestrator.noteProviderFailureText('cursor', route, overflowText)).toBe(true)
+      harness.orchestrator.handleProviderOutput('cursor', route, {
+        type: 'result',
+        status: 'failed'
+      })
+      await vi.waitFor(() => expect(harness.chat.ensemble?.activeRound?.status).toBe('completed'))
+    }
+
+    await failRoundWithOverflow('First overflow.')
+    await vi.waitFor(() => expect(compactSeatContext).toHaveBeenCalledTimes(1))
+
+    clock += CONTEXT_AUTO_COMPACT_COOLDOWN_MS - 1
+    await failRoundWithOverflow('Second overflow inside cooldown.')
+    expect(compactSeatContext).toHaveBeenCalledTimes(1)
+
+    clock += 1
+    ;(
+      harness.orchestrator as unknown as {
+        maybeAutoCompactSeatAfterTurn: (chatId: string, participantId: string) => void
+      }
+    ).maybeAutoCompactSeatAfterTurn('ensemble-chat', 'cursor')
+    await vi.waitFor(() => expect(compactSeatContext).toHaveBeenCalledTimes(2))
+  })
+
+  it('waits for every fan-out lane before starting overflow maintenance', async () => {
+    const chat = makeChat()
+    chat.ensemble!.participants = [
+      {
+        id: 'lead',
+        provider: 'codex',
+        enabled: true,
+        role: 'Lead',
+        instructions: 'Lead.',
+        order: 1,
+        permissionPresetId: 'workspace_write'
+      },
+      {
+        id: 'cursor-lane',
+        provider: 'cursor',
+        enabled: true,
+        role: 'Cursor lane',
+        instructions: 'Inspect.',
+        order: 2,
+        model: 'cursor-model',
+        permissionPresetId: 'read_only',
+        linkedProviderSessionId: 'cursor-session'
+      },
+      {
+        id: 'grok-lane',
+        provider: 'grok',
+        enabled: true,
+        role: 'Grok lane',
+        instructions: 'Inspect.',
+        order: 3,
+        model: 'grok-model',
+        permissionPresetId: 'read_only'
+      }
+    ]
+    const compactSeatContext = vi.fn(async () => ({ ok: true }))
+    const harness = makeHarness({ initialChat: chat, compactSeatContext })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Lead then fan out.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const runtime = (
+      harness.orchestrator as unknown as {
+        roundsByChatId: Map<string, { fanoutPolicy: EnsembleConfig['fanoutPolicy'] }>
+      }
+    ).roundsByChatId.get('ensemble-chat')
+    expect(runtime).toBeTruthy()
+    runtime!.fanoutPolicy = 'read_only'
+    const receipt = await harness.orchestrator.fanoutForRun(harness.dispatched[0].appRunId, {
+      targets: ['cursor-lane', 'grok-lane'],
+      prompt: 'Inspect in parallel.'
+    })
+    expect(receipt.ok).toBe(true)
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
+    const cursorPayload = harness.dispatched[1]
+    const grokPayload = harness.dispatched[2]
+    const cursorRoute = {
+      appRunId: cursorPayload.appRunId,
+      appChatId: 'ensemble-chat'
+    }
+    expect(
+      harness.orchestrator.noteProviderFailureText('cursor', cursorRoute, overflowText)
+    ).toBe(true)
+    harness.orchestrator.handleProviderOutput('cursor', cursorRoute, {
+      type: 'result',
+      status: 'failed'
+    })
+    expect(compactSeatContext).not.toHaveBeenCalled()
+
+    harness.orchestrator.handleProviderOutput(
+      'grok',
+      { appRunId: grokPayload.appRunId, appChatId: 'ensemble-chat' },
+      { type: 'result', status: 'success' }
+    )
+    await vi.waitFor(() => expect(compactSeatContext).toHaveBeenCalledTimes(1))
+    expect(compactSeatContext).toHaveBeenCalledWith({
+      chatId: 'ensemble-chat',
+      participantId: 'cursor-lane',
+      provider: 'cursor',
+      trigger: 'auto'
     })
   })
 })

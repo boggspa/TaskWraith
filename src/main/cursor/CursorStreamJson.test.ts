@@ -1,6 +1,9 @@
 import { describe, it, expect } from 'vitest'
 import {
+  cursorEffectiveExitCode,
   cursorEventToRunEvents,
+  cursorTerminalCompatOutcome,
+  cursorTerminalFailureText,
   cursorToolKind,
   parseCursorStreamChunk,
   type CursorStreamLine
@@ -235,10 +238,33 @@ describe('CursorStreamJson', () => {
 
     it('marks an is_error result as failed', () => {
       const out = cursorEventToRunEvents(
-        ev({ type: 'result', subtype: 'error_max_turns', is_error: true })
+        ev({
+          type: 'result',
+          subtype: 'error_max_turns',
+          is_error: true,
+          result: "This model's maximum context length is 128000 tokens"
+        })
       )
       expect(out[0].type).toBe('result')
       expect(out[0].status).toBe('error_max_turns')
+      expect(out[0].text).toBe("This model's maximum context length is 128000 tokens")
+      expect(cursorTerminalCompatOutcome(out[0])).toEqual({
+        failed: true,
+        status: 'failed',
+        subtype: 'error',
+        text: "This model's maximum context length is 128000 tokens"
+      })
+      expect(cursorEffectiveExitCode(0, true)).toBe(1)
+      expect(cursorEffectiveExitCode(0, false)).toBe(0)
+    })
+
+    it('preserves a no-text context overflow subtype for failure classification', () => {
+      const out = cursorEventToRunEvents(
+        ev({ type: 'result', subtype: 'context_length_exceeded', is_error: true })
+      )
+      expect(out).toHaveLength(1)
+      expect(cursorTerminalFailureText(out[0])).toBe('context_length_exceeded')
+      expect(cursorEffectiveExitCode(0, cursorTerminalCompatOutcome(out[0])!.failed)).toBe(1)
     })
 
     it('maps error to a provider_warning', () => {

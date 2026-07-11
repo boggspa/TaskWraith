@@ -49,6 +49,52 @@ export interface NormalizedCursorRunEvent {
   raw?: unknown
 }
 
+export interface CursorTerminalCompatOutcome {
+  failed: boolean
+  status: 'success' | 'failed'
+  subtype: 'success' | 'error'
+  text?: string
+}
+
+/**
+ * Convert Cursor's normalized terminal event into the provider-agnostic
+ * result contract consumed by TaskWraith. Cursor can report `is_error: true`
+ * while the CLI process exits 0, so process exit alone is not authoritative.
+ */
+export function cursorTerminalCompatOutcome(
+  event: NormalizedCursorRunEvent
+): CursorTerminalCompatOutcome | null {
+  if (event.type !== 'result') return null
+  const failed = event.status !== 'success'
+  return {
+    failed,
+    status: failed ? 'failed' : 'success',
+    subtype: failed ? 'error' : 'success',
+    ...(typeof event.text === 'string' && event.text ? { text: event.text } : {})
+  }
+}
+
+/** Cursor's protocol result outranks its wrapper process' zero exit status. */
+export function cursorEffectiveExitCode(
+  processExitCode: number | null,
+  terminalResultFailed: boolean
+): number | null {
+  return terminalResultFailed && processExitCode === 0 ? 1 : processExitCode
+}
+
+/**
+ * Preserve both Cursor's failure subtype and optional result detail for the
+ * shared error classifier. Some overflow failures carry only the subtype.
+ */
+export function cursorTerminalFailureText(event: NormalizedCursorRunEvent): string {
+  const outcome = cursorTerminalCompatOutcome(event)
+  if (!outcome?.failed) return ''
+  return (
+    [event.status, outcome.text].filter((part): part is string => Boolean(part)).join(': ') ||
+    'Cursor terminal result failed.'
+  )
+}
+
 export interface CursorStreamLine {
   json?: Record<string, unknown>
   nonJson?: string

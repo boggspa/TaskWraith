@@ -122,6 +122,12 @@ export interface CliProviderStreamState extends CliProviderThinkingSegmentsState
   model: string
   fallback: boolean
   completed: boolean
+  /**
+   * A provider-native terminal result declared failure even if its wrapper
+   * process later exits 0 (currently observed from Cursor `is_error:true`).
+   * Close-out must preserve the protocol outcome as authoritative.
+   */
+  terminalResultFailed?: boolean
   assistantText: string
   providerSessionId?: string | null
   approvalMode?: string
