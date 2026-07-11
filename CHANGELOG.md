@@ -188,10 +188,12 @@ history, and workspace state stay on your machine throughout.
 - **Composer shells no longer repaint the whole app.** A composer style now
   changes composer chrome only; the selected app theme consistently owns the
   transcript, sidebar, message bubbles, and surrounding surfaces. Light mode's
-  reading surface is a clean white sheet, split panes use restrained metallic
-  seams, the real composer preview is shared by Settings and first launch, and
-  the quick Themes menu adds live Sidebar and Main-pane opacity sliders without
-  closing the menu.
+  reading surface is fully opaque pure white by default (the Main-pane opacity
+  slider can still bring the glass back), while the Codex light shell now uses
+  its native pure-white editor and joined status rows over a neutral utility
+  bed. Split panes use restrained metallic seams, the real composer preview is
+  shared by Settings and first launch, and the quick Themes menu adds live
+  Sidebar and Main-pane opacity sliders without closing the menu.
 - **Composer and sidebar redressed for Claude-shell and iOS parity.** The Claude
   composer skin's above-composer rows (Create PR, ensemble/roster/queued rows)
   were restyled to match the real Claude app's chrome, with squared chips, a
