@@ -4,6 +4,8 @@ import { describe, expect, it } from 'vitest'
 const readSideChatCss = (): string =>
   readFileSync(new URL('../assets/css/11-side-chat.css', import.meta.url), 'utf8')
 
+const readApp = (): string => readFileSync(new URL('../App.tsx', import.meta.url), 'utf8')
+
 const cssBlockStartingAt = (source: string, selector: string): string => {
   const start = source.indexOf(selector)
   expect(start, `Missing selector: ${selector}`).toBeGreaterThanOrEqual(0)
@@ -33,6 +35,14 @@ describe('main-pane action popover CSS', () => {
 
     expect(css).toContain(
       '.side-chat-layout-menu.chat-corner-picker-menu:not(.composer-combined-picker-popover)'
+    )
+  })
+
+  it('routes the Run preview-target menu through the shared glass chrome', () => {
+    const app = readApp()
+
+    expect(app).toContain(
+      'className="side-chat-layout-menu composer-combined-picker-popover pane-preview-menu"'
     )
   })
 })

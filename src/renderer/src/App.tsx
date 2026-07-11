@@ -5300,7 +5300,11 @@ function App(): React.JSX.Element {
       return null
     }
     return (
-      <div className="side-chat-layout-menu pane-preview-menu" role="menu" aria-label="Preview targets">
+      <div
+        className="side-chat-layout-menu composer-combined-picker-popover pane-preview-menu"
+        role="menu"
+        aria-label="Preview targets"
+      >
         <div className="side-chat-layout-menu-section" role="presentation">
           Preview Target
         </div>
