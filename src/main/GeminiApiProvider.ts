@@ -1020,9 +1020,13 @@ export async function tryRunGeminiApi(
   if (recordUsage && appRunId && appChatId) {
     usageAlreadyRecorded = true
     try {
-      const inputTokens = lastUsage?.promptTokenCount ?? 0
+      const reportedInputTokens = lastUsage?.promptTokenCount ?? 0
+      const cacheReadInputTokens = lastUsage?.cachedContentTokenCount ?? 0
+      const inputTokens = Math.max(0, reportedInputTokens - cacheReadInputTokens)
       const outputTokens = lastUsage?.candidatesTokenCount ?? 0
-      const totalTokens = lastUsage?.totalTokenCount ?? inputTokens + outputTokens
+      const thoughtsTokens = lastUsage?.thoughtsTokenCount ?? 0
+      const totalTokens =
+        lastUsage?.totalTokenCount ?? reportedInputTokens + outputTokens + thoughtsTokens
       const workspaceId =
         priorChat?.workspaceId ||
         (priorChat?.scope === 'global' ? '__taskwraith_global_chats__' : '') ||
@@ -1037,6 +1041,7 @@ export async function tryRunGeminiApi(
         inputTokens,
         outputTokens,
         totalTokens,
+        ...(cacheReadInputTokens > 0 ? { cacheReadInputTokens } : {}),
         durationMs
       })
     } catch {

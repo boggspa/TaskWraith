@@ -15,6 +15,11 @@
  * duration_ms), which is what EnsembleOrchestrator already reads elsewhere.
  */
 import type { ProviderId, UsageRecord } from './store/types'
+import {
+  usageCacheCreationInputTokens,
+  usageCacheReadInputTokens,
+  usageInputIncludesCache
+} from '../shared/usageAccounting'
 
 /** Read the first finite, positive numeric value among the candidate keys. */
 function readCount(stats: Record<string, unknown> | undefined, keys: string[]): number {
@@ -51,10 +56,17 @@ export function buildEnsembleUsageRecord(
   const stats = input.stats
   if (stats && stats['_taskwraith_usage_recorded'] === true) return null
 
-  const inputTokens = readCount(stats, ['input_tokens', 'inputTokens'])
+  const reportedInputTokens = readCount(stats, ['input_tokens', 'inputTokens'])
+  const cacheReadInputTokens = usageCacheReadInputTokens(stats)
+  const cacheCreationInputTokens = usageCacheCreationInputTokens(stats)
+  const inputIncludesCache = usageInputIncludesCache(stats)
+  const inputTokens = inputIncludesCache
+    ? Math.max(0, reportedInputTokens - cacheReadInputTokens - cacheCreationInputTokens)
+    : reportedInputTokens
   const outputTokens = readCount(stats, ['output_tokens', 'outputTokens'])
+  const inclusiveInputTokens = inputTokens + cacheReadInputTokens + cacheCreationInputTokens
   const totalTokens =
-    readCount(stats, ['total_tokens', 'totalTokens']) || inputTokens + outputTokens
+    readCount(stats, ['total_tokens', 'totalTokens']) || inclusiveInputTokens + outputTokens
   const durationMs =
     readCount(stats, ['duration_ms', 'durationMs']) || Math.max(0, input.fallbackDurationMs || 0)
 
@@ -75,6 +87,8 @@ export function buildEnsembleUsageRecord(
     inputTokens,
     outputTokens,
     totalTokens,
+    ...(cacheReadInputTokens > 0 ? { cacheReadInputTokens } : {}),
+    ...(cacheCreationInputTokens > 0 ? { cacheCreationInputTokens } : {}),
     ...(inputTokenLimit > 0 ? { inputTokenLimit } : {}),
     ...(outputTokenLimit > 0 ? { outputTokenLimit } : {}),
     ...(totalTokenLimit > 0 ? { totalTokenLimit } : {}),

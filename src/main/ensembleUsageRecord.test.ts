@@ -36,6 +36,51 @@ describe('buildEnsembleUsageRecord', () => {
     expect(rec).toMatchObject({ inputTokens: 10, outputTokens: 5, totalTokens: 15, durationMs: 1200 })
   })
 
+  it('persists cache breakdown without double-counting cache-inclusive input', () => {
+    const rec = buildEnsembleUsageRecord(
+      base({
+        input_tokens: 100,
+        output_tokens: 40,
+        total_tokens: 140,
+        cache_read_input_tokens: 70,
+        cache_creation_input_tokens: 10,
+        _taskwraith_input_includes_cache: true
+      })
+    )
+    expect(rec).toMatchObject({
+      inputTokens: 20,
+      cacheReadInputTokens: 70,
+      cacheCreationInputTokens: 10,
+      outputTokens: 40,
+      totalTokens: 140
+    })
+  })
+
+  it('recognizes provider cache aliases and keeps separately-reported input intact', () => {
+    const rec = buildEnsembleUsageRecord(
+      base({ inputTokens: 12, outputTokens: 5, cacheReadTokens: 30, cacheWriteTokens: 3 })
+    )
+    expect(rec).toMatchObject({
+      inputTokens: 12,
+      cacheReadInputTokens: 30,
+      cacheCreationInputTokens: 3,
+      outputTokens: 5,
+      totalTokens: 50
+    })
+  })
+
+  it('treats Codex cachedInputTokens as a subset of reported input', () => {
+    const rec = buildEnsembleUsageRecord(
+      base({ inputTokens: 100, outputTokens: 5, cachedInputTokens: 80 })
+    )
+    expect(rec).toMatchObject({
+      inputTokens: 20,
+      cacheReadInputTokens: 80,
+      outputTokens: 5,
+      totalTokens: 105
+    })
+  })
+
   it('derives total from input+output when total is absent', () => {
     const rec = buildEnsembleUsageRecord(base({ input_tokens: 30, output_tokens: 20, duration_ms: 100 }))
     expect(rec?.totalTokens).toBe(50)

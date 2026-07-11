@@ -1,11 +1,18 @@
 import type { NormalizedEvent } from './GeminiAdapter'
 import { isReasoningToolName, isToolResultEvent, isToolUseEvent } from './ToolParser'
+import {
+  usageCacheCreationInputTokens,
+  usageCacheReadInputTokens,
+  usageInputIncludesCache
+} from '../../../shared/usageAccounting'
 
 export type UsageModelEntry = {
   model: string
   inputTokens: number
   outputTokens: number
   totalTokens: number
+  cacheReadInputTokens?: number
+  cacheCreationInputTokens?: number
   inputTokenLimit?: number
   outputTokenLimit?: number
   totalTokenLimit?: number
@@ -337,18 +344,13 @@ export const extractUsageCountsFromCandidate = (
     ['tokenCounts', 'input'],
     ['token_counts', 'input']
   ])
-  const cacheInputTokens = stats?._taskwraith_input_includes_cache
+  const inputIncludesCache = usageInputIncludesCache(stats)
+  const cacheInputTokens = inputIncludesCache
     ? 0
-    : sumUsageCounts(stats, [
-        ['cache_creation_input_tokens'],
-        ['cache_read_input_tokens'],
-        ['cached_input_tokens'],
-        ['input_cache_creation'],
-        ['input_cache_read']
-      ])
-  const inputAudioTokens = stats?._taskwraith_input_includes_cache
+    : usageCacheReadInputTokens(stats) + usageCacheCreationInputTokens(stats)
+  const inputAudioTokens = inputIncludesCache
     ? 0
-    : sumUsageCounts(stats, [['input_audio_tokens']])
+    : extractUsageCount(stats, [['input_audio_tokens'], ['inputAudioTokens']])
   const inputTokens = inputBaseTokens + cacheInputTokens + inputAudioTokens
 
   const outputBaseTokens = extractUsageCount(stats, [
@@ -401,6 +403,43 @@ export const extractUsageCostUsd = (stats: any): number => {
 const isNonEmptyObject = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === 'object' && !Array.isArray(value)
 
+const extractCacheUsageCounts = (
+  stats: any
+): { cacheReadInputTokens: number; cacheCreationInputTokens: number } => ({
+  cacheReadInputTokens: usageCacheReadInputTokens(stats),
+  cacheCreationInputTokens: usageCacheCreationInputTokens(stats)
+})
+
+const persistedNonCacheInputTokens = (
+  stats: any,
+  cacheReadInputTokens: number,
+  cacheCreationInputTokens: number
+): number => {
+  const reportedInputTokens = extractUsageCount(stats, [
+    ['input_tokens'],
+    ['inputTokens'],
+    ['prompt_tokens'],
+    ['promptTokens'],
+    ['input'],
+    ['prompt'],
+    ['counts', 'input'],
+    ['counts', 'prompt'],
+    ['tokenCounts', 'input'],
+    ['token_counts', 'input']
+  ])
+  const inputIncludesCache = usageInputIncludesCache(stats)
+  const inputAudioTokens = inputIncludesCache
+    ? 0
+    : extractUsageCount(stats, [['input_audio_tokens'], ['inputAudioTokens']])
+
+  return Math.max(
+    0,
+    reportedInputTokens -
+      (inputIncludesCache ? cacheReadInputTokens + cacheCreationInputTokens : 0) +
+      inputAudioTokens
+  )
+}
+
 const buildUsageModelEntry = (
   modelName: string,
   candidate: any,
@@ -412,6 +451,12 @@ const buildUsageModelEntry = (
 
   const resolvedModel = modelName?.trim() || fallbackModel || 'unknown'
   const counts = extractUsageCountsFromCandidate(candidate)
+  const cacheCounts = extractCacheUsageCounts(candidate)
+  const inputTokens = persistedNonCacheInputTokens(
+    candidate,
+    cacheCounts.cacheReadInputTokens,
+    cacheCounts.cacheCreationInputTokens
+  )
   const limits = extractUsageLimits(candidate)
   const reset = extractUsageReset(candidate)
   const durationMs = extractUsageCount(candidate, [['duration_ms'], ['durationMs']])
@@ -430,6 +475,13 @@ const buildUsageModelEntry = (
   return {
     model: resolvedModel,
     ...counts,
+    inputTokens,
+    ...(cacheCounts.cacheReadInputTokens > 0
+      ? { cacheReadInputTokens: cacheCounts.cacheReadInputTokens }
+      : {}),
+    ...(cacheCounts.cacheCreationInputTokens > 0
+      ? { cacheCreationInputTokens: cacheCounts.cacheCreationInputTokens }
+      : {}),
     ...limits,
     ...reset,
     ...(hasAnyDuration ? { durationMs } : {})

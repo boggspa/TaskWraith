@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import type { NormalizedEvent } from './GeminiAdapter'
-import { isProviderExecutionToolEvent } from './usageStats'
+import {
+  extractModelUsageEntriesFromStats,
+  extractUsageCountsFromCandidate,
+  isProviderExecutionToolEvent
+} from './usageStats'
 
 describe('usageStats', () => {
   it('does not count provider thinking traces as execution tool events', () => {
@@ -35,5 +39,95 @@ describe('usageStats', () => {
     }
 
     expect(isProviderExecutionToolEvent(event)).toBe(true)
+  })
+
+  it('splits normalized cache-inclusive input for persisted usage', () => {
+    expect(
+      extractModelUsageEntriesFromStats(
+        {
+          input_tokens: 100,
+          output_tokens: 40,
+          total_tokens: 140,
+          cache_read_input_tokens: 70,
+          cache_creation_input_tokens: 10,
+          _taskwraith_input_includes_cache: true
+        },
+        'claude-sonnet'
+      )
+    ).toEqual([
+      expect.objectContaining({
+        inputTokens: 20,
+        cacheReadInputTokens: 70,
+        cacheCreationInputTokens: 10,
+        outputTokens: 40,
+        totalTokens: 140
+      })
+    ])
+  })
+
+  it('keeps Cursor-style fresh input separate from cache read/write aliases', () => {
+    expect(
+      extractModelUsageEntriesFromStats(
+        {
+          inputTokens: 12,
+          outputTokens: 5,
+          totalTokens: 50,
+          cacheReadTokens: 30,
+          cacheWriteTokens: 3
+        },
+        'cursor-composer'
+      )
+    ).toEqual([
+      expect.objectContaining({
+        inputTokens: 12,
+        cacheReadInputTokens: 30,
+        cacheCreationInputTokens: 3,
+        outputTokens: 5,
+        totalTokens: 50
+      })
+    ])
+  })
+
+  it('treats Codex cachedInputTokens as part of reported input', () => {
+    expect(
+      extractModelUsageEntriesFromStats(
+        { inputTokens: 100, outputTokens: 5, totalTokens: 105, cachedInputTokens: 80 },
+        'gpt-codex'
+      )
+    ).toEqual([
+      expect.objectContaining({
+        inputTokens: 20,
+        cacheReadInputTokens: 80,
+        outputTokens: 5,
+        totalTokens: 105
+      })
+    ])
+  })
+
+  it('derives model totals from camelCase cache-inclusive input without adding cache again', () => {
+    expect(
+      extractModelUsageEntriesFromStats(
+        { inputTokens: 100, outputTokens: 5, cachedInputTokens: 80 },
+        'gpt-codex'
+      )
+    ).toEqual([
+      expect.objectContaining({
+        inputTokens: 20,
+        cacheReadInputTokens: 80,
+        outputTokens: 5,
+        totalTokens: 105
+      })
+    ])
+  })
+
+  it('honors the legacy cache-inclusive marker in renderer token extraction', () => {
+    expect(
+      extractUsageCountsFromCandidate({
+        input_tokens: 100,
+        cache_read_input_tokens: 80,
+        output_tokens: 5,
+        _agentbench_input_includes_cache: true
+      })
+    ).toEqual({ inputTokens: 100, outputTokens: 5, totalTokens: 105 })
   })
 })

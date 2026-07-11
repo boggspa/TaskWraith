@@ -1450,6 +1450,54 @@ describe('GeminiApiProvider (Phase M1 Step 8 — usage tracking)', () => {
     expect(entry.model.length).toBeGreaterThan(0)
   })
 
+  it('persists cached prompt tokens separately from non-cache input', async () => {
+    const chat = makeChat({ workspaceId: 'ws-1', messages: [] })
+    const usage = {
+      promptTokenCount: 17,
+      cachedContentTokenCount: 7,
+      candidatesTokenCount: 23,
+      totalTokenCount: 40
+    }
+    const { deps, usageRecords } = makeDeps({
+      profiles: [makeApiKeyProfile()],
+      defaultProfileId: 'profile-1',
+      loadSdk: fakeSdk([{ text: 'hi' }, { text: '', usageMetadata: usage }]),
+      getChat: () => chat
+    })
+
+    await tryRunGeminiApi(stubEvent, basePayload, baseRoute, deps)
+
+    expect(usageRecords[0]).toMatchObject({
+      inputTokens: 10,
+      cacheReadInputTokens: 7,
+      outputTokens: 23,
+      totalTokens: 40
+    })
+  })
+
+  it('includes thinking tokens when persisted usage must derive its total', async () => {
+    const chat = makeChat({ workspaceId: 'ws-1', messages: [] })
+    const usage = {
+      promptTokenCount: 17,
+      candidatesTokenCount: 23,
+      thoughtsTokenCount: 11
+    }
+    const { deps, usageRecords } = makeDeps({
+      profiles: [makeApiKeyProfile()],
+      defaultProfileId: 'profile-1',
+      loadSdk: fakeSdk([{ text: 'hi' }, { text: '', usageMetadata: usage }]),
+      getChat: () => chat
+    })
+
+    await tryRunGeminiApi(stubEvent, basePayload, baseRoute, deps)
+
+    expect(usageRecords[0]).toMatchObject({
+      inputTokens: 17,
+      outputTokens: 23,
+      totalTokens: 51
+    })
+  })
+
   it('records zeros (and derives total) when the stream never reports usageMetadata', async () => {
     const chat = makeChat({ workspaceId: 'ws-1', messages: [] })
     // No usageMetadata in any chunk — older SDK shapes / streaming-only
