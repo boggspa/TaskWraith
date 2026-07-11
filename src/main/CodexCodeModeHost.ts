@@ -8,7 +8,7 @@ export const KNOWN_MACOS_CODE_MODE_HOST_PATHS = [
   '/Applications/Codex.app/Contents/Resources/codex-code-mode-host'
 ] as const
 
-function codeModeHostBinaryName(platform = process.platform): string {
+export function codeModeHostBinaryName(platform = process.platform): string {
   return platform === 'win32' ? 'codex-code-mode-host.exe' : 'codex-code-mode-host'
 }
 

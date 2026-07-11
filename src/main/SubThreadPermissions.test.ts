@@ -1,3 +1,4 @@
+import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
   inheritedSubThreadPermissions,
@@ -96,7 +97,7 @@ describe('inheritedSubThreadPermissions', () => {
       ok: true,
       isolation: 'worktree',
       sessionTrust: false,
-      effectiveWorkspacePath: '/repo-worktrees/worker-1',
+      effectiveWorkspacePath: resolve('/repo-worktrees/worker-1'),
       effectivePermissions: {
         presetId: 'workspace_write',
         readOnly: false
@@ -171,7 +172,7 @@ describe('inheritedSubThreadPermissions', () => {
       ok: true,
       isolation: 'direct_checkout',
       sessionTrust: false,
-      effectiveWorkspacePath: '/repo',
+      effectiveWorkspacePath: resolve('/repo'),
       writeScopes: ['src/worker/**', 'tests/worker/**'],
       leaseId: 'lease-1',
       effectivePermissions: { presetId: 'workspace_write', readOnly: false }

@@ -4,6 +4,7 @@ import { join } from 'path'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   CODEX_CODE_MODE_HOST_ENV,
+  codeModeHostBinaryName,
   resolveCodexCodeModeHostPath,
   withCodexCodeModeHostEnv
 } from './CodexCodeModeHost'
@@ -29,7 +30,7 @@ describe('resolveCodexCodeModeHostPath', () => {
   it('prefers a companion next to the selected Codex binary', async () => {
     const dir = await makeTempDir()
     const codexPath = join(dir, 'codex')
-    const hostPath = join(dir, 'codex-code-mode-host')
+    const hostPath = join(dir, codeModeHostBinaryName())
     await makeExecutable(codexPath)
     await makeExecutable(hostPath)
 
@@ -45,7 +46,7 @@ describe('resolveCodexCodeModeHostPath', () => {
     await mkdir(installDir)
     await mkdir(binDir)
     const realCodexPath = join(installDir, 'codex')
-    const hostPath = join(installDir, 'codex-code-mode-host')
+    const hostPath = join(installDir, codeModeHostBinaryName())
     const linkedCodexPath = join(binDir, 'codex')
     await makeExecutable(realCodexPath)
     await makeExecutable(hostPath)
@@ -88,7 +89,7 @@ describe('withCodexCodeModeHostEnv', () => {
   it('adds the discovered companion without mutating the input env', async () => {
     const dir = await makeTempDir()
     const codexPath = join(dir, 'codex')
-    const hostPath = join(dir, 'codex-code-mode-host')
+    const hostPath = join(dir, codeModeHostBinaryName())
     await makeExecutable(codexPath)
     await makeExecutable(hostPath)
     const env = { PATH: '/usr/bin' }

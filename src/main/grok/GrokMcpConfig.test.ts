@@ -15,7 +15,7 @@ describe('Grok MCP config hygiene', () => {
       'Users-chrisizatt-Documents-AGBench'
     )
     expect(grokProjectMcpDirForWorkspace('/home/me', '/Users/chrisizatt/Documents/Test 3')).toBe(
-      '/home/me/.grok/projects/Users-chrisizatt-Documents-Test 3/mcps'
+      join('/home/me', '.grok', 'projects', 'Users-chrisizatt-Documents-Test 3', 'mcps')
     )
   })
 
