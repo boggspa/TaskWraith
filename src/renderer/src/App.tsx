@@ -557,10 +557,7 @@ import {
   writeChatPopoutHandoff
 } from './lib/chatPopoutHandoff'
 import { useTranscriptScrollState } from './app/state/useTranscriptScrollState'
-import {
-  composerAboveRowClearancePx,
-  countComposerAboveRowStrips
-} from './lib/composerScrollClearance'
+import { bindComposerReservation } from './lib/composerReservation'
 import { buildRunDiffByPath } from './lib/RunWorkspaceDiff'
 import { shouldRunUsageRefresh } from './lib/usageRefresh'
 import { isCiStatusTerminal, shouldRunCiPoll } from './lib/ciStatusRefresh'
@@ -8627,49 +8624,9 @@ function App(): React.JSX.Element {
   useEffect(() => {
     const transcript = appTranscriptRef.current
     const composerArea = composerAreaRef.current
-    if (!transcript || !composerArea) {
-      return
-    }
+    if (!transcript || !composerArea) return
 
-    let lastWrittenHeight = -1
-    let lastAboveRowClearance = -1
-    const updateComposerReservation = () => {
-      const height = Math.ceil(composerArea.getBoundingClientRect().height)
-      const aboveRowStack = composerArea.querySelector('.composer-above-bar-stack')
-      const aboveRowClearance = composerAboveRowClearancePx(
-        countComposerAboveRowStrips(aboveRowStack)
-      )
-      // Skip CSS-var writes when nothing changed — otherwise we trigger a style
-      // recalc which cascades into the transcript ResizeObserver below and
-      // produces a feedback loop / flicker.
-      if (height === lastWrittenHeight && aboveRowClearance === lastAboveRowClearance) {
-        return
-      }
-      lastWrittenHeight = height
-      lastAboveRowClearance = aboveRowClearance
-      transcript.style.setProperty('--composer-reserved-height', `${height}px`)
-      transcript.style.setProperty('--composer-above-row-clearance', `${aboveRowClearance}px`)
-    }
-
-    updateComposerReservation()
-
-    if (typeof ResizeObserver === 'undefined') {
-      window.addEventListener('resize', updateComposerReservation)
-      return () => window.removeEventListener('resize', updateComposerReservation)
-    }
-
-    const resizeObserver = new ResizeObserver(updateComposerReservation)
-    resizeObserver.observe(composerArea)
-    const aboveRowStack = composerArea.querySelector('.composer-above-bar-stack')
-    if (aboveRowStack) {
-      resizeObserver.observe(aboveRowStack)
-    }
-    window.addEventListener('resize', updateComposerReservation)
-
-    return () => {
-      resizeObserver.disconnect()
-      window.removeEventListener('resize', updateComposerReservation)
-    }
+    return bindComposerReservation({ transcript, composerArea })
     // Re-attach when the focused transcript/composer ELEMENT is replaced. The
     // observer + the captured `transcript`/`composerArea` locals are bound to
     // specific DOM nodes; multiview remounts the keyed cell
