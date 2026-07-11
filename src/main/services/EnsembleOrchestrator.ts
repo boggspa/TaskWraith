@@ -112,6 +112,7 @@ import {
   canStartConcurrentRound,
   createLane,
   isTerminalLaneStatus,
+  roundHasActiveLanes,
   transitionLane
 } from '../EnsembleLanes'
 import {
@@ -2714,6 +2715,16 @@ interface ActiveRoundRuntime {
 export class EnsembleOrchestrator {
   private roundsByChatId = new Map<string, ActiveRoundRuntime>()
   private runsByRunId = new Map<string, ActiveParticipantRun>()
+  /**
+   * Serial drains deferred because a detached `ensemble_fanout` lane was
+   * still active when the serial queue emptied. Keyed by chatId; the value
+   * is the drained round's runtime, kept alive so the resume path can replay
+   * the exact drain tail (queued-prompt chaining included) once the last
+   * lane goes terminal. Entries are cleared by the resume itself, by
+   * `cancelRound` (Stop closes the round immediately — cancellation is never
+   * deferred), and by `clearRuntimeIfCurrent` as teardown hygiene.
+   */
+  private deferredLaneDrainByChatId = new Map<string, ActiveRoundRuntime>()
   private bossmanPollTimeoutsById = new Map<string, ReturnType<typeof setTimeout>>()
   private queuedPromptIdCounter = 0
 
@@ -3223,6 +3234,9 @@ export class EnsembleOrchestrator {
       return true
     }
     runtime.cancelled = true
+    // Stop closes the round immediately: a drain deferred behind active
+    // lanes must not race this cancel path to a second finishRound.
+    this.deferredLaneDrainByChatId.delete(chatId)
     runtime.queuedPrompts = []
     this.clearYieldReturnStack(runtime)
     runtime.pendingParticipantSeatChanges = undefined
@@ -7192,6 +7206,10 @@ export class EnsembleOrchestrator {
       if (runtime.fanoutReservedParticipantIds?.size === 0) {
         runtime.fanoutReservedParticipantIds = undefined
       }
+      // A dispatch that threw before seeding any lane must not strand a
+      // deferred drain: with this call's reservation window closed, re-check
+      // whether the round can finish. No-ops while lanes are still active.
+      this.maybeResumeDeferredDrain(runtime.chatId)
     }
   }
 
@@ -9992,6 +10010,80 @@ export class EnsembleOrchestrator {
       }
     }
 
+    // Detached `ensemble_fanout` lanes outlive their caller by design (the
+    // tool returns after dispatch so the caller does not time out while its
+    // lanes work). If any lane is still active — or reserved but not yet
+    // seeded (the seat-compaction window inside `runParallelFanoutPass`) —
+    // when the serial queue drains, closing the round now would stamp
+    // `endedAt` and derive the blackboard while lane output is still
+    // landing. Defer the drain tail; the last lane terminal in `finalizeRun`
+    // (or the reservation release in `fanoutForRun`) replays it. Cancelled
+    // rounds never defer: Stop must close the round immediately.
+    if (!runtime.cancelled && this.deferDrainForActiveLanes(runtime)) return
+    this.finalizeDrainedRound(runtime)
+  }
+
+  /**
+   * Returns true (and records the deferral) when the just-drained round
+   * still has a non-terminal fan-out lane, or an `ensemble_fanout` call is
+   * mid-dispatch (participants reserved, lanes not yet seeded). The round
+   * stays `'running'` so lane output keeps landing in an open round;
+   * `maybeResumeDeferredDrain` replays the drain tail once every lane is
+   * terminal and the reservation window has closed.
+   */
+  private deferDrainForActiveLanes(runtime: ActiveRoundRuntime): boolean {
+    const round = this.deps.getChat(runtime.chatId)?.ensemble?.activeRound
+    if (!round || round.roundId !== runtime.roundId || round.status !== 'running') return false
+    const reservedCount = runtime.fanoutReservedParticipantIds?.size || 0
+    if (!roundHasActiveLanes(round) && reservedCount === 0) return false
+    this.deferredLaneDrainByChatId.set(runtime.chatId, runtime)
+    const activeLaneCount = Object.values(round.lanes || {}).filter(
+      (lane) => !isTerminalLaneStatus(lane.status)
+    ).length
+    this.appendRoundStatus(
+      runtime.chatId,
+      runtime.roundId,
+      `Serial queue drained · holding the round open for ${Math.max(activeLaneCount, reservedCount)} active fan-out lane(s).`
+    )
+    return true
+  }
+
+  /**
+   * Resume a serial drain that was deferred behind active fan-out lanes.
+   * No-ops unless every lane for the deferred round is terminal AND no
+   * fan-out reservation window is open. If the round was cancelled (or
+   * superseded) while deferred, the entry is dropped — `cancelRound`
+   * already closed the round.
+   */
+  private maybeResumeDeferredDrain(chatId: string): void {
+    const runtime = this.deferredLaneDrainByChatId.get(chatId)
+    if (!runtime) return
+    const round = this.deps.getChat(chatId)?.ensemble?.activeRound
+    if (!round || round.roundId !== runtime.roundId || round.status !== 'running') {
+      this.deferredLaneDrainByChatId.delete(chatId)
+      return
+    }
+    if (roundHasActiveLanes(round) || runtime.fanoutReservedParticipantIds?.size) return
+    this.deferredLaneDrainByChatId.delete(chatId)
+    this.finalizeDrainedRound(runtime)
+  }
+
+  /**
+   * The serial drain tail: dequeue the next queued prompt (FIFO), finish the
+   * round, release the runtime, and chain into the follow-up round.
+   * Extracted from `runRound` so a drain deferred behind active fan-out
+   * lanes replays the exact same tail when the last lane goes terminal.
+   * The Work Session terminal state is re-derived here (not captured at
+   * drain time) because a lane can outlive the serial loop by minutes and
+   * the session may have ended in between.
+   */
+  private finalizeDrainedRound(runtime: ActiveRoundRuntime): void {
+    const sessionStatus = this.deps.getChat(runtime.chatId)?.ensemble?.workSession?.status
+    const sessionTerminal =
+      sessionStatus === 'completed' ||
+      sessionStatus === 'paused' ||
+      sessionStatus === 'cancelled' ||
+      sessionStatus === 'limit_reached'
     // Dequeue the next prompt (FIFO) for the follow-up round. Anything
     // remaining stays in `runtime.queuedPrompts` and gets transferred
     // to the new runtime in `beginRound` so the chain continues
@@ -11121,6 +11213,11 @@ export class EnsembleOrchestrator {
       )
     }
     run.completion?.(status)
+    // A serial drain deferred behind active fan-out lanes resumes only once
+    // every lane is terminal. Checked on every run finalization because lane
+    // runs end through this path from dispatch failures, cancels, and normal
+    // completion alike; no-ops when nothing is deferred for this chat.
+    this.maybeResumeDeferredDrain(run.chatId)
   }
 
   private transitionParticipantRunQueueJob(
@@ -12218,6 +12315,12 @@ export class EnsembleOrchestrator {
   private clearRuntimeIfCurrent(runtime: ActiveRoundRuntime): void {
     if (this.roundsByChatId.get(runtime.chatId)?.roundId === runtime.roundId) {
       this.roundsByChatId.delete(runtime.chatId)
+    }
+    // Teardown hygiene: a runtime leaving the registry must not leave a
+    // deferred drain behind (identity-checked so a successor round's
+    // deferral is never swept by a stale teardown).
+    if (this.deferredLaneDrainByChatId.get(runtime.chatId) === runtime) {
+      this.deferredLaneDrainByChatId.delete(runtime.chatId)
     }
   }
 
