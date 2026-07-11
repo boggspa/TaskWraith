@@ -192,7 +192,6 @@ import {
   getStoredWorkspaceSidebarWidth
 } from './lib/panelWidths'
 import { getProviderLabel } from './lib/providerLabels'
-import { buildRecoveryMessagesForChat } from './lib/recoveryMessageBatch'
 import {
   ensembleFanoutPolicyEnabled,
   normalizeEnsembleFanoutPolicy
@@ -10982,39 +10981,12 @@ function App(): React.JSX.Element {
       runsReconciledChats
     )
 
-    const updatedChats = lifecycleReconciledChats.map((chat) => {
-      const chatRecords = recordsByChatId.get(chat.appChatId) || []
-      if (chatRecords.length === 0) return chat
-      const existingMessageIds = new Set(chat.messages.map((message) => message.id))
-      // A recovered ensemble participant job can lose its ensemble identity, so
-      // the recovery record reads as a solo provider run. Re-derive it from the
-      // chat's persisted runs (which keep ensembleParticipantId/Role across
-      // restart) so the message labels the ensemble seat and batches correctly.
-      const ensembleIdentityByRunId = new Map<
-        string,
-        { ensembleParticipantId?: string; ensembleRole?: string }
-      >()
-      for (const run of chat.runs) {
-        if (run.ensembleParticipantId || run.ensembleRole) {
-          ensembleIdentityByRunId.set(run.runId, {
-            ensembleParticipantId: run.ensembleParticipantId,
-            ensembleRole: run.ensembleRole
-          })
-        }
-      }
-      const messagesToAdd = buildRecoveryMessagesForChat(
-        chat.appChatId,
-        chatRecords,
-        existingMessageIds,
-        (runId) => (runId ? ensembleIdentityByRunId.get(runId) : undefined)
-      )
-      if (messagesToAdd.length === 0) return chat
-      return {
-        ...chat,
-        messages: [...chat.messages, ...messagesToAdd],
-        updatedAt: Math.max(chat.updatedAt, Date.now())
-      }
-    })
+    // Run/round lifecycle reconciliation only — we no longer append a
+    // "Recovered interrupted <Provider> run…" system message per record.
+    // Those notices batch-spammed the transcript on every crash recovery, and
+    // the reconciled run/round status already tells the user whether anything
+    // was interrupted and whether it is safe to continue.
+    const updatedChats = lifecycleReconciledChats
 
     const changedChats = updatedChats.filter((chat, index) => chat !== chatList[index])
     if (changedChats.length === 0) return chatList
