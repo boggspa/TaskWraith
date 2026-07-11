@@ -280,7 +280,7 @@ function ChatViewPaneChrome(props: ChatViewPaneProps) {
   const bugReportAction = actionById.get('bug-report')
   const popoutAction = actionById.get('popout-chat')
   const runAction = actionById.get('preview')
-  const homeAction = actionById.get('inspector')
+  const homeAction = actionById.get('home')
   const renderAction = (action: ChatViewPaneChromeAction) => {
     const button = (
       <button

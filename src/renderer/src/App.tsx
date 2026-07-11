@@ -24097,6 +24097,14 @@ function App(): React.JSX.Element {
         onClick: (paneIndex, chatId) => focusPaneAndSelectDock(paneIndex, chatId, 'files')
       },
       {
+        id: 'home',
+        title: showRightDockHome ? 'Hide sidebar home' : 'Open sidebar home',
+        ariaLabel: 'Toggle sidebar home',
+        icon: <SidebarCornerIcon direction="right" isOpen={showRightDockHome} />,
+        active: showRightDockHome,
+        onClick: (paneIndex, chatId) => focusPaneAndSelectDock(paneIndex, chatId, 'home')
+      },
+      {
         id: 'inspector',
         title: `${appearance.showInspector ? 'Hide' : 'Show'} inspector`,
         ariaLabel: 'Toggle inspector',

@@ -268,6 +268,14 @@ describe('ChatViewPane chrome actions', () => {
                 </div>
               ),
               onClick: vi.fn()
+            },
+            {
+              id: 'home',
+              title: 'Hide sidebar home',
+              ariaLabel: 'Toggle sidebar home',
+              icon: <span>home</span>,
+              active: true,
+              onClick: vi.fn()
             }
           ]
         })}
@@ -286,6 +294,7 @@ describe('ChatViewPane chrome actions', () => {
     expect(html).toContain('aria-expanded="true"')
     expect(html).toContain('pane-preview-menu')
     expect(html).toContain('Preview :5173')
+    expect(html).toContain('title="Hide sidebar home"')
   })
 })
 
