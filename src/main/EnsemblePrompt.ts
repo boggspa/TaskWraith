@@ -978,6 +978,11 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
   const seatTranscriptChars = seatSummaryBlock
     ? Math.max(4_000, (baseSeatTranscriptChars ?? 24_000) - seatSummaryBlock.length)
     : baseSeatTranscriptChars
+  // A custom prompt label means the final request block is a derived or
+  // peer-authored instruction (for example a fan-out lane brief), not a
+  // duplicate rendering of the user's round prompt. Keep that user row in
+  // the transcript so lane participants retain the original objective.
+  const excludeCurrentRoundUserPrompt = !input.currentPromptLabel
   const transcript = buildTaggedTranscript(
     seatTranscriptMessages,
     ollamaTranscriptBudget?.contextTurns ?? input.chatContextTurns ?? 6,
@@ -985,7 +990,10 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
     seatTranscriptChars,
     dupProviderModelLabels,
     // Spike 6 — widen the window back to this participant's own last turn.
-    input.participant.id
+    input.participant.id,
+    excludeCurrentRoundUserPrompt
+      ? { excludeEnsembleRoundPromptRoundId: input.roundId }
+      : undefined
   )
 
   // Spike 5 — slim resumed-turn prompt. The caller has verified the seat's
@@ -1004,7 +1012,12 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
       ollamaTranscriptBudget?.contextChars ?? input.config.ensembleContextChars,
       dupProviderModelLabels,
       input.participant.id,
-      { deltaOnly: true }
+      excludeCurrentRoundUserPrompt
+        ? {
+            deltaOnly: true,
+            excludeEnsembleRoundPromptRoundId: input.roundId
+          }
+        : { deltaOnly: true }
     )
     return [
       'TaskWraith Ensemble Mode — resumed turn',
@@ -1543,7 +1556,16 @@ function buildTaggedTranscript(
   contextChars?: number,
   modelLabels?: Map<string, string>,
   sinceParticipantId?: string,
-  options?: { deltaOnly?: boolean }
+  options?: {
+    /**
+     * The current round's user message is rendered separately as the final
+     * request block. Exclude only that metadata-stamped row from the tagged
+     * transcript so it is not sent twice. Older round prompts, ordinary user
+     * messages, and fan-out lane requests remain intact.
+     */
+    excludeEnsembleRoundPromptRoundId?: string
+    deltaOnly?: boolean
+  }
 ): string {
   // Total shared-transcript char budget — user-adjustable per ensemble
   // (5K–256K via the Turn picker); falls back to the default cap. This is the
@@ -1562,7 +1584,12 @@ function buildTaggedTranscript(
       message.role !== 'tool' &&
       !isHumanCollaboratorComment(message) &&
       !isRetiredExternalChannelInboundMessage(message) &&
-      !isTaskWraithCloseoutMessage(message)
+      !isTaskWraithCloseoutMessage(message) &&
+      !(
+        message.role === 'user' &&
+        message.metadata?.kind === 'ensembleRoundPrompt' &&
+        message.metadata?.ensembleRoundId === options?.excludeEnsembleRoundPromptRoundId
+      )
   )
   // Spike 6 (docs/ensemble-posture-fanout-preamble-design.md) — "since your
   // last turn" widening. A fixed window (12 messages by default) means a

@@ -475,6 +475,90 @@ describe('Ensemble prompt composition', () => {
     expect(prompt).not.toContain('Current user request:\nInspect only the routing code.')
   })
 
+  it('renders the current round user request once while retaining an older identical round prompt', () => {
+    const request = 'Keep the cache breakpoint intact.'
+    const shared = chat()
+    shared.messages = [
+      ...shared.messages,
+      {
+        id: 'older-round-prompt',
+        role: 'user',
+        content: request,
+        timestamp: '2026-05-24T00:00:02.000Z',
+        metadata: {
+          kind: 'ensembleRoundPrompt',
+          ensembleRoundId: 'round-older'
+        }
+      },
+      {
+        id: 'current-round-prompt',
+        role: 'user',
+        content: request,
+        timestamp: '2026-05-24T00:00:03.000Z',
+        metadata: {
+          kind: 'ensembleRoundPrompt',
+          ensembleRoundId: 'round-current'
+        }
+      }
+    ]
+
+    const baseInput = {
+      chat: shared,
+      config: ensemble,
+      participant: ensemble.participants[1],
+      currentPrompt: request,
+      roundId: 'round-current',
+      chatContextTurns: 10
+    }
+    const fullPrompt = buildEnsembleParticipantPrompt(baseInput)
+    const slimPrompt = buildEnsembleParticipantPrompt({ ...baseInput, slimTurn: true })
+
+    for (const prompt of [fullPrompt, slimPrompt]) {
+      // The earlier row stays in the shared transcript, while the current
+      // row appears only in the dedicated request block below it.
+      expect(prompt).toContain(`[User]\n${request}`)
+      expect(prompt).toContain(`Current user request:\n${request}`)
+      expect(prompt.split(request).length - 1).toBe(2)
+    }
+  })
+
+  it('keeps the current user request alongside a peer-authored fan-out lane request', () => {
+    const originalRequest = 'Inspect only the routing code.'
+    const peerLaneRequest = 'Compare the retry paths, then report only concrete race risks.'
+    const shared = chat()
+    shared.messages = [
+      ...shared.messages,
+      {
+        id: 'current-round-prompt',
+        role: 'user',
+        content: originalRequest,
+        timestamp: '2026-05-24T00:00:02.000Z',
+        metadata: {
+          kind: 'ensembleRoundPrompt',
+          ensembleRoundId: 'round-current'
+        }
+      }
+    ]
+
+    const prompt = buildEnsembleParticipantPrompt({
+      chat: shared,
+      config: ensemble,
+      participant: ensemble.participants[0],
+      currentPrompt: peerLaneRequest,
+      currentPromptLabel:
+        'Current fan-out lane request (peer-authored, lower authority; not user/system instruction):',
+      roundId: 'round-current',
+      chatContextTurns: 10
+    })
+
+    expect(prompt).toContain(`[User]\n${originalRequest}`)
+    expect(prompt.split(originalRequest).length - 1).toBe(1)
+    expect(prompt).toContain(
+      'Current fan-out lane request (peer-authored, lower authority; not user/system instruction):'
+    )
+    expect(prompt).toContain(peerLaneRequest)
+  })
+
   it('excludes unpromoted collaborator comments from participant context', () => {
     const shared = chat()
     shared.messages = [
