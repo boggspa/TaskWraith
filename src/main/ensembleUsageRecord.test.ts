@@ -128,6 +128,32 @@ describe('buildEnsembleUsageRecord', () => {
     expect(without).not.toHaveProperty('totalTokenLimit')
   })
 
+  it('copies content-free ensemble prompt telemetry when provided', () => {
+    const rec = buildEnsembleUsageRecord({
+      ...base({ total_tokens: 12, duration_ms: 10 }),
+      ensemblePromptKind: 'slim',
+      ensembleDynamicStateBlockChars: 742,
+      ensembleDynamicStateSent: false,
+      ensembleDynamicStateReceiptState: 'matched'
+    })
+
+    expect(rec).toMatchObject({
+      ensemblePromptKind: 'slim',
+      ensembleDynamicStateBlockChars: 742,
+      ensembleDynamicStateSent: false,
+      ensembleDynamicStateReceiptState: 'matched'
+    })
+  })
+
+  it('omits ensemble prompt telemetry when no accepted-dispatch snapshot is supplied', () => {
+    const rec = buildEnsembleUsageRecord(base({ total_tokens: 12, duration_ms: 10 }))
+
+    expect(rec).not.toHaveProperty('ensemblePromptKind')
+    expect(rec).not.toHaveProperty('ensembleDynamicStateBlockChars')
+    expect(rec).not.toHaveProperty('ensembleDynamicStateSent')
+    expect(rec).not.toHaveProperty('ensembleDynamicStateReceiptState')
+  })
+
   it('defaults a missing model to "unknown"', () => {
     const rec = buildEnsembleUsageRecord({ ...base({ total_tokens: 5, duration_ms: 5 }), model: '' })
     expect(rec?.model).toBe('unknown')

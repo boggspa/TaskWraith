@@ -3702,6 +3702,14 @@ export interface UsageRecord {
   cacheReadInputTokens?: number
   /** Input tokens written to a provider prompt cache. */
   cacheCreationInputTokens?: number
+  /** Ensemble prompt shell selected for this participant dispatch. */
+  ensemblePromptKind?: 'full' | 'slim'
+  /** Character count of the canonical dynamic-state replacement block. */
+  ensembleDynamicStateBlockChars?: number
+  /** Whether that block was included in the accepted provider payload. */
+  ensembleDynamicStateSent?: boolean
+  /** Durable receipt state observed before building the participant prompt. */
+  ensembleDynamicStateReceiptState?: 'missing' | 'matched' | 'changed'
   inputTokenLimit?: number
   outputTokenLimit?: number
   totalTokenLimit?: number

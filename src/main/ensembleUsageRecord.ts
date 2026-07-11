@@ -40,6 +40,10 @@ export interface EnsembleUsageInput {
   stats: Record<string, unknown> | undefined
   /** Wall-clock fallback when stats carry no duration (start→end ms). */
   fallbackDurationMs?: number
+  ensemblePromptKind?: UsageRecord['ensemblePromptKind']
+  ensembleDynamicStateBlockChars?: number
+  ensembleDynamicStateSent?: boolean
+  ensembleDynamicStateReceiptState?: UsageRecord['ensembleDynamicStateReceiptState']
 }
 
 /**
@@ -89,6 +93,16 @@ export function buildEnsembleUsageRecord(
     totalTokens,
     ...(cacheReadInputTokens > 0 ? { cacheReadInputTokens } : {}),
     ...(cacheCreationInputTokens > 0 ? { cacheCreationInputTokens } : {}),
+    ...(input.ensemblePromptKind ? { ensemblePromptKind: input.ensemblePromptKind } : {}),
+    ...(input.ensembleDynamicStateBlockChars !== undefined
+      ? { ensembleDynamicStateBlockChars: input.ensembleDynamicStateBlockChars }
+      : {}),
+    ...(input.ensembleDynamicStateSent !== undefined
+      ? { ensembleDynamicStateSent: input.ensembleDynamicStateSent }
+      : {}),
+    ...(input.ensembleDynamicStateReceiptState
+      ? { ensembleDynamicStateReceiptState: input.ensembleDynamicStateReceiptState }
+      : {}),
     ...(inputTokenLimit > 0 ? { inputTokenLimit } : {}),
     ...(outputTokenLimit > 0 ? { outputTokenLimit } : {}),
     ...(totalTokenLimit > 0 ? { totalTokenLimit } : {}),

@@ -1242,7 +1242,231 @@ describe('EnsembleOrchestrator', () => {
       chatId: 'ensemble-chat',
       usageKind: 'run',
       totalTokens: 120,
-      durationMs: 4200
+      durationMs: 4200,
+      ensemblePromptKind: 'full',
+      ensembleDynamicStateSent: true,
+      ensembleDynamicStateReceiptState: 'missing'
+    })
+    expect(recorded[0].ensembleDynamicStateBlockChars).toBeGreaterThan(0)
+  })
+
+  it('records a matched dynamic-state receipt as sent when the accepted prompt is full', async () => {
+    const recorded: Array<Omit<UsageRecord, 'id' | 'timestamp'>> = []
+    const chat = makeChat()
+    const snapshot = buildEnsembleDynamicStateSnapshot(chat, chat.ensemble!)
+    chat.ensemble!.participants[0].promptDynamicStateVersion = snapshot.version
+    const harness = makeHarness({
+      initialChat: chat,
+      recordUsage: (entry) => recorded.push(entry)
+    })
+
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Send a full briefing.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    harness.orchestrator.handleProviderOutput(
+      'claude',
+      { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' },
+      { type: 'result', status: 'success', stats: { total_tokens: 12 } }
+    )
+
+    await vi.waitFor(() => expect(recorded).toHaveLength(1))
+    expect(recorded[0]).toMatchObject({
+      ensemblePromptKind: 'full',
+      ensembleDynamicStateBlockChars: snapshot.block.length,
+      ensembleDynamicStateSent: true,
+      ensembleDynamicStateReceiptState: 'matched'
+    })
+  })
+
+  it('records a matched dynamic-state snapshot as omitted on an accepted slim prompt', async () => {
+    const previous = process.env.TASKWRAITH_ENSEMBLE_SLIM_RESUME
+    process.env.TASKWRAITH_ENSEMBLE_SLIM_RESUME = '1'
+    try {
+      const recorded: Array<Omit<UsageRecord, 'id' | 'timestamp'>> = []
+      const chat = makeChat()
+      const snapshot = buildEnsembleDynamicStateSnapshot(chat, chat.ensemble!)
+      Object.assign(chat.ensemble!.participants[0], {
+        linkedProviderSessionId: 'claude-session-1',
+        promptShellVersion: computeEnsemblePromptShellStamp(chat.ensemble!),
+        promptDynamicStateVersion: snapshot.version
+      })
+      const harness = makeHarness({
+        initialChat: chat,
+        recordUsage: (entry) => recorded.push(entry)
+      })
+
+      harness.orchestrator.startRound({
+        chatId: 'ensemble-chat',
+        prompt: 'Continue from the existing session.',
+        event: { sender: {} as Electron.WebContents }
+      })
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+      expect(harness.dispatched[0].ensembleRun?.promptMode).toBe('slim')
+      harness.orchestrator.handleProviderOutput(
+        'claude',
+        { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' },
+        { type: 'result', status: 'success', stats: { total_tokens: 12 } }
+      )
+
+      await vi.waitFor(() => expect(recorded).toHaveLength(1))
+      expect(recorded[0]).toMatchObject({
+        ensemblePromptKind: 'slim',
+        ensembleDynamicStateBlockChars: snapshot.block.length,
+        ensembleDynamicStateSent: false,
+        ensembleDynamicStateReceiptState: 'matched'
+      })
+    } finally {
+      if (previous === undefined) delete process.env.TASKWRAITH_ENSEMBLE_SLIM_RESUME
+      else process.env.TASKWRAITH_ENSEMBLE_SLIM_RESUME = previous
+    }
+  })
+
+  it('records a changed dynamic-state snapshot as sent on an accepted slim prompt', async () => {
+    const previous = process.env.TASKWRAITH_ENSEMBLE_SLIM_RESUME
+    process.env.TASKWRAITH_ENSEMBLE_SLIM_RESUME = '1'
+    try {
+      const recorded: Array<Omit<UsageRecord, 'id' | 'timestamp'>> = []
+      const chat = makeChat()
+      const snapshot = buildEnsembleDynamicStateSnapshot(chat, chat.ensemble!)
+      Object.assign(chat.ensemble!.participants[0], {
+        linkedProviderSessionId: 'claude-session-1',
+        promptShellVersion: computeEnsemblePromptShellStamp(chat.ensemble!),
+        promptDynamicStateVersion: 'ensemble-dynamic-v1:stale'
+      })
+      const harness = makeHarness({
+        initialChat: chat,
+        recordUsage: (entry) => recorded.push(entry)
+      })
+
+      harness.orchestrator.startRound({
+        chatId: 'ensemble-chat',
+        prompt: 'Continue with updated state.',
+        event: { sender: {} as Electron.WebContents }
+      })
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+      expect(harness.dispatched[0].ensembleRun?.promptMode).toBe('slim')
+      harness.orchestrator.handleProviderOutput(
+        'claude',
+        { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' },
+        { type: 'result', status: 'success', stats: { total_tokens: 12 } }
+      )
+
+      await vi.waitFor(() => expect(recorded).toHaveLength(1))
+      expect(recorded[0]).toMatchObject({
+        ensemblePromptKind: 'slim',
+        ensembleDynamicStateBlockChars: snapshot.block.length,
+        ensembleDynamicStateSent: true,
+        ensembleDynamicStateReceiptState: 'changed'
+      })
+    } finally {
+      if (previous === undefined) delete process.env.TASKWRAITH_ENSEMBLE_SLIM_RESUME
+      else process.env.TASKWRAITH_ENSEMBLE_SLIM_RESUME = previous
+    }
+  })
+
+  it('records a missing dynamic-state receipt as sent on an accepted slim prompt', async () => {
+    const previous = process.env.TASKWRAITH_ENSEMBLE_SLIM_RESUME
+    process.env.TASKWRAITH_ENSEMBLE_SLIM_RESUME = '1'
+    try {
+      const recorded: Array<Omit<UsageRecord, 'id' | 'timestamp'>> = []
+      const chat = makeChat()
+      const snapshot = buildEnsembleDynamicStateSnapshot(chat, chat.ensemble!)
+      Object.assign(chat.ensemble!.participants[0], {
+        linkedProviderSessionId: 'claude-session-1',
+        promptShellVersion: computeEnsemblePromptShellStamp(chat.ensemble!)
+      })
+      const harness = makeHarness({
+        initialChat: chat,
+        recordUsage: (entry) => recorded.push(entry)
+      })
+
+      harness.orchestrator.startRound({
+        chatId: 'ensemble-chat',
+        prompt: 'Continue without a dynamic-state receipt.',
+        event: { sender: {} as Electron.WebContents }
+      })
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+      expect(harness.dispatched[0].ensembleRun?.promptMode).toBe('slim')
+      harness.orchestrator.handleProviderOutput(
+        'claude',
+        { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' },
+        { type: 'result', status: 'success', stats: { total_tokens: 12 } }
+      )
+
+      await vi.waitFor(() => expect(recorded).toHaveLength(1))
+      expect(recorded[0]).toMatchObject({
+        ensemblePromptKind: 'slim',
+        ensembleDynamicStateBlockChars: snapshot.block.length,
+        ensembleDynamicStateSent: true,
+        ensembleDynamicStateReceiptState: 'missing'
+      })
+    } finally {
+      if (previous === undefined) delete process.env.TASKWRAITH_ENSEMBLE_SLIM_RESUME
+      else process.env.TASKWRAITH_ENSEMBLE_SLIM_RESUME = previous
+    }
+  })
+
+  it('records fan-out lane prompts as full even when their prior dynamic receipt matches', async () => {
+    const recorded: Array<Omit<UsageRecord, 'id' | 'timestamp'>> = []
+    const chat = makeChat()
+    chat.ensemble!.fanoutPolicy = 'read_only'
+    chat.ensemble!.participants = [
+      {
+        id: 'codex',
+        provider: 'codex',
+        enabled: true,
+        role: 'Worker',
+        instructions: 'Work.',
+        order: 1,
+        permissionPresetId: 'workspace_write'
+      },
+      {
+        id: 'claude',
+        provider: 'claude',
+        enabled: true,
+        role: 'Reviewer',
+        instructions: 'Review.',
+        order: 2,
+        permissionPresetId: 'read_only'
+      }
+    ]
+    const snapshot = buildEnsembleDynamicStateSnapshot(chat, chat.ensemble!)
+    chat.ensemble!.participants[1].promptDynamicStateVersion = snapshot.version
+    const harness = makeHarness({
+      initialChat: chat,
+      recordUsage: (entry) => recorded.push(entry)
+    })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Start work and fan out review.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    const fanout = harness.orchestrator.fanoutForRun(harness.dispatched[0].appRunId, {
+      targets: ['Reviewer'],
+      prompt: 'Review in parallel.'
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    const lane = harness.dispatched[1]
+    expect(lane.ensembleRun?.promptMode).toBe('full')
+    harness.orchestrator.handleProviderOutput(
+      lane.provider,
+      { appRunId: lane.appRunId, appChatId: 'ensemble-chat' },
+      { type: 'result', status: 'success', stats: { total_tokens: 12 } }
+    )
+    await fanout
+
+    expect(recorded).toHaveLength(1)
+    expect(recorded[0]).toMatchObject({
+      provider: 'claude',
+      ensemblePromptKind: 'full',
+      ensembleDynamicStateBlockChars: snapshot.block.length,
+      ensembleDynamicStateSent: true,
+      ensembleDynamicStateReceiptState: 'matched'
     })
   })
 

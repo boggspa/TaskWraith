@@ -404,6 +404,36 @@ type ParticipantTimelineEntry = { kind: 'content'; text: string } | { kind: 'too
  */
 const SLIM_RESUME_PROVIDERS: ReadonlySet<ProviderId> = new Set(['claude', 'codex', 'cursor'])
 
+type EnsemblePromptUsageTelemetry = Required<
+  Pick<
+    UsageRecord,
+    | 'ensemblePromptKind'
+    | 'ensembleDynamicStateBlockChars'
+    | 'ensembleDynamicStateSent'
+    | 'ensembleDynamicStateReceiptState'
+  >
+>
+
+function buildEnsemblePromptUsageTelemetry(input: {
+  slimTurn: boolean
+  dynamicStateBlockChars: number
+  dynamicStateVersion: string
+  priorDynamicStateReceipt?: string
+}): EnsemblePromptUsageTelemetry {
+  const receiptState = input.priorDynamicStateReceipt
+    ? input.priorDynamicStateReceipt === input.dynamicStateVersion
+      ? 'matched'
+      : 'changed'
+    : 'missing'
+  return {
+    ensemblePromptKind: input.slimTurn ? 'slim' : 'full',
+    ensembleDynamicStateBlockChars: input.dynamicStateBlockChars,
+    ensembleDynamicStateSent:
+      !input.slimTurn || input.priorDynamicStateReceipt !== input.dynamicStateVersion,
+    ensembleDynamicStateReceiptState: receiptState
+  }
+}
+
 interface ActiveParticipantRun {
   chatId: string
   roundId: string
@@ -455,6 +485,8 @@ interface ActiveParticipantRun {
    * successful terminal flush.
    */
   promptDynamicStateVersion?: string
+  /** Content-free prompt receipt/savings telemetry for the accepted payload. */
+  ensemblePromptUsageTelemetry?: EnsemblePromptUsageTelemetry
   /**
    * A provider-native compaction replaced the seat's session context after the
    * prompt was dispatched. Never acknowledge either old receipt at final flush.
@@ -9359,6 +9391,12 @@ export class EnsembleOrchestrator {
           )) &&
         !resumeWakeup &&
         participant.promptShellVersion === promptShellStamp
+      const promptUsageTelemetry = buildEnsemblePromptUsageTelemetry({
+        slimTurn,
+        dynamicStateBlockChars: dynamicStateSnapshot.block.length,
+        dynamicStateVersion: dynamicStateSnapshot.version,
+        priorDynamicStateReceipt: participant.promptDynamicStateVersion
+      })
       // Blackboard delta bookkeeping: same selection the prompt builder makes
       // (full board on a full briefing, unseen-only on a slim turn). Captured
       // BEFORE dispatch so entries posted mid-run stay unseen; stamped onto
@@ -9538,6 +9576,7 @@ export class EnsembleOrchestrator {
         // not mark entries seen.
         run.promptShellStamp = promptShellStamp
         run.promptDynamicStateVersion = dynamicStateSnapshot.version
+        run.ensemblePromptUsageTelemetry = promptUsageTelemetry
         run.injectedBlackboardEntryIds = injectedBlackboardEntryIds
         await completion
         this.maybeAutoCompactSeatAfterTurn(runtime.chatId, participant.id)
@@ -10342,6 +10381,12 @@ export class EnsembleOrchestrator {
         dispatchChat,
         dispatchChat.ensemble!
       )
+      const promptUsageTelemetry = buildEnsemblePromptUsageTelemetry({
+        slimTurn: false,
+        dynamicStateBlockChars: dynamicStateSnapshot.block.length,
+        dynamicStateVersion: dynamicStateSnapshot.version,
+        priorDynamicStateReceipt: participant.promptDynamicStateVersion
+      })
       const promptText = buildEnsembleParticipantPrompt({
         chat: dispatchChat,
         config: dispatchChat.ensemble!,
@@ -10453,6 +10498,7 @@ export class EnsembleOrchestrator {
               // response, matching the serial dispatch contract.
               run.promptShellStamp = promptShellStamp
               run.promptDynamicStateVersion = dynamicStateSnapshot.version
+              run.ensemblePromptUsageTelemetry = promptUsageTelemetry
             }
           })
           .catch((error) => {
@@ -10978,7 +11024,8 @@ export class EnsembleOrchestrator {
         chatId: run.chatId,
         runId: run.runId,
         stats: run.stats as Record<string, unknown> | undefined,
-        fallbackDurationMs
+        fallbackDurationMs,
+        ...run.ensemblePromptUsageTelemetry
       })
       if (entry) record(entry)
     } catch {
