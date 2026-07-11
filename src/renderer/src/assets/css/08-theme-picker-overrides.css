@@ -4853,8 +4853,9 @@
   /* Reading pane = clean near-solid white (was 0.72, which read grey over
    * the desktop through macOS vibrancy). The pane-opacity slider still scales
    * this — dial it down for more frost; at the default 100% the main pane is a
-   * fresh white sheet. Composer / panels / sidebar keep their frosted tokens. */
-  --content-bg: rgba(255, 255, 255, 0.96);
+   * fresh white sheet. Composer / panels / sidebar keep their frosted tokens.
+   * 0.985 so the desktop barely tints it — a touch lighter/whiter. */
+  --content-bg: rgba(255, 255, 255, 0.985);
   --composer-border: rgba(0, 0, 0, 0.12);
   --sidebar-border: rgba(0, 0, 0, 0.10);
   --panel-border: rgba(0, 0, 0, 0.10);
