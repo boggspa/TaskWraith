@@ -889,12 +889,6 @@
   opacity: 0;
 }
 
-[data-appearance="native_glass"][data-reduce-transparency="false"] .workspace-sidebar-resize-handle::before,
-[data-appearance="native_glass"][data-reduce-transparency="false"] .panel-resize-handle::before {
-  background: rgba(236, 246, 255, 0.12);
-  box-shadow: none;
-}
-
 /* Sidebar containment: keep long workspace/thread names inside their cards. */
 .app-sidebar,
 .app-sidebar .sidebar-content,

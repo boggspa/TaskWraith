@@ -37,6 +37,7 @@
 .right-dock-resize-handle.tw-panel-collapsed {
   width: 0;
   flex-basis: 0;
+  margin-inline: 0;
   opacity: 0;
   overflow: hidden;
   pointer-events: none;

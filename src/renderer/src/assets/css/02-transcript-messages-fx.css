@@ -4096,6 +4096,9 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
 .panel-resize-handle {
   width: 8px;
   flex: 0 0 8px;
+  /* Preserve an easy 8px hit target without reserving a glassy strip between
+   * panes: the symmetric overlap leaves a zero-width layout footprint. */
+  margin-inline: -4px;
   align-self: stretch;
   cursor: col-resize;
   position: relative;
@@ -4108,21 +4111,38 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   position: absolute;
   top: 0;
   bottom: 0;
-  left: 3px;
+  left: 50%;
   width: 1px;
-  background: var(--sidebar-border);
+  transform: translateX(-50%);
+  background: linear-gradient(
+    180deg,
+    var(--pane-divider-metal-highlight),
+    var(--pane-divider-metal-base) 18% 82%,
+    var(--pane-divider-metal-shadow)
+  );
+  box-shadow:
+    -0.5px 0 0 var(--pane-divider-metal-highlight),
+    0.5px 0 0 var(--pane-divider-metal-shadow);
+  transition:
+    background 120ms ease,
+    box-shadow 120ms ease;
 }
 
 .panel-resize-handle:hover::before,
 .is-resizing-panel .panel-resize-handle::before {
-  background: color-mix(in srgb, var(--accent) 72%, var(--sidebar-border));
+  background: var(--pane-divider-metal-active);
+  box-shadow:
+    -0.5px 0 0 var(--pane-divider-metal-highlight),
+    0.5px 0 0 var(--pane-divider-metal-shadow),
+    0 0 5px color-mix(in srgb, var(--accent) 24%, transparent);
 }
 
 .panel-resize-handle:focus-visible::before {
   width: 2px;
-  left: 3px;
-  background: var(--focus-ring);
-  box-shadow: 0 0 0 4px var(--focus-glow);
+  background: var(--pane-divider-metal-active);
+  box-shadow:
+    0 0 0 1px var(--pane-divider-metal-highlight),
+    0 0 0 4px var(--focus-glow);
 }
 
 .is-resizing-panel {

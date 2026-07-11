@@ -69,6 +69,14 @@
   --surface: var(--surface-1);
   --surface-elevated: var(--surface-2);
 
+  /* Resizable pane seams. The 8px interaction targets overlap adjacent panes,
+   * so only this opaque, theme-aware metal rim remains visible. Keep these
+   * derived from the solid surface scale rather than glass/transparency tokens. */
+  --pane-divider-metal-base: var(--surface-2);
+  --pane-divider-metal-highlight: color-mix(in srgb, var(--surface-2) 72%, white);
+  --pane-divider-metal-shadow: color-mix(in srgb, var(--surface-2) 72%, black);
+  --pane-divider-metal-active: color-mix(in srgb, var(--surface-2) 24%, var(--accent));
+
   /* Right dock — its own coherent "corporate-clean" skin that maps onto the
    * main-pane tokens (mirrors shadcn's separate --sidebar-* precedent). The
    * dock is permanently neutral: accent is rationed to the focus ring only,
