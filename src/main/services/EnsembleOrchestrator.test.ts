@@ -12,6 +12,7 @@ import type { DiscordContextSnapshot } from '../channels/DiscordContextService'
 import type {
   ActiveGoal,
   AppSettings,
+  ChatMessage,
   ChatRecord,
   ChatRun,
   EnsembleConfig,
@@ -12752,6 +12753,15 @@ describe('post-round host seat auto-compaction (maybeAutoCompactSeatsAfterRound)
     }
   }
 
+  function transcriptRows(count: number): ChatMessage[] {
+    return Array.from({ length: count }, (_, index) => ({
+      id: `message-${index + 1}`,
+      role: 'user' as const,
+      content: `Transcript row ${index + 1}`,
+      timestamp: `2026-05-24T00:00:${String(index).padStart(2, '0')}.000Z`
+    }))
+  }
+
   function harness(opts: {
     participants: EnsembleParticipant[]
     runs: ChatRun[]
@@ -12844,6 +12854,153 @@ describe('post-round host seat auto-compaction (maybeAutoCompactSeatsAfterRound)
     })
     h.fire('completed')
     expect(h.compactSeatContext).not.toHaveBeenCalled()
+  })
+
+  it('auto-compacts Kimi when exact eligible rows fall outside its prompt projection', async () => {
+    const h = harness({
+      participants: [participant({ id: 'kimi', provider: 'kimi' })],
+      runs: []
+    })
+    h.chat.messages = transcriptRows(18)
+
+    await h.beforeDispatch(h.chat.ensemble!.participants[0])
+
+    expect(h.compactSeatContext).toHaveBeenCalledTimes(1)
+    expect(h.compactSeatContext).toHaveBeenCalledWith({
+      chatId: 'ensemble-chat',
+      participantId: 'kimi',
+      provider: 'kimi',
+      trigger: 'auto'
+    })
+  })
+
+  it('does not count the dispatch-live round request rendered separately', async () => {
+    const h = harness({
+      participants: [participant({ id: 'kimi', provider: 'kimi' })],
+      runs: []
+    })
+    h.chat.ensemble!.activeRound = {
+      roundId: 'live-round',
+      status: 'running',
+      prompt: 'Current request.',
+      startedAt: '2026-05-24T00:00:00.000Z',
+      activeParticipantId: 'kimi',
+      participants: [
+        {
+          participantId: 'kimi',
+          provider: 'kimi',
+          role: 'Seat',
+          order: 1,
+          status: 'running'
+        }
+      ]
+    }
+    h.chat.messages = [
+      ...transcriptRows(16),
+      {
+        id: 'live-round-prompt',
+        role: 'user',
+        content: 'Current request.',
+        timestamp: '2026-05-24T00:01:00.000Z',
+        metadata: { kind: 'ensembleRoundPrompt', ensembleRoundId: 'live-round' }
+      }
+    ]
+
+    await h.beforeDispatch(h.chat.ensemble!.participants[0])
+
+    expect(h.compactSeatContext).not.toHaveBeenCalled()
+  })
+
+  it('does not recompact Kimi when bounded provenance represents every omitted row', async () => {
+    const seat = participant({
+      id: 'kimi',
+      provider: 'kimi',
+      contextCompactionSummary: {
+        text: 'Durable summary of the oldest rows.',
+        createdAt: '2026-05-24T00:01:00.000Z',
+        provider: 'kimi',
+        provenance: {
+          kind: 'bounded_prompt_window',
+          suppliedMessageIds: ['message-1', 'message-2']
+        }
+      }
+    })
+    const h = harness({ participants: [seat], runs: [] })
+    h.chat.messages = transcriptRows(18)
+
+    await h.beforeDispatch(h.chat.ensemble!.participants[0])
+
+    expect(h.compactSeatContext).not.toHaveBeenCalled()
+  })
+
+  it('keeps exact prompt-projection evidence Kimi-only', async () => {
+    for (const provider of ['cursor', 'grok'] as const) {
+      const seat = participant({
+        id: provider,
+        provider,
+        ...(provider === 'cursor' ? { linkedProviderSessionId: 'cursor-session' } : {})
+      })
+      const h = harness({ participants: [seat], runs: [] })
+      h.chat.messages = transcriptRows(18)
+
+      await h.beforeDispatch(h.chat.ensemble!.participants[0])
+
+      expect(h.compactSeatContext).not.toHaveBeenCalled()
+    }
+  })
+
+  it('applies the cooldown to repeated Kimi projection evidence', async () => {
+    const h = harness({
+      participants: [participant({ id: 'kimi', provider: 'kimi' })],
+      runs: [],
+      startClock: 10_000
+    })
+    h.chat.messages = transcriptRows(18)
+
+    await h.beforeDispatch(h.chat.ensemble!.participants[0])
+    expect(h.compactSeatContext).toHaveBeenCalledTimes(1)
+
+    h.setClock(10_000 + CONTEXT_AUTO_COMPACT_COOLDOWN_MS - 1)
+    await h.beforeDispatch(h.chat.ensemble!.participants[0])
+    expect(h.compactSeatContext).toHaveBeenCalledTimes(1)
+
+    h.setClock(10_000 + CONTEXT_AUTO_COMPACT_COOLDOWN_MS)
+    await h.beforeDispatch(h.chat.ensemble!.participants[0])
+    expect(h.compactSeatContext).toHaveBeenCalledTimes(2)
+  })
+
+  it('treats a completed round prompt as ordinary post-round projection context', () => {
+    const h = harness({
+      participants: [participant({ id: 'kimi', provider: 'kimi' })],
+      runs: []
+    })
+    h.chat.ensemble!.activeRound = {
+      roundId: 'completed-round',
+      status: 'completed',
+      prompt: 'Completed request.',
+      startedAt: '2026-05-24T00:00:00.000Z',
+      endedAt: '2026-05-24T00:01:00.000Z',
+      participants: []
+    }
+    h.chat.messages = [
+      {
+        id: 'completed-round-prompt',
+        role: 'user',
+        content: 'Completed request.',
+        timestamp: '2026-05-24T00:00:00.000Z',
+        metadata: { kind: 'ensembleRoundPrompt', ensembleRoundId: 'completed-round' }
+      },
+      ...transcriptRows(16)
+    ]
+
+    h.fire('completed')
+
+    expect(h.compactSeatContext).toHaveBeenCalledWith({
+      chatId: 'ensemble-chat',
+      participantId: 'kimi',
+      provider: 'kimi',
+      trigger: 'auto'
+    })
   })
 
   it('does not rank generic usage as automatic compaction evidence', () => {

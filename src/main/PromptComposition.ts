@@ -375,6 +375,48 @@ function eligibleConversationMessages(messages: ChatMessage[]): ChatMessage[] {
   )
 }
 
+/** Exact ids eligible for host compaction material, in canonical transcript order. */
+export function conversationCompactionEligibleMessageIds(messages: ChatMessage[]): string[] {
+  return eligibleConversationMessages(messages).map((message) => message.id)
+}
+
+/**
+ * Resolve a bounded-summary progress claim only when it names a unique, exact
+ * prefix of the current compaction-eligible transcript. Persisted malformed,
+ * stale, gapped, reordered, or duplicate claims fail open to no coverage.
+ */
+export function resolveBoundedCompactionPrefixMessageIds(
+  messages: ChatMessage[],
+  provenance: ContextCompactionProvenance | null | undefined
+): string[] {
+  const relevantMessages = eligibleConversationMessages(messages)
+  const provenanceRecord =
+    provenance && typeof provenance === 'object'
+      ? (provenance as unknown as Record<string, unknown>)
+      : null
+  if (provenanceRecord?.kind !== 'bounded_prompt_window') return []
+  const rawCarried = provenanceRecord.carriedForwardMessageIds ?? []
+  const rawSupplied = provenanceRecord.suppliedMessageIds
+  const arraysAreValid =
+    Array.isArray(rawCarried) &&
+    rawCarried.every((id) => typeof id === 'string') &&
+    Array.isArray(rawSupplied) &&
+    rawSupplied.every((id) => typeof id === 'string')
+  const claimedIds = arraysAreValid ? ([...rawCarried, ...rawSupplied] as string[]) : []
+  const idCounts = new Map<string, number>()
+  for (const message of relevantMessages) {
+    idCounts.set(message.id, (idCounts.get(message.id) || 0) + 1)
+  }
+  const validClaim =
+    claimedIds.length > 0 &&
+    claimedIds.length <= relevantMessages.length &&
+    claimedIds.every((id, index) =>
+      Boolean(id && id.trim() && relevantMessages[index]?.id === id && idCounts.get(id) === 1)
+    ) &&
+    new Set(claimedIds).size === claimedIds.length
+  return validClaim ? claimedIds : []
+}
+
 function renderConversationProjection(
   messages: ChatMessage[],
   header: string,
@@ -487,33 +529,10 @@ export function buildConversationCompactionProjection(
   }
   if (maxTurns <= 0 || relevantMessages.length === 0) return empty
 
-  let carriedForwardMessageIds: string[] = []
-  const provenanceRecord =
-    previousProvenance && typeof previousProvenance === 'object'
-      ? (previousProvenance as unknown as Record<string, unknown>)
-      : null
-  if (provenanceRecord?.kind === 'bounded_prompt_window') {
-    const rawCarried = provenanceRecord.carriedForwardMessageIds ?? []
-    const rawSupplied = provenanceRecord.suppliedMessageIds
-    const arraysAreValid =
-      Array.isArray(rawCarried) &&
-      rawCarried.every((id) => typeof id === 'string') &&
-      Array.isArray(rawSupplied) &&
-      rawSupplied.every((id) => typeof id === 'string')
-    const claimedIds = arraysAreValid ? ([...rawCarried, ...rawSupplied] as string[]) : []
-    const idCounts = new Map<string, number>()
-    for (const message of relevantMessages) {
-      idCounts.set(message.id, (idCounts.get(message.id) || 0) + 1)
-    }
-    const validClaim =
-      claimedIds.length > 0 &&
-      claimedIds.length <= relevantMessages.length &&
-      claimedIds.every((id, index) =>
-        Boolean(id && id.trim() && relevantMessages[index]?.id === id && idCounts.get(id) === 1)
-      ) &&
-      new Set(claimedIds).size === claimedIds.length
-    if (validClaim) carriedForwardMessageIds = claimedIds
-  }
+  const carriedForwardMessageIds = resolveBoundedCompactionPrefixMessageIds(
+    messages,
+    previousProvenance
+  )
 
   const maxMessages = Math.max(0, Math.trunc(maxTurns) * 2)
   const windowedMessages = relevantMessages.slice(

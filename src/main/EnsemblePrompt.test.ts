@@ -6,6 +6,7 @@ import {
   buildParticipantTokenMap,
   computeEnsemblePromptShellStamp,
   ensembleSpeakerForMessage as buildEnsembleSpeaker,
+  findUncoveredEnsemblePromptMessageIds,
   formatFileChangeDigest,
   formatRoundModeInstructions,
   formatSameProviderDisambiguationNote,
@@ -2738,5 +2739,150 @@ describe('seat compaction summary injection (wave 3)', () => {
     })
     expect(prompt).not.toContain('Prior seat summary')
     expect(prompt).toContain('OLD covered panel detail')
+  })
+})
+
+describe('Kimi prompt-projection compaction evidence', () => {
+  function projectionFixture() {
+    const participant: EnsembleParticipant = {
+      id: 'kimi-seat',
+      provider: 'kimi',
+      enabled: true,
+      role: 'Worker',
+      instructions: 'Work.',
+      order: 1,
+      permissionPresetId: 'read_only'
+    }
+    const config: EnsembleConfig = {
+      enabled: true,
+      maxParticipants: 1,
+      participants: [participant]
+    }
+    const messages: ChatRecord['messages'] = [
+      {
+        id: 'tool-row',
+        role: 'tool',
+        content: 'Never part of the tagged transcript.',
+        timestamp: '2026-05-24T00:00:00.000Z'
+      },
+      ...['old-1', 'old-2', 'recent-1', 'recent-2'].map((id, index) => ({
+        id,
+        role: 'user' as const,
+        content: id,
+        timestamp: `2026-05-24T00:00:0${index + 1}.000Z`
+      })),
+      {
+        id: 'current-round',
+        role: 'user',
+        content: 'Current request rendered separately.',
+        timestamp: '2026-05-24T00:00:05.000Z',
+        metadata: { kind: 'ensembleRoundPrompt', ensembleRoundId: 'round-2' }
+      }
+    ]
+    const base = chat()
+    return {
+      participant,
+      config,
+      chat: { ...base, messages, ensemble: config }
+    }
+  }
+
+  it('returns only eligible rows outside the exact live prompt window', () => {
+    const input = projectionFixture()
+    expect(
+      findUncoveredEnsemblePromptMessageIds({
+        ...input,
+        chatContextTurns: 1,
+        excludeEnsembleRoundPromptRoundId: 'round-2'
+      })
+    ).toEqual(['old-1', 'old-2'])
+  })
+
+  it('subtracts rows represented by bounded summary provenance', () => {
+    const input = projectionFixture()
+    input.participant.contextCompactionSummary = {
+      text: 'Durable memory of the first omitted row.',
+      createdAt: '2026-05-24T00:01:00.000Z',
+      provider: 'kimi',
+      provenance: {
+        kind: 'bounded_prompt_window',
+        suppliedMessageIds: ['old-1']
+      }
+    }
+    expect(
+      findUncoveredEnsemblePromptMessageIds({
+        ...input,
+        chatContextTurns: 1,
+        excludeEnsembleRoundPromptRoundId: 'round-2'
+      })
+    ).toEqual(['old-2'])
+  })
+
+  it('fails open when bounded provenance is not a unique exact prefix', () => {
+    const input = projectionFixture()
+    input.participant.contextCompactionSummary = {
+      text: 'Stale summary claim.',
+      createdAt: '2026-05-24T00:01:00.000Z',
+      provider: 'kimi',
+      provenance: {
+        kind: 'bounded_prompt_window',
+        suppliedMessageIds: ['old-2']
+      }
+    }
+    expect(
+      findUncoveredEnsemblePromptMessageIds({
+        ...input,
+        chatContextTurns: 1,
+        excludeEnsembleRoundPromptRoundId: 'round-2'
+      })
+    ).toEqual(['old-1', 'old-2'])
+  })
+
+  it('does not produce evidence for omitted system or error rows', () => {
+    const input = projectionFixture()
+    input.chat.messages = [
+      {
+        id: 'old-system',
+        role: 'system',
+        content: 'Diagnostic system row.',
+        timestamp: '2026-05-24T00:00:00.000Z'
+      },
+      {
+        id: 'old-error',
+        role: 'error',
+        content: 'Diagnostic error row.',
+        timestamp: '2026-05-24T00:00:01.000Z'
+      },
+      ...input.chat.messages.filter((message) =>
+        ['recent-1', 'recent-2', 'current-round'].includes(message.id)
+      )
+    ]
+    expect(
+      findUncoveredEnsemblePromptMessageIds({
+        ...input,
+        chatContextTurns: 1,
+        excludeEnsembleRoundPromptRoundId: 'round-2'
+      })
+    ).toEqual([])
+  })
+
+  it('honors the live own-last-turn widening before claiming rows fell out', () => {
+    const input = projectionFixture()
+    input.chat.messages[2] = {
+      ...input.chat.messages[2],
+      role: 'assistant',
+      metadata: {
+        ensembleParticipantId: input.participant.id,
+        ensembleProvider: 'kimi',
+        ensembleRole: 'Worker'
+      }
+    }
+    expect(
+      findUncoveredEnsemblePromptMessageIds({
+        ...input,
+        chatContextTurns: 1,
+        excludeEnsembleRoundPromptRoundId: 'round-2'
+      })
+    ).toEqual([])
   })
 })

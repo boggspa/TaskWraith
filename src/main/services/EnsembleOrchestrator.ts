@@ -14,6 +14,7 @@ import {
   buildEnsembleDynamicStateSnapshot,
   buildEnsembleParticipantPrompt,
   computeEnsemblePromptShellStamp,
+  findUncoveredEnsemblePromptMessageIds,
   getOrderedEnsembleParticipants,
   providerLabel
 } from '../EnsemblePrompt'
@@ -11866,6 +11867,32 @@ export class EnsembleOrchestrator {
     }
     const chat = this.deps.getChat(chatId)
     if (!chat?.ensemble) return null
+    if (participant.provider === 'kimi') {
+      const messageIds = findUncoveredEnsemblePromptMessageIds({
+        chat,
+        config: chat.ensemble,
+        participant,
+        chatContextTurns: this.deps.getSettings().chatContextTurns,
+        ...(isEnsembleRoundDispatchLive(chat.ensemble.activeRound) && chat.ensemble.activeRound
+          ? { excludeEnsembleRoundPromptRoundId: chat.ensemble.activeRound.roundId }
+          : {})
+      })
+      if (
+        !shouldAutoCompactHostContext('kimi', {
+          kind: 'prompt_projection_uncovered',
+          messageIds
+        })
+      ) {
+        return null
+      }
+      this.seatAutoCompactLastAttemptAt.set(participant.id, this.deps.now())
+      return {
+        chatId,
+        participantId: participant.id,
+        provider: 'kimi',
+        trigger: 'auto'
+      }
+    }
     const usage = latestRunContextUsage(chat.runs ?? [], participant.id)
     const windowTokens = resolveContextWindow(
       participant.provider,
@@ -11875,7 +11902,8 @@ export class EnsembleOrchestrator {
     const percent = contextPercent(usage.tokens, windowTokens)
     // Latest run input+output is processed usage, not provider-semantic live
     // occupancy. Keep it available for diagnostics, but never let it reset a
-    // Cursor/Grok session or refresh Kimi's summary on its own.
+    // Cursor/Grok session on its own. Kimi's separate prompt-projection
+    // evidence above is row-specific and refreshes only its durable summary.
     if (
       !shouldAutoCompactHostContext(participant.provider, {
         kind: 'generic_run_usage',
@@ -11897,8 +11925,9 @@ export class EnsembleOrchestrator {
    * Wave 3 — post-round host auto-compaction for cursor/kimi/grok seats (the
    * providers with no native lever). Runs in the idle dead-time after a
    * COMPLETED round: deferred a tick so a chained queued round is visible.
-   * Generic run usage is advisory and therefore currently yields no automatic
-   * request; the selection path remains ready for provider-semantic evidence.
+   * Kimi may refresh its non-destructive durable summary when exact transcript
+   * projection proves rows fell outside the live prompt window. Generic run
+   * usage remains advisory and cannot reset Cursor/Grok sessions.
    * Fire-and-forget —
    * the maintenance lane cards success/failure itself, and the dispatch-wait
    * above protects any round that starts mid-compaction.
@@ -11918,7 +11947,7 @@ export class EnsembleOrchestrator {
         if (!chat?.ensemble) return
         if (this.roundsByChatId.has(chatId)) return
         if (isEnsembleRoundDispatchLive(chat.ensemble.activeRound)) return
-        let worst: { participant: EnsembleParticipant; percent: number } | null = null
+        let worst: { participant: EnsembleParticipant; rank: number } | null = null
         for (const participant of chat.ensemble.participants || []) {
           if (participant.enabled === false) continue
           if (!isHostSeatCompactionProvider(participant.provider)) continue
@@ -11934,22 +11963,42 @@ export class EnsembleOrchestrator {
           ) {
             continue
           }
-          const usage = latestRunContextUsage(chat.runs ?? [], participant.id)
-          const windowTokens = resolveContextWindow(
-            participant.provider,
-            participant.model,
-            usage.totalTokenLimit
-          )
-          const percent = contextPercent(usage.tokens, windowTokens)
-          if (
-            !shouldAutoCompactHostContext(participant.provider, {
-              kind: 'generic_run_usage',
-              percent
+          let rank: number
+          if (participant.provider === 'kimi') {
+            const messageIds = findUncoveredEnsemblePromptMessageIds({
+              chat,
+              config: chat.ensemble,
+              participant,
+              chatContextTurns: this.deps.getSettings().chatContextTurns
             })
-          ) {
-            continue
+            if (
+              !shouldAutoCompactHostContext('kimi', {
+                kind: 'prompt_projection_uncovered',
+                messageIds
+              })
+            ) {
+              continue
+            }
+            rank = messageIds.length
+          } else {
+            const usage = latestRunContextUsage(chat.runs ?? [], participant.id)
+            const windowTokens = resolveContextWindow(
+              participant.provider,
+              participant.model,
+              usage.totalTokenLimit
+            )
+            const percent = contextPercent(usage.tokens, windowTokens)
+            if (
+              !shouldAutoCompactHostContext(participant.provider, {
+                kind: 'generic_run_usage',
+                percent
+              })
+            ) {
+              continue
+            }
+            rank = percent
           }
-          if (!worst || percent > worst.percent) worst = { participant, percent }
+          if (!worst || rank > worst.rank) worst = { participant, rank }
         }
         if (!worst) return
         this.seatAutoCompactLastAttemptAt.set(worst.participant.id, this.deps.now())

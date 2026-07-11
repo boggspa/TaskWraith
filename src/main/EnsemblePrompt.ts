@@ -59,6 +59,10 @@ import {
   resolveActiveGoalForEnsemble,
   shouldInjectActiveGoal
 } from './GoalState'
+import {
+  conversationCompactionEligibleMessageIds,
+  resolveBoundedCompactionPrefixMessageIds
+} from './PromptComposition'
 
 // 1.0.4-AR2 — mirror of the renderer ceiling
 // (`EnsembleParticipantsAboveRow.MAX_ENSEMBLE_PARTICIPANTS`). Keep
@@ -963,21 +967,15 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
   // exact contiguous-prefix provenance claim may prune transcript rows;
   // current bounded/session summaries and legacy timestamps fail open.
   const seatCompactionSummary = input.participant.contextCompactionSummary
-  const seatSummaryBlock = seatCompactionSummary?.text
-    ? [
-        `Prior seat summary (context was compacted ${seatCompactionSummary.createdAt}):`,
-        sanitizeText(seatCompactionSummary.text).slice(0, 8_000)
-      ].join('\n')
-    : ''
+  const seatSummaryBlock = buildSeatCompactionSummaryBlock(input.participant)
   const seatTranscriptMessages = pruneContiguousCompactionPrefix(
     input.chat.messages || [],
     seatCompactionSummary?.provenance
   ) as ChatMessage[]
-  const baseSeatTranscriptChars =
-    ollamaTranscriptBudget?.contextChars ?? input.config.ensembleContextChars
-  const seatTranscriptChars = seatSummaryBlock
-    ? Math.max(4_000, (baseSeatTranscriptChars ?? 24_000) - seatSummaryBlock.length)
-    : baseSeatTranscriptChars
+  const seatTranscriptChars = resolveSeatTranscriptChars(
+    ollamaTranscriptBudget?.contextChars ?? input.config.ensembleContextChars,
+    seatSummaryBlock
+  )
   // A custom prompt label means the final request block is a derived or
   // peer-authored instruction (for example a fan-out lane brief), not a
   // duplicate rendering of the user's round prompt. Keep that user row in
@@ -1549,7 +1547,14 @@ export function buildParticipantTokenMap(
   return map
 }
 
-function buildTaggedTranscript(
+interface TaggedTranscriptProjection {
+  text: string
+  eligibleMessageIds: string[]
+  suppliedMessageIds: string[]
+  omittedMessageIds: string[]
+}
+
+function projectTaggedTranscript(
   messages: ChatMessage[],
   contextTurns: number,
   participantTokens?: Map<string, string>,
@@ -1566,7 +1571,7 @@ function buildTaggedTranscript(
     excludeEnsembleRoundPromptRoundId?: string
     deltaOnly?: boolean
   }
-): string {
+): TaggedTranscriptProjection {
   // Total shared-transcript char budget — user-adjustable per ensemble
   // (5K–256K via the Turn picker); falls back to the default cap. This is the
   // real lever: it drives BOTH how many recent messages we walk and the hard
@@ -1628,6 +1633,7 @@ function buildTaggedTranscript(
   // chronological (unshift). For a non-truncated window this is identical to the
   // previous forward fill.
   const lines: string[] = []
+  const suppliedMessages: ChatMessage[] = []
   let used = 0
   let truncated = false
   for (let i = relevant.length - 1; i >= 0; i--) {
@@ -1659,11 +1665,117 @@ function buildTaggedTranscript(
     }
     used += line.length
     lines.unshift(line)
+    suppliedMessages.unshift(message)
   }
   if (truncated) {
     lines.unshift('[Transcript truncated to fit Ensemble V1 context budget.]')
   }
-  return lines.join('\n\n')
+  const suppliedSet = new Set(suppliedMessages)
+  return {
+    text: lines.join('\n\n'),
+    eligibleMessageIds: filtered.map((message) => message.id),
+    suppliedMessageIds: suppliedMessages.map((message) => message.id),
+    omittedMessageIds: filtered
+      .filter((message) => !suppliedSet.has(message))
+      .map((message) => message.id)
+  }
+}
+
+function buildTaggedTranscript(
+  messages: ChatMessage[],
+  contextTurns: number,
+  participantTokens?: Map<string, string>,
+  contextChars?: number,
+  modelLabels?: Map<string, string>,
+  sinceParticipantId?: string,
+  options?: {
+    excludeEnsembleRoundPromptRoundId?: string
+    deltaOnly?: boolean
+  }
+): string {
+  return projectTaggedTranscript(
+    messages,
+    contextTurns,
+    participantTokens,
+    contextChars,
+    modelLabels,
+    sinceParticipantId,
+    options
+  ).text
+}
+
+function buildSeatCompactionSummaryBlock(participant: EnsembleParticipant): string {
+  const summary = participant.contextCompactionSummary
+  return summary?.text
+    ? [
+        `Prior seat summary (context was compacted ${summary.createdAt}):`,
+        sanitizeText(summary.text).slice(0, 8_000)
+      ].join('\n')
+    : ''
+}
+
+function resolveSeatTranscriptChars(
+  configuredChars: number | undefined,
+  seatSummaryBlock: string
+): number | undefined {
+  return seatSummaryBlock
+    ? Math.max(4_000, (configuredChars ?? MAX_TRANSCRIPT_CHARS) - seatSummaryBlock.length)
+    : configuredChars
+}
+
+/**
+ * Exact transcript rows that a full ensemble prompt would omit for this seat
+ * and that its injected bounded summary does not already represent. The
+ * projection deliberately shares the live prompt's eligibility, turn-window,
+ * own-last-turn widening, and character-budget code so this evidence cannot
+ * drift into a generic history-length heuristic.
+ */
+export function findUncoveredEnsemblePromptMessageIds(input: {
+  chat: ChatRecord
+  config: EnsembleConfig
+  participant: EnsembleParticipant
+  chatContextTurns?: number
+  excludeEnsembleRoundPromptRoundId?: string
+}): string[] {
+  const seatSummaryBlock = buildSeatCompactionSummaryBlock(input.participant)
+  const seatTranscriptMessages = pruneContiguousCompactionPrefix(
+    input.chat.messages || [],
+    input.participant.contextCompactionSummary?.provenance
+  ) as ChatMessage[]
+  const projection = projectTaggedTranscript(
+    seatTranscriptMessages,
+    input.chatContextTurns ?? 6,
+    buildParticipantTokenMap(input.config.participants),
+    resolveSeatTranscriptChars(input.config.ensembleContextChars, seatSummaryBlock),
+    buildDupProviderModelLabels(input.config.participants),
+    input.participant.id,
+    input.excludeEnsembleRoundPromptRoundId
+      ? { excludeEnsembleRoundPromptRoundId: input.excludeEnsembleRoundPromptRoundId }
+      : undefined
+  )
+  const compactionEligibleIds = conversationCompactionEligibleMessageIds(seatTranscriptMessages)
+  const compactionEligibleCounts = new Map<string, number>()
+  for (const id of compactionEligibleIds) {
+    compactionEligibleCounts.set(id, (compactionEligibleCounts.get(id) || 0) + 1)
+  }
+  const summary = input.participant.contextCompactionSummary
+  const represented = new Set(
+    resolveBoundedCompactionPrefixMessageIds(
+      seatTranscriptMessages,
+      summary?.text ? summary.provenance : undefined
+    )
+  )
+  const idCounts = new Map<string, number>()
+  for (const id of projection.eligibleMessageIds) {
+    idCounts.set(id, (idCounts.get(id) || 0) + 1)
+  }
+  return projection.omittedMessageIds.filter(
+    (id) =>
+      Boolean(id.trim()) &&
+      idCounts.get(id) === 1 &&
+      compactionEligibleCounts.get(id) === 1 &&
+      !represented.has(id)
+  )
 }
 
 function messageTag(
