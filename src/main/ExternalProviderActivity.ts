@@ -99,7 +99,13 @@ export function buildExternalUsageRollup(
   const totals = { h24: 0, d7: 0, d90: 0 }
   for (const record of records) {
     if (record.usageKind === 'reset_hint') continue
-    const tokens = record.totalTokens || record.inputTokens + record.outputTokens || 0
+    const tokens =
+      record.totalTokens ||
+      record.inputTokens +
+        (record.cacheReadInputTokens || 0) +
+        (record.cacheCreationInputTokens || 0) +
+        record.outputTokens ||
+      0
     if (!tokens || !Number.isFinite(record.timestamp)) continue
     const key = record.provider ?? 'unknown'
     const bucket = byProvider.get(key) ?? { h24: 0, d7: 0, d90: 0 }
@@ -284,12 +290,18 @@ function eventToUsageRecord(event: ExternalUsageEvent): UsageRecord | null {
   if (!Number.isFinite(event.timestamp) || event.timestamp <= 0) return null
   const totalTokens = Math.max(0, Math.round(event.totalTokens || 0))
   const inputTokens = Math.max(0, Math.round(event.inputTokens || 0))
-  const outputTokens = Math.max(0, Math.round(event.outputTokens ?? totalTokens - inputTokens))
+  const cacheReadInputTokens = Math.max(0, Math.round(event.cacheReadInputTokens || 0))
+  const cacheCreationInputTokens = Math.max(0, Math.round(event.cacheCreationInputTokens || 0))
+  const outputTokens = Math.max(
+    0,
+    Math.round(
+      event.outputTokens ??
+        totalTokens - inputTokens - cacheReadInputTokens - cacheCreationInputTokens
+    )
+  )
   const id = `external-${event.provider}-${stableHash(
     `${event.timestamp}|${event.model}|${totalTokens}|${event.sourceKey}`
   )}`
-  const cacheReadInputTokens = Math.max(0, Math.round(event.cacheReadInputTokens || 0))
-  const cacheCreationInputTokens = Math.max(0, Math.round(event.cacheCreationInputTokens || 0))
   return {
     id,
     provider: event.provider,
@@ -377,21 +389,37 @@ async function parseCodexSessionFile(filePath: string): Promise<ExternalUsageEve
     const timestamp = parseTimestamp(json.timestamp)
     if (!timestamp) continue
     const usage = json.payload?.info?.last_token_usage || json.payload?.info?.total_token_usage
-    const totalTokens = tokenTotal(usage)
+    const reportedInputTokens = numberValue(usage?.input_tokens)
+    // Codex/OpenAI reports cached tokens as a subset of input_tokens. The two
+    // cache-read keys are aliases seen across CLI versions, not additive
+    // counters, so take the larger rather than double-counting both.
+    const reportedCacheReadInputTokens = Math.max(
+      numberValue(usage?.cache_read_input_tokens),
+      numberValue(usage?.cached_input_tokens)
+    )
+    const cacheReadInputTokens = Math.min(reportedInputTokens, reportedCacheReadInputTokens)
+    const cacheCreationInputTokens = Math.min(
+      Math.max(0, reportedInputTokens - cacheReadInputTokens),
+      numberValue(usage?.cache_creation_input_tokens)
+    )
+    const inputTokens = Math.max(
+      0,
+      reportedInputTokens - cacheReadInputTokens - cacheCreationInputTokens
+    )
+    // reasoning_output_tokens is a subset of output_tokens in Codex rollout
+    // records, so output_tokens is already the inclusive output count.
+    const outputTokens = numberValue(usage?.output_tokens)
+    const totalTokens = tokenTotal(usage, reportedInputTokens, outputTokens)
     if (totalTokens <= 0) continue
-    const cacheReadInputTokens =
-      numberValue(usage?.cache_read_input_tokens) + numberValue(usage?.cached_input_tokens)
-    const cacheCreationInputTokens = numberValue(usage?.cache_creation_input_tokens)
     events.push({
       provider: 'codex',
       timestamp,
       model: sessionModel || 'codex',
       totalTokens,
-      inputTokens: numberValue(usage?.input_tokens),
+      inputTokens,
       cacheReadInputTokens,
       cacheCreationInputTokens,
-      outputTokens:
-        numberValue(usage?.output_tokens) + numberValue(usage?.reasoning_output_tokens),
+      outputTokens,
       sourceKey: `${filePath}:${lineIndex}`
     })
   }
@@ -840,18 +868,11 @@ function parseTimestamp(value: unknown): number | null {
   return Number.isFinite(parsed) ? parsed : null
 }
 
-function tokenTotal(usage: any): number {
+function tokenTotal(usage: any, reportedInputTokens: number, outputTokens: number): number {
   if (!usage || typeof usage !== 'object') return 0
   const direct = numberValue(usage.total_tokens) || numberValue(usage.totalTokens)
   if (direct > 0) return direct
-  return (
-    numberValue(usage.input_tokens) +
-    numberValue(usage.cached_input_tokens) +
-    numberValue(usage.cache_read_input_tokens) +
-    numberValue(usage.cache_creation_input_tokens) +
-    numberValue(usage.output_tokens) +
-    numberValue(usage.reasoning_output_tokens)
-  )
+  return reportedInputTokens + outputTokens
 }
 
 function numberValue(value: unknown): number {

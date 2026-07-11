@@ -25,7 +25,7 @@ import { createInterface } from 'readline'
  *   full re-parse, never a broken usage surface.
  */
 
-export const EXTERNAL_ACTIVITY_FILE_CACHE_VERSION = 1
+export const EXTERNAL_ACTIVITY_FILE_CACHE_VERSION = 2
 
 interface ExternalActivityFileCacheEntry {
   provider: string

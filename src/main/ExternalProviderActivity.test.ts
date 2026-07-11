@@ -47,7 +47,7 @@ describe('loadExternalProviderUsageRecords', () => {
                   cached_input_tokens: 5,
                   output_tokens: 7,
                   reasoning_output_tokens: 3,
-                  total_tokens: 25
+                  total_tokens: 17
                 }
               }
             }
@@ -113,14 +113,60 @@ describe('loadExternalProviderUsageRecords', () => {
       })
       const byProvider = new Map(records.map((record) => [record.provider, record]))
 
-      expect(byProvider.get('codex')?.totalTokens).toBe(25)
-      expect(byProvider.get('codex')?.model).toBe('gpt-5.5')
+      expect(byProvider.get('codex')).toMatchObject({
+        model: 'gpt-5.5',
+        inputTokens: 5,
+        cacheReadInputTokens: 5,
+        outputTokens: 7,
+        totalTokens: 17
+      })
       expect(byProvider.get('claude')?.totalTokens).toBe(19)
       expect(byProvider.get('claude')?.inputTokens).toBe(11)
       expect(byProvider.get('claude')?.cacheReadInputTokens).toBe(3)
       expect(byProvider.get('gemini')?.totalTokens).toBe(24)
       expect(byProvider.get('kimi')?.totalTokens).toBe(25)
       expect(records.every((record) => record.workspaceId === 'external')).toBe(true)
+    } finally {
+      await rm(homeDir, { recursive: true, force: true })
+    }
+  })
+
+  it('does not double-count Codex cache aliases or reasoning subsets', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'taskwraith-external-codex-subsets-'))
+    try {
+      const sessionDir = join(homeDir, '.codex', 'sessions', '2026', '05', '31')
+      await mkdir(sessionDir, { recursive: true })
+      await writeFile(
+        join(sessionDir, 'rollout.jsonl'),
+        JSON.stringify({
+          timestamp: '2026-05-31T09:00:00.000Z',
+          type: 'event_msg',
+          payload: {
+            type: 'token_count',
+            info: {
+              last_token_usage: {
+                input_tokens: 10,
+                cached_input_tokens: 5,
+                cache_read_input_tokens: 5,
+                output_tokens: 7,
+                reasoning_output_tokens: 3
+              }
+            }
+          }
+        })
+      )
+
+      const records = await loadExternalProviderUsageRecords({
+        homeDir,
+        now: new Date('2026-05-31T13:00:00.000Z')
+      })
+
+      expect(records.find((record) => record.provider === 'codex')).toMatchObject({
+        inputTokens: 5,
+        cacheReadInputTokens: 5,
+        outputTokens: 7,
+        totalTokens: 17
+      })
     } finally {
       await rm(homeDir, { recursive: true, force: true })
     }
