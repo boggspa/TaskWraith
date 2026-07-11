@@ -1433,6 +1433,11 @@
   filter: drop-shadow(0 0 4px color-mix(in srgb, #c7ced8 32%, transparent));
 }
 
+.ensemble-above-chip-stage-icon {
+  flex: 0 0 auto;
+  color: var(--text-primary);
+}
+
 .ensemble-above-chip-crown.is-second-in-command {
   color: color-mix(in srgb, var(--text-secondary, #aeb4c0) 78%, #ffffff);
   filter: drop-shadow(0 0 4px color-mix(in srgb, #c7ced8 32%, transparent));

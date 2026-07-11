@@ -1016,10 +1016,81 @@ describe('EnsembleParticipantsAboveRow', () => {
     expect(html).not.toContain('Boss')
   })
 
+  it('renders one neutral 14px glyph for each assigned stage and no slot for Any', () => {
+    const chat = makeChat([
+      makeParticipant({
+        id: 'ensemble-any',
+        provider: 'claude',
+        role: 'Any stage',
+        order: 1,
+        stageRole: undefined
+      }),
+      makeParticipant({
+        id: 'ensemble-scout',
+        provider: 'codex',
+        role: 'Scout stage',
+        order: 2,
+        stageRole: 'scout'
+      }),
+      makeParticipant({
+        id: 'ensemble-worker',
+        provider: 'kimi',
+        role: 'Work stage',
+        order: 3,
+        stageRole: 'worker'
+      }),
+      makeParticipant({
+        id: 'ensemble-reviewer',
+        provider: 'grok',
+        role: 'Review stage',
+        order: 4,
+        stageRole: 'reviewer'
+      })
+    ])
+    const html = renderToStaticMarkup(
+      <EnsembleParticipantsAboveRow
+        chat={chat}
+        selectedParticipantId={null}
+        onSelectParticipant={() => undefined}
+        onChatChange={() => undefined}
+      />
+    )
+
+    expect(html.match(/ensemble-above-chip-stage-icon/g) || []).toHaveLength(3)
+    expect(html).toContain('ensemble-above-chip-stage-icon is-file')
+    expect(html).toContain('ensemble-above-chip-stage-icon is-edit')
+    expect(html).toContain('ensemble-above-chip-stage-icon is-search')
+    expect(
+      html.match(
+        /ensemble-above-chip-stage-icon is-(?:file|edit|search)" width="14" height="14"/g
+      ) || []
+    ).toHaveLength(3)
+
+    const css = readFileSync(
+      new URL('../assets/css/09-ensemble-work-session.css', import.meta.url),
+      'utf8'
+    )
+    expect(css).toMatch(
+      /\.ensemble-above-chip-stage-icon\s*\{[^}]*flex: 0 0 auto;[^}]*color: var\(--text-primary\);/
+    )
+  })
+
   it('renders a silver Captain hat separately from Boss', () => {
     const chat = makeChat([
-      makeParticipant({ id: 'ensemble-claude', provider: 'claude', role: 'Bossman', order: 1 }),
-      makeParticipant({ id: 'ensemble-codex', provider: 'codex', role: 'Deputy', order: 2 })
+      makeParticipant({
+        id: 'ensemble-claude',
+        provider: 'claude',
+        role: 'Bossman',
+        order: 1,
+        stageRole: 'scout'
+      }),
+      makeParticipant({
+        id: 'ensemble-codex',
+        provider: 'codex',
+        role: 'Deputy',
+        order: 2,
+        stageRole: 'reviewer'
+      })
     ])
     chat.ensemble!.bossmanParticipantId = 'ensemble-claude'
     chat.ensemble!.secondInCommandParticipantId = 'ensemble-codex'
@@ -1034,6 +1105,7 @@ describe('EnsembleParticipantsAboveRow', () => {
     const bossCrownHits = html.match(/ensemble-above-chip-crown/g) || []
     expect(bossCrownHits.length).toBe(1)
     expect(html).toContain('ensemble-above-chip-captain-hat')
+    expect(html).not.toContain('ensemble-above-chip-stage-icon')
     expect(html).toContain('aria-label="Boss Bossman"')
     expect(html).toContain('aria-label="Captain Deputy"')
   })

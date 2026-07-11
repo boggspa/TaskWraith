@@ -67,6 +67,7 @@ import {
 } from '../lib/composerChipFormat'
 import { resolveProviderRows } from './ComposerProviderPicker'
 import { ProviderGlyph } from './icons/ProviderGlyph'
+import { ToolFamilyIcon, type ToolFamily } from './icons/ToolFamilyIcon'
 import {
   CombinedModelPicker,
   type CombinedModelPickerProviderGroup,
@@ -713,6 +714,39 @@ function CaptainHatIcon({ className }: { className?: string }): React.JSX.Elemen
         strokeLinecap="round"
       />
     </svg>
+  )
+}
+
+const ENSEMBLE_STAGE_ROLE_ICON_FAMILY = {
+  scout: 'file',
+  worker: 'edit',
+  reviewer: 'search'
+} as const satisfies Record<NonNullable<EnsembleParticipant['stageRole']>, ToolFamily>
+
+function ParticipantLeadingRoleIcon({
+  stageRole,
+  isBossman,
+  isSecondInCommand
+}: {
+  stageRole: EnsembleParticipant['stageRole']
+  isBossman: boolean
+  isSecondInCommand: boolean
+}): React.JSX.Element | null {
+  if (isBossman) {
+    return <BossmanCrownIcon className="ensemble-above-chip-crown" />
+  }
+  if (isSecondInCommand) {
+    return <CaptainHatIcon className="ensemble-above-chip-captain-hat" />
+  }
+  if (!stageRole) return null
+
+  const family = ENSEMBLE_STAGE_ROLE_ICON_FAMILY[stageRole]
+  return (
+    <ToolFamilyIcon
+      family={family}
+      size={14}
+      className={`ensemble-above-chip-stage-icon is-${family}`}
+    />
   )
 }
 
@@ -2192,10 +2226,11 @@ function ParticipantChip({
           spoofed upstream hue.
         */}
         <span className="ensemble-above-chip-role">
-          {isBossman ? <BossmanCrownIcon className="ensemble-above-chip-crown" /> : null}
-          {isSecondInCommand ? (
-            <CaptainHatIcon className="ensemble-above-chip-captain-hat" />
-          ) : null}
+          <ParticipantLeadingRoleIcon
+            stageRole={participant.stageRole}
+            isBossman={isBossman}
+            isSecondInCommand={isSecondInCommand}
+          />
           <ProviderGlyph
             provider={participant.provider}
             accentProvider={providerClass}
