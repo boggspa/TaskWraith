@@ -9,7 +9,8 @@ import {
   normalizeSubThreadMailbox,
   normalizeSubThreadMailboxLedger,
   pendingSubThreadMailboxEvents,
-  releaseSubThreadMailboxDelivery
+  releaseSubThreadMailboxDelivery,
+  summarizeSubThreadMailbox
 } from './SubThreadMailbox'
 
 const parentChatId = 'parent-1'
@@ -176,6 +177,81 @@ describe('SubThreadMailbox', () => {
     })
     expect(released.mailbox.events[0].deliveryRunId).toBeUndefined()
     expect(retried.events[0].deliveryAttempts).toBe(2)
+  })
+
+  it('summarizes retained delivery state and coalesced wakes without payload content', () => {
+    const first = enqueueSubThreadMailboxEvent(
+      undefined,
+      eventInput({ content: 'Sensitive first result' })
+    ).mailbox
+    const second = enqueueSubThreadMailboxEvent(
+      first,
+      eventInput({
+        subThreadId: 'child-2',
+        sourceAssistantMessageId: 'assistant-2',
+        outcome: 'failed',
+        content: 'Sensitive second result'
+      })
+    ).mailbox
+    const third = enqueueSubThreadMailboxEvent(
+      second,
+      eventInput({
+        sourceAssistantMessageId: 'assistant-3',
+        outcome: 'requires_action',
+        content: 'Sensitive blocked result'
+      })
+    ).mailbox
+    const delivered = claimPendingSubThreadMailboxEvents(third, {
+      deliveryRunId: 'mailbox-run-coalesced',
+      eventIds: [third.events[0].id, third.events[1].id],
+      claimedAt: '2026-07-11T12:03:00.000Z'
+    }).mailbox
+    const acknowledged = acknowledgeSubThreadMailboxDelivery(
+      delivered,
+      'mailbox-run-coalesced',
+      { processedAt: '2026-07-11T12:04:00.000Z' }
+    ).mailbox
+    const blockedClaim = claimPendingSubThreadMailboxEvents(acknowledged, {
+      deliveryRunId: 'mailbox-run-blocked',
+      eventIds: [acknowledged.events[2].id],
+      claimedAt: '2026-07-11T12:05:00.000Z'
+    }).mailbox
+    const blocked = releaseSubThreadMailboxDelivery(blockedClaim, 'mailbox-run-blocked', {
+      failedAt: '2026-07-11T12:06:00.000Z',
+      error: 'Sensitive delivery failure'
+    }).mailbox
+
+    const parentSummary = summarizeSubThreadMailbox(blocked)
+    const childSummary = summarizeSubThreadMailbox(blocked, { subThreadId: 'child-1' })
+    expect(parentSummary).toEqual({
+      retainedEvents: 3,
+      pending: 1,
+      claimed: 0,
+      processed: 2,
+      blocked: 1,
+      outcomes: { done: 1, requires_action: 1, failed: 1, cancelled: 0 },
+      delivery: {
+        processedEvents: 2,
+        batches: 1,
+        coalescedBatches: 1,
+        coalescedWakeupsAvoided: 1,
+        lastProcessedAt: '2026-07-11T12:04:00.000Z'
+      }
+    })
+    expect(childSummary).toMatchObject({
+      retainedEvents: 2,
+      pending: 1,
+      processed: 1,
+      blocked: 1,
+      delivery: {
+        processedEvents: 1,
+        batches: 1,
+        coalescedBatches: 1,
+        coalescedWakeupsAvoided: 0
+      }
+    })
+    expect(JSON.stringify(parentSummary)).not.toContain('Sensitive')
+    expect(JSON.stringify(childSummary)).not.toContain('Sensitive')
   })
 
   it('normalizes malformed durable state and preserves only valid ordered events', () => {

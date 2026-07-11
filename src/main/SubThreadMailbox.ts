@@ -72,6 +72,25 @@ export interface SubThreadMailboxLedger {
   mailboxes: Record<string, SubThreadMailbox>
 }
 
+/** Payload-free projection over the retained mailbox window. Delivery metrics
+ * are derived from durable deliveryRunId ownership, so they survive restart
+ * without introducing a second analytics ledger. */
+export interface SubThreadMailboxSummary {
+  retainedEvents: number
+  pending: number
+  claimed: number
+  processed: number
+  blocked: number
+  outcomes: Record<SubThreadMailboxOutcome, number>
+  delivery: {
+    processedEvents: number
+    batches: number
+    coalescedBatches: number
+    coalescedWakeupsAvoided: number
+    lastProcessedAt?: string
+  }
+}
+
 const PROVIDERS = new Set<ProviderId>([
   'gemini',
   'codex',
@@ -343,6 +362,66 @@ export function pendingSubThreadMailboxEvents(
         .filter((event) => event.processedAt === null)
         .sort((a, b) => a.sequence - b.sequence)
     : []
+}
+
+function processedMailboxBatchKey(event: SubThreadMailboxEvent): string {
+  return event.deliveryRunId || `legacy-event:${event.id}`
+}
+
+export function summarizeSubThreadMailbox(
+  current: SubThreadMailbox | undefined,
+  options: { subThreadId?: string } = {}
+): SubThreadMailboxSummary {
+  const mailbox = current
+    ? normalizeSubThreadMailbox(current, current.parentChatId)
+    : undefined
+  const allEvents = mailbox?.events || []
+  const events = options.subThreadId
+    ? allEvents.filter((event) => event.source.subThreadId === options.subThreadId)
+    : allEvents
+  const processed = events.filter((event) => event.processedAt !== null)
+  const processedBatchKeys = new Set(processed.map(processedMailboxBatchKey))
+  const allProcessedBatchSizes = allEvents
+    .filter((event) => event.processedAt !== null)
+    .reduce<Map<string, number>>((sizes, event) => {
+      const key = processedMailboxBatchKey(event)
+      sizes.set(key, (sizes.get(key) || 0) + 1)
+      return sizes
+    }, new Map())
+  const coalescedBatches = [...processedBatchKeys].filter(
+    (key) => (allProcessedBatchSizes.get(key) || 0) > 1
+  ).length
+  const lastProcessedAt = processed
+    .map((event) => event.processedAt)
+    .filter((value): value is string => Boolean(value))
+    .sort()
+    .at(-1)
+  const outcomes: Record<SubThreadMailboxOutcome, number> = {
+    done: 0,
+    requires_action: 0,
+    failed: 0,
+    cancelled: 0
+  }
+  for (const event of events) outcomes[event.outcome] += 1
+  return {
+    retainedEvents: events.length,
+    pending: events.filter((event) => event.processedAt === null).length,
+    claimed: events.filter(
+      (event) => event.processedAt === null && Boolean(event.deliveryRunId)
+    ).length,
+    processed: processed.length,
+    blocked: events.filter(
+      (event) => event.processedAt === null && Boolean(event.lastDeliveryError)
+    ).length,
+    outcomes,
+    delivery: {
+      processedEvents: processed.length,
+      batches: processedBatchKeys.size,
+      coalescedBatches,
+      coalescedWakeupsAvoided: Math.max(0, processed.length - processedBatchKeys.size),
+      ...(lastProcessedAt ? { lastProcessedAt } : {})
+    }
+  }
 }
 
 export function claimPendingSubThreadMailboxEvents(

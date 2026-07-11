@@ -233,7 +233,62 @@ describe('SubThreadWorkerControl', () => {
       attachedAt: now,
       pending: 0,
       active: 0,
-      terminal: 0
+      terminal: 0,
+      processed: 0,
+      completed: 0,
+      failed: 0,
+      cancelled: 0,
+      blocked: 0
     })
+  })
+
+  it('reports terminal outcomes and a prompt-free blocked-work locator', () => {
+    const first = enqueueSubThreadWorkerEvent(undefined, input('tool-completed'), now)
+    const firstClaim = claimNextSubThreadWorkerEvent(first.control, 'claim-completed')
+    const firstDispatch = bindSubThreadWorkerEventToRun(
+      firstClaim.control,
+      firstClaim.event!.id,
+      'claim-completed',
+      firstClaim.event!.plannedRunId,
+      '2026-07-11T12:00:01.000Z'
+    )
+    const completed = settleSubThreadWorkerEvent(
+      firstDispatch,
+      firstClaim.event!.plannedRunId,
+      'completed',
+      { now: '2026-07-11T12:00:02.000Z' }
+    )
+    const second = enqueueSubThreadWorkerEvent(
+      completed.control,
+      input('tool-failed', 'Sensitive queued follow-up'),
+      '2026-07-11T12:00:03.000Z'
+    )
+    const secondClaim = claimNextSubThreadWorkerEvent(second.control, 'claim-failed')
+    const failed = failClaimedSubThreadWorkerEvent(
+      secondClaim.control,
+      secondClaim.event!.id,
+      'claim-failed',
+      'No resumable provider session.',
+      '2026-07-11T12:00:04.000Z'
+    )
+
+    const summary = summarizeSubThreadWorkerControl(failed)
+    expect(summary).toMatchObject({
+      pending: 0,
+      active: 0,
+      terminal: 2,
+      processed: 1,
+      completed: 1,
+      failed: 1,
+      cancelled: 0,
+      blocked: 1,
+      lastFailure: {
+        eventId: secondClaim.event!.id,
+        plannedRunId: secondClaim.event!.plannedRunId,
+        terminalAt: '2026-07-11T12:00:04.000Z'
+      }
+    })
+    expect(JSON.stringify(summary)).not.toContain('Sensitive queued follow-up')
+    expect(JSON.stringify(summary)).not.toContain('No resumable provider session.')
   })
 })

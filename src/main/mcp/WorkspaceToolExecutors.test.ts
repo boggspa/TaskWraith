@@ -32,7 +32,17 @@ import {
   type HostCommandResult,
   type WorkspaceToolExecutorDependencies
 } from './WorkspaceToolExecutors'
-import { enqueueSubThreadWorkerEvent } from '../SubThreadWorkerControl'
+import {
+  claimNextSubThreadWorkerEvent,
+  enqueueSubThreadWorkerEvent,
+  failClaimedSubThreadWorkerEvent
+} from '../SubThreadWorkerControl'
+import {
+  acknowledgeSubThreadMailboxDelivery,
+  claimPendingSubThreadMailboxEvents,
+  enqueueSubThreadMailboxEvent,
+  releaseSubThreadMailboxDelivery
+} from '../SubThreadMailbox'
 
 function makeDeps(
   runHostCommand: WorkspaceToolExecutorDependencies['host']['runHostCommand']
@@ -45,6 +55,12 @@ function makeDeps(
     store: {
       getChat: () => undefined,
       getChildChats: () => [],
+      getSubThreadMailbox: (parentChatId) => ({
+        schemaVersion: 1,
+        parentChatId,
+        nextSequence: 1,
+        events: []
+      }),
       getRunQueueJobs: () => []
     },
     runs: {
@@ -894,27 +910,116 @@ describe('chat attachment workspace tools', () => {
 })
 
 describe('subthread workspace tools', () => {
-  it('projects worker attachment and queue status through existing read tools only', () => {
-    const queued = enqueueSubThreadWorkerEvent(undefined, {
+  it('projects sanitized mailbox, worker, retry, and cache status through existing read tools', () => {
+    const failedQueued = enqueueSubThreadWorkerEvent(undefined, {
+      sourceToolCallId: 'tool-failed',
+      parentChatId: 'parent-1',
+      subThreadId: 'child-1',
+      targetProvider: 'codex',
+      parentProvider: 'claude',
+      prompt: 'Sensitive failed follow-up',
+      returnResultToParent: true,
+      approvalMode: 'plan'
+    })
+    const failedClaim = claimNextSubThreadWorkerEvent(failedQueued.control, 'claim-failed')
+    const failed = failClaimedSubThreadWorkerEvent(
+      failedClaim.control,
+      failedClaim.event!.id,
+      'claim-failed',
+      'Sensitive worker failure',
+      '2026-07-11T12:00:01.000Z'
+    )
+    const queued = enqueueSubThreadWorkerEvent(failed, {
       sourceToolCallId: 'tool-queued',
       parentChatId: 'parent-1',
       subThreadId: 'child-1',
       targetProvider: 'codex',
       parentProvider: 'claude',
-      prompt: 'Queued follow-up',
+      prompt: 'Sensitive queued follow-up',
       returnResultToParent: true,
       approvalMode: 'plan'
     })
+    const firstMailbox = enqueueSubThreadMailboxEvent(undefined, {
+      parentChatId: 'parent-1',
+      subThreadId: 'child-1',
+      subThreadProvider: 'codex',
+      subThreadTitle: 'Child',
+      sourceAssistantMessageId: 'assistant-1',
+      outcome: 'done',
+      content: 'Sensitive child result'
+    }).mailbox
+    const secondMailbox = enqueueSubThreadMailboxEvent(firstMailbox, {
+      parentChatId: 'parent-1',
+      subThreadId: 'child-2',
+      subThreadProvider: 'claude',
+      subThreadTitle: 'Other child',
+      sourceAssistantMessageId: 'assistant-2',
+      outcome: 'done',
+      content: 'Sensitive sibling result'
+    }).mailbox
+    const thirdMailbox = enqueueSubThreadMailboxEvent(secondMailbox, {
+      parentChatId: 'parent-1',
+      subThreadId: 'child-1',
+      subThreadProvider: 'codex',
+      subThreadTitle: 'Child',
+      sourceAssistantMessageId: 'assistant-3',
+      outcome: 'requires_action',
+      content: 'Sensitive blocked result'
+    }).mailbox
+    const claimedMailbox = claimPendingSubThreadMailboxEvents(thirdMailbox, {
+      deliveryRunId: 'mailbox-run-coalesced',
+      eventIds: [thirdMailbox.events[0].id, thirdMailbox.events[1].id],
+      claimedAt: '2026-07-11T12:00:02.000Z'
+    }).mailbox
+    const deliveredMailbox = acknowledgeSubThreadMailboxDelivery(
+      claimedMailbox,
+      'mailbox-run-coalesced',
+      { processedAt: '2026-07-11T12:00:03.000Z' }
+    ).mailbox
+    const blockedMailboxClaim = claimPendingSubThreadMailboxEvents(deliveredMailbox, {
+      deliveryRunId: 'mailbox-run-blocked',
+      eventIds: [deliveredMailbox.events[2].id],
+      claimedAt: '2026-07-11T12:00:04.000Z'
+    }).mailbox
+    const mailbox = releaseSubThreadMailboxDelivery(
+      blockedMailboxClaim,
+      'mailbox-run-blocked',
+      { failedAt: '2026-07-11T12:00:05.000Z', error: 'Sensitive delivery failure' }
+    ).mailbox
     const chat = {
       appChatId: 'child-1',
       parentChatId: 'parent-1',
       provider: 'codex',
+      linkedProviderSessionId: 'codex-session-child-1',
       title: 'Child',
       archived: false,
       createdAt: 1,
       updatedAt: 2,
       messages: [],
-      runs: [{ runId: 'run-live', provider: 'codex', startedAt: 't', status: 'running' }],
+      runs: [{ runId: 'run-complete', provider: 'codex', startedAt: 't', status: 'success' }],
+      seatGeneration: {
+        schemaVersion: 1,
+        id: 'seat-codex-2-test',
+        ordinal: 2,
+        createdAt: '2026-07-11T11:00:00.000Z',
+        updatedAt: '2026-07-11T12:00:00.000Z',
+        config: {
+          provider: 'codex',
+          model: 'gpt-5.5',
+          transport: 'cli-opaque',
+          systemPromptFingerprint: 'sensitive-system-fingerprint',
+          toolsFingerprint: 'sensitive-tools-fingerprint'
+        },
+        guaranteeTier: 'best-effort',
+        cacheEvidence: {
+          state: 'observed_hit',
+          observedAt: '2026-07-11T12:00:00.000Z',
+          runId: 'run-complete',
+          guaranteeTier: 'best-effort',
+          cacheReadInputTokens: 321,
+          cacheCreationInputTokens: 0
+        }
+      },
       delegationContext: {
         createdAt: 1,
         parentProvider: 'claude',
@@ -926,6 +1031,7 @@ describe('subthread workspace tools', () => {
     const deps = makeDeps(async () => commandResult(''))
     deps.store.getChat = (chatId) => (chatId === 'child-1' ? chat : undefined)
     deps.store.getChildChats = () => [chat]
+    deps.store.getSubThreadMailbox = () => mailbox
 
     const context = {
       scope: 'workspace' as const,
@@ -943,11 +1049,79 @@ describe('subthread workspace tools', () => {
       attachedAt: expect.any(String),
       pending: 1,
       active: 0,
-      terminal: 0,
+      terminal: 1,
+      blocked: 1,
       nextPriority: 'normal'
     })
+    expect(listed).toMatchObject({
+      workerCount: 1,
+      blockedWorkerCount: 1,
+      mailbox: {
+        retainedEvents: 3,
+        pending: 1,
+        processed: 2,
+        blocked: 1,
+        delivery: { batches: 1, coalescedBatches: 1, coalescedWakeupsAvoided: 1 }
+      }
+    })
+    expect(listed.subthreads[0]).toMatchObject({
+      mailbox: {
+        retainedEvents: 2,
+        pending: 1,
+        processed: 1,
+        blocked: 1,
+        delivery: { batches: 1, coalescedBatches: 1, coalescedWakeupsAvoided: 0 }
+      },
+      workerActions: {
+        inspect: { tool: 'read_subthread_result', depth: 'events-only' },
+        retry: {
+          tool: 'delegate_to_subthread',
+          available: true,
+          requiresNewPrompt: true
+        }
+      },
+      cache: {
+        generationId: 'seat-codex-2-test',
+        guaranteeTier: 'best-effort',
+        transport: 'cli-opaque',
+        evidence: {
+          state: 'observed_hit',
+          cacheReadInputTokens: 321,
+          cacheCreationInputTokens: 0
+        }
+      }
+    })
     expect(read.workerControl).toEqual(listed.subthreads[0].workerControl)
-    expect(JSON.stringify(read)).not.toContain('Queued follow-up')
+    expect(read.mailbox).toEqual(listed.subthreads[0].mailbox)
+    expect(read.workerActions).toEqual(listed.subthreads[0].workerActions)
+    expect(read.cache).toEqual(listed.subthreads[0].cache)
+    const serialized = JSON.stringify({ listed, read })
+    expect(serialized).not.toContain('Sensitive queued follow-up')
+    expect(serialized).not.toContain('Sensitive failed follow-up')
+    expect(serialized).not.toContain('Sensitive child result')
+    expect(serialized).not.toContain('Sensitive sibling result')
+    expect(serialized).not.toContain('Sensitive blocked result')
+    expect(serialized).not.toContain('Sensitive worker failure')
+    expect(serialized).not.toContain('Sensitive delivery failure')
+    expect(serialized).not.toContain('sensitive-system-fingerprint')
+    expect(serialized).not.toContain('sensitive-tools-fingerprint')
+  })
+
+  it('omits mailbox projection entirely when the retained mailbox is empty', () => {
+    const deps = makeDeps(async () => commandResult(''))
+    const result = executeListSubthreads(
+      deps,
+      {
+        scope: 'workspace',
+        cwd: '/tmp/ws',
+        workspacePath: '/tmp/ws',
+        appChatId: 'parent-1'
+      },
+      {}
+    ) as any
+
+    expect(result.mailbox).toBeUndefined()
+    expect(JSON.stringify(result)).not.toContain('mailbox')
   })
 
   it('hard-cancels the live turn and every queued worker follow-up', async () => {

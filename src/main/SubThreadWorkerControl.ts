@@ -46,8 +46,21 @@ export interface SubThreadWorkerControlSummary {
   pending: number
   active: number
   terminal: number
+  processed: number
+  completed: number
+  failed: number
+  cancelled: number
+  /** Failed terminal events that require a deliberate follow-up rather than
+   * an automatic replay of potentially side-effecting provider work. */
+  blocked: number
   nextEventId?: string
   nextPriority?: SubThreadWorkerEventPriority
+  lastFailure?: {
+    eventId: string
+    plannedRunId: string
+    dispatchRunId?: string
+    terminalAt?: string
+  }
 }
 
 const ACTIVE_EVENT_STATUSES = new Set<SubThreadWorkerEventStatus>(['claimed', 'dispatched'])
@@ -550,14 +563,44 @@ export function recoverSubThreadWorkerControl(
 export function summarizeSubThreadWorkerControl(
   current: SubThreadWorkerControl | null | undefined
 ): SubThreadWorkerControlSummary {
-  if (!current) return { pending: 0, active: 0, terminal: 0 }
+  if (!current) {
+    return {
+      pending: 0,
+      active: 0,
+      terminal: 0,
+      processed: 0,
+      completed: 0,
+      failed: 0,
+      cancelled: 0,
+      blocked: 0
+    }
+  }
   const control = normalizeSubThreadWorkerControl(current)
   const pending = pendingSubThreadWorkerEvents(control)
+  const failed = control.events.filter((event) => event.status === 'failed')
+  const lastFailure = failed.at(-1)
   return {
     attachedAt: control.attachedAt,
     pending: pending.length,
     active: control.events.filter((event) => ACTIVE_EVENT_STATUSES.has(event.status)).length,
     terminal: control.events.filter((event) => TERMINAL_EVENT_STATUSES.has(event.status)).length,
-    ...(pending[0] ? { nextEventId: pending[0].id, nextPriority: pending[0].priority } : {})
+    processed: control.events.filter((event) => Boolean(event.processedAt)).length,
+    completed: control.events.filter((event) => event.status === 'completed').length,
+    failed: failed.length,
+    cancelled: control.events.filter((event) => event.status === 'cancelled').length,
+    blocked: failed.length,
+    ...(pending[0] ? { nextEventId: pending[0].id, nextPriority: pending[0].priority } : {}),
+    ...(lastFailure
+      ? {
+          lastFailure: {
+            eventId: lastFailure.id,
+            plannedRunId: lastFailure.plannedRunId,
+            ...(lastFailure.dispatchRunId
+              ? { dispatchRunId: lastFailure.dispatchRunId }
+              : {}),
+            ...(lastFailure.terminalAt ? { terminalAt: lastFailure.terminalAt } : {})
+          }
+        }
+      : {})
   }
 }

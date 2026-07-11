@@ -5213,6 +5213,7 @@ const workspaceToolExecutors = createWorkspaceToolExecutors({
   store: {
     getChat: (chatId) => AppStore.getChat(chatId) ?? undefined,
     getChildChats: (parentChatId) => AppStore.getChildChats(parentChatId),
+    getSubThreadMailbox: (parentChatId) => AppStore.getSubThreadMailbox(parentChatId),
     getRunQueueJobs: (filter) => AppStore.getRunQueueJobs(filter)
   },
   runs: {

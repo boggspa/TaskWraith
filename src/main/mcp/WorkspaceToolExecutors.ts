@@ -6,6 +6,7 @@ import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } 
 import { isPathInsideWorkspace } from '../AgenticPolicy'
 import { isRetiredExternalChannelInboundMessage } from '../LegacyExternalChannelHistory'
 import { getSubThreadResumeSessionId as defaultGetSubThreadResumeSessionId } from '../SubThreadRecall'
+import { summarizeSubThreadMailbox, type SubThreadMailbox } from '../SubThreadMailbox'
 import {
   cancelPendingSubThreadWorkerEvents,
   summarizeSubThreadWorkerControl
@@ -116,6 +117,7 @@ export interface WorkspaceToolHostDependencies {
 export interface WorkspaceToolStoreDependencies {
   getChat: (chatId: string) => ChatRecord | undefined
   getChildChats: (parentChatId: string) => ChatRecord[]
+  getSubThreadMailbox: (parentChatId: string) => SubThreadMailbox
   getRunQueueJobs: (filter?: { chatId?: string }) => RunQueueJob[]
 }
 
@@ -1845,6 +1847,50 @@ export async function executeInspectChatAttachment(
   }
 }
 
+function summarizeSubThreadCache(chat: ChatRecord) {
+  const generation = chat.seatGeneration
+  if (!generation) return undefined
+  return {
+    generationId: generation.id,
+    ordinal: generation.ordinal,
+    guaranteeTier: generation.guaranteeTier,
+    transport: generation.config.transport,
+    createdAt: generation.createdAt,
+    updatedAt: generation.updatedAt,
+    evidence: generation.cacheEvidence
+      ? {
+          state: generation.cacheEvidence.state,
+          observedAt: generation.cacheEvidence.observedAt,
+          runId: generation.cacheEvidence.runId,
+          guaranteeTier: generation.cacheEvidence.guaranteeTier,
+          cacheReadInputTokens: generation.cacheEvidence.cacheReadInputTokens,
+          cacheCreationInputTokens: generation.cacheEvidence.cacheCreationInputTokens
+        }
+      : null
+  }
+}
+
+function summarizeSubThreadWorkerActions(
+  chat: ChatRecord,
+  blocked: number,
+  lifecycle: { canRecall: boolean; canCancel: boolean }
+) {
+  return {
+    inspect: {
+      tool: 'read_subthread_result',
+      subThreadId: chat.appChatId,
+      depth: 'events-only'
+    },
+    retry: {
+      tool: 'delegate_to_subthread',
+      subThreadId: chat.appChatId,
+      available:
+        blocked > 0 && !chat.archived && (lifecycle.canRecall || lifecycle.canCancel),
+      requiresNewPrompt: true
+    }
+  }
+}
+
 export function executeListSubthreads(
   deps: WorkspaceToolExecutorDependencies,
   context: WorkspaceToolContext,
@@ -1856,6 +1902,8 @@ export function executeListSubthreads(
   }
   const includeArchived = args.includeArchived === true
   const includePrompt = args.includePrompt === true
+  const parentMailboxState = deps.store.getSubThreadMailbox(parentChatId)
+  const parentMailbox = summarizeSubThreadMailbox(parentMailboxState)
   const subthreads = deps.store
     .getChildChats(parentChatId)
     .filter((chat) => includeArchived || !chat.archived)
@@ -1865,6 +1913,13 @@ export function executeListSubthreads(
       const latestAssistant = latestAssistantMessage(chat)
       const workerControl = chat.delegationContext?.workerControl
         ? summarizeSubThreadWorkerControl(chat.delegationContext.workerControl)
+        : undefined
+      const mailbox = summarizeSubThreadMailbox(parentMailboxState, {
+        subThreadId: chat.appChatId
+      })
+      const cache = summarizeSubThreadCache(chat)
+      const workerActions = workerControl
+        ? summarizeSubThreadWorkerActions(chat, workerControl.blocked, lifecycle)
         : undefined
       return {
         id: chat.appChatId,
@@ -1881,6 +1936,9 @@ export function executeListSubthreads(
         workspaceId: chat.workspaceId,
         workspacePath: chat.workspacePath,
         workerControl,
+        ...(mailbox.retainedEvents > 0 ? { mailbox } : {}),
+        ...(workerActions ? { workerActions } : {}),
+        ...(cache ? { cache } : {}),
         delegationContext: chat.delegationContext
           ? {
               createdAt: chat.delegationContext.createdAt,
@@ -1903,6 +1961,11 @@ export function executeListSubthreads(
   return {
     parentChatId,
     count: subthreads.length,
+    workerCount: subthreads.filter((subthread) => Boolean(subthread.workerControl)).length,
+    blockedWorkerCount: subthreads.filter(
+      (subthread) => (subthread.workerControl?.blocked || 0) > 0
+    ).length,
+    ...(parentMailbox.retainedEvents > 0 ? { mailbox: parentMailbox } : {}),
     subthreads
   }
 }
@@ -1929,6 +1992,14 @@ export function executeReadSubthreadResult(
   const workerControl = chat.delegationContext?.workerControl
     ? summarizeSubThreadWorkerControl(chat.delegationContext.workerControl)
     : undefined
+  const mailbox = summarizeSubThreadMailbox(
+    deps.store.getSubThreadMailbox(chat.parentChatId || context.appChatId || ''),
+    { subThreadId: chat.appChatId }
+  )
+  const cache = summarizeSubThreadCache(chat)
+  const workerActions = workerControl
+    ? summarizeSubThreadWorkerActions(chat, workerControl.blocked, lifecycle)
+    : undefined
   const runEvents = includeEvents
     ? (chat.runs || [])
         .flatMap((run) => deps.runs.getRunEvents({ runId: run.runId, limit: eventLimit }))
@@ -1949,6 +2020,9 @@ export function executeReadSubthreadResult(
     createdAt: chat.createdAt,
     updatedAt: chat.updatedAt,
     workerControl,
+    ...(mailbox.retainedEvents > 0 ? { mailbox } : {}),
+    ...(workerActions ? { workerActions } : {}),
+    ...(cache ? { cache } : {}),
     delegationContext: chat.delegationContext
       ? {
           createdAt: chat.delegationContext.createdAt,
