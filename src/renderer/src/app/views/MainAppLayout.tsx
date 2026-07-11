@@ -305,7 +305,6 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   humanCollaborationShares,
   inspectingRunId,
   installGeminiMcpBridge,
-  interfaceStyle,
   isAdvancedFxActive,
   isChatExpanded,
   isChatMediaPanelOpen,
@@ -517,7 +516,6 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   welcomeUsageDashboardData,
   welcomeUsageTab,
   workflowDefinitions,
-  workspaceAddPointerActive,
   workspaceBoardApiReady,
   workspaceBoardCards,
   workspaceBoards,
@@ -1163,7 +1161,6 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                 collaboratingChatIds={collaboratingChatIds}
                 showOnboardingHint={showOnboardingHint}
                 onDismissOnboardingHint={handleDismissOnboardingHint}
-                workspaceAddPointerActive={workspaceAddPointerActive}
                 onSelectWorkspace={handleNavigateToWorkspace}
                 onRemoveWorkspace={handleRemoveWorkspace}
                 onSelectWorkspaceDialog={handleSelectWorkspace}
@@ -1603,7 +1600,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
               renderFocusedCell={() => (
             <div
               ref={appTranscriptRef}
-              className={`app-transcript provider-${currentProvider} interface-${interfaceStyle} ${isCurrentEnsembleChat ? 'chat-kind-ensemble' : ''} ${isCurrentGlobalChat ? 'chat-scope-global' : ''} ${isWelcomeChat ? 'welcome-mode' : ''} ${welcomeDashboardHiddenByFit ? 'welcome-dashboard-hidden-by-fit' : ''} ${isAdvancedFxActive ? `fx-labs-active fx-intensity-${advancedFxIntensity}` : ''} ${showSettings ? 'transcript-hidden-for-settings' : ''}`}
+              className={`app-transcript provider-${currentProvider} ${isCurrentEnsembleChat ? 'chat-kind-ensemble' : ''} ${isCurrentGlobalChat ? 'chat-scope-global' : ''} ${isWelcomeChat ? 'welcome-mode' : ''} ${welcomeDashboardHiddenByFit ? 'welcome-dashboard-hidden-by-fit' : ''} ${isAdvancedFxActive ? `fx-labs-active fx-intensity-${advancedFxIntensity}` : ''} ${showSettings ? 'transcript-hidden-for-settings' : ''}`}
               style={transcriptStyle}
             >
           {chatContextNotice && (
@@ -2158,7 +2155,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                   <div className="right-dock-side-chat">
               <aside
                 ref={sidePaneRef}
-                className={`side-chat-pane app-transcript provider-${sideProvider} interface-${interfaceStyle} ${
+                className={`side-chat-pane app-transcript provider-${sideProvider} ${
                   sideChat.chatKind === 'ensemble' ? 'chat-kind-ensemble' : ''
                 } ${sidePanelAgentIdentity ? 'has-linked-agent-identity' : ''}`}
                 style={

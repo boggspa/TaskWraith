@@ -445,7 +445,6 @@ function ChatViewPaneInner(props: ChatViewPaneProps) {
     'app-transcript',
     'multiview-pane-transcript',
     `provider-${props.providerClass}`,
-    `interface-${props.interfaceStyle}`,
     props.isEnsemble ? 'chat-kind-ensemble' : '',
     props.welcomeIsGlobalChat ? 'chat-scope-global' : '',
     props.isWelcomeChat ? 'welcome-mode' : ''

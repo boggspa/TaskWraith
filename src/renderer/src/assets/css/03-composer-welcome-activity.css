@@ -2811,11 +2811,6 @@
   outline-offset: 1px;
 }
 
-[data-interface-style="codex"] .welcome-usage-activity-grid,
-[data-composer-style="codex"] .welcome-usage-activity-grid {
-  --activity-heatmap-color: var(--provider-codex-color);
-}
-
 .welcome-usage-footnote {
   margin: 10px 0 0;
   color: color-mix(in srgb, var(--text-secondary) 84%, transparent);

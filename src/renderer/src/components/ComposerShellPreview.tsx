@@ -412,7 +412,6 @@ export function ComposerShellPreview({
       className="settings-composer-preview-card"
       data-theme={themeAppearance}
       data-composer-style={composerStyle}
-      data-interface-style={composerStyle}
     >
       <div className="settings-composer-preview-transcript" style={transcriptStyle}>
         <span className="settings-composer-preview-speaker">{meta.providerLabel}</span>
@@ -428,7 +427,7 @@ export function ComposerShellPreview({
         </div>
       </div>
       <div
-        className={`settings-composer-preview-chat app-transcript provider-${previewProviderId} interface-${composerStyle}`}
+        className={`settings-composer-preview-chat app-transcript provider-${previewProviderId}`}
       >
         <div
           className={`composer-area settings-composer-preview-area interface-${composerStyle}`}

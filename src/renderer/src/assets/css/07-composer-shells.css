@@ -64,7 +64,7 @@
 /* Codex shell/interface: remove only the outer composer-surface rim.
  * The detached above rows keep their own rim/tab treatment. */
 :not(:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]))
-  :is([data-composer-style="codex"], [data-interface-style="codex"])
+  :is([data-composer-style="codex"])
   :is(
     .composer-surface,
     .composer-surface:focus-within
@@ -3563,204 +3563,8 @@
   color: color-mix(in srgb, #ffb36c 86%, #ffffff 14%);
 }
 
-[data-interface-style="codex"] .app-sidebar,
-[data-interface-style="claude"] .app-sidebar {
-  --provider-shell-sidebar-line: color-mix(in srgb, #ffffff 9%, transparent);
-  background:
-    linear-gradient(
-      180deg,
-      color-mix(in srgb, color-mix(in srgb, #202020 88%, transparent) var(--sidebar-opacity-100), transparent),
-      color-mix(in srgb, color-mix(in srgb, #151515 92%, transparent) var(--sidebar-opacity-100), transparent)
-    ),
-    color-mix(in srgb, var(--sidebar-bg) var(--sidebar-opacity-100), transparent);
-  border-right-color: var(--provider-shell-sidebar-line);
-}
-
-[data-interface-style="claude"] .app-sidebar {
-  background:
-    linear-gradient(
-      180deg,
-      color-mix(in srgb, color-mix(in srgb, #1b211f 84%, transparent) var(--sidebar-opacity-100), transparent),
-      color-mix(in srgb, color-mix(in srgb, #171717 94%, transparent) var(--sidebar-opacity-100), transparent)
-    ),
-    color-mix(in srgb, var(--sidebar-bg) var(--sidebar-opacity-100), transparent);
-}
-
-[data-interface-style="codex"] .app-sidebar .sidebar-header-card,
-[data-interface-style="claude"] .app-sidebar .sidebar-header-card {
-  border-radius: 12px;
-  padding: 12px 12px 11px;
-  background: color-mix(in srgb, #ffffff 6%, transparent);
-  border-color: color-mix(in srgb, #ffffff 11%, transparent);
-  box-shadow: none;
-}
-
-[data-interface-style="codex"] .app-sidebar .sidebar-section-header,
-[data-interface-style="claude"] .app-sidebar .sidebar-section-header {
-  margin: 10px 0 6px;
-  padding: 0 2px;
-  background: transparent;
-  border: 0;
-  color: color-mix(in srgb, #ffffff 44%, transparent);
-  letter-spacing: 0.03em;
-}
-
-[data-interface-style="codex"] .app-sidebar .sidebar-workspace-item,
-[data-interface-style="codex"] .app-sidebar .sidebar-chat-item,
-[data-interface-style="codex"] .app-sidebar .sidebar-global-chat-item,
-[data-interface-style="claude"] .app-sidebar .sidebar-workspace-item,
-[data-interface-style="claude"] .app-sidebar .sidebar-chat-item,
-[data-interface-style="claude"] .app-sidebar .sidebar-global-chat-item {
-  min-height: 34px;
-  padding: 7px 9px;
-  border-radius: 8px;
-  background: transparent;
-  border-color: transparent;
-  box-shadow: none;
-}
-
-[data-interface-style="codex"] .app-sidebar .sidebar-workspace-item:hover,
-[data-interface-style="codex"] .app-sidebar .sidebar-chat-item:hover,
-[data-interface-style="codex"] .app-sidebar .sidebar-global-chat-item:hover,
-[data-interface-style="claude"] .app-sidebar .sidebar-workspace-item:hover,
-[data-interface-style="claude"] .app-sidebar .sidebar-chat-item:hover,
-[data-interface-style="claude"] .app-sidebar .sidebar-global-chat-item:hover {
-  background: color-mix(in srgb, #ffffff 6%, transparent);
-}
-
-[data-interface-style="codex"] .app-sidebar .sidebar-workspace-item.active,
-[data-interface-style="codex"] .app-sidebar .sidebar-chat-item.active,
-[data-interface-style="codex"] .app-sidebar .sidebar-global-chat-item.active {
-  background: color-mix(in srgb, #ffffff 10%, transparent);
-  border-color: color-mix(in srgb, #ffffff 11%, transparent);
-}
-
-[data-interface-style="claude"] .app-sidebar .sidebar-workspace-item.active,
-[data-interface-style="claude"] .app-sidebar .sidebar-chat-item.active,
-[data-interface-style="claude"] .app-sidebar .sidebar-global-chat-item.active {
-  background: color-mix(in srgb, #f4a35d 12%, #ffffff 5%);
-  border-color: color-mix(in srgb, #f4a35d 24%, transparent);
-}
-
-[data-interface-style="codex"] .app-sidebar :is(.sidebar-chat-title, .sidebar-recents-label),
-[data-interface-style="codex"] .app-sidebar .sidebar-pinned-item:is(
-  .provider-gemini,
-  .provider-codex,
-  .provider-claude,
-  .provider-kimi,
-  .provider-grok,
-  .provider-cursor,
-  .provider-ollama,
-  .provider-ensemble
-) .sidebar-pinned-label,
-[data-interface-style="claude"] .app-sidebar :is(.sidebar-chat-title, .sidebar-recents-label),
-[data-interface-style="claude"] .app-sidebar .sidebar-pinned-item:is(
-  .provider-gemini,
-  .provider-codex,
-  .provider-claude,
-  .provider-kimi,
-  .provider-grok,
-  .provider-cursor,
-  .provider-ollama,
-  .provider-ensemble
-) .sidebar-pinned-label {
-  font-weight: 500;
-  letter-spacing: 0;
-}
-
-[data-interface-style="codex"] .app-sidebar .sidebar-chat-subline,
-[data-interface-style="claude"] .app-sidebar .sidebar-chat-subline,
-[data-interface-style="codex"] .app-sidebar .sidebar-workspace-meta,
-[data-interface-style="claude"] .app-sidebar .sidebar-workspace-meta {
-  opacity: 0.66;
-}
-
-[data-interface-style="codex"] .app-transcript,
-[data-interface-style="claude"] .app-transcript {
-  background:
-    linear-gradient(
-      180deg,
-      color-mix(in srgb, color-mix(in srgb, var(--content-bg) 68%, transparent) var(--main-pane-opacity-100), transparent),
-      color-mix(in srgb, color-mix(in srgb, #0d0d0d 72%, transparent) var(--main-pane-opacity-100), transparent)
-    ),
-    color-mix(in srgb, var(--content-bg) var(--main-pane-opacity-100), transparent);
-}
-
-/* Parity: transcript inherits the composer's max-width across themed shells
- * so the chat bubbles and the composer line up at the same column edges.
- * Previous override hardcoded 860px which left the chat narrower than the
- * 850px composer after the width-equalization slice. */
-
-[data-interface-style="codex"] .message-group,
-[data-interface-style="claude"] .message-group {
-  margin-block: 18px;
-}
-
-[data-interface-style="codex"] .message-meta,
-[data-interface-style="claude"] .message-meta {
-  margin-bottom: 6px;
-  color: color-mix(in srgb, #ffffff 34%, transparent);
-  font-size: calc(var(--font-size-xs) + 1px);
-  font-weight: 500;
-}
-
-[data-interface-style="codex"] .message-bubble.assistant,
-[data-interface-style="claude"] .message-bubble.assistant {
-  max-width: 100%;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  box-shadow: none;
-  color: color-mix(in srgb, #ffffff 88%, transparent);
-  line-height: 1.56;
-}
-
-[data-interface-style="codex"] .message-bubble.user,
-[data-interface-style="claude"] .message-bubble.user {
-  width: fit-content;
-  max-width: min(640px, 82%);
-  margin-left: auto;
-  padding: 9px 13px;
-  border-radius: 18px;
-  background: color-mix(in srgb, #ffffff 8%, transparent);
-  border: 1px solid color-mix(in srgb, #ffffff 12%, transparent);
-  box-shadow: none;
-}
-
-/* Codex / Claude shells force a translucent-white bubble on top of
- * their dark-glass composer chrome — that wins over the generic
- * `.message-bubble.user` rule. Re-apply the user-bubble-base tint
- * here so the picker also takes effect inside these shells. Mix
- * directly into the translucent-white spec rather than the elevated
- * surface to preserve the shell's signature look. */
-:is([data-interface-style="codex"], [data-interface-style="claude"])[data-user-bubble-color]:not([data-user-bubble-color="system"]) .message-bubble.user {
-  background: color-mix(in srgb, var(--user-bubble-base) 18%, color-mix(in srgb, #ffffff 8%, transparent));
-  border-color: color-mix(in srgb, var(--user-bubble-base) 34%, color-mix(in srgb, #ffffff 12%, transparent));
-}
-
-[data-interface-style="codex"] .activity-stack,
-[data-interface-style="claude"] .activity-stack {
-  margin-block: 8px;
-}
-
-[data-interface-style="codex"] .activity-row,
-[data-interface-style="claude"] .activity-row,
-[data-interface-style="codex"] .tool-activity-row,
-[data-interface-style="claude"] .tool-activity-row {
-  min-height: 22px;
-  color: color-mix(in srgb, #ffffff 48%, transparent);
-}
-
-[data-interface-style="codex"] .run-complete-card,
-[data-interface-style="claude"] .run-complete-card {
-  border-radius: 12px;
-  background: color-mix(in srgb, #151515 90%, transparent);
-  border-color: color-mix(in srgb, #ffffff 12%, transparent);
-  box-shadow: none;
-}
-
-[data-interface-style="codex"] .composer-area,
-[data-interface-style="claude"] .composer-area {
+[data-composer-style="codex"] .composer-area,
+[data-composer-style="claude"] .composer-area {
   /* Parity: themed shells inherit TaskWraith native width — color/border/typography
    * differences still convey the codex / claude feel, but the composer footprint
    * matches the rest of the app so users don't see the bar reflow when they
@@ -3768,14 +3572,14 @@
   padding-bottom: 18px;
 }
 
-[data-interface-style="codex"] .composer-above-bar,
-[data-interface-style="claude"] .composer-above-bar {
+[data-composer-style="codex"] .composer-above-bar,
+[data-composer-style="claude"] .composer-above-bar {
   background: var(--composer-bg);
   border-color: var(--composer-border);
   box-shadow: var(--composer-shadow);
 }
 
-[data-interface-style="codex"] .composer-above-bar {
+[data-composer-style="codex"] .composer-above-bar {
   min-height: 34px;
   padding: 6px 12px;
   border-radius: 20px;
@@ -3843,7 +3647,7 @@
   display: none;
 }
 
-[data-interface-style="claude"] .composer-above-bar {
+[data-composer-style="claude"] .composer-above-bar {
   min-height: 30px;
   padding: 6px 12px;
   border-radius: 12px;
@@ -3871,7 +3675,7 @@
   padding: 12px 14px !important;
 }
 
-[data-interface-style="codex"] .composer-surface {
+[data-composer-style="codex"] .composer-surface {
   background: #212121 !important;
   border-color: transparent !important;
   border-radius: 22px !important;
@@ -3879,7 +3683,7 @@
   box-shadow: 0 18px 56px rgba(0, 0, 0, 0.36) !important;
 }
 
-[data-interface-style="codex"] .composer-inner-module {
+[data-composer-style="codex"] .composer-inner-module {
   position: relative;
   z-index: 2;
   display: flex;
@@ -3896,18 +3700,18 @@
     inset 0 -1px 0 color-mix(in srgb, #ffffff 7%, transparent);
 }
 
-[data-interface-style="codex"] .composer-control-footer {
+[data-composer-style="codex"] .composer-control-footer {
   padding-top: 0;
 }
 
-[data-interface-style="codex"] .composer-inline-pickers {
+[data-composer-style="codex"] .composer-inline-pickers {
   min-height: 34px;
   align-items: center;
   border-top: 0;
   padding-top: 0;
 }
 
-[data-interface-style="codex"] .composer-codex-footer {
+[data-composer-style="codex"] .composer-codex-footer {
   min-height: 24px;
   margin-top: 7px;
 }
@@ -3918,7 +3722,7 @@
  * rectangles). Shape now matches every other theme; the claude feel reads
  * via colors, fonts, and the accent run-button tint defined below. */
 
-[data-interface-style="claude"] .composer-textarea {
+[data-composer-style="claude"] .composer-textarea {
   background: #151515 !important;
   border-color: color-mix(in srgb, #ffffff 10%, transparent) !important;
 }
@@ -3933,7 +3737,7 @@
  *   box-shadow, and the [data-prompt-surface="liquid_glass"] backdrop
  *   blur, plus the ::before edge vignette.
  * - .composer-textarea picks up border-radius / border / drop shadow,
- *   reusing the #151515 fill the [data-interface-style="claude"] rule
+ *   reusing the #151515 fill the [data-composer-style="claude"] rule
  *   directly above (line 14341) already declares.
  *
  * No !important on the textarea promotion so the focus-within rule at
@@ -3966,18 +3770,18 @@
  * value (see useAppearance.ts), any background declared here would win
  * by source order and undo that intent. Leave the footer alone. */
 
-[data-interface-style="claude"] .composer-claude-footer {
+[data-composer-style="claude"] .composer-claude-footer {
   min-height: 24px;
   margin-top: 6px;
 }
 
-[data-interface-style="codex"] .composer-picker-label select,
-[data-interface-style="claude"] .composer-picker-label select {
+[data-composer-style="codex"] .composer-picker-label select,
+[data-composer-style="claude"] .composer-picker-label select {
   max-width: 180px;
 }
 
-[data-interface-style="codex"] .composer-picker-label[data-composer-control="permission"] select,
-[data-interface-style="claude"] .composer-picker-label[data-composer-control="permission"] select {
+[data-composer-style="codex"] .composer-picker-label[data-composer-control="permission"] select,
+[data-composer-style="claude"] .composer-picker-label[data-composer-control="permission"] select {
   max-width: 170px;
 }
 
@@ -3986,8 +3790,8 @@
  * codex/claude rules hid it for "feels native" reasons, but theme is now
  * pure cosmetics — the control set is invariant. */
 
-[data-interface-style="codex"] .composer-picker-command,
-[data-interface-style="claude"] .composer-picker-command {
+[data-composer-style="codex"] .composer-picker-command,
+[data-composer-style="claude"] .composer-picker-command {
   border-color: transparent;
   background: transparent;
 }
@@ -4004,275 +3808,38 @@
  * but scoped here with :not() instead of a stacked light override, because
  * a (0,3,0) light override on the bare card class would out-rank the
  * per-provider light tints in 03 by source order and flatten them. */
-[data-interface-style="codex"]:not([data-theme="light"]):not([data-theme="mist"]):not([data-theme="sage"]) .composer-discovery-card,
-[data-interface-style="codex"]:not([data-theme="light"]):not([data-theme="mist"]):not([data-theme="sage"]) .composer-permission-card,
-[data-interface-style="claude"]:not([data-theme="light"]):not([data-theme="mist"]):not([data-theme="sage"]) .composer-discovery-card,
-[data-interface-style="claude"]:not([data-theme="light"]):not([data-theme="mist"]):not([data-theme="sage"]) .composer-permission-card {
+[data-composer-style="codex"]:not([data-theme="light"]):not([data-theme="mist"]):not([data-theme="sage"]) .composer-discovery-card,
+[data-composer-style="codex"]:not([data-theme="light"]):not([data-theme="mist"]):not([data-theme="sage"]) .composer-permission-card,
+[data-composer-style="claude"]:not([data-theme="light"]):not([data-theme="mist"]):not([data-theme="sage"]) .composer-discovery-card,
+[data-composer-style="claude"]:not([data-theme="light"]):not([data-theme="mist"]):not([data-theme="sage"]) .composer-permission-card {
   background: color-mix(in srgb, #151515 96%, transparent);
   border-color: color-mix(in srgb, #ffffff 12%, transparent);
   box-shadow: 0 18px 46px rgba(0, 0, 0, 0.28);
 }
 
-[data-interface-style="codex"] .composer-action-btn.run-btn:not(:disabled) {
+[data-composer-style="codex"] .composer-action-btn.run-btn:not(:disabled) {
   background: color-mix(in srgb, #ffffff 90%, transparent) !important;
 }
 
-[data-interface-style="claude"] .composer-action-btn.run-btn:not(:disabled) {
+[data-composer-style="claude"] .composer-action-btn.run-btn:not(:disabled) {
   color: color-mix(in srgb, #ffb36c 82%, #ffffff 18%) !important;
-}
-
-[data-interface-style="codex"] .welcome-hero,
-[data-interface-style="claude"] .welcome-hero {
-  opacity: 0.92;
-}
-
-[data-interface-style="codex"] .welcome-suggestion-btn,
-[data-interface-style="claude"] .welcome-suggestion-btn {
-  background: color-mix(in srgb, #151515 88%, transparent);
-  border-color: color-mix(in srgb, #ffffff 10%, transparent);
-  box-shadow: none;
-}
-
-/* Light-theme override for the Codex / Claude shell welcome
- * suggestion cards. The shell-scoped rule above hardcodes a dark
- * fill (`#151515 88%`) for every theme; in light themes that
- * dark resting state surfaced regardless of the cards' hover
- * state appearing correctly light. Cascade specificity (0,2,0)
- * tied the hardcoded rule and our earlier `[data-theme="light"]`
- * override at line 4110, with the later rule winning. This
- * stacked-attribute selector lifts our specificity to (0,3,0)
- * so the light fill sticks in both resting + hover states. */
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-interface-style="codex"] .welcome-suggestion-btn,
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-interface-style="claude"] .welcome-suggestion-btn {
-  background: var(--surface-1);
-  border-color: var(--surface-border);
-  color: var(--surface-text-muted, rgba(29, 29, 31, 0.62));
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
-}
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-interface-style="codex"] .welcome-suggestion-btn:hover,
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-interface-style="claude"] .welcome-suggestion-btn:hover {
-  background: var(--surface-2);
-  border-color: color-mix(in srgb, var(--surface-text, rgba(29, 29, 31, 0.86)) 22%, var(--surface-border));
-  color: var(--surface-text, rgba(29, 29, 31, 0.86));
-}
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-interface-style="codex"] .welcome-suggestion-btn .welcome-suggestion-label,
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-interface-style="claude"] .welcome-suggestion-btn .welcome-suggestion-label {
-  color: var(--surface-text, rgba(29, 29, 31, 0.86));
-}
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-interface-style="codex"] .welcome-suggestion-btn .welcome-suggestion-description,
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-interface-style="claude"] .welcome-suggestion-btn .welcome-suggestion-description {
-  color: var(--surface-text-muted, rgba(29, 29, 31, 0.62));
-}
-
-/* 1.0.6 — Obsidian + Codex/Claude shell welcome starter cards. Obsidian gives
- * the Codex/Claude COMPOSER a light surface (it overrides --text-secondary etc.
- * to dark charcoal for that block, main.css:32436), but the starter cards sit on
- * the dark Obsidian PAGE and the shell rule above still paints them a near-black
- * #151515 fill — so the inherited charcoal text rendered dark-on-dark. The
- * `[data-theme="light"]` rescue above excludes Obsidian, so it never recovered.
- * Match Obsidian's inverted-composer treatment: a light card with dark text,
- * specificity (0,3,0) to beat the (0,2,0) shell fill. Scoped to
- * obsidian + codex/claude only — no reach into any other theme/shell. */
-[data-theme="obsidian"][data-interface-style="codex"] .welcome-suggestion-btn,
-[data-theme="obsidian"][data-interface-style="claude"] .welcome-suggestion-btn {
-  background: linear-gradient(180deg, #ffffff 0%, #f4f3ef 100%);
-  border-color: rgba(18, 21, 27, 0.14);
-  color: rgba(18, 21, 27, 0.72);
-  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.26);
-}
-[data-theme="obsidian"][data-interface-style="codex"] .welcome-suggestion-btn:hover,
-[data-theme="obsidian"][data-interface-style="claude"] .welcome-suggestion-btn:hover {
-  background: linear-gradient(180deg, #ffffff 0%, #eeede8 100%);
-  border-color: rgba(18, 21, 27, 0.22);
-  color: rgba(18, 21, 27, 0.94);
-}
-[data-theme="obsidian"][data-interface-style="codex"] .welcome-suggestion-btn .welcome-suggestion-label,
-[data-theme="obsidian"][data-interface-style="claude"] .welcome-suggestion-btn .welcome-suggestion-label {
-  color: rgba(18, 21, 27, 0.94);
-}
-[data-theme="obsidian"][data-interface-style="codex"] .welcome-suggestion-btn .welcome-suggestion-description,
-[data-theme="obsidian"][data-interface-style="claude"] .welcome-suggestion-btn .welcome-suggestion-description {
-  color: rgba(18, 21, 27, 0.6);
 }
 
 @media (max-width: 980px) {
   /* Composer-area width is now inherited from the default .composer-area
    * rule; we keep the narrow-viewport status-row tweaks because those are
    * about chip overflow, not bubble width. */
-  [data-interface-style="codex"] .provider-shell-status-row,
-  [data-interface-style="claude"] .provider-shell-status-row {
+  [data-composer-style="codex"] .provider-shell-status-row,
+  [data-composer-style="claude"] .provider-shell-status-row {
     gap: 4px;
     overflow-x: auto;
     scrollbar-width: none;
   }
 
-  [data-interface-style="codex"] .provider-shell-status-row::-webkit-scrollbar,
-  [data-interface-style="claude"] .provider-shell-status-row::-webkit-scrollbar {
+  [data-composer-style="codex"] .provider-shell-status-row::-webkit-scrollbar,
+  [data-composer-style="claude"] .provider-shell-status-row::-webkit-scrollbar {
     display: none;
   }
-}
-
-/* ============================================================
- * GEMINI app-wide chrome
- * Deep dark-blue sidebar, transparent assistant bubbles, centered
- * welcome hero, blue glow accents. Mirrors codex/claude shape but
- * with Gemini's signature blue identity.
- * ============================================================ */
-[data-interface-style="gemini"] .app-sidebar {
-  background: color-mix(in srgb, color-mix(in srgb, #0a1020 92%, transparent) var(--sidebar-opacity-100), transparent);
-  border-right: 1px solid color-mix(in srgb, #5a8cff 8%, transparent);
-}
-[data-interface-style="gemini"] .app-sidebar .sidebar-header-card {
-  background: transparent;
-  border: 0;
-}
-[data-interface-style="gemini"] .app-sidebar .sidebar-section-header {
-  text-transform: uppercase;
-  font-size: 10px;
-  letter-spacing: 0.06em;
-  color: color-mix(in srgb, #ffffff 38%, transparent);
-}
-[data-interface-style="gemini"] .app-sidebar .sidebar-workspace-item,
-[data-interface-style="gemini"] .app-sidebar .sidebar-chat-item,
-[data-interface-style="gemini"] .app-sidebar .sidebar-global-chat-item {
-  background: transparent;
-  border-radius: 10px;
-  border: 0;
-}
-[data-interface-style="gemini"] .app-sidebar .sidebar-workspace-item:hover,
-[data-interface-style="gemini"] .app-sidebar .sidebar-chat-item:hover,
-[data-interface-style="gemini"] .app-sidebar .sidebar-global-chat-item:hover {
-  background: color-mix(in srgb, #5a8cff 8%, transparent);
-}
-[data-interface-style="gemini"] .app-sidebar .sidebar-chat-item.active,
-[data-interface-style="gemini"] .app-sidebar .sidebar-global-chat-item.active {
-  background: color-mix(in srgb, #5a8cff 14%, transparent);
-}
-
-[data-interface-style="gemini"] .app-transcript {
-  background: color-mix(in srgb, color-mix(in srgb, #0a1020 88%, transparent) var(--main-pane-opacity-100), transparent);
-}
-[data-interface-style="gemini"] .message-bubble.user {
-  background: color-mix(in srgb, #2a3344 88%, transparent);
-  border: 1px solid color-mix(in srgb, #ffffff 8%, transparent);
-  border-radius: 18px;
-}
-[data-interface-style="gemini"] .message-bubble.assistant {
-  background: transparent;
-  border: 0;
-  padding-left: 0;
-  padding-right: 0;
-}
-
-[data-interface-style="gemini"] .welcome-hero {
-  text-align: center;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 12px;
-}
-[data-interface-style="gemini"] .welcome-hero h1 {
-  /* Heading size is shell-agnostic — inherit the base `.welcome-hero h1` clamp. */
-  font-weight: 400;
-  color: color-mix(in srgb, #ffffff 92%, transparent);
-  letter-spacing: -0.01em;
-  text-align: center;
-}
-/* Workspace-name accent follows the PROVIDER theme, not the composer shell;
- * exclude `.workspace-name-glow` so it matches native rendering in every shell. */
-[data-interface-style="gemini"] .welcome-hero h1 strong:not(.workspace-name-glow) {
-  font-weight: 500;
-  color: color-mix(in srgb, #5a8cff 90%, transparent);
-  text-shadow: 0 0 24px color-mix(in srgb, #5a8cff 30%, transparent);
-}
-[data-interface-style="gemini"] .welcome-hero p {
-  text-align: center;
-  color: color-mix(in srgb, #ffffff 60%, transparent);
-}
-
-[data-interface-style="gemini"] .activity-row-inline .activity-detail:hover {
-  background: color-mix(in srgb, #5a8cff 6%, transparent);
-}
-
-/* ============================================================
- * KIMI app-wide chrome
- * Near-black sidebar, transparent assistant bubbles, centered welcome
- * hero, blue accent highlights.
- * ============================================================ */
-[data-interface-style="kimi"] .app-sidebar {
-  background: color-mix(in srgb, color-mix(in srgb, #080808 96%, transparent) var(--sidebar-opacity-100), transparent);
-  border-right: 1px solid color-mix(in srgb, #ffffff 6%, transparent);
-}
-[data-interface-style="kimi"] .app-sidebar .sidebar-header-card {
-  background: transparent;
-  border: 0;
-}
-[data-interface-style="kimi"] .app-sidebar .sidebar-section-header {
-  text-transform: uppercase;
-  font-size: 10px;
-  letter-spacing: 0.06em;
-  color: color-mix(in srgb, #ffffff 40%, transparent);
-}
-[data-interface-style="kimi"] .app-sidebar .sidebar-workspace-item,
-[data-interface-style="kimi"] .app-sidebar .sidebar-chat-item,
-[data-interface-style="kimi"] .app-sidebar .sidebar-global-chat-item {
-  background: transparent;
-  border-radius: 10px;
-  border: 0;
-}
-[data-interface-style="kimi"] .app-sidebar .sidebar-workspace-item:hover,
-[data-interface-style="kimi"] .app-sidebar .sidebar-chat-item:hover,
-[data-interface-style="kimi"] .app-sidebar .sidebar-global-chat-item:hover {
-  background: color-mix(in srgb, #ffffff 6%, transparent);
-}
-[data-interface-style="kimi"] .app-sidebar .sidebar-chat-item.active,
-[data-interface-style="kimi"] .app-sidebar .sidebar-global-chat-item.active {
-  background: color-mix(in srgb, #4da6ff 12%, transparent);
-}
-
-[data-interface-style="kimi"] .app-transcript {
-  background: color-mix(in srgb, color-mix(in srgb, #080808 92%, transparent) var(--main-pane-opacity-100), transparent);
-}
-[data-interface-style="kimi"] .message-bubble.user {
-  background: color-mix(in srgb, #1c1c1e 90%, transparent);
-  border: 1px solid color-mix(in srgb, #ffffff 8%, transparent);
-  border-radius: 14px;
-}
-[data-interface-style="kimi"] .message-bubble.assistant {
-  background: transparent;
-  border: 0;
-  padding-left: 0;
-  padding-right: 0;
-}
-
-[data-interface-style="kimi"] .welcome-hero {
-  text-align: center;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 12px;
-}
-[data-interface-style="kimi"] .welcome-hero h1 {
-  /* Heading size is shell-agnostic — inherit the base `.welcome-hero h1` clamp. */
-  font-weight: 400;
-  color: color-mix(in srgb, #ffffff 92%, transparent);
-  letter-spacing: -0.01em;
-  text-align: center;
-}
-/* Workspace-name accent follows the PROVIDER theme, not the composer shell;
- * exclude `.workspace-name-glow` so it matches native rendering in every shell. */
-[data-interface-style="kimi"] .welcome-hero h1 strong:not(.workspace-name-glow) {
-  font-weight: 500;
-  color: color-mix(in srgb, #4da6ff 95%, transparent);
-  text-shadow: 0 0 24px color-mix(in srgb, #4da6ff 28%, transparent);
-}
-[data-interface-style="kimi"] .welcome-hero p {
-  text-align: center;
-  color: color-mix(in srgb, #ffffff 60%, transparent);
-}
-
-[data-interface-style="kimi"] .activity-row-inline .activity-detail:hover {
-  background: color-mix(in srgb, #ffffff 5%, transparent);
 }
 
 /* ============================================================

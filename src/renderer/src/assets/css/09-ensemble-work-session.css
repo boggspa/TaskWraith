@@ -3180,7 +3180,12 @@
   background-image: var(--theme-gradient-transcript) !important;
 }
 
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-appearance="native_glass"][data-reduce-transparency="false"] .app-transcript,
+/* Light + native-glass paints the theme gradient overlay (`none` for the
+ * light palettes) on the transcript. When Sky/Weather FX is ON this MUST NOT
+ * clobber the light-mode sky-reveal gradient (08) — otherwise the message
+ * transcript loses its sky top-fade (the welcome screen kept it only because
+ * its `.welcome-mode` rule out-specified this one). Skip it while FX is on. */
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-appearance="native_glass"][data-reduce-transparency="false"]:not([data-fx-enabled="true"]) .app-transcript,
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-appearance="native_glass"][data-reduce-transparency="false"] .app-settings-pane {
   background-image: var(--theme-gradient-transcript) !important;
 }

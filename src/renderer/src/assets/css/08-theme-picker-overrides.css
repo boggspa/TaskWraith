@@ -2901,90 +2901,6 @@
   gap: 8px;
 }
 
-/* ── First-time pointer animation ──────────────────────────────────────
- * Renders alongside the sidebar `+` workspace button for ~6 seconds
- * after the FirstLaunchSheet dismisses on first launch. The host
- * (App.tsx) flips a transient flag (`workspaceAddPointerActive`) that
- * the Sidebar reads to add the class below to the `+` button's wrapper.
- *
- * Tone: faint accent-coloured ring pulse + small "Start here" pill
- * floating above. Single visible pulse over ~1.6s, then label fades
- * with the ring as the timer expires. Click anywhere dismisses early. */
-.workspace-add-pointer {
-  position: relative;
-}
-.workspace-add-pointer::before {
-  content: '';
-  position: absolute;
-  inset: -6px;
-  border-radius: 50%;
-  border: 1.5px solid color-mix(in srgb, var(--accent, #5a8cff) 60%, transparent);
-  pointer-events: none;
-  animation: workspace-add-pointer-ring 1.6s ease-out infinite;
-}
-.workspace-add-pointer-label {
-  position: absolute;
-  top: -28px;
-  left: 50%;
-  transform: translateX(-50%);
-  white-space: nowrap;
-  font-size: 0.72em;
-  font-weight: 600;
-  letter-spacing: 0.03em;
-  text-transform: uppercase;
-  padding: 3px 9px;
-  border-radius: 999px;
-  background: var(--accent, #5a8cff);
-  color: #fff;
-  box-shadow: 0 4px 14px color-mix(in srgb, var(--accent, #5a8cff) 32%, transparent);
-  pointer-events: none;
-  animation: workspace-add-pointer-fade-in 280ms ease-out both;
-  z-index: 3;
-}
-.workspace-add-pointer-label::after {
-  content: '';
-  position: absolute;
-  bottom: -4px;
-  left: 50%;
-  transform: translateX(-50%) rotate(45deg);
-  width: 8px;
-  height: 8px;
-  background: var(--accent, #5a8cff);
-}
-@keyframes workspace-add-pointer-ring {
-  0% {
-    opacity: 0.85;
-    transform: scale(0.85);
-  }
-  60% {
-    opacity: 0.1;
-    transform: scale(1.45);
-  }
-  100% {
-    opacity: 0;
-    transform: scale(1.55);
-  }
-}
-@keyframes workspace-add-pointer-fade-in {
-  from {
-    opacity: 0;
-    transform: translate(-50%, -4px);
-  }
-  to {
-    opacity: 1;
-    transform: translate(-50%, 0);
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .workspace-add-pointer::before {
-    animation: none;
-    opacity: 0.6;
-  }
-  .workspace-add-pointer-label {
-    animation: none;
-  }
-}
-
 /* ── Light mode tweaks for FirstLaunchSheet ────────────────────────────
  * Inherit the global light/dark theme — the parent overrides text and
  * panel colours via CSS vars. Only the rgba-baked surfaces need an
@@ -4631,135 +4547,6 @@
   border-color: var(--surface-border);
 }
 
-/* --- Sidebar (forced-dark override neutralisation) ------------- *
- * Codex + Claude shells composite a dark gradient over
- * var(--sidebar-bg). In light mode we drop the gradient so the
- * native light --sidebar-bg shines through, matching the TaskWraith
- * shell's behaviour. Item-text colors were keyed off the dark
- * bg (white at 60–70% mix) so re-key them to dark on light. */
-
-/* Light-mode sidebar fill for Codex + Claude interface shells.
- *
- * Previously `var(--sidebar-bg)` (`rgba(238, 242, 247, 0.64)`) —
- * with the soft_glass blur + gradient composition the visible
- * colour landed as a mid-tone gray, much darker than the
- * Codex / Claude apps' near-white sidebars in light mode.
- *
- * Switch to `var(--surface-2)` (`#f1f1f4` in light themes) and
- * peel back the soft/native-glass overlays in this scope via
- * `!important` — the goal is a flat, near-white sidebar with a
- * subtle 1px right border, matching the real apps' light-mode
- * chrome rather than the TaskWraith glass aesthetic. */
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-interface-style="codex"] .app-sidebar,
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-interface-style="claude"] .app-sidebar {
-  background: color-mix(in srgb, var(--surface-2) var(--sidebar-opacity-100), transparent) !important;
-  border-right-color: var(--surface-border);
-  backdrop-filter: none !important;
-  -webkit-backdrop-filter: none !important;
-}
-
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-interface-style="codex"] .app-sidebar .sidebar-section-header,
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-interface-style="claude"] .app-sidebar .sidebar-section-header {
-  color: var(--text-secondary);
-}
-
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-interface-style="codex"] .app-sidebar .sidebar-header-card,
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-interface-style="claude"] .app-sidebar .sidebar-header-card {
-  background: rgba(0, 0, 0, 0.03);
-  border-color: rgba(0, 0, 0, 0.08);
-}
-
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-interface-style="codex"] .app-sidebar .sidebar-workspace-item:hover,
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-interface-style="codex"] .app-sidebar .sidebar-chat-item:hover,
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-interface-style="codex"] .app-sidebar .sidebar-global-chat-item:hover,
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-interface-style="claude"] .app-sidebar .sidebar-workspace-item:hover,
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-interface-style="claude"] .app-sidebar .sidebar-chat-item:hover,
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-interface-style="claude"] .app-sidebar .sidebar-global-chat-item:hover {
-  background: rgba(0, 0, 0, 0.05);
-}
-
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-interface-style="codex"] .app-sidebar .sidebar-workspace-item.active,
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-interface-style="codex"] .app-sidebar .sidebar-chat-item.active,
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-interface-style="codex"] .app-sidebar .sidebar-global-chat-item.active {
-  background: rgba(0, 0, 0, 0.08);
-  border-color: rgba(0, 0, 0, 0.1);
-}
-
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-interface-style="claude"] .app-sidebar .sidebar-workspace-item.active,
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-interface-style="claude"] .app-sidebar .sidebar-chat-item.active,
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-interface-style="claude"] .app-sidebar .sidebar-global-chat-item.active {
-  background: color-mix(in srgb, #f4a35d 16%, transparent);
-  border-color: color-mix(in srgb, #f4a35d 36%, transparent);
-}
-
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-interface-style="codex"] .app-sidebar .sidebar-chat-title,
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-interface-style="claude"] .app-sidebar .sidebar-chat-title {
-  color: var(--text-primary);
-}
-
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-interface-style="codex"] .app-sidebar .sidebar-chat-subline,
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-interface-style="claude"] .app-sidebar .sidebar-chat-subline,
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-interface-style="codex"] .app-sidebar .sidebar-workspace-meta,
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-interface-style="claude"] .app-sidebar .sidebar-workspace-meta {
-  color: var(--text-secondary);
-  opacity: 1;
-}
-
-/* Gemini sidebar — deep-blue is intentional, but in light mode
- * the user wants consistency with the rest of the light chrome,
- * so we drop the dark blue and let a faint blue accent border
- * mark the shell identity. */
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-interface-style="gemini"] .app-sidebar {
-  background: color-mix(in srgb, var(--sidebar-bg) var(--sidebar-opacity-100), transparent);
-  border-right: 1px solid color-mix(in srgb, #5a8cff 22%, var(--panel-border));
-}
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-interface-style="gemini"] .app-sidebar .sidebar-section-header {
-  color: var(--text-secondary);
-}
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-interface-style="gemini"] .app-sidebar .sidebar-workspace-item:hover,
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-interface-style="gemini"] .app-sidebar .sidebar-chat-item:hover,
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-interface-style="gemini"] .app-sidebar .sidebar-global-chat-item:hover {
-  background: color-mix(in srgb, #5a8cff 10%, transparent);
-}
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-interface-style="gemini"] .app-sidebar .sidebar-chat-item.active,
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-interface-style="gemini"] .app-sidebar .sidebar-global-chat-item.active {
-  background: color-mix(in srgb, #5a8cff 16%, transparent);
-}
-
-/* Kimi sidebar — near-black in dark mode. In light mode use the
- * default light bg and a subtle warm-accent border for identity. */
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-interface-style="kimi"] .app-sidebar {
-  background: color-mix(in srgb, var(--sidebar-bg) var(--sidebar-opacity-100), transparent);
-  border-right: 1px solid color-mix(in srgb, #4da6ff 24%, var(--panel-border));
-}
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-interface-style="kimi"] .app-sidebar .sidebar-section-header {
-  color: var(--text-secondary);
-}
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-interface-style="kimi"] .app-sidebar .sidebar-workspace-item:hover,
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-interface-style="kimi"] .app-sidebar .sidebar-chat-item:hover,
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-interface-style="kimi"] .app-sidebar .sidebar-global-chat-item:hover {
-  background: color-mix(in srgb, #4da6ff 10%, transparent);
-}
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-interface-style="kimi"] .app-sidebar .sidebar-chat-item.active,
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-interface-style="kimi"] .app-sidebar .sidebar-global-chat-item.active {
-  background: color-mix(in srgb, #4da6ff 18%, transparent);
-}
-
-/* Transcript surfaces — the themed shells composite a near-black
- * gradient over the transcript. In light mode that produces a
- * murky grey-on-grey panel; restore it to the native light pane. */
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-interface-style="codex"] .app-transcript,
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-interface-style="claude"] .app-transcript,
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-interface-style="gemini"] .app-transcript,
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-interface-style="kimi"] .app-transcript {
-  /* Was `var(--content-bg)` (`rgba(246,248,251,0.96)`) — slightly
-   * cool / grayish. Bumped to a near-white mix so the transcript
-   * pane reads as cleaner against the now-light sidebar. Real
-   * Codex / Claude transcripts are essentially white in light
-   * mode; this matches that read. */
-  background: color-mix(in srgb, color-mix(in srgb, var(--surface-1) 94%, var(--surface-2) 6%) var(--main-pane-opacity-100), transparent);
-}
-
 /* ============================================================
  * INLINE TOOL CALL LABEL — bold the "Used <tool>" text app-wide
  * --------------------------------------------------------------
@@ -4874,7 +4661,7 @@
 /* Transcript completion card ("Task complete" + run details).
  *
  * 1.0.5-EW8 — Pre-EW8 these light-mode overrides were scoped to
- * `[data-interface-style="codex"]` and `[..="claude"]` only,
+ * `[data-composer-style="codex"]` and `[..="claude"]` only,
  * because the original Codex/Claude shells (line 19439) force the
  * card dark via a hardcoded `#151515` background. The TaskWraith
  * native shell (`data-interface-style="default"`) doesn't carry
@@ -5063,7 +4850,11 @@
   --app-bg-elevated: rgba(0, 0, 0, 0.04);
   --panel-elevated-bg: rgba(0, 0, 0, 0.035);
   --composer-bg: rgba(255, 255, 255, 0.56);
-  --content-bg: rgba(255, 255, 255, 0.72);
+  /* Reading pane = clean near-solid white (was 0.72, which read grey over
+   * the desktop through macOS vibrancy). The pane-opacity slider still scales
+   * this — dial it down for more frost; at the default 100% the main pane is a
+   * fresh white sheet. Composer / panels / sidebar keep their frosted tokens. */
+  --content-bg: rgba(255, 255, 255, 0.96);
   --composer-border: rgba(0, 0, 0, 0.12);
   --sidebar-border: rgba(0, 0, 0, 0.10);
   --panel-border: rgba(0, 0, 0, 0.10);
@@ -5273,15 +5064,13 @@
 /* Light-mode inner module + telemetry row. Keep the nested Codex input panel
  * on the light surface token and the telemetry row on dark text if earlier
  * shell defaults or compatibility overrides drift toward dark chrome. */
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"] .composer-inner-module,
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-interface-style="codex"] .composer-inner-module {
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"] .composer-inner-module {
   background: var(--surface-2);
   box-shadow:
     0 1px 3px rgba(0, 0, 0, 0.05),
     inset 0 -1px 0 color-mix(in srgb, var(--surface-text) 6%, transparent);
 }
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"] .composer-telemetry-row,
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-interface-style="codex"] .composer-telemetry-row {
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"] .composer-telemetry-row {
   color: var(--text-secondary);
 }
 
@@ -5346,9 +5135,9 @@
  *
  *   line 14905: `[data-composer-style="claude"] .composer-above-bar
  *                { background: #151515 !important; }`
- *   line 14913: `[data-interface-style="codex"] .composer-surface
+ *   line 14913: `[data-composer-style="codex"] .composer-surface
  *                { background: ...#1d1d1d... !important; }`
- *   line 14943: `[data-interface-style="claude"] .composer-textarea
+ *   line 14943: `[data-composer-style="claude"] .composer-textarea
  *                { background: #151515 !important; }`
  *
  * Plain specificity overrides can't beat `!important`, so the
@@ -5366,13 +5155,13 @@
  * the above-bar keeps the visible row/tab outline. The
  * above-bar stays at the unified soft surface so the bubble
  * reads as the visually weightier element of the pair. */
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-interface-style="codex"] .composer-surface {
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"] .composer-surface {
   background: var(--surface-3) !important;
   border-color: transparent !important;
   box-shadow: 0 4px 18px rgba(0, 0, 0, 0.08) !important;
 }
 
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-interface-style="claude"] .composer-textarea {
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="claude"] .composer-textarea {
   background: var(--surface-3) !important;
   border-color: color-mix(in srgb, var(--surface-border) 70%, var(--surface-text) 8%) !important;
   color: var(--text-primary) !important;

@@ -37,14 +37,14 @@ describe('composer approval/discovery card light-mode CSS', () => {
     for (const shell of ['codex', 'claude']) {
       for (const card of ['permission', 'discovery']) {
         expect(css).toContain(
-          `[data-interface-style="${shell}"]${LIGHT_NOT_CHAIN} .composer-${card}-card`
+          `[data-composer-style="${shell}"]${LIGHT_NOT_CHAIN} .composer-${card}-card`
         )
       }
     }
     // The pre-fix unscoped selectors must not return (each sat at the start
     // of its own line in the shared dark-fill rule).
     expect(css).not.toMatch(
-      /^\[data-interface-style="(?:codex|claude)"\] \.composer-(?:permission|discovery)-card/m
+      /^\[data-composer-style="(?:codex|claude)"\] \.composer-(?:permission|discovery)-card/m
     )
   })
 
@@ -52,7 +52,7 @@ describe('composer approval/discovery card light-mode CSS', () => {
     const css = readCss('07-composer-shells.css')
     const darkBlock = cssBlockStartingAt(
       css,
-      `[data-interface-style="codex"]${LIGHT_NOT_CHAIN} .composer-discovery-card,`
+      `[data-composer-style="codex"]${LIGHT_NOT_CHAIN} .composer-discovery-card,`
     )
     expect(darkBlock).toContain('background: color-mix(in srgb, #151515 96%, transparent)')
     expect(darkBlock).toContain('border-color: color-mix(in srgb, #ffffff 12%, transparent)')

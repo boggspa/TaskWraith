@@ -36,15 +36,23 @@ describe('theme pane opacity CSS', () => {
     expect(nativeTranscriptBlock).not.toContain('--main-pane-opacity-60')
   })
 
-  it('does not cap the Codex or Claude shell transcript floor at 60%', () => {
-    const css = readRepoFile('src/renderer/src/assets/css/07-composer-shells.css')
-
-    const shellTranscriptBlock = cssBlockStartingAt(
-      css,
-      '[data-interface-style="codex"] .app-transcript,'
-    )
-
-    expect(shellTranscriptBlock).toContain('--main-pane-opacity-100')
-    expect(shellTranscriptBlock).not.toContain('--main-pane-opacity-60')
+  it('keeps the transcript surface theme-driven — composer shells never repaint it', () => {
+    // The transcript pane is now decoupled from the composer shell: no
+    // `[data-interface-style=…] .app-transcript` (or `.app-sidebar` /
+    // `.message-bubble`) app-surface repaint survives. The composer shell only
+    // styles composer chrome; the reading surface follows the app theme.
+    for (const shard of [
+      '07-composer-shells.css',
+      '08-theme-picker-overrides.css',
+      '10-provider-shell-overrides.css'
+    ]) {
+      const css = readRepoFile(`src/renderer/src/assets/css/${shard}`)
+      for (const surface of ['.app-transcript', '.app-sidebar', '.message-bubble']) {
+        expect(
+          css,
+          `${shard} still has an interface-style rule repainting ${surface}`
+        ).not.toMatch(new RegExp(`\\[data-interface-style="[^"]+"\\][^{;}]*${surface.replace('.', '\\.')}`))
+      }
+    }
   })
 })

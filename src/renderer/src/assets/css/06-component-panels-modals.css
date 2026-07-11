@@ -864,7 +864,11 @@
  * the visual priority. Readability over aesthetic — the user
  * explicitly asked for "improve readability" on this surface. */
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-appearance="native_glass"][data-reduce-transparency="false"] .app-transcript {
-  background-color: rgba(255, 255, 255, var(--main-pane-alpha-086)) !important;
+  /* Clean white reading floor that honours the pane-opacity slider (100% ≈
+   * opaque, dial down for frost). Previously a flat 0.86 — and, with FX on,
+   * the sky-reveal's 0.72 floor won and read grey over the desktop. Now both
+   * FX-on and FX-off resolve to this same clean, slider-scaled white. */
+  background-color: color-mix(in srgb, var(--content-bg) var(--main-pane-opacity-100), transparent) !important;
 }
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-appearance="native_glass"][data-reduce-transparency="false"] .app-sidebar {
   /* Lift the sidebar fill in light + native-glass to a brighter

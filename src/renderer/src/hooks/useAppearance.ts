@@ -314,7 +314,11 @@ export function useAppearance() {
     root.style.setProperty('--diff-stat-del-color', next.diffStatColors.deletions)
     root.setAttribute('data-prompt-surface', next.promptSurfaceStyle)
     root.setAttribute('data-composer-style', next.composerStyle)
-    root.setAttribute('data-interface-style', next.composerStyle)
+    // NOTE: `data-interface-style` used to mirror the composer shell onto the
+    // whole app (transcript/sidebar/message-bubbles). That app-wide repaint was
+    // retired — composer shells are purely composer chrome now, and the reading
+    // surfaces follow the app theme only. The composer's own styling keys off
+    // `data-composer-style` (above) and the `.composer-area.interface-*` class.
     root.setAttribute('data-reduce-transparency', String(next.reduceTransparency))
     root.setAttribute('data-reduce-motion', String(next.reduceMotion))
     root.setAttribute('data-fx-enabled', String(next.funFxEnabled))

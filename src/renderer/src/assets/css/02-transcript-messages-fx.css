@@ -109,71 +109,39 @@
   background: none;
 }
 
-/* Provider-tinted transcript backgrounds — each picks a base hue that
- * matches the provider's native web app. User-selected [data-theme] palettes
- * overlay these via the standard cascade (themes set --bg-primary which the
- * color-mix below blends against), so a "light" theme still adapts hue
- * while keeping a provider's visual identity. */
+/* Provider identity in the transcript now lives ONLY in the agent-aura accent
+ * (--agent-accent-rgb) — the transcript FILL is a uniform, theme-driven reading
+ * surface with no per-provider background wash. (Previously each provider
+ * painted its own tinted transcript background, which muddied readability and
+ * meant the reading surface changed colour with the active agent.) These bare
+ * token declarations remain so the agent-aura FX still picks up each provider's
+ * hue. */
 .app-transcript.provider-gemini {
   --agent-accent-rgb: 105 157 255;
-  /* Gemini native: deep navy-blue dark surface. */
-  background-color: color-mix(in srgb, var(--bg-primary) 86%, #0a1530 14%);
 }
 
 .app-transcript.provider-codex {
   --agent-accent-rgb: 160 112 242;
-  /* Codex native: near-black with a faint cool/violet wash. */
-  background-color: color-mix(in srgb, var(--bg-primary) 98%, var(--provider-codex-color) 2%);
 }
 
 .app-transcript.provider-claude {
   --agent-accent-rgb: 255 151 58;
-  /* Claude native: warm near-black, slight amber undertone. */
-  background-color: color-mix(in srgb, var(--bg-primary) 90%, #1a1410 10%);
 }
 
 .app-transcript.provider-kimi {
   --agent-accent-rgb: 26 140 255;
-  /* Kimi native: pure dark, hint of blue on hover/active states. */
-  background-color: color-mix(in srgb, var(--bg-primary) 92%, #080808 8%);
 }
 
 .app-transcript.provider-grok {
   --agent-accent-rgb: 245 245 245;
-  background-color: color-mix(in srgb, var(--bg-primary) 92%, #101114 8%);
 }
 
 .app-transcript.provider-cursor {
   --agent-accent-rgb: 245 196 72;
-  background-color: color-mix(in srgb, var(--bg-primary) 90%, #18140a 10%);
 }
 
 .app-transcript.provider-ollama {
   --agent-accent-rgb: 119 209 190;
-  background-color: color-mix(in srgb, var(--bg-primary) 90%, #081c18 10%);
-}
-
-/* Light theme: dial the tint way down so it reads as a hint, not a wash. */
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .app-transcript.provider-gemini {
-  background-color: color-mix(in srgb, var(--bg-primary) 96%, #4a73ff 4%);
-}
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .app-transcript.provider-codex {
-  background-color: color-mix(in srgb, var(--bg-primary) 96%, var(--provider-codex-color) 4%);
-}
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .app-transcript.provider-claude {
-  background-color: color-mix(in srgb, var(--bg-primary) 96%, #ff973a 4%);
-}
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .app-transcript.provider-kimi {
-  background-color: color-mix(in srgb, var(--bg-primary) 96%, #1a8cff 4%);
-}
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .app-transcript.provider-grok {
-  background-color: color-mix(in srgb, var(--bg-primary) 97%, #111318 3%);
-}
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .app-transcript.provider-cursor {
-  background-color: color-mix(in srgb, var(--bg-primary) 96%, #f5c448 4%);
-}
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .app-transcript.provider-ollama {
-  background-color: color-mix(in srgb, var(--bg-primary) 96%, #77d1be 4%);
 }
 
 /* Per-provider message-bubble polish — light typography pass to echo each

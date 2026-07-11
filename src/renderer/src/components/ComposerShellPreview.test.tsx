@@ -62,12 +62,15 @@ describe('ComposerShellPreview — shell parity', () => {
       // CSS off these attributes on an ancestor).
       expect(html).toContain('class="settings-composer-preview-card"')
       expect(html).toContain(`data-composer-style="${style}"`)
-      expect(html).toContain(`data-interface-style="${style}"`)
+      // Composer shells are purely composer chrome now — the retired app-wide
+      // `data-interface-style` repaint hook is no longer stamped, and the
+      // transcript mock no longer carries an `interface-*` class.
+      expect(html).not.toContain('data-interface-style')
       expect(html).toContain(
-        `settings-composer-preview-chat app-transcript provider-${previewProvider(style)} interface-${style}`
+        `settings-composer-preview-chat app-transcript provider-${previewProvider(style)}"`
       )
-      // The composer-area carries the dual class the prior previews + the live
-      // composer use; the tightly-coupled FirstLaunchSheet test asserts this too.
+      // The composer-area still carries the `interface-*` class the live
+      // composer keys its chrome off (`.composer-area.interface-*`).
       expect(html).toContain(`composer-area settings-composer-preview-area interface-${style}`)
       // Structural skeleton that the shell CSS targets.
       expect(html).toContain('composer-above-bar style-unified')
