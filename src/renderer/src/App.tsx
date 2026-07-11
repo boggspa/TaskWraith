@@ -7130,6 +7130,16 @@ function App(): React.JSX.Element {
       if (normalized.includes('composer') || normalized.includes('cursor')) return 'cursor'
       if (normalized.includes('grok')) return 'grok'
       if (
+        normalized.includes('ollama') ||
+        normalized.includes('qwen') ||
+        normalized.includes('llama') ||
+        normalized.includes('gemma') ||
+        normalized.includes('ornith') ||
+        normalized.includes('gpt-oss') ||
+        normalized.includes('gptoss')
+      )
+        return 'ollama'
+      if (
         normalized.includes('codex') ||
         normalized.includes('gpt') ||
         normalized.includes('o3') ||
@@ -7146,7 +7156,8 @@ function App(): React.JSX.Element {
       provider === 'claude' ||
       provider === 'kimi' ||
       provider === 'grok' ||
-      provider === 'cursor'
+      provider === 'cursor' ||
+      provider === 'ollama'
 
     const runAggregateMap = new Map<string, ModelUsageAggregate>()
     const modelComparisonCutoff = now - 30 * 24 * 60 * 60 * 1000
