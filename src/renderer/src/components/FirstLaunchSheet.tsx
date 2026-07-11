@@ -464,7 +464,8 @@ export function FirstLaunchSheet({
             <div>
               <h2 id={SHEET_TITLE_ID}>Welcome to TaskWraith</h2>
               <p className="first-launch-sheet-subtitle">
-                First-launch checklist — providers, workspace, goals, look, and Ensemble basics.
+                First-launch checklist — providers, workspaces, goals, permissions, and Ensemble
+                basics.
               </p>
             </div>
           </div>
@@ -483,13 +484,14 @@ export function FirstLaunchSheet({
 
         <section className="first-launch-sheet-section">
           <p className="first-launch-sheet-prose">
-            TaskWraith is a multi-provider AI CLI manager. It wraps <strong>Codex</strong>,{' '}
+            TaskWraith is a local-first desktop workbench for AI coding agents. It brings together{' '}
+            <strong>Codex</strong>,{' '}
             <strong>Claude</strong>, <strong>Kimi</strong>, <strong>Cursor</strong>,{' '}
             <strong>Grok</strong>, and local <strong>Ollama</strong> models inside one consistent
-            chrome so you can run and compare
-            them side-by-side in the same UI. Each provider keeps its own auth — sign in to the
-            ones you want to use, skip the rest. Goals, approvals, audit runs, and usage history stay
-            in TaskWraith&apos;s local ledger so each provider shares the same operating context.
+            UI so you can run solo chats, side chats, delegated workers, and Ensembles side by side.
+            Each provider keeps its own auth — sign in to the ones you want to use, skip the rest.
+            Chat history, goals, approvals, audit events, and usage stay in TaskWraith&apos;s local
+            store; each provider receives only the context for the chat or run it is working on.
           </p>
         </section>
 
@@ -554,10 +556,11 @@ export function FirstLaunchSheet({
             Providers sign in three ways: <strong>Codex</strong>, <strong>Cursor</strong>, and{' '}
             <strong>Grok</strong> log in through their own CLI in a Terminal;{' '}
             <strong>Claude</strong> uses in-app OAuth or an API key;{' '}
-            <strong>Kimi</strong> takes an API key. <strong>Ollama</strong> is local-only: install
-            Ollama, pull a model, and no cloud account is needed. Cursor and Grok auth stays inside
-            their CLIs, so TaskWraith marks those cards ready when the provider adapter is available;
-            the CLI may still ask you to finish login in Terminal.
+            <strong>Kimi</strong> takes an API key. <strong>Ollama</strong> is local-first: install
+            Ollama and pull a model with no cloud account, or optionally sign in for Ollama Cloud /
+            Turbo and private models. Cursor and Grok auth stays inside their CLIs, so TaskWraith
+            marks those cards ready when the provider adapter is available; the CLI may still ask
+            you to finish login in Terminal.
           </p>
           <div className="first-launch-sheet-provider-grid">
             {providerRows.map((row) => (
@@ -584,10 +587,11 @@ export function FirstLaunchSheet({
           <h3 className="first-launch-sheet-section-title">2. Add your first workspace</h3>
           <p className="first-launch-sheet-prose">
             A <strong>workspace</strong> is a project folder TaskWraith has read / edit permission
-            inside. Every chat is rooted in a workspace, and the agent can only touch files within
-            its trust boundary. Find the <span className="first-launch-sheet-plus">+</span> button
-            in the sidebar header (next to &quot;Workspaces&quot;) and pick a folder. You can add
-            more later.
+            inside. Workspace chats are rooted in that folder, and the agent can only touch files
+            within its trust boundary unless you explicitly grant another path. General chats can
+            start without a project folder, but use a workspace for coding work. Find the{' '}
+            <span className="first-launch-sheet-plus">+</span> button next to
+            &quot;Workspaces&quot; in the sidebar and pick a folder; you can add more later.
           </p>
         </section>
 
@@ -696,19 +700,21 @@ export function FirstLaunchSheet({
             <div className="first-launch-sheet-safety-block">
               <span className="first-launch-sheet-safety-label">Start cautious, dial up</span>
               <div className="first-launch-sheet-safety-chips">
-                <span className="first-launch-sheet-safety-chip">Plan workflow</span>
+                <span className="first-launch-sheet-safety-chip">Plan</span>
                 <span className="first-launch-sheet-safety-chip">Read-Only/Recon</span>
-                <span className="first-launch-sheet-safety-chip">Default approval</span>
-                <span className="first-launch-sheet-safety-chip">Full workspace access</span>
+                <span className="first-launch-sheet-safety-chip">Default Approval</span>
+                <span className="first-launch-sheet-safety-chip">Workspace Write</span>
+                <span className="first-launch-sheet-safety-chip">Trusted Session</span>
               </div>
             </div>
           </div>
           <p className="first-launch-sheet-prose">
-            Runs are sandboxed to the workspace you grant — files outside the project are off-limits
-            unless you allow a path. Set the workflow and permission for each run from the
-            composer controls before you hit Enter. Plan workflow can still use approval-gated
-            instruments like canvas, media, and sub-thread delegation when you allow them; it does
-            not grant file mutation by itself.
+            Runs start inside the workspace boundary — files outside the project are off-limits
+            unless you allow a path. Plan and Read-Only/Recon stay cautious; Default Approval keeps
+            file actions visible; Workspace Write removes per-action prompts inside the project;
+            and lane-scoped Trusted Session is the highest local authority. Plan workflow can still
+            use approval-gated instruments like canvas, media, and sub-thread delegation when you
+            allow them, but it does not grant ordinary file mutation by itself.
           </p>
         </section>
 
@@ -756,12 +762,13 @@ export function FirstLaunchSheet({
         <section className="first-launch-sheet-section">
           <h3 className="first-launch-sheet-section-title">6. Try Ensemble chats</h3>
           <p className="first-launch-sheet-section-helper">
-            <strong>Get one provider working first</strong> — Ensemble shines with two or more. New
-            Ensemble puts multiple provider participants in one shared transcript. Turn mode keeps
-            one active speaker at a time; Continuous mode lets the panel keep moving. Hit the
-            <strong> Work Session</strong> button in the composer to run a supervised multi-round
-            autonomy session with one of five presets (One-shot review · Architecture panel · Scout
-            pass · Implementation review · Long-running work session).
+            <strong>Get one provider working first</strong> — Ensemble shines with two or more.
+            Toggle Ensemble on an idle top-level chat to add multiple provider participants while
+            preserving its transcript. Turn mode keeps one active speaker at a time; Continuous mode
+            lets the panel keep moving. Hit the <strong>Work Session</strong> button in the composer
+            to run a supervised multi-round autonomy session with one of five presets (One-shot
+            review · Architecture panel · Scout pass · Implementation review · Long-running work
+            session).
           </p>
           <div className="first-launch-sheet-ensemble-preview" aria-label="Ensemble row preview">
             <div className="first-launch-sheet-ensemble-strip">
@@ -806,7 +813,7 @@ export function FirstLaunchSheet({
               </span>
             </div>
             <div className="first-launch-sheet-ensemble-footer">
-              <span>Toggle Ensemble before first send</span>
+              <span>Toggle Ensemble while the thread is idle</span>
               <span>Turn / Continuous in the composer</span>
             </div>
           </div>
@@ -822,8 +829,8 @@ export function FirstLaunchSheet({
             </li>
             <li>
               <strong>/ for slash commands.</strong> Type <code>/</code> at the start of the
-              composer for the slash menu — quick handles for compact, help, feedback, model swaps,
-              etc.
+              composer for the slash menu — <code>/goal &lt;objective&gt;</code> sets or updates the
+              thread goal immediately, alongside compact, help, feedback, and model shortcuts.
             </li>
             <li>
               <strong>Cmd-K opens slash commands.</strong> Anywhere in the app, press{' '}
@@ -837,14 +844,22 @@ export function FirstLaunchSheet({
             </li>
             <li>
               <strong>Permission picker colour-codes the authority.</strong> Plan workflow is
-              separate from Read-Only/Recon: Plan drafts for approval, Default stays neutral, and
-              Full Workspace Access / Auto-edit can edit files. Approval-gated instruments remain
-              explicit. Check both the workflow and the permission before you hit Enter.
+              separate from Read-Only/Recon: Plan drafts for approval, Default Approval keeps
+              actions visible, Workspace Write removes per-action prompts inside the project, and
+              Trusted Session is lane-scoped host authority. Approval-gated instruments remain
+              explicit. Check the selected posture before you hit Enter.
             </li>
             <li>
               <strong>Fast Mode toggle.</strong> Inside the model picker, capable models (Codex
-              GPT-5.5 / 5.4 and supported Claude Opus models) expose a Fast tier — useful when you
-              want snappier turns at higher cost.
+              GPT-5.6 / 5.5 / 5.4, supported Claude Opus models, and supported Cursor routes) expose
+              a Fast choice — useful when you want snappier turns at higher cost. Grok 4.5 on the
+              Grok CLI is always labelled Fast.
+            </li>
+            <li>
+              <strong>Delegate a focused worker.</strong> With approval, an agent can open a
+              context-isolated sub-thread on another provider and continue it later. Returned
+              results arrive as clearly marked, untrusted invocation cards; open <em>Side chat</em>{' '}
+              on a card to inspect the worker&apos;s full thread.
             </li>
             <li>
               <strong>Audit tools and shortcuts.</strong> Settings includes MCP and Keyboard
@@ -855,8 +870,8 @@ export function FirstLaunchSheet({
               surface, provider, workspace, theme, and Ensemble context into the local bug log.
             </li>
             <li>
-              <strong>Screen Watch.</strong> The eye-on-screen icon in the composer&apos;s timecode
-              row picks a macOS window for the AI to see. Click again to detach. A small pulse dot
+              <strong>Screen Watch.</strong> The eye-on-screen icon in the composer&apos;s control row
+              picks a macOS window for the AI to see. Click again to detach. A small pulse dot
               signals a live capture is running.
             </li>
             <li>
@@ -866,8 +881,8 @@ export function FirstLaunchSheet({
             </li>
             <li>
               <strong>Cumulative session timecode.</strong> Composer&apos;s lower-left shows
-              the current turn time while active, then total wall-time across every run in this
-              chat when idle. Click it to compare both counters.
+              the current turn&apos;s elapsed time, while the right side shows total wall-time across
+              the thread. Click the time bar for the run-duration breakdown.
             </li>
           </ul>
         </section>

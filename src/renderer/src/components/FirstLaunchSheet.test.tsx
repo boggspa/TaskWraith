@@ -92,7 +92,11 @@ describe('FirstLaunchSheet', () => {
     expect(html).toContain('6. Try Ensemble chats')
     expect(html).toContain('7. Power-user shortcuts')
     expect(html).toContain('Read-Only/Recon')
+    expect(html).toContain('Workspace Write')
+    expect(html).toContain('Trusted Session')
     expect(html).toContain('approval-gated instruments')
+    expect(html).toContain('/goal &lt;objective&gt;')
+    expect(html).toContain('Delegate a focused worker')
   })
 
   it('intro prose advertises live providers but not the retired Gemini', () => {
@@ -107,7 +111,7 @@ describe('FirstLaunchSheet', () => {
     )
     // The "It wraps …" sentence is an OFFER surface, so the retired Gemini must
     // not appear there even though its chat history is preserved elsewhere.
-    expect(html).toContain('multi-provider AI CLI manager')
+    expect(html).toContain('local-first desktop workbench')
     expect(html).toContain('<strong>Codex</strong>')
     expect(html).toContain('<strong>Ollama</strong>')
     expect(html).not.toContain('<strong>Gemini</strong>')
@@ -146,7 +150,7 @@ describe('FirstLaunchSheet', () => {
         claudeAuthStatus={null}
         kimiAuthStatus={null}      />
     )
-    expect(html).toContain('New Ensemble puts multiple provider participants')
+    expect(html).toContain('Toggle Ensemble on an idle top-level chat')
     expect(html).toContain('data-provider="codex"')
     expect(html).toContain('data-provider="claude"')
     expect(html).toContain('data-provider="kimi"')
@@ -156,6 +160,7 @@ describe('FirstLaunchSheet', () => {
     expect(html).toContain('<em>Grok</em>')
     expect(html).toContain('<em>Ollama</em>')
     expect(html).not.toContain('<em>Gemini</em>')
+    expect(html).toContain('Toggle Ensemble while the thread is idle')
     expect(html).toContain('Turn / Continuous in the composer')
   })
 

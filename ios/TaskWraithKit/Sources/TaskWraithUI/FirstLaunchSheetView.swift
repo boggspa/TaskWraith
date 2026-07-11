@@ -365,12 +365,20 @@ struct FirstLaunchSheetView: View {
                     .font(.caption)
                     .foregroundStyle(TWTheme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
+                Text("Configure each seat's provider, model, reasoning, and Fast/Thinking controls from the composer or roster. Scout, Worker, and Reviewer stages make handoffs easier to follow.")
+                    .font(.caption)
+                    .foregroundStyle(TWTheme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
 
     private var powerToolsSection: some View {
         FirstLaunchSection(title: "Power Tools & Mac-only Setup", systemImage: "terminal") {
+            Text("On this device you can search, pin, rename, or archive threads; schedule a composer message; and copy or export a transcript. The Mac remains the execution and policy host.")
+                .font(.caption)
+                .foregroundStyle(TWTheme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
             DisclosureGroup {
                 VStack(alignment: .leading, spacing: 10) {
                     Text("Provider logins, API keys, CLI installs, MCP servers, Screen Watch, provider settings, and local Ollama pulls stay on your Mac. iPhone can monitor readiness and start allowed remote turns after the Mac is configured.")
@@ -407,13 +415,13 @@ struct FirstLaunchSheetView: View {
     private func workspaceCaption(_ summary: FirstLaunchWorkspaceSummary?) -> String {
         guard let summary else {
             return model.workspaces.isEmpty
-                ? "Add workspace access from TaskWraith on your Mac in Settings -> Devices -> workspace access before composing from iPhone."
+                ? "Add workspace access from TaskWraith on your Mac in Settings → Workspaces by enabling that workspace's remote-access toggle before composing from iPhone."
                 : "Workspace access is granted on your Mac and controlled by the Mac allowlist."
         }
         if summary.hasVisibleWorkspaces {
             return "\(summary.visibleCount) of \(summary.totalCount) desktop workspaces are visible to this phone. Workspace access is granted on your Mac."
         }
-        return "No desktop workspaces are currently shared with this phone. Add access on your Mac in Settings -> Devices -> workspace access."
+        return "No desktop workspaces are currently shared with this phone. Enable remote access for a workspace on your Mac in Settings → Workspaces."
     }
 
     private var ensembleRoster: [EnsembleDisplay] {
