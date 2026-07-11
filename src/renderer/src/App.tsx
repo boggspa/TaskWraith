@@ -1161,6 +1161,81 @@ const cachedPaneLiveOutputTokens = createChatWalkCache(
   (a, b) => a.isRunning === b.isRunning && a.runId === b.runId
 )
 
+interface PaneContextTelemetryDeps {
+  provider: ProviderId
+  modelId?: string
+  liveOutputTokens: number
+  isRunning: boolean
+  resolveOllamaContextLength: (modelId?: string | null) => number | undefined
+}
+
+interface PaneContextTelemetry {
+  usedPercent: number
+  label: string
+  meter: ContextMeterModel
+}
+
+const cachedPaneContextTelemetry = createChatWalkCache(
+  (chat, deps: PaneContextTelemetryDeps): PaneContextTelemetry => {
+    const usedTokens = currentContextTokens(chat.runs || [], {
+      liveOutputTokens: deps.liveOutputTokens,
+      isRunning: deps.isRunning
+    })
+    const liveOllamaContextLength =
+      deps.provider === 'ollama'
+        ? deps.resolveOllamaContextLength(deps.modelId)
+        : undefined
+    const windowTokens = resolveContextWindow(
+      deps.provider,
+      deps.modelId,
+      undefined,
+      liveOllamaContextLength
+    )
+    const usedPercent = contextPercent(usedTokens, windowTokens)
+    const liveParticipantId =
+      deps.isRunning && isEnsembleActiveRoundDispatchLive(chat.ensemble?.activeRound)
+        ? chat.ensemble?.activeRound?.activeParticipantId
+        : undefined
+
+    return {
+      usedPercent,
+      label: `${formatContextTokens(usedTokens)} / ${formatContextTokens(windowTokens)} context`,
+      meter: {
+        solo: {
+          id: 'solo',
+          provider: deps.provider,
+          modelId: deps.modelId,
+          usedTokens,
+          windowTokens,
+          percent: usedPercent
+        },
+        participants:
+          chat.chatKind === 'ensemble'
+            ? buildParticipantContextRows(chat.runs || [], chat.ensemble?.participants || [], {
+                participantId: liveParticipantId,
+                outputTokens: liveOutputTokensForParticipant(
+                  chat.runs || [],
+                  chat.messages || [],
+                  liveParticipantId,
+                  estimateLiveOutputTokensFromChars
+                ),
+                resolveWindowTokens: (participant) =>
+                  participant.provider === 'ollama'
+                    ? deps.resolveOllamaContextLength(participant.model)
+                    : undefined
+              })
+            : undefined
+      }
+    }
+  },
+  (a, b) =>
+    a.provider === b.provider &&
+    a.modelId === b.modelId &&
+    a.liveOutputTokens === b.liveOutputTokens &&
+    a.isRunning === b.isRunning &&
+    a.resolveOllamaContextLength === b.resolveOllamaContextLength
+)
+
 interface LiveToolFileSummaryState {
   chatId: string
   messages: ChatMessage[]
@@ -23755,6 +23830,13 @@ function App(): React.JSX.Element {
     })
     const viewerContextModelId =
       viewerRun?.actualModel || viewerRun?.requestedModel || viewerSelectedModel
+    const viewerContextTelemetry = cachedPaneContextTelemetry(viewerChat, {
+      provider: viewerProvider,
+      modelId: viewerContextModelId,
+      liveOutputTokens: viewerLiveOutputTokens,
+      isRunning: viewerIsRunning,
+      resolveOllamaContextLength: resolveLiveOllamaContextLength
+    })
     const viewerDualTelemetry = Boolean(viewerChat.chatKind === 'ensemble')
     const viewerScreenWatchTitle = attachedWindow
       ? attachedWindow.streaming
@@ -24136,6 +24218,8 @@ function App(): React.JSX.Element {
       if (!nextChat) return
       updateChatById(viewerChatId, () => nextChat)
     }
+    const paneHumanCollaborationShare =
+      activeHumanCollaborationShareByChatId.get(viewerChatId) || null
     const paneComposerCtx: ComposerProps = {
       // Slice H: spread the MEMOISED stable base (chat-independent props + bagged
       // handlers) instead of the focused `composerCtx`. The base is referentially
@@ -24167,6 +24251,27 @@ function App(): React.JSX.Element {
       shouldShowGhostCompanion: paneGhostEnabled(viewerPaneIndex),
       currentChat: viewerChat,
       currentComposerChatId: viewerChatId,
+      humanCollaborationInviteActive: Boolean(paneHumanCollaborationShare),
+      humanCollaborationShare: paneHumanCollaborationShare,
+      humanCollaborationInviteHealth:
+        humanCollaborationInviteHealthByChatId[viewerChatId] || null,
+      humanCollaborationInviteBusy: pendingHumanCollaborationInviteChatIds.has(viewerChatId),
+      humanCollaborationInviteLive: connectedCollaborationChatIds.has(viewerChatId),
+      onCopyHumanCollaborationInvite: paneHumanCollaborationShare
+        ? (options?: { allowLanOnly?: boolean }) =>
+            createFreshHumanCollaborationInvite(paneHumanCollaborationShare.chatId, {
+              mode: paneHumanCollaborationShare.mode,
+              chat: viewerChat,
+              allowLanOnly: options?.allowLanOnly
+            })
+        : undefined,
+      onCopyHumanCollaborationInviteText: copyHumanCollaborationInvitePayload,
+      onStopHumanCollaborationSharing: paneHumanCollaborationShare
+        ? () => stopHumanCollaborationSharingForChat(viewerChatId)
+        : undefined,
+      onOpenHumanCollaborationRemoteSetup: openHumanCollaborationRemoteSetup,
+      onRefreshHumanCollaborationInviteHealth: () =>
+        readHumanCollaborationInviteHealth(viewerChatId),
       currentProvider: viewerProvider,
       currentProviderLabel: viewerProviderLabel,
       currentProviderModelOptions: getProviderModelOptions(viewerProvider),
@@ -24212,7 +24317,7 @@ function App(): React.JSX.Element {
       })(),
       isCurrentGlobalChat: viewerIsGlobalChat,
       isCurrentChatRunning: viewerIsRunning,
-      isCurrentChatLinkedChild: true,
+      isCurrentChatLinkedChild: Boolean(viewerChat.parentChatId),
       isCurrentEnsembleChat: paneIsEnsembleChat,
       isWelcomeChat: viewerIsWelcomeChat,
       isCurrentChatProviderLocked: viewerProviderLocked,
@@ -24263,6 +24368,9 @@ function App(): React.JSX.Element {
       composerTokenTally: viewerTokenTally,
       threadTokenTallyHasValue: paneThreadTokenTallyHasValue,
       contextModelId: viewerContextModelId,
+      contextUsedPercent: viewerContextTelemetry.usedPercent,
+      contextLabel: viewerContextTelemetry.label,
+      contextMeter: viewerContextTelemetry.meter,
       liveRunOutputTokens: viewerLiveOutputTokens,
       composerRunTimecodeStartedAt: viewerRunStartedAt,
       cumulativeRunBaseMs: viewerCumulativeRunBaseMs,
@@ -25002,6 +25110,13 @@ function App(): React.JSX.Element {
       })()
       const viewerContextModelId =
         viewerRun?.actualModel || viewerRun?.requestedModel || viewerSelectedModel
+      const paneContextTelemetry = cachedPaneContextTelemetry(viewerChat, {
+        provider: viewerProvider,
+        modelId: viewerContextModelId,
+        liveOutputTokens: viewerLiveOutputTokens,
+        isRunning: viewerIsRunning,
+        resolveOllamaContextLength: resolveLiveOllamaContextLength
+      })
       const viewerDualTelemetry = Boolean(viewerChat.chatKind === 'ensemble')
       // (Screen-watch title, media refs, pinned count, and the pane chrome/dock
       // helpers are shell-only and live in `renderMultiviewPaneCell`.)
@@ -25129,62 +25244,6 @@ function App(): React.JSX.Element {
           updatedAt: Date.now()
         }))
       }
-      // Per-pane context meter — the donut + its popover must reflect THIS pane's
-      // chat, not the focused chat's (which composerStableBase carries). Mirrors
-      // the focused computation, including live Ollama context lengths when
-      // /api/tags metadata is available.
-      const paneContextUsedTokens = currentContextTokens(viewerChat.runs || [], {
-        liveOutputTokens: viewerLiveOutputTokens,
-        isRunning: viewerIsRunning
-      })
-      const paneLiveOllamaContextLength =
-        viewerProvider === 'ollama'
-          ? resolveLiveOllamaContextLength(viewerContextModelId)
-          : undefined
-      const paneContextWindow = resolveContextWindow(
-        viewerProvider,
-        viewerContextModelId,
-        undefined,
-        paneLiveOllamaContextLength
-      )
-      const paneContextPercent = contextPercent(paneContextUsedTokens, paneContextWindow)
-      const paneContextLabel = `${formatContextTokens(paneContextUsedTokens)} / ${formatContextTokens(paneContextWindow)} context`
-      // Live tick for THIS pane's actively-running participant (same scoping as the
-      // focused composer), so a split-layout pane's per-participant rows tick too.
-      const paneLiveParticipantId =
-        viewerIsRunning && isEnsembleActiveRoundDispatchLive(viewerChat.ensemble?.activeRound)
-          ? viewerChat.ensemble?.activeRound?.activeParticipantId
-          : undefined
-      const paneContextMeter: ContextMeterModel = {
-        solo: {
-          id: 'solo',
-          provider: viewerProvider,
-          modelId: viewerContextModelId,
-          usedTokens: paneContextUsedTokens,
-          windowTokens: paneContextWindow,
-          percent: paneContextPercent
-        },
-        participants:
-          viewerChat.chatKind === 'ensemble'
-            ? buildParticipantContextRows(
-                viewerChat.runs || [],
-                viewerChat.ensemble?.participants || [],
-                {
-                  participantId: paneLiveParticipantId,
-                  outputTokens: liveOutputTokensForParticipant(
-                    viewerChat.runs || [],
-                    viewerChat.messages || [],
-                    paneLiveParticipantId,
-                    estimateLiveOutputTokensFromChars
-                  ),
-                  resolveWindowTokens: (participant) =>
-                    participant.provider === 'ollama'
-                      ? resolveLiveOllamaContextLength(participant.model)
-                      : undefined
-                }
-              )
-            : undefined
-      }
       const paneHumanCollaborationShare =
         activeHumanCollaborationShareByChatId.get(viewerChatId) || null
       const paneComposerCtx: ComposerProps = {
@@ -25290,7 +25349,7 @@ function App(): React.JSX.Element {
         })(),
         isCurrentGlobalChat: viewerIsGlobalChat,
         isCurrentChatRunning: viewerIsRunning,
-        isCurrentChatLinkedChild: true,
+        isCurrentChatLinkedChild: Boolean(viewerChat.parentChatId),
         isCurrentEnsembleChat: paneIsEnsembleChat,
         isWelcomeChat: viewerIsWelcomeChat,
         isCurrentChatProviderLocked: viewerProviderLocked,
@@ -25341,9 +25400,9 @@ function App(): React.JSX.Element {
         composerTokenTally: viewerTokenTally,
         threadTokenTallyHasValue: paneThreadTokenTallyHasValue,
         contextModelId: viewerContextModelId,
-        contextUsedPercent: paneContextPercent,
-        contextLabel: paneContextLabel,
-        contextMeter: paneContextMeter,
+        contextUsedPercent: paneContextTelemetry.usedPercent,
+        contextLabel: paneContextTelemetry.label,
+        contextMeter: paneContextTelemetry.meter,
         liveRunOutputTokens: viewerLiveOutputTokens,
         composerRunTimecodeStartedAt: viewerRunStartedAt,
         cumulativeRunBaseMs: viewerCumulativeRunBaseMs,
