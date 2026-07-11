@@ -721,6 +721,35 @@ describe('composeRunPrompt sub-thread returns', () => {
     expect(wrongProvider.runtimePreambleProvider).toBe('claude')
   })
 
+  it('re-teaches a resumed pre-gateway session exactly once after the main backstop', () => {
+    const composed = composeRunPrompt({
+      provider: 'codex',
+      finalPrompt: 'Use a specialized TaskWraith capability.',
+      messages: [],
+      chatContextTurns: 6,
+      codexHandoffsApplied: [],
+      isGlobalRun: false,
+      approvalMode: 'default',
+      resumeSessionId: 'codex-thread-1',
+      runtimePreambleVersion: 'taskwraith-runtime-v4',
+      runtimePreambleProvider: 'codex',
+      providerLabel: 'Codex',
+      taskWraithMcpProfileId: TASKWRAITH_GATEWAY_MCP_PROFILE_ID
+    })
+
+    expect(composed.runtimePreambleVersion).toBe(TASKWRAITH_RUNTIME_PREAMBLE_VERSION)
+    expect(composed.contextualPrompt).not.toContain('taskwraith-runtime-v4')
+    expect(composed.contextualPrompt.split(TASKWRAITH_GATEWAY_MCP_PROFILE_NOTE)).toHaveLength(2)
+
+    const backstopped = sanitizeTaskWraithMcpPromptClaims(composed.contextualPrompt, {
+      advertised: true,
+      coreProfile: false,
+      gatewayProfile: true,
+      targetProvider: 'codex'
+    })
+    expect(backstopped.split(TASKWRAITH_GATEWAY_MCP_PROFILE_NOTE)).toHaveLength(2)
+  })
+
   it('does not advertise Cursor/Grok write tools in plan mode', () => {
     const result = composeRunPrompt({
       provider: 'cursor',

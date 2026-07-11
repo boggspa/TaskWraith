@@ -112,10 +112,10 @@ export function resolveContextBudget(provider: ProviderId, modelId?: string): Co
   return DEFAULT_CONTEXT_BUDGET
 }
 
-// Bumped v3 -> v4 when the always-on image-tools paragraph became an
-// image-intent hint. Existing resumable gemini/claude/codex sessions re-inject
-// once so they receive the smaller, current contract.
-export const TASKWRAITH_RUNTIME_PREAMBLE_VERSION = 'taskwraith-runtime-v4'
+// Bumped v4 -> v5 when progressive capability discovery became the default.
+// Existing resumable sessions re-inject once so the provider learns how to
+// discover and invoke specialized tools without a full catalogue resend.
+export const TASKWRAITH_RUNTIME_PREAMBLE_VERSION = 'taskwraith-runtime-v5'
 
 /**
  * Standalone one-shot hint re-injected on a RESUMED session (where the full
