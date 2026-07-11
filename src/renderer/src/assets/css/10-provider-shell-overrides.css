@@ -1726,6 +1726,15 @@
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }
+
+/* The diff-action menu is inline (not portaled). Temporarily lift and unclip
+ * only the Grok tucked stack that owns an open menu so it can paint above the
+ * composer surface; the closed stack keeps its rounded overflow clipping. */
+[data-composer-style="grok"]
+  .composer-above-bar-stack:has(.composer-diff-action-menu) {
+  overflow: visible;
+  z-index: 10;
+}
 [data-composer-style="grok"] .composer-above-bar-stack:has(> :nth-child(2))
   > :is(
     .composer-above-bar,
