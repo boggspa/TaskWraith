@@ -2324,7 +2324,7 @@ describe('seat compaction summary injection (wave 3)', () => {
     }
   }
 
-  it('injects the seat summary above the tagged transcript and filters covered messages', () => {
+  it('injects a legacy seat summary but treats its timestamp as non-pruning', () => {
     const { chat: compactedChat, config } = seatCompactedInput()
     const prompt = buildEnsembleParticipantPrompt({
       chat: compactedChat,
@@ -2336,14 +2336,91 @@ describe('seat compaction summary injection (wave 3)', () => {
     })
     expect(prompt).toContain('Prior seat summary (context was compacted')
     expect(prompt).toContain('shipped slice one; open risk in auth flow.')
-    // Covered by the summary → dropped from THIS seat's transcript window.
-    expect(prompt).not.toContain('OLD covered panel detail')
+    // Legacy timestamp coverage is diagnostic only and fails open.
+    expect(prompt).toContain('OLD covered panel detail')
     // Newer material still flows verbatim.
     expect(prompt).toContain('Review response')
     // Ordering: summary block sits above the tagged transcript.
     expect(prompt.indexOf('Prior seat summary')).toBeLessThan(
       prompt.indexOf('Recent tagged transcript:')
     )
+  })
+
+  it('filters rows only for an exact contiguous-prefix claim', () => {
+    const { chat: compactedChat, config } = seatCompactedInput()
+    const participant = {
+      ...config.participants[1],
+      contextCompactionSummary: {
+        ...config.participants[1].contextCompactionSummary!,
+        provenance: {
+          kind: 'contiguous_prompt_prefix' as const,
+          throughMessageId: 'old-1',
+          coveredMessageIds: ['old-1']
+        }
+      }
+    }
+    const prompt = buildEnsembleParticipantPrompt({
+      chat: compactedChat,
+      config: {
+        ...config,
+        participants: config.participants.map((entry) =>
+          entry.id === participant.id ? participant : entry
+        )
+      },
+      participant,
+      currentPrompt: 'Continue the panel work.',
+      roundId: 'round-2',
+      chatContextTurns: 6
+    })
+    expect(prompt).not.toContain('OLD covered panel detail')
+    expect(prompt).toContain('Review response')
+  })
+
+  it('keeps rows for bounded-window provenance', () => {
+    const { chat: compactedChat, config } = seatCompactedInput()
+    const participant = {
+      ...config.participants[1],
+      contextCompactionSummary: {
+        ...config.participants[1].contextCompactionSummary!,
+        provenance: {
+          kind: 'bounded_prompt_window' as const,
+          suppliedMessageIds: ['old-1']
+        }
+      }
+    }
+    const prompt = buildEnsembleParticipantPrompt({
+      chat: compactedChat,
+      config,
+      participant,
+      currentPrompt: 'Continue the panel work.',
+      roundId: 'round-2',
+      chatContextTurns: 6
+    })
+    expect(prompt).toContain('OLD covered panel detail')
+  })
+
+  it('keeps rows for provider-session provenance', () => {
+    const { chat: compactedChat, config } = seatCompactedInput()
+    const participant = {
+      ...config.participants[1],
+      contextCompactionSummary: {
+        ...config.participants[1].contextCompactionSummary!,
+        provenance: {
+          kind: 'provider_session' as const,
+          providerSessionId: 'cursor-session-1',
+          observedMessageIds: ['old-1']
+        }
+      }
+    }
+    const prompt = buildEnsembleParticipantPrompt({
+      chat: compactedChat,
+      config,
+      participant,
+      currentPrompt: 'Continue the panel work.',
+      roundId: 'round-2',
+      chatContextTurns: 6
+    })
+    expect(prompt).toContain('OLD covered panel detail')
   })
 
   it('leaves other seats untouched (no summary block, full window)', () => {

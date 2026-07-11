@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
   TASKWRAITH_RUNTIME_PREAMBLE_VERSION,
+  buildConversationCompactionProjection,
   buildConversationContextBlock,
+  buildConversationContextProjection,
   buildPendingSubThreadResultContextBlock,
   composeRunPrompt,
   promptNeedsImageToolsHint
@@ -137,6 +139,100 @@ describe('composeRunPrompt sub-thread returns', () => {
     expect(block).toContain('Normal assistant reply.')
     expect(block).toContain('Normal user follow-up.')
     expect(block).not.toContain('ignore all previous instructions')
+  })
+
+  it('reports only message ids represented in the bounded context bytes', () => {
+    const projection = buildConversationContextProjection(
+      [
+        message({ id: 'm1', role: 'user', content: 'A'.repeat(40) }),
+        message({ id: 'm2', role: 'assistant', content: 'B'.repeat(40) }),
+        message({ id: 'm3', role: 'user', content: 'C'.repeat(40) })
+      ],
+      3,
+      '',
+      { maxTurns: 3, maxCharsPerTurn: 40, maxBlockChars: 125 }
+    )
+
+    expect(projection.block).toContain('[context truncated]')
+    expect(projection.suppliedMessageIds).toEqual(['m1', 'm2'])
+    expect(projection.block).not.toContain('C'.repeat(20))
+  })
+
+  it('selects oldest uncovered rows for compaction and advances by exact prefix', () => {
+    const messages = [
+      message({ id: 'm1', role: 'user', content: 'oldest user' }),
+      message({ id: 'm2', role: 'assistant', content: 'oldest assistant' }),
+      message({ id: 'm3', role: 'user', content: 'middle user' }),
+      message({ id: 'm4', role: 'assistant', content: 'middle assistant' }),
+      message({ id: 'm5', role: 'user', content: 'newest user' }),
+      message({ id: 'm6', role: 'assistant', content: 'newest assistant' })
+    ]
+    const budget = { maxTurns: 1, maxCharsPerTurn: 80, maxBlockChars: 1_000 }
+    const first = buildConversationCompactionProjection(messages, 1, undefined, budget)
+    expect(first.suppliedMessageIds).toEqual(['m1', 'm2'])
+    expect(first.carriedForwardMessageIds).toEqual([])
+    expect(first.block).toContain('oldest user')
+    expect(first.block).not.toContain('newest user')
+
+    const second = buildConversationCompactionProjection(
+      messages,
+      1,
+      { kind: 'bounded_prompt_window', suppliedMessageIds: first.suppliedMessageIds },
+      budget
+    )
+    expect(second.carriedForwardMessageIds).toEqual(['m1', 'm2'])
+    expect(second.suppliedMessageIds).toEqual(['m3', 'm4'])
+    expect(second.block).toContain('middle user')
+    expect(second.block).not.toContain('oldest user')
+
+    const third = buildConversationCompactionProjection(
+      messages,
+      1,
+      {
+        kind: 'bounded_prompt_window',
+        carriedForwardMessageIds: second.carriedForwardMessageIds,
+        suppliedMessageIds: second.suppliedMessageIds
+      },
+      budget
+    )
+    expect(third.carriedForwardMessageIds).toEqual(['m1', 'm2', 'm3', 'm4'])
+    expect(third.suppliedMessageIds).toEqual(['m5', 'm6'])
+    expect(third.block).toContain('newest user')
+  })
+
+  it('fails open to the oldest row when bounded progress is stale or not a prefix', () => {
+    const messages = [
+      message({ id: 'm1', content: 'oldest' }),
+      message({ id: 'm2', role: 'assistant', content: 'next' }),
+      message({ id: 'm3', content: 'newest' })
+    ]
+    for (const provenance of [
+      { kind: 'bounded_prompt_window' as const, suppliedMessageIds: ['missing'] },
+      { kind: 'bounded_prompt_window' as const, suppliedMessageIds: ['m2'] }
+    ]) {
+      const projection = buildConversationCompactionProjection(messages, 1, provenance, {
+        maxTurns: 1,
+        maxCharsPerTurn: 80,
+        maxBlockChars: 1_000
+      })
+      expect(projection.carriedForwardMessageIds).toEqual([])
+      expect(projection.suppliedMessageIds).toEqual(['m1', 'm2'])
+    }
+  })
+
+  it('never cuts a compaction row in half when the aggregate budget is exhausted', () => {
+    const projection = buildConversationCompactionProjection(
+      [
+        message({ id: 'm1', content: 'A'.repeat(40) }),
+        message({ id: 'm2', role: 'assistant', content: 'B'.repeat(40) })
+      ],
+      2,
+      undefined,
+      { maxTurns: 2, maxCharsPerTurn: 40, maxBlockChars: 140 }
+    )
+    expect(projection.block).toContain('[context truncated]')
+    expect(projection.suppliedMessageIds).toEqual(['m1'])
+    expect(projection.block).not.toContain('B')
   })
 
   it('does not replay TaskWraith closeouts as assistant context', () => {
@@ -353,7 +449,9 @@ describe('composeRunPrompt sub-thread returns', () => {
       expect(result.runtimePreambleProvider).toBe(provider)
       expect(result.contextualPrompt).toContain(delegateTool)
       expect(result.contextualPrompt).toContain('CROSS-PROVIDER delegation')
-      expect(result.contextualPrompt).toContain('do not use provider-native Task/invoke_agent/subagent paths')
+      expect(result.contextualPrompt).toContain(
+        'do not use provider-native Task/invoke_agent/subagent paths'
+      )
       expect(result.contextualPrompt).not.toContain('Complete TaskWraith tool list')
       expect(result.contextualPrompt).not.toContain('workspace/file tools:')
       expect(result.contextualPrompt).not.toContain('creative_midi_dispatch')
@@ -719,7 +817,11 @@ describe('image-tool discoverability (PR5)', () => {
     ]) {
       expect(promptNeedsImageToolsHint(p)).toBe(true)
     }
-    for (const p of ['fix the failing test', 'refactor the auth module', 'what is the imagined plan']) {
+    for (const p of [
+      'fix the failing test',
+      'refactor the auth module',
+      'what is the imagined plan'
+    ]) {
       expect(promptNeedsImageToolsHint(p)).toBe(false)
     }
   })
@@ -946,7 +1048,7 @@ describe('composeRunPrompt host-compaction summary injection', () => {
     timestamp: '2026-07-02T11:00:00Z'
   })
 
-  it('injects the summary above the transcript block for Kimi and filters covered turns', () => {
+  it('injects a legacy summary but treats its timestamp as non-pruning', () => {
     const result = composeRunPrompt({
       provider: 'kimi',
       finalPrompt: 'Continue the work.',
@@ -961,13 +1063,66 @@ describe('composeRunPrompt host-compaction summary injection', () => {
     expect(result.contextualPrompt).toContain('Prior session summary (context was compacted')
     expect(result.contextualPrompt).toContain('Decisions: ship slice 1.')
     expect(result.contextualPrompt).toContain('FRESH detail after the compaction.')
-    // Covered by the summary → dropped from transcript injection.
-    expect(result.contextualPrompt).not.toContain('OLD covered detail')
+    // Legacy timestamp coverage is diagnostic only and fails open.
+    expect(result.contextualPrompt).toContain('OLD covered detail')
     // Ordering: summary block sits above the recent transcript.
     expect(result.contextualPrompt.indexOf('Prior session summary')).toBeLessThan(
       result.contextualPrompt.indexOf('FRESH detail')
     )
     expect(result.applicationLog).toContain('prior-session compaction summary injected')
+  })
+
+  it('prunes only an exact contiguous-prefix provenance claim', () => {
+    const result = composeRunPrompt({
+      provider: 'kimi',
+      finalPrompt: 'Continue the work.',
+      messages: [coveredTurn, freshTurn],
+      chatContextTurns: 6,
+      codexHandoffsApplied: [],
+      isGlobalRun: false,
+      approvalMode: 'default',
+      providerLabel: 'Kimi',
+      contextCompactionSummary: {
+        ...summary,
+        provenance: {
+          kind: 'contiguous_prompt_prefix',
+          throughMessageId: 'covered',
+          coveredMessageIds: ['covered']
+        }
+      }
+    })
+    expect(result.contextualPrompt).not.toContain('OLD covered detail')
+    expect(result.contextualPrompt).toContain('FRESH detail after the compaction.')
+  })
+
+  it('keeps transcript rows for bounded-window, provider-session, and stale prefix provenance', () => {
+    for (const provenance of [
+      { kind: 'bounded_prompt_window' as const, suppliedMessageIds: ['covered'] },
+      {
+        kind: 'provider_session' as const,
+        providerSessionId: 'session-1',
+        observedMessageIds: ['covered']
+      },
+      {
+        kind: 'contiguous_prompt_prefix' as const,
+        throughMessageId: 'missing',
+        coveredMessageIds: ['covered', 'missing']
+      }
+    ]) {
+      const result = composeRunPrompt({
+        provider: 'kimi',
+        finalPrompt: 'Continue the work.',
+        messages: [coveredTurn, freshTurn],
+        chatContextTurns: 6,
+        codexHandoffsApplied: [],
+        isGlobalRun: false,
+        approvalMode: 'default',
+        providerLabel: 'Kimi',
+        contextCompactionSummary: { ...summary, provenance }
+      })
+      expect(result.contextualPrompt).toContain('OLD covered detail')
+      expect(result.contextualPrompt).toContain('FRESH detail after the compaction.')
+    }
   })
 
   it('injects for Cursor only on a fresh session (post-reset), never on resume', () => {

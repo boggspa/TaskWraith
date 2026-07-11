@@ -47,14 +47,15 @@ import { coerceLiveProvider, DEFAULT_PROVIDER, isRetiredProvider } from '../../s
 import { sanitizeRawProviderMediaRefs } from '../../shared/transcriptMediaRefSanitize'
 import { normalizeThreadTitle } from '../../shared/threadTitles'
 import {
+  buildHostCompactionSummaryPrompt,
   CONTEXT_AUTO_COMPACT_COOLDOWN_MS,
-  CONTEXT_AUTO_COMPACT_PERCENT,
   CONTEXT_COMPACTION_MESSAGE_KIND,
   CONTEXT_COMPACTION_SUMMARY_MAX_CHARS,
-  CONTEXT_COMPACTION_SUMMARY_PROMPT,
   contextCompactionMessageId,
   formatContextCompactionSummary,
-  type ContextCompactionProgressEvent
+  shouldAutoCompactHostContext,
+  type ContextCompactionProgressEvent,
+  type ContextCompactionProvenance
 } from '../../shared/contextCompaction'
 import type { TaskWraithPluginActivationSnapshot } from '../../shared/plugins/PluginTypes'
 import { normalizeDiffStatColors } from '../../shared/diffStatColors'
@@ -452,7 +453,12 @@ import {
   type PerChatStateAction,
   usePerChatState
 } from './hooks/usePerChatState'
-import { DEFAULT_CONTEXT_TURNS, clampContextTurns } from '../../main/PromptComposition'
+import {
+  DEFAULT_CONTEXT_TURNS,
+  buildConversationCompactionProjection,
+  clampContextTurns,
+  resolveContextBudget
+} from '../../main/PromptComposition'
 import {
   estimateWorstOllamaEnsembleUiPressure,
   ollamaContextPressureMessage
@@ -642,7 +648,12 @@ import {
   buildRunCloseoutSummaryDigest
 } from './lib/closeoutSummaryDigest'
 import { ollamaMemoryUsageFields } from './lib/ollamaMemoryDisplay'
-import { fetchProviderRates, type RendererProviderRates } from './lib/providerRateEstimate'
+import {
+  fetchProviderRates,
+  usageRecordInputTokens,
+  usageRecordTotalTokens,
+  type RendererProviderRates
+} from './lib/providerRateEstimate'
 import {
   buildWelcomeUsageDashboardData,
   type WelcomeUsageTab
@@ -6886,7 +6897,11 @@ function App(): React.JSX.Element {
         record.timestamp,
         record.provider || '',
         record.model,
+        record.inputTokens,
+        record.outputTokens,
         record.totalTokens,
+        record.cacheReadInputTokens,
+        record.cacheCreationInputTokens,
         record.chatId
       ])
     )
@@ -7135,12 +7150,9 @@ function App(): React.JSX.Element {
         ? record.provider
         : inferUsageProvider(model)
       const key = `${provider}:${model}`
-      const inputTokens = Math.max(0, Number(record?.inputTokens || 0))
+      const inputTokens = usageRecordInputTokens(record)
       const outputTokens = Math.max(0, Number(record?.outputTokens || 0))
-      const totalTokens = Math.max(
-        0,
-        Number(record?.totalTokens || inputTokens + outputTokens || 0)
-      )
+      const totalTokens = usageRecordTotalTokens(record)
       const durationMs = Math.max(0, Number(record?.durationMs || 0))
       const existing =
         runAggregateMap.get(key) ||
@@ -9055,6 +9067,8 @@ function App(): React.JSX.Element {
   // Pending summarize runs keyed by appRunId, consumed on that run's exit.
   // Ref-only state — a run interrupted by app restart simply never finalizes
   // (no summary stored, no session reset: fail-safe, half-state-free).
+  const chatContextTurnsRef = useRef(chatContextTurns)
+  chatContextTurnsRef.current = chatContextTurns
   const pendingHostCompactionsRef = useRef(
     new Map<
       string,
@@ -9064,6 +9078,7 @@ function App(): React.JSX.Element {
         trigger: 'manual' | 'auto'
         preTokens?: number
         startedAtMs: number
+        provenance: ContextCompactionProvenance
       }
     >()
   )
@@ -9131,9 +9146,7 @@ function App(): React.JSX.Element {
                 createdAt: new Date().toISOString(),
                 provider: pending.provider,
                 ...(pending.preTokens !== undefined ? { preTokens: pending.preTokens } : {}),
-                // The summary covers everything through its own reply, so the
-                // compact turn itself also drops out of transcript injection.
-                coversThroughTimestamp: summaryMessage!.timestamp
+                provenance: pending.provenance
               }
             }
           : {}),
@@ -9155,11 +9168,11 @@ function App(): React.JSX.Element {
     })
   }
   /**
-   * Post-run-exit auto-compaction for providers with no native lever. Fires in
-   * the idle dead-time right after a turn seals — never in a user's dispatch
-   * path — when the honest context proxy crosses CONTEXT_AUTO_COMPACT_PERCENT.
-   * Fresh closure each render (rides the appEventHandlersRef bag), so it reads
-   * live settings/queue state. Claude/Codex self-compact natively — excluded.
+   * Post-run auto-compaction gate for providers with no native lever. Generic
+   * input+output is retained as an advisory UI estimate, but it is not proven
+   * session occupancy and therefore cannot authorize a summarize/reset. This
+   * hook remains ready for provider-semantic occupancy, classified overflow,
+   * or Kimi prompt-projection evidence when those signals are wired.
    */
   const maybeAutoCompactAfterRunExit = (chatId: string | undefined, exitCode: number): void => {
     if (!chatId) return
@@ -9190,7 +9203,15 @@ function App(): React.JSX.Element {
       latestRun?.actualModel || latestRun?.requestedModel || '',
       extractUsageLimits(latestRun?.stats).totalTokenLimit
     )
-    if (contextPercent(usedTokens, windowTokens) < CONTEXT_AUTO_COMPACT_PERCENT) return
+    const advisoryPercent = contextPercent(usedTokens, windowTokens)
+    if (
+      !shouldAutoCompactHostContext(provider, {
+        kind: 'generic_run_usage',
+        percent: advisoryPercent
+      })
+    ) {
+      return
+    }
     void compactChatContextRef.current?.(chatId, 'auto')
   }
   const appEventHandlersRef = useRef({
@@ -12463,6 +12484,8 @@ function App(): React.JSX.Element {
                     inputTokens,
                     outputTokens,
                     totalTokens,
+                    cacheReadInputTokens,
+                    cacheCreationInputTokens,
                     inputTokenLimit,
                     outputTokenLimit,
                     totalTokenLimit,
@@ -12483,6 +12506,8 @@ function App(): React.JSX.Element {
                     inputTokens,
                     outputTokens,
                     totalTokens,
+                    cacheReadInputTokens,
+                    cacheCreationInputTokens,
                     inputTokenLimit,
                     outputTokenLimit,
                     totalTokenLimit,
@@ -18872,9 +18897,47 @@ function App(): React.JSX.Element {
           liveOutputTokens: 0,
           isRunning: false
         })
+        const previousSummary = chat.contextCompactionSummary
+        const previousSummaryText = previousSummary?.text?.trim()
+          ? previousSummary.text
+          : undefined
+        const contextBudget = resolveContextBudget(provider)
+        const projection =
+          provider === 'kimi'
+            ? buildConversationCompactionProjection(
+                chat.messages || [],
+                clampContextTurns(chatContextTurnsRef.current, contextBudget),
+                previousSummaryText ? previousSummary?.provenance : undefined,
+                contextBudget
+              )
+            : { block: '', suppliedMessageIds: [], carriedForwardMessageIds: [] }
+        const provenance: ContextCompactionProvenance =
+          provider === 'cursor'
+            ? {
+                kind: 'provider_session',
+                providerSessionId: sessionId,
+                observedMessageIds: [],
+                ...(previousSummaryText && previousSummary?.createdAt
+                  ? { previousSummaryCreatedAt: previousSummary.createdAt }
+                  : {})
+              }
+            : {
+                kind: 'bounded_prompt_window',
+                suppliedMessageIds: [...projection.suppliedMessageIds],
+                ...(projection.carriedForwardMessageIds.length > 0
+                  ? { carriedForwardMessageIds: [...projection.carriedForwardMessageIds] }
+                  : {}),
+                ...(previousSummaryText && previousSummary?.createdAt
+                  ? { previousSummaryCreatedAt: previousSummary.createdAt }
+                  : {})
+              }
+        const compactionPrompt = buildHostCompactionSummaryPrompt({
+          previousSummaryText,
+          materialBlock: projection.block
+        })
         const request = buildRunRequestRef.current(undefined, undefined, {
           chat,
-          prompt: CONTEXT_COMPACTION_SUMMARY_PROMPT,
+          prompt: compactionPrompt,
           // Muscle-memory display: the transcript shows the familiar command,
           // the provider receives the full summarize instruction.
           displayPrompt: '/compact',
@@ -18886,16 +18949,17 @@ function App(): React.JSX.Element {
           provider,
           trigger,
           preTokens: preTokens > 0 ? preTokens : undefined,
-          startedAtMs: Date.now()
+          startedAtMs: Date.now(),
+          provenance
         })
         lastHostCompactionAttemptAtByChatIdRef.current.set(chat.appChatId, Date.now())
         void executeRunRef.current({
           ...request,
           appRunId,
-          // Cursor's session holds the full context — send the instruction
-          // verbatim. Kimi's context IS the injected transcript, so the
-          // summarize turn must ride normal composition to see any material.
-          verbatimPrompt: provider === 'cursor',
+          // The exact bounded Kimi projection (or Cursor's provider-session
+          // instruction) was assembled above. Send it verbatim so persisted
+          // provenance cannot drift from what the summarizer actually saw.
+          verbatimPrompt: true,
           discordContextSelection: undefined,
           discordContextSnapshots: undefined,
           preserveComposer: true

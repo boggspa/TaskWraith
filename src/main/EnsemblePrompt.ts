@@ -53,6 +53,7 @@ import { stripReasoningChains } from './EnsembleThinkingEphemerality'
 import { isHumanCollaboratorComment } from './collaboration/HumanCollaboratorMessages'
 import { isRetiredExternalChannelInboundMessage } from './LegacyExternalChannelHistory'
 import { isTaskWraithCloseoutMessage } from '../shared/taskWraithCloseout'
+import { pruneContiguousCompactionPrefix } from '../shared/contextCompaction'
 import {
   formatActiveGoalPromptBlock,
   resolveActiveGoalForEnsemble,
@@ -842,13 +843,11 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
       )
     : null
   // Host-side SEAT compaction (wave 3): a compacted cursor/kimi seat carries a
-  // durable summary of the rounds that fell off the tagged-transcript budget
-  // (and, for cursor, of the provider session that was reset). Inject it ABOVE
-  // the transcript, drop the messages it covers from THIS seat's transcript
-  // window, and fund it from the seat's transcript char budget so the prompt
-  // does not grow. Full-briefing turns only — a compacted cursor seat has no
-  // session to resume (slim turns never apply), and kimi seats are never
-  // slim-eligible.
+  // durable summary of a bounded prompt window (or, for Cursor, of the provider
+  // session that was reset). Inject it ABOVE the transcript and fund it from
+  // the seat's transcript char budget so the prompt does not grow. Only an
+  // exact contiguous-prefix provenance claim may prune transcript rows;
+  // current bounded/session summaries and legacy timestamps fail open.
   const seatCompactionSummary = input.participant.contextCompactionSummary
   const seatSummaryBlock = seatCompactionSummary?.text
     ? [
@@ -856,15 +855,10 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
         sanitizeText(seatCompactionSummary.text).slice(0, 8_000)
       ].join('\n')
     : ''
-  const seatCompactionBoundaryMs = seatCompactionSummary?.coversThroughTimestamp
-    ? Date.parse(seatCompactionSummary.coversThroughTimestamp)
-    : Number.NaN
-  const seatTranscriptMessages = Number.isFinite(seatCompactionBoundaryMs)
-    ? (input.chat.messages || []).filter((message) => {
-        const at = Date.parse(message.timestamp)
-        return !Number.isFinite(at) || at > seatCompactionBoundaryMs
-      })
-    : input.chat.messages || []
+  const seatTranscriptMessages = pruneContiguousCompactionPrefix(
+    input.chat.messages || [],
+    seatCompactionSummary?.provenance
+  ) as ChatMessage[]
   const baseSeatTranscriptChars =
     ollamaTranscriptBudget?.contextChars ?? input.config.ensembleContextChars
   const seatTranscriptChars = seatSummaryBlock

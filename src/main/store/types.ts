@@ -4,6 +4,7 @@ import type { DiffStatColors } from '../../shared/diffStatColors'
 import type { ClaudeWorkflowTelemetry } from '../../shared/claudeWorkflow'
 import type { CodexReviewTelemetry } from '../../shared/codexReview'
 import type { CodexMultiAgentTelemetry } from '../../shared/codexMultiAgent'
+import type { ContextCompactionProvenance } from '../../shared/contextCompaction'
 import type { UnattendedElevationAck } from '../UnattendedPostureGate'
 import type {
   TaskWraithPluginResourceProvenance,
@@ -655,14 +656,17 @@ export interface EnsembleParticipant {
    * `linkedProviderSessionId` above (fresh seat session next round). Kimi
    * seats keep their token (injection-bounded) — the summary is durable
    * memory of rounds that fell off the tagged-transcript budget.
-   * EnsemblePrompt injects it above the tagged transcript and drops messages
-   * at/before `coversThroughTimestamp` from that seat's transcript window.
+   * EnsemblePrompt injects it above the tagged transcript. Transcript pruning
+   * is fail-open: only exact `contiguous_prompt_prefix` provenance may remove
+   * rows; bounded windows, provider sessions, and legacy timestamps may not.
    */
   contextCompactionSummary?: {
     text: string
     createdAt: string
     provider: ProviderId
     preTokens?: number
+    provenance?: ContextCompactionProvenance
+    /** Legacy diagnostic only. Never authorizes transcript pruning. */
     coversThroughTimestamp?: string
   }
   /**
@@ -2035,11 +2039,11 @@ export interface AppSettings {
    * Defaults to true; requires the bridge daemon + macOS 26 Foundation
    * Models, so on older hosts it is silently inert. */
   closeoutAiSummaryEnabled?: boolean
-  /** Settings → General toggle for host auto-compaction: when a Cursor/Kimi
-   * solo chat crosses ~90% context after a turn, the host dispatches a
-   * summarize turn and compacts the session automatically (Claude/Codex
-   * self-compact natively and are unaffected). Defaults to true; the
-   * summarize turn is a real, visible provider run. */
+  /** Settings → General toggle for evidence-gated host auto-compaction.
+   * Generic run input/output is advisory and cannot authorize a session reset;
+   * automatic maintenance requires provider-semantic occupancy, classified
+   * overflow, or confirmed uncovered Kimi prompt material. Defaults to true;
+   * manual compaction remains available independently. */
   hostAutoCompactEnabled?: boolean
   /** Settings → General toggle: collapse older Ensemble rounds into
    * expandable round cards in the transcript (the most recent / active
@@ -3221,8 +3225,8 @@ export interface ChatRecord {
    * session id above is cleared so the next turn starts fresh and
    * composeRunPrompt injects this block once). Kimi: written without a
    * session reset (its cross-turn context is injection-bounded); the block
-   * upgrades the lossy recent-transcript window, and messages at/before
-   * `coversThroughTimestamp` drop out of future transcript injection.
+   * upgrades the lossy recent-transcript window. Transcript pruning is
+   * fail-open and requires exact contiguous-prefix provenance.
    */
   contextCompactionSummary?: {
     text: string
@@ -3230,7 +3234,8 @@ export interface ChatRecord {
     provider: ProviderId
     /** Context occupancy (tokens) of the session when the summary was taken. */
     preTokens?: number
-    /** Transcript messages at/before this are covered by `text`. */
+    provenance?: ContextCompactionProvenance
+    /** Legacy diagnostic only. Never authorizes transcript pruning. */
     coversThroughTimestamp?: string
   }
   providerMetadata?: Record<string, unknown>
@@ -3671,11 +3676,14 @@ export interface UsageRecord {
   runId: string
   usageKind?: 'run' | 'reset_hint'
   model: string
+  /** Excludes cache reads/creation when the optional breakdown below is present. */
   inputTokens: number
   outputTokens: number
+  /** Inclusive provider total: fresh input + cache input + output when available. */
   totalTokens: number
-  /** Non-cache prompt tokens when a provider splits cache reads/creation. */
+  /** Input tokens served from a provider prompt cache. */
   cacheReadInputTokens?: number
+  /** Input tokens written to a provider prompt cache. */
   cacheCreationInputTokens?: number
   inputTokenLimit?: number
   outputTokenLimit?: number

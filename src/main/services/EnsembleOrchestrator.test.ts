@@ -12616,8 +12616,8 @@ describe('shell stamp persistence requires a successful dispatch', () => {
 })
 
 describe('post-round host seat auto-compaction (maybeAutoCompactSeatsAfterRound)', () => {
-  // A cursor/kimi/grok seat run whose sealed stats produce a deterministic context
-  // percent: `totalTokenLimit` wins in resolveContextWindow, so window == limit.
+  // These sealed stats produce a deterministic processed-usage percentage.
+  // That value remains diagnostic only and must not authorize a session reset.
   function seatRun(
     participantId: string,
     provider: EnsembleParticipant['provider'],
@@ -12733,23 +12733,17 @@ describe('post-round host seat auto-compaction (maybeAutoCompactSeatsAfterRound)
   beforeEach(() => vi.useFakeTimers())
   afterEach(() => vi.useRealTimers())
 
-  it('compacts a cursor seat over the 90% threshold with trigger=auto', () => {
+  it('does not treat cache-inclusive cursor run usage as live occupancy', () => {
     const seat = participant({ id: 'cursor', provider: 'cursor', linkedProviderSessionId: 'sess-1' })
     const h = harness({
       participants: [seat],
       runs: [seatRun('cursor', 'cursor', 195_000, 200_000)] // 97.5%
     })
     h.fire('completed')
-    expect(h.compactSeatContext).toHaveBeenCalledTimes(1)
-    expect(h.compactSeatContext).toHaveBeenCalledWith({
-      chatId: 'ensemble-chat',
-      participantId: 'cursor',
-      provider: 'cursor',
-      trigger: 'auto'
-    })
+    expect(h.compactSeatContext).not.toHaveBeenCalled()
   })
 
-  it('picks the WORST over-threshold seat when several qualify', () => {
+  it('does not rank generic usage as automatic compaction evidence', () => {
     const h = harness({
       participants: [
         participant({ id: 'cursor', provider: 'cursor', linkedProviderSessionId: 's-c' }),
@@ -12761,8 +12755,7 @@ describe('post-round host seat auto-compaction (maybeAutoCompactSeatsAfterRound)
       ]
     })
     h.fire('completed')
-    expect(h.compactSeatContext).toHaveBeenCalledTimes(1)
-    expect(h.compactSeatContext.mock.calls[0][0].participantId).toBe('kimi')
+    expect(h.compactSeatContext).not.toHaveBeenCalled()
   })
 
   it('does nothing for a non-completed round', () => {
@@ -12794,25 +12787,23 @@ describe('post-round host seat auto-compaction (maybeAutoCompactSeatsAfterRound)
     expect(h.compactSeatContext).not.toHaveBeenCalled()
   })
 
-  it('honors the per-seat cooldown across rounds, then re-fires once it expires', () => {
+  it('does not become eligible after a cooldown when evidence is still generic usage', () => {
     const h = harness({
       participants: [participant({ id: 'cursor', provider: 'cursor', linkedProviderSessionId: 's' })],
       runs: [seatRun('cursor', 'cursor', 195_000, 200_000)],
       startClock: 1_000
     })
     h.fire('completed')
-    expect(h.compactSeatContext).toHaveBeenCalledTimes(1)
-    // A second completed round still inside the cooldown window: no re-fire.
+    expect(h.compactSeatContext).not.toHaveBeenCalled()
     h.setClock(1_000 + CONTEXT_AUTO_COMPACT_COOLDOWN_MS - 1)
     h.fire('completed')
-    expect(h.compactSeatContext).toHaveBeenCalledTimes(1)
-    // Past the cooldown: eligible again.
+    expect(h.compactSeatContext).not.toHaveBeenCalled()
     h.setClock(1_000 + CONTEXT_AUTO_COMPACT_COOLDOWN_MS + 1)
     h.fire('completed')
-    expect(h.compactSeatContext).toHaveBeenCalledTimes(2)
+    expect(h.compactSeatContext).not.toHaveBeenCalled()
   })
 
-  it('skips a cursor seat with no provider session but allows kimi/grok seats without one', () => {
+  it('keeps Cursor, Kimi, and Grok manual-only when only generic usage exists', () => {
     const cursorOnly = harness({
       participants: [participant({ id: 'cursor', provider: 'cursor' })], // no session
       runs: [seatRun('cursor', 'cursor', 195_000, 200_000)]
@@ -12825,62 +12816,36 @@ describe('post-round host seat auto-compaction (maybeAutoCompactSeatsAfterRound)
       runs: [seatRun('kimi', 'kimi', 250_000, 256_000)]
     })
     kimiOnly.fire('completed')
-    expect(kimiOnly.compactSeatContext).toHaveBeenCalledTimes(1)
+    expect(kimiOnly.compactSeatContext).not.toHaveBeenCalled()
 
     const grokOnly = harness({
       participants: [participant({ id: 'grok', provider: 'grok' })], // material is in-prompt
       runs: [seatRun('grok', 'grok', 250_000, 256_000)]
     })
     grokOnly.fire('completed')
-    expect(grokOnly.compactSeatContext).toHaveBeenCalledTimes(1)
+    expect(grokOnly.compactSeatContext).not.toHaveBeenCalled()
   })
 
-  it('auto-compacts a grok seat over the threshold', () => {
+  it('does not reset Grok from a terminal usage estimate', () => {
     const h = harness({
       participants: [participant({ id: 'grok', provider: 'grok', linkedProviderSessionId: 's' })],
       runs: [seatRun('grok', 'grok', 250_000, 256_000)] // ~97.6%
     })
     h.fire('completed')
-    expect(h.compactSeatContext).toHaveBeenCalledWith({
-      chatId: 'ensemble-chat',
-      participantId: 'grok',
-      provider: 'grok',
-      trigger: 'auto'
-    })
+    expect(h.compactSeatContext).not.toHaveBeenCalled()
   })
 
-  it('auto-compacts an over-threshold host seat before dispatch', async () => {
+  it('does not compact from generic usage before dispatch', async () => {
     const h = harness({
       participants: [participant({ id: 'grok', provider: 'grok' })],
       runs: [seatRun('grok', 'grok', 250_000, 256_000)]
     })
     await h.beforeDispatch(h.chat.ensemble!.participants[0])
-    expect(h.compactSeatContext).toHaveBeenCalledTimes(1)
-    expect(h.compactSeatContext).toHaveBeenCalledWith({
-      chatId: 'ensemble-chat',
-      participantId: 'grok',
-      provider: 'grok',
-      trigger: 'auto'
-    })
-    expect(h.progressEvents).toEqual([
-      expect.objectContaining({
-        chatId: 'ensemble-chat',
-        participantId: 'grok',
-        provider: 'grok',
-        status: 'started',
-        trigger: 'auto'
-      }),
-      expect.objectContaining({
-        chatId: 'ensemble-chat',
-        participantId: 'grok',
-        provider: 'grok',
-        status: 'completed',
-        trigger: 'auto'
-      })
-    ])
+    expect(h.compactSeatContext).not.toHaveBeenCalled()
+    expect(h.progressEvents).toEqual([])
   })
 
-  it('auto-compacts the finished host seat after its turn', () => {
+  it('does not compact from generic usage after a turn', () => {
     const h = harness({
       participants: [
         participant({ id: 'grok', provider: 'grok' }),
@@ -12891,27 +12856,21 @@ describe('post-round host seat auto-compaction (maybeAutoCompactSeatsAfterRound)
 
     h.afterTurn('grok')
 
-    expect(h.compactSeatContext).toHaveBeenCalledTimes(1)
-    expect(h.compactSeatContext).toHaveBeenCalledWith({
-      chatId: 'ensemble-chat',
-      participantId: 'grok',
-      provider: 'grok',
-      trigger: 'auto'
-    })
+    expect(h.compactSeatContext).not.toHaveBeenCalled()
   })
 
-  it('honors the cooldown for pre-dispatch auto-compaction', async () => {
+  it('remains manual-only across repeated pre-dispatch checks', async () => {
     const h = harness({
       participants: [participant({ id: 'kimi', provider: 'kimi' })],
       runs: [seatRun('kimi', 'kimi', 250_000, 256_000)],
       startClock: 10_000
     })
     await h.beforeDispatch(h.chat.ensemble!.participants[0])
-    expect(h.compactSeatContext).toHaveBeenCalledTimes(1)
+    expect(h.compactSeatContext).not.toHaveBeenCalled()
 
     h.setClock(10_000 + CONTEXT_AUTO_COMPACT_COOLDOWN_MS - 1)
     await h.beforeDispatch(h.chat.ensemble!.participants[0])
-    expect(h.compactSeatContext).toHaveBeenCalledTimes(1)
+    expect(h.compactSeatContext).not.toHaveBeenCalled()
   })
 })
 

@@ -71,11 +71,11 @@ import {
 import { resolveHealthEntryPresentation } from '../../shared/ollamaBrandTable'
 import {
   CONTEXT_AUTO_COMPACT_COOLDOWN_MS,
-  CONTEXT_AUTO_COMPACT_PERCENT,
   CONTEXT_COMPACTION_MESSAGE_KIND,
   contextCompactionMessageId,
   contextPressureSeverity,
   formatContextCompactionSummary,
+  shouldAutoCompactHostContext,
   type ContextCompactionProgressEvent,
   type ContextCompactionSignal,
   type ContextPressureSeverity
@@ -11761,7 +11761,17 @@ export class EnsembleOrchestrator {
       usage.totalTokenLimit
     )
     const percent = contextPercent(usage.tokens, windowTokens)
-    if (percent < CONTEXT_AUTO_COMPACT_PERCENT) return null
+    // Latest run input+output is processed usage, not provider-semantic live
+    // occupancy. Keep it available for diagnostics, but never let it reset a
+    // Cursor/Grok session or refresh Kimi's summary on its own.
+    if (
+      !shouldAutoCompactHostContext(participant.provider, {
+        kind: 'generic_run_usage',
+        percent
+      })
+    ) {
+      return null
+    }
     this.seatAutoCompactLastAttemptAt.set(participant.id, this.deps.now())
     return {
       chatId,
@@ -11774,9 +11784,10 @@ export class EnsembleOrchestrator {
   /**
    * Wave 3 — post-round host auto-compaction for cursor/kimi/grok seats (the
    * providers with no native lever). Runs in the idle dead-time after a
-   * COMPLETED round: deferred a tick so a chained queued round is visible,
-   * then compacts only the single WORST seat at/over the shared 90%
-   * threshold, one attempt per seat per cooldown window. Fire-and-forget —
+   * COMPLETED round: deferred a tick so a chained queued round is visible.
+   * Generic run usage is advisory and therefore currently yields no automatic
+   * request; the selection path remains ready for provider-semantic evidence.
+   * Fire-and-forget —
    * the maintenance lane cards success/failure itself, and the dispatch-wait
    * above protects any round that starts mid-compaction.
    */
@@ -11818,7 +11829,14 @@ export class EnsembleOrchestrator {
             usage.totalTokenLimit
           )
           const percent = contextPercent(usage.tokens, windowTokens)
-          if (percent < CONTEXT_AUTO_COMPACT_PERCENT) continue
+          if (
+            !shouldAutoCompactHostContext(participant.provider, {
+              kind: 'generic_run_usage',
+              percent
+            })
+          ) {
+            continue
+          }
           if (!worst || percent > worst.percent) worst = { participant, percent }
         }
         if (!worst) return

@@ -23,6 +23,10 @@ import {
 } from './TaskWraithMcpPromptNames'
 import { isTaskWraithCloseoutMessage } from '../shared/taskWraithCloseout'
 import { shouldUseCoreMcpProfile } from './mcp/McpToolProfiles'
+import {
+  pruneContiguousCompactionPrefix,
+  type ContextCompactionProvenance
+} from '../shared/contextCompaction'
 
 /**
  * Prompt-composition utilities (Phase B3 step 1).
@@ -61,6 +65,21 @@ export interface ContextBudget {
   maxTurns: number
   maxCharsPerTurn: number
   maxBlockChars: number
+}
+
+export interface ConversationContextProjection {
+  block: string
+  /** Chat-message ids whose rows are represented in `block`, in prompt order. */
+  suppliedMessageIds: string[]
+}
+
+export interface ConversationCompactionProjection extends ConversationContextProjection {
+  /**
+   * Exact prior eligible-message prefix represented by the durable summary
+   * supplied to this compaction. Safe for selection progress only; never for
+   * transcript pruning.
+   */
+  carriedForwardMessageIds: string[]
 }
 
 const DEFAULT_CONTEXT_BUDGET: ContextBudget = {
@@ -345,18 +364,8 @@ export function clampContextTurns(
  * Skips the most-recent user message if it matches `latestPrompt` exactly —
  * that avoids double-quoting the just-typed prompt back at the model.
  */
-export function buildConversationContextBlock(
-  messages: ChatMessage[],
-  maxTurns: number,
-  latestPrompt: string,
-  budget: ContextBudget = DEFAULT_CONTEXT_BUDGET
-): string {
-  if (maxTurns <= 0) {
-    return ''
-  }
-
-  const sanitizedLatestPrompt = latestPrompt.trim()
-  const relevantMessages = messages.filter(
+function eligibleConversationMessages(messages: ChatMessage[]): ChatMessage[] {
+  return messages.filter(
     (message) =>
       (message.role === 'user' || message.role === 'assistant') &&
       !isHumanCollaboratorComment(message) &&
@@ -364,6 +373,69 @@ export function buildConversationContextBlock(
       !isTaskWraithCloseoutMessage(message) &&
       Boolean(message.content && message.content.trim())
   )
+}
+
+function renderConversationProjection(
+  messages: ChatMessage[],
+  header: string,
+  budget: ContextBudget,
+  wholeRowsOnly = false
+): ConversationContextProjection {
+  if (messages.length === 0) return { block: '', suppliedMessageIds: [] }
+  const lines = messages.map((item) => ({
+    id: item.id,
+    text: `${item.role === 'user' ? 'User' : 'Assistant'}: ${sanitizeContextText(item.content, budget.maxCharsPerTurn)}`
+  }))
+  const contextBlock = [header, ...lines.map((line) => line.text)].join('\n')
+  if (contextBlock.length <= budget.maxBlockChars) {
+    return { block: contextBlock, suppliedMessageIds: lines.map((line) => line.id) }
+  }
+
+  const truncationMarker = '\n[context truncated]'
+  if (wholeRowsOnly) {
+    let block = header
+    const suppliedMessageIds: string[] = []
+    for (const line of lines) {
+      const candidate = `${block}\n${line.text}`
+      if (candidate.length + truncationMarker.length > budget.maxBlockChars) break
+      block = candidate
+      suppliedMessageIds.push(line.id)
+    }
+    return {
+      block: `${block}${truncationMarker}`,
+      suppliedMessageIds
+    }
+  }
+
+  // Preserve the legacy ordinary-context slice exactly; compaction uses the
+  // whole-row branch above and therefore stays strictly within its budget.
+  const prefixLength = Math.max(0, budget.maxBlockChars - 18)
+  const suppliedMessageIds: string[] = []
+  let lineStart = header.length + 1
+  for (const line of lines) {
+    // A row is supplied if any portion of its rendered line survives the
+    // aggregate slice. This preserves the legacy context-block behavior.
+    if (lineStart < prefixLength) suppliedMessageIds.push(line.id)
+    lineStart += line.text.length + 1
+  }
+  return {
+    block: `${contextBlock.slice(0, prefixLength)}${truncationMarker}`,
+    suppliedMessageIds
+  }
+}
+
+export function buildConversationContextProjection(
+  messages: ChatMessage[],
+  maxTurns: number,
+  latestPrompt: string,
+  budget: ContextBudget = DEFAULT_CONTEXT_BUDGET
+): ConversationContextProjection {
+  if (maxTurns <= 0) {
+    return { block: '', suppliedMessageIds: [] }
+  }
+
+  const sanitizedLatestPrompt = latestPrompt.trim()
+  const relevantMessages = eligibleConversationMessages(messages)
 
   let historyMessages = relevantMessages
   const lastMessage = historyMessages[historyMessages.length - 1]
@@ -377,30 +449,94 @@ export function buildConversationContextBlock(
   }
 
   if (historyMessages.length === 0) {
-    return ''
+    return { block: '', suppliedMessageIds: [] }
   }
 
   const windowStart = Math.max(0, historyMessages.length - maxTurns * 2)
   const windowedMessages = historyMessages.slice(windowStart)
   if (windowedMessages.length === 0) {
-    return ''
+    return { block: '', suppliedMessageIds: [] }
   }
 
-  const lines = windowedMessages.map((item) => {
-    const content = item.content
-    return `${item.role === 'user' ? 'User' : 'Assistant'}: ${sanitizeContextText(content, budget.maxCharsPerTurn)}`
-  })
+  const header = `\n\nConversation context (last ${Math.min(maxTurns, Math.ceil(windowedMessages.length / 2))} turn(s)):`
+  return renderConversationProjection(windowedMessages, header, budget)
+}
 
-  const contextBlock = [
-    `\n\nConversation context (last ${Math.min(maxTurns, Math.ceil(windowedMessages.length / 2))} turn(s)):`,
-    ...lines
-  ].join('\n')
+/**
+ * Select the oldest eligible rows not already represented by the durable
+ * summary. Progress is accepted only when the previous bounded-window claim
+ * resolves to an exact prefix of the current eligible transcript; malformed,
+ * stale, gapped, or reordered ids fail open and restart at the oldest row.
+ *
+ * Unlike ordinary context projection, aggregate truncation never cuts a row
+ * in half. `suppliedMessageIds` therefore names exactly the complete rendered
+ * rows sent to the summarizer (each row remains subject to maxCharsPerTurn).
+ */
+export function buildConversationCompactionProjection(
+  messages: ChatMessage[],
+  maxTurns: number,
+  previousProvenance: ContextCompactionProvenance | null | undefined,
+  budget: ContextBudget = DEFAULT_CONTEXT_BUDGET
+): ConversationCompactionProjection {
+  const empty = { block: '', suppliedMessageIds: [], carriedForwardMessageIds: [] }
+  if (maxTurns <= 0) return empty
 
-  if (contextBlock.length <= budget.maxBlockChars) {
-    return contextBlock
+  const relevantMessages = eligibleConversationMessages(messages)
+  if (relevantMessages.length === 0) return empty
+
+  let carriedForwardMessageIds: string[] = []
+  const provenanceRecord =
+    previousProvenance && typeof previousProvenance === 'object'
+      ? (previousProvenance as unknown as Record<string, unknown>)
+      : null
+  if (provenanceRecord?.kind === 'bounded_prompt_window') {
+    const rawCarried = provenanceRecord.carriedForwardMessageIds ?? []
+    const rawSupplied = provenanceRecord.suppliedMessageIds
+    const arraysAreValid =
+      Array.isArray(rawCarried) &&
+      rawCarried.every((id) => typeof id === 'string') &&
+      Array.isArray(rawSupplied) &&
+      rawSupplied.every((id) => typeof id === 'string')
+    const claimedIds = arraysAreValid ? ([...rawCarried, ...rawSupplied] as string[]) : []
+    const idCounts = new Map<string, number>()
+    for (const message of relevantMessages) {
+      idCounts.set(message.id, (idCounts.get(message.id) || 0) + 1)
+    }
+    const validClaim =
+      claimedIds.length > 0 &&
+      claimedIds.length <= relevantMessages.length &&
+      claimedIds.every((id, index) =>
+        Boolean(id && id.trim() && relevantMessages[index]?.id === id && idCounts.get(id) === 1)
+      ) &&
+      new Set(claimedIds).size === claimedIds.length
+    if (validClaim) carriedForwardMessageIds = claimedIds
   }
 
-  return `${contextBlock.slice(0, budget.maxBlockChars - 18)}\n[context truncated]`
+  const maxMessages = Math.max(0, Math.trunc(maxTurns) * 2)
+  const windowedMessages = relevantMessages.slice(
+    carriedForwardMessageIds.length,
+    carriedForwardMessageIds.length + maxMessages
+  )
+  if (windowedMessages.length === 0) {
+    return { ...empty, carriedForwardMessageIds }
+  }
+  const header = `\n\nOldest uncovered conversation context (up to ${Math.min(
+    maxTurns,
+    Math.ceil(windowedMessages.length / 2)
+  )} turn(s)):`
+  return {
+    ...renderConversationProjection(windowedMessages, header, budget, true),
+    carriedForwardMessageIds
+  }
+}
+
+export function buildConversationContextBlock(
+  messages: ChatMessage[],
+  maxTurns: number,
+  latestPrompt: string,
+  budget: ContextBudget = DEFAULT_CONTEXT_BUDGET
+): string {
+  return buildConversationContextProjection(messages, maxTurns, latestPrompt, budget).block
 }
 
 /**
@@ -496,13 +632,15 @@ export interface ComposeRunPromptInput {
    * whose cross-turn context is host-fed: Cursor only on a FRESH session (the
    * compaction flow cleared the session id; once the new session resumes
    * natively its own history carries the summary), Kimi/Grok on every turn
-   * (their context IS the injected block). Messages at/before
-   * `coversThroughTimestamp` drop out of the recent-transcript injection so
-   * the two blocks never double-cover.
+   * (their context IS the injected block). Only exact, resolvable
+   * `contiguous_prompt_prefix` provenance may prune recent transcript rows;
+   * legacy timestamps and bounded/session summaries remain non-pruning.
    */
   contextCompactionSummary?: {
     text: string
     createdAt: string
+    provenance?: ContextCompactionProvenance
+    /** Legacy diagnostic only; timestamp coverage never authorizes pruning. */
     coversThroughTimestamp?: string
   } | null
 }
@@ -605,19 +743,14 @@ export function composeRunPrompt(input: ComposeRunPromptInput): ComposeRunPrompt
     codexPreviousModelKey &&
     codexNextModelKey &&
     codexPreviousModelKey !== codexNextModelKey
-  // Host-side compaction summary (see the input doc). Filter the covered
-  // messages out of transcript injection FIRST so the summary block and the
-  // recent-transcript block never double-cover the same turns.
+  // Host-side compaction summary (see the input doc). Only an exact,
+  // resolvable contiguous-prefix provenance claim may prune transcript rows.
+  // Legacy timestamps and bounded/session summaries deliberately fail open.
   const compactionSummary = input.contextCompactionSummary || null
-  const compactionBoundaryMs = compactionSummary?.coversThroughTimestamp
-    ? Date.parse(compactionSummary.coversThroughTimestamp)
-    : Number.NaN
-  const contextMessages = Number.isFinite(compactionBoundaryMs)
-    ? messages.filter((message) => {
-        const at = Date.parse(message.timestamp)
-        return !Number.isFinite(at) || at > compactionBoundaryMs
-      })
-    : messages
+  const contextMessages = pruneContiguousCompactionPrefix(
+    messages,
+    compactionSummary?.provenance
+  ) as ChatMessage[]
   const compactionSummaryBlock =
     compactionSummary?.text &&
     (provider === 'kimi' || provider === 'grok' || (provider === 'cursor' && !resumeSessionId))

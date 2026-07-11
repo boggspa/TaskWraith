@@ -174,16 +174,147 @@ export const CONTEXT_PRESSURE_WARN_PERCENT = 80
 export const CONTEXT_PRESSURE_CRITICAL_PERCENT = 95
 
 /**
- * Host auto-compaction trigger for providers with no native lever
- * (Cursor/Kimi). Sits between warn and critical: past the warn band (so we
- * don't compact eagerly and grind away detail) but with ~10% of the window
- * still free — the summarize turn itself needs headroom to run.
+ * Threshold applied only to provider-semantic occupancy evidence. Generic run
+ * input/output must never be compared to this as though it were a live context
+ * window. Sits between warn and critical so a summarize turn retains headroom.
  */
 export const CONTEXT_AUTO_COMPACT_PERCENT = 90
 
 /** One host auto-compaction attempt per chat per window — breaks retry loops
  * when the summarize turn itself keeps failing. */
 export const CONTEXT_AUTO_COMPACT_COOLDOWN_MS = 10 * 60 * 1000
+
+// ── Stored-summary provenance ───────────────────────────────────────────────────
+
+/**
+ * Evidence carried by a host-authored context summary.
+ *
+ * Only `contiguous_prompt_prefix` is pruning authority. The other variants
+ * describe useful but non-contiguous evidence and therefore never authorize
+ * deleting transcript rows from a future prompt. Arrays are persisted in the
+ * order in which rows were represented to the summarizer/session.
+ */
+export type ContextCompactionProvenance =
+  | {
+      kind: 'contiguous_prompt_prefix'
+      throughMessageId: string
+      /** Exact, gap-free chat-message ids covered from transcript start. */
+      coveredMessageIds: string[]
+      /** Optional audit link when the replacement summary chained an older summary. */
+      chainedFrom?: {
+        throughMessageId: string
+        summaryCreatedAt: string
+      }
+    }
+  | {
+      kind: 'bounded_prompt_window'
+      /** Exact ids whose rows were represented, even if their text was truncated. */
+      suppliedMessageIds: string[]
+      /**
+       * Earlier directly-supplied rows represented transitively by the prior
+       * durable summary included in this summarize turn. This is progress
+       * metadata only: it never authorizes transcript pruning.
+       */
+      carriedForwardMessageIds?: string[]
+      previousSummaryCreatedAt?: string
+    }
+  | {
+      kind: 'provider_session'
+      providerSessionId?: string
+      /** Exact TaskWraith rows proven observed; empty means no row-level claim. */
+      observedMessageIds: string[]
+      previousSummaryCreatedAt?: string
+    }
+
+type MessageWithId = { id: string }
+
+/**
+ * Drop a summarized prefix only when the persisted claim resolves exactly
+ * against the current transcript. Missing ids, duplicate ids, gaps, reordered
+ * rows, legacy timestamp-only summaries, and every non-prefix provenance kind
+ * all fail open by returning the original rows.
+ */
+export function pruneContiguousCompactionPrefix<T extends MessageWithId>(
+  messages: readonly T[],
+  provenance: ContextCompactionProvenance | null | undefined
+): readonly T[] {
+  const provenanceRecord = asRecord(provenance)
+  if (str(provenanceRecord?.kind) !== 'contiguous_prompt_prefix') return messages
+
+  const rawThroughMessageId = provenanceRecord?.throughMessageId
+  const rawCoveredMessageIds = provenanceRecord?.coveredMessageIds
+  if (typeof rawThroughMessageId !== 'string' || !rawThroughMessageId.trim()) return messages
+  if (!Array.isArray(rawCoveredMessageIds) || rawCoveredMessageIds.length === 0) return messages
+  if (rawCoveredMessageIds.some((id) => typeof id !== 'string' || !id.trim())) return messages
+  const throughMessageId = rawThroughMessageId
+  const coveredMessageIds = rawCoveredMessageIds as string[]
+  if (new Set(coveredMessageIds).size !== coveredMessageIds.length) return messages
+
+  // Every claimed id must resolve uniquely in the current transcript. A
+  // duplicate anywhere makes the persisted anchor ambiguous, so fail open.
+  const messageIdCounts = new Map<string, number>()
+  for (const message of messages) {
+    messageIdCounts.set(message.id, (messageIdCounts.get(message.id) || 0) + 1)
+  }
+  if (coveredMessageIds.some((id) => messageIdCounts.get(id) !== 1)) return messages
+
+  const throughIndex = messages.findIndex((message) => message.id === throughMessageId)
+  if (throughIndex < 0) return messages
+  if (throughIndex + 1 !== coveredMessageIds.length) return messages
+  for (let index = 0; index <= throughIndex; index += 1) {
+    if (messages[index].id !== coveredMessageIds[index]) return messages
+  }
+  if (coveredMessageIds[coveredMessageIds.length - 1] !== throughMessageId) return messages
+
+  const rawChainedFrom = provenanceRecord?.chainedFrom
+  if (rawChainedFrom !== undefined) {
+    const chainedFrom = asRecord(rawChainedFrom)
+    const priorThroughMessageId = chainedFrom?.throughMessageId
+    const summaryCreatedAt = chainedFrom?.summaryCreatedAt
+    if (
+      typeof priorThroughMessageId !== 'string' ||
+      !priorThroughMessageId.trim() ||
+      typeof summaryCreatedAt !== 'string' ||
+      !summaryCreatedAt.trim()
+    ) {
+      return messages
+    }
+    const priorIndex = coveredMessageIds.indexOf(priorThroughMessageId)
+    if (priorIndex < 0 || priorIndex >= coveredMessageIds.length - 1) {
+      return messages
+    }
+  }
+  return messages.slice(throughIndex + 1)
+}
+
+// ── Host auto-compaction evidence ───────────────────────────────────────────────
+
+export type HostAutoCompactionProvider = 'cursor' | 'kimi' | 'grok'
+
+export type HostAutoCompactionEvidence =
+  | { kind: 'generic_run_usage'; percent: number }
+  | { kind: 'provider_semantic_occupancy'; percent: number }
+  | { kind: 'classified_context_overflow' }
+  | { kind: 'prompt_projection_uncovered'; messageIds: string[] }
+
+/**
+ * Generic run input/output is processed usage, not proven live occupancy, so
+ * it is always advisory. Cursor/Grok may auto-reset only on a provider-semantic
+ * occupancy signal or a classified context overflow. Kimi may additionally
+ * refresh its non-destructive rolling summary when prompt projection proves
+ * that specific transcript rows are uncovered.
+ */
+export function shouldAutoCompactHostContext(
+  provider: HostAutoCompactionProvider,
+  evidence: HostAutoCompactionEvidence
+): boolean {
+  if (evidence.kind === 'generic_run_usage') return false
+  if (evidence.kind === 'classified_context_overflow') return true
+  if (evidence.kind === 'provider_semantic_occupancy') {
+    return Number.isFinite(evidence.percent) && evidence.percent >= CONTEXT_AUTO_COMPACT_PERCENT
+  }
+  return provider === 'kimi' && evidence.messageIds.some((id) => Boolean(id.trim()))
+}
 
 // ── Host-side fallback compaction (Cursor/Kimi) ─────────────────────────────
 
@@ -199,6 +330,31 @@ export const CONTEXT_COMPACTION_SUMMARY_PROMPT =
 /** Stored-summary size cap — the block is re-injected into future prompts, so
  * it must stay well under every provider's context-injection budget. */
 export const CONTEXT_COMPACTION_SUMMARY_MAX_CHARS = 8_000
+
+/**
+ * Build the exact host-authored summarize prompt used by solo and ensemble
+ * fallback compaction. Repeated compactions always carry the prior durable
+ * summary before newly selected transcript material, so replacement summaries
+ * do not silently discard older memory.
+ */
+export function buildHostCompactionSummaryPrompt(input: {
+  previousSummaryText?: string | null
+  materialBlock?: string | null
+}): string {
+  const previousSummary =
+    typeof input.previousSummaryText === 'string' ? input.previousSummaryText.trim() : ''
+  const previousSummaryBlock = previousSummary
+    ? [
+        'Previous durable context summary (carry all still-relevant facts forward):',
+        previousSummary.slice(0, CONTEXT_COMPACTION_SUMMARY_MAX_CHARS)
+      ].join('\n')
+    : ''
+  const materialBlock =
+    typeof input.materialBlock === 'string' && input.materialBlock.trim() ? input.materialBlock : ''
+  return [previousSummaryBlock, materialBlock, CONTEXT_COMPACTION_SUMMARY_PROMPT]
+    .filter(Boolean)
+    .join('\n\n')
+}
 
 export type ContextPressureSeverity = 'ok' | 'warn' | 'critical'
 

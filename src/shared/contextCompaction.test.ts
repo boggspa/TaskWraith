@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
+  buildHostCompactionSummaryPrompt,
+  CONTEXT_COMPACTION_SUMMARY_MAX_CHARS,
   contextCompactionDedupeKey,
   contextCompactionMessageId,
   contextPressureSeverity,
@@ -8,7 +10,9 @@ import {
   isClaudeContextCompactionSystemEvent,
   isCodexContextCompactionItem,
   isContextOverflowErrorText,
-  normalizeClaudeContextCompactionEvent
+  normalizeClaudeContextCompactionEvent,
+  pruneContiguousCompactionPrefix,
+  shouldAutoCompactHostContext
 } from './contextCompaction'
 
 // Fixtures below are verbatim frames captured from live probes on 2026-07-02
@@ -151,6 +155,175 @@ describe('codex contextCompaction items', () => {
     )
     expect(isCodexContextCompactionItem({ type: 'agentMessage', id: 'x' })).toBe(false)
     expect(isCodexContextCompactionItem(null)).toBe(false)
+  })
+})
+
+describe('stored-summary pruning provenance', () => {
+  const messages = [{ id: 'm1' }, { id: 'm2' }, { id: 'm3' }]
+
+  it('prunes only an exactly resolvable contiguous prefix', () => {
+    expect(
+      pruneContiguousCompactionPrefix(messages, {
+        kind: 'contiguous_prompt_prefix',
+        throughMessageId: 'm2',
+        coveredMessageIds: ['m1', 'm2']
+      })
+    ).toEqual([{ id: 'm3' }])
+  })
+
+  it('accepts a valid chained prefix only when the prior anchor is inside it', () => {
+    expect(
+      pruneContiguousCompactionPrefix(messages, {
+        kind: 'contiguous_prompt_prefix',
+        throughMessageId: 'm3',
+        coveredMessageIds: ['m1', 'm2', 'm3'],
+        chainedFrom: {
+          throughMessageId: 'm2',
+          summaryCreatedAt: '2026-07-01T00:00:00Z'
+        }
+      })
+    ).toEqual([])
+  })
+
+  it('fails open for bounded windows, provider sessions, and missing provenance', () => {
+    expect(
+      pruneContiguousCompactionPrefix(messages, {
+        kind: 'bounded_prompt_window',
+        suppliedMessageIds: ['m2']
+      })
+    ).toBe(messages)
+    expect(
+      pruneContiguousCompactionPrefix(messages, {
+        kind: 'provider_session',
+        providerSessionId: 'session-1',
+        observedMessageIds: []
+      })
+    ).toBe(messages)
+    expect(pruneContiguousCompactionPrefix(messages, undefined)).toBe(messages)
+  })
+
+  it('fails open for stale, gapped, reordered, duplicate, or invalid chained claims', () => {
+    const claims = [
+      {
+        kind: 'contiguous_prompt_prefix' as const,
+        throughMessageId: 'missing',
+        coveredMessageIds: ['m1', 'missing']
+      },
+      {
+        kind: 'contiguous_prompt_prefix' as const,
+        throughMessageId: 'm3',
+        coveredMessageIds: ['m1', 'm3']
+      },
+      {
+        kind: 'contiguous_prompt_prefix' as const,
+        throughMessageId: 'm2',
+        coveredMessageIds: ['m2', 'm1']
+      },
+      {
+        kind: 'contiguous_prompt_prefix' as const,
+        throughMessageId: 'm2',
+        coveredMessageIds: ['m1', 'm1']
+      },
+      {
+        kind: 'contiguous_prompt_prefix' as const,
+        throughMessageId: 'm3',
+        coveredMessageIds: ['m1', 'm2', 'm3'],
+        chainedFrom: { throughMessageId: 'missing', summaryCreatedAt: '2026-07-01T00:00:00Z' }
+      }
+    ]
+    for (const claim of claims) {
+      expect(pruneContiguousCompactionPrefix(messages, claim)).toBe(messages)
+    }
+  })
+
+  it('fails open instead of throwing for malformed persisted provenance', () => {
+    const malformedClaims: unknown[] = [
+      { kind: 'contiguous_prompt_prefix' },
+      { kind: 'contiguous_prompt_prefix', throughMessageId: 42, coveredMessageIds: ['m1'] },
+      { kind: 'contiguous_prompt_prefix', throughMessageId: 'm1' },
+      { kind: 'contiguous_prompt_prefix', throughMessageId: 'm1', coveredMessageIds: 'm1' },
+      {
+        kind: 'contiguous_prompt_prefix',
+        throughMessageId: 'm2',
+        coveredMessageIds: ['m1', 'm2'],
+        chainedFrom: { throughMessageId: 'm1', summaryCreatedAt: null }
+      }
+    ]
+    for (const claim of malformedClaims) {
+      expect(pruneContiguousCompactionPrefix(messages, claim as never)).toBe(messages)
+    }
+  })
+
+  it('fails open when a claimed id is ambiguous in the current transcript', () => {
+    const duplicated = [{ id: 'm1' }, { id: 'm2' }, { id: 'm1' }]
+    expect(
+      pruneContiguousCompactionPrefix(duplicated, {
+        kind: 'contiguous_prompt_prefix',
+        throughMessageId: 'm2',
+        coveredMessageIds: ['m1', 'm2']
+      })
+    ).toBe(duplicated)
+  })
+})
+
+describe('host compaction summarize prompt', () => {
+  it('chains prior durable memory before newly selected material', () => {
+    const prompt = buildHostCompactionSummaryPrompt({
+      previousSummaryText: 'Earlier decision and unresolved risk.',
+      materialBlock: 'Oldest uncovered transcript rows.'
+    })
+    expect(prompt.indexOf('Earlier decision')).toBeLessThan(
+      prompt.indexOf('Oldest uncovered transcript rows.')
+    )
+    expect(prompt.indexOf('Oldest uncovered transcript rows.')).toBeLessThan(
+      prompt.indexOf('Create a compact context summary')
+    )
+  })
+
+  it('caps legacy prior summaries before reinjection', () => {
+    const oversized = `${'A'.repeat(CONTEXT_COMPACTION_SUMMARY_MAX_CHARS)}TAIL`
+    const prompt = buildHostCompactionSummaryPrompt({ previousSummaryText: oversized })
+    expect(prompt).not.toContain('TAIL')
+    expect(prompt).toContain('Create a compact context summary')
+  })
+})
+
+describe('host auto-compaction evidence policy', () => {
+  it('never treats generic processed run usage as live occupancy', () => {
+    for (const provider of ['cursor', 'kimi', 'grok'] as const) {
+      expect(
+        shouldAutoCompactHostContext(provider, { kind: 'generic_run_usage', percent: 999 })
+      ).toBe(false)
+    }
+  })
+
+  it('accepts verified occupancy or classified overflow for host providers', () => {
+    expect(
+      shouldAutoCompactHostContext('cursor', {
+        kind: 'provider_semantic_occupancy',
+        percent: 90
+      })
+    ).toBe(true)
+    expect(shouldAutoCompactHostContext('grok', { kind: 'classified_context_overflow' })).toBe(true)
+    expect(
+      shouldAutoCompactHostContext('cursor', {
+        kind: 'provider_semantic_occupancy',
+        percent: 89.9
+      })
+    ).toBe(false)
+  })
+
+  it('accepts uncovered prompt rows only for Kimi', () => {
+    const evidence = { kind: 'prompt_projection_uncovered' as const, messageIds: ['m1'] }
+    expect(shouldAutoCompactHostContext('kimi', evidence)).toBe(true)
+    expect(shouldAutoCompactHostContext('cursor', evidence)).toBe(false)
+    expect(shouldAutoCompactHostContext('grok', evidence)).toBe(false)
+    expect(
+      shouldAutoCompactHostContext('kimi', {
+        kind: 'prompt_projection_uncovered',
+        messageIds: []
+      })
+    ).toBe(false)
   })
 })
 

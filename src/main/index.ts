@@ -213,9 +213,9 @@ import {
   shouldEmitClaudeWorkflowTelemetry
 } from '../shared/claudeWorkflow'
 import {
+  buildHostCompactionSummaryPrompt,
   CONTEXT_COMPACTION_MESSAGE_KIND,
   CONTEXT_COMPACTION_SUMMARY_MAX_CHARS,
-  CONTEXT_COMPACTION_SUMMARY_PROMPT,
   contextCompactionDedupeKey,
   contextCompactionMessageId,
   codexContextCompactionItemId,
@@ -224,6 +224,7 @@ import {
   isCodexContextCompactionItem,
   normalizeClaudeContextCompactionEvent,
   type ContextCompactionProgressEvent,
+  type ContextCompactionProvenance,
   type ContextCompactionSignal,
   type ContextCompactionTelemetry
 } from '../shared/contextCompaction'
@@ -469,6 +470,7 @@ import type { BridgeComposerPromptAction } from './BridgeActionPayload'
 import {
   buildAgentExitStats,
   codexUsageToStats,
+  cursorUsageToStats,
   extractProviderUsage,
   mergeProviderUsage
 } from './ProviderRunStats'
@@ -1060,7 +1062,7 @@ import {
   parseCustomKeywords,
   sanitiseForKimi
 } from './lib/kimiSanitiser'
-import { buildConversationContextBlock, composeRunPrompt } from './PromptComposition'
+import { buildConversationCompactionProjection, composeRunPrompt } from './PromptComposition'
 import { isRetiredExternalChannelInboundMessage } from './LegacyExternalChannelHistory'
 import {
   createActiveGoal,
@@ -10498,12 +10500,8 @@ function applyCursorRunEvent(state: CliProviderStreamState, evt: NormalizedCurso
     // in the token dashboard. Cost stays 0 until a verified composer-2.5 rate
     // lands (BAKED_IN_RATES ships an empty models list for now).
     if (evt.usage) {
-      const input = evt.usage.inputTokens || 0
-      const output = evt.usage.outputTokens || 0
       state.tokenUsage = {
-        input_tokens: input,
-        output_tokens: output,
-        total_tokens: input + output,
+        ...cursorUsageToStats(evt.usage),
         total_cost_usd: 0
       }
     }
@@ -15261,10 +15259,13 @@ async function compactClaudeProviderContext(payload: {
  *    why cursor seats bloat). On success the seat's linkedProviderSessionId
  *    is CLEARED so the next round starts a fresh session, seeded by the
  *    summary block EnsemblePrompt now injects.
- *  - kimi: `--print --plan` with the transcript material built in-prompt
+ *  - kimi: `--print --plan` with bounded transcript material built in-prompt
  *    (its --resume token restores no usable history) — the seat keeps its
- *    token; the summary becomes durable memory of rounds that fell off the
- *    tagged-transcript budget.
+ *    token; the summary becomes durable memory without claiming that the
+ *    bounded window covered a contiguous transcript prefix.
+ * Repeated compactions carry the prior durable summary into the replacement
+ * summarize turn. Provenance records exact represented message ids, but only
+ * a future exact contiguous-prefix producer may authorize transcript pruning.
  * The pending registry is awaited by the orchestrator's dispatch path so a
  * round started mid-compaction can't race the session reset.
  */
@@ -15300,13 +15301,17 @@ async function compactCliSeatContext(payload: {
   const work = (async (): Promise<{ ok: boolean; error?: string }> => {
     const chat = AppStore.getChat(payload.chatId)
     if (!chat) return { ok: false, error: 'Chat not found.' }
+    const seat = chat.ensemble?.participants?.find(
+      (participant) => participant.id === payload.participantId
+    )
+    if (!seat) return { ok: false, error: 'Participant not found on this ensemble.' }
     const startedAtMs = Date.now()
     const trigger = payload.trigger || 'manual'
     const preTokens = seatRunPreTokens(chat, payload.participantId)
     const workspace = chat.workspacePath || globalRunCwd()
-    const coversThroughTimestamp = [...(chat.messages || [])]
-      .reverse()
-      .find((message) => Boolean(message.timestamp))?.timestamp
+    const previousSummary = seat.contextCompactionSummary
+    const previousSummaryText = previousSummary?.text?.trim() ? previousSummary.text : undefined
+    let provenance: ContextCompactionProvenance
     const progressBase: Omit<ContextCompactionProgressEvent, 'status'> = {
       chatId: payload.chatId,
       participantId: payload.participantId,
@@ -15324,12 +15329,23 @@ async function compactCliSeatContext(payload: {
       if (!payload.providerSessionId) {
         return { ok: false, error: 'This cursor seat has no provider session to compact yet.' }
       }
+      // The maintenance prompt resumes a provider-native session; it does not
+      // directly supply any canonical TaskWraith transcript row. Record no
+      // row-level claim rather than inferring coverage from chat timestamps.
+      provenance = {
+        kind: 'provider_session',
+        providerSessionId: payload.providerSessionId,
+        observedMessageIds: [],
+        ...(previousSummaryText && previousSummary?.createdAt
+          ? { previousSummaryCreatedAt: previousSummary.createdAt }
+          : {})
+      }
       args = buildCursorCliArgs({
         approvalMode: 'plan',
         workspace,
         providerSessionId: payload.providerSessionId,
         model: payload.model,
-        prompt: CONTEXT_COMPACTION_SUMMARY_PROMPT
+        prompt: buildHostCompactionSummaryPrompt({ previousSummaryText })
       })
     } else {
       // Kimi + Grok: no re-openable session to resume against (Kimi's --resume
@@ -15337,14 +15353,30 @@ async function compactCliSeatContext(payload: {
       // in its LIVE ACP process, not a resumable id). So carry the material
       // in-prompt and run a fresh read-only summarize turn. A generous block:
       // the summary is only as good as its input.
-      const material = buildConversationContextBlock(chat.messages || [], 20, '', {
-        maxTurns: 20,
-        maxCharsPerTurn: 800,
-        maxBlockChars: 12_000
+      const material = buildConversationCompactionProjection(
+        chat.messages || [],
+        20,
+        previousSummaryText ? previousSummary?.provenance : undefined,
+        {
+          maxTurns: 20,
+          maxCharsPerTurn: 800,
+          maxBlockChars: 12_000
+        }
+      )
+      provenance = {
+        kind: 'bounded_prompt_window',
+        suppliedMessageIds: [...material.suppliedMessageIds],
+        ...(material.carriedForwardMessageIds.length > 0
+          ? { carriedForwardMessageIds: [...material.carriedForwardMessageIds] }
+          : {}),
+        ...(previousSummaryText && previousSummary?.createdAt
+          ? { previousSummaryCreatedAt: previousSummary.createdAt }
+          : {})
+      }
+      const seatPrompt = buildHostCompactionSummaryPrompt({
+        previousSummaryText,
+        materialBlock: material.block
       })
-      const seatPrompt = material
-        ? `${material}\n${CONTEXT_COMPACTION_SUMMARY_PROMPT}`
-        : CONTEXT_COMPACTION_SUMMARY_PROMPT
       if (payload.provider === 'grok') {
         // Read-only headless summarize (`-p ... --permission-mode plan`), fully
         // independent of the live seat session (which is disposed on success).
@@ -15436,31 +15468,17 @@ async function compactCliSeatContext(payload: {
       })
     })
     const trimmedSummary = summaryText.trim().slice(0, CONTEXT_COMPACTION_SUMMARY_MAX_CHARS)
-    const succeeded = exitCode === 0 && !timedOut && trimmedSummary.length > 0
-    const telemetry: ContextCompactionTelemetry = {
-      provider: payload.provider,
-      trigger,
-      durationMs: Date.now() - startedAtMs,
-      ...(preTokens !== undefined ? { preTokens } : {}),
-      ...(succeeded
-        ? {}
-        : {
-            error: timedOut
-              ? 'Timed out waiting for the seat summarize turn.'
-              : exitCode !== 0
-                ? `Seat summarize turn failed (exit ${exitCode}).`
-                : 'Seat summarize turn returned no summary.'
-          })
-    }
-    const signal: ContextCompactionSignal = {
-      kind: succeeded ? 'completed' : 'failed',
-      telemetry
-    }
-    if (succeeded) {
+    const summaryGenerated = exitCode === 0 && !timedOut && trimmedSummary.length > 0
+    let summaryPersisted = false
+    if (summaryGenerated) {
       // Read-modify-write against the FRESH record (idle-only + the
       // orchestrator dispatch-wait keep this from racing round flushes).
       const fresh = AppStore.getChat(payload.chatId)
-      if (fresh?.ensemble) {
+      const freshParticipant = fresh?.ensemble?.participants?.find(
+        (participant) =>
+          participant.id === payload.participantId && participant.provider === payload.provider
+      )
+      if (fresh?.ensemble && freshParticipant) {
         const participants = (fresh.ensemble.participants || []).map((participant) =>
           participant.id === payload.participantId
             ? {
@@ -15470,7 +15488,7 @@ async function compactCliSeatContext(payload: {
                   createdAt: new Date().toISOString(),
                   provider: payload.provider,
                   ...(preTokens !== undefined ? { preTokens } : {}),
-                  ...(coversThroughTimestamp ? { coversThroughTimestamp } : {})
+                  provenance
                 },
                 // Cursor: abandon the bloated seat session — next round starts
                 // fresh, seeded once by the injected summary block.
@@ -15485,15 +15503,41 @@ async function compactCliSeatContext(payload: {
         }
         AppStore.saveChat(updated)
         broadcastChatUpdated(updated)
+        summaryPersisted = true
       }
-      if (payload.provider === 'grok') {
+      if (payload.provider === 'grok' && summaryPersisted) {
         // Grok's reset arm: the accumulated context lives in the live per-seat
         // ACP process (seat sessions), which no `--resume` can shrink. Dispose
         // it so the next turn respawns a fresh `session/new` seeded only by the
-        // injected summary block + the boundary-filtered tagged transcript.
+        // injected summary block + the bounded tagged transcript.
+        // Never dispose if the chat/seat/provider changed while summarization
+        // was running: without a durably stored replacement summary that
+        // would turn a benign roster race into context loss.
         // Keyed exactly as the seat-session acquire site (`chatId:participantId`).
         grokSeatSessionRegistry.disposeSeat(`${payload.chatId}:${payload.participantId}`)
       }
+    }
+    const succeeded = summaryGenerated && summaryPersisted
+    const telemetry: ContextCompactionTelemetry = {
+      provider: payload.provider,
+      trigger,
+      durationMs: Date.now() - startedAtMs,
+      ...(preTokens !== undefined ? { preTokens } : {}),
+      ...(succeeded
+        ? {}
+        : {
+            error: timedOut
+              ? 'Timed out waiting for the seat summarize turn.'
+              : exitCode !== 0
+                ? `Seat summarize turn failed (exit ${exitCode}).`
+                : !trimmedSummary
+                  ? 'Seat summarize turn returned no summary.'
+                  : 'Seat summary was generated but could not be persisted because the chat or participant changed.'
+          })
+    }
+    const signal: ContextCompactionSignal = {
+      kind: succeeded ? 'completed' : 'failed',
+      telemetry
     }
     appendContextCompactionMessageToChat(
       payload.chatId,

@@ -6148,13 +6148,13 @@ export function SettingsPanel({
                     checked={hostAutoCompactEnabled !== false}
                     onChange={(e) => onChange({ hostAutoCompactEnabled: e.target.checked })}
                   />
-                  <span>Auto-compact Cursor / Kimi context</span>
+                  <span>Auto-compact on verified context pressure</span>
                 </label>
                 <p className="settings-hint">
-                  When a Cursor or Kimi chat crosses ~90% of its context window after a turn,
-                  TaskWraith runs a visible summarize turn and compacts the session automatically
-                  (a “Context compacted” card records it). Claude and Codex compact natively and
-                  are unaffected. Manual /compact stays available either way.
+                  Allows a visible summarize turn only when TaskWraith has provider-semantic
+                  occupancy, a classified context overflow, or confirmed uncovered Kimi prompt
+                  material. Generic run token totals are advisory and never reset a session.
+                  Manual /compact stays available when a provider has no verified signal.
                 </p>
               </div>
 
