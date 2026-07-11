@@ -160,6 +160,16 @@ describe('ChangelogSheet', () => {
     expect(html).toContain('TaskWraith')
   })
 
+  it('bundles the frozen 1.8.0 release notes', () => {
+    const entry = resolveChangelogEntry({ currentVersion: '1.8.0' }, null)
+    expect(entry).toMatchObject({
+      version: '1.8.0',
+      releaseDate: '2026-07-11'
+    })
+    expect(entry.releaseNotes).toContain('Durable delegated workers')
+    expect(entry.releaseNotes).toContain('Async delegated workers cannot inherit Trusted Session')
+  })
+
   it('formats full changelog arrays from electron-updater metadata', () => {
     expect(
       formatReleaseNotes([

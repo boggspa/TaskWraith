@@ -4,9 +4,38 @@ Notable changes to TaskWraith, the local-first macOS desktop workbench for runni
 and reviewing AI coding agents. Entries are user-facing highlights; execution,
 history, and workspace state stay on your machine throughout.
 
-## Unreleased
+## 1.8.0 - 2026-07-11
 
 ### Added
+- **Durable delegated workers with joined return results.** Parent agents can now
+  choose the provider, model, and reasoning controls for a fresh sub-thread
+  worker, then recall that same worker later without losing its provider session
+  or changing its seat configuration. Returned outcomes land exactly once in a
+  durable parent mailbox — including failed, cancelled, and action-required
+  workers — and multiple delegations from one parent run share a join group so
+  required workers gate the resume, optional workers do not, and closely spaced
+  results wake the parent once as a coalesced batch. Follow-up prompts queue
+  safely while a worker is busy, and invocation/result cards expose the live
+  worker and mailbox state instead of leaving background work ambiguous.
+- **Progressive capability gateway for agent tools.** Fresh provider sessions
+  now receive a smaller, stable, session-pinned TaskWraith tool profile: common
+  coding and orchestration tools stay directly available, while specialized
+  capabilities can be discovered and invoked on demand. The resolved target
+  still keeps its original schema validation, approval policy, safety locks,
+  budgets, media handling, and audit identity, and resumed sessions keep the
+  exact profile they saw when they were created.
+- **Live working telemetry and stage glyphs for Ensemble seats.** An active
+  participant's working indicator now shows elapsed time plus an animated token
+  count sourced from provider snapshots (with a clearly estimated fallback),
+  without forcing the whole transcript to re-render. Scout, Worker, and Reviewer
+  roles also gain distinct stage icons across the participant strip and round
+  surfaces, making a busy panel easier to scan.
+- **30-day model comparisons in Settings.** Model Usage now includes a compact
+  comparison table ranked by tracked tokens, with input/output totals and each
+  model's share of the selected 30-day window.
+- **Git branch drift states.** Workspace git status now distinguishes a branch
+  that is merely behind its upstream from one that has truly diverged, with
+  severity styling that makes the latter harder to miss.
 - **Unified provider, model, and reasoning picker.** The composer, side chats,
   and the Ensemble roster now share one combined picker that chooses provider,
   model, and reasoning tier as a single atomic selection instead of juggling
@@ -156,6 +185,13 @@ history, and workspace state stay on your machine throughout.
   dismissal.
 
 ### Changed
+- **Composer shells no longer repaint the whole app.** A composer style now
+  changes composer chrome only; the selected app theme consistently owns the
+  transcript, sidebar, message bubbles, and surrounding surfaces. Light mode's
+  reading surface is a clean white sheet, split panes use restrained metallic
+  seams, the real composer preview is shared by Settings and first launch, and
+  the quick Themes menu adds live Sidebar and Main-pane opacity sliders without
+  closing the menu.
 - **Composer and sidebar redressed for Claude-shell and iOS parity.** The Claude
   composer skin's above-composer rows (Create PR, ensemble/roster/queued rows)
   were restyled to match the real Claude app's chrome, with squared chips, a
@@ -201,7 +237,10 @@ history, and workspace state stay on your machine throughout.
   and background transcript panes (multiview split panes, auxiliary chats) no
   longer re-render on every token from an unrelated chat streaming elsewhere;
   they now update only in response to changes that actually affect what they're
-  displaying, cutting stutter when several chats are active side by side.
+  displaying, cutting stutter when several chats are active side by side. Each
+  pane now also measures its own live composer clearance, keeps Home/popout and
+  workspace chrome scoped to that pane, reuses cached transcript walks by chat
+  identity, and renders the same welcome/composer surface as the main pane.
 - **More efficient, lighter iOS companion.** While a run is streaming, the app
   filters and coalesces what it pushes to your phone: only the thread you're
   actively watching gets full updates, redundant git and full-projection
@@ -340,6 +379,31 @@ history, and workspace state stay on your machine throughout.
   context compaction and read each seat's pressure at a glance.
 
 ### Fixed
+- **Weather-off light themes no longer show a stray sky band.** The transcript's
+  blue top reveal is now keyed to an actually mounted Weather/Sky layer in each
+  pane, rather than the broader visual-effects switch, so disabling weather
+  restores a clean reading surface even when other effects remain enabled.
+- **Long-running Kimi and Grok seats compact context safely.** Host-managed
+  compaction now converges through bounded, checkpointed summary chunks instead
+  of assuming one summary covered an arbitrarily large history. It compacts from
+  exact prompt gaps, preserves every accepted checkpoint, fails open if a later
+  chunk cannot complete, recovers seats that already crossed the provider limit,
+  and keeps Grok's live process until the summary provably covers the transcript
+  prefix being retired.
+- **Token and cost totals count cached input exactly once.** Provider usage is
+  normalized through one cache-aware accounting path, fixing inflated or
+  missing totals in Codex history, Cursor external activity, Gemini/Kimi cache
+  breakdowns, Agent Pool stats, close-out cards, remote projections, and the
+  welcome/usage dashboards. Ensemble records now also include the prompt each
+  participant actually received, so fan-out and repeated shared context no
+  longer disappear from the input tally.
+- **Ensemble rounds wait for detached fan-out lanes.** A serial queue draining
+  no longer marks the round complete while asynchronously dispatched fan-out
+  participants are still working. Late lane output lands inside the live round,
+  the final lane closes it once, and an explicit Stop still cancels immediately.
+- **Right-dock restoration stays quiet and session-scoped.** Remembering the
+  last dock destination no longer opens the dock as a side effect, and that
+  surface memory no longer leaks across app sessions.
 - **Zero-setup cellular iOS pairing over Tailscale.** Pairing now advertises the
   Mac's direct `100.64.0.0/10` Tailscale relay door alongside LAN, so devices on
   the same tailnet no longer need Tailscale Serve or a WSS override to pair and
@@ -585,6 +649,11 @@ history, and workspace state stay on your machine throughout.
   belonged to; it's now correctly ordered ahead of the card, matching desktop.
 
 ### Security
+- **Async delegated workers cannot inherit Trusted Session.** Worker runs carry
+  a capped, signed snapshot of the invoking run's permission posture and
+  external-path grants, with their run identity bound before dispatch. A
+  background worker therefore cannot silently inherit host-level authority from
+  its parent, while lower in-scope permissions remain explicit and auditable.
 - **Closed a cross-instance MCP write path.** A mutating MCP tool call could
   execute against the wrong TaskWraith instance — for example, a dev build's
   write landing in the release app — via stale registrations or an unrouted
@@ -615,6 +684,11 @@ history, and workspace state stay on your machine throughout.
   unaffected.
 
 ### Removed
+- **Redundant internal transcript notices.** Legacy queued-run request cards,
+  per-run crash-recovery notes, steer-handoff notes, and retired Gemini
+  capacity/command-bridge notices no longer interrupt the conversation. Their
+  meaningful state remains available through the queue, activity, recovery, and
+  provider-status surfaces that actually own it.
 - **Duplicate workspace pickers removed from the welcome screens.** The "Work in
   folder" row of recent-workspace chips on the solo, ensemble, and workflow
   welcome screens duplicated the workspace switcher already in the composer's
@@ -627,6 +701,14 @@ history, and workspace state stay on your machine throughout.
   simplifying the composer bar.
 
 ### Documentation
+- **First-launch guidance matches the 1.8 permission and orchestration model.**
+  Onboarding now distinguishes General chats from workspace-scoped coding,
+  names Workspace Write and lane-scoped Trusted Session accurately, documents
+  `/goal`, current Fast-capable model families, and inspectable delegated-worker
+  returns, and describes provider context isolation rather than implying a
+  shared provider session. The iOS guide now points workspace access to the
+  current Settings → Workspaces control and covers its 1.8 thread-management,
+  scheduling, export, and Ensemble seat controls.
 - **How-to manual gains verified screenshots and corrected permission docs.**
   The in-app how-to manual now embeds 59 of its 83 planned screenshots, each
   visually checked against the feature it documents, with the remaining
