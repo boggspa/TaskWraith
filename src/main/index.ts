@@ -895,6 +895,7 @@ import { decideClaudeSdkFailure } from './ClaudeSdkFallbackDecision'
 import {
   decideCodexEnsembleFence,
   resolveCodexExplicitThreadRoute,
+  shouldRestartCodexAppServerForMcpConfig,
   shouldRouteCodexRunSession
 } from './CodexRunRouting'
 import {
@@ -1218,6 +1219,7 @@ const latestSpellcheckContextByWebContentsId = new Map<number, SpellcheckContext
 let geminiProcess: ChildProcess | null = null
 let geminiSessionProcess: pty.IPty | null = null
 let codexClient: CodexAppServerClient | null = null
+let codexAppServerStartupLeaseCount = 0
 let codexExecProcess: ChildProcess | null = null
 // Fire the "a newer codex is installed" hint at most once per app session so we
 // don't nag on every run. See `maybeWarnNewerCodexBinary`.
@@ -14320,11 +14322,14 @@ function getCodexClient(runtimeProfile?: RuntimeProfile | null): CodexAppServerC
   } else {
     codexClient.setMcpConfig(null)
   }
-  const codexTransportInFlight = runManager.getActiveByProvider('codex').some((session) => {
-    const state = session.state as Partial<CodexRunState> | null | undefined
-    return Boolean(state?.threadId && state.completed !== true)
+  const shouldRestart = shouldRestartCodexAppServerForMcpConfig({
+    stale: codexClient.hasStaleMcpConfig(),
+    startupLeaseCount: codexAppServerStartupLeaseCount,
+    activeStates: runManager
+      .getActiveByProvider('codex')
+      .map((session) => session.state as Partial<CodexRunState> | null | undefined)
   })
-  if (codexClient.hasStaleMcpConfig() && !codexTransportInFlight) {
+  if (shouldRestart) {
     console.log('[codex] restarting idle app-server to apply MCP configuration changes')
     codexClient.dispose()
   }
@@ -18164,6 +18169,19 @@ async function runCodexAppServer(event: Electron.IpcMainInvokeEvent, payload: Ag
     })
   }
   const client = getCodexClient(payload.runtimeProfile ?? null)
+  codexAppServerStartupLeaseCount += 1
+  try {
+    await runCodexAppServerWithClient(event, payload, client)
+  } finally {
+    codexAppServerStartupLeaseCount = Math.max(0, codexAppServerStartupLeaseCount - 1)
+  }
+}
+
+async function runCodexAppServerWithClient(
+  event: Electron.IpcMainInvokeEvent,
+  payload: AgentRunPayload,
+  client: CodexAppServerClient
+) {
   client.setNotificationHandler(handleCodexNotification)
   client.setRequestHandler(handleCodexServerRequest)
   client.setStderrHandler((chunk) => {

@@ -14,6 +14,24 @@ export function shouldRouteCodexRunSession(input: {
   return isActiveRunSessionStatus(input.status) && !input.stateCompleted
 }
 
+/**
+ * A Codex app-server run is not registered in RunManager until thread/start or
+ * thread/resume returns. The startup lease covers that unregistered interval;
+ * registered app-server states then keep the daemon alive until completion.
+ * Codex exec-fallback sessions deliberately have no app-server state and do
+ * not own the shared daemon.
+ */
+export function shouldRestartCodexAppServerForMcpConfig(input: {
+  stale: boolean
+  startupLeaseCount: number
+  activeStates: readonly ({ threadId?: string; completed?: boolean } | null | undefined)[]
+}): boolean {
+  if (!input.stale || input.startupLeaseCount > 0) return false
+  return !input.activeStates.some(
+    (state) => Boolean(state?.threadId) && state?.completed !== true
+  )
+}
+
 export type CodexExplicitThreadRoute = 'session' | 'child_owner' | 'none' | 'active_fallback'
 
 export function resolveCodexExplicitThreadRoute(input: {

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   decideCodexEnsembleFence,
   resolveCodexExplicitThreadRoute,
+  shouldRestartCodexAppServerForMcpConfig,
   shouldRouteCodexRunSession
 } from './CodexRunRouting'
 
@@ -50,6 +51,54 @@ describe('CodexRunRouting', () => {
         ensemble: false,
         status: 'cancelled',
         stateCompleted: false
+      })
+    ).toBe(false)
+  })
+
+  it('restarts a stale Codex app-server only when its transport is idle', () => {
+    expect(
+      shouldRestartCodexAppServerForMcpConfig({
+        stale: true,
+        startupLeaseCount: 0,
+        activeStates: []
+      })
+    ).toBe(true)
+    expect(
+      shouldRestartCodexAppServerForMcpConfig({
+        stale: true,
+        startupLeaseCount: 1,
+        activeStates: []
+      })
+    ).toBe(false)
+    expect(
+      shouldRestartCodexAppServerForMcpConfig({
+        stale: true,
+        startupLeaseCount: 0,
+        activeStates: [{ threadId: 'thread-1', completed: false }]
+      })
+    ).toBe(false)
+  })
+
+  it('does not let exec fallback state pin the shared Codex app-server', () => {
+    expect(
+      shouldRestartCodexAppServerForMcpConfig({
+        stale: true,
+        startupLeaseCount: 0,
+        activeStates: [undefined]
+      })
+    ).toBe(true)
+    expect(
+      shouldRestartCodexAppServerForMcpConfig({
+        stale: true,
+        startupLeaseCount: 0,
+        activeStates: [{ threadId: 'thread-1', completed: true }]
+      })
+    ).toBe(true)
+    expect(
+      shouldRestartCodexAppServerForMcpConfig({
+        stale: false,
+        startupLeaseCount: 0,
+        activeStates: []
       })
     ).toBe(false)
   })
