@@ -5970,7 +5970,7 @@
   max-height: min(400px, calc(100vh - 16px));
   overflow: hidden;
   box-sizing: border-box;
-  padding: 10px;
+  padding: 11px 12px 12px;
   transform: translateY(-100%);
   border: 1px solid color-mix(in srgb, var(--panel-border) 90%, transparent);
   border-radius: var(--radius-md, 10px);
@@ -5993,27 +5993,40 @@
 .composer-plan-popover-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  margin-bottom: 8px;
-  padding: 0 2px;
+  justify-content: flex-start;
+  gap: 7px;
+  min-height: 20px;
+  margin-bottom: 9px;
+  padding: 0 1px;
 }
 
 .composer-plan-popover-title {
   font-size: var(--font-size-sm);
-  font-weight: 700;
+  font-weight: 680;
+  letter-spacing: -0.01em;
 }
 
-.composer-plan-count-chip {
-  flex: 0 0 auto;
-  padding: 2px 7px;
-  border-radius: 999px;
-  color: color-mix(in srgb, var(--text-secondary) 88%, transparent);
-  background: color-mix(in srgb, var(--text-secondary) 10%, transparent);
-  border: 1px solid color-mix(in srgb, var(--panel-border) 52%, transparent);
+.composer-plan-step-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: color-mix(in srgb, var(--text-secondary) 82%, transparent);
   font-size: var(--font-size-xs);
-  font-weight: 650;
+  font-weight: 560;
+  letter-spacing: 0.005em;
+  line-height: 1;
   font-variant-numeric: tabular-nums;
+}
+
+.composer-plan-step-count-separator {
+  color: color-mix(in srgb, var(--text-tertiary) 72%, transparent);
+  font-size: 14px;
+  line-height: 1;
+}
+
+.composer-plan-step-count-value {
+  color: color-mix(in srgb, var(--text-secondary) 90%, transparent);
 }
 
 .composer-plan-lanes {
@@ -6090,13 +6103,13 @@
 
 .composer-plan-popover .todo-checklist-card {
   margin: 0;
-  gap: 6px;
+  gap: 7px;
 }
 
 .composer-plan-popover .todo-checklist-item {
   color: color-mix(in srgb, var(--text-secondary) 92%, transparent);
   font-size: var(--font-size-sm);
-  line-height: 1.35;
+  line-height: 1.4;
 }
 
 .composer-plan-popover .todo-checklist-item.status-in_progress {
@@ -6110,6 +6123,79 @@
 
 .composer-plan-popover .todo-checklist-text {
   overflow-wrap: anywhere;
+}
+
+.composer-plan-popover .todo-checklist-item.status-completed .todo-checklist-text {
+  text-decoration: none;
+}
+
+/* The shared checklist keeps text glyphs for compact transcript cards. In the
+ * Plan popover, turn those into Codex-like status rings: a restrained check,
+ * a live partial ring, and a quiet hollow circle for the next step. */
+.composer-plan-popover .todo-checklist-glyph {
+  position: relative;
+  display: inline-grid;
+  width: 14px;
+  height: 14px;
+  margin-top: 2px;
+  place-items: center;
+  box-sizing: border-box;
+  border: 1px solid color-mix(in srgb, var(--text-tertiary) 58%, transparent);
+  border-radius: 50%;
+  color: transparent;
+  font-size: 0;
+  line-height: 1;
+  opacity: 1;
+}
+
+.composer-plan-popover .todo-checklist-item.status-completed .todo-checklist-glyph {
+  border-color: color-mix(in srgb, var(--success, #5ecf8f) 64%, transparent);
+  background: color-mix(in srgb, var(--success, #5ecf8f) 7%, transparent);
+}
+
+.composer-plan-popover .todo-checklist-item.status-completed .todo-checklist-glyph::after {
+  content: "✓";
+  color: color-mix(in srgb, var(--success, #5ecf8f) 88%, var(--text-primary));
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.composer-plan-popover .todo-checklist-item.status-in_progress .todo-checklist-glyph {
+  border-width: 1.5px;
+  border-color: color-mix(in srgb, var(--accent) 86%, transparent);
+  border-right-color: transparent;
+  animation: composer-plan-progress-spin 1.1s linear infinite;
+}
+
+.composer-plan-popover .todo-checklist-item.status-cancelled .todo-checklist-glyph {
+  border-color: color-mix(in srgb, var(--text-tertiary) 42%, transparent);
+}
+
+.composer-plan-popover .todo-checklist-item.status-cancelled .todo-checklist-glyph::after {
+  content: "–";
+  color: color-mix(in srgb, var(--text-tertiary) 78%, transparent);
+  font-size: 10px;
+  line-height: 1;
+}
+
+@keyframes composer-plan-progress-spin {
+  to {
+    transform: rotate(1turn);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .composer-plan-popover .todo-checklist-item.status-in_progress .todo-checklist-glyph {
+    animation: none;
+  }
+}
+
+[data-reduce-motion="true"]
+  .composer-plan-popover
+  .todo-checklist-item.status-in_progress
+  .todo-checklist-glyph {
+  animation: none;
 }
 
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .composer-plan-popover {
