@@ -1,4 +1,4 @@
-import { memo, useRef, useState } from 'react'
+import { memo, useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { ComposerStyle } from '../../../main/store/types'
 import { TranscriptPanel } from './TranscriptPanel'
@@ -10,6 +10,7 @@ import { MainPaneActionPill } from './MainPaneActionPill'
 import { ProviderBadgeIcon } from './Sidebar'
 import { WelcomeUsageDashboard } from './WelcomeUsageDashboard'
 import type { WelcomeUsageDashboardData, WelcomeUsageTab } from '../lib/welcomeUsageDashboard'
+import { bindComposerReservation } from '../lib/composerReservation'
 import {
   AgentAuraLayer,
   LivingWorkspaceLayer,
@@ -427,7 +428,14 @@ function ChatViewPaneChrome(props: ChatViewPaneProps) {
 
 function ChatViewPaneInner(props: ChatViewPaneProps) {
   const rootRef = useRef<HTMLDivElement | null>(null)
+  const paneComposerAreaRef = useRef<HTMLDivElement | null>(null)
   const chatId = props.chat?.appChatId ?? ''
+  useEffect(() => {
+    const transcript = rootRef.current
+    const composerArea = paneComposerAreaRef.current
+    if (!transcript || !composerArea) return
+    return bindComposerReservation({ transcript, composerArea })
+  }, [chatId, Boolean(props.composerProps)])
   // The composer is now the shared <Composer> (rendered below via
   // `props.composerProps`); all of this pane's composer state/handlers live in
   // that component. The retained body only drives the pane shell className,
@@ -537,7 +545,11 @@ function ChatViewPaneInner(props: ChatViewPaneProps) {
         </div>
       )}
       {props.composerProps && (
-        <Composer {...props.composerProps} showWelcomeNotifications={false} />
+        <Composer
+          {...props.composerProps}
+          composerAreaRef={paneComposerAreaRef}
+          showWelcomeNotifications={false}
+        />
       )}
     </div>
   )

@@ -62,7 +62,8 @@
 
 .multiview-pane-transcript {
   height: 100%;
-  --composer-reserved-height: 150px;
+  /* ChatViewPane writes the live height inline; inherit .app-transcript's
+     conservative shared fallback during first paint or without observers. */
   --composer-content-max-width: min(850px, calc(100% - 28px));
   container-type: size;
 }

@@ -3071,11 +3071,9 @@ function App(): React.JSX.Element {
   const rawEventsUserScrolledAwayRef = useRef(false)
   const composerAreaRef = useRef<HTMLDivElement>(null)
   // TODO(per-pane): non-focused multiview panes render the shared <Composer>,
-  // which binds `composerAreaRef` to its `.composer-area` div. The FOCUSED
-  // composer's ref drives the `.app-transcript` height-reservation effect, so a
-  // pane composer must NOT clobber it. All non-focused panes share this one
-  // throwaway ref (nobody reads it) — a later slice can give each pane its own
-  // measured reservation.
+  // but must never clobber the focused composer's reservation ref. Pane contexts
+  // retain this safe throwaway default; ChatViewPane overrides it at the actual
+  // mount with a local ref measured against that pane's own transcript root.
   const paneComposerAreaDiscardRef = useRef<HTMLDivElement | null>(null)
   const welcomeDashboardRegionRef = useRef<HTMLDivElement>(null)
   const [welcomeDashboardHiddenByFit, setWelcomeDashboardHiddenByFit] = useState(false)

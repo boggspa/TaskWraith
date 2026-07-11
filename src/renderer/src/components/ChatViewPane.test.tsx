@@ -16,9 +16,14 @@ import {
 // `composerProps` context is supplied. Composer's own markup is covered by its
 // dedicated tests.
 vi.mock('./Composer', () => ({
-  Composer: (props: { prompt?: string; showWelcomeNotifications?: boolean }) => (
+  Composer: (props: {
+    prompt?: string
+    composerAreaRef?: { current: HTMLDivElement | null }
+    showWelcomeNotifications?: boolean
+  }) => (
     <div
       data-testid="pane-composer-stub"
+      data-has-local-composer-ref={String(Boolean(props.composerAreaRef))}
       data-show-welcome-notifications={String(props.showWelcomeNotifications)}
     >{`pane-composer:${props.prompt ?? ''}`}</div>
   )
@@ -266,6 +271,7 @@ describe('ChatViewPane shared composer', () => {
       />
     )
     expect(html).toContain('data-testid="pane-composer-stub"')
+    expect(html).toContain('data-has-local-composer-ref="true"')
     expect(html).toContain('pane-composer:Pane prompt') // pane context forwarded verbatim
   })
 

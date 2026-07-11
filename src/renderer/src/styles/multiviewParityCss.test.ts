@@ -21,6 +21,8 @@ describe('Multiview shared-surface CSS', () => {
     expect(paneRootBlock).toContain(
       '--composer-content-max-width: min(850px, calc(100% - 28px))'
     )
+    expect(paneRootBlock).not.toContain('--composer-reserved-height')
+    expect(css).not.toContain('--composer-reserved-height: 150px')
   })
 
   it('does not retain selectors from the removed hand-written pane composer', () => {
