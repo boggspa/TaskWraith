@@ -85,6 +85,66 @@ function makeDeps(overrides: Partial<AgentRunNormalizerDeps> = {}): AgentRunNorm
 }
 
 describe('normalizeAgentRunPayload — wrapper-level invariants (faked deps)', () => {
+  it('strips renderer-supplied MCP profile and fence state', () => {
+    const result = normalizeAgentRunPayload(
+      {
+        provider: 'claude',
+        scope: 'workspace',
+        workspace: '/repo',
+        prompt: 'do work',
+        taskWraithMcpProfileId: 'taskwraith-core-v1',
+        taskWraithMcpAdvertised: true,
+        taskWraithMcpProfileFence: {
+          expectedStoreProviderSessionId: 'forged',
+          expectedStoreReceiptFingerprint: 'forged',
+          runStartedProviderSessionId: 'forged',
+          runStartedReceiptFingerprint: 'forged',
+          storeWritable: true
+        }
+      },
+      makeDeps()
+    )
+
+    expect(result.taskWraithMcpProfileId).toBeUndefined()
+    expect(result.taskWraithMcpAdvertised).toBeUndefined()
+    expect(result.taskWraithMcpProfileFence).toBeUndefined()
+  })
+
+  it('preserves only a structurally valid main-canonical provider reroute', () => {
+    const valid = normalizeAgentRunPayload(
+      {
+        provider: 'claude',
+        providerReroute: {
+          from: 'codex',
+          to: 'claude',
+          reason: 'provider-paused',
+          savedAsDefault: true
+        },
+        scope: 'workspace',
+        workspace: '/repo',
+        prompt: 'work'
+      },
+      makeDeps()
+    )
+    expect(valid.providerReroute).toEqual({
+      from: 'codex',
+      to: 'claude',
+      reason: 'provider-paused',
+      savedAsDefault: true
+    })
+    const malformed = normalizeAgentRunPayload(
+      {
+        provider: 'claude',
+        providerReroute: { from: 'codex', to: 'kimi', reason: 'provider-paused' },
+        scope: 'workspace',
+        workspace: '/repo',
+        prompt: 'work'
+      },
+      makeDeps()
+    )
+    expect(malformed.providerReroute).toBeUndefined()
+  })
+
   // Invariant 1: unsigned effectivePermissions → the clamp's read-only downgrade
   // PROPAGATES into the returned payload (end-to-end, not clamp-in-isolation),
   // and the injected getSettings feeds the reDerive closure.

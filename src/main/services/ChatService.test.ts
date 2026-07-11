@@ -218,6 +218,405 @@ describe('ChatService', () => {
     expect(store.saveChat).toHaveBeenCalledWith(makeChat({ title: 'Needs trim' }))
   })
 
+  it('preserves a main-owned solo MCP profile receipt when provider and session still match', () => {
+    const receipt = {
+      schemaVersion: 1 as const,
+      profileId: 'taskwraith-core-v1' as const,
+      provider: 'claude' as const,
+      providerSessionId: 'claude-session-1',
+      pinnedAt: '2026-07-11T00:00:00.000Z'
+    }
+    const current = makeChat({
+      provider: 'claude',
+      linkedProviderSessionId: 'claude-session-1',
+      taskWraithMcpProfileReceipt: receipt
+    })
+    const { deps, store } = makeDeps({ appStore: makeStore({ getChat: vi.fn(() => current) }) })
+    const service = new ChatService(deps)
+
+    const saved = service.saveChat(
+      makeChat({ provider: 'claude', linkedProviderSessionId: 'claude-session-1' })
+    )
+
+    expect(saved.taskWraithMcpProfileReceipt).toBe(receipt)
+    expect(store.saveChat).toHaveBeenCalledWith(
+      expect.objectContaining({ taskWraithMcpProfileReceipt: receipt })
+    )
+  })
+
+  it('preserves a canonical session/receipt pair against a stale renderer relink', () => {
+    const canonicalReceipt = {
+      schemaVersion: 1 as const,
+      profileId: 'taskwraith-core-v1' as const,
+      provider: 'claude' as const,
+      providerSessionId: 'claude-session-1',
+      pinnedAt: '2026-07-11T00:00:00.000Z'
+    }
+    const forgedReceipt = {
+      ...canonicalReceipt,
+      profileId: 'taskwraith-full-v1' as const,
+      providerSessionId: 'claude-session-forged'
+    }
+    const current = makeChat({
+      provider: 'claude',
+      linkedProviderSessionId: 'claude-session-1',
+      taskWraithMcpProfileReceipt: canonicalReceipt
+    })
+    const { deps, store } = makeDeps({ appStore: makeStore({ getChat: vi.fn(() => current) }) })
+    const service = new ChatService(deps)
+
+    const saved = service.saveChat(
+      makeChat({
+        provider: 'claude',
+        linkedProviderSessionId: 'claude-session-2',
+        taskWraithMcpProfileReceipt: forgedReceipt
+      })
+    )
+
+    expect(saved.linkedProviderSessionId).toBe('claude-session-1')
+    expect(saved.taskWraithMcpProfileReceipt).toBe(canonicalReceipt)
+    expect(store.saveChat).toHaveBeenCalledWith(
+      expect.objectContaining({
+        linkedProviderSessionId: 'claude-session-1',
+        taskWraithMcpProfileReceipt: canonicalReceipt
+      })
+    )
+  })
+
+  it('strips a forged renderer receipt when main has no canonical receipt', () => {
+    const forgedReceipt = {
+      schemaVersion: 1 as const,
+      profileId: 'taskwraith-core-v1' as const,
+      provider: 'claude' as const,
+      providerSessionId: 'renderer-session',
+      pinnedAt: '2026-07-11T00:00:00.000Z'
+    }
+    const current = makeChat({
+      provider: 'claude',
+      linkedProviderSessionId: 'main-unreceipted-session'
+    })
+    const { deps } = makeDeps({ appStore: makeStore({ getChat: vi.fn(() => current) }) })
+    const service = new ChatService(deps)
+
+    const saved = service.saveChat(
+      makeChat({
+        provider: 'claude',
+        linkedProviderSessionId: 'renderer-session',
+        taskWraithMcpProfileReceipt: forgedReceipt
+      })
+    )
+
+    expect(saved.linkedProviderSessionId).toBe('main-unreceipted-session')
+    expect(saved.taskWraithMcpProfileReceipt).toBeUndefined()
+  })
+
+  it('does not resurrect a cleared Claude session from a stale renderer save', () => {
+    const current = makeChat({ provider: 'claude', linkedProviderSessionId: undefined })
+    const { deps } = makeDeps({ appStore: makeStore({ getChat: vi.fn(() => current) }) })
+    const service = new ChatService(deps)
+
+    const saved = service.saveChat(
+      makeChat({ provider: 'claude', linkedProviderSessionId: 'stale-session-a' })
+    )
+
+    expect(saved.linkedProviderSessionId).toBeUndefined()
+    expect(saved.taskWraithMcpProfileReceipt).toBeUndefined()
+  })
+
+  it('strips a renderer-authored session from a new Claude chat record', () => {
+    const { deps } = makeDeps({
+      appStore: makeStore({ getChat: vi.fn(() => null) })
+    })
+    const service = new ChatService(deps)
+
+    const saved = service.saveChat(
+      makeChat({ provider: 'claude', linkedProviderSessionId: 'renderer-session' })
+    )
+
+    expect(saved.linkedProviderSessionId).toBeUndefined()
+    expect(saved.taskWraithMcpProfileReceipt).toBeUndefined()
+  })
+
+  it('keeps an unreceipted legacy Claude session authoritative over stale input', () => {
+    const current = makeChat({ provider: 'claude', linkedProviderSessionId: 'legacy-b' })
+    const { deps } = makeDeps({ appStore: makeStore({ getChat: vi.fn(() => current) }) })
+    const service = new ChatService(deps)
+
+    const saved = service.saveChat(
+      makeChat({ provider: 'claude', linkedProviderSessionId: 'stale-a' })
+    )
+
+    expect(saved.linkedProviderSessionId).toBe('legacy-b')
+    expect(saved.taskWraithMcpProfileReceipt).toBeUndefined()
+  })
+
+  it('rejects a renderer-saved target session from an ephemeral solo reroute', () => {
+    const current = makeChat({
+      provider: 'codex',
+      linkedProviderSessionId: 'codex-session-a'
+    })
+    const { deps } = makeDeps({ appStore: makeStore({ getChat: vi.fn(() => current) }) })
+    const service = new ChatService(deps)
+
+    const saved = service.saveChat(
+      makeChat({
+        provider: 'codex',
+        linkedProviderSessionId: 'kimi-session-b',
+        runs: [
+          {
+            runId: 'rerouted-run',
+            provider: 'kimi',
+            providerReroute: {
+              from: 'codex',
+              to: 'kimi',
+              reason: 'provider-paused'
+            },
+            providerThreadId: 'kimi-session-b',
+            startedAt: '2026-07-11T10:00:00.000Z',
+            status: 'completed'
+          }
+        ]
+      })
+    )
+
+    expect(saved.linkedProviderSessionId).toBe('codex-session-a')
+    expect(saved.runs[0].providerThreadId).toBe('kimi-session-b')
+  })
+
+  it('drops the stale session and receipt when a renderer save crosses providers', () => {
+    const canonicalReceipt = {
+      schemaVersion: 1 as const,
+      profileId: 'taskwraith-core-v1' as const,
+      provider: 'claude' as const,
+      providerSessionId: 'claude-session-1',
+      pinnedAt: '2026-07-11T00:00:00.000Z'
+    }
+    const current = makeChat({
+      provider: 'claude',
+      linkedProviderSessionId: 'claude-session-1',
+      taskWraithMcpProfileReceipt: canonicalReceipt
+    })
+    const { deps } = makeDeps({ appStore: makeStore({ getChat: vi.fn(() => current) }) })
+    const service = new ChatService(deps)
+
+    const saved = service.saveChat(
+      makeChat({
+        provider: 'codex',
+        linkedProviderSessionId: 'stale-claude-session',
+        taskWraithMcpProfileReceipt: canonicalReceipt
+      })
+    )
+
+    expect(saved.provider).toBe('codex')
+    expect(saved.linkedProviderSessionId).toBeUndefined()
+    expect(saved.taskWraithMcpProfileReceipt).toBeUndefined()
+  })
+
+  it('overwrites a forged renderer replacement with the matching main-owned receipt', () => {
+    const canonicalReceipt = {
+      schemaVersion: 1 as const,
+      profileId: 'taskwraith-core-v1' as const,
+      provider: 'claude' as const,
+      providerSessionId: 'claude-session-1',
+      pinnedAt: '2026-07-11T00:00:00.000Z'
+    }
+    const current = makeChat({
+      provider: 'claude',
+      linkedProviderSessionId: 'claude-session-1',
+      taskWraithMcpProfileReceipt: canonicalReceipt
+    })
+    const { deps } = makeDeps({ appStore: makeStore({ getChat: vi.fn(() => current) }) })
+    const service = new ChatService(deps)
+
+    const saved = service.saveChat(
+      makeChat({
+        provider: 'claude',
+        linkedProviderSessionId: 'claude-session-1',
+        taskWraithMcpProfileReceipt: {
+          ...canonicalReceipt,
+          profileId: 'taskwraith-full-v1',
+          pinnedAt: 'forged-by-renderer'
+        }
+      })
+    )
+
+    expect(saved.taskWraithMcpProfileReceipt).toBe(canonicalReceipt)
+  })
+
+  it('preserves only canonical per-seat receipts across ensemble renderer saves', () => {
+    const canonicalReceipt = {
+      schemaVersion: 1 as const,
+      profileId: 'taskwraith-core-v1' as const,
+      provider: 'claude' as const,
+      providerSessionId: 'claude-session-1',
+      pinnedAt: '2026-07-11T00:00:00.000Z'
+    }
+    const current = makeChat({
+      chatKind: 'ensemble',
+      ensemble: {
+        enabled: true,
+        maxParticipants: 20,
+        participants: [
+          {
+            id: 'claude-seat',
+            provider: 'claude',
+            enabled: true,
+            role: 'Planner',
+            instructions: '',
+            order: 1,
+            linkedProviderSessionId: 'claude-session-1',
+            taskWraithMcpProfileReceipt: canonicalReceipt
+          }
+        ]
+      }
+    })
+    const forgedReceipt = {
+      ...canonicalReceipt,
+      profileId: 'taskwraith-full-v1' as const
+    }
+    const { deps } = makeDeps({ appStore: makeStore({ getChat: vi.fn(() => current) }) })
+    const service = new ChatService(deps)
+
+    const saved = service.saveChat(
+      makeChat({
+        chatKind: 'ensemble',
+        ensemble: {
+          enabled: true,
+          maxParticipants: 20,
+          participants: [
+            {
+              id: 'claude-seat',
+              provider: 'claude',
+              enabled: true,
+              role: 'Planner',
+              instructions: '',
+              order: 1,
+              linkedProviderSessionId: 'stale-claude-session'
+            },
+            {
+              id: 'forged-seat',
+              provider: 'claude',
+              enabled: true,
+              role: 'Forged',
+              instructions: '',
+              order: 2,
+              linkedProviderSessionId: 'claude-session-1',
+              taskWraithMcpProfileReceipt: forgedReceipt
+            }
+          ]
+        }
+      })
+    )
+
+    expect(saved.ensemble?.participants[0].taskWraithMcpProfileReceipt).toBe(canonicalReceipt)
+    expect(saved.ensemble?.participants[0].linkedProviderSessionId).toBe('claude-session-1')
+    expect(saved.ensemble?.participants[1].taskWraithMcpProfileReceipt).toBeUndefined()
+  })
+
+  it('drops a stale receipted seat session when the renderer changes its provider', () => {
+    const canonicalReceipt = {
+      schemaVersion: 1 as const,
+      profileId: 'taskwraith-core-v1' as const,
+      provider: 'claude' as const,
+      providerSessionId: 'claude-session-1',
+      pinnedAt: '2026-07-11T00:00:00.000Z'
+    }
+    const current = makeChat({
+      chatKind: 'ensemble',
+      ensemble: {
+        enabled: true,
+        maxParticipants: 20,
+        participants: [
+          {
+            id: 'seat-1',
+            provider: 'claude',
+            enabled: true,
+            role: 'Planner',
+            instructions: '',
+            order: 1,
+            linkedProviderSessionId: 'claude-session-1',
+            taskWraithMcpProfileReceipt: canonicalReceipt
+          }
+        ]
+      }
+    })
+    const { deps } = makeDeps({ appStore: makeStore({ getChat: vi.fn(() => current) }) })
+    const service = new ChatService(deps)
+
+    const saved = service.saveChat(
+      makeChat({
+        chatKind: 'ensemble',
+        ensemble: {
+          enabled: true,
+          maxParticipants: 20,
+          participants: [
+            {
+              id: 'seat-1',
+              provider: 'codex',
+              enabled: true,
+              role: 'Planner',
+              instructions: '',
+              order: 1,
+              linkedProviderSessionId: 'stale-claude-session',
+              taskWraithMcpProfileReceipt: canonicalReceipt
+            }
+          ]
+        }
+      })
+    )
+
+    expect(saved.ensemble?.participants[0].provider).toBe('codex')
+    expect(saved.ensemble?.participants[0].linkedProviderSessionId).toBeUndefined()
+    expect(saved.ensemble?.participants[0].taskWraithMcpProfileReceipt).toBeUndefined()
+  })
+
+  it('keeps a legacy Claude ensemble session authoritative without a receipt', () => {
+    const current = makeChat({
+      chatKind: 'ensemble',
+      ensemble: {
+        enabled: true,
+        maxParticipants: 20,
+        participants: [
+          {
+            id: 'seat-1',
+            provider: 'claude',
+            enabled: true,
+            role: 'Planner',
+            instructions: '',
+            order: 1,
+            linkedProviderSessionId: 'legacy-b'
+          }
+        ]
+      }
+    })
+    const { deps } = makeDeps({ appStore: makeStore({ getChat: vi.fn(() => current) }) })
+    const service = new ChatService(deps)
+
+    const saved = service.saveChat(
+      makeChat({
+        chatKind: 'ensemble',
+        ensemble: {
+          enabled: true,
+          maxParticipants: 20,
+          participants: [
+            {
+              id: 'seat-1',
+              provider: 'claude',
+              enabled: true,
+              role: 'Planner',
+              instructions: '',
+              order: 1,
+              linkedProviderSessionId: 'stale-a'
+            }
+          ]
+        }
+      })
+    )
+
+    expect(saved.ensemble?.participants[0].linkedProviderSessionId).toBe('legacy-b')
+    expect(saved.ensemble?.participants[0].taskWraithMcpProfileReceipt).toBeUndefined()
+  })
+
   it('rejects unsafe chat ids before reading, saving, or deleting', () => {
     const { deps, store } = makeDeps()
     const service = new ChatService(deps)

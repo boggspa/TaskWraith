@@ -168,4 +168,96 @@ describe('createRunDispatchFacade — ordered side-effect sequence (faked deps)'
     expect(result).toEqual({ dispatched: true, appRunId: 'run-1' })
     expect(vi.mocked(deps.runCoordinator.dispatch)).toHaveBeenCalledOnce()
   })
+
+  it('reconstructs a current main-owned pause reroute and strips an unproven claim', async () => {
+    const order: string[] = []
+    const deps = makeDeps(order)
+    vi.mocked(resolveProviderDispatch).mockImplementation((_settings, provider) =>
+      provider === 'codex'
+        ? ({
+            provider: 'claude',
+            reroute: {
+              from: 'codex',
+              to: 'claude',
+              reason: 'provider-paused',
+              savedAsDefault: true
+            },
+            reroutePlan: {}
+          } as never)
+        : ({ provider } as never)
+    )
+    vi.mocked(applyReroutePlanToPayload).mockImplementation((p, resolution) =>
+      resolution.reroute
+        ? ({ ...p, provider: resolution.provider, providerReroute: resolution.reroute } as never)
+        : (p as never)
+    )
+
+    await createRunDispatchFacade(deps)(
+      payload({
+        provider: 'claude',
+        providerReroute: {
+          from: 'codex',
+          to: 'claude',
+          reason: 'provider-paused',
+          savedAsDefault: true
+        }
+      }),
+      senderEvent
+    )
+    expect(vi.mocked(deps.runCoordinator.dispatch)).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        provider: 'claude',
+        providerReroute: expect.objectContaining({ from: 'codex', to: 'claude' })
+      }),
+      senderEvent
+    )
+
+    await createRunDispatchFacade(deps)(
+      payload({
+        provider: 'claude',
+        providerReroute: {
+          from: 'kimi',
+          to: 'claude',
+          reason: 'provider-paused'
+        }
+      }),
+      senderEvent
+    )
+    expect(vi.mocked(deps.runCoordinator.dispatch)).toHaveBeenLastCalledWith(
+      expect.not.objectContaining({ providerReroute: expect.anything() }),
+      senderEvent
+    )
+  })
+
+  it('reconstructs a user-failover claim only when the live resolver proves it exactly', async () => {
+    const deps = makeDeps([])
+    vi.mocked(resolveProviderDispatch).mockImplementation((_settings, provider) =>
+      provider === 'codex'
+        ? ({
+            provider: 'claude',
+            reroute: { from: 'codex', to: 'claude', reason: 'user-failover' },
+            reroutePlan: {}
+          } as never)
+        : ({ provider } as never)
+    )
+    vi.mocked(applyReroutePlanToPayload).mockImplementation((p, resolution) =>
+      resolution.reroute
+        ? ({ ...p, provider: resolution.provider, providerReroute: resolution.reroute } as never)
+        : (p as never)
+    )
+    await createRunDispatchFacade(deps)(
+      payload({
+        provider: 'claude',
+        providerReroute: { from: 'codex', to: 'claude', reason: 'user-failover' }
+      }),
+      senderEvent
+    )
+    expect(vi.mocked(deps.runCoordinator.dispatch)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: 'claude',
+        providerReroute: { from: 'codex', to: 'claude', reason: 'user-failover' }
+      }),
+      senderEvent
+    )
+  })
 })

@@ -254,7 +254,7 @@ describe('MCP bridge stream writes', () => {
     expect(response.result.tools.map((tool) => tool.name)).toEqual(['read_file'])
   })
 
-  it('layers the host-gated plan instruments over a constrained core profile', async () => {
+  it('keeps core as a hard ceiling over plan instruments', async () => {
     const brokerRequest = vi.fn(async () => ({ ok: true, text: 'approved' }))
     const chunks: string[] = []
     const stream = {
@@ -291,11 +291,7 @@ describe('MCP bridge stream writes', () => {
     const listResponse = JSON.parse(chunks.join('').trim()) as {
       result: { tools: Array<{ name: string }> }
     }
-    expect(listResponse.result.tools.map((tool) => tool.name)).toEqual([
-      'read_file',
-      'canvas_click',
-      'video_probe'
-    ])
+    expect(listResponse.result.tools.map((tool) => tool.name)).toEqual(['read_file'])
 
     chunks.length = 0
     handleMcpJsonRpcMessage(
@@ -312,10 +308,12 @@ describe('MCP bridge stream writes', () => {
     )
     await new Promise((resolve) => setImmediate(resolve))
 
-    expect(brokerRequest).toHaveBeenCalledWith(
-      '/tmp/taskwraith.sock',
-      expect.objectContaining({ tool: 'canvas_click' })
-    )
+    expect(brokerRequest).not.toHaveBeenCalled()
+    const callResponse = JSON.parse(chunks.join('').trim()) as {
+      error: { code: number; message: string }
+    }
+    expect(callResponse.error.code).toBe(-32601)
+    expect(callResponse.error.message).toContain('core MCP profile')
   })
 
   it('rejects a stale direct call outside the advertised core profile', async () => {

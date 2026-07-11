@@ -89,6 +89,13 @@ describe('applyProviderChange (idle path + turn-end apply)', () => {
       provider: 'claude',
       linkedProviderSessionId: 'sess-claude',
       linkedGeminiSessionId: 'sess-gemini',
+      taskWraithMcpProfileReceipt: {
+        schemaVersion: 1,
+        profileId: 'taskwraith-core-v1',
+        provider: 'claude',
+        providerSessionId: 'sess-claude',
+        pinnedAt: '2026-07-11T00:00:00.000Z'
+      },
       providerMetadata: {
         selectedModelType: 'claude-sonnet',
         taskWraithRuntimePreambleVersion: 'v1', // unrelated key must survive
@@ -104,6 +111,7 @@ describe('applyProviderChange (idle path + turn-end apply)', () => {
     // Session hygiene: both linked ids gone (a switched provider must not resume old session).
     expect('linkedProviderSessionId' in after).toBe(false)
     expect('linkedGeminiSessionId' in after).toBe(false)
+    expect(after.taskWraithMcpProfileReceipt).toBeUndefined()
     // New provider metadata applied; unrelated key preserved; pending dropped.
     expect(after.providerMetadata?.selectedModelType).toBe('gpt-5.5')
     expect(after.providerMetadata?.codexReasoningEffort).toBe('high')
@@ -111,10 +119,17 @@ describe('applyProviderChange (idle path + turn-end apply)', () => {
     expect(after.providerMetadata?.[PENDING_PROVIDER_CHANGE_KEY]).toBeUndefined()
   })
 
-  it('LANDMINE: a same-provider model/reasoning change keeps the live session (no hygiene)', () => {
+  it('keeps the pinned MCP profile on the same native session across a model change', () => {
     const before = chat({
       provider: 'claude',
       linkedProviderSessionId: 'sess-claude',
+      taskWraithMcpProfileReceipt: {
+        schemaVersion: 1,
+        profileId: 'taskwraith-core-v1',
+        provider: 'claude',
+        providerSessionId: 'sess-claude',
+        pinnedAt: '2026-07-11T00:00:00.000Z'
+      },
       providerMetadata: { selectedModelType: 'claude-sonnet' }
     })
     // Same provider, only model/reasoning changes (the mid-turn unlock case).
@@ -123,12 +138,56 @@ describe('applyProviderChange (idle path + turn-end apply)', () => {
       providerMetadata: { selectedModelType: 'claude-opus', claudeReasoningEffort: 'high' }
     })
 
-    // Provider unchanged → the live session MUST survive (conversation continues).
+    // The MCP profile follows the actual native session identity. Changing the
+    // model does not change that birth-pinned tool surface.
     expect(after.provider).toBe('claude')
     expect(after.linkedProviderSessionId).toBe('sess-claude')
+    expect(after.taskWraithMcpProfileReceipt).toMatchObject({
+      profileId: 'taskwraith-core-v1',
+      providerSessionId: 'sess-claude'
+    })
     // …but the model/reasoning metadata did update.
     expect(after.providerMetadata?.selectedModelType).toBe('claude-opus')
     expect(after.providerMetadata?.claudeReasoningEffort).toBe('high')
+  })
+
+  it('keeps legacy same-provider model changes on their existing session', () => {
+    const before = chat({
+      provider: 'claude',
+      linkedProviderSessionId: 'legacy-claude-session',
+      providerMetadata: { selectedModelType: 'claude-sonnet' }
+    })
+
+    const after = applyProviderChange(before, {
+      provider: 'claude',
+      providerMetadata: { selectedModelType: 'claude-opus' }
+    })
+
+    expect(after.linkedProviderSessionId).toBe('legacy-claude-session')
+    expect(after.taskWraithMcpProfileReceipt).toBeUndefined()
+  })
+
+  it('keeps the MCP profile receipt for same-provider non-model metadata changes', () => {
+    const receipt = {
+      schemaVersion: 1 as const,
+      profileId: 'taskwraith-core-v1' as const,
+      provider: 'claude' as const,
+      providerSessionId: 'sess-claude',
+      pinnedAt: '2026-07-11T00:00:00.000Z'
+    }
+    const before = chat({
+      provider: 'claude',
+      linkedProviderSessionId: 'sess-claude',
+      taskWraithMcpProfileReceipt: receipt,
+      providerMetadata: { selectedModelType: 'claude-sonnet' }
+    })
+
+    const after = applyProviderChange(before, {
+      provider: 'claude',
+      providerMetadata: { claudeReasoningEffort: 'high' }
+    })
+
+    expect(after.taskWraithMcpProfileReceipt).toBe(receipt)
   })
 
   it('clears the gemini session on a genuine provider switch', () => {

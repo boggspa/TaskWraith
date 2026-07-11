@@ -148,6 +148,7 @@ export function applyProviderChange(chat: ChatRecord, change: PendingProviderCha
   const {
     linkedProviderSessionId: _dropProviderSession,
     linkedGeminiSessionId: _dropGeminiSession,
+    taskWraithMcpProfileReceipt: _dropMcpProfileReceipt,
     ...restChat
   } = chat
   return {

@@ -1,13 +1,18 @@
 import { describe, expect, it } from 'vitest'
 import {
+  TASKWRAITH_CORE_MCP_PROFILE_NOTE,
+  TASKWRAITH_IMAGE_TOOLS_NOTE,
+  TASKWRAITH_RUNTIME_IMAGE_TOOLS_NOTE,
   TASKWRAITH_RUNTIME_PREAMBLE_VERSION,
   buildConversationCompactionProjection,
   buildConversationContextBlock,
   buildConversationContextProjection,
   buildPendingSubThreadResultContextBlock,
   composeRunPrompt,
-  promptNeedsImageToolsHint
+  promptNeedsImageToolsHint,
+  sanitizeTaskWraithMcpPromptClaims
 } from './PromptComposition'
+import { TASKWRAITH_CORE_MCP_PROFILE_ID } from './mcp/McpSessionProfileFence'
 import { resolveOllamaContextBudget } from './ollama/OllamaContextBudget'
 import type { ChatMessage } from './store/types'
 import { makeHumanCollaboratorComment } from './collaboration/HumanCollaboratorMessages'
@@ -35,6 +40,127 @@ function subThreadReturn(content = 'Child says tests passed.'): ChatMessage {
     }
   })
 }
+
+describe('sanitizeTaskWraithMcpPromptClaims', () => {
+  it('removes full-profile image claims and installs one core claim after reroute', () => {
+    const prompt = `TaskWraith runtime note (${TASKWRAITH_RUNTIME_PREAMBLE_VERSION}): this Claude workspace run has access to the TaskWraith MCP server.\n${TASKWRAITH_RUNTIME_IMAGE_TOOLS_NOTE}\n\nDo image work.`
+    const sanitized = sanitizeTaskWraithMcpPromptClaims(prompt, {
+      advertised: true,
+      coreProfile: true
+    })
+    expect(sanitized).toContain(TASKWRAITH_CORE_MCP_PROFILE_NOTE)
+    expect(sanitized).not.toContain(TASKWRAITH_IMAGE_TOOLS_NOTE)
+    expect(sanitized).not.toContain(TASKWRAITH_RUNTIME_IMAGE_TOOLS_NOTE)
+  })
+
+  it('removes stale core and leading runtime claims when the target does not attach MCP', () => {
+    const prompt = `TaskWraith runtime note (${TASKWRAITH_RUNTIME_PREAMBLE_VERSION}): this Claude workspace run has access to the TaskWraith MCP server.\n${TASKWRAITH_CORE_MCP_PROFILE_NOTE}\n\nUser work.`
+    expect(
+      sanitizeTaskWraithMcpPromptClaims(prompt, { advertised: false, coreProfile: false })
+    ).toBe('User work.')
+  })
+
+  it('removes a source core claim when the target resolves full', () => {
+    expect(
+      sanitizeTaskWraithMcpPromptClaims(
+        `${TASKWRAITH_CORE_MCP_PROFILE_NOTE}\n\nUser work.`,
+        { advertised: true, coreProfile: false }
+      )
+    ).toBe('User work.')
+  })
+
+  it('strips but does not re-inject the core note for a resumed pinned Claude session', () => {
+    expect(
+      sanitizeTaskWraithMcpPromptClaims(
+        `${TASKWRAITH_CORE_MCP_PROFILE_NOTE}\n\nUser work.`,
+        { advertised: true, coreProfile: true, injectCoreNote: false }
+      )
+    ).toBe('User work.')
+  })
+
+  it('preserves identical capability text quoted later in user content', () => {
+    const prompt = `User asks us to audit this literal text:\n${TASKWRAITH_CORE_MCP_PROFILE_NOTE}\n${TASKWRAITH_IMAGE_TOOLS_NOTE}`
+    expect(
+      sanitizeTaskWraithMcpPromptClaims(prompt, {
+        advertised: false,
+        coreProfile: false
+      })
+    ).toBe(prompt)
+  })
+
+  it('strips a Claude runtime block before an advertised Kimi reroute', () => {
+    const sourcePrompt = composeRunPrompt({
+      provider: 'claude',
+      finalPrompt: 'User work.',
+      messages: [],
+      chatContextTurns: 6,
+      codexHandoffsApplied: [],
+      isGlobalRun: false,
+      approvalMode: 'default',
+      providerLabel: 'Claude',
+      taskWraithMcpAdvertised: true
+    }).contextualPrompt
+
+    const sanitized = sanitizeTaskWraithMcpPromptClaims(sourcePrompt, {
+      advertised: true,
+      coreProfile: false,
+      crossProviderReroute: true,
+      targetProvider: 'kimi'
+    })
+
+    expect(sanitized).toBe('User work.')
+    expect(sanitized).not.toContain('this Claude workspace run')
+  })
+
+  it('strips Cursor-only aliases before a core-profile Claude reroute', () => {
+    const sourcePrompt = composeRunPrompt({
+      provider: 'cursor',
+      finalPrompt: 'User work.',
+      messages: [],
+      chatContextTurns: 6,
+      codexHandoffsApplied: [],
+      isGlobalRun: false,
+      approvalMode: 'default',
+      providerLabel: 'Cursor',
+      taskWraithMcpAdvertised: true
+    }).contextualPrompt
+
+    const sanitized = sanitizeTaskWraithMcpPromptClaims(sourcePrompt, {
+      advertised: true,
+      coreProfile: true,
+      crossProviderReroute: true,
+      targetProvider: 'claude'
+    })
+
+    expect(sanitized).toBe(`${TASKWRAITH_CORE_MCP_PROFILE_NOTE}\n\nUser work.`)
+    expect(sanitized).not.toContain('mcp_taskwraith-broker')
+    expect(sanitized).not.toContain('native Cursor Write')
+  })
+
+  it('keeps a runtime block already composed for the reroute target', () => {
+    const targetPrompt = composeRunPrompt({
+      provider: 'kimi',
+      finalPrompt: 'User work.',
+      messages: [],
+      chatContextTurns: 6,
+      codexHandoffsApplied: [],
+      isGlobalRun: false,
+      approvalMode: 'default',
+      providerLabel: 'Kimi',
+      taskWraithMcpAdvertised: true
+    }).contextualPrompt
+
+    const sanitized = sanitizeTaskWraithMcpPromptClaims(targetPrompt, {
+      advertised: true,
+      coreProfile: false,
+      crossProviderReroute: true,
+      targetProvider: 'kimi'
+    })
+
+    expect(sanitized).toBe(targetPrompt)
+    expect(sanitized).toContain('this Kimi workspace run')
+  })
+})
 
 describe('buildPendingSubThreadResultContextBlock', () => {
   it('surfaces sub-thread returns after the last assistant as untrusted data', () => {
@@ -905,6 +1031,24 @@ describe('image-tool discoverability (PR5)', () => {
     expect(resumedGrok.contextualPrompt).not.toContain(
       'TaskWraith image tools are available over MCP'
     )
+  })
+
+  it('states Claude core-profile limits and never promises omitted image tools', () => {
+    const result = composeRunPrompt({
+      provider: 'claude',
+      finalPrompt: 'blur the screenshot',
+      messages: [],
+      chatContextTurns: 6,
+      codexHandoffsApplied: [],
+      isGlobalRun: false,
+      approvalMode: 'default',
+      providerLabel: 'Claude',
+      taskWraithMcpProfileId: TASKWRAITH_CORE_MCP_PROFILE_ID
+    })
+    expect(result.contextualPrompt).toContain('TaskWraith core MCP profile is active')
+    expect(result.contextualPrompt).toContain('specialized media')
+    expect(result.contextualPrompt).not.toContain('Image tools are also available over MCP')
+    expect(result.contextualPrompt).not.toContain('TaskWraith image tools are available over MCP')
   })
 
   it('re-injects only the image note on a resumed session when the prompt is image-related', () => {

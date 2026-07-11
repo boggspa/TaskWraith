@@ -311,6 +311,8 @@ function makeHarness(
       runId: string | undefined
       metadata: Record<string, unknown>
     }) => void
+    shouldPersistProviderSessionForRun?: (runId: string) => boolean
+    releaseProviderSessionPersistenceDecision?: (runId: string) => void
   } = {}
 ) {
   let chat = options.initialChat
@@ -370,6 +372,15 @@ function makeHarness(
       : {}),
     ...(options.recordFanoutAuthorizationRejection
       ? { recordFanoutAuthorizationRejection: options.recordFanoutAuthorizationRejection }
+      : {}),
+    ...(options.shouldPersistProviderSessionForRun
+      ? { shouldPersistProviderSessionForRun: options.shouldPersistProviderSessionForRun }
+      : {}),
+    ...(options.releaseProviderSessionPersistenceDecision
+      ? {
+          releaseProviderSessionPersistenceDecision:
+            options.releaseProviderSessionPersistenceDecision
+        }
       : {})
   })
   return {
@@ -5758,6 +5769,13 @@ Next action:
       'ensemble-shell-v1:old-codex-receipt'
     initialChat.ensemble!.participants[1].promptDynamicStateVersion =
       'ensemble-dynamic-v1:old-codex-receipt'
+    initialChat.ensemble!.participants[1].taskWraithMcpProfileReceipt = {
+      schemaVersion: 1,
+      profileId: 'taskwraith-core-v1',
+      provider: 'codex',
+      providerSessionId: 'codex-session-before-swap',
+      pinnedAt: '2026-07-11T00:00:00.000Z'
+    }
     const harness = makeHarness({
       initialChat,
       probeParticipant: async () => ({ reachable: true })
@@ -5848,6 +5866,10 @@ Next action:
     expect(
       harness.chat.ensemble!.participants.find((participant) => participant.id === 'codex')
         ?.promptDynamicStateVersion
+    ).toBeUndefined()
+    expect(
+      harness.chat.ensemble!.participants.find((participant) => participant.id === 'codex')
+        ?.taskWraithMcpProfileReceipt
     ).toBeUndefined()
     expect(
       harness.chat.ensemble!.activeRound?.participants.find(
@@ -6139,6 +6161,123 @@ Next action:
     expect(harness.chat.messages.at(-1)?.content).toContain(
       'Authoritative seat change applied after round for Worker'
     )
+  })
+
+  it('keeps a pinned MCP profile on the same seat session across an idle model change', async () => {
+    const initialChat = makeChat()
+    initialChat.ensemble!.participants[0] = {
+      ...initialChat.ensemble!.participants[0],
+      linkedProviderSessionId: 'claude-session-1',
+      taskWraithMcpProfileReceipt: {
+        schemaVersion: 1,
+        profileId: 'taskwraith-core-v1',
+        provider: 'claude',
+        providerSessionId: 'claude-session-1',
+        pinnedAt: '2026-07-11T00:00:00.000Z'
+      }
+    }
+    const harness = makeHarness({ initialChat })
+
+    const result = await harness.orchestrator.requestParticipantSeatChange({
+      chatId: 'ensemble-chat',
+      participantId: 'claude',
+      participant: { model: 'claude-opus-next' },
+      changedBy: 'user',
+      reason: 'User changed the model.'
+    })
+
+    expect(result).toMatchObject({ ok: true, status: 'applied', participantId: 'claude' })
+    const seat = harness.chat.ensemble?.participants.find(
+      (participant) => participant.id === 'claude'
+    )
+    expect(seat?.model).toBe('claude-opus-next')
+    expect(seat?.linkedProviderSessionId).toBe('claude-session-1')
+    expect(seat?.taskWraithMcpProfileReceipt).toMatchObject({
+      profileId: 'taskwraith-core-v1',
+      providerSessionId: 'claude-session-1'
+    })
+  })
+
+  it('does not persist a target session when main marks the run reroute-only', async () => {
+    const initialChat = makeChat()
+    initialChat.ensemble!.participants[0] = {
+      ...initialChat.ensemble!.participants[0],
+      linkedProviderSessionId: 'claude-session-a'
+    }
+    const shouldPersistProviderSessionForRun = vi.fn(() => false)
+    const releaseProviderSessionPersistenceDecision = vi.fn()
+    const harness = makeHarness({
+      initialChat,
+      shouldPersistProviderSessionForRun,
+      releaseProviderSessionPersistenceDecision
+    })
+
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Review this.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const route = {
+      appRunId: harness.dispatched[0].appRunId,
+      appChatId: 'ensemble-chat'
+    }
+
+    harness.orchestrator.handleProviderOutput('claude', route, {
+      type: 'init',
+      session_id: 'reroute-target-session'
+    })
+    harness.orchestrator.handleProviderOutput('claude', route, {
+      type: 'content',
+      text: 'Review complete.'
+    })
+    harness.orchestrator.handleProviderOutput('claude', route, {
+      type: 'result',
+      status: 'success'
+    })
+
+    await vi.waitFor(() =>
+      expect(releaseProviderSessionPersistenceDecision).toHaveBeenCalledWith(
+        harness.dispatched[0].appRunId
+      )
+    )
+    expect(shouldPersistProviderSessionForRun).toHaveBeenCalledWith(
+      harness.dispatched[0].appRunId
+    )
+    expect(harness.chat.ensemble?.participants[0].linkedProviderSessionId).toBe(
+      'claude-session-a'
+    )
+  })
+
+  it('clears a pinned MCP profile when an explicit provider patch resets the seat session', async () => {
+    const initialChat = makeChat()
+    initialChat.ensemble!.participants[0] = {
+      ...initialChat.ensemble!.participants[0],
+      linkedProviderSessionId: 'claude-session-1',
+      taskWraithMcpProfileReceipt: {
+        schemaVersion: 1,
+        profileId: 'taskwraith-core-v1',
+        provider: 'claude',
+        providerSessionId: 'claude-session-1',
+        pinnedAt: '2026-07-11T00:00:00.000Z'
+      }
+    }
+    const harness = makeHarness({ initialChat })
+
+    const result = await harness.orchestrator.requestParticipantSeatChange({
+      chatId: 'ensemble-chat',
+      participantId: 'claude',
+      participant: { provider: 'claude' },
+      changedBy: 'user',
+      reason: 'User explicitly reset the provider seat.'
+    })
+
+    expect(result).toMatchObject({ ok: true, status: 'applied', participantId: 'claude' })
+    const seat = harness.chat.ensemble?.participants.find(
+      (participant) => participant.id === 'claude'
+    )
+    expect(seat?.linkedProviderSessionId).toBeNull()
+    expect(seat?.taskWraithMcpProfileReceipt).toBeUndefined()
   })
 
   it('applies a user-requested inactive participant stage role immediately', async () => {
@@ -13008,7 +13147,14 @@ describe('dynamic-state receipt invalidation', () => {
             ...participant,
             linkedProviderSessionId: 'claude-session-1',
             promptShellVersion: computeEnsemblePromptShellStamp(chat.ensemble!),
-            promptDynamicStateVersion: 'ensemble-dynamic-v1:old-receipt'
+            promptDynamicStateVersion: 'ensemble-dynamic-v1:old-receipt',
+            taskWraithMcpProfileReceipt: {
+              schemaVersion: 1,
+              profileId: 'taskwraith-core-v1',
+              provider: 'claude',
+              providerSessionId: 'claude-session-1',
+              pinnedAt: '2026-07-11T00:00:00.000Z'
+            }
           }
         : participant
     )
@@ -13036,6 +13182,13 @@ describe('dynamic-state receipt invalidation', () => {
       harness.chat.ensemble?.participants.find((participant) => participant.id === 'claude')
         ?.promptDynamicStateVersion
     ).toBeUndefined()
+    expect(
+      harness.chat.ensemble?.participants.find((participant) => participant.id === 'claude')
+        ?.taskWraithMcpProfileReceipt
+    ).toMatchObject({
+      profileId: 'taskwraith-core-v1',
+      providerSessionId: 'claude-session-1'
+    })
 
     harness.orchestrator.handleProviderOutput(
       'claude',
@@ -13058,6 +13211,13 @@ describe('dynamic-state receipt invalidation', () => {
         harness.chat.ensemble?.participants.find((participant) => participant.id === 'claude')
           ?.promptDynamicStateVersion
       ).toBeUndefined()
+      expect(
+        harness.chat.ensemble?.participants.find((participant) => participant.id === 'claude')
+          ?.taskWraithMcpProfileReceipt
+      ).toMatchObject({
+        profileId: 'taskwraith-core-v1',
+        providerSessionId: 'claude-session-1'
+      })
     })
   })
 })

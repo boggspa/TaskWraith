@@ -226,13 +226,25 @@ import {
   migrateUserMcpServerPlaintextSecrets
 } from '../ExtensionSecretMigration'
 
+function resetEnsembleParticipantSession(
+  participant: EnsembleParticipant
+): EnsembleParticipant {
+  const {
+    taskWraithMcpProfileReceipt: _dropMcpProfileReceipt,
+    ...restParticipant
+  } = participant
+  return {
+    ...restParticipant,
+    linkedProviderSessionId: null
+  }
+}
+
 function cloneEnsembleForSideChat(parent: ChatRecord, provider: ProviderId) {
   const source = parent.ensemble || createDefaultEnsembleConfig(provider)
   return {
     ...source,
     participants: (source.participants || []).map((participant) => ({
-      ...participant,
-      linkedProviderSessionId: null,
+      ...resetEnsembleParticipantSession(participant),
       tokenTotals: undefined
     })),
     activeRound: undefined,
@@ -2993,7 +3005,13 @@ export class AppStore {
 
       let ensemble: EnsembleConfig
       if (restorable) {
-        ensemble = { ...(stashedConfig as EnsembleConfig), updatedAt: nowIso }
+        ensemble = {
+          ...(stashedConfig as EnsembleConfig),
+          participants: (stashedConfig as EnsembleConfig).participants.map(
+            resetEnsembleParticipantSession
+          ),
+          updatedAt: nowIso
+        }
       } else {
         // Reuse the default config scaffolding (maxParticipants / orchestration /
         // hops) but replace the roster with the SINGLE seed participant, so
@@ -3003,10 +3021,14 @@ export class AppStore {
         if (!seed) {
           throw new Error('Cannot convert to Ensemble without a seed participant')
         }
+        // The seed crosses the renderer trust boundary. A provider-session MCP
+        // profile receipt is main-owned and cannot be introduced through this
+        // shape, even when the rest of the seed is valid.
+        const trustedSeed = resetEnsembleParticipantSession(seed)
         const base = createDefaultEnsembleConfig(chat.provider)
         ensemble = {
           ...base,
-          participants: [seed],
+          participants: [trustedSeed],
           updatedAt: nowIso
         }
       }
@@ -3017,6 +3039,11 @@ export class AppStore {
         ensemble,
         updatedAt: now
       }
+      // Solo and ensemble native sessions have different ownership lanes. Do
+      // not leave a top-level profile receipt detached when the solo lane is
+      // replaced by participant-scoped sessions.
+      delete updated.linkedProviderSessionId
+      delete updated.taskWraithMcpProfileReceipt
       // Consume the stash on any expand (restored OR invalidated by a provider
       // change) so a stale roster can't resurrect on a later toggle.
       if (priorMetadata && 'stashedEnsemble' in priorMetadata) {
@@ -3091,7 +3118,12 @@ export class AppStore {
       chat.provider ||
       coerceLiveProvider(this.getSettings().activeProvider)
     const nowIso = new Date(now).toISOString()
-    const { ensemble: priorEnsemble, ...withoutEnsemble } = chat
+    const {
+      ensemble: priorEnsemble,
+      linkedProviderSessionId: _dropProviderSession,
+      taskWraithMcpProfileReceipt: _dropMcpProfileReceipt,
+      ...withoutEnsemble
+    } = chat
 
     let providerMetadata: Record<string, unknown> | undefined = withoutEnsemble.providerMetadata
       ? { ...withoutEnsemble.providerMetadata }
@@ -3119,10 +3151,13 @@ export class AppStore {
       priorEnsemble.participants.length > 0
     ) {
       const { activeRound: _dropRound, ...stashableConfig } = priorEnsemble
+      const stashableParticipants = stashableConfig.participants.map(
+        resetEnsembleParticipantSession
+      )
       providerMetadata = {
         ...(providerMetadata || {}),
         stashedEnsemble: {
-          config: stashableConfig,
+          config: { ...stashableConfig, participants: stashableParticipants },
           provider: canonicalProvider,
           stashedAt: nowIso
         }

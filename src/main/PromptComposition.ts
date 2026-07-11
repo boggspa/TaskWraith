@@ -11,7 +11,8 @@ import type {
   ActiveGoal,
   ChatMessage,
   NativeSubAgentRequestPolicy,
-  ProviderId
+  ProviderId,
+  TaskWraithMcpProfileId
 } from './store/types'
 import { truncateOpaqueMarkdown, wrapOpaqueMarkdownBlock } from './MarkdownFenceSerializer'
 import { nativeSubAgentPromptInstruction } from './NativeSubAgentPolicy'
@@ -23,6 +24,8 @@ import {
 } from './TaskWraithMcpPromptNames'
 import { isTaskWraithCloseoutMessage } from '../shared/taskWraithCloseout'
 import { shouldUseCoreMcpProfile } from './mcp/McpToolProfiles'
+import { isCoreTaskWraithMcpProfile } from './mcp/McpSessionProfileFence'
+import { normalizeCliProviderModel } from './providers/StaticProviderModels'
 import {
   pruneContiguousCompactionPrefix,
   type ContextCompactionProvenance
@@ -118,8 +121,85 @@ export const TASKWRAITH_RUNTIME_PREAMBLE_VERSION = 'taskwraith-runtime-v4'
  * out / pasting data URLs. The full preamble already carries an image line for
  * cold runs; this only covers the resumed-session gap.
  */
-const TASKWRAITH_IMAGE_TOOLS_NOTE =
+export const TASKWRAITH_IMAGE_TOOLS_NOTE =
   'TaskWraith image tools are available over MCP: image_edit (blur/redact/crop/resize an existing image), svg_rasterize (render an SVG you produced to a PNG — the transcript does not show SVG inline), and image_generate (text-to-image, only when the user has enabled it with an API key in Settings; otherwise the call is refused). Prefer these over shelling out or pasting data URLs.'
+
+export const TASKWRAITH_RUNTIME_IMAGE_TOOLS_NOTE =
+  'Image tools are also available over MCP: image_edit (blur/redact/crop/resize), svg_rasterize (preview an SVG you produced as a PNG — the transcript does not render SVG inline), and image_generate (text-to-image, only when the user has enabled it with a key in Settings). Prefer them over shelling out or pasting data URLs.'
+
+export const TASKWRAITH_CORE_MCP_PROFILE_NOTE =
+  'TaskWraith core MCP profile is active for this provider session; specialized media, creative-app, attached-window, and introspection tools are unavailable in this session. A full-profile session is required to use them.'
+
+/** Reconcile claims in a previously composed prompt after a main-side reroute. */
+export function sanitizeTaskWraithMcpPromptClaims(
+  prompt: string,
+  input: {
+    advertised: boolean
+    coreProfile: boolean
+    injectCoreNote?: boolean
+    /** A different provider must never inherit the source provider's tool aliases or posture. */
+    crossProviderReroute?: boolean
+    targetProvider?: ProviderId
+  }
+): string {
+  let sanitized = prompt
+  // Only touch exact generated prefixes. The same contract text may be quoted
+  // later in the user's request and is essential transcript content.
+  const leadingClaims = [
+    TASKWRAITH_CORE_MCP_PROFILE_NOTE,
+    ...(!input.advertised || input.coreProfile ? [TASKWRAITH_IMAGE_TOOLS_NOTE] : [])
+  ]
+  let removedLeadingClaim = true
+  while (removedLeadingClaim) {
+    removedLeadingClaim = false
+    for (const claim of leadingClaims) {
+      const prefix = `${claim}\n\n`
+      if (sanitized.startsWith(prefix)) {
+        sanitized = sanitized.slice(prefix.length)
+        removedLeadingClaim = true
+        break
+      }
+    }
+  }
+  const runtimePrefix = `TaskWraith runtime note (${TASKWRAITH_RUNTIME_PREAMBLE_VERSION}): this `
+  if (sanitized.startsWith(runtimePrefix)) {
+    const blockEnd = sanitized.indexOf('\n\n')
+    if (blockEnd >= 0) {
+      const expectedTargetPrefix = input.targetProvider
+        ? `${runtimePrefix}${providerDisplayName(input.targetProvider)} workspace run has access to the TaskWraith MCP server.`
+        : null
+      const reroutedRuntimeProviderMismatch = Boolean(
+        input.crossProviderReroute &&
+          expectedTargetPrefix &&
+          !sanitized.startsWith(expectedTargetPrefix)
+      )
+      if (reroutedRuntimeProviderMismatch || !input.advertised) {
+        sanitized = sanitized.slice(blockEnd + 2)
+      } else {
+        const removeFromRuntimeBlock = new Set([
+          TASKWRAITH_CORE_MCP_PROFILE_NOTE,
+          ...(input.coreProfile ? [TASKWRAITH_RUNTIME_IMAGE_TOOLS_NOTE] : [])
+        ])
+        const runtimeBlock = sanitized
+          .slice(0, blockEnd)
+          .split('\n')
+          .filter((line) => !removeFromRuntimeBlock.has(line))
+          .join('\n')
+        sanitized = `${runtimeBlock}\n\n${sanitized.slice(blockEnd + 2)}`
+      }
+    }
+  }
+  if (
+    input.advertised &&
+    input.coreProfile &&
+    input.injectCoreNote !== false &&
+    sanitized.trimStart() &&
+    !sanitized.trimStart().startsWith('/')
+  ) {
+    sanitized = `${TASKWRAITH_CORE_MCP_PROFILE_NOTE}\n\n${sanitized}`
+  }
+  return sanitized
+}
 
 /**
  * Read-Only/Recon posture steer (spike 2 of
@@ -181,8 +261,10 @@ function shouldInjectTaskWraithRuntimePreamble(args: {
   resumeSessionId?: string
   runtimePreambleVersion?: string | null
   runtimePreambleProvider?: string | null
+  taskWraithMcpAdvertised: boolean
 }): boolean {
   if (args.isGlobalRun || args.approvalMode === 'plan') return false
+  if (!args.taskWraithMcpAdvertised) return false
   if (args.provider === 'kimi' || args.provider === 'cursor' || args.provider === 'grok') {
     return true
   }
@@ -222,9 +304,12 @@ function buildTaskWraithRuntimePreamble(args: {
     `TaskWraith runtime note (${TASKWRAITH_RUNTIME_PREAMBLE_VERSION}): this ${args.providerLabel} workspace run has access to the TaskWraith MCP server.`,
     'Route workspace reads, edits, git, and checks through TaskWraith MCP so its approval, path checks, and audit logging govern side effects.',
     `${taskWraithToolNamespaceHint(args.provider)} Examples: ${searchTool}, ${patchTool}, ${statusTool}, ${taskTool}, ${delegateTool}.`,
+    ...(args.coreMcpProfile
+      ? [TASKWRAITH_CORE_MCP_PROFILE_NOTE]
+      : []),
     ...(!args.coreMcpProfile && promptNeedsImageToolsHint(args.finalPrompt)
       ? [
-          'Image tools are also available over MCP: image_edit (blur/redact/crop/resize), svg_rasterize (preview an SVG you produced as a PNG — the transcript does not render SVG inline), and image_generate (text-to-image, only when the user has enabled it with a key in Settings). Prefer them over shelling out or pasting data URLs.'
+          TASKWRAITH_RUNTIME_IMAGE_TOOLS_NOTE
         ]
       : []),
     CLOUD_EDIT_DISCIPLINE_NOTE,
@@ -701,6 +786,10 @@ export interface ComposeRunPromptInput {
     /** Legacy diagnostic only; timestamp coverage never authorizes pruning. */
     coversThroughTimestamp?: string
   } | null
+  /** Main-resolved TaskWraith MCP catalog; controls truthful capability prose. */
+  taskWraithMcpProfileId?: TaskWraithMcpProfileId
+  /** False when the current Grok transport intentionally has no TaskWraith MCP. */
+  taskWraithMcpAdvertised?: boolean
 }
 
 export interface ComposeRunPromptResult {
@@ -765,6 +854,10 @@ export function composeRunPrompt(input: ComposeRunPromptInput): ComposeRunPrompt
     nativeSubAgentRequests,
     provider
   )
+  const coreMcpProfile = input.taskWraithMcpProfileId
+    ? isCoreTaskWraithMcpProfile(input.taskWraithMcpProfileId)
+    : shouldUseCoreMcpProfile(provider, normalizeCliProviderModel(provider, nextModel))
+  const taskWraithMcpAdvertised = input.taskWraithMcpAdvertised !== false
 
   const pendingSubThreadResultContext = buildPendingSubThreadResultContextBlock(
     messages,
@@ -947,7 +1040,8 @@ export function composeRunPrompt(input: ComposeRunPromptInput): ComposeRunPrompt
       approvalMode,
       resumeSessionId,
       runtimePreambleVersion,
-      runtimePreambleProvider
+      runtimePreambleProvider,
+      taskWraithMcpAdvertised
     })
   ) {
     const taskWraithRuntimePreamble = buildTaskWraithRuntimePreamble({
@@ -955,7 +1049,7 @@ export function composeRunPrompt(input: ComposeRunPromptInput): ComposeRunPrompt
       providerLabel: providerDisplayName(provider),
       finalPrompt,
       nativeSubAgentInstruction,
-      coreMcpProfile: shouldUseCoreMcpProfile(provider, nextModel)
+      coreMcpProfile
     })
     contextualPrompt = `${taskWraithRuntimePreamble}\n\n${contextualPrompt}`
     runtimePreambleInjected = true
@@ -986,7 +1080,8 @@ export function composeRunPrompt(input: ComposeRunPromptInput): ComposeRunPrompt
     !runtimePreambleInjected &&
     !isGlobalRun &&
     approvalMode !== 'plan' &&
-    !shouldUseCoreMcpProfile(provider, nextModel) &&
+    taskWraithMcpAdvertised &&
+    !coreMcpProfile &&
     promptNeedsImageToolsHint(finalPrompt)
   ) {
     contextualPrompt = `${TASKWRAITH_IMAGE_TOOLS_NOTE}\n\n${contextualPrompt}`

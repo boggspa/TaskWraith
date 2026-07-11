@@ -7,6 +7,8 @@ import {
   buildClaudeTaskWraithMcpServers,
   extendClaudeCliArgsWithTaskWraithMcp
 } from './ClaudeTaskWraithMcp'
+import { CORE_MCP_ADVERTISE_TOOLS } from './mcp/McpToolProfiles'
+import { TASKWRAITH_CORE_MCP_PROFILE_ID } from './mcp/McpSessionProfileFence'
 
 // Phase I3 (Claude initiator): the Claude SDK + CLI fallback gain the
 // same TaskWraith MCP server that Gemini/Codex already use. Pin the
@@ -95,6 +97,35 @@ describe('buildClaudeTaskWraithMcpServers', () => {
     expect(taskWraith.type).toBe('stdio')
     if (taskWraith.type !== 'stdio') throw new Error('TaskWraith server missing')
     expect(taskWraith.args).not.toContain('--mutated-after-build')
+  })
+
+  it('uses the exact core profile for both the bridge argv and allowed-tool surface', () => {
+    const input = { ...fixture, profileId: TASKWRAITH_CORE_MCP_PROFILE_ID }
+    const servers = buildClaudeTaskWraithMcpServers(input)
+    const taskWraith = servers?.TaskWraith
+    expect(taskWraith?.type).toBe('stdio')
+    if (!taskWraith || taskWraith.type !== 'stdio') throw new Error('TaskWraith server missing')
+    expect(taskWraith.args.at(-1)).toBe('--core-subset')
+
+    const allowed = buildClaudeTaskWraithAllowedToolNames(TASKWRAITH_CORE_MCP_PROFILE_ID)
+    expect(allowed).toHaveLength(CORE_MCP_ADVERTISE_TOOLS.length * 2)
+    for (const tool of CORE_MCP_ADVERTISE_TOOLS) {
+      expect(allowed).toContain(tool)
+      expect(allowed).toContain(`mcp__TaskWraith__${tool}`)
+    }
+    expect(allowed).not.toContain('image_generate')
+    expect(allowed).not.toContain('mcp__TaskWraith__image_generate')
+  })
+
+  it('strips a stale core bridge flag when the pinned profile is full', () => {
+    const servers = buildClaudeTaskWraithMcpServers({
+      ...fixture,
+      bridgeArgs: [...fixture.bridgeArgs, '--core-subset']
+    })
+    const taskWraith = servers?.TaskWraith
+    expect(taskWraith?.type).toBe('stdio')
+    if (!taskWraith || taskWraith.type !== 'stdio') throw new Error('TaskWraith server missing')
+    expect(taskWraith.args).not.toContain('--core-subset')
   })
 
   it('adds user-managed stdio servers beside the TaskWraith bridge', () => {
@@ -311,6 +342,19 @@ describe('extendClaudeCliArgsWithTaskWraithMcp', () => {
     expect(allowedIndex).toBeGreaterThan(-1)
     const allowedValue = out[allowedIndex + 1]
     expect(allowedValue.split(',')).toEqual(buildClaudeTaskWraithAllowedToolNames())
+  })
+
+  it('uses the core allowedTools set when the CLI config bridge is core-filtered', () => {
+    const out = extendClaudeCliArgsWithTaskWraithMcp(baseArgs, {
+      ...fixture,
+      profileId: TASKWRAITH_CORE_MCP_PROFILE_ID
+    })
+    const allowedIndex = out.indexOf('--allowedTools')
+    expect(allowedIndex).toBeGreaterThan(-1)
+    expect(out[allowedIndex + 1].split(',')).toEqual(
+      buildClaudeTaskWraithAllowedToolNames(TASKWRAITH_CORE_MCP_PROFILE_ID)
+    )
+    expect(out[allowedIndex + 1]).not.toContain('image_generate')
   })
 
   it('appends --mcp-config without pre-approving unknown user MCP tools', () => {

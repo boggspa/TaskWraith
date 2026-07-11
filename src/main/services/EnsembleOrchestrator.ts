@@ -140,6 +140,7 @@ import type { NormalizedProviderUsageSnapshot } from '../ProviderQuotaSnapshots'
 import { summarizeProviderUsage, type ProviderUsageSummary } from '../ProviderUsageStatus'
 import {
   ASSIGNABLE_PERMISSION_PRESETS,
+  claudeRosterSessionRelinkError,
   evaluateRosterEdit,
   type RosterEditAction,
   type RosterEditError,
@@ -286,6 +287,9 @@ export interface EnsembleOrchestratorDeps {
     payload: AgentRunPayload,
     event: EnsembleDispatchEvent
   ) => Promise<{ dispatched: boolean; appRunId: string }>
+  /** False for an ephemeral cross-provider reroute with no target session lane. */
+  shouldPersistProviderSessionForRun?: (runId: string) => boolean
+  releaseProviderSessionPersistenceDecision?: (runId: string) => void
   cancelRun: (provider: ProviderId, runId?: string) => Promise<unknown>
   createRunId: (provider: ProviderId) => string
   now: () => number
@@ -1901,6 +1905,7 @@ function applySeatChangePatch(
 ): EnsembleParticipant {
   const next: EnsembleParticipant = { ...target, linkedProviderSessionId: target.linkedProviderSessionId }
   let promptReceiptsInvalidated = false
+  let mcpProfileReceiptInvalidated = false
   if (
     Object.prototype.hasOwnProperty.call(patch, 'provider') &&
     typeof patch.provider === 'string' &&
@@ -1912,6 +1917,7 @@ function applySeatChangePatch(
     // when the provider value is repeated, so neither prompt receipt remains
     // evidence of what the next session remembers.
     promptReceiptsInvalidated = true
+    mcpProfileReceiptInvalidated = true
   }
   if (Object.prototype.hasOwnProperty.call(patch, 'model')) {
     const nextModel = patch.model || undefined
@@ -1990,11 +1996,15 @@ function applySeatChangePatch(
     }
     if ((next.linkedProviderSessionId || '') !== (target.linkedProviderSessionId || '')) {
       promptReceiptsInvalidated = true
+      mcpProfileReceiptInvalidated = true
     }
   }
   if (promptReceiptsInvalidated) {
     delete next.promptShellVersion
     delete next.promptDynamicStateVersion
+  }
+  if (mcpProfileReceiptInvalidated) {
+    delete next.taskWraithMcpProfileReceipt
   }
   return next
 }
@@ -4476,6 +4486,14 @@ export class EnsembleOrchestrator {
       return {
         ok: false,
         message: `Participant seat change rejected: ${provider} is not a live selectable provider.`,
+        error: 'invalid_patch'
+      }
+    }
+    const claudeRelinkError = claudeRosterSessionRelinkError(before, input.participant)
+    if (claudeRelinkError) {
+      return {
+        ok: false,
+        message: claudeRelinkError,
         error: 'invalid_patch'
       }
     }
@@ -9336,7 +9354,8 @@ export class EnsembleOrchestrator {
         linkedProviderSessionId: refreshedParticipant.linkedProviderSessionId,
         contextCompactionSummary: refreshedParticipant.contextCompactionSummary,
         promptShellVersion: refreshedParticipant.promptShellVersion,
-        promptDynamicStateVersion: refreshedParticipant.promptDynamicStateVersion
+        promptDynamicStateVersion: refreshedParticipant.promptDynamicStateVersion,
+        taskWraithMcpProfileReceipt: refreshedParticipant.taskWraithMcpProfileReceipt
       }
       // 1.0.5-N6 — A wakeup-resume run with no linked provider session is
       // re-establishing working memory from TaskWraith transcript context.
@@ -11450,12 +11469,16 @@ export class EnsembleOrchestrator {
       return next
     })
 
+    const persistProviderSession =
+      this.deps.shouldPersistProviderSessionForRun?.(run.runId) !== false
     const participants = (chat.ensemble.participants || []).map((participant) => {
       if (participant.id !== run.participant.id) return participant
       const tokenTotals = mergeTokenTotals(participant.tokenTotals, run.stats)
       const next: EnsembleParticipant = {
         ...participant,
-        ...(run.providerSessionId ? { linkedProviderSessionId: run.providerSessionId } : {}),
+        ...(persistProviderSession && run.providerSessionId
+          ? { linkedProviderSessionId: run.providerSessionId }
+          : {}),
         ...(tokenTotals ? { tokenTotals } : {})
       }
       if (run.invalidatePromptShellReceipt) {
@@ -11508,6 +11531,7 @@ export class EnsembleOrchestrator {
       },
       updatedAt: this.deps.now()
     }, 'participant-updated')
+    if (final) this.deps.releaseProviderSessionPersistenceDecision?.(run.runId)
   }
 
   private scheduleFlush(run: ActiveParticipantRun): void {
@@ -11926,6 +11950,7 @@ export class EnsembleOrchestrator {
         participant.contextCompactionSummary = refreshed.contextCompactionSummary
         participant.promptShellVersion = refreshed.promptShellVersion
         participant.promptDynamicStateVersion = refreshed.promptDynamicStateVersion
+        participant.taskWraithMcpProfileReceipt = refreshed.taskWraithMcpProfileReceipt
       }
     }
     await this.maybeAutoCompactSeatBeforeDispatch(chatId, participant)
@@ -11960,6 +11985,7 @@ export class EnsembleOrchestrator {
       participant.contextCompactionSummary = refreshed.contextCompactionSummary
       participant.promptShellVersion = refreshed.promptShellVersion
       participant.promptDynamicStateVersion = refreshed.promptDynamicStateVersion
+      participant.taskWraithMcpProfileReceipt = refreshed.taskWraithMcpProfileReceipt
     }
   }
 

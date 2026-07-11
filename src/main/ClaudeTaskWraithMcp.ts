@@ -21,6 +21,12 @@
 
 import { TASKWRAITH_MCP_TOOLS } from './TaskWraithMcpTools'
 import { buildUserMcpRemoteHeaders, type UserMcpLaunchServer } from './UserMcpServers'
+import { CORE_MCP_ADVERTISE_TOOLS } from './mcp/McpToolProfiles'
+import {
+  TASKWRAITH_FULL_MCP_PROFILE_ID,
+  isCoreTaskWraithMcpProfile
+} from './mcp/McpSessionProfileFence'
+import type { TaskWraithMcpProfileId } from './store/types'
 
 /**
  * TaskWraith MCP tool name list. Re-exported under the Claude-specific name
@@ -44,6 +50,8 @@ export const CLAUDE_TASKWRAITH_SERVER_NAME = 'TaskWraith'
 
 export interface ClaudeTaskWraithMcpInput {
   enabled: boolean
+  /** Exact main-resolved catalog pinned to this Claude native session. */
+  profileId?: TaskWraithMcpProfileId
   /** Absolute path of the TaskWraith binary that hosts the MCP bridge. */
   bridgeBinaryPath: string
   /** argv passed to the bridge subprocess (already includes flag literals). */
@@ -122,7 +130,7 @@ export function buildClaudeTaskWraithMcpServers(
     servers[CLAUDE_TASKWRAITH_SERVER_NAME] = {
       type: 'stdio',
       command: input.bridgeBinaryPath,
-      args: [...input.bridgeArgs],
+      args: claudeTaskWraithBridgeArgsForProfile(input.bridgeArgs, input.profileId),
       env: buildClaudeTaskWraithMcpEnv(input),
       alwaysLoad: true
     }
@@ -148,6 +156,25 @@ export function buildClaudeTaskWraithMcpServers(
   return Object.keys(servers).length > 0 ? servers : null
 }
 
+const TASKWRAITH_MCP_CORE_SUBSET_ARG = '--core-subset'
+
+function claudeTaskWraithBridgeArgsForProfile(
+  bridgeArgs: readonly string[],
+  profileId: TaskWraithMcpProfileId | null | undefined
+): string[] {
+  const args = bridgeArgs.filter((arg) => arg !== TASKWRAITH_MCP_CORE_SUBSET_ARG)
+  if (isCoreTaskWraithMcpProfile(profileId)) args.push(TASKWRAITH_MCP_CORE_SUBSET_ARG)
+  return args
+}
+
+function claudeTaskWraithToolNamesForProfile(
+  profileId: TaskWraithMcpProfileId | null | undefined
+): readonly string[] {
+  return isCoreTaskWraithMcpProfile(profileId)
+    ? CORE_MCP_ADVERTISE_TOOLS
+    : CLAUDE_TASKWRAITH_TOOL_NAMES
+}
+
 function buildClaudeTaskWraithMcpEnv(input: ClaudeTaskWraithMcpInput): Record<string, string> {
   return {
     TASKWRAITH_PARENT_PROVIDER: 'claude',
@@ -165,12 +192,15 @@ function buildClaudeTaskWraithMcpEnv(input: ClaudeTaskWraithMcpInput): Record<st
  * MCP tools under the `mcp__<server>__<tool>` convention (see
  * `claude --help` / docs) but the bare names are accepted too.
  */
-export function buildClaudeTaskWraithAllowedToolNames(): string[] {
+export function buildClaudeTaskWraithAllowedToolNames(
+  profileId: TaskWraithMcpProfileId = TASKWRAITH_FULL_MCP_PROFILE_ID
+): string[] {
   const names: string[] = []
-  for (const tool of CLAUDE_TASKWRAITH_TOOL_NAMES) {
+  const profileTools = claudeTaskWraithToolNamesForProfile(profileId)
+  for (const tool of profileTools) {
     names.push(`mcp__${CLAUDE_TASKWRAITH_SERVER_NAME}__${tool}`)
   }
-  for (const tool of CLAUDE_TASKWRAITH_TOOL_NAMES) {
+  for (const tool of profileTools) {
     names.push(tool)
   }
   return names
@@ -208,7 +238,9 @@ export function extendClaudeCliArgsWithTaskWraithMcp(
 ): string[] {
   if (!input.enabled && (input.userMcpServers?.length ?? 0) === 0) return [...baseArgs]
   const extended = [...baseArgs, '--mcp-config', input.configFilePath]
-  const allowed = input.enabled ? buildClaudeTaskWraithAllowedToolNames() : []
+  const allowed = input.enabled
+    ? buildClaudeTaskWraithAllowedToolNames(input.profileId ?? TASKWRAITH_FULL_MCP_PROFILE_ID)
+    : []
   if (allowed.length > 0) {
     extended.push('--allowedTools', allowed.join(','))
   }

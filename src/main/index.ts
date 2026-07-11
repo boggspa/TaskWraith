@@ -859,6 +859,21 @@ import {
   startGeminiMcpBridgeProcess as startGeminiMcpBridgeProcessWithDeps
 } from './mcp/McpBridgeRuntime'
 import { shouldUseCoreMcpProfile } from './mcp/McpToolProfiles'
+import {
+  TASKWRAITH_FULL_MCP_PROFILE_ID,
+  isCoreTaskWraithMcpProfile,
+  isTaskWraithMcpAuthorizedEphemeralReroute,
+  isTaskWraithMcpEnsembleLanePresent,
+  isTaskWraithMcpProfileReceiptForSession,
+  isTaskWraithMcpRouteProviderMatch,
+  resolveTaskWraithMcpProfile,
+  shouldRejectTaskWraithMcpStaleDispatch,
+  shouldAcceptTaskWraithMcpSessionId,
+  taskWraithCoreMcpProfileOptInEnabled,
+  taskWraithMcpRunStartedWithPinnedReceipt,
+  taskWraithMcpProfileStoreIdentity,
+  transitionTaskWraithMcpProfileReceipt
+} from './mcp/McpSessionProfileFence'
 import { createGeminiDiscoveryHelpers } from './gemini/GeminiDiscovery'
 import { TrustStatusService } from './TrustStatusService'
 import {
@@ -901,6 +916,7 @@ import {
   buildGrokProviderPrompt
 } from './grok/GrokCliArgs'
 import { grokToolKindToService, type AcpPermissionRequest } from './grok/GrokAcpProtocol'
+import { shouldAdvertiseTaskWraithMcpToGrok } from './grok/GrokMcpAdvertise'
 import { grokReadOnlyShellRequestAllowed } from './grok/GrokReadOnlyShell'
 import { grokEventToRunEvents, type NormalizedGrokRunEvent } from './grok/GrokStreamingJson'
 import {
@@ -1074,7 +1090,11 @@ import {
   parseCustomKeywords,
   sanitiseForKimi
 } from './lib/kimiSanitiser'
-import { composeRunPrompt, conversationCompactionEligibleRows } from './PromptComposition'
+import {
+  composeRunPrompt,
+  conversationCompactionEligibleRows,
+  sanitizeTaskWraithMcpPromptClaims
+} from './PromptComposition'
 import {
   canDisposeGrokSeatAfterCompaction,
   convergeHostSeatCompaction,
@@ -3612,6 +3632,35 @@ async function writeJsonFile(filePath: string, value: any): Promise<void> {
 
 const backgroundSubThreadTranscripts = new Map<string, BackgroundSubThreadTranscriptState>()
 
+// Cross-provider reroutes are intentionally ephemeral: the destination
+// provider has no canonical session lane on the source chat/seat. The central
+// Claude session writer observes this through the MCP fence, while these ids
+// keep older transcript closeout paths from independently writing the target
+// session back onto the source owner.
+const MAX_PROVIDER_SESSION_PERSISTENCE_DECISIONS = 512
+const providerSessionPersistenceSuppressedRunIds = new Map<string, true>()
+
+function suppressProviderSessionPersistenceForRun(runId: string): void {
+  providerSessionPersistenceSuppressedRunIds.delete(runId)
+  providerSessionPersistenceSuppressedRunIds.set(runId, true)
+  while (
+    providerSessionPersistenceSuppressedRunIds.size >
+    MAX_PROVIDER_SESSION_PERSISTENCE_DECISIONS
+  ) {
+    const oldestRunId = providerSessionPersistenceSuppressedRunIds.keys().next().value
+    if (typeof oldestRunId !== 'string') break
+    providerSessionPersistenceSuppressedRunIds.delete(oldestRunId)
+  }
+}
+
+function shouldPersistProviderSessionForRun(runId: string): boolean {
+  return !providerSessionPersistenceSuppressedRunIds.has(runId)
+}
+
+function releaseProviderSessionPersistenceDecision(runId: string): void {
+  providerSessionPersistenceSuppressedRunIds.delete(runId)
+}
+
 /** iOS / bridge-initiated runs skip the renderer's `activeRunsRef`
  * registration, so provider compat lines would otherwise stream to
  * raw logs without persisting assistant text. Mirror the background
@@ -5589,6 +5638,10 @@ async function maybeAutoResumeParentAgent(args: {
     appChatId: parent.appChatId,
     approvalMode: continuationApprovalMode,
     model: parent.requestedModel || 'cli-default',
+    providerSessionId:
+      parent.provider === 'gemini'
+        ? parentWithPrompt.linkedGeminiSessionId ?? null
+        : parentWithPrompt.linkedProviderSessionId ?? null,
     ...(continuationEffectivePermissions
       ? { effectivePermissions: continuationEffectivePermissions }
       : {})
@@ -6320,6 +6373,7 @@ function composeDelegatedProviderPrompt(args: {
   subThread: ChatRecord
   prompt: string
   approvalMode: string
+  model?: string
   resumeSessionId?: string
 }): string {
   // Kimi's `--resume` restores the session token but not the visible
@@ -6334,12 +6388,30 @@ function composeDelegatedProviderPrompt(args: {
     args.provider === 'kimi' || (args.provider === 'grok' && grokAcpEnabled())
   if (!needsHostTranscriptInjection) return args.prompt
   const settings = AppStore.getSettings()
+  const taskWraithMcpAdvertised =
+    args.provider !== 'grok' ||
+    shouldAdvertiseTaskWraithMcpToGrok({
+      acpEnabled: grokAcpEnabled(),
+      approvalMode: args.approvalMode,
+      bridgeEnabled: Boolean(settings.geminiMcpBridgeEnabled),
+      readOnlyAdvertiseEnabled: grokReadOnlyMcpAdvertiseEnabled()
+    })
+  const taskWraithMcpProfile = resolveTaskWraithMcpProfile({
+    provider: args.provider,
+    modelId: args.model,
+    providerSessionId: args.resumeSessionId,
+    storeProviderSessionId: args.subThread.linkedProviderSessionId,
+    receipt: args.subThread.taskWraithMcpProfileReceipt,
+    coreProfileOptIn: taskWraithCoreMcpProfileOptInEnabled(),
+    grokMcpAdvertised: args.provider === 'grok' ? taskWraithMcpAdvertised : undefined
+  })
   return composeRunPrompt({
     provider: args.provider,
     finalPrompt: args.prompt,
     messages: args.subThread.messages || [],
     chatContextTurns: settings.chatContextTurns,
     resumeSessionId: args.resumeSessionId,
+    nextModel: args.model,
     codexHandoffsApplied: [],
     isGlobalRun: (args.subThread.scope ?? 'workspace') === 'global',
     approvalMode: args.approvalMode,
@@ -6347,7 +6419,9 @@ function composeDelegatedProviderPrompt(args: {
     // turn is a recon turn: the child should report findings, not plan.
     workflowMode: args.subThread.workflowMode === 'plan' ? 'plan' : 'normal',
     providerLabel: providerLabel(args.provider),
-    nativeSubAgentRequests: settings.nativeSubAgentRequests
+    nativeSubAgentRequests: settings.nativeSubAgentRequests,
+    taskWraithMcpAdvertised,
+    taskWraithMcpProfileId: taskWraithMcpProfile.profileId
   }).contextualPrompt
 }
 
@@ -6505,10 +6579,14 @@ function flushBackgroundSubThreadTranscript(runId: string, final = false): void 
 
   const updated: ChatRecord = {
     ...current,
-    ...(state.provider !== 'gemini' && state.providerSessionId
+    ...(shouldPersistProviderSessionForRun(runId) &&
+    state.provider !== 'gemini' &&
+    state.providerSessionId
       ? { linkedProviderSessionId: state.providerSessionId }
       : {}),
-    ...(state.provider === 'gemini' && state.providerSessionId
+    ...(shouldPersistProviderSessionForRun(runId) &&
+    state.provider === 'gemini' &&
+    state.providerSessionId
       ? { linkedGeminiSessionId: state.providerSessionId }
       : {}),
     messages,
@@ -6520,6 +6598,7 @@ function flushBackgroundSubThreadTranscript(runId: string, final = false): void 
 
   if (final) {
     backgroundSubThreadTranscripts.delete(runId)
+    releaseProviderSessionPersistenceDecision(runId)
     if (state.status === 'success' && state.returnResultToParent) {
       void maybePropagateSubThreadResult(state.chatId).catch((err) => {
         console.warn(`[SubThreadReturn] propagation failed for chatId=${state.chatId}:`, err)
@@ -6705,10 +6784,14 @@ function flushBridgeRunTranscript(runId: string, final = false): void {
 
   const updated: ChatRecord = {
     ...current,
-    ...(state.provider !== 'gemini' && state.providerSessionId
+    ...(shouldPersistProviderSessionForRun(runId) &&
+    state.provider !== 'gemini' &&
+    state.providerSessionId
       ? { linkedProviderSessionId: state.providerSessionId }
       : {}),
-    ...(state.provider === 'gemini' && state.providerSessionId
+    ...(shouldPersistProviderSessionForRun(runId) &&
+    state.provider === 'gemini' &&
+    state.providerSessionId
       ? { linkedGeminiSessionId: state.providerSessionId }
       : {}),
     messages,
@@ -6734,6 +6817,7 @@ function flushBridgeRunTranscript(runId: string, final = false): void {
   state.flushedOnce = true
   if (final) {
     bridgeRunTranscripts.delete(runId)
+    releaseProviderSessionPersistenceDecision(runId)
   }
 }
 
@@ -9852,6 +9936,86 @@ const cliProviderRuntimeDeps: CliProviderRuntimeDependencies = {
   getCodexMcpStatusSnapshot: getCodexMcpStatusSnapshotForCliRuntime
 }
 
+function taskWraithMcpProfileStoreStateForPayload(payload: AgentRunPayload): {
+  storeSessionId: string | null
+  storeReceipt: ChatRecord['taskWraithMcpProfileReceipt']
+  chatFound: boolean
+  missingEnsembleParticipant: boolean
+  routeProviderMismatch: boolean
+  ephemeralProviderReroute: boolean
+  storeWritable: boolean
+} {
+  const chat = payload.appChatId ? AppStore.getChat(payload.appChatId) : null
+  const ensembleParticipantId = payload.ensembleRun?.participantId
+  const participant =
+    chat?.ensemble && ensembleParticipantId
+      ? chat.ensemble.participants.find(
+          (candidate) => candidate.id === ensembleParticipantId
+        ) || null
+      : null
+  const missingEnsembleParticipant = !isTaskWraithMcpEnsembleLanePresent({
+    chatIsEnsemble: Boolean(chat?.ensemble),
+    participantId: ensembleParticipantId,
+    participantFound: Boolean(participant)
+  })
+  const routeOwnerProvider = participant ? participant.provider : chat?.provider
+  const rawRouteProviderMismatch = Boolean(
+    routeOwnerProvider &&
+      !isTaskWraithMcpRouteProviderMatch({
+        payloadProvider: payload.provider,
+        ownerProvider: routeOwnerProvider
+      })
+  )
+  const ephemeralProviderReroute = Boolean(
+    chat &&
+      !missingEnsembleParticipant &&
+      isTaskWraithMcpAuthorizedEphemeralReroute({
+        payloadProvider: payload.provider,
+        providerReroute: payload.providerReroute
+      })
+  )
+  const routeProviderMismatch = rawRouteProviderMismatch && !ephemeralProviderReroute
+  const storeWritable = Boolean(chat && !missingEnsembleParticipant && !ephemeralProviderReroute)
+  return {
+    storeSessionId: missingEnsembleParticipant || ephemeralProviderReroute
+      ? null
+      : participant
+        ? participant.linkedProviderSessionId ?? null
+        : chat?.linkedProviderSessionId ?? null,
+    storeReceipt: missingEnsembleParticipant || ephemeralProviderReroute
+      ? undefined
+      : participant
+        ? participant.taskWraithMcpProfileReceipt
+        : chat?.taskWraithMcpProfileReceipt,
+    chatFound: Boolean(chat),
+    missingEnsembleParticipant,
+    routeProviderMismatch,
+    ephemeralProviderReroute,
+    storeWritable
+  }
+}
+
+function refreshTaskWraithMcpProfileFenceStoreIdentity(payload: AgentRunPayload): void {
+  const storeState = taskWraithMcpProfileStoreStateForPayload(payload)
+  if (storeState.missingEnsembleParticipant || storeState.routeProviderMismatch) {
+    throw new Error('The Ensemble participant for this run no longer matches its route.')
+  }
+  const storeIdentity = taskWraithMcpProfileStoreIdentity({
+    providerSessionId: storeState.storeSessionId,
+    receipt: storeState.storeReceipt
+  })
+  const priorFence = payload.taskWraithMcpProfileFence
+  payload.taskWraithMcpProfileFence = {
+    expectedStoreProviderSessionId: storeIdentity.providerSessionId,
+    expectedStoreReceiptFingerprint: storeIdentity.receiptFingerprint,
+    runStartedProviderSessionId:
+      priorFence?.runStartedProviderSessionId ?? payload.providerSessionId ?? null,
+    runStartedReceiptFingerprint:
+      priorFence?.runStartedReceiptFingerprint ?? storeIdentity.receiptFingerprint,
+    storeWritable: priorFence?.storeWritable ?? storeState.storeWritable
+  }
+}
+
 function applyRuntimeProfileToPayload(payload: AgentRunPayload): AgentRunPayload {
   const applied = applyRuntimeProfileToPayloadViaCliRuntime(
     payload,
@@ -9869,6 +10033,99 @@ function applyRuntimeProfileToPayload(payload: AgentRunPayload): AgentRunPayload
       applied.effectivePermissions,
       runPostureContextFromPayload(applied)
     )
+  }
+  // Main-owned MCP profile fence. AgentRunNormalizer deliberately strips any
+  // renderer-supplied profile/fence fields; resolve them only after runtime
+  // profile application from the current persisted chat/seat identity.
+  const storeState = taskWraithMcpProfileStoreStateForPayload(applied)
+  if (storeState.missingEnsembleParticipant || storeState.routeProviderMismatch) {
+    throw new Error('The Ensemble participant for this run no longer matches its route.')
+  }
+  // A cross-provider solo reroute has no target-provider store lane. Never
+  // resume the source provider's handle as Claude, and never birth core because
+  // its receipt could not be persisted authoritatively.
+  if (storeState.ephemeralProviderReroute) applied.providerSessionId = null
+  if (
+    shouldRejectTaskWraithMcpStaleDispatch({
+      provider: applied.provider,
+      requestedProviderSessionId: applied.providerSessionId,
+      storeProviderSessionId: storeState.storeSessionId,
+      storeIdentityKnown: storeState.chatFound,
+    })
+  ) {
+    throw new Error(
+      'The Claude session changed before dispatch; retry this turn on the current session.'
+    )
+  }
+  const claudePinnedMcpReceipt =
+    applied.provider === 'claude' &&
+    isTaskWraithMcpProfileReceiptForSession(storeState.storeReceipt, {
+      provider: 'claude',
+      providerSessionId: applied.providerSessionId
+    })
+  const claudeBridgeCommandStatus =
+    applied.provider === 'claude' ? taskwraithMcpBridgeCommandStatus() : null
+  if (claudePinnedMcpReceipt && !claudeBridgeCommandStatus?.available) {
+    throw new Error(
+      'This Claude session requires its pinned TaskWraith MCP surface, but the bridge command is unavailable.'
+    )
+  }
+  const taskWraithMcpAdvertised =
+    applied.provider === 'grok'
+      ? shouldAdvertiseTaskWraithMcpToGrok({
+          acpEnabled: grokAcpEnabled(),
+          approvalMode: applied.approvalMode,
+          bridgeEnabled: Boolean(AppStore.getSettings().geminiMcpBridgeEnabled),
+          readOnlyAdvertiseEnabled: grokReadOnlyMcpAdvertiseEnabled()
+        })
+      : applied.provider === 'claude'
+        ? Boolean(
+            claudePinnedMcpReceipt ||
+              (AppStore.getSettings().geminiMcpBridgeEnabled &&
+                claudeBridgeCommandStatus?.available)
+          )
+        : true
+  const resolution = resolveTaskWraithMcpProfile({
+    provider: applied.provider,
+    modelId: applied.model,
+    providerSessionId: applied.providerSessionId,
+    storeProviderSessionId: storeState.storeSessionId,
+    receipt: storeState.storeReceipt,
+    coreProfileOptIn: taskWraithCoreMcpProfileOptInEnabled(),
+    profileReceiptCanPersist:
+      applied.provider !== 'claude' || (storeState.chatFound && storeState.storeWritable),
+    grokMcpAdvertised: applied.provider === 'grok' ? taskWraithMcpAdvertised : undefined
+  })
+  applied.taskWraithMcpProfileId = resolution.profileId
+  applied.taskWraithMcpAdvertised = taskWraithMcpAdvertised
+  refreshTaskWraithMcpProfileFenceStoreIdentity(applied)
+  if (applied.appRunId) {
+    if (storeState.ephemeralProviderReroute) {
+      suppressProviderSessionPersistenceForRun(applied.appRunId)
+    } else {
+      releaseProviderSessionPersistenceDecision(applied.appRunId)
+    }
+  }
+  // Backstop every main-origin entrypoint (ensemble, sub-thread, remote, and
+  // solo). ComposerService adds the same note inside the runtime preamble; the
+  // exact-string guard keeps this idempotent. Native slash commands must remain
+  // byte-first and therefore skip any prepend.
+  const truthfulPrompt = sanitizeTaskWraithMcpPromptClaims(applied.prompt, {
+    advertised: applied.taskWraithMcpAdvertised === true,
+    coreProfile: isCoreTaskWraithMcpProfile(applied.taskWraithMcpProfileId),
+    injectCoreNote: applied.provider !== 'claude' || !applied.providerSessionId,
+    crossProviderReroute: storeState.ephemeralProviderReroute,
+    targetProvider: applied.provider
+  })
+  if (truthfulPrompt !== applied.prompt) {
+    applied.prompt = truthfulPrompt
+    if (applied.effectivePermissionsSignature) {
+      applied.effectivePermissionsSignature = signRunPosture(
+        applied.approvalMode,
+        applied.effectivePermissions,
+        runPostureContextFromPayload(applied)
+      )
+    }
   }
   return applied
 }
@@ -10040,6 +10297,98 @@ function updateCliProviderSession(
 ): boolean {
   const normalized = typeof sessionId === 'string' ? sessionId.trim() : ''
   if (!normalized || normalized === state.providerSessionId) return false
+  if (
+    state.provider === 'claude' &&
+    !shouldAcceptTaskWraithMcpSessionId({
+      nextProviderSessionId: normalized,
+      currentProviderSessionId: state.providerSessionId,
+      seenProviderSessionIds: state.taskWraithMcpSeenProviderSessionIds
+    })
+  ) {
+    return false
+  }
+
+  if (
+    state.provider === 'claude' &&
+    state.taskWraithMcpProfileId &&
+    state.taskWraithMcpProfileFence &&
+    state.taskWraithMcpProfileFence.storeWritable &&
+    state.appChatId
+  ) {
+    const chat = AppStore.getChat(state.appChatId)
+    const participant =
+      chat?.ensemble && state.ensembleRun?.participantId
+        ? chat.ensemble.participants.find(
+            (candidate) => candidate.id === state.ensembleRun?.participantId
+          ) || null
+        : null
+    if (chat?.ensemble && !state.ensembleRun?.participantId) return false
+    // An ensemble route that lost its exact participant is stale. Do not let
+    // its late session frame attach to the solo chat or another seat.
+    if (state.ensembleRun?.participantId && !participant) return false
+    if (participant && participant.provider !== state.provider) return false
+    if (!participant && chat?.provider && chat.provider !== state.provider) return false
+    if (chat) {
+      const currentStoreSessionId = participant
+        ? participant.linkedProviderSessionId ?? null
+        : chat.linkedProviderSessionId ?? null
+      const currentReceipt = participant
+        ? participant.taskWraithMcpProfileReceipt
+        : chat.taskWraithMcpProfileReceipt
+      const transition = transitionTaskWraithMcpProfileReceipt({
+        provider: 'claude',
+        profileId: state.taskWraithMcpProfileId,
+        mcpAdvertised: state.taskWraithMcpAdvertised === true,
+        nextProviderSessionId: normalized,
+        previousRunProviderSessionId: state.providerSessionId,
+        expectedStoreIdentity: {
+          providerSessionId: state.taskWraithMcpProfileFence.expectedStoreProviderSessionId,
+          receiptFingerprint: state.taskWraithMcpProfileFence.expectedStoreReceiptFingerprint
+        },
+        currentStoreSessionId,
+        currentReceipt
+      })
+      if (!transition.accepted) return false
+      const updated: ChatRecord = participant
+        ? {
+            ...chat,
+            ensemble: {
+              ...chat.ensemble!,
+              participants: chat.ensemble!.participants.map((candidate) =>
+                candidate.id === participant.id
+                  ? {
+                      ...candidate,
+                      linkedProviderSessionId: normalized,
+                      ...(transition.receipt
+                        ? { taskWraithMcpProfileReceipt: transition.receipt }
+                        : { taskWraithMcpProfileReceipt: undefined })
+                    }
+                  : candidate
+              )
+            },
+            updatedAt: Date.now()
+          }
+        : {
+            ...chat,
+            linkedProviderSessionId: normalized,
+            taskWraithMcpProfileReceipt: transition.receipt,
+            updatedAt: Date.now()
+          }
+      saveAndBroadcastChat(updated)
+      const nextIdentity = taskWraithMcpProfileStoreIdentity({
+        providerSessionId: normalized,
+        receipt: transition.receipt
+      })
+      state.taskWraithMcpProfileFence = {
+        ...state.taskWraithMcpProfileFence,
+        expectedStoreProviderSessionId: nextIdentity.providerSessionId,
+        expectedStoreReceiptFingerprint: nextIdentity.receiptFingerprint
+      }
+    }
+  }
+
+  state.taskWraithMcpSeenProviderSessionIds ??= new Set<string>()
+  state.taskWraithMcpSeenProviderSessionIds.add(normalized)
   state.providerSessionId = normalized
   if (state.appRunId) {
     runManager.registerProviderSession(state.appRunId, normalized)
@@ -10902,6 +11251,12 @@ function runCliProviderProcess(
     sessionTrust: Boolean(payload.sessionTrust),
     externalPathGrants: payload.externalPathGrants,
     runtimeProfileId: payload.runtimeProfileId,
+    taskWraithMcpProfileId: payload.taskWraithMcpProfileId,
+    taskWraithMcpAdvertised: payload.taskWraithMcpAdvertised,
+    taskWraithMcpProfileFence: payload.taskWraithMcpProfileFence,
+    taskWraithMcpSeenProviderSessionIds: new Set(
+      payload.providerSessionId ? [payload.providerSessionId] : []
+    ),
     effectivePermissions: payload.effectivePermissions,
     effectivePermissionsSignature: payload.effectivePermissionsSignature,
     ensembleRun: payload.ensembleRun,
@@ -11153,13 +11508,17 @@ async function loadOptionalClaudeSdk(): Promise<any | null> {
  */
 function claudeTaskWraithMcpInput(
   route?: AgentRunRoute | null,
-  workspacePath?: string | null
+  workspacePath?: string | null,
+  profileId: NonNullable<ClaudeTaskWraithMcpInput['profileId']> =
+    TASKWRAITH_FULL_MCP_PROFILE_ID,
+  taskWraithMcpAdvertised = true
 ): ClaudeTaskWraithMcpInput {
   const bridgeCommandStatus = taskwraithMcpBridgeCommandStatus()
   const settings = AppStore.getSettings()
-  const enabled = Boolean(settings.geminiMcpBridgeEnabled && bridgeCommandStatus.available)
+  const enabled = Boolean(taskWraithMcpAdvertised && bridgeCommandStatus.available)
   return {
     enabled,
+    profileId,
     bridgeBinaryPath: bridgeCommandStatus.command,
     bridgeArgs: taskwraithMcpBridgeArgs(),
     userMcpServers: buildUserMcpLaunchServers(settings.userMcpServers, {
@@ -11171,6 +11530,13 @@ function claudeTaskWraithMcpInput(
     ...(route?.appChatId ? { appChatId: route.appChatId } : {}),
     ...(workspacePath ? { workspacePath } : {})
   }
+}
+
+function claudeRunRequiresPinnedTaskWraithMcp(payload: AgentRunPayload): boolean {
+  return taskWraithMcpRunStartedWithPinnedReceipt({
+    providerSessionId: payload.providerSessionId,
+    fence: payload.taskWraithMcpProfileFence
+  })
 }
 
 function claudeAgenticServiceForTool(toolName: string): AgenticServiceId | null {
@@ -11549,6 +11915,12 @@ async function tryRunClaudeSdk(
     sessionTrust: Boolean(payload.sessionTrust),
     externalPathGrants: payload.externalPathGrants,
     runtimeProfileId: payload.runtimeProfileId,
+    taskWraithMcpProfileId: payload.taskWraithMcpProfileId,
+    taskWraithMcpAdvertised: payload.taskWraithMcpAdvertised,
+    taskWraithMcpProfileFence: payload.taskWraithMcpProfileFence,
+    taskWraithMcpSeenProviderSessionIds: new Set(
+      payload.providerSessionId ? [payload.providerSessionId] : []
+    ),
     effectivePermissions: payload.effectivePermissions,
     effectivePermissionsSignature: payload.effectivePermissionsSignature,
     ensembleRun: payload.ensembleRun,
@@ -11627,9 +11999,16 @@ async function tryRunClaudeSdk(
   // pre-approval list closes the gap. Only TaskWraith's own bridge
   // tools are pre-approved; arbitrary user MCP server tools still flow
   // through Claude's normal tool-permission path.
-  const claudeMcpInput = claudeTaskWraithMcpInput(route, payload.workspace)
-  const claudeSdkMcpServers = buildClaudeTaskWraithMcpServers(claudeMcpInput)
-  const claudeSdkAllowedTools = claudeMcpInput.enabled ? buildClaudeTaskWraithAllowedToolNames() : null
+  let claudeMcpInput = claudeTaskWraithMcpInput(
+    route,
+    payload.workspace,
+    payload.taskWraithMcpProfileId,
+    payload.taskWraithMcpAdvertised === true
+  )
+  let claudeSdkMcpServers = buildClaudeTaskWraithMcpServers(claudeMcpInput)
+  let claudeSdkAllowedTools = claudeMcpInput.enabled
+    ? buildClaudeTaskWraithAllowedToolNames(claudeMcpInput.profileId)
+    : null
   const claudeSdkSettings =
     typeof payload.claudeFastMode === 'boolean' ? { fastMode: payload.claudeFastMode } : undefined
   // Belt-and-braces env stamp on the SDK process: in addition to the
@@ -11655,6 +12034,30 @@ async function tryRunClaudeSdk(
   if (claudeMcpInput.enabled) {
     await startGeminiMcpBroker().catch((error) => {
       console.error('[mcp-bridge] broker ensure failed before Claude run', error)
+      if (claudeRunRequiresPinnedTaskWraithMcp(payload)) {
+        throw new Error(
+          `The pinned TaskWraith MCP surface could not be reattached: ${
+            error instanceof Error ? error.message : String(error)
+          }`
+        )
+      }
+      // The run may continue with Claude's native/user-managed tools, but it
+      // must not mint a receipt or retain prompt claims for a TaskWraith server
+      // that failed to attach.
+      payload.taskWraithMcpAdvertised = false
+      state.taskWraithMcpAdvertised = false
+      payload.prompt = sanitizeTaskWraithMcpPromptClaims(payload.prompt, {
+        advertised: false,
+        coreProfile: false
+      })
+      claudeMcpInput = claudeTaskWraithMcpInput(
+        route,
+        payload.workspace,
+        payload.taskWraithMcpProfileId,
+        false
+      )
+      claudeSdkMcpServers = buildClaudeTaskWraithMcpServers(claudeMcpInput)
+      claudeSdkAllowedTools = null
     })
   }
   if (!canStartRunTransport(runManager.get(route.appRunId)?.status, true)) {
@@ -11783,6 +12186,12 @@ async function runClaudeProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
         `Claude Agent SDK failed; falling back to Claude Code CLI. Reason: ${error instanceof Error ? error.message : String(error)}`,
         route
       )
+      // The failed SDK attempt may already have reported and pinned a native
+      // session id. The CLI fallback still starts fresh from the original null
+      // payload session, but its CAS basis must observe that exact SDK write or
+      // it will reject the CLI's replacement id as stale. Keep the chosen
+      // profile fixed; refresh only the expected AppStore identity.
+      refreshTaskWraithMcpProfileFenceStoreIdentity(payload)
     }
     // RC2 — per-occurrence budget kill: if the SDK run was aborted BY the budget
     // kill (cancelProviderRun aborts the SDK controller), tryRunClaudeSdk throws /
@@ -11833,7 +12242,7 @@ async function runClaudeProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
   }
 
   const model = normalizeCliProviderModel('claude', payload.model)
-  const baseArgs = [
+  const buildBaseArgs = (): string[] => [
     ...buildClaudeCliArgs({
       prompt: payload.prompt,
       // Spike 8 note: UNLIKE the SDK path, recon seats keep native plan mode
@@ -11853,6 +12262,7 @@ async function runClaudeProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
     // `--add-dir <path>` flags for Claude CLI.
     ...externalPathGrantsToCliAddDirArgs(payload.externalPathGrants)
   ]
+  let baseArgs = buildBaseArgs()
   // Phase I3 (Claude initiator): the Claude CLI does not accept the
   // SDK's `mcpServers` object directly — it expects `--mcp-config
   // <path>` pointing at a JSON file. Write a per-run config under the
@@ -11860,7 +12270,44 @@ async function runClaudeProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
   // and clean up the temp file when the run exits. User-managed stdio
   // servers share the same config file but do not get added to
   // --allowedTools.
-  const mcpInput = claudeTaskWraithMcpInput(route, payload.workspace)
+  let mcpInput = claudeTaskWraithMcpInput(
+    route,
+    payload.workspace,
+    payload.taskWraithMcpProfileId,
+    payload.taskWraithMcpAdvertised === true
+  )
+  if (mcpInput.enabled) {
+    try {
+      await startGeminiMcpBroker()
+    } catch (error) {
+      const message = `TaskWraith MCP broker could not start for Claude: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+      if (claudeRunRequiresPinnedTaskWraithMcp(payload)) {
+        runManager.finish(route.appRunId, 'failed')
+        sendAgentCompatError(event.sender, 'claude', message, route)
+        sendAgentCompatExit(event.sender, 'claude', 1, route)
+        return
+      }
+      payload.taskWraithMcpAdvertised = false
+      payload.prompt = sanitizeTaskWraithMcpPromptClaims(payload.prompt, {
+        advertised: false,
+        coreProfile: false
+      })
+      mcpInput = claudeTaskWraithMcpInput(
+        route,
+        payload.workspace,
+        payload.taskWraithMcpProfileId,
+        false
+      )
+      sendAgentCompatError(
+        event.sender,
+        'claude',
+        `${message} Claude will continue without TaskWraith MCP for this fresh or legacy session.`,
+        route
+      )
+    }
+  }
   let mcpConfigPath: string | null = null
   let args = baseArgs
   const configJson = buildClaudeTaskWraithMcpConfigJson(mcpInput)
@@ -11880,13 +12327,20 @@ async function runClaudeProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
       // without MCP servers registered. We surface a warning so the
       // user can see why the Claude run does not have the expected MCP
       // tools.
-      sendAgentCompatError(
-        event.sender,
-        'claude',
-        `Failed to write Claude MCP config (${mcpConfigPath}); MCP servers will not be available for this run. Reason: ${error instanceof Error ? error.message : String(error)}`,
-        route
-      )
+      const message = `Failed to write Claude MCP config (${mcpConfigPath}); MCP servers will not be available for this run. Reason: ${error instanceof Error ? error.message : String(error)}`
+      sendAgentCompatError(event.sender, 'claude', message, route)
+      if (claudeRunRequiresPinnedTaskWraithMcp(payload)) {
+        runManager.finish(route.appRunId, 'failed')
+        sendAgentCompatExit(event.sender, 'claude', 1, route)
+        return
+      }
+      payload.taskWraithMcpAdvertised = false
+      payload.prompt = sanitizeTaskWraithMcpPromptClaims(payload.prompt, {
+        advertised: false,
+        coreProfile: false
+      })
       mcpConfigPath = null
+      baseArgs = buildBaseArgs()
       args = baseArgs
     }
   }
@@ -12462,6 +12916,9 @@ async function runGrokAcpProvider(event: Electron.IpcMainInvokeEvent, payload: A
     sessionTrust: Boolean(payload.sessionTrust),
     externalPathGrants: payload.externalPathGrants,
     runtimeProfileId: payload.runtimeProfileId,
+    taskWraithMcpProfileId: payload.taskWraithMcpProfileId,
+    taskWraithMcpAdvertised: payload.taskWraithMcpAdvertised,
+    taskWraithMcpProfileFence: payload.taskWraithMcpProfileFence,
     effectivePermissions: payload.effectivePermissions,
     effectivePermissionsSignature: payload.effectivePermissionsSignature,
     ensembleRun: payload.ensembleRun,
@@ -12524,8 +12981,7 @@ async function runGrokAcpProvider(event: Electron.IpcMainInvokeEvent, payload: A
   const grokReadOnlySeat = !grokWriteSeat
   const grokReadOnlyAdvertiseFlag = grokReadOnlyMcpAdvertiseEnabled()
   const grokBridgeEnabled = Boolean(AppStore.getSettings().geminiMcpBridgeEnabled)
-  const grokAdvertiseTaskWraithMcp =
-    grokWriteSeat || (grokBridgeEnabled && grokReadOnlyAdvertiseFlag)
+  const grokAdvertiseTaskWraithMcp = payload.taskWraithMcpAdvertised === true
   const grokMcpDebug = process.env.TASKWRAITH_GROK_DEBUG
   if (grokMcpDebug === '1' || grokMcpDebug === 'true' || grokMcpDebug === 'yes') {
     process.stderr.write(
@@ -12553,7 +13009,7 @@ async function runGrokAcpProvider(event: Electron.IpcMainInvokeEvent, payload: A
       // the matching env entry. (Read-only Grok shares the plan-mode bridge gap;
       // this only takes effect when the bridge is actually advertised above.)
       const grokAuditRun = Boolean(payload.auditRun)
-      const coreSubset = shouldUseCoreMcpProfile('grok', model)
+      const coreSubset = isCoreTaskWraithMcpProfile(payload.taskWraithMcpProfileId)
       const grokBridgeArgs = taskwraithMcpBridgeArgs(
         geminiMcpSocketPath(),
         safeSubset,
@@ -12587,6 +13043,12 @@ async function runGrokAcpProvider(event: Electron.IpcMainInvokeEvent, payload: A
     } catch (error) {
       // Broker failed to start → no tools (safe). Grok still runs, just toolless.
       grokMcpServers = []
+      payload.taskWraithMcpAdvertised = false
+      state.taskWraithMcpAdvertised = false
+      payload.prompt = sanitizeTaskWraithMcpPromptClaims(payload.prompt, {
+        advertised: false,
+        coreProfile: false
+      })
       sendAgentCompatLine(
         event.sender,
         'grok',
@@ -14412,6 +14874,18 @@ function sendAgentCompatExit(
   if (provider === 'gemini') {
     publishRunEvent('gemini-exit', provider, routedForWire, sender)
   }
+  // Renderer-owned solo runs do not use a main transcript finalizer. Drop their
+  // in-memory suppression decision after the terminal event; ChatService also
+  // rejects any reroute target session carried by the renderer's saved ChatRun.
+  // Main-owned bridge/sub-thread finalizers release only after their async
+  // terminal flush so the target session remains suppressed until persistence.
+  if (
+    routed.appRunId &&
+    !bridgeRunTranscripts.has(routed.appRunId) &&
+    !backgroundSubThreadTranscripts.has(routed.appRunId)
+  ) {
+    releaseProviderSessionPersistenceDecision(routed.appRunId)
+  }
   cleanupRunItemEventState(routed.appRunId)
 }
 
@@ -15255,12 +15729,74 @@ async function compactClaudeProviderContext(payload: {
 }): Promise<{ ok: boolean; error?: string }> {
   const chat = AppStore.getChat(payload.chatId)
   if (!chat) return { ok: false, error: 'Chat not found.' }
+  const participant = payload.participantId
+    ? chat.ensemble?.participants.find((candidate) => candidate.id === payload.participantId)
+    : undefined
+  if (
+    payload.participantId &&
+    (!participant ||
+      participant.provider !== 'claude' ||
+      participant.linkedProviderSessionId !== payload.providerSessionId)
+  ) {
+    return { ok: false, error: 'The Claude participant session changed before compaction.' }
+  }
+  if (
+    !payload.participantId &&
+    (chat.provider !== 'claude' || chat.linkedProviderSessionId !== payload.providerSessionId)
+  ) {
+    return { ok: false, error: 'The Claude chat session changed before compaction.' }
+  }
   if (activeClaudeManualCompactions.has(payload.providerSessionId)) {
     return { ok: false, error: 'A compaction is already in progress for this session.' }
   }
   const sdk = await loadOptionalClaudeSdk()
   if (!sdk?.query) {
     return { ok: false, error: 'Claude Agent SDK is unavailable — cannot compact this seat.' }
+  }
+  const profileResolution = resolveTaskWraithMcpProfile({
+    provider: 'claude',
+    modelId: payload.model,
+    providerSessionId: payload.providerSessionId,
+    storeProviderSessionId: payload.providerSessionId,
+    receipt: payload.participantId
+      ? participant?.taskWraithMcpProfileReceipt
+      : chat.taskWraithMcpProfileReceipt,
+    coreProfileOptIn: false
+  })
+  const storedCompactionReceipt =
+    payload.participantId
+      ? participant?.taskWraithMcpProfileReceipt
+      : chat.taskWraithMcpProfileReceipt
+  const sessionWasBornWithTaskWraithMcp = isTaskWraithMcpProfileReceiptForSession(
+    storedCompactionReceipt,
+    { provider: 'claude', providerSessionId: payload.providerSessionId }
+  )
+  const compactionRoute: AgentRunRoute = { appChatId: payload.chatId }
+  const compactionMcpInput = claudeTaskWraithMcpInput(
+    compactionRoute,
+    chat.workspacePath,
+    profileResolution.profileId,
+    sessionWasBornWithTaskWraithMcp || Boolean(AppStore.getSettings().geminiMcpBridgeEnabled)
+  )
+  const compactionMcpServers = buildClaudeTaskWraithMcpServers(compactionMcpInput)
+  if (sessionWasBornWithTaskWraithMcp && !compactionMcpInput.enabled) {
+    return {
+      ok: false,
+      error:
+        'This Claude session was born with TaskWraith MCP, but that exact MCP surface cannot be reattached for compaction.'
+    }
+  }
+  if (compactionMcpInput.enabled) {
+    try {
+      await startGeminiMcpBroker()
+    } catch (error) {
+      return {
+        ok: false,
+        error: `TaskWraith MCP could not start for Claude compaction: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      }
+    }
   }
   activeClaudeManualCompactions.add(payload.providerSessionId)
   const startedAtMs = Date.now()
@@ -15274,6 +15810,13 @@ async function compactClaudeProviderContext(payload: {
   const timer = setTimeout(() => controller.abort(), 180_000)
   let observed: ContextCompactionSignal | null = null
   let streamError: string | undefined
+  let compactionSessionId = payload.providerSessionId
+  const seenCompactionSessionIds = new Set([compactionSessionId])
+  let compactionExpectedStoreIdentity = taskWraithMcpProfileStoreIdentity({
+    providerSessionId: compactionSessionId,
+    receipt: storedCompactionReceipt
+  })
+  let compactionIdentityFailed = false
   let pathToClaudeCodeExecutable: string | undefined
   try {
     const model = normalizeCliProviderModel('claude', payload.model)
@@ -15296,30 +15839,129 @@ async function compactClaudeProviderContext(payload: {
           behavior: 'deny' as const,
           message: 'Compaction turns run tool-free.'
         }),
+        ...(compactionMcpServers ? { mcpServers: compactionMcpServers } : {}),
         ...(pathToClaudeCodeExecutable ? { pathToClaudeCodeExecutable } : {})
       }
     })
     for await (const message of stream) {
+      const nextSessionId = extractProviderSessionId(message)
+      if (nextSessionId && nextSessionId !== compactionSessionId) {
+        if (
+          !shouldAcceptTaskWraithMcpSessionId({
+            nextProviderSessionId: nextSessionId,
+            currentProviderSessionId: compactionSessionId,
+            seenProviderSessionIds: seenCompactionSessionIds
+          })
+        ) {
+          streamError = 'Claude replayed a stale session identity during compaction.'
+          compactionIdentityFailed = true
+          controller.abort()
+          break
+        }
+        if (activeClaudeManualCompactions.has(nextSessionId)) {
+          streamError = 'A compaction is already in progress for the rotated Claude session.'
+          compactionIdentityFailed = true
+          controller.abort()
+          break
+        }
+        const currentChat = AppStore.getChat(payload.chatId)
+        const currentParticipant = payload.participantId
+          ? currentChat?.ensemble?.participants.find(
+              (candidate) => candidate.id === payload.participantId
+            )
+          : undefined
+        const ownerSessionId = payload.participantId
+          ? currentParticipant?.linkedProviderSessionId
+          : currentChat?.linkedProviderSessionId
+        const ownerReceipt = payload.participantId
+          ? currentParticipant?.taskWraithMcpProfileReceipt
+          : currentChat?.taskWraithMcpProfileReceipt
+        const ownerMatches = Boolean(
+          currentChat &&
+            (payload.participantId
+              ? currentParticipant?.provider === 'claude'
+              : currentChat.provider === 'claude') &&
+            ownerSessionId === compactionSessionId
+        )
+        const transition = ownerMatches
+          ? transitionTaskWraithMcpProfileReceipt({
+              provider: 'claude',
+              profileId: profileResolution.profileId,
+              mcpAdvertised: compactionMcpInput.enabled,
+              nextProviderSessionId: nextSessionId,
+              previousRunProviderSessionId: compactionSessionId,
+              expectedStoreIdentity: compactionExpectedStoreIdentity,
+              currentStoreSessionId: ownerSessionId,
+              currentReceipt: ownerReceipt
+            })
+          : { accepted: false as const, reason: 'stale_store_identity' as const }
+        if (!transition.accepted || !currentChat) {
+          streamError = 'The Claude session changed while compaction was rotating its identity.'
+          compactionIdentityFailed = true
+          controller.abort()
+          break
+        }
+        const updatedChat: ChatRecord = payload.participantId
+          ? {
+              ...currentChat,
+              ensemble: {
+                ...currentChat.ensemble!,
+                participants: currentChat.ensemble!.participants.map((candidate) =>
+                  candidate.id === payload.participantId
+                    ? {
+                        ...candidate,
+                        linkedProviderSessionId: nextSessionId,
+                        taskWraithMcpProfileReceipt: transition.receipt
+                      }
+                    : candidate
+                )
+              },
+              updatedAt: Date.now()
+            }
+          : {
+              ...currentChat,
+              linkedProviderSessionId: nextSessionId,
+              taskWraithMcpProfileReceipt: transition.receipt,
+              updatedAt: Date.now()
+            }
+        saveAndBroadcastChat(updatedChat)
+        compactionExpectedStoreIdentity = taskWraithMcpProfileStoreIdentity({
+          providerSessionId: nextSessionId,
+          receipt: transition.receipt
+        })
+        seenCompactionSessionIds.add(nextSessionId)
+        activeClaudeManualCompactions.add(nextSessionId)
+        compactionSessionId = nextSessionId
+      }
       const signal = normalizeClaudeContextCompactionEvent(message)
       if (!signal) continue
       if (signal.kind === 'completed') observed = signal
       else if (signal.kind === 'failed' && !observed) observed = signal
     }
   } catch (error) {
-    streamError = error instanceof Error ? error.message : String(error)
+    streamError ||= error instanceof Error ? error.message : String(error)
   } finally {
     clearTimeout(timer)
-    activeClaudeManualCompactions.delete(payload.providerSessionId)
+    for (const sessionId of seenCompactionSessionIds) {
+      activeClaudeManualCompactions.delete(sessionId)
+    }
   }
   const signal: ContextCompactionSignal =
-    observed && observed.kind === 'completed'
-      ? observed
-      : (observed ?? {
+    compactionIdentityFailed
+      ? {
           kind: 'failed',
           telemetry: {
             error: streamError || 'Claude did not report a compaction for this session.'
           }
-        })
+        }
+      : observed && observed.kind === 'completed'
+        ? observed
+        : (observed ?? {
+            kind: 'failed',
+            telemetry: {
+              error: streamError || 'Claude did not report a compaction for this session.'
+            }
+          })
   signal.telemetry = {
     ...signal.telemetry,
     provider: 'claude',
@@ -15331,7 +15973,7 @@ async function compactClaudeProviderContext(payload: {
       chatId: payload.chatId,
       participantId: payload.participantId,
       provider: 'claude',
-      linkedProviderSessionId: payload.providerSessionId
+      linkedProviderSessionId: compactionSessionId
     })
   }
   appendContextCompactionMessageToChat(
@@ -22169,6 +22811,7 @@ async function executeGeminiMcpTool(
         subThread,
         prompt: promptArg,
         approvalMode: delegatedApprovalMode,
+        model: 'cli-default',
         resumeSessionId: recalledProviderSessionId
       })
       // Runtime profiles are PER-PROVIDER (resolveRuntimeProfileForPayload
@@ -26520,18 +27163,52 @@ if (isGeminiMcpBridgeProcess) {
           const priorMessages = chat.messages.filter(
             (message) => message.id !== promptMessageId
           )
+          const bridgeSettings = AppStore.getSettings()
+          const bridgeClaudePinnedMcpReceipt =
+            provider === 'claude' &&
+            isTaskWraithMcpProfileReceiptForSession(chat.taskWraithMcpProfileReceipt, {
+              provider: 'claude',
+              providerSessionId: resumeSessionId
+            })
+          const bridgeTaskWraithMcpAdvertised =
+            provider === 'grok'
+              ? shouldAdvertiseTaskWraithMcpToGrok({
+                  acpEnabled: grokAcpEnabled(),
+                  approvalMode: effectiveApprovalMode || 'default',
+                  bridgeEnabled: Boolean(bridgeSettings.geminiMcpBridgeEnabled),
+                  readOnlyAdvertiseEnabled: grokReadOnlyMcpAdvertiseEnabled()
+                })
+              : provider === 'claude'
+                ? Boolean(
+                    bridgeClaudePinnedMcpReceipt ||
+                      (bridgeSettings.geminiMcpBridgeEnabled &&
+                        taskwraithMcpBridgeCommandStatus().available)
+                  )
+                : true
+          const bridgeTaskWraithMcpProfile = resolveTaskWraithMcpProfile({
+            provider,
+            modelId: inheritedModel,
+            providerSessionId: resumeSessionId,
+            storeProviderSessionId: linkedSessionForProvider,
+            receipt: chat.taskWraithMcpProfileReceipt,
+            coreProfileOptIn: taskWraithCoreMcpProfileOptInEnabled(),
+            grokMcpAdvertised:
+              provider === 'grok' ? bridgeTaskWraithMcpAdvertised : undefined
+          })
           const composed = composeRunPrompt({
             provider,
             finalPrompt: action.text,
             messages: priorMessages,
-            chatContextTurns: AppStore.getSettings().chatContextTurns,
+            chatContextTurns: bridgeSettings.chatContextTurns,
             ...(resumeSessionId ? { resumeSessionId } : {}),
-            nextModel: action.model,
+            nextModel: inheritedModel,
             codexHandoffsApplied: [],
             isGlobalRun: isGlobalScope,
             approvalMode: effectiveApprovalMode || 'default',
             workflowMode: effectiveWorkflowMode,
             providerLabel: providerLabel(provider),
+            taskWraithMcpAdvertised: bridgeTaskWraithMcpAdvertised,
+            taskWraithMcpProfileId: bridgeTaskWraithMcpProfile.profileId,
             // Ollama continuity is NOT a session id — it's the persisted
             // tool-trajectory memory the desktop composer injects.
             ...(provider === 'ollama'
@@ -30612,6 +31289,8 @@ if (isGeminiMcpBridgeProcess) {
       signRunPermissionPosture: signRunPosture,
       isTrustedSessionGranted: (scope) => trustedSessionGrants.isGranted(scope),
       dispatch: (payload, event) => dispatchRunWithProviderPause(payload, event),
+      shouldPersistProviderSessionForRun,
+      releaseProviderSessionPersistenceDecision,
       cancelRun: (provider, runId) => providerAdapters.require(provider).cancel(runId),
       createRunId: createFallbackRunId,
       now: () => Date.now(),

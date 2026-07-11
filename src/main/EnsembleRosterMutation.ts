@@ -150,6 +150,23 @@ const PATCH_FIELDS = [
 
 const hasOwn = Object.prototype.hasOwnProperty
 
+export function claudeRosterSessionRelinkError(
+  target: EnsembleParticipant,
+  patch: RosterEditParticipantInput
+): string | null {
+  if (!hasOwn.call(patch, 'linkedProviderSessionId')) return null
+  const nextProvider =
+    typeof patch.provider === 'string' && patch.provider ? patch.provider : target.provider
+  if (nextProvider !== 'claude' || typeof patch.linkedProviderSessionId !== 'string') return null
+  if (
+    target.provider === 'claude' &&
+    patch.linkedProviderSessionId === (target.linkedProviderSessionId ?? null)
+  ) {
+    return null
+  }
+  return 'Roster edit rejected: a Claude provider session cannot be relinked from another thread; reset it with null instead.'
+}
+
 export function evaluateRosterEdit(
   req: RosterEditRequest,
   ctx: RosterEditContext
@@ -277,6 +294,8 @@ function evaluateEdit(req: RosterEditRequest, ctx: RosterEditContext): RosterEdi
   }
 
   const target = ctx.participants[targetIndex]
+  const claudeRelinkError = claudeRosterSessionRelinkError(target, participant)
+  if (claudeRelinkError) return fail('invalid_request', claudeRelinkError)
   const nextTarget = applyParticipantPatch(target, participant)
   const monotonicFineOverrides = validateFineOverridesRemainMonotonic(
     target.permissionOverrides,
@@ -374,12 +393,14 @@ function applyParticipantPatch(
   const next: EnsembleParticipant = { ...target }
   let providerChanged = false
   let promptReceiptsInvalidated = false
+  let mcpProfileReceiptInvalidated = false
   if (hasOwn.call(patch, 'provider') && isNonEmptyString(patch.provider)) {
     const provider = patch.provider as ProviderId
     providerChanged = provider !== target.provider
     next.provider = provider
     if (providerChanged) {
       promptReceiptsInvalidated = true
+      mcpProfileReceiptInvalidated = true
       delete next.runtimeProfileId
       delete next.geminiAuthProfileId
       delete next.ollamaRunProfile
@@ -455,11 +476,15 @@ function applyParticipantPatch(
     }
     if ((next.linkedProviderSessionId || '') !== (target.linkedProviderSessionId || '')) {
       promptReceiptsInvalidated = true
+      mcpProfileReceiptInvalidated = true
     }
   }
   if (promptReceiptsInvalidated) {
     delete next.promptShellVersion
     delete next.promptDynamicStateVersion
+  }
+  if (mcpProfileReceiptInvalidated) {
+    delete next.taskWraithMcpProfileReceipt
   }
   return next
 }

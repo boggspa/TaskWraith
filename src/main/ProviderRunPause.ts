@@ -130,6 +130,7 @@ export function applyReroutePlanToPayload<T extends { provider: ProviderId }>(
       (providerChanged ? undefined : (payload as { runtimeProfileId?: string }).runtimeProfileId),
     ...(providerChanged
       ? {
+          providerSessionId: null,
           effectivePermissions: undefined,
           effectivePermissionsSignature: undefined
         }

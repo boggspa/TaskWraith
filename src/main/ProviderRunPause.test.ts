@@ -71,7 +71,8 @@ describe('ProviderRunPause', () => {
         scope: 'workspace' as const,
         workspace: '/tmp/project',
         prompt: 'Fix the test',
-        approvalMode: 'default'
+        approvalMode: 'default',
+        providerSessionId: 'codex-native-session'
       },
       resolution
     )
@@ -80,6 +81,7 @@ describe('ProviderRunPause', () => {
     expect(routedPayload.providerReroute).toEqual(resolution.reroute)
     expect((routedPayload as { model?: string }).model).toBe('gpt-oss:20b')
     expect(routedPayload.approvalMode).toBe('plan')
+    expect(routedPayload.providerSessionId).toBeNull()
   })
 
   it('does not let a reroute plan raise the payload approval mode', () => {

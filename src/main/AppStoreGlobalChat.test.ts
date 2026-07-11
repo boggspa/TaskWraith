@@ -215,6 +215,18 @@ describe('AppStore global chats', () => {
 
   it('creates default side chats from ensemble parents as linked ensemble clones', () => {
     const parent = AppStore.createEnsembleChat()
+    parent.ensemble!.participants[0] = {
+      ...parent.ensemble!.participants[0],
+      linkedProviderSessionId: 'parent-provider-session',
+      taskWraithMcpProfileReceipt: {
+        schemaVersion: 1,
+        profileId: 'taskwraith-core-v1',
+        provider: parent.ensemble!.participants[0].provider,
+        providerSessionId: 'parent-provider-session',
+        pinnedAt: '2026-07-11T00:00:00.000Z'
+      }
+    }
+    AppStore.saveChat(parent)
     const sideChat = AppStore.createSideChat({
       parentChatId: parent.appChatId
     })
@@ -231,6 +243,13 @@ describe('AppStore global chats', () => {
     expect(sideChat.ensemble?.participants.map((participant) => participant.id)).toEqual(
       parent.ensemble?.participants.map((participant) => participant.id)
     )
+    expect(
+      sideChat.ensemble?.participants.every(
+        (participant) =>
+          participant.linkedProviderSessionId === null &&
+          participant.taskWraithMcpProfileReceipt === undefined
+      )
+    ).toBe(true)
   })
 
   it('keeps chat ids inside the chat persistence directory', () => {

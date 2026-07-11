@@ -46,6 +46,13 @@ import {
   isCursorGrok45ModelId,
   isGrok45ReasoningModelId
 } from '../../shared/grok45Models'
+import {
+  isTaskWraithMcpProfileReceiptForSession,
+  resolveTaskWraithMcpProfile,
+  taskWraithCoreMcpProfileOptInEnabled
+} from '../mcp/McpSessionProfileFence'
+import { grokAcpEnabled, grokReadOnlyMcpAdvertiseEnabled } from '../grokGate'
+import { shouldAdvertiseTaskWraithMcpToGrok } from '../grok/GrokMcpAdvertise'
 
 // Grok + Cursor are first-class providers; no eligibility gate (see ProviderId).
 const PROVIDER_IDS = new Set<ProviderId>(['gemini', 'codex', 'claude', 'kimi', 'grok', 'cursor', 'ollama'])
@@ -191,6 +198,10 @@ export class ComposerService {
     const settings = this.deps.getSettings()
     const dispatchResolution = resolveProviderDispatch(settings, requestedProvider)
     const provider = dispatchResolution.provider
+    const effectiveProviderReroute = input.providerReroute || dispatchResolution.reroute
+    const crossProviderReroute = Boolean(
+      effectiveProviderReroute && effectiveProviderReroute.from !== effectiveProviderReroute.to
+    )
     // A verbatim slash dispatch is provider-native — rerouting it (provider
     // pause plans) would hand the literal slash text to a different provider
     // as prose. Fail visibly instead; the renderer surfaces compose errors.
@@ -353,6 +364,34 @@ export class ComposerService {
     const chatOllamaRunProfile = isOllamaRunProfileId(rawChatOllamaRunProfile)
       ? rawChatOllamaRunProfile
       : undefined
+    const mcpProfileOwner = storedChat || chat
+    const claudePinnedMcpReceipt =
+      provider === 'claude' &&
+      isTaskWraithMcpProfileReceiptForSession(mcpProfileOwner.taskWraithMcpProfileReceipt, {
+        provider: 'claude',
+        providerSessionId: resumeDecision.sessionId
+      })
+    const taskWraithMcpAdvertised =
+      provider === 'grok'
+        ? shouldAdvertiseTaskWraithMcpToGrok({
+            acpEnabled: grokAcpEnabled(),
+            approvalMode,
+            bridgeEnabled: Boolean(settings.geminiMcpBridgeEnabled),
+            readOnlyAdvertiseEnabled: grokReadOnlyMcpAdvertiseEnabled()
+          })
+        : provider === 'claude'
+          ? Boolean(claudePinnedMcpReceipt || settings.geminiMcpBridgeEnabled)
+          : true
+    const taskWraithMcpProfile = resolveTaskWraithMcpProfile({
+      provider,
+      modelId: requestedModel,
+      providerSessionId: resumeDecision.sessionId,
+      storeProviderSessionId: mcpProfileOwner.linkedProviderSessionId,
+      receipt: mcpProfileOwner.taskWraithMcpProfileReceipt,
+      coreProfileOptIn: taskWraithCoreMcpProfileOptInEnabled(),
+      profileReceiptCanPersist: provider !== 'claude' || !crossProviderReroute,
+      grokMcpAdvertised: provider === 'grok' ? taskWraithMcpAdvertised : undefined
+    })
     const composed = composeRunPrompt({
       provider,
       verbatimPrompt: input.verbatimPrompt === true,
@@ -372,6 +411,8 @@ export class ComposerService {
       providerLabel: getProviderLabel(provider),
       nativeSubAgentRequests: settings.nativeSubAgentRequests,
       activeGoal,
+      taskWraithMcpProfileId: taskWraithMcpProfile.profileId,
+      taskWraithMcpAdvertised,
       ...(provider === 'ollama'
         ? {
             ollamaSessionMemory: normalizeOllamaSessionMemory(chat.ollamaSessionMemory)
@@ -465,8 +506,8 @@ export class ComposerService {
               'Workspace'
             )
           }),
-      ...(input.providerReroute || dispatchResolution.reroute
-        ? { providerReroute: input.providerReroute || dispatchResolution.reroute }
+      ...(effectiveProviderReroute
+        ? { providerReroute: effectiveProviderReroute }
         : {}),
       // Carry the per-chat Ollama run profile onto the run payload so the
       // OllamaProvider applies the chat's runtime tuning. Absent → global default.
@@ -537,6 +578,8 @@ export class ComposerService {
       geminiWorktree:
         scope !== 'global' && provider === 'gemini' ? effectiveInput.geminiWorktree : null,
       runtimeProfileId,
+      taskWraithMcpProfileId: taskWraithMcpProfile.profileId,
+      taskWraithMcpAdvertised,
       geminiAuthProfileId,
       handoffSourceRunId: optionalString(input.handoffSourceRunId),
       composer: {

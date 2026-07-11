@@ -36,6 +36,7 @@ import {
   auditContentHash,
   type HumanCollaborationAuditLike
 } from '../collaboration/HumanCollaborationAuditLog'
+import { isTaskWraithMcpProfileReceiptForSession } from '../mcp/McpSessionProfileFence'
 
 // Grok + Cursor are first-class providers; no eligibility gate (see ProviderId).
 const PROVIDER_IDS = new Set<ProviderId>(['gemini', 'codex', 'claude', 'kimi', 'grok', 'cursor', 'ollama'])
@@ -347,8 +348,11 @@ export class ChatService {
   }
 
   saveChat(chat: ChatRecord): ChatRecord {
-    const sanitized = this.preserveCollaboratorComments(this.deps.sanitizeChatForSave(chat))
-    assertSafeChatId(sanitized.appChatId)
+    const sanitizedInput = this.deps.sanitizeChatForSave(chat)
+    assertSafeChatId(sanitizedInput.appChatId)
+    const sanitized = this.preserveCollaboratorComments(
+      this.preserveTaskWraithMcpProfileReceipts(sanitizedInput)
+    )
     this.deps.appStore.saveChat(sanitized)
     return sanitized
   }
@@ -655,6 +659,129 @@ export class ChatService {
     return this.deps.humanCollaborationStore
   }
 
+  /**
+   * MCP-profile receipts describe a provider session's immutable tool surface,
+   * so they are owned by main just like the linked native-session transition
+   * that creates them. Renderer saves may omit a receipt from a stale clone,
+   * but must never mint or replace one. While main has a valid receipt, the
+   * Claude linked-session identity is main-owned even for legacy sessions that
+   * predate receipts: preserve the exact canonical session (including a cleared
+   * value) across stale renderer saves. A provider boundary clears the incoming
+   * session/receipt pair, and renderer-authored receipts are always stripped.
+   */
+  private preserveTaskWraithMcpProfileReceipts(chat: ChatRecord): ChatRecord {
+    const current = this.deps.appStore.getChat(chat.appChatId)
+    const currentSoloReceipt =
+      current?.provider &&
+      isTaskWraithMcpProfileReceiptForSession(current.taskWraithMcpProfileReceipt, {
+        provider: current.provider,
+        providerSessionId: current.linkedProviderSessionId
+      })
+        ? current.taskWraithMcpProfileReceipt
+        : undefined
+    const sameClaudeLane = current?.provider === 'claude' && chat.provider === 'claude'
+    const crossesClaudeBoundary = Boolean(
+      (!current && chat.provider === 'claude') ||
+        (current && (current.provider === 'claude') !== (chat.provider === 'claude'))
+    )
+    const suppressIncomingSoloRerouteSession = Boolean(
+      current?.provider === chat.provider &&
+        isEphemeralProviderRerouteSession(chat, chat.linkedProviderSessionId)
+    )
+    const canonicalSoloSession = suppressIncomingSoloRerouteSession
+      ? current?.linkedProviderSessionId
+      : sameClaudeLane
+        ? current?.linkedProviderSessionId
+        : crossesClaudeBoundary
+          ? undefined
+          : chat.linkedProviderSessionId
+    const canonicalSoloReceipt =
+      suppressIncomingSoloRerouteSession || sameClaudeLane || current?.provider === chat.provider
+        ? currentSoloReceipt
+        : undefined
+
+    let changed =
+      chat.linkedProviderSessionId !== canonicalSoloSession ||
+      !sameTaskWraithMcpProfileReceipt(chat.taskWraithMcpProfileReceipt, canonicalSoloReceipt)
+    let participants = chat.ensemble?.participants
+    if (participants) {
+      const currentParticipants = new Map(
+        (current?.ensemble?.participants || []).map((participant) => [participant.id, participant])
+      )
+      participants = participants.map((participant) => {
+        const currentParticipant = currentParticipants.get(participant.id)
+        const currentReceipt =
+          currentParticipant &&
+          isTaskWraithMcpProfileReceiptForSession(
+            currentParticipant.taskWraithMcpProfileReceipt,
+            {
+              provider: currentParticipant.provider,
+              providerSessionId: currentParticipant.linkedProviderSessionId
+            }
+          )
+            ? currentParticipant.taskWraithMcpProfileReceipt
+            : undefined
+        const sameClaudeParticipant = Boolean(
+          currentParticipant?.provider === 'claude' && participant.provider === 'claude'
+        )
+        const suppressIncomingRerouteSession = Boolean(
+          currentParticipant?.provider === participant.provider &&
+            isEphemeralProviderRerouteSession(
+              chat,
+              participant.linkedProviderSessionId,
+              participant.id
+            )
+        )
+        const crossesClaudeParticipantBoundary = Boolean(
+          !currentParticipant ||
+            (currentParticipant.provider === 'claude') !== (participant.provider === 'claude')
+        )
+        const canonicalSession = suppressIncomingRerouteSession
+          ? currentParticipant?.linkedProviderSessionId
+          : sameClaudeParticipant
+            ? currentParticipant?.linkedProviderSessionId
+            : crossesClaudeParticipantBoundary
+              ? undefined
+              : participant.linkedProviderSessionId
+        const canonicalReceipt =
+          suppressIncomingRerouteSession ||
+          sameClaudeParticipant ||
+          currentParticipant?.provider === participant.provider
+            ? currentReceipt
+            : undefined
+        if (
+          participant.linkedProviderSessionId === canonicalSession &&
+          sameTaskWraithMcpProfileReceipt(participant.taskWraithMcpProfileReceipt, canonicalReceipt)
+        ) {
+          return participant
+        }
+        changed = true
+        const next = { ...participant }
+        if (canonicalSession === undefined) delete next.linkedProviderSessionId
+        else next.linkedProviderSessionId = canonicalSession
+        if (canonicalReceipt) {
+          next.taskWraithMcpProfileReceipt = canonicalReceipt
+        } else {
+          delete next.taskWraithMcpProfileReceipt
+        }
+        return next
+      })
+    }
+
+    if (!changed) return chat
+    const next: ChatRecord = {
+      ...chat,
+      ...(chat.ensemble && participants
+        ? { ensemble: { ...chat.ensemble, participants } }
+        : {})
+    }
+    if (canonicalSoloSession === undefined) delete next.linkedProviderSessionId
+    else next.linkedProviderSessionId = canonicalSoloSession
+    if (canonicalSoloReceipt) next.taskWraithMcpProfileReceipt = canonicalSoloReceipt
+    else delete next.taskWraithMcpProfileReceipt
+    return next
+  }
+
   private preserveCollaboratorComments(chat: ChatRecord): ChatRecord {
     const store = this.deps.humanCollaborationStore
     if (!store) return chat
@@ -704,6 +831,38 @@ export class ChatService {
       messages
     }
   }
+}
+
+function isEphemeralProviderRerouteSession(
+  chat: ChatRecord,
+  providerSessionId: string | null | undefined,
+  ensembleParticipantId?: string
+): boolean {
+  const normalizedSessionId =
+    typeof providerSessionId === 'string' ? providerSessionId.trim() : ''
+  if (!normalizedSessionId) return false
+  return (chat.runs || []).some((run) => {
+    const reroute = run.providerReroute
+    if (!reroute || reroute.from === reroute.to) return false
+    if (run.providerThreadId !== normalizedSessionId) return false
+    return ensembleParticipantId
+      ? run.ensembleParticipantId === ensembleParticipantId
+      : !run.ensembleParticipantId
+  })
+}
+
+function sameTaskWraithMcpProfileReceipt(
+  left: ChatRecord['taskWraithMcpProfileReceipt'],
+  right: ChatRecord['taskWraithMcpProfileReceipt']
+): boolean {
+  if (!left || !right) return left === right
+  return (
+    left.schemaVersion === right.schemaVersion &&
+    left.profileId === right.profileId &&
+    left.provider === right.provider &&
+    left.providerSessionId === right.providerSessionId &&
+    left.pinnedAt === right.pinnedAt
+  )
 }
 
 function compareMessagesByTime(a: ChatMessage, b: ChatMessage): number {

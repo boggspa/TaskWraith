@@ -83,6 +83,40 @@ describe('AppStore.setChatKind (Slice C — mid-thread ensemble toggle)', () => 
     expect(reloaded?.messages).toHaveLength(1)
   })
 
+  it('starts fresh at the solo→ensemble boundary and rejects a renderer-authored seat receipt', () => {
+    const solo = AppStore.createGlobalChat()
+    AppStore.saveChat({
+      ...solo,
+      provider: 'codex',
+      linkedProviderSessionId: 'solo-codex-session',
+      taskWraithMcpProfileReceipt: {
+        schemaVersion: 1,
+        profileId: 'taskwraith-core-v1',
+        provider: 'codex',
+        providerSessionId: 'solo-codex-session',
+        pinnedAt: '2026-07-11T00:00:00.000Z'
+      }
+    } as ChatRecord)
+
+    const converted = AppStore.setChatKind(solo.appChatId, 'ensemble', {
+      seedParticipant: seedParticipant({
+        linkedProviderSessionId: 'renderer-supplied-session',
+        taskWraithMcpProfileReceipt: {
+          schemaVersion: 1,
+          profileId: 'taskwraith-full-v1',
+          provider: 'codex',
+          providerSessionId: 'renderer-supplied-session',
+          pinnedAt: '2026-07-11T00:01:00.000Z'
+        }
+      })
+    })
+
+    expect(converted.linkedProviderSessionId).toBeUndefined()
+    expect(converted.taskWraithMcpProfileReceipt).toBeUndefined()
+    expect(converted.ensemble?.participants[0].linkedProviderSessionId).toBeNull()
+    expect(converted.ensemble?.participants[0].taskWraithMcpProfileReceipt).toBeUndefined()
+  })
+
   it('makes TaskWraith authoritative when a native-goal chat becomes an ensemble', () => {
     const solo = AppStore.createGlobalChat()
     AppStore.saveChat({
@@ -143,6 +177,49 @@ describe('AppStore.setChatKind (Slice C — mid-thread ensemble toggle)', () => 
     expect(reloaded?.ensemble).toBeUndefined()
     expect(reloaded?.provider).toBe('codex')
     expect(reloaded?.messages).toHaveLength(1)
+  })
+
+  it('drops participant session/profile pairs when an ensemble is stashed or collapsed to solo', () => {
+    const ensemble = AppStore.createEnsembleChat()
+    const receipt = {
+      schemaVersion: 1 as const,
+      profileId: 'taskwraith-core-v1' as const,
+      provider: 'claude' as const,
+      providerSessionId: 'claude-seat-session',
+      pinnedAt: '2026-07-11T00:00:00.000Z'
+    }
+    AppStore.saveChat({
+      ...ensemble,
+      provider: 'claude',
+      linkedProviderSessionId: 'stale-top-level-session',
+      taskWraithMcpProfileReceipt: {
+        ...receipt,
+        providerSessionId: 'stale-top-level-session'
+      },
+      ensemble: {
+        ...ensemble.ensemble!,
+        participants: [
+          seedParticipant({
+            id: 'claude-seat',
+            provider: 'claude',
+            linkedProviderSessionId: 'claude-seat-session',
+            taskWraithMcpProfileReceipt: receipt
+          })
+        ]
+      }
+    } as ChatRecord)
+
+    const solo = AppStore.setChatKind(ensemble.appChatId, 'single', {
+      canonicalProvider: 'claude'
+    })
+    const stash = solo.providerMetadata?.stashedEnsemble as
+      | { config?: { participants?: EnsembleParticipant[] } }
+      | undefined
+
+    expect(solo.linkedProviderSessionId).toBeUndefined()
+    expect(solo.taskWraithMcpProfileReceipt).toBeUndefined()
+    expect(stash?.config?.participants?.[0].linkedProviderSessionId).toBeNull()
+    expect(stash?.config?.participants?.[0].taskWraithMcpProfileReceipt).toBeUndefined()
   })
 
   it('is a no-op when the target kind already matches', () => {

@@ -631,6 +631,26 @@ export type EnsembleFanoutPolicy =
  */
 export type EnsembleStageRole = 'scout' | 'worker' | 'reviewer'
 
+/**
+ * Versioned TaskWraith MCP catalog identities. The version is part of the
+ * persisted value deliberately: changing profile membership is a session
+ * boundary, never an in-place mutation of a provider-native session.
+ */
+export type TaskWraithMcpProfileId = 'taskwraith-full-v1' | 'taskwraith-core-v1'
+
+/**
+ * Main-owned proof of the TaskWraith MCP catalog a provider session was born
+ * with. Renderer saves may round-trip this value, but only main creates or
+ * advances it alongside a provider session id.
+ */
+export interface TaskWraithMcpProfileReceipt {
+  schemaVersion: 1
+  profileId: TaskWraithMcpProfileId
+  provider: ProviderId
+  providerSessionId: string
+  pinnedAt: string
+}
+
 export interface EnsembleParticipant {
   id: string
   provider: ProviderId
@@ -648,6 +668,8 @@ export interface EnsembleParticipant {
   /** See EnsembleStageRole — absent means pre-stage dispatch behavior. */
   stageRole?: EnsembleStageRole
   linkedProviderSessionId?: string | null
+  /** TaskWraith MCP profile pinned to linkedProviderSessionId. */
+  taskWraithMcpProfileReceipt?: TaskWraithMcpProfileReceipt
   /**
    * Host-side SEAT compaction (src/shared/contextCompaction.ts) — the stored
    * session summary for cursor/kimi participants (no native compaction lever).
@@ -3235,6 +3257,8 @@ export interface ChatRecord {
   /** Per-thread markdown notes shown above this chat's pinned messages. */
   pinnedNotes?: string
   linkedProviderSessionId?: string
+  /** TaskWraith MCP profile pinned to linkedProviderSessionId. */
+  taskWraithMcpProfileReceipt?: TaskWraithMcpProfileReceipt
   /**
    * Host-side context compaction (src/shared/contextCompaction.ts) — the
    * stored session summary for providers with no native compaction lever.

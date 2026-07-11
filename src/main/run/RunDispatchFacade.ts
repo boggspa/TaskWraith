@@ -54,15 +54,44 @@ export function createRunDispatchFacade(deps: RunDispatchFacadeDeps) {
     payload: AgentRunPayload,
     event: IpcMainInvokeEvent | { sender: WebContents }
   ): Promise<{ dispatched: boolean; appRunId: string }> => {
-    const resolution = resolveProviderDispatch(deps.getSettings(), payload.provider)
-    const routedPayload = applyReroutePlanToPayload(payload, resolution)
+    const settings = deps.getSettings()
+    const claimedReroute = payload.providerReroute
+    const payloadWithoutClaim = { ...payload, providerReroute: undefined }
+    // Composer can resolve a provider pause before the renderer round-trip. Do
+    // not trust that metadata, but do reconstruct it when the CURRENT main-owned
+    // pause plan proves the exact source→target route. All other claims vanish.
+    let resolution = resolveProviderDispatch(settings, payload.provider)
+    let dispatchInput = payloadWithoutClaim
+    if (
+      (claimedReroute?.reason === 'provider-paused' ||
+        claimedReroute?.reason === 'user-failover') &&
+      claimedReroute.to === payload.provider &&
+      claimedReroute.from !== claimedReroute.to
+    ) {
+      try {
+        const sourceResolution = resolveProviderDispatch(settings, claimedReroute.from)
+        if (
+          sourceResolution.reroute?.from === claimedReroute.from &&
+          sourceResolution.reroute.to === claimedReroute.to &&
+          sourceResolution.reroute.reason === claimedReroute.reason &&
+          sourceResolution.provider === payload.provider
+        ) {
+          resolution = sourceResolution
+          dispatchInput = { ...payloadWithoutClaim, provider: claimedReroute.from }
+        }
+      } catch {
+        // The source pause is no longer a valid reroute; dispatch the requested
+        // provider without preserving renderer-carried route metadata.
+      }
+    }
+    const routedPayload = applyReroutePlanToPayload(dispatchInput, resolution)
     // Auto-failover re-dispatch: a provider-change reroute clears
     // effectivePermissions, which normalize would then downgrade to read-only.
     // Re-derive + re-sign a CAPPED, non-escalating posture for the target so a
     // failover PRESERVES (never raises) the user's approved authority. Scoped
     // to failover runs (failoverHopCount set) so manual reroutes are unchanged.
     if (resolution.reroute && typeof routedPayload.failoverHopCount === 'number') {
-      deps.applyFailoverReroutePosture(routedPayload, payload)
+      deps.applyFailoverReroutePosture(routedPayload, dispatchInput)
     }
     // Self-heal stale persisted MCP configs on EVERY dispatch path, not
     // just renderer capability refreshes — bridge (iOS) dispatches on a

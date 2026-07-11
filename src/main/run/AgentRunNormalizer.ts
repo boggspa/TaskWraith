@@ -7,7 +7,8 @@ import type {
   EffectiveRunPermissions,
   ExternalPathGrant,
   GeminiWorktreeLaunchOption,
-  ProviderId
+  ProviderId,
+  ProviderRunReroute
 } from '../store/types'
 import {
   clampUntrustedRunPosture,
@@ -168,6 +169,7 @@ export function normalizeAgentRunPayload(
   }
   return {
     provider,
+    providerReroute: normalizeProviderRunReroute(payload.providerReroute, provider),
     scope,
     workspace,
     prompt: typeof payload.prompt === 'string' ? payload.prompt : String(payload.prompt ?? ''),
@@ -204,6 +206,36 @@ export function normalizeAgentRunPayload(
     effectivePermissionsSignature: clampedPosture.signature,
     ensembleRun: normalizeEnsembleRunIdentity(payload.ensembleRun),
     auditRun: normalizeAuditRunIdentity(payload.auditRun)
+  }
+}
+
+function normalizeProviderRunReroute(
+  value: unknown,
+  provider: ProviderId
+): ProviderRunReroute | undefined {
+  if (!isRecord(value)) return undefined
+  let from: ProviderId
+  let to: ProviderId
+  try {
+    from = assertProviderId(value.from)
+    to = assertProviderId(value.to)
+  } catch {
+    return undefined
+  }
+  if (
+    from === to ||
+    to !== provider ||
+    (value.reason !== 'provider-paused' && value.reason !== 'user-failover')
+  ) {
+    return undefined
+  }
+  return {
+    from,
+    to,
+    reason: value.reason,
+    ...(typeof value.savedAsDefault === 'boolean'
+      ? { savedAsDefault: value.savedAsDefault }
+      : {})
   }
 }
 

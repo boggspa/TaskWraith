@@ -7,8 +7,10 @@ import type {
   EffectiveRunPermissions,
   EnsembleRunIdentity,
   ExternalPathGrant,
-  ProviderId
+  ProviderId,
+  TaskWraithMcpProfileId
 } from './store/types'
+import type { TaskWraithMcpProfileFenceState } from './run/AgentRunTypes'
 export interface CodexRunState {
   sender: Electron.WebContents
   threadId: string
@@ -135,6 +137,11 @@ export interface CliProviderStreamState extends CliProviderThinkingSegmentsState
   sessionTrust?: boolean
   externalPathGrants?: ExternalPathGrant[]
   runtimeProfileId?: string
+  taskWraithMcpProfileId?: TaskWraithMcpProfileId
+  taskWraithMcpAdvertised?: boolean
+  taskWraithMcpProfileFence?: TaskWraithMcpProfileFenceState
+  /** Session ids already accepted from this run; rejects late A→B replay after A→B→C. */
+  taskWraithMcpSeenProviderSessionIds?: Set<string>
   effectivePermissions?: EffectiveRunPermissions
   effectivePermissionsSignature?: string
   ensembleRun?: EnsembleRunIdentity

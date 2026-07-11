@@ -75,7 +75,14 @@ describe('invalidatePromptReceiptsForMatchingEnsembleSession', () => {
             provider: 'codex',
             linkedProviderSessionId: 'codex-session-a',
             promptShellVersion: 'shell-a',
-            promptDynamicStateVersion: 'dynamic-a'
+            promptDynamicStateVersion: 'dynamic-a',
+            taskWraithMcpProfileReceipt: {
+              schemaVersion: 1,
+              profileId: 'taskwraith-core-v1',
+              provider: 'codex',
+              providerSessionId: 'codex-session-a',
+              pinnedAt: '2026-07-11T00:00:00.000Z'
+            }
           })
         ]
       }
@@ -92,6 +99,10 @@ describe('invalidatePromptReceiptsForMatchingEnsembleSession', () => {
     expect(next).not.toBeNull()
     expect(next?.ensemble?.participants[0].promptShellVersion).toBeUndefined()
     expect(next?.ensemble?.participants[0].promptDynamicStateVersion).toBeUndefined()
+    expect(next?.ensemble?.participants[0].taskWraithMcpProfileReceipt).toMatchObject({
+      profileId: 'taskwraith-core-v1',
+      providerSessionId: 'codex-session-a'
+    })
     expect(next?.ensemble?.participants[0].linkedProviderSessionId).toBe('codex-session-a')
 
     expect(
@@ -124,6 +135,50 @@ function externalGrant(): ExternalPathGrant {
 }
 
 describe('evaluateRosterEdit', () => {
+  it('rejects cross-thread Claude relinks while allowing the same id or an explicit reset', () => {
+    const claudeContext = makeContext({
+      participants: [
+        participant({ id: 'boss', provider: 'claude', role: 'Boss', order: 1 }),
+        participant({
+          id: 'worker',
+          provider: 'claude',
+          role: 'Worker',
+          order: 2,
+          linkedProviderSessionId: 'claude-a'
+        })
+      ]
+    })
+    const edit = (participantPatch: Record<string, unknown>, ctx = claudeContext) =>
+      evaluateRosterEdit(
+        {
+          action: 'edit_participant',
+          targetParticipantId: 'worker',
+          participant: participantPatch
+        },
+        ctx
+      )
+    expect(edit({ linkedProviderSessionId: 'claude-b' })).toMatchObject({ ok: false })
+    expect(edit({ linkedProviderSessionId: 'claude-a' })).toMatchObject({ ok: true })
+    expect(edit({ linkedProviderSessionId: null })).toMatchObject({ ok: true })
+    expect(
+      edit(
+        { provider: 'claude', linkedProviderSessionId: 'codex-a' },
+        makeContext({
+          participants: [
+            participant({ id: 'boss', provider: 'claude', role: 'Boss', order: 1 }),
+            participant({
+              id: 'worker',
+              provider: 'codex',
+              role: 'Worker',
+              order: 2,
+              linkedProviderSessionId: 'codex-a'
+            })
+          ]
+        })
+      )
+    ).toMatchObject({ ok: false })
+  })
+
   it('exports the main-side roster bounds and assignable preset ceiling', () => {
     expect(MAX_ENSEMBLE_PARTICIPANTS).toBe(20)
     expect(ASSIGNABLE_PERMISSION_PRESETS).toEqual([
@@ -677,7 +732,14 @@ describe('evaluateRosterEdit', () => {
             serviceTier: 'fast',
             linkedProviderSessionId: 'codex-session',
             promptShellVersion: 'ensemble-shell-v1:old-worker-receipt',
-            promptDynamicStateVersion: 'ensemble-dynamic-v1:old-worker-receipt'
+            promptDynamicStateVersion: 'ensemble-dynamic-v1:old-worker-receipt',
+            taskWraithMcpProfileReceipt: {
+              schemaVersion: 1,
+              profileId: 'taskwraith-core-v1',
+              provider: 'codex',
+              providerSessionId: 'codex-session',
+              pinnedAt: '2026-07-11T00:00:00.000Z'
+            }
           })
         ]
       })
@@ -696,6 +758,7 @@ describe('evaluateRosterEdit', () => {
     expect(worker?.linkedProviderSessionId).toBeUndefined()
     expect(worker?.promptShellVersion).toBeUndefined()
     expect(worker?.promptDynamicStateVersion).toBeUndefined()
+    expect(worker?.taskWraithMcpProfileReceipt).toBeUndefined()
   })
 
   it('clears both prompt receipts when model or explicit linked-session changes', () => {
@@ -710,7 +773,14 @@ describe('evaluateRosterEdit', () => {
           model: 'gpt-5.5',
           linkedProviderSessionId: 'codex-session-a',
           promptShellVersion: 'ensemble-shell-v1:old-worker-receipt',
-          promptDynamicStateVersion: 'ensemble-dynamic-v1:old-worker-receipt'
+          promptDynamicStateVersion: 'ensemble-dynamic-v1:old-worker-receipt',
+          taskWraithMcpProfileReceipt: {
+            schemaVersion: 1,
+            profileId: 'taskwraith-core-v1',
+            provider: 'codex',
+            providerSessionId: 'codex-session-a',
+            pinnedAt: '2026-07-11T00:00:00.000Z'
+          }
         })
       ]
     })
@@ -726,6 +796,11 @@ describe('evaluateRosterEdit', () => {
     if (!modelChanged.ok) throw new Error(modelChanged.message)
     expect(modelChanged.nextParticipants[1].promptShellVersion).toBeUndefined()
     expect(modelChanged.nextParticipants[1].promptDynamicStateVersion).toBeUndefined()
+    expect(modelChanged.nextParticipants[1].taskWraithMcpProfileReceipt).toMatchObject({
+      profileId: 'taskwraith-core-v1',
+      providerSessionId: 'codex-session-a'
+    })
+    expect(modelChanged.nextParticipants[1].linkedProviderSessionId).toBe('codex-session-a')
 
     const sessionRelinked = evaluateRosterEdit(
       {
@@ -739,6 +814,35 @@ describe('evaluateRosterEdit', () => {
     if (!sessionRelinked.ok) throw new Error(sessionRelinked.message)
     expect(sessionRelinked.nextParticipants[1].promptShellVersion).toBeUndefined()
     expect(sessionRelinked.nextParticipants[1].promptDynamicStateVersion).toBeUndefined()
+    expect(sessionRelinked.nextParticipants[1].taskWraithMcpProfileReceipt).toBeUndefined()
+    expect(sessionRelinked.nextParticipants[1].linkedProviderSessionId).toBe('codex-session-b')
+  })
+
+  it('keeps a legacy participant session across a same-provider model change', () => {
+    const result = evaluateRosterEdit(
+      {
+        action: 'edit_participant',
+        targetParticipantId: 'worker',
+        participant: { model: 'gpt-5.6' }
+      },
+      makeContext({
+        participants: [
+          participant({ id: 'boss', provider: 'claude', role: 'Boss', order: 1 }),
+          participant({
+            id: 'worker',
+            provider: 'codex',
+            role: 'Worker',
+            order: 2,
+            model: 'gpt-5.5',
+            linkedProviderSessionId: 'legacy-codex-session'
+          })
+        ]
+      })
+    )
+
+    expect(result).toMatchObject({ ok: true })
+    if (!result.ok) throw new Error(result.message)
+    expect(result.nextParticipants[1].linkedProviderSessionId).toBe('legacy-codex-session')
   })
 })
 

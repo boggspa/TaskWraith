@@ -173,6 +173,144 @@ function makeGrant(overrides: Partial<ExternalPathGrant> = {}): ExternalPathGran
 }
 
 describe('ComposerService', () => {
+  it('composes a truthful core note for fresh opted-in Claude sessions', () => {
+    const previous = process.env.TASKWRAITH_CORE_MCP_PROFILE
+    process.env.TASKWRAITH_CORE_MCP_PROFILE = '1'
+    try {
+      const payload = compose({ provider: 'claude' }, {}, { geminiMcpBridgeEnabled: true })
+      expect(payload.taskWraithMcpProfileId).toBe('taskwraith-core-v1')
+      expect(payload.prompt).toContain('TaskWraith core MCP profile is active')
+      expect(payload.prompt).not.toContain('Image tools are also available over MCP')
+    } finally {
+      if (previous === undefined) delete process.env.TASKWRAITH_CORE_MCP_PROFILE
+      else process.env.TASKWRAITH_CORE_MCP_PROFILE = previous
+    }
+  })
+
+  it('does not claim MCP/core is active when the Claude bridge setting is disabled', () => {
+    const previous = process.env.TASKWRAITH_CORE_MCP_PROFILE
+    process.env.TASKWRAITH_CORE_MCP_PROFILE = '1'
+    try {
+      const payload = compose(
+        { provider: 'claude' },
+        { userInput: 'blur the screenshot' },
+        { geminiMcpBridgeEnabled: false }
+      )
+      expect(payload.taskWraithMcpAdvertised).toBe(false)
+      expect(payload.prompt).not.toContain('TaskWraith core MCP profile is active')
+      expect(payload.prompt).not.toContain('Image tools are also available over MCP')
+    } finally {
+      if (previous === undefined) delete process.env.TASKWRAITH_CORE_MCP_PROFILE
+      else process.env.TASKWRAITH_CORE_MCP_PROFILE = previous
+    }
+  })
+
+  it('honors a pinned Claude core receipt after the rollout flag is disabled', () => {
+    const previous = process.env.TASKWRAITH_CORE_MCP_PROFILE
+    delete process.env.TASKWRAITH_CORE_MCP_PROFILE
+    try {
+      const payload = compose(
+        {
+          provider: 'claude',
+          linkedProviderSessionId: 'claude-session-1',
+          taskWraithMcpProfileReceipt: {
+            schemaVersion: 1,
+            profileId: 'taskwraith-core-v1',
+            provider: 'claude',
+            providerSessionId: 'claude-session-1',
+            pinnedAt: '2026-07-11T10:00:00.000Z'
+          }
+        },
+        {}
+      )
+      expect(payload.providerSessionId).toBe('claude-session-1')
+      expect(payload.taskWraithMcpAdvertised).toBe(true)
+      expect(payload.taskWraithMcpProfileId).toBe('taskwraith-core-v1')
+      expect(payload.prompt).not.toContain('TaskWraith image tools are available over MCP')
+    } finally {
+      if (previous === undefined) delete process.env.TASKWRAITH_CORE_MCP_PROFILE
+      else process.env.TASKWRAITH_CORE_MCP_PROFILE = previous
+    }
+  })
+
+  it('keeps pinned full-profile Claude capability prose truthful when the toggle is off', () => {
+    const payload = compose(
+      {
+        provider: 'claude',
+        linkedProviderSessionId: 'claude-session-1',
+        taskWraithMcpProfileReceipt: {
+          schemaVersion: 1,
+          profileId: 'taskwraith-full-v1',
+          provider: 'claude',
+          providerSessionId: 'claude-session-1',
+          pinnedAt: '2026-07-11T10:00:00.000Z'
+        }
+      },
+      { userInput: 'blur the screenshot' },
+      { geminiMcpBridgeEnabled: false }
+    )
+
+    expect(payload.providerSessionId).toBe('claude-session-1')
+    expect(payload.taskWraithMcpAdvertised).toBe(true)
+    expect(payload.taskWraithMcpProfileId).toBe('taskwraith-full-v1')
+    expect(payload.prompt).toContain('Image tools are also available over MCP')
+  })
+
+  it('normalizes a default Grok model before composing image-tool capability prose', () => {
+    const previous = process.env.TASKWRAITH_GROK_ACP
+    process.env.TASKWRAITH_GROK_ACP = '1'
+    try {
+      const payload = compose(
+        { provider: 'grok' },
+        { selectedModelType: 'cli-default', userInput: 'blur the screenshot' }
+      )
+      expect(payload.taskWraithMcpProfileId).toBe('taskwraith-core-v1')
+      expect(payload.prompt).toContain('TaskWraith core MCP profile is active')
+      expect(payload.prompt).not.toContain('Image tools are also available over MCP')
+      expect(payload.prompt).not.toContain('TaskWraith image tools are available over MCP')
+    } finally {
+      if (previous === undefined) delete process.env.TASKWRAITH_GROK_ACP
+      else process.env.TASKWRAITH_GROK_ACP = previous
+    }
+  })
+
+  it('does not claim an active MCP profile for headless Grok', () => {
+    const previous = process.env.TASKWRAITH_GROK_ACP
+    process.env.TASKWRAITH_GROK_ACP = '0'
+    try {
+      const payload = compose(
+        { provider: 'grok' },
+        { selectedModelType: 'cli-default', userInput: 'blur the screenshot' }
+      )
+      expect(payload.taskWraithMcpProfileId).toBe('taskwraith-full-v1')
+      expect(payload.prompt).not.toContain('TaskWraith core MCP profile is active')
+      expect(payload.prompt).not.toContain('Image tools are also available over MCP')
+    } finally {
+      if (previous === undefined) delete process.env.TASKWRAITH_GROK_ACP
+      else process.env.TASKWRAITH_GROK_ACP = previous
+    }
+  })
+
+  it('does not claim core for ACP read-only Grok when advertise gates are off', () => {
+    const previousAcp = process.env.TASKWRAITH_GROK_ACP
+    const previousReadOnly = process.env.TASKWRAITH_GROK_READONLY_MCP
+    process.env.TASKWRAITH_GROK_ACP = '1'
+    delete process.env.TASKWRAITH_GROK_READONLY_MCP
+    try {
+      const payload = compose(
+        { provider: 'grok' },
+        { selectedModelType: 'cli-default', approvalMode: 'plan', workflowMode: 'normal' }
+      )
+      expect(payload.taskWraithMcpProfileId).toBe('taskwraith-full-v1')
+      expect(payload.prompt).not.toContain('TaskWraith core MCP profile is active')
+    } finally {
+      if (previousAcp === undefined) delete process.env.TASKWRAITH_GROK_ACP
+      else process.env.TASKWRAITH_GROK_ACP = previousAcp
+      if (previousReadOnly === undefined) delete process.env.TASKWRAITH_GROK_READONLY_MCP
+      else process.env.TASKWRAITH_GROK_READONLY_MCP = previousReadOnly
+    }
+  })
+
   it('builds Gemini workspace prompts with compact context and write-tool preamble', () => {
     const payload = compose({ provider: 'gemini' }, {})
     expect(payload.provider).toBe('gemini')
@@ -783,7 +921,8 @@ describe('ComposerService', () => {
     // delegate to Gemini / Codex / Kimi.
     const payload = compose(
       { provider: 'claude' },
-      { userInput: 'Use a review agent and delegate one pass to Gemini.' }
+      { userInput: 'Use a review agent and delegate one pass to Gemini.' },
+      { geminiMcpBridgeEnabled: true }
     )
     expect(payload.prompt).toContain('TaskWraith MCP server')
     expect(payload.prompt).toContain('mcp__TaskWraith__delegate_to_subthread')

@@ -10,6 +10,7 @@ import type {
   OllamaRunProfileId,
   ProviderId,
   RuntimeProfile,
+  TaskWraithMcpProfileId,
   ProviderRunReroute
 } from '../store/types'
 
@@ -28,6 +29,22 @@ export interface RuntimeWorktreeIntent {
   baseWorkspacePath?: string
   effectiveWorkspacePath?: string
   status: 'selection-required' | 'selected'
+}
+
+/**
+ * Main-owned compare-and-set basis for pinning or rotating a provider session's
+ * TaskWraith MCP profile receipt. AgentRunNormalizer intentionally never copies
+ * this from an incoming payload; applyRuntimeProfileToPayload stamps it after
+ * the trust boundary from the current AppStore record.
+ */
+export interface TaskWraithMcpProfileFenceState {
+  expectedStoreProviderSessionId: string | null
+  expectedStoreReceiptFingerprint: string | null
+  runStartedProviderSessionId: string | null
+  /** Immutable receipt identity observed when this run first crossed main. */
+  runStartedReceiptFingerprint: string | null
+  /** False for cross-provider solo reroutes whose target session has no store lane. */
+  storeWritable: boolean
 }
 
 export interface AgentRunPayload {
@@ -65,6 +82,12 @@ export interface AgentRunPayload {
    */
   failoverHopCount?: number
   runtimeProfile?: RuntimeProfile
+  /** Exact main-resolved TaskWraith MCP catalog for this run. */
+  taskWraithMcpProfileId?: TaskWraithMcpProfileId
+  /** Main-resolved fact that this run will attach TaskWraith MCP at all. */
+  taskWraithMcpAdvertised?: boolean
+  /** Main-owned CAS basis for the eventual provider-session receipt write. */
+  taskWraithMcpProfileFence?: TaskWraithMcpProfileFenceState
   runtimeWorktree?: RuntimeWorktreeIntent
   effectivePermissions?: EffectiveRunPermissions
   /**

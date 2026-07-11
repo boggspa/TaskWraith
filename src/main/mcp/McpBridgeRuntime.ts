@@ -13,7 +13,6 @@ import {
   type TaskWraithMcpToolName
 } from '../TaskWraithMcpTools'
 import {
-  PLAN_INSTRUMENT_ADVERTISE_TOOLS,
   isPlanAdvertisedTool,
   isReadOnlyAdvertisedTool
 } from './McpAutoAllowedTools'
@@ -305,11 +304,8 @@ function isBridgeAuditMcpToolName(value: string): boolean {
   return (AUDIT_MCP_TOOL_NAMES as readonly string[]).includes(value)
 }
 
-function isCoreMcpAdvertisedForSeat(name: string, planSubset: boolean): boolean {
-  return (
-    isCoreMcpAdvertisedTool(name) ||
-    (planSubset && (PLAN_INSTRUMENT_ADVERTISE_TOOLS as readonly string[]).includes(name))
-  )
+function isCoreMcpAdvertisedForSeat(name: string): boolean {
+  return isCoreMcpAdvertisedTool(name)
 }
 
 function defaultAppendLimitedOutput(
@@ -613,7 +609,7 @@ export function handleMcpJsonRpcMessage(
         ? allTools.filter(
             (tool) =>
               (!safeSubsetOnly || isAdvertisedForSeat(tool.name)) &&
-              (!coreSubsetOnly || isCoreMcpAdvertisedForSeat(tool.name, planSubset))
+              (!coreSubsetOnly || isCoreMcpAdvertisedForSeat(tool.name))
           )
         : allTools
     const tools = auditSubset ? [...baseTools, ...auditToolDefinitions()] : baseTools
@@ -663,7 +659,7 @@ export function handleMcpJsonRpcMessage(
       (deps.env?.TASKWRAITH_MCP_CORE_SUBSET ?? process.env.TASKWRAITH_MCP_CORE_SUBSET) === '1'
     if (
       coreSubsetOnly &&
-      !isCoreMcpAdvertisedForSeat(String(name), planSubset) &&
+      !isCoreMcpAdvertisedForSeat(String(name)) &&
       !auditToolRequested
     ) {
       bridgeLog(
