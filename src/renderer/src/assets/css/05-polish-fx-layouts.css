@@ -3078,6 +3078,46 @@
   background: color-mix(in srgb, var(--panel-border) 64%, transparent);
 }
 
+/* Mini pane-opacity sliders at the foot of the Themes quick-picker. */
+.sidebar-settings-menu-section-label {
+  padding: 5px 9px 1px;
+  font-size: var(--font-size-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: color-mix(in srgb, var(--text-secondary) 82%, transparent);
+}
+
+.sidebar-settings-menu-slider {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 5px 9px 7px;
+}
+
+.sidebar-settings-menu-slider-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: var(--font-size-sm, 13px);
+  color: var(--text-primary);
+}
+
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .sidebar-settings-menu-slider-head {
+  color: var(--surface-text);
+}
+
+.sidebar-settings-menu-slider-value {
+  flex: 0 0 auto;
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Reuse the glass CHARS slider (09-ensemble-work-session.css) at full width. */
+.sidebar-settings-menu-slider .composer-ensemble-context-slider {
+  width: 100%;
+}
+
 .sidebar-footer-settings:hover {
   color: var(--sidebar-text);
   background: color-mix(in srgb, var(--text-primary) 7%, transparent);

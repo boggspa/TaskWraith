@@ -1181,7 +1181,9 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                   composerStyle: appearance.composerStyle,
                   themeAccentStyle: appearance.themeAccentStyle,
                   themeAppearance: appearance.themeAppearance,
-                  toolIconAccent: appearance.toolIconAccent
+                  toolIconAccent: appearance.toolIconAccent,
+                  sidebarOpacity: appearance.sidebarOpacity,
+                  mainPaneOpacity: appearance.mainPaneOpacity
                 }}
                 onAppearanceQuickChange={handleSettingsChange}
                 canOpenWorkspacePopout={canOpenWorkspacePopout}
@@ -1649,7 +1651,9 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                 composerStyle: appearance.composerStyle,
                 themeAccentStyle: appearance.themeAccentStyle,
                 themeAppearance: appearance.themeAppearance,
-                toolIconAccent: appearance.toolIconAccent
+                toolIconAccent: appearance.toolIconAccent,
+                sidebarOpacity: appearance.sidebarOpacity,
+                mainPaneOpacity: appearance.mainPaneOpacity
               }}
               onAppearanceQuickChange={handleSettingsChange}
               onOpenSettings={() => setShowSettings(true)}

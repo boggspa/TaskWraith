@@ -83,7 +83,7 @@
 .composer-ensemble-orchestration-row .composer-ensemble-mode-trigger {
   font-weight: 700;
 }
-.composer-ensemble-orchestration-row .composer-ensemble-context-slider {
+.composer-ensemble-context-slider {
   width: clamp(76px, 11vw, 130px);
   --ensemble-context-slider-fill: 0%;
   --ensemble-context-slider-track: color-mix(
@@ -109,8 +109,7 @@
   cursor: pointer;
   color: var(--text-primary);
 }
-.composer-ensemble-orchestration-row
-  .composer-ensemble-context-slider::-webkit-slider-runnable-track {
+.composer-ensemble-context-slider::-webkit-slider-runnable-track {
   height: 6px;
   border: 0;
   border-radius: 999px;
@@ -139,8 +138,7 @@
   backdrop-filter: blur(10px) saturate(160%);
   -webkit-backdrop-filter: blur(10px) saturate(160%);
 }
-.composer-ensemble-orchestration-row
-  .composer-ensemble-context-slider::-webkit-slider-thumb {
+.composer-ensemble-context-slider::-webkit-slider-thumb {
   appearance: none;
   -webkit-appearance: none;
   width: 20px;
@@ -167,14 +165,13 @@
   backdrop-filter: blur(16px) saturate(210%);
   -webkit-backdrop-filter: blur(16px) saturate(210%);
 }
-.composer-ensemble-orchestration-row
-  .composer-ensemble-context-slider:focus-visible::-webkit-slider-runnable-track {
+.composer-ensemble-context-slider:focus-visible::-webkit-slider-runnable-track {
   box-shadow:
     inset 0 1px 0 color-mix(in srgb, var(--tw-glass-rim-light, #fff) 52%, transparent),
     inset 0 -1px 0 rgb(0 0 0 / 0.24),
     0 0 0 3px color-mix(in srgb, var(--accent-color) 18%, transparent);
 }
-.composer-ensemble-orchestration-row .composer-ensemble-context-slider::-moz-range-track {
+.composer-ensemble-context-slider::-moz-range-track {
   height: 6px;
   border: 0;
   border-radius: 999px;
@@ -186,12 +183,12 @@
     ),
     var(--ensemble-context-slider-track);
 }
-.composer-ensemble-orchestration-row .composer-ensemble-context-slider::-moz-range-progress {
+.composer-ensemble-context-slider::-moz-range-progress {
   height: 6px;
   border-radius: 999px;
   background: var(--ensemble-context-slider-fill-color);
 }
-.composer-ensemble-orchestration-row .composer-ensemble-context-slider::-moz-range-thumb {
+.composer-ensemble-context-slider::-moz-range-thumb {
   width: 20px;
   height: 20px;
   border: 1px solid color-mix(in srgb, var(--tw-glass-rim-light, #fff) 86%, transparent);
@@ -206,18 +203,14 @@
     0 1px 5px rgb(0 0 0 / 0.34);
 }
 :root[data-advanced-fx-refraction="true"][data-advanced-fx-intensity="cinematic"]
-  .composer-ensemble-orchestration-row
   .composer-ensemble-context-slider::-webkit-slider-thumb,
 :root[data-advanced-fx-refraction="true"][data-advanced-fx-intensity="epic"]
-  .composer-ensemble-orchestration-row
   .composer-ensemble-context-slider::-webkit-slider-thumb {
   filter: url(#tw-glass-refract);
 }
 :root[data-reduce-transparency="true"]
-  .composer-ensemble-orchestration-row
   .composer-ensemble-context-slider::-webkit-slider-runnable-track,
 :root[data-reduce-transparency="true"]
-  .composer-ensemble-orchestration-row
   .composer-ensemble-context-slider::-webkit-slider-thumb {
   backdrop-filter: none;
   -webkit-backdrop-filter: none;

@@ -195,12 +195,18 @@ interface SidebarProps {
     themeAccentStyle: ThemeAccentStyle
     themeAppearance: ThemeAppearance
     toolIconAccent: ToolIconAccent
+    sidebarOpacity: number
+    mainPaneOpacity: number
   }
   onAppearanceQuickChange?: (next: {
     composerStyle?: ComposerStyle
     themeAccentStyle?: ThemeAccentStyle
     themeAppearance?: ThemeAppearance
     toolIconAccent?: ToolIconAccent
+    sidebarOpacity?: number
+    mainPaneOpacity?: number
+    sidebarOpacityOverride?: boolean
+    mainPaneOpacityOverride?: boolean
   }) => void
   onOpenWorkspacePopout?: (kind: 'file-editor' | 'diff-studio' | 'workbench') => void
   canOpenWorkspacePopout?: boolean
@@ -789,6 +795,35 @@ export function SidebarSettingsMenu({
     </button>
   )
 
+  // Mini pane-opacity sliders live at the foot of the Themes pane. They apply
+  // live via onAppearanceQuickChange WITHOUT onClose (dragging must not dismiss
+  // the menu), and stop keydown propagation so arrow keys nudge the slider
+  // rather than moving menu focus (moveMenuFocus on the menu root).
+  const renderOpacitySlider = (
+    label: string,
+    value: number,
+    apply: (value: number) => void
+  ) => (
+    <label className="sidebar-settings-menu-slider">
+      <span className="sidebar-settings-menu-slider-head">
+        <span className="sidebar-settings-menu-item-label">{label}</span>
+        <span className="sidebar-settings-menu-slider-value">{Math.round(value)}%</span>
+      </span>
+      <input
+        type="range"
+        className="composer-ensemble-context-slider"
+        min={0}
+        max={100}
+        step={1}
+        value={value}
+        onChange={(event) => apply(Number(event.target.value))}
+        onKeyDown={(event) => event.stopPropagation()}
+        aria-label={`${label} pane opacity`}
+        style={{ '--ensemble-context-slider-fill': `${value}%` } as CSSProperties}
+      />
+    </label>
+  )
+
   if (pane === 'themes') {
     return (
       <div
@@ -831,6 +866,16 @@ export function SidebarSettingsMenu({
           <span className="sidebar-settings-menu-item-label">Tool Call Theme</span>
           <MenuChevronIcon />
         </button>
+        <div className="sidebar-settings-menu-divider" aria-hidden />
+        <div className="sidebar-settings-menu-section-label" aria-hidden>
+          Pane opacity
+        </div>
+        {renderOpacitySlider('Sidebar', quickSettings?.sidebarOpacity ?? 100, (value) =>
+          onAppearanceQuickChange?.({ sidebarOpacity: value, sidebarOpacityOverride: true })
+        )}
+        {renderOpacitySlider('Main pane', quickSettings?.mainPaneOpacity ?? 100, (value) =>
+          onAppearanceQuickChange?.({ mainPaneOpacity: value, mainPaneOpacityOverride: true })
+        )}
       </div>
     )
   }
