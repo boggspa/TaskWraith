@@ -14097,40 +14097,6 @@ function App(): React.JSX.Element {
       // normal. Any farewell tokens from the cancelled run that were
       // already buffered get dropped on the floor (intentional).
       steerSuppressionChatIdsRef.current.delete(targetChatId)
-      // The cancel-path already marks the previous run's row + may emit
-      // a "Task ended before completing" system message; we add an
-      // additional, more meaningful `↳ Steered` system note so the
-      // transcript explains what happened (the user actively steered,
-      // it wasn't a generic abort).
-      updateChatById(targetChatId, (source) => {
-        const steeredAt = new Date().toISOString()
-        const promptPreview = (request.displayPrompt || request.prompt || '').trim()
-        const previewOneLiner =
-          promptPreview.length > 240 ? `${promptPreview.slice(0, 240)}…` : promptPreview
-        return {
-          ...source,
-          messages: [
-            ...source.messages,
-            {
-              id: `steered-${request.appRunId || createMessageId()}`,
-              role: 'system',
-              content: previewOneLiner
-                ? `↳ Steered: interrupted to run a new prompt — ${previewOneLiner}`
-                : '↳ Steered: interrupted to run a new prompt.',
-              timestamp: steeredAt,
-              metadata: {
-                kind: 'steerHandoff',
-                appRunId: request.appRunId,
-                provider: request.provider,
-                promptPreview: previewOneLiner,
-                interruptedRunId: cancelTargetRunId
-              }
-            }
-          ],
-          updatedAt: Date.now()
-        }
-      })
-
       const dispatchingState = transitionToDispatching({
         prev: steerStateRef.current,
         chatId: targetChatId
@@ -14140,8 +14106,8 @@ function App(): React.JSX.Element {
 
       // Re-base the dispatch on the LIVE chat record. `request.chatRecord` is a
       // snapshot captured at steer-click time — before the interrupted run's
-      // terminal status and the `↳ Steered` note landed — so passing it would
-      // make executeRun's immediate saveChat clobber both. The live ref has them.
+      // terminal status landed — so passing it would make executeRun's immediate
+      // saveChat clobber it. The live ref has it.
       const liveChatForSteer = chatByIdRef.current.get(targetChatId)
       const steerDispatchRequest =
         liveChatForSteer && !isChatSummaryRecord(liveChatForSteer)
@@ -20238,35 +20204,6 @@ function App(): React.JSX.Element {
           clearQueuedSteerInFlight()
           return
         }
-        updateChatById(targetChatId, (source) => {
-          const steeredAt = new Date().toISOString()
-          const promptPreview = (dispatchRequest.displayPrompt || dispatchRequest.prompt || '').trim()
-          const previewOneLiner =
-            promptPreview.length > 240 ? `${promptPreview.slice(0, 240)}…` : promptPreview
-          return {
-            ...source,
-            messages: [
-              ...source.messages,
-              {
-                id: `steered-${dispatchRequest.appRunId || createMessageId()}`,
-                role: 'system',
-                content: previewOneLiner
-                  ? `↳ Steered: interrupted to run a queued prompt — ${previewOneLiner}`
-                  : '↳ Steered: interrupted to run a queued prompt.',
-                timestamp: steeredAt,
-                metadata: {
-                  kind: 'steerHandoff',
-                  appRunId: dispatchRequest.appRunId,
-                  provider: dispatchRequest.provider,
-                  promptPreview: previewOneLiner,
-                  interruptedRunId: cancelTargetRunId
-                }
-              }
-            ],
-            updatedAt: Date.now()
-          }
-        })
-
         const dispatchingState = transitionToDispatching({
           prev: steerStateRef.current,
           chatId: targetChatId
