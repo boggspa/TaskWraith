@@ -85,8 +85,9 @@ describe('sub-thread mailbox main-process integration', () => {
       'function applyRuntimeProfileToPayload(',
       'async function getCliProviderStatus('
     )
-    expect(runtimeProfile).toContain('resolveTaskWraithMcpProfile({')
-    expect(runtimeProfile).toContain('applied.taskWraithMcpProfileId = resolution.profileId')
+    expect(runtimeProfile).toContain('const resolution = resolveTaskWraithMcpProfile({')
+    expect(runtimeProfile).toContain('const providerSeat = applyProviderSeatGeneration({')
+    expect(runtimeProfile).toContain('applied.taskWraithMcpProfileId = providerSeat.profileId')
   })
 
   it('gates automatic wake by durable join readiness and preserves worker trust caps', () => {

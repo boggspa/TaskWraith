@@ -45,6 +45,12 @@ export interface ProviderSeatGenerationTransition {
   preservedCacheTiers: Array<'tools' | 'system' | 'messages'>
 }
 
+export interface ProviderSeatRuntimePlan {
+  transition: ProviderSeatGenerationTransition
+  shouldRotateSession: boolean
+  bootstrappedExistingSession: boolean
+}
+
 const CACHE_USAGE_KEYS = new Set([
   'cacheReadInputTokens',
   'cache_read_input_tokens',
@@ -66,6 +72,20 @@ function normalizedString(value: unknown): string | undefined {
 function normalizedMode(value: string | boolean | null | undefined): string | undefined {
   if (typeof value === 'boolean') return value ? 'on' : 'off'
   return normalizedString(value)
+}
+
+/** Hash only stable, main-owned seat-prefix configuration. Callers pass an
+ * ordered tuple of scalar/config values; user prompts and transcript content
+ * must never enter this fingerprint or every turn would look cache-cold. */
+export function fingerprintProviderSeatPrefix(
+  kind: 'system' | 'tools',
+  components: readonly unknown[]
+): string {
+  const digest = createHash('sha256')
+    .update(JSON.stringify(components))
+    .digest('hex')
+    .slice(0, 24)
+  return `${kind}-${digest}`
 }
 
 function normalizeConfig(input: ProviderSeatGenerationInput): ProviderSeatGenerationConfig {
@@ -253,6 +273,9 @@ export function planProviderSeatGeneration(
 
   const ordinal = freshSessionRequired ? previous.ordinal + 1 : previous.ordinal
   if (input.guaranteeTier === 'unsupported') cacheImpact = 'unsupported'
+  const preserveCacheEvidence =
+    previous.guaranteeTier === input.guaranteeTier &&
+    (cacheImpact === 'none' || cacheImpact === 'unsupported')
   const generation: ProviderSeatGeneration = freshSessionRequired
     ? {
         schemaVersion: 1,
@@ -267,7 +290,8 @@ export function planProviderSeatGeneration(
         ...previous,
         updatedAt: now,
         config,
-        guaranteeTier: input.guaranteeTier
+        guaranteeTier: input.guaranteeTier,
+        ...(preserveCacheEvidence ? {} : { cacheEvidence: undefined })
       }
   return {
     generation,
@@ -275,6 +299,41 @@ export function planProviderSeatGeneration(
     cacheImpact,
     causes,
     preservedCacheTiers: preservedTiers(config.provider, causes, cacheImpact)
+  }
+}
+
+/** Runtime adapter around generation planning. An already-resumable seat with
+ * no persisted generation is bootstrapped from its last-known configuration,
+ * so the first dispatch after upgrade can still detect a model/tool change.
+ * An initial genuinely fresh seat never needs an extra rotation. */
+export function planProviderSeatRuntime(
+  previous: ProviderSeatGeneration | null | undefined,
+  currentInput: ProviderSeatGenerationInput,
+  options: {
+    linkedProviderSessionId?: string | null
+    bootstrapInput?: ProviderSeatGenerationInput
+    now?: string
+  } = {}
+): ProviderSeatRuntimePlan {
+  const now = options.now || new Date().toISOString()
+  const linkedProviderSessionId = normalizedString(options.linkedProviderSessionId)
+  let baseline = previous
+  let bootstrappedExistingSession = false
+  if (!baseline && linkedProviderSessionId) {
+    baseline = planProviderSeatGeneration(
+      undefined,
+      options.bootstrapInput || currentInput,
+      now
+    ).generation
+    bootstrappedExistingSession = true
+  }
+  const transition = planProviderSeatGeneration(baseline, currentInput, now)
+  return {
+    transition,
+    shouldRotateSession: Boolean(
+      linkedProviderSessionId && baseline && transition.freshSessionRequired
+    ),
+    bootstrappedExistingSession
   }
 }
 
@@ -294,6 +353,16 @@ export function recordProviderSeatCacheEvidence(
         ? 'observed_write'
         : 'observed_miss'
   const observedAt = options.observedAt || new Date().toISOString()
+  if (
+    options.runId &&
+    generation.cacheEvidence?.runId === options.runId &&
+    generation.cacheEvidence.state === state &&
+    generation.cacheEvidence.cacheReadInputTokens === cacheReadInputTokens &&
+    generation.cacheEvidence.cacheCreationInputTokens === cacheCreationInputTokens &&
+    generation.cacheEvidence.guaranteeTier === generation.guaranteeTier
+  ) {
+    return generation
+  }
   return {
     ...generation,
     updatedAt: observedAt,

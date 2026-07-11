@@ -1100,8 +1100,15 @@ import {
 import {
   composeRunPrompt,
   conversationCompactionEligibleRows,
-  sanitizeTaskWraithMcpPromptClaims
+  sanitizeTaskWraithMcpPromptClaims,
+  TASKWRAITH_RUNTIME_PREAMBLE_VERSION
 } from './PromptComposition'
+import {
+  fingerprintProviderSeatPrefix,
+  planProviderSeatRuntime,
+  recordProviderSeatCacheEvidence,
+  type ProviderSeatGenerationInput
+} from './ProviderSeatGeneration'
 import {
   canDisposeGrokSeatAfterCompaction,
   convergeHostSeatCompaction,
@@ -5360,6 +5367,7 @@ runManager.onChange((event) => {
       event.session.status === 'cancelled')
   ) {
     cancelPendingAgentQuestionsForRun(event.session.runId, `run-${event.session.status}`)
+    recordProviderSeatCacheEvidenceForRun(event.session)
   }
   void appShellStatsService.refresh().catch((err) => {
     console.warn(
@@ -10890,6 +10898,343 @@ function taskWraithMcpProfileStoreStateForPayload(payload: AgentRunPayload): {
   }
 }
 
+interface ProviderSeatStoreTarget {
+  chat: ChatRecord
+  participantId?: string
+  linkedProviderSessionId?: string | null
+  generation?: ChatRecord['seatGeneration']
+  lastRun?: ChatRun
+}
+
+function providerSeatStoreTarget(
+  appChatId: string | undefined,
+  provider: ProviderId,
+  participantId?: string
+): ProviderSeatStoreTarget | null {
+  if (!appChatId) return null
+  const chat = AppStore.getChat(appChatId)
+  if (!chat) return null
+  if (chat.ensemble) {
+    if (!participantId) return null
+    const participant = chat.ensemble.participants.find(
+      (candidate) => candidate.id === participantId && candidate.provider === provider
+    )
+    if (!participant) return null
+    const lastRun = [...(chat.runs || [])]
+      .reverse()
+      .find(
+        (run) =>
+          run.ensembleParticipantId === participant.id &&
+          (run.provider === undefined || run.provider === provider)
+      )
+    return {
+      chat,
+      participantId: participant.id,
+      linkedProviderSessionId: participant.linkedProviderSessionId,
+      generation: participant.seatGeneration,
+      lastRun
+    }
+  }
+  if (participantId || (chat.provider && chat.provider !== provider)) return null
+  const lastRun = [...(chat.runs || [])]
+    .reverse()
+    .find(
+      (run) =>
+        !run.ensembleParticipantId &&
+        (run.provider === provider || (run.provider === undefined && chat.provider === provider))
+    )
+  return {
+    chat,
+    linkedProviderSessionId: chat.linkedProviderSessionId,
+    generation: chat.seatGeneration,
+    lastRun
+  }
+}
+
+function providerSeatMetadataString(
+  metadata: Record<string, unknown> | undefined,
+  ...keys: string[]
+): string | undefined {
+  for (const key of keys) {
+    const value = metadata?.[key]
+    if (typeof value === 'string' && value.trim()) return value.trim()
+  }
+  return undefined
+}
+
+function providerSeatGenerationInputForPayload(args: {
+  payload: AgentRunPayload
+  taskWraithMcpProfileId: NonNullable<AgentRunPayload['taskWraithMcpProfileId']>
+  taskWraithMcpAdvertised: boolean
+  capability: Pick<ProviderSeatGenerationInput, 'transport' | 'guaranteeTier'>
+  previousRun?: ChatRun
+}): ProviderSeatGenerationInput {
+  const { payload, previousRun } = args
+  const metadata = previousRun?.providerMetadata
+  const settings = AppStore.getSettings()
+  const model = normalizeCliProviderModel(
+    payload.provider,
+    previousRun?.actualModel || previousRun?.requestedModel || payload.model
+  )
+  const approvalMode = previousRun?.approvalMode || payload.approvalMode || 'default'
+  const workflowMode = previousRun?.workflowMode || payload.workflowMode || 'normal'
+  const runtimeProfileId = previousRun?.runtimeProfileId || payload.runtimeProfileId || null
+  const permissionPresetId =
+    previousRun?.permissionPosture?.presetId || payload.effectivePermissions?.presetId || null
+  const readOnly =
+    previousRun?.permissionPosture?.readOnly ?? payload.effectivePermissions?.readOnly ?? null
+  const systemPromptFingerprint = fingerprintProviderSeatPrefix('system', [
+    TASKWRAITH_RUNTIME_PREAMBLE_VERSION,
+    payload.provider,
+    payload.scope,
+    approvalMode,
+    workflowMode,
+    permissionPresetId,
+    readOnly,
+    runtimeProfileId,
+    payload.runtimeProfile?.updatedAt || null,
+    payload.ollamaRunProfile || null,
+    settings.nativeSubAgentRequests || null
+  ])
+  const toolsFingerprint = fingerprintProviderSeatPrefix('tools', [
+    args.taskWraithMcpProfileId,
+    args.taskWraithMcpAdvertised,
+    payload.runtimeProfile?.mcpProfileId || null
+  ])
+  const priorKimiThinking = metadata?.kimiThinking
+  const thinkingMode = previousRun
+    ? typeof priorKimiThinking === 'boolean'
+      ? priorKimiThinking
+      : undefined
+    : payload.provider === 'kimi'
+      ? payload.kimiThinking
+      : undefined
+  const reasoningEffort = previousRun
+    ? providerSeatMetadataString(
+        metadata,
+        'claudeReasoningEffort',
+        'reasoningEffort'
+      )
+    : payload.claudeReasoningEffort || payload.reasoningEffort
+  const serviceTier = previousRun
+    ? providerSeatMetadataString(metadata, 'serviceTier', 'claudeFastMode')
+    : payload.serviceTier || (payload.claudeFastMode ? 'fast' : undefined)
+  return {
+    provider: payload.provider,
+    model,
+    transport: args.capability.transport,
+    guaranteeTier: args.capability.guaranteeTier,
+    systemPromptFingerprint,
+    toolsFingerprint,
+    taskWraithMcpProfileId: args.taskWraithMcpProfileId,
+    thinkingMode,
+    reasoningEffort,
+    serviceTier
+  }
+}
+
+function saveProviderSeatGeneration(
+  target: ProviderSeatStoreTarget,
+  generation: NonNullable<ChatRecord['seatGeneration']>,
+  clearProviderSession: boolean
+): ChatRecord | null {
+  const chat = AppStore.getChat(target.chat.appChatId) || target.chat
+  if (target.participantId) {
+    if (!chat.ensemble) return null
+    const participant = chat.ensemble.participants.find(
+      (candidate) => candidate.id === target.participantId
+    )
+    if (!participant || participant.provider !== generation.config.provider) return null
+    const updated: ChatRecord = {
+      ...chat,
+      ensemble: {
+        ...chat.ensemble,
+        participants: chat.ensemble.participants.map((candidate) =>
+          candidate.id === target.participantId
+            ? {
+                ...candidate,
+                seatGeneration: generation,
+                ...(clearProviderSession
+                  ? {
+                      linkedProviderSessionId: null,
+                      taskWraithMcpProfileReceipt: undefined
+                    }
+                  : {})
+              }
+            : candidate
+        )
+      },
+      updatedAt: Date.now()
+    }
+    saveAndBroadcastChat(updated)
+    return updated
+  }
+  if (chat.provider && chat.provider !== generation.config.provider) return null
+  const updated: ChatRecord = {
+    ...chat,
+    seatGeneration: generation,
+    ...(clearProviderSession
+      ? {
+          linkedProviderSessionId: undefined,
+          taskWraithMcpProfileReceipt: undefined
+        }
+      : {}),
+    updatedAt: Date.now()
+  }
+  saveAndBroadcastChat(updated)
+  return updated
+}
+
+function applyProviderSeatGeneration(args: {
+  payload: AgentRunPayload
+  actualTaskWraithMcpProfileId: NonNullable<AgentRunPayload['taskWraithMcpProfileId']>
+  desiredTaskWraithMcpProfileId: NonNullable<AgentRunPayload['taskWraithMcpProfileId']>
+  actualTaskWraithMcpAdvertised: boolean
+  desiredTaskWraithMcpAdvertised: boolean
+  storeWritable: boolean
+}): {
+  profileId: NonNullable<AgentRunPayload['taskWraithMcpProfileId']>
+  advertised: boolean
+} {
+  const actual = {
+    profileId: args.actualTaskWraithMcpProfileId,
+    advertised: args.actualTaskWraithMcpAdvertised
+  }
+  if (!args.storeWritable) return actual
+  const participantId = args.payload.ensembleRun?.participantId
+  const target = providerSeatStoreTarget(
+    args.payload.appChatId,
+    args.payload.provider,
+    participantId
+  )
+  if (!target) return actual
+  const capability = buildPromptCacheCapabilitySummary(AppStore.getSettings()).capabilities.find(
+    (candidate) => candidate.provider === args.payload.provider
+  )
+  if (!capability) return actual
+  const currentInput = providerSeatGenerationInputForPayload({
+    payload: args.payload,
+    taskWraithMcpProfileId: args.desiredTaskWraithMcpProfileId,
+    taskWraithMcpAdvertised: args.desiredTaskWraithMcpAdvertised,
+    capability
+  })
+  const bootstrapInput = target.linkedProviderSessionId || args.payload.providerSessionId
+    ? providerSeatGenerationInputForPayload({
+        payload: args.payload,
+        taskWraithMcpProfileId: args.actualTaskWraithMcpProfileId,
+        taskWraithMcpAdvertised: args.actualTaskWraithMcpAdvertised,
+        capability,
+        previousRun: target.lastRun
+      })
+    : undefined
+  const runtimePlan = planProviderSeatRuntime(target.generation, currentInput, {
+    linkedProviderSessionId:
+      target.linkedProviderSessionId || args.payload.providerSessionId || null,
+    bootstrapInput
+  })
+  const { transition } = runtimePlan
+  const storedSessionConfigMismatch = Boolean(
+    (target.linkedProviderSessionId || args.payload.providerSessionId) &&
+      target.generation &&
+      bootstrapInput &&
+      (target.generation.config.provider !== bootstrapInput.provider ||
+        target.generation.config.model !== bootstrapInput.model ||
+        target.generation.config.transport !== bootstrapInput.transport ||
+        target.generation.config.toolsFingerprint !== bootstrapInput.toolsFingerprint ||
+        target.generation.config.taskWraithMcpProfileId !==
+          bootstrapInput.taskWraithMcpProfileId ||
+        target.generation.config.systemPromptFingerprint !==
+          bootstrapInput.systemPromptFingerprint)
+  )
+  const shouldRotateSession =
+    runtimePlan.shouldRotateSession || storedSessionConfigMismatch
+  const shouldPersist =
+    !target.generation ||
+    transition.causes.length > 0 ||
+    target.generation.guaranteeTier !== transition.generation.guaranteeTier
+  if (shouldPersist || shouldRotateSession) {
+    saveProviderSeatGeneration(
+      target,
+      transition.generation,
+      shouldRotateSession
+    )
+  }
+  if (shouldRotateSession) args.payload.providerSessionId = null
+  if (shouldPersist || shouldRotateSession) {
+    try {
+      appendDurableRunEventForRoute(
+        args.payload.provider,
+        args.payload,
+        'lifecycle',
+        'control',
+        shouldRotateSession
+          ? 'Rotated provider seat generation before dispatch'
+          : 'Recorded provider seat generation',
+        {
+          eventType: 'provider_seat_generation',
+          generationId: transition.generation.id,
+          ordinal: transition.generation.ordinal,
+          model: transition.generation.config.model,
+          taskWraithMcpProfileId: transition.generation.config.taskWraithMcpProfileId,
+          guaranteeTier: transition.generation.guaranteeTier,
+          cacheImpact: transition.cacheImpact,
+          causes: transition.causes,
+          preservedCacheTiers: transition.preservedCacheTiers,
+          rotatedSession: shouldRotateSession,
+          recoveredStoredSessionMismatch: storedSessionConfigMismatch,
+          bootstrappedExistingSession: runtimePlan.bootstrappedExistingSession,
+          ensembleParticipantId: participantId
+        }
+      )
+    } catch {
+      // Cache/continuity audit is best-effort; the persisted generation owns state.
+    }
+  }
+  return {
+    profileId: args.desiredTaskWraithMcpProfileId,
+    advertised: args.desiredTaskWraithMcpAdvertised
+  }
+}
+
+function recordProviderSeatCacheEvidenceForRun(
+  session: NonNullable<ReturnType<typeof runManager.get>>
+): void {
+  const chat = session.appChatId ? AppStore.getChat(session.appChatId) : null
+  if (!chat) return
+  const state = session.state as
+    | { ensembleRun?: { participantId?: string }; tokenUsage?: unknown; startedAt?: number }
+    | undefined
+  const persistedRun = (chat.runs || []).find((run) => run.runId === session.runId)
+  const participantId = state?.ensembleRun?.participantId || persistedRun?.ensembleParticipantId
+  const target = providerSeatStoreTarget(chat.appChatId, session.provider, participantId)
+  if (!target?.generation) return
+  const stats =
+    buildAgentExitStats(session.provider, state as AgentRunRoute | undefined) ||
+    persistedRun?.stats
+  const nextGeneration = recordProviderSeatCacheEvidence(target.generation, stats, {
+    runId: session.runId
+  })
+  if (nextGeneration === target.generation) return
+  if (!saveProviderSeatGeneration(target, nextGeneration, false)) return
+  try {
+    appendDurableRunEventForRoute(
+      session.provider,
+      { appRunId: session.runId, appChatId: session.appChatId },
+      'lifecycle',
+      'control',
+      'Recorded provider-reported seat cache evidence',
+      {
+        eventType: 'provider_seat_cache_evidence',
+        generationId: nextGeneration.id,
+        ensembleParticipantId: participantId,
+        cacheEvidence: nextGeneration.cacheEvidence
+      }
+    )
+  } catch {
+    // Evidence is already durable on the seat generation.
+  }
+}
+
 function refreshTaskWraithMcpProfileFenceStoreIdentity(payload: AgentRunPayload): void {
   const storeState = taskWraithMcpProfileStoreStateForPayload(payload)
   if (storeState.missingEnsembleParticipant || storeState.routeProviderMismatch) {
@@ -10980,6 +11325,12 @@ function applyRuntimeProfileToPayload(payload: AgentRunPayload): AgentRunPayload
                 claudeBridgeCommandStatus?.available)
           )
         : true
+  const desiredFreshTaskWraithMcpAdvertised =
+    applied.provider === 'claude'
+      ? Boolean(
+          AppStore.getSettings().geminiMcpBridgeEnabled && claudeBridgeCommandStatus?.available
+        )
+      : taskWraithMcpAdvertised
   const resolution = resolveTaskWraithMcpProfile({
     provider: applied.provider,
     modelId: applied.model,
@@ -10991,8 +11342,27 @@ function applyRuntimeProfileToPayload(payload: AgentRunPayload): AgentRunPayload
       applied.provider !== 'claude' || (storeState.chatFound && storeState.storeWritable),
     grokMcpAdvertised: applied.provider === 'grok' ? taskWraithMcpAdvertised : undefined
   })
-  applied.taskWraithMcpProfileId = resolution.profileId
-  applied.taskWraithMcpAdvertised = taskWraithMcpAdvertised
+  const desiredFreshResolution = resolveTaskWraithMcpProfile({
+    provider: applied.provider,
+    modelId: applied.model,
+    providerSessionId: null,
+    storeProviderSessionId: null,
+    receipt: undefined,
+    profileReceiptCanPersist:
+      applied.provider !== 'claude' || (storeState.chatFound && storeState.storeWritable),
+    grokMcpAdvertised:
+      applied.provider === 'grok' ? desiredFreshTaskWraithMcpAdvertised : undefined
+  })
+  const providerSeat = applyProviderSeatGeneration({
+    payload: applied,
+    actualTaskWraithMcpProfileId: resolution.profileId,
+    desiredTaskWraithMcpProfileId: desiredFreshResolution.profileId,
+    actualTaskWraithMcpAdvertised: taskWraithMcpAdvertised,
+    desiredTaskWraithMcpAdvertised: desiredFreshTaskWraithMcpAdvertised,
+    storeWritable: storeState.storeWritable
+  })
+  applied.taskWraithMcpProfileId = providerSeat.profileId
+  applied.taskWraithMcpAdvertised = providerSeat.advertised
   refreshTaskWraithMcpProfileFenceStoreIdentity(applied)
   if (applied.appRunId) {
     if (storeState.ephemeralProviderReroute) {

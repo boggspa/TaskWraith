@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
+  fingerprintProviderSeatPrefix,
   planProviderSeatGeneration,
+  planProviderSeatRuntime,
   providerSeatCanPrewarm,
   recordProviderSeatCacheEvidence
 } from './ProviderSeatGeneration'
@@ -27,6 +29,13 @@ function input(provider: 'claude' | 'codex' | 'kimi' | 'ollama' = 'claude') {
 }
 
 describe('ProviderSeatGeneration', () => {
+  it('fingerprints stable prefix configuration without prompt content', () => {
+    const first = fingerprintProviderSeatPrefix('system', ['v5', 'claude', 'default'])
+    expect(fingerprintProviderSeatPrefix('system', ['v5', 'claude', 'default'])).toBe(first)
+    expect(fingerprintProviderSeatPrefix('system', ['v5', 'claude', 'plan'])).not.toBe(first)
+    expect(fingerprintProviderSeatPrefix('tools', ['taskwraith-gateway-v1'])).not.toBe(first)
+  })
+
   it('creates an initial continuity generation without claiming a cache hit', () => {
     const transition = planProviderSeatGeneration(undefined, input(), '2026-07-11T12:00:00.000Z')
 
@@ -58,7 +67,8 @@ describe('ProviderSeatGeneration', () => {
   })
 
   it('models Claude system and thinking invalidation by cache tier', () => {
-    const first = planProviderSeatGeneration(undefined, input()).generation
+    const initial = planProviderSeatGeneration(undefined, input()).generation
+    const first = recordProviderSeatCacheEvidence(initial, { cacheReadInputTokens: 12 })
     const system = planProviderSeatGeneration(first, {
       ...input(),
       systemPromptFingerprint: 'system-v2'
@@ -81,6 +91,7 @@ describe('ProviderSeatGeneration', () => {
       preservedCacheTiers: ['tools', 'system']
     })
     expect(thinking.generation.id).toBe(first.id)
+    expect(thinking.generation.cacheEvidence).toBeUndefined()
   })
 
   it('does not cold-cycle Claude or Codex continuity for effort-only changes', () => {
@@ -97,6 +108,55 @@ describe('ProviderSeatGeneration', () => {
       expect(next.causes).toEqual(['effort'])
       expect(next.generation.id).toBe(first.id)
     }
+  })
+
+  it('bootstraps an existing session and rotates it on the first observed model change', () => {
+    const previousInput = input('codex')
+    const runtime = planProviderSeatRuntime(
+      undefined,
+      { ...previousInput, model: 'gpt-5.5' },
+      {
+        linkedProviderSessionId: 'thread-existing',
+        bootstrapInput: { ...previousInput, model: 'gpt-5.4' },
+        now: '2026-07-11T12:00:00.000Z'
+      }
+    )
+
+    expect(runtime).toMatchObject({
+      bootstrappedExistingSession: true,
+      shouldRotateSession: true,
+      transition: { causes: ['model'], freshSessionRequired: true }
+    })
+  })
+
+  it('rotates a receipted existing seat when its desired immutable tool profile changes', () => {
+    const desired = input('claude')
+    const actual = {
+      ...desired,
+      toolsFingerprint: 'taskwraith-full-v1-tools',
+      taskWraithMcpProfileId: 'taskwraith-full-v1' as const
+    }
+    const runtime = planProviderSeatRuntime(undefined, desired, {
+      linkedProviderSessionId: 'claude-existing',
+      bootstrapInput: actual
+    })
+
+    expect(runtime.shouldRotateSession).toBe(true)
+    expect(runtime.transition.causes).toEqual(['tools'])
+    expect(runtime.transition.generation.config.taskWraithMcpProfileId).toBe(
+      'taskwraith-gateway-v1'
+    )
+  })
+
+  it('does not redundantly rotate an initial seat with no provider session', () => {
+    const runtime = planProviderSeatRuntime(undefined, input('claude'), {
+      now: '2026-07-11T12:00:00.000Z'
+    })
+
+    expect(runtime.transition.causes).toEqual(['initial'])
+    expect(runtime.transition.freshSessionRequired).toBe(true)
+    expect(runtime.shouldRotateSession).toBe(false)
+    expect(runtime.bootstrappedExistingSession).toBe(false)
   })
 
   it('keeps opaque-provider uncertainty explicit instead of calling it warm', () => {
@@ -134,6 +194,18 @@ describe('ProviderSeatGeneration', () => {
     expect(recordProviderSeatCacheEvidence(observed, { inputTokens: 10 }).cacheEvidence).toEqual(
       observed.cacheEvidence
     )
+    const runObserved = recordProviderSeatCacheEvidence(
+      generation,
+      { cached_input_tokens: 42 },
+      { runId: 'run-idempotent', observedAt: '2026-07-11T12:00:00.000Z' }
+    )
+    expect(
+      recordProviderSeatCacheEvidence(
+        runObserved,
+        { cached_input_tokens: 42 },
+        { runId: 'run-idempotent', observedAt: '2026-07-11T12:01:00.000Z' }
+      )
+    ).toBe(runObserved)
   })
 
   it('keeps unsupported local cache semantics separate from continuity rotation', () => {
