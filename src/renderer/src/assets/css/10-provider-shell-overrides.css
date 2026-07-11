@@ -991,8 +991,7 @@
     .composer-above-bar-branch,
     .composer-above-bar-branch svg,
     .composer-above-bar-files,
-    .composer-above-bar-stats,
-    .composer-above-bar-secondary-revoke
+    .composer-above-bar-stats
   ) {
   color: rgba(255, 255, 255, 0.84) !important;
 }
@@ -3232,9 +3231,6 @@
   border: 1px solid var(--cursor-shell-border) !important;
   color: var(--cursor-shell-fg) !important;
   box-shadow: none !important;
-}
-[data-composer-style="cursor"] .composer-above-bar-secondary .composer-above-bar-secondary-revoke {
-  order: 80 !important;
 }
 
 /* Inline Review-changes / Create-PR menu (not portaled). */

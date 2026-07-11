@@ -1079,9 +1079,6 @@
   :is(.composer-workspace-access-inline, .composer-workspace-access) {
   order: 65;
 }
-:not([data-composer-style="cursor"]) .composer-above-bar > .composer-above-bar-secondary-revoke {
-  order: 75;
-}
 :not([data-composer-style="cursor"]) .composer-above-bar > .composer-diff-action-menu-wrap {
   order: 80;
 }
@@ -1107,17 +1104,14 @@
   margin-left: 0;
   margin-right: 0;
 }
-/* DOM order inside trailing cluster: action → revoke. !important beats the
- * global 70/75/80 order ladder when these flatten onto the secondary row. */
+/* DOM order inside trailing cluster: the git action leads. !important beats
+ * the global 70/80 order ladder when it flattens onto the secondary row. */
 .composer-above-bar-trailing-cluster > * {
   margin-left: 0;
   margin-right: 0;
 }
 .composer-above-bar-trailing-cluster .composer-diff-action-menu-wrap {
   order: 1 !important;
-}
-.composer-above-bar-trailing-cluster .composer-above-bar-secondary-revoke {
-  order: 2 !important;
 }
 .composer-above-bar-center-cluster > .composer-above-bar-pill--changes,
 .composer-above-bar-center-cluster > .composer-above-bar-pill--stats {

@@ -113,7 +113,6 @@ interface ExternalPathAboveRowProps {
    * scope, in which case the row renders without the diff pill.
    */
   diffStats?: ExternalPathDiffStats
-  onRevoke: (grant: ExternalPathGrant) => void
   /**
    * 1.0.6-EW66-1d — Per-path Create-PR state + handler. Repo rows
    * gain the same commit/push/PR action menu as the primary workspace
@@ -171,24 +170,6 @@ function FileGlyph(): React.JSX.Element {
   )
 }
 
-function RevokeGlyph(): React.JSX.Element {
-  return (
-    <svg
-      width="11"
-      height="11"
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.6"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden
-    >
-      <path d="M4 4l8 8M12 4l-8 8" />
-    </svg>
-  )
-}
-
 export function ExternalPathAboveRow({
   grant,
   providers,
@@ -197,7 +178,6 @@ export function ExternalPathAboveRow({
   repoMetadata,
   workspaceDisplayName,
   diffStats,
-  onRevoke,
   createPrState,
   onCreatePr,
   onReviewChanges,
@@ -341,15 +321,6 @@ export function ExternalPathAboveRow({
           )}
         </span>
       )}
-      <button
-        type="button"
-        className="composer-above-bar-secondary-revoke"
-        onClick={() => onRevoke(grant)}
-        title={`Revoke external path: ${grant.path}`}
-        aria-label={`Revoke external path access to ${grant.path}`}
-      >
-        <RevokeGlyph />
-      </button>
     </span>
   )
 
@@ -387,7 +358,11 @@ export function ExternalPathAboveRow({
         <GitPrLifecycleChip pr={pr ?? null} snapshot={snapshot} />
       </div>
       {diffCluster}
-      <div className="composer-above-bar-pill composer-above-bar-pill--action">{trailingCluster}</div>
+      {showRepoActions && (
+        <div className="composer-above-bar-pill composer-above-bar-pill--action">
+          {trailingCluster}
+        </div>
+      )}
     </div>
   )
 }

@@ -11287,28 +11287,6 @@
   opacity: 0.78;
 }
 
-.composer-above-bar-secondary-revoke {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  padding: 0;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: color-mix(in srgb, var(--text-secondary) 84%, transparent);
-  cursor: pointer;
-  appearance: none;
-  -webkit-appearance: none;
-  transition: background 0.16s, color 0.16s;
-}
-
-.composer-above-bar-secondary-revoke:hover {
-  background: color-mix(in srgb, var(--danger) 18%, transparent);
-  color: var(--danger);
-}
-
 /*
  * 1.0.6-EW66-1d — Create-PR action on a secondary row. Tightened
  * padding/size keeps it in proportion with the quieter secondary row
