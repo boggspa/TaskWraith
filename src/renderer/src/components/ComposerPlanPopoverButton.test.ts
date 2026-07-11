@@ -4,7 +4,8 @@ import { TODO_SOLO_LANE } from '../../../main/TodoList'
 import {
   buildComposerPlanLanes,
   composerPlanLaneLabel,
-  computeComposerPlanPopoverPosition
+  computeComposerPlanPopoverPosition,
+  formatPlanStepCount
 } from './ComposerPlanPopoverButton'
 
 function todo(id: string, content: string) {
@@ -47,6 +48,10 @@ function activity(
 }
 
 describe('ComposerPlanPopoverButton helpers', () => {
+  it('formats the compact inline step count used by the Plan popover header', () => {
+    expect(formatPlanStepCount(3, 7)).toBe('Steps 3/7')
+  })
+
   it('keeps same-provider persisted participant lanes separate', () => {
     const record = chat({
       chatTodos: {

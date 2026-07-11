@@ -39,6 +39,10 @@ function completedCount(todos: readonly TodoItem[]): number {
   return todos.filter((item) => item.status === 'completed').length
 }
 
+export function formatPlanStepCount(completed: number, total: number): string {
+  return `Steps ${completed}/${total}`
+}
+
 function providerFromLane(lane: string): ProviderId | undefined {
   switch (lane) {
     case 'codex':
@@ -249,6 +253,10 @@ export function ComposerPlanPopoverButton({
   const title =
     stats.totalActive > 0 ? `Plan - ${stats.totalCompleted}/${stats.totalActive} complete` : 'Plan'
   const ariaLabel = stats.hasInProgress ? `${title}, in progress` : title
+  const popoverAriaLabel =
+    stats.totalActive > 0
+      ? `Plan, ${stats.totalCompleted} of ${stats.totalActive} steps complete`
+      : 'Plan'
   const showLaneHeaders = lanes.length > 1
 
   const popover =
@@ -258,7 +266,7 @@ export function ComposerPlanPopoverButton({
             ref={popoverRef}
             className={`composer-plan-popover shell-${composerStyle}${position?.placement === 'below' ? ' is-below' : ''}`}
             role="dialog"
-            aria-label="Plan"
+            aria-label={popoverAriaLabel}
             style={
               position
                 ? { left: `${position.left}px`, top: `${position.top}px`, width: `${position.width}px` }
@@ -268,8 +276,16 @@ export function ComposerPlanPopoverButton({
             <div className="composer-plan-popover-header">
               <span className="composer-plan-popover-title">Plan</span>
               {stats.totalActive > 0 && (
-                <span className="composer-plan-count-chip">
-                  {stats.totalCompleted}/{stats.totalActive}
+                <span
+                  className="composer-plan-step-count"
+                  aria-label={`${stats.totalCompleted} of ${stats.totalActive} steps complete`}
+                >
+                  <span className="composer-plan-step-count-separator" aria-hidden="true">
+                    ·
+                  </span>
+                  <span className="composer-plan-step-count-value">
+                    {formatPlanStepCount(stats.totalCompleted, stats.totalActive)}
+                  </span>
                 </span>
               )}
             </div>
