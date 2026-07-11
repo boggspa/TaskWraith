@@ -4642,3 +4642,52 @@
   .composer-combined-picker-trigger-provider {
   flex: 0 0 auto;
 }
+
+/* Claude light shell — match the real app's gray above-row family while
+ * keeping the textarea/send affordance on its own white, rimmed surface.
+ * Primary and secondary workspaces share `.composer-workspace-above-row`, so
+ * this single contract keeps every detached Claude row visually aligned. */
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="claude"]
+  .app-transcript
+  .composer-area.interface-claude
+  :is(
+    .composer-workspace-above-row,
+    .ensemble-above-row,
+    .queued-messages-above-row,
+    .ensemble-roster-preset-picker.is-compact
+  ) {
+  background: #f4f4f3 !important;
+}
+
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="claude"]
+  .app-transcript
+  .composer-area.interface-claude
+  .composer-textarea {
+  background: #ffffff !important;
+  border-color: rgba(29, 29, 31, 0.14) !important;
+  box-shadow:
+    0 1px 2px rgba(18, 21, 27, 0.06),
+    0 4px 14px rgba(18, 21, 27, 0.05) !important;
+}
+
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="claude"]
+  .app-transcript
+  .composer-area.interface-claude
+  .composer-surface:focus-within
+  .composer-textarea {
+  border-color: rgba(29, 29, 31, 0.25) !important;
+  box-shadow:
+    0 1px 2px rgba(18, 21, 27, 0.07),
+    0 5px 16px rgba(18, 21, 27, 0.08),
+    0 0 0 1px rgba(29, 29, 31, 0.06) !important;
+}
+
+/* The compact uppercase orchestration labels were keyed to `--text-muted`,
+ * which is too faint on light roster rows. This semantic bump is shared by
+ * every composer shell; higher-specificity shell identity rules can still opt
+ * out where needed. */
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])
+  .composer-ensemble-orchestration-row
+  .composer-orchestration-cell-label {
+  color: var(--text-secondary);
+}
