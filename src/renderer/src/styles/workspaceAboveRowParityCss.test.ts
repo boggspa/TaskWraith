@@ -14,6 +14,8 @@ describe('workspace above-row parity', () => {
     expect(composer).toContain('style-unified composer-workspace-above-row')
     expect(secondary).toContain('style-unified composer-workspace-above-row')
     expect(preview).toContain('style-unified composer-workspace-above-row')
+    expect(composer).toContain('<GitSyncChip snapshot={primaryGitSnapshot} />')
+    expect(secondary).toContain('<GitSyncChip snapshot={snapshot} />')
     expect(secondary).not.toContain('composer-above-bar-center-cluster')
     expect(secondary).not.toContain('composer-above-bar-trailing-cluster')
   })

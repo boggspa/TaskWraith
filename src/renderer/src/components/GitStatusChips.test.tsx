@@ -37,19 +37,40 @@ describe('GitSyncChip', () => {
   it('preserves numeric ahead counts instead of replacing them with PR state', () => {
     const html = renderToStaticMarkup(<GitSyncChip snapshot={snapshot({ ahead: 3 })} />)
 
+    expect(html).toContain('git-sync-ahead')
     expect(html).toContain('git-status-ahead')
     expect(html).toContain('<span class="sr-only">3 ahead</span>')
     expect(html).toContain('digit-odometer')
+    expect(html).not.toContain('git-status-drift-glyph')
     expect(html).not.toContain('synced')
   })
 
-  it('renders both ahead and behind counts through digit odometers', () => {
+  it('renders an amber branch-drift glyph and traceable count when behind upstream', () => {
+    const html = renderToStaticMarkup(<GitSyncChip snapshot={snapshot({ behind: 2 })} />)
+
+    expect(html).toContain('git-sync-behind')
+    expect(html).toContain('data-sync-state="behind"')
+    expect(html).toContain('git-status-behind')
+    expect(html).toContain('git-status-drift-glyph')
+    expect(html).toContain('<span class="sr-only">2 behind</span>')
+    expect(html).toContain('2 commits behind local tracking ref origin/feature/demo')
+    expect(html).toContain('fetch to refresh remote state')
+    expect(html).not.toContain('git-status-diverged')
+  })
+
+  it('renders both counts plus a red semantic state when histories diverge', () => {
     const html = renderToStaticMarkup(<GitSyncChip snapshot={snapshot({ ahead: 3, behind: 2 })} />)
 
+    expect(html).toContain('git-sync-diverged')
+    expect(html).toContain('data-sync-state="diverged"')
     expect(html).toContain('git-status-ahead')
-    expect(html).toContain('git-status-behind')
+    expect(html).toContain('git-status-behind git-status-diverged')
+    expect(html).toContain('git-status-drift-glyph')
     expect(html).toContain('<span class="sr-only">3 ahead</span>')
     expect(html).toContain('<span class="sr-only">2 behind</span>')
+    expect(html).toContain('Diverged from local tracking ref origin/feature/demo')
+    expect(html).toContain('3 commits local-only')
+    expect(html).toContain('2 commits upstream-only')
   })
 
   it('renders a green synced chip once the branch matches upstream', () => {
@@ -57,7 +78,8 @@ describe('GitSyncChip', () => {
 
     expect(html).toContain('git-status-synced')
     expect(html).toContain('synced')
-    expect(html).toContain('Branch matches origin/feature/demo')
+    expect(html).toContain('Branch matches local tracking ref origin/feature/demo')
+    expect(html).toContain('fetch to refresh remote state')
   })
 })
 

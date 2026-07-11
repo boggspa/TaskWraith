@@ -179,4 +179,14 @@ describe('ExternalPathAboveRow workspace name', () => {
     expect(changesPill).toBeGreaterThan(gitPill)
     expect(actionPill).toBeGreaterThan(changesPill)
   })
+
+  it('surfaces a diverged secondary workspace through the shared Git sync chip', () => {
+    const html = renderWorkspaceRow({ snapshot: makeSnapshot({ ahead: 3, behind: 2 }) })
+
+    expect(html).toContain('git-sync-diverged')
+    expect(html).toContain('git-status-drift-glyph')
+    expect(html).toContain('<span class="sr-only">3 ahead</span>')
+    expect(html).toContain('<span class="sr-only">2 behind</span>')
+    expect(html).toContain('local tracking ref origin/master')
+  })
 })

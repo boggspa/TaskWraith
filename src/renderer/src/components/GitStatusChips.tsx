@@ -90,6 +90,33 @@ function GitMergeGlyph(): React.JSX.Element {
   )
 }
 
+/**
+ * Local HEAD and its tracking ref no longer share a straight-line history.
+ * The twin monoline arrows echo Codex's "continue in a new task" fork glyph
+ * while staying legible at the above-row's 13px icon scale.
+ */
+function GitBranchDriftGlyph(): React.JSX.Element {
+  return (
+    <svg
+      className="git-status-drift-glyph"
+      width="13"
+      height="13"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.4"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M2.5 8h2.1c3.1 0 3.1-3.7 5.9-3.7H13" />
+      <path d="m11.1 2.5 1.9 1.8-1.9 1.8" />
+      <path d="M4.6 8c3.1 0 3.1 3.7 5.9 3.7H13" />
+      <path d="m11.1 9.9 1.9 1.8-1.9 1.8" />
+    </svg>
+  )
+}
+
 function normalisePrState(value: string | undefined): string {
   return (value || '').trim().toUpperCase()
 }
@@ -226,7 +253,7 @@ export function GitSyncChip({
     return (
       <span
         className="git-status-push git-status-synced"
-        title={`Branch matches ${snapshot.upstream}`}
+        title={`Branch matches local tracking ref ${snapshot.upstream}; fetch to refresh remote state.`}
       >
         <span className="git-status-sync-glyph" aria-hidden>
           ✓
@@ -235,8 +262,20 @@ export function GitSyncChip({
       </span>
     )
   }
+  const diverged = ahead > 0 && behind > 0
+  const syncState = diverged ? 'diverged' : behind > 0 ? 'behind' : 'ahead'
+  const commitLabel = (count: number): string => `${count} commit${count === 1 ? '' : 's'}`
+  const title = diverged
+    ? `Diverged from local tracking ref ${snapshot.upstream} · ${commitLabel(ahead)} local-only · ${commitLabel(behind)} upstream-only · fetch to refresh remote state.`
+    : behind > 0
+      ? `This checkout is ${commitLabel(behind)} behind local tracking ref ${snapshot.upstream}; fetch to refresh remote state.`
+      : `${commitLabel(ahead)} ahead of local tracking ref ${snapshot.upstream}.`
   return (
-    <span className="git-status-push" title={`${ahead} ahead · ${behind} behind`}>
+    <span
+      className={`git-status-push git-sync-${syncState}`}
+      data-sync-state={syncState}
+      title={title}
+    >
       {ahead > 0 && (
         <span className="git-status-ahead">
           <span aria-hidden>↑</span>
@@ -244,8 +283,8 @@ export function GitSyncChip({
         </span>
       )}
       {behind > 0 && (
-        <span className="git-status-behind">
-          <span aria-hidden>↓</span>
+        <span className={`git-status-behind${diverged ? ' git-status-diverged' : ''}`}>
+          <GitBranchDriftGlyph />
           <DigitOdometer value={behind} ariaLabel={`${behind} behind`} />
         </span>
       )}
