@@ -411,6 +411,58 @@ describe('buildModelUsageWorkspaceMatrix', () => {
       totalTokens: 1500
     })
   })
+
+  it('dedupes cache-blind external Cursor activity while displaying processed input', () => {
+    const ts = NOW - HOURS(1)
+    const internal = [
+      makeRecord({
+        provider: 'cursor',
+        model: 'composer-2.5-fast',
+        workspaceId: 'ws-alpha',
+        timestamp: ts,
+        inputTokens: 8_129,
+        cacheReadInputTokens: 29_056,
+        cacheCreationInputTokens: 12,
+        outputTokens: 834,
+        totalTokens: 38_031
+      })
+    ]
+    const external = [
+      makeRecord({
+        id: 'external-cursor-dup',
+        provider: 'cursor',
+        model: 'composer-2.5-fast',
+        workspaceId: 'external',
+        timestamp: ts + 30_000,
+        inputTokens: 8_129,
+        outputTokens: 834,
+        totalTokens: 8_963
+      })
+    ]
+    const chats = [
+      makeChat({
+        appChatId: 'chat-1',
+        workspaceId: 'ws-alpha',
+        workspacePath: '/repo/alpha'
+      })
+    ]
+
+    const matrix = buildModelUsageWorkspaceMatrix(
+      internal,
+      external,
+      chats,
+      RATES,
+      { ...USD, includeExternal: true },
+      NOW
+    )
+
+    expect(matrix.workspaces).toHaveLength(1)
+    expect(matrix.workspaces[0]).toMatchObject({
+      workspaceId: 'ws-alpha',
+      runs: 1,
+      totalTokens: 38_031
+    })
+  })
 })
 
 describe('buildModelUsageTable — currency conversion + overestimate', () => {
@@ -685,6 +737,44 @@ describe('buildModelUsageTableForSettings — grok/cursor supplement when extern
     )
     const cursor = result.find((g) => g.provider === 'cursor')!
     expect(cursor.totals.h24.totalTokens).toBe(15_000)
+    expect(cursor.totals.h24.runs).toBe(1)
+  })
+
+  it('dedupes a cache-inclusive internal Cursor run against cache-blind external activity', () => {
+    const ts = NOW - HOURS(1)
+    const internal = [
+      makeRecord({
+        provider: 'cursor',
+        model: 'composer-2.5-fast',
+        timestamp: ts,
+        inputTokens: 8_129,
+        cacheReadInputTokens: 29_056,
+        cacheCreationInputTokens: 12,
+        outputTokens: 834,
+        totalTokens: 38_031
+      })
+    ]
+    const external = [
+      makeRecord({
+        id: 'external-cursor-cache-dup',
+        provider: 'cursor',
+        model: 'composer-2.5-fast',
+        timestamp: ts + 30_000,
+        inputTokens: 8_129,
+        outputTokens: 834,
+        totalTokens: 8_963
+      })
+    ]
+    const result = buildModelUsageTableForSettings(
+      internal,
+      external,
+      RATES,
+      { currency: 'USD', includeExternal: true },
+      NOW
+    )
+    const cursor = result.find((group) => group.provider === 'cursor')!
+    expect(cursor.totals.h24.tokensIn).toBe(37_197)
+    expect(cursor.totals.h24.totalTokens).toBe(38_031)
     expect(cursor.totals.h24.runs).toBe(1)
   })
 

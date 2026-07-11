@@ -41,7 +41,11 @@
 
 import type { ChatRecord, ProviderId, UsageRecord } from '../../../main/store/types'
 import { canonicalModelIdForProvider } from './modelDisplayName'
-import { estimateUsageRecordCostUsd, usageRecordInputTokens, type RendererProviderRates } from './providerRateEstimate'
+import {
+  estimateUsageRecordCostUsd,
+  usageRecordInputTokens,
+  type RendererProviderRates
+} from './providerRateEstimate'
 import { formatCost, type DisplayCurrency } from './formatCost'
 
 /** Rolling window keys for the per-model rows (shortest → longest). */
@@ -499,6 +503,22 @@ export function buildModelUsageTable(
  */
 const ALWAYS_SUPPLEMENT_WHEN_EXTERNAL: ProviderId[] = ['grok', 'cursor']
 
+/** Cursor's IDE activity scanner exposes input + output but no cache split. Match
+ * internal cursor-agent rows on that same fresh-input + output basis; display
+ * aggregation remains cache-inclusive through `usageRecordInputTokens`. */
+function cursorDedupeTokens(record: UsageRecord): number {
+  return toNonNegative(record.inputTokens) + toNonNegative(record.outputTokens)
+}
+
+function cursorRecordsLikelyOverlap(internal: UsageRecord, external: UsageRecord): boolean {
+  const internalTokens = cursorDedupeTokens(internal)
+  const externalTokens = cursorDedupeTokens(external)
+  if (internalTokens <= 0 || externalTokens <= 0) return false
+  if (Math.abs(internal.timestamp - external.timestamp) > 120_000) return false
+  const ratio = internalTokens / externalTokens
+  return ratio >= 0.75 && ratio <= 1.33
+}
+
 /** Drop external Cursor rows that likely duplicate a TaskWraith cursor-agent run
  * already captured in the internal set (same ~2m window and similar token total). */
 function dedupeCursorExternalAgainstInternal(
@@ -509,21 +529,14 @@ function dedupeCursorExternalAgainstInternal(
     (record) =>
       record?.provider === 'cursor' &&
       record.usageKind !== 'reset_hint' &&
-      (record.totalTokens || record.inputTokens + record.outputTokens) > 0
+      cursorDedupeTokens(record) > 0
   )
   if (internalCursor.length === 0) return externalRecords
 
   return externalRecords.filter((record) => {
     if (record?.provider !== 'cursor' || record.usageKind === 'reset_hint') return true
-    const extTokens = record.totalTokens || record.inputTokens + record.outputTokens
-    if (extTokens <= 0) return false
-    const duplicate = internalCursor.some((inner) => {
-      const innerTokens = inner.totalTokens || inner.inputTokens + inner.outputTokens
-      if (innerTokens <= 0) return false
-      if (Math.abs(inner.timestamp - record.timestamp) > 120_000) return false
-      const ratio = innerTokens / extTokens
-      return ratio >= 0.75 && ratio <= 1.33
-    })
+    if (cursorDedupeTokens(record) <= 0) return false
+    const duplicate = internalCursor.some((inner) => cursorRecordsLikelyOverlap(inner, record))
     return !duplicate
   })
 }
@@ -675,12 +688,7 @@ function modelUsageRecordsForSettingsMatrix(
       (record?.provider === 'cursor' &&
         !filteredExternal.some((external) => {
           if (external?.provider !== 'cursor') return false
-          const extTokens = external.totalTokens || external.inputTokens + external.outputTokens
-          const innerTokens = record.totalTokens || record.inputTokens + record.outputTokens
-          if (extTokens <= 0 || innerTokens <= 0) return false
-          if (Math.abs(external.timestamp - record.timestamp) > 120_000) return false
-          const ratio = innerTokens / extTokens
-          return ratio >= 0.75 && ratio <= 1.33
+          return cursorRecordsLikelyOverlap(record, external)
         }))
   )
   return [...filteredExternal, ...supplemental]
