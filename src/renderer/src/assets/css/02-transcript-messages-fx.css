@@ -180,32 +180,32 @@
  * native app's silhouette. Sub-pixel adjustments; nothing dramatic. */
 .app-transcript.provider-gemini .message-bubble.user {
   border-radius: 18px;
-  padding: 9px 14px;
+  padding: var(--user-bubble-padding);
 }
 .app-transcript.provider-codex .message-bubble.user {
   border-radius: 14px;
-  padding: 8px 13px;
+  padding: var(--user-bubble-padding);
 }
 .app-transcript.provider-claude .message-bubble.user {
   border-radius: 16px;
-  padding: 8px 14px;
+  padding: var(--user-bubble-padding);
   letter-spacing: -0.005em;
 }
 .app-transcript.provider-kimi .message-bubble.user {
   border-radius: 14px;
-  padding: 8px 13px;
+  padding: var(--user-bubble-padding);
 }
 .app-transcript.provider-grok .message-bubble.user {
   border-radius: 14px;
-  padding: 8px 13px;
+  padding: var(--user-bubble-padding);
 }
 .app-transcript.provider-cursor .message-bubble.user {
   border-radius: 12px;
-  padding: 8px 13px;
+  padding: var(--user-bubble-padding);
 }
 .app-transcript.provider-ollama .message-bubble.user {
   border-radius: 15px;
-  padding: 8px 13px;
+  padding: var(--user-bubble-padding);
 }
 
 /* Assistant messages: native Claude / Codex / Gemini all render assistant
@@ -4600,10 +4600,12 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
 }
 
 .message-bubble.user {
+  --user-bubble-padding: 4px 10px;
   background: var(--app-bg-elevated);
   border: 1px solid var(--sidebar-border);
   align-self: flex-end;
   color: var(--text-primary);
+  padding: var(--user-bubble-padding);
   border-bottom-right-radius: calc(var(--radius-sm) * 3);
   overflow: hidden;
 }

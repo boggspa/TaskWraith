@@ -4912,7 +4912,7 @@
   :not([data-user-bubble-color])
 ) .message-bubble.user {
   background: var(--unified-soft-surface-bg);
-  border-color: var(--unified-soft-surface-border);
+  border-color: color-mix(in srgb, var(--unified-soft-surface-border) 96%, transparent);
   color: var(--text-primary);
 }
 

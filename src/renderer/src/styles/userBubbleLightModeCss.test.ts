@@ -27,7 +27,9 @@ describe('light-mode user bubble CSS', () => {
     const block = cssBlockStartingAt(css, selector)
 
     expect(block).toContain('background: var(--unified-soft-surface-bg)')
-    expect(block).toContain('border-color: var(--unified-soft-surface-border)')
+    expect(block).toContain(
+      'border-color: color-mix(in srgb, var(--unified-soft-surface-border) 96%, transparent)'
+    )
     expect(block).toContain('color: var(--text-primary)')
   })
 
@@ -40,5 +42,21 @@ describe('light-mode user bubble CSS', () => {
     expect(css).toContain(
       ':is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-user-bubble-color]:not([data-user-bubble-color="system"]) .message-bubble.user'
     )
+  })
+
+  it('keeps every provider silhouette on the shared compact user-message inset', () => {
+    const css = readCss('02-transcript-messages-fx.css')
+    const sharedBubble = cssBlockStartingAt(css, '\n.message-bubble.user {')
+
+    expect(sharedBubble).toContain('--user-bubble-padding: 4px 10px')
+    expect(sharedBubble).toContain('padding: var(--user-bubble-padding)')
+
+    for (const provider of ['gemini', 'codex', 'claude', 'kimi', 'grok', 'cursor', 'ollama']) {
+      const providerBubble = cssBlockStartingAt(
+        css,
+        `.app-transcript.provider-${provider} .message-bubble.user {`
+      )
+      expect(providerBubble).toContain('padding: var(--user-bubble-padding)')
+    }
   })
 })
