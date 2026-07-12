@@ -567,6 +567,11 @@ import {
   shouldRenderWelcome,
   isReusableWelcomeChat
 } from './lib/welcomeState'
+import {
+  WELCOME_FIT_FULL,
+  resolveWelcomeFitLevel,
+  type WelcomeFitLevel
+} from './lib/welcomeFit'
 import { isChatSummaryRecord, mergeChatRecord } from './lib/chatRecordMerge'
 import {
   buildPinnedMessageSummaries,
@@ -3019,7 +3024,10 @@ function App(): React.JSX.Element {
   // mount with a local ref measured against that pane's own transcript root.
   const paneComposerAreaDiscardRef = useRef<HTMLDivElement | null>(null)
   const welcomeDashboardRegionRef = useRef<HTMLDivElement>(null)
-  const [welcomeDashboardHiddenByFit, setWelcomeDashboardHiddenByFit] = useState(false)
+  const [welcomeFitState, setWelcomeFitState] = useState<{
+    chatId: string | null
+    level: WelcomeFitLevel
+  }>({ chatId: null, level: WELCOME_FIT_FULL })
   // Composer textarea ref + slash-command picker state moved INTO <Composer>
   // (Slice C) so each multiview pane owns them independently. The
   // composerTextareaRef, slashMenuOpen / slashQuery / slashAnchorIndexRef, and
@@ -20829,13 +20837,18 @@ function App(): React.JSX.Element {
       welcomeWorkspaceActivityPath
     ]
   )
-  const welcomeDashboardFitActive =
-    isWelcomeChat &&
-    welcomeDashboardCardEnabled &&
-    (shouldShowWelcomeUsageDashboard || !usageInitialized)
+  const welcomeFitChatId = currentChat?.appChatId || null
+  const welcomeFitLevel =
+    welcomeFitState.chatId === welcomeFitChatId ? welcomeFitState.level : WELCOME_FIT_FULL
+  const welcomeFitActive = isWelcomeChat && !isMultiviewSplit
   useLayoutEffect(() => {
-    if (!welcomeDashboardFitActive) {
-      setWelcomeDashboardHiddenByFit(false)
+    if (!welcomeFitActive) {
+      setWelcomeFitState((current) => {
+        if (current.chatId === welcomeFitChatId && current.level === WELCOME_FIT_FULL) {
+          return current
+        }
+        return { chatId: welcomeFitChatId, level: WELCOME_FIT_FULL }
+      })
       return
     }
     const transcript = appTranscriptRef.current
@@ -20850,45 +20863,11 @@ function App(): React.JSX.Element {
       const viewportHeight = window.innerHeight || transcript.clientHeight
       return Math.min(max, Math.max(min, viewportHeight * viewportPercent))
     }
-    const welcomeNotificationGridMinSpacerHeight = (): number => {
-      if (
-        !composer.matches(':has(> .notification-zone)') ||
-        transcript.classList.contains('welcome-dashboard-hidden-by-fit')
-      ) {
-        return 0
-      }
-      return clampPx(18, 0.03, 48) + clampPx(18, 0.03, 44) + clampPx(24, 0.04, 64)
-    }
-    const measureComposerContentHeight = (): number => {
-      let visibleChildCount = 0
-      let childrenHeight = 0
+    const directComposerChild = (className: string): HTMLElement | null => {
       for (const child of Array.from(composer.children)) {
-        if (!(child instanceof HTMLElement)) continue
-        const childStyle = window.getComputedStyle(child)
-        if (
-          childStyle.display === 'none' ||
-          childStyle.visibility === 'hidden' ||
-          childStyle.position === 'absolute' ||
-          childStyle.position === 'fixed'
-        ) {
-          continue
-        }
-        const childRect = child.getBoundingClientRect()
-        if (childRect.width <= 0 && childRect.height <= 0) continue
-        visibleChildCount += 1
-        childrenHeight +=
-          childRect.height + readPx(childStyle.marginTop) + readPx(childStyle.marginBottom)
+        if (child instanceof HTMLElement && child.classList.contains(className)) return child
       }
-      const composerStyle = window.getComputedStyle(composer)
-      const gap = readPx(composerStyle.rowGap === 'normal' ? '0' : composerStyle.rowGap)
-      const gapHeight = Math.max(0, visibleChildCount - 1) * gap
-      return (
-        readPx(composerStyle.paddingTop) +
-        childrenHeight +
-        gapHeight +
-        welcomeNotificationGridMinSpacerHeight() +
-        readPx(composerStyle.paddingBottom)
-      )
+      return null
     }
 
     let frame: number | null = null
@@ -20897,23 +20876,74 @@ function App(): React.JSX.Element {
       const dashboard =
         welcomeDashboardRegionRef.current ||
         transcript.querySelector<HTMLElement>('.welcome-usage-region')
-      if (!dashboard) {
-        setWelcomeDashboardHiddenByFit(false)
-        return
-      }
-      const transcriptStyle = window.getComputedStyle(transcript)
-      const dashboardStyle = window.getComputedStyle(dashboard)
-      const dashboardHeight =
-        readPx(dashboardStyle.getPropertyValue('--welcome-usage-dashboard-visual-height')) ||
-        dashboard.getBoundingClientRect().height
+      const primaryStack = directComposerChild('composer-primary-stack')
+      const heatmap = directComposerChild('welcome-standalone-heatmaps')
+      const notification = directComposerChild('notification-zone')
+      if (!primaryStack) return
+
+      const dashboardStyle = dashboard ? window.getComputedStyle(dashboard) : null
+      const dashboardHeight = dashboard
+        ? readPx(dashboardStyle?.getPropertyValue('--welcome-usage-dashboard-visual-height')) ||
+          dashboard.getBoundingClientRect().height
+        : 0
+      const primaryHeight = primaryStack.getBoundingClientRect().height
+      const heatmapRect = heatmap?.getBoundingClientRect() || null
+      const notificationRect = notification?.getBoundingClientRect() || null
+      const heatmapHeight = heatmapRect?.height || 0
+      if (primaryHeight <= 0) return
+
+      const composerStyle = window.getComputedStyle(composer)
+      const composerPadding =
+        readPx(composerStyle.paddingTop) + readPx(composerStyle.paddingBottom)
+      const composerGap = readPx(composerStyle.rowGap === 'normal' ? '0' : composerStyle.rowGap)
+      const fullTranscriptPadding = clampPx(72, 0.095, 120)
+      const compactTranscriptPadding = clampPx(48, 0.07, 72)
+      const flexHeatmapMargin = heatmap ? clampPx(44, 0.06, 84) : 0
+      const flexComposerHeight =
+        composerPadding +
+        primaryHeight +
+        (heatmap ? composerGap + flexHeatmapMargin + heatmapHeight : 0)
+
       const availableHeight = transcript.clientHeight
-      const requiredHeight =
-        readPx(transcriptStyle.paddingTop) + dashboardHeight + measureComposerContentHeight()
-      const overflow = requiredHeight - availableHeight
-      setWelcomeDashboardHiddenByFit((hidden) => {
-        if (!hidden && overflow > 12) return true
-        if (hidden && overflow < -48) return false
-        return hidden
+      // Notification fit is geometry-based rather than a height sum: the
+      // notice is absolutely positioned and the three flexible grid spacers
+      // divide extra room non-linearly. Its hidden tier deliberately keeps the
+      // same grid, so these rectangles remain an exact projection while the
+      // user continues resizing in either direction.
+      const fullHeight = notificationRect
+        ? availableHeight +
+          ((heatmapRect || primaryStack.getBoundingClientRect()).bottom +
+            clampPx(12, 0.018, 24) -
+            notificationRect.top)
+        : fullTranscriptPadding + dashboardHeight + flexComposerHeight
+      const gridComposerMinHeight =
+        composerPadding +
+        clampPx(18, 0.03, 48) +
+        primaryHeight +
+        clampPx(10, 0.02, 28) +
+        heatmapHeight +
+        clampPx(24, 0.04, 64) +
+        composerGap * 5
+      const notificationHiddenHeight =
+        fullTranscriptPadding +
+        dashboardHeight +
+        (notification ? gridComposerMinHeight : flexComposerHeight)
+      const dashboardHiddenHeight =
+        compactTranscriptPadding + flexComposerHeight + clampPx(16, 0.03, 32)
+      setWelcomeFitState((current) => {
+        const currentLevel =
+          current.chatId === welcomeFitChatId ? current.level : WELCOME_FIT_FULL
+        const level = resolveWelcomeFitLevel({
+          currentLevel,
+          availableHeight,
+          fullHeight,
+          notificationHiddenHeight,
+          dashboardHiddenHeight,
+          hasNotification: Boolean(notification),
+          hasHeatmap: Boolean(heatmap)
+        })
+        if (current.chatId === welcomeFitChatId && current.level === level) return current
+        return { chatId: welcomeFitChatId, level }
       })
     }
     const scheduleMeasure = () => {
@@ -20965,8 +20995,12 @@ function App(): React.JSX.Element {
     }
   }, [
     currentChat?.appChatId,
+    isMultiviewSplit,
     usageInitialized,
-    welcomeDashboardFitActive,
+    welcomeDashboardCardEnabled,
+    welcomeFitActive,
+    welcomeFitChatId,
+    welcomeFitLevel,
     welcomeHeatmapSlots.length,
     welcomeUsageTab
   ])
@@ -26170,7 +26204,7 @@ function App(): React.JSX.Element {
     visibleGeminiTerminalLogs,
     visibleRunCompleteNotice,
     welcomeDashboardCardEnabled,
-    welcomeDashboardHiddenByFit,
+    welcomeFitLevel,
     welcomeDashboardRegionRef,
     welcomeUsageDashboardData,
     welcomeUsageTab,

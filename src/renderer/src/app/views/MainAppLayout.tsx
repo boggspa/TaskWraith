@@ -512,7 +512,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   visibleRunCompleteNotice,
   pluginWorkflowTemplates,
   welcomeDashboardCardEnabled,
-  welcomeDashboardHiddenByFit,
+  welcomeFitLevel,
   welcomeDashboardRegionRef,
   welcomeUsageDashboardData,
   welcomeUsageTab,
@@ -1603,7 +1603,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
               renderFocusedCell={() => (
             <div
               ref={appTranscriptRef}
-              className={`app-transcript provider-${currentProvider} ${isCurrentEnsembleChat ? 'chat-kind-ensemble' : ''} ${isCurrentGlobalChat ? 'chat-scope-global' : ''} ${isWelcomeChat ? 'welcome-mode' : ''} ${welcomeDashboardHiddenByFit ? 'welcome-dashboard-hidden-by-fit' : ''} ${isAdvancedFxActive ? `fx-labs-active fx-intensity-${advancedFxIntensity}` : ''} ${showSettings ? 'transcript-hidden-for-settings' : ''}`}
+              className={`app-transcript provider-${currentProvider} ${isCurrentEnsembleChat ? 'chat-kind-ensemble' : ''} ${isCurrentGlobalChat ? 'chat-scope-global' : ''} ${isWelcomeChat ? 'welcome-mode' : ''} ${welcomeFitLevel >= 1 ? 'welcome-notification-hidden-by-fit' : ''} ${welcomeFitLevel >= 2 ? 'welcome-dashboard-hidden-by-fit' : ''} ${welcomeFitLevel >= 3 ? 'welcome-heatmaps-hidden-by-fit' : ''} ${isAdvancedFxActive ? `fx-labs-active fx-intensity-${advancedFxIntensity}` : ''} ${showSettings ? 'transcript-hidden-for-settings' : ''}`}
               style={transcriptStyle}
             >
           {chatContextNotice && (

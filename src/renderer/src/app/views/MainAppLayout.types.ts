@@ -612,7 +612,7 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   visibleRunCompleteNotice: any
   pluginWorkflowTemplates: MainAppLayoutSidebarProps['pluginWorkflowTemplates']
   welcomeDashboardCardEnabled: any
-  welcomeDashboardHiddenByFit: any
+  welcomeFitLevel: any
   welcomeDashboardRegionRef: any
   welcomeUsageDashboardData: any
   welcomeUsageTab: any
