@@ -5985,6 +5985,9 @@ export class EnsembleOrchestrator {
       error: 'poll_not_found'
     }
     const nowIso = this.deps.nowIso()
+    // A4-1: a late vote arriving past a BINDING poll's timeout must terminalize
+    // it through resolveBindingPoll('timeout') below, not a plain 'expired' mark.
+    let bindingPollTimedOut = false
     this.updateBossmanControlState(runtime, (state) => {
       const polls = state.polls || []
       const index = polls.findIndex((poll) => poll.id === pollId)
@@ -6010,6 +6013,19 @@ export class EnsembleOrchestrator {
         return state
       }
       if (poll.timeoutAt && new Date(poll.timeoutAt).getTime() <= this.deps.now()) {
+        // A4-1: binding polls resolve via the atomic resolver on timeout (after
+        // this transaction), never a plain 'expired' mark — leave state untouched.
+        if (poll.binding) {
+          bindingPollTimedOut = true
+          response = {
+            ok: false,
+            tool: 'ensemble_poll_response',
+            pollId,
+            message: `Poll ${pollId} reached its timeout; resolving.`,
+            error: 'poll_closed'
+          }
+          return state
+        }
         const nextPoll = { ...poll, status: 'expired' as const }
         this.clearBossmanPollTimeout(runtime.chatId, pollId)
         response = {
@@ -6086,6 +6102,9 @@ export class EnsembleOrchestrator {
       // Binding goal-complete polls terminalize through the atomic resolver
       // (advisory polls no-op inside it, so their behavior is unchanged).
       this.resolveBindingPoll(runtime.chatId, pollId, 'vote')
+    } else if (bindingPollTimedOut) {
+      // A4-1: a late vote hit the timeout — resolve the binding poll now.
+      this.resolveBindingPoll(runtime.chatId, pollId, 'timeout')
     }
     return response
   }
@@ -6245,6 +6264,18 @@ export class EnsembleOrchestrator {
       }
     }
     if (poll.timeoutAt && new Date(poll.timeoutAt).getTime() <= this.deps.now()) {
+      // A4-1: binding polls resolve via the atomic resolver on timeout, not a
+      // plain 'expired' mark (the user vote never blocks/drives resolution).
+      if (poll.binding) {
+        this.resolveBindingPoll(chatId, pollId, 'timeout')
+        return {
+          ok: false,
+          tool: 'ensemble_poll_response',
+          pollId,
+          message: `Poll ${pollId} reached its timeout; resolving.`,
+          error: 'poll_closed'
+        }
+      }
       const nextPoll = { ...poll, status: 'expired' as const }
       this.clearBossmanPollTimeout(chatId, pollId)
       this.saveChatWithCheckpoint(
@@ -6678,7 +6709,26 @@ export class EnsembleOrchestrator {
                 : resolution === 'failed_floor'
                   ? `below participation floor (${participantVotes.length}/${floor}) — goal stays active.`
                   : `quorum not met (${completeVotes}/${denominator} 'complete', need ≥${quorumThreshold}) — goal stays active.`
-      this.appendRoundStatus(chatId, auditRoundId, `Binding goal-complete poll ${pollId} ${detail}`)
+      // A2/A4 authority-reachability visibility (audit-first mitigation): record
+      // how many stable Boss/Captain voters actually cast, and flag when authority
+      // was unreachable at resolution (health-probe out — e.g. a quota wall), so a
+      // PASS with zero authority input is auditable (completed goals stay
+      // authority-reopenable via update_goal, so audit-first is proportionate).
+      const authorityVotesCast = participantVotes.filter((vote) =>
+        authorityIds.has(vote.voterParticipantId as string)
+      ).length
+      const resolveRuntime = this.roundsByChatId.get(chatId)
+      const authorityUnreachable =
+        authorityIds.size > 0 &&
+        [...authorityIds].some((id) => resolveRuntime?.unreachableParticipantIds?.has(id))
+      const authoritySuffix = ` Authority votes: ${authorityVotesCast}/${authorityIds.size}${
+        authorityUnreachable ? ' (authority unreachable at resolution)' : ''
+      }.`
+      this.appendRoundStatus(
+        chatId,
+        auditRoundId,
+        `Binding goal-complete poll ${pollId} ${detail}${authoritySuffix}`
+      )
     }
   }
 

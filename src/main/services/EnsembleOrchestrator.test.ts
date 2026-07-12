@@ -5634,6 +5634,209 @@ Next action:
     expect(result.error).toBe('no_active_goal')
   })
 
+  // ---- O3 slice-3 — resolver closure tests (items 1/3/4) ------------------
+  const openBinding = async (
+    harness: Awaited<ReturnType<typeof startBindingHarness>>['harness'],
+    pollId: string
+  ) => {
+    await harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
+      action: 'create_poll',
+      roundId: harness.chat.ensemble?.activeRound?.roundId,
+      pollId,
+      binding: { kind: 'goal_complete' }
+    })
+    return harness.chat.ensemble?.bossmanControlState?.polls?.find((p) => p.id === pollId)
+  }
+  const findPoll = (
+    harness: Awaited<ReturnType<typeof startBindingHarness>>['harness'],
+    pollId: string
+  ) => harness.chat.ensemble?.bossmanControlState?.polls?.find((p) => p.id === pollId)
+  // Direct resolver call (private) — confirmatory tally-logic coverage; the vote
+  // and timeout INVOCATION paths are covered by the A4-1 / slice-1 / slice-2 tests.
+  const resolveDirect = (
+    harness: Awaited<ReturnType<typeof startBindingHarness>>['harness'],
+    pollId: string
+  ) =>
+    (
+      harness.orchestrator as unknown as {
+        resolveBindingPoll: (chatId: string, pollId: string, trigger: 'vote' | 'timeout') => void
+      }
+    ).resolveBindingPoll('ensemble-chat', pollId, 'timeout')
+  const pvote = (id: string, choice: string) => ({
+    voterParticipantId: id,
+    voterLabel: id,
+    choice,
+    votedAt: '2026-05-24T00:00:00.000Z'
+  })
+  const uvote = (choice: string) => ({
+    voterLabel: 'User',
+    choice,
+    votedAt: '2026-05-24T00:00:00.000Z'
+  })
+
+  it('A4-1: a late vote past a binding timeout routes to the resolver (not plain expired)', async () => {
+    const { harness } = await startBindingHarness(true)
+    await openBinding(harness, 'binding-late')
+    // Force the deadline into the past WITHOUT firing the scheduled timer. The
+    // harness clock is a small integer counter, so epoch 0 (getTime 0) is ≤ now().
+    const poll = findPoll(harness, 'binding-late')!
+    ;(poll as { timeoutAt?: string }).timeoutAt = '1970-01-01T00:00:00.000Z'
+    const late = harness.orchestrator.pollResponseForRun(harness.dispatched[0].appRunId, {
+      pollId: 'binding-late',
+      choice: 'complete'
+    })
+    expect(late.ok).toBe(false) // late vote rejected…
+    // …but the binding poll terminalized via the resolver, not a plain 'expired' mark.
+    const resolved = findPoll(harness, 'binding-late')!
+    expect(resolved.status).toBe('closed')
+    expect(resolved.bindingResolution).toBe('failed_floor') // 0 votes cast < floor 2
+    expect(harness.chat.activeGoal?.status).toBe('active')
+  })
+
+  it('blocks a binding PASS when a required review gate is active (gate preserved)', async () => {
+    const { harness } = await startBindingHarness(true)
+    await openBinding(harness, 'binding-gate')
+    ;(harness.chat.ensemble!.bossmanControlState as { reviewGates?: unknown[] }).reviewGates = [
+      { id: 'gate-x', scope: 'all', status: 'required', createdAt: '2026-05-24T00:00:00.000Z' }
+    ]
+    ;(findPoll(harness, 'binding-gate') as { votes: unknown[] }).votes = [
+      pvote('claude', 'complete'),
+      pvote('codex', 'complete')
+    ]
+    resolveDirect(harness, 'binding-gate')
+    expect(findPoll(harness, 'binding-gate')?.bindingResolution).toBe('gate_blocked')
+    expect(harness.chat.activeGoal?.status).toBe('active')
+  })
+
+  it('no-ops a binding poll from a stale round (roundId mismatch)', async () => {
+    const { harness } = await startBindingHarness(true)
+    await openBinding(harness, 'binding-stale-round')
+    const poll = findPoll(harness, 'binding-stale-round')!
+    ;(poll as { roundId?: string }).roundId = 'a-prior-round'
+    ;(poll as { votes: unknown[] }).votes = [pvote('claude', 'complete'), pvote('codex', 'complete')]
+    resolveDirect(harness, 'binding-stale-round')
+    expect(findPoll(harness, 'binding-stale-round')?.bindingResolution).toBe('stale')
+    expect(harness.chat.activeGoal?.status).toBe('active')
+  })
+
+  it('confirmatory: resolveBindingPoll is a no-op on an already-resolved poll', async () => {
+    const { harness } = await startBindingHarness(true)
+    await openBinding(harness, 'binding-double')
+    ;(findPoll(harness, 'binding-double') as { votes: unknown[] }).votes = [
+      pvote('claude', 'keep-working') // authority (Boss) veto
+    ]
+    resolveDirect(harness, 'binding-double')
+    expect(findPoll(harness, 'binding-double')?.bindingResolution).toBe('vetoed')
+    expect(findPoll(harness, 'binding-double')?.status).toBe('closed')
+    // A second resolution attempt must be a no-op (status !== 'open' guard).
+    resolveDirect(harness, 'binding-double')
+    expect(findPoll(harness, 'binding-double')?.bindingResolution).toBe('vetoed')
+    expect(harness.chat.activeGoal?.status).toBe('active')
+  })
+
+  it('passes the 2/3 quorum edge (2-of-3 complete + 1 keep-working)', async () => {
+    const { harness } = await startBindingHarness(true)
+    await openBinding(harness, 'binding-edge-pass')
+    const poll = findPoll(harness, 'binding-edge-pass')!
+    ;(poll as { eligibleAtOpen?: number }).eligibleAtOpen = 3 // ⇒ floor 2
+    ;(poll as { votes: unknown[] }).votes = [
+      pvote('claude', 'complete'),
+      pvote('codex', 'complete'),
+      pvote('ghost', 'keep-working')
+    ]
+    resolveDirect(harness, 'binding-edge-pass')
+    expect(findPoll(harness, 'binding-edge-pass')?.bindingResolution).toBe('passed')
+    expect(harness.chat.activeGoal?.status).toBe('completed')
+  })
+
+  it('fails the 2/3 quorum edge (1-of-3 complete)', async () => {
+    const { harness } = await startBindingHarness(true)
+    await openBinding(harness, 'binding-edge-fail')
+    const poll = findPoll(harness, 'binding-edge-fail')!
+    ;(poll as { eligibleAtOpen?: number }).eligibleAtOpen = 3
+    ;(poll as { votes: unknown[] }).votes = [
+      pvote('claude', 'complete'),
+      pvote('codex', 'keep-working'),
+      pvote('ghost', 'keep-working')
+    ]
+    resolveDirect(harness, 'binding-edge-fail')
+    expect(findPoll(harness, 'binding-edge-fail')?.bindingResolution).toBe('failed_quorum')
+    expect(harness.chat.activeGoal?.status).toBe('active')
+  })
+
+  it('lets the Captain (secondInCommandParticipantId) veto a binding poll', async () => {
+    const initialChat = makeChat()
+    initialChat.ensemble!.bossmanParticipantId = 'claude'
+    initialChat.ensemble!.secondInCommandParticipantId = 'codex' // Captain
+    const harness = makeHarness({ initialChat })
+    harness.chat.activeGoal = buildActiveGoal('goal-x')
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Coordinate.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    await openBinding(harness, 'binding-cap-veto')
+    const poll = findPoll(harness, 'binding-cap-veto')!
+    expect(poll.authorityVoterIds).toContain('codex') // Captain captured as authority
+    ;(poll as { votes: unknown[] }).votes = [pvote('claude', 'complete'), pvote('codex', 'keep-working')]
+    resolveDirect(harness, 'binding-cap-veto')
+    expect(findPoll(harness, 'binding-cap-veto')?.bindingResolution).toBe('vetoed')
+    expect(harness.chat.activeGoal?.status).toBe('active')
+  })
+
+  it('counts the user vote in the denominator (user vote flips fail→pass)', async () => {
+    const { harness } = await startBindingHarness(true)
+    await openBinding(harness, 'binding-user-count')
+    const poll = findPoll(harness, 'binding-user-count')!
+    ;(poll as { eligibleAtOpen?: number }).eligibleAtOpen = 3 // floor 2
+    // 2 participant votes clear the floor (1 complete + 1 keep-working); WITHOUT the
+    // user this is 1/2 complete = FAIL. The user's 'complete' makes it 2/3 = PASS.
+    ;(poll as { votes: unknown[] }).votes = [
+      pvote('claude', 'complete'),
+      pvote('codex', 'keep-working'),
+      uvote('complete')
+    ]
+    resolveDirect(harness, 'binding-user-count')
+    expect(findPoll(harness, 'binding-user-count')?.bindingResolution).toBe('passed')
+    expect(harness.chat.activeGoal?.status).toBe('completed')
+  })
+
+  it('records authority-votes-cast in the resolution audit line (item 4)', async () => {
+    const { harness } = await startBindingHarness(true)
+    await openBinding(harness, 'binding-audit')
+    ;(findPoll(harness, 'binding-audit') as { votes: unknown[] }).votes = [
+      pvote('claude', 'complete'),
+      pvote('codex', 'complete')
+    ]
+    resolveDirect(harness, 'binding-audit')
+    // claude is the authority (Boss) and voted ⇒ "Authority votes: 1/1".
+    expect(
+      harness.chat.messages.some((m) => (m.content || '').includes('Authority votes: 1/1'))
+    ).toBe(true)
+  })
+
+  it('flags authority-unreachable-at-resolution when authority is health-probed out (item 4)', async () => {
+    const { harness } = await startBindingHarness(true)
+    await openBinding(harness, 'binding-unreach')
+    // Simulate the Boss going unreachable (quota wall) for the whole window.
+    const runtime = (
+      harness.orchestrator as unknown as {
+        roundsByChatId: Map<string, { unreachableParticipantIds?: Set<string> }>
+      }
+    ).roundsByChatId.get('ensemble-chat')!
+    runtime.unreachableParticipantIds = new Set(['claude'])
+    const poll = findPoll(harness, 'binding-unreach')!
+    ;(poll as { eligibleAtOpen?: number }).eligibleAtOpen = 3
+    ;(poll as { votes: unknown[] }).votes = [pvote('codex', 'complete'), pvote('ghost', 'complete')]
+    resolveDirect(harness, 'binding-unreach')
+    expect(
+      harness.chat.messages.some((m) =>
+        (m.content || '').includes('authority unreachable at resolution')
+      )
+    ).toBe(true)
+  })
+
   it('rejects Boss control from non-Boss callers and stale round ids', async () => {
     const initialChat = makeChat()
     initialChat.ensemble!.bossmanParticipantId = 'claude'
