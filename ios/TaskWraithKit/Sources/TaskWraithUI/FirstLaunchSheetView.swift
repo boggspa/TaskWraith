@@ -373,6 +373,10 @@ struct FirstLaunchSheetView: View {
                     .font(.caption)
                     .foregroundStyle(TWTheme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
+                Text("Continuous mode hands control back instead of repeating an all-yielded, no-work pass. If you queue a provider or model change, the current pass ends before the new seat runs.")
+                    .font(.caption)
+                    .foregroundStyle(TWTheme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }

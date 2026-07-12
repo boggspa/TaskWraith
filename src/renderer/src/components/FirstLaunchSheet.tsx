@@ -767,7 +767,9 @@ export function FirstLaunchSheet({
             <strong>Get one provider working first</strong> — Ensemble shines with two or more.
             Toggle Ensemble on an idle top-level chat to add multiple provider participants while
             preserving its transcript. Turn mode keeps one active speaker at a time; Continuous mode
-            lets the panel keep moving. Hit the <strong>Work Session</strong> button in the composer
+            keeps going while actual work remains, but returns control instead of burning hops on a
+            no-work, all-yielded consensus. Queued provider/model changes close the current pass
+            before the next one starts. Hit the <strong>Work Session</strong> button in the composer
             to run a supervised multi-round autonomy session with one of five presets (One-shot
             review · Architecture panel · Scout pass · Implementation review · Long-running work
             session).
@@ -777,6 +779,10 @@ export function FirstLaunchSheet({
             serial implementation turns, and Reviewers check the result last. BG seats skip
             ordinary rotation; @mention or delegate one for detached read-only work. They cannot
             take Boss, Captain, or synthesizer authority.
+          </p>
+          <p className="first-launch-sheet-prose">
+            In Settings → Roster, choose individual saved panels when importing or exporting, then
+            expand a compact participant card only when you need its detailed controls.
           </p>
           <div className="first-launch-sheet-ensemble-preview" aria-label="Ensemble row preview">
             <div className="first-launch-sheet-ensemble-strip">

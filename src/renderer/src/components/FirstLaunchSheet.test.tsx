@@ -99,6 +99,8 @@ describe('FirstLaunchSheet', () => {
     expect(html).toContain('Delegate a focused worker')
     expect(html).toContain('live token + projected-cost tally')
     expect(html).toContain('BG seats skip ordinary rotation')
+    expect(html).toContain('returns control instead of burning hops')
+    expect(html).toContain('choose individual saved panels')
   })
 
   it('intro prose advertises live providers but not the retired Gemini', () => {
