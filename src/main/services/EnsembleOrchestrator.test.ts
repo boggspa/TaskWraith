@@ -4844,6 +4844,76 @@ Next action:
     ).toContain('Continuous handoff limit reached (1/1); returning control to the user.')
   })
 
+  it('C2: set_review_gate stamps the active goal id onto the gate', async () => {
+    const initialChat = makeChat()
+    initialChat.ensemble!.bossmanParticipantId = 'claude'
+    const harness = makeHarness({ initialChat })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Go.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const runId = harness.dispatched[0].appRunId
+    const roundId = harness.chat.ensemble?.activeRound?.roundId
+
+    await harness.orchestrator.bossmanControlForRun(runId, {
+      action: 'set_goal',
+      roundId,
+      goal: 'Ship the C2 gate scoping'
+    })
+    const goalId = harness.chat.activeGoal?.id
+    expect(goalId).toBeTruthy()
+
+    await harness.orchestrator.bossmanControlForRun(runId, {
+      action: 'set_review_gate',
+      roundId,
+      targetParticipantId: 'claude',
+      scope: 'final diff'
+    })
+    const gate = harness.chat.ensemble?.bossmanControlState?.reviewGates?.[0]
+    expect(gate?.goalId).toBe(goalId) // C2 — gate bound to the active goal
+  })
+
+  it('C2 P2: set_goal mints a fresh id for a materially-new objective, preserves it for the same', async () => {
+    const initialChat = makeChat()
+    initialChat.ensemble!.bossmanParticipantId = 'claude'
+    const harness = makeHarness({ initialChat })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Go.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const runId = harness.dispatched[0].appRunId
+    const roundId = harness.chat.ensemble?.activeRound?.roundId
+
+    await harness.orchestrator.bossmanControlForRun(runId, {
+      action: 'set_goal',
+      roundId,
+      goal: 'First objective'
+    })
+    const firstId = harness.chat.activeGoal?.id
+    expect(firstId).toBeTruthy()
+
+    // Re-set the SAME objective ⇒ identity preserved (idempotent re-set).
+    await harness.orchestrator.bossmanControlForRun(runId, {
+      action: 'set_goal',
+      roundId,
+      goal: 'First objective'
+    })
+    expect(harness.chat.activeGoal?.id).toBe(firstId)
+
+    // A materially-different objective ⇒ FRESH identity (kills the goalId-reuse trap
+    // that would make C2's goal-scoped gate filter a no-op).
+    await harness.orchestrator.bossmanControlForRun(runId, {
+      action: 'set_goal',
+      roundId,
+      goal: 'A completely different objective'
+    })
+    expect(harness.chat.activeGoal?.id).not.toBe(firstId)
+  })
+
   it('records Boss control state and injects it into later participant prompts', async () => {
     const initialChat = makeChat()
     initialChat.ensemble!.bossmanParticipantId = 'claude'
@@ -4952,8 +5022,12 @@ Next action:
     )
 
     expect(result.ok).toBe(true)
+    // C2 P2 — set_goal after a COMPLETED prior goal mints a FRESH identity: a new
+    // objective is a new goal, NOT a reuse of the completed goal's id. This is the
+    // ratified Adversary2/3 reuse-trap fix (reuse would make the goalId gate filter
+    // a no-op). Reopening the SAME goal is update_goal's job, which preserves id.
+    expect(result.goal?.id).not.toBe('goal-old')
     expect(result.goal).toMatchObject({
-      id: 'goal-old',
       objective: 'Ship the next corrected slice',
       status: 'active',
       mode: 'taskwraith_steered',
@@ -5143,6 +5217,9 @@ Next action:
     const initialChat = makeChat()
     initialChat.ensemble!.bossmanParticipantId = 'claude'
     initialChat.ensemble!.workSession = buildWorkSession()
+    // C2 — review gates are goal-scoped: set_review_gate stamps the active goal id,
+    // and completion is blocked only by gates bound to that goal.
+    initialChat.activeGoal = buildActiveGoal('goal-ws')
     const harness = makeHarness({ initialChat })
     harness.orchestrator.startRound({
       chatId: 'ensemble-chat',

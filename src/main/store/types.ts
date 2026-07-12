@@ -1292,6 +1292,13 @@ export interface EnsembleBossmanReviewGate {
   createdAt: string
   updatedAt: string
   createdByParticipantId?: string
+  /**
+   * C2 — the goal this gate was created for, stamped from chat.activeGoal.id at
+   * set_review_gate. Absent on legacy (pre-C2) gates, which fall back to an ISO
+   * createdAt comparison against the active goal (see ReviewGateScope). Optional
+   * ⇒ legacy gates deserialize byte-compatibly.
+   */
+  goalId?: string
 }
 
 export type EnsembleBossmanQuarantineCategory =

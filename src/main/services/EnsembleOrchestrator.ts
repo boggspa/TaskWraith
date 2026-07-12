@@ -88,7 +88,13 @@ import {
   type ContextPressureSeverity
 } from '../../shared/contextCompaction'
 import type { ScoutBriefRecord } from '../ScoutBrief'
-import { createActiveGoal, normalizeActiveGoalObjective, updateActiveGoalLifecycle } from '../GoalState'
+import {
+  createActiveGoal,
+  normalizeActiveGoalObjective,
+  shouldMintFreshGoalIdentity,
+  updateActiveGoalLifecycle
+} from '../GoalState'
+import { gateBlocksActiveGoal } from '../ReviewGateScope'
 import { findTerminalSynthesizerRoundSummary } from '../EnsembleRoundSummary'
 import { mergeTranscriptMediaRefs } from './TranscriptMediaService'
 import { sanitizeRawProviderMediaRefs } from '../../shared/transcriptMediaRefSanitize'
@@ -5451,22 +5457,29 @@ export class EnsembleOrchestrator {
         }
       }
       const nowIso = this.deps.nowIso()
-      const nextGoal = chat.activeGoal
-        ? updateActiveGoalLifecycle(
-            {
-              ...chat.activeGoal,
-              objective,
-              provider: caller.provider,
-              mode: 'taskwraith_steered'
-            },
-            'active',
-            input.reason,
-            new Date(nowIso)
-          )
-        : createActiveGoal(caller.provider, objective, {
-            now: new Date(nowIso),
-            allowProviderNative: false
-          })
+      // C2 P2 — a materially-new objective (or a completed prior goal) MINTS a
+      // fresh identity so its review gates don't inherit the prior goal's id (the
+      // reuse trap that would make C2's goalId filter a no-op). Re-setting the
+      // SAME objective preserves id (idempotent). edit/update/reopen preserve id
+      // via their own updateActiveGoalLifecycle paths, unchanged.
+      const priorGoal = chat.activeGoal
+      const nextGoal =
+        priorGoal && !shouldMintFreshGoalIdentity(priorGoal, objective)
+          ? updateActiveGoalLifecycle(
+              {
+                ...priorGoal,
+                objective,
+                provider: caller.provider,
+                mode: 'taskwraith_steered'
+              },
+              'active',
+              input.reason,
+              new Date(nowIso)
+            )
+          : createActiveGoal(caller.provider, objective, {
+              now: new Date(nowIso),
+              allowProviderNative: false
+            })
       this.saveChatWithCheckpoint(
         {
           ...chat,
@@ -5800,6 +5813,7 @@ export class EnsembleOrchestrator {
       const reviewer = reviewerId ? this.findRuntimeParticipant(runtime, reviewerId) : null
       const scope = normalizeBossmanText(input.scope || input.prompt, 800)
       if (!reviewer || !scope) return this.missingBossmanField(action, runtime.roundId, 'set_review_gate requires targetParticipantId and scope.')
+      const gateChat = this.deps.getChat(runtime.chatId)
       const gate = {
         id: input.gateId || this.nextBossmanControlId('gate'),
         reviewerParticipantId: reviewer.id,
@@ -5807,6 +5821,8 @@ export class EnsembleOrchestrator {
         criteria: normalizeBossmanText(input.acceptanceCriteria, 1000) || undefined,
         status: input.reviewStatus || 'required',
         reason: normalizeBossmanText(input.reason, 500) || undefined,
+        // C2 — bind the gate to the active goal so it can't block a later goal.
+        goalId: gateChat?.activeGoal?.id,
         createdAt: nowIso,
         updatedAt: nowIso,
         createdByParticipantId: callerId
@@ -6860,8 +6876,13 @@ export class EnsembleOrchestrator {
 
   private activeBossmanReviewGateBlocks(chat: ChatRecord): string[] {
     const gates = chat.ensemble?.bossmanControlState?.reviewGates || []
+    // C2 — goal-scoped via the SHARED predicate (the same one index goal_complete
+    // and EnsemblePrompt import — no re-inline). A gate for a different/older goal
+    // never blocks the active goal, and its evidence stays on the board. The 3
+    // callers of this method (incl. the binding-poll gate_blocked branch) inherit
+    // the scoping for free ⇒ a superseded gate can never drive gate_blocked/cooldown.
     return gates
-      .filter((gate) => gate.status === 'required' || gate.status === 'failed')
+      .filter((gate) => gateBlocksActiveGoal(gate, chat.activeGoal))
       .map((gate) => `${gate.id}: ${gate.scope} [${gate.status}]`)
   }
 

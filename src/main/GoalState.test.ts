@@ -10,12 +10,41 @@ import {
   resolveActiveGoalForEnsemble,
   resolveActiveGoalForProvider,
   resolveActiveGoalMode,
+  shouldMintFreshGoalIdentity,
   shouldInjectActiveGoal,
   transitionGoalRuntimeLedger,
   updateActiveGoalLifecycle
 } from './GoalState'
 
 const MINUTE = 60_000
+
+describe('shouldMintFreshGoalIdentity (C2 P2 — fresh goal identity)', () => {
+  const prior = createActiveGoal('claude', 'Ship the quota failover', {
+    now: new Date('2026-07-12T09:00:00Z')
+  })
+
+  it('mints fresh when there is no prior goal', () => {
+    expect(shouldMintFreshGoalIdentity(null, 'anything')).toBe(true)
+    expect(shouldMintFreshGoalIdentity(undefined, 'anything')).toBe(true)
+  })
+
+  it('mints fresh when the prior goal is completed (even for the same objective)', () => {
+    const completed = updateActiveGoalLifecycle(prior, 'completed')
+    expect(shouldMintFreshGoalIdentity(completed, prior.objective)).toBe(true)
+  })
+
+  it('mints fresh when the objective materially changes', () => {
+    expect(shouldMintFreshGoalIdentity(prior, 'A completely different objective')).toBe(true)
+  })
+
+  it('PRESERVES identity when re-setting the SAME objective on an active goal', () => {
+    expect(shouldMintFreshGoalIdentity(prior, prior.objective)).toBe(false)
+  })
+
+  it('PRESERVES identity for the same objective with only whitespace differences (normalized)', () => {
+    expect(shouldMintFreshGoalIdentity(prior, `   ${prior.objective}   `)).toBe(false)
+  })
+})
 
 describe('GoalState', () => {
   it('creates provider-aware goals without treating todos as the objective', () => {

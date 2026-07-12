@@ -397,6 +397,7 @@ import {
 } from './run/ApprovalOrchestration'
 import { classifyProviderQuotaWall } from './ProviderQuotaWallClassifier'
 import { evaluateBossQuotaSoftUnavailable } from './BossQuotaSoftUnavailable'
+import { gateBlocksActiveGoal } from './ReviewGateScope'
 import { isNonEscalatingPreset, reroutePresetId } from './RerouteFailoverPosture'
 import {
   runProviderAutoFailover,
@@ -1145,6 +1146,7 @@ import {
   normalizeActiveGoalObjective,
   resolveActiveGoalForEnsemble,
   resolveActiveGoalMode,
+  shouldMintFreshGoalIdentity,
   updateActiveGoalLifecycle
 } from './GoalState'
 import {
@@ -24485,12 +24487,15 @@ async function executeGeminiMcpTool(
           })
         } else if (
           lifecycleStatus === 'completed' &&
-          chat.ensemble?.bossmanControlState?.reviewGates?.some(
-            (gate) => gate.status === 'required' || gate.status === 'failed'
+          // C2 — goal-scoped via the SHARED predicate (imported, NOT re-inlined —
+          // this is the index goal_complete twin the C1/C2 twin-drift lesson warns
+          // about). A gate for a different/older goal no longer blocks completion.
+          chat.ensemble?.bossmanControlState?.reviewGates?.some((gate) =>
+            gateBlocksActiveGoal(gate, goal)
           )
         ) {
           const blockingGates = chat.ensemble.bossmanControlState.reviewGates
-            .filter((gate) => gate.status === 'required' || gate.status === 'failed')
+            .filter((gate) => gateBlocksActiveGoal(gate, goal))
             .map((gate) => `${gate.id}: ${gate.scope} [${gate.status}]`)
           toolIsError = true
           text = mcpJson({
@@ -27849,7 +27854,14 @@ if (isGeminiMcpBridgeProcess) {
             const provider = assertProviderId(chat.provider ?? 'gemini')
             const allowProviderNativeGoal = chat.chatKind !== 'ensemble'
             const now = new Date()
-            if (activeGoal) {
+            // C2 P2 — op:'set' with a materially-new objective (or after the prior
+            // goal completed) mints a FRESH identity so gates don't inherit the old
+            // id (the reuse trap that makes C2's goalId filter a no-op); op:'edit'
+            // always preserves id. Twin of EnsembleOrchestrator set_goal via the
+            // shared shouldMintFreshGoalIdentity helper (no re-inline).
+            const mintFreshGoal =
+              action.op === 'set' && shouldMintFreshGoalIdentity(activeGoal, objective)
+            if (activeGoal && !mintFreshGoal) {
               activeGoal = {
                 ...updateActiveGoalLifecycle(activeGoal, 'active', action.reason, now),
                 objective,

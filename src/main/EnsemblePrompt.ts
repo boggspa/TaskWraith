@@ -1,4 +1,5 @@
 import type {
+  ActiveGoal,
   ChatMessage,
   ChatRecord,
   EnsembleConfig,
@@ -59,6 +60,7 @@ import {
   resolveActiveGoalForEnsemble,
   shouldInjectActiveGoal
 } from './GoalState'
+import { gateBlocksActiveGoal } from './ReviewGateScope'
 import {
   conversationCompactionEligibleMessageIds,
   resolveBoundedCompactionPrefixMessageIds
@@ -549,7 +551,8 @@ function formatWorkSessionStanza(
 
 function formatBossmanControlStanza(
   config: EnsembleConfig,
-  orderedParticipants: EnsembleParticipant[]
+  orderedParticipants: EnsembleParticipant[],
+  activeGoal: ActiveGoal | null | undefined
 ): string {
   const state = config.bossmanControlState
   if (!state) return ''
@@ -617,8 +620,11 @@ function formatBossmanControlStanza(
       )
     )
   }
+  // C2 — goal-scoped via the SHARED predicate (the same one the orchestrator +
+  // index goal_complete import). A passed/superseded/other-goal gate DISAPPEARS
+  // from the rendered list ⇒ the prompt's stale-gate visibility (pain #2) reconciles.
   const activeGates = (state.reviewGates || [])
-    .filter((gate) => gate.status === 'required' || gate.status === 'failed')
+    .filter((gate) => gateBlocksActiveGoal(gate, activeGoal))
     .slice(-6)
   if (activeGates.length) {
     lines.push(
@@ -768,7 +774,8 @@ export function buildEnsembleDynamicStateSnapshot(
   const workSessionSlot =
     formatWorkSessionStanza(config, stableParticipants) || 'Work Session: <none>'
   const bossmanSlot =
-    formatBossmanControlStanza(config, stableParticipants) || 'Boss/Captain control state: <none>'
+    formatBossmanControlStanza(config, stableParticipants, chat.activeGoal) ||
+    'Boss/Captain control state: <none>'
   const sessionEventsSlot = formatSessionEventsStanza(config) || 'Recent session events: <none>'
   const priorRoundSummary = sanitizeText(config.lastRoundSummary).slice(0, 2_000)
   const priorRoundSummarySlot = priorRoundSummary

@@ -186,6 +186,25 @@ export function createActiveGoal(
   }
 }
 
+/**
+ * C2 P2 — should a set_goal / generic op:'set' operation MINT a FRESH goal
+ * identity (new id + createdAt) instead of reusing the prior goal's id? True when
+ * there is no prior goal, the prior goal is completed, or the objective materially
+ * changed (normalized inequality). A materially-new objective is a genuinely new
+ * goal, so its review gates must not inherit the prior goal's id — that
+ * inheritance is the reuse trap that would make C2's goalId gate filter a no-op.
+ * edit/update/reopen of the SAME goal NEVER call this — they preserve identity via
+ * updateActiveGoalLifecycle.
+ */
+export function shouldMintFreshGoalIdentity(
+  priorGoal: Pick<ActiveGoal, 'status' | 'objective'> | null | undefined,
+  objective: string
+): boolean {
+  if (!priorGoal) return true
+  if (priorGoal.status === 'completed') return true
+  return normalizeActiveGoalObjective(objective) !== priorGoal.objective
+}
+
 export function isUnfinishedActiveGoal(goal: ActiveGoal | null | undefined): boolean {
   return Boolean(goal && goal.status !== 'completed')
 }

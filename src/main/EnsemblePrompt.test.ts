@@ -19,10 +19,12 @@ import {
 import type {
   ActiveGoal,
   ChatRecord,
+  EnsembleBossmanReviewGate,
   EnsembleConfig,
   EnsembleParticipant,
   ToolActivity
 } from './store/types'
+import { createActiveGoal } from './GoalState'
 
 const ensemble: EnsembleConfig = {
   enabled: true,
@@ -294,6 +296,68 @@ describe('Ensemble prompt composition', () => {
     // same-provider disambiguation note — it's only relevant when
     // two participants share a provider.
     expect(prompt).not.toContain('multiple participants from the same provider')
+  })
+
+  it('C2 T5: the Review-gates prompt block goal-scopes (other-goal / superseded / passed gates disappear)', () => {
+    const activeGoal = createActiveGoal('claude', 'Current objective', {
+      now: new Date('2026-07-12T09:00:00Z'),
+      allowProviderNative: false
+    })
+    const reviewGates: EnsembleBossmanReviewGate[] = [
+      // required gate for the ACTIVE goal ⇒ shown
+      {
+        id: 'g-current',
+        reviewerParticipantId: 'claude',
+        scope: 'current-goal-diff',
+        status: 'required',
+        createdAt: '2026-07-12T10:00:00.000Z',
+        updatedAt: '2026-07-12T10:00:00.000Z',
+        goalId: activeGoal.id
+      },
+      // required gate stamped for a DIFFERENT goal ⇒ hidden
+      {
+        id: 'g-other',
+        reviewerParticipantId: 'claude',
+        scope: 'other-goal-diff',
+        status: 'required',
+        createdAt: '2026-07-12T10:00:00.000Z',
+        updatedAt: '2026-07-12T10:00:00.000Z',
+        goalId: 'goal-other'
+      },
+      // legacy (no goalId) gate OLDER than the active goal ⇒ superseded (the live
+      // O3 stuck-gate case: pain #2's visible symptom).
+      {
+        id: 'g-legacy',
+        reviewerParticipantId: 'claude',
+        scope: 'legacy-older-diff',
+        status: 'required',
+        createdAt: '2026-07-12T08:00:00.000Z',
+        updatedAt: '2026-07-12T08:00:00.000Z'
+      },
+      // passed gate for the active goal ⇒ hidden (resolved)
+      {
+        id: 'g-passed',
+        reviewerParticipantId: 'claude',
+        scope: 'already-passed-diff',
+        status: 'passed',
+        createdAt: '2026-07-12T10:00:00.000Z',
+        updatedAt: '2026-07-12T10:00:00.000Z',
+        goalId: activeGoal.id
+      }
+    ]
+    const config: EnsembleConfig = { ...ensemble, bossmanControlState: { reviewGates } }
+    const prompt = buildEnsembleParticipantPrompt({
+      chat: { ...chat(), activeGoal, ensemble: config },
+      config,
+      participant: config.participants[1],
+      currentPrompt: 'Go.',
+      roundId: 'round-1',
+      chatContextTurns: 4
+    })
+    expect(prompt).toContain('current-goal-diff') // active-goal required gate ⇒ shown
+    expect(prompt).not.toContain('other-goal-diff') // different goal ⇒ hidden
+    expect(prompt).not.toContain('legacy-older-diff') // legacy older than active goal ⇒ superseded
+    expect(prompt).not.toContain('already-passed-diff') // resolved ⇒ hidden
   })
 
   it('does not include TaskWraith closeouts in participant transcript context', () => {
