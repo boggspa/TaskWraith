@@ -1,7 +1,5 @@
-// Phase I4 (Kimi initiator): wire the taskwraith MCP bridge into the
-// Kimi CLI run paths so a Kimi agent can call delegate_to_subthread on
-// other providers. Gemini, Codex, and Claude already register the bridge
-// — this module mirrors that wiring for Kimi.
+// Phase I4 (Kimi initiator): wire the TaskWraith MCP bridge into Kimi CLI
+// runs so a Kimi agent can call the shared orchestration tools.
 //
 // Kimi CLI 1.43.0 ships native MCP support via:
 //
@@ -12,14 +10,13 @@
 // bridge subprocess (e.g. `--socket`, `--token`) reach the subprocess
 // rather than being eaten by Kimi.
 //
-// Config file: `~/.kimi/mcp.json`. This is provider-global rather than bound to
-// one native Kimi session, so registration repair cannot honestly guarantee
-// birth-pinned catalogue membership to an already-running session. TaskWraith
-// refreshes only its named registration; user MCP servers remain untouched.
-// The broker subprocess inherits the
-// `TASKWRAITH_PARENT_PROVIDER=kimi` stamp from the per-server env block
-// and the bridge subprocess uses it to route broker requests with the
-// right provider key.
+// Active runs use Kimi's `--mcp-config-file` option with a per-process config.
+// This is important because `~/.kimi/mcp.json` is provider-global: Release and
+// Dev otherwise overwrite the same `TaskWraith` registration and route calls
+// into whichever app wrote last. The isolated document preserves user-owned
+// servers, removes TaskWraith-owned legacy entries, then adds the current app's
+// socket/token launch command. The older `kimi mcp add/remove` builders remain
+// for explicit migration/repair surfaces, but are not the run-time attachment.
 //
 // Kept free of Electron / fs / IPC imports so it can be unit-tested
 // directly against fixed inputs.
@@ -48,6 +45,21 @@ export interface KimiMcpBridgeAddArgsInput {
   bridgeBinaryPath: string
   /** argv passed to the bridge subprocess (already includes flag literals). */
   bridgeArgs: string[]
+}
+
+export interface KimiRunMcpServerInput extends KimiMcpBridgeAddArgsInput {
+  env?: Record<string, string>
+}
+
+export interface KimiRunMcpConfigInput {
+  /** Parsed contents of ~/.kimi/mcp.json. User-owned servers are preserved. */
+  globalConfig?: unknown
+  /** Omit for maintenance turns or when the TaskWraith bridge is disabled. */
+  taskWraith?: KimiRunMcpServerInput | null
+}
+
+export interface KimiRunMcpConfig {
+  mcpServers: Record<string, unknown>
 }
 
 export interface KimiWirePromptRequestInput {
@@ -102,6 +114,53 @@ export function buildKimiMcpBridgeRemoveArgs(serverName: string): string[] {
  */
 export function redactKimiMcpBridgeAddArgs(args: string[]): string[] {
   return args.map((arg, index) => (args[index - 1] === '--token' ? '[redacted-token]' : arg))
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+}
+
+function isTaskWraithOwnedServerName(name: string): boolean {
+  const normalized = name.trim().toLowerCase()
+  return [KIMI_TASKWRAITH_SERVER_NAME, ...KIMI_LEGACY_TASKWRAITH_SERVER_NAMES].some(
+    (owned) => owned.toLowerCase() === normalized
+  )
+}
+
+/**
+ * Build the isolated config supplied to one Kimi process. Kimi 1.47 loads the
+ * provider-global config only when no `--mcp-config-file` is supplied, so this
+ * document is both the user-server merge and the Release/Dev isolation fence.
+ */
+export function buildKimiRunMcpConfig(input: KimiRunMcpConfigInput): KimiRunMcpConfig {
+  const globalServers = isRecord(input.globalConfig)
+    ? isRecord(input.globalConfig.mcpServers)
+      ? input.globalConfig.mcpServers
+      : {}
+    : {}
+  const mcpServers: Record<string, unknown> = {}
+  for (const [name, definition] of Object.entries(globalServers)) {
+    if (!isTaskWraithOwnedServerName(name)) mcpServers[name] = definition
+  }
+  if (input.taskWraith) {
+    mcpServers[KIMI_TASKWRAITH_SERVER_NAME] = {
+      command: input.taskWraith.bridgeBinaryPath,
+      args: [...input.taskWraith.bridgeArgs],
+      env: {
+        ...(input.taskWraith.env || {}),
+        TASKWRAITH_PARENT_PROVIDER: 'kimi'
+      }
+    }
+  }
+  return { mcpServers }
+}
+
+/** Prefix the explicit file so Kimi never falls back to ~/.kimi/mcp.json. */
+export function extendKimiCliArgsWithMcpConfig(
+  baseArgs: string[],
+  configFilePath: string
+): string[] {
+  return ['--mcp-config-file', configFilePath, ...baseArgs]
 }
 
 export function buildKimiWirePromptRequest(input: KimiWirePromptRequestInput): Record<string, unknown> {

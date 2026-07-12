@@ -1237,7 +1237,9 @@ import {
   type ClaudeTaskWraithMcpInput
 } from './ClaudeTaskWraithMcp'
 import {
-  buildKimiWirePromptRequest
+  buildKimiRunMcpConfig,
+  buildKimiWirePromptRequest,
+  extendKimiCliArgsWithMcpConfig
 } from './KimiMcpBridge'
 import { tryRunGeminiApi } from './GeminiApiProvider'
 import { handleEnsembleContinue } from './EnsembleContinue'
@@ -14563,6 +14565,77 @@ function claudeTaskWraithMcpConfigPathForRun(runId: string): string {
   return join(tempDir, `taskwraith-claude-mcp-${safeRunId}.json`)
 }
 
+function kimiTaskWraithMcpConfigPathForRun(runId: string, purpose: string): string {
+  const tempDir = (() => {
+    try {
+      return app.getPath('temp')
+    } catch {
+      return os.tmpdir()
+    }
+  })()
+  const safeRunId = String(runId)
+    .replace(/[^A-Za-z0-9._-]/g, '_')
+    .slice(0, 80)
+  const safePurpose = String(purpose)
+    .replace(/[^A-Za-z0-9._-]/g, '_')
+    .slice(0, 24)
+  return join(tempDir, `taskwraith-kimi-mcp-${safeRunId}-${safePurpose}-${randomUUID()}.json`)
+}
+
+async function readKimiGlobalMcpConfig(): Promise<unknown> {
+  const configPath = join(os.homedir(), '.kimi', 'mcp.json')
+  try {
+    return JSON.parse(await fs.readFile(configPath, 'utf8'))
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
+    throw new Error(
+      `Could not read Kimi's global MCP config at ${configPath}: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    )
+  }
+}
+
+async function writeKimiMcpConfigForRun(input: {
+  runId: string
+  purpose: string
+  includeTaskWraith: boolean
+  preserveUserServers?: boolean
+}): Promise<string> {
+  const globalConfig =
+    input.preserveUserServers === false ? undefined : await readKimiGlobalMcpConfig()
+  const bridgeStatus = input.includeTaskWraith ? taskwraithMcpBridgeCommandStatus() : null
+  if (bridgeStatus && !bridgeStatus.available) {
+    throw new Error(taskwraithMcpBridgeUnavailableMessage(bridgeStatus))
+  }
+  const config = buildKimiRunMcpConfig({
+    globalConfig,
+    ...(bridgeStatus
+      ? {
+          taskWraith: {
+            bridgeBinaryPath: bridgeStatus.command,
+            bridgeArgs: taskwraithMcpBridgeArgs(geminiMcpSocketPath(), {
+              gatewaySubset: true
+            })
+          }
+        }
+      : {})
+  })
+  const configPath = kimiTaskWraithMcpConfigPathForRun(input.runId, input.purpose)
+  try {
+    await fs.writeFile(configPath, JSON.stringify(config), { encoding: 'utf8', mode: 0o600 })
+    return configPath
+  } catch (error) {
+    await fs.unlink(configPath).catch(() => {})
+    throw error
+  }
+}
+
+async function removeKimiMcpConfigFile(configPath: string | null): Promise<void> {
+  if (!configPath) return
+  await fs.unlink(configPath).catch(() => {})
+}
+
 function respondToKimiWireRequest(child: ChildProcess, requestId: string | number, result: any) {
   child.stdin?.write(JSON.stringify({ jsonrpc: '2.0', id: requestId, result }) + '\n')
 }
@@ -14737,7 +14810,7 @@ async function runKimiWireProvider(
     state
   )
 
-  const args = ['--wire', '--work-dir', payload.workspace!]
+  let args = ['--wire', '--work-dir', payload.workspace!]
   appendKimiModelArgs(args, model)
   appendKimiThinkingArgs(args, payload.kimiThinking)
   // Phase J1 composer-unification: cross-provider External Path grants
@@ -14746,12 +14819,10 @@ async function runKimiWireProvider(
   args.push(...externalPathGrantsToCliAddDirArgs(payload.externalPathGrants))
   if (payload.providerSessionId) args.push('--resume', payload.providerSessionId)
 
-  // Phase I4 (Kimi initiator): register the TaskWraith MCP server with
-  // Kimi before spawn (idempotent: only re-runs `kimi mcp add` if the
-  // broker token rotated since the last registration). Failure is
-  // surfaced as a non-fatal warning chip; the Kimi run still launches
-  // so the agent can do single-provider work even when cross-provider
-  // delegation isn't wired up.
+  // Prepare this app's broker, then pin the exact server document to THIS
+  // Kimi process. The explicit file suppresses ~/.kimi/mcp.json, preventing a
+  // Release/Dev instance from stealing the other app's TaskWraith route while
+  // preserving every user-owned server from that global document.
   const kimiMcpReady = await prepareKimiMcpBridgeForRun(event.sender)
   if (!kimiMcpReady) {
     payload.taskWraithMcpAdvertised = false
@@ -14761,9 +14832,38 @@ async function runKimiWireProvider(
       coreProfile: false
     })
   }
+  let kimiMcpConfigPath: string | null = null
+  try {
+    kimiMcpConfigPath = await writeKimiMcpConfigForRun({
+      runId: route.appRunId || 'unknown',
+      purpose: 'wire',
+      includeTaskWraith: kimiMcpReady
+    })
+    args = extendKimiCliArgsWithMcpConfig(args, kimiMcpConfigPath)
+  } catch (error) {
+    const message = `Kimi's isolated MCP config could not be created; the run was not launched. ${
+      error instanceof Error ? error.message : String(error)
+    }`
+    sendAgentCompatError(event.sender, 'kimi', message, state)
+    sendAgentCompatLine(
+      event.sender,
+      'kimi',
+      { type: 'result', status: 'failed', stats: {}, provider: 'kimi' },
+      state
+    )
+    sendAgentCompatExit(event.sender, 'kimi', 1, state)
+    runManager.finish(route.appRunId, 'failed')
+    return true
+  }
 
   const kimiKey = getStoredKimiApiKey()
   return new Promise((resolveWire) => {
+    const finishWire = (result: boolean): void => {
+      const configPath = kimiMcpConfigPath
+      kimiMcpConfigPath = null
+      void removeKimiMcpConfigFile(configPath)
+      resolveWire(result)
+    }
     const child = spawn(binaryPath, args, {
       cwd: payload.workspace!,
       shell: false,
@@ -14775,13 +14875,10 @@ async function runKimiWireProvider(
           TASKWRAITH_RUN_ID: route.appRunId || '',
           TASKWRAITH_CHAT_ID: route.appChatId || '',
           TASKWRAITH_WORKSPACE_PATH: payload.scope === 'global' ? '' : payload.workspace || '',
-          // Phase I4 (Kimi initiator): belt-and-braces env stamp on the
-          // Kimi CLI process itself. The per-server env block in
-          // ~/.kimi/mcp.json already stamps TASKWRAITH_PARENT_PROVIDER=
-          // kimi on the bridge subprocess, but stamping on Kimi's own
-          // process env means the bridge inherits the value even on
-          // platforms / Kimi internals that strip env on grandchild
-          // spawn. Matches the Gemini / Codex / Claude pattern.
+          // Belt-and-braces route stamp on the Kimi process itself. The
+          // isolated per-run server block also stamps the bridge child, but
+          // this keeps the route intact if Kimi inherits rather than merges
+          // that env block on a particular platform.
           TASKWRAITH_PARENT_PROVIDER: 'kimi',
           // Audit role-run: advertise the audit_* MCP tools to this run's
           // bridge child (inherited via the Kimi CLI process env). Audit runs
@@ -14828,7 +14925,7 @@ async function runKimiWireProvider(
       // Wire startup is a transport attempt, not the app-run outcome. Keep the
       // app run live so the guarded print-mode fallback can reuse it.
       runManager.update(route.appRunId!, { process: undefined })
-      resolveWire(false)
+      finishWire(false)
     }, 7_000)
 
     const sendPrompt = (promptText: string): void => {
@@ -15007,7 +15104,7 @@ async function runKimiWireProvider(
             clearTimeout(timeout)
             if (cliProviderProcesses.get('kimi') === child) cliProviderProcesses.delete('kimi')
             runManager.finish(route.appRunId, message.error ? 'failed' : 'completed')
-            resolveWire(true)
+            finishWire(true)
             continue
           }
           if (message.method === 'request') {
@@ -15320,7 +15417,7 @@ async function runKimiWireProvider(
       }
       if (promptSent) runManager.finish(route.appRunId, 'failed')
       else runManager.update(route.appRunId!, { process: undefined })
-      resolveWire(false)
+      finishWire(false)
     })
 
     child.on('close', (code) => {
@@ -15349,7 +15446,7 @@ async function runKimiWireProvider(
       if (decision.terminalStatus) runManager.finish(route.appRunId, decision.terminalStatus)
       else runManager.update(route.appRunId!, { process: undefined })
       settled = true
-      resolveWire(decision.resolveWire)
+      finishWire(decision.resolveWire)
     })
 
     child.stdin?.write(
@@ -15450,9 +15547,9 @@ async function runKimiProvider(event: Electron.IpcMainInvokeEvent, payload: Agen
   }
 
   const model = normalizeCliProviderModel('kimi', payload.model)
-  // The print-mode fallback also needs the TaskWraith registration. Resolve it
-  // before copying payload.prompt into argv so a failed attachment can remove
-  // gateway claims from the exact bytes sent to Kimi.
+  // The print-mode fallback also needs a process-isolated TaskWraith bridge.
+  // Resolve it before copying payload.prompt into argv so a failed attachment
+  // can remove gateway claims from the exact bytes sent to Kimi.
   const kimiMcpReady = await prepareKimiMcpBridgeForRun(event.sender)
   if (!kimiMcpReady) {
     payload.taskWraithMcpAdvertised = false
@@ -15461,12 +15558,35 @@ async function runKimiProvider(event: Electron.IpcMainInvokeEvent, payload: Agen
       coreProfile: false
     })
   }
+  let kimiMcpConfigPath: string | null = null
+  try {
+    kimiMcpConfigPath = await writeKimiMcpConfigForRun({
+      runId: route.appRunId || 'unknown',
+      purpose: 'print',
+      includeTaskWraith: kimiMcpReady
+    })
+  } catch (error) {
+    const message = `Kimi's isolated MCP config could not be created; the print-mode fallback was not launched. ${
+      error instanceof Error ? error.message : String(error)
+    }`
+    sendAgentCompatError(event.sender, 'kimi', message, route)
+    sendAgentCompatLine(event.sender, 'kimi', {
+      type: 'result',
+      status: 'failed',
+      stats: {},
+      provider: 'kimi',
+      fallback: true
+    })
+    sendAgentCompatExit(event.sender, 'kimi', 1, route)
+    runManager.finish(route.appRunId, 'failed')
+    return
+  }
   // `--plan` stays UNCONDITIONAL here — including for recon seats that the
   // wire path deliberately runs without plan mode (isReconRunPosture). Print
   // mode is non-interactive and auto-approves Kimi's provider tool calls, so
   // the plan flag is the only thing making this fallback safe; a recon turn
   // that degrades to print mode accepts plan-shaped output as the tradeoff.
-  const args = [
+  const baseArgs = [
     '--print',
     '--plan',
     '--output-format',
@@ -15476,8 +15596,8 @@ async function runKimiProvider(event: Electron.IpcMainInvokeEvent, payload: Agen
     '--prompt',
     payload.prompt
   ]
-  appendKimiModelArgs(args, model)
-  appendKimiThinkingArgs(args, payload.kimiThinking)
+  appendKimiModelArgs(baseArgs, model)
+  appendKimiThinkingArgs(baseArgs, payload.kimiThinking)
   // 1.0.5-EW43b — Pre-EW43b the Kimi print-mode fallback ignored
   // `payload.imagePaths` entirely. Wire mode handles attachments
   // via structured `image_url` objects in the chat-completions
@@ -15489,13 +15609,14 @@ async function runKimiProvider(event: Electron.IpcMainInvokeEvent, payload: Agen
   // from Claude's image flag, this is the single site to update.
   for (const imagePath of payload.imagePaths || []) {
     if (imagePath && imagePath.trim()) {
-      args.push('--image', imagePath.trim())
+      baseArgs.push('--image', imagePath.trim())
     }
   }
   // Phase J1 composer-unification: same External Path grants → --add-dir
   // translation as the wire-mode spawn path above.
-  args.push(...externalPathGrantsToCliAddDirArgs(payload.externalPathGrants))
-  if (payload.providerSessionId) args.push('--resume', payload.providerSessionId)
+  baseArgs.push(...externalPathGrantsToCliAddDirArgs(payload.externalPathGrants))
+  if (payload.providerSessionId) baseArgs.push('--resume', payload.providerSessionId)
+  const args = extendKimiCliArgsWithMcpConfig(baseArgs, kimiMcpConfigPath)
   const kimiKey = getStoredKimiApiKey()
   const fallbackRoute = routeWithRunId('kimi', payload)
   runCliProviderProcess(event, 'kimi', resolved.binaryPath, args, payload, {
@@ -15510,7 +15631,8 @@ async function runKimiProvider(event: Electron.IpcMainInvokeEvent, payload: Agen
       TASKWRAITH_RUN_ID: fallbackRoute.appRunId || '',
       TASKWRAITH_CHAT_ID: fallbackRoute.appChatId || '',
       ...(kimiKey ? { MOONSHOT_API_KEY: kimiKey } : {})
-    }
+    },
+    onComplete: () => removeKimiMcpConfigFile(kimiMcpConfigPath)
   })
 }
 
@@ -17355,12 +17477,26 @@ async function runHostSeatSummaryProcess(input: {
   args: string[]
   timeoutMs: number
 }): Promise<HostSeatCompactionChunkResult> {
-  const plan = createCliSpawnPlan(input.binaryPath, input.args)
   let summaryText = ''
   let timedOut = false
   let processError: string | undefined
   let exitCode = -1
+  let kimiMcpConfigPath: string | null = null
   try {
+    let processArgs = input.args
+    if (input.provider === 'kimi') {
+      // Maintenance has no reason to load tools. An explicit empty file also
+      // prevents Kimi from consulting a stale Release/Dev-global TaskWraith
+      // registration while it summarizes transcript text.
+      kimiMcpConfigPath = await writeKimiMcpConfigForRun({
+        runId: `seat-summary-${Date.now()}`,
+        purpose: 'maintenance',
+        includeTaskWraith: false,
+        preserveUserServers: false
+      })
+      processArgs = extendKimiCliArgsWithMcpConfig(processArgs, kimiMcpConfigPath)
+    }
+    const plan = createCliSpawnPlan(input.binaryPath, processArgs)
     exitCode = await new Promise<number>((resolve) => {
       const child = spawn(plan.command, plan.args, {
         shell: plan.shell,
@@ -17437,6 +17573,8 @@ async function runHostSeatSummaryProcess(input: {
     })
   } catch (error) {
     processError = error instanceof Error ? error.message : String(error)
+  } finally {
+    await removeKimiMcpConfigFile(kimiMcpConfigPath)
   }
   return {
     ok: exitCode === 0 && !timedOut,

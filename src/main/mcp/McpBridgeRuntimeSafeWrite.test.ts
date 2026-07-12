@@ -787,16 +787,17 @@ describe('MCP bridge stream writes', () => {
     expect(addArgs[addArgs.length - 1]).toBe(GEMINI_MCP_GATEWAY_SUBSET_ARG)
   })
 
-  it('reports whether Kimi actually attached the TaskWraith gateway', async () => {
+  it('prepares Kimi per-run MCP without rewriting the provider-global registration', async () => {
     const sendAgentCompatLine = vi.fn()
     const runtime = new McpBridgeRuntime({
       getSettings: () => ({ geminiMcpBridgeEnabled: true }),
       sendAgentCompatLine
     } as never)
     vi.spyOn(runtime, 'startGeminiMcpBroker').mockResolvedValue()
-    vi.spyOn(runtime, 'repairKimiMcpBridge').mockResolvedValue()
+    const repair = vi.spyOn(runtime, 'repairKimiMcpBridge').mockResolvedValue()
 
     await expect(runtime.prepareKimiMcpBridgeForRun({} as never)).resolves.toBe(true)
+    expect(repair).not.toHaveBeenCalled()
     expect(sendAgentCompatLine).not.toHaveBeenCalled()
 
     vi.spyOn(runtime, 'startGeminiMcpBroker').mockRejectedValueOnce(new Error('socket down'))
@@ -804,7 +805,7 @@ describe('MCP bridge stream writes', () => {
     expect(sendAgentCompatLine).toHaveBeenCalledWith(
       {},
       'kimi',
-      expect.objectContaining({ title: 'Kimi MCP bridge registration failed' })
+      expect.objectContaining({ title: 'Kimi MCP bridge preparation failed' })
     )
   })
 

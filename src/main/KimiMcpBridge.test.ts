@@ -4,15 +4,16 @@ import {
   KIMI_TASKWRAITH_TOOL_NAMES,
   KIMI_LEGACY_TASKWRAITH_SERVER_NAMES,
   buildKimiWirePromptRequest,
+  buildKimiRunMcpConfig,
   buildKimiMcpBridgeAddArgs,
   buildKimiMcpBridgeRemoveArgs,
+  extendKimiCliArgsWithMcpConfig,
   redactKimiMcpBridgeAddArgs
 } from './KimiMcpBridge'
 
-// Phase I4 (Kimi initiator): the Kimi CLI gains the same TaskWraith
-// MCP server that Gemini / Codex / Claude already have. Pin the exact
-// argv shape passed to `kimi mcp add` so a regression in the broker /
-// parent-provider routing trips immediately.
+// Legacy explicit registration helpers remain available for migration and
+// repair commands. Active runs use the isolated --mcp-config-file helpers
+// tested below rather than mutating ~/.kimi/mcp.json.
 //
 // Kimi CLI 1.43.0 syntax (verified via `kimi mcp add --help`):
 //
@@ -165,6 +166,72 @@ describe('buildKimiMcpBridgeRemoveArgs', () => {
 
   it('lists legacy AGBench bridge entries that TaskWraith should prune', () => {
     expect(KIMI_LEGACY_TASKWRAITH_SERVER_NAMES).toEqual(['agentbench', 'AGBench'])
+  })
+})
+
+describe('per-run Kimi MCP config', () => {
+  const taskWraith = {
+    bridgeBinaryPath: '/Applications/TaskWraith Dev.app/Contents/MacOS/TaskWraith Dev',
+    bridgeArgs: [
+      '--taskwraith-gemini-mcp-bridge',
+      '--socket',
+      '/tmp/taskwraith-dev.sock',
+      '--token',
+      'dev-token'
+    ],
+    env: { CUSTOM_ROUTE_HINT: '1', TASKWRAITH_PARENT_PROVIDER: 'wrong-provider' }
+  }
+
+  it('preserves user servers while replacing global TaskWraith registrations', () => {
+    const config = buildKimiRunMcpConfig({
+      globalConfig: {
+        mcpServers: {
+          docs: { command: 'docs-server', args: ['--stdio'] },
+          TaskWraith: { command: '/Applications/TaskWraith.app/old-release' },
+          agentbench: { command: 'old-agentbench' },
+          AGBench: { command: 'old-agbench' }
+        }
+      },
+      taskWraith
+    })
+
+    expect(config.mcpServers).toEqual({
+      docs: { command: 'docs-server', args: ['--stdio'] },
+      TaskWraith: {
+        command: taskWraith.bridgeBinaryPath,
+        args: taskWraith.bridgeArgs,
+        env: { CUSTOM_ROUTE_HINT: '1', TASKWRAITH_PARENT_PROVIDER: 'kimi' }
+      }
+    })
+  })
+
+  it('removes stale TaskWraith entries when the bridge is disabled', () => {
+    expect(
+      buildKimiRunMcpConfig({
+        globalConfig: {
+          mcpServers: {
+            TaskWraith: { command: 'stale-app' },
+            userServer: { url: 'https://example.test/mcp' }
+          }
+        }
+      })
+    ).toEqual({
+      mcpServers: { userServer: { url: 'https://example.test/mcp' } }
+    })
+  })
+
+  it('builds an empty config for maintenance turns', () => {
+    expect(buildKimiRunMcpConfig({})).toEqual({ mcpServers: {} })
+  })
+
+  it('prefixes an explicit config file without mutating the base args', () => {
+    const baseArgs = ['--print', '--plan', '--prompt', 'hello']
+    expect(extendKimiCliArgsWithMcpConfig(baseArgs, '/tmp/kimi-mcp.json')).toEqual([
+      '--mcp-config-file',
+      '/tmp/kimi-mcp.json',
+      ...baseArgs
+    ])
+    expect(baseArgs).toEqual(['--print', '--plan', '--prompt', 'hello'])
   })
 })
 

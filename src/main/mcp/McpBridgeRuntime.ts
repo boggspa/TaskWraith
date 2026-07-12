@@ -1888,9 +1888,12 @@ export class McpBridgeRuntime {
     }
     try {
       await this.startGeminiMcpBroker()
-      if (!this.kimiMcpBridgeInstalledForCurrentToken) {
-        await this.repairKimiMcpBridge()
-      }
+      // Active Kimi processes receive an isolated --mcp-config-file from the
+      // provider launch path. Do not rewrite ~/.kimi/mcp.json here: that file is
+      // shared by Release and Dev, so a global repair routes the other app's
+      // already-running seats into this broker. We only prove that this app's
+      // broker and bridge command are ready for the per-run document.
+      this.assertTaskWraithMcpBridgeCommandAvailable()
       return true
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
@@ -1898,8 +1901,8 @@ export class McpBridgeRuntime {
         type: 'provider_warning',
         provider: 'kimi',
         severity: 'warning',
-        title: 'Kimi MCP bridge registration failed',
-        message: `TaskWraith could not register the TaskWraith MCP server with Kimi: ${message}. Cross-provider delegation tools will not be available for this run.`
+        title: 'Kimi MCP bridge preparation failed',
+        message: `TaskWraith could not prepare its isolated MCP server for Kimi: ${message}. TaskWraith MCP tools will not be available for this run.`
       })
       return false
     }
