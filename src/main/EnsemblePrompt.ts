@@ -65,7 +65,6 @@ import {
   conversationCompactionEligibleMessageIds,
   resolveBoundedCompactionPrefixMessageIds
 } from './PromptComposition'
-import { taskWraithToolNameForProvider } from './TaskWraithMcpPromptNames'
 
 // 1.0.4-AR2 — mirror of the renderer ceiling
 // (`EnsembleParticipantsAboveRow.MAX_ENSEMBLE_PARTICIPANTS`). Keep
@@ -120,6 +119,8 @@ export interface BuildEnsemblePromptInput {
    * prompt-builder callers may omit it and get the canonical calculation.
    */
   dynamicStateSnapshot?: EnsembleDynamicStateSnapshot
+  /** Effective host approval mode, used to name Grok's per-run MCP server exactly. */
+  effectiveApprovalMode?: string | null
 }
 
 export const ENSEMBLE_PROMPT_SHELL_VERSION = 'ensemble-shell-v1'
@@ -801,7 +802,13 @@ export function buildEnsembleDynamicStateSnapshot(
 export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput): string {
   const orderedParticipants = getOrderedEnsembleParticipants(input.config, input.currentPrompt)
   const isOllamaParticipant = input.participant.provider === 'ollama'
-  const grokDirectYieldTool = taskWraithToolNameForProvider('grok', 'ensemble_yield')
+  const grokMcpNamespace =
+    typeof input.effectiveApprovalMode === 'string' &&
+    input.effectiveApprovalMode.trim() !== '' &&
+    input.effectiveApprovalMode.trim() !== 'plan'
+      ? 'TaskWraith'
+      : 'taskwraith-grok'
+  const grokDirectYieldTool = `${grokMcpNamespace}__ensemble_yield`
   // 1.0.7 — rename-stable participant handles (`#p3`) keyed on the
   // immutable participant id. Built from the FULL roster (not just the
   // enabled/ordered subset) so a message authored by a participant who
@@ -1210,7 +1217,7 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
     '- If another participant should handle this turn, call ensemble_yield with a short reason and optional target.',
     ...(input.participant.provider === 'grok'
       ? [
-          `- Grok direct-tool rule: for Ensemble lifecycle calls, invoke a TaskWraith tool directly from the current tool list. For yield, use whichever directly advertised alias is present: \`${grokDirectYieldTool}\`, \`TaskWraith__ensemble_yield\`, or \`taskwraith-grok__ensemble_yield\`. Never route Ensemble lifecycle calls through generic \`search_tool\` / \`use_tool\`, capability discovery, or a Cursor workspace proxy; those can bind the wrong provider context.`
+          `- Grok direct-tool rule: for Ensemble lifecycle calls, invoke the exact MCP alias for this run through Grok's native \`use_tool\` wrapper. For yield, set \`tool_name\` to \`${grokDirectYieldTool}\` and pass the yield input once. Do not call \`search_tool\`, do not use \`taskwraith-broker__ensemble_yield\`, do not probe alternate aliases, and do not route through a Cursor workspace proxy; those bind the wrong provider context. If the exact call fails, report that failure instead of tool-discovery retries.`
         ]
       : []),
     '- Use ensemble_fanout when multiple peers should work in parallel. Default read_only fan-out only targets read-only participants; locked_writers fan-out is feature-gated, requires the assigned Boss (or active Captain after Boss unavailability) as caller with explicit writeScopes for writer targets, and relies on workspace write locks. Set targetStage to all, scouts, workers, reviewers, or backgrounds for selective stage fan-out; targetStage=all excludes untyped Any roles. A unique `@BG` / `@Background` mention launches the background-stage seat asynchronously without consuming foreground rotation. When no Boss is assigned, automatic writer fan-out is host-mediated by user-enabled write-scope claim + matrix-ack preflight rather than peer tool calls.',

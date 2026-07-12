@@ -10405,7 +10405,8 @@ export class EnsembleOrchestrator {
         // (or undefined) skips the section entirely.
         scoutBriefs: runtime.scoutBriefs,
         slimTurn,
-        dynamicStateSnapshot
+        dynamicStateSnapshot,
+        effectiveApprovalMode: permissions.approvalMode
       })
       const promptWithDiscordContext = `${prompt}${formatDiscordContextPromptAppendix(
         runtime.discordContextSnapshots
@@ -11643,7 +11644,8 @@ export class EnsembleOrchestrator {
           : undefined,
         roundId: runtime.roundId,
         chatContextTurns,
-        dynamicStateSnapshot
+        dynamicStateSnapshot,
+        effectiveApprovalMode: permissions.approvalMode
       })
       const promptWithDiscordContext = `${promptText}${formatDiscordContextPromptAppendix(
         runtime.discordContextSnapshots

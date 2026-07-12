@@ -938,15 +938,42 @@ describe('Ensemble prompt composition', () => {
       config: grokEnsemble,
       participant: grokParticipant,
       currentPrompt: 'Yield to the named target.',
-      roundId: 'round-grok-routing'
+      roundId: 'round-grok-routing',
+      effectiveApprovalMode: 'plan'
     })
 
     expect(prompt).toContain('Grok direct-tool rule')
-    expect(prompt).toContain('taskwraith-broker__ensemble_yield')
-    expect(prompt).toContain('TaskWraith__ensemble_yield')
     expect(prompt).toContain('taskwraith-grok__ensemble_yield')
-    expect(prompt).toContain('Never route Ensemble lifecycle calls through generic `search_tool` / `use_tool`')
+    expect(prompt).toContain("Grok's native `use_tool` wrapper")
+    expect(prompt).toContain('Do not call `search_tool`')
+    expect(prompt).toContain('do not use `taskwraith-broker__ensemble_yield`')
     expect(prompt).toContain('wrong provider context')
+  })
+
+  it('names the full TaskWraith MCP server for write-capable Grok seats', () => {
+    const grokParticipant: EnsembleParticipant = {
+      ...ensemble.participants[0],
+      id: 'grok-boss',
+      provider: 'grok',
+      role: 'Boss',
+      permissionPresetId: 'default'
+    }
+    const grokEnsemble: EnsembleConfig = {
+      ...ensemble,
+      participants: [grokParticipant, ...ensemble.participants.slice(1)]
+    }
+
+    const prompt = buildEnsembleParticipantPrompt({
+      chat: { ...chat(), provider: 'grok', ensemble: grokEnsemble },
+      config: grokEnsemble,
+      participant: grokParticipant,
+      currentPrompt: 'Yield to the user.',
+      roundId: 'round-grok-write-routing',
+      effectiveApprovalMode: 'default'
+    })
+
+    expect(prompt).toContain('`TaskWraith__ensemble_yield`')
+    expect(prompt).not.toContain('set `tool_name` to `taskwraith-grok__ensemble_yield`')
   })
 
   it('does not add Grok-specific direct-tool routing to non-Grok seats', () => {
