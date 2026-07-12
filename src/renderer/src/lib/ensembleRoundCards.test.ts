@@ -3,9 +3,12 @@ import {
   buildEnsembleRoundCardRows,
   buildEnsembleRoundCardRowsWithRanges,
   ensembleRoundHeaderId,
+  getSessionRoundExpansionSnapshot,
   isEnsembleRoundHeaderMessage,
   readEnsembleRoundHeader,
   roundExpansionForChat,
+  setSessionRoundExpanded,
+  subscribeSessionRoundExpansion,
   updateRoundExpansionForChat
 } from './ensembleRoundCards'
 import type { ChatMessage, ChatRecord } from '../../../main/store/types'
@@ -363,5 +366,23 @@ describe('per-chat round expansion memory', () => {
     )
     expect(next.get('chat-b')).toEqual(new Map([['round-2', false]]))
     expect(initial.get('chat-a')).toEqual(new Map([['round-1', true]]))
+  })
+
+  it('keeps session disclosure state outside remounting transcript trees', () => {
+    const chatA = 'remount-chat-a'
+    const chatB = 'remount-chat-b'
+    let notifications = 0
+    const unsubscribe = subscribeSessionRoundExpansion(() => {
+      notifications += 1
+    })
+
+    setSessionRoundExpanded(chatA, 'round-10', true)
+    setSessionRoundExpanded(chatB, 'round-2', false)
+    unsubscribe()
+
+    const remountedSnapshot = getSessionRoundExpansionSnapshot()
+    expect(roundExpansionForChat(remountedSnapshot, chatA)).toEqual(new Map([['round-10', true]]))
+    expect(roundExpansionForChat(remountedSnapshot, chatB)).toEqual(new Map([['round-2', false]]))
+    expect(notifications).toBe(2)
   })
 })

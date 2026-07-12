@@ -41,6 +41,33 @@ export const ENSEMBLE_ROUND_HEADER_KIND = 'ensembleRoundHeader'
 
 export type RoundExpansionByChatId = ReadonlyMap<string, ReadonlyMap<string, boolean>>
 
+// Session-only external store. TranscriptPanel intentionally swaps between
+// separate welcome/transcript trees, so component-local state is destroyed by
+// a chat -> welcome -> chat navigation. Keeping this tiny immutable snapshot
+// outside either tree preserves reading context across those remounts and lets
+// simultaneous transcript panes observe the same disclosure state.
+let sessionRoundExpansionSnapshot: RoundExpansionByChatId = new Map()
+const sessionRoundExpansionListeners = new Set<() => void>()
+
+export function getSessionRoundExpansionSnapshot(): RoundExpansionByChatId {
+  return sessionRoundExpansionSnapshot
+}
+
+export function subscribeSessionRoundExpansion(listener: () => void): () => void {
+  sessionRoundExpansionListeners.add(listener)
+  return () => sessionRoundExpansionListeners.delete(listener)
+}
+
+export function setSessionRoundExpanded(chatId: string, roundId: string, expanded: boolean): void {
+  sessionRoundExpansionSnapshot = updateRoundExpansionForChat(
+    sessionRoundExpansionSnapshot,
+    chatId,
+    roundId,
+    expanded
+  )
+  for (const listener of sessionRoundExpansionListeners) listener()
+}
+
 export function roundExpansionForChat(
   expansionByChatId: RoundExpansionByChatId,
   chatId: string | null

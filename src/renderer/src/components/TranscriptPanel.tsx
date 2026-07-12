@@ -1,4 +1,14 @@
-import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import {
+  Fragment,
+  memo,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore
+} from 'react'
 import type { CSSProperties, ReactElement } from 'react'
 import type {
   ChatMessage,
@@ -81,10 +91,12 @@ import {
 } from '../lib/transcriptToolMessageGrouping'
 import {
   buildEnsembleRoundCardRowsWithRanges,
+  getSessionRoundExpansionSnapshot,
   isEnsembleRoundHeaderMessage,
   readEnsembleRoundHeader,
   roundExpansionForChat,
-  updateRoundExpansionForChat
+  setSessionRoundExpanded,
+  subscribeSessionRoundExpansion
 } from '../lib/ensembleRoundCards'
 import {
   createTranscriptScrollAnimator,
@@ -2103,9 +2115,11 @@ export const TranscriptPanel = memo(
     // destination map available during render also lets scroll-anchor restore
     // target a body row before its deferred positioning pass runs.
     const roundExpansionChatId = currentChat?.appChatId ?? null
-    const [manualRoundExpansionByChatId, setManualRoundExpansionByChatId] = useState<
-      Map<string, ReadonlyMap<string, boolean>>
-    >(new Map())
+    const manualRoundExpansionByChatId = useSyncExternalStore(
+      subscribeSessionRoundExpansion,
+      getSessionRoundExpansionSnapshot,
+      getSessionRoundExpansionSnapshot
+    )
     const manualRoundExpansion = useMemo(
       () => roundExpansionForChat(manualRoundExpansionByChatId, roundExpansionChatId),
       [manualRoundExpansionByChatId, roundExpansionChatId]
@@ -2113,9 +2127,7 @@ export const TranscriptPanel = memo(
     const setRoundExpanded = useCallback(
       (roundId: string, expanded: boolean) => {
         if (!roundExpansionChatId) return
-        setManualRoundExpansionByChatId((prev) =>
-          updateRoundExpansionForChat(prev, roundExpansionChatId, roundId, expanded)
-        )
+        setSessionRoundExpanded(roundExpansionChatId, roundId, expanded)
       },
       [roundExpansionChatId]
     )

@@ -2,6 +2,8 @@ import { describe, it, expect } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { createRef } from 'react'
 import { TranscriptPanel } from './App'
+import { setSessionRoundExpanded } from './lib/ensembleRoundCards'
+import { TASKWRAITH_CLOSEOUT_KIND } from '../../shared/taskWraithCloseout'
 import type {
   ChatKind,
   ChatMessage,
@@ -1413,5 +1415,103 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
 
     expect(html).toContain('is-side-chat-seed')
     expect(html).toContain('data-message-id="m2"')
+  })
+
+  it('restores an expanded ensemble round after the transcript tree remounts', () => {
+    const chatId = 'round-expansion-remount-chat'
+    const roundMessages: ChatMessage[] = [
+      {
+        id: 'round-1-prompt',
+        role: 'user',
+        content: 'Inspect the first round.',
+        timestamp: '2026-07-12T12:00:00.000Z',
+        metadata: { kind: 'ensembleRoundPrompt', ensembleRoundId: 'round-1' }
+      },
+      {
+        id: 'round-1-body',
+        role: 'assistant',
+        content: 'ROUND_ONE_BODY_MARKER',
+        timestamp: '2026-07-12T12:00:01.000Z',
+        metadata: {
+          kind: 'ensembleParticipant',
+          ensembleRoundId: 'round-1',
+          ensembleProvider: 'codex',
+          ensembleRole: 'Scout'
+        }
+      },
+      {
+        id: 'round-1-closeout',
+        role: 'system',
+        content: 'Round one complete.',
+        timestamp: '2026-07-12T12:00:02.000Z',
+        metadata: {
+          kind: TASKWRAITH_CLOSEOUT_KIND,
+          closeoutScope: 'ensembleRound',
+          closeoutRoundId: 'round-1'
+        }
+      },
+      {
+        id: 'round-2-prompt',
+        role: 'user',
+        content: 'Inspect the second round.',
+        timestamp: '2026-07-12T12:01:00.000Z',
+        metadata: { kind: 'ensembleRoundPrompt', ensembleRoundId: 'round-2' }
+      },
+      {
+        id: 'round-2-body',
+        role: 'assistant',
+        content: 'ROUND_TWO_BODY_MARKER',
+        timestamp: '2026-07-12T12:01:01.000Z',
+        metadata: {
+          kind: 'ensembleParticipant',
+          ensembleRoundId: 'round-2',
+          ensembleProvider: 'claude',
+          ensembleRole: 'Reviewer'
+        }
+      }
+    ]
+    const roundChat = {
+      appChatId: chatId,
+      title: 'Round expansion remount',
+      chatKind: 'ensemble',
+      provider: 'codex',
+      createdAt: 0,
+      updatedAt: 0,
+      archived: false,
+      messages: roundMessages,
+      runs: [],
+      ensemble: { enabled: true, maxParticipants: 2, participants: [] }
+    } as ChatRecord
+
+    setSessionRoundExpanded(chatId, 'round-1', false)
+    const collapsed = renderToStaticMarkup(
+      <TranscriptPanel
+        {...makeProps({
+          virtualize: false,
+          collapseOlderRounds: true,
+          currentChat: roundChat,
+          messages: roundMessages
+        })}
+      />
+    )
+    expect(collapsed).not.toContain('ROUND_ONE_BODY_MARKER')
+
+    setSessionRoundExpanded(chatId, 'round-1', true)
+    renderToStaticMarkup(
+      <TranscriptPanel {...makeProps({ isWelcomeChat: true, currentChat: null, messages: [] })} />
+    )
+    const restored = renderToStaticMarkup(
+      <TranscriptPanel
+        {...makeProps({
+          virtualize: false,
+          collapseOlderRounds: true,
+          currentChat: roundChat,
+          messages: roundMessages
+        })}
+      />
+    )
+
+    expect(restored).toMatch(/aria-label="Round 1 of 2,[^"]*Collapse round\./)
+    expect(restored).toContain('ROUND_ONE_BODY_MARKER')
   })
 })
