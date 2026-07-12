@@ -235,6 +235,7 @@ import {
 } from '../shared/contextCompaction'
 import { isEnsembleRoundDispatchLive } from '../shared/ensembleRoundLifecycle'
 import type { ParticipantWorkingTelemetryEvent } from '../shared/participantWorkingTelemetry'
+import { SoloWorkingTokenTelemetry } from './soloWorkingTokenTelemetry'
 import { resolveHealthEntryPresentation } from '../shared/ollamaBrandTable'
 import {
   CODEX_REVIEW_TOOL_NAME,
@@ -5271,6 +5272,14 @@ const auditRuntime = createAuditRuntime({
 // `handleProviderOutput` and `handleExit` internally no-op for runs that aren't
 // being tracked, so the per-event hooks are gated cheaply by `isTracked`.
 const auditRunTracker = new AuditRunTracker({ nowMs: () => Date.now() })
+
+// Solo-run mirror of the ensemble working-telemetry lane. Ensemble seats stream
+// live authoritative usage to the renderer via `reportParticipantTokenUsage`;
+// solo runs were never registered there, so their live `state.tokenUsage` never
+// reached the composer footer / working row until the run sealed. This registry
+// broadcasts the same ephemeral `participant-working-telemetry` snapshots for
+// solo runs, and self-gates its `clear` so ensemble seats are never touched.
+const soloWorkingTokenTelemetry = new SoloWorkingTokenTelemetry()
 
 // Cooperative cancellation flags per audit run id. `audit-run:cancel` flips the
 // flag; the orchestrator checks `isCancelled` between phases + spawns. The
@@ -12370,6 +12379,20 @@ function handleCliProviderJsonEvent(state: CliProviderStreamState, event: any) {
       state.tokenUsage as Record<string, unknown> | undefined,
       { provider: state.provider, chatId: state.appChatId }
     )
+    // Solo runs aren't registered with the ensemble orchestrator, so surface
+    // their live authoritative usage to the same working-telemetry lane the
+    // composer footer + working row read from.
+    if (!state.ensembleRun) {
+      const soloEvent = soloWorkingTokenTelemetry.report({
+        runId: state.appRunId,
+        chatId: state.appChatId,
+        provider: state.provider,
+        startedAtMs: state.startedAt,
+        stats: state.tokenUsage as Record<string, unknown> | undefined,
+        nowMs: Date.now()
+      })
+      if (soloEvent) broadcastParticipantWorkingTelemetry(soloEvent)
+    }
   }
   // Per-occurrence budget kill: feed the LIVE token snapshot. No-op unless this
   // run was registered (solo scheduled run with a budget). Covers Claude (SDK +
@@ -16219,6 +16242,11 @@ function sendAgentCompatExit(
     'provider'
   )
   ensembleOrchestratorRef?.markRunExited(routed.appRunId, typeof code === 'number' ? code : -1)
+  // Drop the solo working-telemetry snapshot for this run. Self-gating: only
+  // yields a clear for a run the solo registry actually tracked, so ensemble
+  // seats (cleared by the orchestrator's finalizeRun) are never touched.
+  const soloClearEvent = soloWorkingTokenTelemetry.clear(routed.appRunId)
+  if (soloClearEvent) broadcastParticipantWorkingTelemetry(soloClearEvent)
   // Audit completion bridge — resolve a tracked audit role-run that ended
   // without a terminal `result` event (crash/kill). No-ops for non-audit runs
   // and once already settled by a result. Mirrors the markRunExited hook.
@@ -18296,11 +18324,23 @@ function handleCodexNotification(message: any) {
     state.tokenUsage = params.tokenUsage || params.usage || params
     // Per-occurrence budget kill: Codex's live token signal.
     if (state.appRunId) workflowBudgetRegistry.onUsage(state.appRunId, state.tokenUsage)
-    ensembleOrchestratorRef?.reportParticipantTokenUsage(
-      state.appRunId,
-      codexUsageToStats(state.tokenUsage),
-      { provider: 'codex', chatId: state.appChatId }
-    )
+    const codexStats = codexUsageToStats(state.tokenUsage)
+    ensembleOrchestratorRef?.reportParticipantTokenUsage(state.appRunId, codexStats, {
+      provider: 'codex',
+      chatId: state.appChatId
+    })
+    // Solo Codex runs: surface the same live snapshot the ensemble seats get.
+    if (!state.ensembleRun) {
+      const soloEvent = soloWorkingTokenTelemetry.report({
+        runId: state.appRunId,
+        chatId: state.appChatId,
+        provider: 'codex',
+        startedAtMs: state.startedAt,
+        stats: codexStats,
+        nowMs: Date.now()
+      })
+      if (soloEvent) broadcastParticipantWorkingTelemetry(soloEvent)
+    }
     return
   }
 
