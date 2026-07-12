@@ -9394,33 +9394,11 @@ function App(): React.JSX.Element {
     const handleProviderExit = (fallbackProvider: ProviderId, payload: unknown) => {
       const handlers = appEventHandlersRef.current
       const provider = getRouteProvider(payload, fallbackProvider)
-      const diagRunId = getRouteRunId(payload)
-      const diagChatId = getRouteChatId(payload)
-      const context = handlers.resolveActiveRunContext(provider, diagRunId, diagChatId)
-      // [[EXIT-DIAG]] TEMPORARY — remove after the clean-session solo-Codex seal
-      // repro. One structured line discriminates all three unsealed-run failure
-      // modes: (a) appRunId/appChatId absent → the orphan-seal guard below skips;
-      // (b) ids present but contextHit=false → the seal SHOULD fire (if the run
-      // still hangs, it's HMR/logic, not routing); (c) this line never prints for
-      // a completed run → the exit was never delivered here (cross-instance
-      // misroute). payloadKeys exposes what the codex app-server exit truly carries.
-      try {
-        // eslint-disable-next-line no-console
-        console.log('[[EXIT-DIAG]] provider-exit', {
-          provider,
-          appRunId: diagRunId ?? null,
-          appChatId: diagChatId ?? null,
-          contextHit: !!context,
-          exitCode: extractExitCode(payload) ?? null,
-          payloadKeys:
-            payload && typeof payload === 'object'
-              ? Object.keys(payload as Record<string, unknown>)
-              : typeof payload,
-          activeRunIds: Array.from(activeRunsRef.current.keys())
-        })
-      } catch {
-        /* diagnostic logging must never throw */
-      }
+      const context = handlers.resolveActiveRunContext(
+        provider,
+        getRouteRunId(payload),
+        getRouteChatId(payload)
+      )
       if (!context) {
         // The live run context was lost, so the normal seal below can't run —
         // e.g. a main-process restart mid-run, or a shared codex app-server exit
