@@ -5000,6 +5000,51 @@ function persistRunPermissionPostureOnChatRun(session: {
 }
 
 /**
+ * Seal a SOLO Codex run's persisted `ChatRun` at turn completion.
+ *
+ * Codex's long-lived app-server never exits per-run, so the main-side finalize
+ * that writes `status`/`endedAt`/`stats` on provider-process exit (spawn-based
+ * providers) never fires for it — main's `AppStore` copy of the run stays
+ * frozen at `run_started` state. And because every `runManager.onChange`
+ * re-persists + `broadcastChatUpdated`s main's copy (see
+ * `persistRunPermissionPostureOnChatRun`), that unsealed copy overwrites the
+ * renderer's live `run_finished` seal within its 200ms `saveChat` debounce — so
+ * solo Codex runs land on disk with NO terminal fields and read as
+ * "Running"/"status unknown" forever, while every other provider seals fine.
+ *
+ * Sealing main's own copy the moment the turn completes — status + stats
+ * already in hand from the codex notification `state` — makes main
+ * authoritative, so both the persist and the broadcast carry the seal.
+ * Idempotent: only fills terminal fields the renderer's live seal hasn't
+ * already written, and never re-seals an already-terminal run.
+ */
+function sealSoloCodexRunOnCompletion(args: {
+  appChatId?: string
+  runId?: string
+  status: string
+  stats: unknown
+  endedAt: string
+}): void {
+  if (!args.appChatId || !args.runId) return
+  const chat = AppStore.getChat(args.appChatId)
+  if (!chat?.runs?.length) return
+  const runIndex = chat.runs.findIndex((run) => run.runId === args.runId)
+  if (runIndex < 0) return
+  const existingRun = chat.runs[runIndex]
+  if (existingRun.endedAt && existingRun.status && existingRun.stats) return
+  const runs = [...chat.runs]
+  runs[runIndex] = {
+    ...existingRun,
+    status: existingRun.status || args.status,
+    endedAt: existingRun.endedAt || args.endedAt,
+    stats: existingRun.stats ?? args.stats
+  }
+  const updated: ChatRecord = { ...chat, runs, updatedAt: Date.now() }
+  AppStore.saveChat(updated)
+  broadcastChatUpdated(updated)
+}
+
+/**
  * Explicit dependencies for `normalizeAgentRunPayload` — the universal
  * run-dispatch trust boundary (M3-1a seam-first slice per
  * `design-next-extraction-spec`). Every field below closes over
@@ -18740,6 +18785,20 @@ function handleCodexNotification(message: any) {
     if (state.threadId) pendingCodexInterrupts.delete(state.threadId)
     const turn = params.turn || params.review || {}
     const durationMs = Number(turn.durationMs || turn.duration_ms || 0)
+    // Seal main's own AppStore copy of a SOLO Codex run before we notify the
+    // renderer: the app-server never exits per-run, so nothing else writes
+    // status/endedAt/stats here and the frozen copy would otherwise clobber the
+    // renderer's live seal on the next runManager broadcast. Reviews and
+    // ensemble seats are finalized on their own paths, so scope to plain turns.
+    if (message.method === 'turn/completed' && !state.ensembleRun) {
+      sealSoloCodexRunOnCompletion({
+        appChatId: state.appChatId,
+        runId: state.appRunId,
+        status: normalizeCodexTurnStatus(turn.status || params.status),
+        stats: codexUsageToStats(state.tokenUsage, durationMs),
+        endedAt: new Date().toISOString()
+      })
+    }
     sendAgentCompatLine(
       state.sender,
       'codex',
