@@ -607,6 +607,19 @@ import {
 import type { AgentRunPayload, AgentRunRoute } from './run/AgentRunTypes'
 import { applyPendingProviderChangeOnFinalize, applyProviderChange } from './providerChangeQueue'
 import {
+  AGENT_ROSTER_IMPORT_MAX_BYTES,
+  agentRosterPresetContractGuide,
+  applyPendingEnsembleRosterPresetOnFinalize,
+  buildEnsembleRosterPresetApply,
+  parseSingleAgentRosterPresetExport,
+  queuePendingEnsembleRosterPresetApply
+} from './EnsembleRosterPresetApply'
+import { buildEnsembleParticipantProviderCatalog } from './EnsembleParticipantCatalog'
+import type {
+  EnsembleRosterPreset,
+  EnsembleRosterPresetImportAcknowledgement
+} from './EnsembleRosterPresetContract'
+import {
   DEFAULT_WINDOW_HEIGHT,
   DEFAULT_WINDOW_WIDTH,
   MIN_WINDOW_HEIGHT,
@@ -7725,7 +7738,11 @@ function flushBridgeRunTranscript(runId: string, final = false): void {
   // just written above (the old provider's session must not carry over); a
   // same-provider model/reasoning tweak keeps the live session. Desktop-origin
   // runs finalize in the renderer, which applies the same helper there.
-  const finalizedChat = final ? applyPendingProviderChangeOnFinalize(updated) : updated
+  const finalizedChat = final
+    ? applyPendingProviderChangeOnFinalize(
+        applyPendingEnsembleRosterPresetOnFinalize(updated)
+      )
+    : updated
   const saved = saveAndBroadcastChat(finalizedChat)
   if (final) {
     // Terminal per-thread/task deltas should not wait behind a coalesced full
@@ -22709,6 +22726,344 @@ async function executeSwitchAuthProfile(args: Record<string, any>) {
   }
 }
 
+async function readAgentRosterPresetImportSource(
+  args: Record<string, any>,
+  context: GeminiToolContext,
+  parentProvider: ProviderId
+): Promise<{ json: string; source: { kind: 'inline' | 'path'; path?: string } }> {
+  const requestedPath = optionalString(args.path || args.filePath || args.file_path)
+  const inlineJson =
+    typeof args.json === 'string'
+      ? args.json
+      : typeof args.presetJson === 'string'
+        ? args.presetJson
+        : typeof args.preset_json === 'string'
+          ? args.preset_json
+          : undefined
+  if (requestedPath && inlineJson !== undefined) {
+    throw new Error('Roster preset import accepts either path or json, not both.')
+  }
+  if (!requestedPath && inlineJson === undefined) {
+    throw new Error('Roster preset import requires a roster export path or inline json.')
+  }
+  if (inlineJson !== undefined) {
+    return { json: inlineJson, source: { kind: 'inline' } }
+  }
+
+  const targetPath = resolveGeminiMcpGrantAwarePath(
+    context,
+    parentProvider,
+    requestedPath!,
+    'read'
+  )
+  const stat = await fs.stat(targetPath)
+  if (!stat.isFile()) throw new Error('Roster preset import path is not a file.')
+  if (stat.size > AGENT_ROSTER_IMPORT_MAX_BYTES) {
+    throw new Error(
+      `Roster preset import is larger than ${AGENT_ROSTER_IMPORT_MAX_BYTES.toLocaleString()} bytes.`
+    )
+  }
+  const buffer = await fs.readFile(targetPath)
+  assertTextBuffer(buffer)
+  return {
+    json: buffer.toString('utf8'),
+    source: { kind: 'path', path: formatScopedPath(context, targetPath) }
+  }
+}
+
+interface ConfirmedRendererRosterPresetImport {
+  importedCount: number
+  presetId: string
+  presetName: string
+}
+
+interface PendingRendererRosterPresetImport {
+  webContentsId: number
+  timer: NodeJS.Timeout
+  resolve: (result: ConfirmedRendererRosterPresetImport) => void
+  reject: (error: Error) => void
+}
+
+const RENDERER_ROSTER_PRESET_IMPORT_TIMEOUT_MS = 10_000
+const pendingRendererRosterPresetImports = new Map<
+  string,
+  PendingRendererRosterPresetImport
+>()
+
+function acknowledgeRendererRosterPresetImport(
+  sender: Electron.WebContents,
+  rawPayload: unknown
+): void {
+  if (!rawPayload || typeof rawPayload !== 'object' || Array.isArray(rawPayload)) return
+  const payload = rawPayload as EnsembleRosterPresetImportAcknowledgement
+  const requestId = optionalString(payload.requestId)
+  if (!requestId) return
+  const pending = pendingRendererRosterPresetImports.get(requestId)
+  if (!pending || sender.id !== pending.webContentsId) return
+  pendingRendererRosterPresetImports.delete(requestId)
+  clearTimeout(pending.timer)
+  if (payload.ok !== true) {
+    pending.reject(
+      new Error(optionalString(payload.error) || 'The renderer could not save the roster preset.')
+    )
+    return
+  }
+  const presetId = optionalString(payload.presetId)
+  const presetName = optionalString(payload.presetName)
+  if (!presetId || !presetName || payload.importedCount !== 1) {
+    pending.reject(new Error('The renderer returned an invalid roster preset save receipt.'))
+    return
+  }
+  pending.resolve({
+    importedCount: payload.importedCount,
+    presetId,
+    presetName
+  })
+}
+
+function requestRendererRosterPresetImport(
+  json: string
+): Promise<ConfirmedRendererRosterPresetImport> {
+  const target = mainWindow
+  if (!target || target.isDestroyed() || target.webContents.isDestroyed()) {
+    return Promise.reject(new Error('No active TaskWraith window can save the roster preset.'))
+  }
+  const requestId = randomUUID()
+  const webContentsId = target.webContents.id
+  return new Promise((resolveImport, rejectImport) => {
+    const timer = setTimeout(() => {
+      if (!pendingRendererRosterPresetImports.delete(requestId)) return
+      rejectImport(new Error('Timed out waiting for the roster preset to be saved.'))
+    }, RENDERER_ROSTER_PRESET_IMPORT_TIMEOUT_MS)
+    pendingRendererRosterPresetImports.set(requestId, {
+      webContentsId,
+      timer,
+      resolve: resolveImport,
+      reject: rejectImport
+    })
+    const sent = safeSendToSender(target.webContents, 'ensemble-roster-presets:import-requested', {
+      requestId,
+      json,
+      source: 'agent'
+    })
+    if (sent) return
+    pendingRendererRosterPresetImports.delete(requestId)
+    clearTimeout(timer)
+    rejectImport(new Error('The TaskWraith window closed before the roster preset could be saved.'))
+  })
+}
+
+async function executeAgentRosterPresetImport(
+  args: Record<string, any>,
+  context: GeminiToolContext,
+  parentProvider: ProviderId
+): Promise<Record<string, unknown>> {
+  if (!context.appChatId) {
+    return {
+      ok: false,
+      tool: 'ensemble_roster_edit',
+      action: 'import_preset',
+      error: 'no_active_chat',
+      message: 'Roster preset import requires an active TaskWraith chat.'
+    }
+  }
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return {
+      ok: false,
+      tool: 'ensemble_roster_edit',
+      action: 'import_preset',
+      error: 'preset_store_unavailable',
+      message: 'Roster preset import requires an open TaskWraith window to save the preset.'
+    }
+  }
+  if (AppStore.getSettings().ensembleModeEnabled === false) {
+    return {
+      ok: false,
+      tool: 'ensemble_roster_edit',
+      action: 'import_preset',
+      error: 'ensemble_disabled',
+      message: 'Roster preset import rejected because Ensemble Mode is disabled.'
+    }
+  }
+
+  const source = await readAgentRosterPresetImportSource(args, context, parentProvider)
+  const preset = parseSingleAgentRosterPresetExport(source.json)
+  const activate = args.apply !== false && args.activate !== false
+  const chat = AppStore.getChat(context.appChatId)
+  if (!chat) {
+    return {
+      ok: false,
+      tool: 'ensemble_roster_edit',
+      action: 'import_preset',
+      error: 'no_active_chat',
+      message: 'Roster preset import could not resolve the active chat.'
+    }
+  }
+  const configuredProviders = await detectConfiguredProviders(AppStore.getSettings())
+  configuredProviders.add(parentProvider)
+  for (const participant of chat.ensemble?.participants || []) {
+    configuredProviders.add(participant.provider)
+  }
+  for (const provider of selectableProviderIds()) {
+    if (AppStore.getProviderUsageSnapshot(provider)?.configured === true) {
+      configuredProviders.add(provider)
+    }
+  }
+  const unconfiguredProviders = [
+    ...new Set(
+      preset.participants
+        .map((participant) => participant.provider)
+        .filter((provider) => !configuredProviders.has(provider))
+    )
+  ]
+  if (unconfiguredProviders.length > 0) {
+    return {
+      ok: false,
+      tool: 'ensemble_roster_edit',
+      action: 'import_preset',
+      error: 'provider_not_configured',
+      message: `Roster preset import rejected: configure ${unconfiguredProviders.map(providerLabel).join(', ')} before assigning those providers.`
+    }
+  }
+
+  let validationResult: Record<string, unknown>
+  if (chat.chatKind === 'ensemble') {
+    const result = ensembleOrchestratorRef?.rosterPresetImportForRun(context.appRunId, {
+      roundId: optionalString(args.roundId || args.round_id),
+      preset,
+      activate: false
+    }) || {
+      ok: false,
+      tool: 'ensemble_roster_edit' as const,
+      action: 'import_preset' as const,
+      message: 'Ensemble orchestrator is not available.',
+      error: 'no_active_run' as const
+    }
+    if (!result.ok) return { ...result }
+    validationResult = { ...result }
+  } else {
+    const resolution = buildEnsembleRosterPresetApply({
+      chat,
+      preset,
+      sourceRunId: context.appRunId,
+      queuedAt: new Date().toISOString(),
+      makeParticipantId: () => `agent-roster-${randomUUID()}`
+    })
+    if (!resolution.ok) {
+      return {
+        ok: false,
+        tool: 'ensemble_roster_edit',
+        action: 'import_preset',
+        error: resolution.error,
+        message: resolution.message
+      }
+    }
+    validationResult = {
+      ok: true,
+      tool: 'ensemble_roster_edit',
+      action: 'import_preset',
+      presetId: resolution.plan.presetId,
+      presetName: resolution.plan.presetName,
+      inheritedBossProvider: chat.provider,
+      deferred: false,
+      message: `Validated roster preset "${resolution.plan.presetName}" for the current ${providerLabel(parentProvider)} seat to inherit Boss.`
+    }
+  }
+
+  let saved: ConfirmedRendererRosterPresetImport
+  try {
+    saved = await requestRendererRosterPresetImport(source.json)
+  } catch (error) {
+    return {
+      ok: false,
+      tool: 'ensemble_roster_edit',
+      action: 'import_preset',
+      error: 'preset_save_failed',
+      message: error instanceof Error ? error.message : 'The roster preset could not be saved.'
+    }
+  }
+
+  const savedPreset: EnsembleRosterPreset = {
+    ...preset,
+    id: saved.presetId,
+    name: saved.presetName
+  }
+  let activationResult = validationResult
+  if (activate && chat.chatKind === 'ensemble') {
+    const result = ensembleOrchestratorRef?.rosterPresetImportForRun(context.appRunId, {
+      roundId: optionalString(args.roundId || args.round_id),
+      preset: savedPreset,
+      activate: true
+    }) || {
+      ok: false,
+      tool: 'ensemble_roster_edit' as const,
+      action: 'import_preset' as const,
+      message: 'Ensemble orchestrator is not available.',
+      error: 'no_active_run' as const
+    }
+    if (!result.ok) {
+      return {
+        ...result,
+        presetSaved: true,
+        savedPresetId: saved.presetId,
+        savedPresetName: saved.presetName
+      }
+    }
+    activationResult = { ...result }
+  } else if (activate) {
+    const resolution = buildEnsembleRosterPresetApply({
+      chat,
+      preset: savedPreset,
+      sourceRunId: context.appRunId,
+      queuedAt: new Date().toISOString(),
+      makeParticipantId: () => `agent-roster-${randomUUID()}`
+    })
+    if (!resolution.ok) {
+      return {
+        ok: false,
+        tool: 'ensemble_roster_edit',
+        action: 'import_preset',
+        error: resolution.error,
+        message: resolution.message,
+        presetSaved: true,
+        savedPresetId: saved.presetId,
+        savedPresetName: saved.presetName
+      }
+    }
+    saveAndBroadcastChat({
+      ...queuePendingEnsembleRosterPresetApply(chat, resolution.plan),
+      updatedAt: Date.now()
+    })
+    activationResult = {
+      ok: true,
+      tool: 'ensemble_roster_edit',
+      action: 'import_preset',
+      presetId: resolution.plan.presetId,
+      presetName: resolution.plan.presetName,
+      inheritedBossProvider: chat.provider,
+      deferred: true,
+      message: `Saved roster preset "${resolution.plan.presetName}"; the current ${providerLabel(parentProvider)} seat will inherit Boss and the roster will activate when this turn finishes.`
+    }
+  } else {
+    activationResult = {
+      ...validationResult,
+      presetId: saved.presetId,
+      presetName: saved.presetName,
+      message: `Saved roster preset "${saved.presetName}" without activating it.`
+    }
+  }
+
+  return {
+    ...activationResult,
+    presetSaved: true,
+    savedPresetId: saved.presetId,
+    savedPresetName: saved.presetName,
+    importedCount: saved.importedCount,
+    source: source.source,
+    activate
+  }
+}
+
 const GATEWAY_V1_FULL_TOOL_SET: ReadonlySet<string> = new Set(FULL_MCP_ADVERTISE_TOOLS)
 
 /**
@@ -23614,27 +23969,33 @@ async function executeGeminiMcpTool(
       toolIsError = result.ok === false
       text = mcpJson(result)
     } else if (toolName === 'ensemble_roster_edit') {
-      const result = await (ensembleOrchestratorRef?.rosterEditForRun(context.appRunId, {
-        action:
-          args.action === 'add_participant' ||
-          args.action === 'remove_participant' ||
-          args.action === 'edit_participant'
-            ? args.action
-            : undefined,
-        roundId: optionalString(args.roundId || args.round_id),
-        targetParticipantId: optionalString(
-          args.targetParticipantId || args.target_participant_id
-        ),
-        participant:
-          args.participant && typeof args.participant === 'object' && !Array.isArray(args.participant)
-            ? (args.participant as Record<string, any>)
-            : undefined
-      }) ?? Promise.resolve({
-        ok: false,
-        tool: 'ensemble_roster_edit' as const,
-        message: 'Ensemble orchestrator is not available.',
-        error: 'no_active_run' as const
-      }))
+      const result =
+        args.action === 'import_preset'
+          ? await executeAgentRosterPresetImport(args, context, parentProvider)
+          : await (ensembleOrchestratorRef?.rosterEditForRun(context.appRunId, {
+              action:
+                args.action === 'add_participant' ||
+                args.action === 'remove_participant' ||
+                args.action === 'edit_participant'
+                  ? args.action
+                  : undefined,
+              roundId: optionalString(args.roundId || args.round_id),
+              targetParticipantId: optionalString(
+                args.targetParticipantId || args.target_participant_id
+              ),
+              participant:
+                args.participant &&
+                typeof args.participant === 'object' &&
+                !Array.isArray(args.participant)
+                  ? (args.participant as Record<string, any>)
+                  : undefined
+            }) ??
+              Promise.resolve({
+                ok: false,
+                tool: 'ensemble_roster_edit' as const,
+                message: 'Ensemble orchestrator is not available.',
+                error: 'no_active_run' as const
+              }))
       toolIsError = result.ok === false
       text = mcpJson(result)
     } else if (toolName === 'ensemble_brief_update') {
@@ -23660,13 +24021,63 @@ async function executeGeminiMcpTool(
       toolIsError = result.ok === false
       text = mcpJson(result)
     } else if (toolName === 'list_ensemble_participants') {
-      const result = ensembleOrchestratorRef?.listParticipantsForRun(context.appRunId) || {
-        ok: false,
-        error: 'Ensemble orchestrator is not available.'
-      }
+      const callingChat = context.appChatId ? AppStore.getChat(context.appChatId) : null
+      const configuredProviders = await detectConfiguredProviders(AppStore.getSettings())
+      configuredProviders.add(parentProvider)
+      const result =
+        callingChat && callingChat.chatKind !== 'ensemble'
+          ? {
+              ok: true,
+              chatId: callingChat.appChatId,
+              chatKind: 'single' as const,
+              activeProvider: callingChat.provider,
+              rosterPresetImportAllowed: true,
+              rosterPresetAuthorityRole: 'solo_inherited_boss' as const,
+              availableProviders: buildEnsembleParticipantProviderCatalog(
+                (provider) => AppStore.getProviderUsageSnapshot(provider),
+                configuredProviders
+              ),
+              participants: callingChat.provider
+                ? [
+                    {
+                      id: 'solo-current-seat',
+                      provider: callingChat.provider,
+                      role: 'Inherited Boss',
+                      model:
+                        callingChat.requestedModel ||
+                        optionalString(callingChat.providerMetadata?.selectedModelType),
+                      order: 1,
+                      enabled: true,
+                      status: 'running' as const
+                    }
+                  ]
+                : []
+            }
+          : ensembleOrchestratorRef?.listParticipantsForRun(context.appRunId) || {
+              ok: false,
+              error: 'Ensemble orchestrator is not available.'
+            }
+      const availableProviders = Array.isArray(result.availableProviders)
+        ? result.availableProviders.map((entry) => ({
+            ...entry,
+            configured:
+              configuredProviders.has(entry.provider) ||
+              entry.configured === true ||
+              entry.usage.configured === true
+          }))
+        : result.availableProviders
       toolIsError = result.ok === false
       text = mcpJson({
         ...result,
+        ...(availableProviders ? { availableProviders } : {}),
+        rosterPresetContract: agentRosterPresetContractGuide(
+          callingChat?.chatKind === 'ensemble' ? undefined : callingChat?.provider
+        ),
+        recommendedSetupFlow: [
+          'Use configured providers with non-critical quota when preferences are absent.',
+          'Generate exactly one normal TaskWraith roster-export JSON.',
+          'Call ensemble_roster_edit action=import_preset with path or inline json; it saves and activates the roster.'
+        ],
         tool: 'list_ensemble_participants'
       })
     } else if (toolName === 'schedule_wakeup') {
@@ -25973,6 +26384,9 @@ if (isGeminiMcpBridgeProcess) {
         })
       }
     )
+    ipcMain.on('ensemble-roster-presets:import-result', (event, payload: unknown) => {
+      acknowledgeRendererRosterPresetImport(event.sender, payload)
+    })
 
     // Phase B1: centralize run-event fan-out via the bus. The Electron IPC
     // sink replays today's "send to the originating WebContents" behavior, so
@@ -33282,7 +33696,9 @@ if (isGeminiMcpBridgeProcess) {
       // invocation.
       recordBossmanControlRejection: (rejection) => {
         const rejectedKind = rejection.metadata?.kind
-        const rosterEditRejected = rejectedKind === 'roster_edit_rejected'
+        const rosterEditRejected =
+          rejectedKind === 'roster_edit_rejected' ||
+          rejectedKind === 'roster_preset_import_rejected'
         const briefUpdateRejected = rejectedKind === 'brief_update_rejected'
         const method = briefUpdateRejected
           ? 'ensemble_brief_update'
@@ -33291,11 +33707,15 @@ if (isGeminiMcpBridgeProcess) {
             : 'ensemble_bossman_control'
         const title = briefUpdateRejected
           ? 'Ensemble brief update rejected'
+          : rejectedKind === 'roster_preset_import_rejected'
+            ? 'Ensemble roster preset import rejected'
           : rosterEditRejected
             ? 'Ensemble roster edit rejected'
             : 'Ensemble Boss control rejected'
         const body = briefUpdateRejected
           ? 'A non-Boss participant attempted to use ensemble_brief_update.'
+          : rejectedKind === 'roster_preset_import_rejected'
+            ? 'A non-authority participant attempted to import and activate an Ensemble roster preset.'
           : rosterEditRejected
             ? 'A non-Boss participant attempted to use ensemble_roster_edit.'
             : 'A non-Boss participant attempted to use ensemble_bossman_control.'

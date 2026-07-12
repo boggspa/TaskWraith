@@ -2414,7 +2414,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
     {
       name: 'ensemble_roster_edit',
       description:
-        'In Ensemble Mode, lets the assigned Boss participant, or Captain only after Boss is unavailable, add, remove, or edit participants in the active roster, including swapping an inactive participant seat to a different provider/model/reasoning/permission setup when quota walls, poor output, or agreed role changes make that necessary. Authority-only and audited; requires the user\'s Allow Auto Approvals opt-in on the Ensemble. Call list_ensemble_participants first to inspect live participant ids plus available providers, models, context windows, and coarse quota bands. Permission presets are capped at read_only, plan, or default assignment, and tool-grant permissionOverrides are narrow-only: service overrides may only deny, network may only deny, approvalMode may only narrow to plan, and external path grants are forbidden.',
+        'Manage an Ensemble roster. Existing add/remove/edit actions retain their live-round Boss authority rules and Allow Auto Approvals requirement. For a user request such as "set up my ensemble", first call list_ensemble_participants, generate exactly one normal TaskWraith roster-export JSON, then call action=import_preset with either its workspace path or inline JSON. Import works from a single-provider chat (the current provider must be the marked Boss and inherits Boss authority) or from an existing Ensemble (assigned Boss or Captain only); it saves a unique roster preset and activates it at the next safe turn/round boundary. The export controls participant order, role, brief, stage, provider/model/reasoning, read_only|plan|default permissions, Boss/Captain markers, Turn/Continuous mode, Off/Read/Write/All fan-out, hop cap, max participants, and CHARS. Work Session is intentionally unsupported.',
       annotations: {
         readOnlyHint: false,
         destructiveHint: false,
@@ -2426,9 +2426,14 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
         properties: {
           action: {
             type: 'string',
-            enum: ['add_participant', 'remove_participant', 'edit_participant'],
+            enum: [
+              'add_participant',
+              'remove_participant',
+              'edit_participant',
+              'import_preset'
+            ],
             description:
-              'add_participant creates a new enabled participant; remove_participant removes an existing non-Boss participant; edit_participant patches provider/model/role/reasoning/permission fields.'
+              'add_participant creates a new enabled participant; remove_participant removes an existing non-Boss participant; edit_participant patches provider/model/role/reasoning/permission fields; import_preset validates, saves, and optionally activates one standard TaskWraith roster-export JSON.'
           },
           roundId: {
             type: 'string',
@@ -2496,6 +2501,22 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
               }
             },
             additionalProperties: false
+          },
+          path: {
+            type: 'string',
+            description:
+              'For import_preset: workspace-relative or approved absolute path to a standard TaskWraith roster-export JSON containing exactly one preset. Mutually exclusive with json.'
+          },
+          json: {
+            type: 'string',
+            maxLength: 1000000,
+            description:
+              'For import_preset: inline standard TaskWraith roster-export JSON containing exactly one preset. Useful in global chats; mutually exclusive with path.'
+          },
+          apply: {
+            type: 'boolean',
+            description:
+              'For import_preset: save and activate the imported roster when true/omitted. Set false to save the preset without switching the current chat.'
           }
         },
         required: ['action']
@@ -2542,7 +2563,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
     {
       name: 'list_ensemble_participants',
       description:
-        'In Ensemble Mode, list the current participants, providers, roles, models, per-round statuses, Boss/Captain roster-edit eligibility, available provider/model catalog, per-model context windows, and coarse provider quota bands for the active round. Boss participants and active Captain should use this before ensemble_roster_edit when selecting a replacement provider/model, or before ensemble_brief_update when changing another participant Brief / Goal. Context usage fields are latest usage-bearing run estimates: contextTokens is latest input+output tokens, contextWindow is the resolved token window, and contextPercent is a 0-100 usage percentage; in-flight output is not included.',
+        'Inspect the current single-provider or Ensemble chat before roster work. Returns the current seat/participants, setup authority, runnable-provider configuration, provider/model/reasoning catalog, per-model context windows, coarse quota bands, and the canonical TaskWraith roster-export JSON contract. Call this first when the user asks to "set up my ensemble", then create one task-specific export and pass it to ensemble_roster_edit action=import_preset. In a solo chat the current provider is the required inherited Boss; in an Ensemble only the assigned Boss or Captain may import. Existing Ensemble context usage fields are latest usage-bearing run estimates; in-flight output is not included.',
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,

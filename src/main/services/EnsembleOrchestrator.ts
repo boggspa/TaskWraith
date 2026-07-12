@@ -153,10 +153,20 @@ import {
   type RosterEditParticipantInput,
   type RosterEditRequest
 } from '../EnsembleRosterMutation'
-import { getStaticProviderModels } from '../providers/StaticProviderModels'
 import { selectableProviderIds } from '../settings/MainSanitizers'
 import { buildRunQueueDispatchReceipt } from '../RunQueueDispatchReceipt'
 import { isCodexAppServerThreadId } from '../CodexSessionIdentity'
+import {
+  buildEnsembleParticipantProviderCatalog,
+  type EnsembleParticipantProviderCatalogEntry
+} from '../EnsembleParticipantCatalog'
+import type { EnsembleRosterPreset } from '../EnsembleRosterPresetContract'
+import {
+  applyPendingEnsembleRosterPresetOnFinalize,
+  buildEnsembleRosterPresetApply,
+  queuePendingEnsembleRosterPresetApply,
+  type BuildEnsembleRosterPresetApplyResult
+} from '../EnsembleRosterPresetApply'
 
 export type EnsembleRunMode = 'normal' | 'queue' | 'steer'
 export type EnsembleQueuedSteerResult = {
@@ -556,28 +566,6 @@ function isDynamicStateReceiptTerminalStatus(status: EnsembleParticipantStatus):
   return status === 'answered' || status === 'yielded' || status === 'sleeping'
 }
 
-interface EnsembleParticipantModelCatalogEntry {
-  id: string
-  label: string
-  contextWindow: number
-  isDefault?: boolean
-  description?: string
-  reasoningEfforts?: Array<{
-    id: string
-    disabled?: boolean
-    disabledReason?: string
-  }>
-  defaultReasoningEffort?: string
-  speedTiers?: string[]
-}
-
-interface EnsembleParticipantProviderCatalogEntry {
-  provider: ProviderId
-  label: string
-  usage: ProviderUsageSummary
-  models: EnsembleParticipantModelCatalogEntry[]
-}
-
 interface ConcurrentWriteScopeClaim {
   participantId: string
   participantRole: string
@@ -592,67 +580,6 @@ interface ConcurrentWriteScopePreflight {
   claims: ConcurrentWriteScopeClaim[]
   scopesByParticipantId: Map<string, ConcurrentLaneWriteScope[]>
   matrixSummary: string
-}
-
-function staticModelRecord(model: unknown): Record<string, any> | null {
-  return model && typeof model === 'object' && !Array.isArray(model)
-    ? (model as Record<string, any>)
-    : null
-}
-
-function modelReasoningEfforts(model: Record<string, any>):
-  | EnsembleParticipantModelCatalogEntry['reasoningEfforts']
-  | undefined {
-  if (!Array.isArray(model.supportedReasoningEfforts)) return undefined
-  const efforts = model.supportedReasoningEfforts
-    .map((entry: unknown) => {
-      if (typeof entry === 'string' && entry.trim()) return { id: entry.trim() }
-      const record = staticModelRecord(entry)
-      if (!record) return null
-      const id = typeof record?.reasoningEffort === 'string' ? record.reasoningEffort.trim() : ''
-      if (!id) return null
-      return {
-        id,
-        ...(record.disabled === true ? { disabled: true } : {}),
-        ...(typeof record.disabledReason === 'string' && record.disabledReason.trim()
-          ? { disabledReason: record.disabledReason.trim() }
-          : {})
-      }
-    })
-    .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry))
-  return efforts.length > 0 ? efforts : undefined
-}
-
-function buildParticipantModelCatalog(
-  provider: ProviderId
-): EnsembleParticipantModelCatalogEntry[] {
-  return getStaticProviderModels(provider)
-    .map((model) => {
-      const record = staticModelRecord(model)
-      if (!record) return null
-      const id = typeof record?.id === 'string' ? record.id.trim() : ''
-      if (!id) return null
-      const label =
-        typeof record?.label === 'string' && record.label.trim() ? record.label.trim() : id
-      const reasoningEfforts = modelReasoningEfforts(record)
-      return {
-        id,
-        label,
-        contextWindow: resolveContextWindow(provider, id),
-        ...(record.isDefault === true ? { isDefault: true } : {}),
-        ...(typeof record.description === 'string' && record.description.trim()
-          ? { description: record.description.trim() }
-          : {}),
-        ...(reasoningEfforts ? { reasoningEfforts } : {}),
-        ...(typeof record.defaultReasoningEffort === 'string' && record.defaultReasoningEffort.trim()
-          ? { defaultReasoningEffort: record.defaultReasoningEffort.trim() }
-          : {}),
-        ...(Array.isArray(record.additionalSpeedTiers)
-          ? { speedTiers: record.additionalSpeedTiers.filter((tier) => typeof tier === 'string') }
-          : {})
-      }
-    })
-    .filter((entry): entry is EnsembleParticipantModelCatalogEntry => Boolean(entry))
 }
 
 export interface ScheduleWakeupInput {
@@ -873,6 +800,29 @@ export interface EnsembleRosterEditResult {
     | 'unknown_provider'
     | 'health_check_unavailable'
     | 'participant_unreachable'
+}
+
+export interface EnsembleRosterPresetImportInput {
+  roundId?: string
+  preset: EnsembleRosterPreset
+  activate?: boolean
+}
+
+export interface EnsembleRosterPresetImportResult {
+  ok: boolean
+  tool: 'ensemble_roster_edit'
+  action: 'import_preset'
+  message: string
+  roundId?: string
+  presetId?: string
+  presetName?: string
+  deferred?: boolean
+  error?:
+    | Extract<BuildEnsembleRosterPresetApplyResult, { ok: false }>['error']
+    | 'no_active_run'
+    | 'not_ensemble'
+    | 'no_active_round'
+    | 'stale_round'
 }
 
 export interface EnsembleBriefUpdateInput {
@@ -4192,6 +4142,126 @@ export class EnsembleOrchestrator {
       action,
       roundId: runtime.roundId,
       participantId: resolution.affectedParticipantId,
+      message
+    }
+  }
+
+  rosterPresetImportForRun(
+    runId: string | undefined,
+    input: EnsembleRosterPresetImportInput
+  ): EnsembleRosterPresetImportResult {
+    if (!runId) {
+      return {
+        ok: false,
+        tool: 'ensemble_roster_edit',
+        action: 'import_preset',
+        message: 'Roster preset import requires an active Ensemble participant run.',
+        error: 'no_active_run'
+      }
+    }
+    const caller = this.runsByRunId.get(runId)
+    if (!caller) {
+      return {
+        ok: false,
+        tool: 'ensemble_roster_edit',
+        action: 'import_preset',
+        message: 'No active Ensemble participant run matches this roster preset import.',
+        error: 'no_active_run'
+      }
+    }
+    const chat = this.deps.getChat(caller.chatId)
+    if (!chat?.ensemble) {
+      return {
+        ok: false,
+        tool: 'ensemble_roster_edit',
+        action: 'import_preset',
+        message: 'The active chat is not an Ensemble chat.',
+        error: 'not_ensemble'
+      }
+    }
+    const runtime = this.roundsByChatId.get(caller.chatId)
+    if (!runtime || runtime.roundId !== caller.roundId || runtime.cancelled) {
+      return {
+        ok: false,
+        tool: 'ensemble_roster_edit',
+        action: 'import_preset',
+        message: 'There is no active Ensemble round for this roster preset import.',
+        error: 'no_active_round'
+      }
+    }
+    if (input.roundId && input.roundId !== runtime.roundId) {
+      return {
+        ok: false,
+        tool: 'ensemble_roster_edit',
+        action: 'import_preset',
+        roundId: runtime.roundId,
+        message: 'Roster preset import rejected: roundId is no longer active.',
+        error: 'stale_round'
+      }
+    }
+    let participantSequence = 0
+    const resolution = buildEnsembleRosterPresetApply({
+      chat,
+      preset: input.preset,
+      callerParticipantId: caller.participant.id,
+      sourceRunId: runId,
+      queuedAt: this.deps.nowIso(),
+      makeParticipantId: () =>
+        `agent-roster-${this.deps.now().toString(36)}-${++participantSequence}`
+    })
+    if (!resolution.ok) {
+      if (resolution.error === 'not_authorized') {
+        this.deps.recordBossmanControlRejection?.({
+          provider: caller.participant.provider,
+          workspacePath: chat.workspacePath,
+          chatId: caller.chatId,
+          runId: caller.runId,
+          metadata: {
+            kind: 'roster_preset_import_rejected',
+            rejectionReason: resolution.error,
+            roundId: runtime.roundId,
+            attemptingParticipantId: caller.participant.id,
+            attemptingParticipantRole: caller.participant.role,
+            attemptingProvider: caller.participant.provider,
+            assignedBossmanParticipantId: chat.ensemble.bossmanParticipantId,
+            assignedSecondInCommandParticipantId:
+              chat.ensemble.secondInCommandParticipantId
+          }
+        })
+      }
+      return {
+        ok: false,
+        tool: 'ensemble_roster_edit',
+        action: 'import_preset',
+        roundId: runtime.roundId,
+        message: resolution.message,
+        error: resolution.error
+      }
+    }
+    const activate = input.activate !== false
+    if (activate) {
+      this.saveChatWithCheckpoint(
+        {
+          ...queuePendingEnsembleRosterPresetApply(chat, resolution.plan),
+          updatedAt: this.deps.now()
+        },
+        'round-updated'
+      )
+    }
+    const authorityLabel =
+      resolution.plan.authority === 'ensemble_captain' ? 'Captain' : 'Boss'
+    const message = activate
+      ? `${authorityLabel} imported roster preset "${resolution.plan.presetName}"; it will activate after this round finishes.`
+      : `${authorityLabel} validated roster preset "${resolution.plan.presetName}" for import without activating it.`
+    if (activate) this.appendRoundStatus(runtime.chatId, runtime.roundId, message)
+    return {
+      ok: true,
+      tool: 'ensemble_roster_edit',
+      action: 'import_preset',
+      roundId: runtime.roundId,
+      presetId: resolution.plan.presetId,
+      presetName: resolution.plan.presetName,
+      deferred: activate,
       message
     }
   }
@@ -8486,6 +8556,8 @@ export class EnsembleOrchestrator {
     bossmanPrimaryUnavailableReason?: string
     bossmanAutoApprovalsEnabled?: boolean
     rosterEditAllowed?: boolean
+    rosterPresetImportAllowed?: boolean
+    rosterPresetAuthorityRole?: 'boss' | 'captain'
     availableProviders?: EnsembleParticipantProviderCatalogEntry[]
     participants?: Array<{
       id: string
@@ -8517,6 +8589,12 @@ export class EnsembleOrchestrator {
     const authority = runtime
       ? this.resolveBossAuthorityForCaller(chat, runtime, run.participant.id)
       : null
+    const rosterPresetAuthorityRole =
+      run.participant.id === chat.ensemble.bossmanParticipantId
+        ? 'boss'
+        : run.participant.id === chat.ensemble.secondInCommandParticipantId
+          ? 'captain'
+          : undefined
     return {
       ok: true,
       chatId: chat.appChatId,
@@ -8533,12 +8611,11 @@ export class EnsembleOrchestrator {
         authority?.ok === true &&
         chat.ensemble.bossmanAutoApprovals?.enabled === true &&
         chat.ensemble.bossmanAutoApprovals?.mode === 'permission_preset_once',
-      availableProviders: selectableProviderIds().map((provider) => ({
-        provider,
-        label: providerLabel(provider),
-        usage: summarizeProviderUsage(provider, this.deps.getProviderUsageSnapshot?.(provider)),
-        models: buildParticipantModelCatalog(provider)
-      })),
+      rosterPresetImportAllowed: rosterPresetAuthorityRole !== undefined,
+      ...(rosterPresetAuthorityRole ? { rosterPresetAuthorityRole } : {}),
+      availableProviders: buildEnsembleParticipantProviderCatalog(
+        this.deps.getProviderUsageSnapshot
+      ),
       participants: (chat.ensemble.participants || []).map((participant) => {
         const participantContext = latestRunContextUsage(chat.runs ?? [], participant.id)
         const participantContextWindow = resolveContextWindow(
@@ -12690,6 +12767,16 @@ export class EnsembleOrchestrator {
     this.completeCheckpoint(chatId, roundId, status)
     if (runtime?.roundId === roundId) {
       this.applyPendingRoundEndParticipantSeatChanges(runtime)
+    }
+    const pendingRosterChat = this.deps.getChat(chatId)
+    if (pendingRosterChat) {
+      const appliedRosterChat = applyPendingEnsembleRosterPresetOnFinalize(pendingRosterChat)
+      if (appliedRosterChat !== pendingRosterChat) {
+        this.saveChatWithCheckpoint(
+          { ...appliedRosterChat, updatedAt: this.deps.now() },
+          'participant-updated'
+        )
+      }
     }
     this.maybeAutoCompactSeatsAfterRound(chatId, status)
   }

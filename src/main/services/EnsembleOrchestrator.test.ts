@@ -38,6 +38,7 @@ import {
   type ContextCompactionProgressEvent
 } from '../../shared/contextCompaction'
 import type { ParticipantWorkingTelemetryEvent } from '../../shared/participantWorkingTelemetry'
+import type { EnsembleRosterPreset } from '../EnsembleRosterPresetContract'
 
 const ensemble: EnsembleConfig = {
   enabled: true,
@@ -1865,6 +1866,127 @@ describe('EnsembleOrchestrator', () => {
         })
       ])
     )
+  })
+
+  function agentRosterPreset(): EnsembleRosterPreset {
+    return {
+      id: 'agent-roster-preset',
+      name: 'Task-specific panel',
+      createdAt: 1,
+      updatedAt: 1,
+      orchestrationMode: 'continuous',
+      maxParticipants: 5,
+      maxContinuationHops: 18,
+      fanoutPolicy: 'all',
+      ensembleContextChars: 96_000,
+      participants: [
+        {
+          provider: 'claude',
+          enabled: true,
+          role: 'Boss',
+          instructions: 'Own the result.',
+          order: 1,
+          isBossman: true,
+          model: 'claude-sonnet-4-7',
+          permissionPresetId: 'default'
+        },
+        {
+          provider: 'codex',
+          enabled: true,
+          role: 'Captain',
+          instructions: 'Cover the second lane.',
+          order: 2,
+          isSecondInCommand: true,
+          model: 'gpt-5.6-terra',
+          permissionPresetId: 'plan'
+        },
+        {
+          provider: 'kimi',
+          enabled: true,
+          role: 'Scout',
+          instructions: 'Map the relevant code.',
+          order: 3,
+          model: 'kimi-k2.7-code',
+          permissionPresetId: 'read_only',
+          stageRole: 'scout'
+        }
+      ]
+    }
+  }
+
+  it('queues a Boss-imported roster preset and activates it after the round boundary', async () => {
+    const chat = makeChat()
+    chat.ensemble!.bossmanParticipantId = 'claude'
+    chat.ensemble!.secondInCommandParticipantId = 'codex'
+    const harness = makeHarness({ initialChat: chat })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Set up the panel.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    const imported = harness.orchestrator.rosterPresetImportForRun(
+      harness.dispatched[0].appRunId,
+      { preset: agentRosterPreset() }
+    )
+    expect(imported).toMatchObject({
+      ok: true,
+      action: 'import_preset',
+      presetName: 'Task-specific panel',
+      deferred: true
+    })
+    expect(harness.chat.ensemble?.participants.map((participant) => participant.role)).toEqual([
+      'Reviewer',
+      'Worker'
+    ])
+
+    completeDispatchedRun(harness, 0)
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    completeDispatchedRun(harness, 1)
+    await vi.waitFor(() =>
+      expect(harness.chat.ensemble?.activeRound?.status).toBe('completed')
+    )
+
+    expect(harness.chat.ensemble).toMatchObject({
+      orchestrationMode: 'continuous',
+      fanoutPolicy: 'all',
+      maxContinuationHops: 18,
+      ensembleContextChars: 96_000,
+      bossmanParticipantId: 'claude',
+      secondInCommandParticipantId: 'codex'
+    })
+    expect(harness.chat.ensemble?.participants.map((participant) => participant.role)).toEqual([
+      'Boss',
+      'Captain',
+      'Scout'
+    ])
+  })
+
+  it('lets the configured Captain import a roster while Boss is healthy but preserves Captain', async () => {
+    const chat = makeChat()
+    chat.ensemble!.participants = [
+      { ...chat.ensemble!.participants[1], order: 1 },
+      { ...chat.ensemble!.participants[0], order: 2 }
+    ]
+    chat.ensemble!.bossmanParticipantId = 'claude'
+    chat.ensemble!.secondInCommandParticipantId = 'codex'
+    const harness = makeHarness({ initialChat: chat })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Refine the panel.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    expect(harness.dispatched[0].ensembleRun?.participantId).toBe('codex')
+
+    const imported = harness.orchestrator.rosterPresetImportForRun(
+      harness.dispatched[0].appRunId,
+      { preset: agentRosterPreset() }
+    )
+
+    expect(imported.ok).toBe(true)
+    expect(imported.message).toContain('Captain imported')
   })
 
   it('rejects Captain roster edit while Boss is available', async () => {
