@@ -9828,6 +9828,123 @@ Next action:
     expect(harness.chat.ensemble?.activeRound?.continuationHops).toBe(2)
   })
 
+  // C4 — administrative-idle-consensus terminal condition. `tryAutoContinueRound`
+  // must STOP (escalate to Captain/user) rather than burn another pass when a whole
+  // pass is an idle consensus (every seat yielded, no answered/sleeping work), there
+  // is no pending assignment, and completion authority is unreachable (the Boss
+  // yielded yet stays "available", so the Captain is stuck on standby). These reach
+  // the private decision function directly (mirroring the terminal-status test
+  // above) so the exact predicate is exercised without racing the async loop into a
+  // deadlock. Boss = codex, Captain (standby) = claude.
+  const c4Internals = (orchestrator: EnsembleOrchestrator) =>
+    orchestrator as unknown as {
+      roundsByChatId: Map<
+        string,
+        { continuationHops: number; administrativeIdleEscalated?: boolean; queuedPrompts: unknown[] }
+      >
+      tryAutoContinueRound: (runtime: object, chat: ChatRecord) => EnsembleParticipant[] | null
+    }
+
+  const makeC4Round = async () => {
+    const harness = makeHarness()
+    harness.chat.ensemble!.orchestrationMode = 'continuous'
+    harness.chat.ensemble!.maxContinuationHops = 50 // plenty of hops remain
+    harness.chat.ensemble!.bossmanParticipantId = 'codex'
+    harness.chat.ensemble!.secondInCommandParticipantId = 'claude'
+    harness.chat.activeGoal = { ...buildActiveGoal('goal-c4') } // active, non-terminal
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Keep going.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const internals = c4Internals(harness.orchestrator)
+    const runtime = internals.roundsByChatId.get('ensemble-chat')
+    expect(runtime).toBeTruthy()
+    const tryAutoContinue = internals.tryAutoContinueRound.bind(harness.orchestrator)
+    const setStatuses = (statuses: Record<string, EnsembleParticipantStatus>): void => {
+      const round = harness.chat.ensemble!.activeRound!
+      harness.chat.ensemble!.activeRound = {
+        ...round,
+        participants: round.participants.map((participant) => ({
+          ...participant,
+          status: statuses[participant.participantId] ?? participant.status
+        }))
+      }
+    }
+    const deadlockAnnounced = (): boolean =>
+      harness.chat.messages.some((message) => /administrative deadlock/i.test(message.content || ''))
+    return { harness, runtime: runtime!, tryAutoContinue, setStatuses, deadlockAnnounced }
+  }
+
+  it('C4: escalates and STOPS on an idle-consensus pass with an unreachable (yielded) Boss', async () => {
+    const { harness, runtime, tryAutoContinue, setStatuses, deadlockAnnounced } = await makeC4Round()
+    // Whole panel yielded — the lived deadlock: Boss (codex) yielded control so it
+    // won't self-complete, yet is still classified available ⇒ Captain standby.
+    setStatuses({ codex: 'yielded', claude: 'yielded' })
+    const result = tryAutoContinue(runtime, harness.chat)
+    expect(result).toBeNull() // terminal: do NOT re-dispatch the roster
+    expect(runtime.continuationHops).toBe(0) // and did NOT burn a continuation hop
+    expect(runtime.administrativeIdleEscalated).toBe(true)
+    expect(deadlockAnnounced()).toBe(true)
+  })
+
+  it('C4: does NOT escalate on the same idle pass while a pending assignment has real work', async () => {
+    const { harness, runtime, tryAutoContinue, setStatuses, deadlockAnnounced } = await makeC4Round()
+    // A still-actionable assignment is concrete pending work — status alone is not
+    // enough to call it idle; the round must keep rotating so its owner can act.
+    harness.chat.ensemble!.bossmanControlState = {
+      assignments: [
+        {
+          id: 'a1',
+          participantId: 'codex',
+          objective: 'finish the slice',
+          status: 'open',
+          createdAt: '2026-05-24T00:00:00.000Z',
+          updatedAt: '2026-05-24T00:00:00.000Z'
+        }
+      ]
+    }
+    setStatuses({ codex: 'yielded', claude: 'yielded' })
+    const result = tryAutoContinue(runtime, harness.chat)
+    expect(result).not.toBeNull() // keeps rotating
+    expect(result!.length).toBeGreaterThan(0)
+    expect(runtime.administrativeIdleEscalated).toBeFalsy()
+    expect(deadlockAnnounced()).toBe(false)
+  })
+
+  it('C4: does NOT escalate when a user steer is queued (an active user steer is never a deadlock)', async () => {
+    const { harness, runtime, tryAutoContinue, setStatuses, deadlockAnnounced } = await makeC4Round()
+    runtime.queuedPrompts = [{ id: 'q1', prompt: 'do this next' }]
+    setStatuses({ codex: 'yielded', claude: 'yielded' })
+    const result = tryAutoContinue(runtime, harness.chat)
+    expect(result).not.toBeNull()
+    expect(runtime.administrativeIdleEscalated).toBeFalsy()
+    expect(deadlockAnnounced()).toBe(false)
+  })
+
+  it('C4: does NOT escalate when a seat produced real work this pass (incomplete goal, real progress)', async () => {
+    const { harness, runtime, tryAutoContinue, setStatuses, deadlockAnnounced } = await makeC4Round()
+    // Claude answered — a productive turn. A single ordinary Boss yield amid real
+    // work must not read as unavailability, so the round keeps going.
+    setStatuses({ codex: 'yielded', claude: 'answered' })
+    const result = tryAutoContinue(runtime, harness.chat)
+    expect(result).not.toBeNull()
+    expect(runtime.administrativeIdleEscalated).toBeFalsy()
+    expect(deadlockAnnounced()).toBe(false)
+  })
+
+  it('C4: does NOT escalate when the Boss is genuinely unavailable (Captain can then take authority)', async () => {
+    const { harness, runtime, tryAutoContinue, setStatuses, deadlockAnnounced } = await makeC4Round()
+    // Boss 'skipped' ⇒ primaryBossUnavailable ⇒ the Captain CAN take authority, so
+    // completion is reachable: continue and let promotion happen, don't dead-stop.
+    setStatuses({ codex: 'skipped', claude: 'yielded' })
+    const result = tryAutoContinue(runtime, harness.chat)
+    expect(result).not.toBeNull()
+    expect(runtime.administrativeIdleEscalated).toBeFalsy()
+    expect(deadlockAnnounced()).toBe(false)
+  })
+
   it('resolves turn-bound yield targets by model alias', () => {
     const remaining: EnsembleParticipant[] = [
       {

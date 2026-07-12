@@ -2705,6 +2705,13 @@ interface ActiveRoundRuntime {
   continuationHops: number
   maxContinuationHops: number
   continuationLimitNotified?: boolean
+  /**
+   * C4 — one-shot guard for the administrative-idle-consensus escalation
+   * (`detectAdministrativeIdleConsensus`). Set when the deadlock stop fires so a
+   * single idle streak escalates at most once; re-armed by a productive
+   * continuation pass or a fresh `assign_work` (genuine net-new work).
+   */
+  administrativeIdleEscalated?: boolean
   bossmanSummonCountsByParticipantId?: Map<string, number>
   /**
    * Slice C extension (1.0.3) — when a participant calls
@@ -5771,6 +5778,9 @@ export class EnsembleOrchestrator {
           assignment
         ])
       }))
+      // C4 — a fresh assignment is genuine net-new work; re-arm the one-shot
+      // administrative-idle escalation so a later real deadlock can stop the loop.
+      runtime.administrativeIdleEscalated = false
       this.appendRoundStatus(
         runtime.chatId,
         runtime.roundId,
@@ -12168,6 +12178,75 @@ export class EnsembleOrchestrator {
   }
 
   /**
+   * C4 — administrative-idle-consensus detector. A terminal condition DISTINCT from
+   * hop-cap / cancel / no-progress: the just-finished pass DID produce
+   * `anyProducedContent` (so the no-progress guard passed), yet every seat merely
+   * yielded — a whole-panel consensus that nothing is left to do — while the one
+   * seat that could END the round is unreachable. The lived symptom (goal item
+   * "Continuous mode lacked an administrative-deadlock stop"): the Boss yields
+   * control, so it will not self-complete the goal, but it stays classified
+   * AVAILABLE, so the Captain remains on standby and cannot complete either — and
+   * the loop burns another identical pass that cannot break the deadlock.
+   *
+   * Returns true (→ escalate + stop) only when ALL hold:
+   *  1. No PRODUCTIVE turn this pass — nobody reached `'answered'`/`'sleeping'`.
+   *     Reaching here means `anyProducedContent` was true, so ≥1 seat `'yielded'`;
+   *     requiring zero answered/sleeping makes this an idle CONSENSUS, not one
+   *     seat's handoff amid real work — so a single ordinary Boss yield never trips
+   *     it (A2/A4 refinement).
+   *  2. No concrete pending work — no assignment is `'open'`/`'in_progress'`. Status
+   *     alone is not enough (A2/A4): a still-actionable assignment means the round
+   *     must keep rotating so its owner can act.
+   *  3. Completion authority is unreachable — the Boss `'yielded'` (won't
+   *     self-complete) AND is still classified available, so the Captain stays
+   *     standby and also cannot complete. Reuses the shared authority resolver
+   *     (`primaryBossUnavailable`, c88cd98ef) rather than re-deriving a second
+   *     authority path; a Boss that is genuinely UNavailable is NOT a deadlock (the
+   *     Captain can then take authority, so the round should continue and promote).
+   *
+   * A queued user prompt (an active user steer) is never a deadlock — the caller
+   * drains the queue first, but the predicate also short-circuits on it so it stays
+   * self-contained and honest when called directly.
+   */
+  private detectAdministrativeIdleConsensus(
+    runtime: ActiveRoundRuntime,
+    chat: ChatRecord,
+    roundParticipants: EnsembleRoundParticipantState[]
+  ): boolean {
+    if (runtime.queuedPrompts.length > 0) return false
+    const hadProductiveTurn = roundParticipants.some(
+      (participant) => participant.status === 'answered' || participant.status === 'sleeping'
+    )
+    if (hadProductiveTurn) return false
+    const assignments = chat.ensemble?.bossmanControlState?.assignments || []
+    const hasActionableAssignment = assignments.some(
+      (assignment) => assignment.status === 'open' || assignment.status === 'in_progress'
+    )
+    if (hasActionableAssignment) return false
+    const bossmanParticipantId = this.activeBossmanParticipantId(chat, runtime)
+    if (!bossmanParticipantId) return false
+    const bossState = roundParticipants.find(
+      (participant) => participant.participantId === bossmanParticipantId
+    )
+    if (bossState?.status !== 'yielded') return false
+    // Boss yielded but still classified available ⇒ Captain standby ⇒ nobody can
+    // complete. If the Boss is already UNavailable, the Captain can take authority,
+    // so that is reachable completion, not a deadlock — let the round continue.
+    if (this.primaryBossUnavailable(chat, runtime, bossmanParticipantId).unavailable) return false
+    return true
+  }
+
+  private notifyAdministrativeIdleDeadlock(runtime: ActiveRoundRuntime): void {
+    if (runtime.administrativeIdleEscalated) return
+    runtime.administrativeIdleEscalated = true
+    this.appendRoundStatus(
+      runtime.chatId,
+      runtime.roundId,
+      'Continuous mode: administrative deadlock — every active seat yielded with no pending assignment, and completion authority is unreachable (the Boss yielded control yet stays available, so the Captain remains on standby). Returning control so the Captain or user can complete or block the goal instead of burning another pass.'
+    )
+  }
+
+  /**
    * Continuous-mode AUTONOMOUS continuation. When the serial loop drains with no
    * explicit yield/@-mention handoff, a `'continuous'` round must not silently
    * end at the round boundary (`finishRound`) — it keeps re-dispatching the full
@@ -12184,6 +12263,11 @@ export class EnsembleOrchestrator {
    *    participant reached `'answered'`/`'yielded'` (everyone `'skipped'`/`'failed'`/
    *    `'unreachable'`). Another identical pass would just repeat the silence, so
    *    stop instead of spinning hops on nothing.
+   *  - ADMINISTRATIVE DEADLOCK (C4): the pass produced content, but every seat
+   *    merely `'yielded'` with no pending assignment and completion authority is
+   *    unreachable (Boss yielded yet still available → Captain standby). Escalate to
+   *    Captain/user instead of burning another identical pass — see
+   *    `detectAdministrativeIdleConsensus`.
    *
    * A permission-elevation stall needs no check here (it blocks `await completion`
    * upstream, so this drain point is unreachable while a run is paused for
@@ -12224,6 +12308,18 @@ export class EnsembleOrchestrator {
         participant.status === 'sleeping'
     )
     if (!anyProducedContent) return null
+    // C4 — administrative-idle-consensus terminal condition. `anyProducedContent`
+    // is true here (a `'yielded'` seat counts as content), but a whole-panel idle
+    // consensus with no pending work and unreachable completion authority is a
+    // DEADLOCK another identical pass cannot resolve. Escalate to Captain/user and
+    // stop instead of burning a hop. Fire-once per idle streak.
+    if (this.detectAdministrativeIdleConsensus(runtime, chat, roundParticipants)) {
+      this.notifyAdministrativeIdleDeadlock(runtime)
+      return null
+    }
+    // A productive pass (or one with real pending work) breaks any prior idle
+    // streak, so re-arm the one-shot deadlock escalation for a future streak.
+    runtime.administrativeIdleEscalated = false
     if (runtime.continuationHops >= runtime.maxContinuationHops) {
       this.notifyContinuationLimitReached(runtime)
       return null
