@@ -9658,6 +9658,19 @@ export class EnsembleOrchestrator {
       // already-recorded runs return null from the builder. Best-effort: a
       // recording failure must never break round finalisation.
       this.recordParticipantUsage(run)
+      // Kimi Wire can publish a provisional success notification before the
+      // child process has actually closed. Quota/auth failures may arrive on
+      // stderr immediately afterward, followed by a failed result + exit 1.
+      // Let that final wire outcome settle the participant instead of deleting
+      // the active run here as an empty-output "skipped" turn.
+      if (
+        provider === 'kimi' &&
+        !failed &&
+        payload.fallback === false &&
+        payload.subtype === 'success'
+      ) {
+        return true
+      }
       this.finalizeRun(run, failed ? 'failed' : run.content.trim() ? 'answered' : 'skipped')
       this.haltWorkSessionOnRepeatedFileFailures(run)
       return true

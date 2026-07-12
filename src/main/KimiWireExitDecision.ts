@@ -79,13 +79,15 @@ export function decideKimiWireClose(inputs: KimiWireCloseInputs): KimiWireCloseD
   if (inputs.stateCompleted) {
     // The fix: backfill exit when an upstream path (typically
     // `handleCliProviderJsonEvent` reacting to a notification) flipped
-    // `state.completed` without publishing `agent-exit`. Idempotence is
-    // enforced separately by the caller.
+    // `state.completed` without publishing `agent-exit`. A non-zero child
+    // close still wins over that provisional notification: Kimi can emit an
+    // early success result immediately before a quota/auth error and exit 1.
+    // Idempotence is enforced separately by the caller.
     return {
       ignore: false,
       emitResultLine: false,
       emitExit: true,
-      terminalStatus: 'completed',
+      terminalStatus: inputs.code === null || inputs.code === 0 ? 'completed' : 'failed',
       resolveWire: true
     }
   }

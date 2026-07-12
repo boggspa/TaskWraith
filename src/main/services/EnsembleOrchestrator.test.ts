@@ -763,6 +763,57 @@ describe('EnsembleOrchestrator', () => {
     expect(skipped?.status).toBe('skipped')
   })
 
+  it('keeps Kimi Wire provisional success active so a late failure wins', async () => {
+    const harness = makeHarness()
+    harness.chat.ensemble!.participants = [
+      {
+        id: 'kimi',
+        provider: 'kimi',
+        enabled: true,
+        role: 'KimiSeat',
+        instructions: 'Answer once.',
+        order: 1,
+        permissionPresetId: 'read_only'
+      }
+    ]
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Report status.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const runId = harness.dispatched[0].appRunId!
+    const route = { appRunId: runId, appChatId: 'ensemble-chat' }
+
+    expect(
+      harness.orchestrator.handleProviderOutput('kimi', route, {
+        type: 'result',
+        subtype: 'success',
+        status: 'success',
+        provider: 'kimi',
+        fallback: false,
+        stats: { duration_ms: 100 }
+      })
+    ).toBe(true)
+    expect(harness.chat.ensemble?.activeRound?.status).toBe('running')
+    expect(
+      harness.chat.messages.some((message) => message.content.includes('KimiSeat skipped.'))
+    ).toBe(false)
+
+    harness.orchestrator.handleProviderOutput('kimi', route, {
+      type: 'result',
+      status: 'failed',
+      provider: 'kimi',
+      fallback: false,
+      stats: { duration_ms: 125 }
+    })
+    await vi.waitFor(() => expect(harness.chat.ensemble?.activeRound?.status).toBe('completed'))
+    expect(harness.chat.ensemble?.activeRound?.participants[0].status).toBe('failed')
+    expect(
+      harness.chat.messages.some((message) => message.content.includes('KimiSeat failed.'))
+    ).toBe(true)
+  })
+
   it('freezes participant stage role on dispatch payloads and chat runs', async () => {
     const initialChat = makeChat()
     initialChat.ensemble!.participants[0].stageRole = 'worker'

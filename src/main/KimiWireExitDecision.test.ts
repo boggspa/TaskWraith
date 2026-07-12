@@ -50,6 +50,19 @@ describe('decideKimiWireClose', () => {
     expect(decision.emitExit).toBe(true)
   })
 
+  it('lets a non-zero child close override a provisional completed notification', () => {
+    const decision = decideKimiWireClose({
+      settled: false,
+      promptSent: true,
+      stateCompleted: true,
+      exitAlreadyEmitted: false,
+      code: 1
+    })
+    expect(decision.emitExit).toBe(true)
+    expect(decision.terminalStatus).toBe('failed')
+    expect(decision.resolveWire).toBe(true)
+  })
+
   it('skips the IPC when the prompt was never sent — caller will fall back to print mode', () => {
     const decision = decideKimiWireClose({
       settled: false,
