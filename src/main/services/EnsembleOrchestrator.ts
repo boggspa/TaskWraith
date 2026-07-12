@@ -3477,6 +3477,16 @@ export class EnsembleOrchestrator {
     stack.pop()
   }
 
+  private discardYieldReturnFrameForTarget(
+    runtime: ActiveRoundRuntime,
+    targetParticipantId: string
+  ): void {
+    const stack = runtime.yieldReturnStack
+    const frame = stack?.[stack.length - 1]
+    if (!stack?.length || frame?.targetParticipantId !== targetParticipantId) return
+    stack.pop()
+  }
+
   private completePendingYieldActivity(
     run: ActiveParticipantRun,
     reason?: string,
@@ -10677,7 +10687,27 @@ export class EnsembleOrchestrator {
         }
         runtime.yieldTarget = undefined
       }
-      if (!routedByYieldTarget) {
+      const allParticipants = chat?.ensemble?.participants || []
+      const pendingParticipantTagMatches = routedByYieldTarget
+        ? []
+        : findAllMentions(run.content, allParticipants, new Set([participant.id])).filter(
+            (match): match is ParticipantMentionMatch =>
+              match.kind === 'participant' && match.participant.enabled
+          )
+      const hasRoutableForegroundMention = pendingParticipantTagMatches.some(
+        (match) =>
+          (!runtime.dmTargetParticipantId ||
+            match.participant.id === runtime.dmTargetParticipantId) &&
+          !isBackgroundParticipant(match.participant) &&
+          !match.ambiguousAmong?.length
+      )
+      if (!routedByYieldTarget && hasRoutableForegroundMention) {
+        // A yielded target explicitly handed control onward in its assistant
+        // response. That route outranks the implicit return to the original
+        // yielder, and consumes the frame so it cannot fire if this participant
+        // is summoned again later in the same round.
+        this.discardYieldReturnFrameForTarget(runtime, participant.id)
+      } else if (!routedByYieldTarget) {
         routedByYieldTarget = this.tryRouteYieldReturn(
           runtime,
           remaining,
@@ -10713,13 +10743,9 @@ export class EnsembleOrchestrator {
       //
       // `chat` is already in scope from the top of the while loop —
       // no need to re-fetch.
-      const allParticipants = chat?.ensemble?.participants || []
       const participantTagMatches = routedByYieldTarget
         ? []
-        : findAllMentions(run.content, allParticipants, new Set([participant.id])).filter(
-            (match): match is ParticipantMentionMatch =>
-              match.kind === 'participant' && match.participant.enabled
-          )
+        : pendingParticipantTagMatches
       const outOfScopeTagMatches = runtime.dmTargetParticipantId
         ? participantTagMatches.filter(
             (match) => match.participant.id !== runtime.dmTargetParticipantId
