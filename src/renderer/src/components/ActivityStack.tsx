@@ -1616,17 +1616,37 @@ export function shouldDebounceActivityTimelineCollapse(
   return sameActivityIds(previous, next)
 }
 
-function useCollapseDebouncedTimelineItems(
+function collapseDebounceTimelineKey(items: ActivityTimelineItem[]): string {
+  return JSON.stringify(
+    items.map((item) =>
+      item.type === 'compact-group'
+        ? [
+            'compact-group',
+            item.id,
+            ...item.activities.flatMap((activity) => [activity.id, activity.status])
+          ]
+        : ['activity', item.activity.id, item.activity.status]
+    )
+  )
+}
+
+export function useCollapseDebouncedTimelineItems(
   immediateItems: ActivityTimelineItem[]
 ): ActivityTimelineItem[] {
   const previousImmediateRef = useRef(immediateItems)
+  const latestImmediateRef = useRef(immediateItems)
   const heldItemsRef = useRef<ActivityTimelineItem[] | null>(null)
   const [heldItems, setHeldItems] = useState<ActivityTimelineItem[] | null>(null)
+  const immediateItemsKey = collapseDebounceTimelineKey(immediateItems)
+
+  useLayoutEffect(() => {
+    latestImmediateRef.current = immediateItems
+  })
 
   useLayoutEffect(() => {
     const previousItems = previousImmediateRef.current
-    previousImmediateRef.current = immediateItems
-    if (!shouldDebounceActivityTimelineCollapse(previousItems, immediateItems)) {
+    const nextItems = latestImmediateRef.current
+    if (!shouldDebounceActivityTimelineCollapse(previousItems, nextItems)) {
       // React 19 cannot eagerly bail out this same-value update while the
       // transcript's synchronous measurement work is pending. Gate it before
       // dispatch so the layout effects cannot feed a nested-update loop (#185).
@@ -1643,7 +1663,14 @@ function useCollapseDebouncedTimelineItems(
       }
     }, ACTIVITY_TIMELINE_COLLAPSE_DEBOUNCE_MS)
     return () => window.clearTimeout(timeoutId)
-  }, [immediateItems])
+  }, [immediateItemsKey])
+
+  // Keep the latest rows available as the source of a future semantic
+  // transition without treating equivalent array replacements as transitions
+  // that cancel the active hold timer.
+  useLayoutEffect(() => {
+    previousImmediateRef.current = immediateItems
+  })
 
   return heldItems || immediateItems
 }
