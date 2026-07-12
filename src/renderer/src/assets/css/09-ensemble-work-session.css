@@ -1794,7 +1794,8 @@
 
 .ensemble-brief-textarea.has-mention-overlay::selection {
   background: color-mix(in srgb, var(--accent) 28%, transparent);
-  color: var(--text-primary);
+  color: transparent;
+  -webkit-text-fill-color: transparent;
 }
 
 /* Overflow popover for participant participation, authority, and role details. */

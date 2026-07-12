@@ -4452,7 +4452,12 @@
 }
 .composer-textarea.has-mention-overlay::selection {
   background: color-mix(in srgb, var(--accent) 28%, transparent);
-  color: var(--text-primary);
+  /* The formatted overlay already paints the selected glyphs. Keep the
+   * textarea's duplicate glyph layer transparent so a native selection only
+   * contributes its background instead of producing a second, slightly
+   * offset copy of the text. */
+  color: transparent;
+  -webkit-text-fill-color: transparent;
 }
 
 .composer-textarea:focus,
