@@ -5917,6 +5917,169 @@ input:disabled, select:disabled, textarea:disabled {
   display: none;
 }
 
+.settings-roster-transfer-picker {
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  width: min(500px, calc(100vw - 36px));
+  max-height: min(720px, calc(100vh - 36px));
+  min-height: 0;
+}
+
+.settings-roster-transfer-picker-header {
+  align-items: flex-start;
+}
+
+.settings-roster-transfer-picker-header p {
+  margin: 5px 0 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm, 13px);
+  line-height: 1.45;
+}
+
+.settings-roster-transfer-picker-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.settings-roster-transfer-picker-toolbar > div {
+  display: flex;
+  gap: 4px;
+}
+
+.settings-roster-transfer-picker-toolbar button {
+  padding: 4px 7px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: color-mix(in srgb, var(--accent) 88%, var(--text-primary));
+  font: inherit;
+  cursor: pointer;
+}
+
+.settings-roster-transfer-picker-toolbar button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.settings-roster-transfer-picker-toolbar button:disabled,
+.settings-roster-transfer-picker-actions button:disabled {
+  opacity: 0.42;
+  cursor: default;
+}
+
+.settings-roster-transfer-picker-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-height: 0;
+  max-height: min(52vh, 460px);
+  margin-top: 8px;
+  padding: 5px;
+  overflow-y: auto;
+  border: 1px solid color-mix(in srgb, var(--text-primary) 10%, transparent);
+  border-radius: 11px;
+  background: color-mix(in srgb, var(--text-primary) 2%, transparent);
+}
+
+.settings-roster-transfer-picker-option {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 10px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.settings-roster-transfer-picker-checkbox {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.settings-roster-transfer-picker-option:hover {
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+}
+
+.settings-roster-transfer-picker-option.is-selected {
+  border-color: color-mix(in srgb, var(--accent) 38%, transparent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.settings-roster-transfer-picker-check {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid color-mix(in srgb, var(--text-primary) 24%, transparent);
+  border-radius: 5px;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.settings-roster-transfer-picker-option.is-selected .settings-roster-transfer-picker-check {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+.settings-roster-transfer-picker-option-copy {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.settings-roster-transfer-picker-option-copy strong,
+.settings-roster-transfer-picker-option-copy span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-roster-transfer-picker-option-copy strong {
+  font-size: var(--font-size-sm, 13px);
+}
+
+.settings-roster-transfer-picker-option-copy span {
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.settings-roster-transfer-picker-note {
+  margin: 8px 2px 0;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.settings-roster-transfer-picker-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 7px;
+  margin-top: 14px;
+}
+
+.settings-roster-transfer-picker button:focus-visible,
+.settings-roster-transfer-picker-option:focus-within {
+  outline: 2px solid color-mix(in srgb, var(--accent) 72%, transparent);
+  outline-offset: 2px;
+}
+
 .settings-roster-transfer-status {
   margin: -6px 0 0;
   color: var(--text-secondary);
@@ -6232,6 +6395,70 @@ input:disabled, select:disabled, textarea:disabled {
   gap: 8px;
   flex: 1;
   min-width: 0;
+}
+
+.settings-roster-participant-content {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.settings-roster-participant-content[hidden] {
+  display: none;
+}
+
+.settings-roster-participant-disclosure {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  min-width: 0;
+  padding: 4px 5px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.settings-roster-participant-disclosure:hover {
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+}
+
+.settings-roster-participant-disclosure:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 62%, transparent);
+  outline-offset: 1px;
+}
+
+.settings-roster-participant-disclosure-chevron {
+  flex: 0 0 auto;
+  width: 12px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  text-align: center;
+}
+
+.settings-roster-participant-disclosure-role {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--font-size-sm, 13px);
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-roster-participant-disclosure-meta {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .settings-roster-participant-top {

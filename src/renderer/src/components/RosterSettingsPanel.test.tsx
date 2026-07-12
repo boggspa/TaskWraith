@@ -29,8 +29,15 @@ const fake = vi.hoisted(() => {
   return { store }
 })
 
-import { RosterSettingsPanel } from './RosterSettingsPanel'
-import { createEmptyEnsembleRosterPreset } from '../lib/ensembleRosterPresets'
+import {
+  RosterParticipantRow,
+  RosterSettingsPanel,
+  RosterTransferPicker
+} from './RosterSettingsPanel'
+import {
+  createEmptyEnsembleRosterPreset,
+  materializeParticipantsFromPresetWithBossman
+} from '../lib/ensembleRosterPresets'
 
 beforeEach(() => {
   fake.store.clear()
@@ -55,5 +62,66 @@ describe('RosterSettingsPanel', () => {
     createEmptyEnsembleRosterPreset('Panel A')
     const html = renderToStaticMarkup(<RosterSettingsPanel />)
     expect(html).toContain('Panel A')
+  })
+
+  it('renders an accessible multi-select transfer picker', () => {
+    const first = createEmptyEnsembleRosterPreset('Panel A')
+    const second = createEmptyEnsembleRosterPreset('Panel B')
+    const html = renderToStaticMarkup(
+      <RosterTransferPicker
+        mode="export"
+        presets={[first, second]}
+        selectedIndexes={[0]}
+        skippedCount={0}
+        onToggle={() => {}}
+        onSelectAll={() => {}}
+        onClearAll={() => {}}
+        onCancel={() => {}}
+        onConfirm={() => {}}
+      />
+    )
+
+    expect(html).toContain('role="dialog"')
+    expect(html).toContain('role="group"')
+    expect(html).toContain('type="checkbox"')
+    expect(html).toContain('checked=""')
+    expect(html).toContain('Select all')
+    expect(html).toContain('Clear all')
+    expect(html).toContain('Export 1')
+  })
+
+  it('starts participant cards collapsed without removing their editor controls', () => {
+    const preset = createEmptyEnsembleRosterPreset('Compact panel')
+    const participants = materializeParticipantsFromPresetWithBossman(preset.participants)
+      .participants
+    const html = renderToStaticMarkup(
+      <RosterParticipantRow
+        participant={participants[0]}
+        mentionParticipants={participants}
+        index={0}
+        total={participants.length}
+        canRemove
+        composerStyle="default"
+        grokAvailable={false}
+        cursorAvailable={false}
+        showApplyToAll
+        isBossman={false}
+        isSecondInCommand={false}
+        onMove={() => {}}
+        onRemove={() => {}}
+        onSetBossman={() => {}}
+        onSetSecondInCommand={() => {}}
+        onPatch={() => {}}
+        onFlush={() => {}}
+        onApplyPermissionsToAll={() => {}}
+        onSaveToPool={() => {}}
+      />
+    )
+
+    expect(html).toContain('settings-roster-participant-disclosure')
+    expect(html).toContain('aria-expanded="false"')
+    expect(html).toContain('settings-roster-participant-content" hidden=""')
+    expect(html).toContain('Enabled')
+    expect(html).toContain('Role / nickname')
   })
 })

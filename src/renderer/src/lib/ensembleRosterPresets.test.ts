@@ -43,6 +43,7 @@ import {
   listEnsembleRosterPresets,
   materializeParticipantsFromPreset,
   materializeParticipantsFromPresetWithBossman,
+  previewEnsembleRosterPresetsFromJson,
   saveEnsembleRosterPresetFromParticipants,
   serializeEnsembleRosterPresetsForExport,
   snapshotParticipantsForPreset,
@@ -389,6 +390,35 @@ describe('ensembleRosterPresets — import/export', () => {
     expect(result.presets[0].name).toBe('Base panel imported')
     expect(getEnsembleRosterPreset(existing.id)?.name).toBe('Base panel')
     expect(listEnsembleRosterPresets()).toHaveLength(2)
+  })
+
+  it('previews valid import choices without persisting them', () => {
+    const first = buildEnsembleRosterPresetFromConfig('First choice', sampleEnsemble(), 1)
+    const second = buildEnsembleRosterPresetFromConfig('Second choice', sampleEnsemble(), 2)
+    const preview = previewEnsembleRosterPresetsFromJson(
+      JSON.stringify({ presets: [first, { id: 'bad' }, second] })
+    )
+
+    expect(preview.presets.map((preset) => preset.name)).toEqual([
+      'First choice',
+      'Second choice'
+    ])
+    expect(preview.skippedCount).toBe(1)
+    expect(listEnsembleRosterPresets()).toHaveLength(0)
+  })
+
+  it('imports only the roster choices passed back from the picker preview', () => {
+    const first = buildEnsembleRosterPresetFromConfig('First choice', sampleEnsemble(), 1)
+    const second = buildEnsembleRosterPresetFromConfig('Second choice', sampleEnsemble(), 2)
+    const preview = previewEnsembleRosterPresetsFromJson(JSON.stringify([first, second]))
+    const result = importEnsembleRosterPresetsFromJson(
+      JSON.stringify([preview.presets[1]]),
+      15_000
+    )
+
+    expect(result.importedCount).toBe(1)
+    expect(result.presets[0].name).toBe('Second choice')
+    expect(listEnsembleRosterPresets().map((preset) => preset.name)).toEqual(['Second choice'])
   })
 
   it('accepts raw preset arrays and skips invalid entries without aborting valid imports', () => {

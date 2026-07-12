@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
@@ -8,6 +9,7 @@ import {
   type DragEvent as ReactDragEvent,
   type JSX
 } from 'react'
+import { createPortal } from 'react-dom'
 import type {
   AgenticServicesSettings,
   ComposerStyle,
@@ -25,6 +27,7 @@ import {
   importEnsembleRosterPresetsFromJson,
   listEnsembleRosterPresets,
   materializeParticipantsFromPresetWithBossman,
+  previewEnsembleRosterPresetsFromJson,
   serializeEnsembleRosterPresetsForExport,
   snapshotParticipantsForPreset,
   subscribeEnsembleRosterPresets,
@@ -116,6 +119,174 @@ function rosterExportFileName(): string {
   return `taskwraith-roster-presets-${day}.json`
 }
 
+export interface RosterTransferPickerState {
+  mode: 'import' | 'export'
+  presets: EnsembleRosterPreset[]
+  selectedIndexes: number[]
+  fileName?: string
+  skippedCount: number
+}
+
+export interface RosterTransferPickerProps extends RosterTransferPickerState {
+  onToggle: (index: number) => void
+  onSelectAll: () => void
+  onClearAll: () => void
+  onCancel: () => void
+  onConfirm: () => void
+}
+
+/** Shared multi-select surface for roster imports and exports. */
+export function RosterTransferPicker({
+  mode,
+  presets,
+  selectedIndexes,
+  fileName,
+  skippedCount,
+  onToggle,
+  onSelectAll,
+  onClearAll,
+  onCancel,
+  onConfirm
+}: RosterTransferPickerProps): JSX.Element {
+  const dialogRef = useRef<HTMLDivElement | null>(null)
+  const titleId = useId()
+  const copyId = useId()
+  const selected = new Set(selectedIndexes)
+  const actionLabel = mode === 'import' ? 'Import' : 'Export'
+
+  useEffect(() => {
+    if (typeof document === 'undefined') return
+    const previousFocus = document.activeElement as HTMLElement | null
+    const timer = window.setTimeout(() => {
+      dialogRef.current?.querySelector<HTMLElement>('input[type="checkbox"]')?.focus()
+    }, 0)
+    const handleKey = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      onCancel()
+    }
+    window.addEventListener('keydown', handleKey)
+    return () => {
+      window.clearTimeout(timer)
+      window.removeEventListener('keydown', handleKey)
+      try {
+        previousFocus?.focus()
+      } catch {
+        // The trigger may have been removed while the picker was open.
+      }
+    }
+  }, [onCancel])
+
+  return (
+    <div
+      className="ensemble-roster-preset-dialog-backdrop settings-roster-transfer-picker-backdrop"
+      role="presentation"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onCancel()
+      }}
+    >
+      <div
+        ref={dialogRef}
+        className="ensemble-roster-preset-dialog settings-roster-transfer-picker"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        aria-describedby={copyId}
+      >
+        <div className="ensemble-roster-preset-dialog-header settings-roster-transfer-picker-header">
+          <div>
+            <h2 id={titleId}>Choose rosters to {mode}</h2>
+            <p id={copyId}>
+              {mode === 'import' && fileName
+                ? `${fileName} contains ${presets.length} valid roster preset${presets.length === 1 ? '' : 's'}. `
+                : `${presets.length} saved roster preset${presets.length === 1 ? '' : 's'} available. `}
+              Click a roster to add or remove it from this {mode}.
+            </p>
+          </div>
+          <button
+            type="button"
+            className="ensemble-roster-preset-dialog-close"
+            onClick={onCancel}
+            aria-label={`Close ${mode} roster picker`}
+          >
+            ×
+          </button>
+        </div>
+
+        <div className="settings-roster-transfer-picker-toolbar">
+          <span>{selected.size} of {presets.length} selected</span>
+          <div>
+            <button type="button" onClick={onSelectAll} disabled={selected.size === presets.length}>
+              Select all
+            </button>
+            <button type="button" onClick={onClearAll} disabled={selected.size === 0}>
+              Clear all
+            </button>
+          </div>
+        </div>
+
+        <div
+          className="settings-roster-transfer-picker-list"
+          role="group"
+          aria-label={`Roster presets to ${mode}`}
+        >
+          {presets.map((preset, index) => {
+            const isSelected = selected.has(index)
+            return (
+              <label
+                key={`${preset.id}:${index}`}
+                className={`settings-roster-transfer-picker-option${isSelected ? ' is-selected' : ''}`}
+              >
+                <input
+                  className="settings-roster-transfer-picker-checkbox"
+                  type="checkbox"
+                  checked={isSelected}
+                  onChange={() => onToggle(index)}
+                />
+                <span className="settings-roster-transfer-picker-check" aria-hidden>
+                  {isSelected ? '✓' : ''}
+                </span>
+                <span className="settings-roster-transfer-picker-option-copy">
+                  <strong>{preset.name}</strong>
+                  <span>
+                    {preset.participants.length} participant
+                    {preset.participants.length === 1 ? '' : 's'} · Updated{' '}
+                    {formatTimestamp(preset.updatedAt)}
+                  </span>
+                </span>
+              </label>
+            )
+          })}
+        </div>
+
+        {mode === 'import' && skippedCount > 0 && (
+          <p className="settings-roster-transfer-picker-note">
+            {skippedCount} invalid item{skippedCount === 1 ? '' : 's'} will be skipped.
+          </p>
+        )}
+
+        <div className="settings-roster-transfer-picker-actions">
+          <button
+            type="button"
+            className="ensemble-roster-preset-dialog-button"
+            onClick={onCancel}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            className="ensemble-roster-preset-dialog-button ensemble-roster-preset-dialog-button-primary"
+            onClick={onConfirm}
+            disabled={selected.size === 0}
+          >
+            {actionLabel} {selected.size}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function freshWorkingId(existing: EnsembleParticipant[]): string {
   const ids = new Set(existing.map((participant) => participant.id))
   let candidate = `ensemble-participant-${existing.length + 1}`
@@ -126,7 +297,7 @@ function freshWorkingId(existing: EnsembleParticipant[]): string {
 }
 
 // ── Per-participant row ─────────────────────────────────────────────────────
-interface RosterParticipantRowProps {
+export interface RosterParticipantRowProps {
   participant: EnsembleParticipant
   mentionParticipants: EnsembleParticipant[]
   index: number
@@ -149,7 +320,7 @@ interface RosterParticipantRowProps {
   onSaveToPool: (id: string) => void
 }
 
-function RosterParticipantRow({
+export function RosterParticipantRow({
   participant,
   mentionParticipants,
   index,
@@ -171,6 +342,8 @@ function RosterParticipantRow({
   onApplyPermissionsToAll,
   onSaveToPool
 }: RosterParticipantRowProps): JSX.Element {
+  const [expanded, setExpanded] = useState(false)
+  const contentId = useId()
   const retired = isRetiredProvider(participant.provider)
   const rolePresetId = resolveRolePresetId(participant.role)
   const isLinkedToPool = Boolean(participant.pooledAgentId)
@@ -213,46 +386,80 @@ function RosterParticipantRow({
     </div>
   )
 
+  const disclosure = (
+    <button
+      type="button"
+      className="settings-roster-participant-disclosure"
+      aria-expanded={expanded}
+      aria-controls={contentId}
+      onClick={() => {
+        if (expanded) onFlush()
+        setExpanded((current) => !current)
+      }}
+      title={`${expanded ? 'Collapse' : 'Expand'} ${participant.role || 'participant'} editor`}
+    >
+      <span className="settings-roster-participant-disclosure-chevron" aria-hidden>
+        {expanded ? '▾' : '▸'}
+      </span>
+      <span className="settings-roster-participant-disclosure-role">
+        {participant.role || 'Untitled participant'}
+      </span>
+      <span className="settings-roster-participant-disclosure-meta">
+        {getProviderLabel(participant.provider)}
+        {participant.model ? ` · ${participant.model}` : ''}
+        {!participant.enabled ? ' · Disabled' : ''}
+        {retired ? ' · Retired' : isBossman ? ' · Boss' : isSecondInCommand ? ' · Captain' : ''}
+      </span>
+    </button>
+  )
+
   if (retired) {
     return (
-      <li className="settings-roster-participant is-retired">
+      <li className={`settings-roster-participant is-retired${expanded ? '' : ' is-collapsed'}`}>
         {rail}
         <div className="settings-roster-participant-body">
-          <div className="settings-roster-participant-top">
-            <span className="settings-roster-participant-provider">
-              {getProviderLabel(participant.provider)}
-            </span>
-            <span
-              className="settings-roster-retired-badge"
-              title="This provider is retired. Remove this participant to replace it."
-            >
-              retired
-            </span>
-            <button
-              type="button"
-              className="settings-roster-remove"
-              onClick={() => onRemove(participant.id)}
-              disabled={!canRemove}
-              title={canRemove ? 'Remove participant' : 'Keep at least one participant'}
-              aria-label="Remove participant"
-              style={{ marginLeft: 'auto' }}
-            >
-              ✕
-            </button>
+          {disclosure}
+          <div id={contentId} className="settings-roster-participant-content" hidden={!expanded}>
+            <div className="settings-roster-participant-top">
+              <span className="settings-roster-participant-provider">
+                {getProviderLabel(participant.provider)}
+              </span>
+              <span
+                className="settings-roster-retired-badge"
+                title="This provider is retired. Remove this participant to replace it."
+              >
+                retired
+              </span>
+              <button
+                type="button"
+                className="settings-roster-remove"
+                onClick={() => onRemove(participant.id)}
+                disabled={!canRemove}
+                title={canRemove ? 'Remove participant' : 'Keep at least one participant'}
+                aria-label="Remove participant"
+                style={{ marginLeft: 'auto' }}
+              >
+                ✕
+              </button>
+            </div>
+            <p className="settings-roster-retired-note">
+              {participant.role || 'Untitled'} — retired providers can&apos;t run. Remove this row
+              to replace it with a live provider.
+            </p>
           </div>
-          <p className="settings-roster-retired-note">
-            {participant.role || 'Untitled'} — retired providers can&apos;t run. Remove this row to
-            replace it with a live provider.
-          </p>
         </div>
       </li>
     )
   }
 
   return (
-    <li className={`settings-roster-participant${participant.enabled ? '' : ' is-disabled'}`}>
+    <li
+      className={`settings-roster-participant${participant.enabled ? '' : ' is-disabled'}${expanded ? '' : ' is-collapsed'}`}
+    >
       {rail}
       <div className="settings-roster-participant-body">
+        {disclosure}
+        <div id={contentId} className="settings-roster-participant-content" hidden={!expanded}>
         {/* Row 1 — row-level actions (kept off the picker row so the model name
             below has full width and never clips off the window edge). */}
         <div className="settings-roster-participant-actions">
@@ -395,6 +602,7 @@ function RosterParticipantRow({
           onChange={(value) => onPatch(participant.id, { instructions: value }, false)}
           onBlur={onFlush}
         />
+        </div>
       </div>
     </li>
   )
@@ -419,6 +627,7 @@ export function RosterSettingsPanel({
   const [nameDraft, setNameDraft] = useState('')
   const [maxDraft, setMaxDraft] = useState('')
   const [transferStatus, setTransferStatus] = useState('')
+  const [transferPicker, setTransferPicker] = useState<RosterTransferPickerState | null>(null)
   const nameInputRef = useRef<HTMLInputElement | null>(null)
   const importInputRef = useRef<HTMLInputElement | null>(null)
 
@@ -555,20 +764,13 @@ export function RosterSettingsPanel({
       setTransferStatus('No roster presets to export.')
       return
     }
-    const blob = new Blob([serializeEnsembleRosterPresetsForExport(currentPresets)], {
-      type: 'application/json'
+    setTransferStatus('')
+    setTransferPicker({
+      mode: 'export',
+      presets: currentPresets,
+      selectedIndexes: currentPresets.map((_, index) => index),
+      skippedCount: 0
     })
-    const url = URL.createObjectURL(blob)
-    const link = document.createElement('a')
-    link.href = url
-    link.download = rosterExportFileName()
-    document.body.appendChild(link)
-    link.click()
-    link.remove()
-    URL.revokeObjectURL(url)
-    setTransferStatus(
-      `Exported ${currentPresets.length} roster preset${currentPresets.length === 1 ? '' : 's'}.`
-    )
   }, [commit])
 
   const handleImportFile = useCallback(
@@ -578,16 +780,17 @@ export function RosterSettingsPanel({
       if (!file) return
       if (dirtyRef.current && editingRef.current) commit(editingRef.current)
       try {
-        const result = importEnsembleRosterPresetsFromJson(await file.text())
-        const nextPresets = loadPresets()
-        setPresets(nextPresets)
-        setSelectedId(result.presets[0]?.id ?? nextPresets[0]?.id ?? null)
-        setTransferStatus(
-          `Imported ${result.importedCount} roster preset${
-            result.importedCount === 1 ? '' : 's'
-          }${result.skippedCount > 0 ? `; skipped ${result.skippedCount} invalid item${result.skippedCount === 1 ? '' : 's'}` : ''}.`
-        )
+        const preview = previewEnsembleRosterPresetsFromJson(await file.text())
+        setTransferStatus('')
+        setTransferPicker({
+          mode: 'import',
+          presets: preview.presets,
+          selectedIndexes: preview.presets.map((_, index) => index),
+          fileName: file.name,
+          skippedCount: preview.skippedCount
+        })
       } catch (error) {
+        setTransferPicker(null)
         setTransferStatus(
           error instanceof Error ? error.message : 'Could not import roster presets.'
         )
@@ -595,6 +798,77 @@ export function RosterSettingsPanel({
     },
     [commit]
   )
+
+  const handleToggleTransferPreset = useCallback((index: number): void => {
+    setTransferPicker((current) => {
+      if (!current) return current
+      const isSelected = current.selectedIndexes.includes(index)
+      return {
+        ...current,
+        selectedIndexes: isSelected
+          ? current.selectedIndexes.filter((selectedIndex) => selectedIndex !== index)
+          : [...current.selectedIndexes, index]
+      }
+    })
+  }, [])
+
+  const handleSelectAllTransferPresets = useCallback((): void => {
+    setTransferPicker((current) =>
+      current
+        ? { ...current, selectedIndexes: current.presets.map((_, index) => index) }
+        : current
+    )
+  }, [])
+
+  const handleClearAllTransferPresets = useCallback((): void => {
+    setTransferPicker((current) => (current ? { ...current, selectedIndexes: [] } : current))
+  }, [])
+
+  const handleCancelTransfer = useCallback((): void => setTransferPicker(null), [])
+
+  const handleConfirmTransfer = useCallback((): void => {
+    if (!transferPicker) return
+    const selectedIndexes = new Set(transferPicker.selectedIndexes)
+    const selectedPresets = transferPicker.presets.filter((_, index) => selectedIndexes.has(index))
+    if (selectedPresets.length === 0) return
+
+    try {
+      if (transferPicker.mode === 'export') {
+        const blob = new Blob([serializeEnsembleRosterPresetsForExport(selectedPresets)], {
+          type: 'application/json'
+        })
+        const url = URL.createObjectURL(blob)
+        const link = document.createElement('a')
+        link.href = url
+        link.download = rosterExportFileName()
+        document.body.appendChild(link)
+        link.click()
+        link.remove()
+        URL.revokeObjectURL(url)
+        setTransferStatus(
+          `Exported ${selectedPresets.length} roster preset${selectedPresets.length === 1 ? '' : 's'}.`
+        )
+      } else {
+        const result = importEnsembleRosterPresetsFromJson(JSON.stringify(selectedPresets))
+        const nextPresets = loadPresets()
+        setPresets(nextPresets)
+        setSelectedId(result.presets[0]?.id ?? nextPresets[0]?.id ?? null)
+        setTransferStatus(
+          `Imported ${result.importedCount} roster preset${
+            result.importedCount === 1 ? '' : 's'
+          }${transferPicker.skippedCount > 0 ? `; skipped ${transferPicker.skippedCount} invalid item${transferPicker.skippedCount === 1 ? '' : 's'}` : ''}.`
+        )
+      }
+    } catch (error) {
+      setTransferStatus(
+        error instanceof Error
+          ? error.message
+          : `Could not ${transferPicker.mode} roster presets.`
+      )
+    } finally {
+      setTransferPicker(null)
+    }
+  }, [transferPicker])
 
   const commitName = useCallback((): void => {
     if (!editing) return
@@ -883,6 +1157,8 @@ export function RosterSettingsPanel({
             type="button"
             className="settings-roster-action"
             onClick={() => importInputRef.current?.click()}
+            aria-haspopup="dialog"
+            aria-expanded={transferPicker?.mode === 'import'}
           >
             Import JSON
           </button>
@@ -891,6 +1167,8 @@ export function RosterSettingsPanel({
             className="settings-roster-action"
             onClick={handleExport}
             disabled={presets.length === 0}
+            aria-haspopup="dialog"
+            aria-expanded={transferPicker?.mode === 'export'}
           >
             Export JSON
           </button>
@@ -1058,7 +1336,7 @@ export function RosterSettingsPanel({
               >
                 {orderedParticipants.map((participant, index) => (
                   <RosterParticipantRow
-                    key={participant.id}
+                    key={`${editing.meta.id}:${participant.id}`}
                     participant={participant}
                     mentionParticipants={orderedParticipants}
                     index={index}
@@ -1155,6 +1433,20 @@ export function RosterSettingsPanel({
         Reusable Agents now have their own page — <strong>Settings → Agent pool</strong>. Save a
         roster participant there with the ☆ button on its row.
       </p>
+
+      {transferPicker &&
+        typeof document !== 'undefined' &&
+        createPortal(
+          <RosterTransferPicker
+            {...transferPicker}
+            onToggle={handleToggleTransferPreset}
+            onSelectAll={handleSelectAllTransferPresets}
+            onClearAll={handleClearAllTransferPresets}
+            onCancel={handleCancelTransfer}
+            onConfirm={handleConfirmTransfer}
+          />,
+          document.body
+        )}
     </div>
   )
 }

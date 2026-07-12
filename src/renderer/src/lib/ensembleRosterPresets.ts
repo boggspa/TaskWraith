@@ -622,35 +622,42 @@ export function serializeEnsembleRosterPresetsForExport(
   return `${JSON.stringify(payload, null, 2)}\n`
 }
 
+export interface EnsembleRosterPresetsImportPreview {
+  presets: EnsembleRosterPreset[]
+  skippedCount: number
+}
+
+/** Parse an import file without writing it so the user can pick first. */
+export function previewEnsembleRosterPresetsFromJson(
+  json: string
+): EnsembleRosterPresetsImportPreview {
+  const { validPresets, skippedCount } = parseEnsembleRosterPresetJson(json)
+  if (validPresets.length === 0) {
+    throw new Error('No valid roster presets were found in that JSON file.')
+  }
+  return { presets: validPresets.map(cloneRosterPreset), skippedCount }
+}
+
 export function importEnsembleRosterPresetsFromJson(
   json: string,
   now = Date.now()
 ): EnsembleRosterPresetsImportResult {
-  const { candidates } = parseEnsembleRosterPresetJson(json)
+  const preview = previewEnsembleRosterPresetsFromJson(json)
 
   const existing = readRawPresets()
   const usedNames = new Set(existing.map((preset) => preset.name))
   const usedIds = new Set(existing.map((preset) => preset.id))
   const imported: EnsembleRosterPreset[] = []
-  let skippedCount = 0
 
-  for (const candidate of candidates) {
-    if (!isEnsembleRosterPreset(candidate)) {
-      skippedCount += 1
-      continue
-    }
+  for (const candidate of preview.presets) {
     imported.push(importedRosterPreset(candidate, now - imported.length, usedNames, usedIds))
-  }
-
-  if (imported.length === 0) {
-    throw new Error('No valid roster presets were found in that JSON file.')
   }
 
   writeRawPresets([...imported, ...existing])
   notifyPresetListeners()
   return {
     importedCount: imported.length,
-    skippedCount,
+    skippedCount: preview.skippedCount,
     presets: imported
   }
 }
