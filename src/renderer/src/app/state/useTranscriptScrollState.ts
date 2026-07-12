@@ -49,9 +49,15 @@ export function useTranscriptScrollState({
   const transcriptContentRef = useRef<HTMLDivElement>(null)
   const autoFollowRef = useRef(true)
   const [autoFollowActive, setAutoFollowActive] = useState(true)
+  const publishedAutoFollowRef = useRef(true)
   const setAutoFollow = useCallback((next: boolean) => {
-    if (autoFollowRef.current === next) return
     autoFollowRef.current = next
+    // TranscriptPanel shares this ref and may update it before invoking one of
+    // the callbacks below. Compare against the last published React state, not
+    // the externally mutable decision ref, so those callback paths still
+    // trigger the presentation rerender they requested.
+    if (publishedAutoFollowRef.current === next) return
+    publishedAutoFollowRef.current = next
     // The ref owns synchronous scroll decisions, while state makes the
     // presentation react to input-only changes. Wheel/key/scrollbar gestures
     // do not necessarily change messages, so without this state update the

@@ -82,4 +82,20 @@ describe('useTranscriptScrollState', () => {
     expect(autoFollowStateSetter).toHaveBeenLastCalledWith(true)
     expect(autoFollowStateSetter).toHaveBeenCalledTimes(2)
   })
+
+  it('publishes follow changes after a shared consumer pre-mutates the decision ref', () => {
+    const result = useTranscriptScrollState({
+      chatId: 'chat-1',
+      messages: [],
+      runCompleteNotice: null,
+      streamingActive: true
+    })
+
+    // TranscriptPanel prepares a message jump this way: it updates the shared
+    // decision ref synchronously, then invokes the hook callback.
+    result.autoFollowRef.current = false
+    result.beginManualTranscriptJump()
+
+    expect(hookHarness.stateSetters[0]).toHaveBeenLastCalledWith(false)
+  })
 })
