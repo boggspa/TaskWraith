@@ -6238,6 +6238,24 @@
   vertical-align: 1px;
 }
 
+/* Live "out" figure: a DigitOdometer rolls the token count while a run streams
+   (idle threads keep the plain text number). Baseline-aligned so it sits flush
+   with the surrounding "… in /  … out · $…" text on the nowrap tally line. */
+.composer-thread-token-out {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.04em;
+}
+
+.composer-thread-token-out .digit-odometer {
+  color: inherit;
+  font-weight: inherit;
+}
+
+.composer-thread-token-out-suffix {
+  color: inherit;
+}
+
 .composer-run-timecode {
   display: inline-flex;
   align-items: center;

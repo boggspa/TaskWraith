@@ -161,6 +161,8 @@ export interface ComposerProps {
   activeEnsembleConcurrentMode: any
   activeEnsembleFanoutPolicy: EnsembleFanoutPolicy
   activeEnsembleOrchestrationMode: any
+  /** Run id whose live authoritative usage snapshot drives the footer tally. */
+  activeRunId: string | null
   addImageAttachmentsToChat: (
     chatId: string | null | undefined,
     paths: string[]
@@ -660,6 +662,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     kimiThinkingEnabled,
     lastNonCustomModelType,
     liveRunOutputTokens,
+    activeRunId,
     markCurrentGoalBlocked,
     markPersistentSessionRestartNeeded,
     multiview,
@@ -4766,6 +4769,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                     providerRates={providerRates}
                     running={isCurrentChatRunning}
                     liveOutputTokens={liveRunOutputTokens}
+                    activeRunId={activeRunId}
                     title={threadTokenTallyTooltip}
                   />
                 )}
