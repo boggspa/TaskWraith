@@ -48,6 +48,16 @@ export function useTranscriptScrollState({
   const transcriptScrollRef = useRef<HTMLDivElement>(null)
   const transcriptContentRef = useRef<HTMLDivElement>(null)
   const autoFollowRef = useRef(true)
+  const [autoFollowActive, setAutoFollowActive] = useState(true)
+  const setAutoFollow = useCallback((next: boolean) => {
+    if (autoFollowRef.current === next) return
+    autoFollowRef.current = next
+    // The ref owns synchronous scroll decisions, while state makes the
+    // presentation react to input-only changes. Wheel/key/scrollbar gestures
+    // do not necessarily change messages, so without this state update the
+    // jump-to-latest pill can remain stale for an entire streaming lane.
+    setAutoFollowActive(next)
+  }, [])
   const userScrolledAwayInFrameRef = useRef(false)
   // True from a jump-to-latest click until the scroll arrives at the live
   // edge (or the user cancels with an upward gesture). The smooth-scroll
@@ -93,11 +103,11 @@ export function useTranscriptScrollState({
       options: RestoreTranscriptScrollOptions = {}
     ) => {
       if (scrollState && options.syncAutoFollow) {
-        autoFollowRef.current = scrollState.atBottom
+        setAutoFollow(scrollState.atBottom)
       }
       restoreChatScrollStateWhenReady(() => transcriptScrollRef.current, scrollState)
     },
-    []
+    [setAutoFollow]
   )
 
   const preserveScrollWhile = useCallback(
@@ -112,7 +122,7 @@ export function useTranscriptScrollState({
   const handleJumpToLatest = useCallback(() => {
     const scroller = transcriptScrollRef.current
     if (!scroller) return
-    autoFollowRef.current = true
+    setAutoFollow(true)
     userScrolledAwayInFrameRef.current = false
     jumpInFlightRef.current = true
     if (unreadFromBottomCountRef.current !== 0) {
@@ -120,14 +130,14 @@ export function useTranscriptScrollState({
       setUnreadFromBottomCount(0)
     }
     scroller.scrollTo({ top: scroller.scrollHeight, behavior: 'smooth' })
-  }, [])
+  }, [setAutoFollow])
 
   // Arm follow without a scroll of its own — for gestures where the NEXT
   // messages layout-effect snap should carry the viewport down (sending a
   // prompt while scrolled up: the reply belongs to the user's action, so the
   // transcript re-locks to the live edge exactly like Claude/Codex do).
   const relockToLatest = useCallback(() => {
-    autoFollowRef.current = true
+    setAutoFollow(true)
     userScrolledAwayInFrameRef.current = false
     jumpInFlightRef.current = false
     pendingTranscriptJumpChatIdRef.current = null
@@ -135,7 +145,7 @@ export function useTranscriptScrollState({
       unreadFromBottomCountRef.current = 0
       setUnreadFromBottomCount(0)
     }
-  }, [])
+  }, [setAutoFollow])
 
   const handleJumpToLatestRef = useRef(handleJumpToLatest)
   handleJumpToLatestRef.current = handleJumpToLatest
@@ -217,7 +227,7 @@ export function useTranscriptScrollState({
         return false
       }
       clearProgrammaticScrollTarget()
-      autoFollowRef.current = false
+      setAutoFollow(false)
       userScrolledAwayInFrameRef.current = true
       jumpInFlightRef.current = false
       downwardIntentAtRef.current = 0
@@ -225,11 +235,11 @@ export function useTranscriptScrollState({
       lastNativeScrollTopRef.current = nextScrollTop
       return true
     },
-    [clearProgrammaticScrollTarget]
+    [clearProgrammaticScrollTarget, setAutoFollow]
   )
 
   const beginManualTranscriptJump = useCallback(() => {
-    autoFollowRef.current = false
+    setAutoFollow(false)
     userScrolledAwayInFrameRef.current = true
     jumpInFlightRef.current = false
     clearProgrammaticScrollTarget()
@@ -238,14 +248,14 @@ export function useTranscriptScrollState({
       cancelAnimationFrame(repinRafIdRef.current)
       repinRafIdRef.current = null
     }
-  }, [clearProgrammaticScrollTarget])
+  }, [clearProgrammaticScrollTarget, setAutoFollow])
 
   const prepareMessageJump = useCallback((targetChatId: string) => {
     pendingTranscriptJumpChatIdRef.current = targetChatId
-    autoFollowRef.current = false
+    setAutoFollow(false)
     userScrolledAwayInFrameRef.current = true
     jumpInFlightRef.current = false
-  }, [])
+  }, [setAutoFollow])
 
   const clearPendingMessageJump = useCallback(() => {
     pendingTranscriptJumpChatIdRef.current = null
@@ -293,7 +303,7 @@ export function useTranscriptScrollState({
           })
         })
       ) {
-        autoFollowRef.current = true
+        setAutoFollow(true)
         userScrolledAwayInFrameRef.current = false
         if (unreadFromBottomCountRef.current !== 0) {
           unreadFromBottomCountRef.current = 0
@@ -364,7 +374,7 @@ export function useTranscriptScrollState({
       ) {
         clearProgrammaticScrollTarget()
         userScrolledAwayInFrameRef.current = true
-        autoFollowRef.current = false
+        setAutoFollow(false)
         jumpInFlightRef.current = false
         downwardIntentAtRef.current = 0
       }
@@ -378,7 +388,7 @@ export function useTranscriptScrollState({
       scroller.removeEventListener('scroll', onScroll)
       if (rafId !== null) cancelAnimationFrame(rafId)
     }
-  }, [chatId, clearProgrammaticScrollTarget, snapScrollToBottom])
+  }, [chatId, clearProgrammaticScrollTarget, setAutoFollow, snapScrollToBottom])
 
   useEffect(() => {
     return () => clearProgrammaticScrollTarget()
@@ -398,7 +408,7 @@ export function useTranscriptScrollState({
       if (deltaY >= 0) return
       if (scroller.scrollTop > 0) {
         userScrolledAwayInFrameRef.current = true
-        autoFollowRef.current = false
+        setAutoFollow(false)
         jumpInFlightRef.current = false
         // The user's LAST input is upward — a stale downward flick must not
         // hand the band to this frame's coalesced net movement.
@@ -488,7 +498,7 @@ export function useTranscriptScrollState({
       window.removeEventListener('blur', endScrollbarPointer)
       scrollbarPointerActiveRef.current = false
     }
-  }, [chatId])
+  }, [chatId, setAutoFollow])
 
   useEffect(() => {
     const scroller = transcriptScrollRef.current
@@ -618,7 +628,7 @@ export function useTranscriptScrollState({
     const scroller = transcriptScrollRef.current
     if (!scroller) return
     const hasPendingManualJump = Boolean(chatId && pendingTranscriptJumpChatIdRef.current === chatId)
-    autoFollowRef.current = !hasPendingManualJump
+    setAutoFollow(!hasPendingManualJump)
     userScrolledAwayInFrameRef.current = hasPendingManualJump
     jumpInFlightRef.current = false
     if (unreadFromBottomCountRef.current !== 0) {
@@ -658,7 +668,7 @@ export function useTranscriptScrollState({
     autoFollowRef,
     unreadFromBottomCount,
     showJumpToLatestPill: shouldShowJumpToLatestPill({
-      autoFollow: autoFollowRef.current,
+      autoFollow: autoFollowActive,
       unreadCount: unreadFromBottomCount,
       streamingActive: streamingActive === true
     }),
