@@ -170,6 +170,16 @@ describe('ChangelogSheet', () => {
     expect(entry.releaseNotes).toContain('Async delegated workers cannot inherit Trusted Session')
   })
 
+  it('bundles the current 1.8.1 release notes', () => {
+    const entry = resolveChangelogEntry({ currentVersion: '1.8.1' }, null)
+    expect(entry).toMatchObject({
+      version: '1.8.1',
+      releaseDate: '2026-07-12'
+    })
+    expect(entry.releaseNotes).toContain('Background lanes for Ensemble work')
+    expect(entry.releaseNotes).toContain('Remote iPhone actions stay safe when a Mac sleeps')
+  })
+
   it('formats full changelog arrays from electron-updater metadata', () => {
     expect(
       formatReleaseNotes([

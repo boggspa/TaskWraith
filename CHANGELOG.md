@@ -4,6 +4,66 @@ Notable changes to TaskWraith, the local-first macOS desktop workbench for runni
 and reviewing AI coding agents. Entries are user-facing highlights; execution,
 history, and workspace state stay on your machine throughout.
 
+## 1.8.1 - 2026-07-12
+
+### Added
+- **Background lanes for Ensemble work.** The new BG stage keeps a participant
+  out of ordinary round rotation and starts it in a detached lane only when
+  explicitly @mentioned or delegated. Normal BG launches are read-only, and BG
+  seats cannot own Boss, Captain, or synthesizer authority.
+- **Provider-backed live usage in the composer.** During solo and Ensemble
+  runs, live provider snapshots now lead the input/output tally when available,
+  with an animated output counter and projected cost that includes the in-flight
+  prompt. A labelled text estimate remains when a provider cannot report usage.
+- **Goal completion by quorum during an authority outage.** Eligible Ensemble
+  participants can open one binding complete/keep-working poll when the Boss or
+  Captain cannot close the active goal. A passing quorum closes it; a
+  Boss/Captain keep-working vote vetoes it.
+- **Agent-proposed Ensemble rosters.** An agent can prepare a roster preset for
+  confirmation, letting you apply a validated provider, model, and role
+  configuration without rebuilding the panel by hand.
+- **Post and clean up Blackboard notes from the composer.** The composer
+  popover can now add a session note and delete entries without opening the
+  right dock.
+- **Shared motion and feedback pass.** Desktop and iOS refine panel presence,
+  counter movement, and interaction feedback while respecting Reduce Motion.
+
+### Changed
+- **Review gates now follow the active goal.** Resolved or superseded gates no
+  longer block a newer goal, and an eligible reviewer can record a passed or
+  failed verdict for the gate it owns.
+- **Explicit Ensemble hand-offs win.** An explicit @mention now takes precedence
+  over a yield return, so an intentional next speaker is not lost to ordinary
+  round routing.
+
+### Fixed
+- **Ensemble lifecycle and routing are more dependable.** Transcript events keep
+  their order, directed prompts and shortcut queues retain their intended scope,
+  and terminal yields close cleanly instead of leaving misleading idle hops.
+- **Solo Codex runs seal reliably.** Terminal status, finish time, and usage now
+  persist when a run ends instead of occasionally remaining unknown or active.
+- **Remote iPhone actions stay safe when a Mac sleeps.** Before sending an
+  action, the companion checks that its paired host is alive, makes a bounded
+  reconnect/wake attempt when needed, and leaves synced threads readable while
+  the Mac is unavailable.
+- **Provider integrations handle their edge cases more gracefully.** Kimi keeps
+  MCP bridge settings isolated per run, reports weekly quota correctly, and lets
+  a final quota/auth wire failure override a provisional success; Grok keeps its
+  active MCP lifecycle; and unsupported Codex reasoning levels no longer trigger
+  a failed launch.
+
+### Security
+- **Reviewer verdicts use a strict, narrow allowance.** Only the exact
+  gate-specific passed/failed verdict payload can take the reviewer path; every
+  other management action remains behind its existing authority checks.
+- **Agent-created rosters stay permission-capped.** Imports require confirmation,
+  validate live providers and a single Boss, and may use only Read-Only, Plan,
+  or Default permissions without custom overrides.
+
+### Documentation
+- **Motion and transitions guide.** The how-to documentation now explains the
+  shared motion tokens, presence rules, feedback, and Reduce Motion behaviour.
+
 ## 1.8.0 - 2026-07-11
 
 ### Added
