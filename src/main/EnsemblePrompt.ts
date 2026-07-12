@@ -65,6 +65,7 @@ import {
   conversationCompactionEligibleMessageIds,
   resolveBoundedCompactionPrefixMessageIds
 } from './PromptComposition'
+import { taskWraithToolNameForProvider } from './TaskWraithMcpPromptNames'
 
 // 1.0.4-AR2 — mirror of the renderer ceiling
 // (`EnsembleParticipantsAboveRow.MAX_ENSEMBLE_PARTICIPANTS`). Keep
@@ -800,6 +801,7 @@ export function buildEnsembleDynamicStateSnapshot(
 export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput): string {
   const orderedParticipants = getOrderedEnsembleParticipants(input.config, input.currentPrompt)
   const isOllamaParticipant = input.participant.provider === 'ollama'
+  const grokDirectYieldTool = taskWraithToolNameForProvider('grok', 'ensemble_yield')
   // 1.0.7 — rename-stable participant handles (`#p3`) keyed on the
   // immutable participant id. Built from the FULL roster (not just the
   // enabled/ordered subset) so a message authored by a participant who
@@ -1206,6 +1208,11 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
     // banned, just exceptional.
     '- Address participants by their **participant (role) name** (e.g. `@Farmer`, `@Merchant`) or **model name** (e.g. `@Sonnet 4.6`, `@Flash Lite`) exactly as shown in the roster — these route deterministically to the participant you mean. Do NOT address peers by bare provider name (`@gemini`, `@claude`) unless that provider has exactly one participant on this panel: with same-provider peers a provider tag resolves non-deterministically and your message may reach the wrong panelist.',
     '- If another participant should handle this turn, call ensemble_yield with a short reason and optional target.',
+    ...(input.participant.provider === 'grok'
+      ? [
+          `- Grok direct-tool rule: for Ensemble lifecycle calls, invoke a TaskWraith tool directly from the current tool list. For yield, use whichever directly advertised alias is present: \`${grokDirectYieldTool}\`, \`TaskWraith__ensemble_yield\`, or \`taskwraith-grok__ensemble_yield\`. Never route Ensemble lifecycle calls through generic \`search_tool\` / \`use_tool\`, capability discovery, or a Cursor workspace proxy; those can bind the wrong provider context.`
+        ]
+      : []),
     '- Use ensemble_fanout when multiple peers should work in parallel. Default read_only fan-out only targets read-only participants; locked_writers fan-out is feature-gated, requires the assigned Boss (or active Captain after Boss unavailability) as caller with explicit writeScopes for writer targets, and relies on workspace write locks. Set targetStage to all, scouts, workers, reviewers, or backgrounds for selective stage fan-out; targetStage=all excludes untyped Any roles. A unique `@BG` / `@Background` mention launches the background-stage seat asynchronously without consuming foreground rotation. When no Boss is assigned, automatic writer fan-out is host-mediated by user-enabled write-scope claim + matrix-ack preflight rather than peer tool calls.',
     '- If you are the assigned Boss, or the Captain after Boss is unavailable, use ensemble_bossman_control for bounded orchestration state: assign_work, set_round_plan, request_status, declare_decision, set_review_gate, quarantine_participant, allocate_budget, create_poll, set_goal, update_goal, clear_goal, adjust_hops, ensemble_scheduled_wakeup, check_quota_resets, and summon_participant. Do not merely narrate that @Worker still has work and wait for the rotation; use ensemble_fanout for parallel work, summon_participant or ensemble_yield for direct continuation, and roster/seat changes for provider/model mismatch.',
     '- If you are the assigned Boss, or the Captain after Boss is unavailable, and Boss/Captain Auto Approvals are enabled, use list_ensemble_participants before ensemble_roster_edit to inspect participant ids, available providers/models, model context windows, and coarse provider quota bands; then you may swap a non-active participant seat provider/model/reasoning/permissions when quota walls, weak output, or agreed role changes warrant it. Use ensemble_brief_update for another participant\'s Brief / Goal changes; you cannot change your own brief.',

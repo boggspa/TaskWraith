@@ -921,6 +921,47 @@ describe('Ensemble prompt composition', () => {
     expect(prompt).not.toContain('SPEAKING FIRST')
   })
 
+  it('routes Grok lifecycle calls through direct TaskWraith tools instead of generic discovery', () => {
+    const grokParticipant: EnsembleParticipant = {
+      ...ensemble.participants[0],
+      id: 'grok-boss',
+      provider: 'grok',
+      role: 'Boss'
+    }
+    const grokEnsemble: EnsembleConfig = {
+      ...ensemble,
+      participants: [grokParticipant, ...ensemble.participants.slice(1)]
+    }
+
+    const prompt = buildEnsembleParticipantPrompt({
+      chat: { ...chat(), provider: 'grok', ensemble: grokEnsemble },
+      config: grokEnsemble,
+      participant: grokParticipant,
+      currentPrompt: 'Yield to the named target.',
+      roundId: 'round-grok-routing'
+    })
+
+    expect(prompt).toContain('Grok direct-tool rule')
+    expect(prompt).toContain('taskwraith-broker__ensemble_yield')
+    expect(prompt).toContain('TaskWraith__ensemble_yield')
+    expect(prompt).toContain('taskwraith-grok__ensemble_yield')
+    expect(prompt).toContain('Never route Ensemble lifecycle calls through generic `search_tool` / `use_tool`')
+    expect(prompt).toContain('wrong provider context')
+  })
+
+  it('does not add Grok-specific direct-tool routing to non-Grok seats', () => {
+    const prompt = buildEnsembleParticipantPrompt({
+      chat: chat(),
+      config: ensemble,
+      participant: ensemble.participants[1],
+      currentPrompt: 'Continue.',
+      roundId: 'round-codex-routing'
+    })
+
+    expect(prompt).not.toContain('Grok direct-tool rule')
+    expect(prompt).not.toContain('taskwraith-grok__ensemble_yield')
+  })
+
   // 1.0.4-AJ — last-speaker awareness. The pre-fix failure mode
   // reported by the maintainer: the final participant in a turn-bound round
   // called `ensemble_yield(target: 'codex')` thinking they were
