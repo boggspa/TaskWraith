@@ -666,6 +666,7 @@ export type EnsembleBossmanControlAction =
   | 'adjust_hops'
   | 'ensemble_scheduled_wakeup'
   | 'check_quota_resets'
+  | 'submit_review_verdict'
 
 export interface EnsembleBossmanControlInput {
   action?: EnsembleBossmanControlAction
@@ -681,6 +682,9 @@ export interface EnsembleBossmanControlInput {
   assignmentStatus?: EnsembleBossmanAssignmentStatus
   assignmentId?: string
   gateId?: string
+  /** C2 P3 — reviewer-only verdict for action 'submit_review_verdict'. Disjoint
+   * from set_review_gate's authority-only reviewStatus (the Boss override path). */
+  verdict?: 'passed' | 'failed'
   pollId?: string
   budgetId?: string
   goal?: string
@@ -772,6 +776,9 @@ export interface EnsembleBossmanControlResult {
     | 'wakeup_failed'
     | 'budget_exhausted'
     | 'review_gate_blocked'
+    | 'review_gate_not_found'
+    | 'not_gate_reviewer'
+    | 'invalid_verdict'
     | 'queue_failed'
     | 'no_active_work_session'
     | 'baseline_exceeded'
@@ -3599,6 +3606,16 @@ export class EnsembleOrchestrator {
         message: 'Boss control rejected: roundId is no longer active.',
         error: 'stale_round'
       }
+    }
+    // C2 P3 — reviewer-only verdict (submit_review_verdict) is an OWNER-gated,
+    // NON-upserting path that does NOT require Boss authority: the gate's OWN
+    // reviewer (which may be a read_only seat) submits passed|failed on their own
+    // gate, and the gate + its DERIVED completion block reconcile in ONE synchronous
+    // transaction (closes pain #2's "gate passed but stayed open"). It intentionally
+    // bypasses the authority gate below; a non-owner — even Boss — cannot pass
+    // another's gate this way (Boss override stays on set_review_gate's create/upsert).
+    if (action === 'submit_review_verdict') {
+      return this.submitReviewVerdictForCaller(chat, runtime, caller, input)
     }
     const authority = this.resolveBossAuthorityForCaller(chat, runtime, caller.participant.id)
     if (!authority.ok) {
@@ -6448,6 +6465,96 @@ export class EnsembleOrchestrator {
       tool: 'ensemble_poll_response',
       pollId,
       message: `User voted "${choice}" in poll ${pollId}.`
+    }
+  }
+
+  /**
+   * C2 P3 — reviewer-only verdict handler (action 'submit_review_verdict'). Owner-
+   * gated (G5): ONLY the gate's own reviewer may submit. Non-upserting: an
+   * unknown/absent gateId is rejected, never created. Field-locked to
+   * verdict∈{passed,failed}. Atomic: ONE synchronous updateBossmanControlState RMW
+   * sets the verdict and — because the completion block is DERIVED from gate.status
+   * via ReviewGateScope (C2a) — clears the block in the SAME transaction (no separate
+   * Boss reconcile; closes pain #2). Idempotent: a repeat identical verdict is a
+   * no-op with no duplicate audit/status line. Boss override stays disjoint on
+   * set_review_gate's authority create/upsert.
+   *
+   * NOTE: the strict no-extra-key payload check + read-only reachability live in the
+   * shared exact-invocation classifier (isExactReviewerVerdictInvocation) at the
+   * preflight/bridge boundaries (C2b-ii); this handler is the final owner-gate (C-8),
+   * reached only after those pass — defense-in-depth (preflight relaxes the prompt,
+   * dispatch still owner-gates).
+   */
+  private submitReviewVerdictForCaller(
+    chat: ChatRecord,
+    runtime: ActiveRoundRuntime,
+    caller: ActiveParticipantRun,
+    input: EnsembleBossmanControlInput
+  ): EnsembleBossmanControlResult {
+    const action = 'submit_review_verdict' as const
+    const verdict = input.verdict
+    if (verdict !== 'passed' && verdict !== 'failed') {
+      return {
+        ok: false,
+        tool: 'ensemble_bossman_control',
+        action,
+        roundId: runtime.roundId,
+        message: "submit_review_verdict requires verdict 'passed' or 'failed'.",
+        error: 'invalid_verdict'
+      }
+    }
+    const gates = chat.ensemble?.bossmanControlState?.reviewGates || []
+    const gate = input.gateId ? gates.find((entry) => entry.id === input.gateId) : undefined
+    if (!gate) {
+      return {
+        ok: false,
+        tool: 'ensemble_bossman_control',
+        action,
+        roundId: runtime.roundId,
+        message: 'submit_review_verdict requires an existing gateId owned by the caller.',
+        error: 'review_gate_not_found'
+      }
+    }
+    if (!gate.reviewerParticipantId || gate.reviewerParticipantId !== caller.participant.id) {
+      return {
+        ok: false,
+        tool: 'ensemble_bossman_control',
+        action,
+        roundId: runtime.roundId,
+        message: "Only the review gate's own reviewer may submit a verdict for it.",
+        error: 'not_gate_reviewer'
+      }
+    }
+    if (gate.status === verdict) {
+      // Idempotent: identical repeat ⇒ no mutation, no duplicate audit/status line.
+      return {
+        ok: true,
+        tool: 'ensemble_bossman_control',
+        action,
+        roundId: runtime.roundId,
+        participantId: gate.reviewerParticipantId,
+        message: `Review gate is already ${verdict}.`
+      }
+    }
+    const nowIso = this.deps.nowIso()
+    this.updateBossmanControlState(runtime, (state) => ({
+      ...state,
+      reviewGates: (state.reviewGates || []).map((entry) =>
+        entry.id === gate.id ? { ...entry, status: verdict, updatedAt: nowIso } : entry
+      )
+    }))
+    this.appendRoundStatus(
+      runtime.chatId,
+      runtime.roundId,
+      `${participantDisplayName(caller.participant)} submitted review verdict for gate ${gate.id}: ${verdict}.`
+    )
+    return {
+      ok: true,
+      tool: 'ensemble_bossman_control',
+      action,
+      roundId: runtime.roundId,
+      participantId: gate.reviewerParticipantId,
+      message: `Review gate ${verdict} by its reviewer.`
     }
   }
 

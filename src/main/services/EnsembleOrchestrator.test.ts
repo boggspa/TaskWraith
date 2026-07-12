@@ -4875,6 +4875,120 @@ Next action:
     expect(gate?.goalId).toBe(goalId) // C2 — gate bound to the active goal
   })
 
+  // ---- C2 P3 — reviewer-only verdict (submit_review_verdict) --------------
+  // Owner-gated, non-upserting, one-sync-RMW, idempotent. codex is dispatched
+  // first so it has an active run to call bossmanControlForRun as the caller.
+  const mkGate = (
+    id: string,
+    reviewerParticipantId: string,
+    status: 'required' | 'passed' | 'failed' | 'waived' = 'required'
+  ) => ({
+    id,
+    reviewerParticipantId,
+    scope: 'final diff',
+    status,
+    createdAt: '2026-07-12T01:00:00.000Z',
+    updatedAt: '2026-07-12T01:00:00.000Z'
+  })
+
+  const startVerdictHarness = async (gates: ReturnType<typeof mkGate>[]) => {
+    const chat = makeChat()
+    chat.ensemble!.participants = [
+      { ...chat.ensemble!.participants[0], order: 2 }, // claude order 2
+      { ...chat.ensemble!.participants[1], order: 1 } // codex order 1 ⇒ the caller run
+    ]
+    chat.ensemble!.bossmanParticipantId = 'claude'
+    chat.ensemble!.bossmanControlState = { reviewGates: gates }
+    const harness = makeHarness({ initialChat: chat })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Go.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    expect(harness.dispatched[0].ensembleRun?.participantId).toBe('codex')
+    return { harness, codexRunId: harness.dispatched[0].appRunId }
+  }
+
+  it('C2 P3 T6a: the gate owner submits a verdict on their OWN gate (status flips in one RMW)', async () => {
+    const { harness, codexRunId } = await startVerdictHarness([mkGate('g1', 'codex', 'required')])
+    const result = await harness.orchestrator.bossmanControlForRun(codexRunId, {
+      action: 'submit_review_verdict',
+      gateId: 'g1',
+      verdict: 'passed'
+    })
+    expect(result.ok).toBe(true)
+    expect(harness.chat.ensemble?.bossmanControlState?.reviewGates?.[0]?.status).toBe('passed')
+  })
+
+  it("C2 P3 T6b: a NON-owner caller cannot pass another reviewer's gate", async () => {
+    const { harness, codexRunId } = await startVerdictHarness([mkGate('g1', 'claude', 'required')])
+    const result = await harness.orchestrator.bossmanControlForRun(codexRunId, {
+      action: 'submit_review_verdict',
+      gateId: 'g1',
+      verdict: 'passed'
+    })
+    expect(result.ok).toBe(false)
+    expect(result.error).toBe('not_gate_reviewer')
+    expect(harness.chat.ensemble?.bossmanControlState?.reviewGates?.[0]?.status).toBe('required')
+  })
+
+  it('C2 P3 T6c: an unknown/absent gateId is rejected and NON-upserting (never creates a gate)', async () => {
+    const { harness, codexRunId } = await startVerdictHarness([mkGate('g1', 'codex', 'required')])
+    const unknown = await harness.orchestrator.bossmanControlForRun(codexRunId, {
+      action: 'submit_review_verdict',
+      gateId: 'nope',
+      verdict: 'passed'
+    })
+    expect(unknown.ok).toBe(false)
+    expect(unknown.error).toBe('review_gate_not_found')
+    const absent = await harness.orchestrator.bossmanControlForRun(codexRunId, {
+      action: 'submit_review_verdict',
+      verdict: 'passed'
+    })
+    expect(absent.error).toBe('review_gate_not_found')
+    expect(harness.chat.ensemble?.bossmanControlState?.reviewGates).toHaveLength(1) // never created
+  })
+
+  it('C2 P3 T6d: field-lock — missing verdict + null-owner gate are rejected', async () => {
+    const { harness, codexRunId } = await startVerdictHarness([
+      mkGate('g1', 'codex', 'required'),
+      mkGate('g2', '', 'required') // null/empty owner ⇒ reviewer-self path denied
+    ])
+    const missing = await harness.orchestrator.bossmanControlForRun(codexRunId, {
+      action: 'submit_review_verdict',
+      gateId: 'g1'
+    })
+    expect(missing.error).toBe('invalid_verdict')
+    const nullOwner = await harness.orchestrator.bossmanControlForRun(codexRunId, {
+      action: 'submit_review_verdict',
+      gateId: 'g2',
+      verdict: 'passed'
+    })
+    expect(nullOwner.error).toBe('not_gate_reviewer')
+  })
+
+  it('C2 P3 T6e: a repeat identical verdict is idempotent (no duplicate audit line)', async () => {
+    const { harness, codexRunId } = await startVerdictHarness([mkGate('g1', 'codex', 'required')])
+    await harness.orchestrator.bossmanControlForRun(codexRunId, {
+      action: 'submit_review_verdict',
+      gateId: 'g1',
+      verdict: 'passed'
+    })
+    const auditLines = () =>
+      harness.chat.messages.filter((m) =>
+        (m.content || '').includes('submitted review verdict for gate g1')
+      ).length
+    expect(auditLines()).toBe(1)
+    const repeat = await harness.orchestrator.bossmanControlForRun(codexRunId, {
+      action: 'submit_review_verdict',
+      gateId: 'g1',
+      verdict: 'passed'
+    })
+    expect(repeat.ok).toBe(true)
+    expect(auditLines()).toBe(1) // idempotent: no duplicate audit line
+  })
+
   it('C2 P2: set_goal mints a fresh id for a materially-new objective, preserves it for the same', async () => {
     const initialChat = makeChat()
     initialChat.ensemble!.bossmanParticipantId = 'claude'
