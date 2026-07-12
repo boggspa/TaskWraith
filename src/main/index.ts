@@ -611,6 +611,7 @@ import {
   AGENT_ROSTER_IMPORT_MAX_BYTES,
   agentRosterPresetContractGuide,
   applyPendingEnsembleRosterPresetOnFinalize,
+  applyPendingEnsembleRosterPresetOnRunTerminal,
   buildEnsembleRosterPresetApply,
   parseSingleAgentRosterPresetExport,
   queuePendingEnsembleRosterPresetApply
@@ -5424,6 +5425,18 @@ function persistRunSessionQueueState(session: ReturnType<typeof runManager.get>)
   getRunRepository().persistSessionQueueState(session)
 }
 
+function finalizePendingEnsembleRosterPresetForTerminalRun(session: {
+  runId: string
+  appChatId?: string
+}): void {
+  if (!session.appChatId) return
+  const chat = AppStore.getChat(session.appChatId)
+  if (!chat) return
+  const finalized = applyPendingEnsembleRosterPresetOnRunTerminal(chat, session.runId)
+  if (finalized === chat) return
+  saveAndBroadcastChat({ ...finalized, updatedAt: Date.now() })
+}
+
 runManager.onChange((event) => {
   if (event.type === 'removed') {
     cancelPendingAgentQuestionsForRun(event.session.runId, 'run-removed')
@@ -5446,6 +5459,12 @@ runManager.onChange((event) => {
       event.session.status === 'cancelled')
   ) {
     cancelPendingAgentQuestionsForRun(event.session.runId, `run-${event.session.status}`)
+    // Main owns the durable terminal boundary. The renderer normally consumes
+    // a queued solo roster from the provider `result` line, but `agent-exit`
+    // can arrive without that independent IPC delivery. Finalize the exact
+    // source run here as the persistence-safe fallback (idempotent when the
+    // renderer already applied it).
+    finalizePendingEnsembleRosterPresetForTerminalRun(event.session)
     recordProviderSeatCacheEvidenceForRun(event.session)
   }
   void appShellStatsService.refresh().catch((err) => {

@@ -698,6 +698,7 @@ import {
 } from '../../main/providerChangeQueue'
 import {
   applyPendingEnsembleRosterPresetOnFinalize,
+  applyPendingEnsembleRosterPresetOnRunTerminal,
   hasPendingEnsembleRosterPresetApply
 } from '../../main/EnsembleRosterPresetApply'
 import {
@@ -9479,6 +9480,7 @@ function App(): React.JSX.Element {
         setIsThinking(false)
       }
 
+      let finalizedTerminalChat: ChatRecord | null = null
       updateChatById(completedRunChatId, (source) => {
         const updated = { ...source }
 
@@ -9610,8 +9612,28 @@ function App(): React.JSX.Element {
           ] as ChatMessage[]
           updated.messages = msgs
         }
-        return updated
+        // `result` and `agent-exit` are independent IPC deliveries. The result
+        // reducer normally owns queued solo-chat changes, but an exit without
+        // that line is still a real turn boundary and must not strand them.
+        const rosterFinalized = applyPendingEnsembleRosterPresetOnRunTerminal(
+          updated,
+          completedRunId
+        )
+        const terminalFinalized =
+          rosterFinalized.chatKind === 'ensemble'
+            ? rosterFinalized
+            : applyPendingProviderChangeOnFinalize(rosterFinalized)
+        if (terminalFinalized !== updated) {
+          finalizedTerminalChat = terminalFinalized
+        }
+        return terminalFinalized
       })
+      if (finalizedTerminalChat && currentChatIdRef.current === completedRunChatId) {
+        applyChatComposerSelection(
+          finalizedTerminalChat,
+          getChatProvider(finalizedTerminalChat)
+        )
+      }
 
       // Host-side compaction: consume a finished summarize run (store summary,
       // reset Cursor session, card), THEN — for ordinary exits — check whether
@@ -12562,7 +12584,7 @@ function App(): React.JSX.Element {
             updated.runs = runs
             if (updated.chatKind !== 'ensemble') {
               const nextChat = applyPendingProviderChangeOnFinalize(
-                applyPendingEnsembleRosterPresetOnFinalize(updated)
+                applyPendingEnsembleRosterPresetOnRunTerminal(updated, currentRunId)
               )
               if (nextChat !== updated) {
                 updated = nextChat

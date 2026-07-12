@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   applyPendingEnsembleRosterPresetOnFinalize,
+  applyPendingEnsembleRosterPresetOnRunTerminal,
   buildEnsembleRosterPresetApply,
   hasPendingEnsembleRosterPresetApply,
   parseSingleAgentRosterPresetExport,
@@ -200,6 +201,80 @@ describe('EnsembleRosterPresetApply', () => {
       'Scout'
     ])
     expect(hasPendingEnsembleRosterPresetApply(applied)).toBe(false)
+  })
+
+  it('activates a queued solo roster from the matching terminal run only', () => {
+    const chat = soloChat('codex')
+    const result = buildEnsembleRosterPresetApply({
+      chat,
+      preset: preset(),
+      queuedAt: '2026-07-12T12:00:00.000Z',
+      sourceRunId: 'run-that-imported-the-roster',
+      makeParticipantId: idFactory('new-boss', 'new-captain', 'new-scout')
+    })
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    const queued = queuePendingEnsembleRosterPresetApply(chat, result.plan)
+
+    expect(
+      applyPendingEnsembleRosterPresetOnRunTerminal(queued, 'unrelated-run')
+    ).toBe(queued)
+
+    const applied = applyPendingEnsembleRosterPresetOnRunTerminal(
+      queued,
+      'run-that-imported-the-roster'
+    )
+    expect(applied.chatKind).toBe('ensemble')
+    expect(applied.ensemble?.activeRosterPresetId).toBe('agent-preset')
+    expect(hasPendingEnsembleRosterPresetApply(applied)).toBe(false)
+  })
+
+  it('consumes a stale pending marker when the matching preset is already active', () => {
+    const source = soloChat('codex')
+    const result = buildEnsembleRosterPresetApply({
+      chat: source,
+      preset: preset(),
+      queuedAt: '2026-07-12T12:00:00.000Z',
+      sourceRunId: 'run-1',
+      makeParticipantId: idFactory('queued-boss', 'queued-captain', 'queued-scout')
+    })
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+
+    const manuallyApplied = queuePendingEnsembleRosterPresetApply(
+      {
+        ...ensembleChat(),
+        ensemble: {
+          ...ensembleChat().ensemble!,
+          activeRosterPresetId: result.plan.presetId
+        }
+      },
+      result.plan
+    )
+    const existingParticipants = manuallyApplied.ensemble?.participants
+    const cleaned = applyPendingEnsembleRosterPresetOnRunTerminal(manuallyApplied, 'run-1')
+
+    expect(cleaned.ensemble?.participants).toBe(existingParticipants)
+    expect(hasPendingEnsembleRosterPresetApply(cleaned)).toBe(false)
+  })
+
+  it('leaves a different pending Ensemble preset for the round boundary', () => {
+    const chat = ensembleChat()
+    const result = buildEnsembleRosterPresetApply({
+      chat,
+      preset: preset(),
+      callerParticipantId: 'boss-id',
+      queuedAt: '2026-07-12T12:00:00.000Z',
+      sourceRunId: 'participant-run',
+      makeParticipantId: idFactory('fresh-scout')
+    })
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    const queued = queuePendingEnsembleRosterPresetApply(chat, result.plan)
+
+    expect(
+      applyPendingEnsembleRosterPresetOnRunTerminal(queued, 'participant-run')
+    ).toBe(queued)
   })
 
   it('rejects a solo preset whose marked Boss is a different provider', () => {

@@ -513,6 +513,20 @@ function withoutPendingMetadata(chat: ChatRecord): Record<string, unknown> | und
 export function applyPendingEnsembleRosterPresetOnFinalize(chat: ChatRecord): ChatRecord {
   const plan = readPendingEnsembleRosterPresetApply(chat)
   if (!plan) return chat
+  // A user may recover a missed solo-turn activation by applying the newly
+  // saved preset from the picker. In that case the intended roster is already
+  // live and only the stale pending marker needs to be consumed. Reapplying the
+  // plan would replace the picker-materialized participant ids and clear their
+  // freshly-linked provider sessions at the next round boundary.
+  if (
+    chat.chatKind === 'ensemble' &&
+    chat.ensemble?.activeRosterPresetId === plan.presetId
+  ) {
+    return {
+      ...chat,
+      providerMetadata: withoutPendingMetadata(chat)
+    }
+  }
   const nowIso = new Date().toISOString()
   const ensembleBase =
     chat.chatKind === 'ensemble' && chat.ensemble
@@ -545,6 +559,31 @@ export function applyPendingEnsembleRosterPresetOnFinalize(chat: ChatRecord): Ch
     ensemble,
     providerMetadata: withoutPendingMetadata(chat)
   }
+}
+
+/**
+ * Finalize a queued solo-chat roster only for the run that created it.
+ *
+ * Provider `result` and terminal-exit events are separate IPC deliveries. A
+ * dropped/delayed `result` must not leave the roster queued forever, so both
+ * renderer and main terminal paths call this exact-run helper. Existing
+ * Ensemble roster changes still wait for the orchestrator's round boundary;
+ * the sole Ensemble exception is consuming an already-applied matching preset.
+ */
+export function applyPendingEnsembleRosterPresetOnRunTerminal(
+  chat: ChatRecord,
+  runId: string
+): ChatRecord {
+  const plan = readPendingEnsembleRosterPresetApply(chat)
+  if (!plan) return chat
+  if (plan.sourceRunId && plan.sourceRunId !== runId) return chat
+  if (
+    chat.chatKind === 'ensemble' &&
+    chat.ensemble?.activeRosterPresetId !== plan.presetId
+  ) {
+    return chat
+  }
+  return applyPendingEnsembleRosterPresetOnFinalize(chat)
 }
 
 export function agentRosterPresetContractGuide(activeProvider?: ProviderId): Record<string, unknown> {
