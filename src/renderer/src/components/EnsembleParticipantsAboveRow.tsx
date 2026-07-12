@@ -1022,6 +1022,10 @@ export function EnsembleParticipantsAboveRow({
     liveFanoutLanes.length > 0 &&
     liveFanoutLanes.some((lane) => lane.intent === 'read') &&
     liveFanoutLanes.every((lane) => lane.intent === 'read')
+  // A phase-specific skip is more precise than the generic active-speaker
+  // action. When it is wired, render only that action so read fan-out does not
+  // surface two adjacent Skip buttons for the same orchestration moment.
+  const hasContextualSkipAction = canSkipReadFanout && onSkipReadFanout !== undefined
   const canAddParticipant = !isRoundRunning && participants.length < MAX_ENSEMBLE_PARTICIPANTS
   // Index-aligned `grid-column` spans for the wrapped balanced-rows
   // layout; null in single-row flex mode (≤5 chips) where chips size
@@ -1642,16 +1646,19 @@ export function EnsembleParticipantsAboveRow({
               `QueuedMessagesAboveRow.tsx` + the
               `queuedMessagesAboveRowEntries` builder in App.tsx for
               the ensemble-queued branch. */}
-          {isRoundRunning && activeRound?.activeParticipantId && onSkipActive && (
-            <PillButton
-              size="compact"
-              className="ensemble-above-row-skip"
-              onClick={onSkipActive}
-              title="Skip the currently-speaking participant and let the round continue with the next one. The composer's Stop button still cancels the whole round."
-            >
-              Skip
-            </PillButton>
-          )}
+          {isRoundRunning &&
+            activeRound?.activeParticipantId &&
+            onSkipActive &&
+            !hasContextualSkipAction && (
+              <PillButton
+                size="compact"
+                className="ensemble-above-row-skip"
+                onClick={onSkipActive}
+                title="Skip the currently-speaking participant and let the round continue with the next one. The composer's Stop button still cancels the whole round."
+              >
+                Skip
+              </PillButton>
+            )}
           {canSkipReadFanout && onSkipReadFanout && (
             <PillButton
               size="compact"

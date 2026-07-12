@@ -782,7 +782,7 @@ describe('EnsembleParticipantsAboveRow', () => {
     expect(html).toContain('Skip reads')
   })
 
-  it('uses a fixed stacked control rail for transient actions at the six-participant wrap boundary', () => {
+  it('prioritizes the contextual Skip reads action in the stacked six-participant rail', () => {
     const participants = Array.from({ length: 6 }, (_, index) =>
       makeParticipant({
         id: `ensemble-participant-${index + 1}`,
@@ -830,8 +830,20 @@ describe('EnsembleParticipantsAboveRow', () => {
 
     expect(html).toContain('ensemble-above-row-chips is-wrapped')
     expect(html).toContain('ensemble-above-row-controls is-stacked')
-    expect(html).toContain('>Skip</button>')
+    expect(html).not.toContain('>Skip</button>')
     expect(html).toContain('>Skip reads</button>')
+
+    const fallbackHtml = renderToStaticMarkup(
+      <EnsembleParticipantsAboveRow
+        chat={chat}
+        selectedParticipantId={null}
+        onSelectParticipant={() => undefined}
+        onChatChange={() => undefined}
+        onSkipActive={() => undefined}
+      />
+    )
+    expect(fallbackHtml).toContain('>Skip</button>')
+    expect(fallbackHtml).not.toContain('>Skip reads</button>')
 
     const css = readFileSync(
       new URL('../assets/css/09-ensemble-work-session.css', import.meta.url),
