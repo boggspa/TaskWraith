@@ -21,7 +21,8 @@ This section contains public "How To…" guides for each UX feature in TaskWrait
 10. [Canvas & Previews](canvas-and-previews/)
 11. [Media, Audio & Video](media-audio-and-video/)
 
-### Ready (12–14)
+### Ready (12–15)
 12. [Settings & Configuration](settings-and-configuration/)
 13. [Notifications & Status](notifications-and-status/)
 14. [Goals, To-Dos & Scheduling](goals-todos-and-scheduling/)
+15. [Motion, Transitions & Haptics](motion-and-transitions/)

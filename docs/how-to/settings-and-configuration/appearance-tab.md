@@ -23,3 +23,4 @@ Open **Settings → App → Appearance**.
 - [General tab](general-tab.md) — other core app behavior settings live alongside Appearance under Settings → App.
 - [Keyboard shortcuts tab](keyboard-shortcuts-tab.md) — another Settings → App tab for customizing keybindings.
 - [Welcome Screen](../getting-started/welcome-screen.md) — one of the surfaces where your theme and effects choices are visible.
+- [Motion, transitions & haptics](../motion-and-transitions/) — contributor guide for tokens, presence recipes, DigitOdometer / NumericTickText, and the reduce-motion contract (Reduce motion in this tab feeds that system).
