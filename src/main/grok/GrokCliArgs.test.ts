@@ -358,6 +358,15 @@ describe('applyGrokPromptPreamble', () => {
     expect(lower).toMatch(/do not end|don't end|adapt|switch/)
   })
 
+  it('write steer respects no-tool briefs and contains failed coordination calls', () => {
+    const lower = GROK_WRITE_MODE_PROMPT_PREAMBLE.toLowerCase()
+    expect(lower).toContain('no-tools instruction')
+    expect(lower).toContain('do not call shell, file, goal, or any other tool')
+    expect(lower).toContain('retry only the same requested operation')
+    expect(lower).toContain('never substitute unrelated shell, file, or goal calls')
+    expect(lower).toContain('answer in prose')
+  })
+
   it('prepends Grok steering without dropping Discord context', () => {
     const out = applyGrokPromptPreamble(discordPrompt, true)
 
@@ -458,5 +467,12 @@ describe('applyGrokReadOnlyPromptPreamble', () => {
     expect(GROK_READ_ONLY_PROMPT_PREAMBLE).toMatch(/read-only shell/i)
     expect(GROK_READ_ONLY_PROMPT_PREAMBLE).toMatch(/describe what you would change/i)
     expect(GROK_READ_ONLY_PROMPT_PREAMBLE).toMatch(/summar/i)
+  })
+
+  it('read-only steer treats an explicit no-tool brief as stronger than its read allowance', () => {
+    const lower = GROK_READ_ONLY_PROMPT_PREAMBLE.toLowerCase()
+    expect(lower).toContain('no-tools instruction')
+    expect(lower).toContain('do not call read, shell, file, goal, or any other tool')
+    expect(lower).toContain('do not substitute unrelated workspace or goal tools')
   })
 })

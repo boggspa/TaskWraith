@@ -86,12 +86,15 @@ export function grokWriteCapable(approvalMode: string | null | undefined): boole
 export const GROK_READ_ONLY_PROMPT_PREAMBLE =
   'You are running in READ-ONLY mode (recon / investigation). You CAN read and ' +
   'inspect freely — read files and run read-only shell commands such as ls, ' +
-  'cat, grep, find, and git log / status / diff. File writes and edits, and ' +
+  'cat, grep, find, and git log / status / diff. An explicit no-tools instruction ' +
+  'in the user request or role brief overrides that allowance: do not call read, ' +
+  'shell, file, goal, or any other tool. File writes and edits, and ' +
   'MUTATING shell commands (anything that changes files or git state, installs ' +
   'packages, or has other side effects) are refused by the host — do not ' +
   'attempt them; if the task would need one, describe what you would change ' +
   'instead. If a tool call is refused, do NOT end your turn — summarise what ' +
-  'you found from the reads you did and answer the user directly.'
+  'you found from the reads you did and answer the user directly. Do not substitute ' +
+  'unrelated workspace or goal tools for a failed coordination call.'
 
 const GROK_MCP_QUESTION_TOOL_NAME = `${GROK_BROKER_MCP_TOOL_NAMESPACE}__ask_user_question`
 
@@ -109,10 +112,14 @@ export const GROK_MCP_QUESTION_PROMPT_NOTE =
  * small on purpose: a nudge, not a policy. The host gate stays the safety floor.
  */
 export const GROK_WRITE_MODE_PROMPT_PREAMBLE =
-  'Create and edit files with the Write and Edit tools (they are approved and ' +
-  'diff-reviewed here), not shell commands like mkdir or touch. If a tool call ' +
-  'is refused or fails, do not end your turn — switch to an available tool such ' +
-  'as Write and finish the task.'
+  'When the task actually requests file changes, create and edit files with the ' +
+  'Write and Edit tools (they are approved and diff-reviewed here), not shell ' +
+  'commands like mkdir or touch. An explicit no-tools instruction in the user ' +
+  'request or role brief overrides that allowance: do not call shell, file, goal, ' +
+  'or any other tool. If a tool call is refused or fails, do not end your turn; ' +
+  'retry only the same requested operation with an equivalent allowed tool. Never ' +
+  'substitute unrelated shell, file, or goal calls for a failed coordination call; ' +
+  'otherwise report the failure and answer in prose.'
 
 /**
  * Prepend the read-only steer to a Grok ACP turn's prompt when the seat is
