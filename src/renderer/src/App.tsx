@@ -422,6 +422,7 @@ import {
   type EnsembleRosterPreset
 } from './lib/ensembleRosterPresets'
 import { hydrateParticipantsWithPooledAgentIdentity } from './lib/ensembleAgentPool'
+import { deriveActiveEnsembleWorkingPresentation } from './lib/workingIndicatorPresentation'
 import {
   buildProviderChangeParticipantPatch,
   getDefaultEnsembleParticipantConfig,
@@ -18786,6 +18787,15 @@ function App(): React.JSX.Element {
   )
   const cumulativeChatTokens =
     chatTokenTally.totalTokens + (isCurrentChatRunning ? liveRunOutputTokens : 0)
+  // The footer live tally reads the authoritative per-run usage snapshot keyed
+  // by runId. During an ensemble round the ACTIVE participant's run is not
+  // necessarily chat.runs[last], so mirror the working row's resolution — else
+  // the footer misses the snapshot and silently falls back to the char estimate
+  // (no live input, output tracks visible text only).
+  const composerActiveRunId = useMemo(
+    () => deriveActiveEnsembleWorkingPresentation(currentChat)?.runId ?? currentRun?.runId ?? null,
+    [currentChat, currentRun?.runId]
+  )
   const latestRunLimits = extractUsageLimits(currentRun?.stats)
   const contextModelId = currentRun?.actualModel || currentRun?.requestedModel || selectedModelType
   const installedOllamaModelsForContext = useMemo(
@@ -24350,7 +24360,8 @@ function App(): React.JSX.Element {
       contextLabel: viewerContextTelemetry.label,
       contextMeter: viewerContextTelemetry.meter,
       liveRunOutputTokens: viewerLiveOutputTokens,
-      activeRunId: viewerRun?.runId ?? null,
+      activeRunId:
+        deriveActiveEnsembleWorkingPresentation(viewerChat)?.runId ?? viewerRun?.runId ?? null,
       composerRunTimecodeStartedAt: viewerRunStartedAt,
       cumulativeRunBaseMs: viewerCumulativeRunBaseMs,
       dualComposerTelemetry: viewerDualTelemetry,
@@ -25393,7 +25404,8 @@ function App(): React.JSX.Element {
         contextLabel: paneContextTelemetry.label,
         contextMeter: paneContextTelemetry.meter,
         liveRunOutputTokens: viewerLiveOutputTokens,
-        activeRunId: viewerRun?.runId ?? null,
+        activeRunId:
+          deriveActiveEnsembleWorkingPresentation(viewerChat)?.runId ?? viewerRun?.runId ?? null,
         composerRunTimecodeStartedAt: viewerRunStartedAt,
         cumulativeRunBaseMs: viewerCumulativeRunBaseMs,
         dualComposerTelemetry: viewerDualTelemetry,
@@ -25669,7 +25681,7 @@ function App(): React.JSX.Element {
     kimiThinkingEnabled,
     lastNonCustomModelType,
     liveRunOutputTokens,
-    activeRunId: currentRun?.runId ?? null,
+    activeRunId: composerActiveRunId,
     pendingAgentApproval,
     pendingPlanImport,
     permissionRequestMessage,
