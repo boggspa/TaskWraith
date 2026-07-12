@@ -2472,6 +2472,50 @@ describe('dynamic ensemble-state snapshots', () => {
     expect(staleSlim).toContain('Dynamic ensemble state (replacement snapshot')
     expect(staleSlim).toContain('A new summary must replace the stale memory.')
   })
+
+  it('surfaces an open BINDING goal-complete poll to every seat (tally, denominator, deadline, veto) [M4]', () => {
+    const config: EnsembleConfig = {
+      ...ensemble,
+      bossmanControlState: {
+        polls: [
+          {
+            id: 'poll-binding-1',
+            question: 'Complete the active goal?',
+            options: ['complete', 'keep-working'],
+            status: 'open',
+            includeUser: true,
+            votes: [
+              {
+                voterParticipantId: 'codex',
+                voterLabel: 'codex',
+                choice: 'complete',
+                votedAt: '2026-05-24T00:00:00.000Z'
+              },
+              {
+                voterParticipantId: 'claude',
+                voterLabel: 'claude',
+                choice: 'keep-working',
+                votedAt: '2026-05-24T00:00:00.000Z'
+              }
+            ],
+            createdAt: '2026-05-24T00:00:00.000Z',
+            binding: { kind: 'goal_complete', goalId: 'goal-x' },
+            roundId: 'round-dynamic',
+            eligibleAtOpen: 4,
+            authorityVoterIds: ['claude'],
+            timeoutAt: '2026-05-24T00:05:00.000Z'
+          }
+        ]
+      }
+    }
+    const block = buildEnsembleDynamicStateSnapshot(chat(), config).block
+    expect(block).toContain('BINDING goal-complete poll')
+    expect(block).toContain('Tally 1/2') // 1 'complete' of 2 votes cast
+    expect(block).toContain('of 4 eligible') // eligibleAtOpen denominator
+    expect(block).toContain('deadline 2026-05-24T00:05:00.000Z')
+    expect(block).toContain("'keep-working' vote vetoes")
+    expect(block).toContain('ensemble_poll_response')
+  })
 })
 
 describe('slim resumed-turn prompt shape', () => {

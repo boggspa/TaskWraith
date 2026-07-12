@@ -675,6 +675,16 @@ function formatBossmanControlStanza(
         const targets = poll.targetParticipantIds?.length
           ? ` for ${poll.targetParticipantIds.map(participantName).join(', ')}`
           : ''
+        if (poll.binding) {
+          // M4 — surface an open BINDING goal-complete poll to EVERY seat's prompt
+          // so any eligible participant can vote to close the goal: live tally,
+          // eligible-at-open denominator, deadline, and veto note. The open and
+          // resolution STATUS lines are emitted by the orchestrator, not here.
+          const complete = poll.votes.filter((vote) => vote.choice === 'complete').length
+          const cast = poll.votes.length
+          const deadline = poll.timeoutAt ? `; deadline ${poll.timeoutAt}` : ''
+          return `- ${poll.id}${targets}: BINDING goal-complete poll — vote 'complete' or 'keep-working' via ensemble_poll_response. Tally ${complete}/${cast} 'complete' of ${poll.eligibleAtOpen ?? '?'} eligible${deadline}. PASS completes the active goal; a Boss/Captain 'keep-working' vote vetoes.`
+        }
         return `- ${poll.id}${targets}: ${sanitizeText(poll.question)} Options: ${poll.options.map(sanitizeText).join(' / ')}`
       })
     )

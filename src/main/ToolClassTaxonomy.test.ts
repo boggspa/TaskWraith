@@ -9,7 +9,11 @@ import {
   TOOL_CLASS_ORDER
 } from './ToolClassTaxonomy'
 import { TASKWRAITH_MCP_TOOLS } from './TaskWraithMcpTools'
-import { MCP_APP_STATE_MUTATION_TOOLS, MCP_AUTO_ALLOWED_TOOLS } from './mcp/McpAutoAllowedTools'
+import {
+  MCP_APP_STATE_MUTATION_TOOLS,
+  MCP_AUTO_ALLOWED_TOOLS,
+  MCP_ENSEMBLE_PARTICIPATION_TOOLS
+} from './mcp/McpAutoAllowedTools'
 
 describe('classifyTool', () => {
   it('classifies each non-write class', () => {
@@ -36,6 +40,9 @@ describe('classifyTool', () => {
     expect(classifyTool('launch_status')).toBe('orchestration')
     expect(classifyTool('blackboard_post')).toBe('orchestration')
     expect(classifyTool('blackboard_delete')).toBe('orchestration')
+    // 1.0.4-AN — ensemble participation (vote/propose) is orchestration-class.
+    expect(classifyTool('ensemble_poll_response')).toBe('orchestration')
+    expect(classifyTool('ensemble_propose_goal_complete')).toBe('orchestration')
     // video_decode_frame = native daemon capture (like appwatch_latest_frame /
     // canvas_screenshot), non-mutating → orchestration, allowed under read-only.
     expect(classifyTool('video_decode_frame')).toBe('orchestration')
@@ -150,8 +157,6 @@ describe('workspace_write is exactly the read-only deny set', () => {
         'creative_timeline_import',
         'delete_path',
         'delegate_to_subthread',
-        'ensemble_poll_response',
-        'ensemble_propose_goal_complete',
         'get_diagnostics',
         'git_commit',
         'git_create_pr',
@@ -229,9 +234,32 @@ describe('isReadOnlyBlockedTool', () => {
     expect(isReadOnlyBlockedTool('cancel_active_run', ro)).toBe(true)
     expect(isReadOnlyBlockedTool('start_background_process', ro)).toBe(true)
     expect(isReadOnlyBlockedTool('kill_background_process', ro)).toBe(true)
+    // Every app-state mutation tool stays blocked under read-only EXCEPT the two
+    // audited participation tools (vote/propose) — the ratified read-only exception.
     for (const tool of MCP_APP_STATE_MUTATION_TOOLS) {
+      if ((MCP_ENSEMBLE_PARTICIPATION_TOOLS as ReadonlySet<string>).has(tool)) continue
       expect(isReadOnlyBlockedTool(tool, ro)).toBe(true)
     }
+  })
+
+  it('exempts ONLY the two ensemble participation tools from the read-only deny (floor unchanged)', () => {
+    // Read-only seats can vote / propose without a block (the all-participants ratification)…
+    expect(isReadOnlyBlockedTool('ensemble_poll_response', ro)).toBe(false)
+    expect(isReadOnlyBlockedTool('ensemble_propose_goal_complete', ro)).toBe(false)
+    // …but they REMAIN app-state mutations (route/workspace-lineage guard input preserved)…
+    expect((MCP_APP_STATE_MUTATION_TOOLS as ReadonlySet<string>).has('ensemble_poll_response')).toBe(
+      true
+    )
+    expect(
+      (MCP_APP_STATE_MUTATION_TOOLS as ReadonlySet<string>).has('ensemble_propose_goal_complete')
+    ).toBe(true)
+    // …and every other app-state mutation + the fs/shell/workspace-write floor stays blocked.
+    expect(isReadOnlyBlockedTool('ensemble_bossman_control', ro)).toBe(true)
+    expect(isReadOnlyBlockedTool('ensemble_roster_edit', ro)).toBe(true)
+    expect(isReadOnlyBlockedTool('blackboard_delete', ro)).toBe(true)
+    expect(isReadOnlyBlockedTool('write_file', ro)).toBe(true)
+    expect(isReadOnlyBlockedTool('run_shell_command', ro)).toBe(true)
+    expect(isReadOnlyBlockedTool('apply_patch', ro)).toBe(true)
   })
 
   it('never blocks reads / coordination, or anything when not read-only', () => {

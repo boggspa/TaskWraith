@@ -3,6 +3,7 @@ import { MEDIA_EDITING_TOOLS } from '../TaskWraithMcpTools'
 import {
   MCP_AUTO_ALLOWED_TOOLS,
   MCP_APP_STATE_MUTATION_TOOLS,
+  MCP_ENSEMBLE_PARTICIPATION_TOOLS,
   PLAN_INSTRUMENT_ADVERTISE_TOOLS,
   READ_ONLY_MCP_ADVERTISE_TOOLS,
   isPlanAdvertisedTool,
@@ -68,9 +69,23 @@ describe('MCP_AUTO_ALLOWED_TOOLS', () => {
       'ensemble_roster_edit',
       'ensemble_brief_update',
       'workspace_board_apply_plan',
-      ...MCP_APP_STATE_MUTATION_TOOLS
+      // The two audited participation tools (vote/propose) ARE auto-allowed +
+      // read-only advertised by ratification — exempt them from this floor loop.
+      ...[...MCP_APP_STATE_MUTATION_TOOLS].filter(
+        (t) => !(MCP_ENSEMBLE_PARTICIPATION_TOOLS as ReadonlySet<string>).has(t)
+      )
     ]) {
       expect(autoAllowedTools.has(tool)).toBe(false)
+    }
+  })
+
+  it('auto-allows the two ensemble participation tools (ratified read-only vote/propose)', () => {
+    // The audited exception: prompt-free + read-only advertised, yet STILL an
+    // app-state mutation (route/workspace-lineage guard input preserved).
+    for (const tool of MCP_ENSEMBLE_PARTICIPATION_TOOLS) {
+      expect(autoAllowedTools.has(tool)).toBe(true)
+      expect(READ_ONLY_MCP_ADVERTISE_TOOLS).toContain(tool)
+      expect((MCP_APP_STATE_MUTATION_TOOLS as ReadonlySet<string>).has(tool)).toBe(true)
     }
   })
 
@@ -131,7 +146,11 @@ describe('READ_ONLY_MCP_ADVERTISE_TOOLS', () => {
       'get_diagnostics',
       'cancel_active_run',
       'workspace_board_apply_plan',
-      ...MCP_APP_STATE_MUTATION_TOOLS
+      // The two audited participation tools (vote/propose) ARE auto-allowed +
+      // read-only advertised by ratification — exempt them from this floor loop.
+      ...[...MCP_APP_STATE_MUTATION_TOOLS].filter(
+        (t) => !(MCP_ENSEMBLE_PARTICIPATION_TOOLS as ReadonlySet<string>).has(t)
+      )
     ]) {
       expect(READ_ONLY_MCP_ADVERTISE_TOOLS).not.toContain(tool)
     }

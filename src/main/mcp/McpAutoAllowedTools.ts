@@ -60,6 +60,13 @@ export const MCP_AUTO_ALLOWED_TOOLS = new Set<TaskWraithMcpToolName>([
   'list_running_ides',
   'ensemble_yield',
   'list_ensemble_participants',
+  // 1.0.4-AN — ensemble PARTICIPATION tools (vote + peer-open a goal-complete
+  // poll). Per the all-participants-vote ratification these are read-only-callable
+  // app-state participation: auto-allowed (prompt-free) + read-only advertised.
+  // They STAY in MCP_APP_STATE_MUTATION_TOOLS (below) so route/workspace-lineage
+  // guards still treat them as mutations. See MCP_ENSEMBLE_PARTICIPATION_TOOLS.
+  'ensemble_poll_response',
+  'ensemble_propose_goal_complete',
   // QMOD (1.0.3): asking the user a question is the inverse of the
   // user prompting the agent — it's a focus-shift, not a state mutation.
   // The renderer modal IS the approval surface, so a second confirm
@@ -139,6 +146,20 @@ export const MCP_APP_STATE_MUTATION_TOOLS = new Set<TaskWraithMcpToolName>([
   'workspace_board_apply_plan',
   'tw_introspection_run',
   'tw_introspection_review'
+])
+
+/**
+ * 1.0.4-AN — the audited read-only PARTICIPATION exception: exactly the two
+ * ensemble poll tools a read_only-preset seat may call WITHOUT an approval prompt
+ * (the user's "all participants vote" spec). They are auto-allowed + read-only
+ * advertised + orchestration-class, yet REMAIN in MCP_APP_STATE_MUTATION_TOOLS so
+ * route/workspace-lineage guards still treat them as mutations.
+ * isReadOnlyBlockedTool exempts ONLY this set; every filesystem / shell /
+ * workspace-write / other app-state tool stays blocked under read-only.
+ */
+export const MCP_ENSEMBLE_PARTICIPATION_TOOLS = new Set<TaskWraithMcpToolName>([
+  'ensemble_poll_response',
+  'ensemble_propose_goal_complete'
 ])
 
 /**

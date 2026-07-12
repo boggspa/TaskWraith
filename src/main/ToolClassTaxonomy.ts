@@ -21,7 +21,10 @@
  * (an unrecognised tool is treated as mutating, never surfaced as "safe").
  */
 
-import { MCP_APP_STATE_MUTATION_TOOLS } from './mcp/McpAutoAllowedTools'
+import {
+  MCP_APP_STATE_MUTATION_TOOLS,
+  MCP_ENSEMBLE_PARTICIPATION_TOOLS
+} from './mcp/McpAutoAllowedTools'
 
 export type ToolClass =
   | 'workspace_read'
@@ -195,6 +198,11 @@ const ORCHESTRATION_TOOLS = new Set<string>([
   'ensemble_bossman_control',
   'ensemble_roster_edit',
   'ensemble_brief_update',
+  // 1.0.4-AN — ensemble participation (vote + peer-open goal-complete poll) is
+  // orchestration-class (non-workspace-mutating) so read_only seats can call it;
+  // still route-guarded via MCP_APP_STATE_MUTATION_TOOLS. See isReadOnlyBlockedTool.
+  'ensemble_poll_response',
+  'ensemble_propose_goal_complete',
   'scout_brief',
   'blackboard_post',
   'blackboard_read',
@@ -280,10 +288,16 @@ export function isReadOnlyBlockedTool(
   toolName: string,
   effectivePermissions?: { readOnly?: boolean }
 ): boolean {
+  if (!effectivePermissions?.readOnly) return false
+  // 1.0.4-AN — the audited read-only PARTICIPATION exception: the two ensemble
+  // poll tools are read-only-callable (the "all participants vote" ratification).
+  // They remain app-state mutations for route/workspace-lineage guards, but are
+  // exempt from the read-only mutation deny. Every other app-state / workspace-
+  // write / fs / shell tool stays blocked — the read-only floor is unchanged.
+  if ((MCP_ENSEMBLE_PARTICIPATION_TOOLS as ReadonlySet<string>).has(toolName)) return false
   return (
-    Boolean(effectivePermissions?.readOnly) &&
-    (classifyTool(toolName) === 'workspace_write' ||
-      (MCP_APP_STATE_MUTATION_TOOLS as ReadonlySet<string>).has(toolName))
+    classifyTool(toolName) === 'workspace_write' ||
+    (MCP_APP_STATE_MUTATION_TOOLS as ReadonlySet<string>).has(toolName)
   )
 }
 
