@@ -281,4 +281,52 @@ describe('isReadOnlyBlockedTool', () => {
     expect(isReadOnlyBlockedTool('write_file', { readOnly: false })).toBe(false)
     expect(isReadOnlyBlockedTool('write_file', undefined)).toBe(false)
   })
+
+  it('read-only REVIEWER-VERDICT exception is argument-scoped, never a whole-tool exemption (C2-v4 / G-SINGLE)', () => {
+    const verdict = (v: 'passed' | 'failed') => ({
+      action: 'submit_review_verdict',
+      gateId: 'g1',
+      verdict: v
+    })
+    // The EXACT nested reviewer-verdict invocation is read-only-callable so a gate's
+    // OWN reviewer (which may be a read_only seat) can reconcile it — routed through
+    // the ONE shared isExactReviewerVerdictInvocation classifier (G-SINGLE).
+    expect(isReadOnlyBlockedTool('ensemble_bossman_control', ro, verdict('passed'))).toBe(false)
+    expect(isReadOnlyBlockedTool('ensemble_bossman_control', ro, verdict('failed'))).toBe(false)
+
+    // …but this is NOT a whole-tool exemption. EVERY other shape on the same tool stays
+    // blocked (fail-closed), so no privileged Bossman action is ever reachable read-only:
+    expect(isReadOnlyBlockedTool('ensemble_bossman_control', ro)).toBe(true) // no args → fail-closed
+    expect(isReadOnlyBlockedTool('ensemble_bossman_control', ro, undefined)).toBe(true)
+    // any extra key (strict set-equality reject):
+    expect(
+      isReadOnlyBlockedTool('ensemble_bossman_control', ro, { ...verdict('passed'), reason: 'x' })
+    ).toBe(true)
+    // a wrong / privileged action carrying the same key-set:
+    for (const action of ['quarantine_participant', 'set_review_gate', 'set_goal', 'assign_work']) {
+      expect(
+        isReadOnlyBlockedTool('ensemble_bossman_control', ro, { action, gateId: 'g1', verdict: 'passed' })
+      ).toBe(true)
+    }
+    // a missing key, a blank gateId, a bad verdict enum:
+    expect(
+      isReadOnlyBlockedTool('ensemble_bossman_control', ro, { action: 'submit_review_verdict', verdict: 'passed' })
+    ).toBe(true)
+    expect(
+      isReadOnlyBlockedTool('ensemble_bossman_control', ro, { action: 'submit_review_verdict', gateId: '   ', verdict: 'passed' })
+    ).toBe(true)
+    expect(
+      isReadOnlyBlockedTool('ensemble_bossman_control', ro, { action: 'submit_review_verdict', gateId: 'g1', verdict: 'waived' })
+    ).toBe(true)
+
+    // Tool-scoped: the identical exact payload on a DIFFERENT tool name is still blocked
+    // (the classifier requires the canonical ensemble_bossman_control name).
+    expect(isReadOnlyBlockedTool('ensemble_roster_edit', ro, verdict('passed'))).toBe(true)
+
+    // Route/lineage invariant preserved: the tool REMAINS an app-state mutation — the
+    // exception relaxes ONLY the read-only mutation-deny, exactly like the poll tools.
+    expect((MCP_APP_STATE_MUTATION_TOOLS as ReadonlySet<string>).has('ensemble_bossman_control')).toBe(
+      true
+    )
+  })
 })

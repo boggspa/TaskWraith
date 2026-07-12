@@ -25,6 +25,7 @@ import {
   MCP_APP_STATE_MUTATION_TOOLS,
   MCP_ENSEMBLE_PARTICIPATION_TOOLS
 } from './mcp/McpAutoAllowedTools'
+import { isExactReviewerVerdictInvocation } from './ReviewerVerdictInvocation'
 
 export type ToolClass =
   | 'workspace_read'
@@ -286,7 +287,8 @@ export function classifyTool(name: string): ToolClass {
  */
 export function isReadOnlyBlockedTool(
   toolName: string,
-  effectivePermissions?: { readOnly?: boolean }
+  effectivePermissions?: { readOnly?: boolean },
+  toolArgs?: unknown
 ): boolean {
   if (!effectivePermissions?.readOnly) return false
   // 1.0.4-AN — the audited read-only PARTICIPATION exception: the two ensemble
@@ -295,6 +297,18 @@ export function isReadOnlyBlockedTool(
   // exempt from the read-only mutation deny. Every other app-state / workspace-
   // write / fs / shell tool stays blocked — the read-only floor is unchanged.
   if ((MCP_ENSEMBLE_PARTICIPATION_TOOLS as ReadonlySet<string>).has(toolName)) return false
+  // C2-v4 — the audited read-only REVIEWER-VERDICT exception (argument-scoped). The
+  // security-critical distinction from the whole-tool participation set above: this
+  // is NOT a whole-tool exemption. ensemble_bossman_control stays blocked wholesale;
+  // ONLY the EXACT nested {action:'submit_review_verdict', gateId, verdict} invocation
+  // is read-only-callable, so a gate's OWN reviewer (which may be a read_only seat)
+  // can reconcile its own gate. Delegated to the ONE shared pure classifier (G-SINGLE
+  // — never re-inline the shape check): any extra key / wrong or privileged action /
+  // bad or ABSENT args fails CLOSED → falls through to the whole-tool block below, so
+  // no other Bossman action (roster/quarantine/goal/gate/fanout) is ever relaxed. The
+  // tool REMAINS in MCP_APP_STATE_MUTATION_TOOLS for route/workspace-lineage guards,
+  // exactly like the participation exception above — only the read-only deny relaxes.
+  if (isExactReviewerVerdictInvocation(toolName, toolArgs)) return false
   return (
     classifyTool(toolName) === 'workspace_write' ||
     (MCP_APP_STATE_MUTATION_TOOLS as ReadonlySet<string>).has(toolName)
