@@ -1591,6 +1591,24 @@ const api = {
     ipcRenderer.on('ensemble-roster-presets:save-requested', wrapped)
     return () => ipcRenderer.removeListener('ensemble-roster-presets:save-requested', wrapped)
   },
+  onEnsembleRosterPresetImportRequested: (
+    callback: (payload: { requestId: string; json: string; source?: string }) => void
+  ) => {
+    const wrapped = (
+      _event: unknown,
+      payload: { requestId: string; json: string; source?: string }
+    ): void => callback(payload)
+    ipcRenderer.on('ensemble-roster-presets:import-requested', wrapped)
+    return () => ipcRenderer.removeListener('ensemble-roster-presets:import-requested', wrapped)
+  },
+  sendEnsembleRosterPresetImportResult: (payload: {
+    requestId: string
+    ok: boolean
+    importedCount?: number
+    presetId?: string
+    presetName?: string
+    error?: string
+  }) => ipcRenderer.send('ensemble-roster-presets:import-result', payload),
   onEnsembleRosterPresetDeleteRequested: (callback: (presetId: string) => void) => {
     const wrapped = (_event: unknown, presetId: string): void => callback(presetId)
     ipcRenderer.on('ensemble-roster-presets:delete-requested', wrapped)

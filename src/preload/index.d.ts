@@ -1913,6 +1913,17 @@ declare global {
       onEnsembleRosterPresetSaveRequested: (
         callback: (payload: { name: string; participants: unknown[] }) => void
       ) => () => void
+      onEnsembleRosterPresetImportRequested: (
+        callback: (payload: { requestId: string; json: string; source?: string }) => void
+      ) => () => void
+      sendEnsembleRosterPresetImportResult: (payload: {
+        requestId: string
+        ok: boolean
+        importedCount?: number
+        presetId?: string
+        presetName?: string
+        error?: string
+      }) => void
       onEnsembleRosterPresetDeleteRequested: (callback: (presetId: string) => void) => () => void
       onWorkflowDefinitionsChanged: (callback: (payload: WorkflowDefinition[]) => void) => () => void
       onWorkspaceBoardsChanged: (

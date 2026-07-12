@@ -414,6 +414,7 @@ import {
 } from '../../shared/grok45Models'
 import {
   deleteEnsembleRosterPreset,
+  importEnsembleRosterPresetsFromJson,
   listEnsembleRosterPresets,
   materializeParticipantsFromPresetWithBossman,
   MAX_ROSTER_PRESET_PARTICIPANTS,
@@ -692,6 +693,10 @@ import {
   readPendingProviderChange,
   type PendingProviderChange
 } from '../../main/providerChangeQueue'
+import {
+  applyPendingEnsembleRosterPresetOnFinalize,
+  hasPendingEnsembleRosterPresetApply
+} from '../../main/EnsembleRosterPresetApply'
 import {
   EMPTY_PERMISSION_STATE,
   type ComposerPermissionState
@@ -1359,6 +1364,25 @@ function App(): React.JSX.Element {
         // ignore malformed payloads
       }
     })
+    const offImport = window.api.onEnsembleRosterPresetImportRequested?.((payload) => {
+      try {
+        const result = importEnsembleRosterPresetsFromJson(payload.json)
+        const savedPreset = result.presets[0]
+        window.api.sendEnsembleRosterPresetImportResult({
+          requestId: payload.requestId,
+          ok: true,
+          importedCount: result.importedCount,
+          presetId: savedPreset.id,
+          presetName: savedPreset.name
+        })
+      } catch (error) {
+        window.api.sendEnsembleRosterPresetImportResult({
+          requestId: payload.requestId,
+          ok: false,
+          error: error instanceof Error ? error.message : 'Roster preset import failed.'
+        })
+      }
+    })
     const offDelete = window.api.onEnsembleRosterPresetDeleteRequested?.((presetId) => {
       try {
         deleteEnsembleRosterPreset(presetId)
@@ -1369,6 +1393,7 @@ function App(): React.JSX.Element {
     return () => {
       unsubscribe()
       offSave?.()
+      offImport?.()
       offDelete?.()
     }
   }, [])
@@ -12510,7 +12535,9 @@ function App(): React.JSX.Element {
             }
             updated.runs = runs
             if (updated.chatKind !== 'ensemble') {
-              const nextChat = applyPendingProviderChangeOnFinalize(updated)
+              const nextChat = applyPendingProviderChangeOnFinalize(
+                applyPendingEnsembleRosterPresetOnFinalize(updated)
+              )
               if (nextChat !== updated) {
                 updated = nextChat
                 finalizedProviderChangeChat = nextChat
@@ -16862,9 +16889,15 @@ function App(): React.JSX.Element {
           return
         }
         let dispatchChat = nextRun.chatRecord
-        if (dispatchChat && hasPendingProviderChange(dispatchChat)) {
+        if (
+          dispatchChat &&
+          (hasPendingProviderChange(dispatchChat) ||
+            hasPendingEnsembleRosterPresetApply(dispatchChat))
+        ) {
           const appliedChat = updateChatById(dispatchChat.appChatId, (source) => ({
-            ...applyPendingProviderChangeOnFinalize(source),
+            ...applyPendingProviderChangeOnFinalize(
+              applyPendingEnsembleRosterPresetOnFinalize(source)
+            ),
             updatedAt: Date.now()
           }))
           if (appliedChat) {
