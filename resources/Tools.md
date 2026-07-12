@@ -11,7 +11,7 @@ Local Ollama models call a directly advertised tool by emitting exactly one JSON
 {"taskwraith_tool":{"name":"<tool>","arguments":{ ... }}}
 ```
 
-The 155 tools below are the full TaskWraith surface. 38 common tools are callable directly; every other example uses capability_invoke so the top-level tool surface stays compact. Every mutating target (file edits, shell, publishing) is gated by your run's permission role, and paths must stay inside the active workspace.
+The 156 tools below are the full TaskWraith surface. 39 common tools are callable directly; every other example uses capability_invoke so the top-level tool surface stays compact. Every mutating target (file edits, shell, publishing) is gated by your run's permission role, and paths must stay inside the active workspace.
 
 ## run_shell_command
 
@@ -783,7 +783,7 @@ In Ensemble Mode, allows the assigned Boss participant, or Captain only after Bo
 
 - Access: governed by your run permission role
 - Required args: action
-- Optional args: roundId, targetParticipantId, targetRunId, participantIds, prompt, reason, objective, acceptanceCriteria, due, assignmentStatus, assignmentId, gateId, pollId, budgetId, goal, goalStatus, status, phase, blockers, doneCriteria, decision, rationale, reopenCriteria, scope, reviewStatus, category, quarantineScope, clear, maxExtraTurns, maxFanoutCalls, maxDurationSeconds, maxTokens, question, options, includeUser, timeoutSeconds, hopDelta, maxContinuationHops, delaySeconds, provider, replacement
+- Optional args: roundId, targetParticipantId, targetRunId, participantIds, prompt, reason, objective, acceptanceCriteria, due, assignmentStatus, assignmentId, gateId, pollId, budgetId, goal, goalStatus, status, phase, blockers, doneCriteria, decision, rationale, reopenCriteria, scope, reviewStatus, verdict, category, quarantineScope, clear, maxExtraTurns, maxFanoutCalls, maxDurationSeconds, maxTokens, question, options, includeUser, timeoutSeconds, hopDelta, maxContinuationHops, delaySeconds, provider, replacement
 - Example: `{"taskwraith_tool":{"name":"ensemble_bossman_control","arguments":{"action":"text"}}}`
 
 ## ensemble_poll_response
@@ -795,13 +795,22 @@ In Ensemble Mode, cast or update this participant’s response to an open Boss/C
 - Optional args: rationale
 - Example: `{"taskwraith_tool":{"name":"ensemble_poll_response","arguments":{"pollId":"text","choice":"text"}}}`
 
+## ensemble_propose_goal_complete
+
+In Ensemble Mode, propose completing the active goal by opening a BINDING goal-complete poll (options: complete / keep-working). Any eligible-at-open participant may call this — use it when the work is genuinely done but the Boss/Captain is unreachable to call goal_complete. A passing quorum completes the active goal; a Boss/Captain "keep-working" vote vetoes. One binding poll may be open at a time; a short cooldown follows a failed poll. Active participant runs only.
+
+- Access: governed by your run permission role
+- Required args: none
+- Optional args: rationale
+- Example: `{"taskwraith_tool":{"name":"ensemble_propose_goal_complete","arguments":{"rationale":"text"}}}`
+
 ## ensemble_roster_edit
 
-In Ensemble Mode, lets the assigned Boss participant, or Captain only after Boss is unavailable, add, remove, or edit participants in the active roster, including swapping an inactive participant seat to a different provider/model/reasoning/permission setup when quota walls, poor output, or agreed role changes make that necessary. Authority-only and audited; requires the user's Allow Auto Approvals opt-in on the Ensemble. Call list_ensemble_participants first to inspect live participant ids plus available providers, models, context windows, and coarse quota bands. Permission presets are capped at read_only, plan, or default assignment, and tool-grant permissionOverrides are narrow-only: service overrides may only deny, network may only deny, approvalMode may only narrow to plan, and external path grants are forbidden.
+Manage an Ensemble roster. Existing add/remove/edit actions retain their live-round Boss authority rules and Allow Auto Approvals requirement. For a user request such as "set up my ensemble", first call list_ensemble_participants, generate exactly one normal TaskWraith roster-export JSON, then call action=import_preset with either its workspace path or inline JSON. Import works from a single-provider chat (the current provider must be the marked Boss and inherits Boss authority) or from an existing Ensemble (assigned Boss or Captain only); it saves a unique roster preset and activates it at the next safe turn/round boundary. The export controls participant order, role, brief, stage, provider/model/reasoning, read_only|plan|default permissions, Boss/Captain markers, Turn/Continuous mode, Off/Read/Write/All fan-out, hop cap, max participants, and CHARS. Work Session is intentionally unsupported.
 
 - Access: governed by your run permission role
 - Required args: action
-- Optional args: roundId, targetParticipantId, participant
+- Optional args: roundId, targetParticipantId, participant, path, json, apply
 - Example: `{"taskwraith_tool":{"name":"ensemble_roster_edit","arguments":{"action":"text"}}}`
 
 ## ensemble_brief_update
@@ -815,7 +824,7 @@ In Ensemble Mode, lets the assigned Boss participant, or Captain only after Boss
 
 ## list_ensemble_participants
 
-In Ensemble Mode, list the current participants, providers, roles, models, per-round statuses, Boss/Captain roster-edit eligibility, available provider/model catalog, per-model context windows, and coarse provider quota bands for the active round. Boss participants and active Captain should use this before ensemble_roster_edit when selecting a replacement provider/model, or before ensemble_brief_update when changing another participant Brief / Goal. Context usage fields are latest usage-bearing run estimates: contextTokens is latest input+output tokens, contextWindow is the resolved token window, and contextPercent is a 0-100 usage percentage; in-flight output is not included.
+Inspect the current single-provider or Ensemble chat before roster work. Returns the current seat/participants, setup authority, runnable-provider configuration, provider/model/reasoning catalog, per-model context windows, coarse quota bands, and the canonical TaskWraith roster-export JSON contract. Call this first when the user asks to "set up my ensemble", then create one task-specific export and pass it to ensemble_roster_edit action=import_preset. In a solo chat the current provider is the required inherited Boss; in an Ensemble only the assigned Boss or Captain may import. Existing Ensemble context usage fields are latest usage-bearing run estimates; in-flight output is not included.
 
 - Access: read-only (no approval needed)
 - Required args: none
