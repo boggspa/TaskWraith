@@ -18,11 +18,10 @@ import type { AppSettings, ChatRecord, EnsembleParticipant } from '../store/type
  *        lane it dispatched — and every lane flush (most visibly the
  *        completion batch) piled in above the Boss's live message.
  *
- *   M2 — a lane whose first output arrives late slot-ins by participant
- *        order against ANY same-round lane row. With a round-start recon
- *        wave already settled near the top of the round, a mid-turn
- *        wave-2 lane completing late matched a STALE wave-1 row and
- *        hoisted its whole report above the current speaker's live rows.
+ *   M2 — a lane whose first output arrives late must remain grouped with the
+ *        serial participant that sourced its wave. That participant retains
+ *        foreground ownership until its lanes settle, so the next serial
+ *        speaker cannot start between partial and late fan-out reports.
  *
  * These tests drive the real orchestrator with real (250ms debounced)
  * flush timers, so each step sleeps past the debounce before asserting.
@@ -209,7 +208,7 @@ describe('fan-out transcript ordering vs a live serial speaker', () => {
   )
 
   it(
-    'M2: a late-completing wave-2 lane must not slot against stale wave-1 rows above the live speaker',
+    "M2: holds the next serial speaker until the sourcing Lead's wave-2 lanes settle",
     { timeout: 20_000 },
     async () => {
       const harness = makeHarness([
@@ -254,32 +253,33 @@ describe('fan-out transcript ordering vs a live serial speaker', () => {
       await sleep(FLUSH_MS)
       expect(rowIndex(harness, 'W2-GEMINI-NOTE.')).toBeGreaterThan(rowIndex(harness, 'BOSS-INTRO.'))
 
-      // Lead finishes its serial turn → the round advances to the Builder
-      // while both wave-2 lanes are still running.
+      // Lead finishes its serial turn, but retains foreground ownership while
+      // both wave-2 lanes are still running. Builder must not overlap the
+      // unresolved fan-out return lifecycle.
       complete(harness, 2)
+      expect(harness.dispatched).toHaveLength(5)
+      expect(harness.chat.ensemble?.activeRound?.status).toBe('running')
+
+      // The silent Reviewer lane now completes: its whole report is its first
+      // flush. Same-wave lanes retain deterministic participant ordering, but
+      // both stay after their sourcing Lead and before the next serial speaker.
+      stream(harness, 3, 'W2-CLAUDE-LATE-REPORT.')
+      complete(harness, 3)
+      complete(harness, 4)
+      await sleep(FLUSH_MS)
+
       await vi.waitFor(() => expect(harness.dispatched).toHaveLength(6))
       expect(harness.dispatched[5].provider).toBe('kimi')
 
       stream(harness, 5, 'BUILDER-LIVE-MESSAGE.')
-      await sleep(FLUSH_MS)
-      expect(rowIndex(harness, 'BUILDER-LIVE-MESSAGE.')).toBeGreaterThan(
-        rowIndex(harness, 'W2-GEMINI-NOTE.')
-      )
-
-      // The silent Reviewer lane now completes: its whole report is its
-      // FIRST flush. Matching it against the stale wave-1 rows (participant
-      // order) would hoist the report all the way above the Builder's — and
-      // even the Lead's — messages.
-      stream(harness, 3, 'W2-CLAUDE-LATE-REPORT.')
-      complete(harness, 3)
-      complete(harness, 4)
       await sleep(FLUSH_MS)
 
       const builderIndex = rowIndex(harness, 'BUILDER-LIVE-MESSAGE.')
       const lateLaneIndex = rowIndex(harness, 'W2-CLAUDE-LATE-REPORT.')
       expect(builderIndex).toBeGreaterThanOrEqual(0)
       expect(lateLaneIndex).toBeGreaterThanOrEqual(0)
-      expect(lateLaneIndex).toBeGreaterThan(builderIndex)
+      expect(lateLaneIndex).toBeGreaterThan(rowIndex(harness, 'BOSS-INTRO.'))
+      expect(lateLaneIndex).toBeLessThan(builderIndex)
 
       // The Builder keeps streaming after the fan-out completed; nothing
       // may re-shuffle.
@@ -287,7 +287,7 @@ describe('fan-out transcript ordering vs a live serial speaker', () => {
       await sleep(FLUSH_MS)
       complete(harness, 5)
       await sleep(FLUSH_MS)
-      expect(rowIndex(harness, 'W2-CLAUDE-LATE-REPORT.')).toBeGreaterThan(
+      expect(rowIndex(harness, 'W2-CLAUDE-LATE-REPORT.')).toBeLessThan(
         rowIndex(harness, 'BUILDER-LIVE-MESSAGE.')
       )
       expect(
@@ -295,6 +295,7 @@ describe('fan-out transcript ordering vs a live serial speaker', () => {
           'W1-CLAUDE-RECON.',
           'W1-GEMINI-RECON.',
           'BOSS-INTRO.',
+          'W2-CLAUDE-LATE-REPORT.',
           'W2-GEMINI-NOTE.',
           'BUILDER-LIVE-MESSAGE.'
         ])
@@ -302,6 +303,7 @@ describe('fan-out transcript ordering vs a live serial speaker', () => {
         'W1-CLAUDE-RECON.',
         'W1-GEMINI-RECON.',
         'BOSS-INTRO.',
+        'W2-CLAUDE-LATE-REPORT.',
         'W2-GEMINI-NOTE.',
         'BUILDER-LIVE-MESSAGE.'
       ])
