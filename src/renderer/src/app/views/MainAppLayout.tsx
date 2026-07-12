@@ -8,6 +8,7 @@ import {
   NOOP_PROPOSED_PLAN_CUSTOM
 } from '../../lib/stableEmpties'
 import { buildSideChatComposerProps } from '../../lib/sideChatComposer'
+import { activeEnsembleRoundForComposer } from '../../lib/chatBusyState'
 import { resolveSlashParticipantForChat } from '../../lib/resolveSlashParticipant'
 import { SIDE_CHAT_SELECTED_PARTICIPANT_ID_METADATA_KEY } from '../../lib/sideChatLifecycle'
 import {
@@ -639,15 +640,15 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
     .sort((a: any, b: any) => a.order - b.order)
   const sideCurrentOrchestrationMode =
     sideChat?.ensemble?.orchestrationMode === 'continuous' ? 'continuous' : 'turn_bound'
+  const sideActiveRound = activeEnsembleRoundForComposer(sideChat?.ensemble?.activeRound)
   const sideActiveOrchestrationMode =
-    sideChat?.ensemble?.activeRound?.orchestrationMode === 'continuous'
+    sideActiveRound?.orchestrationMode === 'continuous'
       ? 'continuous'
       : sideCurrentOrchestrationMode
   const sideCurrentFanoutPolicy = normalizeEnsembleFanoutPolicy(
     sideChat?.ensemble?.fanoutPolicy,
     sideChat?.ensemble?.concurrentModeEnabled
   )
-  const sideActiveRound = sideChat?.ensemble?.activeRound
   const sideActiveFanoutPolicy =
     sideActiveRound?.fanoutPolicy !== undefined || sideActiveRound?.concurrentMode !== undefined
       ? normalizeEnsembleFanoutPolicy(
@@ -830,7 +831,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
         isCurrentComposerLocked: isSideComposerLocked,
         isCurrentEnsembleChat: sideChat.chatKind === 'ensemble',
         isCurrentEnsembleRoundRunning:
-          sideChat.chatKind === 'ensemble' && isSideChatRunning,
+          sideChat.chatKind === 'ensemble' && Boolean(sideActiveRound),
         // Preserve the side pane's purpose-built welcome heading; only the
         // composer shell is shared, so Composer must not add a second hero.
         isWelcomeChat: false,

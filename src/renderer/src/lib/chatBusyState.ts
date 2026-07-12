@@ -1,7 +1,21 @@
 import type { ChatRecord, RunQueueJobStatus } from '../../../main/store/types'
+import { isEnsembleRoundDispatchLive } from '../../../shared/ensembleRoundLifecycle'
 export {
   isEnsembleRoundDispatchLive as isEnsembleActiveRoundDispatchLive
 } from '../../../shared/ensembleRoundLifecycle'
+
+type EnsembleRoundState = NonNullable<NonNullable<ChatRecord['ensemble']>['activeRound']>
+
+/**
+ * Terminal rounds remain persisted for transcript/audit rendering, but composer
+ * controls must only inherit mode, fan-out, and hop counters from a live round.
+ */
+export function activeEnsembleRoundForComposer(
+  round: EnsembleRoundState | null | undefined
+): EnsembleRoundState | undefined {
+  if (!round || !isEnsembleRoundDispatchLive(round)) return undefined
+  return round
+}
 
 export const ACTIVE_RUN_QUEUE_STATUSES = new Set<RunQueueJobStatus>([
   'steer_promoting',

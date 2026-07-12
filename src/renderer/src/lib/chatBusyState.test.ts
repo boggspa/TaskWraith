@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  activeEnsembleRoundForComposer,
   isChatBusyForDispatch,
   isEnsembleActiveRoundDispatchLive,
   shouldQueueRunBeforeDispatch
@@ -154,5 +155,29 @@ describe('isEnsembleActiveRoundDispatchLive', () => {
         })
       )
     ).toBe(false)
+  })
+
+  it('keeps terminal round mode and hop state out of idle composer controls', () => {
+    const live = round({
+      orchestrationMode: 'continuous',
+      continuationHops: 1,
+      maxContinuationHops: 24
+    })
+    expect(activeEnsembleRoundForComposer(live)).toBe(live)
+
+    expect(
+      activeEnsembleRoundForComposer({
+        ...live,
+        status: 'cancelled',
+        endedAt: '2026-06-30T00:01:00.000Z'
+      })
+    ).toBeUndefined()
+    expect(
+      activeEnsembleRoundForComposer({
+        ...live,
+        activeParticipantId: undefined,
+        participants: [{ ...live.participants[0], status: 'answered' }]
+      })
+    ).toBeUndefined()
   })
 })

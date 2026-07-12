@@ -495,6 +495,7 @@ import {
 } from './lib/runQueuePredicates'
 import {
   ACTIVE_RUN_QUEUE_STATUSES,
+  activeEnsembleRoundForComposer,
   isChatBusyForDispatch,
   isEnsembleActiveRoundDispatchLive,
   shouldQueueRunBeforeDispatch
@@ -17451,9 +17452,10 @@ function App(): React.JSX.Element {
   const hasCurrentChatActiveRunQueueJob = Boolean(
     currentChat?.appChatId && chatHasActiveRunQueueJob(currentChat.appChatId)
   )
-  const isCurrentEnsembleRoundDispatchLive = isEnsembleActiveRoundDispatchLive(
+  const currentEnsembleRound = activeEnsembleRoundForComposer(
     currentChat?.ensemble?.activeRound
   )
+  const isCurrentEnsembleRoundDispatchLive = Boolean(currentEnsembleRound)
   const isCurrentChatRunning = Boolean(
     currentChat?.appChatId &&
     (runningChatIds.has(currentChat.appChatId) ||
@@ -17560,7 +17562,6 @@ function App(): React.JSX.Element {
     runtimePickerScope.selectedRuntimeProfileId
   )
   currentProviderRuntimeProfiles = runtimeProfilesForProviderAndCurrentScope(runtimePickerScope.provider)
-  const currentEnsembleRound = currentChat?.ensemble?.activeRound
   const currentEnsembleOrchestrationMode: EnsembleOrchestrationMode =
     currentChat?.ensemble?.orchestrationMode === 'continuous' ? 'continuous' : 'turn_bound'
   const activeEnsembleOrchestrationMode: EnsembleOrchestrationMode =
@@ -17635,7 +17636,7 @@ function App(): React.JSX.Element {
     currentChat?.ensemble?.maxContinuationHops ??
     currentEnsembleRound?.maxContinuationHops ??
     6
-  const isCurrentEnsembleRoundRunning = isEnsembleActiveRoundDispatchLive(currentEnsembleRound)
+  const isCurrentEnsembleRoundRunning = Boolean(currentEnsembleRound)
   const queuedSeatPatchKeys = useMemo(
     () =>
       [
