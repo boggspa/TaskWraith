@@ -11501,9 +11501,8 @@ export class EnsembleOrchestrator {
       // paths which already do this. The id is stable beyond the real timeline
       // entries (0..timeline.length-1) so it's idempotent across re-flushes; on
       // a later flush where the participant DOES emit text `stamped` is true and
-      // this synthetic message is never built, so the wholesale rebuild above
-      // (which strips every `ensemble-content-${runId}-*` id and re-inserts only
-      // `desiredMessages`) drops the stale synthetic.
+      // this synthetic message is never built, so the reconciliation below
+      // drops the stale synthetic because it is absent from `desiredMessages`.
       if (!stamped) {
         const id = timelineMessageId(run.runId, timeline.length, 'content')
         desiredIds.add(id)
@@ -11534,13 +11533,15 @@ export class EnsembleOrchestrator {
       }
     }
 
-    // Strip any prior timeline messages for this run from the chat
-    // (other messages — round-prompt user msgs, status cards from
-    // OTHER runs, etc. — stay untouched). Re-flushes preserve the
-    // participant timeline's original anchor so later system/status
-    // rows stay chronological. First fan-out lane insertion still uses
-    // participant order; otherwise every streaming flush would move the
-    // freshest lane to the bottom and churn the transcript order.
+    // Reconcile already-materialised timeline rows in place so system/status
+    // rows keep the exact event position where they were appended. A run can
+    // continue after one of those rows (for example: speak -> system event ->
+    // tool -> speak); rebuilding the whole run at its first anchor would move
+    // the later tool/speech above the system row and leave that row glued to
+    // the transcript tail until the next participant started. Existing rows
+    // are updated where they sit, stale rows are removed, and only genuinely
+    // new timeline rows append at the current tail. First materialisation still
+    // uses the fan-out/dispatch placement rules below.
     const existingTimelineStartIndex = messages.findIndex((message) =>
       isRunTimelineMessage(message, run)
     )
@@ -11550,17 +11551,33 @@ export class EnsembleOrchestrator {
             .slice(0, existingTimelineStartIndex)
             .filter((message) => !isRunTimelineMessage(message, run)).length
         : null
-    messages = messages.filter((message) => !isRunTimelineMessage(message, run))
+    const desiredMessageById = new Map(
+      desiredMessages.map((message) => [message.id, message] as const)
+    )
+    let retainedExistingTimelineMessage = false
+    messages = messages.flatMap((message) => {
+      if (!isRunTimelineMessage(message, run)) return [message]
+      const replacement = desiredMessageById.get(message.id)
+      if (!replacement) return []
+      desiredMessageById.delete(message.id)
+      retainedExistingTimelineMessage = true
+      return [replacement]
+    })
+    const newTimelineMessages = desiredMessages.filter((message) =>
+      desiredMessageById.has(message.id)
+    )
     // Dispatch chronology for the first-flush placement rules: chat.runs is
     // appended per seeded run, so its array order IS the dispatch order.
     const runDispatchOrder = new Map(chat.runs.map((chatRun, index) => [chatRun.runId, index]))
-    messages = insertRunTimelineMessages(
-      messages,
-      desiredMessages,
-      run,
-      preferredInsertionIndex,
-      runDispatchOrder
-    )
+    messages = retainedExistingTimelineMessage
+      ? [...messages, ...newTimelineMessages]
+      : insertRunTimelineMessages(
+          messages,
+          newTimelineMessages,
+          run,
+          preferredInsertionIndex,
+          runDispatchOrder
+        )
 
     // Status card for yielded / failed / skipped, appended after
     // the timeline messages so it reads as a coda. Unchanged from
