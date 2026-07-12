@@ -187,7 +187,9 @@ import {
   codexCommandFileEditMetadata,
   codexCommandText,
   codexPatchPreviewFromValue,
+  codexReasoningSummaryActivityId,
   codexReasoningSummaryDisplayText,
+  codexReasoningSummaryGroupDisplayText,
   codexReasoningSummaryModeForEffort,
   codexReasoningSummaryText,
   codexString,
@@ -16445,6 +16447,8 @@ function createCodexRunState(
     assistantTextByItemId: new Map(),
     timelineStartedItemIds: new Set(),
     reasoningTextByItemId: new Map(),
+    reasoningSummaryGroupIdByItemId: new Map(),
+    reasoningSummaryItemIdsByGroupId: new Map(),
     commandOutputByItemId: new Map(),
     filePatchByItemId: new Map(),
     hostRerunRequestedItemIds: new Set(),
@@ -16511,19 +16515,31 @@ function ensureCodexTimelineTool(
 }
 
 function emitCodexReasoningDelta(state: CodexRunState, params: any, label: string) {
-  const itemId = codexTimelineItemId(params, 'codex-reasoning')
+  const sourceItemId = codexTimelineItemId(params, 'codex-reasoning')
   const delta = codexReasoningSummaryText(
     params?.delta ?? params?.text ?? params?.summary ?? params?.part
   )
   if (!delta) return
-  const previousRaw = state.reasoningTextByItemId.get(itemId) || ''
-  const previous = codexReasoningSummaryDisplayText(previousRaw)
+  const activityId = codexReasoningSummaryActivityId(state, state.model, sourceItemId)
+  const previousRaw = state.reasoningTextByItemId.get(sourceItemId) || ''
+  const previousGroupText = codexReasoningSummaryGroupDisplayText(
+    state,
+    activityId,
+    state.reasoningTextByItemId
+  )
   const nextRaw = previousRaw + delta
-  const next = codexReasoningSummaryDisplayText(nextRaw)
-  state.reasoningTextByItemId.set(itemId, nextRaw)
-  if (!next || next === previous) return
-  ensureCodexTimelineTool(state, itemId, 'codex_reasoning', { title: label, kind: 'reasoning' })
-  sendCodexSyntheticToolResult(state, itemId, next, 'running', {
+  state.reasoningTextByItemId.set(sourceItemId, nextRaw)
+  const nextGroupText = codexReasoningSummaryGroupDisplayText(
+    state,
+    activityId,
+    state.reasoningTextByItemId
+  )
+  if (!nextGroupText || nextGroupText === previousGroupText) return
+  ensureCodexTimelineTool(state, activityId, 'codex_reasoning', {
+    title: label,
+    kind: 'reasoning'
+  })
+  sendCodexSyntheticToolResult(state, activityId, nextGroupText, 'running', {
     toolName: 'codex_reasoning',
     kind: 'reasoning'
   })
@@ -18375,22 +18391,29 @@ function handleCodexNotification(message: any) {
       return
     }
     if (item?.type === 'reasoning') {
-      const itemId = codexTimelineItemId(params, 'codex-reasoning')
+      const sourceItemId = codexTimelineItemId(params, 'codex-reasoning')
       const streamed = codexReasoningSummaryDisplayText(
-        state.reasoningTextByItemId.get(itemId) || ''
+        state.reasoningTextByItemId.get(sourceItemId) || ''
       )
       const summary = codexReasoningSummaryDisplayText(codexReasoningSummaryText(item.summary))
       const text = summary && summary.length >= streamed.length ? summary : streamed
       if (!text.trim()) return
-      ensureCodexTimelineTool(state, itemId, 'codex_reasoning', {
+      state.reasoningTextByItemId.set(sourceItemId, text)
+      const activityId = codexReasoningSummaryActivityId(state, state.model, sourceItemId)
+      const groupText = codexReasoningSummaryGroupDisplayText(
+        state,
+        activityId,
+        state.reasoningTextByItemId
+      )
+      ensureCodexTimelineTool(state, activityId, 'codex_reasoning', {
         title: 'Reasoning summary',
         kind: 'reasoning'
       })
-      if (text)
+      if (groupText)
         sendCodexSyntheticToolResult(
           state,
-          itemId,
-          text,
+          activityId,
+          groupText,
           item.status === 'failed' ? 'error' : 'success',
           { toolName: 'codex_reasoning', kind: 'reasoning' }
         )

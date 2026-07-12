@@ -63,6 +63,12 @@ export interface CodexRunState {
   assistantTextByItemId: Map<string, string>
   timelineStartedItemIds: Set<string>
   reasoningTextByItemId: Map<string, string>
+  /** GPT-5.6-only presentation grouping for adjacent reasoning summary items. */
+  activeReasoningSummaryGroupId?: string
+  reasoningSummaryGroupIdByItemId: Map<string, string>
+  reasoningSummaryItemIdsByGroupId: Map<string, string[]>
+  /** Visible non-reasoning output landed since the last reasoning item. */
+  thinkingChronoBreak?: boolean
   commandOutputByItemId: Map<string, string>
   filePatchByItemId: Map<string, any>
   hostRerunRequestedItemIds: Set<string>

@@ -70,6 +70,78 @@ export function codexReasoningSummaryDisplayText(value: string): string {
     .trimEnd()
 }
 
+const CODEX_56_REASONING_SUMMARY_GROUP_MODELS = new Set([
+  'gpt-5.6-sol',
+  'gpt-5.6-terra',
+  'gpt-5.6-luna',
+  'preview:openai:gpt-5.6:sol',
+  'preview:openai:gpt-5.6:terra',
+  'preview:openai:gpt-5.6:luna'
+])
+
+/**
+ * GPT-5.6 emits several short reasoning summary items back-to-back for one
+ * uninterrupted reasoning burst. Older Codex models use item boundaries as
+ * meaningful transcript boundaries, so the presentation-only grouping stays
+ * deliberately limited to Luna, Terra, and Sol.
+ */
+export function shouldGroupCodexReasoningSummaries(model: string | null | undefined): boolean {
+  return CODEX_56_REASONING_SUMMARY_GROUP_MODELS.has(
+    String(model || '')
+      .trim()
+      .toLowerCase()
+  )
+}
+
+export interface CodexReasoningSummaryGroupState {
+  activeReasoningSummaryGroupId?: string
+  reasoningSummaryGroupIdByItemId: Map<string, string>
+  reasoningSummaryItemIdsByGroupId: Map<string, string[]>
+  /** Set by the compat-output lane whenever visible non-reasoning output lands. */
+  thinkingChronoBreak?: boolean
+}
+
+/**
+ * Resolve the transcript activity that should own one decoded reasoning item.
+ * A chronology break is consumed only when a NEW item arrives; completion or
+ * duplicate notifications for an already-seen item keep targeting its original
+ * activity without stealing the break from the next item.
+ */
+export function codexReasoningSummaryActivityId(
+  state: CodexReasoningSummaryGroupState,
+  model: string | null | undefined,
+  itemId: string
+): string {
+  if (!shouldGroupCodexReasoningSummaries(model)) return itemId
+
+  const existing = state.reasoningSummaryGroupIdByItemId.get(itemId)
+  if (existing) return existing
+
+  const groupId =
+    state.activeReasoningSummaryGroupId && !state.thinkingChronoBreak
+      ? state.activeReasoningSummaryGroupId
+      : itemId
+  state.activeReasoningSummaryGroupId = groupId
+  state.reasoningSummaryGroupIdByItemId.set(itemId, groupId)
+  const itemIds = state.reasoningSummaryItemIdsByGroupId.get(groupId) || []
+  state.reasoningSummaryItemIdsByGroupId.set(groupId, [...itemIds, itemId])
+  state.thinkingChronoBreak = false
+  return groupId
+}
+
+/** Build one display value from the already-decoded summaries in a group. */
+export function codexReasoningSummaryGroupDisplayText(
+  state: CodexReasoningSummaryGroupState,
+  groupId: string,
+  textByItemId: ReadonlyMap<string, string>
+): string {
+  const itemIds = state.reasoningSummaryItemIdsByGroupId.get(groupId) || [groupId]
+  return itemIds
+    .map((itemId) => codexReasoningSummaryDisplayText(textByItemId.get(itemId) || ''))
+    .filter((text) => text.trim().length > 0)
+    .join('\n\n')
+}
+
 export function codexCommandText(command: any): string {
   if (Array.isArray(command)) return command.map(codexString).join(' ')
   return codexString(command)
