@@ -2,6 +2,14 @@ import { describe, expect, it } from 'vitest'
 import { extractProviderText, extractProviderThinkingText } from './ProviderEventText'
 
 describe('ProviderEventText thinking extraction', () => {
+  it('extracts Kimi print-mode role envelopes', () => {
+    expect(extractProviderText({ role: 'assistant', content: 'SUMMARY_OK' })).toBe('SUMMARY_OK')
+  })
+
+  it('does not treat non-assistant role envelopes as provider output', () => {
+    expect(extractProviderText({ role: 'user', content: 'Do not echo this.' })).toBe('')
+  })
+
   it('keeps Claude thinking blocks out of visible assistant text', () => {
     const event = {
       type: 'assistant',

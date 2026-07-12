@@ -81,6 +81,10 @@ export function extractProviderText(event: any): string {
   }
   if (event.type === 'assistant' || event.type === 'message' || event.type === 'message_delta')
     return contentPartsToText(event.message?.content || event.content || event.delta)
+  // Kimi CLI 1.47 print mode emits its completed assistant response as an
+  // untyped role envelope: `{ role: 'assistant', content: '...' }`. Keep this
+  // after the typed branches so a typed streaming event still uses its delta.
+  if (!event.type && event.role === 'assistant') return contentPartsToText(event.content)
   if (event.type === 'result' && typeof event.result === 'string') return event.result
   if (event.method === 'event' && params.type === 'ContentPart') return contentPartsToText(payload)
   if (params.type === 'ContentPart') return contentPartsToText(payload)
