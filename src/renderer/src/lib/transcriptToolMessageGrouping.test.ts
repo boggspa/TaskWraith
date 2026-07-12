@@ -4,7 +4,7 @@ import {
   groupAdjacentToolMessages,
   groupAdjacentToolMessagesWithRanges,
   groupFanoutLaneMessages,
-  groupFanoutLaneMessagesWithRanges,
+  groupFanoutLaneMessagesStable,
   groupedTranscriptMessageIds
 } from './transcriptToolMessageGrouping'
 import {
@@ -293,20 +293,33 @@ describe('groupFanoutLaneMessages', () => {
     ])
   })
 
-  it('reports source ranges for grouped fan-out lane rows', () => {
-    const ranges = groupFanoutLaneMessagesWithRanges([
-      textMessage('before'),
-      fanoutContentMessage('c1', 'First note.'),
-      fanoutToolMessage('t1'),
-      fanoutContentMessage('c2', 'Second note.'),
-      textMessage('after')
-    ])
+  it('reuses unchanged historical lane cards while a different lane grows', () => {
+    const firstLane = fanoutContentMessage('c1', 'First note.')
+    const otherLane = fanoutContentMessage('other-c1', 'Other lane.', {
+      runId: 'run-other',
+      metadata: {
+        ...fanoutContentMessage('base', '').metadata,
+        ensembleParticipantId: 'participant-other',
+        ensembleLaneId: 'lane-round-1-other-1',
+        ensembleRole: 'Other'
+      }
+    })
+    const initial = groupFanoutLaneMessagesStable([firstLane, otherLane])
+    const otherLaneTool = fanoutToolMessage('other-t1', {
+      runId: 'run-other',
+      metadata: {
+        ...otherLane.metadata,
+        kind: 'ensembleParticipantTools'
+      }
+    })
+    const next = groupFanoutLaneMessagesStable(
+      [firstLane, otherLane, otherLaneTool],
+      initial
+    )
 
-    expect(ranges.map((range) => [range.message.id, range.startIndex, range.endIndex])).toEqual([
-      ['before', 0, 1],
-      ['c1', 1, 4],
-      ['after', 4, 5]
-    ])
+    expect(next.output[0]).toBe(initial.output[0])
+    expect(next.output[1]).not.toBe(initial.output[1])
+    expect(next.output[1].metadata?.groupedFanoutMessageIds).toEqual(['other-c1', 'other-t1'])
   })
 
   it('keeps same-round fan-out lanes separated by lane/run identity', () => {
@@ -329,6 +342,52 @@ describe('groupFanoutLaneMessages', () => {
     expect(grouped.map((message) => message.id)).toEqual(['c1', 'c-other'])
     expect(grouped[0].metadata?.groupedFanoutMessageIds).toEqual(['c1', 't1'])
     expect(grouped[1].metadata?.groupedFanoutMessageIds).toBeUndefined()
+  })
+
+  it('keeps each fan-out lane in one first-anchored viewport across interleaved rows', () => {
+    const systemMessage: ChatMessage = {
+      id: 'system-between-lanes',
+      role: 'system',
+      content: 'Blackboard updated: risk / viewport-smoke.',
+      timestamp: '2026-06-13T00:00:01.000Z'
+    }
+    const otherLane = fanoutContentMessage('other-c1', 'Other lane first note.', {
+      runId: 'run-other',
+      metadata: {
+        ...fanoutContentMessage('base', '').metadata,
+        ensembleParticipantId: 'participant-other',
+        ensembleLaneId: 'lane-round-1-other-1',
+        ensembleRole: 'Other'
+      }
+    })
+    const otherLaneTool = fanoutToolMessage('other-t1', {
+      runId: 'run-other',
+      metadata: {
+        ...otherLane.metadata,
+        kind: 'ensembleParticipantTools'
+      }
+    })
+
+    const grouped = groupFanoutLaneMessages([
+      fanoutContentMessage('c1', 'First note.'),
+      systemMessage,
+      otherLane,
+      fanoutToolMessage('t1'),
+      otherLaneTool,
+      fanoutContentMessage('c2', 'Final note.')
+    ])
+
+    expect(grouped).toHaveLength(3)
+    expect(grouped[0].id).toBe('c1')
+    expect(grouped[1]).toBe(systemMessage)
+    expect(grouped[2].id).toBe('other-c1')
+    expect(grouped[0].metadata?.groupedFanoutMessageIds).toEqual(['c1', 't1', 'c2'])
+    expect(readEnsembleFanoutTranscriptParts(grouped[0]).map((part) => part.kind)).toEqual([
+      'content',
+      'tools',
+      'content'
+    ])
+    expect(grouped[2].metadata?.groupedFanoutMessageIds).toEqual(['other-c1', 'other-t1'])
   })
 
   it('materializes tool-only fan-out lane activity as a fan-out result card row', () => {

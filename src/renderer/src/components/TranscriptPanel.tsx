@@ -72,11 +72,11 @@ import { shouldSuppressRunCompleteSummary, type RunCompleteNotice } from '../lib
 import { formatTranscriptClock } from '../lib/dateTimeFormat'
 import { EMPTY_CHAT_MESSAGES } from '../lib/stableEmpties'
 import {
-  fanoutLaneGroupingKey,
   groupAdjacentToolMessagesWithRanges,
-  groupFanoutLaneMessagesWithRanges,
+  groupFanoutLaneMessagesStable,
   groupedTranscriptMessageIds,
   shouldGroupAdjacentToolMessages,
+  type FanoutLaneGroupingState,
   type TranscriptGroupedMessageRange
 } from '../lib/transcriptToolMessageGrouping'
 import {
@@ -771,6 +771,15 @@ function useIncrementalMessageGrouping(
   }, [groupWithRanges, messages, regroupStart, resetKey])
 }
 
+function useFanoutLaneMessageGrouping(messages: ChatMessage[]): ChatMessage[] {
+  const cacheRef = useRef<FanoutLaneGroupingState | null>(null)
+  return useMemo(() => {
+    const next = groupFanoutLaneMessagesStable(messages, cacheRef.current)
+    cacheRef.current = next
+    return next.output
+  }, [messages])
+}
+
 const toolGroupingRegroupStart = (
   messages: readonly ChatMessage[],
   changedIndex: number
@@ -778,15 +787,6 @@ const toolGroupingRegroupStart = (
   regroupStartFromChangedIndex(messages, changedIndex, (previous, next) =>
     shouldGroupAdjacentToolMessages(previous, next)
   )
-
-const fanoutGroupingRegroupStart = (
-  messages: readonly ChatMessage[],
-  changedIndex: number
-): number =>
-  regroupStartFromChangedIndex(messages, changedIndex, (previous, next) => {
-    const key = fanoutLaneGroupingKey(next)
-    return Boolean(key && key === fanoutLaneGroupingKey(previous))
-  })
 
 function ensembleRoundGroupingKey(message: ChatMessage): string | null {
   const value = message.metadata?.ensembleRoundId
@@ -2246,11 +2246,7 @@ export const TranscriptPanel = memo(
       groupAdjacentToolMessagesWithRanges,
       toolGroupingRegroupStart
     )
-    const groupedMessages = useIncrementalMessageGrouping(
-      toolGroupedMessages,
-      groupFanoutLaneMessagesWithRanges,
-      fanoutGroupingRegroupStart
-    )
+    const groupedMessages = useFanoutLaneMessageGrouping(toolGroupedMessages)
     const messageById = useMemo(() => {
       const map = new Map<string, ChatMessage>()
       for (const message of visibleMessages) {

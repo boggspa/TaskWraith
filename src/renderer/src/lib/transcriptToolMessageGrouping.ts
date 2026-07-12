@@ -273,44 +273,72 @@ function mergeFanoutLaneRun(run: ChatMessage[]): ChatMessage {
   }
 }
 
-export function groupFanoutLaneMessagesWithRanges(
-  messages: readonly ChatMessage[]
-): TranscriptGroupedMessageRange[] {
-  const grouped: TranscriptGroupedMessageRange[] = []
-  let pending: ChatMessage[] = []
-  let pendingStart = 0
-  let pendingKey: string | null = null
+export interface FanoutLaneGroupingCacheEntry {
+  sourceMessages: readonly ChatMessage[]
+  message: ChatMessage
+}
 
-  const flush = (endIndex: number): void => {
-    if (pending.length > 0) {
-      grouped.push({
-        message: mergeFanoutLaneRun(pending),
-        startIndex: pendingStart,
-        endIndex
-      })
-      pending = []
-      pendingKey = null
-    }
+export interface FanoutLaneGroupingState {
+  output: ChatMessage[]
+  groups: ReadonlyMap<string, FanoutLaneGroupingCacheEntry>
+}
+
+function sameMessageReferences(
+  previous: readonly ChatMessage[],
+  next: readonly ChatMessage[]
+): boolean {
+  return (
+    previous.length === next.length &&
+    previous.every((message, index) => message === next[index])
+  )
+}
+
+/**
+ * Fold every fragment from one fan-out lane into a single first-anchored card,
+ * even when system rows or concurrent lanes were appended between fragments.
+ * Unrelated rows retain their original relative order. The optional previous
+ * state preserves synthetic message identity for unchanged historical lanes,
+ * which keeps transcript row/measurement caches stable while a live tail grows.
+ */
+export function groupFanoutLaneMessagesStable(
+  messages: readonly ChatMessage[],
+  previous?: FanoutLaneGroupingState | null
+): FanoutLaneGroupingState {
+  const sourceGroups = new Map<string, ChatMessage[]>()
+  for (const message of messages) {
+    const key = fanoutLaneGroupingKey(message)
+    if (!key) continue
+    const group = sourceGroups.get(key)
+    if (group) group.push(message)
+    else sourceGroups.set(key, [message])
   }
 
-  for (let index = 0; index < messages.length; index += 1) {
-    const message = messages[index]
+  const groups = new Map<string, FanoutLaneGroupingCacheEntry>()
+  for (const [key, sourceMessages] of sourceGroups) {
+    const cached = previous?.groups.get(key)
+    const message =
+      cached && sameMessageReferences(cached.sourceMessages, sourceMessages)
+        ? cached.message
+        : mergeFanoutLaneRun(sourceMessages)
+    groups.set(key, { sourceMessages, message })
+  }
+
+  const output: ChatMessage[] = []
+  const emitted = new Set<string>()
+  for (const message of messages) {
     const key = fanoutLaneGroupingKey(message)
     if (!key) {
-      flush(index)
-      grouped.push({ message, startIndex: index, endIndex: index + 1 })
+      output.push(message)
       continue
     }
-    if (pendingKey && pendingKey !== key) flush(index)
-    if (pending.length === 0) pendingStart = index
-    pending.push(message)
-    pendingKey = key
+    if (emitted.has(key)) continue
+    emitted.add(key)
+    output.push(groups.get(key)?.message || message)
   }
 
-  flush(messages.length)
-  return grouped
+  return { output, groups }
 }
 
 export function groupFanoutLaneMessages(messages: ChatMessage[]): ChatMessage[] {
-  return groupFanoutLaneMessagesWithRanges(messages).map((entry) => entry.message)
+  return groupFanoutLaneMessagesStable(messages).output
 }
