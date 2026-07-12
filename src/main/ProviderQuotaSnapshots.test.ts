@@ -183,6 +183,42 @@ describe('ProviderQuotaSnapshots', () => {
     expect(snapshot.windows?.map((windowEntry) => windowEntry.remainingPercent)).toEqual([100, 100])
   })
 
+  it('normalizes Kimi weekly usage when the live response omits remaining', () => {
+    const snapshot = normalizeKimiUsageSnapshot({
+      usage: {
+        limit: '100',
+        used: '100',
+        resetTime: '2026-07-13T14:03:53.641349Z'
+      },
+      limits: [
+        {
+          window: {
+            duration: 300,
+            timeUnit: 'TIME_UNIT_MINUTE'
+          },
+          detail: {
+            limit: '100',
+            used: '60',
+            remaining: '40',
+            resetTime: '2026-07-12T16:03:53.641349Z'
+          }
+        }
+      ]
+    })
+
+    expect(snapshot.windows?.find((windowEntry) => windowEntry.label === '5H')).toMatchObject({
+      limitLabel: '40 / 100 remaining',
+      usedPercent: 60,
+      remainingPercent: 40
+    })
+    expect(snapshot.windows?.find((windowEntry) => windowEntry.label === 'Weekly')).toMatchObject({
+      limitLabel: '0 / 100 remaining',
+      usedPercent: 100,
+      remainingPercent: 0,
+      resetAt: '2026-07-13T14:03:53.641Z'
+    })
+  })
+
   describe('Claude per-family weekly probe (fable/opus shape drift)', () => {
     it('finds Fable under nested seven_day.fable', () => {
       const snapshot = normalizeClaudeUsageSnapshot({

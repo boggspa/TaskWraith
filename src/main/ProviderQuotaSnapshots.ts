@@ -335,20 +335,35 @@ function kimiQuotaWindow(
 ): NormalizedProviderUsageWindow | null {
   const record = usageRecord(detail)
   const limit = numericUsageValue(record?.limit)
-  const remaining = numericUsageValue(record?.remaining)
-  if (limit === undefined && remaining === undefined) return null
+  const reportedUsed = numericUsageValue(record?.used)
+  const reportedRemaining = numericUsageValue(record?.remaining)
+  if (limit === undefined && reportedUsed === undefined && reportedRemaining === undefined) {
+    return null
+  }
+  const usableLimit = limit !== undefined && limit > 0 ? limit : undefined
   const used =
-    limit !== undefined && remaining !== undefined
-      ? Math.max(0, Math.min(limit, limit - remaining))
-      : 0
-  const usedPercent = limit && limit > 0 ? clampPercent((used / limit) * 100) : 0
-  const remainingPercent =
-    limit && limit > 0 && remaining !== undefined
-      ? clampPercent((remaining / limit) * 100)
-      : clampPercent(100 - usedPercent)
+    reportedUsed !== undefined
+      ? usableLimit !== undefined
+        ? Math.max(0, Math.min(usableLimit, reportedUsed))
+        : Math.max(0, reportedUsed)
+      : usableLimit !== undefined && reportedRemaining !== undefined
+        ? Math.max(0, Math.min(usableLimit, usableLimit - reportedRemaining))
+        : undefined
+  // Kimi's aggregate weekly response may report `used` without a
+  // `remaining` field. Derive the complement so both response shapes keep the
+  // same honest contract: usedPercent = USED, remainingPercent = REMAINING.
+  const remaining =
+    usableLimit !== undefined && used !== undefined
+      ? Math.max(0, usableLimit - used)
+      : reportedRemaining !== undefined
+        ? Math.max(0, reportedRemaining)
+        : undefined
+  const usedPercent =
+    usableLimit !== undefined && used !== undefined ? clampPercent((used / usableLimit) * 100) : 0
+  const remainingPercent = clampPercent(100 - usedPercent)
   const limitLabel =
-    limit && remaining !== undefined
-      ? `${Math.round(remaining).toLocaleString()} / ${Math.round(limit).toLocaleString()} remaining`
+    usableLimit !== undefined && remaining !== undefined
+      ? `${Math.round(remaining).toLocaleString()} / ${Math.round(usableLimit).toLocaleString()} remaining`
       : remaining !== undefined
         ? `${Math.round(remaining).toLocaleString()} remaining`
         : `${Math.round(remainingPercent)}% remaining`
