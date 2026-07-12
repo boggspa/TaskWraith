@@ -36,6 +36,7 @@ import {
 } from './lib/scheduledEnsembleSnapshot'
 import { classifyError, redactLog } from './lib/ErrorClassifier'
 import { shouldBackfillRunStats } from './lib/RunStatsBackfill'
+import { sealOrphanExitRun } from './lib/sealOrphanExitRun'
 import { backfillRunDiffCounts, toolEvidenceFromActivities } from '../../shared/runDiffBackfill'
 import {
   TASKWRAITH_CLOSEOUT_KIND,
@@ -9397,6 +9398,29 @@ function App(): React.JSX.Element {
         getRouteChatId(payload)
       )
       if (!context) {
+        // The live run context was lost, so the normal seal below can't run —
+        // e.g. a main-process restart mid-run, or a shared codex app-server exit
+        // routed to a renderer that no longer holds this run in activeRunsRef
+        // (cf. the MCP cross-instance write-leak landmine). Stamp the matching
+        // run's terminal state by EXACT id so its footer tally, sidebar
+        // "Running" badge, and usage totals don't hang open forever. No-ops when
+        // the run is absent or already sealed; exact-id only, so a foreign
+        // main-driven run can't be spliced onto the user's in-flight run.
+        const orphanRunId = getRouteRunId(payload)
+        const orphanChatId = getRouteChatId(payload)
+        if (orphanRunId && orphanChatId) {
+          const orphanStats =
+            payload && typeof payload === 'object'
+              ? (payload as RunRouteEventPayload).stats
+              : undefined
+          updateChatById(orphanChatId, (source) =>
+            sealOrphanExitRun(source, orphanRunId, {
+              stats: orphanStats,
+              exitCode: extractExitCode(payload) ?? 0,
+              endedAt: new Date().toISOString()
+            })
+          )
+        }
         syncRunningState()
         return
       }
