@@ -8,7 +8,6 @@ import {
   type EnsembleRosterParticipantSnapshot,
   type EnsembleRosterPreset
 } from './EnsembleRosterPresetContract'
-import { selectableProviderIds } from './settings/MainSanitizers'
 import { PENDING_PROVIDER_CHANGE_KEY } from './providerChangeQueue'
 import type {
   ChatRecord,
@@ -34,7 +33,18 @@ const ASSIGNABLE_PERMISSION_PRESETS = new Set<PermissionPresetId>([
   'default'
 ])
 
-const LIVE_PROVIDERS = new Set<ProviderId>(selectableProviderIds())
+// Keep this module browser-safe: App.tsx imports the pending-roster finalizer.
+// Pulling selectableProviderIds from MainSanitizers drags main-only policy and
+// node:crypto modules into the renderer bundle. Gemini remains decode-only;
+// these are the live providers selectable for new runs.
+const LIVE_PROVIDERS = new Set<ProviderId>([
+  'codex',
+  'claude',
+  'kimi',
+  'grok',
+  'cursor',
+  'ollama'
+])
 
 export function parseSingleAgentRosterPresetExport(json: string): EnsembleRosterPreset {
   if (new TextEncoder().encode(json).byteLength > AGENT_ROSTER_IMPORT_MAX_BYTES) {
