@@ -1,6 +1,7 @@
 import { Fragment, useLayoutEffect, useRef, type RefObject } from 'react'
 import type { EnsembleParticipant } from '../../../main/store/types'
 import { tokeniseMentions } from '../lib/mentionHighlight'
+import { syncComposerHighlightMetrics, syncComposerHighlightScroll } from './composerHighlightSync'
 
 interface ComposerHighlightOverlayProps {
   value: string
@@ -31,19 +32,6 @@ interface ComposerHighlightOverlayProps {
    * like `"codex|dark|welcome"` instead of hashing into an int.
    */
   syncEpoch: string | number
-}
-
-export function composerHighlightScrollTransform(scrollLeft: number, scrollTop: number): string {
-  const x = Number.isFinite(scrollLeft) ? -scrollLeft : 0
-  const y = Number.isFinite(scrollTop) ? -scrollTop : 0
-  return `translate3d(${x}px, ${y}px, 0)`
-}
-
-export function syncComposerHighlightScroll(
-  textarea: Pick<HTMLTextAreaElement, 'scrollLeft' | 'scrollTop'>,
-  content: Pick<HTMLDivElement, 'style'>
-): void {
-  content.style.transform = composerHighlightScrollTransform(textarea.scrollLeft, textarea.scrollTop)
 }
 
 /**
@@ -179,7 +167,8 @@ export function ComposerHighlightOverlay({
      * Copy the textarea's computed glyph-positioning properties
      * onto the inner overlay content. These are the ones that affect WHERE each
      * character sits — change any of them and the two layers
-     * diverge.
+     * diverge. This includes the font's shaping controls and the
+     * whitespace/wrapping controls, not just the visible font shorthand.
      *
      * NOT copied:
      *   - `color` (textarea is transparent when has-mention-overlay
@@ -187,11 +176,11 @@ export function ComposerHighlightOverlay({
      *   - `background` (per-shell chrome stays on the textarea;
      *     overlay sits over the top with no bg)
      *   - `outline` / `box-shadow` (textarea-specific affordances)
-     *   - `text-align` / `direction` (inherit normally)
-     *
      * Border space is matched with a transparent border on the
      * content layer so its content area is inset by the same number of
-     * pixels as the textarea's (border-box accounting).
+     * pixels as the textarea's (border-box accounting). Its explicit width is
+     * based on `clientWidth`, rather than the wrapper, so a native scrollbar
+     * gutter cannot make the mirror wrap at a different character.
      */
     const syncStyles = (): void => {
       const textarea = textareaRef.current
@@ -202,29 +191,7 @@ export function ComposerHighlightOverlay({
         return
       }
       const cs = getComputedStyle(textarea)
-      content.style.fontFamily = cs.fontFamily
-      content.style.fontSize = cs.fontSize
-      content.style.fontWeight = cs.fontWeight
-      content.style.fontStyle = cs.fontStyle
-      content.style.fontVariant = cs.fontVariant
-      content.style.lineHeight = cs.lineHeight
-      content.style.letterSpacing = cs.letterSpacing
-      content.style.wordSpacing = cs.wordSpacing
-      content.style.textTransform = cs.textTransform
-      content.style.textIndent = cs.textIndent
-      content.style.paddingTop = cs.paddingTop
-      content.style.paddingRight = cs.paddingRight
-      content.style.paddingBottom = cs.paddingBottom
-      content.style.paddingLeft = cs.paddingLeft
-      content.style.boxSizing = cs.boxSizing
-      content.style.borderTopWidth = cs.borderTopWidth
-      content.style.borderRightWidth = cs.borderRightWidth
-      content.style.borderBottomWidth = cs.borderBottomWidth
-      content.style.borderLeftWidth = cs.borderLeftWidth
-      content.style.borderStyle = 'solid'
-      content.style.borderColor = 'transparent'
-      content.style.minHeight = `${Math.max(textarea.scrollHeight, textarea.clientHeight)}px`
-      syncComposerHighlightScroll(textarea, content)
+      syncComposerHighlightMetrics(textarea, content, cs)
     }
 
     const scheduleStyleSync = (): void => {

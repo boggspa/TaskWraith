@@ -2,11 +2,12 @@ import type { RefObject } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import type { EnsembleParticipant } from '../../../main/store/types'
+import { ComposerHighlightOverlay } from './ComposerHighlightOverlay'
 import {
-  ComposerHighlightOverlay,
   composerHighlightScrollTransform,
+  syncComposerHighlightMetrics,
   syncComposerHighlightScroll
-} from './ComposerHighlightOverlay'
+} from './composerHighlightSync'
 
 const textareaRef = { current: null } as RefObject<HTMLTextAreaElement | null>
 
@@ -36,6 +37,60 @@ describe('ComposerHighlightOverlay', () => {
     syncComposerHighlightScroll({ scrollLeft: 18, scrollTop: 42 }, content)
 
     expect(content.style.transform).toBe('translate3d(-18px, -42px, 0)')
+  })
+
+  it('matches the textarea client viewport when a scrollbar consumes inline space', () => {
+    const values: Record<string, string> = {
+      'box-sizing': 'border-box',
+      'border-left-width': '1px',
+      'border-right-width': '1px',
+      'border-top-width': '1px',
+      'border-bottom-width': '1px',
+      'padding-left': '8px',
+      'padding-right': '8px',
+      'padding-top': '6px',
+      'padding-bottom': '6px',
+      'font-family': 'system-ui',
+      'overflow-wrap': 'break-word',
+      'white-space': 'pre-wrap'
+    }
+    const computedStyle = {
+      boxSizing: 'border-box',
+      getPropertyValue: (property: string) => values[property] || ''
+    }
+    const style = {
+      setProperty(property: string, value: string) {
+        values[`copied:${property}`] = value
+      },
+      width: '',
+      minHeight: '',
+      borderStyle: '',
+      borderColor: '',
+      transform: ''
+    }
+    const content = { style } as unknown as Pick<HTMLDivElement, 'style'>
+
+    syncComposerHighlightMetrics(
+      {
+        clientWidth: 286,
+        clientHeight: 108,
+        scrollHeight: 240,
+        scrollLeft: 0,
+        scrollTop: 32
+      },
+      content,
+      computedStyle
+    )
+
+    // 286px is the textarea's padding box after its scrollbar gutter is
+    // removed. Adding only the two borders recreates the mirror border box;
+    // using the 294px wrapper width here would wrap at different words.
+    expect(content.style.width).toBe('288px')
+    expect(content.style.minHeight).toBe('242px')
+    expect(content.style.transform).toBe('translate3d(0px, -32px, 0)')
+    expect(values['copied:font-family']).toBe('system-ui')
+    expect(values['copied:overflow-wrap']).toBe('break-word')
+    expect(values['copied:white-space']).toBe('pre-wrap')
   })
 
   it('renders a clipping shell and translated content layer for mention text', () => {
