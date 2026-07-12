@@ -7,6 +7,7 @@ import {
   PROGRAMMATIC_SCROLL_EPSILON_PX,
   captureChatScrollState,
   expectedBottomScrollTop,
+  hasExplicitTranscriptScrollAwayIntent,
   hasRecentTranscriptDownwardIntent,
   isEditableTranscriptKeyTarget,
   isExpectedProgrammaticScroll,
@@ -20,6 +21,7 @@ import {
   shouldTreatScrollAsUserScrollAway,
   shouldAbortAutoFollowSnap,
   shouldRepinAfterFrame,
+  shouldRepinAfterScrollEvaluation,
   shouldRepinAfterCodeBlockResize,
   shouldRepinAfterTranscriptResize,
   shouldRecordScrollbarDownwardIntent,
@@ -750,6 +752,49 @@ describe('TranscriptScroll', () => {
     })
   })
 
+  describe('hasExplicitTranscriptScrollAwayIntent', () => {
+    it('accepts wheel, touch, or key ownership recorded before the scroll event', () => {
+      expect(
+        hasExplicitTranscriptScrollAwayIntent({
+          userScrolledAwayInThisFrame: true,
+          scrollbarPointerActive: false,
+          previousScrollTop: 5000,
+          nextScrollTop: 4700
+        })
+      ).toBe(true)
+    })
+
+    it('accepts an upward native scrollbar drag', () => {
+      expect(
+        hasExplicitTranscriptScrollAwayIntent({
+          userScrolledAwayInThisFrame: false,
+          scrollbarPointerActive: true,
+          previousScrollTop: 5000,
+          nextScrollTop: 4700
+        })
+      ).toBe(true)
+    })
+
+    it('does not assign layout geometry or downward scrollbar movement to the user', () => {
+      expect(
+        hasExplicitTranscriptScrollAwayIntent({
+          userScrolledAwayInThisFrame: false,
+          scrollbarPointerActive: false,
+          previousScrollTop: 5000,
+          nextScrollTop: 4700
+        })
+      ).toBe(false)
+      expect(
+        hasExplicitTranscriptScrollAwayIntent({
+          userScrolledAwayInThisFrame: false,
+          scrollbarPointerActive: true,
+          previousScrollTop: 4700,
+          nextScrollTop: 5000
+        })
+      ).toBe(false)
+    })
+  })
+
   describe('shouldAbortAutoFollowSnap', () => {
     it('uses the latest native sample when a bottom clamp outruns rAF evaluation', () => {
       // The ActivityStack collapses at the live edge and Chromium clamps the
@@ -765,7 +810,26 @@ describe('TranscriptScroll', () => {
           currentScrollTop: 4700,
           scrollHeight: 5000,
           clientHeight: 200,
-          expectedProgrammaticScrollTop: null
+          expectedProgrammaticScrollTop: null,
+          hasExplicitScrollAwayIntent: false
+        })
+      ).toBe(false)
+    })
+
+    it('does not invent scroll-away when a clamp event arrives after tail growth', () => {
+      // Chromium may coalesce the clamp until after the next participant has
+      // already grown the live edge. Both recorded samples are then stale,
+      // so geometry alone looks like a 300px upward gesture landing 100px
+      // from the bottom. With no input ownership, it is still a layout clamp.
+      expect(
+        shouldAbortAutoFollowSnap({
+          lastRecordedScrollTop: 5000,
+          lastNativeScrollTop: 5000,
+          currentScrollTop: 4700,
+          scrollHeight: 5000,
+          clientHeight: 200,
+          expectedProgrammaticScrollTop: null,
+          hasExplicitScrollAwayIntent: false
         })
       ).toBe(false)
     })
@@ -778,7 +842,8 @@ describe('TranscriptScroll', () => {
           currentScrollTop: 5200,
           scrollHeight: 5400,
           clientHeight: 200,
-          expectedProgrammaticScrollTop: null
+          expectedProgrammaticScrollTop: null,
+          hasExplicitScrollAwayIntent: false
         })
       ).toBe(false)
     })
@@ -791,7 +856,8 @@ describe('TranscriptScroll', () => {
           currentScrollTop: 4700,
           scrollHeight: 5400,
           clientHeight: 200,
-          expectedProgrammaticScrollTop: null
+          expectedProgrammaticScrollTop: null,
+          hasExplicitScrollAwayIntent: true
         })
       ).toBe(true)
     })
@@ -804,7 +870,8 @@ describe('TranscriptScroll', () => {
           currentScrollTop: 4700,
           scrollHeight: 5400,
           clientHeight: 200,
-          expectedProgrammaticScrollTop: 4700
+          expectedProgrammaticScrollTop: 4700,
+          hasExplicitScrollAwayIntent: true
         })
       ).toBe(false)
     })
@@ -817,7 +884,51 @@ describe('TranscriptScroll', () => {
           currentScrollTop: 5180,
           scrollHeight: 5400,
           clientHeight: 200,
-          expectedProgrammaticScrollTop: null
+          expectedProgrammaticScrollTop: null,
+          hasExplicitScrollAwayIntent: true
+        })
+      ).toBe(false)
+    })
+  })
+
+  describe('shouldRepinAfterScrollEvaluation', () => {
+    it('re-pins a followed viewport when a settled clamp is now behind the live edge', () => {
+      expect(
+        shouldRepinAfterScrollEvaluation({
+          autoFollow: true,
+          userScrolledAwayInThisFrame: false,
+          jumpInFlight: false,
+          distanceFromBottom: STICK_DISENGAGE_PX + 68
+        })
+      ).toBe(true)
+    })
+
+    it('does not fight explicit scroll-away or a jump-to-latest flight', () => {
+      expect(
+        shouldRepinAfterScrollEvaluation({
+          autoFollow: false,
+          userScrolledAwayInThisFrame: true,
+          jumpInFlight: false,
+          distanceFromBottom: 100
+        })
+      ).toBe(false)
+      expect(
+        shouldRepinAfterScrollEvaluation({
+          autoFollow: true,
+          userScrolledAwayInThisFrame: false,
+          jumpInFlight: true,
+          distanceFromBottom: 100
+        })
+      ).toBe(false)
+    })
+
+    it('leaves harmless near-edge jitter alone', () => {
+      expect(
+        shouldRepinAfterScrollEvaluation({
+          autoFollow: true,
+          userScrolledAwayInThisFrame: false,
+          jumpInFlight: false,
+          distanceFromBottom: STICK_DISENGAGE_PX
         })
       ).toBe(false)
     })

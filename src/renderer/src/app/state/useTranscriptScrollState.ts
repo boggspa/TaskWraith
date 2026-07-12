@@ -5,16 +5,17 @@ import {
   STICK_ENGAGE_PX,
   captureChatScrollState,
   expectedBottomScrollTop,
+  hasExplicitTranscriptScrollAwayIntent,
   hasRecentTranscriptDownwardIntent,
   isEditableTranscriptKeyTarget,
   isExpectedProgrammaticScroll,
   isTranscriptScrollbarPointer,
   restoreChatScrollStateWhenReady,
   shouldAbortAutoFollowSnap,
-  shouldDisengageAutoFollow,
   shouldReengageAutoFollowAfterScroll,
   shouldRepinAfterCodeBlockResize,
   shouldRepinAfterFrame,
+  shouldRepinAfterScrollEvaluation,
   shouldRepinAfterTranscriptResize,
   shouldRecordScrollbarDownwardIntent,
   shouldClearScrollbarDownwardIntent,
@@ -204,7 +205,13 @@ export function useTranscriptScrollState({
           currentScrollTop: nextScrollTop,
           scrollHeight: scroller.scrollHeight,
           clientHeight: scroller.clientHeight,
-          expectedProgrammaticScrollTop: programmaticScrollTargetRef.current
+          expectedProgrammaticScrollTop: programmaticScrollTargetRef.current,
+          hasExplicitScrollAwayIntent: hasExplicitTranscriptScrollAwayIntent({
+            userScrolledAwayInThisFrame: userScrolledAwayInFrameRef.current,
+            scrollbarPointerActive: scrollbarPointerActiveRef.current,
+            previousScrollTop: lastNativeScrollTopRef.current,
+            nextScrollTop
+          })
         })
       ) {
         return false
@@ -298,12 +305,18 @@ export function useTranscriptScrollState({
           // edge. Complete the gesture so the user is actually pinned.
           snapScrollToBottom(scroller)
         }
-      } else if (!jumpInFlightRef.current && shouldDisengageAutoFollow(distanceFromBottom)) {
-        // Positional disengage — suppressed while a jump-to-latest flight
-        // owns the descent (its intermediate positions are far from the
-        // bottom by construction; user gestures cancel the flight via the
-        // intent/scroll-away paths below and re-enable this branch).
-        autoFollowRef.current = false
+      } else if (
+        shouldRepinAfterScrollEvaluation({
+          autoFollow: autoFollowRef.current,
+          userScrolledAwayInThisFrame: userScrolledAwayInFrameRef.current,
+          jumpInFlight: jumpInFlightRef.current,
+          distanceFromBottom
+        })
+      ) {
+        // Layout clamps and subsequent tail growth can leave a pinned viewport
+        // behind without any user gesture. Preserve app ownership and close
+        // that gap; explicit input handlers have already disabled follow.
+        snapScrollToBottom(scroller)
       }
       lastTranscriptScrollTopRef.current = nextScrollTop
     }
@@ -333,10 +346,17 @@ export function useTranscriptScrollState({
       ) {
         downwardIntentAtRef.current = 0
       }
+      const hasExplicitScrollAwayIntent = hasExplicitTranscriptScrollAwayIntent({
+        userScrolledAwayInThisFrame: userScrolledAwayInFrameRef.current,
+        scrollbarPointerActive: scrollbarPointerActiveRef.current,
+        previousScrollTop: previousNativeScrollTop,
+        nextScrollTop
+      })
       lastNativeScrollTopRef.current = nextScrollTop
       if (
+        hasExplicitScrollAwayIntent &&
         shouldTreatScrollAsUserScrollAway({
-          previousScrollTop: lastTranscriptScrollTopRef.current,
+          previousScrollTop: previousNativeScrollTop,
           nextScrollTop,
           distanceFromBottom: scroller.scrollHeight - nextScrollTop - scroller.clientHeight,
           isProgrammatic: expectedProgrammatic

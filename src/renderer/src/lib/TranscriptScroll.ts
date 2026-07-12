@@ -471,6 +471,26 @@ export function shouldTreatScrollAsUserScrollAway(input: {
 }
 
 /**
+ * Scroll geometry is shared by user gestures and browser-owned layout clamps.
+ * Only input paths that TaskWraith can attribute to the user may disengage a
+ * pinned transcript. Wheel/touch/key handlers set the frame flag directly;
+ * native scrollbar drags are attributed while their pointer remains active.
+ */
+export function hasExplicitTranscriptScrollAwayIntent(input: {
+  userScrolledAwayInThisFrame: boolean
+  scrollbarPointerActive: boolean
+  previousScrollTop: number
+  nextScrollTop: number
+}): boolean {
+  if (input.userScrolledAwayInThisFrame) return true
+  if (!input.scrollbarPointerActive) return false
+  if (!Number.isFinite(input.previousScrollTop) || !Number.isFinite(input.nextScrollTop)) {
+    return false
+  }
+  return input.nextScrollTop < input.previousScrollTop - 0.5
+}
+
+/**
  * Synchronous DOM guard for layout-effect and rAF snap paths. The scroll
  * listener coalesces its evaluate pass, so `autoFollowRef` can still read
  * "follow" when a committed message update runs before the listener has
@@ -486,7 +506,9 @@ export function shouldAbortAutoFollowSnap(input: {
   scrollHeight: number
   clientHeight: number
   expectedProgrammaticScrollTop: number | null | undefined
+  hasExplicitScrollAwayIntent: boolean
 }): boolean {
+  if (!input.hasExplicitScrollAwayIntent) return false
   const distanceFromBottom =
     input.scrollHeight - input.currentScrollTop - input.clientHeight
   const isProgrammatic = isExpectedProgrammaticScroll({
@@ -508,6 +530,24 @@ export function shouldAbortAutoFollowSnap(input: {
     distanceFromBottom,
     isProgrammatic
   })
+}
+
+/**
+ * A scroll event caused by live-edge layout churn can be evaluated after the
+ * next transcript row has already grown the tail. If follow is still owned by
+ * the app and no user-away intent exists, distance from the bottom is a signal
+ * to re-pin — never a reason to silently hand ownership to a layout clamp.
+ */
+export function shouldRepinAfterScrollEvaluation(input: {
+  autoFollow: boolean
+  userScrolledAwayInThisFrame: boolean
+  jumpInFlight: boolean
+  distanceFromBottom: number
+}): boolean {
+  if (!input.autoFollow) return false
+  if (input.userScrolledAwayInThisFrame) return false
+  if (input.jumpInFlight) return false
+  return shouldDisengageAutoFollow(input.distanceFromBottom)
 }
 
 /**
