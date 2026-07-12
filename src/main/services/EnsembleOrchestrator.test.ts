@@ -1902,6 +1902,110 @@ describe('EnsembleOrchestrator', () => {
     expect(result.error).toBe('second_in_command_standby')
   })
 
+  // ---- C1 — quota-aware Captain failover -----------------------------------
+  // A hard provider quota wall finalizes as an ANSWERED Boss turn whose wall
+  // text is content (not lastFailureReason), so the status checks miss it.
+  // primaryBossUnavailable must flip the Boss soft-unavailable so Captain can
+  // take authority — from the Boss's OWN terminal only (G1c), a template/envelope
+  // classifier (G1), and WITHOUT disturbing worker roster order (soft-scope,
+  // Captain G1b-v2).
+  const startC1Harness = async () => {
+    const chat = makeChat()
+    chat.ensemble!.participants = [
+      { ...chat.ensemble!.participants[0], order: 2 }, // claude = Boss (2nd)
+      { ...chat.ensemble!.participants[1], order: 1 } // codex = Captain (1st ⇒ the caller run)
+    ]
+    chat.ensemble!.bossmanParticipantId = 'claude'
+    chat.ensemble!.secondInCommandParticipantId = 'codex'
+    chat.ensemble!.bossmanAutoApprovals = {
+      enabled: true,
+      mode: 'permission_preset_once',
+      confirmedAt: '2026-05-24T00:00:00.000Z'
+    }
+    const harness = makeHarness({ initialChat: chat })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Continue.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    expect(harness.dispatched[0].ensembleRun?.participantId).toBe('codex')
+    const roundId = harness.chat.ensemble!.activeRound!.roundId
+    // Simulate the Boss having taken a terminal turn this round.
+    harness.chat.ensemble!.activeRound!.participants.find(
+      (p) => p.participantId === 'claude'
+    )!.status = 'answered'
+    return { harness, roundId, captainRunId: harness.dispatched[0].appRunId }
+  }
+
+  const pushParticipantTerminal = (
+    harness: Awaited<ReturnType<typeof startC1Harness>>['harness'],
+    roundId: string,
+    participantId: string,
+    content: string
+  ) => {
+    harness.chat.messages.push({
+      id: `terminal-${participantId}-${harness.chat.messages.length}`,
+      role: 'assistant',
+      content,
+      timestamp: '2026-07-12T00:00:00.000Z',
+      metadata: {
+        kind: 'ensembleParticipant',
+        ensembleRoundId: roundId,
+        ensembleParticipantId: participantId
+      }
+    })
+  }
+
+  it('C1: a quota-walled Boss makes Captain the resolved authority', async () => {
+    const { harness, roundId, captainRunId } = await startC1Harness()
+    pushParticipantTerminal(harness, roundId, 'claude', "You've hit your limit · resets Jul 14")
+    const listed = harness.orchestrator.listParticipantsForRun(captainRunId)
+    expect(listed.bossmanAuthorityRole).toBe('second_in_command')
+    expect(listed.bossmanPrimaryUnavailableReason).toContain('quota wall')
+  })
+
+  it('C1 (pin): a healthy answered Boss keeps Captain in standby (unchanged)', async () => {
+    const { harness, roundId, captainRunId } = await startC1Harness()
+    pushParticipantTerminal(harness, roundId, 'claude', 'On it — WriteMain owns C1.')
+    const listed = harness.orchestrator.listParticipantsForRun(captainRunId)
+    expect(listed.bossmanAuthorityRole).toBeUndefined()
+    // The exact standby error is unchanged on the authority-gated path.
+    const edit = await harness.orchestrator.rosterEditForRun(captainRunId, {
+      action: 'edit_participant',
+      targetParticipantId: 'claude',
+      participant: { role: 'Primary' }
+    })
+    expect(edit.ok).toBe(false)
+    expect(edit.error).toBe('second_in_command_standby')
+  })
+
+  it('C1 G1: Boss prose mentioning "quota"/"resets" does NOT flip authority', async () => {
+    const { harness, roundId, captainRunId } = await startC1Harness()
+    pushParticipantTerminal(harness, roundId, 'claude', 'Let me check when the quota resets before we continue.')
+    expect(harness.orchestrator.listParticipantsForRun(captainRunId).bossmanAuthorityRole).toBeUndefined()
+  })
+
+  it('C1 G1c: a PEER quoting the wall does not flip Boss authority', async () => {
+    const { harness, roundId, captainRunId } = await startC1Harness()
+    pushParticipantTerminal(harness, roundId, 'codex', "You've hit your limit · resets Jul 14") // peer quotes it
+    pushParticipantTerminal(harness, roundId, 'claude', 'Proceeding — Captain, review C1.') // Boss healthy
+    expect(harness.orchestrator.listParticipantsForRun(captainRunId).bossmanAuthorityRole).toBeUndefined()
+  })
+
+  it('C1 soft-scope: a quota-walled Boss does NOT reorder the worker roster', async () => {
+    const { harness, roundId, captainRunId } = await startC1Harness()
+    const before = harness.orchestrator
+      .listParticipantsForRun(captainRunId)
+      .participants?.map((p) => `${p.id}:${p.order}`)
+    pushParticipantTerminal(harness, roundId, 'claude', "You've hit your limit · resets Jul 14")
+    const after = harness.orchestrator.listParticipantsForRun(captainRunId)
+    // Authority flipped (soft-scope consumer) ...
+    expect(after.bossmanAuthorityRole).toBe('second_in_command')
+    // ... but the ordered roster the worker scheduler reads is byte-identical.
+    expect(after.participants?.map((p) => `${p.id}:${p.order}`)).toEqual(before)
+  })
+
   it('allows Captain roster edit when Boss is disabled for the round', async () => {
     const chat = makeChat()
     chat.ensemble!.participants = [

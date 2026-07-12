@@ -53,7 +53,13 @@ const PROVIDER_RULES: Partial<Record<ProviderId, ProviderRule>> = {
       /rate_limit_error/i, // Anthropic 429 error.type
       /overloaded_error/i, // Anthropic 529 (capacity); treated as a transient wall
       /Claude AI usage limit reached\|\d{10}/i, // -p/stream-json stdout form, epoch reset
-      /Claude usage limit reached/i // interactive OAuth/subscription form
+      /Claude usage limit reached/i, // interactive OAuth/subscription form
+      // C1 — Claude subscription / "Fable" weekly wall, e.g.
+      // "You've hit your limit · resets Jul 14". Envelope-anchored per Captain
+      // G1: requires the distinctive opener AND a nearby reset token, so bare
+      // "quota"/"resets" prose (or a peer quoting the phrase) never trips it.
+      // Straight + curly apostrophe.
+      /You['’]ve hit your limit[\s\S]{0,64}reset/i
     ]
   },
   codex: {

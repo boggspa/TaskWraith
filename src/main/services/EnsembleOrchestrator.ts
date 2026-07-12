@@ -19,6 +19,7 @@ import {
   providerLabel,
   resolveForegroundSynthesizerParticipantId
 } from '../EnsemblePrompt'
+import { evaluateBossQuotaSoftUnavailable } from '../BossQuotaSoftUnavailable'
 import type {
   ActiveGoal,
   ActiveGoalStatus,
@@ -8008,6 +8009,28 @@ export class EnsembleOrchestrator {
             state.lastFailureReason ||
             state.reason ||
             `${rosterBoss.role || providerLabel(rosterBoss.provider)} is ${state.status}`,
+          liveBossmanParticipantId: bossmanParticipantId
+        }
+      }
+      // C1 — quota-aware soft failover. A hard provider quota wall finalizes as
+      // an ANSWERED turn (finalizeRun) whose wall text is the assistant CONTENT,
+      // not lastFailureReason, so the status checks above miss the lived Boss
+      // wall. The SHARED pure evaluator (also used by the index auto-approval
+      // twin, so the two paths cannot drift) reads the Boss's OWN latest terminal
+      // and classifies it. Folding it in HERE means both consumers of THIS method
+      // — resolveBossAuthorityForCaller and @-mention priority routing — see the
+      // signal, while worker routing (which never calls this method) stays
+      // untouched (soft-scope invariant, Captain G1b-v2). Purely derived from the
+      // current terminal ⇒ non-sticky (a later healthy turn restores it).
+      if (
+        evaluateBossQuotaSoftUnavailable(chat, round.roundId, {
+          id: bossmanParticipantId,
+          provider: rosterBoss.provider
+        })
+      ) {
+        return {
+          unavailable: true,
+          reason: `${rosterBoss.role || providerLabel(rosterBoss.provider)} hit a provider quota wall`,
           liveBossmanParticipantId: bossmanParticipantId
         }
       }

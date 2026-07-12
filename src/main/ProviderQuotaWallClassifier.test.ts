@@ -21,6 +21,13 @@ describe('classifyProviderQuotaWall — real provider 429/quota bodies', () => {
     expect(v.resetHintAt).toBe(new Date(futureEpoch * 1000).toISOString())
   })
 
+  it('claude subscription/Fable weekly wall ("You\'ve hit your limit · resets <date>")', () => {
+    // The lived General/Boss wall this whole control-plane goal exists to catch.
+    expect(classifyProviderQuotaWall('claude', "You've hit your limit · resets Jul 14").hit).toBe(true)
+    // Curly-apostrophe variant (subscription UIs routinely render U+2019).
+    expect(classifyProviderQuotaWall('claude', 'You’ve hit your limit — resets on Monday').hit).toBe(true)
+  })
+
   it('codex insufficient_quota (billing wall)', () => {
     const body =
       '{"error":{"message":"You exceeded your current quota, please check your plan and billing details.","type":"insufficient_quota","code":"insufficient_quota"}}'
@@ -96,6 +103,19 @@ describe('classifyProviderQuotaWall — fails closed (no false positives)', () =
     expect(classifyProviderQuotaWall('claude', '').hit).toBe(false)
     expect(classifyProviderQuotaWall('claude', undefined).hit).toBe(false)
     expect(classifyProviderQuotaWall('codex', 'ENOENT: command not found: codex').hit).toBe(false)
+  })
+
+  it('C1 G1 — bare "quota"/"resets"/"limit" prose does NOT flip (no bare-substring match)', () => {
+    // Ordinary Boss prose that merely mentions the words — the exact false
+    // positive Captain G1 forbids, and this transcript is full of it.
+    for (const prose of [
+      'Let me check when the team quota resets before we continue.',
+      "You've hit your limit of patience with this flaky test", // opener but no reset envelope
+      'The required gate is a blocker; it resets nothing on its own.',
+      'We should watch the weekly limit and quota so nobody walls.'
+    ]) {
+      expect(classifyProviderQuotaWall('claude', prose).hit).toBe(false)
+    }
   })
 })
 

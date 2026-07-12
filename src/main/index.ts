@@ -396,6 +396,7 @@ import {
   type RequestMainApprovalDeps
 } from './run/ApprovalOrchestration'
 import { classifyProviderQuotaWall } from './ProviderQuotaWallClassifier'
+import { evaluateBossQuotaSoftUnavailable } from './BossQuotaSoftUnavailable'
 import { isNonEscalatingPreset, reroutePresetId } from './RerouteFailoverPosture'
 import {
   runProviderAutoFailover,
@@ -8872,8 +8873,12 @@ function ensembleApprovalContext(
 }
 
 function bossmanAutoApprovalPrimaryState(
-  ensemble: NonNullable<ChatRecord['ensemble']>
+  chat: ChatRecord
 ): { unavailable: boolean; reason?: string } {
+  const ensemble = chat.ensemble
+  if (!ensemble) {
+    return { unavailable: true, reason: 'no Ensemble is configured' }
+  }
   const bossmanParticipantId = ensemble.bossmanParticipantId
   if (!bossmanParticipantId) {
     return { unavailable: true, reason: 'no Boss is assigned' }
@@ -8904,6 +8909,21 @@ function bossmanAutoApprovalPrimaryState(
         reason: state.lastFailureReason || state.reason || `${boss.role || boss.provider} is ${state.status}`
       }
     }
+    // C1 — quota-aware soft failover, twin of
+    // EnsembleOrchestrator.primaryBossUnavailable. Same SHARED pure evaluator so
+    // the two authority-resolution paths cannot drift (Captain G1b-v2). Boss's
+    // OWN terminal only (G1c); template/envelope classifier (G1); non-sticky.
+    if (
+      evaluateBossQuotaSoftUnavailable(chat, round.roundId, {
+        id: bossmanParticipantId,
+        provider: boss.provider
+      })
+    ) {
+      return {
+        unavailable: true,
+        reason: `${boss.role || boss.provider} hit a provider quota wall`
+      }
+    }
   }
   return { unavailable: false }
 }
@@ -8930,9 +8950,10 @@ function bossmanAutoApprovalMetadata(input: {
   const { session, ensembleRun, service, request, effectivePermissions, policy, decision } = input
   if (!session || !ensembleRun) return null
   const chatId = session.state?.appChatId
-  const ensemble = (chatId ? AppStore.getChat(chatId) : null)?.ensemble
-  if (!ensemble) return null
-  const primary = bossmanAutoApprovalPrimaryState(ensemble)
+  const chat = chatId ? AppStore.getChat(chatId) : null
+  if (!chat?.ensemble) return null
+  const ensemble = chat.ensemble
+  const primary = bossmanAutoApprovalPrimaryState(chat)
   // The security-critical guard logic lives in the pure, unit-tested
   // `evaluateBossmanAutoApproval`. This wrapper only resolves the live
   // session/chat and forwards the relevant facts.
