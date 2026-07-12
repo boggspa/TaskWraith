@@ -16,6 +16,7 @@ import {
   isPlanAdvertisedTool,
   isReadOnlyAdvertisedTool
 } from './McpAutoAllowedTools'
+import { isExactReviewerVerdictInvocation } from '../ReviewerVerdictInvocation'
 import {
   gatewayToolDefinitions,
   isCapabilityGatewayToolName,
@@ -732,8 +733,29 @@ export function handleMcpJsonRpcMessage(
     const planSubset =
       (deps.env?.TASKWRAITH_MCP_PLAN_SUBSET ?? process.env.TASKWRAITH_MCP_PLAN_SUBSET) === '1'
     const isAdvertisedForSeat = planSubset ? isPlanAdvertisedTool : isReadOnlyAdvertisedTool
+    // C2b-ii-c (G-SINGLE / G-ADVERTISE) — arg-scoped exact reviewer-verdict exception.
+    // The ONLY ensemble_bossman_control invocation a read-only/plan bridge seat may run
+    // through tools/call is the EXACT {action:'submit_review_verdict', gateId, verdict}
+    // payload, delegated to the ONE shared classifier (never re-inlined). It is NEVER
+    // added to any advertised / auto-allowed / tools-list / derived membership set — this
+    // is a per-invocation ARG check, not an advertise change (advertise != execute). A
+    // DIRECT call classifies the OUTER arguments; a capability_invoke classifies the
+    // INNER target arguments (args.arguments). Absent/malformed inner args ⇒ the
+    // classifier sees a non-object ⇒ FALSE ⇒ fail-closed (rejected below). Every other
+    // bossman action / extra key / near-miss stays name-only-rejected exactly as before.
+    const reviewerVerdictArgs = gatewayInvocationTarget?.ok
+      ? isRecord(args)
+        ? (args as Record<string, unknown>).arguments
+        : undefined
+      : args
+    const isExactReviewerVerdictCall = isExactReviewerVerdictInvocation(
+      String(policyToolName),
+      reviewerVerdictArgs
+    )
     const safeScopedToolAllowed =
-      name === 'capability_search' || isAdvertisedForSeat(String(policyToolName))
+      name === 'capability_search' ||
+      isAdvertisedForSeat(String(policyToolName)) ||
+      isExactReviewerVerdictCall
     if (safeSubsetOnly && !safeScopedToolAllowed && !auditToolRequested) {
       bridgeLog(
         `tools/call REJECTED (${planSubset ? 'plan' : 'read-only'} scope) ` +

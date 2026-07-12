@@ -1,3 +1,5 @@
+import { isExactReviewerVerdictInvocation } from '../ReviewerVerdictInvocation'
+
 export const CAPABILITY_SEARCH_TOOL_NAME = 'capability_search' as const
 export const CAPABILITY_INVOKE_TOOL_NAME = 'capability_invoke' as const
 
@@ -951,7 +953,19 @@ export function resolveGatewayInvocation(
     }
   }
   const eligibleNames = normalizedEligibleNames(request.eligibleToolNames)
-  if (!eligibleNames.has(name)) {
+  // C2b-ii-d (G-SINGLE) — arg-scoped gateway-eligibility exception for the ONE exact
+  // reviewer verdict. ensemble_bossman_control is a DIRECT tool (excluded from the
+  // hidden/eligible set = full − direct), so a read-only/plan capability_invoke would
+  // die here as ineligible_target even for a gate's own reviewer reconciling its own
+  // gate. Delegated to the ONE shared classifier (never re-inlined): ONLY canonical
+  // ensemble_bossman_control with the exact {action:'submit_review_verdict', gateId,
+  // verdict} inner payload bypasses the eligibility membership check. Any other action /
+  // extra key / near-miss / non-object fails CLOSED via the classifier → normal
+  // ineligible_target. This relaxes ELIGIBILITY ONLY — the target must still resolve
+  // (unknown_target above is untouched), args must still be an object (isRecord below),
+  // and validateGatewayToolArguments (schema / route / lineage) still runs; no advertise
+  // / auto-allow / direct / hidden set is widened.
+  if (!eligibleNames.has(name) && !isExactReviewerVerdictInvocation(name, request.arguments)) {
     return {
       ok: false,
       code: 'ineligible_target',

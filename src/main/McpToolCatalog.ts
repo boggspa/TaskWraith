@@ -2258,7 +2258,8 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
               'clear_goal',
               'adjust_hops',
               'ensemble_scheduled_wakeup',
-              'check_quota_resets'
+              'check_quota_resets',
+              'submit_review_verdict'
             ]
           },
           roundId: {
@@ -2337,6 +2338,12 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
           reviewStatus: {
             type: 'string',
             enum: ['required', 'passed', 'failed', 'waived']
+          },
+          verdict: {
+            type: 'string',
+            enum: ['passed', 'failed'],
+            description:
+              'For submit_review_verdict: a gate reviewer records passed or failed on their own review gate. Distinct from reviewStatus, which is the Boss set_review_gate field.'
           },
           category: {
             type: 'string',

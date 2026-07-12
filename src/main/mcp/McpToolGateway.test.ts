@@ -483,3 +483,109 @@ describe('resolveGatewayInvocation', () => {
     ).toMatchObject({ ok: false, code: 'invalid_target_schema' })
   })
 })
+
+describe('C2b-ii-d gateway reviewer-verdict eligibility exception', () => {
+  // Schema that ACCEPTS the exact reviewer verdict (submit_review_verdict in the action
+  // enum + verdict declared) — proves the resolver's eligibility bypass in isolation.
+  const acceptingBossmanSchema = {
+    type: 'object',
+    properties: {
+      action: {
+        type: 'string',
+        enum: ['set_goal', 'quarantine_participant', 'set_review_gate', 'submit_review_verdict']
+      },
+      gateId: { type: 'string' },
+      verdict: { type: 'string', enum: ['passed', 'failed'] }
+    },
+    additionalProperties: false
+  }
+  // Schema mirroring the LIVE catalogue (McpToolCatalog action enum has NO
+  // submit_review_verdict / verdict) — proves the schema gate is preserved after the
+  // eligibility bypass and documents the out-of-lane ii-e (catalogue schema) blocker.
+  const liveLikeBossmanSchema = {
+    type: 'object',
+    properties: {
+      action: { type: 'string', enum: ['set_goal', 'quarantine_participant', 'set_review_gate'] },
+      gateId: { type: 'string' }
+    }
+  }
+  const defs = (bossmanSchema: Record<string, unknown> | null): GatewayToolDefinition[] => [
+    ...(bossmanSchema
+      ? [{ name: 'ensemble_bossman_control', inputSchema: bossmanSchema } as GatewayToolDefinition]
+      : []),
+    { name: 'read_file', inputSchema: { type: 'object', properties: { path: { type: 'string' } } } }
+  ]
+  const exact = (verdict: 'passed' | 'failed') => ({
+    action: 'submit_review_verdict',
+    gateId: 'g1',
+    verdict
+  })
+  const resolve = (
+    name: string,
+    args: unknown,
+    definitions: GatewayToolDefinition[],
+    eligible: string[]
+  ) => resolveGatewayInvocation({ name, arguments: args, definitions, eligibleToolNames: eligible })
+
+  it('P-D: exact reviewer-verdict resolves ok despite bossman being INELIGIBLE (both verdicts)', () => {
+    for (const verdict of ['passed', 'failed'] as const) {
+      const res = resolve('ensemble_bossman_control', exact(verdict), defs(acceptingBossmanSchema), [
+        'read_file'
+      ])
+      expect(res.ok, verdict).toBe(true)
+      if (res.ok) expect(res.name).toBe('ensemble_bossman_control')
+    }
+  })
+
+  it('D-SCHEMA: eligibility bypass does NOT bypass schema validation (documents the live-catalogue ii-e blocker)', () => {
+    // Bossman resolves + eligibility is bypassed, but a schema WITHOUT submit_review_verdict
+    // in the action enum (mirroring the live catalogue) still rejects at validation.
+    const res = resolve('ensemble_bossman_control', exact('passed'), defs(liveLikeBossmanSchema), [
+      'read_file'
+    ])
+    expect(res.ok).toBe(false)
+    if (!res.ok) expect(res.code).toBe('target_argument_validation_failed')
+  })
+
+  it('N-D: non-exact / near-miss bossman payloads stay ineligible_target (classifier fail-closed)', () => {
+    const nearMisses: unknown[] = [
+      undefined,
+      {},
+      { action: 'submit_review_verdict', gateId: 'g1' },
+      { action: 'submit_review_verdict', verdict: 'passed' },
+      { action: 'submit_review_verdict', gateId: '   ', verdict: 'passed' },
+      { action: 'submit_review_verdict', gateId: 'g1', verdict: 'waived' },
+      { action: 'submit_review_verdict', gateId: 'g1', verdict: 'passed', reason: 'x' },
+      { action: 'set_goal', gateId: 'g1', verdict: 'passed' },
+      { action: 'quarantine_participant', gateId: 'g1', verdict: 'passed' },
+      { action: 'set_review_gate', gateId: 'g1', verdict: 'passed' },
+      'not-an-object'
+    ]
+    for (const args of nearMisses) {
+      const res = resolve('ensemble_bossman_control', args, defs(acceptingBossmanSchema), ['read_file'])
+      const label = JSON.stringify(args) ?? 'undefined'
+      expect(res.ok, label).toBe(false)
+      if (!res.ok) expect(res.code, label).toBe('ineligible_target')
+    }
+  })
+
+  it('N-D: an exact-looking payload on a DIFFERENT (non-bossman) tool stays ineligible_target', () => {
+    // read_file resolves but is NOT eligible here; the classifier is tool-scoped to bossman.
+    const res = resolve('read_file', exact('passed'), defs(acceptingBossmanSchema), [])
+    expect(res.ok).toBe(false)
+    if (!res.ok) expect(res.code).toBe('ineligible_target')
+  })
+
+  it('N-D: unknown target still fails unknown_target BEFORE eligibility (guard order preserved)', () => {
+    // No bossman definition present ⇒ the exact payload must still hit unknown_target,
+    // proving the bypass did not disturb the definition-resolution guard order.
+    const res = resolve('ensemble_bossman_control', exact('passed'), defs(null), ['read_file'])
+    expect(res.ok).toBe(false)
+    if (!res.ok) expect(res.code).toBe('unknown_target')
+  })
+
+  it('control: an eligible non-bossman tool still resolves normally (floor unchanged)', () => {
+    const res = resolve('read_file', { path: 'README.md' }, defs(acceptingBossmanSchema), ['read_file'])
+    expect(res.ok).toBe(true)
+  })
+})
