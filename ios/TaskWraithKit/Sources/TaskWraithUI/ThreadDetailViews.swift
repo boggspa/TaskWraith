@@ -1003,6 +1003,7 @@ struct ThreadDetailView: View {
             .padding(.top, 4)
             .padding(.bottom, 6)
             .background(TWTheme.appBg.opacity(0.94))
+            .transition(ComposerMotion.cardPresence(reduceMotion: reduceMotion))
         }
     }
 
@@ -1236,6 +1237,9 @@ struct ThreadDetailView: View {
                             .listRowInsets(EdgeInsets(top: 2, leading: 12, bottom: 2, trailing: 12))
                             .listRowBackground(Color.clear)
                             .listRowSeparator(.hidden)
+                            .animation(
+                                ComposerMotion.inlineAnimation(reduceMotion: reduceMotion),
+                                value: prompt.id)
                         }
                     } else {
                         ForEach(
@@ -1261,6 +1265,9 @@ struct ThreadDetailView: View {
                             .listRowInsets(EdgeInsets(top: 2, leading: 12, bottom: 2, trailing: 12))
                             .listRowBackground(Color.clear)
                             .listRowSeparator(.hidden)
+                            .animation(
+                                ComposerMotion.inlineAnimation(reduceMotion: reduceMotion),
+                                value: pair.element.id)
                         }
                     }
                 }
@@ -1317,7 +1324,7 @@ struct ThreadDetailView: View {
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("Jump to latest messages")
-                    .transition(.scale.combined(with: .opacity))
+                    .transition(ComposerMotion.floatingChipTransition(reduceMotion: reduceMotion))
                 }
                 #if canImport(UIKit)
                     if keyboardVisible {
@@ -1328,7 +1335,7 @@ struct ThreadDetailView: View {
                         }
                         .buttonStyle(.plain)
                         .accessibilityLabel("Dismiss keyboard")
-                        .transition(.scale.combined(with: .opacity))
+                        .transition(ComposerMotion.floatingChipTransition(reduceMotion: reduceMotion))
                     }
                 #endif
             }
@@ -4072,6 +4079,7 @@ private struct QueuedMessageBubbleRow: View {
     let onBlackboard: (() -> Void)?
     let onEdit: () -> Void
     let onRemove: () -> Void
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
@@ -4136,6 +4144,7 @@ private struct QueuedMessageBubbleRow: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.vertical, 2)
+        .transition(ComposerMotion.cardPresence(reduceMotion: reduceMotion, edge: .bottom))
     }
 
     private var scheduledCaption: String? {

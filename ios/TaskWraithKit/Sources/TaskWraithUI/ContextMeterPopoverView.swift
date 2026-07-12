@@ -83,10 +83,11 @@ private struct ContextMeterRowView: View {
                         .truncationMode(.tail)
                 }
                 Spacer(minLength: 8)
-                Text("\(Int(row.percent.rounded()))%")
-                    .font(.caption.weight(.semibold))
-                    .monospacedDigit()
-                    .foregroundStyle(.secondary)
+                NumericTickText(
+                    "\(Int(row.percent.rounded()))%",
+                    value: row.percent,
+                    font: .caption.weight(.semibold).monospacedDigit(),
+                    color: Color.secondary)
                     .fixedSize(horizontal: true, vertical: false)
             }
             GeometryReader { geo in

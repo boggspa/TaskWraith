@@ -187,9 +187,11 @@ struct GlassPillHeader: View {
     var collapsed: Bool = false
     var onToggle: (() -> Void)? = nil
     @Environment(\.appScale) private var appScale
+    @State private var toggleHapticTick = 0
 
     var body: some View {
         Button {
+            toggleHapticTick += 1
             withAnimation(.easeInOut(duration: 0.18)) { onToggle?() }
         } label: {
             HStack(spacing: appScale.scaled(6)) {
@@ -203,12 +205,13 @@ struct GlassPillHeader: View {
                 Text(title)
                     .font(.subheadline.weight(.semibold))
                 if let count, count > 0 {
-                    Text("\(count)")
-                        .font(.caption2.weight(.semibold).monospacedDigit())
+                    NumericTickText(
+                        value: count,
+                        font: .caption2.weight(.semibold).monospacedDigit(),
+                        color: TWTheme.textTertiary)
                         .padding(.horizontal, appScale.scaled(6))
                         .padding(.vertical, 1)
                         .background(TWTheme.surface3, in: Capsule())
-                        .foregroundStyle(TWTheme.textTertiary)
                 }
             }
             .foregroundStyle(TWTheme.textSecondary)
@@ -218,6 +221,7 @@ struct GlassPillHeader: View {
         }
         .buttonStyle(.plain)
         .disabled(onToggle == nil)
+        .motionHaptic(MotionHaptics.selection, trigger: toggleHapticTick)
         .accessibilityLabel(glassPillAccessibilityLabel)
         .accessibilityHint(onToggle != nil ? "Double tap to expand or collapse." : "")
         .accessibilityAddTraits(.isHeader)
@@ -4047,14 +4051,14 @@ public struct ToolActivityCards: View {
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(TWTheme.textPrimary)
                     if count > 1 {
-                        Text("×\(count)")
-                            .font(.caption2.weight(.semibold).monospacedDigit())
+                        NumericTickText(
+                            "×\(count)",
+                            value: Double(count),
+                            font: .caption2.weight(.semibold).monospacedDigit(),
+                            color: TWTheme.textSecondary)
                             .padding(.horizontal, 5)
                             .padding(.vertical, 1)
                             .background(TWTheme.surface3, in: Capsule())
-                            .foregroundStyle(TWTheme.textSecondary)
-                            .contentTransition(.numericText(value: Double(count)))
-                            .animation(.snappy(duration: 0.25), value: count)
                     }
                     if let file = entry.file {
                         Text(fileTail(file))
@@ -4063,7 +4067,7 @@ public struct ToolActivityCards: View {
                             .lineLimit(1)
                             .truncationMode(.head)
                     }
-                    // Live edits tick like an odometer — numericText rolls
+                    // Live edits tick like an odometer — NumericTickText rolls
                     // the digits as the Mac re-projects growing ± totals.
                     // Desktop parity: when EITHER side is nonzero, BOTH
                     // chips render ("+1 −0"), zero included. fixedSize keeps
@@ -4072,17 +4076,17 @@ public struct ToolActivityCards: View {
                     let additions = entry.additions ?? 0
                     let deletions = entry.deletions ?? 0
                     if additions > 0 || deletions > 0 {
-                        Text("+\(additions)")
-                            .font(.caption2.weight(.semibold).monospacedDigit())
-                            .foregroundStyle(TWTheme.statusSuccess)
-                            .contentTransition(.numericText(value: Double(additions)))
-                            .animation(.snappy(duration: 0.25), value: additions)
+                        NumericTickText(
+                            "+\(additions)",
+                            value: Double(additions),
+                            font: .caption2.weight(.semibold).monospacedDigit(),
+                            color: TWTheme.statusSuccess)
                             .fixedSize()
-                        Text("−\(deletions)")
-                            .font(.caption2.weight(.semibold).monospacedDigit())
-                            .foregroundStyle(TWTheme.statusFailed)
-                            .contentTransition(.numericText(value: Double(deletions)))
-                            .animation(.snappy(duration: 0.25), value: deletions)
+                        NumericTickText(
+                            "−\(deletions)",
+                            value: Double(deletions),
+                            font: .caption2.weight(.semibold).monospacedDigit(),
+                            color: TWTheme.statusFailed)
                             .fixedSize()
                     }
                     Spacer(minLength: 0)
@@ -7870,6 +7874,7 @@ public func twFriendlyMessage(_ raw: String) -> String {
 public struct StatusBanner: View {
     let message: String
     let onDismiss: () -> Void
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     public init(message: String, onDismiss: @escaping () -> Void) {
         self.message = message
@@ -7900,7 +7905,7 @@ public struct StatusBanner: View {
         .modifier(TWBannerGlassBackground(severity: severity, shape: .rounded(radius: 12)))
         .shadow(color: severity.fill.opacity(0.32), radius: 10, y: 3)
         .padding(.horizontal, 10)
-        .transition(.move(edge: .top).combined(with: .opacity))
+        .transition(ComposerMotion.cardPresence(reduceMotion: reduceMotion))
         .onAppear { twAnnounceForAccessibility(twFriendlyMessage(message)) }
         .onChange(of: message) { _, newMessage in
             twAnnounceForAccessibility(twFriendlyMessage(newMessage))
@@ -7991,6 +7996,7 @@ public struct ConnectionBanner: View {
 
     let state: State
     let onRetry: () -> Void
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     public init(state: State, onRetry: @escaping () -> Void) {
         self.state = state
@@ -8025,7 +8031,7 @@ public struct ConnectionBanner: View {
         .modifier(TWBannerGlassBackground(severity: bannerSeverity, shape: .capsule))
         .padding(.horizontal, 12)
         .shadow(color: bannerSeverity.fill.opacity(0.34), radius: 10, y: 3)
-        .transition(.move(edge: .top).combined(with: .opacity))
+        .transition(ComposerMotion.cardPresence(reduceMotion: reduceMotion))
         .accessibilityElement(children: .combine)
         .accessibilityLabel(connectionAccessibilityLabel)
         .accessibilityValue(connectionAccessibilityValue)
@@ -8563,8 +8569,6 @@ public struct ComposerDiffPill: View {
     let commitsAhead: Int
     var onTap: (() -> Void)? = nil
 
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
     public init(
         filesChanged: Int, additions: Int, deletions: Int, commitsAhead: Int = 0,
         onTap: (() -> Void)? = nil
@@ -8711,31 +8715,30 @@ public struct ComposerDiffPill: View {
     private var pillBody: some View {
         HStack(spacing: 8) {
             if commitsAhead > 0 {
-                Text("↑ \(compact(commitsAhead))")
-                    .foregroundStyle(TWTheme.statusAttention)
-                    .contentTransition(
-                        reduceMotion ? .identity : .numericText(value: Double(commitsAhead)))
-                    .animation(reduceMotion ? nil : .snappy(duration: 0.25), value: commitsAhead)
+                NumericTickText(
+                    "↑ \(compact(commitsAhead))",
+                    value: Double(commitsAhead),
+                    font: .caption.weight(.semibold).monospacedDigit(),
+                    color: TWTheme.statusAttention)
             }
             if hasFileStats {
-                Text("\(filesChanged) file\(filesChanged == 1 ? "" : "s")")
-                    .foregroundStyle(TWTheme.textSecondary)
-                    .contentTransition(
-                        reduceMotion ? .identity : .numericText(value: Double(filesChanged)))
-                    .animation(reduceMotion ? nil : .snappy(duration: 0.25), value: filesChanged)
-                Text("+\(compact(additions))")
-                    .foregroundStyle(TWTheme.statusSuccess)
-                    .contentTransition(
-                        reduceMotion ? .identity : .numericText(value: Double(additions)))
-                    .animation(reduceMotion ? nil : .snappy(duration: 0.25), value: additions)
-                Text("−\(compact(deletions))")
-                    .foregroundStyle(TWTheme.statusFailed)
-                    .contentTransition(
-                        reduceMotion ? .identity : .numericText(value: Double(deletions)))
-                    .animation(reduceMotion ? nil : .snappy(duration: 0.25), value: deletions)
+                NumericTickText(
+                    "\(filesChanged) file\(filesChanged == 1 ? "" : "s")",
+                    value: Double(filesChanged),
+                    font: .caption.weight(.semibold).monospacedDigit(),
+                    color: TWTheme.textSecondary)
+                NumericTickText(
+                    "+\(compact(additions))",
+                    value: Double(additions),
+                    font: .caption.weight(.semibold).monospacedDigit(),
+                    color: TWTheme.statusSuccess)
+                NumericTickText(
+                    "−\(compact(deletions))",
+                    value: Double(deletions),
+                    font: .caption.weight(.semibold).monospacedDigit(),
+                    color: TWTheme.statusFailed)
             }
         }
-        .font(.caption.weight(.semibold).monospacedDigit())
         .lineLimit(1)
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
@@ -8828,10 +8831,10 @@ public struct ComposerDiffPill: View {
                 .onChange(of: proxy.size.width) { _, w in containerWidth = w }
         })
         .sensoryFeedback(trigger: dragState.isActive) { wasActive, isActive in
-            isActive && !wasActive ? .impact(weight: .medium) : nil
+            isActive && !wasActive ? MotionHaptics.impactMedium : nil
         }
-        .sensoryFeedback(.selection, trigger: commitTick)
-        .sensoryFeedback(.success, trigger: resetTick)
+        .motionHaptic(MotionHaptics.selection, trigger: commitTick)
+        .motionHaptic(MotionHaptics.success, trigger: resetTick)
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isButton)
         .accessibilityLabel(accessibilityText)

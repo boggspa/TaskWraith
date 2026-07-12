@@ -43,6 +43,9 @@ struct ApprovalRow: View {
     let card: MobileApprovalCard
     @ObservedObject private var countdownTicker = TWApprovalCountdownTicker.shared
     @State private var showDetail = false
+    /// Discrete decision haptic trigger (user-initiated only).
+    @State private var decisionHapticTick = 0
+    @State private var decisionHaptic: SensoryFeedback = MotionHaptics.success
 
     private var accent: Color { TWTheme.providerAccent(card.provider) }
     private var approvalActions: [ApprovalActionDescriptor] {
@@ -137,7 +140,7 @@ struct ApprovalRow: View {
                     Menu {
                         ForEach(menuActions) { action in
                             Button {
-                                model.approve(card, decision: action.id)
+                                fireDecision(action)
                             } label: {
                                 Label(action.detailLabel, systemImage: action.icon)
                             }
@@ -160,7 +163,7 @@ struct ApprovalRow: View {
                     Menu {
                         ForEach(destructiveActions) { action in
                             Button(role: .destructive) {
-                                model.approve(card, decision: action.id)
+                                fireDecision(action)
                             } label: {
                                 Label(action.detailLabel, systemImage: action.icon)
                             }
@@ -185,21 +188,28 @@ struct ApprovalRow: View {
                 ApprovalExpiryAnnouncer(expiresAt: expiresAt)
             }
         }
+        .motionHaptic(decisionHaptic, trigger: decisionHapticTick)
         .sheet(isPresented: $showDetail) {
             ApprovalDetailSheet(model: model, card: card)
                 .twSheetLiquidGlass(detents: [.medium, .large])
         }
     }
 
+    private func fireDecision(_ action: ApprovalActionDescriptor) {
+        decisionHaptic = MotionHaptics.forApproval(destructive: action.destructive)
+        decisionHapticTick += 1
+        model.approve(card, decision: action.id)
+    }
+
     @ViewBuilder
     private func primaryDecisionButton(_ action: ApprovalActionDescriptor) -> some View {
         if action.prominent {
-            Button(action.rowLabel) { model.approve(card, decision: action.id) }
+            Button(action.rowLabel) { fireDecision(action) }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)
                 .tint(action.destructive ? TWTheme.statusFailed : accent)
         } else {
-            Button(action.rowLabel) { model.approve(card, decision: action.id) }
+            Button(action.rowLabel) { fireDecision(action) }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
                 .tint(action.destructive ? TWTheme.statusFailed : accent)
@@ -214,6 +224,8 @@ struct ApprovalDetailSheet: View {
     let card: MobileApprovalCard
     @Environment(\.dismiss) private var dismiss
     @Environment(\.twGlassSheetHosted) private var glassSheetHosted
+    @State private var decisionHapticTick = 0
+    @State private var decisionHaptic: SensoryFeedback = MotionHaptics.success
 
     private var accent: Color { TWTheme.providerAccent(card.provider) }
     private var approvalActions: [ApprovalActionDescriptor] {
@@ -274,11 +286,14 @@ struct ApprovalDetailSheet: View {
             }
         }
         .twColorScheme()
+        .motionHaptic(decisionHaptic, trigger: decisionHapticTick)
     }
 
     @ViewBuilder
     private func decisionButton(_ action: ApprovalActionDescriptor) -> some View {
         Button {
+            decisionHaptic = MotionHaptics.forApproval(destructive: action.destructive)
+            decisionHapticTick += 1
             model.approve(card, decision: action.id)
             dismiss()
         } label: {

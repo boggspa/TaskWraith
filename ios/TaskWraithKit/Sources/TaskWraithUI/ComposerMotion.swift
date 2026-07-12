@@ -76,4 +76,26 @@ enum ComposerMotion {
                 insertion: .move(edge: .bottom).combined(with: .opacity),
                 removal: .opacity)
     }
+
+    /// Generic card / banner / queued-bubble presence. Insert from `edge` +
+    /// opacity; exit is fade-only so dismissal never yanks layout. Apply only
+    /// at ROW / CARD roots — never deep children. Reduce Motion ⇒ opacity both
+    /// ways. NOT `.bouncy`.
+    static func cardPresence(reduceMotion: Bool, edge: Edge = .top) -> AnyTransition {
+        reduceMotion
+            ? .opacity
+            : .asymmetric(
+                insertion: .move(edge: edge).combined(with: .opacity),
+                removal: .opacity)
+    }
+
+    /// Floating chrome chips (jump-to-latest, keyboard dismiss). Subtle scale
+    /// on insert; fade on remove. Reduce Motion ⇒ opacity both ways.
+    static func floatingChipTransition(reduceMotion: Bool) -> AnyTransition {
+        reduceMotion
+            ? .opacity
+            : .asymmetric(
+                insertion: .scale(scale: 0.92).combined(with: .opacity),
+                removal: .opacity)
+    }
 }
