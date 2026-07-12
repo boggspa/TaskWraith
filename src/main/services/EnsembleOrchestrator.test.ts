@@ -8322,6 +8322,35 @@ Next action:
     expect(closeNote?.content).toContain('Round closed')
   })
 
+  it('keeps an explicit yield to user terminal in Continuous mode', async () => {
+    const harness = makeHarness()
+    harness.chat.ensemble!.orchestrationMode = 'continuous'
+    harness.chat.ensemble!.maxContinuationHops = 24
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Start the continuous work.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    expect(
+      harness.orchestrator.markYielded(
+        harness.dispatched[0].appRunId!,
+        'Return control to the user.',
+        'user'
+      )
+    ).toBe(true)
+
+    await vi.waitFor(() => expect(harness.chat.ensemble?.activeRound?.status).toBe('completed'))
+    expect(harness.dispatched).toHaveLength(1)
+    expect(harness.chat.ensemble?.activeRound?.continuationHops).toBe(0)
+    expect(
+      harness.chat.messages.some((message) =>
+        message.content.includes('auto-continuing for another pass')
+      )
+    ).toBe(false)
+  })
+
   it('lets the assigned Boss definitively close the round and drop queued prompts', async () => {
     const harness = makeHarness()
     harness.chat.ensemble!.bossmanParticipantId = 'claude'

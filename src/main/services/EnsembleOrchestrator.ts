@@ -2630,6 +2630,8 @@ interface ActiveRoundRuntime {
   imageThumbnails: EnsembleImageThumbnail[]
   discordContextSnapshots?: DiscordContextSnapshot[]
   cancelled: boolean
+  /** An explicit yield to user is terminal even after the provider emits late completion events. */
+  returnedControlToUser?: boolean
   /**
    * FIFO queue of prompts to dispatch as fresh rounds after the
    * current round finishes. The user can stack multiple sends
@@ -3426,6 +3428,7 @@ export class EnsembleOrchestrator {
     // happens in runRound after the current turn finalises).
     if (target && runtime && !isFanoutLane) {
       runtime.yieldTarget = target
+      if (isUserYieldTarget(target)) runtime.returnedControlToUser = true
       this.pushYieldReturnFrame(runtime, run, target)
     }
     this.completePendingYieldActivity(run, reason, target)
@@ -10908,6 +10911,7 @@ export class EnsembleOrchestrator {
     if (
       remaining.length === 0 &&
       !runtime.cancelled &&
+      !runtime.returnedControlToUser &&
       runtime.queuedPrompts.length === 0 &&
       this.hasPendingWakeups(runtime)
     ) {
@@ -11009,6 +11013,7 @@ export class EnsembleOrchestrator {
     if (
       remaining.length === 0 &&
       !runtime.cancelled &&
+      !runtime.returnedControlToUser &&
       runtime.queuedPrompts.length === 0 &&
       !sessionTerminal &&
       chatAfterCheck
@@ -12155,6 +12160,7 @@ export class EnsembleOrchestrator {
   ): EnsembleParticipant[] | null {
     if (runtime.orchestrationMode !== 'continuous') return null
     if (runtime.cancelled) return null
+    if (runtime.returnedControlToUser) return null
     // A composer @mention opens a one-seat interaction, not a seed for an
     // autonomous panel pass. Once that participant answers/yields, control
     // returns to the user; agent mentions cannot widen the user's scope.
