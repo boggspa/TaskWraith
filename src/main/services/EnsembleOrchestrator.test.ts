@@ -12853,69 +12853,221 @@ Next action:
     await vi.waitFor(() => expect(harness.chat.ensemble?.activeRound?.status).toBe('completed'))
   })
 
-  it('skips an active fan-out lane participant during the default serial pass', async () => {
+  it('holds foreground rotation until the caller\'s fan-out lane returns', async () => {
     const harness = makeFanoutRaceHarness()
     const { fanout } = await startUnresolvedReviewerFanout(harness)
 
     completeDispatchedRun(harness, 0)
 
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(harness.dispatched).toHaveLength(2)
+    expect(
+      harness.chat.messages.some((message) =>
+        message.content.includes('waiting for its fan-out lane(s) to return')
+      )
+    ).toBe(true)
+
+    completeDispatchedRun(harness, 1)
+    await expect(fanout).resolves.toMatchObject({ ok: true })
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3), { timeout: 1000 })
     expect(harness.dispatched[2].ensembleRun?.participantId).toBe('gemini')
     expect(
       harness.dispatched.filter((payload) => payload.ensembleRun?.participantId === 'claude')
     ).toHaveLength(1)
-    expect(harness.chat.messages.some((message) => message.content.includes('already running in a fan-out lane'))).toBe(
-      true
-    )
 
-    completeDispatchedRun(harness, 1)
-    await expect(fanout).resolves.toMatchObject({ ok: true })
     completeDispatchedRun(harness, 2)
   })
 
-  it('does not let ensemble_yield target a participant already active in fan-out', async () => {
+  it('defers an ensemble_yield handoff until the caller\'s fan-out lane returns', async () => {
     const harness = makeFanoutRaceHarness()
     const { fanout } = await startUnresolvedReviewerFanout(harness)
 
     expect(
       harness.orchestrator.markYielded(
         harness.dispatched[0].appRunId!,
-        'Reviewer should take it.',
-        'Reviewer'
+        'Researcher should take it after the review returns.',
+        'Researcher'
       )
     ).toBe(true)
 
-    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3), { timeout: 1000 })
-    expect(harness.dispatched[2].ensembleRun?.participantId).toBe('gemini')
-    expect(
-      harness.dispatched.filter((payload) => payload.ensembleRun?.participantId === 'claude')
-    ).toHaveLength(1)
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(harness.dispatched).toHaveLength(2)
 
     completeDispatchedRun(harness, 1)
     await expect(fanout).resolves.toMatchObject({ ok: true })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3), { timeout: 1000 })
+    expect(harness.dispatched[2].ensembleRun?.participantId).toBe('gemini')
     completeDispatchedRun(harness, 2)
   })
 
-  it('does not let an @mention promote a participant already active in fan-out', async () => {
+  it('defers an @mention handoff until the caller\'s fan-out lane returns', async () => {
     const harness = makeFanoutRaceHarness()
     const { fanout } = await startUnresolvedReviewerFanout(harness)
 
     harness.orchestrator.handleProviderOutput(
       'codex',
       { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' },
-      { type: 'content', text: '@Reviewer please take the next pass.' }
+      { type: 'content', text: '@Researcher please take the next pass after review returns.' }
     )
     completeDispatchedRun(harness, 0)
 
-    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3), { timeout: 1000 })
-    expect(harness.dispatched[2].ensembleRun?.participantId).toBe('gemini')
-    expect(
-      harness.dispatched.filter((payload) => payload.ensembleRun?.participantId === 'claude')
-    ).toHaveLength(1)
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(harness.dispatched).toHaveLength(2)
 
     completeDispatchedRun(harness, 1)
     await expect(fanout).resolves.toMatchObject({ ok: true })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3), { timeout: 1000 })
+    expect(harness.dispatched[2].ensembleRun?.participantId).toBe('gemini')
+    expect(
+      harness.chat.messages.some((message) =>
+        message.content.includes('@-mention: Researcher promoted to speak next.')
+      )
+    ).toBe(true)
     completeDispatchedRun(harness, 2)
+  })
+
+  it('holds foreground ownership for an accepted single locked-writer lane', async () => {
+    const previous = process.env.TASKWRAITH_CONCURRENT_WRITE_LANES
+    process.env.TASKWRAITH_CONCURRENT_WRITE_LANES = '1'
+    try {
+      const harness = makeHarness()
+      harness.chat.ensemble = {
+        ...harness.chat.ensemble!,
+        bossmanParticipantId: 'codex',
+        fanoutPolicy: 'all',
+        participants: [
+          {
+            id: 'codex',
+            provider: 'codex',
+            enabled: true,
+            role: 'Boss',
+            instructions: 'Coordinate.',
+            order: 1,
+            permissionPresetId: 'workspace_write'
+          },
+          {
+            id: 'claude',
+            provider: 'claude',
+            enabled: true,
+            role: 'Worker',
+            instructions: 'Implement.',
+            order: 2,
+            permissionPresetId: 'workspace_write',
+            stageRole: 'worker'
+          },
+          {
+            id: 'gemini',
+            provider: 'gemini',
+            enabled: true,
+            role: 'Verifier',
+            instructions: 'Verify after implementation.',
+            order: 3,
+            permissionPresetId: 'workspace_write'
+          }
+        ]
+      }
+      harness.orchestrator.startRound({
+        chatId: 'ensemble-chat',
+        prompt: 'Boss starts one writer lane, then verification follows.',
+        event: { sender: {} as Electron.WebContents }
+      })
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1), { timeout: 1000 })
+
+      const result = await harness.orchestrator.fanoutForRun(
+        harness.dispatched[0].appRunId,
+        {
+          targets: ['Worker'],
+          prompt: 'Implement the scoped change.',
+          mode: 'locked_writers',
+          targetStage: 'workers',
+          writeScopes: { Worker: ['src/worker/**'] }
+        }
+      )
+      expect(result).toMatchObject({
+        ok: true,
+        participantIds: ['claude'],
+        laneIds: [expect.any(String)]
+      })
+
+      completeDispatchedRun(harness, 0)
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      expect(harness.dispatched).toHaveLength(2)
+
+      completeDispatchedRun(harness, 1)
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3), { timeout: 1000 })
+      expect(harness.dispatched[2].ensembleRun?.participantId).toBe('gemini')
+      completeDispatchedRun(harness, 2)
+    } finally {
+      if (previous === undefined) delete process.env.TASKWRAITH_CONCURRENT_WRITE_LANES
+      else process.env.TASKWRAITH_CONCURRENT_WRITE_LANES = previous
+    }
+  })
+
+  it('releases a single locked writer back to serial rotation when its lane dispatch is not accepted', async () => {
+    const previous = process.env.TASKWRAITH_CONCURRENT_WRITE_LANES
+    process.env.TASKWRAITH_CONCURRENT_WRITE_LANES = '1'
+    try {
+      const harness = makeHarness({
+        dispatch: async (payload) => ({
+          dispatched: !payload.ensembleRun?.laneId,
+          appRunId: payload.appRunId || ''
+        })
+      })
+      harness.chat.ensemble = {
+        ...harness.chat.ensemble!,
+        bossmanParticipantId: 'codex',
+        fanoutPolicy: 'all',
+        participants: [
+          {
+            id: 'codex',
+            provider: 'codex',
+            enabled: true,
+            role: 'Boss',
+            instructions: 'Coordinate.',
+            order: 1,
+            permissionPresetId: 'workspace_write'
+          },
+          {
+            id: 'claude',
+            provider: 'claude',
+            enabled: true,
+            role: 'Worker',
+            instructions: 'Implement.',
+            order: 2,
+            permissionPresetId: 'workspace_write',
+            stageRole: 'worker'
+          }
+        ]
+      }
+      harness.orchestrator.startRound({
+        chatId: 'ensemble-chat',
+        prompt: 'Boss starts and tries one writer lane.',
+        event: { sender: {} as Electron.WebContents }
+      })
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1), { timeout: 1000 })
+
+      const result = await harness.orchestrator.fanoutForRun(
+        harness.dispatched[0].appRunId,
+        {
+          targets: ['Worker'],
+          prompt: 'Implement the scoped change.',
+          mode: 'locked_writers',
+          targetStage: 'workers',
+          writeScopes: { Worker: ['src/worker/**'] }
+        }
+      )
+
+      expect(result).toMatchObject({ ok: false, error: 'dispatch_failed' })
+      completeDispatchedRun(harness, 0)
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3), { timeout: 1000 })
+      expect(harness.dispatched[1].ensembleRun?.laneId).toBeTruthy()
+      expect(harness.dispatched[2].ensembleRun?.participantId).toBe('claude')
+      expect(harness.dispatched[2].ensembleRun?.laneId).toBeUndefined()
+      completeDispatchedRun(harness, 2)
+    } finally {
+      if (previous === undefined) delete process.env.TASKWRAITH_CONCURRENT_WRITE_LANES
+      else process.env.TASKWRAITH_CONCURRENT_WRITE_LANES = previous
+    }
   })
 
   it('does not let a fan-out lane yield poison the parent serial routing target', async () => {
@@ -13008,9 +13160,15 @@ Next action:
 
     completeDispatchedRun(harness, 0)
 
-    // With only reviewers left the closing wave fires — but only for the two
-    // idle reviewers. The reviewer whose mid-round lane is still live must
-    // not be spliced into the wave as a duplicate concurrent dispatch.
+    // The caller retains foreground ownership while Reviewer A is still live.
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(harness.dispatched).toHaveLength(2)
+
+    completeDispatchedRun(harness, 1)
+    await expect(fanout).resolves.toMatchObject({ ok: true })
+
+    // Once Reviewer A returns, the closing wave fires only for the two idle
+    // reviewers. The already-returned lane target must not be re-dispatched.
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(4), { timeout: 1000 })
     expect(
       new Set(harness.dispatched.slice(2).map((payload) => payload.ensembleRun?.participantId))
@@ -13019,8 +13177,6 @@ Next action:
       harness.dispatched.filter((payload) => payload.ensembleRun?.participantId === 'claude')
     ).toHaveLength(1)
 
-    completeDispatchedRun(harness, 1)
-    await expect(fanout).resolves.toMatchObject({ ok: true })
     completeDispatchedRun(harness, 2)
     completeDispatchedRun(harness, 3)
   })

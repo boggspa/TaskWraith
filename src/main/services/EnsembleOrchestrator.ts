@@ -490,6 +490,14 @@ interface ActiveParticipantRun {
   laneId?: string
   laneIntent?: ConcurrentLane['intent']
   approvedWriteScopes?: ConcurrentLaneWriteScope[]
+  /**
+   * Detached reader/writer fan-out passes launched by this foreground run.
+   * The MCP call returns after dispatch, but the foreground handoff waits on
+   * these settlements so a yield/@mention/default rotation cannot escape its
+   * caller while that caller's lane results are still in flight. Background
+   * lanes are deliberately excluded and remain detached.
+   */
+  ownedFanoutSettlements?: Set<Promise<void>>
   participant: EnsembleParticipant
   promptMessageId: string
   /**
@@ -7933,23 +7941,52 @@ export class EnsembleOrchestrator {
       runtime.fanoutReservedParticipantIds.add(participant.id)
     }
     try {
-      const laneIds = await this.runParallelFanoutPass(runtime, chat, resolvedTargets.targets, {
+      const acceptedRuns: ActiveParticipantRun[] = []
+      await this.runParallelFanoutPass(runtime, chat, resolvedTargets.targets, {
         prompt,
         reason: input.reason,
         mode,
         sourceRunId: runId,
         writeScopesByParticipantId,
-        waitForCompletion: false
+        acceptedRuns,
+        waitForCompletion: false,
+        completionDisposition: resolvedTargets.targets.every(isBackgroundParticipant)
+          ? 'background'
+          : 'caller'
       })
+      const acceptedParticipantIds = new Set(
+        acceptedRuns.map((acceptedRun) => acceptedRun.participant.id)
+      )
+      const acceptedTargets = resolvedTargets.targets.filter((participant) =>
+        acceptedParticipantIds.has(participant.id)
+      )
+      const laneIds = acceptedRuns
+        .map((acceptedRun) => acceptedRun.laneId)
+        .filter((laneId): laneId is string => Boolean(laneId))
+      if (acceptedTargets.length === 0) {
+        const message = `${label} was not dispatched: no target provider accepted a lane. The target remains eligible for serial rotation.`
+        this.appendRoundStatus(run.chatId, run.roundId, message)
+        return {
+          ok: false,
+          tool: 'ensemble_fanout',
+          mode,
+          ...(targetStage ? { targetStage } : {}),
+          message,
+          laneIds: [],
+          participantIds: [],
+          error: 'dispatch_failed'
+        }
+      }
       this.incrementBossmanBudgetUsage(
         runtime,
-        resolvedTargets.targets.map((participant) => participant.id),
+        acceptedTargets.map((participant) => participant.id),
         { fanoutCalls: 1 }
       )
       if (!runtime.fannedOutParticipantIds) runtime.fannedOutParticipantIds = new Set()
-      for (const participant of resolvedTargets.targets) {
+      for (const participant of acceptedTargets) {
         runtime.fannedOutParticipantIds.add(participant.id)
       }
+      const rejectedCount = resolvedTargets.targets.length - acceptedTargets.length
       return {
         ok: true,
         tool: 'ensemble_fanout',
@@ -7957,8 +7994,8 @@ export class EnsembleOrchestrator {
         ...(targetStage ? { targetStage } : {}),
         status: 'dispatched',
         laneIds,
-        participantIds: resolvedTargets.targets.map((participant) => participant.id),
-        message: `${label} dispatched: ${laneIds.length} lane(s) started. Results will appear in the transcript; this tool returns after dispatch so the caller does not time out while lanes are working.`
+        participantIds: acceptedTargets.map((participant) => participant.id),
+        message: `${label} dispatched: ${laneIds.length} lane(s) started.${rejectedCount > 0 ? ` ${rejectedCount} target(s) did not accept dispatch and remain eligible for serial rotation.` : ''} Results will appear in the transcript; this tool returns after dispatch so the caller does not time out while lanes are working.`
       }
     } catch (error) {
       const message =
@@ -10597,6 +10634,17 @@ export class EnsembleOrchestrator {
       }
       runtime.activeRunId = undefined
       this.applyPendingParticipantSeatChangeFor(runtime, participant.id)
+      // `ensemble_fanout` returns to the provider after dispatch so the tool call
+      // itself cannot time out. The caller may then finish, yield, or @mention a
+      // peer while its reader/writer lanes are still working. Keep foreground
+      // ownership with that caller until those detached passes settle; routing
+      // below is intentionally evaluated AFTER the wait so its exact target and
+      // hop accounting are preserved. Stop/steer still cancels the runtime and
+      // releases the wait through lane finalization.
+      if (run.ownedFanoutSettlements?.size) {
+        await this.waitForOwnedFanoutSettlements(runtime, run)
+        if (runtime.cancelled) break
+      }
       const bossYieldedToUser =
         Boolean(runtime.yieldTarget) &&
         isUserYieldTarget(runtime.yieldTarget) &&
@@ -11113,6 +11161,20 @@ export class EnsembleOrchestrator {
     return true
   }
 
+  private async waitForOwnedFanoutSettlements(
+    runtime: ActiveRoundRuntime,
+    run: ActiveParticipantRun
+  ): Promise<void> {
+    const settlements = [...(run.ownedFanoutSettlements || [])]
+    if (settlements.length === 0 || runtime.cancelled) return
+    this.appendRoundStatus(
+      runtime.chatId,
+      runtime.roundId,
+      `${participantDisplayName(run.participant)} is waiting for its fan-out lane(s) to return before foreground handoff.`
+    )
+    await Promise.all(settlements)
+  }
+
   /**
    * Resume a serial drain that was deferred behind active fan-out lanes.
    * No-ops unless every lane for the deferred round is terminal AND no
@@ -11455,26 +11517,36 @@ export class EnsembleOrchestrator {
     }
     try {
       const latestChat = this.deps.getChat(runtime.chatId) || chat
-      const laneIds = await this.runParallelFanoutPass(runtime, latestChat, participants, {
+      const acceptedRuns: ActiveParticipantRun[] = []
+      await this.runParallelFanoutPass(runtime, latestChat, participants, {
         prompt: options.prompt,
         reason: options.reason,
         mode: 'read_only',
         sourceRunId: options.sourceRunId,
         label: 'Background',
         forceReadOnlyDispatch: true,
+        acceptedRuns,
         waitForCompletion: false,
         completionDisposition: 'background'
       })
+      const acceptedParticipantIds = new Set(
+        acceptedRuns.map((acceptedRun) => acceptedRun.participant.id)
+      )
+      const acceptedParticipants = participants.filter((participant) =>
+        acceptedParticipantIds.has(participant.id)
+      )
       runtime.fannedOutParticipantIds ??= new Set()
-      for (const participant of participants) {
+      for (const participant of acceptedParticipants) {
         runtime.fannedOutParticipantIds.add(participant.id)
       }
       this.incrementBossmanBudgetUsage(
         runtime,
-        participants.map((participant) => participant.id),
+        acceptedParticipants.map((participant) => participant.id),
         { fanoutCalls: 1 }
       )
-      return laneIds
+      return acceptedRuns
+        .map((acceptedRun) => acceptedRun.laneId)
+        .filter((laneId): laneId is string => Boolean(laneId))
     } catch (error) {
       const message =
         error instanceof Error ? error.message : 'background dispatch failed.'
@@ -11539,6 +11611,7 @@ export class EnsembleOrchestrator {
       forceReadOnlyDispatch?: boolean
       writeScopesByParticipantId?: Map<string, ConcurrentLaneWriteScope[]>
       onCompleteRuns?: (runs: ActiveParticipantRun[]) => void
+      acceptedRuns?: ActiveParticipantRun[]
       waitForCompletion?: boolean
       completionDisposition?: 'serial' | 'caller' | 'background'
     } = {}
@@ -11790,6 +11863,7 @@ export class EnsembleOrchestrator {
                 this.finalizeRun(run, 'failed', note)
               }
             } else {
+              options.acceptedRuns?.push(run)
               // Candidate only after the adapter confirms it accepted the
               // prompt. flushRun persists it only after an eligible terminal
               // response, matching the serial dispatch contract.
@@ -11874,11 +11948,24 @@ export class EnsembleOrchestrator {
     }
 
     if (options.waitForCompletion === false) {
-      void finishFanoutPass().catch((error) => {
+      const settlement = finishFanoutPass().catch((error) => {
         const message =
           error instanceof Error ? error.message : 'fan-out completion tracking failed.'
         this.appendRoundStatus(runtime.chatId, runtime.roundId, `${label} tracking failed: ${message}`)
       })
+      if (options.sourceRunId && options.completionDisposition !== 'background') {
+        const sourceRun = this.runsByRunId.get(options.sourceRunId)
+        if (sourceRun && !sourceRun.laneId && (options.acceptedRuns?.length || 0) > 0) {
+          sourceRun.ownedFanoutSettlements ??= new Set()
+          sourceRun.ownedFanoutSettlements.add(settlement)
+          void settlement.then(() => {
+            sourceRun.ownedFanoutSettlements?.delete(settlement)
+            if (sourceRun.ownedFanoutSettlements?.size === 0) {
+              sourceRun.ownedFanoutSettlements = undefined
+            }
+          })
+        }
+      }
       return laneIds
     }
 

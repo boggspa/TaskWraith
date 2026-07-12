@@ -4,20 +4,20 @@ import type { AgentRunPayload } from '../run/AgentRunTypes'
 import type { AppSettings, ChatRecord, EnsembleParticipant } from '../store/types'
 
 /*
- * Round completion vs detached fan-out lanes — regression coverage for the
- * "serial queue drains while an ensemble_fanout lane is still working" hole.
+ * Foreground ownership vs detached fan-out lanes — regression coverage for the
+ * "caller hands off while its ensemble_fanout lane is still working" hole.
  *
  * `ensemble_fanout` returns after dispatch (waitForCompletion: false) so the
  * calling participant does not time out while its lanes work. That means the
- * serial loop can fully drain — every serial participant terminal — while a
- * detached lane is still streaming. Closing the round at that instant stamps
- * `endedAt`, derives the blackboard, and flips the renderer to "round
- * finished" while lane output is still landing in the transcript.
+ * serial loop used to advance immediately after the caller's terminal response,
+ * allowing the next participant to overlap the still-streaming lane. That blurs
+ * who owns the handoff and lets a yield/@mention route escape before the fan-out
+ * result returns to its caller.
  *
  * Expected semantics:
- *   - an active (non-terminal) lane defers round completion; the last lane
- *     terminal closes the round through the same drain tail (queued-prompt
- *     chaining included);
+ *   - the participant that launched a reader/writer fan-out retains foreground
+ *     ownership until every lane in that pass settles;
+ *   - the serial queue resumes only after the lane result has returned;
  *   - cancellation is NOT deferred — Stop closes the round immediately even
  *     with lanes in flight (they are finalized as cancelled).
  *
@@ -138,13 +138,11 @@ function rowIndex(harness: Harness, text: string): number {
 }
 
 /**
- * Drive a round to the "serial queue drained, one detached lane still
- * running" state shared by both tests: the Lead fans out to the Reviewer
- * (detached), the serial loop advances past the fanned-out Reviewer to the
- * Researcher, and both serial participants complete while the Reviewer lane
- * keeps streaming. Returns with dispatched = [lead, reviewerLane, researcher].
+ * Drive a round to the "caller completed, one owned lane still running" state
+ * shared by both tests. Returns with dispatched = [lead, reviewerLane]; the
+ * Researcher must not start until the Reviewer lane settles.
  */
-async function drainSerialQueueWithActiveLane(harness: Harness): Promise<void> {
+async function completeCallerWithActiveLane(harness: Harness): Promise<void> {
   harness.orchestrator.startRound({
     chatId: 'ensemble-chat',
     prompt: 'Lead fans out, then the serial queue drains first.',
@@ -165,21 +163,13 @@ async function drainSerialQueueWithActiveLane(harness: Harness): Promise<void> {
   // The lane starts working; the Lead finishes its serial turn.
   stream(harness, 1, 'LANE-WORKING.')
   complete(harness, 0)
-
-  // Serial loop skips the fanned-out Reviewer and advances to the Researcher.
-  await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
-  expect(harness.dispatched[2].provider).toBe('gemini')
-  stream(harness, 2, 'RESEARCHER-NOTE.')
-
-  // The last serial participant completes — the queue is drained while the
-  // Reviewer lane (index 1) is still running.
-  complete(harness, 2)
   await sleep(FLUSH_MS)
+  expect(harness.dispatched).toHaveLength(2)
 }
 
-describe('round completion vs detached fan-out lanes', () => {
+describe('foreground ownership vs detached fan-out lanes', () => {
   it(
-    'defers round completion while a detached fan-out lane is still active',
+    'waits for the caller\'s detached fan-out lane before advancing serial rotation',
     { timeout: 20_000 },
     async () => {
       const harness = makeHarness([
@@ -187,12 +177,14 @@ describe('round completion vs detached fan-out lanes', () => {
         participant('claude', 'claude', 'Reviewer', 2, 'read_only'),
         participant('gemini', 'gemini', 'Researcher', 3, 'workspace_write')
       ])
-      await drainSerialQueueWithActiveLane(harness)
+      await completeCallerWithActiveLane(harness)
 
-      // The Reviewer lane is still non-terminal: the round must stay open.
+      // The Reviewer lane is still non-terminal: the round stays open and the
+      // Researcher has not started.
       const roundWhileLaneActive = harness.chat.ensemble!.activeRound!
       expect(roundWhileLaneActive.status).toBe('running')
       expect(roundWhileLaneActive.endedAt).toBeUndefined()
+      expect(harness.dispatched).toHaveLength(2)
 
       // The lane keeps producing output after the serial drain; it must
       // still land in the transcript of the open round.
@@ -201,8 +193,15 @@ describe('round completion vs detached fan-out lanes', () => {
       expect(rowIndex(harness, 'LANE-LATE-FINDING.')).toBeGreaterThanOrEqual(0)
       expect(harness.chat.ensemble!.activeRound!.status).toBe('running')
 
-      // The last lane terminal closes the round.
+      // The lane terminal returns ownership to the caller and only then lets
+      // the serial Researcher start.
       complete(harness, 1)
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
+      expect(harness.dispatched[2].provider).toBe('gemini')
+      stream(harness, 2, 'RESEARCHER-NOTE.')
+      await sleep(FLUSH_MS)
+      expect(rowIndex(harness, 'RESEARCHER-NOTE.')).toBeGreaterThanOrEqual(0)
+      complete(harness, 2)
       await vi.waitFor(() => {
         expect(harness.chat.ensemble!.activeRound!.status).toBe('completed')
       })
@@ -222,10 +221,11 @@ describe('round completion vs detached fan-out lanes', () => {
         participant('claude', 'claude', 'Reviewer', 2, 'read_only'),
         participant('gemini', 'gemini', 'Researcher', 3, 'workspace_write')
       ])
-      await drainSerialQueueWithActiveLane(harness)
+      await completeCallerWithActiveLane(harness)
 
-      // Deferred-drain state: round open, lane active.
+      // Held-handoff state: round open, lane active, next foreground seat idle.
       expect(harness.chat.ensemble!.activeRound!.status).toBe('running')
+      expect(harness.dispatched).toHaveLength(2)
 
       // Stop must NOT wait for the lane — cancelled rounds finish now.
       const cancelled = await harness.orchestrator.cancelRound('ensemble-chat')
@@ -234,6 +234,7 @@ describe('round completion vs detached fan-out lanes', () => {
       const lanes = Object.values(harness.chat.ensemble!.activeRound!.lanes || {})
       expect(lanes).toHaveLength(1)
       expect(lanes[0].status).toBe('cancelled')
+      expect(harness.dispatched).toHaveLength(2)
     }
   )
 })
