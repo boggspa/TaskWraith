@@ -15,6 +15,7 @@ import {
   normalizeChatScrollState,
   restoreChatScrollAnchor,
   restoreChatScrollState,
+  resolveTranscriptChatSwitchPlan,
   shouldEngageAutoFollow,
   shouldReengageAutoFollowAfterScroll,
   shouldDisengageAutoFollow,
@@ -245,6 +246,50 @@ describe('TranscriptScroll', () => {
 
       callbacks.shift()?.(0)
       expect(scroller.scrollTop).toBe(300)
+    })
+
+    it('cancels both delayed writes when a rapid chat switch invalidates the restore', () => {
+      const callbacks = new Map<number, FrameRequestCallback>()
+      let nextId = 1
+      vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+        const id = nextId++
+        callbacks.set(id, callback)
+        return id
+      })
+      vi.stubGlobal('cancelAnimationFrame', (id: number) => callbacks.delete(id))
+      const scroller = fakeScroller({
+        scrollTop: 40,
+        scrollHeight: 900,
+        clientHeight: 300
+      })
+      let activeChatId = 'chat-b'
+      const cancel = restoreChatScrollState(
+        scroller,
+        {
+          scrollTop: 120,
+          scrollHeight: 600,
+          clientHeight: 200,
+          scrollRatio: 0.5,
+          atBottom: false
+        },
+        () => activeChatId === 'chat-b'
+      )
+
+      const firstRafId = Math.min(...callbacks.keys())
+      const firstCallback = callbacks.get(firstRafId)
+      callbacks.delete(firstRafId)
+      firstCallback?.(0)
+      expect(scroller.scrollTop).toBe(300)
+
+      // Chat C reuses the same DOM scroller after B acquired it but before
+      // B's second settle pass. Cleanup must cancel that delayed write.
+      activeChatId = 'chat-c'
+      scroller.scrollTop = 77
+      cancel()
+      for (const callback of callbacks.values()) callback(0)
+
+      expect(scroller.scrollTop).toBe(77)
+      expect(callbacks.size).toBe(0)
     })
   })
 
@@ -1088,6 +1133,62 @@ describe('TranscriptScroll', () => {
           hasPendingManualJump: false
         })
       ).toBe(false)
+    })
+  })
+
+  describe('resolveTranscriptChatSwitchPlan', () => {
+    const scrollState = {
+      scrollTop: 320,
+      scrollHeight: 1_000,
+      clientHeight: 200,
+      scrollRatio: 0.4,
+      atBottom: false,
+      anchorMessageId: 'message-4',
+      anchorOffset: 12
+    }
+
+    it('keeps first visits and previously pinned chats at the current live edge', () => {
+      expect(
+        resolveTranscriptChatSwitchPlan({ hasPendingManualJump: false })
+      ).toEqual({ kind: 'latest' })
+      expect(
+        resolveTranscriptChatSwitchPlan({
+          cached: { scrollState, autoFollow: true },
+          hasPendingManualJump: false
+        })
+      ).toEqual({ kind: 'latest' })
+    })
+
+    it('restores a revisited chat whose reader owned scroll', () => {
+      expect(
+        resolveTranscriptChatSwitchPlan({
+          cached: { scrollState, autoFollow: false },
+          hasPendingManualJump: false
+        })
+      ).toEqual({
+        kind: 'restore',
+        cached: { scrollState, autoFollow: false }
+      })
+    })
+
+    it('lets an explicit message jump override cached reading position', () => {
+      expect(
+        resolveTranscriptChatSwitchPlan({
+          cached: { scrollState, autoFollow: false },
+          hasPendingManualJump: true
+        })
+      ).toEqual({ kind: 'manual-jump' })
+    })
+
+    it('lets a pending cross-surface restore suppress the ordinary latest snap', () => {
+      const pendingExternalRestore = { scrollState, autoFollow: false }
+      expect(
+        resolveTranscriptChatSwitchPlan({
+          cached: undefined,
+          pendingExternalRestore,
+          hasPendingManualJump: false
+        })
+      ).toEqual({ kind: 'external-restore', cached: pendingExternalRestore })
     })
   })
 

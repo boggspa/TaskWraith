@@ -552,7 +552,8 @@ import {
   shouldDisengageAutoFollow,
   shouldReengageAutoFollowAfterScroll,
   shouldTreatScrollAsUserScrollAway,
-  shouldRepinAfterFrame
+  shouldRepinAfterFrame,
+  type ChatScrollState
 } from './lib/TranscriptScroll'
 import {
   chatPopoutHandoffKey,
@@ -2945,6 +2946,7 @@ function App(): React.JSX.Element {
     beginManualTranscriptJump: beginManualMainTranscriptJump,
     prepareMessageJump: prepareMainTranscriptMessageJump,
     clearPendingMessageJump: clearPendingMainTranscriptMessageJump,
+    prepareChatSwitch: prepareMainTranscriptChatSwitch,
     captureScrollState: captureMainTranscriptScrollState,
     restoreScrollStateWhenReady: restoreMainTranscriptScrollStateWhenReady,
     preserveScrollWhile: preserveMainTranscriptScrollWhile
@@ -2962,8 +2964,43 @@ function App(): React.JSX.Element {
         !hasKnownInactiveEnsembleRound(currentChat)
     )
   })
+  const setCurrentChatIdForNavigation = useCallback(
+    (nextChatId: string | null) => {
+      if (currentChatIdRef.current !== nextChatId) {
+        prepareMainTranscriptChatSwitch(nextChatId)
+      }
+      currentChatIdRef.current = nextChatId
+    },
+    [prepareMainTranscriptChatSwitch]
+  )
   const sideTranscriptScrollRef = useRef<HTMLDivElement>(null)
   const sideTranscriptContentRef = useRef<HTMLDivElement>(null)
+  const committedSideChatIdRef = useRef(sideChatId)
+  const sideRestoreTargetChatIdRef = useRef<string | null>(null)
+  useLayoutEffect(() => {
+    committedSideChatIdRef.current = sideChatId
+    if (
+      sideRestoreTargetChatIdRef.current &&
+      sideRestoreTargetChatIdRef.current !== sideChatId
+    ) {
+      sideRestoreTargetChatIdRef.current = null
+    }
+  }, [sideChatId])
+  const restoreSideTranscriptScrollStateWhenReady = useCallback(
+    (targetChatId: string, scrollState: ChatScrollState) => {
+      sideRestoreTargetChatIdRef.current = targetChatId
+      return restoreChatScrollStateWhenReady(
+        () =>
+          committedSideChatIdRef.current === targetChatId
+            ? sideTranscriptScrollRef.current
+            : null,
+        scrollState,
+        8,
+        () => sideRestoreTargetChatIdRef.current === targetChatId
+      )
+    },
+    []
+  )
   const sideLogsEndRef = useRef<HTMLDivElement>(null)
   const sideComposerTextareaRef = useRef<HTMLTextAreaElement | null>(null)
   const sideComposerContextMenu = useComposerTextareaContextMenu()
@@ -5857,7 +5894,7 @@ function App(): React.JSX.Element {
         }
         const provider = getChatProvider(popoutChat)
         chatByIdRef.current.set(popoutChat.appChatId, popoutChat)
-        currentChatIdRef.current = popoutChat.appChatId
+        setCurrentChatIdForNavigation(popoutChat.appChatId)
         if (isGlobalChat(popoutChat)) {
           setCurrentWorkspace(null)
           currentWorkspaceIdRef.current = null
@@ -5897,7 +5934,8 @@ function App(): React.JSX.Element {
         syncThinkingForChat(popoutChat)
         if (popoutHandoff?.scrollState) {
           restoreMainTranscriptScrollStateWhenReady(popoutHandoff.scrollState, {
-            syncAutoFollow: true
+            syncAutoFollow: true,
+            targetChatId: popoutChat.appChatId
           })
         }
         setInitialRouteReady(true)
@@ -5947,7 +5985,8 @@ function App(): React.JSX.Element {
       }
       if (popoutHandoff?.scrollState) {
         restoreMainTranscriptScrollStateWhenReady(popoutHandoff.scrollState, {
-          syncAutoFollow: true
+          syncAutoFollow: true,
+          targetChatId: chatId
         })
       }
     }
@@ -6535,7 +6574,7 @@ function App(): React.JSX.Element {
         }
       })
       if (updatedChat) {
-        currentChatIdRef.current = updatedChat.appChatId
+        setCurrentChatIdForNavigation(updatedChat.appChatId)
         if (queueAtTurnEnd) {
           setRuntimeProfileForChat(updatedChat.appChatId, nextRuntimeProfileId)
         } else {
@@ -6896,7 +6935,7 @@ function App(): React.JSX.Element {
       selectedProvider = provider
       selectedChat = emptyChat
       chatMutations.reconcileAll(allChats)
-      currentChatIdRef.current = emptyChat.appChatId
+      setCurrentChatIdForNavigation(emptyChat.appChatId)
       chatByIdRef.current.set(emptyChat.appChatId, emptyChat)
       setCurrentChat(emptyChat)
       applyChatComposerSelection(emptyChat, provider)
@@ -6906,7 +6945,7 @@ function App(): React.JSX.Element {
       selectedProvider = provider
       selectedChat = newChat
       setChats((prev) => mergeChatRecord(prev, newChat))
-      currentChatIdRef.current = newChat.appChatId
+      setCurrentChatIdForNavigation(newChat.appChatId)
       chatByIdRef.current.set(newChat.appChatId, newChat)
       setCurrentChat(newChat)
       applyChatComposerSelection(newChat, provider)
@@ -7616,6 +7655,7 @@ function App(): React.JSX.Element {
     setWorkspaces(wsList)
     if (currentWorkspace?.id === id) {
       setCurrentWorkspace(null)
+      setCurrentChatIdForNavigation(null)
       setCurrentChat(null)
       await refreshChatList()
       setUsageSummary([])
@@ -7683,6 +7723,7 @@ function App(): React.JSX.Element {
     chatMutations.removeChat(chatId)
     chatByIdRef.current.delete(chatId)
     if (currentChat?.appChatId === chatId) {
+      setCurrentChatIdForNavigation(null)
       setCurrentChat(null)
     }
     try {
@@ -7744,7 +7785,7 @@ function App(): React.JSX.Element {
     rawLogsByChatIdRef.current.clear()
     queuedRunsRef.current = []
     runQueueJobsRef.current = []
-    currentChatIdRef.current = null
+    setCurrentChatIdForNavigation(null)
     for (const chatId of deletedChatIds) {
       setComposerDraftForChat(chatId, '')
       setPendingPlanChoiceForChat(chatId, null)
@@ -7865,7 +7906,7 @@ function App(): React.JSX.Element {
       setCurrentWorkspace(workspace)
       currentWorkspaceIdRef.current = workspace.id
     }
-    currentChatIdRef.current = newChat.appChatId
+    setCurrentChatIdForNavigation(newChat.appChatId)
     chatByIdRef.current.set(newChat.appChatId, newChat)
     setActiveSidebarChatId(newChat.appChatId)
     startTransition(() => {
@@ -7923,7 +7964,7 @@ function App(): React.JSX.Element {
     const provider = getChatProvider(chat)
     clearWorkspaceOnlyUiState()
     const normalizedChat: ChatRecord = { ...chat, scope: 'global' }
-    currentChatIdRef.current = normalizedChat.appChatId
+    setCurrentChatIdForNavigation(normalizedChat.appChatId)
     chatByIdRef.current.set(normalizedChat.appChatId, normalizedChat)
     setActiveSidebarChatId(normalizedChat.appChatId)
     startTransition(() => {
@@ -7976,7 +8017,7 @@ function App(): React.JSX.Element {
       const newChat = await window.api.createEnsembleChat()
       setChats((prev) => mergeChatRecord(prev, newChat))
       chatByIdRef.current.set(newChat.appChatId, newChat)
-      currentChatIdRef.current = newChat.appChatId
+      setCurrentChatIdForNavigation(newChat.appChatId)
       await selectGlobalChat(newChat)
       reapAbandonedChatsAfterCreate(newChat.appChatId)
       return
@@ -8034,7 +8075,7 @@ function App(): React.JSX.Element {
     const newChat = await window.api.createEnsembleChat(args)
     setChats((prev) => mergeChatRecord(prev, newChat))
     chatByIdRef.current.set(newChat.appChatId, newChat)
-    currentChatIdRef.current = newChat.appChatId
+    setCurrentChatIdForNavigation(newChat.appChatId)
     setActiveSidebarChatId(newChat.appChatId)
     if (newChat.scope === 'global') {
       await selectGlobalChat(newChat)
@@ -8117,7 +8158,7 @@ function App(): React.JSX.Element {
     if (subThread.scope === 'global') {
       await selectGlobalChat(subThread)
     } else {
-      currentChatIdRef.current = subThread.appChatId
+      setCurrentChatIdForNavigation(subThread.appChatId)
       chatByIdRef.current.set(subThread.appChatId, subThread)
       setCurrentChat(subThread)
       applyChatComposerSelection(subThread, provider)
@@ -8571,7 +8612,7 @@ function App(): React.JSX.Element {
     } else {
       currentWorkspaceIdRef.current = selectedChat.workspaceId || null
     }
-    currentChatIdRef.current = selectedChat.appChatId
+    setCurrentChatIdForNavigation(selectedChat.appChatId)
     chatByIdRef.current.set(selectedChat.appChatId, selectedChat)
     startTransition(() => {
       setCurrentChat(selectedChat)
@@ -13387,9 +13428,17 @@ function App(): React.JSX.Element {
       setSideChatId(null)
       setSideChatMenuOpen(false)
     }
-    await handleSelectChat(chat)
-    if (inlineScrollState) {
-      restoreMainTranscriptScrollStateWhenReady(inlineScrollState, { syncAutoFollow: true })
+    const cancelInlineRestore = inlineScrollState
+      ? restoreMainTranscriptScrollStateWhenReady(inlineScrollState, {
+        syncAutoFollow: true,
+        targetChatId: chat.appChatId
+      })
+      : null
+    try {
+      await handleSelectChat(chat)
+    } catch (error) {
+      cancelInlineRestore?.()
+      throw error
     }
   }
   const openLinkedChatInSidePanelRef = useRef(openLinkedChatInSidePanel)
@@ -13558,7 +13607,7 @@ function App(): React.JSX.Element {
       openLinkedChatInSidePanel(currentChat, presentation, linkedParentChat)
       if (linkedMainScrollState) {
         sideAutoFollowRef.current = linkedMainScrollState.atBottom
-        restoreChatScrollStateWhenReady(() => sideTranscriptScrollRef.current, linkedMainScrollState)
+        restoreSideTranscriptScrollStateWhenReady(currentChat.appChatId, linkedMainScrollState)
       }
       return
     }
@@ -13634,7 +13683,7 @@ function App(): React.JSX.Element {
     openLinkedChatInSidePanel(chat, presentation, parentChat)
     if (linkedMainScrollState) {
       sideAutoFollowRef.current = linkedMainScrollState.atBottom
-      restoreChatScrollStateWhenReady(() => sideTranscriptScrollRef.current, linkedMainScrollState)
+      restoreSideTranscriptScrollStateWhenReady(chat.appChatId, linkedMainScrollState)
     }
   }
 
@@ -13685,7 +13734,7 @@ function App(): React.JSX.Element {
         openLinkedChatInSidePanelRef.current(linkedChat, request.presentation, parentChat)
         if (dockScrollState) {
           sideAutoFollowRef.current = dockScrollState.atBottom
-          restoreChatScrollStateWhenReady(() => sideTranscriptScrollRef.current, dockScrollState)
+          restoreSideTranscriptScrollStateWhenReady(linkedChat.appChatId, dockScrollState)
         }
       })()
     })
@@ -14517,7 +14566,7 @@ function App(): React.JSX.Element {
   }
 
   const enterWorkspaceBoardMode = (boardId: string) => {
-    currentChatIdRef.current = null
+    setCurrentChatIdForNavigation(null)
     setCurrentChat(null)
     setActiveSidebarChatId(null)
     setSideChatId(null)
@@ -15249,7 +15298,7 @@ function App(): React.JSX.Element {
 
       setCurrentWorkspace(workspace)
       currentWorkspaceIdRef.current = workspace.id
-      currentChatIdRef.current = chat.appChatId
+      setCurrentChatIdForNavigation(chat.appChatId)
       chatByIdRef.current.set(chat.appChatId, chat)
       setCurrentChat(chat)
       applyChatComposerSelection(chat, dispatchTask.provider)
@@ -23203,7 +23252,7 @@ function App(): React.JSX.Element {
       const viewerChat = chatByIdRef.current.get(chatId)
       if (!viewerChat) return
       multiview.focusPane(paneIndex, currentChatIdRef.current || null)
-      currentChatIdRef.current = viewerChat.appChatId
+      setCurrentChatIdForNavigation(viewerChat.appChatId)
       setActiveSidebarChatId(viewerChat.appChatId)
       const paneWorkspace = getWorkspaceForChat(viewerChat)
       currentWorkspaceIdRef.current = viewerChat.workspaceId || paneWorkspace?.id || null

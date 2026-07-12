@@ -11,6 +11,7 @@ import {
   isExpectedProgrammaticScroll,
   isTranscriptScrollbarPointer,
   restoreChatScrollStateWhenReady,
+  resolveTranscriptChatSwitchPlan,
   shouldAbortAutoFollowSnap,
   shouldReengageAutoFollowAfterScroll,
   shouldRepinAfterCodeBlockResize,
@@ -20,8 +21,8 @@ import {
   shouldRecordScrollbarDownwardIntent,
   shouldClearScrollbarDownwardIntent,
   shouldShowJumpToLatestPill,
-  shouldSnapAfterChatSwitch,
   shouldTreatScrollAsUserScrollAway,
+  type CachedChatScrollState,
   type ChatScrollState
 } from '../../lib/TranscriptScroll'
 
@@ -37,6 +38,7 @@ export interface UseTranscriptScrollStateInput {
 
 export interface RestoreTranscriptScrollOptions {
   syncAutoFollow?: boolean
+  targetChatId?: string | null
 }
 
 export function useTranscriptScrollState({
@@ -97,6 +99,21 @@ export function useTranscriptScrollState({
     count: 0
   })
   const pendingTranscriptJumpChatIdRef = useRef<string | null>(null)
+  const chatScrollStateByIdRef = useRef<Map<string, CachedChatScrollState>>(new Map())
+  const committedChatIdRef = useRef(chatId)
+  const externalRestoreGenerationRef = useRef(0)
+  const pendingExternalRestoreRef = useRef<{
+    generation: number
+    targetChatId: string | null
+    cached: CachedChatScrollState
+  } | null>(null)
+  useLayoutEffect(() => {
+    committedChatIdRef.current = chatId
+  }, [chatId])
+  const cancelPendingExternalRestore = useCallback(() => {
+    externalRestoreGenerationRef.current += 1
+    pendingExternalRestoreRef.current = null
+  }, [])
 
   const captureScrollState = useCallback(
     () => captureChatScrollState(transcriptScrollRef.current),
@@ -108,10 +125,43 @@ export function useTranscriptScrollState({
       scrollState: ChatScrollState | undefined,
       options: RestoreTranscriptScrollOptions = {}
     ) => {
-      if (scrollState && options.syncAutoFollow) {
-        setAutoFollow(scrollState.atBottom)
+      const targetChatId = options.targetChatId ?? committedChatIdRef.current
+      const generation = externalRestoreGenerationRef.current + 1
+      externalRestoreGenerationRef.current = generation
+      pendingExternalRestoreRef.current = scrollState
+        ? {
+            generation,
+            targetChatId,
+            cached: { scrollState, autoFollow: scrollState.atBottom }
+          }
+        : null
+      let ownershipSynced = false
+      const cancel = restoreChatScrollStateWhenReady(
+        () => {
+          if (committedChatIdRef.current !== targetChatId) return null
+          const scroller = transcriptScrollRef.current
+          if (scroller && options.syncAutoFollow && !ownershipSynced && scrollState) {
+            ownershipSynced = true
+            setAutoFollow(scrollState.atBottom)
+            userScrolledAwayInFrameRef.current = !scrollState.atBottom
+          }
+          return scroller
+        },
+        scrollState,
+        8,
+        () => externalRestoreGenerationRef.current === generation,
+        () => {
+          if (pendingExternalRestoreRef.current?.generation === generation) {
+            pendingExternalRestoreRef.current = null
+          }
+        }
+      )
+      return () => {
+        cancel()
+        if (pendingExternalRestoreRef.current?.generation === generation) {
+          pendingExternalRestoreRef.current = null
+        }
       }
-      restoreChatScrollStateWhenReady(() => transcriptScrollRef.current, scrollState)
     },
     [setAutoFollow]
   )
@@ -128,6 +178,7 @@ export function useTranscriptScrollState({
   const handleJumpToLatest = useCallback(() => {
     const scroller = transcriptScrollRef.current
     if (!scroller) return
+    cancelPendingExternalRestore()
     setAutoFollow(true)
     userScrolledAwayInFrameRef.current = false
     jumpInFlightRef.current = true
@@ -136,13 +187,14 @@ export function useTranscriptScrollState({
       setUnreadFromBottomCount(0)
     }
     scroller.scrollTo({ top: scroller.scrollHeight, behavior: 'smooth' })
-  }, [setAutoFollow])
+  }, [cancelPendingExternalRestore, setAutoFollow])
 
   // Arm follow without a scroll of its own — for gestures where the NEXT
   // messages layout-effect snap should carry the viewport down (sending a
   // prompt while scrolled up: the reply belongs to the user's action, so the
   // transcript re-locks to the live edge exactly like Claude/Codex do).
   const relockToLatest = useCallback(() => {
+    cancelPendingExternalRestore()
     setAutoFollow(true)
     userScrolledAwayInFrameRef.current = false
     jumpInFlightRef.current = false
@@ -151,7 +203,7 @@ export function useTranscriptScrollState({
       unreadFromBottomCountRef.current = 0
       setUnreadFromBottomCount(0)
     }
-  }, [setAutoFollow])
+  }, [cancelPendingExternalRestore, setAutoFollow])
 
   const handleJumpToLatestRef = useRef(handleJumpToLatest)
   handleJumpToLatestRef.current = handleJumpToLatest
@@ -245,6 +297,7 @@ export function useTranscriptScrollState({
   )
 
   const beginManualTranscriptJump = useCallback(() => {
+    cancelPendingExternalRestore()
     setAutoFollow(false)
     userScrolledAwayInFrameRef.current = true
     jumpInFlightRef.current = false
@@ -254,18 +307,36 @@ export function useTranscriptScrollState({
       cancelAnimationFrame(repinRafIdRef.current)
       repinRafIdRef.current = null
     }
-  }, [clearProgrammaticScrollTarget, setAutoFollow])
+  }, [cancelPendingExternalRestore, clearProgrammaticScrollTarget, setAutoFollow])
 
   const prepareMessageJump = useCallback((targetChatId: string) => {
+    cancelPendingExternalRestore()
     pendingTranscriptJumpChatIdRef.current = targetChatId
     setAutoFollow(false)
     userScrolledAwayInFrameRef.current = true
     jumpInFlightRef.current = false
-  }, [setAutoFollow])
+  }, [cancelPendingExternalRestore, setAutoFollow])
 
   const clearPendingMessageJump = useCallback(() => {
     pendingTranscriptJumpChatIdRef.current = null
   }, [])
+
+  const prepareChatSwitch = useCallback(
+    (targetChatId: string | null) => {
+      const sourceChatId = committedChatIdRef.current
+      if (!sourceChatId || sourceChatId === targetChatId) return
+      if (pendingExternalRestoreRef.current?.targetChatId !== targetChatId) {
+        cancelPendingExternalRestore()
+      }
+      const scrollState = captureScrollState()
+      if (!scrollState) return
+      chatScrollStateByIdRef.current.set(sourceChatId, {
+        scrollState,
+        autoFollow: autoFollowRef.current
+      })
+    },
+    [cancelPendingExternalRestore, captureScrollState]
+  )
 
   useEffect(() => {
     const scroller = transcriptScrollRef.current
@@ -405,6 +476,7 @@ export function useTranscriptScrollState({
     if (!scroller) return
 
     const handleScrollIntent = (deltaY: number) => {
+      if (deltaY !== 0) cancelPendingExternalRestore()
       if (deltaY > 0) {
         // Downward gesture — vouches for the wide re-engage band for a
         // short window (see hasRecentTranscriptDownwardIntent).
@@ -443,6 +515,7 @@ export function useTranscriptScrollState({
         return
       }
       scrollbarPointerActiveRef.current = true
+      cancelPendingExternalRestore()
       lastNativeScrollTopRef.current = scroller.scrollTop
       // Direction is not known until scrollTop moves. Clear any stale wheel /
       // touch / key voucher so the pointer gesture must earn its own intent.
@@ -519,7 +592,7 @@ export function useTranscriptScrollState({
       window.removeEventListener('blur', endScrollbarPointer)
       scrollbarPointerActiveRef.current = false
     }
-  }, [chatId, setAutoFollow])
+  }, [cancelPendingExternalRestore, chatId, setAutoFollow])
 
   useEffect(() => {
     const scroller = transcriptScrollRef.current
@@ -649,8 +722,21 @@ export function useTranscriptScrollState({
     const scroller = transcriptScrollRef.current
     if (!scroller) return
     const hasPendingManualJump = Boolean(chatId && pendingTranscriptJumpChatIdRef.current === chatId)
-    setAutoFollow(!hasPendingManualJump)
-    userScrolledAwayInFrameRef.current = hasPendingManualJump
+    const cached = chatId ? chatScrollStateByIdRef.current.get(chatId) : undefined
+    const pendingExternalRestore =
+      pendingExternalRestoreRef.current?.targetChatId === chatId
+        ? pendingExternalRestoreRef.current.cached
+        : undefined
+    const initialPlan = resolveTranscriptChatSwitchPlan({
+      cached,
+      pendingExternalRestore,
+      hasPendingManualJump
+    })
+    const initialAutoFollow =
+      initialPlan.kind === 'latest' ||
+      (initialPlan.kind === 'external-restore' && initialPlan.cached.autoFollow)
+    setAutoFollow(initialAutoFollow)
+    userScrolledAwayInFrameRef.current = !initialAutoFollow
     jumpInFlightRef.current = false
     if (unreadFromBottomCountRef.current !== 0) {
       unreadFromBottomCountRef.current = 0
@@ -660,6 +746,7 @@ export function useTranscriptScrollState({
       chatId,
       count: messages?.length ?? 0
     }
+    let cancelRestore = () => {}
     const rafId = requestAnimationFrame(() => {
       const hasStillPendingManualJump = Boolean(
         chatId && pendingTranscriptJumpChatIdRef.current === chatId
@@ -667,18 +754,30 @@ export function useTranscriptScrollState({
       if (hasStillPendingManualJump) {
         pendingTranscriptJumpChatIdRef.current = null
       }
-      if (
-        !shouldSnapAfterChatSwitch({
-          autoFollow: autoFollowRef.current,
-          userScrolledAwayInThisFrame: userScrolledAwayInFrameRef.current,
-          hasPendingManualJump: hasStillPendingManualJump
-        })
-      ) {
+      const plan = resolveTranscriptChatSwitchPlan({
+        cached,
+        pendingExternalRestore,
+        hasPendingManualJump: hasStillPendingManualJump
+      })
+      if (plan.kind === 'manual-jump') {
+        return
+      }
+      if (plan.kind === 'external-restore') return
+      if (plan.kind === 'restore') {
+        cancelRestore = restoreChatScrollStateWhenReady(
+          () => (committedChatIdRef.current === chatId ? transcriptScrollRef.current : null),
+          plan.cached.scrollState,
+          8,
+          () => committedChatIdRef.current === chatId
+        )
         return
       }
       snapScrollToBottom(scroller)
     })
-    return () => cancelAnimationFrame(rafId)
+    return () => {
+      cancelAnimationFrame(rafId)
+      cancelRestore()
+    }
     // Chat-switch only: message growth is handled by the message layout effect above.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chatId])
@@ -699,6 +798,7 @@ export function useTranscriptScrollState({
     beginManualTranscriptJump,
     prepareMessageJump,
     clearPendingMessageJump,
+    prepareChatSwitch,
     captureScrollState,
     restoreScrollStateWhenReady,
     preserveScrollWhile

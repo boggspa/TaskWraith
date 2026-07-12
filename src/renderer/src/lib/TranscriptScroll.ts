@@ -111,6 +111,39 @@ export interface ChatScrollState {
   anchorOffset?: number
 }
 
+export interface CachedChatScrollState {
+  scrollState: ChatScrollState
+  /** Follow ownership is deliberately stored separately from geometry. A
+   * reader can disengage follow while still inside the loose 24px capture
+   * band, and revisiting that chat must not silently re-arm it. */
+  autoFollow: boolean
+}
+
+export type TranscriptChatSwitchPlan =
+  | { kind: 'manual-jump' }
+  | { kind: 'external-restore'; cached: CachedChatScrollState }
+  | { kind: 'restore'; cached: CachedChatScrollState }
+  | { kind: 'latest' }
+
+/** Resolve chat-switch precedence without coupling it to React timing.
+ * Explicit message jumps win, reading positions restore only when the user
+ * owned scroll, and first visits / previously pinned chats land at the current
+ * live edge rather than a stale stored scrollHeight. */
+export function resolveTranscriptChatSwitchPlan(input: {
+  cached?: CachedChatScrollState
+  pendingExternalRestore?: CachedChatScrollState
+  hasPendingManualJump: boolean
+}): TranscriptChatSwitchPlan {
+  if (input.hasPendingManualJump) return { kind: 'manual-jump' }
+  if (input.pendingExternalRestore) {
+    return { kind: 'external-restore', cached: input.pendingExternalRestore }
+  }
+  if (input.cached && !input.cached.autoFollow) {
+    return { kind: 'restore', cached: input.cached }
+  }
+  return { kind: 'latest' }
+}
+
 export function captureChatScrollState(
   scroller: HTMLElement | null | undefined
 ): ChatScrollState | undefined {
@@ -206,10 +239,16 @@ export function normalizeChatScrollState(value: unknown): ChatScrollState | unde
 
 export function restoreChatScrollState(
   scroller: HTMLElement | null | undefined,
-  scrollState: ChatScrollState | undefined
-): void {
-  if (!scroller || !scrollState) return
+  scrollState: ChatScrollState | undefined,
+  shouldApply: () => boolean = () => true,
+  onSettled: () => void = () => {}
+): () => void {
+  if (!scroller || !scrollState) return () => {}
+  let cancelled = false
+  let firstRafId: number | null = null
+  let secondRafId: number | null = null
   const apply = () => {
+    if (cancelled || !shouldApply()) return
     const maxScrollTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight)
     if (scrollState.atBottom) {
       scroller.scrollTop = scroller.scrollHeight
@@ -218,30 +257,61 @@ export function restoreChatScrollState(
     if (restoreChatScrollAnchor(scroller, scrollState)) return
     scroller.scrollTop = Math.max(0, Math.min(maxScrollTop, scrollState.scrollRatio * maxScrollTop))
   }
-  requestAnimationFrame(() => {
+  firstRafId = requestAnimationFrame(() => {
+    firstRafId = null
     apply()
-    requestAnimationFrame(apply)
+    if (cancelled || !shouldApply()) return
+    secondRafId = requestAnimationFrame(() => {
+      secondRafId = null
+      apply()
+      if (!cancelled && shouldApply()) onSettled()
+    })
   })
+  return () => {
+    cancelled = true
+    if (firstRafId !== null) cancelAnimationFrame(firstRafId)
+    if (secondRafId !== null) cancelAnimationFrame(secondRafId)
+    firstRafId = null
+    secondRafId = null
+  }
 }
 
 export function restoreChatScrollStateWhenReady(
   getScroller: () => HTMLElement | null | undefined,
   scrollState: ChatScrollState | undefined,
-  attempts = 8
-): void {
-  if (!scrollState) return
+  attempts = 8,
+  shouldApply: () => boolean = () => true,
+  onSettled: () => void = () => {}
+): () => void {
+  if (!scrollState) return () => {}
+  let cancelled = false
+  let retryRafId: number | null = null
+  let cancelRestore = () => {}
   let remainingAttempts = attempts
   const tryRestore = () => {
+    retryRafId = null
+    if (cancelled || !shouldApply()) return
     const scroller = getScroller()
     if (scroller) {
-      restoreChatScrollState(scroller, scrollState)
+      cancelRestore = restoreChatScrollState(
+        scroller,
+        scrollState,
+        () => !cancelled && shouldApply(),
+        onSettled
+      )
       return
     }
     if (remainingAttempts <= 0) return
     remainingAttempts -= 1
-    requestAnimationFrame(tryRestore)
+    retryRafId = requestAnimationFrame(tryRestore)
   }
   tryRestore()
+  return () => {
+    cancelled = true
+    if (retryRafId !== null) cancelAnimationFrame(retryRafId)
+    retryRafId = null
+    cancelRestore()
+  }
 }
 
 /**
