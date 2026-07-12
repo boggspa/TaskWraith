@@ -17,6 +17,7 @@ export interface EnsembleRosterPresetPickerProps {
   ensemble: EnsembleConfig | null | undefined
   disabled?: boolean
   onApplyPreset: (preset: EnsembleRosterPreset) => void
+  onActivePresetChange?: (presetId: string | null) => void
   variant?: 'welcome' | 'compact'
   composerStyle?: ComposerStyle
   /** Optional full-width second row rendered below the preset chips —
@@ -111,11 +112,35 @@ export function savedRosterPresetForEnsemble(
   return presets.find((preset) => rosterPresetComparableKey(preset) === currentKey) ?? null
 }
 
+export function rosterPresetSelectionForEnsemble(
+  ensemble: EnsembleConfig | null | undefined,
+  presets: readonly EnsembleRosterPreset[]
+): { preset: EnsembleRosterPreset | null; hasUnsavedChanges: boolean } {
+  if (!ensemble || presets.length === 0) {
+    return { preset: null, hasUnsavedChanges: false }
+  }
+  const current = buildEnsembleRosterPresetFromConfig('__current_roster__', ensemble, 0)
+  const currentKey = rosterPresetComparableKey(current)
+  const identifiedPreset = ensemble.activeRosterPresetId
+    ? (presets.find((preset) => preset.id === ensemble.activeRosterPresetId) ?? null)
+    : null
+  if (identifiedPreset) {
+    return {
+      preset: identifiedPreset,
+      hasUnsavedChanges: rosterPresetComparableKey(identifiedPreset) !== currentKey
+    }
+  }
+  return {
+    preset: presets.find((preset) => rosterPresetComparableKey(preset) === currentKey) ?? null,
+    hasUnsavedChanges: false
+  }
+}
+
 export function defaultRosterOverwritePreset(
   ensemble: EnsembleConfig | null | undefined,
   presets: readonly EnsembleRosterPreset[]
 ): EnsembleRosterPreset | null {
-  return savedRosterPresetForEnsemble(ensemble, presets)
+  return rosterPresetSelectionForEnsemble(ensemble, presets).preset
 }
 
 export function rosterPresetTriggerLabel(name: string | null | undefined): string {
@@ -137,6 +162,7 @@ export function EnsembleRosterPresetPicker({
   ensemble,
   disabled = false,
   onApplyPreset,
+  onActivePresetChange,
   variant = 'welcome',
   composerStyle = 'default',
   secondRow
@@ -163,6 +189,34 @@ export function EnsembleRosterPresetPicker({
       setPresets(listEnsembleRosterPresets())
     })
   }, [])
+
+  const rosterSelection = rosterPresetSelectionForEnsemble(ensemble, presets)
+  const activePreset = rosterSelection.preset
+  const hasUnsavedChanges = rosterSelection.hasUnsavedChanges
+  const persistedActivePresetId = ensemble?.activeRosterPresetId
+  const inferredActivePresetId = hasUnsavedChanges ? undefined : activePreset?.id
+
+  // Older chats predate durable preset identity. Once an exact saved match is
+  // observed, backfill its id so the first subsequent edit remains associated
+  // with that preset. Also clear a stale id when its preset is deleted in this
+  // or another renderer window.
+  useEffect(() => {
+    if (!onActivePresetChange) return
+    if (persistedActivePresetId) {
+      if (!presets.some((preset) => preset.id === persistedActivePresetId)) {
+        onActivePresetChange(null)
+      }
+      return
+    }
+    if (inferredActivePresetId) {
+      onActivePresetChange(inferredActivePresetId)
+    }
+  }, [
+    inferredActivePresetId,
+    onActivePresetChange,
+    persistedActivePresetId,
+    presets
+  ])
 
   useEffect(() => {
     if (!popoverOpen) return
@@ -233,7 +287,6 @@ export function EnsembleRosterPresetPicker({
   }, [presetDialogOpen])
 
   const canSave = Boolean(ensemble) && !disabled
-  const activePreset = savedRosterPresetForEnsemble(ensemble, presets)
   const defaultOverwritePreset = defaultRosterOverwritePreset(ensemble, presets)
   const canOverwriteActivePreset = canSave && Boolean(defaultOverwritePreset)
   const triggerLabel = rosterPresetTriggerLabel(activePreset?.name)
@@ -258,6 +311,7 @@ export function EnsembleRosterPresetPicker({
       name: target.name
     }
     upsertEnsembleRosterPreset(next)
+    onActivePresetChange?.(next.id)
     refreshPresets()
     setPopoverOpen(false)
   }
@@ -277,6 +331,9 @@ export function EnsembleRosterPresetPicker({
     const confirmed = window.confirm(`Delete preset "${preset.name}"?`)
     if (!confirmed) return
     deleteEnsembleRosterPreset(preset.id)
+    if (ensemble?.activeRosterPresetId === preset.id) {
+      onActivePresetChange?.(null)
+    }
     refreshPresets()
   }
 
@@ -291,7 +348,8 @@ export function EnsembleRosterPresetPicker({
     try {
       if (presetNameDialog.mode === 'save') {
         if (!ensemble) return
-        saveEnsembleRosterPreset(trimmed, ensemble)
+        const saved = saveEnsembleRosterPreset(trimmed, ensemble)
+        onActivePresetChange?.(saved.id)
       } else {
         if (trimmed === presetNameDialog.preset.name.trim()) {
           setPresetNameDialog(null)
@@ -325,16 +383,24 @@ export function EnsembleRosterPresetPicker({
         <button
           ref={triggerRef}
           type="button"
-          className={`ensemble-roster-preset-picker-browse${popoverOpen ? ' is-open' : ''}`}
+          className={`ensemble-roster-preset-picker-browse${popoverOpen ? ' is-open' : ''}${
+            hasUnsavedChanges ? ' has-unsaved-changes' : ''
+          }`}
           onClick={() => setPopoverOpen((open) => !open)}
           aria-haspopup="menu"
           aria-expanded={popoverOpen}
+          aria-label={
+            activePreset
+              ? `${activePreset.name}${hasUnsavedChanges ? ', unsaved changes' : ''}`
+              : ROSTER_TRIGGER_FALLBACK_LABEL
+          }
+          data-roster-preset-dirty={hasUnsavedChanges ? 'true' : 'false'}
           title={
             activePreset
-              ? activePreset.name
+              ? `${activePreset.name}${hasUnsavedChanges ? ' — unsaved changes' : ''}`
               : presets.length
-              ? `${presets.length} saved roster${presets.length === 1 ? '' : 's'}`
-              : 'No saved rosters yet'
+                ? `${presets.length} saved roster${presets.length === 1 ? '' : 's'}`
+                : 'No saved rosters yet'
           }
         >
           <span className="composer-combined-picker-trigger-primary">{triggerLabel}</span>
@@ -388,7 +454,12 @@ export function EnsembleRosterPresetPicker({
                 </div>
               ) : (
                 presets.map((preset) => (
-                  <div key={preset.id} className="ensemble-roster-preset-popover-row">
+                  <div
+                    key={preset.id}
+                    className={`ensemble-roster-preset-popover-row${
+                      activePreset?.id === preset.id ? ' is-active' : ''
+                    }${activePreset?.id === preset.id && hasUnsavedChanges ? ' is-dirty' : ''}`}
+                  >
                     <button
                       type="button"
                       className="ensemble-roster-preset-popover-row-main-action"

@@ -174,6 +174,7 @@ export interface ComposerProps {
   appearance: any
   applyEnsemblePermissionsToAllParticipants: any
   applyEnsembleRosterPreset: any
+  setActiveEnsembleRosterPresetId: (presetId: string | null) => void
   approvalMode: any
   approvalTimeouts: import('../../../main/store/types').AppSettings['approvalTimeouts']
   attachedWindow: any
@@ -506,6 +507,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     appearance,
     applyEnsemblePermissionsToAllParticipants,
     applyEnsembleRosterPreset,
+    setActiveEnsembleRosterPresetId,
     approvalMode,
     approvalTimeouts,
     attachedWindow,
@@ -2147,6 +2149,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                     ensemble={currentChat.ensemble}
                     disabled={isCurrentEnsembleRoundRunning}
                     onApplyPreset={applyEnsembleRosterPreset}
+                    onActivePresetChange={setActiveEnsembleRosterPresetId}
                     variant="compact"
                     composerStyle={appearance.composerStyle}
                     secondRow={renderEnsembleOrchestrationRow()}

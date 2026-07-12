@@ -17780,6 +17780,7 @@ function App(): React.JSX.Element {
         ...currentChat,
         ensemble: {
           ...currentChat.ensemble,
+          activeRosterPresetId: preset.id,
           orchestrationMode: preset.orchestrationMode,
           maxParticipants: nextMaxParticipants,
           ...(typeof preset.maxContinuationHops === 'number'
@@ -17816,6 +17817,26 @@ function App(): React.JSX.Element {
       void window.api.saveChat(nextChat)
     },
     [isCurrentEnsembleChat, currentChat, isCurrentEnsembleRoundRunning]
+  )
+  const setActiveEnsembleRosterPresetId = useCallback(
+    (presetId: string | null) => {
+      if (!isCurrentEnsembleChat || !currentChat?.ensemble) return
+      updateChatById(currentChat.appChatId, (source) => {
+        if (!source.ensemble) return source
+        const nextPresetId = presetId || undefined
+        if (source.ensemble.activeRosterPresetId === nextPresetId) return source
+        const patched: ChatRecord = {
+          ...source,
+          ensemble: {
+            ...source.ensemble,
+            activeRosterPresetId: nextPresetId,
+            updatedAt: new Date().toISOString()
+          }
+        }
+        return withSessionActivityLedger(source, patched)
+      })
+    },
+    [isCurrentEnsembleChat, currentChat?.appChatId, currentChat?.ensemble, updateChatById]
   )
   const applyEnsemblePermissionsToAllParticipants = useCallback(() => {
     if (!isCurrentEnsembleChat || !selectedParticipant || !currentChat?.ensemble) return
@@ -24758,6 +24779,7 @@ function App(): React.JSX.Element {
       appearance,
       applyEnsemblePermissionsToAllParticipants,
       applyEnsembleRosterPreset,
+      setActiveEnsembleRosterPresetId,
       approvalTimeouts,
       chatByIdRef,
       codexModels,
@@ -24890,6 +24912,7 @@ function App(): React.JSX.Element {
       appearance,
       applyEnsemblePermissionsToAllParticipants,
       applyEnsembleRosterPreset,
+      setActiveEnsembleRosterPresetId,
       approvalTimeouts,
       chatByIdRef,
       checkOllamaModelAvailability,

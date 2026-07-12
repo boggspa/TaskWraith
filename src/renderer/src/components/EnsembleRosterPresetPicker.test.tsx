@@ -6,6 +6,7 @@ import {
 } from '../lib/ensembleRosterPresets'
 import {
   defaultRosterOverwritePreset,
+  rosterPresetSelectionForEnsemble,
   rosterPresetMenuMeta,
   rosterPresetTriggerLabel,
   savedRosterPresetForEnsemble
@@ -99,7 +100,7 @@ describe('EnsembleRosterPresetPicker', () => {
     ).toBeNull()
   })
 
-  it('does not pick a fallback overwrite target once the live roster has drifted', () => {
+  it('does not guess an overwrite target for an unassociated drifted roster', () => {
     const current = ensemble()
     const saved = buildEnsembleRosterPresetFromConfig('Visual UI Architect', current, 1)
     const other = { ...preset(1), id: 'preset-2', name: 'Most recent', updatedAt: 2 }
@@ -112,5 +113,41 @@ describe('EnsembleRosterPresetPicker', () => {
 
     expect(defaultRosterOverwritePreset(drifted, [other, saved])).toBeNull()
     expect(defaultRosterOverwritePreset(current, [other, saved])?.id).toBe(saved.id)
+  })
+
+  it('retains a loaded preset as the deterministic Save target after roster edits', () => {
+    const current = ensemble()
+    const saved = buildEnsembleRosterPresetFromConfig('Visual UI Architect', current, 1)
+    const associated = { ...current, activeRosterPresetId: saved.id }
+    const cleanSelection = rosterPresetSelectionForEnsemble(associated, [saved])
+    const drifted = {
+      ...associated,
+      participants: associated.participants.map((participant, index) =>
+        index === 0 ? { ...participant, instructions: 'A revised live goal.' } : participant
+      )
+    }
+    const dirtySelection = rosterPresetSelectionForEnsemble(drifted, [saved])
+
+    expect(cleanSelection).toEqual({ preset: saved, hasUnsavedChanges: false })
+    expect(dirtySelection).toEqual({ preset: saved, hasUnsavedChanges: true })
+    expect(defaultRosterOverwritePreset(drifted, [saved])?.id).toBe(saved.id)
+  })
+
+  it('keeps explicit loaded identity even when drift matches another saved preset', () => {
+    const firstConfig = ensemble()
+    const first = buildEnsembleRosterPresetFromConfig('First', firstConfig, 1)
+    const secondConfig = {
+      ...firstConfig,
+      participants: firstConfig.participants.map((participant, index) =>
+        index === 0 ? { ...participant, role: 'Changed' } : participant
+      )
+    }
+    const second = buildEnsembleRosterPresetFromConfig('Second', secondConfig, 2)
+    const live = { ...secondConfig, activeRosterPresetId: first.id }
+
+    expect(rosterPresetSelectionForEnsemble(live, [second, first])).toEqual({
+      preset: first,
+      hasUnsavedChanges: true
+    })
   })
 })

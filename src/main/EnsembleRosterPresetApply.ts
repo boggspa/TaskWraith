@@ -520,6 +520,7 @@ export function applyPendingEnsembleRosterPresetOnFinalize(chat: ChatRecord): Ch
       : createDefaultEnsembleConfig(chat.provider)
   const ensemble = {
     ...ensembleBase,
+    activeRosterPresetId: plan.presetId,
     orchestrationMode: plan.orchestrationMode,
     maxParticipants: plan.maxParticipants,
     maxContinuationHops: plan.maxContinuationHops,

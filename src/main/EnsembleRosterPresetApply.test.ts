@@ -186,6 +186,7 @@ describe('EnsembleRosterPresetApply', () => {
     expect(applied.chatKind).toBe('ensemble')
     expect(applied).not.toHaveProperty('linkedProviderSessionId')
     expect(applied.ensemble).toMatchObject({
+      activeRosterPresetId: 'agent-preset',
       orchestrationMode: 'continuous',
       fanoutPolicy: 'all',
       maxContinuationHops: 16,

@@ -742,6 +742,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
       },
       ensemble: {
         ...sideChat.ensemble,
+        activeRosterPresetId: preset.id,
         orchestrationMode: preset.orchestrationMode,
         maxParticipants: Math.min(
           MAX_ROSTER_PRESET_PARTICIPANTS,
@@ -1026,6 +1027,8 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
         handleStopWorkSession: noSideComposerAction,
         setShowWorkSessionSheet: noSideComposerAction,
         applyEnsembleRosterPreset: applySideRosterPreset,
+        setActiveEnsembleRosterPresetId: (presetId: string | null) =>
+          patchSideEnsemble({ activeRosterPresetId: presetId || undefined }),
         applyEnsemblePermissionsToAllParticipants: applySidePermissionsToAllParticipants,
         handleSelectParticipant: selectSideParticipant,
         updateSelectedParticipant: (patch: Record<string, unknown>) => {

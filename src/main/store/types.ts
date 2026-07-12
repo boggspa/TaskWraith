@@ -1407,6 +1407,12 @@ export interface EnsembleBossmanStatusRequest {
 export interface EnsembleConfig {
   enabled: boolean
   maxParticipants: number
+  /**
+   * Durable identity of the roster preset most recently loaded into this
+   * ensemble. The live roster may drift from the saved snapshot; renderers use
+   * that drift as an unsaved-changes signal without losing the Save target.
+   */
+  activeRosterPresetId?: string
   orchestrationMode?: EnsembleOrchestrationMode
   /**
    * Legacy boolean preference for concurrent fan-out. New code should prefer
