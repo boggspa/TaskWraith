@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactElement } from 'react'
 import { createPortal } from 'react-dom'
+import { MOTION_DURATIONS, presenceSettleMs, usePresence } from '../hooks/usePanelPresence'
 
 /**
  * Phase K3 — Approval modal for creative-app actions that mutate state.
@@ -45,10 +46,13 @@ export function CreativeActionApprovalModal({
   onDecide
 }: CreativeActionApprovalModalProps): ReactElement | null {
   const [queue, setQueue] = useState<CreativeApprovalRequestPayload[]>([])
+  const [closingRequestId, setClosingRequestId] = useState<string | null>(null)
   // Track focus restoration so closing the modal returns the user to
   // wherever they were typing.
   const lastFocusedRef = useRef<HTMLElement | null>(null)
   const dialogRef = useRef<HTMLDivElement | null>(null)
+  const closingRequestRef = useRef<string | null>(null)
+  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
     const unsubscribe = onSubscribe((request) => {
@@ -60,6 +64,12 @@ export function CreativeActionApprovalModal({
     })
     return unsubscribe
   }, [onSubscribe])
+
+  useEffect(() => {
+    return () => {
+      if (closeTimerRef.current != null) clearTimeout(closeTimerRef.current)
+    }
+  }, [])
 
   useEffect(() => {
     if (queue.length > 0) {
@@ -77,8 +87,17 @@ export function CreativeActionApprovalModal({
 
   const handleDecide = useCallback(
     (requestId: string, approved: boolean, rememberForSession: boolean) => {
+      if (closingRequestRef.current) return
+      closingRequestRef.current = requestId
       onDecide(requestId, approved, rememberForSession)
-      setQueue((current) => current.filter((q) => q.requestId !== requestId))
+      setClosingRequestId(requestId)
+      // Visual handoff only — IPC already fired. Reduce-motion settles at 0ms.
+      closeTimerRef.current = setTimeout(() => {
+        setQueue((current) => current.filter((q) => q.requestId !== requestId))
+        setClosingRequestId(null)
+        closingRequestRef.current = null
+        closeTimerRef.current = null
+      }, presenceSettleMs(MOTION_DURATIONS.slow))
     },
     [onDecide]
   )
@@ -119,17 +138,23 @@ export function CreativeActionApprovalModal({
     return () => window.removeEventListener('keydown', onKey)
   }, [handleDecide, queue])
 
-  if (queue.length === 0) return null
-
   // Render the top request as interactive; behind it, a small badge
   // shows how many more are queued so the user can tell they're
   // working through a stack.
   const active = queue[0]
+  const isClosing = active?.requestId === closingRequestId
+  const presence = usePresence(Boolean(active) && !isClosing, {
+    durationMs: MOTION_DURATIONS.slow,
+    variant: 'fade'
+  })
+
+  if (!active || !presence.mounted) return null
+
   const remaining = queue.length - 1
 
   return createPortal(
     <div
-      className="creative-approval-backdrop"
+      className={`creative-approval-backdrop${presence.className ? ` ${presence.className}` : ''}`}
       role="presentation"
       onMouseDown={() => handleDecide(active.requestId, false, false)}
     >

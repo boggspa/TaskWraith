@@ -2509,7 +2509,10 @@
 }
 .composer-ensemble-hop-meter.is-clickable {
   cursor: pointer;
-  transition: background 0.16s ease, color 0.16s ease, transform 0.12s ease;
+  transition:
+    background var(--motion-fast) var(--motion-ease-out),
+    color var(--motion-fast) var(--motion-ease-out),
+    transform var(--motion-fast) var(--motion-ease-out);
 }
 .composer-ensemble-hop-meter.is-clickable:hover:not(:disabled),
 .composer-ensemble-hop-meter.is-clickable.is-open {
@@ -2518,6 +2521,16 @@
 }
 .composer-ensemble-hop-meter.is-clickable:active:not(:disabled) {
   transform: scale(0.97);
+}
+
+:root[data-reduce-motion="true"] .composer-ensemble-hop-meter.is-clickable:active:not(:disabled) {
+  transform: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .composer-ensemble-hop-meter.is-clickable:active:not(:disabled) {
+    transform: none;
+  }
 }
 .composer-ensemble-hop-meter.is-clickable:disabled {
   cursor: not-allowed;

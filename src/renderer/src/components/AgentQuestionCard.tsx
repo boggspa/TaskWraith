@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import type { ReactElement } from 'react'
 import type { ProviderId } from '../../../main/store/types'
+import { MOTION_DURATIONS, presenceSettleMs, usePresence } from '../hooks/usePanelPresence'
 import { createOneShotLatch } from '../lib/oneShotLatch'
 
 /**
@@ -40,10 +41,11 @@ export function AgentQuestionCard({
   state,
   onAnswer,
   onDismiss
-}: AgentQuestionCardProps): ReactElement {
+}: AgentQuestionCardProps): ReactElement | null {
   const hasOptions = (state.options?.length ?? 0) > 0
   const [showFreeText, setShowFreeText] = useState(!hasOptions)
   const [freeText, setFreeText] = useState('')
+  const [isClosing, setIsClosing] = useState(false)
   const providerClass = state.provider ? ` provider-${state.provider}` : ''
   const questionTitleId = useId()
   const dialogRef = useRef<HTMLDivElement | null>(null)
@@ -55,12 +57,36 @@ export function AgentQuestionCard({
   // key the card by questionId, so each new question mounts a fresh card (and a
   // fresh latch); no in-render ref reset needed.
   const latchRef = useRef(createOneShotLatch())
+  const completionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => {
+    return () => {
+      if (completionTimerRef.current != null) clearTimeout(completionTimerRef.current)
+    }
+  }, [])
+
+  const finishAfterExit = (resolve: () => void): void => {
+    latchRef.current.run(() => {
+      setIsClosing(true)
+      // Answer after the exit fade; under reduce-motion settle is immediate.
+      completionTimerRef.current = setTimeout(resolve, presenceSettleMs(MOTION_DURATIONS.base))
+    })
+  }
+
   const answerOnce = (value: string, isCustom: boolean): void => {
-    latchRef.current.run(() => onAnswer(value, isCustom))
+    finishAfterExit(() => onAnswer(value, isCustom))
   }
   const dismissOnce = (): void => {
-    latchRef.current.run(() => onDismiss())
+    finishAfterExit(onDismiss)
   }
+
+  const presence = usePresence(!isClosing, {
+    durationMs: MOTION_DURATIONS.base,
+    variant: 'rise',
+    // This card only mounts for a fresh agent request, so it should receive a
+    // single gentle entry rather than inheriting the app-restore skip.
+    skipInitialAnimation: false
+  })
 
   const submitFreeText = (): void => {
     if (!freeText.trim()) return
@@ -128,13 +154,17 @@ export function AgentQuestionCard({
     return () => window.removeEventListener('keydown', onKey)
   }, [hasOptions, showFreeText])
 
+  if (!presence.mounted) return null
+
   return (
     <div
       ref={dialogRef}
       role="alertdialog"
       aria-modal="false"
       aria-labelledby={questionTitleId}
-      className={`plan-choice-card agent-question-card${providerClass}`}
+      className={`plan-choice-card agent-question-card${providerClass}${
+        presence.className ? ` ${presence.className}` : ''
+      }`}
     >
       <div id={questionTitleId} className="plan-choice-question agent-question-card-question">
         {state.question}

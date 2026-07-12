@@ -38,9 +38,11 @@ function render(props: {
 }
 
 describe('ContinuousHopsLimitChip', () => {
-  it('renders the hops/maxHops fraction in the chip text', () => {
+  it('renders the hops/maxHops fraction as animated digits with an accessible label', () => {
     const html = render({ hops: 3, maxHops: 8 })
-    expect(html).toContain('3/8')
+    expect(html).toContain('composer-ensemble-hop-meter-count')
+    expect(html).toContain('digit-odometer')
+    expect(html).toContain('aria-label="Continuous round max handoff turns: 3 of 8"')
   })
 
   it('uses the neutral tone below the final 30% of turns', () => {

@@ -1,4 +1,5 @@
 @import url('../styles/theme.css');
+@import url('./css/00-motion-tokens.css');
 @import url('./css/00-fonts-base.css');
 @import url('./css/01-sidebar.css');
 @import url('./css/02-transcript-messages-fx.css');

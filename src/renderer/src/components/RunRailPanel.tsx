@@ -15,6 +15,7 @@ import { useLaunchAttempts } from '../hooks/useLaunchAttempts'
 import { RunInspector } from './RunInspector'
 import { ProviderBadgeIcon } from './Sidebar'
 import { ReviewSymbolIcon, RunSymbolIcon } from './AppChromeSymbols'
+import { DigitOdometer } from './DigitOdometer'
 
 interface RunRailPanelProps {
   lanes: RunLane[]
@@ -62,6 +63,17 @@ function formatDuration(startedAt?: string, endedAt?: string): string {
   if (minutes < 60) return `${minutes}m ${seconds}s`
   const hours = Math.floor(minutes / 60)
   return `${hours}h ${minutes % 60}m`
+}
+
+function LiveMetric({ value, label }: { value: number; label: string }) {
+  return (
+    <span>
+      <strong>
+        <DigitOdometer value={value} />
+      </strong>{' '}
+      {label}
+    </span>
+  )
 }
 
 function signal(
@@ -291,10 +303,10 @@ export function RunRailPanel({
           <strong>Live lanes and analyst</strong>
         </div>
         <div className="run-rail-metrics" aria-label="Run lane metrics">
-          <span><strong>{activeCount}</strong> active</span>
-          <span><strong>{waitingCount}</strong> waiting</span>
-          <span><strong>{failedCount}</strong> failed</span>
-          <span><strong>{activeLaunchCount}</strong> launch</span>
+          <LiveMetric value={activeCount} label="active" />
+          <LiveMetric value={waitingCount} label="waiting" />
+          <LiveMetric value={failedCount} label="failed" />
+          <LiveMetric value={activeLaunchCount} label="launch" />
         </div>
       </header>
 
@@ -304,7 +316,9 @@ export function RunRailPanel({
           return (
             <span key={provider} className={`run-rail-provider provider-${provider}`}>
               <ProviderBadgeIcon provider={provider} />
-              <span>{count}</span>
+              <span>
+                <DigitOdometer value={count} />
+              </span>
             </span>
           )
         })}

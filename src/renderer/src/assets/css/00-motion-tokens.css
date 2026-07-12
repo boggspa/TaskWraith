@@ -1,0 +1,33 @@
+/* Motion vocabulary — shared renderer timing and easing tokens.
+ *
+ * Keep this file early in main.css so every consumer inherits the same
+ * compact motion budget. Structural chrome uses the damped ease-out curve;
+ * the pop curve is reserved for tiny accents (badges/dots), never panels.
+ */
+
+:root {
+  --motion-fast: 120ms;
+  --motion-base: 180ms;
+  --motion-slow: 260ms;
+
+  --motion-ease-out: cubic-bezier(0.22, 0.61, 0.36, 1);
+  --motion-ease-inout: ease-in-out;
+  --motion-ease-pop: cubic-bezier(0.34, 1.26, 0.5, 1);
+}
+
+/* The renderer preference and OS preference both collapse the shared timing.
+ * Components with positional entry states also override those transforms in
+ * 13-panel-transitions.css, leaving a short opacity-only change. */
+:root[data-reduce-motion="true"] {
+  --motion-fast: 0.01ms;
+  --motion-base: 0.01ms;
+  --motion-slow: 0.01ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --motion-fast: 0.01ms;
+    --motion-base: 0.01ms;
+    --motion-slow: 0.01ms;
+  }
+}

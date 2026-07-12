@@ -450,7 +450,9 @@
   text-decoration: underline;
   text-decoration-color: transparent;
   text-underline-offset: 2px;
-  transition: color 120ms ease, text-decoration-color 120ms ease;
+  transition:
+    color var(--motion-fast) var(--motion-ease-out),
+    text-decoration-color var(--motion-fast) var(--motion-ease-out);
 }
 .transcript-file-target:hover {
   color: var(--accent);
@@ -615,11 +617,25 @@
   margin-left: auto;
   display: inline-flex;
   color: var(--text-tertiary);
-  transition: transform 180ms ease;
+  transition: transform var(--motion-fast) var(--motion-ease-out);
 }
 .compact-tool-trace-chevron[data-expanded="true"] {
   transform: rotate(180deg);
   color: var(--text-secondary);
+}
+
+:root[data-reduce-motion="true"] .compact-tool-trace-chevron,
+:root[data-reduce-motion="true"] .compact-tool-trace-chevron[data-expanded="true"] {
+  transition: none;
+  transform: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .compact-tool-trace-chevron,
+  .compact-tool-trace-chevron[data-expanded="true"] {
+    transition: none;
+    transform: none;
+  }
 }
 
 /* Foldout — sits BELOW the line in its own visual unit. Indented +

@@ -18,6 +18,7 @@
  */
 import { useEffect, useMemo, useState } from 'react'
 import type { UsageRecord } from '../../../main/store/types'
+import { DigitOdometer } from './DigitOdometer'
 import {
   buildHeatmapGrid,
   buildProviderFilteredHeatmapGrid,
@@ -70,6 +71,29 @@ function HeatmapCellTile({ cell }: { cell: HeatmapCell }) {
           : undefined
       }
     />
+  )
+}
+
+function TokenCountOdometer({ value }: { value: number }) {
+  const compact = formatTokenCount(value)
+  const parts = /^(\d+)(?:\.(\d+))?([KMB])?$/.exec(compact)
+  if (!parts) return <>{compact}</>
+
+  const fraction = parts[2] ?? ''
+  const scaledValue = Number(`${parts[1]}${fraction}`)
+  const suffix = parts[3]
+
+  return (
+    <span
+      className="usage-heatmap-token-count"
+      role="img"
+      aria-label={`${Math.max(0, Math.round(value)).toLocaleString()} tokens`}
+    >
+      <span aria-hidden>
+        <DigitOdometer value={scaledValue} decimalPlaces={fraction.length} />
+        {suffix && <span className="usage-heatmap-token-suffix">{suffix}</span>}
+      </span>
+    </span>
   )
 }
 
@@ -202,13 +226,22 @@ export function UsageHeatmap({
           )}
           <span className="usage-heatmap-chips" aria-label={`${title} all-provider totals`}>
             <span className="usage-heatmap-chip">
-              24h <strong>{formatTokenCount(grid.totals.last24h)}</strong>
+              24h{' '}
+              <strong>
+                <TokenCountOdometer value={grid.totals.last24h} />
+              </strong>
             </span>
             <span className="usage-heatmap-chip">
-              7D <strong>{formatTokenCount(grid.totals.last7d)}</strong>
+              7D{' '}
+              <strong>
+                <TokenCountOdometer value={grid.totals.last7d} />
+              </strong>
             </span>
             <span className="usage-heatmap-chip">
-              {windowLabel} <strong>{formatTokenCount(grid.totals.window)}</strong>
+              {windowLabel}{' '}
+              <strong>
+                <TokenCountOdometer value={grid.totals.window} />
+              </strong>
             </span>
           </span>
         </div>

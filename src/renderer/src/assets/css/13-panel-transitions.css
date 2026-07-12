@@ -11,10 +11,10 @@
 
 .tw-panel-anim {
   transition:
-    margin 260ms cubic-bezier(0.22, 1, 0.36, 1),
-    width 260ms cubic-bezier(0.22, 1, 0.36, 1),
-    flex-basis 260ms cubic-bezier(0.22, 1, 0.36, 1),
-    opacity 190ms ease;
+    margin var(--motion-slow) var(--motion-ease-out),
+    width var(--motion-slow) var(--motion-ease-out),
+    flex-basis var(--motion-slow) var(--motion-ease-out),
+    opacity var(--motion-base) var(--motion-ease-inout);
   will-change: margin, opacity;
 }
 
@@ -46,5 +46,48 @@
 @media (prefers-reduced-motion: reduce) {
   .tw-panel-anim {
     transition: none;
+  }
+}
+
+/* Reusable surface presence. Unlike the two legacy resizable panels above,
+ * these classes only animate compositor-friendly transform/opacity values.
+ * `usePresence` removes the class after entry, then retains it just long
+ * enough to play the fade-only exit before unmounting the surface. */
+.tw-presence {
+  transition:
+    opacity var(--motion-base) var(--motion-ease-out),
+    transform var(--motion-base) var(--motion-ease-out);
+  will-change: transform, opacity;
+}
+
+.tw-presence--slide {
+  transition-duration: var(--motion-slow);
+}
+
+.tw-presence--enter-from,
+.tw-presence--exit-to {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.tw-presence--enter-from.tw-presence--slide {
+  transform: translateY(12px);
+}
+
+.tw-presence--enter-from.tw-presence--rise {
+  transform: translateY(6px);
+}
+
+:root[data-reduce-motion="true"] .tw-presence,
+:root[data-reduce-motion="true"] .tw-presence--enter-from {
+  transform: none;
+  will-change: auto;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tw-presence,
+  .tw-presence--enter-from {
+    transform: none;
+    will-change: auto;
   }
 }

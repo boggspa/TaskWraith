@@ -3311,6 +3311,16 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   font-variant-numeric: tabular-nums;
 }
 
+.usage-heatmap-token-count,
+.usage-heatmap-token-count > span {
+  display: inline-flex;
+  align-items: baseline;
+}
+
+.usage-heatmap-token-suffix {
+  margin-left: 0.02em;
+}
+
 @media (max-width: 980px) {
   .usage-heatmap--with-provider-filter .usage-heatmap-header {
     grid-template-columns: 1fr;

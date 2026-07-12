@@ -1622,7 +1622,7 @@
   flex-wrap: wrap;
 }
 
-.run-rail-metrics span,
+.run-rail-metrics > span,
 .run-rail-provider,
 .run-rail-signal {
   border: 1px solid var(--rightdock-border);

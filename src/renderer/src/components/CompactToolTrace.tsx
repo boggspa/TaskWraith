@@ -1,5 +1,6 @@
-import { useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import type { ProviderId, ToolActivity } from '../../../main/store/types'
+import { MOTION_DURATIONS, usePresence } from '../hooks/usePanelPresence'
 import { ToolFamilyIcon, toolNameToFamily } from './icons/ToolFamilyIcon'
 import {
   REDACTION_HINT,
@@ -50,7 +51,21 @@ export function CompactToolTrace({
     softLabel
   )
 
-  const sections = expanded ? buildFoldoutSections(activity) : []
+  // Lazy-build foldout sections only while expanded; keep the last payload in
+  // a ref so the exit fade still has stable content without parsing every
+  // collapsed transcript row on every render.
+  const sectionsRef = useRef<ReturnType<typeof buildFoldoutSections>>([])
+  const sections = useMemo(() => {
+    if (!expanded) return sectionsRef.current
+    const next = buildFoldoutSections(activity)
+    sectionsRef.current = next
+    return next
+  }, [activity, expanded])
+  const hasFoldout = sections.length > 0 || urlTargets.length > 0
+  const foldoutPresence = usePresence(expanded && hasFoldout, {
+    durationMs: MOTION_DURATIONS.base,
+    variant: 'rise'
+  })
 
   const toggleExpanded = () => setExpanded((current) => !current)
 
@@ -154,8 +169,12 @@ export function CompactToolTrace({
           </svg>
         </span>
       </div>
-      {expanded && (sections.length > 0 || urlTargets.length > 0) && (
-        <div className="compact-tool-trace-foldout">
+      {foldoutPresence.mounted && hasFoldout && (
+        <div
+          className={`compact-tool-trace-foldout${
+            foldoutPresence.className ? ` ${foldoutPresence.className}` : ''
+          }`}
+        >
           {urlTargets.length > 0 && (
             <div className="compact-tool-trace-foldout-section">
               <div className="compact-tool-trace-foldout-label">Sources</div>

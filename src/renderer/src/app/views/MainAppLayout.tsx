@@ -30,6 +30,7 @@ import { getProviderLabel } from '../../lib/providerLabels'
 import { isGlobalChat } from '../../lib/chatScope'
 import { resolveWorkspaceDisplayName } from '../../../../shared/workspaceDisplayName'
 import { RunRailPanel } from '../../components/RunRailPanel'
+import { DigitOdometer } from '../../components/DigitOdometer'
 import { ProviderBadgeIcon, Sidebar } from '../../components/Sidebar'
 import { CollapsedSidebarCornerPill } from '../../components/CollapsedSidebarCornerPill'
 import { WorkspaceBoardView } from '../../components/WorkspaceBoardView'
@@ -1806,9 +1807,23 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                 {/* Streaming variant: text grows inside ONE bubble, so the
                     message-count unread number stays 0 — label the affordance
                     itself rather than showing "0 new messages". */}
-                {unreadFromBottomCount > 0
-                  ? `${unreadFromBottomCount} new ${unreadFromBottomCount === 1 ? 'message' : 'messages'}`
-                  : 'Jump to latest'}
+                {unreadFromBottomCount > 0 ? (
+                  <>
+                    <DigitOdometer
+                      value={unreadFromBottomCount}
+                      ariaLabel={`${unreadFromBottomCount} new ${
+                        unreadFromBottomCount === 1 ? 'message' : 'messages'
+                      }`}
+                      className="transcript-jump-to-latest-count"
+                    />
+                    <span aria-hidden>
+                      {' '}
+                      new {unreadFromBottomCount === 1 ? 'message' : 'messages'}
+                    </span>
+                  </>
+                ) : (
+                  'Jump to latest'
+                )}
               </span>
             </button>
           )}

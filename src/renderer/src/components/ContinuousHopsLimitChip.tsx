@@ -29,6 +29,7 @@ import {
   type FormEvent
 } from 'react'
 import { createPortal } from 'react-dom'
+import { DigitOdometer } from './DigitOdometer'
 
 const MIN_HOPS = 1
 const MAX_HOPS = 500
@@ -240,10 +241,14 @@ export function ContinuousHopsLimitChip({
         disabled={disabled}
         aria-haspopup="dialog"
         aria-expanded={open}
-        aria-label="Continuous round max handoff turns"
+        aria-label={`Continuous round max handoff turns: ${hops} of ${maxHops}`}
         title="Click to set max handoff turns for continuous rounds."
       >
-        {hops}/{maxHops}
+        <span className="composer-ensemble-hop-meter-count" aria-hidden>
+          <DigitOdometer value={hops} />
+          <span>/</span>
+          <DigitOdometer value={maxHops} />
+        </span>
       </button>
       {open
         ? createPortal(
