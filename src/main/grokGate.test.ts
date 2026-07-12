@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { grokAcpEnabled } from './grokGate'
+import { grokAcpEnabled, grokSeatSessionsEnabled } from './grokGate'
 
 // Provider eligibility is no longer gated (Grok is permanently first-class —
 // see ProviderId). Only the ACP transport sub-gate remains configurable.
-const GROK_ENV_KEYS = ['TASKWRAITH_GROK_ACP'] as const
+const GROK_ENV_KEYS = ['TASKWRAITH_GROK_ACP', 'TASKWRAITH_GROK_SEAT_SESSIONS'] as const
 
 type GrokEnvKey = (typeof GROK_ENV_KEYS)[number]
 
@@ -53,6 +53,33 @@ describe('grokAcpEnabled', () => {
     for (const value of ['0', 'false', 'no']) {
       resetGrokEnv({ TASKWRAITH_GROK_ACP: value })
       expect(grokAcpEnabled()).toBe(false)
+    }
+  })
+})
+
+describe('grokSeatSessionsEnabled', () => {
+  beforeEach(() => {
+    originalEnv.clear()
+    for (const key of GROK_ENV_KEYS) originalEnv.set(key, process.env[key])
+    resetGrokEnv()
+  })
+
+  afterEach(() => {
+    for (const key of GROK_ENV_KEYS) {
+      const value = originalEnv.get(key)
+      if (value === undefined) delete process.env[key]
+      else process.env[key] = value
+    }
+  })
+
+  it('defaults the production ensemble seat-session path on', () => {
+    expect(grokSeatSessionsEnabled()).toBe(true)
+  })
+
+  it('honors the documented emergency opt-out', () => {
+    for (const value of ['0', 'false', 'no']) {
+      resetGrokEnv({ TASKWRAITH_GROK_SEAT_SESSIONS: value })
+      expect(grokSeatSessionsEnabled()).toBe(false)
     }
   })
 })

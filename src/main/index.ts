@@ -947,6 +947,7 @@ import {
   shouldAdvertiseTaskWraithMcpToGrok
 } from './grok/GrokMcpAdvertise'
 import { grokReadOnlyShellRequestAllowed } from './grok/GrokReadOnlyShell'
+import { deleteCliProviderProcessIfOwned } from './grok/GrokProcessOwnership'
 import { grokEventToRunEvents, type NormalizedGrokRunEvent } from './grok/GrokStreamingJson'
 import {
   cursorDebugEnabled,
@@ -980,7 +981,11 @@ import {
   CURSOR_READONLY_MCP_ALLOW_RULES,
   CURSOR_SCOPED_MCP_SERVER_NAME
 } from './cursor/CursorMcpBridge'
-import { runGrokAcpTurn, type AcpChildProcess } from './grok/GrokAcpClient'
+import {
+  createGrokTurnAbortController,
+  runGrokAcpTurn,
+  type AcpChildProcess
+} from './grok/GrokAcpClient'
 import { sweepGrokProjectTaskWraithMcpRegistrations } from './grok/GrokMcpConfig'
 import { GrokSeatSessionRegistry } from './grok/GrokSeatSession'
 import {
@@ -14335,6 +14340,7 @@ async function runGrokAcpProvider(event: Electron.IpcMainInvokeEvent, payload: A
     ensembleRun: payload.ensembleRun,
     ...route
   }
+  let grokOwnedProcess: ChildProcess | null = null
   registerRunSession(
     'grok',
     event.sender,
@@ -14534,7 +14540,9 @@ async function runGrokAcpProvider(event: Electron.IpcMainInvokeEvent, payload: A
       if (!grokWriteCapable(payload.approvalMode)) {
         if (networkRead) return 'allow'
         // Read-only / recon: allow a shell tool call ONLY when it is a provably
-        // read-only command (ls, cat, git log, find, grep, …). This is what lets
+        // read-only command (ls, cat, find, rg, …). Native-shell Git is denied
+        // because inherited/repository config can execute external programs.
+        // This is what lets
         // "investigate this repo" actually run under read-only posture instead of
         // Grok hard-cancelling the turn on the denied tool. Mutating shell stays
         // denied (fail-closed classifier). See GrokReadOnlyShell.
@@ -14601,7 +14609,8 @@ async function runGrokAcpProvider(event: Electron.IpcMainInvokeEvent, payload: A
         )
         sendAgentCompatExit(event.sender, 'grok', failed ? 1 : (turnComplete ? 0 : (code ?? 1)), state)
       }
-      if (cliProviderProcesses.get('grok')) cliProviderProcesses.delete('grok')
+      deleteCliProviderProcessIfOwned(cliProviderProcesses, 'grok', grokOwnedProcess)
+      grokOwnedProcess = null
       const finalStopReason = normalizeGrokStopReason(terminalStatus)
       const finalFailed =
         !turnComplete ||
@@ -14619,7 +14628,7 @@ async function runGrokAcpProvider(event: Electron.IpcMainInvokeEvent, payload: A
 
   // Spike 7 (docs/ensemble-posture-fanout-preamble-design.md) — persistent
   // per-seat ACP session for ensemble Grok seats, behind
-  // TASKWRAITH_GROK_SEAT_SESSIONS (default OFF). Eligibility is deliberately
+  // TASKWRAITH_GROK_SEAT_SESSIONS (default ON). Eligibility is deliberately
   // narrow: an ensemble seat (stable participantId to key on), READ-ONLY, and
   // TOOLLESS (grokMcpServers empty — the bridge env bakes TASKWRAITH_RUN_ID
   // into session/new, so a reused session would route broker approvals to a
@@ -14640,8 +14649,9 @@ async function runGrokAcpProvider(event: Electron.IpcMainInvokeEvent, payload: A
       spawnProcess: grokSpawnAcpProcess,
       onRawFrame: (direction, message) => maybeLogGrokRawAcp(direction, message)
     }))
-    const seatProcess = session.process() as unknown as ReturnType<typeof spawn>
+    const seatProcess = session.process() as unknown as ChildProcess
     runManager.attachProcess(route.appRunId!, seatProcess)
+    grokOwnedProcess = seatProcess
     cliProviderProcesses.set('grok', seatProcess)
     if (reused) {
       applyGrokRunEvent(state, {
@@ -14649,17 +14659,21 @@ async function runGrokAcpProvider(event: Electron.IpcMainInvokeEvent, payload: A
         text: 'Grok seat session resumed — this turn continues the seat’s live ACP session (provider-native memory).'
       })
     }
-    session.runTurn({
+    const seatTurnHandle = session.runTurn({
       prompt: grokProviderPrompt,
       onEvent: (evt) => applyGrokRunEvent(state, evt),
       onPermissionRequest: grokPermissionHandler,
       onTurnEnd: (turnComplete, terminalStatus, processExited) =>
         finishGrokAcpTurn(processExited && !turnComplete ? 1 : 0, turnComplete, terminalStatus)
     })
+    runManager.attachAbortController(
+      route.appRunId!,
+      createGrokTurnAbortController(seatTurnHandle)
+    )
     return
   }
 
-  runGrokAcpTurn({
+  const grokAcpHandle = runGrokAcpTurn({
     // Read-only seat: prepend the read-only steer so Grok answers from
     // read/inspection tools instead of attempting a write the host gate will
     // refuse — a refused write makes Grok hard-cancel and dead-end with no
@@ -14673,8 +14687,9 @@ async function runGrokAcpProvider(event: Electron.IpcMainInvokeEvent, payload: A
     mcpServers: grokMcpServers,
     spawnProcess: grokSpawnAcpProcess,
     onProcess: (child) => {
-      const proc = child as unknown as ReturnType<typeof spawn>
+      const proc = child as unknown as ChildProcess
       runManager.attachProcess(route.appRunId!, proc)
+      grokOwnedProcess = proc
       cliProviderProcesses.set('grok', proc)
     },
     onPermissionRequest: grokPermissionHandler,
@@ -14682,6 +14697,7 @@ async function runGrokAcpProvider(event: Electron.IpcMainInvokeEvent, payload: A
     onRawFrame: (direction, message) => maybeLogGrokRawAcp(direction, message),
     onClose: finishGrokAcpTurn
   })
+  runManager.attachAbortController(route.appRunId!, createGrokTurnAbortController(grokAcpHandle))
 }
 
 /**

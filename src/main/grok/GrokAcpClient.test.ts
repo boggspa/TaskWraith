@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest'
-import { runGrokAcpTurn, type AcpChildProcess, type GrokAcpRunOptions } from './GrokAcpClient'
+import {
+  createGrokTurnAbortController,
+  runGrokAcpTurn,
+  type AcpChildProcess,
+  type GrokAcpRunOptions
+} from './GrokAcpClient'
 import type { NormalizedGrokRunEvent } from './GrokAcpProtocol'
 
 class FakeAcpChild implements AcpChildProcess {
@@ -126,12 +131,8 @@ describe('runGrokAcpTurn', () => {
     expect(answer).toBe('Hi!')
     expect(events.some((e) => e.type === 'thinking' && e.text === 'Greeting.')).toBe(true)
 
-    // Completion notification → turn complete → process closed.
-    child.emit({
-      jsonrpc: '2.0',
-      method: '_x.ai/session/prompt_complete',
-      params: { sessionId: 's-123', stopReason: 'end_turn' }
-    })
+    // Correlated prompt response → turn complete → process closed.
+    child.emit({ jsonrpc: '2.0', id: 3, result: { stopReason: 'end_turn' } })
     // The ACP `result` is NOT forwarded as a sink event — caller synthesizes it.
     expect(events.some((e) => e.type === 'result')).toBe(false)
 
@@ -146,11 +147,7 @@ describe('runGrokAcpTurn', () => {
     child.emit({ jsonrpc: '2.0', id: 1, result: {} })
     child.emit({ jsonrpc: '2.0', id: 2, result: { sessionId: 's-1' } })
 
-    child.emit({
-      jsonrpc: '2.0',
-      method: '_x.ai/session/prompt_complete',
-      params: { sessionId: 's-1', stopReason: 'PermissionRejected' }
-    })
+    child.emit({ jsonrpc: '2.0', id: 3, result: { stopReason: 'PermissionRejected' } })
 
     expect(events.some((e) => e.type === 'result')).toBe(false)
     await new Promise((r) => setTimeout(r, 40))
@@ -211,6 +208,19 @@ describe('runGrokAcpTurn', () => {
     handle.cancel()
     const cancelMsg = child.sent().find((m) => m.method === 'session/cancel')
     expect(cancelMsg).toMatchObject({ method: 'session/cancel', params: { sessionId: 's-9' } })
+    expect(child.killed).toBe(true)
+  })
+
+  it('routes RunManager abort through the turn handle before raw process cleanup', () => {
+    const child = new FakeAcpChild()
+    const { handle } = run(child)
+    child.emit({ jsonrpc: '2.0', id: 1, result: {} })
+    child.emit({ jsonrpc: '2.0', id: 2, result: { sessionId: 's-9' } })
+
+    const controller = createGrokTurnAbortController(handle)
+    controller.abort()
+
+    expect(child.sent().some((message) => message.method === 'session/cancel')).toBe(true)
     expect(child.killed).toBe(true)
   })
 
@@ -276,6 +286,181 @@ describe('runGrokAcpTurn', () => {
       id: 99,
       result: { outcome: { outcome: 'selected', optionId: 'a' } }
     })
+  })
+
+  it('drops a late allow decision after the transient turn is cancelled', async () => {
+    const child = new FakeAcpChild()
+    let resolveDecision!: (decision: 'allow' | 'deny') => void
+    const decision = new Promise<'allow' | 'deny'>((resolve) => {
+      resolveDecision = resolve
+    })
+    const { handle } = run(child, { onPermissionRequest: () => decision })
+    child.emit({ jsonrpc: '2.0', id: 1, result: {} })
+    child.emit({ jsonrpc: '2.0', id: 2, result: { sessionId: 's-1' } })
+    child.emit({
+      jsonrpc: '2.0',
+      id: 100,
+      method: 'session/request_permission',
+      params: {
+        sessionId: 's-1',
+        toolCall: { title: 'run_terminal_command', kind: 'execute' },
+        options: [
+          { optionId: 'a', name: 'Allow', kind: 'allow_once' },
+          { optionId: 'r', name: 'Reject', kind: 'reject_once' }
+        ]
+      }
+    })
+
+    handle.cancel()
+    resolveDecision('allow')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    const lateReplies = child.sent().filter((message) => message.id === 100)
+    expect(
+      lateReplies.some((message) => JSON.stringify(message).includes('"optionId":"a"'))
+    ).toBe(false)
+  })
+
+  it('recovers once when a denied native tool makes Grok cancel the turn', async () => {
+    const child = new FakeAcpChild()
+    const { events, closeInfos } = run(child, {
+      onPermissionRequest: () => 'deny'
+    })
+    child.emit({ jsonrpc: '2.0', id: 1, result: {} })
+    child.emit({ jsonrpc: '2.0', id: 2, result: { sessionId: 's-1' } })
+
+    child.emit({
+      jsonrpc: '2.0',
+      id: 42,
+      method: 'session/request_permission',
+      params: {
+        sessionId: 's-1',
+        toolCall: {
+          title: 'run_terminal_command',
+          kind: 'execute',
+          rawInput: { command: 'rm -rf build' }
+        },
+        options: [
+          { optionId: 'a', name: 'Allow', kind: 'allow_once' },
+          { optionId: 'r', name: 'Reject', kind: 'reject_once' }
+        ]
+      }
+    })
+    await new Promise((r) => setTimeout(r, 0))
+    expect(child.sent().find((message) => message.id === 42)).toMatchObject({
+      result: { outcome: { outcome: 'selected', optionId: 'r' } }
+    })
+
+    child.emit({ jsonrpc: '2.0', id: 3, result: { stopReason: 'cancelled' } })
+    await new Promise((r) => setTimeout(r, 40))
+
+    expect(child.killed).toBe(false)
+    const prompts = child.sent().filter((message) => message.method === 'session/prompt')
+    expect(prompts).toHaveLength(2)
+    expect(prompts[1]).toMatchObject({
+      id: 4,
+      params: { sessionId: 's-1' }
+    })
+    expect(JSON.stringify(prompts[1])).toContain('denied by TaskWraith policy')
+    expect(
+      events.some(
+        (event) =>
+          event.type === 'provider_warning' &&
+          (event.text || '').includes('continuing without the denied tool')
+      )
+    ).toBe(true)
+
+    // A delayed duplicate response and the uncorrelated extension notification
+    // from prompt 3 cannot terminate the now-active prompt 4.
+    child.emit({ jsonrpc: '2.0', id: 3, result: { stopReason: 'cancelled' } })
+    child.emit({
+      jsonrpc: '2.0',
+      method: '_x.ai/session/prompt_complete',
+      params: { sessionId: 's-1', stopReason: 'cancelled' }
+    })
+    await new Promise((r) => setTimeout(r, 40))
+    expect(child.killed).toBe(false)
+    expect(closeInfos).toHaveLength(0)
+
+    child.emit({
+      jsonrpc: '2.0',
+      method: 'session/update',
+      params: {
+        sessionId: 's-1',
+        update: {
+          sessionUpdate: 'agent_message_chunk',
+          content: { type: 'text', text: 'Recovered answer.' }
+        }
+      }
+    })
+    child.emit({ jsonrpc: '2.0', id: 4, result: { stopReason: 'end_turn' } })
+    await new Promise((r) => setTimeout(r, 40))
+
+    expect(child.killed).toBe(true)
+    expect(closeInfos).toEqual([{ code: 0, turnComplete: true, terminalStatus: 'end_turn' }])
+  })
+
+  it('bounds denied-tool recovery to one follow-up prompt', async () => {
+    const child = new FakeAcpChild()
+    const { closeInfos } = run(child, { onPermissionRequest: () => 'deny' })
+    child.emit({ jsonrpc: '2.0', id: 1, result: {} })
+    child.emit({ jsonrpc: '2.0', id: 2, result: { sessionId: 's-1' } })
+
+    const denyTool = async (rpcId: number, promptRpcId: number): Promise<void> => {
+      child.emit({
+        jsonrpc: '2.0',
+        id: rpcId,
+        method: 'session/request_permission',
+        params: {
+          sessionId: 's-1',
+          toolCall: { title: 'run_terminal_command', kind: 'execute' },
+          options: [{ optionId: 'r', name: 'Reject', kind: 'reject_once' }]
+        }
+      })
+      await new Promise((r) => setTimeout(r, 0))
+      child.emit({
+        jsonrpc: '2.0',
+        id: promptRpcId,
+        result: { stopReason: 'PermissionRejected' }
+      })
+    }
+
+    await denyTool(42, 3)
+    await new Promise((r) => setTimeout(r, 40))
+    expect(child.sent().filter((message) => message.method === 'session/prompt')).toHaveLength(2)
+    expect(child.killed).toBe(false)
+
+    await denyTool(43, 4)
+    await new Promise((r) => setTimeout(r, 40))
+    expect(child.sent().filter((message) => message.method === 'session/prompt')).toHaveLength(2)
+    expect(child.killed).toBe(true)
+    expect(closeInfos).toEqual([
+      { code: 0, turnComplete: true, terminalStatus: 'PermissionRejected' }
+    ])
+  })
+
+  it('cancel invalidates recovery before a late correlated terminal arrives', async () => {
+    const child = new FakeAcpChild()
+    const { handle } = run(child, { onPermissionRequest: () => 'deny' })
+    child.emit({ jsonrpc: '2.0', id: 1, result: {} })
+    child.emit({ jsonrpc: '2.0', id: 2, result: { sessionId: 's-1' } })
+    child.emit({
+      jsonrpc: '2.0',
+      id: 42,
+      method: 'session/request_permission',
+      params: {
+        sessionId: 's-1',
+        toolCall: { title: 'run_terminal_command', kind: 'execute' },
+        options: [{ optionId: 'r', name: 'Reject', kind: 'reject_once' }]
+      }
+    })
+    await new Promise((r) => setTimeout(r, 0))
+
+    handle.cancel()
+    child.emit({ jsonrpc: '2.0', id: 3, result: { stopReason: 'PermissionRejected' } })
+    await new Promise((r) => setTimeout(r, 40))
+
+    expect(child.sent().filter((message) => message.method === 'session/prompt')).toHaveLength(1)
   })
 
   it('answers an unhandled inbound request with method-not-found (transport keep-alive)', () => {

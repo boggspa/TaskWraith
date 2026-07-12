@@ -36,7 +36,11 @@ import {
   type AcpPermissionRequest,
   type AcpPermissionDecision
 } from './GrokAcpProtocol'
-import type { AcpChildProcess } from './GrokAcpClient'
+import {
+  GROK_DENIED_TOOL_RECOVERY_PROMPT,
+  isGrokDeniedToolCancellation,
+  type AcpChildProcess
+} from './GrokAcpClient'
 
 export interface GrokSeatSessionOptions {
   cwd: string
@@ -69,6 +73,9 @@ export interface GrokSeatTurnHandle {
 interface ActiveTurn extends GrokSeatTurnOptions {
   promptRpcId: number
   ended: boolean
+  deniedPromptRpcId?: number
+  deniedToolRecoveryAttempted: boolean
+  cancelRequested: boolean
 }
 
 const INITIALIZE_RPC_ID = 1
@@ -143,7 +150,13 @@ export class GrokSeatSession {
   }
 
   runTurn(turn: GrokSeatTurnOptions): GrokSeatTurnHandle {
-    const active: ActiveTurn = { ...turn, promptRpcId: this.nextRpcId++, ended: false }
+    const active: ActiveTurn = {
+      ...turn,
+      promptRpcId: this.nextRpcId++,
+      ended: false,
+      deniedToolRecoveryAttempted: false,
+      cancelRequested: false
+    }
     if (!this.aliveFlag) {
       // Callers acquire via the registry (which respawns dead sessions), so a
       // dead-session turn is a race (process died between acquire and run).
@@ -167,6 +180,8 @@ export class GrokSeatSession {
     }
     return {
       cancel: () => {
+        active.cancelRequested = true
+        active.deniedPromptRpcId = undefined
         if (this.sessionId && !active.ended) {
           this.writeRpc(null, 'session/cancel', { sessionId: this.sessionId })
         }
@@ -197,10 +212,11 @@ export class GrokSeatSession {
     if (turn) this.endTurn(turn, false, 'seat-session-exited', true)
   }
 
-  private sendPrompt(turn: ActiveTurn): void {
+  private sendPrompt(turn: ActiveTurn, prompt = turn.prompt): void {
+    if (turn.cancelRequested || turn.ended || !this.aliveFlag || this.stdinClosed) return
     this.writeRpc(turn.promptRpcId, 'session/prompt', {
       sessionId: this.sessionId,
-      prompt: [{ type: 'text', text: turn.prompt }]
+      prompt: [{ type: 'text', text: prompt }]
     })
   }
 
@@ -284,9 +300,29 @@ export class GrokSeatSession {
       const turn = this.activeTurn
       for (const event of acpMessageToRunEvents(message)) {
         if (event.type === 'result') {
+          // Only the response id for the current prompt is authoritative.
+          // Grok also emits an id-less prompt_complete notification and may
+          // duplicate/delay the prior response after a recovery prompt starts.
+          if (!turn || message.id !== turn.promptRpcId) continue
+          if (
+            !turn.cancelRequested &&
+            turn.deniedPromptRpcId === turn.promptRpcId &&
+            !turn.deniedToolRecoveryAttempted &&
+            isGrokDeniedToolCancellation(event.status)
+          ) {
+            turn.deniedToolRecoveryAttempted = true
+            turn.deniedPromptRpcId = undefined
+            turn.onEvent({
+              type: 'provider_warning',
+              text: 'Grok cancelled after a denied native tool; continuing without the denied tool.'
+            })
+            turn.promptRpcId = this.nextRpcId++
+            this.sendPrompt(turn, GROK_DENIED_TOOL_RECOVERY_PROMPT)
+            continue
+          }
           // Terminal stopReason: end the turn but KEEP the process + session
           // — this is the whole point of the persistent seat.
-          if (turn) this.endTurn(turn, true, event.status, false)
+          this.endTurn(turn, true, event.status, false)
         } else if (turn) {
           turn.onEvent(event)
         }
@@ -295,12 +331,34 @@ export class GrokSeatSession {
   }
 
   private answerPermissionRequest(request: AcpPermissionRequest): void {
-    const handler = this.activeTurn?.onPermissionRequest
-    const fallbackDeny = (): void =>
+    const turn = this.activeTurn
+    const permissionPromptRpcId = turn?.promptRpcId
+    const handler = turn?.onPermissionRequest
+    const permissionPromptIsCurrent = (): boolean =>
+      Boolean(
+        turn &&
+          permissionPromptRpcId !== undefined &&
+          this.activeTurn === turn &&
+          !turn.ended &&
+          !turn.cancelRequested &&
+          this.aliveFlag &&
+          !this.stdinClosed &&
+          turn.promptRpcId === permissionPromptRpcId
+      )
+    const recordDeniedPrompt = (): void => {
+      if (turn && permissionPromptIsCurrent()) {
+        turn.deniedPromptRpcId = permissionPromptRpcId
+      }
+    }
+    const fallbackDeny = (): void => {
+      if (!permissionPromptIsCurrent()) return
+      recordDeniedPrompt()
       this.writeFrame(buildAcpPermissionResponse(request.rpcId, request.options, 'deny'))
+    }
     if (!handler) {
       // No active turn (or no mediator) → default DENY, never a silent allow.
-      fallbackDeny()
+      recordDeniedPrompt()
+      this.writeFrame(buildAcpPermissionResponse(request.rpcId, request.options, 'deny'))
       return
     }
     let decision: AcpPermissionDecision | Promise<AcpPermissionDecision>
@@ -311,9 +369,14 @@ export class GrokSeatSession {
       return
     }
     Promise.resolve(decision)
-      .then((resolved) =>
+      .then((resolved) => {
+        // Permission mediation can resolve after Stop or after a recovery
+        // prompt replaced the originating prompt. Never apply that stale
+        // decision (especially an allow) to the live ACP session.
+        if (!permissionPromptIsCurrent()) return
+        if (resolved === 'deny') recordDeniedPrompt()
         this.writeFrame(buildAcpPermissionResponse(request.rpcId, request.options, resolved))
-      )
+      })
       .catch(fallbackDeny)
   }
 

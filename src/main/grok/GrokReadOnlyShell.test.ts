@@ -18,35 +18,19 @@ describe('isReadOnlyShellCommand — allows genuine read-only recon', () => {
     'rg --files',
     'find . -maxdepth 3 -type f',
     "find . -maxdepth 3 -type f ! -path './.git/*'",
-    'git log --oneline -10',
-    'git status',
-    'git diff HEAD~1',
-    'git show abc123',
-    'git remote -v',
-    'git remote show origin',
-    'git branch -a',
-    'git branch --list',
-    'git tag -l',
-    'git config --get user.name',
-    'git config --list',
-    'git stash list',
-    'git config --get user.name',
     'wc -l file',
     'stat file',
+    'date',
+    'hostname',
     'rg --files',
     'rg -n pattern src',
+    "rg 'foo$|bar[0-9]{2}?' .",
     'cat x | uniq -c',
     'uniq input.txt',
-    // `-p` AFTER the subcommand is `--patch` (a read), not the global pager.
-    'git log -p',
-    'git log -p -3',
-    'git show -p HEAD',
-    // The exact command from the reported failing turn:
-    "ls -la && git log --oneline -10 2>/dev/null; git remote -v 2>/dev/null; find . -maxdepth 3 -type f ! -path './.git/*' 2>/dev/null | head -80",
     // Pipes of read commands + benign stderr discard:
     'cat package.json | jq .name',
-    'git log --oneline | head -20',
-    'grep -c TODO src/**/*.ts 2>/dev/null'
+    'grep -c TODO src/**/*.ts 2>/dev/null',
+    "cat <<<'${(e)PAYLOAD}'"
   ]
   it.each(allowed)('allows: %s', (command) => {
     expect(isReadOnlyShellCommand(command)).toBe(true)
@@ -66,12 +50,27 @@ describe('isReadOnlyShellCommand — denies mutations & bypasses (fail closed)',
     'ln -s a b',
     'dd if=/dev/zero of=x',
     'truncate -s 0 f',
+    // Dual-mode commands outside the generic proof allowlist.
+    'file README.md',
+    'file -C -m ./magic',
+    'file --compile -m ./magic',
+    'date 0712120026',
+    'date --set 2026-07-12',
+    'hostname changed',
+    'printf hello',
+    'printf -v GIT_PAGER /usr/bin/false',
+    'printf -vGIT_PAGER /usr/bin/false',
     // Redirection writes a file
     'echo hacked > file.txt',
     'echo x >> log',
     'cat a > b',
     'ls -la 1> out.txt',
     'find . -type f > list.txt',
+    'echo x >&1pwn',
+    'echo x 2>&1err',
+    'echo x 1>&2out',
+    'echo x >&2both',
+    'cat <&0input',
     // Redirect to /dev/null is fine, but a real target hidden after it is not
     'ls 2>/dev/null > stolen',
     // Pipe into a mutating command
@@ -104,6 +103,20 @@ describe('isReadOnlyShellCommand — denies mutations & bypasses (fail closed)',
     'git remote set-url origin https://x',
     'git -C /other log',
     'git -c core.pager=touch\\ pwned log',
+    // Native-shell Git is denied entirely: inherited/repository config can
+    // execute pagers, fsmonitor hooks, or external diff drivers on reads.
+    'git',
+    'git --version',
+    'git status --short',
+    'git log --oneline -10',
+    'git branch -a',
+    'git branch -mnew-name',
+    'git branch -uorigin/master',
+    'git branch --set-upstream-to=origin/master',
+    'git branch --edit-des',
+    'git grep --open-files-in-page foo',
+    'git --config-env=core.fsmonitor=SHELL status --short',
+    'printf -v GIT_PAGER /usr/bin/false; git grep --open-files-in-page foo',
     // find that executes
     'find . -name x -delete',
     'find . -type f -exec rm {} ;',
@@ -127,6 +140,8 @@ describe('isReadOnlyShellCommand — denies mutations & bypasses (fail closed)',
     'awk "{print > \\"f\\"}" x',
     'sort -o out.txt file',
     'tee file',
+    'uniq -- input.txt --output',
+    "uniq -- input.txt '-output'",
     // Empty / nonsense
     '',
     '   ',
@@ -167,9 +182,84 @@ describe('isReadOnlyShellCommand — denies mutations & bypasses (fail closed)',
     'git grep -O pattern',
     'git grep --open-files-in-pager foo',
     // uniq's OUTPUT positional writes a file.
-    'uniq input.txt output.txt'
+    'uniq input.txt output.txt',
+    'uniq -- input.txt --output',
+    "uniq -- input.txt '-output'",
+    // Prefixes are kept outside the proof surface even where the local
+    // BSD/GNU build rejects the abbreviation today.
+    'find . -dele',
+    'find . -execd echo {} ;',
+    'rg --pr /bin/sh needle file',
+    'rg --hostname-b /bin/sh needle file'
   ]
   it.each(adversarialBypasses)('denies confirmed bypass: %s', (command) => {
+    expect(isReadOnlyShellCommand(command)).toBe(false)
+  })
+
+  const quotedMutationTokens = [
+    "find . '-exec' touch /tmp/pwned '{}' ';'",
+    'find . "-exec" touch /tmp/pwned "{}" ";"',
+    "find . '-delete'",
+    'find . "-delete"',
+    "find . -'exec' touch /tmp/pwned '{}' ';'",
+    "find . -e''xec touch /tmp/pwned '{}' ';'",
+    "rg '--pre' /bin/sh needle file",
+    'rg "--pre" /bin/sh needle file',
+    "rg '--pre=/bin/sh' needle file",
+    "rg --'pre' /bin/sh needle file",
+    "rg --p''re=/bin/sh needle file",
+    "rg '--hostname-bin' /bin/sh needle file",
+    "git log --ext-''diff"
+  ]
+  it.each(quotedMutationTokens)('denies quoted semantic mutation token: %s', (command) => {
+    expect(isReadOnlyShellCommand(command)).toBe(false)
+  })
+
+  const dynamicExpansionBypasses = [
+    'find . $DANGER',
+    'find . ${DANGER}',
+    'find . "$DANGER"',
+    'find . -{delete,print}',
+    'find . -*',
+    "find . $'-delete'",
+    "find . $'\\x2ddelete'",
+    'rg $PRE /bin/sh needle file',
+    'rg "$PRE" /bin/sh needle file',
+    'rg --{pre,regexp} /bin/sh needle file',
+    "rg $'--pre' /bin/sh needle file",
+    "rg --p$'re'=/bin/sh needle file",
+    "git log --ext-$'diff'",
+    'git log --ext-{diff,nope}',
+    'find . ${(e)DANGER}',
+    'rg "${(e)PRE}" /bin/sh needle file',
+    "find /tmp /tmp/*(e:'touch /tmp/pwn':)",
+    "rg /tmp/*(e:'touch /tmp/pwn':) needle"
+  ]
+  it.each(dynamicExpansionBypasses)('denies dynamic shell argv expansion: %s', (command) => {
+    expect(isReadOnlyShellCommand(command)).toBe(false)
+  })
+
+  const lineContinuationBypasses = [
+    ['find . -de\\', 'lete'].join('\n'),
+    ['rg --pr\\', 'e /bin/sh needle file'].join('\n'),
+    ['git log --ext-\\', 'diff'].join('\n'),
+    ['find . "-de\\', 'lete"'].join('\n'),
+    ['find . -de\\', 'lete'].join('\r\n'),
+    ['rg --pr\\', 'e /bin/sh needle file'].join('\r\n'),
+    ['git log --ext-\\', 'diff'].join('\r\n'),
+    ['find . "-de\\', 'lete"'].join('\r\n')
+  ]
+  it.each(lineContinuationBypasses)('denies shell line-continuation bypass: %s', (command) => {
+    expect(isReadOnlyShellCommand(command)).toBe(false)
+  })
+
+  const redirectExpansionBypasses = [
+    'cat <<<${(e)PAYLOAD}',
+    'cat <${(e)INPUT}',
+    'cat <<<"${(e)PAYLOAD}"',
+    "cat <*(e:'touch${IFS}/tmp/x':)"
+  ]
+  it.each(redirectExpansionBypasses)('denies expansion hidden in input redirect: %s', (command) => {
     expect(isReadOnlyShellCommand(command)).toBe(false)
   })
 
@@ -177,6 +267,16 @@ describe('isReadOnlyShellCommand — denies mutations & bypasses (fail closed)',
     expect(isReadOnlyShellCommand('ls -la && rm -rf .')).toBe(false)
     expect(isReadOnlyShellCommand('git log; git push')).toBe(false)
     expect(isReadOnlyShellCommand('cat a | grep b | tee out')).toBe(false)
+  })
+
+  it('allows descriptor-only duplication at a real shell boundary', () => {
+    expect(isReadOnlyShellCommand('echo x 2>&1')).toBe(true)
+    expect(isReadOnlyShellCommand('echo x 1>&2')).toBe(true)
+    expect(isReadOnlyShellCommand('echo x >&2')).toBe(true)
+    expect(isReadOnlyShellCommand('echo x 2>&1 | head -1')).toBe(true)
+    expect(isReadOnlyShellCommand('echo x 1>&2; pwd')).toBe(true)
+    expect(isReadOnlyShellCommand('echo x >&2 && pwd')).toBe(true)
+    expect(isReadOnlyShellCommand('cat README.md <&0')).toBe(true)
   })
 
   it('handles non-string input', () => {
@@ -203,7 +303,7 @@ describe('extractShellCommandFromToolCall', () => {
 })
 
 describe('grokReadOnlyShellRequestAllowed', () => {
-  it('allows a read-only execute request (the reported run_terminal_command case)', () => {
+  it('denies native-shell Git even when the argv appears read-only', () => {
     expect(
       grokReadOnlyShellRequestAllowed({
         toolKind: 'execute',
@@ -215,7 +315,26 @@ describe('grokReadOnlyShellRequestAllowed', () => {
           }
         }
       })
+    ).toBe(false)
+  })
+  it('allows the exact read-only shell sequence from the July 12 QA denial', () => {
+    expect(
+      grokReadOnlyShellRequestAllowed({
+        toolKind: 'execute',
+        toolName: 'run_terminal_command',
+        rawToolCall: {
+          rawInput: {
+            command:
+              'ls "/Users/chrisizatt/Documents/Test 1"/test_*.py 2>/dev/null | wc -l; rg -n "mcp_|write_file|AppShot|Swift|triangle" "/Users/chrisizatt/Documents/Test 1" --glob \'*.py\' --glob \'*.md\' 2>/dev/null | head -40'
+          }
+        }
+      })
     ).toBe(true)
+  })
+  it('keeps quoted shell operators inside read-only arguments and fails closed on malformed quotes', () => {
+    expect(isReadOnlyShellCommand("rg 'foo|bar;baz&qux' . | head -20")).toBe(true)
+    expect(isReadOnlyShellCommand("rg 'foo|bar . | head -20")).toBe(false)
+    expect(isReadOnlyShellCommand('rg foo . \\')).toBe(false)
   })
   it('denies a mutating execute request', () => {
     expect(

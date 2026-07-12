@@ -94,6 +94,31 @@ export interface GrokAcpRunHandle {
 
 const ACP_ID = { initialize: 1, sessionNew: 2, prompt: 3 } as const
 
+export const GROK_DENIED_TOOL_RECOVERY_PROMPT =
+  'Your previous native tool request was denied by TaskWraith policy. Continue this same turn ' +
+  'without retrying that tool or substituting another side-effecting tool. Answer from the ' +
+  'evidence already gathered. If the denied operation is essential, explain the blocker and ' +
+  'the safe next step instead of ending the turn.'
+
+export function isGrokDeniedToolCancellation(status: string | null | undefined): boolean {
+  const normalized = String(status || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_-]+/g, '')
+  return (
+    normalized === 'cancelled' || normalized === 'canceled' || normalized === 'permissionrejected'
+  )
+}
+
+/** Route RunManager cancellation through the provider handle before its raw
+ * process fallback runs. The handle owns prompt/recovery cancellation state;
+ * killing only the child leaves that state live until close is observed. */
+export function createGrokTurnAbortController(handle: { cancel: () => void }): AbortController {
+  const controller = new AbortController()
+  controller.signal.addEventListener('abort', () => handle.cancel(), { once: true })
+  return controller
+}
+
 function isTerminalStdinWriteError(err: unknown): boolean {
   const code = (err as NodeJS.ErrnoException | null | undefined)?.code
   return (
@@ -138,6 +163,12 @@ export function runGrokAcpTurn(options: GrokAcpRunOptions): GrokAcpRunHandle {
   let turnComplete = false
   let terminalStatus: string | undefined
   let stdinClosed = false
+  let closed = false
+  let nextPromptRpcId = ACP_ID.prompt
+  let activePromptRpcId: number | null = null
+  let deniedPromptRpcId: number | null = null
+  let deniedToolRecoveryAttempted = false
+  let cancelRequested = false
 
   child.stdin?.on?.('error', (err) => {
     if (isTerminalStdinWriteError(err)) {
@@ -187,6 +218,17 @@ export function runGrokAcpTurn(options: GrokAcpRunOptions): GrokAcpRunHandle {
     writeFrame(message)
   }
 
+  const sendPrompt = (text: string): number | null => {
+    if (cancelRequested || closed || stdinClosed) return null
+    const promptRpcId = nextPromptRpcId++
+    activePromptRpcId = promptRpcId
+    writeRpc(promptRpcId, 'session/prompt', {
+      sessionId,
+      prompt: [{ type: 'text', text }]
+    })
+    return promptRpcId
+  }
+
   // Write a raw JSON-RPC response object (already shaped {jsonrpc,id,result}).
   const writeResponse = (message: Record<string, unknown>): void => {
     writeFrame(message)
@@ -197,8 +239,23 @@ export function runGrokAcpTurn(options: GrokAcpRunOptions): GrokAcpRunHandle {
   // missing handler / rejected promise can never silently allow a tool, and the
   // agent never hangs waiting for a reply.
   const answerPermissionRequest = (request: AcpPermissionRequest): void => {
-    const fallbackDeny = (): void =>
+    const permissionPromptRpcId = activePromptRpcId
+    const permissionPromptIsCurrent = (): boolean =>
+      permissionPromptRpcId !== null &&
+      permissionPromptRpcId === activePromptRpcId &&
+      !cancelRequested &&
+      !closed &&
+      !turnComplete
+    const recordDeniedPrompt = (): void => {
+      if (permissionPromptIsCurrent()) {
+        deniedPromptRpcId = permissionPromptRpcId
+      }
+    }
+    const fallbackDeny = (): void => {
+      if (!permissionPromptIsCurrent()) return
+      recordDeniedPrompt()
       writeResponse(buildAcpPermissionResponse(request.rpcId, request.options, 'deny'))
+    }
     let decision: AcpPermissionDecision | Promise<AcpPermissionDecision>
     try {
       decision = options.onPermissionRequest ? options.onPermissionRequest(request) : 'deny'
@@ -207,9 +264,14 @@ export function runGrokAcpTurn(options: GrokAcpRunOptions): GrokAcpRunHandle {
       return
     }
     Promise.resolve(decision)
-      .then((resolved) =>
+      .then((resolved) => {
+        // The ledger decision can outlive the turn it was requested for. A
+        // late allow must never cross cancellation/close or answer a newer
+        // recovery prompt; stale decisions are simply discarded.
+        if (!permissionPromptIsCurrent()) return
+        if (resolved === 'deny') recordDeniedPrompt()
         writeResponse(buildAcpPermissionResponse(request.rpcId, request.options, resolved))
-      )
+      })
       .catch(fallbackDeny)
     // Surface the request in the transcript only when no mediator is wired
     // (so the user sees WHY a tool was declined). With a handler (G5c) the
@@ -250,7 +312,7 @@ export function runGrokAcpTurn(options: GrokAcpRunOptions): GrokAcpRunHandle {
         message.error &&
         (message.id === ACP_ID.initialize ||
           message.id === ACP_ID.sessionNew ||
-          message.id === ACP_ID.prompt)
+          (typeof message.id === 'number' && message.id === activePromptRpcId))
       ) {
         const rpcError = message.error as { message?: string; data?: unknown }
         const step =
@@ -284,10 +346,7 @@ export function runGrokAcpTurn(options: GrokAcpRunOptions): GrokAcpRunHandle {
         if (!promptSent) {
           promptSent = true
           // Step 3 — the prompt (the only step that calls the model).
-          writeRpc(ACP_ID.prompt, 'session/prompt', {
-            sessionId,
-            prompt: [{ type: 'text', text: options.prompt }]
-          })
+          sendPrompt(options.prompt)
         }
         continue
       }
@@ -308,8 +367,40 @@ export function runGrokAcpTurn(options: GrokAcpRunOptions): GrokAcpRunHandle {
       // the stopReason the caller needs for honest final status.
       for (const event of acpMessageToRunEvents(message)) {
         if (event.type === 'result') {
+          // Only the JSON-RPC response to the CURRENT session/prompt is
+          // authoritative. `_x.ai/session/prompt_complete` carries no prompt
+          // id, and delayed/duplicate responses for an earlier prompt must not
+          // terminate a recovery prompt dispatched on the same session.
+          const responsePromptRpcId =
+            typeof message.id === 'number' && message.id === activePromptRpcId
+              ? message.id
+              : null
+          if (responsePromptRpcId === null) continue
+          const status = event.status || terminalStatus
+          if (
+            !cancelRequested &&
+            deniedPromptRpcId === responsePromptRpcId &&
+            !deniedToolRecoveryAttempted &&
+            isGrokDeniedToolCancellation(status)
+          ) {
+            // Grok converts a denied native tool into a terminal cancellation.
+            // Keep the DENY, but give the same ACP session one bounded follow-up
+            // prompt so the participant can report from evidence it already read.
+            // The correlated response proves the first prompt is terminal, so
+            // no debounce is needed; the new prompt's id becomes authoritative.
+            deniedToolRecoveryAttempted = true
+            deniedPromptRpcId = null
+            options.onEvent({
+              type: 'provider_warning',
+              text: 'Grok cancelled after a denied native tool; continuing without the denied tool.'
+            })
+            sendPrompt(GROK_DENIED_TOOL_RECOVERY_PROMPT)
+            continue
+          }
+          activePromptRpcId = null
+          deniedPromptRpcId = null
           turnComplete = true
-          terminalStatus = event.status || terminalStatus
+          terminalStatus = status
         } else {
           options.onEvent(event)
         }
@@ -328,13 +419,24 @@ export function runGrokAcpTurn(options: GrokAcpRunOptions): GrokAcpRunHandle {
   })
 
   child.on('error', (err) => {
+    closed = true
+    activePromptRpcId = null
+    deniedPromptRpcId = null
     options.onEvent({ type: 'provider_warning', text: formatGrokProcessError(err) })
     options.onClose?.(1, turnComplete, terminalStatus)
   })
-  child.on('close', (code) => options.onClose?.(code, turnComplete, terminalStatus))
+  child.on('close', (code) => {
+    closed = true
+    activePromptRpcId = null
+    deniedPromptRpcId = null
+    options.onClose?.(code, turnComplete, terminalStatus)
+  })
 
   return {
     cancel: () => {
+      cancelRequested = true
+      activePromptRpcId = null
+      deniedPromptRpcId = null
       if (sessionId && !turnComplete) writeRpc(null, 'session/cancel', { sessionId })
       child.kill('SIGINT')
     }

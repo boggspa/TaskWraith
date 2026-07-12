@@ -20,16 +20,15 @@
 //   - output redirection to anything but /dev/null|stdout|stderr → false
 //   - command substitution `$(…)` / backticks / process substitution → false
 //   - path/script execution (`./x`, `/bin/sh`) or `VAR=val cmd` prefixes → false
-//   - `git` write subcommands, or dual-mode subcommands (remote/branch/tag/
-//     config/stash) in anything but their read form → false
+//   - `git` → false (repo/user config can make nominal reads execute programs)
 //   - `find` with `-exec/-delete/…` → false
 // The allowlist is deliberately small; widen it only with matching tests.
 
-/** Commands that cannot mutate state through flags AND have no output-file
+/** Commands audited to have no setter/compile/exec mode AND no output-file
  * positional / no command-exec flag. Redirections and substitutions are rejected
- * separately, so these are safe with any of their own flags. Commands that CAN
- * write or exec via their own flags/positionals (`git`, `find`, `rg`, `uniq`)
- * are handled specially below — do NOT add them here. Deliberately EXCLUDED:
+ * separately. Commands that CAN write or exec via their own flags/positionals
+ * (`git`, `file`, `printf`, `find`, `rg`, `uniq`) are rejected or handled
+ * specially below — do NOT add them here. Deliberately EXCLUDED:
  *   - `xxd`  → `xxd infile OUTFILE` writes an arbitrary file (positional output)
  *   - `tree` → `tree -o FILE` writes its output to a file
  *   - `sort` → `sort -o FILE` writes its output to a file
@@ -41,18 +40,14 @@ const READ_ONLY_COMMANDS = new Set([
   'tail',
   'pwd',
   'echo',
-  'printf',
   'wc',
   'stat',
-  'file',
   'which',
   'type',
   'printenv',
-  'date',
   'whoami',
   'id',
   'uname',
-  'hostname',
   'basename',
   'dirname',
   'realpath',
@@ -83,31 +78,6 @@ const READ_ONLY_COMMANDS = new Set([
   'sha256sum'
 ])
 
-/** `git` subcommands that only ever read in every form. */
-const GIT_ALWAYS_READ = new Set([
-  'log',
-  'show',
-  'status',
-  'diff',
-  'rev-parse',
-  'ls-files',
-  'ls-tree',
-  'cat-file',
-  'describe',
-  'blame',
-  'shortlog',
-  'rev-list',
-  'show-ref',
-  'for-each-ref',
-  'name-rev',
-  'merge-base',
-  'grep',
-  'whatchanged',
-  'cherry',
-  'count-objects',
-  'show-branch'
-])
-
 /** `find` primaries that run a command or mutate the tree — any presence = deny. */
 const FIND_MUTATION_FLAGS = new Set([
   '-exec',
@@ -121,84 +91,57 @@ const FIND_MUTATION_FLAGS = new Set([
   '-fls'
 ])
 
-const BRANCH_WRITE_FLAGS = new Set([
-  '-d',
-  '-D',
-  '--delete',
-  '-m',
-  '-M',
-  '--move',
-  '-c',
-  '-C',
-  '--copy',
-  '-f',
-  '--force',
-  '-u',
-  '--set-upstream-to',
-  '--unset-upstream',
-  '--edit-description'
-])
-
-const TAG_WRITE_FLAGS = new Set([
-  '-a',
-  '--annotate',
-  '-s',
-  '--sign',
-  '-d',
-  '--delete',
-  '-m',
-  '--message',
-  '-f',
-  '--force',
-  '-e',
-  '--edit',
-  '--create-reflog'
-])
-
-const CONFIG_READ_FLAGS = new Set([
-  '--get',
-  '--get-all',
-  '--get-regexp',
-  '--get-urlmatch',
-  '--list',
-  '-l'
-])
-
-/** `git config` flags that write / delete config. */
-const CONFIG_WRITE_FLAGS = new Set([
-  '--add',
-  '--replace-all',
-  '--unset',
-  '--unset-all',
-  '--rename-section',
-  '--remove-section',
-  '--edit',
-  '-e'
-])
-
-/**
- * Reject a `git` token that is dangerous REGARDLESS of position: it takes a
- * value we'd mis-parse as the subcommand (`-C`, `-c`, `--git-dir=…`), writes a
- * file (`--output=…`), or forces git to run an EXTERNAL program — an external
- * diff/textconv driver (`--ext-diff`/`--textconv`) or `git grep`'s pager
- * (`-O`/`--open-files-in-pager`). (The pager flag `-p`/`--paginate` is handled
- * separately because it is position-sensitive: `git -p log` paginates, but
- * `git log -p` is the log subcommand's own `--patch` and is a read.)
- */
-function isRejectedGitToken(token: string): boolean {
-  if (token === '-C' || token === '-c') return true
-  if (token === '--ext-diff' || token === '--textconv') return true
-  if (token === '--open-files-in-pager') return true
-  // `-O`, `-Oless`, `-O<orderfile>` — grep's open-in-pager exec vector.
-  if (token.startsWith('-O')) return true
-  return /^--(git-dir|work-tree|namespace|exec-path|output|open-files-in-pager|ext-diff|textconv)(=|$)/.test(
-    token
-  )
-}
 
 function isSafeRedirectTarget(target: string): boolean {
   const unquoted = target.replace(/^['"]|['"]$/g, '')
   return unquoted === '/dev/null' || unquoted === '/dev/stdout' || unquoted === '/dev/stderr'
+}
+
+/**
+ * Reject dynamic shell syntax across the ORIGINAL command before redirect
+ * targets are stripped. This is quote-aware: single-quoted `$`, braces, and
+ * regex parentheses are literal data; outside single quotes they can trigger
+ * parameter/ANSI-C/brace expansion or zsh executable glob qualifiers. A
+ * backslash-newline continuation is also unsafe because the shell removes it
+ * before argv construction.
+ */
+function hasUnsafeDynamicShellSyntax(command: string): boolean {
+  let quote: 'single' | 'double' | null = null
+  let escaped = false
+
+  for (const char of command) {
+    if (escaped) {
+      if (char === '\n' || char === '\r') return true
+      escaped = false
+      continue
+    }
+    if (quote === 'single') {
+      if (char === "'") quote = null
+      continue
+    }
+    if (char === '\\') {
+      escaped = true
+      continue
+    }
+    if (quote === 'double') {
+      if (char === '"') quote = null
+      else if (char === '$') return true
+      continue
+    }
+    if (char === "'") {
+      quote = 'single'
+      continue
+    }
+    if (char === '"') {
+      quote = 'double'
+      continue
+    }
+    if (char === '$' || char === '{' || char === '}' || char === '(' || char === ')') {
+      return true
+    }
+  }
+
+  return quote !== null || escaped
 }
 
 /**
@@ -211,8 +154,13 @@ function sanitizeRedirects(command: string): { ok: boolean; cleaned: string } {
   if (/\$\(|`|<\(|>\(/.test(command)) return { ok: false, cleaned: '' }
 
   let cleaned = command
-  // File-descriptor duplication (2>&1, >&2, 1>&2) is side-effect free — drop it.
-  cleaned = cleaned.replace(/\d*>&\d+/g, ' ').replace(/\d*<&\d+/g, ' ')
+  // File-descriptor duplication (2>&1, >&2, 1>&2) is side-effect free only
+  // when the descriptor number ends at a real shell boundary. In zsh,
+  // `2>&1err` redirects to the filename `1err`; stripping the `2>&1` prefix
+  // would hide that write from the remaining redirect checks.
+  cleaned = cleaned
+    .replace(/\d*>&\d+(?=$|[\s|;&<>])/g, ' ')
+    .replace(/\d*<&\d+(?=$|[\s|;&<>])/g, ' ')
 
   // Any remaining output redirect (`>`, `>>`, `n>`, `n>>`, `&>`, `&>>`) must
   // target /dev/null|stdout|stderr; otherwise it writes a file → deny.
@@ -231,86 +179,253 @@ function sanitizeRedirects(command: string): { ok: boolean; cleaned: string } {
   return { ok: true, cleaned }
 }
 
-/** Validate a single `git …` segment's tokens (everything after `git`). */
-function isReadOnlyGit(argsRaw: string[]): boolean {
-  const args = argsRaw.filter((token) => token.length > 0)
-  // Reject value-taking / file-writing / external-program flags anywhere in the
-  // invocation (they can turn a read subcommand into a write or code exec).
-  if (args.some(isRejectedGitToken)) return false
-  const subIndex = args.findIndex((token) => !token.startsWith('-'))
-  // `-p`/`--paginate` forces the pager (which can exec a repo-configured
-  // core.pager) ONLY as a global flag — before the subcommand. After it, `-p`
-  // is the subcommand's own flag (`git log -p` = patch, a read).
-  const globalRegion = subIndex === -1 ? args : args.slice(0, subIndex)
-  if (globalRegion.some((token) => token === '-p' || token === '--paginate')) return false
-  // `git`, `git --version`, `git --help` (no subcommand) → read.
-  if (subIndex === -1) return true
-  const sub = args[subIndex]
-  const rest = args.slice(subIndex + 1)
-
-  if (GIT_ALWAYS_READ.has(sub)) return true
-
-  switch (sub) {
-    case 'remote': {
-      // `git remote [-v]` or `git remote (show|get-url) [name]` are read.
-      if (rest.length === 0) return true
-      if (rest.every((token) => token === '-v' || token === '--verbose')) return true
-      return rest[0] === 'show' || rest[0] === 'get-url'
-    }
-    case 'branch':
-      // Listing only: every remaining token is a flag and none mutate. A bare
-      // arg (potential new branch name) or a write flag → deny.
-      return rest.every((token) => token.startsWith('-') && !BRANCH_WRITE_FLAGS.has(token))
-    case 'tag':
-      return rest.every((token) => token.startsWith('-') && !TAG_WRITE_FLAGS.has(token))
-    case 'config': {
-      // Read forms only. A read flag must be present, no write flag, and at most
-      // ONE positional (the config name) — `git config <name> <value>` (a SET)
-      // has two positionals and git treats a trailing decoy `--get` as a no-op,
-      // so requiring a read flag is not enough (that was the `.some()` bug).
-      if (rest.some((token) => CONFIG_WRITE_FLAGS.has(token))) return false
-      if (!rest.some((token) => CONFIG_READ_FLAGS.has(token))) return false
-      return rest.filter((token) => !token.startsWith('-')).length <= 1
-    }
-    case 'stash':
-      return rest[0] === 'list' || rest[0] === 'show'
-    default:
-      return false
-  }
-}
-
 /** Validate a single `find …` segment (tokens after `find`). */
 function isReadOnlyFind(args: string[]): boolean {
-  return !args.some((token) => FIND_MUTATION_FLAGS.has(token))
+  return !args.some((token) =>
+    [...FIND_MUTATION_FLAGS].some(
+      (dangerous) => token === dangerous || (token.length > 1 && dangerous.startsWith(token))
+    )
+  )
 }
 
 /** ripgrep can EXECUTE an arbitrary program per file via `--pre <cmd>` (and
  * `--hostname-bin`), turning any readable file into an executed script. Reject
  * those; every other rg flag only reads. */
 function isReadOnlyRg(args: string[]): boolean {
-  return !args.some((token) => token.startsWith('--pre') || token.startsWith('--hostname-bin'))
+  const dangerousFlags = ['--pre', '--hostname-bin']
+  return !args.some((token) =>
+    dangerousFlags.some(
+      (dangerous) =>
+        token.startsWith(dangerous) ||
+        (token.length > 2 && token.startsWith('--') && dangerous.startsWith(token))
+    )
+  )
 }
 
 /** `uniq [INPUT [OUTPUT]]` — a SECOND positional is an output file it writes.
  * Allow zero or one positional (piped, or a single input file); reject two. */
 function isReadOnlyUniq(args: string[]): boolean {
-  return args.filter((token) => !token.startsWith('-')).length <= 1
+  let afterOptionTerminator = false
+  let positionalCount = 0
+  for (const token of args) {
+    if (!afterOptionTerminator && token === '--') {
+      afterOptionTerminator = true
+      continue
+    }
+    if (!afterOptionTerminator && token.startsWith('-')) continue
+    positionalCount += 1
+    if (positionalCount > 1) return false
+  }
+  return true
+}
+
+/** Bare `date` and `hostname` are inert reads. Any argument is denied because
+ * their platform variants include clock/host setters and positional set forms. */
+function isBareSystemRead(args: string[]): boolean {
+  return args.length === 0
+}
+
+/**
+ * Split shell pipelines/sequences without treating operators inside quoted
+ * arguments as syntax. The previous regex split broke commands such as
+ * `rg "foo|bar"`: the regex alternation became a fake pipeline segment and a
+ * provably read-only Grok request was denied, which Grok then treated as a
+ * turn-ending cancellation. Malformed quoting/escaping fails closed.
+ */
+function splitShellSegments(command: string): string[] | null {
+  const segments: string[] = []
+  let segment = ''
+  let quote: 'single' | 'double' | null = null
+  let escaped = false
+
+  const pushSegment = (): void => {
+    const trimmed = segment.trim()
+    if (trimmed) segments.push(trimmed)
+    segment = ''
+  }
+
+  for (let index = 0; index < command.length; index += 1) {
+    const char = command[index]
+    if (escaped) {
+      // zsh removes backslash + LF before tokenization, which can splice a
+      // forbidden flag (`-de\\\nlete`) after policy inspection. CR/CRLF may
+      // arrive through normalized transports; ambiguity fails closed too.
+      if (char === '\n' || char === '\r') return null
+      segment += char
+      escaped = false
+      continue
+    }
+    if (char === '\\' && quote !== 'single') {
+      segment += char
+      escaped = true
+      continue
+    }
+    if (quote) {
+      segment += char
+      if ((quote === 'single' && char === "'") || (quote === 'double' && char === '"')) {
+        quote = null
+      }
+      continue
+    }
+    if (char === "'") {
+      quote = 'single'
+      segment += char
+      continue
+    }
+    if (char === '"') {
+      quote = 'double'
+      segment += char
+      continue
+    }
+    if (char === ';' || char === '|' || char === '&' || char === '\n' || char === '\r') {
+      pushSegment()
+      if (
+        (char === '|' && (command[index + 1] === '|' || command[index + 1] === '&')) ||
+        (char === '&' && command[index + 1] === '&') ||
+        (char === '\r' && command[index + 1] === '\n')
+      ) {
+        index += 1
+      }
+      continue
+    }
+    segment += char
+  }
+
+  if (quote || escaped) return null
+  pushSegment()
+  return segments
+}
+
+/**
+ * Tokenize one already-separated shell segment into the semantic words the
+ * shell passes to the executable. Quote delimiters disappear and adjacent
+ * quoted/unquoted fragments concatenate, so `-e''xec` becomes `-exec` and
+ * `--p''re=/bin/sh` becomes `--pre=/bin/sh`. Backslash escapes are normalized
+ * for the same reason. This is deliberately a small fail-closed lexer rather
+ * than whitespace splitting: policy checks must inspect argv-like values, not
+ * the source spelling an attacker controls.
+ */
+interface ShellWord {
+  value: string
+  /** Literal prefix before the first unquoted pathname-expansion token. Empty
+   * means expansion can synthesize an option such as `--pre` / `-delete`. */
+  pathnameExpansionPrefix?: string
+}
+
+function tokenizeShellWords(segment: string): ShellWord[] | null {
+  const tokens: ShellWord[] = []
+  let token = ''
+  let tokenStarted = false
+  let quote: 'single' | 'double' | null = null
+  let escaped = false
+  let pathnameExpansionPrefix: string | undefined
+
+  const pushToken = (): void => {
+    if (tokenStarted) {
+      tokens.push({
+        value: token,
+        ...(pathnameExpansionPrefix !== undefined ? { pathnameExpansionPrefix } : {})
+      })
+    }
+    token = ''
+    tokenStarted = false
+    pathnameExpansionPrefix = undefined
+  }
+
+  for (let index = 0; index < segment.length; index += 1) {
+    const char = segment[index]
+    if (escaped) {
+      token += char
+      tokenStarted = true
+      escaped = false
+      continue
+    }
+    if (quote === 'single') {
+      tokenStarted = true
+      if (char === "'") quote = null
+      else token += char
+      continue
+    }
+    if (quote === 'double') {
+      tokenStarted = true
+      if (char === '"') quote = null
+      else if (char === '\\') escaped = true
+      // Parameter/command/arithmetic expansion remains active inside double
+      // quotes. Its resulting argv is not statically provable here.
+      else if (char === '$') return null
+      else token += char
+      continue
+    }
+    if (char === '\\') {
+      tokenStarted = true
+      escaped = true
+      continue
+    }
+    if (char === "'") {
+      tokenStarted = true
+      quote = 'single'
+      continue
+    }
+    if (char === '"') {
+      tokenStarted = true
+      quote = 'double'
+      continue
+    }
+    // Dynamic argv construction is outside this classifier's proof surface.
+    // `$` also covers ANSI-C `$'...'` and zsh parameter flags (`${(e)...}`).
+    // Unquoted braces cover brace expansion; parentheses cover zsh glob
+    // qualifiers/process substitutions capable of executing code.
+    if (char === '$' || char === '{' || char === '}' || char === '(' || char === ')') {
+      return null
+    }
+    if (char === '*' || char === '?' || char === '[' || char === '^') {
+      pathnameExpansionPrefix ??= token
+    }
+    if (/\s/.test(char)) {
+      pushToken()
+      continue
+    }
+    tokenStarted = true
+    token += char
+  }
+
+  if (quote || escaped) return null
+  pushToken()
+  return tokens
 }
 
 function isReadOnlySegment(segment: string): boolean {
-  const tokens = segment
-    .trim()
-    .split(/\s+/)
-    .filter((token) => token.length > 0)
-  if (tokens.length === 0) return false
-  const command = tokens[0]
-  const rest = tokens.slice(1)
+  const words = tokenizeShellWords(segment)
+  if (!words || words.length === 0) return false
+  // Expanding the command name is arbitrary execution. For arguments, a
+  // non-empty fixed prefix that does not begin with '-' proves pathname
+  // expansion cannot synthesize a new option. `uniq` is stricter because one
+  // glob can expand into both INPUT and OUTPUT positionals, causing a write.
+  if (words[0].pathnameExpansionPrefix !== undefined) return false
+  const command = words[0].value
+  const expandedArguments = words.slice(1).filter(
+    (word) => word.pathnameExpansionPrefix !== undefined
+  )
+  if (
+    expandedArguments.some(
+      (word) =>
+        word.pathnameExpansionPrefix === '' || word.pathnameExpansionPrefix?.startsWith('-')
+    ) ||
+    (command === 'uniq' && expandedArguments.length > 0)
+  ) {
+    return false
+  }
+  const rest = words.slice(1).map((word) => word.value)
   // No path/script execution, no `VAR=val cmd` prefix, no bare-flag "command".
   if (command.includes('/') || command.includes('=') || command.startsWith('-')) return false
   if (command === 'find') return isReadOnlyFind(rest)
-  if (command === 'git') return isReadOnlyGit(rest)
+  // Even nominal reads can execute inherited/repository-configured pagers,
+  // fsmonitor hooks, or external diff drivers. Native-shell Git stays outside
+  // the read-only proof boundary until it runs in a hardened host environment.
+  if (command === 'git') return false
   if (command === 'rg') return isReadOnlyRg(rest)
   if (command === 'uniq') return isReadOnlyUniq(rest)
+  if (command === 'date' || command === 'hostname') return isBareSystemRead(rest)
   return READ_ONLY_COMMANDS.has(command)
 }
 
@@ -323,13 +438,15 @@ export function isReadOnlyShellCommand(command: string | null | undefined): bool
   if (typeof command !== 'string') return false
   const trimmed = command.trim()
   if (!trimmed) return false
+  if (hasUnsafeDynamicShellSyntax(trimmed)) return false
 
   const { ok, cleaned } = sanitizeRedirects(trimmed)
   if (!ok) return false
 
-  // Split on command sequencing / piping operators: && || ; | |& & and newlines.
-  const segments = cleaned.split(/\s*(?:\|\||&&|;|\||&|\n)\s*/)
-  const meaningful = segments.map((s) => s.trim()).filter((s) => s.length > 0)
+  // Split on command sequencing / piping operators outside quoted arguments:
+  // && || ; | |& & and newlines.
+  const meaningful = splitShellSegments(cleaned)
+  if (!meaningful) return false
   if (meaningful.length === 0) return false
   return meaningful.every(isReadOnlySegment)
 }

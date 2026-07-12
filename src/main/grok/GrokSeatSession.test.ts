@@ -73,6 +73,22 @@ function completeHandshake(child: FakeAcpChild): void {
   child.emit({ jsonrpc: '2.0', id: 2, result: { sessionId: 'sess-1' } })
 }
 
+function requestDeniedTool(child: FakeAcpChild, rpcId = 77): void {
+  child.emit({
+    jsonrpc: '2.0',
+    id: rpcId,
+    method: 'session/request_permission',
+    params: {
+      sessionId: 'sess-1',
+      toolCall: { title: 'run_terminal_command', kind: 'execute' },
+      options: [
+        { optionId: 'allow-once', kind: 'allow_once' },
+        { optionId: 'reject-once', kind: 'reject_once' }
+      ]
+    }
+  })
+}
+
 describe('GrokSeatSession', () => {
   it('runs two sequential turns on ONE session without killing the process', () => {
     const child = new FakeAcpChild()
@@ -188,6 +204,106 @@ describe('GrokSeatSession', () => {
     expect(child.sent().some((m) => m.method === 'session/cancel')).toBe(true)
     expect(session.isAlive()).toBe(false)
     expect(first.ends[0]).toMatchObject({ turnComplete: false, processExited: true })
+  })
+
+  it('default persistent-seat path recovers once and ignores delayed terminals by prompt id', async () => {
+    const child = new FakeAcpChild()
+    const session = new GrokSeatSession({ cwd: '/repo', spawnProcess: () => child })
+    const first = makeTurn()
+    first.turn.onPermissionRequest = () => 'deny'
+    session.runTurn(first.turn)
+    completeHandshake(child)
+
+    requestDeniedTool(child)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    child.emit({ jsonrpc: '2.0', id: 3, result: { stopReason: 'PermissionRejected' } })
+
+    const prompts = child.sent().filter((message) => message.method === 'session/prompt')
+    expect(prompts).toHaveLength(2)
+    expect(prompts[1]).toMatchObject({ id: 4, params: { sessionId: 'sess-1' } })
+    expect(JSON.stringify(prompts[1])).toContain('denied by TaskWraith policy')
+    expect(first.ends).toHaveLength(0)
+
+    // Duplicated/delayed terminal evidence for prompt 3 must not terminate the
+    // now-active recovery prompt 4.
+    child.emit({ jsonrpc: '2.0', id: 3, result: { stopReason: 'PermissionRejected' } })
+    child.emit({
+      jsonrpc: '2.0',
+      method: '_x.ai/session/prompt_complete',
+      params: { sessionId: 'sess-1', stopReason: 'PermissionRejected' }
+    })
+    expect(first.ends).toHaveLength(0)
+    expect(child.sent().filter((message) => message.method === 'session/prompt')).toHaveLength(2)
+
+    child.emit({ jsonrpc: '2.0', id: 4, result: { stopReason: 'end_turn' } })
+    expect(first.ends).toEqual([
+      { turnComplete: true, terminalStatus: 'end_turn', processExited: false }
+    ])
+    expect(session.isAlive()).toBe(true)
+  })
+
+  it('cancel invalidates denied-tool recovery before a late prompt terminal arrives', async () => {
+    const child = new FakeAcpChild()
+    const session = new GrokSeatSession({ cwd: '/repo', spawnProcess: () => child })
+    const first = makeTurn()
+    first.turn.onPermissionRequest = () => 'deny'
+    const handle = session.runTurn(first.turn)
+    completeHandshake(child)
+
+    requestDeniedTool(child)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    handle.cancel()
+    child.emit({ jsonrpc: '2.0', id: 3, result: { stopReason: 'PermissionRejected' } })
+
+    expect(child.sent().filter((message) => message.method === 'session/prompt')).toHaveLength(1)
+    expect(session.isAlive()).toBe(false)
+  })
+
+  it('drops a late allow decision after the persistent seat turn is cancelled', async () => {
+    const child = new FakeAcpChild()
+    const session = new GrokSeatSession({ cwd: '/repo', spawnProcess: () => child })
+    const first = makeTurn()
+    let resolveDecision!: (decision: 'allow' | 'deny') => void
+    const decision = new Promise<'allow' | 'deny'>((resolve) => {
+      resolveDecision = resolve
+    })
+    first.turn.onPermissionRequest = () => decision
+    const handle = session.runTurn(first.turn)
+    completeHandshake(child)
+
+    requestDeniedTool(child, 79)
+    handle.cancel()
+    resolveDecision('allow')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    const lateReplies = child.sent().filter((message) => message.id === 79)
+    expect(
+      lateReplies.some((message) =>
+        JSON.stringify(message).includes('"optionId":"allow-once"')
+      )
+    ).toBe(false)
+    expect(session.isAlive()).toBe(false)
+  })
+
+  it('bounds persistent-seat denied-tool recovery to one follow-up prompt', async () => {
+    const child = new FakeAcpChild()
+    const session = new GrokSeatSession({ cwd: '/repo', spawnProcess: () => child })
+    const first = makeTurn()
+    first.turn.onPermissionRequest = () => 'deny'
+    session.runTurn(first.turn)
+    completeHandshake(child)
+
+    requestDeniedTool(child, 77)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    child.emit({ jsonrpc: '2.0', id: 3, result: { stopReason: 'PermissionRejected' } })
+    requestDeniedTool(child, 78)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    child.emit({ jsonrpc: '2.0', id: 4, result: { stopReason: 'PermissionRejected' } })
+
+    expect(child.sent().filter((message) => message.method === 'session/prompt')).toHaveLength(2)
+    expect(first.ends).toEqual([
+      { turnComplete: true, terminalStatus: 'PermissionRejected', processExited: false }
+    ])
   })
 })
 
