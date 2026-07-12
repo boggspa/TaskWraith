@@ -753,9 +753,11 @@ export function FirstLaunchSheet({
             </div>
           </div>
           <p className="first-launch-sheet-prose">
-            Every run also shows a live token + cost tally next to Send, and the dashboard fills in
-            usage heatmaps and per-provider totals as you go. Local Ollama runs have no cloud quota,
-            but their token totals still appear in usage history.
+            Every run also shows a live token + projected-cost tally next to Send. When a provider
+            reports its usage, those figures lead while the run is active; TaskWraith labels a
+            text-based estimate otherwise. The dashboard fills in usage heatmaps and per-provider
+            totals as you go. Local Ollama runs have no cloud quota, but their token totals still
+            appear in usage history.
           </p>
         </section>
 
@@ -769,6 +771,12 @@ export function FirstLaunchSheet({
             to run a supervised multi-round autonomy session with one of five presets (One-shot
             review · Architecture panel · Scout pass · Implementation review · Long-running work
             session).
+          </p>
+          <p className="first-launch-sheet-prose">
+            Stage roles shape the hand-off: Scouts investigate in parallel first, Workers take
+            serial implementation turns, and Reviewers check the result last. BG seats skip
+            ordinary rotation; @mention or delegate one for detached read-only work. They cannot
+            take Boss, Captain, or synthesizer authority.
           </p>
           <div className="first-launch-sheet-ensemble-preview" aria-label="Ensemble row preview">
             <div className="first-launch-sheet-ensemble-strip">
@@ -825,7 +833,8 @@ export function FirstLaunchSheet({
             <li>
               <strong>-@ to reference files.</strong> Type <code>-@</code> in the composer to
               mention a specific file by path; the agent reads it as part of the turn. Plain{' '}
-              <code>@</code> now mentions a sub-agent or Ensemble participant.
+              <code>@</code> now mentions a sub-agent or Ensemble participant, including a
+              configured BG seat when you want detached background research.
             </li>
             <li>
               <strong>/ for slash commands.</strong> Type <code>/</code> at the start of the

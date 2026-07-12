@@ -97,6 +97,8 @@ describe('FirstLaunchSheet', () => {
     expect(html).toContain('approval-gated instruments')
     expect(html).toContain('/goal &lt;objective&gt;')
     expect(html).toContain('Delegate a focused worker')
+    expect(html).toContain('live token + projected-cost tally')
+    expect(html).toContain('BG seats skip ordinary rotation')
   })
 
   it('intro prose advertises live providers but not the retired Gemini', () => {
@@ -162,6 +164,7 @@ describe('FirstLaunchSheet', () => {
     expect(html).not.toContain('<em>Gemini</em>')
     expect(html).toContain('Toggle Ensemble while the thread is idle')
     expect(html).toContain('Turn / Continuous in the composer')
+    expect(html).toContain('detached read-only work')
   })
 
   it('renders Cursor + Grok cards with original provider glyphs', () => {

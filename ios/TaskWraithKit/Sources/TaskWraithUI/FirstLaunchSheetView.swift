@@ -128,6 +128,10 @@ struct FirstLaunchSheetView: View {
                     .font(.caption)
                     .foregroundStyle(TWTheme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
+                Text("If your Mac is asleep or unreachable, TaskWraith checks for a safe reconnect or wake before it sends an action. Synced threads stay readable meanwhile.")
+                    .font(.caption)
+                    .foregroundStyle(TWTheme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
@@ -365,7 +369,7 @@ struct FirstLaunchSheetView: View {
                     .font(.caption)
                     .foregroundStyle(TWTheme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
-                Text("Configure each seat's provider, model, reasoning, and Fast/Thinking controls from the composer or roster. Scout, Worker, Reviewer, and BG stages make handoffs easier to follow; BG seats run only when delegated.")
+                Text("Configure each seat's provider, model, reasoning, and Fast/Thinking controls from the composer or roster. Scout, Worker, Reviewer, and BG stages make handoffs easier to follow; BG seats skip ordinary rotation and run only when @mentioned or delegated.")
                     .font(.caption)
                     .foregroundStyle(TWTheme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
