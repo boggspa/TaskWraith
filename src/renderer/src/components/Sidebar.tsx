@@ -1329,12 +1329,18 @@ export function getProviderName(provider?: ProviderId) {
 // provider mnemonic glyphs as the sidebar.
 type SidebarProviderBadgeId = ProviderId | 'ensemble'
 
-export function ProviderBadgeIcon({ provider }: { provider?: SidebarProviderBadgeId }) {
+export function ProviderBadgeIcon({
+  provider,
+  accentProvider
+}: {
+  provider?: SidebarProviderBadgeId
+  accentProvider?: string
+}) {
   const providerKey = provider || 'gemini'
 
   return (
     <span className={`sidebar-provider-icon provider-${providerKey}`} aria-hidden="true">
-      <ProviderGlyph provider={providerKey} />
+      <ProviderGlyph provider={providerKey} accentProvider={accentProvider} />
     </span>
   )
 }

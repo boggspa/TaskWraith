@@ -35,7 +35,8 @@ import {
 import {
   OLLAMA_DISPLAY_BRANDS,
   resolveOllamaDisplayBrand,
-  resolveProviderBrandLabel
+  resolveProviderBrandLabel,
+  resolveProviderHueClass
 } from '../lib/ollamaDisplayBrand'
 import type {
   CombinedModelPickerModelOption,
@@ -1149,6 +1150,11 @@ export function CombinedModelPicker({
     resolveProviderBrandLabel(provider, selectedModelOption.id) ||
     selectedProviderGroup?.label ||
     getProviderName(provider)
+  const providerHueClass = resolveProviderHueClass(
+    provider,
+    selectedModelOption.id,
+    selectedModelOption.label
+  )
 
   // Position the popover above-right of the chip when opened.
   useEffect(() => {
@@ -1755,13 +1761,14 @@ export function CombinedModelPicker({
         className={customTrigger?.className || 'composer-combined-picker-trigger'}
         data-composer-control={customTrigger ? undefined : 'model'}
         data-provider={provider}
+        data-provider-hue={providerHueClass}
         data-selected-reasoning={selectedReasoning || ''}
         data-fast-mode-active={fastModeEnabled && fastModeCapable ? 'true' : 'false'}
         // Provider brand hue for the Ultra/Ultracode shimmer + sparkles (the
         // popover's --accent is generic — see the ladder's --ladder-accent).
         style={
           {
-            '--chip-accent': `var(--provider-${provider}-color, var(--accent))`
+            '--chip-accent': `var(--provider-${providerHueClass}-color, var(--accent))`
           } as React.CSSProperties
         }
         onClick={() => setOpen((prev) => !prev)}
@@ -1783,7 +1790,7 @@ export function CombinedModelPicker({
               ))}
             <span className="composer-combined-picker-trigger-provider">
               <span className="composer-combined-picker-trigger-provider-icon" aria-hidden>
-                <ProviderBadgeIcon provider={provider} />
+                <ProviderBadgeIcon provider={provider} accentProvider={providerHueClass} />
               </span>
               <span className="composer-combined-picker-trigger-provider-label">
                 {providerDisplayLabel}

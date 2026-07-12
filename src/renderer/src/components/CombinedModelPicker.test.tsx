@@ -121,6 +121,31 @@ describe('CombinedModelPicker', () => {
     expect(html).toContain('>Codex<')
   })
 
+  it('uses the selected Ollama model spoof hue without changing its runtime provider or glyph', () => {
+    const model = { id: 'qwen3.5:9b', label: 'Qwen 3.5 (9B Param)' }
+    const html = renderToStaticMarkup(
+      <CombinedModelPicker
+        provider="ollama"
+        composerStyle="default"
+        modelOptions={[model]}
+        providerGroups={[{ provider: 'ollama', label: 'Ollama', modelOptions: [model] }]}
+        selectedModelId={model.id}
+        onSelectModel={() => undefined}
+        onSelectProviderModel={() => undefined}
+        reasoningOptions={[]}
+        selectedReasoning=""
+        onSelectReasoning={() => undefined}
+      />
+    )
+
+    expect(html).toContain('data-provider="ollama"')
+    expect(html).toContain('data-provider-hue="alibaba"')
+    expect(html).toContain('--chip-accent:var(--provider-alibaba-color, var(--accent))')
+    expect(html).toContain('>Alibaba<')
+    expect(html).toContain('provider-glyph-ollama')
+    expect(html).toContain('--provider-accent:var(--provider-alibaba-color, currentColor)')
+  })
+
   it('flattens provider groups without losing provider order or duplicate model ids', () => {
     const entries = flattenUnifiedProviderModels([
       {
