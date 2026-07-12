@@ -200,6 +200,7 @@ export function useTranscriptScrollState({
       if (
         !shouldAbortAutoFollowSnap({
           lastRecordedScrollTop: lastTranscriptScrollTopRef.current,
+          lastNativeScrollTop: lastNativeScrollTopRef.current,
           currentScrollTop: nextScrollTop,
           scrollHeight: scroller.scrollHeight,
           clientHeight: scroller.clientHeight,

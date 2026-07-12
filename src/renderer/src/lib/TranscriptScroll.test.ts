@@ -751,10 +751,30 @@ describe('TranscriptScroll', () => {
   })
 
   describe('shouldAbortAutoFollowSnap', () => {
+    it('uses the latest native sample when a bottom clamp outruns rAF evaluation', () => {
+      // The ActivityStack collapses at the live edge and Chromium clamps the
+      // viewport from 5000 to 4700. The native scroll listener records 4700,
+      // but its rAF evaluator has not run before the next transcript row grows
+      // the live edge to 4800. Comparing against the stale evaluated position
+      // invents an upward gesture; the native sample proves the viewport did
+      // not move after the clamp.
+      expect(
+        shouldAbortAutoFollowSnap({
+          lastRecordedScrollTop: 5000,
+          lastNativeScrollTop: 4700,
+          currentScrollTop: 4700,
+          scrollHeight: 5000,
+          clientHeight: 200,
+          expectedProgrammaticScrollTop: null
+        })
+      ).toBe(false)
+    })
+
     it('allows pinned streaming growth when scrollTop moves down at the live edge', () => {
       expect(
         shouldAbortAutoFollowSnap({
           lastRecordedScrollTop: 4800,
+          lastNativeScrollTop: 4800,
           currentScrollTop: 5200,
           scrollHeight: 5400,
           clientHeight: 200,
@@ -767,6 +787,7 @@ describe('TranscriptScroll', () => {
       expect(
         shouldAbortAutoFollowSnap({
           lastRecordedScrollTop: 5200,
+          lastNativeScrollTop: 5200,
           currentScrollTop: 4700,
           scrollHeight: 5400,
           clientHeight: 200,
@@ -779,6 +800,7 @@ describe('TranscriptScroll', () => {
       expect(
         shouldAbortAutoFollowSnap({
           lastRecordedScrollTop: 5200,
+          lastNativeScrollTop: 5200,
           currentScrollTop: 4700,
           scrollHeight: 5400,
           clientHeight: 200,
@@ -791,6 +813,7 @@ describe('TranscriptScroll', () => {
       expect(
         shouldAbortAutoFollowSnap({
           lastRecordedScrollTop: 4700,
+          lastNativeScrollTop: 4700,
           currentScrollTop: 5180,
           scrollHeight: 5400,
           clientHeight: 200,

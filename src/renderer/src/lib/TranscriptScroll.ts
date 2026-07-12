@@ -474,12 +474,14 @@ export function shouldTreatScrollAsUserScrollAway(input: {
  * Synchronous DOM guard for layout-effect and rAF snap paths. The scroll
  * listener coalesces its evaluate pass, so `autoFollowRef` can still read
  * "follow" when a committed message update runs before the listener has
- * recorded the user's new scroll position. Compare the last recorded
- * scrollTop against the live scroller using the same predicate as the
- * scroll listener's immediate scroll-away branch.
+ * evaluated the user's new scroll position. Compare the latest native sample
+ * against the live scroller using the same predicate as the scroll listener's
+ * immediate scroll-away branch. The rAF-coalesced sample is retained only as
+ * a defensive fallback.
  */
 export function shouldAbortAutoFollowSnap(input: {
   lastRecordedScrollTop: number
+  lastNativeScrollTop: number
   currentScrollTop: number
   scrollHeight: number
   clientHeight: number
@@ -492,7 +494,16 @@ export function shouldAbortAutoFollowSnap(input: {
     nextScrollTop: input.currentScrollTop
   })
   return shouldTreatScrollAsUserScrollAway({
-    previousScrollTop: input.lastRecordedScrollTop,
+    // Native scroll events update this position synchronously, while the
+    // evaluator's recorded position is intentionally rAF-coalesced. A
+    // live-edge content shrink can therefore clamp scrollTop and update the
+    // native sample before the evaluator catches up. If new content then grows
+    // the tail in the same frame, the stale evaluated sample looks exactly
+    // like a user-owned upward scroll. Prefer the native sample; retain the
+    // evaluated value only as a defensive fallback for malformed callers.
+    previousScrollTop: Number.isFinite(input.lastNativeScrollTop)
+      ? input.lastNativeScrollTop
+      : input.lastRecordedScrollTop,
     nextScrollTop: input.currentScrollTop,
     distanceFromBottom,
     isProgrammatic
