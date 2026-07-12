@@ -10,6 +10,7 @@ import {
   grokWriteCapable,
   applyGrokReadOnlyPromptPreamble,
   applyGrokPromptPreamble,
+  GROK_MCP_QUESTION_PROMPT_NOTE,
   GROK_READ_ONLY_PROMPT_PREAMBLE,
   GROK_WRITE_MODE_PROMPT_PREAMBLE,
   GROK_READ_ONLY_DENY_RULES,
@@ -371,6 +372,22 @@ describe('applyGrokPromptPreamble', () => {
     expect(out.startsWith(GROK_READ_ONLY_PROMPT_PREAMBLE)).toBe(true)
     expect(out.endsWith(discordPrompt)).toBe(true)
     expect(out).toContain('<discord_messages')
+  })
+
+  it('routes read-only ACP questions through the available broker tool', () => {
+    const out = buildGrokProviderPrompt('Ask before continuing.', 'plan', undefined, {
+      taskWraithQuestionToolAvailable: true
+    })
+
+    expect(out).toContain(GROK_MCP_QUESTION_PROMPT_NOTE)
+    expect(out).toContain('taskwraith-broker__ask_user_question')
+    expect(out).toMatch(/do not use Grok native question/i)
+  })
+
+  it('does not claim the question tool when no TaskWraith broker was attached', () => {
+    expect(buildGrokProviderPrompt('Inspect only.', 'plan')).not.toContain(
+      GROK_MCP_QUESTION_PROMPT_NOTE
+    )
   })
 })
 

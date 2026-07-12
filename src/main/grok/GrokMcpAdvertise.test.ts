@@ -1,5 +1,42 @@
 import { describe, expect, it } from 'vitest'
-import { shouldAdvertiseTaskWraithMcpToGrok } from './GrokMcpAdvertise'
+import {
+  grokTaskWraithSafeToolRequested,
+  shouldAdvertiseTaskWraithMcpToGrok
+} from './GrokMcpAdvertise'
+
+describe('grokTaskWraithSafeToolRequested', () => {
+  it('allows the broker-qualified ask_user_question request emitted by Grok ACP', () => {
+    expect(
+      grokTaskWraithSafeToolRequested({
+        toolName: 'use_tool',
+        rawToolCall: {
+          rawInput: { tool_name: 'taskwraith-broker__ask_user_question' }
+        }
+      })
+    ).toBe(true)
+  })
+
+  it('retains the configured read-only scoped namespace', () => {
+    expect(
+      grokTaskWraithSafeToolRequested({
+        toolName: 'taskwraith-grok__read_file'
+      })
+    ).toBe(true)
+  })
+
+  it('fails closed for mutating tools and unrecognized namespaces', () => {
+    expect(
+      grokTaskWraithSafeToolRequested({
+        toolName: 'taskwraith-broker__write_file'
+      })
+    ).toBe(false)
+    expect(
+      grokTaskWraithSafeToolRequested({
+        toolName: 'other-broker__ask_user_question'
+      })
+    ).toBe(false)
+  })
+})
 
 describe('shouldAdvertiseTaskWraithMcpToGrok', () => {
   it('never advertises outside ACP', () => {

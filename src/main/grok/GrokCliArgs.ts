@@ -24,6 +24,7 @@
 
 import type { ActiveGoal } from '../store/types'
 import { isGrok45ReasoningModelId } from '../../shared/grok45Models'
+import { GROK_BROKER_MCP_TOOL_NAMESPACE } from '../index.constants'
 
 const GROK_EFFORT_LEVELS = new Set(['low', 'medium', 'high'])
 
@@ -92,6 +93,12 @@ export const GROK_READ_ONLY_PROMPT_PREAMBLE =
   'instead. If a tool call is refused, do NOT end your turn — summarise what ' +
   'you found from the reads you did and answer the user directly.'
 
+const GROK_MCP_QUESTION_TOOL_NAME = `${GROK_BROKER_MCP_TOOL_NAMESPACE}__ask_user_question`
+
+export const GROK_MCP_QUESTION_PROMPT_NOTE =
+  `To ask the user a question, call ${GROK_MCP_QUESTION_TOOL_NAME}. ` +
+  'Do not use Grok native question or elicitation UI; ACP does not connect it to TaskWraith desktop or iOS.'
+
 /**
  * WRITE-mode steer prepended to a write-capable Grok turn's prompt. In write
  * mode Grok's Edit/Write tools are auto-approved (diff-reviewed), but a raw
@@ -153,10 +160,15 @@ export function applyGrokNativeGoalPrompt(
 export function buildGrokProviderPrompt(
   prompt: string,
   approvalMode: string | null | undefined,
-  activeGoal?: ActiveGoal | null
+  activeGoal?: ActiveGoal | null,
+  options?: { taskWraithQuestionToolAvailable?: boolean }
 ): string {
+  const questionAwarePrompt =
+    options?.taskWraithQuestionToolAvailable && !prompt.includes(GROK_MCP_QUESTION_TOOL_NAME)
+      ? `${GROK_MCP_QUESTION_PROMPT_NOTE}\n\n${prompt}`
+      : prompt
   return applyGrokNativeGoalPrompt(
-    applyGrokPromptPreamble(prompt, grokWriteCapable(approvalMode)),
+    applyGrokPromptPreamble(questionAwarePrompt, grokWriteCapable(approvalMode)),
     activeGoal
   )
 }

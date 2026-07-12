@@ -925,7 +925,10 @@ import {
   buildGrokProviderPrompt
 } from './grok/GrokCliArgs'
 import { grokToolKindToService, type AcpPermissionRequest } from './grok/GrokAcpProtocol'
-import { shouldAdvertiseTaskWraithMcpToGrok } from './grok/GrokMcpAdvertise'
+import {
+  grokTaskWraithSafeToolRequested,
+  shouldAdvertiseTaskWraithMcpToGrok
+} from './grok/GrokMcpAdvertise'
 import { grokReadOnlyShellRequestAllowed } from './grok/GrokReadOnlyShell'
 import { grokEventToRunEvents, type NormalizedGrokRunEvent } from './grok/GrokStreamingJson'
 import {
@@ -1155,8 +1158,7 @@ import { createTaskWraithMcpToolDefinitions } from './McpToolCatalog'
 import {
   MCP_AUTO_ALLOWED_TOOLS,
   PLAN_MCP_ADVERTISE_TOOLS,
-  READ_ONLY_MCP_ADVERTISE_TOOLS,
-  isReadOnlyAdvertisedTool
+  READ_ONLY_MCP_ADVERTISE_TOOLS
 } from './mcp/McpAutoAllowedTools'
 import {
   CAPABILITY_GATEWAY_TOOL_NAMES,
@@ -14094,32 +14096,6 @@ async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
 // scoped seats use a distinct server name so the permission-allow check below
 // can identify safe-subset tool calls.
 
-// Is this ACP permission request for one of OUR scoped-bridge tools? The
-// taskwraith-grok bridge advertises ONLY the non-mutating safe subset (--safe-subset
-// enforces it), so when Grok asks to use an `taskwraith-grok__<tool>` we allow it
-// even on a read-only seat — that read/coordination surface is exactly what the
-// read-only Grok seat was given. Defense-in-depth: confirm the unprefixed tool is
-// actually in the advertised safe set (the bridge also rejects anything else at
-// tools/call). Grok routes these via `use_tool`, so check the wrapper's
-// rawInput.tool_name too, not just the title.
-function grokScopedBridgeSafeToolRequested(request: {
-  toolName?: string
-  rawToolCall?: unknown
-}): boolean {
-  const prefix = `${GROK_SCOPED_MCP_SERVER_NAME}__`
-  const raw = request.rawToolCall as { rawInput?: { tool_name?: unknown } } | undefined
-  for (const candidate of [request.toolName, raw?.rawInput?.tool_name]) {
-    if (typeof candidate === 'string' && candidate.startsWith(prefix)) {
-      const scopedToolName = candidate.slice(prefix.length)
-      return (
-        isReadOnlyAdvertisedTool(scopedToolName) ||
-        isCapabilityGatewayToolName(scopedToolName)
-      )
-    }
-  }
-  return false
-}
-
 function normalizeGrokStopReason(status: string | null | undefined): 'success' | string {
   const raw = typeof status === 'string' ? status.trim() : ''
   const normalized = raw.toLowerCase().replace(/[\s_-]+/g, '')
@@ -14408,11 +14384,10 @@ async function runGrokAcpProvider(event: Electron.IpcMainInvokeEvent, payload: A
   // The G5a transport seam turns 'deny' into a rejected outcome, so nothing
   // runs without an explicit allow — no silent shell.
   const grokPermissionHandler = async (request: AcpPermissionRequest) => {
-      // Allow OUR read-only scoped bridge's safe tools (the advertised
-      // non-mutating subset) even on a read-only seat — that read/coordination
-      // surface is exactly what this seat was given. Without this, Grok asks to
-      // use an taskwraith-grok__<tool> and the read-only deny below cancels the turn.
-      if (grokScopedBridgeSafeToolRequested(request)) return 'allow'
+      // Grok may qualify this bridge as taskwraith-grok OR taskwraith-broker.
+      // Strip either trusted namespace, then fail closed against the immutable
+      // safe set before allowing it on a read-only seat.
+      if (grokTaskWraithSafeToolRequested(request)) return 'allow'
       const networkRead = grokAcpNetworkReadRequested(request)
       if (networkRead && !grokNetworkAccessAllowed(state)) return 'deny'
       if (!grokWriteCapable(payload.approvalMode)) {
@@ -14497,7 +14472,8 @@ async function runGrokAcpProvider(event: Electron.IpcMainInvokeEvent, payload: A
   const grokProviderPrompt = buildGrokProviderPrompt(
     payload.prompt,
     payload.approvalMode,
-    payload.activeGoal
+    payload.activeGoal,
+    { taskWraithQuestionToolAvailable: grokMcpServers.length > 0 }
   )
 
   // Spike 7 (docs/ensemble-posture-fanout-preamble-design.md) — persistent
