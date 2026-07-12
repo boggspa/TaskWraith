@@ -1343,6 +1343,27 @@ export interface EnsembleBossmanPollVote {
   votedAt: string
 }
 
+/**
+ * 1.0.4-AN — descriptor that turns an advisory poll into a BINDING
+ * goal-complete poll. When present, a passing tally drives the orchestrator to
+ * complete the active goal (see EnsembleOrchestrator.resolveBindingPoll). Polls
+ * WITHOUT `binding` remain advisory with byte-identical behavior.
+ */
+export interface EnsembleBossmanPollBinding {
+  kind: 'goal_complete'
+  /** Snapshot of chat.activeGoal.id at open; resolution no-ops if it drifts. */
+  goalId: string
+}
+
+/** Terminal outcome recorded on a binding poll for audit/inspection. */
+export type EnsembleBossmanPollResolution =
+  | 'passed'
+  | 'failed_quorum'
+  | 'failed_floor'
+  | 'vetoed'
+  | 'stale'
+  | 'gate_blocked'
+
 export interface EnsembleBossmanPoll {
   id: string
   question: string
@@ -1354,6 +1375,16 @@ export interface EnsembleBossmanPoll {
   votes: EnsembleBossmanPollVote[]
   createdAt: string
   createdByParticipantId?: string
+  /** Present ⇒ binding goal-complete poll (see EnsembleBossmanPollBinding). */
+  binding?: EnsembleBossmanPollBinding
+  /** Round the poll was opened in — a stale prior-round poll no-ops on resolve. */
+  roundId?: string
+  /** Snapshot at open: count of eligible participant voters (floor basis). */
+  eligibleAtOpen?: number
+  /** Snapshot at open: stable Boss/Captain participant ids (veto authority). */
+  authorityVoterIds?: string[]
+  /** Terminal resolution outcome (binding polls only). */
+  bindingResolution?: EnsembleBossmanPollResolution
 }
 
 export interface EnsembleBossmanStatusRequest {
@@ -1420,6 +1451,9 @@ export interface EnsembleConfig {
     quarantines?: EnsembleBossmanQuarantine[]
     budgets?: EnsembleBossmanBudget[]
     polls?: EnsembleBossmanPoll[]
+    /** 1.0.4-AN — earliest ISO time a new binding goal-complete poll may open
+     * (set after a FAILED/vetoed binding poll to throttle re-open spam). */
+    bindingPollCooldownUntil?: string
   }
   sessionActivityLedger?: SessionActivityLedgerEntry[]
   activeRound?: EnsembleRoundState

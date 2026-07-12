@@ -5414,6 +5414,200 @@ Next action:
     }
   })
 
+  // ---- 1.0.4-AN — binding goal-complete polls (O3) -----------------------
+  const startBindingHarness = async (withGoal: boolean) => {
+    const initialChat = makeChat()
+    initialChat.ensemble!.bossmanParticipantId = 'claude'
+    const harness = makeHarness({ initialChat })
+    if (withGoal) harness.chat.activeGoal = buildActiveGoal('goal-x')
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Coordinate.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    return { harness, roundId: harness.chat.ensemble?.activeRound?.roundId }
+  }
+
+  it('rejects a binding goal-complete poll when there is no active goal', async () => {
+    const { harness, roundId } = await startBindingHarness(false)
+    const result = await harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
+      action: 'create_poll',
+      roundId,
+      binding: { kind: 'goal_complete' }
+    })
+    expect(result.ok).toBe(false)
+    expect(result.error).toBe('no_active_goal')
+  })
+
+  it('mints a binding poll with fixed options, forced user vote, and eligibility snapshot', async () => {
+    const { harness, roundId } = await startBindingHarness(true)
+    const result = await harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
+      action: 'create_poll',
+      roundId,
+      pollId: 'binding-1',
+      binding: { kind: 'goal_complete' },
+      options: ['yes', 'no'] // custom options are ignored for binding polls
+    })
+    expect(result.ok).toBe(true)
+    const poll = harness.chat.ensemble?.bossmanControlState?.polls?.[0]
+    expect(poll?.binding).toEqual({ kind: 'goal_complete', goalId: 'goal-x' })
+    expect(poll?.options).toEqual(['complete', 'keep-working'])
+    expect(poll?.includeUser).toBe(true)
+    expect(poll?.roundId).toBe(roundId)
+    expect(poll?.eligibleAtOpen).toBe(2)
+    expect(poll?.authorityVoterIds).toContain('claude')
+    expect(poll?.targetParticipantIds).toEqual(expect.arrayContaining(['claude', 'codex']))
+  })
+
+  it('allows only one open binding poll at a time', async () => {
+    const { harness, roundId } = await startBindingHarness(true)
+    const first = await harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
+      action: 'create_poll',
+      roundId,
+      binding: { kind: 'goal_complete' }
+    })
+    expect(first.ok).toBe(true)
+    const second = await harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
+      action: 'create_poll',
+      roundId,
+      binding: { kind: 'goal_complete' }
+    })
+    expect(second.ok).toBe(false)
+    expect(second.error).toBe('binding_poll_unavailable')
+  })
+
+  it('vetoes a binding poll immediately when an authority votes keep-working', async () => {
+    const { harness, roundId } = await startBindingHarness(true)
+    await harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
+      action: 'create_poll',
+      roundId,
+      pollId: 'binding-veto',
+      binding: { kind: 'goal_complete' }
+    })
+    // claude is Boss (authority) → a 'keep-working' vote is an immediate veto.
+    const veto = harness.orchestrator.pollResponseForRun(harness.dispatched[0].appRunId, {
+      pollId: 'binding-veto',
+      choice: 'keep-working'
+    })
+    expect(veto.ok).toBe(true)
+    const poll = harness.chat.ensemble?.bossmanControlState?.polls?.[0]
+    expect(poll?.status).toBe('closed')
+    expect(poll?.bindingResolution).toBe('vetoed')
+    expect(harness.chat.activeGoal?.status).toBe('active')
+    expect(harness.chat.ensemble?.bossmanControlState?.bindingPollCooldownUntil).toBeTruthy()
+    // Cooldown blocks an immediate re-open.
+    const reopen = await harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
+      action: 'create_poll',
+      roundId,
+      binding: { kind: 'goal_complete' }
+    })
+    expect(reopen.ok).toBe(false)
+    expect(reopen.error).toBe('binding_poll_unavailable')
+  })
+
+  it('completes the active goal when a binding poll passes quorum + floor', async () => {
+    const { harness, roundId } = await startBindingHarness(true)
+    await harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
+      action: 'create_poll',
+      roundId,
+      pollId: 'binding-pass',
+      binding: { kind: 'goal_complete' }
+    })
+    // Boss (claude) votes 'complete' on its own run — not yet terminal.
+    const v1 = harness.orchestrator.pollResponseForRun(harness.dispatched[0].appRunId, {
+      pollId: 'binding-pass',
+      choice: 'complete'
+    })
+    expect(v1.ok).toBe(true)
+    expect(harness.chat.activeGoal?.status).toBe('active')
+    // Boss finishes → codex is dispatched and casts the final target vote.
+    harness.orchestrator.handleProviderOutput(
+      'claude',
+      { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' },
+      { type: 'result', status: 'success' }
+    )
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    const v2 = harness.orchestrator.pollResponseForRun(harness.dispatched[1].appRunId, {
+      pollId: 'binding-pass',
+      choice: 'complete'
+    })
+    expect(v2.ok).toBe(true)
+    const poll = harness.chat.ensemble?.bossmanControlState?.polls?.[0]
+    expect(poll?.status).toBe('closed')
+    expect(poll?.bindingResolution).toBe('passed')
+    expect(harness.chat.activeGoal?.status).toBe('completed')
+  })
+
+  it('fails a binding poll below the participation floor on timeout (goal stays active)', async () => {
+    const { harness, roundId } = await startBindingHarness(true)
+    vi.useFakeTimers()
+    try {
+      const poll = await harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
+        action: 'create_poll',
+        roundId,
+        pollId: 'binding-timeout',
+        binding: { kind: 'goal_complete' },
+        timeoutSeconds: 30
+      })
+      expect(poll.ok).toBe(true)
+      await vi.advanceTimersByTimeAsync(30_000)
+      const resolved = harness.chat.ensemble?.bossmanControlState?.polls?.[0]
+      expect(resolved?.status).toBe('closed')
+      expect(resolved?.bindingResolution).toBe('failed_floor')
+      expect(harness.chat.activeGoal?.status).toBe('active')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('no-ops a binding poll whose active goal was swapped out (stale)', async () => {
+    const { harness, roundId } = await startBindingHarness(true)
+    vi.useFakeTimers()
+    try {
+      const poll = await harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
+        action: 'create_poll',
+        roundId,
+        pollId: 'binding-stale',
+        binding: { kind: 'goal_complete' },
+        timeoutSeconds: 30
+      })
+      expect(poll.ok).toBe(true)
+      // The user moves on to a different goal while the poll is open.
+      harness.chat.activeGoal = buildActiveGoal('goal-different')
+      await vi.advanceTimersByTimeAsync(30_000)
+      const resolved = harness.chat.ensemble?.bossmanControlState?.polls?.[0]
+      expect(resolved?.bindingResolution).toBe('stale')
+      expect(harness.chat.activeGoal?.id).toBe('goal-different')
+      expect(harness.chat.activeGoal?.status).toBe('active')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('records a user vote without letting it drive or block binding resolution', async () => {
+    const { harness, roundId } = await startBindingHarness(true)
+    await harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
+      action: 'create_poll',
+      roundId,
+      pollId: 'binding-user',
+      binding: { kind: 'goal_complete' }
+    })
+    const userVote = harness.orchestrator.userPollResponseForChat('ensemble-chat', {
+      pollId: 'binding-user',
+      choice: 'complete'
+    })
+    expect(userVote.ok).toBe(true)
+    const poll = harness.chat.ensemble?.bossmanControlState?.polls?.[0]
+    // A user vote alone NEVER terminalizes the poll (participant-driven only)…
+    expect(poll?.status).toBe('open')
+    // …but it is recorded so it counts in the denominator at resolution.
+    expect(
+      poll?.votes.some((vote) => vote.voterLabel === 'User' && vote.choice === 'complete')
+    ).toBe(true)
+    expect(harness.chat.activeGoal?.status).toBe('active')
+  })
+
   it('rejects Boss control from non-Boss callers and stale round ids', async () => {
     const initialChat = makeChat()
     initialChat.ensemble!.bossmanParticipantId = 'claude'

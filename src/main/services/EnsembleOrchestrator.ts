@@ -34,6 +34,8 @@ import type {
   EnsembleBossmanAssignmentStatus,
   EnsembleBossmanBudget,
   EnsembleBossmanControlScope,
+  EnsembleBossmanPoll,
+  EnsembleBossmanPollResolution,
   EnsembleBossmanPollVote,
   EnsembleBossmanQuarantine,
   EnsembleBossmanQuarantineCategory,
@@ -234,6 +236,11 @@ const MAX_BOSSMAN_SUMMONS_PER_PARTICIPANT_PER_ROUND = 3
 const MAX_CONTINUATION_HOP_LIMIT = 500
 const MAX_BOSSMAN_CONTROL_ITEMS = 40
 const MAX_BOSSMAN_POLL_OPTIONS = 6
+// 1.0.4-AN — binding goal-complete poll. Options are FIXED so resolution is
+// deterministic; a FAILED/vetoed poll sets a cooldown before another may open.
+const BINDING_GOAL_COMPLETE_OPTIONS = ['complete', 'keep-working'] as const
+const BINDING_POLL_DEFAULT_TIMEOUT_SECONDS = 300
+const BINDING_POLL_COOLDOWN_MS = 10 * 60 * 1000
 const ENSEMBLE_IMAGE_ATTACHMENT_EXT = /\.(png|jpe?g|gif|webp|bmp|heic|avif|tiff|tif|svg|jfif)(\?.*)?$/i
 // The visual Odometer roll takes 430ms. Coalescing provider usage snapshots to
 // roughly two per second lets each roll finish, while keeping the event lane
@@ -768,6 +775,8 @@ export interface EnsembleBossmanControlInput {
   delaySeconds?: number
   provider?: ProviderId
   replacement?: Partial<EnsembleParticipant> & { provider?: ProviderId }
+  /** 1.0.4-AN — binding goal-complete poll descriptor for create_poll. */
+  binding?: { kind?: string }
 }
 
 export interface EnsemblePollResponseInput {
@@ -829,6 +838,8 @@ export interface EnsembleBossmanControlResult {
     | 'queue_failed'
     | 'no_active_work_session'
     | 'baseline_exceeded'
+    | 'no_active_goal'
+    | 'binding_poll_unavailable'
 }
 
 export interface EnsembleRosterEditInput extends Omit<RosterEditRequest, 'action'> {
@@ -5822,6 +5833,49 @@ export class EnsembleOrchestrator {
     }
 
     if (action === 'create_poll') {
+      // 1.0.4-AN — binding goal-complete poll: minted deterministically from the
+      // active goal (fixed options, forced user vote, quorum resolution). Advisory
+      // polls (no `binding`) fall through to the unchanged path below.
+      if (input.binding) {
+        const bindingKind = normalizeBossmanText(input.binding.kind, 40)
+        if (bindingKind !== 'goal_complete') {
+          return this.missingBossmanField(
+            action,
+            runtime.roundId,
+            "create_poll binding.kind must be 'goal_complete'."
+          )
+        }
+        const activeGoal = this.deps.getChat(runtime.chatId)?.activeGoal
+        if (!activeGoal || activeGoal.status !== 'active') {
+          return {
+            ok: false,
+            tool: 'ensemble_bossman_control',
+            action,
+            roundId: runtime.roundId,
+            message: 'create_poll binding requires an active goal.',
+            error: 'no_active_goal'
+          }
+        }
+        const openBlock = this.bindingPollOpenBlock(runtime)
+        if (openBlock) {
+          return {
+            ok: false,
+            tool: 'ensemble_bossman_control',
+            action,
+            roundId: runtime.roundId,
+            message: openBlock,
+            error: 'binding_poll_unavailable'
+          }
+        }
+        return this.openBindingGoalCompletePoll(
+          runtime,
+          activeGoal.id,
+          callerId,
+          authorityLabel,
+          input.timeoutSeconds,
+          input.pollId
+        )
+      }
       const question = normalizeBossmanText(input.question || input.prompt, 800)
       const options = normalizeBossmanTextArray(input.options, MAX_BOSSMAN_POLL_OPTIONS, 160)
       if (!question || options.length < 2) return this.missingBossmanField(action, runtime.roundId, 'create_poll requires question and at least two options.')
@@ -6017,13 +6071,20 @@ export class EnsembleOrchestrator {
         ...state,
         polls: [
           ...polls.slice(0, index),
-          hasAllTargetVotes ? { ...nextPoll, status: 'closed' as const } : nextPoll,
+          // Binding polls are terminalized by resolveBindingPoll (veto/quorum/
+          // floor), never the generic all-votes close — leave them open here.
+          hasAllTargetVotes && !nextPoll.binding
+            ? { ...nextPoll, status: 'closed' as const }
+            : nextPoll,
           ...polls.slice(index + 1)
         ]
       }
     })
     if (response.ok) {
       this.appendRoundStatus(runtime.chatId, runtime.roundId, response.message)
+      // Binding goal-complete polls terminalize through the atomic resolver
+      // (advisory polls no-op inside it, so their behavior is unchanged).
+      this.resolveBindingPoll(runtime.chatId, pollId, 'vote')
     }
     return response
   }
@@ -6256,6 +6317,12 @@ export class EnsembleOrchestrator {
     if (!chat?.ensemble || !state || index < 0) return
     const poll = polls[index]
     if (poll.status !== 'open' || poll.timeoutAt !== timeoutAt) return
+    // Binding goal-complete polls terminalize through the atomic resolver
+    // (quorum/floor/veto on votes cast), not a plain 'expired' mark.
+    if (poll.binding) {
+      this.resolveBindingPoll(chatId, pollId, 'timeout')
+      return
+    }
     const nextPoll = { ...poll, status: 'expired' as const }
     this.saveChatWithCheckpoint(
       {
@@ -6278,6 +6345,247 @@ export class EnsembleOrchestrator {
         chat.ensemble.activeRound.roundId,
         `Poll ${pollId} expired after reaching its timeout.`
       )
+    }
+  }
+
+  /**
+   * 1.0.4-AN — participants eligible to vote on (and count toward the
+   * denominator of) a binding goal-complete poll. Mirrors the
+   * tryAutoContinueRound roster predicate so the quorum matches who can actually
+   * take a turn: enabled, non-background, reachable, not quarantined.
+   */
+  private bindingPollEligibleParticipantIds(
+    chat: ChatRecord,
+    runtime: ActiveRoundRuntime
+  ): string[] {
+    return (chat.ensemble?.participants || [])
+      .filter(
+        (participant) =>
+          participant.enabled &&
+          !isBackgroundParticipant(participant) &&
+          !runtime.unreachableParticipantIds?.has(participant.id) &&
+          !this.activeBossmanQuarantine(chat, runtime.roundId, participant.id)
+      )
+      .map((participant) => participant.id)
+  }
+
+  /**
+   * Reason a new binding goal-complete poll cannot open right now (one is
+   * already open, or a post-FAIL cooldown is still active), or null when it may.
+   */
+  private bindingPollOpenBlock(runtime: ActiveRoundRuntime): string | null {
+    const state = this.deps.getChat(runtime.chatId)?.ensemble?.bossmanControlState
+    if ((state?.polls || []).some((poll) => poll.binding && poll.status === 'open')) {
+      return 'A binding goal-complete poll is already open.'
+    }
+    const cooldownUntil = state?.bindingPollCooldownUntil
+    if (cooldownUntil && new Date(cooldownUntil).getTime() > this.deps.now()) {
+      return `Binding goal-complete polls are on cooldown until ${cooldownUntil}.`
+    }
+    return null
+  }
+
+  /**
+   * Open a binding goal-complete poll minted from the active goal: fixed
+   * options, forced user vote, eligible-voter + stable-authority snapshot, and a
+   * default 300s timeout. Shared by the authority create_poll path and the peer
+   * ensemble_propose_goal_complete tool (M3).
+   */
+  private openBindingGoalCompletePoll(
+    runtime: ActiveRoundRuntime,
+    goalId: string,
+    callerId: string,
+    authorityLabel: string,
+    timeoutSecondsInput: number | undefined,
+    pollIdInput: string | undefined
+  ): EnsembleBossmanControlResult {
+    const chat = this.deps.getChat(runtime.chatId)
+    if (!chat?.ensemble) return this.invalidBossmanTarget('create_poll', runtime.roundId)
+    const nowIso = this.deps.nowIso()
+    const eligibleIds = this.bindingPollEligibleParticipantIds(chat, runtime)
+    const authorityVoterIds = [
+      chat.ensemble.bossmanParticipantId,
+      chat.ensemble.secondInCommandParticipantId
+    ].filter((id): id is string => Boolean(id))
+    const timeoutSeconds =
+      clampOptionalInteger(timeoutSecondsInput, 30, 24 * 60 * 60) ??
+      BINDING_POLL_DEFAULT_TIMEOUT_SECONDS
+    const question = `Binding goal-complete poll — complete the active goal "${
+      chat.activeGoal?.objective || goalId
+    }"? Vote 'complete' or 'keep-working'. PASS completes the goal; Boss/Captain 'keep-working' vetoes.`
+    const options = [...BINDING_GOAL_COMPLETE_OPTIONS]
+    const poll: EnsembleBossmanPoll = {
+      id: pollIdInput || this.nextBossmanControlId('poll'),
+      question,
+      options,
+      targetParticipantIds: eligibleIds.length ? eligibleIds : undefined,
+      includeUser: true,
+      timeoutAt: new Date(this.deps.now() + timeoutSeconds * 1000).toISOString(),
+      status: 'open',
+      votes: [],
+      createdAt: nowIso,
+      createdByParticipantId: callerId,
+      binding: { kind: 'goal_complete', goalId },
+      roundId: runtime.roundId,
+      eligibleAtOpen: eligibleIds.length,
+      authorityVoterIds
+    }
+    this.updateBossmanControlState(runtime, (state) => ({
+      ...state,
+      polls: capBossmanItems([
+        ...(state.polls || []).filter((entry) => entry.id !== poll.id),
+        poll
+      ])
+    }))
+    this.appendRoundStatus(
+      runtime.chatId,
+      runtime.roundId,
+      `${authorityLabel} opened BINDING goal-complete poll ${poll.id}: vote 'complete' or 'keep-working' via ensemble_poll_response; PASS completes the active goal; Boss/Captain 'keep-working' vetoes.`
+    )
+    this.appendBossmanPollMessage(runtime, poll.id, question, options, authorityLabel)
+    this.scheduleBossmanPollTimeout(runtime.chatId, poll.id, poll.timeoutAt)
+    if (eligibleIds.length > 0) {
+      this.routeBossmanTargets(
+        runtime,
+        eligibleIds,
+        `${authorityLabel} routed binding poll ${poll.id} voters.`,
+        { allowAnsweredParticipant: true }
+      )
+    }
+    return {
+      ok: true,
+      tool: 'ensemble_bossman_control',
+      action: 'create_poll',
+      roundId: runtime.roundId,
+      message: `${authorityLabel} opened binding goal-complete poll ${poll.id}.`
+    }
+  }
+
+  /**
+   * 1.0.4-AN — the single atomic terminalizer for a binding goal-complete poll,
+   * invoked after each participant vote and on timeout. Owns veto, quorum/floor,
+   * user-vote counting, stale goal/round guards, and review-gate preservation. A
+   * no-op if the poll is advisory, already resolved (double-resolution guard),
+   * or not yet terminal (a non-final vote never blocks or early-closes).
+   */
+  private resolveBindingPoll(chatId: string, pollId: string, trigger: 'vote' | 'timeout'): void {
+    const chat = this.deps.getChat(chatId)
+    const state = chat?.ensemble?.bossmanControlState
+    const polls = state?.polls || []
+    const index = polls.findIndex((entry) => entry.id === pollId)
+    if (!chat?.ensemble || !state || index < 0) return
+    const poll = polls[index]
+    if (!poll.binding || poll.status !== 'open') return
+
+    const authorityIds = new Set(poll.authorityVoterIds || [])
+    const participantVotes = poll.votes.filter((vote) => Boolean(vote.voterParticipantId))
+    const userVote = poll.votes.find((vote) => !vote.voterParticipantId && vote.voterLabel === 'User')
+    const vetoVote = participantVotes.find(
+      (vote) => authorityIds.has(vote.voterParticipantId as string) && vote.choice === 'keep-working'
+    )
+    const expectedVoters = poll.targetParticipantIds || []
+    const hasAllTargetVotes =
+      expectedVoters.length > 0 &&
+      expectedVoters.every((id) => participantVotes.some((vote) => vote.voterParticipantId === id))
+
+    // Terminal only on timeout, an authority veto, or every target having voted.
+    if (trigger !== 'timeout' && !vetoVote && !hasAllTargetVotes) return
+
+    const denominator = participantVotes.length + (userVote ? 1 : 0)
+    const completeVotes =
+      participantVotes.filter((vote) => vote.choice === 'complete').length +
+      (userVote?.choice === 'complete' ? 1 : 0)
+    const floor = Math.max(2, Math.floor((poll.eligibleAtOpen || 0) / 2) + 1)
+    const quorumThreshold = Math.ceil((2 / 3) * denominator)
+
+    const currentRoundId = chat.ensemble.activeRound?.roundId
+    const activeGoal = chat.activeGoal
+    const goalFresh =
+      Boolean(activeGoal) &&
+      activeGoal!.id === poll.binding.goalId &&
+      activeGoal!.status === 'active' &&
+      poll.roundId === currentRoundId
+    const gateBlocks = this.activeBossmanReviewGateBlocks(chat)
+
+    let resolution: EnsembleBossmanPollResolution
+    if (vetoVote) resolution = 'vetoed'
+    else if (!goalFresh) resolution = 'stale'
+    else if (gateBlocks.length > 0) resolution = 'gate_blocked'
+    else if (participantVotes.length < floor) resolution = 'failed_floor'
+    else if (denominator === 0 || completeVotes < quorumThreshold) resolution = 'failed_quorum'
+    else resolution = 'passed'
+
+    this.clearBossmanPollTimeout(chatId, pollId)
+    const nowIso = this.deps.nowIso()
+    const resolvedPoll: EnsembleBossmanPoll = {
+      ...poll,
+      status: 'closed',
+      bindingResolution: resolution
+    }
+    const nextPolls = [...polls.slice(0, index), resolvedPoll, ...polls.slice(index + 1)]
+    // Cooldown throttles re-open after a real failure/veto/gate; NOT after a
+    // 'stale' no-op (the goal changed — a fresh poll on the new goal is valid).
+    const applyCooldown = resolution !== 'passed' && resolution !== 'stale'
+    const nextBossmanState = {
+      ...state,
+      polls: nextPolls,
+      ...(applyCooldown
+        ? {
+            bindingPollCooldownUntil: new Date(
+              this.deps.now() + BINDING_POLL_COOLDOWN_MS
+            ).toISOString()
+          }
+        : {})
+    }
+
+    if (resolution === 'passed') {
+      const reason = `Goal completed by binding poll ${pollId} (${completeVotes}/${denominator} 'complete').`
+      const nextGoal = updateActiveGoalLifecycle(activeGoal!, 'completed', reason, new Date(nowIso))
+      this.saveChatWithCheckpoint(
+        {
+          ...chat,
+          activeGoal: nextGoal,
+          ensemble: {
+            ...chat.ensemble,
+            bossmanControlState: nextBossmanState,
+            updatedAt: nowIso
+          },
+          updatedAt: this.deps.now()
+        },
+        'round-updated'
+      )
+    } else {
+      this.saveChatWithCheckpoint(
+        {
+          ...chat,
+          ensemble: {
+            ...chat.ensemble,
+            bossmanControlState: nextBossmanState,
+            updatedAt: nowIso
+          },
+          updatedAt: this.deps.now()
+        },
+        'round-updated'
+      )
+    }
+
+    const auditRoundId = currentRoundId || poll.roundId
+    if (auditRoundId) {
+      const detail =
+        resolution === 'passed'
+          ? `PASSED (${completeVotes}/${denominator} 'complete', participation ${participantVotes.length}/${
+              poll.eligibleAtOpen ?? '?'
+            } ≥ floor ${floor}). Active goal marked complete.`
+          : resolution === 'vetoed'
+            ? `vetoed by ${vetoVote?.voterLabel || 'Boss/Captain'} — goal stays active.`
+            : resolution === 'stale'
+              ? 'active goal changed or is no longer active — resolution no-op.'
+              : resolution === 'gate_blocked'
+                ? `blocked by review gate(s): ${gateBlocks.join('; ')} — goal stays active.`
+                : resolution === 'failed_floor'
+                  ? `below participation floor (${participantVotes.length}/${floor}) — goal stays active.`
+                  : `quorum not met (${completeVotes}/${denominator} 'complete', need ≥${quorumThreshold}) — goal stays active.`
+      this.appendRoundStatus(chatId, auditRoundId, `Binding goal-complete poll ${pollId} ${detail}`)
     }
   }
 
