@@ -416,6 +416,16 @@
 .ensemble-roster-preset-picker-browse.is-open {
   color: color-mix(in srgb, var(--text-primary) 86%, var(--accent));
 }
+.ensemble-roster-preset-picker-browse.has-unsaved-changes
+  .composer-combined-picker-trigger-primary {
+  color: color-mix(in srgb, var(--warning, #f59e0b) 88%, var(--text-primary)) !important;
+  -webkit-text-fill-color: color-mix(
+    in srgb,
+    var(--warning, #f59e0b) 88%,
+    var(--text-primary)
+  ) !important;
+  text-shadow: 0 0 8px color-mix(in srgb, var(--warning, #f59e0b) 20%, transparent);
+}
 .ensemble-roster-preset-popover {
   position: fixed;
   z-index: 12000;
