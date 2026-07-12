@@ -5614,6 +5614,7 @@ Next action:
       rationale: 'Work is done.'
     })
     expect(result.ok).toBe(true)
+    expect(result.tool).toBe('ensemble_propose_goal_complete') // C0-A: correct tool identity
     const poll = harness.chat.ensemble?.bossmanControlState?.polls?.[0]
     expect(poll?.binding).toEqual({ kind: 'goal_complete', goalId: 'goal-x' })
     expect(poll?.options).toEqual(['complete', 'keep-working'])
@@ -5632,6 +5633,25 @@ Next action:
     const result = harness.orchestrator.proposeGoalCompleteForRun(harness.dispatched[0].appRunId, {})
     expect(result.ok).toBe(false)
     expect(result.error).toBe('no_active_goal')
+    expect(result.tool).toBe('ensemble_propose_goal_complete') // C0-A
+  })
+
+  it('tags every proposeGoalCompleteForRun path as ensemble_propose_goal_complete (C0-A)', async () => {
+    const { harness } = await startBindingHarness(true)
+    // success path
+    const ok = harness.orchestrator.proposeGoalCompleteForRun(harness.dispatched[0].appRunId, {})
+    expect(ok.ok).toBe(true)
+    expect(ok.tool).toBe('ensemble_propose_goal_complete')
+    // error path: no run id ⇒ no_active_run
+    const noRun = harness.orchestrator.proposeGoalCompleteForRun(undefined, {})
+    expect(noRun.ok).toBe(false)
+    expect(noRun.error).toBe('no_active_run')
+    expect(noRun.tool).toBe('ensemble_propose_goal_complete')
+    // error path: a second open while one is already open ⇒ binding_poll_unavailable
+    const blocked = harness.orchestrator.proposeGoalCompleteForRun(harness.dispatched[0].appRunId, {})
+    expect(blocked.ok).toBe(false)
+    expect(blocked.error).toBe('binding_poll_unavailable')
+    expect(blocked.tool).toBe('ensemble_propose_goal_complete')
   })
 
   // ---- O3 slice-3 — resolver closure tests (items 1/3/4) ------------------
@@ -5728,8 +5748,19 @@ Next action:
     resolveDirect(harness, 'binding-double')
     expect(findPoll(harness, 'binding-double')?.bindingResolution).toBe('vetoed')
     expect(findPoll(harness, 'binding-double')?.status).toBe('closed')
-    // A second resolution attempt must be a no-op (status !== 'open' guard).
+    // C0-B: a second resolution attempt must be a no-op — assert NOT ONLY that the
+    // final value is unchanged but that NO duplicate audit/status line is emitted
+    // (a silently-removed guard would recompute the same value AND re-emit the line,
+    // which the value-only assertion cannot distinguish).
+    const statusLinesBefore = harness.chat.messages.filter((m) =>
+      (m.content || '').includes('Binding goal-complete poll binding-double')
+    ).length
+    expect(statusLinesBefore).toBe(1) // the first resolution emitted exactly one audit line
     resolveDirect(harness, 'binding-double')
+    const statusLinesAfter = harness.chat.messages.filter((m) =>
+      (m.content || '').includes('Binding goal-complete poll binding-double')
+    ).length
+    expect(statusLinesAfter).toBe(statusLinesBefore) // no duplicate audit line on re-resolve
     expect(findPoll(harness, 'binding-double')?.bindingResolution).toBe('vetoed')
     expect(harness.chat.activeGoal?.status).toBe('active')
   })

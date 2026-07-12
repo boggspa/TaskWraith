@@ -23546,7 +23546,7 @@ async function executeGeminiMcpTool(
         rationale: optionalString(args.rationale || args.reason)
       }) || {
         ok: false,
-        tool: 'ensemble_bossman_control' as const,
+        tool: 'ensemble_propose_goal_complete' as const,
         message: 'Ensemble orchestrator is not available.',
         error: 'no_active_run' as const
       }

@@ -795,7 +795,9 @@ export interface EnsemblePollResponseResult {
 
 export interface EnsembleBossmanControlResult {
   ok: boolean
-  tool: 'ensemble_bossman_control'
+  // 1.0.4-AO — proposeGoalCompleteForRun reuses this result shape for the peer
+  // ensemble_propose_goal_complete tool, so the tag may be either tool identity.
+  tool: 'ensemble_bossman_control' | 'ensemble_propose_goal_complete'
   action?: EnsembleBossmanControlAction
   message: string
   roundId?: string
@@ -6126,7 +6128,7 @@ export class EnsembleOrchestrator {
     if (!runId) {
       return {
         ok: false,
-        tool: 'ensemble_bossman_control',
+        tool: 'ensemble_propose_goal_complete',
         message: 'ensemble_propose_goal_complete requires an active Ensemble participant run.',
         error: 'no_active_run'
       }
@@ -6135,7 +6137,7 @@ export class EnsembleOrchestrator {
     if (!run) {
       return {
         ok: false,
-        tool: 'ensemble_bossman_control',
+        tool: 'ensemble_propose_goal_complete',
         message: 'No active Ensemble participant run matches this proposal.',
         error: 'no_active_run'
       }
@@ -6144,7 +6146,7 @@ export class EnsembleOrchestrator {
     if (!runtime || runtime.roundId !== run.roundId || runtime.cancelled) {
       return {
         ok: false,
-        tool: 'ensemble_bossman_control',
+        tool: 'ensemble_propose_goal_complete',
         roundId: runtime?.roundId,
         message: 'No active Ensemble round is available for this proposal.',
         error: 'no_active_round'
@@ -6155,7 +6157,7 @@ export class EnsembleOrchestrator {
     if (!chat?.ensemble || !activeGoal || activeGoal.status !== 'active') {
       return {
         ok: false,
-        tool: 'ensemble_bossman_control',
+        tool: 'ensemble_propose_goal_complete',
         roundId: runtime.roundId,
         message: 'ensemble_propose_goal_complete requires an active goal.',
         error: 'no_active_goal'
@@ -6166,7 +6168,7 @@ export class EnsembleOrchestrator {
     if (!eligibleIds.includes(run.participant.id)) {
       return {
         ok: false,
-        tool: 'ensemble_bossman_control',
+        tool: 'ensemble_propose_goal_complete',
         roundId: runtime.roundId,
         message:
           'Only an eligible (enabled, non-background, reachable, non-quarantined) participant may propose goal completion.',
@@ -6177,7 +6179,7 @@ export class EnsembleOrchestrator {
     if (openBlock) {
       return {
         ok: false,
-        tool: 'ensemble_bossman_control',
+        tool: 'ensemble_propose_goal_complete',
         roundId: runtime.roundId,
         message: openBlock,
         error: 'binding_poll_unavailable'
@@ -6191,14 +6193,20 @@ export class EnsembleOrchestrator {
         `${participantDisplayName(run.participant)} proposed goal completion: ${rationale}`
       )
     }
-    return this.openBindingGoalCompletePoll(
-      runtime,
-      activeGoal.id,
-      run.participant.id,
-      participantDisplayName(run.participant),
-      undefined,
-      undefined
-    )
+    // Papercut C0-A: tag the result as THIS tool, not the shared bossman-control
+    // identity openBindingGoalCompletePoll returns (that helper is also the
+    // authority create_poll path, where 'ensemble_bossman_control' is correct).
+    return {
+      ...this.openBindingGoalCompletePoll(
+        runtime,
+        activeGoal.id,
+        run.participant.id,
+        participantDisplayName(run.participant),
+        undefined,
+        undefined
+      ),
+      tool: 'ensemble_propose_goal_complete'
+    }
   }
 
   userPollResponseForChat(
