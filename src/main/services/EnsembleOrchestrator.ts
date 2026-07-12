@@ -12342,6 +12342,8 @@ export class EnsembleOrchestrator {
    *
    * Stop conditions:
    *  - not continuous mode / user cancelled;
+   *  - a provider/model seat change is queued for the round boundary — close
+   *    this pass so the authoritative roster can change before another pass;
    *  - the active goal is marked complete (`chat.activeGoal.status === 'completed'`)
    *    — agents end the loop by completing the goal/tasks (see the Continuous-mode
    *    system prompt);
@@ -12377,6 +12379,16 @@ export class EnsembleOrchestrator {
     // autonomous panel pass. Once that participant answers/yields, control
     // returns to the user; agent mentions cannot widen the user's scope.
     if (runtime.dmTargetParticipantId) return null
+    const queuedSeatChangeCount = runtime.pendingRoundEndParticipantSeatChanges?.length || 0
+    if (queuedSeatChangeCount > 0) {
+      const changeLabel = queuedSeatChangeCount === 1 ? 'change' : 'changes'
+      this.appendRoundStatus(
+        runtime.chatId,
+        runtime.roundId,
+        `Continuous mode: ending this pass to apply ${queuedSeatChangeCount} queued provider/model seat ${changeLabel} before another pass.`
+      )
+      return null
+    }
     // Stop once the goal leaves 'active' — completed (done), blocked, or paused.
     // Agents are prompted to call goal_complete when done and goal_blocked when
     // genuinely stuck; both hand control back to the user, so don't keep spinning

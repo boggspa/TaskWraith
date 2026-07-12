@@ -8860,6 +8860,65 @@ Next action:
     })
   })
 
+  it('ends a Continuous pass before auto-continuing when a provider/model swap is queued', async () => {
+    const harness = makeHarness()
+    harness.chat.ensemble!.orchestrationMode = 'continuous'
+    harness.chat.ensemble!.maxContinuationHops = 8
+    harness.chat.activeGoal = buildActiveGoal('continuous-seat-swap')
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Complete one pass, then apply the queued seat swap.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    const queued = await harness.orchestrator.requestParticipantSeatChange({
+      chatId: 'ensemble-chat',
+      participantId: 'codex',
+      participant: {
+        provider: 'kimi',
+        model: 'kimi-k2.7-code',
+        role: 'Replacement worker'
+      },
+      changedBy: 'user',
+      reason: 'Swap the worker before another Continuous pass.'
+    })
+    expect(queued).toMatchObject({ ok: true, status: 'queued', participantId: 'codex' })
+
+    harness.orchestrator.handleProviderOutput(
+      'claude',
+      { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' },
+      { type: 'content', text: 'First pass review complete.' }
+    )
+    completeDispatchedRun(harness, 0)
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    harness.orchestrator.handleProviderOutput(
+      'codex',
+      { appRunId: harness.dispatched[1].appRunId, appChatId: 'ensemble-chat' },
+      { type: 'content', text: 'First pass implementation complete.' }
+    )
+    completeDispatchedRun(harness, 1)
+
+    await vi.waitFor(() =>
+      expect(harness.chat.ensemble?.activeRound?.status).toBe('completed')
+    )
+    expect(harness.dispatched).toHaveLength(2)
+    expect(
+      harness.chat.ensemble?.participants.find((participant) => participant.id === 'codex')
+    ).toMatchObject({
+      provider: 'kimi',
+      model: 'kimi-k2.7-code',
+      role: 'Replacement worker'
+    })
+    expect(
+      harness.chat.messages.some((message) =>
+        message.content.includes(
+          'Continuous mode: ending this pass to apply 1 queued provider/model seat change before another pass.'
+        )
+      )
+    ).toBe(true)
+  })
+
   it('skipActiveParticipant returns false when no round is active', async () => {
     const harness = makeHarness()
     const skipped = await harness.orchestrator.skipActiveParticipant('ensemble-chat')
