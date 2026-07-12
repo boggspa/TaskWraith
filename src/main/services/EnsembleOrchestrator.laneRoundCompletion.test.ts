@@ -87,6 +87,7 @@ function makeHarness(participants: EnsembleParticipant[]) {
   let chat = makeChat(participants)
   let counter = 0
   const dispatched: AgentRunPayload[] = []
+  const cancelRun = vi.fn(async () => true)
   const orchestrator = new EnsembleOrchestrator({
     getChat: () => chat,
     saveChat: (next) => {
@@ -97,7 +98,7 @@ function makeHarness(participants: EnsembleParticipant[]) {
       dispatched.push(payload)
       return { dispatched: true, appRunId: payload.appRunId || '' }
     }),
-    cancelRun: vi.fn(async () => true),
+    cancelRun,
     createRunId: (provider) => `${provider}-run-${++counter}`,
     now: () => counter,
     nowIso: () => `2026-05-24T00:00:0${counter}.000Z`
@@ -107,6 +108,7 @@ function makeHarness(participants: EnsembleParticipant[]) {
       return chat
     },
     dispatched,
+    cancelRun,
     orchestrator
   }
 }
@@ -142,7 +144,10 @@ function rowIndex(harness: Harness, text: string): number {
  * shared by both tests. Returns with dispatched = [lead, reviewerLane]; the
  * Researcher must not start until the Reviewer lane settles.
  */
-async function completeCallerWithActiveLane(harness: Harness): Promise<void> {
+async function completeCallerWithActiveLane(
+  harness: Harness,
+  ownerPostFanoutText?: string
+): Promise<void> {
   harness.orchestrator.startRound({
     chatId: 'ensemble-chat',
     prompt: 'Lead fans out, then the serial queue drains first.',
@@ -162,6 +167,7 @@ async function completeCallerWithActiveLane(harness: Harness): Promise<void> {
 
   // The lane starts working; the Lead finishes its serial turn.
   stream(harness, 1, 'LANE-WORKING.')
+  if (ownerPostFanoutText) stream(harness, 0, ownerPostFanoutText)
   complete(harness, 0)
   await sleep(FLUSH_MS)
   expect(harness.dispatched).toHaveLength(2)
@@ -221,7 +227,9 @@ describe('foreground ownership vs detached fan-out lanes', () => {
         participant('claude', 'claude', 'Reviewer', 2, 'read_only'),
         participant('gemini', 'gemini', 'Researcher', 3, 'workspace_write')
       ])
-      await completeCallerWithActiveLane(harness)
+      await completeCallerWithActiveLane(harness, ' BOSS-PREMATURE-SUMMARY.')
+
+      expect(rowIndex(harness, 'BOSS-PREMATURE-SUMMARY.')).toBe(-1)
 
       // Held-handoff state: round open, lane active, next foreground seat idle.
       expect(harness.chat.ensemble!.activeRound!.status).toBe('running')
@@ -235,6 +243,156 @@ describe('foreground ownership vs detached fan-out lanes', () => {
       expect(lanes).toHaveLength(1)
       expect(lanes[0].status).toBe('cancelled')
       expect(harness.dispatched).toHaveLength(2)
+
+      // Lane completion promises and transcript debounce timers can settle
+      // after Stop. They must not release the owner's buffered synthesis or
+      // reclassify either participant after the round is terminal.
+      await sleep(FLUSH_MS)
+      await Promise.resolve()
+      expect(rowIndex(harness, 'BOSS-PREMATURE-SUMMARY.')).toBe(-1)
+      expect(harness.chat.ensemble!.activeRound!.status).toBe('cancelled')
+      expect(
+        harness.chat.ensemble!.activeRound!.participants.find(
+          (participant) => participant.participantId === 'codex'
+        )?.status
+      ).toBe('cancelled')
+      expect(
+        harness.chat.ensemble!.activeRound!.participants.find(
+          (participant) => participant.participantId === 'claude'
+        )?.status
+      ).toBe('cancelled')
+      expect(
+        harness.chat.runs.find((run) => run.runId === harness.dispatched[0].appRunId)?.status
+      ).toBe('cancelled')
+      expect(Object.values(harness.chat.ensemble!.activeRound!.lanes || {})[0]?.status).toBe(
+        'cancelled'
+      )
+    }
+  )
+
+  it(
+    'cancellation suppresses held owner prose when Stop catches both owner and lane live',
+    { timeout: 20_000 },
+    async () => {
+      const harness = makeHarness([
+        participant('codex', 'codex', 'Lead', 1, 'workspace_write'),
+        participant('claude', 'claude', 'Reviewer', 2, 'read_only')
+      ])
+      harness.orchestrator.startRound({
+        chatId: 'ensemble-chat',
+        prompt: 'Stop both the live owner and its lane.',
+        event: { sender: {} as Electron.WebContents }
+      })
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+      stream(harness, 0, 'BOSS-PREAMBLE.')
+      await sleep(FLUSH_MS)
+
+      const fanout = await harness.orchestrator.fanoutForRun(harness.dispatched[0].appRunId, {
+        targets: ['Reviewer'],
+        prompt: 'Keep reviewing until Stop.'
+      })
+      expect(fanout.ok).toBe(true)
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+      stream(harness, 1, 'LANE-WORKING.')
+      stream(harness, 0, ' BOSS-PREMATURE-SUMMARY.')
+      await sleep(FLUSH_MS)
+      expect(rowIndex(harness, 'BOSS-PREMATURE-SUMMARY.')).toBe(-1)
+
+      expect(await harness.orchestrator.cancelRound('ensemble-chat')).toBe(true)
+      await sleep(FLUSH_MS)
+      await Promise.resolve()
+
+      expect(rowIndex(harness, 'BOSS-PREMATURE-SUMMARY.')).toBe(-1)
+      expect(harness.chat.ensemble!.activeRound!.status).toBe('cancelled')
+      expect(
+        harness.chat.ensemble!.activeRound!.participants.map((participant) => participant.status)
+      ).toEqual(['cancelled', 'cancelled'])
+      expect(
+        harness.chat.runs.find((run) => run.runId === harness.dispatched[0].appRunId)?.status
+      ).toBe('cancelled')
+      expect(Object.values(harness.chat.ensemble!.activeRound!.lanes || {})[0]?.status).toBe(
+        'cancelled'
+      )
+    }
+  )
+
+  it(
+    'Skip fast-closes a live owner and its owned lane without releasing buffered prose',
+    { timeout: 20_000 },
+    async () => {
+      const harness = makeHarness([
+        participant('codex', 'codex', 'Lead', 1, 'workspace_write'),
+        participant('claude', 'claude', 'Reviewer', 2, 'read_only'),
+        participant('gemini', 'gemini', 'Researcher', 3, 'workspace_write')
+      ])
+      harness.orchestrator.startRound({
+        chatId: 'ensemble-chat',
+        prompt: 'Skip the live owner and continue immediately.',
+        event: { sender: {} as Electron.WebContents }
+      })
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+      stream(harness, 0, 'BOSS-PREAMBLE.')
+      await sleep(FLUSH_MS)
+      const fanout = await harness.orchestrator.fanoutForRun(harness.dispatched[0].appRunId, {
+        targets: ['Reviewer'],
+        prompt: 'Keep reviewing until the owner is skipped.'
+      })
+      expect(fanout.ok).toBe(true)
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+      stream(harness, 1, 'LANE-WORKING.')
+      stream(harness, 0, ' BOSS-PREMATURE-SUMMARY.')
+      await sleep(FLUSH_MS)
+      expect(rowIndex(harness, 'BOSS-PREMATURE-SUMMARY.')).toBe(-1)
+
+      expect(await harness.orchestrator.skipActiveParticipant('ensemble-chat')).toBe(true)
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
+      await sleep(FLUSH_MS)
+
+      const round = harness.chat.ensemble!.activeRound!
+      expect(rowIndex(harness, 'BOSS-PREMATURE-SUMMARY.')).toBe(-1)
+      expect(
+        round.participants.find((participant) => participant.participantId === 'codex')?.status
+      ).toBe('skipped')
+      expect(
+        round.participants.find((participant) => participant.participantId === 'claude')?.status
+      ).toBe('cancelled')
+      expect(Object.values(round.lanes || {})[0]?.status).toBe('cancelled')
+      expect(harness.cancelRun).toHaveBeenCalledWith('codex', harness.dispatched[0].appRunId)
+      expect(harness.cancelRun).toHaveBeenCalledWith('claude', harness.dispatched[1].appRunId)
+
+      complete(harness, 2)
+    }
+  )
+
+  it(
+    'Skip fast-closes an already-provider-terminal owner still waiting on its lane',
+    { timeout: 20_000 },
+    async () => {
+      const harness = makeHarness([
+        participant('codex', 'codex', 'Lead', 1, 'workspace_write'),
+        participant('claude', 'claude', 'Reviewer', 2, 'read_only'),
+        participant('gemini', 'gemini', 'Researcher', 3, 'workspace_write')
+      ])
+      await completeCallerWithActiveLane(harness, ' BOSS-PREMATURE-SUMMARY.')
+      expect(rowIndex(harness, 'BOSS-PREMATURE-SUMMARY.')).toBe(-1)
+
+      expect(await harness.orchestrator.skipActiveParticipant('ensemble-chat')).toBe(true)
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
+      await sleep(FLUSH_MS)
+
+      const round = harness.chat.ensemble!.activeRound!
+      expect(rowIndex(harness, 'BOSS-PREMATURE-SUMMARY.')).toBe(-1)
+      expect(
+        round.participants.find((participant) => participant.participantId === 'codex')?.status
+      ).toBe('skipped')
+      expect(
+        round.participants.find((participant) => participant.participantId === 'claude')?.status
+      ).toBe('cancelled')
+      expect(Object.values(round.lanes || {})[0]?.status).toBe('cancelled')
+      expect(harness.cancelRun).not.toHaveBeenCalledWith('codex', harness.dispatched[0].appRunId)
+      expect(harness.cancelRun).toHaveBeenCalledWith('claude', harness.dispatched[1].appRunId)
+
+      complete(harness, 2)
     }
   )
 })

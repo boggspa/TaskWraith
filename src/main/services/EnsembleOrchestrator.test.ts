@@ -249,6 +249,7 @@ function makeHarness(
   options: {
     initialChat?: ChatRecord
     dispatch?: (payload: AgentRunPayload) => Promise<{ dispatched: boolean; appRunId: string }>
+    beforeSaveChat?: (chat: ChatRecord) => void
     cancelRun?: (provider: EnsembleParticipant['provider'], runId?: string) => Promise<boolean>
     /**
      * 1.0.4-AD — optional probe injection. When set, the orchestrator
@@ -335,6 +336,7 @@ function makeHarness(
   const orchestrator = new EnsembleOrchestrator({
     getChat: () => chat,
     saveChat: (next) => {
+      options.beforeSaveChat?.(next)
       chat = next
     },
     getSettings: options.getSettings ?? makeSettings,
@@ -400,6 +402,14 @@ function makeHarness(
     probeParticipant,
     orchestrator
   }
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((next) => {
+    resolve = next
+  })
+  return { promise, resolve }
 }
 
 type TestQueuedPromptRuntime = {
@@ -5765,6 +5775,78 @@ Next action:
         'closed'
       )
     )
+  })
+
+  it('closes a targeted Boss status request only after the target\'s owned lane returns', async () => {
+    const initialChat = makeChat()
+    initialChat.ensemble!.fanoutPolicy = 'read_only'
+    initialChat.ensemble!.bossmanParticipantId = 'claude'
+    initialChat.ensemble!.participants = [
+      initialChat.ensemble!.participants[0],
+      initialChat.ensemble!.participants[1],
+      {
+        id: 'kimi',
+        provider: 'kimi',
+        enabled: true,
+        role: 'LaneReviewer',
+        instructions: 'Return a read-only review.',
+        order: 3,
+        stageRole: 'reviewer',
+        permissionPresetId: 'read_only'
+      }
+    ]
+    const harness = makeHarness({ initialChat })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Request status, then let the target fan out.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    await harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
+      action: 'request_status',
+      roundId: harness.chat.ensemble?.activeRound?.roundId,
+      targetParticipantId: 'codex',
+      question: 'Are you ready to report?'
+    })
+    completeDispatchedRun(harness, 0)
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+
+    const ownerRunId = harness.dispatched[1].appRunId!
+    const fanout = await harness.orchestrator.fanoutForRun(ownerRunId, {
+      targets: ['LaneReviewer'],
+      prompt: 'Verify my status before it closes.'
+    })
+    expect(fanout.ok).toBe(true)
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
+
+    harness.orchestrator.handleProviderOutput(
+      'codex',
+      { appRunId: ownerRunId, appChatId: 'ensemble-chat' },
+      { type: 'content', text: 'Ready after the reviewer returns.' }
+    )
+    completeDispatchedRun(harness, 1)
+    await new Promise((resolve) => setTimeout(resolve, 20))
+
+    expect(harness.chat.ensemble?.bossmanControlState?.statusRequests?.[0]?.status).toBe('open')
+    expect(
+      harness.chat.ensemble?.activeRound?.participants.find(
+        (participant) => participant.participantId === 'codex'
+      )?.status
+    ).toBe('running')
+    expect(harness.transitionRunQueueJob).not.toHaveBeenCalledWith(
+      ownerRunId,
+      'completed',
+      expect.anything()
+    )
+
+    completeDispatchedRun(harness, 2)
+    await vi.waitFor(() =>
+      expect(harness.chat.ensemble?.bossmanControlState?.statusRequests?.[0]?.status).toBe(
+        'closed'
+      )
+    )
+    expect(harness.transitionRunQueueJob).toHaveBeenCalledWith(ownerRunId, 'completed', {})
   })
 
   it('enforces Boss fan-out call budgets before dispatching lanes', async () => {
@@ -12055,12 +12137,13 @@ Next action:
     expect(harness.dispatched[2].provider).toBe('codex')
     expect(harness.dispatched[2].effectivePermissions?.presetId).toBe('workspace_write')
 
-    // Transcript has the fan-out open/close status notes.
+    // Transcript labels this host-owned stage pass distinctly from a later
+    // participant-authored `ensemble_fanout` request.
     const fanoutOpenNote = harness.chat.messages.find(
       (m) =>
         m.role === 'system' &&
         typeof m.content === 'string' &&
-        m.content.includes('Parallel fan-out · 2 read-only')
+        m.content.includes('Automatic read stage · 2 read-only')
     )
     expect(fanoutOpenNote).toBeDefined()
   })
@@ -12985,6 +13068,305 @@ Next action:
         message.content.includes('@-mention: Researcher promoted to speak next.')
       )
     ).toBe(true)
+    completeDispatchedRun(harness, 2)
+  })
+
+  it('serializes concurrent accepted fan-outs and retains both ownership settlements', async () => {
+    const reviewerGate = deferred<boolean>()
+    const researcherGate = deferred<boolean>()
+    const harness = makeHarness({
+      dispatch: async (payload) => {
+        if (!payload.ensembleRun?.laneId) {
+          return { dispatched: true, appRunId: payload.appRunId || '' }
+        }
+        const accepted = await (payload.ensembleRun.participantId === 'claude'
+          ? reviewerGate.promise
+          : researcherGate.promise)
+        return { dispatched: accepted, appRunId: payload.appRunId || '' }
+      }
+    })
+    harness.chat.ensemble!.fanoutPolicy = 'read_only'
+    harness.chat.ensemble!.participants = [
+      {
+        id: 'codex',
+        provider: 'codex',
+        enabled: true,
+        role: 'Lead',
+        instructions: 'Lead.',
+        order: 1,
+        permissionPresetId: 'workspace_write'
+      },
+      {
+        id: 'claude',
+        provider: 'claude',
+        enabled: true,
+        role: 'Reviewer',
+        instructions: 'Review.',
+        order: 2,
+        permissionPresetId: 'read_only'
+      },
+      {
+        id: 'kimi',
+        provider: 'kimi',
+        enabled: true,
+        role: 'Researcher',
+        instructions: 'Research.',
+        order: 3,
+        stageRole: 'reviewer',
+        permissionPresetId: 'read_only'
+      }
+    ]
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Issue two fan-out calls concurrently.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const ownerRunId = harness.dispatched[0].appRunId!
+
+    const first = harness.orchestrator.fanoutForRun(ownerRunId, {
+      targets: ['Reviewer'],
+      prompt: 'First distinct review.'
+    })
+    const second = harness.orchestrator.fanoutForRun(ownerRunId, {
+      targets: ['Researcher'],
+      prompt: 'Second distinct review.'
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(harness.dispatched).toHaveLength(2)
+
+    reviewerGate.resolve(true)
+    await expect(first).resolves.toMatchObject({ ok: true, participantIds: ['claude'] })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
+    expect(harness.dispatched[2].ensembleRun?.participantId).toBe('kimi')
+    researcherGate.resolve(true)
+    await expect(second).resolves.toMatchObject({ ok: true, participantIds: ['kimi'] })
+
+    harness.orchestrator.handleProviderOutput(
+      'codex',
+      { appRunId: ownerRunId, appChatId: 'ensemble-chat' },
+      { type: 'content', text: 'OWNER-AFTER-TWO-FANOUTS.' }
+    )
+    completeDispatchedRun(harness, 0)
+    harness.orchestrator.handleProviderOutput(
+      'kimi',
+      { appRunId: harness.dispatched[2].appRunId, appChatId: 'ensemble-chat' },
+      { type: 'content', text: 'RESEARCHER-REPORT.' }
+    )
+    completeDispatchedRun(harness, 2)
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(
+      harness.chat.messages.some((message) => message.content.includes('OWNER-AFTER-TWO-FANOUTS.'))
+    ).toBe(false)
+
+    harness.orchestrator.handleProviderOutput(
+      'claude',
+      { appRunId: harness.dispatched[1].appRunId, appChatId: 'ensemble-chat' },
+      { type: 'content', text: 'REVIEWER-REPORT.' }
+    )
+    completeDispatchedRun(harness, 1)
+    await vi.waitFor(() =>
+      expect(
+        harness.chat.messages.some((message) =>
+          message.content.includes('OWNER-AFTER-TWO-FANOUTS.')
+        )
+      ).toBe(true)
+    )
+    const ownerIndex = harness.chat.messages.findIndex((message) =>
+      message.content.includes('OWNER-AFTER-TWO-FANOUTS.')
+    )
+    expect(
+      harness.chat.messages.findIndex((message) => message.content.includes('REVIEWER-REPORT.'))
+    ).toBeLessThan(ownerIndex)
+    expect(
+      harness.chat.messages.findIndex((message) => message.content.includes('RESEARCHER-REPORT.'))
+    ).toBeLessThan(ownerIndex)
+  })
+
+  it('serializes a failed fan-out before an accepted fan-out without losing its boundary', async () => {
+    const rejectedGate = deferred<boolean>()
+    const acceptedGate = deferred<boolean>()
+    const harness = makeHarness({
+      dispatch: async (payload) => {
+        if (!payload.ensembleRun?.laneId) {
+          return { dispatched: true, appRunId: payload.appRunId || '' }
+        }
+        const accepted = await (payload.ensembleRun.participantId === 'claude'
+          ? rejectedGate.promise
+          : acceptedGate.promise)
+        return { dispatched: accepted, appRunId: payload.appRunId || '' }
+      }
+    })
+    harness.chat.ensemble!.fanoutPolicy = 'read_only'
+    harness.chat.ensemble!.participants = [
+      {
+        id: 'codex',
+        provider: 'codex',
+        enabled: true,
+        role: 'Lead',
+        instructions: 'Lead.',
+        order: 1,
+        permissionPresetId: 'workspace_write'
+      },
+      {
+        id: 'claude',
+        provider: 'claude',
+        enabled: true,
+        role: 'Reviewer',
+        instructions: 'Review.',
+        order: 2,
+        permissionPresetId: 'read_only'
+      },
+      {
+        id: 'kimi',
+        provider: 'kimi',
+        enabled: true,
+        role: 'Researcher',
+        instructions: 'Research.',
+        order: 3,
+        stageRole: 'reviewer',
+        permissionPresetId: 'read_only'
+      }
+    ]
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'The first concurrent call fails and the second succeeds.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const ownerRunId = harness.dispatched[0].appRunId!
+
+    const rejected = harness.orchestrator.fanoutForRun(ownerRunId, {
+      targets: ['Reviewer'],
+      prompt: 'This dispatch will fail.'
+    })
+    const accepted = harness.orchestrator.fanoutForRun(ownerRunId, {
+      targets: ['Researcher'],
+      prompt: 'This dispatch will succeed.'
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    rejectedGate.resolve(false)
+    await expect(rejected).resolves.toMatchObject({ ok: false, error: 'dispatch_failed' })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
+    acceptedGate.resolve(true)
+    await expect(accepted).resolves.toMatchObject({ ok: true, participantIds: ['kimi'] })
+
+    harness.orchestrator.handleProviderOutput(
+      'codex',
+      { appRunId: ownerRunId, appChatId: 'ensemble-chat' },
+      { type: 'content', text: 'OWNER-AFTER-FAILED-THEN-ACCEPTED.' }
+    )
+    completeDispatchedRun(harness, 0)
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(
+      harness.chat.messages.some((message) =>
+        message.content.includes('OWNER-AFTER-FAILED-THEN-ACCEPTED.')
+      )
+    ).toBe(false)
+
+    harness.orchestrator.handleProviderOutput(
+      'kimi',
+      { appRunId: harness.dispatched[2].appRunId, appChatId: 'ensemble-chat' },
+      { type: 'content', text: 'ACCEPTED-REPORT.' }
+    )
+    completeDispatchedRun(harness, 2)
+    await vi.waitFor(() =>
+      expect(
+        harness.chat.messages.some((message) =>
+          message.content.includes('OWNER-AFTER-FAILED-THEN-ACCEPTED.')
+        )
+      ).toBe(true)
+    )
+    expect(
+      harness.chat.messages.findIndex((message) => message.content.includes('ACCEPTED-REPORT.'))
+    ).toBeLessThan(
+      harness.chat.messages.findIndex((message) =>
+        message.content.includes('OWNER-AFTER-FAILED-THEN-ACCEPTED.')
+      )
+    )
+  })
+
+  it('releases ownership when both completion-status saves fail', async () => {
+    let rejectCompletionStatus = false
+    const harness = makeHarness({
+      beforeSaveChat: (next) => {
+        const content = next.messages.at(-1)?.content || ''
+        if (
+          rejectCompletionStatus &&
+          (content.includes('complete ·') || content.includes('tracking failed:'))
+        ) {
+          throw new Error('injected fan-out status save failure')
+        }
+      }
+    })
+    harness.chat.ensemble!.fanoutPolicy = 'read_only'
+    harness.chat.ensemble!.participants = [
+      {
+        id: 'codex',
+        provider: 'codex',
+        enabled: true,
+        role: 'Lead',
+        instructions: 'Lead.',
+        order: 1,
+        permissionPresetId: 'workspace_write'
+      },
+      {
+        id: 'claude',
+        provider: 'claude',
+        enabled: true,
+        role: 'Reviewer',
+        instructions: 'Review.',
+        order: 2,
+        permissionPresetId: 'read_only'
+      },
+      {
+        id: 'gemini',
+        provider: 'gemini',
+        enabled: true,
+        role: 'NextWriter',
+        instructions: 'Continue.',
+        order: 3,
+        permissionPresetId: 'workspace_write'
+      }
+    ]
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Continue even if completion telemetry cannot persist.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const ownerRunId = harness.dispatched[0].appRunId!
+    const fanout = await harness.orchestrator.fanoutForRun(ownerRunId, {
+      targets: ['Reviewer'],
+      prompt: 'Return before the next writer.'
+    })
+    expect(fanout.ok).toBe(true)
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+
+    harness.orchestrator.handleProviderOutput(
+      'codex',
+      { appRunId: ownerRunId, appChatId: 'ensemble-chat' },
+      { type: 'content', text: 'OWNER-RELEASED-AFTER-STATUS-FAILURE.' }
+    )
+    completeDispatchedRun(harness, 0)
+    rejectCompletionStatus = true
+    completeDispatchedRun(harness, 1)
+
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
+    expect(
+      harness.chat.messages.some((message) =>
+        message.content.includes('OWNER-RELEASED-AFTER-STATUS-FAILURE.')
+      )
+    ).toBe(true)
+    const internals = harness.orchestrator as unknown as {
+      roundsByChatId: Map<string, { activeScoutRunIds?: Set<string> }>
+      runsByRunId: Map<string, unknown>
+    }
+    expect(internals.roundsByChatId.get('ensemble-chat')?.activeScoutRunIds).toBeUndefined()
+    expect(internals.runsByRunId.has(ownerRunId)).toBe(false)
+
+    rejectCompletionStatus = false
     completeDispatchedRun(harness, 2)
   })
 

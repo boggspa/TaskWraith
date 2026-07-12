@@ -12,11 +12,10 @@ import type { AppSettings, ChatRecord, EnsembleParticipant } from '../store/type
  * placements could still invert the reading order against a concurrently
  * streaming serial participant:
  *
- *   M1 — a fan-out lane out-races its SOURCING serial run's first flush
- *        (the Boss calls ensemble_fanout before producing visible
- *        output). The Boss's block then appended at the tail — BELOW the
- *        lane it dispatched — and every lane flush (most visibly the
- *        completion batch) piled in above the Boss's live message.
+ *   M1 — a sourcing Boss tries to publish a summary before its requested
+ *        lanes return. The owner must remain visibly working and its post-
+ *        fan-out output must stay buffered until the requested evidence is
+ *        terminal, then materialise AFTER the lane reports.
  *
  *   M2 — a lane whose first output arrives late must remain grouped with the
  *        serial participant that sourced its wave. That participant retains
@@ -84,13 +83,17 @@ function makeSettings(): AppSettings {
   } as unknown as AppSettings
 }
 
-function makeHarness(participants: EnsembleParticipant[]) {
+function makeHarness(
+  participants: EnsembleParticipant[],
+  options: { beforeSaveChat?: (chat: ChatRecord) => void } = {}
+) {
   let chat = makeChat(participants)
   let counter = 0
   const dispatched: AgentRunPayload[] = []
   const orchestrator = new EnsembleOrchestrator({
     getChat: () => chat,
     saveChat: (next) => {
+      options.beforeSaveChat?.(next)
       chat = next
     },
     getSettings: makeSettings,
@@ -123,12 +126,12 @@ function stream(harness: Harness, index: number, text: string): void {
   )
 }
 
-function complete(harness: Harness, index: number): void {
+function complete(harness: Harness, index: number, stats?: Record<string, number>): void {
   const payload = harness.dispatched[index]
   harness.orchestrator.handleProviderOutput(
     payload.provider,
     { appRunId: payload.appRunId, appChatId: 'ensemble-chat' },
-    { type: 'result', status: 'success' }
+    { type: 'result', status: 'success', ...(stats ? { stats } : {}) }
   )
 }
 
@@ -148,7 +151,7 @@ function orderedMarkers(harness: Harness, markers: string[]): string[] {
 
 describe('fan-out transcript ordering vs a live serial speaker', () => {
   it(
-    'M1: anchors the sourcing Boss block above a lane that out-races its first flush',
+    'M1: withholds the sourcing Boss summary until its owned lane returns',
     { timeout: 20_000 },
     async () => {
       const harness = makeHarness([
@@ -178,34 +181,364 @@ describe('fan-out transcript ordering vs a live serial speaker', () => {
       await sleep(FLUSH_MS)
       expect(rowIndex(harness, 'LANE-CLAUDE-NOTE.')).toBeGreaterThanOrEqual(0)
 
-      // Now the Boss speaks while the lane is still running.
-      stream(harness, 0, 'BOSS-LIVE-MESSAGE.')
+      // The Boss tries to publish a synthesis and ends its provider turn while
+      // the requested lane is still running. The transcript and durable run
+      // state must keep that output pending: ownership has not returned yet.
+      stream(harness, 0, 'BOSS-PREMATURE-SUMMARY.')
+      complete(harness, 0)
       await sleep(FLUSH_MS)
+      expect(rowIndex(harness, 'BOSS-PREMATURE-SUMMARY.')).toBe(-1)
+      expect(harness.chat.runs.find((run) => run.runId === harness.dispatched[0].appRunId)?.status).toBe(
+        'running'
+      )
+      expect(
+        harness.chat.ensemble?.activeRound?.participants.find(
+          (entry) => entry.participantId === 'codex'
+        )?.status
+      ).toBe('running')
 
-      // The lane completes before the Boss finishes its turn.
+      // Once the lane terminally returns, its final report lands first and only
+      // then may the Boss summary become durable/visible.
       stream(harness, 1, ' Claude lane final report.')
       complete(harness, 1)
       await sleep(FLUSH_MS)
-
-      stream(harness, 0, ' BOSS-WRAP-UP.')
-      await sleep(FLUSH_MS)
-
-      // The Boss sourced the fan-out: its turn began before the lane was
-      // dispatched, so its block must read ABOVE the lane block — and must
-      // not be shoved down when the lane completes mid-turn.
-      expect(orderedMarkers(harness, ['BOSS-LIVE-MESSAGE.', 'LANE-CLAUDE-NOTE.'])).toEqual([
-        'BOSS-LIVE-MESSAGE.',
-        'LANE-CLAUDE-NOTE.'
+      expect(orderedMarkers(harness, ['BOSS-PREMATURE-SUMMARY.', 'LANE-CLAUDE-NOTE.'])).toEqual([
+        'LANE-CLAUDE-NOTE.',
+        'BOSS-PREMATURE-SUMMARY.'
       ])
+      expect(harness.chat.runs.find((run) => run.runId === harness.dispatched[0].appRunId)?.status).toBe(
+        'success'
+      )
+      expect(
+        harness.chat.ensemble?.activeRound?.participants.find(
+          (entry) => entry.participantId === 'codex'
+        )?.status
+      ).toBe('answered')
 
-      complete(harness, 0)
-      await sleep(FLUSH_MS)
-      expect(orderedMarkers(harness, ['BOSS-LIVE-MESSAGE.', 'LANE-CLAUDE-NOTE.'])).toEqual([
-        'BOSS-LIVE-MESSAGE.',
-        'LANE-CLAUDE-NOTE.'
-      ])
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
+      complete(harness, 2)
     }
   )
+
+  it(
+    'M1b: freezes a visible preamble entry so post-fanout prose cannot merge across the hold',
+    { timeout: 20_000 },
+    async () => {
+      const harness = makeHarness([
+        participant('codex', 'codex', 'Lead', 1, 'workspace_write'),
+        participant('claude', 'claude', 'Reviewer', 2, 'read_only'),
+        participant('gemini', 'gemini', 'Researcher', 3, 'workspace_write')
+      ])
+      harness.orchestrator.startRound({
+        chatId: 'ensemble-chat',
+        prompt: 'Lead speaks, fans out without a tool timeline row, then tries to summarize.',
+        event: { sender: {} as Electron.WebContents }
+      })
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+      stream(harness, 0, 'BOSS-PREAMBLE.')
+      await sleep(FLUSH_MS)
+      expect(rowIndex(harness, 'BOSS-PREAMBLE.')).toBeGreaterThanOrEqual(0)
+
+      const fanout = await harness.orchestrator.fanoutForRun(harness.dispatched[0].appRunId, {
+        targets: ['Reviewer'],
+        prompt: 'Inspect after my visible preamble.'
+      })
+      expect(fanout.ok).toBe(true)
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+
+      stream(harness, 1, 'LANE-REPORT.')
+      stream(harness, 0, ' BOSS-PREMATURE-SUMMARY.')
+      complete(harness, 0)
+      await sleep(FLUSH_MS)
+
+      expect(rowIndex(harness, 'BOSS-PREAMBLE.')).toBeGreaterThanOrEqual(0)
+      expect(rowIndex(harness, 'BOSS-PREMATURE-SUMMARY.')).toBe(-1)
+
+      complete(harness, 1)
+      await sleep(FLUSH_MS)
+      expect(orderedMarkers(harness, ['LANE-REPORT.', 'BOSS-PREMATURE-SUMMARY.'])).toEqual([
+        'LANE-REPORT.',
+        'BOSS-PREMATURE-SUMMARY.'
+      ])
+
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
+      complete(harness, 2)
+    }
+  )
+
+  it(
+    'M1c: keeps fast lane reports before owner prose emitted only after settlement',
+    { timeout: 20_000 },
+    async () => {
+      const harness = makeHarness([
+        participant('codex', 'codex', 'Lead', 1, 'workspace_write'),
+        participant('claude', 'claude', 'Reviewer', 2, 'read_only'),
+        participant('gemini', 'gemini', 'Researcher', 3, 'workspace_write')
+      ])
+      harness.orchestrator.startRound({
+        chatId: 'ensemble-chat',
+        prompt: 'The lane returns before the owner writes its synthesis.',
+        event: { sender: {} as Electron.WebContents }
+      })
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+      stream(harness, 0, 'BOSS-PREAMBLE.')
+      await sleep(FLUSH_MS)
+
+      const fanout = await harness.orchestrator.fanoutForRun(harness.dispatched[0].appRunId, {
+        targets: ['Reviewer'],
+        prompt: 'Return as quickly as possible.'
+      })
+      expect(fanout.ok).toBe(true)
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+      stream(harness, 1, 'FAST-LANE-REPORT.')
+      complete(harness, 1)
+      await sleep(FLUSH_MS)
+
+      // Ownership has returned, but the owner has not emitted any post-fanout
+      // timeline entry yet.
+      stream(harness, 0, ' BOSS-AFTER-SETTLEMENT.')
+      complete(harness, 0)
+      await sleep(FLUSH_MS)
+
+      const preamble = harness.chat.messages.find(
+        (message) =>
+          typeof message.content === 'string' && message.content.includes('BOSS-PREAMBLE.')
+      )
+      expect(preamble?.content).not.toContain('BOSS-AFTER-SETTLEMENT.')
+      expect(orderedMarkers(harness, ['FAST-LANE-REPORT.', 'BOSS-AFTER-SETTLEMENT.'])).toEqual([
+        'FAST-LANE-REPORT.',
+        'BOSS-AFTER-SETTLEMENT.'
+      ])
+
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
+      complete(harness, 2)
+    }
+  )
+
+  it(
+    'M1d: materializes an unflushed preamble before a synchronously fast lane',
+    { timeout: 20_000 },
+    async () => {
+      const harness = makeHarness([
+        participant('codex', 'codex', 'Lead', 1, 'workspace_write'),
+        participant('claude', 'claude', 'Reviewer', 2, 'read_only'),
+        participant('gemini', 'gemini', 'Researcher', 3, 'workspace_write')
+      ])
+      harness.orchestrator.startRound({
+        chatId: 'ensemble-chat',
+        prompt: 'Fan out before the owner preamble debounce fires.',
+        event: { sender: {} as Electron.WebContents }
+      })
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+      stream(harness, 0, 'UNFLUSHED-BOSS-PREAMBLE.')
+      const fanout = await harness.orchestrator.fanoutForRun(harness.dispatched[0].appRunId, {
+        targets: ['Reviewer'],
+        prompt: 'Return synchronously.'
+      })
+      expect(fanout.ok).toBe(true)
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+      stream(harness, 1, 'SYNCHRONOUS-LANE-REPORT.')
+      complete(harness, 1)
+
+      stream(harness, 0, ' BOSS-POST-FANOUT.')
+      complete(harness, 0)
+      await sleep(FLUSH_MS)
+
+      expect(
+        orderedMarkers(harness, [
+          'UNFLUSHED-BOSS-PREAMBLE.',
+          'SYNCHRONOUS-LANE-REPORT.',
+          'BOSS-POST-FANOUT.'
+        ])
+      ).toEqual([
+        'UNFLUSHED-BOSS-PREAMBLE.',
+        'SYNCHRONOUS-LANE-REPORT.',
+        'BOSS-POST-FANOUT.'
+      ])
+
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
+      complete(harness, 2)
+    }
+  )
+
+  it(
+    'M1e: restores failed preflush and status boundaries before a successful retry',
+    { timeout: 20_000 },
+    async () => {
+      let rejectedSave: 'preamble' | 'status' | null = null
+      const harness = makeHarness(
+        [
+          participant('codex', 'codex', 'Lead', 1, 'workspace_write'),
+          participant('claude', 'claude', 'Reviewer', 2, 'read_only'),
+          participant('gemini', 'gemini', 'Researcher', 3, 'workspace_write')
+        ],
+        {
+          beforeSaveChat: (next) => {
+            const lastMessage = next.messages.at(-1)
+            if (
+              rejectedSave === 'preamble' &&
+              lastMessage?.metadata?.kind === 'ensembleParticipant' &&
+              lastMessage.content.includes('RETRY-BOSS-PREAMBLE.')
+            ) {
+              rejectedSave = null
+              throw new Error('injected pre-boundary save failure')
+            }
+            if (
+              rejectedSave === 'status' &&
+              lastMessage?.metadata?.kind === 'ensembleRoundStatus' &&
+              lastMessage.content.includes('requested')
+            ) {
+              rejectedSave = null
+              throw new Error('injected fanout status save failure')
+            }
+          }
+        }
+      )
+      harness.orchestrator.startRound({
+        chatId: 'ensemble-chat',
+        prompt: 'Retry fanout after the first boundary save fails.',
+        event: { sender: {} as Electron.WebContents }
+      })
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+      const ownerRunId = harness.dispatched[0].appRunId!
+
+      stream(harness, 0, 'RETRY-BOSS-PREAMBLE.')
+      rejectedSave = 'preamble'
+      await expect(
+        harness.orchestrator.fanoutForRun(ownerRunId, {
+          targets: ['Reviewer'],
+          prompt: 'This first dispatch must not start.'
+        })
+      ).resolves.toMatchObject({ ok: false, error: 'dispatch_failed' })
+      expect(harness.dispatched).toHaveLength(1)
+
+      const failedOwner = (
+        harness.orchestrator as unknown as {
+          runsByRunId: Map<
+            string,
+            { ownedFanoutTranscriptBoundary?: number; forceNextTimelineContentEntry?: boolean }
+          >
+        }
+      ).runsByRunId.get(ownerRunId)
+      expect(failedOwner?.ownedFanoutTranscriptBoundary).toBeUndefined()
+      expect(failedOwner?.forceNextTimelineContentEntry).toBe(false)
+
+      rejectedSave = 'status'
+      await expect(
+        harness.orchestrator.fanoutForRun(ownerRunId, {
+          targets: ['Reviewer'],
+          prompt: 'The status save for this attempt must fail.'
+        })
+      ).resolves.toMatchObject({ ok: false, error: 'dispatch_failed' })
+      expect(harness.dispatched).toHaveLength(1)
+      expect(failedOwner?.ownedFanoutTranscriptBoundary).toBeUndefined()
+      expect(failedOwner?.forceNextTimelineContentEntry).toBe(false)
+
+      const retry = await harness.orchestrator.fanoutForRun(ownerRunId, {
+        targets: ['Reviewer'],
+        prompt: 'The retry may dispatch.'
+      })
+      expect(retry.ok).toBe(true)
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+      stream(harness, 1, 'RETRY-LANE-REPORT.')
+      complete(harness, 1)
+      stream(harness, 0, ' RETRY-BOSS-POST-FANOUT.')
+      complete(harness, 0)
+      await sleep(FLUSH_MS)
+
+      expect(
+        orderedMarkers(harness, [
+          'RETRY-BOSS-PREAMBLE.',
+          'RETRY-LANE-REPORT.',
+          'RETRY-BOSS-POST-FANOUT.'
+        ])
+      ).toEqual([
+        'RETRY-BOSS-PREAMBLE.',
+        'RETRY-LANE-REPORT.',
+        'RETRY-BOSS-POST-FANOUT.'
+      ])
+
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
+      complete(harness, 2)
+    }
+  )
+
+  it('merges held owner token totals exactly once at effective terminal release', async () => {
+    const roster = () => [
+      participant('codex', 'codex', 'Lead', 1, 'workspace_write'),
+      participant('claude', 'claude', 'Reviewer', 2, 'read_only'),
+      participant('gemini', 'gemini', 'Researcher', 3, 'workspace_write')
+    ]
+    const stats = {
+      input_tokens: 20,
+      output_tokens: 5,
+      total_tokens: 25,
+      duration_ms: 100
+    }
+
+    const ordinary = makeHarness(roster())
+    ordinary.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Ordinary accounting baseline.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(ordinary.dispatched).toHaveLength(1))
+    stream(ordinary, 0, 'ORDINARY-OWNER-SUMMARY.')
+    complete(ordinary, 0, stats)
+    const ordinaryTotals = ordinary.chat.ensemble?.participants.find(
+      (entry) => entry.id === 'codex'
+    )?.tokenTotals
+    expect(ordinaryTotals).toMatchObject(stats)
+
+    const held = makeHarness(roster())
+    held.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Hold the same accounting behind a lane.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(held.dispatched).toHaveLength(1))
+    const fanout = await held.orchestrator.fanoutForRun(held.dispatched[0].appRunId, {
+      targets: ['Reviewer'],
+      prompt: 'Hold the owner terminal until I return.'
+    })
+    expect(fanout.ok).toBe(true)
+    await vi.waitFor(() => expect(held.dispatched).toHaveLength(2))
+    const heldOwner = (
+      held.orchestrator as unknown as {
+        runsByRunId: Map<
+          string,
+          {
+            ownedFanoutSettlements?: Set<Promise<void>>
+            ownedFanoutTranscriptBoundary?: number
+            terminalTokenTotalsApplied?: boolean
+          }
+        >
+      }
+    ).runsByRunId.get(held.dispatched[0].appRunId!)
+    expect(heldOwner?.ownedFanoutSettlements?.size).toBe(1)
+    expect(heldOwner?.ownedFanoutTranscriptBoundary).toBe(0)
+    expect(heldOwner?.terminalTokenTotalsApplied).not.toBe(true)
+    expect(
+      held.chat.ensemble?.participants.find((entry) => entry.id === 'codex')?.tokenTotals
+    ).toBeUndefined()
+    stream(held, 0, 'HELD-OWNER-SUMMARY.')
+    complete(held, 0, stats)
+    expect(heldOwner?.ownedFanoutSettlements?.size).toBe(1)
+    expect(heldOwner?.ownedFanoutTranscriptBoundary).toBe(0)
+    expect(heldOwner?.terminalTokenTotalsApplied).not.toBe(true)
+    expect(
+      held.chat.ensemble?.participants.find((entry) => entry.id === 'codex')?.tokenTotals
+    ).toBeUndefined()
+
+    complete(held, 1)
+    await vi.waitFor(() =>
+      expect(
+        held.chat.ensemble?.participants.find((entry) => entry.id === 'codex')?.tokenTotals
+      ).toEqual(ordinaryTotals)
+    )
+  })
 
   it(
     "M2: holds the next serial speaker until the sourcing Lead's wave-2 lanes settle",

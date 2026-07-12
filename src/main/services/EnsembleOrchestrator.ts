@@ -498,6 +498,33 @@ interface ActiveParticipantRun {
    * lanes are deliberately excluded and remain detached.
    */
   ownedFanoutSettlements?: Set<Promise<void>>
+  /** Concrete lane runs represented by the owned settlements. */
+  ownedFanoutRunIds?: Set<string>
+  /** Per-owner tail that serializes explicit fan-out dispatch windows. */
+  fanoutDispatchQueue?: Promise<void>
+  /**
+   * Timeline length when the first owned fan-out was accepted. Entries before
+   * this boundary (the caller's setup/tool invocation) may remain visible;
+   * later synthesis/handoff output is buffered until every owned lane settles.
+   */
+  ownedFanoutTranscriptBoundary?: number
+  /** Prevent the first post-fan-out content delta from mutating the final
+   * pre-boundary content entry in place. */
+  forceNextTimelineContentEntry?: boolean
+  /** One-shot placement hint used when a fully-buffered source had no earlier
+   * timeline row to anchor. Its released output belongs after the lane reports. */
+  releaseOwnedFanoutTranscriptAtTail?: boolean
+  /** Stop/cancel permanently discards post-boundary owner output. Settlement
+   * callbacks must never turn this back into a normal tail release. */
+  suppressOwnedFanoutTranscriptRelease?: boolean
+  /** Terminal provider state can arrive before owned lanes settle. Persist it
+   * only when the buffered transcript is released. */
+  terminalFinalized?: boolean
+  terminalReason?: string
+  /** Terminal bookkeeping is deferred with a held transcript and applied once. */
+  terminalSideEffectsApplied?: boolean
+  /** Participant token totals merge once, on the effective terminal flush. */
+  terminalTokenTotalsApplied?: boolean
   participant: EnsembleParticipant
   promptMessageId: string
   /**
@@ -1079,10 +1106,11 @@ function insertRunTimelineMessages(
 function appendTimelineContent(run: ActiveParticipantRun, text: string): void {
   if (!run.timeline) run.timeline = []
   const last = run.timeline[run.timeline.length - 1]
-  if (last && last.kind === 'content') {
+  if (!run.forceNextTimelineContentEntry && last && last.kind === 'content') {
     last.text += text
     return
   }
+  run.forceNextTimelineContentEntry = false
   run.timeline.push({ kind: 'content', text })
 }
 
@@ -3324,6 +3352,19 @@ export class EnsembleOrchestrator {
     const roundId = runtime.roundId
     const activeRunIds = new Set<string>()
     if (runtime.activeRunId) activeRunIds.add(runtime.activeRunId)
+    // A fan-out owner can already be provider-terminal (and therefore no
+    // longer runtime.activeRunId) while the serial loop awaits its lanes. Keep
+    // it addressable until settlement so Stop can cancel its held transcript.
+    for (const run of this.runsByRunId.values()) {
+      if (
+        run.chatId === chatId &&
+        run.roundId === roundId &&
+        !run.laneId &&
+        run.ownedFanoutSettlements?.size
+      ) {
+        activeRunIds.add(run.runId)
+      }
+    }
     for (const runId of runtime.activeScoutRunIds || []) {
       activeRunIds.add(runId)
     }
@@ -3377,14 +3418,42 @@ export class EnsembleOrchestrator {
     const runtime = this.roundsByChatId.get(chatId)
     if (!runtime) return false
     const activeRunId = runtime.activeRunId
-    if (!activeRunId) return false
-    const active = this.runsByRunId.get(activeRunId)
+    const active =
+      (activeRunId ? this.runsByRunId.get(activeRunId) : undefined) ||
+      [...this.runsByRunId.values()].find(
+        (run) =>
+          run.chatId === chatId &&
+          run.roundId === runtime.roundId &&
+          !run.laneId &&
+          run.terminalFinalized === true &&
+          Boolean(run.ownedFanoutSettlements?.size)
+      )
     if (!active) return false
-    // Finalise/suppress first so the orchestrator advances immediately,
-    // then best-effort cancel the provider process.
+    const ownerWasTerminal = active.terminalFinalized === true
+    const ownedLanes = [...(active.ownedFanoutRunIds || [])]
+      .map((runId) => this.runsByRunId.get(runId))
+      .filter((run): run is ActiveParticipantRun => Boolean(run?.laneId))
+    // Finalise/suppress first, then terminally cancel every lane this owner is
+    // awaiting so the serial loop can advance without a provider callback.
     this.finalizeRun(active, 'skipped', 'Skipped by user.')
     if (runtime.activeRunId === active.runId) runtime.activeRunId = undefined
-    await this.deps.cancelRun(active.participant.provider, active.runId).catch(() => undefined)
+    for (const lane of ownedLanes) {
+      this.finalizeRun(lane, 'cancelled', 'Owning participant was skipped.')
+      runtime.activeScoutRunIds?.delete(lane.runId)
+    }
+    if (runtime.activeScoutRunIds?.size === 0) runtime.activeScoutRunIds = undefined
+    const cancellations: Promise<unknown>[] = []
+    if (!ownerWasTerminal) {
+      cancellations.push(
+        this.deps.cancelRun(active.participant.provider, active.runId).catch(() => undefined)
+      )
+    }
+    for (const lane of ownedLanes) {
+      cancellations.push(
+        this.deps.cancelRun(lane.participant.provider, lane.runId).catch(() => undefined)
+      )
+    }
+    await Promise.all(cancellations)
     return true
   }
 
@@ -7724,7 +7793,33 @@ export class EnsembleOrchestrator {
     return `bossman-replacement-${Math.random().toString(36).slice(2, 10)}`
   }
 
-  async fanoutForRun(runId: string | undefined, input: EnsembleFanoutInput): Promise<EnsembleFanoutResult> {
+  async fanoutForRun(
+    runId: string | undefined,
+    input: EnsembleFanoutInput
+  ): Promise<EnsembleFanoutResult> {
+    const owner = runId ? this.runsByRunId.get(runId) : undefined
+    if (!owner) return this.fanoutForRunExclusive(runId, input)
+
+    const previous = owner.fanoutDispatchQueue || Promise.resolve()
+    let releaseCurrent!: () => void
+    const current = new Promise<void>((resolve) => {
+      releaseCurrent = resolve
+    })
+    const tail = previous.catch(() => undefined).then(() => current)
+    owner.fanoutDispatchQueue = tail
+    await previous.catch(() => undefined)
+    try {
+      return await this.fanoutForRunExclusive(runId, input)
+    } finally {
+      releaseCurrent()
+      if (owner.fanoutDispatchQueue === tail) owner.fanoutDispatchQueue = undefined
+    }
+  }
+
+  private async fanoutForRunExclusive(
+    runId: string | undefined,
+    input: EnsembleFanoutInput
+  ): Promise<EnsembleFanoutResult> {
     const mode = normalizeFanoutMode(input.mode)
     if (!mode) {
       return {
@@ -7931,16 +8026,27 @@ export class EnsembleOrchestrator {
       mode === 'locked_writers' && !targetStage
         ? 'Locked writer fan-out'
         : fanoutTargetStageLabel(targetStage)
-    this.appendRoundStatus(
-      run.chatId,
-      run.roundId,
-      `${label}: ${run.participant.role || run.participant.provider} requested ${resolvedTargets.targets.length} lane(s).${input.reason ? ` ${input.reason}` : ''}`
-    )
-    if (!runtime.fanoutReservedParticipantIds) runtime.fanoutReservedParticipantIds = new Set()
-    for (const participant of resolvedTargets.targets) {
-      runtime.fanoutReservedParticipantIds.add(participant.id)
-    }
+    const previousTranscriptBoundary = run.ownedFanoutTranscriptBoundary
+    const previousForceNextTimelineContentEntry = run.forceNextTimelineContentEntry
+    let acceptedOwnedFanout = false
     try {
+      if (previousTranscriptBoundary === undefined) {
+        run.ownedFanoutTranscriptBoundary = run.timeline?.length || 0
+        run.forceNextTimelineContentEntry = true
+        // Materialize every pre-boundary row before a fast lane can publish. The
+        // normal debounce may not have fired yet, and a later tail release must
+        // contain only the owner's post-fanout continuation.
+        this.flushRun(run)
+      }
+      this.appendRoundStatus(
+        run.chatId,
+        run.roundId,
+        `${label}: ${run.participant.role || run.participant.provider} requested ${resolvedTargets.targets.length} lane(s).${input.reason ? ` ${input.reason}` : ''}`
+      )
+      if (!runtime.fanoutReservedParticipantIds) runtime.fanoutReservedParticipantIds = new Set()
+      for (const participant of resolvedTargets.targets) {
+        runtime.fanoutReservedParticipantIds.add(participant.id)
+      }
       const acceptedRuns: ActiveParticipantRun[] = []
       await this.runParallelFanoutPass(runtime, chat, resolvedTargets.targets, {
         prompt,
@@ -7977,6 +8083,7 @@ export class EnsembleOrchestrator {
           error: 'dispatch_failed'
         }
       }
+      acceptedOwnedFanout = true
       this.incrementBossmanBudgetUsage(
         runtime,
         acceptedTargets.map((participant) => participant.id),
@@ -8000,7 +8107,12 @@ export class EnsembleOrchestrator {
     } catch (error) {
       const message =
         error instanceof Error ? error.message : 'ensemble_fanout: dispatch failed.'
-      this.appendRoundStatus(run.chatId, run.roundId, `${label} failed: ${message}`)
+      try {
+        this.appendRoundStatus(run.chatId, run.roundId, `${label} failed: ${message}`)
+      } catch {
+        // The structured failure + finally cleanup remain authoritative when
+        // even the diagnostic projection cannot be persisted.
+      }
       return {
         ok: false,
         tool: 'ensemble_fanout',
@@ -8010,6 +8122,10 @@ export class EnsembleOrchestrator {
         error: 'dispatch_failed'
       }
     } finally {
+      if (!acceptedOwnedFanout && !run.ownedFanoutSettlements?.size) {
+        run.ownedFanoutTranscriptBoundary = previousTranscriptBoundary
+        run.forceNextTimelineContentEntry = previousForceNextTimelineContentEntry
+      }
       for (const participant of resolvedTargets.targets) {
         runtime.fanoutReservedParticipantIds?.delete(participant.id)
       }
@@ -10143,7 +10259,8 @@ export class EnsembleOrchestrator {
         const rest = remaining.filter((participant) => !readerIds.has(participant.id))
         remaining.splice(0, remaining.length, ...rest)
         await this.runParallelFanoutPass(runtime, chatForFanout, readers, {
-          mode: 'read_only'
+          mode: 'read_only',
+          label: 'Automatic read stage'
         })
       } else if (readFanoutRequested && readers.length > 0) {
         this.appendRoundStatus(
@@ -11905,73 +12022,117 @@ export class EnsembleOrchestrator {
       return []
     }
     const finishFanoutPass = async (): Promise<void> => {
-      await Promise.all(completionPromises)
-      if (runtime.cancelled) {
+      try {
+        await Promise.all(completionPromises)
+        if (runtime.cancelled) return
+        // Consume overflow evidence against the exact failed seat snapshot
+        // before queued roster changes can relink that participant id.
+        for (const run of laneRuns) {
+          if (run.status === 'failed' && run.classifiedContextOverflow) {
+            this.maybeAutoCompactSeatAfterTurn(runtime.chatId, run.participant.id)
+          }
+        }
+        for (const run of laneRuns) {
+          this.applyPendingParticipantSeatChangeFor(runtime, run.participant.id)
+        }
+        options.onCompleteRuns?.(laneRuns)
+
+        this.appendRoundStatus(
+          runtime.chatId,
+          runtime.roundId,
+          (() => {
+            const skippedCount = laneRuns.filter((run) => run.status === 'cancelled').length
+            if (skippedCount === laneRuns.length) {
+              return `${label} skipped · ${skippedCount} lane(s) stopped.`
+            }
+            if (skippedCount > 0) {
+              return `${label} complete · ${laneRuns.length - skippedCount} lane(s) returned, ${skippedCount} skipped.`
+            }
+            if (options.completionDisposition === 'background') {
+              return `${label} complete · ${laneRuns.length} lane(s) returned.`
+            }
+            return options.completionDisposition === 'caller' || options.sourceRunId
+              ? `${label} complete · ${laneRuns.length} lane(s) returned to the caller.`
+              : `${label} complete · returning to serial writer step.`
+          })()
+        )
+      } finally {
         for (const run of laneRuns) {
           runtime.activeScoutRunIds?.delete(run.runId)
         }
         if (runtime.activeScoutRunIds?.size === 0) {
           runtime.activeScoutRunIds = undefined
         }
-        return
       }
-      // Consume overflow evidence against the exact failed seat snapshot
-      // before queued roster changes can relink that participant id.
-      for (const run of laneRuns) {
-        if (run.status === 'failed' && run.classifiedContextOverflow) {
-          this.maybeAutoCompactSeatAfterTurn(runtime.chatId, run.participant.id)
-        }
-      }
-      for (const run of laneRuns) {
-        this.applyPendingParticipantSeatChangeFor(runtime, run.participant.id)
-      }
-      options.onCompleteRuns?.(laneRuns)
-
-      for (const run of laneRuns) {
-        runtime.activeScoutRunIds?.delete(run.runId)
-      }
-      if (runtime.activeScoutRunIds?.size === 0) {
-        runtime.activeScoutRunIds = undefined
-      }
-
-      this.appendRoundStatus(
-        runtime.chatId,
-        runtime.roundId,
-        (() => {
-          const skippedCount = laneRuns.filter((run) => run.status === 'cancelled').length
-          if (skippedCount === laneRuns.length) {
-            return `${label} skipped · ${skippedCount} lane(s) stopped.`
-          }
-          if (skippedCount > 0) {
-            return `${label} complete · ${laneRuns.length - skippedCount} lane(s) returned, ${skippedCount} skipped.`
-          }
-          if (options.completionDisposition === 'background') {
-            return `${label} complete · ${laneRuns.length} lane(s) returned.`
-          }
-          return options.completionDisposition === 'caller' || options.sourceRunId
-            ? `${label} complete · ${laneRuns.length} lane(s) returned to the caller.`
-            : `${label} complete · returning to serial writer step.`
-        })()
-      )
     }
 
     if (options.waitForCompletion === false) {
       const settlement = finishFanoutPass().catch((error) => {
         const message =
           error instanceof Error ? error.message : 'fan-out completion tracking failed.'
-        this.appendRoundStatus(runtime.chatId, runtime.roundId, `${label} tracking failed: ${message}`)
+        try {
+          this.appendRoundStatus(
+            runtime.chatId,
+            runtime.roundId,
+            `${label} tracking failed: ${message}`
+          )
+        } catch {
+          // Ownership cleanup below must still run if status persistence fails.
+        }
       })
       if (options.sourceRunId && options.completionDisposition !== 'background') {
         const sourceRun = this.runsByRunId.get(options.sourceRunId)
         if (sourceRun && !sourceRun.laneId && (options.acceptedRuns?.length || 0) > 0) {
+          const ownedRunIds = (options.acceptedRuns || []).map((run) => run.runId)
           sourceRun.ownedFanoutSettlements ??= new Set()
           sourceRun.ownedFanoutSettlements.add(settlement)
-          void settlement.then(() => {
+          sourceRun.ownedFanoutRunIds ??= new Set()
+          for (const runId of ownedRunIds) sourceRun.ownedFanoutRunIds.add(runId)
+          void settlement.finally(() => {
             sourceRun.ownedFanoutSettlements?.delete(settlement)
+            for (const runId of ownedRunIds) sourceRun.ownedFanoutRunIds?.delete(runId)
+            if (sourceRun.ownedFanoutRunIds?.size === 0) {
+              sourceRun.ownedFanoutRunIds = undefined
+            }
             if (sourceRun.ownedFanoutSettlements?.size === 0) {
               sourceRun.ownedFanoutSettlements = undefined
+              try {
+                const round = this.deps.getChat(sourceRun.chatId)?.ensemble?.activeRound
+                const suppressRelease =
+                  runtime.cancelled ||
+                  sourceRun.suppressOwnedFanoutTranscriptRelease === true ||
+                  round?.roundId !== sourceRun.roundId ||
+                  round.status !== 'running'
+                if (suppressRelease) {
+                  sourceRun.suppressOwnedFanoutTranscriptRelease = true
+                  sourceRun.releaseOwnedFanoutTranscriptAtTail = undefined
+                  return
+                }
+                if (sourceRun.ownedFanoutTranscriptBoundary !== undefined) {
+                  const boundary = sourceRun.ownedFanoutTranscriptBoundary
+                  const hasPostFanoutTimeline = (sourceRun.timeline?.length || 0) > boundary
+                  sourceRun.ownedFanoutTranscriptBoundary = undefined
+                  sourceRun.forceNextTimelineContentEntry = !hasPostFanoutTimeline
+                  sourceRun.releaseOwnedFanoutTranscriptAtTail = true
+                  this.flushRun(
+                    sourceRun,
+                    sourceRun.terminalFinalized === true,
+                    sourceRun.terminalReason
+                  )
+                }
+                if (sourceRun.terminalFinalized) {
+                  this.applyTerminalRunSideEffects(sourceRun)
+                }
+              } finally {
+                if (
+                  sourceRun.terminalFinalized &&
+                  this.runsByRunId.get(sourceRun.runId) === sourceRun
+                ) {
+                  this.runsByRunId.delete(sourceRun.runId)
+                }
+              }
             }
-          })
+          }).catch(() => undefined)
         }
       }
       return laneIds
@@ -12574,11 +12735,27 @@ export class EnsembleOrchestrator {
     status: EnsembleParticipantStatus,
     reason?: string
   ): void {
+    const suppressOwnedFanout =
+      (status === 'cancelled' || status === 'skipped') && run.ownedFanoutSettlements?.size
+    if (suppressOwnedFanout) {
+      run.suppressOwnedFanoutTranscriptRelease = true
+    }
+    if (run.terminalFinalized) {
+      if (suppressOwnedFanout) {
+        run.status = status
+        run.terminalReason = reason
+        this.flushRun(run, true, reason)
+        this.applyTerminalRunSideEffects(run)
+      }
+      return
+    }
     const promoteOverflowEvidence =
       status === 'failed' &&
       run.classifiedContextOverflow === true &&
       isHostSeatCompactionProvider(run.participant.provider)
     run.status = status
+    run.terminalFinalized = true
+    run.terminalReason = reason
     const runtime = this.roundsByChatId.get(run.chatId)
     if (runtime?.roundId === run.roundId) {
       this.incrementBossmanBudgetUsage(
@@ -12588,28 +12765,14 @@ export class EnsembleOrchestrator {
       )
     }
     this.flushRun(run, true, reason)
-    this.reconcileBossmanControlAfterRun(run, status)
-    this.transitionParticipantRunQueueJob(run, status, reason)
-    this.participantWorkingTelemetryByRunId.delete(run.runId)
-    this.deps.onParticipantWorkingTelemetry?.({
-      type: 'clear',
-      chatId: run.chatId,
-      roundId: run.roundId,
-      participantId: run.participant.id,
-      runId: run.runId
-    })
-    if (run.laneId) {
-      try {
-        this.deps.releaseWriteIntentsForLane?.(run.laneId)
-      } catch {
-        // Lock cleanup is best-effort; the in-memory registry is defensive.
-      }
+    if (!run.ownedFanoutSettlements?.size || suppressOwnedFanout) {
+      this.applyTerminalRunSideEffects(run)
     }
-    this.runsByRunId.delete(run.runId)
-    // Promote only after the terminal transcript/queue flush and active-run
-    // deletion. Resolving completion last guarantees serial/fanout maintenance
-    // cannot observe the evidence while the failed provider callback is still
-    // unwinding.
+    if (!run.ownedFanoutSettlements?.size) this.runsByRunId.delete(run.runId)
+    // Promote only after terminal transcript/queue bookkeeping. An owner with
+    // live fan-out settlements remains addressable for Stop until its lanes
+    // return; resolving completion still happens last so serial/fan-out
+    // maintenance cannot observe evidence while the provider callback unwinds.
     if (promoteOverflowEvidence) {
       this.pendingSeatOverflowEvidence.set(
         seatOverflowEvidenceKey(run.chatId, run.participant.id),
@@ -12627,6 +12790,37 @@ export class EnsembleOrchestrator {
     // runs end through this path from dispatch failures, cancels, and normal
     // completion alike; no-ops when nothing is deferred for this chat.
     this.maybeResumeDeferredDrain(run.chatId)
+  }
+
+  private applyTerminalRunSideEffects(run: ActiveParticipantRun): void {
+    if (run.terminalSideEffectsApplied) return
+    run.terminalSideEffectsApplied = true
+    try {
+      this.reconcileBossmanControlAfterRun(run, run.status)
+    } catch {
+      // Durable transcript ownership must still release if a control-state
+      // projection fails to persist; the terminal snapshot remains canonical.
+    }
+    this.transitionParticipantRunQueueJob(run, run.status, run.terminalReason)
+    this.participantWorkingTelemetryByRunId.delete(run.runId)
+    try {
+      this.deps.onParticipantWorkingTelemetry?.({
+        type: 'clear',
+        chatId: run.chatId,
+        roundId: run.roundId,
+        participantId: run.participant.id,
+        runId: run.runId
+      })
+    } catch {
+      // Working telemetry is best-effort terminal projection only.
+    }
+    if (run.laneId) {
+      try {
+        this.deps.releaseWriteIntentsForLane?.(run.laneId)
+      } catch {
+        // Lock cleanup is best-effort; the in-memory registry is defensive.
+      }
+    }
   }
 
   private transitionParticipantRunQueueJob(
@@ -12673,6 +12867,21 @@ export class EnsembleOrchestrator {
     const chat = this.deps.getChat(run.chatId)
     if (!chat?.ensemble) return
     const timestamp = this.deps.nowIso()
+    const holdingOwnedFanoutTranscript =
+      run.ownedFanoutTranscriptBoundary !== undefined &&
+      Boolean(run.ownedFanoutSettlements?.size)
+    const suppressingOwnedFanoutTranscript =
+      run.ownedFanoutTranscriptBoundary !== undefined &&
+      run.suppressOwnedFanoutTranscriptRelease === true
+    const preservingOwnedFanoutBoundary =
+      holdingOwnedFanoutTranscript || suppressingOwnedFanoutTranscript
+    const effectiveFinal =
+      final && (!holdingOwnedFanoutTranscript || suppressingOwnedFanoutTranscript)
+    const visibleStatus: EnsembleParticipantStatus = suppressingOwnedFanoutTranscript
+      ? run.status
+      : holdingOwnedFanoutTranscript
+        ? 'running'
+        : run.status
     let messages = [...chat.messages]
     const existingMessageById = new Map(messages.map((message) => [message.id, message]))
 
@@ -12689,7 +12898,10 @@ export class EnsembleOrchestrator {
     // the orchestrator decides to collapse adjacent entries on a
     // later flush — currently we always preserve order, but the
     // cleanup makes the rebuild idempotent regardless).
-    const timeline = run.timeline || []
+    const fullTimeline = run.timeline || []
+    const timeline = preservingOwnedFanoutBoundary
+      ? fullTimeline.slice(0, run.ownedFanoutTranscriptBoundary)
+      : fullTimeline
     const desiredIds = new Set<string>()
     const desiredMessages: ChatMessage[] = []
     for (let i = 0; i < timeline.length; i += 1) {
@@ -12736,7 +12948,7 @@ export class EnsembleOrchestrator {
             ensembleRole: run.participant.role,
             ...(run.participant.stageRole ? { ensembleStageRole: run.participant.stageRole } : {}),
             ensembleOrder: run.participant.order,
-            ensembleStatus: run.status,
+            ensembleStatus: visibleStatus,
             ensembleTimelineIndex: i,
             ...pooledAgentTranscriptMetadata(run.participant),
             // Model preview: pass the participant's configured model so
@@ -12791,7 +13003,7 @@ export class EnsembleOrchestrator {
     // run's LAST content message so the transcript media strip renders it.
     // Sourced from run.mediaRefs (not bolted onto a message object) so it
     // survives the wholesale message rebuild above on every re-flush.
-    if (run.mediaRefs && run.mediaRefs.length > 0) {
+    if (!preservingOwnedFanoutBoundary && run.mediaRefs && run.mediaRefs.length > 0) {
       let stamped = false
       for (let i = desiredMessages.length - 1; i >= 0; i -= 1) {
         const candidate = desiredMessages[i]
@@ -12838,7 +13050,7 @@ export class EnsembleOrchestrator {
             ensembleRole: run.participant.role,
             ...(run.participant.stageRole ? { ensembleStageRole: run.participant.stageRole } : {}),
             ensembleOrder: run.participant.order,
-            ensembleStatus: run.status,
+            ensembleStatus: visibleStatus,
             ensembleTimelineIndex: timeline.length,
             ensembleModel: run.participant.model,
             ...pooledAgentTranscriptMetadata(run.participant),
@@ -12887,6 +13099,8 @@ export class EnsembleOrchestrator {
     const runDispatchOrder = new Map(chat.runs.map((chatRun, index) => [chatRun.runId, index]))
     messages = retainedExistingTimelineMessage
       ? [...messages, ...newTimelineMessages]
+      : run.releaseOwnedFanoutTranscriptAtTail
+        ? [...messages, ...newTimelineMessages]
       : insertRunTimelineMessages(
           messages,
           newTimelineMessages,
@@ -12900,7 +13114,7 @@ export class EnsembleOrchestrator {
     // the pre-timeline version aside from running after the new
     // messages are materialised.
     if (
-      final &&
+      effectiveFinal &&
       (run.status === 'yielded' ||
         run.status === 'failed' ||
         run.status === 'skipped' ||
@@ -12935,7 +13149,7 @@ export class EnsembleOrchestrator {
           ensembleRole: run.participant.role,
           ...(run.participant.stageRole ? { ensembleStageRole: run.participant.stageRole } : {}),
           ensembleOrder: run.participant.order,
-          ensembleStatus: run.status,
+          ensembleStatus: visibleStatus,
           ensembleModel: run.participant.model,
           ...pooledAgentTranscriptMetadata(run.participant),
           ...ensembleReasoningMetadata(run.participant)
@@ -12953,12 +13167,12 @@ export class EnsembleOrchestrator {
     // acknowledge either the shell or dynamic snapshot, and compaction
     // invalidates both even after an otherwise successful completion.
     const shouldPersistDynamicStateReceipt =
-      final &&
+      effectiveFinal &&
       !run.invalidatePromptDynamicStateReceipt &&
       Boolean(run.promptDynamicStateVersion) &&
       isDynamicStateReceiptTerminalStatus(run.status)
     const shouldPersistPromptShellReceipt =
-      final &&
+      effectiveFinal &&
       !run.invalidatePromptShellReceipt &&
       Boolean(run.promptShellStamp) &&
       isDynamicStateReceiptTerminalStatus(run.status)
@@ -12970,9 +13184,9 @@ export class EnsembleOrchestrator {
         actualModel: run.actualModel || existingRun.actualModel,
         providerThreadId: run.providerSessionId || existingRun.providerThreadId,
         stats: run.stats || existingRun.stats,
-        status: final ? statusToRunStatus(run.status) : existingRun.status || 'running',
-        endedAt: final ? timestamp : existingRun.endedAt,
-        ...(run.status === 'sleeping'
+        status: effectiveFinal ? statusToRunStatus(run.status) : existingRun.status || 'running',
+        endedAt: effectiveFinal ? timestamp : existingRun.endedAt,
+        ...(effectiveFinal && run.status === 'sleeping'
           ? {
               ensembleSleepWakeupId: reason
                 ? extractWakeupIdFromReason(reason)
@@ -12994,9 +13208,12 @@ export class EnsembleOrchestrator {
 
     const persistProviderSession =
       this.deps.shouldPersistProviderSessionForRun?.(run.runId) !== false
+    const shouldMergeTerminalTokenTotals = effectiveFinal && !run.terminalTokenTotalsApplied
     const participants = (chat.ensemble.participants || []).map((participant) => {
       if (participant.id !== run.participant.id) return participant
-      const tokenTotals = mergeTokenTotals(participant.tokenTotals, run.stats)
+      const tokenTotals = shouldMergeTerminalTokenTotals
+        ? mergeTokenTotals(participant.tokenTotals, run.stats)
+        : participant.tokenTotals
       const next: EnsembleParticipant = {
         ...participant,
         ...(persistProviderSession && run.providerSessionId
@@ -13021,15 +13238,15 @@ export class EnsembleOrchestrator {
         chat.ensemble.activeRound,
         run.participant.id,
         {
-          status: run.status,
+          status: visibleStatus,
           runId: run.runId,
-          ...(reason ? { reason } : {}),
-          ...(final ? { endedAt: timestamp } : {})
+          ...(effectiveFinal && reason ? { reason } : {}),
+          ...(effectiveFinal ? { endedAt: timestamp } : {})
         },
         { setActive: !run.laneId }
       ),
       run.laneId,
-      run.status,
+      visibleStatus,
       timestamp,
       reason
     )
@@ -13054,7 +13271,11 @@ export class EnsembleOrchestrator {
       },
       updatedAt: this.deps.now()
     }, 'participant-updated')
-    if (final) this.deps.releaseProviderSessionPersistenceDecision?.(run.runId)
+    if (shouldMergeTerminalTokenTotals) run.terminalTokenTotalsApplied = true
+    if (run.releaseOwnedFanoutTranscriptAtTail && newTimelineMessages.length > 0) {
+      run.releaseOwnedFanoutTranscriptAtTail = undefined
+    }
+    if (effectiveFinal) this.deps.releaseProviderSessionPersistenceDecision?.(run.runId)
   }
 
   private scheduleFlush(run: ActiveParticipantRun): void {
