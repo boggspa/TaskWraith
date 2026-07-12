@@ -996,6 +996,9 @@ describe('Ensemble prompt composition', () => {
       prompt.lastIndexOf('Current user request:')
     )
     expect(prompt).toContain('call the tool first even when the request describes prose')
+    expect(prompt).toContain('Codex runtime rule')
+    expect(prompt).toContain('`ensemble_yield` tool on the `TaskWraith` MCP server directly')
+    expect(prompt).toContain('Never substitute `run_shell_command`, `true`, `exit 0`')
   })
 
   // 1.0.4-AJ — last-speaker awareness. The pre-fix failure mode

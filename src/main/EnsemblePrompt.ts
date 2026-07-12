@@ -833,7 +833,10 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
     selfModelLabel ? ` (${selfModelLabel})` : ''
   }${selfToken ? ` #${selfToken}` : ''}`
   const yieldExecutionCheck =
-    'Lifecycle execution check: if the current request explicitly instructs your role to call `ensemble_yield`, invoke the directly advertised tool before ending. Do not search for it, narrate a handoff instead, or treat exact-output prose as a substitute; tool calls are not prose. If your runtime only permits tool calls before its final answer, call the tool first even when the request describes prose followed by a yield.'
+    'Lifecycle execution check: if the current request explicitly instructs your role to call `ensemble_yield`, invoke the directly advertised tool before ending. Do not search for it, narrate a handoff instead, or treat exact-output prose as a substitute; tool calls are not prose. If your runtime only permits tool calls before its final answer, call the tool first even when the request describes prose followed by a yield.' +
+    (input.participant.provider === 'codex'
+      ? ' Codex runtime rule: call the `ensemble_yield` tool on the `TaskWraith` MCP server directly with the target and optional reason. Never substitute `run_shell_command`, `true`, `exit 0`, or another no-op for the lifecycle tool.'
+      : '')
   const orchestrationMode =
     input.config.orchestrationMode === 'continuous' ? 'continuous' : 'turn_bound'
   const activeConcurrentMode = Boolean(input.config.activeRound?.concurrentMode)
