@@ -1,22 +1,39 @@
 import type {
   EnsembleConfig,
   EnsembleFanoutPolicy,
-  EnsembleOrchestrationMode,
   EnsembleParticipant,
-  EnsembleStageRole,
   PermissionOverrides,
-  PermissionPresetId,
-  PooledAgentIdentitySnapshot,
   ProviderId
 } from '../../../main/store/types'
+import {
+  cloneEnsembleRosterPreset,
+  ENSEMBLE_ROSTER_PRESET_EXPORT_FORMAT,
+  ENSEMBLE_ROSTER_PRESET_EXPORT_VERSION,
+  isEnsembleRosterPreset,
+  MAX_ROSTER_PRESET_PARTICIPANTS,
+  MIN_ROSTER_PRESET_PARTICIPANTS,
+  parseEnsembleRosterPresetJson,
+  safeRosterPermissionPresetId,
+  type EnsembleRosterParticipantSnapshot,
+  type EnsembleRosterPreset,
+  type EnsembleRosterPresetsExportPayload,
+  type EnsembleRosterPresetsImportResult
+} from '../../../main/EnsembleRosterPresetContract'
 import {
   getDefaultEnsembleParticipantConfig,
   getDefaultEnsembleRoleName
 } from './ensembleProviderDefaults'
 
+export {
+  MAX_ROSTER_PRESET_PARTICIPANTS,
+  MIN_ROSTER_PRESET_PARTICIPANTS,
+  type EnsembleRosterParticipantSnapshot,
+  type EnsembleRosterPreset,
+  type EnsembleRosterPresetsExportPayload,
+  type EnsembleRosterPresetsImportResult
+} from '../../../main/EnsembleRosterPresetContract'
+
 const STORAGE_KEY = 'taskwraith-ensemble-roster-presets'
-const EXPORT_FORMAT = 'taskwraith.ensembleRosterPresets'
-const EXPORT_VERSION = 1
 const ENSEMBLE_FANOUT_POLICIES = new Set<EnsembleFanoutPolicy>([
   'off',
   'read_only',
@@ -25,91 +42,10 @@ const ENSEMBLE_FANOUT_POLICIES = new Set<EnsembleFanoutPolicy>([
   'locked_writers_user_preflight'
 ])
 
-/**
- * Ensemble roster floor / ceiling. Mirrors the live-chat guards:
- * `MIN_ENSEMBLE_PARTICIPANTS` in EnsembleParticipantsAboveRow and the
- * `MAX_ROSTER_PRESET_PARTICIPANTS` clamp in App.tsx's
- * `applyEnsembleRosterPreset`.
- */
-export const MIN_ROSTER_PRESET_PARTICIPANTS = 1
-// 1.7.x — 18 → 20 in step with MAX_ENSEMBLE_PARTICIPANTS.
-export const MAX_ROSTER_PRESET_PARTICIPANTS = 20
 const DEFAULT_ROSTER_PRESET_MAX_PARTICIPANTS = 6
-
-function safeRosterPermissionPresetId(value: unknown): PermissionPresetId | undefined {
-  if (
-    value === 'read_only' ||
-    value === 'plan' ||
-    value === 'default' ||
-    value === 'workspace_write' ||
-    value === 'custom'
-  ) {
-    return value
-  }
-  // Trusted Session is live lane authority, not portable roster configuration.
-  if (value === 'full_access') return 'workspace_write'
-  return undefined
-}
 
 function newPresetId(now: number): string {
   return `ensemble-roster-${now.toString(36)}-${Math.random().toString(36).slice(2, 8)}`
-}
-
-export type EnsembleRosterParticipantSnapshot = {
-  provider: ProviderId
-  enabled: boolean
-  role: string
-  instructions: string
-  order: number
-  isBossman?: boolean
-  isSecondInCommand?: boolean
-  /**
-   * Link back to a Settings → Roster pooled Agent (`pooled-agent-<uuid>`).
-   * Present only on participants sourced from the Agent Pool. Editing the
-   * pooled Agent propagates its config to every snapshot carrying its id
-   * (see `propagatePooledAgentToPresets` in ensembleAgentPool.ts), and it is
-   * the stats-attribution key once materialized onto a live participant.
-   */
-  pooledAgentId?: string
-  pooledAgentIdentity?: PooledAgentIdentitySnapshot
-  model?: string
-  runtimeProfileId?: string
-  geminiAuthProfileId?: string | null
-  permissionPresetId?: PermissionPresetId
-  permissionOverrides?: PermissionOverrides
-  /** Staged fan-out stage (spike 4) — see EnsembleStageRole in store/types. */
-  stageRole?: EnsembleStageRole
-  reasoningEffort?: string
-  fastModeEnabled?: boolean
-  thinkingEnabled?: boolean
-  serviceTier?: string
-}
-
-export type EnsembleRosterPreset = {
-  id: string
-  name: string
-  createdAt: number
-  updatedAt: number
-  orchestrationMode: EnsembleOrchestrationMode
-  maxParticipants: number
-  maxContinuationHops?: number
-  fanoutPolicy?: EnsembleFanoutPolicy
-  concurrentModeEnabled?: boolean
-  ensembleContextChars?: number
-  participants: EnsembleRosterParticipantSnapshot[]
-}
-
-export type EnsembleRosterPresetsExportPayload = {
-  format: typeof EXPORT_FORMAT
-  version: typeof EXPORT_VERSION
-  exportedAt: string
-  presets: EnsembleRosterPreset[]
-}
-
-export type EnsembleRosterPresetsImportResult = {
-  importedCount: number
-  skippedCount: number
-  presets: EnsembleRosterPreset[]
 }
 
 export function clonePermissionOverrides(
@@ -147,52 +83,6 @@ function readRawPresets(): EnsembleRosterPreset[] {
   }
 }
 
-const ENSEMBLE_STAGE_ROLES = new Set<EnsembleStageRole>([
-  'scout',
-  'worker',
-  'reviewer',
-  'background'
-])
-
-function isEnsembleRosterParticipantSnapshot(
-  value: unknown
-): value is EnsembleRosterParticipantSnapshot {
-  if (!value || typeof value !== 'object') return false
-  const entry = value as EnsembleRosterParticipantSnapshot
-  return (
-    typeof entry.provider === 'string' &&
-    typeof entry.enabled === 'boolean' &&
-    typeof entry.role === 'string' &&
-    typeof entry.instructions === 'string' &&
-    typeof entry.order === 'number' &&
-    (entry.stageRole === undefined ||
-      ENSEMBLE_STAGE_ROLES.has(entry.stageRole as EnsembleStageRole))
-  )
-}
-
-function isEnsembleRosterPreset(value: unknown): value is EnsembleRosterPreset {
-  if (!value || typeof value !== 'object') return false
-  const entry = value as EnsembleRosterPreset
-  return (
-    typeof entry.id === 'string' &&
-    entry.id.length > 0 &&
-    typeof entry.name === 'string' &&
-    entry.name.length > 0 &&
-    typeof entry.createdAt === 'number' &&
-    typeof entry.updatedAt === 'number' &&
-    (entry.orchestrationMode === 'turn_bound' || entry.orchestrationMode === 'continuous') &&
-    (entry.fanoutPolicy === undefined ||
-      ENSEMBLE_FANOUT_POLICIES.has(entry.fanoutPolicy as EnsembleFanoutPolicy)) &&
-    typeof entry.maxParticipants === 'number' &&
-    entry.maxParticipants >= MIN_ROSTER_PRESET_PARTICIPANTS &&
-    entry.maxParticipants <= MAX_ROSTER_PRESET_PARTICIPANTS &&
-    Array.isArray(entry.participants) &&
-    entry.participants.length >= MIN_ROSTER_PRESET_PARTICIPANTS &&
-    entry.participants.length <= MAX_ROSTER_PRESET_PARTICIPANTS &&
-    entry.participants.every(isEnsembleRosterParticipantSnapshot)
-  )
-}
-
 function normalizeRosterFanoutPolicy(
   value: unknown,
   legacyEnabled?: boolean
@@ -209,20 +99,8 @@ function writeRawPresets(presets: EnsembleRosterPreset[]): void {
   window.localStorage.setItem(STORAGE_KEY, JSON.stringify(presets))
 }
 
-function importPresetCandidates(value: unknown): unknown[] {
-  if (Array.isArray(value)) return value
-  if (!value || typeof value !== 'object') return []
-  const record = value as { presets?: unknown; rosters?: unknown }
-  if (Array.isArray(record.presets)) return record.presets
-  if (Array.isArray(record.rosters)) return record.rosters
-  return []
-}
-
 function cloneRosterPreset(preset: EnsembleRosterPreset): EnsembleRosterPreset {
-  return {
-    ...preset,
-    participants: preset.participants.map(cloneSnapshot)
-  }
+  return cloneEnsembleRosterPreset(preset)
 }
 
 function uniqueImportedRosterName(name: string, usedNames: Set<string>): string {
@@ -736,8 +614,8 @@ export function serializeEnsembleRosterPresetsForExport(
   presets = listEnsembleRosterPresets()
 ): string {
   const payload: EnsembleRosterPresetsExportPayload = {
-    format: EXPORT_FORMAT,
-    version: EXPORT_VERSION,
+    format: ENSEMBLE_ROSTER_PRESET_EXPORT_FORMAT,
+    version: ENSEMBLE_ROSTER_PRESET_EXPORT_VERSION,
     exportedAt: new Date().toISOString(),
     presets: presets.map(cloneRosterPreset)
   }
@@ -748,17 +626,7 @@ export function importEnsembleRosterPresetsFromJson(
   json: string,
   now = Date.now()
 ): EnsembleRosterPresetsImportResult {
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(json)
-  } catch {
-    throw new Error('Roster preset import must be valid JSON.')
-  }
-
-  const candidates = importPresetCandidates(parsed)
-  if (candidates.length === 0) {
-    throw new Error('No roster presets were found in that JSON file.')
-  }
+  const { candidates } = parseEnsembleRosterPresetJson(json)
 
   const existing = readRawPresets()
   const usedNames = new Set(existing.map((preset) => preset.name))
