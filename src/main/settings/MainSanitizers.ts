@@ -554,7 +554,10 @@ function sanitizeUpdateChangelog(value: unknown): ProductUpdateChangelog | undef
 export function normalizeEnsembleRunIdentity(value: unknown): EnsembleRunIdentity | undefined {
   if (!isRecord(value)) return undefined
   const stageRole =
-    value.stageRole === 'scout' || value.stageRole === 'worker' || value.stageRole === 'reviewer'
+    value.stageRole === 'scout' ||
+    value.stageRole === 'worker' ||
+    value.stageRole === 'reviewer' ||
+    value.stageRole === 'background'
       ? value.stageRole
       : undefined
   return {

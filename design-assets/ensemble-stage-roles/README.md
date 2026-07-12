@@ -17,6 +17,7 @@ Design constraints:
 | Scout | `icons/scout-magnifier.svg` |
 | Worker | `icons/worker-wrench.svg` |
 | Reviewer | `icons/reviewer-glasses.svg` |
+| Background | `icons/background-terminal.svg` |
 
 The desktop runtime keeps inline copies of this geometry in
 `src/renderer/src/components/EnsembleParticipantsAboveRow.tsx`. Keep those

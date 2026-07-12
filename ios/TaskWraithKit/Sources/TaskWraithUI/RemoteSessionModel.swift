@@ -4705,7 +4705,7 @@ public final class RemoteSessionModel: ObservableObject {
         public var reasoningEffort: String?
         public var fastModeEnabled: Bool
         public var thinkingEnabled: Bool
-        /// Staged fan-out stage ("scout" | "worker" | "reviewer"); nil = no
+        /// Staged fan-out stage ("scout" | "worker" | "reviewer" | "background"); nil = no
         /// stage (permission-inferred scheduling) — sent as "" so the Mac
         /// clears an existing stage explicitly.
         public var stageRole: String?

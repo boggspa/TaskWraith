@@ -137,7 +137,9 @@ const ENSEMBLE_PARTICIPANT_STAGE_OPTIONS: ReadonlyArray<{
         ? 'Scout'
         : option.id === 'worker'
           ? 'Work'
-          : 'Review',
+          : option.id === 'reviewer'
+            ? 'Review'
+            : 'BG',
     title: option.description
   }))
 ]
@@ -759,6 +761,14 @@ function EnsembleStageRoleIcon({
       </svg>
     )
   }
+  if (stageRole === 'background') {
+    return (
+      <svg {...baseSvgProps}>
+        <rect x="3.2" y="5" width="17.6" height="14" rx="2.2" />
+        <path d="m7.2 10 2.6 2.2-2.6 2.2M12.2 14.4h4.6" />
+      </svg>
+    )
+  }
   return (
     <svg {...baseSvgProps}>
       <circle cx="7.3" cy="13.1" r="3.6" />
@@ -1003,8 +1013,9 @@ export function EnsembleParticipantsAboveRow({
   const isRoundRunning = isEnsembleActiveRoundDispatchLive(activeRound)
   const hasLeadership = participants.some(
     (participant) =>
-      participant.id === chat.ensemble?.bossmanParticipantId ||
-      participant.id === chat.ensemble?.secondInCommandParticipantId
+      participant.stageRole !== 'background' &&
+      (participant.id === chat.ensemble?.bossmanParticipantId ||
+        participant.id === chat.ensemble?.secondInCommandParticipantId)
   )
   const liveFanoutLanes = Object.values(activeRound?.lanes || {}).filter(isLiveFanoutLane)
   const canSkipReadFanout =
@@ -1049,7 +1060,10 @@ export function EnsembleParticipantsAboveRow({
   ): void => {
     if (
       isRoundRunning ||
-      !participants.some((participant) => participant.id === participantId)
+      !participants.some(
+        (participant) =>
+          participant.id === participantId && participant.stageRole !== 'background'
+      )
     ) {
       return
     }
@@ -1131,15 +1145,33 @@ export function EnsembleParticipantsAboveRow({
     const existingBossmanParticipantId = authorityState.bossmanParticipantId
     const bossmanParticipantId =
       existingBossmanParticipantId &&
-      nextParticipants.some((participant) => participant.id === existingBossmanParticipantId)
+      nextParticipants.some(
+        (participant) =>
+          participant.id === existingBossmanParticipantId &&
+          participant.stageRole !== 'background'
+      )
         ? existingBossmanParticipantId
         : undefined
     const existingSecondInCommandParticipantId = authorityState.secondInCommandParticipantId
     const secondInCommandParticipantId =
       existingSecondInCommandParticipantId &&
       existingSecondInCommandParticipantId !== bossmanParticipantId &&
-      nextParticipants.some((participant) => participant.id === existingSecondInCommandParticipantId)
+      nextParticipants.some(
+        (participant) =>
+          participant.id === existingSecondInCommandParticipantId &&
+          participant.stageRole !== 'background'
+      )
         ? existingSecondInCommandParticipantId
+        : undefined
+    const existingSynthesizerParticipantId = chat.ensemble?.synthesizerParticipantId
+    const synthesizerParticipantId =
+      existingSynthesizerParticipantId &&
+      nextParticipants.some(
+        (participant) =>
+          participant.id === existingSynthesizerParticipantId &&
+          participant.stageRole !== 'background'
+      )
+        ? existingSynthesizerParticipantId
         : undefined
     const nextChat: ChatRecord = {
       ...chat,
@@ -1149,6 +1181,7 @@ export function EnsembleParticipantsAboveRow({
         participants: nextParticipants.map((p, idx) => ({ ...p, order: idx + 1 })),
         bossmanParticipantId,
         secondInCommandParticipantId,
+        synthesizerParticipantId,
         bossmanAutoApprovals: bossmanParticipantId || secondInCommandParticipantId
           ? authorityState.bossmanAutoApprovals
           : undefined,
@@ -1438,8 +1471,12 @@ export function EnsembleParticipantsAboveRow({
               }}
               onCloseOverflow={() => setOverflowOpenId(null)}
               onPatch={(patch) => updateParticipant(participant.id, patch)}
-              isBossman={chat.ensemble?.bossmanParticipantId === participant.id}
+              isBossman={
+                participant.stageRole !== 'background' &&
+                chat.ensemble?.bossmanParticipantId === participant.id
+              }
               isSecondInCommand={
+                participant.stageRole !== 'background' &&
                 chat.ensemble?.secondInCommandParticipantId === participant.id &&
                 chat.ensemble?.bossmanParticipantId !== participant.id
               }
@@ -2443,6 +2480,7 @@ interface EnsembleParticipantAuthorityControlsProps {
   participantLabel: string
   enabled: boolean
   authority: EnsembleParticipantAuthority
+  backgroundRestricted?: boolean
   hasLeadership: boolean
   autoApprovalsEnabled: boolean
   locked: boolean
@@ -2459,6 +2497,7 @@ export function EnsembleParticipantAuthorityControls({
   participantLabel,
   enabled,
   authority,
+  backgroundRestricted = false,
   hasLeadership,
   autoApprovalsEnabled,
   locked,
@@ -2518,7 +2557,10 @@ export function EnsembleParticipantAuthorityControls({
         options={[
           {
             value: 'boss',
-            title: 'Assign as the thread\'s only Boss.',
+            disabled: backgroundRestricted,
+            title: backgroundRestricted
+              ? 'BG seats cannot own Boss or Captain authority.'
+              : 'Assign as the thread\'s only Boss.',
             label: (
               <span className="ensemble-above-overflow-authority-label">
                 <BossmanCrownIcon className="ensemble-above-overflow-crown" />
@@ -2528,7 +2570,10 @@ export function EnsembleParticipantAuthorityControls({
           },
           {
             value: 'captain',
-            title: 'Assign as the thread\'s only Captain.',
+            disabled: backgroundRestricted,
+            title: backgroundRestricted
+              ? 'BG seats cannot own Boss or Captain authority.'
+              : 'Assign as the thread\'s only Captain.',
             label: (
               <span className="ensemble-above-overflow-authority-label">
                 <CaptainHatIcon className="ensemble-above-overflow-captain-hat" />
@@ -2724,6 +2769,7 @@ export function EnsembleParticipantOverflowPopover({
         participantLabel={getProviderName(participant.provider)}
         enabled={participant.enabled}
         authority={isBossman ? 'boss' : isSecondInCommand ? 'captain' : 'agent'}
+        backgroundRestricted={participant.stageRole === 'background'}
         hasLeadership={hasLeadership}
         autoApprovalsEnabled={autoApprovalsEnabled}
         locked={locked}

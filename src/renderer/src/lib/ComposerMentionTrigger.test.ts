@@ -117,6 +117,19 @@ describe('extractFirstEnsembleDmTarget', () => {
     )
   })
 
+  it('does not collapse a BG allocation mention into a single-seat DM', () => {
+    const participants = [
+      { id: 'ensemble-codex', role: 'Lead', provider: 'codex' },
+      {
+        id: 'ensemble-shell',
+        role: 'Shell helper',
+        provider: 'claude',
+        stageRole: 'background'
+      }
+    ]
+    expect(extractFirstEnsembleDmTarget('@BG run tests', participants as any)).toBeNull()
+  })
+
   it('does not collapse multiple plain participant mentions into a single DM target', () => {
     const participants = [
       { id: 'ensemble-cursor', role: 'Cursor', provider: 'cursor' },

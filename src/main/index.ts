@@ -27505,11 +27505,12 @@ if (isGeminiMcpBridgeProcess) {
                   ? { thinkingEnabled: entry.thinkingEnabled }
                   : {}),
                 // Staged fan-out stage (spike 4). The decoder guarantees
-                // '' | scout | worker | reviewer when present; '' clears back
+                // '' | scout | worker | reviewer | background when present; '' clears back
                 // to permission-inferred scheduling, absent preserves ...base.
                 ...(entry.stageRole === 'scout' ||
                 entry.stageRole === 'worker' ||
-                entry.stageRole === 'reviewer'
+                entry.stageRole === 'reviewer' ||
+                entry.stageRole === 'background'
                   ? { stageRole: entry.stageRole }
                   : entry.stageRole === ''
                     ? { stageRole: undefined }

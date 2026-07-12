@@ -3,7 +3,7 @@
 **Platform:** Both
 
 ## What it is
-In an Ensemble chat, `@Role` mentions and the `ensemble_yield` tool control which participant speaks next. Typing `@Role` in the composer sends the message to just that participant (a DM); a participant tagging `@Role` in their own reply, or calling `ensemble_yield(target: …)`, promotes that participant to the front of the queue for the next turn.
+In an Ensemble chat, `@Role` mentions and the `ensemble_yield` tool control which participant speaks next. Typing `@Role` in the composer normally sends the message to just that participant (a DM); a participant tagging `@Role` in their own reply, or calling `ensemble_yield(target: …)`, promotes that participant to the front of the queue for the next turn. **BG** is the deliberate exception: mentioning a background-stage participant launches a detached lane while foreground rotation continues.
 
 ## Where to find it
 Type `@` followed by a participant's role or model name in the composer during an ensemble chat — an autocomplete menu lists matching participants. Routing from a participant's own reply happens automatically whenever their response text contains an `@Role` mention or they call the `ensemble_yield` tool; there's no separate control to find for that half.
@@ -12,11 +12,12 @@ Type `@` followed by a participant's role or model name in the composer during a
 
 ## How to use it
 1. In the composer, type `@` and a few letters of a participant's role, provider, or model name (e.g. `@Researcher` or `@GPT 5.5`) and pick them from the autocomplete menu, or just keep typing the plain `@Role` token yourself.
-2. Send a prompt that mentions exactly one participant to DM them directly — only that participant runs for the round, instead of the whole roster.
+2. Send a prompt that mentions exactly one foreground participant to DM them directly — only that participant runs for the round, instead of the whole roster. Mentioning a BG participant does not collapse the panel into a DM; it allocates background work and preserves the foreground round.
 3. During a round, a participant can tag another in their own reply text (`"@Researcher, can you fact-check this?"`) to promote that participant to speak next; if the round is in **Continuous** mode and the tagged participant already spoke this round, they get an extra handoff turn instead.
 4. A participant can also call the `ensemble_yield` tool with an optional `target` (and an optional `reason`) to explicitly hand off — this works the same as a mention but is an explicit tool call rather than text in the reply.
 5. If a tagged name matches more than one participant (e.g. two participants on the same provider), the orchestrator posts an ambiguity notice in the round status and leaves routing unchanged — use a more specific role or model name to disambiguate.
 6. A Boss participant's mentions take routing priority: if both the Boss and another participant are tagged in the same reply, only the Boss's target is promoted.
+7. A unique `@BG` or `@Background` alias launches the sole enabled BG seat. With multiple BG seats, use a unique `@Role`, `@Model`, or participant id; TaskWraith warns and launches nothing when the alias is ambiguous.
 
 ## Tips & related
 - [Continuous Hops Meter](continuous-hops-meter.md) — the handoff budget that governs extra turns created by mentions and yields in Continuous mode.

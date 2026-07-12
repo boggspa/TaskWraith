@@ -47,7 +47,12 @@ export function invalidatePromptReceiptsForMatchingEnsembleSession(
   }
 }
 
-const ENSEMBLE_STAGE_ROLES = new Set<string>(['scout', 'worker', 'reviewer'])
+const ENSEMBLE_STAGE_ROLES = new Set<string>([
+  'scout',
+  'worker',
+  'reviewer',
+  'background'
+])
 
 // 1.7.x — 18 → 20 in step with the renderer strip's balanced rows of
 // at most 5 chips (EnsembleParticipantsAboveRow.MAX_ENSEMBLE_PARTICIPANTS).
@@ -91,7 +96,7 @@ export interface RosterEditParticipantInput {
   serviceTier?: string | null
   permissionPresetId?: PermissionPresetId | string | null
   permissionOverrides?: PermissionOverrides | null
-  /** Staged fan-out stage ('scout' | 'worker' | 'reviewer'); null clears. */
+  /** Staged fan-out stage; null clears back to permission-inferred Any. */
   stageRole?: EnsembleStageRole | string | null
   linkedProviderSessionId?: string | null
 }
@@ -324,7 +329,7 @@ function validateStageRoleInput(
   ) {
     return fail(
       'invalid_request',
-      'Roster edit rejected: stageRole must be scout, worker, or reviewer (or null to clear).'
+      'Roster edit rejected: stageRole must be scout, worker, reviewer, or background (or null to clear).'
     )
   }
   return null

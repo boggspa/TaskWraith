@@ -5762,7 +5762,13 @@ struct RosterChipEditor: View {
     private var stageBinding: Binding<String> {
         Binding(
             get: { entry.stageRole ?? "" },
-            set: { entry.stageRole = $0.isEmpty ? nil : $0 }
+            set: { value in
+                entry.stageRole = value.isEmpty ? nil : value
+                if value == "background" {
+                    entry.isBossman = false
+                    entry.isSecondInCommand = false
+                }
+            }
         )
     }
     private var bossmanBinding: Binding<Bool> {
@@ -5802,12 +5808,14 @@ struct RosterChipEditor: View {
                         Label("Boss", systemImage: entry.isBossman ? "crown.fill" : "crown")
                     }
                     .tint(.yellow)
+                    .disabled(entry.stageRole == "background")
                     Toggle(isOn: secondInCommandBinding) {
                         Label(
                             "Captain",
                             systemImage: entry.isSecondInCommand ? "shield.fill" : "shield")
                     }
                     .tint(TWTheme.chroma3)
+                    .disabled(entry.stageRole == "background")
                 }
                 .twGlassSheetRowBackground()
                 Section("Role") {
@@ -5890,13 +5898,14 @@ struct RosterChipEditor: View {
                         Text("Scout — investigates first").tag("scout")
                         Text("Worker — serial turn").tag("worker")
                         Text("Reviewer — runs after the others").tag("reviewer")
+                        Text("BG — async when delegated").tag("background")
                     }
                     .pickerStyle(.menu)
                 } header: {
                     Text("Stage")
                 } footer: {
                     Text(
-                        "Scouts investigate at round start, workers take serial implementation turns, reviewers wait for the others and then verify the work."
+                        "Scouts investigate at round start, workers take serial implementation turns, reviewers verify last, and BG seats run asynchronously only when explicitly delegated."
                     )
                 }
                 .twGlassSheetRowBackground()

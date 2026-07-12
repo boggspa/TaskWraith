@@ -665,11 +665,15 @@ export type EnsembleFanoutPolicy =
  *                  "review wave" when ≥2 eligible reviewers remain, serially
  *                  otherwise. Explicit routing (ensemble_yield / @-mention)
  *                  outranks the deferral.
+ *   - 'background' — excluded from ordinary serial/review rotation. It runs
+ *                    only after an explicit user/participant @mention or an
+ *                    ensemble_fanout delegation, using a detached lane whose
+ *                    result lands in transcript order when available.
  *
  * Absent ⇒ pre-stage behavior (fan-out eligibility inferred purely from
  * permissions), so existing chats, presets, and iOS rosters are untouched.
  */
-export type EnsembleStageRole = 'scout' | 'worker' | 'reviewer'
+export type EnsembleStageRole = 'scout' | 'worker' | 'reviewer' | 'background'
 
 /**
  * Versioned TaskWraith MCP catalog identities. The version is part of the

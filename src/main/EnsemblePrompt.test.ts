@@ -1652,6 +1652,32 @@ describe('stage-role prompt stanza', () => {
     expect(prompt).toContain('do not redo or extend the work itself')
   })
 
+  it('tells a background seat that it owns a scoped async lane, not rotation', () => {
+    const background: EnsembleParticipant = {
+      ...ensemble.participants[0],
+      stageRole: 'background'
+    }
+    const prompt = buildEnsembleParticipantPrompt({
+      chat: chat(),
+      config: {
+        ...ensemble,
+        participants: [background, ...ensemble.participants.slice(1)],
+        synthesizerParticipantId: background.id,
+        roundMode: 'chair-summary'
+      },
+      participant: background,
+      currentPrompt: '@BG run the checks.',
+      roundId: 'round-background',
+      chatContextTurns: 6
+    })
+    expect(prompt).toContain('Stage role: background')
+    expect(prompt).toContain('do not consume an ordinary round turn')
+    expect(prompt).toContain('respect the lane permission posture')
+    expect(prompt).not.toContain('Turn position: 0')
+    expect(prompt).not.toContain('designated SYNTHESIZER')
+    expect(prompt).not.toContain('you speak last as the chair')
+  })
+
   it('emits no stage line for unstaged participants', () => {
     const prompt = buildEnsembleParticipantPrompt({
       chat: chat(),

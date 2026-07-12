@@ -59,8 +59,15 @@ function text(value: unknown, max = 500): string | undefined {
   return trimmed ? trimmed.slice(0, max) : undefined
 }
 
-function stageRole(value: unknown): 'scout' | 'worker' | 'reviewer' | undefined {
-  return value === 'scout' || value === 'worker' || value === 'reviewer' ? value : undefined
+function stageRole(
+  value: unknown
+): 'scout' | 'worker' | 'reviewer' | 'background' | undefined {
+  return value === 'scout' ||
+    value === 'worker' ||
+    value === 'reviewer' ||
+    value === 'background'
+    ? value
+    : undefined
 }
 
 function feedbackState(message: ChatMessage | null | undefined): FeedbackState | null {

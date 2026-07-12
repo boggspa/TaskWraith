@@ -365,7 +365,7 @@ struct FirstLaunchSheetView: View {
                     .font(.caption)
                     .foregroundStyle(TWTheme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
-                Text("Configure each seat's provider, model, reasoning, and Fast/Thinking controls from the composer or roster. Scout, Worker, and Reviewer stages make handoffs easier to follow.")
+                Text("Configure each seat's provider, model, reasoning, and Fast/Thinking controls from the composer or roster. Scout, Worker, Reviewer, and BG stages make handoffs easier to follow; BG seats run only when delegated.")
                     .font(.caption)
                     .foregroundStyle(TWTheme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)

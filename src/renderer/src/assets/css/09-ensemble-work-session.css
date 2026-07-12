@@ -1902,7 +1902,7 @@
 
 .ensemble-above-overflow-stage-control {
   width: 100%;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
 }
 
 .ensemble-above-overflow-authority .segmented-control-segment,

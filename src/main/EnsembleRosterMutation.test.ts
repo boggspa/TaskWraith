@@ -924,5 +924,23 @@ describe('stageRole roster edits (spike 4)', () => {
     if (!result.ok) throw new Error(result.message)
     const added = result.nextParticipants[result.nextParticipants.length - 1]
     expect(added).toMatchObject({ role: 'Auditor', stageRole: 'reviewer' })
+
+    const background = evaluateRosterEdit(
+      {
+        action: 'add_participant',
+        participant: {
+          provider: 'cursor',
+          role: 'Shell helper',
+          stageRole: 'background'
+        }
+      },
+      makeContext()
+    )
+    expect(background).toMatchObject({ ok: true })
+    if (!background.ok) throw new Error(background.message)
+    expect(background.nextParticipants.at(-1)).toMatchObject({
+      role: 'Shell helper',
+      stageRole: 'background'
+    })
   })
 })

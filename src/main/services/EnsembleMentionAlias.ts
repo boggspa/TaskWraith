@@ -280,6 +280,10 @@ export function getParticipantAliases(p: EnsembleParticipant): string[] {
   push(p.id)
   push(p.provider)
   push(p.role)
+  if (p.stageRole === 'background') {
+    push('bg')
+    push('background')
+  }
   for (const m of generateModelAliases(p.provider, p.model)) {
     out.add(m)
   }
@@ -467,14 +471,16 @@ export function resolveSingleEnsembleDmTarget(
   text: string,
   participants: EnsembleParticipant[]
 ): string | null {
-  const ids = [
-    ...new Set(
-      findAllMentions(text, participants)
-        .filter(isParticipantMention)
-        .filter((match) => !match.ambiguousAmong || match.ambiguousAmong.length === 0)
-        .map((match) => match.participant.id)
-    )
-  ]
+  const participantMentions = findAllMentions(text, participants)
+    .filter(isParticipantMention)
+    .filter((match) => !match.ambiguousAmong || match.ambiguousAmong.length === 0)
+  // BG is an allocation signal, not a request to collapse the whole panel
+  // into a single-seat DM. Main routes it to a detached lane while foreground
+  // participants retain their normal round.
+  if (participantMentions.some((match) => match.participant.stageRole === 'background')) {
+    return null
+  }
+  const ids = [...new Set(participantMentions.map((match) => match.participant.id))]
   return ids.length === 1 ? ids[0] : null
 }
 

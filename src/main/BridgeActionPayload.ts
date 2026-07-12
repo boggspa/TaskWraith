@@ -526,7 +526,7 @@ export interface BridgeRosterParticipant {
   fastModeEnabled?: boolean
   /** Kimi K2 thinking toggle. */
   thinkingEnabled?: boolean
-  /** Staged fan-out stage ('scout' | 'worker' | 'reviewer'); '' clears back
+  /** Staged fan-out stage ('scout' | 'worker' | 'reviewer' | 'background'); '' clears back
    * to permission-inferred scheduling; absent preserves the current value. */
   stageRole?: string
   /** Optional per-roster marker. Exactly one true value assigns Boss. */
@@ -1950,13 +1950,14 @@ function isEnsembleRosterUpdate(v: Record<string, unknown>): boolean {
     if (e.fastModeEnabled !== undefined && typeof e.fastModeEnabled !== 'boolean') return false
     if (e.thinkingEnabled !== undefined && typeof e.thinkingEnabled !== 'boolean') return false
     // Staged fan-out stage (spike 4). '' means "clear back to
-    // permission-inferred"; anything else must be one of the three stages.
+    // permission-inferred"; anything else must be one of the four declared stages.
     if (
       e.stageRole !== undefined &&
       e.stageRole !== '' &&
       e.stageRole !== 'scout' &&
       e.stageRole !== 'worker' &&
-      e.stageRole !== 'reviewer'
+      e.stageRole !== 'reviewer' &&
+      e.stageRole !== 'background'
     ) {
       return false
     }

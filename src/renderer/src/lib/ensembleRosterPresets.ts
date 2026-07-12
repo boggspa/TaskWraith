@@ -147,7 +147,12 @@ function readRawPresets(): EnsembleRosterPreset[] {
   }
 }
 
-const ENSEMBLE_STAGE_ROLES = new Set<EnsembleStageRole>(['scout', 'worker', 'reviewer'])
+const ENSEMBLE_STAGE_ROLES = new Set<EnsembleStageRole>([
+  'scout',
+  'worker',
+  'reviewer',
+  'background'
+])
 
 function isEnsembleRosterParticipantSnapshot(
   value: unknown
@@ -592,7 +597,7 @@ export function saveEnsembleRosterPresetFromParticipants(
     reasoningEffort?: string
     fastModeEnabled?: boolean
     thinkingEnabled?: boolean
-    /** Staged fan-out stage ('scout' | 'worker' | 'reviewer'); other values ignored. */
+    /** Staged fan-out stage; other values are ignored. */
     stageRole?: string
     isBossman?: boolean
     isSecondInCommand?: boolean
@@ -629,7 +634,8 @@ export function saveEnsembleRosterPresetFromParticipants(
         : {}),
       ...(participant.stageRole === 'scout' ||
       participant.stageRole === 'worker' ||
-      participant.stageRole === 'reviewer'
+      participant.stageRole === 'reviewer' ||
+      participant.stageRole === 'background'
         ? { stageRole: participant.stageRole }
         : {})
     }))

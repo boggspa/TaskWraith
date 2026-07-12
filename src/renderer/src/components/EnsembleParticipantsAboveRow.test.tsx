@@ -200,7 +200,29 @@ describe('EnsembleParticipantsAboveRow', () => {
       expect(html).toMatch(/aria-label="Thread-wide Auto Approvals"[^>]*disabled=""/)
     })
 
-    it('renders Stage as a four-way shared control with compact labels', () => {
+    it('disables Boss and Captain assignment for a background seat', () => {
+      const html = renderToStaticMarkup(
+        <EnsembleParticipantAuthorityControls
+          participantLabel="Background shell"
+          enabled
+          authority="agent"
+          backgroundRestricted
+          hasLeadership={false}
+          autoApprovalsEnabled={false}
+          locked={false}
+          onEnabledChange={() => undefined}
+          onAuthorityChange={() => undefined}
+          onAutoApprovalsChange={() => undefined}
+        />
+      )
+
+      expect(html).toMatch(/data-segmented-control-value="boss"[^>]*disabled=""/)
+      expect(html).toMatch(/data-segmented-control-value="captain"[^>]*disabled=""/)
+      expect(html).toMatch(/data-segmented-control-value="agent"(?![^>]*disabled)/)
+      expect(html).toContain('BG seats cannot own Boss or Captain authority.')
+    })
+
+    it('renders Stage as a five-way shared control with compact labels', () => {
       const html = renderToStaticMarkup(
         <EnsembleParticipantStageControl
           participantLabel="Claude Fable 5"
@@ -214,11 +236,12 @@ describe('EnsembleParticipantsAboveRow', () => {
       expect(html).toContain('>Stage</span>')
       expect(html).toContain('role="radiogroup"')
       expect(html).toContain('aria-label="Stage for Claude Fable 5"')
-      expect(html.match(/role="radio"/g) || []).toHaveLength(4)
+      expect(html.match(/role="radio"/g) || []).toHaveLength(5)
       expect(html).toContain('>Any</button>')
       expect(html).toContain('>Scout</button>')
       expect(html).toContain('>Work</button>')
       expect(html).toContain('>Review</button>')
+      expect(html).toContain('>BG</button>')
       expect(html).toMatch(
         /aria-checked="true"[^>]*data-segmented-control-value="worker"/
       )
@@ -335,13 +358,14 @@ describe('EnsembleParticipantsAboveRow', () => {
       expect(html).toContain('class="ensemble-add-participant-fields"')
       expect(html).toContain('>Enabled</button>')
       expect(html).toContain('>Auto</button>')
-      expect(html.match(/role="radio"/g) || []).toHaveLength(7)
+      expect(html.match(/role="radio"/g) || []).toHaveLength(8)
       expect(html).toContain('>Boss</span>')
       expect(html).toContain('>Captain</span>')
       expect(html).toContain('>Any</button>')
       expect(html).toContain('>Scout</button>')
       expect(html).toContain('>Work</button>')
       expect(html).toContain('>Review</button>')
+      expect(html).toContain('>BG</button>')
       expect(html).toContain('<option value="custom" selected="">Custom…</option>')
       expect(html).toContain('value="Release reviewer"')
       expect(html).toContain('Brief preset…')
@@ -1045,6 +1069,13 @@ describe('EnsembleParticipantsAboveRow', () => {
         role: 'Review stage',
         order: 4,
         stageRole: 'reviewer'
+      }),
+      makeParticipant({
+        id: 'ensemble-background',
+        provider: 'cursor',
+        role: 'BG stage',
+        order: 5,
+        stageRole: 'background'
       })
     ])
     const html = renderToStaticMarkup(
@@ -1056,16 +1087,17 @@ describe('EnsembleParticipantsAboveRow', () => {
       />
     )
 
-    expect(html.match(/ensemble-above-chip-stage-icon/g) || []).toHaveLength(3)
+    expect(html.match(/ensemble-above-chip-stage-icon/g) || []).toHaveLength(4)
     expect(html).toContain('ensemble-above-chip-stage-icon is-scout')
     expect(html).toContain('ensemble-above-chip-stage-icon is-worker')
     expect(html).toContain('ensemble-above-chip-stage-icon is-reviewer')
+    expect(html).toContain('ensemble-above-chip-stage-icon is-background')
     expect(html).not.toMatch(/ensemble-above-chip-stage-icon is-(?:file|edit|search)/)
     expect(
       html.match(
-        /ensemble-above-chip-stage-icon is-(?:scout|worker|reviewer)" width="14" height="14"[^>]*fill="none" stroke="currentColor"[^>]*aria-hidden="true" focusable="false"/g
+        /ensemble-above-chip-stage-icon is-(?:scout|worker|reviewer|background)" width="14" height="14"[^>]*fill="none" stroke="currentColor"[^>]*aria-hidden="true" focusable="false"/g
       ) || []
-    ).toHaveLength(3)
+    ).toHaveLength(4)
 
     const css = readFileSync(
       new URL('../assets/css/09-ensemble-work-session.css', import.meta.url),
@@ -1076,8 +1108,13 @@ describe('EnsembleParticipantsAboveRow', () => {
     )
   })
 
-  it('keeps the three stage-role design sources theme-aware and monoline', () => {
-    const assets = ['scout-magnifier.svg', 'worker-wrench.svg', 'reviewer-glasses.svg']
+  it('keeps the four stage-role design sources theme-aware and monoline', () => {
+    const assets = [
+      'scout-magnifier.svg',
+      'worker-wrench.svg',
+      'reviewer-glasses.svg',
+      'background-terminal.svg'
+    ]
 
     for (const asset of assets) {
       const svg = readFileSync(

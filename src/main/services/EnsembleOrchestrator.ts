@@ -16,7 +16,8 @@ import {
   computeEnsemblePromptShellStamp,
   findUncoveredEnsemblePromptMessageIds,
   getOrderedEnsembleParticipants,
-  providerLabel
+  providerLabel,
+  resolveForegroundSynthesizerParticipantId
 } from '../EnsemblePrompt'
 import type {
   ActiveGoal,
@@ -162,7 +163,12 @@ export type EnsembleQueuedSteerResult = {
 }
 
 const BOSSMAN_ASSIGNABLE_PERMISSION_PRESET_SET = new Set<string>(ASSIGNABLE_PERMISSION_PRESETS)
-const ENSEMBLE_SEAT_STAGE_ROLES = new Set<string>(['scout', 'worker', 'reviewer'])
+const ENSEMBLE_SEAT_STAGE_ROLES = new Set<string>([
+  'scout',
+  'worker',
+  'reviewer',
+  'background'
+])
 const SESSION_ACTIVITY_LEDGER_LIMIT = 40
 const MAX_BOSSMAN_BRIEF_CHARS = 4000
 const BRIEF_SEAT_VALUE_PREVIEW_CHARS = 160
@@ -654,7 +660,12 @@ export interface CancelWakeupInput {
 }
 
 export type EnsembleFanoutMode = 'read_only' | 'locked_writers'
-export type EnsembleFanoutTargetStage = 'all' | 'scouts' | 'workers' | 'reviewers'
+export type EnsembleFanoutTargetStage =
+  | 'all'
+  | 'scouts'
+  | 'workers'
+  | 'reviewers'
+  | 'backgrounds'
 
 export interface EnsembleFanoutInput {
   targets?: unknown
@@ -1172,6 +1183,13 @@ function normalizeFanoutTargetStage(value: unknown): EnsembleFanoutTargetStage |
   if (normalized === 'review' || normalized === 'reviewer' || normalized === 'reviewers') {
     return 'reviewers'
   }
+  if (
+    normalized === 'bg' ||
+    normalized === 'background' ||
+    normalized === 'backgrounds'
+  ) {
+    return 'backgrounds'
+  }
   return null
 }
 
@@ -1179,6 +1197,7 @@ function fanoutTargetStageLabel(targetStage: EnsembleFanoutTargetStage | undefin
   if (targetStage === 'scouts') return 'Scout fan-out'
   if (targetStage === 'workers') return 'Worker fan-out'
   if (targetStage === 'reviewers') return 'Review fan-out'
+  if (targetStage === 'backgrounds') return 'Background fan-out'
   if (targetStage === 'all') return 'Ensemble fan-out'
   return 'Parallel fan-out'
 }
@@ -1192,12 +1211,39 @@ function fanoutTargetStageMatches(
     return (
       participant.stageRole === 'scout' ||
       participant.stageRole === 'worker' ||
-      participant.stageRole === 'reviewer'
+      participant.stageRole === 'reviewer' ||
+      participant.stageRole === 'background'
     )
   }
   if (targetStage === 'scouts') return participant.stageRole === 'scout'
   if (targetStage === 'workers') return participant.stageRole === 'worker'
-  return participant.stageRole === 'reviewer'
+  if (targetStage === 'reviewers') return participant.stageRole === 'reviewer'
+  return participant.stageRole === 'background'
+}
+
+function isBackgroundParticipant(participant: EnsembleParticipant): boolean {
+  return participant.stageRole === 'background'
+}
+
+function resolveBackgroundMentions(
+  prompt: string,
+  participants: EnsembleParticipant[]
+): { participantIds: Set<string>; ambiguities: ParticipantMentionMatch[] } {
+  const participantIds = new Set<string>()
+  const ambiguities: ParticipantMentionMatch[] = []
+  for (const match of findAllMentions(prompt, participants)) {
+    if (match.kind !== 'participant') continue
+    const candidates = [match.participant, ...(match.ambiguousAmong || [])]
+    if (!candidates.some((candidate) => isBackgroundParticipant(candidate))) continue
+    if (match.ambiguousAmong && match.ambiguousAmong.length > 0) {
+      ambiguities.push(match)
+      continue
+    }
+    if (isBackgroundParticipant(match.participant) && match.participant.enabled !== false) {
+      participantIds.add(match.participant.id)
+    }
+  }
+  return { participantIds, ambiguities }
 }
 
 function fanoutPolicyAllowsRead(policy: EnsembleFanoutPolicy): boolean {
@@ -2057,7 +2103,9 @@ function resolveEnsembleProposedPlanOwnerId(
   config: EnsembleConfig,
   roundId: string
 ): string | null {
-  const orderedParticipants = getOrderedEnsembleParticipants(config)
+  const orderedParticipants = getOrderedEnsembleParticipants(config).filter(
+    (participant) => !isBackgroundParticipant(participant)
+  )
   const bossmanId = cleanParticipantId(config.bossmanParticipantId)
   if (bossmanId && orderedParticipants.some((participant) => participant.id === bossmanId)) {
     return bossmanId
@@ -3357,7 +3405,7 @@ export class EnsembleOrchestrator {
     this.appendRoundStatus(
       chatId,
       runtime.roundId,
-      `Read fan-out skipped · ${readRuns.length} read lane(s) stopped before the writer step.`
+      `Read fan-out skipped · ${readRuns.length} read/background lane(s) stopped; foreground rotation continues.`
     )
     for (const run of readRuns) {
       await this.deps.cancelRun(run.participant.provider, run.runId).catch(() => undefined)
@@ -3399,6 +3447,7 @@ export class EnsembleOrchestrator {
       run.participant
     )
     if (!targetParticipant?.enabled) return
+    if (isBackgroundParticipant(targetParticipant)) return
     runtime.yieldReturnStack ??= []
     runtime.yieldReturnStack.push({
       returnParticipantId: run.participant.id,
@@ -6977,7 +7026,7 @@ export class EnsembleOrchestrator {
         tool: 'ensemble_fanout',
         mode,
         message:
-          'ensemble_fanout: targetStage must be all, scouts, workers, or reviewers.',
+          'ensemble_fanout: targetStage must be all, scouts, workers, reviewers, or backgrounds.',
         error: 'invalid_target_stage'
       }
     }
@@ -7431,22 +7480,28 @@ export class EnsembleOrchestrator {
     chat: ChatRecord,
     runtime: ActiveRoundRuntime
   ): string | undefined {
-    return (
+    const participantId =
       runtime.bossmanParticipantId ||
       chat.ensemble?.activeRound?.bossmanParticipantId ||
       chat.ensemble?.bossmanParticipantId
+    const participant = chat.ensemble?.participants.find(
+      (candidate) => candidate.id === participantId
     )
+    return participant && isBackgroundParticipant(participant) ? undefined : participantId
   }
 
   private activeSecondInCommandParticipantId(
     chat: ChatRecord,
     runtime: ActiveRoundRuntime
   ): string | undefined {
-    return (
+    const participantId =
       runtime.secondInCommandParticipantId ||
       chat.ensemble?.activeRound?.secondInCommandParticipantId ||
       chat.ensemble?.secondInCommandParticipantId
+    const participant = chat.ensemble?.participants.find(
+      (candidate) => candidate.id === participantId
     )
+    return participant && isBackgroundParticipant(participant) ? undefined : participantId
   }
 
   private primaryBossUnavailable(
@@ -8930,12 +8985,29 @@ export class EnsembleOrchestrator {
     // the user clicked their chip and held Cmd, that's an unambiguous
     // intent. The filter falls back to the full ordered set if the
     // id doesn't match (safety net; should never hit in practice).
-    const ordered = dmTargetParticipantId
+    const requestedParticipants = dmTargetParticipantId
       ? (() => {
           const target = chat.ensemble.participants.find((p) => p.id === dmTargetParticipantId)
           return target ? [target] : orderedFull
         })()
       : orderedFull
+    const backgroundMentionResolution = resolveBackgroundMentions(
+      prompt,
+      chat.ensemble.participants
+    )
+    const backgroundParticipants = requestedParticipants.filter(
+      (participant) =>
+        isBackgroundParticipant(participant) &&
+        (participant.id === dmTargetParticipantId ||
+          backgroundMentionResolution.participantIds.has(participant.id))
+    )
+    // Background seats are rostered and addressable, but never consume an
+    // ordinary serial/review-wave turn. Only explicitly addressed seats enter
+    // this round, and they enter through detached lanes below.
+    const ordered = requestedParticipants.filter(
+      (participant) => !isBackgroundParticipant(participant)
+    )
+    const roundParticipants = [...ordered, ...backgroundParticipants]
     const startedAt = this.deps.nowIso()
     const normalizedImageAttachments = normalizeEnsembleImageAttachments(imageAttachments)
     const normalizedImageThumbnails = normalizeEnsembleImageThumbnails(imageThumbnails)
@@ -8955,7 +9027,11 @@ export class EnsembleOrchestrator {
       concurrentLanesEnabled: concurrentLanesEnabled(),
       chatIsEnsemble: true,
       requestedConcurrentMode,
-      enabledParticipantCount: ordered.length
+      // BG seats still count as valid enabled panel members for the feature
+      // gate even when this particular prompt did not delegate one. Otherwise
+      // a common Lead + BG roster would fail to start whenever Read fan-out is
+      // selected, despite safely running the lone foreground seat serially.
+      enabledParticipantCount: requestedParticipants.length
     })
     let effectiveConcurrentMode = requestedConcurrentMode
     let effectiveFanoutPolicy = requestedFanoutPolicy
@@ -8972,7 +9048,9 @@ export class EnsembleOrchestrator {
     const secondInCommandParticipantId =
       chat.ensemble.secondInCommandParticipantId &&
       chat.ensemble.secondInCommandParticipantId !== chat.ensemble.bossmanParticipantId &&
-      ordered.some((participant) => participant.id === chat.ensemble!.secondInCommandParticipantId)
+      roundParticipants.some(
+        (participant) => participant.id === chat.ensemble!.secondInCommandParticipantId
+      )
         ? chat.ensemble.secondInCommandParticipantId
         : undefined
     const round: EnsembleRoundState = {
@@ -8987,11 +9065,11 @@ export class EnsembleOrchestrator {
         ? { bossmanParticipantId: chat.ensemble.bossmanParticipantId }
         : {}),
       ...(secondInCommandParticipantId ? { secondInCommandParticipantId } : {}),
-      bossmanBaselineParticipantIds: ordered.map((participant) => participant.id),
-      bossmanBaselineParticipantCount: ordered.length,
+      bossmanBaselineParticipantIds: roundParticipants.map((participant) => participant.id),
+      bossmanBaselineParticipantCount: roundParticipants.length,
       ...(effectiveConcurrentMode ? { concurrentMode: true } : {}),
       fanoutPolicy: effectiveFanoutPolicy,
-      participants: ordered.map((participant) =>
+      participants: roundParticipants.map((participant) =>
         roundParticipantStateFromParticipant(participant, 'idle')
       ),
       // Surface any carry-over queue on the chat record so the
@@ -9063,8 +9141,8 @@ export class EnsembleOrchestrator {
         ? { bossmanParticipantId: chat.ensemble.bossmanParticipantId }
         : {}),
       ...(secondInCommandParticipantId ? { secondInCommandParticipantId } : {}),
-      bossmanBaselineParticipantIds: ordered.map((participant) => participant.id),
-      bossmanBaselineParticipantCount: ordered.length,
+      bossmanBaselineParticipantIds: roundParticipants.map((participant) => participant.id),
+      bossmanBaselineParticipantCount: roundParticipants.length,
       orchestrationMode,
       fanoutPolicy: effectiveFanoutPolicy,
       ...(effectiveConcurrentMode ? { concurrentMode: true } : {}),
@@ -9077,6 +9155,46 @@ export class EnsembleOrchestrator {
       ...(unattended && unattendedElevationLevel ? { unattendedElevationLevel } : {})
     }
     this.roundsByChatId.set(chatId, runtime)
+    for (const mention of backgroundMentionResolution.ambiguities) {
+      const candidates = [mention.participant, ...(mention.ambiguousAmong || [])]
+      this.appendRoundStatus(
+        chatId,
+        roundId,
+        `@-mention: \`@${mention.text}\` was ambiguous (${candidates
+          .map((participant) => participantDisplayName(participant))
+          .join(', ')}). No background lane launched. Use a unique @role, @model, or @id.`
+      )
+    }
+    const backgroundAuthorityAssignments = [
+      ['Boss', chat.ensemble.bossmanParticipantId],
+      ['Captain', chat.ensemble.secondInCommandParticipantId],
+      ['synthesizer', chat.ensemble.synthesizerParticipantId],
+      ['Work Session lead', chat.ensemble.workSession?.leadParticipantId],
+      ['Work Session manager', chat.ensemble.workSession?.managerParticipantId]
+    ]
+      .filter((entry): entry is [string, string] => Boolean(entry[1]))
+      .filter(([, participantId]) =>
+        chat.ensemble!.participants.some(
+          (participant) =>
+            participant.id === participantId && isBackgroundParticipant(participant)
+        )
+      )
+    if (backgroundAuthorityAssignments.length > 0) {
+      this.appendRoundStatus(
+        chatId,
+        roundId,
+        `BG seats cannot own Ensemble authority; ignored ${backgroundAuthorityAssignments
+          .map(([role, participantId]) => `${role}=${participantId}`)
+          .join(', ')} for this round.`
+      )
+    }
+    if (ordered.length === 0 && backgroundParticipants.length === 0) {
+      this.appendRoundStatus(
+        chatId,
+        roundId,
+        'No foreground participant was scheduled. @mention a BG seat explicitly, or change at least one participant Stage to Any, Scout, Work, or Review.'
+      )
+    }
     if (concurrentFallbackReason) {
       this.appendRoundStatus(
         chatId,
@@ -9084,7 +9202,7 @@ export class EnsembleOrchestrator {
         'Fan-out requested but parallel lanes are disabled (TASKWRAITH_CONCURRENT_LANES=0) — running participants serially.'
       )
     }
-    void this.runRound(runtime, ordered)
+    void this.runRound(runtime, ordered, { backgroundParticipants })
     return roundId
   }
 
@@ -9096,7 +9214,10 @@ export class EnsembleOrchestrator {
     // round-start read-only fan-out on the FIRST pass, so a re-dispatched
     // continuation pass jumps straight to the serial loop rather than
     // re-probing / re-fanning-out every hop.
-    options: { skipPreamble?: boolean } = {}
+    options: {
+      skipPreamble?: boolean
+      backgroundParticipants?: EnsembleParticipant[]
+    } = {}
   ): Promise<void> {
     if (runtime.startAfterCancellation) {
       await runtime.startAfterCancellation.catch(() => undefined)
@@ -9143,6 +9264,21 @@ export class EnsembleOrchestrator {
             result.reason || `${participant.provider} runtime not reachable`
           )
         }
+      }
+    }
+
+    if (
+      !options.skipPreamble &&
+      options.backgroundParticipants?.length &&
+      !runtime.cancelled
+    ) {
+      const chatForBackground = this.deps.getChat(runtime.chatId)
+      if (chatForBackground?.ensemble) {
+        await this.dispatchBackgroundParticipants(
+          runtime,
+          chatForBackground,
+          options.backgroundParticipants
+        )
       }
     }
 
@@ -9748,30 +9884,42 @@ export class EnsembleOrchestrator {
             participantId: participant.id
           })
         } else {
-          const idx = resolveYieldTargetIndex(remaining, runtime.yieldTarget)
-          if (idx > 0) {
-            const [moved] = remaining.splice(idx, 1)
-            remaining.unshift(moved)
+          const resolvedTarget = resolveYieldTargetParticipant(
+            chat.ensemble.participants || [],
+            runtime.yieldTarget,
+            participant
+          )
+          if (resolvedTarget?.enabled && isBackgroundParticipant(resolvedTarget)) {
+            await this.dispatchBackgroundParticipants(runtime, chat, [resolvedTarget], {
+              prompt: run.content,
+              sourceRunId: run.runId,
+              reason: `Explicit yield from ${participantDisplayName(participant)}.`
+            })
             routedByYieldTarget = true
             this.appendRoundStatus(
               runtime.chatId,
               runtime.roundId,
-              `Yielded to ${moved.role || moved.provider} (${moved.provider}).`
+              `Yielded background work to ${participantDisplayName(resolvedTarget)}; foreground rotation continues.`
             )
-          } else if (idx === 0) {
-            routedByYieldTarget = true
-          } else if (runtime.orchestrationMode === 'continuous') {
-            const target = resolveYieldTargetParticipant(
-              chat.ensemble.participants || [],
-              runtime.yieldTarget,
-              participant
-            )
-            if (target?.enabled) {
+          } else {
+            const idx = resolveYieldTargetIndex(remaining, runtime.yieldTarget)
+            if (idx > 0) {
+              const [moved] = remaining.splice(idx, 1)
+              remaining.unshift(moved)
+              routedByYieldTarget = true
+              this.appendRoundStatus(
+                runtime.chatId,
+                runtime.roundId,
+                `Yielded to ${moved.role || moved.provider} (${moved.provider}).`
+              )
+            } else if (idx === 0) {
+              routedByYieldTarget = true
+            } else if (runtime.orchestrationMode === 'continuous' && resolvedTarget?.enabled) {
               routedByYieldTarget = this.tryAppendContinuationTurn(
                 runtime,
                 remaining,
-                target,
-                `Yielded back to ${target.role || target.provider} (${target.provider}).`
+                resolvedTarget,
+                `Yielded back to ${resolvedTarget.role || resolvedTarget.provider} (${resolvedTarget.provider}).`
               ).appended
             }
           }
@@ -9874,12 +10022,23 @@ export class EnsembleOrchestrator {
         for (const warning of ambiguityWarnings) {
           this.appendRoundStatus(runtime.chatId, runtime.roundId, warning)
         }
+        const backgroundTargets = mentionedParticipants.filter(isBackgroundParticipant)
+        if (backgroundTargets.length > 0) {
+          await this.dispatchBackgroundParticipants(runtime, chat, backgroundTargets, {
+            prompt: run.content,
+            sourceRunId: run.runId,
+            reason: `Explicit @mention from ${participantDisplayName(participant)}.`
+          })
+        }
+        const routedMentionedParticipants = mentionedParticipants.filter(
+          (tagged) => !isBackgroundParticipant(tagged)
+        )
         const remainingTargetIds = new Set(
-          mentionedParticipants
+          routedMentionedParticipants
             .filter((tagged) => remaining.some((entry) => entry.id === tagged.id))
             .map((tagged) => tagged.id)
         )
-        const orderedTargets = mentionedParticipants.filter((tagged) =>
+        const orderedTargets = routedMentionedParticipants.filter((tagged) =>
           remainingTargetIds.has(tagged.id)
         )
         if (orderedTargets.length > 0) {
@@ -9895,7 +10054,7 @@ export class EnsembleOrchestrator {
               .join(', ')} promoted to speak next.`
           )
         }
-        const extraTargets = mentionedParticipants.filter(
+        const extraTargets = routedMentionedParticipants.filter(
           (tagged) => !remainingTargetIds.has(tagged.id)
         )
         if (runtime.orchestrationMode === 'continuous') {
@@ -10375,6 +10534,7 @@ export class EnsembleOrchestrator {
   private canRequestBroadFanout(chat: ChatRecord, run: ActiveParticipantRun): boolean {
     const ensemble = chat.ensemble
     if (!ensemble) return false
+    if (isBackgroundParticipant(run.participant)) return false
     const runtime = this.roundsByChatId.get(run.chatId)
     if (runtime && this.resolveBossAuthorityForCaller(chat, runtime, run.participant.id).ok) {
       return true
@@ -10394,6 +10554,124 @@ export class EnsembleOrchestrator {
         Array.isArray(workSession.allowedParticipantIds) &&
         workSession.allowedParticipantIds.includes(run.participant.id)
     )
+  }
+
+  /**
+   * Explicit BG routing reuses the normal fan-out lane executor, but automatic
+   * @mention/yield launches are always read-only. This keeps shell/test/recon
+   * useful while reserving asynchronous mutations for the existing
+   * Boss-authorized locked-writer path with explicit write scopes.
+   */
+  private async dispatchBackgroundParticipants(
+    runtime: ActiveRoundRuntime,
+    chat: ChatRecord,
+    requested: EnsembleParticipant[],
+    options: { prompt?: string; sourceRunId?: string; reason?: string } = {}
+  ): Promise<string[]> {
+    if (!concurrentLanesEnabled()) {
+      this.appendRoundStatus(
+        runtime.chatId,
+        runtime.roundId,
+        'Background dispatch not launched because parallel lanes are disabled (TASKWRAITH_CONCURRENT_LANES=0).'
+      )
+      return []
+    }
+    const requestedBackgrounds = dedupeParticipants(requested).filter(isBackgroundParticipant)
+    const alreadyActive = requestedBackgrounds.filter(
+      (participant) => this.participantFanoutDispatchState(runtime, participant.id) === 'active'
+    )
+    if (alreadyActive.length > 0) {
+      this.appendRoundStatus(
+        runtime.chatId,
+        runtime.roundId,
+        `Background dispatch not launched for ${alreadyActive
+          .map(participantDisplayName)
+          .join(', ')}: that seat already has an active lane. Wait for its result, then delegate again.`
+      )
+    }
+    const candidates = requestedBackgrounds.filter(
+      (participant) =>
+        this.participantFanoutDispatchState(runtime, participant.id) !== 'active'
+    )
+    const blocked = candidates
+      .map((participant) => ({
+        participant,
+        reason: this.bossmanBudgetBlock(runtime, participant.id, 'fanout_call')
+      }))
+      .filter((entry): entry is { participant: EnsembleParticipant; reason: string } =>
+        Boolean(entry.reason)
+      )
+    if (blocked.length > 0) {
+      this.appendRoundStatus(
+        runtime.chatId,
+        runtime.roundId,
+        `Background dispatch skipped by budget: ${blocked
+          .map((entry) => `${participantDisplayName(entry.participant)} (${entry.reason})`)
+          .join(', ')}.`
+      )
+    }
+    const blockedIds = new Set(blocked.map((entry) => entry.participant.id))
+    const participants = candidates.filter((participant) => !blockedIds.has(participant.id))
+    if (participants.length === 0 || runtime.cancelled) return []
+
+    // Unmentioned BG seats are intentionally absent from activeRound. Add only
+    // the explicitly delegated seats so chip/lane state can transition without
+    // filling every ordinary round with synthetic skipped participants.
+    this.updateChatRound(runtime.chatId, (round) => {
+      if (!round || round.roundId !== runtime.roundId) return round
+      const present = new Set(round.participants.map((entry) => entry.participantId))
+      const added = participants
+        .filter((participant) => !present.has(participant.id))
+        .map((participant) => roundParticipantStateFromParticipant(participant, 'idle'))
+      return added.length > 0
+        ? { ...round, participants: [...round.participants, ...added] }
+        : round
+    })
+
+    runtime.fanoutReservedParticipantIds ??= new Set()
+    for (const participant of participants) {
+      runtime.fanoutReservedParticipantIds.add(participant.id)
+    }
+    try {
+      const latestChat = this.deps.getChat(runtime.chatId) || chat
+      const laneIds = await this.runParallelFanoutPass(runtime, latestChat, participants, {
+        prompt: options.prompt,
+        reason: options.reason,
+        mode: 'read_only',
+        sourceRunId: options.sourceRunId,
+        label: 'Background',
+        forceReadOnlyDispatch: true,
+        waitForCompletion: false,
+        completionDisposition: 'background'
+      })
+      runtime.fannedOutParticipantIds ??= new Set()
+      for (const participant of participants) {
+        runtime.fannedOutParticipantIds.add(participant.id)
+      }
+      this.incrementBossmanBudgetUsage(
+        runtime,
+        participants.map((participant) => participant.id),
+        { fanoutCalls: 1 }
+      )
+      return laneIds
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'background dispatch failed.'
+      this.appendRoundStatus(
+        runtime.chatId,
+        runtime.roundId,
+        `Background dispatch failed: ${message}`
+      )
+      return []
+    } finally {
+      for (const participant of participants) {
+        runtime.fanoutReservedParticipantIds?.delete(participant.id)
+      }
+      if (runtime.fanoutReservedParticipantIds?.size === 0) {
+        runtime.fanoutReservedParticipantIds = undefined
+      }
+      this.maybeResumeDeferredDrain(runtime.chatId)
+    }
   }
 
   /**
@@ -10441,6 +10719,7 @@ export class EnsembleOrchestrator {
       writeScopesByParticipantId?: Map<string, ConcurrentLaneWriteScope[]>
       onCompleteRuns?: (runs: ActiveParticipantRun[]) => void
       waitForCompletion?: boolean
+      completionDisposition?: 'serial' | 'caller' | 'background'
     } = {}
   ): Promise<string[]> {
     if (participants.length === 0) return []
@@ -10762,7 +11041,10 @@ export class EnsembleOrchestrator {
           if (skippedCount > 0) {
             return `${label} complete · ${laneRuns.length - skippedCount} lane(s) returned, ${skippedCount} skipped.`
           }
-          return options.sourceRunId
+          if (options.completionDisposition === 'background') {
+            return `${label} complete · ${laneRuns.length} lane(s) returned.`
+          }
+          return options.completionDisposition === 'caller' || options.sourceRunId
             ? `${label} complete · ${laneRuns.length} lane(s) returned to the caller.`
             : `${label} complete · returning to serial writer step.`
         })()
@@ -10796,8 +11078,13 @@ export class EnsembleOrchestrator {
   ): ActiveParticipantRun {
     const startedAt = this.deps.nowIso()
     const runId = this.deps.createRunId(participant.provider)
-    const promptMessageId = `ensemble-prompt-${runtime.roundId}-${participant.id}`
-    const assistantMessageId = `ensemble-assistant-${runtime.roundId}-${participant.id}`
+    // Serial seats still have one deterministic message identity per round.
+    // A fan-out/BG seat may be delegated more than once in that same round,
+    // so lane records need the run id suffix to avoid colliding in ChatRun
+    // bookkeeping even though timeline rows are already run-id keyed.
+    const laneRunSuffix = options.laneId ? `-${runId}` : ''
+    const promptMessageId = `ensemble-prompt-${runtime.roundId}-${participant.id}${laneRunSuffix}`
+    const assistantMessageId = `ensemble-assistant-${runtime.roundId}-${participant.id}${laneRunSuffix}`
     const run: ChatRun = {
       runId,
       provider: participant.provider,
@@ -11120,6 +11407,7 @@ export class EnsembleOrchestrator {
     const roster = getOrderedEnsembleParticipants(chat.ensemble, runtime.prompt).filter(
       (participant) =>
         participant.enabled &&
+        !isBackgroundParticipant(participant) &&
         !runtime.unreachableParticipantIds?.has(participant.id) &&
         !this.activeBossmanQuarantine(chat, runtime.roundId, participant.id) &&
         !this.bossmanBudgetBlock(runtime, participant.id, 'extra_turn')
@@ -11835,7 +12123,7 @@ export class EnsembleOrchestrator {
         ? findTerminalSynthesizerRoundSummary({
             messages: chat.messages,
             roundId,
-            synthesizerParticipantId: chat.ensemble.synthesizerParticipantId,
+            synthesizerParticipantId: resolveForegroundSynthesizerParticipantId(chat.ensemble),
             capturedAt: endedAt
           })
         : null
@@ -11875,7 +12163,7 @@ export class EnsembleOrchestrator {
         participants: nextRound.participants,
         continuationHops: nextRound.continuationHops,
         maxContinuationHops: nextRound.maxContinuationHops,
-        hasSynthesizer: Boolean(chat.ensemble.synthesizerParticipantId),
+        hasSynthesizer: Boolean(resolveForegroundSynthesizerParticipantId(chat.ensemble)),
         createdAt: endedAt,
         makeId: (kind) => `${roundId}-esc-${kind}`
       })
@@ -12444,7 +12732,16 @@ export class EnsembleOrchestrator {
       chat,
       participant,
       runtime.externalPathGrants,
-      mode === 'read_only' ? { ignoreWorkSessionOverride: true } : {}
+      mode === 'read_only'
+        ? {
+            ignoreWorkSessionOverride: true,
+            ...(isBackgroundParticipant(participant)
+              ? { disallowTrustedSession: true }
+              : {})
+          }
+        : isBackgroundParticipant(participant)
+          ? { disallowTrustedSession: true }
+          : {}
     )
   }
 
@@ -12459,8 +12756,15 @@ export class EnsembleOrchestrator {
       participant,
       runtime.externalPathGrants,
       mode === 'read_only'
-        ? { presetId: 'read_only', ignoreWorkSessionOverride: true, ignoreOverrides: true }
-        : {}
+        ? {
+            presetId: 'read_only',
+            ignoreWorkSessionOverride: true,
+            ignoreOverrides: true,
+            disallowTrustedSession: true
+          }
+        : isBackgroundParticipant(participant)
+          ? { disallowTrustedSession: true }
+          : {}
     )
   }
 
@@ -12494,6 +12798,7 @@ export class EnsembleOrchestrator {
       ignoreOverrides?: boolean
       presetId?: string | null
       ensembleLaneId?: string | null
+      disallowTrustedSession?: boolean
     } = {}
   ): EffectiveRunPermissions {
     // P1b — unattended (scheduled/workflow) ensemble clamp. A scheduled
@@ -12558,6 +12863,7 @@ export class EnsembleOrchestrator {
     const requestedPresetId =
       options.presetId || (sessionActive ? workSession.permissionPresetId : participant.permissionPresetId)
     const trustedSessionGranted =
+      options.disallowTrustedSession !== true &&
       requestedPresetId === 'full_access' &&
       this.deps.isTrustedSessionGranted?.({
         chatId: chat.appChatId,

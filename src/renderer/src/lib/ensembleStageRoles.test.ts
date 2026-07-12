@@ -5,11 +5,12 @@ import {
 } from './ensembleStageRoles'
 
 describe('ensembleStageRoles', () => {
-  it('offers exactly the three orchestrator stages', () => {
+  it('offers the four orchestrator stages', () => {
     expect(ENSEMBLE_STAGE_ROLE_OPTIONS.map((option) => option.id)).toEqual([
       'scout',
       'worker',
-      'reviewer'
+      'reviewer',
+      'background'
     ])
   })
 
@@ -17,6 +18,7 @@ describe('ensembleStageRoles', () => {
     expect(normalizeEnsembleStageRole('scout')).toBe('scout')
     expect(normalizeEnsembleStageRole('worker')).toBe('worker')
     expect(normalizeEnsembleStageRole('reviewer')).toBe('reviewer')
+    expect(normalizeEnsembleStageRole('background')).toBe('background')
     // The "Any (by permissions)" option and junk both clear the stage.
     expect(normalizeEnsembleStageRole('')).toBeUndefined()
     expect(normalizeEnsembleStageRole('boss')).toBeUndefined()

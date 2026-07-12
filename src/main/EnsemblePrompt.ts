@@ -261,17 +261,32 @@ function applyChairSummaryOrder(
   participants: EnsembleParticipant[],
   config: EnsembleConfig
 ): EnsembleParticipant[] {
-  if (config.roundMode !== 'chair-summary' || !config.synthesizerParticipantId) {
+  const synthesizerParticipantId = resolveForegroundSynthesizerParticipantId(config)
+  if (config.roundMode !== 'chair-summary' || !synthesizerParticipantId) {
     return participants
   }
   const idx = participants.findIndex(
-    (participant) => participant.id === config.synthesizerParticipantId
+    (participant) => participant.id === synthesizerParticipantId
   )
   if (idx < 0 || idx === participants.length - 1) return participants
   const next = [...participants]
   const [synthesizer] = next.splice(idx, 1)
   next.push(synthesizer)
   return next
+}
+
+/**
+ * Background seats are detached workers, never round owners. Ignore stale or
+ * conflicting synthesizer assignments instead of turning an async result into
+ * the canonical chair summary.
+ */
+export function resolveForegroundSynthesizerParticipantId(
+  config: EnsembleConfig
+): string | undefined {
+  const participantId = config.synthesizerParticipantId?.trim()
+  if (!participantId) return undefined
+  const participant = config.participants.find((candidate) => candidate.id === participantId)
+  return participant && participant.stageRole !== 'background' ? participantId : undefined
 }
 
 function applyActiveWorkSessionRoster(
@@ -364,7 +379,9 @@ function formatRoleBoundaryContract(
   }
 
   lines.push(
-    `- Turn position: ${positionOneIndexed} of ${totalParticipants}. Account for later speakers; do not close the whole round while peer-owned work remains.`
+    participant.stageRole === 'background'
+      ? '- Background lane position: detached from foreground rotation. Report the scoped result without claiming round ownership or closing peer work.'
+      : `- Turn position: ${positionOneIndexed} of ${totalParticipants}. Account for later speakers; do not close the whole round while peer-owned work remains.`
   )
 
   const peerScopes = formatPeerRoleScopes(orderedParticipants, participant.id)
@@ -386,7 +403,11 @@ function formatAuthorityLines(
     workSession?.leadParticipantId,
     workSession?.managerParticipantId
   ].filter(Boolean) as string[]
-  const uniqueAuthorityIds = [...new Set(authorityIds)]
+  const uniqueAuthorityIds = [...new Set(authorityIds)].filter(
+    (participantId) =>
+      config.participants.find((candidate) => candidate.id === participantId)?.stageRole !==
+      'background'
+  )
   if (uniqueAuthorityIds.length === 0) return []
   const labels = uniqueAuthorityIds
     .map((id) => {
@@ -418,7 +439,9 @@ function resolveEnsemblePlanOwnerId(config: EnsembleConfig): string | null {
   // eligibility/lead) though: an excluded seat must never own a plan that no
   // dispatched participant can emit. Slim sessions retain this rule, so all
   // full and dynamic surfaces share this canonical effective roster.
-  const stableParticipants = getCanonicalEffectiveEnsembleParticipants(config)
+  const stableParticipants = getCanonicalEffectiveEnsembleParticipants(config).filter(
+    (participant) => participant.stageRole !== 'background'
+  )
   const bossmanId = sanitizeText(config.bossmanParticipantId)
   if (bossmanId && stableParticipants.some((participant) => participant.id === bossmanId)) {
     return bossmanId
@@ -806,14 +829,17 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
   // exhausted, or the user stops it (see the continuous-mode round-policy line
   // + rule below, and `tryAutoContinueRound` in EnsembleOrchestrator). So the
   // fixed last-speaker marker is skipped in continuous mode.
-  const isMultiParticipantRound = orderedParticipants.length >= 2
-  const selfIndex = orderedParticipants.findIndex(
+  const rotationParticipants = orderedParticipants.filter(
+    (participant) => participant.stageRole !== 'background'
+  )
+  const isMultiParticipantRound = rotationParticipants.length >= 2
+  const selfIndex = rotationParticipants.findIndex(
     (participant) => participant.id === input.participant.id
   )
-  const totalParticipants = orderedParticipants.length
+  const totalParticipants = rotationParticipants.length
   const positionOneIndexed = selfIndex >= 0 ? selfIndex + 1 : 0
   const isFirstSpeaker =
-    isMultiParticipantRound && orderedParticipants[0]?.id === input.participant.id
+    isMultiParticipantRound && rotationParticipants[0]?.id === input.participant.id
   const isLastSpeaker =
     isMultiParticipantRound &&
     orchestrationMode === 'turn_bound' &&
@@ -829,8 +855,8 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
   const roster = orderedParticipants
     .map((participant) => {
       const isSelf = participant.id === input.participant.id
-      const isFirstInList = participant.id === orderedParticipants[0]?.id
-      const isLastInList = participant.id === orderedParticipants[totalParticipants - 1]?.id
+      const isFirstInList = participant.id === rotationParticipants[0]?.id
+      const isLastInList = participant.id === rotationParticipants[totalParticipants - 1]?.id
       // Position marker accompanies the "(you)" tag. First/last
       // markers give the model a contextual cue beyond the rule
       // lines further down — useful even when the participant
@@ -1123,7 +1149,12 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
               '',
               'Stage role: worker — you take a serial implementation turn. Act on the request (and any scout findings above) directly.'
             ]
-          : []),
+          : input.participant.stageRole === 'background'
+            ? [
+                '',
+                'Stage role: background — you were explicitly delegated an asynchronous lane and do not consume an ordinary round turn. Execute only the scoped request, respect the lane permission posture, and report concise evidence when ready; do not take ownership of foreground rotation, call ensemble_continue, or claim Boss/Captain/synthesizer authority.'
+              ]
+            : []),
     ...(isOllamaParticipant
       ? [
           '',
@@ -1158,7 +1189,7 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
     // banned, just exceptional.
     '- Address participants by their **participant (role) name** (e.g. `@Farmer`, `@Merchant`) or **model name** (e.g. `@Sonnet 4.6`, `@Flash Lite`) exactly as shown in the roster — these route deterministically to the participant you mean. Do NOT address peers by bare provider name (`@gemini`, `@claude`) unless that provider has exactly one participant on this panel: with same-provider peers a provider tag resolves non-deterministically and your message may reach the wrong panelist.',
     '- If another participant should handle this turn, call ensemble_yield with a short reason and optional target.',
-    '- Use ensemble_fanout when multiple peers should work in parallel. Default read_only fan-out only targets read-only participants; locked_writers fan-out is feature-gated, requires the assigned Boss (or active Captain after Boss unavailability) as caller with explicit writeScopes for writer targets, and relies on workspace write locks. Set targetStage to all, scouts, workers, or reviewers for selective stage fan-out; targetStage=all excludes untyped Any roles. When no Boss is assigned, automatic writer fan-out is host-mediated by user-enabled write-scope claim + matrix-ack preflight rather than peer tool calls.',
+    '- Use ensemble_fanout when multiple peers should work in parallel. Default read_only fan-out only targets read-only participants; locked_writers fan-out is feature-gated, requires the assigned Boss (or active Captain after Boss unavailability) as caller with explicit writeScopes for writer targets, and relies on workspace write locks. Set targetStage to all, scouts, workers, reviewers, or backgrounds for selective stage fan-out; targetStage=all excludes untyped Any roles. A unique `@BG` / `@Background` mention launches the background-stage seat asynchronously without consuming foreground rotation. When no Boss is assigned, automatic writer fan-out is host-mediated by user-enabled write-scope claim + matrix-ack preflight rather than peer tool calls.',
     '- If you are the assigned Boss, or the Captain after Boss is unavailable, use ensemble_bossman_control for bounded orchestration state: assign_work, set_round_plan, request_status, declare_decision, set_review_gate, quarantine_participant, allocate_budget, create_poll, set_goal, update_goal, clear_goal, adjust_hops, ensemble_scheduled_wakeup, check_quota_resets, and summon_participant. Do not merely narrate that @Worker still has work and wait for the rotation; use ensemble_fanout for parallel work, summon_participant or ensemble_yield for direct continuation, and roster/seat changes for provider/model mismatch.',
     '- If you are the assigned Boss, or the Captain after Boss is unavailable, and Boss/Captain Auto Approvals are enabled, use list_ensemble_participants before ensemble_roster_edit to inspect participant ids, available providers/models, model context windows, and coarse provider quota bands; then you may swap a non-active participant seat provider/model/reasoning/permissions when quota walls, weak output, or agreed role changes warrant it. Use ensemble_brief_update for another participant\'s Brief / Goal changes; you cannot change your own brief.',
     '- Use blackboard_post only for durable shared facts, decisions, risks, or do-not-repeat notes. Do not use the blackboard for conversational side messages. Read the board on demand with blackboard_read (bounded: pass keys/category/first/last — a bare call returns the newest entries, so small-context seats can read specific posts a peer points them at). Retire stale or superseded entries with blackboard_delete so the board stays current.',
@@ -1279,7 +1310,7 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
     // for decisions / open risks / corrections / next action.
     // Lands once per participant per round; non-synthesizer
     // participants don't see this rule.
-    ...(input.config.synthesizerParticipantId === input.participant.id
+    ...(resolveForegroundSynthesizerParticipantId(input.config) === input.participant.id
       ? [
           '',
           '- You are the designated SYNTHESIZER for this ensemble. After your normal response, append a structured summary block titled "Round summary:" containing four short lines: `Decisions:` (what was decided this round), `Corrections:` (any earlier panel claims this round needed to correct), `Open risks:` (unresolved concerns the user should know about), `Next action:` (what the panel recommends next). Keep each line under ~120 chars; this summary propagates to every participant in the following round.'
@@ -2128,7 +2159,8 @@ export function formatRoundModeInstructions(
     return []
   }
   if (mode === 'chair-summary') {
-    const isSynthesizer = config.synthesizerParticipantId === currentParticipantId
+    const isSynthesizer =
+      resolveForegroundSynthesizerParticipantId(config) === currentParticipantId
     if (isSynthesizer) {
       return [
         '',

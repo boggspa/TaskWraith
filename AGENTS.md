@@ -217,6 +217,25 @@ think…" without looping yourself back to the front).
 This is the lower-friction way to invite collaboration — yield is
 explicit, mention is conversational.
 
+### Stage roles and background lanes
+
+The participant Stage control has five choices: **Any**, **Scout**, **Work**,
+**Review**, and **BG**. Scout/Work/Review shape the foreground waves. A BG
+participant is different: it receives no ordinary serial or review turn and
+runs only when explicitly delegated.
+
+- A unique `@BG`, `@Background`, `@Role`, or `@Model` mention launches that
+  participant in a detached lane while foreground rotation continues. Bare
+  `@BG` is rejected as ambiguous when more than one BG seat matches.
+- Mention/yield launches are always capped to read-only posture. Scoped
+  mutations must use the existing Boss-authorized
+  `ensemble_fanout(mode=locked_writers, targetStage=backgrounds,
+  writeScopes=...)` path.
+- BG lanes never inherit Trusted Session and cannot own Boss, Captain, Work
+  Session lead/manager, synthesizer, or broad fan-out authority.
+- Normal completion waits for live/reserved BG lanes. Cancellation and failure
+  preserve the terminal fast-close semantics and stop those lanes immediately.
+
 ### Turn-bound vs Continuous mode
 
 Each ensemble has a `orchestrationMode`:

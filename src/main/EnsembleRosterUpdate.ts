@@ -5,6 +5,7 @@ type BossmanRosterEntry = {
 
 type BossmanRosterParticipant = {
   id: string
+  stageRole?: string
 }
 
 export type BossmanRosterUpdateResolution<TAutoApprovals = unknown> =
@@ -20,6 +21,10 @@ export type BossmanRosterUpdateResolution<TAutoApprovals = unknown> =
     }
 
 const hasOwn = Object.prototype.hasOwnProperty
+
+function canOwnEnsembleAuthority(participant: BossmanRosterParticipant | undefined): boolean {
+  return Boolean(participant && participant.stageRole !== 'background')
+}
 
 export function resolveRosterUpdateBossmanAssignment<TAutoApprovals>(
   entries: ReadonlyArray<BossmanRosterEntry>,
@@ -48,13 +53,26 @@ export function resolveRosterUpdateBossmanAssignment<TAutoApprovals>(
   if (markedSecondIndexes.length > 1) {
     return { ok: false, error: 'Only one participant may be marked as Captain.' }
   }
+  if (
+    [...markedIndexes, ...markedSecondIndexes].some(
+      (index) => !canOwnEnsembleAuthority(participants[index])
+    )
+  ) {
+    return {
+      ok: false,
+      error: 'Background participants cannot be assigned as Boss or Captain.'
+    }
+  }
 
   const markedBossmanParticipantId =
     markedIndexes.length === 1 ? participants[markedIndexes[0]]?.id : undefined
   const preservedBossmanParticipantId =
     !markerWasSpecified &&
     previous.bossmanParticipantId &&
-    participants.some((participant) => participant.id === previous.bossmanParticipantId)
+    participants.some(
+      (participant) =>
+        participant.id === previous.bossmanParticipantId && canOwnEnsembleAuthority(participant)
+    )
       ? previous.bossmanParticipantId
       : undefined
   const bossmanParticipantId = markedBossmanParticipantId ?? preservedBossmanParticipantId
@@ -64,7 +82,11 @@ export function resolveRosterUpdateBossmanAssignment<TAutoApprovals>(
     !secondMarkerWasSpecified &&
     previous.secondInCommandParticipantId &&
     previous.secondInCommandParticipantId !== bossmanParticipantId &&
-    participants.some((participant) => participant.id === previous.secondInCommandParticipantId)
+    participants.some(
+      (participant) =>
+        participant.id === previous.secondInCommandParticipantId &&
+        canOwnEnsembleAuthority(participant)
+    )
       ? previous.secondInCommandParticipantId
       : undefined
   const secondInCommandParticipantId =

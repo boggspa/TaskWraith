@@ -256,6 +256,30 @@ describe('handleEnsembleContinue', () => {
       expect(result.ok).toBe(true)
     })
 
+    it('does not let a background lane advance or complete a Work Session', () => {
+      const chat = makeChat(
+        {},
+        {
+          participants: [makeParticipant({ stageRole: 'background' })],
+          workSession: makeWorkSession({ allowedParticipantIds: null })
+        }
+      )
+      const { deps, queueFollowUpPrompt } = makeDeps(chat)
+      const result = handleEnsembleContinue(
+        'chat-1',
+        { nextPrompt: 'background tries to advance', acceptanceStatus: 'inProgress' },
+        deps
+      )
+
+      expect(result).toMatchObject({
+        ok: false,
+        queued: false,
+        error: 'participant_not_allowed'
+      })
+      expect(result.message).toContain('background lanes cannot advance or complete')
+      expect(queueFollowUpPrompt).not.toHaveBeenCalled()
+    })
+
     it('rejects when nextPrompt is missing for inProgress', () => {
       const chat = makeChat()
       const { deps, queueFollowUpPrompt } = makeDeps(chat)

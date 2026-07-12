@@ -155,6 +155,20 @@ export function handleEnsembleContinue(
     }
   }
 
+  const callingParticipant = ensemble.participants.find(
+    (participant) => participant.id === deps.callingParticipantId
+  )
+  if (callingParticipant?.stageRole === 'background') {
+    return {
+      ok: false,
+      status: 'active',
+      message:
+        'ensemble_continue: background lanes cannot advance or complete a Work Session; report the scoped result and leave foreground ownership unchanged.',
+      queued: false,
+      error: 'participant_not_allowed'
+    }
+  }
+
   // Defensive default: if the agent omits the field, treat as
   // inProgress (the most common case). If the field is set to a
   // bogus value, reject — we don't want to silently coerce

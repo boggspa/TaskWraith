@@ -482,10 +482,12 @@ describe('bridge preset save carries stageRole (spike 4 iOS parity)', () => {
     const preset = saveEnsembleRosterPresetFromParticipants('Phone panel', [
       { provider: 'claude', role: 'Auditor', stageRole: 'reviewer' },
       { provider: 'codex', role: 'Builder', stageRole: 'boss' },
-      { provider: 'kimi', role: 'Scout', stageRole: 'scout' }
+      { provider: 'kimi', role: 'Scout', stageRole: 'scout' },
+      { provider: 'cursor', role: 'Shell helper', stageRole: 'background' }
     ])
     expect(preset.participants[0].stageRole).toBe('reviewer')
     expect(preset.participants[1]).not.toHaveProperty('stageRole')
     expect(preset.participants[2].stageRole).toBe('scout')
+    expect(preset.participants[3].stageRole).toBe('background')
   })
 })

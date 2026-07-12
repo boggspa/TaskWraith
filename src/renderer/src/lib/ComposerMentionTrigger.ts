@@ -91,6 +91,7 @@ export interface EnsembleDmCandidate {
   role?: string
   provider: string
   model?: string
+  stageRole?: string
 }
 
 /**
@@ -129,7 +130,13 @@ export function extractFirstEnsembleDmTarget(
     .map((match) => match[1])
     .filter(Boolean)
   const uniqueLinkTargets = [...new Set(linkMatches)]
-  if (uniqueLinkTargets.length === 1) return uniqueLinkTargets[0]
+  if (uniqueLinkTargets.length === 1) {
+    const linkedParticipant = participants?.find(
+      (participant) => participant.id === uniqueLinkTargets[0]
+    )
+    if (linkedParticipant?.stageRole === 'background') return null
+    return uniqueLinkTargets[0]
+  }
   if (uniqueLinkTargets.length > 1) return null
 
   if (!participants || participants.length === 0) return null
@@ -144,11 +151,13 @@ export function extractFirstEnsembleDmTarget(
     prompt,
     participants as unknown as Parameters<typeof findAllMentions>[1]
   )
+  const participantMentions = mentions.filter((match) => match.kind === 'participant')
+  if (participantMentions.some((match) => match.participant.stageRole === 'background')) {
+    return null
+  }
   const participantIds = [
     ...new Set(
-      mentions
-        .filter((match) => match.kind === 'participant')
-        .map((match) => match.participant.id)
+      participantMentions.map((match) => match.participant.id)
     )
   ]
   // User mentions are informational in this send path. They do not

@@ -6,8 +6,9 @@ import type { EnsembleStageRole } from '../../../main/store/types'
  * docs/ensemble-posture-fanout-preamble-design.md): scouts join the
  * round-start parallel read pass, workers always take a serial
  * implementation turn, reviewers wait until every non-reviewer finishes and
- * then run (as a parallel review wave when eligible). No stage = the
- * pre-stage behavior, inferred purely from the seat's permissions.
+ * then run (as a parallel review wave when eligible), and background seats
+ * run only when explicitly delegated or @mentioned. No stage = the pre-stage
+ * behavior, inferred purely from the seat's permissions.
  */
 export const ENSEMBLE_STAGE_ROLE_OPTIONS: ReadonlyArray<{
   id: EnsembleStageRole
@@ -31,12 +32,23 @@ export const ENSEMBLE_STAGE_ROLE_OPTIONS: ReadonlyArray<{
     label: 'Reviewer — runs after the others finish',
     description:
       'Waits until every non-reviewer has spoken, then reviews what changed (parallel review wave when at least two eligible reviewers remain).'
+  },
+  {
+    id: 'background',
+    label: 'BG — async, only when delegated',
+    description:
+      'Skips ordinary round rotation and runs in a detached background lane only when explicitly @mentioned or delegated; cannot own Boss/Captain/synthesizer authority.'
   }
 ]
 
 export const ENSEMBLE_STAGE_ROLE_HINT =
-  'Staged fan-out: scouts investigate at round start, workers take serial implementation turns, reviewers wait for the others and then verify the work. Leave unset to schedule purely by permissions.'
+  'Staged fan-out: scouts investigate first, workers take serial implementation turns, reviewers verify last, and BG seats run asynchronously only when explicitly delegated. Leave unset to schedule purely by permissions.'
 
 export function normalizeEnsembleStageRole(value: unknown): EnsembleStageRole | undefined {
-  return value === 'scout' || value === 'worker' || value === 'reviewer' ? value : undefined
+  return value === 'scout' ||
+    value === 'worker' ||
+    value === 'reviewer' ||
+    value === 'background'
+    ? value
+    : undefined
 }

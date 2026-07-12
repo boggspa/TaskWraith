@@ -1225,7 +1225,7 @@ public struct RemoteEnsembleState: Codable, Sendable, Equatable {
         public let reasoningEffort: String?
         public let fastModeEnabled: Bool?
         public let thinkingEnabled: Bool?
-        /// Staged fan-out stage ("scout" | "worker" | "reviewer") — spike 4.
+        /// Staged fan-out stage ("scout" | "worker" | "reviewer" | "background").
         /// Optional so older Mac builds (which didn't project it) still decode.
         public let stageRole: String?
         public let isBossman: Bool?

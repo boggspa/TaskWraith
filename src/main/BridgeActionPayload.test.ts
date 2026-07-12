@@ -2265,7 +2265,7 @@ describe('ensembleRosterUpdate stageRole (staged fan-out)', () => {
   }
 
   it('decodes valid stages and the empty-string clear', () => {
-    for (const stage of ['scout', 'worker', 'reviewer', '']) {
+    for (const stage of ['scout', 'worker', 'reviewer', 'background', '']) {
       const { payload } = decodeBridgeActionPayload(encode(rosterUpdate(stage)))
       expect(payload.kind).toBe('ensembleRosterUpdate')
       if (payload.kind === 'ensembleRosterUpdate') {

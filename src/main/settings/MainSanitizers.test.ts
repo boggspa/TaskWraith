@@ -55,6 +55,16 @@ describe('normalizeEnsembleRunIdentity', () => {
       ensembleContextChars: 24000,
       ensembleContextTurns: 4
     })
+    expect(
+      normalizeEnsembleRunIdentity({
+        roundId: 'round-bg',
+        participantId: 'claude-bg',
+        provider: 'claude',
+        role: 'Shell helper',
+        stageRole: 'background',
+        order: 4
+      })
+    ).toMatchObject({ stageRole: 'background' })
   })
 
   it('drops invalid stage roles rather than preserving untrusted values', () => {

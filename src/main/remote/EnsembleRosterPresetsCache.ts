@@ -122,7 +122,8 @@ function mapSnapshot(
       : {}),
     ...(entry.stageRole === 'scout' ||
     entry.stageRole === 'worker' ||
-    entry.stageRole === 'reviewer'
+    entry.stageRole === 'reviewer' ||
+    entry.stageRole === 'background'
       ? { stageRole: entry.stageRole }
       : {})
   }

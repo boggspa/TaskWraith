@@ -100,9 +100,9 @@ surface:
 
 - Mac to phone roster and ensemble-preset projections carry `stageRole`.
 - Phone to Mac `ensembleRosterUpdate` accepts only `scout`, `worker`,
-  `reviewer`, or `''`; an absent field preserves the existing stage and `''`
-  explicitly clears it.
-- iOS roster editing can set Any / Scout / Worker / Reviewer and now uses the
+  `reviewer`, `background`, or `''`; an absent field preserves the existing
+  stage and `''` explicitly clears it.
+- iOS roster editing can set Any / Scout / Worker / Reviewer / BG and now uses the
   Mac-side 20-seat roster cap.
 
 This closes the bridge round-trip for live roster editing. It does not by
@@ -547,7 +547,10 @@ Target:
 What exists:
 
 - Live roster/preset bridge now round-trips `stageRole`.
-- The orchestrator uses stage roles for scout/worker/reviewer scheduling.
+- The orchestrator uses stage roles for scout/worker/reviewer foreground
+  scheduling and explicit background lanes. BG seats are absent from ordinary
+  rotation, mention/yield launches are read-only capped, locked mutation stays
+  behind scoped writer fan-out, and normal completion joins live BG lanes.
 - Solo wakeups capture a permission snapshot.
 - Remote queued composer work now preserves `workflowMode`.
 - Ensemble run identity now preserves `laneId` and `stageRole` across dispatch

@@ -184,6 +184,19 @@ describe('getParticipantAliases', () => {
     const aliases = new Set(getParticipantAliases(sneaky))
     expect(aliases.has('me')).toBe(false)
   })
+
+  it('adds BG and background aliases only for a background-stage seat', () => {
+    const background = participant({
+      id: 'ensemble-shell',
+      provider: 'claude',
+      role: 'Shell helper',
+      stageRole: 'background' as EnsembleParticipant['stageRole']
+    })
+    const aliases = new Set(getParticipantAliases(background))
+    expect(aliases.has('bg')).toBe(true)
+    expect(aliases.has('background')).toBe(true)
+    expect(new Set(getParticipantAliases(CLAUDE)).has('bg')).toBe(false)
+  })
 })
 
 describe('isReservedMentionToken', () => {
@@ -524,5 +537,15 @@ describe('resolveSingleEnsembleDmTarget', () => {
 
   it('dedupes repeated mentions of one participant to a single target', () => {
     expect(resolveSingleEnsembleDmTarget('@codex @codex urgent', panel)).toBe('ensemble-codex')
+  })
+
+  it('keeps a sole BG mention in the panel round instead of turning it into a DM', () => {
+    const background = participant({
+      id: 'ensemble-shell',
+      provider: 'claude',
+      role: 'Shell helper',
+      stageRole: 'background' as EnsembleParticipant['stageRole']
+    })
+    expect(resolveSingleEnsembleDmTarget('@BG run tests', [CODEX, background])).toBeNull()
   })
 })

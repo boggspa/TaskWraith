@@ -529,7 +529,7 @@ export interface RemoteEnsembleRosterEntry {
   reasoningEffort?: string
   fastModeEnabled?: boolean
   thinkingEnabled?: boolean
-  /** Staged fan-out stage ('scout' | 'worker' | 'reviewer') — spike 4; the
+  /** Staged fan-out stage (scout/worker/reviewer/background); the
    * iOS Roster page displays and round-trips it via ensembleRosterUpdate. */
   stageRole?: string
   isBossman?: boolean

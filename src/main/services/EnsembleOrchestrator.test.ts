@@ -10870,6 +10870,134 @@ Next action:
     })
   })
 
+  it('targetStage=backgrounds explicitly dispatches only BG seats', async () => {
+    const harness = makeHarness()
+    harness.chat.ensemble!.fanoutPolicy = 'off'
+    harness.chat.ensemble!.bossmanParticipantId = 'codex'
+    harness.chat.ensemble!.participants = [
+      {
+        id: 'codex',
+        provider: 'codex',
+        enabled: true,
+        role: 'LeadBoss',
+        instructions: 'Coordinate.',
+        order: 1,
+        permissionPresetId: 'workspace_write',
+        stageRole: 'worker'
+      },
+      {
+        id: 'claude-bg',
+        provider: 'claude',
+        enabled: true,
+        role: 'Shell helper',
+        instructions: 'Run checks.',
+        order: 2,
+        permissionPresetId: 'read_only',
+        stageRole: 'background'
+      }
+    ]
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Lead starts without summoning BG.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const runtime = (
+      harness.orchestrator as unknown as {
+        roundsByChatId: Map<string, { fanoutPolicy: EnsembleConfig['fanoutPolicy'] }>
+      }
+    ).roundsByChatId.get('ensemble-chat')
+    expect(runtime).toBeTruthy()
+    runtime!.fanoutPolicy = 'all'
+
+    const result = await harness.orchestrator.fanoutForRun(
+      harness.dispatched[0].appRunId,
+      {
+        prompt: 'Run the background checks.',
+        targetStage: 'backgrounds'
+      }
+    )
+    expect(result).toMatchObject({
+      ok: true,
+      targetStage: 'backgrounds',
+      participantIds: ['claude-bg']
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    expect(harness.dispatched[1].ensembleRun?.participantId).toBe('claude-bg')
+    expect(harness.dispatched[1].ensembleRun?.laneId).toBeTruthy()
+    completeDispatchedRun(harness, 1)
+    completeDispatchedRun(harness, 0)
+  })
+
+  it('keeps an explicit locked-writer BG lane below Trusted Session', async () => {
+    const previous = process.env.TASKWRAITH_CONCURRENT_WRITE_LANES
+    process.env.TASKWRAITH_CONCURRENT_WRITE_LANES = '1'
+    const isTrustedSessionGranted = vi.fn(() => true)
+    try {
+      const harness = makeHarness({ isTrustedSessionGranted })
+      harness.chat.ensemble!.fanoutPolicy = 'all'
+      harness.chat.ensemble!.bossmanParticipantId = 'lead'
+      harness.chat.ensemble!.participants = [
+        {
+          id: 'lead',
+          provider: 'codex',
+          enabled: true,
+          role: 'Lead',
+          instructions: 'Coordinate.',
+          order: 1,
+          permissionPresetId: 'workspace_write',
+          stageRole: 'worker'
+        },
+        {
+          id: 'background-shell',
+          provider: 'claude',
+          enabled: true,
+          role: 'Shell helper',
+          instructions: 'Apply a scoped background edit.',
+          order: 2,
+          permissionPresetId: 'full_access',
+          stageRole: 'background'
+        }
+      ]
+      harness.orchestrator.startRound({
+        chatId: 'ensemble-chat',
+        prompt: 'Lead starts.',
+        event: { sender: {} as Electron.WebContents }
+      })
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+      const fanout = harness.orchestrator.fanoutForRun(
+        harness.dispatched[0].appRunId,
+        {
+          prompt: 'Edit only generated reports.',
+          mode: 'locked_writers',
+          targetStage: 'backgrounds',
+          writeScopes: { 'background-shell': ['reports/generated/**'] }
+        }
+      )
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+      const backgroundRun = harness.dispatched[1]
+      expect(backgroundRun.ensembleRun?.participantId).toBe('background-shell')
+      expect(backgroundRun.effectivePermissions?.presetId).toBe('workspace_write')
+      expect(isTrustedSessionGranted).not.toHaveBeenCalledWith(
+        expect.objectContaining({ ensembleParticipantId: 'background-shell' })
+      )
+      completeDispatchedRun(harness, 1)
+      await expect(fanout).resolves.toMatchObject({
+        ok: true,
+        mode: 'locked_writers',
+        targetStage: 'backgrounds'
+      })
+      completeDispatchedRun(harness, 0)
+    } finally {
+      if (previous === undefined) {
+        delete process.env.TASKWRAITH_CONCURRENT_WRITE_LANES
+      } else {
+        process.env.TASKWRAITH_CONCURRENT_WRITE_LANES = previous
+      }
+    }
+  })
+
   it('1.0.8: ensemble_fanout rejects broad fanout from non-authority participants', async () => {
     const harness = makeHarness()
     harness.chat.ensemble!.fanoutPolicy = 'read_only'
@@ -12864,6 +12992,496 @@ describe('staged fan-out (stageRole)', () => {
     ).toBe(true)
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
     expect(harness.dispatched[1].provider).toBe('claude')
+  })
+})
+
+describe('background stage routing', () => {
+  function backgroundParticipant(
+    overrides: Partial<EnsembleParticipant> = {}
+  ): EnsembleParticipant {
+    return {
+      id: 'background-shell',
+      provider: 'claude',
+      enabled: true,
+      role: 'Shell helper',
+      instructions: 'Run scoped background checks and report evidence.',
+      order: 2,
+      permissionPresetId: 'workspace_write',
+      stageRole: 'background' as EnsembleParticipant['stageRole'],
+      ...overrides
+    }
+  }
+
+  it('does not give a background participant an ordinary serial turn', async () => {
+    const harness = makeHarness()
+    harness.chat.ensemble!.participants = [
+      {
+        id: 'lead',
+        provider: 'codex',
+        enabled: true,
+        role: 'Lead',
+        instructions: 'Lead the round.',
+        order: 1,
+        permissionPresetId: 'workspace_write'
+      },
+      backgroundParticipant()
+    ]
+
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Handle this normally without delegating background work.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    expect(harness.dispatched[0].ensembleRun?.participantId).toBe('lead')
+
+    completeDispatchedRun(harness, 0)
+    await vi.waitFor(() =>
+      expect(harness.chat.ensemble?.activeRound?.status).toBe('completed')
+    )
+    expect(harness.dispatched).toHaveLength(1)
+    expect(
+      harness.chat.ensemble?.activeRound?.participants.map((entry) => entry.participantId)
+    ).toEqual(['lead'])
+  })
+
+  it('keeps a one-foreground-plus-BG roster usable when Read fan-out is selected', async () => {
+    const harness = makeHarness()
+    harness.chat.ensemble!.fanoutPolicy = 'read_only'
+    harness.chat.ensemble!.participants = [
+      {
+        id: 'lead',
+        provider: 'codex',
+        enabled: true,
+        role: 'Lead',
+        instructions: 'Lead the round.',
+        order: 1,
+        permissionPresetId: 'workspace_write'
+      },
+      backgroundParticipant()
+    ]
+
+    expect(() =>
+      harness.orchestrator.startRound({
+        chatId: 'ensemble-chat',
+        prompt: 'Handle this without background work.',
+        event: { sender: {} as Electron.WebContents }
+      })
+    ).not.toThrow()
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    expect(harness.dispatched[0].ensembleRun?.participantId).toBe('lead')
+
+    completeDispatchedRun(harness, 0)
+  })
+
+  it('explains an all-BG round that did not explicitly delegate a seat', async () => {
+    const harness = makeHarness()
+    harness.chat.ensemble!.participants = [
+      backgroundParticipant({ id: 'background-tests', role: 'Test runner', order: 1 }),
+      backgroundParticipant({
+        id: 'background-logs',
+        provider: 'kimi',
+        role: 'Log watcher',
+        order: 2
+      })
+    ]
+
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Investigate this.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() =>
+      expect(harness.chat.ensemble?.activeRound?.status).toBe('completed')
+    )
+    expect(harness.dispatched).toHaveLength(0)
+    expect(
+      harness.chat.messages.some(
+        (message) =>
+          typeof message.content === 'string' &&
+          message.content.includes('No foreground participant was scheduled')
+      )
+    ).toBe(true)
+  })
+
+  it('launches a user-mentioned BG seat asynchronously with a read-only cap', async () => {
+    const harness = makeHarness()
+    harness.chat.ensemble!.participants = [
+      {
+        id: 'lead',
+        provider: 'codex',
+        enabled: true,
+        role: 'Lead',
+        instructions: 'Lead the foreground round.',
+        order: 1,
+        permissionPresetId: 'workspace_write'
+      },
+      backgroundParticipant()
+    ]
+
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: '@BG run the shell checks while Lead handles the foreground answer.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    const backgroundIndex = harness.dispatched.findIndex(
+      (payload) => payload.ensembleRun?.participantId === 'background-shell'
+    )
+    const leadIndex = harness.dispatched.findIndex(
+      (payload) => payload.ensembleRun?.participantId === 'lead'
+    )
+    expect(backgroundIndex).toBeGreaterThanOrEqual(0)
+    expect(leadIndex).toBeGreaterThanOrEqual(0)
+    expect(harness.dispatched[backgroundIndex].ensembleRun?.laneId).toBeTruthy()
+    expect(harness.dispatched[backgroundIndex].effectivePermissions?.readOnly).toBe(true)
+    expect(harness.dispatched[backgroundIndex].prompt).toContain('Stage role: background')
+
+    completeDispatchedRun(harness, leadIndex)
+    await vi.waitFor(() =>
+      expect(harness.chat.ensemble?.activeRound?.status).toBe('running')
+    )
+    harness.orchestrator.handleProviderOutput(
+      harness.dispatched[backgroundIndex].provider,
+      {
+        appRunId: harness.dispatched[backgroundIndex].appRunId,
+        appChatId: 'ensemble-chat'
+      },
+      { type: 'message', role: 'assistant', delta: true, content: 'BG checks passed.' }
+    )
+    completeDispatchedRun(harness, backgroundIndex)
+    await vi.waitFor(() =>
+      expect(harness.chat.ensemble?.activeRound?.status).toBe('completed')
+    )
+    const result = harness.chat.messages.find((message) =>
+      message.content?.includes('BG checks passed.')
+    )
+    expect(result?.metadata).toMatchObject({
+      ensembleParticipantId: 'background-shell',
+      ensembleStageRole: 'background',
+      ensembleLaneIntent: 'read'
+    })
+  })
+
+  it('does not bypass the global parallel-lane kill switch', async () => {
+    const previous = process.env.TASKWRAITH_CONCURRENT_LANES
+    process.env.TASKWRAITH_CONCURRENT_LANES = '0'
+    try {
+      const harness = makeHarness()
+      harness.chat.ensemble!.participants = [
+        {
+          id: 'lead',
+          provider: 'codex',
+          enabled: true,
+          role: 'Lead',
+          instructions: 'Lead the foreground round.',
+          order: 1,
+          permissionPresetId: 'workspace_write'
+        },
+        backgroundParticipant()
+      ]
+      harness.orchestrator.startRound({
+        chatId: 'ensemble-chat',
+        prompt: '@BG run checks while Lead continues.',
+        event: { sender: {} as Electron.WebContents }
+      })
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+      expect(harness.dispatched[0].ensembleRun?.participantId).toBe('lead')
+      expect(
+        harness.chat.messages.some(
+          (message) =>
+            typeof message.content === 'string' &&
+            message.content.includes('Background dispatch not launched') &&
+            message.content.includes('TASKWRAITH_CONCURRENT_LANES=0')
+        )
+      ).toBe(true)
+      completeDispatchedRun(harness, 0)
+    } finally {
+      if (previous === undefined) {
+        delete process.env.TASKWRAITH_CONCURRENT_LANES
+      } else {
+        process.env.TASKWRAITH_CONCURRENT_LANES = previous
+      }
+    }
+  })
+
+  it('does not guess when a bare @BG mention matches multiple background seats', async () => {
+    const harness = makeHarness()
+    harness.chat.ensemble!.participants = [
+      {
+        id: 'lead',
+        provider: 'codex',
+        enabled: true,
+        role: 'Lead',
+        instructions: 'Lead the foreground round.',
+        order: 1,
+        permissionPresetId: 'workspace_write'
+      },
+      backgroundParticipant({
+        id: 'background-tests',
+        role: 'Test runner',
+        order: 2
+      }),
+      backgroundParticipant({
+        id: 'background-logs',
+        provider: 'kimi',
+        role: 'Log watcher',
+        order: 3
+      })
+    ]
+
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: '@BG investigate while Lead continues.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    expect(harness.dispatched[0].ensembleRun?.participantId).toBe('lead')
+    expect(
+      harness.chat.messages.some(
+        (message) =>
+          typeof message.content === 'string' &&
+          message.content.includes('`@BG` was ambiguous') &&
+          message.content.includes('No background lane launched')
+      )
+    ).toBe(true)
+
+    completeDispatchedRun(harness, 0)
+  })
+
+  it('never treats a background lane as Boss or Captain authority', async () => {
+    const harness = makeHarness()
+    harness.chat.ensemble!.bossmanParticipantId = 'background-shell'
+    harness.chat.ensemble!.participants = [
+      {
+        id: 'lead',
+        provider: 'codex',
+        enabled: true,
+        role: 'Lead',
+        instructions: 'Lead the foreground round.',
+        order: 1,
+        permissionPresetId: 'workspace_write'
+      },
+      backgroundParticipant()
+    ]
+
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: '@BG run the checks while Lead continues.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    const backgroundRun = harness.dispatched.find(
+      (payload) => payload.ensembleRun?.participantId === 'background-shell'
+    )
+    expect(backgroundRun).toBeTruthy()
+
+    const participantView = harness.orchestrator.listParticipantsForRun(
+      backgroundRun?.appRunId
+    )
+    expect(participantView.ok).toBe(true)
+    expect(participantView.bossmanAuthorityRole).toBeUndefined()
+    expect(participantView.rosterEditAllowed).toBe(false)
+    expect(
+      harness.chat.messages.some(
+        (message) =>
+          typeof message.content === 'string' &&
+          message.content.includes('BG seats cannot own Ensemble authority')
+      )
+    ).toBe(true)
+
+    await harness.orchestrator.cancelRound('ensemble-chat')
+  })
+
+  it('turns an agent @BG mention into a lane without delaying the next serial seat', async () => {
+    const harness = makeHarness()
+    harness.chat.ensemble!.participants = [
+      {
+        id: 'lead',
+        provider: 'codex',
+        enabled: true,
+        role: 'Lead',
+        instructions: 'Delegate checks.',
+        order: 1,
+        permissionPresetId: 'workspace_write'
+      },
+      {
+        id: 'worker',
+        provider: 'kimi',
+        enabled: true,
+        role: 'Worker',
+        instructions: 'Continue foreground work.',
+        order: 2,
+        permissionPresetId: 'workspace_write'
+      },
+      backgroundParticipant({ order: 3 })
+    ]
+
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Coordinate the work.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    harness.orchestrator.handleProviderOutput(
+      'codex',
+      { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' },
+      {
+        type: 'message',
+        role: 'assistant',
+        delta: true,
+        content: '@BG run the shell tests while Worker continues.'
+      }
+    )
+    completeDispatchedRun(harness, 0)
+
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
+    const backgroundIndex = harness.dispatched.findIndex(
+      (payload) => payload.ensembleRun?.participantId === 'background-shell'
+    )
+    const workerIndex = harness.dispatched.findIndex(
+      (payload) => payload.ensembleRun?.participantId === 'worker'
+    )
+    expect(harness.dispatched[backgroundIndex].ensembleRun?.laneId).toBeTruthy()
+    expect(harness.dispatched[workerIndex].ensembleRun?.laneId).toBeUndefined()
+
+    completeDispatchedRun(harness, workerIndex)
+    await vi.waitFor(() =>
+      expect(harness.chat.ensemble?.activeRound?.status).toBe('running')
+    )
+    completeDispatchedRun(harness, backgroundIndex)
+    await vi.waitFor(() =>
+      expect(harness.chat.ensemble?.activeRound?.status).toBe('completed')
+    )
+  })
+
+  it('can dispatch the same BG seat twice without duplicating either result', async () => {
+    const harness = makeHarness()
+    harness.chat.ensemble!.participants = [
+      {
+        id: 'lead',
+        provider: 'codex',
+        enabled: true,
+        role: 'Lead',
+        instructions: 'Delegate the first check.',
+        order: 1,
+        permissionPresetId: 'workspace_write'
+      },
+      {
+        id: 'worker',
+        provider: 'kimi',
+        enabled: true,
+        role: 'Worker',
+        instructions: 'Delegate the second check.',
+        order: 2,
+        permissionPresetId: 'workspace_write'
+      },
+      backgroundParticipant({ order: 3 })
+    ]
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Run two foreground steps.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    harness.orchestrator.handleProviderOutput(
+      'codex',
+      { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' },
+      { type: 'message', role: 'assistant', delta: true, content: '@BG run first check.' }
+    )
+    completeDispatchedRun(harness, 0)
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
+    const firstBackgroundIndex = harness.dispatched.findIndex(
+      (payload, index) =>
+        index > 0 && payload.ensembleRun?.participantId === 'background-shell'
+    )
+    const workerIndex = harness.dispatched.findIndex(
+      (payload) => payload.ensembleRun?.participantId === 'worker'
+    )
+    harness.orchestrator.handleProviderOutput(
+      harness.dispatched[firstBackgroundIndex].provider,
+      {
+        appRunId: harness.dispatched[firstBackgroundIndex].appRunId,
+        appChatId: 'ensemble-chat'
+      },
+      { type: 'message', role: 'assistant', delta: true, content: 'FIRST-BG-RESULT' }
+    )
+    completeDispatchedRun(harness, firstBackgroundIndex)
+    await vi.waitFor(() =>
+      expect(
+        harness.chat.messages.some(
+          (message) =>
+            typeof message.content === 'string' &&
+            message.content.includes('Background complete')
+        )
+      ).toBe(true)
+    )
+
+    harness.orchestrator.handleProviderOutput(
+      harness.dispatched[workerIndex].provider,
+      { appRunId: harness.dispatched[workerIndex].appRunId, appChatId: 'ensemble-chat' },
+      { type: 'message', role: 'assistant', delta: true, content: '@BG run second check.' }
+    )
+    completeDispatchedRun(harness, workerIndex)
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(4))
+    const secondBackgroundIndex = harness.dispatched.findIndex(
+      (payload, index) =>
+        index !== firstBackgroundIndex &&
+        payload.ensembleRun?.participantId === 'background-shell'
+    )
+    harness.orchestrator.handleProviderOutput(
+      harness.dispatched[secondBackgroundIndex].provider,
+      {
+        appRunId: harness.dispatched[secondBackgroundIndex].appRunId,
+        appChatId: 'ensemble-chat'
+      },
+      { type: 'message', role: 'assistant', delta: true, content: 'SECOND-BG-RESULT' }
+    )
+    completeDispatchedRun(harness, secondBackgroundIndex)
+    await vi.waitFor(() =>
+      expect(harness.chat.ensemble?.activeRound?.status).toBe('completed')
+    )
+
+    expect(
+      harness.chat.messages.filter((message) => message.content === 'FIRST-BG-RESULT')
+    ).toHaveLength(1)
+    expect(
+      harness.chat.messages.filter((message) => message.content === 'SECOND-BG-RESULT')
+    ).toHaveLength(1)
+    const backgroundRunPromptIds = harness.chat.runs
+      .filter((run) => run.ensembleParticipantId === 'background-shell')
+      .map((run) => run.promptMessageId)
+    expect(new Set(backgroundRunPromptIds).size).toBe(2)
+  })
+
+  it('cancels an active BG lane immediately with the rest of the round', async () => {
+    const harness = makeHarness()
+    harness.chat.ensemble!.participants = [
+      {
+        id: 'lead',
+        provider: 'codex',
+        enabled: true,
+        role: 'Lead',
+        instructions: 'Lead foreground work.',
+        order: 1,
+        permissionPresetId: 'workspace_write'
+      },
+      backgroundParticipant()
+    ]
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: '@BG run a long check while Lead works.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+
+    expect(await harness.orchestrator.cancelRound('ensemble-chat')).toBe(true)
+    expect(harness.chat.ensemble?.activeRound?.status).toBe('cancelled')
+    const lanes = Object.values(harness.chat.ensemble?.activeRound?.lanes || {})
+    expect(lanes).toHaveLength(1)
+    expect(lanes[0].status).toBe('cancelled')
+    expect(harness.cancelRun).toHaveBeenCalledTimes(2)
   })
 })
 
