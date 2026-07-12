@@ -115,20 +115,17 @@ export function codexModelSupportsMaxReasoning(modelId?: string | null): boolean
   )
 }
 
-// Official GPT-5.6 catalog (2026-07-09): the top tier's OFFICIAL effort id is
-// `ultra` ("Maximum reasoning with automatic task delegation") and it exists on
-// Sol AND Terra — NOT Luna. TaskWraith's internal token for this tier stays
-// `ultracode` (shared with Claude's ladder and persisted composer state);
-// codexWireReasoningEffort maps it to the official `ultra` at the CLI boundary,
-// and codexReasoningEffortsForModel maps an inbound `ultra` from the live
-// `model/list` back onto the internal token.
-// NOTE (verified in codex core, reasoning_effort_for_request): on the wire the
-// client maps Ultra→Max for the model request — `ultra` IS max reasoning plus
-// the client's proactive multi-agent delegation. `max` remains a real,
-// separately-selectable level on ALL THREE trio models per the live account
-// catalog; the ChatGPT app merely hides Max behind a settings toggle (Ultra is
-// plan-gated instead). Do NOT remove `max` from the trio because an app picker
-// doesn't show it by default.
+// Official GPT-5.6 catalog (2026-07-09): the top tier's catalog effort id is
+// `ultra` ("Maximum reasoning with automatic task delegation"), on Sol AND
+// Terra — NOT Luna. TaskWraith's internal token for this tier stays `ultracode`
+// (shared with Claude's ladder and persisted composer state), and
+// codexReasoningEffortsForModel maps an inbound `ultra` from the live
+// `model/list` back onto the internal token for the PICKER.
+// WIRE CAVEAT (2026-07-12): the Codex API's reasoning.effort enum tops out at
+// `xhigh` and 400s on `max`/`ultra`/`ultracode` ("Codex failed · exit 1"), so
+// codexWireReasoningEffort clamps all three to `xhigh` at dispatch — see its
+// doc. This model-support flag now only shapes which tiers the PICKER offers
+// (keep `max`/`ultra` selectable per product), NOT the wire value.
 export function codexModelSupportsUltracodeReasoning(modelId?: string | null): boolean {
   const id = String(modelId || '')
     .trim()
@@ -142,31 +139,40 @@ export function codexModelSupportsUltracodeReasoning(modelId?: string | null): b
 }
 
 /**
- * Map TaskWraith's internal reasoning-effort token to the official Codex CLI
- * wire value. The top-tier divergence: internal `ultracode` → official `ultra`
- * on models that support it, clamped to `max` on models that don't (Luna, or a
- * stale persisted seat). Mirrors ClaudeCliArgs' internal→wire mapping on the
- * Claude side.
+ * Map TaskWraith's internal reasoning-effort token to the Codex API wire value.
  *
- * This mapping MUST run on every codex dispatch: the API hard-rejects the raw
- * internal token ("[reasoning.effort] invalid_enum_value: 'ultracode'"), which
- * is exactly the failure users saw as "Codex failed · exit 1" on Ultra runs
- * from a main process built before this map existed. (Verified 2026-07-09 via
- * the durable run-event log + live app-server repros: ultra itself — including
- * its multi-agent sub-agent delegation — runs fine through TaskWraith's
- * MCP-registered app-server session.)
+ * The Codex `reasoning.effort` enum tops out at `xhigh`; the API hard-rejects
+ * anything higher with a 400 that the app-server relays and the run surfaces as
+ * "Codex failed · exit 1":
+ *
+ *   Invalid value: 'max'. Supported values are: 'none', 'minimal', 'low',
+ *   'medium', 'high', and 'xhigh'.   (param reasoning.effort, status 400)
+ *
+ * TaskWraith's internal ladder carries higher tiers — `max`, and the shared
+ * `ultracode`/`ultra` top tier — so every above-`xhigh` tier is clamped to
+ * `xhigh` (the deepest reasoning the wire actually accepts). This stops a
+ * Max/Ultra seat — or a stale persisted `max` effort that leaked onto a model
+ * that never listed it (e.g. gpt-5.5, captured in the durable run-event log
+ * 2026-07-12) — from 400ing the turn. Internal tokens are untouched, so the
+ * picker and persisted composer state keep their tiers; only the outbound wire
+ * value is normalized. Mirrors ClaudeCliArgs' internal→wire mapping.
+ *
+ * History: an earlier revision believed the wire accepted `max`/`ultra` and
+ * only clamped the raw `ultracode` token. The live API enum rejects them
+ * (whether it narrowed or never accepted them on this account), so the clamp
+ * now covers all three. `modelId` is retained for call-site compatibility; the
+ * clamp is model-agnostic because the enum ceiling is API-wide.
  */
 export function codexWireReasoningEffort(
   effort?: string | null,
-  modelId?: string | null
+  _modelId?: string | null
 ): string | undefined {
   const normalized = String(effort || '').trim()
   if (!normalized) return undefined
-  if (normalized.toLowerCase() !== 'ultracode') return normalized
-  // When the target model is known and lacks the ultra tier, clamp to max
-  // (same reasoning depth on the wire) instead of sending an unsupported id.
-  if (modelId !== undefined && !codexModelSupportsUltracodeReasoning(modelId)) return 'max'
-  return 'ultra'
+  const lower = normalized.toLowerCase()
+  // Above-`xhigh` internal tiers are not in the API's reasoning.effort enum.
+  if (lower === 'ultracode' || lower === 'ultra' || lower === 'max') return 'xhigh'
+  return normalized
 }
 
 export function codexReasoningEffortsForModel<T extends CodexReasoningEffortOption>(

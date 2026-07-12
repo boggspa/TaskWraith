@@ -310,29 +310,34 @@ describe('getStaticProviderModels (provider-specific catalogs)', () => {
     ).toEqual(['low', 'medium', 'high', 'xhigh', 'max', 'ultracode'])
   })
 
-  it("maps internal 'ultracode' to the official 'ultra' wire value for the Codex CLI", () => {
-    // The API hard-rejects the raw internal token — this map must run on
-    // every codex dispatch.
-    expect(codexWireReasoningEffort('ultracode')).toBe('ultra')
-    expect(codexWireReasoningEffort('Ultracode')).toBe('ultra')
-    expect(codexWireReasoningEffort('max')).toBe('max')
+  it("clamps above-xhigh tiers to 'xhigh' for the Codex wire (API enum ceiling)", () => {
+    // The reasoning.effort enum is {none,minimal,low,medium,high,xhigh}; the API
+    // 400s on 'max'/'ultra'/'ultracode' ("Codex failed · exit 1"), so each
+    // clamps to 'xhigh' — the deepest reasoning the wire accepts.
+    expect(codexWireReasoningEffort('ultracode')).toBe('xhigh')
+    expect(codexWireReasoningEffort('Ultracode')).toBe('xhigh')
+    expect(codexWireReasoningEffort('ultra')).toBe('xhigh')
+    expect(codexWireReasoningEffort('max')).toBe('xhigh')
+    // Accepted tiers pass through untouched.
+    expect(codexWireReasoningEffort('xhigh')).toBe('xhigh')
+    expect(codexWireReasoningEffort('high')).toBe('high')
     expect(codexWireReasoningEffort('medium')).toBe('medium')
+    expect(codexWireReasoningEffort('minimal')).toBe('minimal')
     expect(codexWireReasoningEffort('')).toBeUndefined()
     expect(codexWireReasoningEffort(null)).toBeUndefined()
     expect(codexWireReasoningEffort(undefined)).toBeUndefined()
   })
 
-  it("clamps 'ultracode' to 'max' on models without the ultra tier when the model is known", () => {
-    // Sol + Terra carry the official ultra tier; Luna (and stale/unknown ids)
-    // clamp DOWN to max — same wire reasoning depth, no unsupported enum.
-    expect(codexWireReasoningEffort('ultracode', 'gpt-5.6-sol')).toBe('ultra')
-    expect(codexWireReasoningEffort('ultracode', 'gpt-5.6-terra')).toBe('ultra')
-    expect(codexWireReasoningEffort('ultracode', 'preview:openai:gpt-5.6:terra')).toBe('ultra')
-    expect(codexWireReasoningEffort('ultracode', 'gpt-5.6-luna')).toBe('max')
-    expect(codexWireReasoningEffort('ultracode', 'gpt-5.5')).toBe('max')
-    expect(codexWireReasoningEffort('ultracode', null)).toBe('max')
-    // Non-ultracode efforts pass through untouched regardless of model.
-    expect(codexWireReasoningEffort('max', 'gpt-5.6-luna')).toBe('max')
+  it('clamps above-xhigh tiers regardless of the target model', () => {
+    // The enum ceiling is API-wide, so model identity no longer changes the wire
+    // value. Regression: a stale 'max' effort leaked onto gpt-5.5 (which never
+    // listed 'max') and 400'd the turn — it must clamp to 'xhigh'.
+    expect(codexWireReasoningEffort('max', 'gpt-5.5')).toBe('xhigh')
+    expect(codexWireReasoningEffort('ultracode', 'gpt-5.6-sol')).toBe('xhigh')
+    expect(codexWireReasoningEffort('ultracode', 'gpt-5.6-terra')).toBe('xhigh')
+    expect(codexWireReasoningEffort('ultracode', 'preview:openai:gpt-5.6:terra')).toBe('xhigh')
+    expect(codexWireReasoningEffort('ultracode', 'gpt-5.6-luna')).toBe('xhigh')
+    expect(codexWireReasoningEffort('ultracode', null)).toBe('xhigh')
     expect(codexWireReasoningEffort('xhigh', 'gpt-5.5')).toBe('xhigh')
   })
 })

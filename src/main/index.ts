@@ -19815,9 +19815,9 @@ async function runCodexAppServerWithClient(
   )
 
   const codexReasoningSummaryMode = codexReasoningSummaryModeForEffort(payload.reasoningEffort)
-  // Internal token → official CLI wire value (GPT-5.6's top tier is 'ultra' on
-  // the wire; TaskWraith's shared internal token is 'ultracode'; models without
-  // the ultra tier clamp to 'max'). The API hard-rejects the raw internal token.
+  // Internal token → API wire value. The reasoning.effort enum tops out at
+  // 'xhigh', so above-xhigh internal tiers ('max'/'ultra'/'ultracode') clamp to
+  // 'xhigh' here — the API 400s on them otherwise ("Codex failed · exit 1").
   const codexWireEffort = codexWireReasoningEffort(payload.reasoningEffort, model)
   await client.request(
     'turn/start',
