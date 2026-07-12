@@ -60,6 +60,51 @@ export function normalizeBlackboardScope(value: unknown): BlackboardScope {
     : 'session'
 }
 
+/**
+ * Sentinel roundId stamped on a post made with no active round (session/chat
+ * scope between rounds). Inert for pruning/read selection, which key only on
+ * `scope === 'round'`.
+ */
+export const BLACKBOARD_MANUAL_ROUND_ID = 'manual'
+
+export interface BlackboardPostRoundResolution {
+  ok: boolean
+  scope: BlackboardScope
+  /** Only meaningful when ok — the roundId to stamp on the entry. */
+  roundId: string
+  /** Present only when ok is false. */
+  error?: string
+}
+
+/**
+ * Decide whether a blackboard post is allowed given the current round state,
+ * and which roundId to stamp on it. Only ROUND-scoped posts require an active
+ * round to attach to; session/chat notes are durable shared memory and post
+ * between rounds with a `manual` roundId fallback (matching `blackboard_read`,
+ * which surfaces non-round entries when no round is active).
+ *
+ * Single source of truth for BOTH the `blackboard_post` MCP tool (agents) and
+ * the `post-blackboard-entry` IPC path (the user's composer button), so an
+ * agent and the human obey exactly the same rule and cannot drift apart.
+ */
+export function resolveBlackboardPostRound(input: {
+  scope?: unknown
+  activeRoundId?: string | null
+}): BlackboardPostRoundResolution {
+  const scope = normalizeBlackboardScope(input.scope)
+  const activeRoundId = (input.activeRoundId || '').trim()
+  if (scope === 'round' && !activeRoundId) {
+    return {
+      ok: false,
+      scope,
+      roundId: '',
+      error:
+        'Round-scoped blackboard entries require an active Ensemble round. Use scope "session" or "chat" for durable notes.'
+    }
+  }
+  return { ok: true, scope, roundId: activeRoundId || BLACKBOARD_MANUAL_ROUND_ID }
+}
+
 export interface MakeBlackboardEntryInput {
   id: string
   chatId: string

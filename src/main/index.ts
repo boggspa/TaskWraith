@@ -1268,6 +1268,7 @@ import {
   makeBlackboardEntry,
   markBlackboardEntriesSeen,
   removeBlackboardEntries,
+  resolveBlackboardPostRound,
   selectBlackboardForRound,
   selectBlackboardReadWindow,
   upsertBlackboardEntry
@@ -24272,12 +24273,30 @@ async function executeGeminiMcpTool(
       const activeRound = chat?.ensemble?.activeRound
       const participantId =
         ensembleOrchestratorRef?.getParticipantIdForRun(context.appRunId) || 'system'
-      if (!chat?.ensemble || !activeRound) {
+      // Only ROUND-scoped posts need an active round to attach to; session/chat
+      // notes are durable shared memory that must stay writable between rounds.
+      // Shared with the user-facing post-blackboard-entry IPC path via
+      // resolveBlackboardPostRound so an agent and the human obey the same rule —
+      // without it a participant tasked with curating the board could read +
+      // delete but never write once the round drained (the reported
+      // "surface only has read and delete" symptom).
+      const roundResolution = resolveBlackboardPostRound({
+        scope: args.scope,
+        activeRoundId: activeRound?.roundId
+      })
+      if (!chat?.ensemble) {
         toolIsError = true
         text = mcpJson({
           ok: false,
           tool: 'blackboard_post',
-          error: 'blackboard_post requires an active Ensemble round.'
+          error: 'blackboard_post requires an Ensemble chat.'
+        })
+      } else if (!roundResolution.ok) {
+        toolIsError = true
+        text = mcpJson({
+          ok: false,
+          tool: 'blackboard_post',
+          error: roundResolution.error
         })
       } else {
         const createdAt = new Date().toISOString()
@@ -24286,7 +24305,7 @@ async function executeGeminiMcpTool(
             .toString(36)
             .slice(2, 8)}`,
           chatId: chat.appChatId,
-          roundId: activeRound.roundId,
+          roundId: roundResolution.roundId,
           participantId,
           key: optionalString(args.key) || '',
           value: optionalString(args.value) || '',
@@ -34147,22 +34166,25 @@ if (isGeminiMcpBridgeProcess) {
         const chatId = requireNonEmptyString(payload?.chatId, 'Ensemble chat id')
         const chat = AppStore.getChat(chatId)
         if (!chat?.ensemble) throw new Error('Blackboard entries require an Ensemble chat.')
-        const scope = payload?.scope === 'round' || payload?.scope === 'chat' ? payload.scope : 'session'
-        if (scope === 'round' && !chat.ensemble.activeRound) {
-          throw new Error('Round-scoped blackboard entries require an active Ensemble round.')
-        }
+        // Same rule the blackboard_post MCP tool applies for agents: round scope
+        // needs an active round; session/chat notes post between rounds.
+        const roundResolution = resolveBlackboardPostRound({
+          scope: payload?.scope,
+          activeRoundId: chat.ensemble.activeRound?.roundId
+        })
+        if (!roundResolution.ok) throw new Error(roundResolution.error)
         const value = requireNonEmptyString(payload?.value, 'Blackboard entry value')
         const createdAt = new Date().toISOString()
         const fallbackKey = `user-note-${createdAt.replace(/[^0-9]/g, '').slice(0, 14)}`
         const entry = makeBlackboardEntry({
           id: `blackboard-user-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
           chatId: chat.appChatId,
-          roundId: chat.ensemble.activeRound?.roundId || 'manual',
+          roundId: roundResolution.roundId,
           participantId: 'user',
           key: optionalString(payload?.key) || fallbackKey,
           value,
           category: payload?.category,
-          scope,
+          scope: roundResolution.scope,
           createdAt
         })
         if (!entry) throw new Error('Blackboard entry requires non-empty key and value.')

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { BlackboardEntry } from '../store/types'
 import {
+  BLACKBOARD_MANUAL_ROUND_ID,
   BLACKBOARD_MAX_ENTRIES,
   BLACKBOARD_MAX_STORE_LEN,
   BLACKBOARD_MAX_VALUE_LEN,
@@ -12,6 +13,7 @@ import {
   normalizeBlackboardScope,
   pruneBlackboard,
   removeBlackboardEntries,
+  resolveBlackboardPostRound,
   selectBlackboardForRound,
   selectBlackboardReadWindow,
   selectUnseenBlackboard,
@@ -55,6 +57,50 @@ describe('normalizeBlackboardScope', () => {
   it('defaults to session for junk', () => {
     expect(normalizeBlackboardScope('forever')).toBe('session')
     expect(normalizeBlackboardScope(null)).toBe('session')
+  })
+})
+
+describe('resolveBlackboardPostRound', () => {
+  it('stamps the active round when one is present', () => {
+    const res = resolveBlackboardPostRound({ scope: 'session', activeRoundId: 'round-7' })
+    expect(res).toEqual({ ok: true, scope: 'session', roundId: 'round-7' })
+  })
+
+  it('allows session posts with NO active round (agent can write between rounds)', () => {
+    // Regression: blackboard_post used to require an active round for ALL posts,
+    // so a participant curating the board could read + delete but never write
+    // once the round drained. Session/chat notes must post between rounds.
+    const res = resolveBlackboardPostRound({ scope: 'session', activeRoundId: undefined })
+    expect(res.ok).toBe(true)
+    expect(res.roundId).toBe(BLACKBOARD_MANUAL_ROUND_ID)
+  })
+
+  it('defaults an absent scope to session and allows it with no active round', () => {
+    const res = resolveBlackboardPostRound({ activeRoundId: null })
+    expect(res).toEqual({ ok: true, scope: 'session', roundId: BLACKBOARD_MANUAL_ROUND_ID })
+  })
+
+  it('allows chat-scoped posts with no active round', () => {
+    const res = resolveBlackboardPostRound({ scope: 'chat', activeRoundId: '' })
+    expect(res.ok).toBe(true)
+    expect(res.scope).toBe('chat')
+    expect(res.roundId).toBe(BLACKBOARD_MANUAL_ROUND_ID)
+  })
+
+  it('rejects ONLY round-scoped posts when there is no active round', () => {
+    const res = resolveBlackboardPostRound({ scope: 'round', activeRoundId: undefined })
+    expect(res.ok).toBe(false)
+    expect(res.error).toMatch(/active Ensemble round/i)
+  })
+
+  it('allows round-scoped posts when a round is active', () => {
+    const res = resolveBlackboardPostRound({ scope: 'round', activeRoundId: 'round-3' })
+    expect(res).toEqual({ ok: true, scope: 'round', roundId: 'round-3' })
+  })
+
+  it('treats a whitespace-only active round id as no round', () => {
+    const res = resolveBlackboardPostRound({ scope: 'round', activeRoundId: '   ' })
+    expect(res.ok).toBe(false)
   })
 })
 
