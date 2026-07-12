@@ -564,8 +564,14 @@ const CURSOR_STATIC_MODELS = [
   }
 ]
 const KIMI_DEFAULT_MODEL = 'kimi-k2.7-code'
-export const KIMI_STANDARD_CLI_MODEL = 'kimi-for-coding'
-export const KIMI_HIGHSPEED_CLI_MODEL = 'kimi-for-coding-highspeed'
+const KIMI_STANDARD_API_MODEL = 'kimi-for-coding'
+const KIMI_HIGHSPEED_API_MODEL = 'kimi-for-coding-highspeed'
+// Kimi CLI's --model option resolves configured model aliases, not raw API
+// model ids. OAuth-managed Kimi Code models use the stable `kimi-code/` key
+// namespace in ~/.kimi/config.toml; passing only `kimi-for-coding` leaves the
+// CLI without an LLM even though that is the correct third-party API model id.
+export const KIMI_STANDARD_CLI_MODEL = `kimi-code/${KIMI_STANDARD_API_MODEL}`
+export const KIMI_HIGHSPEED_CLI_MODEL = `kimi-code/${KIMI_HIGHSPEED_API_MODEL}`
 const KIMI_CLI_MODEL_IDS = new Set([
   ...KIMI_STATIC_MODELS.map((model) => model.id),
   KIMI_STANDARD_CLI_MODEL,
@@ -578,6 +584,8 @@ const KIMI_CLI_MODEL_ALIASES = new Map<string, string>([
   ['best', KIMI_DEFAULT_MODEL],
   ['kimi-latest', KIMI_DEFAULT_MODEL],
   ['kimi-code', KIMI_DEFAULT_MODEL],
+  [KIMI_STANDARD_API_MODEL, KIMI_STANDARD_CLI_MODEL],
+  [KIMI_HIGHSPEED_API_MODEL, KIMI_HIGHSPEED_CLI_MODEL],
   ['kimi-k2.7', KIMI_DEFAULT_MODEL],
   ['kimi-k2.7-code', KIMI_DEFAULT_MODEL],
   ['kimi-k2.7-code-thinking', KIMI_DEFAULT_MODEL],
