@@ -833,7 +833,7 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
     selfModelLabel ? ` (${selfModelLabel})` : ''
   }${selfToken ? ` #${selfToken}` : ''}`
   const yieldExecutionCheck =
-    'Lifecycle execution check: if the current request explicitly instructs your role to call `ensemble_yield`, invoke the directly advertised tool before ending. Do not search for it, narrate a handoff instead, or treat exact-output prose as a substitute; tool calls are not prose.'
+    'Lifecycle execution check: if the current request explicitly instructs your role to call `ensemble_yield`, invoke the directly advertised tool before ending. Do not search for it, narrate a handoff instead, or treat exact-output prose as a substitute; tool calls are not prose. If your runtime only permits tool calls before its final answer, call the tool first even when the request describes prose followed by a yield.'
   const orchestrationMode =
     input.config.orchestrationMode === 'continuous' ? 'continuous' : 'turn_bound'
   const activeConcurrentMode = Boolean(input.config.activeRound?.concurrentMode)

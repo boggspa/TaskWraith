@@ -995,6 +995,7 @@ describe('Ensemble prompt composition', () => {
     expect(prompt.lastIndexOf('Lifecycle execution check')).toBeGreaterThan(
       prompt.lastIndexOf('Current user request:')
     )
+    expect(prompt).toContain('call the tool first even when the request describes prose')
   })
 
   // 1.0.4-AJ — last-speaker awareness. The pre-fix failure mode
