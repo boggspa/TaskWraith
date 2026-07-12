@@ -991,6 +991,10 @@ describe('Ensemble prompt composition', () => {
     expect(prompt).toContain('Do not run `capability_search`, `capability_invoke`')
     expect(prompt).toContain('the tool call is mandatory before ending the turn')
     expect(prompt).toContain('Never replace the call with a narrated handoff')
+    expect(prompt).toContain('Lifecycle execution check')
+    expect(prompt.lastIndexOf('Lifecycle execution check')).toBeGreaterThan(
+      prompt.lastIndexOf('Current user request:')
+    )
   })
 
   // 1.0.4-AJ — last-speaker awareness. The pre-fix failure mode
@@ -2690,6 +2694,10 @@ describe('slim resumed-turn prompt shape', () => {
     // Full-shell sections stay out.
     expect(prompt).not.toContain('Participant roster:')
     expect(prompt).not.toContain('Rules:')
+    expect(prompt).toContain('Lifecycle execution check')
+    expect(prompt.lastIndexOf('Lifecycle execution check')).toBeGreaterThan(
+      prompt.lastIndexOf('Current user request:')
+    )
     expect(prompt).toContain('Respond now as')
   })
 

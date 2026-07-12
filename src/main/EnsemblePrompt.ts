@@ -832,6 +832,8 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
   const participantLabel = `${providerLabel(input.participant.provider)} / ${input.participant.role || 'Participant'}${
     selfModelLabel ? ` (${selfModelLabel})` : ''
   }${selfToken ? ` #${selfToken}` : ''}`
+  const yieldExecutionCheck =
+    'Lifecycle execution check: if the current request explicitly instructs your role to call `ensemble_yield`, invoke the directly advertised tool before ending. Do not search for it, narrate a handoff instead, or treat exact-output prose as a substitute; tool calls are not prose.'
   const orchestrationMode =
     input.config.orchestrationMode === 'continuous' ? 'continuous' : 'turn_bound'
   const activeConcurrentMode = Boolean(input.config.activeRound?.concurrentMode)
@@ -1114,6 +1116,8 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
       input.currentPromptLabel || 'Current user request:',
       sanitizeText(input.currentPrompt),
       '',
+      yieldExecutionCheck,
+      '',
       `Respond now as [${participantLabel}].`
     ].join('\n')
   }
@@ -1394,6 +1398,8 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
     '',
     input.currentPromptLabel || 'Current user request:',
     sanitizeText(input.currentPrompt),
+    '',
+    yieldExecutionCheck,
     '',
     `Respond now as [${participantLabel}].`
   ].join('\n')
