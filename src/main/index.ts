@@ -18805,6 +18805,12 @@ function handleCodexNotification(message: any) {
       {
         type: 'result',
         subtype: normalizeCodexTurnStatus(turn.status || params.status),
+        // The renderer's stream adapter derives run_finished's status from
+        // `status` (it never reads `subtype`, which is Claude-CLI vocabulary), so
+        // mirror the normalized turn status here too. Without it the adapter falls
+        // back to 'unknown' and a solo Codex run's in-memory status + close-out
+        // prose read "unknown" even though the persisted run now seals success.
+        status: normalizeCodexTurnStatus(turn.status || params.status),
         stats: codexUsageToStats(state.tokenUsage, durationMs),
         provider: 'codex',
         providerThreadId: state.threadId,
