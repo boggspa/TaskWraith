@@ -221,6 +221,7 @@ type ContinuationTurnResult =
       appended: false
       reason:
         | 'not_continuous'
+        | 'outside_round_scope'
         | 'unreachable'
         | 'active_fanout'
         | 'blocked_status'
@@ -2601,6 +2602,8 @@ interface ActiveRoundRuntime {
   roundId: string
   sender: Electron.WebContents
   prompt: string
+  /** Single participant selected by the user's composer @mention for this round. */
+  dmTargetParticipantId?: string
   imageAttachments: EnsembleImageAttachment[]
   imageThumbnails: EnsembleImageThumbnail[]
   discordContextSnapshots?: DiscordContextSnapshot[]
@@ -3418,6 +3421,12 @@ export class EnsembleOrchestrator {
       run.participant
     )
     if (!targetParticipant?.enabled) return
+    if (
+      runtime.dmTargetParticipantId &&
+      targetParticipant.id !== runtime.dmTargetParticipantId
+    ) {
+      return
+    }
     if (isBackgroundParticipant(targetParticipant)) return
     runtime.yieldReturnStack ??= []
     runtime.yieldReturnStack.push({
@@ -9565,12 +9574,10 @@ export class EnsembleOrchestrator {
     // the user clicked their chip and held Cmd, that's an unambiguous
     // intent. The filter falls back to the full ordered set if the
     // id doesn't match (safety net; should never hit in practice).
-    const requestedParticipants = dmTargetParticipantId
-      ? (() => {
-          const target = chat.ensemble.participants.find((p) => p.id === dmTargetParticipantId)
-          return target ? [target] : orderedFull
-        })()
-      : orderedFull
+    const dmTargetParticipant = dmTargetParticipantId
+      ? chat.ensemble.participants.find((participant) => participant.id === dmTargetParticipantId)
+      : undefined
+    const requestedParticipants = dmTargetParticipant ? [dmTargetParticipant] : orderedFull
     const backgroundMentionResolution = resolveBackgroundMentions(
       prompt,
       chat.ensemble.participants
@@ -9578,7 +9585,7 @@ export class EnsembleOrchestrator {
     const backgroundParticipants = requestedParticipants.filter(
       (participant) =>
         isBackgroundParticipant(participant) &&
-        (participant.id === dmTargetParticipantId ||
+        (participant.id === dmTargetParticipant?.id ||
           backgroundMentionResolution.participantIds.has(participant.id))
     )
     // Background seats are rostered and addressable, but never consume an
@@ -9638,6 +9645,7 @@ export class EnsembleOrchestrator {
       status: 'running',
       prompt,
       startedAt,
+      ...(dmTargetParticipant ? { dmTargetParticipantId: dmTargetParticipant.id } : {}),
       orchestrationMode,
       continuationHops: 0,
       maxContinuationHops,
@@ -9712,6 +9720,7 @@ export class EnsembleOrchestrator {
       roundId,
       sender,
       prompt: promptForParticipants,
+      ...(dmTargetParticipant ? { dmTargetParticipantId: dmTargetParticipant.id } : {}),
       imageAttachments: normalizedImageAttachments,
       imageThumbnails: normalizedImageThumbnails,
       ...(discordContextSnapshots.length > 0 ? { discordContextSnapshots } : {}),
@@ -10469,7 +10478,17 @@ export class EnsembleOrchestrator {
             runtime.yieldTarget,
             participant
           )
-          if (resolvedTarget?.enabled && isBackgroundParticipant(resolvedTarget)) {
+          if (
+            resolvedTarget?.enabled &&
+            runtime.dmTargetParticipantId &&
+            resolvedTarget.id !== runtime.dmTargetParticipantId
+          ) {
+            this.appendRoundStatus(
+              runtime.chatId,
+              runtime.roundId,
+              `Yield target ${participantDisplayName(resolvedTarget)} is outside this user-targeted round; no turn appended.`
+            )
+          } else if (resolvedTarget?.enabled && isBackgroundParticipant(resolvedTarget)) {
             await this.dispatchBackgroundParticipants(runtime, chat, [resolvedTarget], {
               prompt: run.content,
               sourceRunId: run.runId,
@@ -10546,12 +10565,32 @@ export class EnsembleOrchestrator {
       // `chat` is already in scope from the top of the while loop —
       // no need to re-fetch.
       const allParticipants = chat?.ensemble?.participants || []
-      const tagMatches = routedByYieldTarget
+      const participantTagMatches = routedByYieldTarget
         ? []
         : findAllMentions(run.content, allParticipants, new Set([participant.id])).filter(
             (match): match is ParticipantMentionMatch =>
               match.kind === 'participant' && match.participant.enabled
           )
+      const outOfScopeTagMatches = runtime.dmTargetParticipantId
+        ? participantTagMatches.filter(
+            (match) => match.participant.id !== runtime.dmTargetParticipantId
+          )
+        : []
+      if (outOfScopeTagMatches.length > 0) {
+        const ignoredMentions = [
+          ...new Set(outOfScopeTagMatches.map((match) => `@${match.text}`))
+        ]
+        this.appendRoundStatus(
+          runtime.chatId,
+          runtime.roundId,
+          `@-mention: ${ignoredMentions.join(', ')} ${ignoredMentions.length === 1 ? 'is' : 'are'} outside this user-targeted round; no turn appended.`
+        )
+      }
+      const tagMatches = runtime.dmTargetParticipantId
+        ? participantTagMatches.filter(
+            (match) => match.participant.id === runtime.dmTargetParticipantId
+          )
+        : participantTagMatches
 
       if (tagMatches.length > 0) {
         const bossmanParticipantId = this.activeBossmanParticipantId(chat, runtime)
@@ -11836,6 +11875,12 @@ export class EnsembleOrchestrator {
     options: { allowYieldedParticipant?: boolean; allowAnsweredParticipant?: boolean } = {}
   ): ContinuationTurnResult {
     if (runtime.orchestrationMode !== 'continuous') return { appended: false, reason: 'not_continuous' }
+    if (
+      runtime.dmTargetParticipantId &&
+      participant.id !== runtime.dmTargetParticipantId
+    ) {
+      return { appended: false, reason: 'outside_round_scope' }
+    }
     if (runtime.unreachableParticipantIds?.has(participant.id))
       return { appended: false, reason: 'unreachable' }
     if (this.participantFanoutDispatchState(runtime, participant.id)) {
@@ -11892,6 +11937,8 @@ export class EnsembleOrchestrator {
   private describeContinuationDecline(result: ContinuationTurnResult): string {
     if (result.appended) return ''
     switch (result.reason) {
+      case 'outside_round_scope':
+        return 'it is outside this user-targeted round'
       case 'hop_limit':
         return 'continuation-hop budget exhausted'
       case 'unreachable':
@@ -11963,6 +12010,10 @@ export class EnsembleOrchestrator {
   ): EnsembleParticipant[] | null {
     if (runtime.orchestrationMode !== 'continuous') return null
     if (runtime.cancelled) return null
+    // A composer @mention opens a one-seat interaction, not a seed for an
+    // autonomous panel pass. Once that participant answers/yields, control
+    // returns to the user; agent mentions cannot widen the user's scope.
+    if (runtime.dmTargetParticipantId) return null
     // Stop once the goal leaves 'active' — completed (done), blocked, or paused.
     // Agents are prompted to call goal_complete when done and goal_blocked when
     // genuinely stuck; both hand control back to the user, so don't keep spinning

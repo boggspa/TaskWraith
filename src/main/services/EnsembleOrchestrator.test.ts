@@ -10328,6 +10328,7 @@ Next action:
     expect(harness.chat.ensemble?.activeRound?.participants.map((p) => p.participantId)).toEqual([
       'codex'
     ])
+    expect(harness.chat.ensemble?.activeRound?.dmTargetParticipantId).toBe('codex')
 
     // Codex finishes → no further dispatch (no Claude/Gemini/Kimi
     // follow-up), because DM is single-participant.
@@ -10340,6 +10341,74 @@ Next action:
     // dispatch lands.
     await new Promise((resolve) => setTimeout(resolve, 30))
     expect(harness.dispatched).toHaveLength(1)
+  })
+
+  it('does not let an agent @mention widen a continuous user-targeted round', async () => {
+    const harness = makeHarness()
+    harness.chat.ensemble!.orchestrationMode = 'continuous'
+    harness.chat.ensemble!.maxContinuationHops = 192
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'DM Codex only.',
+      event: { sender: {} as Electron.WebContents },
+      dmTargetParticipantId: 'codex'
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    const codexRoute = {
+      appRunId: harness.dispatched[0].appRunId,
+      appChatId: 'ensemble-chat'
+    }
+    harness.orchestrator.handleProviderOutput('codex', codexRoute, {
+      type: 'content',
+      text: 'We are good to go. @Reviewer proceed with the next task.'
+    })
+    harness.orchestrator.handleProviderOutput('codex', codexRoute, {
+      type: 'result',
+      status: 'success',
+      stats: { total_tokens: 10 }
+    })
+
+    await vi.waitFor(() => expect(harness.chat.ensemble?.activeRound?.status).toBe('completed'))
+    expect(harness.dispatched).toHaveLength(1)
+    expect(harness.chat.ensemble?.activeRound?.continuationHops || 0).toBe(0)
+    expect(harness.chat.messages.map((message) => message.content)).toContain(
+      '@-mention: @Reviewer is outside this user-targeted round; no turn appended.'
+    )
+  })
+
+  it('does not let an agent yield outside a continuous user-targeted round', async () => {
+    const harness = makeHarness()
+    harness.chat.ensemble!.orchestrationMode = 'continuous'
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'DM Codex only.',
+      event: { sender: {} as Electron.WebContents },
+      dmTargetParticipantId: 'codex'
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    expect(
+      harness.orchestrator.markYielded(
+        harness.dispatched[0].appRunId!,
+        'Reviewer should continue.',
+        'Reviewer'
+      )
+    ).toBe(true)
+
+    await vi.waitFor(() => expect(harness.chat.ensemble?.activeRound?.status).toBe('completed'))
+    expect(harness.dispatched).toHaveLength(1)
+    expect(harness.chat.ensemble?.activeRound?.continuationHops || 0).toBe(0)
+    expect(
+      harness.chat.messages.some(
+        (message) =>
+          message.metadata?.kind === 'ensembleRoundStatus' &&
+          message.content.startsWith('Yield target ') &&
+          message.content.endsWith(
+            'is outside this user-targeted round; no turn appended.'
+          )
+      )
+    ).toBe(true)
   })
 
   it('falls through to the full round when dmTargetParticipantId points at a non-existent id', async () => {
@@ -10355,6 +10424,7 @@ Next action:
     // is silently ignored; the orchestrator runs the full ordered
     // participant list (safety net for typo / racy IPC).
     expect(harness.dispatched[0].provider).toBe('claude')
+    expect(harness.chat.ensemble?.activeRound?.dmTargetParticipantId).toBeUndefined()
   })
 
   // 1.0.4 — same-provider disambiguation. Two Codex participants

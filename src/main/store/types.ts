@@ -973,6 +973,8 @@ export interface EnsembleRoundState {
   startedAt: string
   endedAt?: string
   activeParticipantId?: string
+  /** User-addressed single-seat scope captured for a targeted/DM round. */
+  dmTargetParticipantId?: string
   orchestrationMode?: EnsembleOrchestrationMode
   continuationHops?: number
   maxContinuationHops?: number
