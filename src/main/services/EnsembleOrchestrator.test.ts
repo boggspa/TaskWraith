@@ -9376,7 +9376,7 @@ Next action:
     expect(harness.dispatched[2].provider).toBe('codex')
   })
 
-  it('does not re-promote a participant tagged via @mention after they already completed their turn', async () => {
+  it('reopens a spoken participant only once when an explicit yield and @mention target the same seat', async () => {
     const harness = makeHarness()
     harness.chat.ensemble!.orchestrationMode = 'continuous'
     // This test isolates the explicit @-mention/yield ROUTING mechanics. A
@@ -9423,10 +9423,9 @@ Next action:
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
     expect(harness.dispatched[1].provider).toBe('claude')
 
-    // Claude speaks (with @codex in content) then yields via tool to
-    // codex. Codex already completed this round, so neither the
-    // yield-target fallback nor the trailing @-mention should append
-    // a continuation turn.
+    // Claude speaks (with @codex in content) then explicitly yields via the
+    // tool to Codex. Explicit yield is authoritative even though Codex already
+    // spoke; the duplicate inline mention must not append a second copy.
     harness.orchestrator.handleProviderOutput(
       'claude',
       { appRunId: harness.dispatched[1].appRunId, appChatId: 'ensemble-chat' },
@@ -9436,9 +9435,11 @@ Next action:
       }
     )
     harness.orchestrator.markYielded(harness.dispatched[1].appRunId!, 'Passing to Codex', 'codex')
-    await vi.waitFor(() => expect(harness.chat.ensemble?.activeRound?.status).toBe('completed'))
-    expect(harness.dispatched).toHaveLength(2)
-    expect(harness.chat.ensemble?.activeRound?.continuationHops || 0).toBe(0)
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
+    expect(harness.dispatched[2].provider).toBe('codex')
+    expect(harness.chat.ensemble?.activeRound?.continuationHops).toBe(1)
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(harness.dispatched).toHaveLength(3)
   })
 
   const CONTINUOUS_PAIR: EnsembleParticipant[] = [
@@ -10179,6 +10180,81 @@ Next action:
     )
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
     expect(harness.dispatched[2].provider).toBe('gemini')
+  })
+
+  it('routes an explicit continuous yield back to a participant who already spoke', async () => {
+    const harness = makeHarness()
+    harness.chat.ensemble!.orchestrationMode = 'continuous'
+    harness.chat.ensemble!.maxContinuationHops = 24
+    harness.chat.ensemble!.participants = [
+      {
+        id: 'grok-tag-a',
+        provider: 'grok',
+        enabled: true,
+        role: 'GrokTagA',
+        instructions: 'Answer first.',
+        order: 1,
+        permissionPresetId: 'read_only'
+      },
+      {
+        id: 'boss',
+        provider: 'codex',
+        enabled: true,
+        role: 'Boss',
+        instructions: 'Direct the round.',
+        order: 2,
+        permissionPresetId: 'default'
+      },
+      {
+        id: 'captain',
+        provider: 'claude',
+        enabled: true,
+        role: 'Captain',
+        instructions: 'Wait for the handoff.',
+        order: 3,
+        permissionPresetId: 'read_only'
+      }
+    ]
+
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Exercise a back-reference handoff.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    expect(harness.dispatched[0].ensembleRun?.participantId).toBe('grok-tag-a')
+
+    harness.orchestrator.handleProviderOutput(
+      'grok',
+      { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' },
+      { type: 'content', text: 'Initial answer from GrokTagA.' }
+    )
+    harness.orchestrator.handleProviderOutput(
+      'grok',
+      { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' },
+      { type: 'result', status: 'success', stats: { total_tokens: 10 } }
+    )
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    expect(harness.dispatched[1].ensembleRun?.participantId).toBe('boss')
+
+    expect(
+      harness.orchestrator.markYielded(
+        harness.dispatched[1].appRunId!,
+        'Please check this again.',
+        'GrokTagA'
+      )
+    ).toBe(true)
+
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
+    expect(harness.dispatched[2].ensembleRun?.participantId).toBe('grok-tag-a')
+    expect(harness.chat.ensemble?.activeRound?.continuationHops).toBe(1)
+    expect(
+      harness.chat.messages.some(
+        (message) =>
+          message.metadata?.kind === 'ensembleRoundStatus' &&
+          message.content.includes('Yielded back to GrokTagA (grok). Continuous handoff 1/24.')
+      )
+    ).toBe(true)
   })
 
   it('auto-returns to the yielding participant after a yielded target answers', async () => {

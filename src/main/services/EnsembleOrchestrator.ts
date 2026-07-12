@@ -10626,12 +10626,27 @@ export class EnsembleOrchestrator {
             } else if (idx === 0) {
               routedByYieldTarget = true
             } else if (runtime.orchestrationMode === 'continuous' && resolvedTarget?.enabled) {
-              routedByYieldTarget = this.tryAppendContinuationTurn(
+              const continuation = this.tryAppendContinuationTurn(
                 runtime,
                 remaining,
                 resolvedTarget,
-                `Yielded back to ${resolvedTarget.role || resolvedTarget.provider} (${resolvedTarget.provider}).`
-              ).appended
+                `Yielded back to ${resolvedTarget.role || resolvedTarget.provider} (${resolvedTarget.provider}).`,
+                {
+                  // An explicit yield target is a deliberate request to re-open
+                  // that participant even when they already answered or yielded
+                  // earlier in this pass. The hop budget still bounds the loop.
+                  allowAnsweredParticipant: true,
+                  allowYieldedParticipant: true
+                }
+              )
+              routedByYieldTarget = continuation.appended
+              if (!continuation.appended) {
+                this.appendRoundStatus(
+                  runtime.chatId,
+                  runtime.roundId,
+                  `Yield to ${participantDisplayName(resolvedTarget)} was not routed because ${this.describeContinuationDecline(continuation)}; foreground rotation continues.`
+                )
+              }
             }
           }
           if (!routedByYieldTarget) {
