@@ -4353,7 +4353,7 @@ Next action:
     expect(claudeMessage?.content).toBe('Line one.')
   })
 
-  it('keeps only the tail from an untagged cumulative content snapshot', async () => {
+  it('keeps only the tail from an explicitly tagged cumulative content snapshot', async () => {
     const harness = makeHarness()
     harness.orchestrator.startRound({
       chatId: 'ensemble-chat',
@@ -4372,7 +4372,8 @@ Next action:
     })
     harness.orchestrator.handleProviderOutput('claude', route, {
       type: 'content',
-      text: 'Alpha beta'
+      text: 'Alpha beta',
+      runItemCumulative: true
     })
     harness.orchestrator.handleProviderOutput('claude', route, {
       type: 'result',
@@ -4383,6 +4384,36 @@ Next action:
       (message) => message.role === 'assistant' && message.metadata?.ensembleProvider === 'claude'
     )
     expect(claudeMessage?.content).toBe('Alpha beta')
+  })
+
+  it('preserves a one-character compat delta that matches the response prefix', async () => {
+    const harness = makeHarness()
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Reply with the exact lifecycle token.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    const route = {
+      appRunId: harness.dispatched[0].appRunId,
+      appChatId: 'ensemble-chat'
+    }
+    for (const text of ['Captain', ' STE', 'ER', '-', 'C']) {
+      harness.orchestrator.handleProviderOutput('claude', route, {
+        type: 'content',
+        text
+      })
+    }
+    harness.orchestrator.handleProviderOutput('claude', route, {
+      type: 'result',
+      status: 'success'
+    })
+
+    const captainMessage = harness.chat.messages.find(
+      (message) => message.role === 'assistant' && message.runId === route.appRunId
+    )
+    expect(captainMessage?.content).toBe('Captain STEER-C')
   })
 
   it('places only the post-tool tail from a cumulative content restatement', async () => {

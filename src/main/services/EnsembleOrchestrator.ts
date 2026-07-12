@@ -135,7 +135,10 @@ import {
 // + provider totals). Ensemble runs complete here, not via handleProviderExit.
 import { buildEnsembleUsageRecord } from '../ensembleUsageRecord'
 import { bridgeResultDiffStats, bridgeToolDiffStats } from '../bridge/BridgeToolDiffStats'
-import { foldBridgeRunText } from '../bridge/BridgeTextFold'
+import {
+  foldBridgeRunText,
+  isTaggedCumulativeRestatement
+} from '../bridge/BridgeTextFold'
 import {
   formatDiscordContextPromptAppendix,
   normalizeDiscordContextSnapshots,
@@ -1075,32 +1078,42 @@ function appendTimelineContent(run: ActiveParticipantRun, text: string): void {
   run.timeline.push({ kind: 'content', text })
 }
 
-function replaceTimelineContent(run: ActiveParticipantRun, text: string): void {
-  run.content = text
-  run.timeline = text ? [{ kind: 'content', text }] : []
-}
-
 function appendProviderContent(
   run: ActiveParticipantRun,
   text: string,
-  options: { cumulative?: boolean } = {}
+  options: { trustedIncremental?: boolean; claudeCumulative?: boolean } = {}
 ): boolean {
   if (!text) return false
 
   if (run.content.length > 0) {
+    // Every event reaching handleProviderOutput comes through the trusted
+    // sendAgentCompatLine chokepoint. An untagged compat event is therefore a
+    // literal delta, even when it happens to equal a prefix of the assembled
+    // response (for example final chunk "C" after "Captain STEER-"). Shape
+    // folding that case drops real text.
+    if (options.trustedIncremental) {
+      run.content += text
+      appendTimelineContent(run, text)
+      return true
+    }
     const fold = foldBridgeRunText(run.content, text)
-    if (fold.kind === 'skip') return false
-    if (fold.kind === 'tail') {
+    if (options.claudeCumulative) {
+      // Claude's tagged terminal envelope repeats deltas already streamed. A
+      // clean superset may contribute a missing tail; a stale or divergent
+      // restatement contributes nothing. This mirrors the solo/bridge lane.
+      if (fold.kind !== 'tail') return false
       run.content = text
       appendTimelineContent(run, fold.tail)
       return true
     }
-    if (options.cumulative) {
-      const hasToolBoundary = run.timeline?.some((entry) => entry.kind === 'tool') ?? false
-      if (hasToolBoundary) {
-        return false
-      }
-      replaceTimelineContent(run, text)
+    // Explicit snapshot carriers (Cursor runItemCumulative/snapshot) use shape
+    // folding because the snapshot can be their only text event. Prefer a
+    // duplicate divergent snapshot over dropping content; clean supersets add
+    // only their tail.
+    if (fold.kind === 'skip') return false
+    if (fold.kind === 'tail') {
+      run.content = text
+      appendTimelineContent(run, fold.tail)
       return true
     }
   }
@@ -9487,6 +9500,7 @@ export class EnsembleOrchestrator {
             ? payload.content
             : ''
       if (text) {
+        const taggedCumulative = isTaggedCumulativeRestatement(payload)
         const itemTransition =
           itemId !== undefined &&
           run.lastContentItemId !== undefined &&
@@ -9494,7 +9508,8 @@ export class EnsembleOrchestrator {
           run.content.length > 0
         const chunk = `${itemTransition ? '\n\n---\n\n' : ''}${text}`
         const appended = appendProviderContent(run, chunk, {
-          cumulative: payload.cumulative === true
+          trustedIncremental: !taggedCumulative,
+          claudeCumulative: payload.cumulative === true
         })
         if (itemId) run.lastContentItemId = itemId
         if (appended) this.scheduleFlush(run)
@@ -9514,7 +9529,8 @@ export class EnsembleOrchestrator {
       const text = payload.content
       if (text) {
         const appended = appendProviderContent(run, text, {
-          cumulative: payload.cumulative === true
+          trustedIncremental: !isTaggedCumulativeRestatement(payload),
+          claudeCumulative: payload.cumulative === true
         })
         if (appended) this.scheduleFlush(run)
       }
@@ -9553,7 +9569,9 @@ export class EnsembleOrchestrator {
       if (text) {
         const isDelta = payload.delta === true
         if (isDelta) {
-          if (appendProviderContent(run, text)) this.scheduleFlush(run)
+          if (appendProviderContent(run, text, { trustedIncremental: true })) {
+            this.scheduleFlush(run)
+          }
         } else if (run.content.length === 0) {
           // First and only message-shape payload for this turn —
           // treat as the authoritative body.
