@@ -987,6 +987,10 @@ describe('Ensemble prompt composition', () => {
 
     expect(prompt).not.toContain('Grok direct-tool rule')
     expect(prompt).not.toContain('taskwraith-grok__ensemble_yield')
+    expect(prompt).toContain('Ensemble yield is a directly advertised lifecycle tool')
+    expect(prompt).toContain('Do not run `capability_search`, `capability_invoke`')
+    expect(prompt).toContain('the tool call is mandatory before ending the turn')
+    expect(prompt).toContain('Never replace the call with a narrated handoff')
   })
 
   // 1.0.4-AJ — last-speaker awareness. The pre-fix failure mode
