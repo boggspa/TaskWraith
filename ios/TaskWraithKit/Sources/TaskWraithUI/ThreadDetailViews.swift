@@ -1307,6 +1307,10 @@ struct ThreadDetailView: View {
                 topActionBanner
                 attentionBanner
             }
+            .animation(
+                ComposerMotion.inlineAnimation(reduceMotion: reduceMotion),
+                value: threadApprovals.count + threadQuestions.count
+            )
         }
         .overlay(alignment: .bottom) {
             // Jump-to-latest: centered just above the composer shell (the
