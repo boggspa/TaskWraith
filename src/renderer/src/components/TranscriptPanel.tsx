@@ -82,7 +82,9 @@ import {
 import {
   buildEnsembleRoundCardRowsWithRanges,
   isEnsembleRoundHeaderMessage,
-  readEnsembleRoundHeader
+  readEnsembleRoundHeader,
+  roundExpansionForChat,
+  updateRoundExpansionForChat
 } from '../lib/ensembleRoundCards'
 import {
   createTranscriptScrollAnimator,
@@ -2096,19 +2098,27 @@ export const TranscriptPanel = memo(
     // Per-message expansion state for long user-message bubbles. Keyed by
     // message.id so toggling one brief does not collapse others. Default for
     // every long message is collapsed — see UserMessageCollapse for thresholds.
-    // Per-round manual expand/collapse overrides for the ensemble
-    // round-card transcript. Keyed by ensemble roundId; value true =
-    // expanded. Absent → the default (latest round expanded, older
-    // collapsed) applies. Reset on chat change like the other transcript
-    // expansion state below.
-    const [manualRoundExpansion, setManualRoundExpansion] = useState<Map<string, boolean>>(new Map())
-    const setRoundExpanded = useCallback((roundId: string, expanded: boolean) => {
-      setManualRoundExpansion((prev) => {
-        const next = new Map(prev)
-        next.set(roundId, expanded)
-        return next
-      })
-    }, [])
+    // Manual round expansion is session-local but keyed by chat. Switching
+    // away and back must not erase the round the reader opened; keeping the
+    // destination map available during render also lets scroll-anchor restore
+    // target a body row before its deferred positioning pass runs.
+    const roundExpansionChatId = currentChat?.appChatId ?? null
+    const [manualRoundExpansionByChatId, setManualRoundExpansionByChatId] = useState<
+      Map<string, ReadonlyMap<string, boolean>>
+    >(new Map())
+    const manualRoundExpansion = useMemo(
+      () => roundExpansionForChat(manualRoundExpansionByChatId, roundExpansionChatId),
+      [manualRoundExpansionByChatId, roundExpansionChatId]
+    )
+    const setRoundExpanded = useCallback(
+      (roundId: string, expanded: boolean) => {
+        if (!roundExpansionChatId) return
+        setManualRoundExpansionByChatId((prev) =>
+          updateRoundExpansionForChat(prev, roundExpansionChatId, roundId, expanded)
+        )
+      },
+      [roundExpansionChatId]
+    )
     const [expandedUserMessages, setExpandedUserMessages] = useState<Set<string>>(new Set())
     const toggleUserMessageExpanded = useCallback((id: string) => {
       setExpandedUserMessages((prev) => {
@@ -2392,14 +2402,10 @@ export const TranscriptPanel = memo(
       (messageId: string) => {
         const roundId = roundIdByMessageId.get(messageId)
         if (!roundId) return
-        setManualRoundExpansion((prev) => {
-          if (prev.get(roundId) === true) return prev
-          const next = new Map(prev)
-          next.set(roundId, true)
-          return next
-        })
+        if (manualRoundExpansion.get(roundId) === true) return
+        setRoundExpanded(roundId, true)
       },
-      [roundIdByMessageId]
+      [manualRoundExpansion, roundIdByMessageId, setRoundExpanded]
     )
 
     // Phase 3 — type-out reveal (Variant B), default ON. The
@@ -2634,7 +2640,6 @@ export const TranscriptPanel = memo(
       previousChatIdRef.current = chatId
       setMessageContextMenu(null)
       setExpandedUserMessages(new Set())
-      setManualRoundExpansion(new Map())
       setActivityExpansionByRow(new Map())
       setExpandedSubThreadResults(new Set())
       setActiveParticipantFilterKeys(new Set())

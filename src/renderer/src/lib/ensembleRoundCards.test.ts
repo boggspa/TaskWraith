@@ -4,7 +4,9 @@ import {
   buildEnsembleRoundCardRowsWithRanges,
   ensembleRoundHeaderId,
   isEnsembleRoundHeaderMessage,
-  readEnsembleRoundHeader
+  readEnsembleRoundHeader,
+  roundExpansionForChat,
+  updateRoundExpansionForChat
 } from './ensembleRoundCards'
 import type { ChatMessage, ChatRecord } from '../../../main/store/types'
 import { TASKWRAITH_CLOSEOUT_KIND } from '../../../shared/taskWraithCloseout'
@@ -332,5 +334,34 @@ describe('buildEnsembleRoundCardRows', () => {
       ['u2', 2, 3],
       ['a2', 3, 4]
     ])
+  })
+})
+
+describe('per-chat round expansion memory', () => {
+  it('restores chat A overrides after visiting chat B without leaking between chats', () => {
+    let cache = updateRoundExpansionForChat(new Map(), 'chat-a', 'round-1', true)
+    cache = updateRoundExpansionForChat(cache, 'chat-b', 'round-9', false)
+
+    expect(roundExpansionForChat(cache, 'chat-a')).toEqual(new Map([['round-1', true]]))
+    expect(roundExpansionForChat(cache, 'chat-b')).toEqual(new Map([['round-9', false]]))
+    expect(roundExpansionForChat(cache, 'chat-c')).toEqual(new Map())
+  })
+
+  it('updates one round immutably while preserving the other chat buckets', () => {
+    const initial = new Map<string, Map<string, boolean>>([
+      ['chat-a', new Map([['round-1', true]])],
+      ['chat-b', new Map([['round-2', false]])]
+    ])
+    const next = updateRoundExpansionForChat(initial, 'chat-a', 'round-3', true)
+
+    expect(next).not.toBe(initial)
+    expect(next.get('chat-a')).toEqual(
+      new Map([
+        ['round-1', true],
+        ['round-3', true]
+      ])
+    )
+    expect(next.get('chat-b')).toEqual(new Map([['round-2', false]]))
+    expect(initial.get('chat-a')).toEqual(new Map([['round-1', true]]))
   })
 })

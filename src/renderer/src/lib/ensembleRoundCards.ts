@@ -39,6 +39,28 @@ import type { TranscriptGroupedMessageRange } from './transcriptToolMessageGroup
 
 export const ENSEMBLE_ROUND_HEADER_KIND = 'ensembleRoundHeader'
 
+export type RoundExpansionByChatId = ReadonlyMap<string, ReadonlyMap<string, boolean>>
+
+export function roundExpansionForChat(
+  expansionByChatId: RoundExpansionByChatId,
+  chatId: string | null
+): ReadonlyMap<string, boolean> {
+  return (chatId ? expansionByChatId.get(chatId) : undefined) ?? new Map()
+}
+
+export function updateRoundExpansionForChat(
+  expansionByChatId: RoundExpansionByChatId,
+  chatId: string,
+  roundId: string,
+  expanded: boolean
+): Map<string, ReadonlyMap<string, boolean>> {
+  const next = new Map(expansionByChatId)
+  const chatExpansion = new Map(next.get(chatId) ?? [])
+  chatExpansion.set(roundId, expanded)
+  next.set(chatId, chatExpansion)
+  return next
+}
+
 export interface EnsembleRoundHeaderData {
   roundId: string
   /** 1-based index of this round among all rounds in the chat. */
