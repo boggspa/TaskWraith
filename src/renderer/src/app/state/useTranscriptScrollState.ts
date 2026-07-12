@@ -468,6 +468,16 @@ export function useTranscriptScrollState({
 
     const onKeyDown = (event: KeyboardEvent) => {
       if (isEditableTranscriptKeyTarget(event.target)) return
+      const target = event.target
+      const isNodeTarget = typeof Node !== 'undefined' && target instanceof Node
+      if (
+        isNodeTarget &&
+        target !== document.body &&
+        target !== document.documentElement &&
+        !scroller.contains(target)
+      ) {
+        return
+      }
       if (event.key === 'PageUp' || event.key === 'ArrowUp' || event.key === 'Home') {
         handleScrollIntent(-1)
         return
@@ -487,7 +497,12 @@ export function useTranscriptScrollState({
     scroller.addEventListener('touchstart', onTouchStart, { passive: true })
     scroller.addEventListener('touchmove', onTouchMove, { passive: true })
     scroller.addEventListener('touchend', onTouchEnd, { passive: true })
-    scroller.addEventListener('keydown', onKeyDown)
+    // Ordinary transcript prose is not focusable, so clicking it leaves the
+    // document root focused. PageUp/Home still scroll the transcript through
+    // the browser's default handling, but a listener bound only to `scroller`
+    // never sees that key event and follow remains incorrectly armed. Listen at
+    // the window and accept only document-root or transcript-owned targets.
+    window.addEventListener('keydown', onKeyDown)
     window.addEventListener('pointerup', endScrollbarPointer, { passive: true })
     window.addEventListener('pointercancel', endScrollbarPointer, { passive: true })
     window.addEventListener('blur', endScrollbarPointer)
@@ -498,7 +513,7 @@ export function useTranscriptScrollState({
       scroller.removeEventListener('touchstart', onTouchStart)
       scroller.removeEventListener('touchmove', onTouchMove)
       scroller.removeEventListener('touchend', onTouchEnd)
-      scroller.removeEventListener('keydown', onKeyDown)
+      window.removeEventListener('keydown', onKeyDown)
       window.removeEventListener('pointerup', endScrollbarPointer)
       window.removeEventListener('pointercancel', endScrollbarPointer)
       window.removeEventListener('blur', endScrollbarPointer)
