@@ -1933,6 +1933,7 @@ function App(): React.JSX.Element {
    * Claude runs receive it as `fastMode` settings for SDK and CLI paths.
    */
   const [claudeFastMode, setClaudeFastMode] = useState<boolean>(false)
+  const [kimiFastMode, setKimiFastMode] = useState<boolean>(false)
   const [kimiThinkingEnabled, setKimiThinkingEnabled] = useState<boolean>(true)
   const [grokReasoningEffort, setGrokReasoningEffort] = useState<string>(
     GROK_45_DEFAULT_REASONING_EFFORT
@@ -3481,7 +3482,10 @@ function App(): React.JSX.Element {
           }
         : {}),
       ...(provider === 'kimi'
-        ? { kimiThinkingEnabled: participant.thinkingEnabled ?? true }
+        ? {
+            kimiFastMode: Boolean(participant.fastModeEnabled),
+            kimiThinkingEnabled: participant.thinkingEnabled ?? true
+          }
         : {}),
       ...(provider === 'grok'
         ? isGrok45ReasoningModelId(providerModel)
@@ -3603,9 +3607,14 @@ function App(): React.JSX.Element {
               }
             : {}),
           ...(fallbackProvider === 'kimi'
-            ? typeof fallbackMetadata.kimiThinkingEnabled === 'boolean'
-              ? { kimiThinkingEnabled: fallbackMetadata.kimiThinkingEnabled }
-              : {}
+            ? {
+                ...(typeof fallbackMetadata.kimiFastMode === 'boolean'
+                  ? { kimiFastMode: fallbackMetadata.kimiFastMode }
+                  : {}),
+                ...(typeof fallbackMetadata.kimiThinkingEnabled === 'boolean'
+                  ? { kimiThinkingEnabled: fallbackMetadata.kimiThinkingEnabled }
+                  : {})
+              }
             : {}),
           ...(fallbackProvider === 'grok'
             ? typeof fallbackMetadata.grokReasoningEffort === 'string'
@@ -5046,6 +5055,7 @@ function App(): React.JSX.Element {
           : resolveClaudeDefaultReasoningEffort(claudeModelOption),
       claudeFastMode:
         typeof metadata.claudeFastMode === 'boolean' ? metadata.claudeFastMode : false,
+      kimiFastMode: typeof metadata.kimiFastMode === 'boolean' ? metadata.kimiFastMode : false,
       kimiThinkingEnabled:
         typeof metadata.kimiThinkingEnabled === 'boolean' ? metadata.kimiThinkingEnabled : true,
       grokReasoningEffort:
@@ -5088,6 +5098,7 @@ function App(): React.JSX.Element {
     setCodexServiceTier(selection.codexServiceTier)
     setClaudeReasoningEffort(selection.claudeReasoningEffort)
     setClaudeFastMode(selection.claudeFastMode)
+    setKimiFastMode(selection.kimiFastMode)
     setKimiThinkingEnabled(selection.kimiThinkingEnabled)
     setGrokReasoningEffort(selection.grokReasoningEffort)
     setCursorReasoningEffort(selection.cursorReasoningEffort)
@@ -5143,7 +5154,11 @@ function App(): React.JSX.Element {
           }
         : {}),
       ...(provider === 'kimi'
-        ? { thinkingEnabled: selection.kimiThinkingEnabled ?? defaults.thinkingEnabled ?? true }
+        ? {
+            fastModeEnabled: Boolean(selection.kimiFastMode),
+            thinkingEnabled: selection.kimiThinkingEnabled ?? defaults.thinkingEnabled ?? true,
+            serviceTier: selection.kimiFastMode ? 'fast' : 'standard'
+          }
         : {}),
       ...(provider === 'grok'
         ? isGrok45ReasoningModelId(selection.selectedModelType)
@@ -5194,6 +5209,7 @@ function App(): React.JSX.Element {
     'codexServiceTier',
     'claudeReasoningEffort',
     'claudeFastMode',
+    'kimiFastMode',
     'kimiThinkingEnabled',
     'grokReasoningEffort',
     'cursorReasoningEffort',
@@ -6468,6 +6484,8 @@ function App(): React.JSX.Element {
           provider === 'claude' ? normalizedSelection.reasoningEffort || '' : undefined,
         claudeFastMode:
           provider === 'claude' ? Boolean(normalizedSelection.fastModeEnabled) : undefined,
+        kimiFastMode:
+          provider === 'kimi' ? Boolean(normalizedSelection.fastModeEnabled) : undefined,
         kimiThinkingEnabled:
           provider === 'kimi' ? Boolean(normalizedSelection.thinkingEnabled) : undefined,
         grokReasoningEffort:
@@ -6543,6 +6561,7 @@ function App(): React.JSX.Element {
         setClaudeReasoningEffort(String(metadata.claudeReasoningEffort || ''))
         setClaudeFastMode(Boolean(metadata.claudeFastMode))
       } else if (provider === 'kimi') {
+        setKimiFastMode(Boolean(metadata.kimiFastMode))
         setKimiThinkingEnabled(metadata.kimiThinkingEnabled !== false)
       } else if (provider === 'grok') {
         setGrokReasoningEffort(String(metadata.grokReasoningEffort || ''))
@@ -10706,6 +10725,7 @@ function App(): React.JSX.Element {
         ? { claudeReasoningEffort: snapshot.claudeReasoningEffort }
         : {}),
       ...(snapshot.claudeFastMode !== undefined ? { claudeFastMode: snapshot.claudeFastMode } : {}),
+      ...(snapshot.kimiFastMode !== undefined ? { kimiFastMode: snapshot.kimiFastMode } : {}),
       ...(snapshot.kimiThinkingEnabled !== undefined
         ? { kimiThinkingEnabled: snapshot.kimiThinkingEnabled }
         : {}),
@@ -10790,6 +10810,7 @@ function App(): React.JSX.Element {
       ? { claudeReasoningEffort: request.claudeReasoningEffort }
       : {}),
     ...(request.claudeFastMode !== undefined ? { claudeFastMode: request.claudeFastMode } : {}),
+    ...(request.kimiFastMode !== undefined ? { kimiFastMode: request.kimiFastMode } : {}),
     ...(request.kimiThinkingEnabled !== undefined
       ? { kimiThinkingEnabled: request.kimiThinkingEnabled }
       : {}),
@@ -10919,6 +10940,7 @@ function App(): React.JSX.Element {
       claudeReasoningEffort:
         queuedProviderSelection?.claudeReasoningEffort ?? request.claudeReasoningEffort,
       claudeFastMode: queuedProviderSelection?.claudeFastMode ?? request.claudeFastMode,
+      kimiFastMode: queuedProviderSelection?.kimiFastMode ?? request.kimiFastMode,
       kimiThinkingEnabled:
         queuedProviderSelection?.kimiThinkingEnabled ?? request.kimiThinkingEnabled,
       grokReasoningEffort:
@@ -11139,6 +11161,8 @@ function App(): React.JSX.Element {
       provider === 'kimi'
         ? (composerSelection?.kimiThinkingEnabled ?? kimiThinkingEnabled)
         : kimiThinkingEnabled
+    const requestKimiFastMode =
+      provider === 'kimi' ? (composerSelection?.kimiFastMode ?? kimiFastMode) : kimiFastMode
     const requestClaudeReasoningEffort =
       provider === 'claude'
         ? composerSelection?.claudeReasoningEffort || claudeReasoningEffort
@@ -11201,6 +11225,7 @@ function App(): React.JSX.Element {
       codexServiceTier: requestServiceTier,
       claudeReasoningEffort: requestClaudeReasoningEffort,
       claudeFastMode: requestClaudeFastMode,
+      kimiFastMode: requestKimiFastMode,
       kimiThinkingEnabled: requestKimiThinkingEnabled,
       grokReasoningEffort: requestGrokReasoningEffort,
       cursorReasoningEffort: requestCursorReasoningEffort,
@@ -11628,6 +11653,7 @@ function App(): React.JSX.Element {
           codexServiceTier: request.codexServiceTier,
           claudeReasoningEffort: request.claudeReasoningEffort,
           claudeFastMode: request.claudeFastMode,
+          kimiFastMode: request.kimiFastMode,
           kimiThinkingEnabled: request.kimiThinkingEnabled,
           grokReasoningEffort: request.grokReasoningEffort,
           cursorReasoningEffort: request.cursorReasoningEffort,
@@ -13248,6 +13274,7 @@ function App(): React.JSX.Element {
           participantMetadata.claudeFastMode = Boolean(selectedSideParticipant.fastModeEnabled)
         }
         if (selectedSideParticipant.provider === 'kimi') {
+          participantMetadata.kimiFastMode = Boolean(selectedSideParticipant.fastModeEnabled)
           participantMetadata.kimiThinkingEnabled =
             selectedSideParticipant.thinkingEnabled ?? true
         }
@@ -14201,6 +14228,7 @@ function App(): React.JSX.Element {
       codexServiceTier: request.codexServiceTier,
       claudeReasoningEffort: request.claudeReasoningEffort,
       claudeFastMode: request.claudeFastMode,
+      kimiFastMode: request.kimiFastMode,
       kimiThinkingEnabled: request.kimiThinkingEnabled,
       grokReasoningEffort: request.grokReasoningEffort,
       cursorReasoningEffort: request.cursorReasoningEffort,
@@ -15001,6 +15029,7 @@ function App(): React.JSX.Element {
       codexServiceTier: selection.codexServiceTier,
       claudeReasoningEffort: selection.claudeReasoningEffort,
       claudeFastMode: selection.claudeFastMode,
+      kimiFastMode: selection.kimiFastMode,
       kimiThinkingEnabled: selection.kimiThinkingEnabled,
       grokReasoningEffort: selection.grokReasoningEffort,
       cursorReasoningEffort: selection.cursorReasoningEffort,
@@ -15242,6 +15271,7 @@ function App(): React.JSX.Element {
         setClaudeFastMode(Boolean(dispatchTask.claudeFastMode))
       }
       if (dispatchTask.provider === 'kimi') {
+        setKimiFastMode(Boolean(dispatchTask.kimiFastMode))
         setKimiThinkingEnabled(dispatchTask.kimiThinkingEnabled !== false)
       }
       if (dispatchTask.provider === 'grok') {
@@ -15288,6 +15318,7 @@ function App(): React.JSX.Element {
         codexServiceTier: dispatchTask.codexServiceTier,
         claudeReasoningEffort: dispatchTask.claudeReasoningEffort,
         claudeFastMode: dispatchTask.claudeFastMode,
+        kimiFastMode: dispatchTask.kimiFastMode,
         kimiThinkingEnabled: dispatchTask.kimiThinkingEnabled,
         grokReasoningEffort: dispatchTask.grokReasoningEffort,
         cursorReasoningEffort: dispatchTask.cursorReasoningEffort,
@@ -18517,6 +18548,7 @@ function App(): React.JSX.Element {
     sideComposerSelection?.claudeReasoningEffort ||
     resolveClaudeDefaultReasoningEffort(sideClaudeModelOption)
   const sideKimiThinking = sideComposerSelection?.kimiThinkingEnabled ?? true
+  const sideKimiFastMode = Boolean(sideComposerSelection?.kimiFastMode)
   const sideGrokReasoning =
     sideComposerSelection?.grokReasoningEffort || GROK_45_DEFAULT_REASONING_EFFORT
   const sideCursorReasoning =
@@ -18589,6 +18621,13 @@ function App(): React.JSX.Element {
           .map((model) => model.id)
       )
     }
+    if (sideComposerProvider === 'kimi') {
+      return new Set(
+        sideComposerModelOptionsRaw
+          .filter((model) => model.additionalSpeedTiers?.includes('fast'))
+          .map((model) => model.id)
+      )
+    }
     if (sideComposerProvider === 'cursor') {
       return new Set(['composer-2.5', 'composer-2.5-fast', CURSOR_GROK_45_BASE_MODEL_ID])
     }
@@ -18604,11 +18643,13 @@ function App(): React.JSX.Element {
       ? sideComposerSelection?.codexServiceTier === 'fast'
       : sideComposerProvider === 'claude'
         ? Boolean(sideComposerSelection?.claudeFastMode)
-        : sideComposerProvider === 'cursor'
-          ? isCursorGrok45ModelId(sideComposerSelectedModel)
-            ? sideCursorFastMode
-            : sideComposerSelectedModel === 'composer-2.5-fast'
-          : false
+        : sideComposerProvider === 'kimi'
+          ? sideKimiFastMode
+          : sideComposerProvider === 'cursor'
+            ? isCursorGrok45ModelId(sideComposerSelectedModel)
+              ? sideCursorFastMode
+              : sideComposerSelectedModel === 'composer-2.5-fast'
+            : false
   const sidePermissionOptions: PermissionOption[] = [
     { value: 'plan', label: PLAN_LABEL },
     { value: 'read_only', label: READ_ONLY_RECON_LABEL },
@@ -18767,19 +18808,24 @@ function App(): React.JSX.Element {
             rememberSideChatComposerSelection({
               claudeFastMode: !sideComposerSelection?.claudeFastMode
             })
-        : sideComposerProvider === 'cursor'
-          ? () => {
-              if (isCursorGrok45ModelId(sideComposerSelectedModel)) {
-                rememberSideChatComposerSelection({ cursorFastMode: !sideCursorFastMode })
-                return
+        : sideComposerProvider === 'kimi'
+          ? () =>
+              rememberSideChatComposerSelection({
+                kimiFastMode: !sideKimiFastMode
+              })
+          : sideComposerProvider === 'cursor'
+            ? () => {
+                if (isCursorGrok45ModelId(sideComposerSelectedModel)) {
+                  rememberSideChatComposerSelection({ cursorFastMode: !sideCursorFastMode })
+                  return
+                }
+                handleSideModelChange(
+                  sideComposerSelectedModel === 'composer-2.5-fast'
+                    ? 'composer-2.5'
+                    : 'composer-2.5-fast'
+                )
               }
-              handleSideModelChange(
-                sideComposerSelectedModel === 'composer-2.5-fast'
-                  ? 'composer-2.5'
-                  : 'composer-2.5-fast'
-              )
-            }
-          : undefined
+            : undefined
   const handleSetSideAgenticWorkspaceGrant = async (
     service: AgenticServiceId,
     enabled: boolean
@@ -24447,6 +24493,7 @@ function App(): React.JSX.Element {
       codexReasoningOptions: viewerCodexReasoningOptionsRaw,
       claudeReasoningOptions: viewerClaudeReasoningOptionsRaw,
       claudeReasoningEffort: viewerClaudeReasoning,
+      kimiFastMode: Boolean(viewerSelection.kimiFastMode),
       kimiThinkingEnabled: viewerKimiThinking,
       grokReasoningEffort: viewerGrokReasoning,
       cursorReasoningEffort: viewerCursorReasoning,
@@ -24529,6 +24576,7 @@ function App(): React.JSX.Element {
         paneRememberComposerSelection({ customModel: value }),
       setCodexReasoningEffort: paneNoopSetter,
       setClaudeReasoningEffort: paneNoopSetter,
+      setKimiFastMode: paneNoopSetter,
       setKimiThinkingEnabled: paneNoopSetter,
       setGrokReasoningEffort: paneNoopSetter,
       setCursorReasoningEffort: paneNoopSetter,
@@ -25493,6 +25541,7 @@ function App(): React.JSX.Element {
         codexReasoningOptions: viewerCodexReasoningOptionsRaw,
         claudeReasoningOptions: viewerClaudeReasoningOptionsRaw,
         claudeReasoningEffort: viewerClaudeReasoning,
+        kimiFastMode: Boolean(viewerSelection.kimiFastMode),
         kimiThinkingEnabled: viewerKimiThinking,
         grokReasoningEffort: viewerGrokReasoning,
         cursorReasoningEffort: viewerCursorReasoning,
@@ -25575,6 +25624,7 @@ function App(): React.JSX.Element {
           paneRememberComposerSelection({ customModel: value }),
         setCodexReasoningEffort: paneNoopSetter,
         setClaudeReasoningEffort: paneNoopSetter,
+        setKimiFastMode: paneNoopSetter,
         setKimiThinkingEnabled: paneNoopSetter,
         setGrokReasoningEffort: paneNoopSetter,
         setCursorReasoningEffort: paneNoopSetter,
@@ -25795,6 +25845,7 @@ function App(): React.JSX.Element {
     isWelcomeChat,
     isWorkflowChatWelcome,
     isWorkflowComposeChat,
+    kimiFastMode,
     kimiThinkingEnabled,
     lastNonCustomModelType,
     liveRunOutputTokens,
@@ -25826,6 +25877,7 @@ function App(): React.JSX.Element {
     setGrokReasoningEffort,
     setCursorReasoningEffort,
     setCursorFastMode,
+    setKimiFastMode,
     setKimiThinkingEnabled,
     setLastNonCustomModelType,
     setSelectedModelType,
@@ -26118,6 +26170,7 @@ function App(): React.JSX.Element {
     jumpToTranscriptMessage,
     kimiAuthStatus,
     kimiBinaryPath,
+    kimiFastMode,
     kimiThinkingEnabled,
     latestSideChatRunResultSeed,
     logsEndRef,

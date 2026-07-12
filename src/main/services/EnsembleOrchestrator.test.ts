@@ -10877,7 +10877,7 @@ Next action:
     expect(harness.dispatched[1].provider).toBe('codex')
   })
 
-  it('threads kimi thinking flag through dispatch', async () => {
+  it('threads Kimi thinking and HighSpeed tier through dispatch', async () => {
     const harness = makeHarness()
     harness.chat.ensemble!.participants = [
       {
@@ -10889,7 +10889,9 @@ Next action:
         order: 1,
         model: 'kimi-k2.6',
         permissionPresetId: 'read_only',
-        thinkingEnabled: true
+        thinkingEnabled: true,
+        fastModeEnabled: true,
+        serviceTier: 'fast'
       }
     ]
     harness.orchestrator.startRound({
@@ -10901,9 +10903,9 @@ Next action:
     const kimiPayload = harness.dispatched[0]
     expect(kimiPayload.provider).toBe('kimi')
     expect(kimiPayload.kimiThinking).toBe(true)
-    // Kimi runs should NOT carry reasoning or fast-mode fields.
+    expect(kimiPayload.serviceTier).toBe('fast')
+    // Kimi runs should not leak other providers' controls.
     expect(kimiPayload.reasoningEffort).toBeUndefined()
-    expect(kimiPayload.serviceTier).toBeUndefined()
     expect(kimiPayload.claudeFastMode).toBeUndefined()
   })
 
@@ -10932,6 +10934,7 @@ Next action:
     })
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
     expect(harness.dispatched[0].kimiThinking).toBe(true)
+    expect(harness.dispatched[0].serviceTier).toBe('standard')
   })
 
   // A2 (1.0.3) — `dmTargetParticipantId` scopes the round to a

@@ -517,6 +517,7 @@ function normalizeWorkflowTemplate(value: unknown): WorkflowRunTemplate | null {
     cursorReasoningEffort: input.cursorReasoningEffort,
     codexServiceTier: input.codexServiceTier,
     claudeFastMode: input.claudeFastMode,
+    kimiFastMode: input.kimiFastMode,
     cursorFastMode: input.cursorFastMode,
     kimiThinkingEnabled: input.kimiThinkingEnabled,
     runtimeProfileId: input.runtimeProfileId,
@@ -1600,6 +1601,7 @@ function buildScheduledTaskDispatchReceipt(task: ScheduledTask) {
         ? { claudeReasoningEffort: task.claudeReasoningEffort }
         : {}),
       ...(task.claudeFastMode !== undefined ? { claudeFastMode: task.claudeFastMode } : {}),
+      ...(task.kimiFastMode !== undefined ? { kimiFastMode: task.kimiFastMode } : {}),
       ...(task.grokReasoningEffort !== undefined
         ? { grokReasoningEffort: task.grokReasoningEffort }
         : {}),

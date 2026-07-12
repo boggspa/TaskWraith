@@ -299,6 +299,7 @@ export interface RemoteTaskCard {
   cursorFastMode?: boolean
   claudeFastMode?: boolean
   codexServiceTier?: string
+  kimiFastMode?: boolean
   kimiThinkingEnabled?: boolean
   /** Slice B (provider unlock): a provider/model/reasoning switch queued while
    *  a run is active, applied at turn end. Remote composers show a "switching at
@@ -1168,6 +1169,9 @@ export function buildRemoteTaskCard(
   }
   if (isString(providerMetadata.codexServiceTier)) {
     card.codexServiceTier = providerMetadata.codexServiceTier
+  }
+  if (typeof providerMetadata.kimiFastMode === 'boolean') {
+    card.kimiFastMode = providerMetadata.kimiFastMode
   }
   if (typeof providerMetadata.kimiThinkingEnabled === 'boolean') {
     card.kimiThinkingEnabled = providerMetadata.kimiThinkingEnabled

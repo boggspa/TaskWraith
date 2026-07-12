@@ -462,8 +462,9 @@ const KIMI_STATIC_MODELS = [
   {
     id: 'kimi-k2.7-code',
     label: 'Kimi K2.7 Code',
-    description: 'Kimi Code CLI configured default model',
-    isDefault: true
+    description: 'Kimi Code CLI standard and HighSpeed tiers',
+    isDefault: true,
+    additionalSpeedTiers: ['fast']
   }
 ]
 const OLLAMA_STATIC_MODELS = [
@@ -563,7 +564,13 @@ const CURSOR_STATIC_MODELS = [
   }
 ]
 const KIMI_DEFAULT_MODEL = 'kimi-k2.7-code'
-const KIMI_CLI_MODEL_IDS = new Set(KIMI_STATIC_MODELS.map((model) => model.id))
+export const KIMI_STANDARD_CLI_MODEL = 'kimi-for-coding'
+export const KIMI_HIGHSPEED_CLI_MODEL = 'kimi-for-coding-highspeed'
+const KIMI_CLI_MODEL_IDS = new Set([
+  ...KIMI_STATIC_MODELS.map((model) => model.id),
+  KIMI_STANDARD_CLI_MODEL,
+  KIMI_HIGHSPEED_CLI_MODEL
+])
 const KIMI_CLI_MODEL_ALIASES = new Map<string, string>([
   ['default', KIMI_DEFAULT_MODEL],
   ['cli-default', KIMI_DEFAULT_MODEL],
@@ -696,14 +703,20 @@ export function appendKimiThinkingArgs(args: string[], kimiThinking?: boolean | 
   args.push(kimiThinking === false ? '--no-thinking' : '--thinking')
 }
 
-function kimiCliModelArg(model: string): string | null {
+function kimiCliModelArg(model: string, serviceTier?: string | null): string | null {
+  if (serviceTier === 'fast') return KIMI_HIGHSPEED_CLI_MODEL
+  if (serviceTier === 'standard') return KIMI_STANDARD_CLI_MODEL
   const normalized = model.trim().toLowerCase()
   if (!normalized || normalized === 'default' || normalized === KIMI_DEFAULT_MODEL) return null
   return model
 }
 
-export function appendKimiModelArgs(args: string[], model: string): void {
-  const cliModel = kimiCliModelArg(model)
+export function appendKimiModelArgs(
+  args: string[],
+  model: string,
+  serviceTier?: string | null
+): void {
+  const cliModel = kimiCliModelArg(model, serviceTier)
   if (cliModel) args.push('--model', cliModel)
 }
 

@@ -1810,6 +1810,14 @@ function EnsembleAddParticipantButton({
         }
         return { ...current, fastModeEnabled: !current.fastModeEnabled }
       }
+      if (current.provider === 'kimi') {
+        const nextFast = !current.fastModeEnabled
+        return {
+          ...current,
+          fastModeEnabled: nextFast,
+          serviceTier: nextFast ? 'fast' : 'standard'
+        }
+      }
       return { ...current, fastModeEnabled: !current.fastModeEnabled }
     })
   }, [availableProviderGroups])
@@ -1862,7 +1870,10 @@ function EnsembleAddParticipantButton({
       }
       fastModeEnabled={fastModeEnabled}
       onToggleFastMode={
-        draft.provider === 'codex' || draft.provider === 'claude' || draft.provider === 'cursor'
+        draft.provider === 'codex' ||
+        draft.provider === 'claude' ||
+        draft.provider === 'kimi' ||
+        draft.provider === 'cursor'
           ? handleToggleFastMode
           : undefined
       }

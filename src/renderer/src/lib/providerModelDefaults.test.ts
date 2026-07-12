@@ -197,6 +197,14 @@ describe('Grok provider model defaults', () => {
 })
 
 describe('provider model picker sentinels', () => {
+  it('keeps K2.7 Code as one model row with a Fast-capable HighSpeed tier', () => {
+    expect(KIMI_DEFAULT_MODELS).toHaveLength(1)
+    expect(KIMI_DEFAULT_MODELS[0]).toMatchObject({
+      id: 'kimi-k2.7-code',
+      additionalSpeedTiers: ['fast']
+    })
+  })
+
   it('does not expose Default or CLI Default as selectable model rows', () => {
     const catalogs = [
       CODEX_DEFAULT_MODELS,

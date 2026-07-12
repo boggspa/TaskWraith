@@ -192,6 +192,7 @@ export interface ProviderReroutePlan {
   codexServiceTier?: string | null
   claudeReasoningEffort?: string | null
   claudeFastMode?: boolean | null
+  kimiFastMode?: boolean
   kimiThinkingEnabled?: boolean
   grokReasoningEffort?: string | null
   cursorReasoningEffort?: string | null
@@ -767,7 +768,7 @@ export interface EnsembleParticipant {
    *
    *   reasoningEffort  Codex: 'minimal' | 'low'/'light' | 'medium' | 'high' | 'xhigh'
    *                    Claude: 'off' | 'low' | 'medium' | 'high'
-   *   fastModeEnabled  Codex (serviceTier=fast) + Claude (claudeFastMode)
+   *   fastModeEnabled  Codex/Kimi service tier + Claude fast mode
    *   thinkingEnabled  Kimi only — toggles K2 thinking mode
    *   serviceTier      Reserved for explicit Codex tier overrides if
    *                    we ever expose more than the fast toggle.
@@ -4090,6 +4091,7 @@ export interface ScheduledTask {
   codexServiceTier?: string | null
   claudeReasoningEffort?: string | null
   claudeFastMode?: boolean | null
+  kimiFastMode?: boolean
   kimiThinkingEnabled?: boolean
   grokReasoningEffort?: string | null
   cursorReasoningEffort?: string | null
@@ -5031,6 +5033,7 @@ export interface RunQueueRequestSnapshot {
   codexServiceTier?: string | null
   claudeReasoningEffort?: string | null
   claudeFastMode?: boolean | null
+  kimiFastMode?: boolean
   kimiThinkingEnabled?: boolean
   grokReasoningEffort?: string | null
   cursorReasoningEffort?: string | null
@@ -5058,6 +5061,7 @@ export interface RunQueueRequestSnapshot {
     cursorReasoningEffort?: string | null
     cursorFastMode?: boolean
     claudeFastMode?: boolean
+    kimiFastMode?: boolean
     codexServiceTier?: string | null
     kimiThinkingEnabled?: boolean
     contextTurns?: number

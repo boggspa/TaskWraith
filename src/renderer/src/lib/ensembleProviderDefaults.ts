@@ -146,6 +146,7 @@ const GEMINI_MODELS: CombinedModelPickerModelOption[] = [
 const KIMI_MODELS: CombinedModelPickerModelOption[] = [
   { id: 'kimi-k2.7-code', label: 'Kimi K2.7 Code' }
 ]
+const KIMI_FAST_CAPABLE = new Set<string>(['kimi-k2.7-code'])
 
 // Grok — mirrors App.tsx GROK_DEFAULT_MODELS. Keep Grok Composer separate from
 // Cursor's `composer-2.5-fast` because it dispatches through Grok Build CLI auth.
@@ -336,7 +337,9 @@ export function getDefaultEnsembleParticipantConfig(
       return {
         model: 'kimi-k2.7-code',
         permissionPresetId: 'default',
-        thinkingEnabled: true
+        fastModeEnabled: false,
+        thinkingEnabled: true,
+        serviceTier: 'standard'
       }
     case 'grok':
       // Default Approval like every other seed; the Grok seat itself is
@@ -509,7 +512,7 @@ function defaultReasoningEffortForModel(
  * This encodes the same model-sensitive rules as the composer:
  *
  * - Codex/Claude start with Fast off and the model's enabled default reasoning.
- * - Kimi starts with thinking on and has no reasoning effort field.
+ * - Kimi starts with thinking on and its Standard speed tier selected.
  * - Grok's Fast posture is encoded by its provider/model route, not a toggle;
  *   only Grok 4.5 carries a reasoning effort.
  * - Cursor Composer 2.5 expresses Fast through the model id, while Cursor Grok
@@ -543,7 +546,12 @@ export function normalizeProviderModelSelection(
         fastModeEnabled: false
       }
     case 'kimi':
-      return { ...cleared, thinkingEnabled: true }
+      return {
+        ...cleared,
+        fastModeEnabled: false,
+        thinkingEnabled: true,
+        serviceTier: 'standard'
+      }
     case 'grok':
       return {
         ...cleared,
@@ -681,7 +689,7 @@ export function getEnsembleModelDefaults(provider: ProviderId): EnsembleModelDef
         modelOptions: KIMI_MODELS,
         reasoningOptions: KIMI_REASONING,
         defaultReasoning: 'on',
-        fastModeCapableModelIds: new Set<string>(),
+        fastModeCapableModelIds: KIMI_FAST_CAPABLE,
         defaultModelId: 'kimi-k2.7-code'
       }
     case 'grok':

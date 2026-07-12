@@ -94,6 +94,25 @@ describe('buildParticipantProviderModelPatch', () => {
       buildParticipantProviderModelPatch(source, 'cursor', 'composer-2.5-fast')
     ).toMatchObject({ model: 'composer-2.5-fast', fastModeEnabled: true })
   })
+
+  it('preserves a selected Kimi HighSpeed tier across its K2.7 model row', () => {
+    const source = participant({
+      provider: 'kimi',
+      model: 'kimi-k2.7-code',
+      fastModeEnabled: true,
+      serviceTier: 'fast',
+      thinkingEnabled: true
+    })
+
+    const patch = buildParticipantProviderModelPatch(source, 'kimi', 'kimi-k2.7-code')
+
+    expect(patch).toMatchObject({
+      model: 'kimi-k2.7-code',
+      fastModeEnabled: true,
+      serviceTier: 'fast'
+    })
+    expect(patch).not.toHaveProperty('thinkingEnabled')
+  })
 })
 
 describe('ParticipantPickerCluster', () => {
@@ -114,5 +133,28 @@ describe('ParticipantPickerCluster', () => {
     expect(html).toContain('Claude Opus 4.8 1M')
     expect(html).not.toContain('data-composer-control="provider"')
     expect(html).toContain('data-composer-control="permission"')
+  })
+
+  it('marks a HighSpeed Kimi participant as Fast while retaining the K2.7 model row', () => {
+    const html = renderToStaticMarkup(
+      <ParticipantPickerCluster
+        participant={
+          participant({
+            provider: 'kimi',
+            model: 'kimi-k2.7-code',
+            fastModeEnabled: true,
+            serviceTier: 'fast',
+            thinkingEnabled: true
+          })
+        }
+        composerStyle="default"
+        grokAvailable
+        cursorAvailable
+        onPatch={() => undefined}
+      />
+    )
+
+    expect(html).toContain('data-fast-mode-active="true"')
+    expect(html).toContain('Kimi K2.7 Code')
   })
 })

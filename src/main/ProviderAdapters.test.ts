@@ -174,10 +174,11 @@ describe('defaultProviderDescriptor capabilities', () => {
     expect(cap.speedTiers).toEqual(['fast'])
   })
 
-  it('kimi has a restrictive default-only capability set with image attachments', () => {
+  it('kimi advertises its HighSpeed tier with the default-only capability set', () => {
     const cap = defaultProviderDescriptor('kimi').capabilities
     expect(cap.approvalModes).toEqual(['default'])
     expect(cap.reasoningEffort).toBe(false)
+    expect(cap.speedTiers).toEqual(['fast'])
     expect(cap.imageAttachments).toBe(true)
   })
 

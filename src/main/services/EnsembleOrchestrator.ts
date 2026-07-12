@@ -10497,11 +10497,15 @@ export class EnsembleOrchestrator {
       const sharedServiceTier =
         participant.provider === 'codex'
           ? (participant.serviceTier ?? (participant.fastModeEnabled ? 'fast' : ''))
-          : participant.provider === 'cursor' && isCursorGrok45ModelId(participant.model)
+          : participant.provider === 'kimi'
             ? participant.fastModeEnabled
               ? 'fast'
-              : ''
-          : undefined
+              : 'standard'
+            : participant.provider === 'cursor' && isCursorGrok45ModelId(participant.model)
+              ? participant.fastModeEnabled
+                ? 'fast'
+                : ''
+              : undefined
       const claudeReasoning =
         participant.provider === 'claude' ? participant.reasoningEffort : undefined
       const claudeFastMode =
@@ -11784,11 +11788,15 @@ export class EnsembleOrchestrator {
       const sharedServiceTier =
         participant.provider === 'codex'
           ? (participant.serviceTier ?? (participant.fastModeEnabled ? 'fast' : ''))
-          : participant.provider === 'cursor' && isCursorGrok45ModelId(participant.model)
+          : participant.provider === 'kimi'
             ? participant.fastModeEnabled
               ? 'fast'
-              : ''
-          : undefined
+              : 'standard'
+            : participant.provider === 'cursor' && isCursorGrok45ModelId(participant.model)
+              ? participant.fastModeEnabled
+                ? 'fast'
+                : ''
+              : undefined
       const claudeReasoning =
         participant.provider === 'claude' ? participant.reasoningEffort : undefined
       const claudeFastMode =

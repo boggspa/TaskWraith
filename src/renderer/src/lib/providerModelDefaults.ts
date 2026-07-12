@@ -210,8 +210,9 @@ const KIMI_DEFAULT_MODELS = [
   {
     id: 'kimi-k2.7-code',
     label: 'Kimi K2.7 Code',
-    description: 'Kimi Code CLI model',
-    isDefault: true
+    description: 'Kimi Code CLI standard and HighSpeed tiers',
+    isDefault: true,
+    additionalSpeedTiers: ['fast']
   }
 ] satisfies CodexModelOption[]
 const KIMI_DEFAULT_MODEL = KIMI_DEFAULT_MODELS[0].id

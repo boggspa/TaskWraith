@@ -5,7 +5,10 @@ import {
   codexModelContextConfig,
   codexWireReasoningEffort,
   claudeModelSupportsFastMode,
+  appendKimiModelArgs,
   getStaticProviderModels,
+  KIMI_HIGHSPEED_CLI_MODEL,
+  KIMI_STANDARD_CLI_MODEL,
   mergeCodexLiveModelRows,
   normalizeCliProviderModel
 } from './StaticProviderModels'
@@ -411,6 +414,38 @@ describe('normalizeCliProviderModel (kimi)', () => {
     expect(normalizeCliProviderModel('kimi', 'cli-default')).toBe('kimi-k2.7-code')
     expect(normalizeCliProviderModel('kimi', 'kimi-k2.6')).toBe('kimi-k2.7-code')
     expect(normalizeCliProviderModel('kimi', 'kimi-k2-thinking')).toBe('kimi-k2.7-code')
+  })
+
+  it('preserves the stable Kimi Code Standard and HighSpeed route ids', () => {
+    expect(normalizeCliProviderModel('kimi', KIMI_STANDARD_CLI_MODEL)).toBe(
+      KIMI_STANDARD_CLI_MODEL
+    )
+    expect(normalizeCliProviderModel('kimi', KIMI_HIGHSPEED_CLI_MODEL)).toBe(
+      KIMI_HIGHSPEED_CLI_MODEL
+    )
+  })
+
+  it('routes K2.7 Code Fast mode to the exact Kimi CLI model id', () => {
+    const standardArgs: string[] = []
+    const highSpeedArgs: string[] = []
+
+    appendKimiModelArgs(standardArgs, 'kimi-k2.7-code', 'standard')
+    appendKimiModelArgs(highSpeedArgs, 'kimi-k2.7-code', 'fast')
+
+    expect(standardArgs).toEqual(['--model', KIMI_STANDARD_CLI_MODEL])
+    expect(highSpeedArgs).toEqual(['--model', KIMI_HIGHSPEED_CLI_MODEL])
+  })
+})
+
+describe('getStaticProviderModels (kimi)', () => {
+  it('advertises K2.7 Code as Fast-capable without adding a duplicate model row', () => {
+    const models = getStaticProviderModels('kimi') as StaticModelShape[]
+
+    expect(models).toHaveLength(1)
+    expect(models[0]).toMatchObject({
+      id: 'kimi-k2.7-code',
+      additionalSpeedTiers: ['fast']
+    })
   })
 })
 

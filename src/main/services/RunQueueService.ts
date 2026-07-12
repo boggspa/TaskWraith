@@ -395,6 +395,7 @@ export class RunQueueService {
         ? sanitizeRemoteComposer(value.remoteComposer)
         : undefined,
       claudeFastMode: typeof value.claudeFastMode === 'boolean' ? value.claudeFastMode : undefined,
+      kimiFastMode: typeof value.kimiFastMode === 'boolean' ? value.kimiFastMode : undefined,
       cursorFastMode: typeof value.cursorFastMode === 'boolean' ? value.cursorFastMode : undefined,
       kimiThinkingEnabled:
         typeof value.kimiThinkingEnabled === 'boolean' ? value.kimiThinkingEnabled : undefined,
@@ -579,6 +580,7 @@ function sanitizeRemoteComposer(value: unknown): RunQueueRequestSnapshot['remote
     ...(typeof value.cursorFastMode === 'boolean' ? { cursorFastMode: value.cursorFastMode } : {}),
     ...(codexServiceTier !== undefined ? { codexServiceTier } : {}),
     ...(typeof value.claudeFastMode === 'boolean' ? { claudeFastMode: value.claudeFastMode } : {}),
+    ...(typeof value.kimiFastMode === 'boolean' ? { kimiFastMode: value.kimiFastMode } : {}),
     ...(typeof value.kimiThinkingEnabled === 'boolean'
       ? { kimiThinkingEnabled: value.kimiThinkingEnabled }
       : {}),

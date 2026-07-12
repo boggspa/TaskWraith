@@ -14950,7 +14950,7 @@ async function runKimiWireProvider(
   )
 
   let args = ['--wire', '--work-dir', payload.workspace!]
-  appendKimiModelArgs(args, model)
+  appendKimiModelArgs(args, model, payload.serviceTier)
   appendKimiThinkingArgs(args, payload.kimiThinking)
   // Phase J1 composer-unification: cross-provider External Path grants
   // flow through Kimi's CLI as `--add-dir <path>` flags. Same picker
@@ -15739,7 +15739,7 @@ async function runKimiProvider(event: Electron.IpcMainInvokeEvent, payload: Agen
     '--prompt',
     payload.prompt
   ]
-  appendKimiModelArgs(baseArgs, model)
+  appendKimiModelArgs(baseArgs, model, payload.serviceTier)
   appendKimiThinkingArgs(baseArgs, payload.kimiThinking)
   // 1.0.5-EW43b — Pre-EW43b the Kimi print-mode fallback ignored
   // `payload.imagePaths` entirely. Wire mode handles attachments
@@ -27293,6 +27293,7 @@ if (isGeminiMcpBridgeProcess) {
         cursorFastMode?: boolean
         claudeFastMode?: boolean
         codexServiceTier?: string | null
+        kimiFastMode?: boolean
         kimiThinkingEnabled?: boolean
         contextTurns?: number
         extraWorkspaceIds?: string[]
@@ -27365,6 +27366,7 @@ if (isGeminiMcpBridgeProcess) {
             : undefined
         const queueClaudeFastMode = provider === 'claude' ? action.claudeFastMode : undefined
         const queueCodexServiceTier = provider === 'codex' ? action.codexServiceTier : undefined
+        const queueKimiFastMode = provider === 'kimi' ? action.kimiFastMode : undefined
         const queueKimiThinkingEnabled = provider === 'kimi' ? action.kimiThinkingEnabled : undefined
         const permissionPosture = buildRemoteComposerQueuePermissionPosture({
           provider,
@@ -27418,6 +27420,7 @@ if (isGeminiMcpBridgeProcess) {
             ...(queueCodexServiceTier !== undefined
               ? { codexServiceTier: queueCodexServiceTier }
               : {}),
+            ...(queueKimiFastMode !== undefined ? { kimiFastMode: queueKimiFastMode } : {}),
             ...(queueKimiThinkingEnabled !== undefined
               ? { kimiThinkingEnabled: queueKimiThinkingEnabled }
               : {}),
@@ -27456,6 +27459,9 @@ if (isGeminiMcpBridgeProcess) {
                 : {}),
               ...(action.codexServiceTier !== undefined
                 ? { codexServiceTier: action.codexServiceTier }
+                : {}),
+              ...(action.kimiFastMode !== undefined
+                ? { kimiFastMode: action.kimiFastMode }
                 : {}),
               ...(action.kimiThinkingEnabled !== undefined
                 ? { kimiThinkingEnabled: action.kimiThinkingEnabled }
@@ -29488,6 +29494,10 @@ if (isGeminiMcpBridgeProcess) {
             typeof providerMetadata.codexServiceTier === 'string'
               ? providerMetadata.codexServiceTier
               : undefined
+          const metadataKimiFastMode =
+            typeof providerMetadata.kimiFastMode === 'boolean'
+              ? providerMetadata.kimiFastMode
+              : undefined
           const metadataKimiThinkingEnabled =
             typeof providerMetadata.kimiThinkingEnabled === 'boolean'
               ? providerMetadata.kimiThinkingEnabled
@@ -29526,9 +29536,9 @@ if (isGeminiMcpBridgeProcess) {
             provider === 'cursor' && isCursorGrok45ModelId(inheritedReasoningCapabilityModel)
               ? (action.cursorFastMode ?? metadataCursorFastMode ?? false)
               : undefined
-          // Claude Fast + Codex service-tier + Kimi thinking, phone-sent (with
+          // Claude Fast + Codex/Kimi service tiers + Kimi thinking, phone-sent (with
           // chat-metadata fallback). Provider-gated so the single-valued run
-          // never sets conflicting fields; serviceTier is shared by codex+cursor
+          // never sets conflicting fields; serviceTier is shared by codex/cursor/kimi
           // (mutually exclusive by provider). nil kimiThinking stays ON.
           const inheritedClaudeFastMode =
             provider === 'claude'
@@ -29538,6 +29548,8 @@ if (isGeminiMcpBridgeProcess) {
             provider === 'codex'
               ? (action.codexServiceTier ?? metadataCodexServiceTier ?? null)
               : undefined
+          const inheritedKimiFastMode =
+            provider === 'kimi' ? (action.kimiFastMode ?? metadataKimiFastMode ?? false) : undefined
           const inheritedKimiThinkingEnabled =
             provider === 'kimi'
               ? (action.kimiThinkingEnabled ?? metadataKimiThinkingEnabled ?? true)
@@ -29555,6 +29567,9 @@ if (isGeminiMcpBridgeProcess) {
               : {}),
             ...(typeof inheritedCodexServiceTier === 'string'
               ? { codexServiceTier: inheritedCodexServiceTier }
+              : {}),
+            ...(inheritedKimiFastMode !== undefined
+              ? { kimiFastMode: inheritedKimiFastMode }
               : {}),
             ...(inheritedKimiThinkingEnabled !== undefined
               ? { kimiThinkingEnabled: inheritedKimiThinkingEnabled }
@@ -29770,6 +29785,9 @@ if (isGeminiMcpBridgeProcess) {
               : {}),
             ...(inheritedCodexServiceTier !== undefined
               ? { serviceTier: inheritedCodexServiceTier }
+              : {}),
+            ...(inheritedKimiFastMode !== undefined
+              ? { serviceTier: inheritedKimiFastMode ? 'fast' : 'standard' }
               : {}),
             ...(inheritedClaudeFastMode !== undefined
               ? { claudeFastMode: inheritedClaudeFastMode }

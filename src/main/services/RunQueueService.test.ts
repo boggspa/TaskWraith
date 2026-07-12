@@ -199,6 +199,8 @@ describe('RunQueueService', () => {
         guestRole: 'assistant',
         geminiAuthProfileId: 'gauth-1',
         codexReasoningEffort: 'minimal',
+        kimiFastMode: true,
+        kimiThinkingEnabled: false,
         geminiWorktree: { enabled: true, name: 'feature' }
       }
     })
@@ -244,6 +246,8 @@ describe('RunQueueService', () => {
           guestRole: 'assistant',
           geminiAuthProfileId: 'gauth-1',
           codexReasoningEffort: 'minimal',
+          kimiFastMode: true,
+          kimiThinkingEnabled: false,
           geminiWorktree: { enabled: true, name: 'feature' }
         })
       })

@@ -116,6 +116,7 @@ export function buildRemoteComposerQueueDispatchAction(
       ...(remote.codexServiceTier !== undefined
         ? { codexServiceTier: remote.codexServiceTier }
         : {}),
+      ...(remote.kimiFastMode !== undefined ? { kimiFastMode: remote.kimiFastMode } : {}),
       ...(remote.kimiThinkingEnabled !== undefined
         ? { kimiThinkingEnabled: remote.kimiThinkingEnabled }
         : {}),

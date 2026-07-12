@@ -133,6 +133,8 @@ export interface BridgeComposerPromptAction extends BridgeActionMetadata {
   claudeFastMode?: boolean
   /** Codex service-tier override, e.g. `'fast'`. */
   codexServiceTier?: string | null
+  /** Kimi K2.7 Code HighSpeed tier toggle. */
+  kimiFastMode?: boolean
   /** Kimi "thinking" toggle. Absent means ON (matches appendKimiThinkingArgs default). */
   kimiThinkingEnabled?: boolean
   /** Optional context-turn count (0–20 per the plan's standard payload). */
@@ -522,7 +524,7 @@ export interface BridgeRosterParticipant {
   /** Per-participant reasoning effort (generic; provider-interpreted: Codex/Grok
    * effort, Claude effort). */
   reasoningEffort?: string
-  /** Codex serviceTier=fast / Claude fast mode. */
+  /** Codex/Kimi service tier or Claude fast mode. */
   fastModeEnabled?: boolean
   /** Kimi K2 thinking toggle. */
   thinkingEnabled?: boolean
@@ -1449,6 +1451,7 @@ function isComposerPrompt(v: Record<string, unknown>): boolean {
     (v.codexServiceTier === undefined ||
       v.codexServiceTier === null ||
       typeof v.codexServiceTier === 'string') &&
+    (v.kimiFastMode === undefined || typeof v.kimiFastMode === 'boolean') &&
     (v.kimiThinkingEnabled === undefined || typeof v.kimiThinkingEnabled === 'boolean') &&
     (v.imageAttachments === undefined || isImageAttachments(v.imageAttachments)) &&
     (v.contextTurns === undefined ||

@@ -1701,8 +1701,8 @@ export function CombinedModelPicker({
           {/*
             Fast Mode toggle. Tucked under the Reasoning column so
             it reads as a Reasoning-adjacent capability rather than
-            a separate concept. Visible only for Codex + Claude
-            (the providers with capable models); the row stays
+            a separate concept. Visible for providers with capable
+            models; the row stays
             visible but disabled when the selected model isn't
             in `fastModeCapableModelIds` so the user understands
             the affordance exists but doesn't apply to this model.

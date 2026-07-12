@@ -91,6 +91,7 @@ export interface ComposerInput {
   codexServiceTier?: string | null
   claudeReasoningEffort?: string | null
   claudeFastMode?: boolean | null
+  kimiFastMode?: boolean
   kimiThinkingEnabled?: boolean
   grokReasoningEffort?: string | null
   cursorReasoningEffort?: string | null
@@ -530,6 +531,10 @@ export class ComposerService {
       serviceTier:
         provider === 'codex'
           ? optionalStringOrNull(effectiveInput.codexServiceTier) || null
+          : provider === 'kimi'
+            ? (effectiveInput.kimiFastMode ?? metadataBoolean(chat, 'kimiFastMode') ?? false)
+              ? 'fast'
+              : 'standard'
           : provider === 'cursor' && isCursorGrok45ModelId(requestedModel)
             ? (effectiveInput.cursorFastMode ?? metadataBoolean(chat, 'cursorFastMode') ?? false)
               ? 'fast'
@@ -649,7 +654,10 @@ function applyComposerReroutePlan(
         }
       : {}),
     ...(resolution.provider === 'kimi'
-      ? { kimiThinkingEnabled: plan.kimiThinkingEnabled ?? true }
+      ? {
+          kimiFastMode: plan.kimiFastMode ?? false,
+          kimiThinkingEnabled: plan.kimiThinkingEnabled ?? true
+        }
       : {}),
     ...(resolution.provider === 'grok'
       ? { grokReasoningEffort: plan.grokReasoningEffort ?? null }

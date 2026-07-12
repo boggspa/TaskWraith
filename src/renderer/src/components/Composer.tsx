@@ -342,6 +342,7 @@ export interface ComposerProps {
   showWelcomeNotifications?: boolean
   isWorkflowChatWelcome: any
   isWorkflowComposeChat: any
+  kimiFastMode: any
   kimiThinkingEnabled: any
   lastNonCustomModelType: any
   liveRunOutputTokens: any
@@ -422,6 +423,7 @@ export interface ComposerProps {
   setGoalFromObjective: any
   setGoalPopoverOpen: any
   setIntentNote: any
+  setKimiFastMode: any
   setKimiThinkingEnabled: any
   setLastNonCustomModelType: any
   setPendingElevation: any
@@ -661,6 +663,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     showWelcomeNotifications = true,
     isWorkflowChatWelcome,
     isWorkflowComposeChat,
+    kimiFastMode,
     kimiThinkingEnabled,
     lastNonCustomModelType,
     liveRunOutputTokens,
@@ -734,6 +737,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     setGoalFromObjective,
     setGoalPopoverOpen,
     setIntentNote,
+    setKimiFastMode,
     setKimiThinkingEnabled,
     setLastNonCustomModelType,
     setPendingElevation,
@@ -836,7 +840,11 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     targetProvider: ProviderId,
     models: CodexModelOption[] = getProviderModelOptions(targetProvider)
   ): Set<string> => {
-    if (targetProvider === 'codex' || targetProvider === 'claude') {
+    if (
+      targetProvider === 'codex' ||
+      targetProvider === 'claude' ||
+      targetProvider === 'kimi'
+    ) {
       return new Set(
         models
           .filter((model) => model.additionalSpeedTiers?.includes('fast'))
@@ -3375,6 +3383,12 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                     'boolean'
                                 ? soloPendingProviderMetadata.kimiThinkingEnabled
                                 : kimiThinkingEnabled
+                          const effectiveKimiFastMode =
+                            ensembleResolved?.provider === 'kimi'
+                              ? ensembleResolved.fastModeEnabled
+                              : typeof soloPendingProviderMetadata?.kimiFastMode === 'boolean'
+                                ? soloPendingProviderMetadata.kimiFastMode
+                                : kimiFastMode
                           const effectiveGrokReasoning =
                             ensembleResolved?.provider === 'grok'
                               ? ensembleResolved.reasoningEffort
@@ -3666,6 +3680,8 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               ? effectiveCodexServiceTier === 'fast'
                               : effectiveProvider === 'claude'
                                 ? effectiveClaudeFastMode
+                                : effectiveProvider === 'kimi'
+                                  ? effectiveKimiFastMode
                                 : effectiveProvider === 'cursor'
                                   ? isCursorGrok45ModelId(effectiveSelectedModel)
                                     ? effectiveCursorFastMode
@@ -3704,31 +3720,48 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                       claudeFastMode: nextFast
                                     })
                                   }
-                                : effectiveProvider === 'cursor'
+                                : effectiveProvider === 'kimi'
                                   ? () => {
-                                      if (isCursorGrok45ModelId(effectiveSelectedModel)) {
-                                        const nextFast = !effectiveCursorFastMode
-                                        if (ensembleBinding) {
-                                          updateSelectedParticipantWithNotice({
-                                            fastModeEnabled: nextFast
-                                          })
-                                          return
-                                        }
-                                        if (shouldUpdateLiveComposerState) {
-                                          setCursorFastMode(nextFast)
-                                        }
-                                        rememberCurrentChatComposerSelection({
-                                          cursorFastMode: nextFast
+                                      const nextFast = !effectiveKimiFastMode
+                                      if (ensembleBinding) {
+                                        updateSelectedParticipantWithNotice({
+                                          fastModeEnabled: nextFast,
+                                          serviceTier: nextFast ? 'fast' : 'standard'
                                         })
                                         return
                                       }
-                                      const nextModel =
-                                        effectiveSelectedModel === 'composer-2.5-fast'
-                                          ? 'composer-2.5'
-                                          : 'composer-2.5-fast'
-                                      handleCombinedModelChange(nextModel)
+                                      if (shouldUpdateLiveComposerState) {
+                                        setKimiFastMode(nextFast)
+                                      }
+                                      rememberCurrentChatComposerSelection({
+                                        kimiFastMode: nextFast
+                                      })
                                     }
-                                  : undefined
+                                  : effectiveProvider === 'cursor'
+                                    ? () => {
+                                        if (isCursorGrok45ModelId(effectiveSelectedModel)) {
+                                          const nextFast = !effectiveCursorFastMode
+                                          if (ensembleBinding) {
+                                            updateSelectedParticipantWithNotice({
+                                              fastModeEnabled: nextFast
+                                            })
+                                            return
+                                          }
+                                          if (shouldUpdateLiveComposerState) {
+                                            setCursorFastMode(nextFast)
+                                          }
+                                          rememberCurrentChatComposerSelection({
+                                            cursorFastMode: nextFast
+                                          })
+                                          return
+                                        }
+                                        const nextModel =
+                                          effectiveSelectedModel === 'composer-2.5-fast'
+                                            ? 'composer-2.5'
+                                            : 'composer-2.5-fast'
+                                        handleCombinedModelChange(nextModel)
+                                      }
+                                    : undefined
 
                           const handleCombinedReasoningChange = (value: string) => {
                             if (ensembleBinding) {

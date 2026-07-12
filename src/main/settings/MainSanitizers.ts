@@ -665,6 +665,7 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
       grokReasoningEffort: optionalStringOrNull(input.grokReasoningEffort),
       cursorReasoningEffort: optionalStringOrNull(input.cursorReasoningEffort),
       claudeFastMode: typeof input.claudeFastMode === 'boolean' ? input.claudeFastMode : undefined,
+      kimiFastMode: typeof input.kimiFastMode === 'boolean' ? input.kimiFastMode : undefined,
       cursorFastMode: typeof input.cursorFastMode === 'boolean' ? input.cursorFastMode : undefined,
       runtimeProfileId: optionalString(input.runtimeProfileId),
       geminiAuthProfileId: optionalStringOrNull(input.geminiAuthProfileId),
@@ -711,6 +712,10 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
     if ('claudeFastMode' in input) {
       sanitized.claudeFastMode =
         typeof input.claudeFastMode === 'boolean' ? input.claudeFastMode : undefined
+    }
+    if ('kimiFastMode' in input) {
+      sanitized.kimiFastMode =
+        typeof input.kimiFastMode === 'boolean' ? input.kimiFastMode : undefined
     }
     if ('grokReasoningEffort' in input) {
       sanitized.grokReasoningEffort = optionalStringOrNull(input.grokReasoningEffort)
@@ -799,6 +804,7 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
       cursorReasoningEffort: optionalString(input.cursorReasoningEffort),
       codexServiceTier: optionalString(input.codexServiceTier),
       claudeFastMode: typeof input.claudeFastMode === 'boolean' ? input.claudeFastMode : undefined,
+      kimiFastMode: typeof input.kimiFastMode === 'boolean' ? input.kimiFastMode : undefined,
       cursorFastMode: typeof input.cursorFastMode === 'boolean' ? input.cursorFastMode : undefined,
       kimiThinkingEnabled:
         typeof input.kimiThinkingEnabled === 'boolean' ? input.kimiThinkingEnabled : undefined,

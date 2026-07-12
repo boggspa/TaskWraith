@@ -176,7 +176,7 @@ export function defaultProviderDescriptor(provider: ProviderId): ProviderAdapter
       capabilities: {
         approvalModes: ['default'],
         reasoningEffort: false,
-        speedTiers: [],
+        speedTiers: ['fast'],
         imageAttachments: true,
         contextInjection: true,
         sessionResumption: false,

@@ -61,11 +61,13 @@ describe('getDefaultEnsembleParticipantConfig', () => {
     })
   })
 
-  it('returns kimi defaults: K2.7 Code model, default approval, thinking ON', () => {
+  it('returns kimi defaults: K2.7 Code model, Standard speed, thinking ON', () => {
     expect(getDefaultEnsembleParticipantConfig('kimi')).toEqual({
       model: 'kimi-k2.7-code',
       permissionPresetId: 'default',
-      thinkingEnabled: true
+      fastModeEnabled: false,
+      thinkingEnabled: true,
+      serviceTier: 'standard'
     })
   })
 
@@ -158,13 +160,13 @@ describe('normalizeProviderModelSelection', () => {
     })
   })
 
-  it('seeds Kimi thinking without leaking reasoning or Fast fields', () => {
+  it('seeds Kimi thinking with the Standard speed tier', () => {
     expect(normalizeProviderModelSelection('kimi', 'kimi-k2.7-code')).toEqual({
       model: 'kimi-k2.7-code',
       reasoningEffort: undefined,
-      fastModeEnabled: undefined,
+      fastModeEnabled: false,
       thinkingEnabled: true,
-      serviceTier: undefined
+      serviceTier: 'standard'
     })
   })
 
@@ -337,6 +339,8 @@ describe('resolveEnsembleParticipantSettings', () => {
       participant({ provider: 'kimi', id: 'ensemble-kimi' })
     )
     expect(defaults.thinkingEnabled).toBe(true)
+    expect(defaults.fastModeEnabled).toBe(false)
+    expect(defaults.serviceTier).toBe('standard')
     expect(defaults.permissionPresetId).toBe('default')
 
     const overridden = resolveEnsembleParticipantSettings(
@@ -426,9 +430,11 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
     }
   })
 
-  it('exposes kimi preferred model id as kimi-k2.7-code with thinking on by default', () => {
-    expect(getEnsembleModelDefaults('kimi').defaultModelId).toBe('kimi-k2.7-code')
-    expect(getEnsembleModelDefaults('kimi').defaultReasoning).toBe('on')
+  it('exposes Kimi K2.7 Code as Fast-capable with thinking on by default', () => {
+    const kimi = getEnsembleModelDefaults('kimi')
+    expect(kimi.defaultModelId).toBe('kimi-k2.7-code')
+    expect(kimi.defaultReasoning).toBe('on')
+    expect(kimi.fastModeCapableModelIds.has('kimi-k2.7-code')).toBe(true)
   })
 
   it('exposes returned Claude 5 family rows and Sonnet 4.6 Legacy without Mythos', () => {

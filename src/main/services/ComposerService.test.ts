@@ -446,6 +446,22 @@ describe('ComposerService', () => {
     const payload = compose({ provider: 'kimi' }, { selectedModelType: undefined })
     expect(payload.model).toBe('kimi-k2.7-code')
     expect(payload.kimiThinking).toBe(true)
+    expect(payload.serviceTier).toBe('standard')
+  })
+
+  it('maps the Kimi Fast selection to the HighSpeed service tier', () => {
+    const selected = compose(
+      { provider: 'kimi' },
+      { selectedModelType: 'kimi-k2.7-code', kimiFastMode: true }
+    )
+    const persisted = compose(
+      { provider: 'kimi', providerMetadata: { kimiFastMode: true } },
+      { selectedModelType: 'kimi-k2.7-code' }
+    )
+
+    expect(selected.serviceTier).toBe('fast')
+    expect(persisted.serviceTier).toBe('fast')
+    expect(selected.kimiThinking).toBe(true)
   })
 
   it('teaches Kimi about cross-provider delegate_to_subthread (Phase I4)', () => {

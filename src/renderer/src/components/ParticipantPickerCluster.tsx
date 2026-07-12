@@ -92,6 +92,11 @@ export function buildParticipantProviderModelPatch(
   } else if (provider === 'claude') {
     const seededFast = participant.fastModeEnabled === true
     patch.fastModeEnabled = defaults.fastModeCapableModelIds.has(model) && seededFast
+  } else if (provider === 'kimi') {
+    const seededFast = participant.fastModeEnabled === true
+    const nextFast = defaults.fastModeCapableModelIds.has(model) && seededFast
+    patch.fastModeEnabled = nextFast
+    patch.serviceTier = nextFast ? 'fast' : 'standard'
   } else if (provider === 'cursor') {
     const seededFast = participant.fastModeEnabled === true
     patch.fastModeEnabled =
@@ -190,9 +195,11 @@ export function ParticipantPickerCluster({
       ? resolved.serviceTier === 'fast'
       : participant.provider === 'claude'
         ? resolved.fastModeEnabled
-        : participant.provider === 'cursor'
-          ? selectedModelId === 'composer-2.5-fast' || resolved.fastModeEnabled
-          : false
+        : participant.provider === 'kimi'
+          ? resolved.fastModeEnabled
+          : participant.provider === 'cursor'
+            ? selectedModelId === 'composer-2.5-fast' || resolved.fastModeEnabled
+            : false
   const onToggleFastMode =
     participant.provider === 'codex'
       ? (): void => {
@@ -201,19 +208,30 @@ export function ParticipantPickerCluster({
         }
       : participant.provider === 'claude'
         ? (): void => onPatch({ fastModeEnabled: !resolved.fastModeEnabled })
-        : participant.provider === 'cursor'
+        : participant.provider === 'kimi'
           ? (): void => {
-              if (selectedModelId === 'composer-2.5' || selectedModelId === 'composer-2.5-fast') {
-                onPatch({
-                  model: selectedModelId === 'composer-2.5-fast' ? 'composer-2.5' : 'composer-2.5-fast',
-                  fastModeEnabled: selectedModelId !== 'composer-2.5-fast'
-                })
-                return
-              }
-              if (!isCursorGrok45ModelId(selectedModelId)) return
-              onPatch({ fastModeEnabled: !resolved.fastModeEnabled })
+              const nextFast = !resolved.fastModeEnabled
+              onPatch({
+                fastModeEnabled: nextFast,
+                serviceTier: nextFast ? 'fast' : 'standard'
+              })
             }
-        : undefined
+          : participant.provider === 'cursor'
+            ? (): void => {
+                if (selectedModelId === 'composer-2.5' || selectedModelId === 'composer-2.5-fast') {
+                  onPatch({
+                    model:
+                      selectedModelId === 'composer-2.5-fast'
+                        ? 'composer-2.5'
+                        : 'composer-2.5-fast',
+                    fastModeEnabled: selectedModelId !== 'composer-2.5-fast'
+                  })
+                  return
+                }
+                if (!isCursorGrok45ModelId(selectedModelId)) return
+                onPatch({ fastModeEnabled: !resolved.fastModeEnabled })
+              }
+            : undefined
 
   const permissionOptions: PermissionOption[] = [
     ...PERMISSION_PRESET_OPTIONS,
