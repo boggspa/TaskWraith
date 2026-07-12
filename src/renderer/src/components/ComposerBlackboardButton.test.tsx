@@ -1,7 +1,12 @@
 import { describe, it, expect } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import type { BlackboardEntry, ChatRecord } from '../../../main/store/types'
-import { ComposerBlackboardButton, buildBlackboardGroups } from './ComposerBlackboardButton'
+import {
+  ComposerBlackboardButton,
+  ComposerBlackboardDeleteButton,
+  ComposerBlackboardPostForm,
+  buildBlackboardGroups
+} from './ComposerBlackboardButton'
 
 function entry(
   partial: Partial<BlackboardEntry> & Pick<BlackboardEntry, 'key' | 'value'>
@@ -19,9 +24,9 @@ function entry(
 }
 
 function chatWith(entries: BlackboardEntry[]): ChatRecord {
-  // Only the ensemble.blackboard path is read by the component; cast keeps the
-  // fixture minimal without reproducing the whole ChatRecord shape.
-  return { ensemble: { blackboard: entries } } as unknown as ChatRecord
+  // Only the id + ensemble.blackboard paths are read by these components; the
+  // cast keeps the fixture minimal without reproducing the whole ChatRecord.
+  return { appChatId: 'chat-1', ensemble: { blackboard: entries } } as unknown as ChatRecord
 }
 
 describe('buildBlackboardGroups', () => {
@@ -95,5 +100,58 @@ describe('ComposerBlackboardButton (static render)', () => {
       <ComposerBlackboardButton chat={null} provider="grok" composerStyle="obsidian" disabled />
     )
     expect(html).toContain('disabled')
+  })
+})
+
+describe('ComposerBlackboardPostForm (static render)', () => {
+  it('renders the compact user post controls for an Ensemble chat', () => {
+    const html = renderToStaticMarkup(<ComposerBlackboardPostForm chat={chatWith([])} />)
+
+    expect(html).toContain('class="composer-blackboard-compose"')
+    expect(html).toContain('aria-label="Post to Blackboard"')
+    expect(html).toContain('aria-label="Blackboard entry"')
+    expect(html).toContain('Post a note to the Blackboard...')
+    expect(html).toContain('type="submit"')
+    expect(html).toContain('disabled')
+    expect(html).toContain('>Post</button>')
+  })
+
+  it('stays hidden when no Ensemble chat can accept the post', () => {
+    expect(renderToStaticMarkup(<ComposerBlackboardPostForm chat={null} />)).toBe('')
+    expect(renderToStaticMarkup(<ComposerBlackboardPostForm chat={chatWith([])} disabled />)).toBe(
+      ''
+    )
+  })
+})
+
+describe('ComposerBlackboardDeleteButton (static render)', () => {
+  it('uses the existing compact Blackboard delete action', () => {
+    const target = entry({ key: 'stale-note', value: 'Remove me' })
+    const html = renderToStaticMarkup(
+      <ComposerBlackboardDeleteButton
+        entry={target}
+        deletingEntryId={null}
+        onDelete={() => undefined}
+      />
+    )
+
+    expect(html).toContain('class="pinned-blackboard-entry-delete"')
+    expect(html).toContain('aria-label="Delete blackboard entry stale-note"')
+    expect(html).toContain('title="Delete blackboard entry"')
+    expect(html).not.toContain('disabled')
+  })
+
+  it('disables the action while its entry is being deleted', () => {
+    const target = entry({ id: 'delete-me', key: 'stale-note', value: 'Remove me' })
+    const html = renderToStaticMarkup(
+      <ComposerBlackboardDeleteButton
+        entry={target}
+        deletingEntryId="delete-me"
+        onDelete={() => undefined}
+      />
+    )
+
+    expect(html).toContain('disabled')
+    expect(html).toContain('title="Deleting..."')
   })
 })

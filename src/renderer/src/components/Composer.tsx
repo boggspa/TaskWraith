@@ -4688,10 +4688,9 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
 	                  chat={currentChat}
 	                  composerStyle={appearance.composerStyle}
 	                />
-	                {/* Blackboard quick-access — a read-only glance at the ensemble
-	                    Blackboard (the full post/delete surface stays in the
-	                    right-dock Notes pane). Ensemble-only: solo chats have no
-	                    blackboard. */}
+	                {/* Blackboard quick-access — post a user note, review entries,
+	                    or delete stale ones without opening the right dock. Seen-by
+	                    stays in Notes. Ensemble-only: solo chats have no blackboard. */}
 	                {isCurrentEnsembleChat && (
 	                  <ComposerBlackboardButton
 	                    chat={currentChat}

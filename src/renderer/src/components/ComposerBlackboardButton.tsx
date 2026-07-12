@@ -1,6 +1,19 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type FormEvent,
+  type ReactElement
+} from 'react'
 import { createPortal } from 'react-dom'
-import type { ChatRecord, ComposerStyle, ProviderId } from '../../../main/store/types'
+import type {
+  BlackboardEntry,
+  ChatRecord,
+  ComposerStyle,
+  ProviderId
+} from '../../../main/store/types'
 import { resolveComposerSurfacePopoverPosition } from '../lib/composerSurfacePopover'
 import { BlackboardGroupedList, buildBlackboardGroups } from './BlackboardEntryCard'
 
@@ -8,11 +21,11 @@ import { BlackboardGroupedList, buildBlackboardGroups } from './BlackboardEntryC
  * Quick-access Blackboard popover — a satellite icon button in the composer's
  * telemetry icon row. Clicking it opens a small frosted popover (the same
  * `.composer-combined-picker-popover` chrome the Multiview / model / context
- * pickers in this row use) that lets you scroll the ensemble Blackboard
- * READ-ONLY, without opening the right-dock "Notes" pane. Posting, deleting,
- * and the "seen by" rail stay in the full panel — this is a glance surface.
+ * pickers in this row use) that lets you post to and scroll the ensemble
+ * Blackboard without opening the right-dock "Notes" pane. The "seen by" rail
+ * stays in the full panel; entry deletion is available in both surfaces.
  * Entries render through the shared BlackboardEntryCard so the popover and
- * the panel stay visually in lockstep (provider-hued author chips included).
+ * panel stay visually in lockstep (provider-hued author chips included).
  */
 
 export { buildBlackboardGroups }
@@ -40,6 +53,28 @@ function BlackboardSymbolIcon(): ReactElement {
   )
 }
 
+function TrashMiniIcon(): ReactElement {
+  return (
+    <svg
+      width="13"
+      height="13"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M3 4h10" />
+      <path d="M5.5 4V2.5C5.5 2.22 5.72 2 6 2h4c.28 0 .5.22.5.5V4" />
+      <path d="M4.5 4l.5 9c.04.55.5 1 1 1h4c.5 0 .96-.45 1-1l.5-9" />
+      <path d="M7 7v5" />
+      <path d="M9 7v5" />
+    </svg>
+  )
+}
+
 export interface ComposerBlackboardButtonProps {
   chat: ChatRecord | null
   provider: ProviderId
@@ -47,10 +82,106 @@ export interface ComposerBlackboardButtonProps {
   disabled?: boolean
 }
 
+interface ComposerBlackboardPostFormProps {
+  chat: ChatRecord | null
+  disabled?: boolean
+}
+
+interface ComposerBlackboardDeleteButtonProps {
+  entry: BlackboardEntry
+  deletingEntryId: string | null
+  onDelete: (entry: BlackboardEntry) => void
+}
+
+export function ComposerBlackboardDeleteButton(
+  props: ComposerBlackboardDeleteButtonProps
+): ReactElement {
+  const deleting = props.deletingEntryId === props.entry.id
+  return (
+    <button
+      type="button"
+      className="pinned-blackboard-entry-delete"
+      onClick={() => props.onDelete(props.entry)}
+      disabled={props.deletingEntryId !== null}
+      title={deleting ? 'Deleting...' : 'Delete blackboard entry'}
+      aria-label={`Delete blackboard entry ${props.entry.key}`}
+    >
+      <TrashMiniIcon />
+    </button>
+  )
+}
+
+export function ComposerBlackboardPostForm(
+  props: ComposerBlackboardPostFormProps
+): ReactElement | null {
+  const [draft, setDraft] = useState('')
+  const [posting, setPosting] = useState(false)
+  const [postError, setPostError] = useState<string | null>(null)
+  const chatId = props.chat?.appChatId
+  const canPost = Boolean(chatId && props.chat?.ensemble && !props.disabled)
+  const draftValue = draft.trim()
+
+  const submitPost = async (event: FormEvent<HTMLFormElement>): Promise<void> => {
+    event.preventDefault()
+    if (!chatId || !canPost || !draftValue || posting) return
+    setPosting(true)
+    setPostError(null)
+    try {
+      await window.api.postBlackboardEntry({
+        chatId,
+        value: draftValue,
+        category: 'note',
+        scope: 'session'
+      })
+      setDraft('')
+    } catch (error) {
+      setPostError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setPosting(false)
+    }
+  }
+
+  if (!canPost) return null
+
+  return (
+    <form
+      className="composer-blackboard-compose"
+      aria-label="Post to Blackboard"
+      onSubmit={submitPost}
+    >
+      <textarea
+        value={draft}
+        onChange={(event) => {
+          setDraft(event.target.value)
+          if (postError) setPostError(null)
+        }}
+        onKeyDown={(event) => {
+          if (event.key !== 'Enter' || (!event.metaKey && !event.ctrlKey)) return
+          event.preventDefault()
+          event.currentTarget.form?.requestSubmit()
+        }}
+        aria-label="Blackboard entry"
+        placeholder="Post a note to the Blackboard..."
+        rows={2}
+      />
+      <button type="submit" disabled={!draftValue || posting}>
+        {posting ? 'Posting' : 'Post'}
+      </button>
+      {postError && (
+        <small className="composer-blackboard-post-error" role="alert">
+          {postError}
+        </small>
+      )}
+    </form>
+  )
+}
+
 export function ComposerBlackboardButton(props: ComposerBlackboardButtonProps): ReactElement {
   const triggerRef = useRef<HTMLButtonElement | null>(null)
   const popoverRef = useRef<HTMLDivElement | null>(null)
   const [open, setOpen] = useState(false)
+  const [deletingEntryId, setDeletingEntryId] = useState<string | null>(null)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
   const [position, setPosition] = useState<{ left: number; top: number; width: number } | null>(
     null
   )
@@ -64,6 +195,23 @@ export function ComposerBlackboardButton(props: ComposerBlackboardButtonProps): 
     () => groups.reduce((total, group) => total + group.entries.length, 0),
     [groups]
   )
+  const canDelete = Boolean(props.chat?.appChatId && props.chat?.ensemble && !props.disabled)
+
+  const deleteEntry = async (entry: BlackboardEntry): Promise<void> => {
+    const chatId = props.chat?.appChatId
+    if (!chatId || !canDelete || deletingEntryId) return
+    const confirmed = window.confirm(`Delete "${entry.key}" from the Blackboard?`)
+    if (!confirmed) return
+    setDeletingEntryId(entry.id)
+    setDeleteError(null)
+    try {
+      await window.api.deleteBlackboardEntry({ chatId, entryId: entry.id })
+    } catch (error) {
+      setDeleteError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setDeletingEntryId(null)
+    }
+  }
 
   const updatePosition = useCallback((): void => {
     if (typeof window === 'undefined') return
@@ -145,11 +293,30 @@ export function ComposerBlackboardButton(props: ComposerBlackboardButtonProps): 
                 <span className="composer-blackboard-popover-count">{entryCount}</span>
               )}
             </div>
+            <ComposerBlackboardPostForm chat={props.chat} disabled={props.disabled} />
+            {deleteError && (
+              <small className="composer-blackboard-post-error" role="alert">
+                {deleteError}
+              </small>
+            )}
             {entryCount === 0 ? (
               <div className="composer-blackboard-popover-empty">No blackboard entries yet.</div>
             ) : (
               <div className="composer-blackboard-list" role="list">
-                <BlackboardGroupedList chat={props.chat} groups={groups} variant="popover" />
+                <BlackboardGroupedList
+                  chat={props.chat}
+                  groups={groups}
+                  variant="popover"
+                  renderEntryActions={(entry) =>
+                    canDelete ? (
+                      <ComposerBlackboardDeleteButton
+                        entry={entry}
+                        deletingEntryId={deletingEntryId}
+                        onDelete={deleteEntry}
+                      />
+                    ) : null
+                  }
+                />
               </div>
             )}
           </div>,
