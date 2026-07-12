@@ -64,6 +64,7 @@ import { durationLabel } from './CompactToolTrace.lib'
 import { isGlobalChat } from '../lib/chatScope'
 import { getProviderLabel } from '../lib/providerLabels'
 import { resolveProviderHueClass } from '../lib/ollamaDisplayBrand'
+import { setRefStateIfChanged } from '../lib/setRefStateIfChanged'
 import {
   agentInvocationRouteLabel,
   childAgentInteractivityLabel,
@@ -1619,19 +1620,27 @@ function useCollapseDebouncedTimelineItems(
   immediateItems: ActivityTimelineItem[]
 ): ActivityTimelineItem[] {
   const previousImmediateRef = useRef(immediateItems)
+  const heldItemsRef = useRef<ActivityTimelineItem[] | null>(null)
   const [heldItems, setHeldItems] = useState<ActivityTimelineItem[] | null>(null)
 
   useLayoutEffect(() => {
     const previousItems = previousImmediateRef.current
     previousImmediateRef.current = immediateItems
     if (!shouldDebounceActivityTimelineCollapse(previousItems, immediateItems)) {
-      setHeldItems(null)
+      // React 19 cannot eagerly bail out this same-value update while the
+      // transcript's synchronous measurement work is pending. Gate it before
+      // dispatch so the layout effects cannot feed a nested-update loop (#185).
+      setRefStateIfChanged(heldItemsRef, null, setHeldItems)
       return undefined
     }
 
-    setHeldItems(previousItems)
+    setRefStateIfChanged(heldItemsRef, previousItems, setHeldItems)
     const timeoutId = window.setTimeout(() => {
-      setHeldItems(null)
+      // A superseding transition owns its own timer. Do not let an older timer
+      // release a newer set of held rows if both callbacks meet at the boundary.
+      if (heldItemsRef.current === previousItems) {
+        setRefStateIfChanged(heldItemsRef, null, setHeldItems)
+      }
     }, ACTIVITY_TIMELINE_COLLAPSE_DEBOUNCE_MS)
     return () => window.clearTimeout(timeoutId)
   }, [immediateItems])
