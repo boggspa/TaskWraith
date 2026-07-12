@@ -10060,8 +10060,10 @@ export class EnsembleOrchestrator {
         if (runtime.orchestrationMode === 'continuous') {
           for (const tagged of extraTargets.slice().reverse()) {
             // The Boss/Captain priority authority is re-summoned even after it
-            // already spoke ('answered') this round — a directed @-mention to the
-            // Boss must actually route, not just print the priority note above.
+            // already spoke ('answered') OR explicitly yielded ('yielded') this
+            // round — a directed @-mention to the Boss must actually route, not
+            // just print the priority note above (mirrors summon_participant at
+            // :5194, which passes both allowAnswered + allowYielded).
             // The hop budget still throttles it (one hop per re-summon, same as
             // any continuation). Advisory (non-authority) participants keep the
             // existing "no re-summon of an already-terminal participant" behavior.
@@ -10071,7 +10073,7 @@ export class EnsembleOrchestrator {
               remaining,
               tagged,
               `@-mention: extra turn appended for ${tagged.role || tagged.provider}.`,
-              { allowAnsweredParticipant: isPriorityAuthority }
+              { allowAnsweredParticipant: isPriorityAuthority, allowYieldedParticipant: isPriorityAuthority }
             )
             if (continuation.appended) {
               // Spike 4 — an explicitly summoned extra turn outranks the

@@ -9824,6 +9824,82 @@ Next action:
     expect(harness.chat.ensemble?.activeRound?.continuationHops).toBe(1)
   })
 
+  it('re-summons a YIELDED Boss on a priority @-mention (parity with an answered Boss)', async () => {
+    // Regression (orchestration-pains pass): a Boss/Captain who explicitly
+    // yielded ('yielded' status) must still be re-summonable via a priority
+    // @-mention — mirroring summon_participant, which already passes
+    // allowYieldedParticipant. Before the fix the priority @-mention passed only
+    // { allowAnsweredParticipant }, so a yielded Boss hit the 'it yielded control
+    // this round' decline and Continuous mode spun with nobody able to close the
+    // goal (observed live: repeated "could not re-summon General (Boss)").
+    const harness = makeHarness()
+    harness.chat.ensemble!.orchestrationMode = 'continuous'
+    harness.chat.ensemble!.bossmanParticipantId = 'ensemble-codex'
+    // Completed goal disables auto-continuation, isolating the re-summon route.
+    harness.chat.activeGoal = { ...buildActiveGoal('goal-x'), status: 'completed' }
+    harness.chat.ensemble!.participants = [
+      {
+        id: 'ensemble-codex',
+        provider: 'codex',
+        enabled: true,
+        role: 'Lead',
+        instructions: 'Lead.',
+        order: 1,
+        permissionPresetId: 'workspace_write'
+      },
+      {
+        id: 'ensemble-claude',
+        provider: 'claude',
+        enabled: true,
+        role: 'Worker',
+        instructions: 'Work.',
+        order: 2,
+        permissionPresetId: 'read_only'
+      }
+    ]
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Coordinate.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    expect(harness.dispatched[0].provider).toBe('codex') // Boss speaks first
+
+    // Boss (codex) YIELDS — the status that used to block the priority re-summon.
+    // No target is passed, so NO yield-return frame is created: the ONLY path that
+    // can bring the Boss back is the priority @-mention under test (yield-return
+    // already allows yielded, and would confound the assertion).
+    const bossRunId = harness.dispatched[0].appRunId!
+    expect(harness.orchestrator.markYielded(bossRunId, 'Worker, take it.')).toBe(true)
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    expect(harness.dispatched[1].provider).toBe('claude')
+
+    // Worker (claude) @-mentions the yielded Boss.
+    const workerRun = { appRunId: harness.dispatched[1].appRunId, appChatId: 'ensemble-chat' }
+    harness.orchestrator.handleProviderOutput('claude', workerRun, {
+      type: 'content',
+      text: 'Done with the slice. @Lead please review and call goal_complete.'
+    })
+    harness.orchestrator.handleProviderOutput('claude', workerRun, {
+      type: 'result',
+      status: 'success'
+    })
+
+    // The yielded Boss is re-summoned (not declined) — a third dispatch, back to codex.
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
+    expect(harness.dispatched[2].provider).toBe('codex')
+    // The hop is still counted — re-summon is throttled like any continuation.
+    expect(harness.chat.ensemble?.activeRound?.continuationHops).toBe(1)
+    // And no 'yielded control this round' decline was emitted.
+    expect(
+      harness.chat.messages.some(
+        (m) =>
+          (m.content || '').includes('could not re-summon') &&
+          (m.content || '').includes('yielded control this round')
+      )
+    ).toBe(false)
+  })
+
   it('surfaces an honest note when a Boss priority @-mention cannot be re-summoned (hops exhausted)', async () => {
     const harness = makeHarness()
     harness.chat.ensemble!.orchestrationMode = 'continuous'
