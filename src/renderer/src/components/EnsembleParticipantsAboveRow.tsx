@@ -1542,44 +1542,6 @@ export function EnsembleParticipantsAboveRow({
           )
         })}
       </div>
-      {/*
-        1.0.5-EW2 — The "+ add participant" button lives OUTSIDE
-        the chip strip / grid. Pre-EW2 the button was inside
-        `.ensemble-above-row-chips`, which took a grid cell in the
-        wrapped layout and forced an extra row at the previous participant
-        cap
-        (6 + 6 chips + 1 standalone "+" cell). Sibling placement
-        + flex layout on the parent `.ensemble-above-row` pins
-        the button to the right edge of the row at all counts,
-        matching the existing `.ensemble-above-row-actions`
-        right-justified pattern. At low counts (1-6) the button
-        sits at the far-right while chips stay centred in their
-        flex slot — same visual logic as Stop Ensemble + queued-
-        prompt indicator.
-      */}
-      <EnsembleAddParticipantButton
-        disabled={!canAddParticipant}
-        title={
-          isRoundRunning
-            ? 'Participant changes are locked while a round is running.'
-            : participants.length >= MAX_ENSEMBLE_PARTICIPANTS
-              ? `Ensembles support up to ${MAX_ENSEMBLE_PARTICIPANTS} participants.`
-              : 'Add another participant'
-        }
-        composerStyle={composerStyle}
-        grokAvailable={grokAvailable}
-        cursorAvailable={cursorAvailable}
-        providerGroups={providerGroups}
-        participants={participants}
-        hasLeadership={hasLeadership}
-        bossmanAutoApprovals={chat.ensemble?.bossmanAutoApprovals}
-        initialProvider={
-          participants.find((participant) => participant.id === selectedParticipantId)?.provider ||
-          participants[participants.length - 1]?.provider ||
-          'codex'
-        }
-        onAdd={addParticipant}
-      />
       {dragGhost
         ? (() => {
             const ghostParticipant = participants.find(
@@ -1609,66 +1571,98 @@ export function EnsembleParticipantsAboveRow({
           })()
         : null}
       {/*
-        1.0.5-EW22 — "-" remove-selected sibling button. Pairs with
-        "+" on the right edge so the roster's add/remove controls
-        live in one visual locus, freeing the popover from
-        carrying a destructive row. Disabled when no chip is
-        selected, when at the 1-participant floor, or when a round
-        is running (matches `removeParticipant`'s own guards).
+        The control rail keeps transient round actions from changing
+        the chip grid's width. With 1–5 participants it remains the
+        existing inline add / remove / Skip sequence. At 6+ (the first
+        wrapped roster), Skip / Skip reads occupy a reserved row above
+        add/remove, so mounting or unmounting an action cannot make the
+        participant columns jump.
       */}
-      <button
-        type="button"
-        className="ensemble-above-remove-participant"
-        onClick={() => {
-          if (selectedParticipantId) removeParticipant(selectedParticipantId)
-        }}
-        disabled={
-          isRoundRunning ||
-          !selectedParticipantId ||
-          participants.length <= MIN_ENSEMBLE_PARTICIPANTS
-        }
-        title={
-          isRoundRunning
-            ? 'Participant changes are locked while a round is running.'
-            : !selectedParticipantId
-              ? 'Select a participant chip first.'
-              : participants.length <= MIN_ENSEMBLE_PARTICIPANTS
-                ? 'Ensembles need at least one participant.'
-                : 'Remove the selected participant'
-        }
-        aria-label="Remove selected Ensemble participant"
+      <div
+        className={`ensemble-above-row-controls${
+          participants.length >= ENSEMBLE_CHIPS_WRAP_THRESHOLD ? ' is-stacked' : ''
+        }`}
       >
-        −
-      </button>
-      <div className="ensemble-above-row-actions">
-        {/* "Queued next round" label intentionally not rendered here —
-            the queued-messages above-row (sibling in the composer
-            above-bar stack) now surfaces ensemble `queuedPrompt`
-            entries as a full row with Edit / Delete / Steer actions,
-            so duplicating the bare label here would be noise. See
-            `QueuedMessagesAboveRow.tsx` + the
-            `queuedMessagesAboveRowEntries` builder in App.tsx for
-            the ensemble-queued branch. */}
-        {isRoundRunning && activeRound?.activeParticipantId && onSkipActive && (
-          <PillButton
-            size="compact"
-            className="ensemble-above-row-skip"
-            onClick={onSkipActive}
-            title="Skip the currently-speaking participant and let the round continue with the next one. The composer's Stop button still cancels the whole round."
+        <div className="ensemble-above-row-roster-actions">
+          <EnsembleAddParticipantButton
+            disabled={!canAddParticipant}
+            title={
+              isRoundRunning
+                ? 'Participant changes are locked while a round is running.'
+                : participants.length >= MAX_ENSEMBLE_PARTICIPANTS
+                  ? `Ensembles support up to ${MAX_ENSEMBLE_PARTICIPANTS} participants.`
+                  : 'Add another participant'
+            }
+            composerStyle={composerStyle}
+            grokAvailable={grokAvailable}
+            cursorAvailable={cursorAvailable}
+            providerGroups={providerGroups}
+            participants={participants}
+            hasLeadership={hasLeadership}
+            bossmanAutoApprovals={chat.ensemble?.bossmanAutoApprovals}
+            initialProvider={
+              participants.find((participant) => participant.id === selectedParticipantId)
+                ?.provider ||
+              participants[participants.length - 1]?.provider ||
+              'codex'
+            }
+            onAdd={addParticipant}
+          />
+          <button
+            type="button"
+            className="ensemble-above-remove-participant"
+            onClick={() => {
+              if (selectedParticipantId) removeParticipant(selectedParticipantId)
+            }}
+            disabled={
+              isRoundRunning ||
+              !selectedParticipantId ||
+              participants.length <= MIN_ENSEMBLE_PARTICIPANTS
+            }
+            title={
+              isRoundRunning
+                ? 'Participant changes are locked while a round is running.'
+                : !selectedParticipantId
+                  ? 'Select a participant chip first.'
+                  : participants.length <= MIN_ENSEMBLE_PARTICIPANTS
+                    ? 'Ensembles need at least one participant.'
+                    : 'Remove the selected participant'
+            }
+            aria-label="Remove selected Ensemble participant"
           >
-            Skip
-          </PillButton>
-        )}
-        {canSkipReadFanout && onSkipReadFanout && (
-          <PillButton
-            size="compact"
-            className="ensemble-above-row-skip"
-            onClick={onSkipReadFanout}
-            title="Stop the active read-only fan-out lanes and continue the round with the remaining serial step. Parallel writer lanes cannot be skipped here."
-          >
-            Skip reads
-          </PillButton>
-        )}
+            −
+          </button>
+        </div>
+        <div className="ensemble-above-row-actions">
+          {/* "Queued next round" label intentionally not rendered here —
+              the queued-messages above-row (sibling in the composer
+              above-bar stack) now surfaces ensemble `queuedPrompt`
+              entries as a full row with Edit / Delete / Steer actions,
+              so duplicating the bare label here would be noise. See
+              `QueuedMessagesAboveRow.tsx` + the
+              `queuedMessagesAboveRowEntries` builder in App.tsx for
+              the ensemble-queued branch. */}
+          {isRoundRunning && activeRound?.activeParticipantId && onSkipActive && (
+            <PillButton
+              size="compact"
+              className="ensemble-above-row-skip"
+              onClick={onSkipActive}
+              title="Skip the currently-speaking participant and let the round continue with the next one. The composer's Stop button still cancels the whole round."
+            >
+              Skip
+            </PillButton>
+          )}
+          {canSkipReadFanout && onSkipReadFanout && (
+            <PillButton
+              size="compact"
+              className="ensemble-above-row-skip"
+              onClick={onSkipReadFanout}
+              title="Stop the active read-only fan-out lanes and continue the round with the remaining serial step. Parallel writer lanes cannot be skipped here."
+            >
+              Skip reads
+            </PillButton>
+          )}
+        </div>
       </div>
     </div>
   )

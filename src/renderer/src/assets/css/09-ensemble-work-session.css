@@ -1021,10 +1021,9 @@
    * every shell (default / codex / claude / gemini / kimi /
    * modular / satellite / stub / terminal) because they all share
    * this inner chip-container element. The optional
-   * `.ensemble-above-row-actions` sibling stays right-justified on
-   * the row, so when actions are present (running round + Stop
-   * Ensemble button) the layout reads as "chips centred, actions
-   * right" — same as the Codex CLI's stacked-row pattern. */
+   * `.ensemble-above-row-controls` sibling stays right-justified on
+   * the row, so the layout reads as "chips centred, controls right"
+   * — same as the Codex CLI's stacked-row pattern. */
   justify-content: center;
 }
 
@@ -1114,14 +1113,52 @@
   max-width: 8.5rem;
 }
 
-/* 1.0.5-EW2 — The "+ add participant" button is now a SIBLING of
- * `.ensemble-above-row-chips` (was a child pre-EW2). At wrap mode
- * the button used to take a grid cell and forced an extra row at
- * the previous participant cap. Pinning it to the right of the row instead
- * keeps the 6-column grid clean. `flex: 0 0 auto` stops it from
- * shrinking; `align-self: center` keeps it vertically centred
- * against either a single-row or wrapped chip strip. */
-.ensemble-above-row > .ensemble-above-add-participant {
+/* Right-side roster controls. Single-row rosters keep the historical
+ * add / remove / transient-action sequence on one line. Once the chip
+ * grid wraps (6+ participants), the rail becomes two fixed rows: round
+ * actions above and add/remove below. Its fixed 72px inline size is
+ * reserved even when no round action is mounted, so Skip / Skip reads
+ * cannot resize the participant grid as orchestration phases change. */
+.ensemble-above-row-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 0 0 auto;
+}
+
+.ensemble-above-row-roster-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 0 0 auto;
+}
+
+.ensemble-above-row-controls.is-stacked {
+  display: grid;
+  grid-template-columns: 72px;
+  grid-template-rows: 22px 26px;
+  gap: 6px 0;
+  flex: 0 0 72px;
+  width: 72px;
+  min-width: 72px;
+  max-width: 72px;
+  align-self: center;
+}
+
+.ensemble-above-row-controls.is-stacked .ensemble-above-row-actions {
+  grid-column: 1;
+  grid-row: 1;
+  align-self: center;
+  justify-self: end;
+}
+
+.ensemble-above-row-controls.is-stacked .ensemble-above-row-roster-actions {
+  grid-column: 1;
+  grid-row: 2;
+  justify-content: flex-end;
+}
+
+.ensemble-above-row-roster-actions > .ensemble-above-add-participant {
   flex: 0 0 auto;
   align-self: center;
 }
@@ -1136,12 +1173,16 @@
 [data-composer-style="codex"] .ensemble-above-row {
   gap: 6px;
 }
-[data-composer-style="codex"] .ensemble-above-row
+[data-composer-style="codex"] .ensemble-above-row-controls,
+[data-composer-style="codex"] .ensemble-above-row-roster-actions {
+  gap: 6px;
+}
+[data-composer-style="codex"] .ensemble-above-row-roster-actions
   > .ensemble-above-add-participant:has(+ .ensemble-above-remove-participant) {
   border-top-right-radius: 0;
   border-bottom-right-radius: 0;
 }
-[data-composer-style="codex"] .ensemble-above-row
+[data-composer-style="codex"] .ensemble-above-row-roster-actions
   > .ensemble-above-add-participant
   + .ensemble-above-remove-participant {
   margin-left: -6px;

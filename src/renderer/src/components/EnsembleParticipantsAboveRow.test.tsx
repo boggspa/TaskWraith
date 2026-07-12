@@ -782,6 +782,72 @@ describe('EnsembleParticipantsAboveRow', () => {
     expect(html).toContain('Skip reads')
   })
 
+  it('uses a fixed stacked control rail for transient actions at the six-participant wrap boundary', () => {
+    const participants = Array.from({ length: 6 }, (_, index) =>
+      makeParticipant({
+        id: `ensemble-participant-${index + 1}`,
+        provider: 'codex',
+        role: `Worker ${index + 1}`,
+        order: index + 1
+      })
+    )
+    const chat = makeChat(participants)
+    chat.ensemble!.activeRound = {
+      roundId: 'round-wrapped',
+      status: 'running',
+      prompt: 'Implement in sequence.',
+      startedAt: '2026-07-12T10:00:00.000Z',
+      activeParticipantId: participants[0].id,
+      lanes: {
+        'lane-round-wrapped-read': {
+          laneId: 'lane-round-wrapped-read',
+          participantId: participants[1].id,
+          provider: participants[1].provider,
+          status: 'running',
+          intent: 'read',
+          startedAt: '2026-07-12T10:00:00.000Z'
+        }
+      },
+      participants: participants.map((participant, index) => ({
+        participantId: participant.id,
+        provider: participant.provider,
+        role: participant.role,
+        order: participant.order,
+        status: index < 2 ? 'running' : 'idle'
+      }))
+    }
+
+    const html = renderToStaticMarkup(
+      <EnsembleParticipantsAboveRow
+        chat={chat}
+        selectedParticipantId={null}
+        onSelectParticipant={() => undefined}
+        onChatChange={() => undefined}
+        onSkipActive={() => undefined}
+        onSkipReadFanout={() => undefined}
+      />
+    )
+
+    expect(html).toContain('ensemble-above-row-chips is-wrapped')
+    expect(html).toContain('ensemble-above-row-controls is-stacked')
+    expect(html).toContain('>Skip</button>')
+    expect(html).toContain('>Skip reads</button>')
+
+    const css = readFileSync(
+      new URL('../assets/css/09-ensemble-work-session.css', import.meta.url),
+      'utf8'
+    )
+    expect(css).toMatch(
+      /\.ensemble-above-row-controls\.is-stacked\s*\{[^}]*grid-template-columns: 72px;[^}]*flex: 0 0 72px;/
+    )
+    expect(css).toMatch(
+      /\.ensemble-above-row-controls\.is-stacked \.ensemble-above-row-actions\s*\{[^}]*grid-row: 1;/
+    )
+    expect(css).toMatch(
+      /\.ensemble-above-row-controls\.is-stacked \.ensemble-above-row-roster-actions\s*\{[^}]*grid-row: 2;/
+    )
+  })
+
   it('renders sleeping participant chips for scheduled wakeups', () => {
     const chat = makeChat([
       makeParticipant({ id: 'ensemble-claude', provider: 'claude', role: 'Explorer', order: 1 }),
@@ -1265,5 +1331,6 @@ describe('EnsembleParticipantsAboveRow', () => {
     )
     expect(html).not.toContain('is-wrapped')
     expect(html).not.toContain('grid-column:span')
+    expect(html).toContain('class="ensemble-above-row-controls"')
   })
 })
