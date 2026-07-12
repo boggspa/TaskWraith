@@ -405,6 +405,7 @@ function makeHarness(
 type TestQueuedPromptRuntime = {
   id: string
   prompt: string
+  dmTargetParticipantId?: string
 }
 
 function getRuntimeQueuedPrompts(
@@ -3233,6 +3234,76 @@ Next action:
     expect(harness.chat.messages.map((message) => message.content)).toContain(
       'Ensemble steered: interrupted the active speaker and started a queued prompt.'
     )
+  })
+
+  it('preserves a directed participant scope when steering a queued prompt', async () => {
+    const harness = makeHarness()
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Original prompt',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    const queued = harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: '@Worker directed follow-up',
+      event: { sender: {} as Electron.WebContents },
+      mode: 'queue',
+      dmTargetParticipantId: 'codex'
+    })
+    expect(queued.status).toBe('queued')
+    expect(getRuntimeQueuedPrompts(harness.orchestrator, 'ensemble-chat')[0]).toMatchObject({
+      prompt: '@Worker directed follow-up',
+      dmTargetParticipantId: 'codex'
+    })
+
+    const steered = harness.orchestrator.steerQueuedPrompt({
+      chatId: 'ensemble-chat',
+      index: 0,
+      textPrefix: '@Worker directed follow-up',
+      event: { sender: {} as Electron.WebContents }
+    })
+
+    expect(steered.status).toBe('steered')
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    expect(harness.dispatched[1].provider).toBe('codex')
+    expect(harness.chat.ensemble?.activeRound?.dmTargetParticipantId).toBe('codex')
+    expect(harness.chat.ensemble?.activeRound?.participants.map((participant) => participant.participantId)).toEqual([
+      'codex'
+    ])
+  })
+
+  it('preserves a directed participant scope when a queued prompt drains normally', async () => {
+    const harness = makeHarness()
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Original prompt',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: '@Worker directed follow-up',
+      event: { sender: {} as Electron.WebContents },
+      mode: 'queue',
+      dmTargetParticipantId: 'codex'
+    })
+
+    harness.orchestrator.handleProviderOutput(
+      'claude',
+      { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' },
+      { type: 'result', status: 'success', stats: { total_tokens: 10 } }
+    )
+
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    expect(harness.dispatched[1].provider).toBe('codex')
+    expect(harness.chat.ensemble?.activeRound?.prompt).toBe('@Worker directed follow-up')
+    expect(harness.chat.ensemble?.activeRound?.dmTargetParticipantId).toBe('codex')
+    expect(harness.chat.ensemble?.activeRound?.participants.map((participant) => participant.participantId)).toEqual([
+      'codex'
+    ])
   })
 
   it('honors a genuine steer during a parked round instead of swallowing it (no double-click)', async () => {

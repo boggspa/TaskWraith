@@ -2582,6 +2582,8 @@ function createDiscordContextToolMessage(
 interface QueuedRoundEntry {
   id: string
   prompt: string
+  /** Preserve the user's single-seat @mention scope until this queued round starts. */
+  dmTargetParticipantId?: string
   fanoutPolicy?: EnsembleFanoutPolicy
   imageAttachments: EnsembleImageAttachment[]
   imageThumbnails?: EnsembleImageThumbnail[]
@@ -2969,6 +2971,9 @@ export class EnsembleOrchestrator {
       existing.queuedPrompts.push({
         id: this.nextQueuedPromptId(input.chatId),
         prompt: promptWithAttachmentReferences(prompt, imageAttachments),
+        ...(input.dmTargetParticipantId
+          ? { dmTargetParticipantId: input.dmTargetParticipantId }
+          : {}),
         imageAttachments,
         ...(imageThumbnails.length ? { imageThumbnails } : {}),
         ...(input.externalPathGrants?.length
@@ -3140,7 +3145,7 @@ export class EnsembleOrchestrator {
       input.chatId,
       selected.prompt,
       input.event.sender,
-      undefined,
+      selected.dmTargetParticipantId,
       selected.imageAttachments,
       selected.imageThumbnails ?? [],
       remainingQueue,
@@ -11087,7 +11092,7 @@ export class EnsembleOrchestrator {
         runtime.chatId,
         nextEntry.prompt,
         runtime.sender,
-        undefined,
+        nextEntry.dmTargetParticipantId,
         nextEntry.imageAttachments,
         nextEntry.imageThumbnails ?? [],
         remainingQueue,
