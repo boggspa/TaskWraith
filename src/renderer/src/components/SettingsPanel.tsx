@@ -2447,6 +2447,7 @@ const MCP_TOOL_GROUPED_NAMES: Record<McpToolGroup, readonly TaskWraithMcpToolNam
     'ensemble_fanout',
     'ensemble_bossman_control',
     'ensemble_poll_response',
+    'ensemble_propose_goal_complete',
     'ensemble_roster_edit',
     'ensemble_brief_update',
     'list_ensemble_participants',
