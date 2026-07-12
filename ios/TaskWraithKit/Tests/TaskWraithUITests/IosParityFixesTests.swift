@@ -1519,7 +1519,7 @@ struct IosParityFixesTests {
             threadId: "t1", data: streamingTokenLine("z"), runId: "run-1")
         model.appendStreamingDeltasForTesting(
             threadId: "t1", data: streamingTokenLine("!"), runId: "run-1")
-        try await Task.sleep(nanoseconds: StreamingPublishGate.streamingPublishCoalesceWindowNs + 500_000_000)
+        try await Task.sleep(nanoseconds: StreamingPublishGate.streamingPublishCoalesceWindowNs + 70_000_000)
         #expect(model.streamingTexts["t1"] == "z!")
         let elapsed = start.duration(to: .now)
         // Bound is a "does not hang / staleness stays bounded" guard, not a tight
