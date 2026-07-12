@@ -66,7 +66,6 @@ import {
   grokReasoningDisplayLabel
 } from '../lib/composerChipFormat'
 import { resolveProviderRows } from './ComposerProviderPicker'
-import { ProviderGlyph } from './icons/ProviderGlyph'
 import {
   CombinedModelPicker,
   type CombinedModelPickerProviderGroup,
@@ -1601,14 +1600,6 @@ export function EnsembleParticipantsAboveRow({
               >
                 <div className="ensemble-above-chip-body">
                   <span className="ensemble-above-chip-role">
-                    <ProviderGlyph
-                      provider={ghostParticipant.provider}
-                      accentProvider={resolveProviderHueClass(
-                        ghostParticipant.provider,
-                        ghostParticipant.model
-                      )}
-                      className="ensemble-above-chip-provider-glyph"
-                    />
                     {ghostParticipant.role || getProviderName(ghostParticipant.provider)}
                   </span>
                 </div>
@@ -2298,24 +2289,18 @@ function ParticipantChip({
       >
         {/*
           1.0.5-EW24 removed the old leading `<ProviderBadgeIcon>` as
-          ambiguous. 2026-07 chip polish reinstates a leading provider
-          mark — but as the shared `<ProviderGlyph>` (the hue-accurate
-          mnemonic used by the transcript filter rail), sized to the
-          role text. It replaces the identification job the removed
-          token badge's colouring incidentally helped with, and
-          `accentProvider` keeps Ollama-backed display brands on their
-          spoofed upstream hue.
+          ambiguous; a later 2026-07 polish briefly reinstated a leading
+          `<ProviderGlyph>` provider mark. That mark is now dropped too —
+          provider identity already reads from the chip's hue and the
+          hover tooltip, so the role label leads on its own (behind any
+          Boss/Captain/stage authority icon). Keeps the chip face lean
+          and gives the role name back the reclaimed width.
         */}
         <span className="ensemble-above-chip-role">
           <ParticipantLeadingRoleIcon
             stageRole={participant.stageRole}
             isBossman={isBossman}
             isSecondInCommand={isSecondInCommand}
-          />
-          <ProviderGlyph
-            provider={participant.provider}
-            accentProvider={providerClass}
-            className="ensemble-above-chip-provider-glyph"
           />
           {participant.role || getProviderName(participant.provider)}
         </span>
