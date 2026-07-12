@@ -5608,6 +5608,32 @@ Next action:
     expect(harness.chat.activeGoal?.status).toBe('active')
   })
 
+  it('lets an eligible participant open a binding poll via proposeGoalCompleteForRun (M3)', async () => {
+    const { harness } = await startBindingHarness(true)
+    const result = harness.orchestrator.proposeGoalCompleteForRun(harness.dispatched[0].appRunId, {
+      rationale: 'Work is done.'
+    })
+    expect(result.ok).toBe(true)
+    const poll = harness.chat.ensemble?.bossmanControlState?.polls?.[0]
+    expect(poll?.binding).toEqual({ kind: 'goal_complete', goalId: 'goal-x' })
+    expect(poll?.options).toEqual(['complete', 'keep-working'])
+    // The opener is an eligible-at-open voter (included in the target set).
+    expect(poll?.targetParticipantIds).toContain('claude')
+    // The optional rationale rides a visible round-status line.
+    expect(
+      harness.chat.messages.some((m) =>
+        (m.content || '').includes('proposed goal completion: Work is done.')
+      )
+    ).toBe(true)
+  })
+
+  it('rejects proposeGoalCompleteForRun when there is no active goal (M3)', async () => {
+    const { harness } = await startBindingHarness(false)
+    const result = harness.orchestrator.proposeGoalCompleteForRun(harness.dispatched[0].appRunId, {})
+    expect(result.ok).toBe(false)
+    expect(result.error).toBe('no_active_goal')
+  })
+
   it('rejects Boss control from non-Boss callers and stale round ids', async () => {
     const initialChat = makeChat()
     initialChat.ensemble!.bossmanParticipantId = 'claude'

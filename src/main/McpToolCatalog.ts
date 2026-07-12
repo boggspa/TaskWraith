@@ -2616,6 +2616,27 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
       }
     },
     {
+      name: 'ensemble_propose_goal_complete',
+      description:
+        'In Ensemble Mode, propose completing the active goal by opening a BINDING goal-complete poll (options: complete / keep-working). Any eligible-at-open participant may call this — use it when the work is genuinely done but the Boss/Captain is unreachable to call goal_complete. A passing quorum completes the active goal; a Boss/Captain "keep-working" vote vetoes. One binding poll may be open at a time; a short cooldown follows a failed poll. Active participant runs only.',
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          rationale: {
+            type: 'string',
+            maxLength: 500,
+            description: 'Optional short reason the goal is ready to complete.'
+          }
+        }
+      }
+    },
+    {
       name: 'cancel_wakeup',
       description:
         'Cancel this participant’s pending wakeup in the active Ensemble round. Omit wakeupId to cancel all own pending wakeups for the round.',

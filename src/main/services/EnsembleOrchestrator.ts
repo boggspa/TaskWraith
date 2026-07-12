@@ -840,6 +840,7 @@ export interface EnsembleBossmanControlResult {
     | 'baseline_exceeded'
     | 'no_active_goal'
     | 'binding_poll_unavailable'
+    | 'not_eligible_voter'
 }
 
 export interface EnsembleRosterEditInput extends Omit<RosterEditRequest, 'action'> {
@@ -6087,6 +6088,98 @@ export class EnsembleOrchestrator {
       this.resolveBindingPoll(runtime.chatId, pollId, 'vote')
     }
     return response
+  }
+
+  /**
+   * 1.0.4-AN — peer path for the ensemble_propose_goal_complete MCP tool. ANY
+   * eligible-at-open participant may open a binding goal-complete poll from their
+   * own run — the failure mode this goal fixes (a finished panel deadlocked when
+   * authority is unreachable to call goal_complete). The poll body is minted from
+   * the active goal (caller cannot pass free-form options/question); run-gated
+   * like pollResponseForRun; one-open + cooldown enforced via bindingPollOpenBlock;
+   * opener must be an eligible voter. Abuse guard = quorum + authority veto, NOT
+   * an opener gate (per design/orchestration-poll-semantics).
+   */
+  proposeGoalCompleteForRun(
+    runId: string | undefined,
+    input: { rationale?: string }
+  ): EnsembleBossmanControlResult {
+    if (!runId) {
+      return {
+        ok: false,
+        tool: 'ensemble_bossman_control',
+        message: 'ensemble_propose_goal_complete requires an active Ensemble participant run.',
+        error: 'no_active_run'
+      }
+    }
+    const run = this.runsByRunId.get(runId)
+    if (!run) {
+      return {
+        ok: false,
+        tool: 'ensemble_bossman_control',
+        message: 'No active Ensemble participant run matches this proposal.',
+        error: 'no_active_run'
+      }
+    }
+    const runtime = this.roundsByChatId.get(run.chatId)
+    if (!runtime || runtime.roundId !== run.roundId || runtime.cancelled) {
+      return {
+        ok: false,
+        tool: 'ensemble_bossman_control',
+        roundId: runtime?.roundId,
+        message: 'No active Ensemble round is available for this proposal.',
+        error: 'no_active_round'
+      }
+    }
+    const chat = this.deps.getChat(runtime.chatId)
+    const activeGoal = chat?.activeGoal
+    if (!chat?.ensemble || !activeGoal || activeGoal.status !== 'active') {
+      return {
+        ok: false,
+        tool: 'ensemble_bossman_control',
+        roundId: runtime.roundId,
+        message: 'ensemble_propose_goal_complete requires an active goal.',
+        error: 'no_active_goal'
+      }
+    }
+    // Opener must be an eligible-at-open voter (same predicate as the denominator).
+    const eligibleIds = this.bindingPollEligibleParticipantIds(chat, runtime)
+    if (!eligibleIds.includes(run.participant.id)) {
+      return {
+        ok: false,
+        tool: 'ensemble_bossman_control',
+        roundId: runtime.roundId,
+        message:
+          'Only an eligible (enabled, non-background, reachable, non-quarantined) participant may propose goal completion.',
+        error: 'not_eligible_voter'
+      }
+    }
+    const openBlock = this.bindingPollOpenBlock(runtime)
+    if (openBlock) {
+      return {
+        ok: false,
+        tool: 'ensemble_bossman_control',
+        roundId: runtime.roundId,
+        message: openBlock,
+        error: 'binding_poll_unavailable'
+      }
+    }
+    const rationale = normalizeBossmanText(input.rationale, 500)
+    if (rationale) {
+      this.appendRoundStatus(
+        runtime.chatId,
+        runtime.roundId,
+        `${participantDisplayName(run.participant)} proposed goal completion: ${rationale}`
+      )
+    }
+    return this.openBindingGoalCompletePoll(
+      runtime,
+      activeGoal.id,
+      run.participant.id,
+      participantDisplayName(run.participant),
+      undefined,
+      undefined
+    )
   }
 
   userPollResponseForChat(

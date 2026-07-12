@@ -151,6 +151,7 @@ describe('workspace_write is exactly the read-only deny set', () => {
         'delete_path',
         'delegate_to_subthread',
         'ensemble_poll_response',
+        'ensemble_propose_goal_complete',
         'get_diagnostics',
         'git_commit',
         'git_create_pr',

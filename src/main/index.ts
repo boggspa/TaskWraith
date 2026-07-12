@@ -23541,6 +23541,17 @@ async function executeGeminiMcpTool(
       }
       toolIsError = result.ok === false
       text = mcpJson(result)
+    } else if (toolName === 'ensemble_propose_goal_complete') {
+      const result = ensembleOrchestratorRef?.proposeGoalCompleteForRun(context.appRunId, {
+        rationale: optionalString(args.rationale || args.reason)
+      }) || {
+        ok: false,
+        tool: 'ensemble_bossman_control' as const,
+        message: 'Ensemble orchestrator is not available.',
+        error: 'no_active_run' as const
+      }
+      toolIsError = result.ok === false
+      text = mcpJson(result)
     } else if (toolName === 'ensemble_roster_edit') {
       const result = await (ensembleOrchestratorRef?.rosterEditForRun(context.appRunId, {
         action:

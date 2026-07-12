@@ -33,10 +33,10 @@ describe('immutable v1 MCP profile snapshots', () => {
     }
   })
 
-  it('pins full-v1 to the exact historical 155-tool surface', () => {
-    expect(FULL_MCP_ADVERTISE_TOOLS).toHaveLength(155)
+  it('pins full-v1 to the exact historical 156-tool surface', () => {
+    expect(FULL_MCP_ADVERTISE_TOOLS).toHaveLength(156)
     expect(nameHash(FULL_MCP_ADVERTISE_TOOLS)).toBe(
-      '61493913c017c0d37a2f1bd212f971e8c11b4edf747ef03acf58c1d538f5bc73'
+      '88f3a823f09087de4889580ba9d0bf049f92a514ced982935b18318da7f73360'
     )
     for (const tool of FULL_MCP_ADVERTISE_TOOLS) expect(TASKWRAITH_MCP_TOOLS).toContain(tool)
     expect(taskWraithMcpAdvertisedToolNamesForProfile('taskwraith-full-v1')).toBe(
@@ -56,9 +56,9 @@ describe('immutable v1 MCP profile snapshots', () => {
 })
 
 describe('GATEWAY_MCP_ADVERTISE_TOOLS', () => {
-  it('exposes 38 common tools plus only the two virtual gateway tools', () => {
-    expect(GATEWAY_MCP_DIRECT_TOOLS).toHaveLength(38)
-    expect(GATEWAY_MCP_ADVERTISE_TOOLS).toHaveLength(40)
+  it('exposes 39 common tools plus only the two virtual gateway tools', () => {
+    expect(GATEWAY_MCP_DIRECT_TOOLS).toHaveLength(39)
+    expect(GATEWAY_MCP_ADVERTISE_TOOLS).toHaveLength(41)
     expect(new Set(GATEWAY_MCP_ADVERTISE_TOOLS).size).toBe(GATEWAY_MCP_ADVERTISE_TOOLS.length)
     for (const tool of GATEWAY_MCP_DIRECT_TOOLS) expect(TASKWRAITH_MCP_TOOLS).toContain(tool)
     expect(GATEWAY_MCP_ADVERTISE_TOOLS.slice(-2)).toEqual(CAPABILITY_GATEWAY_TOOL_NAMES)
@@ -126,8 +126,8 @@ describe('GATEWAY_MCP_ADVERTISE_TOOLS', () => {
     const fullChars = serializedChars(FULL_MCP_ADVERTISE_TOOLS)
     const gatewayChars = serializedChars(GATEWAY_MCP_DIRECT_TOOLS, gatewayToolDefinitions())
 
-    expect(fullChars).toBe(128_088)
-    expect(gatewayChars).toBe(36_466)
+    expect(fullChars).toBe(128_889)
+    expect(gatewayChars).toBe(37_267)
     expect(gatewayChars).toBeLessThan(40_000)
     expect(gatewayChars / fullChars).toBeLessThan(0.3)
   })
@@ -219,5 +219,23 @@ describe('shouldUseCoreMcpProfile', () => {
   it('never constrains unrelated providers', () => {
     expect(shouldUseCoreMcpProfile('codex', 'grok-4.5')).toBe(false)
     expect(shouldUseCoreMcpProfile('claude', 'grok-4.5')).toBe(false)
+  })
+})
+
+describe('ensemble_propose_goal_complete reachability (O3 M3)', () => {
+  it('is registered, defined, and advertised to gateway + full seats', () => {
+    // Captain gate #5 / A3 #2: catalog-only is unreachable (the lived HelperKimi
+    // "tool not available in this MCP context" failure). Assert the peer-open tool
+    // is in the canonical registry, has a schema definition, and reaches the
+    // gateway + full profiles seats actually receive.
+    expect(TASKWRAITH_MCP_TOOLS).toContain('ensemble_propose_goal_complete')
+    const definitions = createTaskWraithMcpToolDefinitions()
+    expect(definitions.some((d) => d.name === 'ensemble_propose_goal_complete')).toBe(true)
+    expect(isGatewayMcpAdvertisedTool('ensemble_propose_goal_complete')).toBe(true)
+    expect(FULL_MCP_ADVERTISE_TOOLS).toContain('ensemble_propose_goal_complete')
+    // KNOWN GAP (escalated to Design/Captain): NOT in the 60-tool CORE budget yet.
+    // Constrained (Cursor/Grok) seats on the core profile can't propose until the
+    // CORE_MCP_TOOL_BUDGET decision (bump vs evict) lands. See slice-2 disposition.
+    expect(isCoreMcpAdvertisedTool('ensemble_propose_goal_complete')).toBe(false)
   })
 })

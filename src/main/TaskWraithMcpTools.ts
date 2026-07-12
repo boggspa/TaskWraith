@@ -111,6 +111,10 @@ export const TASKWRAITH_MCP_TOOLS = [
   'ensemble_fanout',
   'ensemble_bossman_control',
   'ensemble_poll_response',
+  // 1.0.4-AN — peer-openable BINDING goal-complete poll. Any eligible-at-open
+  // seat may propose completing the active goal (quorum + authority veto decide),
+  // so a finished panel isn't deadlocked when authority is unreachable.
+  'ensemble_propose_goal_complete',
   'ensemble_roster_edit',
   'ensemble_brief_update',
   'list_ensemble_participants',
