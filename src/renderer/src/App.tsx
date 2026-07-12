@@ -24,6 +24,7 @@ import { resolveSessionLinkRouting } from './lib/participantSessionLink'
 import { fetchForkCapability, forkAgentThreadUniversal } from './lib/universalFork'
 import { resolveRuntimePickerScope } from './lib/participantRuntimeProfile'
 import { resolveSlashParticipantForChat } from './lib/resolveSlashParticipant'
+import { resolveComposerRunDmTarget } from './lib/runPromptDmScope'
 import { buildHumanCollaborationInvitePayload } from './lib/humanCollaborationInvitePayload'
 import {
   classifyHumanCollaborationRelayUrls,
@@ -13029,7 +13030,20 @@ function App(): React.JSX.Element {
           }
         : undefined
     )
-    const request = dmTargetParticipantId ? { ...baseRequest, dmTargetParticipantId } : baseRequest
+    // The textarea Enter + send-button handlers resolve @mentions before
+    // calling us, but the global Run Prompt shortcut (Cmd/Ctrl+Enter) calls
+    // handleRun directly. Resolve once more at this central seam so a queued
+    // shortcut submission preserves its directed participant scope through a
+    // later natural drain or Steer action.
+    const resolvedDmTargetParticipantId = resolveComposerRunDmTarget({
+      explicitParticipantId: dmTargetParticipantId,
+      prompt: baseRequest.prompt || '',
+      participants: baseRequest.chatRecord?.ensemble?.participants,
+      inferFromPrompt: !existingPrompt && baseRequest.chatRecord?.chatKind === 'ensemble'
+    })
+    const request = resolvedDmTargetParticipantId
+      ? { ...baseRequest, dmTargetParticipantId: resolvedDmTargetParticipantId }
+      : baseRequest
     if (!runRequestHasContent(request)) {
       return
     }
