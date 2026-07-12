@@ -1198,6 +1198,7 @@ import {
 import { executeWebMcpTool, isWebMcpToolName } from './mcp/WebTools'
 import { resolveSubThreadWorkerPermissions } from './SubThreadPermissions'
 import { isNetworkAccessBlockedTool, isReadOnlyBlockedTool } from './ToolClassTaxonomy'
+import { isExactReviewerVerdictInvocation } from './ReviewerVerdictInvocation'
 import {
   detectCrossProviderDelegationMisuse,
   crossProviderDelegationWarningMessage
@@ -8791,11 +8792,21 @@ function networkAccessBlockedToolName(
 
 function isMcpAutoAllowedForRun(
   toolName: string | null | undefined,
-  effectivePermissions?: EffectiveRunPermissions
+  effectivePermissions?: EffectiveRunPermissions,
+  toolArgs?: unknown
 ): boolean {
   const raw = String(toolName || '').trim()
   if (!raw) return false
   const canonical = canonicalTaskWraithToolName(raw) || raw
+  // C2b-ii — arg-scoped exact reviewer-verdict auto-allow (G-SINGLE: delegates to
+  // the one classifier, never re-inlines the shape check). NOT a whole-tool
+  // exemption: ensemble_bossman_control stays ABSENT from MCP_AUTO_ALLOWED_TOOLS.
+  // ONLY the exact {action:'submit_review_verdict', gateId, verdict} payload
+  // auto-allows, so a gate's OWN reviewer (which may be a read_only seat) can
+  // reconcile its gate prompt-free. Any absent/extra-key/privileged/blank/bad-enum
+  // args fail CLOSED via the classifier → falls through to the normal name-gated
+  // path below, so no other Bossman action is ever auto-allowed.
+  if (isExactReviewerVerdictInvocation(canonical, toolArgs)) return true
   return (
     isTaskWraithMcpToolName(canonical) &&
     MCP_AUTO_ALLOWED_TOOLS.has(canonical as TaskWraithMcpToolName) &&
@@ -13162,7 +13173,7 @@ async function canUseClaudeSdkTool(
   const unprefixedToolName = toolName
     .replace(/^mcp__/, '')
     .replace(/^taskwraith__/, '')
-  if (isMcpAutoAllowedForRun(unprefixedToolName, payload.effectivePermissions)) {
+  if (isMcpAutoAllowedForRun(unprefixedToolName, payload.effectivePermissions, normalizedInput)) {
     return { behavior: 'allow', updatedInput }
   }
   const service = claudeAgenticServiceForTool(toolName)
@@ -13174,7 +13185,7 @@ async function canUseClaudeSdkTool(
   // under read_only that classifies as the generic mcpTools service must be
   // refused, not prompted — route it to a denied service so the gate denies it.
   const gateService =
-    isReadOnlyBlockedTool(unprefixedToolName, payload.effectivePermissions) &&
+    isReadOnlyBlockedTool(unprefixedToolName, payload.effectivePermissions, normalizedInput) &&
     service === 'mcpTools'
       ? 'shellCommands'
       : service
@@ -15179,6 +15190,10 @@ async function runKimiWireProvider(
                 message.params?.payload?.sender || message.params?.payload?.action || 'kimi_action'
               )
               const kimiCanonicalToolName = canonicalTaskWraithToolName(kimiToolName)
+              // C2b-ii — best-effort tool-args for the exact reviewer-verdict
+              // exception; fail-closed when the ApprovalRequest payload carries no
+              // plain-object args (classifier sees undefined → stays gated).
+              const kimiToolArgs = message.params?.payload?.arguments
               // Auto-approve side-effect-free tools at the Kimi wire-
               // protocol layer. The generic MCP-level gate (line ~14078)
               // already skips these for the dispatch path, but Kimi
@@ -15194,7 +15209,7 @@ async function runKimiWireProvider(
               // Reuses `MCP_AUTO_ALLOWED_TOOLS` for the ordinary safe set.
               if (
                 isCapabilityGatewayToolName(kimiCanonicalToolName) ||
-                isMcpAutoAllowedForRun(kimiCanonicalToolName, state.effectivePermissions)
+                isMcpAutoAllowedForRun(kimiCanonicalToolName, state.effectivePermissions, kimiToolArgs)
               ) {
                 respondToKimiWireRequest(child, message.id, {
                   request_id: message.params?.payload?.id || message.id,
@@ -15213,7 +15228,7 @@ async function runKimiWireProvider(
               const kimiResolvedService = kimiAgenticServiceForTool(kimiToolName)
               const kimiGateService =
                 kimiResolvedService === 'mcpTools' &&
-                isReadOnlyBlockedTool(kimiCanonicalToolName, state.effectivePermissions)
+                isReadOnlyBlockedTool(kimiCanonicalToolName, state.effectivePermissions, kimiToolArgs)
                   ? ('shellCommands' as AgenticServiceId)
                   : kimiResolvedService
               const workspacePathForKimiApproval =
@@ -18930,7 +18945,13 @@ function handleCodexServerRequest(message: any) {
                 ? ((formatted.preview as Record<string, unknown>).toolName as string)
                 : ''
   const codexCanonicalToolName = canonicalTaskWraithToolName(probedToolName)
-  if (isMcpAutoAllowedForRun(codexCanonicalToolName, state.effectivePermissions)) {
+  // C2b-ii — best-effort tool-args for the exact reviewer-verdict exception;
+  // fail-closed when the ACP approval params carry no plain-object args
+  // (classifier sees undefined → no auto-allow / no read-only exemption).
+  const codexToolArgs =
+    (params as Record<string, unknown>)?.arguments ??
+    (params as Record<string, unknown>)?.input
+  if (isMcpAutoAllowedForRun(codexCanonicalToolName, state.effectivePermissions, codexToolArgs)) {
     if (method === 'mcpServer/elicitation/request' || method === 'mcp/elicitation/request') {
       codexClient.respond(message.id, { action: 'accept', content: null, _meta: null })
     } else if (method === 'tool/requestUserInput') {
@@ -18963,7 +18984,7 @@ function handleCodexServerRequest(message: any) {
   }
   const gateService =
     service === 'mcpTools' &&
-    isReadOnlyBlockedTool(codexCanonicalToolName, state.effectivePermissions)
+    isReadOnlyBlockedTool(codexCanonicalToolName, state.effectivePermissions, codexToolArgs)
       ? ('shellCommands' as AgenticServiceId)
       : service
   const nativePreflight = resolveNativeApprovalPreflight({
@@ -23376,14 +23397,14 @@ async function executeGeminiMcpTool(
   const skipGenericApproval =
     toolName === 'delegate_to_subthread' ||
     isRecallMcpToolName(toolName) ||
-    isMcpAutoAllowedForRun(toolName, context.effectivePermissions)
+    isMcpAutoAllowedForRun(toolName, context.effectivePermissions, args)
   // 1.0.72 — read-only hard-deny for side-effecting fall-through tools. The host
   // gate denies file/shell under read_only, but a mutating tool that classifies
   // as the generic mcpTools service (creative_blender_python, browser_open/click,
   // switch_auth_profile, …) would only PROMPT. Route it to a denied service so a
   // read-only run refuses it outright (with an audit record) rather than asking.
   const gateService: AgenticServiceId =
-    isReadOnlyBlockedTool(toolName, context.effectivePermissions) &&
+    isReadOnlyBlockedTool(toolName, context.effectivePermissions, args) &&
     approvalPreview.service === 'mcpTools'
       ? 'shellCommands'
       : approvalPreview.service
@@ -23842,7 +23863,8 @@ async function executeGeminiMcpTool(
           args.action === 'clear_goal' ||
           args.action === 'adjust_hops' ||
           args.action === 'ensemble_scheduled_wakeup' ||
-          args.action === 'check_quota_resets'
+          args.action === 'check_quota_resets' ||
+          args.action === 'submit_review_verdict'
             ? args.action
             : undefined,
         roundId: optionalString(args.roundId || args.round_id),
@@ -23878,6 +23900,10 @@ async function executeGeminiMcpTool(
         reopenCriteria: optionalString(args.reopenCriteria || args.reopen_criteria),
         scope: optionalString(args.scope),
         reviewStatus: optionalString(args.reviewStatus || args.review_status) as any,
+        // C2b-ii F2 — reviewer verdict forwarded INDEPENDENTLY of reviewStatus
+        // (reviewStatus stays for Boss set_review_gate; verdict feeds the
+        // owner-gated submit_review_verdict handler landed in C2b-i-b).
+        verdict: optionalString(args.verdict) as any,
         category: optionalString(args.category) as any,
         quarantineScope: optionalString(args.quarantineScope || args.quarantine_scope) as any,
         clear: args.clear === true,
