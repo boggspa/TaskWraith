@@ -22,6 +22,9 @@ history, and workspace state stay on your machine throughout.
 - **Agent-proposed Ensemble rosters.** An agent can prepare a roster preset for
   confirmation, letting you apply a validated provider, model, and role
   configuration without rebuilding the panel by hand.
+- **Select roster presets during import or export.** Settings now lets you pick
+  individual saved panels when moving rosters, while participant cards stay
+  compact until you expand their detailed controls.
 - **Post and clean up Blackboard notes from the composer.** The composer
   popover can now add a session note and delete entries without opening the
   right dock.
@@ -35,11 +38,27 @@ history, and workspace state stay on your machine throughout.
 - **Explicit Ensemble hand-offs win.** An explicit @mention now takes precedence
   over a yield return, so an intentional next speaker is not lost to ordinary
   round routing.
+- **Continuous mode now respects clean pass boundaries.** When an all-yielded
+  panel has no actionable assignment and cannot complete on its own, it returns
+  control instead of spending another hop. A queued provider or model seat swap
+  ends the current pass before a new one can run on the stale seat.
 
 ### Fixed
 - **Ensemble lifecycle and routing are more dependable.** Transcript events keep
   their order, directed prompts and shortcut queues retain their intended scope,
   and terminal yields close cleanly instead of leaving misleading idle hops.
+  Foreground seats now also hold their reader/writer fan-out lanes through
+  settlement, so late lane reports stay with their source before the next serial
+  speaker begins; background lanes remain detached.
+- **Contextual Ensemble controls no longer duplicate themselves.** A read-fan-out
+  pass shows its precise **Skip reads** action instead of an adjacent generic
+  **Skip** button.
+- **Activity timeline collapse avoids a React render loop.** Rapid transcript
+  measurement and collapse transitions no longer repeatedly dispatch the same
+  state update.
+- **Goal-complete poll reporting is accurate and idempotent.** Proposal results
+  retain the `ensemble_propose_goal_complete` identity, and re-resolving a poll
+  cannot append a duplicate audit status line.
 - **Solo Codex runs seal reliably.** Terminal status, finish time, and usage now
   persist when a run ends instead of occasionally remaining unknown or active.
 - **Remote iPhone actions stay safe when a Mac sleeps.** Before sending an
@@ -63,6 +82,10 @@ history, and workspace state stay on your machine throughout.
 ### Documentation
 - **Motion and transitions guide.** The how-to documentation now explains the
   shared motion tokens, presence rules, feedback, and Reduce Motion behaviour.
+- **MCP catalogue catch-up.** Settings groups goal-complete proposals with the
+  other Ensemble controls, while the generated Ollama reference reflects the
+  current 156-tool surface and 39 common direct tools. Cursor's capability
+  gateway now also includes the goal-complete proposal tool.
 
 ## 1.8.0 - 2026-07-11
 

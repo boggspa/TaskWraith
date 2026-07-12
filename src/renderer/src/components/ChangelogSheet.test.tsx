@@ -178,6 +178,8 @@ describe('ChangelogSheet', () => {
     })
     expect(entry.releaseNotes).toContain('Background lanes for Ensemble work')
     expect(entry.releaseNotes).toContain('Remote iPhone actions stay safe when a Mac sleeps')
+    expect(entry.releaseNotes).toContain('Select roster presets during import or export')
+    expect(entry.releaseNotes).toContain('Foreground seats now also hold their reader/writer fan-out lanes')
   })
 
   it('formats full changelog arrays from electron-updater metadata', () => {
