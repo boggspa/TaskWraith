@@ -578,6 +578,10 @@ describe('RemoteBridgeRuntime trusted reconnect (T5)', () => {
     void phoneId
 
     expect(h.runtime.startListening()).toBe(true)
+    // Persisted remote-access intent is published immediately, before the
+    // phone reconnects, so the host can hold its no-sleep assertion across a
+    // later screen lock.
+    expect(h.pairedCounts.at(-1)).toBe(1)
     await settle()
     // The registration reveals the freshly minted sessionId (what the phone
     // gets from the resolve directory).

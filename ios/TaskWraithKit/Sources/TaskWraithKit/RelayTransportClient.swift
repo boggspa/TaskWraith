@@ -54,6 +54,7 @@ public enum TransportError: Error, Sendable {
     case resolveFailed(Int)
     case resolveNoSession
     case timeout(String)
+    case hostUnavailable
     case badBootstrap(String)
     case badIdentity
 }
@@ -71,6 +72,8 @@ extension TransportError: LocalizedError {
             return "The Mac is not advertising an active session for this device."
         case .timeout(let stage):
             return "Timed out during \(stage)."
+        case .hostUnavailable:
+            return "Your Mac isn't responding. Wake it, then retry; your synced threads are still available."
         case .badBootstrap(let reason):
             return "Invalid pairing code: \(reason)."
         case .badIdentity:
@@ -298,6 +301,34 @@ public actor RelayTransportClient {
         }
     }
 
+    /// Prove the authenticated computer endpoint is awake, not merely the
+    /// phone's WebSocket connection to the relay. Repeated encrypted pings make
+    /// this a small best-effort wake window on Macs configured for network wake;
+    /// a screen-locked but awake Mac answers immediately.
+    public func checkPeerAlive(timeoutMs: Int = 6_000) async -> Bool {
+        guard established, let session, wsTask != nil else { return false }
+        let baseline = session.peerPongCount
+        let pollMs = 100
+        let pingEveryMs = 1_000
+        var waitedMs = 0
+        var nextPingAtMs = 0
+
+        while waitedMs < timeoutMs {
+            guard established, self.session === session, wsTask != nil else { return false }
+            if session.peerPongCount > baseline { return true }
+            if waitedMs >= nextPingAtMs {
+                session.ping()
+                await drainAndTransmit()
+                nextPingAtMs += pingEveryMs
+            }
+            guard !Task.isCancelled else { return false }
+            let sleepMs = min(pollMs, timeoutMs - waitedMs)
+            try? await Task.sleep(nanoseconds: UInt64(sleepMs) * 1_000_000)
+            waitedMs += sleepMs
+        }
+        return established && session.peerPongCount > baseline
+    }
+
     // ── App messages ────────────────────────────────────────────────────────────
 
     public func sendAction(_ method: String, params: Data?) async {
@@ -313,6 +344,10 @@ public actor RelayTransportClient {
     public func request(_ method: String, params: [String: Any], timeoutMs: Int = 8000) async throws
         -> AckResult
     {
+        // A relay ping can succeed while the Mac is asleep. Never enqueue a
+        // user action into that zombie-looking session: prove the encrypted
+        // peer first so callers can reconnect/wake or show a safe notice.
+        guard await checkPeerAlive() else { throw TransportError.hostUnavailable }
         requestCounter += 1
         let requestId = "ios-req-\(requestCounter)"
         var withId = params

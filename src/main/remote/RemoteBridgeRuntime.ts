@@ -169,12 +169,11 @@ export interface RemoteBridgeRuntimeOptions {
    * see `onPairedDeviceCountChange`. Kept as a callback so the runtime stays
    * electron-free. */
   onConnectedDeviceCountChange?: (connectedCount: number) => void
-  /** Fired with the PAIRED-with-reconnect-intent count (`established.size`) — on
-   * establish and teardown ONLY. The host drives the Electron powerSaveBlocker
-   * off this so the Mac stays awake through a phone SUSPEND (a suspended phone is
-   * still paired and about to return; RC6's watchdog only moves the live count,
-   * never the paired count), and releases it on unpair. Not fired at the
-   * persisted-listen add site, so a saved-but-offline pairing never holds power. */
+  /** Fired with the PAIRED-with-reconnect-intent count (`established.size`) —
+   * after persisted listeners are installed, on establish, and on teardown.
+   * The host drives the Electron powerSaveBlocker from this durable presence so
+   * the Mac remains reachable after its screen locks even when the phone was
+   * suspended before the lock. RC6's live count remains separate. */
   onPairedDeviceCountChange?: (pairedCount: number) => void
   /** Pairing QR validity window; the un-paired socket is torn down after. */
   pairingWindowMs?: number
@@ -231,6 +230,10 @@ export class RemoteBridgeRuntime {
     for (const device of devices) {
       this.ensurePersistedDeviceListening(device)
     }
+    // A saved pairing is explicit remote-access intent. Publish it before the
+    // phone reconnects so the host can prevent sleep during the exact gap in
+    // which an offline/suspended phone would otherwise be unable to wake it.
+    this.publishPairedDeviceCount()
     return true
   }
 

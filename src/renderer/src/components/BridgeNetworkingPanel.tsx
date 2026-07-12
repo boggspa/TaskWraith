@@ -579,8 +579,10 @@ function IosRemoteBridgeSection({
         <span>
           Enable iOS remote bridge
           <small>
-            Pair an iPhone/iPad over the encrypted relay. Settings-based, so login-item
-            launches keep it alive — no shell environment needed.
+            Pair an iPhone/iPad over the encrypted relay. Settings-based, so login-item launches
+            keep it alive — no shell environment needed. Once a device is paired, TaskWraith keeps
+            the computer awake for remote threads while still allowing the screen to lock and turn
+            off.
             {config?.envOverride
               ? ` Currently forced ${config.envOverride === 'force-on' ? 'ON' : 'OFF'} by IOS_REMOTE_TRUE.`
               : ''}

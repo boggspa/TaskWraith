@@ -609,6 +609,8 @@ public final class RemoteSessionModel: ObservableObject {
     /// (nil / empty = no name; the greeting then shows just the time-of-day).
     public var projectedUserName: String? { projectedShellAppearance?.userName }
     @Published public private(set) var lastActionMessage: String?
+    nonisolated static let hostUnavailableActionMessage =
+        "Your Mac isn't responding. Wake it, then retry; your synced threads are still available."
     /// Set after createThread succeeds — HomeView navigates to the new chat.
     @Published public var navigationTarget: String?
     /// The chat the user has open (sidebar selection / pushed thread), plus the
@@ -4248,10 +4250,6 @@ public final class RemoteSessionModel: ObservableObject {
         // so the button never disables and a silent return is indistinguishable
         // from a dropped tap ("took a couple of goes"). Surface a transient
         // banner so the tap visibly does something.
-        guard let client else {
-            lastActionMessage = "Not connected — can't load the full message yet."
-            return
-        }
         guard let workspaceId = remoteScopeForThread(threadId) else {
             lastActionMessage = "Reconnecting — try Show more again in a moment."
             return
@@ -4261,15 +4259,8 @@ public final class RemoteSessionModel: ObservableObject {
             workspaceId: workspaceId, threadId: threadId, rowId: rowId)
         Task {
             do {
-                let ack = try await client.request(
-                    "bridge.requestActionAck", params: params, timeoutMs: 12_000)
-                guard ack.ok, let data = ack.result else {
-                    await MainActor.run { _ = self.expandingRows.remove(rowId) }
-                    return
-                }
-                guard let actionAck = try? JSONDecoder().decode(BridgeActionAck.self, from: data),
-                    let row = actionAck.data?.row
-                else {
+                let actionAck = try await self.requestFileAction(params)
+                guard let row = actionAck.data?.row else {
                     await MainActor.run { _ = self.expandingRows.remove(rowId) }
                     return
                 }
@@ -4281,7 +4272,7 @@ public final class RemoteSessionModel: ObservableObject {
                 }
             } catch {
                 await MainActor.run {
-                    self.lastActionMessage = String(describing: error)
+                    self.lastActionMessage = Self.actionFailureMessage(error, phase: self.phase)
                     self.expandingRows.remove(rowId)
                 }
             }
@@ -4314,13 +4305,7 @@ public final class RemoteSessionModel: ObservableObject {
                 // time out on a slow Mac while the socket is healthy. Calm copy when connected;
                 // alarming banner preserved for genuinely disconnected/asleep Mac.
                 // Re-throw is unconditional so the caller (media loading UI) still receives the error.
-                let errorText = (error as? LocalizedError)?.errorDescription ?? String(describing: error)
-                if case .connected = self.phase, errorText == "timeout" {
-                    self.lastActionMessage =
-                        "Your Mac is taking longer than usual to respond — it's still connected."
-                } else {
-                    self.lastActionMessage = String(describing: error)
-                }
+                self.lastActionMessage = Self.actionFailureMessage(error, phase: self.phase)
             }
             throw error
         }
@@ -4357,13 +4342,7 @@ public final class RemoteSessionModel: ObservableObject {
                 // connected; alarming banner preserved for a genuinely
                 // disconnected/asleep Mac. Re-throw is unconditional so the
                 // resource loader still surfaces the error to AVFoundation.
-                let errorText = (error as? LocalizedError)?.errorDescription ?? String(describing: error)
-                if case .connected = self.phase, errorText == "timeout" {
-                    self.lastActionMessage =
-                        "Your Mac is taking longer than usual to respond — it's still connected."
-                } else {
-                    self.lastActionMessage = String(describing: error)
-                }
+                self.lastActionMessage = Self.actionFailureMessage(error, phase: self.phase)
             }
             throw error
         }
@@ -4669,10 +4648,7 @@ public final class RemoteSessionModel: ObservableObject {
     private func requestFileAction(
         _ params: [String: Any], timeoutMs: Int = 12_000
     ) async throws -> BridgeActionAck {
-        guard let client else { throw RemoteFileActionError.notConnected }
-        let paramsData = try JSONSerialization.data(withJSONObject: params)
-        let ack = try await client.requestSerialized(
-            "bridge.requestActionAck", paramsData: paramsData, timeoutMs: timeoutMs)
+        let ack = try await requestActionAckWithWake(params, timeoutMs: timeoutMs)
         guard ack.ok else {
             throw RemoteFileActionError.denied(ack.error ?? "Action denied.")
         }
@@ -5330,13 +5306,7 @@ public final class RemoteSessionModel: ObservableObject {
                 // Emit calm copy when connected so the alarming "may be busy or asleep" banner
                 // (driven by twFriendlyMessage/"timeout" keyword match) is not shown falsely.
                 // When phase is NOT .connected the else branch fires the alarming banner normally.
-                let errorText = (error as? LocalizedError)?.errorDescription ?? String(describing: error)
-                if case .connected = self.phase, errorText == "timeout" {
-                    self.lastActionMessage =
-                        "Your Mac is taking longer than usual to respond — it's still connected."
-                } else {
-                    self.lastActionMessage = String(describing: error)
-                }
+                self.lastActionMessage = Self.actionFailureMessage(error, phase: self.phase)
             }
         }
     }
@@ -5360,13 +5330,7 @@ public final class RemoteSessionModel: ObservableObject {
                 // Same phase guard as requestThreadSnapshot and send(): a "load older messages"
                 // ack can time out on a slow-but-connected Mac without the Mac being asleep.
                 // Calm copy while connected; alarming banner preserved for genuinely disconnected.
-                let errorText = (error as? LocalizedError)?.errorDescription ?? String(describing: error)
-                if case .connected = self.phase, errorText == "timeout" {
-                    self.lastActionMessage =
-                        "Your Mac is taking longer than usual to respond — it's still connected."
-                } else {
-                    self.lastActionMessage = String(describing: error)
-                }
+                self.lastActionMessage = Self.actionFailureMessage(error, phase: self.phase)
             }
             self.loadingPreviousThreadRows.remove(threadId)
         }
@@ -6179,7 +6143,8 @@ public final class RemoteSessionModel: ObservableObject {
         imageAttachments: [[String: Any]]? = nil,
         extraWorkspaceIds: [String]? = nil,
         fastModeEnabled: Bool? = nil, kimiThinkingEnabled: Bool? = nil,
-        navigateOnAck: Bool = true
+        navigateOnAck: Bool = true,
+        onActionUnsent: (() -> Void)? = nil
     ) {
         if isDemo {
             appendDemoTurn(card: card, prompt: prompt)
@@ -6206,6 +6171,7 @@ public final class RemoteSessionModel: ObservableObject {
                     imageAttachments: imageAttachments),
                 successLabel: "Sent to ensemble.",
                 navigateOnAck: navigateOnAck,
+                onUnsent: onActionUnsent,
                 onAck: { [weak self] accepted in
                     guard accepted else { return }
                     self?.hideRunSummaryFingerprintsForNextTurn(
@@ -6229,6 +6195,7 @@ public final class RemoteSessionModel: ObservableObject {
                 timeoutMs: 12_000,
                 successLabel: "Sent.",
                 navigateOnAck: navigateOnAck,
+                onUnsent: onActionUnsent,
                 onAck: { [weak self] accepted in
                     guard accepted else { return }
                     self?.hideRunSummaryFingerprintsForNextTurn(
@@ -6242,20 +6209,71 @@ public final class RemoteSessionModel: ObservableObject {
         scheduleThreadRefreshAfterUserAction(thread)
     }
 
+    /// Run one action against a computer we have proved alive. A relay socket
+    /// can remain healthy while the Mac sleeps, so the transport first asks for
+    /// an encrypted pong. If that proof fails, re-resolve the trusted pairing
+    /// once and give network-wake / a just-opened lid a bounded chance to bring
+    /// the Mac back before returning a user-safe error. The action itself has
+    /// not been sent when `hostUnavailable` is thrown, so this one retry cannot
+    /// duplicate a mutation.
+    private func requestActionAckWithWake(
+        _ params: [String: Any], timeoutMs: Int, announceWake: Bool = true
+    ) async throws -> AckResult {
+        // `[String: Any]` is not Sendable. Freeze it to immutable bytes before
+        // crossing from MainActor to the transport actor; the same bytes are
+        // safe to reuse only because a host-unavailable preflight sends no
+        // application action.
+        let paramsData = try JSONSerialization.data(withJSONObject: params)
+        if case .connected = phase, let activeClient = client {
+            do {
+                return try await activeClient.requestSerialized(
+                    "bridge.requestActionAck", paramsData: paramsData, timeoutMs: timeoutMs)
+            } catch TransportError.hostUnavailable {
+                // Fall through to a fresh trusted reconnect. No app action was
+                // transmitted; RelayTransportClient fails before enqueueing it.
+            } catch {
+                throw error
+            }
+        }
+
+        guard hasStoredPairing else { throw TransportError.hostUnavailable }
+        if announceWake { lastActionMessage = "Trying to wake your Mac…" }
+        autoReconnectAttempt = 0
+        reconnectTrusted()
+        guard await waitForRemoteWakeConnection(timeoutMs: 12_000), let retryClient = client
+        else { throw TransportError.hostUnavailable }
+        return try await retryClient.requestSerialized(
+            "bridge.requestActionAck", paramsData: paramsData, timeoutMs: timeoutMs)
+    }
+
+    nonisolated static func actionFailureMessage(
+        _ error: Error, phase: SessionPhase
+    ) -> String {
+        if case TransportError.hostUnavailable = error {
+            return hostUnavailableActionMessage
+        }
+        let text = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+        if case .connected = phase, text == "timeout" {
+            return "Your Mac is taking longer than usual to respond — it's still connected."
+        }
+        return text
+    }
+
     private func send(
         _ params: [String: Any], timeoutMs: Int = 16_000, successLabel: String = "Sent.",
         navigateToThreadId: String? = nil,
         navigateOnAck: Bool = true,
         silent: Bool = false,
         onThreadCreated: ((String?) -> Void)? = nil,
+        onUnsent: (() -> Void)? = nil,
         onAck: ((Bool) -> Void)? = nil,
         onAckResult: ((Bool, AckResult?) -> Void)? = nil
     ) {
-        guard !isDemo, let client else { return }
+        guard !isDemo else { return }
         Task {
             do {
-                let ack = try await client.request(
-                    "bridge.requestActionAck", params: params, timeoutMs: timeoutMs)
+                let ack = try await self.requestActionAckWithWake(
+                    params, timeoutMs: timeoutMs, announceWake: !silent)
                 await MainActor.run {
                     let accepted = Self.actionAckSucceeded(ack)
                     let threadId = accepted ? (Self.threadId(from: ack) ?? navigateToThreadId) : nil
@@ -6292,7 +6310,14 @@ public final class RemoteSessionModel: ObservableObject {
                 await MainActor.run {
                     onAck?(false)
                     onAckResult?(false, nil)
-                    if !silent { self.lastActionMessage = String(describing: error) }
+                    // Only restore composer content when peer preflight proves
+                    // the app action was never transmitted. An ack timeout is
+                    // ambiguous (the run may have started), so never invite a
+                    // duplicate by restoring on every generic failure.
+                    if case TransportError.hostUnavailable = error { onUnsent?() }
+                    if !silent {
+                        self.lastActionMessage = Self.actionFailureMessage(error, phase: self.phase)
+                    }
                 }
             }
         }

@@ -10,6 +10,14 @@ import Testing
 
 @Suite("Transport error copy")
 struct TransportErrorCopyTests {
+    @Test("sleeping host errors keep cached threads usable")
+    func sleepingHostCopy() {
+        #expect(
+            TransportError.hostUnavailable.errorDescription
+                == "Your Mac isn't responding. Wake it, then retry; your synced threads are still available."
+        )
+    }
+
     private func urlError(_ code: Int) -> NSError {
         NSError(
             domain: NSURLErrorDomain, code: code,

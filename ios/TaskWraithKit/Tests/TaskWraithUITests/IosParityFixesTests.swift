@@ -655,6 +655,15 @@ struct IosParityFixesTests {
                 ack: AckResult(ok: false, result: nil, error: "timeout"), phase: .error("x")))
     }
 
+    @Test func sleepingHostActionKeepsThreadsUsableAndAsksForWake() {
+        #expect(
+            RemoteSessionModel.actionFailureMessage(
+                TransportError.hostUnavailable, phase: .connected)
+                == RemoteSessionModel.hostUnavailableActionMessage)
+        #expect(RemoteSessionModel.hostUnavailableActionMessage.contains("synced threads"))
+        #expect(RemoteSessionModel.hostUnavailableActionMessage.contains("Wake"))
+    }
+
     // Slice 3 (RC1): alive-wake rehydrate debounce.
     @MainActor
     @Test func shouldRehydrateOnAliveWakeDebounce() {

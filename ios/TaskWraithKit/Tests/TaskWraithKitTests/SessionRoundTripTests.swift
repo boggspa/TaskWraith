@@ -92,6 +92,24 @@ struct SessionRoundTripTests {
         #expect(macMsgs.contains { $0.method == "bridge.requestActionAck" })
     }
 
+    @Test("encrypted ping proves the authenticated peer is awake")
+    func peerPong() {
+        let (wire, _) = makeWire()
+        wire.mac.start()
+        wire.iphone.start()
+        wire.pump()
+
+        let iphoneBaseline = wire.iphone.peerPongCount
+        wire.iphone.ping()
+        wire.pump()
+        #expect(wire.iphone.peerPongCount == iphoneBaseline + 1)
+
+        let macBaseline = wire.mac.peerPongCount
+        wire.mac.ping()
+        wire.pump()
+        #expect(wire.mac.peerPongCount == macBaseline + 1)
+    }
+
     @Test("a buffered message replays after reconnect")
     func reconnectReplay() {
         let (wire, _) = makeWire()

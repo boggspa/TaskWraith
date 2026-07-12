@@ -47,6 +47,10 @@ public final class E2eeSession {
     private var pendingConfirmCode: String?
     private var establishedEdge = false
     private var pendingError: Error?
+    /// Monotonic proof that the authenticated peer answered a transport ping.
+    /// Relay WebSocket pings only prove the relay is awake; this counter proves
+    /// the Mac endpoint itself decrypted our ping and returned a pong.
+    private var receivedPongCount: UInt64 = 0
 
     // Per-connection handshake state.
     private var ephemeral: Curve25519.KeyAgreement.PrivateKey?
@@ -104,6 +108,7 @@ public final class E2eeSession {
     public func takeConfirmCode() -> String? { defer { pendingConfirmCode = nil }; return pendingConfirmCode }
     public func takeEstablishedEdge() -> Bool { defer { establishedEdge = false }; return establishedEdge }
     public func takeError() -> Error? { defer { pendingError = nil }; return pendingError }
+    public var peerPongCount: UInt64 { receivedPongCount }
 
     /// Begin (or restart, after reconnect) the handshake.
     public func start() {
@@ -408,6 +413,8 @@ public final class E2eeSession {
     private func handleControl(method: String, params: Any?) {
         if method == TWProtocol.transportPing {
             sendControl(TWProtocol.transportPong, nil)
+        } else if method == TWProtocol.transportPong {
+            receivedPongCount &+= 1
         } else if method == TWProtocol.transportResume {
             let resumeParams = params as? [String: Any]
             let lastAcked = (resumeParams?["lastAckedMsgId"] as? Int) ?? 0

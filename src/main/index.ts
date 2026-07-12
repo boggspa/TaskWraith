@@ -1330,22 +1330,18 @@ const remoteBridgeRunEventFilter = createRemoteBridgeRunEventInterestFilter()
 function requestThrottledRemoteProjectionSnapshot(): void {
   bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
 }
-// Remote-session power assertion: while >=1 iOS device is connected over the
-// bridge, hold an Electron powerSaveBlocker so the Mac stays awake to serve
-// remote approvals/questions (the agent runs on-Mac; a sleeping Mac can't be
-// reached at all). Released when the last device disconnects, with a hard time
-// cap so a phone that drops WITHOUT a clean disconnect can't pin the Mac awake
-// forever. NOTE: this does nothing if the Mac is ALREADY asleep before a
-// session starts — that remains the hard ceiling of an on-device (non-cloud)
-// agent.
+// Remote-session power assertion: while >=1 persisted iOS pairing is listening,
+// hold an Electron powerSaveBlocker so the Mac stays awake to serve remote
+// threads after the screen locks. The display may still sleep; only system/app
+// suspension is blocked. Persisted pairing is deliberate remote-access intent,
+// so do not expire this behind the user's back — the old four-hour cap created
+// a zombie-looking phone session (relay alive, Mac asleep) and made follow-up
+// sends fail. The assertion is released on unpair, bridge shutdown, or app quit.
+// A lid-closed/already-sleeping Mac remains an OS-level ceiling; Swift detects
+// that state with an encrypted peer ping and shows actionable copy.
 let remotePowerBlockerId: number | null = null
-let remotePowerBlockerCapTimer: ReturnType<typeof setTimeout> | null = null
-const REMOTE_POWER_BLOCKER_CAP_MS = 4 * 60 * 60 * 1000
+let remotePairedDeviceCount = 0
 function releaseRemotePowerAssertion(): void {
-  if (remotePowerBlockerCapTimer) {
-    clearTimeout(remotePowerBlockerCapTimer)
-    remotePowerBlockerCapTimer = null
-  }
   if (remotePowerBlockerId !== null) {
     if (powerSaveBlocker.isStarted(remotePowerBlockerId)) {
       powerSaveBlocker.stop(remotePowerBlockerId)
@@ -1353,24 +1349,28 @@ function releaseRemotePowerAssertion(): void {
     remotePowerBlockerId = null
   }
 }
-function updateRemotePowerAssertion(connectedDeviceCount: number): void {
-  if (connectedDeviceCount <= 0) {
+function updateRemotePowerAssertion(pairedDeviceCount: number): void {
+  remotePairedDeviceCount = Math.max(0, pairedDeviceCount)
+  if (remotePairedDeviceCount <= 0) {
     if (remotePowerBlockerId !== null) {
-      console.log('[remote-bridge] power assertion released (no devices connected)')
+      console.log('[remote-bridge] power assertion released (no paired devices)')
     }
     releaseRemotePowerAssertion()
     return
   }
   if (remotePowerBlockerId === null || !powerSaveBlocker.isStarted(remotePowerBlockerId)) {
     remotePowerBlockerId = powerSaveBlocker.start('prevent-app-suspension')
-    console.log('[remote-bridge] power assertion held (device connected)')
+    console.log('[remote-bridge] power assertion held (paired remote device)')
   }
-  // (Re)arm the safety cap from the latest connection change.
-  if (remotePowerBlockerCapTimer) clearTimeout(remotePowerBlockerCapTimer)
-  remotePowerBlockerCapTimer = setTimeout(() => {
-    console.log('[remote-bridge] power assertion released (safety cap reached)')
-    releaseRemotePowerAssertion()
-  }, REMOTE_POWER_BLOCKER_CAP_MS)
+}
+function renewRemotePowerAssertion(reason: string): void {
+  if (remotePairedDeviceCount <= 0) return
+  // A forced sleep (closed lid / OS override) can invalidate the underlying
+  // assertion. Recreate it on resume; doing the same at screen lock makes the
+  // locked-computer contract explicit and repairs an unexpectedly stopped id.
+  releaseRemotePowerAssertion()
+  remotePowerBlockerId = powerSaveBlocker.start('prevent-app-suspension')
+  console.log(`[remote-bridge] power assertion renewed (${reason})`)
 }
 // Deferred hook: the provider-model catalog builder is defined inside the
 // app-ready scope (it reuses the get-agent-models extraction); the
@@ -26284,6 +26284,8 @@ if (isGeminiMcpBridgeProcess) {
     setInterval(sweepMediaStagingDir, 30 * 60 * 1000).unref?.()
     electronApp.setAppUserModelId('com.electron')
     registerProductCrashHandlers()
+    powerMonitor.on('lock-screen', () => renewRemotePowerAssertion('screen locked'))
+    powerMonitor.on('resume', () => renewRemotePowerAssertion('system resumed'))
 
     /*
      * 1.0.5-EW35 — Currency sub-slice (c): kick off the live FX
@@ -31377,6 +31379,7 @@ if (isGeminiMcpBridgeProcess) {
     app.on('will-quit', () => {
       teardownCanvasSurfacesForWindowClose()
       stopBridgeDaemon()
+      releaseRemotePowerAssertion()
       if (stallReconcilerInterval) {
         clearInterval(stallReconcilerInterval)
         stallReconcilerInterval = null

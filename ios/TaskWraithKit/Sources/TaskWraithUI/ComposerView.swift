@@ -979,9 +979,13 @@ struct Composer: View {
             return
         }
 
+        let submittedText = text
         #if canImport(UIKit)
+            let submittedAttachments = attachments
+            text = ""
+            attachments = []
             model.continueTask(
-                card, prompt: text,
+                card, prompt: submittedText,
                 approvalMode: bridgeApprovalMode,
                 workflowMode: bridgeWorkflowMode,
                 permissionPresetId: bridgePermissionPresetId,
@@ -991,11 +995,21 @@ struct Composer: View {
                 imageAttachments: encoded.isEmpty ? nil : encoded,
                 extraWorkspaceIds: extraWorkspaceIds,
                 fastModeEnabled: selectedFastMode, kimiThinkingEnabled: effectiveKimiThinking,
-                navigateOnAck: navigateOnSend)
-            attachments = []
+                navigateOnAck: navigateOnSend,
+                onActionUnsent: {
+                    if !submittedText.isEmpty {
+                        text = text.isEmpty ? submittedText : submittedText + "\n\n" + text
+                    }
+                    if !submittedAttachments.isEmpty {
+                        attachments = Array(
+                            (submittedAttachments + attachments)
+                                .prefix(twMaxComposerImageAttachments))
+                    }
+                })
         #else
+            text = ""
             model.continueTask(
-                card, prompt: text,
+                card, prompt: submittedText,
                 approvalMode: bridgeApprovalMode,
                 workflowMode: bridgeWorkflowMode,
                 permissionPresetId: bridgePermissionPresetId,
@@ -1003,9 +1017,13 @@ struct Composer: View {
                 providerOverride: canChangeProvider ? selectedProvider : nil,
                 reasoningEffort: selectedReasoningEffort,
                 fastModeEnabled: selectedFastMode, kimiThinkingEnabled: effectiveKimiThinking,
-                navigateOnAck: navigateOnSend)
+                navigateOnAck: navigateOnSend,
+                onActionUnsent: {
+                    if !submittedText.isEmpty {
+                        text = text.isEmpty ? submittedText : submittedText + "\n\n" + text
+                    }
+                })
         #endif
-        text = ""
     }
 
     private func queueCurrent() {
