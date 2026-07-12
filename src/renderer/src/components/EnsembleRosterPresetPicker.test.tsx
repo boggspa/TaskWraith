@@ -150,4 +150,42 @@ describe('EnsembleRosterPresetPicker', () => {
       hasUnsavedChanges: true
     })
   })
+
+  it('does not mark an agent-applied fan-out preset dirty when its legacy projection is materialized', () => {
+    const portableConfig = {
+      ...ensemble(),
+      fanoutPolicy: 'read_only' as const
+    }
+    const saved = buildEnsembleRosterPresetFromConfig('Agent roster', portableConfig, 1)
+    expect(saved.concurrentModeEnabled).toBeUndefined()
+
+    const applied = {
+      ...portableConfig,
+      activeRosterPresetId: saved.id,
+      concurrentModeEnabled: true
+    }
+
+    expect(rosterPresetSelectionForEnsemble(applied, [saved])).toEqual({
+      preset: saved,
+      hasUnsavedChanges: false
+    })
+  })
+
+  it('marks participant stage changes as unsaved roster edits', () => {
+    const current = ensemble()
+    current.participants[0].stageRole = 'scout'
+    const saved = buildEnsembleRosterPresetFromConfig('Staged roster', current, 1)
+    const changed = {
+      ...current,
+      activeRosterPresetId: saved.id,
+      participants: current.participants.map((participant, index) =>
+        index === 0 ? { ...participant, stageRole: 'reviewer' as const } : participant
+      )
+    }
+
+    expect(rosterPresetSelectionForEnsemble(changed, [saved])).toEqual({
+      preset: saved,
+      hasUnsavedChanges: true
+    })
+  })
 })

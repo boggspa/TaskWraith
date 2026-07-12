@@ -80,6 +80,7 @@ function rosterParticipantComparable(participant: EnsembleRosterParticipantSnaps
     role: participant.role,
     runtimeProfileId: participant.runtimeProfileId ?? null,
     serviceTier: participant.serviceTier ?? null,
+    stageRole: participant.stageRole ?? null,
     thinkingEnabled:
       typeof participant.thinkingEnabled === 'boolean' ? participant.thinkingEnabled : null
   }
@@ -87,10 +88,12 @@ function rosterParticipantComparable(participant: EnsembleRosterParticipantSnaps
 
 function rosterPresetComparableKey(preset: EnsembleRosterPreset): string {
   return stableJson({
-    concurrentModeEnabled:
-      typeof preset.concurrentModeEnabled === 'boolean' ? preset.concurrentModeEnabled : null,
     ensembleContextChars:
       typeof preset.ensembleContextChars === 'number' ? preset.ensembleContextChars : null,
+    // `concurrentModeEnabled` is a legacy projection of the canonical fan-out
+    // policy. Agent-applied presets materialize that projection even when the
+    // saved portable preset omitted it, so comparing both fields reports a
+    // false edit immediately after load.
     fanoutPolicy: preset.fanoutPolicy ?? (preset.concurrentModeEnabled ? 'read_only' : 'off'),
     maxContinuationHops:
       typeof preset.maxContinuationHops === 'number' ? preset.maxContinuationHops : null,
