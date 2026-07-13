@@ -254,6 +254,7 @@
   position: absolute;
   z-index: 0;
   inset: var(--model-usage-rim-inset);
+  height: auto;
   padding: 1px;
   border-radius: calc(16px - var(--model-usage-rim-inset));
   background: rgba(112, 168, 246, 0.68);

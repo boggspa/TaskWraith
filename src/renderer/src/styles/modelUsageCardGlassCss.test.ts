@@ -39,6 +39,7 @@ describe('Model Usage liquid-glass sidebar CSS', () => {
     expect(card).not.toContain('radial-gradient(115% 82% at 12% -12%')
     expect(card).not.toContain('inset 0 18px 34px -30px')
     expect(rim).toContain('inset: var(--model-usage-rim-inset);')
+    expect(rim).toContain('height: auto;')
     expect(rim).toContain('border-radius: calc(16px - var(--model-usage-rim-inset));')
     expect(rim).toContain('-webkit-mask-composite: xor;')
     expect(rim).toContain('mask-composite: exclude;')
