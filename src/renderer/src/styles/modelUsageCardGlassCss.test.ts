@@ -21,8 +21,11 @@ describe('Model Usage liquid-glass sidebar CSS', () => {
     const body = rule('.app-sidebar .model-usage-liquid-card {')
 
     expect(card).toContain('border-radius: 16px;')
-    expect(card).toContain('background-color: rgba(19, 22, 29, 0.85);')
-    expect(card).toContain('backdrop-filter: blur(22px) saturate(82%) brightness(0.96);')
+    expect(card).toContain('background-color: rgba(0, 0, 0, 0.85);')
+    expect(card).toContain('background-image: none;')
+    expect(card).toContain('backdrop-filter: blur(22px) saturate(0%) brightness(0.96);')
+    expect(card).toContain('--model-usage-rim-glow: rgba(86, 151, 240, 0.38);')
+    expect(card).toContain('0 0 12px -4px var(--model-usage-rim-glow)')
     expect(body).toContain('background: transparent;')
     expect(body).toContain('border: 0;')
   })
@@ -47,29 +50,37 @@ describe('Model Usage liquid-glass sidebar CSS', () => {
     expect(rim).not.toContain('background: linear-gradient(')
     expect(sheen).toContain('linear-gradient(')
     expect(sheen).not.toContain('radial-gradient(')
+    expect(sheen).not.toContain('rgba(150, 171, 201')
     expect(sheen).not.toMatch(/purple|magenta/i)
   })
 
-  it('overrides shared native-glass chrome without increasing layout-rule specificity', () => {
-    const nativeGlassCard = rule(
-      "[data-appearance='native_glass'][data-reduce-transparency='false']\n  .app-sidebar\n  .run-summary.model-usage-summary.model-usage-summary--sidebar {"
+  it('keeps soft and native glass achromatic without increasing layout-rule specificity', () => {
+    const glassCard = rule(
+      ":is([data-appearance='soft_glass'], [data-appearance='native_glass'])"
     )
 
     expect(css).toContain('.app-sidebar .model-usage-summary--sidebar.is-collapsed {')
-    expect(nativeGlassCard).toContain('border-color: transparent;')
-    expect(nativeGlassCard).toContain('background-color: rgba(19, 22, 29, 0.85);')
-    expect(nativeGlassCard).toContain('inset 0 -1px 0 rgba(1, 3, 7, 0.5)')
-    expect(nativeGlassCard).not.toContain('inset 0 1px 0')
+    expect(glassCard).toContain('border-color: transparent;')
+    expect(glassCard).toContain('background-color: rgba(0, 0, 0, 0.85);')
+    expect(glassCard).toContain('background-image: none;')
+    expect(glassCard).toContain('inset 0 -1px 0 rgba(0, 0, 0, 0.5)')
+    expect(glassCard).toContain('0 0 12px -4px var(--model-usage-rim-glow)')
+    expect(glassCard).not.toContain('inset 0 1px 0')
   })
 
-  it('has opaque Reduce Transparency and pale light-theme fallbacks', () => {
-    const reduced = rule("[data-appearance='solid'] .app-sidebar .model-usage-summary--sidebar,")
-    const light = rule(":is([data-theme='light'], [data-theme='mist'], [data-theme='sage'])")
+  it('uses opaque black for Reduce Transparency and pure white for light themes', () => {
+    const reduced = rule("[data-appearance='solid']")
+    const light = rule(
+      ":is([data-theme='light'], [data-theme='mist'], [data-theme='sage'])[data-appearance]"
+    )
 
     expect(reduced).toContain("[data-reduce-transparency='true']")
+    expect(reduced).toContain('background-color: rgb(0, 0, 0);')
+    expect(reduced).toContain('background-image: none;')
     expect(reduced).toContain('backdrop-filter: none;')
     expect(light).toContain('.model-usage-summary--sidebar')
-    expect(light).toContain('background-color: rgba(231, 233, 237, 0.85);')
+    expect(light).toContain('background-color: rgba(255, 255, 255, 0.85);')
+    expect(light).toContain('background-image: none;')
   })
 
   it('uses fading provider dividers and compact luminous quota meters', () => {

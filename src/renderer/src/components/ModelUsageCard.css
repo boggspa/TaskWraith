@@ -224,23 +224,18 @@
   isolation: isolate;
   /* Keep the visible rim safely inside the pane's clipping boundary. */
   --model-usage-rim-inset: 2px;
+  --model-usage-rim-glow: rgba(86, 151, 240, 0.38);
   border: 1px solid transparent;
   border-radius: 16px;
-  background-color: rgba(19, 22, 29, 0.85);
-  background-image:
-    radial-gradient(82% 72% at 108% 102%, rgba(93, 108, 128, 0.045), transparent 66%),
-    linear-gradient(
-      155deg,
-      rgba(54, 59, 69, 0.16),
-      rgba(19, 22, 29, 0.08) 52%,
-      rgba(7, 9, 13, 0.18)
-    );
+  background-color: rgba(0, 0, 0, 0.85);
+  background-image: none;
   box-shadow:
-    inset 0 -1px 0 rgba(1, 3, 7, 0.5),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.5),
+    0 0 12px -4px var(--model-usage-rim-glow),
     0 12px 28px -18px rgba(0, 0, 0, 0.72),
     0 1px 2px rgba(0, 0, 0, 0.42);
-  backdrop-filter: blur(22px) saturate(82%) brightness(0.96);
-  -webkit-backdrop-filter: blur(22px) saturate(82%) brightness(0.96);
+  backdrop-filter: blur(22px) saturate(0%) brightness(0.96);
+  -webkit-backdrop-filter: blur(22px) saturate(0%) brightness(0.96);
 }
 
 .app-sidebar .model-usage-summary--sidebar .model-usage-collapsible {
@@ -276,7 +271,7 @@
     118deg,
     rgba(255, 255, 255, 0.025),
     transparent 27% 76%,
-    rgba(150, 171, 201, 0.018)
+    rgba(255, 255, 255, 0.012)
   );
   pointer-events: none;
 }
@@ -306,59 +301,56 @@
   box-shadow: none;
 }
 
-[data-appearance='solid'] .app-sidebar .model-usage-summary--sidebar,
-[data-reduce-transparency='true'] .app-sidebar .model-usage-summary--sidebar {
-  background-color: rgb(18, 20, 25);
-  background-image:
-    linear-gradient(155deg, rgb(42, 46, 54), rgb(18, 20, 25) 58%, rgb(7, 9, 13));
+[data-appearance='solid']
+  .app-sidebar
+  .run-summary.model-usage-summary.model-usage-summary--sidebar,
+[data-reduce-transparency='true']
+  .app-sidebar
+  .run-summary.model-usage-summary.model-usage-summary--sidebar {
+  background-color: rgb(0, 0, 0);
+  background-image: none;
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }
 
-[data-appearance='native_glass'][data-reduce-transparency='false']
+:is([data-appearance='soft_glass'], [data-appearance='native_glass'])[data-reduce-transparency='false']
   .app-sidebar
   .run-summary.model-usage-summary.model-usage-summary--sidebar {
   border-color: transparent;
-  background-color: rgba(19, 22, 29, 0.85);
-  background-image:
-    radial-gradient(82% 72% at 108% 102%, rgba(93, 108, 128, 0.045), transparent 66%),
-    linear-gradient(
-      155deg,
-      rgba(54, 59, 69, 0.16),
-      rgba(19, 22, 29, 0.08) 52%,
-      rgba(7, 9, 13, 0.18)
-    );
+  background-color: rgba(0, 0, 0, 0.85);
+  background-image: none;
   box-shadow:
-    inset 0 -1px 0 rgba(1, 3, 7, 0.5),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.5),
+    0 0 12px -4px var(--model-usage-rim-glow),
     0 12px 28px -18px rgba(0, 0, 0, 0.72),
     0 1px 2px rgba(0, 0, 0, 0.42);
-  backdrop-filter: blur(16px) saturate(82%) brightness(0.96);
-  -webkit-backdrop-filter: blur(16px) saturate(82%) brightness(0.96);
+  backdrop-filter: blur(16px) saturate(0%) brightness(0.96);
+  -webkit-backdrop-filter: blur(16px) saturate(0%) brightness(0.96);
 }
 
-:is([data-theme='light'], [data-theme='mist'], [data-theme='sage'])
+:is([data-theme='light'], [data-theme='mist'], [data-theme='sage'])[data-appearance]
   .app-sidebar
   .run-summary.model-usage-summary.model-usage-summary--sidebar {
-  border-color: rgba(72, 104, 138, 0.3);
-  background-color: rgba(231, 233, 237, 0.85);
-  background-image: linear-gradient(155deg, rgba(250, 251, 253, 0.14), rgba(214, 219, 228, 0.1));
+  --model-usage-rim-glow: rgba(72, 137, 226, 0.28);
+  border-color: transparent;
+  background-color: rgba(255, 255, 255, 0.85);
+  background-image: none;
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.94),
-    inset 1px 0 0 rgba(255, 255, 255, 0.48),
-    inset 0 -1px 0 rgba(64, 92, 122, 0.16),
-    0 12px 28px -19px rgba(38, 61, 88, 0.42),
-    0 0 18px -13px rgba(72, 119, 166, 0.44);
+    inset 0 -1px 0 rgba(0, 0, 0, 0.08),
+    0 0 12px -4px var(--model-usage-rim-glow),
+    0 12px 28px -19px rgba(0, 0, 0, 0.3),
+    0 1px 2px rgba(0, 0, 0, 0.12);
 }
 
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   .app-sidebar .model-usage-summary--sidebar {
-    background-color: rgb(18, 20, 25);
+    background-color: rgb(0, 0, 0);
   }
 }
 
 /* Expanded quota meters inherit one continuous material. Provider sections use
  * a fading hairline instead of hard full-width rules, and the meter fills cast
- * their own coloured light across the neutral navy surface. */
+ * their own coloured light across the neutral surface. */
 .app-sidebar .model-usage-liquid-card .model-usage-list {
   gap: 0;
 }
