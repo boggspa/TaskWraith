@@ -81,4 +81,24 @@ describe('Model Usage liquid-glass sidebar CSS', () => {
     expect(hiddenChrome).toContain('opacity: 0;')
     expect(hiddenChrome).toContain('background: transparent;')
   })
+
+  it('gives spend estimates shallow glass rows with chrome value pills', () => {
+    const row = rule('.app-sidebar .model-usage-liquid-card .model-usage-spend-row {')
+    const cost = rule('.app-sidebar .model-usage-liquid-card .model-usage-spend-cost {')
+
+    expect(row).toContain('border-radius: 7px;')
+    expect(row).toContain('rgba(215, 234, 252, 0.025)')
+    expect(cost).toContain('border-radius: 999px;')
+  })
+
+  it('keeps context catalogues dense inside provider-level glass wells', () => {
+    const rows = rule(
+      '.app-sidebar .model-usage-liquid-card .model-usage-item.context-only .model-usage-context-rows {'
+    )
+    const value = rule('.app-sidebar .model-usage-liquid-card .model-usage-context-window {')
+
+    expect(rows).toContain('border-radius: 9px;')
+    expect(rows).toContain('gap: 1px;')
+    expect(value).toContain('border-radius: 999px;')
+  })
 })
