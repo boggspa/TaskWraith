@@ -1,9 +1,11 @@
 # Provider Swatch Update
 
-Status: **analysis and allocation only — no production palette change yet**
+Status: **implemented app-wide and mirrored on iOS**
 
 First recorded: 2026-07-13  
 Source snapshot: `37c4ea489`  
+Allocation record: `40d156a4f`
+Implementation commit: `8dccc4625`
 Colour space: sRGB
 
 ## Approved direction
@@ -44,24 +46,24 @@ normal text on both backgrounds. They do not meet AAA's `7:1` normal-text thresh
 | Codex | `#A070F2` | 3.45 / 6.09 | **`#705AFF`** | **`rgb(112, 90, 255)`** | **4.57 / 4.60** | Approved new indigo field; also inherited by OpenAI/GPT OSS branding. |
 | Claude | `#D97706` | 3.19 / 6.59 | `#B16105` | `rgb(177, 97, 5)` | 4.58 / 4.58 | Same rust-orange field, darkened. |
 | Kimi | `#1A8CFF` | 3.37 / 6.24 | `#0073E6` | `rgb(0, 115, 230)` | 4.57 / 4.59 | Same saturated blue field, darkened. |
-| Grok | `var(--text-primary)` | Theme-dependent | `#757575` | `rgb(117, 117, 117)` | 4.61 / 4.56 | Provisional static monochrome allocation; see the Grok note below. |
+| Grok | `var(--text-primary)` | Theme-dependent | `#757575` | `rgb(117, 117, 117)` | 4.61 / 4.56 | Static monochrome allocation; see the Grok note below. |
 | Cursor | `#E3B91E` | 1.87 / 11.22 | `#8D7312` | `rgb(141, 115, 18)` | 4.57 / 4.59 | Same mustard field, substantially darkened. |
 | Ollama | `#20A77A` | 3.06 / 6.87 | `#1A8562` | `rgb(26, 133, 98)` | 4.59 / 4.58 | Same local green-teal field, darkened. |
 | Ensemble | `#E8DDE3` | 1.32 / 15.88 | `#986781` | `rgb(152, 103, 129)` | 4.57 / 4.59 | Same soft pink-gray field, moved to a mid-tone mauve. |
 
 ### Grok exception
 
-Grok currently aliases to `var(--text-primary)`, deliberately choosing the high-contrast
-black/white end of the active theme. That adaptive behaviour will generally outperform
-a single mid-gray on its corresponding surface. `#757575` is the mathematically balanced
-static monochrome allocation if the new policy requires one invariant hue; retain the
-dynamic alias if per-theme maximum contrast remains the higher priority.
+Grok previously aliased to `var(--text-primary)`, deliberately choosing the high-contrast
+black/white end of the active theme. That adaptive behaviour generally outperformed a
+single mid-gray on its corresponding surface. The implementation adopts `#757575`, the
+mathematically balanced static monochrome allocation, so Grok now follows the same
+invariant provider-hue policy as the other providers.
 
 ## Ollama display-brand allocations
 
 Runtime provider remains `ollama`. These are presentation overrides selected by
-`src/shared/ollamaBrandTable.ts`; alias relationships should remain aliases when the code
-switch is made.
+`src/shared/ollamaBrandTable.ts`; the implementation keeps the documented alias
+relationships as aliases.
 
 | Display brand / model family | Current token | Current white / black | Proposed token | Proposed RGB | Proposed white / black | Relationship |
 | --- | --- | ---: | --- | --- | ---: | --- |
@@ -84,38 +86,55 @@ switch is made.
   select a light-mode and dark-mode token independently, two tokens can provide materially
   stronger readability than any single invariant colour.
 - The large Liquid, Poolside, Ensemble, and Cursor shifts are mathematical consequences of
-  moving very light colours to the equal-contrast luminance. They require visual identity
-  review before implementation.
+  moving very light colours to the equal-contrast luminance. They remain priority surfaces
+  for visual identity review after implementation.
 - Do not flatten the Google, OpenAI, Qwen, or Ornith aliases into duplicate literals.
   Keeping the aliases prevents future palette drift.
 - Gemini remains in the allocation because historical records and Google/Gemma branding
   still consume its hue even though Gemini is retired for new desktop runs.
 
-## Future implementation checklist
+## Implementation record
 
-No item in this section was changed as part of this analysis document.
+Completed in `8dccc4625`:
 
-1. Update canonical desktop tokens in `src/renderer/src/styles/theme.css`.
-2. Update the iOS mirror in
+1. Updated canonical desktop tokens in `src/renderer/src/styles/theme.css`.
+2. Updated the iOS mirror in
    `ios/TaskWraithKit/Sources/TaskWraithUI/Theme.swift`.
-3. Audit hard-coded renderer mirrors, especially:
+3. Audited and updated hard-coded renderer mirrors, including:
    - `src/renderer/src/lib/UsageHeatmap.ts`
    - `src/renderer/src/components/WelcomeUsageDashboard.tsx`
    - provider fallbacks in renderer CSS and component styles
-4. Audit provider-specific iOS shell literals, especially Codex and Kimi values in
+4. Updated provider-specific iOS shell literals, including Codex, Gemini, and Kimi values in
    `ios/TaskWraithKit/Sources/TaskWraithUI/ComposerShellResolver.swift`.
-5. Update focused colour assertions in `UsageHeatmap.test.ts`,
-   `welcomeUsageDashboard.test.ts`, and affected provider-component tests.
-6. Do not blanket-replace old hex values. Some matches are unrelated canvas/theme colours,
-   while some dashboard rails and shell treatments intentionally use lighter or darker
-   variants.
-7. Visually verify small text, quota percentages, bars, chips, participant filters,
-   transcript accents, light/dark themes, and reduce-transparency mode.
-8. Record the implementation commit and any reviewed exceptions in the history below.
+5. Updated focused colour assertions in `UsageHeatmap.test.ts` and
+   `welcomeUsageDashboard.test.ts`.
+6. Added `providerPaletteContrast.test.ts` to pin the exact desktop/iOS palette, alias
+   relationships, transcript/Aura RGB mirrors, and the `4.5:1` dual-background floor.
+7. Routed desktop identity surfaces through canonical variables: sidebar, transcript,
+   composer, welcome/usage, settings, run cards, permission cards, shell treatments,
+   activity traces, Agent Aura, and Ensemble UI.
+8. Routed iOS Ensemble and provider-shell accents through `TWTheme.providerAccent` where
+   they had bypassed the palette.
+9. Preserved unrelated generic canvas/theme colours and permission-state colours rather
+   than blanket-replacing matching historical hex values.
+
+## Verification
+
+- Focused renderer run: **16 test files / 314 tests passed**, including usage-dashboard,
+  heatmap, palette/contrast, theme-opacity, permission-card, and reasoning-ladder checks.
+- `npm run build`: node + web typechecks and Electron main/preload/renderer production
+  bundles passed.
+- Swift package: all modified iOS sources compiled; the 403-test run had one unrelated
+  timing assertion fail, and its isolated `stalenessBoundRespected` rerun passed.
+- `git diff --check` passed on the owned implementation paths.
+- No repository-wide Prettier or format command was run.
+
+Still recommended as release visual QA: small text, quota percentages, bars, chips,
+participant filters, transcript accents, light/dark themes, and reduce-transparency mode.
 
 ## Change history
 
 | Date | State | Notes |
 | --- | --- | --- |
 | 2026-07-13 | Proposed | Allocated balanced provider and Ollama display-brand swatches. Codex `#705AFF` approved as the new direction. Production code unchanged. |
-
+| 2026-07-13 | Implemented | Applied the allocations across desktop and iOS in `8dccc4625`; added exact palette, alias, RGB-mirror, and dual-background contrast regression coverage. |
