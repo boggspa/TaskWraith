@@ -3,6 +3,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import {
   CODE_BLOCK_RESIZE_EVENT,
   STICK_ENGAGE_PX,
+  advanceExternalRestoreLifecycle,
   captureChatScrollState,
   expectedBottomScrollTop,
   hasExplicitTranscriptScrollAwayIntent,
@@ -106,6 +107,10 @@ export function useTranscriptScrollState({
     generation: number
     targetChatId: string | null
     cached: CachedChatScrollState
+    lifecycle: {
+      settled: boolean
+      chatSwitchObserved: boolean
+    }
   } | null>(null)
   useLayoutEffect(() => {
     committedChatIdRef.current = chatId
@@ -132,7 +137,11 @@ export function useTranscriptScrollState({
         ? {
             generation,
             targetChatId,
-            cached: { scrollState, autoFollow: scrollState.atBottom }
+            cached: { scrollState, autoFollow: scrollState.atBottom },
+            lifecycle: {
+              settled: false,
+              chatSwitchObserved: committedChatIdRef.current === targetChatId
+            }
           }
         : null
       let ownershipSynced = false
@@ -151,10 +160,14 @@ export function useTranscriptScrollState({
         8,
         () => externalRestoreGenerationRef.current === generation,
         () => {
-          if (pendingExternalRestoreRef.current?.generation === generation) {
-            pendingExternalRestoreRef.current = null
+          const pending = pendingExternalRestoreRef.current
+          if (pending?.generation === generation) {
+            const transition = advanceExternalRestoreLifecycle(pending.lifecycle, 'settled')
+            const nextPending = { ...pending, lifecycle: transition.state }
+            pendingExternalRestoreRef.current = transition.shouldClear ? null : nextPending
           }
-        }
+        },
+        8
       )
       return () => {
         cancel()
@@ -723,10 +736,22 @@ export function useTranscriptScrollState({
     if (!scroller) return
     const hasPendingManualJump = Boolean(chatId && pendingTranscriptJumpChatIdRef.current === chatId)
     const cached = chatId ? chatScrollStateByIdRef.current.get(chatId) : undefined
-    const pendingExternalRestore =
+    let pendingExternalRestoreRecord =
       pendingExternalRestoreRef.current?.targetChatId === chatId
-        ? pendingExternalRestoreRef.current.cached
+        ? pendingExternalRestoreRef.current
         : undefined
+    if (pendingExternalRestoreRecord) {
+      const transition = advanceExternalRestoreLifecycle(
+        pendingExternalRestoreRecord.lifecycle,
+        'chat-switch-observed'
+      )
+      const nextPending = { ...pendingExternalRestoreRecord, lifecycle: transition.state }
+      if (pendingExternalRestoreRef.current?.generation === nextPending.generation) {
+        pendingExternalRestoreRef.current = transition.shouldClear ? null : nextPending
+      }
+      pendingExternalRestoreRecord = nextPending
+    }
+    const pendingExternalRestore = pendingExternalRestoreRecord?.cached
     const initialPlan = resolveTranscriptChatSwitchPlan({
       cached,
       pendingExternalRestore,

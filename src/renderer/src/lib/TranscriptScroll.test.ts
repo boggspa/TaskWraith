@@ -1,5 +1,6 @@
 import { afterEach, describe, it, expect, vi } from 'vitest'
 import {
+  advanceExternalRestoreLifecycle,
   DOWNWARD_INTENT_WINDOW_MS,
   STICK_ENGAGE_PX,
   STICK_REENGAGE_DOWNWARD_PX,
@@ -246,6 +247,51 @@ describe('TranscriptScroll', () => {
 
       callbacks.shift()?.(0)
       expect(scroller.scrollTop).toBe(300)
+    })
+
+    it('retries long enough for a virtualized anchor to mount after ratio positioning', () => {
+      const callbacks: FrameRequestCallback[] = []
+      vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+        callbacks.push(callback)
+        return callbacks.length
+      })
+      let queryCount = 0
+      const scroller = fakeScroller({
+        scrollTop: 0,
+        scrollHeight: 900,
+        clientHeight: 300,
+        top: 0,
+        bottom: 300
+      })
+      scroller.querySelector = () => {
+        queryCount += 1
+        if (queryCount < 3) return null
+        return {
+          getBoundingClientRect: () =>
+            fakeRect(500 - scroller.scrollTop, 540 - scroller.scrollTop)
+        } as HTMLElement
+      }
+      const onSettled = vi.fn()
+
+      restoreChatScrollState(
+        scroller,
+        {
+          scrollTop: 120,
+          scrollHeight: 600,
+          clientHeight: 200,
+          scrollRatio: 0.5,
+          atBottom: false,
+          anchorMessageId: 'virtualized-message',
+          anchorOffset: 20
+        },
+        () => true,
+        onSettled,
+        4
+      )
+
+      for (let frame = 0; frame < 4; frame += 1) callbacks.shift()?.(frame * 16)
+      expect(scroller.scrollTop).toBe(480)
+      expect(onSettled).toHaveBeenCalledTimes(1)
     })
 
     it('cancels both delayed writes when a rapid chat switch invalidates the restore', () => {
@@ -1189,6 +1235,52 @@ describe('TranscriptScroll', () => {
           hasPendingManualJump: false
         })
       ).toEqual({ kind: 'external-restore', cached: pendingExternalRestore })
+    })
+  })
+
+  describe('external restore lifecycle', () => {
+    it('survives settling before the chat-switch effect observes ownership', () => {
+      const settled = advanceExternalRestoreLifecycle(
+        { settled: false, chatSwitchObserved: false },
+        'settled'
+      )
+      expect(settled).toEqual({
+        state: { settled: true, chatSwitchObserved: false },
+        shouldClear: false
+      })
+      expect(
+        advanceExternalRestoreLifecycle(settled.state, 'chat-switch-observed')
+      ).toEqual({
+        state: { settled: true, chatSwitchObserved: true },
+        shouldClear: true
+      })
+    })
+
+    it('survives the chat-switch effect observing ownership before settling', () => {
+      const observed = advanceExternalRestoreLifecycle(
+        { settled: false, chatSwitchObserved: false },
+        'chat-switch-observed'
+      )
+      expect(observed).toEqual({
+        state: { settled: false, chatSwitchObserved: true },
+        shouldClear: false
+      })
+      expect(advanceExternalRestoreLifecycle(observed.state, 'settled')).toEqual({
+        state: { settled: true, chatSwitchObserved: true },
+        shouldClear: true
+      })
+    })
+
+    it('clears a same-chat external restore as soon as it settles', () => {
+      expect(
+        advanceExternalRestoreLifecycle(
+          { settled: false, chatSwitchObserved: true },
+          'settled'
+        )
+      ).toEqual({
+        state: { settled: true, chatSwitchObserved: true },
+        shouldClear: true
+      })
     })
   })
 

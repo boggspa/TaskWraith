@@ -3000,7 +3000,9 @@ function App(): React.JSX.Element {
             : null,
         scrollState,
         8,
-        () => sideRestoreTargetChatIdRef.current === targetChatId
+        () => sideRestoreTargetChatIdRef.current === targetChatId,
+        () => {},
+        8
       )
     },
     []

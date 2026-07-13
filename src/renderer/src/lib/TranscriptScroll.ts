@@ -119,6 +119,22 @@ export interface CachedChatScrollState {
   autoFollow: boolean
 }
 
+export interface ExternalRestoreLifecycle {
+  settled: boolean
+  chatSwitchObserved: boolean
+}
+
+export function advanceExternalRestoreLifecycle(
+  state: ExternalRestoreLifecycle,
+  event: 'settled' | 'chat-switch-observed'
+): { state: ExternalRestoreLifecycle; shouldClear: boolean } {
+  const next = {
+    settled: state.settled || event === 'settled',
+    chatSwitchObserved: state.chatSwitchObserved || event === 'chat-switch-observed'
+  }
+  return { state: next, shouldClear: next.settled && next.chatSwitchObserved }
+}
+
 export type TranscriptChatSwitchPlan =
   | { kind: 'manual-jump' }
   | { kind: 'external-restore'; cached: CachedChatScrollState }
@@ -241,12 +257,13 @@ export function restoreChatScrollState(
   scroller: HTMLElement | null | undefined,
   scrollState: ChatScrollState | undefined,
   shouldApply: () => boolean = () => true,
-  onSettled: () => void = () => {}
+  onSettled: () => void = () => {},
+  settleFrames = 2
 ): () => void {
   if (!scroller || !scrollState) return () => {}
   let cancelled = false
-  let firstRafId: number | null = null
-  let secondRafId: number | null = null
+  let rafId: number | null = null
+  let remainingFrames = Math.max(1, Math.floor(settleFrames))
   const apply = () => {
     if (cancelled || !shouldApply()) return
     const maxScrollTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight)
@@ -257,22 +274,22 @@ export function restoreChatScrollState(
     if (restoreChatScrollAnchor(scroller, scrollState)) return
     scroller.scrollTop = Math.max(0, Math.min(maxScrollTop, scrollState.scrollRatio * maxScrollTop))
   }
-  firstRafId = requestAnimationFrame(() => {
-    firstRafId = null
+  const applyFrame = () => {
+    rafId = null
     apply()
     if (cancelled || !shouldApply()) return
-    secondRafId = requestAnimationFrame(() => {
-      secondRafId = null
-      apply()
-      if (!cancelled && shouldApply()) onSettled()
-    })
-  })
+    remainingFrames -= 1
+    if (remainingFrames <= 0) {
+      onSettled()
+      return
+    }
+    rafId = requestAnimationFrame(applyFrame)
+  }
+  rafId = requestAnimationFrame(applyFrame)
   return () => {
     cancelled = true
-    if (firstRafId !== null) cancelAnimationFrame(firstRafId)
-    if (secondRafId !== null) cancelAnimationFrame(secondRafId)
-    firstRafId = null
-    secondRafId = null
+    if (rafId !== null) cancelAnimationFrame(rafId)
+    rafId = null
   }
 }
 
@@ -281,7 +298,8 @@ export function restoreChatScrollStateWhenReady(
   scrollState: ChatScrollState | undefined,
   attempts = 8,
   shouldApply: () => boolean = () => true,
-  onSettled: () => void = () => {}
+  onSettled: () => void = () => {},
+  settleFrames = 2
 ): () => void {
   if (!scrollState) return () => {}
   let cancelled = false
@@ -297,7 +315,8 @@ export function restoreChatScrollStateWhenReady(
         scroller,
         scrollState,
         () => !cancelled && shouldApply(),
-        onSettled
+        onSettled,
+        settleFrames
       )
       return
     }

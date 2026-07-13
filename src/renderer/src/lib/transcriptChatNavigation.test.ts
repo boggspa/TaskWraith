@@ -15,4 +15,33 @@ describe('transcript chat navigation integration', () => {
     expect(source).toContain('setCurrentChatIdForNavigation(selectedChat.appChatId)')
     expect(source).toContain('setCurrentChatIdForNavigation(null)')
   })
+
+  it('keeps external restore ownership until the chat-switch effect observes it', () => {
+    const source = readFileSync(
+      new URL('../app/state/useTranscriptScrollState.ts', import.meta.url),
+      'utf8'
+    )
+    expect(source).toContain(
+      'chatSwitchObserved: committedChatIdRef.current === targetChatId'
+    )
+    expect(source).toContain(
+      "advanceExternalRestoreLifecycle(pending.lifecycle, 'settled')"
+    )
+    expect(source.match(/pendingExternalRestoreRef\.current = transition\.shouldClear \? null : nextPending/g)).toHaveLength(2)
+
+    const observedIndex = source.indexOf("'chat-switch-observed'")
+    const retainedRecordIndex = source.indexOf(
+      'pendingExternalRestoreRecord = nextPending',
+      observedIndex
+    )
+    const cachedPlanIndex = source.indexOf(
+      'const pendingExternalRestore = pendingExternalRestoreRecord?.cached',
+      retainedRecordIndex
+    )
+    const planIndex = source.indexOf('resolveTranscriptChatSwitchPlan({', cachedPlanIndex)
+    expect(observedIndex).toBeGreaterThanOrEqual(0)
+    expect(retainedRecordIndex).toBeGreaterThan(observedIndex)
+    expect(cachedPlanIndex).toBeGreaterThan(retainedRecordIndex)
+    expect(planIndex).toBeGreaterThan(cachedPlanIndex)
+  })
 })
