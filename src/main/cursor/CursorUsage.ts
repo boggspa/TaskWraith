@@ -64,6 +64,8 @@ export interface CursorUsageSnapshot {
   stale?: boolean
   /** ISO timestamp the snapshot was produced. */
   fetchedAt: string
+  /** Raw local membership identifier (for example `pro_plus`). */
+  planType?: string
 }
 
 /** macOS path of the Cursor editor's global-storage SQLite DB. */
@@ -183,7 +185,8 @@ export function parseCursorUsageResponse(payload: unknown): {
 
 export function buildCursorUsageSnapshot(
   payload: unknown,
-  fetchedAtIso: string
+  fetchedAtIso: string,
+  planType?: string | null
 ): CursorUsageSnapshot {
   const { windows, balances } = parseCursorUsageResponse(payload)
   return {
@@ -192,7 +195,8 @@ export function buildCursorUsageSnapshot(
     windows,
     balances,
     configured: true,
-    fetchedAt: fetchedAtIso
+    fetchedAt: fetchedAtIso,
+    ...(planType?.trim() ? { planType: planType.trim() } : {})
   }
 }
 
@@ -215,6 +219,8 @@ export function emptyCursorUsageSnapshot(
 export interface CursorUsageLoadDeps {
   /** Resolve the editor bearer token, or null if not signed in / unreadable. */
   readAccessToken: () => Promise<string | null>
+  /** Read the editor's local Stripe membership type without exposing auth data. */
+  readPlanType?: () => Promise<string | null>
   /** Perform the dashboard RPC and resolve the parsed JSON, or throw. */
   fetchUsageRpc: (token: string) => Promise<unknown>
   /** Injectable clock (defaults to Date.now). */
@@ -247,8 +253,11 @@ export async function loadCursorUsageSnapshot(
   }
 
   try {
-    const payload = await deps.fetchUsageRpc(token)
-    return buildCursorUsageSnapshot(payload, fetchedAtIso)
+    const [payload, planType] = await Promise.all([
+      deps.fetchUsageRpc(token),
+      deps.readPlanType?.().catch(() => null) ?? Promise.resolve(null)
+    ])
+    return buildCursorUsageSnapshot(payload, fetchedAtIso, planType)
   } catch (error) {
     return emptyCursorUsageSnapshot(fetchedAtIso, {
       configured: true,

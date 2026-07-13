@@ -87,13 +87,18 @@ describe('parseCursorUsageResponse', () => {
 
 describe('buildCursorUsageSnapshot', () => {
   it('wraps the parse into a configured snapshot', () => {
-    const snap = buildCursorUsageSnapshot(FULL_PAYLOAD, '2026-05-29T00:00:00.000Z')
+    const snap = buildCursorUsageSnapshot(
+      FULL_PAYLOAD,
+      '2026-05-29T00:00:00.000Z',
+      'pro_plus'
+    )
     expect(snap.provider).toBe('cursor')
     expect(snap.configured).toBe(true)
     expect(snap.source).toBe('cursor-dashboard-usage')
     expect(snap.fetchedAt).toBe('2026-05-29T00:00:00.000Z')
     expect(snap.windows).toHaveLength(3)
     expect(snap.balances).toHaveLength(1)
+    expect(snap.planType).toBe('pro_plus')
   })
 })
 
@@ -143,6 +148,7 @@ describe('loadCursorUsageSnapshot', () => {
   it('builds a full snapshot when token + RPC succeed', async () => {
     const snap = await loadCursorUsageSnapshot({
       readAccessToken: async () => 'tok',
+      readPlanType: async () => 'pro_plus',
       fetchUsageRpc: async () => FULL_PAYLOAD,
       now: fixedNow
     })
@@ -150,6 +156,21 @@ describe('loadCursorUsageSnapshot', () => {
     expect(snap.error).toBeUndefined()
     expect(snap.windows).toHaveLength(3)
     expect(snap.balances).toHaveLength(1)
+    expect(snap.planType).toBe('pro_plus')
+  })
+
+  it('keeps usage available when local membership metadata is unreadable', async () => {
+    const snap = await loadCursorUsageSnapshot({
+      readAccessToken: async () => 'tok',
+      readPlanType: async () => {
+        throw new Error('sqlite locked')
+      },
+      fetchUsageRpc: async () => FULL_PAYLOAD,
+      now: fixedNow
+    })
+
+    expect(snap.windows).toHaveLength(3)
+    expect(snap.planType).toBeUndefined()
   })
 
   it('treats a thrown token read as no token (never crashes)', async () => {

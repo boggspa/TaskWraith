@@ -22,6 +22,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { GrokUsageSnapshot } from '../../../main/grok/GrokUsage'
 import { computeQuotaPace } from '../lib/QuotaPace'
+import { providerPlanName } from '../lib/providerPlanName'
 import { ProviderLogoTile } from './ProviderLogoTile'
 import { QuotaProgressBar } from './QuotaProgressBar'
 
@@ -78,6 +79,10 @@ export function GrokCreditsMeterView({
         ? Math.max(0, Math.min(1, Number(bandFloor[1]) / 100))
         : 0
   const display = snapshot?.creditsUsedDisplay || '0%'
+  const planName = providerPlanName(
+    'grok',
+    snapshot?.planLabel || (observed ? 'SuperGrok' : undefined)
+  )
   const metaText = stale ? `${kindText} · stale` : kindText
   const pace =
     snapshot?.resetAt && snapshot.limitWindowSeconds && percent != null
@@ -99,9 +104,7 @@ export function GrokCreditsMeterView({
         <span className="sidebar-provider-label provider-grok">
           <ProviderLogoTile provider="grok" />
           <span className="model-usage-provider-name">Grok</span>
-          {snapshot?.planLabel ? (
-            <span className="model-usage-tier-badge">{snapshot.planLabel}</span>
-          ) : null}
+          {planName ? <span className="model-usage-tier-badge">{planName}</span> : null}
         </span>
       </div>
       <div className="model-usage-window-list">

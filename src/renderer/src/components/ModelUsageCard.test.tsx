@@ -61,6 +61,15 @@ describe('ModelUsageCard', () => {
     expect(html).toContain('2000 / 2000 remaining')
   })
 
+  it('renders an observed provider plan as a tier badge', () => {
+    const html = renderToStaticMarkup(
+      <ModelUsageCard usageSummary={[quotaEntry({ provider: 'codex', planName: 'Pro' })]} />
+    )
+
+    expect(html).toContain('model-usage-tier-badge')
+    expect(html).toContain('>Pro<')
+  })
+
   it('renders the existing four providers and does NOT add a Grok meter when Grok is unavailable', () => {
     // Regression for 1.0.6-GU: the gated Grok subscription-credit meter
     // must not leak into the card. Under SSR the availability effect never

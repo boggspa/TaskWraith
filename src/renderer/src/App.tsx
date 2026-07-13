@@ -152,6 +152,7 @@ import type {
   UsageWindowAggregate,
   UsageBalanceAggregate
 } from './lib/usageAggregateTypes'
+import { providerPlanNameFromSnapshot } from './lib/providerPlanName'
 import type { AgentApprovalAction, AgentApprovalRequest } from './lib/agentApprovalTypes'
 import { formatScheduledRunTime, toDateTimeLocalValue } from './lib/dateTimeFormat'
 import { buildReviewCurrentDiffPrompt } from './lib/reviewDiffPrompt'
@@ -7239,6 +7240,7 @@ function App(): React.JSX.Element {
       outputTokens: 0,
       totalTokens: 0,
       durationMs: 0,
+      planName: providerPlanNameFromSnapshot(provider, snapshot),
       windows,
       balances: normalizeUsageBalances(provider, snapshot?.balances),
       quotaSource: typeof snapshot?.source === 'string' ? snapshot.source : undefined,
@@ -7426,6 +7428,7 @@ function App(): React.JSX.Element {
         outputTokens: entry.outputTokens,
         totalTokens: entry.totalTokens,
         durationMs: entry.durationMs,
+        planName: entry.planName || '',
         windows: (entry.windows || []).map((windowEntry) => ({
           id: windowEntry.id,
           label: windowEntry.label,

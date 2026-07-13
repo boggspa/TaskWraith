@@ -27,6 +27,10 @@ import {
   loadCursorUsageSnapshot,
   type CursorUsageSnapshot
 } from '../cursor/CursorUsage'
+import {
+  extractClaudeAccountPlanType,
+  extractKimiPlanType
+} from './ProviderPlanMetadata'
 import { AppStore } from '../store'
 import { looksLikeTailscaleOAuthClientSecret } from '../../shared/tailscaleAuthKey'
 import type {
@@ -1280,7 +1284,11 @@ export async function fetchKimiUsageSnapshot(
       throw new Error(`Kimi usage endpoint returned HTTP ${response.status}.`)
     }
     const payload = await response.json()
-    const snapshot = normalizeKimiUsageSnapshot(payload)
+    const planType = extractKimiPlanType(payload)
+    const snapshot = {
+      ...normalizeKimiUsageSnapshot(payload),
+      ...(planType ? { planType } : {})
+    }
     kimiUsageCache = { snapshot, fetchedAt: Date.now() }
     cacheProviderUsageSnapshot('kimi', snapshot)
     return snapshot
@@ -1352,6 +1360,23 @@ export async function readCursorEditorAccessToken(): Promise<string | null> {
   return null
 }
 
+export async function readCursorEditorPlanType(): Promise<string | null> {
+  const keys = ['cursorAuth/stripeMembershipType', 'cursorAuth/cachedMembershipType']
+  for (const dbPath of cursorStateDbCandidates(os.homedir())) {
+    try {
+      await fs.access(dbPath)
+    } catch {
+      continue
+    }
+    for (const key of keys) {
+      const query = `SELECT value FROM ItemTable WHERE key='${key}' LIMIT 1;`
+      const planType = await runCursorSqliteScalar(dbPath, query)
+      if (planType) return planType
+    }
+  }
+  return null
+}
+
 export async function fetchCursorUsageRpc(token: string): Promise<unknown> {
   const response = await fetch(CURSOR_USAGE_ENDPOINT, {
     method: 'POST',
@@ -1381,6 +1406,7 @@ export async function fetchCursorUsageSnapshot(
   }
   const snapshot = await loadCursorUsageSnapshot({
     readAccessToken: readCursorEditorAccessToken,
+    readPlanType: readCursorEditorPlanType,
     fetchUsageRpc: fetchCursorUsageRpc,
     now: () => Date.now()
   })
@@ -1430,7 +1456,13 @@ export async function readClaudeCredentialsFile(): Promise<ClaudeOAuthCredential
         continue
       }
       const subscriptionType =
-        String(inner?.subscriptionType || inner?.subscription_type || '').toLowerCase() || undefined
+        String(
+          inner?.rateLimitTier ||
+            inner?.rate_limit_tier ||
+            inner?.subscriptionType ||
+            inner?.subscription_type ||
+            ''
+        ).toLowerCase() || undefined
       return {
         accessToken,
         subscriptionType,
@@ -1472,8 +1504,13 @@ export async function readClaudeKeychainCredential(): Promise<ClaudeOAuthCredent
             return resolve(null)
           }
           const subscriptionType =
-            String(inner?.subscriptionType || inner?.subscription_type || '').toLowerCase() ||
-            undefined
+            String(
+              inner?.rateLimitTier ||
+                inner?.rate_limit_tier ||
+                inner?.subscriptionType ||
+                inner?.subscription_type ||
+                ''
+            ).toLowerCase() || undefined
           resolve({
             accessToken,
             subscriptionType,
@@ -1501,11 +1538,19 @@ export async function readClaudeLegacyTokenFile(): Promise<ClaudeOAuthCredential
 }
 
 export async function getClaudeOAuthCredential(): Promise<ClaudeOAuthCredential | null> {
-  return (
+  const credential =
     (await readClaudeCredentialsFile()) ||
     (await readClaudeKeychainCredential()) ||
     (await readClaudeLegacyTokenFile())
-  )
+  if (!credential) return null
+
+  try {
+    const raw = await fs.readFile(join(os.homedir(), '.claude.json'), 'utf8')
+    const exactPlanType = extractClaudeAccountPlanType(JSON.parse(raw))
+    return exactPlanType ? { ...credential, subscriptionType: exactPlanType } : credential
+  } catch {
+    return credential
+  }
 }
 
 export async function fetchClaudeUsageSnapshot(

@@ -94,8 +94,20 @@ describe('GrokCreditsMeterView', () => {
     const html = render({
       snapshot: snap('Free credits with SuperGrok\nCredits used: 2%\nPay as you go: disabled')
     })
-    expect(html).toContain('Free credits with SuperGrok')
+    expect(html).toContain('>SuperGrok<')
+    expect(html).not.toContain('Free credits with')
     expect(html).not.toContain('Pay as you go')
+  })
+
+  it('falls back to SuperGrok for an observed weekly screen without a plan line', () => {
+    const html = render({ snapshot: snap('Weekly limit: 25%') })
+    expect(html).toContain('model-usage-tier-badge')
+    expect(html).toContain('>SuperGrok<')
+  })
+
+  it('preserves an explicit SuperGrok Heavy plan', () => {
+    const html = render({ snapshot: snap('Plan: SuperGrok Heavy\nWeekly limit: 25%') })
+    expect(html).toContain('>SuperGrok Heavy<')
   })
 
   it('renders an unavailable state', () => {
