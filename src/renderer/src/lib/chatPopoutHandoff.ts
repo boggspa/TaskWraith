@@ -1,11 +1,14 @@
 import {
-  normalizeChatScrollState,
-  type ChatScrollState
-} from './TranscriptScroll'
+  normalizeChatPopoutRoundExpansion,
+  normalizeChatPopoutScrollState,
+  type ChatPopoutRoundExpansionSnapshot,
+  type ChatPopoutScrollState
+} from '../../../shared/chatPopoutTransfer'
 
 export interface ChatPopoutHandoffState {
   draft?: string
-  scrollState?: ChatScrollState
+  scrollState?: ChatPopoutScrollState
+  roundExpansion?: ChatPopoutRoundExpansionSnapshot
   writtenAt: number
 }
 
@@ -31,7 +34,14 @@ export function serializeChatPopoutHandoff(
   handoff: Omit<ChatPopoutHandoffState, 'writtenAt'>,
   writtenAt = Date.now()
 ): string {
-  return JSON.stringify({ ...handoff, writtenAt })
+  const scrollState = normalizeChatPopoutScrollState(handoff.scrollState)
+  const roundExpansion = normalizeChatPopoutRoundExpansion(handoff.roundExpansion)
+  return JSON.stringify({
+    ...(typeof handoff.draft === 'string' ? { draft: handoff.draft } : {}),
+    ...(scrollState ? { scrollState } : {}),
+    ...(roundExpansion ? { roundExpansion } : {}),
+    writtenAt
+  })
 }
 
 export function parseChatPopoutHandoffPayload(
@@ -39,14 +49,16 @@ export function parseChatPopoutHandoffPayload(
   fallbackWrittenAt = Date.now()
 ): ChatPopoutHandoffState | null {
   try {
-    const parsed = JSON.parse(raw) as Partial<ChatPopoutHandoffState> | null
-    if (parsed === null) return null
+    const parsed = JSON.parse(raw) as unknown
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null
+    const record = parsed as Record<string, unknown>
+    const scrollState = normalizeChatPopoutScrollState(record.scrollState)
+    const roundExpansion = normalizeChatPopoutRoundExpansion(record.roundExpansion)
     return {
-      ...(typeof parsed.draft === 'string' ? { draft: parsed.draft } : {}),
-      ...(parsed.scrollState
-        ? { scrollState: normalizeChatScrollState(parsed.scrollState) }
-        : {}),
-      writtenAt: typeof parsed.writtenAt === 'number' ? parsed.writtenAt : fallbackWrittenAt
+      ...(typeof record.draft === 'string' ? { draft: record.draft } : {}),
+      ...(scrollState ? { scrollState } : {}),
+      ...(roundExpansion ? { roundExpansion } : {}),
+      writtenAt: typeof record.writtenAt === 'number' ? record.writtenAt : fallbackWrittenAt
     }
   } catch {
     return null

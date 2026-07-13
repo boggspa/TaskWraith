@@ -71,7 +71,7 @@ describe('chatPopoutHandoff', () => {
   })
 
   describe('payload parsing', () => {
-    it('serializes and parses draft, normalized scroll state, and writtenAt', () => {
+    it('serializes and parses draft, anchored scroll, disclosure, and writtenAt', () => {
       const raw = serializeChatPopoutHandoff(
         {
           draft: 'resume this',
@@ -83,7 +83,11 @@ describe('chatPopoutHandoff', () => {
             atBottom: false,
             anchorMessageId: 'm1',
             anchorOffset: 8
-          }
+          },
+          roundExpansion: [
+            { roundId: 'round-1', expanded: true },
+            { roundId: 'round-2', expanded: false }
+          ]
         },
         123
       )
@@ -99,7 +103,38 @@ describe('chatPopoutHandoff', () => {
           anchorMessageId: 'm1',
           anchorOffset: 8
         },
+        roundExpansion: [
+          { roundId: 'round-1', expanded: true },
+          { roundId: 'round-2', expanded: false }
+        ],
         writtenAt: 123
+      })
+    })
+
+    it('preserves explicit empty disclosure so the destination can clear stale state', () => {
+      const raw = serializeChatPopoutHandoff({ roundExpansion: [] }, 321)
+      expect(parseChatPopoutHandoffPayload(raw)).toEqual({
+        roundExpansion: [],
+        writtenAt: 321
+      })
+    })
+
+    it('filters malformed disclosure at both serialization boundaries', () => {
+      const malformed = [
+        { roundId: 'round-1', expanded: true },
+        { roundId: '', expanded: false },
+        { roundId: 'round-2', expanded: 'yes' }
+      ]
+      const raw = serializeChatPopoutHandoff({ roundExpansion: malformed as never }, 222)
+      expect(JSON.parse(raw)).toEqual({
+        roundExpansion: [{ roundId: 'round-1', expanded: true }],
+        writtenAt: 222
+      })
+      expect(
+        parseChatPopoutHandoffPayload(JSON.stringify({ roundExpansion: malformed, writtenAt: 223 }))
+      ).toEqual({
+        roundExpansion: [{ roundId: 'round-1', expanded: true }],
+        writtenAt: 223
       })
     })
 
@@ -110,9 +145,10 @@ describe('chatPopoutHandoff', () => {
       })
     })
 
-    it('returns null for corrupt or null payloads', () => {
+    it('returns null for corrupt, null, or primitive payloads', () => {
       expect(parseChatPopoutHandoffPayload('{bad json')).toBeNull()
       expect(parseChatPopoutHandoffPayload('null')).toBeNull()
+      expect(parseChatPopoutHandoffPayload('7')).toBeNull()
     })
   })
 

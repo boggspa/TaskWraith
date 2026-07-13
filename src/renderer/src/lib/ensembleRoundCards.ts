@@ -1,6 +1,11 @@
 import type { ChatMessage, ChatRecord } from '../../../main/store/types'
 import { isEnsembleRoundDispatchLive } from '../../../shared/ensembleRoundLifecycle'
 import { TASKWRAITH_CLOSEOUT_KIND } from '../../../shared/taskWraithCloseout'
+import {
+  MAX_CHAT_POPOUT_ROUND_EXPANSION_ENTRIES,
+  normalizeChatPopoutRoundExpansion,
+  type ChatPopoutRoundExpansionSnapshot
+} from '../../../shared/chatPopoutTransfer'
 import { groupEnsembleMessagesByRound } from './ensembleRoundGrouping'
 import type { TranscriptGroupedMessageRange } from './transcriptToolMessageGrouping'
 
@@ -66,6 +71,40 @@ export function setSessionRoundExpanded(chatId: string, roundId: string, expande
     expanded
   )
   for (const listener of sessionRoundExpansionListeners) listener()
+}
+
+export function captureSessionRoundExpansionForChat(
+  chatId: string
+): ChatPopoutRoundExpansionSnapshot {
+  const entries = Array.from(sessionRoundExpansionSnapshot.get(chatId) ?? [])
+  return entries
+    .slice(-MAX_CHAT_POPOUT_ROUND_EXPANSION_ENTRIES)
+    .map(([roundId, expanded]) => ({ roundId, expanded }))
+}
+
+export function hydrateSessionRoundExpansionForChat(chatId: string, value: unknown): boolean {
+  const normalized = normalizeChatPopoutRoundExpansion(value)
+  if (!normalized) return false
+  const current = sessionRoundExpansionSnapshot.get(chatId)
+  const currentEntries = Array.from(current ?? [])
+  const unchanged =
+    currentEntries.length === normalized.length &&
+    normalized.every(
+      (entry, index) =>
+        currentEntries[index]?.[0] === entry.roundId &&
+        currentEntries[index]?.[1] === entry.expanded
+    )
+  if (unchanged || (!current && normalized.length === 0)) return false
+
+  const next = new Map(sessionRoundExpansionSnapshot)
+  if (normalized.length === 0) {
+    next.delete(chatId)
+  } else {
+    next.set(chatId, new Map(normalized.map((entry) => [entry.roundId, entry.expanded] as const)))
+  }
+  sessionRoundExpansionSnapshot = next
+  for (const listener of sessionRoundExpansionListeners) listener()
+  return true
 }
 
 export function roundExpansionForChat(

@@ -51,6 +51,10 @@ import type {
 } from '../shared/plugins/PluginTypes'
 import type { ContextCompactionProgressEvent } from '../shared/contextCompaction'
 import type { ParticipantWorkingTelemetryEvent } from '../shared/participantWorkingTelemetry'
+import type {
+  ChatPopoutRoundExpansionSnapshot,
+  ChatPopoutScrollState
+} from '../shared/chatPopoutTransfer'
 
 type ComposerImageAttachment = {
   id?: string
@@ -411,13 +415,8 @@ const api = {
     chatId: string
     presentation?: 'split' | 'drawer'
     draft?: string
-    scrollState?: {
-      scrollTop: number
-      scrollHeight: number
-      clientHeight: number
-      scrollRatio: number
-      atBottom: boolean
-    }
+    scrollState?: ChatPopoutScrollState
+    roundExpansion?: ChatPopoutRoundExpansionSnapshot
   }) => ipcRenderer.invoke('dock-side-chat-popout', input) as Promise<{ ok: true }>,
   quitApp: () => ipcRenderer.invoke('app:quit') as Promise<boolean>,
   listWorkspaceFiles: (workspace: string) => ipcRenderer.invoke('list-workspace-files', workspace),
@@ -1766,13 +1765,8 @@ const api = {
       parentChatId: string
       presentation: 'split' | 'drawer'
       draft?: string
-      scrollState?: {
-        scrollTop: number
-        scrollHeight: number
-        clientHeight: number
-        scrollRatio: number
-        atBottom: boolean
-      }
+      scrollState?: ChatPopoutScrollState
+      roundExpansion?: ChatPopoutRoundExpansionSnapshot
     }) => void
   ) => {
     const wrapped = (
@@ -1782,13 +1776,8 @@ const api = {
         parentChatId: string
         presentation: 'split' | 'drawer'
         draft?: string
-        scrollState?: {
-          scrollTop: number
-          scrollHeight: number
-          clientHeight: number
-          scrollRatio: number
-          atBottom: boolean
-        }
+        scrollState?: ChatPopoutScrollState
+        roundExpansion?: ChatPopoutRoundExpansionSnapshot
       }
     ): void => callback(payload)
     ipcRenderer.on('side-chat:dock-request', wrapped)

@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest'
 import {
   buildEnsembleRoundCardRows,
   buildEnsembleRoundCardRowsWithRanges,
+  captureSessionRoundExpansionForChat,
   ensembleRoundHeaderId,
   getSessionRoundExpansionSnapshot,
+  hydrateSessionRoundExpansionForChat,
   isEnsembleRoundHeaderMessage,
   readEnsembleRoundHeader,
   roundExpansionForChat,
@@ -384,5 +386,38 @@ describe('per-chat round expansion memory', () => {
     expect(roundExpansionForChat(remountedSnapshot, chatA)).toEqual(new Map([['round-10', true]]))
     expect(roundExpansionForChat(remountedSnapshot, chatB)).toEqual(new Map([['round-2', false]]))
     expect(notifications).toBe(2)
+  })
+
+  it('atomically replaces one chat disclosure bucket for a renderer handoff', () => {
+    const targetChat = 'popout-transfer-target'
+    const otherChat = 'popout-transfer-other'
+    setSessionRoundExpanded(targetChat, 'stale-round', true)
+    setSessionRoundExpanded(otherChat, 'other-round', false)
+    let notifications = 0
+    const unsubscribe = subscribeSessionRoundExpansion(() => {
+      notifications += 1
+    })
+
+    expect(
+      hydrateSessionRoundExpansionForChat(targetChat, [
+        { roundId: 'round-1', expanded: true },
+        { roundId: 'round-2', expanded: false }
+      ])
+    ).toBe(true)
+    expect(notifications).toBe(1)
+    expect(captureSessionRoundExpansionForChat(targetChat)).toEqual([
+      { roundId: 'round-1', expanded: true },
+      { roundId: 'round-2', expanded: false }
+    ])
+    expect(captureSessionRoundExpansionForChat(otherChat)).toEqual([
+      { roundId: 'other-round', expanded: false }
+    ])
+
+    expect(hydrateSessionRoundExpansionForChat(targetChat, [])).toBe(true)
+    expect(notifications).toBe(2)
+    expect(captureSessionRoundExpansionForChat(targetChat)).toEqual([])
+    expect(hydrateSessionRoundExpansionForChat(targetChat, [])).toBe(false)
+    expect(notifications).toBe(2)
+    unsubscribe()
   })
 })

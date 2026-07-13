@@ -562,6 +562,10 @@ import {
   readChatPopoutHandoff,
   writeChatPopoutHandoff
 } from './lib/chatPopoutHandoff'
+import {
+  captureSessionRoundExpansionForChat,
+  hydrateSessionRoundExpansionForChat
+} from './lib/ensembleRoundCards'
 import { useTranscriptScrollState } from './app/state/useTranscriptScrollState'
 import { bindComposerReservation } from './lib/composerReservation'
 import { buildRunDiffByPath } from './lib/RunWorkspaceDiff'
@@ -5921,9 +5925,15 @@ function App(): React.JSX.Element {
               .catch(() => {})
           }
         }
+        const popoutHandoff = readChatPopoutHandoff(popoutChat.appChatId)
+        if (popoutHandoff?.roundExpansion !== undefined) {
+          hydrateSessionRoundExpansionForChat(
+            popoutChat.appChatId,
+            popoutHandoff.roundExpansion
+          )
+        }
         setCurrentChat(popoutChat)
         applyChatComposerSelection(popoutChat, provider)
-        const popoutHandoff = readChatPopoutHandoff(popoutChat.appChatId)
         if (typeof popoutHandoff?.draft === 'string') {
           setChatPromptDraft(popoutChat.appChatId, popoutHandoff.draft)
         }
@@ -5980,6 +5990,9 @@ function App(): React.JSX.Element {
     const handoffKey = chatPopoutHandoffKey(chatId)
     const applyIncomingHandoff = () => {
       const popoutHandoff = readChatPopoutHandoff(chatId)
+      if (popoutHandoff?.roundExpansion !== undefined) {
+        hydrateSessionRoundExpansionForChat(chatId, popoutHandoff.roundExpansion)
+      }
       if (typeof popoutHandoff?.draft === 'string') {
         setChatPromptDraft(chatId, popoutHandoff.draft)
       }
@@ -13548,7 +13561,8 @@ function App(): React.JSX.Element {
         ? captureChatScrollState(sideTranscriptScrollRef.current)
         : currentChat?.appChatId === targetChat.appChatId
           ? captureMainTranscriptScrollState()
-          : undefined
+          : undefined,
+      roundExpansion: captureSessionRoundExpansionForChat(targetChat.appChatId)
     })
     void window.api.openWorkspacePopout({
       kind: 'chat',
@@ -13727,6 +13741,9 @@ function App(): React.JSX.Element {
         })
         if (typeof request.draft === 'string') {
           setChatPromptDraft(linkedChat.appChatId, request.draft)
+        }
+        if (request.roundExpansion !== undefined) {
+          hydrateSessionRoundExpansionForChat(linkedChat.appChatId, request.roundExpansion)
         }
         if (currentChatIdRef.current !== parentChat.appChatId) {
           await handleSelectChatRef.current(parentChat)
@@ -17225,7 +17242,8 @@ function App(): React.JSX.Element {
     if (!currentChat?.appChatId) return
     writeChatPopoutHandoff(currentChat.appChatId, {
       draft: prompt,
-      scrollState: captureMainTranscriptScrollState()
+      scrollState: captureMainTranscriptScrollState(),
+      roundExpansion: captureSessionRoundExpansionForChat(currentChat.appChatId)
     })
     void window.api.openWorkspacePopout({
       kind: 'chat',
@@ -17247,7 +17265,8 @@ function App(): React.JSX.Element {
         chatId: currentChat.appChatId,
         presentation,
         draft: prompt,
-        scrollState: captureMainTranscriptScrollState()
+        scrollState: captureMainTranscriptScrollState(),
+        roundExpansion: captureSessionRoundExpansionForChat(currentChat.appChatId)
       }).catch(() => {
         isDockingChatPopoutRef.current = false
       })
@@ -24053,10 +24072,14 @@ function App(): React.JSX.Element {
     const openPaneChatPopout = (paneIndex: number, chatId: string): void => {
       const paneChat = chatByIdRef.current.get(chatId)
       if (!paneChat) return
+      const paneScrollState =
+        captureChatScrollState(multiview.paneRefs[paneIndex]?.scrollRef.current) ??
+        (currentChatIdRef.current === chatId ? captureMainTranscriptScrollState() : undefined)
       focusPaneForChromeAction(paneIndex, chatId)
       writeChatPopoutHandoff(chatId, {
         draft: composerDraftsByChatIdRef.current[chatId] || '',
-        scrollState: undefined
+        scrollState: paneScrollState,
+        roundExpansion: captureSessionRoundExpansionForChat(chatId)
       })
       void window.api.openWorkspacePopout({
         kind: 'chat',
