@@ -2972,12 +2972,15 @@ function App(): React.JSX.Element {
   })
   const setCurrentChatIdForNavigation = useCallback(
     (nextChatId: string | null) => {
+      if (nextChatId && multiview.isMultiview) {
+        multiview.assignToNextPane(nextChatId)
+      }
       if (currentChatIdRef.current !== nextChatId) {
         prepareMainTranscriptChatSwitch(nextChatId)
       }
       currentChatIdRef.current = nextChatId
     },
-    [prepareMainTranscriptChatSwitch]
+    [multiview.assignToNextPane, multiview.isMultiview, prepareMainTranscriptChatSwitch]
   )
   const sideTranscriptScrollRef = useRef<HTMLDivElement>(null)
   const sideTranscriptContentRef = useRef<HTMLDivElement>(null)
@@ -11526,7 +11529,9 @@ function App(): React.JSX.Element {
         }
       }
       const isGlobalRun = request.scope === 'global' || isGlobalChat(runChat)
-      const runWorkspace = isGlobalRun ? null : request.workspaceRecord || currentWorkspace
+      const runWorkspace = isGlobalRun
+        ? null
+        : request.workspaceRecord || getWorkspaceForChat(runChat) || currentWorkspace
       const currentRunId = request.appRunId || Date.now().toString()
       currentRunIdForCleanup = currentRunId
       if (!runChat || (!isGlobalRun && !runWorkspace) || !runRequestHasContent(request)) {

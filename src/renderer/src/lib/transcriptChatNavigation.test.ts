@@ -14,6 +14,14 @@ describe('transcript chat navigation integration', () => {
     expect(directAssignments).toHaveLength(2)
     expect(source).toContain('setCurrentChatIdForNavigation(selectedChat.appChatId)')
     expect(source).toContain('setCurrentChatIdForNavigation(null)')
+    const navigationHelper = source.slice(
+      source.indexOf('const setCurrentChatIdForNavigation'),
+      source.indexOf('const sideTranscriptScrollRef')
+    )
+    expect(navigationHelper).toContain('multiview.assignToNextPane(nextChatId)')
+    expect(navigationHelper.indexOf('multiview.assignToNextPane(nextChatId)')).toBeLessThan(
+      navigationHelper.indexOf('currentChatIdRef.current = nextChatId')
+    )
   })
 
   it('keeps external restore ownership until the chat-switch effect observes it', () => {

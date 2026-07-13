@@ -419,6 +419,16 @@ describe('applyClosePane', () => {
 })
 
 describe('applyAssignToNextPane', () => {
+  it('focuses a chat already visible in another pane without duplicating it', () => {
+    const result = applyAssignToNextPane(
+      state({ layout: 'vertical-2', panes: panesOf(['test-3', 'test-2']), focusedPaneIndex: 1 }),
+      'test-3'
+    )
+    expect(result.index).toBe(0)
+    expect(chatIds(result.state)).toEqual(['test-3', 'test-2'])
+    expect(result.state.focusedPaneIndex).toBe(0)
+  })
+
   it('fills the focused pane when it is empty (id preserved)', () => {
     const result = applyAssignToNextPane(
       state({ layout: 'vertical-2', panes: panesOf(['a', null]), focusedPaneIndex: 1 }),

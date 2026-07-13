@@ -431,6 +431,13 @@ export function applyAssignToNextPane(
   chatId: string
 ): { state: MultiviewCoreState; index: number } {
   const count = paneCountForLayout(state.layout)
+  const existing = state.panes.findIndex((pane) => pane.chatId === chatId)
+  if (existing >= 0) {
+    return {
+      state: applySetFocusedPane(state, existing),
+      index: existing
+    }
+  }
   let target: number
   if (state.panes[state.focusedPaneIndex]?.chatId == null) {
     target = state.focusedPaneIndex
