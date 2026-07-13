@@ -35,16 +35,30 @@ describe('Model Usage liquid-glass sidebar CSS', () => {
     expect(card).toContain('--model-usage-rim-inset: 2px;')
     expect(card).toContain('border: 1px solid transparent;')
     expect(card).not.toContain('0 0 20px -12px')
+    expect(card).not.toContain('inset 0 1px 0')
     expect(card).not.toContain('radial-gradient(115% 82% at 12% -12%')
     expect(card).not.toContain('inset 0 18px 34px -30px')
     expect(rim).toContain('inset: var(--model-usage-rim-inset);')
     expect(rim).toContain('border-radius: calc(16px - var(--model-usage-rim-inset));')
     expect(rim).toContain('-webkit-mask-composite: xor;')
     expect(rim).toContain('mask-composite: exclude;')
-    expect(rim).toContain('rgba(126, 181, 255, 0.84)')
+    expect(rim).toContain('background: rgba(112, 168, 246, 0.68);')
+    expect(rim).not.toContain('background: linear-gradient(')
     expect(sheen).toContain('linear-gradient(')
     expect(sheen).not.toContain('radial-gradient(')
     expect(sheen).not.toMatch(/purple|magenta/i)
+  })
+
+  it('overrides shared native-glass chrome without increasing layout-rule specificity', () => {
+    const nativeGlassCard = rule(
+      "[data-appearance='native_glass'][data-reduce-transparency='false']\n  .app-sidebar\n  .run-summary.model-usage-summary.model-usage-summary--sidebar {"
+    )
+
+    expect(css).toContain('.app-sidebar .model-usage-summary--sidebar.is-collapsed {')
+    expect(nativeGlassCard).toContain('border-color: transparent;')
+    expect(nativeGlassCard).toContain('background-color: rgba(19, 22, 29, 0.85);')
+    expect(nativeGlassCard).toContain('inset 0 -1px 0 rgba(1, 3, 7, 0.5)')
+    expect(nativeGlassCard).not.toContain('inset 0 1px 0')
   })
 
   it('has opaque Reduce Transparency and pale light-theme fallbacks', () => {
