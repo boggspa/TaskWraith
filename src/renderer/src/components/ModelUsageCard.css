@@ -227,7 +227,7 @@
   --model-usage-rim-glow: rgba(86, 151, 240, 0.38);
   border: 1px solid transparent;
   border-radius: 16px;
-  background-color: rgba(0, 0, 0, 0.85);
+  background-color: rgba(22, 22, 22, 0.65);
   background-image: none;
   box-shadow:
     inset 0 -1px 0 rgba(0, 0, 0, 0.5),
@@ -307,7 +307,7 @@
 [data-reduce-transparency='true']
   .app-sidebar
   .run-summary.model-usage-summary.model-usage-summary--sidebar {
-  background-color: rgb(0, 0, 0);
+  background-color: rgb(22, 22, 22);
   background-image: none;
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
@@ -317,7 +317,7 @@
   .app-sidebar
   .run-summary.model-usage-summary.model-usage-summary--sidebar {
   border-color: transparent;
-  background-color: rgba(0, 0, 0, 0.85);
+  background-color: rgba(22, 22, 22, 0.65);
   background-image: none;
   box-shadow:
     inset 0 -1px 0 rgba(0, 0, 0, 0.5),
@@ -333,7 +333,7 @@
   .run-summary.model-usage-summary.model-usage-summary--sidebar {
   --model-usage-rim-glow: rgba(72, 137, 226, 0.28);
   border-color: transparent;
-  background-color: rgba(255, 255, 255, 0.85);
+  background-color: rgba(255, 255, 255, 0.65);
   background-image: none;
   box-shadow:
     inset 0 -1px 0 rgba(0, 0, 0, 0.08),
@@ -344,7 +344,7 @@
 
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   .app-sidebar .model-usage-summary--sidebar {
-    background-color: rgb(0, 0, 0);
+    background-color: rgb(22, 22, 22);
   }
 }
 

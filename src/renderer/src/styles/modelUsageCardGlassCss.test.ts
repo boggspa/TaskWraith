@@ -16,12 +16,12 @@ const rule = (selector: string): string => {
 }
 
 describe('Model Usage liquid-glass sidebar CSS', () => {
-  it('makes the whole pane a neutral 85%-alpha material, including its header', () => {
+  it('makes the whole pane a sampled neutral 65%-alpha material, including its header', () => {
     const card = rule('.app-sidebar .model-usage-summary--sidebar {')
     const body = rule('.app-sidebar .model-usage-liquid-card {')
 
     expect(card).toContain('border-radius: 16px;')
-    expect(card).toContain('background-color: rgba(0, 0, 0, 0.85);')
+    expect(card).toContain('background-color: rgba(22, 22, 22, 0.65);')
     expect(card).toContain('background-image: none;')
     expect(card).toContain('backdrop-filter: blur(22px) saturate(0%) brightness(0.96);')
     expect(card).toContain('--model-usage-rim-glow: rgba(86, 151, 240, 0.38);')
@@ -61,7 +61,7 @@ describe('Model Usage liquid-glass sidebar CSS', () => {
 
     expect(css).toContain('.app-sidebar .model-usage-summary--sidebar.is-collapsed {')
     expect(glassCard).toContain('border-color: transparent;')
-    expect(glassCard).toContain('background-color: rgba(0, 0, 0, 0.85);')
+    expect(glassCard).toContain('background-color: rgba(22, 22, 22, 0.65);')
     expect(glassCard).toContain('background-image: none;')
     expect(glassCard).toContain('inset 0 -1px 0 rgba(0, 0, 0, 0.5)')
     expect(glassCard).toContain('0 0 12px -4px var(--model-usage-rim-glow)')
@@ -75,11 +75,11 @@ describe('Model Usage liquid-glass sidebar CSS', () => {
     )
 
     expect(reduced).toContain("[data-reduce-transparency='true']")
-    expect(reduced).toContain('background-color: rgb(0, 0, 0);')
+    expect(reduced).toContain('background-color: rgb(22, 22, 22);')
     expect(reduced).toContain('background-image: none;')
     expect(reduced).toContain('backdrop-filter: none;')
     expect(light).toContain('.model-usage-summary--sidebar')
-    expect(light).toContain('background-color: rgba(255, 255, 255, 0.85);')
+    expect(light).toContain('background-color: rgba(255, 255, 255, 0.65);')
     expect(light).toContain('background-image: none;')
   })
 
