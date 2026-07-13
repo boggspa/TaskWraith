@@ -958,7 +958,7 @@ struct HomeView: View {
         projection: HomeListProjection
     ) -> some View {
         let accent = card.isEnsemble
-            ? TWTheme.chroma2 : TWTheme.providerAccent(card.provider)
+            ? TWTheme.providerAccent("ensemble") : TWTheme.providerAccent(card.provider)
         let rowInsets = EdgeInsets(
             top: appScale.scaled(2),
             leading: appScale.scaled(nested ? 28 : 16),
@@ -1284,7 +1284,7 @@ struct TaskRow: View {
     }
 
     private var accent: Color {
-        card.isEnsemble ? TWTheme.chroma2 : TWTheme.providerAccent(card.provider)
+        card.isEnsemble ? TWTheme.providerAccent("ensemble") : TWTheme.providerAccent(card.provider)
     }
 
     var body: some View {

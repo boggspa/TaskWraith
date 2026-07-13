@@ -2271,7 +2271,7 @@
   .composer-above-bar-stack
   > .ensemble-roster-preset-picker.is-compact {
   background: var(--surface-2);
-  border-color: color-mix(in srgb, #5a8cff 32%, var(--surface-border));
+  border-color: color-mix(in srgb, var(--provider-gemini-color) 32%, var(--surface-border));
   box-shadow: 0 4px 18px rgba(0, 0, 0, 0.08);
   color: var(--surface-text);
 }
@@ -2281,7 +2281,7 @@
   .composer-above-bar-stack
   > .ensemble-roster-preset-picker.is-compact {
   background: var(--surface-2);
-  border-color: color-mix(in srgb, #4da6ff 32%, var(--surface-border));
+  border-color: color-mix(in srgb, var(--provider-kimi-color) 32%, var(--surface-border));
   box-shadow: 0 4px 18px rgba(0, 0, 0, 0.08);
   color: var(--surface-text);
 }
@@ -2844,12 +2844,12 @@
  * match the COMPOSER-SURFACE chrome instead of a satellite-flat
  * treatment so the chip strip reads as a sibling to the composer
  * pill below it (Gemini composer-surface: 28px radius / `#0e1218
- * 94%` / `#5a8cff 18%` border / `0 4px 28px` shadow). */
+ * 94%` / provider-blue 18% border / `0 4px 28px` shadow). */
 [data-composer-style="gemini"] .ensemble-above-row,
 [data-composer-style="gemini"] .composer-above-bar-stack > .ensemble-roster-preset-picker.is-compact {
   border-radius: 28px;
   background: color-mix(in srgb, #0e1218 94%, transparent);
-  border: 1px solid color-mix(in srgb, #5a8cff 18%, transparent);
+  border: 1px solid color-mix(in srgb, var(--provider-gemini-color) 18%, transparent);
   box-shadow: 0 4px 28px rgba(0, 0, 0, 0.42);
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
@@ -2858,13 +2858,13 @@
   .composer-above-bar-stack
   > .ensemble-roster-preset-picker.is-compact
   .ensemble-roster-preset-picker-chip {
-  background: color-mix(in srgb, #5a8cff 8%, transparent);
-  border-color: color-mix(in srgb, #5a8cff 22%, transparent);
+  background: color-mix(in srgb, var(--provider-gemini-color) 8%, transparent);
+  border-color: color-mix(in srgb, var(--provider-gemini-color) 22%, transparent);
 }
 [data-composer-style="gemini"] .ensemble-above-chip.is-selected {
-  border-color: color-mix(in srgb, #5a8cff 65%, transparent);
-  background: color-mix(in srgb, #5a8cff 16%, transparent);
-  box-shadow: 0 0 0 1px color-mix(in srgb, #5a8cff 50%, transparent);
+  border-color: color-mix(in srgb, var(--provider-gemini-color) 65%, transparent);
+  background: color-mix(in srgb, var(--provider-gemini-color) 16%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--provider-gemini-color) 50%, transparent);
 }
 
 /* Kimi shell — same situation: `.composer-above-bar` hidden, chip
@@ -2885,13 +2885,13 @@
   .composer-above-bar-stack
   > .ensemble-roster-preset-picker.is-compact
   .ensemble-roster-preset-picker-chip {
-  background: color-mix(in srgb, #4da6ff 8%, transparent);
-  border-color: color-mix(in srgb, #4da6ff 22%, transparent);
+  background: color-mix(in srgb, var(--provider-kimi-color) 8%, transparent);
+  border-color: color-mix(in srgb, var(--provider-kimi-color) 22%, transparent);
 }
 [data-composer-style="kimi"] .ensemble-above-chip.is-selected {
-  border-color: color-mix(in srgb, #4da6ff 65%, transparent);
-  background: color-mix(in srgb, #4da6ff 18%, transparent);
-  box-shadow: 0 0 0 1px color-mix(in srgb, #4da6ff 50%, transparent);
+  border-color: color-mix(in srgb, var(--provider-kimi-color) 65%, transparent);
+  background: color-mix(in srgb, var(--provider-kimi-color) 18%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--provider-kimi-color) 50%, transparent);
 }
 
 /* Modular shell — `.composer-above-bar` is transparent / 0
@@ -3109,48 +3109,24 @@
   position: relative;
   z-index: 1;
 }
-.app-transcript.provider-gemini .ensemble-above-row::before {
+:is(
+  .app-transcript.provider-gemini,
+  .app-transcript.provider-codex,
+  .app-transcript.provider-claude,
+  .app-transcript.provider-kimi,
+  .app-transcript.provider-grok,
+  .app-transcript.provider-cursor,
+  .app-transcript.provider-ollama,
+  .app-transcript.provider-ensemble
+) .ensemble-above-row::before {
   background: linear-gradient(
     90deg,
-    rgba(7, 18, 48, 0.22),
-    rgba(35, 91, 184, 0.14) 18%,
+    color-mix(in srgb, var(--transcript-provider-color) 8%, rgb(0 0 0 / 22%)),
+    color-mix(in srgb, var(--transcript-provider-color) 14%, transparent) 18%,
     transparent 36%,
     transparent 64%,
-    rgba(28, 80, 172, 0.14) 82%,
-    rgba(5, 13, 36, 0.22)
-  );
-}
-.app-transcript.provider-codex .ensemble-above-row::before {
-  background: linear-gradient(
-    90deg,
-    color-mix(in srgb, var(--provider-codex-color) 8%, rgb(0 0 0 / 22%)),
-    color-mix(in srgb, var(--provider-codex-color) 14%, transparent) 18%,
-    transparent 36%,
-    transparent 64%,
-    color-mix(in srgb, var(--provider-codex-color) 14%, transparent) 82%,
-    color-mix(in srgb, var(--provider-codex-color) 8%, rgb(0 0 0 / 22%))
-  );
-}
-.app-transcript.provider-claude .ensemble-above-row::before {
-  background: linear-gradient(
-    90deg,
-    rgba(38, 17, 5, 0.22),
-    rgba(141, 68, 20, 0.12) 18%,
-    transparent 36%,
-    transparent 64%,
-    rgba(144, 72, 22, 0.12) 82%,
-    rgba(31, 13, 4, 0.22)
-  );
-}
-.app-transcript.provider-kimi .ensemble-above-row::before {
-  background: linear-gradient(
-    90deg,
-    rgba(2, 15, 29, 0.22),
-    rgba(9, 75, 142, 0.12) 18%,
-    transparent 36%,
-    transparent 64%,
-    rgba(9, 75, 142, 0.12) 82%,
-    rgba(1, 11, 21, 0.22)
+    color-mix(in srgb, var(--transcript-provider-color) 14%, transparent) 82%,
+    color-mix(in srgb, var(--transcript-provider-color) 8%, rgb(0 0 0 / 22%))
   );
 }
 [data-composer-style="claude"] .ensemble-above-row::before {

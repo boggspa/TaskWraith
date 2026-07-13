@@ -611,7 +611,7 @@
 .settings-model-comparison-dot.provider-gemini,
 .settings-model-comparison-fill.provider-gemini,
 .settings-provider-telemetry-card.provider-gemini {
-  color: #5a8cff;
+  color: var(--provider-gemini-color);
 }
 
 .settings-model-comparison-dot.provider-codex,
@@ -623,13 +623,13 @@
 .settings-model-comparison-dot.provider-claude,
 .settings-model-comparison-fill.provider-claude,
 .settings-provider-telemetry-card.provider-claude {
-  color: #ff9b54;
+  color: var(--provider-claude-color);
 }
 
 .settings-model-comparison-dot.provider-kimi,
 .settings-model-comparison-fill.provider-kimi,
 .settings-provider-telemetry-card.provider-kimi {
-  color: #4da6ff;
+  color: var(--provider-kimi-color);
 }
 
 .settings-model-comparison-dot.provider-grok,
@@ -4076,12 +4076,12 @@ input:disabled, select:disabled, textarea:disabled {
  * outer glow uses its identity color at low alpha so the
  * halo subtly echoes the text tint. */
 .run-card-provider.provider-gemini {
-  color: #8eb1ff;
-  border-color: rgba(142, 177, 255, 0.32);
-  background: rgba(142, 177, 255, 0.12);
+  color: var(--provider-gemini-color);
+  border-color: color-mix(in srgb, var(--provider-gemini-color) 32%, transparent);
+  background: color-mix(in srgb, var(--provider-gemini-color) 12%, transparent);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.18),
-    0 0 10px rgba(142, 177, 255, 0.14);
+    0 0 10px color-mix(in srgb, var(--provider-gemini-color) 14%, transparent);
 }
 .run-card-provider.provider-codex {
   color: var(--provider-codex-color);
@@ -4092,20 +4092,20 @@ input:disabled, select:disabled, textarea:disabled {
     0 0 10px color-mix(in srgb, var(--provider-codex-color) 14%, transparent);
 }
 .run-card-provider.provider-claude {
-  color: #ffad64;
-  border-color: rgba(255, 173, 100, 0.32);
-  background: rgba(255, 173, 100, 0.12);
+  color: var(--provider-claude-color);
+  border-color: color-mix(in srgb, var(--provider-claude-color) 32%, transparent);
+  background: color-mix(in srgb, var(--provider-claude-color) 12%, transparent);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.18),
-    0 0 10px rgba(255, 173, 100, 0.14);
+    0 0 10px color-mix(in srgb, var(--provider-claude-color) 14%, transparent);
 }
 .run-card-provider.provider-kimi {
-  color: #70b8ff;
-  border-color: rgba(112, 184, 255, 0.32);
-  background: rgba(112, 184, 255, 0.12);
+  color: var(--provider-kimi-color);
+  border-color: color-mix(in srgb, var(--provider-kimi-color) 32%, transparent);
+  background: color-mix(in srgb, var(--provider-kimi-color) 12%, transparent);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.18),
-    0 0 10px rgba(112, 184, 255, 0.14);
+    0 0 10px color-mix(in srgb, var(--provider-kimi-color) 14%, transparent);
 }
 /* Grok + Cursor were missing here, so the transcript run header ("Cursor
  * Done #…") fell back to the base .run-card-provider colour — making

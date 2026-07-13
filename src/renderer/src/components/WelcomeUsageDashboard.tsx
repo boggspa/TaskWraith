@@ -205,17 +205,13 @@ export function WelcomeUsageDashboard({
   // in roughly this proportion" — TaskWraith's distinct identity vs
   // Claude's single-accent dashboard.
   const PROVIDER_PALETTE = {
-    gemini: '#8eb1ff',
-    codex: '#A070F2',
-    claude: '#ffad64',
-    kimi: '#70B8FF',
-    // Grok — monochrome identity; the dashboard rails sit on a dark
-    // surface, so the "white" end of black/white reads here.
-    grok: '#e6e6e8',
-    // Cursor (gated) — cyan identity, distinct from the five.
-    cursor: '#E3B91E',
-    // Ollama — local green, matching the provider glyph accent.
-    ollama: '#20A77A'
+    gemini: '#346EEC',
+    codex: '#705AFF',
+    claude: '#B16105',
+    kimi: '#0073E6',
+    grok: '#757575',
+    cursor: '#8D7312',
+    ollama: '#1A8562'
   } as const
   const chipRailColor =
     mixProviderColors(data.providerTokenTotals, PROVIDER_PALETTE) ||

@@ -23,19 +23,13 @@ const MAX_HEATMAP_COLUMNS = 180
  * theme tokens so the heatmap reads as a sibling of the bars
  * above it. */
 export const HEATMAP_PROVIDER_COLOR_HEX: Record<ProviderId, string> = {
-  gemini: '#2563EB',
-  codex: '#A070F2',
-  claude: '#D97706',
-  kimi: '#1A8CFF',
-  // Grok — monochrome identity. Use the theme-reactive token directly
-  // (the cell colour is applied as an inline `backgroundColor`, so the CSS
-  // var resolves; the heatmap never canvas-renders these). This keeps Grok
-  // cells visible on BOTH surfaces: light on the dark sidebar / dark
-  // dashboard, dark on the LIGHT-mode dashboard heatmap — a static
-  // near-white hex was invisible on the light surface.
-  grok: 'var(--provider-grok-color)',
-  cursor: '#D2A60C',
-  ollama: '#20A77A'
+  gemini: '#346EEC',
+  codex: '#705AFF',
+  claude: '#B16105',
+  kimi: '#0073E6',
+  grok: '#757575',
+  cursor: '#8D7312',
+  ollama: '#1A8562'
 }
 
 export interface HeatmapCell {

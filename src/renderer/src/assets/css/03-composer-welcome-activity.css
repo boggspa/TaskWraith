@@ -1289,59 +1289,41 @@
 }
 
 .welcome-hero h1 strong {
-  color: rgba(245, 252, 255, 1);
+  --welcome-provider-color: var(--provider-gemini-color);
+  color: color-mix(in srgb, var(--welcome-provider-color) 28%, #ffffff 72%);
   font-weight: 720;
   text-shadow:
-    0 0 8px rgba(136, 211, 255, 0.56),
-    0 0 18px rgba(78, 180, 255, 0.38),
-    0 0 34px rgba(64, 145, 255, 0.24);
+    0 0 8px color-mix(in srgb, var(--welcome-provider-color) 58%, transparent),
+    0 0 18px color-mix(in srgb, var(--welcome-provider-color) 42%, transparent),
+    0 0 36px color-mix(in srgb, var(--welcome-provider-color) 34%, transparent);
 }
 
 .app-transcript.provider-codex .welcome-hero h1 strong {
-  color: color-mix(in srgb, var(--provider-codex-color) 28%, #ffffff 72%);
-  text-shadow:
-    0 0 8px color-mix(in srgb, var(--provider-codex-color) 58%, transparent),
-    0 0 18px color-mix(in srgb, var(--provider-codex-color) 42%, transparent),
-    0 0 36px color-mix(in srgb, var(--provider-codex-color) 34%, transparent);
+  --welcome-provider-color: var(--provider-codex-color);
 }
 
 .app-transcript.provider-claude .welcome-hero h1 strong {
-  color: rgba(255, 247, 237, 1);
-  text-shadow:
-    0 0 8px rgba(255, 173, 86, 0.58),
-    0 0 18px rgba(227, 112, 34, 0.4),
-    0 0 36px rgba(126, 54, 13, 0.32);
+  --welcome-provider-color: var(--provider-claude-color);
 }
 
 .app-transcript.provider-kimi .welcome-hero h1 strong {
-  color: rgba(250, 255, 230, 1);
-  text-shadow:
-    0 0 8px rgba(107, 181, 255, 0.5),
-    0 0 18px rgba(0, 122, 244, 0.36),
-    0 0 36px rgba(7, 58, 109, 0.3);
+  --welcome-provider-color: var(--provider-kimi-color);
 }
 
-/* Grok + Cursor were missing from this per-provider set, so the welcome
- * workspace name inherited the base `.welcome-hero h1 strong` rule above —
- * which hardcodes a Gemini-BLUE glow. That's why Grok/Cursor showed
- * "Gemini colours" in the default dark theme. Mirror the codex/claude/kimi
- * pattern with each provider's own glow (driven by the theme token, so
- * Grok stays monochrome and Cursor stays mustard). Obsidian/alabaster keep
- * their higher-specificity CRUX9 treatment. */
 .app-transcript.provider-grok .welcome-hero h1 strong {
-  color: rgba(248, 250, 253, 1);
-  text-shadow:
-    0 0 8px color-mix(in srgb, var(--provider-grok-color) 46%, transparent),
-    0 0 18px color-mix(in srgb, var(--provider-grok-color) 30%, transparent),
-    0 0 34px color-mix(in srgb, var(--provider-grok-color) 18%, transparent);
+  --welcome-provider-color: var(--provider-grok-color);
 }
 
 .app-transcript.provider-cursor .welcome-hero h1 strong {
-  color: rgba(252, 247, 233, 1);
-  text-shadow:
-    0 0 8px color-mix(in srgb, var(--provider-cursor-color) 56%, transparent),
-    0 0 18px color-mix(in srgb, var(--provider-cursor-color) 40%, transparent),
-    0 0 36px color-mix(in srgb, var(--provider-cursor-color) 24%, transparent);
+  --welcome-provider-color: var(--provider-cursor-color);
+}
+
+.app-transcript.provider-ollama .welcome-hero h1 strong {
+  --welcome-provider-color: var(--provider-ollama-color);
+}
+
+.app-transcript.provider-ensemble .welcome-hero h1 strong {
+  --welcome-provider-color: var(--provider-ensemble-color);
 }
 
 .welcome-hero p {
@@ -2305,19 +2287,19 @@
   border-color: color-mix(in srgb, var(--provider-codex-color) 55%, transparent);
 }
 .welcome-usage-provider-card.provider-claude:hover {
-  border-color: color-mix(in srgb, #ffad64 55%, transparent);
+  border-color: color-mix(in srgb, var(--provider-claude-color) 55%, transparent);
 }
 .welcome-usage-provider-card.provider-gemini:hover {
-  border-color: color-mix(in srgb, #8eb1ff 55%, transparent);
+  border-color: color-mix(in srgb, var(--provider-gemini-color) 55%, transparent);
 }
 .welcome-usage-provider-card.provider-kimi:hover {
-  border-color: color-mix(in srgb, #70b8ff 55%, transparent);
+  border-color: color-mix(in srgb, var(--provider-kimi-color) 55%, transparent);
 }
 .welcome-usage-provider-card.provider-grok:hover {
-  border-color: color-mix(in srgb, #e5e7eb 55%, transparent);
+  border-color: color-mix(in srgb, var(--provider-grok-color) 55%, transparent);
 }
 .welcome-usage-provider-card.provider-cursor:hover {
-  border-color: color-mix(in srgb, #e3b91e 55%, transparent);
+  border-color: color-mix(in srgb, var(--provider-cursor-color) 55%, transparent);
 }
 .welcome-usage-provider-card.provider-ollama:hover {
   border-color: color-mix(in srgb, var(--provider-ollama-color) 55%, transparent);
@@ -2354,24 +2336,24 @@
   box-shadow: 0 0 6px color-mix(in srgb, var(--provider-codex-color) 50%, transparent);
 }
 .welcome-usage-provider-card-dot.provider-claude {
-  background: #ffad64;
-  box-shadow: 0 0 6px color-mix(in srgb, #ffad64 50%, transparent);
+  background: var(--provider-claude-color);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--provider-claude-color) 50%, transparent);
 }
 .welcome-usage-provider-card-dot.provider-gemini {
-  background: #8eb1ff;
-  box-shadow: 0 0 6px color-mix(in srgb, #8eb1ff 50%, transparent);
+  background: var(--provider-gemini-color);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--provider-gemini-color) 50%, transparent);
 }
 .welcome-usage-provider-card-dot.provider-kimi {
-  background: #70b8ff;
-  box-shadow: 0 0 6px color-mix(in srgb, #70b8ff 50%, transparent);
+  background: var(--provider-kimi-color);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--provider-kimi-color) 50%, transparent);
 }
 .welcome-usage-provider-card-dot.provider-grok {
-  background: #e5e7eb;
-  box-shadow: 0 0 6px color-mix(in srgb, #e5e7eb 50%, transparent);
+  background: var(--provider-grok-color);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--provider-grok-color) 50%, transparent);
 }
 .welcome-usage-provider-card-dot.provider-cursor {
-  background: #e3b91e;
-  box-shadow: 0 0 6px color-mix(in srgb, #e3b91e 50%, transparent);
+  background: var(--provider-cursor-color);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--provider-cursor-color) 50%, transparent);
 }
 .welcome-usage-provider-card-dot.provider-ollama {
   background: var(--provider-ollama-color);
@@ -2417,13 +2399,13 @@
   );
 }
 .welcome-usage-provider-card-fill.provider-claude {
-  background: linear-gradient(90deg, color-mix(in srgb, #ffad64 70%, transparent), #ffad64);
+  background: linear-gradient(90deg, color-mix(in srgb, var(--provider-claude-color) 70%, transparent), var(--provider-claude-color));
 }
 .welcome-usage-provider-card-fill.provider-gemini {
-  background: linear-gradient(90deg, color-mix(in srgb, #8eb1ff 70%, transparent), #8eb1ff);
+  background: linear-gradient(90deg, color-mix(in srgb, var(--provider-gemini-color) 70%, transparent), var(--provider-gemini-color));
 }
 .welcome-usage-provider-card-fill.provider-kimi {
-  background: linear-gradient(90deg, color-mix(in srgb, #70b8ff 70%, transparent), #70b8ff);
+  background: linear-gradient(90deg, color-mix(in srgb, var(--provider-kimi-color) 70%, transparent), var(--provider-kimi-color));
 }
 .welcome-usage-provider-card-fill.provider-grok {
   background: linear-gradient(90deg, color-mix(in srgb, var(--provider-grok-color) 70%, transparent), var(--provider-grok-color));
@@ -3012,16 +2994,16 @@
  * rule below; without it the meters fell back to the default (near-white). */
 .welcome-usage-model-dot.provider-gemini,
 .welcome-usage-model-meter-fill.provider-gemini,
-.welcome-usage-bar-segment.provider-gemini { color: #5a8cff; }
+.welcome-usage-bar-segment.provider-gemini { color: var(--provider-gemini-color); }
 .welcome-usage-model-dot.provider-codex,
 .welcome-usage-model-meter-fill.provider-codex,
 .welcome-usage-bar-segment.provider-codex { color: var(--provider-codex-color); }
 .welcome-usage-model-dot.provider-claude,
 .welcome-usage-model-meter-fill.provider-claude,
-.welcome-usage-bar-segment.provider-claude { color: #ff9b54; }
+.welcome-usage-bar-segment.provider-claude { color: var(--provider-claude-color); }
 .welcome-usage-model-dot.provider-kimi,
 .welcome-usage-model-meter-fill.provider-kimi,
-.welcome-usage-bar-segment.provider-kimi { color: #4da6ff; }
+.welcome-usage-bar-segment.provider-kimi { color: var(--provider-kimi-color); }
 .welcome-usage-model-dot.provider-grok,
 .welcome-usage-model-meter-fill.provider-grok,
 .welcome-usage-bar-segment.provider-grok { color: var(--provider-grok-color); }
@@ -3279,61 +3261,22 @@
     0 0 42px rgba(82, 170, 255, 0.12);
 }
 
-.app-transcript.provider-gemini .composer-surface:focus-within {
-  border-color: rgba(105, 157, 255, 0.56);
+:is(
+  .app-transcript.provider-gemini,
+  .app-transcript.provider-codex,
+  .app-transcript.provider-claude,
+  .app-transcript.provider-kimi,
+  .app-transcript.provider-grok,
+  .app-transcript.provider-cursor,
+  .app-transcript.provider-ollama,
+  .app-transcript.provider-ensemble
+) .composer-surface:focus-within {
+  border-color: color-mix(in srgb, var(--transcript-provider-color) 52%, transparent);
   box-shadow:
     var(--composer-shadow),
-    0 0 0 1px rgba(74, 132, 255, 0.22),
-    0 0 24px rgba(54, 121, 255, 0.24),
-    0 0 46px rgba(20, 62, 154, 0.2);
-}
-
-.app-transcript.provider-codex .composer-surface:focus-within {
-  border-color: color-mix(in srgb, var(--provider-codex-color) 52%, transparent);
-  box-shadow:
-    var(--composer-shadow),
-    0 0 0 1px color-mix(in srgb, var(--provider-codex-color) 22%, transparent),
-    0 0 24px color-mix(in srgb, var(--provider-codex-color) 24%, transparent),
-    0 0 46px color-mix(in srgb, var(--provider-codex-color) 20%, transparent);
-}
-
-.app-transcript.provider-claude .composer-surface:focus-within {
-  border-color: rgba(255, 153, 68, 0.52);
-  box-shadow:
-    var(--composer-shadow),
-    0 0 0 1px rgba(232, 112, 34, 0.2),
-    0 0 24px rgba(174, 77, 20, 0.22),
-    0 0 46px rgba(82, 34, 9, 0.18);
-}
-
-.app-transcript.provider-kimi .composer-surface:focus-within {
-  border-color: rgba(26, 140, 255, 0.5);
-  box-shadow:
-    var(--composer-shadow),
-    0 0 0 1px rgba(0, 126, 253, 0.2),
-    0 0 24px rgba(9, 75, 142, 0.2),
-    0 0 46px rgba(4, 34, 65, 0.18);
-}
-
-/* 1.0.6 — Grok = silver (xAI is monochrome black/white; a neutral silver reads
- * on BOTH light and dark, so no per-mode explicits needed). */
-.app-transcript.provider-grok .composer-surface:focus-within {
-  border-color: rgba(176, 182, 194, 0.52);
-  box-shadow:
-    var(--composer-shadow),
-    0 0 0 1px rgba(150, 157, 170, 0.24),
-    0 0 24px rgba(140, 147, 160, 0.22),
-    0 0 46px rgba(90, 96, 108, 0.18);
-}
-
-/* 1.0.6 — Cursor = mustard (#D2A60C, matching its heatmap/provider colour). */
-.app-transcript.provider-cursor .composer-surface:focus-within {
-  border-color: rgba(210, 166, 12, 0.5);
-  box-shadow:
-    var(--composer-shadow),
-    0 0 0 1px rgba(200, 158, 16, 0.24),
-    0 0 24px rgba(190, 150, 18, 0.24),
-    0 0 46px rgba(120, 94, 12, 0.2);
+    0 0 0 1px color-mix(in srgb, var(--transcript-provider-color) 22%, transparent),
+    0 0 24px color-mix(in srgb, var(--transcript-provider-color) 24%, transparent),
+    0 0 46px color-mix(in srgb, var(--transcript-provider-color) 20%, transparent);
 }
 
 .composer-surface::before {
@@ -3348,56 +3291,28 @@
   z-index: 0;
 }
 
-.app-transcript.provider-gemini .composer-surface::before {
-  background: linear-gradient(90deg, rgba(7, 18, 48, 0.32), rgba(35, 91, 184, 0.2) 18%, transparent 36%, transparent 64%, rgba(28, 80, 172, 0.2) 82%, rgba(5, 13, 36, 0.34));
-  box-shadow:
-    inset 42px 0 52px -30px rgba(16, 52, 122, 0.34),
-    inset -42px 0 52px -30px rgba(40, 92, 190, 0.3);
-}
-
-.app-transcript.provider-codex .composer-surface::before {
+:is(
+  .app-transcript.provider-gemini,
+  .app-transcript.provider-codex,
+  .app-transcript.provider-claude,
+  .app-transcript.provider-kimi,
+  .app-transcript.provider-grok,
+  .app-transcript.provider-cursor,
+  .app-transcript.provider-ollama,
+  .app-transcript.provider-ensemble
+) .composer-surface::before {
   background: linear-gradient(
     90deg,
-    color-mix(in srgb, var(--provider-codex-color) 8%, rgb(0 0 0 / 32%)),
-    color-mix(in srgb, var(--provider-codex-color) 20%, transparent) 18%,
+    color-mix(in srgb, var(--transcript-provider-color) 8%, rgb(0 0 0 / 32%)),
+    color-mix(in srgb, var(--transcript-provider-color) 20%, transparent) 18%,
     transparent 36%,
     transparent 64%,
-    color-mix(in srgb, var(--provider-codex-color) 20%, transparent) 82%,
-    color-mix(in srgb, var(--provider-codex-color) 8%, rgb(0 0 0 / 34%))
+    color-mix(in srgb, var(--transcript-provider-color) 20%, transparent) 82%,
+    color-mix(in srgb, var(--transcript-provider-color) 8%, rgb(0 0 0 / 34%))
   );
   box-shadow:
-    inset 42px 0 52px -30px color-mix(in srgb, var(--provider-codex-color) 18%, transparent),
-    inset -42px 0 52px -30px color-mix(in srgb, var(--provider-codex-color) 32%, transparent);
-}
-
-.app-transcript.provider-claude .composer-surface::before {
-  background: linear-gradient(90deg, rgba(38, 17, 5, 0.32), rgba(141, 68, 20, 0.18) 18%, transparent 36%, transparent 64%, rgba(144, 72, 22, 0.18) 82%, rgba(31, 13, 4, 0.32));
-  box-shadow:
-    inset 42px 0 52px -30px rgba(68, 31, 9, 0.32),
-    inset -42px 0 52px -30px rgba(151, 72, 20, 0.26);
-}
-
-.app-transcript.provider-kimi .composer-surface::before {
-  background: linear-gradient(90deg, rgba(2, 16, 30, 0.32), rgba(9, 74, 140, 0.18) 18%, transparent 36%, transparent 64%, rgba(9, 72, 136, 0.18) 82%, rgba(1, 11, 22, 0.32));
-  box-shadow:
-    inset 42px 0 52px -30px rgba(4, 32, 61, 0.32),
-    inset -42px 0 52px -30px rgba(9, 73, 137, 0.26);
-}
-
-/* 1.0.6 — Grok resting tint: neutral silver, persists across light + dark. */
-.app-transcript.provider-grok .composer-surface::before {
-  background: linear-gradient(90deg, rgba(18, 20, 24, 0.32), rgba(150, 157, 170, 0.18) 18%, transparent 36%, transparent 64%, rgba(150, 157, 170, 0.18) 82%, rgba(14, 16, 20, 0.32));
-  box-shadow:
-    inset 42px 0 52px -30px rgba(120, 126, 140, 0.3),
-    inset -42px 0 52px -30px rgba(150, 157, 170, 0.28);
-}
-
-/* 1.0.6 — Cursor resting tint: mustard (#D2A60C). */
-.app-transcript.provider-cursor .composer-surface::before {
-  background: linear-gradient(90deg, rgba(34, 26, 4, 0.32), rgba(210, 166, 12, 0.18) 18%, transparent 36%, transparent 64%, rgba(210, 166, 12, 0.18) 82%, rgba(28, 21, 3, 0.32));
-  box-shadow:
-    inset 42px 0 52px -30px rgba(120, 92, 12, 0.32),
-    inset -42px 0 52px -30px rgba(200, 158, 16, 0.28);
+    inset 42px 0 52px -30px color-mix(in srgb, var(--transcript-provider-color) 18%, transparent),
+    inset -42px 0 52px -30px color-mix(in srgb, var(--transcript-provider-color) 32%, transparent);
 }
 
 [data-prompt-surface="liquid_glass"] .composer-surface,
@@ -4319,7 +4234,7 @@
 /*
  * 1.0.4 — Light-theme contrast bump for composer mention tokens.
  *
- * Default provider hex values (`--provider-codex-color: #A070F2`
+ * Default provider hex values (`--provider-codex-color: #705AFF`
  * etc.) are mid-saturation purples / ambers / blues. In
  * dark theme they pop against the dark composer surface. In light
  * theme they sit at similar luminance to the surface text — the maintainer
@@ -8277,13 +8192,13 @@ button.composer-run-timecode.is-open {
 }
 
 .composer-permission-card.provider-claude {
-  border-color: rgba(255, 151, 58, 0.28);
-  background: rgba(176, 79, 18, 0.08);
+  border-color: color-mix(in srgb, var(--provider-claude-color) 28%, transparent);
+  background: color-mix(in srgb, var(--provider-claude-color) 8%, transparent);
 }
 
 .composer-permission-card.provider-kimi {
-  border-color: rgba(26, 140, 255, 0.28);
-  background: rgba(9, 76, 143, 0.08);
+  border-color: color-mix(in srgb, var(--provider-kimi-color) 28%, transparent);
+  background: color-mix(in srgb, var(--provider-kimi-color) 8%, transparent);
 }
 
 /* Light-mode awareness for the composer-area approval card.
@@ -8304,12 +8219,12 @@ button.composer-run-timecode.is-open {
   background: color-mix(in srgb, var(--provider-codex-color) 18%, transparent);
 }
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .composer-permission-card.provider-claude {
-  border-color: rgba(176, 79, 18, 0.42);
-  background: rgba(255, 151, 58, 0.22);
+  border-color: color-mix(in srgb, var(--provider-claude-color) 42%, transparent);
+  background: color-mix(in srgb, var(--provider-claude-color) 22%, transparent);
 }
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .composer-permission-card.provider-kimi {
-  border-color: rgba(9, 76, 143, 0.45);
-  background: rgba(26, 140, 255, 0.22);
+  border-color: color-mix(in srgb, var(--provider-kimi-color) 45%, transparent);
+  background: color-mix(in srgb, var(--provider-kimi-color) 22%, transparent);
 }
 
 .composer-permission-title {
@@ -12312,9 +12227,9 @@ button.diff-file-row {
 }
 
 .activity-yield-target.provider-codex { --provider-tint: var(--provider-codex-color); }
-.activity-yield-target.provider-claude { --provider-tint: #ffad64; }
-.activity-yield-target.provider-gemini { --provider-tint: #8eb1ff; }
-.activity-yield-target.provider-kimi { --provider-tint: #70b8ff; }
+.activity-yield-target.provider-claude { --provider-tint: var(--provider-claude-color); }
+.activity-yield-target.provider-gemini { --provider-tint: var(--provider-gemini-color); }
+.activity-yield-target.provider-kimi { --provider-tint: var(--provider-kimi-color); }
 .activity-yield-target.provider-grok { --provider-tint: var(--provider-grok-color); }
 .activity-yield-target.provider-cursor { --provider-tint: var(--provider-cursor-color); }
 .activity-yield-target.provider-ollama { --provider-tint: var(--provider-ollama-color); }
@@ -12466,16 +12381,16 @@ button.diff-file-row {
  * palette source.
  */
 .transcript-jump-to-latest-pill.provider-gemini {
-  --jump-pill-accent: #6f9dff;
+  --jump-pill-accent: var(--provider-gemini-color);
 }
 .transcript-jump-to-latest-pill.provider-codex {
   --jump-pill-accent: var(--provider-codex-color);
 }
 .transcript-jump-to-latest-pill.provider-claude {
-  --jump-pill-accent: #ff9f4a;
+  --jump-pill-accent: var(--provider-claude-color);
 }
 .transcript-jump-to-latest-pill.provider-kimi {
-  --jump-pill-accent: #4da6ff;
+  --jump-pill-accent: var(--provider-kimi-color);
 }
 
 @keyframes transcript-jump-pill-fade-in {
@@ -13243,17 +13158,17 @@ button.diff-file-row {
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger) 12%, transparent);
 }
 .notification-card--accent-claude:not(.notification-card--danger) {
-  --notification-accent: var(--provider-claude-color, #d97706);
-  border-color: color-mix(in srgb, var(--provider-claude-color, #d97706) 36%, var(--panel-border));
+  --notification-accent: var(--provider-claude-color, #b16105);
+  border-color: color-mix(in srgb, var(--provider-claude-color, #b16105) 36%, var(--panel-border));
   background: color-mix(
     in srgb,
-    var(--provider-claude-color, #d97706) 8%,
+    var(--provider-claude-color, #b16105) 8%,
     var(--panel-bg, rgba(127, 127, 127, 0.06))
   );
   box-shadow:
-    inset 0 0 0 1px color-mix(in srgb, var(--provider-claude-color, #d97706) 42%, var(--panel-border)),
-    inset 0 0 18px color-mix(in srgb, var(--provider-claude-color, #d97706) 14%, transparent),
-    0 0 0 3px color-mix(in srgb, var(--provider-claude-color, #d97706) 9%, transparent);
+    inset 0 0 0 1px color-mix(in srgb, var(--provider-claude-color, #b16105) 42%, var(--panel-border)),
+    inset 0 0 18px color-mix(in srgb, var(--provider-claude-color, #b16105) 14%, transparent),
+    0 0 0 3px color-mix(in srgb, var(--provider-claude-color, #b16105) 9%, transparent);
 }
 .notification-card--accent-ensemble:not(.notification-card--danger) {
   --notification-accent: var(--success, #46a758);
@@ -13269,17 +13184,17 @@ button.diff-file-row {
     0 0 0 3px color-mix(in srgb, var(--success, #46a758) 10%, transparent);
 }
 .notification-card--accent-cursor:not(.notification-card--danger) {
-  --notification-accent: var(--provider-cursor-color, #e3b91e);
-  border-color: color-mix(in srgb, var(--provider-cursor-color, #e3b91e) 38%, var(--panel-border));
+  --notification-accent: var(--provider-cursor-color, #8d7312);
+  border-color: color-mix(in srgb, var(--provider-cursor-color, #8d7312) 38%, var(--panel-border));
   background: color-mix(
     in srgb,
-    var(--provider-cursor-color, #e3b91e) 8%,
+    var(--provider-cursor-color, #8d7312) 8%,
     var(--panel-bg, rgba(127, 127, 127, 0.06))
   );
   box-shadow:
-    inset 0 0 0 1px color-mix(in srgb, var(--provider-cursor-color, #e3b91e) 42%, var(--panel-border)),
-    inset 0 0 18px color-mix(in srgb, var(--provider-cursor-color, #e3b91e) 14%, transparent),
-    0 0 0 3px color-mix(in srgb, var(--provider-cursor-color, #e3b91e) 9%, transparent);
+    inset 0 0 0 1px color-mix(in srgb, var(--provider-cursor-color, #8d7312) 42%, var(--panel-border)),
+    inset 0 0 18px color-mix(in srgb, var(--provider-cursor-color, #8d7312) 14%, transparent),
+    0 0 0 3px color-mix(in srgb, var(--provider-cursor-color, #8d7312) 9%, transparent);
 }
 .notification-card--accent-grok:not(.notification-card--danger) {
   --notification-accent: var(--provider-grok-color, var(--text-primary));
@@ -13374,15 +13289,15 @@ button.diff-file-row {
 }
 .notification-newadditions-provider.provider-claude,
 .notification-newadditions-model.provider-claude {
-  color: var(--provider-claude-color, #d97706);
+  color: var(--provider-claude-color, #b16105);
 }
 .notification-newadditions-provider.provider-codex,
 .notification-newadditions-model.provider-codex {
-  color: var(--provider-codex-color, #a070f2);
+  color: var(--provider-codex-color, #705aff);
 }
 .notification-newadditions-provider.provider-cursor,
 .notification-newadditions-model.provider-cursor {
-  color: var(--provider-cursor-color, #e3b91e);
+  color: var(--provider-cursor-color, #8d7312);
 }
 .notification-newadditions-provider.provider-grok,
 .notification-newadditions-model.provider-grok {
@@ -13390,19 +13305,19 @@ button.diff-file-row {
 }
 .notification-newadditions-provider.provider-ollama,
 .notification-newadditions-model.provider-ollama {
-  color: var(--provider-ollama-color, #20a77a);
+  color: var(--provider-ollama-color, #1a8562);
 }
 /* Ollama-backed models wear their spoofed upstream brand hue (set per-model via
  * `accentProvider`) — so a model name reads in its brand colour instead of
  * generic Ollama green. The "Ollama" group heading stays green above. */
 .notification-newadditions-model.provider-deep-reinforce {
-  color: var(--provider-deep-reinforce-color, #b45309);
+  color: var(--provider-deep-reinforce-color, #be5809);
 }
 .notification-newadditions-model.provider-liquid {
-  color: var(--provider-liquid-color, #f7d5e6);
+  color: var(--provider-liquid-color, #d72d82);
 }
 .notification-newadditions-model.provider-poolside {
-  color: var(--provider-poolside-color, #86e5f5);
+  color: var(--provider-poolside-color, #0c8194);
 }
 
 .notification-card-dismiss {

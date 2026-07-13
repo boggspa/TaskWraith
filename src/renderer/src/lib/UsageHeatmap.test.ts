@@ -48,7 +48,7 @@ describe('buildHeatmapGrid', () => {
     expect(cell!.totalTokens).toBe(1000)
     expect(cell!.eventCount).toBe(1)
     expect(cell!.dominantProvider).toBe('codex')
-    expect(cell!.color).toBe('#A070F2')
+    expect(cell!.color).toBe('#705AFF')
   })
 
   it('drops events older than the 30-day window', () => {

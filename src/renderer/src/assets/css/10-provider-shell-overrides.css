@@ -559,7 +559,7 @@
   --composer-glass-bg: rgba(21, 21, 25, 0.98);
   --composer-glass-border: rgba(255, 255, 255, 0.14);
   --composer-border: rgba(255, 255, 255, 0.14);
-  --provider-grok-color: rgba(255, 255, 255, 0.86);
+  --provider-grok-color: #757575;
   color: rgba(255, 255, 255, 0.9);
   color-scheme: dark;
 }
@@ -632,7 +632,7 @@
   --composer-glass-bg: rgba(247, 246, 242, 0.98);
   --composer-glass-border: rgba(18, 21, 27, 0.14);
   --composer-border: rgba(18, 21, 27, 0.14);
-  --provider-grok-color: rgba(18, 21, 27, 0.86);
+  --provider-grok-color: #757575;
   color: rgba(18, 21, 27, 0.9);
   color-scheme: light;
 }
@@ -3307,10 +3307,10 @@
 }
 
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"])[data-composer-style="kimi"] .composer-surface:focus-within {
-  border-color: color-mix(in srgb, #1a8cff 42%, var(--unified-soft-surface-border)) !important;
+  border-color: color-mix(in srgb, #0073e6 42%, var(--unified-soft-surface-border)) !important;
   box-shadow:
     0 4px 20px rgba(0, 0, 0, 0.10),
-    0 0 0 3px color-mix(in srgb, #1a8cff 12%, transparent) !important;
+    0 0 0 3px color-mix(in srgb, #0073e6 12%, transparent) !important;
 }
 
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"])[data-composer-style="kimi"]
@@ -3319,8 +3319,8 @@
     [data-composer-control="workspace"],
     [data-composer-control="ensemble-mode"] .composer-picker-label
   ) {
-  background: color-mix(in srgb, #1a8cff 12%, var(--surface-1)) !important;
-  border-color: color-mix(in srgb, #1a8cff 28%, var(--unified-soft-surface-border)) !important;
+  background: color-mix(in srgb, #0073e6 12%, var(--surface-1)) !important;
+  border-color: color-mix(in srgb, #0073e6 28%, var(--unified-soft-surface-border)) !important;
   color: #0a3357 !important;
   -webkit-text-fill-color: #0a3357 !important;
 }
@@ -3330,8 +3330,8 @@
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"])[data-composer-style="kimi"]
   [data-composer-control="ensemble-mode"]
   .composer-picker-label:hover {
-  background: color-mix(in srgb, #1a8cff 18%, var(--surface-1)) !important;
-  border-color: color-mix(in srgb, #1a8cff 38%, var(--unified-soft-surface-border)) !important;
+  background: color-mix(in srgb, #0073e6 18%, var(--surface-1)) !important;
+  border-color: color-mix(in srgb, #0073e6 38%, var(--unified-soft-surface-border)) !important;
 }
 
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"])[data-composer-style="kimi"]
@@ -3617,12 +3617,12 @@
 
 [data-theme="alabaster"][data-composer-style="gemini"] {
   --gemini-capsule-fill: linear-gradient(180deg, #ffffff 0%, #eef3ff 100%);
-  --gemini-capsule-border: color-mix(in srgb, #5a8cff 30%, var(--surface-border));
-  --gemini-capsule-border-focus: color-mix(in srgb, #5a8cff 60%, transparent);
+  --gemini-capsule-border: color-mix(in srgb, var(--provider-gemini-color) 30%, var(--surface-border));
+  --gemini-capsule-border-focus: color-mix(in srgb, var(--provider-gemini-color) 60%, transparent);
   --gemini-capsule-shadow: 0 4px 18px rgba(20, 40, 90, 0.10);
   --gemini-capsule-shadow-focus:
     0 4px 22px rgba(20, 40, 90, 0.14),
-    0 0 0 4px color-mix(in srgb, #5a8cff 14%, transparent);
+    0 0 0 4px color-mix(in srgb, var(--provider-gemini-color) 14%, transparent);
 }
 
 [data-theme="alabaster"][data-composer-style="gemini"] .composer-surface,
@@ -3644,7 +3644,7 @@
   .composer-above-bar-stack
   > .ensemble-roster-preset-picker.is-compact {
   background: var(--surface-2) !important;
-  border-color: color-mix(in srgb, #5a8cff 32%, var(--surface-border)) !important;
+  border-color: color-mix(in srgb, var(--provider-gemini-color) 32%, var(--surface-border)) !important;
   box-shadow: 0 4px 18px rgba(0, 0, 0, 0.08) !important;
   color: var(--surface-text) !important;
   color-scheme: light;
@@ -3661,7 +3661,7 @@
   .composer-above-bar-stack
   > .ensemble-roster-preset-picker.is-compact {
   background: var(--surface-2) !important;
-  border-color: color-mix(in srgb, #4da6ff 32%, var(--surface-border)) !important;
+  border-color: color-mix(in srgb, var(--provider-kimi-color) 32%, var(--surface-border)) !important;
   box-shadow: 0 4px 18px rgba(0, 0, 0, 0.08) !important;
   color: var(--surface-text) !important;
   color-scheme: light;
@@ -3699,8 +3699,8 @@
   :is([data-composer-control="model"], [data-composer-control="provider"], [data-composer-control="workspace"]),
 [data-theme="alabaster"][data-composer-style="gemini"]
   [data-composer-control="ensemble-mode"] {
-  background: color-mix(in srgb, #5a8cff 10%, #ffffff) !important;
-  border-color: color-mix(in srgb, #5a8cff 24%, var(--surface-border)) !important;
+  background: color-mix(in srgb, var(--provider-gemini-color) 10%, #ffffff) !important;
+  border-color: color-mix(in srgb, var(--provider-gemini-color) 24%, var(--surface-border)) !important;
   color: #23345f !important;
   -webkit-text-fill-color: #23345f !important;
 }
@@ -3709,8 +3709,8 @@
   :is([data-composer-control="model"], [data-composer-control="provider"], [data-composer-control="workspace"]),
 [data-theme="alabaster"][data-composer-style="kimi"]
   [data-composer-control="ensemble-mode"] {
-  background: color-mix(in srgb, #1a8cff 10%, #ffffff) !important;
-  border-color: color-mix(in srgb, #1a8cff 26%, var(--surface-border)) !important;
+  background: color-mix(in srgb, var(--provider-kimi-color) 10%, #ffffff) !important;
+  border-color: color-mix(in srgb, var(--provider-kimi-color) 26%, var(--surface-border)) !important;
   color: #0a3357 !important;
   -webkit-text-fill-color: #0a3357 !important;
 }
@@ -3718,7 +3718,7 @@
 [data-theme="alabaster"][data-composer-style="gemini"]
   [data-composer-control="ensemble-mode"]
   .composer-ensemble-mode-button.is-active {
-  background: color-mix(in srgb, #5a8cff 18%, #ffffff) !important;
+  background: color-mix(in srgb, var(--provider-gemini-color) 18%, #ffffff) !important;
   color: #23345f !important;
   -webkit-text-fill-color: #23345f !important;
 }
@@ -3726,13 +3726,13 @@
 [data-theme="alabaster"][data-composer-style="kimi"]
   [data-composer-control="ensemble-mode"]
   .composer-ensemble-mode-button.is-active {
-  background: color-mix(in srgb, #4da6ff 70%, transparent) !important;
+  background: color-mix(in srgb, var(--provider-kimi-color) 70%, transparent) !important;
   color: #0a0a0c !important;
   -webkit-text-fill-color: #0a0a0c !important;
 }
 
 [data-theme="alabaster"][data-composer-style="kimi"] .composer-action-btn.run-btn:not(:disabled) {
-  background: color-mix(in srgb, #1a8cff 18%, #ffffff) !important;
+  background: color-mix(in srgb, var(--provider-kimi-color) 18%, #ffffff) !important;
   color: #0a3357 !important;
 }
 

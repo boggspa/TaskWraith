@@ -50,7 +50,7 @@
   --composer-content-max-width: 850px;
   --welcome-usage-top: clamp(112px, 17vh, 220px);
   --chat-side-gutter: clamp(24px, 4.4vw, 72px);
-  --agent-accent-rgb: 105 157 255;
+  --agent-accent-rgb: 52 110 236;
   --agent-accent-strong: rgb(var(--agent-accent-rgb) / 0.72);
   --agent-accent-mid: rgb(var(--agent-accent-rgb) / 0.34);
   --agent-accent-soft: rgb(var(--agent-accent-rgb) / 0.12);
@@ -117,31 +117,43 @@
  * token declarations remain so the agent-aura FX still picks up each provider's
  * hue. */
 .app-transcript.provider-gemini {
-  --agent-accent-rgb: 105 157 255;
+  --agent-accent-rgb: 52 110 236;
+  --transcript-provider-color: var(--provider-gemini-color);
 }
 
 .app-transcript.provider-codex {
-  --agent-accent-rgb: 160 112 242;
+  --agent-accent-rgb: 112 90 255;
+  --transcript-provider-color: var(--provider-codex-color);
 }
 
 .app-transcript.provider-claude {
-  --agent-accent-rgb: 255 151 58;
+  --agent-accent-rgb: 177 97 5;
+  --transcript-provider-color: var(--provider-claude-color);
 }
 
 .app-transcript.provider-kimi {
-  --agent-accent-rgb: 26 140 255;
+  --agent-accent-rgb: 0 115 230;
+  --transcript-provider-color: var(--provider-kimi-color);
 }
 
 .app-transcript.provider-grok {
-  --agent-accent-rgb: 245 245 245;
+  --agent-accent-rgb: 117 117 117;
+  --transcript-provider-color: var(--provider-grok-color);
 }
 
 .app-transcript.provider-cursor {
-  --agent-accent-rgb: 245 196 72;
+  --agent-accent-rgb: 141 115 18;
+  --transcript-provider-color: var(--provider-cursor-color);
 }
 
 .app-transcript.provider-ollama {
-  --agent-accent-rgb: 119 209 190;
+  --agent-accent-rgb: 26 133 98;
+  --transcript-provider-color: var(--provider-ollama-color);
+}
+
+.app-transcript.provider-ensemble {
+  --agent-accent-rgb: 152 103 129;
+  --transcript-provider-color: var(--provider-ensemble-color);
 }
 
 /* Per-provider message-bubble polish — light typography pass to echo each
@@ -3690,8 +3702,8 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
 }
 
 .sidebar-provider-label.provider-gemini {
-  color: #6f9dff;
-  text-shadow: 0 0 10px rgba(70, 139, 255, 0.28);
+  color: var(--provider-gemini-color);
+  text-shadow: 0 0 10px color-mix(in srgb, var(--provider-gemini-color) 28%, transparent);
 }
 
 .sidebar-provider-label.provider-codex {
@@ -3700,13 +3712,13 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
 }
 
 .sidebar-provider-label.provider-claude {
-  color: #ff9f4a;
-  text-shadow: 0 0 10px rgba(255, 134, 42, 0.32);
+  color: var(--provider-claude-color);
+  text-shadow: 0 0 10px color-mix(in srgb, var(--provider-claude-color) 32%, transparent);
 }
 
 .sidebar-provider-label.provider-kimi {
-  color: #4da6ff;
-  text-shadow: 0 0 10px rgba(14, 134, 255, 0.3);
+  color: var(--provider-kimi-color);
+  text-shadow: 0 0 10px color-mix(in srgb, var(--provider-kimi-color) 30%, transparent);
 }
 
 .sidebar-provider-label.provider-grok {
@@ -3877,7 +3889,7 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   top: 5px;
   height: 1px;
   background: rgba(255, 255, 255, 0.12);
-  box-shadow: 0 0 18px rgba(105, 157, 255, 0.12);
+  box-shadow: 0 0 18px color-mix(in srgb, var(--provider-gemini-color) 12%, transparent);
 }
 
 .gemini-terminal-resize-divider:hover::before,
@@ -3885,8 +3897,8 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
 .is-resizing-gemini-terminal .gemini-terminal-resize-divider::before {
   height: 2px;
   top: 5px;
-  background: rgba(123, 173, 255, 0.62);
-  box-shadow: 0 0 22px rgba(105, 157, 255, 0.34);
+  background: color-mix(in srgb, var(--provider-gemini-color) 62%, transparent);
+  box-shadow: 0 0 22px color-mix(in srgb, var(--provider-gemini-color) 34%, transparent);
 }
 
 .gemini-terminal-header {
@@ -4430,10 +4442,10 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
  * Explorer" / etc.) reads in the provider's theme colour.
  *
  * Tokens live in `src/renderer/src/styles/theme.css`:
- *   - Gemini: #2563EB (blue)
- *   - Codex:  #A070F2 (lavender purple)
- *   - Claude: #D97706 (rust orange / brown)
- *   - Kimi:   #1a8cff (blue)
+ *   - Gemini: #346EEC (blue)
+ *   - Codex:  #705AFF (electric indigo)
+ *   - Claude: #B16105 (rust orange / brown)
+ *   - Kimi:   #0073E6 (blue)
  *
  * Earlier draft mixed these with `--text-muted` (a low-opacity
  * white/black gray) at 22%. That dropped both saturation AND

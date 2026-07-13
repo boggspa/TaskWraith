@@ -560,7 +560,7 @@
 
 .sidebar-pinned-item.provider-gemini,
 .sidebar-recents-item.provider-gemini {
-  --chat-provider-accent: #6f9dff;
+  --chat-provider-accent: var(--provider-gemini-color);
 }
 
 .sidebar-pinned-item.provider-codex,
@@ -570,12 +570,12 @@
 
 .sidebar-pinned-item.provider-claude,
 .sidebar-recents-item.provider-claude {
-  --chat-provider-accent: #ff9f4a;
+  --chat-provider-accent: var(--provider-claude-color);
 }
 
 .sidebar-pinned-item.provider-kimi,
 .sidebar-recents-item.provider-kimi {
-  --chat-provider-accent: #4da6ff;
+  --chat-provider-accent: var(--provider-kimi-color);
 }
 
 .sidebar-pinned-item.provider-grok,

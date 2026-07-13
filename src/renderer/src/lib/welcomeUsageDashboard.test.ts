@@ -870,13 +870,13 @@ describe('buildWelcomeUsageDashboardData favoriteProject (Welcome L9 hero chip)'
 
 describe('mixProviderColors', () => {
   const palette = {
-    gemini: '#2563EB',
-    codex: '#A070F2',
-    claude: '#D97706',
-    kimi: '#1A8CFF',
-    grok: '#6B7280',
-    cursor: '#06B6D4',
-    ollama: '#20A77A'
+    gemini: '#346EEC',
+    codex: '#705AFF',
+    claude: '#B16105',
+    kimi: '#0073E6',
+    grok: '#757575',
+    cursor: '#8D7312',
+    ollama: '#1A8562'
   } as const
 
   it('returns empty string when no provider has weight', () => {
@@ -894,7 +894,7 @@ describe('mixProviderColors', () => {
         { gemini: 0, codex: 50, claude: 0, kimi: 0, grok: 0, cursor: 0, ollama: 0 },
         palette
       )
-    ).toBe('#A070F2')
+    ).toBe('#705AFF')
   })
 
   it('builds a nested color-mix() expression that references both providers when two contribute', () => {
@@ -903,8 +903,8 @@ describe('mixProviderColors', () => {
       palette
     )
     expect(result).toContain('color-mix(in srgb,')
-    expect(result).toContain('#2563EB')
-    expect(result).toContain('#A070F2')
+    expect(result).toContain('#346EEC')
+    expect(result).toContain('#705AFF')
   })
 
   it('weights the dominant provider with a higher percentage in the color-mix expression', () => {
@@ -913,7 +913,7 @@ describe('mixProviderColors', () => {
       palette
     )
     // color-mix(in srgb, <gemini> 10%, <codex> 90%) → codex weight should appear with a high number.
-    expect(dominantCodex).toMatch(/#A070F2 9[0-9]%/)
+    expect(dominantCodex).toMatch(/#705AFF 9[0-9]%/)
   })
 })
 

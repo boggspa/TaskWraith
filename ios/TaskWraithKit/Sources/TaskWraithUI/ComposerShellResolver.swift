@@ -218,13 +218,13 @@ public enum ComposerShellResolver {
                 textPrimary: textPrimary,
                 placeholder: placeholder,
                 // CS13: codex detached above-rows carry the desktop agent-aura rim
-                // (05-polish-fx-layouts.css:3120-3139 → rgb(160 112 242), ring 0.28
+                // (05-polish-fx-layouts.css:3120-3139 → rgb(112 90 255), ring 0.28
                 // / glow 0.18). The .composerShell rim shows on the above-row pills
                 // AND the core card (consistent with terminal/stub, which also rim
                 // their core); the desktop strips only the core's OWN rim, not the aura.
                 rim: ComposerShellRim(
-                    color: Color(hex: 0xA070F2).opacity(0.28), width: 1,
-                    glow: Color(hex: 0xA070F2).opacity(0.18))),
+                    color: Color(hex: 0x705AFF).opacity(0.28), width: 1,
+                    glow: Color(hex: 0x705AFF).opacity(0.18))),
             geometry: ComposerShellGeometry(
                 surfaceCornerRadius: 22,   // 07:22 outer r22
                 // Inner module is 21/21/14/14; the contract carries a single
@@ -524,14 +524,14 @@ public enum ComposerShellResolver {
         let capsuleFill = isLight ? Color(hex: 0xFFFFFF) : Color(hex: 0x141D30)
 
         // Signature Gemini blue — focus accent + border tint, both themes.
-        let geminiBlue = Color(hex: 0x5A8CFF)  // #5a8cff
+        let geminiBlue = TWTheme.providerAccent("gemini")
 
-        // Capsule border: dark color-mix(#5a8cff 22%, transparent);
-        // light  color-mix(#5a8cff 30%, --surface-border). Encode as the blue
+        // Capsule border: dark provider-blue at 22%; light provider-blue at
+        // 30% over the surface border. Encode as the blue
         // at the documented mix percentage.
         let capsuleBorder = isLight
-            ? geminiBlue.opacity(0.30)   // color-mix(#5a8cff 30%)
-            : geminiBlue.opacity(0.22)   // color-mix(#5a8cff 22%, transparent)
+            ? geminiBlue.opacity(0.30)
+            : geminiBlue.opacity(0.22)
 
         // Text + placeholder.
         //   dark  text white; placeholder color-mix(#ffffff 38%)
@@ -544,13 +544,13 @@ public enum ComposerShellResolver {
             : Color(hex: 0xFFFFFF).opacity(0.38)
 
         // Capsule rim/glow: rest box-shadow 0 6px 30px rgba(0,0,0,0.42); on
-        // focus the signature blue halo (4px color-mix(#5a8cff 12%) ring +
-        // border → color-mix(#5a8cff 58%)). We carry the rest border as the
+        // focus the signature blue halo (4px provider-blue 12% ring +
+        // provider-blue 58% border). We carry the rest border as the
         // ring color and the blue-12% wash as the focus glow.
         let capsuleRim = ComposerShellRim(
             color: capsuleBorder,
             width: 1,
-            glow: geminiBlue.opacity(0.12))  // focus ring color-mix(#5a8cff 12%)
+            glow: geminiBlue.opacity(0.12))
 
         // Send button: near-white circle 32×32 (999px), glyph #0e1218, flat
         // (no border / no box-shadow). fill .neutral = inverse-of-surface; the
@@ -565,7 +565,7 @@ public enum ComposerShellResolver {
                 surfaceFill: capsuleFill,   // the navy/near-white CAPSULE; outer surface is transparent
                 innerModuleFill: nil,       // n/a — the capsule is the only filled surface
                 border: capsuleBorder,
-                focusAccent: geminiBlue,    // #5a8cff focus border → color-mix(#5a8cff 58%)
+                focusAccent: geminiBlue,
                 textPrimary: textPrimary,
                 placeholder: placeholder,
                 rim: capsuleRim),
@@ -596,9 +596,9 @@ public enum ComposerShellResolver {
         // kimi — Kimi. Single SOLID near-black rounded rectangle (no glass, no
         // card-in-card) with a blue accent that surfaces only on
         // focus. Theme-immune at core: hardcodes #0a0a0c surface, #ffffff/8%
-        // border, #ffffff/36% placeholder, #4da6ff accent regardless of theme.
+        // border, #ffffff/36% placeholder, and the balanced Kimi provider accent.
         // Light family (light/mist/sage/alabaster) re-keys to a soft cream surface
-        // and the base blue #1a8cff. See COMPOSER-SHELL-PARITY.md (Part C, kimi)
+        // and the base blue #0073e6. See COMPOSER-SHELL-PARITY.md (Part C, kimi)
         // / desktop 07-composer-shells.css:2553-2759.
         let isLight = context.appIsLight
 
@@ -614,11 +614,9 @@ public enum ComposerShellResolver {
             ? TWTheme.border            // light: soft-surface hairline
             : Color.white.opacity(0.08)            // dark: #ffffff @ 8%
 
-        // focusAccent — dark blue #4da6ff; light base blue #1a8cff. Signature
-        // accent surfaces only on focus (border color-mix 50% + 3px 10% ring).
-        let focusAccent = isLight
-            ? Color(hex: 0x1A8CFF)                 // light: base blue
-            : Color(hex: 0x4DA6FF)                 // dark: brighter blue
+        // The balanced Kimi provider accent surfaces only on focus (border
+        // color-mix 50% + 3px 10% ring) on both light and dark shells.
+        let focusAccent = TWTheme.providerAccent("kimi")
 
         // textPrimary — dark: model #ffffff 88%; light: var(--text-primary).
         let textPrimary = isLight

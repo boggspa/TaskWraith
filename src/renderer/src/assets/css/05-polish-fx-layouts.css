@@ -75,7 +75,7 @@
 }
 
 .app-sidebar .sidebar-workspace-group .sidebar-chat-item.provider-gemini {
-  --chat-provider-accent: #6f9dff;
+  --chat-provider-accent: var(--provider-gemini-color);
 }
 
 .app-sidebar .sidebar-workspace-group .sidebar-chat-item.provider-codex {
@@ -83,11 +83,11 @@
 }
 
 .app-sidebar .sidebar-workspace-group .sidebar-chat-item.provider-claude {
-  --chat-provider-accent: #ff9f4a;
+  --chat-provider-accent: var(--provider-claude-color);
 }
 
 .app-sidebar .sidebar-workspace-group .sidebar-chat-item.provider-kimi {
-  --chat-provider-accent: #4da6ff;
+  --chat-provider-accent: var(--provider-kimi-color);
 }
 
 .app-sidebar .sidebar-workspace-group .sidebar-chat-item.provider-grok {
@@ -2362,7 +2362,7 @@
 
 .app-sidebar .sidebar-chat-item.provider-gemini,
 .app-sidebar .sidebar-global-chat-item.provider-gemini {
-  --chat-provider-accent: #6f9dff;
+  --chat-provider-accent: var(--provider-gemini-color);
 }
 
 .app-sidebar .sidebar-chat-item.provider-codex,
@@ -2372,12 +2372,12 @@
 
 .app-sidebar .sidebar-chat-item.provider-claude,
 .app-sidebar .sidebar-global-chat-item.provider-claude {
-  --chat-provider-accent: #ff9f4a;
+  --chat-provider-accent: var(--provider-claude-color);
 }
 
 .app-sidebar .sidebar-chat-item.provider-kimi,
 .app-sidebar .sidebar-global-chat-item.provider-kimi {
-  --chat-provider-accent: #4da6ff;
+  --chat-provider-accent: var(--provider-kimi-color);
 }
 
 .app-sidebar .sidebar-chat-item.provider-grok,
@@ -3715,32 +3715,43 @@ button.sidebar-footer-approval-row.is-clickable:focus-visible {
 }
 
 :is(.app-root, .agent-aura-layer).fx-provider-gemini {
-  --agent-aura-rgb: 75 142 255;
-  --agent-aura-rgb-2: 88 231 190;
+  --agent-aura-rgb: 52 110 236;
+  --agent-aura-rgb-2: 52 110 236;
 }
 
 :is(.app-root, .agent-aura-layer).fx-provider-codex {
-  --agent-aura-rgb: 160 112 242;
-  --agent-aura-rgb-2: 160 112 242;
+  --agent-aura-rgb: 112 90 255;
+  --agent-aura-rgb-2: 112 90 255;
 }
 
 :is(.app-root, .agent-aura-layer).fx-provider-claude {
-  --agent-aura-rgb: 255 123 94;
-  --agent-aura-rgb-2: 227 176 125;
+  --agent-aura-rgb: 177 97 5;
+  --agent-aura-rgb-2: 177 97 5;
 }
 
 :is(.app-root, .agent-aura-layer).fx-provider-kimi {
-  --agent-aura-rgb: 103 225 255;
-  --agent-aura-rgb-2: 157 121 255;
+  --agent-aura-rgb: 0 115 230;
+  --agent-aura-rgb-2: 0 115 230;
 }
 
-/* Ensemble — no single provider, so a deliberate MULTI-provider aura:
- * a teal -> violet 2-tone distinct from every single-provider palette,
- * signalling "many agents" rather than one brand. Driven by
- * `fx-provider-ensemble` (App.tsx aura class for ensemble chats). */
+:is(.app-root, .agent-aura-layer).fx-provider-grok {
+  --agent-aura-rgb: 117 117 117;
+  --agent-aura-rgb-2: 117 117 117;
+}
+
+:is(.app-root, .agent-aura-layer).fx-provider-cursor {
+  --agent-aura-rgb: 141 115 18;
+  --agent-aura-rgb-2: 141 115 18;
+}
+
+:is(.app-root, .agent-aura-layer).fx-provider-ollama {
+  --agent-aura-rgb: 26 133 98;
+  --agent-aura-rgb-2: 26 133 98;
+}
+
 :is(.app-root, .agent-aura-layer).fx-provider-ensemble {
-  --agent-aura-rgb: 116 214 198;
-  --agent-aura-rgb-2: 168 134 255;
+  --agent-aura-rgb: 152 103 129;
+  --agent-aura-rgb-2: 152 103 129;
 }
 
 :is(.app-root, .agent-aura-layer).fx-intensity-subtle {

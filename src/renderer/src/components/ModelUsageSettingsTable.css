@@ -485,25 +485,25 @@
 
 /* Provider accent stripe on the summary row's left edge. */
 .model-usage-table-provider.provider-gemini .model-usage-table-provider-cell {
-  box-shadow: inset 3px 0 0 var(--provider-gemini-color, #4a8cff);
+  box-shadow: inset 3px 0 0 var(--provider-gemini-color, #346eec);
 }
 .model-usage-table-provider.provider-codex .model-usage-table-provider-cell {
-  box-shadow: inset 3px 0 0 var(--provider-codex-color, #a070f2);
+  box-shadow: inset 3px 0 0 var(--provider-codex-color, #705aff);
 }
 .model-usage-table-provider.provider-claude .model-usage-table-provider-cell {
-  box-shadow: inset 3px 0 0 var(--provider-claude-color, #d97757);
+  box-shadow: inset 3px 0 0 var(--provider-claude-color, #b16105);
 }
 .model-usage-table-provider.provider-kimi .model-usage-table-provider-cell {
-  box-shadow: inset 3px 0 0 var(--provider-kimi-color, #1a8cff);
+  box-shadow: inset 3px 0 0 var(--provider-kimi-color, #0073e6);
 }
 .model-usage-table-provider.provider-grok .model-usage-table-provider-cell {
-  box-shadow: inset 3px 0 0 var(--provider-grok-color, #f5f5f5);
+  box-shadow: inset 3px 0 0 var(--provider-grok-color, #757575);
 }
 .model-usage-table-provider.provider-cursor .model-usage-table-provider-cell {
-  box-shadow: inset 3px 0 0 var(--provider-cursor-color, #888);
+  box-shadow: inset 3px 0 0 var(--provider-cursor-color, #8d7312);
 }
 .model-usage-table-provider.provider-ollama .model-usage-table-provider-cell {
-  box-shadow: inset 3px 0 0 var(--provider-ollama-color, #20a77a);
+  box-shadow: inset 3px 0 0 var(--provider-ollama-color, #1a8562);
 }
 
 .model-usage-table-provider--memory .model-usage-table-memory,

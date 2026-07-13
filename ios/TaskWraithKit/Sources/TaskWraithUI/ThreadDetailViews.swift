@@ -2125,7 +2125,7 @@ struct ThreadEmptyWelcomeCanvas: View {
     private var isGlobal: Bool { card.isGlobalScope }
     private var canSwitchPrimaryWorkspace: Bool { !isGlobal && !model.workspaces.isEmpty }
     private var accent: Color {
-        if card.isEnsemble { return TWTheme.chroma2 }
+        if card.isEnsemble { return TWTheme.providerAccent("ensemble") }
         // General chats now glow with the live provider hue too (was a flat
         // chroma3) so the greeting heading + ghost shadow track the composer
         // provider pill — the same mechanism workspace chats use below.

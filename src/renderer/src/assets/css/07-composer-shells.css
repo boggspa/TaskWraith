@@ -967,37 +967,28 @@
   position: relative;
   z-index: 1;
 }
-.app-transcript.provider-gemini .composer-above-bar::before {
-  background: linear-gradient(90deg, rgba(7, 18, 48, 0.32), rgba(35, 91, 184, 0.2) 18%, transparent 36%, transparent 64%, rgba(28, 80, 172, 0.2) 82%, rgba(5, 13, 36, 0.34));
-  box-shadow:
-    inset 42px 0 52px -30px rgba(16, 52, 122, 0.34),
-    inset -42px 0 52px -30px rgba(40, 92, 190, 0.3);
-}
-.app-transcript.provider-codex .composer-above-bar::before {
+:is(
+  .app-transcript.provider-gemini,
+  .app-transcript.provider-codex,
+  .app-transcript.provider-claude,
+  .app-transcript.provider-kimi,
+  .app-transcript.provider-grok,
+  .app-transcript.provider-cursor,
+  .app-transcript.provider-ollama,
+  .app-transcript.provider-ensemble
+) .composer-above-bar::before {
   background: linear-gradient(
     90deg,
-    color-mix(in srgb, var(--provider-codex-color) 8%, rgb(0 0 0 / 32%)),
-    color-mix(in srgb, var(--provider-codex-color) 20%, transparent) 18%,
+    color-mix(in srgb, var(--transcript-provider-color) 8%, rgb(0 0 0 / 32%)),
+    color-mix(in srgb, var(--transcript-provider-color) 20%, transparent) 18%,
     transparent 36%,
     transparent 64%,
-    color-mix(in srgb, var(--provider-codex-color) 20%, transparent) 82%,
-    color-mix(in srgb, var(--provider-codex-color) 8%, rgb(0 0 0 / 34%))
+    color-mix(in srgb, var(--transcript-provider-color) 20%, transparent) 82%,
+    color-mix(in srgb, var(--transcript-provider-color) 8%, rgb(0 0 0 / 34%))
   );
   box-shadow:
-    inset 42px 0 52px -30px color-mix(in srgb, var(--provider-codex-color) 18%, transparent),
-    inset -42px 0 52px -30px color-mix(in srgb, var(--provider-codex-color) 32%, transparent);
-}
-.app-transcript.provider-claude .composer-above-bar::before {
-  background: linear-gradient(90deg, rgba(38, 17, 5, 0.32), rgba(141, 68, 20, 0.18) 18%, transparent 36%, transparent 64%, rgba(144, 72, 22, 0.18) 82%, rgba(31, 13, 4, 0.32));
-  box-shadow:
-    inset 42px 0 52px -30px rgba(68, 31, 9, 0.32),
-    inset -42px 0 52px -30px rgba(151, 72, 20, 0.26);
-}
-.app-transcript.provider-kimi .composer-above-bar::before {
-  background: linear-gradient(90deg, rgba(2, 15, 29, 0.32), rgba(9, 75, 142, 0.18) 18%, transparent 36%, transparent 64%, rgba(9, 75, 142, 0.18) 82%, rgba(1, 11, 21, 0.32));
-  box-shadow:
-    inset 42px 0 52px -30px rgba(4, 34, 65, 0.34),
-    inset -42px 0 52px -30px rgba(0, 116, 233, 0.24);
+    inset 42px 0 52px -30px color-mix(in srgb, var(--transcript-provider-color) 18%, transparent),
+    inset -42px 0 52px -30px color-mix(in srgb, var(--transcript-provider-color) 32%, transparent);
 }
 /* Phase J1 composer-unification: the above-bar SHAPE is now identical
  * across every provider. The previous `style-codex` / `style-claude` /
@@ -2076,7 +2067,7 @@
 [data-composer-style="claude"] .context-wheel {
   order: -1;
   margin-right: 6px;
-  color: #e6a960; /* tinted to read like Claude's amber indicator */
+  color: var(--provider-claude-color);
   width: 20px;
   height: 20px;
 }
@@ -2101,7 +2092,7 @@
  * variants hardcode `color-mix(#ffffff 65|70%, transparent)`
  * which renders as invisible white on light surfaces. Switch
  * to dark tone so the donut + its dashed remainder ring read
- * legibly. Claude's amber #e6a960 already works in both modes
+ * legibly. Claude's balanced provider hue already works in both modes
  * — no override needed there. */
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .context-wheel {
   color: rgba(29, 29, 31, 0.62);
@@ -2354,13 +2345,13 @@
  * chats added the chip strip to the same stack — and the maintainer wants
  * Create-PR parity across all shells — we re-enable the above-bar
  * with the same composer-surface chrome the ensemble chip strip
- * uses (28px radius / `#0e1218 94%` / `#5a8cff 18%` border /
+ * uses (28px radius / `#0e1218 94%` / provider-blue 18% border /
  * `0 4px 28px` shadow) so both rows in the stack read as siblings
  * of the Gemini composer below. */
 [data-composer-style="gemini"] .composer-above-bar {
   border-radius: 28px;
   background: color-mix(in srgb, #0e1218 94%, transparent);
-  border: 1px solid color-mix(in srgb, #5a8cff 18%, transparent);
+  border: 1px solid color-mix(in srgb, var(--provider-gemini-color) 18%, transparent);
   box-shadow: 0 4px 28px rgba(0, 0, 0, 0.42);
 }
 /* Per-provider ::before gradient is too busy on the cleaner Gemini
@@ -2399,12 +2390,12 @@
  * alabaster, whose Gemini chrome is intentionally dark navy). ---- */
 [data-composer-style="gemini"] {
   --gemini-capsule-fill: linear-gradient(180deg, #141d30 0%, #0d1320 100%);
-  --gemini-capsule-border: color-mix(in srgb, #5a8cff 22%, transparent);
-  --gemini-capsule-border-focus: color-mix(in srgb, #5a8cff 58%, transparent);
+  --gemini-capsule-border: color-mix(in srgb, var(--provider-gemini-color) 22%, transparent);
+  --gemini-capsule-border-focus: color-mix(in srgb, var(--provider-gemini-color) 58%, transparent);
   --gemini-capsule-shadow: 0 6px 30px rgba(0, 0, 0, 0.42);
   --gemini-capsule-shadow-focus:
     0 6px 34px rgba(0, 0, 0, 0.46),
-    0 0 0 4px color-mix(in srgb, #5a8cff 12%, transparent);
+    0 0 0 4px color-mix(in srgb, var(--provider-gemini-color) 12%, transparent);
 }
 
 /* Surface → invisible vertical shell. The capsule lives on the
@@ -2583,8 +2574,8 @@
   font-size: var(--font-size-xs);
 }
 [data-composer-style="gemini"] [data-composer-control="workspace"]:hover:not(:disabled) {
-  background: color-mix(in srgb, #5a8cff 10%, transparent);
-  border-color: color-mix(in srgb, #5a8cff 30%, transparent);
+  background: color-mix(in srgb, var(--provider-gemini-color) 10%, transparent);
+  border-color: color-mix(in srgb, var(--provider-gemini-color) 30%, transparent);
 }
 [data-composer-style="gemini"] [data-composer-control="workspace"] .composer-control-icon {
   width: 12px;
@@ -2678,7 +2669,7 @@
   min-height: 28px;
   padding: 4px 12px;
   border-radius: 999px;
-  background: color-mix(in srgb, #5a8cff 18%, transparent);
+  background: color-mix(in srgb, var(--provider-gemini-color) 18%, transparent);
   color: color-mix(in srgb, #b8ccff 95%, transparent);
   font-size: calc(var(--font-size-xs) + 1px);
   font-weight: 500;
@@ -2699,7 +2690,7 @@
   flex: 0 0 auto;
 }
 [data-composer-style="gemini"] [data-composer-control="model"]:hover {
-  background: color-mix(in srgb, #5a8cff 28%, transparent);
+  background: color-mix(in srgb, var(--provider-gemini-color) 28%, transparent);
 }
 [data-composer-style="gemini"] [data-composer-control="model"] svg:not(.composer-combined-picker-trigger-fast-bolt) {
   display: none;
@@ -2707,7 +2698,7 @@
 
 /* C (#6/#7) — first-class control tints. The KEPT Gemini/Kimi Turn / Provider /
  * Workspace pills carry the provider highlight (Gemini blue = the model pill's
- * #5a8cff; Kimi blue = #1a8cff/#70b8ff) instead of the neutral base pill. The
+ * provider Gemini/Kimi hues instead of the neutral base pill. The
  * :is() arg includes a 2-class selector so the rule outranks the per-control
  * neutral styling (your "overridden in the cascade" worry). */
 [data-composer-style="gemini"]
@@ -2716,7 +2707,7 @@
     [data-composer-control="workspace"],
     [data-composer-control="ensemble-mode"] .composer-picker-label
   ) {
-  background: color-mix(in srgb, #5a8cff 18%, transparent);
+  background: color-mix(in srgb, var(--provider-gemini-color) 18%, transparent);
   border-color: transparent;
   color: color-mix(in srgb, #b8ccff 95%, transparent);
 }
@@ -2725,7 +2716,7 @@
 [data-composer-style="gemini"]
   [data-composer-control="ensemble-mode"]
   .composer-picker-label:hover {
-  background: color-mix(in srgb, #5a8cff 28%, transparent);
+  background: color-mix(in srgb, var(--provider-gemini-color) 28%, transparent);
 }
 [data-composer-style="kimi"]
   :is(
@@ -2733,8 +2724,8 @@
     [data-composer-control="workspace"],
     [data-composer-control="ensemble-mode"] .composer-picker-label
   ) {
-  background: color-mix(in srgb, #1a8cff 22%, transparent);
-  border-color: color-mix(in srgb, #70b8ff 34%, transparent);
+  background: color-mix(in srgb, var(--provider-kimi-color) 22%, transparent);
+  border-color: color-mix(in srgb, var(--provider-kimi-color) 34%, transparent);
   color: color-mix(in srgb, #cfe4ff 96%, transparent);
 }
 [data-composer-style="kimi"]
@@ -2742,8 +2733,8 @@
 [data-composer-style="kimi"]
   [data-composer-control="ensemble-mode"]
   .composer-picker-label:hover {
-  background: color-mix(in srgb, #1a8cff 32%, transparent);
-  border-color: color-mix(in srgb, #70b8ff 46%, transparent);
+  background: color-mix(in srgb, var(--provider-kimi-color) 32%, transparent);
+  border-color: color-mix(in srgb, var(--provider-kimi-color) 46%, transparent);
 }
 
 /* D — shared-history char-budget slider. Originally a section of the
@@ -2774,7 +2765,7 @@
   font-size: var(--font-size-xs);
 }
 [data-composer-style="gemini"] [data-composer-control="provider"]:hover {
-  background: color-mix(in srgb, #5a8cff 10%, transparent);
+  background: color-mix(in srgb, var(--provider-gemini-color) 10%, transparent);
 }
 
 /* Turn / Continuous toggle — matches the Gemini shell's provider
@@ -2802,11 +2793,11 @@
 }
 [data-composer-style="gemini"] [data-composer-control="ensemble-mode"] .composer-ensemble-mode-button:hover {
   color: color-mix(in srgb, #ffffff 92%, transparent);
-  background: color-mix(in srgb, #5a8cff 10%, transparent);
+  background: color-mix(in srgb, var(--provider-gemini-color) 10%, transparent);
 }
 [data-composer-style="gemini"] [data-composer-control="ensemble-mode"] .composer-ensemble-mode-button.is-active {
   color: color-mix(in srgb, #ffffff 96%, transparent);
-  background: color-mix(in srgb, #5a8cff 22%, transparent);
+  background: color-mix(in srgb, var(--provider-gemini-color) 22%, transparent);
   font-weight: 600;
 }
 
@@ -2873,10 +2864,10 @@
   display: none;
 }
 [data-composer-style="kimi"] .composer-surface:focus-within {
-  border-color: color-mix(in srgb, #4da6ff 50%, transparent);
+  border-color: color-mix(in srgb, var(--provider-kimi-color) 50%, transparent);
   box-shadow:
     0 4px 16px rgba(0, 0, 0, 0.55),
-    0 0 0 3px color-mix(in srgb, #4da6ff 10%, transparent);
+    0 0 0 3px color-mix(in srgb, var(--provider-kimi-color) 10%, transparent);
 }
 [data-composer-style="kimi"] .composer-textarea {
   background: transparent;
@@ -2921,7 +2912,7 @@
 }
 [data-composer-style="kimi"] [data-composer-control="workspace"]:hover:not(:disabled) {
   background: color-mix(in srgb, #ffffff 6%, transparent);
-  border-color: color-mix(in srgb, #4da6ff 40%, transparent);
+  border-color: color-mix(in srgb, var(--provider-kimi-color) 40%, transparent);
 }
 [data-composer-style="kimi"] [data-composer-control="workspace"] .composer-control-icon {
   width: 12px;
@@ -2998,7 +2989,7 @@
 /* Turn / Continuous toggle — matches the Kimi shell's provider chip
  * (transparent bg, faint white border, white-78% text — slightly
  * brighter than Codex/Gemini per Kimi's terminal aesthetic). Active
- * state uses the blue (#4da6ff) accent so the choice reads in
+ * state uses the balanced Kimi accent so the choice reads in
  * Kimi's signature colour rather than a neutral white. */
 [data-composer-style="kimi"] [data-composer-control="ensemble-mode"] {
   min-height: 28px;
@@ -3022,7 +3013,7 @@
 }
 [data-composer-style="kimi"] [data-composer-control="ensemble-mode"] .composer-ensemble-mode-button.is-active {
   color: #0a0a0c;
-  background: color-mix(in srgb, #4da6ff 70%, transparent);
+  background: color-mix(in srgb, var(--provider-kimi-color) 70%, transparent);
   font-weight: 600;
 }
 
@@ -3036,7 +3027,7 @@
   border: 0;
 }
 [data-composer-style="kimi"] .composer-action-btn.run-btn:hover:not(:disabled) {
-  background: color-mix(in srgb, #4da6ff 65%, transparent);
+  background: color-mix(in srgb, var(--provider-kimi-color) 65%, transparent);
   color: #0a0a0c;
 }
 [data-composer-style="kimi"] .composer-action-btn:disabled {

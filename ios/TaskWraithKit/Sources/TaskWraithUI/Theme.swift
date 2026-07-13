@@ -92,27 +92,27 @@ public enum TWTheme {
     // accent on the provider pill, placeholder, and send button.
     @MainActor public static func providerAccent(_ provider: String?) -> Color {
         switch provider?.lowercased() {
-        case "gemini", "google": return Color(hex: 0x2563EB)
-        case "codex", "openai": return Color(hex: 0xA070F2)
-        case "claude": return Color(hex: 0xD97706)
-        case "kimi": return Color(hex: 0x1A8CFF)
-        case "cursor": return Color(hex: 0xE3B91E)
-        case "ollama": return Color(hex: 0x20A77A)
-        case "ensemble": return Color(hex: 0xE8DDE3)
-        case "grok": return textPrimary
+        case "gemini", "google": return Color(hex: 0x346EEC)
+        case "codex", "openai": return Color(hex: 0x705AFF)
+        case "claude": return Color(hex: 0xB16105)
+        case "kimi": return Color(hex: 0x0073E6)
+        case "cursor": return Color(hex: 0x8D7312)
+        case "ollama": return Color(hex: 0x1A8562)
+        case "ensemble": return Color(hex: 0x986781)
+        case "grok": return Color(hex: 0x757575)
         // ── Ollama-backed display brands (--provider-*-color) ──────────────
         // Runtime provider stays `ollama`; these spoofed brand classes let
         // local models wear their upstream brand hue. Mirrors theme.css
         // lines 148–159. `google`/`openai` reuse the gemini/codex accents
         // above. `qwen`/`ornith` retained as legacy speaker heads but now
         // alias to their canonical brand colors (Alibaba / Deep Reinforce).
-        case "alibaba", "qwen": return Color(hex: 0x7C3AED)
-        case "deep-reinforce", "ornith": return Color(hex: 0xB45309)
-        case "ibm": return Color(hex: 0x1F4E79)
-        case "liquid": return Color(hex: 0xF7D5E6)
-        case "nvidia": return Color(hex: 0x76B900)
-        case "openbmb": return Color(hex: 0xEF6F61)
-        case "poolside": return Color(hex: 0x86E5F5)
+        case "alibaba", "qwen": return Color(hex: 0x8C52EF)
+        case "deep-reinforce", "ornith": return Color(hex: 0xBE5809)
+        case "ibm": return Color(hex: 0x3079BC)
+        case "liquid": return Color(hex: 0xD72D82)
+        case "nvidia": return Color(hex: 0x538200)
+        case "openbmb": return Color(hex: 0xE22B17)
+        case "poolside": return Color(hex: 0x0C8194)
         default: return chroma1
         }
     }
