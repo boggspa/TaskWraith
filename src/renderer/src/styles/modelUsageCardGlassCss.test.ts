@@ -16,24 +16,29 @@ const rule = (selector: string): string => {
 }
 
 describe('Model Usage liquid-glass sidebar CSS', () => {
-  it('makes the whole pane one 85%-alpha material, including its header', () => {
+  it('makes the whole pane a neutral 85%-alpha material, including its header', () => {
     const card = rule('.app-sidebar .model-usage-summary--sidebar {')
     const body = rule('.app-sidebar .model-usage-liquid-card {')
 
     expect(card).toContain('border-radius: 16px;')
-    expect(card).toContain('background-color: rgba(7, 19, 34, 0.85);')
-    expect(card).toContain('backdrop-filter: blur(22px) saturate(145%) brightness(1.03);')
+    expect(card).toContain('background-color: rgba(19, 22, 29, 0.85);')
+    expect(card).toContain('backdrop-filter: blur(22px) saturate(82%) brightness(0.96);')
     expect(body).toContain('background: transparent;')
     expect(body).toContain('border: 0;')
   })
 
-  it('builds a directional rim and neutral refractive sheen around the card', () => {
+  it('builds a sharp cool hairline rim and restrained neutral sheen around the card', () => {
+    const card = rule('.app-sidebar .model-usage-summary--sidebar {')
     const rim = rule('.app-sidebar .model-usage-summary--sidebar::before {')
     const sheen = rule('.app-sidebar .model-usage-summary--sidebar::after {')
 
+    expect(card).toContain('border: 1px solid rgba(126, 181, 255, 0.58);')
+    expect(card).toContain('0 0 0 1px rgba(73, 139, 235, 0.14)')
+    expect(card).not.toContain('0 0 20px -12px')
     expect(rim).toContain('-webkit-mask-composite: xor;')
     expect(rim).toContain('mask-composite: exclude;')
-    expect(sheen).toContain('rgba(255, 255, 255, 0.1)')
+    expect(rim).toContain('rgba(126, 181, 255, 0.84)')
+    expect(sheen).toContain('rgba(255, 255, 255, 0.055)')
     expect(sheen).not.toMatch(/purple|magenta/i)
   })
 
@@ -44,7 +49,7 @@ describe('Model Usage liquid-glass sidebar CSS', () => {
     expect(reduced).toContain("[data-reduce-transparency='true']")
     expect(reduced).toContain('backdrop-filter: none;')
     expect(light).toContain('.model-usage-summary--sidebar')
-    expect(light).toContain('background-color: rgba(224, 235, 246, 0.85);')
+    expect(light).toContain('background-color: rgba(231, 233, 237, 0.85);')
   })
 
   it('uses fading provider dividers and compact luminous quota meters', () => {
