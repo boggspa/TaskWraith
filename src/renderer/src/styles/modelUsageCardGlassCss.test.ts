@@ -27,7 +27,7 @@ describe('Model Usage liquid-glass sidebar CSS', () => {
     expect(body).toContain('border: 0;')
   })
 
-  it('builds a sharp cool hairline rim and restrained neutral sheen around the card', () => {
+  it('builds a sharp cool hairline rim without a top-biased sheen', () => {
     const card = rule('.app-sidebar .model-usage-summary--sidebar {')
     const rim = rule('.app-sidebar .model-usage-summary--sidebar::before {')
     const sheen = rule('.app-sidebar .model-usage-summary--sidebar::after {')
@@ -35,12 +35,15 @@ describe('Model Usage liquid-glass sidebar CSS', () => {
     expect(card).toContain('--model-usage-rim-inset: 2px;')
     expect(card).toContain('border: 1px solid transparent;')
     expect(card).not.toContain('0 0 20px -12px')
+    expect(card).not.toContain('radial-gradient(115% 82% at 12% -12%')
+    expect(card).not.toContain('inset 0 18px 34px -30px')
     expect(rim).toContain('inset: var(--model-usage-rim-inset);')
     expect(rim).toContain('border-radius: calc(16px - var(--model-usage-rim-inset));')
     expect(rim).toContain('-webkit-mask-composite: xor;')
     expect(rim).toContain('mask-composite: exclude;')
     expect(rim).toContain('rgba(126, 181, 255, 0.84)')
-    expect(sheen).toContain('rgba(255, 255, 255, 0.055)')
+    expect(sheen).toContain('linear-gradient(')
+    expect(sheen).not.toContain('radial-gradient(')
     expect(sheen).not.toMatch(/purple|magenta/i)
   })
 
