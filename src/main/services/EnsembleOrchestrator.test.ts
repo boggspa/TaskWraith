@@ -5004,7 +5004,7 @@ Next action:
     expect(harness.dispatched).toHaveLength(3)
     expect(
       harness.chat.messages.map((message) => message.content)
-    ).toContain('Continuous handoff limit reached (1/1); returning control to the user.')
+    ).not.toContain('Continuous handoff limit reached (1/1); returning control to the user.')
   })
 
   it('C2: set_review_gate stamps the active goal id onto the gate', async () => {
@@ -5414,6 +5414,17 @@ Next action:
     })
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
 
+    const runtime = (
+      harness.orchestrator as unknown as {
+        roundsByChatId: Map<
+          string,
+          { continuationLimitNotified?: boolean; continuationLimitPending?: boolean }
+        >
+      }
+    ).roundsByChatId.get('ensemble-chat')!
+    runtime.continuationLimitNotified = true
+    runtime.continuationLimitPending = true
+
     const result = await harness.orchestrator.bossmanControlForRun(
       harness.dispatched[0].appRunId,
       {
@@ -5427,6 +5438,8 @@ Next action:
     expect(result.ok).toBe(true)
     expect(harness.chat.ensemble?.maxContinuationHops).toBe(5)
     expect(harness.chat.ensemble?.activeRound?.maxContinuationHops).toBe(5)
+    expect(runtime.continuationLimitNotified).toBe(false)
+    expect(runtime.continuationLimitPending).toBe(false)
   })
 
   it('returns quota bands and reset windows from Boss quota checks', async () => {
@@ -9715,6 +9728,130 @@ Next action:
     }
   ]
 
+  const CONTINUOUS_QUARTET: EnsembleParticipant[] = [
+    ...CONTINUOUS_PAIR,
+    {
+      id: 'ensemble-grok',
+      provider: 'grok',
+      enabled: true,
+      role: 'Scout',
+      instructions: 'Scout.',
+      order: 3,
+      permissionPresetId: 'read_only'
+    },
+    {
+      id: 'ensemble-cursor',
+      provider: 'cursor',
+      enabled: true,
+      role: 'Reviewer',
+      instructions: 'Review.',
+      order: 4,
+      permissionPresetId: 'read_only'
+    }
+  ]
+
+  const CONTINUOUS_BACKGROUND: EnsembleParticipant = {
+    id: 'ensemble-background',
+    provider: 'kimi',
+    enabled: true,
+    role: 'Background checker',
+    instructions: 'Run the detached check.',
+    order: 5,
+    permissionPresetId: 'read_only',
+    stageRole: 'background'
+  }
+
+  const continuousForegroundRuns = (
+    harness: ReturnType<typeof makeHarness>
+  ): AgentRunPayload[] => harness.dispatched.filter((run) => !run.ensembleRun?.laneId)
+
+  const continuousLimitStatuses = (
+    harness: ReturnType<typeof makeHarness>,
+    limit = 6
+  ): ChatMessage[] =>
+    harness.chat.messages.filter((message) =>
+      new RegExp(`Continuous handoff limit reached \\(${limit}/${limit}\\)`).test(
+        message.content || ''
+      )
+    )
+
+  function completeLatestContinuousForeground(
+    harness: ReturnType<typeof makeHarness>
+  ): void {
+    const runs = continuousForegroundRuns(harness)
+    const run = runs[runs.length - 1]
+    harness.orchestrator.handleProviderOutput(
+      run.provider,
+      { appRunId: run.appRunId, appChatId: 'ensemble-chat' },
+      { type: 'content', text: `${run.provider} made progress.` }
+    )
+    harness.orchestrator.handleProviderOutput(
+      run.provider,
+      { appRunId: run.appRunId, appChatId: 'ensemble-chat' },
+      { type: 'result', status: 'success' }
+    )
+  }
+
+  async function advanceContinuousForegroundTo(
+    harness: ReturnType<typeof makeHarness>,
+    targetCount: number
+  ): Promise<void> {
+    while (continuousForegroundRuns(harness).length < targetCount) {
+      const expectedCount = continuousForegroundRuns(harness).length + 1
+      completeLatestContinuousForeground(harness)
+      await vi.waitFor(() =>
+        expect(continuousForegroundRuns(harness)).toHaveLength(expectedCount)
+      )
+    }
+  }
+
+  async function startContinuousQuartet(
+    harness: ReturnType<typeof makeHarness>,
+    withBackground = false
+  ): Promise<number | undefined> {
+    harness.chat.ensemble!.orchestrationMode = 'continuous'
+    harness.chat.ensemble!.maxContinuationHops = 6
+    harness.chat.ensemble!.participants = [
+      ...CONTINUOUS_QUARTET.map((participant) => ({ ...participant })),
+      ...(withBackground ? [{ ...CONTINUOUS_BACKGROUND }] : [])
+    ]
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: withBackground
+        ? '@BG run a detached check while the foreground roster keeps working.'
+        : 'Keep working through the bounded roster.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => {
+      expect(continuousForegroundRuns(harness)).toHaveLength(1)
+      expect(harness.dispatched.filter((run) => Boolean(run.ensembleRun?.laneId))).toHaveLength(
+        withBackground ? 1 : 0
+      )
+    })
+    if (!withBackground) return undefined
+    const backgroundIndex = harness.dispatched.findIndex((run) => Boolean(run.ensembleRun?.laneId))
+    expect(backgroundIndex).toBeGreaterThanOrEqual(0)
+    return backgroundIndex
+  }
+
+  async function holdExhaustedContinuousRoundForBackground(
+    harness: ReturnType<typeof makeHarness>
+  ): Promise<number> {
+    const backgroundIndex = await startContinuousQuartet(harness, true)
+    // Initial four-seat pass + full four-seat continuation + final two-seat
+    // partial pass = ten foreground dispatches. Leave the BG lane unresolved.
+    await advanceContinuousForegroundTo(harness, 10)
+    completeLatestContinuousForeground(harness)
+    await vi.waitFor(() =>
+      expect(
+        harness.chat.messages.some((message) =>
+          (message.content || '').includes('Serial queue drained · holding the round open')
+        )
+      ).toBe(true)
+    )
+    return backgroundIndex!
+  }
+
   it('auto-continues a continuous round with no explicit handoff until the hop budget is exhausted', async () => {
     const harness = makeHarness()
     harness.chat.ensemble!.orchestrationMode = 'continuous'
@@ -9752,6 +9889,109 @@ Next action:
     expect(
       harness.chat.messages.some((m) => /limit reached \(2\/2\)/.test(m.content || ''))
     ).toBe(true)
+  })
+
+  it('dispatches a final partial continuous pass before publishing one terminal hop-limit status', async () => {
+    const harness = makeHarness()
+    await startContinuousQuartet(harness)
+
+    // Initial four-seat pass, then one full four-seat continuation pass.
+    await advanceContinuousForegroundTo(harness, 9)
+
+    // Only two of the four seats fit in the remaining hop budget. The partial
+    // pass must start before TaskWraith claims control is returning to the user.
+    expect(
+      continuousForegroundRuns(harness).slice(8).map((run) => run.ensembleRun?.participantId)
+    ).toEqual(['ensemble-codex'])
+    expect(continuousLimitStatuses(harness)).toHaveLength(0)
+
+    await advanceContinuousForegroundTo(harness, 10)
+    expect(
+      continuousForegroundRuns(harness).slice(8).map((run) => run.ensembleRun?.participantId)
+    ).toEqual(['ensemble-codex', 'ensemble-claude'])
+    expect(continuousLimitStatuses(harness)).toHaveLength(0)
+
+    completeLatestContinuousForeground(harness)
+    await vi.waitFor(() => expect(harness.chat.ensemble?.activeRound?.status).toBe('completed'))
+
+    expect(harness.dispatched).toHaveLength(10)
+    expect(harness.chat.ensemble?.activeRound?.continuationHops).toBe(6)
+    expect(continuousLimitStatuses(harness)).toHaveLength(1)
+    const messageContents = harness.chat.messages.map((message) => message.content || '')
+    const partialPassStatusIndex = messageContents.findIndex((content) =>
+      content.includes('auto-continuing for another pass (6/6 hops)')
+    )
+    const limitStatusIndex = messageContents.findIndex((content) =>
+      content.includes('Continuous handoff limit reached (6/6)')
+    )
+    expect(partialPassStatusIndex).toBeGreaterThanOrEqual(0)
+    expect(limitStatusIndex).toBeGreaterThan(partialPassStatusIndex)
+  })
+
+  it('defers a hop-limit notice when a final partial-pass participant yields to an answered seat', async () => {
+    const harness = makeHarness()
+    await startContinuousQuartet(harness)
+    await advanceContinuousForegroundTo(harness, 9)
+
+    const finalPartialCodex = continuousForegroundRuns(harness)[8]
+    expect(finalPartialCodex.ensembleRun?.participantId).toBe('ensemble-codex')
+    expect(
+      harness.orchestrator.markYielded(
+        finalPartialCodex.appRunId!,
+        'Scout should take another look.',
+        'Scout'
+      )
+    ).toBe(true)
+
+    // Grok already answered and the hop budget is exhausted, so the directed
+    // extra turn is correctly rejected. Claude was already admitted to the
+    // partial pass and must still settle before the terminal notice appears.
+    await vi.waitFor(() => expect(continuousForegroundRuns(harness)).toHaveLength(10))
+    expect(continuousForegroundRuns(harness)[9].ensembleRun?.participantId).toBe(
+      'ensemble-claude'
+    )
+    expect(
+      harness.dispatched.filter(
+        (run) => run.ensembleRun?.participantId === 'ensemble-grok'
+      )
+    ).toHaveLength(2)
+    expect(
+      harness.chat.messages.some((message) =>
+        (message.content || '').includes(
+          'Yield to Scout was not routed because continuation-hop budget exhausted'
+        )
+      )
+    ).toBe(true)
+    expect(continuousLimitStatuses(harness)).toHaveLength(0)
+
+    completeLatestContinuousForeground(harness)
+    await vi.waitFor(() => expect(harness.chat.ensemble?.activeRound?.status).toBe('completed'))
+
+    expect(harness.dispatched).toHaveLength(10)
+    expect(continuousLimitStatuses(harness)).toHaveLength(1)
+  })
+
+  it('publishes the terminal hop-limit status only after an unresolved BG lane settles', async () => {
+    const harness = makeHarness()
+    const backgroundIndex = await holdExhaustedContinuousRoundForBackground(harness)
+
+    expect(harness.chat.ensemble?.activeRound?.status).toBe('running')
+    expect(continuousLimitStatuses(harness)).toHaveLength(0)
+
+    completeDispatchedRun(harness, backgroundIndex)
+    await vi.waitFor(() => expect(harness.chat.ensemble?.activeRound?.status).toBe('completed'))
+
+    expect(continuousLimitStatuses(harness)).toHaveLength(1)
+  })
+
+  it('suppresses a pending terminal hop-limit status when the held round is cancelled', async () => {
+    const harness = makeHarness()
+    await holdExhaustedContinuousRoundForBackground(harness)
+
+    expect(continuousLimitStatuses(harness)).toHaveLength(0)
+    expect(await harness.orchestrator.cancelRound('ensemble-chat')).toBe(true)
+    expect(harness.chat.ensemble?.activeRound?.status).toBe('cancelled')
+    expect(continuousLimitStatuses(harness)).toHaveLength(0)
   })
 
   it('does not auto-continue a continuous round once the active goal is marked complete', async () => {
@@ -10386,7 +10626,7 @@ Next action:
     }
   })
 
-  it('caps continuous continuation appends at the configured handoff limit', async () => {
+  it('rejects continuous continuation appends at the hop limit without publishing before drain', async () => {
     const harness = makeHarness()
     harness.chat.ensemble!.orchestrationMode = 'continuous'
     harness.chat.ensemble!.maxContinuationHops = 1
@@ -10416,7 +10656,7 @@ Next action:
           remaining: EnsembleParticipant[],
           participant: EnsembleParticipant,
           statusMessage: string
-        ) => { appended: boolean }
+        ) => { appended: boolean; reason?: string }
       }
     ).tryAppendContinuationTurn(
       runtime!,
@@ -10426,8 +10666,9 @@ Next action:
     )
 
     expect(appended.appended).toBe(false)
-    expect(runtime!.continuationLimitNotified).toBe(true)
-    expect(harness.chat.messages.map((message) => message.content)).toContain(
+    expect(appended.reason).toBe('hop_limit')
+    expect(runtime!.continuationLimitNotified).not.toBe(true)
+    expect(harness.chat.messages.map((message) => message.content)).not.toContain(
       'Continuous handoff limit reached (1/1); returning control to the user.'
     )
   })

@@ -2742,6 +2742,13 @@ interface ActiveRoundRuntime {
   maxContinuationHops: number
   continuationLimitNotified?: boolean
   /**
+   * The serial continuation budget is exhausted, but terminal publication is
+   * waiting for the true drain tail. Detached BG lanes and fan-out reservation
+   * windows can outlive the serial queue, so "returning control" is only honest
+   * after those lanes settle and no higher-priority closure supersedes it.
+   */
+  continuationLimitPending?: boolean
+  /**
    * C4 — one-shot guard for the administrative-idle-consensus escalation
    * (`detectAdministrativeIdleConsensus`). Set when the deadlock stop fires so a
    * single idle streak escalates at most once; re-armed by a productive
@@ -5747,6 +5754,7 @@ export class EnsembleOrchestrator {
       const nextMax = Math.max(1, Math.min(MAX_CONTINUATION_HOP_LIMIT, Math.floor(requested)))
       runtime.maxContinuationHops = nextMax
       runtime.continuationLimitNotified = false
+      runtime.continuationLimitPending = false
       this.updateChatRound(runtime.chatId, (round) =>
         round?.roundId === runtime.roundId
           ? { ...round, maxContinuationHops: nextMax, continuationHops: runtime.continuationHops }
@@ -11326,12 +11334,24 @@ export class EnsembleOrchestrator {
    * the session may have ended in between.
    */
   private finalizeDrainedRound(runtime: ActiveRoundRuntime): void {
-    const sessionStatus = this.deps.getChat(runtime.chatId)?.ensemble?.workSession?.status
+    const chat = this.deps.getChat(runtime.chatId)
+    const sessionStatus = chat?.ensemble?.workSession?.status
     const sessionTerminal =
       sessionStatus === 'completed' ||
       sessionStatus === 'paused' ||
       sessionStatus === 'cancelled' ||
       sessionStatus === 'limit_reached'
+    const continuationLimitStillOwnsClose =
+      runtime.continuationLimitPending === true &&
+      !runtime.cancelled &&
+      !runtime.returnedControlToUser &&
+      runtime.queuedPrompts.length === 0 &&
+      !sessionTerminal &&
+      (!chat?.activeGoal || chat.activeGoal.status === 'active')
+    runtime.continuationLimitPending = false
+    if (continuationLimitStillOwnsClose) {
+      this.notifyContinuationLimitReached(runtime)
+    }
     // Dequeue the next prompt (FIFO) for the follow-up round. Anything
     // remaining stays in `runtime.queuedPrompts` and gets transferred
     // to the new runtime in `beginRound` so the chain continues
@@ -12353,7 +12373,10 @@ export class EnsembleOrchestrator {
       return { appended: false, reason: 'blocked_status', blockedStatus: participantStatus }
     }
     if (runtime.continuationHops >= runtime.maxContinuationHops) {
-      this.notifyContinuationLimitReached(runtime)
+      // Reject the extra turn immediately, but defer the terminal status until
+      // the serial queue drains. A final partial auto-continuation pass can
+      // exhaust the budget while another admitted participant is still queued;
+      // publishing "returning control" here would get ahead of that work.
       return { appended: false, reason: 'hop_limit' }
     }
     const budgetBlock = this.bossmanBudgetBlock(runtime, participant.id, 'extra_turn')
@@ -12589,7 +12612,11 @@ export class EnsembleOrchestrator {
     // streak, so re-arm the one-shot deadlock escalation for a future streak.
     runtime.administrativeIdleEscalated = false
     if (runtime.continuationHops >= runtime.maxContinuationHops) {
-      this.notifyContinuationLimitReached(runtime)
+      // The serial queue is exhausted, but detached BG lanes or a reservation
+      // window may still own live work. Record the terminal reason now and let
+      // finalizeDrainedRound publish it only after the true drain tail, unless
+      // cancel/steer/user-yield/goal/work-session closure supersedes it.
+      runtime.continuationLimitPending = true
       return null
     }
     if (!chat.ensemble) return null
@@ -12605,7 +12632,12 @@ export class EnsembleOrchestrator {
     const fresh: EnsembleParticipant[] = []
     for (const participant of roster) {
       if (runtime.continuationHops >= runtime.maxContinuationHops) {
-        this.notifyContinuationLimitReached(runtime)
+        // A non-divisible hop budget can leave room for a partial final pass.
+        // Do not publish the terminal limit status while constructing that
+        // pass: its participants have not run yet, so claiming control is
+        // already returning to the user would be false. The next drain enters
+        // the exhausted-budget guard above and publishes the fire-once status
+        // after every admitted participant has completed.
         break
       }
       runtime.continuationHops += 1
