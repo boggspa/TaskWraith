@@ -285,6 +285,7 @@ import {
 } from './lib/queuedMessageRows'
 import { estimateLineChanges } from './lib/ToolParser'
 import { reduceSoloToolEventMessages } from './lib/soloToolEventReducer'
+import { resolveChatApprovalMode } from './lib/chatComposerSelection'
 import { getLiveToolFileDiffSummaries } from './lib/LiveFileDiffSummary'
 import { parseGeminiPermissionRequest } from './lib/GeminiPermissionParser'
 import type { GeminiPermissionRequest } from './lib/GeminiPermissionParser'
@@ -681,6 +682,7 @@ import { type ComposerProps } from './components/Composer'
 import { removedCanvasIds, useMultiviewState } from './hooks/useMultiviewState'
 import { deriveChatIsRunning, deriveChatRunCompleteNotice } from './lib/chatRunDisplay'
 import { resolveEnsembleParticipantSeatMutationState } from './lib/ensembleParticipantSeatLock'
+import { isCurrentWorkspaceTrustOwner } from './lib/workspaceTrustOwnership'
 // Re-exported so the existing `TranscriptPanel.test.tsx` (which imports it
 // from './App') keeps resolving after the component moved to its own module.
 export { TranscriptPanel } from './components/TranscriptPanel'
@@ -2984,8 +2986,11 @@ function App(): React.JSX.Element {
     )
   })
   const setCurrentChatIdForNavigation = useCallback(
-    (nextChatId: string | null) => {
-      if (nextChatId && multiview.isMultiview) {
+    (
+      nextChatId: string | null,
+      options: { assignMultiviewPane?: boolean } = {}
+    ) => {
+      if (nextChatId && multiview.isMultiview && options.assignMultiviewPane !== false) {
         multiview.assignToNextPane(nextChatId)
       }
       if (currentChatIdRef.current !== nextChatId) {
@@ -3192,6 +3197,8 @@ function App(): React.JSX.Element {
   })
   const fxBurstTimeoutRef = useRef<number | null>(null)
   const currentWorkspaceIdRef = useRef<string | null>(null)
+  const currentWorkspacePathRef = useRef<string | null>(null)
+  const workspaceTrustGenerationRef = useRef(0)
   const currentChatIdRef = useRef<string | null>(null)
   const chatByIdRef = useRef<Map<string, ChatRecord>>(new Map())
   // rAF render-coalescer for streamed deltas (#1). chatByIdRef above stays the
@@ -3220,6 +3227,42 @@ function App(): React.JSX.Element {
   const persistentSessionActiveRef = useRef(false)
   const activeScheduledTaskIdRef = useRef<string | null>(null)
   const scheduledTasksRef = useRef<ScheduledTask[]>([])
+  const clearWorkspaceTrust = useCallback(() => {
+    workspaceTrustGenerationRef.current += 1
+    setTrustResult(null)
+  }, [])
+  const refreshWorkspaceTrust = useCallback(
+    async (workspace: Pick<WorkspaceRecord, 'id' | 'path'> | null): Promise<any | null> => {
+      if (
+        !workspace?.path ||
+        currentWorkspaceIdRef.current !== workspace.id ||
+        currentWorkspacePathRef.current !== workspace.path
+      ) {
+        return null
+      }
+      const requestOwner = {
+        generation: workspaceTrustGenerationRef.current + 1,
+        workspaceId: workspace.id,
+        workspacePath: workspace.path
+      }
+      workspaceTrustGenerationRef.current = requestOwner.generation
+      setTrustResult(null)
+      try {
+        const result = await window.api.checkTrust(workspace.path)
+        const currentOwner = {
+          generation: workspaceTrustGenerationRef.current,
+          workspaceId: currentWorkspaceIdRef.current,
+          workspacePath: currentWorkspacePathRef.current
+        }
+        if (!isCurrentWorkspaceTrustOwner(requestOwner, currentOwner)) return null
+        setTrustResult(result)
+        return result
+      } catch {
+        return null
+      }
+    },
+    []
+  )
   const currentProvider = currentChat ? getChatProvider(currentChat) : activeProvider
   const currentChatScope = getChatScope(currentChat)
   const isCurrentGlobalChat = currentChatScope === 'global'
@@ -5112,12 +5155,12 @@ function App(): React.JSX.Element {
     // same way as every provider — the persisted per-chat approvalMode, else the
     // snapshot/composer default ('default' = Default Approval out of the box). No
     // more force-'plan'; the Ollama tier ladder that used to govern tools is gone.
-    const resolvedApprovalMode =
-      typeof metadata.approvalMode === 'string'
-        ? metadata.approvalMode
-        : chat.settingsSnapshot?.approvalMode ||
-          fallbackApprovalMode ||
-          (isSubThreadChat(chat) ? 'default' : approvalMode)
+    const resolvedApprovalMode = resolveChatApprovalMode({
+      metadataApprovalMode:
+        typeof metadata.approvalMode === 'string' ? metadata.approvalMode : undefined,
+      settingsSnapshotApprovalMode: chat.settingsSnapshot?.approvalMode,
+      fallbackApprovalMode
+    })
     const derivedPermissionPresetId = approvalModeToPermissionPreset(
       resolvedApprovalMode,
       workflowMode
@@ -5205,6 +5248,8 @@ function App(): React.JSX.Element {
       syncPersistentModelSelection(selection.selectedModelType)
     }
   }
+  const applyChatComposerSelectionRef = useRef(applyChatComposerSelection)
+  applyChatComposerSelectionRef.current = applyChatComposerSelection
 
   const buildEnsembleSeedParticipantFromChat = (chat: ChatRecord): EnsembleParticipant => {
     const provider = getChatProvider(chat)
@@ -5955,6 +6000,8 @@ function App(): React.JSX.Element {
         if (isGlobalChat(popoutChat)) {
           setCurrentWorkspace(null)
           currentWorkspaceIdRef.current = null
+          currentWorkspacePathRef.current = null
+          clearWorkspaceTrust()
         } else {
           const workspaceForChat =
             wsList.find((workspace) => workspace.id === popoutChat.workspaceId) ||
@@ -5971,11 +6018,10 @@ function App(): React.JSX.Element {
               : null)
           setCurrentWorkspace(workspaceForChat)
           currentWorkspaceIdRef.current = workspaceForChat?.id || popoutChat.workspaceId || null
+          currentWorkspacePathRef.current =
+            workspaceForChat?.path || popoutChat.workspacePath || null
           if (workspaceForChat?.path) {
-            window.api
-              .checkTrust(workspaceForChat.path)
-              .then(setTrustResult)
-              .catch(() => {})
+            void refreshWorkspaceTrust(workspaceForChat)
           }
         }
         const popoutHandoff = readChatPopoutHandoff(popoutChat.appChatId)
@@ -6927,6 +6973,7 @@ function App(): React.JSX.Element {
     setPersistentSessionNeedsRestart(false)
     setCurrentWorkspace(ws)
     currentWorkspaceIdRef.current = ws.id
+    currentWorkspacePathRef.current = ws.path
 
     // 1.0.5-EW41 — When the current chat is an Ensemble *and* this is an
     // intentional 'switch' (composer / welcome picker), rebind it in place
@@ -6972,8 +7019,7 @@ function App(): React.JSX.Element {
             .then((response) => setCodexThreads(Array.isArray(response?.data) ? response.data : []))
             .catch(() => setCodexThreads([]))
         }
-        const tr = await window.api.checkTrust(ws.path)
-        setTrustResult(tr)
+        await refreshWorkspaceTrust(ws)
         return
       }
       // rebound === null → chat is already on this workspace.
@@ -6981,8 +7027,7 @@ function App(): React.JSX.Element {
       // above (cheap no-op when identical), so just refresh trust
       // and bail. This handles the edge case where the user picks
       // the workspace they're already in from the popover.
-      const tr = await window.api.checkTrust(ws.path)
-      setTrustResult(tr)
+      await refreshWorkspaceTrust(ws)
       return
     }
 
@@ -7045,10 +7090,7 @@ function App(): React.JSX.Element {
 
     // Check trust
     scheduleAfterPaint(() => {
-      window.api
-        .checkTrust(ws.path)
-        .then(setTrustResult)
-        .catch(() => {})
+      void refreshWorkspaceTrust(ws)
     })
   }
 
@@ -7084,6 +7126,7 @@ function App(): React.JSX.Element {
 
     setCurrentWorkspace(ws)
     currentWorkspaceIdRef.current = ws.id
+    currentWorkspacePathRef.current = ws.path
     updateChatById(chatWithLedger.appChatId, () => chatWithLedger)
     await refreshUsageSummary(ws.id, getChatProvider(chatWithLedger))
     setDiff(null)
@@ -7094,8 +7137,7 @@ function App(): React.JSX.Element {
     setSessionTrust(false)
     syncThinkingForChat(rebound)
     void refreshProviderMetadata(getChatProvider(chatWithLedger), ws.path)
-    const tr = await window.api.checkTrust(ws.path)
-    setTrustResult(tr)
+    await refreshWorkspaceTrust(ws)
   }
 
   const refreshUsageSummary = async (
@@ -7723,6 +7765,9 @@ function App(): React.JSX.Element {
     setWorkspaces(wsList)
     if (currentWorkspace?.id === id) {
       setCurrentWorkspace(null)
+      currentWorkspaceIdRef.current = null
+      currentWorkspacePathRef.current = null
+      clearWorkspaceTrust()
       setCurrentChatIdForNavigation(null)
       setCurrentChat(null)
       await refreshChatList()
@@ -7973,6 +8018,7 @@ function App(): React.JSX.Element {
     if (workspace) {
       setCurrentWorkspace(workspace)
       currentWorkspaceIdRef.current = workspace.id
+      currentWorkspacePathRef.current = workspace.path
     }
     setCurrentChatIdForNavigation(newChat.appChatId)
     chatByIdRef.current.set(newChat.appChatId, newChat)
@@ -7992,10 +8038,7 @@ function App(): React.JSX.Element {
     })
     scheduleAfterPaint(() => {
       if (workspace) {
-        window.api
-          .checkTrust(workspace.path)
-          .then(setTrustResult)
-          .catch(() => {})
+        void refreshWorkspaceTrust(workspace)
       }
       requestUsageSummaryRefresh(wsId, provider)
     })
@@ -8015,9 +8058,11 @@ function App(): React.JSX.Element {
     setIsPersistentSessionEnabled(false)
     setPersistentSessionStatus('idle')
     setPersistentSessionNeedsRestart(false)
+    setSessionTrust(false)
     setCurrentWorkspace(null)
     currentWorkspaceIdRef.current = null
-    setTrustResult(null)
+    currentWorkspacePathRef.current = null
+    clearWorkspaceTrust()
     setDiff(null)
     setRunDiff(null)
     setDiffRefreshStatus('')
@@ -8078,6 +8123,8 @@ function App(): React.JSX.Element {
           : rebound
         setCurrentWorkspace(null)
         currentWorkspaceIdRef.current = null
+        currentWorkspacePathRef.current = null
+        clearWorkspaceTrust()
         updateChatById(chatWithLedger.appChatId, () => chatWithLedger)
         await selectGlobalChat(chatWithLedger)
         return
@@ -8152,6 +8199,7 @@ function App(): React.JSX.Element {
       if (chatWorkspace) {
         setCurrentWorkspace(chatWorkspace)
         currentWorkspaceIdRef.current = chatWorkspace.id
+        currentWorkspacePathRef.current = chatWorkspace.path
       }
       setCurrentChat(newChat)
       applyChatComposerSelection(newChat, getChatProvider(newChat))
@@ -8645,6 +8693,7 @@ function App(): React.JSX.Element {
       !isTerminatedSideChat(incoming)
         ? applySideChatLifecycle(incoming, 'active')
         : incoming
+    setSessionTrust(false)
     if (selectedChat !== incoming) {
       chatByIdRef.current.set(selectedChat.appChatId, selectedChat)
       setChats((prev) =>
@@ -8673,12 +8722,11 @@ function App(): React.JSX.Element {
       setPersistentSessionNeedsRestart(false)
       setCurrentWorkspace(workspaceForChat)
       currentWorkspaceIdRef.current = workspaceForChat.id
-      window.api
-        .checkTrust(workspaceForChat.path)
-        .then(setTrustResult)
-        .catch(() => {})
+      currentWorkspacePathRef.current = workspaceForChat.path
+      clearWorkspaceTrust()
     } else {
       currentWorkspaceIdRef.current = selectedChat.workspaceId || null
+      currentWorkspacePathRef.current = selectedChat.workspacePath || workspaceForChat?.path || null
     }
     setCurrentChatIdForNavigation(selectedChat.appChatId)
     chatByIdRef.current.set(selectedChat.appChatId, selectedChat)
@@ -8757,10 +8805,17 @@ function App(): React.JSX.Element {
   // Main transcript scroll ownership lives in useTranscriptScrollState.
 
   useEffect(() => {
-    if (!showTerminal && currentWorkspace) {
-      window.api.checkTrust(currentWorkspace.path).then(setTrustResult)
+    if (showTerminal || !currentWorkspace) {
+      if (!currentWorkspace) clearWorkspaceTrust()
+      return undefined
     }
-  }, [showTerminal, currentWorkspace])
+    currentWorkspaceIdRef.current = currentWorkspace.id
+    currentWorkspacePathRef.current = currentWorkspace.path
+    void refreshWorkspaceTrust(currentWorkspace)
+    return () => {
+      workspaceTrustGenerationRef.current += 1
+    }
+  }, [clearWorkspaceTrust, refreshWorkspaceTrust, showTerminal, currentWorkspace])
 
   useEffect(() => {
     if (!appearance.showInspector && showTerminal) {
@@ -8770,7 +8825,8 @@ function App(): React.JSX.Element {
 
   useEffect(() => {
     currentWorkspaceIdRef.current = currentWorkspace?.id ?? null
-  }, [currentWorkspace?.id])
+    currentWorkspacePathRef.current = currentWorkspace?.path ?? null
+  }, [currentWorkspace?.id, currentWorkspace?.path])
 
   useEffect(() => {
     let cancelled = false
@@ -11229,6 +11285,7 @@ function App(): React.JSX.Element {
       displayPrompt?: string
       approvalMode?: string
       workflowMode?: ChatWorkflowMode
+      sessionTrust?: boolean
       imageAttachments?: ImageAttachment[]
     }
   ): QueuedRunRequest => {
@@ -11322,7 +11379,7 @@ function App(): React.JSX.Element {
       approvalMode: requestApprovalMode,
       permissionPresetId: requestPermissionPresetId,
       workflowMode: requestWorkflowMode,
-      sessionTrust,
+      sessionTrust: target?.sessionTrust ?? sessionTrust,
       imageAttachments: target?.imageAttachments ?? imageAttachments,
       ...(requestDiscordContextSelection
         ? { discordContextSelection: requestDiscordContextSelection }
@@ -14682,10 +14739,8 @@ function App(): React.JSX.Element {
     if (currentWorkspace?.id !== workspace.id) {
       setCurrentWorkspace(workspace)
       currentWorkspaceIdRef.current = workspace.id
-      void window.api
-        .checkTrust(workspace.path)
-        .then(setTrustResult)
-        .catch(() => {})
+      currentWorkspacePathRef.current = workspace.path
+      void refreshWorkspaceTrust(workspace)
     }
     setWorkspaceBoards((prev) => [saved, ...prev.filter((board) => board.id !== saved.id)])
     setWorkspaceBoardCreatorOpen(false)
@@ -14697,10 +14752,8 @@ function App(): React.JSX.Element {
     if (workspace && currentWorkspace?.id !== workspace.id) {
       setCurrentWorkspace(workspace)
       currentWorkspaceIdRef.current = workspace.id
-      void window.api
-        .checkTrust(workspace.path)
-        .then(setTrustResult)
-        .catch(() => {})
+      currentWorkspacePathRef.current = workspace.path
+      void refreshWorkspaceTrust(workspace)
     }
     enterWorkspaceBoardMode(board.id)
   }
@@ -14772,10 +14825,8 @@ function App(): React.JSX.Element {
     if (currentWorkspace?.id !== workspace.id) {
       setCurrentWorkspace(workspace)
       currentWorkspaceIdRef.current = workspace.id
-      void window.api
-        .checkTrust(workspace.path)
-        .then(setTrustResult)
-        .catch(() => {})
+      currentWorkspacePathRef.current = workspace.path
+      void refreshWorkspaceTrust(workspace)
     }
     enterWorkspaceBoardMode(savedBoard.id)
   }
@@ -15374,6 +15425,8 @@ function App(): React.JSX.Element {
 
       setCurrentWorkspace(workspace)
       currentWorkspaceIdRef.current = workspace.id
+      currentWorkspacePathRef.current = workspace.path
+      void refreshWorkspaceTrust(workspace)
       setCurrentChatIdForNavigation(chat.appChatId)
       chatByIdRef.current.set(chat.appChatId, chat)
       setCurrentChat(chat)
@@ -21967,8 +22020,7 @@ function App(): React.JSX.Element {
     try {
       const result = await window.api.trustWorkspace(ws.path)
       if (result?.ok) {
-        const refreshed = await window.api.checkTrust(ws.path)
-        setTrustResult(refreshed)
+        await refreshWorkspaceTrust(ws)
         setGeminiTrustWriteError(null)
         // The trust file is read by the CLI at process start, so an
         // already-running persistent session needs a restart to pick it up.
@@ -23344,6 +23396,7 @@ function App(): React.JSX.Element {
     (paneIndex: number, chatId: string) => {
       const viewerChat = chatByIdRef.current.get(chatId)
       if (!viewerChat) return
+      const viewerProvider = getChatProvider(viewerChat)
       const outgoingChatId = currentChatIdRef.current || null
       const paneWorkspace = resolvePaneWorkspace({
         chat: viewerChat,
@@ -23351,24 +23404,45 @@ function App(): React.JSX.Element {
         workspaces,
         currentWorkspace
       })
-      currentWorkspaceIdRef.current = viewerChat.workspaceId || paneWorkspace?.id || null
-      const shouldUpdateWorkspace =
-        (currentWorkspace?.id || null) !== (paneWorkspace?.id || null)
-      startTransition(() => {
-        multiview.focusPane(paneIndex, outgoingChatId)
-        setCurrentChatIdForNavigation(viewerChat.appChatId)
-        setActiveSidebarChatId(viewerChat.appChatId)
-        if (shouldUpdateWorkspace) setCurrentWorkspace(paneWorkspace)
-        setCurrentChat(viewerChat)
-        setRunCompleteNotice(
-          deriveChatRunCompleteNotice(viewerChat, runningChatIds.has(viewerChat.appChatId))
-        )
-        setRawLogs(rawLogsByChatIdRef.current.get(viewerChat.appChatId) || [])
-        syncThinkingForChat(viewerChat)
-      })
+      const paneWorkspaceId = viewerChat.workspaceId || paneWorkspace?.id || null
+      const workspaceChanged = currentWorkspaceIdRef.current !== paneWorkspaceId
+      if (workspaceChanged) {
+        const geminiSessionApi = window.api as any
+        if (
+          persistentSessionActiveRef.current &&
+          typeof geminiSessionApi.stopGeminiSession === 'function'
+        ) {
+          geminiSessionApi.stopGeminiSession().catch(() => {})
+        }
+        persistentSessionActiveRef.current = false
+        setIsPersistentSessionEnabled(false)
+        setPersistentSessionStatus('idle')
+        setPersistentSessionNeedsRestart(false)
+        clearWorkspaceTrust()
+        setDiff(null)
+      } else if (!paneWorkspace) {
+        clearWorkspaceTrust()
+      }
+      currentWorkspaceIdRef.current = paneWorkspaceId
+      currentWorkspacePathRef.current = paneWorkspace?.path || viewerChat.workspacePath || null
+      setSessionTrust(false)
+      multiview.focusPane(paneIndex, outgoingChatId)
+      setCurrentChatIdForNavigation(viewerChat.appChatId, { assignMultiviewPane: false })
+      setActiveSidebarChatId(viewerChat.appChatId)
+      setCurrentWorkspace(paneWorkspace)
+      setCurrentChat(viewerChat)
+      applyChatComposerSelectionRef.current(viewerChat, viewerProvider)
+      if (viewerProvider === 'codex') setShowGeminiTerminal(false)
+      setRunDiff(null)
+      setRunCompleteNotice(
+        deriveChatRunCompleteNotice(viewerChat, runningChatIds.has(viewerChat.appChatId))
+      )
+      setRawLogs(rawLogsByChatIdRef.current.get(viewerChat.appChatId) || [])
+      syncThinkingForChat(viewerChat)
     },
     [
       currentWorkspace,
+      clearWorkspaceTrust,
       multiview.focusPane,
       runningChatIds,
       setCurrentChatIdForNavigation,
@@ -23431,11 +23505,13 @@ function App(): React.JSX.Element {
       if (currentChatIdRef.current === chatId) {
         setCurrentWorkspace(workspace)
         currentWorkspaceIdRef.current = workspace.id
+        currentWorkspacePathRef.current = workspace.path
+        void refreshWorkspaceTrust(workspace)
       }
       void refreshUsageSummary(workspace.id, paneProvider)
       void refreshProviderMetadata(paneProvider, workspace.path)
     },
-    [updateChatById]
+    [refreshWorkspaceTrust, updateChatById]
   )
   const handleMultiviewPaneAddWorkspace = useCallback(
     (paneIndex: number, chatId: string) => {
@@ -23456,10 +23532,12 @@ function App(): React.JSX.Element {
       })
       if (currentChatIdRef.current === chatId) {
         currentWorkspaceIdRef.current = null
+        currentWorkspacePathRef.current = null
+        clearWorkspaceTrust()
         setCurrentWorkspace(null)
       }
     },
-    [updateChatById]
+    [clearWorkspaceTrust, updateChatById]
   )
   const handleMultiviewPaneToggleScreenWatch = useCallback(
     (_paneIndex: number, _chatId: string) => {
@@ -23480,7 +23558,7 @@ function App(): React.JSX.Element {
     []
   )
   const handleRunMultiviewPane = useCallback(
-    (_paneIndex: number, chatId: string) => {
+    (paneIndex: number, chatId: string) => {
       const paneChat = chatByIdRef.current.get(chatId)
       if (!paneChat) return
       const panePrompt = composerDraftsByChatIdRef.current[chatId] || ''
@@ -23489,6 +23567,12 @@ function App(): React.JSX.Element {
       const request = buildRunRequestRef.current(undefined, undefined, {
         chat: paneChat,
         prompt: panePrompt,
+        // Trusted Session is a focused-renderer grant, not pane-owned state.
+        // A resting pane must never inherit it from whichever chat is focused.
+        sessionTrust:
+          paneIndex === multiview.focusedPaneIndex && currentChatIdRef.current === chatId
+            ? sessionTrust
+            : false,
         imageAttachments: paneAttachments
       })
       if (
@@ -23507,7 +23591,7 @@ function App(): React.JSX.Element {
       }
       void executeRunRef.current(request)
     },
-    [setChatPromptDraft]
+    [multiview.focusedPaneIndex, sessionTrust, setChatPromptDraft]
   )
   const handleCancelMultiviewPane = useCallback((_paneIndex: number, chatId: string) => {
     const paneChat = chatByIdRef.current.get(chatId)
@@ -23958,6 +24042,9 @@ function App(): React.JSX.Element {
     }
     const viewerProvider = getChatProvider(viewerChat)
     const viewerIsGlobalChat = isGlobalChat(viewerChat)
+    const viewerOwnsFocusedTrust =
+      viewerPaneIndex === multiview.focusedPaneIndex &&
+      currentChatIdRef.current === viewerChatId
     const viewerWorkspace = getWorkspaceForChat(viewerChat)
     const viewerBaseWorkspacePath = viewerWorkspace?.path || viewerChat.workspacePath || ''
     const viewerWorktreeSelection = viewerBaseWorkspacePath
@@ -24672,6 +24759,31 @@ function App(): React.JSX.Element {
       // `currentWorkspace(Path)` (all overridden above), so the pane's grant set
       // is already pane-correct — there is no `enabledGrantIds` prop to set.
       approvalMode: paneViewerSelection.approvalMode,
+      // Trust is focused-renderer state. A resting pane must neither display nor
+      // mutate the focused chat's session/persistent trust. Its first trust
+      // interaction focuses the pane; the now-focused composer owns any change.
+      sessionTrust: viewerOwnsFocusedTrust ? sessionTrust : false,
+      setSessionTrust: viewerOwnsFocusedTrust
+        ? setSessionTrust
+        : () => focusPaneForGoalControl(),
+      trustResult: viewerOwnsFocusedTrust ? trustResult : null,
+      geminiWorkspaceTrustReady: viewerOwnsFocusedTrust
+        ? geminiWorkspaceTrustReady
+        : viewerIsGlobalChat,
+      trustSelectValue: viewerOwnsFocusedTrust
+        ? trustSelectValue
+        : viewerIsGlobalChat
+          ? 'trusted'
+          : 'untrusted',
+      handleTrustWorkspaceClick: viewerOwnsFocusedTrust
+        ? handleTrustWorkspaceClick
+        : focusPaneForGoalControl,
+      handleBridgeCommand: viewerOwnsFocusedTrust
+        ? handleBridgeCommand
+        : async () => focusPaneForGoalControl(),
+      markPersistentSessionRestartNeeded: viewerOwnsFocusedTrust
+        ? markPersistentSessionRestartNeeded
+        : focusPaneForGoalControl,
       // attachments (display)
       imageAttachments: imageAttachmentsByChatId[viewerChatId] || EMPTY_IMAGE_ATTACHMENTS,
       composerImageAttachments: paneComposerImageAttachments,
@@ -25724,6 +25836,17 @@ function App(): React.JSX.Element {
         // `currentWorkspace(Path)` (all overridden above), so the pane's grant set
         // is already pane-correct — there is no `enabledGrantIds` prop to set.
         approvalMode: paneViewerSelection.approvalMode,
+        // Trust is focused-renderer state. A resting pane must neither display nor
+        // mutate the focused chat's session/persistent trust. Its first trust
+        // interaction focuses the pane; the now-focused composer owns any change.
+        sessionTrust: false,
+        setSessionTrust: () => focusPaneForGoalControl(),
+        trustResult: null,
+        geminiWorkspaceTrustReady: viewerIsGlobalChat,
+        trustSelectValue: viewerIsGlobalChat ? 'trusted' : 'untrusted',
+        handleTrustWorkspaceClick: focusPaneForGoalControl,
+        handleBridgeCommand: async () => focusPaneForGoalControl(),
+        markPersistentSessionRestartNeeded: focusPaneForGoalControl,
         // attachments (display)
         imageAttachments: imageAttachmentsByChatId[viewerChatId] || EMPTY_IMAGE_ATTACHMENTS,
         composerImageAttachments: paneComposerImageAttachments,

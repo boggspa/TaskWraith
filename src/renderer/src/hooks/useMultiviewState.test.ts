@@ -364,6 +364,36 @@ describe('applyFocusPane', () => {
     expect(next.focusedPaneIndex).toBe(1)
     expect(ids(next)).toEqual(['t0', 't1'])
   })
+
+  it('honors the clicked pane when seeded panes still show the same chat', () => {
+    const seeded = state({
+      layout: 'two-top-one-bottom',
+      panes: panesOf(['a', 'a', 'a']),
+      focusedPaneIndex: 0
+    })
+    const next = applyFocusPane(seeded, 2, 'a')
+
+    expect(chatIds(next)).toEqual(['a', 'a', 'a'])
+    expect(next.focusedPaneIndex).toBe(2)
+    expect(ids(next)).toEqual(['t0', 't1', 't2'])
+  })
+
+  it('keeps distinct pane ownership stable through repeated focus churn', () => {
+    let next = state({
+      layout: 'vertical-2',
+      panes: panesOf(['a', 'b']),
+      focusedPaneIndex: 0
+    })
+    for (let index = 0; index < 20; index += 1) {
+      const target = index % 2 === 0 ? 1 : 0
+      const outgoing = target === 1 ? 'a' : 'b'
+      next = applyFocusPane(next, target, outgoing)
+      expect(chatIds(next)).toEqual(['a', 'b'])
+      expect(new Set(chatIds(next)).size).toBe(2)
+      expect(next.focusedPaneIndex).toBe(target)
+      expect(ids(next)).toEqual(['t0', 't1'])
+    }
+  })
 })
 
 describe('applyClosePane', () => {

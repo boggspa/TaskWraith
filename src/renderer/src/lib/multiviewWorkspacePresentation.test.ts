@@ -61,20 +61,70 @@ describe('Multiview focused workspace presentation', () => {
     expect(paneSetter).toContain('updatePathKeyedWorkspaceSnapshot(prev, path, snapshot)')
   })
 
-  it('updates focused workspace and chat inside one transition', () => {
+  it('updates explicit pane focus once and hydrates its owned display state', () => {
     const focus = slice('const handleFocusMultiviewPane =', 'const handleOpenInMultiview =')
-    const transitionIndex = focus.indexOf('startTransition(() => {')
-    const focusIndex = focus.indexOf('multiview.focusPane(paneIndex, outgoingChatId)', transitionIndex)
-    const nullableWorkspaceGuard = focus.indexOf(
-      '(currentWorkspace?.id || null) !== (paneWorkspace?.id || null)'
+    const focusIndex = focus.indexOf('multiview.focusPane(paneIndex, outgoingChatId)')
+    const navigationIndex = focus.indexOf(
+      'setCurrentChatIdForNavigation(viewerChat.appChatId, { assignMultiviewPane: false })'
     )
-    const workspaceIndex = focus.indexOf('setCurrentWorkspace(paneWorkspace)', transitionIndex)
-    const chatIndex = focus.indexOf('setCurrentChat(viewerChat)', transitionIndex)
-    expect(transitionIndex).toBeGreaterThanOrEqual(0)
-    expect(nullableWorkspaceGuard).toBeGreaterThanOrEqual(0)
-    expect(focusIndex).toBeGreaterThan(transitionIndex)
-    expect(workspaceIndex).toBeGreaterThan(focusIndex)
+    const workspaceIndex = focus.indexOf('setCurrentWorkspace(paneWorkspace)')
+    const chatIndex = focus.indexOf('setCurrentChat(viewerChat)')
+    const composerIndex = focus.indexOf(
+      'applyChatComposerSelectionRef.current(viewerChat, viewerProvider)'
+    )
+    expect(focus).not.toContain('startTransition(() => {')
+    expect(focus).not.toContain('assignToNextPane')
+    expect(focus).toContain('setSessionTrust(false)')
+    expect(focus).toContain('clearWorkspaceTrust()')
+    expect(focus).toContain('currentWorkspaceIdRef.current !== paneWorkspaceId')
+    expect(focusIndex).toBeGreaterThanOrEqual(0)
+    expect(navigationIndex).toBeGreaterThan(focusIndex)
+    expect(workspaceIndex).toBeGreaterThan(navigationIndex)
     expect(chatIndex).toBeGreaterThan(workspaceIndex)
+    expect(composerIndex).toBeGreaterThan(chatIndex)
+  })
+
+  it('guards workspace trust refreshes against late ownership changes', () => {
+    const trustRefresh = slice('const clearWorkspaceTrust =', 'const currentProvider =')
+    expect(trustRefresh).toContain('workspaceTrustGenerationRef.current += 1')
+    expect(trustRefresh).toContain('await window.api.checkTrust(workspace.path)')
+    expect(trustRefresh).toContain('isCurrentWorkspaceTrustOwner(requestOwner, currentOwner)')
+    expect(trustRefresh).toContain('currentWorkspaceIdRef.current')
+    expect(trustRefresh).toContain('currentWorkspacePathRef.current')
+    expect(trustRefresh).toContain('setTrustResult(null)')
+    expect(source.match(/window\.api\.checkTrust\(/g)).toHaveLength(1)
+    expect(source).not.toContain('.then(setTrustResult)')
+  })
+
+  it('keeps resting panes outside focused-session trust', () => {
+    const paneRun = slice('const handleRunMultiviewPane =', 'const handleCancelMultiviewPane =')
+    expect(paneRun).toContain('paneIndex === multiview.focusedPaneIndex')
+    expect(paneRun).toContain('? sessionTrust')
+    expect(paneRun).toContain(': false')
+
+    const paneComposer = slice(
+      'const paneComposerCtx: ComposerProps =',
+      'const memoizedPaneComposerCtx ='
+    )
+    expect(paneComposer).toContain(
+      'sessionTrust: viewerOwnsFocusedTrust ? sessionTrust : false'
+    )
+    expect(paneComposer).toContain('setSessionTrust: viewerOwnsFocusedTrust')
+    expect(paneComposer).toContain('trustResult: viewerOwnsFocusedTrust ? trustResult : null')
+    expect(paneComposer).toContain('handleTrustWorkspaceClick: viewerOwnsFocusedTrust')
+    expect(paneComposer).toContain('handleBridgeCommand: viewerOwnsFocusedTrust')
+    expect(paneComposer).toContain('markPersistentSessionRestartNeeded: viewerOwnsFocusedTrust')
+
+    const restingPaneComposer = slice(
+      'const buildPaneComposerCtx =',
+      'const paneComposerCtxByKey ='
+    )
+    expect(restingPaneComposer).toContain(
+      'handleBridgeCommand: async () => focusPaneForGoalControl()'
+    )
+    expect(restingPaneComposer).toContain(
+      'markPersistentSessionRestartNeeded: focusPaneForGoalControl'
+    )
   })
 
   it('does not let the focused Diff Studio scalar replace the current chat run summary', () => {

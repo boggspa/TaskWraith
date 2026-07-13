@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { RefObject } from 'react'
 import {
   DEFAULT_MULTIVIEW_LAYOUT,
@@ -746,7 +746,9 @@ export function useMultiviewState(options: UseMultiviewStateOptions = {}): UseMu
   // Keep the latest state reachable synchronously so assignToNextPane can
   // return the chosen index without depending on a setState callback's timing.
   const stateRef = useRef(state)
-  stateRef.current = state
+  useLayoutEffect(() => {
+    stateRef.current = state
+  }, [state])
 
   // One stable ref-object pool for every possible pane. Plain { current }
   // objects are valid React refs; memoized so identity never changes. Kept
@@ -784,7 +786,9 @@ export function useMultiviewState(options: UseMultiviewStateOptions = {}): UseMu
     []
   )
   const focusPane = useCallback((index: number, outgoingFocusedChatId: string | null = null) => {
-    setState((s) => applyFocusPane(s, index, outgoingFocusedChatId))
+    const next = applyFocusPane(stateRef.current, index, outgoingFocusedChatId)
+    stateRef.current = next
+    setState(next)
   }, [])
   const closePane = useCallback((index: number) => setState((s) => applyClosePane(s, index)), [])
   const assignToNextPane = useCallback((chatId: string) => {
