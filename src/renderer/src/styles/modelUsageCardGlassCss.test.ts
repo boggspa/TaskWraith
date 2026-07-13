@@ -32,9 +32,11 @@ describe('Model Usage liquid-glass sidebar CSS', () => {
     const rim = rule('.app-sidebar .model-usage-summary--sidebar::before {')
     const sheen = rule('.app-sidebar .model-usage-summary--sidebar::after {')
 
-    expect(card).toContain('border: 1px solid rgba(126, 181, 255, 0.58);')
-    expect(card).toContain('0 0 0 1px rgba(73, 139, 235, 0.14)')
+    expect(card).toContain('--model-usage-rim-inset: 2px;')
+    expect(card).toContain('border: 1px solid transparent;')
     expect(card).not.toContain('0 0 20px -12px')
+    expect(rim).toContain('inset: var(--model-usage-rim-inset);')
+    expect(rim).toContain('border-radius: calc(16px - var(--model-usage-rim-inset));')
     expect(rim).toContain('-webkit-mask-composite: xor;')
     expect(rim).toContain('mask-composite: exclude;')
     expect(rim).toContain('rgba(126, 181, 255, 0.84)')

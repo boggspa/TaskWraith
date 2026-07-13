@@ -222,8 +222,9 @@
   overflow-y: auto;
   position: relative;
   isolation: isolate;
-  /* A crisp cool rim carries the glass read; the fill itself stays graphite. */
-  border: 1px solid rgba(126, 181, 255, 0.58);
+  /* Keep the visible rim safely inside the pane's clipping boundary. */
+  --model-usage-rim-inset: 2px;
+  border: 1px solid transparent;
   border-radius: 16px;
   background-color: rgba(19, 22, 29, 0.85);
   background-image:
@@ -236,9 +237,6 @@
       rgba(7, 9, 13, 0.18)
     );
   box-shadow:
-    0 0 0 1px rgba(73, 139, 235, 0.14),
-    inset 0 1px 0 rgba(211, 232, 255, 0.58),
-    inset 1px 0 0 rgba(170, 209, 255, 0.16),
     inset 0 -1px 0 rgba(1, 3, 7, 0.5),
     inset 0 18px 34px -30px rgba(207, 223, 242, 0.24),
     0 12px 28px -18px rgba(0, 0, 0, 0.72),
@@ -257,9 +255,9 @@
   content: '';
   position: absolute;
   z-index: 0;
-  inset: 0;
+  inset: var(--model-usage-rim-inset);
   padding: 1px;
-  border-radius: inherit;
+  border-radius: calc(16px - var(--model-usage-rim-inset));
   background: linear-gradient(
     138deg,
     rgba(222, 239, 255, 0.92) 0%,
@@ -280,8 +278,8 @@
   content: '';
   position: absolute;
   z-index: 0;
-  inset: 0;
-  border-radius: inherit;
+  inset: var(--model-usage-rim-inset);
+  border-radius: calc(16px - var(--model-usage-rim-inset));
   background:
     radial-gradient(72% 30% at 24% 0%, rgba(255, 255, 255, 0.055), transparent 72%),
     linear-gradient(
