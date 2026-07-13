@@ -91,6 +91,7 @@ describe('ModelUsageCard', () => {
     expect(html).toContain('aria-expanded="false"')
     expect(html).toContain('title="Expand provider usage"')
     expect(html).toContain('model-usage-compact-grid')
+    expect(html).toContain('model-usage-liquid-card')
     expect(html).not.toContain('model-usage-resize-handle')
     expect(html).not.toContain('model-usage-resize-grip')
   })

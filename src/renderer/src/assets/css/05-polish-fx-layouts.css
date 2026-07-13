@@ -1906,16 +1906,11 @@
   box-shadow: none !important;
 }
 
-/* Sidebar chrome (model-usage pane + footer/status) shares the top band's fixed
- * 95% fill so the non-list regions stay readable regardless of the user's
- * sidebar-opacity slider. !important overrides each region's per-appearance-mode
- * background rules (footer above, model-usage in ModelUsageCard.css, plus the
- * native_glass tile-chrome group selectors) while leaving their borders / blur /
- * shadows intact — only the fill alpha is unified. The workspace/threads list is
- * deliberately NOT included: it keeps painting on the factor-scaled .app-sidebar
- * surface, i.e. the user-defined opacity from Settings -> Appearance. */
-.app-sidebar .sidebar-footer,
-.app-sidebar .model-usage-summary--sidebar {
+/* Footer/status shares the top band's fixed 95% fill so permanent chrome stays
+ * readable regardless of the user's sidebar-opacity slider. Model Usage is
+ * intentionally excluded: its component-owned inner surface is an inset liquid-
+ * glass card, while the outer resize/scroll region remains transparent. */
+.app-sidebar .sidebar-footer {
   background: var(--sidebar-chrome-fixed-bg) !important;
   background-image: none !important;
 }
@@ -1924,8 +1919,7 @@
  * fully opaque, matching the app's picker/popover convention for that setting. */
 [data-reduce-transparency="true"] .app-sidebar .sidebar-top-chrome,
 [data-reduce-transparency="true"] .app-sidebar .sidebar-masthead,
-[data-reduce-transparency="true"] .app-sidebar .sidebar-footer,
-[data-reduce-transparency="true"] .app-sidebar .model-usage-summary--sidebar {
+[data-reduce-transparency="true"] .app-sidebar .sidebar-footer {
   background: var(--sidebar-chrome-color) !important;
   background-image: none !important;
 }

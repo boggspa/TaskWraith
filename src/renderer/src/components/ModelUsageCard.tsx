@@ -1100,28 +1100,30 @@ export function ModelUsageCard({ usageSummary, variant = 'card', apiSpend }: Mod
           </button>
         )}
       </div>
-      {showCollapsedCompactUsage && (
-        <CompactModelUsageGrid quotaEntries={quotaEntries} grokUsage={grokUsage} />
-      )}
-      <div id={quotaContentId} className="model-usage-collapsible" aria-hidden={!showQuotaEntries}>
-        <div className="model-usage-collapsible-inner">
-          {effectiveView === 'spend' ? (
-            <ApiSpendView options={apiSpend} />
-          ) : effectiveView === 'context' ? (
-            <ContextLengthsView />
-          ) : (
-            <div className="model-usage-list">
-              {quotaEntries.map((entry) => (
-                <ProviderUsageBlock key={`${entry.provider}-${entry.model}`} entry={entry} />
-              ))}
-              {/* 1.0.6-GU — Grok subscription credits (separate data model from
-               * the token/cost meters above; manual-refresh PTY probe). Only
-               * mounts when the gated Grok provider adapter is registered. Kept
-               * inside the list so the `.model-usage-item + .model-usage-item`
-               * divider lands between Kimi and Grok. */}
-              {grokAvailable ? <GrokCreditsMeterView {...grokUsage} /> : null}
-            </div>
-          )}
+      <div className="model-usage-liquid-card">
+        {showCollapsedCompactUsage && (
+          <CompactModelUsageGrid quotaEntries={quotaEntries} grokUsage={grokUsage} />
+        )}
+        <div id={quotaContentId} className="model-usage-collapsible" aria-hidden={!showQuotaEntries}>
+          <div className="model-usage-collapsible-inner">
+            {effectiveView === 'spend' ? (
+              <ApiSpendView options={apiSpend} />
+            ) : effectiveView === 'context' ? (
+              <ContextLengthsView />
+            ) : (
+              <div className="model-usage-list">
+                {quotaEntries.map((entry) => (
+                  <ProviderUsageBlock key={`${entry.provider}-${entry.model}`} entry={entry} />
+                ))}
+                {/* 1.0.6-GU — Grok subscription credits (separate data model from
+                 * the token/cost meters above; manual-refresh PTY probe). Only
+                 * mounts when the gated Grok provider adapter is registered. Kept
+                 * inside the list so the `.model-usage-item + .model-usage-item`
+                 * divider lands between Kimi and Grok. */}
+                {grokAvailable ? <GrokCreditsMeterView {...grokUsage} /> : null}
+              </div>
+            )}
+          </div>
         </div>
       </div>
       {!isSidebarVariant && (

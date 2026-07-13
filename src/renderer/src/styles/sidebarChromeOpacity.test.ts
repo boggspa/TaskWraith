@@ -16,7 +16,7 @@ const cssBlockStartingAt = (source: string, selector: string, fromIndex = 0): st
   return source.slice(start, end + 1)
 }
 
-// The top masthead band, model-usage pane, and footer/status derive their fill
+// The top masthead band and footer/status derive their fill
 // from --sidebar-chrome-color (decoupled from the .app-sidebar list surface,
 // which rides the sidebar-opacity slider) and tie its ALPHA 1:1 to the MAIN-PANE
 // opacity setting via --main-pane-opacity-100 — fully opaque at the default 100%,
@@ -58,18 +58,20 @@ describe('sidebar chrome fixed opacity CSS', () => {
     expect(masthead).not.toContain('background: var(--sidebar-chrome-fixed-bg)')
   })
 
-  it('paints the footer/status and model-usage pane with the fixed chrome token', () => {
+  it('paints footer/status with the fixed chrome token but leaves Model Usage component-owned', () => {
     const css = readCss('05-polish-fx-layouts.css')
-    const grouped = cssBlockStartingAt(
+    const footer = cssBlockStartingAt(
       css,
-      '.app-sidebar .sidebar-footer,\n.app-sidebar .model-usage-summary--sidebar {'
+      '.app-sidebar .sidebar-footer {',
+      css.indexOf('Footer/status shares')
     )
-    expect(grouped).toContain('background: var(--sidebar-chrome-fixed-bg) !important;')
+    expect(footer).toContain('background: var(--sidebar-chrome-fixed-bg) !important;')
+    expect(footer).not.toContain('model-usage-summary--sidebar')
     // The workspace/threads list + its toggle/search/headers must NOT be pinned
     // here — they stay at the user-defined opacity.
-    expect(grouped).not.toContain('sidebar-hierarchy-scroll')
-    expect(grouped).not.toContain('sidebar-view-tabs')
-    expect(grouped).not.toContain('sidebar-search-section')
+    expect(footer).not.toContain('sidebar-hierarchy-scroll')
+    expect(footer).not.toContain('sidebar-view-tabs')
+    expect(footer).not.toContain('sidebar-search-section')
   })
 
   it('pins the chrome regions (incl. the top band) fully opaque under Reduce Transparency', () => {
@@ -80,7 +82,7 @@ describe('sidebar chrome fixed opacity CSS', () => {
     )
     expect(reduced).toContain('.sidebar-masthead')
     expect(reduced).toContain('.sidebar-footer')
-    expect(reduced).toContain('.model-usage-summary--sidebar')
+    expect(reduced).not.toContain('.model-usage-summary--sidebar')
     // Uses the chrome colour opaque — not --sidebar-bg-solid (the list colour).
     expect(reduced).toContain('background: var(--sidebar-chrome-color) !important;')
   })
