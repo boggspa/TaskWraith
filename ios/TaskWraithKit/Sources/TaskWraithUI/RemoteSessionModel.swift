@@ -1946,15 +1946,14 @@ public final class RemoteSessionModel: ObservableObject {
         let firstLaunchJSON = """
         {"schemaVersion":1,"generatedAt":"2026-06-19T10:45:00Z",
          "notifications":[
-          {"id":"new-additions-2026-07-10","kind":"addition","title":"New Additions","body":"Claude Sonnet 5 and Fable 5, the GPT-5.6 Luna/Terra/Sol trio, Cursor Grok 4.5, Grok 4.5 Fast, and four new local Ollama models are all available now.","tone":"default","accent":"default","dismissible":true,"groups":[
-            {"provider":"claude","label":"Claude","models":[
-              {"name":"Sonnet 5","blurb":"Anthropic's fast coding model — adaptive thinking, 1M context, 85.2% SWE-bench Verified."},
-              {"name":"Fable 5","blurb":"Anthropic's frontier tier above Opus — 1M context, 128K max output, and adaptive thinking."}
-            ]},
+          {"id":"new-additions-2026-07-13","kind":"addition","title":"New Additions","body":"Kimi Code HighSpeed, the GPT-5.6 Luna/Terra/Sol trio, Cursor Grok 4.5, Grok 4.5 Fast, and four new local Ollama models are all available now.","tone":"default","accent":"default","dismissible":true,"groups":[
             {"provider":"codex","label":"Codex","models":[
               {"name":"GPT-5.6-Luna","blurb":"Fast and affordable agentic coding — with the Max reasoning tier."},
               {"name":"GPT-5.6-Terra","blurb":"Balanced agentic coding for everyday work — Max and Ultra reasoning tiers."},
               {"name":"GPT-5.6-Sol","blurb":"Latest frontier agentic coding model — Max and Ultra reasoning tiers."}
+            ]},
+            {"provider":"kimi","label":"Kimi","models":[
+              {"name":"Kimi Code HighSpeed","blurb":"The same K2.7 Code intelligence at roughly 5–6× the output speed — switch it on with Fast mode."}
             ]},
             {"provider":"cursor","label":"Cursor","models":[
               {"name":"Cursor Grok 4.5","blurb":"Cursor's first-party model pool — 500K context, Low/Medium/High reasoning, and a Fast toggle."}

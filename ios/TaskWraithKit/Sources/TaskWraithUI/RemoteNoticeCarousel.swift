@@ -2,11 +2,9 @@ import SwiftUI
 import TaskWraithKit
 
 /// Per-notice dismissal persistence for the remote notice carousel. Keyed by
-/// notice id in UserDefaults so a dismissal sticks across launches AND is shared
-/// between the two surfaces that render the carousel (the New-Chat welcome
-/// screen and the first-launch sheet) — both read the same store, so dismissing
-/// on one hides it on the other. Mirrors the Electron localStorage per-id
-/// dismiss keys; the `tw.*.dismissed` prefix matches the whole-sheet key.
+/// notice id in UserDefaults so a first-launch-sheet dismissal sticks across
+/// launches. Mirrors the Electron localStorage per-id dismiss keys; the
+/// `tw.*.dismissed` prefix matches the whole-sheet key.
 enum RemoteNoticeDismissalStore {
     static func key(_ id: String) -> String { "tw.appNotice.\(id).dismissed" }
 
