@@ -182,8 +182,9 @@ describe('per-run Kimi MCP config', () => {
     env: { CUSTOM_ROUTE_HINT: '1', TASKWRAITH_PARENT_PROVIDER: 'wrong-provider' }
   }
 
-  it('preserves user servers while replacing global TaskWraith registrations', () => {
+  it('preserves user servers only when an audited caller explicitly opts in', () => {
     const config = buildKimiRunMcpConfig({
+      preserveUserServers: true,
       globalConfig: {
         mcpServers: {
           docs: { command: 'docs-server', args: ['--stdio'] },
@@ -208,6 +209,7 @@ describe('per-run Kimi MCP config', () => {
   it('removes stale TaskWraith entries when the bridge is disabled', () => {
     expect(
       buildKimiRunMcpConfig({
+        preserveUserServers: true,
         globalConfig: {
           mcpServers: {
             TaskWraith: { command: 'stale-app' },
@@ -222,6 +224,26 @@ describe('per-run Kimi MCP config', () => {
 
   it('builds an empty config for maintenance turns', () => {
     expect(buildKimiRunMcpConfig({})).toEqual({ mcpServers: {} })
+  })
+
+  it('omits opaque global MCP servers from a broker-only active run', () => {
+    expect(
+      buildKimiRunMcpConfig({
+        globalConfig: {
+          mcpServers: {
+            filesystem: { command: 'arbitrary-filesystem-server' },
+            shell: { command: 'arbitrary-shell-server' }
+          }
+        },
+        taskWraith
+      }).mcpServers
+    ).toEqual({
+      TaskWraith: {
+        command: taskWraith.bridgeBinaryPath,
+        args: taskWraith.bridgeArgs,
+        env: { CUSTOM_ROUTE_HINT: '1', TASKWRAITH_PARENT_PROVIDER: 'kimi' }
+      }
+    })
   })
 
   it('prefixes an explicit config file without mutating the base args', () => {

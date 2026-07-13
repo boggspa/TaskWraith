@@ -60,7 +60,11 @@ export function buildClaudeCliArgs(input: BuildClaudeCliArgsInput): string[] {
     '--verbose',
     '--include-partial-messages',
     '--permission-mode',
-    input.permissionMode
+    input.permissionMode,
+    // Empty --tools disables every built-in, including future additions. MCP
+    // servers load separately and remain available through their namespaces.
+    '--tools',
+    ''
   ]
   if (input.model && input.model !== 'default') {
     args.push('--model', input.model)

@@ -48,7 +48,16 @@ export function normalizeGrokEffortFlag(value: string | null | undefined): strin
  * answer) instead of answering from the reads it already did. See the read-only
  * seat wiring in index.ts.
  */
-export const GROK_READ_ONLY_DENY_RULES = ['Bash(*)', 'Shell(*)', 'Edit(*)', 'Write(*)'] as const
+export const GROK_READ_ONLY_DENY_RULES = [
+  'Bash(*)',
+  'Shell(*)',
+  'Edit(*)',
+  'Write(*)',
+  'Read(*)',
+  'ReadFile(*)',
+  'Glob(*)',
+  'Grep(*)'
+] as const
 
 /**
  * Deny rules for FILE-WRITE mode: Edit/Write are allowed (diff-reviewed via
@@ -56,12 +65,10 @@ export const GROK_READ_ONLY_DENY_RULES = ['Bash(*)', 'Shell(*)', 'Edit(*)', 'Wri
  * without an MCP server, and 0.2.8 has no per-run `--mcp-config`. Shell
  * mediation is the ACP path (G5c-ACP: TaskWraith MCP + approval ledger).
  */
-// Write mode now allows Bash too: a write-capable Grok turn that runs a shell
-// command was hitting this deny and HARD-CANCELLING with no answer (stopReason
-// Cancelled, 0 output). Since the user opted into write permissions, Grok's Bash
-// runs unmediated in write mode (Edit/Write remain diff-reviewed via TaskWraith).
-// Was ['Bash(*)'].
-export const GROK_WRITE_MODE_DENY_RULES = [] as const
+// Write-capable turns use the TaskWraith MCP broker for the same operations.
+// Approval posture changes what that signed broker may do inside the canonical
+// workspace; it never gives Grok's opaque native tools host filesystem access.
+export const GROK_WRITE_MODE_DENY_RULES = GROK_READ_ONLY_DENY_RULES
 
 /** True when the approval mode permits writes (anything other than read-only plan). */
 export function grokWriteCapable(approvalMode: string | null | undefined): boolean {
@@ -233,6 +240,8 @@ export function buildGrokCliArgs(input: BuildGrokCliArgsInput): string[] {
   const writeCapable = grokWriteCapable(input.approvalMode)
   const args: string[] = [
     '--no-auto-update',
+    '--tools',
+    '',
     '-p',
     input.prompt,
     '--cwd',
@@ -261,10 +270,9 @@ export function buildGrokCliArgs(input: BuildGrokCliArgsInput): string[] {
 }
 
 export function buildGrokAcpCliArgs(input: BuildGrokAcpCliArgsInput): string[] {
-  const args = ['--no-auto-update']
-  if (input.readOnlySeat) {
-    for (const rule of GROK_READ_ONLY_DENY_RULES) args.push('--deny', rule)
-  }
+  const args = ['--no-auto-update', '--tools', '']
+  const denyRules = input.readOnlySeat ? GROK_READ_ONLY_DENY_RULES : GROK_WRITE_MODE_DENY_RULES
+  for (const rule of denyRules) args.push('--deny', rule)
   appendGrokModelAndEffortArgs(args, input)
   args.push('agent', 'stdio')
   return args

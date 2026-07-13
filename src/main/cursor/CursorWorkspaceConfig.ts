@@ -34,9 +34,14 @@ export interface CursorCliConfig {
   [key: string]: unknown
 }
 
-/** Native side effects denied in write mode. Edits stay allowed (diff-reviewed);
- *  shell and provider-native writes are blocked outright. */
-export const CURSOR_WRITE_MODE_DENY_RULES: readonly string[] = ['Shell(**)', 'Write(**)']
+/** Opaque native filesystem/shell tools are blocked while the broker is active. */
+export const CURSOR_WRITE_MODE_DENY_RULES: readonly string[] = [
+  'Shell(**)',
+  'Write(**)',
+  'Read(**)',
+  'Glob(**)',
+  'Grep(**)'
+]
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -192,11 +197,11 @@ export function applyCursorWriteModeConfig(
 
   // cli.json: deny the native shell (write containment) + optionally allow the
   // bridge's MCP tools — merged into a single write so there's one file state.
-  // Full Workspace Access: a signed full_access run drops the native shell/write
-  // deny-list entirely (parity with Codex danger-full-access + Grok write mode),
-  // so Cursor's native shell/writes run unmediated. The caller gates this strictly
-  // on the post-clamp trusted grant; every other write run keeps the containment.
-  const denyRules = options?.fullAccess ? [] : CURSOR_WRITE_MODE_DENY_RULES
+  // Full Workspace Access expands what the signed TaskWraith broker may do in
+  // the canonical workspace. It never authorizes Cursor's opaque native tools
+  // to open arbitrary host paths under `--force`.
+  void options
+  const denyRules = CURSOR_WRITE_MODE_DENY_RULES
   const cli = captureFile(fs, configPath)
   let cliMerged = mergeCursorDenyRules(cli.parsed, denyRules)
   if (bridge) cliMerged = mergeCursorAllowRules(cliMerged, bridge.allowRules)

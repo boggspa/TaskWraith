@@ -13,10 +13,10 @@
 // Active runs use Kimi's `--mcp-config-file` option with a per-process config.
 // This is important because `~/.kimi/mcp.json` is provider-global: Release and
 // Dev otherwise overwrite the same `TaskWraith` registration and route calls
-// into whichever app wrote last. The isolated document preserves user-owned
-// servers, removes TaskWraith-owned legacy entries, then adds the current app's
-// socket/token launch command. The older `kimi mcp add/remove` builders remain
-// for explicit migration/repair surfaces, but are not the run-time attachment.
+// into whichever app wrote last. Contained runs omit opaque user MCP servers
+// and add only the current app's socket/token launch command. The older `kimi
+// mcp add/remove` builders remain for explicit migration/repair surfaces, but
+// are not the run-time attachment.
 //
 // Kept free of Electron / fs / IPC imports so it can be unit-tested
 // directly against fixed inputs.
@@ -52,8 +52,10 @@ export interface KimiRunMcpServerInput extends KimiMcpBridgeAddArgsInput {
 }
 
 export interface KimiRunMcpConfigInput {
-  /** Parsed contents of ~/.kimi/mcp.json. User-owned servers are preserved. */
+  /** Parsed contents of ~/.kimi/mcp.json. Ignored unless explicitly allowed. */
   globalConfig?: unknown
+  /** Opaque user servers bypass TaskWraith's signed workspace boundary. */
+  preserveUserServers?: boolean
   /** Omit for maintenance turns or when the TaskWraith bridge is disabled. */
   taskWraith?: KimiRunMcpServerInput | null
 }
@@ -133,7 +135,7 @@ function isTaskWraithOwnedServerName(name: string): boolean {
  * document is both the user-server merge and the Release/Dev isolation fence.
  */
 export function buildKimiRunMcpConfig(input: KimiRunMcpConfigInput): KimiRunMcpConfig {
-  const globalServers = isRecord(input.globalConfig)
+  const globalServers = input.preserveUserServers === true && isRecord(input.globalConfig)
     ? isRecord(input.globalConfig.mcpServers)
       ? input.globalConfig.mcpServers
       : {}

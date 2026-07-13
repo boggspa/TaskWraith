@@ -114,15 +114,23 @@ describe('applyCursorWriteModeConfig', () => {
     expect(files.has(CONFIG)).toBe(false)
   })
 
-  it('exposes the canonical write-mode deny rule', () => {
-    expect(CURSOR_WRITE_MODE_DENY_RULES).toEqual(['Shell(**)', 'Write(**)'])
+  it('exposes the canonical broker-only native tool deny rules', () => {
+    expect(CURSOR_WRITE_MODE_DENY_RULES).toEqual([
+      'Shell(**)',
+      'Write(**)',
+      'Read(**)',
+      'Glob(**)',
+      'Grep(**)'
+    ])
   })
 
-  it('drops the native shell/write deny-list under a full-access grant', () => {
+  it('keeps native tools broker-only under a full-access grant', () => {
     const { fs, files } = makeFakeFs()
     const restore = applyCursorWriteModeConfig(fs, CONFIG, DIR, undefined, { fullAccess: true })
     const written = JSON.parse(files.get(CONFIG)!)
-    expect(written.permissions.deny).toEqual([])
+    expect(written.permissions.deny).toEqual(
+      expect.arrayContaining([...CURSOR_WRITE_MODE_DENY_RULES])
+    )
     restore()
     expect(files.has(CONFIG)).toBe(false)
   })
@@ -204,7 +212,7 @@ describe('applyCursorWriteModeConfig with the TaskWraith MCP bridge', () => {
     const restore = applyCursorWriteModeConfig(fs, CONFIG, DIR, bridge())
 
     const cli = JSON.parse(files.get(CONFIG)!)
-    expect(cli.permissions.deny).toEqual(['Write(.env)', 'Shell(**)', 'Write(**)'])
+    expect(cli.permissions.deny).toEqual(['Write(.env)', ...CURSOR_WRITE_MODE_DENY_RULES])
     expectTaskWraithAllowRules(cli.permissions.allow)
 
     const mcp = JSON.parse(files.get(MCP)!)

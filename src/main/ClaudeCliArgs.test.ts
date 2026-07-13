@@ -81,7 +81,9 @@ describe('buildClaudeCliArgs', () => {
       '--verbose',
       '--include-partial-messages',
       '--permission-mode',
-      'default'
+      'default',
+      '--tools',
+      ''
     ])
     expect(args).not.toContain('--budget-tokens')
     expect(args).not.toContain('--effort')

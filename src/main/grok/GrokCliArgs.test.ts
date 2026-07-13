@@ -68,6 +68,8 @@ describe('buildGrokCliArgs', () => {
     const args = buildGrokCliArgs(base)
     expect(args).toEqual([
       '--no-auto-update',
+      '--tools',
+      '',
       '-p',
       'explain this repo',
       '--cwd',
@@ -84,7 +86,15 @@ describe('buildGrokCliArgs', () => {
       '--deny',
       'Edit(*)',
       '--deny',
-      'Write(*)'
+      'Write(*)',
+      '--deny',
+      'Read(*)',
+      '--deny',
+      'ReadFile(*)',
+      '--deny',
+      'Glob(*)',
+      '--deny',
+      'Grep(*)'
     ])
   })
 
@@ -103,6 +113,13 @@ describe('buildGrokCliArgs', () => {
     expect(
       buildGrokCliArgs({ ...base, model: 'grok-code-fast-1', reasoningEffort: 'high' })
     ).not.toContain('--always-approve')
+  })
+
+  it('disables the complete built-in tool set while retaining separately configured MCP', () => {
+    const args = buildGrokCliArgs(base)
+    expect(args[args.indexOf('--tools') + 1]).toBe('')
+    const acpArgs = buildGrokAcpCliArgs({ readOnlySeat: false })
+    expect(acpArgs[acpArgs.indexOf('--tools') + 1]).toBe('')
   })
 
   it('denies the write/shell/edit tools to keep the run read-only', () => {
@@ -255,21 +272,13 @@ describe('buildGrokCliArgs', () => {
     }
   })
 
-  it('G5c — file-write mode (non-plan): acceptEdits, Edit/Write/Bash all allowed (no deny rules)', () => {
+  it('G5c — file-write mode keeps native filesystem and shell tools broker-only', () => {
     const args = buildGrokCliArgs({ ...base, approvalMode: 'default' })
     expect(args[args.indexOf('--permission-mode') + 1]).toBe('acceptEdits')
-    // Edit/Write are applied + diff-reviewed; Bash is now ALSO allowed in write
-    // mode (user-enabled perms — a denied Bash hard-cancelled the turn with no
-    // answer). Nothing is denied in write mode any more.
-    expect(args).not.toContain('Edit(*)')
-    expect(args).not.toContain('Write(*)')
-    expect(args).not.toContain('Bash(*)')
-    expect(args).not.toContain('Shell(*)')
     const denied = args
       .map((value, index) => (value === '--deny' ? args[index + 1] : null))
       .filter((value): value is string => value !== null)
     expect(denied).toEqual([...GROK_WRITE_MODE_DENY_RULES])
-    expect(denied).toEqual([])
   })
 
   it('G5c — write mode NEVER emits --always-approve (no auto-approve escape hatch)', () => {
