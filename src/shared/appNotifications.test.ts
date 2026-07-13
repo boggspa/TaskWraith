@@ -147,12 +147,9 @@ describe('notification registry', () => {
       (n) => n.id === NEW_ADDITIONS_NOTIFICATION_ID
     )
     const groups = newAdditions?.groups ?? []
-    expect(groups.map((g) => g.provider)).toEqual(['claude', 'codex', 'cursor', 'grok', 'ollama'])
-    expect(groups.map((g) => g.label)).toEqual(['Claude', 'Codex', 'Cursor', 'Grok', 'Ollama'])
-
-    const claude = groups.find((g) => g.provider === 'claude')
-    expect(claude?.models.map((m) => m.name)).toEqual(['Sonnet 5', 'Fable 5'])
-    expect(claude?.models.find((m) => m.name === 'Fable 5')?.blurb).not.toContain('Fast tier')
+    expect(groups.map((g) => g.provider)).toEqual(['codex', 'kimi', 'cursor', 'grok', 'ollama'])
+    expect(groups.map((g) => g.label)).toEqual(['Codex', 'Kimi', 'Cursor', 'Grok', 'Ollama'])
+    expect(groups.some((g) => g.provider === 'claude')).toBe(false)
 
     const codex = groups.find((g) => g.provider === 'codex')
     // Official hyphenated display names (GA 2026-07-09).
@@ -160,6 +157,15 @@ describe('notification registry', () => {
       'GPT-5.6-Luna',
       'GPT-5.6-Terra',
       'GPT-5.6-Sol'
+    ])
+
+    const kimi = groups.find((g) => g.provider === 'kimi')
+    expect(kimi?.models).toEqual([
+      {
+        name: 'Kimi Code HighSpeed',
+        blurb:
+          'The same K2.7 Code intelligence at roughly 5–6× the output speed — switch it on with Fast mode.'
+      }
     ])
 
     const cursor = groups.find((g) => g.provider === 'cursor')

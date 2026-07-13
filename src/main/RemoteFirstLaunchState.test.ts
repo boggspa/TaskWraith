@@ -251,7 +251,7 @@ describe('buildRemoteFirstLaunchState', () => {
       usage: {}
     })
 
-    expect(state.notifications.map((notice) => notice.id)).toContain('new-additions-2026-07-10')
+    expect(state.notifications.map((notice) => notice.id)).toContain('new-additions-2026-07-13')
     expect(state.notifications.map((notice) => notice.id)).not.toContain(
       'gemini-retirement-2026-06-18'
     )
@@ -260,22 +260,27 @@ describe('buildRemoteFirstLaunchState', () => {
     )
 
     const newAdditions = state.notifications.find(
-      (notice) => notice.id === 'new-additions-2026-07-10'
+      (notice) => notice.id === 'new-additions-2026-07-13'
     )
     expect(newAdditions?.tone).toBe('default')
     expect(newAdditions?.accent).toBe('default')
     expect(newAdditions?.kind).toBe('addition')
     expect(newAdditions?.title).toBe('New Additions')
     expect(newAdditions?.groups?.map((group) => group.provider)).toEqual([
-      'claude',
       'codex',
+      'kimi',
       'cursor',
       'grok',
       'ollama'
     ])
-    const claudeGroup = newAdditions?.groups?.find((group) => group.provider === 'claude')
-    expect(claudeGroup?.models.map((model) => model.name)).toEqual(['Sonnet 5', 'Fable 5'])
-    expect(claudeGroup?.models.every((model) => model.blurb.length > 0)).toBe(true)
+    expect(newAdditions?.groups?.some((group) => group.provider === 'claude')).toBe(false)
+    const kimiGroup = newAdditions?.groups?.find((group) => group.provider === 'kimi')
+    expect(kimiGroup?.models).toEqual([
+      expect.objectContaining({
+        name: 'Kimi Code HighSpeed',
+        blurb: expect.stringMatching(/5–6×.*Fast mode/)
+      })
+    ])
     const ollamaGroup = newAdditions?.groups?.find((group) => group.provider === 'ollama')
     expect(ollamaGroup?.models.at(-1)).toMatchObject({
       name: 'Poolside - Laguna XS 2.1 33B-A3B Q8',

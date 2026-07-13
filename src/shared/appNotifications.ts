@@ -127,7 +127,7 @@ export function activeAppNotifications(args: {
 /** Stable id for the current "New Additions" card — bump the date suffix (and
  *  never reuse this exact id) when the lineup below changes, so a user who
  *  already dismissed the old lineup sees the refreshed one. */
-export const NEW_ADDITIONS_NOTIFICATION_ID = 'new-additions-2026-07-10'
+export const NEW_ADDITIONS_NOTIFICATION_ID = 'new-additions-2026-07-13'
 
 /** Always-on carousel notices. Currently just the "New Additions" model-launch
  *  card — replace/extend this list the next time a significant provider or
@@ -137,25 +137,9 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
     id: NEW_ADDITIONS_NOTIFICATION_ID,
     kind: 'addition',
     title: 'New Additions',
-    body: 'Claude Sonnet 5 and Fable 5, the GPT-5.6 Luna/Terra/Sol trio, Cursor Grok 4.5, Grok 4.5 Fast, and four new local Ollama models are all available now.',
+    body: 'Kimi Code HighSpeed, the GPT-5.6 Luna/Terra/Sol trio, Cursor Grok 4.5, Grok 4.5 Fast, and four new local Ollama models are all available now.',
     dismissible: true,
     groups: [
-      {
-        provider: 'claude',
-        label: 'Claude',
-        models: [
-          {
-            name: 'Sonnet 5',
-            blurb:
-              "Anthropic's fast coding model — adaptive thinking, 1M context, 85.2% SWE-bench Verified."
-          },
-          {
-            name: 'Fable 5',
-            blurb:
-              "Anthropic's frontier tier above Opus — 1M context, 128K max output, and adaptive thinking."
-          }
-        ]
-      },
       {
         provider: 'codex',
         label: 'Codex',
@@ -173,6 +157,17 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
           {
             name: 'GPT-5.6-Sol',
             blurb: 'Latest frontier agentic coding model — Max and Ultra reasoning tiers.'
+          }
+        ]
+      },
+      {
+        provider: 'kimi',
+        label: 'Kimi',
+        models: [
+          {
+            name: 'Kimi Code HighSpeed',
+            blurb:
+              'The same K2.7 Code intelligence at roughly 5–6× the output speed — switch it on with Fast mode.'
           }
         ]
       },
