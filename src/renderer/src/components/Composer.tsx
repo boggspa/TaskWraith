@@ -91,6 +91,7 @@ import { formatScheduledRunTime } from '../lib/dateTimeFormat'
 import { formatScheduledTaskCountdown } from '../lib/scheduledCountdown'
 import { buildParticipantToolGrantPatch, getParticipantToolGrantIds } from '../lib/ensembleParticipantToolGrants'
 import {
+  buildCodexModelChangeParticipantPatch,
   buildProviderModelChangeParticipantPatch,
   getEnsembleReasoningOptions,
   resolveEnsembleParticipantSettings
@@ -3517,9 +3518,10 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               // it, mirroring the chat-level handler below.
                               if (effectiveProvider === 'codex') {
                                 const modelOption = codexModels.find((m) => m.id === nextModel)
-                                if (modelOption?.defaultReasoningEffort) {
-                                  patch.reasoningEffort = modelOption.defaultReasoningEffort
-                                }
+                                Object.assign(
+                                  patch,
+                                  buildCodexModelChangeParticipantPatch(nextModel, modelOption)
+                                )
                                 if (!modelOption?.additionalSpeedTiers?.includes('fast')) {
                                   patch.fastModeEnabled = false
                                   patch.serviceTier = ''
@@ -3566,13 +3568,13 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               const modelOption = codexModels.find(
                                 (model) => model.id === nextModel
                               )
-                              if (modelOption?.defaultReasoningEffort) {
-                                if (shouldUpdateLiveComposerState) {
-                                  setCodexReasoningEffort(modelOption.defaultReasoningEffort)
-                                }
-                                metadataPatch.codexReasoningEffort =
-                                  modelOption.defaultReasoningEffort
+                              const nextReasoning =
+                                buildCodexModelChangeParticipantPatch(nextModel, modelOption)
+                                  .reasoningEffort || ''
+                              if (shouldUpdateLiveComposerState) {
+                                setCodexReasoningEffort(nextReasoning)
                               }
+                              metadataPatch.codexReasoningEffort = nextReasoning
                               if (!modelOption?.additionalSpeedTiers?.includes('fast')) {
                                 if (shouldUpdateLiveComposerState) {
                                   setCodexServiceTier('')

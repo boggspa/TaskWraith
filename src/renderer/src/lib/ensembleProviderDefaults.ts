@@ -574,6 +574,27 @@ export function normalizeProviderModelSelection(
 }
 
 /**
+ * Deterministic model-only patch for a Codex participant or chat.
+ *
+ * `reasoningEffort` is deliberately present even when the live model row has
+ * no explicit default. Composer state is shallow-merged, so omitting this key
+ * would let the previous model's effort (for example Sol's `max`) survive a
+ * switch to GPT-5.5. Fast fields stay out of this patch: same-provider model
+ * changes preserve Fast when the destination supports it and clear it when it
+ * does not, which remains the composer's separate responsibility.
+ */
+export function buildCodexModelChangeParticipantPatch(
+  model: string,
+  modelMetadata?: ProviderModelSelectionMetadata | null
+): Pick<Partial<EnsembleParticipant>, 'model' | 'reasoningEffort'> {
+  const normalized = normalizeProviderModelSelection('codex', model, modelMetadata)
+  return {
+    model,
+    reasoningEffort: normalized.reasoningEffort
+  }
+}
+
+/**
  * One atomic participant patch for selecting a model from any provider group.
  * Provider/session/grant hygiene comes from `buildProviderChangeParticipantPatch`;
  * the explicit model fields then override that provider's generic seed values.

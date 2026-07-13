@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { EnsembleParticipant } from '../../../main/store/types'
 import {
+  buildCodexModelChangeParticipantPatch,
   buildProviderModelChangeParticipantPatch,
   getDefaultEnsembleParticipantConfig,
   getDefaultEnsembleRoleName,
@@ -208,6 +209,34 @@ describe('normalizeProviderModelSelection', () => {
       fastModeEnabled: false,
       thinkingEnabled: undefined,
       serviceTier: undefined
+    })
+  })
+})
+
+describe('buildCodexModelChangeParticipantPatch', () => {
+  it('replaces stale Sol max reasoning when GPT-5.5 live metadata omits its default', () => {
+    const previous = participant({
+      model: 'gpt-5.6-sol',
+      reasoningEffort: 'max',
+      fastModeEnabled: true,
+      serviceTier: 'fast'
+    })
+    const patch = buildCodexModelChangeParticipantPatch('gpt-5.5', {
+      supportedReasoningEfforts: [
+        { reasoningEffort: 'low' },
+        { reasoningEffort: 'medium' },
+        { reasoningEffort: 'high' },
+        { reasoningEffort: 'xhigh' }
+      ],
+      additionalSpeedTiers: ['fast']
+    })
+
+    expect(patch).toEqual({ model: 'gpt-5.5', reasoningEffort: 'medium' })
+    expect({ ...previous, ...patch }).toMatchObject({
+      model: 'gpt-5.5',
+      reasoningEffort: 'medium',
+      fastModeEnabled: true,
+      serviceTier: 'fast'
     })
   })
 })
