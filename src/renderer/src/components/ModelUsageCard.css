@@ -224,7 +224,7 @@
   isolation: isolate;
   border: 1px solid rgba(146, 190, 236, 0.28);
   border-radius: 16px;
-  background-color: rgba(7, 19, 34, 0.6);
+  background-color: rgba(7, 19, 34, 0.85);
   background-image:
     radial-gradient(115% 82% at 12% -12%, rgba(151, 202, 255, 0.14), transparent 56%),
     radial-gradient(82% 72% at 108% 102%, rgba(84, 128, 184, 0.08), transparent 66%),
@@ -329,7 +329,7 @@
 [data-appearance='native_glass'][data-reduce-transparency='false']
   .app-sidebar
   .model-usage-summary--sidebar {
-  background-color: rgba(7, 19, 34, 0.6);
+  background-color: rgba(7, 19, 34, 0.85);
   backdrop-filter: blur(16px) saturate(132%);
   -webkit-backdrop-filter: blur(16px) saturate(132%);
 }
@@ -338,7 +338,7 @@
   .app-sidebar
   .model-usage-summary--sidebar {
   border-color: rgba(72, 104, 138, 0.3);
-  background-color: rgba(224, 235, 246, 0.6);
+  background-color: rgba(224, 235, 246, 0.85);
   background-image:
     radial-gradient(110% 80% at 15% -10%, rgba(255, 255, 255, 0.34), transparent 58%),
     linear-gradient(155deg, rgba(245, 250, 255, 0.18), rgba(211, 226, 240, 0.12));
