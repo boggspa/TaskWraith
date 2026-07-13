@@ -419,6 +419,7 @@ import {
   deleteEnsembleRosterPreset,
   importEnsembleRosterPresetsFromJson,
   listEnsembleRosterPresets,
+  clonePermissionOverrides,
   materializeParticipantsFromPresetWithBossman,
   MAX_ROSTER_PRESET_PARTICIPANTS,
   saveEnsembleRosterPresetFromParticipants,
@@ -683,6 +684,11 @@ import { removedCanvasIds, useMultiviewState } from './hooks/useMultiviewState'
 import { deriveChatIsRunning, deriveChatRunCompleteNotice } from './lib/chatRunDisplay'
 import { resolveEnsembleParticipantSeatMutationState } from './lib/ensembleParticipantSeatLock'
 import { isCurrentWorkspaceTrustOwner } from './lib/workspaceTrustOwnership'
+import {
+  buildMultiviewEnsembleComposerProjection,
+  mergeEnsembleQueuedPromptMutationResult,
+  pruneMultiviewEnsembleSelectionOwnership
+} from './lib/multiviewEnsembleComposer'
 // Re-exported so the existing `TranscriptPanel.test.tsx` (which imports it
 // from './App') keeps resolving after the component moved to its own module.
 export { TranscriptPanel } from './components/TranscriptPanel'
@@ -14504,7 +14510,10 @@ function App(): React.JSX.Element {
         })
       )
       applyChatComposerSelection(updatedChat, getChatProvider(updatedChat))
-      setSelectedParticipantId(updatedChat.ensemble?.participants[0]?.id || null)
+      setSelectedParticipantForChat(
+        updatedChat.appChatId,
+        updatedChat.ensemble?.participants[0]?.id || null
+      )
       if (workflowDraft?.chatId === updatedChat.appChatId) {
         setWorkflowDraft({
           ...workflowDraft,
@@ -14540,7 +14549,7 @@ function App(): React.JSX.Element {
         })
       )
       applyChatComposerSelection(updatedChat, getChatProvider(updatedChat))
-      setSelectedParticipantId(null)
+      setSelectedParticipantForChat(updatedChat.appChatId, null)
       if (workflowDraft?.chatId === updatedChat.appChatId) {
         setWorkflowDraft({
           ...workflowDraft,
@@ -17754,7 +17763,38 @@ function App(): React.JSX.Element {
   // round, an effect lower in the render syncs the selection to
   // `activeRound.activeParticipantId` so the user sees the speaker's
   // settings live.
-  const [selectedParticipantId, setSelectedParticipantId] = useState<string | null>(null)
+  const [selectedParticipantIdByChatId, setSelectedParticipantIdByChatId] = useState<
+    Record<string, string>
+  >({})
+  const [userOverrodeSelectionRoundKeys, setUserOverrodeSelectionRoundKeys] = useState<Set<string>>(
+    () => new Set()
+  )
+  useEffect(() => {
+    setSelectedParticipantIdByChatId((previous) =>
+      pruneMultiviewEnsembleSelectionOwnership(chats, previous, new Set())
+        .selectedParticipantIdByChatId
+    )
+    setUserOverrodeSelectionRoundKeys((previous) =>
+      pruneMultiviewEnsembleSelectionOwnership(chats, {}, previous)
+        .userOverrodeSelectionRoundKeys
+    )
+  }, [chats])
+  const setSelectedParticipantForChat = useCallback(
+    (chatId: string | null | undefined, participantId: string | null) => {
+      if (!chatId) return
+      setSelectedParticipantIdByChatId((previous) => {
+        if (participantId) {
+          if (previous[chatId] === participantId) return previous
+          return { ...previous, [chatId]: participantId }
+        }
+        if (!Object.prototype.hasOwnProperty.call(previous, chatId)) return previous
+        const next = { ...previous }
+        delete next[chatId]
+        return next
+      })
+    },
+    []
+  )
   const ensembleParticipantsForCurrent = useMemo(
     () => [...(currentChat?.ensemble?.participants || [])].sort((a, b) => a.order - b.order),
     [currentChat?.ensemble?.participants]
@@ -17777,6 +17817,12 @@ function App(): React.JSX.Element {
     })
     return style
   }, [isCurrentEnsembleChat, ensembleEnabledParticipantsForCurrent])
+  const chatOwnedSelectedParticipantId = currentChat
+    ? resolveSlashParticipantForChat(currentChat)?.id || null
+    : null
+  const selectedParticipantId = currentChat?.appChatId
+    ? selectedParticipantIdByChatId[currentChat.appChatId] || chatOwnedSelectedParticipantId
+    : null
   const effectiveSelectedParticipantId = useMemo(() => {
     if (!isCurrentEnsembleChat) return null
     const explicit = ensembleParticipantsForCurrent.find((p) => p.id === selectedParticipantId)
@@ -18002,98 +18048,86 @@ function App(): React.JSX.Element {
     },
     [hasProviderOrModelSeatPatch, patchParticipantImmediate, requestQueuedParticipantSeatChange]
   )
-  // Slice F v2 (1.0.3) — write-through helper used by the composer
-  // pickers when an ensemble chip is selected. Patches the targeted
-  // participant in chat.ensemble.participants and persists. Same
-  // chat-state plumbing as the chip-strip's onChatChange callback —
-  // kept as a separate callback so picker handlers can call it
-  // without going through the strip component.
-  const updateSelectedParticipant = useCallback(
-    (patch: Partial<EnsembleParticipant>) => {
-      if (!isCurrentEnsembleChat || !selectedParticipant || !currentChat?.ensemble) return
-      const nextChat = patchParticipantWithSeatGate(currentChat, selectedParticipant.id, patch)
+  const patchEnsembleParticipantForChat = useCallback(
+    (chatId: string, participantId: string, patch: Partial<EnsembleParticipant>): void => {
+      const sourceChat = chatByIdRef.current.get(chatId)
+      if (!sourceChat?.ensemble) return
+      const nextChat = patchParticipantWithSeatGate(sourceChat, participantId, patch)
       if (!nextChat) return
-      applyChatSnapshot(nextChat)
-      void window.api.saveChat(nextChat)
+      updateChatById(chatId, () => nextChat)
     },
-    [
-      applyChatSnapshot,
-      isCurrentEnsembleChat,
-      patchParticipantWithSeatGate,
-      selectedParticipant,
-      currentChat
-    ]
+    [patchParticipantWithSeatGate, updateChatById]
   )
-  const patchEnsembleParticipantById = useCallback(
-    (participantId: string, patch: Partial<EnsembleParticipant>) => {
-      if (!isCurrentEnsembleChat || !currentChat?.ensemble) return
-      const nextChat = patchParticipantWithSeatGate(currentChat, participantId, patch)
-      if (!nextChat) return
-      applyChatSnapshot(nextChat)
-      void window.api.saveChat(nextChat)
-    },
-    [applyChatSnapshot, isCurrentEnsembleChat, patchParticipantWithSeatGate, currentChat]
-  )
-  const applyEnsembleRosterPreset = useCallback(
-    (preset: EnsembleRosterPreset) => {
-      if (!isCurrentEnsembleChat || !currentChat?.ensemble || isCurrentEnsembleRoundRunning) return
+  const applyEnsembleRosterPresetToChat = useCallback(
+    (chatId: string, preset: EnsembleRosterPreset): void => {
+      const sourceChat = chatByIdRef.current.get(chatId)
+      if (
+        !sourceChat?.ensemble ||
+        isEnsembleActiveRoundDispatchLive(sourceChat.ensemble.activeRound)
+      ) {
+        return
+      }
       const materializedPreset = materializeParticipantsFromPresetWithBossman(
         preset.participants
       )
       const participants = hydrateParticipantsWithPooledAgentIdentity(
         materializedPreset.participants
       )
-      const { bossmanParticipantId, secondInCommandParticipantId } = materializedPreset
+      const firstEnabled = participants.find((participant) => participant.enabled) || participants[0]
       const nextMaxParticipants = Math.min(
         MAX_ROSTER_PRESET_PARTICIPANTS,
         Math.max(preset.maxParticipants, participants.length, 2)
       )
-      const patchedChat: ChatRecord = {
-        ...currentChat,
-        ensemble: {
-          ...currentChat.ensemble,
-          activeRosterPresetId: preset.id,
-          orchestrationMode: preset.orchestrationMode,
-          maxParticipants: nextMaxParticipants,
-          ...(typeof preset.maxContinuationHops === 'number'
-            ? { maxContinuationHops: preset.maxContinuationHops }
-            : {}),
-          fanoutPolicy: normalizeEnsembleFanoutPolicy(
-            preset.fanoutPolicy,
-            preset.concurrentModeEnabled
-          ),
-          concurrentModeEnabled:
-            typeof preset.concurrentModeEnabled === 'boolean'
-              ? preset.concurrentModeEnabled
-              : ensembleFanoutPolicyEnabled(
-                  normalizeEnsembleFanoutPolicy(preset.fanoutPolicy)
-                ),
-          ...(typeof preset.ensembleContextChars === 'number'
-            ? { ensembleContextChars: preset.ensembleContextChars }
-            : {}),
-          participants,
-          bossmanParticipantId,
-          secondInCommandParticipantId,
-          bossmanAutoApprovals: undefined,
-          updatedAt: new Date().toISOString()
+      const updated = updateChatById(chatId, (source) => {
+        if (!source.ensemble) return source
+        const patched: ChatRecord = {
+          ...source,
+          providerMetadata: {
+            ...(source.providerMetadata || {}),
+            ...(firstEnabled
+              ? { [SIDE_CHAT_SELECTED_PARTICIPANT_ID_METADATA_KEY]: firstEnabled.id }
+              : {})
+          },
+          ensemble: {
+            ...source.ensemble,
+            activeRosterPresetId: preset.id,
+            orchestrationMode: preset.orchestrationMode,
+            maxParticipants: nextMaxParticipants,
+            ...(typeof preset.maxContinuationHops === 'number'
+              ? { maxContinuationHops: preset.maxContinuationHops }
+              : {}),
+            fanoutPolicy: normalizeEnsembleFanoutPolicy(
+              preset.fanoutPolicy,
+              preset.concurrentModeEnabled
+            ),
+            concurrentModeEnabled:
+              typeof preset.concurrentModeEnabled === 'boolean'
+                ? preset.concurrentModeEnabled
+                : ensembleFanoutPolicyEnabled(
+                    normalizeEnsembleFanoutPolicy(preset.fanoutPolicy)
+                  ),
+            ...(typeof preset.ensembleContextChars === 'number'
+              ? { ensembleContextChars: preset.ensembleContextChars }
+              : {}),
+            participants,
+            bossmanParticipantId: materializedPreset.bossmanParticipantId,
+            secondInCommandParticipantId: materializedPreset.secondInCommandParticipantId,
+            bossmanAutoApprovals: undefined,
+            updatedAt: new Date().toISOString()
+          },
+          updatedAt: Date.now()
         }
+        return withSessionActivityLedger(source, patched)
+      })
+      if (updated && firstEnabled) {
+        setSelectedParticipantForChat(chatId, firstEnabled.id)
       }
-      const nextChat = withSessionActivityLedger(currentChat, patchedChat)
-      chatByIdRef.current.set(nextChat.appChatId, nextChat)
-      setCurrentChat((prev) => (prev?.appChatId === nextChat.appChatId ? nextChat : prev))
-      setChats((prev) => prev.map((c) => (c.appChatId === nextChat.appChatId ? nextChat : c)))
-      const firstEnabled = participants.find((participant) => participant.enabled) || participants[0]
-      if (firstEnabled) {
-        setSelectedParticipantId(firstEnabled.id)
-      }
-      void window.api.saveChat(nextChat)
     },
-    [isCurrentEnsembleChat, currentChat, isCurrentEnsembleRoundRunning]
+    [setSelectedParticipantForChat, updateChatById]
   )
-  const setActiveEnsembleRosterPresetId = useCallback(
-    (presetId: string | null) => {
-      if (!isCurrentEnsembleChat || !currentChat?.ensemble) return
-      updateChatById(currentChat.appChatId, (source) => {
+  const setActiveEnsembleRosterPresetIdForChat = useCallback(
+    (chatId: string, presetId: string | null): void => {
+      updateChatById(chatId, (source) => {
         if (!source.ensemble) return source
         const nextPresetId = presetId || undefined
         if (source.ensemble.activeRosterPresetId === nextPresetId) return source
@@ -18103,79 +18137,59 @@ function App(): React.JSX.Element {
             ...source.ensemble,
             activeRosterPresetId: nextPresetId,
             updatedAt: new Date().toISOString()
-          }
+          },
+          updatedAt: Date.now()
         }
         return withSessionActivityLedger(source, patched)
       })
     },
-    [isCurrentEnsembleChat, currentChat?.appChatId, currentChat?.ensemble, updateChatById]
+    [updateChatById]
   )
-  const applyEnsemblePermissionsToAllParticipants = useCallback(() => {
-    if (!isCurrentEnsembleChat || !selectedParticipant || !currentChat?.ensemble) return
-    const sourceOverrides = selectedParticipant.permissionOverrides
-    const clonedOverrides = sourceOverrides
-      ? {
-          ...sourceOverrides,
-          ...(sourceOverrides.agenticServices
-            ? { agenticServices: { ...sourceOverrides.agenticServices } }
-            : {}),
-          ...(sourceOverrides.externalPathGrants
-            ? { externalPathGrants: [...sourceOverrides.externalPathGrants] }
-            : {})
-        }
-      : undefined
-    const patchedChat: ChatRecord = {
-      ...currentChat,
-      ensemble: {
-        ...currentChat.ensemble,
-        participants: currentChat.ensemble.participants.map((participant) => ({
-          ...participant,
-          permissionPresetId: selectedParticipant.permissionPresetId,
-          permissionOverrides: clonedOverrides
-        })),
-        updatedAt: new Date().toISOString()
+  const applyEnsemblePermissionsToAllParticipantsForChat = useCallback(
+    (chatId: string, participantId: string): void => {
+      const sourceChat = chatByIdRef.current.get(chatId)
+      const selected = sourceChat?.ensemble?.participants.find(
+        (participant) => participant.id === participantId
+      )
+      if (!sourceChat?.ensemble || !selected) return
+      for (const participant of sourceChat.ensemble.participants) {
+        patchEnsembleParticipantForChat(chatId, participant.id, {
+          permissionPresetId: selected.permissionPresetId,
+          permissionOverrides: clonePermissionOverrides(selected.permissionOverrides)
+        })
       }
-    }
-    const nextChat = withSessionActivityLedger(currentChat, patchedChat)
-    chatByIdRef.current.set(nextChat.appChatId, nextChat)
-    setCurrentChat((prev) => (prev?.appChatId === nextChat.appChatId ? nextChat : prev))
-    setChats((prev) => prev.map((c) => (c.appChatId === nextChat.appChatId ? nextChat : c)))
-    void window.api.saveChat(nextChat)
-  }, [isCurrentEnsembleChat, selectedParticipant, currentChat])
-  const updateCurrentEnsembleOrchestrationMode = useCallback(
-    (mode: EnsembleOrchestrationMode) => {
-      if (!isCurrentEnsembleChat || !currentChat?.ensemble) return
-      updateChatById(currentChat.appChatId, (source) => {
+    },
+    [patchEnsembleParticipantForChat]
+  )
+  const updateEnsembleOrchestrationModeForChat = useCallback(
+    (chatId: string, mode: EnsembleOrchestrationMode): void => {
+      updateChatById(chatId, (source) => {
+        if (!source.ensemble) return source
         const patched: ChatRecord = {
           ...source,
           ensemble: {
-            ...source.ensemble!,
+            ...source.ensemble,
             orchestrationMode: mode,
-            // 1.0.4-AR2 — track the global ceiling of 8 (was 6).
-            // 1.0.5-EW1 — ceiling raised again 8 → 12. Preserve any
-            // 1.0.5-EW46 — ceiling raised 12 → 18.
-            // existing per-chat override that's already within
-            // [2, MAX] instead of clobbering it to the cap.
             maxParticipants:
-              Number.isFinite(source.ensemble!.maxParticipants) &&
-              source.ensemble!.maxParticipants >= 2 &&
-              source.ensemble!.maxParticipants <= MAX_ROSTER_PRESET_PARTICIPANTS
-                ? source.ensemble!.maxParticipants
+              Number.isFinite(source.ensemble.maxParticipants) &&
+              source.ensemble.maxParticipants >= 2 &&
+              source.ensemble.maxParticipants <= MAX_ROSTER_PRESET_PARTICIPANTS
+                ? source.ensemble.maxParticipants
                 : MAX_ROSTER_PRESET_PARTICIPANTS,
-            maxContinuationHops: source.ensemble!.maxContinuationHops || 6,
+            maxContinuationHops: source.ensemble.maxContinuationHops || 6,
             updatedAt: new Date().toISOString()
-          }
+          },
+          updatedAt: Date.now()
         }
         return withSessionActivityLedger(source, patched)
       })
     },
-    [isCurrentEnsembleChat, currentChat?.appChatId, currentChat?.ensemble, updateChatById]
+    [updateChatById]
   )
-  const updateCurrentEnsembleFanoutPolicy = useCallback(
-    (policy: EnsembleFanoutPolicy) => {
-      if (!isCurrentEnsembleChat || !currentChat?.ensemble) return
+  const updateEnsembleFanoutPolicyForChat = useCallback(
+    (chatId: string, policy: EnsembleFanoutPolicy): void => {
       const nextPolicy = normalizeEnsembleFanoutPolicy(policy)
-      updateChatById(currentChat.appChatId, (source) => {
+      updateChatById(chatId, (source) => {
         if (!source.ensemble) return source
         const patched: ChatRecord = {
           ...source,
@@ -18184,29 +18198,19 @@ function App(): React.JSX.Element {
             fanoutPolicy: nextPolicy,
             concurrentModeEnabled: ensembleFanoutPolicyEnabled(nextPolicy),
             updatedAt: new Date().toISOString()
-          }
+          },
+          updatedAt: Date.now()
         }
         return withSessionActivityLedger(source, patched)
       })
     },
-    [isCurrentEnsembleChat, currentChat?.appChatId, currentChat?.ensemble, updateChatById]
+    [updateChatById]
   )
-  const updateCurrentEnsembleConcurrentMode = useCallback(
-    (enabled: boolean) => {
-      updateCurrentEnsembleFanoutPolicy(enabled ? 'read_only' : 'off')
-    },
-    [updateCurrentEnsembleFanoutPolicy]
-  )
-
-  // D — persist the user-set shared-transcript char budget (5K–256K) onto
-  // chat.ensemble.ensembleContextChars. Drives buildTaggedTranscript's budget
-  // for the NEXT round; clamped here so a malformed value never lands.
-  const updateCurrentEnsembleContextChars = useCallback(
-    (nextChars: number) => {
-      if (!isCurrentEnsembleChat || !currentChat?.ensemble) return
+  const updateEnsembleContextCharsForChat = useCallback(
+    (chatId: string, nextChars: number): void => {
       const safeChars = Math.max(5_000, Math.min(256_000, Math.round(Number(nextChars) || 0)))
       if (!Number.isFinite(safeChars) || safeChars <= 0) return
-      updateChatById(currentChat.appChatId, (source) => {
+      updateChatById(chatId, (source) => {
         if (!source.ensemble) return source
         const patched: ChatRecord = {
           ...source,
@@ -18214,25 +18218,19 @@ function App(): React.JSX.Element {
             ...source.ensemble,
             ensembleContextChars: safeChars,
             updatedAt: new Date().toISOString()
-          }
+          },
+          updatedAt: Date.now()
         }
         return withSessionActivityLedger(source, patched)
       })
     },
-    [isCurrentEnsembleChat, currentChat?.appChatId, currentChat?.ensemble, updateChatById]
+    [updateChatById]
   )
-
-  // 1.0.6 — persist the user-set max handoff turns for continuous rounds onto
-  // chat.ensemble.maxContinuationHops. Range-clamped at the call site
-  // (ContinuousHopsLimitChip enforces 1–500); we still guard here so a malformed
-  // value never lands in the store. Also mirror onto activeRound when a round is
-  // in flight so the hops meter and persisted round snapshot stay in sync.
-  const updateCurrentEnsembleMaxContinuationHops = useCallback(
-    (nextMax: number) => {
-      if (!isCurrentEnsembleChat || !currentChat?.ensemble) return
+  const updateEnsembleMaxContinuationHopsForChat = useCallback(
+    (chatId: string, nextMax: number): void => {
       const safeMax = Math.max(1, Math.min(500, Math.round(Number(nextMax) || 0)))
       if (!Number.isFinite(safeMax) || safeMax <= 0) return
-      updateChatById(currentChat.appChatId, (source) => {
+      updateChatById(chatId, (source) => {
         if (!source.ensemble) return source
         const activeRound = source.ensemble.activeRound
         const patched: ChatRecord = {
@@ -18249,12 +18247,138 @@ function App(): React.JSX.Element {
                 }
               : {}),
             updatedAt: new Date().toISOString()
-          }
+          },
+          updatedAt: Date.now()
         }
         return withSessionActivityLedger(source, patched)
       })
     },
-    [isCurrentEnsembleChat, currentChat?.appChatId, currentChat?.ensemble, updateChatById]
+    [updateChatById]
+  )
+  // Slice F v2 (1.0.3) — write-through helper used by the composer
+  // pickers when an ensemble chip is selected. Patches the targeted
+  // participant in chat.ensemble.participants and persists. Same
+  // chat-state plumbing as the chip-strip's onChatChange callback —
+  // kept as a separate callback so picker handlers can call it
+  // without going through the strip component.
+  const updateSelectedParticipant = useCallback(
+    (patch: Partial<EnsembleParticipant>) => {
+      if (!isCurrentEnsembleChat || !selectedParticipant || !currentChat?.ensemble) return
+      patchEnsembleParticipantForChat(currentChat.appChatId, selectedParticipant.id, patch)
+    },
+    [
+      isCurrentEnsembleChat,
+      patchEnsembleParticipantForChat,
+      selectedParticipant,
+      currentChat
+    ]
+  )
+  const patchEnsembleParticipantById = useCallback(
+    (participantId: string, patch: Partial<EnsembleParticipant>) => {
+      if (!isCurrentEnsembleChat || !currentChat?.ensemble) return
+      patchEnsembleParticipantForChat(currentChat.appChatId, participantId, patch)
+    },
+    [isCurrentEnsembleChat, patchEnsembleParticipantForChat, currentChat]
+  )
+  const applyEnsembleRosterPreset = useCallback(
+    (preset: EnsembleRosterPreset) => {
+      if (!isCurrentEnsembleChat || !currentChat?.ensemble || isCurrentEnsembleRoundRunning) return
+      applyEnsembleRosterPresetToChat(currentChat.appChatId, preset)
+    },
+    [
+      applyEnsembleRosterPresetToChat,
+      isCurrentEnsembleChat,
+      currentChat,
+      isCurrentEnsembleRoundRunning
+    ]
+  )
+  const setActiveEnsembleRosterPresetId = useCallback(
+    (presetId: string | null) => {
+      if (!isCurrentEnsembleChat || !currentChat?.ensemble) return
+      setActiveEnsembleRosterPresetIdForChat(currentChat.appChatId, presetId)
+    },
+    [
+      isCurrentEnsembleChat,
+      currentChat?.appChatId,
+      currentChat?.ensemble,
+      setActiveEnsembleRosterPresetIdForChat
+    ]
+  )
+  const applyEnsemblePermissionsToAllParticipants = useCallback(() => {
+    if (!isCurrentEnsembleChat || !selectedParticipant || !currentChat?.ensemble) return
+    applyEnsemblePermissionsToAllParticipantsForChat(
+      currentChat.appChatId,
+      selectedParticipant.id
+    )
+  }, [
+    applyEnsemblePermissionsToAllParticipantsForChat,
+    isCurrentEnsembleChat,
+    selectedParticipant,
+    currentChat
+  ])
+  const updateCurrentEnsembleOrchestrationMode = useCallback(
+    (mode: EnsembleOrchestrationMode) => {
+      if (!isCurrentEnsembleChat || !currentChat?.ensemble) return
+      updateEnsembleOrchestrationModeForChat(currentChat.appChatId, mode)
+    },
+    [
+      isCurrentEnsembleChat,
+      currentChat?.appChatId,
+      currentChat?.ensemble,
+      updateEnsembleOrchestrationModeForChat
+    ]
+  )
+  const updateCurrentEnsembleFanoutPolicy = useCallback(
+    (policy: EnsembleFanoutPolicy) => {
+      if (!isCurrentEnsembleChat || !currentChat?.ensemble) return
+      updateEnsembleFanoutPolicyForChat(currentChat.appChatId, policy)
+    },
+    [
+      isCurrentEnsembleChat,
+      currentChat?.appChatId,
+      currentChat?.ensemble,
+      updateEnsembleFanoutPolicyForChat
+    ]
+  )
+  const updateCurrentEnsembleConcurrentMode = useCallback(
+    (enabled: boolean) => {
+      updateCurrentEnsembleFanoutPolicy(enabled ? 'read_only' : 'off')
+    },
+    [updateCurrentEnsembleFanoutPolicy]
+  )
+
+  // D — persist the user-set shared-transcript char budget (5K–256K) onto
+  // chat.ensemble.ensembleContextChars. Drives buildTaggedTranscript's budget
+  // for the NEXT round; clamped here so a malformed value never lands.
+  const updateCurrentEnsembleContextChars = useCallback(
+    (nextChars: number) => {
+      if (!isCurrentEnsembleChat || !currentChat?.ensemble) return
+      updateEnsembleContextCharsForChat(currentChat.appChatId, nextChars)
+    },
+    [
+      isCurrentEnsembleChat,
+      currentChat?.appChatId,
+      currentChat?.ensemble,
+      updateEnsembleContextCharsForChat
+    ]
+  )
+
+  // 1.0.6 — persist the user-set max handoff turns for continuous rounds onto
+  // chat.ensemble.maxContinuationHops. Range-clamped at the call site
+  // (ContinuousHopsLimitChip enforces 1–500); we still guard here so a malformed
+  // value never lands in the store. Also mirror onto activeRound when a round is
+  // in flight so the hops meter and persisted round snapshot stay in sync.
+  const updateCurrentEnsembleMaxContinuationHops = useCallback(
+    (nextMax: number) => {
+      if (!isCurrentEnsembleChat || !currentChat?.ensemble) return
+      updateEnsembleMaxContinuationHopsForChat(currentChat.appChatId, nextMax)
+    },
+    [
+      isCurrentEnsembleChat,
+      currentChat?.appChatId,
+      currentChat?.ensemble,
+      updateEnsembleMaxContinuationHopsForChat
+    ]
   )
 
   // 1.0.4-AK2 — Work Session lifecycle callbacks wired to the setup
@@ -18390,38 +18514,67 @@ function App(): React.JSX.Element {
   // without the next speaker-change clobbering their selection.
   // The override resets when the round transitions out of `running`
   // — the next round starts with fresh auto-follow behaviour.
-  const userOverrodeSelectionRef = useRef(false)
   useEffect(() => {
-    if (!isCurrentEnsembleChat) return
+    if (!isCurrentEnsembleChat || !currentChat?.appChatId) return
     const round = currentChat?.ensemble?.activeRound
+    const roundKey = round?.roundId ? `${currentChat.appChatId}:${round.roundId}` : null
     if (!isEnsembleActiveRoundDispatchLive(round)) {
-      // Round not running → drop any override so the next round
-      // resumes auto-follow from a clean state.
-      userOverrodeSelectionRef.current = false
+      // Round not running → drop only this chat's override so another pane's
+      // in-flight selection ownership remains intact.
+      setUserOverrodeSelectionRoundKeys((previous) => {
+        const prefix = `${currentChat.appChatId}:`
+        if (![...previous].some((key) => key.startsWith(prefix))) return previous
+        return new Set([...previous].filter((key) => !key.startsWith(prefix)))
+      })
       return
     }
-    if (userOverrodeSelectionRef.current) return
+    if (roundKey && userOverrodeSelectionRoundKeys.has(roundKey)) return
     const activeId = round?.activeParticipantId
     if (!activeId) return
     if (activeId === selectedParticipantId) return
-    setSelectedParticipantId(activeId)
+    setSelectedParticipantForChat(currentChat.appChatId, activeId)
   }, [
     isCurrentEnsembleChat,
+    currentChat?.appChatId,
     currentChat?.ensemble?.activeRound,
     currentChat?.ensemble?.activeRound?.activeParticipantId,
     currentChat?.ensemble?.activeRound?.status,
-    selectedParticipantId
+    selectedParticipantId,
+    setSelectedParticipantForChat,
+    userOverrodeSelectionRoundKeys
   ])
   // Click handler that records the override before applying the
   // selection. Passed to the chip strip as `onSelectParticipant`.
+  const selectEnsembleParticipantForChat = useCallback(
+    (chatId: string, id: string): void => {
+      const chat = chatByIdRef.current.get(chatId)
+      const round = chat?.ensemble?.activeRound
+      if (isEnsembleActiveRoundDispatchLive(round) && round?.roundId) {
+        const roundKey = `${chatId}:${round.roundId}`
+        setUserOverrodeSelectionRoundKeys((previous) => {
+          if (previous.has(roundKey)) return previous
+          return new Set(previous).add(roundKey)
+        })
+      }
+      setSelectedParticipantForChat(chatId, id)
+      updateChatById(chatId, (source) => ({
+        ...source,
+        providerMetadata: {
+          ...(source.providerMetadata || {}),
+          [SIDE_CHAT_SELECTED_PARTICIPANT_ID_METADATA_KEY]: id
+        },
+        updatedAt: Date.now()
+      }))
+    },
+    [setSelectedParticipantForChat, updateChatById]
+  )
   const handleSelectParticipant = useCallback(
     (id: string) => {
-      if (isEnsembleActiveRoundDispatchLive(currentChat?.ensemble?.activeRound)) {
-        userOverrodeSelectionRef.current = true
-      }
-      setSelectedParticipantId(id)
+      const chatId = currentChat?.appChatId
+      if (!chatId) return
+      selectEnsembleParticipantForChat(chatId, id)
     },
-    [currentChat?.ensemble?.activeRound]
+    [currentChat?.appChatId, selectEnsembleParticipantForChat]
   )
   // Phase J3 (steer): the composer Steer button is visible while the
   // current chat has an in-flight run. `isChatBusy` is the per-chat
@@ -19910,6 +20063,50 @@ function App(): React.JSX.Element {
     () => buildQueuedMessagesAboveRowEntriesForChat(sideChat),
     [buildQueuedMessagesAboveRowEntriesForChat, sideChat]
   )
+  const updateEnsembleQueuedPromptsForRound = useCallback(
+    (
+      chatId: string,
+      roundId: string,
+      nextQueueOrReducer: string[] | ((currentQueue: string[]) => string[])
+    ): void => {
+      updateChatByIdLocalOnly(chatId, (source) => {
+        const activeRound = source.ensemble?.activeRound
+        if (!source.ensemble || !activeRound || activeRound.roundId !== roundId) {
+          return source
+        }
+        const currentQueue =
+          Array.isArray(activeRound.queuedPrompts) && activeRound.queuedPrompts.length > 0
+            ? activeRound.queuedPrompts
+            : activeRound.queuedPrompt
+              ? [activeRound.queuedPrompt]
+              : []
+        const nextQueue =
+          typeof nextQueueOrReducer === 'function'
+            ? nextQueueOrReducer(currentQueue)
+            : nextQueueOrReducer
+        if (
+          currentQueue.length === nextQueue.length &&
+          currentQueue.every((prompt, index) => prompt === nextQueue[index])
+        ) {
+          return source
+        }
+        return {
+          ...source,
+          ensemble: {
+            ...source.ensemble,
+            activeRound: {
+              ...activeRound,
+              queuedPrompt: nextQueue[0],
+              queuedPrompts: nextQueue
+            },
+            updatedAt: new Date().toISOString()
+          },
+          updatedAt: Date.now()
+        }
+      })
+    },
+    [updateChatByIdLocalOnly]
+  )
   // Edit: hoist the queued prompt into the composer textarea and
   // remove the queue entry. Most chat apps do this when the user
   // clicks "Edit" on a queued message — the result is a fresh
@@ -19924,10 +20121,11 @@ function App(): React.JSX.Element {
       // out of the array so the chain continues with the rest.
       const ensembleMatch = entryId.match(/^ensemble-queued-(.+)-(\d+)$/)
       if (ensembleMatch) {
+        const queuedRoundId = ensembleMatch[1]
         const idx = Number(ensembleMatch[2])
         const chat = targetChat || currentChat
         const round = chat?.ensemble?.activeRound
-        if (!chat || !round) return
+        if (!chat || !round || round.roundId !== queuedRoundId) return
         const currentQueue =
           Array.isArray(round.queuedPrompts) && round.queuedPrompts.length > 0
             ? round.queuedPrompts
@@ -19954,21 +20152,12 @@ function App(): React.JSX.Element {
             const nextQueue = Array.isArray(result.queuedPrompts)
               ? result.queuedPrompts
               : [...currentQueue.slice(0, idx), ...currentQueue.slice(idx + 1)]
-            const nextChat: ChatRecord = {
-              ...chat,
-              ensemble: {
-                ...chat.ensemble!,
-                activeRound: {
-                  ...round,
-                  queuedPrompt: nextQueue[0],
-                  queuedPrompts: nextQueue
-                },
-                updatedAt: new Date().toISOString()
-              }
-            }
-            chatByIdRef.current.set(nextChat.appChatId, nextChat)
-            setCurrentChat((prev) => (prev?.appChatId === nextChat.appChatId ? nextChat : prev))
-            setChats((prev) => prev.map((c) => (c.appChatId === nextChat.appChatId ? nextChat : c)))
+            updateEnsembleQueuedPromptsForRound(
+              chat.appChatId,
+              queuedRoundId,
+              (latestQueue) =>
+                mergeEnsembleQueuedPromptMutationResult(currentQueue, nextQueue, latestQueue)
+            )
           })
           .catch((error) => {
             appendThreadRawLog(chat.appChatId, {
@@ -19986,7 +20175,10 @@ function App(): React.JSX.Element {
         (job ? resolveQueuedDesktopRunRequest(job) : null) ||
         queuedRunsRef.current.find((request) => queuedRunFallbackId(request) === entryId)
       if (!match && !job) return
-      const targetChatId = match?.chatRecord?.appChatId || job?.chatId || currentChat?.appChatId
+      const recordedOwnerChatId = match?.chatRecord?.appChatId || job?.chatId || null
+      if (targetChat && recordedOwnerChatId !== targetChat.appChatId) return
+      const targetChatId =
+        targetChat?.appChatId || recordedOwnerChatId || currentChat?.appChatId
       if (targetChatId) {
         setChatPromptDraft(
           targetChatId,
@@ -19999,8 +20191,11 @@ function App(): React.JSX.Element {
         )
       }
       const scheduledRunAt = match?.scheduledRunAt || job?.request?.scheduledRunAt
-      if (scheduledRunAt) {
-        setScheduleRunAt(toDateTimeLocalValue(new Date(scheduledRunAt)))
+      if (scheduledRunAt && targetChatId) {
+        setScheduleRunAtForChat(
+          targetChatId,
+          toDateTimeLocalValue(new Date(scheduledRunAt))
+        )
       }
       setQueuedRuns((prev) =>
         prev.filter(
@@ -20017,7 +20212,13 @@ function App(): React.JSX.Element {
           .catch(() => {})
       }
     },
-    [currentChat, setChatPromptDraft, workspaces]
+    [
+      currentChat,
+      setChatPromptDraft,
+      setScheduleRunAtForChat,
+      updateEnsembleQueuedPromptsForRound,
+      workspaces
+    ]
   )
   // Delete: drop from local queue + transition the persistent job
   // to 'cancelled' so the store-backed listing doesn't resurrect it
@@ -20029,10 +20230,11 @@ function App(): React.JSX.Element {
       // reads from the front, so future entries remain in order.
       const ensembleMatch = entryId.match(/^ensemble-queued-(.+)-(\d+)$/)
       if (ensembleMatch) {
+        const queuedRoundId = ensembleMatch[1]
         const idx = Number(ensembleMatch[2])
         const chat = targetChat || currentChat
         const round = chat?.ensemble?.activeRound
-        if (!chat || !round) return
+        if (!chat || !round || round.roundId !== queuedRoundId) return
         const currentQueue =
           Array.isArray(round.queuedPrompts) && round.queuedPrompts.length > 0
             ? round.queuedPrompts
@@ -20058,21 +20260,12 @@ function App(): React.JSX.Element {
             const nextQueue = Array.isArray(result.queuedPrompts)
               ? result.queuedPrompts
               : [...currentQueue.slice(0, idx), ...currentQueue.slice(idx + 1)]
-            const nextChat: ChatRecord = {
-              ...chat,
-              ensemble: {
-                ...chat.ensemble!,
-                activeRound: {
-                  ...round,
-                  queuedPrompt: nextQueue[0],
-                  queuedPrompts: nextQueue
-                },
-                updatedAt: new Date().toISOString()
-              }
-            }
-            chatByIdRef.current.set(nextChat.appChatId, nextChat)
-            setCurrentChat((prev) => (prev?.appChatId === nextChat.appChatId ? nextChat : prev))
-            setChats((prev) => prev.map((c) => (c.appChatId === nextChat.appChatId ? nextChat : c)))
+            updateEnsembleQueuedPromptsForRound(
+              chat.appChatId,
+              queuedRoundId,
+              (latestQueue) =>
+                mergeEnsembleQueuedPromptMutationResult(currentQueue, nextQueue, latestQueue)
+            )
           })
           .catch((error) => {
             appendThreadRawLog(chat.appChatId, {
@@ -20090,6 +20283,8 @@ function App(): React.JSX.Element {
         (job ? resolveQueuedDesktopRunRequest(job) : null) ||
         queuedRunsRef.current.find((request) => queuedRunFallbackId(request) === entryId)
       if (!match && !job) return
+      const recordedOwnerChatId = match?.chatRecord?.appChatId || job?.chatId || null
+      if (targetChat && recordedOwnerChatId !== targetChat.appChatId) return
       setQueuedRuns((prev) =>
         prev.filter(
           (request) =>
@@ -20105,7 +20300,11 @@ function App(): React.JSX.Element {
           .catch(() => {})
       }
     },
-    [currentChat, workspaces]
+    [
+      currentChat,
+      updateEnsembleQueuedPromptsForRound,
+      workspaces
+    ]
   )
   // Blackboard: consume the queued ensemble prompt into a user-authored
   // blackboard note (session scope) WITHOUT interrupting the live round —
@@ -20117,10 +20316,11 @@ function App(): React.JSX.Element {
     (entryId: string, targetChat?: ChatRecord | null) => {
       const ensembleMatch = entryId.match(/^ensemble-queued-(.+)-(\d+)$/)
       if (!ensembleMatch) return
+      const queuedRoundId = ensembleMatch[1]
       const idx = Number(ensembleMatch[2])
       const chat = targetChat || currentChat
       const round = chat?.ensemble?.activeRound
-      if (!chat || !round) return
+      if (!chat || !round || round.roundId !== queuedRoundId) return
       const currentQueue =
         Array.isArray(round.queuedPrompts) && round.queuedPrompts.length > 0
           ? round.queuedPrompts
@@ -20146,22 +20346,19 @@ function App(): React.JSX.Element {
           // Optimistic queue splice mirrors handleDeleteQueuedMessage; the
           // new blackboard entry itself arrives via the chat-updated
           // broadcast from the main-side save.
-          const nextQueue = [...currentQueue.slice(0, idx), ...currentQueue.slice(idx + 1)]
-          const nextChat: ChatRecord = {
-            ...chat,
-            ensemble: {
-              ...chat.ensemble!,
-              activeRound: {
-                ...round,
-                queuedPrompt: nextQueue[0],
-                queuedPrompts: nextQueue
-              },
-              updatedAt: new Date().toISOString()
+          updateEnsembleQueuedPromptsForRound(
+            chat.appChatId,
+            queuedRoundId,
+            (latestQueue) => {
+              const latestIndex =
+                latestQueue[idx] === target ? idx : latestQueue.indexOf(target)
+              if (latestIndex < 0) return latestQueue
+              return [
+                ...latestQueue.slice(0, latestIndex),
+                ...latestQueue.slice(latestIndex + 1)
+              ]
             }
-          }
-          chatByIdRef.current.set(nextChat.appChatId, nextChat)
-          setCurrentChat((prev) => (prev?.appChatId === nextChat.appChatId ? nextChat : prev))
-          setChats((prev) => prev.map((c) => (c.appChatId === nextChat.appChatId ? nextChat : c)))
+          )
         })
         .catch((error) => {
           appendThreadRawLog(chat.appChatId, {
@@ -20170,7 +20367,7 @@ function App(): React.JSX.Element {
           })
         })
     },
-    [currentChat]
+    [currentChat, updateEnsembleQueuedPromptsForRound]
   )
   // Steer to a queued item: cancel the chat's active run, then
   // dispatch this queued request immediately. Same gentle handoff
@@ -20195,10 +20392,11 @@ function App(): React.JSX.Element {
       // the replacement round, so multi-item queues are preserved.
       const ensembleMatch = entryId.match(/^ensemble-queued-(.+)-(\d+)$/)
       if (ensembleMatch) {
+        const queuedRoundId = ensembleMatch[1]
         const idx = Number(ensembleMatch[2])
         const chat = targetChat || currentChat
         const round = chat?.ensemble?.activeRound
-        if (!chat || !round) return
+        if (!chat || !round || round.roundId !== queuedRoundId) return
         const ensembleChatId = chat.appChatId
         // Single-flight parity with the composer Steer (see `handleSteer`). A
         // steered round dispatches asynchronously main-side — the interrupted
@@ -20262,11 +20460,14 @@ function App(): React.JSX.Element {
         (job ? resolveQueuedDesktopRunRequest(job) : null) ||
         queuedRunsRef.current.find((request) => queuedRunFallbackId(request) === entryId)
       if (!match) return
-      const targetChatId = match.chatRecord?.appChatId || job?.chatId || currentChat?.appChatId
+      const recordedOwnerChatId = match.chatRecord?.appChatId || job?.chatId || null
+      if (targetChat && recordedOwnerChatId !== targetChat.appChatId) return
+      const targetChatId =
+        targetChat?.appChatId || recordedOwnerChatId || currentChat?.appChatId
       const targetRecord =
+        (targetChatId ? chatByIdRef.current.get(targetChatId) : null) ||
         targetChat ||
         match.chatRecord ||
-        (targetChatId ? chatByIdRef.current.get(targetChatId) : null) ||
         null
 
       const activeContext = targetChatId ? resolveActiveRunContextForChat(targetChatId) : null
@@ -23558,7 +23759,7 @@ function App(): React.JSX.Element {
     []
   )
   const handleRunMultiviewPane = useCallback(
-    (paneIndex: number, chatId: string) => {
+    (paneIndex: number, chatId: string, dmTargetParticipantId?: string) => {
       const paneChat = chatByIdRef.current.get(chatId)
       if (!paneChat) return
       const panePrompt = composerDraftsByChatIdRef.current[chatId] || ''
@@ -23575,6 +23776,7 @@ function App(): React.JSX.Element {
             : false,
         imageAttachments: paneAttachments
       })
+      if (dmTargetParticipantId) request.dmTargetParticipantId = dmTargetParticipantId
       if (
         shouldQueueRunBeforeDispatch({
           chatKind: paneChat.chatKind,
@@ -23946,32 +24148,43 @@ function App(): React.JSX.Element {
       updateChatById
     ]
   )
-  const resolvePaneSlashParticipant = (chat: ChatRecord): EnsembleParticipant | null =>
-    resolveSlashParticipantForChat(chat)
-  const resolvePaneSlashProvider = (chat: ChatRecord, provider: ProviderId): ProviderId => {
-    const slashParticipant = resolvePaneSlashParticipant(chat)
-    return chat.chatKind === 'ensemble' && slashParticipant ? slashParticipant.provider : provider
+  const paneSlashCommandHelperImpls = {
+    buildScopedComposerSlashExtraCommands,
+    resolveSlashPaletteItems
   }
+  const paneSlashCommandHelperImplsRef = useRef(paneSlashCommandHelperImpls)
+  paneSlashCommandHelperImplsRef.current = paneSlashCommandHelperImpls
+  const paneSlashCommandHelpers = useMemo(() => {
+    const ref = paneSlashCommandHelperImplsRef
+    type ImplKey = keyof typeof paneSlashCommandHelperImpls
+    const wrapped = {} as Record<ImplKey, (...args: unknown[]) => unknown>
+    for (const key of Object.keys(ref.current) as ImplKey[]) {
+      wrapped[key] = (...args: unknown[]) =>
+        (ref.current[key] as (...args: unknown[]) => unknown)(...args)
+    }
+    return wrapped as typeof paneSlashCommandHelperImpls
+  }, [])
   const buildPaneComposerSlashCommands = useCallback(
     (
       paneIndex: number,
       chat: ChatRecord,
       provider: ProviderId,
-      workspace: WorkspaceRecord | null
+      workspace: WorkspaceRecord | null,
+      selectedParticipant: EnsembleParticipant | null
     ) => {
-      const slashParticipant = resolvePaneSlashParticipant(chat)
-      const slashProvider = resolvePaneSlashProvider(chat, provider)
+      const slashParticipant = selectedParticipant
+      const slashProvider = slashParticipant?.provider ?? provider
       const focusPane = (): void => handleFocusMultiviewPane(paneIndex, chat.appChatId)
       const preserveForFocusedFlow = (ctx: SlashCommandRunContext, message: string): void =>
         preserveSlashDraftForFocusedFlow(ctx, focusPane, message)
-      const paletteItems = resolveSlashPaletteItems(slashProvider)
+      const paletteItems = paneSlashCommandHelpers.resolveSlashPaletteItems(slashProvider)
       return buildComposerSlashCommandRegistry({
         provider: slashProvider,
         paletteItems,
         capabilities:
           providerCapabilitiesByProvider[slashProvider] ||
           (slashProvider === currentProvider ? currentProviderCapabilities : undefined),
-        extraCommands: buildScopedComposerSlashExtraCommands({
+        extraCommands: paneSlashCommandHelpers.buildScopedComposerSlashExtraCommands({
           chat,
           provider: slashProvider,
           workspace,
@@ -24020,9 +24233,8 @@ function App(): React.JSX.Element {
       handleFocusMultiviewPane,
       handleMultiviewPaneCopyTranscript,
       handleMultiviewPanePickAttachments,
-      buildScopedComposerSlashExtraCommands,
+      paneSlashCommandHelpers,
       providerCapabilitiesByProvider,
-      resolveSlashPaletteItems
     ]
   )
   const handleSelectMultiviewLayout = useCallback(
@@ -24042,6 +24254,24 @@ function App(): React.JSX.Element {
     }
     const viewerProvider = getChatProvider(viewerChat)
     const viewerIsGlobalChat = isGlobalChat(viewerChat)
+    const viewerLiveEnsembleRound = activeEnsembleRoundForComposer(
+      viewerChat.ensemble?.activeRound
+    )
+    const viewerRoundSelectionKey = viewerLiveEnsembleRound?.roundId
+      ? `${viewerChatId}:${viewerLiveEnsembleRound.roundId}`
+      : null
+    const viewerSelectedParticipantId =
+      viewerLiveEnsembleRound?.activeParticipantId &&
+      (!viewerRoundSelectionKey || !userOverrodeSelectionRoundKeys.has(viewerRoundSelectionKey))
+        ? viewerLiveEnsembleRound.activeParticipantId
+        : selectedParticipantIdByChatId[viewerChatId]
+    const viewerEnsembleProjection = buildMultiviewEnsembleComposerProjection(
+      viewerChat,
+      Array.isArray(agentStatusByProvider.ollama?.models)
+        ? agentStatusByProvider.ollama.models
+        : [],
+      viewerSelectedParticipantId
+    )
     const viewerOwnsFocusedTrust =
       viewerPaneIndex === multiview.focusedPaneIndex &&
       currentChatIdRef.current === viewerChatId
@@ -24576,9 +24806,14 @@ function App(): React.JSX.Element {
     const paneDiffActionMenuOpen = Boolean(diffActionMenuOpenByChatId[viewerChatId])
     // Adapter: <Composer> calls handleRun()/handleRun(_, _, dmTarget) with no
     // chat context (it operates on `currentComposerChatId` in the focused case).
-    // For a pane we delegate to the pane runner scoped to this pane's chat. The
-    // ensemble dmTarget arg is a focused-only nicety here (TODO(per-pane)).
-    const paneHandleRun = (): void => handleRunMultiviewPane(viewerPaneIndex, viewerChatId)
+    // For a pane we delegate to the pane runner scoped to this pane's chat,
+    // including the directed participant selected by an @mention/modifier send.
+    const paneHandleRun = (
+      _overrideModel?: string,
+      _existingPrompt?: string,
+      dmTargetParticipantId?: string
+    ): void =>
+      handleRunMultiviewPane(viewerPaneIndex, viewerChatId, dmTargetParticipantId)
     const paneHandleCancel = (): void => handleCancelMultiviewPane(viewerPaneIndex, viewerChatId)
     const paneHandleProviderChange = (provider: ProviderId, model?: string): void =>
       handleMultiviewPaneProviderChange(viewerPaneIndex, viewerChatId, provider, model)
@@ -24595,32 +24830,34 @@ function App(): React.JSX.Element {
     // display fields below (selectedModelType/codexReasoningEffort/etc.), so the
     // UI still reflects the persisted selection on the next render.
     const paneNoopSetter = (): void => {}
-    const paneSlashParticipant = resolvePaneSlashParticipant(viewerChat)
-    const paneSlashProvider = resolvePaneSlashProvider(viewerChat, viewerProvider)
-    const paneSelectParticipant = (participantId: string): void => {
-      updateChatById(viewerChatId, (source) => ({
-        ...source,
-        providerMetadata: {
-          ...(source.providerMetadata || {}),
-          [SIDE_CHAT_SELECTED_PARTICIPANT_ID_METADATA_KEY]: participantId
-        },
-        updatedAt: Date.now()
-      }))
-    }
+    const paneSlashParticipant = viewerEnsembleProjection.selectedParticipant
+    const paneSlashProvider = paneSlashParticipant?.provider ?? viewerProvider
+    const paneSelectParticipant = (participantId: string): void =>
+      selectEnsembleParticipantForChat(viewerChatId, participantId)
     const paneUpdateSelectedParticipant = (patch: Partial<EnsembleParticipant>): void => {
       if (!paneSlashParticipant) return
-      const nextChat = patchParticipantWithSeatGate(viewerChat, paneSlashParticipant.id, patch)
-      if (!nextChat) return
-      updateChatById(viewerChatId, () => nextChat)
+      patchEnsembleParticipantForChat(viewerChatId, paneSlashParticipant.id, patch)
     }
     const panePatchParticipantById = (
       participantId: string,
       patch: Partial<EnsembleParticipant>
     ): void => {
-      const nextChat = patchParticipantWithSeatGate(viewerChat, participantId, patch)
-      if (!nextChat) return
-      updateChatById(viewerChatId, () => nextChat)
+      patchEnsembleParticipantForChat(viewerChatId, participantId, patch)
     }
+    const paneQueuedMessagesAboveRowEntries =
+      buildQueuedMessagesAboveRowEntriesForChat(viewerChat)
+    const paneIsChatBusyForSteer =
+      viewerIsRunning || viewerEnsembleProjection.isRoundRunning
+    const paneIsSteerBusyForCurrentChat = isSteerInFlight({
+      state: steerState,
+      chatId: viewerChatId
+    })
+    const paneSteerIndicatorMessage = getSteerIndicatorMessage({
+      state: steerState,
+      chatId: viewerChatId,
+      providerLabel: getProviderLabel(viewerProvider),
+      turnLabel: paneIsEnsembleChat ? 'ensemble round' : undefined
+    })
     const paneHumanCollaborationShare =
       activeHumanCollaborationShareByChatId.get(viewerChatId) || null
     const paneComposerCtx: ComposerProps = {
@@ -24683,11 +24920,62 @@ function App(): React.JSX.Element {
       handleSelectParticipant: paneSelectParticipant,
       updateSelectedParticipant: paneUpdateSelectedParticipant,
       patchEnsembleParticipantById: panePatchParticipantById,
+      currentComposerMentionParticipants: viewerEnsembleProjection.participants,
+      ensembleEnabledParticipantsForCurrent: viewerEnsembleProjection.enabledParticipants,
+      ensembleBlendStyle: viewerEnsembleProjection.providerBlendStyle as CSSProperties,
+      currentEnsembleOrchestrationMode: viewerEnsembleProjection.currentOrchestrationMode,
+      activeEnsembleOrchestrationMode: viewerEnsembleProjection.activeOrchestrationMode,
+      currentEnsembleFanoutPolicy: viewerEnsembleProjection.currentFanoutPolicy,
+      activeEnsembleFanoutPolicy: viewerEnsembleProjection.activeFanoutPolicy,
+      currentEnsembleConcurrentMode: viewerEnsembleProjection.currentConcurrentMode,
+      activeEnsembleConcurrentMode: viewerEnsembleProjection.activeConcurrentMode,
+      currentEnsembleContinuationHops: viewerEnsembleProjection.continuationHops,
+      currentEnsembleMaxContinuationHops: viewerEnsembleProjection.maxContinuationHops,
+      isCurrentEnsembleRoundRunning: viewerEnsembleProjection.isRoundRunning,
+      currentEnsembleRoundStatus: viewerEnsembleProjection.roundStatus,
+      currentEnsembleActiveGoalStatus: viewerEnsembleProjection.activeGoalStatus,
+      ensembleOllamaContextWarning: viewerEnsembleProjection.ollamaContextWarning,
+      applyEnsembleRosterPreset: (preset: EnsembleRosterPreset) =>
+        applyEnsembleRosterPresetToChat(viewerChatId, preset),
+      setActiveEnsembleRosterPresetId: (presetId: string | null) =>
+        setActiveEnsembleRosterPresetIdForChat(viewerChatId, presetId),
+      applyEnsemblePermissionsToAllParticipants: () => {
+        if (!paneSlashParticipant) return
+        applyEnsemblePermissionsToAllParticipantsForChat(
+          viewerChatId,
+          paneSlashParticipant.id
+        )
+      },
+      updateCurrentEnsembleOrchestrationMode: (mode: EnsembleOrchestrationMode) =>
+        updateEnsembleOrchestrationModeForChat(viewerChatId, mode),
+      updateCurrentEnsembleFanoutPolicy: (policy: EnsembleFanoutPolicy) =>
+        updateEnsembleFanoutPolicyForChat(viewerChatId, policy),
+      updateCurrentEnsembleConcurrentMode: (enabled: boolean) =>
+        updateEnsembleFanoutPolicyForChat(viewerChatId, enabled ? 'read_only' : 'off'),
+      updateCurrentEnsembleContextChars: (nextChars: number) =>
+        updateEnsembleContextCharsForChat(viewerChatId, nextChars),
+      updateCurrentEnsembleMaxContinuationHops: (nextMax: number) =>
+        updateEnsembleMaxContinuationHopsForChat(viewerChatId, nextMax),
+      queuedMessagesAboveRowEntries: paneQueuedMessagesAboveRowEntries,
+      handleEditQueuedMessage: (entryId: string) =>
+        handleEditQueuedMessage(entryId, viewerChat),
+      handleDeleteQueuedMessage: (entryId: string) =>
+        handleDeleteQueuedMessage(entryId, viewerChat),
+      handleBlackboardQueuedMessage: (entryId: string) =>
+        handleBlackboardQueuedMessage(entryId, viewerChat),
+      handleSteerToQueuedMessage: (entryId: string) =>
+        handleSteerToQueuedMessage(entryId, viewerChat),
+      isCurrentChatBusyForSteer: paneIsChatBusyForSteer,
+      isSteerBusyForCurrentChat: paneIsSteerBusyForCurrentChat,
+      steerIndicatorMessage: paneSteerIndicatorMessage,
+      setShowWorkSessionSheet: focusPaneForGoalControl,
+      handleStopWorkSession: async () => focusPaneForGoalControl(),
       composerSlashCommands: buildPaneComposerSlashCommands(
         viewerPaneIndex,
         viewerChat,
         viewerProvider,
-        viewerWorkspace
+        viewerWorkspace,
+        paneSlashParticipant
       ),
       handlePaletteCommand: (item: CommandPaletteItem) =>
         handlePanePaletteCommand(viewerPaneIndex, viewerChat, paneSlashProvider, viewerWorkspace, item),
@@ -24874,14 +25162,13 @@ function App(): React.JSX.Element {
       // plus-menu clicks open each pane's slash menu directly.
       openSlashCommandsRequestId: 0,
       // ── focused-only state that would otherwise LEAK into resting panes.
-      // Pending approvals, queued-message bubbles, and plan import remain hidden;
+      // Pending approvals and plan import remain hidden;
       // git/worktree + secondary-workspace fields are derived per pane below.
       pendingAgentApproval: null,
       permissionRequestPaths: [],
       permissionRequestTitle: '',
       permissionRequestSource: undefined,
       permissionRequestMessage: '',
-      queuedMessagesAboveRowEntries: [],
       // Per-pane git snapshot: the branch/sync/merge chips + Review/Push action now
       // read THIS pane's snapshot (was hard-null, which dropped ahead/behind + merge
       // for panes). Branch label still falls back to currentWorkspace.branch if absent.
@@ -24910,11 +25197,8 @@ function App(): React.JSX.Element {
         attachedWindowOwnerChatIdRef.current === viewerChatId ? attachedWindow : null,
       isAttachingWindow:
         attachedWindowOwnerChatIdRef.current === viewerChatId ? isAttachingWindow : false
-      // TODO(per-pane): the remaining focused-only concepts (gemini memory/trust,
-      // ensemble roster editing, steer-to-queued, queued-message editing) are
-      // reused from `composerCtx` as harmless placeholders — they operate on
-      // focused state, not this pane's chat. A later slice plumbs per-pane
-      // variants where they prove worth the cost.
+      // TODO(per-pane): Gemini memory remains focused-only. Trust, Ensemble
+      // roster/config, queue, and steer controls above are explicitly pane-owned.
       // TODO(per-pane): duplicate-chat shares draft — `setChatPromptDraft` is
       // keyed by chatId, so the same chat shown in two panes shares one draft.
     }
@@ -25119,10 +25403,25 @@ function App(): React.JSX.Element {
   // composer handler bag (behaviour-identical, identity-stable). These are NOT
   // composer props — kept in their own bag so they don't leak onto <Composer>.
   const paneCtxHelperImpls = {
+    applyEnsemblePermissionsToAllParticipantsForChat,
+    applyEnsembleRosterPresetToChat,
+    buildQueuedMessagesAboveRowEntriesForChat,
     getChatComposerSelection,
+    getRuntimeProfileIdForChat,
     getWorkspaceForChat,
     getProviderModelOptions,
-    paneGhostEnabled
+    handleBlackboardQueuedMessage,
+    handleDeleteQueuedMessage,
+    handleEditQueuedMessage,
+    handleSteerToQueuedMessage,
+    paneGhostEnabled,
+    patchEnsembleParticipantForChat,
+    selectEnsembleParticipantForChat,
+    setActiveEnsembleRosterPresetIdForChat,
+    updateEnsembleContextCharsForChat,
+    updateEnsembleFanoutPolicyForChat,
+    updateEnsembleMaxContinuationHopsForChat,
+    updateEnsembleOrchestrationModeForChat
   }
   const paneCtxHelperImplsRef = useRef(paneCtxHelperImpls)
   paneCtxHelperImplsRef.current = paneCtxHelperImpls
@@ -25424,6 +25723,24 @@ function App(): React.JSX.Element {
       if (!viewerChat) return null
       const viewerProvider = getChatProvider(viewerChat)
       const viewerIsGlobalChat = isGlobalChat(viewerChat)
+      const viewerLiveEnsembleRound = activeEnsembleRoundForComposer(
+        viewerChat.ensemble?.activeRound
+      )
+      const viewerRoundSelectionKey = viewerLiveEnsembleRound?.roundId
+        ? `${viewerChatId}:${viewerLiveEnsembleRound.roundId}`
+        : null
+      const viewerSelectedParticipantId =
+        viewerLiveEnsembleRound?.activeParticipantId &&
+        (!viewerRoundSelectionKey || !userOverrodeSelectionRoundKeys.has(viewerRoundSelectionKey))
+          ? viewerLiveEnsembleRound.activeParticipantId
+          : selectedParticipantIdByChatId[viewerChatId]
+      const viewerEnsembleProjection = buildMultiviewEnsembleComposerProjection(
+        viewerChat,
+        Array.isArray(agentStatusByProvider.ollama?.models)
+          ? agentStatusByProvider.ollama.models
+          : [],
+        viewerSelectedParticipantId
+      )
       const viewerWorkspace = paneCtxHelpers.getWorkspaceForChat(viewerChat)
       const viewerBaseWorkspacePath = viewerWorkspace?.path || viewerChat.workspacePath || ''
       const viewerWorktreeSelection = viewerBaseWorkspacePath
@@ -25625,9 +25942,14 @@ function App(): React.JSX.Element {
       const paneDiffActionMenuOpen = Boolean(diffActionMenuOpenByChatId[viewerChatId])
       // Adapter: <Composer> calls handleRun()/handleRun(_, _, dmTarget) with no
       // chat context (it operates on `currentComposerChatId` in the focused case).
-      // For a pane we delegate to the pane runner scoped to this pane's chat. The
-      // ensemble dmTarget arg is a focused-only nicety here (TODO(per-pane)).
-      const paneHandleRun = (): void => handleRunMultiviewPane(viewerPaneIndex, viewerChatId)
+      // For a pane we delegate to the pane runner scoped to this pane's chat,
+      // including the directed participant selected by an @mention/modifier send.
+      const paneHandleRun = (
+        _overrideModel?: string,
+        _existingPrompt?: string,
+        dmTargetParticipantId?: string
+      ): void =>
+        handleRunMultiviewPane(viewerPaneIndex, viewerChatId, dmTargetParticipantId)
       const paneHandleCancel = (): void => handleCancelMultiviewPane(viewerPaneIndex, viewerChatId)
       const paneHandleProviderChange = (provider: ProviderId, model?: string): void =>
         handleMultiviewPaneProviderChange(viewerPaneIndex, viewerChatId, provider, model)
@@ -25644,54 +25966,38 @@ function App(): React.JSX.Element {
       // display fields below (selectedModelType/codexReasoningEffort/etc.), so the
       // UI still reflects the persisted selection on the next render.
       const paneNoopSetter = (): void => {}
-      const paneSlashParticipant = resolvePaneSlashParticipant(viewerChat)
-      const paneSlashProvider = resolvePaneSlashProvider(viewerChat, viewerProvider)
-      const paneSelectParticipant = (participantId: string): void => {
-        updateChatById(viewerChatId, (source) => ({
-          ...source,
-          providerMetadata: {
-            ...(source.providerMetadata || {}),
-            [SIDE_CHAT_SELECTED_PARTICIPANT_ID_METADATA_KEY]: participantId
-          },
-          updatedAt: Date.now()
-        }))
-      }
+      const paneSlashParticipant = viewerEnsembleProjection.selectedParticipant
+      const paneSlashProvider = paneSlashParticipant?.provider ?? viewerProvider
+      const paneSelectParticipant = (participantId: string): void =>
+        paneCtxHelpers.selectEnsembleParticipantForChat(viewerChatId, participantId)
       const paneUpdateSelectedParticipant = (patch: Partial<EnsembleParticipant>): void => {
         if (!paneSlashParticipant) return
-        updateChatById(viewerChatId, (source) => ({
-          ...source,
-          ensemble: source.ensemble
-            ? {
-                ...source.ensemble,
-                participants: source.ensemble.participants.map((participant) =>
-                  participant.id === paneSlashParticipant.id
-                    ? { ...participant, ...patch }
-                    : participant
-                ),
-                updatedAt: new Date().toISOString()
-              }
-            : source.ensemble,
-          updatedAt: Date.now()
-        }))
+        paneCtxHelpers.patchEnsembleParticipantForChat(
+          viewerChatId,
+          paneSlashParticipant.id,
+          patch
+        )
       }
       const panePatchParticipantById = (
         participantId: string,
         patch: Partial<EnsembleParticipant>
       ): void => {
-        updateChatById(viewerChatId, (source) => ({
-          ...source,
-          ensemble: source.ensemble
-            ? {
-                ...source.ensemble,
-                participants: source.ensemble.participants.map((participant) =>
-                  participant.id === participantId ? { ...participant, ...patch } : participant
-                ),
-                updatedAt: new Date().toISOString()
-              }
-            : source.ensemble,
-          updatedAt: Date.now()
-        }))
+        paneCtxHelpers.patchEnsembleParticipantForChat(viewerChatId, participantId, patch)
       }
+      const paneQueuedMessagesAboveRowEntries =
+        paneCtxHelpers.buildQueuedMessagesAboveRowEntriesForChat(viewerChat)
+      const paneIsChatBusyForSteer =
+        viewerIsRunning || viewerEnsembleProjection.isRoundRunning
+      const paneIsSteerBusyForCurrentChat = isSteerInFlight({
+        state: steerState,
+        chatId: viewerChatId
+      })
+      const paneSteerIndicatorMessage = getSteerIndicatorMessage({
+        state: steerState,
+        chatId: viewerChatId,
+        providerLabel: getProviderLabel(viewerProvider),
+        turnLabel: paneIsEnsembleChat ? 'ensemble round' : undefined
+      })
       const paneHumanCollaborationShare =
         activeHumanCollaborationShareByChatId.get(viewerChatId) || null
       const paneComposerCtx: ComposerProps = {
@@ -25754,11 +26060,65 @@ function App(): React.JSX.Element {
         handleSelectParticipant: paneSelectParticipant,
         updateSelectedParticipant: paneUpdateSelectedParticipant,
         patchEnsembleParticipantById: panePatchParticipantById,
+        currentComposerMentionParticipants: viewerEnsembleProjection.participants,
+        ensembleEnabledParticipantsForCurrent: viewerEnsembleProjection.enabledParticipants,
+        ensembleBlendStyle: viewerEnsembleProjection.providerBlendStyle as CSSProperties,
+        currentEnsembleOrchestrationMode: viewerEnsembleProjection.currentOrchestrationMode,
+        activeEnsembleOrchestrationMode: viewerEnsembleProjection.activeOrchestrationMode,
+        currentEnsembleFanoutPolicy: viewerEnsembleProjection.currentFanoutPolicy,
+        activeEnsembleFanoutPolicy: viewerEnsembleProjection.activeFanoutPolicy,
+        currentEnsembleConcurrentMode: viewerEnsembleProjection.currentConcurrentMode,
+        activeEnsembleConcurrentMode: viewerEnsembleProjection.activeConcurrentMode,
+        currentEnsembleContinuationHops: viewerEnsembleProjection.continuationHops,
+        currentEnsembleMaxContinuationHops: viewerEnsembleProjection.maxContinuationHops,
+        isCurrentEnsembleRoundRunning: viewerEnsembleProjection.isRoundRunning,
+        currentEnsembleRoundStatus: viewerEnsembleProjection.roundStatus,
+        currentEnsembleActiveGoalStatus: viewerEnsembleProjection.activeGoalStatus,
+        ensembleOllamaContextWarning: viewerEnsembleProjection.ollamaContextWarning,
+        applyEnsembleRosterPreset: (preset: EnsembleRosterPreset) =>
+          paneCtxHelpers.applyEnsembleRosterPresetToChat(viewerChatId, preset),
+        setActiveEnsembleRosterPresetId: (presetId: string | null) =>
+          paneCtxHelpers.setActiveEnsembleRosterPresetIdForChat(viewerChatId, presetId),
+        applyEnsemblePermissionsToAllParticipants: () => {
+          if (!paneSlashParticipant) return
+          paneCtxHelpers.applyEnsemblePermissionsToAllParticipantsForChat(
+            viewerChatId,
+            paneSlashParticipant.id
+          )
+        },
+        updateCurrentEnsembleOrchestrationMode: (mode: EnsembleOrchestrationMode) =>
+          paneCtxHelpers.updateEnsembleOrchestrationModeForChat(viewerChatId, mode),
+        updateCurrentEnsembleFanoutPolicy: (policy: EnsembleFanoutPolicy) =>
+          paneCtxHelpers.updateEnsembleFanoutPolicyForChat(viewerChatId, policy),
+        updateCurrentEnsembleConcurrentMode: (enabled: boolean) =>
+          paneCtxHelpers.updateEnsembleFanoutPolicyForChat(
+            viewerChatId,
+            enabled ? 'read_only' : 'off'
+          ),
+        updateCurrentEnsembleContextChars: (nextChars: number) =>
+          paneCtxHelpers.updateEnsembleContextCharsForChat(viewerChatId, nextChars),
+        updateCurrentEnsembleMaxContinuationHops: (nextMax: number) =>
+          paneCtxHelpers.updateEnsembleMaxContinuationHopsForChat(viewerChatId, nextMax),
+        queuedMessagesAboveRowEntries: paneQueuedMessagesAboveRowEntries,
+        handleEditQueuedMessage: (entryId: string) =>
+          paneCtxHelpers.handleEditQueuedMessage(entryId, viewerChat),
+        handleDeleteQueuedMessage: (entryId: string) =>
+          paneCtxHelpers.handleDeleteQueuedMessage(entryId, viewerChat),
+        handleBlackboardQueuedMessage: (entryId: string) =>
+          paneCtxHelpers.handleBlackboardQueuedMessage(entryId, viewerChat),
+        handleSteerToQueuedMessage: (entryId: string) =>
+          paneCtxHelpers.handleSteerToQueuedMessage(entryId, viewerChat),
+        isCurrentChatBusyForSteer: paneIsChatBusyForSteer,
+        isSteerBusyForCurrentChat: paneIsSteerBusyForCurrentChat,
+        steerIndicatorMessage: paneSteerIndicatorMessage,
+        setShowWorkSessionSheet: focusPaneForGoalControl,
+        handleStopWorkSession: async () => focusPaneForGoalControl(),
         composerSlashCommands: buildPaneComposerSlashCommands(
           viewerPaneIndex,
           viewerChat,
           viewerProvider,
-          viewerWorkspace
+          viewerWorkspace,
+          paneSlashParticipant
         ),
         handlePaletteCommand: (item: CommandPaletteItem) =>
           handlePanePaletteCommand(
@@ -25817,7 +26177,7 @@ function App(): React.JSX.Element {
         selectedComposerModelType: viewerSelectedModel,
         selectedRuntimeProfileId:
           paneSlashParticipant?.runtimeProfileId ||
-          getRuntimeProfileIdForChat(viewerChat, viewerProvider) ||
+          paneCtxHelpers.getRuntimeProfileIdForChat(viewerChat, viewerProvider) ||
           null,
         customModel: paneViewerSelection.customModel || '',
         codexReasoningEffort: viewerCodexReasoning,
@@ -25937,14 +26297,13 @@ function App(): React.JSX.Element {
         // plus-menu clicks open each pane's slash menu directly.
         openSlashCommandsRequestId: 0,
         // ── focused-only state that would otherwise LEAK into resting panes.
-        // Pending approvals, queued-message bubbles, and plan import remain hidden;
+        // Pending approvals and plan import remain hidden;
         // git/worktree + secondary-workspace fields are derived per pane below.
         pendingAgentApproval: null,
         permissionRequestPaths: [],
         permissionRequestTitle: '',
         permissionRequestSource: undefined,
         permissionRequestMessage: '',
-        queuedMessagesAboveRowEntries: [],
         // Per-pane git snapshot: the branch/sync/merge chips + Review/Push action now
         // read THIS pane's snapshot (was hard-null, which dropped ahead/behind + merge
         // for panes). Branch label still falls back to currentWorkspace.branch if absent.
@@ -25973,11 +26332,8 @@ function App(): React.JSX.Element {
           attachedWindowOwnerChatIdRef.current === viewerChatId ? attachedWindow : null,
         isAttachingWindow:
           attachedWindowOwnerChatIdRef.current === viewerChatId ? isAttachingWindow : false
-        // TODO(per-pane): the remaining focused-only concepts (gemini memory/trust,
-        // ensemble roster editing, steer-to-queued, queued-message editing) are
-        // reused from `composerCtx` as harmless placeholders — they operate on
-        // focused state, not this pane's chat. A later slice plumbs per-pane
-        // variants where they prove worth the cost.
+        // TODO(per-pane): Gemini memory remains focused-only. Trust, Ensemble
+        // roster/config, queue, and steer controls above are explicitly pane-owned.
         // TODO(per-pane): duplicate-chat shares draft — `setChatPromptDraft` is
         // keyed by chatId, so the same chat shown in two panes shares one draft.
       }
@@ -25985,6 +26341,7 @@ function App(): React.JSX.Element {
     },
     [
       activeHumanCollaborationShareByChatId,
+      agentStatusByProvider.ollama?.models,
       clearExternalPathGrantPrompt,
       composerWorktreeByWorkspace,
       connectedCollaborationChatIds,
@@ -26029,14 +26386,21 @@ function App(): React.JSX.Element {
       openHumanCollaborationRemoteSetup,
       pendingHumanCollaborationInviteChatIds,
       persistExternalPathGrantPromptForChat,
+      providerRates,
       readHumanCollaborationInviteHealth,
       rememberMultiviewPaneComposerSelection,
+      resolveLiveOllamaContextLength,
       runQueueJobs,
       runningChatIds,
+      selectedParticipantIdByChatId,
+      setChatPromptDraft,
       setDiffActionMenuOpenForChat,
+      settings?.userName,
+      steerState,
       stopHumanCollaborationSharingForChat,
       usageInitialized,
       usageRecords,
+      userOverrodeSelectionRoundKeys,
       welcomeExternalHeatmapEnabled,
       welcomeHeatmapRefreshKey,
       welcomeTaskWraithHeatmapEnabled,
