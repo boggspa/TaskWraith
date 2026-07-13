@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   CODEX_STAGED_ROLLOUT_MODEL_IDS,
+  CODEX_WIRE_REASONING_EFFORTS,
   codexReasoningEffortsForModel,
   codexModelContextConfig,
   codexWireReasoningEffort,
@@ -326,9 +327,32 @@ describe('getStaticProviderModels (provider-specific catalogs)', () => {
     expect(codexWireReasoningEffort('high')).toBe('high')
     expect(codexWireReasoningEffort('medium')).toBe('medium')
     expect(codexWireReasoningEffort('minimal')).toBe('minimal')
-    expect(codexWireReasoningEffort('')).toBeUndefined()
-    expect(codexWireReasoningEffort(null)).toBeUndefined()
-    expect(codexWireReasoningEffort(undefined)).toBeUndefined()
+    expect(codexWireReasoningEffort('OFF')).toBe('none')
+    expect(codexWireReasoningEffort('light')).toBe('low')
+    expect(codexWireReasoningEffort('extra')).toBe('xhigh')
+  })
+
+  it('resolves unset and unknown effort to an explicit renderer-equivalent default', () => {
+    // Never omit the wire value: omission would inherit ~/.codex/config.toml,
+    // which can contain a tier (for example max) that the selected model rejects.
+    expect(codexWireReasoningEffort('', 'gpt-5.5')).toBe('medium')
+    expect(codexWireReasoningEffort('   ', 'gpt-5.5')).toBe('medium')
+    expect(codexWireReasoningEffort(null, 'gpt-5.5')).toBe('medium')
+    expect(codexWireReasoningEffort(undefined, 'gpt-5.5')).toBe('medium')
+    expect(codexWireReasoningEffort('future-tier', 'gpt-5.5')).toBe('medium')
+    expect(codexWireReasoningEffort(undefined, 'gpt-5.6-sol')).toBe('medium')
+    expect(codexWireReasoningEffort(undefined, 'future-codex-model')).toBe('medium')
+  })
+
+  it('maps every advertised static tier onto the finite accepted wire enum', () => {
+    const accepted = new Set<string>(CODEX_WIRE_REASONING_EFFORTS)
+    const models = getStaticProviderModels('codex') as StaticModelShape[]
+    for (const model of models) {
+      expect(accepted.has(codexWireReasoningEffort(undefined, model.id))).toBe(true)
+      for (const option of model.supportedReasoningEfforts || []) {
+        expect(accepted.has(codexWireReasoningEffort(option.reasoningEffort, model.id))).toBe(true)
+      }
+    }
   })
 
   it('clamps above-xhigh tiers regardless of the target model', () => {

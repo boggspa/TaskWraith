@@ -194,7 +194,6 @@ import {
   codexReasoningSummaryActivityId,
   codexReasoningSummaryDisplayText,
   codexReasoningSummaryGroupDisplayText,
-  codexReasoningSummaryModeForEffort,
   codexReasoningSummaryText,
   codexString,
   codexTimelineItemId,
@@ -202,6 +201,12 @@ import {
   codexToolUseFromItem,
   summarizeCodexFileChanges
 } from './codex/CodexEventFormatting'
+import {
+  buildCodexThreadResumeRequest,
+  buildCodexTurnStartRequest,
+  resolveCodexOutboundReasoning,
+  resolvePersistedCodexModelSelection
+} from './codex/CodexOutboundReasoning'
 import {
   resolveCodexMcpRouteHint,
   type CodexMcpRouteHint
@@ -654,9 +659,7 @@ import {
   CODEX_MODEL_RETIREMENTS,
   CODEX_RETIRED_MODEL_IDS,
   claudePermissionModeForApproval,
-  codexModelContextConfig,
   codexReasoningEffortsForModel,
-  codexWireReasoningEffort,
   getStaticProviderModels,
   mergeCodexLiveModelRows,
   normalizeCliProviderModel,
@@ -16702,6 +16705,9 @@ function createCodexRunState(
     cwd,
     workspacePath,
     model,
+    ...(payload
+      ? { reasoningEffort: resolveCodexOutboundReasoning(model, payload.reasoningEffort).effort }
+      : {}),
     approvalMode: payload?.approvalMode,
     workflowMode: payload?.workflowMode,
     sessionTrust: Boolean(payload?.sessionTrust),
@@ -17172,6 +17178,8 @@ async function compactCodexProviderContext(payload: {
   chatId: string
   providerSessionId?: string
   participantId?: string
+  model?: string
+  reasoningEffort?: string | null
   /** Frozen ensemble-participant presentation for the card (see
    * resolveEnsembleCompactionTarget); absent on solo chats. */
   cardMetadata?: Record<string, unknown>
@@ -17192,6 +17200,28 @@ async function compactCodexProviderContext(payload: {
     )
     return { ok: false, error }
   }
+  const soloMetadata = payload.participantId
+    ? undefined
+    : ((chat.providerMetadata || {}) as Record<string, unknown>)
+  const lastSoloCodexRun = payload.participantId
+    ? undefined
+    : [...(chat.runs || [])].reverse().find((run) => run.provider === 'codex')
+  const persistedSoloModel = resolvePersistedCodexModelSelection({
+    selectedModelType: soloMetadata?.selectedModelType,
+    customModel: soloMetadata?.customModel,
+    lastRunActualModel: lastSoloCodexRun?.actualModel,
+    lastRunRequestedModel: lastSoloCodexRun?.requestedModel,
+    chatLastActualModel: chat.lastActualModel,
+    chatRequestedModel: chat.requestedModel
+  })
+  const persistedSoloReasoning =
+    typeof soloMetadata?.codexReasoningEffort === 'string'
+      ? soloMetadata.codexReasoningEffort
+      : providerSeatMetadataString(lastSoloCodexRun?.providerMetadata, 'reasoningEffort')
+  const codexReasoning = resolveCodexOutboundReasoning(
+    payload.model || persistedSoloModel,
+    payload.reasoningEffort !== undefined ? payload.reasoningEffort : persistedSoloReasoning
+  )
   // Review fix (TOCTOU): reserve the thread SYNCHRONOUSLY before any await —
   // the old shape checked the guard here but registered after ensureStarted,
   // so a double-click raced two compactions and orphaned the first record.
@@ -17248,7 +17278,11 @@ async function compactCodexProviderContext(payload: {
       await client.request('thread/compact/start', { threadId }, 30_000)
     } catch (firstError) {
       // A cold app-server may not have the thread loaded — resume, retry once.
-      await client.request('thread/resume', { threadId, persistExtendedHistory: true }, 30_000)
+      await client.request(
+        'thread/resume',
+        buildCodexThreadResumeRequest(threadId, codexReasoning),
+        30_000
+      )
       try {
         await client.request('thread/compact/start', { threadId }, 30_000)
       } catch {
@@ -18088,6 +18122,7 @@ async function compactProviderContextForRequest(payload: {
 }): Promise<{ ok: boolean; error?: string }> {
   let providerSessionId = payload.providerSessionId
   let model: string | undefined
+  let reasoningEffort: string | null | undefined
   let cardMetadata: Record<string, unknown> | undefined
   const isHostSeatProvider =
     payload.provider === 'cursor' || payload.provider === 'kimi' || payload.provider === 'grok'
@@ -18134,6 +18169,7 @@ async function compactProviderContextForRequest(payload: {
     }
     providerSessionId = participant.linkedProviderSessionId || undefined
     model = participant.model
+    reasoningEffort = participant.reasoningEffort
     const presentation = resolveHealthEntryPresentation(
       participant.provider,
       participant.model,
@@ -18173,6 +18209,8 @@ async function compactProviderContextForRequest(payload: {
     chatId: payload.chatId,
     providerSessionId,
     participantId: payload.participantId,
+    model,
+    reasoningEffort,
     cardMetadata
   })
 }
@@ -19355,6 +19393,7 @@ function maybeRequestCodexHostRerun(
     workspacePath: state.scope === 'global' ? undefined : state.workspacePath,
     threadId: state.threadId,
     model: state.model,
+    reasoningEffort: state.reasoningEffort,
     appRunId: state.appRunId,
     appChatId: state.appChatId,
     allowedActions: ['accept', 'decline', 'cancel'],
@@ -19451,6 +19490,10 @@ async function continueCodexAfterHostRerun(
 ): Promise<void> {
   if (!codexClient) return
   const settings = AppStore.getSettings()
+  const codexReasoning = resolveCodexOutboundReasoning(
+    approval.model,
+    approval.reasoningEffort
+  )
   const continuationState = createCodexRunState(
     approval.sender,
     approval.threadId,
@@ -19460,6 +19503,7 @@ async function continueCodexAfterHostRerun(
     approval.workspacePath ? 'workspace' : 'global',
     approval
   )
+  continuationState.reasoningEffort = codexReasoning.effort
   registerRunSession(
     'codex',
     approval.sender,
@@ -19495,22 +19539,25 @@ async function continueCodexAfterHostRerun(
   try {
     await codexClient.request(
       'turn/start',
-      {
-        threadId: approval.threadId,
-        input: buildCodexUserInput(prompt),
-        cwd: approval.cwd,
-        approvalPolicy: approval.workspacePath
-          ? codexApprovalPolicyForMode('default', settings)
-          : 'on-request',
-        sandboxPolicy: codexSandboxPolicyForMode(
-          'default',
-          approval.cwd,
-          [],
-          settings,
-          approval.workspacePath ? 'workspace' : 'global'
-        ),
-        model: approval.model
-      },
+      buildCodexTurnStartRequest(
+        {
+          threadId: approval.threadId,
+          input: buildCodexUserInput(prompt),
+          cwd: approval.cwd,
+          approvalPolicy: approval.workspacePath
+            ? codexApprovalPolicyForMode('default', settings)
+            : 'on-request',
+          sandboxPolicy: codexSandboxPolicyForMode(
+            'default',
+            approval.cwd,
+            [],
+            settings,
+            approval.workspacePath ? 'workspace' : 'global'
+          ),
+          model: approval.model
+        },
+        codexReasoning
+      ),
       60_000
     )
   } catch (error) {
@@ -19819,7 +19866,7 @@ async function runCodexAppServerWithClient(
 
   const settings = runtimeSettings(AppStore.getSettings(), payload.runtimeProfile)
   const model = normalizeCodexModel(payload.model)
-  const contextConfig = codexModelContextConfig(model)
+  const codexReasoning = resolveCodexOutboundReasoning(model, payload.reasoningEffort)
   const approvalPolicy =
     payload.scope === 'global'
       ? 'on-request'
@@ -19829,7 +19876,7 @@ async function runCodexAppServerWithClient(
   const startOrResumeParams = {
     cwd: payload.workspace!,
     model,
-    ...(contextConfig ? { config: contextConfig } : {}),
+    config: codexReasoning.threadConfig,
     ...(payload.serviceTier ? { serviceTier: payload.serviceTier } : {}),
     approvalPolicy,
     sandbox,
@@ -19862,11 +19909,7 @@ async function runCodexAppServerWithClient(
   if (resumableThreadId) {
     threadResponse = await client.request(
       'thread/resume',
-      {
-        threadId: resumableThreadId,
-        ...(contextConfig ? { config: contextConfig } : {}),
-        persistExtendedHistory: true
-      },
+      buildCodexThreadResumeRequest(resumableThreadId, codexReasoning),
       30_000
     )
   } else {
@@ -19942,31 +19985,27 @@ async function runCodexAppServerWithClient(
     codexState
   )
 
-  const codexReasoningSummaryMode = codexReasoningSummaryModeForEffort(payload.reasoningEffort)
-  // Internal token → API wire value. The reasoning.effort enum tops out at
-  // 'xhigh', so above-xhigh internal tiers ('max'/'ultra'/'ultracode') clamp to
-  // 'xhigh' here — the API 400s on them otherwise ("Codex failed · exit 1").
-  const codexWireEffort = codexWireReasoningEffort(payload.reasoningEffort, model)
   await client.request(
     'turn/start',
-    {
-      threadId,
-      input: buildCodexUserInput(payload.prompt, payload.imagePaths),
-      cwd: payload.workspace!,
-      approvalPolicy,
-      sandboxPolicy: codexSandboxPolicyForMode(
-        payload.approvalMode,
-        payload.workspace!,
-        payload.externalPathGrants,
-        settings,
-        payload.scope,
-        fullAccessGranted
-      ),
-      model,
-      ...(codexWireEffort ? { effort: codexWireEffort } : {}),
-      ...(codexReasoningSummaryMode ? { summary: codexReasoningSummaryMode } : {}),
-      ...(payload.serviceTier ? { serviceTier: payload.serviceTier } : {})
-    },
+    buildCodexTurnStartRequest(
+      {
+        threadId,
+        input: buildCodexUserInput(payload.prompt, payload.imagePaths),
+        cwd: payload.workspace!,
+        approvalPolicy,
+        sandboxPolicy: codexSandboxPolicyForMode(
+          payload.approvalMode,
+          payload.workspace!,
+          payload.externalPathGrants,
+          settings,
+          payload.scope,
+          fullAccessGranted
+        ),
+        model,
+        ...(payload.serviceTier ? { serviceTier: payload.serviceTier } : {})
+      },
+      codexReasoning
+    ),
     60_000
   )
 }
@@ -20009,12 +20048,14 @@ async function runCodexExecFallback(
   }
 
   const model = normalizeCodexModel(payload.model)
+  const codexReasoning = resolveCodexOutboundReasoning(model, payload.reasoningEffort)
   const sandbox = codexSandboxForMode(
     payload.approvalMode,
     isFullShellAccessGranted(payload.effectivePermissions)
   )
   const args = [
     ...buildCodexFastServiceTierCompatibilityArgs(),
+    ...codexReasoning.execConfigArgs,
     'exec',
     '--json',
     '--color',

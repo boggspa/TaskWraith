@@ -139,6 +139,8 @@ export interface PendingHostCommandApproval {
   workspacePath?: string
   threadId: string
   model: string
+  /** Concrete Codex wire effort from the turn that requested this rerun. */
+  reasoningEffort?: string
   appRunId?: string
   appChatId?: string
   allowedActions?: AgentApprovalAction[]

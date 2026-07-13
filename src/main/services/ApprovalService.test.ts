@@ -323,11 +323,13 @@ describe('ApprovalService — registries', () => {
       cwd: '/tmp',
       threadId: 't-1',
       model: 'm-1',
+      reasoningEffort: 'xhigh',
       reason: 'sandbox',
       output: 'denied'
     }
     svc.registerHostCommand('h-1', approval)
     expect(svc.getHostCommand('h-1')).toBe(approval)
+    expect(svc.getHostCommand('h-1')?.reasoningEffort).toBe('xhigh')
     svc.deleteHostCommand('h-1')
     expect(svc.getHostCommand('h-1')).toBeUndefined()
   })

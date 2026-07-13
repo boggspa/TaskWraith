@@ -37,6 +37,8 @@ export interface CodexRunState {
   /** Accumulated telemetry for the in-flight Multi-agent episode. */
   multiAgentTelemetry?: CodexMultiAgentTelemetry
   model: string
+  /** Concrete app-server wire effort selected for this run. */
+  reasoningEffort?: string
   approvalMode?: string
   workflowMode?: ChatWorkflowMode
   sessionTrust?: boolean
@@ -108,6 +110,7 @@ export interface HostCommandApproval {
   workspacePath?: string
   threadId: string
   model: string
+  reasoningEffort?: string
   appRunId?: string
   appChatId?: string
   reason: string

@@ -157,22 +157,78 @@ export function codexModelSupportsUltracodeReasoning(modelId?: string | null): b
  * picker and persisted composer state keep their tiers; only the outbound wire
  * value is normalized. Mirrors ClaudeCliArgs' internal→wire mapping.
  *
- * History: an earlier revision believed the wire accepted `max`/`ultra` and
- * only clamped the raw `ultracode` token. The live API enum rejects them
- * (whether it narrowed or never accepted them on this account), so the clamp
- * now covers all three. `modelId` is retained for call-site compatibility; the
- * clamp is model-agnostic because the enum ceiling is API-wide.
+ * An explicit effort is normalized onto that finite wire enum. Missing,
+ * whitespace-only, and unknown values resolve to the same effective default
+ * the renderer shows for an older/unseeded Codex seat: `medium` whenever the
+ * selected model supports it, otherwise that model's canonical default or its
+ * first accepted effort. This explicit fallback is important: omitting
+ * `turn/start.effort` lets app-server inherit `model_reasoning_effort` from the
+ * user's global Codex config, which may be invalid for the selected model (the
+ * production failure was a global `max` inherited by gpt-5.5).
  */
+export const CODEX_WIRE_REASONING_EFFORTS = [
+  'none',
+  'minimal',
+  'low',
+  'medium',
+  'high',
+  'xhigh'
+] as const
+
+export type CodexWireReasoningEffort = (typeof CODEX_WIRE_REASONING_EFFORTS)[number]
+
+const CODEX_WIRE_REASONING_EFFORT_SET: ReadonlySet<string> = new Set(
+  CODEX_WIRE_REASONING_EFFORTS
+)
+
+function explicitCodexWireReasoningEffort(
+  effort?: string | null
+): CodexWireReasoningEffort | null {
+  const normalized = String(effort || '')
+    .trim()
+    .toLowerCase()
+  if (!normalized) return null
+  if (normalized === 'off') return 'none'
+  if (normalized === 'light') return 'low'
+  if (normalized === 'extra') return 'xhigh'
+  // Above-`xhigh` internal tiers are not in the API's reasoning.effort enum.
+  if (normalized === 'ultracode' || normalized === 'ultra' || normalized === 'max') {
+    return 'xhigh'
+  }
+  return CODEX_WIRE_REASONING_EFFORT_SET.has(normalized)
+    ? (normalized as CodexWireReasoningEffort)
+    : null
+}
+
+function fallbackCodexWireReasoningEffort(modelId?: string | null): CodexWireReasoningEffort {
+  const normalizedModel = normalizeCodexModel(modelId)
+  const model = CODEX_STATIC_MODELS.find((candidate) => candidate.id === normalizedModel)
+  const supported = [
+    ...new Set(
+      (model?.supportedReasoningEfforts || [])
+        .filter((option) => !('disabled' in option) || !option.disabled)
+        .map((option) => explicitCodexWireReasoningEffort(option.reasoningEffort))
+        .filter((effort): effort is CodexWireReasoningEffort => effort !== null)
+    )
+  ]
+
+  // Matches resolveEnsembleParticipantSettings: an older participant with no
+  // stored effort displays the provider default (medium) when the model allows
+  // it. Explicit model-selection paths still persist the model's own default.
+  if (supported.includes('medium')) return 'medium'
+
+  const modelDefault = explicitCodexWireReasoningEffort(model?.defaultReasoningEffort)
+  if (modelDefault && (supported.length === 0 || supported.includes(modelDefault))) {
+    return modelDefault
+  }
+  return supported[0] || 'medium'
+}
+
 export function codexWireReasoningEffort(
   effort?: string | null,
-  _modelId?: string | null
-): string | undefined {
-  const normalized = String(effort || '').trim()
-  if (!normalized) return undefined
-  const lower = normalized.toLowerCase()
-  // Above-`xhigh` internal tiers are not in the API's reasoning.effort enum.
-  if (lower === 'ultracode' || lower === 'ultra' || lower === 'max') return 'xhigh'
-  return normalized
+  modelId?: string | null
+): CodexWireReasoningEffort {
+  return explicitCodexWireReasoningEffort(effort) || fallbackCodexWireReasoningEffort(modelId)
 }
 
 export function codexReasoningEffortsForModel<T extends CodexReasoningEffortOption>(
@@ -183,8 +239,8 @@ export function codexReasoningEffortsForModel<T extends CodexReasoningEffortOpti
   const seen = new Set<string>()
   // Inbound wire-token → internal-token aliases: the live `model/list` says
   // 'light' where TaskWraith says 'low', and (GPT-5.6) 'ultra' where
-  // TaskWraith's shared internal tier token is 'ultracode' (the outbound
-  // mapping back to 'ultra' lives in codexWireReasoningEffort).
+  // TaskWraith's shared internal tier token is 'ultracode' (outbound wire
+  // normalization lives in codexWireReasoningEffort).
   const INBOUND_EFFORT_ALIASES: Readonly<Record<string, string>> = {
     light: 'low',
     ultra: 'ultracode'
