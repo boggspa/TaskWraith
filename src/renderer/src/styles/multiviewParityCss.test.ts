@@ -4,6 +4,11 @@ import { describe, expect, it } from 'vitest'
 
 const readMultiviewCss = (): string =>
   readFileSync(join(process.cwd(), 'src/renderer/src/assets/css/14-multiview.css'), 'utf8')
+const readTranscriptFxCss = (): string =>
+  readFileSync(
+    join(process.cwd(), 'src/renderer/src/assets/css/02-transcript-messages-fx.css'),
+    'utf8'
+  )
 
 const cssBlockStartingAt = (source: string, selector: string): string => {
   const start = source.indexOf(selector)
@@ -37,5 +42,13 @@ describe('Multiview shared-surface CSS', () => {
     ]
 
     for (const selector of removedSelectors) expect(css).not.toContain(selector)
+  })
+
+  it('keeps the shared composer fade enabled in resting Multiview panes', () => {
+    const css = readTranscriptFxCss()
+    const sideChatOptOut = cssBlockStartingAt(css, '.side-chat-pane .transcript-scroll {')
+
+    expect(css).not.toContain('.multiview-pane-transcript .transcript-scroll')
+    expect(sideChatOptOut).toContain('mask-image: none')
   })
 })

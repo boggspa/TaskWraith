@@ -2415,15 +2415,11 @@
   );
 }
 
-/* Scope the fade to the true "composer floats over the transcript" surfaces
- * (the focused single-chat view + popout). Two secondary surfaces opt out:
- *   - Multiview split panes put the composer in NORMAL flow (14-multiview.css) so
- *     nothing scrolls under it, and --composer-reserved-height is a static 150px —
- *     a live-anchored fade would just over-dim a short pane.
- *   - The side-chat pane's composer overlaps, but its scroller uses a fixed
+/* The shared floating composer and live reservation now cover focused and
+ * resting Multiview panes alike, so they inherit the same anchored fade. The
+ * side-chat pane still opts out: its composer overlaps, but its scroller uses a fixed
  *     218px bottom reserve (not the live --composer-reserved-height), so this
  *     anchor wouldn't line up. Left off until it has its own anchor. */
-.multiview-pane-transcript .transcript-scroll,
 .side-chat-pane .transcript-scroll {
   -webkit-mask-image: none;
   mask-image: none;
