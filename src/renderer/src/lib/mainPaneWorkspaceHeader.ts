@@ -25,6 +25,32 @@ function workspaceMatchesChat(
   return Boolean(chatPath && normalizePath(workspace.path) === chatPath)
 }
 
+export function resolvePaneWorkspace<TWorkspace extends PaneWorkspaceRecord>(input: {
+  chat?: PaneWorkspaceChatIdentity | null
+  isGlobalChat: boolean
+  workspaces: readonly TWorkspace[]
+  currentWorkspace?: TWorkspace | null
+}): TWorkspace | null {
+  if (input.chat && input.isGlobalChat) return null
+  if (!input.chat) return input.currentWorkspace || null
+  return (
+    input.workspaces.find((candidate) => workspaceMatchesChat(candidate, input.chat!)) ||
+    (input.currentWorkspace && workspaceMatchesChat(input.currentWorkspace, input.chat)
+      ? input.currentWorkspace
+      : null)
+  )
+}
+
+export function resolvePaneWorkspacePath(input: {
+  chat?: PaneWorkspaceChatIdentity | null
+  isGlobalChat: boolean
+  workspaces: readonly PaneWorkspaceRecord[]
+  currentWorkspace?: PaneWorkspaceRecord | null
+}): string | null {
+  const workspace = resolvePaneWorkspace(input)
+  return workspace?.path || (input.isGlobalChat ? null : input.chat?.workspacePath || null)
+}
+
 export function resolveMainPaneWorkspaceLabel(input: {
   chat?: PaneWorkspaceChatIdentity | null
   isGlobalChat: boolean
@@ -35,15 +61,7 @@ export function resolveMainPaneWorkspaceLabel(input: {
 }): string | null {
   if (input.chat && input.isGlobalChat) return null
 
-  const currentMatchesChat = Boolean(
-    input.chat &&
-      input.currentWorkspace &&
-      workspaceMatchesChat(input.currentWorkspace, input.chat)
-  )
-  const workspace = input.chat
-    ? input.workspaces.find((candidate) => workspaceMatchesChat(candidate, input.chat!)) ||
-      (currentMatchesChat ? input.currentWorkspace || null : null)
-    : input.currentWorkspace || null
+  const workspace = resolvePaneWorkspace(input)
   const path = workspace?.path || input.chat?.workspacePath || ''
   if (!workspace && !path) return null
 

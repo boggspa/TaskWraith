@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { resolveMainPaneWorkspaceLabel } from './mainPaneWorkspaceHeader'
+import {
+  resolveMainPaneWorkspaceLabel,
+  resolvePaneWorkspace,
+  resolvePaneWorkspacePath
+} from './mainPaneWorkspaceHeader'
 
 const test2 = {
   id: 'workspace-test-2',
@@ -69,5 +73,35 @@ describe('resolveMainPaneWorkspaceLabel', () => {
         snapshotRemoteUrl: 'git@github.com:example/stale-repo.git'
       })
     ).toBe('Test 2')
+  })
+
+  it('resolves the operational focused path from the chat rather than stale global state', () => {
+    expect(
+      resolvePaneWorkspacePath({
+        chat: { workspaceId: test2.id, workspacePath: test2.path },
+        isGlobalChat: false,
+        workspaces: [test2, test3],
+        currentWorkspace: test3
+      })
+    ).toBe(test2.path)
+  })
+
+  it('resolves a global chat to no operational workspace', () => {
+    expect(
+      resolvePaneWorkspace({
+        chat: {},
+        isGlobalChat: true,
+        workspaces: [test3],
+        currentWorkspace: test3
+      })
+    ).toBeNull()
+    expect(
+      resolvePaneWorkspacePath({
+        chat: {},
+        isGlobalChat: true,
+        workspaces: [test3],
+        currentWorkspace: test3
+      })
+    ).toBeNull()
   })
 })

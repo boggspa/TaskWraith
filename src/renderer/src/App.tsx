@@ -216,6 +216,8 @@ import {
   isSubThreadChat,
   getUsageWorkspaceIdForChat
 } from './lib/chatScope'
+import { resolvePaneWorkspace, resolvePaneWorkspacePath } from './lib/mainPaneWorkspaceHeader'
+import { updatePathKeyedWorkspaceSnapshot } from './lib/multiviewWorkspacePresentation'
 import {
   SIDE_CHAT_HIDDEN_CONTEXT_CONSUMED_AT_METADATA_KEY,
   SIDE_CHAT_HIDDEN_CONTEXT_PROMPT_METADATA_KEY,
@@ -2437,10 +2439,24 @@ function App(): React.JSX.Element {
   const [gitSnapshotByWorkspace, setGitSnapshotByWorkspace] = useState<
     Record<string, GitRepositorySnapshot | null>
   >({})
-  const currentWorkspacePath = currentWorkspace?.path
+  const currentChatWorkspace = resolvePaneWorkspace({
+    chat: currentChat,
+    isGlobalChat: Boolean(currentChat && isGlobalChat(currentChat)),
+    workspaces,
+    currentWorkspace
+  })
+  const currentWorkspacePath =
+    resolvePaneWorkspacePath({
+      chat: currentChat,
+      isGlobalChat: Boolean(currentChat && isGlobalChat(currentChat)),
+      workspaces,
+      currentWorkspace: currentChatWorkspace
+    }) || undefined
   const currentComposerWorktreeSelection = currentWorkspacePath
     ? composerWorktreeByWorkspace[normalizeWorkspacePath(currentWorkspacePath)] || null
     : null
+  const currentGitPresentationPath =
+    currentComposerWorktreeSelection?.effectiveWorkspacePath || currentWorkspacePath
   const primaryPrStatusKeyRef = useRef('')
   const externalPrStatusKeyByPathRef = useRef<Record<string, string>>({})
   const refreshPrimaryPrStatus = useCallback(
@@ -19529,17 +19545,23 @@ function App(): React.JSX.Element {
   // Multiview — live git snapshot for every VISIBLE pane's workspace path so
   // each pane's composer above-row reports its OWN diff stats. Normal builds use
   // subscription initial snapshots; the fetch effect below is fallback only.
-  const multiviewPaneWorkspacePathsKey = useMemo(() => {
+  // Four panes maximum: recompute directly so a workspace record/path relink
+  // cannot leave subscriptions pinned to a memoized path for the same chat id.
+  const multiviewPaneWorkspacePathsKey = (() => {
     if (!isMultiviewSplit) return ''
     const seen = new Set<string>()
     for (const paneChatId of multiview.paneChatIds) {
       if (!paneChatId) continue
-      const path = getWorkspaceForChat(chatByIdRef.current.get(paneChatId))?.path
+      const paneChat = chatByIdRef.current.get(paneChatId)
+      const basePath = getWorkspaceForChat(paneChat)?.path || paneChat?.workspacePath
+      const selection = basePath
+        ? composerWorktreeByWorkspace[normalizeWorkspacePath(basePath)] || null
+        : null
+      const path = selection?.effectiveWorkspacePath || basePath
       if (path) seen.add(path)
     }
     return Array.from(seen).sort().join('\n')
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- chatByIdRef/getWorkspaceForChat are stable; paneChatIds + split flag drive recompute
-  }, [isMultiviewSplit, multiview.paneChatIds])
+  })()
   useEffect(() => {
     const paths = multiviewPaneWorkspacePathsKey ? multiviewPaneWorkspacePathsKey.split('\n') : []
     if (paths.length === 0) {
@@ -19619,6 +19641,29 @@ function App(): React.JSX.Element {
       void window.api.gitInvalidateSnapshot?.({ workspacePath: path, reason: 'run-diff' })
     })
   }, [multiviewPaneWorkspacePathsKey, runCompleteNotice?.timestamp])
+
+  const focusedPrimaryGitSnapshot =
+    isMultiviewSplit && currentGitPresentationPath
+      ? gitSnapshotByWorkspace[currentGitPresentationPath] ?? null
+      : primaryGitSnapshot
+  const focusedCurrentWorkspace = isMultiviewSplit ? currentChatWorkspace : currentWorkspace
+  const setFocusedPrimaryGitSnapshot = useCallback(
+    (snapshot: GitRepositorySnapshot | null) => {
+      if (isMultiviewSplit && currentGitPresentationPath) {
+        setGitSnapshotByWorkspace((prev) =>
+          updatePathKeyedWorkspaceSnapshot(prev, currentGitPresentationPath, snapshot)
+        )
+        return
+      }
+      setPrimaryGitSnapshot(snapshot)
+    },
+    [currentGitPresentationPath, isMultiviewSplit]
+  )
+  // PR/CI rollups are still scalar single-pane state. Suppress them in split
+  // mode until their path-keyed counterparts are plumbed, so a late response
+  // from the previously focused pane can never decorate the next pane.
+  const focusedPrimaryPr = isMultiviewSplit ? null : primaryPr
+  const focusedPrimaryCi = isMultiviewSplit ? null : primaryCi
 
   const currentExternalWorkspaceState = useMemo(
     () =>
@@ -20817,14 +20862,14 @@ function App(): React.JSX.Element {
   // if the last run edited files. Non-repo workspaces fall back to raw run
   // diff summaries because there is no commit-aware worktree to query.
   const workspaceDiffStats = useMemo(() => {
-    if (primaryGitSnapshot) {
+    if (focusedPrimaryGitSnapshot) {
       return {
-        filesChanged: primaryGitSnapshot.counts?.changed ?? 0,
-        additions: primaryGitSnapshot.lineStats?.additions ?? 0,
-        deletions: primaryGitSnapshot.lineStats?.deletions ?? 0
+        filesChanged: focusedPrimaryGitSnapshot.counts?.changed ?? 0,
+        additions: focusedPrimaryGitSnapshot.lineStats?.additions ?? 0,
+        deletions: focusedPrimaryGitSnapshot.lineStats?.deletions ?? 0
       }
     }
-    if (currentWorkspace?.isGitRepo !== false) {
+    if (focusedCurrentWorkspace?.isGitRepo !== false) {
       return {
         filesChanged: 0,
         additions: 0,
@@ -20840,8 +20885,8 @@ function App(): React.JSX.Element {
     displayFileChangeSummaries.length,
     fileChangeDisplayAdds,
     fileChangeDisplayDels,
-    currentWorkspace?.isGitRepo,
-    primaryGitSnapshot
+    focusedCurrentWorkspace?.isGitRepo,
+    focusedPrimaryGitSnapshot
   ])
 
   const liveGitInvalidationKey = useMemo(
@@ -23314,15 +23359,21 @@ function App(): React.JSX.Element {
     (paneIndex: number, chatId: string) => {
       const viewerChat = chatByIdRef.current.get(chatId)
       if (!viewerChat) return
-      multiview.focusPane(paneIndex, currentChatIdRef.current || null)
-      setCurrentChatIdForNavigation(viewerChat.appChatId)
-      setActiveSidebarChatId(viewerChat.appChatId)
-      const paneWorkspace = getWorkspaceForChat(viewerChat)
+      const outgoingChatId = currentChatIdRef.current || null
+      const paneWorkspace = resolvePaneWorkspace({
+        chat: viewerChat,
+        isGlobalChat: isGlobalChat(viewerChat),
+        workspaces,
+        currentWorkspace
+      })
       currentWorkspaceIdRef.current = viewerChat.workspaceId || paneWorkspace?.id || null
-      if (paneWorkspace && currentWorkspace?.id !== paneWorkspace.id) {
-        setCurrentWorkspace(paneWorkspace)
-      }
+      const shouldUpdateWorkspace =
+        (currentWorkspace?.id || null) !== (paneWorkspace?.id || null)
       startTransition(() => {
+        multiview.focusPane(paneIndex, outgoingChatId)
+        setCurrentChatIdForNavigation(viewerChat.appChatId)
+        setActiveSidebarChatId(viewerChat.appChatId)
+        if (shouldUpdateWorkspace) setCurrentWorkspace(paneWorkspace)
         setCurrentChat(viewerChat)
         setRunCompleteNotice(
           deriveChatRunCompleteNotice(viewerChat, runningChatIds.has(viewerChat.appChatId))
@@ -23331,7 +23382,14 @@ function App(): React.JSX.Element {
         syncThinkingForChat(viewerChat)
       })
     },
-    [currentWorkspace?.id, multiview.focusPane, runningChatIds]
+    [
+      currentWorkspace,
+      multiview.focusPane,
+      runningChatIds,
+      setCurrentChatIdForNavigation,
+      syncThinkingForChat,
+      workspaces
+    ]
   )
   const handleOpenInMultiview = useCallback(
     (chat: ChatRecord) => {
@@ -23593,7 +23651,9 @@ function App(): React.JSX.Element {
       const paneChat = chatByIdRef.current.get(chatId)
       const path = paneChat?.workspacePath
       if (!path) return
-      setGitSnapshotByWorkspace((prev) => ({ ...prev, [path]: snapshot }))
+      setGitSnapshotByWorkspace((prev) =>
+        updatePathKeyedWorkspaceSnapshot(prev, path, snapshot)
+      )
     },
     []
   )
@@ -23914,6 +23974,12 @@ function App(): React.JSX.Element {
     const viewerProvider = getChatProvider(viewerChat)
     const viewerIsGlobalChat = isGlobalChat(viewerChat)
     const viewerWorkspace = getWorkspaceForChat(viewerChat)
+    const viewerBaseWorkspacePath = viewerWorkspace?.path || viewerChat.workspacePath || ''
+    const viewerWorktreeSelection = viewerBaseWorkspacePath
+      ? composerWorktreeByWorkspace[normalizeWorkspacePath(viewerBaseWorkspacePath)] || null
+      : null
+    const viewerGitPresentationPath =
+      viewerWorktreeSelection?.effectiveWorkspacePath || viewerBaseWorkspacePath
     const viewerPreviewTargets = getPreviewTargetsForChat(viewerChat)
     const viewerPaneId = multiview.panes[viewerPaneIndex]?.id ?? null
     const viewerPreviewMenuOpen =
@@ -24571,7 +24637,7 @@ function App(): React.JSX.Element {
       // focused one (workspaceDiffStats otherwise comes from composerStableBase =
       // the FOCUSED value, the cross-pane leak). Zeros until the snapshot lands.
       workspaceDiffStats: ((): { filesChanged: number; additions: number; deletions: number } => {
-        const snap = gitSnapshotByWorkspace[viewerWorkspace?.path ?? ''] ?? null
+        const snap = gitSnapshotByWorkspace[viewerGitPresentationPath] ?? null
         return snap
           ? {
               filesChanged: snap.counts?.changed ?? 0,
@@ -24722,12 +24788,10 @@ function App(): React.JSX.Element {
       // Per-pane git snapshot: the branch/sync/merge chips + Review/Push action now
       // read THIS pane's snapshot (was hard-null, which dropped ahead/behind + merge
       // for panes). Branch label still falls back to currentWorkspace.branch if absent.
-      primaryGitSnapshot: gitSnapshotByWorkspace[viewerWorkspace?.path ?? ''] ?? null,
+      primaryGitSnapshot: gitSnapshotByWorkspace[viewerGitPresentationPath] ?? null,
       setPrimaryGitSnapshot: (snapshot: GitRepositorySnapshot | null) =>
         handleMultiviewPanePrimaryGitSnapshot(viewerChatId, snapshot),
-      composerWorktreeSelection: viewerWorkspace?.path
-        ? composerWorktreeByWorkspace[normalizeWorkspacePath(viewerWorkspace.path)] || null
-        : null,
+      composerWorktreeSelection: viewerWorktreeSelection,
       onComposerWorktreeChange: (
         selection: ComposerWorktreeSelection | null,
         snapshot: GitRepositorySnapshot | null
@@ -25264,6 +25328,12 @@ function App(): React.JSX.Element {
       const viewerProvider = getChatProvider(viewerChat)
       const viewerIsGlobalChat = isGlobalChat(viewerChat)
       const viewerWorkspace = paneCtxHelpers.getWorkspaceForChat(viewerChat)
+      const viewerBaseWorkspacePath = viewerWorkspace?.path || viewerChat.workspacePath || ''
+      const viewerWorktreeSelection = viewerBaseWorkspacePath
+        ? composerWorktreeByWorkspace[normalizeWorkspacePath(viewerBaseWorkspacePath)] || null
+        : null
+      const viewerGitPresentationPath =
+        viewerWorktreeSelection?.effectiveWorkspacePath || viewerBaseWorkspacePath
       const viewerWorkspaceName = viewerIsGlobalChat
         ? 'General Chat'
         : viewerWorkspace?.displayName ||
@@ -25619,7 +25689,7 @@ function App(): React.JSX.Element {
         // focused one (workspaceDiffStats otherwise comes from composerStableBase =
         // the FOCUSED value, the cross-pane leak). Zeros until the snapshot lands.
         workspaceDiffStats: ((): { filesChanged: number; additions: number; deletions: number } => {
-          const snap = gitSnapshotByWorkspace[viewerWorkspace?.path ?? ''] ?? null
+          const snap = gitSnapshotByWorkspace[viewerGitPresentationPath] ?? null
           return snap
             ? {
                 filesChanged: snap.counts?.changed ?? 0,
@@ -25770,12 +25840,10 @@ function App(): React.JSX.Element {
         // Per-pane git snapshot: the branch/sync/merge chips + Review/Push action now
         // read THIS pane's snapshot (was hard-null, which dropped ahead/behind + merge
         // for panes). Branch label still falls back to currentWorkspace.branch if absent.
-        primaryGitSnapshot: gitSnapshotByWorkspace[viewerWorkspace?.path ?? ''] ?? null,
+        primaryGitSnapshot: gitSnapshotByWorkspace[viewerGitPresentationPath] ?? null,
         setPrimaryGitSnapshot: (snapshot: GitRepositorySnapshot | null) =>
           handleMultiviewPanePrimaryGitSnapshot(viewerChatId, snapshot),
-        composerWorktreeSelection: viewerWorkspace?.path
-          ? composerWorktreeByWorkspace[normalizeWorkspacePath(viewerWorkspace.path)] || null
-          : null,
+        composerWorktreeSelection: viewerWorktreeSelection,
         onComposerWorktreeChange: (
           selection: ComposerWorktreeSelection | null,
           snapshot: GitRepositorySnapshot | null
@@ -25941,7 +26009,7 @@ function App(): React.JSX.Element {
     currentProvider,
     currentProviderLabel,
     currentProviderModelOptions,
-    currentWorkspace,
+    currentWorkspace: focusedCurrentWorkspace,
     currentWorkspacePath,
     customModel,
     dualComposerTelemetry,
@@ -25972,11 +26040,12 @@ function App(): React.JSX.Element {
     permissionRequestPaths,
     permissionRequestSource,
     permissionRequestTitle,
-    primaryGitSnapshot,
+    primaryGitSnapshot: focusedPrimaryGitSnapshot,
+    setPrimaryGitSnapshot: setFocusedPrimaryGitSnapshot,
     composerWorktreeSelection: currentComposerWorktreeSelection,
     onComposerWorktreeChange: handleComposerWorktreeChange,
-    primaryPr,
-    primaryCi,
+    primaryPr: focusedPrimaryPr,
+    primaryCi: focusedPrimaryCi,
     onNotifyThreadOfCi: handleNotifyThreadOfCi,
     queuedMessagesAboveRowEntries,
     runtimeProfileControl,
