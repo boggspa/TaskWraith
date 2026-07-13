@@ -106,6 +106,51 @@ describe('FaviconService', () => {
     expect(fetchImpl).not.toHaveBeenCalled()
   })
 
+  it('pins the validated public address instead of allowing a private fetch-time resolution', async () => {
+    const secondResolution = vi.fn(() => '127.0.0.1')
+    const pinnedAddresses: string[] = []
+    let reachedPrivateAddress = false
+    const fetchImpl = vi.fn(
+      async (url: string, _init?: RequestInit, connection?: { address: string; family: 4 | 6 }) => {
+        const transportAddress = connection?.address || secondResolution()
+        pinnedAddresses.push(transportAddress)
+        if (transportAddress === '127.0.0.1') reachedPrivateAddress = true
+        if (url === 'https://example.com/') {
+          return new Response('<link rel="icon" href="/icon.png">', {
+            headers: { 'content-type': 'text/html' }
+          })
+        }
+        return new Response(PNG_BYTES, { headers: { 'content-type': 'image/png' } })
+      }
+    )
+    const service = new FaviconService({
+      cacheDir: makeCacheDir(),
+      fetchImpl,
+      resolveHost: async () => ['93.184.216.34']
+    })
+
+    await expect(service.getForUrl('https://example.com')).resolves.toMatchObject({ ok: true })
+    expect(secondResolution).not.toHaveBeenCalled()
+    expect(reachedPrivateAddress).toBe(false)
+    expect(pinnedAddresses).toEqual(['93.184.216.34', '93.184.216.34'])
+  })
+
+  it('does not connect when a host changes from a public to a private validation result', async () => {
+    let resolutions = 0
+    const fetchImpl = vi.fn()
+    const service = new FaviconService({
+      cacheDir: makeCacheDir(),
+      fetchImpl,
+      resolveHost: async () => [resolutions++ === 0 ? '93.184.216.34' : '127.0.0.1']
+    })
+
+    await expect(service.getForUrl('https://example.com')).resolves.toMatchObject({
+      ok: false,
+      error: 'No supported favicon found.'
+    })
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
   it('rejects SVG favicons rather than handing remote SVG to the renderer', async () => {
     const service = new FaviconService({
       cacheDir: makeCacheDir(),
@@ -146,8 +191,7 @@ describe('FaviconService', () => {
     const service = new FaviconService({
       cacheDir: makeCacheDir(),
       fetchImpl,
-      resolveHost: async (host) =>
-        host === 'example.com' ? ['93.184.216.34'] : ['127.0.0.1']
+      resolveHost: async (host) => (host === 'example.com' ? ['93.184.216.34'] : ['127.0.0.1'])
     })
 
     await expect(service.getForUrl('https://example.com')).resolves.toMatchObject({
@@ -186,5 +230,181 @@ describe('FaviconService', () => {
     expect(fetchImpl.mock.calls.map(([url]) => url)).not.toContain(
       'http://169.254.169.254/latest/meta-data/'
     )
+  })
+
+  it('bounds streamed page metadata before parsing declared icon links', async () => {
+    let pageCancelled = false
+    const oversizedHtml = new TextEncoder().encode(
+      `${' '.repeat(80)}<link rel="icon" href="http://127.0.0.1/private.png">`
+    )
+    const fetchImpl = vi.fn(async (url: string) => {
+      if (url === 'https://example.com/') {
+        return new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(oversizedHtml)
+            },
+            cancel() {
+              pageCancelled = true
+            }
+          }),
+          { headers: { 'content-type': 'text/html' } }
+        )
+      }
+      if (url === 'https://example.com/favicon.ico') {
+        return new Response(PNG_BYTES, { headers: { 'content-type': 'image/png' } })
+      }
+      return new Response('', { status: 404 })
+    })
+    const service = new FaviconService({
+      cacheDir: makeCacheDir(),
+      fetchImpl,
+      resolveHost: async () => ['93.184.216.34'],
+      maxPageBytes: 64
+    })
+
+    await expect(service.getForUrl('https://example.com')).resolves.toMatchObject({
+      ok: true,
+      iconUrl: 'https://example.com/favicon.ico'
+    })
+    expect(pageCancelled).toBe(true)
+    expect(fetchImpl.mock.calls.map(([url]) => url)).not.toContain('http://127.0.0.1/private.png')
+  })
+
+  it('rejects and cancels oversized streamed icon bodies', async () => {
+    let iconCancelled = false
+    const fetchImpl = vi.fn(async (url: string) => {
+      if (url === 'https://example.com/') {
+        return new Response('<link rel="icon" href="/huge.png">', {
+          headers: { 'content-type': 'text/html' }
+        })
+      }
+      if (url === 'https://example.com/huge.png') {
+        return new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(new Uint8Array(65))
+            },
+            cancel() {
+              iconCancelled = true
+            }
+          }),
+          { headers: { 'content-type': 'image/png' } }
+        )
+      }
+      return new Response('', { status: 404 })
+    })
+    const service = new FaviconService({
+      cacheDir: makeCacheDir(),
+      fetchImpl,
+      resolveHost: async () => ['93.184.216.34'],
+      maxIconBytes: 64
+    })
+
+    await expect(service.getForUrl('https://example.com')).resolves.toMatchObject({
+      ok: false,
+      error: 'No supported favicon found.'
+    })
+    expect(iconCancelled).toBe(true)
+  })
+
+  it('keeps the timeout armed through a never-ending response body and cancels it', async () => {
+    let bodyCancelled = false
+    const fetchImpl = vi.fn(async (url: string) => {
+      if (url === 'https://example.com/') {
+        return new Response('<link rel="icon" href="/hanging.png">', {
+          headers: { 'content-type': 'text/html' }
+        })
+      }
+      if (url === 'https://example.com/hanging.png') {
+        return new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(PNG_BYTES)
+            },
+            cancel() {
+              bodyCancelled = true
+            }
+          }),
+          { headers: { 'content-type': 'image/png' } }
+        )
+      }
+      return new Response('', { status: 404 })
+    })
+    const service = new FaviconService({
+      cacheDir: makeCacheDir(),
+      fetchImpl,
+      resolveHost: async () => ['93.184.216.34'],
+      fetchTimeoutMs: 20
+    })
+
+    await expect(service.getForUrl('https://example.com')).resolves.toMatchObject({
+      ok: false,
+      error: 'No supported favicon found.'
+    })
+    expect(bodyCancelled).toBe(true)
+  })
+
+  it('caps simultaneous network fetches across concurrent favicon requests', async () => {
+    let activeFetches = 0
+    let peakFetches = 0
+    const fetchImpl = vi.fn(async () => {
+      activeFetches += 1
+      peakFetches = Math.max(peakFetches, activeFetches)
+      await new Promise((resolve) => setTimeout(resolve, 2))
+      activeFetches -= 1
+      return new Response('', { status: 404 })
+    })
+    const service = new FaviconService({
+      cacheDir: makeCacheDir(),
+      fetchImpl,
+      resolveHost: async () => ['93.184.216.34'],
+      maxConcurrentFetches: 2
+    })
+
+    await Promise.all(
+      Array.from({ length: 5 }, (_, index) => service.getForUrl(`https://example${index}.com`))
+    )
+    expect(peakFetches).toBe(2)
+  })
+
+  it('fails fast when the bounded request queue is full', async () => {
+    let releaseFirstFetch: () => void = () => undefined
+    const firstFetchReleased = new Promise<void>((resolve) => {
+      releaseFirstFetch = resolve
+    })
+    let reportFirstFetchStarted: () => void = () => undefined
+    const firstFetchStarted = new Promise<void>((resolve) => {
+      reportFirstFetchStarted = resolve
+    })
+    let fetchCount = 0
+    const fetchImpl = vi.fn(async () => {
+      fetchCount += 1
+      if (fetchCount === 1) {
+        reportFirstFetchStarted()
+        await firstFetchReleased
+      }
+      return new Response('', { status: 404 })
+    })
+    const service = new FaviconService({
+      cacheDir: makeCacheDir(),
+      fetchImpl,
+      resolveHost: async () => ['93.184.216.34'],
+      maxConcurrentFetches: 1,
+      maxPendingRequests: 1
+    })
+
+    const activeRequest = service.getForUrl('https://active.example.com')
+    await firstFetchStarted
+    const queuedRequest = service.getForUrl('https://queued.example.com')
+
+    await expect(service.getForUrl('https://rejected.example.com')).resolves.toEqual({
+      ok: false,
+      error: 'Too many favicon requests are already pending.'
+    })
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+
+    releaseFirstFetch()
+    await Promise.all([activeRequest, queuedRequest])
   })
 })
