@@ -84,7 +84,7 @@ describe('Model Usage liquid-glass sidebar CSS', () => {
     expect(meta).toContain('display: none;')
   })
 
-  it('turns the collapsed matrix into subtle glass wells without losing density', () => {
+  it('keeps the collapsed quota percentages flat and readable at compact density', () => {
     const grid = rule(
       '.app-sidebar .model-usage-liquid-card .model-usage-compact-grid {'
     )
@@ -92,7 +92,10 @@ describe('Model Usage liquid-glass sidebar CSS', () => {
 
     expect(grid).toContain('border-collapse: separate;')
     expect(grid).toContain('border-spacing: 2px 2px;')
-    expect(cell).toContain('background: rgba(218, 235, 252, 0.035);')
+    expect(cell).toContain('border: 0;')
+    expect(cell).toContain('background: transparent;')
+    expect(cell).toContain('box-shadow: none;')
+    expect(cell).toContain('text-shadow: none;')
   })
 
   it('keeps the resize hit target draggable while hiding its visual grip', () => {
