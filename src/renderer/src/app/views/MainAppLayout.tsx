@@ -475,6 +475,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   sideThinkingProviderLabel,
   sideThreadTokenTallyHasValue,
   sideTranscriptContentRef,
+  sideExternalRestoreAnchorMessageId,
   sideTranscriptScrollRef,
   sideWorkspace,
   sidebarPresence,
@@ -494,6 +495,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   togglePinMessageInChat,
   toggleRightDockPanel,
   transcriptContentRef,
+  mainExternalRestoreAnchorMessageId,
   transcriptJumpRequest,
   transcriptMessages,
   transcriptScrollRef,
@@ -1979,6 +1981,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                 key={isWelcomeChat ? 'welcome' : 'transcript'}
                 scrollRef={transcriptScrollRef}
                 contentRef={transcriptContentRef}
+                externalRestoreAnchorMessageId={mainExternalRestoreAnchorMessageId}
                 endRef={logsEndRef}
                 messages={transcriptMessages}
                 isWelcomeChat={isWelcomeChat}
@@ -2314,6 +2317,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
               key={`side-${sideChat.appChatId}`}
               scrollRef={sideTranscriptScrollRef}
               contentRef={sideTranscriptContentRef}
+              externalRestoreAnchorMessageId={sideExternalRestoreAnchorMessageId}
               endRef={sideLogsEndRef}
               messages={sideChat.messages || EMPTY_CHAT_MESSAGES}
               isWelcomeChat={sideChatIsWelcome}

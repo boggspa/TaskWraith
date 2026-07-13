@@ -94,6 +94,11 @@ export function useTranscriptScrollState({
   const programmaticScrollTargetRef = useRef<number | null>(null)
   const programmaticScrollClearRafRef = useRef<number | null>(null)
   const [unreadFromBottomCount, setUnreadFromBottomCount] = useState(0)
+  const [externalRestoreAnchorTarget, setExternalRestoreAnchorTarget] = useState<{
+    generation: number
+    targetChatId: string | null
+    messageId: string
+  } | null>(null)
   const unreadFromBottomCountRef = useRef(0)
   const previousMessagesCountRef = useRef<{ chatId: string | null; count: number }>({
     chatId: null,
@@ -118,6 +123,7 @@ export function useTranscriptScrollState({
   const cancelPendingExternalRestore = useCallback(() => {
     externalRestoreGenerationRef.current += 1
     pendingExternalRestoreRef.current = null
+    setExternalRestoreAnchorTarget(null)
   }, [])
 
   const captureScrollState = useCallback(
@@ -144,6 +150,11 @@ export function useTranscriptScrollState({
             }
           }
         : null
+      setExternalRestoreAnchorTarget(
+        scrollState?.anchorMessageId
+          ? { generation, targetChatId, messageId: scrollState.anchorMessageId }
+          : null
+      )
       let ownershipSynced = false
       const cancel = restoreChatScrollStateWhenReady(
         () => {
@@ -166,6 +177,11 @@ export function useTranscriptScrollState({
             const nextPending = { ...pending, lifecycle: transition.state }
             pendingExternalRestoreRef.current = transition.shouldClear ? null : nextPending
           }
+          if (externalRestoreGenerationRef.current === generation) {
+            setExternalRestoreAnchorTarget((current) =>
+              current?.generation === generation ? null : current
+            )
+          }
         },
         8
       )
@@ -173,6 +189,11 @@ export function useTranscriptScrollState({
         cancel()
         if (pendingExternalRestoreRef.current?.generation === generation) {
           pendingExternalRestoreRef.current = null
+        }
+        if (externalRestoreGenerationRef.current === generation) {
+          setExternalRestoreAnchorTarget((current) =>
+            current?.generation === generation ? null : current
+          )
         }
       }
     },
@@ -811,6 +832,10 @@ export function useTranscriptScrollState({
     transcriptScrollRef,
     transcriptContentRef,
     autoFollowRef,
+    externalRestoreAnchorMessageId:
+      externalRestoreAnchorTarget?.targetChatId === chatId
+        ? externalRestoreAnchorTarget.messageId
+        : null,
     unreadFromBottomCount,
     showJumpToLatestPill: shouldShowJumpToLatestPill({
       autoFollow: autoFollowActive,

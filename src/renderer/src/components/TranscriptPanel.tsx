@@ -433,6 +433,10 @@ export type TranscriptPanelProps = {
   onOpenSideChatFromMessage?: (message: ChatMessage) => void
   sideChatSeedMessageId?: string | null
   jumpToMessageRequest?: { messageId: string; rowKey?: string; requestId: number } | null
+  /** Temporarily force-mount this transferred reading anchor so the host's
+   * exact-offset restore can find it even when the destination virtual window
+   * initially lands elsewhere after a width change. */
+  externalRestoreAnchorMessageId?: string | null
   onManualTranscriptJump?: () => void
   onJumpToLatest?: () => void
   onPreviewImage: (ref: ChatMediaRef) => void
@@ -1775,6 +1779,7 @@ export const TranscriptPanel = memo(
     onOpenSideChatFromMessage,
     sideChatSeedMessageId,
     jumpToMessageRequest,
+    externalRestoreAnchorMessageId,
     onManualTranscriptJump,
     onJumpToLatest,
     onPreviewImage,
@@ -2434,6 +2439,10 @@ export const TranscriptPanel = memo(
         return true
       }
     }, [])
+    useLayoutEffect(() => {
+      if (!externalRestoreAnchorMessageId) return
+      ensureRoundExpandedForMessage(externalRestoreAnchorMessageId)
+    }, [ensureRoundExpandedForMessage, externalRestoreAnchorMessageId])
     const revealChatId = currentChat?.appChatId ?? null
     const revealChatIsRunning =
       revealChatId != null && Array.isArray(runningChatIds) && runningChatIds.includes(revealChatId)
@@ -2567,6 +2576,13 @@ export const TranscriptPanel = memo(
       const rowPosition = projectedRowLookup.indexByRowKey.get(row.rowKey) ?? -1
       return rowPosition >= 0 ? rowPosition : null
     }, [findProjectedRowForMessage, pendingFocusTarget, projectedRowLookup])
+    const externalRestoreAnchorRowIndex = useMemo(() => {
+      if (!externalRestoreAnchorMessageId) return null
+      const row = findProjectedRowForMessage(externalRestoreAnchorMessageId)
+      if (!row) return null
+      const rowPosition = projectedRowLookup.indexByRowKey.get(row.rowKey) ?? -1
+      return rowPosition >= 0 ? rowPosition : null
+    }, [externalRestoreAnchorMessageId, findProjectedRowForMessage, projectedRowLookup])
     const virtualRows = virtualizeEnabled ? projectedRows : EMPTY_VIRTUAL_ROWS
     const {
       window: virtualWindow,
@@ -2586,7 +2602,7 @@ export const TranscriptPanel = memo(
       autoFollowRef,
       onProgrammaticScrollWrite,
       compactDensity,
-      forcedRowIndex: pendingFocusRowIndex,
+      forcedRowIndex: pendingFocusRowIndex ?? externalRestoreAnchorRowIndex,
       activeLiveRowKey: liveMeasurementRowKey,
       expandedRowIds: expandedRowIdsWithLiveViewports
     })
@@ -4401,6 +4417,7 @@ export const TranscriptPanel = memo(
     previous.jumpToMessageRequest?.messageId === next.jumpToMessageRequest?.messageId &&
     previous.jumpToMessageRequest?.rowKey === next.jumpToMessageRequest?.rowKey &&
     previous.jumpToMessageRequest?.requestId === next.jumpToMessageRequest?.requestId &&
+    previous.externalRestoreAnchorMessageId === next.externalRestoreAnchorMessageId &&
     previous.onManualTranscriptJump === next.onManualTranscriptJump &&
     previous.onJumpToLatest === next.onJumpToLatest &&
     previous.onPreviewImage === next.onPreviewImage &&

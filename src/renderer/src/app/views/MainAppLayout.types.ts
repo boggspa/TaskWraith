@@ -576,6 +576,7 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   sideThinkingProviderLabel: any
   sideThreadTokenTallyHasValue: any
   sideTranscriptContentRef: any
+  sideExternalRestoreAnchorMessageId: any
   sideTranscriptScrollRef: any
   sideWorkspace: any
   sidebarPresence: MainAppLayoutSidebarProps['sidebarPresence']
@@ -594,6 +595,7 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   toggleFeedbackMessageInChat: any
   togglePinMessageInChat: any
   transcriptContentRef: any
+  mainExternalRestoreAnchorMessageId: any
   transcriptJumpRequest: any
   transcriptMessages: any
   transcriptScrollRef: any

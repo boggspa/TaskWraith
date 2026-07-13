@@ -2942,6 +2942,7 @@ function App(): React.JSX.Element {
     transcriptScrollRef,
     transcriptContentRef,
     autoFollowRef,
+    externalRestoreAnchorMessageId: mainExternalRestoreAnchorMessageId,
     unreadFromBottomCount,
     showJumpToLatestPill,
     handleJumpToLatest,
@@ -2981,6 +2982,12 @@ function App(): React.JSX.Element {
   const sideTranscriptContentRef = useRef<HTMLDivElement>(null)
   const committedSideChatIdRef = useRef(sideChatId)
   const sideRestoreTargetChatIdRef = useRef<string | null>(null)
+  const sideRestoreGenerationRef = useRef(0)
+  const [sideExternalRestoreAnchorTarget, setSideExternalRestoreAnchorTarget] = useState<{
+    generation: number
+    targetChatId: string
+    messageId: string
+  } | null>(null)
   useLayoutEffect(() => {
     committedSideChatIdRef.current = sideChatId
     if (
@@ -2988,22 +2995,49 @@ function App(): React.JSX.Element {
       sideRestoreTargetChatIdRef.current !== sideChatId
     ) {
       sideRestoreTargetChatIdRef.current = null
+      sideRestoreGenerationRef.current += 1
+      setSideExternalRestoreAnchorTarget(null)
     }
   }, [sideChatId])
   const restoreSideTranscriptScrollStateWhenReady = useCallback(
     (targetChatId: string, scrollState: ChatScrollState) => {
+      const generation = sideRestoreGenerationRef.current + 1
+      sideRestoreGenerationRef.current = generation
       sideRestoreTargetChatIdRef.current = targetChatId
-      return restoreChatScrollStateWhenReady(
+      setSideExternalRestoreAnchorTarget(
+        scrollState.anchorMessageId
+          ? { generation, targetChatId, messageId: scrollState.anchorMessageId }
+          : null
+      )
+      const cancel = restoreChatScrollStateWhenReady(
         () =>
           committedSideChatIdRef.current === targetChatId
             ? sideTranscriptScrollRef.current
             : null,
         scrollState,
         8,
-        () => sideRestoreTargetChatIdRef.current === targetChatId,
-        () => {},
+        () =>
+          sideRestoreGenerationRef.current === generation &&
+          sideRestoreTargetChatIdRef.current === targetChatId,
+        () => {
+          if (sideRestoreGenerationRef.current === generation) {
+            setSideExternalRestoreAnchorTarget((current) =>
+              current?.generation === generation ? null : current
+            )
+          }
+        },
         8
       )
+      return () => {
+        cancel()
+        if (sideRestoreGenerationRef.current === generation) {
+          sideRestoreGenerationRef.current += 1
+          sideRestoreTargetChatIdRef.current = null
+          setSideExternalRestoreAnchorTarget((current) =>
+            current?.generation === generation ? null : current
+          )
+        }
+      }
     },
     []
   )
@@ -26426,6 +26460,11 @@ function App(): React.JSX.Element {
     sideThinkingProviderLabel,
     sideThreadTokenTallyHasValue,
     sideTranscriptContentRef,
+    sideExternalRestoreAnchorMessageId:
+      sideExternalRestoreAnchorTarget &&
+      sideExternalRestoreAnchorTarget.targetChatId === sideChat?.appChatId
+        ? sideExternalRestoreAnchorTarget.messageId
+        : null,
     sideTranscriptScrollRef,
     sideWorkspace,
     sidebarPresence,
@@ -26445,6 +26484,7 @@ function App(): React.JSX.Element {
     togglePinMessageInChat,
     toggleRightDockPanel,
     transcriptContentRef,
+    mainExternalRestoreAnchorMessageId,
     transcriptJumpRequest,
     transcriptMessages,
     transcriptScrollRef,

@@ -592,6 +592,22 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
     expect(spacerHeight(html, 'vlist-spacer-bottom')).toBeGreaterThan(0)
   })
 
+  it('force-mounts an off-window external restore anchor without treating it as a manual jump', () => {
+    const html = renderToStaticMarkup(
+      <TranscriptPanel
+        {...makeProps({
+          virtualize: true,
+          autoFollowRef: { current: false },
+          externalRestoreAnchorMessageId: 'm100'
+        })}
+      />
+    )
+
+    expect(html).toContain('data-message-id="m100"')
+    expect(html).toContain('UNIQUEMARK_100')
+    expect(html).not.toContain('data-vrow-id="m0#0"')
+  })
+
   it('virtualised + bottom-pinned (auto-follow): mounts the last window, bottom spacer 0', () => {
     const html = renderToStaticMarkup(
       <TranscriptPanel {...makeProps({ virtualize: true, autoFollowRef: { current: true } })} />
