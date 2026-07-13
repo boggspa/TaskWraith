@@ -16,12 +16,12 @@ const rule = (selector: string): string => {
 }
 
 describe('Model Usage liquid-glass sidebar CSS', () => {
-  it('makes the whole pane one 30%-alpha material, including its header', () => {
+  it('makes the whole pane one 60%-alpha material, including its header', () => {
     const card = rule('.app-sidebar .model-usage-summary--sidebar {')
     const body = rule('.app-sidebar .model-usage-liquid-card {')
 
     expect(card).toContain('border-radius: 16px;')
-    expect(card).toContain('background-color: rgba(7, 19, 34, 0.3);')
+    expect(card).toContain('background-color: rgba(7, 19, 34, 0.6);')
     expect(card).toContain('backdrop-filter: blur(22px) saturate(145%) brightness(1.03);')
     expect(body).toContain('background: transparent;')
     expect(body).toContain('border: 0;')
@@ -44,7 +44,7 @@ describe('Model Usage liquid-glass sidebar CSS', () => {
     expect(reduced).toContain("[data-reduce-transparency='true']")
     expect(reduced).toContain('backdrop-filter: none;')
     expect(light).toContain('.model-usage-summary--sidebar')
-    expect(light).toContain('background-color: rgba(224, 235, 246, 0.3);')
+    expect(light).toContain('background-color: rgba(224, 235, 246, 0.6);')
   })
 
   it('uses fading provider dividers and compact luminous quota meters', () => {
