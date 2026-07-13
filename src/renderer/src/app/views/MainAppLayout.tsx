@@ -29,7 +29,7 @@ import {
 } from '../../lib/panelWidths'
 import { getProviderLabel } from '../../lib/providerLabels'
 import { isGlobalChat } from '../../lib/chatScope'
-import { resolveWorkspaceDisplayName } from '../../../../shared/workspaceDisplayName'
+import { resolveMainPaneWorkspaceLabel } from '../../lib/mainPaneWorkspaceHeader'
 import { RunRailPanel } from '../../components/RunRailPanel'
 import { DigitOdometer } from '../../components/DigitOdometer'
 import { ProviderBadgeIcon, Sidebar } from '../../components/Sidebar'
@@ -1097,16 +1097,15 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
       } satisfies Partial<ComposerProps>) as ComposerProps)
     : null
 
-  const mainPaneThreadTitle = currentChat?.title || currentWorkspace?.displayName || 'New chat'
-  const mainPaneWorkspaceLabel =
-    isCurrentGlobalChat || !currentWorkspace
-      ? null
-      : resolveWorkspaceDisplayName({
-          displayName: currentWorkspace.displayName,
-          path: currentWorkspace.path,
-          repoRoot: composerCtx?.primaryGitSnapshot?.repoRoot,
-          remoteUrl: composerCtx?.primaryGitSnapshot?.remoteUrl || currentWorkspace.remoteOriginUrl
-        })
+  const mainPaneWorkspaceLabel = resolveMainPaneWorkspaceLabel({
+    chat: currentChat,
+    isGlobalChat: isCurrentGlobalChat,
+    workspaces,
+    currentWorkspace,
+    snapshotRepoRoot: composerCtx?.primaryGitSnapshot?.repoRoot,
+    snapshotRemoteUrl: composerCtx?.primaryGitSnapshot?.remoteUrl
+  })
+  const mainPaneThreadTitle = currentChat?.title || mainPaneWorkspaceLabel || 'New chat'
   const mainPaneProvider = isCurrentEnsembleChat
     ? 'ensemble'
     : currentChat?.provider || currentProvider
