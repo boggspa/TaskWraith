@@ -16,35 +16,35 @@ const rule = (selector: string): string => {
 }
 
 describe('Model Usage liquid-glass sidebar CSS', () => {
-  it('keeps the resize shell transparent and gives the selected view its own material', () => {
-    const shell = rule('.app-sidebar .model-usage-summary--sidebar {')
-    const card = rule('.app-sidebar .model-usage-liquid-card {')
+  it('makes the whole pane one 30%-alpha material, including its header', () => {
+    const card = rule('.app-sidebar .model-usage-summary--sidebar {')
+    const body = rule('.app-sidebar .model-usage-liquid-card {')
 
-    expect(shell).toContain('background: transparent;')
-    expect(shell).toContain('border: 0;')
     expect(card).toContain('border-radius: 16px;')
-    expect(card).toContain('background-color: rgba(7, 19, 34, 0.82);')
+    expect(card).toContain('background-color: rgba(7, 19, 34, 0.3);')
     expect(card).toContain('backdrop-filter: blur(22px) saturate(145%) brightness(1.03);')
+    expect(body).toContain('background: transparent;')
+    expect(body).toContain('border: 0;')
   })
 
   it('builds a directional rim and neutral refractive sheen around the card', () => {
-    const rim = rule('.app-sidebar .model-usage-liquid-card::before {')
-    const sheen = rule('.app-sidebar .model-usage-liquid-card::after {')
+    const rim = rule('.app-sidebar .model-usage-summary--sidebar::before {')
+    const sheen = rule('.app-sidebar .model-usage-summary--sidebar::after {')
 
     expect(rim).toContain('-webkit-mask-composite: xor;')
     expect(rim).toContain('mask-composite: exclude;')
-    expect(sheen).toContain('rgba(255, 255, 255, 0.12)')
+    expect(sheen).toContain('rgba(255, 255, 255, 0.1)')
     expect(sheen).not.toMatch(/purple|magenta/i)
   })
 
   it('has opaque Reduce Transparency and pale light-theme fallbacks', () => {
-    const reduced = rule("[data-appearance='solid'] .app-sidebar .model-usage-liquid-card,")
+    const reduced = rule("[data-appearance='solid'] .app-sidebar .model-usage-summary--sidebar,")
     const light = rule(":is([data-theme='light'], [data-theme='mist'], [data-theme='sage'])")
 
     expect(reduced).toContain("[data-reduce-transparency='true']")
     expect(reduced).toContain('backdrop-filter: none;')
-    expect(light).toContain('.model-usage-liquid-card')
-    expect(light).toContain('background-color: rgba(224, 235, 246, 0.78);')
+    expect(light).toContain('.model-usage-summary--sidebar')
+    expect(light).toContain('background-color: rgba(224, 235, 246, 0.3);')
   })
 
   it('uses fading provider dividers and compact luminous quota meters', () => {
@@ -57,5 +57,28 @@ describe('Model Usage liquid-glass sidebar CSS', () => {
     expect(divider).toContain('linear-gradient(90deg, transparent')
     expect(meter).toContain('height: 5px;')
     expect(meta).toContain('display: none;')
+  })
+
+  it('turns the collapsed matrix into subtle glass wells without losing density', () => {
+    const grid = rule(
+      '.app-sidebar .model-usage-liquid-card .model-usage-compact-grid {'
+    )
+    const cell = rule('.app-sidebar .model-usage-liquid-card .model-usage-compact-cell {')
+
+    expect(grid).toContain('border-collapse: separate;')
+    expect(grid).toContain('border-spacing: 2px 2px;')
+    expect(cell).toContain('background: rgba(218, 235, 252, 0.035);')
+  })
+
+  it('keeps the resize hit target draggable while hiding its visual grip', () => {
+    const handle = rule('.model-usage-resize-handle {')
+    const hiddenChrome = rule(
+      '.app-sidebar .model-usage-summary--sidebar .model-usage-resize-handle::before,'
+    )
+
+    expect(handle).toContain('height: 18px;')
+    expect(handle).toContain('cursor: ns-resize;')
+    expect(hiddenChrome).toContain('opacity: 0;')
+    expect(hiddenChrome).toContain('background: transparent;')
   })
 })
