@@ -76,4 +76,23 @@ describe('Multiview focused workspace presentation', () => {
     expect(workspaceIndex).toBeGreaterThan(focusIndex)
     expect(chatIndex).toBeGreaterThan(workspaceIndex)
   })
+
+  it('does not let the focused Diff Studio scalar replace the current chat run summary', () => {
+    expect(source).toContain(
+      'const exactFileChangeSummaries = getRunFileDiffSummaries(currentRunDiff || null)'
+    )
+    expect(source).toContain(
+      'messages.filter((message) => message.runId === liveToolFileSummaryRunId)'
+    )
+    expect(source).not.toContain(
+      'const exactFileChangeSummaries = getRunFileDiffSummaries(runDiff || currentRunDiff || null)'
+    )
+    const completionEvidence = slice(
+      'const liveToolFileChangeSummaries =',
+      'const displayFileChangeSummaries ='
+    )
+    expect(completionEvidence).toContain(': liveToolFileChangeSummaries')
+    expect(completionEvidence).not.toContain('workspaceFileChangeSummaries')
+    expect(completionEvidence).not.toContain('applyWorkspaceDiffOverlay')
+  })
 })

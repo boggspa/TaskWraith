@@ -5,6 +5,7 @@ interface SoloToolEventReducerOptions {
   createMessageId: () => string
   nowIso?: () => string
   provider?: ProviderId
+  runId?: string
 }
 
 export interface SoloToolEventReduction {
@@ -57,6 +58,7 @@ export function reduceSoloToolEventMessages(
     role: 'tool',
     content: '',
     timestamp: options.nowIso?.() || new Date().toISOString(),
+    ...(options.runId ? { runId: options.runId } : {}),
     toolActivities: []
   })
 

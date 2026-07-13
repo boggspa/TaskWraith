@@ -35,13 +35,133 @@ describe('buildChatViewProps (viewer policy)', () => {
     expect(p.onDeleteMessage('m')).toBeUndefined()
   })
 
-  it('shows no diff surface (the focused pane owns it)', () => {
-    const p = buildChatViewProps(makeInput())
+  it('shows no file summary when this pane has no run evidence', () => {
+    const p = buildChatViewProps(
+      makeInput({
+        messages: [
+          {
+            id: 'legacy-tool',
+            role: 'tool',
+            content: '',
+            timestamp: '2026-07-13T04:46:16.000Z',
+            toolActivities: [
+              {
+                id: 'legacy-write',
+                toolName: 'write_file',
+                displayName: 'Wrote file',
+                category: 'write',
+                status: 'success',
+                parameters: { path: 'unowned.txt', content: 'unowned\n' }
+              }
+            ]
+          }
+        ]
+      })
+    )
     expect(p.displayFileChangeSummaries).toEqual([])
     expect(p.fileChangeSummaryText).toBe('')
     expect(p.fileChangeShouldShowStats).toBe(false)
     expect(p.fileChangeDisplayAdds).toBe(0)
     expect(p.fileChangeDisplayDels).toBe(0)
+  })
+
+  it('projects only this pane current run file changes', () => {
+    const summary = {
+      path: 'tw-multiview-test2-sentinel.txt',
+      status: 'created',
+      additions: 2,
+      deletions: 0,
+      previewKind: 'synthetic_new_file'
+    }
+    const p = buildChatViewProps(
+      makeInput({
+        currentWorkspacePath: '/Users/chrisizatt/Documents/Test 2',
+        currentRun: {
+          runDiff: {
+            createdFiles: [summary],
+            modifiedFiles: [],
+            deletedFiles: []
+          }
+        } as unknown as BuildChatViewPropsInput['currentRun']
+      })
+    )
+    expect(p.displayFileChangeSummaries).toEqual([summary])
+    expect(p.fileChangeSummaryText).toBe('Created 1 · Edited 0 · Deleted 0')
+    expect(p.fileChangeShouldShowStats).toBe(true)
+    expect(p.fileChangeDisplayAdds).toBe(2)
+    expect(p.fileChangeDisplayDels).toBe(0)
+  })
+
+  it('does not reuse another pane run summary', () => {
+    const test2 = buildChatViewProps(
+      makeInput({
+        currentRun: {
+          runDiff: {
+            createdFiles: [{ path: 'test2.txt', status: 'created' }],
+            modifiedFiles: [],
+            deletedFiles: []
+          }
+        } as unknown as BuildChatViewPropsInput['currentRun']
+      })
+    )
+    const test3 = buildChatViewProps(
+      makeInput({
+        currentRun: {
+          runDiff: {
+            createdFiles: [{ path: 'test3.txt', status: 'created' }],
+            modifiedFiles: [],
+            deletedFiles: []
+          }
+        } as unknown as BuildChatViewPropsInput['currentRun']
+      })
+    )
+    expect(test2.displayFileChangeSummaries.map((item) => item.path)).toEqual(['test2.txt'])
+    expect(test3.displayFileChangeSummaries.map((item) => item.path)).toEqual(['test3.txt'])
+  })
+
+  it('falls back to only the current run tool evidence when an exact diff is empty', () => {
+    const toolMessage = (runId: string, path: string) => ({
+      id: `tool-${runId}`,
+      role: 'tool' as const,
+      content: '',
+      timestamp: '2026-07-13T04:46:16.000Z',
+      runId,
+      toolActivities: [
+        {
+          id: `write-${runId}`,
+          toolName: 'write_file',
+          displayName: 'Wrote file',
+          category: 'write' as const,
+          status: 'success' as const,
+          parameters: { path, content: 'sentinel\n' },
+          diffSummary: {
+            additions: 1,
+            deletions: 1,
+            files: [{ path, status: 'modified' as const, additions: 1, deletions: 1 }],
+            source: 'result_diff' as const,
+            confidence: 'exact' as const
+          }
+        }
+      ]
+    })
+    const p = buildChatViewProps(
+      makeInput({
+        currentWorkspacePath: '/Users/chrisizatt/Documents/Test 3',
+        messages: [
+          toolMessage('run-other', '/Users/chrisizatt/Documents/Test 2/test2.txt'),
+          toolMessage('run-current', '/Users/chrisizatt/Documents/Test 3/test3.txt')
+        ],
+        currentRun: {
+          runId: 'run-current',
+          runDiff: { createdFiles: [], modifiedFiles: [], deletedFiles: [] }
+        } as unknown as BuildChatViewPropsInput['currentRun']
+      })
+    )
+
+    expect(p.displayFileChangeSummaries.map((item) => item.path)).toEqual(['test3.txt'])
+    expect(p.fileChangeSummaryText).toBe('Created 0 · Edited 1 · Deleted 0 · live est.')
+    expect(p.fileChangeDisplayAdds).toBe(1)
+    expect(p.fileChangeDisplayDels).toBe(1)
   })
 
   it('keeps policy props at stable identities across calls (memo-safe)', () => {

@@ -79,6 +79,29 @@ describe('reduceSoloToolEventMessages', () => {
     })
   })
 
+  it('stamps newly projected tool messages with their owning run id', () => {
+    const result = reduceSoloToolEventMessages(
+      [],
+      {
+        type: 'tool_event',
+        isUse: true,
+        data: {
+          type: 'tool_use',
+          tool_id: 'call-run-owned',
+          tool_name: 'write_file',
+          parameters: { path: 'sentinel.txt', content: 'owned' }
+        }
+      },
+      {
+        createMessageId: () => 'tool-message-run-owned',
+        nowIso: () => NOW,
+        runId: 'run-123'
+      }
+    )
+
+    expect(result.messages[0].runId).toBe('run-123')
+  })
+
   it('pairs a solo tool_result with the existing tool activity', () => {
     const first = reduce([], {
       type: 'tool_event',

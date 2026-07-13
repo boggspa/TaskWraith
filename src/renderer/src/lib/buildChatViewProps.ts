@@ -1,5 +1,6 @@
 import type { TranscriptPanelProps } from '../components/TranscriptPanel'
 import { isGlobalChat } from './chatScope'
+import { getLiveToolFileDiffSummaries } from './LiveFileDiffSummary'
 
 /**
  * Build the TranscriptPanel prop bundle for a Multiview pane-scoped transcript.
@@ -74,7 +75,57 @@ const NOOP_PLAN_CHOICE = (_messageId: string, _option: string): void => {}
 const NOOP_AGENT_QUESTION = (_questionId: string, _answer: string, _isCustom: boolean): void => {}
 const EMPTY_FILE_SUMMARIES: TranscriptPanelProps['displayFileChangeSummaries'] = []
 
+function paneFileChangePresentation(input: BuildChatViewPropsInput): {
+  summaries: TranscriptPanelProps['displayFileChangeSummaries']
+  text: string
+  shouldShowStats: boolean
+  additions: number
+  deletions: number
+} {
+  const runDiff = input.currentRun?.runDiff
+  const exactSummaries = runDiff
+    ? [...runDiff.createdFiles, ...runDiff.modifiedFiles, ...runDiff.deletedFiles]
+    : null
+  const hasExactSummaries = exactSummaries !== null && exactSummaries.length > 0
+  const currentRunId = input.currentRun?.runId
+  const currentRunMessages = currentRunId
+    ? input.messages.filter((message) => message.runId === currentRunId)
+    : []
+  const summaries = (
+    hasExactSummaries
+      ? exactSummaries
+      : getLiveToolFileDiffSummaries(currentRunMessages, input.currentWorkspacePath)
+  ).filter((summary) => !summary.isNoise)
+  if (summaries.length === 0) {
+    return {
+      summaries: EMPTY_FILE_SUMMARIES,
+      text: '',
+      shouldShowStats: false,
+      additions: 0,
+      deletions: 0
+    }
+  }
+  const created = summaries.filter((summary) => summary.status === 'created').length
+  const modified = summaries.filter((summary) => summary.status === 'modified').length
+  const deleted = summaries.filter((summary) => summary.status === 'deleted').length
+  const hasLineStats = summaries.some(
+    (summary) => summary.additions !== undefined || summary.deletions !== undefined
+  )
+  return {
+    summaries,
+    text: `Created ${created} · Edited ${modified} · Deleted ${deleted}${hasExactSummaries ? '' : ' · live est.'}`,
+    shouldShowStats: true,
+    additions: hasLineStats
+      ? summaries.reduce((total, summary) => total + (summary.additions || 0), 0)
+      : created + modified,
+    deletions: hasLineStats
+      ? summaries.reduce((total, summary) => total + (summary.deletions || 0), 0)
+      : deleted
+  }
+}
+
 export function buildChatViewProps(input: BuildChatViewPropsInput): TranscriptPanelProps {
+  const fileChanges = paneFileChangePresentation(input)
   return {
     scrollRef: input.refs.scrollRef,
     contentRef: input.refs.contentRef,
@@ -109,12 +160,14 @@ export function buildChatViewProps(input: BuildChatViewPropsInput): TranscriptPa
     ...(input.thinkingModelBadge !== undefined
       ? { thinkingModelBadge: input.thinkingModelBadge }
       : {}),
-    // Pane policy: the focused pane owns the diff surface.
-    displayFileChangeSummaries: EMPTY_FILE_SUMMARIES,
-    fileChangeSummaryText: '',
-    fileChangeShouldShowStats: false,
-    fileChangeDisplayAdds: 0,
-    fileChangeDisplayDels: 0,
+    // The transcript completion card is pane-owned even though Diff Studio
+    // remains focused-only. Project this chat's own run/tool evidence so a
+    // resting pane never hides its writes or borrows another pane's files.
+    displayFileChangeSummaries: fileChanges.summaries,
+    fileChangeSummaryText: fileChanges.text,
+    fileChangeShouldShowStats: fileChanges.shouldShowStats,
+    fileChangeDisplayAdds: fileChanges.additions,
+    fileChangeDisplayDels: fileChanges.deletions,
     chats: input.chats,
     runningChatIds: input.runningChatIds,
     onPlanChoiceSubmit: input.onPlanChoiceSubmit ?? NOOP_PLAN_CHOICE,

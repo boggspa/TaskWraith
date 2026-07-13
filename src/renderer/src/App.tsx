@@ -285,10 +285,7 @@ import {
 } from './lib/queuedMessageRows'
 import { estimateLineChanges } from './lib/ToolParser'
 import { reduceSoloToolEventMessages } from './lib/soloToolEventReducer'
-import {
-  applyWorkspaceDiffOverlay,
-  getLiveToolFileDiffSummaries
-} from './lib/LiveFileDiffSummary'
+import { getLiveToolFileDiffSummaries } from './lib/LiveFileDiffSummary'
 import { parseGeminiPermissionRequest } from './lib/GeminiPermissionParser'
 import type { GeminiPermissionRequest } from './lib/GeminiPermissionParser'
 import type {
@@ -12240,7 +12237,8 @@ function App(): React.JSX.Element {
               for (const projection of toolProjections) {
                 const reduction = reduceSoloToolEventMessages(nextMessages, projection.event, {
                   createMessageId,
-                  provider: effectiveRunProvider
+                  provider: effectiveRunProvider,
+                  runId: currentRunId
                 })
                 nextMessages = reduction.messages
                 if (
@@ -12814,7 +12812,8 @@ function App(): React.JSX.Element {
             }
             const reduction = reduceSoloToolEventMessages(updated.messages, event, {
               createMessageId,
-              provider: effectiveRunProvider
+              provider: effectiveRunProvider,
+              runId: currentRunId
             })
             updated.messages = reduction.messages
 
@@ -20657,9 +20656,18 @@ function App(): React.JSX.Element {
         ? 'Tool permission requested'
         : 'Attachment access requested'
   const currentRunDiff = currentRun?.runDiff
-  const exactFileChangeSummaries = getRunFileDiffSummaries(runDiff || currentRunDiff || null)
+  // Completion cards are pane/chat-owned. The scalar `runDiff` backs the
+  // focused Diff Studio selection and may still contain the previously focused
+  // pane's result; never let it override this chat's persisted run evidence.
+  const exactFileChangeSummaries = getRunFileDiffSummaries(currentRunDiff || null)
   const liveToolFileSummaryChatId = currentChat?.appChatId ?? null
-  const liveToolFileSummaryMessages = currentChat?.messages || EMPTY_CHAT_MESSAGES
+  const liveToolFileSummaryRunId = currentRun?.runId ?? null
+  const liveToolFileSummaryMessages = useMemo(() => {
+    const messages = currentChat?.messages || EMPTY_CHAT_MESSAGES
+    return liveToolFileSummaryRunId
+      ? messages.filter((message) => message.runId === liveToolFileSummaryRunId)
+      : EMPTY_CHAT_MESSAGES
+  }, [currentChat?.messages, liveToolFileSummaryRunId])
   const liveToolFileSummarySignature = useMemo(
     () => buildLiveToolFileSummarySignature(liveToolFileSummaryMessages),
     [liveToolFileSummaryMessages]
@@ -20718,35 +20726,12 @@ function App(): React.JSX.Element {
     liveToolFileSummaryState.workspacePath === liveToolFileSummaryWorkspacePath
       ? liveToolFileSummaryState.summaries
       : EMPTY_DIFF_FILE_SUMMARIES
-  const workspaceFileChangeSummaries = useMemo(
-    () =>
-      Array.isArray((diff as any)?.summaries)
-        ? (diff as any).summaries.filter(isFileSummaryRecord)
-        : EMPTY_DIFF_FILE_SUMMARIES,
-    [diff]
-  )
-  const overlaidLiveToolFileChangeSummaries = useMemo(
-    () =>
-      applyWorkspaceDiffOverlay(
-        liveToolFileChangeSummaries,
-        workspaceFileChangeSummaries,
-        liveToolFileSummaryWorkspacePath
-      ),
-    [
-      liveToolFileChangeSummaries,
-      liveToolFileSummaryWorkspacePath,
-      workspaceFileChangeSummaries
-    ]
-  )
   const exactFileChangeSummariesWithOwners = useMemo(() => {
-    if (
-      exactFileChangeSummaries.length === 0 ||
-      overlaidLiveToolFileChangeSummaries.length === 0
-    ) {
+    if (exactFileChangeSummaries.length === 0 || liveToolFileChangeSummaries.length === 0) {
       return exactFileChangeSummaries
     }
     const ownersByPath = new Map<string, DiffFileSummary['owners']>()
-    for (const summary of overlaidLiveToolFileChangeSummaries) {
+    for (const summary of liveToolFileChangeSummaries) {
       if (summary.owners?.length) ownersByPath.set(summary.path, summary.owners)
     }
     if (ownersByPath.size === 0) return exactFileChangeSummaries
@@ -20755,13 +20740,13 @@ function App(): React.JSX.Element {
         ? summary
         : { ...summary, owners: ownersByPath.get(summary.path) }
     )
-  }, [exactFileChangeSummaries, overlaidLiveToolFileChangeSummaries])
+  }, [exactFileChangeSummaries, liveToolFileChangeSummaries])
   const fileChangeSummaries =
     exactFileChangeSummaries.length > 0
       ? exactFileChangeSummariesWithOwners
-      : overlaidLiveToolFileChangeSummaries
+      : liveToolFileChangeSummaries
   const fileChangeSummaryEstimated =
-    exactFileChangeSummaries.length === 0 && overlaidLiveToolFileChangeSummaries.length > 0
+    exactFileChangeSummaries.length === 0 && liveToolFileChangeSummaries.length > 0
   const displayFileChangeSummaries = useMemo(
     () => fileChangeSummaries.filter((item) => !item.isNoise),
     [fileChangeSummaries]
