@@ -1,5 +1,13 @@
 import { execFileSync, spawnSync } from 'child_process'
-import { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } from 'fs'
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  realpathSync,
+  rmSync,
+  writeFileSync
+} from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -10,6 +18,12 @@ import {
   parseWorktreeList,
   type GitCommandRunner
 } from './GitService'
+import {
+  gitCommandEnvironment,
+  hardenedGitCommandArgs,
+  isSafeExternalGitPushUrl,
+  unsafeRepositoryPushConfigKeys
+} from './GitCommandSecurity'
 
 function runGit(cwd: string, args: string[]): string {
   return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
@@ -55,6 +69,75 @@ describe('GitService', () => {
     runGit(repo, ['push', '-u', 'origin', 'main'])
     return remote
   }
+
+  it('prefixes every Git invocation with non-executable repository config overrides', () => {
+    const args = hardenedGitCommandArgs('/usr/bin/git', ['status', '--porcelain'])
+
+    expect(args).toEqual(
+      expect.arrayContaining([
+        'core.fsmonitor=false',
+        expect.stringMatching(/^core\.hooksPath=/),
+        expect.stringMatching(/^core\.attributesFile=/),
+        'diff.external=',
+        'credential.helper=',
+        'credential.interactive=never',
+        'core.sshCommand=ssh',
+        'protocol.ext.allow=never',
+        'commit.gpgSign=false',
+        'push.gpgSign=false'
+      ])
+    )
+    expect(args.slice(-2)).toEqual(['status', '--porcelain'])
+    expect(hardenedGitCommandArgs('gh', ['status'])).toEqual(['status'])
+  })
+
+  it('builds a scrubbed Git environment and re-adds only the safe prompt control', () => {
+    const env = gitCommandEnvironment(
+      'git',
+      {
+        SAFE_OVERRIDE: 'yes',
+        GIT_WORK_TREE: '/hostile/worktree',
+        gIt_Object_Directory: '/hostile/objects'
+      },
+      {
+        PATH: '/usr/bin',
+        GIT_DIR: '/hostile/git-dir',
+        Git_Config_Parameters: 'hostile',
+        GITHUB_TOKEN: 'secret',
+        SSH_ASKPASS: '/hostile/askpass'
+      }
+    )
+
+    expect(env).toMatchObject({
+      PATH: '/usr/bin',
+      SAFE_OVERRIDE: 'yes',
+      GIT_TERMINAL_PROMPT: '0'
+    })
+    expect(Object.keys(env).filter((key) => key.toUpperCase().startsWith('GIT_'))).toEqual([
+      'GIT_TERMINAL_PROMPT'
+    ])
+    expect(env).not.toHaveProperty('GITHUB_TOKEN')
+    expect(env).not.toHaveProperty('SSH_ASKPASS')
+    expect(gitCommandEnvironment('gh', { GH_PROMPT_DISABLED: '0' }, {})).toEqual({
+      GH_PROMPT_DISABLED: '1'
+    })
+  })
+
+  it('classifies external push URLs and executable repository transport config', () => {
+    expect(isSafeExternalGitPushUrl('https://github.com/acme/repo.git')).toBe(true)
+    expect(isSafeExternalGitPushUrl('ssh://git@github.com/acme/repo.git')).toBe(true)
+    expect(isSafeExternalGitPushUrl('git@github.com:acme/repo.git')).toBe(true)
+    expect(isSafeExternalGitPushUrl('/tmp/local.git')).toBe(false)
+    expect(isSafeExternalGitPushUrl('file:///tmp/local.git')).toBe(false)
+    expect(isSafeExternalGitPushUrl('ext::sh -c touch /tmp/pwned')).toBe(false)
+    expect(
+      unsafeRepositoryPushConfigKeys([
+        'remote.origin.receivepack',
+        'url.file:///tmp/.insteadOf',
+        'remote.origin.url'
+      ])
+    ).toEqual(['remote.origin.receivepack', 'url.file:///tmp/.insteadOf'])
+  })
 
   it('parses porcelain status records', () => {
     expect(parseStatusPorcelainZ(' M README.md\0?? new file.txt\0')).toEqual([
@@ -124,6 +207,58 @@ describe('GitService', () => {
     expect(result.data.requestedPath).toBe(nested)
     expect(result.data.branch).toBe('main')
     expect(result.data.clean).toBe(true)
+  })
+
+  it('strips inherited Git routing variables before invoking the default runner', async () => {
+    const keys = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_CONFIG_COUNT'] as const
+    const previous = new Map(keys.map((key) => [key, process.env[key]]))
+    process.env.GIT_DIR = join(repo, 'hostile-git-dir')
+    process.env.GIT_WORK_TREE = join(repo, 'hostile-work-tree')
+    process.env.GIT_CONFIG_COUNT = '1'
+    try {
+      const result = await new GitService().snapshot(repo)
+
+      expect(result.ok).toBe(true)
+      if (!result.ok) return
+      expect(result.data.repoRoot).toBe(repo)
+      expect(result.data.branch).toBe('main')
+    } finally {
+      for (const key of keys) {
+        const value = previous.get(key)
+        if (value === undefined) delete process.env[key]
+        else process.env[key] = value
+      }
+    }
+  })
+
+  it('disables a repository-local core.fsmonitor hook during automatic status', async () => {
+    const marker = join(repo, 'fsmonitor-executed')
+    const monitor = join(repo, 'hostile-fsmonitor.sh')
+    writeFileSync(monitor, `#!/bin/sh\ntouch ${JSON.stringify(marker)}\n`)
+    chmodSync(monitor, 0o755)
+    runGit(repo, ['config', 'core.fsmonitor', monitor])
+
+    const result = await new GitService().snapshot(repo)
+
+    expect(result.ok).toBe(true)
+    expect(existsSync(marker)).toBe(false)
+  })
+
+  it('fails closed before repository-local clean filters can run', async () => {
+    const marker = join(repo, 'filter-executed')
+    const filter = join(repo, 'hostile-filter.sh')
+    writeFileSync(filter, `#!/bin/sh\ntouch ${JSON.stringify(marker)}\ncat\n`)
+    chmodSync(filter, 0o755)
+    writeFileSync(join(repo, '.gitattributes'), 'README.md filter=hostile\n')
+    runGit(repo, ['config', 'filter.hostile.clean', filter])
+
+    const result = await new GitService().snapshot(repo)
+
+    expect(result).toEqual({
+      ok: false,
+      error: 'Repository-local Git filter commands are not executed by TaskWraith (filter.hostile.clean).'
+    })
+    expect(existsSync(marker)).toBe(false)
   })
 
   it('reports changed and untracked files', async () => {
@@ -327,6 +462,67 @@ describe('GitService', () => {
       ok: false,
       error: 'Cannot push from a detached HEAD. Create or switch to a branch first.'
     })
+  })
+
+  it('rejects executable local transport config for an externally granted repository', async () => {
+    addBareRemote()
+    const marker = join(repo, 'receive-pack-ran')
+    runGit(repo, [
+      'config',
+      'remote.origin.receivepack',
+      `sh -c 'touch ${marker}'`
+    ])
+
+    const result = await new GitService().push({
+      repoPath: repo,
+      externalRepository: true
+    })
+
+    expect(result).toMatchObject({ ok: false })
+    if (result.ok) return
+    expect(result.error).toContain('remote.origin.receivepack')
+    expect(existsSync(marker)).toBe(false)
+  })
+
+  it('rejects local-file remotes for an externally granted repository', async () => {
+    addBareRemote()
+
+    const result = await new GitService().push({
+      repoPath: repo,
+      externalRepository: true
+    })
+
+    expect(result).toEqual({
+      ok: false,
+      error: 'Externally granted repositories can push only to explicit HTTPS or SSH remotes.'
+    })
+  })
+
+  it('rejects repository-local URL rewrites before an external push', async () => {
+    addBareRemote()
+    runGit(repo, ['remote', 'set-url', 'origin', 'https://github.com/acme/repo.git'])
+    runGit(repo, ['config', 'url.file:///tmp/redirect/.insteadOf', 'https://github.com/'])
+
+    const result = await new GitService().push({
+      repoPath: repo,
+      externalRepository: true
+    })
+
+    expect(result).toMatchObject({ ok: false })
+    if (result.ok) return
+    expect(result.error).toContain('url.file:///tmp/redirect/.insteadof')
+  })
+
+  it('pins the receive-pack executable for ordinary pushes', async () => {
+    addBareRemote()
+    writeFileSync(join(repo, 'push.txt'), 'push\n')
+    runGit(repo, ['add', 'push.txt'])
+    runGit(repo, ['commit', '-m', 'Push test'])
+
+    const result = await new GitService().push({ repoPath: repo })
+
+    expect(result.ok).toBe(true)
+    expect(runGit(repo, ['status', '--short'])).toBe('')
   })
 
   it('runs gh pr create from the resolved repository root', async () => {

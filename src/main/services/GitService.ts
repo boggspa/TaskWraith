@@ -2,7 +2,18 @@ import { spawn } from 'child_process'
 import { promises as fs } from 'fs'
 import { homedir } from 'os'
 import { basename, dirname, isAbsolute, join, normalize, relative, resolve, sep } from 'path'
-import { scrubCliEnv } from '../CliEnvSecurity'
+import {
+  gitCommandEnvironment,
+  hardenedGitCommandArgs,
+  isSafeExternalGitPushUrl,
+  isSafeGitRemoteName,
+  LOCAL_GIT_CONFIG_KEY_QUERY_ARGS,
+  LOCAL_GIT_FILTER_CONFIG_QUERY_ARGS,
+  repositoryLocalPushConfigError,
+  repositoryLocalGitFilterError,
+  repositoryLocalGitFilterKeys,
+  unsafeRepositoryPushConfigKeys
+} from './GitCommandSecurity'
 
 const DEFAULT_TIMEOUT_MS = 30_000
 
@@ -211,6 +222,8 @@ export interface GitPushInput {
   repoPath: string
   setUpstream?: boolean
   remote?: string
+  /** True when desktop authority comes from a per-chat external-path grant. */
+  externalRepository?: boolean
 }
 
 export interface GitCreatePrInput {
@@ -252,7 +265,9 @@ export class GitService {
   private timeoutMs: number
 
   constructor(options: { run?: GitCommandRunner; timeoutMs?: number } = {}) {
-    this.run = options.run || runCommand
+    const runner = options.run || runCommand
+    this.run = (command, args, commandOptions) =>
+      runner(command, hardenedGitCommandArgs(command, args), commandOptions)
     this.timeoutMs = options.timeoutMs || DEFAULT_TIMEOUT_MS
   }
 
@@ -272,6 +287,7 @@ export class GitService {
         repo.repoRoot,
         await pathBaseForRepoPaths(repo.requestedPath)
       )
+      await this.assertNoRepositoryLocalFilters(repo.repoRoot)
       if (input.patch && input.patch.trim()) {
         return {
           ok: false,
@@ -316,10 +332,14 @@ export class GitService {
       const message = input.message.trim()
       if (!message) return { ok: false, error: 'Commit message is required.' }
       const repo = await this.resolveRepository(input.repoPath)
-      const staged = await this.run('git', ['diff', '--cached', '--quiet'], {
+      const staged = await this.run(
+        'git',
+        ['diff', '--no-ext-diff', '--no-textconv', '--cached', '--quiet'],
+        {
         cwd: repo.repoRoot,
         timeoutMs: this.timeoutMs
-      })
+        }
+      )
       if (staged.code === 0) return { ok: false, error: 'No staged changes to commit.' }
       await this.mustRun('git', ['commit', '-m', message], repo.repoRoot)
       return { ok: true, data: await this.buildSnapshot(repo.repoRoot) }
@@ -337,11 +357,20 @@ export class GitService {
       if (!snapshot.remoteUrl && !input.remote?.trim()) {
         return { ok: false, error: 'No git remote is configured. Add a remote before pushing.' }
       }
-      const remote = input.remote?.trim() || snapshot.remoteName || 'origin'
+      const remote =
+        snapshot.upstream && !input.setUpstream
+          ? snapshot.remoteName || 'origin'
+          : input.remote?.trim() || snapshot.remoteName || 'origin'
+      if (!isSafeGitRemoteName(remote)) {
+        return { ok: false, error: 'Git remote name is not safe to execute.' }
+      }
+      if (input.externalRepository) {
+        await this.assertSafeExternalPushRemote(snapshot.repoRoot, remote)
+      }
       const args =
         snapshot.upstream && !input.setUpstream
-          ? ['push']
-          : ['push', '-u', remote, snapshot.branch]
+          ? ['push', '--receive-pack=git-receive-pack']
+          : ['push', '--receive-pack=git-receive-pack', '-u', remote, snapshot.branch]
       await this.mustRun('git', args, snapshot.repoRoot)
       return { ok: true, data: await this.buildSnapshot(snapshot.repoRoot) }
     } catch (error) {
@@ -427,6 +456,7 @@ export class GitService {
         ? await this.assertBranchName(repo.repoRoot, input.branch)
         : undefined
       const targetPath = resolveWorktreeTargetPath(repo.repoRoot, input)
+      await this.assertNoRepositoryLocalFilters(repo.repoRoot)
       const args = ['worktree', 'add']
       if (branch) {
         const exists = await this.branchExists(repo.repoRoot, branch)
@@ -728,6 +758,27 @@ export class GitService {
     }
   }
 
+  private async assertSafeExternalPushRemote(repoRoot: string, remote: string): Promise<void> {
+    const config = await this.mustRun('git', [...LOCAL_GIT_CONFIG_KEY_QUERY_ARGS], repoRoot)
+    const unsafeKeys = unsafeRepositoryPushConfigKeys(repositoryLocalGitFilterKeys(config.stdout))
+    if (unsafeKeys.length > 0) throw new Error(repositoryLocalPushConfigError(unsafeKeys))
+
+    const urls = await this.mustRun(
+      'git',
+      ['remote', 'get-url', '--push', '--all', remote],
+      repoRoot
+    )
+    const resolvedUrls = urls.stdout
+      .split('\n')
+      .map((value) => value.trim())
+      .filter(Boolean)
+    if (resolvedUrls.length === 0 || resolvedUrls.some((url) => !isSafeExternalGitPushUrl(url))) {
+      throw new Error(
+        'Externally granted repositories can push only to explicit HTTPS or SSH remotes.'
+      )
+    }
+  }
+
   private async readPullRequestSummary(repoRoot: string, selector?: string): Promise<
     | { ok: true; summary?: GitPrSummary }
     | { ok: false; error: string; stderr?: string; notFound?: boolean }
@@ -798,6 +849,7 @@ export class GitService {
 
   private async buildSnapshot(inputPath: string): Promise<GitRepositorySnapshot> {
     const repo = await this.resolveRepository(inputPath)
+    await this.assertNoRepositoryLocalFilters(repo.repoRoot)
     const [
       branchResult,
       commitResult,
@@ -905,10 +957,14 @@ export class GitService {
    * unreachable. Binary files emit "-\t-" rows, which coerce to 0.
    */
   private async readLineStats(repoRoot: string): Promise<{ additions: number; deletions: number }> {
-    const result = await this.run('git', ['diff', '--numstat', 'HEAD'], {
-      cwd: repoRoot,
-      timeoutMs: this.timeoutMs
-    })
+    const result = await this.run(
+      'git',
+      ['diff', '--no-ext-diff', '--no-textconv', '--numstat', 'HEAD'],
+      {
+        cwd: repoRoot,
+        timeoutMs: this.timeoutMs
+      }
+    )
     if (result.code !== 0) return { additions: 0, deletions: 0 }
     let additions = 0
     let deletions = 0
@@ -932,6 +988,26 @@ export class GitService {
     return {
       ahead: Number(aheadRaw) || 0,
       behind: Number(behindRaw) || 0
+    }
+  }
+
+  private async assertNoRepositoryLocalFilters(repoRoot: string): Promise<void> {
+    const result = await this.run(
+      'git',
+      [...LOCAL_GIT_FILTER_CONFIG_QUERY_ARGS],
+      { cwd: repoRoot, timeoutMs: this.timeoutMs }
+    )
+    if (result.code === 1 && !result.stdout.trim()) return
+    if (result.code !== 0) {
+      throw new Error(
+        result.stderr.trim() ||
+          result.stdout.trim() ||
+          'Repository-local Git filter configuration could not be inspected safely.'
+      )
+    }
+    const filters = repositoryLocalGitFilterKeys(result.stdout)
+    if (filters.length > 0) {
+      throw new Error(repositoryLocalGitFilterError(filters))
     }
   }
 
@@ -1060,11 +1136,7 @@ async function runCommand(
     let settled = false
     const child = spawn(command, args, {
       cwd: options.cwd,
-      env: scrubCliEnv({
-        ...process.env,
-        ...(command === 'gh' ? { GH_PROMPT_DISABLED: '1' } : {}),
-        ...options.env
-      }),
+      env: gitCommandEnvironment(command, options.env),
       stdio: ['ignore', 'pipe', 'pipe']
     })
     const timeout = setTimeout(() => {

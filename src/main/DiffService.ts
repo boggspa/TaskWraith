@@ -1,6 +1,13 @@
 import { spawn, spawnSync } from 'child_process'
 import * as fs from 'fs'
 import * as path from 'path'
+import {
+  gitCommandEnvironment,
+  hardenedGitCommandArgs,
+  LOCAL_GIT_FILTER_CONFIG_QUERY_ARGS,
+  repositoryLocalGitFilterError,
+  repositoryLocalGitFilterKeys
+} from './services/GitCommandSecurity'
 import type {
   DiffFileSummary,
   DiffFileStatus,
@@ -65,12 +72,35 @@ function toGitPath(filePath: string): string {
   return filePath.split(path.sep).join('/')
 }
 
-async function spawnGit(
+type SpawnGitResult = { stdout: string; stderr: string; code: number; truncated?: boolean }
+
+function gitCommandMayApplyRepositoryFilters(args: readonly string[]): boolean {
+  return args[0] === 'status' || args[0] === 'diff'
+}
+
+function repositoryLocalFilterFailure(result: SpawnGitResult): string | null {
+  if (result.code === 1 && !result.stdout.trim()) return null
+  if (result.code !== 0) {
+    return (
+      result.stderr.trim() ||
+      result.stdout.trim() ||
+      'Repository-local Git filter configuration could not be inspected safely.'
+    )
+  }
+  const keys = repositoryLocalGitFilterKeys(result.stdout)
+  return keys.length > 0 ? repositoryLocalGitFilterError(keys) : null
+}
+
+async function spawnGitRaw(
   cwd: string,
-  args: string[]
-): Promise<{ stdout: string; stderr: string; code: number }> {
+  args: readonly string[]
+): Promise<SpawnGitResult> {
   return new Promise((resolve) => {
-    const proc = spawn('git', args, { cwd, shell: false })
+    const proc = spawn('git', hardenedGitCommandArgs('git', args), {
+      cwd,
+      shell: false,
+      env: gitCommandEnvironment('git', undefined)
+    })
     let stdout = ''
     let stderr = ''
     proc.stdout?.on('data', (data) => {
@@ -88,15 +118,25 @@ async function spawnGit(
   })
 }
 
-function spawnGitSync(
+async function spawnGit(cwd: string, args: readonly string[]): Promise<SpawnGitResult> {
+  if (gitCommandMayApplyRepositoryFilters(args)) {
+    const filterCheck = await spawnGitRaw(cwd, LOCAL_GIT_FILTER_CONFIG_QUERY_ARGS)
+    const filterFailure = repositoryLocalFilterFailure(filterCheck)
+    if (filterFailure) return { stdout: '', stderr: filterFailure, code: -1 }
+  }
+  return spawnGitRaw(cwd, args)
+}
+
+function spawnGitSyncRaw(
   cwd: string,
-  args: string[],
+  args: readonly string[],
   options: { maxBuffer?: number } = {}
-): { stdout: string; stderr: string; code: number; truncated?: boolean } {
-  const result = spawnSync('git', args, {
+): SpawnGitResult {
+  const result = spawnSync('git', hardenedGitCommandArgs('git', args), {
     cwd,
     shell: false,
     encoding: 'utf-8',
+    env: gitCommandEnvironment('git', undefined),
     ...(options.maxBuffer ? { maxBuffer: options.maxBuffer } : {})
   })
   return {
@@ -107,6 +147,19 @@ function spawnGitSync(
       Boolean(result.error && 'code' in result.error && result.error.code === 'ENOBUFS') ||
       (options.maxBuffer !== undefined && (result.stdout || '').length >= options.maxBuffer)
   }
+}
+
+function spawnGitSync(
+  cwd: string,
+  args: readonly string[],
+  options: { maxBuffer?: number } = {}
+): SpawnGitResult {
+  if (gitCommandMayApplyRepositoryFilters(args)) {
+    const filterCheck = spawnGitSyncRaw(cwd, LOCAL_GIT_FILTER_CONFIG_QUERY_ARGS)
+    const filterFailure = repositoryLocalFilterFailure(filterCheck)
+    if (filterFailure) return { stdout: '', stderr: filterFailure, code: -1 }
+  }
+  return spawnGitSyncRaw(cwd, args, options)
 }
 
 async function resolveGitWorkspaceScope(
@@ -182,7 +235,14 @@ function countGitFileDiffLines(
   gitPath: string
 ): { additions?: number; deletions?: number } {
   const unstaged = parseNumstat(
-    spawnGitSync(gitCwd, ['diff', '--numstat', '--no-ext-diff', '--', gitPath]).stdout
+    spawnGitSync(gitCwd, [
+      'diff',
+      '--numstat',
+      '--no-ext-diff',
+      '--no-textconv',
+      '--',
+      gitPath
+    ]).stdout
   )
   const staged = parseNumstat(
     spawnGitSync(gitCwd, [
@@ -190,6 +250,7 @@ function countGitFileDiffLines(
       '--cached',
       '--numstat',
       '--no-ext-diff',
+      '--no-textconv',
       '--',
       gitPath
     ]).stdout
@@ -376,6 +437,7 @@ function buildCurrentFileSummary(
     const unstagedDiff = readGitDiffPreview(gitCwd, [
       'diff',
       '--no-ext-diff',
+      '--no-textconv',
       `--unified=${GIT_DIFF_PREVIEW_CONTEXT_LINES}`,
       '--',
       gitPath
@@ -384,6 +446,7 @@ function buildCurrentFileSummary(
       'diff',
       '--cached',
       '--no-ext-diff',
+      '--no-textconv',
       `--unified=${GIT_DIFF_PREVIEW_CONTEXT_LINES}`,
       '--',
       gitPath
@@ -452,7 +515,7 @@ export async function getWorkspaceDiff(workspace: string): Promise<{
   }
 
   const pathspec = workspacePathspec(scope.workspacePrefix)
-  const { stdout: statusOut, stderr: statusErr } = await spawnGit(scope.repoRoot, [
+  const { stdout: statusOut, stderr: statusErr, code: statusCode } = await spawnGit(scope.repoRoot, [
     'status',
     '--porcelain=v1',
     '-z',
@@ -463,6 +526,12 @@ export async function getWorkspaceDiff(workspace: string): Promise<{
     return {
       type: 'not_repo',
       text: 'This folder is not a git repository. Run git init if you want diff tracking.'
+    }
+  }
+  if (statusCode !== 0) {
+    return {
+      type: 'error',
+      text: statusErr.trim() || 'Git status could not be inspected safely.'
     }
   }
 
@@ -495,13 +564,17 @@ export async function getWorkspaceDiff(workspace: string): Promise<{
 }
 
 export async function captureWorkspaceSnapshot(workspace: string): Promise<WorkspaceSnapshot> {
-  const { stdout: statusOut, stderr: statusErr } = await spawnGit(workspace, [
+  const { stdout: statusOut, stderr: statusErr, code: statusCode } = await spawnGit(workspace, [
     'status',
     '--porcelain=v1',
     '-z',
     '--untracked-files=all'
   ])
   const isGitRepo = !statusErr.includes('not a git repository')
+
+  if (isGitRepo && statusCode !== 0) {
+    throw new Error(statusErr.trim() || 'Git status could not be captured safely.')
+  }
 
   if (isGitRepo) {
     return {

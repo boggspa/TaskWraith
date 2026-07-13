@@ -8,6 +8,7 @@ import {
   classifyStatus,
   generateSyntheticNewFileDiff,
   getWorkspaceDiff,
+  captureWorkspaceSnapshot,
   buildBoundedWorkspaceDiff,
   computeRunDiff
 } from './DiffService'
@@ -108,6 +109,89 @@ describe('DiffService', () => {
   })
 
   describe('getWorkspaceDiff', () => {
+    it('ignores hostile inherited Git routing variables in async and sync diff commands', async () => {
+      const { baseDir, repoDir } = makeGitRepo()
+      const keys = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_CONFIG_COUNT'] as const
+      const previous = new Map(keys.map((key) => [key, process.env[key]]))
+      try {
+        fs.writeFileSync(path.join(repoDir, 'tracked.txt'), 'before\n')
+        runGit(repoDir, ['add', 'tracked.txt'])
+        runGit(repoDir, ['commit', '-m', 'initial'])
+        fs.writeFileSync(path.join(repoDir, 'tracked.txt'), 'after\n')
+        process.env.GIT_DIR = path.join(repoDir, 'hostile-git-dir')
+        process.env.GIT_WORK_TREE = path.join(repoDir, 'hostile-work-tree')
+        process.env.GIT_CONFIG_COUNT = '1'
+
+        const diff = await getWorkspaceDiff(repoDir)
+
+        expect(diff.type).toBe('changes')
+        expect(diff.summaries?.find((file) => file.path === 'tracked.txt')?.diffText).toContain(
+          '+after'
+        )
+      } finally {
+        for (const key of keys) {
+          const value = previous.get(key)
+          if (value === undefined) delete process.env[key]
+          else process.env[key] = value
+        }
+        fs.rmSync(baseDir, { recursive: true, force: true })
+      }
+    })
+
+    it('disables repository-local fsmonitor and external diff executables', async () => {
+      const { baseDir, repoDir } = makeGitRepo()
+      try {
+        const fsmonitorMarker = path.join(repoDir, 'fsmonitor-executed')
+        const diffMarker = path.join(repoDir, 'external-diff-executed')
+        const fsmonitor = path.join(repoDir, 'hostile-fsmonitor.sh')
+        const externalDiff = path.join(repoDir, 'hostile-diff.sh')
+        fs.writeFileSync(fsmonitor, `#!/bin/sh\ntouch ${JSON.stringify(fsmonitorMarker)}\n`)
+        fs.writeFileSync(externalDiff, `#!/bin/sh\ntouch ${JSON.stringify(diffMarker)}\n`)
+        fs.chmodSync(fsmonitor, 0o755)
+        fs.chmodSync(externalDiff, 0o755)
+        fs.writeFileSync(path.join(repoDir, 'tracked.txt'), 'before\n')
+        runGit(repoDir, ['add', 'tracked.txt'])
+        runGit(repoDir, ['commit', '-m', 'initial'])
+        runGit(repoDir, ['config', 'core.fsmonitor', fsmonitor])
+        runGit(repoDir, ['config', 'diff.external', externalDiff])
+        fs.writeFileSync(path.join(repoDir, 'tracked.txt'), 'after\n')
+
+        const diff = await getWorkspaceDiff(repoDir)
+
+        expect(diff.type).toBe('changes')
+        expect(diff.summaries?.find((file) => file.path === 'tracked.txt')?.diffText).toContain(
+          '+after'
+        )
+        expect(fs.existsSync(fsmonitorMarker)).toBe(false)
+        expect(fs.existsSync(diffMarker)).toBe(false)
+      } finally {
+        fs.rmSync(baseDir, { recursive: true, force: true })
+      }
+    })
+
+    it('fails diff and snapshot capture closed before repository-local filters execute', async () => {
+      const { baseDir, repoDir } = makeGitRepo()
+      try {
+        const marker = path.join(repoDir, 'filter-executed')
+        const filter = path.join(repoDir, 'hostile-filter.sh')
+        fs.writeFileSync(filter, `#!/bin/sh\ntouch ${JSON.stringify(marker)}\ncat\n`)
+        fs.chmodSync(filter, 0o755)
+        fs.writeFileSync(path.join(repoDir, '.gitattributes'), 'README.md filter=hostile\n')
+        runGit(repoDir, ['config', 'filter.hostile.clean', filter])
+
+        await expect(getWorkspaceDiff(repoDir)).resolves.toEqual({
+          type: 'error',
+          text: 'Repository-local Git filter commands are not executed by TaskWraith (filter.hostile.clean).'
+        })
+        await expect(captureWorkspaceSnapshot(repoDir)).rejects.toThrow(
+          'Repository-local Git filter commands are not executed by TaskWraith'
+        )
+        expect(fs.existsSync(marker)).toBe(false)
+      } finally {
+        fs.rmSync(baseDir, { recursive: true, force: true })
+      }
+    })
+
     it('includes a preview for staged-only tracked changes', async () => {
       const { baseDir, repoDir } = makeGitRepo()
       try {
