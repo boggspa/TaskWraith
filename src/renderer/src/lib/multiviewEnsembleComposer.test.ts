@@ -9,9 +9,13 @@ import type {
 } from '../../../main/store/types'
 import {
   buildMultiviewEnsembleComposerProjection,
+  buildMultiviewEnsembleSelectionPruneSnapshot,
+  isMultiviewEnsembleParticipantSelectionValid,
   mergeEnsembleQueuedPromptMutationResult,
-  pruneMultiviewEnsembleSelectionOwnership
+  pruneMultiviewEnsembleSelectionOwnership,
+  resolveMultiviewEnsembleParticipantSelection
 } from './multiviewEnsembleComposer'
+import { reconcileChatRefMap } from './reconcileChatRefMap'
 
 describe('buildMultiviewEnsembleComposerProjection', () => {
   it('keeps composer state disjoint for chats that reuse participant ids', () => {
@@ -264,6 +268,250 @@ describe('buildMultiviewEnsembleComposerProjection', () => {
     expect(stable.userOverrodeSelectionRoundKeys).toBe(
       pruned.userOverrodeSelectionRoundKeys
     )
+  })
+
+  it('converges across unstable summary snapshots while hydrated panes remain live', () => {
+    const participants = makeParticipants([
+      ['pane-boss', 'codex', 0, true],
+      ['pane-worker', 'cursor', 1, true]
+    ])
+    const hydratedPane = makeEnsembleChat({
+      id: 'pane-chat',
+      participants,
+      selectedParticipantId: 'pane-boss',
+      orchestrationMode: 'continuous',
+      fanoutPolicy: 'off',
+      activeGoalStatus: 'active',
+      activeRound: makeLiveRound({
+        id: 'pane-live-round',
+        participants,
+        activeParticipantId: 'pane-worker',
+        orchestrationMode: 'continuous',
+        fanoutPolicy: 'off',
+        continuationHops: 1,
+        maxContinuationHops: 6
+      })
+    })
+    const summary = {
+      ...hydratedPane,
+      summaryOnly: true as const,
+      messageCount: 1,
+      runCount: 1,
+      messages: [],
+      runs: [],
+      // Reproduce the stale list projection that triggered the loop: its
+      // ensemble payload temporarily lacks the live worker and round.
+      ensemble: {
+        ...hydratedPane.ensemble!,
+        participants: [participants[0]],
+        activeRound: undefined
+      }
+    }
+    const hydrated = new Map([[hydratedPane.appChatId, hydratedPane]])
+    const selected = { 'pane-chat': 'pane-worker' }
+    const overrides = new Set(['pane-chat:pane-live-round'])
+
+    const firstAuthority = reconcileChatRefMap({
+      chats: [{ ...summary }],
+      currentChat: null,
+      prev: hydrated,
+      activeRunChatId: hydratedPane.appChatId,
+      activeRunChatIds: new Set([hydratedPane.appChatId]),
+      recentlyCompleted: new Map(),
+      now: 1
+    })
+    const firstSnapshot = buildMultiviewEnsembleSelectionPruneSnapshot(
+      firstAuthority.values()
+    )
+    const firstPrune = pruneMultiviewEnsembleSelectionOwnership(
+      firstSnapshot.chats,
+      selected,
+      overrides
+    )
+    expect(firstSnapshot.chats[0]).toBe(hydratedPane)
+    expect(
+      isMultiviewEnsembleParticipantSelectionValid(hydratedPane, 'pane-worker')
+    ).toBe(true)
+    expect(firstPrune.selectedParticipantIdByChatId).toBe(selected)
+    expect(firstPrune.userOverrodeSelectionRoundKeys).toBe(overrides)
+
+    // Fresh arrays and summary objects model whole-chat broadcast churn. The
+    // effect revision stays stable and cleanup itself is a reference no-op.
+    const repeatedAuthority = reconcileChatRefMap({
+      chats: [{ ...summary }],
+      currentChat: null,
+      prev: firstAuthority,
+      activeRunChatId: hydratedPane.appChatId,
+      activeRunChatIds: new Set([hydratedPane.appChatId]),
+      recentlyCompleted: new Map(),
+      now: 2
+    })
+    const repeatedSnapshot = buildMultiviewEnsembleSelectionPruneSnapshot(
+      repeatedAuthority.values()
+    )
+    const repeatedPrune = pruneMultiviewEnsembleSelectionOwnership(
+      repeatedSnapshot.chats,
+      firstPrune.selectedParticipantIdByChatId,
+      firstPrune.userOverrodeSelectionRoundKeys
+    )
+    expect(repeatedSnapshot.ownershipKey).toBe(firstSnapshot.ownershipKey)
+    expect(repeatedPrune.selectedParticipantIdByChatId).toBe(
+      firstPrune.selectedParticipantIdByChatId
+    )
+    expect(repeatedPrune.userOverrodeSelectionRoundKeys).toBe(
+      firstPrune.userOverrodeSelectionRoundKeys
+    )
+
+    // Participant removal and terminal-round cleanup still follow the
+    // hydrated authority once it records those transitions.
+    const removedWorker = {
+      ...hydratedPane,
+      ensemble: {
+        ...hydratedPane.ensemble!,
+        participants: [participants[0]],
+        activeRound: {
+          ...hydratedPane.ensemble!.activeRound!,
+          status: 'completed' as const
+        }
+      }
+    }
+    const terminalSnapshot = buildMultiviewEnsembleSelectionPruneSnapshot([
+      removedWorker
+    ])
+    const terminalPrune = pruneMultiviewEnsembleSelectionOwnership(
+      terminalSnapshot.chats,
+      selected,
+      overrides
+    )
+    expect(terminalSnapshot.ownershipKey).not.toBe(firstSnapshot.ownershipKey)
+    expect(
+      isMultiviewEnsembleParticipantSelectionValid(removedWorker, 'pane-worker')
+    ).toBe(false)
+    expect(terminalPrune.selectedParticipantIdByChatId).toEqual({})
+    expect(terminalPrune.userOverrodeSelectionRoundKeys.size).toBe(0)
+
+    // The durable list remains the deletion authority even if the hydrated map
+    // has not yet discarded an old pane record.
+    const deletedAuthority = reconcileChatRefMap({
+      chats: [],
+      currentChat: null,
+      prev: hydrated,
+      activeRunChatId: null,
+      activeRunChatIds: new Set(),
+      recentlyCompleted: new Map(),
+      now: 3
+    })
+    const deletedSnapshot = buildMultiviewEnsembleSelectionPruneSnapshot(
+      deletedAuthority.values()
+    )
+    const deletedPrune = pruneMultiviewEnsembleSelectionOwnership(
+      deletedSnapshot.chats,
+      selected,
+      overrides
+    )
+    expect(deletedPrune.selectedParticipantIdByChatId).toEqual({})
+    expect(deletedPrune.userOverrodeSelectionRoundKeys.size).toBe(0)
+  })
+
+  it('derives live speakers without overwriting the resting user selection', () => {
+    const participants = makeParticipants([
+      ['speaker-a', 'codex', 0, true],
+      ['manual-b', 'cursor', 1, true],
+      ['speaker-c', 'grok', 2, true]
+    ])
+    const liveA = makeEnsembleChat({
+      id: 'speaker-chat',
+      participants,
+      selectedParticipantId: 'manual-b',
+      orchestrationMode: 'continuous',
+      fanoutPolicy: 'off',
+      activeGoalStatus: 'active',
+      activeRound: makeLiveRound({
+        id: 'speaker-round',
+        participants,
+        activeParticipantId: 'speaker-a',
+        orchestrationMode: 'continuous',
+        fanoutPolicy: 'off',
+        continuationHops: 1,
+        maxContinuationHops: 6
+      })
+    })
+    const liveC: ChatRecord = {
+      ...liveA,
+      ensemble: {
+        ...liveA.ensemble!,
+        activeRound: {
+          ...liveA.ensemble!.activeRound!,
+          activeParticipantId: 'speaker-c'
+        }
+      }
+    }
+    const terminalC: ChatRecord = {
+      ...liveC,
+      ensemble: {
+        ...liveC.ensemble!,
+        activeRound: {
+          ...liveC.ensemble!.activeRound!,
+          status: 'completed'
+        }
+      }
+    }
+    const removedManualB: ChatRecord = {
+      ...liveC,
+      ensemble: {
+        ...liveC.ensemble!,
+        participants: participants.filter((participant) => participant.id !== 'manual-b')
+      }
+    }
+    const removedManualBTerminal: ChatRecord = {
+      ...removedManualB,
+      ensemble: {
+        ...removedManualB.ensemble!,
+        activeRound: {
+          ...removedManualB.ensemble!.activeRound!,
+          status: 'completed'
+        }
+      }
+    }
+    const noOverrides = new Set<string>()
+    const manualOverride = new Set(['speaker-chat:speaker-round'])
+
+    // Focused and resting panes now share this projection. Switching focus
+    // therefore cannot write A/C into the user-owned resting choice B.
+    expect(
+      resolveMultiviewEnsembleParticipantSelection(liveA, 'manual-b', noOverrides)
+    ).toBe('speaker-a')
+    expect(
+      resolveMultiviewEnsembleParticipantSelection(liveC, 'manual-b', noOverrides)
+    ).toBe('speaker-c')
+    expect(
+      resolveMultiviewEnsembleParticipantSelection(liveC, 'manual-b', manualOverride)
+    ).toBe('manual-b')
+    expect(
+      resolveMultiviewEnsembleParticipantSelection(terminalC, 'manual-b', noOverrides)
+    ).toBe('manual-b')
+    expect(
+      resolveMultiviewEnsembleParticipantSelection(
+        removedManualB,
+        'manual-b',
+        manualOverride
+      )
+    ).toBe('speaker-c')
+    expect(
+      resolveMultiviewEnsembleParticipantSelection(
+        removedManualBTerminal,
+        'manual-b',
+        manualOverride
+      )
+    ).toBeNull()
+
+    // Active-speaker churn is projection-only and must not retrigger cleanup;
+    // live → terminal remains a structural ownership transition.
+    const liveARevision = buildMultiviewEnsembleSelectionPruneSnapshot([liveA])
+    const liveCRevision = buildMultiviewEnsembleSelectionPruneSnapshot([liveC])
+    const terminalRevision = buildMultiviewEnsembleSelectionPruneSnapshot([terminalC])
+    expect(liveCRevision.ownershipKey).toBe(liveARevision.ownershipKey)
+    expect(terminalRevision.ownershipKey).not.toBe(liveARevision.ownershipKey)
   })
 
   it('merges a queue removal without dropping concurrent appends', () => {

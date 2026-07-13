@@ -156,7 +156,9 @@ describe('Multiview pane Composer context parity', () => {
       'if (dmTargetParticipantId) request.dmTargetParticipantId = dmTargetParticipantId'
     )
     expect(source).toContain('selectedParticipantIdByChatId[currentChat.appChatId]')
-    expect(source).toContain('userOverrodeSelectionRoundKeys.has(viewerRoundSelectionKey)')
+    expect(
+      source.match(/resolveMultiviewEnsembleParticipantSelection\(/g)
+    ).toHaveLength(3)
     expect(source.match(/paneSlashParticipant\?\.provider \?\? viewerProvider/g)).toHaveLength(2)
     expect(paneSlash).toContain('selectedParticipant: EnsembleParticipant | null')
     expect(paneSlash).toContain('const slashParticipant = selectedParticipant')

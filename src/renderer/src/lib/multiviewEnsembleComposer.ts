@@ -49,6 +49,86 @@ export interface MultiviewEnsembleSelectionOwnership {
   userOverrodeSelectionRoundKeys: Set<string>
 }
 
+export interface MultiviewEnsembleSelectionPruneSnapshot {
+  chats: ChatRecord[]
+  ownershipKey: string
+}
+
+export function isMultiviewEnsembleParticipantSelectionValid(
+  chat: ChatRecord | null | undefined,
+  participantId: string
+): boolean {
+  return Boolean(
+    chat?.chatKind === 'ensemble' &&
+      chat.ensemble?.participants.some((participant) => participant.id === participantId)
+  )
+}
+
+/**
+ * Projects the live speaker without mutating the renderer's user-owned
+ * participant selection. A per-round manual override wins while that round is
+ * live; once it becomes terminal, the caller's resting selection is restored.
+ */
+export function resolveMultiviewEnsembleParticipantSelection(
+  chat: ChatRecord | null | undefined,
+  userSelectedParticipantId: string | null | undefined,
+  userOverrodeSelectionRoundKeys: ReadonlySet<string>
+): string | null {
+  const liveRound = activeEnsembleRoundForComposer(chat?.ensemble?.activeRound)
+  const roundKey =
+    chat?.appChatId && liveRound?.roundId
+      ? `${chat.appChatId}:${liveRound.roundId}`
+      : null
+  const activeParticipantId = liveRound?.activeParticipantId
+  const validUserSelection =
+    userSelectedParticipantId &&
+    isMultiviewEnsembleParticipantSelectionValid(chat, userSelectedParticipantId)
+      ? userSelectedParticipantId
+      : null
+  const hasValidManualOverride = Boolean(
+    validUserSelection &&
+      roundKey &&
+      userOverrodeSelectionRoundKeys.has(roundKey)
+  )
+  if (
+    activeParticipantId &&
+    isMultiviewEnsembleParticipantSelectionValid(chat, activeParticipantId) &&
+    !hasValidManualOverride
+  ) {
+    return activeParticipantId
+  }
+  return validUserSelection
+}
+
+/**
+ * Builds a stable key from only the fields that renderer-local selection
+ * cleanup owns. The caller supplies the reconciled, hydrated chat-map values;
+ * unlike the referentially unstable list/stream snapshots, that map preserves
+ * live pane records and has already discarded genuinely deleted chats.
+ */
+export function buildMultiviewEnsembleSelectionPruneSnapshot(
+  authoritativeChats: Iterable<ChatRecord>
+): MultiviewEnsembleSelectionPruneSnapshot {
+  const chats = Array.from(authoritativeChats)
+  const ownershipKey = JSON.stringify(
+    chats
+      .map((chat) => {
+        const liveRound = activeEnsembleRoundForComposer(chat.ensemble?.activeRound)
+        return [
+          chat.appChatId,
+          chat.chatKind === 'ensemble' && chat.ensemble ? 'ensemble' : 'other',
+          chat.chatKind === 'ensemble' && chat.ensemble
+            ? chat.ensemble.participants.map((participant) => participant.id).sort()
+            : [],
+          liveRound?.roundId || null
+        ]
+      })
+      .sort(([leftId], [rightId]) => String(leftId).localeCompare(String(rightId)))
+  )
+
+  return { chats, ownershipKey }
+}
+
 /**
  * Applies a main-owned queued-prompt removal to the newest renderer snapshot.
  * Queue additions are append-only, so a still-present captured prefix can be

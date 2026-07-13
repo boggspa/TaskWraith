@@ -685,9 +685,12 @@ import { deriveChatIsRunning, deriveChatRunCompleteNotice } from './lib/chatRunD
 import { resolveEnsembleParticipantSeatMutationState } from './lib/ensembleParticipantSeatLock'
 import { isCurrentWorkspaceTrustOwner } from './lib/workspaceTrustOwnership'
 import {
+  buildMultiviewEnsembleSelectionPruneSnapshot,
   buildMultiviewEnsembleComposerProjection,
+  isMultiviewEnsembleParticipantSelectionValid,
   mergeEnsembleQueuedPromptMutationResult,
-  pruneMultiviewEnsembleSelectionOwnership
+  pruneMultiviewEnsembleSelectionOwnership,
+  resolveMultiviewEnsembleParticipantSelection
 } from './lib/multiviewEnsembleComposer'
 // Re-exported so the existing `TranscriptPanel.test.tsx` (which imports it
 // from './App') keeps resolving after the component moved to its own module.
@@ -17758,30 +17761,48 @@ function App(): React.JSX.Element {
   // CombinedPermissionsPicker read this to decide whether they're
   // editing the chat or the selected participant.
   //
-  // Default selection: first enabled participant in `order`. On chat
-  // switch the useMemo below picks a fresh default. During a running
-  // round, an effect lower in the render syncs the selection to
-  // `activeRound.activeParticipantId` so the user sees the speaker's
-  // settings live.
+  // Default selection: first enabled participant in `order`. On chat switch
+  // the useMemo below picks a fresh default. Live-speaker selection is derived
+  // separately so this map remains user-owned and restores the resting choice
+  // after a round ends.
   const [selectedParticipantIdByChatId, setSelectedParticipantIdByChatId] = useState<
     Record<string, string>
   >({})
   const [userOverrodeSelectionRoundKeys, setUserOverrodeSelectionRoundKeys] = useState<Set<string>>(
     () => new Set()
   )
+  const ensembleSelectionPruneKeyRef = useRef<string | null>(null)
   useEffect(() => {
+    // The earlier reconcileChatRefMap effect has already made chatByIdRef the
+    // authority for hydrated/current panes and removed genuinely deleted chats.
+    // Whole-chat broadcasts replace `chats` repeatedly during streaming, so
+    // skip both scheduling boundaries unless roster/live-round ownership changed.
+    const snapshot = buildMultiviewEnsembleSelectionPruneSnapshot(
+      chatByIdRef.current.values()
+    )
+    if (ensembleSelectionPruneKeyRef.current === snapshot.ownershipKey) return
+    ensembleSelectionPruneKeyRef.current = snapshot.ownershipKey
     setSelectedParticipantIdByChatId((previous) =>
-      pruneMultiviewEnsembleSelectionOwnership(chats, previous, new Set())
+      pruneMultiviewEnsembleSelectionOwnership(snapshot.chats, previous, new Set())
         .selectedParticipantIdByChatId
     )
     setUserOverrodeSelectionRoundKeys((previous) =>
-      pruneMultiviewEnsembleSelectionOwnership(chats, {}, previous)
+      pruneMultiviewEnsembleSelectionOwnership(snapshot.chats, {}, previous)
         .userOverrodeSelectionRoundKeys
     )
-  }, [chats])
+  }, [chats, currentChat])
   const setSelectedParticipantForChat = useCallback(
     (chatId: string | null | undefined, participantId: string | null) => {
       if (!chatId) return
+      if (
+        participantId &&
+        !isMultiviewEnsembleParticipantSelectionValid(
+          chatByIdRef.current.get(chatId),
+          participantId
+        )
+      ) {
+        return
+      }
       setSelectedParticipantIdByChatId((previous) => {
         if (participantId) {
           if (previous[chatId] === participantId) return previous
@@ -17820,9 +17841,14 @@ function App(): React.JSX.Element {
   const chatOwnedSelectedParticipantId = currentChat
     ? resolveSlashParticipantForChat(currentChat)?.id || null
     : null
-  const selectedParticipantId = currentChat?.appChatId
+  const userSelectedParticipantId = currentChat?.appChatId
     ? selectedParticipantIdByChatId[currentChat.appChatId] || chatOwnedSelectedParticipantId
     : null
+  const selectedParticipantId = resolveMultiviewEnsembleParticipantSelection(
+    currentChat,
+    userSelectedParticipantId,
+    userOverrodeSelectionRoundKeys
+  )
   const effectiveSelectedParticipantId = useMemo(() => {
     if (!isCurrentEnsembleChat) return null
     const explicit = ensembleParticipantsForCurrent.find((p) => p.id === selectedParticipantId)
@@ -18504,50 +18530,12 @@ function App(): React.JSX.Element {
     currentChat?.ensemble?.activeRound?.endedAt
   ])
 
-  // Auto-follow the active speaker during a running round so the
-  // composer pickers always reflect who's speaking. When the round
-  // isn't running, the selection is purely user-driven.
-  //
-  // Override path (1.0.3, post-ship-night UX fix): if the user
-  // explicitly clicks a chip mid-round, auto-follow yields to user
-  // intent so they can adjust a non-speaking participant's settings
-  // without the next speaker-change clobbering their selection.
-  // The override resets when the round transitions out of `running`
-  // — the next round starts with fresh auto-follow behaviour.
-  useEffect(() => {
-    if (!isCurrentEnsembleChat || !currentChat?.appChatId) return
-    const round = currentChat?.ensemble?.activeRound
-    const roundKey = round?.roundId ? `${currentChat.appChatId}:${round.roundId}` : null
-    if (!isEnsembleActiveRoundDispatchLive(round)) {
-      // Round not running → drop only this chat's override so another pane's
-      // in-flight selection ownership remains intact.
-      setUserOverrodeSelectionRoundKeys((previous) => {
-        const prefix = `${currentChat.appChatId}:`
-        if (![...previous].some((key) => key.startsWith(prefix))) return previous
-        return new Set([...previous].filter((key) => !key.startsWith(prefix)))
-      })
-      return
-    }
-    if (roundKey && userOverrodeSelectionRoundKeys.has(roundKey)) return
-    const activeId = round?.activeParticipantId
-    if (!activeId) return
-    if (activeId === selectedParticipantId) return
-    setSelectedParticipantForChat(currentChat.appChatId, activeId)
-  }, [
-    isCurrentEnsembleChat,
-    currentChat?.appChatId,
-    currentChat?.ensemble?.activeRound,
-    currentChat?.ensemble?.activeRound?.activeParticipantId,
-    currentChat?.ensemble?.activeRound?.status,
-    selectedParticipantId,
-    setSelectedParticipantForChat,
-    userOverrodeSelectionRoundKeys
-  ])
   // Click handler that records the override before applying the
   // selection. Passed to the chip strip as `onSelectParticipant`.
   const selectEnsembleParticipantForChat = useCallback(
     (chatId: string, id: string): void => {
       const chat = chatByIdRef.current.get(chatId)
+      if (!isMultiviewEnsembleParticipantSelectionValid(chat, id)) return
       const round = chat?.ensemble?.activeRound
       if (isEnsembleActiveRoundDispatchLive(round) && round?.roundId) {
         const roundKey = `${chatId}:${round.roundId}`
@@ -24254,17 +24242,11 @@ function App(): React.JSX.Element {
     }
     const viewerProvider = getChatProvider(viewerChat)
     const viewerIsGlobalChat = isGlobalChat(viewerChat)
-    const viewerLiveEnsembleRound = activeEnsembleRoundForComposer(
-      viewerChat.ensemble?.activeRound
+    const viewerSelectedParticipantId = resolveMultiviewEnsembleParticipantSelection(
+      viewerChat,
+      selectedParticipantIdByChatId[viewerChatId],
+      userOverrodeSelectionRoundKeys
     )
-    const viewerRoundSelectionKey = viewerLiveEnsembleRound?.roundId
-      ? `${viewerChatId}:${viewerLiveEnsembleRound.roundId}`
-      : null
-    const viewerSelectedParticipantId =
-      viewerLiveEnsembleRound?.activeParticipantId &&
-      (!viewerRoundSelectionKey || !userOverrodeSelectionRoundKeys.has(viewerRoundSelectionKey))
-        ? viewerLiveEnsembleRound.activeParticipantId
-        : selectedParticipantIdByChatId[viewerChatId]
     const viewerEnsembleProjection = buildMultiviewEnsembleComposerProjection(
       viewerChat,
       Array.isArray(agentStatusByProvider.ollama?.models)
@@ -25723,17 +25705,11 @@ function App(): React.JSX.Element {
       if (!viewerChat) return null
       const viewerProvider = getChatProvider(viewerChat)
       const viewerIsGlobalChat = isGlobalChat(viewerChat)
-      const viewerLiveEnsembleRound = activeEnsembleRoundForComposer(
-        viewerChat.ensemble?.activeRound
+      const viewerSelectedParticipantId = resolveMultiviewEnsembleParticipantSelection(
+        viewerChat,
+        selectedParticipantIdByChatId[viewerChatId],
+        userOverrodeSelectionRoundKeys
       )
-      const viewerRoundSelectionKey = viewerLiveEnsembleRound?.roundId
-        ? `${viewerChatId}:${viewerLiveEnsembleRound.roundId}`
-        : null
-      const viewerSelectedParticipantId =
-        viewerLiveEnsembleRound?.activeParticipantId &&
-        (!viewerRoundSelectionKey || !userOverrodeSelectionRoundKeys.has(viewerRoundSelectionKey))
-          ? viewerLiveEnsembleRound.activeParticipantId
-          : selectedParticipantIdByChatId[viewerChatId]
       const viewerEnsembleProjection = buildMultiviewEnsembleComposerProjection(
         viewerChat,
         Array.isArray(agentStatusByProvider.ollama?.models)
