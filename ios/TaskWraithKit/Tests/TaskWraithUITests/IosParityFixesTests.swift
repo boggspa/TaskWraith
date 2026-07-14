@@ -777,6 +777,22 @@ struct IosParityFixesTests {
     }
 
     @MainActor
+    @Test func staleExitDoesNotMarkLiveRunTerminal() {
+        let model = makeRemoteSessionModel()
+        // Run B is live on the thread; run A's trailing exit (cancel-then-resend)
+        // must be ignored, or B's reveal slams mid-stream and a deferred clear
+        // is armed against B's bubble.
+        model.appendStreamingDeltasForTesting(
+            threadId: "thread-1", data: #"{"type":"content","text":"Run B streaming"}"#,
+            runId: "run-b")
+        model.markStreamingTerminalForTesting(threadId: "thread-1", exitRunId: "run-a")
+        #expect(!model.streamingTerminalThreads.contains("thread-1"))
+        // The LIVE run's own exit still marks terminal.
+        model.markStreamingTerminalForTesting(threadId: "thread-1", exitRunId: "run-b")
+        #expect(model.streamingTerminalThreads.contains("thread-1"))
+    }
+
+    @MainActor
     @Test func newRunPublishClearsStreamingTerminal() {
         let model = makeRemoteSessionModel()
         model.appendStreamingDeltasForTesting(

@@ -46,6 +46,35 @@ struct ThreadTranscriptStoreTests {
         #expect(fires == after)
     }
 
+    /// The reveal-drain hole: agent-exit after the last coalesce window republishes
+    /// byte-identical staging (swallowed by removeDuplicates), so terminal
+    /// membership is the ONLY thing that changes — the gate must fire on it or the
+    /// transcript never re-renders and TokenRevealText's isComplete never flips.
+    @Test func firesWhenStreamingTurnsTerminalWithoutTextChange() {
+        let model = makeModel()
+        let store = ThreadTranscriptStore()
+        store.bind(model: model, taskId: "thread-A")
+        model.appendStreamingDeltasForTesting(
+            threadId: "thread-A", data: #"{"type":"content","text":"Answer"}"#,
+            runId: "run-A")
+
+        var fires = 0
+        let sub = store.objectWillChange.sink { _ in fires += 1 }
+        defer { sub.cancel() }
+
+        // Exit's flush republishes identical staging; only the terminal set flips.
+        model.markStreamingTerminalForTesting(threadId: "thread-A", exitRunId: "run-A")
+        #expect(fires >= 1)
+
+        // Another thread going terminal stays silent for this store (scoped).
+        model.appendStreamingDeltasForTesting(
+            threadId: "thread-B", data: #"{"type":"content","text":"Other"}"#,
+            runId: "run-B")
+        let afterOtherStream = fires
+        model.markStreamingTerminalForTesting(threadId: "thread-B", exitRunId: "run-B")
+        #expect(fires == afterOtherStream)
+    }
+
     /// The ordering hole: streaming lands under the Mac's wire thread-id BEFORE the
     /// projection snapshot registers that id as an alias of the open taskId. When
     /// the alias finally registers, the gate MUST fire so the view re-reads the

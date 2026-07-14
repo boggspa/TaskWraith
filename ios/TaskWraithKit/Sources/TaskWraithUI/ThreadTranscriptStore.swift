@@ -180,6 +180,15 @@ final class ThreadTranscriptStore: ObservableObject {
         model.$streamingProviders
             .map { [weak self] dict in self.flatMap { s in s.slice(dict) } }
             .removeDuplicates().sink { [weak self] _ in self?.fire() }.store(in: &cancellables)
+        // Terminal membership flips WITHOUT an accompanying text/segment change
+        // (agent-exit after the last coalesce window republishes identical
+        // staging, which removeDuplicates swallows) — without this pipeline the
+        // reveal drain never re-renders on the store-gated transcript view.
+        model.$streamingTerminalThreads
+            .map { [weak self] set in
+                self.flatMap { s in s.cachedKeys.contains(where: set.contains) } ?? false
+            }
+            .removeDuplicates().sink { [weak self] _ in self?.fire() }.store(in: &cancellables)
         model.$ensembleStates
             .map { [weak self] dict in self.flatMap { s in s.slice(dict) } }
             .removeDuplicates().sink { [weak self] _ in self?.fire() }.store(in: &cancellables)

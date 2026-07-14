@@ -1382,7 +1382,7 @@ struct ThreadDetailView: View {
                 isTail: isTail,
                 agentIdentity: threadAgentIdentity,
                 participants: transcriptParticipants,
-                isComplete: model.streamingTerminalThreads.contains(taskId),
+                isComplete: resolvedThreadKeys.contains { model.streamingTerminalThreads.contains($0) },
                 onRevealFrame: {
                     requestFollowPin(proxy)
                 })

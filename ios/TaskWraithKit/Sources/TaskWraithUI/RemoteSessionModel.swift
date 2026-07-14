@@ -3184,7 +3184,7 @@ public final class RemoteSessionModel: ObservableObject {
                     provider: wire.provider, data: data)
             }
             if wire.channel == "agent-exit" || wire.channel == "gemini-exit" {
-                markStreamingTerminal(threadId: threadId)
+                markStreamingTerminal(threadId: threadId, exitRunId: wire.payload?.appRunId)
             }
             // Snapshot re-pull is the consistency backstop. During text
             // streaming the live buffer (appendStreamingDeltas above) already
@@ -3231,7 +3231,16 @@ public final class RemoteSessionModel: ObservableObject {
     /// terminal so the reveal cursor drains within the handoff window. The
     /// final snapshot supersedes the live bubble; clear shortly after the
     /// refresh lands so the handoff doesn't flash empty.
-    private func markStreamingTerminal(threadId: String) {
+    ///
+    /// `exitRunId` guards against a STALE exit: on cancel-then-resend / steer,
+    /// run A's trailing exit can arrive while run B is already streaming on
+    /// the same thread — marking terminal then would slam B's live reveal
+    /// (and arm a deferred clear against B's bubble). An exit for a run other
+    /// than the live one is a no-op; a nil exitRunId keeps legacy behavior.
+    private func markStreamingTerminal(threadId: String, exitRunId: String? = nil) {
+        if let exitRunId, let live = streamingRunIds[threadId], live != exitRunId {
+            return
+        }
         streamingPublishGate.flushBeforeTerminal(threadId: threadId)
         // AFTER the flush: flushBeforeTerminal publishes synchronously, and
         // applyStreamingStagingPublish clears terminal membership (tokens
@@ -4202,8 +4211,8 @@ public final class RemoteSessionModel: ObservableObject {
             streamingPublishGate.flushBeforeTerminal(threadId: threadId)
         }
 
-        func markStreamingTerminalForTesting(threadId: String) {
-            markStreamingTerminal(threadId: threadId)
+        func markStreamingTerminalForTesting(threadId: String, exitRunId: String? = nil) {
+            markStreamingTerminal(threadId: threadId, exitRunId: exitRunId)
         }
 
         func resetStreamingPublishGateForTesting(threadId: String) {
