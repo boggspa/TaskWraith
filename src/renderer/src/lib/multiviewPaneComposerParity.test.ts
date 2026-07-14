@@ -204,9 +204,29 @@ describe('Multiview pane Composer context parity', () => {
     expect(steerQueue).toContain('recordedOwnerChatId !== targetChat.appChatId')
     expect(steerQueue).toContain('round.roundId !== queuedRoundId')
     expect(source).toContain('updateChatByIdLocalOnly(chatId, (source) =>')
-    expect(source).toContain(
-      'patchEnsembleParticipantForChat(chatId, participant.id, {'
+    expect(source).toContain('summaryChatUpdateQueueRef.current.enqueue({')
+    expect(source).toContain('summaryChatUpdateQueueRef.current.hasPending(chatId)')
+    const participantPatch = source.slice(
+      source.indexOf('const patchEnsembleParticipantForChat ='),
+      source.indexOf('const applyEnsembleRosterPresetToChat =')
     )
+    expect(participantPatch).toContain('updateChatById(chatId, (sourceChat) =>')
+    expect(participantPatch).not.toContain('updateChatById(chatId, () =>')
+    const applyPermissions = source.slice(
+      source.indexOf('const applyEnsemblePermissionsToAllParticipantsForChat ='),
+      source.indexOf('const updateEnsembleOrchestrationModeForChat =')
+    )
+    expect(applyPermissions).toContain(
+      'applyParticipantPermissionsToEnsemble(source, participantId)'
+    )
+    expect(applyPermissions).toContain(
+      'window.alert(APPLY_PERMISSIONS_TO_ALL_ACTIVE_ROUND_MESSAGE)'
+    )
+    expect(applyPermissions).toContain(
+      'isEnsembleActiveRoundDispatchLive(source.ensemble?.activeRound)'
+    )
+    expect(applyPermissions).not.toContain('for (const participant')
+    expect(applyPermissions.match(/updateChatById\(/g)).toHaveLength(1)
     expect(source).not.toContain('setSelectedParticipantId(')
     expect(source).toContain('setSelectedParticipantForChat(updatedChat.appChatId, null)')
   })

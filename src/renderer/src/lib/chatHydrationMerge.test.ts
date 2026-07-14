@@ -1,0 +1,127 @@
+import { readFileSync } from 'node:fs'
+import { describe, expect, it } from 'vitest'
+import type { ChatListItem, ChatRecord } from '../../../main/store/types'
+import { resolveChatHydration } from './chatHydrationMerge'
+import { ChatUpdateHydrationQueue } from './chatUpdateHydrationQueue'
+
+function chat(title: string): ChatRecord {
+  return {
+    appChatId: 'chat-a',
+    title,
+    createdAt: 1,
+    updatedAt: 1,
+    archived: false,
+    messages: [],
+    runs: []
+  }
+}
+
+function summary(): ChatRecord {
+  return {
+    ...chat('Summary'),
+    summaryOnly: true,
+    messageCount: 0,
+    runCount: 0
+  } as ChatListItem
+}
+
+describe('resolveChatHydration', () => {
+  it('preserves a full record installed after the hydration request began', () => {
+    const requestStart = summary()
+    const locallyUpdated = { ...chat('Hydrated'), updatedAt: 3, workspacePath: '/latest' }
+    const staleIncoming = { ...chat('Hydrated'), updatedAt: 2, workspacePath: '/stale' }
+
+    expect(
+      resolveChatHydration({
+        incoming: staleIncoming,
+        current: locallyUpdated,
+        localAtRequestStart: requestStart
+      })
+    ).toBe(locallyUpdated)
+  })
+
+  it('accepts hydration when the local request snapshot still owns the chat', () => {
+    const requestStart = summary()
+    const incoming = chat('Hydrated')
+
+    expect(
+      resolveChatHydration({
+        incoming,
+        current: requestStart,
+        localAtRequestStart: requestStart
+      })
+    ).toBe(incoming)
+  })
+
+  it('keeps queued edits when selected-chat hydration resolves after the queue', async () => {
+    const queue = new ChatUpdateHydrationQueue<ChatRecord>()
+    const requestStart = summary()
+    let current: ChatRecord = requestStart
+    let resolveQueueHydration!: (value: ChatRecord | null) => void
+    const queueHydration = new Promise<ChatRecord | null>((resolve) => {
+      resolveQueueHydration = resolve
+    })
+
+    queue.enqueue({
+      key: 'chat-a',
+      updater: (value) => ({ ...value, workspacePath: '/queue-edit', updatedAt: 3 }),
+      hydrate: () => queueHydration,
+      resolveBase: (_key, hydrated) => hydrated,
+      apply: (_key, base, updater) => {
+        current = updater(base)
+      }
+    })
+    resolveQueueHydration({ ...chat('Hydrated'), workspacePath: '/stale', updatedAt: 2 })
+    await Promise.resolve()
+    await Promise.resolve()
+
+    const selectedHydrationLast = resolveChatHydration({
+      incoming: { ...chat('Hydrated'), workspacePath: '/stale', updatedAt: 2 },
+      current,
+      localAtRequestStart: requestStart
+    })
+
+    expect(selectedHydrationLast.workspacePath).toBe('/queue-edit')
+    expect(selectedHydrationLast).toBe(current)
+  })
+
+  it('guards both ordinary refresh and selected-after-paint hydration in App', () => {
+    const source = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8')
+    const refresh = source.slice(
+      source.indexOf('const refreshSingleChat ='),
+      source.indexOf('const isValidModelForProvider =')
+    )
+    const selected = source.slice(
+      source.indexOf('const hydrateSelectedChatAfterPaint ='),
+      source.indexOf('const PROVIDER_SCOPED_COMPOSER_METADATA_KEYS')
+    )
+
+    expect(refresh).toContain('const localAtRequestStart =')
+    expect(refresh).toContain('applyHydratedChat(hydrated, { localAtRequestStart })')
+    expect(selected).toContain('const localAtRequestStart =')
+    expect(selected).toContain('resolveHydratedChat(hydrated, { localAtRequestStart })')
+    expect(selected).not.toContain('setCurrentChat(hydrated)')
+  })
+
+  it('cancels pending hydration before delete, clear-all, and reap removal', () => {
+    const source = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8')
+    const deleteOne = source.slice(
+      source.indexOf('const handleDeleteChat ='),
+      source.indexOf('const handleDeleteAllChatHistory =')
+    )
+    const deleteAll = source.slice(
+      source.indexOf('const handleDeleteAllChatHistory ='),
+      source.indexOf('const handleTogglePinWorkspace =')
+    )
+    const reap = source.slice(
+      source.indexOf('const reapAbandonedChatsAfterCreate ='),
+      source.indexOf('const handleNewChat =')
+    )
+
+    expect(deleteOne).toContain('summaryChatUpdateQueueRef.current.cancel(chatId)')
+    expect(deleteOne).toContain('saveChatTimersRef.current.delete(chatId)')
+    expect(deleteAll).toContain('summaryChatUpdateQueueRef.current.clear()')
+    expect(reap).toContain('summaryChatUpdateQueueRef.current.cancel(id)')
+    expect(reap).toContain('saveChatTimersRef.current.delete(id)')
+  })
+})

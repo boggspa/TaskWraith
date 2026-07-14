@@ -3,6 +3,7 @@ import type {
   ChatRecord,
   EnsembleConfig,
   EnsembleParticipant,
+  PermissionOverrides,
   ProviderId,
   SessionActivityLedgerEntry
 } from '../../../main/store/types'
@@ -125,6 +126,18 @@ function collectSessionActivityEntries(
         reason: 'Participant permission preset changed.'
       })
     }
+    if (
+      stableStringify(before.permissionOverrides) !==
+      stableStringify(participant.permissionOverrides)
+    ) {
+      add({
+        scope: 'participant',
+        target: `${participantLabel(participant)} permission overrides`,
+        oldValue: permissionOverrideSummary(before.permissionOverrides),
+        newValue: permissionOverrideSummary(participant.permissionOverrides),
+        reason: 'Participant permission overrides changed.'
+      })
+    }
     if ((before.instructions || '').trim() !== (participant.instructions || '').trim()) {
       add({
         scope: 'participant',
@@ -178,6 +191,33 @@ function participantLabel(participant: EnsembleParticipant): string {
   return `${PROVIDER_LABELS[participant.provider] || participant.provider} / ${
     normalizedRole(participant) || 'Participant'
   }`
+}
+
+function permissionOverrideSummary(overrides: PermissionOverrides | undefined): string | null {
+  if (!overrides) return null
+  const parts: string[] = []
+  if (overrides.approvalMode) parts.push('approval policy')
+  if (overrides.networkAccess) parts.push('network policy')
+  const serviceCount = Object.keys(overrides.agenticServices || {}).length
+  if (serviceCount > 0) {
+    parts.push(`${serviceCount} service ${serviceCount === 1 ? 'rule' : 'rules'}`)
+  }
+  const grantCount = overrides.externalPathGrants?.length || 0
+  if (grantCount > 0) {
+    parts.push(`${grantCount} external path ${grantCount === 1 ? 'grant' : 'grants'}`)
+  }
+  return parts.length > 0 ? parts.join(', ') : 'empty overrides'
+}
+
+function stableStringify(value: unknown): string {
+  if (value === undefined) return 'undefined'
+  if (value === null || typeof value !== 'object') return JSON.stringify(value)
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`
+  const record = value as Record<string, unknown>
+  return `{${Object.keys(record)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${stableStringify(record[key])}`)
+    .join(',')}}`
 }
 
 function normalizedRole(participant: EnsembleParticipant): string {

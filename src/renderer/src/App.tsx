@@ -434,7 +434,6 @@ import {
   deleteEnsembleRosterPreset,
   importEnsembleRosterPresetsFromJson,
   listEnsembleRosterPresets,
-  clonePermissionOverrides,
   materializeParticipantsFromPresetWithBossman,
   MAX_ROSTER_PRESET_PARTICIPANTS,
   saveEnsembleRosterPresetFromParticipants,
@@ -605,6 +604,12 @@ import {
   type WelcomeFitLevel
 } from './lib/welcomeFit'
 import { isChatSummaryRecord, mergeChatRecord } from './lib/chatRecordMerge'
+import { ChatUpdateHydrationQueue } from './lib/chatUpdateHydrationQueue'
+import { resolveChatHydration } from './lib/chatHydrationMerge'
+import {
+  APPLY_PERMISSIONS_TO_ALL_ACTIVE_ROUND_MESSAGE,
+  applyParticipantPermissionsToEnsemble
+} from './lib/ensembleParticipantPermissions'
 import {
   buildPinnedMessageSummaries,
   countMessagesWithPinnedMetadata,
@@ -3361,6 +3366,7 @@ function App(): React.JSX.Element {
   const workspaceTrustGenerationRef = useRef(0)
   const currentChatIdRef = useRef<string | null>(null)
   const chatByIdRef = useRef<Map<string, ChatRecord>>(new Map())
+  const summaryChatUpdateQueueRef = useRef(new ChatUpdateHydrationQueue<ChatRecord>())
   // rAF render-coalescer for streamed deltas (#1). chatByIdRef above stays the
   // synchronous, byte-exact source of truth; these defer the React commit
   // (setChats/setCurrentChat) for coalesced updates to one flush per frame, so
@@ -4879,6 +4885,7 @@ function App(): React.JSX.Element {
   // The 200ms saveChat debounce already persists the latest ref content.
   useEffect(() => {
     return () => {
+      summaryChatUpdateQueueRef.current.clear()
       if (chatFlushRafRef.current !== null) {
         cancelAnimationFrame(chatFlushRafRef.current)
         chatFlushRafRef.current = null
@@ -4899,16 +4906,29 @@ function App(): React.JSX.Element {
           ? activeRunChatSnapshotRef.current
           : null)
       if (!base) return null
-      if (isChatSummaryRecord(base)) {
-        void window.api
-          .getChat(chatId)
-          .then((hydrated) => {
-            if (!hydrated) return
-            chatByIdRef.current.set(chatId, hydrated)
-            setChats((prev) => mergeChatRecord(prev, hydrated))
-            updateChatById(chatId, updater, options)
-          })
-          .catch(() => {})
+      if (
+        isChatSummaryRecord(base) ||
+        summaryChatUpdateQueueRef.current.hasPending(chatId)
+      ) {
+        summaryChatUpdateQueueRef.current.enqueue({
+          key: chatId,
+          updater,
+          options,
+          hydrate: (key) => window.api.getChat(key),
+          resolveBase: (key, hydrated) => {
+            const current =
+              chatByIdRef.current.get(key) ||
+              (activeRunChatSnapshotRef.current?.appChatId === key
+                ? activeRunChatSnapshotRef.current
+                : null)
+            return current && !isChatSummaryRecord(current) ? current : hydrated
+          },
+          apply: (key, hydratedBase, queuedUpdater, queuedOptions) => {
+            chatByIdRef.current.set(key, hydratedBase)
+            setChats((prev) => mergeChatRecord(prev, hydratedBase))
+            updateChatById(key, queuedUpdater, queuedOptions)
+          }
+        })
         return null
       }
 
@@ -5126,21 +5146,52 @@ function App(): React.JSX.Element {
     return list
   }, [chatMutations, loadChatList])
 
-  const applyHydratedChat = useCallback((chat: ChatRecord): ChatRecord => {
-    const local = chatByIdRef.current.get(chat.appChatId)
-    const merged = preserveOptimisticEnsembleQueue(chat, local)
-    chatByIdRef.current.set(merged.appChatId, merged)
-    setChats((prev) => mergeChatRecord(prev, merged))
-    setCurrentChat((prev) => (prev?.appChatId === merged.appChatId ? merged : prev))
-    return merged
-  }, [])
+  const resolveHydratedChat = useCallback(
+    (
+      chat: ChatRecord,
+      request?: { localAtRequestStart: ChatRecord | null }
+    ): ChatRecord => {
+      const current =
+        chatByIdRef.current.get(chat.appChatId) ||
+        (activeRunChatSnapshotRef.current?.appChatId === chat.appChatId
+          ? activeRunChatSnapshotRef.current
+          : null)
+      return request
+        ? resolveChatHydration({
+            incoming: chat,
+            current,
+            localAtRequestStart: request.localAtRequestStart
+          })
+        : preserveOptimisticEnsembleQueue(chat, current)
+    },
+    []
+  )
+
+  const applyHydratedChat = useCallback(
+    (
+      chat: ChatRecord,
+      request?: { localAtRequestStart: ChatRecord | null }
+    ): ChatRecord => {
+      const merged = resolveHydratedChat(chat, request)
+      chatByIdRef.current.set(merged.appChatId, merged)
+      setChats((prev) => mergeChatRecord(prev, merged))
+      setCurrentChat((prev) => (prev?.appChatId === merged.appChatId ? merged : prev))
+      return merged
+    },
+    [resolveHydratedChat]
+  )
 
   const refreshSingleChat = useCallback(
     async (chatId: string | null | undefined): Promise<ChatRecord | null> => {
       if (!chatId) return null
+      const localAtRequestStart =
+        chatByIdRef.current.get(chatId) ||
+        (activeRunChatSnapshotRef.current?.appChatId === chatId
+          ? activeRunChatSnapshotRef.current
+          : null)
       const hydrated = await window.api.getChat(chatId)
       if (!hydrated) return null
-      return applyHydratedChat(hydrated)
+      return applyHydratedChat(hydrated, { localAtRequestStart })
     },
     [applyHydratedChat]
   )
@@ -5493,22 +5544,24 @@ function App(): React.JSX.Element {
 
   const hydrateSelectedChatAfterPaint = (chat: ChatRecord) => {
     if (!isChatSummaryRecord(chat)) return
+    const localAtRequestStart = chatByIdRef.current.get(chat.appChatId) || chat
     scheduleAfterNextPaint(() => {
       void window.api
         .getChat(chat.appChatId)
         .then((hydrated) => {
           if (!hydrated || currentChatIdRef.current !== hydrated.appChatId) return
-          const provider = getChatProvider(hydrated)
-          chatByIdRef.current.set(hydrated.appChatId, hydrated)
-          setChats((prev) => mergeChatRecord(prev, hydrated))
+          const resolved = resolveHydratedChat(hydrated, { localAtRequestStart })
+          const provider = getChatProvider(resolved)
+          chatByIdRef.current.set(resolved.appChatId, resolved)
+          setChats((prev) => mergeChatRecord(prev, resolved))
           startTransition(() => {
-            setCurrentChat(hydrated)
-            applyChatComposerSelection(hydrated, provider)
+            setCurrentChat(resolved)
+            applyChatComposerSelection(resolved, provider)
             setRunCompleteNotice(
-              deriveChatRunCompleteNotice(hydrated, runningChatIds.has(hydrated.appChatId))
+              deriveChatRunCompleteNotice(resolved, runningChatIds.has(resolved.appChatId))
             )
-            setRawLogs(rawLogsByChatIdRef.current.get(hydrated.appChatId) || [])
-            syncThinkingForChat(hydrated)
+            setRawLogs(rawLogsByChatIdRef.current.get(resolved.appChatId) || [])
+            syncThinkingForChat(resolved)
           })
         })
         .catch(() => {})
@@ -8093,6 +8146,12 @@ function App(): React.JSX.Element {
         ? window.confirm("Delete this chat? This can't be undone.")
         : true
     if (!ok) return
+    summaryChatUpdateQueueRef.current.cancel(chatId)
+    const pendingSave = saveChatTimersRef.current.get(chatId)
+    if (pendingSave) {
+      clearTimeout(pendingSave)
+      saveChatTimersRef.current.delete(chatId)
+    }
     chatMutations.removeChat(chatId)
     chatByIdRef.current.delete(chatId)
     if (currentChat?.appChatId === chatId) {
@@ -8126,6 +8185,8 @@ function App(): React.JSX.Element {
         )
         .map((chat) => chat.appChatId)
     )
+
+    summaryChatUpdateQueueRef.current.clear()
 
     await Promise.allSettled([
       ...activeRunContexts.map((context) =>
@@ -8263,7 +8324,15 @@ function App(): React.JSX.Element {
         // round-trip (it re-persists on first send anyway).
         const reaped = new Set(res.reaped.filter((id) => id !== currentChatIdRef.current))
         if (reaped.size === 0) return
-        for (const id of reaped) chatByIdRef.current.delete(id)
+        for (const id of reaped) {
+          summaryChatUpdateQueueRef.current.cancel(id)
+          const pendingSave = saveChatTimersRef.current.get(id)
+          if (pendingSave) {
+            clearTimeout(pendingSave)
+            saveChatTimersRef.current.delete(id)
+          }
+          chatByIdRef.current.delete(id)
+        }
         chatMutations.removeChats(reaped)
       })
       .catch(() => {})
@@ -18448,11 +18517,10 @@ function App(): React.JSX.Element {
   )
   const patchEnsembleParticipantForChat = useCallback(
     (chatId: string, participantId: string, patch: Partial<EnsembleParticipant>): void => {
-      const sourceChat = chatByIdRef.current.get(chatId)
-      if (!sourceChat?.ensemble) return
-      const nextChat = patchParticipantWithSeatGate(sourceChat, participantId, patch)
-      if (!nextChat) return
-      updateChatById(chatId, () => nextChat)
+      updateChatById(chatId, (sourceChat) => {
+        if (!sourceChat.ensemble) return sourceChat
+        return patchParticipantWithSeatGate(sourceChat, participantId, patch) || sourceChat
+      })
     },
     [patchParticipantWithSeatGate, updateChatById]
   )
@@ -18545,19 +18613,15 @@ function App(): React.JSX.Element {
   )
   const applyEnsemblePermissionsToAllParticipantsForChat = useCallback(
     (chatId: string, participantId: string): void => {
-      const sourceChat = chatByIdRef.current.get(chatId)
-      const selected = sourceChat?.ensemble?.participants.find(
-        (participant) => participant.id === participantId
-      )
-      if (!sourceChat?.ensemble || !selected) return
-      for (const participant of sourceChat.ensemble.participants) {
-        patchEnsembleParticipantForChat(chatId, participant.id, {
-          permissionPresetId: selected.permissionPresetId,
-          permissionOverrides: clonePermissionOverrides(selected.permissionOverrides)
-        })
-      }
+      updateChatById(chatId, (source) => {
+        if (isEnsembleActiveRoundDispatchLive(source.ensemble?.activeRound)) {
+          window.alert(APPLY_PERMISSIONS_TO_ALL_ACTIVE_ROUND_MESSAGE)
+          return source
+        }
+        return applyParticipantPermissionsToEnsemble(source, participantId)
+      })
     },
-    [patchEnsembleParticipantForChat]
+    [updateChatById]
   )
   const updateEnsembleOrchestrationModeForChat = useCallback(
     (chatId: string, mode: EnsembleOrchestrationMode): void => {
