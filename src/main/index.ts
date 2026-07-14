@@ -3028,12 +3028,12 @@ const audioToolExecutors = createAudioToolExecutors({
   // inspect_audio_segment v2 — realpath-jail the source FILE (the daemon opens the path,
   // not bytes). Reuse the audio validator (sniffs audio mime + realpath-jails to the
   // workspace/grants), returning ONLY the real path (we don't need the decoded bytes here).
-  jailAudio: (args, ctx) => {
+  jailAudio: async (args, ctx) => {
     const chat = ctx.appChatId ? AppStore.getChat(ctx.appChatId) : null
     const sourcePath = typeof args.sourcePath === 'string' ? args.sourcePath.trim() : ''
     if (!sourcePath) return { ok: false, reason: 'provide sourcePath (a workspace audio file)' }
     if (!chat?.workspacePath) return { ok: false, reason: 'no workspace to resolve sourcePath' }
-    const staged = stageWorkspaceMediaSnapshot({
+    const staged = await stageWorkspaceMediaSnapshot({
       workspacePath: chat.workspacePath,
       candidatePath: sourcePath,
       externalPathGrants: executableExternalPathGrantsForRun(chat, ctx.appRunId),
@@ -3250,10 +3250,10 @@ function sweepMediaStagingDir(): void {
   }
 }
 const ffmpegToolExecutors = createFfmpegToolExecutors({
-  jailInput: (sourcePath, ctx) => {
+  jailInput: async (sourcePath, ctx) => {
     const chat = ctx.appChatId ? AppStore.getChat(ctx.appChatId) : null
     if (!chat?.workspacePath) return { ok: false, reason: 'no workspace to resolve sourcePath' }
-    const staged = stageWorkspaceMediaSnapshot({
+    const staged = await stageWorkspaceMediaSnapshot({
       workspacePath: chat.workspacePath,
       candidatePath: sourcePath,
       externalPathGrants: executableExternalPathGrantsForRun(chat, ctx.appRunId),
@@ -3363,10 +3363,10 @@ const ffmpegToolExecutors = createFfmpegToolExecutors({
 // decodeFrame is the `video.decodeFrame` daemon RPC; the decoded PNG rides the
 // PROVEN image-block lane (createToolResultMediaRefs), so no trusted-AV channel.
 const vtToolExecutors = createVtToolExecutors({
-  jailInput: (sourcePath, ctx) => {
+  jailInput: async (sourcePath, ctx) => {
     const chat = ctx.appChatId ? AppStore.getChat(ctx.appChatId) : null
     if (!chat?.workspacePath) return { ok: false, reason: 'no workspace to resolve sourcePath' }
-    const staged = stageWorkspaceMediaSnapshot({
+    const staged = await stageWorkspaceMediaSnapshot({
       workspacePath: chat.workspacePath,
       candidatePath: sourcePath,
       externalPathGrants: executableExternalPathGrantsForRun(chat, ctx.appRunId),
@@ -3381,10 +3381,10 @@ const vtToolExecutors = createVtToolExecutors({
   // (validateWorkspaceImagePath sniffs raster mime, rejects SVG, size-caps), NOT
   // the video jailInput above (validateWorkspaceMediaPath rejects a PNG as
   // 'unsupported' since it only sniffs audio/video).
-  jailOverlay: (overlayPath, ctx) => {
+  jailOverlay: async (overlayPath, ctx) => {
     const chat = ctx.appChatId ? AppStore.getChat(ctx.appChatId) : null
     if (!chat?.workspacePath) return { ok: false, reason: 'no workspace to resolve overlayPath' }
-    const staged = stageWorkspaceMediaSnapshot({
+    const staged = await stageWorkspaceMediaSnapshot({
       workspacePath: chat.workspacePath,
       candidatePath: overlayPath,
       externalPathGrants: executableExternalPathGrantsForRun(chat, ctx.appRunId),

@@ -78,6 +78,34 @@ describe('isFfmpegMcpToolName', () => {
 })
 
 describe('video_probe', () => {
+  it('waits for an asynchronous jail before invoking ffprobe', async () => {
+    const cleanup = vi.fn(() => true)
+    let resolveJail!: (value: JailedMediaInput) => void
+    const jailResult = new Promise<JailedMediaInput>((resolve) => {
+      resolveJail = resolve
+    })
+    const { executors, deps } = build({ jailInput: vi.fn(() => jailResult) })
+
+    const pending = executors.executeFfmpegTool(
+      'video_probe',
+      { sourcePath: 'clip.mp4' },
+      { appChatId: 'c1' }
+    )
+    expect(deps.jailInput).toHaveBeenCalledTimes(1)
+    expect(deps.runFfprobe).not.toHaveBeenCalled()
+
+    resolveJail({
+      ok: true,
+      realPath: '/ws/deferred.mp4',
+      mimeType: 'video/mp4',
+      cleanup
+    })
+    const result = await pending
+    expect(result.isError).toBeFalsy()
+    expect(deps.runFfprobe).toHaveBeenCalledTimes(1)
+    expect(cleanup).toHaveBeenCalledTimes(1)
+  })
+
   it('jails the input, runs ffprobe on the REAL path, returns parsed info', async () => {
     const { executors, deps, getProbeArgs, inputCleanup } = build()
     const result = await executors.executeFfmpegTool('video_probe', { sourcePath: 'clip.mp4' }, { appChatId: 'c1' })

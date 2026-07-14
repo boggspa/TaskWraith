@@ -1365,6 +1365,98 @@ function exactInodeCleanup(
   }
 }
 
+export type WorkspaceMediaSnapshotTestStage = 'after_first_chunk'
+
+type WorkspaceMediaSnapshotTestHook = (
+  stage: WorkspaceMediaSnapshotTestStage
+) => Promise<void> | void
+
+let workspaceMediaSnapshotTestHook: WorkspaceMediaSnapshotTestHook | undefined
+
+export function setWorkspaceMediaSnapshotTestHookForTests(
+  hook: WorkspaceMediaSnapshotTestHook | undefined
+): void {
+  if (process.env.NODE_ENV !== 'test') {
+    throw new Error('Workspace media snapshot test hooks are only available in tests.')
+  }
+  workspaceMediaSnapshotTestHook = hook
+}
+
+function readFileDescriptor(
+  fd: number,
+  buffer: Buffer,
+  offset: number,
+  length: number,
+  position: number
+): Promise<number> {
+  return new Promise((resolve, reject) => {
+    fs.read(fd, buffer, offset, length, position, (error, bytesRead) => {
+      if (error) reject(error)
+      else resolve(bytesRead)
+    })
+  })
+}
+
+function writeFileDescriptor(
+  fd: number,
+  buffer: Buffer,
+  offset: number,
+  length: number,
+  position: number
+): Promise<number> {
+  return new Promise((resolve, reject) => {
+    fs.write(fd, buffer, offset, length, position, (error, bytesWritten) => {
+      if (error) reject(error)
+      else resolve(bytesWritten)
+    })
+  })
+}
+
+function openFileDescriptor(filePath: string, flags: number, mode: number): Promise<number> {
+  return new Promise((resolve, reject) => {
+    fs.open(filePath, flags, mode, (error, fd) => {
+      if (error) reject(error)
+      else resolve(fd)
+    })
+  })
+}
+
+function statFileDescriptor(fd: number): Promise<fs.Stats> {
+  return new Promise((resolve, reject) => {
+    fs.fstat(fd, (error, stat) => {
+      if (error) reject(error)
+      else resolve(stat)
+    })
+  })
+}
+
+function syncFileDescriptor(fd: number): Promise<void> {
+  return new Promise((resolve, reject) => {
+    fs.fsync(fd, (error) => {
+      if (error) reject(error)
+      else resolve()
+    })
+  })
+}
+
+function closeFileDescriptor(fd: number): Promise<void> {
+  return new Promise((resolve, reject) => {
+    fs.close(fd, (error) => {
+      if (error) reject(error)
+      else resolve()
+    })
+  })
+}
+
+async function closeFileDescriptorBestEffort(fd: number | null): Promise<void> {
+  if (fd === null) return
+  try {
+    await closeFileDescriptor(fd)
+  } catch {
+    // best-effort close
+  }
+}
+
 /**
  * Copy an authorized workspace/grant-backed media file from its verified
  * nofollow descriptor into a private, main-owned staging directory. This is the
@@ -1372,19 +1464,19 @@ function exactInodeCleanup(
  * bridge daemons). The returned path is stable because untrusted workspace code
  * cannot rename or replace entries in the staging directory.
  *
- * This helper is synchronous to match the existing jailInput contracts. Keep
- * the input cap bounded and always invoke `cleanup` in the tool executor's
- * outermost finally block. The existing staging sweeper remains crash cleanup,
- * not the normal ownership mechanism.
+ * The descriptor copy is asynchronous so a large authorized input cannot block
+ * Electron's main event loop. Keep the input cap bounded and always invoke
+ * `cleanup` in the tool executor's outermost finally block. The existing staging
+ * sweeper remains crash cleanup, not the normal ownership mechanism.
  */
-export function stageWorkspaceMediaSnapshot({
+export async function stageWorkspaceMediaSnapshot({
   workspacePath,
   candidatePath,
   externalPathGrants = [],
   maxBytes,
   stagingDirectory,
   kind
-}: StageWorkspaceMediaSnapshotOptions): StagedWorkspaceMediaSnapshotResult {
+}: StageWorkspaceMediaSnapshotOptions): Promise<StagedWorkspaceMediaSnapshotResult> {
   const effectiveMaxBytes =
     maxBytes ??
     (kind === 'image'
@@ -1406,7 +1498,7 @@ export function stageWorkspaceMediaSnapshot({
   let cleanupDestination: (() => boolean) | null = null
   try {
     const sourceHeader = Buffer.alloc(Math.min(512, opened.stat.size))
-    const sourceHeaderBytes = fs.readSync(
+    const sourceHeaderBytes = await readFileDescriptor(
       opened.fd,
       sourceHeader,
       0,
@@ -1437,7 +1529,7 @@ export function stageWorkspaceMediaSnapshot({
       stagingRoot,
       `tw-input-${randomUUID()}.${stagedMediaExtension(sourceMime.mimeType)}`
     )
-    destinationFd = fs.openSync(
+    destinationFd = await openFileDescriptor(
       destinationPath,
       fs.constants.O_RDWR |
         fs.constants.O_CREAT |
@@ -1445,7 +1537,8 @@ export function stageWorkspaceMediaSnapshot({
         fs.constants.O_NOFOLLOW,
       0o600
     )
-    destinationStat = fs.fstatSync(destinationFd)
+    destinationStat = await statFileDescriptor(destinationFd)
+    cleanupDestination = exactInodeCleanup(destinationPath, stagingRoot, destinationStat)
     const destinationLstat = fs.lstatSync(destinationPath)
     if (
       destinationLstat.isSymbolicLink() ||
@@ -1454,17 +1547,17 @@ export function stageWorkspaceMediaSnapshot({
     ) {
       return { ok: false, reason: 'snapshot_failed' }
     }
-    cleanupDestination = exactInodeCleanup(destinationPath, stagingRoot, destinationStat)
 
     const chunk = Buffer.allocUnsafe(Math.min(1024 * 1024, opened.stat.size))
     let sourceOffset = 0
+    let copiedFirstChunk = false
     while (sourceOffset < opened.stat.size) {
       const requested = Math.min(chunk.length, opened.stat.size - sourceOffset)
-      const bytesRead = fs.readSync(opened.fd, chunk, 0, requested, sourceOffset)
+      const bytesRead = await readFileDescriptor(opened.fd, chunk, 0, requested, sourceOffset)
       if (bytesRead === 0) break
       let written = 0
       while (written < bytesRead) {
-        const bytesWritten = fs.writeSync(
+        const bytesWritten = await writeFileDescriptor(
           destinationFd,
           chunk,
           written,
@@ -1475,8 +1568,12 @@ export function stageWorkspaceMediaSnapshot({
         written += bytesWritten
       }
       sourceOffset += bytesRead
+      if (!copiedFirstChunk) {
+        copiedFirstChunk = true
+        await workspaceMediaSnapshotTestHook?.('after_first_chunk')
+      }
     }
-    const finalSourceStat = fs.fstatSync(opened.fd)
+    const finalSourceStat = await statFileDescriptor(opened.fd)
     if (
       sourceOffset !== opened.stat.size ||
       finalSourceStat.size !== opened.stat.size ||
@@ -1484,8 +1581,8 @@ export function stageWorkspaceMediaSnapshot({
     ) {
       return { ok: false, reason: 'snapshot_failed' }
     }
-    fs.fsyncSync(destinationFd)
-    const finalDestinationStat = fs.fstatSync(destinationFd)
+    await syncFileDescriptor(destinationFd)
+    const finalDestinationStat = await statFileDescriptor(destinationFd)
     if (
       finalDestinationStat.size !== opened.stat.size ||
       !sameFileIdentity(finalDestinationStat, destinationStat)
@@ -1494,7 +1591,7 @@ export function stageWorkspaceMediaSnapshot({
     }
 
     const stagedHeader = Buffer.alloc(Math.min(512, finalDestinationStat.size))
-    const stagedHeaderBytes = fs.readSync(
+    const stagedHeaderBytes = await readFileDescriptor(
       destinationFd,
       stagedHeader,
       0,
@@ -1521,16 +1618,8 @@ export function stageWorkspaceMediaSnapshot({
   } catch {
     return { ok: false, reason: 'snapshot_failed' }
   } finally {
-    try {
-      if (destinationFd !== null) fs.closeSync(destinationFd)
-    } catch {
-      // best-effort close
-    }
-    try {
-      fs.closeSync(opened.fd)
-    } catch {
-      // best-effort close
-    }
+    await closeFileDescriptorBestEffort(destinationFd)
+    await closeFileDescriptorBestEffort(opened.fd)
     cleanupDestination?.()
   }
 }

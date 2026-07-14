@@ -40,6 +40,8 @@ export type JailedMediaInput =
   | { ok: true; realPath: string; mimeType: string; cleanup: () => boolean | void }
   | { ok: false; reason: string }
 
+type Awaitable<T> = T | Promise<T>
+
 export interface FfmpegRunResult {
   stdout: string
   stderr: string
@@ -47,7 +49,7 @@ export interface FfmpegRunResult {
 
 export interface FfmpegToolDeps {
   /** Realpath-jail a workspace media path (the security boundary). */
-  jailInput: (sourcePath: string, ctx: FfmpegToolContext) => JailedMediaInput
+  jailInput: (sourcePath: string, ctx: FfmpegToolContext) => Awaitable<JailedMediaInput>
   resolveFfprobe: () => string | null
   resolveFfmpeg: () => string | null
   runFfprobe: (binaryPath: string, args: string[]) => Promise<FfmpegRunResult>
@@ -184,12 +186,17 @@ export function createFfmpegToolExecutors(deps: FfmpegToolDeps): FfmpegToolExecu
     }
   }
 
-  function jail(toolName: string, args: Record<string, unknown>, ctx: FfmpegToolContext):
+  async function jail(
+    toolName: string,
+    args: Record<string, unknown>,
+    ctx: FfmpegToolContext
+  ): Promise<
     | { ok: true; realPath: string; mimeType: string; cleanup: () => boolean | void }
-    | { ok: false; result: McpToolExecutionResult } {
+    | { ok: false; result: McpToolExecutionResult }
+  > {
     const sourcePath = typeof args.sourcePath === 'string' ? args.sourcePath.trim() : ''
     if (!sourcePath) return { ok: false, result: fail(toolName, 'provide sourcePath (a media file inside the workspace)') }
-    const jailed = jailInput(sourcePath, ctx)
+    const jailed = await jailInput(sourcePath, ctx)
     if (!jailed.ok) return { ok: false, result: fail(toolName, `could not read media: ${jailed.reason}`) }
     return { ok: true, realPath: jailed.realPath, mimeType: jailed.mimeType, cleanup: jailed.cleanup }
   }
@@ -203,7 +210,7 @@ export function createFfmpegToolExecutors(deps: FfmpegToolDeps): FfmpegToolExecu
   }
 
   async function executeVideoProbe(args: Record<string, unknown>, ctx: FfmpegToolContext): Promise<McpToolExecutionResult> {
-    const j = jail('video_probe', args, ctx)
+    const j = await jail('video_probe', args, ctx)
     if (!j.ok) return j.result
     try {
       const ffprobe = resolveFfprobe()
@@ -227,7 +234,7 @@ export function createFfmpegToolExecutors(deps: FfmpegToolDeps): FfmpegToolExecu
   }
 
   async function executeVideoThumbnail(args: Record<string, unknown>, ctx: FfmpegToolContext): Promise<McpToolExecutionResult> {
-    const j = jail('video_thumbnail', args, ctx)
+    const j = await jail('video_thumbnail', args, ctx)
     if (!j.ok) return j.result
     try {
       const ffmpeg = resolveFfmpeg()
@@ -353,7 +360,7 @@ export function createFfmpegToolExecutors(deps: FfmpegToolDeps): FfmpegToolExecu
   }
 
   async function executeAudioExtract(args: Record<string, unknown>, ctx: FfmpegToolContext): Promise<McpToolExecutionResult> {
-    const j = jail('audio_extract', args, ctx)
+    const j = await jail('audio_extract', args, ctx)
     if (!j.ok) return j.result
     try {
       if (!isAudioOutFormat(args.format)) return fail('audio_extract', 'provide format: one of "wav", "m4a", "mp3"')
@@ -374,7 +381,7 @@ export function createFfmpegToolExecutors(deps: FfmpegToolDeps): FfmpegToolExecu
   }
 
   async function executeTranscodeAudio(args: Record<string, unknown>, ctx: FfmpegToolContext): Promise<McpToolExecutionResult> {
-    const j = jail('transcode_audio', args, ctx)
+    const j = await jail('transcode_audio', args, ctx)
     if (!j.ok) return j.result
     try {
       if (!isAudioOutFormat(args.format)) return fail('transcode_audio', 'provide format: one of "wav", "m4a", "mp3"')
@@ -395,7 +402,7 @@ export function createFfmpegToolExecutors(deps: FfmpegToolDeps): FfmpegToolExecu
   }
 
   async function executeTranscodeVideo(args: Record<string, unknown>, ctx: FfmpegToolContext): Promise<McpToolExecutionResult> {
-    const j = jail('transcode_video', args, ctx)
+    const j = await jail('transcode_video', args, ctx)
     if (!j.ok) return j.result
     try {
       const outputPath = stagingPath('mp4')

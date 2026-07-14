@@ -69,8 +69,10 @@ export type VtJailedInput =
   | { ok: true; realPath: string; cleanup: () => boolean | void }
   | { ok: false; reason: string }
 
+type Awaitable<T> = T | Promise<T>
+
 export interface VtToolDeps {
-  jailInput: (sourcePath: string, ctx: VtToolContext) => VtJailedInput
+  jailInput: (sourcePath: string, ctx: VtToolContext) => Awaitable<VtJailedInput>
   /**
    * Realpath-jail a workspace IMAGE path for the optional encode overlay. DISTINCT
    * from `jailInput`: the overlay is a PNG/JPEG/WebP composited over every frame, so
@@ -78,7 +80,7 @@ export interface VtToolDeps {
    * size-capped). It must NOT reuse `jailInput`, whose `validateWorkspaceMediaPath`
    * sniffs AUDIO/VIDEO mime and would reject a PNG as `unsupported`.
    */
-  jailOverlay: (overlayPath: string, ctx: VtToolContext) => VtJailedInput
+  jailOverlay: (overlayPath: string, ctx: VtToolContext) => Awaitable<VtJailedInput>
   decodeFrame: (params: { inputPath: string; timestampSeconds?: number; preferHardware?: boolean }) =>
     Promise<{ pngBase64: string; width: number; height: number; timestampSeconds: number; codec: string; usedHardware: boolean }>
   /**
@@ -259,7 +261,7 @@ export function createVtToolExecutors(deps: VtToolDeps): VtToolExecutors {
     // Optional preferHardware — default true; only override when an explicit boolean.
     const preferHardware = typeof args.preferHardware === 'boolean' ? args.preferHardware : undefined
 
-    const jailed = jailInput(inputPath, ctx)
+    const jailed = await jailInput(inputPath, ctx)
     if (!jailed.ok) {
       return fail('video_decode_frame', `could not read video: ${jailed.reason}`)
     }
@@ -351,7 +353,7 @@ export function createVtToolExecutors(deps: VtToolDeps): VtToolExecutors {
     }
     timestamps = timestamps.slice(0, maxFrames)
 
-    const jailed = jailInput(inputPath, ctx)
+    const jailed = await jailInput(inputPath, ctx)
     if (!jailed.ok) {
       return fail('inspect_video_frames', `could not read video: ${jailed.reason}`)
     }
@@ -428,7 +430,7 @@ export function createVtToolExecutors(deps: VtToolDeps): VtToolExecutors {
       durationSeconds = d
     }
 
-    const jailed = jailInput(inputPath, ctx)
+    const jailed = await jailInput(inputPath, ctx)
     if (!jailed.ok) {
       return fail('video_encode_clip', `could not read video: ${jailed.reason}`)
     }
@@ -447,7 +449,7 @@ export function createVtToolExecutors(deps: VtToolDeps): VtToolExecutors {
     const overlayPath = typeof args.overlayPath === 'string' ? args.overlayPath.trim() : ''
     try {
       if (overlayPath) {
-        const candidate = jailOverlay(overlayPath, ctx)
+        const candidate = await jailOverlay(overlayPath, ctx)
         if (!candidate.ok) {
           return fail('video_encode_clip', `could not read overlay image: ${candidate.reason}`)
         }
@@ -568,7 +570,7 @@ export function createVtToolExecutors(deps: VtToolDeps): VtToolExecutors {
           }
           durationSeconds = d
         }
-        const jailed = jailInput(inputPath, ctx)
+        const jailed = await jailInput(inputPath, ctx)
         if (!jailed.ok) {
           return fail('video_concat_clips', `segment ${i}: ${jailed.reason}`)
         }
@@ -675,7 +677,7 @@ export function createVtToolExecutors(deps: VtToolDeps): VtToolExecutors {
           return fail('audio_mix', `track ${i}: provide sourcePath (an audio file inside the workspace)`)
         }
         if (i === 0) firstTrackSourcePath = track.sourcePath
-        const jailed = jailInput(sourcePath, ctx)
+        const jailed = await jailInput(sourcePath, ctx)
         if (!jailed.ok) {
           return fail('audio_mix', `track ${i}: ${jailed.reason}`)
         }
@@ -793,7 +795,7 @@ export function createVtToolExecutors(deps: VtToolDeps): VtToolExecutors {
         ? args.localeIdentifier.trim()
         : undefined
 
-    const jailed = jailInput(sourcePath, ctx)
+    const jailed = await jailInput(sourcePath, ctx)
     if (!jailed.ok) {
       return fail('transcribe_audio', `could not read audio: ${jailed.reason}`)
     }

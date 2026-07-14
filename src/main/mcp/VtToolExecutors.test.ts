@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
-import { createVtToolExecutors, isVtMcpToolName, type VtToolDeps } from './VtToolExecutors'
+import {
+  createVtToolExecutors,
+  isVtMcpToolName,
+  type VtJailedInput,
+  type VtToolDeps
+} from './VtToolExecutors'
 
 function imageBlock(result: { content?: Array<{ type: string }> }) {
   return (result.content ?? []).find((b) => b.type === 'image') as
@@ -148,6 +153,29 @@ describe('isVtMcpToolName', () => {
 })
 
 describe('video_decode_frame', () => {
+  it('waits for an asynchronous jail before invoking the daemon', async () => {
+    const cleanup = vi.fn(() => true)
+    let resolveJail!: (value: VtJailedInput) => void
+    const jailResult = new Promise<VtJailedInput>((resolve) => {
+      resolveJail = resolve
+    })
+    const { executors, deps } = build({ jailInput: vi.fn(() => jailResult) })
+
+    const pending = executors.executeVtTool(
+      'video_decode_frame',
+      { inputPath: 'clip.mp4' },
+      { appChatId: 'c1' }
+    )
+    expect(deps.jailInput).toHaveBeenCalledTimes(1)
+    expect(deps.decodeFrame).not.toHaveBeenCalled()
+
+    resolveJail({ ok: true, realPath: '/ws/deferred.mp4', cleanup })
+    const result = await pending
+    expect(result.isError).toBeFalsy()
+    expect(deps.decodeFrame).toHaveBeenCalledTimes(1)
+    expect(cleanup).toHaveBeenCalledTimes(1)
+  })
+
   it('jails the input, decodes over the REAL path, and returns an inline PNG image block', async () => {
     const { executors, deps, getDecodeParams } = build()
     const result = await executors.executeVtTool(

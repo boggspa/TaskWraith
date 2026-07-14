@@ -373,6 +373,39 @@ describe('normalizeHarvestedPeaks (waveform peaks shape contract)', () => {
 // windowed transcript (Item 2) rides best-effort in the result text. The clip writes only
 // the internal asset store, never the workspace (still read-only-safe).
 describe('inspect_audio_segment (interactive clip)', () => {
+  it('waits for an asynchronous jail before producing the window clip', async () => {
+    const cleanup = vi.fn(() => true)
+    let resolveJail!: (value: {
+      ok: true
+      realPath: string
+      cleanup: () => boolean | void
+    }) => void
+    const jailResult = new Promise<{
+      ok: true
+      realPath: string
+      cleanup: () => boolean | void
+    }>((resolve) => {
+      resolveJail = resolve
+    })
+    const { executors, jailAudio, produceWindowClip } = build({
+      jailAudio: vi.fn(() => jailResult)
+    })
+
+    const pending = executors.executeAudioTool(
+      'inspect_audio_segment',
+      { sourcePath: 'clip.wav', startMs: 0, endMs: 15_000 },
+      { appRunId: 'run-async-jail' }
+    )
+    expect(jailAudio).toHaveBeenCalledTimes(1)
+    expect(produceWindowClip).not.toHaveBeenCalled()
+
+    resolveJail({ ok: true, realPath: '/ws/deferred.wav', cleanup })
+    const result = await pending
+    expect(result.isError).toBeFalsy()
+    expect(produceWindowClip).toHaveBeenCalledWith('/ws/deferred.wav', 0, 15_000)
+    expect(cleanup).toHaveBeenCalledTimes(1)
+  })
+
   it('jails the source, produces a windowed clip, and returns a TRUSTED AV ref with peaks + caption', async () => {
     const { executors, jailAudio, produceWindowClip, cleanupStagedInput, getWindowClipArgs } = build()
     const result = await executors.executeAudioTool(

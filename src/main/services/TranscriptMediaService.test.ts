@@ -8,6 +8,7 @@ import {
   extractMarkdownImagePathCandidates,
   extractMcpImageBlocksFromRawResult,
   extractProviderImageBlocksFromRawEvent,
+  setWorkspaceMediaSnapshotTestHookForTests,
   snapshotRasterOrPdfAttachment,
   sniffImageMime,
   stageWorkspaceMediaSnapshot,
@@ -29,6 +30,7 @@ function makeTempRoot(): string {
 }
 
 afterEach(() => {
+  setWorkspaceMediaSnapshotTestHookForTests(undefined)
   while (tempRoots.length) {
     const dir = tempRoots.pop()
     if (dir) fs.rmSync(dir, { recursive: true, force: true })
@@ -617,7 +619,7 @@ describe('TranscriptMediaService', () => {
     expect(snapshot.mimeType).toBe('image/png')
   })
 
-  it('stages a descriptor-backed media snapshot that survives source replacement', () => {
+  it('stages a descriptor-backed media snapshot that survives source replacement', async () => {
     const root = makeTempRoot()
     const workspace = path.join(root, 'workspace')
     const staging = path.join(root, 'main-owned-staging')
@@ -627,7 +629,7 @@ describe('TranscriptMediaService', () => {
     source.set([0x1a, 0x45, 0xdf, 0xa3], 0)
     fs.writeFileSync(sourcePath, source)
 
-    const staged = stageWorkspaceMediaSnapshot({
+    const staged = await stageWorkspaceMediaSnapshot({
       workspacePath: workspace,
       candidatePath: sourcePath,
       stagingDirectory: staging,
@@ -645,7 +647,75 @@ describe('TranscriptMediaService', () => {
     expect(staged.cleanup()).toBe(false)
   })
 
-  it('refuses a symlinked staging directory instead of creating a path a workspace can replace', () => {
+  it('yields while copying a multi-chunk descriptor snapshot', async () => {
+    const root = makeTempRoot()
+    const workspace = path.join(root, 'workspace')
+    const staging = path.join(root, 'main-owned-staging')
+    fs.mkdirSync(workspace)
+    const sourcePath = path.join(workspace, 'large-clip.webm')
+    const source = Buffer.alloc(2 * 1024 * 1024 + 256, 0x5a)
+    source.set([0x1a, 0x45, 0xdf, 0xa3], 0)
+    fs.writeFileSync(sourcePath, source)
+
+    let releaseCopy!: () => void
+    let reportCopyPaused!: () => void
+    const copyPaused = new Promise<void>((resolve) => {
+      reportCopyPaused = resolve
+    })
+    const copyRelease = new Promise<void>((resolve) => {
+      releaseCopy = resolve
+    })
+    setWorkspaceMediaSnapshotTestHookForTests(async (stage) => {
+      if (stage !== 'after_first_chunk') return
+      reportCopyPaused()
+      await copyRelease
+    })
+
+    let settled = false
+    const pending = stageWorkspaceMediaSnapshot({
+      workspacePath: workspace,
+      candidatePath: sourcePath,
+      stagingDirectory: staging,
+      kind: 'audio_video'
+    }).finally(() => {
+      settled = true
+    })
+
+    await copyPaused
+    expect(settled).toBe(false)
+    releaseCopy()
+    const staged = await pending
+    expect(staged.ok).toBe(true)
+    if (!staged.ok) return
+    expect(fs.readFileSync(staged.realPath).equals(source)).toBe(true)
+    expect(staged.cleanup()).toBe(true)
+  })
+
+  it('rejects an in-place source mutation during an async descriptor copy', async () => {
+    const root = makeTempRoot()
+    const workspace = path.join(root, 'workspace')
+    const staging = path.join(root, 'main-owned-staging')
+    fs.mkdirSync(workspace)
+    const sourcePath = path.join(workspace, 'changing-clip.webm')
+    const source = Buffer.alloc(2 * 1024 * 1024 + 256, 0x5a)
+    source.set([0x1a, 0x45, 0xdf, 0xa3], 0)
+    fs.writeFileSync(sourcePath, source)
+    setWorkspaceMediaSnapshotTestHookForTests((stage) => {
+      if (stage === 'after_first_chunk') fs.appendFileSync(sourcePath, Buffer.from('changed'))
+    })
+
+    await expect(
+      stageWorkspaceMediaSnapshot({
+        workspacePath: workspace,
+        candidatePath: sourcePath,
+        stagingDirectory: staging,
+        kind: 'audio_video'
+      })
+    ).resolves.toEqual({ ok: false, reason: 'snapshot_failed' })
+    expect(fs.readdirSync(staging)).toEqual([])
+  })
+
+  it('refuses a symlinked staging directory instead of creating a path a workspace can replace', async () => {
     const root = makeTempRoot()
     const workspace = path.join(root, 'workspace')
     const attackerOwned = path.join(root, 'attacker-owned')
@@ -657,7 +727,7 @@ describe('TranscriptMediaService', () => {
     fs.writeFileSync(imagePath, PNG_BUFFER)
 
     expect(
-      stageWorkspaceMediaSnapshot({
+      await stageWorkspaceMediaSnapshot({
         workspacePath: workspace,
         candidatePath: imagePath,
         stagingDirectory: stagingLink,
@@ -667,14 +737,14 @@ describe('TranscriptMediaService', () => {
     expect(fs.readdirSync(attackerOwned)).toEqual([])
   })
 
-  it('refuses to stage snapshots inside the agent-writable workspace', () => {
+  it('refuses to stage snapshots inside the agent-writable workspace', async () => {
     const workspace = makeTempRoot()
     const imagePath = path.join(workspace, 'image.png')
     const stagingPath = path.join(workspace, '.media-staging')
     fs.writeFileSync(imagePath, PNG_BUFFER)
 
     expect(
-      stageWorkspaceMediaSnapshot({
+      await stageWorkspaceMediaSnapshot({
         workspacePath: workspace,
         candidatePath: imagePath,
         stagingDirectory: stagingPath,
@@ -684,7 +754,7 @@ describe('TranscriptMediaService', () => {
     expect(fs.existsSync(stagingPath)).toBe(false)
   })
 
-  it('cleanup refuses to unlink a replacement at the staged path', () => {
+  it('cleanup refuses to unlink a replacement at the staged path', async () => {
     const root = makeTempRoot()
     const workspace = path.join(root, 'workspace')
     const staging = path.join(root, 'staging')
@@ -692,7 +762,7 @@ describe('TranscriptMediaService', () => {
     const imagePath = path.join(workspace, 'image.png')
     fs.writeFileSync(imagePath, PNG_BUFFER)
 
-    const staged = stageWorkspaceMediaSnapshot({
+    const staged = await stageWorkspaceMediaSnapshot({
       workspacePath: workspace,
       candidatePath: imagePath,
       stagingDirectory: staging,

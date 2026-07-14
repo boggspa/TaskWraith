@@ -186,6 +186,8 @@ export type ResolvedAudioSource =
   | { ok: true; dataBase64: string; mimeType: string; byteLength: number }
   | { ok: false; reason: string }
 
+type Awaitable<T> = T | Promise<T>
+
 export interface AudioToolContext {
   appChatId?: string
   appRunId?: string
@@ -236,9 +238,10 @@ export interface AudioToolExecutorDeps {
   jailAudio?: (
     args: Record<string, unknown>,
     ctx: AudioToolContext
-  ) =>
+  ) => Awaitable<
     | { ok: true; realPath: string; cleanup: () => boolean | void }
     | { ok: false; reason: string }
+  >
   /**
    * Produce a PLAYABLE windowed clip for inspect_audio_segment: slice [startMs,endMs] out
    * of the (already-jailed) `sourcePath` via the daemon's native `audio.windowClip`, read
@@ -489,7 +492,7 @@ export function createAudioToolExecutors(deps: AudioToolExecutorDeps): AudioTool
     }
 
     // Snapshot the source FILE for the daemon (the daemon opens the path, not bytes).
-    const jailed = jailAudio(args, ctx)
+    const jailed = await jailAudio(args, ctx)
     if (!jailed.ok) return fail('inspect_audio_segment', `could not read audio: ${jailed.reason}`)
 
     try {
