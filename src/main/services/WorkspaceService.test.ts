@@ -39,6 +39,9 @@ function makeStore(overrides: Partial<WorkspaceServiceStore> = {}): WorkspaceSer
     addOrUpdateWorkspace: vi.fn((workspacePath: string, partial?: Partial<WorkspaceRecord>) =>
       makeWorkspace({ path: workspacePath, ...partial })
     ),
+    pinWorkspaceRealPath: vi.fn((workspaceId, expectedPath, realPath) =>
+      makeWorkspace({ id: workspaceId, path: expectedPath, realPath })
+    ),
     removeWorkspace: vi.fn(),
     clearWorkspaces: vi.fn(),
     ...overrides
@@ -66,6 +69,9 @@ function makeDeps(overrides: Partial<WorkspaceServiceDeps> = {}): {
     appStore: store,
     allowlist,
     canonicalPath: vi.fn((value: string) => value.replace('/input', '/repo')),
+    resolveRealDirectory: vi.fn(async (value: string) =>
+      value.replace('/input', '/real/repo').replace('/repo', '/real/repo')
+    ),
     selectDirectory: vi.fn(async () => '/input'),
     checkTrust: vi.fn(() => ({ status: 'trusted' as const })),
     ...overrides
@@ -89,6 +95,7 @@ describe('WorkspaceService', () => {
       branch: 'main',
       pinned: true,
       notes: 'ignored',
+      realPath: '/attacker/controlled',
       geminiWorktree: {
         enabled: true,
         name: 'feature'
@@ -128,8 +135,25 @@ describe('WorkspaceService', () => {
   it('selectWorkspace registers a safe native selection', async () => {
     const { deps, store } = makeDeps()
     const service = new WorkspaceService(deps)
-    await expect(service.selectWorkspace()).resolves.toEqual(makeWorkspace({ path: '/repo' }))
-    expect(store.addOrUpdateWorkspace).toHaveBeenCalledWith('/repo')
+    await expect(service.selectWorkspace()).resolves.toEqual(
+      makeWorkspace({ path: '/repo', realPath: '/real/repo' })
+    )
+    expect(store.addOrUpdateWorkspace).toHaveBeenCalledWith('/repo', {
+      realPath: '/real/repo'
+    })
+  })
+
+  it('rejects a native selection when the filesystem target is not a directory', async () => {
+    const { deps, store } = makeDeps({
+      resolveRealDirectory: vi.fn(async () => {
+        throw new Error('Workspace must resolve to a directory.')
+      })
+    })
+    const service = new WorkspaceService(deps)
+    await expect(service.selectWorkspace()).rejects.toThrow(
+      'Workspace must resolve to a directory.'
+    )
+    expect(store.addOrUpdateWorkspace).not.toHaveBeenCalled()
   })
 
   it('rejects filesystem roots when registering native selections', async () => {
@@ -141,6 +165,65 @@ describe('WorkspaceService', () => {
       'Filesystem roots cannot be registered as workspaces.'
     )
     expect(store.addOrUpdateWorkspace).not.toHaveBeenCalled()
+  })
+
+  describe('workspace real-target reconciliation', () => {
+    it('pins only direct legacy directory paths', async () => {
+      const direct = makeWorkspace({ id: 'direct', path: '/repo/direct' })
+      const symlink = makeWorkspace({ id: 'symlink', path: '/repo/link' })
+      const missing = makeWorkspace({ id: 'missing', path: '/repo/missing' })
+      const store = makeStore({
+        getWorkspaces: vi.fn(() => [direct, symlink, missing]),
+        pinWorkspaceRealPath: vi.fn((id, expectedPath, realPath) =>
+          makeWorkspace({ id, path: expectedPath, realPath })
+        )
+      })
+      const { deps } = makeDeps({
+        appStore: store,
+        canonicalPath: vi.fn((value: string) => value),
+        resolveRealDirectory: vi.fn(async (value: string) => {
+          if (value === direct.path) return direct.path
+          if (value === symlink.path) return '/repo/target'
+          throw new Error('missing')
+        })
+      })
+      const log = vi.fn()
+
+      await expect(new WorkspaceService(deps).reconcileWorkspaceRealPaths(log)).resolves.toBe(1)
+      expect(store.pinWorkspaceRealPath).toHaveBeenCalledTimes(1)
+      expect(store.pinWorkspaceRealPath).toHaveBeenCalledWith(direct.id, direct.path, direct.path)
+      expect(log).toHaveBeenCalledWith(expect.stringContaining('pinned direct'))
+    })
+
+    it('never inspects or repairs an existing pin', async () => {
+      const pinned = makeWorkspace({
+        id: 'pinned',
+        path: '/repo/lexical',
+        realPath: '/repo/old-target'
+      })
+      const store = makeStore({ getWorkspaces: vi.fn(() => [pinned]) })
+      const { deps } = makeDeps({ appStore: store })
+
+      await expect(new WorkspaceService(deps).reconcileWorkspaceRealPaths()).resolves.toBe(0)
+      expect(deps.resolveRealDirectory).not.toHaveBeenCalled()
+      expect(store.pinWorkspaceRealPath).not.toHaveBeenCalled()
+    })
+
+    it('does not count a stale compare-and-set race as an adopted pin', async () => {
+      const direct = makeWorkspace({ id: 'direct', path: '/repo/direct' })
+      const store = makeStore({
+        getWorkspaces: vi.fn(() => [direct]),
+        pinWorkspaceRealPath: vi.fn(() => null)
+      })
+      const { deps } = makeDeps({
+        appStore: store,
+        canonicalPath: vi.fn((value: string) => value),
+        resolveRealDirectory: vi.fn(async (value: string) => value)
+      })
+
+      await expect(new WorkspaceService(deps).reconcileWorkspaceRealPaths()).resolves.toBe(0)
+      expect(store.pinWorkspaceRealPath).toHaveBeenCalledTimes(1)
+    })
   })
 
   it('validates and upserts remote allowlist entries with the original shape', () => {

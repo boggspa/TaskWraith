@@ -2967,6 +2967,11 @@ export type GeminiWorktreeLaunchOption = GeminiWorktreeConfig | string | boolean
 export interface WorkspaceRecord {
   id: string
   path: string
+  /**
+   * Main-owned, filesystem-resolved execution target for this lexical workspace
+   * path. Renderer updates must never create or rotate this pin.
+   */
+  realPath?: string
   displayName: string
   lastOpenedAt: number
   createdAt: number

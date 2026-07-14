@@ -1,4 +1,5 @@
 import { parse } from 'path'
+import { realpath, stat } from 'fs/promises'
 import {
   capabilitiesForRemoteWorkspaceEntry,
   isRemoteWorkspaceCapability,
@@ -14,6 +15,11 @@ export interface WorkspaceServiceStore {
     workspacePath: string,
     partial?: Partial<WorkspaceRecord>
   ) => WorkspaceRecord
+  pinWorkspaceRealPath: (
+    workspaceId: string,
+    expectedPath: string,
+    realPath: string
+  ) => WorkspaceRecord | null
   removeWorkspace: (id: string) => void
   clearWorkspaces: () => void
 }
@@ -29,6 +35,8 @@ export interface WorkspaceServiceDeps {
   appStore: WorkspaceServiceStore
   allowlist: WorkspaceAllowlistStore
   canonicalPath: (path: string) => string
+  /** Resolve only an existing directory, returning its canonical filesystem path. */
+  resolveRealDirectory?: (path: string) => Promise<string>
   selectDirectory: () => Promise<string | null>
   checkTrust: (workspacePath: string) => TrustStatusResult
 }
@@ -67,6 +75,36 @@ export class WorkspaceService {
     const path = await this.deps.selectDirectory()
     if (!path) return null
     return this.addWorkspaceFromNativeSelection(path)
+  }
+
+  /**
+   * Conservatively pins legacy workspace records at startup. Only a direct
+   * lexical path whose canonical spelling already equals its filesystem
+   * realpath is adopted. Existing pins are never repaired or rotated here.
+   */
+  async reconcileWorkspaceRealPaths(log?: (line: string) => void): Promise<number> {
+    let pinned = 0
+    for (const workspace of this.deps.appStore.getWorkspaces()) {
+      if (workspace.realPath) continue
+      try {
+        const lexicalPath = this.deps.canonicalPath(workspace.path)
+        this.assertSafeWorkspaceRoot(lexicalPath)
+        const realPath = await this.resolveRealDirectory(lexicalPath)
+        if (this.deps.canonicalPath(realPath) !== lexicalPath) continue
+        const updated = this.deps.appStore.pinWorkspaceRealPath(
+          workspace.id,
+          workspace.path,
+          realPath
+        )
+        if (!updated) continue
+        pinned++
+        log?.(`[workspace-target] pinned ${workspace.id} (${workspace.path})`)
+      } catch {
+        // Missing, unreadable, non-directory, and otherwise unsafe legacy
+        // paths remain unpinned until the user selects them again.
+      }
+    }
+    return pinned
   }
 
   listRemoteAllowlist(): RemoteWorkspaceEntry[] {
@@ -225,10 +263,11 @@ export class WorkspaceService {
     return normalized
   }
 
-  addWorkspaceFromNativeSelection(workspacePath: string): WorkspaceRecord {
+  async addWorkspaceFromNativeSelection(workspacePath: string): Promise<WorkspaceRecord> {
     const normalized = this.deps.canonicalPath(requireNonEmptyString(workspacePath, 'Workspace'))
     this.assertSafeWorkspaceRoot(normalized)
-    return this.deps.appStore.addOrUpdateWorkspace(normalized)
+    const realPath = await this.resolveRealDirectory(normalized)
+    return this.deps.appStore.addOrUpdateWorkspace(normalized, { realPath })
   }
 
   private safeWorkspacePartial(partial: Partial<WorkspaceRecord> = {}): Partial<WorkspaceRecord> {
@@ -250,6 +289,22 @@ export class WorkspaceService {
       throw new Error('Filesystem roots cannot be registered as workspaces.')
     }
   }
+
+  private async resolveRealDirectory(workspacePath: string): Promise<string> {
+    const resolver = this.deps.resolveRealDirectory || resolveRealDirectory
+    const resolved = this.deps.canonicalPath(await resolver(workspacePath))
+    this.assertSafeWorkspaceRoot(resolved)
+    return resolved
+  }
+}
+
+async function resolveRealDirectory(workspacePath: string): Promise<string> {
+  const resolved = await realpath(workspacePath)
+  const info = await stat(resolved)
+  if (!info.isDirectory()) {
+    throw new Error('Workspace must resolve to a directory.')
+  }
+  return resolved
 }
 
 function sanitizeWorkspaceGeminiWorktree(

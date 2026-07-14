@@ -2430,6 +2430,28 @@ export class AppStore {
     return ws
   }
 
+  /**
+   * Compare-and-set a missing main-owned real target without changing recent
+   * workspace ordering. Existing pins are immutable through this repair path.
+   */
+  static pinWorkspaceRealPath(
+    workspaceId: string,
+    expectedPath: string,
+    realPath: string
+  ): WorkspaceRecord | null {
+    const workspaces = this.getWorkspaces()
+    const index = workspaces.findIndex(
+      (workspace) => workspace.id === workspaceId && workspace.path === expectedPath
+    )
+    if (index < 0) return null
+    const existing = workspaces[index]
+    if (existing.realPath) return null
+    const updated = { ...existing, realPath }
+    workspaces[index] = updated
+    writeJson(workspacesPath, workspaces)
+    return updated
+  }
+
   static removeWorkspace(workspaceId: string) {
     const workspaces = this.getWorkspaces().filter((w) => w.id !== workspaceId)
     writeJson(workspacesPath, workspaces)
