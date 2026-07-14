@@ -8658,6 +8658,19 @@ public struct ComposerDiffPill: View {
     /// pushed side so the single-line pill text can't be starved into a wrap.
     private static let edgeMargin: CGFloat = 28
 
+    /// Quantized gate for the two GeometryReader→@State measurement feedbacks
+    /// below. At 440pt and 420pt iPhone widths (17 Pro Max, Air) the measured
+    /// slot width oscillates by one ULP per layout pass (420.0 ↔
+    /// 420.00000000000006); writing every bit-level change back into @State
+    /// re-invalidates layout forever — the first frame never commits and
+    /// launch wedges on the splash at 100% CPU (on hardware the watchdog
+    /// would kill it). The centring math only needs point accuracy, so
+    /// quantize to whole points and swallow sub-point deltas.
+    private static func quantizedMeasurement(_ measured: CGFloat, current: CGFloat) -> CGFloat? {
+        let points = measured.rounded()
+        return abs(points - current) >= 0.5 ? points : nil
+    }
+
     /// Half the slack between the pill and its column — how far the pill may
     /// travel before its edge meets the keep-clear margin. CLAMPED TO CENTRE (0)
     /// until BOTH measurements land: a finite 0 keeps the onEnded commit bounded
@@ -8819,8 +8832,16 @@ public struct ComposerDiffPill: View {
                 .layoutPriority(1)
                 .background(GeometryReader { proxy in
                     Color.clear
-                        .onAppear { pillWidth = proxy.size.width }
-                        .onChange(of: proxy.size.width) { _, w in pillWidth = w }
+                        .onAppear {
+                            if let w = Self.quantizedMeasurement(proxy.size.width, current: pillWidth) {
+                                pillWidth = w
+                            }
+                        }
+                        .onChange(of: proxy.size.width) { _, w in
+                            if let q = Self.quantizedMeasurement(w, current: pillWidth) {
+                                pillWidth = q
+                            }
+                        }
                 })
                 .scaleEffect(dragState.isActive ? 1.06 : 1)
                 // Visual delta DURING a live drag only (the finger is on the pill,
@@ -8856,8 +8877,16 @@ public struct ComposerDiffPill: View {
         .frame(maxWidth: .infinity)
         .background(GeometryReader { proxy in
             Color.clear
-                .onAppear { containerWidth = proxy.size.width }
-                .onChange(of: proxy.size.width) { _, w in containerWidth = w }
+                .onAppear {
+                    if let w = Self.quantizedMeasurement(proxy.size.width, current: containerWidth) {
+                        containerWidth = w
+                    }
+                }
+                .onChange(of: proxy.size.width) { _, w in
+                    if let q = Self.quantizedMeasurement(w, current: containerWidth) {
+                        containerWidth = q
+                    }
+                }
         })
         .sensoryFeedback(trigger: dragState.isActive) { wasActive, isActive in
             isActive && !wasActive ? MotionHaptics.impactMedium : nil
