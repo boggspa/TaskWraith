@@ -1,6 +1,7 @@
 import fs from 'fs'
 import os from 'os'
 import path from 'path'
+import { createHash, randomUUID } from 'crypto'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   TRANSCRIPT_MEDIA_MAX_AUDIO_BYTES,
@@ -22,6 +23,59 @@ function makeRoot(): string {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tw-media-assets-'))
   roots.push(root)
   return root
+}
+
+function interceptIngestTempWrites(
+  hook: (input: { call: number; phase: 'before' | 'after' }) => void | Promise<void>
+): void {
+  const realOpen = fs.promises.open.bind(fs.promises)
+  vi.spyOn(fs.promises, 'open').mockImplementation(
+    (async (file: fs.PathLike, flags?: string | number, mode?: fs.Mode) => {
+      const handle = await realOpen(file, flags ?? 'r', mode)
+      if (typeof file !== 'string' || !path.basename(file).startsWith('.ingest-')) {
+        return handle
+      }
+      const originalWrite = handle.write.bind(handle)
+      let call = 0
+      Object.defineProperty(handle, 'write', {
+        configurable: true,
+        value: async (
+          buffer: Uint8Array,
+          offset?: number,
+          length?: number,
+          position?: number | null
+        ) => {
+          call += 1
+          await hook({ call, phase: 'before' })
+          const result = await originalWrite(buffer, offset, length, position)
+          await hook({ call, phase: 'after' })
+          return result
+        }
+      })
+      return handle
+    }) as typeof fs.promises.open
+  )
+}
+
+function limitDescriptorReads(filePaths: ReadonlySet<string>, maxBytesPerRead: number): void {
+  const realOpen = fs.promises.open.bind(fs.promises)
+  vi.spyOn(fs.promises, 'open').mockImplementation(
+    (async (file: fs.PathLike, flags?: string | number, mode?: fs.Mode) => {
+      const handle = await realOpen(file, flags ?? 'r', mode)
+      if (typeof file !== 'string' || !filePaths.has(file)) return handle
+      const originalRead = handle.read.bind(handle)
+      Object.defineProperty(handle, 'read', {
+        configurable: true,
+        value: (
+          buffer: Uint8Array,
+          offset: number,
+          length: number,
+          position: number | null
+        ) => originalRead(buffer, offset, Math.min(length, maxBytesPerRead), position)
+      })
+      return handle
+    }) as typeof fs.promises.open
+  )
 }
 
 afterEach(() => {
@@ -895,5 +949,335 @@ describe('TranscriptMediaAssetStore', () => {
     expect(store.write({ sha256, mimeType: 'audio/wav', buffer })).toEqual({ ok: true })
     const read = store.read({ sha256, mimeType: 'audio/wav' })
     expect(read.ok && read.byteLength).toBe(buffer.length)
+  })
+
+  it('ingests a file in bounded async chunks and returns its canonical durable asset', async () => {
+    const root = makeRoot()
+    const sourceRoot = makeRoot()
+    const sourcePath = path.join(sourceRoot, 'clip.mp4')
+    const bytes = Buffer.alloc(2 * 1024 * 1024 + 137, 0x5a)
+    fs.writeFileSync(sourcePath, bytes)
+    const expectedSha256 = createHash('sha256').update(bytes).digest('base64url')
+    const readSync = vi.spyOn(fs, 'readSync')
+    const writeSync = vi.spyOn(fs, 'writeSync')
+
+    const result = await new TranscriptMediaAssetStore(root).writeContentAddressedFromFile({
+      sourcePath,
+      mimeType: 'video/mp4'
+    })
+
+    expect(result).toEqual({
+      ok: true,
+      persistenceVersion: 1,
+      sha256: expectedSha256,
+      path: transcriptMediaAssetPath(fs.realpathSync(root), expectedSha256, 'video/mp4'),
+      mimeType: 'video/mp4',
+      byteLength: bytes.length
+    })
+    expect(readSync).not.toHaveBeenCalled()
+    expect(writeSync).not.toHaveBeenCalled()
+    if (!result.ok) return
+    expect(fs.readFileSync(result.path).equals(bytes)).toBe(true)
+    expect(fs.statSync(result.path).mode & 0o077).toBe(0)
+    expect(fs.readFileSync(sourcePath).equals(bytes)).toBe(true)
+    expect(fs.readdirSync(root).some((entry) => entry.startsWith('.ingest-'))).toBe(false)
+  })
+
+  it('rejects unsafe, empty, oversized, and unsupported file-backed inputs before publishing', async () => {
+    const root = makeRoot()
+    const sourceRoot = makeRoot()
+    const store = new TranscriptMediaAssetStore(root)
+    const realSource = path.join(sourceRoot, 'real.mp4')
+    const linkedSource = path.join(sourceRoot, 'linked.mp4')
+    const emptySource = path.join(sourceRoot, 'empty.mp4')
+    const oversizedSource = path.join(sourceRoot, 'oversized.png')
+    fs.writeFileSync(realSource, 'video-bytes')
+    fs.symlinkSync(realSource, linkedSource)
+    fs.writeFileSync(emptySource, '')
+    fs.writeFileSync(oversizedSource, 'x')
+    fs.truncateSync(oversizedSource, TRANSCRIPT_MEDIA_MAX_FULL_IMAGE_BYTES + 1)
+
+    await expect(
+      store.writeContentAddressedFromFile({ sourcePath: linkedSource, mimeType: 'video/mp4' })
+    ).resolves.toEqual({ ok: false, reason: 'unsafe_source_path' })
+    await expect(
+      store.writeContentAddressedFromFile({ sourcePath: emptySource, mimeType: 'video/mp4' })
+    ).resolves.toEqual({ ok: false, reason: 'too_large' })
+    await expect(
+      store.writeContentAddressedFromFile({ sourcePath: oversizedSource, mimeType: 'image/png' })
+    ).resolves.toEqual({ ok: false, reason: 'too_large' })
+    await expect(
+      store.writeContentAddressedFromFile({ sourcePath: realSource, mimeType: 'image/svg+xml' })
+    ).resolves.toEqual({ ok: false, reason: 'unsupported' })
+    await expect(
+      store.writeContentAddressedFromFile({ sourcePath: 'relative.mp4', mimeType: 'video/mp4' })
+    ).resolves.toEqual({ ok: false, reason: 'unsafe_source_path' })
+    await expect(
+      store.writeContentAddressedFromFile({
+        sourcePath: path.join(sourceRoot, 'missing.mp4'),
+        mimeType: 'video/mp4'
+      })
+    ).resolves.toEqual({ ok: false, reason: 'missing' })
+    expect(fs.readdirSync(root)).toEqual([])
+  })
+
+  it('deduplicates identical file ingests and preserves a mismatched existing target', async () => {
+    const root = makeRoot()
+    const sourceRoot = makeRoot()
+    const sourcePath = path.join(sourceRoot, 'same.wav')
+    const bytes = Buffer.from('RIFF....WAVE-same-content')
+    fs.writeFileSync(sourcePath, bytes)
+    const store = new TranscriptMediaAssetStore(root)
+
+    const first = await store.writeContentAddressedFromFile({
+      sourcePath,
+      mimeType: 'audio/wav'
+    })
+    const second = await store.writeContentAddressedFromFile({
+      sourcePath,
+      mimeType: 'audio/wav'
+    })
+    expect(first.ok).toBe(true)
+    expect(second).toEqual(first)
+    if (!first.ok) return
+
+    const collisionBytes = Buffer.alloc(bytes.length, 0x21)
+    fs.writeFileSync(first.path, collisionBytes)
+    await expect(
+      store.writeContentAddressedFromFile({ sourcePath, mimeType: 'audio/wav' })
+    ).resolves.toEqual({ ok: false, reason: 'content_address_collision' })
+    expect(fs.readFileSync(first.path).equals(collisionBytes)).toBe(true)
+    expect(fs.readdirSync(root).some((entry) => entry.startsWith('.ingest-'))).toBe(false)
+  })
+
+  it('publishes concurrent identical ingests atomically without transient collisions', async () => {
+    const root = makeRoot()
+    const sourceRoot = makeRoot()
+    const sourcePath = path.join(sourceRoot, 'concurrent.mp4')
+    const bytes = Buffer.alloc(3 * 1024 * 1024 + 41, 0x33)
+    fs.writeFileSync(sourcePath, bytes)
+    const firstStore = new TranscriptMediaAssetStore(root)
+    const secondStore = new TranscriptMediaAssetStore(root)
+
+    const [first, second] = await Promise.all([
+      firstStore.writeContentAddressedFromFile({ sourcePath, mimeType: 'video/mp4' }),
+      secondStore.writeContentAddressedFromFile({ sourcePath, mimeType: 'video/mp4' })
+    ])
+
+    expect(first.ok).toBe(true)
+    expect(second).toEqual(first)
+    if (!first.ok) return
+    expect(fs.readFileSync(first.path).equals(bytes)).toBe(true)
+    expect(fs.readdirSync(root).filter((entry) => entry.startsWith('.ingest-'))).toEqual([])
+  })
+
+  it('never rolls back a published target after a concurrent ingest adopts it', async () => {
+    const root = makeRoot()
+    const sourceRoot = makeRoot()
+    const sourcePath = path.join(sourceRoot, 'adopted.mp4')
+    const bytes = Buffer.alloc(1024 * 1024 + 29, 0x34)
+    fs.writeFileSync(sourcePath, bytes)
+    const sha256 = createHash('sha256').update(bytes).digest('base64url')
+    const target = transcriptMediaAssetPath(fs.realpathSync(root), sha256, 'video/mp4')
+    const realLink = fs.promises.link.bind(fs.promises)
+    const realLstat = fs.promises.lstat.bind(fs.promises)
+    let announcePublished!: () => void
+    let releasePublisher!: () => void
+    const published = new Promise<void>((resolve) => {
+      announcePublished = resolve
+    })
+    const publisherRelease = new Promise<void>((resolve) => {
+      releasePublisher = resolve
+    })
+    let firstLink = true
+    vi.spyOn(fs.promises, 'link').mockImplementation(async (existingPath, newPath) => {
+      await realLink(existingPath, newPath)
+      if (!firstLink) return
+      firstLink = false
+      announcePublished()
+      await publisherRelease
+    })
+    let failPublisherValidation = false
+    vi.spyOn(fs.promises, 'lstat').mockImplementation(async (file) => {
+      if (failPublisherValidation && file === target) {
+        failPublisherValidation = false
+        throw new Error('simulated_post_link_validation_failure')
+      }
+      return realLstat(file)
+    })
+
+    const publisher = new TranscriptMediaAssetStore(root).writeContentAddressedFromFile({
+      sourcePath,
+      mimeType: 'video/mp4'
+    })
+    await published
+    const adopter = await new TranscriptMediaAssetStore(root).writeContentAddressedFromFile({
+      sourcePath,
+      mimeType: 'video/mp4'
+    })
+    expect(adopter.ok).toBe(true)
+
+    failPublisherValidation = true
+    releasePublisher()
+    await expect(publisher).resolves.toEqual({
+      ok: false,
+      reason: 'simulated_post_link_validation_failure'
+    })
+    expect(fs.readFileSync(target).equals(bytes)).toBe(true)
+    await expect(
+      new TranscriptMediaAssetStore(root).writeContentAddressedFromFile({
+        sourcePath,
+        mimeType: 'video/mp4'
+      })
+    ).resolves.toEqual(adopter)
+  })
+
+  it('reads source and collision descriptors exactly across short asynchronous reads', async () => {
+    const root = makeRoot()
+    const sourceRoot = makeRoot()
+    const sourcePath = path.join(sourceRoot, 'short-reads.wav')
+    const bytes = Buffer.alloc(4097, 0x35)
+    fs.writeFileSync(sourcePath, bytes)
+    const limitedPaths = new Set([sourcePath])
+    limitDescriptorReads(limitedPaths, 17)
+    const store = new TranscriptMediaAssetStore(root)
+
+    const first = await store.writeContentAddressedFromFile({
+      sourcePath,
+      mimeType: 'audio/wav'
+    })
+    expect(first.ok).toBe(true)
+    if (!first.ok) return
+    limitedPaths.add(first.path)
+    await expect(
+      store.writeContentAddressedFromFile({ sourcePath, mimeType: 'audio/wav' })
+    ).resolves.toEqual(first)
+    expect(fs.readFileSync(first.path).equals(bytes)).toBe(true)
+  })
+
+  it('reclaims only sufficiently old exact-name temps from definitely dead processes', async () => {
+    const root = makeRoot()
+    const sourceRoot = makeRoot()
+    const sourcePath = path.join(sourceRoot, 'cleanup.wav')
+    fs.writeFileSync(sourcePath, 'cleanup-source')
+    const livePid = process.pid + 100_000
+    const deadPid = livePid + 1
+    const exactTemp = (pid: number) => path.join(root, `.ingest-${pid}-${randomUUID()}.tmp`)
+    const currentTemp = exactTemp(process.pid)
+    const liveTemp = exactTemp(livePid)
+    const staleDeadTemp = exactTemp(deadPid)
+    const freshDeadTemp = exactTemp(deadPid)
+    const symlinkTemp = exactTemp(deadPid)
+    const symlinkTarget = path.join(root, 'symlink-target')
+    const malformedTemp = path.join(root, `.ingest-${deadPid}-not-a-uuid.tmp`)
+    for (const file of [currentTemp, liveTemp, staleDeadTemp, freshDeadTemp, symlinkTarget, malformedTemp]) {
+      fs.writeFileSync(file, 'temp', { mode: 0o600 })
+      fs.chmodSync(file, 0o600)
+    }
+    fs.symlinkSync(symlinkTarget, symlinkTemp)
+    const old = new Date(Date.now() - 48 * 60 * 60 * 1000)
+    for (const file of [currentTemp, liveTemp, staleDeadTemp, symlinkTemp, malformedTemp]) {
+      fs.utimesSync(file, old, old)
+    }
+    vi.spyOn(process, 'kill').mockImplementation(((pid: number) => {
+      if (pid === livePid) return true
+      if (pid === deadPid) {
+        throw Object.assign(new Error('no such process'), { code: 'ESRCH' })
+      }
+      throw new Error(`unexpected pid check: ${pid}`)
+    }) as typeof process.kill)
+
+    const result = await new TranscriptMediaAssetStore(root).writeContentAddressedFromFile({
+      sourcePath,
+      mimeType: 'audio/wav'
+    })
+
+    expect(result.ok).toBe(true)
+    expect(fs.existsSync(staleDeadTemp)).toBe(false)
+    for (const file of [currentTemp, liveTemp, freshDeadTemp, symlinkTemp, malformedTemp]) {
+      expect(fs.existsSync(file)).toBe(true)
+    }
+  })
+
+  it('removes a stale post-publication temp link without removing the canonical asset', async () => {
+    const root = makeRoot()
+    const sourceRoot = makeRoot()
+    const sourcePath = path.join(sourceRoot, 'cleanup-published.wav')
+    fs.writeFileSync(sourcePath, 'cleanup-trigger')
+    const deadPid = process.pid + 200_000
+    const staleTemp = path.join(root, `.ingest-${deadPid}-${randomUUID()}.tmp`)
+    const canonicalDir = path.join(root, 'aa')
+    const canonicalPath = path.join(canonicalDir, 'published.wav')
+    fs.mkdirSync(canonicalDir, { mode: 0o700 })
+    fs.writeFileSync(staleTemp, 'published-bytes', { mode: 0o600 })
+    fs.linkSync(staleTemp, canonicalPath)
+    const old = new Date(Date.now() - 48 * 60 * 60 * 1000)
+    fs.utimesSync(staleTemp, old, old)
+    vi.spyOn(process, 'kill').mockImplementation(((pid: number) => {
+      if (pid === deadPid) {
+        throw Object.assign(new Error('no such process'), { code: 'ESRCH' })
+      }
+      throw new Error(`unexpected pid check: ${pid}`)
+    }) as typeof process.kill)
+
+    const result = await new TranscriptMediaAssetStore(root).writeContentAddressedFromFile({
+      sourcePath,
+      mimeType: 'audio/wav'
+    })
+
+    expect(result.ok).toBe(true)
+    expect(fs.existsSync(staleTemp)).toBe(false)
+    expect(fs.readFileSync(canonicalPath, 'utf8')).toBe('published-bytes')
+    expect(fs.statSync(canonicalPath).nlink).toBe(1)
+  })
+
+  it.each(['mutation', 'replacement'] as const)(
+    'rejects a source $mode during ingestion and removes its unpublished temp file',
+    async (mode) => {
+      const root = makeRoot()
+      const sourceRoot = makeRoot()
+      const sourcePath = path.join(sourceRoot, 'changing.mp4')
+      const movedPath = path.join(sourceRoot, 'changing-original.mp4')
+      const bytes = Buffer.alloc(2 * 1024 * 1024 + 19, 0x44)
+      fs.writeFileSync(sourcePath, bytes)
+      let changed = false
+      interceptIngestTempWrites(({ call, phase }) => {
+        if (changed || call !== 1 || phase !== 'after') return
+        changed = true
+        if (mode === 'mutation') {
+          fs.writeFileSync(sourcePath, Buffer.alloc(bytes.length, 0x45))
+        } else {
+          fs.renameSync(sourcePath, movedPath)
+          fs.writeFileSync(sourcePath, Buffer.alloc(bytes.length, 0x46))
+        }
+      })
+
+      await expect(
+        new TranscriptMediaAssetStore(root).writeContentAddressedFromFile({
+          sourcePath,
+          mimeType: 'video/mp4'
+        })
+      ).resolves.toEqual({ ok: false, reason: 'source_changed' })
+      expect(changed).toBe(true)
+      expect(fs.readdirSync(root)).toEqual([])
+    }
+  )
+
+  it('removes a partially-written temp file after an asynchronous write failure', async () => {
+    const root = makeRoot()
+    const sourceRoot = makeRoot()
+    const sourcePath = path.join(sourceRoot, 'partial.mp4')
+    fs.writeFileSync(sourcePath, Buffer.alloc(2 * 1024 * 1024 + 7, 0x55))
+    interceptIngestTempWrites(({ call, phase }) => {
+      if (call === 2 && phase === 'before') throw new Error('simulated_write_failure')
+    })
+
+    await expect(
+      new TranscriptMediaAssetStore(root).writeContentAddressedFromFile({
+        sourcePath,
+        mimeType: 'video/mp4'
+      })
+    ).resolves.toEqual({ ok: false, reason: 'simulated_write_failure' })
+    expect(fs.readdirSync(root)).toEqual([])
   })
 })

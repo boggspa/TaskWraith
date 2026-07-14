@@ -41,6 +41,10 @@ export const TRANSCRIPT_MEDIA_OWNERSHIP_MAX_FILE_BYTES = 8 * 1024 * 1024
 export const TRANSCRIPT_MEDIA_OWNERSHIP_MAX_ASSETS = 50_000
 export const TRANSCRIPT_MEDIA_OWNERSHIP_MAX_CHATS_PER_ASSET = 256
 const TRANSCRIPT_MEDIA_OWNERSHIP_MAX_CHAT_ID_BYTES = 512
+const TRANSCRIPT_MEDIA_FILE_INGEST_CHUNK_BYTES = 1024 * 1024
+const TRANSCRIPT_MEDIA_STALE_INGEST_TEMP_AGE_MS = 24 * 60 * 60 * 1000
+const TRANSCRIPT_MEDIA_INGEST_TEMP_PATTERN =
+  /^\.ingest-([1-9]\d*)-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.tmp$/
 const TRANSCRIPT_MEDIA_EXTENSIONS = new Set([
   'png',
   'jpg',
@@ -291,6 +295,188 @@ function safeAssetTarget(
     return path.join(realShard, path.basename(target))
   } catch {
     return null
+  }
+}
+
+function safeAssetIngestTempPath(baseDir: string): string | null {
+  try {
+    fs.mkdirSync(baseDir, { recursive: true, mode: 0o700 })
+    if (!directoryIsMainOwned(baseDir)) return null
+    const realBase = fs.realpathSync.native(baseDir)
+    return path.join(realBase, `.ingest-${process.pid}-${randomUUID()}.tmp`)
+  } catch {
+    return null
+  }
+}
+
+async function descriptorSnapshotMatchesPath(
+  handle: fs.promises.FileHandle,
+  filePath: string,
+  expected: fs.Stats
+): Promise<boolean> {
+  try {
+    const [descriptorStat, pathStat] = await Promise.all([
+      handle.stat(),
+      fs.promises.lstat(filePath)
+    ])
+    return (
+      descriptorStat.isFile() &&
+      pathStat.isFile() &&
+      !pathStat.isSymbolicLink() &&
+      sameFileSnapshotVersion(descriptorStat, expected) &&
+      sameFileSnapshotVersion(pathStat, expected)
+    )
+  } catch {
+    return false
+  }
+}
+
+async function writeDescriptorChunk(
+  handle: fs.promises.FileHandle,
+  buffer: Buffer,
+  byteLength: number,
+  position: number
+): Promise<void> {
+  let written = 0
+  while (written < byteLength) {
+    const result = await handle.write(
+      buffer,
+      written,
+      byteLength - written,
+      position + written
+    )
+    if (result.bytesWritten <= 0) throw new Error('short_write')
+    written += result.bytesWritten
+  }
+}
+
+async function readDescriptorChunk(
+  handle: fs.promises.FileHandle,
+  buffer: Buffer,
+  byteLength: number,
+  position: number
+): Promise<number> {
+  let read = 0
+  while (read < byteLength) {
+    const result = await handle.read(buffer, read, byteLength - read, position + read)
+    if (result.bytesRead <= 0) break
+    read += result.bytesRead
+  }
+  return read
+}
+
+async function descriptorsEqual(
+  left: fs.promises.FileHandle,
+  right: fs.promises.FileHandle,
+  byteLength: number
+): Promise<boolean> {
+  const chunkBytes = Math.min(TRANSCRIPT_MEDIA_FILE_INGEST_CHUNK_BYTES, byteLength)
+  const leftChunk = Buffer.allocUnsafe(chunkBytes)
+  const rightChunk = Buffer.allocUnsafe(chunkBytes)
+  let position = 0
+  while (position < byteLength) {
+    const requested = Math.min(chunkBytes, byteLength - position)
+    const [leftRead, rightRead] = await Promise.all([
+      readDescriptorChunk(left, leftChunk, requested, position),
+      readDescriptorChunk(right, rightChunk, requested, position)
+    ])
+    if (
+      leftRead !== requested ||
+      rightRead !== requested ||
+      !leftChunk.subarray(0, requested).equals(rightChunk.subarray(0, requested))
+    ) {
+      return false
+    }
+    position += requested
+  }
+  return true
+}
+
+async function safeUnlinkMatchingFile(filePath: string, expected: fs.Stats): Promise<void> {
+  try {
+    const current = await fs.promises.lstat(filePath)
+    if (!current.isSymbolicLink() && current.isFile() && sameFileIdentity(current, expected)) {
+      await fs.promises.unlink(filePath)
+    }
+  } catch {
+    // Best-effort cleanup of a file created by this process.
+  }
+}
+
+function processIsDefinitelyDead(pid: number): boolean {
+  if (!Number.isSafeInteger(pid) || pid <= 0 || pid === process.pid) return false
+  try {
+    process.kill(pid, 0)
+    return false
+  } catch (error) {
+    return (error as NodeJS.ErrnoException)?.code === 'ESRCH'
+  }
+}
+
+async function safeUnlinkMatchingStaleFile(
+  filePath: string,
+  expected: fs.Stats
+): Promise<void> {
+  try {
+    const current = await fs.promises.lstat(filePath)
+    if (
+      !current.isSymbolicLink() &&
+      current.isFile() &&
+      sameFileSnapshotVersion(current, expected)
+    ) {
+      await fs.promises.unlink(filePath)
+    }
+  } catch {
+    // Best-effort cleanup; any ambiguity preserves the candidate.
+  }
+}
+
+async function cleanupStaleAssetIngestTemps(baseDir: string): Promise<void> {
+  try {
+    if (!directoryIsMainOwned(baseDir)) return
+    const realBase = fs.realpathSync.native(baseDir)
+    const entries = await fs.promises.readdir(realBase)
+    const uid = typeof process.getuid === 'function' ? process.getuid() : null
+    const now = Date.now()
+    for (const entry of entries) {
+      const match = TRANSCRIPT_MEDIA_INGEST_TEMP_PATTERN.exec(entry)
+      if (!match) continue
+      const pid = Number(match[1])
+      if (pid === process.pid) continue
+      const candidate = path.join(realBase, entry)
+      let candidateStat: fs.Stats
+      try {
+        candidateStat = await fs.promises.lstat(candidate)
+      } catch {
+        continue
+      }
+      if (
+        candidateStat.isSymbolicLink() ||
+        !candidateStat.isFile() ||
+        (uid !== null && candidateStat.uid !== uid) ||
+        (uid !== null && (candidateStat.mode & 0o077) !== 0) ||
+        !Number.isFinite(candidateStat.mtimeMs) ||
+        now - candidateStat.mtimeMs < TRANSCRIPT_MEDIA_STALE_INGEST_TEMP_AGE_MS ||
+        !processIsDefinitelyDead(pid)
+      ) {
+        continue
+      }
+      await safeUnlinkMatchingStaleFile(candidate, candidateStat)
+    }
+  } catch {
+    // Reclamation is opportunistic and must never make a valid ingest fail.
+  }
+}
+
+async function fsyncDirectoryBestEffort(directory: string): Promise<void> {
+  let handle: fs.promises.FileHandle | null = null
+  try {
+    handle = await fs.promises.open(directory, fs.constants.O_RDONLY)
+    await handle.sync()
+  } catch {
+    // Some platforms/filesystems reject directory fsync.
+  } finally {
+    await handle?.close().catch(() => undefined)
   }
 }
 
@@ -838,6 +1024,192 @@ export class TranscriptMediaAssetStore {
       return { ok: true }
     } catch (error) {
       return { ok: false, reason: error instanceof Error ? error.message : String(error) }
+    }
+  }
+
+  /**
+   * Persist a main-owned staging file without materializing the full asset in the
+   * Electron main-process heap. The source is descriptor-anchored and copied into
+   * a private, fsynced store temp file in bounded chunks while its canonical hash
+   * is computed. A hard link publishes the complete file atomically, so concurrent
+   * ingests can never observe a partially-written content-addressed target.
+   *
+   * Ownership is intentionally out of scope: producer tools grant the returned ref
+   * to their canonical chat only after the main-side tool result has been built.
+   */
+  async writeContentAddressedFromFile(input: {
+    sourcePath: string
+    mimeType: string
+  }): Promise<TranscriptMediaContentAddressedWriteResult> {
+    if (typeof input.sourcePath !== 'string' || !path.isAbsolute(input.sourcePath)) {
+      return { ok: false, reason: 'unsafe_source_path' }
+    }
+    if (typeof input.mimeType !== 'string') return { ok: false, reason: 'unsupported' }
+    const normalizedMimeType = input.mimeType.toLowerCase()
+    if (!mediaExtension(normalizedMimeType)) return { ok: false, reason: 'unsupported' }
+
+    let sourceHandle: fs.promises.FileHandle | null = null
+    let tempHandle: fs.promises.FileHandle | null = null
+    let tempPath: string | null = null
+    let tempIdentity: fs.Stats | null = null
+
+    try {
+      let sourcePathStat: fs.Stats
+      try {
+        sourcePathStat = await fs.promises.lstat(input.sourcePath)
+      } catch (error) {
+        return {
+          ok: false,
+          reason: (error as NodeJS.ErrnoException)?.code === 'ENOENT' ? 'missing' : 'unsafe_source_path'
+        }
+      }
+      if (sourcePathStat.isSymbolicLink() || !sourcePathStat.isFile()) {
+        return { ok: false, reason: 'unsafe_source_path' }
+      }
+
+      try {
+        sourceHandle = await fs.promises.open(
+          input.sourcePath,
+          fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW
+        )
+      } catch (error) {
+        return {
+          ok: false,
+          reason: (error as NodeJS.ErrnoException)?.code === 'ENOENT' ? 'missing' : 'unsafe_source_path'
+        }
+      }
+      const sourceStat = await sourceHandle.stat()
+      const uid = typeof process.getuid === 'function' ? process.getuid() : null
+      if (
+        !sourceStat.isFile() ||
+        !sameFileSnapshotVersion(sourcePathStat, sourceStat) ||
+        (uid !== null && sourceStat.uid !== uid)
+      ) {
+        return { ok: false, reason: 'unsafe_source_path' }
+      }
+      const cap = maxTranscriptMediaBytesForMime(normalizedMimeType)
+      if (sourceStat.size <= 0 || sourceStat.size > cap) {
+        return { ok: false, reason: 'too_large' }
+      }
+
+      tempPath = safeAssetIngestTempPath(this.baseDir)
+      if (!tempPath) return { ok: false, reason: 'unsafe_asset_path' }
+      await cleanupStaleAssetIngestTemps(path.dirname(tempPath))
+      tempHandle = await fs.promises.open(
+        tempPath,
+        fs.constants.O_RDWR |
+          fs.constants.O_CREAT |
+          fs.constants.O_EXCL |
+          fs.constants.O_NOFOLLOW,
+        0o600
+      )
+      await tempHandle.chmod(0o600)
+      tempIdentity = await tempHandle.stat()
+      if (
+        !tempIdentity.isFile() ||
+        (uid !== null && tempIdentity.uid !== uid) ||
+        (uid !== null && (tempIdentity.mode & 0o077) !== 0)
+      ) {
+        throw new Error('unsafe_asset_path')
+      }
+
+      const hash = createHash('sha256')
+      const chunk = Buffer.allocUnsafe(
+        Math.min(TRANSCRIPT_MEDIA_FILE_INGEST_CHUNK_BYTES, sourceStat.size)
+      )
+      let position = 0
+      while (position < sourceStat.size) {
+        const requested = Math.min(chunk.length, sourceStat.size - position)
+        const bytesRead = await readDescriptorChunk(sourceHandle, chunk, requested, position)
+        if (bytesRead !== requested) throw new Error('source_changed')
+        hash.update(chunk.subarray(0, requested))
+        await writeDescriptorChunk(tempHandle, chunk, requested, position)
+        position += requested
+      }
+      await tempHandle.sync()
+
+      if (!(await descriptorSnapshotMatchesPath(sourceHandle, input.sourcePath, sourceStat))) {
+        throw new Error('source_changed')
+      }
+      const [tempFinalStat, tempPathStat] = await Promise.all([
+        tempHandle.stat(),
+        fs.promises.lstat(tempPath)
+      ])
+      if (
+        !tempFinalStat.isFile() ||
+        tempPathStat.isSymbolicLink() ||
+        !tempPathStat.isFile() ||
+        tempFinalStat.size !== sourceStat.size ||
+        !sameFileIdentity(tempFinalStat, tempIdentity) ||
+        !sameFileIdentity(tempPathStat, tempIdentity)
+      ) {
+        throw new Error('unsafe_asset_path')
+      }
+
+      const sha256 = hash.digest('base64url')
+      const target = safeAssetTarget(this.baseDir, sha256, normalizedMimeType, true)
+      if (!target) throw new Error('unsafe_asset_path')
+
+      try {
+        await fs.promises.link(tempPath, target)
+        // The hard link is the irreversible publication point. A concurrent
+        // ingest may adopt the canonical target immediately, so failures in our
+        // subsequent validation or directory fsync must never roll it back.
+        const targetStat = await fs.promises.lstat(target)
+        if (
+          targetStat.isSymbolicLink() ||
+          !targetStat.isFile() ||
+          targetStat.size !== sourceStat.size ||
+          !sameFileIdentity(targetStat, tempFinalStat)
+        ) {
+          throw new Error('unsafe_asset_path')
+        }
+        await fsyncDirectoryBestEffort(path.dirname(target))
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException)?.code !== 'EEXIST') throw error
+        let existingHandle: fs.promises.FileHandle | null = null
+        try {
+          const existingPathStat = await fs.promises.lstat(target)
+          if (existingPathStat.isSymbolicLink() || !existingPathStat.isFile()) {
+            return { ok: false, reason: 'content_address_collision' }
+          }
+          existingHandle = await fs.promises.open(
+            target,
+            fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW
+          )
+          const existingStat = await existingHandle.stat()
+          if (
+            !existingStat.isFile() ||
+            existingStat.size !== sourceStat.size ||
+            !sameFileSnapshotVersion(existingStat, existingPathStat) ||
+            !(await descriptorsEqual(tempHandle, existingHandle, sourceStat.size)) ||
+            !(await descriptorSnapshotMatchesPath(existingHandle, target, existingStat))
+          ) {
+            return { ok: false, reason: 'content_address_collision' }
+          }
+        } catch {
+          return { ok: false, reason: 'content_address_collision' }
+        } finally {
+          await existingHandle?.close().catch(() => undefined)
+        }
+      }
+
+      return {
+        ok: true,
+        persistenceVersion: 1,
+        sha256,
+        path: target,
+        mimeType: normalizedMimeType,
+        byteLength: sourceStat.size
+      }
+    } catch (error) {
+      return { ok: false, reason: error instanceof Error ? error.message : String(error) }
+    } finally {
+      await tempHandle?.close().catch(() => undefined)
+      await sourceHandle?.close().catch(() => undefined)
+      if (tempPath && tempIdentity) {
+        await safeUnlinkMatchingFile(tempPath, tempIdentity)
+      }
     }
   }
 
