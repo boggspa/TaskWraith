@@ -32,6 +32,7 @@ import type {
   TaskWraithPluginReviewState
 } from '../../shared/plugins/PluginTypes'
 import { WORKSPACE_BOARD_CARD_LINK_KINDS } from '../store/types'
+import { pickWorkflowRunTemplateFields } from '../store/WorkflowRunTemplate'
 import { sanitizeProviderRunPauses } from '../ProviderRunPause'
 import { normalizePromptCacheSettings } from '../PromptCachePolicy'
 import { coerceLiveProvider, isRetiredProvider } from '../../shared/retiredProviders'
@@ -920,9 +921,9 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
       'Workflow attachments',
       existingTemplate?.imageAttachments
     )
-    const restInput = stripScheduledTaskTrustFields(input)
+    const templateInput = pickWorkflowRunTemplateFields(input)
     return {
-      ...restInput,
+      ...templateInput,
       workspaceId: workspace.id,
       workspacePath,
       chatId: appChatId,

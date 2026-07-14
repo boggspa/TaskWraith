@@ -4179,23 +4179,44 @@ export interface ScheduledTask {
   ensembleSnapshot?: ScheduledEnsembleSnapshot
 }
 
-export type WorkflowRunTemplate = Omit<
+/**
+ * The durable, user-configurable portion of a workflow-created task.
+ *
+ * Keep this as an explicit allowlist rather than deriving it by omission from
+ * `ScheduledTask`: newly added task lifecycle/authority fields must not become
+ * renderer-controlled workflow-template fields by default.
+ */
+export type WorkflowRunTemplate = Pick<
   ScheduledTask,
-  | 'id'
-  | 'runAt'
-  | 'timezone'
-  | 'status'
-  | 'createdAt'
-  | 'updatedAt'
-  | 'runId'
-  | 'permissionPosture'
-  | 'dispatchReceipt'
-  | 'firedAt'
-  | 'completedAt'
-  | 'lastError'
-  | 'workflowId'
-  | 'workflowExecutionId'
-  | 'workflowOccurrenceAt'
+  | 'workspaceId'
+  | 'workspacePath'
+  | 'chatId'
+  | 'provider'
+  | 'prompt'
+  | 'displayPrompt'
+  | 'selectedModelType'
+  | 'customModel'
+  | 'approvalMode'
+  | 'permissionPresetId'
+  | 'workflowMode'
+  | 'sessionTrust'
+  | 'imageAttachments'
+  | 'externalPathGrants'
+  | 'geminiWorktree'
+  | 'codexReasoningEffort'
+  | 'codexServiceTier'
+  | 'claudeReasoningEffort'
+  | 'claudeFastMode'
+  | 'kimiFastMode'
+  | 'kimiThinkingEnabled'
+  | 'grokReasoningEffort'
+  | 'cursorReasoningEffort'
+  | 'cursorFastMode'
+  | 'runtimeProfileId'
+  | 'geminiAuthProfileId'
+  | 'handoffSourceRunId'
+  | 'kind'
+  | 'ensembleSnapshot'
 >
 
 /** Stage 2 — how a maker→verifier LOOP workflow decides to STOP. maxIterations is

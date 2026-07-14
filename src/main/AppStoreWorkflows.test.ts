@@ -126,6 +126,111 @@ describe('AppStore workflows', () => {
     expect(workflow?.nextRunAt).toBe(new Date(Date.parse(plannedFor) + intervalMs).toISOString())
   })
 
+  it('drops persisted task lifecycle fields before workflow materialization', () => {
+    const saved = AppStore.saveWorkflowDefinition(
+      workflowInput({
+        trigger: { kind: 'manual' },
+        nextRunAt: undefined,
+        template: {
+          permissionPresetId: 'read_only',
+          workflowMode: 'plan',
+          claudeReasoningEffort: 'high'
+        }
+      })
+    )
+    const victim = AppStore.saveScheduledTask({
+      id: 'victim-task',
+      workspaceId: 'ws-1',
+      workspacePath: '/repo',
+      chatId: saved.template.chatId,
+      provider: 'codex',
+      prompt: 'Existing task must remain unchanged.',
+      selectedModelType: 'cli-default',
+      customModel: '',
+      approvalMode: 'default',
+      sessionTrust: false,
+      imageAttachments: [],
+      runAt: '2026-06-08T20:00:00.000Z',
+      timezone: 'Europe/London'
+    })
+    const workflowsPath = `${userDataPath}/workflows.json`
+    const rows = JSON.parse(fs.readFileSync(workflowsPath, 'utf8')) as WorkflowDefinition[]
+    const row = rows.find((workflow) => workflow.id === saved.id)
+    expect(row).toBeTruthy()
+    Object.assign(row!.template as unknown as Record<string, unknown>, {
+      id: victim.id,
+      runAt: '1999-01-01T00:00:00.000Z',
+      timezone: 'forged-zone',
+      status: 'completed',
+      createdAt: '1999-01-01T00:00:00.000Z',
+      updatedAt: '1999-01-01T00:00:00.000Z',
+      runId: 'victim-run',
+      permissionPosture: { signaturePresent: true },
+      dispatchReceipt: { runId: 'victim-run' },
+      firedAt: '1999-01-01T00:00:00.000Z',
+      runningSince: '1999-01-01T00:00:00.000Z',
+      completedAt: '1999-01-01T00:00:00.000Z',
+      lastError: 'forged failure',
+      workflowId: 'forged-workflow',
+      workflowExecutionId: 'forged-execution',
+      workflowOccurrenceAt: '1999-01-01T00:00:00.000Z',
+      futureAuthorityField: 'must not survive'
+    })
+    fs.writeFileSync(workflowsPath, JSON.stringify(rows))
+
+    const normalized = AppStore.getWorkflowDefinition(saved.id)
+    expect(normalized?.template).toMatchObject({
+      permissionPresetId: 'read_only',
+      workflowMode: 'plan',
+      claudeReasoningEffort: 'high'
+    })
+    for (const field of [
+      'id',
+      'runAt',
+      'timezone',
+      'status',
+      'createdAt',
+      'updatedAt',
+      'runId',
+      'permissionPosture',
+      'dispatchReceipt',
+      'firedAt',
+      'runningSince',
+      'completedAt',
+      'lastError',
+      'workflowId',
+      'workflowExecutionId',
+      'workflowOccurrenceAt',
+      'futureAuthorityField'
+    ]) {
+      expect(normalized?.template).not.toHaveProperty(field)
+    }
+
+    const task = AppStore.materializeWorkflowNow(saved.id, Date.parse(plannedFor))
+    expect(task).toMatchObject({
+      runAt: plannedFor,
+      timezone: 'Europe/London',
+      status: 'due',
+      workflowId: saved.id,
+      workflowOccurrenceAt: plannedFor,
+      permissionPresetId: 'read_only',
+      workflowMode: 'plan',
+      claudeReasoningEffort: 'high'
+    })
+    expect(task?.id).not.toBe(victim.id)
+    expect(task?.createdAt).not.toBe('1999-01-01T00:00:00.000Z')
+    expect(task?.updatedAt).not.toBe('1999-01-01T00:00:00.000Z')
+    expect(task?.workflowExecutionId).not.toBe('forged-execution')
+    expect(task).not.toHaveProperty('runId')
+    expect(task).not.toHaveProperty('permissionPosture')
+    expect(task).not.toHaveProperty('firedAt')
+    expect(task).not.toHaveProperty('runningSince')
+    expect(task).not.toHaveProperty('completedAt')
+    expect(task).not.toHaveProperty('lastError')
+    expect(task?.dispatchReceipt).toMatchObject({ runId: task?.id })
+    expect(AppStore.getScheduledTasks().find((item) => item.id === victim.id)).toEqual(victim)
+  })
+
   it('resolves durable workflow attachments before materialization and preserves their identity', () => {
     const attachment = durableAttachment()
     const saved = AppStore.saveWorkflowDefinition(

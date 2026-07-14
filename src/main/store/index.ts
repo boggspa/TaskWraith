@@ -95,6 +95,7 @@ import {
   SubThreadJoinPolicy
 } from './types'
 import { canonicalizeExternalPathGrantMetadata } from './ExternalPathGrants'
+import { pickWorkflowRunTemplateFields } from './WorkflowRunTemplate'
 import { createDefaultEnsembleConfig } from '../EnsembleDefaults'
 import { isEnsembleRoundDispatchLive } from '../../shared/ensembleRoundLifecycle'
 import { isCursorGrok45ModelId, isGrok45ReasoningModelId } from '../../shared/grok45Models'
@@ -500,7 +501,7 @@ function normalizeWorkflowExecutionRecord(
 
 function normalizeWorkflowTemplate(value: unknown): WorkflowRunTemplate | null {
   if (!value || typeof value !== 'object') return null
-  const input = value as Partial<WorkflowRunTemplate>
+  const input = value as Record<string, unknown> & Partial<WorkflowRunTemplate>
   if (
     !input.workspaceId ||
     !input.workspacePath ||
@@ -511,7 +512,7 @@ function normalizeWorkflowTemplate(value: unknown): WorkflowRunTemplate | null {
     return null
   }
   return {
-    ...input,
+    ...pickWorkflowRunTemplateFields(input),
     workspaceId: input.workspaceId,
     workspacePath: input.workspacePath,
     chatId: input.chatId,

@@ -544,6 +544,79 @@ describe('MainSanitizers scheduled tasks', () => {
     ])
   })
 
+  it('allows only configurable workflow-template fields from renderer input', () => {
+    const { sanitizeWorkflowForSave } = makeSanitizers(makeSettings())
+    const saved = sanitizeWorkflowForSave({
+      name: 'Safe workflow template',
+      workspaceId: 'workspace-1',
+      workspacePath: '/tmp/taskwraith-workspace',
+      enabled: true,
+      trigger: { kind: 'manual' },
+      template: {
+        workspaceId: 'workspace-1',
+        workspacePath: '/tmp/taskwraith-workspace',
+        chatId: 'chat-1',
+        provider: 'codex',
+        prompt: 'Review the project.',
+        selectedModelType: 'cli-default',
+        customModel: '',
+        approvalMode: 'plan',
+        permissionPresetId: 'read_only',
+        workflowMode: 'plan',
+        claudeReasoningEffort: 'high',
+        sessionTrust: false,
+        imageAttachments: [],
+        id: 'victim-task',
+        runAt: '1999-01-01T00:00:00.000Z',
+        timezone: 'forged-zone',
+        status: 'completed',
+        createdAt: '1999-01-01T00:00:00.000Z',
+        updatedAt: '1999-01-01T00:00:00.000Z',
+        runId: 'victim-run',
+        permissionPosture: { signaturePresent: true },
+        dispatchReceipt: { runId: 'victim-run' },
+        firedAt: '1999-01-01T00:00:00.000Z',
+        runningSince: '1999-01-01T00:00:00.000Z',
+        completedAt: '1999-01-01T00:00:00.000Z',
+        lastError: 'forged failure',
+        workflowId: 'forged-workflow',
+        workflowExecutionId: 'forged-execution',
+        workflowOccurrenceAt: '1999-01-01T00:00:00.000Z',
+        futureAuthorityField: 'must not survive'
+      },
+      missedRunPolicy: 'coalesce',
+      concurrencyPolicy: 'skip',
+      limits: {}
+    })
+
+    expect(saved.template).toMatchObject({
+      permissionPresetId: 'read_only',
+      workflowMode: 'plan',
+      claudeReasoningEffort: 'high'
+    })
+    for (const field of [
+      'id',
+      'runAt',
+      'timezone',
+      'status',
+      'createdAt',
+      'updatedAt',
+      'runId',
+      'permissionPosture',
+      'dispatchReceipt',
+      'firedAt',
+      'runningSince',
+      'completedAt',
+      'lastError',
+      'workflowId',
+      'workflowExecutionId',
+      'workflowOccurrenceAt',
+      'futureAuthorityField'
+    ]) {
+      expect(saved.template).not.toHaveProperty(field)
+    }
+  })
+
   it('strips renderer-supplied scheduled task posture and dispatch receipts', () => {
     const { sanitizeScheduledTaskForSave, sanitizeScheduledTaskPatch } = makeSanitizers(
       makeSettings()
