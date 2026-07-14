@@ -718,8 +718,9 @@ struct HomeView: View {
         }
 
         // ── Workflows — scheduled / recurring runs (desktop parity). Like
-        //    Ensembles, a cross-cutting view; read-only on the phone for now
-        //    (tapping a row opens the workflow's chat). ────────────────────
+        //    Ensembles, a cross-cutting view. Tap opens the workflow's chat;
+        //    swipe/context-menu carry pause/resume + run-now (Mac-authorized
+        //    workflowSetEnabled / workflowRunNow bridge actions). ───────────
         let workflowRows = listedWorkflows
         if !workflowRows.isEmpty {
             Section {
@@ -1086,8 +1087,8 @@ struct HomeView: View {
             }
         }
         Button {
-            // Read-only slice: tap opens the workflow's chat. No-op if there's
-            // no thread yet (run-now / pause actions land in a later slice).
+            // Tap opens the workflow's chat; the write-actions live on the
+            // swipe/context controls below. No-op if there's no thread yet.
             guard let threadId = workflow.threadId else { return }
             selection = threadId
         } label: {
@@ -1103,6 +1104,49 @@ struct HomeView: View {
         .buttonStyle(.plain)
         .disabled(workflow.threadId == nil)
         .accessibilityHint(workflow.threadId == nil ? "No chat started yet" : "")
+        // Pause/resume + run-now (workflowSetEnabled / workflowRunNow bridge
+        // actions; Mac-side authority + gates). Run-now is withheld while an
+        // execution is live — the Mac would reject it anyway, and a swipe
+        // button can't render a disabled state.
+        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+            if !workflow.isRunning {
+                Button {
+                    Task { await model.runWorkflowNow(workflowId: workflow.id) }
+                } label: {
+                    Label("Run Now", systemImage: "play.fill")
+                }
+                .tint(accent)
+            }
+            Button {
+                Task {
+                    await model.setWorkflowEnabled(
+                        workflowId: workflow.id, enabled: workflow.isPaused)
+                }
+            } label: {
+                workflow.isPaused
+                    ? Label("Resume", systemImage: "play.circle")
+                    : Label("Pause", systemImage: "pause.circle")
+            }
+            .tint(workflow.isPaused ? TWTheme.statusSuccess : TWTheme.statusAttention)
+        }
+        .contextMenu {
+            Button {
+                Task { await model.runWorkflowNow(workflowId: workflow.id) }
+            } label: {
+                Label("Run Now", systemImage: "play.fill")
+            }
+            .disabled(workflow.isRunning)
+            Button {
+                Task {
+                    await model.setWorkflowEnabled(
+                        workflowId: workflow.id, enabled: workflow.isPaused)
+                }
+            } label: {
+                workflow.isPaused
+                    ? Label("Resume Schedule", systemImage: "play.circle")
+                    : Label("Pause Schedule", systemImage: "pause.circle")
+            }
+        }
         .listRowInsets(rowInsets)
         .listRowSeparator(.hidden)
         .listRowBackground(chrome)

@@ -459,8 +459,10 @@ public struct WorkspaceSummary: Codable, Sendable, Identifiable, Hashable {
 }
 
 /// A scheduled / recurring workflow projected from the Mac (sidebar "Workflows"
-/// section). Read-only on the phone for now — tapping a row opens the workflow's
-/// chat (`threadId`). Every field except `id` is optional per the additive-decode
+/// section). Tapping a row opens the workflow's chat (`threadId`); pause/resume
+/// and run-now dispatch over the bridge (`workflowSetEnabled` /
+/// `workflowRunNow` — authority is derived Mac-side from the workflow record).
+/// Every field except `id` is optional per the additive-decode
 /// convention so older/newer Mac builds still decode.
 /// A saved ensemble roster preset projected from the Mac (iOS Roster page).
 /// GLOBAL (not workspace-bound). Participants reuse the roster-entry shape so
@@ -859,6 +861,13 @@ public struct BridgeActionAckData: Codable, Sendable {
     /// so the Notification Service Extension can derive the static shared secret
     /// to decrypt that host's rich pushes. Wire key `macAgreePub`.
     public let macAgreePub: String?
+    /// Workflow action acks (`workflowSetEnabled` / `workflowRunNow`): the
+    /// acted-on workflow id, the Mac-final enabled state, and — for run-now —
+    /// the materialized scheduled task + workflow execution ids.
+    public let workflowId: String?
+    public let enabled: Bool?
+    public let scheduledTaskId: String?
+    public let workflowExecutionId: String?
 }
 
 public struct TranscriptMediaFetchResult: Codable, Sendable, Hashable {
@@ -1668,6 +1677,33 @@ public enum BridgeAction {
     ) -> [String: Any] {
         encode([
             "kind": "discoverTailnetHosts", "actionId": actionId,
+        ])
+    }
+
+    /// Pause/resume a saved workflow. The phone sends ONLY the workflow id —
+    /// the Mac derives workspace/provider/posture from its own workflow record
+    /// (RemoteWorkflowActions revalidates authorization around the mutation).
+    /// Ack: `executed` mirrors ok; `data.enabled` is the Mac-final state.
+    public static func workflowSetEnabled(
+        workflowId: String, enabled: Bool,
+        actionId: String = UUID().uuidString
+    ) -> [String: Any] {
+        encode([
+            "kind": "workflowSetEnabled", "actionId": actionId,
+            "workflowId": workflowId, "enabled": enabled,
+        ])
+    }
+
+    /// Materialize one immediate occurrence of a saved workflow. Server-side
+    /// gates: active-execution rejection, per-workflow cooldown, and the
+    /// unattended posture resolution — failures come back as the ack message.
+    public static func workflowRunNow(
+        workflowId: String,
+        actionId: String = UUID().uuidString
+    ) -> [String: Any] {
+        encode([
+            "kind": "workflowRunNow", "actionId": actionId,
+            "workflowId": workflowId,
         ])
     }
 

@@ -533,8 +533,10 @@ public final class RemoteSessionModel: ObservableObject {
     /// Cleared when an authoritative projection snapshot replaces them.
     private var fallbackThreadListCardIds: Set<String> = []
     /// Scheduled / recurring workflows projected from the Mac (sidebar
-    /// "Workflows" section). Read-only on the phone — tapping opens the
-    /// workflow's chat. One `workflows` envelope per workflow, like `taskCard`.
+    /// "Workflows" section). Tapping opens the workflow's chat; pause/resume
+    /// and run-now dispatch via `setWorkflowEnabled` / `runWorkflowNow` with
+    /// an optimistic flip reconciled by the ack + the Mac's re-broadcast.
+    /// One `workflows` envelope per workflow, like `taskCard`.
     @Published public private(set) var workflows: [RemoteWorkflow] = []
     /// Workspace Boards projected from the Mac. Read-only on the phone for now;
     /// the Mac and agent MCP surface remain the write authority.
@@ -4215,6 +4217,10 @@ public final class RemoteSessionModel: ObservableObject {
             markStreamingTerminal(threadId: threadId, exitRunId: exitRunId)
         }
 
+        func seedWorkflowsForTesting(_ seeded: [RemoteWorkflow]) {
+            workflows = seeded
+        }
+
         func resetStreamingPublishGateForTesting(threadId: String) {
             streamingPublishGate.reset(threadId: threadId)
         }
@@ -4708,6 +4714,80 @@ public final class RemoteSessionModel: ObservableObject {
                 actionAck.message ?? "Accepted, but the Mac did not run the file action.")
         }
         return actionAck
+    }
+
+    // ── Workflow write-actions (pause / resume / run-now) ────────────────────
+    // Authority is Mac-derived from the workflow record (the phone sends only
+    // the id); the Mac gates on the remote allowlist + unattended posture and
+    // re-broadcasts the projection after every mutation. The optimistic flip
+    // here only bridges the gap until that re-broadcast lands.
+
+    /// Pause (`enabled: false`) or resume (`enabled: true`) a saved workflow.
+    public func setWorkflowEnabled(workflowId: String, enabled: Bool) async {
+        let verb = enabled ? "resumed" : "paused"
+        if isDemo {
+            applyWorkflowEnabledLocally(workflowId: workflowId, enabled: enabled)
+            lastActionMessage = "Workflow \(verb) (demo)."
+            return
+        }
+        let previous = workflows.first(where: { $0.id == workflowId })?.enabled
+        applyWorkflowEnabledLocally(workflowId: workflowId, enabled: enabled)
+        do {
+            let ack = try await requestFileAction(
+                BridgeAction.workflowSetEnabled(workflowId: workflowId, enabled: enabled),
+                timeoutMs: 12_000)
+            // Reconcile to the Mac-final state (idempotent same-state acks
+            // return it too); the projection re-broadcast follows anyway.
+            if let confirmed = ack.data?.enabled {
+                applyWorkflowEnabledLocally(workflowId: workflowId, enabled: confirmed)
+            }
+            lastActionMessage = "Workflow \(verb)."
+        } catch {
+            if let previous {
+                applyWorkflowEnabledLocally(workflowId: workflowId, enabled: previous)
+            }
+            lastActionMessage = Self.workflowActionFailureMessage(error, phase: phase)
+        }
+    }
+
+    /// Queue one immediate occurrence of a saved workflow. No optimistic state:
+    /// `isRunning` flips when the Mac's projection re-broadcast lands. Mac-side
+    /// gates (active execution, cooldown, posture) surface as the ack reason.
+    public func runWorkflowNow(workflowId: String) async {
+        if isDemo {
+            lastActionMessage = "Workflow queued (demo)."
+            return
+        }
+        do {
+            _ = try await requestFileAction(
+                BridgeAction.workflowRunNow(workflowId: workflowId), timeoutMs: 20_000)
+            lastActionMessage = "Workflow queued to run now."
+        } catch {
+            lastActionMessage = Self.workflowActionFailureMessage(error, phase: phase)
+        }
+    }
+
+    /// The Mac's denial reasons ("already has an active execution", rate
+    /// limited, allowlist) are user-actionable — surface them verbatim;
+    /// transport failures fall back to the shared connection messaging.
+    nonisolated static func workflowActionFailureMessage(_ error: Error, phase: SessionPhase) -> String {
+        if case RemoteFileActionError.denied(let reason) = error, !reason.isEmpty {
+            return reason
+        }
+        return actionFailureMessage(error, phase: phase)
+    }
+
+    private func applyWorkflowEnabledLocally(workflowId: String, enabled: Bool) {
+        guard let index = workflows.firstIndex(where: { $0.id == workflowId }) else { return }
+        let current = workflows[index]
+        guard current.enabled != enabled else { return }
+        workflows[index] = RemoteWorkflow(
+            id: current.id, name: current.name, workspaceId: current.workspaceId,
+            threadId: current.threadId, provider: current.provider, enabled: enabled,
+            schedule: current.schedule, status: current.status,
+            nextRunAt: current.nextRunAt, lastRunAt: current.lastRunAt,
+            loopIterationCount: current.loopIterationCount,
+            loopStopReason: current.loopStopReason, loopTokens: current.loopTokens)
     }
 
     /// One staged roster entry from the in-thread editor.
