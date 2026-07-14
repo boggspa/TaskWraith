@@ -1576,18 +1576,19 @@ struct IosParityFixesTests {
     @Test func stalenessBoundRespected() async throws {
         let model = makeRemoteSessionModel()
         let start = ContinuousClock.now
+        let deadline = start.advanced(by: .milliseconds(500))
         model.appendStreamingDeltasForTesting(
             threadId: "t1", data: streamingTokenLine("z"), runId: "run-1")
         model.appendStreamingDeltasForTesting(
             threadId: "t1", data: streamingTokenLine("!"), runId: "run-1")
-        try await Task.sleep(nanoseconds: StreamingPublishGate.streamingPublishCoalesceWindowNs + 70_000_000)
+        while model.streamingTexts["t1"] != "z!" && ContinuousClock.now < deadline {
+            try await Task.sleep(nanoseconds: 5_000_000)
+        }
         #expect(model.streamingTexts["t1"] == "z!")
         let elapsed = start.duration(to: .now)
-        // Bound is a "does not hang / staleness stays bounded" guard, not a tight
-        // perf assertion. The body sleeps coalesceWindow + 70ms (~170-190ms), so a
-        // 200ms ceiling left only ~10-30ms for CI scheduling jitter and flaked
-        // (observed 211ms on a loaded runner). 500ms keeps the guard meaningful
-        // (catches a real hang / doubled window) without flaking.
+        // Poll only until the publish arrives or the bound expires. A fixed
+        // post-coalesce sleep measured unrelated CI scheduling delay after the
+        // value was already available and made this staleness guard flaky.
         #expect(elapsed <= .milliseconds(500))
     }
 

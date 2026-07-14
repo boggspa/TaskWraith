@@ -22,7 +22,7 @@ quantizing the two measurement feedbacks to whole points.
 | ------ | ---- | ----- |
 | `57ffe5686` | Reveal terminal drain on stream exit | `streamingTerminalThreads` + `TokenRevealText.isComplete` |
 | `c22cb7025` | Screenshot automation v1 (XCUITest) | Superseded by `0c5a7a15d`; kept for the `-tw-demo` hook history |
-| `3b2bf11ef` | Workflow write-actions contract spec | **Mac-side follow-up**: new bridge actions `workflowSetEnabled`/`workflowRunNow` |
+| `3b2bf11ef` | Workflow write-actions contract spec | Mac contract later landed in `d17bdd5a1`; Swift controls remain open |
 | `ec7795a47` | Drain fix adversarial hardening | Store pipeline (flip was invisible to the store-gated transcript), alias-resolved lookup, stale-exit runId guard |
 | `843e5b13e` | **ComposerDiffPill layout-livelock fix** | Real-device risk — see above |
 | `53a985283` | Spec: posture-escalation gate | `workflowRunNow` must not dispatch at saved posture for a plan-clamped phone |
@@ -56,14 +56,16 @@ quantizing the two measurement feedbacks to whole points.
 
 ## Open items by owner
 
-- **Mac/desktop session (Codex):** wire the workflow write-action bridge
-  contract (`ios/WORKFLOW-WRITE-ACTIONS.md`, incl. the posture-escalation
-  gate); add the `src/shared/contextWindows.ts` ↔
-  `ContextWindows.swift` drift-guard test (tables verified in sync 2026-07-14,
-  guard is comment-only today).
+- **Landed after merge:** `dc19ad471` added an executable
+  `src/shared/contextWindows.ts` ↔ `ContextWindows.swift` drift guard over the
+  complete model/provider tables. `d17bdd5a1` landed the Mac workflow bridge
+  contract, including canonical authority resolution, posture clamping,
+  revalidation, replay/expiry checks, and run-now cooldown; `110809ac9` records
+  the final handoff contract in `ios/WORKFLOW-WRITE-ACTIONS.md`.
 - **User/console:** host the privacy policy (draft:
   `ios/TaskWraithApp/PrivacyPolicy-DRAFT.md`), ASC privacy questionnaire +
   listing (draft: `ios/TaskWraithApp/AppStoreListing.md`), screenshot upload,
   export-compliance answer per build, APNs `.p8` for closed-app push.
-- **iOS (post-contract):** swipe actions/context menu on workflow rows once
-  the bridge actions land (small; pattern in the spec doc).
+- **iOS:** Swift workflow controls remain open: add pause/resume and run-now
+  swipe actions/context menus plus ack reconciliation on workflow rows (small;
+  the bridge contract is now available and the pattern is in the spec doc).

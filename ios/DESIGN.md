@@ -983,13 +983,34 @@ Open on the audit: only the `src/shared` ContextWindows drift-guard test
 Verified: 407 Swift tests, simulator app build, screenshot-harness renders
 on both ASC device classes.
 
+## v0.43 — post-merge desktop contract reconciliation (2026-07-14)
+
+The two desktop-owned follow-ups parked by v0.42 are now concrete, executable
+contracts rather than comment-level parity assumptions:
+
+- **Context-window drift guard landed in `dc19ad471`.** The shared TypeScript
+  test parses `ContextWindows.swift` and compares the complete model and
+  provider fallback tables against `src/shared/contextWindows.ts`, so either
+  side drifting now fails the desktop suite.
+- **Workflow bridge actions landed in `d17bdd5a1`.** The Mac strictly decodes
+  `workflowSetEnabled` / `workflowRunNow`, resolves workspace, provider, and
+  posture authority from canonical workflow state, clamps unauthenticated
+  phone execution to plan, revalidates immediately before mutation, and routes
+  run-now through the signed scheduled-task path. The final acknowledgement and
+  security contract is recorded in `ios/WORKFLOW-WRITE-ACTIONS.md`.
+
+Still open on iOS: Swift workflow-row controls (pause/resume and run-now swipe
+actions/context menu, with standard bridge-ack reconciliation). No Mac contract
+work remains before that UI slice can proceed.
+
 ## Current follow-ups
 
-1. Keep the first-launch, settings, usage, and provider-readiness surfaces in
+1. Add the now-unblocked Swift workflow-row controls and ack reconciliation.
+2. Keep the first-launch, settings, usage, and provider-readiness surfaces in
    sync with the Mac projection schema as 1.6.0 hardens.
-2. Tighten iPad-exclusive density: sub-thread tree, side-by-side transcript +
+3. Tighten iPad-exclusive density: sub-thread tree, side-by-side transcript +
    diff review, and larger workflow/ensemble controls.
-3. Continue device QA across offline Demo Mode, paired LAN, paired Tailscale,
+4. Continue device QA across offline Demo Mode, paired LAN, paired Tailscale,
    foreground reconnect, APNs wake, image attachments, and settings persistence.
 
 ## Non-goals
