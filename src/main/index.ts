@@ -110,6 +110,7 @@ import {
   normalizeMcpToolArguments,
   isTaskWraithMcpToolName
 } from './mcp/McpResultHelpers'
+import { replaceLiteralText } from './mcp/LiteralTextReplacement'
 import {
   AGENTIC_SERVICE_LABELS,
   agenticServiceBlockedMessage,
@@ -25768,17 +25769,15 @@ async function executeGeminiMcpTool(
       } else {
       const oldString = String(args.old_string ?? args.oldString ?? '')
       const newString = String(args.new_string ?? args.newString ?? '')
-      if (!oldString) throw new Error('old_string is required.')
       await updateScopedUtf8File(authority, {
         maxBytes: MAX_EDITOR_FILE_BYTES,
-        update: (original) => {
-          if (!original.includes(oldString)) {
-            throw new Error('old_string was not found in the target file.')
-          }
-          return args.replace_all === true || args.replaceAll === true
-            ? original.split(oldString).join(newString)
-            : original.replace(oldString, newString)
-        }
+        update: (original) =>
+          replaceLiteralText(
+            original,
+            oldString,
+            newString,
+            args.replace_all === true || args.replaceAll === true
+          )
       })
       text = `Edited ${formatScopedPath(context, targetPath)}.`
       }
