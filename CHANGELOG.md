@@ -46,6 +46,10 @@ the next explicitly versioned desktop and iOS release.
   serialized and revision-aware, rebasing only disjoint updates so a stale UI
   snapshot cannot overwrite newer workspace, provider-session, grant, run, or
   Ensemble state.
+- **Sandboxed builds keep their capability handoff.** The packaged preload uses
+  browser-safe Web Crypto and local structural comparison instead of importing
+  unavailable Node modules, so clipboard capabilities and serialized chat
+  persistence no longer prevent the app from booting under Electron's sandbox.
 - **Provider controls survive edge cases.** Grok can recover from a denied tool
   without weakening Read-Only mode, Kimi speed tiers resolve through their CLI
   aliases, and Codex reasoning controls are pinned to the dispatched run and
