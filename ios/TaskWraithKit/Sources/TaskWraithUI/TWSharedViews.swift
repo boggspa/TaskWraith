@@ -1137,10 +1137,16 @@ struct ProviderModelPicker: View {
                 .foregroundStyle(TWTheme.textPrimary)
                 .lineLimit(1)
             if let reasoningLabel {
-                Text("· \(reasoningLabel)")
-                    .font(.caption)
-                    .foregroundStyle(TWTheme.textSecondary)
-                    .lineLimit(1)
+                // Desktop-parity tier treatment: the suffix takes on the
+                // provider hue progressively as effort rises (identity keyed
+                // on the effort so a tier change restarts the fresh state).
+                ChipReasoningSuffix(
+                    label: reasoningLabel,
+                    effort: isKimiProvider ? (kimiThinkingEnabled ? "on" : nil) : reasoningEffort,
+                    accent: TWTheme.providerAccent(
+                        provider, modelId: displayModelId, modelLabel: modelLabel)
+                )
+                .id(isKimiProvider ? "kimi-thinking" : (reasoningEffort ?? ""))
             }
             Image(systemName: "chevron.up.chevron.down")
                 .font(.system(size: 8, weight: .semibold))
@@ -1526,6 +1532,140 @@ private func twLadderStopLabel(_ index: Int, provider: String?) -> String {
     let stop = twReasoningStops[index]
     guard stop.effort == "ultracode" else { return stop.label }
     return twReasoningDisplayLabel(stop.effort, provider: provider)
+}
+
+/// Collapsed picker chip's reasoning suffix — desktop parity with the
+/// composer trigger's tiered treatment (08-theme-picker-overrides.css +
+/// CombinedModelPicker.tsx): Low/Thinking through High are hue-only ramps of
+/// the provider accent (38% → 62% → 84%, High adds weight); Extra (xhigh)
+/// wears a gentle 4.6s shimmer sweep plus a 4-dot faint sparkle field;
+/// Max/Ultracode get the full-contrast 3.2s sweep plus the dense field.
+/// Off/unknown keep the plain muted suffix. Reduce Motion pins the static
+/// base hue and freezes the sparkles, matching the desktop's reduce-motion
+/// override.
+private struct ChipReasoningSuffix: View {
+    let label: String
+    let effort: String?
+    let accent: Color
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var sweepPhase: CGFloat = 0
+    @State private var twinkle = false
+
+    private enum Tier { case low, medium, high, xhigh, top }
+
+    private var tier: Tier? {
+        switch (effort ?? "").trimmingCharacters(in: .whitespaces).lowercased() {
+        case "low", "light", "on": return .low
+        case "medium": return .medium
+        case "high": return .high
+        case "xhigh", "extra": return .xhigh
+        case "max", "ultracode", "ultra": return .top
+        default: return nil
+        }
+    }
+
+    // Well-spread twinkle spots over the suffix bounds (x, y fractions +
+    // per-dot delay) — the faint 4-dot field samples every other entry so it
+    // still spans the whole run, mirroring FAINT_SPARKLE_INDICES [0,2,4,6].
+    private static let sparkleSpots: [(x: CGFloat, y: CGFloat, delay: Double)] = [
+        (0.08, 0.22, 0.0), (0.24, 0.68, 1.9), (0.38, 0.18, 0.9), (0.52, 0.74, 2.8),
+        (0.64, 0.30, 1.3), (0.76, 0.82, 0.4), (0.88, 0.40, 2.2), (0.97, 0.64, 3.1),
+    ]
+
+    var body: some View {
+        switch tier {
+        case nil:
+            suffixText(weight: .regular)
+                .foregroundStyle(TWTheme.textSecondary)
+        case .low:
+            suffixText(weight: .regular)
+                .foregroundStyle(TWTheme.mix(accent, 0.38, TWTheme.textPrimary.opacity(0.58)))
+        case .medium:
+            suffixText(weight: .regular)
+                .foregroundStyle(TWTheme.mix(accent, 0.62, TWTheme.textPrimary.opacity(0.62)))
+        case .high:
+            suffixText(weight: .medium)
+                .foregroundStyle(TWTheme.mix(accent, 0.84, TWTheme.textPrimary))
+        case .xhigh:
+            shimmering(
+                base: TWTheme.mix(accent, 0.80, TWTheme.textPrimary),
+                highlight: TWTheme.mix(accent, 0.78, .white),
+                weight: .medium, period: 4.6, sparkleCount: 4, brilliance: 0.45)
+        case .top:
+            shimmering(
+                base: TWTheme.mix(accent, 0.92, TWTheme.textPrimary),
+                highlight: TWTheme.mix(accent, 0.55, .white),
+                weight: .semibold, period: 3.2, sparkleCount: 8, brilliance: 0.85)
+        }
+    }
+
+    private func suffixText(weight: Font.Weight) -> Text {
+        Text("· \(label)").font(.caption.weight(weight))
+    }
+
+    private func shimmering(
+        base: Color, highlight: Color, weight: Font.Weight, period: Double,
+        sparkleCount: Int, brilliance: Double
+    ) -> some View {
+        suffixText(weight: weight)
+            .lineLimit(1)
+            .foregroundStyle(base)
+            .overlay {
+                if !reduceMotion {
+                    // 240%-wide gradient swept across the glyphs, masked to the
+                    // text — the CSS text-shimmer-sweep twin.
+                    GeometryReader { geo in
+                        let w = geo.size.width
+                        LinearGradient(
+                            stops: [
+                                .init(color: base, location: 0),
+                                .init(color: base, location: 0.34),
+                                .init(color: highlight, location: 0.5),
+                                .init(color: base, location: 0.66),
+                                .init(color: base, location: 1),
+                            ],
+                            startPoint: .leading, endPoint: .trailing
+                        )
+                        .frame(width: w * 2.4, height: geo.size.height)
+                        .offset(x: -w * 2.4 + sweepPhase * w * 3.4)
+                    }
+                    .mask(suffixText(weight: weight).lineLimit(1))
+                    .allowsHitTesting(false)
+                }
+            }
+            .overlay {
+                GeometryReader { geo in
+                    ForEach(0..<sparkleCount, id: \.self) { i in
+                        let spot = Self.sparkleSpots[
+                            sparkleCount == 4 ? min(i * 2, Self.sparkleSpots.count - 1) : i]
+                        Circle()
+                            .fill(Color.white)
+                            .frame(width: 1.8, height: 1.8)
+                            .position(x: spot.x * geo.size.width, y: spot.y * geo.size.height)
+                            .opacity(
+                                reduceMotion
+                                    ? brilliance * 0.5
+                                    : (twinkle ? brilliance : brilliance * 0.2)
+                            )
+                            .animation(
+                                reduceMotion
+                                    ? nil
+                                    : .easeInOut(duration: 1.8)
+                                        .repeatForever(autoreverses: true)
+                                        .delay(spot.delay),
+                                value: twinkle)
+                    }
+                }
+                .allowsHitTesting(false)
+            }
+            .onAppear {
+                guard !reduceMotion else { return }
+                withAnimation(.linear(duration: period).repeatForever(autoreverses: false)) {
+                    sweepPhase = 1
+                }
+                twinkle = true
+            }
+    }
 }
 
 /// Pure visual profile for the ladder's provider-hued effects. Stop 0 (`Off`)
@@ -3861,11 +4001,15 @@ public struct MarkdownLite: View {
         } else {
             attributed = AttributedString(raw)
         }
-        // Style inline code runs.
+        // Style inline code runs — desktop parity (.message-markdown code):
+        // text-primary mono on the sunken well, NOT an accent tint. Attributed
+        // runs can't carry the desktop chip's border/radius; background + mono
+        // are the readable core of the treatment.
         for run in attributed.runs
         where run.inlinePresentationIntent?.contains(.code) == true {
             attributed[run.range].font = .system(size: 14, design: .monospaced)
-            attributed[run.range].foregroundColor = TWTheme.chroma3
+            attributed[run.range].foregroundColor = TWTheme.textPrimary
+            attributed[run.range].backgroundColor = TWTheme.appBgSunken
         }
         // Tint known participant mentions.
         if !participants.isEmpty {
@@ -4100,13 +4244,13 @@ public struct ToolActivityCards: View {
                             "+\(additions)",
                             value: Double(additions),
                             font: .caption2.weight(.semibold).monospacedDigit(),
-                            color: TWTheme.statusSuccess)
+                            color: TWTheme.diffStatAdd)
                             .fixedSize()
                         NumericTickText(
                             "−\(deletions)",
                             value: Double(deletions),
                             font: .caption2.weight(.semibold).monospacedDigit(),
-                            color: TWTheme.statusFailed)
+                            color: TWTheme.diffStatDel)
                             .fixedSize()
                     }
                     Spacer(minLength: 0)
@@ -4394,19 +4538,19 @@ struct DiffSummaryPanel: View {
                     if let additions = diff.additions, additions > 0 {
                         Text("+\(additions)")
                             .font(.caption.weight(.semibold).monospacedDigit())
-                            .foregroundStyle(TWTheme.statusSuccess)
+                            .foregroundStyle(TWTheme.diffStatAdd)
                     }
                     if let deletions = diff.deletions, deletions > 0 {
                         Text("−\(deletions)")
                             .font(.caption.weight(.semibold).monospacedDigit())
-                            .foregroundStyle(TWTheme.statusFailed)
+                            .foregroundStyle(TWTheme.diffStatDel)
                     }
                     Spacer()
                 }
                 HStack(spacing: 8) {
-                    statChip("Created", diff.createdFiles, TWTheme.statusSuccess)
+                    statChip("Created", diff.createdFiles, TWTheme.diffStatAdd)
                     statChip("Edited", diff.modifiedFiles, TWTheme.chroma1)
-                    statChip("Deleted", diff.deletedFiles, TWTheme.statusFailed)
+                    statChip("Deleted", diff.deletedFiles, TWTheme.diffStatDel)
                     Spacer()
                 }
                 VStack(alignment: .leading, spacing: 4) {
@@ -4475,12 +4619,12 @@ struct DiffSummaryPanel: View {
                 if let additions = file.additions, additions > 0 {
                     Text("+\(additions)")
                         .font(.caption2.monospacedDigit())
-                        .foregroundStyle(TWTheme.statusSuccess)
+                        .foregroundStyle(TWTheme.diffStatAdd)
                 }
                 if let deletions = file.deletions, deletions > 0 {
                     Text("−\(deletions)")
                         .font(.caption2.monospacedDigit())
-                        .foregroundStyle(TWTheme.statusFailed)
+                        .foregroundStyle(TWTheme.diffStatDel)
                 }
             }
         }
@@ -4491,8 +4635,8 @@ struct DiffSummaryPanel: View {
 
     private func statusColor(_ status: String?) -> Color {
         switch status {
-        case "created", "added": return TWTheme.statusSuccess
-        case "deleted", "removed": return TWTheme.statusFailed
+        case "created", "added": return TWTheme.diffStatAdd
+        case "deleted", "removed": return TWTheme.diffStatDel
         default: return TWTheme.chroma1
         }
     }
@@ -4704,12 +4848,12 @@ public struct ChangesAboveRow: View {
                 if let additions = diff.additions, additions > 0 {
                     Text("+\(additions)")
                         .font(.caption.monospacedDigit().weight(.semibold))
-                        .foregroundStyle(TWTheme.statusSuccess)
+                        .foregroundStyle(TWTheme.diffStatAdd)
                 }
                 if let deletions = diff.deletions, deletions > 0 {
                     Text("−\(deletions)")
                         .font(.caption.monospacedDigit().weight(.semibold))
-                        .foregroundStyle(TWTheme.statusFailed)
+                        .foregroundStyle(TWTheme.diffStatDel)
                 }
                 Spacer()
                 Text("Review")
@@ -8773,12 +8917,12 @@ public struct ComposerDiffPill: View {
                     "+\(compact(additions))",
                     value: Double(additions),
                     font: .caption.weight(.semibold).monospacedDigit(),
-                    color: TWTheme.statusSuccess)
+                    color: TWTheme.diffStatAdd)
                 NumericTickText(
                     "−\(compact(deletions))",
                     value: Double(deletions),
                     font: .caption.weight(.semibold).monospacedDigit(),
-                    color: TWTheme.statusFailed)
+                    color: TWTheme.diffStatDel)
             }
         }
         .lineLimit(1)
