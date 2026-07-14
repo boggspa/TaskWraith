@@ -14,7 +14,6 @@
 		86FFF3D3461B52C64C62367A /* TaskWraithKit in Frameworks */ = {isa = PBXBuildFile; productRef = 82D6D74C2FEF1679DD51831D /* TaskWraithKit */; };
 		9F4932E7183327339A41AF84 /* TaskWraithAppLifecycleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8738F17EF74CF59C08107065 /* TaskWraithAppLifecycleTests.swift */; };
 		A4DCD2CE78DEEEB16D3B82C8 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 2F7552D09A7EE4DFE7C62B6F /* Assets.xcassets */; };
-		A84C09B58915828617EF2994 /* TaskWraithScreenshotUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A51C81630D770318EFA7DF1F /* TaskWraithScreenshotUITests.swift */; };
 		BB498271F052F45C5816493E /* TaskWraithLaunchUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3AC061527DD5E03FB2CB5FB6 /* TaskWraithLaunchUITests.swift */; };
 		CE7101A9804142C180B58774 /* TaskWraithUI in Frameworks */ = {isa = PBXBuildFile; productRef = AF7441603810B23EE879F5FE /* TaskWraithUI */; };
 /* End PBXBuildFile section */
@@ -69,7 +68,6 @@
 		793E610251E2C2C41B44C224 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		8738F17EF74CF59C08107065 /* TaskWraithAppLifecycleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskWraithAppLifecycleTests.swift; sourceTree = "<group>"; };
 		A12FB9A2BBEAC31DB7D439FE /* TaskWraithUnitTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = TaskWraithUnitTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
-		A51C81630D770318EFA7DF1F /* TaskWraithScreenshotUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskWraithScreenshotUITests.swift; sourceTree = "<group>"; };
 		F52EAA275EC223F7FEF2C488 /* TaskWraithUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = TaskWraithUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		FAD184B8DAC8733EE42CBCA3 /* NotificationService.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = NotificationService.entitlements; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -116,7 +114,6 @@
 			isa = PBXGroup;
 			children = (
 				3AC061527DD5E03FB2CB5FB6 /* TaskWraithLaunchUITests.swift */,
-				A51C81630D770318EFA7DF1F /* TaskWraithScreenshotUITests.swift */,
 			);
 			path = UITests;
 			sourceTree = "<group>";
@@ -335,7 +332,6 @@
 			buildActionMask = 2147483647;
 			files = (
 				BB498271F052F45C5816493E /* TaskWraithLaunchUITests.swift in Sources */,
-				A84C09B58915828617EF2994 /* TaskWraithScreenshotUITests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -365,6 +361,7 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = YES;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -383,6 +380,7 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = YES;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -587,6 +585,7 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = YES;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -630,6 +629,7 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = YES;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",

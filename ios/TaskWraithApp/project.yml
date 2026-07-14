@@ -157,6 +157,9 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.taskwraith.companion.uitests
         CODE_SIGN_STYLE: Automatic
         SWIFT_VERSION: "6.0"
+        # Test bundles have no committed Info.plist; simulator ad-hoc signing
+        # requires one, so let Xcode synthesize it.
+        GENERATE_INFOPLIST_FILE: YES
   TaskWraithUnitTests:
     type: bundle.unit-test
     platform: iOS
@@ -169,6 +172,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.taskwraith.companion.tests
         CODE_SIGN_STYLE: Automatic
         SWIFT_VERSION: "6.0"
+        GENERATE_INFOPLIST_FILE: YES
 schemes:
   TaskWraith:
     build:
