@@ -1,5 +1,4 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
-import { randomUUID } from 'node:crypto'
 import type {
   GeminiWorktreeLaunchOption,
   BlackboardEntry,
@@ -82,7 +81,12 @@ window.addEventListener(
       item.type.startsWith('image/')
     )
     if (!containsImage) return
-    const token = randomUUID()
+    // Sandboxed preloads cannot require Node's `crypto` module. Chromium's
+    // Web Crypto implementation is available in this isolated world; fail
+    // closed if a future runtime ever removes it rather than minting a weak
+    // clipboard capability token.
+    const token = globalThis.crypto?.randomUUID?.()
+    if (!token) return
     pendingClipboardPasteIntent = {
       token,
       expiresAt: Date.now() + CLIPBOARD_PASTE_INTENT_TTL_MS

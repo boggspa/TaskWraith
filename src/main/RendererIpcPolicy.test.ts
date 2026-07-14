@@ -110,6 +110,18 @@ describe('RendererIpcPolicy', () => {
     expect(main).toContain('saveClipboardImageFromTrustedPaste({')
   })
 
+  it('keeps sandboxed preload code free of unsupported Node crypto/util imports', () => {
+    const preload = readFileSync(join(process.cwd(), 'src/preload/index.ts'), 'utf8')
+    const persistence = readFileSync(
+      join(process.cwd(), 'src/preload/SerializedChatPersistence.ts'),
+      'utf8'
+    )
+
+    expect(preload).not.toContain("from 'node:crypto'")
+    expect(preload).toContain('globalThis.crypto?.randomUUID?.()')
+    expect(persistence).not.toContain("from 'node:util'")
+  })
+
   it('projects provider status reads for secondary renderers instead of returning account/path payloads', () => {
     const main = readFileSync(join(process.cwd(), 'src/main/index.ts'), 'utf8')
 

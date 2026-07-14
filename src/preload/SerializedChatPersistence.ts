@@ -1,4 +1,3 @@
-import { isDeepStrictEqual } from 'node:util'
 import type { ChatRecord } from '../main/store/types'
 
 type CanonicalChatResult = ChatRecord | null
@@ -52,6 +51,45 @@ const SESSION_AND_GRANT_FIELDS: ReadonlyArray<keyof ChatRecord> = [
   'requestedModel',
   'lastActualModel'
 ]
+
+/**
+ * Chat records are structured-clone/JSON-shaped data. Keep equality local to
+ * the sandboxed preload instead of importing Node's `util`, which Electron's
+ * sandbox intentionally does not expose to preload scripts.
+ */
+function isDeepStrictEqual(left: unknown, right: unknown): boolean {
+  if (Object.is(left, right)) return true
+  if (
+    left === null ||
+    right === null ||
+    typeof left !== 'object' ||
+    typeof right !== 'object'
+  ) {
+    return false
+  }
+
+  const leftIsArray = Array.isArray(left)
+  if (leftIsArray !== Array.isArray(right)) return false
+  if (leftIsArray) {
+    const leftArray = left as unknown[]
+    const rightArray = right as unknown[]
+    if (leftArray.length !== rightArray.length) return false
+    for (let index = 0; index < leftArray.length; index += 1) {
+      if (!isDeepStrictEqual(leftArray[index], rightArray[index])) return false
+    }
+    return true
+  }
+
+  const leftRecord = left as Record<string, unknown>
+  const rightRecord = right as Record<string, unknown>
+  const leftKeys = Object.keys(leftRecord)
+  if (leftKeys.length !== Object.keys(rightRecord).length) return false
+  return leftKeys.every(
+    (key) =>
+      Object.prototype.hasOwnProperty.call(rightRecord, key) &&
+      isDeepStrictEqual(leftRecord[key], rightRecord[key])
+  )
+}
 
 function persistenceRevision(chat: Pick<ChatRecord, 'persistenceRevision'> | null): number {
   const revision = chat?.persistenceRevision
