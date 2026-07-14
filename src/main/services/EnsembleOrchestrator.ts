@@ -3140,7 +3140,19 @@ export class EnsembleOrchestrator {
      * default → default). Absent ⇒ P1b read-only. Ignored when `unattended` is false.
      */
     unattendedElevationLevel?: UnattendedElevationLevel
-  }): { status: 'started' | 'queued' | 'steered' | 'ignored'; roundId?: string } {
+    /**
+     * Scheduled dispatches must own a genuinely new round. Unlike an
+     * interactive send, they must never fall into the ordinary prompt queue
+     * or reuse the id of a round that is already running/reserved.
+     */
+    requireFreshRound?: boolean
+    /**
+     * Synchronous ownership seam for callers that need to bind bookkeeping to
+     * the new round before any participant (or an empty roster) can settle it.
+     * Runs after the runtime reservation is installed and before `runRound`.
+     */
+    onRoundReserved?: (roundId: string) => void
+  }): { status: 'started' | 'queued' | 'steered' | 'ignored' | 'busy'; roundId?: string } {
     // 1.0.4-AF — strip a leading `/discuss` (alias `/meta`) token so
     // the slash never reaches the panel verbatim. The flag flows
     // through to `beginRound` and lands on the runtime for the
@@ -3183,6 +3195,9 @@ export class EnsembleOrchestrator {
         existing = undefined
       }
     }
+    if (input.requireFreshRound && existing) {
+      return { status: 'busy' }
+    }
     if (!existing) {
       const persistedRound = this.deps.getChat(input.chatId)?.ensemble?.activeRound
       const persistedQueue =
@@ -3191,6 +3206,12 @@ export class EnsembleOrchestrator {
           : persistedRound?.queuedPrompt
             ? [persistedRound.queuedPrompt]
             : []
+      if (
+        input.requireFreshRound &&
+        (isEnsembleRoundDispatchLive(persistedRound) || persistedQueue.length > 0)
+      ) {
+        return { status: 'busy' }
+      }
       if (
         persistedRound && persistedQueue.length > 0
       ) {
@@ -3221,7 +3242,8 @@ export class EnsembleOrchestrator {
           input.discordContextSnapshots,
           input.unattended,
           input.unattendedElevationLevel,
-          startAfterCancellation
+          startAfterCancellation,
+          input.onRoundReserved
         )
         this.appendRoundStatus(
           input.chatId,
@@ -3285,7 +3307,9 @@ export class EnsembleOrchestrator {
       input.fanoutPolicy,
       input.discordContextSnapshots,
       input.unattended,
-      input.unattendedElevationLevel
+      input.unattendedElevationLevel,
+      undefined,
+      input.onRoundReserved
     )
     return { status: 'started', roundId }
   }
@@ -10243,7 +10267,8 @@ export class EnsembleOrchestrator {
     discordContextSnapshotsInput?: DiscordContextSnapshot[],
     unattended?: boolean,
     unattendedElevationLevel?: UnattendedElevationLevel,
-    startAfterCancellation?: Promise<unknown>
+    startAfterCancellation?: Promise<unknown>,
+    onRoundReserved?: (roundId: string) => void
   ): string {
     const chat = this.deps.getChat(chatId)
     if (!chat?.ensemble) throw new Error('Ensemble chat not found.')
@@ -10432,6 +10457,7 @@ export class EnsembleOrchestrator {
       ...(unattended && unattendedElevationLevel ? { unattendedElevationLevel } : {})
     }
     this.roundsByChatId.set(chatId, runtime)
+    onRoundReserved?.(roundId)
     for (const mention of backgroundMentionResolution.ambiguities) {
       const candidates = [mention.participant, ...(mention.ambiguousAmong || [])]
       this.appendRoundStatus(

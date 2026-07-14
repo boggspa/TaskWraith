@@ -501,6 +501,89 @@ function completeDispatchedRun(
 }
 
 describe('EnsembleOrchestrator', () => {
+  it('rejects a fresh-only start while an interactive round owns the chat without queueing or mutation', () => {
+    const harness = makeHarness()
+    const active = harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Interactive owner.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    expect(active.status).toBe('started')
+    const before = JSON.parse(JSON.stringify(harness.chat)) as ChatRecord
+
+    const scheduled = harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Scheduled contender.',
+      event: { sender: {} as Electron.WebContents },
+      requireFreshRound: true
+    })
+
+    expect(scheduled).toEqual({ status: 'busy' })
+    expect(scheduled.roundId).toBeUndefined()
+    expect(harness.chat).toEqual(before)
+    expect(getRuntimeQueuedPrompts(harness.orchestrator, 'ensemble-chat')).toEqual([])
+    expect(harness.chat.messages.some((message) => message.content === 'Scheduled contender.')).toBe(
+      false
+    )
+  })
+
+  it('reserves a fresh round before a re-entrant fresh contender can start', () => {
+    const harness = makeHarness()
+    let contender: ReturnType<typeof harness.orchestrator.startRound> | undefined
+
+    const owner = harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Scheduled owner.',
+      event: { sender: {} as Electron.WebContents },
+      requireFreshRound: true,
+      onRoundReserved: () => {
+        contender = harness.orchestrator.startRound({
+          chatId: 'ensemble-chat',
+          prompt: 'Near-concurrent scheduled contender.',
+          event: { sender: {} as Electron.WebContents },
+          requireFreshRound: true
+        })
+      }
+    })
+
+    expect(owner.status).toBe('started')
+    expect(contender).toEqual({ status: 'busy' })
+    expect(
+      harness.chat.messages.filter(
+        (message) => message.metadata?.kind === 'ensembleRoundPrompt'
+      )
+    ).toHaveLength(1)
+    expect(getRuntimeQueuedPrompts(harness.orchestrator, 'ensemble-chat')).toEqual([])
+  })
+
+  it('binds round ownership before an empty roster can complete synchronously', () => {
+    const completionOrder: string[] = []
+    const harness = makeHarness({
+      beforeSaveChat: (chat) => {
+        if (chat.ensemble?.activeRound?.status === 'completed') {
+          completionOrder.push('completed')
+        }
+      }
+    })
+    harness.chat.ensemble!.participants = []
+
+    const result = harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Scheduled empty roster.',
+      event: { sender: {} as Electron.WebContents },
+      requireFreshRound: true,
+      onRoundReserved: (roundId) => {
+        expect(roundId).toBe(harness.chat.ensemble?.activeRound?.roundId)
+        expect(harness.chat.ensemble?.activeRound?.status).toBe('running')
+        completionOrder.push('reserved')
+      }
+    })
+
+    expect(result.status).toBe('started')
+    expect(completionOrder).toEqual(['reserved', 'completed'])
+    expect(harness.chat.ensemble?.activeRound?.status).toBe('completed')
+  })
+
   it('dispatches participants serially in configured order', async () => {
     const harness = makeHarness()
     harness.orchestrator.startRound({
