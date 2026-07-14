@@ -492,6 +492,8 @@ export function FirstLaunchSheet({
             Each provider keeps its own auth — sign in to the ones you want to use, skip the rest.
             Chat history, goals, approvals, audit events, and usage stay in TaskWraith&apos;s local
             store; each provider receives only the context for the chat or run it is working on.
+            Bare provider filesystem and shell shortcuts that cannot enforce that boundary stay
+            disabled — work uses TaskWraith&apos;s namespaced workspace tools instead.
           </p>
         </section>
 
@@ -592,6 +594,8 @@ export function FirstLaunchSheet({
             start without a project folder, but use a workspace for coding work. Find the{' '}
             <span className="first-launch-sheet-plus">+</span> button next to
             &quot;Workspaces&quot; in the sidebar and pick a folder; you can add more later.
+            TaskWraith&apos;s built-in Git actions also treat repository-local hooks, filters,
+            helpers, and transport rewrites as untrusted rather than executing them.
           </p>
         </section>
 
@@ -866,9 +870,9 @@ export function FirstLaunchSheet({
             </li>
             <li>
               <strong>Fast Mode toggle.</strong> Inside the model picker, capable models (Codex
-              GPT-5.6 / 5.5 / 5.4, supported Claude Opus models, and supported Cursor routes) expose
-              a Fast choice — useful when you want snappier turns at higher cost. Grok 4.5 on the
-              Grok CLI is always labelled Fast.
+              GPT-5.6 / 5.5 / 5.4, supported Claude Opus models, supported Cursor routes, and Kimi
+              K2.7 Code) expose a Fast choice — Kimi switches between Standard and HighSpeed, while
+              Grok 4.5 on the Grok CLI is always labelled Fast.
             </li>
             <li>
               <strong>Delegate a focused worker.</strong> With approval, an agent can open a

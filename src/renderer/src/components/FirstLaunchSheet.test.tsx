@@ -101,6 +101,9 @@ describe('FirstLaunchSheet', () => {
     expect(html).toContain('BG seats skip ordinary rotation')
     expect(html).toContain('returns control instead of burning hops')
     expect(html).toContain('choose individual saved panels')
+    expect(html).toContain('namespaced workspace tools')
+    expect(html).toContain('repository-local hooks, filters')
+    expect(html).toContain('Kimi switches between Standard and HighSpeed')
   })
 
   it('intro prose advertises live providers but not the retired Gemini', () => {

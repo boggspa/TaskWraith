@@ -319,6 +319,10 @@ struct FirstLaunchSheetView: View {
                     title: "Inspect before acting",
                     detail: "Diffs, files, and transcript snapshots are monitor-first on iPhone.",
                     enabled: state?.workspace?.capabilities.monitor ?? true)
+                Text("Provider-native file and shell shortcuts that cannot enforce the Mac's signed run, workspace, and approval grants stay disabled. Work uses TaskWraith's brokered workspace tools instead.")
+                    .font(.caption)
+                    .foregroundStyle(TWTheme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
