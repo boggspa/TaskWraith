@@ -598,8 +598,8 @@ struct DiffKindChip: View {
 
     private var color: Color {
         switch kind {
-        case "created": return TWTheme.statusSuccess
-        case "deleted": return TWTheme.statusFailed
+        case "created": return TWTheme.diffStatAdd
+        case "deleted": return TWTheme.diffStatDel
         default: return TWTheme.statusAttention
         }
     }
@@ -654,12 +654,12 @@ struct DiffStatChips: View {
         if let additions, additions > 0 {
             Text("+\(additions)")
                 .font(.caption2.weight(.semibold).monospacedDigit())
-                .foregroundStyle(TWTheme.statusSuccess)
+                .foregroundStyle(TWTheme.diffStatAdd)
         }
         if let deletions, deletions > 0 {
             Text("−\(deletions)")
                 .font(.caption2.weight(.semibold).monospacedDigit())
-                .foregroundStyle(TWTheme.statusFailed)
+                .foregroundStyle(TWTheme.diffStatDel)
         }
     }
 }
@@ -954,14 +954,19 @@ private struct DiffLineRow: View {
 
     private var rowBackground: Color {
         switch line.type {
-        case "add": return TWTheme.statusSuccess.opacity(0.12)
-        case "del": return TWTheme.statusFailed.opacity(0.12)
+        case "add": return TWTheme.diffAddBg
+        case "del": return TWTheme.diffDelBg
         default: return .clear
         }
     }
 
     private var textColor: Color {
-        line.type == "ctx" ? TWTheme.textSecondary : TWTheme.textPrimary
+        switch line.type {
+        case "add": return TWTheme.diffAddText
+        case "del": return TWTheme.diffDelText
+        case "ctx": return TWTheme.textSecondary
+        default: return TWTheme.textPrimary
+        }
     }
 
     private var marker: String {
@@ -974,8 +979,8 @@ private struct DiffLineRow: View {
 
     private var markerColor: Color {
         switch line.type {
-        case "add": return TWTheme.statusSuccess
-        case "del": return TWTheme.statusFailed
+        case "add": return TWTheme.diffStatAdd
+        case "del": return TWTheme.diffStatDel
         default: return TWTheme.textMuted
         }
     }

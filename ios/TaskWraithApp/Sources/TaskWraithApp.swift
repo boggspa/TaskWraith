@@ -21,6 +21,34 @@ struct TaskWraithApp: App {
     var body: some Scene {
         WindowGroup {
             RootView(model: pushDelegate.model)
+                .task {
+                    // Screenshot/UI-test hook: boot straight into the OFFLINE
+                    // demo session (canned data, no pairing, no network — the
+                    // same surface App Review exercises) so automation never
+                    // depends on a paired Mac. Argument-gated AND Debug-only:
+                    // the screenshot harness builds Debug, so Release binaries
+                    // need not carry the hook at all.
+                    #if DEBUG
+                        let args = ProcessInfo.processInfo.arguments
+                        if args.contains("-tw-demo") {
+                            pushDelegate.model.enterDemoMode()
+                            // Optional harness navigation: `-tw-demo-thread <id>`
+                            // deep-links into a canned thread via the same
+                            // navigation the notification tap uses — lets the
+                            // screenshot script capture detail surfaces with
+                            // plain simctl (no XCUITest snapshot queries, which
+                            // time out on this hierarchy).
+                            if let flag = args.firstIndex(of: "-tw-demo-thread"),
+                                args.indices.contains(flag + 1)
+                            {
+                                // A beat for the demo projection to apply first.
+                                try? await Task.sleep(nanoseconds: 800_000_000)
+                                guard !Task.isCancelled else { return }
+                                pushDelegate.model.handleNotificationTap(threadId: args[flag + 1])
+                            }
+                        }
+                    #endif
+                }
         }
     }
 }

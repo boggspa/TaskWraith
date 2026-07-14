@@ -116,8 +116,7 @@ enum TWToolFamilyResolver {
         case "create_handoff_card", "open_in_ide", "open_in_ide_at_position",
             "reveal_in_finder", "ide_app_status", "ide_app_capabilities", "list_running_ides":
             return .handoff
-        case "run_task", "list_active_runs", "cancel_active_run", "test_result_summary",
-            "ask_user_question", "askuserquestion":
+        case "run_task", "list_active_runs", "cancel_active_run", "test_result_summary":
             return .task
         case "start_background_process", "list_background_processes",
             "read_background_process", "kill_background_process",
@@ -136,7 +135,11 @@ enum TWToolFamilyResolver {
             return .plan
         case "codex_reasoning", "reasoning", "thinking":
             return .reasoning
-        case "approval_status", "provider_auth_status", "provider_usage_status", "run_timeline",
+        // ask_user_question shares the desktop's approval family (routed to
+        // .diagnostic on iOS per the note above), not .task — a question card
+        // is a user-gate like an approval, not run mechanics.
+        case "approval_status", "ask_user_question", "askuserquestion",
+            "provider_auth_status", "provider_usage_status", "run_timeline",
             "raw_provider_events", "get_diagnostics", "switch_auth_profile", "agent_delegation_role",
             "coherence_gate_check", "completion_claim_check", "evidence_pack_write",
             "creative_app_status", "creative_app_capabilities", "creative_project_snapshot",

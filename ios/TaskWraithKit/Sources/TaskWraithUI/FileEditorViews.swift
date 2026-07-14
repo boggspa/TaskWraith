@@ -1205,8 +1205,9 @@ private struct RunestoneEditorView: UIViewRepresentable {
         }
     }
 
+    @MainActor
     private static func state(text: String, filePath: String) -> TextViewState {
-        let theme = TaskWraithRunestoneTheme()
+        let theme = TaskWraithRunestoneTheme(isLight: TWThemeStore.shared.systemTheme.isLight)
         if let language = TaskWraithRunestoneLanguage.language(for: filePath) {
             return TextViewState(text: text, theme: theme, language: language)
         }
@@ -1335,6 +1336,15 @@ private enum TaskWraithRunestoneLanguage {
 }
 
 private final class TaskWraithRunestoneTheme: Theme {
+    /// Captured at construction (main thread) — Runestone may highlight off
+    /// the main actor, so the theme carries the flag instead of reading the
+    /// @MainActor theme store per token.
+    private let isLight: Bool
+
+    init(isLight: Bool = false) {
+        self.isLight = isLight
+    }
+
     let font = UIFont.monospacedSystemFont(ofSize: 13, weight: .regular)
     let textColor = UIColor.label
     let gutterBackgroundColor = UIColor.secondarySystemBackground.withAlphaComponent(0.68)
@@ -1349,32 +1359,49 @@ private final class TaskWraithRunestoneTheme: Theme {
     let pageGuideBackgroundColor = UIColor.clear
     let markedTextBackgroundColor = UIColor.systemYellow.withAlphaComponent(0.2)
 
+    // Desktop CodeMirror palette twins (--cm-*, theme.css:263-274 dark /
+    // :416-427 light) so the phone's editor reads as the same product.
+    // Runestone capture names keep their buckets; tag has no dedicated
+    // desktop token and rides the keyword pink, variable.parameter rides
+    // the type gold (nearest canonical values to the pre-parity colors).
     func textColor(for highlightName: String) -> UIColor? {
         let name = highlightName.lowercased()
-        if name.contains("comment") { return UIColor(red: 0.50, green: 0.54, blue: 0.59, alpha: 1) }
-        if name.contains("string") { return UIColor(red: 0.62, green: 0.86, blue: 0.54, alpha: 1) }
+        if name.contains("comment") {
+            return isLight ? Self.rgb(0x6E7781) : UIColor(white: 1, alpha: 0.42)
+        }
+        if name.contains("string") { return isLight ? Self.rgb(0x0A3069) : Self.rgb(0x9BE69F) }
         if name.contains("keyword") || name.contains("operator") {
-            return UIColor(red: 0.78, green: 0.55, blue: 1.00, alpha: 1)
+            return isLight ? Self.rgb(0xCF222E) : Self.rgb(0xFF8FB3)
         }
         if name.contains("number") || name.contains("constant") || name.contains("boolean") {
-            return UIColor(red: 0.95, green: 0.67, blue: 0.42, alpha: 1)
+            return isLight ? Self.rgb(0x0A7C42) : Self.rgb(0xC7A6FF)
         }
         if name.contains("function") || name.contains("method") {
-            return UIColor(red: 0.43, green: 0.72, blue: 1.00, alpha: 1)
+            return isLight ? Self.rgb(0x8250DF) : Self.rgb(0x8FD6FF)
         }
         if name.contains("type") || name.contains("class") || name.contains("struct")
             || name.contains("enum") || name.contains("interface")
         {
-            return UIColor(red: 0.39, green: 0.84, blue: 0.78, alpha: 1)
+            return isLight ? Self.rgb(0x953800) : Self.rgb(0xFFD27D)
         }
         if name.contains("property") || name.contains("field") || name.contains("member")
             || name.contains("attribute")
         {
-            return UIColor(red: 0.58, green: 0.78, blue: 1.00, alpha: 1)
+            return isLight ? Self.rgb(0x0550AE) : Self.rgb(0xB9D7FF)
         }
-        if name.contains("tag") { return UIColor(red: 1.00, green: 0.55, blue: 0.55, alpha: 1) }
-        if name.contains("variable.parameter") { return UIColor(red: 0.88, green: 0.78, blue: 0.48, alpha: 1) }
+        if name.contains("tag") { return isLight ? Self.rgb(0xCF222E) : Self.rgb(0xFF8FB3) }
+        if name.contains("variable.parameter") {
+            return isLight ? Self.rgb(0x953800) : Self.rgb(0xFFD27D)
+        }
         return nil
+    }
+
+    private static func rgb(_ hex: UInt32) -> UIColor {
+        UIColor(
+            red: CGFloat((hex >> 16) & 0xFF) / 255,
+            green: CGFloat((hex >> 8) & 0xFF) / 255,
+            blue: CGFloat(hex & 0xFF) / 255,
+            alpha: 1)
     }
 }
 #endif

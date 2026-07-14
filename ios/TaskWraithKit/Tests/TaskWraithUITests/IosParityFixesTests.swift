@@ -759,6 +759,58 @@ struct IosParityFixesTests {
     }
 
     @MainActor
+    @Test func streamingTerminalMarksThreadForRevealDrain() {
+        let model = makeRemoteSessionModel()
+        model.appendStreamingDeltasForTesting(
+            threadId: "thread-1", data: #"{"type":"content","text":"Hello world"}"#,
+            runId: "run-a")
+        #expect(model.streamingTexts["thread-1"] == "Hello world")
+        #expect(!model.streamingTerminalThreads.contains("thread-1"))
+        // markStreamingTerminal flushes the gate FIRST, then inserts — the
+        // terminal flush publish must not knock the flag back out (ordering
+        // regression guard: publish-clears-terminal vs. insert-after-flush).
+        model.markStreamingTerminalForTesting(threadId: "thread-1")
+        #expect(model.streamingTerminalThreads.contains("thread-1"))
+        // The bubble lingers for the handoff window — terminal does NOT clear
+        // the live text; the deferred clear / snapshot reconcile owns that.
+        #expect(model.streamingTexts["thread-1"] == "Hello world")
+    }
+
+    @MainActor
+    @Test func staleExitDoesNotMarkLiveRunTerminal() {
+        let model = makeRemoteSessionModel()
+        // Run B is live on the thread; run A's trailing exit (cancel-then-resend)
+        // must be ignored, or B's reveal slams mid-stream and a deferred clear
+        // is armed against B's bubble.
+        model.appendStreamingDeltasForTesting(
+            threadId: "thread-1", data: #"{"type":"content","text":"Run B streaming"}"#,
+            runId: "run-b")
+        model.markStreamingTerminalForTesting(threadId: "thread-1", exitRunId: "run-a")
+        #expect(!model.streamingTerminalThreads.contains("thread-1"))
+        // The LIVE run's own exit still marks terminal.
+        model.markStreamingTerminalForTesting(threadId: "thread-1", exitRunId: "run-b")
+        #expect(model.streamingTerminalThreads.contains("thread-1"))
+    }
+
+    @MainActor
+    @Test func newRunPublishClearsStreamingTerminal() {
+        let model = makeRemoteSessionModel()
+        model.appendStreamingDeltasForTesting(
+            threadId: "thread-1", data: #"{"type":"content","text":"First answer"}"#,
+            runId: "run-a")
+        model.markStreamingTerminalForTesting(threadId: "thread-1")
+        #expect(model.streamingTerminalThreads.contains("thread-1"))
+        // A follow-up run's tokens on the same thread mean the stream is live
+        // again: the publish path drops terminal membership so the reveal
+        // returns to streaming cadence instead of slamming the new answer in.
+        model.appendStreamingDeltasForTesting(
+            threadId: "thread-1", data: #"{"type":"content","text":"Next"}"#,
+            runId: "run-b")
+        #expect(!model.streamingTerminalThreads.contains("thread-1"))
+        #expect(model.streamingTexts["thread-1"] == "Next")
+    }
+
+    @MainActor
     @Test func scheduleThreadRefreshBypassesSuppressionForTerminalRefresh() async throws {
         let model = makeRemoteSessionModel()
         model.visibleThreadId = "thread-1"

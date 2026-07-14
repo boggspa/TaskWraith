@@ -1382,6 +1382,7 @@ struct ThreadDetailView: View {
                 isTail: isTail,
                 agentIdentity: threadAgentIdentity,
                 participants: transcriptParticipants,
+                isComplete: resolvedThreadKeys.contains { model.streamingTerminalThreads.contains($0) },
                 onRevealFrame: {
                     requestFollowPin(proxy)
                 })
@@ -3727,6 +3728,9 @@ struct StreamingRowView: View {
     var role: String? = nil
     var agentIdentity: ThreadAgentIdentity? = nil
     var participants: [RemoteEnsembleState.Participant] = []
+    /// Stream hit its terminal event — the reveal tail drains instead of
+    /// continuing at streaming cadence (see TokenRevealText.isComplete).
+    var isComplete: Bool = false
     @State private var streamingSplitCache = StreamingMarkdownSplitCacheBox()
 
     private var accent: Color {
@@ -3763,7 +3767,8 @@ struct StreamingRowView: View {
                     TokenRevealText(
                         target: parts.tail,
                         font: TWFont.transcript(),
-                        color: TWTheme.textPrimary)
+                        color: TWTheme.textPrimary,
+                        isComplete: isComplete)
                 }
             }            .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -3839,6 +3844,9 @@ struct StreamingSegmentRow: View {
     let isTail: Bool
     var agentIdentity: ThreadAgentIdentity? = nil
     var participants: [RemoteEnsembleState.Participant] = []
+    /// Stream hit its terminal event — the reveal tail drains instead of
+    /// continuing at streaming cadence (see TokenRevealText.isComplete).
+    var isComplete: Bool = false
     var onRevealFrame: (() -> Void)? = nil
     @State private var streamingSplitCache = StreamingMarkdownSplitCacheBox()
 
@@ -3866,6 +3874,7 @@ struct StreamingSegmentRow: View {
                         target: parts.tail,
                         font: TWFont.transcript(),
                         color: TWTheme.textPrimary,
+                        isComplete: isComplete,
                         onRevealFrame: onRevealFrame)
                 }
             }            .frame(maxWidth: .infinity, alignment: .leading)

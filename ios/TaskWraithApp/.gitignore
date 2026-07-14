@@ -1,0 +1,3 @@
+# Screenshot-harness output (scripts/appstore-screenshots.sh) — regenerated
+# per run; 1MB+ of PNGs that must never ride a bulk `git add`.
+screenshots/

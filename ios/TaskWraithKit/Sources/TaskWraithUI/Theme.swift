@@ -9,6 +9,8 @@
 import SwiftUI
 #if canImport(UIKit)
     import UIKit
+#elseif canImport(AppKit)
+    import AppKit
 #endif
 import TaskWraithKit
 
@@ -76,6 +78,52 @@ public enum TWTheme {
     public static let statusAttention = Color(hex: 0xF5A623)
     public static let statusFailed = Color(hex: 0xE5484D)
     public static let statusSuccess = Color(hex: 0x46A758)
+
+    // ── Diff palette (--diff-stat-add/del-color, --diff-add/del-bg/-text) ────
+    // Dedicated to DIFF surfaces (± counters, diff rows) so they can't drift
+    // with run-status semantics; the desktop defines no light overrides, so
+    // these are theme-invariant like the status palette above.
+    public static let diffStatAdd = Color(hex: 0x2DB777)
+    public static let diffStatDel = Color(hex: 0xEC3D35)
+    public static let diffAddText = Color(hex: 0x6DDFA8)
+    public static let diffDelText = Color(hex: 0xF08080)
+    public static let diffAddBg = Color(hex: 0x4CC38A).opacity(0.10)
+    public static let diffDelBg = Color(hex: 0xE54D4D).opacity(0.10)
+
+    /// Sunken well behind inline code chips (--app-bg-sunken).
+    @MainActor public static var appBgSunken: Color {
+        TWThemeStore.shared.systemTheme.isLight ? Color(hex: 0xE9EDF2) : Color(hex: 0x0E0E0E)
+    }
+
+    /// Boss crown — desktop .ensemble-above-chip-crown: the warning hue
+    /// lifted 12% toward white; pair with a 4pt statusAttention@34% shadow
+    /// for the drop-glow half of the treatment.
+    public static let bossCrown = mix(statusAttention, 0.88, Color.white)
+
+    /// CSS `color-mix(in srgb, a W%, b)` twin — premultiplied-alpha weighted
+    /// mix so translucent operands (e.g. textPrimary at partial opacity in
+    /// the reasoning chip ramp) resolve exactly like the desktop.
+    public static func mix(_ a: Color, _ weight: Double, _ b: Color) -> Color {
+        let w = max(0, min(1, weight))
+        var c1: (r: CGFloat, g: CGFloat, b: CGFloat, a: CGFloat) = (0, 0, 0, 0)
+        var c2: (r: CGFloat, g: CGFloat, b: CGFloat, a: CGFloat) = (0, 0, 0, 0)
+        #if canImport(UIKit)
+            UIColor(a).getRed(&c1.r, green: &c1.g, blue: &c1.b, alpha: &c1.a)
+            UIColor(b).getRed(&c2.r, green: &c2.g, blue: &c2.b, alpha: &c2.a)
+        #elseif canImport(AppKit)
+            (NSColor(a).usingColorSpace(.sRGB) ?? .black)
+                .getRed(&c1.r, green: &c1.g, blue: &c1.b, alpha: &c1.a)
+            (NSColor(b).usingColorSpace(.sRGB) ?? .black)
+                .getRed(&c2.r, green: &c2.g, blue: &c2.b, alpha: &c2.a)
+        #endif
+        let outA = w * c1.a + (1 - w) * c2.a
+        guard outA > 0 else { return .clear }
+        return Color(
+            red: (w * c1.a * c1.r + (1 - w) * c2.a * c2.r) / outA,
+            green: (w * c1.a * c1.g + (1 - w) * c2.a * c2.g) / outA,
+            blue: (w * c1.a * c1.b + (1 - w) * c2.a * c2.b) / outA,
+            opacity: outA)
+    }
 
     @MainActor public static func statusColor(_ status: String?) -> Color {
         switch status {
