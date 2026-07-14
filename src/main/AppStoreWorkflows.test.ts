@@ -1547,6 +1547,27 @@ describe('AppStore workflow unattended elevation (P2)', () => {
     expect(updated?.unattendedElevation).toEqual(wellFormedAck)
   })
 
+  it('saveWorkflowDefinition permanently revokes an ack across A → B → A authority edits', () => {
+    const authorityA = AppStore.saveWorkflowDefinition(
+      workflowInput({ template: { prompt: 'Authority A prompt.' } })
+    )
+    AppStore.setWorkflowUnattendedElevation(authorityA.id, wellFormedAck)
+
+    const authorityB = AppStore.saveWorkflowDefinition({
+      ...authorityA,
+      template: { ...authorityA.template, prompt: 'Authority B prompt.' }
+    })
+    expect(authorityB.unattendedElevation).toBeUndefined()
+    expect(AppStore.getWorkflowDefinition(authorityA.id)?.unattendedElevation).toBeUndefined()
+
+    const authorityARestored = AppStore.saveWorkflowDefinition({
+      ...authorityB,
+      template: { ...authorityB.template, prompt: 'Authority A prompt.' }
+    })
+    expect(authorityARestored.unattendedElevation).toBeUndefined()
+    expect(AppStore.getWorkflowDefinition(authorityA.id)?.unattendedElevation).toBeUndefined()
+  })
+
   it('setWorkflowUnattendedElevation(undefined) revokes', () => {
     const saved = AppStore.saveWorkflowDefinition(workflowInput())
     AppStore.setWorkflowUnattendedElevation(saved.id, wellFormedAck)

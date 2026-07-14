@@ -3906,19 +3906,22 @@ export class AppStore {
       normalized.nextRunAt = resolveNextWorkflowRunAt(normalized.trigger, nowMs, nowMs)
     }
     const index = workflows.findIndex((item) => item.id === normalized.id)
+    let saved = normalized
     if (index >= 0) {
       const prior = workflows[index]
+      const next: WorkflowDefinition = { ...prior, ...normalized, updatedAt: nowIso }
       // An acknowledgement authorizes the complete execution envelope, not just
       // approvalMode. Any authority-bearing change revokes it before persistence.
-      if (!sameWorkflowAuthority(prior, normalized)) {
-        delete normalized.unattendedElevation
-      } else if (!normalized.unattendedElevation && prior.unattendedElevation) {
-        normalized.unattendedElevation = prior.unattendedElevation
+      if (!sameWorkflowAuthority(prior, next)) {
+        delete next.unattendedElevation
+      } else if (!next.unattendedElevation && prior.unattendedElevation) {
+        next.unattendedElevation = prior.unattendedElevation
       }
-      workflows[index] = { ...prior, ...normalized, updatedAt: nowIso }
-    } else workflows.push(normalized)
+      workflows[index] = next
+      saved = next
+    } else workflows.push(saved)
     writeJson(workflowsPath, workflows)
-    return normalized
+    return saved
   }
 
   static updateWorkflowDefinition(
