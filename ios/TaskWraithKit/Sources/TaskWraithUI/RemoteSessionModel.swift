@@ -581,6 +581,15 @@ public final class RemoteSessionModel: ObservableObject {
     /// Live run id per streaming thread — lets the view hide the in-flight
     /// snapshot row the bubble supersedes.
     @Published public private(set) var streamingRunIds: [String: String] = [:]
+    /// Threads whose stream hit its terminal event (agent-exit) but whose live
+    /// bubble is still on screen inside the deferred-clear handoff window. The
+    /// reveal cursor reads this to DRAIN (advanceReveal isComplete — converges
+    /// within completeDrainMs) instead of continuing at streaming cadence, so
+    /// the settled snapshot never swaps in over a half-typed tail. Membership
+    /// ends when new tokens publish (next run on the thread), when the deferred
+    /// exit clear or snapshot reconcile drops the stream, and on the canonical
+    /// per-host reset.
+    @Published public private(set) var streamingTerminalThreads: Set<String> = []
     /// Provider currently producing each live stream. This comes from the
     /// bridge.runEvent envelope and updates before the next snapshot/ensemble
     /// state pull, so live headers do not briefly show the previous speaker.
@@ -2036,6 +2045,7 @@ public final class RemoteSessionModel: ObservableObject {
         streamingRunIds = [:]
         streamingProviders = [:]
         streamingItemIds = [:]
+        streamingTerminalThreads = []
         streamingPublishGate.resetAll()
         providerModels = [:]
         projectionHydrated = false
@@ -3174,28 +3184,7 @@ public final class RemoteSessionModel: ObservableObject {
                     provider: wire.provider, data: data)
             }
             if wire.channel == "agent-exit" || wire.channel == "gemini-exit" {
-                // Exit-contract (S3): flush staged stream text before capture so
-                // the 900ms handoff guard compares the final bubble.
-                streamingPublishGate.flushBeforeTerminal(threadId: threadId)
-                // Final snapshot supersedes the live bubble; clear shortly
-                // after the refresh lands so the handoff doesn't flash empty.
-                let captured = streamingTexts[threadId]
-                let capturedRunId = streamingRunIds[threadId]
-                Task { [weak self] in
-                    try? await Task.sleep(nanoseconds: 900_000_000)
-                    await MainActor.run {
-                        guard let self,
-                            self.streamingTexts[threadId] == captured,
-                            self.streamingRunIds[threadId] == capturedRunId
-                        else { return }
-                        self.streamingTexts[threadId] = nil
-                        self.streamingSegments[threadId] = nil
-                        self.streamingRunIds[threadId] = nil
-                        self.streamingProviders[threadId] = nil
-                        self.streamingItemIds[threadId] = nil
-                        self.streamingPublishGate.reset(threadId: threadId)
-                    }
-                }
+                markStreamingTerminal(threadId: threadId)
             }
             // Snapshot re-pull is the consistency backstop. During text
             // streaming the live buffer (appendStreamingDeltas above) already
@@ -3237,6 +3226,39 @@ public final class RemoteSessionModel: ObservableObject {
     /// line is `JSON.stringify(routed)` — provider events flat-merged with
     /// routing fields; raw Gemini CLI chunks arrive as multi-line fragments,
     /// so split + tolerate partial lines.
+    /// Exit-contract (S3): flush staged stream text before capture so the
+    /// 900ms handoff guard compares the final bubble, then mark the thread
+    /// terminal so the reveal cursor drains within the handoff window. The
+    /// final snapshot supersedes the live bubble; clear shortly after the
+    /// refresh lands so the handoff doesn't flash empty.
+    private func markStreamingTerminal(threadId: String) {
+        streamingPublishGate.flushBeforeTerminal(threadId: threadId)
+        // AFTER the flush: flushBeforeTerminal publishes synchronously, and
+        // applyStreamingStagingPublish clears terminal membership (tokens
+        // flowing = live). Insertion must win over that final flush publish.
+        if !streamingTerminalThreads.contains(threadId) {
+            streamingTerminalThreads.insert(threadId)
+        }
+        let captured = streamingTexts[threadId]
+        let capturedRunId = streamingRunIds[threadId]
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 900_000_000)
+            await MainActor.run {
+                guard let self,
+                    self.streamingTexts[threadId] == captured,
+                    self.streamingRunIds[threadId] == capturedRunId
+                else { return }
+                self.streamingTexts[threadId] = nil
+                self.streamingSegments[threadId] = nil
+                self.streamingRunIds[threadId] = nil
+                self.streamingProviders[threadId] = nil
+                self.streamingItemIds[threadId] = nil
+                self.streamingTerminalThreads.remove(threadId)
+                self.streamingPublishGate.reset(threadId: threadId)
+            }
+        }
+    }
+
     private func appendStreamingDeltas(
         threadId: String, runId: String?, provider: String?, data: String
     ) {
@@ -3351,6 +3373,14 @@ public final class RemoteSessionModel: ObservableObject {
     private func applyStreamingStagingPublish(
         threadId: String, staging: StreamingPublishGate.Staging
     ) {
+        // Tokens flowing = the stream is live (again): a publish AFTER the
+        // terminal mark means a new run started on this thread inside the
+        // handoff window, so the reveal returns to streaming cadence. Guarded
+        // (contains before remove) — an unconditional mutating access would
+        // fire objectWillChange on every ~80ms publish tick for nothing.
+        if streamingTerminalThreads.contains(threadId) {
+            streamingTerminalThreads.remove(threadId)
+        }
         streamingSegments[threadId] = staging.segments
         streamingTexts[threadId] = Self.joinedStreamText(staging.segments)
         if let provider = staging.provider, !provider.isEmpty {
@@ -3722,6 +3752,9 @@ public final class RemoteSessionModel: ObservableObject {
         streamingRunIds[key] = nil
         streamingProviders[key] = nil
         streamingItemIds[key] = nil
+        if streamingTerminalThreads.contains(key) {
+            streamingTerminalThreads.remove(key)
+        }
         streamingPublishGate.reset(threadId: key)
     }
 
@@ -4167,6 +4200,10 @@ public final class RemoteSessionModel: ObservableObject {
 
         func flushStreamingPublishForTesting(threadId: String) {
             streamingPublishGate.flushBeforeTerminal(threadId: threadId)
+        }
+
+        func markStreamingTerminalForTesting(threadId: String) {
+            markStreamingTerminal(threadId: threadId)
         }
 
         func resetStreamingPublishGateForTesting(threadId: String) {

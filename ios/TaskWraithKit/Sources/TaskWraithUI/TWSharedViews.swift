@@ -2385,6 +2385,12 @@ public struct TokenRevealText: View {
     let target: String
     let font: Font
     let color: Color
+    /// Terminal-drain input (advanceReveal isComplete): true once the stream
+    /// has ended and the remaining backlog should drain within
+    /// `completeDrainMs` instead of continuing at streaming cadence — parity
+    /// with Electron's `isComplete: !isLive`, so the settled row never swaps
+    /// in over a half-typed tail.
+    let isComplete: Bool
     let onRevealFrame: (() -> Void)?
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -2399,11 +2405,17 @@ public struct TokenRevealText: View {
     /// value, so a plain `let` would go stale as the stream grows; @State
     /// reads route through SwiftUI's storage and stay current.
     @State private var goal = ""
+    /// Live mirror of `isComplete`, same by-value-capture reason as `goal`.
+    @State private var terminal = false
 
-    public init(target: String, font: Font, color: Color, onRevealFrame: (() -> Void)? = nil) {
+    public init(
+        target: String, font: Font, color: Color, isComplete: Bool = false,
+        onRevealFrame: (() -> Void)? = nil
+    ) {
         self.target = target
         self.font = font
         self.color = color
+        self.isComplete = isComplete
         self.onRevealFrame = onRevealFrame
     }
 
@@ -2427,6 +2439,7 @@ public struct TokenRevealText: View {
             .accessibilityLabel(Text(target))
             .onAppear {
                 goal = target
+                terminal = isComplete
                 if reduceMotion || target.count > RevealParams.shared.coldSnapChars {
                     revealed = target.count
                     solidified = revealed
@@ -2434,6 +2447,13 @@ public struct TokenRevealText: View {
                 } else {
                     startPumpIfNeeded()
                 }
+            }
+            .onChange(of: isComplete) { _, complete in
+                terminal = complete
+                // The terminal flip usually arrives with no new characters, so
+                // no onChange(of: target) fires — re-arm the pump here or the
+                // remaining backlog would never drain.
+                if complete { startPumpIfNeeded() }
             }
             .onChange(of: target) { _, newValue in
                 let commonPrefix = Self.commonPrefixCount(goal, newValue)
@@ -2525,7 +2545,7 @@ public struct TokenRevealText: View {
                     // so cadence + catch-up match Electron. prev==next here;
                     // divergence rewind is handled in onChange(of: target).
                     revealed = advanceReveal(
-                        prev: goal, next: goal, revealed: revealed, isComplete: false, dt: dt)
+                        prev: goal, next: goal, revealed: revealed, isComplete: terminal, dt: dt)
                     if revealed > goal.count { revealed = goal.count }
                     // Keep the fade band bounded to the shared tail length.
                     if solidified < revealed - maxTail { solidified = revealed - maxTail }
@@ -9363,7 +9383,8 @@ struct MiniThreadView: View {
                 text: live, provider: card.provider,
                 model: snapshot?.runSummary?.model,
                 agentIdentity: ThreadAgentIdentity(card: card),
-                participants: model.ensembleStates[threadId]?.displayParticipants ?? [])
+                participants: model.ensembleStates[threadId]?.displayParticipants ?? [],
+                isComplete: model.streamingTerminalThreads.contains(threadId))
         }
     }
 
