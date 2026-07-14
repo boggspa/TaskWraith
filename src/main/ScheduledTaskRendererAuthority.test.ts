@@ -189,6 +189,15 @@ describe('isCanonicalWorkflowScheduledTask', () => {
     expect(isCanonicalWorkflowScheduledTask(running, workflow(running), canonicalPath)).toBe(true)
   })
 
+  it('accepts a legacy omitted workflow mode as the materialized normal posture', () => {
+    const task = scheduledTask({ workflowMode: 'normal' })
+    const legacyWorkflow = workflow(task, {
+      template: { ...workflow(task).template, workflowMode: undefined }
+    })
+
+    expect(isCanonicalWorkflowScheduledTask(task, legacyWorkflow, canonicalPath)).toBe(true)
+  })
+
   it('rejects outer workspace, template, history, and lifecycle divergence', () => {
     const task = scheduledTask()
     const base = workflow(task)

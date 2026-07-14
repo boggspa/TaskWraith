@@ -846,6 +846,7 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
       selectedModelType: optionalString(input.selectedModelType) || 'default',
       customModel: optionalString(input.customModel) || '',
       approvalMode: optionalString(input.approvalMode) || 'default',
+      workflowMode: input.workflowMode === 'plan' ? 'plan' : 'normal',
       // Workflows and scheduled tasks are unattended. They may receive only a
       // separately verified unattended-elevation ack, never Trusted Session.
       sessionTrust: false,

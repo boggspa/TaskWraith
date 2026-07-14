@@ -623,6 +623,7 @@ describe('MainSanitizers scheduled tasks', () => {
       limits: {}
     }
     const initial = makeSanitizers(makeSettings()).sanitizeWorkflowForSave(draft)
+    expect(initial.template.workflowMode).toBe('normal')
     const victim = {
       ...initial,
       id: 'victim-workflow',

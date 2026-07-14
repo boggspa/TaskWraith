@@ -30359,6 +30359,7 @@ if (isGeminiMcpBridgeProcess) {
                 selectedModelType: workflowSelectedModel,
                 customModel: '',
                 approvalMode: effectiveApprovalMode || 'default',
+                workflowMode: effectiveWorkflowMode,
                 sessionTrust: false,
                 imageAttachments: [],
                 ...(workflowCodexReasoning !== undefined

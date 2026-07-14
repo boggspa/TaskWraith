@@ -523,6 +523,11 @@ function normalizeWorkflowTemplate(value: unknown): WorkflowRunTemplate | null {
     selectedModelType: input.selectedModelType || 'default',
     customModel: input.customModel || '',
     approvalMode: input.approvalMode || 'default',
+    // Missing/legacy workflow posture is the normal product workflow, not a
+    // third authority state. ScheduledTask persistence already canonicalizes
+    // the same omission to `normal`; keep the durable template identical so
+    // exact workflow-occurrence comparisons do not discard valid elevation.
+    workflowMode: normalizeChatWorkflowMode(input.workflowMode),
     // Persisted workflows are unattended authority. Legacy renderer-authored
     // Trusted Session flags are discarded during every read/normalization.
     sessionTrust: false,

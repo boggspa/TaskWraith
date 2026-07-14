@@ -173,6 +173,19 @@ describe('AppStore workflows', () => {
     expect(workflow?.nextRunAt).toBe(new Date(Date.parse(plannedFor) + intervalMs).toISOString())
   })
 
+  it('canonicalizes an omitted workflow mode before persistence and materialization', () => {
+    const saved = AppStore.saveWorkflowDefinition(workflowInput())
+
+    expect(saved.template.workflowMode).toBe('normal')
+    const rows = JSON.parse(
+      fs.readFileSync(`${userDataPath}/workflows.json`, 'utf8')
+    ) as WorkflowDefinition[]
+    expect(rows.find((workflow) => workflow.id === saved.id)?.template.workflowMode).toBe('normal')
+
+    const [task] = AppStore.materializeDueWorkflows(Date.parse(plannedFor))
+    expect(task.workflowMode).toBe('normal')
+  })
+
   it('drops persisted task lifecycle fields before workflow materialization', () => {
     const saved = AppStore.saveWorkflowDefinition(
       workflowInput({

@@ -52,7 +52,11 @@ export function workflowRunTemplateAuthority(
     customModel: template.customModel,
     approvalMode: template.approvalMode,
     permissionPresetId: template.permissionPresetId,
-    workflowMode: template.workflowMode,
+    // `workflowMode` was optional on legacy workflow templates, while
+    // materialized ScheduledTasks have always canonicalized omission to
+    // `normal`. Treat both spellings as one authority value; `plan` remains a
+    // distinct, explicitly authorized posture.
+    workflowMode: template.workflowMode === 'plan' ? 'plan' : 'normal',
     sessionTrust: template.sessionTrust,
     imageAttachments: template.imageAttachments.map(attachmentAuthority),
     externalPathGrants: template.externalPathGrants || [],
