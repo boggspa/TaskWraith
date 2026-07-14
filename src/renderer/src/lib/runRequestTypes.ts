@@ -51,6 +51,8 @@ export interface QueuedRunRequest {
   scheduledRunAt?: string
   workspaceRecord?: WorkspaceRecord
   chatRecord?: ChatRecord
+  /** Immutable composer-selected linked worktree captured when this turn is queued. */
+  effectiveWorkspacePath?: string
   preserveComposer?: boolean
   runtimeProfileId?: string
   geminiAuthProfileId?: string | null
@@ -67,6 +69,26 @@ export interface QueuedRunRequest {
    * the prompt VERBATIM — no context injection or preamble prepends, which
    * would push the slash off the start and stop the provider executing it. */
   verbatimPrompt?: boolean
+}
+
+/**
+ * The worktree target is request-owned once a turn enters the durable queue.
+ * Keep the tiny codec here so enqueue, steer promotion, and restart recovery
+ * cannot accidentally fall back to the renderer's later picker state.
+ */
+export function snapshotQueuedRunWorktreeTarget(
+  effectiveWorkspacePath: string | null | undefined
+): Pick<QueuedRunRequest, 'effectiveWorkspacePath'> {
+  const normalized = effectiveWorkspacePath?.trim().replace(/\/+$/, '')
+  return normalized ? { effectiveWorkspacePath: normalized } : {}
+}
+
+export function restoreQueuedRunWorktreeTarget(snapshot: {
+  effectiveWorkspacePath?: unknown
+}): string | undefined {
+  return typeof snapshot.effectiveWorkspacePath === 'string'
+    ? snapshotQueuedRunWorktreeTarget(snapshot.effectiveWorkspacePath).effectiveWorkspacePath
+    : undefined
 }
 
 export interface RunRouteEventPayload {

@@ -8,6 +8,7 @@ export interface ExternalPathGrantGap {
   path: string
   access: 'read' | 'write'
   missingProviders: ProviderId[]
+  selectionReceipt?: string
 }
 
 export interface ExternalPathGrantPreflight {

@@ -101,9 +101,10 @@ describe('Multiview secondary-workspace isolation', () => {
     })
   })
 
-  it('binds pane mutations to the viewer chat and workspace', () => {
+  it('never rewrites signed chat/workspace authority in the renderer', () => {
     const viewer = chat('viewer', 'workspace-b', [])
     const incoming = grant('beta', '/repos/beta')
+    incoming.bindingVersion = 2
     incoming.chatId = 'focused'
     incoming.workspaceId = 'workspace-a'
 
@@ -114,9 +115,11 @@ describe('Multiview secondary-workspace isolation', () => {
     expect(persisted).toHaveLength(1)
     expect(persisted[0]).toMatchObject({
       id: 'beta',
-      chatId: 'viewer',
-      workspaceId: 'workspace-b',
+      bindingVersion: 2,
+      chatId: 'focused',
+      workspaceId: 'workspace-a',
       path: '/repos/beta'
     })
+    expect(persisted[0].signature).toBe('signed-beta')
   })
 })

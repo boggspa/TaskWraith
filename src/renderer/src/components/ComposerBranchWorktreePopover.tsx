@@ -27,6 +27,8 @@ import './ComposerBranchWorktreePopover.css'
 
 export interface ComposerBranchWorktreePopoverProps {
   workspacePath: string | null | undefined
+  /** Owning chat for an external repository grant. */
+  chatId?: string
   gitSnapshot: GitRepositorySnapshot | null | undefined
   fallbackBranch?: string
   detached?: boolean
@@ -69,6 +71,7 @@ function computePopoverPosition(
 
 export function ComposerBranchWorktreePopover({
   workspacePath,
+  chatId,
   gitSnapshot,
   fallbackBranch,
   detached = false,
@@ -105,8 +108,8 @@ export function ComposerBranchWorktreePopover({
     if (!workspacePath || !apiAvailable) return
     setLoading(true)
     const [branchResult, worktreeResult] = await Promise.all([
-      listGitBranches(workspacePath),
-      listGitWorktrees(workspacePath)
+      listGitBranches(workspacePath, chatId),
+      listGitWorktrees(workspacePath, chatId)
     ])
     setBranches(branchResult.branches.filter((entry) => !entry.isRemote))
     setWorktrees(worktreeResult.worktrees)
@@ -115,17 +118,20 @@ export function ComposerBranchWorktreePopover({
       setStatusTone('error')
     }
     setLoading(false)
-  }, [apiAvailable, workspacePath])
+  }, [apiAvailable, chatId, workspacePath])
 
   const refreshSnapshot = useCallback(async (): Promise<void> => {
     if (!workspacePath || typeof window.api?.gitSnapshot !== 'function') return
     try {
-      const res = await window.api.gitSnapshot({ workspacePath })
+      const res = await window.api.gitSnapshot({
+        workspacePath,
+        ...(chatId ? { chatId } : {})
+      })
       onSnapshotRefresh?.(res?.ok ? res.data : null)
     } catch {
       onSnapshotRefresh?.(null)
     }
-  }, [onSnapshotRefresh, workspacePath])
+  }, [chatId, onSnapshotRefresh, workspacePath])
 
   const updatePosition = useCallback((): void => {
     const trigger = triggerRef.current
@@ -205,7 +211,10 @@ export function ComposerBranchWorktreePopover({
     else {
       await refreshSnapshot()
       try {
-        const res = await window.api.gitSnapshot({ workspacePath })
+        const res = await window.api.gitSnapshot({
+          workspacePath,
+          ...(chatId ? { chatId } : {})
+        })
         resolvedSnapshot = res?.ok ? res.data : null
       } catch {
         resolvedSnapshot = null
@@ -279,7 +288,7 @@ export function ComposerBranchWorktreePopover({
                       disabled={working || branch.isCurrent || Boolean(branchDisabledReason)}
                       onClick={() =>
                         void runAction(
-                          () => checkoutGitBranch(workspacePath!, branch.name),
+                          () => checkoutGitBranch(workspacePath!, branch.name, chatId),
                           'branch-checkout'
                         )
                       }
@@ -308,7 +317,12 @@ export function ComposerBranchWorktreePopover({
                     onClick={() =>
                       void runAction(
                         () =>
-                          createGitBranch(workspacePath!, newBranchName.trim(), gitSnapshot?.branch),
+                          createGitBranch(
+                            workspacePath!,
+                            newBranchName.trim(),
+                            gitSnapshot?.branch,
+                            chatId
+                          ),
                         'branch-checkout'
                       )
                     }
@@ -330,7 +344,7 @@ export function ComposerBranchWorktreePopover({
                       title={worktree.path}
                       onClick={() =>
                         void runAction(
-                          () => selectGitWorktree(workspacePath!, worktree.path),
+                          () => selectGitWorktree(workspacePath!, worktree.path, chatId),
                           'worktree'
                         )
                       }
@@ -354,10 +368,14 @@ export function ComposerBranchWorktreePopover({
                       onClick={() =>
                         void runAction(
                           () =>
-                            createGitWorktree(workspacePath!, {
-                              name: newWorktreeName.trim(),
-                              branch: newWorktreeName.trim()
-                            }),
+                            createGitWorktree(
+                              workspacePath!,
+                              {
+                                name: newWorktreeName.trim(),
+                                branch: newWorktreeName.trim()
+                              },
+                              chatId
+                            ),
                           'worktree'
                         )
                       }

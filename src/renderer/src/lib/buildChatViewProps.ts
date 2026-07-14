@@ -1,6 +1,11 @@
 import type { TranscriptPanelProps } from '../components/TranscriptPanel'
 import { isGlobalChat } from './chatScope'
 import { getLiveToolFileDiffSummaries } from './LiveFileDiffSummary'
+import {
+  mergeCompletionFileChangeSummaries,
+  selectCompletionRunIds,
+  selectRunEvidenceMessages
+} from './RunWorkspaceDiff'
 
 /**
  * Build the TranscriptPanel prop bundle for a Multiview pane-scoped transcript.
@@ -75,8 +80,17 @@ const NOOP_PLAN_CHOICE = (_messageId: string, _option: string): void => {}
 const NOOP_AGENT_QUESTION = (_questionId: string, _answer: string, _isCustom: boolean): void => {}
 const EMPTY_FILE_SUMMARIES: TranscriptPanelProps['displayFileChangeSummaries'] = []
 
+function evidencePathKey(path: string, workspacePath?: string): string {
+  const normalized = path.trim().replace(/\\/g, '/').replace(/^\.\//, '')
+  const workspace = workspacePath?.trim().replace(/\\/g, '/').replace(/\/$/, '')
+  if (!workspace) return normalized
+  const prefix = `${workspace}/`
+  return normalized.startsWith(prefix) ? normalized.slice(prefix.length) : normalized
+}
+
 function paneFileChangePresentation(input: BuildChatViewPropsInput): {
   summaries: TranscriptPanelProps['displayFileChangeSummaries']
+  roundSummaries: NonNullable<TranscriptPanelProps['roundFileChangeSummaries']>
   text: string
   shouldShowStats: boolean
   additions: number
@@ -89,16 +103,57 @@ function paneFileChangePresentation(input: BuildChatViewPropsInput): {
   const hasExactSummaries = exactSummaries !== null && exactSummaries.length > 0
   const currentRunId = input.currentRun?.runId
   const currentRunMessages = currentRunId
-    ? input.messages.filter((message) => message.runId === currentRunId)
+    ? selectRunEvidenceMessages(input.messages, {
+        runIds: [currentRunId],
+        runs: input.chat?.runs
+      })
     : []
-  const summaries = (
-    hasExactSummaries
-      ? exactSummaries
-      : getLiveToolFileDiffSummaries(currentRunMessages, input.currentWorkspacePath)
+  const liveSummaries = getLiveToolFileDiffSummaries(
+    currentRunMessages,
+    input.currentWorkspacePath
   ).filter((summary) => !summary.isNoise)
+  const ownersByPath = new Map<string, NonNullable<(typeof liveSummaries)[number]['owners']>>()
+  for (const summary of liveSummaries) {
+    if (summary.owners?.length) {
+      ownersByPath.set(evidencePathKey(summary.path, input.currentWorkspacePath), summary.owners)
+    }
+  }
+  const exactSummariesWithOwners = (exactSummaries || []).map((summary) => {
+    const owners = ownersByPath.get(evidencePathKey(summary.path, input.currentWorkspacePath))
+    return summary.owners?.length || !owners ? summary : { ...summary, owners }
+  })
+  const currentRunSummaries = (
+    hasExactSummaries ? exactSummariesWithOwners : liveSummaries
+  ).filter((summary) => !summary.isNoise)
+  const roundRunIds = input.runCompleteNotice
+    ? selectCompletionRunIds(input.chat, input.currentRun)
+    : new Set<string>()
+  const roundMessages = input.runCompleteNotice
+    ? selectRunEvidenceMessages(input.messages, {
+        runIds: roundRunIds,
+        runs: input.chat?.runs
+      })
+    : []
+  const roundSummaries =
+    roundMessages.length > 0
+      ? getLiveToolFileDiffSummaries(roundMessages, input.currentWorkspacePath).filter(
+          (summary) => !summary.isNoise
+        )
+      : EMPTY_FILE_SUMMARIES
+  const summaries = mergeCompletionFileChangeSummaries(
+    currentRunSummaries,
+    roundSummaries,
+    input.currentWorkspacePath,
+    { preferDisplayEvidence: roundRunIds.size <= 1 }
+  )
+  const completionRoundSummaries =
+    roundSummaries.length > 0 ? summaries : EMPTY_FILE_SUMMARIES
+  const summariesAreEstimated =
+    !hasExactSummaries || (roundSummaries.length > 0 && roundRunIds.size > 1)
   if (summaries.length === 0) {
     return {
       summaries: EMPTY_FILE_SUMMARIES,
+      roundSummaries: completionRoundSummaries,
       text: '',
       shouldShowStats: false,
       additions: 0,
@@ -113,7 +168,8 @@ function paneFileChangePresentation(input: BuildChatViewPropsInput): {
   )
   return {
     summaries,
-    text: `Created ${created} · Edited ${modified} · Deleted ${deleted}${hasExactSummaries ? '' : ' · live est.'}`,
+    roundSummaries: completionRoundSummaries,
+    text: `Created ${created} · Edited ${modified} · Deleted ${deleted}${summariesAreEstimated ? ' · live est.' : ''}`,
     shouldShowStats: true,
     additions: hasLineStats
       ? summaries.reduce((total, summary) => total + (summary.additions || 0), 0)
@@ -164,6 +220,7 @@ export function buildChatViewProps(input: BuildChatViewPropsInput): TranscriptPa
     // remains focused-only. Project this chat's own run/tool evidence so a
     // resting pane never hides its writes or borrows another pane's files.
     displayFileChangeSummaries: fileChanges.summaries,
+    roundFileChangeSummaries: fileChanges.roundSummaries,
     fileChangeSummaryText: fileChanges.text,
     fileChangeShouldShowStats: fileChanges.shouldShowStats,
     fileChangeDisplayAdds: fileChanges.additions,

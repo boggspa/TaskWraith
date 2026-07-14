@@ -33,6 +33,9 @@ export interface GitCommitControlsProps {
   /** Workspace path to operate on. When absent the controls render a
    * "no workspace" hint and disable all git actions. */
   workspacePath: string | null | undefined
+  /** Owning chat for an external repository grant. Registered workspace
+   * repositories omit this and retain the existing workspace-scoped path. */
+  chatId?: string
   /** Whether the parent diff-action menu is currently open. We lazily
    * fetch the snapshot only while open to avoid background IPC churn. */
   open: boolean
@@ -97,6 +100,7 @@ function computePrReadiness(snapshot: GitRepositorySnapshot | null): {
 
 export function GitCommitControls({
   workspacePath,
+  chatId,
   open,
   hasReviewableDiff,
   onReviewChanges,
@@ -148,7 +152,8 @@ export function GitCommitControls({
     setLoadState({ status: 'working' })
     try {
       const result: GitResult<GitRepositorySnapshot> = await window.api.gitSnapshot({
-        workspacePath
+        workspacePath,
+        ...(chatId ? { chatId } : {})
       })
       if (!mountedRef.current) return
       if (result.ok) {
@@ -169,7 +174,7 @@ export function GitCommitControls({
       })
       onSnapshotRef.current?.(null)
     }
-  }, [workspacePath])
+  }, [chatId, workspacePath])
 
   // Canonical PR-readiness fetch (backend, gh-aware). Runs alongside the
   // snapshot fetch; any failure leaves serverReadiness null so the local
@@ -181,14 +186,17 @@ export function GitCommitControls({
       return
     }
     try {
-      const result = await window.api.githubPrReadiness({ workspacePath })
+      const result = await window.api.githubPrReadiness({
+        workspacePath,
+        ...(chatId ? { chatId } : {})
+      })
       if (!mountedRef.current) return
       setServerReadiness(result.ok ? result.data : null)
     } catch {
       if (!mountedRef.current) return
       setServerReadiness(null)
     }
-  }, [workspacePath])
+  }, [chatId, workspacePath])
 
   // Lazily (re)fetch whenever the menu opens or the workspace changes.
   useEffect(() => {
@@ -216,14 +224,22 @@ export function GitCommitControls({
       // Stage everything the user is reviewing, then commit. Two
       // explicit steps so a stage failure surfaces distinctly from a
       // commit failure (e.g. nothing staged, hook rejection).
-      const staged = await window.api.gitStage({ workspacePath, all: true })
+      const staged = await window.api.gitStage({
+        workspacePath,
+        ...(chatId ? { chatId } : {}),
+        all: true
+      })
       if (!mountedRef.current) return
       if (!staged.ok) {
         setCommitState({ status: 'error', message: staged.error || 'Failed to stage changes.' })
         return
       }
       setCommitState({ status: 'working', message: 'Committing…' })
-      const committed = await window.api.gitCommit({ workspacePath, message: trimmed })
+      const committed = await window.api.gitCommit({
+        workspacePath,
+        ...(chatId ? { chatId } : {}),
+        message: trimmed
+      })
       if (!mountedRef.current) return
       if (!committed.ok) {
         setCommitState({ status: 'error', message: committed.error || 'Failed to commit.' })
@@ -247,7 +263,7 @@ export function GitCommitControls({
         message: error instanceof Error ? error.message : 'Failed to commit.'
       })
     }
-  }, [message, workspacePath, refreshSnapshot, refreshReadiness])
+  }, [chatId, message, workspacePath, refreshSnapshot, refreshReadiness])
 
   // Phase Git-U5 — push the committed branch so a PR can open. First push (no
   // upstream yet) sets the upstream; later pushes are a plain `git push`.
@@ -265,6 +281,7 @@ export function GitCommitControls({
     try {
       const pushed = await window.api.gitPush({
         workspacePath,
+        ...(chatId ? { chatId } : {}),
         setUpstream: !snapshot?.upstream
       })
       if (!mountedRef.current) return
@@ -284,7 +301,7 @@ export function GitCommitControls({
         message: error instanceof Error ? error.message : 'Failed to push.'
       })
     }
-  }, [workspacePath, snapshot?.upstream, refreshReadiness])
+  }, [chatId, workspacePath, snapshot?.upstream, refreshReadiness])
 
   // Prefer the canonical backend readiness (gh-aware: detached, remote,
   // push-first, AND existing-PR detection); fall back to the local mirror

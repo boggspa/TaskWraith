@@ -198,6 +198,9 @@ describe('FileEditorGitActions', () => {
     expect(html).toContain('aria-keyshortcuts="Meta+Shift+D Control+Shift+D"')
     expect(html).toContain('aria-keyshortcuts="Alt+Z"')
     expect(html).toContain('Show in Diff')
+    expect(html).toContain('aria-label="Delete editor file"')
+    expect(html).toContain('Delete</button>')
+    expect(html).not.toContain('Existing files only')
   })
 })
 

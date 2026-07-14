@@ -61,11 +61,21 @@ export function gitBranchWorktreeApiAvailable(): boolean {
   return Boolean(apiFn(IPC.listBranches) && apiFn(IPC.checkoutBranch))
 }
 
-export async function listGitBranches(workspacePath: string): Promise<GitBranchListResult> {
+function gitRepositoryPayload(workspacePath: string, chatId?: string): {
+  workspacePath: string
+  chatId?: string
+} {
+  return chatId ? { workspacePath, chatId } : { workspacePath }
+}
+
+export async function listGitBranches(
+  workspacePath: string,
+  chatId?: string
+): Promise<GitBranchListResult> {
   const fn = apiFn(IPC.listBranches)
   if (!fn) return { ok: false, branches: [], error: 'Branch list API unavailable.' }
   try {
-    const result = (await fn({ workspacePath })) as GitBranchListResult
+    const result = (await fn(gitRepositoryPayload(workspacePath, chatId))) as GitBranchListResult
     if (!result || typeof result !== 'object') {
       return { ok: false, branches: [], error: 'Unexpected branch list response.' }
     }
@@ -81,12 +91,13 @@ export async function listGitBranches(workspacePath: string): Promise<GitBranchL
 
 export async function checkoutGitBranch(
   workspacePath: string,
-  branch: string
+  branch: string,
+  chatId?: string
 ): Promise<GitBranchActionResult> {
   const fn = apiFn(IPC.checkoutBranch)
   if (!fn) return { ok: false, error: 'Checkout API unavailable.' }
   try {
-    return (await fn({ workspacePath, branch })) as GitBranchActionResult
+    return (await fn({ ...gitRepositoryPayload(workspacePath, chatId), branch })) as GitBranchActionResult
   } catch (error) {
     return { ok: false, error: String(error) }
   }
@@ -95,22 +106,26 @@ export async function checkoutGitBranch(
 export async function createGitBranch(
   workspacePath: string,
   branch: string,
-  from?: string
+  from?: string,
+  chatId?: string
 ): Promise<GitBranchActionResult> {
   const fn = apiFn(IPC.createBranch)
   if (!fn) return { ok: false, error: 'Create-branch API unavailable.' }
   try {
-    return (await fn({ workspacePath, branch, from })) as GitBranchActionResult
+    return (await fn({ ...gitRepositoryPayload(workspacePath, chatId), branch, from })) as GitBranchActionResult
   } catch (error) {
     return { ok: false, error: String(error) }
   }
 }
 
-export async function listGitWorktrees(workspacePath: string): Promise<GitWorktreeListResult> {
+export async function listGitWorktrees(
+  workspacePath: string,
+  chatId?: string
+): Promise<GitWorktreeListResult> {
   const fn = apiFn(IPC.listWorktrees)
   if (!fn) return { ok: false, worktrees: [], error: 'Worktree list API unavailable.' }
   try {
-    const result = (await fn({ workspacePath })) as GitWorktreeListResult
+    const result = (await fn(gitRepositoryPayload(workspacePath, chatId))) as GitWorktreeListResult
     return {
       ok: Boolean(result?.ok),
       worktrees: Array.isArray(result?.worktrees) ? result.worktrees : [],
@@ -123,12 +138,13 @@ export async function listGitWorktrees(workspacePath: string): Promise<GitWorktr
 
 export async function createGitWorktree(
   workspacePath: string,
-  input: { name: string; branch?: string; path?: string }
+  input: { name: string; branch?: string; path?: string },
+  chatId?: string
 ): Promise<GitBranchActionResult> {
   const fn = apiFn(IPC.createWorktree)
   if (!fn) return { ok: false, error: 'Create-worktree API unavailable.' }
   try {
-    return (await fn({ workspacePath, ...input })) as GitBranchActionResult
+    return (await fn({ ...gitRepositoryPayload(workspacePath, chatId), ...input })) as GitBranchActionResult
   } catch (error) {
     return { ok: false, error: String(error) }
   }
@@ -137,12 +153,17 @@ export async function createGitWorktree(
 export async function removeGitWorktree(
   workspacePath: string,
   worktreePath: string,
-  force?: boolean
+  force?: boolean,
+  chatId?: string
 ): Promise<GitBranchActionResult> {
   const fn = apiFn(IPC.removeWorktree)
   if (!fn) return { ok: false, error: 'Remove-worktree API unavailable.' }
   try {
-    return (await fn({ workspacePath, path: worktreePath, force: Boolean(force) })) as GitBranchActionResult
+    return (await fn({
+      ...gitRepositoryPayload(workspacePath, chatId),
+      path: worktreePath,
+      force: Boolean(force)
+    })) as GitBranchActionResult
   } catch (error) {
     return { ok: false, error: String(error) }
   }
@@ -150,12 +171,16 @@ export async function removeGitWorktree(
 
 export async function selectGitWorktree(
   workspacePath: string,
-  worktreePath: string
+  worktreePath: string,
+  chatId?: string
 ): Promise<GitBranchActionResult> {
   const fn = apiFn(IPC.selectWorktree)
   if (!fn) return { ok: false, error: 'Select-worktree API unavailable.' }
   try {
-    return (await fn({ workspacePath, path: worktreePath })) as GitBranchActionResult
+    return (await fn({
+      ...gitRepositoryPayload(workspacePath, chatId),
+      path: worktreePath
+    })) as GitBranchActionResult
   } catch (error) {
     return { ok: false, error: String(error) }
   }

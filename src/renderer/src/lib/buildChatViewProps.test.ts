@@ -164,6 +164,234 @@ describe('buildChatViewProps (viewer policy)', () => {
     expect(p.fileChangeDisplayDels).toBe(1)
   })
 
+  it('does not present a denied write as an edit when its optimistic status stayed success', () => {
+    const p = buildChatViewProps(
+      makeInput({
+        currentWorkspacePath: '/Users/chrisizatt/Documents/Test 1',
+        messages: [
+          {
+            id: 'denied-tool',
+            role: 'tool',
+            content: '',
+            timestamp: '2026-07-13T11:37:20.513Z',
+            runId: 'codex-denied',
+            toolActivities: [
+              {
+                id: 'call-denied',
+                toolName: 'write_file',
+                displayName: 'Edited taskwraith_phase7_Test_1.txt',
+                category: 'write',
+                status: 'success',
+                parameters: {
+                  path: 'taskwraith_phase7_Test_1.txt',
+                  content: 'TEST1_ONLY_20260713\n'
+                },
+                rawResultEvent: {
+                  type: 'tool_result',
+                  status: 'error',
+                  result: {
+                    structuredContent: {
+                      ok: false,
+                      tool: 'write_file',
+                      error: 'File changes denied by TaskWraith.'
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        ],
+        currentRun: {
+          runId: 'codex-denied',
+          runDiff: { createdFiles: [], modifiedFiles: [], deletedFiles: [] }
+        } as unknown as BuildChatViewPropsInput['currentRun']
+      })
+    )
+
+    expect(p.displayFileChangeSummaries).toEqual([])
+    expect(p.fileChangeSummaryText).toBe('')
+    expect(p.fileChangeShouldShowStats).toBe(false)
+  })
+
+  it('enriches an exact resting-pane diff with its Ensemble participant owner', () => {
+    const exact = {
+      path: 'owned.ts',
+      status: 'modified',
+      additions: 1,
+      deletions: 0,
+      previewKind: 'git_diff'
+    }
+    const p = buildChatViewProps(
+      makeInput({
+        currentWorkspacePath: '/Users/chrisizatt/Documents/Test 2',
+        messages: [
+          {
+            id: 'owned-tool',
+            role: 'tool',
+            content: '',
+            timestamp: '2026-07-13T12:00:10.000Z',
+            runId: 'seat-b',
+            metadata: { ensembleRole: 'Reviewer', ensembleOrder: 2 },
+            toolActivities: [
+              {
+                id: 'owned-write',
+                toolName: 'write_file',
+                displayName: 'Edited owned.ts',
+                category: 'write',
+                status: 'success',
+                parameters: {
+                  path: '/Users/chrisizatt/Documents/Test 2/owned.ts',
+                  content: 'owned\n'
+                },
+                metadata: {
+                  ensembleProvider: 'codex',
+                  ensembleParticipantId: 'participant-b'
+                }
+              }
+            ]
+          }
+        ],
+        currentRun: {
+          runId: 'seat-b',
+          runDiff: {
+            createdFiles: [],
+            modifiedFiles: [exact],
+            deletedFiles: []
+          }
+        } as unknown as BuildChatViewPropsInput['currentRun']
+      })
+    )
+
+    expect(p.displayFileChangeSummaries).toEqual([
+      {
+        ...exact,
+        owners: [
+          {
+            provider: 'codex',
+            participantId: 'participant-b',
+            role: 'Reviewer',
+            order: 2
+          }
+        ]
+      }
+    ])
+  })
+
+  it('builds the resting-pane This round evidence from every participant run', () => {
+    const activity = (id: string, path: string) => ({
+      id,
+      toolName: 'write_file',
+      displayName: `Edited ${path}`,
+      category: 'write' as const,
+      status: 'success' as const,
+      parameters: { path, content: `${id}\n` }
+    })
+    const message = (
+      id: string,
+      runId: string,
+      path: string,
+      participantId: string,
+      order: number
+    ) => ({
+      id,
+      role: 'tool' as const,
+      content: '',
+      timestamp: '2026-07-13T12:00:30.000Z',
+      runId,
+      metadata: {
+        ensembleProvider: 'codex' as const,
+        ensembleParticipantId: participantId,
+        ensembleRole: participantId === 'participant-a' ? 'Worker' : 'Reviewer',
+        ensembleOrder: order
+      },
+      toolActivities: [activity(`activity-${id}`, path)]
+    })
+    const runs = [
+      {
+        runId: 'seat-a',
+        startedAt: '2026-07-13T12:00:00.000Z',
+        endedAt: '2026-07-13T12:00:20.000Z',
+        ensembleRoundId: 'round-current'
+      },
+      {
+        runId: 'seat-b',
+        startedAt: '2026-07-13T12:00:20.000Z',
+        endedAt: '2026-07-13T12:00:40.000Z',
+        ensembleRoundId: 'round-current'
+      },
+      {
+        runId: 'seat-old',
+        startedAt: '2026-07-13T11:00:00.000Z',
+        endedAt: '2026-07-13T11:00:20.000Z',
+        ensembleRoundId: 'round-old'
+      }
+    ]
+    const p = buildChatViewProps(
+      makeInput({
+        chat: {
+          appChatId: 'ensemble-chat',
+          chatKind: 'ensemble',
+          messages: [],
+          runs,
+          ensemble: {
+            enabled: true,
+            maxParticipants: 3,
+            participants: [],
+            activeRound: {
+              roundId: 'round-current',
+              status: 'completed',
+              prompt: 'test',
+              startedAt: '2026-07-13T12:00:00.000Z',
+              endedAt: '2026-07-13T12:00:40.000Z',
+              participants: [
+                { participantId: 'participant-a', runId: 'seat-a' },
+                { participantId: 'participant-b', runId: 'seat-b' }
+              ]
+            }
+          }
+        } as unknown as BuildChatViewPropsInput['chat'],
+        currentWorkspacePath: '/Users/chrisizatt/Documents/Test 3',
+        messages: [
+          message(
+            'message-a',
+            'seat-a',
+            '/Users/chrisizatt/Documents/Test 3/a.ts',
+            'participant-a',
+            1
+          ),
+          message(
+            'message-b',
+            'seat-b',
+            '/Users/chrisizatt/Documents/Test 3/b.ts',
+            'participant-b',
+            2
+          ),
+          message(
+            'message-old',
+            'seat-old',
+            '/Users/chrisizatt/Documents/Test 3/old.ts',
+            'participant-old',
+            3
+          )
+        ],
+        currentRun: {
+          ...runs[1],
+          runDiff: { createdFiles: [], modifiedFiles: [], deletedFiles: [] }
+        } as unknown as BuildChatViewPropsInput['currentRun'],
+        runCompleteNotice: { timestamp: '2026-07-13T12:00:40.000Z', exitCode: 0 }
+      })
+    )
+
+    expect(p.displayFileChangeSummaries.map((summary) => summary.path)).toEqual(['a.ts', 'b.ts'])
+    expect(p.displayFileChangeSummaries.map((summary) => summary.owners?.[0]?.participantId)).toEqual(
+      ['participant-a', 'participant-b']
+    )
+    expect(p.roundFileChangeSummaries?.map((summary) => summary.path).sort()).toEqual([
+      'a.ts',
+      'b.ts'
+    ])
+  })
+
   it('keeps policy props at stable identities across calls (memo-safe)', () => {
     const a = buildChatViewProps(makeInput())
     const b = buildChatViewProps(makeInput())

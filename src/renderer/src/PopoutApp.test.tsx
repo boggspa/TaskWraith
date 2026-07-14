@@ -3,8 +3,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   PopoutApp,
   popoutKindReceivesOpenFileBroadcast,
-  resolvePopoutOpenFileView
+  resolvePopoutOpenFileView,
+  resolvePopoutWorkspaceIpcTarget
 } from './PopoutApp'
+import {
+  popoutAllowsGitMutations,
+  refreshPopoutGitMutationCapability
+} from './lib/workspacePopoutCapabilities'
 
 const diffViewerCapture = vi.hoisted(() => ({
   calls: [] as Array<Record<string, unknown>>
@@ -67,6 +72,45 @@ describe('PopoutApp Diff Studio', () => {
     expect(typeof props?.onStageFile).toBe('function')
     expect(typeof props?.onUnstageFile).toBe('function')
   })
+
+  it('keeps a read-only external Diff Studio bound to its chat without Git mutations', () => {
+    vi.stubGlobal('window', {
+      location: {
+        search: '?popout=diff-studio&workspace=%2Fexternal%2Frepo&chat=chat-2&write=0'
+      }
+    })
+
+    renderToStaticMarkup(<PopoutApp />)
+
+    const props = diffViewerCapture.calls.at(-1)
+    expect(props?.workspacePath).toBe('/external/repo')
+    expect(props?.onOpenFile).toBeUndefined()
+    expect(props?.onStageFile).toBeUndefined()
+    expect(props?.onUnstageFile).toBeUndefined()
+    expect(resolvePopoutWorkspaceIpcTarget('/external/repo', 'chat-2')).toEqual({
+      repoPath: '/external/repo',
+      chatId: 'chat-2'
+    })
+  })
+
+  it('exposes Git mutations only when main marks the external popout writable', () => {
+    vi.stubGlobal('window', {
+      location: {
+        search: '?popout=diff-studio&workspace=%2Fexternal%2Frepo&chat=chat-2&write=1'
+      }
+    })
+
+    renderToStaticMarkup(<PopoutApp />)
+
+    const props = diffViewerCapture.calls.at(-1)
+    expect(props?.onOpenFile).toBeUndefined()
+    expect(typeof props?.onStageFile).toBe('function')
+    expect(typeof props?.onUnstageFile).toBe('function')
+  })
+
+  it('uses registered-workspace IPC shape when no chat scope is present', () => {
+    expect(resolvePopoutWorkspaceIpcTarget('/repo', '')).toEqual({ workspacePath: '/repo' })
+  })
 })
 
 describe('PopoutApp File Editor', () => {
@@ -114,5 +158,28 @@ describe('PopoutApp open-file broadcast routing', () => {
     expect(resolvePopoutOpenFileView('workbench', 'diff')).toBe('diff')
     expect(resolvePopoutOpenFileView('workbench', 'editor')).toBe('editor')
     expect(resolvePopoutOpenFileView('workbench', undefined)).toBe('editor')
+  })
+})
+
+describe('PopoutApp external Git capability refresh', () => {
+  it('adopts targeted main capability events for revoke and elevation', () => {
+    expect(
+      refreshPopoutGitMutationCapability('chat-2', true, {
+        externalWriteAllowed: false
+      })
+    ).toBe(false)
+    expect(
+      refreshPopoutGitMutationCapability('chat-2', false, {
+        externalWriteAllowed: true
+      })
+    ).toBe(true)
+    expect(refreshPopoutGitMutationCapability('chat-2', false, {})).toBe(false)
+  })
+
+  it('keeps registered workspace popouts writable without an external capability', () => {
+    expect(popoutAllowsGitMutations('', '0')).toBe(true)
+    expect(
+      refreshPopoutGitMutationCapability('', false, { externalWriteAllowed: false })
+    ).toBe(true)
   })
 })

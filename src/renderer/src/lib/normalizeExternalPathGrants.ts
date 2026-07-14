@@ -25,23 +25,40 @@ const normalizeExternalPathGrants = (value: unknown): ExternalPathGrant[] => {
     const grant = item as Partial<ExternalPathGrant>
     const providerToken = grant.provider as ProviderId | undefined
     if (!providerToken || !VALID_PROVIDERS.has(providerToken)) continue
+    if (typeof grant.id !== 'string' || !grant.id) continue
     if (typeof grant.path !== 'string' || !grant.path.trim()) continue
+    if (grant.kind !== 'file' && grant.kind !== 'directory') continue
+    if (grant.access !== 'read' && grant.access !== 'write') continue
+    if (
+      grant.duration !== 'thisRun' &&
+      grant.duration !== 'thisThread' &&
+      grant.duration !== 'workspace'
+    ) {
+      continue
+    }
+    if (typeof grant.createdAt !== 'string' || !grant.createdAt) continue
     if (grant.issuedBy !== 'main' || typeof grant.signature !== 'string' || !grant.signature)
       continue
-    const access = grant.access === 'write' ? 'write' : 'read'
+
+    // Every field below except `order` participates in either the grant's
+    // signed authority or its security-scoped filesystem capability. Do not
+    // trim, default, rebind, or otherwise "repair" it in the renderer: doing
+    // so turns a valid main-issued grant into a different unsigned claim.
     grants.push({
-      id: grant.id || `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      id: grant.id,
       provider: providerToken,
+      bindingVersion: grant.bindingVersion,
       workspaceId: grant.workspaceId,
       chatId: grant.chatId,
-      path: grant.path.trim(),
-      kind: grant.kind === 'directory' ? 'directory' : 'file',
-      access,
-      duration: grant.duration || 'thisThread',
+      appRunId: grant.appRunId,
+      path: grant.path,
+      kind: grant.kind,
+      access: grant.access,
+      duration: grant.duration,
       securityScopedBookmark: grant.securityScopedBookmark,
       issuedBy: 'main',
       signature: grant.signature,
-      createdAt: grant.createdAt || new Date().toISOString(),
+      createdAt: grant.createdAt,
       // 1.0.6-EW66 — preserve the persisted display order through
       // normalization so a user's drag-reorder survives reload.
       // `coalesceExternalPathGrants` (below) self-heals any missing

@@ -101,11 +101,10 @@ export function applyExternalPathGrantsToChat(
   nextGrants: ExternalPathGrant[],
   updatedAt = Date.now()
 ): ChatRecord {
-  const normalized = normalizeExternalPathGrants(nextGrants).map((grant) => ({
-    ...grant,
-    workspaceId: chat.workspaceId || grant.workspaceId,
-    chatId: chat.appChatId
-  }))
+  // workspaceId/chatId are signed authority, not renderer-owned routing
+  // metadata. Main must issue a new grant when the binding changes; rewriting
+  // either field here would persist a forged, non-verifying bearer token.
+  const normalized = normalizeExternalPathGrants(nextGrants)
   return {
     ...chat,
     providerMetadata: canonicalizeExternalPathGrantMetadata(chat.providerMetadata, normalized),

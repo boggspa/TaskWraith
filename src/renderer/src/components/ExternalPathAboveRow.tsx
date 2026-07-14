@@ -297,6 +297,7 @@ export function ExternalPathAboveRow({
         <div className="composer-diff-action-menu" role="menu">
           <GitCommitControls
             workspacePath={grant.path}
+            chatId={grant.chatId}
             open={diffMenuOpen}
             hasReviewableDiff={Boolean(hasDiff)}
             onReviewChanges={() => onReviewChanges?.()}
@@ -328,6 +329,7 @@ export function ExternalPathAboveRow({
                 {' · '}
                 <ComposerBranchWorktreePopover
                   workspacePath={grant.path}
+                  chatId={grant.chatId}
                   gitSnapshot={snapshot}
                   fallbackBranch={descriptor.branch}
                   detached={snapshot?.detached ?? false}

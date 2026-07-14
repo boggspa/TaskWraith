@@ -71,6 +71,7 @@ describe('Multiview pane Composer context parity', () => {
       'applyEnsemblePermissionsToAllParticipants',
       'applyEnsembleRosterPreset',
       'currentComposerMentionParticipants',
+      'currentDiscordContextSelection',
       'currentEnsembleActiveGoalStatus',
       'currentEnsembleConcurrentMode',
       'currentEnsembleContinuationHops',
@@ -83,16 +84,23 @@ describe('Multiview pane Composer context parity', () => {
       'ensembleEnabledParticipantsForCurrent',
       'ensembleOllamaContextWarning',
       'handleBlackboardQueuedMessage',
+      'handleAttachWindow',
+      'handleClearDiscordContext',
       'handleDeleteQueuedMessage',
+      'handleDetachWindow',
       'handleEditQueuedMessage',
+      'handleReviewCurrentDiff',
       'handleSelectParticipant',
       'handleStopWorkSession',
       'handleSteerToQueuedMessage',
+      'handleToggleWelcomeEnsemble',
       'isCurrentChatBusyForSteer',
       'isCurrentEnsembleRoundRunning',
       'isSteerBusyForCurrentChat',
+      'openDiscordContextPicker',
       'patchEnsembleParticipantById',
       'queuedMessagesAboveRowEntries',
+      'resumeAppWatchSnapshot',
       'selectedParticipant',
       'setActiveEnsembleRosterPresetId',
       'setShowWorkSessionSheet',
@@ -155,6 +163,23 @@ describe('Multiview pane Composer context parity', () => {
     expect(paneRun).toContain(
       'if (dmTargetParticipantId) request.dmTargetParticipantId = dmTargetParticipantId'
     )
+    expect(paneRun).toContain(
+      'discordContextSelection: discordContextSelectionByChatIdRef.current[chatId] || null'
+    )
+    expect(paneRun).toContain(
+      'setDiscordContextSelectionByChatId((prev) => ({ ...prev, [chatId]: null }))'
+    )
+    const buildRunRequestStart = source.indexOf('const buildRunRequest =')
+    const buildRunRequestEnd = source.indexOf(
+      'const buildRunRequestRef =',
+      buildRunRequestStart
+    )
+    const buildRunRequest = source.slice(buildRunRequestStart, buildRunRequestEnd)
+    expect(buildRunRequest).toContain(
+      "Object.prototype.hasOwnProperty.call(target, 'discordContextSelection')"
+    )
+    expect(buildRunRequest).toContain('resolveRunDiscordContextSelection({')
+    expect(buildRunRequest).toContain('targetSelection: targetDiscordContextSelection')
     expect(source).toContain('selectedParticipantIdByChatId[currentChat.appChatId]')
     expect(
       source.match(/resolveMultiviewEnsembleParticipantSelection\(/g)

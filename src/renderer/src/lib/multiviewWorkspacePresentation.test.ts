@@ -40,8 +40,9 @@ describe('Multiview focused workspace presentation', () => {
       'const currentExternalWorkspaceState ='
     )
     expect(focusedSnapshot).toContain('gitSnapshotByWorkspace[currentGitPresentationPath] ?? null')
-    expect(focusedSnapshot).toContain('const focusedPrimaryPr = isMultiviewSplit ? null : primaryPr')
-    expect(focusedSnapshot).toContain('const focusedPrimaryCi = isMultiviewSplit ? null : primaryCi')
+    expect(focusedSnapshot).toContain('normalizeWorkspacePath(primaryPrOwnerPathRef.current')
+    expect(focusedSnapshot).toContain('normalizeWorkspacePath(primaryCiOwnerPathRef.current')
+    expect(focusedSnapshot).toContain('normalizeWorkspacePath(snapshot.requestedPath)')
 
     const diffStats = slice('const workspaceDiffStats =', 'const liveGitInvalidationKey =')
     expect(diffStats).toContain('if (focusedPrimaryGitSnapshot)')
@@ -127,13 +128,63 @@ describe('Multiview focused workspace presentation', () => {
     )
   })
 
+  it('binds resting-pane review, mode, capture, and Discord actions to the pane chat', () => {
+    const paneComposer = slice(
+      'const paneComposerCtx: ComposerProps =',
+      'const memoizedPaneComposerCtx ='
+    )
+    expect(paneComposer).toContain(
+      'currentDiscordContextSelection: discordContextSelectionByChatId[viewerChatId] || null'
+    )
+    expect(paneComposer).toContain('resumeAppWatchSnapshot: viewerResumeAppWatchSnapshot')
+    expect(paneComposer).toContain(
+      'await handleReviewDiffForChat(viewerChat, viewerProvider, viewerWorkspace)'
+    )
+    expect(paneComposer).toContain(
+      'handleToggleEnsembleForChat(viewerChat, enabled, viewerIsRunning)'
+    )
+    expect(paneComposer).toContain('handleAttachWindow: () => handleAttachWindow(viewerChatId)')
+    expect(paneComposer).toContain('handleDetachWindow: () => handleDetachWindow(viewerChatId)')
+    expect(paneComposer).toContain(
+      'handleClearDiscordContext: () => clearDiscordContextForChat(viewerChatId)'
+    )
+    expect(paneComposer).toContain(
+      'openDiscordContextPickerForPane(viewerPaneIndex, viewerChatId)'
+    )
+
+    const screenWatch = slice(
+      'const handleMultiviewPaneToggleScreenWatch =',
+      'const openDiscordContextPickerForPane ='
+    )
+    expect(screenWatch).toContain('attachedWindowOwnerChatIdRef.current === chatId')
+    expect(screenWatch).toContain('handleDetachWindow(chatId)')
+    expect(screenWatch).toContain('handleAttachWindow(chatId)')
+  })
+
+  it('invalidates registered Git and CI responses when workspace ownership changes', () => {
+    expect(source).toContain('primaryWorkspacePresentationGenerationRef.current += 1')
+    expect(source).toContain('primaryCiRequestGenerationRef.current += 1')
+    expect(source).toContain('setPrimaryGitSnapshot(null)')
+    expect(source).toContain(
+      '!isCurrentPrimaryWorkspaceRequest(requestedWorkspacePath, workspaceGeneration)'
+    )
+    expect(source).toContain(
+      'primaryCiRequestGenerationRef.current !== requestGeneration'
+    )
+    expect(source).toContain(
+      "normalizeWorkspacePath(primaryPrOwnerPathRef.current || '')"
+    )
+    expect(source).toContain(
+      "normalizeWorkspacePath(primaryCiOwnerPathRef.current || '')"
+    )
+  })
+
   it('does not let the focused Diff Studio scalar replace the current chat run summary', () => {
     expect(source).toContain(
       'const exactFileChangeSummaries = getRunFileDiffSummaries(currentRunDiff || null)'
     )
-    expect(source).toContain(
-      'messages.filter((message) => message.runId === liveToolFileSummaryRunId)'
-    )
+    expect(source).toContain('selectRunEvidenceMessages(messages, {')
+    expect(source).toContain('runIds: [liveToolFileSummaryRunId]')
     expect(source).not.toContain(
       'const exactFileChangeSummaries = getRunFileDiffSummaries(runDiff || currentRunDiff || null)'
     )
@@ -144,5 +195,6 @@ describe('Multiview focused workspace presentation', () => {
     expect(completionEvidence).toContain(': liveToolFileChangeSummaries')
     expect(completionEvidence).not.toContain('workspaceFileChangeSummaries')
     expect(completionEvidence).not.toContain('applyWorkspaceDiffOverlay')
+    expect(source).toContain('mergeCompletionFileChangeSummaries(')
   })
 })

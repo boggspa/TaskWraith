@@ -1,9 +1,16 @@
 import { describe, expect, it } from 'vitest'
-import type { ChatRecord, WorkspaceRecord } from '../../../main/store/types'
+import type {
+  ChatRecord,
+  ExternalPathGrant,
+  ProviderId,
+  ProviderSeatGeneration,
+  WorkspaceRecord
+} from '../../../main/store/types'
 import {
   rebindEnsembleChatToWorkspace,
   rebindWelcomeEnsembleChatToGlobal,
-  rebindWelcomeEnsembleChatToWorkspace
+  rebindWelcomeEnsembleChatToWorkspace,
+  shouldApplyFocusedWorkspaceRebind
 } from './ensembleWelcomeWorkspace'
 
 const workspace: WorkspaceRecord = {
@@ -13,6 +20,79 @@ const workspace: WorkspaceRecord = {
   createdAt: 1,
   lastOpenedAt: 1,
   pinned: false
+}
+
+describe('shouldApplyFocusedWorkspaceRebind', () => {
+  it('preserves a live focused session only for a true canonical and renderer no-op', () => {
+    expect(
+      shouldApplyFocusedWorkspaceRebind({
+        canonicalChanged: false,
+        rendererAlreadyAtTarget: true
+      })
+    ).toBe(false)
+  })
+
+  it('resets focused ownership when main changed or the renderer was stale', () => {
+    expect(
+      shouldApplyFocusedWorkspaceRebind({
+        canonicalChanged: true,
+        rendererAlreadyAtTarget: true
+      })
+    ).toBe(true)
+    expect(
+      shouldApplyFocusedWorkspaceRebind({
+        canonicalChanged: false,
+        rendererAlreadyAtTarget: false
+      })
+    ).toBe(true)
+  })
+})
+
+function externalGrant(provider: ProviderId, path: string): ExternalPathGrant {
+  return {
+    id: `${provider}:${path}`,
+    provider,
+    path,
+    kind: 'directory',
+    access: 'write',
+    duration: 'thisThread',
+    issuedBy: 'main',
+    signature: 'old-workspace-signature',
+    createdAt: '2026-07-13T00:00:00.000Z'
+  }
+}
+
+function seatGeneration(provider: ProviderId): ProviderSeatGeneration {
+  return {
+    schemaVersion: 1,
+    id: `seat-${provider}-old-workspace`,
+    ordinal: 2,
+    createdAt: '2026-07-13T00:00:00.000Z',
+    updatedAt: '2026-07-13T00:00:00.000Z',
+    config: {
+      provider,
+      model: `${provider}-model`,
+      transport: 'cli-opaque',
+      systemPromptFingerprint: 'system-old-workspace',
+      toolsFingerprint: 'tools-old-workspace'
+    },
+    guaranteeTier: 'best-effort',
+    cacheEvidence: {
+      state: 'observed_hit',
+      observedAt: '2026-07-13T00:00:00.000Z',
+      guaranteeTier: 'best-effort',
+      cacheReadInputTokens: 900,
+      cacheCreationInputTokens: 0
+    }
+  }
+}
+
+function contextSummary(provider: ProviderId): NonNullable<ChatRecord['contextCompactionSummary']> {
+  return {
+    text: 'Old workspace compacted context.',
+    createdAt: '2026-07-13T00:00:00.000Z',
+    provider
+  }
 }
 
 function ensembleChat(): ChatRecord {
@@ -192,6 +272,89 @@ describe('rebindEnsembleChatToWorkspace (1.0.5-EW41)', () => {
     })
   })
 
+  it('starts every provider seat fresh when moving from Test 1 to Test 3', () => {
+    const codexReceipt = {
+      schemaVersion: 1 as const,
+      profileId: 'taskwraith-core-v1' as const,
+      provider: 'codex' as const,
+      providerSessionId: 'codex-test-1-session',
+      pinnedAt: '2026-07-13T00:00:00.000Z'
+    }
+    const original = ensembleChat()
+    original.workspaceId = 'test-1'
+    original.workspacePath = '/Users/chrisizatt/Documents/Test 1'
+    original.provider = 'codex'
+    original.linkedProviderSessionId = 'codex-top-level-session'
+    original.linkedGeminiSessionId = 'legacy-top-level-session'
+    original.taskWraithMcpProfileReceipt = {
+      ...codexReceipt,
+      providerSessionId: 'codex-top-level-session'
+    }
+    original.seatGeneration = seatGeneration('codex')
+    original.contextCompactionSummary = contextSummary('codex')
+    original.providerMetadata = {
+      customSetting: 'preserved',
+      externalPathGrants: [externalGrant('codex', '/Users/chrisizatt/Documents/Test 2')],
+      claudeExternalPathGrants: [externalGrant('claude', '/Users/chrisizatt/Documents/Test 4')]
+    }
+    original.ensemble!.participants = [
+      {
+        id: 'boss',
+        provider: 'codex',
+        enabled: true,
+        role: 'Boss',
+        instructions: 'Preserve this brief.',
+        order: 1,
+        permissionPresetId: 'workspace_write',
+        permissionOverrides: {
+          approvalMode: 'plan',
+          externalPathGrants: [externalGrant('codex', '/Users/chrisizatt/Documents/Test 2')]
+        },
+        linkedProviderSessionId: 'codex-test-1-session',
+        taskWraithMcpProfileReceipt: codexReceipt,
+        promptShellVersion: 'ensemble-shell-v1:test-1',
+        promptDynamicStateVersion: 'ensemble-dynamic-v1:test-1',
+        seatGeneration: seatGeneration('codex'),
+        contextCompactionSummary: contextSummary('codex')
+      }
+    ]
+    const test3: WorkspaceRecord = {
+      ...workspace,
+      id: 'test-3',
+      path: '/Users/chrisizatt/Documents/Test 3',
+      displayName: 'Test 3'
+    }
+
+    const rebound = rebindEnsembleChatToWorkspace(original, test3, 7777)
+
+    expect(rebound).toMatchObject({
+      appChatId: original.appChatId,
+      workspaceId: 'test-3',
+      workspacePath: '/Users/chrisizatt/Documents/Test 3'
+    })
+    expect(rebound?.linkedProviderSessionId).toBeUndefined()
+    expect(rebound?.linkedGeminiSessionId).toBeUndefined()
+    expect(rebound?.taskWraithMcpProfileReceipt).toBeUndefined()
+    expect(rebound?.seatGeneration).toBeUndefined()
+    expect(rebound?.contextCompactionSummary).toBeUndefined()
+    expect(rebound?.providerMetadata).toEqual({ customSetting: 'preserved' })
+    expect(rebound?.ensemble?.participants[0]).toMatchObject({
+      id: 'boss',
+      role: 'Boss',
+      instructions: 'Preserve this brief.',
+      permissionPresetId: 'workspace_write'
+    })
+    expect(rebound?.ensemble?.participants[0].linkedProviderSessionId).toBeUndefined()
+    expect(rebound?.ensemble?.participants[0].taskWraithMcpProfileReceipt).toBeUndefined()
+    expect(rebound?.ensemble?.participants[0].promptShellVersion).toBeUndefined()
+    expect(rebound?.ensemble?.participants[0].promptDynamicStateVersion).toBeUndefined()
+    expect(rebound?.ensemble?.participants[0].seatGeneration).toBeUndefined()
+    expect(rebound?.ensemble?.participants[0].contextCompactionSummary).toBeUndefined()
+    expect(rebound?.ensemble?.participants[0].permissionOverrides).toEqual({
+      approvalMode: 'plan'
+    })
+  })
+
   it('returns null when the chat is already bound to the target workspace', () => {
     const alreadyOnTarget: ChatRecord = {
       ...ensembleChat(),
@@ -200,6 +363,20 @@ describe('rebindEnsembleChatToWorkspace (1.0.5-EW41)', () => {
     }
     // No-op signal so callers can skip the save round-trip + UI churn.
     expect(rebindEnsembleChatToWorkspace(alreadyOnTarget, workspace)).toBeNull()
+  })
+
+  it('treats an absent legacy scope as already bound to its workspace', () => {
+    const alreadyOnTarget: ChatRecord = {
+      ...ensembleChat(),
+      scope: undefined,
+      workspaceId: workspace.id,
+      workspacePath: workspace.path,
+      linkedProviderSessionId: 'legacy-session-must-survive-no-op',
+      seatGeneration: seatGeneration('codex')
+    }
+
+    expect(rebindEnsembleChatToWorkspace(alreadyOnTarget, workspace)).toBeNull()
+    expect(rebindWelcomeEnsembleChatToWorkspace(alreadyOnTarget, workspace, true)).toBeNull()
   })
 
   it('rebinds a global Ensemble chat to a workspace (scope transition)', () => {

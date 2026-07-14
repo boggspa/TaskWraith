@@ -114,8 +114,6 @@ export function applyRecoveryRecordsToEnsembleRounds(
           status: recoveryRoundStatus(Array.from(recordByRunId.values())),
           endedAt: latestRecoveredAt(Array.from(recordByRunId.values()), activeRound.endedAt),
           activeParticipantId: undefined,
-          queuedPrompt: undefined,
-          queuedPrompts: [],
           pendingWakeupIds: [],
           sleepingParticipantIds: []
         }

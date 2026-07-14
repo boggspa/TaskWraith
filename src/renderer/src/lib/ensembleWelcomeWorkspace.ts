@@ -1,5 +1,17 @@
 import type { ChatRecord, WorkspaceRecord } from '../../../main/store/types'
 
+export function shouldApplyFocusedWorkspaceRebind(input: {
+  canonicalChanged: boolean
+  rendererAlreadyAtTarget: boolean
+}): boolean {
+  // A true main-process no-op may preserve the focused provider session only
+  // when this renderer already agrees with the canonical target. A stale
+  // renderer still needs the full transition reset even if main was already
+  // bound correctly (for example another renderer completed the rebind first).
+  return input.canonicalChanged || !input.rendererAlreadyAtTarget
+}
+import { EXTERNAL_PATH_GRANT_METADATA_KEYS } from '../../../main/store/ExternalPathGrants'
+
 export function rebindWelcomeEnsembleChatToWorkspace(
   chat: ChatRecord | null | undefined,
   workspace: WorkspaceRecord,
@@ -7,7 +19,8 @@ export function rebindWelcomeEnsembleChatToWorkspace(
   now = Date.now()
 ): ChatRecord | null {
   if (!isWelcomeChat || chat?.chatKind !== 'ensemble' || !chat.ensemble) return null
-  return {
+  if (isChatBoundToWorkspace(chat, workspace)) return null
+  return clearWorkspaceBoundContinuity({
     ...chat,
     scope: 'workspace',
     workspaceId: workspace.id,
@@ -17,7 +30,7 @@ export function rebindWelcomeEnsembleChatToWorkspace(
       ...chat.ensemble,
       updatedAt: new Date(now).toISOString()
     }
-  }
+  })
 }
 
 /**
@@ -30,12 +43,12 @@ export function rebindWelcomeEnsembleChatToWorkspace(
  * single-provider "create new chat in target workspace" path —
  * tossing the user out of their Ensemble entirely.
  *
- * This helper rebinds in place: same chat id, same participants,
- * same transcript, same ensemble config; only the workspace
- * pointer changes. Subsequent rounds dispatch against the new
- * workspace path. The transcript history references the old
- * workspace by string, but no agent can reach into it after the
- * switch — they get the new sandbox.
+ * This helper rebinds in place: same chat id, participants,
+ * transcript, and Ensemble config. The workspace pointer changes
+ * and workspace-bound provider session / prompt receipts are reset,
+ * so subsequent rounds start fresh against the new sandbox. The
+ * transcript history can still reference the old workspace by string,
+ * but no resumed provider session can reach back into it.
  *
  * Returns null when the rebind is a no-op (chat is already on
  * this workspace) or when the input isn't a valid Ensemble chat,
@@ -50,14 +63,8 @@ export function rebindEnsembleChatToWorkspace(
   if (chat?.chatKind !== 'ensemble' || !chat.ensemble) return null
   // Already pointing at this workspace — no-op so callers can
   // skip the rebind/save round-trip entirely.
-  if (
-    chat.scope === 'workspace' &&
-    chat.workspaceId === workspace.id &&
-    chat.workspacePath === workspace.path
-  ) {
-    return null
-  }
-  return {
+  if (isChatBoundToWorkspace(chat, workspace)) return null
+  return clearWorkspaceBoundContinuity({
     ...chat,
     scope: 'workspace',
     workspaceId: workspace.id,
@@ -67,7 +74,7 @@ export function rebindEnsembleChatToWorkspace(
       ...chat.ensemble,
       updatedAt: new Date(now).toISOString()
     }
-  }
+  })
 }
 
 /**
@@ -94,7 +101,7 @@ export function rebindWelcomeEnsembleChatToGlobal(
   // Already global — no-op signal so the caller can skip the
   // rebind/save round-trip entirely.
   if (chat.scope === 'global' && !chat.workspaceId && !chat.workspacePath) return null
-  const next: ChatRecord = {
+  const next: ChatRecord = clearWorkspaceBoundContinuity({
     ...chat,
     scope: 'global',
     updatedAt: now,
@@ -102,8 +109,74 @@ export function rebindWelcomeEnsembleChatToGlobal(
       ...chat.ensemble,
       updatedAt: new Date(now).toISOString()
     }
-  }
+  })
   delete (next as Partial<ChatRecord>).workspaceId
   delete (next as Partial<ChatRecord>).workspacePath
   return next
+}
+
+/**
+ * Provider-native sessions and their delivery receipts are born against one
+ * workspace. A renderer-side optimistic rebind must never show those sessions
+ * as reusable while main validates and persists the canonical transition.
+ */
+function clearWorkspaceBoundContinuity(chat: ChatRecord): ChatRecord {
+  const next: ChatRecord = {
+    ...chat,
+    providerMetadata: clearExternalPathGrantMetadata(chat.providerMetadata),
+    ...(chat.ensemble
+      ? {
+          ensemble: {
+            ...chat.ensemble,
+            participants: chat.ensemble.participants.map((participant) => {
+              const fresh = { ...participant }
+              delete fresh.linkedProviderSessionId
+              delete fresh.taskWraithMcpProfileReceipt
+              delete fresh.promptShellVersion
+              delete fresh.promptDynamicStateVersion
+              delete fresh.seatGeneration
+              delete fresh.contextCompactionSummary
+              const permissionOverrides = clearExternalPathGrantOverrides(fresh.permissionOverrides)
+              if (permissionOverrides) fresh.permissionOverrides = permissionOverrides
+              else delete fresh.permissionOverrides
+              return fresh
+            })
+          }
+        }
+      : {})
+  }
+  delete next.linkedProviderSessionId
+  delete next.linkedGeminiSessionId
+  delete next.taskWraithMcpProfileReceipt
+  delete next.seatGeneration
+  delete next.contextCompactionSummary
+  return next
+}
+
+function isChatBoundToWorkspace(chat: ChatRecord, workspace: WorkspaceRecord): boolean {
+  return (
+    chat.scope !== 'global' &&
+    chat.workspaceId === workspace.id &&
+    chat.workspacePath === workspace.path
+  )
+}
+
+function clearExternalPathGrantMetadata(
+  metadata: Record<string, unknown> | undefined
+): Record<string, unknown> | undefined {
+  if (!metadata) return undefined
+  const next = { ...metadata }
+  for (const key of EXTERNAL_PATH_GRANT_METADATA_KEYS) {
+    delete next[key]
+  }
+  return Object.keys(next).length > 0 ? next : undefined
+}
+
+function clearExternalPathGrantOverrides(
+  overrides: NonNullable<ChatRecord['ensemble']>['participants'][number]['permissionOverrides']
+): NonNullable<ChatRecord['ensemble']>['participants'][number]['permissionOverrides'] {
+  if (!overrides) return undefined
+  const next = { ...overrides }
+  delete next.externalPathGrants
+  return Object.keys(next).length > 0 ? next : undefined
 }

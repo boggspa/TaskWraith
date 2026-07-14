@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   MAX_IMAGE_ATTACHMENTS,
@@ -13,6 +15,7 @@ import {
   imagePreviewDataUrlToThumbnail,
   isPdfAttachmentPath,
   mergeImageAttachments,
+  persistedAttachmentMetadata,
   sanitizeImagePath
 } from './imageAttachments'
 
@@ -70,6 +73,34 @@ describe('image attachment path helpers', () => {
 
     expect(attachmentSummary(attachments)).toBe('Attached 2 files: B.png, a.png')
     expect(attachmentQueueKey(attachments)).toBe('/tmp/B.png\n/tmp/a.png')
+  })
+
+  it('preserves only complete durable attachment identity', () => {
+    expect(
+      persistedAttachmentMetadata({
+        persistenceVersion: 1,
+        sha256: 'abc123',
+        mimeType: 'image/png',
+        byteLength: 42
+      })
+    ).toEqual({
+      persistenceVersion: 1,
+      sha256: 'abc123',
+      mimeType: 'image/png',
+      byteLength: 42
+    })
+    expect(
+      persistedAttachmentMetadata({
+        persistenceVersion: 1,
+        sha256: 'abc123',
+        mimeType: 'image/png'
+      })
+    ).toEqual({})
+  })
+
+  it('carries durable identity through every queue and Ensemble attachment mapping', () => {
+    const source = readFileSync(join(process.cwd(), 'src/renderer/src/App.tsx'), 'utf8')
+    expect(source.match(/persistedAttachmentMetadata\(attachment\)/g)).toHaveLength(6)
   })
 
   it('parses bounded raster preview data URLs for transcript thumbnails', () => {

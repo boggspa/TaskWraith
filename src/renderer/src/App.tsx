@@ -275,7 +275,14 @@ import {
   formatEnsembleTokenBreakdown
 } from './lib/threadTokenTally'
 import { buildCodexUsageWindows } from './lib/codexUsageWindows'
-import type { QueuedRunRequest, RunRouteEventPayload, ActiveRunContext } from './lib/runRequestTypes'
+import {
+  restoreQueuedRunWorktreeTarget,
+  snapshotQueuedRunWorktreeTarget,
+  type QueuedRunRequest,
+  type RunRouteEventPayload,
+  type ActiveRunContext
+} from './lib/runRequestTypes'
+import { resolveRunDiscordContextSelection } from './lib/runDiscordContextSelection'
 import {
   appendLocalQueuedRunEntries,
   collectRunQueueJobIds,
@@ -333,11 +340,15 @@ import {
 } from './lib/externalPathGrantPreflight'
 import {
   applyExternalPathGrantsToChat,
-  deriveChatExternalWorkspaceState,
   deriveExternalWorkspaceStateFromGrants,
-  externalPathGrantsForChat,
-  groupExternalPathGrants
+  externalPathGrantsForChat
 } from './lib/multiviewWorkspaceIsolation'
+import {
+  buildExternalWorkspaceOwnerTargets,
+  externalWorkspaceOwnerKey,
+  projectExternalWorkspaceOwnerCache,
+  repositoryUiStateKey
+} from './lib/externalWorkspaceOwnerState'
 import type {
   GitCiStatusSummary,
   GitPrSummary,
@@ -345,7 +356,11 @@ import type {
 } from '../../main/services/GitService'
 import {
   buildComposerRuntimeWorktreeIntent,
+  composerWorktreeSelectionForChat,
+  composerWorktreeSelectionFromEffectivePath,
   normalizeWorkspacePath,
+  resolveComposerEffectiveWorkspacePath,
+  updateComposerWorktreeSelectionForChat,
   worktreeSelectionRequiredWarning,
   type ComposerWorktreeSelection
 } from './lib/composerWorktreeSelection'
@@ -434,11 +449,7 @@ import {
   normalizeProviderModelSelection,
   resolveEnsembleParticipantSettings
 } from './lib/ensembleProviderDefaults'
-import {
-  rebindEnsembleChatToWorkspace,
-  rebindWelcomeEnsembleChatToGlobal,
-  rebindWelcomeEnsembleChatToWorkspace
-} from './lib/ensembleWelcomeWorkspace'
+import { shouldApplyFocusedWorkspaceRebind } from './lib/ensembleWelcomeWorkspace'
 import { withSessionActivityLedger } from './lib/sessionActivityLedger'
 import { applyWorkSessionConfirmation, cancelWorkSessionOnChat } from './lib/workSessionChat'
 // EnsembleSetupSheet retired in 1.0.3 — the bottom-pinned modal had a
@@ -565,12 +576,21 @@ import {
   writeChatPopoutHandoff
 } from './lib/chatPopoutHandoff'
 import {
+  chatPopoutAuthorityDisabledReason,
+  shouldPersistApprovalElevationAck
+} from './lib/chatPopoutAuthority'
+import {
   captureSessionRoundExpansionForChat,
   hydrateSessionRoundExpansionForChat
 } from './lib/ensembleRoundCards'
 import { useTranscriptScrollState } from './app/state/useTranscriptScrollState'
 import { bindComposerReservation } from './lib/composerReservation'
-import { buildRunDiffByPath } from './lib/RunWorkspaceDiff'
+import {
+  buildRunDiffByPath,
+  mergeCompletionFileChangeSummaries,
+  selectCompletionRunIds,
+  selectRunEvidenceMessages
+} from './lib/RunWorkspaceDiff'
 import { shouldRunUsageRefresh } from './lib/usageRefresh'
 import { isCiStatusTerminal, shouldRunCiPoll } from './lib/ciStatusRefresh'
 import type { CiNotice } from './lib/ciNotice'
@@ -625,6 +645,7 @@ import {
   isImageAttachmentPath,
   MAX_IMAGE_ATTACHMENTS,
   mergeImageAttachments,
+  persistedAttachmentMetadata,
   sanitizeImagePath,
   type ImageAttachment,
   type ImageAttachmentThumbnail
@@ -1299,6 +1320,14 @@ function App(): React.JSX.Element {
   const { copiedId, copy } = useCopyFeedback()
   const chatPopoutChatIdRef = useRef(getInitialChatPopoutChatId())
   const isChatPopoutWindow = Boolean(chatPopoutChatIdRef.current)
+  const trustedSessionMutationDisabledReason = chatPopoutAuthorityDisabledReason(
+    isChatPopoutWindow,
+    'trusted-session'
+  )
+  const workspaceTrustMutationDisabledReason = chatPopoutAuthorityDisabledReason(
+    isChatPopoutWindow,
+    'workspace-trust'
+  )
   const isDockingChatPopoutRef = useRef(false)
   const skipCloseSideChatPresentationIdRef = useRef<string | null>(null)
   const [settings, setSettings] = useState<AppSettings | null>(null)
@@ -1361,9 +1390,12 @@ function App(): React.JSX.Element {
   // devices (the Roster page). The same subscription fires when an iOS-driven
   // save/delete round-trips back to the renderer (slice B3).
   useEffect(() => {
+    if (isChatPopoutWindow) return
     const push = (): void => {
       try {
-        void window.api.syncEnsembleRosterPresets?.(listEnsembleRosterPresets())
+        void window.api
+          .syncEnsembleRosterPresets?.(listEnsembleRosterPresets())
+          .catch(() => undefined)
       } catch {
         // Best-effort: an older preload without the bridge just skips iOS sync.
       }
@@ -1416,7 +1448,7 @@ function App(): React.JSX.Element {
       offImport?.()
       offDelete?.()
     }
-  }, [])
+  }, [isChatPopoutWindow])
 
   // Seed drafts synchronously from localStorage on first render (not an async
   // effect) so a restored draft is present before the composer reads it and can't
@@ -2308,6 +2340,8 @@ function App(): React.JSX.Element {
   const [discordContextSelectionByChatId, setDiscordContextSelectionByChatId] = useState<
     Record<string, DiscordContextSelection | null>
   >({})
+  const discordContextSelectionByChatIdRef = useRef(discordContextSelectionByChatId)
+  discordContextSelectionByChatIdRef.current = discordContextSelectionByChatId
   const [discordContextTargets, setDiscordContextTargets] =
     useState<DiscordContextTargets | null>(null)
   const [discordContextPickerOpen, setDiscordContextPickerOpen] = useState(false)
@@ -2369,21 +2403,32 @@ function App(): React.JSX.Element {
   // string suffices; it's cleared whenever an approval resolves so the
   // next queued request starts blank.
   const [intentNote, setIntentNote] = useState('')
-  // 1.0.6-EW66-1d — Create-PR state is now keyed by workspace PATH
-  // so the primary workspace and each WRITE-access additional
-  // workspace track their own pending/success/error independently.
-  // The primary is keyed by `currentWorkspace.path`; write grants by
-  // `grant.path`. (Same-path grants in an ensemble share one entry,
-  // so all rows for a repo reflect that repo's PR state coherently.)
+  // Create-PR state follows the same authority boundary as Git IPC. Registered
+  // workspaces are path-owned; additional workspaces are owned by the composite
+  // { chatId, path } grant so identical paths in separate chats never share UI.
   type CreatePrState = {
     status: 'idle' | 'pending' | 'success' | 'error'
     message?: string
   }
-  const [createPrStateByPath, setCreatePrStateByPath] = useState<Record<string, CreatePrState>>({})
-  const getCreatePrState = (path: string | null | undefined): CreatePrState =>
-    (path && createPrStateByPath[path]) || { status: 'idle' }
-  const setCreatePrStateFor = (path: string, next: CreatePrState): void =>
-    setCreatePrStateByPath((prev) => ({ ...prev, [path]: next }))
+  const [createPrStateByOwner, setCreatePrStateByOwner] = useState<Record<string, CreatePrState>>(
+    {}
+  )
+  const getCreatePrState = (
+    path: string | null | undefined,
+    externalChatId?: string | null
+  ): CreatePrState =>
+    (path && createPrStateByOwner[repositoryUiStateKey(path, externalChatId)]) || {
+      status: 'idle'
+    }
+  const setCreatePrStateFor = (
+    path: string,
+    next: CreatePrState,
+    externalChatId?: string | null
+  ): void =>
+    setCreatePrStateByOwner((prev) => ({
+      ...prev,
+      [repositoryUiStateKey(path, externalChatId)]: next
+    }))
   const [diffActionMenuOpenByChatId, setDiffActionMenuOpenByChatId] = useState<
     Record<string, boolean>
   >({})
@@ -2419,7 +2464,7 @@ function App(): React.JSX.Element {
   // tool-derived diff counts. Null until the live subscription handshake
   // returns or the repo read fails.
   const [primaryGitSnapshot, setPrimaryGitSnapshot] = useState<GitRepositorySnapshot | null>(null)
-  const [composerWorktreeByWorkspace, setComposerWorktreeByWorkspace] = useState<
+  const [composerWorktreeByChatId, setComposerWorktreeByChatId] = useState<
     Record<string, ComposerWorktreeSelection | null>
   >({})
   // PR check rollup for the current workspace, lifted alongside the snapshot so
@@ -2430,15 +2475,17 @@ function App(): React.JSX.Element {
   const [primaryCi, setPrimaryCi] = useState<GitCiStatusSummary | null>(null)
   const primaryCiInFlightRef = useRef(false)
   const primaryCiLastPolledAtRef = useRef<number | null>(null)
+  const primaryCiRequestGenerationRef = useRef(0)
   const primaryPrRef = useRef<GitPrSummary | null>(primaryPr)
   const primaryCiRef = useRef<GitCiStatusSummary | null>(primaryCi)
-  // P4 — live git snapshot per unique external-workspace path, so each collapsed
-  // additional-workspace row shows git-grounded "N files changed +A −B" that
-  // resets on commit (same as the primary). Keyed by path.
-  const [externalGitSnapshots, setExternalGitSnapshots] = useState<
+  // External Git and PR caches are keyed by { chatId, path }. They are projected
+  // back to path-keyed maps only at an individual chat's Composer boundary.
+  const [externalGitSnapshotsByOwner, setExternalGitSnapshotsByOwner] = useState<
     Record<string, GitRepositorySnapshot | null>
   >({})
-  const [externalPrByPath, setExternalPrByPath] = useState<Record<string, GitPrSummary | null>>({})
+  const [externalPrByOwner, setExternalPrByOwner] = useState<Record<string, GitPrSummary | null>>(
+    {}
+  )
   // Multiview — live git snapshot per VISIBLE pane workspace path, so each pane's
   // composer above-row shows its OWN "N files changed +A −B" instead of the
   // focused workspace's global `workspaceDiffStats` (which leaked into every
@@ -2460,84 +2507,128 @@ function App(): React.JSX.Element {
       workspaces,
       currentWorkspace: currentChatWorkspace
     }) || undefined
-  const currentComposerWorktreeSelection = currentWorkspacePath
-    ? composerWorktreeByWorkspace[normalizeWorkspacePath(currentWorkspacePath)] || null
-    : null
-  const currentGitPresentationPath =
-    currentComposerWorktreeSelection?.effectiveWorkspacePath || currentWorkspacePath
+  const currentComposerWorktreeSelection = composerWorktreeSelectionForChat(
+    composerWorktreeByChatId,
+    currentChat?.appChatId,
+    currentWorkspacePath
+  )
+  const currentGitPresentationPath = resolveComposerEffectiveWorkspacePath(
+    currentWorkspacePath,
+    currentComposerWorktreeSelection
+  )
+  const currentGitPresentationPathRef = useRef<string | null>(currentGitPresentationPath || null)
+  currentGitPresentationPathRef.current = currentGitPresentationPath || null
+  const primaryWorkspacePresentationGenerationRef = useRef(0)
+  const primaryPrOwnerPathRef = useRef<string | null>(null)
+  const primaryCiOwnerPathRef = useRef<string | null>(null)
   const primaryPrStatusKeyRef = useRef('')
-  const externalPrStatusKeyByPathRef = useRef<Record<string, string>>({})
+  const externalPrStatusKeyByOwnerRef = useRef<Record<string, string>>({})
+  const isCurrentPrimaryWorkspaceRequest = useCallback(
+    (workspacePath: string, generation: number): boolean =>
+      primaryWorkspacePresentationGenerationRef.current === generation &&
+      normalizeWorkspacePath(currentGitPresentationPathRef.current || '') ===
+        normalizeWorkspacePath(workspacePath),
+    []
+  )
   const refreshPrimaryPrStatus = useCallback(
     (snapshot: GitRepositorySnapshot | null): void => {
       const key = gitPrStatusRefreshKey(snapshot)
-      if (!currentWorkspacePath || !key || typeof window.api.githubPrStatus !== 'function') {
+      if (!currentGitPresentationPath || !key || typeof window.api.githubPrStatus !== 'function') {
         primaryPrStatusKeyRef.current = ''
+        primaryPrOwnerPathRef.current = null
         setPrimaryPr(null)
         return
       }
-      const requestKey = `${currentWorkspacePath}\u0000${key}`
+      const requestKey = `${currentGitPresentationPath}\u0000${key}`
       if (primaryPrStatusKeyRef.current === requestKey) return
       primaryPrStatusKeyRef.current = requestKey
-      void window.api.githubPrStatus({ workspacePath: currentWorkspacePath }).then(
+      void window.api.githubPrStatus({ workspacePath: currentGitPresentationPath }).then(
         (prRes) => {
           if (primaryPrStatusKeyRef.current === requestKey) {
+            primaryPrOwnerPathRef.current = currentGitPresentationPath
             setPrimaryPr(prRes?.ok ? prRes.data : null)
           }
         },
         () => {
-          if (primaryPrStatusKeyRef.current === requestKey) setPrimaryPr(null)
+          if (primaryPrStatusKeyRef.current === requestKey) {
+            primaryPrOwnerPathRef.current = null
+            setPrimaryPr(null)
+          }
         }
       )
     },
-    [currentWorkspacePath]
+    [currentGitPresentationPath]
   )
   const refreshPrimaryCiStatus = useCallback(async (): Promise<void> => {
-    const workspacePath = currentWorkspacePath
+    const workspacePath = currentGitPresentationPath
     if (!workspacePath || typeof window.api.githubCiStatus !== 'function') {
+      primaryCiOwnerPathRef.current = null
       setPrimaryCi(null)
       return
     }
     if (primaryCiInFlightRef.current) return
+    const workspaceGeneration = primaryWorkspacePresentationGenerationRef.current
+    const requestGeneration = primaryCiRequestGenerationRef.current + 1
+    primaryCiRequestGenerationRef.current = requestGeneration
     primaryCiInFlightRef.current = true
     primaryCiLastPolledAtRef.current = Date.now()
     try {
       const res = await window.api.githubCiStatus({ workspacePath })
-      setPrimaryCi(res?.ok ? res.data : null)
-    } catch {
-      setPrimaryCi(null)
-    } finally {
-      primaryCiInFlightRef.current = false
-    }
-  }, [currentWorkspacePath])
-  const refreshPrimaryCiStatusRef = useRef(refreshPrimaryCiStatus)
-  const refreshExternalPrStatus = useCallback(
-    (path: string, snapshot: GitRepositorySnapshot | null): void => {
-      const key = gitPrStatusRefreshKey(snapshot)
-      if (!key || typeof window.api.githubPrStatus !== 'function') {
-        const nextKeys = { ...externalPrStatusKeyByPathRef.current }
-        delete nextKeys[path]
-        externalPrStatusKeyByPathRef.current = nextKeys
-        setExternalPrByPath((prev) => ({ ...prev, [path]: null }))
+      if (
+        primaryCiRequestGenerationRef.current !== requestGeneration ||
+        !isCurrentPrimaryWorkspaceRequest(workspacePath, workspaceGeneration)
+      ) {
         return
       }
-      const requestKey = `${path}\u0000${key}`
-      if (externalPrStatusKeyByPathRef.current[path] === requestKey) return
-      externalPrStatusKeyByPathRef.current = {
-        ...externalPrStatusKeyByPathRef.current,
-        [path]: requestKey
+      primaryCiOwnerPathRef.current = workspacePath
+      setPrimaryCi(res?.ok ? res.data : null)
+    } catch {
+      if (
+        primaryCiRequestGenerationRef.current !== requestGeneration ||
+        !isCurrentPrimaryWorkspaceRequest(workspacePath, workspaceGeneration)
+      ) {
+        return
       }
-      void window.api.githubPrStatus({ repoPath: path }).then(
+      primaryCiOwnerPathRef.current = null
+      setPrimaryCi(null)
+    } finally {
+      if (primaryCiRequestGenerationRef.current === requestGeneration) {
+        primaryCiInFlightRef.current = false
+      }
+    }
+  }, [currentGitPresentationPath, isCurrentPrimaryWorkspaceRequest])
+  const refreshPrimaryCiStatusRef = useRef(refreshPrimaryCiStatus)
+  const refreshExternalPrStatus = useCallback(
+    (path: string, snapshot: GitRepositorySnapshot | null, chatId?: string): void => {
+      const normalizedChatId = chatId?.trim()
+      if (!normalizedChatId) return
+      const ownerKey = externalWorkspaceOwnerKey(normalizedChatId, path)
+      const key = gitPrStatusRefreshKey(snapshot)
+      if (!key || typeof window.api.githubPrStatus !== 'function') {
+        const nextKeys = { ...externalPrStatusKeyByOwnerRef.current }
+        delete nextKeys[ownerKey]
+        externalPrStatusKeyByOwnerRef.current = nextKeys
+        setExternalPrByOwner((prev) => ({ ...prev, [ownerKey]: null }))
+        return
+      }
+      const requestKey = `${ownerKey}\u0000${key}`
+      if (externalPrStatusKeyByOwnerRef.current[ownerKey] === requestKey) return
+      externalPrStatusKeyByOwnerRef.current = {
+        ...externalPrStatusKeyByOwnerRef.current,
+        [ownerKey]: requestKey
+      }
+      void window.api.githubPrStatus({ repoPath: path, chatId: normalizedChatId }).then(
         (result) => {
-          if (externalPrStatusKeyByPathRef.current[path] === requestKey) {
-            setExternalPrByPath((prev) => ({
+          if (externalPrStatusKeyByOwnerRef.current[ownerKey] === requestKey) {
+            setExternalPrByOwner((prev) => ({
               ...prev,
-              [path]: result?.ok ? result.data : null
+              [ownerKey]: result?.ok ? result.data : null
             }))
           }
         },
         () => {
-          if (externalPrStatusKeyByPathRef.current[path] === requestKey) {
-            setExternalPrByPath((prev) => ({ ...prev, [path]: null }))
+          if (externalPrStatusKeyByOwnerRef.current[ownerKey] === requestKey) {
+            setExternalPrByOwner((prev) => ({ ...prev, [ownerKey]: null }))
           }
         }
       )
@@ -2545,24 +2636,27 @@ function App(): React.JSX.Element {
     []
   )
   const handleExternalGitSnapshotRefresh = useCallback(
-    (path: string, snapshot: GitRepositorySnapshot | null): void => {
-      setExternalGitSnapshots((prev) => ({
+    (path: string, snapshot: GitRepositorySnapshot | null, chatId?: string): void => {
+      const normalizedChatId = chatId?.trim()
+      if (!normalizedChatId) return
+      const ownerKey = externalWorkspaceOwnerKey(normalizedChatId, path)
+      setExternalGitSnapshotsByOwner((prev) => ({
         ...prev,
-        [path]: snapshot
+        [ownerKey]: snapshot
       }))
-      refreshExternalPrStatus(path, snapshot)
+      refreshExternalPrStatus(path, snapshot, normalizedChatId)
     },
     [refreshExternalPrStatus]
   )
   const handleComposerWorktreeChange = useCallback(
-    (selection: ComposerWorktreeSelection | null, snapshot: GitRepositorySnapshot | null) => {
-      const basePath =
-        selection?.baseWorkspacePath || snapshot?.repoRoot || currentWorkspacePath || ''
-      const key = normalizeWorkspacePath(basePath)
-      if (!key) return
-      setComposerWorktreeByWorkspace((prev) => ({ ...prev, [key]: selection }))
+    (selection: ComposerWorktreeSelection | null, _snapshot: GitRepositorySnapshot | null) => {
+      const chatId = currentChat?.appChatId
+      if (!chatId) return
+      setComposerWorktreeByChatId((prev) =>
+        updateComposerWorktreeSelectionForChat(prev, chatId, selection)
+      )
     },
-    [currentWorkspacePath]
+    [currentChat?.appChatId]
   )
   // Set of (workspace|provider) keys whose Tier-1 "raise to Default Approval"
   // elevation notice has already been acknowledged, derived from the persisted
@@ -2583,18 +2677,38 @@ function App(): React.JSX.Element {
   // returns the initial snapshot, so avoid a duplicate eager `gitSnapshot` call;
   // focus/run-complete events invalidate the publisher instead.
   useEffect(() => {
-    if (!currentWorkspacePath) {
-      setPrimaryGitSnapshot(null)
-      setPrimaryPr(null)
+    primaryWorkspacePresentationGenerationRef.current += 1
+    primaryCiRequestGenerationRef.current += 1
+    primaryCiInFlightRef.current = false
+    primaryCiLastPolledAtRef.current = null
+    primaryPrStatusKeyRef.current = ''
+    primaryPrOwnerPathRef.current = null
+    primaryCiOwnerPathRef.current = null
+    primaryPrRef.current = null
+    primaryCiRef.current = null
+    setPrimaryGitSnapshot(null)
+    setPrimaryPr(null)
+    setPrimaryCi(null)
+  }, [currentGitPresentationPath])
+
+  useEffect(() => {
+    if (!currentGitPresentationPath) {
       return
     }
     if (hasGitSnapshotSubscriptionApi()) return undefined
+    const requestedWorkspacePath = currentGitPresentationPath
+    const workspaceGeneration = primaryWorkspacePresentationGenerationRef.current
     let cancelled = false
     const fetchSnapshot = async (): Promise<void> => {
       try {
-        const res = await window.api.gitSnapshot({ workspacePath: currentWorkspacePath })
+        const res = await window.api.gitSnapshot({ workspacePath: requestedWorkspacePath })
         const snap = res?.ok ? res.data : null
-        if (cancelled) return
+        if (
+          cancelled ||
+          !isCurrentPrimaryWorkspaceRequest(requestedWorkspacePath, workspaceGeneration)
+        ) {
+          return
+        }
         setPrimaryGitSnapshot(snap)
         refreshPrimaryPrStatus(snap)
       } catch {
@@ -2612,40 +2726,70 @@ function App(): React.JSX.Element {
       cancelled = true
       window.removeEventListener('focus', onFocus)
     }
-  }, [currentWorkspacePath, refreshPrimaryPrStatus, runCompleteNotice?.timestamp])
+  }, [
+    currentGitPresentationPath,
+    isCurrentPrimaryWorkspaceRequest,
+    refreshPrimaryPrStatus,
+    runCompleteNotice?.timestamp
+  ])
 
   useEffect(() => {
-    if (!currentWorkspacePath || !hasGitSnapshotSubscriptionApi()) return undefined
+    if (!currentGitPresentationPath || !hasGitSnapshotSubscriptionApi()) return undefined
+    const requestedWorkspacePath = currentGitPresentationPath
+    const workspaceGeneration = primaryWorkspacePresentationGenerationRef.current
     return window.api.gitSubscribeSnapshot(
-      { workspacePath: currentWorkspacePath },
+      { workspacePath: requestedWorkspacePath },
       (payload) => {
+        if (!isCurrentPrimaryWorkspaceRequest(requestedWorkspacePath, workspaceGeneration)) return
         setPrimaryGitSnapshot(payload.snapshot)
         refreshPrimaryPrStatus(payload.snapshot)
       }
     )
-  }, [currentWorkspacePath, refreshPrimaryPrStatus])
+  }, [currentGitPresentationPath, isCurrentPrimaryWorkspaceRequest, refreshPrimaryPrStatus])
 
   useEffect(() => {
-    if (!currentWorkspacePath || !runCompleteNotice?.timestamp || !window.api.gitInvalidateSnapshot) {
+    if (!currentGitPresentationPath || !runCompleteNotice?.timestamp || !window.api.gitInvalidateSnapshot) {
       return
     }
-    void window.api.gitInvalidateSnapshot({ workspacePath: currentWorkspacePath, reason: 'run-diff' })
-  }, [currentWorkspacePath, runCompleteNotice?.timestamp])
+    void window.api.gitInvalidateSnapshot({
+      workspacePath: currentGitPresentationPath,
+      reason: 'run-diff'
+    })
+  }, [currentGitPresentationPath, runCompleteNotice?.timestamp])
 
   // Keep latest-value refs fresh for the mount-once CI poll below.
   useEffect(() => {
     refreshPrimaryCiStatusRef.current = refreshPrimaryCiStatus
-    primaryPrRef.current = primaryPr
-    primaryCiRef.current = primaryCi
-  }, [refreshPrimaryCiStatus, primaryPr, primaryCi])
+    const currentWorkspaceKey = normalizeWorkspacePath(currentGitPresentationPath || '')
+    primaryPrRef.current =
+      normalizeWorkspacePath(primaryPrOwnerPathRef.current || '') === currentWorkspaceKey
+        ? primaryPr
+        : null
+    primaryCiRef.current =
+      normalizeWorkspacePath(primaryCiOwnerPathRef.current || '') === currentWorkspaceKey
+        ? primaryCi
+        : null
+  }, [currentGitPresentationPath, refreshPrimaryCiStatus, primaryPr, primaryCi])
 
   // Fetch the rich CI summary when the PR (or its head) changes or a run
   // completes; clears it when there's no PR. The satellite row falls back to
   // pr.checks when this is null, so this only enriches + freshens.
   useEffect(() => {
-    if (primaryPr?.number != null) void refreshPrimaryCiStatus()
-    else setPrimaryCi(null)
-  }, [refreshPrimaryCiStatus, primaryPr?.number, primaryPr?.headRefOid, runCompleteNotice?.timestamp])
+    const ownsCurrentWorkspace =
+      normalizeWorkspacePath(primaryPrOwnerPathRef.current || '') ===
+      normalizeWorkspacePath(currentGitPresentationPath || '')
+    if (ownsCurrentWorkspace && primaryPr?.number != null) void refreshPrimaryCiStatus()
+    else {
+      primaryCiOwnerPathRef.current = null
+      setPrimaryCi(null)
+    }
+  }, [
+    currentGitPresentationPath,
+    refreshPrimaryCiStatus,
+    primaryPr?.number,
+    primaryPr?.headRefOid,
+    runCompleteNotice?.timestamp
+  ])
 
   // Bounded, visibility-gated CI poll. CI transitions (pending → pass/fail) on
   // GitHub's servers without a local commit, so the PR-status dedup key can't
@@ -2697,20 +2841,20 @@ function App(): React.JSX.Element {
   }, [])
 
   useEffect(() => {
-    if (!currentWorkspacePath || !hasGitSnapshotSubscriptionApi() || !window.api.gitInvalidateSnapshot) {
+    if (!currentGitPresentationPath || !hasGitSnapshotSubscriptionApi() || !window.api.gitInvalidateSnapshot) {
       return undefined
     }
     const onFocus = (): void => {
       if (typeof document === 'undefined' || document.visibilityState !== 'hidden') {
         void window.api.gitInvalidateSnapshot({
-          workspacePath: currentWorkspacePath,
+          workspacePath: currentGitPresentationPath,
           reason: 'manual'
         })
       }
     }
     window.addEventListener('focus', onFocus)
     return () => window.removeEventListener('focus', onFocus)
-  }, [currentWorkspacePath])
+  }, [currentGitPresentationPath])
   type AttachedWindowSnapshot = {
     handleID: string
     windowMeta: {
@@ -2735,8 +2879,11 @@ function App(): React.JSX.Element {
   const {
     ensembleConcurrentLanesAvailable,
     ensembleConcurrentWriteLanesAvailable,
-    screenWatchUnavailableReason
+    screenWatchUnavailableReason: nativeScreenWatchUnavailableReason
   } = useNativeCapabilities()
+  const screenWatchUnavailableReason = isChatPopoutWindow
+    ? 'Open this chat in the main window to attach or resume Screen Watch.'
+    : nativeScreenWatchUnavailableReason
   // 1.0.5-AU — Track which chat owns the current attachment so we
   // can auto-detach when the user switches away. Pre-AU the
   // `attachedWindow` state was app-global: attach in Chat A, switch
@@ -2871,6 +3018,10 @@ function App(): React.JSX.Element {
   // Multiview: split the central pane into 1-4 panes. Inert until a layout is
   // chosen — single layout renders byte-identically to before Multiview.
   const multiview = useMultiviewState()
+  const focusedMultiviewPaneIdRef = useRef(multiview.focusedPaneId)
+  useEffect(() => {
+    focusedMultiviewPaneIdRef.current = multiview.focusedPaneId
+  }, [multiview.focusedPaneId])
   const previousMultiviewPanesRef = useRef(multiview.panes)
   useEffect(() => {
     const removed = removedCanvasIds(previousMultiviewPanesRef.current, multiview.panes)
@@ -4195,8 +4346,15 @@ function App(): React.JSX.Element {
     setDiscordContextSelection(selection)
     setDiscordContextPickerOpen(false)
   }
+  const clearDiscordContextForChat = (chatId: string): void => {
+    setDiscordContextSelectionByChatId((prev) => {
+      if (!prev[chatId]) return prev
+      return { ...prev, [chatId]: null }
+    })
+  }
   const handleClearDiscordContext = () => {
-    setDiscordContextSelection(null)
+    const chatId = getCurrentComposerStateChatId()
+    if (chatId) clearDiscordContextForChat(chatId)
   }
   const updatePermissionRequestState = (
     patch:
@@ -4387,10 +4545,17 @@ function App(): React.JSX.Element {
   }, [isFxEnabled, fxBurstClass])
 
   useEffect(() => {
+    if (isChatPopoutWindow) {
+      setAttachedWindow(null)
+      return
+    }
     let cancelled = false
-    void window.api.attachWindowStatus().then(({ snapshot }) => {
-      if (!cancelled) setAttachedWindow(snapshot)
-    })
+    void window.api
+      .attachWindowStatus()
+      .then(({ snapshot }) => {
+        if (!cancelled) setAttachedWindow(snapshot)
+      })
+      .catch(() => undefined)
     const unsubscribe = window.api.onAttachedWindowChanged((snapshot) => {
       setAttachedWindow(snapshot)
     })
@@ -4398,7 +4563,7 @@ function App(): React.JSX.Element {
       cancelled = true
       unsubscribe?.()
     }
-  }, [])
+  }, [isChatPopoutWindow])
 
   // triggerSendConfirmation moved INTO <Composer> (Slice B) with its
   // sendConfirmationTimeoutRef + isSendConfirming state, so each pane runs
@@ -6969,20 +7134,19 @@ function App(): React.JSX.Element {
     // rail / Settings click that must open a fresh draft instead of
     // relocating the current chat. See shouldRebindCurrentChatOnWorkspaceSelect.
     const intent: WorkspaceSelectIntent = options?.intent ?? 'switch'
-    const geminiSessionApi = window.api as any
-    if (
-      persistentSessionActiveRef.current &&
-      typeof geminiSessionApi.stopGeminiSession === 'function'
-    ) {
-      geminiSessionApi.stopGeminiSession().catch(() => {})
+    const stopPersistentSessionForWorkspaceTransition = (): void => {
+      const geminiSessionApi = window.api as any
+      if (
+        persistentSessionActiveRef.current &&
+        typeof geminiSessionApi.stopGeminiSession === 'function'
+      ) {
+        geminiSessionApi.stopGeminiSession().catch(() => {})
+      }
+      persistentSessionActiveRef.current = false
+      setIsPersistentSessionEnabled(false)
+      setPersistentSessionStatus('idle')
+      setPersistentSessionNeedsRestart(false)
     }
-    persistentSessionActiveRef.current = false
-    setIsPersistentSessionEnabled(false)
-    setPersistentSessionStatus('idle')
-    setPersistentSessionNeedsRestart(false)
-    setCurrentWorkspace(ws)
-    currentWorkspaceIdRef.current = ws.id
-    currentWorkspacePathRef.current = ws.path
 
     // 1.0.5-EW41 — When the current chat is an Ensemble *and* this is an
     // intentional 'switch' (composer / welcome picker), rebind it in place
@@ -6993,10 +7157,10 @@ function App(): React.JSX.Element {
     // single-provider welcome screen — losing their entire curated panel
     // and transcript. The helper preserves participants + ensemble config +
     // history; subsequent rounds dispatch against the new workspace path.
-    // The helper returns null when the rebind is a no-op (chat is already
-    // on this workspace) — we then short-circuit without churning state,
-    // since the user effectively re-selected their current workspace from
-    // the popover. A 'navigate' selection (sidebar rail / Settings list)
+    // Main returns both the canonical chat and a `changed` bit. A true no-op
+    // preserves the live focused provider session, while a stale renderer is
+    // still reconciled through the canonical reply. A 'navigate' selection
+    // (sidebar rail / Settings list)
     // deliberately skips this branch and opens a fresh draft instead, so a
     // stray click never relocates an in-progress chat onto another
     // workspace (see shouldRebindCurrentChatOnWorkspaceSelect).
@@ -7004,41 +7168,81 @@ function App(): React.JSX.Element {
       currentChat &&
       shouldRebindCurrentChatOnWorkspaceSelect({ intent, isCurrentEnsembleChat })
     ) {
-      const rebound = rebindEnsembleChatToWorkspace(currentChat, ws)
-      if (rebound) {
-        const chatWithLedger = withSessionActivityLedger(currentChat, rebound)
-        const provider = getChatProvider(chatWithLedger)
-        updateChatById(chatWithLedger.appChatId, () => chatWithLedger)
-        await refreshUsageSummary(ws.id, provider)
-        setDiff(
-          provider === 'gemini' && isGeminiWorktreeDiffUnavailable(resolveGeminiWorktreeConfig(ws))
-            ? createWorktreeDiffUnavailable()
-            : null
-        )
-        void refreshProviderMetadata(provider, ws.path)
-        setRunDiff(null)
-        setRunCompleteNotice(null)
-        setRawLogs(rawLogsByChatIdRef.current.get(chatWithLedger.appChatId) || [])
-        hydrateThreadRawLogsFromEvents(chatWithLedger.appChatId)
-        setSessionTrust(false)
-        syncThinkingForChat(chatWithLedger)
-        if (provider === 'codex' && typeof window.api.listAgentThreads === 'function') {
-          window.api
-            .listAgentThreads('codex', { cwd: ws.path })
-            .then((response) => setCodexThreads(Array.isArray(response?.data) ? response.data : []))
-            .catch(() => setCodexThreads([]))
-        }
+      const initiatingChat = currentChat
+      const initiatingChatId = initiatingChat.appChatId
+      const rendererAlreadyBound =
+        initiatingChat.scope !== 'global' &&
+        initiatingChat.workspaceId === ws.id &&
+        initiatingChat.workspacePath === ws.path &&
+        currentWorkspaceIdRef.current === ws.id &&
+        currentWorkspacePathRef.current === ws.path &&
+        currentWorkspace?.id === ws.id &&
+        currentWorkspace?.path === ws.path
+      let rebound: ChatRecord
+      let canonicalChanged = false
+      try {
+        const result = await window.api.rebindChatWorkspace({
+          chatId: initiatingChatId,
+          scope: 'workspace',
+          workspaceId: ws.id,
+          workspacePath: ws.path
+        })
+        rebound = result.chat
+        canonicalChanged = result.changed
+      } catch (error) {
+        appendThreadRawLog(initiatingChatId, {
+          type: 'stderr',
+          content: `Workspace switch blocked: ${redactLog(String(error))}`
+        })
+        return
+      }
+      const chatWithLedger = withSessionActivityLedger(initiatingChat, rebound)
+      updateChatById(initiatingChatId, () => chatWithLedger)
+      // Main owns the canonical rebind even if this renderer's local snapshot
+      // was stale. If focus moved while IPC was in flight, keep that canonical
+      // chat update but never project it onto the newly focused chat's scalar UI.
+      if (currentChatIdRef.current !== initiatingChatId) return
+      if (
+        !shouldApplyFocusedWorkspaceRebind({
+          canonicalChanged,
+          rendererAlreadyAtTarget: rendererAlreadyBound
+        })
+      ) {
         await refreshWorkspaceTrust(ws)
         return
       }
-      // rebound === null → chat is already on this workspace.
-      // No state churn needed; we already set currentWorkspace
-      // above (cheap no-op when identical), so just refresh trust
-      // and bail. This handles the edge case where the user picks
-      // the workspace they're already in from the popover.
+      stopPersistentSessionForWorkspaceTransition()
+      setCurrentWorkspace(ws)
+      currentWorkspaceIdRef.current = ws.id
+      currentWorkspacePathRef.current = ws.path
+      const provider = getChatProvider(chatWithLedger)
+      void refreshUsageSummary(ws.id, provider)
+      setDiff(
+        provider === 'gemini' && isGeminiWorktreeDiffUnavailable(resolveGeminiWorktreeConfig(ws))
+          ? createWorktreeDiffUnavailable()
+          : null
+      )
+      void refreshProviderMetadata(provider, ws.path)
+      setRunDiff(null)
+      setRunCompleteNotice(null)
+      setRawLogs(rawLogsByChatIdRef.current.get(chatWithLedger.appChatId) || [])
+      hydrateThreadRawLogsFromEvents(chatWithLedger.appChatId)
+      setSessionTrust(false)
+      syncThinkingForChat(chatWithLedger)
+      if (provider === 'codex' && typeof window.api.listAgentThreads === 'function') {
+        window.api
+          .listAgentThreads('codex', { cwd: ws.path })
+          .then((response) => setCodexThreads(Array.isArray(response?.data) ? response.data : []))
+          .catch(() => setCodexThreads([]))
+      }
       await refreshWorkspaceTrust(ws)
       return
     }
+
+    stopPersistentSessionForWorkspaceTransition()
+    setCurrentWorkspace(ws)
+    currentWorkspaceIdRef.current = ws.id
+    currentWorkspacePathRef.current = ws.path
 
     const allChats = await loadChatList()
     const workspaceChats = allChats.filter(
@@ -7126,25 +7330,62 @@ function App(): React.JSX.Element {
   }
 
   const handleSelectWelcomeWorkspace = async (ws: WorkspaceRecord) => {
-    const rebound = rebindWelcomeEnsembleChatToWorkspace(currentChat, ws, isWelcomeChat)
-    if (!rebound) {
+    if (currentChat?.chatKind !== 'ensemble' || !currentChat.ensemble || !isWelcomeChat) {
       await handleSelectExistingWorkspace(ws)
       return
     }
-    const chatWithLedger = currentChat ? withSessionActivityLedger(currentChat, rebound) : rebound
+    const initiatingChat = currentChat
+    const initiatingChatId = initiatingChat.appChatId
+    const rendererAlreadyBound =
+      initiatingChat.scope !== 'global' &&
+      initiatingChat.workspaceId === ws.id &&
+      initiatingChat.workspacePath === ws.path &&
+      currentWorkspaceIdRef.current === ws.id &&
+      currentWorkspacePathRef.current === ws.path &&
+      currentWorkspace?.id === ws.id &&
+      currentWorkspace?.path === ws.path
+    let rebound: ChatRecord
+    let canonicalChanged = false
+    try {
+      const result = await window.api.rebindChatWorkspace({
+        chatId: initiatingChatId,
+        scope: 'workspace',
+        workspaceId: ws.id,
+        workspacePath: ws.path
+      })
+      rebound = result.chat
+      canonicalChanged = result.changed
+    } catch (error) {
+      appendThreadRawLog(initiatingChatId, {
+        type: 'stderr',
+        content: `Workspace switch blocked: ${redactLog(String(error))}`
+      })
+      return
+    }
+    const chatWithLedger = withSessionActivityLedger(initiatingChat, rebound)
+    updateChatById(initiatingChatId, () => chatWithLedger)
+    if (currentChatIdRef.current !== initiatingChatId) return
+    if (
+      !shouldApplyFocusedWorkspaceRebind({
+        canonicalChanged,
+        rendererAlreadyAtTarget: rendererAlreadyBound
+      })
+    ) {
+      await refreshWorkspaceTrust(ws)
+      return
+    }
 
     setCurrentWorkspace(ws)
     currentWorkspaceIdRef.current = ws.id
     currentWorkspacePathRef.current = ws.path
-    updateChatById(chatWithLedger.appChatId, () => chatWithLedger)
-    await refreshUsageSummary(ws.id, getChatProvider(chatWithLedger))
+    void refreshUsageSummary(ws.id, getChatProvider(chatWithLedger))
     setDiff(null)
     setRunDiff(null)
     setRunCompleteNotice(null)
     setRawLogs(rawLogsByChatIdRef.current.get(chatWithLedger.appChatId) || [])
     hydrateThreadRawLogsFromEvents(chatWithLedger.appChatId)
     setSessionTrust(false)
-    syncThinkingForChat(rebound)
+    syncThinkingForChat(chatWithLedger)
     void refreshProviderMetadata(getChatProvider(chatWithLedger), ws.path)
     await refreshWorkspaceTrust(ws)
   }
@@ -7660,7 +7901,8 @@ function App(): React.JSX.Element {
         const result = await window.api.pickAndPersistExternalPathGrant({
           chatId,
           access: gap.access,
-          path: gap.path
+          path: gap.path,
+          selectionReceipt: gap.selectionReceipt
         })
         if (!result.ok) return
       }
@@ -7710,7 +7952,14 @@ function App(): React.JSX.Element {
         if (missingProviders.length === 0) return
         openExternalPathGrantPrompt({
           chatId,
-          gaps: [{ path: result.path, access, missingProviders }],
+          gaps: [
+            {
+              path: result.path,
+              access,
+              missingProviders,
+              selectionReceipt: result.selectionReceipt
+            }
+          ],
           trigger: 'attach'
         })
       } catch (err) {
@@ -8119,22 +8368,45 @@ function App(): React.JSX.Element {
     // creating a brand-new global ensemble chat with defaults. For
     // the welcome-chat case we now rebind the current chat in
     // place to `scope: 'global'` + clear workspace fields, keeping
-    // every participant + the ensemble config. The
-    // `rebindWelcomeEnsembleChatToGlobal` helper returns null when
-    // the rebind isn't applicable (non-welcome, non-Ensemble, or
-    // already global), in which case we fall back to the old
-    // create-new path below.
+    // every participant + the ensemble config. Main owns the no-op decision so
+    // a stale renderer can never invent a workspace binding.
     if (isCurrentEnsembleChat) {
-      const rebound = rebindWelcomeEnsembleChatToGlobal(currentChat, isWelcomeChat)
-      if (rebound) {
-        const chatWithLedger = currentChat
-          ? withSessionActivityLedger(currentChat, rebound)
-          : rebound
-        setCurrentWorkspace(null)
-        currentWorkspaceIdRef.current = null
-        currentWorkspacePathRef.current = null
-        clearWorkspaceTrust()
-        updateChatById(chatWithLedger.appChatId, () => chatWithLedger)
+      if (currentChat && isWelcomeChat) {
+        const initiatingChat = currentChat
+        const initiatingChatId = initiatingChat.appChatId
+        const rendererAlreadyGlobal =
+          initiatingChat.scope === 'global' &&
+          !initiatingChat.workspaceId &&
+          !initiatingChat.workspacePath &&
+          currentWorkspaceIdRef.current === null &&
+          currentWorkspacePathRef.current === null &&
+          currentWorkspace === null
+        let rebound: ChatRecord
+        let canonicalChanged = false
+        try {
+          const result = await window.api.rebindChatWorkspace({
+            chatId: initiatingChatId,
+            scope: 'global'
+          })
+          rebound = result.chat
+          canonicalChanged = result.changed
+        } catch (error) {
+          appendThreadRawLog(initiatingChatId, {
+            type: 'stderr',
+            content: `Workspace switch blocked: ${redactLog(String(error))}`
+          })
+          return
+        }
+        const chatWithLedger = withSessionActivityLedger(initiatingChat, rebound)
+        updateChatById(initiatingChatId, () => chatWithLedger)
+        if (currentChatIdRef.current !== initiatingChatId) return
+        if (
+          !shouldApplyFocusedWorkspaceRebind({
+            canonicalChanged,
+            rendererAlreadyAtTarget: rendererAlreadyGlobal
+          })
+        )
+          return
         await selectGlobalChat(chatWithLedger)
         return
       }
@@ -8369,16 +8641,10 @@ function App(): React.JSX.Element {
     async (chatId: string | null | undefined, paths: string[]) => {
       if (!chatId || paths.length === 0) return
       const parsed = imageAttachmentsFromPaths(paths)
-      // C4: authorize these exact attachment paths so the (jailed)
-      // read-image-preview IPC will serve their thumbnails. Awaited before the
-      // state update so authorization lands before the thumbnail effect fires
-      // its read — every composer attachment source funnels through here, and
-      // nothing else authorizes, so agent/transcript paths can't be previewed.
-      try {
-        await window.api.authorizeImagePreview?.(parsed.map((attachment) => attachment.path))
-      } catch {
-        // Best-effort — a failed authorize just yields a placeholder thumbnail.
-      }
+      // Preview authority is minted only by the main-owned picker, the
+      // preload-owned OS File drop receipt, or the trusted clipboard-paste
+      // materializer. This state helper deliberately cannot authorize raw
+      // renderer strings; unreceipted paths render as placeholders.
       setImageAttachmentsByChatId((prev) => ({
         ...prev,
         [chatId]: mergeImageAttachments(prev[chatId] || [], parsed)
@@ -8406,7 +8672,7 @@ function App(): React.JSX.Element {
     }
   }
 
-  const handleAttachWindow = async () => {
+  const handleAttachWindow = async (requestedOwnerChatId?: string) => {
     if (isAttachingWindow) return
     if (screenWatchUnavailableReason) {
       setRawLogs((prev) => [
@@ -8418,6 +8684,11 @@ function App(): React.JSX.Element {
       ])
       return
     }
+    // Capture ownership before the native picker yields. Focus can move to
+    // another multiview pane while the user is choosing a window, but the
+    // completed attachment still belongs to the pane that initiated it.
+    const attachmentOwnerChatId =
+      requestedOwnerChatId?.trim() || currentChatIdRef.current || currentChat?.appChatId || null
     setIsAttachingWindow(true)
     try {
       const result = await window.api.attachWindowPick()
@@ -8436,7 +8707,7 @@ function App(): React.JSX.Element {
         setAttachedWindow(result.snapshot)
         // 1.0.5-AU — Record the chat that owns this attachment so
         // the cross-chat auto-detach effect knows when to clear.
-        const ownerChatId = currentChat?.appChatId || null
+        const ownerChatId = attachmentOwnerChatId
         attachedWindowOwnerChatIdRef.current = ownerChatId
         // M11 — a fresh attach supersedes any remembered stash for this chat.
         if (ownerChatId) {
@@ -8449,10 +8720,11 @@ function App(): React.JSX.Element {
     }
   }
 
-  const handleDetachWindow = async () => {
+  const handleDetachWindow = async (expectedOwnerChatId?: string) => {
     // M11 — a USER-initiated detach is intentional: clear any sticky stash for
     // this chat so we don't offer to resume something they deliberately stopped.
     const ownerChatId = attachedWindowOwnerChatIdRef.current
+    if (expectedOwnerChatId?.trim() && ownerChatId !== expectedOwnerChatId.trim()) return
     setAttachedWindow(null)
     // 1.0.5-AU — Clear ownership marker too so a subsequent
     // chat-switch effect doesn't try to detach again.
@@ -8520,25 +8792,28 @@ function App(): React.JSX.Element {
   // Cleared while an attachment is live (the chip shows "Watching" instead).
   useEffect(() => {
     const chatId = currentChat?.appChatId || null
-    if (!chatId || attachedWindow) {
+    if (isChatPopoutWindow || !chatId || attachedWindow) {
       setResumeAppWatchSnapshot(null)
       return
     }
     let cancelled = false
-    void window.api.stickyAppWatchGet?.(chatId).then((res) => {
-      if (cancelled) return
-      const snap = res?.snapshot
-      setResumeAppWatchSnapshot(
-        snap && snap.chatId === chatId
-          ? { chatId: snap.chatId, windowMeta: snap.windowMeta, wasStreaming: snap.wasStreaming }
-          : null
-      )
-    })
+    const request = window.api.stickyAppWatchGet?.(chatId)
+    void request
+      ?.then((res) => {
+        if (cancelled) return
+        const snap = res?.snapshot
+        setResumeAppWatchSnapshot(
+          snap && snap.chatId === chatId
+            ? { chatId: snap.chatId, windowMeta: snap.windowMeta, wasStreaming: snap.wasStreaming }
+            : null
+        )
+      })
+      .catch(() => undefined)
     return () => {
       cancelled = true
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentChat?.appChatId, attachedWindow])
+  }, [currentChat?.appChatId, attachedWindow, isChatPopoutWindow])
 
   // handleComposerDragEnter/Over/Leave/Drop + handleComposerPaste moved INTO
   // <Composer> (Slice B) with their imageDragCounterRef + isComposerDragOver
@@ -8563,6 +8838,17 @@ function App(): React.JSX.Element {
     updateExternalPathGrantsForChat(chatId, nextGrants)
   }
 
+  const revokeExternalPathGrantsForChat = useCallback(
+    (chatId: string, grantIds: string[]) => {
+      const canonicalIds = [...new Set(grantIds.filter(Boolean))]
+      if (canonicalIds.length === 0) return
+      void window.api
+        .revokeExternalPathGrants({ chatId, grantIds: canonicalIds })
+        .catch(() => undefined)
+    },
+    []
+  )
+
   // `handlePickExternalPathGrant` was the entry point for the
   // pre-emptive picker pill that lived in the composer's above-bar.
   // Removed with the pill (slice 8) — runtime detection (slice 5)
@@ -8572,7 +8858,9 @@ function App(): React.JSX.Element {
   // grant-entry escape hatch (post-lunch plan item).
 
   const handleRemoveExternalPathGrant = (id: string) => {
-    updateExternalPathGrants(externalPathGrants.filter((grant) => grant.id !== id))
+    const chatId = currentChat?.appChatId
+    if (!chatId) return
+    revokeExternalPathGrantsForChat(chatId, [id])
   }
 
   // 1.0.6-EW66 — Remove ALL grants for a path (an ensemble stores
@@ -8580,7 +8868,12 @@ function App(): React.JSX.Element {
   // so the workspace manager's × removes the whole additional
   // workspace rather than a single provider's grant.
   const handleRemoveExternalPathGrantsByPath = (path: string) => {
-    updateExternalPathGrants(externalPathGrants.filter((grant) => grant.path !== path))
+    const chatId = currentChat?.appChatId
+    if (!chatId) return
+    revokeExternalPathGrantsForChat(
+      chatId,
+      externalPathGrants.filter((grant) => grant.path === path).map((grant) => grant.id)
+    )
   }
 
   const closeSideChatPresentationRecord = (chat: ChatRecord | null | undefined) => {
@@ -9328,7 +9621,11 @@ function App(): React.JSX.Element {
         return
       }
 
-      const diffObj = await window.api.getDiff(getDiffWorkspacePath(currentWorkspace, worktree))
+      const diffWorkspacePath = currentComposerWorktreeSelection
+        ? currentGitPresentationPath
+        : getDiffWorkspacePath(currentWorkspace, worktree)
+      if (!diffWorkspacePath) return
+      const diffObj = await window.api.getDiff(diffWorkspacePath)
       setDiff(diffObj)
     }
   }
@@ -9849,7 +10146,10 @@ function App(): React.JSX.Element {
           const grants = normalizeExternalPathGrants(
             collectExternalPathGrantsFromMetadata(source.providerMetadata)
           )
-          const byPath = buildRunDiffByPath(source.messages, grants)
+          const byPath = buildRunDiffByPath(source.messages, grants, {
+            runIds: [completedRunId],
+            runs: source.runs
+          })
           if (Object.keys(byPath).length === 0) return source
           const runs = [...(source.runs || [])]
           const idx = runs.findIndex((run) => run.runId === completedRunId)
@@ -10868,17 +11168,20 @@ function App(): React.JSX.Element {
       ...fallbackRequest,
       prompt: snapshot.prompt,
       ...(snapshot.displayPrompt ? { displayPrompt: snapshot.displayPrompt } : {}),
+      dmTargetParticipantId: snapshot.dmTargetParticipantId,
       selectedModelType: snapshot.selectedModelType || fallbackRequest.selectedModelType,
       customModel: snapshot.customModel || fallbackRequest.customModel,
       approvalMode: snapshot.approvalMode || fallbackRequest.approvalMode,
       workflowMode: snapshot.workflowMode || fallbackRequest.workflowMode,
       sessionTrust:
         typeof snapshot.sessionTrust === 'boolean' ? snapshot.sessionTrust : fallbackRequest.sessionTrust,
+      effectiveWorkspacePath: restoreQueuedRunWorktreeTarget(snapshot),
       imageAttachments: snapshot.imageAttachments.length
         ? snapshot.imageAttachments.map((attachment, index) => ({
-            id: attachment.id || `${fallbackRequest.appRunId || 'queued-steer'}-attachment-${index}`,
-            path: attachment.path,
-            name: attachment.name || getImageName(attachment.path)
+          id: attachment.id || `${fallbackRequest.appRunId || 'queued-steer'}-attachment-${index}`,
+          path: attachment.path,
+          name: attachment.name || getImageName(attachment.path),
+          ...persistedAttachmentMetadata(attachment)
           }))
         : fallbackRequest.imageAttachments,
       ...(snapshot.discordContextSelection
@@ -10955,6 +11258,9 @@ function App(): React.JSX.Element {
     scope: request.scope || getChatScope(request.chatRecord || currentChat),
     prompt: request.prompt,
     ...(request.displayPrompt ? { displayPrompt: request.displayPrompt } : {}),
+    ...(request.dmTargetParticipantId
+      ? { dmTargetParticipantId: request.dmTargetParticipantId }
+      : {}),
     selectedModelType: request.selectedModelType,
     customModel: request.customModel,
     approvalMode: request.approvalMode,
@@ -10964,7 +11270,8 @@ function App(): React.JSX.Element {
     imageAttachments: request.imageAttachments.map((attachment) => ({
       id: attachment.id,
       path: attachment.path,
-      name: attachment.name
+      name: attachment.name,
+      ...persistedAttachmentMetadata(attachment)
     })),
     ...(request.discordContextSelection
       ? { discordContextSelection: request.discordContextSelection }
@@ -10997,6 +11304,7 @@ function App(): React.JSX.Element {
     ...(request.cursorFastMode !== undefined ? { cursorFastMode: request.cursorFastMode } : {}),
     ...(request.scheduledTaskId ? { scheduledTaskId: request.scheduledTaskId } : {}),
     ...(request.scheduledRunAt ? { scheduledRunAt: request.scheduledRunAt } : {}),
+    ...snapshotQueuedRunWorktreeTarget(request.effectiveWorkspacePath),
     ...(request.runtimeProfileId ? { runtimeProfileId: request.runtimeProfileId } : {}),
     ...(request.geminiAuthProfileId ? { geminiAuthProfileId: request.geminiAuthProfileId } : {}),
     ...(request.handoffSourceRunId ? { handoffSourceRunId: request.handoffSourceRunId } : {}),
@@ -11102,7 +11410,8 @@ function App(): React.JSX.Element {
       imageAttachments: request.imageAttachments.map((attachment, index) => ({
         id: attachment.id || `${job.runId}-attachment-${index}`,
         path: attachment.path,
-        name: attachment.name || getImageName(attachment.path)
+        name: attachment.name || getImageName(attachment.path),
+        ...persistedAttachmentMetadata(attachment)
       })),
       discordContextSelection: request.discordContextSelection,
       externalPathGrants: request.externalPathGrants,
@@ -11124,6 +11433,8 @@ function App(): React.JSX.Element {
       cursorFastMode: queuedProviderSelection?.cursorFastMode ?? request.cursorFastMode,
       scheduledTaskId: request.scheduledTaskId,
       scheduledRunAt: request.scheduledRunAt,
+      effectiveWorkspacePath: restoreQueuedRunWorktreeTarget(request),
+      dmTargetParticipantId: request.dmTargetParticipantId,
       runtimeProfileId: queuedProviderSelection
         ? getRuntimeProfileIdForChat(queuedProviderBaseChat, effectiveProvider)
         : job.runtimeProfileId || request.runtimeProfileId,
@@ -11296,6 +11607,7 @@ function App(): React.JSX.Element {
       workflowMode?: ChatWorkflowMode
       sessionTrust?: boolean
       imageAttachments?: ImageAttachment[]
+      discordContextSelection?: DiscordContextSelection | null
     }
   ): QueuedRunRequest => {
     const selectedChat =
@@ -11305,6 +11617,11 @@ function App(): React.JSX.Element {
     const scope = getChatScope(selectedChat)
     const selectedWorkspace =
       scope === 'global' ? null : getWorkspaceForChat(selectedChat) || currentWorkspace
+    const selectedComposerWorktree = composerWorktreeSelectionForChat(
+      composerWorktreeByChatId,
+      selectedChat?.appChatId,
+      selectedWorkspace?.path
+    )
     const provider = selectedChat ? getChatProvider(selectedChat) : currentProvider
     const composerSelection = selectedChat ? getChatComposerSelection(selectedChat, provider) : null
     const rawRequestModel = overrideModel
@@ -11368,12 +11685,17 @@ function App(): React.JSX.Element {
         : selectedChat?.chatKind === 'ensemble'
           ? filterDispatchExternalPathGrants(normalizedExternalPathGrants)
           : normalizedExternalPathGrants.filter((grant) => grant.provider === provider)
-    const requestDiscordContextSelection =
-      !existingPrompt &&
-      selectedChat?.appChatId &&
-      selectedChat.appChatId === currentComposerChatId
-        ? currentDiscordContextSelection || undefined
+    const targetDiscordContextSelection =
+      target && Object.prototype.hasOwnProperty.call(target, 'discordContextSelection')
+        ? { value: target.discordContextSelection }
         : undefined
+    const requestDiscordContextSelection = resolveRunDiscordContextSelection({
+      existingPrompt,
+      selectedChatId: selectedChat?.appChatId,
+      currentComposerChatId,
+      currentSelection: currentDiscordContextSelection,
+      targetSelection: targetDiscordContextSelection
+    })
 
     return {
       appRunId: createAppRunId(),
@@ -11390,6 +11712,9 @@ function App(): React.JSX.Element {
       workflowMode: requestWorkflowMode,
       sessionTrust: target?.sessionTrust ?? sessionTrust,
       imageAttachments: target?.imageAttachments ?? imageAttachments,
+      ...(selectedComposerWorktree?.effectiveWorkspacePath
+        ? { effectiveWorkspacePath: selectedComposerWorktree.effectiveWorkspacePath }
+        : {}),
       ...(requestDiscordContextSelection
         ? { discordContextSelection: requestDiscordContextSelection }
         : {}),
@@ -11433,6 +11758,8 @@ function App(): React.JSX.Element {
         (job.request?.prompt || job.promptPreview || '') === queuedRequest.prompt &&
         job.request?.selectedModelType === queuedRequest.selectedModelType &&
         job.request?.scheduledRunAt === queuedRequest.scheduledRunAt &&
+        job.request?.effectiveWorkspacePath === queuedRequest.effectiveWorkspacePath &&
+        job.request?.dmTargetParticipantId === queuedRequest.dmTargetParticipantId &&
         attachmentQueueKey(job.request?.imageAttachments || []) ===
           attachmentQueueKey(queuedRequest.imageAttachments) &&
         discordContextSelectionQueueKey(job.request?.discordContextSelection) ===
@@ -11446,6 +11773,8 @@ function App(): React.JSX.Element {
         request.prompt === queuedRequest.prompt &&
         request.selectedModelType === queuedRequest.selectedModelType &&
         request.scheduledRunAt === queuedRequest.scheduledRunAt &&
+        request.effectiveWorkspacePath === queuedRequest.effectiveWorkspacePath &&
+        request.dmTargetParticipantId === queuedRequest.dmTargetParticipantId &&
         attachmentQueueKey(request.imageAttachments) ===
           attachmentQueueKey(queuedRequest.imageAttachments) &&
         discordContextSelectionQueueKey(request.discordContextSelection) ===
@@ -11721,7 +12050,8 @@ function App(): React.JSX.Element {
             imageAttachments: request.imageAttachments.map((attachment) => ({
               id: attachment.id,
               path: attachment.path,
-              name: attachment.name
+              name: attachment.name,
+              ...persistedAttachmentMetadata(attachment)
             })),
             ...(request.discordContextSnapshots?.length
               ? { discordContextSnapshots: request.discordContextSnapshots }
@@ -11883,7 +12213,10 @@ function App(): React.JSX.Element {
           : undefined
       const composerWorktreeSelection =
         !isGlobalRun && runWorkspace
-          ? composerWorktreeByWorkspace[normalizeWorkspacePath(runWorkspace.path)] || null
+          ? composerWorktreeSelectionFromEffectivePath(
+              runWorkspace.path,
+              request.effectiveWorkspacePath
+            )
           : null
       const runRuntimeProfile = request.runtimeProfileId
         ? runtimeProfiles.find((profile) => profile.id === request.runtimeProfileId) || null
@@ -13019,7 +13352,7 @@ function App(): React.JSX.Element {
             model: modelToPass,
             target: { type: 'uncommittedChanges' },
             delivery: 'inline',
-            cwd: runWorkspace!.path,
+            cwd: runDiffWorkspacePath || runWorkspace!.path,
             appRunId: currentRunId,
             appChatId: runChatId
           })
@@ -13119,14 +13452,14 @@ function App(): React.JSX.Element {
   }
 
   const handleReviewCurrentDiff = async () => {
-    if (!currentWorkspace || !currentChat || isPreparingDiffReview) {
+    if (!currentWorkspace || !currentGitPresentationPath || !currentChat || isPreparingDiffReview) {
       return
     }
 
     setIsPreparingDiffReview(true)
 
     try {
-      const diffObj = await window.api.getDiff(currentWorkspace.path)
+      const diffObj = await window.api.getDiff(currentGitPresentationPath)
       setDiff(diffObj)
       setDiffView('workspace')
       openInspectorTab('diff')
@@ -13171,6 +13504,7 @@ function App(): React.JSX.Element {
         workflowMode: 'normal',
         sessionTrust,
         imageAttachments: [],
+        effectiveWorkspacePath: currentComposerWorktreeSelection?.effectiveWorkspacePath,
         codexNativeReview:
           currentProvider === 'codex' &&
           !isCurrentEnsembleChat &&
@@ -14135,7 +14469,8 @@ function App(): React.JSX.Element {
           imageAttachments: request.imageAttachments.map((attachment) => ({
             id: attachment.id,
             path: attachment.path,
-            name: attachment.name
+            name: attachment.name,
+            ...persistedAttachmentMetadata(attachment)
           }))
         })
         clearComposerAttachmentsForSubmittedRequest(request)
@@ -14478,13 +14813,17 @@ function App(): React.JSX.Element {
   // mutation preserves the SAME appChatId + transcript/runs/history; renderer
   // builds the seed participant (solo→ensemble) and the canonical-provider
   // metadata (ensemble→solo), while the backend enforces the idle-only guard.
-  const handleToggleWelcomeEnsemble = async (enabled: boolean) => {
-    if (!currentChat?.appChatId || currentChatIsLinkedChild) return
+  const handleToggleEnsembleForChat = async (
+    targetChat: ChatRecord,
+    enabled: boolean,
+    targetIsRunning: boolean
+  ): Promise<void> => {
+    if (!targetChat.appChatId || targetChat.parentChatId) return
     if (settings?.ensembleModeEnabled === false && enabled) return
-    if (isCurrentEnsembleChat === enabled) return
+    if ((targetChat.chatKind === 'ensemble') === enabled) return
     if (chatKindTogglingRef.current) return
-    if (isCurrentChatRunning) {
-      appendThreadRawLog(currentChat.appChatId, {
+    if (targetIsRunning) {
+      appendThreadRawLog(targetChat.appChatId, {
         type: 'info',
         content: 'Finish the current turn first to change chat mode.'
       })
@@ -14492,9 +14831,9 @@ function App(): React.JSX.Element {
     }
     if (!enabled) {
       const modalChat =
-        isChatSummaryRecord(currentChat)
-          ? (await refreshSingleChat(currentChat.appChatId)) || currentChat
-          : currentChat
+        isChatSummaryRecord(targetChat)
+          ? (await refreshSingleChat(targetChat.appChatId)) || targetChat
+          : targetChat
       setPendingEnsembleToSoloChatId(modalChat.appChatId)
       return
     }
@@ -14502,9 +14841,9 @@ function App(): React.JSX.Element {
     setChatKindMutationBusy(true)
     try {
       const baseChat =
-        isChatSummaryRecord(currentChat)
-          ? (await refreshSingleChat(currentChat.appChatId)) || currentChat
-          : currentChat
+        isChatSummaryRecord(targetChat)
+          ? (await refreshSingleChat(targetChat.appChatId)) || targetChat
+          : targetChat
       const updatedChat = applyHydratedChat(
         await window.api.setChatKind({
           chatId: baseChat.appChatId,
@@ -14512,20 +14851,21 @@ function App(): React.JSX.Element {
           seedParticipant: buildEnsembleSeedParticipantFromChat(baseChat)
         })
       )
-      applyChatComposerSelection(updatedChat, getChatProvider(updatedChat))
+      if (currentChatIdRef.current === updatedChat.appChatId) {
+        applyChatComposerSelection(updatedChat, getChatProvider(updatedChat))
+      }
       setSelectedParticipantForChat(
         updatedChat.appChatId,
         updatedChat.ensemble?.participants[0]?.id || null
       )
-      if (workflowDraft?.chatId === updatedChat.appChatId) {
-        setWorkflowDraft({
-          ...workflowDraft,
-          ensembleEnabled: true
-        })
-      }
+      setWorkflowDraft((draft) =>
+        draft?.chatId === updatedChat.appChatId
+          ? { ...draft, ensembleEnabled: true }
+          : draft
+      )
       void refreshChatList()
     } catch (error) {
-      appendThreadRawLog(currentChat.appChatId, {
+      appendThreadRawLog(targetChat.appChatId, {
         type: 'stderr',
         content: redactLog(error instanceof Error ? error.message : String(error))
       })
@@ -14533,6 +14873,10 @@ function App(): React.JSX.Element {
       chatKindTogglingRef.current = false
       setChatKindMutationBusy(false)
     }
+  }
+  const handleToggleWelcomeEnsemble = async (enabled: boolean) => {
+    if (!currentChat) return
+    await handleToggleEnsembleForChat(currentChat, enabled, isCurrentChatRunning)
   }
 
   const handleConfirmEnsembleToSolo = async (provider: ProviderId): Promise<void> => {
@@ -14551,14 +14895,15 @@ function App(): React.JSX.Element {
           canonicalProviderMetadata: providerChoice?.metadata
         })
       )
-      applyChatComposerSelection(updatedChat, getChatProvider(updatedChat))
-      setSelectedParticipantForChat(updatedChat.appChatId, null)
-      if (workflowDraft?.chatId === updatedChat.appChatId) {
-        setWorkflowDraft({
-          ...workflowDraft,
-          ensembleEnabled: false
-        })
+      if (currentChatIdRef.current === updatedChat.appChatId) {
+        applyChatComposerSelection(updatedChat, getChatProvider(updatedChat))
       }
+      setSelectedParticipantForChat(updatedChat.appChatId, null)
+      setWorkflowDraft((draft) =>
+        draft?.chatId === updatedChat.appChatId
+          ? { ...draft, ensembleEnabled: false }
+          : draft
+      )
       void refreshChatList()
       setPendingEnsembleToSoloChatId(null)
     } catch (error) {
@@ -19628,51 +19973,59 @@ function App(): React.JSX.Element {
   // "N files changed +A -B" reflects the working tree and resets on commit —
   // the same git grounding as the primary row, instead of summing tool activity
   // across the whole transcript.
-  // Live git snapshot per unique external path across every VISIBLE chat. Each
-  // composer receives a path-filtered projection below, so the shared cache is
-  // an I/O optimisation rather than a source of cross-pane UI state.
-  const externalWorkspacePathsKey = useMemo(
-    () =>
-      groupExternalPathGrants(visibleExternalPathGrants)
-        .map((group) => group.path)
-        .sort()
-        .join('\n'),
+  // Live git snapshot per unique external owner across every VISIBLE chat. Two
+  // chats can grant the same path with distinct authority, so dedupe by the
+  // composite owner rather than by filesystem path.
+  const externalWorkspaceTargetsKey = useMemo(
+    () => JSON.stringify(buildExternalWorkspaceOwnerTargets(visibleExternalPathGrants)),
     [visibleExternalPathGrants]
   )
+  const externalWorkspaceTargets = useMemo(
+    () =>
+      JSON.parse(externalWorkspaceTargetsKey) as Array<{
+        ownerKey: string
+        path: string
+        chatId: string
+      }>,
+    [externalWorkspaceTargetsKey]
+  )
   useEffect(() => {
-    const paths = externalWorkspacePathsKey ? externalWorkspacePathsKey.split('\n') : []
-    if (paths.length === 0) {
-      setExternalGitSnapshots({})
-      setExternalPrByPath({})
-      externalPrStatusKeyByPathRef.current = {}
+    if (externalWorkspaceTargets.length === 0) {
+      setExternalGitSnapshotsByOwner({})
+      setExternalPrByOwner({})
+      externalPrStatusKeyByOwnerRef.current = {}
       return
     }
     if (hasGitSnapshotSubscriptionApi()) return undefined
     let cancelled = false
     const fetchAll = async (): Promise<void> => {
       const entries = await Promise.all(
-        paths.map(async (path) => {
+        externalWorkspaceTargets.map(async ({ ownerKey, path, chatId }) => {
           try {
-            const res = await window.api.gitSnapshot({ repoPath: path })
+            const res = await window.api.gitSnapshot({ repoPath: path, chatId })
             const snapshot = res?.ok ? res.data : null
             let pr: GitPrSummary | null = null
             if (snapshot?.remoteUrl && typeof window.api.githubPrStatus === 'function') {
               try {
-                const prRes = await window.api.githubPrStatus({ repoPath: path })
+                const prRes = await window.api.githubPrStatus({ repoPath: path, chatId })
                 pr = prRes?.ok ? prRes.data : null
               } catch {
                 pr = null
               }
             }
-            return [path, snapshot, pr] as const
+            return [ownerKey, snapshot, pr] as const
           } catch {
-            return [path, null, null] as const
+            return [ownerKey, null, null] as const
           }
         })
       )
       if (!cancelled) {
-        setExternalGitSnapshots(Object.fromEntries(entries.map(([path, snapshot]) => [path, snapshot])))
-        setExternalPrByPath(Object.fromEntries(entries.map(([path, , pr]) => [path, pr])))
+        setExternalGitSnapshotsByOwner(
+          Object.fromEntries(entries.map(([ownerKey, snapshot]) => [ownerKey, snapshot]))
+        )
+        setExternalPrByOwner(
+          Object.fromEntries(entries.map(([ownerKey, , pr]) => [ownerKey, pr]))
+        )
       }
     }
     void fetchAll()
@@ -19684,33 +20037,35 @@ function App(): React.JSX.Element {
       cancelled = true
       window.removeEventListener('focus', onFocus)
     }
-  }, [externalWorkspacePathsKey, runCompleteNotice?.timestamp])
+  }, [externalWorkspaceTargets, externalWorkspaceTargetsKey, runCompleteNotice?.timestamp])
 
   useEffect(() => {
-    const paths = externalWorkspacePathsKey ? externalWorkspacePathsKey.split('\n') : []
-    if (paths.length === 0 || !hasGitSnapshotSubscriptionApi()) return undefined
-    const unsubscribers = paths.map((path) =>
-      window.api.gitSubscribeSnapshot({ repoPath: path }, (payload) => {
-        setExternalGitSnapshots((prev) => ({
+    if (externalWorkspaceTargets.length === 0 || !hasGitSnapshotSubscriptionApi()) return undefined
+    const unsubscribers = externalWorkspaceTargets.map(({ ownerKey, path, chatId }) =>
+      window.api.gitSubscribeSnapshot({ repoPath: path, chatId }, (payload) => {
+        setExternalGitSnapshotsByOwner((prev) => ({
           ...prev,
-          [path]: payload.snapshot
+          [ownerKey]: payload.snapshot
         }))
-        refreshExternalPrStatus(path, payload.snapshot)
+        refreshExternalPrStatus(path, payload.snapshot, chatId)
       })
     )
     return () => {
       unsubscribers.forEach((unsubscribe) => unsubscribe())
     }
-  }, [externalWorkspacePathsKey, refreshExternalPrStatus])
+  }, [externalWorkspaceTargets, externalWorkspaceTargetsKey, refreshExternalPrStatus])
 
   useEffect(() => {
-    const paths = externalWorkspacePathsKey ? externalWorkspacePathsKey.split('\n') : []
-    if (paths.length === 0 || !hasGitSnapshotSubscriptionApi() || !window.api.gitInvalidateSnapshot) {
+    if (
+      externalWorkspaceTargets.length === 0 ||
+      !hasGitSnapshotSubscriptionApi() ||
+      !window.api.gitInvalidateSnapshot
+    ) {
       return undefined
     }
     const invalidateAll = (): void => {
-      paths.forEach((path) => {
-        void window.api.gitInvalidateSnapshot?.({ repoPath: path, reason: 'manual' })
+      externalWorkspaceTargets.forEach(({ path, chatId }) => {
+        void window.api.gitInvalidateSnapshot?.({ repoPath: path, chatId, reason: 'manual' })
       })
     }
     const onFocus = (): void => {
@@ -19718,22 +20073,21 @@ function App(): React.JSX.Element {
     }
     window.addEventListener('focus', onFocus)
     return () => window.removeEventListener('focus', onFocus)
-  }, [externalWorkspacePathsKey])
+  }, [externalWorkspaceTargets, externalWorkspaceTargetsKey])
 
   useEffect(() => {
-    const paths = externalWorkspacePathsKey ? externalWorkspacePathsKey.split('\n') : []
     if (
-      paths.length === 0 ||
+      externalWorkspaceTargets.length === 0 ||
       !runCompleteNotice?.timestamp ||
       !hasGitSnapshotSubscriptionApi() ||
       !window.api.gitInvalidateSnapshot
     ) {
       return
     }
-    paths.forEach((path) => {
-      void window.api.gitInvalidateSnapshot?.({ repoPath: path, reason: 'run-diff' })
+    externalWorkspaceTargets.forEach(({ path, chatId }) => {
+      void window.api.gitInvalidateSnapshot?.({ repoPath: path, chatId, reason: 'run-diff' })
     })
-  }, [externalWorkspacePathsKey, runCompleteNotice?.timestamp])
+  }, [externalWorkspaceTargets, externalWorkspaceTargetsKey, runCompleteNotice?.timestamp])
 
   // Multiview — live git snapshot for every VISIBLE pane's workspace path so
   // each pane's composer above-row reports its OWN diff stats. Normal builds use
@@ -19747,9 +20101,11 @@ function App(): React.JSX.Element {
       if (!paneChatId) continue
       const paneChat = chatByIdRef.current.get(paneChatId)
       const basePath = getWorkspaceForChat(paneChat)?.path || paneChat?.workspacePath
-      const selection = basePath
-        ? composerWorktreeByWorkspace[normalizeWorkspacePath(basePath)] || null
-        : null
+      const selection = composerWorktreeSelectionForChat(
+        composerWorktreeByChatId,
+        paneChatId,
+        basePath
+      )
       const path = selection?.effectiveWorkspacePath || basePath
       if (path) seen.add(path)
     }
@@ -19835,10 +20191,16 @@ function App(): React.JSX.Element {
     })
   }, [multiviewPaneWorkspacePathsKey, runCompleteNotice?.timestamp])
 
+  const currentGitPresentationKey = normalizeWorkspacePath(currentGitPresentationPath || '')
+  const singlePanePrimaryGitSnapshot =
+    primaryGitSnapshot &&
+    normalizeWorkspacePath(primaryGitSnapshot.requestedPath) === currentGitPresentationKey
+      ? primaryGitSnapshot
+      : null
   const focusedPrimaryGitSnapshot =
     isMultiviewSplit && currentGitPresentationPath
       ? gitSnapshotByWorkspace[currentGitPresentationPath] ?? null
-      : primaryGitSnapshot
+      : singlePanePrimaryGitSnapshot
   const focusedCurrentWorkspace = isMultiviewSplit ? currentChatWorkspace : currentWorkspace
   const setFocusedPrimaryGitSnapshot = useCallback(
     (snapshot: GitRepositorySnapshot | null) => {
@@ -19848,6 +20210,13 @@ function App(): React.JSX.Element {
         )
         return
       }
+      if (
+        snapshot &&
+        normalizeWorkspacePath(snapshot.requestedPath) !==
+          normalizeWorkspacePath(currentGitPresentationPath || '')
+      ) {
+        return
+      }
       setPrimaryGitSnapshot(snapshot)
     },
     [currentGitPresentationPath, isMultiviewSplit]
@@ -19855,21 +20224,40 @@ function App(): React.JSX.Element {
   // PR/CI rollups are still scalar single-pane state. Suppress them in split
   // mode until their path-keyed counterparts are plumbed, so a late response
   // from the previously focused pane can never decorate the next pane.
-  const focusedPrimaryPr = isMultiviewSplit ? null : primaryPr
-  const focusedPrimaryCi = isMultiviewSplit ? null : primaryCi
+  const focusedPrimaryPr =
+    !isMultiviewSplit &&
+    normalizeWorkspacePath(primaryPrOwnerPathRef.current || '') ===
+      normalizeWorkspacePath(currentGitPresentationPath || '')
+      ? primaryPr
+      : null
+  const focusedPrimaryCi =
+    !isMultiviewSplit &&
+    normalizeWorkspacePath(primaryCiOwnerPathRef.current || '') ===
+      normalizeWorkspacePath(currentGitPresentationPath || '')
+      ? primaryCi
+      : null
 
   const currentExternalWorkspaceState = useMemo(
-    () =>
-      deriveExternalWorkspaceStateFromGrants(externalPathGrants, {
+    () => {
+      const gitSnapshotsByPath = projectExternalWorkspaceOwnerCache(
+        externalPathGrants,
+        externalGitSnapshotsByOwner
+      )
+      const prByPath = projectExternalWorkspaceOwnerCache(
+        externalPathGrants,
+        externalPrByOwner
+      )
+      return deriveExternalWorkspaceStateFromGrants(externalPathGrants, {
         repoMetadataByPath: externalPathRepoMetadataByPath,
-        gitSnapshotsByPath: externalGitSnapshots,
-        prByPath: externalPrByPath
-      }),
+        gitSnapshotsByPath,
+        prByPath
+      })
+    },
     [
-      externalGitSnapshots,
+      externalGitSnapshotsByOwner,
       externalPathGrants,
       externalPathRepoMetadataByPath,
-      externalPrByPath
+      externalPrByOwner
     ]
   )
 
@@ -20907,9 +21295,12 @@ function App(): React.JSX.Element {
   const liveToolFileSummaryMessages = useMemo(() => {
     const messages = currentChat?.messages || EMPTY_CHAT_MESSAGES
     return liveToolFileSummaryRunId
-      ? messages.filter((message) => message.runId === liveToolFileSummaryRunId)
+      ? selectRunEvidenceMessages(messages, {
+          runIds: [liveToolFileSummaryRunId],
+          runs: currentChat?.runs
+        })
       : EMPTY_CHAT_MESSAGES
-  }, [currentChat?.messages, liveToolFileSummaryRunId])
+  }, [currentChat?.messages, currentChat?.runs, liveToolFileSummaryRunId])
   const liveToolFileSummarySignature = useMemo(
     () => buildLiveToolFileSummarySignature(liveToolFileSummaryMessages),
     [liveToolFileSummaryMessages]
@@ -20989,10 +21380,6 @@ function App(): React.JSX.Element {
       : liveToolFileChangeSummaries
   const fileChangeSummaryEstimated =
     exactFileChangeSummaries.length === 0 && liveToolFileChangeSummaries.length > 0
-  const displayFileChangeSummaries = useMemo(
-    () => fileChangeSummaries.filter((item) => !item.isNoise),
-    [fileChangeSummaries]
-  )
   // Round-scoped slice of the live tool-diff extraction: only messages from
   // the just-completed ensemble round (every run stamped with its roundId,
   // plus the round's own participant/lane bookkeeping for older records) or,
@@ -21009,29 +21396,12 @@ function App(): React.JSX.Element {
   } | null>(null)
   const roundFileChangeSummaries = useMemo(() => {
     if (!runCompleteNotice) return EMPTY_DIFF_FILE_SUMMARIES
-    const roundRunIds = new Set<string>()
-    const activeRound =
-      currentChat?.chatKind === 'ensemble' ? currentChat.ensemble?.activeRound : undefined
-    if (activeRound?.roundId) {
-      for (const run of currentChat?.runs || []) {
-        if (run.runId && run.ensembleRoundId === activeRound.roundId) roundRunIds.add(run.runId)
-      }
-      for (const participant of activeRound.participants || []) {
-        if (participant.runId) roundRunIds.add(participant.runId)
-      }
-      for (const lane of Object.values(activeRound.lanes || {})) {
-        if (lane?.runId) roundRunIds.add(lane.runId)
-      }
-    } else if (currentRun?.runId) {
-      roundRunIds.add(currentRun.runId)
-    }
+    const roundRunIds = selectCompletionRunIds(currentChat, currentRun)
     if (roundRunIds.size === 0) return EMPTY_DIFF_FILE_SUMMARIES
-    const roundMessages = liveToolFileSummaryMessages.filter(
-      (message) =>
-        message.runId !== undefined &&
-        roundRunIds.has(message.runId) &&
-        (message.toolActivities?.length || 0) > 0
-    )
+    const roundMessages = selectRunEvidenceMessages(currentChat?.messages, {
+      runIds: roundRunIds,
+      runs: currentChat?.runs
+    })
     if (roundMessages.length === 0) return EMPTY_DIFF_FILE_SUMMARIES
     const cacheKey = [
       liveToolFileSummaryChatId || '',
@@ -21052,9 +21422,39 @@ function App(): React.JSX.Element {
     currentChat,
     currentRun,
     liveToolFileSummaryChatId,
-    liveToolFileSummaryMessages,
     liveToolFileSummaryWorkspacePath
   ])
+  const completionRoundHasMultipleRuns = useMemo(
+    () =>
+      Boolean(
+        runCompleteNotice &&
+          currentChat?.chatKind === 'ensemble' &&
+          selectCompletionRunIds(currentChat, currentRun).size > 1
+      ),
+    [currentChat, currentRun, runCompleteNotice]
+  )
+  const displayFileChangeSummaries = useMemo(
+    () =>
+      mergeCompletionFileChangeSummaries(
+        fileChangeSummaries.filter((item) => !item.isNoise),
+        roundFileChangeSummaries,
+        liveToolFileSummaryWorkspacePath,
+        { preferDisplayEvidence: !completionRoundHasMultipleRuns }
+      ),
+    [
+      completionRoundHasMultipleRuns,
+      fileChangeSummaries,
+      liveToolFileSummaryWorkspacePath,
+      roundFileChangeSummaries
+    ]
+  )
+  const completionRoundFileChangeSummaries =
+    roundFileChangeSummaries.length > 0
+      ? displayFileChangeSummaries
+      : EMPTY_DIFF_FILE_SUMMARIES
+  const completionFileChangeSummaryEstimated =
+    fileChangeSummaryEstimated ||
+    (roundFileChangeSummaries.length > 0 && completionRoundHasMultipleRuns)
   const createdChangeCount = displayFileChangeSummaries.filter(
     (item) => item.status === 'created'
   ).length
@@ -21066,7 +21466,7 @@ function App(): React.JSX.Element {
   ).length
   const fileChangeSummaryText =
     displayFileChangeSummaries.length > 0
-      ? `Created ${createdChangeCount} · Edited ${modifiedChangeCount} · Deleted ${deletedChangeCount}${fileChangeSummaryEstimated ? ' · live est.' : ''}`
+      ? `Created ${createdChangeCount} · Edited ${modifiedChangeCount} · Deleted ${deletedChangeCount}${completionFileChangeSummaryEstimated ? ' · live est.' : ''}`
       : 'No file changes detected.'
   const fileChangeAdds = displayFileChangeSummaries.reduce(
     (total, item) => total + (item.additions || 0),
@@ -21128,14 +21528,14 @@ function App(): React.JSX.Element {
   )
 
   useEffect(() => {
-    if (!currentWorkspacePath || !liveGitInvalidationKey || !window.api.gitInvalidateSnapshot) {
+    if (!currentGitPresentationPath || !liveGitInvalidationKey || !window.api.gitInvalidateSnapshot) {
       return
     }
     void window.api.gitInvalidateSnapshot({
-      workspacePath: currentWorkspacePath,
+      workspacePath: currentGitPresentationPath,
       reason: 'run-diff'
     })
-  }, [currentWorkspacePath, liveGitInvalidationKey])
+  }, [currentGitPresentationPath, liveGitInvalidationKey])
 
   const transcriptMessages = currentChat?.messages || EMPTY_CHAT_MESSAGES
   // Welcome-surface gate. Extracted into `lib/welcomeState` so the
@@ -22341,7 +22741,7 @@ function App(): React.JSX.Element {
   // `createGithubPr` IPC already accepts `workspacePath`, so this is
   // pure per-path parameterization. State is tracked per path so
   // each row's button reflects only its own PR progress.
-  const handleCreateGithubPr = async (targetPath?: string) => {
+  const handleCreateGithubPr = async (targetPath?: string, externalChatId?: string) => {
     const workspacePath = targetPath || currentWorkspace?.path
     if (!workspacePath) {
       // No path to key state by; surface against the primary slot.
@@ -22353,47 +22753,61 @@ function App(): React.JSX.Element {
       window.setTimeout(() => setCreatePrStateFor(fallbackKey, { status: 'idle' }), 5000)
       return
     }
-    if (getCreatePrState(workspacePath).status === 'pending') return
+    if (getCreatePrState(workspacePath, externalChatId).status === 'pending') return
     if (typeof window.api.createGithubPr !== 'function') {
       openInspectorTab('diff')
       return
     }
-    setCreatePrStateFor(workspacePath, { status: 'pending' })
+    setCreatePrStateFor(workspacePath, { status: 'pending' }, externalChatId)
     try {
-      const result = await window.api.createGithubPr({ workspacePath, openInBrowser: true })
+      const gitTarget = externalChatId
+        ? { repoPath: workspacePath, chatId: externalChatId }
+        : { workspacePath }
+      const result = await window.api.createGithubPr({
+        ...gitTarget,
+        openInBrowser: true
+      })
       if (result?.ok) {
         setCreatePrStateFor(workspacePath, {
           status: 'success',
           message: result.url ? `Opened ${result.url}` : 'Pull request created.'
-        })
+        }, externalChatId)
         const refreshPr = async (): Promise<GitPrSummary | null> => {
           if (typeof window.api.githubPrStatus !== 'function') return result as GitPrSummary
           try {
-            const prRes = await window.api.githubPrStatus({ workspacePath })
+            const prRes = await window.api.githubPrStatus(gitTarget)
             return prRes?.ok ? prRes.data : (result as GitPrSummary)
           } catch {
             return result as GitPrSummary
           }
         }
         const pr = await refreshPr()
-        if (workspacePath === currentWorkspacePath) {
+        if (externalChatId) {
+          const ownerKey = externalWorkspaceOwnerKey(externalChatId, workspacePath)
+          setExternalPrByOwner((prev) => ({ ...prev, [ownerKey]: pr }))
+        } else if (
+          normalizeWorkspacePath(currentGitPresentationPathRef.current || '') ===
+          normalizeWorkspacePath(workspacePath)
+        ) {
+          primaryPrOwnerPathRef.current = workspacePath
           setPrimaryPr(pr)
-        } else {
-          setExternalPrByPath((prev) => ({ ...prev, [workspacePath]: pr }))
         }
       } else {
         setCreatePrStateFor(workspacePath, {
           status: 'error',
           message: result?.error || 'Failed to create pull request.'
-        })
+        }, externalChatId)
       }
     } catch (error) {
       setCreatePrStateFor(workspacePath, {
         status: 'error',
         message: error instanceof Error ? error.message : 'Failed to create pull request.'
-      })
+      }, externalChatId)
     }
-    window.setTimeout(() => setCreatePrStateFor(workspacePath, { status: 'idle' }), 6000)
+    window.setTimeout(
+      () => setCreatePrStateFor(workspacePath, { status: 'idle' }, externalChatId),
+      6000
+    )
   }
 
   // Phase Git-U1 — `handlePrimeCommitChangesPrompt` (which injected a
@@ -22554,7 +22968,8 @@ function App(): React.JSX.Element {
         imageAttachments: attachments.map((attachment) => ({
           id: attachment.id,
           path: attachment.path,
-          name: attachment.name
+          name: attachment.name,
+          ...persistedAttachmentMetadata(attachment)
         }))
       })
       .then(() => {
@@ -23681,26 +24096,66 @@ function App(): React.JSX.Element {
     []
   )
   const handleMultiviewPanePickWorkspace = useCallback(
-    (_paneIndex: number, chatId: string, workspace: WorkspaceRecord) => {
+    async (_paneIndex: number, chatId: string, workspace: WorkspaceRecord) => {
       const paneChat = chatByIdRef.current.get(chatId)
-      const paneProvider = paneChat ? getChatProvider(paneChat) : DEFAULT_PROVIDER
-      updateChatById(chatId, (source) => ({
-        ...source,
-        scope: 'workspace',
-        workspaceId: workspace.id,
-        workspacePath: workspace.path,
-        updatedAt: Date.now()
-      }))
-      if (currentChatIdRef.current === chatId) {
-        setCurrentWorkspace(workspace)
-        currentWorkspaceIdRef.current = workspace.id
-        currentWorkspacePathRef.current = workspace.path
-        void refreshWorkspaceTrust(workspace)
+      if (!paneChat) return
+      const initiatingPaneId = multiview.panes[_paneIndex]?.id
+      const alreadyBound =
+        paneChat.scope !== 'global' &&
+        paneChat.workspaceId === workspace.id &&
+        paneChat.workspacePath === workspace.path
+      let rebound: ChatRecord
+      let canonicalChanged = false
+      try {
+        const result = await window.api.rebindChatWorkspace({
+          chatId,
+          scope: 'workspace',
+          workspaceId: workspace.id,
+          workspacePath: workspace.path
+        })
+        rebound = result.chat
+        canonicalChanged = result.changed
+      } catch (error) {
+        appendThreadRawLog(chatId, {
+          type: 'stderr',
+          content: `Workspace switch blocked: ${redactLog(String(error))}`
+        })
+        return
       }
-      void refreshUsageSummary(workspace.id, paneProvider)
-      void refreshProviderMetadata(paneProvider, workspace.path)
+      const canonical = alreadyBound ? rebound : withSessionActivityLedger(paneChat, rebound)
+      const paneProvider = getChatProvider(canonical)
+      updateChatById(chatId, () => canonical)
+      if (
+        initiatingPaneId &&
+        focusedMultiviewPaneIdRef.current === initiatingPaneId &&
+        currentChatIdRef.current === chatId
+      ) {
+        const focusedRendererAlreadyBound =
+          alreadyBound &&
+          currentWorkspaceIdRef.current === workspace.id &&
+          currentWorkspacePathRef.current === workspace.path &&
+          currentWorkspace?.id === workspace.id &&
+          currentWorkspace?.path === workspace.path
+        if (
+          !shouldApplyFocusedWorkspaceRebind({
+            canonicalChanged,
+            rendererAlreadyAtTarget: focusedRendererAlreadyBound
+          })
+        ) {
+          void refreshWorkspaceTrust(workspace)
+          return
+        }
+        // Re-run the focused-pane transition against the canonical chat. This
+        // clears Trusted Session, stops any old-workspace persistent provider,
+        // and drops stale diff/run presentation before the new workspace owns
+        // the focused renderer.
+        handleFocusMultiviewPane(_paneIndex, chatId)
+        void refreshWorkspaceTrust(workspace)
+        void refreshUsageSummary(workspace.id, paneProvider)
+        void refreshProviderMetadata(paneProvider, workspace.path)
+      }
     },
-    [refreshWorkspaceTrust, updateChatById]
+    [currentWorkspace, handleFocusMultiviewPane, multiview.panes, refreshWorkspaceTrust, updateChatById]
   )
   const handleMultiviewPaneAddWorkspace = useCallback(
     (paneIndex: number, chatId: string) => {
@@ -23710,35 +24165,70 @@ function App(): React.JSX.Element {
     [handleFocusMultiviewPane, handleSelectWorkspace]
   )
   const handleMultiviewPaneSelectNoWorkspace = useCallback(
-    (_paneIndex: number, chatId: string) => {
-      updateChatById(chatId, (source) => {
-        const { workspaceId: _workspaceId, workspacePath: _workspacePath, ...rest } = source
-        return {
-          ...rest,
-          scope: 'global',
-          updatedAt: Date.now()
-        }
-      })
-      if (currentChatIdRef.current === chatId) {
-        currentWorkspaceIdRef.current = null
-        currentWorkspacePathRef.current = null
-        clearWorkspaceTrust()
-        setCurrentWorkspace(null)
-      }
-    },
-    [clearWorkspaceTrust, updateChatById]
-  )
-  const handleMultiviewPaneToggleScreenWatch = useCallback(
-    (_paneIndex: number, _chatId: string) => {
-      if (screenWatchUnavailableReason) return
-      if (attachedWindow) {
-        void handleDetachWindow()
+    async (_paneIndex: number, chatId: string) => {
+      const paneChat = chatByIdRef.current.get(chatId)
+      if (!paneChat) return
+      const initiatingPaneId = multiview.panes[_paneIndex]?.id
+      const alreadyGlobal =
+        paneChat.scope === 'global' && !paneChat.workspaceId && !paneChat.workspacePath
+      let rebound: ChatRecord
+      let canonicalChanged = false
+      try {
+        const result = await window.api.rebindChatWorkspace({ chatId, scope: 'global' })
+        rebound = result.chat
+        canonicalChanged = result.changed
+      } catch (error) {
+        appendThreadRawLog(chatId, {
+          type: 'stderr',
+          content: `Workspace switch blocked: ${redactLog(String(error))}`
+        })
         return
       }
-      void handleAttachWindow()
+      const canonical = alreadyGlobal ? rebound : withSessionActivityLedger(paneChat, rebound)
+      updateChatById(chatId, () => canonical)
+      if (
+        initiatingPaneId &&
+        focusedMultiviewPaneIdRef.current === initiatingPaneId &&
+        currentChatIdRef.current === chatId
+      ) {
+        const focusedRendererAlreadyGlobal =
+          alreadyGlobal &&
+          currentWorkspaceIdRef.current === null &&
+          currentWorkspacePathRef.current === null &&
+          currentWorkspace === null
+        if (
+          !shouldApplyFocusedWorkspaceRebind({
+            canonicalChanged,
+            rendererAlreadyAtTarget: focusedRendererAlreadyGlobal
+          })
+        )
+          return
+        handleFocusMultiviewPane(_paneIndex, chatId)
+      }
+    },
+    [currentWorkspace, handleFocusMultiviewPane, multiview.panes, updateChatById]
+  )
+  const handleMultiviewPaneToggleScreenWatch = useCallback(
+    (_paneIndex: number, chatId: string) => {
+      if (screenWatchUnavailableReason) return
+      if (attachedWindow && attachedWindowOwnerChatIdRef.current === chatId) {
+        void handleDetachWindow(chatId)
+        return
+      }
+      void handleAttachWindow(chatId)
     },
     [attachedWindow, handleAttachWindow, handleDetachWindow, screenWatchUnavailableReason]
   )
+  const openDiscordContextPickerForPane = (paneIndex: number, chatId: string): void => {
+    if (currentChatIdRef.current === chatId) {
+      openDiscordContextPicker()
+      return
+    }
+    handleFocusMultiviewPane(paneIndex, chatId)
+    window.alert(
+      'Discord context opens from the focused pane. This pane is now focused; choose Discord context again.'
+    )
+  }
   const handleMultiviewPaneCopyTranscript = useCallback(
     async (_paneIndex: number, chatId: string) => {
       if (!chatId) return { ok: false as const, reason: 'empty' as const }
@@ -23762,7 +24252,8 @@ function App(): React.JSX.Element {
           paneIndex === multiview.focusedPaneIndex && currentChatIdRef.current === chatId
             ? sessionTrust
             : false,
-        imageAttachments: paneAttachments
+        imageAttachments: paneAttachments,
+        discordContextSelection: discordContextSelectionByChatIdRef.current[chatId] || null
       })
       if (dmTargetParticipantId) request.dmTargetParticipantId = dmTargetParticipantId
       if (
@@ -23777,6 +24268,7 @@ function App(): React.JSX.Element {
         )
         setChatPromptDraft(chatId, '')
         setImageAttachmentsByChatId((prev) => ({ ...prev, [chatId]: [] }))
+        setDiscordContextSelectionByChatId((prev) => ({ ...prev, [chatId]: null }))
         return
       }
       void executeRunRef.current(request)
@@ -23874,25 +24366,22 @@ function App(): React.JSX.Element {
   )
   const handleMultiviewPaneRemoveExternalPathGrant = useCallback(
     (chatId: string, grantId: string) => {
-      const paneChat = chatByIdRef.current.get(chatId)
-      if (!paneChat) return
-      updateExternalPathGrantsForChat(
-        chatId,
-        externalPathGrantsForChat(paneChat).filter((grant) => grant.id !== grantId)
-      )
+      revokeExternalPathGrantsForChat(chatId, [grantId])
     },
-    [updateExternalPathGrantsForChat]
+    [revokeExternalPathGrantsForChat]
   )
   const handleMultiviewPaneRemoveExternalPathGrantsByPath = useCallback(
     (chatId: string, path: string) => {
       const paneChat = chatByIdRef.current.get(chatId)
       if (!paneChat) return
-      updateExternalPathGrantsForChat(
+      revokeExternalPathGrantsForChat(
         chatId,
-        externalPathGrantsForChat(paneChat).filter((grant) => grant.path !== path)
+        externalPathGrantsForChat(paneChat)
+          .filter((grant) => grant.path === path)
+          .map((grant) => grant.id)
       )
     },
-    [updateExternalPathGrantsForChat]
+    [revokeExternalPathGrantsForChat]
   )
   const handleMultiviewPaneReorderExternalPathGrants = useCallback(
     (chatId: string, orderedPaths: string[]) => {
@@ -23920,14 +24409,11 @@ function App(): React.JSX.Element {
     (
       chatId: string,
       selection: ComposerWorktreeSelection | null,
-      snapshot: GitRepositorySnapshot | null
+      _snapshot: GitRepositorySnapshot | null
     ) => {
-      const paneChat = chatByIdRef.current.get(chatId)
-      const basePath =
-        selection?.baseWorkspacePath || snapshot?.repoRoot || paneChat?.workspacePath || ''
-      const key = normalizeWorkspacePath(basePath)
-      if (!key) return
-      setComposerWorktreeByWorkspace((prev) => ({ ...prev, [key]: selection }))
+      setComposerWorktreeByChatId((prev) =>
+        updateComposerWorktreeSelectionForChat(prev, chatId, selection)
+      )
     },
     []
   )
@@ -23967,22 +24453,28 @@ function App(): React.JSX.Element {
   const handleReviewDiffForChat = useCallback(
     async (chat: ChatRecord, provider: ProviderId, workspace: WorkspaceRecord | null) => {
       if (!workspace?.path || isPreparingDiffReview) return
+      const reviewPath = resolveComposerEffectiveWorkspacePath(
+        workspace.path,
+        composerWorktreeSelectionForChat(
+          composerWorktreeByChatId,
+          chat.appChatId,
+          workspace.path
+        )
+      )
+      if (!reviewPath) return
       setIsPreparingDiffReview(true)
       try {
-        const diffObj = await window.api.getDiff(workspace.path)
+        const diffObj = await window.api.getDiff(reviewPath)
         setDiff(diffObj)
         setDiffView('workspace')
         openInspectorTab('diff')
         if (chat.chatKind === 'ensemble') {
-          setRawLogs((prev) => [
-            ...prev,
-            {
-              type: 'info',
-              content:
-                'Ensemble /review: runs as a panel discussion of the diff (prompt-only). ' +
-                'Native Codex review only fires in solo Codex chats with a linked thread.'
-            }
-          ])
+          appendThreadRawLog(chat.appChatId, {
+            type: 'info',
+            content:
+              'Ensemble /review: runs as a panel discussion of the diff (prompt-only). ' +
+              'Native Codex review only fires in solo Codex chats with a linked thread.'
+          })
         }
         const request: QueuedRunRequest = {
           ...buildRunRequestRef.current(undefined, undefined, {
@@ -24014,15 +24506,15 @@ function App(): React.JSX.Element {
         void executeRunRef.current(request)
       } catch (error) {
         setDiffRefreshStatus('Diff review failed to prepare.')
-        setRawLogs((prev) => [
-          ...prev,
-          { type: 'info', content: `Failed to prepare diff review: ${redactLog(String(error))}` }
-        ])
+        appendThreadRawLog(chat.appChatId, {
+          type: 'info',
+          content: `Failed to prepare diff review: ${redactLog(String(error))}`
+        })
       } finally {
         setIsPreparingDiffReview(false)
       }
     },
-    [isPreparingDiffReview]
+    [composerWorktreeByChatId, isPreparingDiffReview]
   )
   const handlePanePaletteCommand = useCallback(
     (
@@ -24033,6 +24525,14 @@ function App(): React.JSX.Element {
       item: CommandPaletteItem
     ): boolean | void => {
       const focusPane = (): void => handleFocusMultiviewPane(paneIndex, chat.appChatId)
+      const paneGitActionPath = resolveComposerEffectiveWorkspacePath(
+        workspace?.path,
+        composerWorktreeSelectionForChat(
+          composerWorktreeByChatId,
+          chat.appChatId,
+          workspace?.path
+        )
+      )
       if (provider === 'codex') {
         if (item.command === '/status' || item.command === '/permissions') {
           void refreshProviderMetadata(provider, workspace?.path)
@@ -24049,8 +24549,8 @@ function App(): React.JSX.Element {
           }
           openInspectorTab('capabilities')
         } else if (item.command === '/diff') {
-          if (workspace?.path) {
-            void window.api.getDiff(workspace.path).then((diffObj) => {
+          if (paneGitActionPath) {
+            void window.api.getDiff(paneGitActionPath).then((diffObj) => {
               setDiff(diffObj)
               setDiffView('workspace')
               openInspectorTab('diff')
@@ -24101,8 +24601,8 @@ function App(): React.JSX.Element {
           void refreshProviderMetadata(provider, workspace?.path)
           openInspectorTab('capabilities')
         } else if (item.command === '/diff') {
-          if (workspace?.path) {
-            void window.api.getDiff(workspace.path).then((diffObj) => {
+          if (paneGitActionPath) {
+            void window.api.getDiff(paneGitActionPath).then((diffObj) => {
               setDiff(diffObj)
               setDiffView('workspace')
               openInspectorTab('diff')
@@ -24128,6 +24628,7 @@ function App(): React.JSX.Element {
     },
     [
       codexModels,
+      composerWorktreeByChatId,
       handleFocusMultiviewPane,
       handleReviewDiffForChat,
       openInspectorTab,
@@ -24259,9 +24760,11 @@ function App(): React.JSX.Element {
       currentChatIdRef.current === viewerChatId
     const viewerWorkspace = getWorkspaceForChat(viewerChat)
     const viewerBaseWorkspacePath = viewerWorkspace?.path || viewerChat.workspacePath || ''
-    const viewerWorktreeSelection = viewerBaseWorkspacePath
-      ? composerWorktreeByWorkspace[normalizeWorkspacePath(viewerBaseWorkspacePath)] || null
-      : null
+    const viewerWorktreeSelection = composerWorktreeSelectionForChat(
+      composerWorktreeByChatId,
+      viewerChatId,
+      viewerBaseWorkspacePath
+    )
     const viewerGitPresentationPath =
       viewerWorktreeSelection?.effectiveWorkspacePath || viewerBaseWorkspacePath
     const viewerPreviewTargets = getPreviewTargetsForChat(viewerChat)
@@ -24403,12 +24906,16 @@ function App(): React.JSX.Element {
       resolveOllamaContextLength: resolveLiveOllamaContextLength
     })
     const viewerDualTelemetry = Boolean(viewerChat.chatKind === 'ensemble')
-    const viewerScreenWatchTitle = attachedWindow
-      ? attachedWindow.streaming
-        ? `Watching ${attachedWindow.windowMeta.applicationName || 'window'} · live capture · click to detach`
-        : `Watching ${attachedWindow.windowMeta.applicationName || 'window'}${attachedWindow.windowMeta.title ? ` — ${attachedWindow.windowMeta.title}` : ''} · click to detach`
-      : resumeAppWatchSnapshot
-        ? `Resume watching ${resumeAppWatchSnapshot.windowMeta.applicationName || 'window'}${resumeAppWatchSnapshot.windowMeta.title ? ` — ${resumeAppWatchSnapshot.windowMeta.title}` : ''} · click to re-pick`
+    const viewerAttachedWindow =
+      attachedWindowOwnerChatIdRef.current === viewerChatId ? attachedWindow : null
+    const viewerResumeAppWatchSnapshot =
+      resumeAppWatchSnapshot?.chatId === viewerChatId ? resumeAppWatchSnapshot : null
+    const viewerScreenWatchTitle = viewerAttachedWindow
+      ? viewerAttachedWindow.streaming
+        ? `Watching ${viewerAttachedWindow.windowMeta.applicationName || 'window'} · live capture · click to detach`
+        : `Watching ${viewerAttachedWindow.windowMeta.applicationName || 'window'}${viewerAttachedWindow.windowMeta.title ? ` — ${viewerAttachedWindow.windowMeta.title}` : ''} · click to detach`
+      : viewerResumeAppWatchSnapshot
+        ? `Resume watching ${viewerResumeAppWatchSnapshot.windowMeta.applicationName || 'window'}${viewerResumeAppWatchSnapshot.windowMeta.title ? ` — ${viewerResumeAppWatchSnapshot.windowMeta.title}` : ''} · click to re-pick`
         : screenWatchUnavailableReason || 'Screen Watch — click to pick a window for the AI to see'
     const viewerGoalStatus = viewerChat.activeGoal?.status || 'empty'
     const viewerGoalTitle = viewerChat.activeGoal
@@ -24653,7 +25160,7 @@ function App(): React.JSX.Element {
         title: viewerScreenWatchTitle,
         ariaLabel: viewerScreenWatchTitle,
         icon: <ScreenWatchSymbolIcon />,
-        active: Boolean(attachedWindow),
+        active: Boolean(viewerAttachedWindow),
         disabled: Boolean(screenWatchUnavailableReason),
         onClick: (paneIndex, chatId) => {
           focusPaneForChromeAction(paneIndex, chatId)
@@ -24776,11 +25283,21 @@ function App(): React.JSX.Element {
     const paneWorkflowForChat =
       workflowDefinitions.find((wf) => wf.template.chatId === viewerChatId) ?? null
     const paneIsWorkflowChatWelcome = paneIsWorkflowComposeChat || paneWorkflowForChat != null
-    const paneExternalWorkspaceState = deriveChatExternalWorkspaceState(viewerChat, {
-      repoMetadataByPath: externalPathRepoMetadataByPath,
-      gitSnapshotsByPath: externalGitSnapshots,
-      prByPath: externalPrByPath
-    })
+    const paneExternalPathGrants = externalPathGrantsForChat(viewerChat)
+    const paneExternalWorkspaceState = deriveExternalWorkspaceStateFromGrants(
+      paneExternalPathGrants,
+      {
+        repoMetadataByPath: externalPathRepoMetadataByPath,
+        gitSnapshotsByPath: projectExternalWorkspaceOwnerCache(
+          paneExternalPathGrants,
+          externalGitSnapshotsByOwner
+        ),
+        prByPath: projectExternalWorkspaceOwnerCache(
+          paneExternalPathGrants,
+          externalPrByOwner
+        )
+      }
+    )
     const paneExternalPathGrantPrompt =
       externalPathGrantPromptByChatId[viewerChatId] || null
     const paneExternalPathGrantPromptBusy =
@@ -24873,6 +25390,8 @@ function App(): React.JSX.Element {
       shouldShowGhostCompanion: paneGhostEnabled(viewerPaneIndex),
       currentChat: viewerChat,
       currentComposerChatId: viewerChatId,
+      currentDiscordContextSelection: discordContextSelectionByChatId[viewerChatId] || null,
+      resumeAppWatchSnapshot: viewerResumeAppWatchSnapshot,
       humanCollaborationInviteActive: Boolean(paneHumanCollaborationShare),
       humanCollaborationShare: paneHumanCollaborationShare,
       humanCollaborationInviteHealth:
@@ -25080,6 +25599,17 @@ function App(): React.JSX.Element {
       handleRun: paneHandleRun,
       handleCancel: paneHandleCancel,
       handleProviderChange: paneHandleProviderChange,
+      handleReviewCurrentDiff: async () => {
+        handleFocusMultiviewPane(viewerPaneIndex, viewerChatId)
+        await handleReviewDiffForChat(viewerChat, viewerProvider, viewerWorkspace)
+      },
+      handleToggleWelcomeEnsemble: (enabled: boolean) =>
+        handleToggleEnsembleForChat(viewerChat, enabled, viewerIsRunning),
+      handleAttachWindow: () => handleAttachWindow(viewerChatId),
+      handleDetachWindow: () => handleDetachWindow(viewerChatId),
+      handleClearDiscordContext: () => clearDiscordContextForChat(viewerChatId),
+      openDiscordContextPicker: () =>
+        openDiscordContextPickerForPane(viewerPaneIndex, viewerChatId),
       rememberCurrentChatComposerSelection: paneRememberComposerSelection,
       openGoalPopover: focusPaneForGoalControl,
       setGoalPopoverOpen: focusPaneForGoalControl,
@@ -25392,10 +25922,16 @@ function App(): React.JSX.Element {
     getRuntimeProfileIdForChat,
     getWorkspaceForChat,
     getProviderModelOptions,
+    clearDiscordContextForChat,
     handleBlackboardQueuedMessage,
+    handleAttachWindow,
     handleDeleteQueuedMessage,
+    handleDetachWindow,
     handleEditQueuedMessage,
+    handleReviewDiffForChat,
     handleSteerToQueuedMessage,
+    handleToggleEnsembleForChat,
+    openDiscordContextPickerForPane,
     paneGhostEnabled,
     patchEnsembleParticipantForChat,
     selectEnsembleParticipantForChat,
@@ -25431,6 +25967,12 @@ function App(): React.JSX.Element {
   const composerStableBase = useMemo(
     () => ({
       ...composerHandlers,
+      openDiscordContextPicker: isChatPopoutWindow
+        ? undefined
+        : composerHandlers.openDiscordContextPicker,
+      discordContextUnavailableReason: isChatPopoutWindow
+        ? 'Open this chat in the main window to add Discord context.'
+        : undefined,
       PLAN_IMPORT_CHIP_LABELS,
       PLAN_IMPORT_RISK_LABELS,
       PLAN_IMPORT_RUN_CONSTRAINT_LABELS,
@@ -25567,6 +26109,7 @@ function App(): React.JSX.Element {
     }),
     [
       composerHandlers,
+      isChatPopoutWindow,
       acknowledgedElevationDefaults,
       activeEnsembleConcurrentMode,
       activeEnsembleFanoutPolicy,
@@ -25719,9 +26262,11 @@ function App(): React.JSX.Element {
       )
       const viewerWorkspace = paneCtxHelpers.getWorkspaceForChat(viewerChat)
       const viewerBaseWorkspacePath = viewerWorkspace?.path || viewerChat.workspacePath || ''
-      const viewerWorktreeSelection = viewerBaseWorkspacePath
-        ? composerWorktreeByWorkspace[normalizeWorkspacePath(viewerBaseWorkspacePath)] || null
-        : null
+      const viewerWorktreeSelection = composerWorktreeSelectionForChat(
+        composerWorktreeByChatId,
+        viewerChatId,
+        viewerBaseWorkspacePath
+      )
       const viewerGitPresentationPath =
         viewerWorktreeSelection?.effectiveWorkspacePath || viewerBaseWorkspacePath
       const viewerWorkspaceName = viewerIsGlobalChat
@@ -25792,6 +26337,8 @@ function App(): React.JSX.Element {
           (viewerChat.chatKind !== 'ensemble' && hasPendingProviderChange(viewerChat))
       )
       const viewerComposerLocked = Boolean(viewerIsRunning && viewerChat.chatKind !== 'ensemble')
+      const viewerResumeAppWatchSnapshot =
+        resumeAppWatchSnapshot?.chatId === viewerChatId ? resumeAppWatchSnapshot : null
       const viewerRunStartedAt = viewerIsRunning
         ? viewerChat.ensemble?.activeRound?.startedAt || viewerRun?.startedAt || null
         : null
@@ -25906,11 +26453,21 @@ function App(): React.JSX.Element {
       const paneWorkflowForChat =
         workflowDefinitions.find((wf) => wf.template.chatId === viewerChatId) ?? null
       const paneIsWorkflowChatWelcome = paneIsWorkflowComposeChat || paneWorkflowForChat != null
-      const paneExternalWorkspaceState = deriveChatExternalWorkspaceState(viewerChat, {
-        repoMetadataByPath: externalPathRepoMetadataByPath,
-        gitSnapshotsByPath: externalGitSnapshots,
-        prByPath: externalPrByPath
-      })
+      const paneExternalPathGrants = externalPathGrantsForChat(viewerChat)
+      const paneExternalWorkspaceState = deriveExternalWorkspaceStateFromGrants(
+        paneExternalPathGrants,
+        {
+          repoMetadataByPath: externalPathRepoMetadataByPath,
+          gitSnapshotsByPath: projectExternalWorkspaceOwnerCache(
+            paneExternalPathGrants,
+            externalGitSnapshotsByOwner
+          ),
+          prByPath: projectExternalWorkspaceOwnerCache(
+            paneExternalPathGrants,
+            externalPrByOwner
+          )
+        }
+      )
       const paneExternalPathGrantPrompt =
         externalPathGrantPromptByChatId[viewerChatId] || null
       const paneExternalPathGrantPromptBusy =
@@ -26007,6 +26564,8 @@ function App(): React.JSX.Element {
         shouldShowGhostCompanion: paneCtxHelpers.paneGhostEnabled(viewerPaneIndex),
         currentChat: viewerChat,
         currentComposerChatId: viewerChatId,
+        currentDiscordContextSelection: discordContextSelectionByChatId[viewerChatId] || null,
+        resumeAppWatchSnapshot: viewerResumeAppWatchSnapshot,
         humanCollaborationInviteActive: Boolean(paneHumanCollaborationShare),
         humanCollaborationShare: paneHumanCollaborationShare,
         humanCollaborationInviteHealth:
@@ -26209,6 +26768,22 @@ function App(): React.JSX.Element {
         handleRun: paneHandleRun,
         handleCancel: paneHandleCancel,
         handleProviderChange: paneHandleProviderChange,
+        handleReviewCurrentDiff: async () => {
+          handleFocusMultiviewPane(viewerPaneIndex, viewerChatId)
+          await paneCtxHelpers.handleReviewDiffForChat(
+            viewerChat,
+            viewerProvider,
+            viewerWorkspace
+          )
+        },
+        handleToggleWelcomeEnsemble: (enabled: boolean) =>
+          paneCtxHelpers.handleToggleEnsembleForChat(viewerChat, enabled, viewerIsRunning),
+        handleAttachWindow: () => paneCtxHelpers.handleAttachWindow(viewerChatId),
+        handleDetachWindow: () => paneCtxHelpers.handleDetachWindow(viewerChatId),
+        handleClearDiscordContext: () =>
+          paneCtxHelpers.clearDiscordContextForChat(viewerChatId),
+        openDiscordContextPicker: () =>
+          paneCtxHelpers.openDiscordContextPickerForPane(viewerPaneIndex, viewerChatId),
         rememberCurrentChatComposerSelection: paneRememberComposerSelection,
         openGoalPopover: focusPaneForGoalControl,
         setGoalPopoverOpen: focusPaneForGoalControl,
@@ -26319,7 +26894,7 @@ function App(): React.JSX.Element {
       activeHumanCollaborationShareByChatId,
       agentStatusByProvider.ollama?.models,
       clearExternalPathGrantPrompt,
-      composerWorktreeByWorkspace,
+      composerWorktreeByChatId,
       connectedCollaborationChatIds,
       copyHumanCollaborationInvitePayload,
       createFreshHumanCollaborationInvite,
@@ -26330,12 +26905,13 @@ function App(): React.JSX.Element {
       composerDraftsByChatId,
       composerStableBase,
       buildPaneComposerSlashCommands,
-      externalGitSnapshots,
+      discordContextSelectionByChatId,
+      externalGitSnapshotsByOwner,
       diffActionMenuOpenByChatId,
       externalPathGrantPromptBusyCountByChatId,
       externalPathGrantPromptByChatId,
       externalPathRepoMetadataByPath,
-      externalPrByPath,
+      externalPrByOwner,
       handleCancelMultiviewPane,
       handleFocusMultiviewPane,
       handlePanePaletteCommand,
@@ -26366,6 +26942,7 @@ function App(): React.JSX.Element {
       readHumanCollaborationInviteHealth,
       rememberMultiviewPaneComposerSelection,
       resolveLiveOllamaContextLength,
+      resumeAppWatchSnapshot,
       runQueueJobs,
       runningChatIds,
       selectedParticipantIdByChatId,
@@ -26522,6 +27099,8 @@ function App(): React.JSX.Element {
     shouldShowGhostCompanion: focusedPaneGhostEnabled,
     shouldShowWelcomeStandaloneHeatmaps,
     threadTokenTallyHasValue,
+    trustedSessionMutationDisabledReason,
+    workspaceTrustMutationDisabledReason,
     welcomeCopy,
     welcomeHeatmapSlots,
     workflowForCurrentChat,
@@ -26857,7 +27436,7 @@ function App(): React.JSX.Element {
     rightDockStyle,
     rightDockVisible,
     rightTab,
-    roundFileChangeSummaries,
+    roundFileChangeSummaries: completionRoundFileChangeSummaries,
     runCompleteDurationText,
     runCompleteNotice,
     runDiff,
@@ -27484,10 +28063,15 @@ function App(): React.JSX.Element {
             // — e.g. an old preload missing recordApprovalElevationAck, which
             // makes the call-on-undefined throw past the .catch — forced the
             // user to press Esc.) The picker already captured `pendingElevation`,
-            // so apply() + the ack still run after this.
+            // so apply() still runs after this.
             setPendingElevation(null)
             try {
               pendingElevation.apply()
+              // A detached chat may change its own permission selection, but it
+              // cannot write global acknowledgement settings or global audit
+              // rows. Leave the acknowledgement unpersisted so the primary
+              // renderer warns again next time.
+              if (!shouldPersistApprovalElevationAck(isChatPopoutWindow)) return
               // Best-effort audit trail for BOTH tiers; optional-chained so an
               // old/missing preload method can never throw out of confirm.
               window.api

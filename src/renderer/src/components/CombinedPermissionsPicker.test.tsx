@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import type { AgenticServiceId, AgenticServicesSettings } from '../../../main/store/types'
+import { permissionOptionCanBeSelected } from '../lib/chatPopoutAuthority'
 import { WORKSPACE_POLICY_SERVICES } from '../lib/workspacePolicyServices'
 import { CombinedPermissionsPicker } from './CombinedPermissionsPicker'
 
@@ -36,6 +37,13 @@ function renderPicker(enabledGrantIds: Set<AgenticServiceId>): string {
 }
 
 describe('CombinedPermissionsPicker', () => {
+  it('refuses an authority-only permission row that its host disabled', () => {
+    expect(
+      permissionOptionCanBeSelected({ disabled: true })
+    ).toBe(false)
+    expect(permissionOptionCanBeSelected({})).toBe(true)
+  })
+
   it('shows a workspace grant count in the trigger', () => {
     const html = renderPicker(new Set(['fileChanges']))
 

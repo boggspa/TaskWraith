@@ -29,6 +29,7 @@ import type {
   ComposerStyle,
   ProviderId
 } from '../../../main/store/types'
+import { permissionOptionCanBeSelected } from '../lib/chatPopoutAuthority'
 import type { WorkspacePolicyService } from '../lib/workspacePolicyServices'
 
 export interface PermissionOption {
@@ -40,6 +41,10 @@ export interface PermissionOption {
   description?: string
   /** Render this row as a high-risk permission action. */
   danger?: boolean
+  /** Keep the row visible while making an authority-only action unavailable. */
+  disabled?: boolean
+  /** Concise explanation shown beneath and on hover for a disabled row. */
+  disabledReason?: string
 }
 
 interface CombinedPermissionsPickerProps {
@@ -195,20 +200,23 @@ export function CombinedPermissionsPicker({
   }, [open])
 
   // Arrow navigation.
-  const choosePermissionOption = useCallback((option: PermissionOption | undefined): void => {
-    if (!option) return
-    if (option.value === 'full_access' && onStartTrustedSession) {
-      if (selectedPermission === 'full_access' && onStopTrustedSession) {
-        onStopTrustedSession()
-      } else if (selectedPermission !== 'full_access') {
-        onStartTrustedSession()
+  const choosePermissionOption = useCallback(
+    (option: PermissionOption | undefined): void => {
+      if (!permissionOptionCanBeSelected(option)) return
+      if (option.value === 'full_access' && onStartTrustedSession) {
+        if (selectedPermission === 'full_access' && onStopTrustedSession) {
+          onStopTrustedSession()
+        } else if (selectedPermission !== 'full_access') {
+          onStartTrustedSession()
+        }
+        setOpen(false)
+        return
       }
+      onSelectPermission(option.value)
       setOpen(false)
-      return
-    }
-    onSelectPermission(option.value)
-    setOpen(false)
-  }, [onSelectPermission, onStartTrustedSession, onStopTrustedSession, selectedPermission])
+    },
+    [onSelectPermission, onStartTrustedSession, onStopTrustedSession, selectedPermission]
+  )
 
   useEffect(() => {
     if (!open) return
@@ -281,6 +289,7 @@ export function CombinedPermissionsPicker({
         <div className="composer-combined-picker-column-header">Permissions</div>
         {permissionOptions.map((option, idx) => {
           const isTrustedSession = option.value === 'full_access'
+          const optionDescription = option.disabledReason || option.description
           return (
             <button
               key={option.value}
@@ -293,11 +302,13 @@ export function CombinedPermissionsPicker({
                 setPermissionHighlight(idx)
               }}
               onClick={() => choosePermissionOption(option)}
+              disabled={option.disabled}
+              title={option.disabledReason}
             >
               <span className="composer-combined-picker-row-body">
                 <span className="composer-combined-picker-row-label">{option.label}</span>
-                {option.description && (
-                  <span className="composer-combined-picker-row-sub">{option.description}</span>
+                {optionDescription && (
+                  <span className="composer-combined-picker-row-sub">{optionDescription}</span>
                 )}
               </span>
               {option.value === selectedPermission && (

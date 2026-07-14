@@ -54,6 +54,16 @@ function ensembleChat(
         activeParticipantId: 'p1',
         queuedPrompt: 'next prompt',
         queuedPrompts: ['next prompt'],
+        queuedPromptEntries: [
+          {
+            persistenceVersion: 1,
+            id: 'queued-next',
+            prompt: 'next prompt',
+            dmTargetParticipantId: 'p1',
+            fanoutPolicy: 'off',
+            imageAttachments: []
+          }
+        ],
         participants: [
           {
             participantId: 'p1',
@@ -89,7 +99,7 @@ describe('applyRecoveryRecordsToEnsembleRounds', () => {
     expect(applyRecoveryRecordsToEnsembleRounds(records, chats)).toBe(chats)
   })
 
-  it('closes an orphaned running round and clears dead queued prompts after startup recovery', () => {
+  it('closes an orphaned running round without clearing durable queued work', () => {
     const chats = [ensembleChat()]
     const records = [
       makeRecord({
@@ -108,8 +118,15 @@ describe('applyRecoveryRecordsToEnsembleRounds', () => {
       status: 'failed',
       endedAt: '2026-06-30T12:01:00.000Z',
       activeParticipantId: undefined,
-      queuedPrompt: undefined,
-      queuedPrompts: [],
+      queuedPrompt: 'next prompt',
+      queuedPrompts: ['next prompt'],
+      queuedPromptEntries: [
+        expect.objectContaining({
+          id: 'queued-next',
+          dmTargetParticipantId: 'p1',
+          fanoutPolicy: 'off'
+        })
+      ],
       pendingWakeupIds: [],
       sleepingParticipantIds: []
     })
@@ -183,7 +200,8 @@ describe('applyRecoveryRecordsToEnsembleRounds', () => {
     )
 
     expect(result[0].ensemble?.activeRound?.status).toBe('failed')
-    expect(result[0].ensemble?.activeRound?.queuedPrompts).toEqual([])
+    expect(result[0].ensemble?.activeRound?.queuedPrompts).toEqual(['next prompt'])
+    expect(result[0].ensemble?.activeRound?.queuedPromptEntries?.[0]?.id).toBe('queued-next')
   })
 
   it('updates matching concurrent lanes before closing a recovered round', () => {

@@ -137,6 +137,7 @@ import {
   isGrok45ReasoningModelId
 } from '../../../shared/grok45Models'
 import { composerGitActionUsesCommitIcon } from '../lib/composerGitActionIcon'
+import { resolveComposerEffectiveWorkspacePath } from '../lib/composerWorktreeSelection'
 import { composerVoicePlacementForStyle } from '../lib/composerVoicePlacement'
 import { composerPermissionOptions } from '../lib/planModeLabels'
 import { pathComparisonKey } from '../lib/pathDisplay'
@@ -226,6 +227,7 @@ export interface ComposerProps {
   currentComposerChatId: any
   currentComposerMentionParticipants: any
   currentDiscordContextSelection: any
+  discordContextUnavailableReason?: string
   currentEnsembleConcurrentMode: any
   currentEnsembleFanoutPolicy: EnsembleFanoutPolicy
   currentEnsembleContinuationHops: any
@@ -446,6 +448,9 @@ export interface ComposerProps {
   threadTokenTallyTooltip: any
   trustResult: any
   trustSelectValue: any
+  /** Main-owned authority controls stay visible-but-disabled in chat popouts. */
+  trustedSessionMutationDisabledReason?: string
+  workspaceTrustMutationDisabledReason?: string
   updateCurrentEnsembleConcurrentMode: any
   updateCurrentEnsembleFanoutPolicy: (policy: EnsembleFanoutPolicy) => void
   updateCurrentEnsembleContextChars: any
@@ -555,6 +560,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     currentComposerChatId,
     currentComposerMentionParticipants,
     currentDiscordContextSelection,
+    discordContextUnavailableReason,
     currentEnsembleFanoutPolicy,
     currentEnsembleContinuationHops,
     currentEnsembleMaxContinuationHops,
@@ -760,6 +766,8 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     threadTokenTallyTooltip,
     trustResult,
     trustSelectValue,
+    trustedSessionMutationDisabledReason,
+    workspaceTrustMutationDisabledReason,
     updateCurrentEnsembleFanoutPolicy,
     updateCurrentEnsembleContextChars,
     updateCurrentEnsembleMaxContinuationHops,
@@ -992,6 +1000,11 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     : null
 
   const confirmTrustedSessionForLane = async (): Promise<void> => {
+    if (trustedSessionMutationDisabledReason) {
+      setTrustedSessionConfirmOpen(false)
+      setTrustedSessionApprovalId(null)
+      return
+    }
     const approvalId = trustedSessionApprovalId
     const approvalParticipantId =
       approvalId && pendingAgentApproval?.id === approvalId
@@ -1363,7 +1376,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
       if (!hasImageItem) {
         return
       }
-      const saved = await window.api.saveClipboardImageAttachment()
+      const saved = await window.api.saveClipboardImageAttachment().catch(() => [])
       paths = saved || []
     }
     if (paths.length === 0) {
@@ -1875,6 +1888,10 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                    merged-frame never flattens these two rows. */
                 const aboveRowsFloatAboveStack =
                   appearance.composerStyle === 'cursor' || appearance.composerStyle === 'codex'
+                const primaryGitActionPath = resolveComposerEffectiveWorkspacePath(
+                  currentWorkspace?.path,
+                  composerWorktreeSelection
+                )
                 // GitHub PR/CI/Merge satellite row — icon-only upstream status,
                 // pinned at the top of the above-composer area. Renders null
                 // unless there's a remote + PR/CI worth surfacing.
@@ -1972,7 +1989,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                         const hasReviewableDiff = workspaceDiffStats.filesChanged > 0
                         // 1.0.6-EW66-1d — primary workspace's PR state is now
                         // read from the per-path map keyed by its own path.
-                        const primaryPrState = getCreatePrState(currentWorkspace?.path)
+                        const primaryPrState = getCreatePrState(primaryGitActionPath)
                         // Phase Git-U1 — the trigger button keeps "Review
                         // changes" as the FIRST/primary action whenever there's
                         // a diff (the canonical safety entry point); it falls
@@ -2044,22 +2061,22 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                             {diffActionMenuOpen && (
                               <div className="composer-diff-action-menu" role="menu">
                                 <GitCommitControls
-                                  workspacePath={currentWorkspace?.path}
+                                  workspacePath={primaryGitActionPath}
                                   open={diffActionMenuOpen}
                                   hasReviewableDiff={hasReviewableDiff}
                                   onReviewChanges={() => {
-                                    if (!currentWorkspace?.path) {
+                                    if (!primaryGitActionPath) {
                                       openInspectorTab('diff')
                                       return
                                     }
                                     void window.api.openWorkspacePopout({
                                       kind: 'diff-studio',
-                                      workspacePath: currentWorkspace.path
+                                      workspacePath: primaryGitActionPath
                                     })
                                   }}
                                   onClose={() => setDiffActionMenuOpen(false)}
                                   onCreatePr={() =>
-                                    void handleCreateGithubPr(currentWorkspace?.path)
+                                    void handleCreateGithubPr(primaryGitActionPath)
                                   }
                                   prState={primaryPrState}
                                   onSnapshot={setPrimaryGitSnapshot}
@@ -2100,16 +2117,26 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                 }
                               : undefined
                           })()}
-                          createPrState={getCreatePrState(group.path)}
-                          onCreatePr={() => handleCreateGithubPr(group.path)}
+                          createPrState={getCreatePrState(
+                            group.path,
+                            group.representative.chatId
+                          )}
+                          onCreatePr={(grant) =>
+                            handleCreateGithubPr(grant.path, grant.chatId)
+                          }
                           onReviewChanges={() =>
                             void window.api.openWorkspacePopout({
                               kind: 'diff-studio',
-                              workspacePath: group.path
+                              workspacePath: group.path,
+                              chatId: group.representative.chatId
                             })
                           }
                           onSnapshotRefresh={(snapshot) =>
-                            onExternalGitSnapshotRefresh?.(group.path, snapshot)
+                            onExternalGitSnapshotRefresh?.(
+                              group.path,
+                              snapshot,
+                              group.representative.chatId
+                            )
                           }
                           composerStyle={appearance.composerStyle}
                           cursorLeadDetached={aboveRowsFloatAboveStack}
@@ -2619,7 +2646,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                   onPasteClipboardAttachment={async () => {
                     const targetChatId = currentComposerChatId
                     if (!targetChatId) return false
-                    const saved = await window.api.saveClipboardImageAttachment()
+                    const saved = await window.api.saveClipboardImageAttachment().catch(() => [])
                     const paths = saved || []
                     if (paths.length === 0) return false
                     if ((currentChatIdRef.current || targetChatId) !== targetChatId) return false
@@ -3047,13 +3074,20 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                 variant="ghost"
                                 size="compact"
                                 type="button"
-                                title="Raise only this chat or selected participant to Trusted Session, then approve this request once. Other lanes are unchanged."
+                                disabled={Boolean(trustedSessionMutationDisabledReason)}
+                                title={
+                                  trustedSessionMutationDisabledReason ||
+                                  'Raise only this chat or selected participant to Trusted Session, then approve this request once. Other lanes are unchanged.'
+                                }
                                 onClick={() => {
+                                  if (trustedSessionMutationDisabledReason) return
                                   setTrustedSessionApprovalId(pendingAgentApproval.id)
                                   setTrustedSessionConfirmOpen(true)
                                 }}
                               >
-                                Start Trusted Session...
+                                {trustedSessionMutationDisabledReason
+                                  ? 'Trusted Session in main window'
+                                  : 'Start Trusted Session...'}
                               </PillButton>
                             )}
                           {(pendingAgentApproval.actions || ['decline']).includes('decline') && (
@@ -3182,12 +3216,14 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                   label: 'Discord context',
                                   description: currentDiscordContextSelection
                                     ? `#${currentDiscordContextSelection.channelName || currentDiscordContextSelection.channelId} · last ${currentDiscordContextSelection.limit}`
-                                    : 'Read recent channel messages',
+                                    : discordContextUnavailableReason ||
+                                      'Read recent channel messages',
                                   icon: <ChatMediaIcon />,
                                   active: Boolean(currentDiscordContextSelection),
                                   disabled:
                                     isCurrentComposerLocked ||
                                     !currentChat ||
+                                    Boolean(discordContextUnavailableReason) ||
                                     typeof openDiscordContextPicker !== 'function',
                                   onSelect: openDiscordContextPicker
                                 }
@@ -4000,7 +4036,15 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               if (option.value === 'full_access') {
                                 return {
                                   ...option,
-                                  description: 'This chat/lane only; host-level tools when supported.',
+                                  description:
+                                    trustedSessionMutationDisabledReason ||
+                                    'This chat/lane only; host-level tools when supported.',
+                                  ...(trustedSessionMutationDisabledReason
+                                    ? {
+                                        disabled: true,
+                                        disabledReason: trustedSessionMutationDisabledReason
+                                      }
+                                    : {}),
                                   danger: true
                                 }
                               }
@@ -4038,6 +4082,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                           const handlePermissionSelection = (nextPermissionMode: string): void => {
                             const nextPermissionPreset = selectionToPreset(nextPermissionMode)
                             if (nextPermissionPreset === 'full_access') {
+                              if (trustedSessionMutationDisabledReason) return
                               setTrustedSessionApprovalId(null)
                               setTrustedSessionConfirmOpen(true)
                               return
@@ -4186,6 +4231,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               grantScopeLabel={ensembleBinding ? 'participant' : 'workspace'}
                               onApplyToAllParticipants={applyAllParticipants}
                               onStartTrustedSession={() => {
+                                if (trustedSessionMutationDisabledReason) return
                                 setTrustedSessionApprovalId(null)
                                 setTrustedSessionConfirmOpen(true)
                               }}
@@ -4256,8 +4302,11 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                   )
                                 }
                               }}
-                              disabled={isCurrentComposerLocked}
-                              title="Workspace trust"
+                              disabled={
+                                isCurrentComposerLocked ||
+                                Boolean(workspaceTrustMutationDisabledReason)
+                              }
+                              title={workspaceTrustMutationDisabledReason || 'Workspace trust'}
                             >
                               <option value="trusted">Trusted</option>
                               <option value="untrusted">Untrusted</option>
@@ -4443,8 +4492,15 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                             <button
                               type="button"
                               onClick={() => void handleTrustWorkspaceClick()}
-                              disabled={geminiTrustWriteBusy || isCurrentComposerLocked}
-                              title={`Trust ${currentWorkspace.path} for Gemini — writes ~/.gemini/trustedFolders.json`}
+                              disabled={
+                                geminiTrustWriteBusy ||
+                                isCurrentComposerLocked ||
+                                Boolean(workspaceTrustMutationDisabledReason)
+                              }
+                              title={
+                                workspaceTrustMutationDisabledReason ||
+                                `Trust ${currentWorkspace.path} for Gemini — writes ~/.gemini/trustedFolders.json`
+                              }
                               style={{
                                 display: 'inline-flex',
                                 alignItems: 'center',
@@ -4457,12 +4513,22 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                 border:
                                   '1px solid color-mix(in srgb, var(--warning) 45%, transparent)',
                                 borderRadius: '6px',
-                                cursor: geminiTrustWriteBusy ? 'default' : 'pointer',
-                                opacity: geminiTrustWriteBusy ? 0.7 : 1
+                                cursor:
+                                  geminiTrustWriteBusy || workspaceTrustMutationDisabledReason
+                                    ? 'default'
+                                    : 'pointer',
+                                opacity:
+                                  geminiTrustWriteBusy || workspaceTrustMutationDisabledReason
+                                    ? 0.7
+                                    : 1
                               }}
                             >
                               <TrustSymbolIcon />
-                              {geminiTrustWriteBusy ? 'Trusting…' : 'Trust this folder'}
+                              {workspaceTrustMutationDisabledReason
+                                ? 'Trust in main window'
+                                : geminiTrustWriteBusy
+                                  ? 'Trusting…'
+                                  : 'Trust this folder'}
                             </button>
                           )}
                         <span style={{ opacity: 0.75 }}>or enable session trust above.</span>
@@ -4897,7 +4963,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
             {shouldRenderWelcomeNotifications(isWelcomeChat, showWelcomeNotifications) && (
               <NotificationZone />
             )}
-            {trustedSessionConfirmOpen && (
+            {trustedSessionConfirmOpen && !trustedSessionMutationDisabledReason && (
               <TrustedSessionConfirmSheet
                 subjectLabel={
                   trustedSessionApprovalId &&

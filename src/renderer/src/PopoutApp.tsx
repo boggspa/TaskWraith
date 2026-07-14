@@ -4,6 +4,10 @@ import { DiffViewer } from './components/DiffViewer'
 import { FileEditorPanel } from './components/FileEditorPanel'
 import { TaskWraithWorkbench } from './components/TaskWraithWorkbench'
 import { useAppearance } from './hooks/useAppearance'
+import {
+  popoutAllowsGitMutations,
+  refreshPopoutGitMutationCapability
+} from './lib/workspacePopoutCapabilities'
 
 export type PopoutKind = 'file-editor' | 'diff-studio' | 'workbench'
 
@@ -45,6 +49,12 @@ export const resolvePopoutOpenFileView = (
   if (kind === 'file-editor') return 'editor'
   return value === 'diff' ? 'diff' : 'editor'
 }
+
+export const resolvePopoutWorkspaceIpcTarget = (
+  workspacePath: string,
+  chatId: string
+): { workspacePath: string } | { repoPath: string; chatId: string } =>
+  chatId ? { repoPath: workspacePath, chatId } : { workspacePath }
 
 function PopoutChromeIcon({ kind }: { kind: PopoutKind }) {
   if (kind === 'diff-studio') {
@@ -88,6 +98,10 @@ export function PopoutApp() {
   const params = useMemo(() => new URLSearchParams(window.location.search), [])
   const kind = parsePopoutKind(params.get('popout'))
   const workspacePath = params.get('workspace') || ''
+  const chatId = params.get('chat') || ''
+  const [canMutateGit, setCanMutateGit] = useState(() =>
+    popoutAllowsGitMutations(chatId, params.get('write'))
+  )
   const targetFilePath = params.get('file') || ''
   const targetView = parseTargetView(params.get('view'), kind)
   const [diff, setDiff] = useState<WorkspaceDiff | null>(null)
@@ -109,9 +123,10 @@ export function PopoutApp() {
     diffRefreshSeqRef.current = requestId
     setStatus('Refreshing diff...')
     try {
+      const target = resolvePopoutWorkspaceIpcTarget(workspacePath, chatId)
       const [nextDiff, nextGitSnapshot] = await Promise.all([
-        window.api.getDiff(workspacePath),
-        window.api.gitSnapshot({ workspacePath })
+        window.api.getDiff(target),
+        window.api.gitSnapshot(target)
       ])
       if (requestId !== diffRefreshSeqRef.current) return
       setDiff(nextDiff)
@@ -126,7 +141,7 @@ export function PopoutApp() {
       setDiffGitSnapshot(null)
       setStatus('Diff refresh failed')
     }
-  }, [kind, workspacePath])
+  }, [chatId, kind, workspacePath])
 
   const openDiffFileInEditor = useCallback(
     async (path: string) => {
@@ -136,6 +151,7 @@ export function PopoutApp() {
         await window.api.openWorkspacePopout({
           kind: 'file-editor',
           workspacePath,
+          ...(chatId ? { chatId } : {}),
           targetPath: path,
           targetView: 'editor'
         })
@@ -144,7 +160,7 @@ export function PopoutApp() {
         setStatus(error instanceof Error ? error.message : 'Could not open file editor')
       }
     },
-    [workspacePath]
+    [chatId, workspacePath]
   )
 
   const openEditorFileInDiff = useCallback(
@@ -155,6 +171,7 @@ export function PopoutApp() {
         await window.api.openWorkspacePopout({
           kind: 'diff-studio',
           workspacePath,
+          ...(chatId ? { chatId } : {}),
           targetPath: path,
           targetView: 'diff'
         })
@@ -163,7 +180,7 @@ export function PopoutApp() {
         setStatus(error instanceof Error ? error.message : 'Could not open Diff Studio')
       }
     },
-    [workspacePath]
+    [chatId, workspacePath]
   )
 
   const stageDiffFile = useCallback(
@@ -172,7 +189,10 @@ export function PopoutApp() {
       setDiffActionPath(path)
       setStatus(`Staging ${path}...`)
       try {
-        const result = await window.api.gitStage({ workspacePath, paths: [path] })
+        const result = await window.api.gitStage({
+          ...resolvePopoutWorkspaceIpcTarget(workspacePath, chatId),
+          paths: [path]
+        })
         if (result.ok) {
           setDiffGitSnapshot(result.data)
           await refreshDiff()
@@ -185,7 +205,7 @@ export function PopoutApp() {
         setDiffActionPath('')
       }
     },
-    [refreshDiff, workspacePath]
+    [chatId, refreshDiff, workspacePath]
   )
 
   const unstageDiffFile = useCallback(
@@ -194,7 +214,10 @@ export function PopoutApp() {
       setDiffActionPath(path)
       setStatus(`Unstaging ${path}...`)
       try {
-        const result = await window.api.gitUnstage({ workspacePath, paths: [path] })
+        const result = await window.api.gitUnstage({
+          ...resolvePopoutWorkspaceIpcTarget(workspacePath, chatId),
+          paths: [path]
+        })
         if (result.ok) {
           setDiffGitSnapshot(result.data)
           await refreshDiff()
@@ -207,7 +230,7 @@ export function PopoutApp() {
         setDiffActionPath('')
       }
     },
-    [refreshDiff, workspacePath]
+    [chatId, refreshDiff, workspacePath]
   )
 
   useEffect(() => {
@@ -228,6 +251,9 @@ export function PopoutApp() {
       // any future broadcaster forgets we don't want cross-workspace
       // churn here.
       if (payload.workspacePath !== workspacePath) return
+      setCanMutateGit((current) =>
+        refreshPopoutGitMutationCapability(chatId, current, payload)
+      )
       if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current)
       refreshTimerRef.current = setTimeout(() => {
         refreshTimerRef.current = null
@@ -243,7 +269,7 @@ export function PopoutApp() {
       refreshTimerRef.current = null
       unsubscribe?.()
     }
-  }, [kind, workspacePath, refreshDiff])
+  }, [chatId, kind, workspacePath, refreshDiff])
 
   useEffect(() => {
     if (!workspacePath || !popoutKindReceivesOpenFileBroadcast(kind)) return
@@ -353,9 +379,9 @@ export function PopoutApp() {
               busyPath={diffActionPath}
               workspacePath={workspacePath}
               selectionRequest={openFileRequest}
-              onOpenFile={openDiffFileInEditor}
-              onStageFile={stageDiffFile}
-              onUnstageFile={unstageDiffFile}
+              onOpenFile={chatId ? undefined : openDiffFileInEditor}
+              onStageFile={canMutateGit ? stageDiffFile : undefined}
+              onUnstageFile={canMutateGit ? unstageDiffFile : undefined}
             />
           </div>
         ) : (

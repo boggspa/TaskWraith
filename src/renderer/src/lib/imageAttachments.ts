@@ -9,6 +9,40 @@ export type ImageAttachment = {
   id: string
   path: string
   name: string
+  persistenceVersion?: 1
+  sha256?: string
+  mimeType?: string
+  byteLength?: number
+}
+
+export type PersistedAttachmentMetadata = Pick<
+  ImageAttachment,
+  'persistenceVersion' | 'sha256' | 'mimeType' | 'byteLength'
+>
+
+export const persistedAttachmentMetadata = (
+  value: unknown
+): Partial<PersistedAttachmentMetadata> => {
+  if (!value || typeof value !== 'object') return {}
+  const candidate = value as Record<string, unknown>
+  if (
+    candidate.persistenceVersion !== 1 ||
+    typeof candidate.sha256 !== 'string' ||
+    !candidate.sha256 ||
+    typeof candidate.mimeType !== 'string' ||
+    !candidate.mimeType ||
+    typeof candidate.byteLength !== 'number' ||
+    !Number.isFinite(candidate.byteLength) ||
+    candidate.byteLength <= 0
+  ) {
+    return {}
+  }
+  return {
+    persistenceVersion: 1,
+    sha256: candidate.sha256,
+    mimeType: candidate.mimeType,
+    byteLength: candidate.byteLength
+  }
 }
 
 type AttachmentPromptLike = {

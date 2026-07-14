@@ -173,7 +173,7 @@ describe('sideChatComposer', () => {
     expect(appSource).toMatch(
       /getChatComposerSelection\(\s*sideComposerSourceChat,\s*getChatProvider\(sideComposerSourceChat\),\s*'default'\s*\)/
     )
-    expect(appSource).toContain("(isSubThreadChat(chat) ? 'default' : approvalMode)")
+    expect(appSource).toContain('const resolvedApprovalMode = resolveChatApprovalMode({')
     expect(layoutSource).toContain('externalComposerTextareaRef: sideComposerTextareaRef')
     expect(layoutSource).toContain('patchSideParticipantWithSeatGate(sideChat, participantId, patch)')
     expect(layoutSource).toContain('withSessionActivityLedger(sideChat, nextChat)')
