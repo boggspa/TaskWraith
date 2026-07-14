@@ -66,6 +66,18 @@ describe('run queue predicates', () => {
     const nowMs = Date.parse('2026-06-27T12:30:00.000Z')
 
     expect(isScheduledTaskReadyToDispatch(scheduledTask({ status: 'due' }), nowMs)).toBe(true)
+    expect(
+      isScheduledTaskReadyToDispatch(
+        scheduledTask({ status: 'due', runAt: new Date(nowMs).toISOString() }),
+        nowMs
+      )
+    ).toBe(true)
+    expect(
+      isScheduledTaskReadyToDispatch(
+        scheduledTask({ status: 'due', runAt: '2026-06-27T13:00:00.000Z' }),
+        nowMs
+      )
+    ).toBe(false)
     expect(isScheduledTaskReadyToDispatch(scheduledTask(), nowMs)).toBe(true)
     expect(
       isScheduledTaskReadyToDispatch(
@@ -77,6 +89,24 @@ describe('run queue predicates', () => {
     expect(isScheduledTaskReadyToDispatch(scheduledTask({ runAt: 'not-a-date' }), nowMs)).toBe(
       false
     )
+    expect(
+      isScheduledTaskReadyToDispatch(
+        scheduledTask({ status: 'due', runAt: 'not-a-date' }),
+        nowMs
+      )
+    ).toBe(false)
+    expect(
+      isScheduledTaskReadyToDispatch(
+        scheduledTask({ status: 'due', runAt: null as unknown as string }),
+        nowMs
+      )
+    ).toBe(false)
+    expect(
+      isScheduledTaskReadyToDispatch(
+        scheduledTask({ status: 'due', runAt: false as unknown as string }),
+        nowMs
+      )
+    ).toBe(false)
   })
 
   it('distinguishes remote composer jobs from queued desktop jobs', () => {

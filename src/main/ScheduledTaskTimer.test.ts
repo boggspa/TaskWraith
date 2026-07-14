@@ -25,7 +25,7 @@ function task(overrides: Partial<ScheduledTask> = {}): ScheduledTask {
 }
 
 describe('getNextScheduledTaskRunAtMs', () => {
-  it('returns now when any due task exists', () => {
+  it('returns now when an overdue due task exists', () => {
     const nowMs = 1_000_000_000_000
     expect(
       getNextScheduledTaskRunAtMs({
@@ -34,6 +34,43 @@ describe('getNextScheduledTaskRunAtMs', () => {
         nextWorkflowRunAtMs: nowMs + 60000
       })
     ).toBe(nowMs)
+  })
+
+  it('accepts the exact-now due boundary', () => {
+    const nowMs = 1_000_000_000_000
+    expect(
+      getNextScheduledTaskRunAtMs({
+        nowMs,
+        tasks: [task({ status: 'due', runAt: new Date(nowMs).toISOString() })],
+        nextWorkflowRunAtMs: null
+      })
+    ).toBe(nowMs)
+  })
+
+  it('waits until runAt for a future due task', () => {
+    const nowMs = 1_000_000_000_000
+    const futureRunAtMs = nowMs + 30000
+
+    expect(
+      getNextScheduledTaskRunAtMs({
+        nowMs,
+        tasks: [task({ status: 'due', runAt: new Date(futureRunAtMs).toISOString() })],
+        nextWorkflowRunAtMs: nowMs + 60000
+      })
+    ).toBe(futureRunAtMs)
+  })
+
+  it('ignores a due task with an invalid runAt', () => {
+    expect(
+      getNextScheduledTaskRunAtMs({
+        tasks: [
+          task({ status: 'due', runAt: 'not-a-date' }),
+          task({ id: 'malformed-null', status: 'due', runAt: null as unknown as string }),
+          task({ id: 'malformed-boolean', status: 'due', runAt: false as unknown as string })
+        ],
+        nextWorkflowRunAtMs: null
+      })
+    ).toBeNull()
   })
 
   it('falls back to future pending and workflow candidates when no due task exists', () => {

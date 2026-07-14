@@ -5254,11 +5254,11 @@ export class AppStore {
   ): ScheduledTask[] {
     const due: ScheduledTask[] = []
     for (const task of this.getScheduledTasks()) {
+      const runAtMs = typeof task.runAt === 'string' ? Date.parse(task.runAt) : Number.NaN
       const eligible =
-        task.status === 'due' ||
-        (task.status === 'pending' &&
-          Number.isFinite(new Date(task.runAt).getTime()) &&
-          new Date(task.runAt).getTime() <= nowMs)
+        (task.status === 'due' || task.status === 'pending') &&
+        Number.isFinite(runAtMs) &&
+        runAtMs <= nowMs
       if (!eligible) continue
       const imageAttachments = resolveScheduledAttachmentRefs(
         task.imageAttachments,

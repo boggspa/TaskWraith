@@ -8,8 +8,8 @@ interface ScheduledTaskTimerInputs extends NowProvider {
   nextIntrospectionRunAtMs?: number | null | undefined
 }
 
-function parseRunAtMs(runAt: string): number {
-  return new Date(runAt).getTime()
+function parseRunAtMs(runAt: unknown): number {
+  return typeof runAt === 'string' ? Date.parse(runAt) : Number.NaN
 }
 
 /**
@@ -26,7 +26,8 @@ export function getNextScheduledTaskRunAtMs({
 
   for (const task of tasks) {
     if (task.status === 'due') {
-      candidates.push(nowMs)
+      const runAtMs = parseRunAtMs(task.runAt)
+      if (Number.isFinite(runAtMs)) candidates.push(Math.max(runAtMs, nowMs))
       continue
     }
     if (task.status !== 'pending') continue

@@ -57,7 +57,8 @@ function assertOnlyLifecycleFields(input: Readonly<Record<string, unknown>>): vo
  */
 export function sanitizeRendererScheduledTaskLifecyclePatch(
   existing: ScheduledTask,
-  input: Readonly<Record<string, unknown>>
+  input: Readonly<Record<string, unknown>>,
+  nowMs: number = Date.now()
 ): RendererScheduledTaskLifecyclePatch {
   assertOnlyLifecycleFields(input)
   const status = requireStatus(input.status)
@@ -70,6 +71,11 @@ export function sanitizeRendererScheduledTaskLifecyclePatch(
     if (existing.status !== 'due') {
       throw new Error('Only a due scheduled task can transition to running.')
     }
+    const runAtMs =
+      typeof existing.runAt === 'string' ? Date.parse(existing.runAt) : Number.NaN
+    if (!Number.isFinite(runAtMs) || runAtMs > nowMs) {
+      throw new Error('Scheduled task run time has not arrived.')
+    }
     if ('completedAt' in input || 'lastError' in input) {
       throw new Error('A running transition cannot include terminal fields.')
     }
@@ -77,7 +83,7 @@ export function sanitizeRendererScheduledTaskLifecyclePatch(
       status,
       runId: requireNonEmptyLifecycleString(input.runId, 'Scheduled task run id'),
       // Renderer timestamps are display input, not schedule/audit authority.
-      firedAt: new Date().toISOString()
+      firedAt: new Date(nowMs).toISOString()
     }
   }
 
@@ -117,7 +123,7 @@ export function sanitizeRendererScheduledTaskLifecyclePatch(
 
   return {
     status,
-    completedAt: new Date().toISOString(),
+    completedAt: new Date(nowMs).toISOString(),
     ...('lastError' in input ? { lastError: input.lastError as string | undefined } : {})
   }
 }

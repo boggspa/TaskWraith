@@ -393,6 +393,96 @@ describe('AppStore workflows', () => {
     expect(AppStore.getScheduledTasks()[0]?.imageAttachments).toEqual(due[0]?.imageAttachments)
   })
 
+  it('returns due tasks only once their valid run time has arrived', () => {
+    const chatId = AppStore.createChat('ws-1', '/repo').appChatId
+    const nowMs = Date.parse(plannedFor)
+    const overdue = AppStore.saveScheduledTask({
+      id: 'overdue-due',
+      workspaceId: 'ws-1',
+      workspacePath: '/repo',
+      chatId,
+      provider: 'codex',
+      prompt: 'Retry now.',
+      selectedModelType: 'cli-default',
+      customModel: '',
+      approvalMode: 'default',
+      sessionTrust: false,
+      imageAttachments: [],
+      runAt: new Date(nowMs - 1000).toISOString(),
+      timezone: 'Europe/London',
+      status: 'due'
+    })
+    const exact = AppStore.saveScheduledTask({
+      id: 'exact-due',
+      workspaceId: 'ws-1',
+      workspacePath: '/repo',
+      chatId,
+      provider: 'codex',
+      prompt: 'Run exactly now.',
+      selectedModelType: 'cli-default',
+      customModel: '',
+      approvalMode: 'default',
+      sessionTrust: false,
+      imageAttachments: [],
+      runAt: new Date(nowMs).toISOString(),
+      timezone: 'Europe/London',
+      status: 'due'
+    })
+    AppStore.saveScheduledTask({
+      id: 'future-due',
+      workspaceId: 'ws-1',
+      workspacePath: '/repo',
+      chatId,
+      provider: 'codex',
+      prompt: 'Do not run early.',
+      selectedModelType: 'cli-default',
+      customModel: '',
+      approvalMode: 'default',
+      sessionTrust: false,
+      imageAttachments: [],
+      runAt: new Date(nowMs + 1000).toISOString(),
+      timezone: 'Europe/London',
+      status: 'due'
+    })
+    AppStore.saveScheduledTask({
+      id: 'invalid-due',
+      workspaceId: 'ws-1',
+      workspacePath: '/repo',
+      chatId,
+      provider: 'codex',
+      prompt: 'Never dispatch invalid time.',
+      selectedModelType: 'cli-default',
+      customModel: '',
+      approvalMode: 'default',
+      sessionTrust: false,
+      imageAttachments: [],
+      runAt: 'not-a-date',
+      timezone: 'Europe/London',
+      status: 'due'
+    })
+    AppStore.saveScheduledTask({
+      id: 'non-string-due',
+      workspaceId: 'ws-1',
+      workspacePath: '/repo',
+      chatId,
+      provider: 'codex',
+      prompt: 'Never coerce a malformed time.',
+      selectedModelType: 'cli-default',
+      customModel: '',
+      approvalMode: 'default',
+      sessionTrust: false,
+      imageAttachments: [],
+      runAt: null as unknown as string,
+      timezone: 'Europe/London',
+      status: 'due'
+    })
+
+    expect(AppStore.getDueScheduledTasks(nowMs).map((task) => task.id)).toEqual([
+      overdue.id,
+      exact.id
+    ])
+  })
+
   it('fails a due legacy scheduled attachment without passing its path to the resolver', () => {
     const chatId = AppStore.createChat('ws-1', '/repo').appChatId
     const task = AppStore.saveScheduledTask({

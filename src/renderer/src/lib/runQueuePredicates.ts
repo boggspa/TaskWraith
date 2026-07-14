@@ -13,9 +13,8 @@ export function isScheduledTaskReadyToDispatch(
   task: ScheduledTask,
   nowMs: number = Date.now()
 ): boolean {
-  if (task.status === 'due') return true
-  if (task.status !== 'pending') return false
-  const runAtMs = new Date(task.runAt).getTime()
+  if (task.status !== 'due' && task.status !== 'pending') return false
+  const runAtMs = typeof task.runAt === 'string' ? Date.parse(task.runAt) : Number.NaN
   return Number.isFinite(runAtMs) && runAtMs <= nowMs
 }
 

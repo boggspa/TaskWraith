@@ -50,8 +50,8 @@ function isWorkflowOccurrence(task: ScheduledTask): boolean {
  * re-patch would reset the clock and the wedge would never age out).
  *   - 'running'  -> `runningSince` (stamped on the into-running transition),
  *                  falling back to `firedAt` for legacy tasks.
- *   - 'due'      -> `firedAt` (stamped when emitDueScheduledTasks marks it due),
- *                  falling back to `runAt`.
+ *   - 'due'      -> the later of `runAt` and `firedAt`. A persisted/faulty early
+ *                  firedAt must not consume the stall budget before runAt.
  *   - 'pending'  -> `runAt` (overdue pending: runAt already in the past).
  * Returns NaN when no usable basis exists (caller excludes it).
  */
@@ -59,7 +59,8 @@ export function stallBasisMs(task: ScheduledTask): {
   basis: StalledScheduledTask['basis']
   ms: number
 } {
-  const parse = (v?: string): number => (v ? Date.parse(v) : Number.NaN)
+  const parse = (value: unknown): number =>
+    typeof value === 'string' ? Date.parse(value) : Number.NaN
   if (task.status === 'running') {
     const since = parse(task.runningSince)
     if (Number.isFinite(since)) return { basis: 'runningSince', ms: since }
@@ -69,8 +70,10 @@ export function stallBasisMs(task: ScheduledTask): {
   }
   if (task.status === 'due') {
     const fired = parse(task.firedAt)
-    if (Number.isFinite(fired)) return { basis: 'firedAt', ms: fired }
     const runAt = parse(task.runAt)
+    if (Number.isFinite(fired) && (!Number.isFinite(runAt) || fired >= runAt)) {
+      return { basis: 'firedAt', ms: fired }
+    }
     return { basis: 'runAt', ms: runAt }
   }
   // pending (overdue)
@@ -85,8 +88,8 @@ export function stallBasisMs(task: ScheduledTask): {
  * Eligibility:
  *   1. Workflow-bound (`workflowId` + `workflowExecutionId`).
  *   2. Status is a non-terminal occupant of `activeExecutionId`: 'running' (held
- *      via syncWorkflow on into-running), 'due' (held at materialize time), or
- *      'pending' ONLY when overdue (runAt <= nowMs).
+ *      via syncWorkflow on into-running), or an arrived 'due'/'pending'
+ *      occurrence with a finite runAt <= nowMs.
  *   3. Aged past `backstopMs` from its basis (NaN basis -> excluded; never settle
  *      a task we can't time).
  *   4. LIVENESS: a 'running' task with a live RunQueueJob is NEVER settled — that
@@ -111,9 +114,10 @@ export function findStalledScheduledTasks(
     const status = task.status
     if (status !== 'running' && status !== 'due' && status !== 'pending') continue
 
-    // Overdue gate for pending: a not-yet-fired pending is not a wedge.
-    if (status === 'pending') {
-      const runAtMs = Date.parse(task.runAt)
+    // Readiness gate for not-yet-running occurrences: neither a forged/future
+    // 'due' status nor an overdue-looking firedAt may age a task before runAt.
+    if (status === 'pending' || status === 'due') {
+      const runAtMs = typeof task.runAt === 'string' ? Date.parse(task.runAt) : Number.NaN
       if (!Number.isFinite(runAtMs) || runAtMs > nowMs) continue
     }
 

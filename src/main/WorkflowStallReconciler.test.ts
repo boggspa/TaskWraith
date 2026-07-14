@@ -56,6 +56,84 @@ describe('findStalledScheduledTasks', () => {
     expect(result[0].ageMs).toBe(HOURS(7))
   })
 
+  it('requires a finite arrived runAt without consuming stall age before arrival', () => {
+    const oldFiredAt = ago(HOURS(7))
+    const exact = task({
+      id: 'due-exact',
+      status: 'due',
+      runId: undefined,
+      runningSince: undefined,
+      firedAt: oldFiredAt,
+      runAt: new Date(NOW).toISOString()
+    })
+    const future = task({
+      id: 'due-future',
+      status: 'due',
+      runId: undefined,
+      runningSince: undefined,
+      firedAt: oldFiredAt,
+      runAt: new Date(NOW + 1).toISOString()
+    })
+    const invalid = task({
+      id: 'due-invalid',
+      status: 'due',
+      runId: undefined,
+      runningSince: undefined,
+      firedAt: oldFiredAt,
+      runAt: 'not-a-date'
+    })
+    const malformed = task({
+      id: 'due-malformed',
+      status: 'due',
+      runId: undefined,
+      runningSince: undefined,
+      firedAt: oldFiredAt,
+      runAt: null as unknown as string
+    })
+    const malformedBoolean = task({
+      id: 'due-malformed-boolean',
+      status: 'due',
+      runId: undefined,
+      runningSince: undefined,
+      firedAt: oldFiredAt,
+      runAt: false as unknown as string
+    })
+
+    expect(
+      findStalledScheduledTasks(
+        [exact, future, invalid, malformed, malformedBoolean],
+        NONE_LIVE,
+        NOW,
+        DEFAULT_STALL_BACKSTOP_MS
+      ).map((entry) => entry.task.id)
+    ).toEqual([])
+  })
+
+  it('starts a due task stall budget at runAt when firedAt was forged early', () => {
+    const arrivedAt = ago(DEFAULT_STALL_BACKSTOP_MS)
+    const due = task({
+      id: 'due-arrived',
+      status: 'due',
+      runId: undefined,
+      runningSince: undefined,
+      firedAt: ago(HOURS(7)),
+      runAt: arrivedAt
+    })
+
+    const result = findStalledScheduledTasks(
+      [due],
+      NONE_LIVE,
+      NOW,
+      DEFAULT_STALL_BACKSTOP_MS
+    )
+    expect(result).toHaveLength(1)
+    expect(result[0]).toMatchObject({
+      basis: 'runAt',
+      basisMs: Date.parse(arrivedAt),
+      ageMs: DEFAULT_STALL_BACKSTOP_MS
+    })
+  })
+
   it('settles a running-wedge whose run-queue job is DEAD', () => {
     const t = task({ id: 'running-dead', runningSince: ago(HOURS(7)) })
     const result = findStalledScheduledTasks([t], NONE_LIVE, NOW, DEFAULT_STALL_BACKSTOP_MS)

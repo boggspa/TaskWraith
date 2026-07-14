@@ -96,20 +96,52 @@ function workflow(task: ScheduledTask, overrides: Partial<WorkflowDefinition> = 
 describe('sanitizeRendererScheduledTaskLifecyclePatch', () => {
   it('accepts only live lifecycle transitions and MAIN-stamps audit times', () => {
     const due = scheduledTask()
-    const running = sanitizeRendererScheduledTaskLifecyclePatch(due, {
-      status: 'running',
-      runId: '  run-1  ',
-      firedAt: '2099-01-01T00:00:00.000Z'
-    })
-    expect(running).toMatchObject({ status: 'running', runId: 'run-1' })
+    const running = sanitizeRendererScheduledTaskLifecyclePatch(
+      due,
+      {
+        status: 'running',
+        runId: '  run-1  ',
+        firedAt: '2099-01-01T00:00:00.000Z'
+      },
+      Date.parse(now)
+    )
+    expect(running).toMatchObject({ status: 'running', runId: 'run-1', firedAt: now })
     expect(running.firedAt).not.toBe('2099-01-01T00:00:00.000Z')
 
     const completed = sanitizeRendererScheduledTaskLifecyclePatch(
       scheduledTask({ status: 'running', runId: 'run-1', firedAt: now }),
-      { status: 'completed', completedAt: '2099-01-01T00:00:00.000Z' }
+      { status: 'completed', completedAt: '2099-01-01T00:00:00.000Z' },
+      Date.parse(now)
     )
     expect(completed.status).toBe('completed')
+    expect(completed.completedAt).toBe(now)
     expect(completed.completedAt).not.toBe('2099-01-01T00:00:00.000Z')
+  })
+
+  it('rejects running claims before a finite run time has arrived', () => {
+    const nowMs = Date.parse(now)
+    expect(
+      sanitizeRendererScheduledTaskLifecyclePatch(
+        scheduledTask({ runAt: now }),
+        { status: 'running', runId: 'run-exact' },
+        nowMs
+      )
+    ).toMatchObject({ status: 'running', runId: 'run-exact', firedAt: now })
+
+    for (const runAt of [
+      new Date(nowMs + 1).toISOString(),
+      'not-a-date',
+      null as unknown as string,
+      false as unknown as string
+    ]) {
+      expect(() =>
+        sanitizeRendererScheduledTaskLifecyclePatch(
+          scheduledTask({ runAt }),
+          { status: 'running', runId: 'run-early' },
+          nowMs
+        )
+      ).toThrow('Scheduled task run time has not arrived.')
+    }
   })
 
   it('rejects readiness minting, illegal transitions, oversized ids, and config mutation', () => {

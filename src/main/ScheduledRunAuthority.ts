@@ -5,6 +5,7 @@ export interface ScheduledRunAuthorityInput {
   chat: ChatRecord | null | undefined
   expectedKind: ScheduledTaskKind
   appRunId?: string
+  nowMs?: number
   canonicalizePath: (value: string) => string
 }
 
@@ -34,9 +35,14 @@ export function assertScheduledRunAuthority(input: ScheduledRunAuthorityInput): 
   const chatKind: ScheduledTaskKind = chat.chatKind === 'ensemble' ? 'ensemble' : 'single'
   const taskRunId = task.runId?.trim()
   const requestedRunId = input.appRunId?.trim()
+  const runAtMs = typeof task.runAt === 'string' ? Date.parse(task.runAt) : Number.NaN
+  const nowMs = input.nowMs ?? Date.now()
   if (
     task.status !== 'running' ||
     !taskRunId ||
+    !Number.isFinite(nowMs) ||
+    !Number.isFinite(runAtMs) ||
+    runAtMs > nowMs ||
     actualKind !== input.expectedKind ||
     chatKind !== input.expectedKind ||
     (input.expectedKind === 'ensemble' && !task.ensembleSnapshot) ||
@@ -87,6 +93,7 @@ export function assertRunAgentScheduledAuthority(
     chat: input.chat,
     expectedKind: 'single',
     appRunId,
+    nowMs: input.nowMs,
     canonicalizePath: input.canonicalizePath
   })
 }

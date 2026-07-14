@@ -6,6 +6,7 @@ import {
 } from './ScheduledRunAuthority'
 
 const canonicalizePath = (value: string): string => value.replace(/\/$/, '')
+const nowMs = Date.parse('2026-07-13T00:00:00.000Z')
 
 function chat(overrides: Partial<ChatRecord> = {}): ChatRecord {
   return {
@@ -58,6 +59,7 @@ describe('assertScheduledRunAuthority', () => {
         chat: chat(),
         expectedKind: 'single',
         appRunId: 'run-test-1',
+        nowMs,
         canonicalizePath
       })
     ).toBe(scheduled)
@@ -77,6 +79,7 @@ describe('assertScheduledRunAuthority', () => {
         task: scheduled,
         chat: chat({ chatKind: 'ensemble', ensemble: { participants: [] } as never }),
         expectedKind: 'ensemble',
+        nowMs,
         canonicalizePath
       })
     ).toBe(scheduled)
@@ -123,6 +126,37 @@ describe('assertScheduledRunAuthority', () => {
     ).toThrow('Scheduled occurrence does not match')
   })
 
+  it('rejects running occurrences before a finite run time has arrived', () => {
+    expect(
+      assertScheduledRunAuthority({
+        task: task({ runAt: new Date(nowMs).toISOString() }),
+        chat: chat(),
+        expectedKind: 'single',
+        appRunId: 'run-test-1',
+        nowMs,
+        canonicalizePath
+      })
+    ).toMatchObject({ id: 'scheduled-test-1' })
+
+    for (const runAt of [
+      new Date(nowMs + 1).toISOString(),
+      'not-a-date',
+      null as unknown as string,
+      false as unknown as string
+    ]) {
+      expect(() =>
+        assertScheduledRunAuthority({
+          task: task({ runAt }),
+          chat: chat(),
+          expectedKind: 'single',
+          appRunId: 'run-test-1',
+          nowMs,
+          canonicalizePath
+        })
+      ).toThrow('Scheduled occurrence does not match')
+    }
+  })
+
   it('rejects global chat authority', () => {
     expect(() =>
       assertScheduledRunAuthority({
@@ -146,6 +180,7 @@ describe('assertRunAgentScheduledAuthority', () => {
         task: scheduled,
         chat: chat(),
         appRunId: 'run-test-1',
+        nowMs,
         canonicalizePath
       })
     ).toBe(scheduled)
