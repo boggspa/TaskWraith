@@ -3687,9 +3687,6 @@ const imageGenExecutor = createImageGenExecutor({
   getConfig: imageGenConfig,
   generate: generateImageViaApi
 })
-// Renderer canvas-pane (live-embed) IPC: open-embedded / set-bounds / set-visible
-// / close / list. Human-initiated (un-gated); the driver still enforces SSRF.
-registerCanvasEmbedIpc(ipcMain, { controller: canvasService, embed: canvasEmbedController })
 // Cross-thread retrospection (recall). Slice 1 wires it inert; Slice 2 passes
 // the resolver deps (run-queue / chat-list / workspaces / run-events).
 // Live remote-workspace allowlist (set at main-init below). Recall from a
@@ -4183,6 +4180,11 @@ installIpcValidation(ipcMain, (channel, event) => {
     assertMainRendererSender(event)
   }
 })
+
+// Renderer canvas-pane (live-embed) IPC: register only after the global
+// validation/renderer-authority wrapper is installed. The driver additionally
+// enforces its URL/SSRF policy once a validated main-renderer request arrives.
+registerCanvasEmbedIpc(ipcMain, { controller: canvasService, embed: canvasEmbedController })
 
 // Ask Chromium to keep expensive renderer visuals on the GPU raster path where supported.
 app.commandLine.appendSwitch('enable-gpu-rasterization')

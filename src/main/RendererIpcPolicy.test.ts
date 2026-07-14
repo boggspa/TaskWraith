@@ -47,6 +47,8 @@ describe('RendererIpcPolicy', () => {
     'providerRates:probe',
     'ensemble-roster-presets:sync',
     'attach-window:pick',
+    'canvas:open-embedded',
+    'canvas:set-bounds',
     'app:quit'
   ])('keeps %s behind main-renderer authority', (channel) => {
     expect(ipcChannelRequiresMainRenderer(channel)).toBe(true)

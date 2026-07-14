@@ -44,9 +44,8 @@ describe('IpcValidation', () => {
   // The handlers originally all lived in index.ts. As the IPC god-module is
   // broken up into per-domain modules under `src/main/ipc/`, the scan must
   // follow them — otherwise an extracted channel silently leaves this
-  // invariant. So we scan index.ts AND every `*.ts` (non-test) file under
-  // `src/main/ipc/`. NB: extracted handler modules MUST live directly under
-  // `src/main/ipc/` for this static check to keep covering them.
+  // invariant. So we scan index.ts, every `*.ts` (non-test) file under
+  // `src/main/ipc/`, and the separately factored canvas IPC module.
   it('registers an arg schema for every ipcMain.handle channel', () => {
     const sources = [readFileSync(join(process.cwd(), 'src/main/index.ts'), 'utf8')]
     const ipcDir = join(process.cwd(), 'src/main/ipc')
@@ -56,6 +55,9 @@ describe('IpcValidation', () => {
         sources.push(readFileSync(join(ipcDir, entry), 'utf8'))
       }
     }
+    sources.push(
+      readFileSync(join(process.cwd(), 'src/main/canvas/CanvasEmbedIpc.ts'), 'utf8')
+    )
     const handled = new Set<string>()
     const re = /ipcMain\.handle\(\s*['"`]([^'"`]+)['"`]/g
     for (const source of sources) {
@@ -72,6 +74,53 @@ describe('IpcValidation', () => {
     expect(handled.size).toBeGreaterThan(0)
     const missing = [...handled].filter((channel) => !(channel in IPC_ARGUMENT_SCHEMAS)).sort()
     expect(missing).toEqual([])
+  })
+
+  it('registers Canvas handlers only after the validation wrapper is installed', () => {
+    const main = readFileSync(join(process.cwd(), 'src/main/index.ts'), 'utf8')
+    expect(main.indexOf('installIpcValidation(ipcMain')).toBeGreaterThanOrEqual(0)
+    expect(main.indexOf('registerCanvasEmbedIpc(ipcMain')).toBeGreaterThan(
+      main.indexOf('installIpcValidation(ipcMain')
+    )
+  })
+
+  it('validates Canvas open payloads and embedded bounds deeply', () => {
+    expect(() =>
+      validateIpcArgs('canvas:open-window', [
+        {
+          url: 'http://localhost:5173',
+          originAllowlist: ['http://localhost:5173'],
+          chatId: 'chat-1'
+        }
+      ])
+    ).not.toThrow()
+    expect(() => validateIpcArgs('canvas:open-sketch-window', [])).not.toThrow()
+    expect(() =>
+      validateIpcArgs('canvas:set-bounds', [
+        'canvas-1',
+        { x: 1, y: 2, width: 800, height: 600 }
+      ])
+    ).not.toThrow()
+
+    expect(() => validateIpcArgs('canvas:open-window', [{ chatId: '../settings' }])).toThrow(
+      /safe chat id/
+    )
+    expect(() => validateIpcArgs('canvas:open-sketch-window', [{ url: 'https://x.test' }])).toThrow(
+      /unknown field/
+    )
+    expect(() =>
+      validateIpcArgs('canvas:set-bounds', [
+        'canvas-1',
+        { x: '1', y: 2, width: 800, height: 600 }
+      ])
+    ).toThrow(/bounds.x must be a finite number/)
+    expect(() =>
+      validateIpcArgs('canvas:set-bounds', [
+        'canvas-1',
+        { x: 1, y: 2, width: -1, height: 600 }
+      ])
+    ).toThrow(/dimensions must be non-negative/)
+    expect(() => validateIpcArgs('canvas:set-visible', ['canvas-1', 'false'])).toThrow(/boolean/)
   })
 
   // Explicit pin for the human-collaboration channels: the generic scan above

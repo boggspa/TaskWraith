@@ -28,6 +28,9 @@ type ArgSpec =
   | 'externalPathGrantAccess'
   | 'runQueueStatus'
   | 'bugReportPayload'
+  | 'optionalCanvasOpenArgs'
+  | 'optionalCanvasSketchArgs'
+  | 'canvasBounds'
 
 // Grok + Cursor are first-class providers; no eligibility gate (see ProviderId).
 const PROVIDERS = new Set(['gemini', 'codex', 'claude', 'kimi', 'grok', 'cursor', 'ollama'])
@@ -243,6 +246,17 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'launch-attempts-snapshot': [],
   'launch-start': ['object'],
   'launch-stop': ['object'],
+  // Canvas WebContentsView control is main-renderer-only (see
+  // RendererIpcPolicy). Keep the IPC boundary strict because malformed bounds
+  // or a secondary renderer driving the shared overlay can obscure/spoof the
+  // primary app surface.
+  'canvas:open-window': ['optionalCanvasOpenArgs'],
+  'canvas:open-embedded': ['optionalCanvasOpenArgs'],
+  'canvas:open-sketch-window': ['optionalCanvasSketchArgs'],
+  'canvas:set-bounds': ['nonEmptyString', 'canvasBounds'],
+  'canvas:set-visible': ['nonEmptyString', 'boolean'],
+  'canvas:close': ['nonEmptyString'],
+  'canvas:list': [],
   // Changelog sheet (update-pill feature): `changelog-snapshot` is a no-arg
   // read returning ProductChangelogSnapshot | null; `mark-changelog-seen`
   // persists the last-seen version. The handler coerces a missing/empty
@@ -569,6 +583,75 @@ function validateArg(channel: string, spec: ArgSpec, value: unknown, index: numb
   if (spec === 'chatRecord') validateChatRecord(channel, value)
   if (spec === 'settingsPatch') validateSettingsPatch(channel, value)
   if (spec === 'bugReportPayload') validateBugReportPayload(channel, value)
+  if (spec === 'optionalCanvasOpenArgs') validateCanvasOpenArgs(channel, value)
+  if (spec === 'optionalCanvasSketchArgs') validateCanvasSketchArgs(channel, value)
+  if (spec === 'canvasBounds') validateCanvasBounds(channel, value)
+}
+
+function validateKnownKeys(
+  channel: string,
+  value: Record<string, unknown>,
+  allowed: ReadonlySet<string>
+): void {
+  for (const key of Object.keys(value)) {
+    if (!allowed.has(key)) throw new Error(`${channel} payload contains unknown field ${key}.`)
+  }
+}
+
+function validateOptionalCanvasChatId(channel: string, value: unknown): void {
+  if (value === undefined) return
+  assertSafeChatId(value, `${channel} chat id`)
+}
+
+function validateCanvasOpenArgs(channel: string, value: unknown): void {
+  if (value === undefined || value === null) return
+  if (!isRecord(value)) throw new Error(`${channel} payload must be an object.`)
+  validateKnownKeys(channel, value, new Set(['url', 'originAllowlist', 'chatId']))
+  if (value.url !== undefined) {
+    if (typeof value.url !== 'string' || !value.url.trim() || value.url.length > 8_192) {
+      throw new Error(`${channel} url must be a non-empty string of at most 8192 characters.`)
+    }
+  }
+  if (value.originAllowlist !== undefined) {
+    if (!Array.isArray(value.originAllowlist) || value.originAllowlist.length > 64) {
+      throw new Error(`${channel} originAllowlist must be an array of at most 64 strings.`)
+    }
+    for (const origin of value.originAllowlist) {
+      if (typeof origin !== 'string' || !origin.trim() || origin.length > 2_048) {
+        throw new Error(`${channel} originAllowlist entries must be non-empty bounded strings.`)
+      }
+    }
+  }
+  validateOptionalCanvasChatId(channel, value.chatId)
+}
+
+function validateCanvasSketchArgs(channel: string, value: unknown): void {
+  if (value === undefined || value === null) return
+  if (!isRecord(value)) throw new Error(`${channel} payload must be an object.`)
+  validateKnownKeys(channel, value, new Set(['chatId']))
+  validateOptionalCanvasChatId(channel, value.chatId)
+}
+
+function validateCanvasBounds(channel: string, value: unknown): void {
+  if (!isRecord(value)) throw new Error(`${channel} bounds must be an object.`)
+  validateKnownKeys(channel, value, new Set(['x', 'y', 'width', 'height']))
+  for (const key of ['x', 'y', 'width', 'height'] as const) {
+    if (typeof value[key] !== 'number' || !Number.isFinite(value[key])) {
+      throw new Error(`${channel} bounds.${key} must be a finite number.`)
+    }
+  }
+  if ((value.width as number) < 0 || (value.height as number) < 0) {
+    throw new Error(`${channel} bounds dimensions must be non-negative.`)
+  }
+  const coordinateLimit = 1_000_000
+  if (
+    Math.abs(value.x as number) > coordinateLimit ||
+    Math.abs(value.y as number) > coordinateLimit ||
+    (value.width as number) > coordinateLimit ||
+    (value.height as number) > coordinateLimit
+  ) {
+    throw new Error(`${channel} bounds exceed the supported range.`)
+  }
 }
 
 function validateRunPayload(channel: string, value: unknown): void {

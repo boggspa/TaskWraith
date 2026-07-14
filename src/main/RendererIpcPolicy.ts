@@ -255,6 +255,16 @@ export const SECONDARY_RENDERER_SAFE_IPC_CHANNELS = new Set<string>([
  * catalogue changes.
  */
 export const MAIN_RENDERER_ONLY_IPC_CHANNELS = new Set<string>([
+  // Canvas WebContentsView state belongs to the primary window. Popouts and
+  // other secondary renderers must not create or reposition an overlay over it.
+  'canvas:open-window',
+  'canvas:open-embedded',
+  'canvas:open-sketch-window',
+  'canvas:set-bounds',
+  'canvas:set-visible',
+  'canvas:close',
+  'canvas:list',
+
   // Global settings, runtime profiles, encrypted secrets, and handoff records.
   'update-settings',
   'prompt-cache:get-policy',
