@@ -10246,10 +10246,17 @@ export class EnsembleOrchestrator {
     const promptForParticipants = promptWithAttachmentReferences(prompt, normalizedImageAttachments)
     const orchestrationMode = resolveEnsembleOrchestrationMode(chat.ensemble)
     const maxContinuationHops = resolveMaxContinuationHops(chat.ensemble)
-    const requestedFanoutPolicy = resolveRequestedEnsembleFanoutPolicy(chat.ensemble, {
-      concurrentMode,
-      fanoutPolicy
-    })
+    // Directed user rounds are a hard routing boundary. Clamp fan-out here as
+    // defence-in-depth even when an older or remote caller forgets to do so;
+    // otherwise a one-participant DM can inherit a roster-wide concurrent
+    // policy, either widening scope or failing the concurrent participant
+    // count check below.
+    const requestedFanoutPolicy = dmTargetParticipant
+      ? 'off'
+      : resolveRequestedEnsembleFanoutPolicy(chat.ensemble, {
+          concurrentMode,
+          fanoutPolicy
+        })
     const requestedConcurrentMode = fanoutPolicyEnablesConcurrent(requestedFanoutPolicy)
     const concurrentCheck = canStartConcurrentRound({
       concurrentLanesEnabled: concurrentLanesEnabled(),

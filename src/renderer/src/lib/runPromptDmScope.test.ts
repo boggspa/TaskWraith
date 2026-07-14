@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import type { EnsembleParticipant } from '../../../main/store/types'
 import { resolveComposerRunDmTarget } from './runPromptDmScope'
@@ -45,5 +46,23 @@ describe('resolveComposerRunDmTarget', () => {
         inferFromPrompt: false
       })
     ).toBeUndefined()
+  })
+
+  it('keeps direct composer Steer on the resolved participant with fan-out off', () => {
+    const appSource = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8')
+    const steerStart = appSource.indexOf('const handleSteer = async')
+    const steerEnd = appSource.indexOf('// Guard: if there\'s no active run', steerStart)
+    expect(steerStart).toBeGreaterThanOrEqual(0)
+    expect(steerEnd).toBeGreaterThan(steerStart)
+
+    const ensembleSteer = appSource.slice(steerStart, steerEnd)
+    expect(ensembleSteer).toContain('const dmTargetParticipantId = resolveComposerRunDmTarget({')
+    expect(ensembleSteer).toContain(
+      'const fanoutPolicy: EnsembleFanoutPolicy = dmTargetParticipantId'
+    )
+    expect(ensembleSteer).toContain("? 'off'")
+    expect(ensembleSteer).toContain(
+      '...(dmTargetParticipantId ? { dmTargetParticipantId } : {})'
+    )
   })
 })

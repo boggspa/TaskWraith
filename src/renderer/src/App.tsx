@@ -14446,10 +14446,24 @@ function App(): React.JSX.Element {
       if (ensembleSteerInFlightChatIdsRef.current.has(targetChatId)) {
         return
       }
-      const fanoutPolicy = normalizeEnsembleFanoutPolicy(
-        targetChat.ensemble?.fanoutPolicy,
-        targetChat.ensemble?.concurrentModeEnabled
-      )
+      // A direct composer Steer must preserve the same single-participant
+      // boundary as a normal send. Previously this branch rebuilt the IPC
+      // request without resolving the structured @mention, so the steer
+      // silently widened back to the whole roster. A directed steer is also
+      // never a concurrent fan-out request: only the addressed participant is
+      // reachable for this round.
+      const dmTargetParticipantId = resolveComposerRunDmTarget({
+        explicitParticipantId: request.dmTargetParticipantId,
+        prompt: request.prompt || '',
+        participants: targetChat.ensemble?.participants,
+        inferFromPrompt: !existingPrompt
+      })
+      const fanoutPolicy: EnsembleFanoutPolicy = dmTargetParticipantId
+        ? 'off'
+        : normalizeEnsembleFanoutPolicy(
+            targetChat.ensemble?.fanoutPolicy,
+            targetChat.ensemble?.concurrentModeEnabled
+          )
       ensembleSteerInFlightChatIdsRef.current.add(targetChatId)
       try {
         await window.api.runEnsembleRound({
@@ -14466,6 +14480,7 @@ function App(): React.JSX.Element {
           mode: 'steer',
           concurrentMode: ensembleFanoutPolicyEnabled(fanoutPolicy),
           fanoutPolicy,
+          ...(dmTargetParticipantId ? { dmTargetParticipantId } : {}),
           imageAttachments: request.imageAttachments.map((attachment) => ({
             id: attachment.id,
             path: attachment.path,

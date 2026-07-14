@@ -29506,6 +29506,10 @@ if (isGeminiMcpBridgeProcess) {
             event: fakeEvent,
             mode: 'steer',
             ...(dmTargetParticipantId ? { dmTargetParticipantId } : {}),
+            // A phone steer with one resolved @target has the same directed
+            // boundary as desktop: never inherit Read/Write/All fan-out from
+            // the roster for a one-participant round.
+            ...(dmTargetParticipantId ? { concurrentMode: false, fanoutPolicy: 'off' } : {}),
             ...(steerImagePaths.length
               ? {
                   imageAttachments: steerImagePaths.map((imagePath) => ({

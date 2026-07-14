@@ -11636,6 +11636,40 @@ Next action:
     expect(harness.dispatched).toHaveLength(1)
   })
 
+  it.each(['read_only', 'all'] as const)(
+    'clamps inherited %s fan-out off for a directed participant round',
+    async (inheritedFanoutPolicy) => {
+      const harness = makeHarness()
+      harness.chat.ensemble!.fanoutPolicy = inheritedFanoutPolicy
+      harness.chat.ensemble!.concurrentModeEnabled = true
+
+      expect(() =>
+        harness.orchestrator.startRound({
+          chatId: 'ensemble-chat',
+          prompt: '@Worker directed steer.',
+          event: { sender: {} as Electron.WebContents },
+          mode: 'steer',
+          dmTargetParticipantId: 'codex',
+          // Model a stale/remote caller that forwards the live roster policy.
+          concurrentMode: true,
+          fanoutPolicy: inheritedFanoutPolicy
+        })
+      ).not.toThrow()
+
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+      expect(harness.dispatched[0].provider).toBe('codex')
+      expect(harness.chat.ensemble?.activeRound?.dmTargetParticipantId).toBe('codex')
+      expect(harness.chat.ensemble?.activeRound?.fanoutPolicy).toBe('off')
+      expect(harness.chat.ensemble?.activeRound?.concurrentMode).toBeUndefined()
+      expect(
+        harness.chat.ensemble?.activeRound?.participants.map(
+          (participant) => participant.participantId
+        )
+      ).toEqual(['codex'])
+      expect(harness.chat.ensemble?.activeRound?.lanes).toBeUndefined()
+    }
+  )
+
   it('does not let an agent @mention widen a continuous user-targeted round', async () => {
     const harness = makeHarness()
     harness.chat.ensemble!.orchestrationMode = 'continuous'
