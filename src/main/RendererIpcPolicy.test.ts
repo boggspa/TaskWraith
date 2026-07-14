@@ -1,9 +1,11 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { IPC_ARGUMENT_SCHEMAS } from './IpcValidation'
 import {
   ipcChannelRequiresMainRenderer,
-  MAIN_RENDERER_ONLY_IPC_CHANNELS
+  MAIN_RENDERER_ONLY_IPC_CHANNELS,
+  SECONDARY_RENDERER_SAFE_IPC_CHANNELS
 } from './RendererIpcPolicy'
 
 describe('RendererIpcPolicy', () => {
@@ -54,21 +56,58 @@ describe('RendererIpcPolicy', () => {
     'get-settings',
     'get-agent-models',
     'get-chat',
+    'save-chat',
     'run-agent',
     'save-clipboard-image-attachment',
     'get-run-queue-jobs',
     'check-trust',
     'audit-run:start',
+    'get-diff',
+    'git:snapshot',
+    'read-workspace-file',
     'read-image-preview',
     'record-product-crash'
-  ])('leaves %s to its read or owner-scoped domain policy', (channel) => {
+  ])('allows %s to reach its read or owner-scoped domain policy', (channel) => {
     expect(ipcChannelRequiresMainRenderer(channel)).toBe(false)
+    expect(SECONDARY_RENDERER_SAFE_IPC_CHANNELS.has(channel)).toBe(true)
   })
 
-  it('contains no accidental duplicate entries', () => {
-    expect(MAIN_RENDERER_ONLY_IPC_CHANNELS.size).toBe(
-      [...MAIN_RENDERER_ONLY_IPC_CHANNELS].length
+  it.each([
+    'brand-new-settings-channel',
+    'get-setting',
+    '',
+    'authorize-image-preview'
+  ])('fails closed for unknown channel %j', (channel) => {
+    expect(ipcChannelRequiresMainRenderer(channel)).toBe(true)
+    expect(SECONDARY_RENDERER_SAFE_IPC_CHANNELS.has(channel)).toBe(false)
+  })
+
+  it('classifies the complete registered IPC catalogue exactly once', () => {
+    const registeredChannels = Object.keys(IPC_ARGUMENT_SCHEMAS).sort()
+    const unclassified = registeredChannels.filter(
+      (channel) =>
+        !MAIN_RENDERER_ONLY_IPC_CHANNELS.has(channel) &&
+        !SECONDARY_RENDERER_SAFE_IPC_CHANNELS.has(channel)
     )
+    const conflicting = registeredChannels.filter(
+      (channel) =>
+        MAIN_RENDERER_ONLY_IPC_CHANNELS.has(channel) &&
+        SECONDARY_RENDERER_SAFE_IPC_CHANNELS.has(channel)
+    )
+    const staleMainOnly = [...MAIN_RENDERER_ONLY_IPC_CHANNELS].filter(
+      (channel) => !(channel in IPC_ARGUMENT_SCHEMAS)
+    )
+    const staleSecondarySafe = [...SECONDARY_RENDERER_SAFE_IPC_CHANNELS].filter(
+      (channel) => !(channel in IPC_ARGUMENT_SCHEMAS)
+    )
+
+    expect(unclassified).toEqual([])
+    expect(conflicting).toEqual([])
+    expect(staleMainOnly).toEqual([])
+    expect(staleSecondarySafe).toEqual([])
+    expect(
+      MAIN_RENDERER_ONLY_IPC_CHANNELS.size + SECONDARY_RENDERER_SAFE_IPC_CHANNELS.size
+    ).toBe(registeredChannels.length)
   })
 
   it('exposes no generic renderer-string image-preview authorizer', () => {
@@ -77,7 +116,7 @@ describe('RendererIpcPolicy', () => {
     const main = readFileSync(join(process.cwd(), 'src/main/index.ts'), 'utf8')
     const renderer = readFileSync(join(process.cwd(), 'src/renderer/src/App.tsx'), 'utf8')
 
-    expect(ipcChannelRequiresMainRenderer('authorize-image-preview')).toBe(false)
+    expect(ipcChannelRequiresMainRenderer('authorize-image-preview')).toBe(true)
     expect(preload).not.toContain("ipcRenderer.invoke('authorize-image-preview'")
     expect(preloadTypes).not.toContain('authorizeImagePreview')
     expect(main).not.toContain("ipcMain.handle('authorize-image-preview'")
