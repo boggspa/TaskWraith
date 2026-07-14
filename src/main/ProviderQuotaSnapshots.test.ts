@@ -58,6 +58,50 @@ describe('ProviderQuotaSnapshots', () => {
     expect(snapshot.accountId).toBe('accoun...7890')
   })
 
+  it('uses the reported duration when Codex temporarily returns weekly usage as primary', () => {
+    const snapshot = normalizeCodexUsagePayload({
+      plan_type: 'pro',
+      rate_limit: {
+        primary_window: {
+          used_percent: 35,
+          limit_window_seconds: 604_800,
+          reset_after_seconds: 518_400,
+          reset_at: 1_783_910_400
+        }
+      },
+      additional_rate_limits: [
+        {
+          limit_name: 'GPT-5.3-Codex-Spark',
+          rate_limit: {
+            primary_window: {
+              used_percent: 6,
+              limit_window_seconds: 18_000,
+              reset_after_seconds: 18_000,
+              reset_at: 1_783_910_400
+            }
+          }
+        }
+      ]
+    })
+
+    expect(snapshot.windows).toMatchObject([
+      {
+        id: 'primary-weekly',
+        label: 'Weekly',
+        windowKind: 'weekly',
+        usedPercent: 35,
+        limitWindowSeconds: 604_800
+      },
+      {
+        id: 'additional-0-5h',
+        label: 'GPT-5.3-Codex-Spark 5h',
+        windowKind: 'session',
+        usedPercent: 6,
+        limitWindowSeconds: 18_000
+      }
+    ])
+  })
+
   it('suppresses stale Codex aggregate windows when named limits have reset', () => {
     // The aggregate's reset is genuinely in the PAST (60s ago), yet the backend
     // still reports 100% used — that's actually-stale data (the bucket has

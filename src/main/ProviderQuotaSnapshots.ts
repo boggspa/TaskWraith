@@ -113,6 +113,32 @@ function normalizeCodexUsageWindow(
   }
 }
 
+type CodexUsageWindowKind = 'session' | 'weekly'
+
+const CODEX_SESSION_WINDOW_SECONDS = 5 * 60 * 60
+const CODEX_WEEKLY_WINDOW_SECONDS = 7 * 24 * 60 * 60
+
+function isCodexWindowDuration(value: number, expected: number): boolean {
+  return Math.abs(value - expected) <= expected * 0.05
+}
+
+function codexUsageWindowKind(
+  window: any,
+  fallback: CodexUsageWindowKind
+): CodexUsageWindowKind {
+  const limitWindowSeconds = numericUsageValue(
+    window?.limit_window_seconds ?? window?.limitWindowSeconds
+  )
+  if (limitWindowSeconds === undefined) return fallback
+  if (isCodexWindowDuration(limitWindowSeconds, CODEX_SESSION_WINDOW_SECONDS)) return 'session'
+  if (isCodexWindowDuration(limitWindowSeconds, CODEX_WEEKLY_WINDOW_SECONDS)) return 'weekly'
+  return fallback
+}
+
+function codexUsageWindowSuffix(windowKind: CodexUsageWindowKind): string {
+  return windowKind === 'session' ? '5h' : 'weekly'
+}
+
 function codexUsageWindowIdentity(windowEntry: any): string {
   const label = String(windowEntry?.label || '')
     .trim()
@@ -244,13 +270,25 @@ export function normalizeCodexUsagePayload(
   const primaryWindow = codexUsageWindowValue(rateLimit, 'primary')
   const secondaryWindow = codexUsageWindowValue(rateLimit, 'secondary')
   if (primaryWindow) {
+    const windowKind = codexUsageWindowKind(primaryWindow, 'session')
     aggregateWindows.push(
-      normalizeCodexUsageWindow('primary-5h', 'Session', 'session', primaryWindow)
+      normalizeCodexUsageWindow(
+        `primary-${codexUsageWindowSuffix(windowKind)}`,
+        windowKind === 'session' ? 'Session' : 'Weekly',
+        windowKind,
+        primaryWindow
+      )
     )
   }
   if (secondaryWindow) {
+    const windowKind = codexUsageWindowKind(secondaryWindow, 'weekly')
     aggregateWindows.push(
-      normalizeCodexUsageWindow('secondary-weekly', 'Weekly', 'weekly', secondaryWindow)
+      normalizeCodexUsageWindow(
+        `secondary-${codexUsageWindowSuffix(windowKind)}`,
+        windowKind === 'session' ? 'Session' : 'Weekly',
+        windowKind,
+        secondaryWindow
+      )
     )
   }
   const additional = Array.isArray(payload?.additional_rate_limits)
@@ -271,21 +309,23 @@ export function normalizeCodexUsagePayload(
     const nestedPrimary = codexUsageWindowValue(nested, 'primary')
     const nestedSecondary = codexUsageWindowValue(nested, 'secondary')
     if (nestedPrimary) {
+      const windowKind = codexUsageWindowKind(nestedPrimary, 'session')
       additionalWindows.push(
         normalizeCodexUsageWindow(
-          `additional-${index}-5h`,
-          `${rawName} 5h`,
-          'session',
+          `additional-${index}-${codexUsageWindowSuffix(windowKind)}`,
+          `${rawName} ${windowKind === 'session' ? '5h' : 'Weekly'}`,
+          windowKind,
           nestedPrimary
         )
       )
     }
     if (nestedSecondary) {
+      const windowKind = codexUsageWindowKind(nestedSecondary, 'weekly')
       additionalWindows.push(
         normalizeCodexUsageWindow(
-          `additional-${index}-weekly`,
-          `${rawName} Weekly`,
-          'weekly',
+          `additional-${index}-${codexUsageWindowSuffix(windowKind)}`,
+          `${rawName} ${windowKind === 'session' ? '5h' : 'Weekly'}`,
+          windowKind,
           nestedSecondary
         )
       )
