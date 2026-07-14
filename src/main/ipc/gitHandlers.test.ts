@@ -449,6 +449,84 @@ describe('registerGitHandlers', () => {
     expect(deps.gitSnapshotPublisher.unsubscribe).toHaveBeenCalledWith('sub-1')
   })
 
+  it('revalidates a live subscription without probing the Git root again', async () => {
+    const { deps } = createDeps()
+    deps.findRegisteredWorkspace.mockReturnValue({ id: 'ws-1' })
+    const sender = {
+      id: 10,
+      send: vi.fn(),
+      isDestroyed: vi.fn(() => false),
+      once: vi.fn(),
+      removeListener: vi.fn()
+    }
+    registerGitHandlers(deps)
+
+    await expect(
+      handlerFor('git:subscribe-snapshot')(
+        { sender },
+        { workspacePath: '/repo', subscriptionId: 'sub-no-reprobe' }
+      )
+    ).resolves.toMatchObject({ ok: true })
+    expect(deps.gitRepositoryRootForPath).toHaveBeenCalledTimes(1)
+
+    const subscription = vi.mocked(deps.gitSnapshotPublisher!.subscribe).mock.calls[0][0]
+    deps.gitRepositoryRootForPath.mockImplementation(() => {
+      throw new Error('Git root must stay bound after subscribe.')
+    })
+    subscription.send({
+      subscriptionId: 'sub-no-reprobe',
+      requestedPath: '/repo',
+      repoRoot: '/repo',
+      snapshot: { requestedPath: '/repo', repoRoot: '/repo' } as GitRepositorySnapshot,
+      generation: 2,
+      reason: 'filesystem'
+    })
+
+    expect(sender.send).toHaveBeenCalledWith(
+      'git:snapshot-changed',
+      expect.objectContaining({ subscriptionId: 'sub-no-reprobe', repoRoot: '/repo' })
+    )
+    expect(deps.gitRepositoryRootForPath).toHaveBeenCalledTimes(1)
+  })
+
+  it('cleans up a live subscription when renderer scope revalidation throws', async () => {
+    const { deps } = createDeps()
+    deps.findRegisteredWorkspace.mockReturnValue({ id: 'ws-1' })
+    const sender = {
+      id: 11,
+      send: vi.fn(),
+      isDestroyed: vi.fn(() => false),
+      once: vi.fn(),
+      removeListener: vi.fn()
+    }
+    registerGitHandlers(deps)
+
+    await expect(
+      handlerFor('git:subscribe-snapshot')(
+        { sender },
+        { workspacePath: '/repo', subscriptionId: 'sub-scope-revoked' }
+      )
+    ).resolves.toMatchObject({ ok: true })
+    const subscription = vi.mocked(deps.gitSnapshotPublisher!.subscribe).mock.calls[0][0]
+    deps.assertSenderScope.mockImplementationOnce(() => {
+      throw new Error('Renderer workspace scope denied.')
+    })
+
+    expect(() =>
+      subscription.send({
+        subscriptionId: 'sub-scope-revoked',
+        requestedPath: '/repo',
+        repoRoot: '/repo',
+        snapshot: { requestedPath: '/repo', repoRoot: '/repo' } as GitRepositorySnapshot,
+        generation: 2,
+        reason: 'filesystem'
+      })
+    ).not.toThrow()
+    expect(sender.send).not.toHaveBeenCalled()
+    expect(deps.gitSnapshotPublisher!.unsubscribe).toHaveBeenCalledWith('sub-scope-revoked')
+    expect(sender.removeListener).toHaveBeenCalledWith('destroyed', expect.any(Function))
+  })
+
   it('binds Git requests and live snapshot subscriptions to the invoking renderer', async () => {
     const { deps } = createDeps()
     deps.findRegisteredWorkspace.mockReturnValue({ id: 'ws-1' })
@@ -539,10 +617,61 @@ describe('registerGitHandlers', () => {
 
     const subscription = vi.mocked(deps.gitSnapshotPublisher!.subscribe).mock.calls[0][0]
     deps.executableExternalPathGrantsForChat.mockReturnValue([])
-    subscription.send({ subscriptionId: 'sub-external' } as any)
+    subscription.send({
+      subscriptionId: 'sub-external',
+      requestedPath: '/granted/repo',
+      repoRoot: '/granted/repo',
+      snapshot: {
+        requestedPath: '/granted/repo',
+        repoRoot: '/granted/repo'
+      } as GitRepositorySnapshot,
+      generation: 2,
+      reason: 'filesystem'
+    })
 
     expect(sender.send).not.toHaveBeenCalled()
     expect(deps.gitSnapshotPublisher!.unsubscribe).toHaveBeenCalledWith('sub-external')
+    expect(sender.removeListener).toHaveBeenCalledWith('destroyed', expect.any(Function))
+    expect(deps.externalGitRepositoryRootIsSelfContained).toHaveBeenCalledTimes(3)
+  })
+
+  it('closes an external snapshot subscription when its self-contained Git marker changes', async () => {
+    const { deps } = createDeps()
+    const chat = createChat()
+    deps.getChat.mockReturnValue(chat)
+    deps.executableExternalPathGrantsForChat.mockReturnValue([createGrant()])
+    const sender = {
+      id: 12,
+      send: vi.fn(),
+      isDestroyed: vi.fn(() => false),
+      once: vi.fn(),
+      removeListener: vi.fn()
+    }
+    registerGitHandlers(deps)
+
+    await expect(
+      handlerFor('git:subscribe-snapshot')(
+        { sender },
+        { repoPath: '/granted/repo', chatId: 'chat-1', subscriptionId: 'sub-marker' }
+      )
+    ).resolves.toMatchObject({ ok: true })
+
+    const subscription = vi.mocked(deps.gitSnapshotPublisher!.subscribe).mock.calls[0][0]
+    deps.externalGitRepositoryRootIsSelfContained.mockReturnValue(false)
+    subscription.send({
+      subscriptionId: 'sub-marker',
+      requestedPath: '/granted/repo',
+      repoRoot: '/granted/repo',
+      snapshot: {
+        requestedPath: '/granted/repo',
+        repoRoot: '/granted/repo'
+      } as GitRepositorySnapshot,
+      generation: 2,
+      reason: 'filesystem'
+    })
+
+    expect(sender.send).not.toHaveBeenCalled()
+    expect(deps.gitSnapshotPublisher!.unsubscribe).toHaveBeenCalledWith('sub-marker')
     expect(sender.removeListener).toHaveBeenCalledWith('destroyed', expect.any(Function))
   })
 

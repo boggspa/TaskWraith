@@ -229,7 +229,11 @@ export class GitSnapshotPublisher {
     const startedGeneration = state.generation
     try {
       const result = await this.gitService.snapshot(repoRoot)
-      if (result.ok && state.generation === startedGeneration) {
+      if (
+        result.ok &&
+        result.data.repoRoot === state.repoRoot &&
+        state.generation === startedGeneration
+      ) {
         state.lastGood = result.data
         state.generation += 1
         this.broadcast(state, result.data, reason)
@@ -259,14 +263,18 @@ export class GitSnapshotPublisher {
         snapshot.requestedPath === subscription.requestedPath
           ? snapshot
           : { ...snapshot, requestedPath: subscription.requestedPath }
-      subscription.send({
-        subscriptionId,
-        requestedPath: subscription.requestedPath,
-        repoRoot: state.repoRoot,
-        snapshot: subscriberSnapshot,
-        generation: state.generation,
-        reason
-      })
+      try {
+        subscription.send({
+          subscriptionId,
+          requestedPath: subscription.requestedPath,
+          repoRoot: state.repoRoot,
+          snapshot: subscriberSnapshot,
+          generation: state.generation,
+          reason
+        })
+      } catch {
+        this.unsubscribe(subscriptionId)
+      }
     }
   }
 

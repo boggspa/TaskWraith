@@ -219,6 +219,40 @@ describe('GitSnapshotPublisher', () => {
     expect(send).not.toHaveBeenCalled()
   })
 
+  it('does not publish a refresh that resolves to a different repository root', async () => {
+    let snapshotCall = 0
+    const gitService = {
+      snapshot: vi.fn<Pick<GitService, 'snapshot'>['snapshot']>(async (path) => {
+        snapshotCall += 1
+        return {
+          ok: true,
+          data:
+            snapshotCall === 1
+              ? makeSnapshot(path)
+              : makeSnapshot(path, { repoRoot: '/replacement-repo' })
+        }
+      })
+    }
+    const watchers: Array<(filename: string) => void> = []
+    const send = vi.fn()
+    const publisher = new GitSnapshotPublisher({
+      gitService,
+      debounceMs: 25,
+      minIntervalMs: 0,
+      watcherFactory: (_repoRoot, onChange) => {
+        watchers.push((filename) => onChange(filename))
+        return { on: vi.fn(), close: vi.fn() } as any
+      }
+    })
+    await publisher.subscribe({ subscriptionId: 'sub-1', requestedPath: '/repo', send })
+
+    watchers[0]('src/App.tsx')
+    await vi.advanceTimersByTimeAsync(25)
+
+    expect(gitService.snapshot).toHaveBeenCalledTimes(2)
+    expect(send).not.toHaveBeenCalled()
+  })
+
   it('publishes git-action snapshots immediately', async () => {
     const gitService = {
       snapshot: vi.fn<Pick<GitService, 'snapshot'>['snapshot']>(async (path) => ({
@@ -248,6 +282,47 @@ describe('GitSnapshotPublisher', () => {
         snapshot
       })
     )
+  })
+
+  it('isolates and removes a throwing subscriber without blocking later deliveries', async () => {
+    const gitService = {
+      snapshot: vi.fn<Pick<GitService, 'snapshot'>['snapshot']>(async (path) => ({
+        ok: true,
+        data: makeSnapshot(path)
+      }))
+    }
+    const throwingSend = vi.fn(() => {
+      throw new Error('renderer unavailable')
+    })
+    const healthySend = vi.fn()
+    const publisher = new GitSnapshotPublisher({
+      gitService,
+      debounceMs: 25,
+      minIntervalMs: 0,
+      watcherFactory: () => ({ on: vi.fn(), close: vi.fn() }) as any
+    })
+    await publisher.subscribe({
+      subscriptionId: 'throwing',
+      requestedPath: '/repo',
+      send: throwingSend
+    })
+    await publisher.subscribe({
+      subscriptionId: 'healthy',
+      requestedPath: '/repo',
+      send: healthySend
+    })
+
+    const snapshot = makeSnapshot('/repo', {
+      clean: false,
+      counts: { changed: 1, staged: 0, unstaged: 1, untracked: 0 }
+    })
+    expect(() => publisher.publishSnapshot(snapshot, 'git-action')).not.toThrow()
+    expect(throwingSend).toHaveBeenCalledTimes(1)
+    expect(healthySend).toHaveBeenCalledTimes(1)
+
+    publisher.publishSnapshot(snapshot, 'manual')
+    expect(throwingSend).toHaveBeenCalledTimes(1)
+    expect(healthySend).toHaveBeenCalledTimes(2)
   })
 
   it('does not let an older in-flight refresh overwrite a newer git-action snapshot', async () => {

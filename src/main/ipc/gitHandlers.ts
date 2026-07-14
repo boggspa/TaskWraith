@@ -33,6 +33,13 @@ type GitIpcPayload = { workspacePath?: string; repoPath?: string; chatId?: strin
 type GitSnapshotSubscribePayload = GitIpcPayload & { subscriptionId?: string }
 type GitSnapshotInvalidatePayload = GitIpcPayload & { reason?: GitSnapshotInvalidationReason }
 type GitIpcScope = 'registered-workspace' | 'registered-or-granted-read' | 'registered-or-granted-write'
+type GitAuthorizedPath = {
+  ok: true
+  path: string
+  lexicalPath: string
+  source: 'registered' | 'external'
+  chatId: string
+}
 
 const GIT_SNAPSHOT_INVALIDATION_REASONS = new Set<GitSnapshotInvalidationReason>([
   'subscribe',
@@ -136,7 +143,7 @@ function gitPayloadPath(
   payload: GitIpcPayload | undefined,
   scope: GitIpcScope
 ):
-  | { ok: true; path: string; source: 'registered' | 'external' }
+  | GitAuthorizedPath
   | { ok: false; error: string } {
   const raw =
     typeof payload?.repoPath === 'string' && payload.repoPath.trim()
@@ -165,7 +172,13 @@ function gitPayloadPath(
     if (repositoryRoot !== normalized) {
       return { ok: false, error: gitScopeError(scope) }
     }
-    return { ok: true, path: normalized, source: 'registered' }
+    return {
+      ok: true,
+      path: normalized,
+      lexicalPath: lexicalNormalized,
+      source: 'registered',
+      chatId
+    }
   }
   if (scope === 'registered-workspace') {
     return { ok: false, error: gitScopeError(scope) }
@@ -190,12 +203,50 @@ function gitPayloadPath(
       scope === 'registered-or-granted-write' ? 'write' : 'read'
     )
   ) {
-    return { ok: true, path: normalized, source: 'external' }
+    return {
+      ok: true,
+      path: normalized,
+      lexicalPath: lexicalNormalized,
+      source: 'external',
+      chatId
+    }
   }
   return {
     ok: false,
     error: gitScopeError(scope)
   }
+}
+
+function gitSnapshotSubscriptionStillAuthorized(
+  deps: GitHandlersDeps,
+  event: IpcMainInvokeEvent,
+  bound: GitAuthorizedPath
+): boolean {
+  deps.assertSenderScope(event, {
+    capability: 'git',
+    ...(bound.chatId ? { chatId: bound.chatId } : {}),
+    workspacePath: bound.path
+  })
+  if (bound.source === 'registered') {
+    return Boolean(
+      deps.findRegisteredWorkspace(bound.lexicalPath) ||
+        deps.findRegisteredWorkspace(bound.path)
+    )
+  }
+  // External repositories must retain both halves of their original
+  // authority: a self-contained `.git` marker and the chat's live signed
+  // grant. This deliberately avoids another `git rev-parse` during publish.
+  if (!deps.externalGitRepositoryRootIsSelfContained(bound.path)) return false
+  const chat = bound.chatId ? deps.getChat(bound.chatId) : null
+  return Boolean(
+    chat &&
+      externalGrantCoversPath(
+        deps,
+        bound.path,
+        deps.executableExternalPathGrantsForChat(chat),
+        'read'
+      )
+  )
 }
 
 function gitSnapshotInvalidationReason(value: unknown): GitSnapshotInvalidationReason {
@@ -309,23 +360,31 @@ export function registerGitHandlers(deps: GitHandlersDeps): void {
       const subscription: SubscriptionCleanup = { cleanup, webContentsId: sender.id }
       sender.once('destroyed', onDestroyed)
       subscriptionCleanups.set(subscriptionId, subscription)
+      const boundRepoRoot = repo.path
       const result = await deps.gitSnapshotPublisher.subscribe({
         subscriptionId,
         requestedPath: repo.path,
         webContentsId: sender.id,
         send: (snapshotPayload) => {
-          const stillAuthorized = gitPayloadPath(
-            deps,
-            event,
-            payload,
-            'registered-or-granted-read'
-          )
-          if (!stillAuthorized.ok || stillAuthorized.path !== repo.path) {
-            cleanup()
-            return
-          }
-          if (!sender.isDestroyed()) {
+          try {
+            if (
+              snapshotPayload.repoRoot !== boundRepoRoot ||
+              snapshotPayload.snapshot.repoRoot !== boundRepoRoot
+            ) {
+              cleanup()
+              return
+            }
+            if (!gitSnapshotSubscriptionStillAuthorized(deps, event, repo)) {
+              cleanup()
+              return
+            }
+            if (sender.isDestroyed()) {
+              cleanup()
+              return
+            }
             sender.send('git:snapshot-changed', snapshotPayload)
+          } catch {
+            cleanup()
           }
         }
       })
@@ -339,8 +398,25 @@ export function registerGitHandlers(deps: GitHandlersDeps): void {
           error: 'Git snapshot subscription changed while it was starting.'
         }
       }
-      const stillAuthorized = gitPayloadPath(deps, event, payload, 'registered-or-granted-read')
-      if (!stillAuthorized.ok || stillAuthorized.path !== repo.path) {
+      if (
+        result.data.repoRoot !== boundRepoRoot ||
+        result.data.snapshot.repoRoot !== boundRepoRoot
+      ) {
+        cleanup()
+        return {
+          ok: false,
+          error: 'Git snapshot repository changed while the subscription was starting.'
+        }
+      }
+      try {
+        if (!gitSnapshotSubscriptionStillAuthorized(deps, event, repo)) {
+          cleanup()
+          return {
+            ok: false,
+            error: 'Git snapshot authorization changed while the subscription was starting.'
+          }
+        }
+      } catch {
         cleanup()
         return {
           ok: false,
