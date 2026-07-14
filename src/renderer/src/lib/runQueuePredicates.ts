@@ -13,7 +13,10 @@ export function isScheduledTaskReadyToDispatch(
   task: ScheduledTask,
   nowMs: number = Date.now()
 ): boolean {
-  if (task.status !== 'due' && task.status !== 'pending') return false
+  // Main owns pending -> due promotion. Treating an overdue pending record as
+  // renderer-dispatchable races that promotion and then fails the main-owned
+  // due -> running claim, incorrectly terminalising otherwise valid work.
+  if (task.status !== 'due') return false
   const runAtMs = typeof task.runAt === 'string' ? Date.parse(task.runAt) : Number.NaN
   return Number.isFinite(runAtMs) && runAtMs <= nowMs
 }

@@ -78,7 +78,7 @@ describe('run queue predicates', () => {
         nowMs
       )
     ).toBe(false)
-    expect(isScheduledTaskReadyToDispatch(scheduledTask(), nowMs)).toBe(true)
+    expect(isScheduledTaskReadyToDispatch(scheduledTask(), nowMs)).toBe(false)
     expect(
       isScheduledTaskReadyToDispatch(
         scheduledTask({ runAt: '2026-06-27T13:00:00.000Z' }),
