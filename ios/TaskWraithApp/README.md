@@ -102,6 +102,38 @@ Before upload:
 3. Read `AppStorePrivacyNotes.md` and make the App Store privacy answers match
    the selected distribution model.
 
+## App Store screenshots (automated)
+
+`scripts/appstore-screenshots.sh` produces the full ASC screenshot set with no
+paired Mac and no XCUITest (accessibility snapshot queries time out against
+this hierarchy — the harness drives plain `simctl` instead):
+
+```sh
+cd ios/TaskWraithApp
+scripts/appstore-screenshots.sh                                  # both classes
+TW_SCREENSHOT_DEVICES="iPhone 17 Pro Max" scripts/appstore-screenshots.sh
+```
+
+What it does per device class (defaults: 6.9" iPhone + 13" iPad): build once,
+boot the simulator exclusively, pre-dismiss the first-launch sheet, install,
+launch the **Debug-only** demo hooks, poll `simctl io screenshot` until content
+renders (splash-sized captures retry; a leg that never renders exits non-zero),
+and write `screenshots/<device>/NN-*.png` (gitignored). Knobs:
+`TW_SCREENSHOT_DEVICES` (pipe-separated simulator names),
+`TW_SCREENSHOT_MAX_WAIT`, `TW_SCREENSHOT_MIN_BYTES`.
+
+The launch hooks (compiled only in Debug, argument-gated, inert otherwise):
+
+- `-tw-demo` — boot straight into offline Demo Mode (the surface App Review
+  exercises), no pairing.
+- `-tw-demo-thread <id>` — after the demo applies, deep-link a canned thread
+  (`demo-1`…`demo-3`) via the notification-tap navigation path.
+
+Keep simulator ad-hoc signing ON for any automation against this app:
+`CODE_SIGNING_ALLOWED=NO` strips the keychain-access-groups entitlement, the
+identity seed read fails with `-34018`, and the app boots to the
+"Device identity unavailable" recovery screen instead of the demo.
+
 ## Push notifications (post-pairing opt-in; delivery needs Mac credentials)
 
 Release/TestFlight builds request notification permission **after a successful

@@ -946,6 +946,43 @@ until the classification is confirmed):
 Verified: 25 Mac remote-store tests (3 new refusal regressions), Swift
 suite, full xcodebuild of the app target, typecheck.
 
+## v0.42 — desktop-parity audit closure (2026-07-14, fable/ios-parallel)
+
+A dedicated iOS↔Electron parity audit (agent-run, hex-for-hex against the
+desktop CSS) returned "substantially complete" and eight gaps; all iOS-side
+gaps are now closed:
+
+- **Collapsed picker chip reasoning suffix** wears the desktop tier ramp:
+  provider hue at 38/62/84% for Low/Medium/High, gentle 4.6s shimmer + 4-dot
+  faint sparkle field for Extra, full 3.2s sweep + dense field for
+  Max/Ultracode; Reduce Motion pins the static hue. Color math goes through
+  `TWTheme.mix`, a premultiplied-alpha `color-mix(in srgb, …)` twin.
+- **Inline code** (supersedes v0.10's chroma-3 tint): text-primary mono on
+  the new `appBgSunken` well (`--app-bg-sunken` twin) — attributed runs
+  can't carry the desktop chip border, background + mono is the treatment.
+- **Dedicated diff palette** (`--diff-*` twins: `diffStatAdd/Del`,
+  `diffAddText/DelText`, `diffAddBg/DelBg`) re-keyed across tool-card
+  odometers, diff summary cards/chips, per-file counters, changes rows, the
+  composer diff pill, and DiffStudio — diff surfaces no longer drift with
+  run-status semantics.
+- **File-editor syntax palette** re-keyed to the desktop CodeMirror tokens
+  (`--cm-*`) with the light-theme variant; `tag` rides keyword pink and
+  `variable.parameter` type gold (no dedicated desktop tokens).
+- **`ask_user_question` glyph** → diagnostic family (desktop approval
+  parity); **boss crown** → `TWTheme.bossCrown` (warning lifted 12% toward
+  white) + 4pt amber drop-glow at both chip and roster sites.
+- Also in this branch: the reveal terminal drain (streamingTerminalThreads +
+  TokenRevealText.isComplete, adversarially hardened), the ComposerDiffPill
+  one-ULP layout-livelock fix (REAL-DEVICE launch-watchdog risk at 440/420pt
+  widths — quantize GeometryReader→@State feedback to whole points), and the
+  simctl App Store screenshot harness (`scripts/appstore-screenshots.sh`).
+
+Open on the audit: only the `src/shared` ContextWindows drift-guard test
+(desktop-side file; parked until the active desktop session clears).
+
+Verified: 407 Swift tests, simulator app build, screenshot-harness renders
+on both ASC device classes.
+
 ## Current follow-ups
 
 1. Keep the first-launch, settings, usage, and provider-readiness surfaces in
