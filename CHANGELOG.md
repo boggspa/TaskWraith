@@ -36,19 +36,35 @@ the next explicitly versioned desktop and iOS release.
   first-anchored viewport, foreground ownership closes only after its lanes
   settle, and the continuation-hop notice is published after live work rather
   than racing it.
-- **Multiview state stays with its pane.** Chat, workspace, focus, trust,
-  Ensemble controls, file evidence, composer fades, and selection updates no
-  longer bleed between panes or enter selection-update loops.
+- **Multiview lifecycle state stays with its pane and chat.** Workspace and
+  worktree selection, focus, trust, permissions, Ensemble controls, queued-run
+  scope, attachments, external grants, Git/PR/CI snapshots, file evidence, and
+  composer state no longer bleed between panes or enter selection-update loops.
+  Completion and diff views accept only successful evidence owned by the exact
+  run, including additional write-granted workspaces.
+- **Concurrent chat saves preserve canonical state.** Per-chat persistence is
+  serialized and revision-aware, rebasing only disjoint updates so a stale UI
+  snapshot cannot overwrite newer workspace, provider-session, grant, run, or
+  Ensemble state.
 - **Provider controls survive edge cases.** Grok can recover from a denied tool
   without weakening Read-Only mode, Kimi speed tiers resolve through their CLI
   aliases, and Codex reasoning controls are pinned to the dispatched run and
   reset safely when its model changes.
+- **Codex quota windows keep the right labels.** Session and weekly meters are
+  classified from their reported duration, so a temporary backend response
+  that places weekly usage in the primary slot no longer presents it as the
+  five-hour window.
 - **Queued rosters and onboarding notices finish cleanly.** A queued agent roster
   can finalize from its source run's durable terminal event, activity collapse
   keeps its debounce guard, and iOS retains app notices in First Launch instead
   of consuming them in the thread detail view.
 
 ### Security
+- **Run authority is reconstructed from canonical state.** Main revalidates the
+  invoking chat, workspace, scheduled occurrence, popout owner, attachment and
+  external-path capabilities, and IPC operation instead of trusting renderer
+  payloads. Capability handoffs are scoped to the receiving window and stale
+  or detached views cannot widen a run.
 - **Built-in Git actions treat repository configuration as untrusted.**
   TaskWraith disables repository-selected hooks, filters, monitors, external
   diff/credential helpers, SSH/signing helpers, transport commands, and URL
