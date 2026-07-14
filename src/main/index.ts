@@ -595,6 +595,7 @@ import {
 } from './services/TranscriptMediaService'
 import {
   createOwnedToolResultMediaRefs,
+  grantTranscriptMediaOwnershipCandidates,
   isVerifiedEmulatedForkMediaTransfer,
   transferTranscriptMediaMessagesBatch,
   transferTranscriptMediaRefsBatch
@@ -8572,20 +8573,15 @@ function grantTranscriptMediaRefsToChat(
       Boolean(ref.sha256 && ref.mimeType)
   )
   if (grantable.length === 0) return []
-  const granted = getTranscriptMediaAssetStore().grantMany(
+  const grantedIndexes = grantTranscriptMediaOwnershipCandidates(
+    getTranscriptMediaAssetStore(),
     grantable.map((ref) => ({
       sha256: ref.sha256,
       mimeType: ref.mimeType,
       appChatId
     }))
   )
-  if (!granted.ok) {
-    console.warn(
-      `[TranscriptMedia] ownership batch skipped for chat ${appChatId}: ${granted.reason}`
-    )
-    return []
-  }
-  return grantable
+  return grantable.filter((_, index) => grantedIndexes.has(index))
 }
 
 function transferTranscriptMediaRefsBetweenChats(

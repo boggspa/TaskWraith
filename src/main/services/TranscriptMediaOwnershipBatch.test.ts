@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { ChatMessage, ChatRecord, TranscriptMediaRef } from '../store/types'
 import {
   createOwnedToolResultMediaRefs,
+  grantTranscriptMediaOwnershipCandidates,
   isVerifiedEmulatedForkMediaTransfer,
   transferTranscriptMediaMessagesBatch,
   transferTranscriptMediaRefsBatch,
@@ -275,6 +276,30 @@ describe('createOwnedToolResultMediaRefs', () => {
     expect(refs[1]).not.toHaveProperty('path')
   })
 
+  it('retries one atomic grant without a precisely missing asset', () => {
+    const { store, grantMany } = makeStoreHarness()
+    grantMany
+      .mockReturnValueOnce({ ok: false, reason: 'missing', failedAt: 1 })
+      .mockReturnValueOnce({ ok: true })
+
+    const refs = createOwnedToolResultMediaRefs({
+      store,
+      appChatId: 'chat-1',
+      messageId: 'message-1',
+      blocks: [imageBlock('retained'), imageBlock('missing')],
+      thumbnailer: () => ({ dataBase64: 'thumbnail', mimeType: 'image/png' })
+    })
+
+    expect(grantMany).toHaveBeenCalledTimes(2)
+    expect(grantMany.mock.calls[0][0]).toHaveLength(2)
+    expect(grantMany.mock.calls[1][0]).toEqual([grantMany.mock.calls[0][0][0]])
+    expect(refs[0]).toMatchObject({ status: 'available', sha256: expect.any(String) })
+    expect(refs[1]).toMatchObject({ status: 'denied' })
+    expect(refs[1]).not.toHaveProperty('sha256')
+    expect(refs[1]).not.toHaveProperty('assetId')
+    expect(refs[1]).not.toHaveProperty('path')
+  })
+
   it('poisons every duplicate ref when a later write of the same asset fails', () => {
     const { store, write, grantMany } = makeStoreHarness()
     write
@@ -457,6 +482,30 @@ describe('transferTranscriptMediaRefsBatch', () => {
     expect(transferred[1]).not.toHaveProperty('path')
   })
 
+  it('retries a fork grant without an asset at its per-owner cap', () => {
+    const { store, grantMany } = makeStoreHarness()
+    grantMany
+      .mockReturnValueOnce({ ok: false, reason: 'ownership_limit', failedAt: 0 })
+      .mockReturnValueOnce({ ok: true })
+    const capped = storeRef('capped', 'generated')
+    const retained = storeRef('retained', 'upload')
+
+    const transferred = transferTranscriptMediaRefsBatch({
+      store,
+      sourceAppChatId: 'source-chat',
+      targetAppChatId: 'target-chat',
+      refs: [capped, retained],
+      verifyTransfer: () => true
+    })
+
+    expect(grantMany).toHaveBeenCalledTimes(2)
+    expect(grantMany.mock.calls[0][0]).toHaveLength(2)
+    expect(grantMany.mock.calls[1][0]).toEqual([grantMany.mock.calls[0][0][1]])
+    expect(transferred[0]).toMatchObject({ status: 'denied', thumbnail: capped.thumbnail })
+    expect(transferred[0]).not.toHaveProperty('sha256')
+    expect(transferred[1]).toBe(retained)
+  })
+
   it('deduplicates repeated assets across a flat transcript batch', () => {
     const { store, owns, grantMany } = makeStoreHarness()
     const first = storeRef('shared', 'upload')
@@ -545,6 +594,24 @@ describe('transferTranscriptMediaRefsBatch', () => {
     expect(refs).toEqual(original)
   })
 
+  it('does not retry an ambiguous global ownership limit', () => {
+    const { store, grantMany } = makeStoreHarness()
+    grantMany.mockReturnValue({ ok: false, reason: 'ownership_limit' })
+    const refs = [storeRef('generated', 'generated'), storeRef('upload', 'upload')]
+
+    const transferred = transferTranscriptMediaRefsBatch({
+      store,
+      sourceAppChatId: 'source-chat',
+      targetAppChatId: 'target-chat',
+      refs,
+      verifyTransfer: () => true
+    })
+
+    expect(grantMany).toHaveBeenCalledTimes(1)
+    expect(transferred.every((ref) => ref.status === 'denied')).toBe(true)
+    expect(transferred.every((ref) => !ref.sha256 && !ref.assetId && !ref.path)).toBe(true)
+  })
+
   it('skips authority work when refs contain only harmless presentation data', () => {
     const { store, owns, grantMany } = makeStoreHarness()
     const verifyTransfer = vi.fn(() => true)
@@ -571,6 +638,50 @@ describe('transferTranscriptMediaRefsBatch', () => {
     expect(grantMany).not.toHaveBeenCalled()
     expect(transferred).toEqual(refs)
     expect(transferred).not.toBe(refs)
+  })
+})
+
+describe('grantTranscriptMediaOwnershipCandidates', () => {
+  it('removes every duplicate of a precisely invalid asset before retrying', () => {
+    const invalid = { sha256: 'x', mimeType: 'image/png', appChatId: 'chat-1' }
+    const valid = {
+      sha256: 'b'.repeat(43),
+      mimeType: 'image/png',
+      appChatId: 'chat-1'
+    }
+    const { store, grantMany } = makeStoreHarness()
+    grantMany
+      .mockReturnValueOnce({ ok: false, reason: 'invalid_asset', failedAt: 0 })
+      .mockReturnValueOnce({ ok: true })
+
+    expect(
+      [...grantTranscriptMediaOwnershipCandidates(store, [invalid, invalid, valid])]
+    ).toEqual([2])
+    expect(grantMany).toHaveBeenCalledTimes(2)
+    expect(grantMany.mock.calls[1][0]).toEqual([valid])
+  })
+
+  it('does not retry persistence, owner-authority, or imprecise failures', () => {
+    const inputs = [
+      { sha256: 'a'.repeat(43), mimeType: 'image/png', appChatId: 'chat-1' },
+      { sha256: 'b'.repeat(43), mimeType: 'image/png', appChatId: 'chat-1' }
+    ]
+    for (const failure of [
+      { ok: false as const, reason: 'persistence_failed' as const },
+      { ok: false as const, reason: 'invalid_chat' as const, failedAt: 0 },
+      { ok: false as const, reason: 'missing' as const, failedAt: 99 },
+      {
+        ok: false as const,
+        reason: 'future_failure' as 'persistence_failed',
+        failedAt: 0
+      }
+    ]) {
+      const { store, grantMany } = makeStoreHarness()
+      grantMany.mockReturnValue(failure)
+
+      expect(grantTranscriptMediaOwnershipCandidates(store, inputs).size).toBe(0)
+      expect(grantMany).toHaveBeenCalledTimes(1)
+    }
   })
 })
 

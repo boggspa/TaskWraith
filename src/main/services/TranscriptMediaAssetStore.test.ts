@@ -343,6 +343,17 @@ describe('TranscriptMediaAssetStore', () => {
       ])
     ).toEqual({ ok: false, reason: 'missing', failedAt: 1 })
     expect(store.owns(valid)).toBe(false)
+    expect(
+      store.grantMany([
+        valid,
+        {
+          sha256: 'missingBulk_abcdefghijklmnopqrstuvwxyz0123456789-XYZ',
+          mimeType: 'image/png',
+          appChatId: 'chat-b'
+        }
+      ])
+    ).toEqual({ ok: false, reason: 'missing', failedAt: 1 })
+    expect(store.owns(valid)).toBe(false)
 
     expect(
       store.backfillOwnership([
@@ -354,6 +365,11 @@ describe('TranscriptMediaAssetStore', () => {
     expect(
       store.backfillOwnership([{ ...valid, mimeType: 'image/svg+xml' }])
     ).toEqual({ ok: false, reason: 'invalid_asset', failedAt: 0 })
+    expect(store.grantMany([{ ...valid, mimeType: 'image/svg+xml' }])).toEqual({
+      ok: false,
+      reason: 'invalid_asset',
+      failedAt: 0
+    })
     expect(fs.existsSync(path.join(root, TRANSCRIPT_MEDIA_OWNERSHIP_FILE))).toBe(false)
   })
 
@@ -385,7 +401,7 @@ describe('TranscriptMediaAssetStore', () => {
           appChatId: 'one-chat-too-many'
         }
       ])
-    ).toEqual({ ok: false, reason: 'ownership_limit' })
+    ).toEqual({ ok: false, reason: 'ownership_limit', failedAt: 0 })
     expect(fs.readFileSync(ledgerPath).equals(boundedLedger)).toBe(true)
 
     const assetLimitRoot = makeRoot()

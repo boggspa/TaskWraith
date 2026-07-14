@@ -126,6 +126,8 @@ export type TranscriptMediaAssetOwnershipBatchResult =
         | 'missing'
         | 'ownership_limit'
         | 'persistence_failed'
+      /** Index of the first offending input when the failure is input-specific. */
+      failedAt?: number
     }
 
 export type TranscriptMediaAssetOwnershipBackfillResult =
@@ -874,12 +876,19 @@ export class TranscriptMediaAssetStore {
     inputs: readonly TranscriptMediaAssetOwnershipInput[]
   ): TranscriptMediaAssetOwnershipBatchResult {
     const result = this.applyOwnershipGrants(inputs)
-    return result.ok ? { ok: true } : { ok: false, reason: result.reason }
+    return result.ok
+      ? { ok: true }
+      : {
+          ok: false,
+          reason: result.reason,
+          ...(result.failedAt === undefined ? {} : { failedAt: result.failedAt })
+        }
   }
 
   /** One-item compatibility wrapper around the atomic batch grant. */
   grant(input: TranscriptMediaAssetOwnershipInput): TranscriptMediaAssetOwnershipResult {
-    return this.grantMany([input])
+    const result = this.grantMany([input])
+    return result.ok ? result : { ok: false, reason: result.reason }
   }
 
   /**

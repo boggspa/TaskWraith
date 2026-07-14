@@ -4,7 +4,11 @@ import type {
   TranscriptMediaRef,
   TranscriptMediaSource
 } from '../store/types'
-import type { TranscriptMediaAssetStore } from './TranscriptMediaAssetStore'
+import type {
+  TranscriptMediaAssetOwnershipInput,
+  TranscriptMediaAssetOwnershipBatchResult,
+  TranscriptMediaAssetStore
+} from './TranscriptMediaAssetStore'
 import {
   createToolResultMediaRefs,
   type CreateToolResultMediaRefsOptions
@@ -53,6 +57,71 @@ const STORE_BACKED_SOURCES = new Set<TranscriptMediaSource>([
 
 function ownershipAssetKey(sha256: string, mimeType: string): string {
   return `${sha256}\u0000${mimeType.toLowerCase()}`
+}
+
+function preciseRecoverableGrantFailureIndex(
+  result: TranscriptMediaAssetOwnershipBatchResult,
+  inputCount: number
+): number | undefined {
+  if (result.ok) return undefined
+  // invalid_chat is an owner-authority failure rather than an independently
+  // bad asset. Persistence failures and ownership_limit without failedAt are
+  // likewise batch/global failures and must never be retried piecemeal.
+  if (
+    result.reason !== 'invalid_asset' &&
+    result.reason !== 'missing' &&
+    result.reason !== 'ownership_limit'
+  ) {
+    return undefined
+  }
+  return typeof result.failedAt === 'number' &&
+    Number.isSafeInteger(result.failedAt) &&
+    result.failedAt >= 0 &&
+    result.failedAt < inputCount
+    ? result.failedAt
+    : undefined
+}
+
+/**
+ * Grant every independently valid asset while preserving atomic ownership
+ * persistence. Failed attempts publish nothing. A precise asset-local failure
+ * removes that asset (including duplicate refs) and retries the remainder as
+ * one batch; ambiguous/global, persistence, owner-authority, and thrown
+ * failures keep the entire remaining batch ungranted.
+ *
+ * The returned indexes refer to the original `inputs` array. An empty set is
+ * therefore the fail-closed result for both a wholly invalid batch and a store
+ * failure whose atomic persistence cannot be proven.
+ */
+export function grantTranscriptMediaOwnershipCandidates(
+  store: Pick<TranscriptMediaOwnershipBatchStore, 'grantMany'>,
+  inputs: readonly TranscriptMediaAssetOwnershipInput[]
+): ReadonlySet<number> {
+  let remaining = inputs.map((input, index) => ({
+    input,
+    index,
+    assetKey:
+      typeof input?.sha256 === 'string' && typeof input?.mimeType === 'string'
+        ? ownershipAssetKey(input.sha256, input.mimeType)
+        : `invalid:${index}`
+  }))
+
+  while (remaining.length > 0) {
+    try {
+      const result = store.grantMany(remaining.map((candidate) => candidate.input))
+      if (result.ok) {
+        return new Set(remaining.map((candidate) => candidate.index))
+      }
+      const failedAt = preciseRecoverableGrantFailureIndex(result, remaining.length)
+      if (failedAt === undefined) return new Set()
+      const failedAssetKey = remaining[failedAt].assetKey
+      remaining = remaining.filter((candidate) => candidate.assetKey !== failedAssetKey)
+    } catch {
+      return new Set()
+    }
+  }
+
+  return new Set()
 }
 
 function redactStoreLocators(ref: TranscriptMediaRef): TranscriptMediaRef {
@@ -164,19 +233,22 @@ export function createOwnedToolResultMediaRefs(
     })
   }
 
-  let batchGranted = false
-  if (grantsByAsset.size > 0) {
-    try {
-      batchGranted = store.grantMany([...grantsByAsset.values()]).ok
-    } catch {
-      // Ownership is the authority boundary. A throwing store fails closed.
-    }
-  }
+  const grants = [...grantsByAsset.entries()]
+  const grantedIndexes = grantTranscriptMediaOwnershipCandidates(
+    store,
+    grants.map(([, grant]) => grant)
+  )
+  const grantedAssets = new Set(
+    grants
+      .filter((_, index) => grantedIndexes.has(index))
+      .map(([assetKey]) => assetKey)
+  )
 
   return refs.map((ref) => {
     if (!ref.sha256 || !ref.mimeType) return ref
-    const written = successfullyWrittenAssets.has(ownershipAssetKey(ref.sha256, ref.mimeType))
-    return written && batchGranted ? ref : redactStoreLocators(ref)
+    const key = ownershipAssetKey(ref.sha256, ref.mimeType)
+    const written = successfullyWrittenAssets.has(key)
+    return written && grantedAssets.has(key) ? ref : redactStoreLocators(ref)
   })
 }
 
@@ -242,19 +314,26 @@ export function transferTranscriptMediaRefsBatch(
     }
   }
 
-  let batchGranted = false
-  if (grantsByAsset.size > 0) {
-    try {
-      batchGranted = store.grantMany([...grantsByAsset.values()]).ok
-    } catch {
-      // Keep every target locator redacted if the atomic grant cannot be proven.
-    }
-  }
+  const grants = [...grantsByAsset.entries()]
+  const grantedIndexes = grantTranscriptMediaOwnershipCandidates(
+    store,
+    grants.map(([, grant]) => grant)
+  )
+  const grantedAssets = new Set(
+    grants
+      .filter((_, index) => grantedIndexes.has(index))
+      .map(([assetKey]) => assetKey)
+  )
 
   const candidates = new Set(candidateIndexes)
   return refs.map((ref, index) => {
     if (!candidates.has(index)) return ref
-    return batchGranted && grantableIndexes.has(index) ? ref : redactStoreLocators(ref)
+    if (!grantableIndexes.has(index) || !ref.sha256 || !ref.mimeType) {
+      return redactStoreLocators(ref)
+    }
+    return grantedAssets.has(ownershipAssetKey(ref.sha256, ref.mimeType))
+      ? ref
+      : redactStoreLocators(ref)
   })
 }
 
