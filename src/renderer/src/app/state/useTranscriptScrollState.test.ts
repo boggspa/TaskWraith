@@ -118,4 +118,31 @@ describe('useTranscriptScrollState', () => {
 
     expect(hookHarness.stateSetters[0]).toHaveBeenLastCalledWith(false)
   })
+
+  it('captures the outgoing chat into its supplied pane-local cache with exact follow ownership', () => {
+    const autoFollowRef = { current: false }
+    const chatScrollStateByIdRef = { current: new Map() }
+    useTranscriptScrollState({
+      chatId: 'chat-a',
+      messages: [],
+      runCompleteNotice: null,
+      transcriptScrollRef: { current: hookHarness.scroller as HTMLDivElement },
+      transcriptContentRef: { current: null },
+      autoFollowRef,
+      chatScrollStateByIdRef
+    })
+
+    const cleanup = hookHarness.layoutEffectFactories[1]?.()
+    expect(cleanup).toBeTypeOf('function')
+    cleanup?.()
+
+    expect(chatScrollStateByIdRef.current.get('chat-a')).toMatchObject({
+      autoFollow: false,
+      scrollState: {
+        scrollTop: 500,
+        atBottom: false
+      }
+    })
+    expect(chatScrollStateByIdRef.current.has('chat-b')).toBe(false)
+  })
 })

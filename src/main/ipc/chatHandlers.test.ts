@@ -93,6 +93,7 @@ function createDeps(overrides: Partial<Parameters<typeof registerChatHandlers>[0
     reapAbandonedChats: vi.fn(() => []),
     getWorkflowChatIds: vi.fn(() => new Set(['workflow-chat'])),
     getScheduledChatIds: vi.fn(() => new Set(['scheduled-chat'])),
+    getOpenChatPopoutIds: vi.fn(() => new Set<string>()),
     resolveSenderChatReadScope: vi.fn(() => ({ kind: 'all' as const })),
     assertSenderCanManageChatCollection: vi.fn(),
     assertSenderChatScope: vi.fn(),
@@ -712,5 +713,30 @@ describe('registerChatHandlers', () => {
       reaped: []
     })
     expect(deps.broadcastThreadList).toHaveBeenCalledTimes(1)
+  })
+
+  it('authoritatively protects live chat popouts after their handoff payload is consumed', () => {
+    const reapAbandonedChats =
+      vi.fn<Parameters<typeof registerChatHandlers>[0]['reapAbandonedChats']>(() => [])
+    const deps = createDeps({
+      reapAbandonedChats,
+      getOpenChatPopoutIds: vi.fn(() => new Set(['open-popout', 'already-protected']))
+    })
+    registerChatHandlers(deps)
+
+    expect(handlerFor('reap-abandoned-chats')({} as any, {
+      protectedChatIds: ['active-chat', 'already-protected'],
+      draftChatIds: ['draft-chat'],
+      keepChatId: 'created-chat'
+    })).toEqual({ ok: true, reaped: [] })
+
+    expect(reapAbandonedChats).toHaveBeenCalledWith(
+      expect.any(Object),
+      {
+        protectedChatIds: ['active-chat', 'already-protected', 'open-popout'],
+        draftChatIds: ['draft-chat'],
+        keepChatId: 'created-chat'
+      }
+    )
   })
 })

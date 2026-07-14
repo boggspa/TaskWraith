@@ -1,10 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
+import { createMultiviewPaneRefs } from '../hooks/useMultiviewState'
 import { buildChatViewProps, type BuildChatViewPropsInput } from './buildChatViewProps'
 
-const ref = () => ({ current: null }) as BuildChatViewPropsInput['refs']['scrollRef']
-
 const makeInput = (over: Partial<BuildChatViewPropsInput> = {}): BuildChatViewPropsInput => ({
-  refs: { scrollRef: ref(), contentRef: ref(), endRef: ref() },
+  refs: createMultiviewPaneRefs(),
   chat: null,
   messages: [],
   provider: 'codex',

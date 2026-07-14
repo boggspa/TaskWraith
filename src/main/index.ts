@@ -33763,6 +33763,15 @@ if (isGeminiMcpBridgeProcess) {
             .map((t) => t.chatId)
             .filter((id): id is string => typeof id === 'string')
         ),
+      getOpenChatPopoutIds: () => {
+        const chatIds = new Set<string>()
+        for (const [key, win] of workspacePopoutWindows) {
+          if (key.startsWith('chat:') && !win.isDestroyed()) {
+            chatIds.add(key.slice('chat:'.length))
+          }
+        }
+        return chatIds
+      },
       getChatWorkspaceRebindBlocker,
       resolveSenderChatReadScope: (event) => {
         if (isMainRendererSender(event)) return { kind: 'all' }

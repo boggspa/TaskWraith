@@ -60,6 +60,12 @@ export interface ChatHandlerDeps {
   getWorkflowChatIds: () => Set<string>
   getScheduledChatIds: () => Set<string>
   /**
+   * Main-owned chat popout windows that are currently alive. The renderer's
+   * one-shot handoff payload is consumed on mount, so it cannot be the durable
+   * authority for protecting an open empty chat from create-time cleanup.
+   */
+  getOpenChatPopoutIds: () => Set<string>
+  /**
    * Main may read the complete chat collection. A chat popout receives only
    * its main-owned chat/workspace identity; non-chat secondary renderers must
    * throw. Handler-side filtering keeps payload ids from becoming authority.
@@ -344,10 +350,11 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
   /**
    * Reap abandoned never-started "New Chat" tombstones (delete-only). The
    * renderer supplies the do-not-reap signals the main process can't see —
-   * the active/multiview/popout selection and chats with unsent composer
-   * text — plus the just-created `keepChatId`. The main side adds the
-   * workflow + scheduled-task links. Ensembles are never reaped (the service
-   * supplies no default-roster check), so a curated roster is never lost.
+   * the active/multiview selection and chats with unsent composer text — plus
+   * the just-created `keepChatId`. The main side adds authoritative live-chat
+   * popouts plus workflow + scheduled-task links. Ensembles are never reaped
+   * (the service supplies no default-roster check), so a curated roster is
+   * never lost.
    * Returns the reaped ids so the renderer can drop them from its own state.
    */
   ipcMain.handle(
@@ -358,6 +365,16 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
     ) => {
       deps.assertSenderCanManageChatCollection(event, 'reap-abandoned-chats')
       try {
+        const openChatPopoutIds = deps.getOpenChatPopoutIds()
+        const effectiveRenderer =
+          openChatPopoutIds.size > 0
+            ? {
+                ...(renderer ?? {}),
+                protectedChatIds: Array.from(
+                  new Set([...(renderer?.protectedChatIds ?? []), ...openChatPopoutIds])
+                )
+              }
+            : renderer ?? {}
         const reaped = deps.reapAbandonedChats(
           {
             getChats: () => deps.chatService.getChats(),
@@ -365,7 +382,7 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
             getScheduledChatIds: deps.getScheduledChatIds,
             deleteChat: (id) => deps.chatService.deleteChat(id)
           },
-          renderer ?? {}
+          effectiveRenderer
         )
         if (reaped.length > 0) deps.broadcastThreadList()
         return { ok: true, reaped }

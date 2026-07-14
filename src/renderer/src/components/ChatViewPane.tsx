@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef, useState } from 'react'
+import { memo, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { ComposerStyle } from '../../../main/store/types'
 import { TranscriptPanel } from './TranscriptPanel'
@@ -11,6 +11,7 @@ import { ProviderBadgeIcon } from './Sidebar'
 import { WelcomeUsageDashboard } from './WelcomeUsageDashboard'
 import type { WelcomeUsageDashboardData, WelcomeUsageTab } from '../lib/welcomeUsageDashboard'
 import { bindComposerReservation } from '../lib/composerReservation'
+import { useTranscriptScrollState } from '../app/state/useTranscriptScrollState'
 import {
   AgentAuraLayer,
   LivingWorkspaceLayer,
@@ -431,6 +432,24 @@ function ChatViewPaneInner(props: ChatViewPaneProps) {
   const paneComposerAreaRef = useRef<HTMLDivElement | null>(null)
   const chatId = props.chat?.appChatId ?? ''
   const hasComposerProps = Boolean(props.composerProps)
+  const paneScrollState = useTranscriptScrollState({
+    chatId: chatId || null,
+    messages: props.messages,
+    runCompleteNotice: props.runCompleteNotice,
+    streamingActive: props.isThinking,
+    transcriptScrollRef: props.refs.scrollRef,
+    transcriptContentRef: props.refs.contentRef,
+    autoFollowRef: props.refs.autoFollowRef,
+    chatScrollStateByIdRef: props.refs.chatScrollStateByIdRef
+  })
+  useLayoutEffect(() => {
+    props.refs.relockToLatestRef.current = paneScrollState.relockToLatest
+    return () => {
+      if (props.refs.relockToLatestRef.current === paneScrollState.relockToLatest) {
+        props.refs.relockToLatestRef.current = null
+      }
+    }
+  }, [paneScrollState.relockToLatest, props.refs])
   useEffect(() => {
     const transcript = rootRef.current
     const composerArea = paneComposerAreaRef.current
@@ -524,6 +543,11 @@ function ChatViewPaneInner(props: ChatViewPaneProps) {
           <TranscriptPanel
             {...buildChatViewProps({
               ...props,
+              autoFollowRef: paneScrollState.autoFollowRef,
+              externalRestoreAnchorMessageId: paneScrollState.externalRestoreAnchorMessageId,
+              onManualTranscriptJump: paneScrollState.beginManualTranscriptJump,
+              onJumpToLatest: paneScrollState.handleJumpToLatest,
+              onProgrammaticScrollWrite: paneScrollState.markProgrammaticScroll,
               onDeleteMessage: (messageId) =>
                 chatId && props.onDeleteMessage?.(props.paneIndex, chatId, messageId),
               onAddMessageToPrompt: props.onAddMessageToPrompt

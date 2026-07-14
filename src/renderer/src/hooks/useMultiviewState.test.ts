@@ -17,11 +17,13 @@ import {
   applySetPaneChat,
   applySetPaneFxFlag,
   applySetPaneMedia,
+  createMultiviewPaneRefs,
   createInitialMultiviewState,
   getLayoutTracks,
   MULTIVIEW_MIN_PANE_PX,
   normalizeMultiviewCoreState,
   removedCanvasIds,
+  resolveMultiviewPaneRefs,
   type MultiviewCoreState
 } from './useMultiviewState'
 
@@ -70,6 +72,48 @@ describe('createInitialMultiviewState', () => {
     const s = createInitialMultiviewState('chat-1')
     expect(chatIds(s)).toEqual(['chat-1'])
     expect(s.panes[0].id).toBe('pane-1')
+  })
+})
+
+describe('Multiview pane reader ownership', () => {
+  it('keeps chat caches and auto-follow isolated by stable pane id across A→B→A and compaction', () => {
+    const refsByPaneId = new Map()
+    const initial = resolveMultiviewPaneRefs(panesOf(['A', 'B']), refsByPaneId)
+    const stateA = {
+      scrollTop: 320,
+      scrollHeight: 1_000,
+      clientHeight: 200,
+      scrollRatio: 0.4,
+      atBottom: false
+    }
+    initial[0].autoFollowRef.current = false
+    initial[0].chatScrollStateByIdRef.current.set('A', {
+      scrollState: stateA,
+      autoFollow: false
+    })
+
+    const showingB = resolveMultiviewPaneRefs(panesOf(['B', 'B']), refsByPaneId)
+    expect(showingB[0]).toBe(initial[0])
+    expect(showingB[1]).toBe(initial[1])
+    expect(showingB[1].chatScrollStateByIdRef.current.has('A')).toBe(false)
+    expect(showingB[1].autoFollowRef.current).toBe(true)
+
+    const returningA = resolveMultiviewPaneRefs(panesOf(['A', 'B']), refsByPaneId)
+    expect(returningA[0].chatScrollStateByIdRef.current.get('A')).toEqual({
+      scrollState: stateA,
+      autoFollow: false
+    })
+    expect(returningA[0].autoFollowRef.current).toBe(false)
+
+    const compacted = resolveMultiviewPaneRefs([{ id: 't1', chatId: 'B' }], refsByPaneId)
+    expect(compacted[0]).toBe(initial[1])
+  })
+
+  it('creates independent ownership refs for distinct panes', () => {
+    const left = createMultiviewPaneRefs()
+    const right = createMultiviewPaneRefs()
+    expect(left.autoFollowRef).not.toBe(right.autoFollowRef)
+    expect(left.chatScrollStateByIdRef.current).not.toBe(right.chatScrollStateByIdRef.current)
   })
 })
 

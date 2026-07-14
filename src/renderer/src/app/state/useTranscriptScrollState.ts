@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import type { MutableRefObject, RefObject } from 'react'
 
 import {
   CODE_BLOCK_RESIZE_EVENT,
@@ -35,24 +36,41 @@ export interface UseTranscriptScrollStateInput {
    *  jump-to-latest pill visible when follow is off even though text growth
    *  inside one bubble never bumps the message-count-based unread number. */
   streamingActive?: boolean
+  /** Optional pane-owned refs. Stable Multiview panes supply these so their
+   * reader position and follow ownership survive transcript remounts. */
+  transcriptScrollRef?: RefObject<HTMLDivElement | null>
+  transcriptContentRef?: RefObject<HTMLDivElement | null>
+  autoFollowRef?: MutableRefObject<boolean>
+  chatScrollStateByIdRef?: MutableRefObject<Map<string, CachedChatScrollState>>
 }
 
 export interface RestoreTranscriptScrollOptions {
   syncAutoFollow?: boolean
   targetChatId?: string | null
+  /** Geometry's loose bottom band is not equivalent to ownership. Surface
+   * transfers can preserve the source's exact follow latch here. */
+  autoFollow?: boolean
 }
 
 export function useTranscriptScrollState({
   chatId,
   messages,
   runCompleteNotice,
-  streamingActive
+  streamingActive,
+  transcriptScrollRef: providedTranscriptScrollRef,
+  transcriptContentRef: providedTranscriptContentRef,
+  autoFollowRef: providedAutoFollowRef,
+  chatScrollStateByIdRef: providedChatScrollStateByIdRef
 }: UseTranscriptScrollStateInput) {
-  const transcriptScrollRef = useRef<HTMLDivElement>(null)
-  const transcriptContentRef = useRef<HTMLDivElement>(null)
-  const autoFollowRef = useRef(true)
-  const [autoFollowActive, setAutoFollowActive] = useState(true)
-  const publishedAutoFollowRef = useRef(true)
+  const ownedTranscriptScrollRef = useRef<HTMLDivElement>(null)
+  const ownedTranscriptContentRef = useRef<HTMLDivElement>(null)
+  const ownedAutoFollowRef = useRef(true)
+  const transcriptScrollRef = providedTranscriptScrollRef ?? ownedTranscriptScrollRef
+  const transcriptContentRef = providedTranscriptContentRef ?? ownedTranscriptContentRef
+  const autoFollowRef = providedAutoFollowRef ?? ownedAutoFollowRef
+  const initialAutoFollow = autoFollowRef.current
+  const [autoFollowActive, setAutoFollowActive] = useState(initialAutoFollow)
+  const publishedAutoFollowRef = useRef(initialAutoFollow)
   const setAutoFollow = useCallback((next: boolean) => {
     autoFollowRef.current = next
     // TranscriptPanel shares this ref and may update it before invoking one of
@@ -105,7 +123,8 @@ export function useTranscriptScrollState({
     count: 0
   })
   const pendingTranscriptJumpChatIdRef = useRef<string | null>(null)
-  const chatScrollStateByIdRef = useRef<Map<string, CachedChatScrollState>>(new Map())
+  const ownedChatScrollStateByIdRef = useRef<Map<string, CachedChatScrollState>>(new Map())
+  const chatScrollStateByIdRef = providedChatScrollStateByIdRef ?? ownedChatScrollStateByIdRef
   const committedChatIdRef = useRef(chatId)
   const externalRestoreGenerationRef = useRef(0)
   const pendingExternalRestoreRef = useRef<{
@@ -128,22 +147,45 @@ export function useTranscriptScrollState({
 
   const captureScrollState = useCallback(
     () => captureChatScrollState(transcriptScrollRef.current),
-    []
+    [transcriptScrollRef]
   )
+
+  // Capture the outgoing chat before this transcript DOM is rebound or removed.
+  // Main navigation also calls prepareChatSwitch synchronously; this cleanup is
+  // what gives independently-mounted Multiview panes the same guarantee.
+  useLayoutEffect(() => {
+    const sourceChatId = chatId
+    return () => {
+      if (!sourceChatId) return
+      const scrollState = captureScrollState()
+      if (!scrollState) return
+      chatScrollStateByIdRef.current.set(sourceChatId, {
+        scrollState,
+        autoFollow: autoFollowRef.current
+      })
+    }
+  }, [autoFollowRef, captureScrollState, chatId, chatScrollStateByIdRef])
 
   const restoreScrollStateWhenReady = useCallback(
     (
       scrollState: ChatScrollState | undefined,
       options: RestoreTranscriptScrollOptions = {}
     ) => {
+      const restoreState =
+        scrollState && options.autoFollow !== undefined
+          ? { ...scrollState, atBottom: options.autoFollow }
+          : scrollState
       const targetChatId = options.targetChatId ?? committedChatIdRef.current
       const generation = externalRestoreGenerationRef.current + 1
       externalRestoreGenerationRef.current = generation
-      pendingExternalRestoreRef.current = scrollState
+      pendingExternalRestoreRef.current = restoreState
         ? {
             generation,
             targetChatId,
-            cached: { scrollState, autoFollow: scrollState.atBottom },
+            cached: {
+              scrollState: restoreState,
+              autoFollow: options.autoFollow ?? restoreState.atBottom
+            },
             lifecycle: {
               settled: false,
               chatSwitchObserved: committedChatIdRef.current === targetChatId
@@ -151,8 +193,8 @@ export function useTranscriptScrollState({
           }
         : null
       setExternalRestoreAnchorTarget(
-        scrollState?.anchorMessageId
-          ? { generation, targetChatId, messageId: scrollState.anchorMessageId }
+        restoreState?.anchorMessageId
+          ? { generation, targetChatId, messageId: restoreState.anchorMessageId }
           : null
       )
       let ownershipSynced = false
@@ -160,14 +202,15 @@ export function useTranscriptScrollState({
         () => {
           if (committedChatIdRef.current !== targetChatId) return null
           const scroller = transcriptScrollRef.current
-          if (scroller && options.syncAutoFollow && !ownershipSynced && scrollState) {
+          if (scroller && options.syncAutoFollow && !ownershipSynced && restoreState) {
             ownershipSynced = true
-            setAutoFollow(scrollState.atBottom)
-            userScrolledAwayInFrameRef.current = !scrollState.atBottom
+            const restoredAutoFollow = options.autoFollow ?? restoreState.atBottom
+            setAutoFollow(restoredAutoFollow)
+            userScrolledAwayInFrameRef.current = !restoredAutoFollow
           }
           return scroller
         },
-        scrollState,
+        restoreState,
         8,
         () => externalRestoreGenerationRef.current === generation,
         () => {

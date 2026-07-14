@@ -8,6 +8,7 @@ import {
   chatViewPanePropsEqual,
   type ChatViewPaneProps
 } from './ChatViewPane'
+import { createMultiviewPaneRefs } from '../hooks/useMultiviewState'
 
 // The pane composer is now the SAME first-class <Composer> the focused main
 // pane renders (built by App from `composerCtx` with per-pane overrides). It
@@ -34,9 +35,7 @@ vi.mock('./Composer', () => ({
 const stubComposerProps = (prompt = ''): ChatViewPaneProps['composerProps'] =>
   ({ prompt }) as unknown as ChatViewPaneProps['composerProps']
 
-const ref = () => ({ current: null }) as ChatViewPaneProps['refs']['scrollRef']
-
-const sharedRefs = { scrollRef: ref(), contentRef: ref(), endRef: ref() }
+const sharedRefs = createMultiviewPaneRefs()
 const sharedCopy = vi.fn()
 const sharedOpenSub = vi.fn()
 const sharedCopyMsg = vi.fn()

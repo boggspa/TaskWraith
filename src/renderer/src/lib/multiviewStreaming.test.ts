@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import type { ChatRecord } from '../../../main/store/types'
 import { deriveChatIsRunning } from './chatRunDisplay'
@@ -8,6 +9,9 @@ import {
   applySetPaneChat,
   createInitialMultiviewState
 } from '../hooks/useMultiviewState'
+
+const appSource = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8')
+const paneSource = readFileSync(new URL('../components/ChatViewPane.tsx', import.meta.url), 'utf8')
 
 /**
  * Integration cover for the review's top multi-pane risk: two chats streaming
@@ -93,5 +97,38 @@ describe('two-pane simultaneous streaming', () => {
     expect(deriveChatIsRunning({ chat: chatA, runningChatIds: onlyA })).toBe(true)
     expect(deriveChatIsRunning({ chat: chatB, runningChatIds: onlyA })).toBe(false)
     expect(buildChatViewProps(viewerInput(chatB, onlyA)).isThinking).toBe(false)
+  })
+
+  it('passes pane-owned scroll and follow controls through without sharing identities', () => {
+    const autoFollowRef = { current: false }
+    const onManualTranscriptJump = () => {}
+    const onJumpToLatest = () => {}
+    const onProgrammaticScrollWrite = () => {}
+    const props = buildChatViewProps({
+      ...viewerInput(chatA, runningChatIds),
+      autoFollowRef,
+      externalRestoreAnchorMessageId: 'a1',
+      onManualTranscriptJump,
+      onJumpToLatest,
+      onProgrammaticScrollWrite
+    })
+
+    expect(props.autoFollowRef).toBe(autoFollowRef)
+    expect(props.externalRestoreAnchorMessageId).toBe('a1')
+    expect(props.onManualTranscriptJump).toBe(onManualTranscriptJump)
+    expect(props.onJumpToLatest).toBe(onJumpToLatest)
+    expect(props.onProgrammaticScrollWrite).toBe(onProgrammaticScrollWrite)
+  })
+
+  it('wires stable pane ownership through A→B→A rendering and focused-surface transfer', () => {
+    expect(appSource).toContain('key={viewerPaneId || `pane-${viewerPaneIndex}`}')
+    expect(appSource).toContain('incomingPaneRefs?.chatScrollStateByIdRef.current.get(chatId)')
+    expect(appSource).toContain(
+      'outgoingPaneRefs.chatScrollStateByIdRef.current.set(outgoingChatId, outgoingCachedScroll)'
+    )
+    expect(appSource).toContain('autoFollow: incomingCachedScroll.autoFollow')
+    expect(paneSource).toContain('useTranscriptScrollState({')
+    expect(paneSource).toContain('chatScrollStateByIdRef: props.refs.chatScrollStateByIdRef')
+    expect(paneSource).toContain('props.refs.relockToLatestRef.current = paneScrollState.relockToLatest')
   })
 })

@@ -53,6 +53,36 @@ describe('chat popout authority projection', () => {
     expect(composerSource).toContain('Boolean(discordContextUnavailableReason)')
   })
 
+  it('does not query or subscribe to main-renderer-only startup state from a chat popout', () => {
+    expect(appSource).toContain(
+      'isChatPopoutWindow\n        ? Promise.resolve(null)\n        : window.api.getManagedPolicyStatus()'
+    )
+    expect(appSource).toContain(
+      "if (!isChatPopoutWindow && typeof window.api.getGeminiMcpBridgeStatus === 'function')"
+    )
+    expect(appSource).toContain(
+      "if (!isChatPopoutWindow && typeof window.api.getProductOperationsStatus === 'function')"
+    )
+    expect(appSource).toContain(
+      'if (isChatPopoutWindow) return\n    void window.api.getScheduledTasks(currentWorkspace?.id)'
+    )
+    expect(appSource).toContain(
+      "if (!isChatPopoutWindow && typeof window.api.onScheduledTaskDue === 'function')"
+    )
+    expect(appSource).toContain(
+      "if (!isChatPopoutWindow && typeof window.api.onScheduledTasksChanged === 'function')"
+    )
+    expect(appSource).toContain(
+      "if (!isChatPopoutWindow && typeof window.api.onWorkflowDefinitionsChanged === 'function')"
+    )
+    expect(appSource).toContain(
+      "if (!isChatPopoutWindow && typeof window.api.agenticYoloGet === 'function')"
+    )
+    expect(appSource).toContain(
+      "if (!isChatPopoutWindow && typeof window.api.onAgenticYoloState === 'function')"
+    )
+  })
+
   it('applies the chat-owned elevation before skipping global ack side effects', () => {
     const confirmStart = appSource.indexOf(
       'onConfirm={() => {',

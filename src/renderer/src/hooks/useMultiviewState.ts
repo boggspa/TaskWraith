@@ -1,8 +1,8 @@
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import type { RefObject } from 'react'
+import type { MutableRefObject, RefObject } from 'react'
+import type { CachedChatScrollState } from '../lib/TranscriptScroll'
 import {
   DEFAULT_MULTIVIEW_LAYOUT,
-  MAX_MULTIVIEW_PANES,
   clampFocusedPaneIndex,
   defaultColumnFractions,
   defaultRowFractions,
@@ -685,6 +685,39 @@ export interface MultiviewPaneRefs {
   scrollRef: RefObject<HTMLDivElement | null>
   contentRef: RefObject<HTMLDivElement | null>
   endRef: RefObject<HTMLDivElement | null>
+  /** Reader ownership is pane-local and chat-keyed: two panes may show the same
+   * chat at different positions without influencing each other. */
+  autoFollowRef: MutableRefObject<boolean>
+  chatScrollStateByIdRef: MutableRefObject<Map<string, CachedChatScrollState>>
+  /** Bound by ChatViewPane while mounted so sending from a resting pane matches
+   * the focused composer's relock-to-latest behavior. */
+  relockToLatestRef: MutableRefObject<(() => void) | null>
+}
+
+export function createMultiviewPaneRefs(): MultiviewPaneRefs {
+  return {
+    scrollRef: { current: null },
+    contentRef: { current: null },
+    endRef: { current: null },
+    autoFollowRef: { current: true },
+    chatScrollStateByIdRef: { current: new Map() },
+    relockToLatestRef: { current: null }
+  }
+}
+
+/** Resolve refs by stable pane id, not cell index. Surviving panes therefore
+ * retain reader state when another cell closes and the grid compacts. */
+export function resolveMultiviewPaneRefs(
+  panes: ReadonlyArray<MultiviewPaneRecord>,
+  refsByPaneId: Map<string, MultiviewPaneRefs>
+): MultiviewPaneRefs[] {
+  return panes.map((pane) => {
+    const existing = refsByPaneId.get(pane.id)
+    if (existing) return existing
+    const created = createMultiviewPaneRefs()
+    refsByPaneId.set(pane.id, created)
+    return created
+  })
 }
 
 export interface UseMultiviewStateOptions {
@@ -700,7 +733,7 @@ export interface UseMultiviewStateResult extends MultiviewCoreState {
   /** The chats in cell order — the backward-compatible index-based view of `panes`. */
   paneChatIds: (string | null)[]
   isMultiview: boolean
-  /** Stable per-pane ref pool (length MAX_MULTIVIEW_PANES) for the grid panes. */
+  /** Stable, pane-id-keyed refs in current cell order. */
   paneRefs: MultiviewPaneRefs[]
   /** Effective column/row fractions for the CURRENT layout (dragged or spec). */
   tracks: MultiviewLayoutTracks
@@ -750,19 +783,17 @@ export function useMultiviewState(options: UseMultiviewStateOptions = {}): UseMu
     stateRef.current = state
   }, [state])
 
-  // One stable ref-object pool for every possible pane. Plain { current }
-  // objects are valid React refs; memoized so identity never changes. Kept
-  // index-keyed (transient DOM anchors, re-attached per render) — pane identity
-  // for SETTINGS lives in `paneSettings`, not here.
-  const paneRefs = useMemo<MultiviewPaneRefs[]>(
-    () =>
-      Array.from({ length: MAX_MULTIVIEW_PANES }, () => ({
-        scrollRef: { current: null } as RefObject<HTMLDivElement | null>,
-        contentRef: { current: null } as RefObject<HTMLDivElement | null>,
-        endRef: { current: null } as RefObject<HTMLDivElement | null>
-      })),
-    []
+  const paneRefsByIdRef = useRef(new Map<string, MultiviewPaneRefs>())
+  const paneRefs = useMemo(
+    () => resolveMultiviewPaneRefs(state.panes, paneRefsByIdRef.current),
+    [state.panes]
   )
+  useLayoutEffect(() => {
+    const livePaneIds = new Set(state.panes.map((pane) => pane.id))
+    for (const paneId of paneRefsByIdRef.current.keys()) {
+      if (!livePaneIds.has(paneId)) paneRefsByIdRef.current.delete(paneId)
+    }
+  }, [state.panes])
 
   const setLayout = useCallback((next: MultiviewLayout, seedChatId: string | null = null) => {
     setState((s) => applySetLayout(s, next, { seedChatId }))

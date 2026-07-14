@@ -6023,7 +6023,9 @@ function App(): React.JSX.Element {
   const loadInitialData = async () => {
     const [s, policyStatus] = await Promise.all([
       window.api.getSettings(),
-      window.api.getManagedPolicyStatus().catch(() => null)
+      isChatPopoutWindow
+        ? Promise.resolve(null)
+        : window.api.getManagedPolicyStatus().catch(() => null)
     ])
     setSettings(s)
     setManagedPolicyStatus(policyStatus)
@@ -6073,13 +6075,13 @@ function App(): React.JSX.Element {
         })
         .catch(() => {})
     }
-    if (typeof window.api.getGeminiMcpBridgeStatus === 'function') {
+    if (!isChatPopoutWindow && typeof window.api.getGeminiMcpBridgeStatus === 'function') {
       void window.api
         .getGeminiMcpBridgeStatus()
         .then(setGeminiMcpBridgeStatus)
         .catch(() => {})
     }
-    if (typeof window.api.getProductOperationsStatus === 'function') {
+    if (!isChatPopoutWindow && typeof window.api.getProductOperationsStatus === 'function') {
       void window.api
         .getProductOperationsStatus()
         .then(setProductOperationsStatus)
@@ -8220,7 +8222,7 @@ function App(): React.JSX.Element {
   // fresh record, so no per-type default is ever corrupted (the historical
   // "drafts act weirdly between chat types" bug came from REUSING records,
   // which we never do). The renderer supplies the do-not-reap signals the main
-  // process can't see: the active multiview/side/popout selection, an in-flight
+  // process can't see: the active multiview/side selection, an in-flight
   // workflow-compose chat, and chats with unsent composer text.
   const reapAbandonedChatsAfterCreate = (keepChatId: string): void => {
     const protectedChatIds = new Set<string>()
@@ -8231,8 +8233,9 @@ function App(): React.JSX.Element {
     // An in-flight (not-yet-saved) workflow-compose chat is intentionally empty
     // and invisible to the main process — protect it explicitly.
     if (workflowDraft?.chatId) protectedChatIds.add(workflowDraft.chatId)
-    // Chats open in popout windows the main process can't enumerate; stale keys
-    // only over-protect (safe).
+    // Pending handoffs cover the short open-window race. Once mounted, the main
+    // process authoritatively merges its live popout registry before reaping;
+    // stale handoff keys only over-protect (safe).
     for (const chatId of listChatPopoutHandoffChatIds()) {
       protectedChatIds.add(chatId)
     }
@@ -9367,6 +9370,7 @@ function App(): React.JSX.Element {
   }, [chats, currentChat])
 
   useEffect(() => {
+    if (isChatPopoutWindow) return
     void window.api.getScheduledTasks(currentWorkspace?.id).then(setScheduledTasks)
     void window.api.getWorkflowDefinitions(currentWorkspace?.id).then(setWorkflowDefinitions)
     if (workspaceBoardApiReady) {
@@ -9382,7 +9386,7 @@ function App(): React.JSX.Element {
     } else {
       setCapabilityLedgerSnapshot(null)
     }
-  }, [currentWorkspace?.id, evidencePackApiReady, workspaceBoardApiReady])
+  }, [currentWorkspace?.id, evidencePackApiReady, isChatPopoutWindow, workspaceBoardApiReady])
 
   useEffect(() => {
     scheduledTasksRef.current = scheduledTasks
@@ -10475,7 +10479,7 @@ function App(): React.JSX.Element {
       )
     }
 
-    if (typeof window.api.onScheduledTaskDue === 'function') {
+    if (!isChatPopoutWindow && typeof window.api.onScheduledTaskDue === 'function') {
       addIpcSubscription(
         window.api.onScheduledTaskDue((task) => {
           if (!isScheduledTaskReadyToDispatch(task)) return
@@ -10486,7 +10490,7 @@ function App(): React.JSX.Element {
       )
     }
 
-    if (typeof window.api.onScheduledTasksChanged === 'function') {
+    if (!isChatPopoutWindow && typeof window.api.onScheduledTasksChanged === 'function') {
       addIpcSubscription(
         window.api.onScheduledTasksChanged((tasks) => {
           setScheduledTasks(tasks)
@@ -10502,7 +10506,7 @@ function App(): React.JSX.Element {
       )
     }
 
-    if (typeof window.api.onWorkflowDefinitionsChanged === 'function') {
+    if (!isChatPopoutWindow && typeof window.api.onWorkflowDefinitionsChanged === 'function') {
       addIpcSubscription(
         window.api.onWorkflowDefinitionsChanged((workflows) => {
           const workspaceId = currentWorkspaceIdRef.current || currentWorkspace?.id
@@ -10513,7 +10517,11 @@ function App(): React.JSX.Element {
       )
     }
 
-    if (workspaceBoardApiReady && typeof window.api.onWorkspaceBoardsChanged === 'function') {
+    if (
+      !isChatPopoutWindow &&
+      workspaceBoardApiReady &&
+      typeof window.api.onWorkspaceBoardsChanged === 'function'
+    ) {
       addIpcSubscription(
         window.api.onWorkspaceBoardsChanged((payload) => {
           setWorkspaceBoards(payload.boards)
@@ -10527,7 +10535,11 @@ function App(): React.JSX.Element {
       )
     }
 
-    if (evidencePackApiReady && typeof window.api.onEvidencePacksChanged === 'function') {
+    if (
+      !isChatPopoutWindow &&
+      evidencePackApiReady &&
+      typeof window.api.onEvidencePacksChanged === 'function'
+    ) {
       addIpcSubscription(
         window.api.onEvidencePacksChanged((payload) => {
           const workspaceId = currentWorkspaceIdRef.current || currentWorkspace?.id
@@ -10876,13 +10888,13 @@ function App(): React.JSX.Element {
     // Legacy global auto-approval indicator. Main refuses new enable requests,
     // but we still read the current value in case multiple windows are attached
     // to a process with an older/global bypass already active.
-    if (typeof window.api.agenticYoloGet === 'function') {
+    if (!isChatPopoutWindow && typeof window.api.agenticYoloGet === 'function') {
       window.api
         .agenticYoloGet()
         .then((state) => setSessionYoloModeState(state))
         .catch(() => {})
     }
-    if (typeof window.api.onAgenticYoloState === 'function') {
+    if (!isChatPopoutWindow && typeof window.api.onAgenticYoloState === 'function') {
       addIpcSubscription(
         window.api.onAgenticYoloState((state) => setSessionYoloModeState(state))
       )
@@ -24017,6 +24029,27 @@ function App(): React.JSX.Element {
       if (!viewerChat) return
       const viewerProvider = getChatProvider(viewerChat)
       const outgoingChatId = currentChatIdRef.current || null
+      const incomingPaneRefs = multiview.paneRefs[paneIndex]
+      const incomingScrollState = captureChatScrollState(incomingPaneRefs?.scrollRef.current)
+      const incomingCachedScroll = incomingScrollState
+        ? {
+            scrollState: incomingScrollState,
+            autoFollow: incomingPaneRefs?.autoFollowRef.current ?? incomingScrollState.atBottom
+          }
+        : incomingPaneRefs?.chatScrollStateByIdRef.current.get(chatId)
+      if (incomingPaneRefs && incomingCachedScroll) {
+        incomingPaneRefs.chatScrollStateByIdRef.current.set(chatId, incomingCachedScroll)
+      }
+      const outgoingPaneRefs = multiview.paneRefs[multiview.focusedPaneIndex]
+      const outgoingScrollState = captureMainTranscriptScrollState()
+      if (outgoingChatId && outgoingPaneRefs && outgoingScrollState) {
+        const outgoingCachedScroll = {
+          scrollState: outgoingScrollState,
+          autoFollow: autoFollowRef.current
+        }
+        outgoingPaneRefs.autoFollowRef.current = outgoingCachedScroll.autoFollow
+        outgoingPaneRefs.chatScrollStateByIdRef.current.set(outgoingChatId, outgoingCachedScroll)
+      }
       const paneWorkspace = resolvePaneWorkspace({
         chat: viewerChat,
         isGlobalChat: isGlobalChat(viewerChat),
@@ -24050,6 +24083,13 @@ function App(): React.JSX.Element {
       setActiveSidebarChatId(viewerChat.appChatId)
       setCurrentWorkspace(paneWorkspace)
       setCurrentChat(viewerChat)
+      if (incomingCachedScroll) {
+        restoreMainTranscriptScrollStateWhenReady(incomingCachedScroll.scrollState, {
+          syncAutoFollow: true,
+          targetChatId: viewerChat.appChatId,
+          autoFollow: incomingCachedScroll.autoFollow
+        })
+      }
       applyChatComposerSelectionRef.current(viewerChat, viewerProvider)
       if (viewerProvider === 'codex') setShowGeminiTerminal(false)
       setRunDiff(null)
@@ -24061,8 +24101,12 @@ function App(): React.JSX.Element {
     },
     [
       currentWorkspace,
+      captureMainTranscriptScrollState,
       clearWorkspaceTrust,
+      multiview.focusedPaneIndex,
       multiview.focusPane,
+      multiview.paneRefs,
+      restoreMainTranscriptScrollStateWhenReady,
       runningChatIds,
       setCurrentChatIdForNavigation,
       syncThinkingForChat,
@@ -24258,6 +24302,7 @@ function App(): React.JSX.Element {
       const panePrompt = composerDraftsByChatIdRef.current[chatId] || ''
       const paneAttachments = imageAttachmentsByChatIdRef.current[chatId] || EMPTY_IMAGE_ATTACHMENTS
       if (!hasAttachmentPromptContent(panePrompt, paneAttachments)) return
+      multiview.paneRefs[paneIndex]?.relockToLatestRef.current?.()
       const request = buildRunRequestRef.current(undefined, undefined, {
         chat: paneChat,
         prompt: panePrompt,
@@ -24288,7 +24333,7 @@ function App(): React.JSX.Element {
       }
       void executeRunRef.current(request)
     },
-    [multiview.focusedPaneIndex, sessionTrust, setChatPromptDraft]
+    [multiview.focusedPaneIndex, multiview.paneRefs, sessionTrust, setChatPromptDraft]
   )
   const handleCancelMultiviewPane = useCallback((_paneIndex: number, chatId: string) => {
     const paneChat = chatByIdRef.current.get(chatId)
@@ -25740,7 +25785,7 @@ function App(): React.JSX.Element {
 
     return (
       <ChatViewPane
-        key={`${viewerPaneIndex}:${viewerChatId}`}
+        key={viewerPaneId || `pane-${viewerPaneIndex}`}
         paneIndex={viewerPaneIndex}
         composerProps={effectivePaneComposerCtx}
         refs={multiview.paneRefs[viewerPaneIndex]}

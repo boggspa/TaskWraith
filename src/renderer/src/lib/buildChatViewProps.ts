@@ -1,4 +1,5 @@
 import type { TranscriptPanelProps } from '../components/TranscriptPanel'
+import type { MultiviewPaneRefs } from '../hooks/useMultiviewState'
 import { isGlobalChat } from './chatScope'
 import { getLiveToolFileDiffSummaries } from './LiveFileDiffSummary'
 import {
@@ -22,7 +23,7 @@ import {
  * perturb the pane's memo.
  */
 
-type Refs = Pick<TranscriptPanelProps, 'scrollRef' | 'contentRef' | 'endRef'>
+type Refs = MultiviewPaneRefs
 
 export interface BuildChatViewPropsInput {
   refs: Refs
@@ -60,6 +61,11 @@ export interface BuildChatViewPropsInput {
   onMessageSelectionCandidate?: TranscriptPanelProps['onMessageSelectionCandidate']
   onPreviewImage: TranscriptPanelProps['onPreviewImage']
   onDetachToPane?: TranscriptPanelProps['onDetachToPane']
+  autoFollowRef?: TranscriptPanelProps['autoFollowRef']
+  externalRestoreAnchorMessageId?: TranscriptPanelProps['externalRestoreAnchorMessageId']
+  onManualTranscriptJump?: TranscriptPanelProps['onManualTranscriptJump']
+  onJumpToLatest?: TranscriptPanelProps['onJumpToLatest']
+  onProgrammaticScrollWrite?: TranscriptPanelProps['onProgrammaticScrollWrite']
   // Optional pass-throughs — supplied when available, omitted otherwise.
   currentRun?: TranscriptPanelProps['currentRun']
   currentWorkspacePath?: string
@@ -245,6 +251,11 @@ export function buildChatViewProps(input: BuildChatViewPropsInput): TranscriptPa
     onMessageSelectionCandidate: input.onMessageSelectionCandidate,
     onPreviewImage: input.onPreviewImage,
     onDetachToPane: input.onDetachToPane,
+    autoFollowRef: input.autoFollowRef,
+    externalRestoreAnchorMessageId: input.externalRestoreAnchorMessageId,
+    onManualTranscriptJump: input.onManualTranscriptJump,
+    onJumpToLatest: input.onJumpToLatest,
+    onProgrammaticScrollWrite: input.onProgrammaticScrollWrite,
     copiedId: input.copiedId,
     copy: input.copy,
     userMessageGutterEnabled: false,
