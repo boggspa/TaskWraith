@@ -116,6 +116,18 @@ export type TranscriptMediaAssetOwnershipResult =
         | 'unverified'
     }
 
+export type TranscriptMediaAssetOwnershipBatchResult =
+  | { ok: true }
+  | {
+      ok: false
+      reason:
+        | 'invalid_asset'
+        | 'invalid_chat'
+        | 'missing'
+        | 'ownership_limit'
+        | 'persistence_failed'
+    }
+
 export type TranscriptMediaAssetOwnershipBackfillResult =
   | {
       ok: true
@@ -748,44 +760,11 @@ export class TranscriptMediaAssetStore {
   }
 
   /**
-   * Main-authority grant for an existing store asset. Renderer-supplied chat ids
-   * must never be routed here without an independently trusted owner lookup.
+   * Apply independently trusted grants as one immutable ledger replacement.
+   * Inputs are fully validated before the next ownership map is published, so
+   * any failure leaves every requested grant unapplied.
    */
-  grant(input: TranscriptMediaAssetOwnershipInput): TranscriptMediaAssetOwnershipResult {
-    const asset = ownershipAssetKey(input.sha256, input.mimeType)
-    if (!asset) return { ok: false, reason: 'invalid_asset' }
-    if (!safeOwnershipChatId(input.appChatId)) return { ok: false, reason: 'invalid_chat' }
-    if (this.ownershipMutationsUnavailable) return { ok: false, reason: 'persistence_failed' }
-    if (!storedAssetExists(this.baseDir, input.sha256, input.mimeType)) {
-      return { ok: false, reason: 'missing' }
-    }
-    const current = this.ownershipByAsset.get(asset)
-    if (current?.has(input.appChatId)) return { ok: true }
-    if (
-      (!current && this.ownershipByAsset.size >= TRANSCRIPT_MEDIA_OWNERSHIP_MAX_ASSETS) ||
-      (current?.size ?? 0) >= TRANSCRIPT_MEDIA_OWNERSHIP_MAX_CHATS_PER_ASSET
-    ) {
-      return { ok: false, reason: 'ownership_limit' }
-    }
-    const next = new Map(this.ownershipByAsset)
-    next.set(asset, new Set([...(current ?? []), input.appChatId]))
-    if (!this.persistOwnership(next)) {
-      return { ok: false, reason: 'persistence_failed' }
-    }
-    this.ownershipByAsset = next
-    return { ok: true }
-  }
-
-  /**
-   * Atomically seed ownership from an independently trusted migration source.
-   * Persisted chat JSON is renderer-authored and is explicitly NOT provenance
-   * for this operation. A caller retaining this migration hook must authenticate
-   * a separate main-owned manifest before constructing `inputs`.
-   *
-   * This is intentionally a bulk operation: assets are checked once, touched
-   * sets are cloned once, and at most one ledger replacement is attempted.
-   */
-  backfillOwnership(
+  private applyOwnershipGrants(
     inputs: readonly TranscriptMediaAssetOwnershipInput[]
   ): TranscriptMediaAssetOwnershipBackfillResult {
     if (this.ownershipMutationsUnavailable) {
@@ -885,6 +864,37 @@ export class TranscriptMediaAssetStore {
     }
     this.ownershipByAsset = next
     return { ok: true, ...commonResult, persisted: true }
+  }
+
+  /**
+   * Main-authority batch grant for existing store assets. Renderer-supplied chat
+   * ids must never be routed here without an independently trusted owner lookup.
+   */
+  grantMany(
+    inputs: readonly TranscriptMediaAssetOwnershipInput[]
+  ): TranscriptMediaAssetOwnershipBatchResult {
+    const result = this.applyOwnershipGrants(inputs)
+    return result.ok ? { ok: true } : { ok: false, reason: result.reason }
+  }
+
+  /** One-item compatibility wrapper around the atomic batch grant. */
+  grant(input: TranscriptMediaAssetOwnershipInput): TranscriptMediaAssetOwnershipResult {
+    return this.grantMany([input])
+  }
+
+  /**
+   * Atomically seed ownership from an independently trusted migration source.
+   * Persisted chat JSON is renderer-authored and is explicitly NOT provenance
+   * for this operation. A caller retaining this migration hook must authenticate
+   * a separate main-owned manifest before constructing `inputs`.
+   *
+   * This retains migration counters while sharing the same validation and single
+   * ledger replacement used by ordinary main-authority batches.
+   */
+  backfillOwnership(
+    inputs: readonly TranscriptMediaAssetOwnershipInput[]
+  ): TranscriptMediaAssetOwnershipBackfillResult {
+    return this.applyOwnershipGrants(inputs)
   }
 
   /**

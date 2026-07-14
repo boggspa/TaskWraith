@@ -161,6 +161,105 @@ describe('TranscriptMediaAssetStore', () => {
     ).toEqual({ ok: false, reason: 'invalid_chat' })
   })
 
+  it('grants many distinct owners in one durable replacement and skips duplicate replays', () => {
+    const root = makeRoot()
+    const store = new TranscriptMediaAssetStore(root)
+    const first = store.writeContentAddressed({
+      mimeType: 'image/png',
+      buffer: Buffer.from('grant-many-first')
+    })
+    const second = store.writeContentAddressed({
+      mimeType: 'application/pdf',
+      buffer: Buffer.from('%PDF grant-many-second')
+    })
+    expect(first.ok).toBe(true)
+    expect(second.ok).toBe(true)
+    if (!first.ok || !second.ok) return
+
+    const inputs = [
+      { sha256: first.sha256, mimeType: first.mimeType, appChatId: 'chat-a' },
+      { sha256: first.sha256, mimeType: first.mimeType, appChatId: 'chat-b' },
+      { sha256: first.sha256, mimeType: first.mimeType, appChatId: 'chat-b' },
+      { sha256: second.sha256, mimeType: second.mimeType, appChatId: 'chat-c' }
+    ]
+    const rename = vi.spyOn(fs, 'renameSync')
+
+    expect(store.grantMany(inputs)).toEqual({ ok: true })
+    expect(rename).toHaveBeenCalledTimes(1)
+    expect(store.owns(inputs[0])).toBe(true)
+    expect(store.owns(inputs[1])).toBe(true)
+    expect(store.owns(inputs[3])).toBe(true)
+
+    const restarted = new TranscriptMediaAssetStore(root)
+    expect(restarted.owns(inputs[0])).toBe(true)
+    expect(restarted.owns(inputs[1])).toBe(true)
+    expect(restarted.owns(inputs[3])).toBe(true)
+
+    rename.mockClear()
+    expect(store.grantMany(inputs)).toEqual({ ok: true })
+    expect(store.grantMany([])).toEqual({ ok: true })
+    expect(rename).not.toHaveBeenCalled()
+  })
+
+  it('leaves the ownership ledger and memory unchanged when a batch replacement fails', () => {
+    const root = makeRoot()
+    const store = new TranscriptMediaAssetStore(root)
+    const retained = store.writeContentAddressed({
+      mimeType: 'image/png',
+      buffer: Buffer.from('grant-many-retained'),
+      appChatId: 'retained-chat'
+    })
+    const pending = store.writeContentAddressed({
+      mimeType: 'image/png',
+      buffer: Buffer.from('grant-many-pending')
+    })
+    expect(retained.ok).toBe(true)
+    expect(pending.ok).toBe(true)
+    if (!retained.ok || !pending.ok) return
+    const ledgerPath = path.join(root, TRANSCRIPT_MEDIA_OWNERSHIP_FILE)
+    const originalLedger = fs.readFileSync(ledgerPath)
+    vi.spyOn(fs, 'renameSync').mockImplementationOnce(() => {
+      throw new Error('simulated atomic replacement failure')
+    })
+
+    const firstGrant = {
+      sha256: retained.sha256,
+      mimeType: retained.mimeType,
+      appChatId: 'pending-chat-a'
+    }
+    const secondGrant = {
+      sha256: pending.sha256,
+      mimeType: pending.mimeType,
+      appChatId: 'pending-chat-b'
+    }
+    expect(store.grantMany([firstGrant, secondGrant])).toEqual({
+      ok: false,
+      reason: 'persistence_failed'
+    })
+    expect(store.owns(firstGrant)).toBe(false)
+    expect(store.owns(secondGrant)).toBe(false)
+    expect(
+      store.owns({
+        sha256: retained.sha256,
+        mimeType: retained.mimeType,
+        appChatId: 'retained-chat'
+      })
+    ).toBe(true)
+    expect(fs.readFileSync(ledgerPath).equals(originalLedger)).toBe(true)
+    expect(fs.readdirSync(root).some((entry) => entry.endsWith('.tmp'))).toBe(false)
+
+    const restarted = new TranscriptMediaAssetStore(root)
+    expect(restarted.owns(firstGrant)).toBe(false)
+    expect(restarted.owns(secondGrant)).toBe(false)
+    expect(
+      restarted.owns({
+        sha256: retained.sha256,
+        mimeType: retained.mimeType,
+        appChatId: 'retained-chat'
+      })
+    ).toBe(true)
+  })
+
   it('backfills canonical ownership in one atomic write and skips an idempotent replay', () => {
     const root = makeRoot()
     const store = new TranscriptMediaAssetStore(root)
@@ -279,14 +378,14 @@ describe('TranscriptMediaAssetStore', () => {
     const ledgerPath = path.join(root, TRANSCRIPT_MEDIA_OWNERSHIP_FILE)
     const boundedLedger = fs.readFileSync(ledgerPath)
     expect(
-      store.backfillOwnership([
+      store.grantMany([
         {
           sha256: persisted.sha256,
           mimeType: persisted.mimeType,
           appChatId: 'one-chat-too-many'
         }
       ])
-    ).toEqual({ ok: false, reason: 'ownership_limit', failedAt: 0 })
+    ).toEqual({ ok: false, reason: 'ownership_limit' })
     expect(fs.readFileSync(ledgerPath).equals(boundedLedger)).toBe(true)
 
     const assetLimitRoot = makeRoot()
@@ -308,7 +407,7 @@ describe('TranscriptMediaAssetStore', () => {
     ).toEqual({ ok: true })
     const fullLedger = fs.readFileSync(path.join(assetLimitRoot, TRANSCRIPT_MEDIA_OWNERSHIP_FILE))
     expect(
-      fullStore.backfillOwnership([
+      fullStore.grantMany([
         { sha256: newHash, mimeType: 'image/png', appChatId: 'new-chat' }
       ])
     ).toEqual({ ok: false, reason: 'ownership_limit' })
