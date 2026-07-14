@@ -121,6 +121,15 @@ signed off on iOS** — this effort adds the other 12 + their theme handling, pl
 **Evidence:** `07-composer-shells.css:2131-2139` (capsule tokens), `:2152-2184` (surface invisible + single-h), `:2188-2210` (capsule 26px + anchor-name + focus), `:2211-2223` (gutters 9px 224px 9px 46px), `:2276-2301` (LIFT abs+anchor), `:2330-2392` (attach/model/permission), `:2480-2545` (provider/ensemble/send); `05-polish-fx-layouts.css:3011-3284` (per-row aura); `08-theme-picker-overrides.css:4408-4425` (light capsule); `10-provider-shell-overrides.css:691-751` (obsidian), `:3249-3363` (alabaster), `:3009-3012` (chrome darken); `App.tsx:20677-20682` (ArrowUpSendIcon).
 
 ### kimi — Kimi
+> **CORRECTION (2026-07-14 parity audit):** the accent hexes recorded below
+> (#4da6ff dark / #1a8cff light, plus the #70b8ff/#cfe4ff wash family) are
+> STALE — the live desktop shell now keys every kimi accent off
+> `var(--provider-kimi-color)` = **#0073E6** (07-composer-shells.css:2867-2870,
+> 3016), and iOS matches via `providerAccent("kimi")`
+> (ComposerShellResolver.swift:617-619). Zero hardcoded #4da6ff/#1a8cff hexes
+> remain in either codebase; read the hardcoded blues below as historical
+> recipe detail, with the provider token as the source of truth.
+
 **Essence:** Single solid near-black rounded rectangle (no glass, no card-in-card) with a blue (#4da6ff) accent surfacing only on focus and hover/active. Textarea sits directly on the surface; footer is a flat strip of mostly-transparent outlined pills; send button is a 32px filled circle whose hover flips to blue.
 **Material:** Solid, opaque — NOT glass. Base fill `color-mix(#0a0a0c 96%, transparent)` ≈ `rgba(10,10,12,0.96)` (07:2577). No backdrop-filter ever; reduce-transparency swaps are no-ops. Base blue edge-gradient ::before suppressed (display:none). Light (light/mist/sage/alabaster) `var(--unified-soft-surface-bg)`. Obsidian forces solid **#202124** surface / **#1f2023** above-bar. Ensemble dark contexts force surface #202124, above-bar #1f2023.
 **Palette:** surfaceFill `rgba(10,10,12,0.96)`; light `var(--unified-soft-surface-bg)`; obsidian #202124 / above-bar #1f2023 · innerModuleFill **same as surface** (no inner card) · border `1px color-mix(#ffffff 8%)` ≈ rgba(255,255,255,0.08); light `var(--unified-soft-surface-border)`; obsidian rgba(255,255,255,0.12) · focusAccent **#4da6ff** — focus border `color-mix(#4da6ff 50%)` + 3px ring `color-mix(#4da6ff 10%)`; light darker blue **#1a8cff** 42% border + 3px #1a8cff 12% ring · textPrimary model #ffffff 88%, permission #ffffff 80%, provider/workspace/ensemble #ffffff 78%; light var(--text-primary) / #0a3357 chip text · placeholder `color-mix(#ffffff 36%)` ≈ rgba(255,255,255,0.36); light `var(--text-tertiary)` · rimOrGlow no rest rim; rest shadow `0 4px 16px rgba(0,0,0,0.5)`; focus adds `0 0 0 3px color-mix(#4da6ff 10%)` + deepens shadow to `0 4px 16px rgba(0,0,0,0.55)`
