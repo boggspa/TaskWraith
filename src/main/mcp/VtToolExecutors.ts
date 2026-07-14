@@ -20,8 +20,8 @@ import { buildAvMediaRef, type AvPosterResult, type GeneratePoster } from '../me
  * the daemon's native VideoToolbox (hardware-accelerated; no ffmpeg). Its output is
  * a VIDEO FILE, so — exactly like the ffmpeg `transcode_video` producer — it CANNOT
  * ride the image-block lane and instead travels the TRUSTED AV channel: the daemon
- * writes the MP4 to a staging path WE own, we read + persist it to the content-
- * addressed asset store (the injected `persistOutput`), and return a media ref built
+ * writes the MP4 to a staging path WE own, we persist it to the content-addressed
+ * asset store (the injected `persistOutputFile`), and return a media ref built
  * by `buildAvMediaRef` on `McpToolExecutionResult.trustedMediaRefs`. That ref is un-
  * forgeable (only this main-side executor can construct the result) and bypasses the
  * image-only provider sanitizer (which hard-drops kind!=='image').
@@ -86,11 +86,11 @@ export interface VtToolDeps {
   /**
    * `video.encodeClip` daemon RPC — re-encode a segment of the (already-jailed)
    * source video to an H.264 MP4 written at the TS-supplied `outputPath` (a dir WE
-   * own). Resolves with the produced clip's metadata; REJECTS on failure. TS reads +
-   * deletes `outputPath` afterwards. `overlayPath` (when present) is the JAILED
+   * own). Resolves with the produced clip's metadata; REJECTS on failure. `overlayPath`
+   * (when present) is the JAILED
    * realPath of an image composited over every frame at (`overlayX`,`overlayY`),
    * optionally scaled to `overlayWidth` (aspect preserved) at `overlayOpacity` (the
-   * daemon clamps to 0..1).
+   * daemon clamps to 0..1). TS persists + deletes `outputPath` afterwards.
    */
   encodeClip: (params: { sourcePath: string; outputPath: string; scaleWidth?: number; targetBitrateKbps?: number; startSeconds?: number; durationSeconds?: number; overlayPath?: string; overlayX?: number; overlayY?: number; overlayWidth?: number; overlayOpacity?: number }) =>
     Promise<{ width: number; height: number; durationMs: number; codec: string; usedHardware: boolean }>
@@ -99,7 +99,7 @@ export interface VtToolDeps {
    * SEGMENTS, each with an optional trim (`startSeconds`/`durationSeconds`), into one
    * H.264 MP4 written at the TS-supplied `outputPath` (a dir WE own). Segments with
    * different dimensions are letterboxed to the first segment's size. Resolves with the
-   * produced clip's metadata (incl. `segmentCount`); REJECTS on failure. TS reads +
+   * produced clip's metadata (incl. `segmentCount`); REJECTS on failure. TS persists +
    * deletes `outputPath` afterwards.
    */
   concatClips: (params: { outputPath: string; segments: Array<{ sourcePath: string; startSeconds?: number; durationSeconds?: number }>; scaleWidth?: number; targetBitrateKbps?: number }) =>
@@ -110,7 +110,7 @@ export interface VtToolDeps {
    * ('wav' | 'm4a') file written at the TS-supplied `outputPath` (a dir WE own). All
    * sources must already match `sampleRate`. `bitrateKbps` applies to m4a (AAC) only.
    * Resolves with the produced file's metadata (incl. `trackCount`); REJECTS on
-   * failure. TS reads + deletes `outputPath` afterwards.
+   * failure. TS persists + deletes `outputPath` afterwards.
    */
   mixdown: (params: {
     outputPath: string
@@ -136,17 +136,21 @@ export interface VtToolDeps {
   }>
   /** An absolute staging file path (a dir WE own, never agent-supplied) for the encoded output. */
   stagingPath: (ext: string) => string
-  /** Read a produced staging file → bytes (throws if missing / over the size cap). */
-  readOutput: (path: string, mimeType: string) => Buffer
   /**
-   * Persist a produced output buffer to the content-addressed asset store and return
-   * its canonical sha256. The host (index.ts) provides the real implementation.
+   * Persist a produced staging file without materializing the AV asset in the
+   * main-process heap. Returns the canonical durable path and exact byte metadata.
    */
-  persistOutput: (buffer: Buffer, mimeType: string) => { ok: true; sha256: string } | { ok: false; reason: string }
+  persistOutputFile: (
+    path: string,
+    mimeType: string
+  ) => Awaitable<
+    | { ok: true; path: string; sha256: string; byteLength: number }
+    | { ok: false; reason: string }
+  >
   /**
    * Best-effort poster/waveform for a produced AV file (the card preview). Never
    * throws; resolves undefined on any failure (the producer still returns its ref).
-   * Called BEFORE removeFile so the staging file still exists on disk.
+   * Receives the canonical durable asset path returned by persistOutputFile.
    */
   generatePoster: GeneratePoster
   removeFile: (path: string) => void
@@ -212,7 +216,7 @@ function formatTimestampLabel(seconds: number): string {
 }
 
 export function createVtToolExecutors(deps: VtToolDeps): VtToolExecutors {
-  const { jailInput, jailOverlay, decodeFrame, encodeClip, concatClips, mixdown, transcribe, stagingPath, readOutput, persistOutput, generatePoster, removeFile } = deps
+  const { jailInput, jailOverlay, decodeFrame, encodeClip, concatClips, mixdown, transcribe, stagingPath, persistOutputFile, generatePoster, removeFile } = deps
 
   // Guard the injected poster generator: even a misbehaving (throwing) impl must never
   // fail the producer (the poster is decorative). The real impl is already fail-
@@ -477,25 +481,17 @@ export function createVtToolExecutors(deps: VtToolDeps): VtToolExecutors {
           overlayWidth,
           overlayOpacity
         })
-        let buffer: Buffer
-        try {
-          buffer = readOutput(outputPath, mimeType)
-        } catch (error) {
-          return fail('video_encode_clip', `encode output unavailable: ${error instanceof Error ? error.message : String(error)}`)
-        }
-        if (!buffer || buffer.length === 0) return fail('video_encode_clip', 'VideoToolbox produced an empty clip')
-        const persisted = persistOutput(buffer, mimeType)
+        const persisted = await persistOutputFile(outputPath, mimeType)
         if (!persisted.ok) return fail('video_encode_clip', `Failed to persist output: ${persisted.reason}`)
-        // Best-effort poster (fail-tolerant: undefined on any error) BEFORE the
-        // finally { removeFile } — the staging MP4 must still be on disk. Guarded so a
+        // Best-effort poster from the canonical durable path. Guarded so a
         // misbehaving generator can never fail the producer (the poster is decorative).
-        const poster = await safePoster(outputPath, 'video', mimeType, buffer.length)
+        const poster = await safePoster(persisted.path, 'video', mimeType, persisted.byteLength)
         const ref = buildAvMediaRef({
           sha256: persisted.sha256,
           mimeType,
           name: `${sourceBaseName(args.inputPath)}.mp4`,
           runId: ctx?.appRunId,
-          byteLength: buffer.length,
+          byteLength: persisted.byteLength,
           durationMs: result.durationMs,
           codecs: result.codec,
           thumbnail: poster?.thumbnail
@@ -507,7 +503,7 @@ export function createVtToolExecutors(deps: VtToolDeps): VtToolExecutors {
         if (!ref) return fail('video_encode_clip', `internal: unsupported output mime ${mimeType}`)
         const summary =
           `Encoded clip → ${result.width}×${result.height}, ${(result.durationMs / 1000).toFixed(1)}s, ` +
-          `${result.codec} (${humanBytes(buffer.length)}, ${result.usedHardware ? 'hardware' : 'software'})` +
+          `${result.codec} (${humanBytes(persisted.byteLength)}, ${result.usedHardware ? 'hardware' : 'software'})` +
           (overlayRealPath ? ' + overlay' : '')
         return {
           text: summary,
@@ -591,23 +587,16 @@ export function createVtToolExecutors(deps: VtToolDeps): VtToolExecutors {
           scaleWidth,
           targetBitrateKbps
         })
-        let buffer: Buffer
-        try {
-          buffer = readOutput(outputPath, mimeType)
-        } catch (error) {
-          return fail('video_concat_clips', `concat output unavailable: ${error instanceof Error ? error.message : String(error)}`)
-        }
-        if (!buffer || buffer.length === 0) return fail('video_concat_clips', 'VideoToolbox produced an empty clip')
-        const persisted = persistOutput(buffer, mimeType)
+        const persisted = await persistOutputFile(outputPath, mimeType)
         if (!persisted.ok) return fail('video_concat_clips', `Failed to persist output: ${persisted.reason}`)
-        // Best-effort poster (fail-tolerant) BEFORE the finally { removeFile }.
-        const poster = await safePoster(outputPath, 'video', mimeType, buffer.length)
+        // Best-effort poster (fail-tolerant) from the canonical durable path.
+        const poster = await safePoster(persisted.path, 'video', mimeType, persisted.byteLength)
         const ref = buildAvMediaRef({
           sha256: persisted.sha256,
           mimeType,
           name: `${sourceBaseName(firstSegmentInputPath)}-concat.mp4`,
           runId: ctx?.appRunId,
-          byteLength: buffer.length,
+          byteLength: persisted.byteLength,
           durationMs: result.durationMs,
           codecs: result.codec,
           thumbnail: poster?.thumbnail
@@ -619,7 +608,7 @@ export function createVtToolExecutors(deps: VtToolDeps): VtToolExecutors {
         const summary =
           `Concatenated ${result.segmentCount} clips → ${result.width}×${result.height}, ` +
           `${(result.durationMs / 1000).toFixed(1)}s, ${result.codec} ` +
-          `(${humanBytes(buffer.length)}, ${result.usedHardware ? 'hardware' : 'software'})`
+          `(${humanBytes(persisted.byteLength)}, ${result.usedHardware ? 'hardware' : 'software'})`
         return {
           text: summary,
           content: [{ type: 'text', text: summary }],
@@ -720,25 +709,18 @@ export function createVtToolExecutors(deps: VtToolDeps): VtToolExecutors {
           bitrateKbps,
           tracks: realTracks
         })
-        let buffer: Buffer
-        try {
-          buffer = readOutput(outputPath, mimeType)
-        } catch (error) {
-          return fail('audio_mix', `mix output unavailable: ${error instanceof Error ? error.message : String(error)}`)
-        }
-        if (!buffer || buffer.length === 0) return fail('audio_mix', 'audio engine produced an empty mix')
-        const persisted = persistOutput(buffer, mimeType)
+        const persisted = await persistOutputFile(outputPath, mimeType)
         if (!persisted.ok) return fail('audio_mix', `Failed to persist output: ${persisted.reason}`)
-        // Best-effort waveform poster + harvested peaks (fail-tolerant) BEFORE the
-        // finally { removeFile }. Audio carries BOTH the JPEG poster (fallback) and the
-        // compact `peaks` envelope the renderer DAW-draws from.
-        const poster = await safePoster(outputPath, 'audio', mimeType, buffer.length)
+        // Best-effort waveform poster + harvested peaks from the canonical durable path.
+        // Audio carries BOTH the JPEG poster (fallback) and the compact `peaks` envelope
+        // the renderer DAW-draws from.
+        const poster = await safePoster(persisted.path, 'audio', mimeType, persisted.byteLength)
         const ref = buildAvMediaRef({
           sha256: persisted.sha256,
           mimeType,
           name: `${sourceBaseName(firstTrackSourcePath)}-mix.${ext}`,
           runId: ctx?.appRunId,
-          byteLength: buffer.length,
+          byteLength: persisted.byteLength,
           durationMs: result.durationMs,
           codecs: result.codec,
           thumbnail: poster?.thumbnail,
@@ -749,7 +731,7 @@ export function createVtToolExecutors(deps: VtToolDeps): VtToolExecutors {
         // return a silent empty-success that would strand the persisted asset with no ref.
         if (!ref) return fail('audio_mix', `internal: unsupported output mime ${mimeType}`)
         const summary =
-          `Mixed ${realTracks.length} tracks → ${ref.name} (${humanBytes(buffer.length)})`
+          `Mixed ${realTracks.length} tracks → ${ref.name} (${humanBytes(persisted.byteLength)})`
         return {
           text: summary,
           content: [{ type: 'text', text: summary }],

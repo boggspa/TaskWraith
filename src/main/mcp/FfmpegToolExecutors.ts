@@ -15,7 +15,7 @@ import { buildAvMediaRef, type AvPosterResult, type GeneratePoster } from '../me
  *   and renders inline, no new trust lane required.
  * S1b-3: the audio/video PRODUCERS (audio_extract / transcode_audio / transcode_video),
  *   whose output is audio/video and so cannot ride the image-block lane. They persist
- *   the output to the content-addressed asset store (the INJECTED `persistOutput` dep)
+ *   the output to the content-addressed asset store (the INJECTED `persistOutputFile` dep)
  *   and return a `trustedMediaRefs` ref built by buildAvMediaRef. That ref travels a
  *   NEW trusted channel (McpToolExecutionResult.trustedMediaRefs) the host injects
  *   straight into run state — bypassing the image-only provider sanitizer (which hard-
@@ -58,22 +58,26 @@ export interface FfmpegToolDeps {
   /** An absolute staging file path (a dir WE own, never agent-supplied) for ffmpeg output. */
   stagingPath: (ext: string) => string
   /**
-   * Read a produced staging file → bytes (throws if missing / over the size cap).
-   * The optional mimeType selects the PER-MIME cap (audio 64MB / video 512MB) so an
-   * oversized output is rejected before it is read into the heap; omit for the video
-   * ceiling (the thumbnail PNG path).
+   * Read the bounded thumbnail staging file asynchronously. The host descriptor-
+   * anchors the read and applies the image MIME cap before allocating its buffer.
    */
-  readOutput: (path: string, mimeType?: string) => Buffer
+  readOutput: (path: string, mimeType: string) => Awaitable<Buffer>
   /**
-   * Persist a produced output buffer to the content-addressed asset store and return
-   * its canonical sha256. Owns the hashing (this module introduces no hash scheme).
-   * The host (index.ts) provides the real implementation; the producers only CALL it.
+   * Persist a produced staging file without materializing the AV asset in this
+   * process's heap. The returned path is the canonical durable asset; downstream
+   * probe/poster work must use it because staging cleanup can run immediately after.
    */
-  persistOutput: (buffer: Buffer, mimeType: string) => { ok: true; sha256: string } | { ok: false; reason: string }
+  persistOutputFile: (
+    path: string,
+    mimeType: string
+  ) => Awaitable<
+    | { ok: true; path: string; sha256: string; byteLength: number }
+    | { ok: false; reason: string }
+  >
   /**
    * Best-effort poster/waveform for a produced AV file (the card preview). Never
    * throws; resolves undefined on any failure (the producer still returns its ref).
-   * Called BEFORE removeFile so the staging file still exists on disk.
+   * Receives the canonical durable asset path returned by persistOutputFile.
    */
   generatePoster: GeneratePoster
   removeFile: (path: string) => void
@@ -155,7 +159,7 @@ function capProbeOutput<T extends Record<string, unknown>>(full: T): T | (Record
 }
 
 export function createFfmpegToolExecutors(deps: FfmpegToolDeps): FfmpegToolExecutors {
-  const { jailInput, resolveFfprobe, resolveFfmpeg, runFfprobe, runFfmpeg, stagingPath, readOutput, persistOutput, generatePoster, removeFile, missingMessage } = deps
+  const { jailInput, resolveFfprobe, resolveFfmpeg, runFfprobe, runFfmpeg, stagingPath, readOutput, persistOutputFile, generatePoster, removeFile, missingMessage } = deps
 
   // Part 2 — best-effort ffprobe on a PRODUCER'S OUTPUT file to fill durationMs +
   // codecs (the badge fields the VT producers already supply but the ffmpeg ones
@@ -256,7 +260,7 @@ export function createFfmpegToolExecutors(deps: FfmpegToolDeps): FfmpegToolExecu
           // The thumbnail is a PNG image — cap it at the 8MB IMAGE ceiling, not the
           // 512MB video default, so a pathological large frame (e.g. 4096×4096) can't
           // buffer huge in the heap before the image block is built.
-          buffer = readOutput(outputPath, 'image/png')
+          buffer = await readOutput(outputPath, 'image/png')
         } catch (error) {
           return fail('video_thumbnail', `ffmpeg output unavailable: ${error instanceof Error ? error.message : String(error)}`)
         }
@@ -300,21 +304,13 @@ export function createFfmpegToolExecutors(deps: FfmpegToolDeps): FfmpegToolExecu
     if (!argv.ok) return fail(toolName, argv.error)
     try {
       await runFfmpeg(ffmpeg, argv.args)
-      let buffer: Buffer
-      try {
-        buffer = readOutput(outputPath, mimeType)
-      } catch (error) {
-        return fail(toolName, `ffmpeg output unavailable: ${error instanceof Error ? error.message : String(error)}`)
-      }
-      if (!buffer || buffer.length === 0) return fail(toolName, 'ffmpeg produced an empty output')
-      const persisted = persistOutput(buffer, mimeType)
+      const persisted = await persistOutputFile(outputPath, mimeType)
       if (!persisted.ok) return fail(toolName, `Failed to persist output: ${persisted.reason}`)
       // Part 2 — best-effort durationMs/codecs from an ffprobe on the OUTPUT (badge
       // consistency with the VT producers). Part 1 — best-effort poster/waveform.
-      // BOTH run BEFORE the `finally { removeFile }` (the staging file is still on
-      // disk) and BOTH are fail-tolerant: any failure → undefined/{} and the ref is
-      // built without the missing field, exactly as today.
-      const probed = await probeOutputMetadata(outputPath)
+      // Both consume the canonical durable path and are fail-tolerant: any failure
+      // yields undefined/{} and the ref is built without the missing field.
+      const probed = await probeOutputMetadata(persisted.path)
       const kind: 'audio' | 'video' = mimeType.startsWith('audio/') ? 'audio' : 'video'
       // Guard the injected generator at the call site too: even if a (misbehaving)
       // generatePoster impl throws, the producer must still return its ref — the
@@ -322,7 +318,7 @@ export function createFfmpegToolExecutors(deps: FfmpegToolDeps): FfmpegToolExecu
       // defense-in-depth so the producer's contract holds for ANY injected dep.
       let poster: AvPosterResult | undefined
       try {
-        poster = await generatePoster(outputPath, kind, mimeType, buffer.length)
+        poster = await generatePoster(persisted.path, kind, mimeType, persisted.byteLength)
       } catch {
         poster = undefined
       }
@@ -331,7 +327,7 @@ export function createFfmpegToolExecutors(deps: FfmpegToolDeps): FfmpegToolExecu
         mimeType,
         name: outputName,
         runId: ctx?.appRunId,
-        byteLength: buffer.length,
+        byteLength: persisted.byteLength,
         durationMs: probed.durationMs,
         codecs: probed.codecs,
         thumbnail: poster?.thumbnail,
@@ -342,7 +338,7 @@ export function createFfmpegToolExecutors(deps: FfmpegToolDeps): FfmpegToolExecu
       // than return silent empty-success that would strand the persisted (content-
       // addressed) asset with no ref pointing at it.
       if (!ref) return fail(toolName, `internal: unsupported output mime ${mimeType}`)
-      const summary = `${PRODUCER_VERB[toolName]} ${outputName} (${humanBytes(buffer.length)})`
+      const summary = `${PRODUCER_VERB[toolName]} ${outputName} (${humanBytes(persisted.byteLength)})`
       return {
         text: summary,
         content: [{ type: 'text', text: summary }],

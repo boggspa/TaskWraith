@@ -113,8 +113,12 @@ function build(overrides: Partial<VtToolDeps> = {}) {
       return { ...TRANSCRIBE_RESULT, segments: [...TRANSCRIBE_RESULT.segments] }
     }),
     stagingPath: vi.fn((ext: string) => `/staging/out.${ext}`),
-    readOutput: vi.fn(() => Buffer.concat([Buffer.from([0x00, 0x00, 0x00, 0x18]), Buffer.from('ftypmp42clip')])),
-    persistOutput: vi.fn((_buffer: Buffer, _mimeType: string) => ({ ok: true as const, sha256: 'f'.repeat(64) })),
+    persistOutputFile: vi.fn((_path: string, _mimeType: string) => ({
+      ok: true as const,
+      path: '/assets/canonical-output',
+      sha256: 'f'.repeat(64),
+      byteLength: 42
+    })),
     // Default: no poster. Specific tests override to assert the thumbnail is threaded
     // onto the ref, and that a throwing generator still yields a ref WITHOUT one.
     generatePoster: vi.fn(async () => undefined),
@@ -484,7 +488,7 @@ describe('video_encode_clip', () => {
     expect(getEncodeParams()?.startSeconds).toBe(2)
     expect(getEncodeParams()?.durationSeconds).toBe(4)
     // Persisted to the asset store with the fixed video mime.
-    expect(deps.persistOutput).toHaveBeenCalledWith(expect.any(Buffer), 'video/mp4')
+    expect(deps.persistOutputFile).toHaveBeenCalledWith('/staging/out.mp4', 'video/mp4')
     // Rides the TRUSTED AV channel — a video ref, not an image block.
     const refs = result.trustedMediaRefs ?? []
     expect(refs).toHaveLength(1)
@@ -548,9 +552,9 @@ describe('video_encode_clip', () => {
     expect(getRemoved()).toContain('/staging/out.mp4')
   })
 
-  it('a persistOutput failure yields an error result with NO trusted refs (and still cleans up)', async () => {
+  it('a persistOutputFile failure yields an error result with NO trusted refs (and still cleans up)', async () => {
     const { executors, getRemoved } = build({
-      persistOutput: vi.fn(() => ({ ok: false as const, reason: 'disk_full' }))
+      persistOutputFile: vi.fn(async () => ({ ok: false as const, reason: 'disk_full' }))
     })
     const result = await executors.executeVtTool('video_encode_clip', { inputPath: 'clip.mp4' }, {})
     expect(result.isError).toBe(true)
@@ -559,14 +563,60 @@ describe('video_encode_clip', () => {
     expect(getRemoved()).toContain('/staging/out.mp4')
   })
 
-  it('fails (and cleans up) when the encoded output is empty', async () => {
-    const { executors, deps, getRemoved } = build({
-      readOutput: vi.fn(() => Buffer.alloc(0))
+  it('awaits file persistence before building the ref or removing staging', async () => {
+    let resolvePersistence!: (value: {
+      ok: true
+      path: string
+      sha256: string
+      byteLength: number
+    }) => void
+    const pendingPersistence = new Promise<{
+      ok: true
+      path: string
+      sha256: string
+      byteLength: number
+    }>((resolve) => {
+      resolvePersistence = resolve
+    })
+    let announcePersistenceStarted!: () => void
+    const persistenceStarted = new Promise<void>((resolve) => {
+      announcePersistenceStarted = resolve
+    })
+    const { executors, getRemoved } = build({
+      persistOutputFile: vi.fn(() => {
+        announcePersistenceStarted()
+        return pendingPersistence
+      })
+    })
+    let settled = false
+    const pending = executors
+      .executeVtTool('video_encode_clip', { inputPath: 'clip.mp4' }, {})
+      .finally(() => {
+        settled = true
+      })
+
+    await persistenceStarted
+    expect(settled).toBe(false)
+    expect(getRemoved()).toEqual([])
+    resolvePersistence({
+      ok: true,
+      path: '/assets/deferred.mp4',
+      sha256: 'd'.repeat(64),
+      byteLength: 4096
+    })
+    const result = await pending
+    expect(result.trustedMediaRefs?.[0]).toMatchObject({ sha256: 'd'.repeat(64), byteLength: 4096 })
+    expect(getRemoved()).toEqual(['/staging/out.mp4'])
+  })
+
+  it('fails without a ref when persistence rejects an empty encoded output', async () => {
+    const { executors, getRemoved } = build({
+      persistOutputFile: vi.fn(async () => ({ ok: false as const, reason: 'too_large' }))
     })
     const result = await executors.executeVtTool('video_encode_clip', { inputPath: 'clip.mp4' }, {})
     expect(result.isError).toBe(true)
-    expect(result.text).toContain('empty')
-    expect(deps.persistOutput).not.toHaveBeenCalled()
+    expect(result.text).toContain('too_large')
+    expect(result.trustedMediaRefs).toBeUndefined()
     expect(getRemoved()).toContain('/staging/out.mp4')
   })
 
@@ -645,7 +695,7 @@ describe('video_encode_clip', () => {
     })
     const result = await executors.executeVtTool('video_encode_clip', { inputPath: 'clip.mp4' }, {})
     expect(result.isError).toBeFalsy()
-    expect(deps.generatePoster).toHaveBeenCalledWith('/staging/out.mp4', 'video', 'video/mp4', expect.any(Number))
+    expect(deps.generatePoster).toHaveBeenCalledWith('/assets/canonical-output', 'video', 'video/mp4', 42)
     const refs = result.trustedMediaRefs ?? []
     expect(refs).toHaveLength(1)
     expect(refs[0].thumbnail).toEqual({ dataBase64: 'UE9TVEVS', mimeType: 'image/jpeg', width: 320, height: 180 })
@@ -706,7 +756,7 @@ describe('video_concat_clips', () => {
     expect(params?.segments[1].durationSeconds).toBe(4)
     expect(params?.segments[0].startSeconds).toBeUndefined()
     // Persisted with the fixed video mime; rides the TRUSTED AV channel.
-    expect(deps.persistOutput).toHaveBeenCalledWith(expect.any(Buffer), 'video/mp4')
+    expect(deps.persistOutputFile).toHaveBeenCalledWith('/staging/out.mp4', 'video/mp4')
     const refs = result.trustedMediaRefs ?? []
     expect(refs).toHaveLength(1)
     expect(refs[0].kind).toBe('video')
@@ -829,9 +879,9 @@ describe('video_concat_clips', () => {
     expect(getRemoved()).toContain('/staging/out.mp4')
   })
 
-  it('a persistOutput failure yields an error result with NO trusted refs (and still cleans up)', async () => {
+  it('a persistOutputFile failure yields an error result with NO trusted refs (and still cleans up)', async () => {
     const { executors, getRemoved } = build({
-      persistOutput: vi.fn(() => ({ ok: false as const, reason: 'disk_full' }))
+      persistOutputFile: vi.fn(async () => ({ ok: false as const, reason: 'disk_full' }))
     })
     const result = await executors.executeVtTool(
       'video_concat_clips',
@@ -844,9 +894,9 @@ describe('video_concat_clips', () => {
     expect(getRemoved()).toContain('/staging/out.mp4')
   })
 
-  it('fails (and cleans up) when the concatenated output is empty', async () => {
-    const { executors, deps, getRemoved } = build({
-      readOutput: vi.fn(() => Buffer.alloc(0))
+  it('fails without a ref when persistence rejects an empty concatenated output', async () => {
+    const { executors, getRemoved } = build({
+      persistOutputFile: vi.fn(async () => ({ ok: false as const, reason: 'too_large' }))
     })
     const result = await executors.executeVtTool(
       'video_concat_clips',
@@ -854,8 +904,8 @@ describe('video_concat_clips', () => {
       {}
     )
     expect(result.isError).toBe(true)
-    expect(result.text).toContain('empty')
-    expect(deps.persistOutput).not.toHaveBeenCalled()
+    expect(result.text).toContain('too_large')
+    expect(result.trustedMediaRefs).toBeUndefined()
     expect(getRemoved()).toContain('/staging/out.mp4')
   })
 
@@ -920,7 +970,7 @@ describe('audio_mix', () => {
     expect(params?.tracks[1].fadeOutMs).toBe(200)
     expect(params?.tracks[0].gainDb).toBeUndefined()
     // Persisted with the WAV mime; rides the TRUSTED AV channel.
-    expect(deps.persistOutput).toHaveBeenCalledWith(expect.any(Buffer), 'audio/wav')
+    expect(deps.persistOutputFile).toHaveBeenCalledWith('/staging/out.wav', 'audio/wav')
     const refs = result.trustedMediaRefs ?? []
     expect(refs).toHaveLength(1)
     expect(refs[0].kind).toBe('audio')
@@ -965,7 +1015,7 @@ describe('audio_mix', () => {
     expect(getMixParams()?.outputPath).toBe('/staging/out.m4a')
     expect(getMixParams()?.bitrateKbps).toBe(256)
     // Asset-store-known AV mime — audio/mp4, NOT audio/x-m4a.
-    expect(deps.persistOutput).toHaveBeenCalledWith(expect.any(Buffer), 'audio/mp4')
+    expect(deps.persistOutputFile).toHaveBeenCalledWith('/staging/out.m4a', 'audio/mp4')
     const refs = result.trustedMediaRefs ?? []
     expect(refs[0].mimeType).toBe('audio/mp4')
     expect(refs[0].kind).toBe('audio')
@@ -1053,9 +1103,9 @@ describe('audio_mix', () => {
     expect(getRemoved()).toContain('/staging/out.wav')
   })
 
-  it('a persistOutput failure yields an error result with NO trusted refs (and still cleans up)', async () => {
+  it('a persistOutputFile failure yields an error result with NO trusted refs (and still cleans up)', async () => {
     const { executors, getRemoved } = build({
-      persistOutput: vi.fn(() => ({ ok: false as const, reason: 'disk_full' }))
+      persistOutputFile: vi.fn(async () => ({ ok: false as const, reason: 'disk_full' }))
     })
     const result = await executors.executeVtTool('audio_mix', { tracks: [{ sourcePath: 'a.wav' }], format: 'wav' }, {})
     expect(result.isError).toBe(true)
@@ -1064,22 +1114,27 @@ describe('audio_mix', () => {
     expect(getRemoved()).toContain('/staging/out.wav')
   })
 
-  it('fails (and cleans up) when the mixed output is empty', async () => {
-    const { executors, deps, getRemoved } = build({
-      readOutput: vi.fn(() => Buffer.alloc(0))
+  it('fails without a ref when persistence rejects an empty mixed output', async () => {
+    const { executors, getRemoved } = build({
+      persistOutputFile: vi.fn(async () => ({ ok: false as const, reason: 'too_large' }))
     })
     const result = await executors.executeVtTool('audio_mix', { tracks: [{ sourcePath: 'a.wav' }], format: 'wav' }, {})
     expect(result.isError).toBe(true)
-    expect(result.text).toContain('empty')
-    expect(deps.persistOutput).not.toHaveBeenCalled()
+    expect(result.text).toContain('too_large')
+    expect(result.trustedMediaRefs).toBeUndefined()
     expect(getRemoved()).toContain('/staging/out.wav')
   })
 
   it('fails LOUDLY (error result, no trusted refs) when buildAvMediaRef would return null', async () => {
-    // Force the null-ref branch by handing persistOutput back an empty sha256 (buildAvMediaRef
+    // Force the null-ref branch by handing persistOutputFile back an empty sha256 (buildAvMediaRef
     // returns null on an empty digest) — the executor must NOT return a silent empty-success.
     const { executors, getRemoved } = build({
-      persistOutput: vi.fn(() => ({ ok: true as const, sha256: '' }))
+      persistOutputFile: vi.fn(() => ({
+        ok: true as const,
+        path: '/assets/canonical-output',
+        sha256: '',
+        byteLength: 42
+      }))
     })
     const result = await executors.executeVtTool('audio_mix', { tracks: [{ sourcePath: 'a.wav' }], format: 'wav' }, {})
     expect(result.isError).toBe(true)
@@ -1098,7 +1153,7 @@ describe('audio_mix', () => {
     })
     const result = await executors.executeVtTool('audio_mix', { tracks: [{ sourcePath: 'a.wav' }], format: 'wav' }, {})
     expect(result.isError).toBeFalsy()
-    expect(deps.generatePoster).toHaveBeenCalledWith('/staging/out.wav', 'audio', 'audio/wav', expect.any(Number))
+    expect(deps.generatePoster).toHaveBeenCalledWith('/assets/canonical-output', 'audio', 'audio/wav', 42)
     const refs = result.trustedMediaRefs ?? []
     expect(refs).toHaveLength(1)
     expect(refs[0].thumbnail).toEqual({ dataBase64: 'V0FWRQ==', mimeType: 'image/jpeg', width: 320, height: 80 })

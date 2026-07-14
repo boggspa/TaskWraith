@@ -576,13 +576,11 @@ import {
   validateWorkspaceAudioPath,
   stageWorkspaceMediaSnapshot,
   snapshotRasterOrPdfAttachment,
-  sha256Base64Url,
   TRANSCRIPT_MEDIA_MAX_WORKSPACE_IMAGE_BYTES
 } from './services/TranscriptMediaService'
 import {
   TRANSCRIPT_MEDIA_ASSET_DIR,
   TRANSCRIPT_MEDIA_MAX_FULL_IMAGE_BYTES,
-  TRANSCRIPT_MEDIA_MAX_VIDEO_BYTES,
   maxTranscriptMediaBytesForMime,
   TranscriptMediaAssetStore
 } from './services/TranscriptMediaAssetStore'
@@ -3048,7 +3046,7 @@ const audioToolExecutors = createAudioToolExecutors({
   // source into a standalone WAV via the daemon's native audio.windowClip, persist it to
   // the content-addressed asset store, poster/peaks it, and BEST-EFFORT transcribe the
   // windowed slice (Item 2 — caught here so a Speech-permission/locale failure NEVER fails
-  // the call). Mirrors the audio_mix producer lane (same staging→readOutput→persistOutput→
+  // the call). Mirrors the audio_mix producer lane (same staging→file persistence→
   // generateAvPoster→finally removeFile), but with one source + a transcript step.
   produceWindowClip: async (sourcePath, startMs, endMs) => {
     const daemon = bridgeDaemonRef
@@ -3066,22 +3064,18 @@ const audioToolExecutors = createAudioToolExecutors({
           { timeoutMs: 120_000 }
         )
       )
-      // Read with the per-mime cap (audio 64MB) BEFORE the heap read — same as the VtTool
-      // readOutput dep. A 120s clip stays well under it, but a malformed daemon result can't
-      // amplify into an oversized readFileSync.
-      const stat = fsSync.statSync(outputPath)
-      const cap = maxTranscriptMediaBytesForMime(mimeType)
-      if (stat.size > cap) throw new Error(`clip output too large (${stat.size} bytes; max ${cap})`)
-      const buffer = fsSync.readFileSync(outputPath)
-      if (!buffer || buffer.length === 0) throw new Error('audio engine produced an empty clip')
-      // Persist to the content-addressed store + get its canonical sha256 (same helper +
-      // store the image/AV lanes use, so the twmedia:// URL is byte-identical).
-      const sha256 = sha256Base64Url(buffer)
-      const persisted = getTranscriptMediaAssetStore().write({ sha256, mimeType, buffer })
+      // Stream the staged WAV into the content-addressed store under the shared media
+      // limiter. The returned canonical path is immutable and remains valid after this
+      // function's staging cleanup.
+      const persisted = await persistMediaOutputFile(outputPath, mimeType)
       if (!persisted.ok) throw new Error(`Failed to persist clip: ${persisted.reason}`)
-      // Best-effort poster/peaks BEFORE removeFile (the staging file must still exist).
-      const poster = await generateAvPoster(outputPath, 'audio', mimeType, buffer.length)
-      // Best-effort WINDOWED transcript (Item 2): transcribe the staging WAV. NEVER fail
+      const poster = await generateAvPoster(
+        persisted.path,
+        'audio',
+        mimeType,
+        persisted.byteLength
+      )
+      // Best-effort WINDOWED transcript (Item 2): transcribe the canonical WAV. NEVER fail
       // the call — a denied Speech permission / undownloaded locale model just omits it.
       let transcript: string | undefined
       let segments:
@@ -3094,7 +3088,7 @@ const audioToolExecutors = createAudioToolExecutors({
             segments: Array<{ text: string; startMs: number; endMs: number; confidence: number }>
             localeIdentifier: string
             onDevice: boolean
-          }>('audio.transcribe', { sourcePath: outputPath }, { timeoutMs: 120_000 })
+          }>('audio.transcribe', { sourcePath: persisted.path }, { timeoutMs: 120_000 })
         )
         if (t && typeof t.text === 'string' && t.text.trim()) {
           transcript = t.text
@@ -3104,8 +3098,8 @@ const audioToolExecutors = createAudioToolExecutors({
         // omit; permission/locale — the clip + peaks + levels still ride back.
       }
       return {
-        sha256,
-        byteLength: buffer.length,
+        sha256: persisted.sha256,
+        byteLength: persisted.byteLength,
         durationMs: clip.durationMs,
         peaks: poster?.peaks,
         thumbnail: poster?.thumbnail,
@@ -3132,6 +3126,72 @@ const vtToolCallBudget = new ImageToolCallBudget()
 const mediaProcessLimiter = createSemaphore(2)
 const MEDIA_STAGING_DIR = join(app.getPath('userData'), 'media-staging')
 const COMPOSER_AUDIO_TRANSCRIPTION_MAX_BYTES = 32 * 1024 * 1024
+
+async function readDescriptorAnchoredMediaFile(
+  filePath: string,
+  maxBytes: number
+): Promise<Buffer> {
+  if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0) {
+    throw new Error('invalid output byte limit')
+  }
+  const pathStat = await fs.lstat(filePath)
+  if (pathStat.isSymbolicLink() || !pathStat.isFile()) {
+    throw new Error('output is not a regular file')
+  }
+  const handle = await fs.open(filePath, fsSync.constants.O_RDONLY | fsSync.constants.O_NOFOLLOW)
+  try {
+    const stat = await handle.stat()
+    const uid = typeof process.getuid === 'function' ? process.getuid() : null
+    const sameSnapshot = (left: fsSync.Stats, right: fsSync.Stats): boolean =>
+      left.dev === right.dev &&
+      left.ino === right.ino &&
+      left.size === right.size &&
+      left.mtimeMs === right.mtimeMs &&
+      left.ctimeMs === right.ctimeMs
+    if (
+      !stat.isFile() ||
+      !sameSnapshot(stat, pathStat) ||
+      (uid !== null && (stat.uid !== uid || pathStat.uid !== uid))
+    ) {
+      throw new Error('output changed before read')
+    }
+    if (!Number.isSafeInteger(stat.size) || stat.size < 0) {
+      throw new Error('output has an invalid size')
+    }
+    if (stat.size > maxBytes) {
+      throw new Error(`output too large (${stat.size} bytes; max ${maxBytes})`)
+    }
+    const buffer = Buffer.allocUnsafe(stat.size)
+    let offset = 0
+    while (offset < stat.size) {
+      const read = await handle.read(buffer, offset, stat.size - offset, offset)
+      if (read.bytesRead <= 0) throw new Error('output ended before its declared size')
+      offset += read.bytesRead
+    }
+    const [finalStat, finalPathStat] = await Promise.all([handle.stat(), fs.lstat(filePath)])
+    if (
+      finalPathStat.isSymbolicLink() ||
+      !finalPathStat.isFile() ||
+      !sameSnapshot(finalStat, stat) ||
+      !sameSnapshot(finalPathStat, stat)
+    ) {
+      throw new Error('output changed during read')
+    }
+    return buffer
+  } finally {
+    await handle.close().catch(() => undefined)
+  }
+}
+
+async function persistMediaOutputFile(filePath: string, mimeType: string) {
+  return mediaProcessLimiter.run(() =>
+    getTranscriptMediaAssetStore().writeContentAddressedFromFile({
+      sourcePath: filePath,
+      mimeType
+    })
+  )
+}
+
 type ComposerAudioTranscriptionResult =
   | {
       ok: true
@@ -3321,19 +3381,11 @@ const ffmpegToolExecutors = createFfmpegToolExecutors({
     fsSync.mkdirSync(MEDIA_STAGING_DIR, { recursive: true })
     return join(MEDIA_STAGING_DIR, `tw-${randomUUID()}.${ext}`)
   },
-  readOutput: (filePath, mimeType) => {
-    const stat = fsSync.statSync(filePath)
-    // Cap at the PER-MIME limit (audio 64MB / video 512MB) BEFORE reading into
-    // the heap. An oversized audio output must be rejected here, not after a
-    // 512MB readFileSync that the store's audio cap would then reject anyway
-    // (adversarial review: read-cap memory amplification). No mime (the
-    // thumbnail PNG path) falls back to the video ceiling, as before.
-    const cap = mimeType ? maxTranscriptMediaBytesForMime(mimeType) : TRANSCRIPT_MEDIA_MAX_VIDEO_BYTES
-    if (stat.size > cap) {
-      throw new Error(`output too large (${stat.size} bytes; max ${cap})`)
-    }
-    return fsSync.readFileSync(filePath)
-  },
+  // Only the bounded PNG thumbnail lane still materializes producer output.
+  // Descriptor anchoring rejects symlinks/path replacement and the image cap is
+  // applied before allocating the buffer.
+  readOutput: (filePath, mimeType) =>
+    readDescriptorAnchoredMediaFile(filePath, maxTranscriptMediaBytesForMime(mimeType)),
   removeFile: (filePath) => {
     try {
       fsSync.unlinkSync(filePath)
@@ -3341,16 +3393,9 @@ const ffmpegToolExecutors = createFfmpegToolExecutors({
       // best-effort staging cleanup
     }
   },
-  // S1b-3 — persist a producer's output buffer into the content-addressed
-  // asset store and hand back its canonical (base64url) sha256. Uses the SAME
-  // hash helper + store the image lane uses, so the twmedia:// URL the renderer
-  // builds is byte-identical to a freshly-written asset. The executor never
-  // hashes; this dep owns it.
-  persistOutput: (buffer, mimeType) => {
-    const sha256 = sha256Base64Url(buffer)
-    const result = getTranscriptMediaAssetStore().write({ sha256, mimeType, buffer })
-    return result.ok ? { ok: true, sha256 } : { ok: false, reason: result.reason }
-  },
+  // S1b-3 — bounded async copy+hash into the content-addressed store. The helper
+  // runs under the shared media limiter and returns the durable canonical path.
+  persistOutputFile: persistMediaOutputFile,
   // Quick-win — a small poster/waveform so the AV card isn't blank. Fail-tolerant
   // (undefined on any error); see generateAvPoster.
   generatePoster: generateAvPoster,
@@ -3409,7 +3454,7 @@ const vtToolExecutors = createVtToolExecutors({
     }>('video.decodeFrame', params, { timeoutMs: 30_000 })
   },
   // S3 — native VideoToolbox encode. The daemon writes the MP4 to the TS-owned
-  // staging path and returns metadata; TS reads + persists + removes it (the
+  // staging path and returns metadata; TS persists + removes it (the
   // ffmpeg-producer pattern, but daemon-backed). 5-min timeout mirrors runFfmpeg.
   encodeClip: async (params) => {
     const daemon = bridgeDaemonRef
@@ -3478,26 +3523,14 @@ const vtToolExecutors = createVtToolExecutors({
       }>('audio.transcribe', params, { timeoutMs: 120_000 })
     )
   },
-  // The output-file deps mirror the ffmpeg factory exactly (same MEDIA_STAGING_DIR,
-  // per-mime cap, content-addressed store) so a daemon-produced MP4 rides the
+  // The output-file deps mirror the ffmpeg factory exactly (same MEDIA_STAGING_DIR
+  // and content-addressed store) so a daemon-produced MP4 rides the
   // identical persist→buildAvMediaRef→trustedMediaRefs lane as transcode_video.
   stagingPath: (ext) => {
     fsSync.mkdirSync(MEDIA_STAGING_DIR, { recursive: true })
     return join(MEDIA_STAGING_DIR, `tw-${randomUUID()}.${ext}`)
   },
-  readOutput: (filePath, mimeType) => {
-    const stat = fsSync.statSync(filePath)
-    const cap = mimeType ? maxTranscriptMediaBytesForMime(mimeType) : TRANSCRIPT_MEDIA_MAX_VIDEO_BYTES
-    if (stat.size > cap) {
-      throw new Error(`output too large (${stat.size} bytes; max ${cap})`)
-    }
-    return fsSync.readFileSync(filePath)
-  },
-  persistOutput: (buffer, mimeType) => {
-    const sha256 = sha256Base64Url(buffer)
-    const result = getTranscriptMediaAssetStore().write({ sha256, mimeType, buffer })
-    return result.ok ? { ok: true, sha256 } : { ok: false, reason: result.reason }
-  },
+  persistOutputFile: persistMediaOutputFile,
   // Quick-win — a small poster/waveform so the AV card isn't blank. Fail-tolerant
   // (undefined on any error); see generateAvPoster.
   generatePoster: generateAvPoster,
@@ -4405,11 +4438,11 @@ const POSTER_AUDIO_MAX_BYTES = 24 * 1024 * 1024
 // Outer guard so a single poster can never hang a producer for long.
 const POSTER_TIMEOUT_MS = 12_000
 
-// Best-effort poster/waveform for an already-written AV staging file. INJECTED into
+// Best-effort poster/waveform for an already-persisted canonical AV file. INJECTED into
 // both the ffmpeg + VideoToolbox producers (the `generatePoster` dep). MUST be fully
 // fail-tolerant: it NEVER throws and resolves to undefined on any error/timeout/empty
 // result, so a producer always returns its ref (just with no poster), exactly as
-// before this feature. Called BEFORE the producer removes the staging file.
+// before this feature. The canonical path remains valid after staging cleanup.
 //   - VIDEO: native VideoToolbox `video.decodeFrame` at t=0 (under mediaProcessLimiter,
 //     the same encoder semaphore) → base64 PNG → downscaled, size-capped JPEG.
 //   - AUDIO: the offscreen audio engine's analyzeAudio → waveform PNG → same downscale.
@@ -4449,7 +4482,10 @@ async function generateAvPoster(
         if (byteLength > POSTER_AUDIO_MAX_BYTES) return undefined
         let audioBuffer: Buffer
         try {
-          audioBuffer = fsSync.readFileSync(outputPath)
+          audioBuffer = await readDescriptorAnchoredMediaFile(
+            outputPath,
+            POSTER_AUDIO_MAX_BYTES
+          )
         } catch {
           return undefined
         }

@@ -44,7 +44,12 @@ function build(overrides: Partial<FfmpegToolDeps> = {}) {
     }),
     stagingPath: vi.fn((ext: string) => `/staging/out.${ext}`),
     readOutput: vi.fn(() => Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.from('frame')])),
-    persistOutput: vi.fn((_buffer: Buffer, _mimeType: string) => ({ ok: true as const, sha256: 'f'.repeat(64) })),
+    persistOutputFile: vi.fn((_path: string, _mimeType: string) => ({
+      ok: true as const,
+      path: '/assets/canonical-output',
+      sha256: 'f'.repeat(64),
+      byteLength: 42
+    })),
     // Default: no poster (mirrors a generator that can't produce one). Specific
     // tests override this to assert the thumbnail is threaded onto the ref, and
     // that a throwing generator still yields a ref WITHOUT a thumbnail.
@@ -213,6 +218,40 @@ describe('video_thumbnail', () => {
     expect(deps.readOutput).toHaveBeenCalledWith('/staging/out.png', 'image/png')
   })
 
+  it('awaits the bounded thumbnail read before returning or cleaning staging', async () => {
+    let resolveRead!: (buffer: Buffer) => void
+    let announceReadStarted!: () => void
+    const pendingRead = new Promise<Buffer>((resolve) => {
+      resolveRead = resolve
+    })
+    const readStarted = new Promise<void>((resolve) => {
+      announceReadStarted = resolve
+    })
+    const { executors, getRemoved } = build({
+      readOutput: vi.fn(() => {
+        announceReadStarted()
+        return pendingRead
+      })
+    })
+    let settled = false
+    const pending = executors
+      .executeFfmpegTool('video_thumbnail', { sourcePath: 'clip.mp4' }, {})
+      .finally(() => {
+        settled = true
+      })
+
+    await readStarted
+    expect(settled).toBe(false)
+    expect(getRemoved()).toEqual([])
+    resolveRead(Buffer.concat([
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+      Buffer.from('frame')
+    ]))
+    const result = await pending
+    expect(result.isError).toBeFalsy()
+    expect(getRemoved()).toEqual(['/staging/out.png'])
+  })
+
   it('returns an actionable error when ffmpeg is not installed', async () => {
     const { executors, deps, inputCleanup } = build({ resolveFfmpeg: vi.fn(() => null) })
     const result = await executors.executeFfmpegTool('video_thumbnail', { sourcePath: 'clip.mp4' }, {})
@@ -281,7 +320,7 @@ describe('audio_extract / transcode_audio / transcode_video (trusted AV refs)', 
     expect(args).toContain('-i /ws/clip.mp4') // jailed input
     expect(args).toContain('/staging/out.m4a') // staged output WE named
     // Persisted to the asset store with the format's mime.
-    expect(deps.persistOutput).toHaveBeenCalledWith(expect.any(Buffer), 'audio/mp4')
+    expect(deps.persistOutputFile).toHaveBeenCalledWith('/staging/out.m4a', 'audio/mp4')
     const refs = result.trustedMediaRefs ?? []
     expect(refs).toHaveLength(1)
     expect(refs[0].kind).toBe('audio')
@@ -301,7 +340,7 @@ describe('audio_extract / transcode_audio / transcode_video (trusted AV refs)', 
     const { executors, deps } = build()
     const result = await executors.executeFfmpegTool('transcode_audio', { sourcePath: 'song.flac', format: 'wav' }, {})
     expect(result.isError).toBeFalsy()
-    expect(deps.persistOutput).toHaveBeenCalledWith(expect.any(Buffer), 'audio/wav')
+    expect(deps.persistOutputFile).toHaveBeenCalledWith('/staging/out.wav', 'audio/wav')
     const refs = result.trustedMediaRefs ?? []
     expect(refs).toHaveLength(1)
     expect(refs[0].kind).toBe('audio')
@@ -314,7 +353,7 @@ describe('audio_extract / transcode_audio / transcode_video (trusted AV refs)', 
     const result = await executors.executeFfmpegTool('transcode_video', { sourcePath: 'clip.mp4', crf: 28, scaleWidth: 640 }, {})
     expect(result.isError).toBeFalsy()
     expect(getFfmpegArgs()!.join(' ')).toContain('/staging/out.mp4')
-    expect(deps.persistOutput).toHaveBeenCalledWith(expect.any(Buffer), 'video/mp4')
+    expect(deps.persistOutputFile).toHaveBeenCalledWith('/staging/out.mp4', 'video/mp4')
     const refs = result.trustedMediaRefs ?? []
     expect(refs).toHaveLength(1)
     expect(refs[0].kind).toBe('video')
@@ -331,9 +370,9 @@ describe('audio_extract / transcode_audio / transcode_video (trusted AV refs)', 
     expect(inputCleanup).toHaveBeenCalledTimes(1)
   })
 
-  it('a persistOutput failure yields an error result with NO trusted refs (and still cleans up)', async () => {
+  it('an awaited persistOutputFile failure yields no trusted refs and still cleans up', async () => {
     const { executors, getRemoved, inputCleanup } = build({
-      persistOutput: vi.fn(() => ({ ok: false as const, reason: 'disk_full' }))
+      persistOutputFile: vi.fn(async () => ({ ok: false as const, reason: 'disk_full' }))
     })
     const result = await executors.executeFfmpegTool('transcode_video', { sourcePath: 'clip.mp4' }, {})
     expect(result.isError).toBe(true)
@@ -341,6 +380,52 @@ describe('audio_extract / transcode_audio / transcode_video (trusted AV refs)', 
     expect(result.trustedMediaRefs).toBeUndefined()
     expect(getRemoved()).toContain('/staging/out.mp4')
     expect(inputCleanup).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not build a ref or clean staging until file persistence resolves', async () => {
+    let resolvePersistence!: (value: {
+      ok: true
+      path: string
+      sha256: string
+      byteLength: number
+    }) => void
+    const pendingPersistence = new Promise<{
+      ok: true
+      path: string
+      sha256: string
+      byteLength: number
+    }>((resolve) => {
+      resolvePersistence = resolve
+    })
+    let announcePersistenceStarted!: () => void
+    const persistenceStarted = new Promise<void>((resolve) => {
+      announcePersistenceStarted = resolve
+    })
+    const { executors, getRemoved } = build({
+      persistOutputFile: vi.fn(() => {
+        announcePersistenceStarted()
+        return pendingPersistence
+      })
+    })
+    let settled = false
+    const pending = executors
+      .executeFfmpegTool('transcode_video', { sourcePath: 'clip.mp4' }, {})
+      .finally(() => {
+        settled = true
+      })
+
+    await persistenceStarted
+    expect(settled).toBe(false)
+    expect(getRemoved()).toEqual([])
+    resolvePersistence({
+      ok: true,
+      path: '/assets/deferred.mp4',
+      sha256: 'd'.repeat(64),
+      byteLength: 2048
+    })
+    const result = await pending
+    expect(result.trustedMediaRefs?.[0]).toMatchObject({ sha256: 'd'.repeat(64), byteLength: 2048 })
+    expect(getRemoved()).toEqual(['/staging/out.mp4'])
   })
 
   it('fails (and cleans up) when a producer ffmpeg run throws', async () => {
@@ -352,7 +437,7 @@ describe('audio_extract / transcode_audio / transcode_video (trusted AV refs)', 
     const result = await executors.executeFfmpegTool('transcode_audio', { sourcePath: 'a.wav', format: 'mp3' }, {})
     expect(result.isError).toBe(true)
     expect(result.text).toContain('timed out')
-    expect(deps.persistOutput).not.toHaveBeenCalled()
+    expect(deps.persistOutputFile).not.toHaveBeenCalled()
     expect(getRemoved()).toContain('/staging/out.mp3')
     expect(inputCleanup).toHaveBeenCalledTimes(1)
   })
@@ -389,7 +474,7 @@ describe('audio_extract / transcode_audio / transcode_video (trusted AV refs)', 
   })
 
   // Part 1 — poster/waveform threading + fail-tolerance.
-  it('threads the generated poster onto the trusted ref (called with the staging path, BEFORE cleanup)', async () => {
+  it('threads the generated poster from the canonical asset before staging cleanup', async () => {
     const order: string[] = []
     const { executors, deps } = build({
       generatePoster: vi.fn(async () => {
@@ -402,8 +487,7 @@ describe('audio_extract / transcode_audio / transcode_video (trusted AV refs)', 
     })
     const result = await executors.executeFfmpegTool('transcode_video', { sourcePath: 'clip.mp4' }, {})
     expect(result.isError).toBeFalsy()
-    // Poster dep called with (outputPath, kind, mime, byteLength) on the staging file.
-    expect(deps.generatePoster).toHaveBeenCalledWith('/staging/out.mp4', 'video', 'video/mp4', expect.any(Number))
+    expect(deps.generatePoster).toHaveBeenCalledWith('/assets/canonical-output', 'video', 'video/mp4', 42)
     const refs = result.trustedMediaRefs ?? []
     expect(refs).toHaveLength(1)
     expect(refs[0].thumbnail).toEqual({ dataBase64: 'UE9TVEVS', mimeType: 'image/jpeg', width: 320, height: 180 })
@@ -414,7 +498,7 @@ describe('audio_extract / transcode_audio / transcode_video (trusted AV refs)', 
   it('audio producers ask for an audio-kind poster', async () => {
     const { executors, deps } = build()
     await executors.executeFfmpegTool('transcode_audio', { sourcePath: 'song.flac', format: 'wav' }, {})
-    expect(deps.generatePoster).toHaveBeenCalledWith('/staging/out.wav', 'audio', 'audio/wav', expect.any(Number))
+    expect(deps.generatePoster).toHaveBeenCalledWith('/assets/canonical-output', 'audio', 'audio/wav', 42)
   })
 
   it('still returns the ref WITHOUT a thumbnail when the poster generator throws (fail-tolerant)', async () => {
@@ -433,13 +517,14 @@ describe('audio_extract / transcode_audio / transcode_video (trusted AV refs)', 
 
   // Part 2 — best-effort durationMs/codecs from an ffprobe on the OUTPUT.
   it('fills durationMs + codecs from a best-effort ffprobe on the output', async () => {
-    const { executors } = build()
+    const { executors, getProbeArgs } = build()
     const result = await executors.executeFfmpegTool('transcode_video', { sourcePath: 'clip.mp4' }, {})
     const refs = result.trustedMediaRefs ?? []
     expect(refs).toHaveLength(1)
     // PROBE_JSON: format.duration "10.0" → 10000ms; streams h264 + aac → "h264,aac".
     expect(refs[0].durationMs).toBe(10000)
     expect(refs[0].codecs).toBe('h264,aac')
+    expect(getProbeArgs()).toContain('/assets/canonical-output')
   })
 
   it('omits durationMs/codecs (badges conditional) when the output ffprobe fails', async () => {
