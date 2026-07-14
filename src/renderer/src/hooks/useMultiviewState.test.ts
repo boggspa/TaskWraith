@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import type {
   MultiviewPaneMediaRef,
@@ -536,6 +537,27 @@ describe('applyAssignToNextPane', () => {
     const result = applyAssignToNextPane(state({ panes: panesOf(['a']) }), 'z')
     expect(result.index).toBe(0)
     expect(chatIds(result.state)).toEqual(['z'])
+  })
+
+  it('composes focus and assignment after another state update in the same React batch', () => {
+    const initial = state({ panes: panesOf(['a']) })
+    const queuedUpdates: Array<(value: MultiviewCoreState) => MultiviewCoreState> = [
+      (value) => applySetLayout(value, 'vertical-2'),
+      (value) => applyFocusPane(value, 1, 'a'),
+      (value) => applyAssignToNextPane(value, 'b').state
+    ]
+    const next = queuedUpdates.reduce((value, update) => update(value), initial)
+
+    expect(next.layout).toBe('vertical-2')
+    expect(chatIds(next)).toEqual(['a', 'b'])
+    expect(next.focusedPaneIndex).toBe(1)
+
+    const source = readFileSync(new URL('./useMultiviewState.ts', import.meta.url), 'utf8')
+    const hook = source.slice(source.indexOf('export function useMultiviewState'))
+    expect(hook).toContain('setState((s) => applyFocusPane(s, index, outgoingFocusedChatId))')
+    expect(hook).toContain('setState((s) => applyAssignToNextPane(s, chatId).state)')
+    expect(hook).not.toContain('stateRef.current')
+    expect(hook).not.toContain('setState(result.state)')
   })
 })
 

@@ -745,8 +745,8 @@ export interface UseMultiviewStateResult extends MultiviewCoreState {
   setFocusedPane: (index: number) => void
   focusPane: (index: number, outgoingFocusedChatId?: string | null) => void
   closePane: (index: number) => void
-  /** Place + focus a chat; returns the pane index it landed in. */
-  assignToNextPane: (chatId: string) => number
+  /** Place + focus a chat. */
+  assignToNextPane: (chatId: string) => void
   /** Open a chat in a non-focused pane (grows the layout if needed); keeps focus. */
   openInNewPane: (chatId: string, outgoingFocusedChatId?: string | null) => void
   /** Detach an A/V player into a non-focused pane (grows if needed); keeps focus. */
@@ -775,13 +775,6 @@ export function useMultiviewState(options: UseMultiviewStateOptions = {}): UseMu
   const [state, setState] = useState<MultiviewCoreState>(() =>
     createInitialMultiviewState(options.initialPaneChatId ?? null)
   )
-
-  // Keep the latest state reachable synchronously so assignToNextPane can
-  // return the chosen index without depending on a setState callback's timing.
-  const stateRef = useRef(state)
-  useLayoutEffect(() => {
-    stateRef.current = state
-  }, [state])
 
   const paneRefsByIdRef = useRef(new Map<string, MultiviewPaneRefs>())
   const paneRefs = useMemo(
@@ -817,16 +810,11 @@ export function useMultiviewState(options: UseMultiviewStateOptions = {}): UseMu
     []
   )
   const focusPane = useCallback((index: number, outgoingFocusedChatId: string | null = null) => {
-    const next = applyFocusPane(stateRef.current, index, outgoingFocusedChatId)
-    stateRef.current = next
-    setState(next)
+    setState((s) => applyFocusPane(s, index, outgoingFocusedChatId))
   }, [])
   const closePane = useCallback((index: number) => setState((s) => applyClosePane(s, index)), [])
   const assignToNextPane = useCallback((chatId: string) => {
-    const result = applyAssignToNextPane(stateRef.current, chatId)
-    stateRef.current = result.state
-    setState(result.state)
-    return result.index
+    setState((s) => applyAssignToNextPane(s, chatId).state)
   }, [])
   const openInNewPane = useCallback(
     (chatId: string, outgoingFocusedChatId: string | null = null) => {
