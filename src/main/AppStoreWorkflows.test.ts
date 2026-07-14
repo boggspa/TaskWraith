@@ -942,6 +942,7 @@ describe('AppStore workflow unattended elevation (P2)', () => {
     level: 'full_access' as const,
     acknowledgedAt: '2026-06-24T00:00:00.000Z',
     acknowledgedApprovalMode: 'auto_edit',
+    authorityDigest: 'b'.repeat(64),
     signature: 'a'.repeat(64)
   }
 
@@ -958,7 +959,8 @@ describe('AppStore workflow unattended elevation (P2)', () => {
       { ...wellFormedAck, signature: undefined as unknown as string },
       { ...wellFormedAck, level: 'root' as unknown as 'safe' },
       { ...wellFormedAck, acknowledgedAt: '' },
-      { ...wellFormedAck, acknowledgedApprovalMode: 123 as unknown as string }
+      { ...wellFormedAck, acknowledgedApprovalMode: 123 as unknown as string },
+      { ...wellFormedAck, authorityDigest: '' }
     ]) {
       AppStore.setWorkflowUnattendedElevation(saved.id, bad as never)
       expect(AppStore.getWorkflowDefinition(saved.id)?.unattendedElevation).toBeUndefined()
@@ -975,6 +977,58 @@ describe('AppStore workflow unattended elevation (P2)', () => {
     })
     expect(updated?.unattendedElevation).toBeUndefined()
     expect(AppStore.getWorkflowDefinition(saved.id)?.unattendedElevation).toBeUndefined()
+  })
+
+  it('revokes the ack for every authority-bearing workflow update class', () => {
+    const mutations = [
+      (saved: WorkflowDefinition) => ({
+        template: { ...saved.template, prompt: 'Retargeted prompt.' }
+      }),
+      (saved: WorkflowDefinition) => ({
+        template: { ...saved.template, selectedModelType: 'gpt-5.6-terra' }
+      }),
+      (saved: WorkflowDefinition) => ({
+        template: { ...saved.template, workflowMode: 'plan' as const }
+      }),
+      (saved: WorkflowDefinition) => ({
+        template: {
+          ...saved.template,
+          externalPathGrants: [
+            {
+              id: 'grant-1',
+              provider: 'codex' as const,
+              path: '/external',
+              kind: 'directory' as const,
+              access: 'write' as const,
+              duration: 'workspace' as const,
+              createdAt: plannedFor
+            }
+          ]
+        }
+      }),
+      (saved: WorkflowDefinition) => ({
+        template: { ...saved.template, imageAttachments: [durableAttachment()] }
+      }),
+      () => ({ trigger: { kind: 'manual' as const } }),
+      () => ({ missedRunPolicy: 'skip' as const }),
+      (saved: WorkflowDefinition) => ({
+        limits: { ...saved.limits, maxRunsPerDay: 2 }
+      }),
+      () => ({
+        loop: {
+          acceptance: { maxIterations: 2, verifier: { provider: 'claude' as const } },
+          limits: { maxRuns: 4 }
+        }
+      })
+    ]
+
+    for (const mutate of mutations) {
+      const saved = AppStore.saveWorkflowDefinition(workflowInput())
+      AppStore.setWorkflowUnattendedElevation(saved.id, wellFormedAck)
+      const updated = AppStore.updateWorkflowDefinition(saved.id, mutate(saved))
+      expect(updated?.unattendedElevation).toBeUndefined()
+      expect(AppStore.getWorkflowDefinition(saved.id)?.unattendedElevation).toBeUndefined()
+    }
   })
 
   it('updateWorkflowDefinition (unrelated field) PRESERVES the ack', () => {

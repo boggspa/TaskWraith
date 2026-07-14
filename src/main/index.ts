@@ -467,6 +467,11 @@ import {
   type FailoverRunSnapshot
 } from './services/ProviderAutoFailover'
 import { WorkflowBudgetRegistry } from './WorkflowBudgetRegistry'
+import {
+  buildElevatedWorkflowRunNowConfirmationOptions,
+  buildWorkflowElevationConfirmationOptions,
+  confirmNativeWorkflowAuthority
+} from './NativeWorkflowConfirmation'
 import { decideCancelInterrupt, shouldFlushPendingInterrupt } from './CodexPendingInterrupt'
 import { routeDueScheduledTask } from './HeadlessScheduledDispatch'
 import { getNextScheduledTaskRunAtMs } from './ScheduledTaskTimer'
@@ -525,6 +530,7 @@ import {
   type TrustedSessionSetResult
 } from './TrustedSessionGrants'
 import { buildScheduledTaskPermissionPosture } from './services/ScheduledTaskPosture'
+import { isCanonicalWorkflowScheduledTask } from './ScheduledTaskRendererAuthority'
 import { SettingsService } from './services/SettingsService'
 import { WorkspaceService } from './services/WorkspaceService'
 import { GitService } from './services/GitService'
@@ -767,6 +773,7 @@ import {
   signUnattendedElevation,
   verifyUnattendedElevation
 } from './UnattendedElevationSignature'
+import { workflowAuthorityDigest } from './WorkflowAuthorityDigest'
 import {
   applyRuntimeProfileToPayload as applyRuntimeProfileToPayloadViaCliRuntime,
   captureProcessOutput,
@@ -4816,6 +4823,7 @@ const {
   getSettings: () => AppStore.getSettings(),
   getScheduledTasks: () => AppStore.getScheduledTasks(),
   getWorkflowDefinitions: () => AppStore.getWorkflowDefinitions(),
+  getChat: (id) => AppStore.getChat(id),
   findRegisteredWorkspace,
   requireRegisteredWorkspace,
   canonicalPath,
@@ -5162,13 +5170,15 @@ function signWorkflowUnattendedElevation(
   workflowId: string,
   workspacePath: string,
   level: UnattendedElevationLevel,
-  acknowledgedApprovalMode: string
+  acknowledgedApprovalMode: string,
+  authorityDigest: string
 ): string {
   return signUnattendedElevation(externalGrantSigningSecret, {
     workflowId,
     workspacePath: canonicalPath(workspacePath),
     level,
-    acknowledgedApprovalMode
+    acknowledgedApprovalMode,
+    authorityDigest
   })
 }
 
@@ -5177,18 +5187,33 @@ function resolveWorkflowUnattendedElevation(
 ): { ack: UnattendedElevationAck; templateApprovalMode: string } | null {
   const ack = wf.unattendedElevation
   if (!ack) return null
+  let currentAuthorityDigest: string
+  try {
+    currentAuthorityDigest = workflowAuthorityDigest(wf, canonicalPath)
+  } catch {
+    return null
+  }
   const verified = verifyUnattendedElevation(
     externalGrantSigningSecret,
     {
       workflowId: wf.id,
       workspacePath: canonicalPath(wf.workspacePath),
       level: ack.level,
-      acknowledgedApprovalMode: ack.acknowledgedApprovalMode
+      acknowledgedApprovalMode: ack.acknowledgedApprovalMode,
+      authorityDigest: currentAuthorityDigest
     },
     ack.signature
   )
   if (!verified) return null
-  if (!isUnattendedElevationAckCurrent(ack, wf.template.approvalMode)) return null
+  if (
+    !isUnattendedElevationAckCurrent(
+      ack,
+      wf.template.approvalMode,
+      currentAuthorityDigest
+    )
+  ) {
+    return null
+  }
   return { ack, templateApprovalMode: wf.template.approvalMode }
 }
 
@@ -5204,6 +5229,7 @@ function resolveUnattendedElevation(
   if (!task?.workflowId) return null
   const wf = AppStore.getWorkflowDefinition(task.workflowId)
   if (!wf) return null
+  if (!isCanonicalWorkflowScheduledTask(task, wf, canonicalPath)) return null
   return resolveWorkflowUnattendedElevation(wf)
 }
 
@@ -34070,6 +34096,50 @@ if (isGeminiMcpBridgeProcess) {
           scheduledAttachmentPersistence.resolve
         )
         return task ? ensureScheduledTaskSignedPosture(task) : null
+      },
+      workflowAuthorityDigest: (workflow) =>
+        workflowAuthorityDigest(workflow, canonicalPath),
+      currentWorkflowUnattendedElevationCapability: (workflow) => {
+        const elevation = resolveWorkflowUnattendedElevation(workflow)
+        const signature = elevation?.ack.signature
+        const level = elevation?.ack.level
+        if (!signature || (level !== 'default' && level !== 'full_access')) return null
+        return {
+          key: `${level}:${elevation.ack.authorityDigest}:${signature}`,
+          level
+        }
+      },
+      workflowTargetIsCurrent: (workflow) => {
+        try {
+          const workspace = findRegisteredWorkspace(workflow.workspacePath)
+          const chat = AppStore.getChat(workflow.template.chatId)
+          return Boolean(
+            workspace &&
+              chat &&
+              !chat.archived &&
+              chat.scope === 'workspace' &&
+              chat.workspaceId === workspace.id &&
+              chat.workspaceId === workflow.workspaceId &&
+              chat.workspaceId === workflow.template.workspaceId &&
+              chat.workspacePath &&
+              canonicalPath(chat.workspacePath) === canonicalPath(workflow.workspacePath) &&
+              canonicalPath(chat.workspacePath) === canonicalPath(workflow.template.workspacePath)
+          )
+        } catch {
+          return false
+        }
+      },
+      confirmWorkflowUnattendedElevation: async (event, workflow, level) => {
+        return confirmNativeWorkflowAuthority(
+          BrowserWindow.fromWebContents(event.sender),
+          buildWorkflowElevationConfirmationOptions(workflow, level)
+        )
+      },
+      confirmElevatedWorkflowRunNow: async (event, workflow, level) => {
+        return confirmNativeWorkflowAuthority(
+          BrowserWindow.fromWebContents(event.sender),
+          buildElevatedWorkflowRunNowConfirmationOptions(workflow, level)
+        )
       },
       setWorkflowUnattendedElevation: (id, ack) => AppStore.setWorkflowUnattendedElevation(id, ack),
       getWorkflowRunSummaries: (workflowId) => AppStore.getWorkflowRunSummaries(workflowId),

@@ -4254,7 +4254,7 @@ export interface WorkflowDefinition {
    * (scheduled) run of this workflow may rise above the forced-'plan' clamp to
    * Default / Full-Workspace-Access. Minted server-side only (the
    * set-workflow-unattended-elevation IPC); the save/update sanitizers strip a
-   * renderer-supplied value. Eagerly nulled when template.approvalMode changes.
+   * renderer-supplied value. Eagerly nulled when any execution-authority field changes.
    */
   unattendedElevation?: UnattendedElevationAck
   workspaceId: string
@@ -4286,6 +4286,32 @@ export interface WorkflowDefinition {
   createdAt: string
   updatedAt: string
 }
+
+/** Renderer-to-MAIN create contracts. Identity, lifecycle, history, linkage and
+ * unattended authority are deliberately absent. Runtime sanitizers still
+ * enforce these boundaries against untyped/compromised callers. */
+export type ScheduledTaskCreateInput = WorkflowRunTemplate &
+  Pick<ScheduledTask, 'runAt' | 'timezone'>
+
+export type ScheduledTaskLifecycleUpdate = Pick<ScheduledTask, 'status'> &
+  Partial<Pick<ScheduledTask, 'runId' | 'firedAt' | 'completedAt' | 'lastError'>>
+
+export type WorkflowDefinitionCreateInput = Pick<
+  WorkflowDefinition,
+  | 'name'
+  | 'workspaceId'
+  | 'workspacePath'
+  | 'enabled'
+  | 'trigger'
+  | 'template'
+  | 'missedRunPolicy'
+  | 'concurrencyPolicy'
+  | 'limits'
+>
+
+export type WorkflowDefinitionRendererUpdate = Partial<
+  Pick<WorkflowDefinition, 'enabled' | 'trigger'>
+>
 
 export type WorkspaceBoardColumnId =
   | 'inbox'

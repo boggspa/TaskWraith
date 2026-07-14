@@ -77,6 +77,7 @@ describe('buildScheduledTaskPermissionPosture', () => {
       unattendedElevationAck: {
         level: 'default',
         acknowledgedApprovalMode: 'default',
+        authorityDigest: 'a'.repeat(64),
         signature: 'verified-elsewhere',
         acknowledgedAt: '2026-07-02T00:00:00.000Z'
       },

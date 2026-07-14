@@ -6,6 +6,7 @@ import type {
   AuditOrchestrationSettings,
   AuditRole,
   AuditRunIdentity,
+  ChatRecord,
   EnsembleRunIdentity,
   ExternalPathGrant,
   HandoffCard,
@@ -23,6 +24,8 @@ import type {
   WorkspaceBoardProvenance,
   WorkspaceBoardProvenanceSourceKind,
   WorkflowDefinition,
+  WorkflowDefinitionCreateInput,
+  WorkflowDefinitionRendererUpdate,
   WorkflowRunTemplate,
   WorkflowTrigger,
   WorkspaceRecord
@@ -33,6 +36,8 @@ import type {
 } from '../../shared/plugins/PluginTypes'
 import { WORKSPACE_BOARD_CARD_LINK_KINDS } from '../store/types'
 import { pickWorkflowRunTemplateFields } from '../store/WorkflowRunTemplate'
+import { sanitizeRendererScheduledTaskLifecyclePatch } from '../ScheduledTaskRendererAuthority'
+import type { RendererScheduledTaskLifecyclePatch } from '../ScheduledTaskRendererAuthority'
 import { sanitizeProviderRunPauses } from '../ProviderRunPause'
 import { normalizePromptCacheSettings } from '../PromptCachePolicy'
 import { coerceLiveProvider, isRetiredProvider } from '../../shared/retiredProviders'
@@ -155,6 +160,12 @@ export interface MainSanitizerDeps {
   getSettings: () => AppSettings
   getScheduledTasks: () => ScheduledTask[]
   getWorkflowDefinitions: () => WorkflowDefinition[]
+  getChat: (
+    id: string
+  ) => Pick<
+    ChatRecord,
+    'appChatId' | 'archived' | 'scope' | 'workspaceId' | 'workspacePath'
+  > | null
   findRegisteredWorkspace: (workspacePath: string) => WorkspaceRecord | undefined
   requireRegisteredWorkspace: (workspacePath: string, label?: string) => string
   canonicalPath: (value: string) => string
@@ -608,15 +619,6 @@ export function normalizeAuditRunIdentity(value: unknown): AuditRunIdentity | un
 }
 
 export function createMainSanitizers(deps: MainSanitizerDeps) {
-  function stripScheduledTaskTrustFields<T extends Record<string, unknown>>(
-    input: T
-  ): Omit<T, 'dispatchReceipt' | 'permissionPosture'> {
-    const copy = { ...input }
-    delete copy.dispatchReceipt
-    delete copy.permissionPosture
-    return copy
-  }
-
   function normalizeScheduledTaskExternalGrants(value: unknown): ExternalPathGrant[] | undefined {
     const rawGrants = Array.isArray(value) ? (value as ExternalPathGrant[]) : []
     const grants = deps.normalizeExternalPathGrants(rawGrants)
@@ -644,6 +646,24 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
       throw new Error('Scheduled task workspace id does not match the registered workspace.')
     }
     return workspace
+  }
+
+  function assertScheduledTaskChatIdentity(
+    appChatId: string,
+    workspace: WorkspaceRecord,
+    workspacePath: string
+  ): void {
+    const chat = deps.getChat(appChatId)
+    if (
+      !chat ||
+      chat.archived ||
+      chat.scope !== 'workspace' ||
+      chat.workspaceId !== workspace.id ||
+      !chat.workspacePath ||
+      deps.canonicalPath(chat.workspacePath) !== workspacePath
+    ) {
+      throw new Error('Scheduled task chat must be a live chat in the selected workspace.')
+    }
   }
 
   function normalizeScheduledAttachmentCandidates(
@@ -727,8 +747,7 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
 
   function sanitizeScheduledTaskForSave(
     task: unknown
-  ): Omit<ScheduledTask, 'id' | 'createdAt' | 'updatedAt' | 'status'> &
-    Partial<Pick<ScheduledTask, 'id' | 'createdAt' | 'updatedAt' | 'status'>> {
+  ): WorkflowRunTemplate & Pick<ScheduledTask, 'runAt' | 'timezone'> {
     const input = requireRecord(task, 'Scheduled task')
     const runAt = requireNonEmptyString(input.runAt, 'Scheduled task run time')
     const runAtMs = new Date(runAt).getTime()
@@ -738,133 +757,23 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
     if (runAtMs <= Date.now()) {
       throw new Error('Scheduled task run time must be in the future.')
     }
-    const workspace = assertScheduledTaskWorkspaceIdentity(
-      requireNonEmptyString(input.workspacePath, 'Scheduled task workspace'),
-      input.workspaceId
-    )
-    const workspacePath = deps.canonicalPath(workspace.path)
-    const appChatId = requireNonEmptyString(input.chatId, 'Scheduled task chat')
-    const externalPathGrants = normalizeScheduledTaskExternalGrants(input.externalPathGrants)
-    const imageAttachments = stageScheduledAttachments(
-      input.imageAttachments,
-      { appChatId, workspaceId: workspace.id, workspacePath, externalPathGrants },
-      'Scheduled task attachments',
-      typeof input.id === 'string'
-        ? deps.getScheduledTasks().find((task) => task.id === input.id)?.imageAttachments
-        : undefined
-    )
-    const restInput = stripScheduledTaskTrustFields(input)
+    const template = sanitizeWorkflowTemplate(input)
     return {
-      ...restInput,
+      ...template,
+      sessionTrust: false,
       runAt: new Date(runAtMs).toISOString(),
-      workspaceId: workspace.id,
-      workspacePath,
-      chatId: appChatId,
-      provider: assertProviderId(input.provider),
-      imageAttachments,
-      externalPathGrants,
-      grokReasoningEffort: optionalStringOrNull(input.grokReasoningEffort),
-      cursorReasoningEffort: optionalStringOrNull(input.cursorReasoningEffort),
-      claudeFastMode: typeof input.claudeFastMode === 'boolean' ? input.claudeFastMode : undefined,
-      kimiFastMode: typeof input.kimiFastMode === 'boolean' ? input.kimiFastMode : undefined,
-      cursorFastMode: typeof input.cursorFastMode === 'boolean' ? input.cursorFastMode : undefined,
-      runtimeProfileId: optionalString(input.runtimeProfileId),
-      geminiAuthProfileId: optionalStringOrNull(input.geminiAuthProfileId),
-      handoffSourceRunId: optionalString(input.handoffSourceRunId)
-    } as Omit<ScheduledTask, 'id' | 'createdAt' | 'updatedAt' | 'status'> &
-      Partial<Pick<ScheduledTask, 'id' | 'createdAt' | 'updatedAt' | 'status'>>
+      timezone: requireNonEmptyString(input.timezone, 'Scheduled task timezone')
+    }
   }
 
-  function sanitizeScheduledTaskPatch(id: string, partial: unknown): Partial<ScheduledTask> | null {
+  function sanitizeScheduledTaskPatch(
+    id: string,
+    partial: unknown
+  ): RendererScheduledTaskLifecyclePatch | null {
     const input = requireRecord(partial, 'Scheduled task update')
     const existing = deps.getScheduledTasks().find((task) => task.id === id)
     if (!existing) return null
-    const workspace = assertScheduledTaskWorkspaceIdentity(
-      existing.workspacePath,
-      existing.workspaceId
-    )
-    if (
-      'workspacePath' in input &&
-      input.workspacePath !== undefined &&
-      deps.canonicalPath(String(input.workspacePath)) !== deps.canonicalPath(workspace.path)
-    ) {
-      throw new Error('Scheduled task workspace path cannot be changed by the renderer.')
-    }
-    if (
-      'workspaceId' in input &&
-      input.workspaceId !== undefined &&
-      input.workspaceId !== workspace.id
-    ) {
-      throw new Error('Scheduled task workspace id cannot be changed by the renderer.')
-    }
-    if (
-      'chatId' in input &&
-      input.chatId !== undefined &&
-      input.chatId !== existing.chatId
-    ) {
-      throw new Error('Scheduled task chat cannot be changed by the renderer.')
-    }
-
-    const restInput = stripScheduledTaskTrustFields(input)
-    const workspacePath = deps.canonicalPath(workspace.path)
-    const externalPathGrants =
-      'externalPathGrants' in input
-        ? normalizeScheduledTaskExternalGrants(input.externalPathGrants)
-        : 'imageAttachments' in input
-          ? normalizeScheduledTaskExternalGrants(existing.externalPathGrants)
-          : undefined
-    const sanitized: Partial<ScheduledTask> = {
-      ...(restInput as Partial<ScheduledTask>),
-      workspaceId: workspace.id,
-      workspacePath
-    }
-    if ('provider' in input && input.provider !== undefined) {
-      sanitized.provider = assertProviderId(input.provider)
-    }
-    if ('externalPathGrants' in input) {
-      sanitized.externalPathGrants = externalPathGrants
-    }
-    if ('imageAttachments' in input) {
-      sanitized.imageAttachments = stageScheduledAttachments(
-        input.imageAttachments,
-        {
-          appChatId: existing.chatId,
-          workspaceId: workspace.id,
-          workspacePath,
-          externalPathGrants
-        },
-        'Scheduled task attachments',
-        existing.imageAttachments
-      )
-    }
-    if ('claudeFastMode' in input) {
-      sanitized.claudeFastMode =
-        typeof input.claudeFastMode === 'boolean' ? input.claudeFastMode : undefined
-    }
-    if ('kimiFastMode' in input) {
-      sanitized.kimiFastMode =
-        typeof input.kimiFastMode === 'boolean' ? input.kimiFastMode : undefined
-    }
-    if ('grokReasoningEffort' in input) {
-      sanitized.grokReasoningEffort = optionalStringOrNull(input.grokReasoningEffort)
-    }
-    if ('cursorReasoningEffort' in input) {
-      sanitized.cursorReasoningEffort = optionalStringOrNull(input.cursorReasoningEffort)
-    }
-    if ('cursorFastMode' in input) {
-      sanitized.cursorFastMode =
-        typeof input.cursorFastMode === 'boolean' ? input.cursorFastMode : undefined
-    }
-    if ('runtimeProfileId' in input) {
-      sanitized.runtimeProfileId = optionalString(input.runtimeProfileId)
-    }
-    if ('geminiAuthProfileId' in input) {
-      sanitized.geminiAuthProfileId = optionalStringOrNull(input.geminiAuthProfileId)
-    }
-    if ('handoffSourceRunId' in input) {
-      sanitized.handoffSourceRunId = optionalString(input.handoffSourceRunId)
-    }
-    return sanitized
+    return sanitizeRendererScheduledTaskLifecyclePatch(existing, input)
   }
 
   function sanitizeWorkflowTrigger(value: unknown): WorkflowTrigger {
@@ -914,6 +823,10 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
     if (!prompt.trim()) throw new Error('Workflow prompt is required.')
     const workspacePath = deps.canonicalPath(workspace.path)
     const appChatId = requireNonEmptyString(input.chatId, 'Workflow chat')
+    // Validate the durable owner before staging any attachment bytes. A
+    // compromised renderer must not be able to leave orphaned main-owned
+    // assets behind by pairing a valid workspace with a missing/moved chat.
+    assertScheduledTaskChatIdentity(appChatId, workspace, workspacePath)
     const externalPathGrants = normalizeScheduledTaskExternalGrants(input.externalPathGrants)
     const imageAttachments = stageScheduledAttachments(
       input.imageAttachments,
@@ -933,7 +846,9 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
       selectedModelType: optionalString(input.selectedModelType) || 'default',
       customModel: optionalString(input.customModel) || '',
       approvalMode: optionalString(input.approvalMode) || 'default',
-      sessionTrust: Boolean(input.sessionTrust),
+      // Workflows and scheduled tasks are unattended. They may receive only a
+      // separately verified unattended-elevation ack, never Trusted Session.
+      sessionTrust: false,
       imageAttachments,
       externalPathGrants,
       geminiWorktree: input.geminiWorktree as any,
@@ -956,18 +871,14 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
 
   function sanitizeWorkflowForSave(
     workflow: unknown
-  ): Omit<WorkflowDefinition, 'id' | 'createdAt' | 'updatedAt' | 'history' | 'failureStreak'> &
-    Partial<
-      Pick<WorkflowDefinition, 'id' | 'createdAt' | 'updatedAt' | 'history' | 'failureStreak'>
-    > {
+  ): WorkflowDefinitionCreateInput {
     const input = requireRecord(workflow, 'Workflow')
-    const existing = optionalString(input.id)
-      ? deps.getWorkflowDefinitions().find((workflow) => workflow.id === optionalString(input.id))
-      : undefined
-    const template = sanitizeWorkflowTemplate(input.template, existing?.template)
+    if ('id' in input) {
+      throw new Error('Workflow creation cannot replace an existing workflow.')
+    }
+    const template = sanitizeWorkflowTemplate(input.template)
     const limits = isRecord(input.limits) ? input.limits : {}
     return {
-      id: optionalString(input.id),
       name: requireNonEmptyString(input.name, 'Workflow name'),
       workspaceId: template.workspaceId,
       workspacePath: template.workspacePath,
@@ -987,38 +898,29 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
     }
   }
 
-  function sanitizeWorkflowPatch(id: string, partial: unknown): Partial<WorkflowDefinition> | null {
+  function sanitizeWorkflowPatch(
+    id: string,
+    partial: unknown
+  ): (WorkflowDefinitionRendererUpdate & { unattendedElevation?: undefined }) | null {
     const existing = deps.getWorkflowDefinitions().find((workflow) => workflow.id === id)
     if (!existing) return null
     const input = requireRecord(partial, 'Workflow update')
-    const sanitized: Partial<WorkflowDefinition> = {}
-    if ('name' in input) sanitized.name = requireNonEmptyString(input.name, 'Workflow name')
-    if ('enabled' in input) sanitized.enabled = input.enabled !== false
+    const allowedFields = new Set(['enabled', 'trigger'])
+    if (Object.keys(input).some((field) => !allowedFields.has(field))) {
+      throw new Error('Workflow configuration and authority are main-owned after creation.')
+    }
+    const sanitized: WorkflowDefinitionRendererUpdate & {
+      unattendedElevation?: undefined
+    } = {}
+    if ('enabled' in input) {
+      if (typeof input.enabled !== 'boolean') throw new Error('Workflow enabled state is invalid.')
+      sanitized.enabled = input.enabled
+    }
     if ('trigger' in input) sanitized.trigger = sanitizeWorkflowTrigger(input.trigger)
-    if ('template' in input) {
-      sanitized.template = sanitizeWorkflowTemplate(input.template, existing.template)
-    }
-    if ('missedRunPolicy' in input) {
-      sanitized.missedRunPolicy = input.missedRunPolicy === 'skip' ? 'skip' : 'coalesce'
-    }
-    if ('concurrencyPolicy' in input) {
-      sanitized.concurrencyPolicy = input.concurrencyPolicy === 'enqueue' ? 'enqueue' : 'skip'
-    }
-    if ('limits' in input && isRecord(input.limits)) {
-      sanitized.limits = {
-        ...existing.limits,
-        ...(Number.isFinite(Number(input.limits.maxRunsPerDay))
-          ? { maxRunsPerDay: Math.max(1, Math.trunc(Number(input.limits.maxRunsPerDay))) }
-          : {}),
-        ...(Number.isFinite(Number(input.limits.maxConsecutiveFailures))
-          ? {
-              maxConsecutiveFailures: Math.max(
-                1,
-                Math.trunc(Number(input.limits.maxConsecutiveFailures))
-              )
-            }
-          : {})
-      }
+    if ('enabled' in input || 'trigger' in input) {
+      // Renderer-owned pause/cadence controls are fail-safe: changing either
+      // explicitly revokes any standing unattended authority.
+      sanitized.unattendedElevation = undefined
     }
     return sanitized
   }

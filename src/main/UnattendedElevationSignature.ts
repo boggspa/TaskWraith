@@ -2,12 +2,14 @@
 // WorkflowDefinition.unattendedElevation lets a user authorize a scheduled
 // (unattended) workflow to run at Default or Full-Workspace-Access permissions
 // instead of the safe-by-default 'plan' clamp. The ack is a plain JSON blob on
-// the definition — FORGEABLE by a local workflows.json edit — so it is bound by
+// the definition — untrusted when read from workflows.json — so it is bound by
 // an HMAC over the canonical {workflowId, workspacePath, level,
-// acknowledgedApprovalMode} tuple. The ack is MINTED server-side only (a
+// acknowledgedApprovalMode, authorityDigest} tuple. The ack is MINTED server-side only (a
 // dedicated IPC) and RE-VERIFIED at every dispatch (ComposerService / the
 // ensemble orchestrator) before its level is honored; an unsigned / tampered /
-// stale ack fails verification and falls back to the safe 'plan' posture.
+// stale ack fails verification and falls back to the safe 'plan' posture. This
+// is a renderer/persistence integrity boundary, not a defense against an attacker
+// who can execute MAIN-process code or extract its in-memory signing secret.
 //
 // Mirrors src/main/RunPermissionPosture.ts exactly (same key, same
 // deterministic serialization style, same constant-time hex-guarded verify) and
@@ -26,6 +28,8 @@ export interface UnattendedElevationTuple {
   level: UnattendedElevationLevel
   /** The template approvalMode the ack authorizes — server-derived at sign time. */
   acknowledgedApprovalMode: string
+  /** SHA-256 of the normalized execution-authority envelope. */
+  authorityDigest: string
 }
 
 /**
@@ -48,7 +52,8 @@ export function canonicalUnattendedElevation(tuple: UnattendedElevationTuple): s
     workflowId: tuple.workflowId,
     workspacePath: tuple.workspacePath,
     level: tuple.level,
-    acknowledgedApprovalMode: tuple.acknowledgedApprovalMode
+    acknowledgedApprovalMode: tuple.acknowledgedApprovalMode,
+    authorityDigest: tuple.authorityDigest
   })
 }
 

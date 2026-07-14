@@ -186,7 +186,20 @@ function makeSettings(overrides: Partial<AppSettings> = {}): AppSettings {
   } as AppSettings
 }
 
-function makeSanitizers(settings: AppSettings) {
+function workspaceChat(workspacePath = '/tmp/taskwraith-workspace') {
+  return {
+    appChatId: 'chat-1',
+    archived: false,
+    scope: 'workspace' as const,
+    workspaceId: 'workspace-1',
+    workspacePath
+  }
+}
+
+function makeSanitizers(
+  settings: AppSettings,
+  overrides: Partial<Parameters<typeof createMainSanitizers>[0]> = {}
+) {
   const workspace: WorkspaceRecord = {
     id: 'workspace-1',
     path: '/tmp/taskwraith-workspace',
@@ -199,6 +212,7 @@ function makeSanitizers(settings: AppSettings) {
     getSettings: () => settings,
     getScheduledTasks: () => [],
     getWorkflowDefinitions: () => [],
+    getChat: (id) => (id === 'chat-1' ? workspaceChat(workspace.path) : null),
     findRegisteredWorkspace: (workspacePath: string) =>
       workspacePath === workspace.path ? workspace : undefined,
     requireRegisteredWorkspace: (workspacePath: string) => workspacePath,
@@ -215,7 +229,8 @@ function makeSanitizers(settings: AppSettings) {
         mimeType: 'image/png',
         byteLength: 8
       }))
-    })
+    }),
+    ...overrides
   })
 }
 
@@ -228,7 +243,8 @@ describe('MainSanitizers scheduled tasks', () => {
       chatId: 'chat-1',
       provider: 'codex',
       prompt: 'Run later',
-      runAt: new Date(Date.now() + 60_000).toISOString()
+      runAt: new Date(Date.now() + 60_000).toISOString(),
+      timezone: 'Europe/London'
     }
 
     expect(() => sanitizeScheduledTaskForSave({ ...baseTask, runAt: 'not-a-date' })).toThrow(
@@ -262,6 +278,7 @@ describe('MainSanitizers scheduled tasks', () => {
       getSettings: () => makeSettings(),
       getScheduledTasks: () => [],
       getWorkflowDefinitions: () => [],
+      getChat: (id) => (id === 'chat-1' ? workspaceChat('/canonical/workspace') : null),
       findRegisteredWorkspace: () => ({
         id: 'workspace-1',
         path: '/canonical/workspace',
@@ -297,7 +314,7 @@ describe('MainSanitizers scheduled tasks', () => {
       timezone: 'Europe/London'
     })
 
-    expect(events).toEqual(['canonical', 'grants', 'stage'])
+    expect(events).toEqual(['canonical', 'canonical', 'grants', 'stage'])
     expect(stageScheduledAttachments).toHaveBeenCalledWith({
       appChatId: 'chat-1',
       workspaceId: 'workspace-1',
@@ -327,6 +344,7 @@ describe('MainSanitizers scheduled tasks', () => {
       getSettings: () => makeSettings(),
       getScheduledTasks: () => [],
       getWorkflowDefinitions: () => [],
+      getChat: (id) => (id === 'chat-1' ? workspaceChat() : null),
       findRegisteredWorkspace: () => ({
         id: 'workspace-1',
         path: '/tmp/taskwraith-workspace',
@@ -359,7 +377,7 @@ describe('MainSanitizers scheduled tasks', () => {
         ...baseTask,
         imageAttachments: [{ id: '', name: 'proof.png', path: '/fresh/proof.png' }]
       })
-    ).toThrow('Scheduled task attachments 1 id is required.')
+    ).toThrow('Workflow attachments 1 id is required.')
     expect(() =>
       sanitizer.sanitizeScheduledTaskForSave({
         ...baseTask,
@@ -381,16 +399,38 @@ describe('MainSanitizers scheduled tasks', () => {
     expect(stageScheduledAttachments).not.toHaveBeenCalled()
   })
 
-  it('uses effective stored grants for attachment patches and leaves attachments untouched otherwise', () => {
-    const grant: ExternalPathGrant = {
-      id: 'grant-1',
+  it('rejects a missing, archived, global, or moved chat before staging attachments', () => {
+    const stageScheduledAttachments = vi.fn()
+    const baseTask = {
+      workspaceId: 'workspace-1',
+      workspacePath: '/tmp/taskwraith-workspace',
+      chatId: 'chat-1',
       provider: 'codex',
-      path: '/external',
-      kind: 'directory',
-      access: 'read',
-      duration: 'workspace',
-      createdAt: '2026-07-13T00:00:00.000Z'
+      prompt: 'Run later',
+      imageAttachments: [{ id: 'image-1', name: 'proof.png', path: '/fresh/proof.png' }],
+      runAt: new Date(Date.now() + 60_000).toISOString(),
+      timezone: 'Europe/London'
     }
+    const invalidChats = [
+      null,
+      { ...workspaceChat(), archived: true },
+      { ...workspaceChat(), scope: 'global' as const },
+      { ...workspaceChat(), workspacePath: '/other-workspace' }
+    ]
+
+    for (const chat of invalidChats) {
+      const { sanitizeScheduledTaskForSave } = makeSanitizers(makeSettings(), {
+        getChat: () => chat,
+        stageScheduledAttachments
+      })
+      expect(() => sanitizeScheduledTaskForSave(baseTask)).toThrow(
+        'Scheduled task chat must be a live chat in the selected workspace.'
+      )
+    }
+    expect(stageScheduledAttachments).not.toHaveBeenCalled()
+  })
+
+  it('rejects renderer attempts to patch scheduled task configuration or authority', () => {
     const existing = {
       id: 'task-1',
       workspaceId: 'workspace-1',
@@ -403,27 +443,19 @@ describe('MainSanitizers scheduled tasks', () => {
       approvalMode: 'default',
       sessionTrust: false,
       imageAttachments: [],
-      externalPathGrants: [grant],
+      externalPathGrants: [],
       runAt: new Date(Date.now() + 60_000).toISOString(),
       timezone: 'Europe/London',
       status: 'pending' as const,
       createdAt: '2026-07-13T00:00:00.000Z',
       updatedAt: '2026-07-13T00:00:00.000Z'
     }
-    const stageScheduledAttachments = vi.fn(({ attachments }) => ({
-      ok: true as const,
-      attachments: attachments.map(() => ({
-        persistenceVersion: 1 as const,
-        path: '/tmp/taskwraith-assets/proof.png',
-        sha256: 'c'.repeat(43),
-        mimeType: 'image/png',
-        byteLength: 12
-      }))
-    }))
+    const stageScheduledAttachments = vi.fn()
     const { sanitizeScheduledTaskPatch } = createMainSanitizers({
       getSettings: () => makeSettings(),
       getScheduledTasks: () => [existing],
       getWorkflowDefinitions: () => [],
+      getChat: (id) => (id === 'chat-1' ? workspaceChat() : null),
       findRegisteredWorkspace: () => ({
         id: 'workspace-1',
         path: '/tmp/taskwraith-workspace',
@@ -438,69 +470,18 @@ describe('MainSanitizers scheduled tasks', () => {
       stageScheduledAttachments
     })
 
-    expect(sanitizeScheduledTaskPatch('task-1', { approvalMode: 'plan' })).not.toHaveProperty(
-      'imageAttachments'
-    )
-    expect(stageScheduledAttachments).not.toHaveBeenCalled()
-    expect(() =>
-      sanitizeScheduledTaskPatch('task-1', { chatId: 'other-chat' })
-    ).toThrow('Scheduled task chat cannot be changed by the renderer.')
-
-    sanitizeScheduledTaskPatch('task-1', {
-      imageAttachments: [{ id: 'image-1', name: 'proof.png', path: '/external/proof.png' }]
-    })
-    expect(stageScheduledAttachments).toHaveBeenCalledWith(
-      expect.objectContaining({ externalPathGrants: [grant] })
-    )
-  })
-
-  it('does not silently upgrade an existing legacy attachment path during a patch', () => {
-    const stageScheduledAttachments = vi.fn(() => ({ ok: true as const, attachments: [] }))
-    const existing = {
-      id: 'task-1',
-      workspaceId: 'workspace-1',
-      workspacePath: '/tmp/taskwraith-workspace',
-      chatId: 'chat-1',
-      provider: 'codex' as const,
-      prompt: 'Run later',
-      selectedModelType: 'cli-default',
-      customModel: '',
-      approvalMode: 'default',
-      sessionTrust: false,
-      imageAttachments: [
-        { id: 'legacy-1', name: 'legacy.png', path: '/tmp/taskwraith-workspace/legacy.png' }
-      ],
-      runAt: new Date(Date.now() + 60_000).toISOString(),
-      timezone: 'Europe/London',
-      status: 'pending' as const,
-      createdAt: '2026-07-13T00:00:00.000Z',
-      updatedAt: '2026-07-13T00:00:00.000Z'
+    for (const patch of [
+      { prompt: 'Forged prompt' },
+      { provider: 'claude' },
+      { approvalMode: 'full_access' },
+      { sessionTrust: true },
+      { workflowId: 'elevated-workflow' },
+      { imageAttachments: [{ id: 'image-1', name: 'proof.png', path: '/external/proof.png' }] }
+    ]) {
+      expect(() => sanitizeScheduledTaskPatch('task-1', patch)).toThrow(
+        'Scheduled task configuration and workflow linkage are main-owned.'
+      )
     }
-    const { sanitizeScheduledTaskPatch } = createMainSanitizers({
-      getSettings: () => makeSettings(),
-      getScheduledTasks: () => [existing],
-      getWorkflowDefinitions: () => [],
-      findRegisteredWorkspace: () => ({
-        id: 'workspace-1',
-        path: '/tmp/taskwraith-workspace',
-        displayName: 'Workspace',
-        lastOpenedAt: 1,
-        createdAt: 1,
-        pinned: false
-      }),
-      requireRegisteredWorkspace: (workspacePath: string) => workspacePath,
-      canonicalPath: (value: string) => value,
-      normalizeExternalPathGrants: (grants: ExternalPathGrant[]) => grants,
-      stageScheduledAttachments
-    })
-
-    expect(() =>
-      sanitizeScheduledTaskPatch('task-1', {
-        imageAttachments: [
-          { id: 'legacy-1', name: 'legacy.png', path: '/tmp/taskwraith-workspace/legacy.png' }
-        ]
-      })
-    ).toThrow('Re-select the attachments')
     expect(stageScheduledAttachments).not.toHaveBeenCalled()
   })
 
@@ -617,7 +598,79 @@ describe('MainSanitizers scheduled tasks', () => {
     }
   })
 
-  it('strips renderer-supplied scheduled task posture and dispatch receipts', () => {
+  it('makes renderer workflow save create-only and permits only enabled/trigger updates', () => {
+    const fixedNow = '2026-07-14T12:00:00.000Z'
+    const draft = {
+      name: 'Safe workflow',
+      workspaceId: 'workspace-1',
+      workspacePath: '/tmp/taskwraith-workspace',
+      enabled: true,
+      trigger: { kind: 'manual' as const },
+      template: {
+        workspaceId: 'workspace-1',
+        workspacePath: '/tmp/taskwraith-workspace',
+        chatId: 'chat-1',
+        provider: 'codex' as const,
+        prompt: 'Review the project.',
+        selectedModelType: 'cli-default',
+        customModel: '',
+        approvalMode: 'default',
+        sessionTrust: false,
+        imageAttachments: []
+      },
+      missedRunPolicy: 'coalesce' as const,
+      concurrencyPolicy: 'skip' as const,
+      limits: {}
+    }
+    const initial = makeSanitizers(makeSettings()).sanitizeWorkflowForSave(draft)
+    const victim = {
+      ...initial,
+      id: 'victim-workflow',
+      failureStreak: 0,
+      history: [],
+      createdAt: fixedNow,
+      updatedAt: fixedNow
+    } as any
+    const sanitizer = makeSanitizers(makeSettings(), {
+      getWorkflowDefinitions: () => [victim]
+    })
+
+    expect(() =>
+      sanitizer.sanitizeWorkflowForSave({ ...draft, id: 'victim-workflow' })
+    ).toThrow('Workflow creation cannot replace an existing workflow.')
+    expect(sanitizer.sanitizeWorkflowPatch(victim.id, { enabled: false })).toEqual({
+      enabled: false,
+      unattendedElevation: undefined
+    })
+    expect(
+      sanitizer.sanitizeWorkflowPatch(victim.id, {
+        trigger: { kind: 'interval', intervalMs: 120_000, startAt: fixedNow }
+      })
+    ).toEqual({
+      trigger: {
+        kind: 'interval',
+        intervalMs: 120_000,
+        startAt: fixedNow,
+        timezone: undefined
+      },
+      unattendedElevation: undefined
+    })
+
+    for (const patch of [
+      { id: 'other-workflow' },
+      { workspaceId: 'workspace-2' },
+      { template: { ...victim.template, prompt: 'Retargeted prompt.' } },
+      { unattendedElevation: { level: 'full_access' } },
+      { history: [] },
+      { limits: { maxRunsPerDay: 1000 } }
+    ]) {
+      expect(() => sanitizer.sanitizeWorkflowPatch(victim.id, patch)).toThrow(
+        'Workflow configuration and authority are main-owned after creation.'
+      )
+    }
+  })
+
+  it('strips renderer-supplied scheduled identity, lifecycle, linkage, and posture', () => {
     const { sanitizeScheduledTaskForSave, sanitizeScheduledTaskPatch } = makeSanitizers(
       makeSettings()
     )
@@ -632,16 +685,33 @@ describe('MainSanitizers scheduled tasks', () => {
       selectedModelType: 'cli-default',
       customModel: '',
       approvalMode: 'default',
-      sessionTrust: false,
+      sessionTrust: true,
       imageAttachments: [],
       runAt,
       timezone: 'Europe/London',
+      status: 'due',
+      runId: 'forged-run',
+      workflowId: 'forged-workflow',
+      workflowExecutionId: 'forged-execution',
+      workflowOccurrenceAt: runAt,
       dispatchReceipt: { permissionPostureSignaturePresent: true },
       permissionPosture: { signaturePresent: true }
     }
 
-    expect(sanitizeScheduledTaskForSave(baseTask)).not.toHaveProperty('dispatchReceipt')
-    expect(sanitizeScheduledTaskForSave(baseTask)).not.toHaveProperty('permissionPosture')
+    const saved = sanitizeScheduledTaskForSave(baseTask)
+    expect(saved.sessionTrust).toBe(false)
+    for (const field of [
+      'id',
+      'status',
+      'runId',
+      'workflowId',
+      'workflowExecutionId',
+      'workflowOccurrenceAt',
+      'dispatchReceipt',
+      'permissionPosture'
+    ]) {
+      expect(saved).not.toHaveProperty(field)
+    }
 
     const { sanitizeScheduledTaskPatch: sanitizePatchWithExisting } = createMainSanitizers({
       getSettings: () => makeSettings(),
@@ -655,6 +725,7 @@ describe('MainSanitizers scheduled tasks', () => {
         } as any
       ],
       getWorkflowDefinitions: () => [],
+      getChat: (id) => (id === 'chat-1' ? workspaceChat() : null),
       findRegisteredWorkspace: (workspacePath: string) =>
         workspacePath === '/tmp/taskwraith-workspace'
           ? {
@@ -682,15 +753,13 @@ describe('MainSanitizers scheduled tasks', () => {
         }))
       })
     })
-    const patch = sanitizePatchWithExisting('task-1', {
-      status: 'due',
-      dispatchReceipt: { permissionPostureSignaturePresent: true },
-      permissionPosture: { signaturePresent: true }
-    })
-
     expect(sanitizeScheduledTaskPatch('missing', {})).toBeNull()
-    expect(patch).not.toHaveProperty('dispatchReceipt')
-    expect(patch).not.toHaveProperty('permissionPosture')
+    expect(() =>
+      sanitizePatchWithExisting('task-1', {
+        status: 'cancelled',
+        dispatchReceipt: { permissionPostureSignaturePresent: true }
+      })
+    ).toThrow('Scheduled task configuration and workflow linkage are main-owned.')
   })
 })
 

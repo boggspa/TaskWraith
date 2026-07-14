@@ -20,6 +20,10 @@ import {
   ExternalPathGrant,
   ScheduledTask,
   WorkflowDefinition,
+  ScheduledTaskCreateInput,
+  ScheduledTaskLifecycleUpdate,
+  WorkflowDefinitionCreateInput,
+  WorkflowDefinitionRendererUpdate,
   GeminiMcpBridgeStatus,
   ProviderApiKeyStatus,
   GeminiAuthStatus,
@@ -1715,27 +1719,20 @@ declare global {
       getScheduledTasks: (workspaceId?: string) => Promise<ScheduledTask[]>
       syncEnsembleRosterPresets: (presets: unknown[]) => Promise<void>
       saveScheduledTask: (
-        task: Omit<ScheduledTask, 'id' | 'createdAt' | 'updatedAt' | 'status'> &
-          Partial<Pick<ScheduledTask, 'id' | 'createdAt' | 'updatedAt' | 'status'>>
+        task: ScheduledTaskCreateInput
       ) => Promise<ScheduledTask>
       updateScheduledTask: (
         id: string,
-        partial: Partial<ScheduledTask>
+        partial: ScheduledTaskLifecycleUpdate
       ) => Promise<ScheduledTask | null>
       deleteScheduledTask: (id: string) => Promise<void>
       getWorkflowDefinitions: (workspaceId?: string) => Promise<WorkflowDefinition[]>
       saveWorkflowDefinition: (
-        workflow: Omit<
-          WorkflowDefinition,
-          'id' | 'createdAt' | 'updatedAt' | 'history' | 'failureStreak'
-        > &
-          Partial<
-            Pick<WorkflowDefinition, 'id' | 'createdAt' | 'updatedAt' | 'history' | 'failureStreak'>
-          >
+        workflow: WorkflowDefinitionCreateInput
       ) => Promise<WorkflowDefinition>
       updateWorkflowDefinition: (
         id: string,
-        partial: Partial<WorkflowDefinition>
+        partial: WorkflowDefinitionRendererUpdate
       ) => Promise<WorkflowDefinition | null>
       deleteWorkflowDefinition: (id: string) => Promise<void>
       getWorkspaceBoards: (workspaceId?: string) => Promise<WorkspaceBoardDefinition[]>

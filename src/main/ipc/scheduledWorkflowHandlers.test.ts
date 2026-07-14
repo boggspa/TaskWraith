@@ -26,6 +26,7 @@ function handlerFor(channel: string): RegisteredHandler {
 }
 
 function createDeps() {
+  const authorityDigest = 'a'.repeat(64)
   const defaultSanitizedTask = {
     id: 'task-1',
     workspaceId: 'ws-1',
@@ -64,6 +65,13 @@ function createDeps() {
     getRepoConventionIndexes: vi.fn(() => [{ workspaceId: 'ws-1' } as any]),
     saveRepoConventionIndex: vi.fn((snapshot) => ({ ...snapshot, workspaceId: snapshot.workspaceId || 'ws-1' })),
     materializeWorkflowNow: vi.fn(() => defaultSanitizedTask),
+    workflowAuthorityDigest: vi.fn(() => authorityDigest),
+    currentWorkflowUnattendedElevationCapability: vi.fn(
+      () => null as { key: string; level: 'default' | 'full_access' } | null
+    ),
+    workflowTargetIsCurrent: vi.fn(() => true),
+    confirmWorkflowUnattendedElevation: vi.fn(async () => true),
+    confirmElevatedWorkflowRunNow: vi.fn(async () => true),
     setWorkflowUnattendedElevation: vi.fn((_, ack) => ({ ...defaultWorkflow, unattendedElevation: ack })),
     getWorkflowRunSummaries: vi.fn(async () => [{ id: 'summary-1' }]),
     getWorkflowRunEventsFiltered: vi.fn(async () => [{ id: 'event-1' }]),
@@ -71,14 +79,15 @@ function createDeps() {
 
     emitDueScheduledTasks: vi.fn(),
     scheduleNextTaskTimer: vi.fn(),
-    buildUnattendedElevationAck: vi.fn((_workflow, _level, sign) => {
+    buildUnattendedElevationAck: vi.fn((_workflow, _level, digest, sign) => {
       sign({
         workflowId: 'wf-1',
         workspacePath: '/tmp/test',
         level: 'default',
-        acknowledgedApprovalMode: 'auto'
+        acknowledgedApprovalMode: 'auto',
+        authorityDigest: digest
       })
-      return { acknowledgedApprovalMode: 'auto' } as any
+      return { acknowledgedApprovalMode: 'auto', authorityDigest: digest } as any
     }),
     signWorkflowUnattendedElevation: vi.fn(() => 'signed-token'),
     requireNonEmptyString: vi.fn((value) => `${value}`),
@@ -133,7 +142,7 @@ describe('registerScheduledWorkflowHandlers', () => {
     expect(handlerFor('get-agent-stats-summaries')).toBeTypeOf('function')
   })
 
-  it('rejects every scheduled-workflow surface before reading or mutating global state', () => {
+  it('rejects every scheduled-workflow surface before reading or mutating global state', async () => {
     const deps = createDeps()
     const rejection = new Error('Only the main renderer can manage workspace authority.')
     deps.assertMainRendererSender.mockImplementation(() => {
@@ -171,9 +180,17 @@ describe('registerScheduledWorkflowHandlers', () => {
       'get-agent-stats-summaries'
     ]
     const event = { sender: { id: 42 } }
+    const asyncChannels = new Set([
+      'run-workflow-now',
+      'set-workflow-unattended-elevation'
+    ])
 
     for (const channel of channels) {
-      expect(() => handlerFor(channel)(event)).toThrow(rejection)
+      if (asyncChannels.has(channel)) {
+        await expect(handlerFor(channel)(event)).rejects.toThrow(rejection)
+      } else {
+        expect(() => handlerFor(channel)(event)).toThrow(rejection)
+      }
     }
     expect(deps.assertMainRendererSender).toHaveBeenCalledTimes(channels.length)
     expect(deps.getScheduledTasks).not.toHaveBeenCalled()
@@ -203,6 +220,20 @@ describe('registerScheduledWorkflowHandlers', () => {
       workspaceId: 'ws-1',
       workflowId: 'wf-1'
     })
+  })
+
+  it('does not reach workflow persistence when create-only sanitization rejects a victim id', () => {
+    const deps = createDeps()
+    deps.sanitizeWorkflowForSave.mockImplementation(() => {
+      throw new Error('Workflow creation cannot replace an existing workflow.')
+    })
+    registerScheduledWorkflowHandlers(deps)
+
+    expect(() =>
+      handlerFor('save-workflow-definition')({}, { id: 'wf-1', name: 'Hijack' })
+    ).toThrow('Workflow creation cannot replace an existing workflow.')
+    expect(deps.saveWorkflowDefinition).not.toHaveBeenCalled()
+    expect(deps.getWorkflowDefinition()).toMatchObject({ id: 'wf-1', name: 'wf' })
   })
 
   it('saves evidence packs and broadcasts ledger changes', () => {
@@ -265,21 +296,21 @@ describe('registerScheduledWorkflowHandlers', () => {
     const deps = createDeps()
     registerScheduledWorkflowHandlers(deps)
 
-    const updated = handlerFor('update-workflow-definition')({}, 'wf-1', { name: 'new' })
+    const updated = handlerFor('update-workflow-definition')({}, 'wf-1', { enabled: false })
 
-    expect(deps.sanitizeWorkflowPatch).toHaveBeenCalledWith('wf-1', { name: 'new' })
-    expect(deps.updateWorkflowDefinition).toHaveBeenCalledWith('wf-1', { name: 'new' })
+    expect(deps.sanitizeWorkflowPatch).toHaveBeenCalledWith('wf-1', { enabled: false })
+    expect(deps.updateWorkflowDefinition).toHaveBeenCalledWith('wf-1', { enabled: false })
     expect(deps.broadcastWorkflowDefinitionsChanged).toHaveBeenCalledTimes(1)
     expect(deps.broadcastRemoteProjectionSnapshot).toHaveBeenCalledTimes(1)
     expect(deps.scheduleNextTaskTimer).toHaveBeenCalledTimes(1)
-    expect(updated).toMatchObject({ id: 'wf-1', name: 'new' })
+    expect(updated).toMatchObject({ id: 'wf-1', enabled: false })
   })
 
-  it('proxies run-now execution to workflow materialization and emits due-task signal', () => {
+  it('proxies safe run-now execution to workflow materialization and emits due-task signal', async () => {
     const deps = createDeps()
     registerScheduledWorkflowHandlers(deps)
 
-    const dueTask = handlerFor('run-workflow-now')({}, 'wf-1')
+    const dueTask = await handlerFor('run-workflow-now')({}, 'wf-1')
 
     expect(deps.materializeWorkflowNow).toHaveBeenCalledWith('wf-1')
     expect(deps.broadcastWorkflowDefinitionsChanged).toHaveBeenCalledTimes(1)
@@ -289,14 +320,19 @@ describe('registerScheduledWorkflowHandlers', () => {
     expect(deps.scheduleNextTaskTimer).toHaveBeenCalledTimes(1)
   })
 
-  it('saves unattended elevation via workflow template mode callback', () => {
+  it('saves unattended elevation only after native confirmation', async () => {
     const deps = createDeps()
     registerScheduledWorkflowHandlers(deps)
 
-    const wf = handlerFor('set-workflow-unattended-elevation')({}, 'wf-1', 'default')
+    const wf = await handlerFor('set-workflow-unattended-elevation')(
+      {},
+      'wf-1',
+      'default'
+    )
 
     expect(deps.requireNonEmptyString).toHaveBeenCalledWith('wf-1', 'Workflow id')
     expect(deps.getWorkflowDefinition).toHaveBeenCalledWith('wf-1')
+    expect(deps.confirmWorkflowUnattendedElevation).toHaveBeenCalled()
     expect(deps.buildUnattendedElevationAck).toHaveBeenCalled()
     expect(deps.signWorkflowUnattendedElevation).toHaveBeenCalled()
     expect(deps.setWorkflowUnattendedElevation).toHaveBeenCalledWith(
@@ -304,6 +340,100 @@ describe('registerScheduledWorkflowHandlers', () => {
       expect.any(Object)
     )
     expect(wf).toMatchObject({ id: 'wf-1', unattendedElevation: { acknowledgedApprovalMode: 'auto' } })
+  })
+
+  it('does not sign or persist elevation when native confirmation is declined or stale', async () => {
+    const deps = createDeps()
+    deps.confirmWorkflowUnattendedElevation.mockResolvedValue(false)
+    registerScheduledWorkflowHandlers(deps)
+
+    await expect(
+      handlerFor('set-workflow-unattended-elevation')({}, 'wf-1', 'full_access')
+    ).resolves.toMatchObject({ id: 'wf-1' })
+    expect(deps.buildUnattendedElevationAck).not.toHaveBeenCalled()
+    expect(deps.signWorkflowUnattendedElevation).not.toHaveBeenCalled()
+    expect(deps.setWorkflowUnattendedElevation).not.toHaveBeenCalled()
+
+    deps.confirmWorkflowUnattendedElevation.mockResolvedValue(true)
+    deps.workflowAuthorityDigest
+      .mockReturnValueOnce('a'.repeat(64))
+      .mockReturnValueOnce('b'.repeat(64))
+    await expect(
+      handlerFor('set-workflow-unattended-elevation')({}, 'wf-1', 'default')
+    ).resolves.toMatchObject({ id: 'wf-1' })
+    expect(deps.buildUnattendedElevationAck).not.toHaveBeenCalled()
+    expect(deps.setWorkflowUnattendedElevation).not.toHaveBeenCalled()
+  })
+
+  it('does not mint when the target chat or prior elevation capability changes during confirmation', async () => {
+    const deps = createDeps()
+    deps.workflowTargetIsCurrent.mockReturnValueOnce(true).mockReturnValueOnce(false)
+    registerScheduledWorkflowHandlers(deps)
+
+    await expect(
+      handlerFor('set-workflow-unattended-elevation')({}, 'wf-1', 'default')
+    ).resolves.toMatchObject({ id: 'wf-1' })
+    expect(deps.setWorkflowUnattendedElevation).not.toHaveBeenCalled()
+
+    deps.workflowTargetIsCurrent.mockReturnValue(true)
+    deps.currentWorkflowUnattendedElevationCapability
+      .mockReturnValueOnce(null)
+      .mockReturnValueOnce({
+        key: `default:${'a'.repeat(64)}:new-signature`,
+        level: 'default'
+      })
+    await expect(
+      handlerFor('set-workflow-unattended-elevation')({}, 'wf-1', 'default')
+    ).resolves.toMatchObject({ id: 'wf-1' })
+    expect(deps.setWorkflowUnattendedElevation).not.toHaveBeenCalled()
+  })
+
+  it('revokes safely without confirmation and rejects unknown elevation levels', async () => {
+    const deps = createDeps()
+    registerScheduledWorkflowHandlers(deps)
+
+    await handlerFor('set-workflow-unattended-elevation')({}, 'wf-1', 'safe')
+    expect(deps.confirmWorkflowUnattendedElevation).not.toHaveBeenCalled()
+    expect(deps.setWorkflowUnattendedElevation).toHaveBeenCalledWith('wf-1', undefined)
+
+    await expect(
+      handlerFor('set-workflow-unattended-elevation')({}, 'wf-1', 'bogus')
+    ).rejects.toThrow('Workflow unattended elevation level is invalid.')
+    expect(deps.confirmWorkflowUnattendedElevation).not.toHaveBeenCalled()
+  })
+
+  it('requires fresh native intent before Run Now uses a current elevated ack', async () => {
+    const deps = createDeps()
+    deps.currentWorkflowUnattendedElevationCapability.mockReturnValue({
+      key: `default:${'a'.repeat(64)}:signature`,
+      level: 'default'
+    })
+    deps.confirmElevatedWorkflowRunNow.mockResolvedValue(false)
+    registerScheduledWorkflowHandlers(deps)
+
+    await expect(handlerFor('run-workflow-now')({}, 'wf-1')).resolves.toBeNull()
+    expect(deps.confirmElevatedWorkflowRunNow).toHaveBeenCalled()
+    expect(deps.materializeWorkflowNow).not.toHaveBeenCalled()
+
+    deps.confirmElevatedWorkflowRunNow.mockResolvedValue(true)
+    deps.workflowAuthorityDigest
+      .mockReturnValueOnce('a'.repeat(64))
+      .mockReturnValueOnce('b'.repeat(64))
+    await expect(handlerFor('run-workflow-now')({}, 'wf-1')).resolves.toBeNull()
+    expect(deps.materializeWorkflowNow).not.toHaveBeenCalled()
+
+    deps.workflowAuthorityDigest.mockReturnValue('a'.repeat(64))
+    deps.currentWorkflowUnattendedElevationCapability
+      .mockReturnValueOnce({
+        key: `default:${'a'.repeat(64)}:old-signature`,
+        level: 'default'
+      })
+      .mockReturnValueOnce({
+        key: `full_access:${'a'.repeat(64)}:new-signature`,
+        level: 'full_access'
+      })
+    await expect(handlerFor('run-workflow-now')({}, 'wf-1')).resolves.toBeNull()
+    expect(deps.materializeWorkflowNow).not.toHaveBeenCalled()
   })
 
   it('reads workflow run summaries and events through injected store queries', async () => {

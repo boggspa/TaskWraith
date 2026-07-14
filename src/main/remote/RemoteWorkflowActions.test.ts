@@ -111,6 +111,7 @@ describe('RemoteWorkflowActions', () => {
         level: 'default',
         acknowledgedAt: '2026-07-14T00:00:00.000Z',
         acknowledgedApprovalMode: 'default',
+        authorityDigest: 'a'.repeat(64),
         signature: 'already-verified-by-main'
       })
     ).toBe('default')
@@ -122,6 +123,7 @@ describe('RemoteWorkflowActions', () => {
           level: 'full_access',
           acknowledgedAt: '2026-07-14T00:00:00.000Z',
           acknowledgedApprovalMode: 'auto_edit',
+          authorityDigest: 'a'.repeat(64),
           signature: 'already-verified-by-main'
         }
       )

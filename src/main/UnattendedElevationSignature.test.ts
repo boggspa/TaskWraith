@@ -13,6 +13,7 @@ const tuple = (over: Partial<UnattendedElevationTuple> = {}): UnattendedElevatio
   workspacePath: '/repo',
   level: 'full_access',
   acknowledgedApprovalMode: 'auto_edit',
+  authorityDigest: 'a'.repeat(64),
   ...over
 })
 
@@ -27,13 +28,15 @@ describe('signUnattendedElevation / verifyUnattendedElevation', () => {
       workflowId: 'wf-1',
       workspacePath: '/repo',
       level: 'default',
-      acknowledgedApprovalMode: 'default'
+      acknowledgedApprovalMode: 'default',
+      authorityDigest: 'a'.repeat(64)
     })
     const b = canonicalUnattendedElevation({
       acknowledgedApprovalMode: 'default',
       level: 'default',
       workspacePath: '/repo',
-      workflowId: 'wf-1'
+      workflowId: 'wf-1',
+      authorityDigest: 'a'.repeat(64)
     } as UnattendedElevationTuple)
     expect(a).toBe(b)
   })
@@ -47,6 +50,9 @@ describe('signUnattendedElevation / verifyUnattendedElevation', () => {
     expect(verifyUnattendedElevation(SECRET, { ...t, acknowledgedApprovalMode: 'default' }, sig)).toBe(
       false
     )
+    expect(
+      verifyUnattendedElevation(SECRET, { ...t, authorityDigest: 'b'.repeat(64) }, sig)
+    ).toBe(false)
   })
 
   it('a default-level signature does NOT verify against a full_access tuple (no privilege upgrade)', () => {

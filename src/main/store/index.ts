@@ -13,6 +13,7 @@ import { resolveActiveGoalForEnsemble } from '../GoalState'
 import { partitionUsageRecordsForRotation } from './usageRotation'
 import type { TaskWraithPluginResourceProvenance } from '../../shared/plugins/PluginTypes'
 import type { UnattendedElevationAck } from '../UnattendedPostureGate'
+import { workflowAuthorityDigest } from '../WorkflowAuthorityDigest'
 import {
   AppSettings,
   WorkspaceRecord,
@@ -522,7 +523,9 @@ function normalizeWorkflowTemplate(value: unknown): WorkflowRunTemplate | null {
     selectedModelType: input.selectedModelType || 'default',
     customModel: input.customModel || '',
     approvalMode: input.approvalMode || 'default',
-    sessionTrust: Boolean(input.sessionTrust),
+    // Persisted workflows are unattended authority. Legacy renderer-authored
+    // Trusted Session flags are discarded during every read/normalization.
+    sessionTrust: false,
     imageAttachments: Array.isArray(input.imageAttachments) ? input.imageAttachments : [],
     externalPathGrants: input.externalPathGrants,
     geminiWorktree: input.geminiWorktree,
@@ -632,11 +635,15 @@ function normalizeUnattendedElevationAck(value: unknown): UnattendedElevationAck
   if (ack.level !== 'safe' && ack.level !== 'default' && ack.level !== 'full_access') return undefined
   if (typeof ack.acknowledgedAt !== 'string' || !ack.acknowledgedAt) return undefined
   if (typeof ack.acknowledgedApprovalMode !== 'string' || !ack.acknowledgedApprovalMode) return undefined
+  if (typeof ack.authorityDigest !== 'string' || !/^[0-9a-f]{64}$/i.test(ack.authorityDigest)) {
+    return undefined
+  }
   if (typeof ack.signature !== 'string' || !ack.signature) return undefined
   return {
     level: ack.level,
     acknowledgedAt: ack.acknowledgedAt,
     acknowledgedApprovalMode: ack.acknowledgedApprovalMode,
+    authorityDigest: ack.authorityDigest,
     signature: ack.signature
   }
 }
@@ -898,6 +905,17 @@ function isInvalidScheduledTaskStatusTransition(
 function sameWorkflowPath(a: string | undefined, b: string | undefined): boolean {
   if (!a || !b) return false
   return path.resolve(a) === path.resolve(b)
+}
+
+function sameWorkflowAuthority(a: WorkflowDefinition, b: WorkflowDefinition): boolean {
+  try {
+    const canonicalPath = (value: string): string => path.resolve(value)
+    return (
+      workflowAuthorityDigest(a, canonicalPath) === workflowAuthorityDigest(b, canonicalPath)
+    )
+  } catch {
+    return false
+  }
 }
 
 function scheduledAttachmentsAreDurable(value: unknown): value is ScheduledTaskAttachmentRef[] {
@@ -3890,15 +3908,12 @@ export class AppStore {
     const index = workflows.findIndex((item) => item.id === normalized.id)
     if (index >= 0) {
       const prior = workflows[index]
-      // P2 — preserve a prior stored ack across a re-save that did NOT supply one
-      // (the save sanitizer strips a renderer-supplied ack), but ONLY while
-      // template.approvalMode is unchanged; a mode change invalidates it. Without
-      // this, a benign re-save would silently wipe a valid ack via the spread below.
-      if (!normalized.unattendedElevation && prior.unattendedElevation) {
-        normalized.unattendedElevation =
-          prior.template?.approvalMode === normalized.template?.approvalMode
-            ? prior.unattendedElevation
-            : undefined
+      // An acknowledgement authorizes the complete execution envelope, not just
+      // approvalMode. Any authority-bearing change revokes it before persistence.
+      if (!sameWorkflowAuthority(prior, normalized)) {
+        delete normalized.unattendedElevation
+      } else if (!normalized.unattendedElevation && prior.unattendedElevation) {
+        normalized.unattendedElevation = prior.unattendedElevation
       }
       workflows[index] = { ...prior, ...normalized, updatedAt: nowIso }
     } else workflows.push(normalized)
@@ -3925,19 +3940,11 @@ export class AppStore {
       limits: partial.limits ? { ...source.limits, ...partial.limits } : source.limits,
       updatedAt: nowIso
     }
-    // P2 eager invalidation: a template.approvalMode change makes any existing
-    // elevation ack stale (it was confirmed against the old mode). Drop it now so
-    // the persisted record never carries a mode-mismatched ack. Defense-in-depth:
-    // the dispatch verifier (isUnattendedElevationAckCurrent) rejects it anyway,
-    // and the HMAC binds acknowledgedApprovalMode so it can't be re-pointed.
-    if (
-      merged.unattendedElevation &&
-      merged.template?.approvalMode !== source.template?.approvalMode
-    ) {
-      delete merged.unattendedElevation
-    }
     const normalized = normalizeWorkflowDefinitionRecord(merged, nowMs)
     if (!normalized) return null
+    if (normalized.unattendedElevation && !sameWorkflowAuthority(source, normalized)) {
+      delete normalized.unattendedElevation
+    }
     // Disabling is the fail-safe escape hatch for an orphaned workflow. A
     // target chat can be archived, deleted, or moved after the workflow was
     // saved; requiring that stale target to remain runnable would make the

@@ -1435,6 +1435,7 @@ describe('composeRun unattended ELEVATION (P2 verified ack honoring)', () => {
                 level: elevation.level,
                 acknowledgedAt: '2026-06-24T00:00:00.000Z',
                 acknowledgedApprovalMode: elevation.mode,
+                authorityDigest: 'a'.repeat(64),
                 signature: 'verified-by-the-dep'
               },
               templateApprovalMode: elevation.mode

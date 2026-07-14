@@ -14,7 +14,11 @@ import type {
   RepoConventionIndexSnapshot,
   WorkspaceBoardCard,
   WorkspaceBoardDefinition,
-  WorkspaceActivitySnapshot
+  WorkspaceActivitySnapshot,
+  ScheduledTaskCreateInput,
+  ScheduledTaskLifecycleUpdate,
+  WorkflowDefinitionCreateInput,
+  WorkflowDefinitionRendererUpdate
 } from '../main/store/types'
 import type { AppShellStatsSnapshot } from '../main/services/AppShellStatsService'
 import type { SessionCheckpointRecord } from '../main/checkpoints/SessionCheckpoint'
@@ -1427,15 +1431,16 @@ const api = {
   // it to paired iOS devices (the renderer's localStorage is the source of truth).
   syncEnsembleRosterPresets: (presets: unknown[]) =>
     ipcRenderer.invoke('ensemble-roster-presets:sync', presets),
-  saveScheduledTask: (task: any) => ipcRenderer.invoke('save-scheduled-task', task),
-  updateScheduledTask: (id: string, partial: any) =>
+  saveScheduledTask: (task: ScheduledTaskCreateInput) =>
+    ipcRenderer.invoke('save-scheduled-task', task),
+  updateScheduledTask: (id: string, partial: ScheduledTaskLifecycleUpdate) =>
     ipcRenderer.invoke('update-scheduled-task', id, partial),
   deleteScheduledTask: (id: string) => ipcRenderer.invoke('delete-scheduled-task', id),
   getWorkflowDefinitions: (workspaceId?: string) =>
     ipcRenderer.invoke('get-workflow-definitions', workspaceId),
-  saveWorkflowDefinition: (workflow: any) =>
+  saveWorkflowDefinition: (workflow: WorkflowDefinitionCreateInput) =>
     ipcRenderer.invoke('save-workflow-definition', workflow),
-  updateWorkflowDefinition: (id: string, partial: any) =>
+  updateWorkflowDefinition: (id: string, partial: WorkflowDefinitionRendererUpdate) =>
     ipcRenderer.invoke('update-workflow-definition', id, partial),
   deleteWorkflowDefinition: (id: string) => ipcRenderer.invoke('delete-workflow-definition', id),
   getWorkspaceBoards: (workspaceId?: string) =>

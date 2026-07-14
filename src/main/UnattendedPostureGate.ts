@@ -22,12 +22,13 @@
 // P2a (WIRED): the elevation ack is minted server-side (the
 // set-workflow-unattended-elevation IPC) and HMAC-bound via
 // UnattendedElevationSignature over {workflowId, workspacePath, level,
-// acknowledgedApprovalMode}. index.ts `resolveUnattendedElevation` RE-VERIFIES the
-// HMAC AND isUnattendedElevationAckCurrent on EVERY dispatch before honoring, so a
-// plain JSON ack hand-edited into workflows.json (no valid signature) is rejected
-// and the run falls back to 'plan'. This module treats the ack as a capability the
-// impure caller has already authenticated. (P2b — the opt-in UI — is the remaining
-// piece; until then an ack can only be minted via the IPC.)
+// acknowledgedApprovalMode, authorityDigest}. index.ts `resolveUnattendedElevation` RE-VERIFIES the
+// HMAC AND isUnattendedElevationAckCurrent on EVERY dispatch before honoring, so
+// renderer/persistence edits to either the ack or execution envelope are rejected
+// and the run falls back to 'plan'. This protects the renderer trust boundary; a
+// same-user attacker able to execute code in MAIN or obtain its process secret is
+// outside this capability boundary. This module treats the ack as a capability the
+// impure caller has already authenticated.
 
 import { approvalModeRank, coerceApprovalMode } from './RunPermissionPosture'
 
@@ -37,10 +38,12 @@ export interface UnattendedElevationAck {
   level: UnattendedElevationLevel
   /** ISO timestamp the user confirmed the elevation (Tier-4-style "are you sure"). */
   acknowledgedAt: string
-  /** The template approvalMode the ack was confirmed against. Editing the workflow's
-   * mode after acking invalidates it (see isUnattendedElevationAckCurrent). */
+  /** The template approvalMode the ack was confirmed against. */
   acknowledgedApprovalMode: string
-  /** P2: HMAC binding the ack to {workflowId, workspacePath, level, mode}. Until a
+  /** Digest of the complete unattended execution authority envelope confirmed
+   * by the user. Legacy acks without this binding fail closed. */
+  authorityDigest: string
+  /** P2: HMAC binding the ack to workflow identity, level, mode and authority digest. Until a
    * caller verifies it, the ack is forgeable; an unsigned/unverified ack must be
    * treated as absent (→ safe). */
   signature?: string
@@ -73,16 +76,19 @@ export function resolveUnattendedApprovalMode(
 
 /**
  * An elevation ack only authorizes the exact mode it was confirmed against. If the
- * workflow's template approvalMode changed after the ack — or the ack's level no
- * longer covers that mode — the ack is stale and must be treated as absent (→ safe).
+ * workflow's authority digest or template approvalMode changed after the ack — or
+ * the ack's level no longer covers that mode — the ack is stale and must be treated as absent (→ safe).
  * Pure STRUCTURAL check only; cryptographic provenance (HMAC) is a separate step
  * the impure caller performs before passing the ack in.
  */
 export function isUnattendedElevationAckCurrent(
   ack: UnattendedElevationAck | undefined,
-  templateApprovalMode: string | undefined
+  templateApprovalMode: string | undefined,
+  authorityDigest: string
 ): boolean {
   if (!ack || ack.level === 'safe') return false
+  if (!/^[0-9a-f]{64}$/i.test(ack.authorityDigest)) return false
+  if (ack.authorityDigest !== authorityDigest) return false
   if (ack.acknowledgedApprovalMode !== templateApprovalMode) return false
   const templateSafe = coerceApprovalMode(templateApprovalMode) || 'default'
   // The ack's ceiling must actually authorize the template mode it claims.
@@ -135,21 +141,31 @@ export interface WorkflowForElevationAck {
 export function buildUnattendedElevationAck(
   wf: WorkflowForElevationAck,
   level: string,
+  authorityDigest: string,
   sign: (tuple: {
     workflowId: string
     workspacePath: string
     level: UnattendedElevationLevel
     acknowledgedApprovalMode: string
+    authorityDigest: string
   }) => string,
   now: () => string = () => new Date().toISOString()
 ): UnattendedElevationAck | undefined {
   if (level !== 'default' && level !== 'full_access') return undefined
+  if (!/^[0-9a-f]{64}$/i.test(authorityDigest)) return undefined
   const acknowledgedApprovalMode = wf.template.approvalMode
   const signature = sign({
     workflowId: wf.id,
     workspacePath: wf.workspacePath,
     level,
-    acknowledgedApprovalMode
+    acknowledgedApprovalMode,
+    authorityDigest
   })
-  return { level, acknowledgedAt: now(), acknowledgedApprovalMode, signature }
+  return {
+    level,
+    acknowledgedAt: now(),
+    acknowledgedApprovalMode,
+    authorityDigest,
+    signature
+  }
 }

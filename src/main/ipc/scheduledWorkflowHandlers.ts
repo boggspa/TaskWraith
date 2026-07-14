@@ -1,6 +1,10 @@
 import { ipcMain, type IpcMainInvokeEvent } from 'electron'
 import type {
   ScheduledTask,
+  ScheduledTaskCreateInput,
+  ScheduledTaskLifecycleUpdate,
+  WorkflowDefinitionCreateInput,
+  WorkflowDefinitionRendererUpdate,
   WorkflowDefinition,
   CapabilityLedgerSnapshot,
   EvidencePackRecord,
@@ -14,11 +18,10 @@ import {
   type WorkflowForElevationAck
 } from '../UnattendedPostureGate'
 
-export type ScheduledTaskSaveInput = Omit<
-  ScheduledTask,
-  'id' | 'createdAt' | 'updatedAt' | 'status'
-> &
-  Partial<Pick<ScheduledTask, 'id' | 'createdAt' | 'updatedAt' | 'status'>>
+export type ScheduledTaskSaveInput = ScheduledTaskCreateInput
+type SanitizedRendererWorkflowUpdate = WorkflowDefinitionRendererUpdate & {
+  unattendedElevation?: undefined
+}
 
 export type WorkspaceBoardSaveInput = Omit<
   WorkspaceBoardDefinition,
@@ -40,7 +43,7 @@ export interface ScheduledWorkflowHandlersDeps {
   deleteScheduledTask: (id: string) => void
   getWorkflowDefinitions: (workspaceId?: string) => WorkflowDefinition[]
   getWorkflowDefinition: (id: string) => WorkflowDefinition | null
-  saveWorkflowDefinition: (workflow: Omit<WorkflowDefinition, 'id' | 'createdAt' | 'updatedAt' | 'history' | 'failureStreak'> & Partial<Pick<WorkflowDefinition, 'id' | 'createdAt' | 'updatedAt' | 'history' | 'failureStreak'>>) => WorkflowDefinition
+  saveWorkflowDefinition: (workflow: WorkflowDefinitionCreateInput) => WorkflowDefinition
   updateWorkflowDefinition: (
     id: string,
     partial: Partial<WorkflowDefinition>
@@ -69,6 +72,24 @@ export interface ScheduledWorkflowHandlersDeps {
     snapshot: Partial<RepoConventionIndexSnapshot>
   ) => RepoConventionIndexSnapshot
   materializeWorkflowNow: (id: string) => ScheduledTask | null
+  workflowAuthorityDigest: (workflow: WorkflowDefinition) => string
+  currentWorkflowUnattendedElevationCapability: (
+    workflow: WorkflowDefinition
+  ) => {
+    key: string
+    level: Exclude<UnattendedElevationLevel, 'safe'>
+  } | null
+  workflowTargetIsCurrent: (workflow: WorkflowDefinition) => boolean
+  confirmWorkflowUnattendedElevation: (
+    event: IpcMainInvokeEvent,
+    workflow: WorkflowDefinition,
+    level: Exclude<UnattendedElevationLevel, 'safe'>
+  ) => Promise<boolean>
+  confirmElevatedWorkflowRunNow: (
+    event: IpcMainInvokeEvent,
+    workflow: WorkflowDefinition,
+    level: Exclude<UnattendedElevationLevel, 'safe'>
+  ) => Promise<boolean>
   setWorkflowUnattendedElevation: (
     id: string,
     ack: UnattendedElevationAck | undefined
@@ -82,32 +103,36 @@ export interface ScheduledWorkflowHandlersDeps {
   buildUnattendedElevationAck: (
     workflow: WorkflowForElevationAck,
     level: string,
+    authorityDigest: string,
     sign: (tuple: {
       workflowId: string
       workspacePath: string
       level: UnattendedElevationLevel
       acknowledgedApprovalMode: string
+      authorityDigest: string
     }) => string
   ) => UnattendedElevationAck | undefined
   signWorkflowUnattendedElevation: (
     workflowId: string,
     workspacePath: string,
     level: UnattendedElevationLevel,
-    acknowledgedApprovalMode: string
+    acknowledgedApprovalMode: string,
+    authorityDigest: string
   ) => string
   requireNonEmptyString: (value: unknown, label: string) => string
 
   sanitizeScheduledTaskForSave: (task: ScheduledTaskSaveInput) => ScheduledTaskSaveInput
-  sanitizeScheduledTaskPatch: (id: string, partial: Partial<ScheduledTask>) => Partial<ScheduledTask> | null
+  sanitizeScheduledTaskPatch: (
+    id: string,
+    partial: ScheduledTaskLifecycleUpdate
+  ) => ScheduledTaskLifecycleUpdate | null
   sanitizeWorkflowForSave: (
-    workflow: Omit<WorkflowDefinition, 'id' | 'createdAt' | 'updatedAt' | 'history' | 'failureStreak'> &
-      Partial<Pick<WorkflowDefinition, 'id' | 'createdAt' | 'updatedAt' | 'history' | 'failureStreak'>>
-  ) => Omit<
-    WorkflowDefinition,
-    'id' | 'createdAt' | 'updatedAt' | 'history' | 'failureStreak'
-  > &
-    Partial<Pick<WorkflowDefinition, 'id' | 'createdAt' | 'updatedAt' | 'history' | 'failureStreak'>>
-  sanitizeWorkflowPatch: (id: string, partial: Partial<WorkflowDefinition>) => Partial<WorkflowDefinition> | null
+    workflow: WorkflowDefinitionCreateInput
+  ) => WorkflowDefinitionCreateInput
+  sanitizeWorkflowPatch: (
+    id: string,
+    partial: WorkflowDefinitionRendererUpdate
+  ) => SanitizedRendererWorkflowUpdate | null
   sanitizeWorkspaceBoardForSave: (
     board: WorkspaceBoardSaveInput
   ) => WorkspaceBoardSaveInput
@@ -150,7 +175,7 @@ export function registerScheduledWorkflowHandlers(deps: ScheduledWorkflowHandler
     return saved
   })
 
-  ipcMain.handle('update-scheduled-task', (event, id: string, partial: Partial<ScheduledTask>) => {
+  ipcMain.handle('update-scheduled-task', (event, id: string, partial: ScheduledTaskLifecycleUpdate) => {
     deps.assertMainRendererSender(event)
     const sanitized = deps.sanitizeScheduledTaskPatch(id, partial)
     if (!sanitized) return null
@@ -174,7 +199,7 @@ export function registerScheduledWorkflowHandlers(deps: ScheduledWorkflowHandler
     return deps.getWorkflowDefinitions(workspaceId)
   })
 
-  ipcMain.handle('save-workflow-definition', (event, workflow: Parameters<ScheduledWorkflowHandlersDeps['saveWorkflowDefinition']>[0]) => {
+  ipcMain.handle('save-workflow-definition', (event, workflow: WorkflowDefinitionCreateInput) => {
     deps.assertMainRendererSender(event)
     const saved = deps.saveWorkflowDefinition(deps.sanitizeWorkflowForSave(workflow))
     deps.broadcastWorkflowDefinitionsChanged()
@@ -183,7 +208,7 @@ export function registerScheduledWorkflowHandlers(deps: ScheduledWorkflowHandler
     return saved
   })
 
-  ipcMain.handle('update-workflow-definition', (event, id: string, partial: Partial<WorkflowDefinition>) => {
+  ipcMain.handle('update-workflow-definition', (event, id: string, partial: WorkflowDefinitionRendererUpdate) => {
     deps.assertMainRendererSender(event)
     const sanitized = deps.sanitizeWorkflowPatch(id, partial)
     if (!sanitized) return null
@@ -294,9 +319,35 @@ export function registerScheduledWorkflowHandlers(deps: ScheduledWorkflowHandler
     return saved
   })
 
-  ipcMain.handle('run-workflow-now', (event, id: string) => {
+  ipcMain.handle('run-workflow-now', async (event, id: string) => {
     deps.assertMainRendererSender(event)
-    const task = deps.materializeWorkflowNow(id)
+    const workflowId = deps.requireNonEmptyString(id, 'Workflow id')
+    const workflow = deps.getWorkflowDefinition(workflowId)
+    if (!workflow) return null
+    const capability = deps.currentWorkflowUnattendedElevationCapability(workflow)
+    if (capability) {
+      if (!deps.workflowTargetIsCurrent(workflow)) return null
+      const authorityDigest = deps.workflowAuthorityDigest(workflow)
+      const confirmed = await deps.confirmElevatedWorkflowRunNow(
+        event,
+        workflow,
+        capability.level
+      )
+      if (!confirmed) return null
+      const current = deps.getWorkflowDefinition(workflowId)
+      const currentCapability = current
+        ? deps.currentWorkflowUnattendedElevationCapability(current)
+        : null
+      if (
+        !current ||
+        deps.workflowAuthorityDigest(current) !== authorityDigest ||
+        !deps.workflowTargetIsCurrent(current) ||
+        currentCapability?.key !== capability.key
+      ) {
+        return null
+      }
+    }
+    const task = deps.materializeWorkflowNow(workflowId)
     if (task) {
       deps.broadcastWorkflowDefinitionsChanged()
       deps.broadcastScheduledTasksChanged()
@@ -307,19 +358,51 @@ export function registerScheduledWorkflowHandlers(deps: ScheduledWorkflowHandler
     return task
   })
 
-  ipcMain.handle('set-workflow-unattended-elevation', (event, id: string, level: string) => {
+  ipcMain.handle('set-workflow-unattended-elevation', async (event, id: string, level: string) => {
     deps.assertMainRendererSender(event)
-    const wf = deps.getWorkflowDefinition(deps.requireNonEmptyString(id, 'Workflow id'))
+    const workflowId = deps.requireNonEmptyString(id, 'Workflow id')
+    const wf = deps.getWorkflowDefinition(workflowId)
     if (!wf) return null
-    const ack = deps.buildUnattendedElevationAck(wf as WorkflowForElevationAck, level, (tuple) =>
-      deps.signWorkflowUnattendedElevation(
-        wf.id,
-        wf.workspacePath,
-        tuple.level,
-        tuple.acknowledgedApprovalMode
-      )
+    if (level === 'safe') {
+      const updated = deps.setWorkflowUnattendedElevation(workflowId, undefined)
+      deps.broadcastWorkflowDefinitionsChanged()
+      requestThrottledRemoteProjectionAfterIpcMutation(deps)
+      return updated
+    }
+    if (level !== 'default' && level !== 'full_access') {
+      throw new Error('Workflow unattended elevation level is invalid.')
+    }
+    if (!deps.workflowTargetIsCurrent(wf)) return wf
+    const authorityDigest = deps.workflowAuthorityDigest(wf)
+    const priorCapabilityKey =
+      deps.currentWorkflowUnattendedElevationCapability(wf)?.key ?? null
+    const confirmed = await deps.confirmWorkflowUnattendedElevation(event, wf, level)
+    if (!confirmed) return wf
+    const current = deps.getWorkflowDefinition(workflowId)
+    if (
+      !current ||
+      deps.workflowAuthorityDigest(current) !== authorityDigest ||
+      !deps.workflowTargetIsCurrent(current) ||
+      (deps.currentWorkflowUnattendedElevationCapability(current)?.key ?? null) !==
+        priorCapabilityKey
+    ) {
+      return current
+    }
+    const ack = deps.buildUnattendedElevationAck(
+      current as WorkflowForElevationAck,
+      level,
+      authorityDigest,
+      (tuple) =>
+        deps.signWorkflowUnattendedElevation(
+          current.id,
+          current.workspacePath,
+          tuple.level,
+          tuple.acknowledgedApprovalMode,
+          tuple.authorityDigest
+        )
     )
-    const updated = deps.setWorkflowUnattendedElevation(id, ack)
+    if (!ack) return current
+    const updated = deps.setWorkflowUnattendedElevation(workflowId, ack)
     deps.broadcastWorkflowDefinitionsChanged()
     requestThrottledRemoteProjectionAfterIpcMutation(deps)
     return updated

@@ -10,10 +10,13 @@ import {
 } from './UnattendedPostureGate'
 import { signUnattendedElevation, verifyUnattendedElevation } from './UnattendedElevationSignature'
 
+const AUTHORITY_DIGEST = 'a'.repeat(64)
+
 const ack = (over: Partial<UnattendedElevationAck> = {}): UnattendedElevationAck => ({
   level: 'full_access',
   acknowledgedAt: '2026-06-24T00:00:00.000Z',
   acknowledgedApprovalMode: 'auto_edit',
+  authorityDigest: AUTHORITY_DIGEST,
   ...over
 })
 
@@ -57,21 +60,25 @@ describe('resolveUnattendedApprovalMode', () => {
 
 describe('isUnattendedElevationAckCurrent', () => {
   it('is false with no ack or a safe-level ack', () => {
-    expect(isUnattendedElevationAckCurrent(undefined, 'auto_edit')).toBe(false)
-    expect(isUnattendedElevationAckCurrent(ack({ level: 'safe' }), 'plan')).toBe(false)
+    expect(isUnattendedElevationAckCurrent(undefined, 'auto_edit', AUTHORITY_DIGEST)).toBe(false)
+    expect(
+      isUnattendedElevationAckCurrent(ack({ level: 'safe' }), 'plan', AUTHORITY_DIGEST)
+    ).toBe(false)
   })
 
   it('is true when the ack was confirmed against the current template mode and covers it', () => {
     expect(
       isUnattendedElevationAckCurrent(
         ack({ level: 'full_access', acknowledgedApprovalMode: 'auto_edit' }),
-        'auto_edit'
+        'auto_edit',
+        AUTHORITY_DIGEST
       )
     ).toBe(true)
     expect(
       isUnattendedElevationAckCurrent(
         ack({ level: 'default', acknowledgedApprovalMode: 'default' }),
-        'default'
+        'default',
+        AUTHORITY_DIGEST
       )
     ).toBe(true)
   })
@@ -80,7 +87,8 @@ describe('isUnattendedElevationAckCurrent', () => {
     expect(
       isUnattendedElevationAckCurrent(
         ack({ level: 'full_access', acknowledgedApprovalMode: 'auto_edit' }),
-        'plan'
+        'plan',
+        AUTHORITY_DIGEST
       )
     ).toBe(false)
   })
@@ -90,7 +98,25 @@ describe('isUnattendedElevationAckCurrent', () => {
     expect(
       isUnattendedElevationAckCurrent(
         ack({ level: 'default', acknowledgedApprovalMode: 'auto_edit' }),
-        'auto_edit'
+        'auto_edit',
+        AUTHORITY_DIGEST
+      )
+    ).toBe(false)
+  })
+
+  it('is stale when the current execution-authority digest changed or is missing', () => {
+    expect(
+      isUnattendedElevationAckCurrent(
+        ack(),
+        'auto_edit',
+        'b'.repeat(64)
+      )
+    ).toBe(false)
+    expect(
+      isUnattendedElevationAckCurrent(
+        ack({ authorityDigest: '' }),
+        'auto_edit',
+        AUTHORITY_DIGEST
       )
     ).toBe(false)
   })
@@ -116,25 +142,37 @@ describe('buildUnattendedElevationAck', () => {
 
   it('returns undefined for level safe / unknown (revoke) and never signs', () => {
     const sign = vi.fn(() => 'sig')
-    expect(buildUnattendedElevationAck(wf, 'safe', sign, fixedNow)).toBeUndefined()
-    expect(buildUnattendedElevationAck(wf, 'nonsense', sign, fixedNow)).toBeUndefined()
+    expect(
+      buildUnattendedElevationAck(wf, 'safe', AUTHORITY_DIGEST, sign, fixedNow)
+    ).toBeUndefined()
+    expect(
+      buildUnattendedElevationAck(wf, 'nonsense', AUTHORITY_DIGEST, sign, fixedNow)
+    ).toBeUndefined()
     expect(sign).not.toHaveBeenCalled()
   })
 
   it('mints a signed ack for full_access with a SERVER-DERIVED mode', () => {
     const sign = vi.fn((tuple) => `sig:${tuple.level}:${tuple.acknowledgedApprovalMode}`)
-    const built = buildUnattendedElevationAck(wf, 'full_access', sign, fixedNow)
+    const built = buildUnattendedElevationAck(
+      wf,
+      'full_access',
+      AUTHORITY_DIGEST,
+      sign,
+      fixedNow
+    )
     expect(built).toEqual({
       level: 'full_access',
       acknowledgedAt: '2026-06-24T12:00:00.000Z',
       acknowledgedApprovalMode: 'auto_edit', // from wf.template, not a caller arg
+      authorityDigest: AUTHORITY_DIGEST,
       signature: 'sig:full_access:auto_edit'
     })
     expect(sign).toHaveBeenCalledWith({
       workflowId: 'wf-1',
       workspacePath: '/repo',
       level: 'full_access',
-      acknowledgedApprovalMode: 'auto_edit'
+      acknowledgedApprovalMode: 'auto_edit',
+      authorityDigest: AUTHORITY_DIGEST
     })
   })
 
@@ -142,6 +180,7 @@ describe('buildUnattendedElevationAck', () => {
     const built = buildUnattendedElevationAck(
       { ...wf, template: { approvalMode: 'default' } },
       'default',
+      AUTHORITY_DIGEST,
       () => 'sig',
       fixedNow
     )
@@ -155,12 +194,14 @@ describe('resolveUnattendedElevation gate composition (verify AND current — bo
     workflowId: 'wf-1',
     workspacePath: '/repo',
     level: 'full_access' as const,
-    acknowledgedApprovalMode: 'auto_edit'
+    acknowledgedApprovalMode: 'auto_edit',
+    authorityDigest: AUTHORITY_DIGEST
   }
   const goodAck: UnattendedElevationAck = {
     level: 'full_access',
     acknowledgedAt: '2026-06-24T00:00:00.000Z',
     acknowledgedApprovalMode: 'auto_edit',
+    authorityDigest: AUTHORITY_DIGEST,
     signature: signUnattendedElevation(SECRET, tuple)
   }
   // Mirror index.ts resolveUnattendedElevation: HMAC verify AND structural currency.
@@ -169,7 +210,12 @@ describe('resolveUnattendedElevation gate composition (verify AND current — bo
       SECRET,
       { ...tuple, acknowledgedApprovalMode: ackUnderTest.acknowledgedApprovalMode },
       ackUnderTest.signature
-    ) && isUnattendedElevationAckCurrent(ackUnderTest, templateMode)
+    ) &&
+    isUnattendedElevationAckCurrent(
+      ackUnderTest,
+      templateMode,
+      AUTHORITY_DIGEST
+    )
 
   it('passes for an authentic, current ack', () => {
     expect(resolve(goodAck, 'auto_edit')).toBe(true)
