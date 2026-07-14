@@ -21,6 +21,16 @@ struct TaskWraithApp: App {
     var body: some Scene {
         WindowGroup {
             RootView(model: pushDelegate.model)
+                .task {
+                    // Screenshot/UI-test hook: boot straight into the OFFLINE
+                    // demo session (canned data, no pairing, no network — the
+                    // same surface App Review exercises) so automation never
+                    // depends on a paired Mac. Argument-gated; inert for
+                    // normal launches.
+                    if ProcessInfo.processInfo.arguments.contains("-tw-demo") {
+                        pushDelegate.model.enterDemoMode()
+                    }
+                }
         }
     }
 }
