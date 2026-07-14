@@ -4115,6 +4115,28 @@ export interface ScheduledEnsembleSnapshot {
   capturedAt: string
 }
 
+/**
+ * Main-issued proof that a persisted scheduled occurrence still matches the
+ * exact task, workflow execution, workspace target, runtime profiles, and
+ * permission posture that were authorized when it was materialized.
+ *
+ * Plain runtime-profile environment values never enter this record. They are
+ * represented only by `runtimeProfileSetHmac`, which is derived while those
+ * values remain in main-process memory. Permission authority is also resolved
+ * afresh for every runnable seat and represented only by a keyed set HMAC; the
+ * task's persisted posture snapshot is projection/audit data, not seal input.
+ */
+export interface ScheduledOccurrenceSeal {
+  readonly schemaVersion: 1
+  readonly issuedAt: string
+  readonly taskAuthorityDigest: string
+  readonly compositeWorkflowAuthorityDigest: string | null
+  readonly workspaceRealPath: string
+  readonly runtimeProfileSetHmac: string
+  readonly permissionPostureSetHmac: string
+  readonly sealSignature: string
+}
+
 export interface ScheduledTask {
   id: string
   workspaceId: string
@@ -4157,6 +4179,7 @@ export interface ScheduledTask {
   runId?: string
   permissionPosture?: RunPermissionPostureSnapshot
   dispatchReceipt?: RunQueueDispatchReceipt
+  occurrenceSeal?: ScheduledOccurrenceSeal
   firedAt?: string
   /**
    * ISO timestamp stamped ONLY on the transition INTO 'running' in
