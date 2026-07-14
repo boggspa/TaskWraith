@@ -5076,28 +5076,57 @@ export class AppStore {
     if (!nextStatus) return workflow
     const nowIso = new Date().toISOString()
     const history = [...workflow.history]
-    let executionIndex = history.findIndex((execution) => execution.id === task.workflowExecutionId)
+    const executionIndex = history.findIndex(
+      (execution) => execution.id === task.workflowExecutionId
+    )
+    // A ScheduledTask is a projection of a workflow execution, never authority
+    // for creating one. Missing or mismatched linkage therefore fails closed
+    // instead of manufacturing durable workflow history from task-controlled
+    // fields.
+    if (executionIndex < 0 || !task.workflowOccurrenceAt) return workflow
+    const previous = history[executionIndex]
+    if (
+      previous.workflowId !== workflow.id ||
+      previous.scheduledTaskId !== task.id ||
+      previous.plannedFor !== task.workflowOccurrenceAt
+    ) {
+      return workflow
+    }
     // Stage 1 — the prior recorded status, captured BEFORE the history mutation,
     // so the durable ledger only gets an event on an ACTUAL status transition.
-    const priorExecStatus = executionIndex >= 0 ? history[executionIndex].status : null
-    if (executionIndex < 0) {
-      history.push({
-        id: task.workflowExecutionId,
-        workflowId: workflow.id,
-        scheduledTaskId: task.id,
-        plannedFor: task.workflowOccurrenceAt || task.runAt,
-        status: nextStatus,
-        createdAt: task.createdAt || nowIso,
-        updatedAt: nowIso
-      })
-      executionIndex = history.length - 1
-    }
-    const previous = history[executionIndex]
+    const priorExecStatus = previous.status
     const terminal = isTerminalWorkflowExecutionStatus(nextStatus)
     const wasTerminal = isTerminalWorkflowExecutionStatus(previous.status)
+    const isActiveExecution = workflow.activeExecutionId === task.workflowExecutionId
+    const terminalRunOwnerMatches = previous.runId
+      ? task.runId === previous.runId
+      : previous.runId === undefined && task.runId === undefined
+
+    // Terminal executions are immutable. In particular, a replayed/stale task
+    // may not resurrect one to running or rewrite its terminal evidence.
+    if (wasTerminal || nextStatus === previous.status) return workflow
+    if (
+      nextStatus === 'running' &&
+      (previous.status !== 'queued' || !isActiveExecution || !task.runId)
+    ) {
+      return workflow
+    }
+    if (terminal && previous.status === 'running' && !terminalRunOwnerMatches) {
+      return workflow
+    }
+    if (
+      terminal &&
+      previous.status !== 'running' &&
+      !(
+        previous.status === 'queued' &&
+        (nextStatus === 'failed' || nextStatus === 'cancelled')
+      )
+    ) {
+      return workflow
+    }
+
     history[executionIndex] = {
       ...previous,
-      scheduledTaskId: task.id,
       runId: task.runId || previous.runId,
       status: nextStatus,
       updatedAt: nowIso,
@@ -5109,38 +5138,36 @@ export class AppStore {
     }
 
     workflow.history = history.slice(-WORKFLOW_HISTORY_LIMIT)
-    workflow.lastStatus = nextStatus
-    workflow.lastError = task.lastError
     workflow.updatedAt = nowIso
-    if (nextStatus === 'running') {
-      workflow.activeExecutionId = task.workflowExecutionId
+    // An old occurrence may settle after a newer execution became active. Its
+    // own history remains useful evidence, but it must not clobber the current
+    // workflow projection, failure streak, cadence, or active execution.
+    if (isActiveExecution) {
+      workflow.lastStatus = nextStatus
+      workflow.lastError = task.lastError
     }
-    if (terminal) {
+    if (terminal && isActiveExecution) {
       workflow.lastCompletedAt = task.completedAt || nowIso
-      if (workflow.activeExecutionId === task.workflowExecutionId) {
-        workflow.activeExecutionId = undefined
-      }
-      if (!wasTerminal) {
-        workflow.failureStreak = nextStatus === 'failed' ? workflow.failureStreak + 1 : 0
-        const maxFailures = workflow.limits.maxConsecutiveFailures || 3
-        if (nextStatus === 'failed' && workflow.failureStreak >= maxFailures) {
-          workflow.enabled = false
-          workflow.nextRunAt = undefined
-          workflow.lastError =
-            task.lastError || `Workflow auto-disabled after ${workflow.failureStreak} failures.`
-        } else if (workflow.enabled) {
-          const completedAtMs = task.completedAt ? Date.parse(task.completedAt) : Number.NaN
-          const nowMs = Number.isFinite(completedAtMs) ? completedAtMs : Date.now()
-          const existingNextRunAtMs = workflow.nextRunAt
-            ? Date.parse(workflow.nextRunAt)
-            : Number.NaN
-          workflow.nextRunAt =
-            Number.isFinite(existingNextRunAtMs) && existingNextRunAtMs > nowMs
-              ? workflow.nextRunAt
-              : resolveNextWorkflowRunAt(workflow.trigger, nowMs, nowMs)
-        } else {
-          workflow.nextRunAt = undefined
-        }
+      workflow.activeExecutionId = undefined
+      workflow.failureStreak = nextStatus === 'failed' ? workflow.failureStreak + 1 : 0
+      const maxFailures = workflow.limits.maxConsecutiveFailures || 3
+      if (nextStatus === 'failed' && workflow.failureStreak >= maxFailures) {
+        workflow.enabled = false
+        workflow.nextRunAt = undefined
+        workflow.lastError =
+          task.lastError || `Workflow auto-disabled after ${workflow.failureStreak} failures.`
+      } else if (workflow.enabled) {
+        const completedAtMs = task.completedAt ? Date.parse(task.completedAt) : Number.NaN
+        const nowMs = Number.isFinite(completedAtMs) ? completedAtMs : Date.now()
+        const existingNextRunAtMs = workflow.nextRunAt
+          ? Date.parse(workflow.nextRunAt)
+          : Number.NaN
+        workflow.nextRunAt =
+          Number.isFinite(existingNextRunAtMs) && existingNextRunAtMs > nowMs
+            ? workflow.nextRunAt
+            : resolveNextWorkflowRunAt(workflow.trigger, nowMs, nowMs)
+      } else {
+        workflow.nextRunAt = undefined
       }
     }
     // Stage 1 — append a durable ledger event on a real status transition
@@ -5197,10 +5224,9 @@ export class AppStore {
     record.dispatchReceipt = task.dispatchReceipt || buildScheduledTaskDispatchReceipt(record)
     const index = tasks.findIndex((item) => item.id === record.id)
     if (index >= 0) {
-      tasks[index] = { ...tasks[index], ...record, updatedAt: now }
-    } else {
-      tasks.push(record)
+      throw new Error('Scheduled task already exists. Use the lifecycle update APIs.')
     }
+    tasks.push(record)
     writeJson(scheduledTasksPath, tasks)
     return record
   }
@@ -5219,6 +5245,16 @@ export class AppStore {
     if (partial.status && isInvalidScheduledTaskStatusTransition(current.status, partial.status)) {
       return current
     }
+    // Run ownership is established exclusively by claimDueScheduledTaskForRun.
+    // The generic lifecycle updater may settle or annotate that owner, but it
+    // cannot create, replace, or clear it.
+    if (partial.status === 'running' && current.status !== 'running') return current
+    if (
+      Object.prototype.hasOwnProperty.call(partial, 'runId') &&
+      partial.runId !== current.runId
+    ) {
+      return current
+    }
     const updated = { ...current, ...partial, id, updatedAt: new Date().toISOString() }
     if ('permissionPosture' in partial || 'runId' in partial || 'workflowMode' in partial) {
       updated.dispatchReceipt = buildScheduledTaskDispatchReceipt(updated)
@@ -5234,6 +5270,121 @@ export class AppStore {
     ) {
       updated.runningSince = new Date().toISOString()
     }
+    tasks[index] = updated
+    writeJson(scheduledTasksPath, tasks)
+    this.syncWorkflowFromScheduledTask(updated)
+    return updated
+  }
+
+  /**
+   * Synchronously claim one arrived scheduled occurrence for exactly one run.
+   *
+   * The in-process read/validate/write sequence is synchronous inside MAIN, so
+   * a second caller observes `running` and loses the claim. Workflow tasks
+   * additionally require the exact pre-materialized queued execution tuple;
+   * standalone tasks deliberately omit it.
+   */
+  static claimDueScheduledTaskForRun(
+    id: string,
+    options: {
+      nowMs?: number
+      runId?: string
+      expectedWorkflowOccurrence?: {
+        workflowId: string
+        executionId: string
+        plannedFor: string
+        taskId: string
+      }
+    } = {}
+  ): ScheduledTask | null {
+    const nowMs = options.nowMs ?? Date.now()
+    const nowDate = new Date(nowMs)
+    if (!Number.isFinite(nowMs) || !Number.isFinite(nowDate.getTime())) return null
+
+    const tasks = this.getScheduledTasks()
+    const index = tasks.findIndex((task) => task.id === id)
+    if (index < 0) return null
+    const current = tasks[index]
+    const runAtMs =
+      typeof current.runAt === 'string' && current.runAt.trim()
+        ? Date.parse(current.runAt)
+        : Number.NaN
+    if (
+      current.status !== 'due' ||
+      current.runId !== undefined ||
+      !Number.isFinite(runAtMs) ||
+      runAtMs > nowMs
+    ) {
+      return null
+    }
+
+    const expected = options.expectedWorkflowOccurrence
+    const hasWorkflowLink = Boolean(
+      current.workflowId || current.workflowExecutionId || current.workflowOccurrenceAt
+    )
+    if (hasWorkflowLink) {
+      if (
+        !expected ||
+        current.workflowId !== expected.workflowId ||
+        current.workflowExecutionId !== expected.executionId ||
+        current.workflowOccurrenceAt !== expected.plannedFor ||
+        current.id !== expected.taskId
+      ) {
+        return null
+      }
+      const workflow = this.getWorkflowDefinition(expected.workflowId)
+      const execution = workflow?.history.find((item) => item.id === expected.executionId)
+      if (
+        !workflow ||
+        workflow.activeExecutionId !== expected.executionId ||
+        !execution ||
+        execution.workflowId !== expected.workflowId ||
+        execution.scheduledTaskId !== expected.taskId ||
+        execution.plannedFor !== expected.plannedFor ||
+        execution.status !== 'queued'
+      ) {
+        return null
+      }
+    } else if (expected) {
+      return null
+    }
+
+    const occupiedRunIds = new Set<string>()
+    for (const task of tasks) {
+      if (task.runId) occupiedRunIds.add(task.runId)
+    }
+    for (const workflow of this.getWorkflowDefinitions()) {
+      for (const execution of workflow.history) {
+        if (execution.runId) occupiedRunIds.add(execution.runId)
+      }
+    }
+
+    let runId = options.runId
+    if (runId !== undefined) {
+      if (
+        typeof runId !== 'string' ||
+        !runId ||
+        runId.trim() !== runId ||
+        occupiedRunIds.has(runId)
+      ) {
+        return null
+      }
+    } else {
+      do {
+        runId = randomUUID()
+      } while (occupiedRunIds.has(runId))
+    }
+
+    const nowIso = nowDate.toISOString()
+    const updated: ScheduledTask = {
+      ...current,
+      status: 'running',
+      runId,
+      firedAt: nowIso,
+      runningSince: nowIso,
+      updatedAt: nowIso
+    }
+    updated.dispatchReceipt = buildScheduledTaskDispatchReceipt(updated)
     tasks[index] = updated
     writeJson(scheduledTasksPath, tasks)
     this.syncWorkflowFromScheduledTask(updated)

@@ -19,6 +19,7 @@ vi.mock('electron', () => ({
 const plannedFor = '2026-06-07T20:00:00.000Z'
 const intervalMs = 15 * 60_000
 type WorkflowInput = Parameters<typeof AppStore.saveWorkflowDefinition>[0]
+type ScheduledTaskInput = Parameters<typeof AppStore.saveScheduledTask>[0]
 
 function durableAttachment(
   overrides: Partial<ScheduledTaskAttachmentRef & PersistedAttachmentRef> = {}
@@ -82,6 +83,52 @@ function workflowInput(
     nextRunAt: plannedFor,
     ...restOverrides
   }
+}
+
+function standaloneScheduledTaskInput(
+  overrides: Partial<ScheduledTaskInput> = {}
+): ScheduledTaskInput {
+  const workspaceId = overrides.workspaceId || 'ws-1'
+  const workspacePath = overrides.workspacePath || '/repo'
+  const chatId =
+    overrides.chatId || AppStore.createChat(workspaceId, workspacePath).appChatId
+  return {
+    workspaceId,
+    workspacePath,
+    chatId,
+    provider: 'codex',
+    prompt: 'Run the standalone task.',
+    selectedModelType: 'cli-default',
+    customModel: '',
+    approvalMode: 'default',
+    workflowMode: 'normal',
+    sessionTrust: false,
+    imageAttachments: [],
+    runAt: plannedFor,
+    timezone: 'Europe/London',
+    ...overrides
+  }
+}
+
+function claimScheduledTask(
+  task: ReturnType<typeof AppStore.saveScheduledTask>,
+  runId: string,
+  nowMs: number = Date.parse(task.runAt)
+) {
+  const expectedWorkflowOccurrence =
+    task.workflowId && task.workflowExecutionId && task.workflowOccurrenceAt
+      ? {
+          workflowId: task.workflowId,
+          executionId: task.workflowExecutionId,
+          plannedFor: task.workflowOccurrenceAt,
+          taskId: task.id
+        }
+      : undefined
+  return AppStore.claimDueScheduledTaskForRun(task.id, {
+    nowMs,
+    runId,
+    expectedWorkflowOccurrence
+  })
 }
 
 describe('AppStore workflows', () => {
@@ -559,6 +606,7 @@ describe('AppStore workflows', () => {
       imageAttachments: [],
       runAt: plannedFor,
       timezone: 'Europe/London',
+      status: 'due',
       permissionPosture: {
         schemaVersion: 1,
         approvalMode: 'plan',
@@ -576,11 +624,11 @@ describe('AppStore workflows', () => {
     expect(edited?.approvalMode).toBe('auto_edit')
     expect(edited?.permissionPosture?.approvalMode).toBe('plan')
 
-    const running = AppStore.updateScheduledTask(task.id, {
-      status: 'running',
-      runId: 'run-after-policy-edit',
-      firedAt: '2026-06-07T20:00:01.000Z'
-    })
+    const running = claimScheduledTask(
+      task,
+      'run-after-policy-edit',
+      Date.parse('2026-06-07T20:00:01.000Z')
+    )
 
     expect(running?.dispatchReceipt).toMatchObject({
       runId: 'run-after-policy-edit',
@@ -674,11 +722,11 @@ describe('AppStore workflows', () => {
     const saved = AppStore.saveWorkflowDefinition(workflowInput())
     const [task] = AppStore.materializeDueWorkflows(Date.parse(plannedFor))
 
-    const running = AppStore.updateScheduledTask(task.id, {
-      status: 'running',
-      runId: 'run-1',
-      firedAt: '2026-06-07T20:00:01.000Z'
-    })
+    const running = claimScheduledTask(
+      task,
+      'run-1',
+      Date.parse('2026-06-07T20:00:01.000Z')
+    )
     expect(running?.status).toBe('running')
     expect(AppStore.getWorkflowDefinition(saved.id)?.lastStatus).toBe('running')
 
@@ -698,15 +746,360 @@ describe('AppStore workflows', () => {
     expect(workflow?.nextRunAt).toBe(new Date(Date.parse(plannedFor) + intervalMs).toISOString())
   })
 
+  it('synchronously claims one arrived standalone task and mints its run identity', () => {
+    const task = AppStore.saveScheduledTask(
+      standaloneScheduledTaskInput({ status: 'due', runAt: plannedFor })
+    )
+
+    const claimed = AppStore.claimDueScheduledTaskForRun(task.id, {
+      nowMs: Date.parse(plannedFor)
+    })
+
+    expect(claimed).toMatchObject({
+      id: task.id,
+      status: 'running',
+      firedAt: plannedFor,
+      runningSince: plannedFor
+    })
+    expect(claimed?.runId).toMatch(/^[0-9a-f-]{36}$/)
+    expect(claimed?.dispatchReceipt?.runId).toBe(claimed?.runId)
+    expect(AppStore.getScheduledTasks().find((item) => item.id === task.id)).toEqual(claimed)
+  })
+
+  it('rejects pending, future, and invalid-time tasks without mutating them', () => {
+    const pending = AppStore.saveScheduledTask(
+      standaloneScheduledTaskInput({ status: 'pending', runAt: plannedFor })
+    )
+    const future = AppStore.saveScheduledTask(
+      standaloneScheduledTaskInput({
+        status: 'due',
+        runAt: '2026-06-07T20:00:01.000Z'
+      })
+    )
+    const invalid = AppStore.saveScheduledTask(
+      standaloneScheduledTaskInput({ status: 'due', runAt: null as unknown as string })
+    )
+    const before = AppStore.getScheduledTasks()
+
+    expect(
+      AppStore.claimDueScheduledTaskForRun(pending.id, {
+        nowMs: Date.parse(plannedFor),
+        runId: 'run-pending'
+      })
+    ).toBeNull()
+    expect(
+      AppStore.claimDueScheduledTaskForRun(future.id, {
+        nowMs: Date.parse(plannedFor),
+        runId: 'run-future'
+      })
+    ).toBeNull()
+    expect(
+      AppStore.claimDueScheduledTaskForRun(invalid.id, {
+        nowMs: Date.parse(plannedFor),
+        runId: 'run-invalid'
+      })
+    ).toBeNull()
+    expect(AppStore.getScheduledTasks()).toEqual(before)
+  })
+
+  it('allows exactly one due-task claimant and rejects a run identity collision', () => {
+    const first = AppStore.saveScheduledTask(
+      standaloneScheduledTaskInput({ status: 'due', runAt: plannedFor })
+    )
+    const second = AppStore.saveScheduledTask(
+      standaloneScheduledTaskInput({ status: 'due', runAt: plannedFor })
+    )
+
+    const firstClaim = AppStore.claimDueScheduledTaskForRun(first.id, {
+      nowMs: Date.parse(plannedFor),
+      runId: 'one-owner'
+    })
+    expect(firstClaim).toMatchObject({ status: 'running', runId: 'one-owner' })
+    expect(() =>
+      AppStore.saveScheduledTask(
+        standaloneScheduledTaskInput({
+          id: first.id,
+          status: 'due',
+          runId: 'replacement-owner'
+        })
+      )
+    ).toThrow('Scheduled task already exists')
+    expect(AppStore.getScheduledTasks().find((item) => item.id === first.id)).toEqual(firstClaim)
+    expect(
+      AppStore.updateScheduledTask(first.id, {
+        status: 'running',
+        runId: 'stolen-owner'
+      })
+    ).toMatchObject({ status: 'running', runId: 'one-owner' })
+    expect(
+      AppStore.claimDueScheduledTaskForRun(first.id, {
+        nowMs: Date.parse(plannedFor),
+        runId: 'stale-second-owner'
+      })
+    ).toBeNull()
+    const genericBypass = AppStore.updateScheduledTask(second.id, {
+      status: 'running',
+      runId: 'generic-bypass'
+    })
+    expect(genericBypass?.status).toBe('due')
+    expect(genericBypass?.runId).toBeUndefined()
+    expect(
+      AppStore.claimDueScheduledTaskForRun(second.id, {
+        nowMs: Date.parse(plannedFor),
+        runId: 'one-owner'
+      })
+    ).toBeNull()
+    expect(AppStore.getScheduledTasks().find((item) => item.id === second.id)?.status).toBe('due')
+  })
+
+  it('claims a workflow task only for its exact pre-existing queued occurrence', () => {
+    const saved = AppStore.saveWorkflowDefinition(workflowInput())
+    const [task] = AppStore.materializeDueWorkflows(Date.parse(plannedFor))
+    const expectedWorkflowOccurrence = {
+      workflowId: saved.id,
+      executionId: task.workflowExecutionId as string,
+      plannedFor,
+      taskId: task.id
+    }
+
+    expect(
+      AppStore.claimDueScheduledTaskForRun(task.id, {
+        nowMs: Date.parse(plannedFor),
+        runId: 'workflow-run',
+        expectedWorkflowOccurrence
+      })
+    ).toMatchObject({ status: 'running', runId: 'workflow-run' })
+    expect(AppStore.getWorkflowDefinition(saved.id)).toMatchObject({
+      activeExecutionId: task.workflowExecutionId,
+      lastStatus: 'running'
+    })
+    expect(AppStore.getWorkflowDefinition(saved.id)?.history[0]).toMatchObject({
+      id: task.workflowExecutionId,
+      status: 'running',
+      runId: 'workflow-run'
+    })
+  })
+
+  it('rejects a missing or mismatched workflow occurrence tuple without mutation', () => {
+    const saved = AppStore.saveWorkflowDefinition(workflowInput())
+    const [task] = AppStore.materializeDueWorkflows(Date.parse(plannedFor))
+    const beforeTask = AppStore.getScheduledTasks().find((item) => item.id === task.id)
+    const beforeWorkflow = AppStore.getWorkflowDefinition(saved.id)
+
+    expect(
+      AppStore.claimDueScheduledTaskForRun(task.id, {
+        nowMs: Date.parse(plannedFor),
+        runId: 'missing-tuple'
+      })
+    ).toBeNull()
+    expect(
+      AppStore.claimDueScheduledTaskForRun(task.id, {
+        nowMs: Date.parse(plannedFor),
+        runId: 'mismatched-tuple',
+        expectedWorkflowOccurrence: {
+          workflowId: saved.id,
+          executionId: task.workflowExecutionId as string,
+          plannedFor: '2026-06-07T19:59:59.000Z',
+          taskId: task.id
+        }
+      })
+    ).toBeNull()
+    expect(AppStore.getScheduledTasks().find((item) => item.id === task.id)).toEqual(beforeTask)
+    expect(AppStore.getWorkflowDefinition(saved.id)).toEqual(beforeWorkflow)
+  })
+
+  it('rejects a task whose persisted workflow execution linkage does not match', () => {
+    const saved = AppStore.saveWorkflowDefinition(workflowInput())
+    const [task] = AppStore.materializeDueWorkflows(Date.parse(plannedFor))
+    const workflow = AppStore.getWorkflowDefinition(saved.id)!
+    AppStore.updateWorkflowDefinition(saved.id, {
+      history: workflow.history.map((execution) => ({
+        ...execution,
+        scheduledTaskId: 'different-task'
+      }))
+    })
+    const beforeTask = AppStore.getScheduledTasks().find((item) => item.id === task.id)
+    const beforeWorkflow = AppStore.getWorkflowDefinition(saved.id)
+
+    expect(
+      AppStore.claimDueScheduledTaskForRun(task.id, {
+        nowMs: Date.parse(plannedFor),
+        runId: 'mismatched-persisted-link',
+        expectedWorkflowOccurrence: {
+          workflowId: saved.id,
+          executionId: task.workflowExecutionId as string,
+          plannedFor,
+          taskId: task.id
+        }
+      })
+    ).toBeNull()
+    expect(AppStore.getScheduledTasks().find((item) => item.id === task.id)).toEqual(beforeTask)
+    expect(AppStore.getWorkflowDefinition(saved.id)).toEqual(beforeWorkflow)
+  })
+
+  it('rejects a workflow claim when its history entry is missing and never manufactures it', () => {
+    const saved = AppStore.saveWorkflowDefinition(workflowInput())
+    const [task] = AppStore.materializeDueWorkflows(Date.parse(plannedFor))
+    AppStore.updateWorkflowDefinition(saved.id, { history: [] })
+    const beforeTask = AppStore.getScheduledTasks().find((item) => item.id === task.id)
+    const beforeWorkflow = AppStore.getWorkflowDefinition(saved.id)
+
+    expect(
+      AppStore.claimDueScheduledTaskForRun(task.id, {
+        nowMs: Date.parse(plannedFor),
+        runId: 'forged-history',
+        expectedWorkflowOccurrence: {
+          workflowId: saved.id,
+          executionId: task.workflowExecutionId as string,
+          plannedFor,
+          taskId: task.id
+        }
+      })
+    ).toBeNull()
+    AppStore.syncWorkflowFromScheduledTask({
+      ...task,
+      status: 'running',
+      runId: 'forged-history'
+    })
+
+    expect(AppStore.getScheduledTasks().find((item) => item.id === task.id)).toEqual(beforeTask)
+    expect(AppStore.getWorkflowDefinition(saved.id)).toEqual(beforeWorkflow)
+    expect(AppStore.getWorkflowDefinition(saved.id)?.history).toEqual([])
+  })
+
+  it('rejects a terminal execution replay and cannot resurrect it to running', () => {
+    const saved = AppStore.saveWorkflowDefinition(workflowInput())
+    const [task] = AppStore.materializeDueWorkflows(Date.parse(plannedFor))
+    const workflow = AppStore.getWorkflowDefinition(saved.id)!
+    AppStore.updateWorkflowDefinition(saved.id, {
+      activeExecutionId: undefined,
+      lastStatus: 'completed',
+      history: workflow.history.map((execution) => ({
+        ...execution,
+        status: 'completed' as const,
+        completedAt: '2026-06-07T20:01:00.000Z'
+      }))
+    })
+    const beforeWorkflow = AppStore.getWorkflowDefinition(saved.id)
+
+    expect(
+      AppStore.claimDueScheduledTaskForRun(task.id, {
+        nowMs: Date.parse(plannedFor),
+        runId: 'replayed-claim',
+        expectedWorkflowOccurrence: {
+          workflowId: saved.id,
+          executionId: task.workflowExecutionId as string,
+          plannedFor,
+          taskId: task.id
+        }
+      })
+    ).toBeNull()
+    AppStore.syncWorkflowFromScheduledTask({
+      ...task,
+      status: 'running',
+      runId: 'replayed-claim'
+    })
+
+    expect(AppStore.getWorkflowDefinition(saved.id)).toEqual(beforeWorkflow)
+    expect(AppStore.getWorkflowDefinition(saved.id)?.history[0]).toMatchObject({
+      status: 'completed',
+      completedAt: '2026-06-07T20:01:00.000Z'
+    })
+  })
+
+  it('rejects a terminal sync whose run identity does not match the established owner', () => {
+    const saved = AppStore.saveWorkflowDefinition(workflowInput())
+    const [task] = AppStore.materializeDueWorkflows(Date.parse(plannedFor))
+    const claimed = claimScheduledTask(task, 'established-owner')
+    expect(claimed).toBeTruthy()
+    const beforeWorkflow = AppStore.getWorkflowDefinition(saved.id)
+
+    AppStore.syncWorkflowFromScheduledTask({
+      ...claimed!,
+      status: 'completed',
+      runId: 'replacement-owner',
+      completedAt: '2026-06-07T20:01:00.000Z'
+    })
+
+    expect(AppStore.getWorkflowDefinition(saved.id)).toEqual(beforeWorkflow)
+    expect(AppStore.getWorkflowDefinition(saved.id)?.history[0]).toMatchObject({
+      status: 'running',
+      runId: 'established-owner'
+    })
+
+    AppStore.updateScheduledTask(task.id, {
+      status: 'completed',
+      completedAt: '2026-06-07T20:01:00.000Z'
+    })
+    expect(AppStore.getWorkflowDefinition(saved.id)?.history[0]).toMatchObject({
+      status: 'completed',
+      runId: 'established-owner'
+    })
+  })
+
+  it('settles an older execution without clobbering a newer active execution projection', () => {
+    const saved = AppStore.saveWorkflowDefinition(workflowInput())
+    const [task] = AppStore.materializeDueWorkflows(Date.parse(plannedFor))
+    const claimed = AppStore.claimDueScheduledTaskForRun(task.id, {
+      nowMs: Date.parse(plannedFor),
+      runId: 'older-run',
+      expectedWorkflowOccurrence: {
+        workflowId: saved.id,
+        executionId: task.workflowExecutionId as string,
+        plannedFor,
+        taskId: task.id
+      }
+    })
+    expect(claimed).toBeTruthy()
+
+    const workflow = AppStore.getWorkflowDefinition(saved.id)!
+    AppStore.updateWorkflowDefinition(saved.id, {
+      activeExecutionId: 'newer-execution',
+      lastStatus: 'running',
+      history: [
+        ...workflow.history,
+        {
+          id: 'newer-execution',
+          workflowId: saved.id,
+          scheduledTaskId: 'newer-task',
+          runId: 'newer-run',
+          plannedFor: '2026-06-07T20:15:00.000Z',
+          status: 'running',
+          createdAt: '2026-06-07T20:15:00.000Z',
+          updatedAt: '2026-06-07T20:15:01.000Z',
+          startedAt: '2026-06-07T20:15:01.000Z'
+        }
+      ]
+    })
+
+    AppStore.updateScheduledTask(task.id, {
+      status: 'failed',
+      completedAt: '2026-06-07T20:16:00.000Z',
+      lastError: 'older execution failed late'
+    })
+
+    const after = AppStore.getWorkflowDefinition(saved.id)
+    expect(after).toMatchObject({
+      activeExecutionId: 'newer-execution',
+      lastStatus: 'running',
+      failureStreak: 0
+    })
+    expect(after?.lastError).toBeUndefined()
+    expect(after?.history.find((item) => item.id === task.workflowExecutionId)).toMatchObject({
+      status: 'failed',
+      error: 'older execution failed late'
+    })
+    expect(after?.history.find((item) => item.id === 'newer-execution')).toMatchObject({
+      status: 'running',
+      runId: 'newer-run'
+    })
+  })
+
   it('does not resurrect completed scheduled tasks from stale status updates', () => {
     const saved = AppStore.saveWorkflowDefinition(workflowInput())
     const [task] = AppStore.materializeDueWorkflows(Date.parse(plannedFor))
 
-    AppStore.updateScheduledTask(task.id, {
-      status: 'running',
-      runId: 'run-1',
-      firedAt: '2026-06-07T20:00:01.000Z'
-    })
+    claimScheduledTask(task, 'run-1', Date.parse('2026-06-07T20:00:01.000Z'))
     AppStore.updateScheduledTask(task.id, {
       status: 'completed',
       completedAt: '2026-06-07T20:01:00.000Z'
@@ -731,11 +1124,7 @@ describe('AppStore workflows', () => {
     const saved = AppStore.saveWorkflowDefinition(workflowInput())
     const [task] = AppStore.materializeDueWorkflows(Date.parse(plannedFor))
 
-    AppStore.updateScheduledTask(task.id, {
-      status: 'running',
-      runId: 'run-1',
-      firedAt: '2026-06-07T20:00:01.000Z'
-    })
+    claimScheduledTask(task, 'run-1', Date.parse('2026-06-07T20:00:01.000Z'))
     AppStore.updateScheduledTask(task.id, {
       status: 'failed',
       completedAt: '2026-06-07T20:01:00.000Z',
@@ -756,11 +1145,7 @@ describe('AppStore workflows', () => {
   it('recovers interrupted running scheduled workflow tasks on startup', () => {
     const saved = AppStore.saveWorkflowDefinition(workflowInput())
     const [task] = AppStore.materializeDueWorkflows(Date.parse(plannedFor))
-    AppStore.updateScheduledTask(task.id, {
-      status: 'running',
-      runId: 'run-1',
-      firedAt: '2026-06-07T20:00:01.000Z'
-    })
+    claimScheduledTask(task, 'run-1', Date.parse('2026-06-07T20:00:01.000Z'))
 
     const recovered = AppStore.recoverInterruptedScheduledTasksAfterStartup(
       Date.parse('2026-06-07T20:02:00.000Z')
@@ -786,6 +1171,47 @@ describe('AppStore workflows', () => {
       status: 'failed',
       completedAt: '2026-06-07T20:02:00.000Z'
     })
+  })
+
+  it('recovers a legacy running workflow occurrence when both records have no run owner', () => {
+    const saved = AppStore.saveWorkflowDefinition(workflowInput())
+    const [task] = AppStore.materializeDueWorkflows(Date.parse(plannedFor))
+    const workflow = AppStore.getWorkflowDefinition(saved.id)!
+    AppStore.updateWorkflowDefinition(saved.id, {
+      lastStatus: 'running',
+      history: workflow.history.map((execution) => ({
+        ...execution,
+        status: 'running' as const,
+        startedAt: plannedFor,
+        runId: undefined
+      }))
+    })
+    const tasksPath = `${userDataPath}/scheduled-tasks.json`
+    const rows = JSON.parse(fs.readFileSync(tasksPath, 'utf8'))
+    const legacyTask = rows.find((item: { id?: string }) => item.id === task.id)
+    expect(legacyTask).toBeTruthy()
+    Object.assign(legacyTask, {
+      status: 'running',
+      firedAt: plannedFor,
+      runningSince: plannedFor
+    })
+    delete legacyTask.runId
+    fs.writeFileSync(tasksPath, JSON.stringify(rows))
+
+    const recovered = AppStore.recoverInterruptedScheduledTasksAfterStartup(
+      Date.parse('2026-06-07T20:02:00.000Z')
+    )
+
+    expect(recovered).toHaveLength(1)
+    expect(recovered[0]).toMatchObject({ id: task.id, status: 'failed' })
+    expect(recovered[0].runId).toBeUndefined()
+    expect(AppStore.getWorkflowDefinition(saved.id)).toMatchObject({
+      activeExecutionId: undefined,
+      lastStatus: 'failed',
+      failureStreak: 1
+    })
+    expect(AppStore.getWorkflowDefinition(saved.id)?.history[0]?.status).toBe('failed')
+    expect(AppStore.getWorkflowDefinition(saved.id)?.history[0]?.runId).toBeUndefined()
   })
 
   it('leaves non-running scheduled tasks unchanged during startup recovery', () => {
@@ -944,7 +1370,7 @@ describe('AppStore workflows', () => {
   it('stamps runningSince on the transition into running and does not reset it on a benign re-patch', () => {
     AppStore.saveWorkflowDefinition(workflowInput())
     const [task] = AppStore.materializeDueWorkflows(Date.parse(plannedFor))
-    const running = AppStore.updateScheduledTask(task.id, { status: 'running', runId: 'run-1' })
+    const running = claimScheduledTask(task, 'run-1')
     expect(running?.runningSince).toBeTruthy()
     const firstStamp = running?.runningSince
     const repatched = AppStore.updateScheduledTask(task.id, { runId: 'run-1' })
@@ -978,13 +1404,7 @@ describe('AppStore workflows', () => {
     const saved = AppStore.saveWorkflowDefinition(workflowInput())
     const materializeMs = Date.parse(plannedFor)
     const [task] = AppStore.materializeDueWorkflows(materializeMs)
-    // Explicit runningSince so the backstop is measured against mock time (the
-    // auto-stamp uses real wall-clock, which a mocked nowMs can't reach).
-    AppStore.updateScheduledTask(task.id, {
-      status: 'running',
-      runId: 'run-1',
-      runningSince: new Date(materializeMs).toISOString()
-    })
+    claimScheduledTask(task, 'run-1', materializeMs)
     const later = materializeMs + 7 * 60 * 60 * 1000
 
     // LIVE job -> not settled (false-positive guard).
@@ -1013,11 +1433,7 @@ describe('AppStore workflows', () => {
       const occMs = Date.parse(nextRunAt)
       const [task] = AppStore.materializeDueWorkflows(occMs)
       expect(task).toBeTruthy()
-      AppStore.updateScheduledTask(task.id, {
-        status: 'running',
-        runId: `run-${i}`,
-        runningSince: new Date(occMs).toISOString()
-      })
+      claimScheduledTask(task, `run-${i}`, occMs)
       AppStore.settleStalledScheduledTasks(() => false, occMs + backstop)
     }
     const workflow = AppStore.getWorkflowDefinition(saved.id)
@@ -1140,12 +1556,18 @@ describe('AppStore workflow unattended elevation (P2)', () => {
 })
 
 describe('AppStore workflow run ledger (Stage 1)', () => {
+  beforeEach(() => {
+    vi.useRealTimers()
+    fs.rmSync(userDataPath, { recursive: true, force: true })
+    fs.mkdirSync(userDataPath, { recursive: true })
+  })
+
   it('records the running → completed lifecycle in the durable per-execution ledger', () => {
     const saved = AppStore.saveWorkflowDefinition(workflowInput())
     const [task] = AppStore.materializeDueWorkflows(Date.parse(plannedFor))
     const executionId = task.workflowExecutionId as string
 
-    AppStore.updateScheduledTask(task.id, { status: 'running', runId: 'run-1', firedAt: plannedFor })
+    claimScheduledTask(task, 'run-1', Date.parse(plannedFor))
     AppStore.updateScheduledTask(task.id, {
       status: 'completed',
       completedAt: '2026-06-07T20:05:00.000Z'
@@ -1164,7 +1586,7 @@ describe('AppStore workflow run ledger (Stage 1)', () => {
     const [task] = AppStore.materializeDueWorkflows(Date.parse(plannedFor))
     const executionId = task.workflowExecutionId as string
 
-    AppStore.updateScheduledTask(task.id, { status: 'running', runId: 'run-1' })
+    claimScheduledTask(task, 'run-1')
     AppStore.updateScheduledTask(task.id, { status: 'failed', lastError: 'boom' })
     // A re-patch that does not change status must not append a duplicate event.
     AppStore.updateScheduledTask(task.id, { status: 'failed', lastError: 'boom' })
@@ -1183,7 +1605,7 @@ describe('AppStore workflow run ledger (Stage 1)', () => {
     const [task] = AppStore.materializeDueWorkflows(Date.parse(plannedFor))
     const executionId = task.workflowExecutionId as string
     // Left mid-run by a crash: a 'running' ledger event, no terminal lifecycle event.
-    AppStore.updateScheduledTask(task.id, { status: 'running', runId: 'run-1', firedAt: plannedFor })
+    claimScheduledTask(task, 'run-1', Date.parse(plannedFor))
 
     const settled = AppStore.reconcileStaleWorkflowRunLedgers()
     expect(settled.some((e) => e.workflowExecutionId === executionId)).toBe(true)
