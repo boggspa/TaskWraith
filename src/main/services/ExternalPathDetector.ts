@@ -25,10 +25,17 @@ import * as path from 'node:path'
  */
 const FILE_IO_TOOL_CATEGORY: Record<string, 'read' | 'write'> = {
   // Read-side
+  // Provider-native aliases (Claude SDK / ACP) arrive without the
+  // TaskWraith snake_case names. Keep them here so the shared approval preflight
+  // cannot auto-allow an outside-workspace Read/Glob/Grep before it is classified.
+  read: 'read',
+  glob: 'read',
+  grep: 'read',
   read_file: 'read',
   list_directory: 'read',
   find_files: 'read',
   // Write-side
+  write: 'write',
   write_file: 'write',
   replace: 'write',
   create_directory: 'write',
@@ -63,7 +70,8 @@ function stripToolNamespace(toolName: string): string {
 
 /**
  * Inspect a params object for the conventional path-bearing fields.
- * Returns every non-empty absolute path found, in wire-order.
+ * Returns every non-empty path found, in wire-order. Relative paths are
+ * resolved against the active workspace before containment checks.
  *
  * Covers three param-shape families TaskWraith's detectors see in the wild:
  *  1. Flat path fields used by most tool-call params (path, filePath,
@@ -74,7 +82,7 @@ function stripToolNamespace(toolName: string): string {
  *     execute a command in a `cwd` — useful when the command would
  *     work against a directory outside the workspace.
  */
-function extractPathsFromParams(params: unknown): string[] {
+function extractPathsFromParams(params: unknown, workspacePath?: string): string[] {
   if (!params || typeof params !== 'object') return []
   const record = params as Record<string, unknown>
   const paths: string[] = []
@@ -104,6 +112,7 @@ function extractPathsFromParams(params: unknown): string[] {
     if (typeof candidate === 'string' && candidate.trim()) {
       const trimmed = candidate.trim()
       if (path.isAbsolute(trimmed)) paths.push(trimmed)
+      else if (workspacePath) paths.push(path.resolve(workspacePath, trimmed))
     }
   }
   // (2) Codex `item/fileChange/requestApproval` shape.
@@ -111,8 +120,10 @@ function extractPathsFromParams(params: unknown): string[] {
   if (Array.isArray(changes) && changes.length > 0) {
     for (const change of changes) {
       const p = change?.path
-      if (typeof p === 'string' && p.trim() && path.isAbsolute(p.trim())) {
-        paths.push(p.trim())
+      if (typeof p === 'string' && p.trim()) {
+        const trimmed = p.trim()
+        if (path.isAbsolute(trimmed)) paths.push(trimmed)
+        else if (workspacePath) paths.push(path.resolve(workspacePath, trimmed))
       }
     }
   }
@@ -120,7 +131,7 @@ function extractPathsFromParams(params: unknown): string[] {
   // in an `item` object for some methods).
   const item = record.item as Record<string, unknown> | undefined
   if (item && typeof item === 'object') {
-    paths.push(...extractPathsFromParams(item))
+    paths.push(...extractPathsFromParams(item, workspacePath))
   }
   return paths
 }
@@ -192,7 +203,7 @@ export function detectExternalPath(input: {
   }
   if (!category) return { needsPrompt: false }
 
-  const detectedPaths = extractPathsFromParams(input.params)
+  const detectedPaths = extractPathsFromParams(input.params, input.workspacePath)
   if (!detectedPaths.length) return { needsPrompt: false }
 
   for (const detectedPath of detectedPaths) {

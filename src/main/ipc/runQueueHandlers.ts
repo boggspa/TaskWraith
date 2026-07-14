@@ -1,4 +1,4 @@
-import { ipcMain } from 'electron'
+import { ipcMain, type IpcMainInvokeEvent } from 'electron'
 import {
   buildCloseoutSummaryUnavailableSnapshot,
   normalizeCloseoutSummaryResult,
@@ -30,10 +30,25 @@ interface BridgeDaemonLike {
   request: BridgeRequest
 }
 
+export type RunQueueSenderScope =
+  | { kind: 'main' }
+  | { kind: 'chat'; chatId: string }
+
+export interface RunQueueTargetScope {
+  kind: 'run-or-job' | 'ensemble-round'
+  targetId: string
+}
+
 export interface RunQueueHandlersDeps {
+  resolveSenderRunQueueScope: (event: IpcMainInvokeEvent) => RunQueueSenderScope
+  resolveSenderAttachmentFilePaths: (event: IpcMainInvokeEvent) => string[]
+  resolveRunQueueTargetChatId: (target: RunQueueTargetScope) => string | undefined
   getRunQueueJobs: (filter?: RunQueueJobFilter) => RunQueueJob[]
   getRunRecoveryRecords: (filter?: RunRecoveryFilter) => RunRecoveryRecord[]
-  requestRunQueueJob: (job: unknown) => RunQueueJob
+  requestRunQueueJob: (
+    job: unknown,
+    options?: { authorizedFilePaths?: string[] }
+  ) => RunQueueJob
   leaseRunQueueJob: (request: {
     runId?: string
     provider?: ProviderId
@@ -75,28 +90,91 @@ export interface RunQueueHandlersDeps {
 const RUN_ANALYST_TIMEOUT_MS = 45_000
 const CLOSEOUT_SUMMARY_TIMEOUT_MS = 30_000
 
+function scopedChatFilter<T extends { chatId?: string }>(
+  scope: RunQueueSenderScope,
+  filter: T | undefined
+): T | undefined {
+  if (scope.kind === 'main') return filter
+  if (filter?.chatId !== undefined && filter.chatId !== scope.chatId) {
+    throw new Error('Renderer cannot access run state for another chat.')
+  }
+  return { ...(filter || ({} as T)), chatId: scope.chatId }
+}
+
+function assertScopedTarget(
+  deps: RunQueueHandlersDeps,
+  scope: RunQueueSenderScope,
+  target: RunQueueTargetScope
+): void {
+  if (scope.kind === 'main') return
+  if (!target.targetId.trim()) {
+    throw new Error('Renderer run ownership could not be resolved.')
+  }
+  const chatId = deps.resolveRunQueueTargetChatId(target)
+  if (!chatId || chatId !== scope.chatId) {
+    throw new Error('Renderer cannot access run state for another chat.')
+  }
+}
+
+function requestedJobChatId(value: unknown): string | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
+  const chatId = (value as Record<string, unknown>).chatId
+  return typeof chatId === 'string' && chatId.trim() ? chatId.trim() : undefined
+}
+
 export function registerRunQueueHandlers(deps: RunQueueHandlersDeps): void {
-  ipcMain.handle('get-run-queue-jobs', (_, filter?: RunQueueJobFilter) => deps.getRunQueueJobs(filter))
+  ipcMain.handle('get-run-queue-jobs', (event, filter?: RunQueueJobFilter) => {
+    const scope = deps.resolveSenderRunQueueScope(event)
+    return deps.getRunQueueJobs(scopedChatFilter(scope, filter))
+  })
 
-  ipcMain.handle('get-run-recovery-records', (_, filter?: RunRecoveryFilter) =>
-    deps.getRunRecoveryRecords(filter || {})
-  )
+  ipcMain.handle('get-run-recovery-records', (event, filter?: RunRecoveryFilter) => {
+    const scope = deps.resolveSenderRunQueueScope(event)
+    return deps.getRunRecoveryRecords(scopedChatFilter(scope, filter) || {})
+  })
 
-  ipcMain.handle('request-run-queue-job', (_, job: unknown) => deps.requestRunQueueJob(job))
+  ipcMain.handle('request-run-queue-job', (event, job: unknown) => {
+    const scope = deps.resolveSenderRunQueueScope(event)
+    if (scope.kind === 'chat' && requestedJobChatId(job) !== scope.chatId) {
+      throw new Error('Renderer cannot create run state for another chat.')
+    }
+    return deps.requestRunQueueJob(job, {
+      authorizedFilePaths: deps.resolveSenderAttachmentFilePaths(event)
+    })
+  })
 
   ipcMain.handle(
     'lease-run-queue-job',
-    (_, request: { runId?: string; provider?: ProviderId; statusReason?: string } = {}) =>
-      deps.leaseRunQueueJob(request)
+    (event, request: { runId?: string; provider?: ProviderId; statusReason?: string } = {}) => {
+      const scope = deps.resolveSenderRunQueueScope(event)
+      if (scope.kind === 'chat' && !request.runId) {
+        throw new Error('Chat renderers must lease an explicitly owned run.')
+      }
+      if (request.runId) {
+        assertScopedTarget(deps, scope, { kind: 'run-or-job', targetId: request.runId })
+      }
+      return deps.leaseRunQueueJob(request)
+    }
   )
 
   ipcMain.handle(
     'transition-run-queue-job',
-    (_, runIdOrId: string, status: RunQueueJobStatus, partial: Partial<RunQueueJob> = {}) =>
-      deps.transitionRunQueueJob(runIdOrId, status, partial)
+    (event, runIdOrId: string, status: RunQueueJobStatus, partial: Partial<RunQueueJob> = {}) => {
+      const scope = deps.resolveSenderRunQueueScope(event)
+      assertScopedTarget(deps, scope, { kind: 'run-or-job', targetId: runIdOrId })
+      return deps.transitionRunQueueJob(runIdOrId, status, partial)
+    }
   )
 
-  ipcMain.handle('promote-queued-job-for-steer', async (_, input: PromoteQueuedJobForSteerInput) => {
+  ipcMain.handle('promote-queued-job-for-steer', async (event, input: PromoteQueuedJobForSteerInput) => {
+    const scope = deps.resolveSenderRunQueueScope(event)
+    assertScopedTarget(deps, scope, { kind: 'run-or-job', targetId: input?.runId || '' })
+    if (scope.kind === 'chat' && input?.chatId !== undefined && input.chatId !== scope.chatId) {
+      throw new Error('Renderer cannot promote run state for another chat.')
+    }
+    if (input?.cancelRunId) {
+      assertScopedTarget(deps, scope, { kind: 'run-or-job', targetId: input.cancelRunId })
+    }
     const coordinator = deps.getRunLifecycleCoordinator()
     if (!coordinator) {
       return {
@@ -113,7 +191,9 @@ export function registerRunQueueHandlers(deps: RunQueueHandlersDeps): void {
     return coordinator.promoteQueuedJobForSteer(input)
   })
 
-  ipcMain.handle('lease-promoted-steer-job', async (_, input: LeasePromotedSteerInput) => {
+  ipcMain.handle('lease-promoted-steer-job', async (event, input: LeasePromotedSteerInput) => {
+    const scope = deps.resolveSenderRunQueueScope(event)
+    assertScopedTarget(deps, scope, { kind: 'run-or-job', targetId: input?.runId || '' })
     const coordinator = deps.getRunLifecycleCoordinator()
     if (!coordinator) {
       return {
@@ -127,7 +207,9 @@ export function registerRunQueueHandlers(deps: RunQueueHandlersDeps): void {
     return coordinator.leasePromotedSteerJob(input)
   })
 
-  ipcMain.handle('fallback-promoted-steer-job', async (_, input: FallbackPromotedSteerInput) => {
+  ipcMain.handle('fallback-promoted-steer-job', async (event, input: FallbackPromotedSteerInput) => {
+    const scope = deps.resolveSenderRunQueueScope(event)
+    assertScopedTarget(deps, scope, { kind: 'run-or-job', targetId: input?.runId || '' })
     const coordinator = deps.getRunLifecycleCoordinator()
     if (!coordinator) {
       return {
@@ -144,13 +226,22 @@ export function registerRunQueueHandlers(deps: RunQueueHandlersDeps): void {
   // Durable transcript/event store. Writes are main-owned; renderer may only
   // read/replay. Use the ASYNC read so a filter without runId/chatId (whole-dir
   // sweep) yields the event loop instead of beachballing the main thread.
-  ipcMain.handle('get-run-events', (_, filter: Record<string, unknown> = {}) =>
-    deps.getRunEvents(filter || {})
-  )
-  ipcMain.handle('get-run-event-replay', (_, runId: string) => deps.getRunEventReplay(runId))
+  ipcMain.handle('get-run-events', (event, filter: Record<string, unknown> = {}) => {
+    const scope = deps.resolveSenderRunQueueScope(event)
+    const runId = typeof filter?.runId === 'string' ? filter.runId : undefined
+    if (runId) assertScopedTarget(deps, scope, { kind: 'run-or-job', targetId: runId })
+    return deps.getRunEvents(scopedChatFilter(scope, filter) || {})
+  })
+  ipcMain.handle('get-run-event-replay', (event, runId: string) => {
+    const scope = deps.resolveSenderRunQueueScope(event)
+    assertScopedTarget(deps, scope, { kind: 'run-or-job', targetId: runId })
+    return deps.getRunEventReplay(runId)
+  })
 
-  ipcMain.handle('run-analyst:analyze', async (_, input: unknown) => {
+  ipcMain.handle('run-analyst:analyze', async (event, input: unknown) => {
+    const scope = deps.resolveSenderRunQueueScope(event)
     const request = deps.sanitizeRunAnalystRequest(input)
+    assertScopedTarget(deps, scope, { kind: 'run-or-job', targetId: request.runId })
     const daemon = deps.getBridgeDaemon()
     if (!daemon?.status().running) {
       return deps.buildRunAnalystUnavailableSnapshot(
@@ -173,8 +264,13 @@ export function registerRunQueueHandlers(deps: RunQueueHandlersDeps): void {
   // daemon). Unavailable is a normal outcome — the renderer keeps its
   // deterministic close-out prose — so every failure path returns an
   // 'unavailable' snapshot instead of throwing across the IPC boundary.
-  ipcMain.handle('closeout:summarize', async (_, input: unknown) => {
+  ipcMain.handle('closeout:summarize', async (event, input: unknown) => {
+    const scope = deps.resolveSenderRunQueueScope(event)
     const request = sanitizeCloseoutSummaryRequest(input)
+    assertScopedTarget(deps, scope, {
+      kind: request.scope === 'ensembleRound' ? 'ensemble-round' : 'run-or-job',
+      targetId: request.targetId
+    })
     const daemon = deps.getBridgeDaemon()
     if (!daemon?.status().running) {
       return buildCloseoutSummaryUnavailableSnapshot(

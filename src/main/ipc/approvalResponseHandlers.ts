@@ -1,4 +1,4 @@
-import { ipcMain } from 'electron'
+import { ipcMain, type IpcMainInvokeEvent } from 'electron'
 import { promises as fs } from 'fs'
 import { randomBytes } from 'crypto'
 import type { AgentApprovalAction, ChatRecord, ExternalPathGrant } from '../store/types'
@@ -40,7 +40,11 @@ import {
  * never hit the stale-null bug the module-scope bundles risked.
  */
 export interface ApprovalResponseHandlerDeps {
-  approvalService: Pick<ApprovalService, 'getPendingExternalPathDetection' | 'resolve'>
+  approvalService: Pick<
+    ApprovalService,
+    'getPendingExternalPathDetection' | 'resolve'
+  >
+  assertSenderCanRespond: (event: IpcMainInvokeEvent, requestId: string) => void
   issueExternalPathGrant: (
     grant: Omit<ExternalPathGrant, 'issuedBy' | 'signature'>
   ) => ExternalPathGrant
@@ -52,7 +56,8 @@ export interface ApprovalResponseHandlerDeps {
 export function registerApprovalResponseHandlers(deps: ApprovalResponseHandlerDeps): void {
   ipcMain.handle(
     'respond-agent-approval',
-    async (_, requestId: string, action: AgentApprovalAction, intentNote?: string) => {
+    async (event, requestId: string, action: AgentApprovalAction, intentNote?: string) => {
+      deps.assertSenderCanRespond(event, requestId)
       // Order-4 — optional one-line "why" note captured in the
       // approval card. Trim + cap defensively (the renderer already
       // trims, but the IPC boundary is untrusted) and ride it on the
@@ -63,6 +68,7 @@ export function registerApprovalResponseHandlers(deps: ApprovalResponseHandlerDe
       const resolveOptions = trimmedIntentNote
         ? { extraMetadata: { intentNote: trimmedIntentNote } }
         : undefined
+      let actionToResolve = action
       // Slice 5 v2 of the external-path-redesign arc. When the user
       // clicks "Grant read access" / "Grant edit access" in an
       // external-path approval modal, peek at the pending approval's stashed
@@ -71,6 +77,13 @@ export function registerApprovalResponseHandlers(deps: ApprovalResponseHandlerDe
       // above-row appears the moment the modal closes.
       if (action === 'grantExternalPathRead' || action === 'grantExternalPathEdit') {
         const detection = deps.approvalService.getPendingExternalPathDetection(requestId)
+        // A read grant can be useful for later reads, but it must never approve
+        // the write operation that is currently paused. Persist the narrower
+        // grant, then reject this one write request. The user must explicitly
+        // choose edit access to let a pending mutation proceed.
+        if (action === 'grantExternalPathRead' && detection?.access === 'write') {
+          actionToResolve = 'declineExternalPath'
+        }
         if (detection?.path && detection.appChatId) {
           try {
             const grantAccess: 'read' | 'write' =
@@ -114,7 +127,7 @@ export function registerApprovalResponseHandlers(deps: ApprovalResponseHandlerDe
           }
         }
       }
-      return deps.approvalService.resolve(requestId, action, resolveOptions)
+      return deps.approvalService.resolve(requestId, actionToResolve, resolveOptions)
     }
   )
 }

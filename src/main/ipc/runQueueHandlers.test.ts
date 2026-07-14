@@ -77,6 +77,9 @@ const createDeps = () => {
     signals: []
   }
   const deps: RunQueueHandlersDeps = {
+    resolveSenderRunQueueScope: vi.fn(() => ({ kind: 'main' as const })),
+    resolveSenderAttachmentFilePaths: vi.fn(() => []),
+    resolveRunQueueTargetChatId: vi.fn(() => 'chat-1'),
     getRunQueueJobs: vi.fn(() => [defaultJob]),
     getRunRecoveryRecords: vi.fn(() => [recoveryRecord]),
     requestRunQueueJob: vi.fn(() => defaultJob),
@@ -127,6 +130,146 @@ describe('registerRunQueueHandlers', () => {
     expect(handlerFor('get-run-events')).toBeTypeOf('function')
     expect(handlerFor('get-run-event-replay')).toBeTypeOf('function')
     expect(handlerFor('run-analyst:analyze')).toBeTypeOf('function')
+    expect(handlerFor('closeout:summarize')).toBeTypeOf('function')
+  })
+
+  it('keeps a chat popout scoped to its own jobs, recovery, events, and run actions', async () => {
+    const deps = createDeps()
+    deps.resolveSenderRunQueueScope = vi.fn(() => ({
+      kind: 'chat' as const,
+      chatId: 'chat-1'
+    }))
+    deps.resolveRunQueueTargetChatId = vi.fn(() => 'chat-1')
+    registerRunQueueHandlers(deps)
+    const event = { sender: { id: 42 } }
+
+    handlerFor('get-run-queue-jobs')(event, { status: 'queued' })
+    expect(deps.getRunQueueJobs).toHaveBeenCalledWith({ status: 'queued', chatId: 'chat-1' })
+
+    handlerFor('get-run-recovery-records')(event, { provider: 'gemini' })
+    expect(deps.getRunRecoveryRecords).toHaveBeenCalledWith({
+      provider: 'gemini',
+      chatId: 'chat-1'
+    })
+
+    handlerFor('request-run-queue-job')(event, { runId: 'run-1', chatId: 'chat-1' })
+    expect(deps.requestRunQueueJob).toHaveBeenCalledWith(
+      {
+        runId: 'run-1',
+        chatId: 'chat-1'
+      },
+      { authorizedFilePaths: [] }
+    )
+
+    handlerFor('transition-run-queue-job')(event, 'run-1', 'queued', {})
+    expect(deps.transitionRunQueueJob).toHaveBeenCalledWith('run-1', 'queued', {})
+
+    await handlerFor('get-run-events')(event, { runId: 'run-1' })
+    expect(deps.getRunEvents).toHaveBeenCalledWith({ runId: 'run-1', chatId: 'chat-1' })
+
+    handlerFor('get-run-event-replay')(event, 'run-1')
+    expect(deps.getRunEventReplay).toHaveBeenCalledWith('run-1')
+
+    await handlerFor('run-analyst:analyze')(event, { runId: 'run-1' })
+    expect(deps.sanitizeRunAnalystRequest).toHaveBeenCalledWith({ runId: 'run-1' })
+
+    await handlerFor('closeout:summarize')(event, { targetId: 'round-1', scope: 'ensembleRound' })
+    expect(deps.resolveRunQueueTargetChatId).toHaveBeenCalledWith({
+      kind: 'ensemble-round',
+      targetId: 'round-1'
+    })
+  })
+
+  it('rejects Test 1 popout access to Test 3 run state before side effects', async () => {
+    const deps = createDeps()
+    deps.resolveSenderRunQueueScope = vi.fn(() => ({
+      kind: 'chat' as const,
+      chatId: 'chat-1'
+    }))
+    deps.resolveRunQueueTargetChatId = vi.fn((target) =>
+      target.targetId.includes('3') ? 'chat-3' : 'chat-1'
+    )
+    deps.sanitizeRunAnalystRequest = vi.fn((input) => ({
+      runId: (input as { runId: string }).runId
+    }))
+    registerRunQueueHandlers(deps)
+    const event = { sender: { id: 42 } }
+    const attempts = [
+      () => handlerFor('get-run-queue-jobs')(event, { chatId: 'chat-3' }),
+      () => handlerFor('get-run-recovery-records')(event, { chatId: 'chat-3' }),
+      () => handlerFor('request-run-queue-job')(event, { runId: 'run-3', chatId: 'chat-3' }),
+      () => handlerFor('lease-run-queue-job')(event, { runId: 'run-3' }),
+      () => handlerFor('transition-run-queue-job')(event, 'run-3', 'queued', {}),
+      () => handlerFor('promote-queued-job-for-steer')(event, { runId: 'run-3' }),
+      () => handlerFor('promote-queued-job-for-steer')(event, {
+        runId: 'run-1',
+        cancelRunId: 'run-3'
+      }),
+      () => handlerFor('lease-promoted-steer-job')(event, {
+        runId: 'run-3',
+        ownerToken: 'owner'
+      }),
+      () => handlerFor('fallback-promoted-steer-job')(event, {
+        runId: 'run-3',
+        ownerToken: 'owner'
+      }),
+      () => handlerFor('get-run-events')(event, { runId: 'run-3' }),
+      () => handlerFor('get-run-event-replay')(event, 'run-3'),
+      () => handlerFor('run-analyst:analyze')(event, { runId: 'run-3' }),
+      () => handlerFor('closeout:summarize')(event, {
+        targetId: 'round-3',
+        scope: 'ensembleRound'
+      })
+    ]
+
+    for (const attempt of attempts) {
+      await expect(Promise.resolve().then(attempt)).rejects.toThrow(/another chat/)
+    }
+    expect(deps.transitionRunQueueJob).not.toHaveBeenCalled()
+    expect(deps.getRunLifecycleCoordinator).not.toHaveBeenCalled()
+    expect(deps.getBridgeDaemon).not.toHaveBeenCalled()
+  })
+
+  it('passes only the requesting renderer attachment receipts into queue staging', () => {
+    const deps = createDeps()
+    deps.resolveSenderRunQueueScope = vi.fn((event) => ({
+      kind: 'chat' as const,
+      chatId: (event as { sender: { id: number } }).sender.id === 101 ? 'chat-1' : 'chat-3'
+    }))
+    deps.resolveSenderAttachmentFilePaths = vi.fn((event) =>
+      (event as { sender: { id: number } }).sender.id === 101
+        ? ['/tmp/Test 1/one.png']
+        : ['/tmp/Test 3/three.png']
+    )
+    registerRunQueueHandlers(deps)
+
+    handlerFor('request-run-queue-job')(
+      { sender: { id: 101 } },
+      { runId: 'run-1', chatId: 'chat-1' }
+    )
+
+    expect(deps.requestRunQueueJob).toHaveBeenCalledWith(
+      { runId: 'run-1', chatId: 'chat-1' },
+      { authorizedFilePaths: ['/tmp/Test 1/one.png'] }
+    )
+    expect(deps.requestRunQueueJob).not.toHaveBeenCalledWith(
+      expect.anything(),
+      { authorizedFilePaths: expect.arrayContaining(['/tmp/Test 3/three.png']) }
+    )
+  })
+
+  it('requires an explicit owned run when a chat popout leases queue work', () => {
+    const deps = createDeps()
+    deps.resolveSenderRunQueueScope = vi.fn(() => ({
+      kind: 'chat' as const,
+      chatId: 'chat-1'
+    }))
+    registerRunQueueHandlers(deps)
+
+    expect(() => handlerFor('lease-run-queue-job')({ sender: { id: 42 } }, {})).toThrow(
+      'Chat renderers must lease an explicitly owned run.'
+    )
+    expect(deps.leaseRunQueueJob).not.toHaveBeenCalled()
   })
 
   it('routes queue CRUD/read channels through injected deps', async () => {
@@ -152,7 +295,10 @@ describe('registerRunQueueHandlers', () => {
       status: 'queued',
       source: 'manual'
     })
-    expect(deps.requestRunQueueJob).toHaveBeenCalledWith({ runId: 'run-1' })
+    expect(deps.requestRunQueueJob).toHaveBeenCalledWith(
+      { runId: 'run-1' },
+      { authorizedFilePaths: [] }
+    )
   })
 
   it('passes lease and transition requests through to the queue service', () => {

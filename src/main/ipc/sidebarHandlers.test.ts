@@ -81,6 +81,8 @@ function createDeps() {
     estimateChatMarkdownTranscriptChars:
       vi.fn<SidebarHandlersDeps['estimateChatMarkdownTranscriptChars']>(() => 100),
     assertSafeChatId: vi.fn<SidebarHandlersDeps['assertSafeChatId']>((chatId) => String(chatId)),
+    assertSenderWorkspaceScope: vi.fn<SidebarHandlersDeps['assertSenderWorkspaceScope']>(),
+    assertSenderChatScope: vi.fn<SidebarHandlersDeps['assertSenderChatScope']>(),
     homedir: vi.fn<SidebarHandlersDeps['homedir']>(() => '/Users/test')
   } satisfies SidebarHandlersDeps
 }
@@ -181,6 +183,28 @@ describe('registerSidebarHandlers', () => {
       charCount: 2_000_001,
       omissions: ['transcript too large for clipboard copy']
     })
+    expect(deps.buildChatMarkdownTranscript).not.toHaveBeenCalled()
+  })
+
+  it('checks renderer ownership before revealing or copying another scope', async () => {
+    const deps = createDeps()
+    deps.assertSenderWorkspaceScope.mockImplementation(() => {
+      throw new Error('Renderer workspace ownership does not match this request.')
+    })
+    registerSidebarHandlers(deps)
+
+    expect(() =>
+      handlerFor('sidebar:copy-workspace-directory')({ sender: {} }, 'ws-1')
+    ).toThrow('Renderer workspace ownership does not match this request.')
+    expect(deps.writeClipboardText).not.toHaveBeenCalled()
+
+    deps.assertSenderWorkspaceScope.mockReset()
+    deps.assertSenderChatScope.mockImplementation(() => {
+      throw new Error('Renderer cannot act on another chat.')
+    })
+    await expect(
+      handlerFor('copy-chat-markdown-transcript')({ sender: {} }, 'chat-1')
+    ).rejects.toThrow('Renderer cannot act on another chat.')
     expect(deps.buildChatMarkdownTranscript).not.toHaveBeenCalled()
   })
 

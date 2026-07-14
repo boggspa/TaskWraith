@@ -1,6 +1,14 @@
 import { describe, expect, it, vi } from 'vitest'
 import { ChatService, type ChatServiceDeps, type ChatServiceStore } from './ChatService'
-import type { ChatListItem, ChatRecord, ProviderId, WorkspaceRecord } from '../store/types'
+import type {
+  ChatListItem,
+  ChatRecord,
+  EnsembleParticipant,
+  ExternalPathGrant,
+  ProviderId,
+  ProviderSeatGeneration,
+  WorkspaceRecord
+} from '../store/types'
 
 function makeChat(overrides: Partial<ChatRecord> = {}): ChatRecord {
   return {
@@ -28,6 +36,56 @@ function makeWorkspace(overrides: Partial<WorkspaceRecord> = {}): WorkspaceRecor
     lastOpenedAt: 1,
     pinned: false,
     ...overrides
+  }
+}
+
+function makeExternalGrant(provider: ProviderId, path: string): ExternalPathGrant {
+  return {
+    id: `${provider}:${path}`,
+    provider,
+    path,
+    kind: 'directory',
+    access: 'write',
+    duration: 'thisThread',
+    issuedBy: 'main',
+    signature: 'signed-for-old-workspace',
+    createdAt: '2026-07-13T00:00:00.000Z'
+  }
+}
+
+function makeSeatGeneration(provider: ProviderId): ProviderSeatGeneration {
+  return {
+    schemaVersion: 1,
+    id: `seat-${provider}-old-workspace`,
+    ordinal: 4,
+    createdAt: '2026-07-13T00:00:00.000Z',
+    updatedAt: '2026-07-13T00:00:00.000Z',
+    config: {
+      provider,
+      model: `${provider}-model`,
+      transport: 'cli-opaque',
+      systemPromptFingerprint: 'system-old-workspace',
+      toolsFingerprint: 'tools-old-workspace'
+    },
+    guaranteeTier: 'best-effort',
+    cacheEvidence: {
+      state: 'observed_hit',
+      observedAt: '2026-07-13T00:00:00.000Z',
+      runId: 'run-old-workspace',
+      guaranteeTier: 'best-effort',
+      cacheReadInputTokens: 1200,
+      cacheCreationInputTokens: 0
+    }
+  }
+}
+
+function makeContextSummary(
+  provider: ProviderId
+): NonNullable<ChatRecord['contextCompactionSummary']> {
+  return {
+    text: 'Old workspace compacted context.',
+    createdAt: '2026-07-13T00:00:00.000Z',
+    provider
   }
 }
 
@@ -138,11 +196,22 @@ function makeStore(overrides: Partial<ChatServiceStore> = {}): ChatServiceStore 
         parentChatRelation: 'sideChat'
       })
     ]),
-    saveChat: vi.fn(),
+    saveChat: vi.fn((chat: ChatRecord) => chat),
     deleteChat: vi.fn(),
     clearChats: vi.fn(),
     ...overrides
   }
+}
+
+function makeStatefulStore(initial: ChatRecord): ChatServiceStore {
+  let stored = initial
+  return makeStore({
+    getChat: vi.fn(() => stored),
+    saveChat: vi.fn((chat: ChatRecord) => {
+      stored = chat
+      return chat
+    })
+  })
 }
 
 function makeDeps(overrides: Partial<ChatServiceDeps> = {}): {
@@ -216,6 +285,736 @@ describe('ChatService', () => {
     service.saveChat(makeChat({ title: '  Needs trim  ' }))
     expect(deps.sanitizeChatForSave).toHaveBeenCalledTimes(1)
     expect(store.saveChat).toHaveBeenCalledWith(makeChat({ title: 'Needs trim' }))
+  })
+
+  it('rejects a stale full-record save after canonical transcript, run, and config advances', () => {
+    const initial = makeChat({
+      persistenceRevision: 7,
+      requestedModel: 'codex-old-model',
+      messages: [
+        {
+          id: 'message-1',
+          role: 'user',
+          content: 'Initial prompt',
+          timestamp: '2026-07-13T20:00:00.000Z'
+        }
+      ],
+      runs: [
+        {
+          runId: 'run-1',
+          provider: 'codex',
+          startedAt: '2026-07-13T20:00:00.000Z'
+        }
+      ]
+    })
+    const snapshotA = {
+      ...initial,
+      messages: [...initial.messages],
+      runs: [...initial.runs]
+    }
+    const staleSnapshotB = {
+      ...initial,
+      messages: [...initial.messages],
+      runs: [...initial.runs]
+    }
+    const canonical = {
+      ...snapshotA,
+      persistenceRevision: 8,
+      requestedModel: 'codex-new-model',
+      messages: [
+        ...snapshotA.messages,
+        {
+          id: 'message-2',
+          role: 'assistant' as const,
+          content: 'Canonical append',
+          timestamp: '2026-07-13T20:00:01.000Z'
+        }
+      ],
+      runs: [
+        ...snapshotA.runs,
+        {
+          runId: 'run-2',
+          provider: 'codex' as const,
+          startedAt: '2026-07-13T20:00:01.000Z'
+        }
+      ]
+    }
+    const store = makeStore({ getChat: vi.fn(() => canonical) })
+    const { deps } = makeDeps({ appStore: store })
+
+    const saved = new ChatService(deps).saveChat({
+      ...staleSnapshotB,
+      title: 'Stale popout title'
+    })
+
+    expect(saved).toBe(canonical)
+    expect(saved.persistenceRevision).toBe(8)
+    expect(saved.messages.map((message) => message.id)).toEqual(['message-1', 'message-2'])
+    expect(saved.runs.map((run) => run.runId)).toEqual(['run-1', 'run-2'])
+    expect(saved.requestedModel).toBe('codex-new-model')
+    expect(store.saveChat).not.toHaveBeenCalled()
+  })
+
+  it('fences canonical grants from stale renderer saves while accepting display order', () => {
+    const revoked = {
+      ...makeExternalGrant('claude', '/revoked'),
+      id: 'revoked',
+      signature: 'revoked-signature',
+      order: 0
+    }
+    const canonical = {
+      ...makeExternalGrant('codex', '/canonical'),
+      id: 'canonical',
+      signature: 'canonical-signature',
+      access: 'read' as const,
+      order: 1
+    }
+    const current = makeChat({
+      providerMetadata: {
+        rendererSetting: 'current',
+        externalPathGrants: [canonical]
+      }
+    })
+    const store = makeStatefulStore(current)
+    const { deps } = makeDeps({ appStore: store })
+
+    const saved = new ChatService(deps).saveChat(
+      makeChat({
+        providerMetadata: {
+          rendererSetting: 'next',
+          externalPathGrants: [
+            revoked,
+            {
+              ...canonical,
+              path: '/renderer-forged-path',
+              access: 'write',
+              order: 0
+            }
+          ]
+        }
+      })
+    )
+
+    expect(saved.providerMetadata).toEqual({
+      rendererSetting: 'next',
+      externalPathGrants: [{ ...canonical, order: 0 }]
+    })
+    expect(store.saveChat).toHaveBeenCalledWith(saved)
+  })
+
+  it('strips renderer-authored grants when main has no canonical grant metadata', () => {
+    const current = makeChat({ providerMetadata: { rendererSetting: 'current' } })
+    const store = makeStatefulStore(current)
+    const { deps } = makeDeps({ appStore: store })
+
+    const saved = new ChatService(deps).saveChat(
+      makeChat({
+        providerMetadata: {
+          rendererSetting: 'next',
+          externalPathGrants: [makeExternalGrant('codex', '/forged')]
+        }
+      })
+    )
+
+    expect(saved.providerMetadata).toEqual({ rendererSetting: 'next' })
+  })
+
+  it('strips renderer grant authority from chat-kind conversion inputs', () => {
+    const setChatKind = vi.fn((chatId: string, targetKind: 'single' | 'ensemble') =>
+      makeChat({ appChatId: chatId, chatKind: targetKind })
+    )
+    const { deps } = makeDeps({ appStore: makeStore({ setChatKind }) })
+    const service = new ChatService(deps)
+    const forgedGrant = makeExternalGrant('codex', '/revoked')
+
+    service.setChatKind({
+      chatId: 'chat-1',
+      targetKind: 'single',
+      canonicalProvider: 'codex',
+      canonicalProviderMetadata: {
+        selectedModelType: 'gpt-safe',
+        externalPathGrants: [forgedGrant],
+        codexExternalPathGrants: [forgedGrant]
+      }
+    })
+
+    expect(setChatKind).toHaveBeenLastCalledWith('chat-1', 'single', {
+      seedParticipant: undefined,
+      canonicalProvider: 'codex',
+      canonicalProviderMetadata: { selectedModelType: 'gpt-safe' }
+    })
+
+    const seedParticipant: EnsembleParticipant = {
+      id: 'seed',
+      provider: 'codex',
+      enabled: true,
+      role: 'Boss',
+      instructions: '',
+      order: 0,
+      permissionOverrides: {
+        networkAccess: 'deny',
+        externalPathGrants: [forgedGrant]
+      }
+    }
+    service.setChatKind({ chatId: 'chat-1', targetKind: 'ensemble', seedParticipant })
+
+    expect(setChatKind).toHaveBeenLastCalledWith('chat-1', 'ensemble', {
+      seedParticipant: {
+        ...seedParticipant,
+        permissionOverrides: { networkAccess: 'deny' }
+      },
+      canonicalProvider: undefined,
+      canonicalProviderMetadata: undefined
+    })
+  })
+
+  it('atomically rebinds a solo Claude chat from Test 1 to Test 3 with fresh continuity', () => {
+    const receipt = {
+      schemaVersion: 1 as const,
+      profileId: 'taskwraith-core-v1' as const,
+      provider: 'claude' as const,
+      providerSessionId: 'claude-test-1-session',
+      pinnedAt: '2026-07-13T00:00:00.000Z'
+    }
+    const current = makeChat({
+      provider: 'claude',
+      workspaceId: 'test-1',
+      workspacePath: '/Users/chrisizatt/Documents/Test 1',
+      linkedProviderSessionId: 'claude-test-1-session',
+      linkedGeminiSessionId: 'legacy-test-1-session',
+      taskWraithMcpProfileReceipt: receipt,
+      seatGeneration: makeSeatGeneration('claude'),
+      contextCompactionSummary: makeContextSummary('claude'),
+      messages: [
+        {
+          id: 'message-1',
+          role: 'user',
+          content: 'Keep this history.',
+          timestamp: '2026-07-13T00:00:00.000Z'
+        }
+      ],
+      runs: [
+        {
+          runId: 'run-1',
+          provider: 'claude',
+          startedAt: '2026-07-13T00:00:00.000Z',
+          status: 'completed'
+        }
+      ],
+      providerMetadata: {
+        customSetting: 'preserved',
+        externalPathGrants: [makeExternalGrant('claude', '/Users/chrisizatt/Documents/Test 2')],
+        codexExternalPathGrants: [makeExternalGrant('codex', '/Users/chrisizatt/Documents/Test 4')]
+      }
+    })
+    const store = makeStatefulStore(current)
+    const { deps } = makeDeps({
+      appStore: store,
+      findRegisteredWorkspace: vi.fn((path: string) =>
+        path === '/Users/chrisizatt/Documents/Test 3'
+          ? makeWorkspace({
+              id: 'test-3',
+              path: '/Users/chrisizatt/Documents/Test 3',
+              displayName: 'Test 3'
+            })
+          : undefined
+      ),
+      canonicalPath: vi.fn((path: string) => path)
+    })
+    const service = new ChatService(deps)
+    const assertIdle = vi.fn()
+
+    const rebound = service.rebindChatWorkspace(
+      {
+        chatId: current.appChatId,
+        scope: 'workspace',
+        workspaceId: 'test-3',
+        workspacePath: '/Users/chrisizatt/Documents/Test 3'
+      },
+      { assertIdle, now: 1234 }
+    )
+
+    expect(assertIdle).toHaveBeenCalledWith(current)
+    expect(rebound).toMatchObject({
+      appChatId: 'chat-1',
+      scope: 'workspace',
+      workspaceId: 'test-3',
+      workspacePath: '/Users/chrisizatt/Documents/Test 3',
+      updatedAt: 1234,
+      messages: current.messages,
+      runs: current.runs,
+      providerMetadata: { customSetting: 'preserved' }
+    })
+    expect(rebound.linkedProviderSessionId).toBeUndefined()
+    expect(rebound.linkedGeminiSessionId).toBeUndefined()
+    expect(rebound.taskWraithMcpProfileReceipt).toBeUndefined()
+    expect(rebound.seatGeneration).toBeUndefined()
+    expect(rebound.contextCompactionSummary).toBeUndefined()
+    expect(rebound.providerMetadata).toEqual({ customSetting: 'preserved' })
+    expect(store.saveChat).toHaveBeenCalledWith(rebound)
+  })
+
+  it('rebinds an Ensemble from Test 1 to Test 3 without leaking any seat receipts', () => {
+    const claudeReceipt = {
+      schemaVersion: 1 as const,
+      profileId: 'taskwraith-core-v1' as const,
+      provider: 'claude' as const,
+      providerSessionId: 'claude-test-1-session',
+      pinnedAt: '2026-07-13T00:00:00.000Z'
+    }
+    const codexReceipt = {
+      ...claudeReceipt,
+      provider: 'codex' as const,
+      providerSessionId: 'codex-test-1-session'
+    }
+    const current = makeChat({
+      chatKind: 'ensemble',
+      provider: 'claude',
+      workspaceId: 'test-1',
+      workspacePath: '/Users/chrisizatt/Documents/Test 1',
+      linkedProviderSessionId: 'claude-top-level-session',
+      linkedGeminiSessionId: 'legacy-ensemble-test-1-session',
+      taskWraithMcpProfileReceipt: {
+        ...claudeReceipt,
+        providerSessionId: 'claude-top-level-session'
+      },
+      seatGeneration: makeSeatGeneration('claude'),
+      contextCompactionSummary: makeContextSummary('claude'),
+      providerMetadata: {
+        rosterSetting: 'preserved',
+        externalPathGrants: [makeExternalGrant('claude', '/Users/chrisizatt/Documents/Test 2')],
+        kimiExternalPathGrants: [makeExternalGrant('kimi', '/Users/chrisizatt/Documents/Test 4')]
+      },
+      messages: [
+        {
+          id: 'message-1',
+          role: 'assistant',
+          content: 'Existing transcript',
+          timestamp: '2026-07-13T00:00:00.000Z'
+        }
+      ],
+      ensemble: {
+        enabled: true,
+        maxParticipants: 20,
+        orchestrationMode: 'continuous',
+        maxContinuationHops: 12,
+        participants: [
+          {
+            id: 'boss',
+            provider: 'claude',
+            enabled: true,
+            role: 'Boss',
+            instructions: 'Coordinate.',
+            order: 1,
+            permissionPresetId: 'workspace_write',
+            permissionOverrides: {
+              approvalMode: 'plan',
+              externalPathGrants: [
+                makeExternalGrant('claude', '/Users/chrisizatt/Documents/Test 2')
+              ]
+            },
+            linkedProviderSessionId: 'claude-test-1-session',
+            taskWraithMcpProfileReceipt: claudeReceipt,
+            promptShellVersion: 'ensemble-shell-v1:test-1',
+            promptDynamicStateVersion: 'ensemble-dynamic-v1:test-1',
+            seatGeneration: makeSeatGeneration('claude'),
+            contextCompactionSummary: makeContextSummary('claude')
+          },
+          {
+            id: 'reviewer',
+            provider: 'codex',
+            enabled: true,
+            role: 'Reviewer',
+            instructions: 'Review only.',
+            order: 2,
+            permissionPresetId: 'read_only',
+            permissionOverrides: {
+              externalPathGrants: [makeExternalGrant('codex', '/Users/chrisizatt/Documents/Test 4')]
+            },
+            linkedProviderSessionId: 'codex-test-1-session',
+            taskWraithMcpProfileReceipt: codexReceipt,
+            promptShellVersion: 'ensemble-shell-v1:test-1-reviewer',
+            promptDynamicStateVersion: 'ensemble-dynamic-v1:test-1-reviewer',
+            seatGeneration: makeSeatGeneration('codex'),
+            contextCompactionSummary: makeContextSummary('codex')
+          }
+        ]
+      }
+    })
+    const store = makeStatefulStore(current)
+    const { deps } = makeDeps({
+      appStore: store,
+      findRegisteredWorkspace: vi.fn(() =>
+        makeWorkspace({
+          id: 'test-3',
+          path: '/Users/chrisizatt/Documents/Test 3',
+          displayName: 'Test 3'
+        })
+      ),
+      canonicalPath: vi.fn((path: string) => path)
+    })
+    const service = new ChatService(deps)
+
+    const rebound = service.rebindChatWorkspace(
+      {
+        chatId: current.appChatId,
+        scope: 'workspace',
+        workspaceId: 'test-3',
+        workspacePath: '/Users/chrisizatt/Documents/Test 3'
+      },
+      { now: 4321 }
+    )
+
+    expect(rebound.messages).toEqual(current.messages)
+    expect(rebound.ensemble).toMatchObject({
+      enabled: true,
+      orchestrationMode: 'continuous',
+      maxContinuationHops: 12,
+      updatedAt: new Date(4321).toISOString(),
+      participants: [
+        expect.objectContaining({
+          id: 'boss',
+          role: 'Boss',
+          instructions: 'Coordinate.',
+          permissionPresetId: 'workspace_write'
+        }),
+        expect.objectContaining({
+          id: 'reviewer',
+          role: 'Reviewer',
+          instructions: 'Review only.',
+          permissionPresetId: 'read_only'
+        })
+      ]
+    })
+    expect(rebound.linkedProviderSessionId).toBeUndefined()
+    expect(rebound.linkedGeminiSessionId).toBeUndefined()
+    expect(rebound.taskWraithMcpProfileReceipt).toBeUndefined()
+    expect(rebound.seatGeneration).toBeUndefined()
+    expect(rebound.contextCompactionSummary).toBeUndefined()
+    expect(rebound.providerMetadata).toEqual({ rosterSetting: 'preserved' })
+    for (const participant of rebound.ensemble?.participants || []) {
+      expect(participant.linkedProviderSessionId).toBeUndefined()
+      expect(participant.taskWraithMcpProfileReceipt).toBeUndefined()
+      expect(participant.promptShellVersion).toBeUndefined()
+      expect(participant.promptDynamicStateVersion).toBeUndefined()
+      expect(participant.seatGeneration).toBeUndefined()
+      expect(participant.contextCompactionSummary).toBeUndefined()
+      expect(participant.permissionOverrides?.externalPathGrants).toBeUndefined()
+    }
+    expect(rebound.ensemble?.participants[0].permissionOverrides).toEqual({ approvalMode: 'plan' })
+    expect(rebound.ensemble?.participants[1].permissionOverrides).toBeUndefined()
+  })
+
+  it('rejects an active workspace rebind before saving the validated target', () => {
+    const current = makeChat({
+      workspaceId: 'test-1',
+      workspacePath: '/Users/chrisizatt/Documents/Test 1'
+    })
+    const store = makeStore({ getChat: vi.fn(() => current) })
+    const { deps } = makeDeps({
+      appStore: store,
+      findRegisteredWorkspace: vi.fn(() =>
+        makeWorkspace({
+          id: 'test-3',
+          path: '/Users/chrisizatt/Documents/Test 3',
+          displayName: 'Test 3'
+        })
+      )
+    })
+    const service = new ChatService(deps)
+
+    expect(() =>
+      service.rebindChatWorkspace(
+        {
+          chatId: current.appChatId,
+          scope: 'workspace',
+          workspaceId: 'test-3',
+          workspacePath: '/Users/chrisizatt/Documents/Test 3'
+        },
+        {
+          assertIdle: () => {
+            throw new Error('Cannot change chat workspace while a turn is active.')
+          }
+        }
+      )
+    ).toThrow('turn is active')
+    expect(deps.findRegisteredWorkspace).toHaveBeenCalledWith('/Users/chrisizatt/Documents/Test 3')
+    expect(store.saveChat).not.toHaveBeenCalled()
+  })
+
+  it('rejects an unregistered rebind target without mutating the canonical chat', () => {
+    const current = makeChat()
+    const store = makeStatefulStore(current)
+    const { deps } = makeDeps({
+      appStore: store,
+      findRegisteredWorkspace: vi.fn(() => undefined)
+    })
+    const service = new ChatService(deps)
+
+    expect(() =>
+      service.rebindChatWorkspace({
+        chatId: current.appChatId,
+        scope: 'workspace',
+        workspaceId: 'test-3',
+        workspacePath: '/Users/chrisizatt/Documents/Test 3'
+      })
+    ).toThrow('registered TaskWraith workspace')
+    expect(store.saveChat).not.toHaveBeenCalled()
+  })
+
+  it('rebinds a workspace chat to global scope and clears linked sessions', () => {
+    const current = makeChat({
+      provider: 'claude',
+      linkedProviderSessionId: 'claude-workspace-session',
+      linkedGeminiSessionId: 'legacy-gemini-session',
+      seatGeneration: makeSeatGeneration('claude'),
+      contextCompactionSummary: makeContextSummary('claude'),
+      providerMetadata: {
+        externalPathGrants: [makeExternalGrant('claude', '/Users/chrisizatt/Documents/Test 2')]
+      }
+    })
+    const store = makeStatefulStore(current)
+    const { deps } = makeDeps({ appStore: store })
+    const service = new ChatService(deps)
+
+    const rebound = service.rebindChatWorkspace(
+      { chatId: current.appChatId, scope: 'global' },
+      { now: 9999 }
+    )
+
+    expect(rebound).toMatchObject({ scope: 'global', updatedAt: 9999 })
+    expect(rebound.workspaceId).toBeUndefined()
+    expect(rebound.workspacePath).toBeUndefined()
+    expect(rebound.linkedProviderSessionId).toBeUndefined()
+    expect(rebound.linkedGeminiSessionId).toBeUndefined()
+    expect(rebound.seatGeneration).toBeUndefined()
+    expect(rebound.contextCompactionSummary).toBeUndefined()
+    expect(rebound.providerMetadata).toBeUndefined()
+  })
+
+  it('canonicalizes a global chat with leftover workspace fields instead of treating it as a no-op', () => {
+    const current = makeChat({
+      scope: 'global',
+      workspaceId: 'test-1',
+      workspacePath: '/Users/chrisizatt/Documents/Test 1',
+      linkedProviderSessionId: 'old-workspace-session'
+    })
+    const store = makeStatefulStore(current)
+    const { deps } = makeDeps({ appStore: store })
+    const assertIdle = vi.fn()
+
+    const rebound = new ChatService(deps).rebindChatWorkspace(
+      { chatId: current.appChatId, scope: 'global' },
+      { assertIdle, now: 10_000 }
+    )
+
+    expect(assertIdle).toHaveBeenCalledWith(current)
+    expect(rebound.scope).toBe('global')
+    expect(rebound.workspaceId).toBeUndefined()
+    expect(rebound.workspacePath).toBeUndefined()
+    expect(rebound.linkedProviderSessionId).toBeUndefined()
+    expect(store.saveChat).toHaveBeenCalledWith(rebound)
+  })
+
+  it('returns the canonical chat unchanged when the target workspace is already bound', () => {
+    const current = makeChat({
+      workspaceId: 'test-3',
+      workspacePath: '/Users/chrisizatt/Documents/Test 3',
+      linkedProviderSessionId: 'still-valid-test-3-session'
+    })
+    const store = makeStore({ getChat: vi.fn(() => current) })
+    const { deps } = makeDeps({
+      appStore: store,
+      findRegisteredWorkspace: vi.fn(() =>
+        makeWorkspace({
+          id: 'test-3',
+          path: '/Users/chrisizatt/Documents/Test 3',
+          displayName: 'Test 3'
+        })
+      ),
+      canonicalPath: vi.fn((path: string) => path)
+    })
+    const service = new ChatService(deps)
+    const assertIdle = vi.fn()
+
+    const rebound = service.rebindChatWorkspace(
+      {
+        chatId: current.appChatId,
+        scope: 'workspace',
+        workspaceId: 'test-3',
+        workspacePath: '/Users/chrisizatt/Documents/Test 3'
+      },
+      { assertIdle }
+    )
+
+    expect(rebound).toBe(current)
+    expect(rebound.linkedProviderSessionId).toBe('still-valid-test-3-session')
+    expect(assertIdle).not.toHaveBeenCalled()
+    expect(store.saveChat).not.toHaveBeenCalled()
+  })
+
+  it('treats an absent legacy scope as a same-workspace no-op', () => {
+    const current = makeChat({
+      scope: undefined,
+      workspaceId: 'test-3',
+      workspacePath: '/Users/chrisizatt/Documents/Test 3',
+      linkedProviderSessionId: 'legacy-still-valid-test-3-session',
+      seatGeneration: makeSeatGeneration('gemini')
+    })
+    const store = makeStore({ getChat: vi.fn(() => current) })
+    const { deps } = makeDeps({
+      appStore: store,
+      findRegisteredWorkspace: vi.fn(() =>
+        makeWorkspace({
+          id: 'test-3',
+          path: '/Users/chrisizatt/Documents/Test 3',
+          displayName: 'Test 3'
+        })
+      ),
+      canonicalPath: vi.fn((path: string) => path)
+    })
+    const assertIdle = vi.fn()
+
+    const rebound = new ChatService(deps).rebindChatWorkspace(
+      {
+        chatId: current.appChatId,
+        scope: 'workspace',
+        workspaceId: 'test-3',
+        workspacePath: '/Users/chrisizatt/Documents/Test 3'
+      },
+      { assertIdle }
+    )
+
+    expect(rebound).toBe(current)
+    expect(rebound.linkedProviderSessionId).toBe('legacy-still-valid-test-3-session')
+    expect(rebound.seatGeneration).toBe(current.seatGeneration)
+    expect(assertIdle).not.toHaveBeenCalled()
+    expect(store.saveChat).not.toHaveBeenCalled()
+  })
+
+  it('rejects a stale non-Claude solo renderer clone after a main-owned rebind', () => {
+    const canonicalReceipt = {
+      schemaVersion: 1 as const,
+      profileId: 'taskwraith-core-v1' as const,
+      provider: 'codex' as const,
+      providerSessionId: 'codex-test-3-session',
+      pinnedAt: '2026-07-13T00:00:00.000Z'
+    }
+    const current = makeChat({
+      provider: 'codex',
+      title: 'Canonical Test 3 chat',
+      workspaceId: 'test-3',
+      workspacePath: '/Users/chrisizatt/Documents/Test 3',
+      linkedProviderSessionId: 'codex-test-3-session',
+      linkedGeminiSessionId: 'legacy-test-3-session',
+      taskWraithMcpProfileReceipt: canonicalReceipt,
+      seatGeneration: makeSeatGeneration('codex'),
+      contextCompactionSummary: makeContextSummary('codex'),
+      providerMetadata: { canonicalOnly: true },
+      messages: [
+        {
+          id: 'canonical-message',
+          role: 'assistant',
+          content: 'Canonical Test 3 state.',
+          timestamp: '2026-07-13T00:00:00.000Z'
+        }
+      ]
+    })
+    const store = makeStore({ getChat: vi.fn(() => current) })
+    const { deps } = makeDeps({ appStore: store })
+    const service = new ChatService(deps)
+
+    const saved = service.saveChat(
+      makeChat({
+        provider: 'codex',
+        title: 'Stale Test 1 clone',
+        workspaceId: 'test-1',
+        workspacePath: '/Users/chrisizatt/Documents/Test 1',
+        linkedProviderSessionId: 'stale-codex-test-1-session',
+        linkedGeminiSessionId: 'stale-legacy-test-1-session',
+        seatGeneration: makeSeatGeneration('codex'),
+        contextCompactionSummary: makeContextSummary('codex'),
+        providerMetadata: {
+          externalPathGrants: [makeExternalGrant('codex', '/Users/chrisizatt/Documents/Test 2')]
+        },
+        messages: []
+      })
+    )
+
+    expect(saved).toBe(current)
+    expect(saved.linkedProviderSessionId).toBe('codex-test-3-session')
+    expect(saved.linkedGeminiSessionId).toBe('legacy-test-3-session')
+    expect(saved.taskWraithMcpProfileReceipt).toBe(canonicalReceipt)
+    expect(saved.seatGeneration).toBe(current.seatGeneration)
+    expect(saved.contextCompactionSummary).toBe(current.contextCompactionSummary)
+    expect(saved.providerMetadata).toEqual({ canonicalOnly: true })
+    expect(saved.messages).toEqual(current.messages)
+    expect(store.saveChat).not.toHaveBeenCalled()
+  })
+
+  it('rejects a stale non-Claude Ensemble clone including seat prompt and cache state', () => {
+    const currentParticipant = {
+      id: 'worker',
+      provider: 'kimi' as const,
+      enabled: true,
+      role: 'Worker',
+      instructions: 'Canonical Test 3 brief.',
+      order: 1,
+      linkedProviderSessionId: 'kimi-test-3-session',
+      promptShellVersion: 'shell-test-3',
+      promptDynamicStateVersion: 'dynamic-test-3',
+      seatGeneration: makeSeatGeneration('kimi'),
+      contextCompactionSummary: makeContextSummary('kimi'),
+      permissionOverrides: { networkAccess: 'deny' as const }
+    }
+    const current = makeChat({
+      chatKind: 'ensemble',
+      provider: 'kimi',
+      workspaceId: 'test-3',
+      workspacePath: '/Users/chrisizatt/Documents/Test 3',
+      ensemble: {
+        enabled: true,
+        maxParticipants: 20,
+        participants: [currentParticipant]
+      }
+    })
+    const store = makeStore({ getChat: vi.fn(() => current) })
+    const { deps } = makeDeps({ appStore: store })
+    const staleParticipant = {
+      ...currentParticipant,
+      instructions: 'Stale Test 1 brief.',
+      linkedProviderSessionId: 'kimi-test-1-session',
+      promptShellVersion: 'shell-test-1',
+      promptDynamicStateVersion: 'dynamic-test-1',
+      permissionOverrides: {
+        externalPathGrants: [makeExternalGrant('kimi', '/Users/chrisizatt/Documents/Test 2')]
+      }
+    }
+
+    const saved = new ChatService(deps).saveChat(
+      makeChat({
+        chatKind: 'ensemble',
+        provider: 'kimi',
+        workspaceId: 'test-1',
+        workspacePath: '/Users/chrisizatt/Documents/Test 1',
+        ensemble: {
+          enabled: true,
+          maxParticipants: 20,
+          participants: [staleParticipant]
+        }
+      })
+    )
+
+    expect(saved).toBe(current)
+    expect(saved.ensemble?.participants[0]).toBe(currentParticipant)
+    expect(saved.ensemble?.participants[0].linkedProviderSessionId).toBe('kimi-test-3-session')
+    expect(saved.ensemble?.participants[0].promptShellVersion).toBe('shell-test-3')
+    expect(saved.ensemble?.participants[0].promptDynamicStateVersion).toBe('dynamic-test-3')
+    expect(saved.ensemble?.participants[0].seatGeneration).toBe(currentParticipant.seatGeneration)
+    expect(saved.ensemble?.participants[0].contextCompactionSummary).toBe(
+      currentParticipant.contextCompactionSummary
+    )
+    expect(store.saveChat).not.toHaveBeenCalled()
   })
 
   it('preserves a main-owned solo MCP profile receipt when provider and session still match', () => {

@@ -3,9 +3,9 @@
  * EXISTING content-addressed image attachment (canvas_open_attachment). The bytes
  * are loaded through an INJECTED resolver that goes through the media asset store's
  * realpath jail (sha256 + mime→ext whitelist) and decodes via nativeImage, so an
- * agent can only view assets it/its tools already produced — never an arbitrary
- * file. There is no live surface and no scripting; the DOM/interactive verbs throw
- * like the device driver.
+ * agent can only view assets durably granted to the canonical active chat — never
+ * an arbitrary file or another chat's asset. There is no live surface and no
+ * scripting; the DOM/interactive verbs throw like the device driver.
  *
  * The loader is injected so the driver is unit-testable without Electron / the
  * real asset store (the real impl reads the jailed asset + nativeImage.toPNG()).
@@ -30,11 +30,20 @@ import type {
 } from './canvasTypes'
 import { readPngDimensions, validateCanvasImageRef } from './canvasTypes'
 
-/** Resolve a content-addressed image asset to PNG bytes (jailed; throws if absent/undecodable). */
-export type CanvasImageLoader = (sha256: string, mimeType: string) => Promise<Buffer>
+export interface CanvasImageLoadInput {
+  sha256: string
+  mimeType: string
+  /** Canonical main-owned chat whose durable grant authorizes this asset. */
+  appChatId: string
+}
+
+/** Resolve a chat-owned content-addressed image to PNG bytes (throws when unauthorized). */
+export type CanvasImageLoader = (input: CanvasImageLoadInput) => Promise<Buffer>
 
 export interface CanvasImageDriverDeps {
   load: CanvasImageLoader
+  /** Bound by CanvasService from its trusted open-call context, never agent input. */
+  appChatId: string
   now?: () => string
 }
 
@@ -50,10 +59,19 @@ export class CanvasImageDriver implements CanvasDriver {
   private frame: CanvasFrame | null = null
 
   private readonly load: CanvasImageLoader
+  private readonly appChatId: string
   private readonly nowFn: () => string
 
   constructor(_sessionId: string, deps: CanvasImageDriverDeps) {
+    if (
+      typeof deps.appChatId !== 'string' ||
+      !deps.appChatId ||
+      deps.appChatId.trim() !== deps.appChatId
+    ) {
+      throw new Error('The image driver requires an active canonical chat authority.')
+    }
     this.load = deps.load
+    this.appChatId = deps.appChatId
     this.nowFn = deps.now ?? (() => new Date().toISOString())
   }
 
@@ -62,7 +80,7 @@ export class CanvasImageDriver implements CanvasDriver {
     const mimeType = (input.mediaMimeType || '').trim()
     const verdict = validateCanvasImageRef(sha256, mimeType)
     if (!verdict.ok) throw new Error(verdict.reason || 'Invalid image attachment.')
-    const png = await this.load(sha256, mimeType)
+    const png = await this.load({ sha256, mimeType, appChatId: this.appChatId })
     const { width, height } = readPngDimensions(png)
     this.frame = {
       mimeType: 'image/png',

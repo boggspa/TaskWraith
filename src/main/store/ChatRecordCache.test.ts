@@ -63,6 +63,25 @@ describe('AppStore chat record cache', () => {
     expect(onDisk.title).toBe('Renamed')
   })
 
+  it('increments and propagates the canonical whole-record persistence revision', () => {
+    const chat = AppStore.createChat('ws-1', '/repo')
+    expect(chat.persistenceRevision).toBe(1)
+
+    const firstInput = { ...chat, title: 'First save' } as ChatRecord
+    const first = AppStore.saveChat(firstInput)
+    expect(first.persistenceRevision).toBe(2)
+    expect(firstInput.persistenceRevision).toBe(2)
+
+    const secondInput = { ...first, title: 'Second save' } as ChatRecord
+    const second = AppStore.saveChat(secondInput)
+    expect(second.persistenceRevision).toBe(3)
+    expect(secondInput.persistenceRevision).toBe(3)
+    expect(AppStore.getChat(chat.appChatId)?.persistenceRevision).toBe(3)
+
+    const onDisk = JSON.parse(fs.readFileSync(diskPath(chat.appChatId), 'utf-8'))
+    expect(onDisk.persistenceRevision).toBe(3)
+  })
+
   it('an out-of-band file change invalidates via mtime/size and re-parses', () => {
     const chat = AppStore.createChat('ws-1', '/repo')
     const cached = AppStore.getChat(chat.appChatId)

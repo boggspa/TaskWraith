@@ -61,7 +61,12 @@ function handlerFor(channel: string): RegisteredHandler {
   return handler
 }
 
-type Detection = { path?: string; appChatId?: string; provider: string } | undefined
+type Detection = {
+  path?: string
+  appChatId?: string
+  provider: string
+  access: 'read' | 'write'
+} | undefined
 
 function createChat(overrides: Partial<ChatRecord> = {}): ChatRecord {
   return {
@@ -76,9 +81,15 @@ function createChat(overrides: Partial<ChatRecord> = {}): ChatRecord {
 }
 
 function createDeps(order: string[]) {
-  let detection: Detection = { path: '/tmp/target', appChatId: 'chat-1', provider: 'codex' }
+  let detection: Detection = {
+    path: '/tmp/target',
+    appChatId: 'chat-1',
+    provider: 'codex',
+    access: 'read'
+  }
   let chat: ChatRecord | null = createChat()
   const deps = {
+    assertSenderCanRespond: vi.fn(),
     approvalService: {
       getPendingExternalPathDetection: vi.fn(() => {
         order.push('getPendingExternalPathDetection')
@@ -126,6 +137,21 @@ describe('registerApprovalResponseHandlers', () => {
   it('registers the respond-agent-approval channel', () => {
     registerApprovalResponseHandlers(createDeps([]).deps)
     expect(handlerFor('respond-agent-approval')).toBeTypeOf('function')
+  })
+
+  it('rejects a renderer that does not own the pending approval before resolving it', async () => {
+    const order: string[] = []
+    const { deps } = createDeps(order)
+    vi.mocked(deps.assertSenderCanRespond).mockImplementation(() => {
+      throw new Error('approval belongs to another chat')
+    })
+    registerApprovalResponseHandlers(deps)
+
+    await expect(
+      handlerFor('respond-agent-approval')({} as never, 'req-cross-chat', 'accept')
+    ).rejects.toThrow('approval belongs to another chat')
+    expect(deps.approvalService.resolve).not.toHaveBeenCalled()
+    expect(deps.issueExternalPathGrant).not.toHaveBeenCalled()
   })
 
   // (d1) THE deliverable: persist-before-resolve ordering. A grant action issues +
@@ -176,6 +202,30 @@ describe('registerApprovalResponseHandlers', () => {
 
     expect(vi.mocked(deps.issueExternalPathGrant)).toHaveBeenCalledWith(
       expect.objectContaining({ access: 'write', kind: 'directory' })
+    )
+    expect(order[order.length - 1]).toBe('resolve')
+  })
+
+  it('(d2b) persists a read grant but rejects a currently pending write', async () => {
+    const order: string[] = []
+    const { deps, setDetection } = createDeps(order)
+    setDetection({
+      path: '/tmp/target',
+      appChatId: 'chat-1',
+      provider: 'codex',
+      access: 'write'
+    })
+    registerApprovalResponseHandlers(deps)
+
+    await handlerFor('respond-agent-approval')({}, 'req-2b', 'grantExternalPathRead')
+
+    expect(vi.mocked(deps.issueExternalPathGrant)).toHaveBeenCalledWith(
+      expect.objectContaining({ access: 'read' })
+    )
+    expect(vi.mocked(deps.approvalService.resolve)).toHaveBeenCalledWith(
+      'req-2b',
+      'declineExternalPath',
+      undefined
     )
     expect(order[order.length - 1]).toBe('resolve')
   })
@@ -273,7 +323,12 @@ describe('registerApprovalResponseHandlers', () => {
   it('(d8) skips the grant when the detection has no appChatId', async () => {
     const order: string[] = []
     const { deps, setDetection } = createDeps(order)
-    setDetection({ path: '/tmp/target', appChatId: undefined, provider: 'codex' })
+    setDetection({
+      path: '/tmp/target',
+      appChatId: undefined,
+      provider: 'codex',
+      access: 'read'
+    })
     registerApprovalResponseHandlers(deps)
 
     await handlerFor('respond-agent-approval')({}, 'req-8', 'grantExternalPathRead')

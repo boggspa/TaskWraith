@@ -55,8 +55,11 @@ function makeCheckpoint(overrides: Partial<SessionCheckpointRecord> = {}): Sessi
 
 function createDeps() {
   let store: {
+    list: () => SessionCheckpointRecord[]
     latestForChat: (chatId: string) => SessionCheckpointRecord | null
-    accept: (checkpointId: string) => { checkpoint: SessionCheckpointRecord; resumePrompt: string } | null
+    accept: (
+      checkpointId: string
+    ) => { checkpoint: SessionCheckpointRecord; resumePrompt: string } | null
     dismiss: (checkpointId: string) => SessionCheckpointRecord | null
   } | null = null
 
@@ -68,7 +71,8 @@ function createDeps() {
       }
       return value.trim()
     }),
-    formatSessionCheckpointResumePrompt: vi.fn(() => 'formatted resume prompt')
+    formatSessionCheckpointResumePrompt: vi.fn(() => 'formatted resume prompt'),
+    assertSenderChatScope: vi.fn()
   }
 
   return {
@@ -92,7 +96,9 @@ describe('registerCheckpointHandlers', () => {
     const { deps } = createDeps()
     registerCheckpointHandlers(deps)
 
-    await expect(handlerFor('session-checkpoints:latest')({}, '')).rejects.toThrow('Chat id required')
+    await expect(handlerFor('session-checkpoints:latest')({}, '')).rejects.toThrow(
+      'Chat id required'
+    )
     expect(deps.requireNonEmptyString).toHaveBeenCalledWith('', 'Chat id')
 
     await expect(handlerFor('session-checkpoints:accept')({}, '')).rejects.toThrow(
@@ -114,6 +120,7 @@ describe('registerCheckpointHandlers', () => {
 
     const checkpoint = makeCheckpoint()
     setStore({
+      list: vi.fn(() => [checkpoint]),
       latestForChat: vi.fn(() => checkpoint),
       accept: vi.fn(() => null),
       dismiss: vi.fn(() => null)
@@ -137,6 +144,7 @@ describe('registerCheckpointHandlers', () => {
     })
 
     setStore({
+      list: vi.fn(() => []),
       latestForChat: vi.fn(() => null),
       accept: vi.fn(() => null),
       dismiss: vi.fn(() => null)
@@ -157,6 +165,7 @@ describe('registerCheckpointHandlers', () => {
 
     const checkpoint = makeCheckpoint()
     setStore({
+      list: vi.fn(() => [checkpoint]),
       latestForChat: vi.fn(() => null),
       accept: vi.fn(() => ({ checkpoint, resumePrompt: '' })),
       dismiss: vi.fn(() => null)
@@ -176,6 +185,7 @@ describe('registerCheckpointHandlers', () => {
 
     const checkpoint = makeCheckpoint({ status: 'dismissed' })
     setStore({
+      list: vi.fn(() => [checkpoint]),
       latestForChat: vi.fn(() => null),
       accept: vi.fn(() => null),
       dismiss: vi.fn(() => checkpoint)
@@ -186,4 +196,54 @@ describe('registerCheckpointHandlers', () => {
       checkpoint
     })
   })
+
+  it('rejects a Test 1 popout reading the latest checkpoint for Test 3', async () => {
+    const event = { sender: { id: 11 } }
+    const { deps, setStore } = createDeps()
+    const latestForChat = vi.fn(() => makeCheckpoint({ chatId: 'chat-test-3' }))
+    deps.assertSenderChatScope.mockImplementation((_event, chatId) => {
+      if (chatId !== 'chat-test-1') throw new Error('Renderer chat ownership mismatch.')
+    })
+    setStore({
+      list: vi.fn(() => []),
+      latestForChat,
+      accept: vi.fn(() => null),
+      dismiss: vi.fn(() => null)
+    })
+    registerCheckpointHandlers(deps)
+
+    await expect(handlerFor('session-checkpoints:latest')(event, 'chat-test-3')).rejects.toThrow(
+      'Renderer chat ownership mismatch.'
+    )
+    expect(deps.assertSenderChatScope).toHaveBeenCalledWith(event, 'chat-test-3')
+    expect(latestForChat).not.toHaveBeenCalled()
+  })
+
+  it.each(['session-checkpoints:accept', 'session-checkpoints:dismiss'])(
+    'resolves checkpoint ownership before %s and rejects a foreign chat without mutation',
+    async (channel) => {
+      const event = { sender: { id: 11 } }
+      const checkpoint = makeCheckpoint({ chatId: 'chat-test-3' })
+      const accept = vi.fn(() => ({ checkpoint, resumePrompt: 'resume' }))
+      const dismiss = vi.fn(() => checkpoint)
+      const { deps, setStore } = createDeps()
+      deps.assertSenderChatScope.mockImplementation((_event, chatId) => {
+        if (chatId !== 'chat-test-1') throw new Error('Renderer chat ownership mismatch.')
+      })
+      setStore({
+        list: vi.fn(() => [checkpoint]),
+        latestForChat: vi.fn(() => null),
+        accept,
+        dismiss
+      })
+      registerCheckpointHandlers(deps)
+
+      await expect(handlerFor(channel)(event, checkpoint.id)).rejects.toThrow(
+        'Renderer chat ownership mismatch.'
+      )
+      expect(deps.assertSenderChatScope).toHaveBeenCalledWith(event, 'chat-test-3')
+      expect(accept).not.toHaveBeenCalled()
+      expect(dismiss).not.toHaveBeenCalled()
+    }
+  )
 })

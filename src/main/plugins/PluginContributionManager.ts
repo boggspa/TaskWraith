@@ -182,7 +182,12 @@ export class PluginContributionManager {
   }
 
   getActivationSnapshot(): TaskWraithPluginActivationSnapshot {
-    return this.sync()
+    if (this.snapshot) return this.snapshot
+    const generatedAt = this.nowIso()
+    return this.buildActivationSnapshot(
+      this.options.pluginHost.getContributionSnapshot(),
+      generatedAt
+    )
   }
 
   private nowIso(): string {

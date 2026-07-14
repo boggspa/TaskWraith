@@ -69,6 +69,55 @@ describe('ExternalPathGrants metadata helpers', () => {
     ])
   })
 
+  it('prefers an executable v2 grant over a same-access legacy duplicate', () => {
+    const legacy = grant('codex', '/tmp/a.txt', 'write', 'legacy-write')
+    const bound = {
+      ...grant('codex', '/tmp/a.txt', 'write', 'bound-write'),
+      bindingVersion: 2 as const,
+      workspaceId: 'workspace-a',
+      chatId: 'chat-a'
+    }
+
+    expect(coalesceExternalPathGrants([legacy, bound])).toMatchObject([
+      {
+        id: 'bound-write',
+        bindingVersion: 2,
+        workspaceId: 'workspace-a',
+        chatId: 'chat-a'
+      }
+    ])
+    expect(coalesceExternalPathGrants([bound, legacy])).toMatchObject([
+      { id: 'bound-write', bindingVersion: 2 }
+    ])
+  })
+
+  it('does not treat a thisRun v2 grant without an exact run id as executable', () => {
+    const legacy = grant('codex', '/tmp/a.txt', 'write', 'legacy-write')
+    const incomplete = {
+      ...grant('codex', '/tmp/a.txt', 'write', 'incomplete-v2'),
+      bindingVersion: 2 as const,
+      workspaceId: 'workspace-a',
+      chatId: 'chat-a',
+      duration: 'thisRun' as const
+    }
+
+    expect(coalesceExternalPathGrants([legacy, incomplete])).toMatchObject([{ id: 'legacy-write' }])
+  })
+
+  it('preserves signed authority fields verbatim while coalescing', () => {
+    const source = {
+      ...grant('codex', ' /tmp/signed path ', 'write', 'bound-write'),
+      bindingVersion: 2 as const,
+      workspaceId: ' workspace-a ',
+      chatId: ' chat-a ',
+      appRunId: ' run-a ',
+      duration: 'thisRun' as const,
+      signature: 'signed-exactly'
+    }
+
+    expect(coalesceExternalPathGrants([source])[0]).toMatchObject(source)
+  })
+
   it('keeps canonical entries ahead of legacy duplicates on re-migration', () => {
     const metadata = {
       externalPathGrants: [grant('gemini', '/tmp/a.txt', 'read', 'canonical-read')],
@@ -77,6 +126,23 @@ describe('ExternalPathGrants metadata helpers', () => {
 
     expect(canonicalizeExternalPathGrantMetadata(metadata).externalPathGrants).toMatchObject([
       { id: 'canonical-read', provider: 'gemini', path: '/tmp/a.txt', access: 'read' }
+    ])
+  })
+
+  it('migrates an executable v2 duplicate out of a legacy metadata key', () => {
+    const bound = {
+      ...grant('codex', '/tmp/a.txt', 'read', 'bound-read'),
+      bindingVersion: 2 as const,
+      workspaceId: 'workspace-a',
+      chatId: 'chat-a'
+    }
+    const metadata = {
+      externalPathGrants: [grant('codex', '/tmp/a.txt', 'read', 'canonical-legacy')],
+      codexExternalPathGrants: [bound]
+    }
+
+    expect(collectExternalPathGrantsFromMetadata(metadata)).toMatchObject([
+      { id: 'bound-read', bindingVersion: 2, chatId: 'chat-a', workspaceId: 'workspace-a' }
     ])
   })
 

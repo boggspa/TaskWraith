@@ -64,6 +64,7 @@ function createDeps(
 ) {
   return {
     requireRegisteredWorkspace: vi.fn(() => '/repo/real'),
+    assertSenderScope: vi.fn(),
     findRegisteredWorkspace: vi.fn(() => workspace('workspace-1')),
     recordWorkspaceEditorChange: vi.fn(),
     scheduleRemoteGitSnapshotRefresh: vi.fn(),
@@ -85,6 +86,14 @@ describe('registerWorkspaceFileEditorHandlers', () => {
 
     await expect(handlerFor('list-workspace-files')({} as any, '/repo')).resolves.toEqual([entry])
     expect(deps.requireRegisteredWorkspace).toHaveBeenCalledWith('/repo')
+    expect(deps.assertSenderScope).toHaveBeenCalledWith(
+      {},
+      {
+        capability: 'workspace-file',
+        workspacePath: '/repo/real',
+        operation: 'read'
+      }
+    )
     expect(mockedListWorkspaceFiles).toHaveBeenCalledWith('/repo/real')
   })
 
@@ -102,6 +111,14 @@ describe('registerWorkspaceFileEditorHandlers', () => {
         limit: 25
       })
     ).resolves.toBe(result)
+    expect(deps.assertSenderScope).toHaveBeenCalledWith(
+      {},
+      {
+        capability: 'workspace-file',
+        workspacePath: '/repo/real',
+        operation: 'read'
+      }
+    )
     expect(mockedListWorkspaceFiles).toHaveBeenCalledWith('/repo/real', {
       path: 'src',
       query: 'App',
@@ -123,6 +140,14 @@ describe('registerWorkspaceFileEditorHandlers', () => {
     await expect(handlerFor('read-workspace-file')({} as any, '/repo', 'README.md')).resolves.toBe(
       result
     )
+    expect(deps.assertSenderScope).toHaveBeenCalledWith(
+      {},
+      {
+        capability: 'workspace-file',
+        workspacePath: '/repo/real',
+        operation: 'read'
+      }
+    )
     expect(mockedReadWorkspaceFile).toHaveBeenCalledWith('/repo/real', 'README.md')
   })
 
@@ -139,6 +164,14 @@ describe('registerWorkspaceFileEditorHandlers', () => {
     await expect(
       handlerFor('write-workspace-file')({} as any, '/repo', 'README.md', 'updated', 'etag-1')
     ).resolves.toBe(result)
+    expect(deps.assertSenderScope).toHaveBeenCalledWith(
+      {},
+      {
+        capability: 'workspace-file',
+        workspacePath: '/repo/real',
+        operation: 'write'
+      }
+    )
     expect(mockedWriteWorkspaceFile).toHaveBeenCalledWith({
       workspacePath: '/repo/real',
       filePath: 'README.md',
@@ -165,6 +198,14 @@ describe('registerWorkspaceFileEditorHandlers', () => {
     await expect(
       handlerFor('delete-workspace-file')({} as any, '/repo', 'README.md', 'etag-1')
     ).resolves.toBe(result)
+    expect(deps.assertSenderScope).toHaveBeenCalledWith(
+      {},
+      {
+        capability: 'workspace-file',
+        workspacePath: '/repo/real',
+        operation: 'write'
+      }
+    )
     expect(mockedDeleteWorkspaceFile).toHaveBeenCalledWith({
       workspacePath: '/repo/real',
       filePath: 'README.md',
@@ -178,4 +219,46 @@ describe('registerWorkspaceFileEditorHandlers', () => {
       force: true
     })
   })
+
+  it.each([
+    ['list-workspace-files', []],
+    ['list-workspace-files-for-editor', [{}]],
+    ['read-workspace-file', ['README.md']],
+    ['write-workspace-file', ['README.md', 'updated', 'etag-1']],
+    ['delete-workspace-file', ['README.md', 'etag-1']]
+  ] as const)(
+    'rejects a Test 1 popout attempting %s against Test 2 before filesystem access',
+    async (channel, args) => {
+      const test1Popout = { sender: { id: 101 } }
+      const deps = createDeps({
+        requireRegisteredWorkspace: vi.fn((requestedPath: string) => requestedPath),
+        assertSenderScope: vi.fn((event, input) => {
+          if (event.sender.id === 101 && input.workspacePath === '/repo/Test2') {
+            throw new Error('Renderer workspace ownership does not match this request.')
+          }
+        })
+      })
+      registerWorkspaceFileEditorHandlers(deps)
+
+      await expect(
+        handlerFor(channel)(test1Popout, '/repo/Test2', ...args)
+      ).rejects.toThrow('Renderer workspace ownership does not match this request.')
+
+      expect(deps.assertSenderScope).toHaveBeenCalledWith(test1Popout, {
+        capability: 'workspace-file',
+        workspacePath: '/repo/Test2',
+        operation:
+          channel === 'write-workspace-file' || channel === 'delete-workspace-file'
+            ? 'write'
+            : 'read'
+      })
+      expect(mockedListWorkspaceFiles).not.toHaveBeenCalled()
+      expect(mockedReadWorkspaceFile).not.toHaveBeenCalled()
+      expect(mockedWriteWorkspaceFile).not.toHaveBeenCalled()
+      expect(mockedDeleteWorkspaceFile).not.toHaveBeenCalled()
+      expect(deps.recordWorkspaceEditorChange).not.toHaveBeenCalled()
+      expect(deps.findRegisteredWorkspace).not.toHaveBeenCalled()
+      expect(deps.scheduleRemoteGitSnapshotRefresh).not.toHaveBeenCalled()
+    }
+  )
 })

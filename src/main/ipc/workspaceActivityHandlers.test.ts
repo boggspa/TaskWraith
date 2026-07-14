@@ -37,13 +37,30 @@ describe('registerWorkspaceActivityHandlers', () => {
     const snapshot = { workspacePath: '/repo/real', days: [] }
     mockedGetWorkspaceActivitySnapshot.mockResolvedValue(snapshot as any)
     const requireRegisteredWorkspace = vi.fn(() => '/repo/real')
+    const assertSenderScope = vi.fn()
 
-    registerWorkspaceActivityHandlers({ requireRegisteredWorkspace })
+    registerWorkspaceActivityHandlers({ requireRegisteredWorkspace, assertSenderScope })
 
     await expect(handlerFor('get-workspace-activity')({} as any, '/repo', 30)).resolves.toBe(
       snapshot
     )
     expect(requireRegisteredWorkspace).toHaveBeenCalledWith('/repo')
+    expect(assertSenderScope).toHaveBeenCalledWith(expect.anything(), '/repo')
     expect(mockedGetWorkspaceActivitySnapshot).toHaveBeenCalledWith('/repo/real', 30)
+  })
+
+  it('rejects another renderer workspace before loading activity', async () => {
+    const assertSenderScope = vi.fn(() => {
+      throw new Error('wrong workspace owner')
+    })
+    registerWorkspaceActivityHandlers({
+      requireRegisteredWorkspace: vi.fn(() => '/repo/real'),
+      assertSenderScope
+    })
+
+    await expect(handlerFor('get-workspace-activity')({} as any, '/repo', 30)).rejects.toThrow(
+      'wrong workspace owner'
+    )
+    expect(mockedGetWorkspaceActivitySnapshot).not.toHaveBeenCalled()
   })
 })

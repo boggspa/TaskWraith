@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ipcMain } from 'electron'
+import type { GitRepositorySnapshot } from '../services/GitService'
 import type { ChatRecord, ExternalPathGrant } from '../store/types'
 import { registerGitHandlers, type GitHandlersDeps } from './gitHandlers'
 
@@ -52,12 +53,11 @@ function createChat(overrides: Partial<ChatRecord> = {}): ChatRecord {
 
 function createDeps() {
   const deps = {
-    getChats: vi.fn<GitHandlersDeps['getChats']>(() => []),
-    externalPathGrantMetadataLists: vi.fn<GitHandlersDeps['externalPathGrantMetadataLists']>(
+    getChat: vi.fn<GitHandlersDeps['getChat']>(() => undefined),
+    executableExternalPathGrantsForChat: vi.fn<
+      GitHandlersDeps['executableExternalPathGrantsForChat']
+    >(
       (_chat: ChatRecord | null | undefined) => [] as ExternalPathGrant[]
-    ),
-    normalizeExternalPathGrants: vi.fn<GitHandlersDeps['normalizeExternalPathGrants']>(
-      (grants?: ExternalPathGrant[]) => grants || []
     ),
     canonicalExternalGrantPath: vi.fn<GitHandlersDeps['canonicalExternalGrantPath']>(
       (_value: string) => null
@@ -66,6 +66,12 @@ function createDeps() {
     findRegisteredWorkspace: vi.fn<GitHandlersDeps['findRegisteredWorkspace']>(
       (_workspacePath: string) => undefined
     ),
+    gitRepositoryRootForPath: vi.fn<GitHandlersDeps['gitRepositoryRootForPath']>(
+      (workspacePath) => workspacePath
+    ),
+    externalGitRepositoryRootIsSelfContained: vi.fn<
+      GitHandlersDeps['externalGitRepositoryRootIsSelfContained']
+    >(() => true),
     resolvePath: vi.fn<GitHandlersDeps['resolvePath']>((value: string) => value),
     pathSeparator: '/',
     gitService: {
@@ -166,7 +172,8 @@ function createDeps() {
         vi.fn<NonNullable<GitHandlersDeps['gitSnapshotPublisher']>['publishSnapshot']>()
     },
     externalPublishReceipts: undefined as GitHandlersDeps['externalPublishReceipts'],
-    openExternal: vi.fn<GitHandlersDeps['openExternal']>(async (_url: string) => undefined)
+    openExternal: vi.fn<GitHandlersDeps['openExternal']>(async (_url: string) => undefined),
+    assertSenderScope: vi.fn<GitHandlersDeps['assertSenderScope']>()
   } satisfies GitHandlersDeps
 
   return { deps }
@@ -205,6 +212,9 @@ describe('registerGitHandlers', () => {
       ok: false,
       error: 'Repository path is required.'
     })
+    expect(deps.canonicalPath).not.toHaveBeenCalled()
+    expect(deps.gitRepositoryRootForPath).not.toHaveBeenCalled()
+    expect(deps.gitService.snapshot).not.toHaveBeenCalled()
   })
 
   it('allows registered workspaces for snapshot and mutating actions', async () => {
@@ -284,18 +294,21 @@ describe('registerGitHandlers', () => {
     const { deps } = createDeps()
     const grant = createGrant({ path: '/granted/repo', access: 'write' })
     const chat = createChat()
-    deps.getChats.mockReturnValue([chat])
-    deps.externalPathGrantMetadataLists.mockReturnValue([grant])
+    deps.getChat.mockReturnValue(chat)
+    deps.executableExternalPathGrantsForChat.mockReturnValue([grant])
     registerGitHandlers(deps)
 
     await expect(
-      handlerFor('git:create-branch')({}, { repoPath: '/granted/repo', branch: 'feature/new' })
+      handlerFor('git:create-branch')(
+        {},
+        { repoPath: '/granted/repo', chatId: 'chat-1', branch: 'feature/new' }
+      )
     ).resolves.toEqual({
       ok: true,
       snapshot: { repoPath: '/granted/repo', branch: 'feature/new', from: undefined }
     })
     await expect(
-      handlerFor('git:stage')({}, { repoPath: '/granted/repo', all: true })
+      handlerFor('git:stage')({}, { repoPath: '/granted/repo', chatId: 'chat-1', all: true })
     ).resolves.toEqual({
       ok: true,
       data: {
@@ -307,7 +320,10 @@ describe('registerGitHandlers', () => {
       }
     })
     await expect(
-      handlerFor('create-github-pr')({}, { repoPath: '/granted/repo', title: 'Ship it' })
+      handlerFor('create-github-pr')(
+        {},
+        { repoPath: '/granted/repo', chatId: 'chat-1', title: 'Ship it' }
+      )
     ).resolves.toEqual({
       ok: true,
       url: 'https://example.test/pr/1'
@@ -336,17 +352,20 @@ describe('registerGitHandlers', () => {
     const { deps } = createDeps()
     const grant = createGrant({ path: '/granted/repo', access: 'read' })
     const chat = createChat()
-    deps.getChats.mockReturnValue([chat])
-    deps.externalPathGrantMetadataLists.mockReturnValue([grant])
+    deps.getChat.mockReturnValue(chat)
+    deps.executableExternalPathGrantsForChat.mockReturnValue([grant])
     registerGitHandlers(deps)
 
-    await expect(handlerFor('git:list-branches')({}, { repoPath: '/granted/repo' })).resolves.toEqual({
+    await expect(handlerFor('git:list-branches')(
+      {},
+      { repoPath: '/granted/repo', chatId: 'chat-1' }
+    )).resolves.toEqual({
       ok: true,
       branches: [{ name: 'main', isCurrent: true }],
       currentBranch: 'main'
     })
     await expect(
-      handlerFor('git:stage')({}, { repoPath: '/granted/repo', all: true })
+      handlerFor('git:stage')({}, { repoPath: '/granted/repo', chatId: 'chat-1', all: true })
     ).resolves.toEqual({
       ok: false,
       error: 'Git actions require registered workspaces or signed write grants.'
@@ -425,51 +444,252 @@ describe('registerGitHandlers', () => {
     expect(deps.gitSnapshotPublisher.invalidatePath).toHaveBeenCalledWith('/repo', 'run-diff')
 
     await expect(
-      handlerFor('git:unsubscribe-snapshot')({}, { subscriptionId: 'sub-1' })
+      handlerFor('git:unsubscribe-snapshot')({ sender }, { subscriptionId: 'sub-1' })
     ).resolves.toEqual({ ok: true })
     expect(deps.gitSnapshotPublisher.unsubscribe).toHaveBeenCalledWith('sub-1')
   })
 
-  it('allows signed external grants for read-only git/PR inspection and rejects mutating actions', async () => {
+  it('binds Git requests and live snapshot subscriptions to the invoking renderer', async () => {
     const { deps } = createDeps()
-    deps.getChats.mockReturnValue([createChat()])
-    deps.externalPathGrantMetadataLists.mockReturnValue([createGrant()])
+    deps.findRegisteredWorkspace.mockReturnValue({ id: 'ws-1' })
+    const owner = {
+      id: 17,
+      send: vi.fn(),
+      isDestroyed: vi.fn(() => false),
+      once: vi.fn(),
+      removeListener: vi.fn()
+    }
+    const attacker = { ...owner, id: 18 }
     registerGitHandlers(deps)
 
-    await expect(handlerFor('git:snapshot')({}, { repoPath: '/granted/repo/subdir' })).resolves.toEqual({
-      ok: true,
-      data: { requestedPath: '/granted/repo/subdir' }
+    await expect(
+      handlerFor('git:snapshot')(
+        { sender: owner },
+        { workspacePath: '/repo', chatId: 'chat-1' }
+      )
+    ).resolves.toMatchObject({ ok: true })
+    expect(deps.assertSenderScope).toHaveBeenCalledWith(
+      { sender: owner },
+      { capability: 'git', chatId: 'chat-1', workspacePath: '/repo' }
+    )
+
+    await expect(
+      handlerFor('git:subscribe-snapshot')(
+        { sender: owner },
+        { workspacePath: '/repo', chatId: 'chat-1', subscriptionId: 'owned-sub' }
+      )
+    ).resolves.toMatchObject({ ok: true })
+    await expect(
+      handlerFor('git:unsubscribe-snapshot')(
+        { sender: attacker },
+        { subscriptionId: 'owned-sub' }
+      )
+    ).resolves.toEqual({
+      ok: false,
+      error: 'Git snapshot subscription id belongs to another renderer.'
     })
-    await expect(handlerFor('github:pr-status')({}, { repoPath: '/granted/repo/subdir' })).resolves.toEqual({
-      ok: true,
-      data: { url: 'status:/granted/repo/subdir' }
+    expect(deps.gitSnapshotPublisher.unsubscribe).not.toHaveBeenCalledWith('owned-sub')
+
+    await expect(
+      handlerFor('git:unsubscribe-snapshot')(
+        { sender: owner },
+        { subscriptionId: 'owned-sub' }
+      )
+    ).resolves.toEqual({ ok: true })
+    expect(deps.gitSnapshotPublisher.unsubscribe).toHaveBeenCalledWith('owned-sub')
+  })
+
+  it('fails closed before invoking Git when the renderer scope check rejects', async () => {
+    const { deps } = createDeps()
+    deps.findRegisteredWorkspace.mockReturnValue({ id: 'ws-1' })
+    deps.assertSenderScope.mockImplementationOnce(() => {
+      throw new Error('Renderer workspace scope denied.')
     })
-    await expect(handlerFor('github:pr-readiness')({}, { repoPath: '/granted/repo/subdir' })).resolves.toEqual({
+    registerGitHandlers(deps)
+
+    await expect(
+      handlerFor('git:snapshot')(
+        { sender: { id: 22 } },
+        { workspacePath: '/repo', chatId: 'chat-1' }
+      )
+    ).rejects.toThrow('Renderer workspace scope denied.')
+    expect(deps.gitService.snapshot).not.toHaveBeenCalled()
+  })
+
+  it('closes an external snapshot subscription when its originating chat loses the grant', async () => {
+    const { deps } = createDeps()
+    const chat = createChat()
+    deps.getChat.mockReturnValue(chat)
+    deps.executableExternalPathGrantsForChat.mockReturnValue([createGrant()])
+    const sender = {
+      id: 8,
+      send: vi.fn(),
+      isDestroyed: vi.fn(() => false),
+      once: vi.fn(),
+      removeListener: vi.fn()
+    }
+    registerGitHandlers(deps)
+
+    await expect(
+      handlerFor('git:subscribe-snapshot')(
+        { sender },
+        { repoPath: '/granted/repo', chatId: 'chat-1', subscriptionId: 'sub-external' }
+      )
+    ).resolves.toMatchObject({ ok: true })
+
+    const subscription = vi.mocked(deps.gitSnapshotPublisher!.subscribe).mock.calls[0][0]
+    deps.executableExternalPathGrantsForChat.mockReturnValue([])
+    subscription.send({ subscriptionId: 'sub-external' } as any)
+
+    expect(sender.send).not.toHaveBeenCalled()
+    expect(deps.gitSnapshotPublisher!.unsubscribe).toHaveBeenCalledWith('sub-external')
+    expect(sender.removeListener).toHaveBeenCalledWith('destroyed', expect.any(Function))
+  })
+
+  it('rejects an initial external snapshot when its grant is revoked while subscribe is pending', async () => {
+    const { deps } = createDeps()
+    const chat = createChat()
+    deps.getChat.mockReturnValue(chat)
+    deps.executableExternalPathGrantsForChat.mockReturnValue([createGrant()])
+    let resolveSubscribe!: (value: {
+      ok: true
+      data: {
+        subscriptionId: string
+        requestedPath: string
+        repoRoot: string
+        snapshot: GitRepositorySnapshot
+        generation: number
+      }
+    }) => void
+    deps.gitSnapshotPublisher!.subscribe.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveSubscribe = resolve
+        })
+    )
+    const sender = {
+      id: 9,
+      send: vi.fn(),
+      isDestroyed: vi.fn(() => false),
+      once: vi.fn(),
+      removeListener: vi.fn()
+    }
+    registerGitHandlers(deps)
+
+    const pending = handlerFor('git:subscribe-snapshot')(
+      { sender },
+      { repoPath: '/granted/repo', chatId: 'chat-1', subscriptionId: 'sub-revoked' }
+    ) as Promise<unknown>
+    expect(deps.gitSnapshotPublisher!.subscribe).toHaveBeenCalledTimes(1)
+
+    deps.executableExternalPathGrantsForChat.mockReturnValue([])
+    resolveSubscribe({
       ok: true,
-      data: { reason: 'ready:/granted/repo/subdir' }
+      data: {
+        subscriptionId: 'sub-revoked',
+        requestedPath: '/granted/repo',
+        repoRoot: '/granted/repo',
+        snapshot: {
+          requestedPath: '/granted/repo',
+          repoRoot: '/granted/repo'
+        } as GitRepositorySnapshot,
+        generation: 1
+      }
     })
 
-    await expect(handlerFor('git:stage')({}, { repoPath: '/granted/repo/subdir' })).resolves.toEqual({
+    await expect(pending).resolves.toEqual({
+      ok: false,
+      error: 'Git snapshot authorization changed while the subscription was starting.'
+    })
+    expect(sender.send).not.toHaveBeenCalled()
+    expect(deps.gitSnapshotPublisher!.unsubscribe).toHaveBeenCalledWith('sub-revoked')
+    expect(sender.removeListener).toHaveBeenCalledWith('destroyed', expect.any(Function))
+  })
+
+  it('allows signed external grants for read-only git/PR inspection and rejects mutating actions', async () => {
+    const { deps } = createDeps()
+    deps.getChat.mockReturnValue(createChat())
+    deps.executableExternalPathGrantsForChat.mockReturnValue([createGrant()])
+    registerGitHandlers(deps)
+
+    await expect(handlerFor('git:snapshot')(
+      {},
+      { repoPath: '/granted/repo', chatId: 'chat-1' }
+    )).resolves.toEqual({
+      ok: true,
+      data: { requestedPath: '/granted/repo' }
+    })
+    await expect(handlerFor('github:pr-status')(
+      {},
+      { repoPath: '/granted/repo', chatId: 'chat-1' }
+    )).resolves.toEqual({
+      ok: true,
+      data: { url: 'status:/granted/repo' }
+    })
+    await expect(handlerFor('github:pr-readiness')(
+      {},
+      { repoPath: '/granted/repo', chatId: 'chat-1' }
+    )).resolves.toEqual({
+      ok: true,
+      data: { reason: 'ready:/granted/repo' }
+    })
+
+    await expect(handlerFor('git:stage')(
+      {},
+      { repoPath: '/granted/repo', chatId: 'chat-1' }
+    )).resolves.toEqual({
       ok: false,
       error: 'Git actions require registered workspaces or signed write grants.'
     })
   })
 
+  it('requires the originating chat for an external-repository grant', async () => {
+    const { deps } = createDeps()
+    const chatA = createChat({ appChatId: 'chat-a' })
+    deps.getChat.mockImplementation((chatId) => (chatId === 'chat-a' ? chatA : undefined))
+    deps.executableExternalPathGrantsForChat.mockImplementation((chat) =>
+      chat?.appChatId === 'chat-a' ? [createGrant({ chatId: 'chat-a' })] : []
+    )
+    registerGitHandlers(deps)
+
+    await expect(
+      handlerFor('git:snapshot')({}, { repoPath: '/granted/repo', chatId: 'chat-a' })
+    ).resolves.toMatchObject({ ok: true })
+    await expect(
+      handlerFor('git:snapshot')({}, { repoPath: '/granted/repo', chatId: 'chat-b' })
+    ).resolves.toEqual({
+      ok: false,
+      error: 'Git inspection is limited to registered workspaces or signed external path grants.'
+    })
+    await expect(
+      handlerFor('git:snapshot')({}, { repoPath: '/granted/repo' })
+    ).resolves.toEqual({
+      ok: false,
+      error: 'Git inspection is limited to registered workspaces or signed external path grants.'
+    })
+  })
+
   it('resolves ci-status through the read grant and forwards the pr/branch selectors', async () => {
     const { deps } = createDeps()
-    deps.getChats.mockReturnValue([createChat()])
-    deps.externalPathGrantMetadataLists.mockReturnValue([createGrant()])
+    deps.getChat.mockReturnValue(createChat())
+    deps.executableExternalPathGrantsForChat.mockReturnValue([createGrant()])
     registerGitHandlers(deps)
 
     await expect(
       handlerFor('github:ci-status')(
         {},
-        { repoPath: '/granted/repo/subdir', pr: 75, branch: 'feat/x', includeFailedLogs: true }
+        {
+          repoPath: '/granted/repo',
+          chatId: 'chat-1',
+          pr: 75,
+          branch: 'feat/x',
+          includeFailedLogs: true
+        }
       )
     ).resolves.toMatchObject({ ok: true, data: { status: 'passed' } })
     expect(deps.gitService.ciStatus).toHaveBeenCalledWith(
       expect.objectContaining({
-        repoPath: '/granted/repo/subdir',
+        repoPath: '/granted/repo',
         pr: 75,
         branch: 'feat/x',
         includeFailedLogs: true
@@ -479,7 +699,7 @@ describe('registerGitHandlers', () => {
 
   it('rejects ci-status for a path with no registered workspace or signed grant', async () => {
     const { deps } = createDeps()
-    deps.getChats.mockReturnValue([])
+    deps.getChat.mockReturnValue(undefined)
     registerGitHandlers(deps)
 
     await expect(
@@ -491,23 +711,264 @@ describe('registerGitHandlers', () => {
     expect(deps.gitService.ciStatus).not.toHaveBeenCalled()
   })
 
-  it('preserves path normalization and directory grant boundary matching', async () => {
+  it('requires an external Git target to be the repository root', async () => {
     const { deps } = createDeps()
-    deps.getChats.mockReturnValue([createChat()])
-    deps.externalPathGrantMetadataLists.mockReturnValue([
+    deps.getChat.mockReturnValue(createChat())
+    deps.executableExternalPathGrantsForChat.mockReturnValue([
       createGrant({ path: '/granted/repo/' })
     ])
+    deps.gitRepositoryRootForPath.mockImplementation((path) =>
+      path === '/granted/repo/' ? path : '/granted/repo/'
+    )
     registerGitHandlers(deps)
 
-    await expect(handlerFor('git:snapshot')({}, { repoPath: '  /granted/repo/subdir/  ' })).resolves.toEqual({
+    await expect(handlerFor('git:snapshot')(
+      {},
+      { repoPath: '  /granted/repo/  ', chatId: 'chat-1' }
+    )).resolves.toEqual({
       ok: true,
-      data: { requestedPath: '/granted/repo/subdir/' }
+      data: { requestedPath: '/granted/repo/' }
     })
+    expect(deps.canonicalPath).toHaveBeenCalledWith('/granted/repo/')
+    expect(deps.canonicalExternalGrantPath).toHaveBeenCalledWith('/granted/repo/')
 
-    await expect(handlerFor('git:snapshot')({}, { repoPath: '/granted/repo-evil' })).resolves.toEqual({
+    await expect(handlerFor('git:snapshot')(
+      {},
+      { repoPath: '/granted/repo/subdir', chatId: 'chat-1' }
+    )).resolves.toEqual({
       ok: false,
       error: 'Git inspection is limited to registered workspaces or signed external path grants.'
     })
+    expect(deps.gitService.snapshot).toHaveBeenCalledTimes(1)
+
+    await expect(handlerFor('git:snapshot')(
+      {},
+      { repoPath: '/granted/repo-evil', chatId: 'chat-1' }
+    )).resolves.toEqual({
+      ok: false,
+      error: 'Git inspection is limited to registered workspaces or signed external path grants.'
+    })
+  })
+
+  it('rejects an external repository subdirectory before invoking the Git service', async () => {
+    const { deps } = createDeps()
+    deps.getChat.mockReturnValue(createChat())
+    deps.executableExternalPathGrantsForChat.mockReturnValue([
+      createGrant({ path: '/granted/repo' })
+    ])
+    deps.gitRepositoryRootForPath.mockReturnValue('/granted/repo')
+    registerGitHandlers(deps)
+
+    await expect(
+      handlerFor('git:snapshot')(
+        {},
+        { repoPath: '/granted/repo/subdir', chatId: 'chat-1' }
+      )
+    ).resolves.toEqual({
+      ok: false,
+      error: 'Git inspection is limited to registered workspaces or signed external path grants.'
+    })
+    expect(deps.getChat).not.toHaveBeenCalled()
+    expect(deps.gitService.snapshot).not.toHaveBeenCalled()
+  })
+
+  it('rejects an external .git indirection before consulting its chat grant', async () => {
+    const { deps } = createDeps()
+    deps.getChat.mockReturnValue(createChat())
+    deps.executableExternalPathGrantsForChat.mockReturnValue([
+      createGrant({ path: '/granted/worktree' })
+    ])
+    deps.gitRepositoryRootForPath.mockReturnValue('/granted/worktree')
+    deps.externalGitRepositoryRootIsSelfContained.mockReturnValue(false)
+    registerGitHandlers(deps)
+
+    await expect(
+      handlerFor('git:snapshot')(
+        {},
+        { repoPath: '/granted/worktree', chatId: 'chat-1' }
+      )
+    ).resolves.toEqual({
+      ok: false,
+      error: 'Git inspection is limited to registered workspaces or signed external path grants.'
+    })
+    expect(deps.externalGitRepositoryRootIsSelfContained).toHaveBeenCalledWith(
+      '/granted/worktree'
+    )
+    expect(deps.getChat).not.toHaveBeenCalled()
+    expect(deps.executableExternalPathGrantsForChat).not.toHaveBeenCalled()
+    expect(deps.gitService.snapshot).not.toHaveBeenCalled()
+  })
+
+  it('does not apply the external .git directory restriction to a registered worktree', async () => {
+    const { deps } = createDeps()
+    deps.findRegisteredWorkspace.mockReturnValue({ id: 'ws-worktree' })
+    deps.gitRepositoryRootForPath.mockReturnValue('/registered/worktree')
+    deps.externalGitRepositoryRootIsSelfContained.mockReturnValue(false)
+    registerGitHandlers(deps)
+
+    await expect(
+      handlerFor('git:snapshot')({}, { workspacePath: '/registered/worktree' })
+    ).resolves.toEqual({
+      ok: true,
+      data: { requestedPath: '/registered/worktree' }
+    })
+    expect(deps.externalGitRepositoryRootIsSelfContained).not.toHaveBeenCalled()
+    expect(deps.gitService.snapshot).toHaveBeenCalledWith('/registered/worktree')
+  })
+
+  it('rejects a file-kind external grant for Git inspection and mutation', async () => {
+    const { deps } = createDeps()
+    deps.getChat.mockReturnValue(createChat())
+    deps.executableExternalPathGrantsForChat.mockReturnValue([
+      createGrant({ kind: 'file', access: 'write' })
+    ])
+    registerGitHandlers(deps)
+
+    await expect(
+      handlerFor('git:snapshot')({}, { repoPath: '/granted/repo', chatId: 'chat-1' })
+    ).resolves.toEqual({
+      ok: false,
+      error: 'Git inspection is limited to registered workspaces or signed external path grants.'
+    })
+    await expect(
+      handlerFor('git:stage')(
+        {},
+        { repoPath: '/granted/repo', chatId: 'chat-1', all: true }
+      )
+    ).resolves.toEqual({
+      ok: false,
+      error: 'Git actions require registered workspaces or signed write grants.'
+    })
+    expect(deps.gitService.snapshot).not.toHaveBeenCalled()
+    expect(deps.gitService.stage).not.toHaveBeenCalled()
+  })
+
+  it('does not retarget a signed directory grant through a later symlink replacement', async () => {
+    const { deps } = createDeps()
+    deps.getChat.mockReturnValue(createChat())
+    deps.executableExternalPathGrantsForChat.mockReturnValue([
+      createGrant({ path: '/signed/repository' })
+    ])
+    deps.canonicalExternalGrantPath.mockImplementation((path) =>
+      path === '/alias/repository' || path === '/signed/repository'
+        ? '/redirected/repository'
+        : null
+    )
+    deps.gitRepositoryRootForPath.mockReturnValue('/redirected/repository')
+    registerGitHandlers(deps)
+
+    await expect(
+      handlerFor('git:snapshot')(
+        {},
+        { repoPath: '/alias/repository', chatId: 'chat-1' }
+      )
+    ).resolves.toEqual({
+      ok: false,
+      error: 'Git inspection is limited to registered workspaces or signed external path grants.'
+    })
+    expect(deps.gitService.snapshot).not.toHaveBeenCalled()
+  })
+
+  it('rejects a registered nested workspace before invoking the Git service', async () => {
+    const { deps } = createDeps()
+    deps.findRegisteredWorkspace.mockImplementation((path) =>
+      path === '/repo/packages/app' ? { id: 'ws-app' } : undefined
+    )
+    deps.gitRepositoryRootForPath.mockReturnValue('/repo')
+    registerGitHandlers(deps)
+
+    await expect(
+      handlerFor('git:snapshot')({}, { workspacePath: '/repo/packages/app' })
+    ).resolves.toEqual({
+      ok: false,
+      error: 'Git inspection is limited to registered workspaces or signed external path grants.'
+    })
+    expect(deps.gitService.snapshot).not.toHaveBeenCalled()
+  })
+
+  it('rejects a registered workspace when its actual Git top-level cannot be proven', async () => {
+    const { deps } = createDeps()
+    deps.findRegisteredWorkspace.mockReturnValue({ id: 'ws-signed' })
+    deps.gitRepositoryRootForPath.mockReturnValue(null)
+    registerGitHandlers(deps)
+
+    await expect(
+      handlerFor('git:snapshot')({}, { workspacePath: '/signed/repository' })
+    ).resolves.toEqual({
+      ok: false,
+      error: 'Git inspection is limited to registered workspaces or signed external path grants.'
+    })
+    expect(deps.gitService.snapshot).not.toHaveBeenCalled()
+  })
+
+  it('denies every external worktree action without invoking worktree services', async () => {
+    const { deps } = createDeps()
+    deps.getChat.mockReturnValue(createChat())
+    deps.executableExternalPathGrantsForChat.mockReturnValue([
+      createGrant({ access: 'write' })
+    ])
+    registerGitHandlers(deps)
+    const target = { repoPath: '/granted/repo', chatId: 'chat-1' }
+
+    await expect(handlerFor('git:list-worktrees')({}, target)).resolves.toEqual({
+      ok: false,
+      worktrees: [],
+      error: 'Worktree actions are limited to registered workspace roots.'
+    })
+    await expect(
+      handlerFor('git:create-worktree')({}, {
+        ...target,
+        name: 'feature',
+        path: '/outside/feature'
+      })
+    ).resolves.toEqual({
+      ok: false,
+      error: 'Worktree actions are limited to registered workspace roots.'
+    })
+    await expect(
+      handlerFor('git:remove-worktree')({}, {
+        ...target,
+        path: '/outside/feature',
+        force: true
+      })
+    ).resolves.toEqual({
+      ok: false,
+      error: 'Worktree actions are limited to registered workspace roots.'
+    })
+    await expect(
+      handlerFor('git:select-worktree')({}, { ...target, path: '/outside/feature' })
+    ).resolves.toEqual({
+      ok: false,
+      error: 'Worktree actions are limited to registered workspace roots.'
+    })
+
+    expect(deps.gitService.listWorktrees).not.toHaveBeenCalled()
+    expect(deps.gitService.createWorktree).not.toHaveBeenCalled()
+    expect(deps.gitService.removeWorktree).not.toHaveBeenCalled()
+    expect(deps.gitService.selectWorktree).not.toHaveBeenCalled()
+    expect(deps.gitSnapshotPublisher!.publishSnapshot).not.toHaveBeenCalled()
+  })
+
+  it('accepts a registered symlink through its lexical workspace identity', async () => {
+    const { deps } = createDeps()
+    deps.canonicalPath.mockImplementation((path) => path.trim())
+    deps.canonicalExternalGrantPath.mockImplementation((path) =>
+      path.trim() === '/linked/repo' ? '/real/repo' : null
+    )
+    deps.findRegisteredWorkspace.mockImplementation((path) =>
+      path === '/linked/repo' ? { id: 'ws-linked' } : undefined
+    )
+    deps.gitRepositoryRootForPath.mockReturnValue('/real/repo')
+    registerGitHandlers(deps)
+
+    await expect(
+      handlerFor('git:snapshot')({}, { workspacePath: '/linked/repo' })
+    ).resolves.toEqual({
+      ok: true,
+      data: { requestedPath: '/real/repo' }
+    })
+    expect(deps.findRegisteredWorkspace).toHaveBeenNthCalledWith(1, '/linked/repo')
+    expect(deps.gitService.snapshot).toHaveBeenCalledWith('/real/repo')
   })
 
   it('create-github-pr preserves openExternal gating and success/raw result behavior', async () => {

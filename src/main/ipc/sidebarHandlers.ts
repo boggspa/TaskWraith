@@ -1,4 +1,4 @@
-import { type WebContents, ipcMain } from 'electron'
+import { type IpcMainInvokeEvent, type WebContents, ipcMain } from 'electron'
 import type { ChatRecord, WorkspaceRecord } from '../store/types'
 import type {
   TranscriptMarkdownExportOptions,
@@ -45,6 +45,8 @@ export interface SidebarHandlersDeps {
   ) => TranscriptMarkdownExportResult
   estimateChatMarkdownTranscriptChars: (chat: ChatRecord) => number
   assertSafeChatId: (chatIdRaw: unknown, label: string) => string
+  assertSenderWorkspaceScope: (event: IpcMainInvokeEvent, workspacePath: string) => void
+  assertSenderChatScope: (event: IpcMainInvokeEvent, chatId: string) => void
   homedir: () => string
 }
 
@@ -131,6 +133,7 @@ export function registerSidebarHandlers(deps: SidebarHandlersDeps): void {
     }
     const workspace = resolveSidebarWorkspace(deps, workspaceId)
     if (!workspace) return { ok: false, reason: 'workspace-not-found' }
+    deps.assertSenderWorkspaceScope(event, workspace.path)
     return revealSidebarPath(deps, workspace.path)
   })
 
@@ -140,6 +143,7 @@ export function registerSidebarHandlers(deps: SidebarHandlersDeps): void {
     }
     const workspace = resolveSidebarWorkspace(deps, workspaceId)
     if (!workspace) return { ok: false, reason: 'workspace-not-found' }
+    deps.assertSenderWorkspaceScope(event, workspace.path)
     return copySidebarPath(deps, workspace.path)
   })
 
@@ -147,6 +151,7 @@ export function registerSidebarHandlers(deps: SidebarHandlersDeps): void {
     if (!isAuthorizedSender(deps, event.sender)) {
       return { ok: false, reason: 'unauthorized' }
     }
+    deps.assertSenderChatScope(event, chatId)
     const workspace = resolveWorkspaceForSidebarChat(deps, chatId)
     if ('ok' in workspace) return workspace
     return revealSidebarPath(deps, workspace.path)
@@ -156,6 +161,7 @@ export function registerSidebarHandlers(deps: SidebarHandlersDeps): void {
     if (!isAuthorizedSender(deps, event.sender)) {
       return { ok: false, reason: 'unauthorized' }
     }
+    deps.assertSenderChatScope(event, chatId)
     const workspace = resolveWorkspaceForSidebarChat(deps, chatId)
     if ('ok' in workspace) return workspace
     return copySidebarPath(deps, workspace.path)
@@ -165,6 +171,7 @@ export function registerSidebarHandlers(deps: SidebarHandlersDeps): void {
     if (!isAuthorizedSender(deps, event.sender)) {
       return { ok: false, reason: 'unauthorized' }
     }
+    deps.assertSenderChatScope(event, chatId)
     if (deps.getSettings().storeLocalChatHistory === false) {
       return { ok: false, reason: 'local-history-disabled' }
     }
@@ -184,6 +191,7 @@ export function registerSidebarHandlers(deps: SidebarHandlersDeps): void {
         return { ok: false, reason: 'unauthorized' }
       }
       deps.assertSafeChatId(chatId, 'copy-chat-markdown-transcript chatId')
+      deps.assertSenderChatScope(event, chatId)
       const chat = deps.getChat(chatId)
       if (!chat) return { ok: false, reason: 'not-found' }
       if (chat.archived) return { ok: false, reason: 'archived' }

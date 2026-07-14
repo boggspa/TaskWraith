@@ -171,6 +171,7 @@ describe('registerPluginHandlers', () => {
         getActivationSnapshot: vi.fn(() => activationSnapshot)
       },
       onActivationChanged: vi.fn(),
+      isMainRendererSender: vi.fn(() => true),
       requireNonEmptyString: vi.fn((value: unknown) => String(value))
     }
 
@@ -243,5 +244,112 @@ describe('registerPluginHandlers', () => {
     expect(deps.pluginContributionManager.sync).toHaveBeenCalledTimes(4)
     expect(deps.onActivationChanged).toHaveBeenCalledTimes(4)
     expect(deps.onActivationChanged).toHaveBeenLastCalledWith(activationSnapshot)
+  })
+
+  it('returns only safe activation metadata to secondary renderers', () => {
+    const activationSnapshot: TaskWraithPluginActivationSnapshot = {
+      ...activation(),
+      mcpServers: [
+        {
+          id: 'plugin:demo:mcp:private',
+          name: 'Private MCP',
+          enabled: true,
+          transport: 'stdio',
+          command: '/private/bin/server',
+          args: ['--token', 'plaintext-token'],
+          url: 'https://user:password@example.test/mcp?token=secret',
+          env: { DATABASE_URL: 'postgres://secret' },
+          headers: { Authorization: 'Bearer secret' },
+          secretRefs: { env: ['DATABASE_URL'], headers: ['Authorization'] },
+          bearerTokenEnvVar: 'PLUGIN_TOKEN',
+          description: 'User-visible description'
+        }
+      ],
+      connectors: [
+        {
+          id: 'plugin:demo:connector:private',
+          connector: {
+            id: 'private',
+            label: 'Private connector',
+            kind: 'api-key',
+            command: '/private/bin/connector',
+            env: { API_TOKEN: 'connector-secret' }
+          }
+        } as unknown as TaskWraithPluginActivationSnapshot['connectors'][number]
+      ],
+      localServices: [
+        {
+          id: 'plugin:demo:service:private',
+          service: {
+            id: 'private',
+            label: 'Private service',
+            command: '/private/bin/service',
+            env: { SERVICE_TOKEN: 'service-secret' }
+          }
+        } as unknown as TaskWraithPluginActivationSnapshot['localServices'][number]
+      ],
+      workflowTemplates: [
+        {
+          id: 'plugin:demo:workflow:review',
+          plugin: {
+            pluginId: 'demo',
+            publisher: 'acme',
+            version: '1.0.0',
+            source: 'builtin',
+            namespace: 'plugin.acme.demo',
+            manifestHash: 'abc'
+          },
+          template: {
+            id: 'review',
+            name: 'Review',
+            prompt: 'Review this change.'
+          },
+          pluginProvenance: {
+            pluginId: 'demo',
+            publisher: 'acme',
+            version: '1.0.0',
+            source: 'builtin',
+            namespace: 'plugin.acme.demo',
+            manifestHash: 'abc',
+            kind: 'workflowTemplate',
+            objectId: 'review',
+            materializedAt: '2026-06-29T12:00:00.000Z'
+          }
+        }
+      ]
+    }
+    const deps = {
+      pluginHost: {
+        getCatalogSnapshot: vi.fn(() => snapshot()),
+        getContributionSnapshot: vi.fn(() => contributions()),
+        materializeMcpServerPreset: vi.fn(),
+        installPlugin: vi.fn(),
+        setPluginEnabled: vi.fn(),
+        updatePlugin: vi.fn(),
+        uninstallPlugin: vi.fn()
+      },
+      pluginContributionManager: {
+        sync: vi.fn(() => activationSnapshot),
+        getActivationSnapshot: vi.fn(() => activationSnapshot)
+      },
+      isMainRendererSender: vi.fn(() => false),
+      requireNonEmptyString: vi.fn((value: unknown) => String(value))
+    }
+    registerPluginHandlers(deps)
+
+    const result = handlerFor('plugins:get-activation')({}) as TaskWraithPluginActivationSnapshot
+
+    expect(result.mcpServers).toEqual([])
+    expect(result.workflowTemplates).toEqual(activationSnapshot.workflowTemplates)
+    expect(result.connectors).toEqual([])
+    expect(result.localServices).toEqual([])
+    expect(JSON.stringify(result)).not.toContain('/private/bin/server')
+    expect(JSON.stringify(result)).not.toContain('plaintext-token')
+    expect(JSON.stringify(result)).not.toContain('postgres://secret')
+    expect(JSON.stringify(result)).not.toContain('/private/bin/connector')
+    expect(JSON.stringify(result)).not.toContain('connector-secret')
+    expect(JSON.stringify(result)).not.toContain('/private/bin/service')
+    expect(JSON.stringify(result)).not.toContain('service-secret')
+    expect(deps.pluginContributionManager.sync).not.toHaveBeenCalled()
   })
 })

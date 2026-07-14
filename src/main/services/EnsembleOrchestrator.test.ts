@@ -5,6 +5,7 @@ import {
   resolveYieldTargetIndex,
   worstConsecutiveFileEditFailure,
   MAX_CONSECUTIVE_FILE_EDIT_FAILURES,
+  type EnsembleOrchestratorDeps,
   type ParticipantProbeResult
 } from './EnsembleOrchestrator'
 import type { AgentRunPayload } from '../run/AgentRunTypes'
@@ -289,6 +290,7 @@ function makeHarness(
       ensembleLaneId?: string | null
       runtimeProfileId?: string | null
     }) => boolean
+    issueRunScopedExternalGrants?: EnsembleOrchestratorDeps['issueRunScopedExternalGrants']
     persistSessionCheckpoint?: (chat: ChatRecord, reason: string) => void
     completeSessionCheckpoint?: (chatId: string, roundId: string, status: string) => void
     transitionRunQueueJob?: (
@@ -360,6 +362,9 @@ function makeHarness(
       : {}),
     ...(options.isTrustedSessionGranted
       ? { isTrustedSessionGranted: options.isTrustedSessionGranted }
+      : {}),
+    ...(options.issueRunScopedExternalGrants
+      ? { issueRunScopedExternalGrants: options.issueRunScopedExternalGrants }
       : {}),
     ...(options.getProviderUsageSnapshot
       ? { getProviderUsageSnapshot: options.getProviderUsageSnapshot }
@@ -2615,6 +2620,20 @@ describe('EnsembleOrchestrator', () => {
       expect(harness1.chat.ensemble?.activeRound?.status).toBe('running')
       expect(harness1.chat.ensemble?.activeRound?.pendingWakeupIds).toEqual([wakeupId])
     })
+    Object.assign(harness1.chat.ensemble!.activeRound!, {
+      queuedPrompt: '@Worker continue after the recovered wakeup',
+      queuedPrompts: ['@Worker continue after the recovered wakeup'],
+      queuedPromptEntries: [
+        {
+          persistenceVersion: 1,
+          id: 'queued-after-wakeup',
+          prompt: '@Worker continue after the recovered wakeup',
+          dmTargetParticipantId: 'codex',
+          fanoutPolicy: 'off',
+          imageAttachments: []
+        }
+      ]
+    })
     harness1.chat.ensemble!.participants[0].role = 'Mutated Reviewer'
     harness1.chat.ensemble!.participants[0].stageRole = 'reviewer'
 
@@ -2645,6 +2664,12 @@ describe('EnsembleOrchestrator', () => {
     expect(
       restarted.chat.messages.some((message) => message.content.includes('woke after app restart'))
     ).toBe(true)
+
+    completeDispatchedRun(restarted, 0)
+    await vi.waitFor(() => expect(restarted.dispatched).toHaveLength(2))
+    expect(restarted.dispatched[1].provider).toBe('codex')
+    expect(restarted.dispatched[1].imagePaths).toEqual([])
+    expect(restarted.chat.ensemble?.activeRound?.dmTargetParticipantId).toBe('codex')
   })
 
   it('cancelWakeupById flips a pending wakeup to cancelled and clears the sleeping state', async () => {
@@ -2853,6 +2878,53 @@ describe('EnsembleOrchestrator', () => {
     expect(harness.dispatched[1].prompt).not.toContain('/tmp/claude-notes.pdf')
   })
 
+  it('mints non-image attachment grants against each exact serial participant run', async () => {
+    const issueRunScopedExternalGrants = vi.fn(
+      ({ participant, appRunId, attachments }: Parameters<
+        NonNullable<EnsembleOrchestratorDeps['issueRunScopedExternalGrants']>
+      >[0]) => [
+        externalGrant(participant.provider, attachments[0].path, {
+          appRunId,
+          chatId: 'ensemble-chat',
+          workspaceId: 'ws-1'
+        })
+      ]
+    )
+    const harness = makeHarness({ issueRunScopedExternalGrants })
+
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Review the attachment.',
+      imageAttachments: [{ id: 'pdf-1', path: '/tmp/spec.pdf', name: 'spec.pdf' }],
+      event: { sender: {} as Electron.WebContents }
+    })
+
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    expect(issueRunScopedExternalGrants).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        appRunId: 'claude-run-1',
+        participant: expect.objectContaining({ id: 'claude' })
+      })
+    )
+    expect(harness.dispatched[0].externalPathGrants).toMatchObject([
+      { provider: 'claude', path: '/tmp/spec.pdf', appRunId: 'claude-run-1' }
+    ])
+
+    completeDispatchedRun(harness, 0)
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    expect(issueRunScopedExternalGrants).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        appRunId: 'codex-run-2',
+        participant: expect.objectContaining({ id: 'codex' })
+      })
+    )
+    expect(harness.dispatched[1].externalPathGrants).toMatchObject([
+      { provider: 'codex', path: '/tmp/spec.pdf', appRunId: 'codex-run-2' }
+    ])
+  })
+
   it('keeps each participant permission and tool posture on an attached workspace', async () => {
     const secondaryPath = '/tmp/secondary-workspace'
     const providerPostures = [
@@ -3043,6 +3115,53 @@ describe('EnsembleOrchestrator', () => {
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
     expect(harness.dispatched[1].prompt).toContain('External Discord channel snapshot context')
     expect(harness.dispatched[1].prompt).toContain('alice: Queued Discord clue.')
+  })
+
+  it('quarantines queued run-only Discord context after restart instead of dispatching without it', async () => {
+    const seed = makeHarness()
+    seed.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'First prompt',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(seed.dispatched).toHaveLength(1))
+
+    seed.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Use the selected Discord evidence',
+      discordContextSnapshots: [makeDiscordSnapshot('Restart-sensitive Discord clue.')],
+      event: { sender: {} as Electron.WebContents },
+      mode: 'queue'
+    })
+
+    const persistedEntry = seed.chat.ensemble?.activeRound?.queuedPromptEntries?.[0]
+    expect(persistedEntry).toMatchObject({
+      persistenceVersion: 1,
+      prompt: 'Use the selected Discord evidence',
+      hadDiscordContext: true
+    })
+    expect(persistedEntry).not.toHaveProperty('discordContextSnapshots')
+    expect(JSON.stringify(seed.chat)).not.toContain('Restart-sensitive Discord clue.')
+
+    const restarted = makeHarness({ initialChat: seed.chat })
+    const result = restarted.orchestrator.steerQueuedPrompt({
+      chatId: 'ensemble-chat',
+      index: 0,
+      textPrefix: 'Use the selected Discord evidence',
+      event: { sender: {} as Electron.WebContents }
+    })
+
+    expect(result.status).toBe('ignored')
+    expect(result.error).toContain('Discord context was run-only and must be re-selected')
+    expect(restarted.dispatched).toHaveLength(0)
+    expect(restarted.chat.ensemble?.activeRound?.queuedPromptEntries?.[0]).toMatchObject({
+      hadDiscordContext: true
+    })
+    expect(
+      restarted.chat.messages.some((message) =>
+        message.content.includes('Discord context was run-only and must be re-selected')
+      )
+    ).toBe(true)
   })
 
   it('queues a fresh round after the current speaker finishes', async () => {
@@ -3299,6 +3418,7 @@ Next action:
 
   it('preserves a directed participant scope when steering a queued prompt', async () => {
     const harness = makeHarness()
+    harness.chat.ensemble!.fanoutPolicy = 'read_only'
     harness.orchestrator.startRound({
       chatId: 'ensemble-chat',
       prompt: 'Original prompt',
@@ -3311,7 +3431,8 @@ Next action:
       prompt: '@Worker directed follow-up',
       event: { sender: {} as Electron.WebContents },
       mode: 'queue',
-      dmTargetParticipantId: 'codex'
+      dmTargetParticipantId: 'codex',
+      fanoutPolicy: 'off'
     })
     expect(queued.status).toBe('queued')
     expect(getRuntimeQueuedPrompts(harness.orchestrator, 'ensemble-chat')[0]).toMatchObject({
@@ -3323,13 +3444,17 @@ Next action:
       chatId: 'ensemble-chat',
       index: 0,
       textPrefix: '@Worker directed follow-up',
-      event: { sender: {} as Electron.WebContents }
+      event: { sender: {} as Electron.WebContents },
+      // The queued-row UI supplies the roster's current policy. The queued
+      // entry's own directed/off boundary must take precedence.
+      fanoutPolicy: 'read_only'
     })
 
     expect(steered.status).toBe('steered')
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
     expect(harness.dispatched[1].provider).toBe('codex')
     expect(harness.chat.ensemble?.activeRound?.dmTargetParticipantId).toBe('codex')
+    expect(harness.chat.ensemble?.activeRound?.fanoutPolicy).toBe('off')
     expect(harness.chat.ensemble?.activeRound?.participants.map((participant) => participant.participantId)).toEqual([
       'codex'
     ])
@@ -3450,16 +3575,47 @@ Next action:
       event: { sender: {} as Electron.WebContents }
     })
     await vi.waitFor(() => expect(seed.dispatched).toHaveLength(1))
-    for (const prompt of ['Queued A', 'Queued B']) {
-      seed.orchestrator.startRound({
-        chatId: 'ensemble-chat',
-        prompt,
-        event: { sender: {} as Electron.WebContents },
-        mode: 'queue'
-      })
-    }
+    seed.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Queued A',
+      event: { sender: {} as Electron.WebContents },
+      mode: 'queue'
+    })
+    seed.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Queued B',
+      event: { sender: {} as Electron.WebContents },
+      mode: 'queue',
+      dmTargetParticipantId: 'codex',
+      fanoutPolicy: 'off',
+      externalPathGrants: [
+        externalGrant('codex', '/tmp/stale-run-only', {
+          id: 'stale-run-grant',
+          appRunId: 'prior-process-run'
+        }),
+        externalGrant('codex', '/tmp/thread-notes', {
+          id: 'durable-thread-grant',
+          duration: 'thisThread'
+        })
+      ]
+    })
     expect(seed.chat.ensemble?.activeRound?.status).toBe('running')
-    expect(seed.chat.ensemble?.activeRound?.queuedPrompts).toEqual(['Queued A', 'Queued B'])
+    expect(seed.chat.ensemble?.activeRound?.queuedPrompts?.[0]).toBe('Queued A')
+    expect(seed.chat.ensemble?.activeRound?.queuedPrompts?.[1]).toContain('Queued B')
+    expect(seed.chat.ensemble?.activeRound?.queuedPromptEntries?.[1]).toMatchObject({
+      persistenceVersion: 1,
+      dmTargetParticipantId: 'codex',
+      fanoutPolicy: 'off',
+      imageAttachments: [],
+      externalPathGrants: [
+        { id: 'durable-thread-grant', provider: 'codex', path: '/tmp/thread-notes' }
+      ]
+    })
+    expect(
+      seed.chat.ensemble?.activeRound?.queuedPromptEntries?.[1]?.externalPathGrants?.map(
+        (grant) => grant.id
+      )
+    ).toEqual(['durable-thread-grant'])
 
     const restarted = makeHarness({ initialChat: seed.chat })
     // Sanity: the fresh orchestrator has no in-memory runtime for this chat.
@@ -3474,10 +3630,194 @@ Next action:
     expect(steered.status).toBe('steered')
     await vi.waitFor(() => expect(restarted.dispatched).toHaveLength(1))
     expect(restarted.dispatched[0].prompt).toContain('Queued B')
+    expect(restarted.dispatched[0].provider).toBe('codex')
+    expect(restarted.dispatched[0].imagePaths).toEqual([])
+    expect(restarted.dispatched[0].externalPathGrants).toEqual([
+      expect.objectContaining({
+        id: 'durable-thread-grant',
+        provider: 'codex',
+        path: '/tmp/thread-notes',
+        duration: 'thisThread'
+      })
+    ])
+    expect(restarted.dispatched[0].externalPathGrants).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ appRunId: 'prior-process-run' })])
+    )
     expect(restarted.chat.ensemble?.activeRound?.roundId).toBe(steered.roundId)
-    expect(restarted.chat.ensemble?.activeRound?.prompt).toBe('Queued B')
+    expect(restarted.chat.ensemble?.activeRound?.prompt).toContain('Queued B')
+    expect(restarted.chat.ensemble?.activeRound?.dmTargetParticipantId).toBe('codex')
+    expect(restarted.chat.ensemble?.activeRound?.fanoutPolicy).toBe('off')
     // The un-steered sibling prompt is carried into the recovered round's queue.
     expect(restarted.chat.ensemble?.activeRound?.queuedPrompts).toEqual(['Queued A'])
+    const carriedId = restarted.chat.ensemble?.activeRound?.queuedPromptEntries?.[0]?.id
+    expect(carriedId).toBeDefined()
+
+    restarted.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Queued C after restart',
+      event: { sender: {} as Electron.WebContents },
+      mode: 'queue'
+    })
+    const idsAfterRestartQueue =
+      restarted.chat.ensemble?.activeRound?.queuedPromptEntries?.map((entry) => entry.id) || []
+    expect(idsAfterRestartQueue[0]).toBe(carriedId)
+    expect(new Set(idsAfterRestartQueue).size).toBe(2)
+  })
+
+  it('quarantines attachment-bearing queued prompts after restart until files are re-selected', async () => {
+    const seed = makeHarness()
+    seed.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Original prompt',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(seed.dispatched).toHaveLength(1))
+    seed.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: '@Worker inspect the queued image',
+      event: { sender: {} as Electron.WebContents },
+      mode: 'queue',
+      dmTargetParticipantId: 'codex',
+      imageAttachments: [
+        { id: 'restart-image', path: '/tmp/restart.png', name: 'restart.png' }
+      ],
+      imageThumbnails: [
+        { dataBase64: 'cmVzdGFydA==', mimeType: 'image/png', width: 12, height: 8 }
+      ]
+    })
+
+    const restarted = makeHarness({ initialChat: seed.chat })
+    const result = restarted.orchestrator.steerQueuedPrompt({
+      chatId: 'ensemble-chat',
+      index: 0,
+      textPrefix: '@Worker inspect the queued image',
+      event: { sender: {} as Electron.WebContents }
+    })
+
+    expect(result.status).toBe('ignored')
+    expect(result.error).toContain('attachment paths must be re-selected')
+    expect(restarted.dispatched).toHaveLength(0)
+    expect(restarted.chat.ensemble?.activeRound?.queuedPromptEntries?.[0]).toMatchObject({
+      dmTargetParticipantId: 'codex',
+      imageAttachments: [{ path: '/tmp/restart.png' }],
+      imageThumbnails: [{ mimeType: 'image/png' }]
+    })
+    expect(
+      restarted.chat.messages.some((message) =>
+        message.content.includes('attachment paths must be re-selected')
+      )
+    ).toBe(true)
+  })
+
+  it('quarantines prompt-only legacy queue rows after restart instead of widening them', async () => {
+    const seed = makeHarness()
+    seed.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Original prompt',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(seed.dispatched).toHaveLength(1))
+    seed.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: '@Worker legacy directed prompt',
+      event: { sender: {} as Electron.WebContents },
+      mode: 'queue',
+      dmTargetParticipantId: 'codex'
+    })
+    seed.chat.ensemble!.activeRound!.queuedPromptEntries = undefined
+
+    const restarted = makeHarness({ initialChat: seed.chat })
+    const result = restarted.orchestrator.steerQueuedPrompt({
+      chatId: 'ensemble-chat',
+      index: 0,
+      textPrefix: '@Worker legacy directed prompt',
+      event: { sender: {} as Electron.WebContents }
+    })
+
+    expect(result.status).toBe('ignored')
+    expect(result.error).toContain('routing metadata is unavailable')
+    expect(restarted.dispatched).toHaveLength(0)
+    expect(restarted.chat.ensemble?.activeRound?.queuedPrompts?.[0]).toContain(
+      '@Worker legacy directed prompt'
+    )
+    expect(restarted.chat.messages.map((message) => message.content)).toContain(
+      'Queued prompt preserved but not dispatched because its restart-era routing metadata is unavailable.'
+    )
+  })
+
+  it('keeps a terminal orphan queue reachable and refuses to overwrite it with a new round', async () => {
+    const seed = makeHarness()
+    seed.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Original prompt',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(seed.dispatched).toHaveLength(1))
+    seed.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Durable queued prompt',
+      event: { sender: {} as Electron.WebContents },
+      mode: 'queue'
+    })
+    seed.chat.ensemble!.activeRound!.status = 'failed'
+
+    const restarted = makeHarness({ initialChat: seed.chat })
+    const attemptedReplacement = restarted.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Do not overwrite the durable queue',
+      event: { sender: {} as Electron.WebContents }
+    })
+    expect(attemptedReplacement.status).toBe('ignored')
+    expect(restarted.dispatched).toHaveLength(0)
+    expect(restarted.chat.ensemble?.activeRound?.queuedPrompts).toEqual([
+      'Durable queued prompt'
+    ])
+
+    const recovered = restarted.orchestrator.steerQueuedPrompt({
+      chatId: 'ensemble-chat',
+      index: 0,
+      textPrefix: 'Durable queued prompt',
+      event: { sender: {} as Electron.WebContents }
+    })
+    expect(recovered.status).toBe('steered')
+    await vi.waitFor(() => expect(restarted.dispatched).toHaveLength(1))
+    expect(restarted.dispatched[0].prompt).toContain('Durable queued prompt')
+  })
+
+  it('preserves and blocks a restart-recovered directed queue row whose target left the roster', async () => {
+    const seed = makeHarness()
+    seed.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Original prompt',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(seed.dispatched).toHaveLength(1))
+    seed.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: '@Worker directed follow-up',
+      event: { sender: {} as Electron.WebContents },
+      mode: 'queue',
+      dmTargetParticipantId: 'codex'
+    })
+    seed.chat.ensemble!.participants = seed.chat.ensemble!.participants.filter(
+      (participant) => participant.id !== 'codex'
+    )
+
+    const restarted = makeHarness({ initialChat: seed.chat })
+    const result = restarted.orchestrator.steerQueuedPrompt({
+      chatId: 'ensemble-chat',
+      index: 0,
+      textPrefix: '@Worker directed follow-up',
+      event: { sender: {} as Electron.WebContents }
+    })
+
+    expect(result.status).toBe('ignored')
+    expect(result.error).toContain('codex')
+    expect(restarted.dispatched).toHaveLength(0)
+    expect(restarted.chat.ensemble?.activeRound?.queuedPromptEntries?.[0]).toMatchObject({
+      dmTargetParticipantId: 'codex'
+    })
+    expect(restarted.chat.messages.some((message) => message.content.includes('preserved but not dispatched'))).toBe(true)
   })
 
   it('does not recover a queued steer when there is neither a runtime nor a live persisted round', () => {
@@ -11364,20 +11704,58 @@ Next action:
     ).toBe(true)
   })
 
-  it('falls through to the full round when dmTargetParticipantId points at a non-existent id', async () => {
+  it('does not let explicit fan-out widen a user-targeted round', async () => {
     const harness = makeHarness()
+    harness.chat.ensemble!.fanoutPolicy = 'read_only'
+    harness.chat.ensemble!.workSession = buildWorkSession({ enableScoutPass: true })
     harness.orchestrator.startRound({
       chatId: 'ensemble-chat',
-      prompt: 'DM phantom.',
+      prompt: 'DM Codex only.',
       event: { sender: {} as Electron.WebContents },
-      dmTargetParticipantId: 'phantom-participant'
+      dmTargetParticipantId: 'codex',
+      // A targeted round itself stays fan-out-off, but the Work Session scout
+      // pass used to override that and authorize an explicit read lane.
+      fanoutPolicy: 'off'
     })
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
-    // First in default fixture order = Claude. The unknown DM target
-    // is silently ignored; the orchestrator runs the full ordered
-    // participant list (safety net for typo / racy IPC).
-    expect(harness.dispatched[0].provider).toBe('claude')
-    expect(harness.chat.ensemble?.activeRound?.dmTargetParticipantId).toBeUndefined()
+
+    await expect(
+      harness.orchestrator.fanoutForRun(harness.dispatched[0].appRunId, {
+        targets: ['Reviewer'],
+        prompt: 'Inspect in parallel.',
+        mode: 'read_only'
+      })
+    ).resolves.toMatchObject({
+      ok: false,
+      error: 'not_authorized',
+      message: expect.stringContaining('user-targeted round')
+    })
+    expect(harness.dispatched).toHaveLength(1)
+    expect(harness.chat.ensemble?.activeRound?.participants.map((p) => p.participantId)).toEqual([
+      'codex'
+    ])
+    expect(harness.chat.ensemble?.activeRound?.lanes).toBeUndefined()
+
+    harness.orchestrator.handleProviderOutput(
+      'codex',
+      { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' },
+      { type: 'result', status: 'success' }
+    )
+    await vi.waitFor(() => expect(harness.chat.ensemble?.activeRound?.status).toBe('completed'))
+  })
+
+  it('fails closed when dmTargetParticipantId points at a non-existent id', () => {
+    const harness = makeHarness()
+    expect(() =>
+      harness.orchestrator.startRound({
+        chatId: 'ensemble-chat',
+        prompt: 'DM phantom.',
+        event: { sender: {} as Electron.WebContents },
+        dmTargetParticipantId: 'phantom-participant'
+      })
+    ).toThrow('Directed Ensemble target "phantom-participant" is no longer in the roster.')
+    expect(harness.dispatched).toHaveLength(0)
+    expect(harness.chat.ensemble?.activeRound).toBeUndefined()
   })
 
   // 1.0.4 — same-provider disambiguation. Two Codex participants
@@ -12949,6 +13327,68 @@ Next action:
     const result = await fanout
     expect(result.ok).toBe(true)
     expect(result.laneIds).toHaveLength(1)
+  })
+
+  it('binds fan-out attachment grants to the lane run instead of the parent run', async () => {
+    const issueRunScopedExternalGrants = vi.fn(
+      ({ participant, appRunId, attachments }: Parameters<
+        NonNullable<EnsembleOrchestratorDeps['issueRunScopedExternalGrants']>
+      >[0]) => [
+        externalGrant(participant.provider, attachments[0].path, {
+          appRunId,
+          chatId: 'ensemble-chat',
+          workspaceId: 'ws-1'
+        })
+      ]
+    )
+    const harness = makeHarness({ issueRunScopedExternalGrants })
+    harness.chat.ensemble!.fanoutPolicy = 'read_only'
+    harness.chat.ensemble!.participants = [
+      {
+        id: 'codex',
+        provider: 'codex',
+        enabled: true,
+        role: 'Worker',
+        instructions: 'Work.',
+        order: 1,
+        permissionPresetId: 'workspace_write'
+      },
+      {
+        id: 'claude',
+        provider: 'claude',
+        enabled: true,
+        role: 'Reviewer',
+        instructions: 'Review.',
+        order: 2,
+        permissionPresetId: 'read_only'
+      }
+    ]
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Worker starts, reviewer inspects the attachment.',
+      imageAttachments: [{ id: 'pdf-1', path: '/tmp/spec.pdf', name: 'spec.pdf' }],
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    const fanout = harness.orchestrator.fanoutForRun(harness.dispatched[0].appRunId, {
+      targets: ['Reviewer'],
+      prompt: 'Inspect the attached specification.'
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2), { timeout: 1000 })
+
+    const parentRunId = harness.dispatched[0].appRunId
+    const laneRunId = harness.dispatched[1].appRunId
+    expect(laneRunId).not.toBe(parentRunId)
+    expect(harness.dispatched[0].externalPathGrants).toMatchObject([
+      { provider: 'codex', path: '/tmp/spec.pdf', appRunId: parentRunId }
+    ])
+    expect(harness.dispatched[1].externalPathGrants).toMatchObject([
+      { provider: 'claude', path: '/tmp/spec.pdf', appRunId: laneRunId }
+    ])
+
+    completeDispatchedRun(harness, 1)
+    await expect(fanout).resolves.toMatchObject({ ok: true })
   })
 
   it('returns a fan-out dispatch receipt before the lane completes', async () => {

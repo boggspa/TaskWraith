@@ -37,6 +37,12 @@ import {
   type HumanCollaborationAuditLike
 } from '../collaboration/HumanCollaborationAuditLog'
 import { isTaskWraithMcpProfileReceiptForSession } from '../mcp/McpSessionProfileFence'
+import {
+  EXTERNAL_PATH_GRANT_METADATA_KEYS,
+  canonicalizeExternalPathGrantMetadata,
+  collectExternalPathGrantsFromMetadata,
+  externalPathGrantMetadataLists
+} from '../store/ExternalPathGrants'
 
 // Grok + Cursor are first-class providers; no eligibility gate (see ProviderId).
 const PROVIDER_IDS = new Set<ProviderId>(['gemini', 'codex', 'claude', 'kimi', 'grok', 'cursor', 'ollama'])
@@ -82,6 +88,28 @@ export interface SetChatKindInput {
   canonicalProviderMetadata?: Record<string, unknown>
 }
 
+export type RebindChatWorkspaceInput =
+  | {
+      chatId: string
+      scope: 'global'
+    }
+  | {
+      chatId: string
+      scope: 'workspace'
+      workspaceId: string
+      workspacePath: string
+    }
+
+export interface RebindChatWorkspaceOptions {
+  /**
+   * Main-owned lifecycle fence. The IPC layer supplies a synchronous guard
+   * backed by the run manager + durable queue so the canonical record cannot
+   * move while any turn still owns its workspace.
+   */
+  assertIdle?: (chat: ChatRecord) => void
+  now?: number
+}
+
 export interface ChatServiceStore {
   getChats: (workspaceId?: string) => ChatRecord[]
   getChatList: (workspaceId?: string) => ChatListItem[]
@@ -103,7 +131,7 @@ export interface ChatServiceStore {
   ) => ChatRecord
   getChildChats: (parentChatId: string) => ChatRecord[]
   getSideChats: (parentChatId: string) => ChatRecord[]
-  saveChat: (chat: ChatRecord) => void
+  saveChat: (chat: ChatRecord) => ChatRecord
   deleteChat: (chatId: string) => void
   clearChats: (workspaceId?: string) => void
 }
@@ -313,14 +341,18 @@ export class ChatService {
   setChatKind(args: SetChatKindInput | undefined): ChatRecord {
     const chatId = requireSafeChatId(args?.chatId, 'Chat id')
     const targetKind: ChatKind = args?.targetKind === 'ensemble' ? 'ensemble' : 'single'
+    const seedParticipant = args?.seedParticipant
+      ? clearParticipantExternalPathGrantOverrides(args.seedParticipant)
+      : undefined
+    const canonicalProviderMetadata =
+      args?.canonicalProviderMetadata && typeof args.canonicalProviderMetadata === 'object'
+        ? clearExternalPathGrantMetadata(args.canonicalProviderMetadata)
+        : undefined
     const result = this.deps.appStore.setChatKind(chatId, targetKind, {
-      seedParticipant: args?.seedParticipant,
+      seedParticipant,
       canonicalProvider:
         args?.canonicalProvider === undefined ? undefined : assertProviderId(args.canonicalProvider),
-      canonicalProviderMetadata:
-        args?.canonicalProviderMetadata && typeof args.canonicalProviderMetadata === 'object'
-          ? args.canonicalProviderMetadata
-          : undefined
+      canonicalProviderMetadata
     })
 
     try {
@@ -348,13 +380,115 @@ export class ChatService {
   }
 
   saveChat(chat: ChatRecord): ChatRecord {
+    return this.saveChatInternal(chat, false)
+  }
+
+  private saveChatInternal(chat: ChatRecord, allowWorkspaceTransition: boolean): ChatRecord {
     const sanitizedInput = this.deps.sanitizeChatForSave(chat)
     assertSafeChatId(sanitizedInput.appChatId)
-    const sanitized = this.preserveCollaboratorComments(
-      this.preserveTaskWraithMcpProfileReceipts(sanitizedInput)
-    )
-    this.deps.appStore.saveChat(sanitized)
-    return sanitized
+    const current = this.deps.appStore.getChat(sanitizedInput.appChatId)
+    // A renderer can finish a debounced save after main has rebound this chat.
+    // Treat that whole clone as stale: merging any part of it could restore an
+    // old provider session, delivery receipt, prompt stamp, grant, or transcript.
+    if (current && !allowWorkspaceTransition && !sameChatWorkspace(sanitizedInput, current)) {
+      return current
+    }
+    // Full renderer records are optimistic snapshots, not patches. Without a
+    // canonical revision check, a second window can save an older clone after
+    // main has appended transcript/run/config state and silently erase those
+    // newer fields. There is no honest three-way merge without the renderer's
+    // base record, so reject the stale clone as a unit and broadcast the
+    // canonical record back to every view.
+    if (
+      current &&
+      !allowWorkspaceTransition &&
+      chatPersistenceRevision(sanitizedInput) !== chatPersistenceRevision(current)
+    ) {
+      return current
+    }
+    const grantFenced = allowWorkspaceTransition
+      ? sanitizedInput
+      : preserveCanonicalExternalPathGrantMetadata(sanitizedInput, current)
+    const continuityFenced = allowWorkspaceTransition
+      ? grantFenced
+      : this.preserveTaskWraithMcpProfileReceipts(grantFenced)
+    const sanitized = this.preserveCollaboratorComments(continuityFenced)
+    return this.deps.appStore.saveChat(sanitized)
+  }
+
+  /**
+   * Atomically move one canonical chat to another registered workspace (or to
+   * global scope). Provider-native sessions are workspace-bound, so a genuine
+   * transition always starts every seat fresh while preserving transcript,
+   * runs, roster, roles, permissions, and the rest of the Ensemble config.
+   *
+   * The optional idle assertion executes after loading the canonical chat and
+   * before any mutation. It is deliberately synchronous: the main process can
+   * inspect live + queued ownership and persist the transition in one event-loop
+   * turn, without a renderer-authored clone entering the decision.
+   */
+  rebindChatWorkspace(
+    input: RebindChatWorkspaceInput | undefined,
+    options: RebindChatWorkspaceOptions = {}
+  ): ChatRecord {
+    const chatId = requireSafeChatId(input?.chatId, 'Chat id')
+    const current = this.deps.appStore.getChat(chatId)
+    if (!current) throw new Error('Chat not found.')
+
+    let scope: ChatRecord['scope']
+    let workspaceId: string | undefined
+    let workspacePath: string | undefined
+    if (input?.scope === 'global') {
+      scope = 'global'
+    } else if (input?.scope === 'workspace') {
+      workspaceId = requireNonEmptyString(input.workspaceId, 'Workspace id')
+      const requestedPath = requireNonEmptyString(input.workspacePath, 'Workspace path')
+      const registered = this.deps.findRegisteredWorkspace(requestedPath)
+      if (!registered || registered.id !== workspaceId) {
+        throw new Error('Chat workspace must be a registered TaskWraith workspace.')
+      }
+      scope = 'workspace'
+      workspacePath = this.deps.canonicalPath(registered.path)
+    } else {
+      throw new Error('Chat workspace scope is invalid.')
+    }
+
+    if (chatMatchesRebindTarget(current, { scope, workspaceId, workspacePath })) {
+      return current
+    }
+    options.assertIdle?.(current)
+
+    const now = options.now ?? Date.now()
+    const participants = current.ensemble?.participants.map(clearParticipantWorkspaceContinuity)
+    const providerMetadata = clearExternalPathGrantMetadata(current.providerMetadata)
+    const rebound: ChatRecord = {
+      ...current,
+      scope,
+      workspaceId,
+      workspacePath,
+      updatedAt: now,
+      providerMetadata,
+      ...(current.ensemble && participants
+        ? {
+            ensemble: {
+              ...current.ensemble,
+              participants,
+              updatedAt: new Date(now).toISOString()
+            }
+          }
+        : {})
+    }
+    delete rebound.linkedProviderSessionId
+    delete rebound.linkedGeminiSessionId
+    delete rebound.taskWraithMcpProfileReceipt
+    delete rebound.seatGeneration
+    delete rebound.contextCompactionSummary
+
+    // Route through the ordinary sanitizer/comment-preservation path. This is
+    // the sole path allowed to persist a workspace transition; ordinary saves
+    // return the canonical record when their binding is stale.
+    const saved = this.saveChatInternal(rebound, true)
+    return this.deps.appStore.getChat(chatId) ?? saved
   }
 
   createHumanCollaborationShare(args: {
@@ -671,6 +805,7 @@ export class ChatService {
    */
   private preserveTaskWraithMcpProfileReceipts(chat: ChatRecord): ChatRecord {
     const current = this.deps.appStore.getChat(chat.appChatId)
+    const workspaceChanged = Boolean(current && !sameChatWorkspace(current, chat))
     const currentSoloReceipt =
       current?.provider &&
       isTaskWraithMcpProfileReceiptForSession(current.taskWraithMcpProfileReceipt, {
@@ -679,7 +814,8 @@ export class ChatService {
       })
         ? current.taskWraithMcpProfileReceipt
         : undefined
-    const sameClaudeLane = current?.provider === 'claude' && chat.provider === 'claude'
+    const sameClaudeLane =
+      !workspaceChanged && current?.provider === 'claude' && chat.provider === 'claude'
     const crossesClaudeBoundary = Boolean(
       (!current && chat.provider === 'claude') ||
         (current && (current.provider === 'claude') !== (chat.provider === 'claude'))
@@ -688,15 +824,14 @@ export class ChatService {
       current?.provider === chat.provider &&
         isEphemeralProviderRerouteSession(chat, chat.linkedProviderSessionId)
     )
-    const canonicalSoloSession = suppressIncomingSoloRerouteSession
-      ? current?.linkedProviderSessionId
-      : sameClaudeLane
-        ? current?.linkedProviderSessionId
-        : crossesClaudeBoundary
-          ? undefined
-          : chat.linkedProviderSessionId
+    let canonicalSoloSession = chat.linkedProviderSessionId
+    if (workspaceChanged || crossesClaudeBoundary) canonicalSoloSession = undefined
+    if (!workspaceChanged && (suppressIncomingSoloRerouteSession || sameClaudeLane)) {
+      canonicalSoloSession = current?.linkedProviderSessionId
+    }
     const canonicalSoloReceipt =
-      suppressIncomingSoloRerouteSession || sameClaudeLane || current?.provider === chat.provider
+      !workspaceChanged &&
+      (suppressIncomingSoloRerouteSession || sameClaudeLane || current?.provider === chat.provider)
         ? currentSoloReceipt
         : undefined
 
@@ -722,7 +857,9 @@ export class ChatService {
             ? currentParticipant.taskWraithMcpProfileReceipt
             : undefined
         const sameClaudeParticipant = Boolean(
-          currentParticipant?.provider === 'claude' && participant.provider === 'claude'
+          !workspaceChanged &&
+            currentParticipant?.provider === 'claude' &&
+            participant.provider === 'claude'
         )
         const suppressIncomingRerouteSession = Boolean(
           currentParticipant?.provider === participant.provider &&
@@ -736,17 +873,16 @@ export class ChatService {
           !currentParticipant ||
             (currentParticipant.provider === 'claude') !== (participant.provider === 'claude')
         )
-        const canonicalSession = suppressIncomingRerouteSession
-          ? currentParticipant?.linkedProviderSessionId
-          : sameClaudeParticipant
-            ? currentParticipant?.linkedProviderSessionId
-            : crossesClaudeParticipantBoundary
-              ? undefined
-              : participant.linkedProviderSessionId
+        let canonicalSession = participant.linkedProviderSessionId
+        if (workspaceChanged || crossesClaudeParticipantBoundary) canonicalSession = undefined
+        if (!workspaceChanged && (suppressIncomingRerouteSession || sameClaudeParticipant)) {
+          canonicalSession = currentParticipant?.linkedProviderSessionId
+        }
         const canonicalReceipt =
-          suppressIncomingRerouteSession ||
-          sameClaudeParticipant ||
-          currentParticipant?.provider === participant.provider
+          !workspaceChanged &&
+          (suppressIncomingRerouteSession ||
+            sameClaudeParticipant ||
+            currentParticipant?.provider === participant.provider)
             ? currentReceipt
             : undefined
         if (
@@ -831,6 +967,130 @@ export class ChatService {
       messages
     }
   }
+}
+
+function clearParticipantWorkspaceContinuity(
+  participant: EnsembleParticipant
+): EnsembleParticipant {
+  const next = { ...participant }
+  delete next.linkedProviderSessionId
+  delete next.taskWraithMcpProfileReceipt
+  delete next.promptShellVersion
+  delete next.promptDynamicStateVersion
+  delete next.seatGeneration
+  delete next.contextCompactionSummary
+  const permissionOverrides = clearExternalPathGrantOverrides(next.permissionOverrides)
+  if (permissionOverrides) next.permissionOverrides = permissionOverrides
+  else delete next.permissionOverrides
+  return next
+}
+
+function clearParticipantExternalPathGrantOverrides(
+  participant: EnsembleParticipant
+): EnsembleParticipant {
+  const next = { ...participant }
+  const permissionOverrides = clearExternalPathGrantOverrides(next.permissionOverrides)
+  if (permissionOverrides) next.permissionOverrides = permissionOverrides
+  else delete next.permissionOverrides
+  return next
+}
+
+function sameChatWorkspace(
+  left: Pick<ChatRecord, 'scope' | 'workspaceId' | 'workspacePath'>,
+  right: Pick<ChatRecord, 'scope' | 'workspaceId' | 'workspacePath'>
+): boolean {
+  const leftScope = left.scope === 'global' ? 'global' : 'workspace'
+  const rightScope = right.scope === 'global' ? 'global' : 'workspace'
+  if (leftScope !== rightScope) return false
+  if (leftScope === 'global') return true
+  return left.workspaceId === right.workspaceId && left.workspacePath === right.workspacePath
+}
+
+function chatPersistenceRevision(chat: Pick<ChatRecord, 'persistenceRevision'>): number {
+  return Number.isSafeInteger(chat.persistenceRevision) && (chat.persistenceRevision ?? -1) >= 0
+    ? (chat.persistenceRevision as number)
+    : 0
+}
+
+function chatMatchesRebindTarget(
+  chat: Pick<ChatRecord, 'scope' | 'workspaceId' | 'workspacePath'>,
+  target: Pick<ChatRecord, 'scope' | 'workspaceId' | 'workspacePath'>
+): boolean {
+  if (target.scope === 'global') {
+    return chat.scope === 'global' && !chat.workspaceId && !chat.workspacePath
+  }
+  return (
+    chat.scope !== 'global' &&
+    chat.workspaceId === target.workspaceId &&
+    chat.workspacePath === target.workspacePath
+  )
+}
+
+function clearExternalPathGrantMetadata(
+  metadata: Record<string, unknown> | undefined
+): Record<string, unknown> | undefined {
+  if (!metadata) return undefined
+  const next = { ...metadata }
+  for (const key of EXTERNAL_PATH_GRANT_METADATA_KEYS) {
+    delete next[key]
+  }
+  return Object.keys(next).length > 0 ? next : undefined
+}
+
+/**
+ * Full renderer records are not grant-authoring requests. Strip every
+ * renderer-supplied grant key, then restore only main's current canonical
+ * values. The sole renderer-owned field is display `order`, accepted only when
+ * both canonical id and signature match; membership and every signed field stay
+ * main-owned. A new record has no canonical grant state, so forged grant
+ * metadata is removed. Workspace rebind bypasses this helper and deliberately
+ * clears the old workspace's grants.
+ */
+function preserveCanonicalExternalPathGrantMetadata(
+  incoming: ChatRecord,
+  current: ChatRecord | null | undefined
+): ChatRecord {
+  const providerMetadata = clearExternalPathGrantMetadata(incoming.providerMetadata)
+  const currentMetadata = current?.providerMetadata
+  const currentHasGrantMetadata = Boolean(
+    currentMetadata &&
+      EXTERNAL_PATH_GRANT_METADATA_KEYS.some((key) =>
+        Object.prototype.hasOwnProperty.call(currentMetadata, key)
+      )
+  )
+  const next = { ...incoming }
+  if (!currentHasGrantMetadata) {
+    if (providerMetadata) next.providerMetadata = providerMetadata
+    else delete next.providerMetadata
+    return next
+  }
+
+  const incomingOrderByIdentity = new Map<string, number>()
+  for (const grant of externalPathGrantMetadataLists(incoming.providerMetadata)) {
+    if (!grant.signature || !Number.isSafeInteger(grant.order) || (grant.order ?? -1) < 0) continue
+    incomingOrderByIdentity.set(`${grant.id}\u0000${grant.signature}`, grant.order as number)
+  }
+  const canonicalGrants = collectExternalPathGrantsFromMetadata(currentMetadata).map(
+    (grant) => {
+      if (!grant.signature) return grant
+      const order = incomingOrderByIdentity.get(`${grant.id}\u0000${grant.signature}`)
+      return order === undefined ? grant : { ...grant, order }
+    }
+  )
+  next.providerMetadata = canonicalizeExternalPathGrantMetadata(
+    providerMetadata,
+    canonicalGrants
+  )
+  return next
+}
+
+function clearExternalPathGrantOverrides(
+  overrides: EnsembleParticipant['permissionOverrides']
+): EnsembleParticipant['permissionOverrides'] {
+  if (!overrides) return undefined
+  const next = { ...overrides }
+  delete next.externalPathGrants
+  return Object.keys(next).length > 0 ? next : undefined
 }
 
 function isEphemeralProviderRerouteSession(

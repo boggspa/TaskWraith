@@ -27,6 +27,7 @@ function handlerFor(channel: string): RegisteredHandler {
 
 function createDeps() {
   return {
+    assertMainRendererSender: vi.fn(),
     getApprovalLedger: vi.fn((filter = {}) => [{ id: 'ledger-1', filter }]),
     recordApprovalLedgerDecision: vi.fn(),
     randomUUID: vi.fn(() => 'uuid-123'),
@@ -45,21 +46,42 @@ describe('registerApprovalLedgerHandlers', () => {
   it('routes approval ledger reads through deps and defaults empty filters', () => {
     const deps = createDeps()
     registerApprovalLedgerHandlers(deps)
+    const mainRenderer = { sender: { id: 1 } }
 
     const handler = handlerFor('get-approval-ledger')
 
-    expect(handler({}, { provider: 'codex' })).toEqual([{ id: 'ledger-1', filter: { provider: 'codex' } }])
+    expect(handler(mainRenderer, { provider: 'codex' })).toEqual([
+      { id: 'ledger-1', filter: { provider: 'codex' } }
+    ])
+    expect(deps.assertMainRendererSender).toHaveBeenCalledWith(mainRenderer)
     expect(deps.getApprovalLedger).toHaveBeenCalledWith({ provider: 'codex' })
 
-    expect(handler({}, undefined)).toEqual([{ id: 'ledger-1', filter: {} }])
+    expect(handler(mainRenderer, undefined)).toEqual([{ id: 'ledger-1', filter: {} }])
     expect(deps.getApprovalLedger).toHaveBeenLastCalledWith({})
+  })
+
+  it('denies a Test1 popout before listing the global approval ledger', () => {
+    const deps = createDeps()
+    deps.assertMainRendererSender.mockImplementation(() => {
+      throw new Error('Only the main renderer can manage workspace authority.')
+    })
+    registerApprovalLedgerHandlers(deps)
+
+    expect(() =>
+      handlerFor('get-approval-ledger')(
+        { sender: { id: 101 } },
+        { workspacePath: '/Users/chrisizatt/Documents/Test 3' }
+      )
+    ).toThrow('Only the main renderer can manage workspace authority.')
+    expect(deps.getApprovalLedger).not.toHaveBeenCalled()
   })
 
   it('records approval elevation acknowledgements with normalized ledger entries', () => {
     const deps = createDeps()
     registerApprovalLedgerHandlers(deps)
+    const mainRenderer = { sender: { id: 1 } }
 
-    handlerFor('record-approval-elevation-ack')({}, {
+    handlerFor('record-approval-elevation-ack')(mainRenderer, {
       provider: ' codex ',
       workspacePath: null,
       toMode: ' auto ',
@@ -67,6 +89,7 @@ describe('registerApprovalLedgerHandlers', () => {
     })
 
     expect(deps.getNowIso).toHaveBeenCalledOnce()
+    expect(deps.assertMainRendererSender).toHaveBeenCalledWith(mainRenderer)
     expect(deps.randomUUID).toHaveBeenCalledOnce()
     expect(deps.recordApprovalLedgerDecision).toHaveBeenCalledTimes(1)
 
@@ -94,5 +117,28 @@ describe('registerApprovalLedgerHandlers', () => {
       }
     })
     expect(record.workspacePath).toBeUndefined()
+  })
+
+  it('denies a Test1 popout before forging an elevation acknowledgement', () => {
+    const deps = createDeps()
+    deps.assertMainRendererSender.mockImplementation(() => {
+      throw new Error('Only the main renderer can manage workspace authority.')
+    })
+    registerApprovalLedgerHandlers(deps)
+
+    expect(() =>
+      handlerFor('record-approval-elevation-ack')(
+        { sender: { id: 101 } },
+        {
+          provider: 'codex',
+          workspacePath: '/Users/chrisizatt/Documents/Test 3',
+          toMode: 'auto',
+          tier: 4
+        }
+      )
+    ).toThrow('Only the main renderer can manage workspace authority.')
+    expect(deps.getNowIso).not.toHaveBeenCalled()
+    expect(deps.randomUUID).not.toHaveBeenCalled()
+    expect(deps.recordApprovalLedgerDecision).not.toHaveBeenCalled()
   })
 })

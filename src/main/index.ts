@@ -15,14 +15,22 @@ import {
   nativeImage,
   clipboard,
   protocol,
+  session,
   Tray,
   systemPreferences
 } from 'electron'
 import type {
   BrowserWindowConstructorOptions,
+  IpcMainInvokeEvent,
   MenuItemConstructorOptions
 } from 'electron'
 import { detectExternalPath } from './services/ExternalPathDetector'
+import {
+  nativeProviderApprovalPriority,
+  nativeProviderBrokerOnlyMessage,
+  nativeProviderToolRequiresBroker
+} from './NativeProviderToolContainment'
+import { buildKimiBrokerOnlyAgentYaml } from './KimiAgentContainment'
 import { FaviconService } from './services/FaviconService'
 import {
   listWorkspaceFiles as listWorkspaceFilesForEditor,
@@ -33,7 +41,7 @@ import {
 import { basename, dirname, isAbsolute, join, parse, relative, resolve, sep } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { spawn, ChildProcess, execFile } from 'child_process'
-import { createHmac, randomBytes, randomUUID, timingSafeEqual } from 'crypto'
+import { randomBytes, randomUUID } from 'crypto'
 import { promises as fs } from 'fs'
 import * as fsSync from 'fs'
 import * as pty from 'node-pty'
@@ -167,6 +175,29 @@ import type {
   BackgroundSubThreadTranscriptState,
   WorkspacePopoutKind
 } from './index.types'
+import {
+  assertWorkspacePopoutChatRequestWithinOwner,
+  assertWorkspacePopoutRequestWithinOwner,
+  type WorkspacePopoutAuthority
+} from './WorkspacePopoutAuthority'
+import { AttachmentCapabilityRegistry } from './AttachmentCapabilityRegistry'
+import { ClipboardPasteIntentRegistry } from './ClipboardPasteIntentRegistry'
+import { saveClipboardImageFromTrustedPaste } from './ClipboardImagePasteHandler'
+import {
+  authorizeThenExpandAttachmentRecords,
+  dispatchWithAuthorizedAttachmentPaths,
+  resolveAuthorizedRendererAttachmentPaths
+} from './RendererAttachmentAuthorization'
+import {
+  bindRuntimeWorktreeBaseWorkspace,
+  derivePopoutRunPayload
+} from './RendererRunAuthority'
+import { resolveComposerRunAuthority } from './ComposerRunAuthority'
+import {
+  assertRunAgentScheduledAuthority,
+  assertScheduledRunAuthority
+} from './ScheduledRunAuthority'
+import { ScheduledRunDispatchReceiptRegistry } from './ScheduledRunDispatchReceipt'
 import { appendGeminiCliWorktreeArgs } from './gemini/GeminiCliArgs'
 import {
   buildCodexFastServiceTierCompatibilityArgs,
@@ -262,7 +293,6 @@ import {
 } from '../shared/codexMultiAgent'
 import { BridgeBroadcaster } from './BridgeBroadcaster'
 import {
-  REMOTE_QUESTION_MAX_ANSWER_CHARS,
   REMOTE_QUESTION_MAX_CONTEXT_CHARS,
   REMOTE_QUESTION_MAX_OPTION_CHARS,
   REMOTE_QUESTION_MAX_OPTIONS,
@@ -300,6 +330,20 @@ import {
 import { ensembleSpeakerForMessage } from './EnsemblePrompt'
 import { extractThreadId } from './BridgeRunEventSink'
 import { resolveCanonicalWorkspaceId } from './WorkspaceIdentity'
+import {
+  externalGitRepositoryRootIsSelfContained,
+  gitRepositoryRootForPath
+} from './GitRepositoryScope'
+import { ExternalPathGrantExecutionRegistry } from './ExternalPathGrantExecutionRegistry'
+import {
+  EXTERNAL_PATH_GRANT_BINDING_VERSION,
+  isExecutableExternalPathGrantDuration,
+  matchesExternalPathGrantExecutionAuthority,
+  resolveChatPrimaryWorkspace,
+  signExternalPathGrantPayload,
+  verifyExternalPathGrantSignature,
+  type ExternalPathGrantRunBindingContext
+} from './ExternalPathGrantBinding'
 import { resolveDaemonShouldRun } from './BridgeDaemonSettings'
 import { BridgeActionRouter } from './BridgeActionRouter'
 import { buildRunQueueDispatchReceipt } from './RunQueueDispatchReceipt'
@@ -428,9 +472,12 @@ import {
 import type { WorkflowLoopConfig } from './WorkflowLoopModel'
 import type { WorkflowRunEventInput } from './WorkflowRunStore'
 import {
+  armScheduledLoopStepTimeout,
+  scheduledHeadlessComposeFields
+} from './ScheduledHeadlessRun'
+import {
   ComposerService,
-  getDefaultModelForProvider,
-  type ComposerInput
+  getDefaultModelForProvider
 } from './services/ComposerService'
 import {
   DiscordContextService,
@@ -454,6 +501,7 @@ import { appendBugReport } from './services/BugReportService'
 import { RunCoordinator } from './services/RunCoordinator'
 import { RunLifecycleCoordinator } from './services/RunLifecycleCoordinator'
 import { RunQueueService } from './services/RunQueueService'
+import { resolveOwnedPersistedRunQueueAttachment } from './RunQueueAttachmentAuthority'
 import {
   authorizeRemoteComposerQueueDispatch,
   buildRemoteComposerQueueDispatchAction,
@@ -524,7 +572,8 @@ import {
   extractProviderImageBlocksFromRawEvent,
   validateWorkspaceImagePath,
   validateWorkspaceAudioPath,
-  validateWorkspaceMediaPath,
+  stageWorkspaceMediaSnapshot,
+  snapshotRasterOrPdfAttachment,
   sha256Base64Url,
   TRANSCRIPT_MEDIA_MAX_WORKSPACE_IMAGE_BYTES
 } from './services/TranscriptMediaService'
@@ -535,6 +584,7 @@ import {
   maxTranscriptMediaBytesForMime,
   TranscriptMediaAssetStore
 } from './services/TranscriptMediaAssetStore'
+import { sanitizeTranscriptMediaOwnershipClaims } from './services/TranscriptMediaOwnershipClaims'
 import {
   defaultPdfAttachmentRenderCacheDir,
   isPdfAttachmentPath,
@@ -575,13 +625,12 @@ import {
   RunAnalystSignal,
   RunAnalystSnapshot,
   RunQueueJob,
+  PersistedAttachmentRef,
   RunEventInput,
   AgentApprovalAction,
   ApprovalLedgerRequestInput,
   ProviderAdapterDescriptor,
   RunRecoveryRecord,
-  WorkspaceChangeFilter,
-  WorkspaceRunChangeInput,
   ProductAuditBundleExportRequest,
   ProductAuditBundleExportResult,
   ProductAuditBundleVerificationRequest,
@@ -843,6 +892,7 @@ import {
 import { createNativeAudioEngine } from './mcp/AudioRenderEngine'
 import type { AvPosterResult } from './media/AvMediaRef'
 import { registerTwMediaProtocol, TW_MEDIA_PRIVILEGE } from './media/TwMediaProtocol'
+import { createTwMediaRequestGate } from './media/TwMediaRequestAuthority'
 import { readTranscriptMediaRangeSlice } from './media/twMediaRange'
 import { createFfmpegToolExecutors, isFfmpegMcpToolName } from './mcp/FfmpegToolExecutors'
 import { createVtToolExecutors, isVtMcpToolName } from './mcp/VtToolExecutors'
@@ -1045,6 +1095,11 @@ import {
 import { AuditBundleSigningKeyStore } from './AuditBundleSigningKeyStore'
 import { loadManagedPolicyFromEnvironment } from './ManagedPolicyService'
 import { installIpcValidation } from './IpcValidation'
+import { ipcChannelRequiresMainRenderer } from './RendererIpcPolicy'
+import {
+  resolveRendererLocalPath,
+  type RendererLocalPathAuthorizationRequest
+} from './RendererLocalPathAuthority'
 import { registerPtyHandlers } from './ipc/ptyHandlers'
 import { registerLaunchHandlers } from './ipc/launchHandlers'
 import { discoverLaunchTargets } from './launchTargets/discovery'
@@ -1057,6 +1112,7 @@ import { registerWorkspaceActivityHandlers } from './ipc/workspaceActivityHandle
 import { registerWorkspaceFileEditorHandlers } from './ipc/workspaceFileEditorHandlers'
 import { registerWorkspaceGeminiDiscoveryHandlers } from './ipc/workspaceGeminiDiscoveryHandlers'
 import { registerWorkspaceDiffSnapshotHandlers } from './ipc/workspaceDiffSnapshotHandlers'
+import { registerWorkspaceChangeLedgerHandlers } from './ipc/workspaceChangeLedgerHandlers'
 import { registerTrustHandlers } from './ipc/trustHandlers'
 import { registerUpdateHandlers } from './ipc/updateHandlers'
 import { registerSettingsHandlers } from './ipc/settingsHandlers'
@@ -1071,6 +1127,7 @@ import { registerEnsembleRosterPresetsHandlers } from './ipc/ensembleRosterPrese
 import { registerAgenticWorkspaceGrantHandlers } from './ipc/agenticWorkspaceGrantHandlers'
 import { registerUsageRatesHandlers } from './ipc/usageRatesHandlers'
 import { registerScheduledWorkflowHandlers } from './ipc/scheduledWorkflowHandlers'
+import { createMainOwnedScheduledAttachmentPersistence } from './ScheduledAttachmentDurability'
 import { registerRunQueueHandlers } from './ipc/runQueueHandlers'
 import { registerApprovalLedgerHandlers } from './ipc/approvalLedgerHandlers'
 import { registerIntrospectionHandlers } from './ipc/introspectionHandlers'
@@ -1088,13 +1145,26 @@ import {
   createIosRemoteTailscaleStatusGetter,
   registerBridgeRemoteHandlers
 } from './ipc/bridgeRemoteHandlers'
-import { registerDiagnosticsHandlers } from './ipc/diagnosticsHandlers'
+import {
+  PRODUCT_AUDIT_BUNDLE_MAX_VERIFY_BYTES,
+  registerDiagnosticsHandlers
+} from './ipc/diagnosticsHandlers'
+import { readBoundedRegularFile } from './BoundedRegularFileReader'
+import {
+  readScopedDirectory,
+  readScopedRegularFile,
+  updateScopedUtf8File,
+  writeScopedUtf8FileWithLegacyCreate,
+  type ScopedPathAuthority
+} from './ScopedPathAccess'
 import { registerSidebarHandlers } from './ipc/sidebarHandlers'
 import { registerAppearanceHandlers } from './ipc/appearanceHandlers'
 import { registerDiscordContextHandlers } from './ipc/discordContextHandlers'
 import { registerFileIconHandlers } from './ipc/fileIconHandlers'
 import { registerCheckpointHandlers } from './ipc/checkpointHandlers'
 import { registerContextCompactionHandlers } from './ipc/contextCompactionHandlers'
+import { registerComposeRunHandlers } from './ipc/composeRunHandlers'
+import { registerAgentQuestionHandlers } from './ipc/agentQuestionHandlers'
 import { registerApnsHandlers } from './ipc/apnsHandlers'
 import { registerImageGenerationHandlers } from './ipc/imageGenerationHandlers'
 import { registerMediaAssetHandlers } from './ipc/mediaAssetHandlers'
@@ -1114,8 +1184,13 @@ import { registerClaudeAuthHandlers } from './ipc/claudeAuthHandlers'
 import { registerKimiAuthHandlers } from './ipc/kimiAuthHandlers'
 import { registerGeminiAuthHandlers } from './ipc/geminiAuthHandlers'
 import { registerProviderMetadataHandlers } from './ipc/providerMetadataHandlers'
+import { rendererSafeProviderStatus } from './RendererProviderProjection'
 import { registerProviderTerminalHandlers } from './ipc/providerTerminalHandlers'
-import { registerCodexThreadHandlers } from './ipc/codexThreadHandlers'
+import {
+  authorizeAgentReview,
+  registerCodexThreadHandlers,
+  type AgentThreadSenderScope
+} from './ipc/codexThreadHandlers'
 import { getCachedRemoteEnsemblePresets } from './remote/EnsembleRosterPresetsCache'
 import { resolveGeminiCliResumePolicy } from './GeminiSessionPolicy'
 // 1.0.5-EW26 — Kimi compatibility filter (curated + user-
@@ -1294,6 +1369,118 @@ import { evaluatePlanArtifactWrite } from './PlanArtifactWritePolicy'
 
 let mainWindow: BrowserWindow | null = null
 const workspacePopoutWindows = new Map<string, BrowserWindow>()
+const workspacePopoutOwners = new Map<
+  string,
+  {
+    kind: WorkspacePopoutKind
+    workspacePath?: string
+    chatId?: string
+    externalWriteAllowed?: boolean
+  }
+>()
+
+type RendererFilesystemCapability =
+  | 'external-grant'
+  | 'git'
+  | 'workspace-diff'
+  | 'workspace-file'
+
+type RendererSenderEvent = Pick<IpcMainInvokeEvent, 'sender'>
+
+function isMainRendererSender(event: RendererSenderEvent): boolean {
+  return Boolean(
+    mainWindow &&
+      !mainWindow.isDestroyed() &&
+      mainWindow.webContents.id === event.sender.id
+  )
+}
+
+function assertMainRendererSender(event: RendererSenderEvent): void {
+  if (!isMainRendererSender(event)) {
+    throw new Error('Only the main renderer can manage workspace authority.')
+  }
+}
+
+function workspacePopoutOwnerForSender(senderId: number): WorkspacePopoutAuthority | undefined {
+  for (const [key, win] of workspacePopoutWindows) {
+    if (win.isDestroyed() || win.webContents.id !== senderId) continue
+    return workspacePopoutOwners.get(key)
+  }
+  return undefined
+}
+
+/**
+ * Main renderer owns the whole desktop surface. Every secondary renderer is a
+ * least-authority popout and may address only the chat/workspace recorded when
+ * main created that exact BrowserWindow. Payload chat IDs and paths are never
+ * themselves proof of ownership.
+ */
+function assertRendererFilesystemScope(
+  event: IpcMainInvokeEvent,
+  input: {
+    capability: RendererFilesystemCapability
+    chatId?: string
+    workspacePath?: string
+    operation?: 'read' | 'write'
+  }
+): void {
+  const senderId = event.sender.id
+  if (isMainRendererSender(event)) return
+
+  const owner = workspacePopoutOwnerForSender(senderId)
+  if (!owner) throw new Error('Renderer is not authorized for filesystem IPC.')
+  if (input.capability === 'external-grant' && owner.kind !== 'chat') {
+    throw new Error('Only the owning chat window can change external path grants.')
+  }
+  if (input.capability === 'workspace-file' && input.operation === 'write') {
+    const editorOwner = owner.kind === 'file-editor' || owner.kind === 'workbench'
+    const externalDiffOwner =
+      owner.kind === 'diff-studio' &&
+      Boolean(owner.chatId) &&
+      owner.externalWriteAllowed === true
+    if (!editorOwner && !externalDiffOwner) {
+      throw new Error('Renderer does not own workspace file-write authority.')
+    }
+  }
+
+  const requestedChatId = input.chatId?.trim()
+  if (requestedChatId && owner.chatId !== requestedChatId) {
+    throw new Error('Renderer chat ownership does not match this request.')
+  }
+  if (input.workspacePath) {
+    if (!owner.workspacePath) {
+      throw new Error('Renderer has no workspace ownership for this request.')
+    }
+    let requestedPath: string
+    let ownerPath: string
+    try {
+      requestedPath = canonicalPath(input.workspacePath)
+      ownerPath = canonicalPath(owner.workspacePath)
+    } catch {
+      throw new Error('Renderer workspace ownership could not be resolved.')
+    }
+    if (requestedPath !== ownerPath) {
+      throw new Error('Renderer workspace ownership does not match this request.')
+    }
+  }
+}
+
+function assertRendererCanOpenWorkspacePopout(
+  event: IpcMainInvokeEvent,
+  request: WorkspacePopoutAuthority
+): void {
+  if (isMainRendererSender(event)) return
+  const owner = workspacePopoutOwnerForSender(event.sender.id)
+  if (!owner) throw new Error('Renderer is not authorized to open workspace popouts.')
+  assertWorkspacePopoutRequestWithinOwner(owner, request, canonicalPath)
+}
+
+function assertRendererChatScope(event: IpcMainInvokeEvent, chatId: string): void {
+  if (isMainRendererSender(event)) return
+  const owner = workspacePopoutOwnerForSender(event.sender.id)
+  if (!owner) throw new Error('Renderer is not authorized for chat IPC.')
+  assertWorkspacePopoutChatRequestWithinOwner(owner, chatId)
+}
 const latestSpellcheckContextByWebContentsId = new Map<number, SpellcheckContextSnapshot>()
 let geminiProcess: ChildProcess | null = null
 let geminiSessionProcess: pty.IPty | null = null
@@ -1849,6 +2036,7 @@ if (shouldSuppressMacAppPresentation(process.argv, process.env)) {
   }
 }
 const externalGrantSigningSecret = loadOrCreateExternalGrantSigningSecret()
+const externalPathGrantExecutionRegistry = new ExternalPathGrantExecutionRegistry()
 const geminiMcpBrokerToken = randomBytes(32).toString('hex')
 
 function taskwraithMcpBridgeCommandStatus(): { command: string; available: boolean; error?: string } {
@@ -1898,6 +2086,11 @@ const geminiDiscoveryHelpers = createGeminiDiscoveryHelpers({
   resolveCliProviderBinary,
   createCliEnv
 })
+const scheduledAttachmentPersistence = createMainOwnedScheduledAttachmentPersistence({
+  getAssetStore: () => getTranscriptMediaAssetStore(),
+  getAuthorizedFilePaths: () => attachmentCapabilityRegistry.getMainAuthorizedPaths()
+})
+
 const {
   assertTextBuffer,
   normalizeGeminiResumeTarget,
@@ -1983,6 +2176,8 @@ const scheduledTaskIdByFailoverRun = new Map<string, string>()
 // appRunId -> scheduledTaskId at dispatch, mark terminal in sendAgentCompatExit.
 // Idempotent vs the renderer mark (updateScheduledTask's transition guard).
 const scheduledTaskIdBySoloRun = new Map<string, string>()
+const scheduledRunDispatchReceipts = new ScheduledRunDispatchReceiptRegistry()
+const scheduledTaskIdsDispatching = new Set<string>()
 
 // Stage 0b-dispatch — composerServiceRef lets the scheduler compose a run from
 // MAIN (the ComposerService is constructed later, in whenReady); headlessRunSender
@@ -2723,6 +2918,7 @@ const canvasService = new CanvasService({
     sessionId: string,
     opts?: {
       embedded?: boolean
+      appChatId?: string
       initialSketchDocument?: CanvasSketchDocument
       onSketchDocumentChange?: (document: CanvasSketchDocument) => void
     }
@@ -2736,11 +2932,16 @@ const canvasService = new CanvasService({
     }
     if (kind === 'image') {
       return new CanvasImageDriver(sessionId, {
+        appChatId: opts?.appChatId || '',
         // Resolve through the asset store's realpath jail (sha + mime->ext
         // whitelist) and decode via nativeImage — the agent can only view an
         // EXISTING content-addressed attachment, never an arbitrary file.
-        load: async (sha256, mimeType) => {
-          const res = getTranscriptMediaAssetStore().read({ sha256, mimeType })
+        load: async ({ sha256, mimeType, appChatId }) => {
+          const store = getTranscriptMediaAssetStore()
+          if (!store.owns({ sha256, mimeType, appChatId })) {
+            throw new Error('Image attachment is not owned by this chat.')
+          }
+          const res = store.read({ sha256, mimeType })
           if (!res.ok) throw new Error(`Image attachment unavailable (${res.reason}).`)
           // Pre-decode bomb guard: an 8MiB compressed PNG can declare a 20000x20000
           // bitmap (~1.6GB RGBA). Reject a too-large DECLARED size (cheap IHDR read)
@@ -2830,14 +3031,16 @@ const audioToolExecutors = createAudioToolExecutors({
     const sourcePath = typeof args.sourcePath === 'string' ? args.sourcePath.trim() : ''
     if (!sourcePath) return { ok: false, reason: 'provide sourcePath (a workspace audio file)' }
     if (!chat?.workspacePath) return { ok: false, reason: 'no workspace to resolve sourcePath' }
-    const validation = validateWorkspaceAudioPath({
+    const staged = stageWorkspaceMediaSnapshot({
       workspacePath: chat.workspacePath,
       candidatePath: sourcePath,
-      externalPathGrants: normalizeExternalPathGrants(
-        collectExternalPathGrantsFromMetadata(chat.providerMetadata)
-      )
+      externalPathGrants: executableExternalPathGrantsForRun(chat, ctx.appRunId),
+      stagingDirectory: MEDIA_STAGING_DIR,
+      kind: 'audio'
     })
-    return validation.ok ? { ok: true, realPath: validation.realPath } : { ok: false, reason: validation.reason }
+    return staged.ok
+      ? { ok: true, realPath: staged.realPath, cleanup: staged.cleanup }
+      : { ok: false, reason: staged.reason }
   },
   // inspect_audio_segment v2 — slice a [startMs,endMs] WINDOW out of the (already-jailed)
   // source into a standalone WAV via the daemon's native audio.windowClip, persist it to
@@ -3048,16 +3251,21 @@ const ffmpegToolExecutors = createFfmpegToolExecutors({
   jailInput: (sourcePath, ctx) => {
     const chat = ctx.appChatId ? AppStore.getChat(ctx.appChatId) : null
     if (!chat?.workspacePath) return { ok: false, reason: 'no workspace to resolve sourcePath' }
-    const validation = validateWorkspaceMediaPath({
+    const staged = stageWorkspaceMediaSnapshot({
       workspacePath: chat.workspacePath,
       candidatePath: sourcePath,
-      externalPathGrants: normalizeExternalPathGrants(
-        collectExternalPathGrantsFromMetadata(chat.providerMetadata)
-      )
+      externalPathGrants: executableExternalPathGrantsForRun(chat, ctx.appRunId),
+      stagingDirectory: MEDIA_STAGING_DIR,
+      kind: 'audio_video'
     })
-    return validation.ok
-      ? { ok: true, realPath: validation.realPath, mimeType: validation.mimeType }
-      : { ok: false, reason: validation.reason }
+    return staged.ok
+      ? {
+          ok: true,
+          realPath: staged.realPath,
+          mimeType: staged.mimeType,
+          cleanup: staged.cleanup
+        }
+      : { ok: false, reason: staged.reason }
   },
   resolveFfprobe: () => resolveFfmpegBinaries().ffprobePath,
   // ffprobe is metadata-only (cheap CPU) but still spawns a subprocess; gate it on
@@ -3156,16 +3364,16 @@ const vtToolExecutors = createVtToolExecutors({
   jailInput: (sourcePath, ctx) => {
     const chat = ctx.appChatId ? AppStore.getChat(ctx.appChatId) : null
     if (!chat?.workspacePath) return { ok: false, reason: 'no workspace to resolve sourcePath' }
-    const validation = validateWorkspaceMediaPath({
+    const staged = stageWorkspaceMediaSnapshot({
       workspacePath: chat.workspacePath,
       candidatePath: sourcePath,
-      externalPathGrants: normalizeExternalPathGrants(
-        collectExternalPathGrantsFromMetadata(chat.providerMetadata)
-      )
+      externalPathGrants: executableExternalPathGrantsForRun(chat, ctx.appRunId),
+      stagingDirectory: MEDIA_STAGING_DIR,
+      kind: 'audio_video'
     })
-    return validation.ok
-      ? { ok: true, realPath: validation.realPath }
-      : { ok: false, reason: validation.reason }
+    return staged.ok
+      ? { ok: true, realPath: staged.realPath, cleanup: staged.cleanup }
+      : { ok: false, reason: staged.reason }
   },
   // S3-2 — jail an OVERLAY image (PNG/JPEG/WebP). MUST use the IMAGE validator
   // (validateWorkspaceImagePath sniffs raster mime, rejects SVG, size-caps), NOT
@@ -3174,18 +3382,17 @@ const vtToolExecutors = createVtToolExecutors({
   jailOverlay: (overlayPath, ctx) => {
     const chat = ctx.appChatId ? AppStore.getChat(ctx.appChatId) : null
     if (!chat?.workspacePath) return { ok: false, reason: 'no workspace to resolve overlayPath' }
-    const validation = validateWorkspaceImagePath({
-      workspaceId: chat.workspaceId,
+    const staged = stageWorkspaceMediaSnapshot({
       workspacePath: chat.workspacePath,
       candidatePath: overlayPath,
-      externalPathGrants: normalizeExternalPathGrants(
-        collectExternalPathGrantsFromMetadata(chat.providerMetadata)
-      ),
-      maxBytes: TRANSCRIPT_MEDIA_MAX_WORKSPACE_IMAGE_BYTES
+      externalPathGrants: executableExternalPathGrantsForRun(chat, ctx.appRunId),
+      maxBytes: TRANSCRIPT_MEDIA_MAX_WORKSPACE_IMAGE_BYTES,
+      stagingDirectory: MEDIA_STAGING_DIR,
+      kind: 'image'
     })
-    return validation.ok
-      ? { ok: true, realPath: validation.realPath }
-      : { ok: false, reason: validation.reason }
+    return staged.ok
+      ? { ok: true, realPath: staged.realPath, cleanup: staged.cleanup }
+      : { ok: false, reason: staged.reason }
   },
   decodeFrame: async (params) => {
     const daemon = bridgeDaemonRef
@@ -3913,7 +4120,11 @@ function workspaceIdForApprovalPush(workspacePath: string | undefined): string |
   }
 }
 
-installIpcValidation(ipcMain)
+installIpcValidation(ipcMain, (channel, event) => {
+  if (ipcChannelRequiresMainRenderer(channel)) {
+    assertMainRendererSender(event)
+  }
+})
 
 // Ask Chromium to keep expensive renderer visuals on the GPU raster path where supported.
 app.commandLine.appendSwitch('enable-gpu-rasterization')
@@ -4356,26 +4567,30 @@ function prepareIosComposerPromptChat(args: {
 function validateChatWorkspaceIdentity(
   chatId: string | undefined,
   workspace: WorkspaceRecord | undefined
-): void {
+): WorkspaceRecord | undefined {
   if (!chatId) return
   const chat = AppStore.getChat(chatId)
-  if (!chat) return
+  if (!chat) {
+    throw new Error('Workspace-scoped run chat could not be resolved.')
+  }
   if (chatScope(chat) === 'global') {
     throw new Error('Global chats cannot be used for workspace-scoped runs.')
   }
-  if (workspace && chat.workspaceId && chat.workspaceId !== workspace.id) {
-    // Legacy chats may reference their workspace by display name or path
-    // instead of the uuid (see WorkspaceIdentity.ts) — resolve before
-    // declaring a mismatch, or follow-up turns on those chats are rejected.
-    const canonical = resolveCanonicalWorkspaceId(
-      chat.workspaceId,
-      AppStore.getWorkspaces(),
-      canonicalPath
-    )
-    if (canonical !== workspace.id) {
-      throw new Error('Chat workspace does not match the selected workspace.')
-    }
+  if (!workspace) {
+    throw new Error('Selected workspace could not be resolved.')
   }
+  const primaryWorkspace = resolveChatPrimaryWorkspace(
+    chat,
+    AppStore.getWorkspaces(),
+    canonicalPath
+  )
+  if (!primaryWorkspace) {
+    throw new Error('Chat primary workspace could not be resolved.')
+  }
+  if (primaryWorkspace.id !== workspace.id) {
+    throw new Error('Chat workspace does not match the selected workspace.')
+  }
+  return primaryWorkspace
 }
 
 function sanitizeChatForSave(chat: ChatRecord): ChatRecord {
@@ -4551,48 +4766,59 @@ const {
   findRegisteredWorkspace,
   requireRegisteredWorkspace,
   canonicalPath,
-  normalizeExternalPathGrants
+  normalizeExternalPathGrants,
+  stageScheduledAttachments: scheduledAttachmentPersistence.stage
 })
 
-function externalGrantSigningPayload(
-  grant: Pick<
-    ExternalPathGrant,
-    'id' | 'provider' | 'path' | 'kind' | 'access' | 'duration' | 'createdAt'
-  >
-): string {
-  return JSON.stringify({
-    id: grant.id,
-    provider: grant.provider,
-    path: canonicalPath(grant.path),
-    kind: grant.kind,
-    access: grant.access,
-    duration: grant.duration,
-    createdAt: grant.createdAt
-  })
-}
-
-function signExternalPathGrant(
-  grant: Pick<
-    ExternalPathGrant,
-    'id' | 'provider' | 'path' | 'kind' | 'access' | 'duration' | 'createdAt'
-  >
-): string {
-  return createHmac('sha256', externalGrantSigningSecret)
-    .update(externalGrantSigningPayload(grant))
-    .digest('hex')
+function signExternalPathGrant(grant: ExternalPathGrant): string {
+  return signExternalPathGrantPayload(externalGrantSigningSecret, grant, canonicalPath)
 }
 
 function issueExternalPathGrant(
-  grant: Omit<ExternalPathGrant, 'issuedBy' | 'signature'>
+  grant: Omit<ExternalPathGrant, 'issuedBy' | 'signature'>,
+  options?: { canonicalPath: string }
 ): ExternalPathGrant {
-  const canonicalGrantPath = canonicalExternalGrantPath(grant.path) || canonicalPath(grant.path)
+  const canonicalGrantPath = options?.canonicalPath
+    ? canonicalPath(options.canonicalPath)
+    : canonicalExternalGrantPath(grant.path) || canonicalPath(grant.path)
+  if (options?.canonicalPath && canonicalPath(grant.path) !== canonicalGrantPath) {
+    throw new Error('Canonical external path grant binding does not match the selected path.')
+  }
+  const requestedChatId = grant.chatId?.trim() || undefined
+  let canonicalPrimaryWorkspaceId: string | undefined
+  if (requestedChatId) {
+    const chat = AppStore.getChat(requestedChatId)
+    if (!chat || chatScope(chat) === 'global') {
+      throw new Error('External path grants require a resolvable workspace chat.')
+    }
+    const primaryWorkspace = resolveChatPrimaryWorkspace(
+      chat,
+      AppStore.getWorkspaces(),
+      canonicalPath
+    )
+    if (!primaryWorkspace) {
+      throw new Error('External path grant chat primary workspace could not be resolved.')
+    }
+    canonicalPrimaryWorkspaceId = primaryWorkspace.id
+  } else if (grant.workspaceId) {
+    canonicalPrimaryWorkspaceId =
+      resolveCanonicalWorkspaceId(grant.workspaceId, AppStore.getWorkspaces(), canonicalPath) ||
+      undefined
+  }
   const normalizedGrant: ExternalPathGrant = {
     ...grant,
+    bindingVersion: EXTERNAL_PATH_GRANT_BINDING_VERSION,
+    ...(canonicalPrimaryWorkspaceId
+      ? { workspaceId: canonicalPrimaryWorkspaceId }
+      : { workspaceId: undefined }),
+    ...(requestedChatId ? { chatId: requestedChatId } : { chatId: undefined }),
+    ...(grant.appRunId?.trim() ? { appRunId: grant.appRunId.trim() } : { appRunId: undefined }),
     path: canonicalGrantPath,
     issuedBy: 'main',
     signature: ''
   }
   normalizedGrant.signature = signExternalPathGrant(normalizedGrant)
+  externalPathGrantExecutionRegistry.registerIssued(normalizedGrant)
   return normalizedGrant
 }
 
@@ -4689,31 +4915,87 @@ function isPathInsideRoot(rootPath: string | undefined, candidatePath: string): 
   return rel === '' || (Boolean(rel) && !rel.startsWith('..') && !isAbsolute(rel))
 }
 
-function ensembleExternalGrantProviders(chat: ChatRecord): ProviderId[] {
-  if (chat.chatKind !== 'ensemble' || !chat.ensemble?.participants?.length) return []
-  const seen = new Set<ProviderId>()
-  const providers: ProviderId[] = []
-  for (const participant of chat.ensemble.participants) {
-    if (!participant.enabled) continue
-    if (!isExternalPathGrantDispatchProvider(participant.provider)) continue
-    if (seen.has(participant.provider)) continue
-    seen.add(participant.provider)
-    providers.push(participant.provider)
+type ChatScopedWorkspacePathInput =
+  | string
+  | { workspacePath?: string; repoPath?: string; chatId?: string }
+
+function externalGrantAllowsPath(
+  grant: ExternalPathGrant,
+  targetPath: string,
+  access: 'read' | 'write'
+): boolean {
+  const target = (canonicalExternalGrantPath(targetPath) || canonicalPath(targetPath)).replace(
+    /\/+$/,
+    ''
+  )
+  // The signed grant path is already canonical at issuance. Keep that
+  // authority anchored to its signed string so a later symlink replacement
+  // cannot redirect a valid capability to a different filesystem target.
+  const granted = canonicalPath(grant.path).replace(/\/+$/, '')
+  const covers =
+    target === granted || (grant.kind === 'directory' && target.startsWith(`${granted}${sep}`))
+  return covers && (access === 'read' || grant.access === 'write')
+}
+
+/**
+ * Resolve a renderer filesystem target without ever unioning grants from other
+ * chats. Legacy string callers remain registered-workspace-only; an external
+ * target must carry its originating chat id and a matching signed thread grant.
+ */
+function resolveRegisteredOrChatGrantedWorkspacePath(
+  input: ChatScopedWorkspacePathInput,
+  access: 'read' | 'write' = 'read',
+  label = 'Workspace'
+): string {
+  const rawPath =
+    typeof input === 'string'
+      ? input
+      : typeof input?.repoPath === 'string'
+        ? input.repoPath
+        : input?.workspacePath
+  const lexicalNormalized = canonicalPath(requireNonEmptyString(rawPath, label))
+  const normalized = canonicalExternalGrantPath(lexicalNormalized) || lexicalNormalized
+  assertSafeWorkspaceRoot(normalized)
+  if (findRegisteredWorkspace(lexicalNormalized) || findRegisteredWorkspace(normalized)) {
+    const repositoryRoot = gitRepositoryRootForPath(normalized)
+    if (repositoryRoot !== normalized) {
+      throw new Error(`${label} Git access cannot widen beyond the registered workspace root.`)
+    }
+    return normalized
   }
-  return providers
+  if (typeof input === 'string') {
+    throw new Error(`${label} must be selected through TaskWraith before it can be used.`)
+  }
+  if (
+    gitRepositoryRootForPath(normalized) !== normalized ||
+    !externalGitRepositoryRootIsSelfContained(normalized)
+  ) {
+    throw new Error(`${label} external Git access requires a repository-root grant.`)
+  }
+  const chatId = typeof input.chatId === 'string' ? input.chatId.trim() : ''
+  const chat = chatId ? AppStore.getChat(chatId) : null
+  if (
+    !chat ||
+    !executableExternalPathGrantsForChat(chat).some((grant) =>
+      grant.kind === 'directory' && externalGrantAllowsPath(grant, normalized, access)
+    )
+  ) {
+    throw new Error(`${label} requires a signed external-path grant from its originating chat.`)
+  }
+  return normalized
 }
 
 function issueRunScopedExternalGrantsForNonImageAttachments(
   chat: ChatRecord,
-  attachments: Array<{ path?: string; name?: string }>,
-  existingGrants: ExternalPathGrant[] = []
+  participant: EnsembleParticipant,
+  appRunId: string,
+  attachments: Array<{ path?: string; name?: string }>
 ): ExternalPathGrant[] {
   if (chat.scope === 'global' || !chat.workspacePath || attachments.length === 0) return []
-  const providers = ensembleExternalGrantProviders(chat)
-  if (providers.length === 0) return []
-  const seen = new Set(
-    normalizeExternalPathGrants(existingGrants).map((grant) => `${grant.provider}:${grant.path}`)
-  )
+  if (!isExternalPathGrantDispatchProvider(participant.provider)) return []
+  const runId = appRunId.trim()
+  if (!runId) return []
+  const seen = new Set<string>()
   const grants: ExternalPathGrant[] = []
   const now = Date.now()
   for (const attachment of attachments) {
@@ -4727,32 +5009,60 @@ function issueRunScopedExternalGrantsForNonImageAttachments(
     } catch {
       continue
     }
-    for (const provider of providers) {
-      const grant = issueExternalPathGrant({
-        id: `attachment-${now}-${provider}-${randomBytes(4).toString('hex')}`,
-        provider,
+    const key = `${participant.provider}:${attachmentPath}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    grants.push(
+      issueExternalPathGrant({
+        id: `attachment-${now}-${participant.provider}-${randomBytes(4).toString('hex')}`,
+        provider: participant.provider,
         workspaceId: chat.workspaceId,
         chatId: chat.appChatId,
+        appRunId: runId,
         path: attachmentPath,
         kind,
         access: 'read',
         duration: 'thisRun',
         createdAt: new Date(now).toISOString()
       })
-      const key = `${grant.provider}:${grant.path}`
-      if (seen.has(key)) continue
-      seen.add(key)
-      grants.push(grant)
-    }
+    )
   }
   return grants
 }
 
-function isMainIssuedExternalPathGrant(grant: ExternalPathGrant): boolean {
-  if (!grant || grant.issuedBy !== 'main' || typeof grant.signature !== 'string') return false
-  const expected = Buffer.from(signExternalPathGrant(grant), 'hex')
-  const actual = Buffer.from(grant.signature, 'hex')
-  return expected.length === actual.length && timingSafeEqual(expected, actual)
+function isMainIssuedExternalPathGrant(
+  grant: ExternalPathGrant,
+  runContext?: Omit<ExternalPathGrantRunBindingContext, 'workspaceId'> & {
+    workspacePath?: string
+  }
+): boolean {
+  if (!verifyExternalPathGrantSignature(externalGrantSigningSecret, grant, canonicalPath)) {
+    return false
+  }
+  if (!runContext) return true
+  if (!externalPathGrantExecutionRegistry.allowsExecution(grant)) return false
+  const appChatId = runContext.appChatId?.trim()
+  const workspacePath = runContext.workspacePath?.trim()
+  if (!appChatId || !workspacePath) return false
+  const chat = AppStore.getChat(appChatId)
+  const workspace = findRegisteredWorkspace(workspacePath)
+  if (!chat || !workspace) return false
+  try {
+    const primaryWorkspace = validateChatWorkspaceIdentity(appChatId, workspace)
+    if (!primaryWorkspace) return false
+    return matchesExternalPathGrantExecutionAuthority(
+      grant,
+      {
+        provider: runContext.provider,
+        appChatId,
+        appRunId: runContext.appRunId,
+        workspaceId: primaryWorkspace.id
+      },
+      externalPathGrantMetadataLists(chat)
+    )
+  } catch {
+    return false
+  }
 }
 
 // Run permission posture provenance. Mirrors the external-path-grant HMAC
@@ -5149,10 +5459,11 @@ async function resolveRuntimeWorktreeWorkspace(
       `Runtime profile${profile} requires an isolated worktree. Create or select one from Branch & worktree before running.`
     )
   }
-  const baseWorkspace = requireRegisteredWorkspace(
-    intent.baseWorkspacePath || registeredWorkspace,
-    'Base workspace'
-  )
+  const baseWorkspace = bindRuntimeWorktreeBaseWorkspace({
+    requestedBaseWorkspacePath: intent.baseWorkspacePath,
+    registeredWorkspace,
+    canonicalizePath: canonicalPath
+  })
   const targetPath = canonicalPath(requireNonEmptyString(intent.effectiveWorkspacePath, 'Worktree'))
   const list = await new GitService().listWorktrees(baseWorkspace)
   if (!list.ok) {
@@ -5308,7 +5619,11 @@ const workspaceToolExecutors = createWorkspaceToolExecutors({
   },
   externalPublishReceipts: externalPublishReceiptsForOrigin('agent'),
   media: {
-    readTranscriptMediaAsset: (input) => getTranscriptMediaAssetStore().read(input)
+    readTranscriptMediaAsset: (input) => {
+      const store = getTranscriptMediaAssetStore()
+      if (!store.owns(input)) return { ok: false, reason: 'missing' }
+      return store.read(input)
+    }
   }
 })
 
@@ -5451,6 +5766,7 @@ function finalizePendingEnsembleRosterPresetForTerminalRun(session: {
 
 runManager.onChange((event) => {
   if (event.type === 'removed') {
+    externalPathGrantExecutionRegistry.revokeRun(event.session.runId)
     cancelPendingAgentQuestionsForRun(event.session.runId, 'run-removed')
     void appShellStatsService.refresh().catch((err) => {
       console.warn(
@@ -5470,6 +5786,7 @@ runManager.onChange((event) => {
       event.session.status === 'failed' ||
       event.session.status === 'cancelled')
   ) {
+    externalPathGrantExecutionRegistry.revokeRun(event.session.runId)
     cancelPendingAgentQuestionsForRun(event.session.runId, `run-${event.session.status}`)
     // Main owns the durable terminal boundary. The renderer normally consumes
     // a queued solo roster from the provider `result` line, but `agent-exit`
@@ -5605,9 +5922,20 @@ async function maybePropagateSubThreadResult(
   // failed/cancelled newer run.
   const lastAssistant =
     runScopedAssistant || (terminal.outcome === 'done' ? assistantMessages[0] : undefined)
-  const returnedMediaRefs = Array.isArray(lastAssistant?.metadata?.mediaRefs)
-    ? lastAssistant.metadata.mediaRefs
-    : []
+  const returnedMediaRefs = transferTranscriptMediaRefsBetweenChats(
+    subThread.appChatId,
+    subThread.parentChatId,
+    Array.isArray(lastAssistant?.metadata?.mediaRefs) ? lastAssistant.metadata.mediaRefs : [],
+    (sourceAppChatId, targetAppChatId) => {
+      const canonicalSource = AppStore.getChat(sourceAppChatId)
+      return Boolean(
+        canonicalSource &&
+          canonicalSource.parentChatId === targetAppChatId &&
+          (canonicalSource.parentChatRelation === undefined ||
+            canonicalSource.parentChatRelation === 'subThread')
+      )
+    }
+  )
   if (
     terminal.outcome === 'done' &&
     (!lastAssistant || (!lastAssistant.content.trim() && returnedMediaRefs.length === 0))
@@ -6448,6 +6776,100 @@ function safeSendToSender(
 }
 
 let transcriptMediaAssetStore: TranscriptMediaAssetStore | null = null
+const MAX_AUTHORIZED_IMAGE_PREVIEW_PATHS = 500
+const IMAGE_PREVIEW_MAX_BYTES = 40 * 1024 * 1024
+const attachmentCapabilityRegistry = new AttachmentCapabilityRegistry(
+  MAX_AUTHORIZED_IMAGE_PREVIEW_PATHS
+)
+const clipboardPasteIntentRegistry = new ClipboardPasteIntentRegistry()
+const attachmentCapabilityCleanupRegistered = new Set<number>()
+
+function registerRendererCapabilityCleanup(sender: Electron.WebContents): void {
+  if (attachmentCapabilityCleanupRegistered.has(sender.id)) return
+  const senderId = sender.id
+  attachmentCapabilityCleanupRegistered.add(senderId)
+  sender.once('destroyed', () => {
+    attachmentCapabilityRegistry.revokeRenderer(senderId)
+    clipboardPasteIntentRegistry.revoke(senderId)
+    attachmentCapabilityCleanupRegistered.delete(senderId)
+  })
+}
+
+function authorizeImagePreviewPath(
+  rawPath: unknown,
+  options: { sender?: Electron.WebContents; mainAuthority?: boolean } = {}
+): void {
+  if (typeof rawPath !== 'string' || !rawPath) return
+  try {
+    const filePath = rawPath.startsWith('file://') ? fileURLToPath(rawPath) : rawPath
+    const real = fsSync.realpathSync.native(filePath)
+    if (options.sender) {
+      attachmentCapabilityRegistry.authorizeRendererPath(options.sender.id, real)
+      registerRendererCapabilityCleanup(options.sender)
+    }
+    if (options.mainAuthority === true) {
+      attachmentCapabilityRegistry.authorizeMainPath(real)
+    }
+  } catch {
+    // Unresolvable path — never authorize.
+  }
+}
+
+function rendererAttachmentCapabilityPaths(event: RendererSenderEvent): string[] {
+  return attachmentCapabilityRegistry.getAuthorizedPathsForRenderer(event.sender.id, {
+    includeMainAuthority: isMainRendererSender(event)
+  })
+}
+
+function resolveRendererAttachmentPaths(
+  event: RendererSenderEvent,
+  rawPaths: unknown
+): string[] {
+  return resolveAuthorizedRendererAttachmentPaths(
+    rawPaths,
+    rendererAttachmentCapabilityPaths(event),
+    (rawPath) => {
+      const filePath = rawPath.startsWith('file://') ? fileURLToPath(rawPath) : rawPath
+      return fsSync.realpathSync.native(filePath)
+    }
+  )
+}
+
+function authorizeRendererLocalPath(
+  event: IpcMainInvokeEvent,
+  request: RendererLocalPathAuthorizationRequest
+): string {
+  const mainAuthority = isMainRendererSender(event)
+  const owner = mainAuthority ? undefined : workspacePopoutOwnerForSender(event.sender.id)
+  return resolveRendererLocalPath({
+    requestedPath: request.requestedPath,
+    isMainRenderer: mainAuthority,
+    ...(owner?.workspacePath ? { ownerWorkspacePath: owner.workspacePath } : {}),
+    authorizedAttachmentPaths: rendererAttachmentCapabilityPaths(event),
+    canonicalizePath: mainAuthority
+      ? (path) => canonicalExternalGrantPath(path) || canonicalPath(path)
+      : (path) => fsSync.realpathSync.native(path)
+  })
+}
+
+function deriveRendererRunPayload(
+  event: RendererSenderEvent,
+  payload: AgentRunPayload
+): AgentRunPayload {
+  if (isMainRendererSender(event)) return payload
+  const owner = workspacePopoutOwnerForSender(event.sender.id)
+  const chatId = requireNonEmptyString(payload?.appChatId, 'Chat id')
+  const chat = AppStore.getChat(chatId)
+  if (!owner || !chat) {
+    throw new Error('Renderer run authority does not match its owning chat.')
+  }
+  return derivePopoutRunPayload({
+    payload,
+    chat,
+    owner,
+    canonicalizePath: canonicalPath
+  })
+}
 
 function getTranscriptMediaAssetStore(): TranscriptMediaAssetStore {
   if (!transcriptMediaAssetStore) {
@@ -6466,6 +6888,7 @@ function writeTranscriptMediaAsset(input: {
   sha256: string
   buffer: Buffer
   mimeType: string
+  appChatId?: string
 }): void {
   const result = getTranscriptMediaAssetStore().write(input)
   if (!result.ok) {
@@ -6507,14 +6930,19 @@ function providerForTranscriptMessage(chat: ChatRecord, message: ChatMessage): P
 }
 
 function normalizeTranscriptMarkdownMediaForChat(chat: ChatRecord): ChatRecord {
-  if (!chat.workspacePath || !Array.isArray(chat.messages) || chat.messages.length === 0) {
-    return chat
-  }
-  const allGrants = normalizeExternalPathGrants(
-    collectExternalPathGrantsFromMetadata(chat.providerMetadata)
+  if (!Array.isArray(chat.messages) || chat.messages.length === 0) return chat
+  const ownershipSanitized = sanitizeTranscriptMediaOwnershipClaims(
+    chat,
+    getTranscriptMediaAssetStore()
   )
+  if (!ownershipSanitized.workspacePath) return ownershipSanitized
+  // A renderer-authored save is not an authority source. Resolve grants from
+  // main's canonical chat and enforce their chat + primary-workspace binding
+  // before any transcript-media path is inspected.
+  const canonicalChat = AppStore.getChat(ownershipSanitized.appChatId)
+  const allGrants = executableExternalPathGrantsForChat(canonicalChat)
   let changed = false
-  const messages = chat.messages.map((message) => {
+  const messages = ownershipSanitized.messages.map((message) => {
     if (message.role !== 'assistant' && message.role !== 'system') return message
     const existingRefs = Array.isArray(message.metadata?.mediaRefs)
       ? (message.metadata.mediaRefs as TranscriptMediaRef[])
@@ -6525,7 +6953,7 @@ function normalizeTranscriptMarkdownMediaForChat(chat: ChatRecord): ChatRecord {
     )
     if (!message.content.includes('![') && !hasManagedRefs) return message
 
-    const provider = providerForTranscriptMessage(chat, message)
+    const provider = providerForTranscriptMessage(ownershipSanitized, message)
     const externalPathGrants = provider
       ? allGrants.filter((grant) => grant.provider === provider)
       : allGrants
@@ -6533,8 +6961,8 @@ function normalizeTranscriptMarkdownMediaForChat(chat: ChatRecord): ChatRecord {
       ? createWorkspacePathMediaRefs({
           messageId: message.id,
           content: message.content,
-          workspaceId: chat.workspaceId,
-          workspacePath: chat.workspacePath!,
+          workspaceId: ownershipSanitized.workspaceId,
+          workspacePath: ownershipSanitized.workspacePath!,
           externalPathGrants
         })
       : []
@@ -6565,7 +6993,7 @@ function normalizeTranscriptMarkdownMediaForChat(chat: ChatRecord): ChatRecord {
       }
     }
   })
-  return changed ? { ...chat, messages } : chat
+  return changed ? { ...ownershipSanitized, messages } : ownershipSanitized
 }
 
 function findTranscriptMediaRef(
@@ -6583,11 +7011,22 @@ function findTranscriptMediaRef(
 }
 
 function fullTranscriptMediaFromAsset(
+  appChatId: string,
   mediaRef: TranscriptMediaRef,
   maxBytes: number
 ): { ok: true; dataBase64: string; byteLength: number } | { ok: false; reason: string } {
   if (!mediaRef.sha256) return { ok: false, reason: 'No original asset hash is available' }
-  const read = getTranscriptMediaAssetStore().read({
+  const store = getTranscriptMediaAssetStore()
+  if (
+    !store.owns({
+      sha256: mediaRef.sha256,
+      mimeType: mediaRef.mimeType,
+      appChatId
+    })
+  ) {
+    return { ok: false, reason: 'Original media asset is not owned by this chat' }
+  }
+  const read = store.read({
     sha256: mediaRef.sha256,
     mimeType: mediaRef.mimeType,
     maxBytes
@@ -6605,7 +7044,8 @@ function fullTranscriptMediaFromAsset(
 function fullWorkspaceTranscriptMedia(
   chat: ChatRecord,
   mediaRef: TranscriptMediaRef,
-  maxBytes: number
+  maxBytes: number,
+  externalPathGrants: ExternalPathGrant[] = executableExternalPathGrantsForChat(chat)
 ): { ok: true; dataBase64: string; byteLength: number; mimeType: string } | { ok: false; reason: string } {
   if (!chat.workspacePath || !mediaRef.path) {
     return { ok: false, reason: 'Workspace media path is unavailable' }
@@ -6614,9 +7054,7 @@ function fullWorkspaceTranscriptMedia(
     workspaceId: chat.workspaceId,
     workspacePath: chat.workspacePath,
     candidatePath: mediaRef.path,
-    externalPathGrants: normalizeExternalPathGrants(
-      collectExternalPathGrantsFromMetadata(chat.providerMetadata)
-    ),
+    externalPathGrants,
     maxBytes
   })
   if (!validation.ok) {
@@ -6625,7 +7063,7 @@ function fullWorkspaceTranscriptMedia(
   if (mediaRef.sha256 && validation.sha256 !== mediaRef.sha256) {
     return { ok: false, reason: 'Workspace media changed after it was attached' }
   }
-  const buffer = fsSync.readFileSync(validation.realPath)
+  const buffer = validation.buffer
   if (buffer.length > maxBytes) return { ok: false, reason: 'Workspace media exceeds requested byte limit' }
   return {
     ok: true,
@@ -6658,8 +7096,13 @@ async function resolveImageRasterSource(
       if (!ref) continue
       const read =
         ref.source === 'workspace_path'
-          ? fullWorkspaceTranscriptMedia(chat, ref, maxBytes)
-          : fullTranscriptMediaFromAsset(ref, maxBytes)
+          ? fullWorkspaceTranscriptMedia(
+              chat,
+              ref,
+              maxBytes,
+              executableExternalPathGrantsForRun(chat, ctx.appRunId)
+            )
+          : fullTranscriptMediaFromAsset(chat.appChatId, ref, maxBytes)
       if (!read.ok) return { ok: false, reason: read.reason }
       const mimeType =
         (read as { mimeType?: string }).mimeType || ref.mimeType || 'image/png'
@@ -6674,14 +7117,11 @@ async function resolveImageRasterSource(
       workspaceId: chat.workspaceId,
       workspacePath: chat.workspacePath,
       candidatePath: sourcePath,
-      externalPathGrants: normalizeExternalPathGrants(
-        collectExternalPathGrantsFromMetadata(chat.providerMetadata)
-      ),
+      externalPathGrants: executableExternalPathGrantsForRun(chat, ctx.appRunId),
       maxBytes
     })
     if (!validation.ok) return { ok: false, reason: validation.reason }
-    const buffer = fsSync.readFileSync(validation.realPath)
-    return { ok: true, buffer, mimeType: validation.mimeType }
+    return { ok: true, buffer: validation.buffer, mimeType: validation.mimeType }
   }
   return { ok: false, reason: 'provide sourceMediaId or sourcePath' }
 }
@@ -6714,9 +7154,7 @@ async function resolveAudioSource(
   const validation = validateWorkspaceAudioPath({
     workspacePath: chat.workspacePath,
     candidatePath: sourcePath,
-    externalPathGrants: normalizeExternalPathGrants(
-      collectExternalPathGrantsFromMetadata(chat.providerMetadata)
-    )
+    externalPathGrants: executableExternalPathGrantsForRun(chat, ctx.appRunId)
   })
   if (!validation.ok) return { ok: false, reason: validation.reason }
   return {
@@ -6778,16 +7216,50 @@ function maybeScheduleCodexNativeGoalSync(
  */
 function broadcastWorkspacePopoutRefresh(workspacePath: string, reason: string): void {
   if (!workspacePath || workspacePopoutWindows.size === 0) return
-  const suffix = `:${workspacePath}`
   for (const [key, win] of workspacePopoutWindows.entries()) {
-    if (!key.endsWith(suffix)) continue
-    safeSendToWebContents(win, 'workspace-popout-refresh', { workspacePath, reason })
+    const owner = workspacePopoutOwners.get(key)
+    if (!owner || owner.kind === 'chat' || owner.workspacePath !== workspacePath) continue
+    const externalWriteAllowed =
+      owner.chatId && owner.workspacePath
+        ? externalWorkspaceWriteAllowedForChat(owner.chatId, owner.workspacePath)
+        : undefined
+    if (externalWriteAllowed !== undefined) owner.externalWriteAllowed = externalWriteAllowed
+    safeSendToWebContents(win, 'workspace-popout-refresh', {
+      workspacePath,
+      reason,
+      ...(externalWriteAllowed === undefined ? {} : { externalWriteAllowed })
+    })
+  }
+}
+
+function broadcastChatOwnedWorkspacePopoutRefresh(chatId: string, reason: string): void {
+  if (!chatId || workspacePopoutWindows.size === 0) return
+  for (const [key, win] of workspacePopoutWindows.entries()) {
+    const owner = workspacePopoutOwners.get(key)
+    if (
+      !owner ||
+      owner.kind === 'chat' ||
+      owner.chatId !== chatId ||
+      !owner.workspacePath
+    )
+      continue
+    const externalWriteAllowed = externalWorkspaceWriteAllowedForChat(
+      owner.chatId,
+      owner.workspacePath
+    )
+    owner.externalWriteAllowed = externalWriteAllowed
+    safeSendToWebContents(win, 'workspace-popout-refresh', {
+      workspacePath: owner.workspacePath,
+      reason,
+      externalWriteAllowed
+    })
   }
 }
 
 function broadcastChatUpdated(chat: ChatRecord): void {
   safeSendToWebContents(mainWindow, 'chat-updated', chat)
   broadcastChatPopoutUpdate(chat)
+  broadcastChatOwnedWorkspacePopoutRefresh(chat.appChatId, 'chat-updated')
 }
 
 function broadcastContextCompactionProgress(event: ContextCompactionProgressEvent): void {
@@ -6837,8 +7309,17 @@ function sendTrustedRunMediaRefs(
 
 function broadcastChatPopoutUpdate(chat: ChatRecord): void {
   if (!chat?.appChatId || workspacePopoutWindows.size === 0) return
-  const win = workspacePopoutWindows.get(`chat:${chat.appChatId}`)
+  const key = `chat:${chat.appChatId}`
+  const win = workspacePopoutWindows.get(key)
   if (!win || win.isDestroyed()) return
+  const owner = workspacePopoutOwners.get(key)
+  if (owner?.kind === 'chat' && owner.chatId === chat.appChatId) {
+    // Workspace rebind is persisted atomically while the chat is idle. Keep
+    // the popout's main-owned authority record in the same canonical update so
+    // its next Git/diff/child-popout request cannot retain the old workspace or
+    // be spuriously denied until the window is reopened.
+    owner.workspacePath = chat.workspacePath || undefined
+  }
   safeSendToWebContents(win, 'chat-updated', chat)
 }
 
@@ -8006,6 +8487,64 @@ function mergeTranscriptMediaRefs(
     refs.push(ref)
   }
   return refs
+}
+
+function grantTranscriptMediaRefsToChat(
+  appChatId: string | undefined,
+  refs: readonly TranscriptMediaRef[]
+): TranscriptMediaRef[] {
+  if (!appChatId) return []
+  return refs.filter((ref) => {
+    if (!ref.sha256 || !ref.mimeType) return false
+    const granted = getTranscriptMediaAssetStore().grant({
+      sha256: ref.sha256,
+      mimeType: ref.mimeType,
+      appChatId
+    })
+    if (!granted.ok) {
+      console.warn(
+        `[TranscriptMedia] ownership grant skipped for chat ${appChatId}: ${granted.reason}`
+      )
+    }
+    return granted.ok
+  })
+}
+
+function transferTranscriptMediaRefsBetweenChats(
+  sourceAppChatId: string,
+  targetAppChatId: string,
+  refs: readonly TranscriptMediaRef[],
+  verifyTransfer: (sourceAppChatId: string, targetAppChatId: string) => boolean
+): TranscriptMediaRef[] {
+  return refs.map((ref) => {
+    if (
+      !ref.sha256 ||
+      !ref.mimeType ||
+      (ref.source !== 'generated' && ref.source !== 'tool_result')
+    ) {
+      return ref
+    }
+    const transferred = getTranscriptMediaAssetStore().grantVerifiedTransfer(
+      {
+        sha256: ref.sha256,
+        mimeType: ref.mimeType,
+        sourceAppChatId,
+        targetAppChatId
+      },
+      verifyTransfer
+    )
+    if (transferred.ok) return ref
+    console.warn(
+      `[TranscriptMedia] verified transfer ${sourceAppChatId} -> ${targetAppChatId} skipped: ${transferred.reason}`
+    )
+    return {
+      ...ref,
+      sha256: undefined,
+      assetId: undefined,
+      path: undefined,
+      status: 'denied'
+    }
+  })
 }
 
 function appendBridgeRunMediaRefs(
@@ -9294,16 +9833,24 @@ function externalPathGrantForTarget(
   targetPath: string,
   access: 'read' | 'write'
 ): ExternalPathGrant | undefined {
-  const grants = normalizeExternalPathGrants([
-    ...(context.externalPathGrants || []),
-    ...externalPathGrantsForProvider(context.appChatId, provider)
-  ]).filter((grant) => grant.provider === provider)
+  const chat = context.appChatId ? AppStore.getChat(context.appChatId) : null
+  const grants = executableExternalPathGrantsForRun(chat, context.appRunId).filter(
+    (grant) => grant.provider === provider
+  )
   const target = (canonicalExternalGrantPath(targetPath) || resolve(targetPath)).replace(/\/+$/, '')
   return grants.find((grant) => {
-    const grantPath = (canonicalExternalGrantPath(grant.path) || resolve(grant.path)).replace(
-      /\/+$/,
-      ''
-    )
+    // `grant.path` is the signed canonical authority. Re-realpathing it here
+    // would let a later symlink replacement retarget that signature.
+    const grantPath = resolve(grant.path).replace(/\/+$/, '')
+    try {
+      const grantStat = fsSync.lstatSync(grantPath)
+      if (grantStat.isSymbolicLink()) return false
+      if (grant.kind === 'directory' ? !grantStat.isDirectory() : !grantStat.isFile()) {
+        return false
+      }
+    } catch {
+      return false
+    }
     const coversPath =
       target === grantPath || (grant.kind === 'directory' && target.startsWith(grantPath + sep))
     if (!coversPath) return false
@@ -9318,25 +9865,59 @@ function resolveGeminiMcpGrantAwarePath(
   access: 'read' | 'write',
   options: { allowWorkspaceRoot?: boolean } = {}
 ): string {
+  return resolveGeminiMcpGrantAwarePathAuthority(
+    context,
+    provider,
+    filePath,
+    access,
+    options
+  ).targetPath
+}
+
+function resolveGeminiMcpGrantAwarePathAuthority(
+  context: GeminiToolContext,
+  provider: ProviderId,
+  filePath: string,
+  access: 'read' | 'write',
+  options: { allowWorkspaceRoot?: boolean } = {}
+): ScopedPathAuthority {
   if (typeof filePath !== 'string' || !filePath.trim()) {
     throw new Error(
       context.scope === 'global' ? 'A host path is required.' : 'A workspace path is required.'
     )
   }
   if (context.scope === 'global') {
-    return isAbsolute(filePath) ? resolve(filePath) : resolve(context.cwd, filePath)
+    const lexicalTarget = isAbsolute(filePath) ? resolve(filePath) : resolve(context.cwd, filePath)
+    const targetPath = canonicalExternalGrantPath(lexicalTarget) || lexicalTarget
+    return {
+      rootPath: dirname(targetPath) === targetPath ? targetPath : dirname(targetPath),
+      targetPath
+    }
   }
 
-  const workspaceRoot = resolve(context.workspacePath || context.cwd)
-  const targetPath = isAbsolute(filePath) ? resolve(filePath) : resolve(workspaceRoot, filePath)
+  const lexicalWorkspaceRoot = resolve(context.workspacePath || context.cwd)
+  const workspaceRoot = canonicalExternalGrantPath(lexicalWorkspaceRoot)
+  if (!workspaceRoot) throw new Error('Active workspace could not be resolved safely.')
+  const lexicalTarget = isAbsolute(filePath)
+    ? resolve(filePath)
+    : resolve(lexicalWorkspaceRoot, filePath)
+  const targetPath = canonicalExternalGrantPath(lexicalTarget)
+  if (!targetPath) throw new Error('Selected path could not be resolved safely.')
   if (isPathInsideWorkspace(workspaceRoot, targetPath)) {
-    return resolveGeminiMcpPath(workspaceRoot, targetPath, options)
+    return {
+      rootPath: workspaceRoot,
+      targetPath: resolveGeminiMcpPath(workspaceRoot, targetPath, options)
+    }
   }
-  if (
-    isAbsolute(filePath) &&
-    externalPathGrantForTarget(context, provider, targetPath, access)
-  ) {
-    return targetPath
+  if (isAbsolute(filePath)) {
+    const grant = externalPathGrantForTarget(context, provider, targetPath, access)
+    if (grant) {
+      const grantPath = resolve(grant.path)
+      return {
+        rootPath: grant.kind === 'directory' ? grantPath : dirname(grantPath),
+        targetPath
+      }
+    }
   }
   const accessLabel = access === 'write' ? 'edit' : 'read'
   throw new Error(`Path is outside the workspace and has no ${accessLabel} grant.`)
@@ -10279,6 +10860,24 @@ function applyScheduledEnsembleSnapshotMain(
   }
 }
 
+function verifyScheduledTaskAttachmentOwnership(task: ScheduledTask): boolean {
+  const resolved = scheduledAttachmentPersistence.resolve({
+    source: 'scheduled-task',
+    recordId: task.id,
+    appChatId: task.chatId,
+    workspaceId: task.workspaceId,
+    workspacePath: task.workspacePath,
+    externalPathGrants: normalizeExternalPathGrants(task.externalPathGrants),
+    attachments: task.imageAttachments || []
+  })
+  if (!resolved.ok) {
+    console.warn(
+      `[TranscriptMedia] scheduled attachment ownership failed for ${task.id}: ${resolved.reason}`
+    )
+  }
+  return resolved.ok
+}
+
 // Stage 0b-dispatch (ensemble) — start a due ENSEMBLE scheduled round from MAIN
 // when no renderer can (windowless). Mirrors the run-ensemble-round IPC handler:
 // apply the schedule-time roster/mode snapshot + persist (the orchestrator reads
@@ -10304,6 +10903,10 @@ async function dispatchDueEnsembleScheduledTaskHeadless(task: ScheduledTask): Pr
       failTask('Headless ensemble dispatch: chat is not an ensemble.')
       return
     }
+    if (!verifyScheduledTaskAttachmentOwnership(task)) {
+      failTask('Headless ensemble dispatch: attachment ownership could not be verified.')
+      return
+    }
     // Apply the schedule-time snapshot + persist so the orchestrator (getChat) sees
     // the dispatch-time roster/mode — exactly as the renderer does before dispatch.
     if (task.ensembleSnapshot) {
@@ -10322,17 +10925,6 @@ async function dispatchDueEnsembleScheduledTaskHeadless(task: ScheduledTask): Pr
     const scheduledImageAttachments = imageAttachmentSnapshots(task.imageAttachments)
     const dispatchImageAttachments = await expandPdfAttachmentsForDispatch(scheduledImageAttachments)
     const scheduledExternalPathGrants = normalizeExternalPathGrants(task.externalPathGrants)
-    const dispatchChat = AppStore.getChat(task.chatId) || chat
-    const scheduledAttachmentExternalPathGrants =
-      issueRunScopedExternalGrantsForNonImageAttachments(
-        dispatchChat,
-        scheduledImageAttachments,
-        scheduledExternalPathGrants
-      )
-    const roundExternalPathGrants = normalizeExternalPathGrants([
-      ...scheduledExternalPathGrants,
-      ...scheduledAttachmentExternalPathGrants
-    ])
     const started = orchestrator.startRound({
       chatId: task.chatId,
       prompt: task.prompt,
@@ -10340,8 +10932,8 @@ async function dispatchDueEnsembleScheduledTaskHeadless(task: ScheduledTask): Pr
       mode: 'normal',
       imageAttachments: dispatchImageAttachments,
       unattended: true,
-      ...(roundExternalPathGrants.length > 0
-        ? { externalPathGrants: roundExternalPathGrants }
+      ...(scheduledExternalPathGrants.length > 0
+        ? { externalPathGrants: scheduledExternalPathGrants }
         : {}),
       ...(elevation ? { unattendedElevationLevel: elevation.ack.level } : {})
     })
@@ -10388,6 +10980,14 @@ async function dispatchDueScheduledLoopHeadless(
   const composer = composerServiceRef
   const dispatch = dispatchRunWithProviderPauseRef
   if (!composer || !dispatch) return
+  if (!verifyScheduledTaskAttachmentOwnership(task)) {
+    AppStore.updateScheduledTask(task.id, {
+      status: 'failed',
+      completedAt: new Date().toISOString(),
+      lastError: 'Workflow loop attachment ownership could not be verified.'
+    })
+    return
+  }
   // Claim the task synchronously (before any await) so a racing tick can't double-fire.
   const running = AppStore.updateScheduledTask(task.id, {
     status: 'running',
@@ -10534,6 +11134,7 @@ async function dispatchDueScheduledLoopHeadless(
               geminiAuthProfileId: task.geminiAuthProfileId
             }),
         approvalMode: task.approvalMode,
+        ...scheduledHeadlessComposeFields(task),
         sessionTrust: task.sessionTrust,
         imageAttachments: task.imageAttachments,
         externalPathGrants: task.externalPathGrants,
@@ -10544,13 +11145,14 @@ async function dispatchDueScheduledLoopHeadless(
     }
     // Track BEFORE dispatch (inline-exit landmine) + arm an absolute backstop.
     const completion = auditRunTracker.track(input.runId)
-    const backstop = setTimeout(() => {
-      // CANCEL the provider run — settling the tracked promise alone leaves it
-      // running (it would keep editing/spending after the loop moves on).
-      void cancelProviderRun(task.provider, input.runId)
-      auditRunTracker.handleExit(input.runId, -1)
-    }, stepTimeoutMs)
-    void completion.finally(() => clearTimeout(backstop))
+    const clearBackstop = armScheduledLoopStepTimeout({
+      composeProvider,
+      runId: input.runId,
+      timeoutMs: stepTimeoutMs,
+      cancelProviderRun,
+      handleExit: (runId, exitCode) => auditRunTracker.handleExit(runId, exitCode)
+    })
+    void completion.finally(clearBackstop)
     const sender =
       mainWindow && !mainWindow.webContents.isDestroyed()
         ? mainWindow.webContents
@@ -10692,6 +11294,14 @@ async function dispatchDueScheduledTaskHeadless(task: ScheduledTask): Promise<vo
   if (!composer || !dispatch) return
   const scheduledRunId = task.runId || `${task.provider}-scheduled-${randomUUID()}`
   try {
+    if (!verifyScheduledTaskAttachmentOwnership(task)) {
+      AppStore.updateScheduledTask(task.id, {
+        status: 'failed',
+        completedAt: new Date().toISOString(),
+        lastError: 'Headless scheduled attachment ownership could not be verified.'
+      })
+      return
+    }
     const running = AppStore.updateScheduledTask(task.id, {
       status: 'running',
       firedAt: task.firedAt || new Date().toISOString(),
@@ -10709,6 +11319,7 @@ async function dispatchDueScheduledTaskHeadless(task: ScheduledTask): Promise<vo
       selectedModelType: task.selectedModelType,
       customModel: task.customModel,
       approvalMode: task.approvalMode,
+      ...scheduledHeadlessComposeFields(task),
       sessionTrust: task.sessionTrust,
       imageAttachments: task.imageAttachments,
       externalPathGrants: task.externalPathGrants,
@@ -10743,12 +11354,18 @@ async function dispatchDueScheduledTaskHeadless(task: ScheduledTask): Promise<vo
 }
 
 function emitDueScheduledTasks() {
-  const materialized = AppStore.materializeDueWorkflows().map(ensureScheduledTaskSignedPosture)
+  const materialized = AppStore.materializeDueWorkflows(
+    Date.now(),
+    scheduledAttachmentPersistence.resolve
+  ).map(ensureScheduledTaskSignedPosture)
   mainWindow?.webContents.send('workflow-definitions-changed', AppStore.getWorkflowDefinitions())
   if (materialized.length > 0) {
     mainWindow?.webContents.send('scheduled-tasks-changed', AppStore.getScheduledTasks())
   }
-  const dueTasks = AppStore.getDueScheduledTasks()
+  const dueTasks = AppStore.getDueScheduledTasks(
+    Date.now(),
+    scheduledAttachmentPersistence.resolve
+  )
   const rendererAvailable = Boolean(mainWindow && !mainWindow.webContents.isDestroyed())
   const headlessEnabled = AppStore.getSettings().headlessScheduledDispatchEnabled !== false
   const soloDispatchReady = Boolean(composerServiceRef && dispatchRunWithProviderPauseRef)
@@ -10768,6 +11385,14 @@ function emitDueScheduledTasks() {
             firedAt: new Date().toISOString()
           }) || task
     const dueTask = ensureScheduledTaskSignedPosture(dueTaskRaw)
+    if (!verifyScheduledTaskAttachmentOwnership(dueTask)) {
+      AppStore.updateScheduledTask(dueTask.id, {
+        status: 'failed',
+        completedAt: new Date().toISOString(),
+        lastError: 'Scheduled attachment ownership could not be verified.'
+      })
+      continue
+    }
     // Stage 2 slice 5 — a LOOP-workflow occurrence runs the engine in MAIN regardless
     // of rendererAvailable (the renderer has no loop engine). Solo only; bypasses
     // routeDueScheduledTask. If the composer isn't wired yet (early boot) leave it
@@ -11577,10 +12202,23 @@ async function getAgentMcpStatusSnapshot(provider: ProviderId): Promise<any> {
 async function getProviderCapabilityContract(
   provider: ProviderId,
   workspacePath?: string,
-  approvalMode?: string
+  approvalMode?: string,
+  options: { allowGeminiBridgeRepair?: boolean } = {}
 ): Promise<ProviderCapabilityContract> {
   const adapter = providerAdapters.require(provider)
-  const contract = await adapter.getCapabilityContract({ workspacePath, approvalMode })
+  const contract =
+    provider === 'gemini' && options.allowGeminiBridgeRepair === false
+      ? await getProviderCapabilityContractDirectViaCliRuntime(
+          provider,
+          workspacePath,
+          approvalMode,
+          {
+            ...cliProviderRuntimeDeps,
+            getGeminiMcpBridgeStatus: () =>
+              getGeminiMcpBridgeStatus({ autoRepairIfEnabled: false })
+          }
+        )
+      : await adapter.getCapabilityContract({ workspacePath, approvalMode })
   const preflight = providerPreflightService.evaluate(
     { provider, workspacePath, approvalMode },
     contract,
@@ -11877,7 +12515,12 @@ function emitCliProviderMediaRefs(state: CliProviderStreamState, event: unknown)
     source: 'generated',
     blocks,
     assetWriter: ({ sha256, buffer, mimeType }) =>
-      writeTranscriptMediaAsset({ sha256, buffer, mimeType })
+      writeTranscriptMediaAsset({
+        sha256,
+        buffer,
+        mimeType,
+        ...(state.appChatId ? { appChatId: state.appChatId } : {})
+      })
   })
   if (refs.length === 0) return
   const seen = state.providerMediaRefKeys ?? new Set<string>()
@@ -13249,7 +13892,17 @@ async function canUseClaudeSdkTool(
   const unprefixedToolName = toolName
     .replace(/^mcp__/, '')
     .replace(/^taskwraith__/, '')
-  if (isMcpAutoAllowedForRun(unprefixedToolName, payload.effectivePermissions, normalizedInput)) {
+  const approvalPriority = nativeProviderApprovalPriority(
+    toolName,
+    isMcpAutoAllowedForRun(unprefixedToolName, payload.effectivePermissions, normalizedInput)
+  )
+  if (approvalPriority === 'deny-native') {
+    return {
+      behavior: 'deny',
+      message: nativeProviderBrokerOnlyMessage('Claude', toolName)
+    }
+  }
+  if (approvalPriority === 'allow-auto') {
     return { behavior: 'allow', updatedInput }
   }
   const service = claudeAgenticServiceForTool(toolName)
@@ -13268,6 +13921,7 @@ async function canUseClaudeSdkTool(
   const externalPathDetection = detectExternalPathForProviderApproval({
     provider: 'claude',
     appChatId: route.appChatId,
+    appRunId: route.appRunId,
     toolName,
     method: 'claude/canUseTool',
     params: normalizedInput,
@@ -13520,6 +14174,9 @@ async function tryRunClaudeSdk(
       permissionMode: isReconRunPosture(payload)
         ? 'default'
         : claudePermissionModeForApproval(payload.approvalMode),
+      // Built-ins cannot enforce TaskWraith's signed workspace/path boundary.
+      // MCP servers are configured separately and remain available.
+      tools: [],
       resume: payload.providerSessionId || undefined,
       abortController: controller,
       canUseTool: (toolNameOrRequest: unknown, input?: unknown) =>
@@ -13689,9 +14346,8 @@ async function runClaudeProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
       claudeFastMode: payload.claudeFastMode,
       imagePaths: payload.imagePaths || null
     }),
-    // Phase J1 composer-unification: External Path grants picked from
-    // the cross-provider composer pill flow through here as
-    // `--add-dir <path>` flags for Claude CLI.
+    // External grants are consumed only by the TaskWraith broker. Opaque
+    // provider CLIs never receive widened native directory authority.
     ...externalPathGrantsToCliAddDirArgs(payload.externalPathGrants)
   ]
   let baseArgs = buildBaseArgs()
@@ -14544,6 +15200,7 @@ async function runGrokAcpProvider(event: Electron.IpcMainInvokeEvent, payload: A
       if (grokTaskWraithSafeToolRequested(request)) return 'allow'
       const networkRead = grokAcpNetworkReadRequested(request)
       if (networkRead && !grokNetworkAccessAllowed(state)) return 'deny'
+      if (nativeProviderToolRequiresBroker(request.toolName)) return 'deny'
       if (!grokWriteCapable(payload.approvalMode)) {
         if (networkRead) return 'allow'
         // Read-only / recon: allow a shell tool call ONLY when it is a provably
@@ -14744,6 +15401,57 @@ function kimiTaskWraithMcpConfigPathForRun(runId: string, purpose: string): stri
   return join(tempDir, `taskwraith-kimi-mcp-${safeRunId}-${safePurpose}-${randomUUID()}.json`)
 }
 
+function kimiTaskWraithAgentPathForRun(runId: string, purpose: string): string {
+  const tempDir = (() => {
+    try {
+      return app.getPath('temp')
+    } catch {
+      return os.tmpdir()
+    }
+  })()
+  const safeRunId = String(runId)
+    .replace(/[^A-Za-z0-9._-]/g, '_')
+    .slice(0, 80)
+  const safePurpose = String(purpose)
+    .replace(/[^A-Za-z0-9._-]/g, '_')
+    .slice(0, 24)
+  return join(tempDir, `taskwraith-kimi-agent-${safeRunId}-${safePurpose}-${randomUUID()}.yaml`)
+}
+
+async function assertKimiUserPluginToolsAbsent(): Promise<void> {
+  const pluginDirectory = join(os.homedir(), '.kimi', 'plugins')
+  try {
+    const entries = await fs.readdir(pluginDirectory)
+    const pluginEntries = entries.filter((entry) => entry !== '.DS_Store' && !entry.startsWith('.'))
+    if (pluginEntries.length > 0) {
+      throw new Error(
+        `Kimi user plugin tools are installed in ${pluginDirectory}. TaskWraith cannot bind those opaque tools to this run's workspace, so the run was not launched.`
+      )
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return
+    throw error
+  }
+}
+
+async function writeKimiBrokerOnlyAgentForRun(input: {
+  runId: string
+  purpose: string
+}): Promise<string> {
+  await assertKimiUserPluginToolsAbsent()
+  const agentPath = kimiTaskWraithAgentPathForRun(input.runId, input.purpose)
+  try {
+    await fs.writeFile(agentPath, buildKimiBrokerOnlyAgentYaml(), {
+      encoding: 'utf8',
+      mode: 0o600
+    })
+    return agentPath
+  } catch (error) {
+    await fs.unlink(agentPath).catch(() => {})
+    throw error
+  }
+}
+
 async function readKimiGlobalMcpConfig(): Promise<unknown> {
   const configPath = join(os.homedir(), '.kimi', 'mcp.json')
   try {
@@ -14765,13 +15473,14 @@ async function writeKimiMcpConfigForRun(input: {
   preserveUserServers?: boolean
 }): Promise<string> {
   const globalConfig =
-    input.preserveUserServers === false ? undefined : await readKimiGlobalMcpConfig()
+    input.preserveUserServers === true ? await readKimiGlobalMcpConfig() : undefined
   const bridgeStatus = input.includeTaskWraith ? taskwraithMcpBridgeCommandStatus() : null
   if (bridgeStatus && !bridgeStatus.available) {
     throw new Error(taskwraithMcpBridgeUnavailableMessage(bridgeStatus))
   }
   const config = buildKimiRunMcpConfig({
     globalConfig,
+    preserveUserServers: input.preserveUserServers === true,
     ...(bridgeStatus
       ? {
           taskWraith: {
@@ -14796,6 +15505,11 @@ async function writeKimiMcpConfigForRun(input: {
 async function removeKimiMcpConfigFile(configPath: string | null): Promise<void> {
   if (!configPath) return
   await fs.unlink(configPath).catch(() => {})
+}
+
+async function removeKimiAgentFile(agentPath: string | null): Promise<void> {
+  if (!agentPath) return
+  await fs.unlink(agentPath).catch(() => {})
 }
 
 function respondToKimiWireRequest(child: ChildProcess, requestId: string | number, result: any) {
@@ -14975,16 +15689,15 @@ async function runKimiWireProvider(
   let args = ['--wire', '--work-dir', payload.workspace!]
   appendKimiModelArgs(args, model, payload.serviceTier)
   appendKimiThinkingArgs(args, payload.kimiThinking)
-  // Phase J1 composer-unification: cross-provider External Path grants
-  // flow through Kimi's CLI as `--add-dir <path>` flags. Same picker
-  // pill, same persisted state slot, different provider runtime.
+  // External grants remain broker-only; this deliberately contributes no
+  // native Kimi directory flags.
   args.push(...externalPathGrantsToCliAddDirArgs(payload.externalPathGrants))
   if (payload.providerSessionId) args.push('--resume', payload.providerSessionId)
 
   // Prepare this app's broker, then pin the exact server document to THIS
   // Kimi process. The explicit file suppresses ~/.kimi/mcp.json, preventing a
-  // Release/Dev instance from stealing the other app's TaskWraith route while
-  // preserving every user-owned server from that global document.
+  // Release/Dev instance from stealing the other app's TaskWraith route and
+  // preventing opaque user MCP servers from bypassing the signed broker.
   const kimiMcpReady = await prepareKimiMcpBridgeForRun(event.sender)
   if (!kimiMcpReady) {
     payload.taskWraithMcpAdvertised = false
@@ -14995,15 +15708,24 @@ async function runKimiWireProvider(
     })
   }
   let kimiMcpConfigPath: string | null = null
+  let kimiAgentFilePath: string | null = null
   try {
+    kimiAgentFilePath = await writeKimiBrokerOnlyAgentForRun({
+      runId: route.appRunId || 'unknown',
+      purpose: 'wire'
+    })
     kimiMcpConfigPath = await writeKimiMcpConfigForRun({
       runId: route.appRunId || 'unknown',
       purpose: 'wire',
-      includeTaskWraith: kimiMcpReady
+      includeTaskWraith: kimiMcpReady,
+      preserveUserServers: false
     })
+    args.push('--agent-file', kimiAgentFilePath)
     args = extendKimiCliArgsWithMcpConfig(args, kimiMcpConfigPath)
   } catch (error) {
-    const message = `Kimi's isolated MCP config could not be created; the run was not launched. ${
+    await removeKimiAgentFile(kimiAgentFilePath)
+    await removeKimiMcpConfigFile(kimiMcpConfigPath)
+    const message = `Kimi's isolated broker-only runtime files could not be created; the run was not launched. ${
       error instanceof Error ? error.message : String(error)
     }`
     sendAgentCompatError(event.sender, 'kimi', message, state)
@@ -15022,8 +15744,10 @@ async function runKimiWireProvider(
   return new Promise((resolveWire) => {
     const finishWire = (result: boolean): void => {
       const configPath = kimiMcpConfigPath
+      const agentPath = kimiAgentFilePath
       kimiMcpConfigPath = null
-      void removeKimiMcpConfigFile(configPath)
+      kimiAgentFilePath = null
+      void Promise.all([removeKimiMcpConfigFile(configPath), removeKimiAgentFile(agentPath)])
       resolveWire(result)
     }
     const child = spawn(binaryPath, args, {
@@ -15294,10 +16018,26 @@ async function runKimiWireProvider(
               // prompt: main unwraps capability_invoke and applies the target's
               // real approval policy, so the wrapper itself is never granted.
               // Reuses `MCP_AUTO_ALLOWED_TOOLS` for the ordinary safe set.
-              if (
+              const approvalPriority = nativeProviderApprovalPriority(
+                kimiToolName,
                 isCapabilityGatewayToolName(kimiCanonicalToolName) ||
-                isMcpAutoAllowedForRun(kimiCanonicalToolName, state.effectivePermissions, kimiToolArgs)
-              ) {
+                  isMcpAutoAllowedForRun(
+                    kimiCanonicalToolName,
+                    state.effectivePermissions,
+                    kimiToolArgs
+                  )
+              )
+              if (approvalPriority === 'deny-native') {
+                const feedback = nativeProviderBrokerOnlyMessage('Kimi', kimiToolName)
+                respondToKimiWireRequest(child, message.id, {
+                  request_id: message.params?.payload?.id || message.id,
+                  response: 'reject',
+                  feedback
+                })
+                sendAgentCompatError(event.sender, 'kimi', feedback, state)
+                continue
+              }
+              if (approvalPriority === 'allow-auto') {
                 respondToKimiWireRequest(child, message.id, {
                   request_id: message.params?.payload?.id || message.id,
                   response: 'approve'
@@ -15307,6 +16047,7 @@ async function runKimiWireProvider(
               const externalPathDetection = detectExternalPathForProviderApproval({
                 provider: 'kimi',
                 appChatId: route.appChatId,
+                appRunId: route.appRunId,
                 toolName: kimiToolName,
                 method: 'request/ApprovalRequest',
                 params: message.params?.payload,
@@ -15725,14 +16466,22 @@ async function runKimiProvider(event: Electron.IpcMainInvokeEvent, payload: Agen
     })
   }
   let kimiMcpConfigPath: string | null = null
+  let kimiAgentFilePath: string | null = null
   try {
+    kimiAgentFilePath = await writeKimiBrokerOnlyAgentForRun({
+      runId: route.appRunId || 'unknown',
+      purpose: 'print'
+    })
     kimiMcpConfigPath = await writeKimiMcpConfigForRun({
       runId: route.appRunId || 'unknown',
       purpose: 'print',
-      includeTaskWraith: kimiMcpReady
+      includeTaskWraith: kimiMcpReady,
+      preserveUserServers: false
     })
   } catch (error) {
-    const message = `Kimi's isolated MCP config could not be created; the print-mode fallback was not launched. ${
+    await removeKimiAgentFile(kimiAgentFilePath)
+    await removeKimiMcpConfigFile(kimiMcpConfigPath)
+    const message = `Kimi's isolated broker-only runtime files could not be created; the print-mode fallback was not launched. ${
       error instanceof Error ? error.message : String(error)
     }`
     sendAgentCompatError(event.sender, 'kimi', message, route)
@@ -15759,6 +16508,8 @@ async function runKimiProvider(event: Electron.IpcMainInvokeEvent, payload: Agen
     'stream-json',
     '--work-dir',
     payload.workspace!,
+    '--agent-file',
+    kimiAgentFilePath,
     '--prompt',
     payload.prompt
   ]
@@ -15778,8 +16529,7 @@ async function runKimiProvider(event: Electron.IpcMainInvokeEvent, payload: Agen
       baseArgs.push('--image', imagePath.trim())
     }
   }
-  // Phase J1 composer-unification: same External Path grants → --add-dir
-  // translation as the wire-mode spawn path above.
+  // External grants remain broker-only in print fallback too.
   baseArgs.push(...externalPathGrantsToCliAddDirArgs(payload.externalPathGrants))
   if (payload.providerSessionId) baseArgs.push('--resume', payload.providerSessionId)
   const args = extendKimiCliArgsWithMcpConfig(baseArgs, kimiMcpConfigPath)
@@ -15798,7 +16548,12 @@ async function runKimiProvider(event: Electron.IpcMainInvokeEvent, payload: Agen
       TASKWRAITH_CHAT_ID: fallbackRoute.appChatId || '',
       ...(kimiKey ? { MOONSHOT_API_KEY: kimiKey } : {})
     },
-    onComplete: () => removeKimiMcpConfigFile(kimiMcpConfigPath)
+    onComplete: async () => {
+      await Promise.all([
+        removeKimiMcpConfigFile(kimiMcpConfigPath),
+        removeKimiAgentFile(kimiAgentFilePath)
+      ])
+    }
   })
 }
 
@@ -16510,6 +17265,16 @@ function normalizeExternalPathGrants(grants?: ExternalPathGrant[]): ExternalPath
     if (isSymlinkPath(grantPath)) continue
     const resolvedPath = canonicalExternalGrantPath(grantPath)
     if (!resolvedPath) continue
+    if (grant.bindingVersion === EXTERNAL_PATH_GRANT_BINDING_VERSION) {
+      // Every authority-bearing v2 field is part of the HMAC. Normalization may
+      // validate but must never "repair" a signed grant into a different object.
+      if (grant.path !== resolvedPath) continue
+      if (grant.access !== 'read' && grant.access !== 'write') continue
+      if (grant.kind !== 'file' && grant.kind !== 'directory') continue
+      if (!isExecutableExternalPathGrantDuration(grant.duration)) continue
+      normalized.push(grant)
+      continue
+    }
     normalized.push({
       ...grant,
       path: resolvedPath,
@@ -16525,30 +17290,112 @@ function externalPathGrantMetadataLists(chat: ChatRecord | null | undefined): Ex
   return collectExternalPathGrantsFromMetadata(chat?.providerMetadata)
 }
 
-function externalPathGrantsForProvider(
-  appChatId: string | undefined,
-  provider: ProviderId
+/**
+ * Main-owned execution view of a chat's durable external-path grants.
+ *
+ * `normalizeExternalPathGrants` is intentionally suitable for decoding and UI
+ * display, so its context-free signature check is not an authorization
+ * boundary. Every host-side filesystem consumer must come through this helper:
+ * it resolves the chat's canonical PRIMARY workspace and rejects grants copied
+ * from another chat/workspace. With no run id, `thisRun` grants also fail
+ * closed; durable host-media and desktop Git surfaces use thread grants only.
+ */
+function executableExternalPathGrantsForChat(
+  chat: ChatRecord | null | undefined,
+  provider?: ProviderId
 ): ExternalPathGrant[] {
-  if (!appChatId) return []
-  return normalizeExternalPathGrants(
-    externalPathGrantMetadataLists(AppStore.getChat(appChatId))
-  ).filter((grant) => grant.provider === provider)
+  if (!chat || chatScope(chat) === 'global') return []
+  const primaryWorkspace = resolveChatPrimaryWorkspace(
+    chat,
+    AppStore.getWorkspaces(),
+    canonicalPath
+  )
+  if (!primaryWorkspace) return []
+  return normalizeExternalPathGrants(externalPathGrantMetadataLists(chat)).filter(
+    (grant) =>
+      (!provider || grant.provider === provider) &&
+      isMainIssuedExternalPathGrant(grant, {
+        provider: grant.provider,
+        appChatId: chat.appChatId,
+        workspacePath: primaryWorkspace.path
+      })
+  )
+}
+
+/**
+ * Resolve the capabilities carried by one live provider run. Unlike renderer
+ * metadata, the RunManager state was created from the main-normalized dispatch
+ * payload, so it is the authority source for exact `thisRun` attachment grants.
+ */
+function executableExternalPathGrantsForRun(
+  chat: ChatRecord | null | undefined,
+  appRunId: string | null | undefined
+): ExternalPathGrant[] {
+  const runId = typeof appRunId === 'string' ? appRunId.trim() : ''
+  if (!chat || !runId || chatScope(chat) === 'global') return []
+  const session = runManager.get(runId)
+  if (
+    !session ||
+    session.appChatId !== chat.appChatId ||
+    (session.status !== 'starting' && session.status !== 'running')
+  ) {
+    return []
+  }
+  const primaryWorkspace = resolveChatPrimaryWorkspace(
+    chat,
+    AppStore.getWorkspaces(),
+    canonicalPath
+  )
+  if (!primaryWorkspace || !session.workspacePath) return []
+  try {
+    if (canonicalPath(session.workspacePath) !== canonicalPath(primaryWorkspace.path)) return []
+  } catch {
+    return []
+  }
+
+  const state = asRecord(session.state)
+  const effectivePermissions = asRecord(state?.effectivePermissions)
+  const stateGrants = Array.isArray(state?.externalPathGrants)
+    ? (state.externalPathGrants as ExternalPathGrant[])
+    : []
+  const effectiveGrants = Array.isArray(effectivePermissions?.externalPathGrants)
+    ? (effectivePermissions.externalPathGrants as ExternalPathGrant[])
+    : []
+  return normalizeExternalPathGrants([
+    ...effectiveGrants,
+    ...stateGrants,
+    ...externalPathGrantMetadataLists(chat)
+  ]).filter(
+    (grant) =>
+      grant.provider === session.provider &&
+      isMainIssuedExternalPathGrant(grant, {
+        provider: session.provider,
+        appChatId: chat.appChatId,
+        appRunId: runId,
+        workspacePath: primaryWorkspace.path
+      })
+  )
 }
 
 function detectExternalPathForProviderApproval(input: {
   provider: ProviderId
   appChatId?: string
+  appRunId?: string
   toolName: string
   method?: string
   params: unknown
   workspacePath?: string
 }): PendingExternalPathDetection | undefined {
+  const chat = input.appChatId ? AppStore.getChat(input.appChatId) : null
+  const grants = input.appRunId
+    ? executableExternalPathGrantsForRun(chat, input.appRunId)
+    : executableExternalPathGrantsForChat(chat, input.provider)
   const detection = detectExternalPath({
     toolName: input.toolName,
     method: input.method,
     params: input.params,
     workspacePath: input.workspacePath,
-    existingGrants: externalPathGrantsForProvider(input.appChatId, input.provider).map((grant) => ({
+    existingGrants: grants.map((grant) => ({
       path: grant.path,
       kind: grant.kind,
       access: grant.access
@@ -16588,27 +17435,14 @@ function externalPathApprovalPreview(detection: PendingExternalPathDetection): {
 }
 
 /**
- * Phase J1 composer-unification: translate the run payload's external
- * path grants into `--add-dir <path>` CLI flag pairs for the
- * non-Codex providers. Codex still routes grants through its
- * sandbox-policy translator (see `codexSandboxPolicyForMode`); this
- * helper is consumed by `appendGeminiCliSessionArgs`, the Claude CLI
- * fallback spawn, and the Kimi spawn so granting access via the
- * shared composer pill flows through to every provider's runtime.
- *
- * Pure function — exported via the existing test harness so we can
- * pin the exact translation in a unit test (`grants → ["--add-dir",
- * <path>, "--add-dir", <path>, ...]`).
+ * Opaque provider CLIs cannot express TaskWraith's signed per-path
+ * read-vs-write capability or revalidate it at every native file open. Never
+ * widen them with `--add-dir`: external workspace access stays on the brokered
+ * TaskWraith tools, where chat/run binding and canonical paths are checked for
+ * every operation.
  */
-function externalPathGrantsToCliAddDirArgs(grants?: ExternalPathGrant[]): string[] {
-  const args: string[] = []
-  const seen = new Set<string>()
-  for (const grant of normalizeExternalPathGrants(grants)) {
-    if (seen.has(grant.path)) continue
-    seen.add(grant.path)
-    args.push('--add-dir', grant.path)
-  }
-  return args
+function externalPathGrantsToCliAddDirArgs(_grants?: ExternalPathGrant[]): string[] {
+  return []
 }
 
 /**
@@ -16619,33 +17453,21 @@ function externalPathGrantsToCliAddDirArgs(grants?: ExternalPathGrant[]): string
  * site). Pre-EW42c we were emitting `--add-dir` to Gemini via
  * `externalPathGrantsToCliAddDirArgs`, which Gemini silently
  * ignored — so `ExternalPathGrant`s for Gemini-routed turns were
- * cosmetic only (the grant existed in the chat metadata + showed
- * up in the `ExternalPathAboveRow` banner, but the agent's actual
- * filesystem scope didn't include the path, forcing fallback to
- * shell commands). With this helper, Gemini participants now
- * receive `--include-directories <path>` per grant, matching the
- * sandbox enforcement Codex / Claude / Kimi already had.
+ * cosmetic only. Gemini is now retired; this historical helper deliberately
+ * follows the live providers' broker-only fail-closed posture.
  */
-function externalPathGrantsToGeminiIncludeDirArgs(grants?: ExternalPathGrant[]): string[] {
-  const args: string[] = []
-  const seen = new Set<string>()
-  for (const grant of normalizeExternalPathGrants(grants)) {
-    if (seen.has(grant.path)) continue
-    seen.add(grant.path)
-    args.push('--include-directories', grant.path)
-  }
-  return args
+function externalPathGrantsToGeminiIncludeDirArgs(_grants?: ExternalPathGrant[]): string[] {
+  return []
 }
 
 function codexSandboxPolicyForMode(
   approvalMode: string | undefined,
   workspace: string,
-  externalPathGrants?: ExternalPathGrant[],
+  _externalPathGrants?: ExternalPathGrant[],
   settings: AppSettings = AppStore.getSettings(),
   scope: ChatScope = 'workspace',
   fullAccessGranted = false
 ) {
-  const grants = normalizeExternalPathGrants(externalPathGrants)
   const workspaceRoot = resolve(workspace)
   const hostRoot = parse(workspaceRoot).root || sep
   const gitMetadataRoots =
@@ -16653,14 +17475,13 @@ function codexSandboxPolicyForMode(
   const readableRoots =
     scope === 'global'
       ? [hostRoot]
-      : uniqueRoots([workspaceRoot, ...gitMetadataRoots, ...grants.map((grant) => grant.path)])
+      : uniqueRoots([workspaceRoot, ...gitMetadataRoots])
   const writableRoots =
     scope === 'global'
       ? [hostRoot]
       : uniqueRoots([
           workspaceRoot,
-          ...gitMetadataRoots,
-          ...grants.filter((grant) => grant.access === 'write').map((grant) => grant.path)
+          ...gitMetadataRoots
         ])
   if (approvalMode === 'plan') {
     return { type: 'readOnly', readableRoots, networkAccess: false }
@@ -16827,7 +17648,12 @@ function emitCodexProviderMediaRefs(state: CodexRunState, raw: unknown): void {
     source: 'generated',
     blocks,
     assetWriter: ({ sha256, buffer, mimeType }) =>
-      writeTranscriptMediaAsset({ sha256, buffer, mimeType })
+      writeTranscriptMediaAsset({
+        sha256,
+        buffer,
+        mimeType,
+        ...(state.appChatId ? { appChatId: state.appChatId } : {})
+      })
   })
   if (refs.length === 0) return
   const seen = state.providerMediaRefKeys ?? new Set<string>()
@@ -17684,6 +18510,7 @@ async function runHostSeatSummaryProcess(input: {
   let processError: string | undefined
   let exitCode = -1
   let kimiMcpConfigPath: string | null = null
+  let kimiAgentFilePath: string | null = null
   try {
     let processArgs = input.args
     if (input.provider === 'kimi') {
@@ -17696,7 +18523,14 @@ async function runHostSeatSummaryProcess(input: {
         includeTaskWraith: false,
         preserveUserServers: false
       })
-      processArgs = extendKimiCliArgsWithMcpConfig(processArgs, kimiMcpConfigPath)
+      kimiAgentFilePath = await writeKimiBrokerOnlyAgentForRun({
+        runId: `seat-summary-${Date.now()}`,
+        purpose: 'maintenance'
+      })
+      processArgs = extendKimiCliArgsWithMcpConfig(
+        [...processArgs, '--agent-file', kimiAgentFilePath],
+        kimiMcpConfigPath
+      )
     }
     const plan = createCliSpawnPlan(input.binaryPath, processArgs)
     exitCode = await new Promise<number>((resolve) => {
@@ -17777,6 +18611,7 @@ async function runHostSeatSummaryProcess(input: {
     processError = error instanceof Error ? error.message : String(error)
   } finally {
     await removeKimiMcpConfigFile(kimiMcpConfigPath)
+    await removeKimiAgentFile(kimiAgentFilePath)
   }
   return {
     ok: exitCode === 0 && !timedOut,
@@ -19108,6 +19943,7 @@ function handleCodexServerRequest(message: any) {
     const detection = detectExternalPathForProviderApproval({
       provider: 'codex',
       appChatId: state.appChatId,
+      appRunId: state.appRunId,
       toolName: probedToolName,
       method,
       params,
@@ -20479,6 +21315,28 @@ function resolveOllamaReadToolScope(
   }
 }
 
+function resolveWorkspaceToolPathAuthority(
+  context: WorkspaceToolContext,
+  filePath: string,
+  options: { allowWorkspaceRoot?: boolean } = {}
+): ScopedPathAuthority {
+  const targetPath = resolveWorkspaceToolScopedPath(context, filePath, options)
+  if (context.scope === 'global') {
+    const canonicalTarget = canonicalExternalGrantPath(targetPath) || targetPath
+    return {
+      rootPath:
+        dirname(canonicalTarget) === canonicalTarget ? canonicalTarget : dirname(canonicalTarget),
+      targetPath: canonicalTarget
+    }
+  }
+  const rootPath = canonicalExternalGrantPath(context.workspacePath || context.cwd)
+  const canonicalTarget = canonicalExternalGrantPath(targetPath)
+  if (!rootPath || !canonicalTarget) {
+    throw new Error('Selected workspace path could not be resolved safely.')
+  }
+  return { rootPath, targetPath: canonicalTarget }
+}
+
 async function executeOllamaLocalTool(
   request: OllamaToolExecutionRequest
 ): Promise<OllamaToolExecutionResult> {
@@ -20618,15 +21476,14 @@ async function executeOllamaLocalTool(
         appRunId: request.appRunId,
         appChatId: request.appChatId
       })
-      const targetPath = runContext
-        ? resolveGeminiMcpGrantAwarePath(runContext, 'ollama', rawPath, 'read')
-        : resolveWorkspaceToolScopedPath(context, rawPath)
-      const stat = await fs.stat(targetPath)
-      if (!stat.isFile()) throw new Error('Selected path is not a file.')
-      if (stat.size > MAX_EDITOR_FILE_BYTES) {
-        throw new Error('File is too large to read through the Ollama tool loop.')
-      }
-      const buffer = await fs.readFile(targetPath)
+      const authority = runContext
+        ? resolveGeminiMcpGrantAwarePathAuthority(runContext, 'ollama', rawPath, 'read')
+        : resolveWorkspaceToolPathAuthority(context, rawPath)
+      const { buffer, stat } = await readScopedRegularFile(authority, {
+        maxBytes: MAX_EDITOR_FILE_BYTES,
+        sizeLimitErrorMessage: 'File is too large to read through the Ollama tool loop.'
+      })
+      const targetPath = authority.targetPath
       assertTextBuffer(buffer)
       const sliced = sliceOllamaReadFileOutput(buffer.toString('utf8'), request.arguments)
       return {
@@ -20636,7 +21493,7 @@ async function executeOllamaLocalTool(
           ok: true,
           tool: 'read_file',
           path: formatWorkspaceToolScopedPath(context, targetPath),
-          bytes: stat.size,
+          bytes: Number(stat.size),
           startLine: sliced.startLine,
           endLine: sliced.endLine,
           totalLines: sliced.totalLines,
@@ -20675,14 +21532,13 @@ async function executeOllamaLocalTool(
         appRunId: request.appRunId,
         appChatId: request.appChatId
       })
-      const targetPath = runContext
-        ? resolveGeminiMcpGrantAwarePath(runContext, 'ollama', rawPath, 'read', {
+      const authority = runContext
+        ? resolveGeminiMcpGrantAwarePathAuthority(runContext, 'ollama', rawPath, 'read', {
             allowWorkspaceRoot: true
           })
-        : resolveWorkspaceToolScopedPath(context, rawPath, { allowWorkspaceRoot: true })
-      const stat = await fs.stat(targetPath)
-      if (!stat.isDirectory()) throw new Error('Selected path is not a directory.')
-      const entries = await fs.readdir(targetPath, { withFileTypes: true })
+        : resolveWorkspaceToolPathAuthority(context, rawPath, { allowWorkspaceRoot: true })
+      const targetPath = authority.targetPath
+      const entries = await readScopedDirectory(authority)
       const rows = entries
         .sort((a, b) => {
           if (a.isDirectory() !== b.isDirectory()) return a.isDirectory() ? -1 : 1
@@ -22441,7 +23297,14 @@ async function verifyProductAuditBundle(
       }
       targetPath = result.filePaths[0]
     }
-    const raw = await fs.readFile(targetPath, 'utf8')
+    const raw = (
+      await readBoundedRegularFile(targetPath, {
+        maxBytes: PRODUCT_AUDIT_BUNDLE_MAX_VERIFY_BYTES,
+        regularFileErrorMessage: 'Audit bundle verification requires a regular file.',
+        sizeLimitErrorMessage:
+          `Audit bundle exceeds the ${PRODUCT_AUDIT_BUNDLE_MAX_VERIFY_BYTES}-byte verification limit.`
+      })
+    ).toString('utf8')
     const snapshot = JSON.parse(raw) as ProductAuditBundleSnapshot
     const verification = verifyAuditBundleSnapshotSignature(snapshot)
     return recordVerification({
@@ -22919,24 +23782,22 @@ async function readAgentRosterPresetImportSource(
     return { json: inlineJson, source: { kind: 'inline' } }
   }
 
-  const targetPath = resolveGeminiMcpGrantAwarePath(
+  const authority = resolveGeminiMcpGrantAwarePathAuthority(
     context,
     parentProvider,
     requestedPath!,
     'read'
   )
-  const stat = await fs.stat(targetPath)
-  if (!stat.isFile()) throw new Error('Roster preset import path is not a file.')
-  if (stat.size > AGENT_ROSTER_IMPORT_MAX_BYTES) {
-    throw new Error(
+  const { buffer } = await readScopedRegularFile(authority, {
+    maxBytes: AGENT_ROSTER_IMPORT_MAX_BYTES,
+    regularFileErrorMessage: 'Roster preset import path is not a file.',
+    sizeLimitErrorMessage:
       `Roster preset import is larger than ${AGENT_ROSTER_IMPORT_MAX_BYTES.toLocaleString()} bytes.`
-    )
-  }
-  const buffer = await fs.readFile(targetPath)
+  })
   assertTextBuffer(buffer)
   return {
     json: buffer.toString('utf8'),
-    source: { kind: 'path', path: formatScopedPath(context, targetPath) }
+    source: { kind: 'path', path: formatScopedPath(context, authority.targetPath) }
   }
 }
 
@@ -23528,6 +24389,7 @@ async function executeGeminiMcpTool(
   const externalPathDetection = detectExternalPathForProviderApproval({
     provider: parentProvider,
     appChatId: context.appChatId,
+    appRunId: context.appRunId,
     toolName,
     method: `${parentProvider}-mcp/${toolName}`,
     params: args,
@@ -24841,30 +25703,27 @@ async function executeGeminiMcpTool(
         })
       }
     } else if (toolName === 'read_file') {
-      const targetPath = resolveGeminiMcpGrantAwarePath(
+      const authority = resolveGeminiMcpGrantAwarePathAuthority(
         context,
         parentProvider,
         String(args.path || args.file_path || ''),
         'read'
       )
-      const stat = await fs.stat(targetPath)
-      if (!stat.isFile()) throw new Error('Selected path is not a file.')
-      if (stat.size > MAX_EDITOR_FILE_BYTES)
-        throw new Error('File is too large to read through the MCP bridge.')
-      const buffer = await fs.readFile(targetPath)
+      const { buffer } = await readScopedRegularFile(authority, {
+        maxBytes: MAX_EDITOR_FILE_BYTES,
+        sizeLimitErrorMessage: 'File is too large to read through the MCP bridge.'
+      })
       assertTextBuffer(buffer)
       text = buffer.toString('utf8')
     } else if (toolName === 'list_directory') {
-      const targetPath = resolveGeminiMcpGrantAwarePath(
+      const authority = resolveGeminiMcpGrantAwarePathAuthority(
         context,
         parentProvider,
         String(args.path || args.directory || '.'),
         'read',
         { allowWorkspaceRoot: true }
       )
-      const stat = await fs.stat(targetPath)
-      if (!stat.isDirectory()) throw new Error('Selected path is not a directory.')
-      const entries = await fs.readdir(targetPath, { withFileTypes: true })
+      const entries = await readScopedDirectory(authority)
       text = entries
         .sort((a, b) => {
           if (a.isDirectory() !== b.isDirectory()) return a.isDirectory() ? -1 : 1
@@ -24874,29 +25733,33 @@ async function executeGeminiMcpTool(
         .map((entry) => `${entry.isDirectory() ? 'directory' : 'file'}\t${entry.name}`)
         .join('\n')
     } else if (toolName === 'write_file') {
-      const targetPath = resolveGeminiMcpGrantAwarePath(
+      const authority = resolveGeminiMcpGrantAwarePathAuthority(
         context,
         parentProvider,
         String(args.path || args.file_path || ''),
         'write'
       )
+      const targetPath = authority.targetPath
       const lock = acquireMcpWorkspaceWriteLocks({ context, toolName, cwd, resourcePath: targetPath })
       if (!lock.ok) {
         toolIsError = true
         text = lock.text
       } else {
       const content = String(args.content ?? '')
-      await fs.mkdir(dirname(targetPath), { recursive: true })
-      await fs.writeFile(targetPath, content, 'utf8')
+      await writeScopedUtf8FileWithLegacyCreate(authority, {
+        maxBytes: MAX_EDITOR_FILE_BYTES,
+        content
+      })
       text = `Wrote ${formatScopedPath(context, targetPath)} (${content.length} chars).`
       }
     } else if (toolName === 'replace') {
-      const targetPath = resolveGeminiMcpGrantAwarePath(
+      const authority = resolveGeminiMcpGrantAwarePathAuthority(
         context,
         parentProvider,
         String(args.path || args.file_path || ''),
         'write'
       )
+      const targetPath = authority.targetPath
       const lock = acquireMcpWorkspaceWriteLocks({ context, toolName, cwd, resourcePath: targetPath })
       if (!lock.ok) {
         toolIsError = true
@@ -24905,14 +25768,17 @@ async function executeGeminiMcpTool(
       const oldString = String(args.old_string ?? args.oldString ?? '')
       const newString = String(args.new_string ?? args.newString ?? '')
       if (!oldString) throw new Error('old_string is required.')
-      const original = await fs.readFile(targetPath, 'utf8')
-      if (!original.includes(oldString))
-        throw new Error('old_string was not found in the target file.')
-      const updated =
-        args.replace_all === true || args.replaceAll === true
-          ? original.split(oldString).join(newString)
-          : original.replace(oldString, newString)
-      await fs.writeFile(targetPath, updated, 'utf8')
+      await updateScopedUtf8File(authority, {
+        maxBytes: MAX_EDITOR_FILE_BYTES,
+        update: (original) => {
+          if (!original.includes(oldString)) {
+            throw new Error('old_string was not found in the target file.')
+          }
+          return args.replace_all === true || args.replaceAll === true
+            ? original.split(oldString).join(newString)
+            : original.replace(oldString, newString)
+        }
+      })
       text = `Edited ${formatScopedPath(context, targetPath)}.`
       }
     } else if (toolName === 'delegate_to_subthread') {
@@ -25553,7 +26419,12 @@ async function executeGeminiMcpTool(
         // forged value can't emit an unbounded number of refs. Absent → the default 8.
         maxRefs: finalRichResult?.mediaRefHints?.maxRefs,
         assetWriter: ({ sha256, buffer, mimeType }) =>
-          writeTranscriptMediaAsset({ sha256, buffer, mimeType })
+          writeTranscriptMediaAsset({
+            sha256,
+            buffer,
+            mimeType,
+            ...(context.appChatId ? { appChatId: context.appChatId } : {})
+          })
       })
       if (mediaRefs.length > 0) {
         sendAgentCompatLine(context.sender, parentProvider, {
@@ -25585,13 +26456,19 @@ async function executeGeminiMcpTool(
     // that case is map-owned anyway). Renderer-side it applies RAW + persists via
     // saveChat, so the inline Electron transcript shows it and it syncs to iOS.
     if (finalRichResult?.trustedMediaRefs && finalRichResult.trustedMediaRefs.length > 0) {
-      const delivered = injectTrustedMediaRefs(context.appRunId, finalRichResult.trustedMediaRefs)
-      if (!delivered && context.sender && context.appRunId && context.appChatId) {
-        sendTrustedRunMediaRefs(context.sender, {
-          appChatId: context.appChatId,
-          appRunId: context.appRunId,
-          mediaRefs: finalRichResult.trustedMediaRefs
-        })
+      const ownedMediaRefs = grantTranscriptMediaRefsToChat(
+        context.appChatId,
+        finalRichResult.trustedMediaRefs
+      )
+      if (ownedMediaRefs.length > 0) {
+        const delivered = injectTrustedMediaRefs(context.appRunId, ownedMediaRefs)
+        if (!delivered && context.sender && context.appRunId && context.appChatId) {
+          sendTrustedRunMediaRefs(context.sender, {
+            appChatId: context.appChatId,
+            appRunId: context.appRunId,
+            mediaRefs: ownedMediaRefs
+          })
+        }
       }
     }
     if (finalRichResult) {
@@ -26129,6 +27006,7 @@ function parseWorkspacePopoutInput(input: unknown): {
   kind: WorkspacePopoutKind
   workspacePath?: string
   chatId?: string
+  externalWriteAllowed?: boolean
   targetPath?: string
   targetView?: WorkspacePopoutTargetView
 } {
@@ -26154,19 +27032,44 @@ function parseWorkspacePopoutInput(input: unknown): {
     const workspacePath = chat.workspacePath || undefined
     return { kind, chatId, workspacePath }
   }
-  const workspacePath = requireRegisteredWorkspace(
-    requireNonEmptyString(input.workspacePath, 'Workspace'),
-    'Workspace'
-  )
+  const requestedWorkspacePath = requireNonEmptyString(input.workspacePath, 'Workspace')
+  const registeredWorkspace = findRegisteredWorkspace(requestedWorkspacePath)
+  const requestedChatId = typeof input.chatId === 'string' ? input.chatId.trim() : ''
+  if (!registeredWorkspace && kind !== 'diff-studio') {
+    throw new Error('External paths can only open in Diff Studio.')
+  }
+  const workspacePath = registeredWorkspace
+    ? requireRegisteredWorkspace(requestedWorkspacePath, 'Workspace')
+    : resolveRegisteredOrChatGrantedWorkspacePath(
+        { repoPath: requestedWorkspacePath, chatId: requestedChatId },
+        'read',
+        'Workspace'
+      )
+  const externalWriteAllowed = registeredWorkspace
+    ? undefined
+    : externalWorkspaceWriteAllowedForChat(requestedChatId, workspacePath)
   return {
     kind,
     workspacePath,
+    ...(registeredWorkspace ? {} : { chatId: requestedChatId }),
+    ...(externalWriteAllowed === undefined ? {} : { externalWriteAllowed }),
     targetPath:
       kind === 'file-editor' || kind === 'diff-studio' || kind === 'workbench'
         ? normalizeWorkspacePopoutTargetPath(input.targetPath)
         : undefined,
     targetView: normalizeWorkspacePopoutTargetView(kind, input.targetView)
   }
+}
+
+function externalWorkspaceWriteAllowedForChat(chatId: string, workspacePath: string): boolean {
+  const normalizedChatId = chatId.trim()
+  if (!normalizedChatId || !workspacePath) return false
+  return executableExternalPathGrantsForChat(AppStore.getChat(normalizedChatId)).some(
+    (grant) =>
+      grant.kind === 'directory' &&
+      grant.access === 'write' &&
+      externalGrantAllowsPath(grant, workspacePath, 'write')
+  )
 }
 
 type WorkspacePopoutTargetView = 'editor' | 'diff'
@@ -26176,6 +27079,7 @@ async function loadWorkspacePopoutWindow(
   kind: WorkspacePopoutKind,
   workspacePath: string | undefined,
   chatId?: string,
+  externalWriteAllowed?: boolean,
   targetPath?: string,
   targetView?: WorkspacePopoutTargetView
 ): Promise<void> {
@@ -26184,6 +27088,7 @@ async function loadWorkspacePopoutWindow(
     target.searchParams.set('popout', kind)
     if (workspacePath) target.searchParams.set('workspace', workspacePath)
     if (chatId) target.searchParams.set('chat', chatId)
+    if (chatId) target.searchParams.set('write', externalWriteAllowed ? '1' : '0')
     if (targetPath) target.searchParams.set('file', targetPath)
     if (targetView) target.searchParams.set('view', targetView)
     await win.loadURL(target.toString())
@@ -26192,6 +27097,7 @@ async function loadWorkspacePopoutWindow(
   const query: Record<string, string> = { popout: kind }
   if (workspacePath) query.workspace = workspacePath
   if (chatId) query.chat = chatId
+  if (chatId) query.write = externalWriteAllowed ? '1' : '0'
   if (targetPath) query.file = targetPath
   if (targetView) query.view = targetView
   await win.loadFile(join(__dirname, '../renderer/index.html'), {
@@ -26231,11 +27137,32 @@ function sendWorkspacePopoutOpenFile(
   safeSendToWebContents(win, 'workspace-popout-open-file', { workspacePath, path, view })
 }
 
-async function openWorkspacePopout(input: unknown): Promise<{ ok: true }> {
-  const { kind, workspacePath, chatId, targetPath, targetView } = parseWorkspacePopoutInput(input)
-  const key = kind === 'chat' ? `chat:${chatId}` : `${kind}:${workspacePath}`
+async function openWorkspacePopout(
+  event: IpcMainInvokeEvent,
+  input: unknown
+): Promise<{ ok: true }> {
+  const { kind, workspacePath, chatId, externalWriteAllowed, targetPath, targetView } =
+    parseWorkspacePopoutInput(input)
+  assertRendererCanOpenWorkspacePopout(event, { kind, workspacePath, chatId })
+  const key =
+    kind === 'chat'
+      ? `chat:${chatId}`
+      : JSON.stringify([kind, workspacePath || '', chatId || ''])
   const existing = workspacePopoutWindows.get(key)
   if (existing && !existing.isDestroyed()) {
+    const existingOwner = workspacePopoutOwners.get(key)
+    if (
+      existingOwner &&
+      externalWriteAllowed !== undefined &&
+      existingOwner.externalWriteAllowed !== externalWriteAllowed
+    ) {
+      existingOwner.externalWriteAllowed = externalWriteAllowed
+      safeSendToWebContents(existing, 'workspace-popout-refresh', {
+        workspacePath,
+        reason: 'capability-changed',
+        externalWriteAllowed
+      })
+    }
     if (existing.isMinimized()) existing.restore()
     existing.focus()
     if (
@@ -26302,6 +27229,7 @@ async function openWorkspacePopout(input: unknown): Promise<{ ok: true }> {
   })
 
   workspacePopoutWindows.set(key, win)
+  workspacePopoutOwners.set(key, { kind, workspacePath, chatId, externalWriteAllowed })
   attachSpellcheckContextTracking(win)
   win.webContents.setWindowOpenHandler((details) => {
     openSafeShellTargetDetached(details.url)
@@ -26311,20 +27239,33 @@ async function openWorkspacePopout(input: unknown): Promise<{ ok: true }> {
   win.on('closed', () => {
     if (workspacePopoutWindows.get(key) === win) {
       workspacePopoutWindows.delete(key)
+      workspacePopoutOwners.delete(key)
     }
   })
-  await loadWorkspacePopoutWindow(win, kind, workspacePath, chatId, targetPath, targetView)
+  await loadWorkspacePopoutWindow(
+    win,
+    kind,
+    workspacePath,
+    chatId,
+    externalWriteAllowed,
+    targetPath,
+    targetView
+  )
   return { ok: true }
 }
 
 async function dockSideChatPopout(
-  sender: Electron.WebContents,
+  event: IpcMainInvokeEvent,
   input: unknown
 ): Promise<{ ok: true }> {
   if (!isRecord(input)) {
     throw new Error('Dock request is invalid.')
   }
   const chatId = requireNonEmptyString(input.chatId, 'Chat')
+  // A chat id supplied by a secondary renderer is not authority. Validate the
+  // sender-owned popout before reading another chat or emitting navigation;
+  // main remains the only renderer allowed to dock an arbitrary linked chat.
+  assertRendererChatScope(event, chatId)
   const presentation = input.presentation === 'drawer' ? 'drawer' : 'split'
   const draft = typeof input.draft === 'string' ? input.draft : undefined
   const scrollState = normalizeChatPopoutScrollState(input.scrollState)
@@ -26359,7 +27300,7 @@ async function dockSideChatPopout(
     ...(roundExpansion ? { roundExpansion } : {})
   })
 
-  const sourceWindow = BrowserWindow.fromWebContents(sender)
+  const sourceWindow = BrowserWindow.fromWebContents(event.sender)
   if (sourceWindow && sourceWindow !== mainWindow && !sourceWindow.isDestroyed()) {
     sourceWindow.close()
   }
@@ -26390,9 +27331,31 @@ if (isGeminiMcpBridgeProcess) {
     // Rebrand continuity: seed the new TaskWraith userData dir from a legacy
     // AGBench install BEFORE the store performs its first lazy read.
     migrateLegacyUserDataSync()
+    // Transcript metadata is presentation data, not migration provenance. Old
+    // unowned assets remain fail-closed; only the durable main-owned ownership
+    // ledger can authorize a chat after restart.
     // Serve content-addressed transcript media (audio/video) over twmedia:// with
     // HTTP Range so <video>/<audio> can stream + seek (S0b). Base dir matches the
     // lazy TranscriptMediaAssetStore (userData/transcript-media).
+    session.defaultSession.webRequest.onBeforeRequest(
+      { urls: ['twmedia://asset/*'] },
+      createTwMediaRequestGate({
+        resolveWebContentsAuthority: (webContentsId) => {
+          if (
+            mainWindow &&
+            !mainWindow.isDestroyed() &&
+            mainWindow.webContents.id === webContentsId
+          ) {
+            return { kind: 'main' }
+          }
+          const owner = workspacePopoutOwnerForSender(webContentsId)
+          return owner?.kind === 'chat' && owner.chatId
+            ? { kind: 'chat', appChatId: owner.chatId }
+            : null
+        },
+        owns: (input) => getTranscriptMediaAssetStore().owns(input)
+      })
+    )
     registerTwMediaProtocol(join(app.getPath('userData'), TRANSCRIPT_MEDIA_ASSET_DIR))
     // Reclaim orphaned media-staging outputs (timed-out daemon encodes / ffmpeg
     // crash-orphans) at startup + every 30 min.
@@ -26545,7 +27508,8 @@ if (isGeminiMcpBridgeProcess) {
     })
     ipcMain.on(
       'creative-action:decide',
-      (_event, payload: { requestId: string; approved: boolean; rememberForSession: boolean }) => {
+      (event, payload: { requestId: string; approved: boolean; rememberForSession: boolean }) => {
+        assertMainRendererSender(event)
         creativeApprovalGateRef?.resolveApproval(payload.requestId, {
           approved: payload.approved,
           rememberForSession: payload.rememberForSession
@@ -26637,6 +27601,55 @@ if (isGeminiMcpBridgeProcess) {
       requireRegisteredWorkspace,
       findRegisteredWorkspace,
       validateChatWorkspaceIdentity,
+      stageAttachments: (input) => {
+        const attachments: PersistedAttachmentRef[] = []
+        for (const attachment of input.attachments) {
+          if ('persistenceVersion' in attachment && attachment.persistenceVersion === 1) {
+            const existing = resolveOwnedPersistedRunQueueAttachment({
+              store: getTranscriptMediaAssetStore(),
+              attachment,
+              appChatId: input.chatId
+            })
+            if (!existing.ok) {
+              return { ok: false, reason: 'Attachment snapshot failed.' }
+            }
+            attachments.push({
+              ...existing.attachment,
+              ...(attachment.id ? { id: attachment.id } : {}),
+              ...(attachment.name ? { name: attachment.name } : {})
+            })
+            continue
+          }
+          const snapshot = snapshotRasterOrPdfAttachment({
+            candidatePath: attachment.path,
+            workspacePath: input.workspacePath,
+            externalPathGrants: input.externalPathGrants,
+            authorizedFilePaths:
+              input.authorizedFilePaths ?? attachmentCapabilityRegistry.getMainAuthorizedPaths()
+          })
+          if (!snapshot.ok) {
+            return { ok: false, reason: 'Attachment snapshot failed.' }
+          }
+          const persisted = getTranscriptMediaAssetStore().writeContentAddressed({
+            buffer: snapshot.buffer,
+            mimeType: snapshot.mimeType,
+            ...(input.chatId ? { appChatId: input.chatId } : {})
+          })
+          if (!persisted.ok) {
+            return { ok: false, reason: 'Attachment snapshot failed.' }
+          }
+          attachments.push({
+            persistenceVersion: 1 as const,
+            ...(attachment.id ? { id: attachment.id } : {}),
+            path: persisted.path,
+            ...(attachment.name ? { name: attachment.name } : {}),
+            sha256: persisted.sha256,
+            mimeType: snapshot.mimeType,
+            byteLength: persisted.byteLength
+          })
+        }
+        return { ok: true, attachments }
+      },
       canLeaseJob: (job) => {
         if (!job.chatId) return true
         // 1.0.6-CRUX26 — sweep all AVAILABLE providers (incl. gated grok/cursor)
@@ -27133,7 +28146,7 @@ if (isGeminiMcpBridgeProcess) {
         if (!job.request?.remoteComposer) return false
         const leased = options.alreadyLeased
           ? job
-          : getRunRepository().leaseQueuedRun({
+          : runQueueService.leaseJob({
               runId: job.runId,
               provider: job.provider,
               statusReason: reason
@@ -28470,6 +29483,9 @@ if (isGeminiMcpBridgeProcess) {
                 fsSync.writeFileSync(file, buf)
                 return file
               })
+              for (const imagePath of steerImagePaths) {
+                authorizeImagePreviewPath(imagePath, { mainAuthority: true })
+              }
               steerImageThumbnails = buildBridgeImageThumbnails(buffers)
             } catch (err) {
               console.warn('[remote-bridge] failed to materialize steer attachments:', err)
@@ -28787,6 +29803,15 @@ if (isGeminiMcpBridgeProcess) {
               (mediaRef.source === 'generated' || mediaRef.source === 'tool_result') &&
               mediaRef.sha256
             ) {
+              if (
+                !getTranscriptMediaAssetStore().owns({
+                  sha256: mediaRef.sha256,
+                  mimeType: mediaRef.mimeType,
+                  appChatId: chat.appChatId
+                })
+              ) {
+                return { ok: false, reason: 'Transcript media is not owned by this chat' }
+              }
               try {
                 const slice = readTranscriptMediaRangeSlice({
                   baseDir: join(app.getPath('userData'), TRANSCRIPT_MEDIA_ASSET_DIR),
@@ -28820,7 +29845,7 @@ if (isGeminiMcpBridgeProcess) {
             }
             const full =
               mediaRef.source === 'generated' || mediaRef.source === 'tool_result'
-                ? fullTranscriptMediaFromAsset(mediaRef, maxBytes)
+                ? fullTranscriptMediaFromAsset(chat.appChatId, mediaRef, maxBytes)
                 : mediaRef.source === 'workspace_path'
                   ? fullWorkspaceTranscriptMedia(chat, mediaRef, maxBytes)
                   : { ok: false as const, reason: 'Full fetch is not supported for this media source' }
@@ -29364,6 +30389,9 @@ if (isGeminiMcpBridgeProcess) {
                 fsSync.writeFileSync(file, buf)
                 return file
               })
+              for (const imagePath of iosImagePaths) {
+                authorizeImagePreviewPath(imagePath, { mainAuthority: true })
+              }
               // Transcript previews the phone can actually render (it can't
               // read these Mac-local paths). Failure here is non-fatal — the
               // run still dispatches with the attachment, just no thumbnail.
@@ -29845,6 +30873,7 @@ if (isGeminiMcpBridgeProcess) {
                       // non-null record is guaranteed on this path.
                       workspaceId: workspaceRecord?.id ?? action.workspaceId,
                       chatId: chat.appChatId,
+                      appRunId: runId,
                       path: grantPath,
                       kind: 'directory',
                       access: 'write',
@@ -31854,6 +32883,7 @@ if (isGeminiMcpBridgeProcess) {
         remoteFirstLaunchStateTrigger?.()
         void localServersService.refreshNow()
       },
+      isMainRendererSender,
       requireNonEmptyString
     })
     const launchManager = new LaunchManager({
@@ -31876,6 +32906,31 @@ if (isGeminiMcpBridgeProcess) {
     })
     registerLaunchHandlers({
       launchManager,
+      resolveSenderLaunchScope: (event) => {
+        if (isMainRendererSender(event)) return { kind: 'main' }
+        const owner = workspacePopoutOwnerForSender(event.sender.id)
+        if (owner?.kind !== 'chat' || !owner.chatId) {
+          throw new Error('Renderer has no launch authority.')
+        }
+        const chat = AppStore.getChat(owner.chatId)
+        if (!chat?.workspaceId) {
+          throw new Error('Renderer launch authority could not be resolved.')
+        }
+        const canonicalWorkspaceId = canonicalRemoteWorkspaceId(chat.workspaceId)
+        const workspace = canonicalWorkspaceId
+          ? AppStore.getWorkspaces().find((candidate) => candidate.id === canonicalWorkspaceId)
+          : undefined
+        if (!workspace) {
+          throw new Error('Renderer launch workspace is not registered.')
+        }
+        return {
+          kind: 'chat',
+          chatId: owner.chatId,
+          workspaceId: workspace.id,
+          workspacePath: requireRegisteredWorkspace(workspace.path, 'Workspace')
+        }
+      },
+      workspacePathsEqual: (left, right) => canonicalPath(left) === canonicalPath(right),
       requireRegisteredWorkspace,
       findWorkspaceId: (workspacePath) => findRegisteredWorkspace(workspacePath)?.id,
       localServersSnapshot: () => localServersService.snapshot(),
@@ -32441,95 +33496,30 @@ if (isGeminiMcpBridgeProcess) {
       return { ok: true }
     })
 
-    // QMOD (1.0.3) — receive the user's answer to an `ask_user_question`
-    // tool call. Resolves the parked Promise so the MCP handler can
-    // return the answer to the agent. Validates that the questionId
-    // is still pending — stale answers from a previously-cancelled
-    // question quietly no-op.
-	    ipcMain.handle(
-	      'answer-agent-question',
-	      (
-	        _event,
-	        payload: {
-	          questionId: string
-	          answer: string
-	          isCustom?: boolean
-	          appChatId?: string
-	          appRunId?: string
-	          workspaceId?: string | null
-	        }
-	      ) => {
-	        const scope: RemoteQuestionResolutionScope = {
-	          workspaceId: payload.workspaceId,
-	          threadId: optionalString(payload.appChatId),
-	          runId: optionalString(payload.appRunId)
-	        }
-	        const result =
-	          scope.threadId || scope.runId || scope.workspaceId
-	            ? remoteQuestionRegistry.answerScoped(
-	                payload.questionId,
-	                scope,
-	                String(payload.answer || '').slice(0, REMOTE_QUESTION_MAX_ANSWER_CHARS),
-	                Boolean(payload.isCustom)
-	              )
-	            : remoteQuestionRegistry.answer(
-	                payload.questionId,
-	                String(payload.answer || '').slice(0, REMOTE_QUESTION_MAX_ANSWER_CHARS),
-	                Boolean(payload.isCustom)
-	              )
-	        if (!result.ok) return { ok: false, error: result.reason || 'no-such-question' }
-	        return { ok: true }
-	      }
-	    )
-
-    // QMOD (1.0.3) — user dismissed the question modal. Resolves with
-    // `cancelled: true` so the agent can treat it as "skip this step"
-    // and continue gracefully instead of timing out at 10 min.
-	    ipcMain.handle(
-	      'cancel-agent-question',
-	      (
-	        _event,
-	        payload: {
-	          questionId: string
-	          reason?: string
-	          appChatId?: string
-	          appRunId?: string
-	          workspaceId?: string | null
-	        }
-	      ) => {
-	        const scope: RemoteQuestionResolutionScope = {
-	          workspaceId: payload.workspaceId,
-	          threadId: optionalString(payload.appChatId),
-	          runId: optionalString(payload.appRunId)
-	        }
-	        const result =
-	          scope.threadId || scope.runId || scope.workspaceId
-	            ? remoteQuestionRegistry.rejectScoped(
-	                payload.questionId,
-	                scope,
-	                optionalString(payload.reason) || 'user-dismissed'
-	              )
-	            : remoteQuestionRegistry.reject(
-	                payload.questionId,
-	                optionalString(payload.reason) || 'user-dismissed'
-	              )
-	        if (!result.ok) return { ok: false, error: result.reason || 'no-such-question' }
-	        return { ok: true }
-	      }
-	    )
+    registerAgentQuestionHandlers({
+      registry: remoteQuestionRegistry,
+      isMainRendererSender,
+      assertSenderChatScope: (event, chatId) => assertRendererChatScope(event, chatId)
+    })
 
     ipcMain.handle(
       'answer-ensemble-poll',
       (
-        _event,
+        event,
         payload: {
           appChatId?: string
           pollId?: string
           choice?: string
         }
       ) => {
+        const appChatId = optionalString(payload.appChatId)
+        if (appChatId) {
+          assertRendererChatScope(event, appChatId)
+        } else if (!isMainRendererSender(event)) {
+          throw new Error('Renderer cannot resolve Ensemble poll chat authority.')
+        }
         const result = ensembleOrchestratorRef?.userPollResponseForChat(
-          optionalString(payload.appChatId),
+          appChatId,
           {
             pollId: optionalString(payload.pollId),
             choice: optionalString(payload.choice)
@@ -32566,6 +33556,35 @@ if (isGeminiMcpBridgeProcess) {
       clearExtensionSecret: (ref) => AppStore.clearExtensionSecret(ref),
       getManagedPolicyStatus: () =>
         managedPolicyService.snapshot() as unknown as Record<string, unknown>,
+      resolveSenderSettingsScope: (event) => {
+        if (isMainRendererSender(event)) return { kind: 'main' }
+        const owner = workspacePopoutOwnerForSender(event.sender.id)
+        if (owner?.kind === 'chat') {
+          return {
+            kind: 'chat',
+            ...(owner.workspacePath ? { workspacePath: owner.workspacePath } : {})
+          }
+        }
+        return { kind: 'utility' }
+      },
+      workspacePathsEqual: (left, right) => {
+        try {
+          return canonicalPath(left) === canonicalPath(right)
+        } catch {
+          return false
+        }
+      },
+      resolveSenderHandoffCardScope: (event) => {
+        if (isMainRendererSender(event)) return { kind: 'all' }
+        const owner = workspacePopoutOwnerForSender(event.sender.id)
+        if (owner?.kind !== 'chat' || !owner.chatId) {
+          throw new Error('Renderer has no handoff card authority.')
+        }
+        assertRendererChatScope(event, owner.chatId)
+        const chat = AppStore.getChat(owner.chatId)
+        if (!chat) throw new Error('Renderer handoff card authority could not be resolved.')
+        return { kind: 'chat', chatId: chat.appChatId }
+      },
       getHandoffCards: (filter) => AppStore.getHandoffCards(filter),
       saveHandoffCard: (card) => AppStore.saveHandoffCard(card),
       updateHandoffCard: (id, partial) => AppStore.updateHandoffCard(id, partial),
@@ -32587,9 +33606,44 @@ if (isGeminiMcpBridgeProcess) {
       getSettings: () => settingsService.getSettings(),
       assertProviderId,
       requireNonEmptyString,
-      assertAgenticServiceId
+      assertAgenticServiceId,
+      assertSenderCanManageAgenticWorkspaceGrants: (event, workspacePath) => {
+        assertMainRendererSender(event)
+        return requireRegisteredWorkspace(workspacePath, 'Workspace')
+      }
     })
-    ipcMain.handle('compose-run', (_, input: ComposerInput) => composerService.composeRun(input))
+    registerComposeRunHandlers({
+      composeRun: (input) => composerService.composeRun(input),
+      requireNonEmptyString,
+      resolveSenderComposeAuthority: (event, input) => {
+        const chatId = requireNonEmptyString(input.chatId, 'Chat id')
+        const chat = AppStore.getChat(chatId)
+        if (!chat) throw new Error('Composer chat authority is unavailable.')
+        const scheduledTaskId = optionalString(input.scheduledTaskId)
+        const scheduledTask = scheduledTaskId
+          ? AppStore.getScheduledTasks().find((task) => task.id === scheduledTaskId)
+          : undefined
+        return resolveComposerRunAuthority({
+          input,
+          chat,
+          isMainRenderer: isMainRendererSender(event),
+          owner: workspacePopoutOwnerForSender(event.sender.id),
+          scheduledTask,
+          canonicalizePath: canonicalPath
+        })
+      },
+      resolveSenderAttachmentPaths: (event, paths) =>
+        resolveRendererAttachmentPaths(event, paths),
+      onScheduledRunComposed: (event, input, payload) => {
+        scheduledRunDispatchReceipts.issue({
+          senderId: event.sender.id,
+          scheduledTaskId: requireNonEmptyString(input.scheduledTaskId, 'Scheduled task id'),
+          appRunId: requireNonEmptyString(input.appRunId, 'Run id'),
+          payload
+        })
+      },
+      assertSenderChatScope: (event, chatId) => assertRendererChatScope(event, chatId)
+    })
     registerDiscordContextHandlers({
       listTargets: () => discordContextService.listTargets(),
       readChannel: (input: unknown) => discordContextService.readChannel(input)
@@ -32602,16 +33656,79 @@ if (isGeminiMcpBridgeProcess) {
         return probeExternalPath(path)
       },
       broadcastWorkspaceUpdate,
-      broadcastWorkspaceList
+      broadcastWorkspaceList,
+      assertSenderCanManageWorkspaces: assertMainRendererSender,
+      resolveSenderWorkspaceReadScope: (event) => {
+        if (isMainRendererSender(event)) return { kind: 'all' }
+        const owner = workspacePopoutOwnerForSender(event.sender.id)
+        if (!owner?.workspacePath) {
+          throw new Error('Renderer has no workspace read authority.')
+        }
+        const workspace = findRegisteredWorkspace(owner.workspacePath)
+        if (!workspace) {
+          throw new Error('Renderer workspace read authority could not be resolved.')
+        }
+        return { kind: 'workspace', workspaceId: workspace.id }
+      }
     })
-    registerWorkspaceActivityHandlers({ requireRegisteredWorkspace })
+    registerWorkspaceActivityHandlers({
+      requireRegisteredWorkspace,
+      assertSenderScope: (event, workspacePath) =>
+        assertRendererFilesystemScope(event, {
+          capability: 'workspace-file',
+          workspacePath,
+          operation: 'read'
+        })
+    })
     registerWorkspaceFileEditorHandlers({
       requireRegisteredWorkspace,
+      assertSenderScope: assertRendererFilesystemScope,
       findRegisteredWorkspace,
       recordWorkspaceEditorChange: (input) => AppStore.recordWorkspaceEditorChange(input),
       scheduleRemoteGitSnapshotRefresh
     })
-    registerWorkspaceDiffSnapshotHandlers({ requireRegisteredWorkspace })
+    registerWorkspaceDiffSnapshotHandlers({
+      requireRegisteredWorkspace,
+      resolveWorkspaceDiffPath: (input) =>
+        resolveRegisteredOrChatGrantedWorkspacePath(input, 'read', 'Workspace'),
+      assertSenderScope: assertRendererFilesystemScope
+    })
+
+    const getChatWorkspaceRebindBlocker = (chatId: string): 'active' | 'queued' | null => {
+      const hasActiveProviderSession = RUN_MANAGER_PROVIDERS.some((provider) =>
+        runManager
+          .getActiveByProvider(provider)
+          .some((session) => session.appChatId === chatId)
+      )
+      if (hasActiveProviderSession) return 'active'
+
+      const queueJobs = AppStore.getRunQueueJobs({
+        chatId,
+        statuses: ['queued', 'steer_promoting', 'starting', 'active', 'paused', 'cancelling']
+      })
+      if (queueJobs.some((job) => job.status !== 'queued')) return 'active'
+      if (queueJobs.length > 0) return 'queued'
+
+      const chat = AppStore.getChat(chatId)
+      const round = chat?.ensemble?.activeRound
+      if (round?.status === 'running') return 'active'
+      if ((round?.queuedPrompts?.length || 0) > 0 || Boolean(round?.queuedPrompt?.trim())) {
+        return 'queued'
+      }
+      if (Object.values(chat?.ensemble?.wakeups || {}).some((wakeup) => wakeup.status === 'pending')) {
+        return 'queued'
+      }
+      if (Object.values(chat?.soloWakeups || {}).some((wakeup) => wakeup.status === 'pending')) {
+        return 'queued'
+      }
+
+      const scheduledTasks = AppStore.getScheduledTasks().filter((task) => task.chatId === chatId)
+      if (scheduledTasks.some((task) => task.status === 'running')) return 'active'
+      if (scheduledTasks.some((task) => task.status === 'pending' || task.status === 'due')) {
+        return 'queued'
+      }
+      return null
+    }
 
     registerChatHandlers({
       chatService,
@@ -32640,7 +33757,25 @@ if (isGeminiMcpBridgeProcess) {
             .filter((t) => t.status === 'pending' || t.status === 'due' || t.status === 'running')
             .map((t) => t.chatId)
             .filter((id): id is string => typeof id === 'string')
-        )
+        ),
+      getChatWorkspaceRebindBlocker,
+      resolveSenderChatReadScope: (event) => {
+        if (isMainRendererSender(event)) return { kind: 'all' }
+        const owner = workspacePopoutOwnerForSender(event.sender.id)
+        if (owner?.kind !== 'chat' || !owner.chatId) {
+          throw new Error('Renderer has no chat read authority.')
+        }
+        const chat = AppStore.getChat(owner.chatId)
+        if (!chat) throw new Error('Renderer chat read authority could not be resolved.')
+        return {
+          kind: 'chat',
+          chatId: owner.chatId,
+          ...(chat.workspaceId ? { workspaceId: chat.workspaceId } : {})
+        }
+      },
+      assertSenderChatScope: (event, chatId) => assertRendererChatScope(event, chatId),
+      assertSenderCanRebindChatWorkspace: (event) => assertMainRendererSender(event),
+      assertSenderCanManageChatCollection: (event) => assertMainRendererSender(event)
     })
     const broadcastHumanCollaborationUpdate = (chatId: string): void => {
       mainWindow?.webContents.send('human-collaboration-updated', { chatId })
@@ -32683,9 +33818,44 @@ if (isGeminiMcpBridgeProcess) {
         mainWindow?.webContents.send(channel, payload)
       },
       broadcastChatUpdated,
-      broadcastHumanCollaborationUpdate
+      broadcastHumanCollaborationUpdate,
+      assertMainRendererSender,
+      resolveSenderHumanCollaborationScope: (event) => {
+        if (isMainRendererSender(event)) return { kind: 'main' }
+        const owner = workspacePopoutOwnerForSender(event.sender.id)
+        if (owner?.kind !== 'chat' || !owner.chatId) {
+          throw new Error('Renderer has no human collaboration authority.')
+        }
+        assertRendererChatScope(event, owner.chatId)
+        const chat = AppStore.getChat(owner.chatId)
+        if (!chat) {
+          throw new Error('Renderer collaboration chat authority could not be resolved.')
+        }
+        return { kind: 'chat', chatId: chat.appChatId }
+      }
     }).dispose
     registerUsageRatesHandlers({
+      assertMainRendererSender,
+      globalUsageWorkspaceId: '__taskwraith_global_chats__',
+      resolveSenderUsageScope: (event) => {
+        if (isMainRendererSender(event)) return { kind: 'main' }
+        const owner = workspacePopoutOwnerForSender(event.sender.id)
+        if (owner?.kind !== 'chat' || !owner.chatId) {
+          throw new Error('Renderer has no usage authority.')
+        }
+        assertRendererChatScope(event, owner.chatId)
+        const chat = AppStore.getChat(owner.chatId)
+        if (!chat) throw new Error('Renderer usage authority could not be resolved.')
+        if (chat.scope === 'global' || !chat.workspaceId) {
+          return { kind: 'chat', chatId: chat.appChatId, chatScope: 'global' }
+        }
+        return {
+          kind: 'chat',
+          chatId: chat.appChatId,
+          chatScope: 'workspace',
+          workspaceId: chat.workspaceId
+        }
+      },
       recordUsage: (usage) => AppStore.recordUsage(usage),
       getUsage: (workspaceId, chatId) => AppStore.getUsage(workspaceId, chatId),
       getExternalUsageCached: (options) =>
@@ -32750,6 +33920,7 @@ if (isGeminiMcpBridgeProcess) {
       registerRemoteFirstLaunchStateTrigger
     })
     registerScheduledWorkflowHandlers({
+      assertMainRendererSender,
       getScheduledTasks: (workspaceId) => AppStore.getScheduledTasks(workspaceId),
       saveScheduledTask: (task) => saveScheduledTaskWithSignedPosture(task),
       updateScheduledTask: (id, partial) => {
@@ -32782,7 +33953,11 @@ if (isGeminiMcpBridgeProcess) {
       getRepoConventionIndexes: (workspaceId) => AppStore.getRepoConventionIndexes(workspaceId),
       saveRepoConventionIndex: (snapshot) => AppStore.saveRepoConventionIndex(snapshot),
       materializeWorkflowNow: (id) => {
-        const task = AppStore.materializeWorkflowNow(id)
+        const task = AppStore.materializeWorkflowNow(
+          id,
+          Date.now(),
+          scheduledAttachmentPersistence.resolve
+        )
         return task ? ensureScheduledTaskSignedPosture(task) : null
       },
       setWorkflowUnattendedElevation: (id, ack) => AppStore.setWorkflowUnattendedElevation(id, ack),
@@ -32830,9 +34005,37 @@ if (isGeminiMcpBridgeProcess) {
     })
 
     registerRunQueueHandlers({
+      resolveSenderRunQueueScope: (event) => {
+        if (isMainRendererSender(event)) return { kind: 'main' }
+        const owner = workspacePopoutOwnerForSender(event.sender.id)
+        if (owner?.kind !== 'chat' || !owner.chatId) {
+          throw new Error('Renderer has no run-queue authority.')
+        }
+        return { kind: 'chat', chatId: owner.chatId }
+      },
+      resolveSenderAttachmentFilePaths: (event) =>
+        attachmentCapabilityRegistry.getAuthorizedPathsForRenderer(event.sender.id, {
+          includeMainAuthority: isMainRendererSender(event)
+        }),
+      resolveRunQueueTargetChatId: ({ kind, targetId }) => {
+        if (kind === 'run-or-job') {
+          const queuedChatId = AppStore.getRunQueueJob(targetId)?.chatId
+          if (queuedChatId) return queuedChatId
+          const liveChatId = runManager.get(targetId)?.appChatId
+          if (liveChatId) return liveChatId
+          return AppStore.getChats().find((chat) =>
+            chat.runs?.some((run) => run.runId === targetId)
+          )?.appChatId
+        }
+        return AppStore.getChats().find(
+          (chat) =>
+            chat.ensemble?.activeRound?.roundId === targetId ||
+            chat.runs?.some((run) => run.ensembleRoundId === targetId)
+        )?.appChatId
+      },
       getRunQueueJobs: (filter) => runQueueService.getJobs(filter),
       getRunRecoveryRecords: (filter) => getRunRepository().getRunRecoveryRecords(filter || {}),
-      requestRunQueueJob: (job) => runQueueService.requestJob(job),
+      requestRunQueueJob: (job, options) => runQueueService.requestJob(job, options),
       leaseRunQueueJob: (request) => runQueueService.leaseJob(request),
       transitionRunQueueJob: (runIdOrId, status, partial) =>
         runQueueService.transitionJob(runIdOrId, status, partial),
@@ -32846,6 +34049,7 @@ if (isGeminiMcpBridgeProcess) {
       randomUUID
     })
     registerApprovalLedgerHandlers({
+      assertMainRendererSender,
       getApprovalLedger: (filter) => AppStore.getApprovalLedger(filter || {}),
       recordApprovalLedgerDecision,
       randomUUID,
@@ -32906,7 +34110,8 @@ if (isGeminiMcpBridgeProcess) {
       getAppShellStatsSnapshot: () => appShellStatsService.getSnapshot(),
       getAppVersion: () => app.getVersion(),
       getUserDataPath: () => app.getPath('userData'),
-      appendBugReport: (userDataPath, payload) => appendBugReport(userDataPath, payload)
+      appendBugReport: (userDataPath, payload) => appendBugReport(userDataPath, payload),
+      isMainRendererSender
     })
 
     registerAppearanceHandlers({
@@ -32924,7 +34129,8 @@ if (isGeminiMcpBridgeProcess) {
     })
 
     registerFileIconHandlers({
-      getFileIcon: (normalizedPath, options) => app.getFileIcon(normalizedPath, options)
+      getFileIcon: (normalizedPath, options) => app.getFileIcon(normalizedPath, options),
+      authorizeLocalPath: authorizeRendererLocalPath
     })
 
     // Gemini Version
@@ -32954,7 +34160,8 @@ if (isGeminiMcpBridgeProcess) {
 
     ipcMain.handle(
       'get-gemini-capabilities',
-      async (_, workspace?: string): Promise<GeminiCapabilitiesState> => {
+      async (event, workspace?: string): Promise<GeminiCapabilitiesState> => {
+        assertMainRendererSender(event)
         const capabilityWorkspace = await resolveCapabilityWorkspace(workspace)
         await repairKnownStaleGeminiMcpBridgeConfigs(capabilityWorkspace).catch(() => {})
         const capabilitySections = await Promise.all(
@@ -32980,15 +34187,29 @@ if (isGeminiMcpBridgeProcess) {
     ipcMain.handle('get-gemini-mcp-bridge-status', async () =>
       getGeminiMcpBridgeStatus({ autoRepairIfEnabled: true })
     )
-    ipcMain.handle('install-gemini-mcp-bridge', async () => installGeminiMcpBridge())
-    ipcMain.handle('set-gemini-mcp-bridge-enabled', async (_, enabled: boolean) =>
-      setGeminiMcpBridgeEnabled(Boolean(enabled))
-    )
-    ipcMain.handle('run-approved-host-command', async (_, requestId: string) =>
-      runApprovedHostCommand(requireNonEmptyString(requestId, 'Request id'))
-    )
+    ipcMain.handle('install-gemini-mcp-bridge', async (event) => {
+      assertMainRendererSender(event)
+      return installGeminiMcpBridge()
+    })
+    ipcMain.handle('set-gemini-mcp-bridge-enabled', async (event, enabled: boolean) => {
+      assertMainRendererSender(event)
+      return setGeminiMcpBridgeEnabled(Boolean(enabled))
+    })
+    ipcMain.handle('run-approved-host-command', async (event, requestId: string) => {
+      const normalizedRequestId = requireNonEmptyString(requestId, 'Request id')
+      if (!isMainRendererSender(event)) {
+        const pending = approvalService?.getHostCommand(normalizedRequestId)
+        if (!pending || pending.sender.id !== event.sender.id) {
+          throw new Error('Renderer does not own this host-command approval.')
+        }
+      }
+      return runApprovedHostCommand(normalizedRequestId)
+    })
 
-    ipcMain.handle('list-gemini-sessions', async () => listGeminiSessions())
+    ipcMain.handle('list-gemini-sessions', async (event) => {
+      assertMainRendererSender(event)
+      return listGeminiSessions()
+    })
 
     // C4: `read-image-preview` reads a local image and returns a data URL.
     // Left open it is an arbitrary-image disclosure primitive — a future
@@ -32998,34 +34219,28 @@ if (isGeminiMcpBridgeProcess) {
     // attachment (picker / drag-drop / paste) before its thumbnail renders;
     // nothing else authorizes, so agent/transcript paths are rejected. Paths
     // are stored realpath-resolved (symlink-safe) and bounded.
-    const authorizedImagePreviewPaths = new Set<string>()
-    const MAX_AUTHORIZED_IMAGE_PREVIEW_PATHS = 500
-    const IMAGE_PREVIEW_MAX_BYTES = 40 * 1024 * 1024
-    const authorizeImagePreviewPath = async (rawPath: unknown): Promise<void> => {
-      if (typeof rawPath !== 'string' || !rawPath) return
-      try {
-        const filePath = rawPath.startsWith('file://') ? fileURLToPath(rawPath) : rawPath
-        const real = await fs.realpath(filePath)
-        if (authorizedImagePreviewPaths.size >= MAX_AUTHORIZED_IMAGE_PREVIEW_PATHS) {
-          const oldest = authorizedImagePreviewPaths.values().next().value
-          if (oldest !== undefined) authorizedImagePreviewPaths.delete(oldest)
-        }
-        authorizedImagePreviewPaths.add(real)
-      } catch {
-        // Unresolvable path — never authorize.
-      }
-    }
+    ipcMain.on('authorize-dropped-attachment', (event, rawPath: unknown) => {
+      // This event is emitted only inside preload immediately after
+      // webUtils.getPathForFile succeeds for an OS-backed File object. The
+      // context-isolated renderer has no generic ipcRenderer surface with which
+      // to forge this channel.
+      authorizeImagePreviewPath(rawPath, {
+        sender: event.sender,
+        mainAuthority: isMainRendererSender(event)
+      })
+    })
 
-    ipcMain.handle('authorize-image-preview', async (_event, rawPaths: unknown) => {
-      if (!Array.isArray(rawPaths)) return
-      for (const rawPath of rawPaths) await authorizeImagePreviewPath(rawPath)
+    ipcMain.on('authorize-clipboard-paste-intent', (event, token: unknown) => {
+      if (clipboardPasteIntentRegistry.issue(event.sender.id, token)) {
+        registerRendererCapabilityCleanup(event.sender)
+      }
     })
 
     ipcMain.handle('composer-audio:transcribe', async (_event, rawInput: unknown) =>
       transcribeComposerAudioPayload(rawInput)
     )
 
-    ipcMain.handle('select-image-files', async () => {
+    ipcMain.handle('select-image-files', async (event) => {
       if (!mainWindow) return []
       const result = await dialog.showOpenDialog(mainWindow, {
         title: 'Select attachments',
@@ -33036,23 +34251,35 @@ if (isGeminiMcpBridgeProcess) {
         return []
       }
       const filePaths = result.filePaths || []
-      for (const filePath of filePaths) await authorizeImagePreviewPath(filePath)
+      for (const filePath of filePaths) {
+        authorizeImagePreviewPath(filePath, {
+          sender: event.sender,
+          mainAuthority: isMainRendererSender(event)
+        })
+      }
       return filePaths
     })
 
-    ipcMain.handle('save-clipboard-image-attachment', async () => {
-      const image = clipboard.readImage()
-      if (image.isEmpty()) {
-        return []
-      }
-      const filePath = join(
-        os.tmpdir(),
-        `taskwraith-paste-${Date.now()}-${randomUUID().slice(0, 8)}.png`
-      )
-      await fs.writeFile(filePath, image.toPNG())
-      await authorizeImagePreviewPath(filePath)
-      return [filePath]
-    })
+    ipcMain.handle('save-clipboard-image-attachment', async (event, token: unknown) =>
+      saveClipboardImageFromTrustedPaste({
+        senderId: event.sender.id,
+        token,
+        consumeIntent: (senderId, candidate) =>
+          clipboardPasteIntentRegistry.consume(senderId, candidate),
+        readImage: () => clipboard.readImage(),
+        createFilePath: () =>
+          join(
+            os.tmpdir(),
+            `taskwraith-paste-${Date.now()}-${randomUUID().slice(0, 8)}.png`
+          ),
+        writeFile: (filePath, data) => fs.writeFile(filePath, data),
+        authorizePath: (filePath) =>
+          authorizeImagePreviewPath(filePath, {
+            sender: event.sender,
+            mainAuthority: isMainRendererSender(event)
+          })
+      })
+    )
 
     const readImageViaMacImageServices = async (
       real: string
@@ -33087,7 +34314,7 @@ if (isGeminiMcpBridgeProcess) {
     // Composer attachment thumbnail. A raw file:// path can't be shown by the
     // renderer (non-file origin + webSecurity), so read the image here and hand
     // back a downscaled PNG data URL the <img> can actually load.
-    ipcMain.handle('read-image-preview', async (_event, rawPath: unknown) => {
+    ipcMain.handle('read-image-preview', async (event, rawPath: unknown) => {
       try {
         if (typeof rawPath !== 'string' || !rawPath) return null
         const filePath = rawPath.startsWith('file://') ? fileURLToPath(rawPath) : rawPath
@@ -33100,7 +34327,13 @@ if (isGeminiMcpBridgeProcess) {
         } catch {
           return null
         }
-        if (!authorizedImagePreviewPaths.has(real)) return null
+        if (
+          !attachmentCapabilityRegistry.isAuthorizedForRenderer(event.sender.id, real, {
+            includeMainAuthority: isMainRendererSender(event)
+          })
+        ) {
+          return null
+        }
         const stat = await fs.lstat(real)
         if (!stat.isFile()) return null
         if (isPdfAttachmentPath(real)) {
@@ -33149,7 +34382,22 @@ if (isGeminiMcpBridgeProcess) {
           return false
         }
       },
-      getMainWindow: () => mainWindow,
+      authorizeSender: (event, asset) => {
+        if (isMainRendererSender(event)) return true
+        const owner = workspacePopoutOwnerForSender(event.sender.id)
+        return Boolean(
+          owner?.kind === 'chat' &&
+            owner.chatId &&
+            getTranscriptMediaAssetStore().owns({
+              ...asset,
+              appChatId: owner.chatId
+            })
+        )
+      },
+      getRequestingWindow: (event) => {
+        const requestingWindow = BrowserWindow.fromWebContents(event.sender)
+        return requestingWindow && !requestingWindow.isDestroyed() ? requestingWindow : null
+      },
       showItemInFolder: (assetPath) => shell.showItemInFolder(assetPath),
       showSaveDialog: (window, options) => dialog.showSaveDialog(window, options),
       copyFile: (src, dest) => fs.copyFile(src, dest)
@@ -33183,6 +34431,13 @@ if (isGeminiMcpBridgeProcess) {
       buildChatMarkdownTranscript,
       estimateChatMarkdownTranscriptChars,
       assertSafeChatId,
+      assertSenderWorkspaceScope: (event, workspacePath) =>
+        assertRendererFilesystemScope(event, {
+          capability: 'workspace-file',
+          workspacePath,
+          operation: 'read'
+        }),
+      assertSenderChatScope: (event, chatId) => assertRendererChatScope(event, chatId),
       homedir: () => os.homedir()
     })
 
@@ -33190,6 +34445,7 @@ if (isGeminiMcpBridgeProcess) {
       getMainWindow: () => mainWindow,
       showOpenDialog: (window, options) => dialog.showOpenDialog(window, options),
       stat: (pathValue) => fs.stat(pathValue),
+      realpath: (pathValue) => fs.realpath(pathValue),
       resolvePath: (pathValue) => resolve(pathValue),
       providerLabel,
       issueExternalPathGrant,
@@ -33205,6 +34461,8 @@ if (isGeminiMcpBridgeProcess) {
       optionalString,
       randomBytes,
       securityScopedBookmarks: process.platform === 'darwin',
+      assertSenderScope: assertRendererFilesystemScope,
+      assertSenderCanProbeExternalPath: assertMainRendererSender,
       probeExternalPath: async (absolutePath) => {
         const { probeExternalPath } = await import('./services/ExternalPathProbe')
         return probeExternalPath(absolutePath)
@@ -33213,12 +34471,19 @@ if (isGeminiMcpBridgeProcess) {
 
     registerWorkspaceGeminiDiscoveryHandlers({
       requireRegisteredWorkspace,
+      assertSenderScope: (event, workspacePath) =>
+        assertRendererFilesystemScope(event, {
+          capability: 'workspace-file',
+          workspacePath,
+          operation: 'read'
+        }),
       discoverGeminiCommands,
       discoverGeminiMemory
     })
 
-    ipcMain.handle('get-agent-status', async (_, provider: ProviderId) => {
-      return getAgentStatusSnapshot(assertProviderId(provider))
+    ipcMain.handle('get-agent-status', async (event, provider: ProviderId) => {
+      const status = await getAgentStatusSnapshot(assertProviderId(provider))
+      return isMainRendererSender(event) ? status : rendererSafeProviderStatus(status)
     })
 
     ipcMain.handle(
@@ -33342,12 +34607,14 @@ if (isGeminiMcpBridgeProcess) {
     })
 
     registerGitHandlers({
-      getChats: () => AppStore.getChats(),
-      externalPathGrantMetadataLists,
-      normalizeExternalPathGrants,
+      getChat: (chatId) => AppStore.getChat(chatId),
+      executableExternalPathGrantsForChat,
       canonicalExternalGrantPath,
       canonicalPath,
       findRegisteredWorkspace,
+      gitRepositoryRootForPath,
+      externalGitRepositoryRootIsSelfContained,
+      assertSenderScope: assertRendererFilesystemScope,
       resolvePath: (pathValue) => resolve(pathValue),
       pathSeparator: sep,
       gitService,
@@ -33365,7 +34632,8 @@ if (isGeminiMcpBridgeProcess) {
       readClaudeAuthState,
       readResolvedCliVersion,
       spawn,
-      createCliEnv
+      createCliEnv,
+      isMainRendererSender
     })
 
     // Phase E1 (iOS bridge gap #1) — APNs config IPC surface for the
@@ -33399,7 +34667,8 @@ if (isGeminiMcpBridgeProcess) {
       isEncryptionAvailable: () => safeStorage.isEncryptionAvailable(),
       encryptApiKey,
       resolveCliProviderBinary,
-      readResolvedCliVersion
+      readResolvedCliVersion,
+      isMainRendererSender
     })
 
     registerGeminiAuthHandlers({
@@ -33412,14 +34681,27 @@ if (isGeminiMcpBridgeProcess) {
       setDefaultGeminiAuthProfile,
       startGeminiOAuthLogin,
       getGeminiOAuthLoginStatus,
-      cancelGeminiOAuthLogin
+      cancelGeminiOAuthLogin,
+      isMainRendererSender
     })
 
     registerProviderMetadataHandlers({
       assertProviderId,
       getAgentMcpStatusSnapshot,
-      getProviderCapabilityContract,
-      getProviderAdapterDescriptors
+      getProviderCapabilityContract: (event, provider, workspacePath, approvalMode) => {
+        if (!isMainRendererSender(event) && workspacePath) {
+          assertRendererFilesystemScope(event, {
+            capability: 'workspace-file',
+            workspacePath,
+            operation: 'read'
+          })
+        }
+        return getProviderCapabilityContract(provider, workspacePath, approvalMode, {
+          allowGeminiBridgeRepair: isMainRendererSender(event)
+        })
+      },
+      getProviderAdapterDescriptors,
+      isMainRendererSender
     })
 
     registerProviderTerminalHandlers({
@@ -33432,17 +34714,89 @@ if (isGeminiMcpBridgeProcess) {
       getPlatform: () => process.platform
     })
 
+    const resolveSenderAgentThreadScope = (
+      event: IpcMainInvokeEvent
+    ): AgentThreadSenderScope => {
+      if (isMainRendererSender(event)) return { kind: 'main' }
+      const owner = workspacePopoutOwnerForSender(event.sender.id)
+      if (owner?.kind !== 'chat' || !owner.chatId) {
+        throw new Error('Renderer is not authorized for provider thread IPC.')
+      }
+      assertRendererChatScope(event, owner.chatId)
+      const chat = AppStore.getChat(owner.chatId)
+      if (!chat || chat.appChatId !== owner.chatId) {
+        throw new Error('Owning chat is unavailable.')
+      }
+      const globalChat = chat.scope === 'global'
+      const chatWorkspacePath = globalChat ? null : chat.workspacePath?.trim() || null
+      const ownerWorkspacePath = owner.workspacePath?.trim() || null
+      if (globalChat ? ownerWorkspacePath : !chatWorkspacePath || !ownerWorkspacePath) {
+        throw new Error('Provider thread workspace authority is unavailable.')
+      }
+      if (
+        chatWorkspacePath &&
+        ownerWorkspacePath &&
+        canonicalPath(chatWorkspacePath) !== canonicalPath(ownerWorkspacePath)
+      ) {
+        throw new Error('Provider thread workspace authority is stale.')
+      }
+
+      const linkedProviderThreads: Array<{ provider: ProviderId; threadId: string }> = []
+      const seen = new Set<string>()
+      const addLinkedThread = (provider: ProviderId, rawThreadId?: string | null): void => {
+        const threadId = rawThreadId?.trim()
+        if (!threadId) return
+        const key = `${provider}\u0000${threadId}`
+        if (seen.has(key)) return
+        seen.add(key)
+        linkedProviderThreads.push({ provider, threadId })
+      }
+      addLinkedThread(chat.provider || 'gemini', chat.linkedProviderSessionId)
+      addLinkedThread('gemini', chat.linkedGeminiSessionId)
+      for (const participant of chat.ensemble?.participants || []) {
+        addLinkedThread(participant.provider, participant.linkedProviderSessionId)
+      }
+      return {
+        kind: 'chat',
+        chatId: chat.appChatId,
+        workspacePath: chatWorkspacePath,
+        linkedProviderThreads
+      }
+    }
+
     registerCodexThreadHandlers({
       getCodexClient: () => getCodexClient(),
       getAppVersion: () => app.getVersion(),
       providerDisplayName,
-      createEmulatedFork: (input) =>
-        chatService.createForkChat({
+      resolveSenderAgentThreadScope,
+      createEmulatedFork: (input) => {
+        const fork = chatService.createForkChat({
           parentChatId: input.chatId,
           provider: input.provider,
           sourceProviderThreadId: input.sourceProviderThreadId,
           sourceModel: input.sourceModel
         })
+        for (const message of fork.messages) {
+          const refs = Array.isArray(message.metadata?.mediaRefs)
+            ? message.metadata.mediaRefs
+            : []
+          transferTranscriptMediaRefsBetweenChats(
+            input.chatId,
+            fork.appChatId,
+            refs,
+            (sourceAppChatId, targetAppChatId) => {
+              const canonicalTarget = AppStore.getChat(targetAppChatId)
+              return Boolean(
+                canonicalTarget &&
+                  canonicalTarget.parentChatId === sourceAppChatId &&
+                  canonicalTarget.parentChatRelation === 'sideChat' &&
+                  canonicalTarget.forkContext?.sourceChatId === sourceAppChatId
+              )
+            }
+          )
+        }
+        return fork
+      }
     })
 
     ipcMain.handle(
@@ -33456,6 +34810,14 @@ if (isGeminiMcpBridgeProcess) {
         if (!threadId || typeof threadId !== 'string') {
           throw new Error('Codex thread id is required for native review.')
         }
+        const senderScope = resolveSenderAgentThreadScope(event)
+        const { workspacePath: reviewWorkspacePath } = authorizeAgentReview(
+          senderScope,
+          provider,
+          threadId,
+          params,
+          (left, right) => canonicalPath(left) === canonicalPath(right)
+        )
         const client = getCodexClient()
         await client.ensureStarted(app.getVersion())
         const model = normalizeCodexModel(params?.model)
@@ -33464,12 +34826,19 @@ if (isGeminiMcpBridgeProcess) {
           event.sender,
           threadId,
           model,
-          params?.cwd,
-          params?.cwd,
+          reviewWorkspacePath,
+          reviewWorkspacePath,
           'workspace',
           route
         )
-        registerRunSession('codex', event.sender, reviewState, params?.cwd, reviewState, threadId)
+        registerRunSession(
+          'codex',
+          event.sender,
+          reviewState,
+          reviewWorkspacePath,
+          reviewState,
+          threadId
+        )
         setActiveCodexRunState(reviewState)
         sendAgentCompatLine(
           event.sender,
@@ -33830,6 +35199,13 @@ if (isGeminiMcpBridgeProcess) {
       getSettings: () => AppStore.getSettings(),
       signRunPermissionPosture: signRunPosture,
       isTrustedSessionGranted: (scope) => trustedSessionGrants.isGranted(scope),
+      issueRunScopedExternalGrants: ({ chat, participant, appRunId, attachments }) =>
+        issueRunScopedExternalGrantsForNonImageAttachments(
+          chat,
+          participant,
+          appRunId,
+          attachments
+        ),
       dispatch: (payload, event) => dispatchRunWithProviderPause(payload, event),
       shouldPersistProviderSessionForRun,
       releaseProviderSessionPersistenceDecision,
@@ -34151,7 +35527,53 @@ if (isGeminiMcpBridgeProcess) {
     }
 
     ipcMain.handle('run-agent', async (event, payload: AgentRunPayload) => {
-      await dispatchAgentRun(payload, event)
+      const chatId = requireNonEmptyString(payload?.appChatId, 'Chat id')
+      assertRendererChatScope(event, chatId)
+      const rawScheduledTaskId = (payload as AgentRunPayload & { scheduledTaskId?: unknown })
+        .scheduledTaskId
+      const scheduledTaskId =
+        typeof rawScheduledTaskId === 'string' ? rawScheduledTaskId.trim() : ''
+      const scheduledTask = assertRunAgentScheduledAuthority({
+        scheduledTaskId: rawScheduledTaskId,
+        isMainRenderer: isMainRendererSender(event),
+        task: scheduledTaskId
+          ? AppStore.getScheduledTasks().find((task) => task.id === scheduledTaskId)
+          : undefined,
+        chat: AppStore.getChat(chatId),
+        appRunId: payload?.appRunId,
+        canonicalizePath: canonicalPath,
+        alreadyBound:
+          Boolean(scheduledTaskId) &&
+          (scheduledTaskIdsDispatching.has(scheduledTaskId) ||
+            [...scheduledTaskIdBySoloRun.values()].includes(scheduledTaskId))
+      })
+      if (scheduledTask) {
+        const canonicalPayload = scheduledRunDispatchReceipts.consume({
+          senderId: event.sender.id,
+          scheduledTaskId: scheduledTask.id,
+          appRunId: requireNonEmptyString(scheduledTask.runId, 'Run id'),
+          payload
+        })
+        scheduledTaskIdsDispatching.add(scheduledTask.id)
+        try {
+          // The receipt returns the exact main-composed payload. Only the
+          // bookkeeping id is reattached; renderer-only worktree/attachment
+          // mutations are discarded before reaching the shared normalizer.
+          await dispatchAgentRun(
+            { ...canonicalPayload, scheduledTaskId: scheduledTask.id } as AgentRunPayload,
+            event
+          )
+        } finally {
+          scheduledTaskIdsDispatching.delete(scheduledTask.id)
+        }
+        return
+      }
+      const authorityBoundPayload = deriveRendererRunPayload(event, payload)
+      await dispatchWithAuthorizedAttachmentPaths(
+        authorityBoundPayload,
+        (paths) => resolveRendererAttachmentPaths(event, paths),
+        (authorizedPayload) => dispatchAgentRun(authorizedPayload, event)
+      )
     })
 
     ipcMain.handle(
@@ -34175,62 +35597,103 @@ if (isGeminiMcpBridgeProcess) {
           throw new Error('Ensemble Mode is disabled.')
         }
         const chatId = requireNonEmptyString(payload?.chatId, 'Ensemble chat id')
-        const imageAttachments = imageAttachmentSnapshots(payload?.imageAttachments)
-        const prompt = typeof payload?.prompt === 'string' ? payload.prompt : ''
+        assertRendererChatScope(event, chatId)
+        const scheduledTaskId = optionalString(payload?.scheduledTaskId)
+        let scheduledTask: ScheduledTask | undefined
+        if (scheduledTaskId) {
+          assertMainRendererSender(event)
+          const chat = AppStore.getChat(chatId)
+          scheduledTask = assertScheduledRunAuthority({
+            task: AppStore.getScheduledTasks().find((task) => task.id === scheduledTaskId),
+            chat,
+            expectedKind: 'ensemble',
+            canonicalizePath: canonicalPath
+          })
+          if ([...scheduledTaskIdByEnsembleRound.values()].includes(scheduledTask.id)) {
+            throw new Error('Scheduled Ensemble occurrence is already bound to an active round.')
+          }
+          if (scheduledTask.ensembleSnapshot && chat?.ensemble) {
+            AppStore.saveChat(
+              applyScheduledEnsembleSnapshotMain(chat, scheduledTask.ensembleSnapshot)
+            )
+          }
+        }
+        const imageAttachments = imageAttachmentSnapshots(
+          scheduledTask?.imageAttachments ?? payload?.imageAttachments
+        )
+        const prompt =
+          scheduledTask?.prompt ?? (typeof payload?.prompt === 'string' ? payload.prompt : '')
         if (!prompt.trim() && imageAttachments.length === 0) {
           throw new Error('Ensemble prompt or attachment is required.')
         }
-        const chat = AppStore.getChat(chatId)
-        const dispatchImageAttachments = await expandPdfAttachmentsForDispatch(imageAttachments)
+        const dispatchImageAttachments = scheduledTask
+          ? await expandPdfAttachmentsForDispatch(imageAttachments)
+          : await authorizeThenExpandAttachmentRecords(
+              imageAttachments,
+              (paths) => resolveRendererAttachmentPaths(event, paths),
+              expandPdfAttachmentsForDispatch
+            )
         // 1.0.4-AT4 — normalize the renderer-supplied grants the
         // same way solo-run dispatch does. Drops malformed entries
         // and produces an [] when nothing is granted.
-        const externalPathGrants = Array.isArray(payload?.externalPathGrants)
-          ? normalizeExternalPathGrants(payload!.externalPathGrants as ExternalPathGrant[])
+        const externalPathGrantInput =
+          scheduledTask?.externalPathGrants ?? payload?.externalPathGrants
+        const externalPathGrants = Array.isArray(externalPathGrantInput)
+          ? normalizeExternalPathGrants(externalPathGrantInput as ExternalPathGrant[])
           : []
-        const attachmentExternalPathGrants = chat
-          ? issueRunScopedExternalGrantsForNonImageAttachments(
-              chat,
-              imageAttachments,
-              externalPathGrants
-            )
-          : []
-        const roundExternalPathGrants = normalizeExternalPathGrants([
-          ...externalPathGrants,
-          ...attachmentExternalPathGrants
-        ])
-        const discordContextSnapshots = Array.isArray(payload?.discordContextSnapshots)
-          ? payload.discordContextSnapshots
-          : []
+        const discordContextSnapshots =
+          !scheduledTask && Array.isArray(payload?.discordContextSnapshots)
+            ? payload.discordContextSnapshots
+            : []
         // P2 — resolve a VERIFIED elevation for the scheduled occurrence (HMAC +
         // current); null ⇒ the round stays read-only (P1b). The orchestrator
         // applies the uniform level → preset when honoring.
-        const ensembleElevation = payload?.scheduledTaskId
-          ? resolveUnattendedElevation(payload.scheduledTaskId)
+        const ensembleElevation = scheduledTask
+          ? resolveUnattendedElevation(scheduledTask.id)
           : null
+        const scheduledSnapshot = scheduledTask?.ensembleSnapshot
+        const scheduledFanoutPolicy = scheduledSnapshot
+          ? normalizeScheduledFanoutPolicy(
+              scheduledSnapshot.fanoutPolicy,
+              scheduledSnapshot.concurrentModeEnabled
+            )
+          : undefined
+        const scheduledConcurrentMode = scheduledSnapshot
+          ? scheduledSnapshot.concurrentModeEnabled ?? scheduledFanoutPolicy !== 'off'
+          : undefined
         const ensembleStartResult = ensembleOrchestratorRef?.startRound({
           chatId,
           prompt,
           event,
-          mode: payload?.mode || 'normal',
-          ...(payload?.concurrentMode !== undefined
-            ? { concurrentMode: Boolean(payload.concurrentMode) }
+          mode: scheduledTask ? 'normal' : payload?.mode || 'normal',
+          ...((scheduledTask ? scheduledConcurrentMode : payload?.concurrentMode) !== undefined
+            ? {
+                concurrentMode: Boolean(
+                  scheduledTask ? scheduledConcurrentMode : payload?.concurrentMode
+                )
+              }
             : {}),
-          ...(payload?.fanoutPolicy !== undefined
-            ? { fanoutPolicy: payload.fanoutPolicy }
+          ...((scheduledTask ? scheduledFanoutPolicy : payload?.fanoutPolicy) !== undefined
+            ? { fanoutPolicy: scheduledTask ? scheduledFanoutPolicy : payload?.fanoutPolicy }
             : {}),
           imageAttachments: dispatchImageAttachments,
           ...(discordContextSnapshots.length > 0 ? { discordContextSnapshots } : {}),
-          ...(payload?.dmTargetParticipantId
-            ? { dmTargetParticipantId: payload.dmTargetParticipantId }
+          ...((scheduledTask
+            ? scheduledSnapshot?.dmTargetParticipantId
+            : payload?.dmTargetParticipantId)
+            ? {
+                dmTargetParticipantId: scheduledTask
+                  ? scheduledSnapshot?.dmTargetParticipantId
+                  : payload?.dmTargetParticipantId
+              }
             : {}),
-          ...(roundExternalPathGrants.length > 0
-            ? { externalPathGrants: roundExternalPathGrants }
+          ...(externalPathGrants.length > 0
+            ? { externalPathGrants }
             : {}),
           // P1b — a scheduled occurrence is unattended; the orchestrator
           // clamps every participant to a read-only posture so an
           // unattended round can't auto-accept edits.
-          unattended: Boolean(payload?.scheduledTaskId),
+          unattended: Boolean(scheduledTask),
           // P2 — when a verified elevation exists, lift the uniform participant
           // posture from read-only to the level's preset.
           ...(ensembleElevation
@@ -34239,8 +35702,8 @@ if (isGeminiMcpBridgeProcess) {
         })
         // Scheduled ensemble: remember roundId -> scheduledTaskId so the round-settle
         // hook can mark the task terminal. Keyed by roundId so only THIS round counts.
-        if (payload?.scheduledTaskId && ensembleStartResult?.roundId) {
-          scheduledTaskIdByEnsembleRound.set(ensembleStartResult.roundId, payload.scheduledTaskId)
+        if (scheduledTask && ensembleStartResult?.roundId) {
+          scheduledTaskIdByEnsembleRound.set(ensembleStartResult.roundId, scheduledTask.id)
         }
         return ensembleStartResult
       }
@@ -34262,6 +35725,7 @@ if (isGeminiMcpBridgeProcess) {
           throw new Error('Ensemble Mode is disabled.')
         }
         const chatId = requireNonEmptyString(payload?.chatId, 'Ensemble chat id')
+        assertRendererChatScope(event, chatId)
         const index = Number.isFinite(payload?.index) ? Math.floor(Number(payload.index)) : -1
         return ensembleOrchestratorRef?.steerQueuedPrompt({
           chatId,
@@ -34281,7 +35745,7 @@ if (isGeminiMcpBridgeProcess) {
     ipcMain.handle(
       'remove-queued-ensemble-prompt',
       async (
-        _,
+        event,
         payload: {
           chatId?: string
           index?: number
@@ -34292,6 +35756,7 @@ if (isGeminiMcpBridgeProcess) {
           throw new Error('Ensemble Mode is disabled.')
         }
         const chatId = requireNonEmptyString(payload?.chatId, 'Ensemble chat id')
+        assertRendererChatScope(event, chatId)
         const index = Number.isFinite(payload?.index) ? Math.floor(Number(payload.index)) : -1
         const result = ensembleOrchestratorRef?.removeQueuedPrompt({
           chatId,
@@ -34307,14 +35772,16 @@ if (isGeminiMcpBridgeProcess) {
       }
     )
 
-    ipcMain.handle('cancel-ensemble-round', async (_, chatId?: string) => {
-      return ensembleOrchestratorRef?.cancelRound(requireNonEmptyString(chatId, 'Ensemble chat id'))
+    ipcMain.handle('cancel-ensemble-round', async (event, chatId?: string) => {
+      const canonicalChatId = requireNonEmptyString(chatId, 'Ensemble chat id')
+      assertRendererChatScope(event, canonicalChatId)
+      return ensembleOrchestratorRef?.cancelRound(canonicalChatId)
     })
 
     ipcMain.handle(
       'post-blackboard-entry',
       async (
-        _,
+        event,
         payload?: {
           chatId?: string
           key?: string
@@ -34327,6 +35794,7 @@ if (isGeminiMcpBridgeProcess) {
           throw new Error('Ensemble Mode is disabled.')
         }
         const chatId = requireNonEmptyString(payload?.chatId, 'Ensemble chat id')
+        assertRendererChatScope(event, chatId)
         const chat = AppStore.getChat(chatId)
         if (!chat?.ensemble) throw new Error('Blackboard entries require an Ensemble chat.')
         // Same rule the blackboard_post MCP tool applies for agents: round scope
@@ -34368,7 +35836,7 @@ if (isGeminiMcpBridgeProcess) {
     ipcMain.handle(
       'delete-blackboard-entry',
       async (
-        _,
+        event,
         payload?: {
           chatId?: string
           entryId?: string
@@ -34378,6 +35846,7 @@ if (isGeminiMcpBridgeProcess) {
           throw new Error('Ensemble Mode is disabled.')
         }
         const chatId = requireNonEmptyString(payload?.chatId, 'Ensemble chat id')
+        assertRendererChatScope(event, chatId)
         const entryId = requireNonEmptyString(payload?.entryId, 'Blackboard entry id')
         const chat = AppStore.getChat(chatId)
         if (!chat?.ensemble) throw new Error('Blackboard entries require an Ensemble chat.')
@@ -34471,7 +35940,7 @@ if (isGeminiMcpBridgeProcess) {
     ipcMain.handle(
       'blackboard-queued-ensemble-prompt',
       async (
-        _,
+        event,
         payload?: {
           chatId?: string
           index?: number
@@ -34482,6 +35951,7 @@ if (isGeminiMcpBridgeProcess) {
           throw new Error('Ensemble Mode is disabled.')
         }
         const chatId = requireNonEmptyString(payload?.chatId, 'Ensemble chat id')
+        assertRendererChatScope(event, chatId)
         const index = Number.isFinite(payload?.index) ? Math.floor(Number(payload?.index)) : -1
         return blackboardQueuedEnsemblePrompt({
           chatId,
@@ -34494,7 +35964,7 @@ if (isGeminiMcpBridgeProcess) {
     ipcMain.handle(
       'request-ensemble-participant-seat-change',
       async (
-        _,
+        event,
         payload?: {
           chatId?: string
           participantId?: string
@@ -34506,6 +35976,7 @@ if (isGeminiMcpBridgeProcess) {
           throw new Error('Ensemble Mode is disabled.')
         }
         const chatId = requireNonEmptyString(payload?.chatId, 'Ensemble chat id')
+        assertRendererChatScope(event, chatId)
         const participantId = requireNonEmptyString(payload?.participantId, 'Participant id')
         const rawParticipant =
           payload?.participant && typeof payload.participant === 'object' && !Array.isArray(payload.participant)
@@ -34628,34 +36099,41 @@ if (isGeminiMcpBridgeProcess) {
       }
     )
 
-    ipcMain.handle('skip-ensemble-participant', async (_, chatId?: string) => {
-      return ensembleOrchestratorRef?.skipActiveParticipant(
-        requireNonEmptyString(chatId, 'Ensemble chat id')
-      )
+    ipcMain.handle('skip-ensemble-participant', async (event, chatId?: string) => {
+      const canonicalChatId = requireNonEmptyString(chatId, 'Ensemble chat id')
+      assertRendererChatScope(event, canonicalChatId)
+      return ensembleOrchestratorRef?.skipActiveParticipant(canonicalChatId)
     })
 
-    ipcMain.handle('skip-ensemble-read-fanout', async (_, chatId?: string) => {
-      return ensembleOrchestratorRef?.skipReadFanout(
-        requireNonEmptyString(chatId, 'Ensemble chat id')
-      )
+    ipcMain.handle('skip-ensemble-read-fanout', async (event, chatId?: string) => {
+      const canonicalChatId = requireNonEmptyString(chatId, 'Ensemble chat id')
+      assertRendererChatScope(event, canonicalChatId)
+      return ensembleOrchestratorRef?.skipReadFanout(canonicalChatId)
     })
 
     registerCheckpointHandlers({
       getSessionCheckpointStore: () => mainRuntimeContext.getSessionCheckpoints(),
       requireNonEmptyString,
-      formatSessionCheckpointResumePrompt
+      formatSessionCheckpointResumePrompt,
+      assertSenderChatScope: (event, chatId) => assertRendererChatScope(event, chatId)
     })
 
     registerContextCompactionHandlers({
       compactProviderContext: compactProviderContextForRequest,
-      requireNonEmptyString
+      requireNonEmptyString,
+      assertSenderChatScope: (event, chatId) => assertRendererChatScope(event, chatId)
     })
 
     // 1.0.5-N7 — User-initiated Wake-Now from the participant chip
     // overflow. Forwards to the orchestrator's existing wakeup-fired
     // path; same code path as the timer firing naturally.
-    ipcMain.handle('wake-ensemble-participant-now', async (_, wakeupId?: string) => {
+    ipcMain.handle('wake-ensemble-participant-now', async (event, wakeupId?: string) => {
       const id = requireNonEmptyString(wakeupId, 'Wakeup id')
+      const persisted = findPersistedEnsembleWakeup(id)
+      if (!persisted && !isMainRendererSender(event)) {
+        throw new Error('Renderer cannot resolve wakeup chat authority.')
+      }
+      if (persisted) assertRendererChatScope(event, persisted.chatId)
       // The timer service holds an in-flight setTimeout; cancel it
       // first so the timer doesn't fire a duplicate after this user
       // wake. handleWakeupFired removes the record from
@@ -34670,8 +36148,13 @@ if (isGeminiMcpBridgeProcess) {
     // the in-memory runtime path first; falls back to a direct
     // persisted-record cancel if the runtime isn't in memory
     // (e.g. post-restart before recovery armed the timer).
-    ipcMain.handle('cancel-ensemble-participant-wakeup', async (_, wakeupId?: string) => {
+    ipcMain.handle('cancel-ensemble-participant-wakeup', async (event, wakeupId?: string) => {
       const id = requireNonEmptyString(wakeupId, 'Wakeup id')
+      const persistedBeforeCancel = findPersistedEnsembleWakeup(id)
+      if (!persistedBeforeCancel && !isMainRendererSender(event)) {
+        throw new Error('Renderer cannot resolve wakeup chat authority.')
+      }
+      if (persistedBeforeCancel) assertRendererChatScope(event, persistedBeforeCancel.chatId)
       wakeupTimerServiceRef?.cancel(id)
       const cancelled = ensembleOrchestratorRef?.cancelWakeupById(id, 'cancelled by user')
       if (cancelled) return { ok: true, cancelled }
@@ -34691,7 +36174,7 @@ if (isGeminiMcpBridgeProcess) {
 
     ipcMain.handle(
       'cancel-agent-run',
-      async (_, provider: ProviderId = 'gemini', runId?: string) => {
+      async (event, provider: ProviderId = 'gemini', runId?: string) => {
         const normalizedProvider = assertProviderId(provider || 'gemini')
         // QMOD (1.0.3): if the user cancels a run while an
         // `ask_user_question` modal is open for that run, the parked
@@ -34699,6 +36182,12 @@ if (isGeminiMcpBridgeProcess) {
         // exits but the modal sticks around in the renderer waiting
         // for an answer that will never get back to anyone.
         const runIdString = optionalString(runId)
+        if (!isMainRendererSender(event)) {
+          const session = runIdString ? runManager.get(runIdString) : undefined
+          const chatId = optionalString(session?.state?.appChatId)
+          if (!chatId) throw new Error('Renderer cannot resolve run chat authority.')
+          assertRendererChatScope(event, chatId)
+        }
         if (runIdString) {
           cancelPendingAgentQuestionsForRun(runIdString, 'run-cancelled')
         }
@@ -34809,6 +36298,17 @@ if (isGeminiMcpBridgeProcess) {
 
     registerApprovalResponseHandlers({
       approvalService: approvalServiceInstance,
+      assertSenderCanRespond: (event, requestId) => {
+        if (isMainRendererSender(event)) return
+        const route = approvalServiceInstance.lookupRoute(requestId)
+        const external = approvalServiceInstance.getPendingExternalPathDetection(requestId)
+        const chatId =
+          route?.appChatId || external?.appChatId
+        if (!chatId) {
+          throw new Error('Renderer does not own this approval request.')
+        }
+        assertRendererChatScope(event, chatId)
+      },
       issueExternalPathGrant,
       getChat: (chatId) => AppStore.getChat(chatId),
       saveChat: (chat) => AppStore.saveChat(chat),
@@ -34829,6 +36329,7 @@ if (isGeminiMcpBridgeProcess) {
         worktree: GeminiWorktreeLaunchOption = null,
         runRoute: AgentRunRoute | null = null
       ) => {
+        assertMainRendererSender(event)
         const normalizedPayload = normalizeAgentRunPayload({
           provider: 'gemini',
           workspace,
@@ -34849,11 +36350,13 @@ if (isGeminiMcpBridgeProcess) {
       }
     )
 
-    ipcMain.handle('cancel-gemini', async (_, runId?: string) => {
+    ipcMain.handle('cancel-gemini', async (event, runId?: string) => {
+      assertMainRendererSender(event)
       return providerAdapters.require('gemini').cancel(optionalString(runId))
     })
 
-    ipcMain.handle('write-gemini-input', async (_, data: string) => {
+    ipcMain.handle('write-gemini-input', async (event, data: string) => {
+      assertMainRendererSender(event)
       if (typeof data !== 'string' || !data.length) {
         return false
       }
@@ -34888,6 +36391,7 @@ if (isGeminiMcpBridgeProcess) {
         resumeSessionId?: string | null,
         worktree: GeminiWorktreeLaunchOption = null
       ) => {
+        assertMainRendererSender(event)
         // Gemini is retired. This PTY path bypasses normalizeAgentRunPayload, so
         // it needs its OWN guard — otherwise a historical gemini chat's
         // persistent-terminal toggle would spawn the retired CLI directly.
@@ -35059,7 +36563,8 @@ if (isGeminiMcpBridgeProcess) {
       }
     )
 
-    ipcMain.handle('stop-gemini-session', async () => {
+    ipcMain.handle('stop-gemini-session', async (event) => {
+      assertMainRendererSender(event)
       if (geminiSessionProcess) {
         geminiSessionProcess.kill()
         geminiSessionProcess = null
@@ -35069,24 +36574,26 @@ if (isGeminiMcpBridgeProcess) {
       }
     })
 
-    ipcMain.handle('write-gemini-session', (_, data: string) => {
+    ipcMain.handle('write-gemini-session', (event, data: string) => {
+      assertMainRendererSender(event)
       if (geminiSessionProcess) {
         geminiSessionProcess.write(data)
       }
     })
 
-    ipcMain.handle('resize-gemini-session', (_, cols: number, rows: number) => {
+    ipcMain.handle('resize-gemini-session', (event, cols: number, rows: number) => {
+      assertMainRendererSender(event)
       if (geminiSessionProcess) {
         geminiSessionProcess.resize(cols, rows)
       }
     })
 
-    ipcMain.handle('open-workspace-popout', async (_, input: unknown) => {
-      return openWorkspacePopout(input)
+    ipcMain.handle('open-workspace-popout', async (event, input: unknown) => {
+      return openWorkspacePopout(event, input)
     })
 
     ipcMain.handle('dock-side-chat-popout', async (event, input: unknown) => {
-      return dockSideChatPopout(event.sender, input)
+      return dockSideChatPopout(event, input)
     })
 
     ipcMain.handle('app:quit', async () => {
@@ -35094,51 +36601,112 @@ if (isGeminiMcpBridgeProcess) {
       return true
     })
 
-    ipcMain.handle('get-workspace-change-sets', async (_, filter?: WorkspaceChangeFilter) => {
-      return AppStore.getWorkspaceChangeSets(filter || {})
-    })
+    registerWorkspaceChangeLedgerHandlers({
+      assertSenderCanReadWorkspaceChangeLedger: assertMainRendererSender,
+      assertSenderRunChangeScope: (event, input) =>
+        assertRendererFilesystemScope(event, {
+          capability: 'workspace-diff',
+          chatId: input.chatId,
+          workspacePath: input.workspacePath,
+          operation: 'read'
+        }),
+      getWorkspaceChangeSets: (filter) => AppStore.getWorkspaceChangeSets(filter),
+      computeRunDiff,
+      recordWorkspaceRunChange: (input) => AppStore.recordWorkspaceRunChange(input),
+      requireRegisteredWorkspace,
+      findRegisteredWorkspace,
+      assertProviderId,
+      assertRunChangeContext: ({
+        runId,
+        changeContext,
+        workspace,
+        workspacePath,
+        effectiveWorkspacePath,
+        preSnapshot,
+        postSnapshot
+      }) => {
+        const chatId = requireNonEmptyString(changeContext.chatId, 'Run diff chat id')
+        const chat = AppStore.getChat(chatId)
+        if (!chat) throw new Error('Run diff chat could not be resolved.')
+        validateChatWorkspaceIdentity(chatId, workspace)
 
-    ipcMain.handle(
-      'compute-run-diff',
-      async (
-        _,
-        runId: string,
-        preSnapshot: any,
-        postSnapshot: any,
-        changeContext?: Partial<WorkspaceRunChangeInput>
-      ) => {
-        const runDiff = computeRunDiff(preSnapshot, postSnapshot, runId)
-        if (!changeContext || !isRecord(changeContext)) {
-          return runDiff
+        const session = runManager.get(runId)
+        const storedRun = chat.runs?.find((run) => run.runId === runId)
+        if (!session && !storedRun) {
+          throw new Error('Run diff does not belong to the selected chat.')
+        }
+        if (session?.appChatId && session.appChatId !== chatId) {
+          throw new Error('Run diff session belongs to another chat.')
+        }
+        if (
+          session?.workspacePath &&
+          canonicalPath(session.workspacePath) !== canonicalPath(effectiveWorkspacePath)
+        ) {
+          throw new Error('Run diff session belongs to another workspace.')
         }
 
-        const workspacePath = requireRegisteredWorkspace(
-          requireNonEmptyString(changeContext.workspacePath, 'Workspace')
-        )
-        const workspace = findRegisteredWorkspace(workspacePath)
-        if (changeContext.workspaceId && workspace && changeContext.workspaceId !== workspace.id) {
-          throw new Error('Run diff workspace id does not match the registered workspace.')
+        const provider = changeContext.provider
+          ? assertProviderId(changeContext.provider)
+          : undefined
+        if (provider && session?.provider && session.provider !== provider) {
+          throw new Error('Run diff provider does not match the live run.')
         }
-        const effectiveWorkspacePath = changeContext.effectiveWorkspacePath
-          ? requireRegisteredWorkspace(changeContext.effectiveWorkspacePath, 'Effective workspace')
-          : workspacePath
-        const changeSet = AppStore.recordWorkspaceRunChange({
-          ...changeContext,
-          runId,
-          workspaceId: workspace?.id || changeContext.workspaceId,
-          workspacePath,
-          effectiveWorkspacePath,
-          provider: changeContext.provider ? assertProviderId(changeContext.provider) : undefined,
-          runDiff
-        })
-        return {
-          ...runDiff,
-          changeSetId: changeSet.id
+        if (provider && storedRun?.provider && storedRun.provider !== provider) {
+          throw new Error('Run diff provider does not match the stored run.')
+        }
+
+        for (const snapshot of [preSnapshot, postSnapshot]) {
+          if (
+            snapshot.workspacePath &&
+            canonicalPath(snapshot.workspacePath) !== canonicalPath(effectiveWorkspacePath)
+          ) {
+            throw new Error('Run diff snapshot belongs to another workspace.')
+          }
+        }
+        if (!workspace || canonicalPath(workspacePath) !== canonicalPath(workspace.path)) {
+          throw new Error('Run diff workspace does not match the registered workspace.')
         }
       }
-    )
+    })
 
     registerTrustHandlers({
+      assertMainRendererSender,
+      assertSenderCanCheckWorkspaceTrust: (event, workspacePath) =>
+        assertRendererFilesystemScope(event, {
+          capability: 'workspace-diff',
+          workspacePath,
+          operation: 'read'
+        }),
+      assertSenderCanReadTrustedSession: (event, scope) => {
+        if (isMainRendererSender(event)) return
+        assertRendererChatScope(event, requireNonEmptyString(scope?.chatId, 'Chat id'))
+        const chat = AppStore.getChat(scope.chatId)
+        if (!chat) throw new Error('Trusted Session chat could not be resolved.')
+        const primaryWorkspace = resolveChatPrimaryWorkspace(
+          chat,
+          AppStore.getWorkspaces(),
+          canonicalPath
+        )
+        const requestedWorkspacePath = scope.workspacePath?.trim() || ''
+        if (!primaryWorkspace) {
+          if (requestedWorkspacePath) {
+            throw new Error('Global chat Trusted Session scope cannot name a workspace.')
+          }
+          return
+        }
+        if (
+          !requestedWorkspacePath ||
+          canonicalPath(requestedWorkspacePath) !== canonicalPath(primaryWorkspace.path)
+        ) {
+          throw new Error('Trusted Session workspace does not match the owning chat.')
+        }
+        assertRendererFilesystemScope(event, {
+          capability: 'workspace-diff',
+          chatId: chat.appChatId,
+          workspacePath: requestedWorkspacePath,
+          operation: 'read'
+        })
+      },
       checkTrust: (workspacePath) => workspaceService.checkTrust(workspacePath),
       trustWorkspace: (workspacePath) => TrustStatusService.trustWorkspace(workspacePath),
       getSessionYoloMode,
@@ -35151,7 +36719,13 @@ if (isGeminiMcpBridgeProcess) {
     // favicon:getForUrl) — extracted to ./ipc/shellHandlers. Thin delegators;
     // the collaborators stay in index.ts (openSafeShellTarget has a second
     // caller) and are injected.
-    registerShellHandlers({ openSafeShellTarget, revealPathInFinder, getFaviconService })
+    registerShellHandlers({
+      openSafeShellTarget,
+      revealPathInFinder,
+      getFaviconService,
+      authorizeLocalPath: authorizeRendererLocalPath,
+      isMainRendererSender
+    })
 
     // Ensemble roster presets: the renderer (localStorage source of truth)
     // syncs its list up via 'ensemble-roster-presets:sync' so the bridge can
@@ -35164,7 +36738,22 @@ if (isGeminiMcpBridgeProcess) {
     // pty-write / pty-resize. Extracted to ./ipc/ptyHandlers — `ipcMain` is
     // the validation-patched singleton, and the two index-local collaborators
     // are injected so the module needs no back-reference into index.ts.
-    registerPtyHandlers({ requireRegisteredWorkspace, requestAgenticServiceApproval })
+    registerPtyHandlers({
+      requireRegisteredWorkspace,
+      assertSenderWorkspaceScope: (event, workspacePath) => {
+        if (isMainRendererSender(event)) return
+        const owner = workspacePopoutOwnerForSender(event.sender.id)
+        if (owner?.kind !== 'chat') {
+          throw new Error('Only an owning chat renderer can start a workspace terminal.')
+        }
+        assertRendererFilesystemScope(event, {
+          capability: 'workspace-file',
+          workspacePath,
+          operation: 'read'
+        })
+      },
+      requestAgenticServiceApproval
+    })
 
     // Audit-run IPC: audit-run:start / audit-run:cancel / get-audit-run(s).
     // Extracted to ./ipc/auditHandlers (register-fn DI, like ptyHandlers). The
@@ -35174,6 +36763,31 @@ if (isGeminiMcpBridgeProcess) {
       getAuditOrchestrator: () => mainRuntimeContext.getAuditOrchestrator(),
       getAuditRun: (id) => AppStore.getAuditRun(id),
       getAuditRuns: (workspaceId) => AppStore.getAuditRuns(workspaceId),
+      resolveSenderAuditScope: (event) => {
+        if (isMainRendererSender(event)) return { kind: 'main' }
+        const owner = workspacePopoutOwnerForSender(event.sender.id)
+        if (owner?.kind !== 'chat' || !owner.chatId) {
+          throw new Error('Renderer has no audit authority.')
+        }
+        const chat = AppStore.getChat(owner.chatId)
+        if (!chat?.workspaceId) {
+          throw new Error('Renderer audit authority could not be resolved.')
+        }
+        const canonicalWorkspaceId = canonicalRemoteWorkspaceId(chat.workspaceId)
+        const workspace = canonicalWorkspaceId
+          ? AppStore.getWorkspaces().find((candidate) => candidate.id === canonicalWorkspaceId)
+          : undefined
+        if (!workspace) {
+          throw new Error('Renderer audit workspace is not registered.')
+        }
+        return {
+          kind: 'chat',
+          chatId: owner.chatId,
+          workspaceId: workspace.id,
+          workspacePath: requireRegisteredWorkspace(workspace.path, 'Workspace')
+        }
+      },
+      workspacePathsEqual: (left, right) => canonicalPath(left) === canonicalPath(right),
       validateWorkspacePath: (workspacePath) => {
         const registeredWorkspace = requireRegisteredWorkspace(workspacePath, 'Workspace')
         const stat = fsSync.statSync(registeredWorkspace)

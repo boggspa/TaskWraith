@@ -61,11 +61,10 @@ export interface CanvasOpenInput {
    * Content hash of an EXISTING image asset in the content-addressed media store.
    * REQUIRED for the `image` driver. It resolves through the same realpath jail as
    * twmedia:// (the store rejects a bad/unknown hash + enforces a mime->ext
-   * whitelist), so it is never an arbitrary-file-read primitive. NOTE: the asset
-   * store is process-global (not per-chat/workspace), so the access control is
-   * possession of the hash — an agent can view any stored asset whose hash it
-   * already has, not strictly only the ones it produced (the opened Canvas session
-   * is, however, chat-scoped via CanvasService.owns).
+   * whitelist), so it is never an arbitrary-file-read primitive. CanvasService
+   * binds the canonical active chat to the image driver, and the host loader must
+   * verify that chat's durable asset grant before returning bytes; possession of
+   * a hash alone is not authority.
    */
   mediaSha256?: string
   /** MIME type of the image asset (e.g. "image/png"). REQUIRED for the `image` driver. */

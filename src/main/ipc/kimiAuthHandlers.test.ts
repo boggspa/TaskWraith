@@ -44,7 +44,8 @@ function createDeps() {
     isEncryptionAvailable: vi.fn(() => true),
     encryptApiKey: vi.fn((value: string) => `encrypted:${value}`),
     resolveCliProviderBinary: vi.fn(async () => createResolved('/usr/local/bin/kimi')),
-    readResolvedCliVersion: vi.fn(async () => '2.7.0')
+    readResolvedCliVersion: vi.fn(async () => '2.7.0'),
+    isMainRendererSender: vi.fn(() => true)
   }
 
   return {
@@ -97,6 +98,20 @@ describe('registerKimiAuthHandlers', () => {
       encryptionAvailable: true,
       version: '2.7.0',
       binaryPath: '/usr/local/bin/kimi'
+    })
+  })
+
+  it('omits the resolved binary path from secondary auth status', async () => {
+    const { deps } = createDeps()
+    deps.isMainRendererSender.mockReturnValue(false)
+    registerKimiAuthHandlers(deps)
+
+    await expect(handlerFor('get-kimi-auth-status')({ sender: { id: 42 } })).resolves.toEqual({
+      available: true,
+      authState: 'api-key',
+      apiKeyConfigured: true,
+      encryptionAvailable: true,
+      version: '2.7.0'
     })
   })
 

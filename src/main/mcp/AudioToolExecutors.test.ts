@@ -124,9 +124,14 @@ function build(
       overrides.source ?? { ok: true, dataBase64: 'QUJD', mimeType: 'audio/wav', byteLength: 1024 }
   )
   // Default jail: succeeds, returns a real path. Tests override to a rejection.
+  const cleanupStagedInput = vi.fn(() => true)
   const jailAudio =
     overrides.jailAudio ??
-    vi.fn((_args: Record<string, unknown>) => ({ ok: true as const, realPath: '/ws/clip.wav' }))
+    vi.fn((_args: Record<string, unknown>) => ({
+      ok: true as const,
+      realPath: '/ws/clip.wav',
+      cleanup: cleanupStagedInput
+    }))
   // Default producer: a well-formed clip with peaks + transcript. Tests override to
   // omit the transcript or to throw (daemon/persist failure).
   const produceWindowClip =
@@ -145,6 +150,7 @@ function build(
     resolveAudioSource,
     jailAudio,
     produceWindowClip,
+    cleanupStagedInput,
     getSpec: () => lastSpec,
     getAnalyzeInput: () => lastAnalyzeInput,
     getWindowClipArgs: () => lastWindowClipArgs
@@ -368,7 +374,7 @@ describe('normalizeHarvestedPeaks (waveform peaks shape contract)', () => {
 // the internal asset store, never the workspace (still read-only-safe).
 describe('inspect_audio_segment (interactive clip)', () => {
   it('jails the source, produces a windowed clip, and returns a TRUSTED AV ref with peaks + caption', async () => {
-    const { executors, jailAudio, produceWindowClip, getWindowClipArgs } = build()
+    const { executors, jailAudio, produceWindowClip, cleanupStagedInput, getWindowClipArgs } = build()
     const result = await executors.executeAudioTool(
       'inspect_audio_segment',
       { sourcePath: 'song.wav', startMs: 65000, endMs: 80000 },
@@ -402,6 +408,7 @@ describe('inspect_audio_segment (interactive clip)', () => {
     expect(result.text).toContain('1:05–1:20')
     expect(result.text).toContain('playable clip')
     expect(result.text).toContain('the chorus kicks in here')
+    expect(cleanupStagedInput).toHaveBeenCalledTimes(1)
   })
 
   it('still emits the clip+peaks (no transcript, no throw) when the windowed transcribe is omitted', async () => {
@@ -506,7 +513,9 @@ describe('inspect_audio_segment (interactive clip)', () => {
   })
 
   it('surfaces a producer (daemon/persist) failure as a graceful tool error', async () => {
+    const cleanup = vi.fn(() => true)
     const { executors } = build({
+      jailAudio: vi.fn(() => ({ ok: true as const, realPath: '/staged/clip.wav', cleanup })),
       produceWindowClip: vi.fn(async () => {
         throw new Error('audio engine produced an empty clip')
       })
@@ -518,6 +527,43 @@ describe('inspect_audio_segment (interactive clip)', () => {
     )
     expect(result.isError).toBe(true)
     expect(result.text).toContain('audio engine produced an empty clip')
+    expect(cleanup).toHaveBeenCalledTimes(1)
+  })
+
+  it('cleans the staged input exactly once when produced clip validation returns early', async () => {
+    const cleanup = vi.fn(() => true)
+    const { executors } = build({
+      jailAudio: vi.fn(() => ({ ok: true as const, realPath: '/staged/clip.wav', cleanup })),
+      produceWindowClip: vi.fn(async () => ({
+        ...FAKE_WINDOW_CLIP,
+        sha256: ''
+      }))
+    })
+    const result = await executors.executeAudioTool(
+      'inspect_audio_segment',
+      { sourcePath: 'clip.wav', startMs: 0, endMs: 1000 },
+      {}
+    )
+    expect(result.isError).toBe(true)
+    expect(result.text).toContain('unsupported output mime')
+    expect(cleanup).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not let a staged-input cleanup throw mask a successful clip result', async () => {
+    const cleanup = vi.fn(() => {
+      throw new Error('unlink failed')
+    })
+    const { executors } = build({
+      jailAudio: vi.fn(() => ({ ok: true as const, realPath: '/staged/clip.wav', cleanup }))
+    })
+    const result = await executors.executeAudioTool(
+      'inspect_audio_segment',
+      { sourcePath: 'clip.wav', startMs: 0, endMs: 1000 },
+      {}
+    )
+    expect(result.isError).toBeFalsy()
+    expect(result.trustedMediaRefs).toHaveLength(1)
+    expect(cleanup).toHaveBeenCalledTimes(1)
   })
 
   it('fails loudly (not a crash) when the window-clip pipeline is not configured', async () => {

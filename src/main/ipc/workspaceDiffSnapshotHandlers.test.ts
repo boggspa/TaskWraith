@@ -40,11 +40,16 @@ describe('registerWorkspaceDiffSnapshotHandlers', () => {
     const diff = { type: 'no_changes', text: 'No changes were made.' }
     mockedGetWorkspaceDiff.mockResolvedValue(diff)
     const requireRegisteredWorkspace = vi.fn(() => '/repo/real')
+    const assertSenderScope = vi.fn()
 
-    registerWorkspaceDiffSnapshotHandlers({ requireRegisteredWorkspace })
+    registerWorkspaceDiffSnapshotHandlers({ requireRegisteredWorkspace, assertSenderScope })
 
     await expect(handlerFor('get-diff')({} as any, '/repo')).resolves.toBe(diff)
     expect(requireRegisteredWorkspace).toHaveBeenCalledWith('/repo')
+    expect(assertSenderScope).toHaveBeenCalledWith(
+      expect.anything(),
+      { capability: 'workspace-diff', workspacePath: '/repo/real' }
+    )
     expect(mockedGetWorkspaceDiff).toHaveBeenCalledWith('/repo/real')
   })
 
@@ -57,11 +62,44 @@ describe('registerWorkspaceDiffSnapshotHandlers', () => {
     }
     mockedCaptureWorkspaceSnapshot.mockResolvedValue(snapshot as any)
     const requireRegisteredWorkspace = vi.fn(() => '/repo/real')
+    const assertSenderScope = vi.fn()
 
-    registerWorkspaceDiffSnapshotHandlers({ requireRegisteredWorkspace })
+    registerWorkspaceDiffSnapshotHandlers({ requireRegisteredWorkspace, assertSenderScope })
 
     await expect(handlerFor('capture-snapshot')({} as any, '/repo')).resolves.toBe(snapshot)
     expect(requireRegisteredWorkspace).toHaveBeenCalledWith('/repo')
+    expect(assertSenderScope).toHaveBeenCalledWith(
+      expect.anything(),
+      { capability: 'workspace-diff', workspacePath: '/repo/real' }
+    )
     expect(mockedCaptureWorkspaceSnapshot).toHaveBeenCalledWith('/repo/real')
+  })
+
+  it('resolves a chat-scoped external repository before loading its diff', async () => {
+    const diff = { type: 'changes', text: 'external changes' }
+    mockedGetWorkspaceDiff.mockResolvedValue(diff)
+    const requireRegisteredWorkspace = vi.fn()
+    const resolveWorkspaceDiffPath = vi.fn(() => '/external/repo/real')
+    const assertSenderScope = vi.fn()
+
+    registerWorkspaceDiffSnapshotHandlers({
+      requireRegisteredWorkspace,
+      resolveWorkspaceDiffPath,
+      assertSenderScope
+    })
+
+    const input = { repoPath: '/external/repo', chatId: 'chat-1' }
+    await expect(handlerFor('get-diff')({} as any, input)).resolves.toBe(diff)
+    expect(resolveWorkspaceDiffPath).toHaveBeenCalledWith(input)
+    expect(requireRegisteredWorkspace).not.toHaveBeenCalled()
+    expect(assertSenderScope).toHaveBeenCalledWith(
+      expect.anything(),
+      {
+        capability: 'workspace-diff',
+        chatId: 'chat-1',
+        workspacePath: '/external/repo/real'
+      }
+    )
+    expect(mockedGetWorkspaceDiff).toHaveBeenCalledWith('/external/repo/real')
   })
 })

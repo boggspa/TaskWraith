@@ -165,6 +165,13 @@ function cloneExternalPathGrants(grants: ExternalPathGrant[] | undefined): Exter
   return grants.map((grant) => ({ ...grant }))
 }
 
+function cloneDurableExternalPathGrants(
+  grants: ExternalPathGrant[] | undefined
+): ExternalPathGrant[] | undefined {
+  const durable = grants?.filter((grant) => grant.duration === 'thisThread')
+  return durable?.length ? cloneExternalPathGrants(durable) : undefined
+}
+
 function cloneEffectiveRunPermissions(
   permissions: EffectiveRunPermissions | undefined
 ): EffectiveRunPermissions | undefined {
@@ -184,10 +191,17 @@ function buildResumePermissionSnapshot(
   const snapshot: SoloChatWakeupRecord['resumePermissions'] = {}
   if (typeof runContext.approvalMode === 'string') snapshot.approvalMode = runContext.approvalMode
   if (runContext.sessionTrust !== undefined) snapshot.sessionTrust = runContext.sessionTrust
-  const externalPathGrants = cloneExternalPathGrants(runContext.externalPathGrants)
+  // A scheduled wakeup is a new run, potentially after app restart. Never
+  // persist/replay a `thisRun` bearer token under its fresh run id; only
+  // canonical thread grants are eligible to resume.
+  const externalPathGrants = cloneDurableExternalPathGrants(runContext.externalPathGrants)
   if (externalPathGrants?.length) snapshot.externalPathGrants = externalPathGrants
   const effectivePermissions = cloneEffectiveRunPermissions(runContext.effectivePermissions)
-  if (effectivePermissions) snapshot.effectivePermissions = effectivePermissions
+  if (effectivePermissions) {
+    effectivePermissions.externalPathGrants =
+      cloneDurableExternalPathGrants(effectivePermissions.externalPathGrants) || []
+    snapshot.effectivePermissions = effectivePermissions
+  }
   return Object.keys(snapshot).length > 0 ? snapshot : undefined
 }
 

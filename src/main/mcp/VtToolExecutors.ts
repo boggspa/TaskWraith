@@ -65,8 +65,12 @@ export interface VtToolContext {
   workspacePath?: string
 }
 
+export type VtJailedInput =
+  | { ok: true; realPath: string; cleanup: () => boolean | void }
+  | { ok: false; reason: string }
+
 export interface VtToolDeps {
-  jailInput: (sourcePath: string, ctx: VtToolContext) => { ok: true; realPath: string } | { ok: false; reason: string }
+  jailInput: (sourcePath: string, ctx: VtToolContext) => VtJailedInput
   /**
    * Realpath-jail a workspace IMAGE path for the optional encode overlay. DISTINCT
    * from `jailInput`: the overlay is a PNG/JPEG/WebP composited over every frame, so
@@ -74,7 +78,7 @@ export interface VtToolDeps {
    * size-capped). It must NOT reuse `jailInput`, whose `validateWorkspaceMediaPath`
    * sniffs AUDIO/VIDEO mime and would reject a PNG as `unsupported`.
    */
-  jailOverlay: (overlayPath: string, ctx: VtToolContext) => { ok: true; realPath: string } | { ok: false; reason: string }
+  jailOverlay: (overlayPath: string, ctx: VtToolContext) => VtJailedInput
   decodeFrame: (params: { inputPath: string; timestampSeconds?: number; preferHardware?: boolean }) =>
     Promise<{ pngBase64: string; width: number; height: number; timestampSeconds: number; codec: string; usedHardware: boolean }>
   /**
@@ -224,6 +228,15 @@ export function createVtToolExecutors(deps: VtToolDeps): VtToolExecutors {
     }
   }
 
+  function cleanupInput(input: { cleanup: () => boolean | void } | undefined): void {
+    if (!input) return
+    try {
+      input.cleanup()
+    } catch {
+      // best-effort staged-input cleanup
+    }
+  }
+
   async function executeVideoDecodeFrame(
     args: Record<string, unknown>,
     ctx: VtToolContext
@@ -268,6 +281,8 @@ export function createVtToolExecutors(deps: VtToolDeps): VtToolExecutors {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       return fail('video_decode_frame', `video_decode_frame failed: ${message}`)
+    } finally {
+      cleanupInput(jailed)
     }
   }
 
@@ -341,43 +356,47 @@ export function createVtToolExecutors(deps: VtToolDeps): VtToolExecutors {
       return fail('inspect_video_frames', `could not read video: ${jailed.reason}`)
     }
 
-    const blocks: McpToolContentBlock[] = []
-    const labels: string[] = []
-    let lastError: string | undefined
-    // Decode SEQUENTIALLY (for…await), one daemon RPC per timestamp. A failed decode is
-    // treated as end-of-clip: STOP the loop and keep the frames collected so far (don't
-    // fail the whole tool just because everyNSeconds overshot the clip's duration).
-    for (const ts of timestamps) {
-      try {
-        const result = await decodeFrame({
-          inputPath: jailed.realPath,
-          timestampSeconds: ts,
-          preferHardware: true
-        })
-        blocks.push({ type: 'image', mimeType: 'image/png', data: result.pngBase64 })
-        // Label from the ACTUAL decoded timestamp (the daemon may snap to a keyframe).
-        labels.push(formatTimestampLabel(result.timestampSeconds))
-      } catch (error) {
-        lastError = error instanceof Error ? error.message : String(error)
-        break
+    try {
+      const blocks: McpToolContentBlock[] = []
+      const labels: string[] = []
+      let lastError: string | undefined
+      // Decode SEQUENTIALLY (for…await), one daemon RPC per timestamp. A failed decode is
+      // treated as end-of-clip: STOP the loop and keep the frames collected so far (don't
+      // fail the whole tool just because everyNSeconds overshot the clip's duration).
+      for (const ts of timestamps) {
+        try {
+          const result = await decodeFrame({
+            inputPath: jailed.realPath,
+            timestampSeconds: ts,
+            preferHardware: true
+          })
+          blocks.push({ type: 'image', mimeType: 'image/png', data: result.pngBase64 })
+          // Label from the ACTUAL decoded timestamp (the daemon may snap to a keyframe).
+          labels.push(formatTimestampLabel(result.timestampSeconds))
+        } catch (error) {
+          lastError = error instanceof Error ? error.message : String(error)
+          break
+        }
       }
-    }
 
-    // Zero successful frames → a real failure (bad clip, first decode threw, etc.).
-    if (blocks.length === 0) {
-      return fail(
-        'inspect_video_frames',
-        `inspect_video_frames failed: ${lastError ?? 'no frames could be decoded'}`
-      )
-    }
+      // Zero successful frames → a real failure (bad clip, first decode threw, etc.).
+      if (blocks.length === 0) {
+        return fail(
+          'inspect_video_frames',
+          `inspect_video_frames failed: ${lastError ?? 'no frames could be decoded'}`
+        )
+      }
 
-    const summary = `Inspected ${blocks.length} frame${blocks.length === 1 ? '' : 's'} at ${labels.join(', ')}`
-    return {
-      text: summary,
-      content: [{ type: 'text', text: summary }, ...blocks],
-      // maxRefs: 24 lets the dispatch seam emit all the frames we collected (the GLOBAL
-      // default is 8); a trusted main-side hint, ceiling-clamped at createToolResultMediaRefs.
-      mediaRefHints: { groupKind: 'video_frames', labels, maxRefs: INSPECT_VIDEO_FRAMES_MAX }
+      const summary = `Inspected ${blocks.length} frame${blocks.length === 1 ? '' : 's'} at ${labels.join(', ')}`
+      return {
+        text: summary,
+        content: [{ type: 'text', text: summary }, ...blocks],
+        // maxRefs: 24 lets the dispatch seam emit all the frames we collected (the GLOBAL
+        // default is 8); a trusted main-side hint, ceiling-clamped at createToolResultMediaRefs.
+        mediaRefHints: { groupKind: 'video_frames', labels, maxRefs: INSPECT_VIDEO_FRAMES_MAX }
+      }
+    } finally {
+      cleanupInput(jailed)
     }
   }
 
@@ -424,80 +443,87 @@ export function createVtToolExecutors(deps: VtToolDeps): VtToolExecutors {
     let overlayY: number | undefined
     let overlayWidth: number | undefined
     let overlayOpacity: number | undefined
+    let jailedOverlay: Extract<VtJailedInput, { ok: true }> | undefined
     const overlayPath = typeof args.overlayPath === 'string' ? args.overlayPath.trim() : ''
-    if (overlayPath) {
-      const jailedOverlay = jailOverlay(overlayPath, ctx)
-      if (!jailedOverlay.ok) {
-        return fail('video_encode_clip', `could not read overlay image: ${jailedOverlay.reason}`)
-      }
-      overlayRealPath = jailedOverlay.realPath
-      overlayX = numArg(args.overlayX)
-      overlayY = numArg(args.overlayY)
-      overlayWidth = numArg(args.overlayWidth)
-      overlayOpacity = numArg(args.overlayOpacity)
-    }
-
-    const outputPath = stagingPath('mp4')
-    const mimeType = 'video/mp4'
     try {
-      const result = await encodeClip({
-        sourcePath: jailed.realPath,
-        outputPath,
-        scaleWidth,
-        targetBitrateKbps,
-        startSeconds,
-        durationSeconds,
-        overlayPath: overlayRealPath,
-        overlayX,
-        overlayY,
-        overlayWidth,
-        overlayOpacity
-      })
-      let buffer: Buffer
+      if (overlayPath) {
+        const candidate = jailOverlay(overlayPath, ctx)
+        if (!candidate.ok) {
+          return fail('video_encode_clip', `could not read overlay image: ${candidate.reason}`)
+        }
+        jailedOverlay = candidate
+        overlayRealPath = candidate.realPath
+        overlayX = numArg(args.overlayX)
+        overlayY = numArg(args.overlayY)
+        overlayWidth = numArg(args.overlayWidth)
+        overlayOpacity = numArg(args.overlayOpacity)
+      }
+
+      const outputPath = stagingPath('mp4')
+      const mimeType = 'video/mp4'
       try {
-        buffer = readOutput(outputPath, mimeType)
+        const result = await encodeClip({
+          sourcePath: jailed.realPath,
+          outputPath,
+          scaleWidth,
+          targetBitrateKbps,
+          startSeconds,
+          durationSeconds,
+          overlayPath: overlayRealPath,
+          overlayX,
+          overlayY,
+          overlayWidth,
+          overlayOpacity
+        })
+        let buffer: Buffer
+        try {
+          buffer = readOutput(outputPath, mimeType)
+        } catch (error) {
+          return fail('video_encode_clip', `encode output unavailable: ${error instanceof Error ? error.message : String(error)}`)
+        }
+        if (!buffer || buffer.length === 0) return fail('video_encode_clip', 'VideoToolbox produced an empty clip')
+        const persisted = persistOutput(buffer, mimeType)
+        if (!persisted.ok) return fail('video_encode_clip', `Failed to persist output: ${persisted.reason}`)
+        // Best-effort poster (fail-tolerant: undefined on any error) BEFORE the
+        // finally { removeFile } — the staging MP4 must still be on disk. Guarded so a
+        // misbehaving generator can never fail the producer (the poster is decorative).
+        const poster = await safePoster(outputPath, 'video', mimeType, buffer.length)
+        const ref = buildAvMediaRef({
+          sha256: persisted.sha256,
+          mimeType,
+          name: `${sourceBaseName(args.inputPath)}.mp4`,
+          runId: ctx?.appRunId,
+          byteLength: buffer.length,
+          durationMs: result.durationMs,
+          codecs: result.codec,
+          thumbnail: poster?.thumbnail
+        })
+        // buildAvMediaRef only returns null on a non-AV mime — unreachable here
+        // (mimeType is the fixed main-derived 'video/mp4'), but fail LOUDLY rather than
+        // return silent empty-success that would strand the persisted (content-
+        // addressed) asset with no ref pointing at it.
+        if (!ref) return fail('video_encode_clip', `internal: unsupported output mime ${mimeType}`)
+        const summary =
+          `Encoded clip → ${result.width}×${result.height}, ${(result.durationMs / 1000).toFixed(1)}s, ` +
+          `${result.codec} (${humanBytes(buffer.length)}, ${result.usedHardware ? 'hardware' : 'software'})` +
+          (overlayRealPath ? ' + overlay' : '')
+        return {
+          text: summary,
+          content: [{ type: 'text', text: summary }],
+          trustedMediaRefs: [ref]
+        }
       } catch (error) {
-        return fail('video_encode_clip', `encode output unavailable: ${error instanceof Error ? error.message : String(error)}`)
+        return fail('video_encode_clip', error instanceof Error ? error.message : String(error))
+      } finally {
+        try {
+          removeFile(outputPath)
+        } catch {
+          // best-effort staging cleanup
+        }
       }
-      if (!buffer || buffer.length === 0) return fail('video_encode_clip', 'VideoToolbox produced an empty clip')
-      const persisted = persistOutput(buffer, mimeType)
-      if (!persisted.ok) return fail('video_encode_clip', `Failed to persist output: ${persisted.reason}`)
-      // Best-effort poster (fail-tolerant: undefined on any error) BEFORE the
-      // finally { removeFile } — the staging MP4 must still be on disk. Guarded so a
-      // misbehaving generator can never fail the producer (the poster is decorative).
-      const poster = await safePoster(outputPath, 'video', mimeType, buffer.length)
-      const ref = buildAvMediaRef({
-        sha256: persisted.sha256,
-        mimeType,
-        name: `${sourceBaseName(args.inputPath)}.mp4`,
-        runId: ctx?.appRunId,
-        byteLength: buffer.length,
-        durationMs: result.durationMs,
-        codecs: result.codec,
-        thumbnail: poster?.thumbnail
-      })
-      // buildAvMediaRef only returns null on a non-AV mime — unreachable here
-      // (mimeType is the fixed main-derived 'video/mp4'), but fail LOUDLY rather than
-      // return silent empty-success that would strand the persisted (content-
-      // addressed) asset with no ref pointing at it.
-      if (!ref) return fail('video_encode_clip', `internal: unsupported output mime ${mimeType}`)
-      const summary =
-        `Encoded clip → ${result.width}×${result.height}, ${(result.durationMs / 1000).toFixed(1)}s, ` +
-        `${result.codec} (${humanBytes(buffer.length)}, ${result.usedHardware ? 'hardware' : 'software'})` +
-        (overlayRealPath ? ' + overlay' : '')
-      return {
-        text: summary,
-        content: [{ type: 'text', text: summary }],
-        trustedMediaRefs: [ref]
-      }
-    } catch (error) {
-      return fail('video_encode_clip', error instanceof Error ? error.message : String(error))
     } finally {
-      try {
-        removeFile(outputPath)
-      } catch {
-        // best-effort staging cleanup
-      }
+      cleanupInput(jailedOverlay)
+      cleanupInput(jailed)
     }
   }
 
@@ -519,88 +545,96 @@ export function createVtToolExecutors(deps: VtToolDeps): VtToolExecutors {
       return fail('video_concat_clips', 'too many segments (max 50)')
     }
 
-    // Validate + jail EACH segment up front. The first segment's inputPath also names
-    // the cosmetic output label, so capture it. Any jail failure aborts the whole
-    // concat BEFORE the daemon is ever invoked (carries the offending segment index).
-    const realSegments: Array<{ sourcePath: string; startSeconds?: number; durationSeconds?: number }> = []
-    let firstSegmentInputPath: unknown
-    for (let i = 0; i < rawSegments.length; i++) {
-      const segment = asRecord(rawSegments[i])
-      const inputPath = typeof segment.inputPath === 'string' ? segment.inputPath.trim() : ''
-      if (!inputPath) {
-        return fail('video_concat_clips', `segment ${i}: provide inputPath (a video file inside the workspace)`)
-      }
-      if (i === 0) firstSegmentInputPath = segment.inputPath
-      const startSeconds = numArg(segment.startSeconds)
-      let durationSeconds: number | undefined
-      if (segment.durationSeconds !== undefined) {
-        const d = numArg(segment.durationSeconds)
-        if (d === undefined || d <= 0) {
-          return fail('video_concat_clips', `segment ${i}: durationSeconds must be a finite number > 0`)
-        }
-        durationSeconds = d
-      }
-      const jailed = jailInput(inputPath, ctx)
-      if (!jailed.ok) {
-        return fail('video_concat_clips', `segment ${i}: ${jailed.reason}`)
-      }
-      realSegments.push({ sourcePath: jailed.realPath, startSeconds, durationSeconds })
-    }
-
-    // Optional output knobs — numeric, defaulted at the daemon.
-    const scaleWidth = numArg(args.scaleWidth)
-    const targetBitrateKbps = numArg(args.targetBitrateKbps)
-
-    const outputPath = stagingPath('mp4')
-    const mimeType = 'video/mp4'
+    const jailedInputs: Array<Extract<VtJailedInput, { ok: true }>> = []
     try {
-      const result = await concatClips({
-        outputPath,
-        segments: realSegments,
-        scaleWidth,
-        targetBitrateKbps
-      })
-      let buffer: Buffer
+      // Validate + jail EACH segment up front. The first segment's inputPath also names
+      // the cosmetic output label, so capture it. Any jail failure aborts the whole
+      // concat BEFORE the daemon is ever invoked (carries the offending segment index).
+      const realSegments: Array<{ sourcePath: string; startSeconds?: number; durationSeconds?: number }> = []
+      let firstSegmentInputPath: unknown
+      for (let i = 0; i < rawSegments.length; i++) {
+        const segment = asRecord(rawSegments[i])
+        const inputPath = typeof segment.inputPath === 'string' ? segment.inputPath.trim() : ''
+        if (!inputPath) {
+          return fail('video_concat_clips', `segment ${i}: provide inputPath (a video file inside the workspace)`)
+        }
+        if (i === 0) firstSegmentInputPath = segment.inputPath
+        const startSeconds = numArg(segment.startSeconds)
+        let durationSeconds: number | undefined
+        if (segment.durationSeconds !== undefined) {
+          const d = numArg(segment.durationSeconds)
+          if (d === undefined || d <= 0) {
+            return fail('video_concat_clips', `segment ${i}: durationSeconds must be a finite number > 0`)
+          }
+          durationSeconds = d
+        }
+        const jailed = jailInput(inputPath, ctx)
+        if (!jailed.ok) {
+          return fail('video_concat_clips', `segment ${i}: ${jailed.reason}`)
+        }
+        jailedInputs.push(jailed)
+        realSegments.push({ sourcePath: jailed.realPath, startSeconds, durationSeconds })
+      }
+
+      // Optional output knobs — numeric, defaulted at the daemon.
+      const scaleWidth = numArg(args.scaleWidth)
+      const targetBitrateKbps = numArg(args.targetBitrateKbps)
+
+      const outputPath = stagingPath('mp4')
+      const mimeType = 'video/mp4'
       try {
-        buffer = readOutput(outputPath, mimeType)
+        const result = await concatClips({
+          outputPath,
+          segments: realSegments,
+          scaleWidth,
+          targetBitrateKbps
+        })
+        let buffer: Buffer
+        try {
+          buffer = readOutput(outputPath, mimeType)
+        } catch (error) {
+          return fail('video_concat_clips', `concat output unavailable: ${error instanceof Error ? error.message : String(error)}`)
+        }
+        if (!buffer || buffer.length === 0) return fail('video_concat_clips', 'VideoToolbox produced an empty clip')
+        const persisted = persistOutput(buffer, mimeType)
+        if (!persisted.ok) return fail('video_concat_clips', `Failed to persist output: ${persisted.reason}`)
+        // Best-effort poster (fail-tolerant) BEFORE the finally { removeFile }.
+        const poster = await safePoster(outputPath, 'video', mimeType, buffer.length)
+        const ref = buildAvMediaRef({
+          sha256: persisted.sha256,
+          mimeType,
+          name: `${sourceBaseName(firstSegmentInputPath)}-concat.mp4`,
+          runId: ctx?.appRunId,
+          byteLength: buffer.length,
+          durationMs: result.durationMs,
+          codecs: result.codec,
+          thumbnail: poster?.thumbnail
+        })
+        // buildAvMediaRef only returns null on a non-AV mime — unreachable here (mimeType
+        // is the fixed main-derived 'video/mp4'), but fail LOUDLY rather than return a
+        // silent empty-success that would strand the persisted asset with no ref.
+        if (!ref) return fail('video_concat_clips', `internal: unsupported output mime ${mimeType}`)
+        const summary =
+          `Concatenated ${result.segmentCount} clips → ${result.width}×${result.height}, ` +
+          `${(result.durationMs / 1000).toFixed(1)}s, ${result.codec} ` +
+          `(${humanBytes(buffer.length)}, ${result.usedHardware ? 'hardware' : 'software'})`
+        return {
+          text: summary,
+          content: [{ type: 'text', text: summary }],
+          trustedMediaRefs: [ref]
+        }
       } catch (error) {
-        return fail('video_concat_clips', `concat output unavailable: ${error instanceof Error ? error.message : String(error)}`)
+        return fail('video_concat_clips', error instanceof Error ? error.message : String(error))
+      } finally {
+        try {
+          removeFile(outputPath)
+        } catch {
+          // best-effort staging cleanup
+        }
       }
-      if (!buffer || buffer.length === 0) return fail('video_concat_clips', 'VideoToolbox produced an empty clip')
-      const persisted = persistOutput(buffer, mimeType)
-      if (!persisted.ok) return fail('video_concat_clips', `Failed to persist output: ${persisted.reason}`)
-      // Best-effort poster (fail-tolerant) BEFORE the finally { removeFile }.
-      const poster = await safePoster(outputPath, 'video', mimeType, buffer.length)
-      const ref = buildAvMediaRef({
-        sha256: persisted.sha256,
-        mimeType,
-        name: `${sourceBaseName(firstSegmentInputPath)}-concat.mp4`,
-        runId: ctx?.appRunId,
-        byteLength: buffer.length,
-        durationMs: result.durationMs,
-        codecs: result.codec,
-        thumbnail: poster?.thumbnail
-      })
-      // buildAvMediaRef only returns null on a non-AV mime — unreachable here (mimeType
-      // is the fixed main-derived 'video/mp4'), but fail LOUDLY rather than return a
-      // silent empty-success that would strand the persisted asset with no ref.
-      if (!ref) return fail('video_concat_clips', `internal: unsupported output mime ${mimeType}`)
-      const summary =
-        `Concatenated ${result.segmentCount} clips → ${result.width}×${result.height}, ` +
-        `${(result.durationMs / 1000).toFixed(1)}s, ${result.codec} ` +
-        `(${humanBytes(buffer.length)}, ${result.usedHardware ? 'hardware' : 'software'})`
-      return {
-        text: summary,
-        content: [{ type: 'text', text: summary }],
-        trustedMediaRefs: [ref]
-      }
-    } catch (error) {
-      return fail('video_concat_clips', error instanceof Error ? error.message : String(error))
     } finally {
-      try {
-        removeFile(outputPath)
-      } catch {
-        // best-effort staging cleanup
+      for (let i = jailedInputs.length - 1; i >= 0; i -= 1) {
+        cleanupInput(jailedInputs[i])
       }
     }
   }
@@ -625,104 +659,112 @@ export function createVtToolExecutors(deps: VtToolDeps): VtToolExecutors {
       return fail('audio_mix', 'too many tracks (max 24)')
     }
 
-    // Validate + jail EACH track up front. The first track's sourcePath also names the
-    // cosmetic output label, so capture it. Any jail failure aborts the whole mix BEFORE
-    // the daemon is ever invoked (carries the offending track index). Optional per-track
-    // numeric knobs (gainDb/pan/offsetMs/fadeInMs/fadeOutMs) are read defensively and
-    // only forwarded when finite.
-    const realTracks: Array<{ sourcePath: string; gainDb?: number; pan?: number; offsetMs?: number; fadeInMs?: number; fadeOutMs?: number }> = []
-    let firstTrackSourcePath: unknown
-    for (let i = 0; i < rawTracks.length; i++) {
-      const track = asRecord(rawTracks[i])
-      const sourcePath = typeof track.sourcePath === 'string' ? track.sourcePath.trim() : ''
-      if (!sourcePath) {
-        return fail('audio_mix', `track ${i}: provide sourcePath (an audio file inside the workspace)`)
-      }
-      if (i === 0) firstTrackSourcePath = track.sourcePath
-      const jailed = jailInput(sourcePath, ctx)
-      if (!jailed.ok) {
-        return fail('audio_mix', `track ${i}: ${jailed.reason}`)
-      }
-      realTracks.push({
-        sourcePath: jailed.realPath,
-        gainDb: numArg(track.gainDb),
-        pan: numArg(track.pan),
-        offsetMs: numArg(track.offsetMs),
-        fadeInMs: numArg(track.fadeInMs),
-        fadeOutMs: numArg(track.fadeOutMs)
-      })
-    }
-
-    // Top-level mix knobs. format defaults 'wav' and is the ONLY field that picks the
-    // ext+mime; sampleRate (44100) / channels (2) / bitrateKbps (192, m4a/AAC only)
-    // default at the daemon. Anything outside the allowed set falls back to the default.
-    const rawFormat = typeof args.format === 'string' ? args.format.trim().toLowerCase() : ''
-    const format: 'wav' | 'm4a' = rawFormat === 'm4a' ? 'm4a' : 'wav'
-    // Round the integer-typed knobs: the daemon decodes sampleRate/bitrateKbps as
-    // Swift Int, which rejects a fractional JSON value (44100.5) with invalidParams.
-    const sampleRate = Math.round(numArg(args.sampleRate) ?? 44100)
-    const rawChannels = numArg(args.channels)
-    const channels = rawChannels === 1 ? 1 : 2
-    const bitrateKbps = Math.round(numArg(args.bitrateKbps) ?? 192)
-
-    // Output mime MUST be an asset-store-known AV mime: 'audio/wav' for wav, 'audio/mp4'
-    // for m4a. NEVER 'audio/x-m4a' — it is absent from AV_MIMES + the asset-store map and
-    // would null-ref-fail.
-    const ext = format === 'wav' ? 'wav' : 'm4a'
-    const mimeType = format === 'wav' ? 'audio/wav' : 'audio/mp4'
-
-    const outputPath = stagingPath(ext)
+    const jailedInputs: Array<Extract<VtJailedInput, { ok: true }>> = []
     try {
-      const result = await mixdown({
-        outputPath,
-        format,
-        sampleRate,
-        channels,
-        bitrateKbps,
-        tracks: realTracks
-      })
-      let buffer: Buffer
+      // Validate + jail EACH track up front. The first track's sourcePath also names the
+      // cosmetic output label, so capture it. Any jail failure aborts the whole mix BEFORE
+      // the daemon is ever invoked (carries the offending track index). Optional per-track
+      // numeric knobs (gainDb/pan/offsetMs/fadeInMs/fadeOutMs) are read defensively and
+      // only forwarded when finite.
+      const realTracks: Array<{ sourcePath: string; gainDb?: number; pan?: number; offsetMs?: number; fadeInMs?: number; fadeOutMs?: number }> = []
+      let firstTrackSourcePath: unknown
+      for (let i = 0; i < rawTracks.length; i++) {
+        const track = asRecord(rawTracks[i])
+        const sourcePath = typeof track.sourcePath === 'string' ? track.sourcePath.trim() : ''
+        if (!sourcePath) {
+          return fail('audio_mix', `track ${i}: provide sourcePath (an audio file inside the workspace)`)
+        }
+        if (i === 0) firstTrackSourcePath = track.sourcePath
+        const jailed = jailInput(sourcePath, ctx)
+        if (!jailed.ok) {
+          return fail('audio_mix', `track ${i}: ${jailed.reason}`)
+        }
+        jailedInputs.push(jailed)
+        realTracks.push({
+          sourcePath: jailed.realPath,
+          gainDb: numArg(track.gainDb),
+          pan: numArg(track.pan),
+          offsetMs: numArg(track.offsetMs),
+          fadeInMs: numArg(track.fadeInMs),
+          fadeOutMs: numArg(track.fadeOutMs)
+        })
+      }
+
+      // Top-level mix knobs. format defaults 'wav' and is the ONLY field that picks the
+      // ext+mime; sampleRate (44100) / channels (2) / bitrateKbps (192, m4a/AAC only)
+      // default at the daemon. Anything outside the allowed set falls back to the default.
+      const rawFormat = typeof args.format === 'string' ? args.format.trim().toLowerCase() : ''
+      const format: 'wav' | 'm4a' = rawFormat === 'm4a' ? 'm4a' : 'wav'
+      // Round the integer-typed knobs: the daemon decodes sampleRate/bitrateKbps as
+      // Swift Int, which rejects a fractional JSON value (44100.5) with invalidParams.
+      const sampleRate = Math.round(numArg(args.sampleRate) ?? 44100)
+      const rawChannels = numArg(args.channels)
+      const channels = rawChannels === 1 ? 1 : 2
+      const bitrateKbps = Math.round(numArg(args.bitrateKbps) ?? 192)
+
+      // Output mime MUST be an asset-store-known AV mime: 'audio/wav' for wav, 'audio/mp4'
+      // for m4a. NEVER 'audio/x-m4a' — it is absent from AV_MIMES + the asset-store map and
+      // would null-ref-fail.
+      const ext = format === 'wav' ? 'wav' : 'm4a'
+      const mimeType = format === 'wav' ? 'audio/wav' : 'audio/mp4'
+
+      const outputPath = stagingPath(ext)
       try {
-        buffer = readOutput(outputPath, mimeType)
+        const result = await mixdown({
+          outputPath,
+          format,
+          sampleRate,
+          channels,
+          bitrateKbps,
+          tracks: realTracks
+        })
+        let buffer: Buffer
+        try {
+          buffer = readOutput(outputPath, mimeType)
+        } catch (error) {
+          return fail('audio_mix', `mix output unavailable: ${error instanceof Error ? error.message : String(error)}`)
+        }
+        if (!buffer || buffer.length === 0) return fail('audio_mix', 'audio engine produced an empty mix')
+        const persisted = persistOutput(buffer, mimeType)
+        if (!persisted.ok) return fail('audio_mix', `Failed to persist output: ${persisted.reason}`)
+        // Best-effort waveform poster + harvested peaks (fail-tolerant) BEFORE the
+        // finally { removeFile }. Audio carries BOTH the JPEG poster (fallback) and the
+        // compact `peaks` envelope the renderer DAW-draws from.
+        const poster = await safePoster(outputPath, 'audio', mimeType, buffer.length)
+        const ref = buildAvMediaRef({
+          sha256: persisted.sha256,
+          mimeType,
+          name: `${sourceBaseName(firstTrackSourcePath)}-mix.${ext}`,
+          runId: ctx?.appRunId,
+          byteLength: buffer.length,
+          durationMs: result.durationMs,
+          codecs: result.codec,
+          thumbnail: poster?.thumbnail,
+          peaks: poster?.peaks
+        })
+        // buildAvMediaRef only returns null on a non-AV mime — unreachable here (mimeType is
+        // the fixed main-derived 'audio/wav' | 'audio/mp4'), but fail LOUDLY rather than
+        // return a silent empty-success that would strand the persisted asset with no ref.
+        if (!ref) return fail('audio_mix', `internal: unsupported output mime ${mimeType}`)
+        const summary =
+          `Mixed ${realTracks.length} tracks → ${ref.name} (${humanBytes(buffer.length)})`
+        return {
+          text: summary,
+          content: [{ type: 'text', text: summary }],
+          trustedMediaRefs: [ref]
+        }
       } catch (error) {
-        return fail('audio_mix', `mix output unavailable: ${error instanceof Error ? error.message : String(error)}`)
+        return fail('audio_mix', error instanceof Error ? error.message : String(error))
+      } finally {
+        try {
+          removeFile(outputPath)
+        } catch {
+          // best-effort staging cleanup
+        }
       }
-      if (!buffer || buffer.length === 0) return fail('audio_mix', 'audio engine produced an empty mix')
-      const persisted = persistOutput(buffer, mimeType)
-      if (!persisted.ok) return fail('audio_mix', `Failed to persist output: ${persisted.reason}`)
-      // Best-effort waveform poster + harvested peaks (fail-tolerant) BEFORE the
-      // finally { removeFile }. Audio carries BOTH the JPEG poster (fallback) and the
-      // compact `peaks` envelope the renderer DAW-draws from.
-      const poster = await safePoster(outputPath, 'audio', mimeType, buffer.length)
-      const ref = buildAvMediaRef({
-        sha256: persisted.sha256,
-        mimeType,
-        name: `${sourceBaseName(firstTrackSourcePath)}-mix.${ext}`,
-        runId: ctx?.appRunId,
-        byteLength: buffer.length,
-        durationMs: result.durationMs,
-        codecs: result.codec,
-        thumbnail: poster?.thumbnail,
-        peaks: poster?.peaks
-      })
-      // buildAvMediaRef only returns null on a non-AV mime — unreachable here (mimeType is
-      // the fixed main-derived 'audio/wav' | 'audio/mp4'), but fail LOUDLY rather than
-      // return a silent empty-success that would strand the persisted asset with no ref.
-      if (!ref) return fail('audio_mix', `internal: unsupported output mime ${mimeType}`)
-      const summary =
-        `Mixed ${realTracks.length} tracks → ${ref.name} (${humanBytes(buffer.length)})`
-      return {
-        text: summary,
-        content: [{ type: 'text', text: summary }],
-        trustedMediaRefs: [ref]
-      }
-    } catch (error) {
-      return fail('audio_mix', error instanceof Error ? error.message : String(error))
     } finally {
-      try {
-        removeFile(outputPath)
-      } catch {
-        // best-effort staging cleanup
+      for (let i = jailedInputs.length - 1; i >= 0; i -= 1) {
+        cleanupInput(jailedInputs[i])
       }
     }
   }
@@ -791,6 +833,8 @@ export function createVtToolExecutors(deps: VtToolDeps): VtToolExecutors {
       // unavailable / recognizer error) rides through verbatim — graceful fail, never a
       // crash. This is also the path the EXPECTED runtime permission denial takes.
       return fail('transcribe_audio', error instanceof Error ? error.message : String(error))
+    } finally {
+      cleanupInput(jailed)
     }
   }
 

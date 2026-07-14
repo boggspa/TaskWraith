@@ -30,6 +30,7 @@ function createDeps(overrides: Partial<Parameters<typeof registerFileIconHandler
     getFileIcon: vi.fn(async () => ({
       toDataURL: () => 'data:image/png;base64,abc'
     })),
+    authorizeLocalPath: vi.fn(async (_event, request) => request.requestedPath),
     cache: new Map<string, string | null>(),
     ...overrides
   }
@@ -71,6 +72,41 @@ describe('registerFileIconHandlers', () => {
       'data:image/png;base64,abc'
     )
     expect(deps.getFileIcon).toHaveBeenCalledTimes(1)
+  })
+
+  it('uses only the canonical path returned by caller authorization', async () => {
+    const deps = createDeps({
+      authorizeLocalPath: vi.fn(async () => '/canonical/workspace/icon.png')
+    })
+    registerFileIconHandlers(deps)
+
+    const event = { sender: { id: 88 } }
+    await expect(handlerFor('get-file-icon')(event, '/forged/outside/icon.png')).resolves.toBe(
+      'data:image/png;base64,abc'
+    )
+    expect(deps.authorizeLocalPath).toHaveBeenCalledWith(event, {
+      operation: 'file-icon',
+      requestedPath: '/forged/outside/icon.png'
+    })
+    expect(deps.getFileIcon).toHaveBeenCalledWith('/canonical/workspace/icon.png', {
+      size: 'small'
+    })
+    expect(deps.cache.get('/canonical/workspace/icon.png')).toBe('data:image/png;base64,abc')
+  })
+
+  it('prevents a denied secondary icon request from reaching the OS or cache', async () => {
+    const deps = createDeps({
+      authorizeLocalPath: vi.fn(async () => {
+        throw new Error('outside owned workspace')
+      })
+    })
+    registerFileIconHandlers(deps)
+
+    await expect(
+      handlerFor('get-file-icon')({ sender: { id: 88 } }, '/private/secret.txt')
+    ).rejects.toThrow(/outside owned workspace/i)
+    expect(deps.getFileIcon).not.toHaveBeenCalled()
+    expect(deps.cache.size).toBe(0)
   })
 
   it('stores null on failure and returns cached null on subsequent calls', async () => {

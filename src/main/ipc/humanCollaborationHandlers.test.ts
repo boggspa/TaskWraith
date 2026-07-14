@@ -88,7 +88,7 @@ function createDeps(overrides: Partial<HumanCollaborationHandlersDeps> = {}) {
   const runtime = {
     hostIdentityPubKeyB64: vi.fn(() => 'host-key'),
     connectedChatIds: vi.fn(() => ['chat-1']),
-    sessionSummaries: vi.fn(() => [{ chatId: 'chat-1' }]),
+    sessionSummaries: vi.fn<() => unknown[]>(() => [{ chatId: 'chat-1' }]),
     publishProjectionUpdates: vi.fn(async () => undefined),
     beginAdmission: vi.fn(async () => ({ confirmCode: '123456' })),
     confirmSas: vi.fn(async () => ({ chatId: 'chat-1' })),
@@ -169,6 +169,8 @@ function createDeps(overrides: Partial<HumanCollaborationHandlersDeps> = {}) {
     sendToMainWindow: vi.fn(),
     broadcastChatUpdated: vi.fn(),
     broadcastHumanCollaborationUpdate: vi.fn(),
+    resolveSenderHumanCollaborationScope: vi.fn(() => ({ kind: 'main' as const })),
+    assertMainRendererSender: vi.fn(),
     ...overrides
   } as HumanCollaborationHandlersDeps
 
@@ -324,5 +326,159 @@ describe('registerHumanCollaborationHandlers', () => {
       shareId: 'share-1',
       preset: 'autoDraft'
     })
+  })
+
+  it('preserves own-chat host views while filtering global runtime state for a chat popout', async () => {
+    const { deps, runtime, baseShare } = createDeps()
+    const popoutEvent = { sender: { id: 41 } }
+    deps.resolveSenderHumanCollaborationScope = vi.fn(() => ({
+      kind: 'chat' as const,
+      chatId: 'chat-1'
+    }))
+    runtime.connectedChatIds.mockReturnValue(['chat-1', 'chat-3'])
+    runtime.sessionSummaries.mockReturnValue([
+      { chatId: 'chat-1', shareId: 'share-1' },
+      { chatId: 'chat-3', shareId: 'share-3' }
+    ])
+    registerHumanCollaborationHandlers(deps)
+
+    await expect(
+      handlerFor('human-collaboration:invite-health')(popoutEvent, 'chat-1')
+    ).resolves.toMatchObject({ chatAvailable: true, shareEnabled: true })
+    expect(handlerFor('human-collaboration:list-shares')(popoutEvent)).toEqual([baseShare])
+    expect(deps.chatService.listHumanCollaborationShares).toHaveBeenLastCalledWith('chat-1')
+    expect(handlerFor('human-collaboration:connected-chat-ids')(popoutEvent)).toEqual([
+      'chat-1'
+    ])
+    expect(handlerFor('human-collaboration:session-status')(popoutEvent)).toEqual([
+      { chatId: 'chat-1', shareId: 'share-1' }
+    ])
+    expect(
+      handlerFor('human-collaboration:update-share-rules')(popoutEvent, {
+        shareId: 'share-1',
+        preset: 'autoDraft'
+      })
+    ).toEqual(baseShare)
+    expect(deps.chatService.updateHumanCollaborationShareRules).toHaveBeenCalledWith({
+      shareId: 'share-1',
+      preset: 'autoDraft'
+    })
+  })
+
+  it('blocks a Test 1 chat popout from Test 3 shares and foreign comment routes', async () => {
+    const { deps, baseChat, baseShare } = createDeps()
+    const test1Chat = {
+      ...baseChat,
+      workspaceId: 'test-1',
+      workspacePath: '/Users/chrisizatt/Documents/Test 1'
+    }
+    const test3Chat = chat('chat-3', {
+      workspaceId: 'test-3',
+      workspacePath: '/Users/chrisizatt/Documents/Test 3'
+    })
+    const test3Share = share({ shareId: 'share-3', chatId: 'chat-3' })
+    vi.mocked(deps.chatService.getChat).mockImplementation((chatId) =>
+      chatId === 'chat-1' ? test1Chat : chatId === 'chat-3' ? test3Chat : null
+    )
+    vi.mocked(deps.humanCollaborationStore.getShare).mockImplementation((shareId) =>
+      shareId === 'share-1' ? baseShare : shareId === 'share-3' ? test3Share : null
+    )
+    deps.resolveSenderHumanCollaborationScope = vi.fn(() => ({
+      kind: 'chat' as const,
+      chatId: 'chat-1'
+    }))
+    const popoutEvent = { sender: { id: 41 } }
+    registerHumanCollaborationHandlers(deps)
+
+    expect(() =>
+      handlerFor('human-collaboration:list-shares')(popoutEvent, 'chat-3')
+    ).toThrow('Renderer does not own this collaboration chat.')
+    expect(deps.chatService.listHumanCollaborationShares).not.toHaveBeenCalled()
+
+    expect(() =>
+      handlerFor('human-collaboration:audit-log')(popoutEvent, { chatId: 'chat-3' })
+    ).toThrow('Renderer does not own this collaboration chat.')
+    expect(deps.humanCollaborationAuditLog.list).not.toHaveBeenCalled()
+
+    await expect(
+      handlerFor('human-collaboration:create-share')(popoutEvent, {
+        chatId: 'chat-3',
+        mode: 'comments'
+      })
+    ).rejects.toThrow('Renderer does not own this collaboration chat.')
+    expect(deps.chatService.createHumanCollaborationShare).not.toHaveBeenCalled()
+    expect(deps.selectAdvertisableRelayUrls).not.toHaveBeenCalled()
+
+    expect(() =>
+      handlerFor('human-collaboration:revoke-share')(popoutEvent, 'share-3')
+    ).toThrow('Renderer does not own this collaboration chat.')
+    expect(deps.chatService.revokeHumanCollaborationShare).not.toHaveBeenCalled()
+
+    expect(() =>
+      handlerFor('human-collaboration:append-comment')(popoutEvent, {
+        shareId: 'share-3',
+        chatId: 'chat-3',
+        collaboratorId: 'collab-1',
+        clientMessageId: 'foreign-client-message',
+        content: 'Test 1 must not write into Test 3.'
+      })
+    ).toThrow('Renderer does not own this collaboration chat.')
+    expect(deps.chatService.appendCollaboratorComment).not.toHaveBeenCalled()
+
+    expect(() =>
+      handlerFor('human-collaboration:append-comment')(popoutEvent, {
+        shareId: 'share-1',
+        chatId: 'chat-3',
+        collaboratorId: 'collab-1',
+        clientMessageId: 'mismatched-share-route',
+        content: 'Mismatched persisted share ownership.'
+      })
+    ).toThrow('Collaboration share does not belong to the requested chat.')
+    expect(deps.chatService.appendCollaboratorComment).not.toHaveBeenCalled()
+  })
+
+  it('keeps unscoped host runtime and collaborator-client controls main-renderer only', async () => {
+    const denied = new Error('main renderer required')
+    const { deps, runtime } = createDeps({
+      assertMainRendererSender: vi.fn(() => {
+        throw denied
+      })
+    })
+    const popoutEvent = { sender: { id: 41 } }
+    registerHumanCollaborationHandlers(deps)
+
+    expect(() =>
+      handlerFor('human-collaboration-runtime:subscribe-projection')(popoutEvent, {
+        sessionId: 'session-1'
+      })
+    ).toThrow(denied)
+    expect(runtime.subscribeProjection).not.toHaveBeenCalled()
+
+    await expect(
+      handlerFor('human-collaboration-runtime:confirm-sas')(popoutEvent, {
+        handshakeId: 'handshake-1',
+        confirmCode: '123456',
+        collaboratorTranscriptSigB64: 'signature'
+      })
+    ).rejects.toThrow(denied)
+    expect(runtime.confirmSas).not.toHaveBeenCalled()
+
+    await expect(
+      handlerFor('human-collaboration-collaborator:join')(popoutEvent, {
+        shareId: 'share-1',
+        chatId: 'chat-1',
+        inviteToken: 'invite-token',
+        displayName: 'Collaborator',
+        mode: 'comments',
+        relayUrl: 'ws://remote',
+        roomId: 'room-1'
+      })
+    ).rejects.toThrow(denied)
+    expect(deps.socketFactory).not.toHaveBeenCalled()
+
+    expect(() => handlerFor('human-collaboration-collaborator:last-session')(popoutEvent)).toThrow(
+      denied
+    )
+    expect(() => handlerFor('human-collaboration-collaborator:leave')(popoutEvent)).toThrow(denied)
   })
 })

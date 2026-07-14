@@ -1459,7 +1459,8 @@ describe('composeRun unattended ELEVATION (P2 verified ack honoring)', () => {
       provider: 'codex',
       access: 'write',
       kind: 'directory',
-      path: '/outside'
+      path: '/outside',
+      duration: 'workspace'
     })
     const payload = composeUnattended({ level: 'full_access', mode: 'auto_edit' }, undefined, {
       externalPathGrants: [grant]
@@ -1470,7 +1471,8 @@ describe('composeRun unattended ELEVATION (P2 verified ack honoring)', () => {
     // Unattended elevation force-denies network egress (no exfiltration on a loop).
     expect(payload.effectivePermissions?.networkAccess).toBe('deny')
     // Elevated ⇒ approvalMode !== 'plan' ⇒ the grant-clear is skipped.
-    expect((payload.externalPathGrants ?? []).length).toBeGreaterThan(0)
+    expect(payload.externalPathGrants).toEqual([grant])
+    expect(payload.prompt).toContain('/outside')
     // The posture is SIGNED (honest, verifiable) — not undefined.
     expect(payload.effectivePermissionsSignature).toBeTruthy()
     expect(

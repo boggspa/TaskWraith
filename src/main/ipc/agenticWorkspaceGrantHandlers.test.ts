@@ -27,7 +27,15 @@ function handlerFor(channel: string): RegisteredHandler {
 }
 
 function createDeps() {
-  const settings = { bridgeDaemonEnabled: false } as AppSettings
+  const settings = {
+    bridgeDaemonEnabled: false,
+    compactDensity: true,
+    claudeApiKey: 'secret-claude',
+    codexUsageCredential: {
+      accountId: 'account-1',
+      encryptedAccessToken: 'secret-codex'
+    }
+  } as unknown as AppSettings
   return {
     settings,
     permissionService: {
@@ -37,22 +45,41 @@ function createDeps() {
     getSettings: vi.fn(() => settings),
     assertProviderId: vi.fn((provider: ProviderId) => provider),
     requireNonEmptyString: vi.fn((value: string) => value),
-    assertAgenticServiceId: vi.fn((service: AgenticServiceId) => service)
+    assertAgenticServiceId: vi.fn((service: AgenticServiceId) => service),
+    assertSenderCanManageAgenticWorkspaceGrants: vi.fn(
+      (_event: unknown, workspacePath: string) => workspacePath
+    )
   }
 }
 
 describe('registerAgenticWorkspaceGrantHandlers', () => {
   it('registers and executes the upsert grant handler', () => {
     const deps = createDeps()
+    const event = { sender: { id: 1 } }
     registerAgenticWorkspaceGrantHandlers(deps)
 
-    expect(
-      handlerFor('upsert-agentic-workspace-grant')({}, 'codex', '/tmp/workspace', 'fileChanges')
-    ).toBe(deps.settings)
+    const result = handlerFor('upsert-agentic-workspace-grant')(
+      event,
+      'codex',
+      '/tmp/workspace',
+      'fileChanges'
+    ) as AppSettings
+
+    expect(result).toMatchObject({
+      bridgeDaemonEnabled: false,
+      compactDensity: true,
+      codexUsageCredential: { accountId: 'account-1' }
+    })
+    expect(result).not.toHaveProperty('claudeApiKey')
+    expect(result.codexUsageCredential).not.toHaveProperty('encryptedAccessToken')
 
     expect(deps.assertProviderId).toHaveBeenCalledWith('codex')
     expect(deps.requireNonEmptyString).toHaveBeenCalledWith('/tmp/workspace', 'Workspace path')
     expect(deps.assertAgenticServiceId).toHaveBeenCalledWith('fileChanges')
+    expect(deps.assertSenderCanManageAgenticWorkspaceGrants).toHaveBeenCalledWith(
+      event,
+      '/tmp/workspace'
+    )
     expect(deps.permissionService.upsertWorkspaceGrant).toHaveBeenCalledWith(
       'codex',
       '/tmp/workspace',
@@ -63,19 +90,89 @@ describe('registerAgenticWorkspaceGrantHandlers', () => {
 
   it('registers and executes the remove grant handler', () => {
     const deps = createDeps()
+    const event = { sender: { id: 1 } }
     registerAgenticWorkspaceGrantHandlers(deps)
-    expect(
-      handlerFor('remove-agentic-workspace-grant')({}, 'claude', '/tmp/workspace-2', 'shellCommands')
-    ).toBe(deps.settings)
+    const result = handlerFor('remove-agentic-workspace-grant')(
+      event,
+      'claude',
+      '/tmp/workspace-2',
+      'shellCommands'
+    ) as AppSettings
+
+    expect(result).toMatchObject({
+      bridgeDaemonEnabled: false,
+      compactDensity: true,
+      codexUsageCredential: { accountId: 'account-1' }
+    })
+    expect(result).not.toHaveProperty('claudeApiKey')
+    expect(result.codexUsageCredential).not.toHaveProperty('encryptedAccessToken')
 
     expect(deps.assertProviderId).toHaveBeenCalledWith('claude')
     expect(deps.requireNonEmptyString).toHaveBeenCalledWith('/tmp/workspace-2', 'Workspace path')
     expect(deps.assertAgenticServiceId).toHaveBeenCalledWith('shellCommands')
+    expect(deps.assertSenderCanManageAgenticWorkspaceGrants).toHaveBeenCalledWith(
+      event,
+      '/tmp/workspace-2'
+    )
     expect(deps.permissionService.removeWorkspaceGrant).toHaveBeenCalledWith(
       'claude',
       '/tmp/workspace-2',
       'shellCommands'
     )
     expect(deps.getSettings).toHaveBeenCalledTimes(1)
+  })
+
+  it('rejects an upsert from a hostile secondary renderer before permission mutation', () => {
+    const secondaryEvent = { sender: { id: 42 } }
+    const deps = createDeps()
+    deps.assertSenderCanManageAgenticWorkspaceGrants.mockImplementation((event) => {
+      if (event === secondaryEvent) throw new Error('Renderer cannot manage agentic grants.')
+      return '/tmp/workspace'
+    })
+    registerAgenticWorkspaceGrantHandlers(deps)
+
+    expect(() =>
+      handlerFor('upsert-agentic-workspace-grant')(
+        secondaryEvent,
+        'codex',
+        '/tmp/workspace',
+        'fileChanges'
+      )
+    ).toThrow('Renderer cannot manage agentic grants.')
+
+    expect(deps.assertSenderCanManageAgenticWorkspaceGrants).toHaveBeenCalledWith(
+      secondaryEvent,
+      '/tmp/workspace'
+    )
+    expect(deps.permissionService.upsertWorkspaceGrant).not.toHaveBeenCalled()
+    expect(deps.permissionService.removeWorkspaceGrant).not.toHaveBeenCalled()
+    expect(deps.getSettings).not.toHaveBeenCalled()
+  })
+
+  it('rejects a removal from a hostile secondary renderer before permission mutation', () => {
+    const secondaryEvent = { sender: { id: 43 } }
+    const deps = createDeps()
+    deps.assertSenderCanManageAgenticWorkspaceGrants.mockImplementation((event) => {
+      if (event === secondaryEvent) throw new Error('Renderer cannot manage agentic grants.')
+      return '/tmp/workspace-2'
+    })
+    registerAgenticWorkspaceGrantHandlers(deps)
+
+    expect(() =>
+      handlerFor('remove-agentic-workspace-grant')(
+        secondaryEvent,
+        'claude',
+        '/tmp/workspace-2',
+        'shellCommands'
+      )
+    ).toThrow('Renderer cannot manage agentic grants.')
+
+    expect(deps.assertSenderCanManageAgenticWorkspaceGrants).toHaveBeenCalledWith(
+      secondaryEvent,
+      '/tmp/workspace-2'
+    )
+    expect(deps.permissionService.upsertWorkspaceGrant).not.toHaveBeenCalled()
+    expect(deps.permissionService.removeWorkspaceGrant).not.toHaveBeenCalled()
+    expect(deps.getSettings).not.toHaveBeenCalled()
   })
 })

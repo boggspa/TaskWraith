@@ -131,6 +131,18 @@ function makeDeps(overrides: Partial<RunQueueServiceDeps> = {}): {
     requireRegisteredWorkspace: vi.fn(() => '/repo'),
     findRegisteredWorkspace: vi.fn(() => makeWorkspace()),
     validateChatWorkspaceIdentity: vi.fn(),
+    stageAttachments: vi.fn((input) => ({
+      ok: true as const,
+      attachments: input.attachments.map((attachment, index) => ({
+        persistenceVersion: 1 as const,
+        id: attachment.id,
+        path: `/main-owned/transcript-media/ab/abcDEF1234567890_abcdefghijklmnopqrstuvwxyz0123456789-XYZ-${index}.png`,
+        name: attachment.name,
+        sha256: 'abcDEF1234567890_abcdefghijklmnopqrstuvwxyz0123456789-XYZ',
+        mimeType: 'image/png',
+        byteLength: 68
+      }))
+    })),
     canLeaseJob: vi.fn(() => true),
     ...overrides
   }
@@ -176,6 +188,7 @@ describe('RunQueueService', () => {
       priority: 4,
       request: {
         prompt: 'Ship it',
+        dmTargetParticipantId: 'participant-codex',
         imageAttachments: [{ id: 'img-1', path: '/tmp/a.png', name: 'a.png' }],
         discordContextSelection: {
           guildId: '456789012345678901',
@@ -197,6 +210,7 @@ describe('RunQueueService', () => {
         },
         guestParentChatId: 'guest-thread-1',
         guestRole: 'assistant',
+        effectiveWorkspacePath: '/repo-worktrees/queued-feature',
         geminiAuthProfileId: 'gauth-1',
         codexReasoningEffort: 'minimal',
         kimiFastMode: true,
@@ -219,11 +233,22 @@ describe('RunQueueService', () => {
         priority: 4,
         request: expect.objectContaining({
           prompt: 'Ship it',
+          dmTargetParticipantId: 'participant-codex',
           selectedModelType: 'cli-default',
           customModel: '',
           approvalMode: 'default',
           sessionTrust: false,
-          imageAttachments: [{ id: 'img-1', path: '/tmp/a.png', name: 'a.png' }],
+          imageAttachments: [
+            {
+              persistenceVersion: 1,
+              id: 'img-1',
+              path: '/main-owned/transcript-media/ab/abcDEF1234567890_abcdefghijklmnopqrstuvwxyz0123456789-XYZ-0.png',
+              name: 'a.png',
+              sha256: 'abcDEF1234567890_abcdefghijklmnopqrstuvwxyz0123456789-XYZ',
+              mimeType: 'image/png',
+              byteLength: 68
+            }
+          ],
           discordContextSelection: {
             guildId: '456789012345678901',
             guildName: 'Task Team',
@@ -244,6 +269,7 @@ describe('RunQueueService', () => {
           externalPathGrants: [grant],
           guestParentChatId: 'guest-thread-1',
           guestRole: 'assistant',
+          effectiveWorkspacePath: '/repo-worktrees/queued-feature',
           geminiAuthProfileId: 'gauth-1',
           codexReasoningEffort: 'minimal',
           kimiFastMode: true,
@@ -252,6 +278,174 @@ describe('RunQueueService', () => {
         })
       })
     )
+    expect(deps.stageAttachments).toHaveBeenCalledWith({
+      runId: 'run-1',
+      provider: 'codex',
+      source: 'scheduled',
+      chatId: 'chat-1',
+      workspaceId: 'workspace-1',
+      workspacePath: '/repo',
+      externalPathGrants: [grant],
+      attachments: [{ id: 'img-1', path: '/tmp/a.png', name: 'a.png' }]
+    })
+  })
+
+  it('persists a visible failed row without raw paths when fresh attachment staging fails', () => {
+    const { deps, repository } = makeDeps({
+      stageAttachments: vi.fn(() => ({
+        ok: false as const,
+        reason: 'Selected attachment changed.'
+      }))
+    })
+    const service = new RunQueueService(deps)
+
+    service.requestJob({
+      runId: 'run-attachment-failed',
+      provider: 'codex',
+      workspacePath: '/repo',
+      chatId: 'chat-1',
+      request: {
+        prompt: 'Use this image',
+        imageAttachments: [{ id: 'img-1', path: '/tmp/replaceable.png', name: 'image.png' }]
+      }
+    })
+
+    expect(repository.saveRunQueueJob).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runId: 'run-attachment-failed',
+        status: 'failed',
+        statusReason: expect.stringContaining('Re-select the attachments'),
+        lastError: expect.stringContaining('Re-select the attachments'),
+        request: expect.objectContaining({ imageAttachments: [] })
+      })
+    )
+    expect(JSON.stringify(vi.mocked(repository.saveRunQueueJob).mock.calls[0][0])).not.toContain(
+      '/tmp/replaceable.png'
+    )
+  })
+
+  it('stages fresh attachments with only the requesting renderer capability paths', () => {
+    const stageAttachments = vi.fn(() => ({ ok: false as const, reason: 'not authorized' }))
+    const { deps } = makeDeps({ stageAttachments })
+    const service = new RunQueueService(deps)
+
+    service.requestJob(
+      {
+        runId: 'run-renderer-capability',
+        provider: 'codex',
+        workspacePath: '/repo',
+        chatId: 'chat-1',
+        request: {
+          prompt: 'Use this image',
+          imageAttachments: [{ path: '/tmp/Test 1/one.png', name: 'one.png' }]
+        }
+      },
+      { authorizedFilePaths: ['/tmp/Test 1/one.png'] }
+    )
+
+    expect(stageAttachments).toHaveBeenCalledWith(
+      expect.objectContaining({
+        chatId: 'chat-1',
+        authorizedFilePaths: ['/tmp/Test 1/one.png']
+      })
+    )
+    expect(stageAttachments).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        authorizedFilePaths: expect.arrayContaining(['/tmp/Test 3/three.png'])
+      })
+    )
+  })
+
+  it('passes durable identity fields to staging so re-queued assets can be revalidated, not reopened as raw paths', () => {
+    const stageAttachments = vi.fn((input) => ({
+      ok: true as const,
+      attachments: input.attachments.filter(
+        (attachment): attachment is Extract<typeof attachment, { persistenceVersion: 1 }> =>
+          attachment.persistenceVersion === 1
+      )
+    }))
+    const { deps } = makeDeps({ stageAttachments })
+    const service = new RunQueueService(deps)
+    const durable = {
+      persistenceVersion: 1 as const,
+      id: 'img-1',
+      path: '/main-owned/transcript-media/ab/abcDEF1234567890_abcdefghijklmnopqrstuvwxyz0123456789-XYZ.png',
+      name: 'image.png',
+      sha256: 'abcDEF1234567890_abcdefghijklmnopqrstuvwxyz0123456789-XYZ',
+      mimeType: 'image/png',
+      byteLength: 68
+    }
+
+    service.requestJob({
+      runId: 'run-durable',
+      provider: 'codex',
+      workspacePath: '/repo',
+      chatId: 'chat-1',
+      request: { prompt: 'again', imageAttachments: [durable] }
+    })
+
+    expect(stageAttachments).toHaveBeenCalledWith(
+      expect.objectContaining({ attachments: [durable] })
+    )
+  })
+
+  it('quarantines legacy raw-path queue rows on read without staging replacement bytes', () => {
+    const legacy = makeJob({
+      request: {
+        prompt: 'legacy',
+        selectedModelType: 'cli-default',
+        customModel: '',
+        approvalMode: 'default',
+        sessionTrust: false,
+        imageAttachments: [{ id: 'old', path: '/tmp/replaced.png', name: 'old.png' }]
+      } as unknown as RunQueueJob['request']
+    })
+    const repository = makeRepository({ getRunQueueJobs: vi.fn(() => [legacy]) })
+    const stageAttachments = vi.fn(() => ({ ok: true as const, attachments: [] }))
+    const { deps } = makeDeps({
+      getRunRepository: vi.fn(() => repository),
+      stageAttachments
+    })
+    const service = new RunQueueService(deps)
+
+    const [quarantined] = service.getJobs()
+    expect(quarantined).toMatchObject({
+      status: 'failed',
+      request: { imageAttachments: [] },
+      lastError: expect.stringContaining('Re-select the attachments')
+    })
+    expect(repository.transitionRunQueueJob).toHaveBeenCalledWith('run-1', 'failed', {
+      statusReason: expect.stringContaining('Re-select the attachments'),
+      lastError: expect.stringContaining('Re-select the attachments')
+    })
+    expect(stageAttachments).not.toHaveBeenCalled()
+
+    expect(service.getJobs({ statuses: ['queued'] })).toEqual([])
+  })
+
+  it('refuses to lease a legacy raw-path row and never re-stages it', () => {
+    const legacy = makeJob({
+      request: {
+        prompt: 'legacy',
+        selectedModelType: 'cli-default',
+        customModel: '',
+        approvalMode: 'default',
+        sessionTrust: false,
+        imageAttachments: [{ id: 'old', path: '/tmp/replaced.png', name: 'old.png' }]
+      } as unknown as RunQueueJob['request']
+    })
+    const store = makeStore({ getRunQueueJob: vi.fn(() => legacy) })
+    const stageAttachments = vi.fn(() => ({ ok: true as const, attachments: [] }))
+    const { deps, repository } = makeDeps({ appStore: store, stageAttachments })
+    const service = new RunQueueService(deps)
+
+    expect(service.leaseJob({ runId: 'run-1' })).toBeNull()
+    expect(repository.leaseQueuedRun).not.toHaveBeenCalled()
+    expect(repository.transitionRunQueueJob).toHaveBeenCalledWith('run-1', 'failed', {
+      statusReason: expect.stringContaining('Re-select the attachments'),
+      lastError: expect.stringContaining('Re-select the attachments')
+    })
+    expect(stageAttachments).not.toHaveBeenCalled()
   })
 
   it('normalizes global queue requests through the saved global chat guard', () => {

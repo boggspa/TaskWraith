@@ -1,6 +1,7 @@
-import { ipcMain } from 'electron'
+import { ipcMain, type IpcMainInvokeEvent } from 'electron'
 import type { ProviderApiKeyStatus } from '../store/types'
 import type { ResolvedProviderBinary } from '../providers/CliProviderRuntime'
+import { rendererSafeProviderApiKeyStatus } from '../RendererProviderProjection'
 
 interface KimiVersionReader {
   (resolved: ResolvedProviderBinary): Promise<string>
@@ -13,24 +14,26 @@ export interface KimiAuthHandlersDeps {
   encryptApiKey: (value: string) => string | null
   resolveCliProviderBinary: (provider: 'kimi') => Promise<ResolvedProviderBinary>
   readResolvedCliVersion: KimiVersionReader
+  isMainRendererSender: (event: IpcMainInvokeEvent) => boolean
 }
 
 export function registerKimiAuthHandlers(deps: KimiAuthHandlersDeps): void {
-  ipcMain.handle('get-kimi-auth-status', async (): Promise<ProviderApiKeyStatus> => {
+  ipcMain.handle('get-kimi-auth-status', async (event): Promise<ProviderApiKeyStatus> => {
     const encryptionAvailable = deps.isEncryptionAvailable()
     const apiKeyConfigured = Boolean(deps.getSettings().kimiApiKey)
     const resolved = await deps.resolveCliProviderBinary('kimi')
     if (!resolved.binaryPath) {
-      return {
+      const status: ProviderApiKeyStatus = {
         available: false,
         authState: 'missing',
         apiKeyConfigured,
         encryptionAvailable,
         binaryPath: null
       }
+      return deps.isMainRendererSender(event) ? status : rendererSafeProviderApiKeyStatus(status)
     }
     const version = await deps.readResolvedCliVersion(resolved)
-    return {
+    const status: ProviderApiKeyStatus = {
       available: true,
       authState: apiKeyConfigured ? 'api-key' : 'unknown',
       apiKeyConfigured,
@@ -38,6 +41,7 @@ export function registerKimiAuthHandlers(deps: KimiAuthHandlersDeps): void {
       version,
       binaryPath: resolved.binaryPath
     }
+    return deps.isMainRendererSender(event) ? status : rendererSafeProviderApiKeyStatus(status)
   })
 
   ipcMain.handle('store-kimi-api-key', async (_, rawKey: string) => {

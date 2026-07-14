@@ -40,7 +40,8 @@ function createDeps() {
         }
         return value.trim()
       }
-    )
+    ),
+    assertSenderChatScope: vi.fn<ContextCompactionHandlersDeps['assertSenderChatScope']>()
   } satisfies ContextCompactionHandlersDeps
 }
 
@@ -113,5 +114,23 @@ describe('registerContextCompactionHandlers', () => {
       providerSessionId: 'sess-42',
       participantId: undefined
     })
+  })
+
+  it('rejects a Test 1 popout compacting the Test 3 chat before provider work starts', async () => {
+    const event = { sender: { id: 11 } }
+    const deps = createDeps()
+    deps.assertSenderChatScope.mockImplementation((_event, chatId) => {
+      if (chatId !== 'chat-test-1') throw new Error('Renderer chat ownership mismatch.')
+    })
+    registerContextCompactionHandlers(deps)
+
+    await expect(
+      handlerFor('compact-provider-context')(event, {
+        chatId: 'chat-test-3',
+        provider: 'codex'
+      })
+    ).rejects.toThrow('Renderer chat ownership mismatch.')
+    expect(deps.assertSenderChatScope).toHaveBeenCalledWith(event, 'chat-test-3')
+    expect(deps.compactProviderContext).not.toHaveBeenCalled()
   })
 })

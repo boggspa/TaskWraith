@@ -1,5 +1,6 @@
-import { promises as fs } from 'fs'
-import type { Dirent } from 'fs'
+import { constants, promises as fs } from 'fs'
+import type { BigIntStats, Dirent } from 'fs'
+import type { FileHandle } from 'fs/promises'
 import { basename, dirname, join, resolve } from 'path'
 import { createHash, randomBytes } from 'crypto'
 import {
@@ -73,6 +74,28 @@ export type WorkspaceFileEditorErrorCode =
   | 'missing_base_etag'
   | 'stale_etag'
   | 'symlink_unsupported'
+
+export type WorkspaceFileEditorTestHookStage =
+  | 'before_read_open'
+  | 'before_write_parent_snapshot'
+  | 'before_write_commit'
+  | 'after_write_truncate'
+  | 'before_new_file_commit'
+  | 'before_delete_commit'
+
+type WorkspaceFileEditorTestHook = (stage: WorkspaceFileEditorTestHookStage) => Promise<void> | void
+
+let workspaceFileEditorTestHook: WorkspaceFileEditorTestHook | undefined
+
+/** Test-only seam for deterministically exercising filesystem replacement races. */
+export function setWorkspaceFileEditorTestHookForTests(
+  hook: WorkspaceFileEditorTestHook | undefined
+): void {
+  if (process.env.NODE_ENV !== 'test') {
+    throw new Error('Workspace file editor test hooks are only available in tests.')
+  }
+  workspaceFileEditorTestHook = hook
+}
 
 export class WorkspaceFileEditorError extends Error {
   readonly code: WorkspaceFileEditorErrorCode
@@ -367,115 +390,261 @@ export async function readWorkspaceFile(
   workspacePath: string,
   filePath: string
 ): Promise<WorkspaceFileReadResult> {
-  const workspaceRoot = resolve(workspacePath)
-  const targetPath = await resolveReadableFile(workspaceRoot, filePath)
-  const fileStat = await fs.stat(targetPath)
-  if (!fileStat.isFile()) {
-    throw new WorkspaceFileEditorError('directory_selected', 'Selected item is not a file.')
-  }
-  if (fileStat.size > MAX_EDITOR_FILE_BYTES) {
-    throw new WorkspaceFileEditorError('file_too_large', 'File is too large for the basic editor.')
-  }
+  const workspaceRoot = await canonicalWorkspaceRoot(workspacePath)
+  const targetPath = resolveWorkspaceChild(workspaceRoot, filePath)
+  const parentSnapshot = await snapshotDirectoryChain(workspaceRoot, dirname(targetPath))
 
-  const buffer = await fs.readFile(targetPath)
-  assertTextBuffer(buffer)
+  await runWorkspaceFileEditorTestHook('before_read_open')
+  const fileHandle = await openNoFollow(targetPath, constants.O_RDONLY)
+  try {
+    const fileStat = await assertOpenedWorkspaceFile(
+      fileHandle,
+      targetPath,
+      parentSnapshot,
+      'opened'
+    )
+    assertEditorFileStat(fileStat)
 
-  return {
-    path: toWorkspaceRelativePath(workspaceRoot, targetPath),
-    content: buffer.toString('utf8'),
-    sizeBytes: fileStat.size,
-    mtimeMs: fileStat.mtimeMs,
-    etag: workspaceFileEtag(buffer)
+    // Content is read from the pinned descriptor, never by reopening the lexical path.
+    const buffer = await fileHandle.readFile()
+    assertTextBuffer(buffer)
+
+    return {
+      path: toWorkspaceRelativePath(workspaceRoot, targetPath),
+      content: buffer.toString('utf8'),
+      sizeBytes: Number(fileStat.size),
+      mtimeMs: Number(fileStat.mtimeMs),
+      etag: workspaceFileEtag(buffer)
+    }
+  } finally {
+    await fileHandle.close()
   }
 }
 
 export async function writeWorkspaceFile(
   options: WorkspaceFileWriteOptions
 ): Promise<WorkspaceFileReadResult> {
-  const workspaceRoot = resolve(options.workspacePath)
+  const recordedWorkspacePath = resolve(options.workspacePath)
+  const workspaceRoot = await canonicalWorkspaceRoot(options.workspacePath)
   const requireBaseEtag = options.requireBaseEtag ?? true
   const targetPath = resolveWorkspaceChild(workspaceRoot, options.filePath)
-  await assertParentInsideWorkspace(workspaceRoot, dirname(targetPath))
+  await runWorkspaceFileEditorTestHook('before_write_parent_snapshot')
+  let parentSnapshot: DirectoryIdentitySnapshot | undefined
+  try {
+    parentSnapshot = await snapshotDirectoryChain(workspaceRoot, dirname(targetPath))
+  } catch (err) {
+    if (isNodeErrnoException(err) && err.code === 'ENOENT') parentSnapshot = undefined
+    else throw err
+  }
 
   const nextBuffer = Buffer.from(options.content, 'utf8')
   assertIncomingTextContent(options.content, nextBuffer)
 
-  let previousContent: string | undefined
-  let existedBefore = false
-
-  try {
-    const lstat = await fs.lstat(targetPath)
-    if (lstat.isSymbolicLink()) {
-      throw new WorkspaceFileEditorError(
-        'symlink_unsupported',
-        'Symbolic links cannot be edited from the file editor.'
-      )
-    }
-    if (lstat.isDirectory()) {
-      throw new WorkspaceFileEditorError('directory_selected', 'Selected item is not a file.')
-    }
-    existedBefore = lstat.isFile()
-    if (existedBefore) {
-      if (requireBaseEtag && !options.baseEtag) {
-        throw new WorkspaceFileEditorError(
-          'missing_base_etag',
-          'Missing base file version for save.'
-        )
-      }
-      if (lstat.size > MAX_EDITOR_FILE_BYTES) {
-        throw new WorkspaceFileEditorError(
-          'file_too_large',
-          'File is too large for the basic editor.'
-        )
-      }
-      const previousBuffer = await fs.readFile(targetPath)
-      assertTextBuffer(previousBuffer)
-      const currentEtag = workspaceFileEtag(previousBuffer)
-      if (requireBaseEtag && currentEtag !== options.baseEtag) {
-        throw new WorkspaceFileEditorError(
-          'stale_etag',
-          'File changed on disk. Reload before saving.'
-        )
-      }
-      previousContent = previousBuffer.toString('utf8')
-    }
-  } catch (err) {
-    if (err instanceof WorkspaceFileEditorError) throw err
-    if (!isNodeErrnoException(err) || err.code !== 'ENOENT') {
-      throw err
-    }
-    if (requireBaseEtag && options.baseEtag !== null) {
-      throw new WorkspaceFileEditorError(
-        'stale_etag',
-        'File no longer exists on disk. Reload before saving.'
-      )
-    }
+  if (!parentSnapshot) {
+    return createWorkspaceFile({
+      options,
+      recordedWorkspacePath,
+      workspaceRoot,
+      targetPath,
+      nextBuffer,
+      requireBaseEtag
+    })
   }
 
-  await fs.mkdir(dirname(targetPath), { recursive: true })
-  const tempPath = join(
-    dirname(targetPath),
-    `.${basename(targetPath)}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`
-  )
+  let fileHandle: FileHandle
   try {
-    await fs.writeFile(tempPath, nextBuffer)
-    await fs.rename(tempPath, targetPath)
+    fileHandle = await openNoFollow(targetPath, constants.O_RDWR)
   } catch (err) {
-    await fs.unlink(tempPath).catch(() => {})
+    if (err instanceof WorkspaceFileEditorError) throw err
+    if (isNodeErrnoException(err) && err.code === 'ENOENT') {
+      return createWorkspaceFile({
+        options,
+        recordedWorkspacePath,
+        workspaceRoot,
+        targetPath,
+        nextBuffer,
+        requireBaseEtag,
+        parentSnapshot
+      })
+    }
     throw err
   }
 
-  const fileStat = await fs.stat(targetPath)
+  try {
+    const openedStat = await assertOpenedWorkspaceFile(
+      fileHandle,
+      targetPath,
+      parentSnapshot,
+      'edited'
+    )
+    assertEditorFileStat(openedStat)
+    if (requireBaseEtag && !options.baseEtag) {
+      throw new WorkspaceFileEditorError('missing_base_etag', 'Missing base file version for save.')
+    }
+
+    const previousBuffer = await fileHandle.readFile()
+    assertTextBuffer(previousBuffer)
+    const currentEtag = workspaceFileEtag(previousBuffer)
+    if (requireBaseEtag && currentEtag !== options.baseEtag) {
+      throw new WorkspaceFileEditorError(
+        'stale_etag',
+        'File changed on disk. Reload before saving.'
+      )
+    }
+
+    await runWorkspaceFileEditorTestHook('before_write_commit')
+    await assertDirectoryChainStable(parentSnapshot)
+    await assertPathMatchesOpenedFile(targetPath, openedStat, 'edited')
+
+    // Write through the already-verified descriptor. No lexical target path is reopened.
+    let writeStarted = false
+    let savedStat: BigIntStats
+    try {
+      await fileHandle.truncate(0)
+      writeStarted = true
+      await runWorkspaceFileEditorTestHook('after_write_truncate')
+      await writeBufferAtStart(fileHandle, nextBuffer)
+      await fileHandle.sync()
+
+      savedStat = await fileHandle.stat({ bigint: true })
+      assertSameFileIdentity(openedStat, savedStat)
+      await assertDirectoryChainStable(parentSnapshot)
+      await assertPathMatchesOpenedFile(targetPath, savedStat, 'saved')
+    } catch (error) {
+      if (writeStarted) {
+        // Best effort only: the verified descriptor is still the safest rollback
+        // target, but an I/O failure can also make restoration fail. Preserve the
+        // original error and never reopen the lexical path during recovery.
+        await restoreOpenedFileBestEffort(fileHandle, previousBuffer)
+      }
+      throw error
+    }
+
+    const relativePath = toWorkspaceRelativePath(workspaceRoot, targetPath)
+    const nextEtag = workspaceFileEtag(nextBuffer)
+    const changeSet = options.recordChange?.({
+      workspaceId: options.workspaceId,
+      workspacePath: recordedWorkspacePath,
+      filePath: relativePath,
+      existedBefore: true,
+      previousContent: previousBuffer.toString('utf8'),
+      nextContent: options.content,
+      sizeBytes: Number(savedStat.size),
+      metadata: {
+        origin: options.origin ?? 'file-editor'
+      }
+    })
+
+    return {
+      path: relativePath,
+      content: options.content,
+      sizeBytes: Number(savedStat.size),
+      mtimeMs: Number(savedStat.mtimeMs),
+      etag: nextEtag,
+      changeSet
+    }
+  } finally {
+    await fileHandle.close()
+  }
+}
+
+async function createWorkspaceFile(input: {
+  options: WorkspaceFileWriteOptions
+  recordedWorkspacePath: string
+  workspaceRoot: string
+  targetPath: string
+  nextBuffer: Buffer
+  requireBaseEtag: boolean
+  parentSnapshot?: DirectoryIdentitySnapshot
+}): Promise<WorkspaceFileReadResult> {
+  const {
+    options,
+    recordedWorkspacePath,
+    workspaceRoot,
+    targetPath,
+    nextBuffer,
+    requireBaseEtag
+  } = input
+  if (requireBaseEtag && options.baseEtag !== null) {
+    throw new WorkspaceFileEditorError(
+      'stale_etag',
+      'File no longer exists on disk. Reload before saving.'
+    )
+  }
+
+  const parentPath = dirname(targetPath)
+  const parentSnapshot = input.parentSnapshot
+    ? input.parentSnapshot
+    : await createMissingParentDirectories(workspaceRoot, parentPath)
+
+  await runWorkspaceFileEditorTestHook('before_new_file_commit')
+  await assertDirectoryChainStable(parentSnapshot)
+  await assertTargetPathMissing(targetPath)
+
+  const tempPath = join(
+    parentPath,
+    `.${basename(targetPath)}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`
+  )
+  const tempHandle = await openNoFollow(
+    tempPath,
+    constants.O_CREAT | constants.O_EXCL | constants.O_RDWR,
+    0o666
+  )
+  let tempStat: BigIntStats | undefined
+  let committed = false
+  let handleClosed = false
+  try {
+    const openedTempStat = await tempHandle.stat({ bigint: true })
+    tempStat = openedTempStat
+    assertEditorFileStat(openedTempStat)
+    await assertDirectoryChainStable(parentSnapshot)
+    await assertPathMatchesOpenedFile(tempPath, openedTempStat, 'created')
+    await writeBufferAtStart(tempHandle, nextBuffer)
+    await tempHandle.sync()
+    tempStat = await tempHandle.stat({ bigint: true })
+    assertSameFileIdentity(openedTempStat, tempStat)
+    await tempHandle.close()
+    handleClosed = true
+
+    await assertDirectoryChainStable(parentSnapshot)
+    await assertPathMatchesOpenedFile(tempPath, tempStat, 'committed')
+    await assertTargetPathMissing(targetPath)
+
+    // Preserve the editor's established atomic temp-file replacement behavior.
+    // Node has no portable renameat(2) rooted at a verified directory descriptor,
+    // so a final path-based parent/target race remains until structural writes
+    // move to a native descriptor-relative primitive.
+    await fs.rename(tempPath, targetPath)
+    committed = true
+    await assertDirectoryChainStable(parentSnapshot)
+    await assertPathMatchesOpenedFile(targetPath, tempStat, 'created')
+  } catch (error) {
+    if (!handleClosed) {
+      await tempHandle.close().catch(() => {})
+      handleClosed = true
+    }
+    if (!committed && tempStat) {
+      await removeOpenedPathBestEffort(tempPath, tempStat, parentSnapshot)
+    }
+    throw error
+  } finally {
+    if (!handleClosed) await tempHandle.close()
+  }
+
+  if (!tempStat) {
+    throw new Error('Created file identity was unavailable after save.')
+  }
+  const savedStat = await fs.lstat(targetPath, { bigint: true })
+  assertSameFileIdentity(tempStat, savedStat)
   const relativePath = toWorkspaceRelativePath(workspaceRoot, targetPath)
-  const nextEtag = workspaceFileEtag(nextBuffer)
   const changeSet = options.recordChange?.({
     workspaceId: options.workspaceId,
-    workspacePath: workspaceRoot,
+    workspacePath: recordedWorkspacePath,
     filePath: relativePath,
-    existedBefore,
-    previousContent,
+    existedBefore: false,
+    previousContent: undefined,
     nextContent: options.content,
-    sizeBytes: fileStat.size,
+    sizeBytes: Number(savedStat.size),
     metadata: {
       origin: options.origin ?? 'file-editor'
     }
@@ -484,9 +653,9 @@ export async function writeWorkspaceFile(
   return {
     path: relativePath,
     content: options.content,
-    sizeBytes: fileStat.size,
-    mtimeMs: fileStat.mtimeMs,
-    etag: nextEtag,
+    sizeBytes: Number(savedStat.size),
+    mtimeMs: Number(savedStat.mtimeMs),
+    etag: workspaceFileEtag(nextBuffer),
     changeSet
   }
 }
@@ -494,61 +663,65 @@ export async function writeWorkspaceFile(
 export async function deleteWorkspaceFile(
   options: WorkspaceFileDeleteOptions
 ): Promise<WorkspaceFileDeleteResult> {
+  const recordedWorkspacePath = resolve(options.workspacePath)
+  const workspaceRoot = await canonicalWorkspaceRoot(options.workspacePath)
   const requireBaseEtag = options.requireBaseEtag ?? true
-  const workspaceRoot = resolve(options.workspacePath)
-  const targetPath = await resolveReadableFile(workspaceRoot, options.filePath)
-  const lstat = await fs.lstat(targetPath)
-  if (lstat.isSymbolicLink()) {
-    throw new WorkspaceFileEditorError(
-      'symlink_unsupported',
-      'Symbolic links cannot be deleted from the file editor.'
-    )
-  }
-  if (lstat.isDirectory()) {
-    throw new WorkspaceFileEditorError('directory_selected', 'Selected item is not a file.')
-  }
-  if (!lstat.isFile()) {
-    throw new WorkspaceFileEditorError('directory_selected', 'Selected item is not a file.')
-  }
-  if (lstat.size > MAX_EDITOR_FILE_BYTES) {
-    throw new WorkspaceFileEditorError('file_too_large', 'File is too large for the basic editor.')
-  }
+  const targetPath = resolveWorkspaceChild(workspaceRoot, options.filePath)
+  const parentSnapshot = await snapshotDirectoryChain(workspaceRoot, dirname(targetPath))
+  const fileHandle = await openNoFollow(targetPath, constants.O_RDONLY)
 
-  const previousBuffer = await fs.readFile(targetPath)
-  assertTextBuffer(previousBuffer)
-  const currentEtag = workspaceFileEtag(previousBuffer)
-  if (requireBaseEtag && !options.baseEtag) {
-    throw new WorkspaceFileEditorError(
-      'missing_base_etag',
-      'Missing base file version for delete.'
+  try {
+    const openedStat = await assertOpenedWorkspaceFile(
+      fileHandle,
+      targetPath,
+      parentSnapshot,
+      'deleted'
     )
-  }
-  if (requireBaseEtag && currentEtag !== options.baseEtag) {
-    throw new WorkspaceFileEditorError(
-      'stale_etag',
-      'File changed on disk. Reload before deleting.'
-    )
-  }
-  const relativePath = toWorkspaceRelativePath(workspaceRoot, targetPath)
-  await fs.unlink(targetPath)
-
-  const changeSet = options.recordChange?.({
-    workspaceId: options.workspaceId,
-    workspacePath: workspaceRoot,
-    filePath: relativePath,
-    existedBefore: true,
-    deleted: true,
-    previousContent: previousBuffer.toString('utf8'),
-    nextContent: '',
-    sizeBytes: 0,
-    metadata: {
-      origin: options.origin ?? 'file-editor'
+    assertEditorFileStat(openedStat)
+    const previousBuffer = await fileHandle.readFile()
+    assertTextBuffer(previousBuffer)
+    const currentEtag = workspaceFileEtag(previousBuffer)
+    if (requireBaseEtag && !options.baseEtag) {
+      throw new WorkspaceFileEditorError(
+        'missing_base_etag',
+        'Missing base file version for delete.'
+      )
     }
-  })
+    if (requireBaseEtag && currentEtag !== options.baseEtag) {
+      throw new WorkspaceFileEditorError(
+        'stale_etag',
+        'File changed on disk. Reload before deleting.'
+      )
+    }
 
-  return {
-    path: relativePath,
-    changeSet
+    await runWorkspaceFileEditorTestHook('before_delete_commit')
+    await assertDirectoryChainStable(parentSnapshot)
+    await assertPathMatchesOpenedFile(targetPath, openedStat, 'deleted')
+
+    // Node has no portable unlinkat(2). The identity + ancestor checks close
+    // deterministic replacement windows, but a final path race between this
+    // check and unlink remains until structural operations move to a native
+    // descriptor-relative primitive.
+    await fs.unlink(targetPath)
+
+    const relativePath = toWorkspaceRelativePath(workspaceRoot, targetPath)
+    const changeSet = options.recordChange?.({
+      workspaceId: options.workspaceId,
+      workspacePath: recordedWorkspacePath,
+      filePath: relativePath,
+      existedBefore: true,
+      deleted: true,
+      previousContent: previousBuffer.toString('utf8'),
+      nextContent: '',
+      sizeBytes: 0,
+      metadata: {
+        origin: options.origin ?? 'file-editor'
+      }
+    })
+
+    return { path: relativePath, changeSet }
+  } finally {
+    await fileHandle.close()
   }
 }
 
@@ -565,6 +738,71 @@ function assertIncomingTextContent(content: string, buffer: Buffer): void {
   }
 }
 
+async function createMissingParentDirectories(
+  workspaceRoot: string,
+  parentPath: string
+): Promise<DirectoryIdentitySnapshot> {
+  const existingParent = await nearestExistingDirectory(workspaceRoot, parentPath)
+  const existingSnapshot = await snapshotDirectoryChain(workspaceRoot, existingParent)
+  await assertDirectoryChainStable(existingSnapshot)
+
+  // This retains the existing create-in-new-folders behavior. Recursive mkdir
+  // is necessarily path-based in portable Node, so an attacker able to replace
+  // a missing component during this call can still race it. The snapshots before
+  // and after reject every replacement that is observable at our checkpoints.
+  await fs.mkdir(parentPath, { recursive: true })
+  await assertDirectoryChainStable(existingSnapshot)
+  return snapshotDirectoryChain(workspaceRoot, parentPath)
+}
+
+async function nearestExistingDirectory(
+  workspaceRoot: string,
+  targetPath: string
+): Promise<string> {
+  let cursor = targetPath
+  while (isPathInsideWorkspace(workspaceRoot, cursor)) {
+    try {
+      const stat = await fs.lstat(cursor, { bigint: true })
+      if (stat.isSymbolicLink()) {
+        throw new WorkspaceFileEditorError(
+          'symlink_unsupported',
+          'Symbolic links cannot be used in file editor paths.'
+        )
+      }
+      if (!stat.isDirectory()) {
+        throw new WorkspaceFileEditorError(
+          'path_outside_workspace',
+          'File editor parent path is not a directory.'
+        )
+      }
+      return cursor
+    } catch (error) {
+      if (!isNodeErrnoException(error) || error.code !== 'ENOENT') throw error
+    }
+    if (cursor === workspaceRoot) break
+    const next = dirname(cursor)
+    if (next === cursor) break
+    cursor = next
+  }
+  throw new WorkspaceFileEditorError(
+    'path_outside_workspace',
+    'Path is outside the workspace.'
+  )
+}
+
+async function assertTargetPathMissing(targetPath: string): Promise<void> {
+  try {
+    await fs.lstat(targetPath)
+  } catch (error) {
+    if (isNodeErrnoException(error) && error.code === 'ENOENT') return
+    throw error
+  }
+  throw new WorkspaceFileEditorError(
+    'stale_etag',
+    'File appeared on disk. Reload before saving.'
+  )
+}
+
 function assertTextBuffer(buffer: Buffer): void {
   if (buffer.includes(0)) {
     throw new WorkspaceFileEditorError('binary_file', 'Binary files cannot be edited.')
@@ -575,53 +813,216 @@ function assertTextBuffer(buffer: Buffer): void {
   }
 }
 
-async function resolveReadableFile(workspaceRoot: string, filePath: string): Promise<string> {
-  const targetPath = resolveWorkspaceChild(workspaceRoot, filePath)
-  const lstat = await fs.lstat(targetPath)
-  if (lstat.isSymbolicLink()) {
+interface DirectoryIdentitySnapshotEntry {
+  path: string
+  dev: bigint
+  ino: bigint
+}
+
+type DirectoryIdentitySnapshot = DirectoryIdentitySnapshotEntry[]
+
+async function canonicalWorkspaceRoot(workspacePath: string): Promise<string> {
+  const workspaceRoot = await fs.realpath(resolve(workspacePath))
+  const rootStat = await fs.lstat(workspaceRoot, { bigint: true })
+  if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) {
     throw new WorkspaceFileEditorError(
-      'symlink_unsupported',
-      'Symbolic links cannot be opened from the file editor.'
+      'path_outside_workspace',
+      'Workspace root is not a stable directory.'
     )
   }
-  const realWorkspace = await fs.realpath(workspaceRoot)
-  const realTarget = await fs.realpath(targetPath)
-  if (!isPathInsideWorkspace(realWorkspace, realTarget)) {
-    throw new WorkspaceFileEditorError('path_outside_workspace', 'Path is outside the workspace.')
-  }
-  return targetPath
+  return workspaceRoot
 }
 
-async function assertParentInsideWorkspace(workspaceRoot: string, parentPath: string): Promise<void> {
-  const realWorkspace = await fs.realpath(workspaceRoot)
-  let realParent: string
-  try {
-    realParent = await fs.realpath(parentPath)
-  } catch (err) {
-    if (isNodeErrnoException(err) && err.code === 'ENOENT') {
-      realParent = await nearestExistingParent(parentPath, realWorkspace)
-    } else {
+async function snapshotDirectoryChain(
+  workspaceRoot: string,
+  parentPath: string
+): Promise<DirectoryIdentitySnapshot> {
+  if (!isPathInsideWorkspace(workspaceRoot, parentPath)) {
+    throw new WorkspaceFileEditorError('path_outside_workspace', 'Path is outside the workspace.')
+  }
+
+  const paths: string[] = []
+  let cursor = parentPath
+  while (true) {
+    paths.push(cursor)
+    if (cursor === workspaceRoot) break
+    const next = dirname(cursor)
+    if (next === cursor || !isPathInsideWorkspace(workspaceRoot, next)) {
+      throw new WorkspaceFileEditorError('path_outside_workspace', 'Path is outside the workspace.')
+    }
+    cursor = next
+  }
+  paths.reverse()
+
+  const snapshot: DirectoryIdentitySnapshot = []
+  for (const path of paths) {
+    const stat = await fs.lstat(path, { bigint: true })
+    if (stat.isSymbolicLink()) {
+      throw new WorkspaceFileEditorError(
+        'symlink_unsupported',
+        'Symbolic links cannot be used in file editor paths.'
+      )
+    }
+    if (!stat.isDirectory()) {
+      throw new WorkspaceFileEditorError(
+        'path_outside_workspace',
+        'File editor parent path is not a directory.'
+      )
+    }
+    snapshot.push({ path, dev: stat.dev, ino: stat.ino })
+  }
+  return snapshot
+}
+
+async function assertDirectoryChainStable(snapshot: DirectoryIdentitySnapshot): Promise<void> {
+  for (const expected of snapshot) {
+    let stat: BigIntStats
+    try {
+      stat = await fs.lstat(expected.path, { bigint: true })
+    } catch (err) {
+      if (isNodeErrnoException(err) && err.code === 'ENOENT') {
+        throw unstableWorkspacePathError()
+      }
       throw err
     }
-  }
-  if (!isPathInsideWorkspace(realWorkspace, realParent)) {
-    throw new WorkspaceFileEditorError('path_outside_workspace', 'Path is outside the workspace.')
+    if (
+      stat.isSymbolicLink() ||
+      !stat.isDirectory() ||
+      stat.dev !== expected.dev ||
+      stat.ino !== expected.ino
+    ) {
+      throw unstableWorkspacePathError()
+    }
   }
 }
 
-async function nearestExistingParent(parentPath: string, workspaceRoot: string): Promise<string> {
-  let cursor = parentPath
-  while (cursor.startsWith(workspaceRoot)) {
-    try {
-      return await fs.realpath(cursor)
-    } catch (err) {
-      if (!isNodeErrnoException(err) || err.code !== 'ENOENT') throw err
-      const next = dirname(cursor)
-      if (next === cursor) break
-      cursor = next
+async function openNoFollow(path: string, flags: number, mode?: number): Promise<FileHandle> {
+  try {
+    return await fs.open(path, flags | constants.O_NOFOLLOW, mode)
+  } catch (err) {
+    if (isNodeErrnoException(err) && (err.code === 'ELOOP' || err.code === 'EMLINK')) {
+      throw new WorkspaceFileEditorError(
+        'symlink_unsupported',
+        'Symbolic links cannot be used in file editor paths.'
+      )
     }
+    throw err
   }
-  return fs.realpath(workspaceRoot)
+}
+
+async function assertOpenedWorkspaceFile(
+  fileHandle: FileHandle,
+  targetPath: string,
+  parentSnapshot: DirectoryIdentitySnapshot,
+  operation: string
+): Promise<BigIntStats> {
+  const fileStat = await fileHandle.stat({ bigint: true })
+  await assertDirectoryChainStable(parentSnapshot)
+  await assertPathMatchesOpenedFile(targetPath, fileStat, operation)
+  return fileStat
+}
+
+function assertEditorFileStat(fileStat: BigIntStats): void {
+  if (!fileStat.isFile()) {
+    throw new WorkspaceFileEditorError('directory_selected', 'Selected item is not a file.')
+  }
+  if (fileStat.size > BigInt(MAX_EDITOR_FILE_BYTES)) {
+    throw new WorkspaceFileEditorError('file_too_large', 'File is too large for the basic editor.')
+  }
+}
+
+async function assertPathMatchesOpenedFile(
+  targetPath: string,
+  openedStat: BigIntStats,
+  operation: string
+): Promise<void> {
+  let pathStat: BigIntStats
+  try {
+    pathStat = await fs.lstat(targetPath, { bigint: true })
+  } catch (err) {
+    if (isNodeErrnoException(err) && err.code === 'ENOENT') {
+      throw unstableWorkspacePathError()
+    }
+    throw err
+  }
+  if (
+    pathStat.isSymbolicLink() ||
+    pathStat.dev !== openedStat.dev ||
+    pathStat.ino !== openedStat.ino
+  ) {
+    throw new WorkspaceFileEditorError(
+      'path_outside_workspace',
+      `File path changed before it could be ${operation}.`
+    )
+  }
+}
+
+async function writeBufferAtStart(fileHandle: FileHandle, buffer: Buffer): Promise<void> {
+  let offset = 0
+  while (offset < buffer.length) {
+    const { bytesWritten } = await fileHandle.write(
+      buffer,
+      offset,
+      buffer.length - offset,
+      offset
+    )
+    if (bytesWritten <= 0) {
+      throw new Error('Could not complete the file editor write.')
+    }
+    offset += bytesWritten
+  }
+}
+
+async function restoreOpenedFileBestEffort(
+  fileHandle: FileHandle,
+  previousBuffer: Buffer
+): Promise<void> {
+  try {
+    await fileHandle.truncate(0)
+    await writeBufferAtStart(fileHandle, previousBuffer)
+    await fileHandle.sync()
+  } catch {
+    // Preserve the original save failure. The caller must surface that the
+    // write did not complete; a secondary recovery error cannot be made safe by
+    // reopening the path that the descriptor hardening deliberately avoids.
+  }
+}
+
+async function removeOpenedPathBestEffort(
+  targetPath: string,
+  openedStat: BigIntStats,
+  parentSnapshot: DirectoryIdentitySnapshot
+): Promise<void> {
+  try {
+    await assertDirectoryChainStable(parentSnapshot)
+    await assertPathMatchesOpenedFile(targetPath, openedStat, 'cleaned up')
+    await fs.unlink(targetPath)
+  } catch {
+    // A replaced parent makes lexical cleanup unsafe. Leaving the private temp
+    // beside the original directory is preferable to unlinking an attacker path.
+  }
+}
+
+function assertSameFileIdentity(expected: BigIntStats, actual: BigIntStats): void {
+  if (expected.dev !== actual.dev || expected.ino !== actual.ino || !actual.isFile()) {
+    throw new WorkspaceFileEditorError(
+      'path_outside_workspace',
+      'Opened file identity changed while the editor save was in progress.'
+    )
+  }
+}
+
+function unstableWorkspacePathError(): WorkspaceFileEditorError {
+  return new WorkspaceFileEditorError(
+    'path_outside_workspace',
+    'Workspace path changed while the file editor operation was in progress.'
+  )
+}
+
+async function runWorkspaceFileEditorTestHook(
+  stage: WorkspaceFileEditorTestHookStage
+): Promise<void> {
+  await workspaceFileEditorTestHook?.(stage)
 }
 
 function isNodeErrnoException(value: unknown): value is NodeJS.ErrnoException {

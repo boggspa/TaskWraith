@@ -1,4 +1,4 @@
-import { ipcMain } from 'electron'
+import { ipcMain, type IpcMainInvokeEvent } from 'electron'
 import type { ApprovalLedgerFilter, ApprovalLedgerRequestInput, ProviderId } from '../store/types'
 
 interface ApprovalElevationAckInput {
@@ -9,6 +9,7 @@ interface ApprovalElevationAckInput {
 }
 
 export interface ApprovalLedgerHandlersDeps {
+  assertMainRendererSender: (event: IpcMainInvokeEvent) => void
   getApprovalLedger: (filter?: ApprovalLedgerFilter) => unknown
   recordApprovalLedgerDecision: (input: ApprovalLedgerRequestInput) => void
   randomUUID: () => string
@@ -16,12 +17,14 @@ export interface ApprovalLedgerHandlersDeps {
 }
 
 export function registerApprovalLedgerHandlers(deps: ApprovalLedgerHandlersDeps): void {
-  ipcMain.handle('get-approval-ledger', (_, filter?: ApprovalLedgerFilter) =>
-    deps.getApprovalLedger(filter || {})
-  )
+  ipcMain.handle('get-approval-ledger', (event, filter?: ApprovalLedgerFilter) => {
+    deps.assertMainRendererSender(event)
+    return deps.getApprovalLedger(filter || {})
+  })
 
   // This is a terminal acknowledgement row, not a pending approval request.
-  ipcMain.handle('record-approval-elevation-ack', (_, input: ApprovalElevationAckInput) => {
+  ipcMain.handle('record-approval-elevation-ack', (event, input: ApprovalElevationAckInput) => {
+    deps.assertMainRendererSender(event)
     const provider = (input?.provider || '').trim() as ProviderId
     const toMode = String(input?.toMode || '').trim()
     const tier = Number(input?.tier) || 0

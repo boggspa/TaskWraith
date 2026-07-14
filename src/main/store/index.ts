@@ -24,6 +24,7 @@ import {
   PooledAgentStatsSummary,
   UsageRecord,
   ScheduledTask,
+  ScheduledTaskAttachmentRef,
   RunQueueJob,
   RunQueueJobFilter,
   RunEventFilter,
@@ -219,6 +220,13 @@ import {
   normalizeWorkflowTrigger,
   resolveNextWorkflowRunAt
 } from '../workflows/WorkflowScheduler'
+import {
+  copyResolvedScheduledAttachments,
+  isDurableScheduledAttachmentRef,
+  rejectUnconfiguredScheduledAttachmentResolution,
+  SCHEDULED_ATTACHMENT_RESELECT_REASON,
+  type ResolveScheduledAttachments
+} from '../ScheduledAttachmentDurability'
 import { sanitizeProviderRunPauses } from '../ProviderRunPause'
 import {
   DEFAULT_STALL_BACKSTOP_MS,
@@ -410,6 +418,11 @@ const LEGACY_TASKWRAITH_FONT_STACK =
 const TASKWRAITH_DEFAULT_FONT_STACK =
   '"Avenir Next", Avenir, system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif'
 const RETIRED_SETTINGS_KEYS = ['messageBridgeEnabled', 'messageBridgePollIntervalMs'] as const
+
+function chatPersistenceRevision(chat: Pick<ChatRecord, 'persistenceRevision'> | null): number {
+  const revision = chat?.persistenceRevision
+  return Number.isSafeInteger(revision) && (revision ?? -1) >= 0 ? (revision as number) : 0
+}
 
 function electronSafeStorageOrUnavailable(): ExtensionSecretSafeStorage {
   try {
@@ -884,6 +897,41 @@ function isInvalidScheduledTaskStatusTransition(
 function sameWorkflowPath(a: string | undefined, b: string | undefined): boolean {
   if (!a || !b) return false
   return path.resolve(a) === path.resolve(b)
+}
+
+function scheduledAttachmentsAreDurable(value: unknown): value is ScheduledTaskAttachmentRef[] {
+  return Array.isArray(value) && value.every(isDurableScheduledAttachmentRef)
+}
+
+function resolveScheduledAttachmentRefs(
+  attachments: unknown,
+  context: {
+    source: 'scheduled-task' | 'workflow-template'
+    recordId: string
+    appChatId: string
+    workspaceId: string
+    workspacePath: string
+    externalPathGrants?: ScheduledTask['externalPathGrants']
+  },
+  resolveAttachments: ResolveScheduledAttachments
+): ScheduledTaskAttachmentRef[] | null {
+  if (!scheduledAttachmentsAreDurable(attachments)) return null
+  if (attachments.length === 0) return []
+  try {
+    const result = resolveAttachments({
+      source: context.source,
+      recordId: context.recordId,
+      appChatId: context.appChatId,
+      workspaceId: context.workspaceId,
+      workspacePath: context.workspacePath,
+      externalPathGrants: context.externalPathGrants || [],
+      attachments
+    })
+    if (!result.ok) return null
+    return copyResolvedScheduledAttachments(attachments, result.attachments)
+  } catch {
+    return null
+  }
 }
 
 /** Defensive shape-guard for a persisted audit run. Arrays default to empty
@@ -2654,6 +2702,7 @@ export class AppStore {
     if (includeVolatile) return JSON.stringify(item)
     const {
       updatedAt: _updatedAt,
+      persistenceRevision: _persistenceRevision,
       searchText: _searchText,
       searchPreview: _searchPreview,
       sourceChatMtimeMs: _sourceChatMtimeMs,
@@ -3428,9 +3477,9 @@ export class AppStore {
     )
   }
 
-  static saveChat(chat: ChatRecord) {
+  static saveChat(chat: ChatRecord): ChatRecord {
     const settings = this.getSettings()
-    if (!settings.storeLocalChatHistory) return
+    if (!settings.storeLocalChatHistory) return chat
     if ((chat as Partial<ChatListItem>).summaryOnly === true) {
       throw new Error('Cannot save a summary-only chat record; hydrate the chat first.')
     }
@@ -3446,8 +3495,9 @@ export class AppStore {
       normalizedChat.appChatId,
       chatPath
     )
+    normalizedChat.persistenceRevision = chatPersistenceRevision(previousChatForFeedback) + 1
     if (deletedChatIds.has(normalizedChat.appChatId) && !fs.existsSync(chatPath)) {
-      return
+      return previousChatForFeedback || normalizedChat
     }
     const preStat = fs.existsSync(chatPath) ? fs.statSync(chatPath) : null
     let postStat: fs.Stats | null = null
@@ -3490,6 +3540,12 @@ export class AppStore {
     } catch (e) {
       console.error('Failed to harvest agent stats', e)
     }
+    // Many main-owned mutation paths intentionally ignore the return value and
+    // broadcast the object they passed in. Stamp only the server-owned token
+    // back onto that object so those existing broadcasts still hand renderers
+    // the exact revision that was persisted.
+    chat.persistenceRevision = normalizedChat.persistenceRevision
+    return normalizedChat
   }
 
   static deleteChat(chatId: string, seen: Set<string> = new Set()): void {
@@ -3762,6 +3818,9 @@ export class AppStore {
     }
     if (workflow.concurrencyPolicy === 'enqueue') {
       return 'Workflow enqueue concurrency is not supported yet.'
+    }
+    if (!scheduledAttachmentsAreDurable(workflow.template.imageAttachments)) {
+      return SCHEDULED_ATTACHMENT_RESELECT_REASON
     }
     const unsafeGrant = workflow.template.externalPathGrants?.find(
       (grant) => grant.duration !== 'workspace'
@@ -4784,7 +4843,11 @@ export class AppStore {
     return next
   }
 
-  static materializeDueWorkflows(nowMs: number = Date.now()): ScheduledTask[] {
+  static materializeDueWorkflows(
+    nowMs: number = Date.now(),
+    resolveAttachments: ResolveScheduledAttachments =
+      rejectUnconfiguredScheduledAttachmentResolution
+  ): ScheduledTask[] {
     const workflows = this.getWorkflowDefinitions()
     const materialized: ScheduledTask[] = []
     let changed = false
@@ -4793,7 +4856,13 @@ export class AppStore {
       const nextRunAtMs = new Date(workflow.nextRunAt).getTime()
       if (!Number.isFinite(nextRunAtMs) || nextRunAtMs > nowMs) continue
       const before = JSON.stringify(workflow)
-      const task = this.materializeWorkflowTask(workflow, workflow.nextRunAt, nowMs)
+      const task = this.materializeWorkflowTask(
+        workflow,
+        workflow.nextRunAt,
+        nowMs,
+        false,
+        resolveAttachments
+      )
       if (task) {
         materialized.push(task)
       }
@@ -4803,12 +4872,23 @@ export class AppStore {
     return materialized
   }
 
-  static materializeWorkflowNow(id: string, nowMs: number = Date.now()): ScheduledTask | null {
+  static materializeWorkflowNow(
+    id: string,
+    nowMs: number = Date.now(),
+    resolveAttachments: ResolveScheduledAttachments =
+      rejectUnconfiguredScheduledAttachmentResolution
+  ): ScheduledTask | null {
     const workflows = this.getWorkflowDefinitions()
     const workflow = workflows.find((item) => item.id === id)
     if (!workflow) return null
     const before = JSON.stringify(workflow)
-    const task = this.materializeWorkflowTask(workflow, new Date(nowMs).toISOString(), nowMs, true)
+    const task = this.materializeWorkflowTask(
+      workflow,
+      new Date(nowMs).toISOString(),
+      nowMs,
+      true,
+      resolveAttachments
+    )
     if (task || JSON.stringify(workflow) !== before) writeJson(workflowsPath, workflows)
     return task
   }
@@ -4817,30 +4897,33 @@ export class AppStore {
     workflow: WorkflowDefinition,
     plannedFor: string,
     nowMs: number,
-    manual = false
+    manual: boolean,
+    resolveAttachments: ResolveScheduledAttachments
   ): ScheduledTask | null {
     const nowIso = new Date(nowMs).toISOString()
     const invalidReason = this.workflowDefinitionInvalidReason(workflow)
     if (invalidReason) {
-      const execution: WorkflowExecutionRecord = {
-        id: randomUUID(),
-        workflowId: workflow.id,
+      return this.failWorkflowMaterialization(workflow, plannedFor, nowIso, invalidReason)
+    }
+    const imageAttachments = resolveScheduledAttachmentRefs(
+      workflow.template.imageAttachments,
+      {
+        source: 'workflow-template',
+        recordId: workflow.id,
+        appChatId: workflow.template.chatId,
+        workspaceId: workflow.workspaceId,
+        workspacePath: workflow.workspacePath,
+        externalPathGrants: workflow.template.externalPathGrants
+      },
+      resolveAttachments
+    )
+    if (!imageAttachments) {
+      return this.failWorkflowMaterialization(
+        workflow,
         plannedFor,
-        status: 'failed',
-        createdAt: nowIso,
-        updatedAt: nowIso,
-        completedAt: nowIso,
-        error: invalidReason
-      }
-      workflow.history = [...workflow.history, execution].slice(-WORKFLOW_HISTORY_LIMIT)
-      workflow.activeExecutionId = undefined
-      workflow.lastStatus = 'failed'
-      workflow.lastError = invalidReason
-      workflow.failureStreak += 1
-      workflow.enabled = false
-      workflow.nextRunAt = undefined
-      workflow.updatedAt = nowIso
-      return null
+        nowIso,
+        SCHEDULED_ATTACHMENT_RESELECT_REASON
+      )
     }
     const activeExecution = workflow.activeExecutionId
       ? workflow.history.find((execution) => execution.id === workflow.activeExecutionId)
@@ -4908,6 +4991,7 @@ export class AppStore {
     const executionId = randomUUID()
     const task = this.saveScheduledTask({
       ...workflow.template,
+      imageAttachments,
       // No `[workflow: …]` text prefix — workflows are identified by the
       // Workflows sidebar section + glyph, not a baked-in title/transcript
       // string (the prefix used to leak into the chat title everywhere).
@@ -4940,6 +5024,33 @@ export class AppStore {
       workflow.nextRunAt = undefined
     }
     return task
+  }
+
+  private static failWorkflowMaterialization(
+    workflow: WorkflowDefinition,
+    plannedFor: string,
+    nowIso: string,
+    reason: string
+  ): null {
+    const execution: WorkflowExecutionRecord = {
+      id: randomUUID(),
+      workflowId: workflow.id,
+      plannedFor,
+      status: 'failed',
+      createdAt: nowIso,
+      updatedAt: nowIso,
+      completedAt: nowIso,
+      error: reason
+    }
+    workflow.history = [...workflow.history, execution].slice(-WORKFLOW_HISTORY_LIMIT)
+    workflow.activeExecutionId = undefined
+    workflow.lastStatus = 'failed'
+    workflow.lastError = reason
+    workflow.failureStreak += 1
+    workflow.enabled = false
+    workflow.nextRunAt = undefined
+    workflow.updatedAt = nowIso
+    return null
   }
 
   static syncWorkflowFromScheduledTask(task: ScheduledTask): WorkflowDefinition | null {
@@ -5057,6 +5168,9 @@ export class AppStore {
     task: Omit<ScheduledTask, 'id' | 'createdAt' | 'updatedAt' | 'status'> &
       Partial<Pick<ScheduledTask, 'id' | 'createdAt' | 'updatedAt' | 'status'>>
   ): ScheduledTask {
+    if (!scheduledAttachmentsAreDurable(task.imageAttachments)) {
+      throw new Error(SCHEDULED_ATTACHMENT_RESELECT_REASON)
+    }
     const tasks = this.getScheduledTasks()
     const now = new Date().toISOString()
     const record: ScheduledTask = {
@@ -5083,6 +5197,12 @@ export class AppStore {
     const index = tasks.findIndex((task) => task.id === id)
     if (index < 0) return null
     const current = tasks[index]
+    if (
+      Object.prototype.hasOwnProperty.call(partial, 'imageAttachments') &&
+      !scheduledAttachmentsAreDurable(partial.imageAttachments)
+    ) {
+      throw new Error(SCHEDULED_ATTACHMENT_RESELECT_REASON)
+    }
     if (partial.status && isInvalidScheduledTaskStatusTransition(current.status, partial.status)) {
       return current
     }
@@ -5114,13 +5234,47 @@ export class AppStore {
     )
   }
 
-  static getDueScheduledTasks(nowMs: number = Date.now()): ScheduledTask[] {
-    return this.getScheduledTasks().filter((task) => {
-      if (task.status === 'due') return true
-      if (task.status !== 'pending') return false
-      const runAtMs = new Date(task.runAt).getTime()
-      return Number.isFinite(runAtMs) && runAtMs <= nowMs
-    })
+  static getDueScheduledTasks(
+    nowMs: number = Date.now(),
+    resolveAttachments: ResolveScheduledAttachments =
+      rejectUnconfiguredScheduledAttachmentResolution
+  ): ScheduledTask[] {
+    const due: ScheduledTask[] = []
+    for (const task of this.getScheduledTasks()) {
+      const eligible =
+        task.status === 'due' ||
+        (task.status === 'pending' &&
+          Number.isFinite(new Date(task.runAt).getTime()) &&
+          new Date(task.runAt).getTime() <= nowMs)
+      if (!eligible) continue
+      const imageAttachments = resolveScheduledAttachmentRefs(
+        task.imageAttachments,
+        {
+          source: 'scheduled-task',
+          recordId: task.id,
+          appChatId: task.chatId,
+          workspaceId: task.workspaceId,
+          workspacePath: task.workspacePath,
+          externalPathGrants: task.externalPathGrants
+        },
+        resolveAttachments
+      )
+      if (!imageAttachments) {
+        this.updateScheduledTask(task.id, {
+          status: 'failed',
+          completedAt: new Date(nowMs).toISOString(),
+          lastError: SCHEDULED_ATTACHMENT_RESELECT_REASON
+        })
+        continue
+      }
+      if (JSON.stringify(imageAttachments) !== JSON.stringify(task.imageAttachments)) {
+        const updated = this.updateScheduledTask(task.id, { imageAttachments })
+        if (updated) due.push(updated)
+      } else {
+        due.push(task)
+      }
+    }
+    return due
   }
 
   static recoverInterruptedScheduledTasksAfterStartup(nowMs: number = Date.now()): ScheduledTask[] {

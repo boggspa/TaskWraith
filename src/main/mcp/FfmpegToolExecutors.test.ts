@@ -24,8 +24,14 @@ function build(overrides: Partial<FfmpegToolDeps> = {}) {
   let lastProbeArgs: string[] | null = null
   let lastFfmpegArgs: string[] | null = null
   const removed: string[] = []
+  const inputCleanup = vi.fn(() => true)
   const deps: FfmpegToolDeps = {
-    jailInput: vi.fn((): JailedMediaInput => ({ ok: true, realPath: '/ws/clip.mp4', mimeType: 'video/mp4' })),
+    jailInput: vi.fn((): JailedMediaInput => ({
+      ok: true,
+      realPath: '/ws/clip.mp4',
+      mimeType: 'video/mp4',
+      cleanup: inputCleanup
+    })),
     resolveFfprobe: vi.fn(() => '/opt/homebrew/bin/ffprobe'),
     resolveFfmpeg: vi.fn(() => '/opt/homebrew/bin/ffmpeg'),
     runFfprobe: vi.fn(async (_bin: string, args: string[]) => {
@@ -50,7 +56,14 @@ function build(overrides: Partial<FfmpegToolDeps> = {}) {
     ...overrides
   }
   const executors = createFfmpegToolExecutors(deps)
-  return { executors, deps, getProbeArgs: () => lastProbeArgs, getFfmpegArgs: () => lastFfmpegArgs, getRemoved: () => removed }
+  return {
+    executors,
+    deps,
+    inputCleanup,
+    getProbeArgs: () => lastProbeArgs,
+    getFfmpegArgs: () => lastFfmpegArgs,
+    getRemoved: () => removed
+  }
 }
 
 describe('isFfmpegMcpToolName', () => {
@@ -66,7 +79,7 @@ describe('isFfmpegMcpToolName', () => {
 
 describe('video_probe', () => {
   it('jails the input, runs ffprobe on the REAL path, returns parsed info', async () => {
-    const { executors, deps, getProbeArgs } = build()
+    const { executors, deps, getProbeArgs, inputCleanup } = build()
     const result = await executors.executeFfmpegTool('video_probe', { sourcePath: 'clip.mp4' }, { appChatId: 'c1' })
     expect(result.isError).toBeFalsy()
     expect(deps.jailInput).toHaveBeenCalledWith('clip.mp4', { appChatId: 'c1' })
@@ -74,6 +87,7 @@ describe('video_probe', () => {
     const payload = JSON.parse(result.text) as Record<string, unknown>
     expect(payload.hasVideo).toBe(true)
     expect((payload.video as Record<string, unknown>).codec).toBe('h264')
+    expect(inputCleanup).toHaveBeenCalledTimes(1)
   })
 
   it('surfaces a jail rejection without running ffprobe', async () => {
@@ -87,16 +101,68 @@ describe('video_probe', () => {
   })
 
   it('returns an actionable error when ffprobe is not installed', async () => {
-    const { executors } = build({ resolveFfprobe: vi.fn(() => null) })
+    const { executors, inputCleanup } = build({ resolveFfprobe: vi.fn(() => null) })
     const result = await executors.executeFfmpegTool('video_probe', { sourcePath: 'clip.mp4' }, {})
     expect(result.isError).toBe(true)
     expect(result.text).toContain('install ffprobe')
+    expect(inputCleanup).toHaveBeenCalledTimes(1)
+  })
+
+  it('cleans the staged input exactly once on argv rejection and runner failure', async () => {
+    const invalidCleanup = vi.fn(() => true)
+    const invalid = build({
+      jailInput: vi.fn((): JailedMediaInput => ({
+        ok: true,
+        realPath: 'relative.mp4',
+        mimeType: 'video/mp4',
+        cleanup: invalidCleanup
+      }))
+    })
+    const invalidResult = await invalid.executors.executeFfmpegTool('video_probe', { sourcePath: 'clip.mp4' }, {})
+    expect(invalidResult.isError).toBe(true)
+    expect(invalidResult.text).toContain('must be absolute')
+    expect(invalidCleanup).toHaveBeenCalledTimes(1)
+    expect(invalid.deps.runFfprobe).not.toHaveBeenCalled()
+
+    const failedCleanup = vi.fn(() => true)
+    const failed = build({
+      jailInput: vi.fn((): JailedMediaInput => ({
+        ok: true,
+        realPath: '/ws/clip.mp4',
+        mimeType: 'video/mp4',
+        cleanup: failedCleanup
+      })),
+      runFfprobe: vi.fn(async () => {
+        throw new Error('probe runner failed')
+      })
+    })
+    const failedResult = await failed.executors.executeFfmpegTool('video_probe', { sourcePath: 'clip.mp4' }, {})
+    expect(failedResult.isError).toBe(true)
+    expect(failedResult.text).toContain('probe runner failed')
+    expect(failedCleanup).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not mask the tool result when staged-input cleanup throws', async () => {
+    const cleanup = vi.fn(() => {
+      throw new Error('cleanup failed')
+    })
+    const { executors } = build({
+      jailInput: vi.fn((): JailedMediaInput => ({
+        ok: true,
+        realPath: '/ws/clip.mp4',
+        mimeType: 'video/mp4',
+        cleanup
+      }))
+    })
+    const result = await executors.executeFfmpegTool('video_probe', { sourcePath: 'clip.mp4' }, {})
+    expect(result.isError).toBeFalsy()
+    expect(cleanup).toHaveBeenCalledTimes(1)
   })
 })
 
 describe('video_thumbnail', () => {
   it('extracts a frame over the JAILED path and returns it as an inline PNG image block', async () => {
-    const { executors, getFfmpegArgs, getRemoved } = build()
+    const { executors, getFfmpegArgs, getRemoved, inputCleanup } = build()
     const result = await executors.executeFfmpegTool('video_thumbnail', { sourcePath: 'clip.mp4', atMs: 2500, width: 320 }, {})
     expect(result.isError).toBeFalsy()
     const args = getFfmpegArgs()!.join(' ')
@@ -109,6 +175,7 @@ describe('video_thumbnail', () => {
     expect(img?.data).toBeTruthy()
     // Staging file cleaned up.
     expect(getRemoved()).toContain('/staging/out.png')
+    expect(inputCleanup).toHaveBeenCalledTimes(1)
   })
 
   it('reads the PNG output under the IMAGE byte cap (passes image/png mime to readOutput)', async () => {
@@ -119,15 +186,16 @@ describe('video_thumbnail', () => {
   })
 
   it('returns an actionable error when ffmpeg is not installed', async () => {
-    const { executors, deps } = build({ resolveFfmpeg: vi.fn(() => null) })
+    const { executors, deps, inputCleanup } = build({ resolveFfmpeg: vi.fn(() => null) })
     const result = await executors.executeFfmpegTool('video_thumbnail', { sourcePath: 'clip.mp4' }, {})
     expect(result.isError).toBe(true)
     expect(result.text).toContain('install ffmpeg')
     expect(deps.runFfmpeg).not.toHaveBeenCalled()
+    expect(inputCleanup).toHaveBeenCalledTimes(1)
   })
 
   it('fails (and still cleans up staging) when ffmpeg produces no frame', async () => {
-    const { executors, getRemoved } = build({
+    const { executors, getRemoved, inputCleanup } = build({
       readOutput: vi.fn(() => {
         throw new Error('ENOENT')
       })
@@ -136,10 +204,11 @@ describe('video_thumbnail', () => {
     expect(result.isError).toBe(true)
     expect(result.text).toContain('ffmpeg output unavailable')
     expect(getRemoved()).toContain('/staging/out.png')
+    expect(inputCleanup).toHaveBeenCalledTimes(1)
   })
 
   it('fails (and cleans up) when the ffmpeg run throws', async () => {
-    const { executors, getRemoved } = build({
+    const { executors, getRemoved, inputCleanup } = build({
       runFfmpeg: vi.fn(async () => {
         throw new Error('ffmpeg timed out')
       })
@@ -148,6 +217,24 @@ describe('video_thumbnail', () => {
     expect(result.isError).toBe(true)
     expect(result.text).toContain('timed out')
     expect(getRemoved()).toContain('/staging/out.png')
+    expect(inputCleanup).toHaveBeenCalledTimes(1)
+  })
+
+  it('cleans the staged input exactly once when argv validation rejects it', async () => {
+    const cleanup = vi.fn(() => true)
+    const { executors, deps } = build({
+      jailInput: vi.fn((): JailedMediaInput => ({
+        ok: true,
+        realPath: 'relative.mp4',
+        mimeType: 'video/mp4',
+        cleanup
+      }))
+    })
+    const result = await executors.executeFfmpegTool('video_thumbnail', { sourcePath: 'clip.mp4' }, {})
+    expect(result.isError).toBe(true)
+    expect(result.text).toContain('must be absolute')
+    expect(deps.runFfmpeg).not.toHaveBeenCalled()
+    expect(cleanup).toHaveBeenCalledTimes(1)
   })
 })
 
@@ -155,7 +242,7 @@ describe('video_thumbnail', () => {
 // (result.trustedMediaRefs, NOT an image block + NOT provider media_refs).
 describe('audio_extract / transcode_audio / transcode_video (trusted AV refs)', () => {
   it('audio_extract persists the output and returns a trusted audio ref with a sha-derived id', async () => {
-    const { executors, deps, getFfmpegArgs, getRemoved } = build()
+    const { executors, deps, getFfmpegArgs, getRemoved, inputCleanup } = build()
     const result = await executors.executeFfmpegTool(
       'audio_extract',
       { sourcePath: 'clip.mp4', format: 'm4a', bitrateKbps: 128 },
@@ -179,6 +266,7 @@ describe('audio_extract / transcode_audio / transcode_video (trusted AV refs)', 
     expect((result.content ?? []).some((b) => b.type === 'image')).toBe(false)
     // Staging file cleaned up.
     expect(getRemoved()).toContain('/staging/out.m4a')
+    expect(inputCleanup).toHaveBeenCalledTimes(1)
   })
 
   it('transcode_audio returns a trusted audio ref (wav → audio/wav)', async () => {
@@ -207,15 +295,16 @@ describe('audio_extract / transcode_audio / transcode_video (trusted AV refs)', 
   })
 
   it('rejects a producer with a missing/invalid audio format', async () => {
-    const { executors, deps } = build()
+    const { executors, deps, inputCleanup } = build()
     const result = await executors.executeFfmpegTool('audio_extract', { sourcePath: 'clip.mp4' }, {})
     expect(result.isError).toBe(true)
     expect(result.text).toContain('format')
     expect(deps.runFfmpeg).not.toHaveBeenCalled()
+    expect(inputCleanup).toHaveBeenCalledTimes(1)
   })
 
   it('a persistOutput failure yields an error result with NO trusted refs (and still cleans up)', async () => {
-    const { executors, getRemoved } = build({
+    const { executors, getRemoved, inputCleanup } = build({
       persistOutput: vi.fn(() => ({ ok: false as const, reason: 'disk_full' }))
     })
     const result = await executors.executeFfmpegTool('transcode_video', { sourcePath: 'clip.mp4' }, {})
@@ -223,10 +312,11 @@ describe('audio_extract / transcode_audio / transcode_video (trusted AV refs)', 
     expect(result.text).toContain('disk_full')
     expect(result.trustedMediaRefs).toBeUndefined()
     expect(getRemoved()).toContain('/staging/out.mp4')
+    expect(inputCleanup).toHaveBeenCalledTimes(1)
   })
 
   it('fails (and cleans up) when a producer ffmpeg run throws', async () => {
-    const { executors, deps, getRemoved } = build({
+    const { executors, deps, getRemoved, inputCleanup } = build({
       runFfmpeg: vi.fn(async () => {
         throw new Error('producer timed out')
       })
@@ -236,6 +326,38 @@ describe('audio_extract / transcode_audio / transcode_video (trusted AV refs)', 
     expect(result.text).toContain('timed out')
     expect(deps.persistOutput).not.toHaveBeenCalled()
     expect(getRemoved()).toContain('/staging/out.mp3')
+    expect(inputCleanup).toHaveBeenCalledTimes(1)
+  })
+
+  it('cleans the staged input exactly once on missing binary and argv rejection', async () => {
+    const missing = build({ resolveFfmpeg: vi.fn(() => null) })
+    const missingResult = await missing.executors.executeFfmpegTool(
+      'transcode_audio',
+      { sourcePath: 'a.wav', format: 'mp3' },
+      {}
+    )
+    expect(missingResult.isError).toBe(true)
+    expect(missingResult.text).toContain('install ffmpeg')
+    expect(missing.inputCleanup).toHaveBeenCalledTimes(1)
+
+    const invalidCleanup = vi.fn(() => true)
+    const invalid = build({
+      jailInput: vi.fn((): JailedMediaInput => ({
+        ok: true,
+        realPath: 'relative.wav',
+        mimeType: 'audio/wav',
+        cleanup: invalidCleanup
+      }))
+    })
+    const invalidResult = await invalid.executors.executeFfmpegTool(
+      'transcode_audio',
+      { sourcePath: 'a.wav', format: 'mp3' },
+      {}
+    )
+    expect(invalidResult.isError).toBe(true)
+    expect(invalidResult.text).toContain('must be absolute')
+    expect(invalid.deps.runFfmpeg).not.toHaveBeenCalled()
+    expect(invalidCleanup).toHaveBeenCalledTimes(1)
   })
 
   // Part 1 — poster/waveform threading + fail-tolerance.

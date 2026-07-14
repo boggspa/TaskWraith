@@ -59,25 +59,35 @@ function isGrantLike(value: unknown): value is ExternalPathGrant {
   )
 }
 
+function isExecutionBoundGrant(grant: ExternalPathGrant): boolean {
+  if (grant.bindingVersion !== 2) return false
+  if (typeof grant.chatId !== 'string' || !grant.chatId.trim()) return false
+  if (typeof grant.workspaceId !== 'string' || !grant.workspaceId.trim()) return false
+  if (grant.duration === 'thisRun') {
+    return typeof grant.appRunId === 'string' && Boolean(grant.appRunId.trim())
+  }
+  return true
+}
+
 export function coalesceExternalPathGrants(
   grants: Array<ExternalPathGrant | null | undefined>
 ): ExternalPathGrant[] {
   const byKey = new Map<string, ExternalPathGrant>()
   for (const grant of grants) {
     if (!isGrantLike(grant)) continue
-    const path = grant.path.trim()
-    if (!path) continue
-    const access = grant.access === 'write' ? 'write' : 'read'
-    const key = `${grant.provider}:${path}`
-    const normalized: ExternalPathGrant = {
-      ...grant,
-      path,
-      access,
-      kind: grant.kind === 'directory' ? 'directory' : 'file',
-      duration: grant.duration || 'thisThread'
-    }
+    if (!grant.path.trim()) continue
+    const key = `${grant.provider}:${grant.path}`
+    const normalized: ExternalPathGrant = { ...grant }
     const existing = byKey.get(key)
-    if (!existing || (existing.access === 'read' && access === 'write')) {
+    const existingIsBound = existing ? isExecutionBoundGrant(existing) : false
+    const incomingIsBound = isExecutionBoundGrant(normalized)
+    const shouldReplace =
+      !existing ||
+      (incomingIsBound && !existingIsBound) ||
+      (incomingIsBound === existingIsBound &&
+        existing.access === 'read' &&
+        normalized.access === 'write')
+    if (shouldReplace) {
       // Preserve a previously-resolved order if the incoming
       // duplicate lacks one — keeps explicit reorder sticky when
       // a write grant upgrades an earlier read grant for the
@@ -225,13 +235,30 @@ export function collectExternalPathGrantsFromMetadata(
       ? (metadata.externalPathGrants as ExternalPathGrant[])
       : []
   )
-  const canonicalKeys = new Set(canonical.map(grantKey))
   const legacy = coalesceExternalPathGrants(
     EXTERNAL_PATH_GRANT_METADATA_KEYS.filter((key) => key !== 'externalPathGrants').flatMap(
       (key) => (Array.isArray(metadata[key]) ? (metadata[key] as ExternalPathGrant[]) : [])
     )
   )
-  return [...canonical, ...legacy.filter((grant) => !canonicalKeys.has(grantKey(grant)))]
+  const merged = [...canonical]
+  const canonicalIndexByKey = new Map(
+    canonical.map((grant, index) => [grantKey(grant), index] as const)
+  )
+  for (const legacyGrant of legacy) {
+    const canonicalIndex = canonicalIndexByKey.get(grantKey(legacyGrant))
+    if (canonicalIndex === undefined) {
+      merged.push(legacyGrant)
+      continue
+    }
+    const canonicalGrant = merged[canonicalIndex]
+    if (!isExecutionBoundGrant(canonicalGrant) && isExecutionBoundGrant(legacyGrant)) {
+      merged[canonicalIndex] = {
+        ...legacyGrant,
+        order: legacyGrant.order ?? canonicalGrant.order
+      }
+    }
+  }
+  return assignExternalPathGrantOrder(merged)
 }
 
 export function canonicalizeExternalPathGrantMetadata(

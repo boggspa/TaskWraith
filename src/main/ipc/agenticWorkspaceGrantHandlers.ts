@@ -1,6 +1,7 @@
-import { ipcMain } from 'electron'
+import { ipcMain, type IpcMainInvokeEvent } from 'electron'
 import type { AppSettings, AgenticServiceId, ProviderId } from '../store/types'
 import type { PermissionService } from '../PermissionService'
+import { rendererSafeSettings } from './settingsHandlers'
 
 export interface AgenticWorkspaceGrantHandlerDeps {
   permissionService: Pick<PermissionService, 'upsertWorkspaceGrant' | 'removeWorkspaceGrant'>
@@ -8,6 +9,10 @@ export interface AgenticWorkspaceGrantHandlerDeps {
   assertProviderId: (provider: ProviderId) => ProviderId
   requireNonEmptyString: (value: string, label: string) => string
   assertAgenticServiceId: (service: AgenticServiceId) => AgenticServiceId
+  assertSenderCanManageAgenticWorkspaceGrants: (
+    event: IpcMainInvokeEvent,
+    workspacePath: string
+  ) => string
 }
 
 export function registerAgenticWorkspaceGrantHandlers(
@@ -15,25 +20,39 @@ export function registerAgenticWorkspaceGrantHandlers(
 ): void {
   ipcMain.handle(
     'upsert-agentic-workspace-grant',
-    (_event, provider: ProviderId, workspacePath: string, service: AgenticServiceId) => {
-      deps.permissionService.upsertWorkspaceGrant(
-        deps.assertProviderId(provider),
-        deps.requireNonEmptyString(workspacePath, 'Workspace path'),
-        deps.assertAgenticServiceId(service)
+    (event, provider: ProviderId, workspacePath: string, service: AgenticServiceId) => {
+      const validatedProvider = deps.assertProviderId(provider)
+      const validatedWorkspacePath = deps.requireNonEmptyString(workspacePath, 'Workspace path')
+      const validatedService = deps.assertAgenticServiceId(service)
+      const authorizedWorkspacePath = deps.assertSenderCanManageAgenticWorkspaceGrants(
+        event,
+        validatedWorkspacePath
       )
-      return deps.getSettings()
+      deps.permissionService.upsertWorkspaceGrant(
+        validatedProvider,
+        authorizedWorkspacePath,
+        validatedService
+      )
+      return rendererSafeSettings(deps.getSettings())
     }
   )
 
   ipcMain.handle(
     'remove-agentic-workspace-grant',
-    (_event, provider: ProviderId, workspacePath: string, service: AgenticServiceId) => {
-      deps.permissionService.removeWorkspaceGrant(
-        deps.assertProviderId(provider),
-        deps.requireNonEmptyString(workspacePath, 'Workspace path'),
-        deps.assertAgenticServiceId(service)
+    (event, provider: ProviderId, workspacePath: string, service: AgenticServiceId) => {
+      const validatedProvider = deps.assertProviderId(provider)
+      const validatedWorkspacePath = deps.requireNonEmptyString(workspacePath, 'Workspace path')
+      const validatedService = deps.assertAgenticServiceId(service)
+      const authorizedWorkspacePath = deps.assertSenderCanManageAgenticWorkspaceGrants(
+        event,
+        validatedWorkspacePath
       )
-      return deps.getSettings()
+      deps.permissionService.removeWorkspaceGrant(
+        validatedProvider,
+        authorizedWorkspacePath,
+        validatedService
+      )
+      return rendererSafeSettings(deps.getSettings())
     }
   )
 }

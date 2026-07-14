@@ -82,9 +82,11 @@ function build(overrides: Partial<VtToolDeps> = {}) {
   } | null = null
   let lastTranscribeParams: { sourcePath: string; localeIdentifier?: string } | null = null
   const removed: string[] = []
+  const inputCleanup = vi.fn(() => true)
+  const overlayCleanup = vi.fn(() => true)
   const deps: VtToolDeps = {
-    jailInput: vi.fn(() => ({ ok: true as const, realPath: '/ws/clip.mp4' })),
-    jailOverlay: vi.fn(() => ({ ok: true as const, realPath: '/ws/logo.png' })),
+    jailInput: vi.fn(() => ({ ok: true as const, realPath: '/ws/clip.mp4', cleanup: inputCleanup })),
+    jailOverlay: vi.fn(() => ({ ok: true as const, realPath: '/ws/logo.png', cleanup: overlayCleanup })),
     decodeFrame: vi.fn(async (params) => {
       lastDecodeParams = params
       return { ...DECODE_RESULT }
@@ -120,6 +122,8 @@ function build(overrides: Partial<VtToolDeps> = {}) {
   return {
     executors,
     deps,
+    inputCleanup,
+    overlayCleanup,
     getDecodeParams: () => lastDecodeParams,
     getEncodeParams: () => lastEncodeParams,
     getConcatParams: () => lastConcatParams,
@@ -643,7 +647,7 @@ describe('video_concat_clips', () => {
     // JAILED path (not the raw string) reached the daemon, preserving order.
     let i = 0
     const { executors, deps, getConcatParams, getRemoved } = build({
-      jailInput: vi.fn(() => ({ ok: true as const, realPath: `/ws/seg-${i++}.mp4` }))
+      jailInput: vi.fn(() => ({ ok: true as const, realPath: `/ws/seg-${i++}.mp4`, cleanup: vi.fn(() => true) }))
     })
     const result = await executors.executeVtTool(
       'video_concat_clips',
@@ -740,7 +744,7 @@ describe('video_concat_clips', () => {
         call++
         return call === 2
           ? ({ ok: false as const, reason: 'outside_allowed_roots' })
-          : ({ ok: true as const, realPath: '/ws/ok.mp4' })
+          : ({ ok: true as const, realPath: '/ws/ok.mp4', cleanup: vi.fn(() => true) })
       })
     })
     const result = await executors.executeVtTool(
@@ -851,7 +855,7 @@ describe('audio_mix', () => {
     // JAILED path (not the raw string) reached the daemon, preserving order.
     let i = 0
     const { executors, deps, getMixParams, getRemoved } = build({
-      jailInput: vi.fn(() => ({ ok: true as const, realPath: `/ws/trk-${i++}.wav` }))
+      jailInput: vi.fn(() => ({ ok: true as const, realPath: `/ws/trk-${i++}.wav`, cleanup: vi.fn(() => true) }))
     })
     const result = await executors.executeVtTool(
       'audio_mix',
@@ -994,7 +998,7 @@ describe('audio_mix', () => {
         call++
         return call === 2
           ? ({ ok: false as const, reason: 'outside_allowed_roots' })
-          : ({ ok: true as const, realPath: '/ws/ok.wav' })
+          : ({ ok: true as const, realPath: '/ws/ok.wav', cleanup: vi.fn(() => true) })
       })
     })
     const result = await executors.executeVtTool(
@@ -1176,5 +1180,300 @@ describe('transcribe_audio', () => {
     expect(result.isError).toBeFalsy()
     expect(result.text).toContain('(no speech detected)')
     expect(result.text).toContain('segments: []')
+  })
+})
+
+describe('staged input cleanup ownership', () => {
+  it('cleans decode, frame-inspection, and transcription inputs exactly once on success and daemon failure', async () => {
+    const decodeSuccess = build()
+    await decodeSuccess.executors.executeVtTool('video_decode_frame', { inputPath: 'clip.mp4' }, {})
+    expect(decodeSuccess.inputCleanup).toHaveBeenCalledTimes(1)
+
+    const decodeFailureCleanup = vi.fn(() => true)
+    const decodeFailure = build({
+      jailInput: vi.fn(() => ({
+        ok: true as const,
+        realPath: '/staged/decode.mp4',
+        cleanup: decodeFailureCleanup
+      })),
+      decodeFrame: vi.fn(async () => {
+        throw new Error('decode failed')
+      })
+    })
+    const failedDecode = await decodeFailure.executors.executeVtTool(
+      'video_decode_frame',
+      { inputPath: 'clip.mp4' },
+      {}
+    )
+    expect(failedDecode.isError).toBe(true)
+    expect(decodeFailureCleanup).toHaveBeenCalledTimes(1)
+
+    const inspectCleanup = vi.fn(() => true)
+    let inspectCall = 0
+    const inspect = build({
+      jailInput: vi.fn(() => ({
+        ok: true as const,
+        realPath: '/staged/inspect.mp4',
+        cleanup: inspectCleanup
+      })),
+      decodeFrame: vi.fn(async (params) => {
+        inspectCall += 1
+        if (inspectCall > 1) throw new Error('past EOF')
+        return { ...DECODE_RESULT, timestampSeconds: params.timestampSeconds ?? 0 }
+      })
+    })
+    const inspected = await inspect.executors.executeVtTool(
+      'inspect_video_frames',
+      { inputPath: 'clip.mp4', timestamps: [0, 1] },
+      {}
+    )
+    expect(inspected.isError).toBeFalsy()
+    expect(inspectCleanup).toHaveBeenCalledTimes(1)
+
+    const transcribeCleanup = vi.fn(() => true)
+    const transcription = build({
+      jailInput: vi.fn(() => ({
+        ok: true as const,
+        realPath: '/staged/memo.m4a',
+        cleanup: transcribeCleanup
+      })),
+      transcribe: vi.fn(async () => {
+        throw new Error('recognizer failed')
+      })
+    })
+    const failedTranscription = await transcription.executors.executeVtTool(
+      'transcribe_audio',
+      { sourcePath: 'memo.m4a' },
+      {}
+    )
+    expect(failedTranscription.isError).toBe(true)
+    expect(transcribeCleanup).toHaveBeenCalledTimes(1)
+  })
+
+  it('cleans the encode input and overlay exactly once on success, failure, and overlay rejection', async () => {
+    const inputCleanup = vi.fn(() => true)
+    const overlayCleanup = vi.fn(() => true)
+    const success = build({
+      jailInput: vi.fn(() => ({ ok: true as const, realPath: '/staged/clip.mp4', cleanup: inputCleanup })),
+      jailOverlay: vi.fn(() => ({ ok: true as const, realPath: '/staged/logo.png', cleanup: overlayCleanup }))
+    })
+    const result = await success.executors.executeVtTool(
+      'video_encode_clip',
+      { inputPath: 'clip.mp4', overlayPath: 'logo.png' },
+      {}
+    )
+    expect(result.isError).toBeFalsy()
+    expect(inputCleanup).toHaveBeenCalledTimes(1)
+    expect(overlayCleanup).toHaveBeenCalledTimes(1)
+
+    const failedInputCleanup = vi.fn(() => true)
+    const failedOverlayCleanup = vi.fn(() => true)
+    const failed = build({
+      jailInput: vi.fn(() => ({
+        ok: true as const,
+        realPath: '/staged/clip.mp4',
+        cleanup: failedInputCleanup
+      })),
+      jailOverlay: vi.fn(() => ({
+        ok: true as const,
+        realPath: '/staged/logo.png',
+        cleanup: failedOverlayCleanup
+      })),
+      encodeClip: vi.fn(async () => {
+        throw new Error('encode failed')
+      })
+    })
+    const failedResult = await failed.executors.executeVtTool(
+      'video_encode_clip',
+      { inputPath: 'clip.mp4', overlayPath: 'logo.png' },
+      {}
+    )
+    expect(failedResult.isError).toBe(true)
+    expect(failedInputCleanup).toHaveBeenCalledTimes(1)
+    expect(failedOverlayCleanup).toHaveBeenCalledTimes(1)
+
+    const rejectedInputCleanup = vi.fn(() => true)
+    const rejected = build({
+      jailInput: vi.fn(() => ({
+        ok: true as const,
+        realPath: '/staged/clip.mp4',
+        cleanup: rejectedInputCleanup
+      })),
+      jailOverlay: vi.fn(() => ({ ok: false as const, reason: 'unsafe_overlay' }))
+    })
+    const rejectedResult = await rejected.executors.executeVtTool(
+      'video_encode_clip',
+      { inputPath: 'clip.mp4', overlayPath: 'logo.svg' },
+      {}
+    )
+    expect(rejectedResult.isError).toBe(true)
+    expect(rejectedInputCleanup).toHaveBeenCalledTimes(1)
+    expect(rejected.deps.encodeClip).not.toHaveBeenCalled()
+  })
+
+  it('cleans all concatenation inputs exactly once, including a later jail failure', async () => {
+    const successCleanups = [vi.fn(() => true), vi.fn(() => true), vi.fn(() => true)]
+    let successIndex = 0
+    const success = build({
+      jailInput: vi.fn(() => {
+        const index = successIndex++
+        return {
+          ok: true as const,
+          realPath: `/staged/segment-${index}.mp4`,
+          cleanup: successCleanups[index]
+        }
+      })
+    })
+    const successResult = await success.executors.executeVtTool(
+      'video_concat_clips',
+      { segments: [{ inputPath: 'a.mp4' }, { inputPath: 'b.mp4' }, { inputPath: 'c.mp4' }] },
+      {}
+    )
+    expect(successResult.isError).toBeFalsy()
+    for (const cleanup of successCleanups) expect(cleanup).toHaveBeenCalledTimes(1)
+
+    const partialCleanup = vi.fn(() => true)
+    let partialIndex = 0
+    const partial = build({
+      jailInput: vi.fn(() => {
+        partialIndex += 1
+        return partialIndex === 1
+          ? { ok: true as const, realPath: '/staged/a.mp4', cleanup: partialCleanup }
+          : { ok: false as const, reason: 'outside_allowed_roots' }
+      })
+    })
+    const partialResult = await partial.executors.executeVtTool(
+      'video_concat_clips',
+      { segments: [{ inputPath: 'a.mp4' }, { inputPath: 'bad.mp4' }, { inputPath: 'c.mp4' }] },
+      {}
+    )
+    expect(partialResult.isError).toBe(true)
+    expect(partialCleanup).toHaveBeenCalledTimes(1)
+    expect(partial.deps.jailInput).toHaveBeenCalledTimes(2)
+    expect(partial.deps.concatClips).not.toHaveBeenCalled()
+
+    const failedCleanups = [vi.fn(() => true), vi.fn(() => true)]
+    let failedIndex = 0
+    const failed = build({
+      jailInput: vi.fn(() => {
+        const index = failedIndex++
+        return {
+          ok: true as const,
+          realPath: `/staged/segment-${index}.mp4`,
+          cleanup: failedCleanups[index]
+        }
+      }),
+      concatClips: vi.fn(async () => {
+        throw new Error('concat failed')
+      })
+    })
+    const failedResult = await failed.executors.executeVtTool(
+      'video_concat_clips',
+      { segments: [{ inputPath: 'a.mp4' }, { inputPath: 'b.mp4' }] },
+      {}
+    )
+    expect(failedResult.isError).toBe(true)
+    for (const cleanup of failedCleanups) expect(cleanup).toHaveBeenCalledTimes(1)
+  })
+
+  it('cleans all mixdown inputs exactly once, including a later jail failure', async () => {
+    const successCleanups = [vi.fn(() => true), vi.fn(() => true), vi.fn(() => true)]
+    let successIndex = 0
+    const success = build({
+      jailInput: vi.fn(() => {
+        const index = successIndex++
+        return {
+          ok: true as const,
+          realPath: `/staged/track-${index}.wav`,
+          cleanup: successCleanups[index]
+        }
+      })
+    })
+    const successResult = await success.executors.executeVtTool(
+      'audio_mix',
+      { tracks: [{ sourcePath: 'a.wav' }, { sourcePath: 'b.wav' }, { sourcePath: 'c.wav' }] },
+      {}
+    )
+    expect(successResult.isError).toBeFalsy()
+    for (const cleanup of successCleanups) expect(cleanup).toHaveBeenCalledTimes(1)
+
+    const partialCleanup = vi.fn(() => true)
+    let partialIndex = 0
+    const partial = build({
+      jailInput: vi.fn(() => {
+        partialIndex += 1
+        return partialIndex === 1
+          ? { ok: true as const, realPath: '/staged/a.wav', cleanup: partialCleanup }
+          : { ok: false as const, reason: 'outside_allowed_roots' }
+      })
+    })
+    const partialResult = await partial.executors.executeVtTool(
+      'audio_mix',
+      { tracks: [{ sourcePath: 'a.wav' }, { sourcePath: 'bad.wav' }, { sourcePath: 'c.wav' }] },
+      {}
+    )
+    expect(partialResult.isError).toBe(true)
+    expect(partialCleanup).toHaveBeenCalledTimes(1)
+    expect(partial.deps.jailInput).toHaveBeenCalledTimes(2)
+    expect(partial.deps.mixdown).not.toHaveBeenCalled()
+
+    const failedCleanups = [vi.fn(() => true), vi.fn(() => true)]
+    let failedIndex = 0
+    const failed = build({
+      jailInput: vi.fn(() => {
+        const index = failedIndex++
+        return {
+          ok: true as const,
+          realPath: `/staged/track-${index}.wav`,
+          cleanup: failedCleanups[index]
+        }
+      }),
+      mixdown: vi.fn(async () => {
+        throw new Error('mixdown failed')
+      })
+    })
+    const failedResult = await failed.executors.executeVtTool(
+      'audio_mix',
+      { tracks: [{ sourcePath: 'a.wav' }, { sourcePath: 'b.wav' }] },
+      {}
+    )
+    expect(failedResult.isError).toBe(true)
+    for (const cleanup of failedCleanups) expect(cleanup).toHaveBeenCalledTimes(1)
+  })
+
+  it('cleans successfully jailed inputs when staging path creation throws and ignores cleanup errors', async () => {
+    const stagingCleanup = vi.fn(() => true)
+    const stagingFailure = build({
+      jailInput: vi.fn(() => ({
+        ok: true as const,
+        realPath: '/staged/clip.mp4',
+        cleanup: stagingCleanup
+      })),
+      stagingPath: vi.fn(() => {
+        throw new Error('staging unavailable')
+      })
+    })
+    await expect(
+      stagingFailure.executors.executeVtTool('video_encode_clip', { inputPath: 'clip.mp4' }, {})
+    ).rejects.toThrow('staging unavailable')
+    expect(stagingCleanup).toHaveBeenCalledTimes(1)
+
+    const throwingCleanup = vi.fn(() => {
+      throw new Error('cleanup failed')
+    })
+    const cleanupFailure = build({
+      jailInput: vi.fn(() => ({
+        ok: true as const,
+        realPath: '/staged/clip.mp4',
+        cleanup: throwingCleanup
+      }))
+    })
+    const result = await cleanupFailure.executors.executeVtTool(
+      'video_decode_frame',
+      { inputPath: 'clip.mp4' },
+      {}
+    )
+    expect(result.isError).toBeFalsy()
+    expect(throwingCleanup).toHaveBeenCalledTimes(1)
   })
 })

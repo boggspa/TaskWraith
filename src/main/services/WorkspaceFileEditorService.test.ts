@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'fs/promises'
+import { mkdtemp, mkdir, readFile, rename, rm, symlink, writeFile } from 'fs/promises'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import { MAX_EDITOR_FILES } from '../index.constants'
@@ -7,6 +7,7 @@ import {
   deleteWorkspaceFile,
   listWorkspaceFiles,
   readWorkspaceFile,
+  setWorkspaceFileEditorTestHookForTests,
   writeWorkspaceFile,
   workspaceFileEtag
 } from './WorkspaceFileEditorService'
@@ -20,6 +21,7 @@ async function makeWorkspace(): Promise<string> {
 }
 
 afterEach(async () => {
+  setWorkspaceFileEditorTestHookForTests(undefined)
   await Promise.all(cleanupPaths.map((path) => rm(path, { recursive: true, force: true })))
   cleanupPaths = []
 })
@@ -118,7 +120,29 @@ describe('WorkspaceFileEditorService', () => {
     await expect(readWorkspaceFile(workspace, 'binary.dat')).rejects.toThrow(/binary|utf-8/i)
   })
 
-  it('requires a current etag and records atomic text saves', async () => {
+  it('fails closed without reading outside when an ancestor becomes a symlink before open', async () => {
+    const workspace = await makeWorkspace()
+    const outside = await makeWorkspace()
+    await mkdir(join(workspace, 'safe'), { recursive: true })
+    await writeFile(join(workspace, 'safe/note.txt'), 'inside\n')
+    await writeFile(join(outside, 'note.txt'), 'outside secret\n')
+
+    setWorkspaceFileEditorTestHookForTests(async (stage) => {
+      if (stage !== 'before_read_open') return
+      await rename(join(workspace, 'safe'), join(workspace, 'safe-original'))
+      await symlink(outside, join(workspace, 'safe'), 'dir')
+    })
+
+    await expect(readWorkspaceFile(workspace, 'safe/note.txt')).rejects.toThrow(
+      /workspace path changed/i
+    )
+    await expect(readFile(join(outside, 'note.txt'), 'utf8')).resolves.toBe('outside secret\n')
+    await expect(readFile(join(workspace, 'safe-original/note.txt'), 'utf8')).resolves.toBe(
+      'inside\n'
+    )
+  })
+
+  it('requires a current etag and records descriptor-pinned text saves', async () => {
     const workspace = await makeWorkspace()
     await writeFile(join(workspace, 'note.txt'), 'old\n')
     const initial = await readWorkspaceFile(workspace, 'note.txt')
@@ -191,19 +215,208 @@ describe('WorkspaceFileEditorService', () => {
     )
   })
 
-  it('deletes text files and records a deleted editor change', async () => {
+  it('fails closed before descriptor writes when an ancestor changes', async () => {
+    const workspace = await makeWorkspace()
+    const outside = await makeWorkspace()
+    await mkdir(join(workspace, 'safe'), { recursive: true })
+    await writeFile(join(workspace, 'safe/note.txt'), 'inside old\n')
+    await writeFile(join(outside, 'note.txt'), 'outside untouched\n')
+    const initial = await readWorkspaceFile(workspace, 'safe/note.txt')
+
+    setWorkspaceFileEditorTestHookForTests(async (stage) => {
+      if (stage !== 'before_write_commit') return
+      await rename(join(workspace, 'safe'), join(workspace, 'safe-original'))
+      await symlink(outside, join(workspace, 'safe'), 'dir')
+    })
+
+    await expect(
+      writeWorkspaceFile({
+        workspacePath: workspace,
+        filePath: 'safe/note.txt',
+        content: 'inside new\n',
+        baseEtag: initial.etag
+      })
+    ).rejects.toThrow(/workspace path changed/i)
+    await expect(readFile(join(outside, 'note.txt'), 'utf8')).resolves.toBe(
+      'outside untouched\n'
+    )
+    await expect(readFile(join(workspace, 'safe-original/note.txt'), 'utf8')).resolves.toBe(
+      'inside old\n'
+    )
+  })
+
+  it('restores the original bytes when an existing descriptor write fails after truncate', async () => {
+    const workspace = await makeWorkspace()
+    await writeFile(join(workspace, 'note.txt'), 'original bytes\n')
+    const initial = await readWorkspaceFile(workspace, 'note.txt')
+
+    setWorkspaceFileEditorTestHookForTests((stage) => {
+      if (stage === 'after_write_truncate') throw new Error('synthetic write failure')
+    })
+
+    await expect(
+      writeWorkspaceFile({
+        workspacePath: workspace,
+        filePath: 'note.txt',
+        content: 'replacement bytes\n',
+        baseEtag: initial.etag
+      })
+    ).rejects.toThrow('synthetic write failure')
+    await expect(readFile(join(workspace, 'note.txt'), 'utf8')).resolves.toBe(
+      'original bytes\n'
+    )
+  })
+
+  it('atomically creates new files, including missing parent directories', async () => {
+    const workspace = await makeWorkspace()
+    await mkdir(join(workspace, 'existing'), { recursive: true })
+    const recordChange = vi.fn((input): any => ({
+      schemaVersion: 1,
+      id: 'change-create',
+      source: 'editor',
+      status: 'captured',
+      title: 'Created existing/new.txt',
+      workspacePath: input.workspacePath,
+      createdAt: '2026-07-14T00:00:00.000Z',
+      updatedAt: '2026-07-14T00:00:00.000Z',
+      files: [],
+      artifacts: [],
+      stats: {
+        filesChanged: 1,
+        filesCreated: 1,
+        filesModified: 0,
+        filesDeleted: 0,
+        filesPreExisting: 0,
+        artifactsGenerated: 0,
+        additions: 1,
+        deletions: 0
+      },
+      metadata: input.metadata
+    }))
+
+    await expect(
+      writeWorkspaceFile({
+        workspacePath: workspace,
+        filePath: 'existing/new.txt',
+        content: 'must supply create intent\n'
+      })
+    ).rejects.toThrow(/no longer exists/i)
+    await expect(readFile(join(workspace, 'existing/new.txt'), 'utf8')).rejects.toThrow()
+
+    const created = await writeWorkspaceFile({
+      workspacePath: workspace,
+      workspaceId: 'ws-1',
+      filePath: 'existing/new.txt',
+      content: 'new\n',
+      baseEtag: null,
+      origin: 'ios-file-editor',
+      recordChange
+    })
+    expect(created).toMatchObject({
+      path: 'existing/new.txt',
+      content: 'new\n',
+      etag: workspaceFileEtag(Buffer.from('new\n'))
+    })
+    await expect(readFile(join(workspace, 'existing/new.txt'), 'utf8')).resolves.toBe('new\n')
+    expect(recordChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspaceId: 'ws-1',
+        filePath: 'existing/new.txt',
+        existedBefore: false,
+        previousContent: undefined,
+        nextContent: 'new\n',
+        metadata: { origin: 'ios-file-editor' }
+      })
+    )
+
+    await writeWorkspaceFile({
+      workspacePath: workspace,
+      filePath: 'missing/nested/new.txt',
+      content: 'nested\n',
+      baseEtag: null
+    })
+    await expect(readFile(join(workspace, 'missing/nested/new.txt'), 'utf8')).resolves.toBe(
+      'nested\n'
+    )
+  })
+
+  it('does not create outside directories when a missing parent is swapped to a symlink', async () => {
+    const workspace = await makeWorkspace()
+    const outside = await makeWorkspace()
+
+    setWorkspaceFileEditorTestHookForTests(async (stage) => {
+      if (stage !== 'before_write_parent_snapshot') return
+      await symlink(outside, join(workspace, 'missing'), 'dir')
+    })
+
+    await expect(
+      writeWorkspaceFile({
+        workspacePath: workspace,
+        filePath: 'missing/nested/new.txt',
+        content: 'must not escape\n',
+        baseEtag: null
+      })
+    ).rejects.toThrow(/outside the workspace|symbolic links/i)
+    await expect(readFile(join(outside, 'nested/new.txt'), 'utf8')).rejects.toThrow()
+  })
+
+  it('denies a new-file commit when its verified ancestor is replaced', async () => {
+    const workspace = await makeWorkspace()
+    const outside = await makeWorkspace()
+    await mkdir(join(workspace, 'safe'), { recursive: true })
+
+    setWorkspaceFileEditorTestHookForTests(async (stage) => {
+      if (stage !== 'before_new_file_commit') return
+      await rename(join(workspace, 'safe'), join(workspace, 'safe-original'))
+      await symlink(outside, join(workspace, 'safe'), 'dir')
+    })
+
+    await expect(
+      writeWorkspaceFile({
+        workspacePath: workspace,
+        filePath: 'safe/new.txt',
+        content: 'must stay inside\n',
+        baseEtag: null
+      })
+    ).rejects.toThrow(/workspace path changed/i)
+    await expect(readFile(join(outside, 'new.txt'), 'utf8')).rejects.toThrow()
+    await expect(readFile(join(workspace, 'safe-original/new.txt'), 'utf8')).rejects.toThrow()
+  })
+
+  it('does not overwrite a file that appears during a new-file save', async () => {
+    const workspace = await makeWorkspace()
+    const targetPath = join(workspace, 'new.txt')
+
+    setWorkspaceFileEditorTestHookForTests(async (stage) => {
+      if (stage === 'before_new_file_commit') {
+        await writeFile(targetPath, 'concurrent writer\n')
+      }
+    })
+
+    await expect(
+      writeWorkspaceFile({
+        workspacePath: workspace,
+        filePath: 'new.txt',
+        content: 'editor writer\n',
+        baseEtag: null
+      })
+    ).rejects.toThrow(/appeared on disk/i)
+    await expect(readFile(targetPath, 'utf8')).resolves.toBe('concurrent writer\n')
+  })
+
+  it('requires a current etag and records deletes', async () => {
     const workspace = await makeWorkspace()
     await writeFile(join(workspace, 'remove-me.txt'), 'delete me\n')
     const initial = await readWorkspaceFile(workspace, 'remove-me.txt')
     const recordChange = vi.fn((input): any => ({
       schemaVersion: 1,
-      id: 'delete-1',
+      id: 'change-delete',
       source: 'editor',
       status: 'captured',
       title: 'Deleted remove-me.txt',
       workspacePath: input.workspacePath,
-      createdAt: '2026-06-11T00:00:00.000Z',
-      updatedAt: '2026-06-11T00:00:00.000Z',
+      createdAt: '2026-07-14T00:00:00.000Z',
+      updatedAt: '2026-07-14T00:00:00.000Z',
       files: [],
       artifacts: [],
       stats: {
@@ -219,36 +432,14 @@ describe('WorkspaceFileEditorService', () => {
       metadata: input.metadata
     }))
 
-    const deleted = await deleteWorkspaceFile({
-      workspacePath: workspace,
-      workspaceId: 'ws-1',
-      filePath: 'remove-me.txt',
-      baseEtag: initial.etag,
-      origin: 'ios-file-editor',
-      recordChange
-    })
-
-    expect(deleted).toMatchObject({ path: 'remove-me.txt', changeSet: { id: 'delete-1' } })
-    await expect(readFile(join(workspace, 'remove-me.txt'), 'utf8')).rejects.toThrow()
-    expect(recordChange).toHaveBeenCalledWith(
-      expect.objectContaining({
-        workspaceId: 'ws-1',
-        filePath: 'remove-me.txt',
-        existedBefore: true,
-        deleted: true,
-        previousContent: 'delete me\n',
-        nextContent: '',
-        metadata: { origin: 'ios-file-editor' }
+    await expect(
+      deleteWorkspaceFile({
+        workspacePath: workspace,
+        filePath: 'remove-me.txt'
       })
-    )
-  })
+    ).rejects.toThrow(/base file version/i)
 
-  it('rejects delete when the file version is stale', async () => {
-    const workspace = await makeWorkspace()
-    await writeFile(join(workspace, 'remove-me.txt'), 'delete me\n')
-    const initial = await readWorkspaceFile(workspace, 'remove-me.txt')
     await writeFile(join(workspace, 'remove-me.txt'), 'changed elsewhere\n')
-
     await expect(
       deleteWorkspaceFile({
         workspacePath: workspace,
@@ -256,8 +447,55 @@ describe('WorkspaceFileEditorService', () => {
         baseEtag: initial.etag
       })
     ).rejects.toThrow(/changed on disk/i)
-    await expect(readFile(join(workspace, 'remove-me.txt'), 'utf8')).resolves.toBe(
-      'changed elsewhere\n'
+
+    const current = await readWorkspaceFile(workspace, 'remove-me.txt')
+    const deleted = await deleteWorkspaceFile({
+      workspacePath: workspace,
+      workspaceId: 'ws-1',
+      filePath: 'remove-me.txt',
+      baseEtag: current.etag,
+      origin: 'ios-file-editor',
+      recordChange
+    })
+    expect(deleted).toMatchObject({ path: 'remove-me.txt' })
+    await expect(readFile(join(workspace, 'remove-me.txt'), 'utf8')).rejects.toThrow()
+    expect(recordChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspaceId: 'ws-1',
+        filePath: 'remove-me.txt',
+        existedBefore: true,
+        deleted: true,
+        previousContent: 'changed elsewhere\n',
+        nextContent: '',
+        metadata: { origin: 'ios-file-editor' }
+      })
+    )
+  })
+
+  it('denies delete when its verified ancestor is replaced', async () => {
+    const workspace = await makeWorkspace()
+    const outside = await makeWorkspace()
+    await mkdir(join(workspace, 'safe'), { recursive: true })
+    await writeFile(join(workspace, 'safe/remove-me.txt'), 'inside\n')
+    await writeFile(join(outside, 'remove-me.txt'), 'outside\n')
+    const initial = await readWorkspaceFile(workspace, 'safe/remove-me.txt')
+
+    setWorkspaceFileEditorTestHookForTests(async (stage) => {
+      if (stage !== 'before_delete_commit') return
+      await rename(join(workspace, 'safe'), join(workspace, 'safe-original'))
+      await symlink(outside, join(workspace, 'safe'), 'dir')
+    })
+
+    await expect(
+      deleteWorkspaceFile({
+        workspacePath: workspace,
+        filePath: 'safe/remove-me.txt',
+        baseEtag: initial.etag
+      })
+    ).rejects.toThrow(/workspace path changed/i)
+    await expect(readFile(join(outside, 'remove-me.txt'), 'utf8')).resolves.toBe('outside\n')
+    await expect(readFile(join(workspace, 'safe-original/remove-me.txt'), 'utf8')).resolves.toBe(
+      'inside\n'
     )
   })
 

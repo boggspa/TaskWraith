@@ -1,7 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import fs from 'fs'
 import { AppStore } from './store'
-import type { WorkflowDefinition, WorkflowRunTemplate } from './store/types'
+import type {
+  PersistedAttachmentRef,
+  ScheduledTaskAttachmentRef,
+  WorkflowDefinition,
+  WorkflowRunTemplate
+} from './store/types'
 
 const userDataPath = vi.hoisted(() => `/tmp/taskwraith-workflows-test-${process.pid}`)
 
@@ -14,6 +19,21 @@ vi.mock('electron', () => ({
 const plannedFor = '2026-06-07T20:00:00.000Z'
 const intervalMs = 15 * 60_000
 type WorkflowInput = Parameters<typeof AppStore.saveWorkflowDefinition>[0]
+
+function durableAttachment(
+  overrides: Partial<ScheduledTaskAttachmentRef & PersistedAttachmentRef> = {}
+): ScheduledTaskAttachmentRef & PersistedAttachmentRef {
+  return {
+    persistenceVersion: 1,
+    id: 'image-1',
+    path: '/tmp/taskwraith-assets/image-1.png',
+    name: 'proof.png',
+    sha256: 'd'.repeat(43),
+    mimeType: 'image/png',
+    byteLength: 12,
+    ...overrides
+  }
+}
 
 function workflowInput(
   overrides: Partial<Omit<WorkflowInput, 'template'>> & { template?: Partial<WorkflowRunTemplate> } &
@@ -106,6 +126,78 @@ describe('AppStore workflows', () => {
     expect(workflow?.nextRunAt).toBe(new Date(Date.parse(plannedFor) + intervalMs).toISOString())
   })
 
+  it('resolves durable workflow attachments before materialization and preserves their identity', () => {
+    const attachment = durableAttachment()
+    const saved = AppStore.saveWorkflowDefinition(
+      workflowInput({ template: { imageAttachments: [attachment] } })
+    )
+    const resolveAttachments = vi.fn(({ attachments }) => ({
+      ok: true as const,
+      attachments: attachments.map(() => ({
+        ...attachment,
+        id: undefined,
+        name: undefined,
+        path: '/tmp/taskwraith-assets/canonical-image.png'
+      }))
+    }))
+
+    const tasks = AppStore.materializeDueWorkflows(Date.parse(plannedFor), resolveAttachments)
+
+    expect(resolveAttachments).toHaveBeenCalledWith({
+      source: 'workflow-template',
+      recordId: saved.id,
+      appChatId: saved.template.chatId,
+      workspaceId: 'ws-1',
+      workspacePath: '/repo',
+      externalPathGrants: [],
+      attachments: [attachment]
+    })
+    expect(tasks[0]?.imageAttachments).toEqual([
+      {
+        ...attachment,
+        path: '/tmp/taskwraith-assets/canonical-image.png'
+      }
+    ])
+  })
+
+  it('disables a legacy workflow attachment without passing its path to the resolver', () => {
+    const saved = AppStore.saveWorkflowDefinition(workflowInput())
+    const workflowsPath = `${userDataPath}/workflows.json`
+    const rows = JSON.parse(fs.readFileSync(workflowsPath, 'utf8')) as WorkflowDefinition[]
+    rows[0].template.imageAttachments = [
+      { id: 'legacy-1', name: 'legacy.png', path: '/repo/legacy.png' }
+    ]
+    fs.writeFileSync(workflowsPath, JSON.stringify(rows))
+    const resolveAttachments = vi.fn(() => ({ ok: true as const, attachments: [] }))
+
+    expect(
+      AppStore.materializeDueWorkflows(Date.parse(plannedFor), resolveAttachments)
+    ).toEqual([])
+    expect(resolveAttachments).not.toHaveBeenCalled()
+    expect(AppStore.getWorkflowDefinition(saved.id)).toMatchObject({
+      enabled: false,
+      lastStatus: 'failed',
+      lastError: expect.stringContaining('Re-select the attachments')
+    })
+  })
+
+  it('disables a workflow when its durable attachment no longer resolves', () => {
+    const saved = AppStore.saveWorkflowDefinition(
+      workflowInput({ template: { imageAttachments: [durableAttachment()] } })
+    )
+    const resolveAttachments = vi.fn(() => ({ ok: false as const, reason: 'missing' }))
+
+    expect(
+      AppStore.materializeDueWorkflows(Date.parse(plannedFor), resolveAttachments)
+    ).toEqual([])
+    expect(resolveAttachments).toHaveBeenCalledOnce()
+    expect(AppStore.getWorkflowDefinition(saved.id)).toMatchObject({
+      enabled: false,
+      lastStatus: 'failed',
+      lastError: expect.stringContaining('Re-select the attachments')
+    })
+  })
+
   it('rebuilds a scheduled task dispatch receipt when trusted posture is attached', () => {
     const chatId = AppStore.createChat('ws-1', '/repo').appChatId
     const task = AppStore.saveScheduledTask({
@@ -148,6 +240,112 @@ describe('AppStore workflows', () => {
       permissionPostureHash: 'a'.repeat(64),
       permissionPostureSignaturePresent: true
     })
+  })
+
+  it('resolves durable scheduled-task attachments before returning due work', () => {
+    const chatId = AppStore.createChat('ws-1', '/repo').appChatId
+    const attachment = durableAttachment()
+    const task = AppStore.saveScheduledTask({
+      workspaceId: 'ws-1',
+      workspacePath: '/repo',
+      chatId,
+      provider: 'codex',
+      prompt: 'Run later.',
+      selectedModelType: 'cli-default',
+      customModel: '',
+      approvalMode: 'default',
+      workflowMode: 'normal',
+      sessionTrust: false,
+      imageAttachments: [attachment],
+      runAt: plannedFor,
+      timezone: 'Europe/London',
+      status: 'due'
+    })
+    const resolveAttachments = vi.fn(({ attachments }) => ({
+      ok: true as const,
+      attachments: attachments.map(() => ({
+        ...attachment,
+        id: undefined,
+        name: undefined,
+        path: '/tmp/taskwraith-assets/canonical-task.png'
+      }))
+    }))
+
+    const due = AppStore.getDueScheduledTasks(Date.parse(plannedFor), resolveAttachments)
+
+    expect(resolveAttachments).toHaveBeenCalledWith({
+      source: 'scheduled-task',
+      recordId: task.id,
+      appChatId: chatId,
+      workspaceId: 'ws-1',
+      workspacePath: '/repo',
+      externalPathGrants: [],
+      attachments: [attachment]
+    })
+    expect(due[0]?.imageAttachments).toEqual([
+      { ...attachment, path: '/tmp/taskwraith-assets/canonical-task.png' }
+    ])
+    expect(AppStore.getScheduledTasks()[0]?.imageAttachments).toEqual(due[0]?.imageAttachments)
+  })
+
+  it('fails a due legacy scheduled attachment without passing its path to the resolver', () => {
+    const chatId = AppStore.createChat('ws-1', '/repo').appChatId
+    const task = AppStore.saveScheduledTask({
+      workspaceId: 'ws-1',
+      workspacePath: '/repo',
+      chatId,
+      provider: 'codex',
+      prompt: 'Run later.',
+      selectedModelType: 'cli-default',
+      customModel: '',
+      approvalMode: 'default',
+      workflowMode: 'normal',
+      sessionTrust: false,
+      imageAttachments: [],
+      runAt: plannedFor,
+      timezone: 'Europe/London',
+      status: 'due'
+    })
+    const tasksPath = `${userDataPath}/scheduled-tasks.json`
+    const rows = JSON.parse(fs.readFileSync(tasksPath, 'utf8'))
+    rows[0].imageAttachments = [
+      { id: 'legacy-1', name: 'legacy.png', path: '/repo/legacy.png' }
+    ]
+    fs.writeFileSync(tasksPath, JSON.stringify(rows))
+    const resolveAttachments = vi.fn(() => ({ ok: true as const, attachments: [] }))
+
+    expect(AppStore.getDueScheduledTasks(Date.parse(plannedFor), resolveAttachments)).toEqual([])
+    expect(resolveAttachments).not.toHaveBeenCalled()
+    expect(AppStore.getScheduledTasks().find((item) => item.id === task.id)).toMatchObject({
+      status: 'failed',
+      lastError: expect.stringContaining('Re-select the attachments'),
+      imageAttachments: [
+        { id: 'legacy-1', name: 'legacy.png', path: '/repo/legacy.png' }
+      ]
+    })
+  })
+
+  it('rejects new raw scheduled attachments before persistence', () => {
+    const chatId = AppStore.createChat('ws-1', '/repo').appChatId
+    expect(() =>
+      AppStore.saveScheduledTask({
+        workspaceId: 'ws-1',
+        workspacePath: '/repo',
+        chatId,
+        provider: 'codex',
+        prompt: 'Run later.',
+        selectedModelType: 'cli-default',
+        customModel: '',
+        approvalMode: 'default',
+        workflowMode: 'normal',
+        sessionTrust: false,
+        imageAttachments: [
+          { id: 'legacy-1', name: 'legacy.png', path: '/repo/legacy.png' }
+        ],
+        runAt: plannedFor,
+        timezone: 'Europe/London'
+      })
+    ).toThrow('Re-select the attachments')
   })
 
   it('keeps the signed scheduled posture authoritative when mutable approval mode changes before dispatch', () => {
@@ -490,6 +688,31 @@ describe('AppStore workflows', () => {
     }
 
     expect(() => AppStore.saveWorkflowDefinition(input)).toThrow('workspace-scoped')
+  })
+
+  it('preserves workspace-scoped external path grants through save and materialization', () => {
+    const input = workflowInput({ trigger: { kind: 'manual' }, nextRunAt: undefined })
+    const grant = {
+      id: 'grant-workspace-1',
+      provider: 'codex' as const,
+      bindingVersion: 2 as const,
+      workspaceId: 'ws-1',
+      chatId: input.template.chatId,
+      path: '/tmp/approved-external-workspace',
+      kind: 'directory' as const,
+      access: 'write' as const,
+      duration: 'workspace' as const,
+      issuedBy: 'main' as const,
+      signature: 'a'.repeat(64),
+      createdAt: '2026-06-07T19:00:00.000Z'
+    }
+    input.template = { ...input.template, externalPathGrants: [grant] }
+
+    const saved = AppStore.saveWorkflowDefinition(input)
+    expect(saved.template.externalPathGrants).toEqual([grant])
+
+    const task = AppStore.materializeWorkflowNow(saved.id, Date.parse(plannedFor))
+    expect(task?.externalPathGrants).toEqual([grant])
   })
 
   it('persists + clamps a workflow loop config; a workflow with no loop stays single-occurrence', () => {

@@ -227,6 +227,98 @@ describe('normalizeAgentRunPayload — wrapper-level invariants (faked deps)', (
     expect(result.externalPathGrants).toEqual([normalizedGrant]) // provider 'codex' kept
   })
 
+  it('rejects cross-chat/workspace grant replay at the dispatch boundary', () => {
+    const rawGrant = grant({
+      issuedBy: 'main',
+      signature: 'sig',
+      bindingVersion: 2,
+      chatId: 'chat-a',
+      workspaceId: 'ws-a'
+    })
+    const isMainIssuedExternalPathGrant = vi.fn(
+      (_grant: ExternalPathGrant, context?: { appChatId?: string; workspacePath?: string }) =>
+        context === undefined
+    )
+    const deps = makeDeps({
+      normalizeExternalPathGrants: vi.fn(() => [rawGrant]),
+      isMainIssuedExternalPathGrant
+    })
+
+    expect(() =>
+      normalizeAgentRunPayload(
+        {
+          provider: 'codex',
+          scope: 'workspace',
+          workspace: '/repo-b',
+          appChatId: 'chat-b',
+          appRunId: 'run-b',
+          prompt: 'do work',
+          externalPathGrants: [rawGrant]
+        },
+        deps
+      )
+    ).toThrow('does not match this chat, workspace, provider, or run')
+    expect(isMainIssuedExternalPathGrant).toHaveBeenLastCalledWith(rawGrant, {
+      provider: 'codex',
+      appChatId: 'chat-b',
+      appRunId: 'run-b',
+      workspacePath: '/canon/repo-b'
+    })
+  })
+
+  it('rejects a grant issued for a different provider instead of silently dropping it', () => {
+    const wrongProviderGrant = grant({
+      provider: 'claude',
+      issuedBy: 'main',
+      signature: 'sig',
+      bindingVersion: 2,
+      chatId: 'chat-a',
+      workspaceId: 'ws-a'
+    })
+    const deps = makeDeps({
+      normalizeExternalPathGrants: vi.fn(() => [wrongProviderGrant])
+    })
+
+    expect(() =>
+      normalizeAgentRunPayload(
+        {
+          provider: 'codex',
+          scope: 'workspace',
+          workspace: '/repo',
+          appChatId: 'chat-a',
+          prompt: 'do work',
+          externalPathGrants: [wrongProviderGrant]
+        },
+        deps
+      )
+    ).toThrow('provider does not match the dispatched provider')
+  })
+
+  it('rejects integrity-valid legacy grants when they lack v2 run binding', () => {
+    const legacyGrant = grant({ issuedBy: 'main', signature: 'legacy-sig' })
+    const isMainIssuedExternalPathGrant = vi.fn(
+      (_grant: ExternalPathGrant, context?: unknown) => context === undefined
+    )
+    const deps = makeDeps({
+      normalizeExternalPathGrants: vi.fn(() => [legacyGrant]),
+      isMainIssuedExternalPathGrant
+    })
+
+    expect(() =>
+      normalizeAgentRunPayload(
+        {
+          provider: 'codex',
+          scope: 'workspace',
+          workspace: '/repo',
+          appChatId: 'chat-a',
+          prompt: 'do work',
+          externalPathGrants: [legacyGrant]
+        },
+        deps
+      )
+    ).toThrow('does not match this chat, workspace, provider, or run')
+  })
+
   // Invariant 4: provider-liveness — a retired/invalid provider is rejected at
   // the chokepoint before any dependency runs.
   it('rejects an invalid/retired provider before invoking any dep', () => {

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { mkdtempSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { CanvasService } from './CanvasService'
+import { CanvasService, type CanvasServiceDeps } from './CanvasService'
 import { CanvasStore } from './CanvasStore'
 import type {
   CanvasActionInput,
@@ -22,6 +22,8 @@ import type {
   CanvasSketchUpdateInput,
   CanvasViewport
 } from './canvasTypes'
+
+const IMAGE_SHA = 'a'.repeat(43)
 
 class FakeDriver implements CanvasDriver {
   readonly kind = 'web' as const
@@ -129,15 +131,18 @@ describe('CanvasService', () => {
   let fake: FakeDriver
   let events: CanvasEventRecord[]
   let service: CanvasService
+  let lastDriverOpts: Parameters<CanvasServiceDeps['createDriver']>[2]
 
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'canvas-svc-'))
     store = new CanvasStore(dir)
     fake = new FakeDriver()
     events = []
+    lastDriverOpts = undefined
     let seq = 0
     service = new CanvasService({
       createDriver: (_kind, _sessionId, opts) => {
+        lastDriverOpts = opts
         if (opts?.initialSketchDocument) fake.sketchDoc = opts.initialSketchDocument
         return fake
       },
@@ -172,6 +177,25 @@ describe('CanvasService', () => {
   it('rejects a bad url before spawning a window', async () => {
     await expect(service.open({ url: 'file:///etc/passwd' }, {})).rejects.toThrow()
     expect(fake.opened).toBe(false)
+  })
+
+  it('requires canonical chat authority for image canvases and binds it into the driver', async () => {
+    const imageInput: CanvasOpenInput = {
+      driver: 'image',
+      mediaSha256: IMAGE_SHA,
+      mediaMimeType: 'image/png'
+    }
+    await expect(service.open(imageInput, {})).rejects.toThrow(/canonical chat authority/)
+    await expect(service.open(imageInput, { chatId: ' chat-a ' })).rejects.toThrow(
+      /canonical chat authority/
+    )
+    expect(fake.opened).toBe(false)
+    expect(lastDriverOpts).toBeUndefined()
+
+    const opened = await service.open(imageInput, { chatId: 'chat-a' })
+    expect(opened.canvasId).toBeTruthy()
+    expect(lastDriverOpts?.appChatId).toBe('chat-a')
+    expect(store.getSession(opened.canvasId)?.chatId).toBe('chat-a')
   })
 
   it('device open requires a valid bundleId, rejected before the driver runs', async () => {

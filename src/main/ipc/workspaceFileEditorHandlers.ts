@@ -1,4 +1,4 @@
-import { ipcMain } from 'electron'
+import { ipcMain, type IpcMainInvokeEvent } from 'electron'
 import {
   listWorkspaceFiles,
   readWorkspaceFile,
@@ -16,6 +16,14 @@ import { isRecord, optionalNumber, optionalString } from '../settings/MainSaniti
 
 export interface WorkspaceFileEditorHandlerDeps {
   requireRegisteredWorkspace: (workspacePath: string, label?: string) => string
+  assertSenderScope: (
+    event: IpcMainInvokeEvent,
+    input: {
+      capability: 'workspace-file'
+      workspacePath: string
+      operation: 'read' | 'write'
+    }
+  ) => void
   findRegisteredWorkspace: (workspacePath: string) => WorkspaceRecord | undefined
   recordWorkspaceEditorChange: RecordWorkspaceEditorChangeFn
   scheduleRemoteGitSnapshotRefresh: (
@@ -29,17 +37,29 @@ export function registerWorkspaceFileEditorHandlers(
 ): void {
   ipcMain.handle(
     'list-workspace-files',
-    async (_event, workspace: string): Promise<WorkspaceFileEntry[]> => {
-      return (await listWorkspaceFiles(deps.requireRegisteredWorkspace(workspace))).entries
+    async (event, workspace: string): Promise<WorkspaceFileEntry[]> => {
+      const registeredWorkspace = deps.requireRegisteredWorkspace(workspace)
+      deps.assertSenderScope(event, {
+        capability: 'workspace-file',
+        workspacePath: registeredWorkspace,
+        operation: 'read'
+      })
+      return (await listWorkspaceFiles(registeredWorkspace)).entries
     }
   )
 
   ipcMain.handle(
     'list-workspace-files-for-editor',
-    async (_event, workspace: string, options?: unknown): Promise<WorkspaceFileListResult> => {
+    async (event, workspace: string, options?: unknown): Promise<WorkspaceFileListResult> => {
       const request = isRecord(options) ? options : {}
       const limit = optionalNumber(request.limit)
-      return listWorkspaceFiles(deps.requireRegisteredWorkspace(workspace), {
+      const registeredWorkspace = deps.requireRegisteredWorkspace(workspace)
+      deps.assertSenderScope(event, {
+        capability: 'workspace-file',
+        workspacePath: registeredWorkspace,
+        operation: 'read'
+      })
+      return listWorkspaceFiles(registeredWorkspace, {
         path: optionalString(request.path),
         query: optionalString(request.query),
         ...(typeof request.includeDirectories === 'boolean'
@@ -52,8 +72,13 @@ export function registerWorkspaceFileEditorHandlers(
 
   ipcMain.handle(
     'read-workspace-file',
-    async (_event, workspace: string, filePath: string): Promise<WorkspaceFileReadResult> => {
+    async (event, workspace: string, filePath: string): Promise<WorkspaceFileReadResult> => {
       const registeredWorkspace = deps.requireRegisteredWorkspace(workspace)
+      deps.assertSenderScope(event, {
+        capability: 'workspace-file',
+        workspacePath: registeredWorkspace,
+        operation: 'read'
+      })
       return readWorkspaceFile(registeredWorkspace, filePath)
     }
   )
@@ -61,13 +86,18 @@ export function registerWorkspaceFileEditorHandlers(
   ipcMain.handle(
     'write-workspace-file',
     async (
-      _event,
+      event,
       workspace: string,
       filePath: string,
       content: string,
       baseEtag?: string | null
     ): Promise<WorkspaceFileReadResult> => {
       const registeredWorkspace = deps.requireRegisteredWorkspace(workspace)
+      deps.assertSenderScope(event, {
+        capability: 'workspace-file',
+        workspacePath: registeredWorkspace,
+        operation: 'write'
+      })
       const result = await writeWorkspaceFile({
         workspacePath: registeredWorkspace,
         filePath,
@@ -84,8 +114,13 @@ export function registerWorkspaceFileEditorHandlers(
 
   ipcMain.handle(
     'delete-workspace-file',
-    async (_event, workspace: string, filePath: string, baseEtag?: string | null) => {
+    async (event, workspace: string, filePath: string, baseEtag?: string | null) => {
       const registeredWorkspace = deps.requireRegisteredWorkspace(workspace)
+      deps.assertSenderScope(event, {
+        capability: 'workspace-file',
+        workspacePath: registeredWorkspace,
+        operation: 'write'
+      })
       const result = await deleteWorkspaceFile({
         workspacePath: registeredWorkspace,
         filePath,

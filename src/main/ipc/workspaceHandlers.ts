@@ -1,10 +1,14 @@
-import { ipcMain } from 'electron'
+import { ipcMain, type IpcMainInvokeEvent } from 'electron'
 import type { WorkspaceService } from '../services/WorkspaceService'
 import type { WorkspaceRecord } from '../store/types'
 
 export interface WorkspaceProbeResult {
   branch?: string
 }
+
+export type SenderWorkspaceReadScope =
+  | { kind: 'all' }
+  | { kind: 'workspace'; workspaceId: string }
 
 export interface WorkspaceHandlerDeps {
   workspaceService: Pick<
@@ -18,12 +22,26 @@ export interface WorkspaceHandlerDeps {
   probeExternalPath: (path: string) => Promise<WorkspaceProbeResult | null>
   broadcastWorkspaceUpdate: (workspaceId: string | undefined) => void
   broadcastWorkspaceList: () => void
+  /**
+   * Main may enumerate all workspaces. A secondary renderer receives only the
+   * registered workspace bound to its main-owned window identity; renderers
+   * without a workspace owner must throw.
+   */
+  resolveSenderWorkspaceReadScope: (
+    event: IpcMainInvokeEvent
+  ) => SenderWorkspaceReadScope
+  assertSenderCanManageWorkspaces: (event: IpcMainInvokeEvent) => void
 }
 
 export function registerWorkspaceHandlers(deps: WorkspaceHandlerDeps): void {
   // Lazily backfill branch metadata for records persisted before branch probing existed.
-  ipcMain.handle('get-workspaces', async () => {
-    const workspaces = deps.workspaceService.getWorkspaces()
+  ipcMain.handle('get-workspaces', async (event) => {
+    const scope = deps.resolveSenderWorkspaceReadScope(event)
+    const filterVisible = (workspaces: WorkspaceRecord[]): WorkspaceRecord[] =>
+      scope.kind === 'all'
+        ? workspaces
+        : workspaces.filter((workspace) => workspace.id === scope.workspaceId)
+    const workspaces = filterVisible(deps.workspaceService.getWorkspaces())
     const missing = workspaces.filter((ws) => !ws.branch)
     if (missing.length === 0) return workspaces
     try {
@@ -46,7 +64,7 @@ export function registerWorkspaceHandlers(deps: WorkspaceHandlerDeps): void {
           touched = true
         }
       }
-      return touched ? deps.workspaceService.getWorkspaces() : workspaces
+      return touched ? filterVisible(deps.workspaceService.getWorkspaces()) : workspaces
     } catch {
       return workspaces
     }
@@ -54,7 +72,8 @@ export function registerWorkspaceHandlers(deps: WorkspaceHandlerDeps): void {
 
   ipcMain.handle(
     'add-or-update-workspace',
-    async (_event, path: string, partial: Partial<WorkspaceRecord>) => {
+    async (event, path: string, partial: Partial<WorkspaceRecord>) => {
+      deps.assertSenderCanManageWorkspaces(event)
       let resolvedPartial: Partial<WorkspaceRecord> = partial || {}
       if (!resolvedPartial.branch) {
         try {
@@ -72,15 +91,20 @@ export function registerWorkspaceHandlers(deps: WorkspaceHandlerDeps): void {
     }
   )
 
-  ipcMain.handle('remove-workspace', (_event, id: string) => {
+  ipcMain.handle('remove-workspace', (event, id: string) => {
+    deps.assertSenderCanManageWorkspaces(event)
     deps.workspaceService.removeWorkspace(id)
     deps.broadcastWorkspaceList()
   })
 
-  ipcMain.handle('clear-workspaces', () => {
+  ipcMain.handle('clear-workspaces', (event) => {
+    deps.assertSenderCanManageWorkspaces(event)
     deps.workspaceService.clearWorkspaces()
     deps.broadcastWorkspaceList()
   })
 
-  ipcMain.handle('select-workspace', async () => deps.workspaceService.selectWorkspace())
+  ipcMain.handle('select-workspace', async (event) => {
+    deps.assertSenderCanManageWorkspaces(event)
+    return deps.workspaceService.selectWorkspace()
+  })
 }

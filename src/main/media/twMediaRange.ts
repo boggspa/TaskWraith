@@ -2,6 +2,7 @@ import fs from 'fs'
 import path from 'path'
 import {
   THREAD_MEDIA_CHUNK_MAX_BYTES,
+  maxTranscriptMediaBytesForMime,
   transcriptMediaAssetPath
 } from '../services/TranscriptMediaAssetStore'
 import { TW_MEDIA_SCHEME, twMediaMimeForExt } from '../../shared/twMedia'
@@ -62,6 +63,147 @@ export interface ResolvedTwMediaAsset {
   realPath: string
   mime: string
   size: number
+  /** Descriptor for the exact regular file whose identity and size were verified. */
+  fd: number
+  /** Close the descriptor unless ownership was transferred to a read stream. */
+  close: () => void
+  /** Internal snapshot used to reject in-place mutation during bounded reads/copies. */
+  readonly snapshot: Pick<fs.Stats, 'dev' | 'ino' | 'size' | 'mtimeMs'>
+}
+
+function sameFileIdentity(
+  left: Pick<fs.Stats, 'dev' | 'ino'>,
+  right: Pick<fs.Stats, 'dev' | 'ino'>
+): boolean {
+  return left.dev === right.dev && left.ino === right.ino
+}
+
+function pathWithinRoot(candidate: string, root: string): boolean {
+  const relative = path.relative(root, candidate)
+  return (
+    relative === '' || (!!relative && !relative.startsWith('..') && !path.isAbsolute(relative))
+  )
+}
+
+function trustedDirectorySnapshot(directory: string): fs.Stats | null {
+  try {
+    const lstat = fs.lstatSync(directory)
+    if (lstat.isSymbolicLink() || !lstat.isDirectory()) return null
+    const stat = fs.statSync(directory)
+    const uid = typeof process.getuid === 'function' ? process.getuid() : null
+    return (
+      sameFileIdentity(lstat, stat) &&
+      (uid === null || stat.uid === uid) &&
+      (stat.mode & 0o022) === 0
+        ? stat
+        : null
+    )
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Open one content-addressed asset from the store and bind all subsequent I/O
+ * to that exact descriptor. The base directory is realpath-frozen first, the
+ * shard and leaf must be non-symlinks, and the lstat/open/fstat identities must
+ * agree. A leaf replacement in any of those gaps therefore fails closed.
+ */
+export function openTranscriptMediaAsset(input: {
+  baseDir: string
+  sha256: string
+  mimeType: string
+}): ResolvedTwMediaAsset | null {
+  let realBase: string
+  let candidate: string
+  let baseSnapshot: fs.Stats
+  try {
+    realBase = fs.realpathSync.native(input.baseDir)
+    const trustedBase = trustedDirectorySnapshot(realBase)
+    if (!trustedBase) return null
+    baseSnapshot = trustedBase
+    candidate = transcriptMediaAssetPath(realBase, input.sha256, input.mimeType)
+  } catch {
+    return null
+  }
+
+  const shard = path.dirname(candidate)
+  const shardSnapshot = trustedDirectorySnapshot(shard)
+  if (!pathWithinRoot(shard, realBase) || !shardSnapshot) return null
+
+  let before: fs.Stats
+  let fd: number | null = null
+  try {
+    before = fs.lstatSync(candidate)
+    if (
+      before.isSymbolicLink() ||
+      !before.isFile() ||
+      before.nlink !== 1 ||
+      (before.mode & 0o022) !== 0
+    ) {
+      return null
+    }
+    fd = fs.openSync(
+      candidate,
+      fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0)
+    )
+    const opened = fs.fstatSync(fd)
+    const after = fs.lstatSync(candidate)
+    const real = fs.realpathSync.native(candidate)
+    const baseAfter = fs.lstatSync(realBase)
+    const shardAfter = fs.lstatSync(shard)
+    const uid = typeof process.getuid === 'function' ? process.getuid() : null
+    if (
+      !opened.isFile() ||
+      opened.nlink !== 1 ||
+      opened.size <= 0 ||
+      opened.size > maxTranscriptMediaBytesForMime(input.mimeType) ||
+      (uid !== null && opened.uid !== uid) ||
+      (opened.mode & 0o022) !== 0 ||
+      after.isSymbolicLink() ||
+      baseAfter.isSymbolicLink() ||
+      shardAfter.isSymbolicLink() ||
+      !sameFileIdentity(baseSnapshot, baseAfter) ||
+      !sameFileIdentity(shardSnapshot, shardAfter) ||
+      !sameFileIdentity(before, opened) ||
+      !sameFileIdentity(after, opened) ||
+      !pathWithinRoot(real, realBase) ||
+      real !== candidate
+    ) {
+      return null
+    }
+
+    const ownedFd = fd
+    fd = null
+    let closed = false
+    return {
+      realPath: real,
+      mime: input.mimeType,
+      size: opened.size,
+      fd: ownedFd,
+      snapshot: {
+        dev: opened.dev,
+        ino: opened.ino,
+        size: opened.size,
+        mtimeMs: opened.mtimeMs
+      },
+      close: () => {
+        if (closed) return
+        closed = true
+        fs.closeSync(ownedFd)
+      }
+    }
+  } catch {
+    return null
+  } finally {
+    if (fd !== null) {
+      try {
+        fs.closeSync(fd)
+      } catch {
+        // Preserve the fail-closed result.
+      }
+    }
+  }
 }
 
 /**
@@ -75,32 +217,11 @@ export interface ResolvedTwMediaAsset {
 export function resolveTwMediaAsset(baseDir: string, rawUrl: string): ResolvedTwMediaAsset | null {
   const parsed = parseTwMediaUrl(rawUrl)
   if (!parsed) return null
-  let candidate: string
-  try {
-    candidate = transcriptMediaAssetPath(baseDir, parsed.sha256, parsed.mime)
-  } catch {
-    return null
-  }
-  let real: string
-  let realBase: string
-  try {
-    real = fs.realpathSync.native(candidate)
-    realBase = fs.realpathSync.native(baseDir)
-  } catch {
-    return null // missing file or base dir
-  }
-  // Symlink-safe jail: the resolved file must live under the resolved asset dir.
-  // (Don't compare real===candidate — a legit base under a symlinked root, e.g.
-  // /tmp→/private/tmp on macOS, diverges without any attack.)
-  if (real !== realBase && !real.startsWith(realBase + path.sep)) return null
-  let stat: fs.Stats
-  try {
-    stat = fs.statSync(real)
-  } catch {
-    return null
-  }
-  if (!stat.isFile()) return null
-  return { realPath: real, mime: parsed.mime, size: stat.size }
+  return openTranscriptMediaAsset({
+    baseDir,
+    sha256: parsed.sha256,
+    mimeType: parsed.mime
+  })
 }
 
 export interface MediaRangeResult {
@@ -167,26 +288,92 @@ export function resolveMediaRange(rangeHeader: string | null | undefined, size: 
  * waiting for the missing bytes). Failing loudly turns it into an observable
  * network error the element can surface. Reachable via a TOCTOU window (the file
  * is replaced/truncated between the size stat and the read) or a transient fs hiccup.
+ * The legacy path API now also binds the read to an O_NOFOLLOW descriptor after
+ * verifying the lstat/open/fstat identities.
  */
 export function readAssetSlice(filePath: string, start: number, end: number): Buffer {
-  const length = end - start + 1
-  if (length <= 0) return Buffer.alloc(0)
-  const buffer = Buffer.alloc(length)
-  const fd = fs.openSync(filePath, 'r')
+  let before: fs.Stats
   try {
-    let offset = 0
-    while (offset < length) {
-      const read = fs.readSync(fd, buffer, offset, length - offset, start + offset)
-      if (read <= 0) break
-      offset += read
+    before = fs.lstatSync(filePath)
+  } catch {
+    throw new Error(`twmedia: unsafe asset path for ${filePath}`)
+  }
+  if (before.isSymbolicLink() || !before.isFile()) {
+    throw new Error(`twmedia: unsafe asset path for ${filePath}`)
+  }
+  const fd = fs.openSync(filePath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0))
+  try {
+    const opened = fs.fstatSync(fd)
+    const after = fs.lstatSync(filePath)
+    if (
+      !opened.isFile() ||
+      after.isSymbolicLink() ||
+      !sameFileIdentity(before, opened) ||
+      !sameFileIdentity(after, opened)
+    ) {
+      throw new Error(`twmedia: asset changed while opening ${filePath}`)
     }
-    if (offset !== length) {
-      throw new Error(`twmedia: short read (${offset}/${length} bytes) for ${filePath}`)
-    }
-    return buffer
+    return readOpenedAssetSlice(
+      {
+        realPath: filePath,
+        mime: 'application/octet-stream',
+        size: opened.size,
+        fd,
+        snapshot: {
+          dev: opened.dev,
+          ino: opened.ino,
+          size: opened.size,
+          mtimeMs: opened.mtimeMs
+        },
+        close: () => undefined
+      },
+      start,
+      end
+    )
   } finally {
     fs.closeSync(fd)
   }
+}
+
+export function verifyOpenedTwMediaAssetSnapshot(asset: ResolvedTwMediaAsset): boolean {
+  try {
+    const current = fs.fstatSync(asset.fd)
+    return (
+      current.isFile() &&
+      sameFileIdentity(current, asset.snapshot) &&
+      current.size === asset.snapshot.size &&
+      current.mtimeMs === asset.snapshot.mtimeMs
+    )
+  } catch {
+    return false
+  }
+}
+
+/** Read from an already verified descriptor; no pathname is reopened. */
+export function readOpenedAssetSlice(
+  asset: ResolvedTwMediaAsset,
+  start: number,
+  end: number
+): Buffer {
+  const length = end - start + 1
+  if (length <= 0) return Buffer.alloc(0)
+  const buffer = Buffer.alloc(length)
+  if (!verifyOpenedTwMediaAssetSnapshot(asset)) {
+    throw new Error(`twmedia: asset changed before read for ${asset.realPath}`)
+  }
+  let offset = 0
+  while (offset < length) {
+    const read = fs.readSync(asset.fd, buffer, offset, length - offset, start + offset)
+    if (read <= 0) break
+    offset += read
+  }
+  if (offset !== length) {
+    throw new Error(`twmedia: short read (${offset}/${length} bytes) for ${asset.realPath}`)
+  }
+  if (!verifyOpenedTwMediaAssetSnapshot(asset)) {
+    throw new Error(`twmedia: asset changed during read for ${asset.realPath}`)
+  }
+  return buffer
 }
 
 export interface TranscriptMediaRangeSlice {
@@ -224,7 +411,7 @@ export class TranscriptMediaRangeOutOfBoundsError extends Error {
  *  - The read window is `[offset, offset + effLength - 1]`, always inside
  *    `[0, totalBytes)`: `offset` is validated `>= 0` by the request guard and
  *    `< totalBytes` here; `effLength` is additionally clamped to `totalBytes - offset`.
- *  - `readAssetSlice` throws on a short read (TOCTOU truncation) — propagated so
+ *  - `readOpenedAssetSlice` throws on a short read or in-place mutation — propagated so
  *    the handler reports a failure rather than shipping a truncated body.
  */
 export function readTranscriptMediaRangeSlice(input: {
@@ -235,20 +422,26 @@ export function readTranscriptMediaRangeSlice(input: {
   requestedLength: number
 }): TranscriptMediaRangeSlice {
   const { baseDir, sha256, mimeType, offset, requestedLength } = input
-  // Path jail: assertSafeSha256 + mime→ext whitelist live inside this call.
-  const filePath = transcriptMediaAssetPath(baseDir, sha256, mimeType)
-  const totalBytes = fs.statSync(filePath).size
-  if (offset >= totalBytes) {
-    throw new TranscriptMediaRangeOutOfBoundsError(offset, totalBytes)
-  }
-  // Server-side hard cap wins over the client's requested length; also clamp to the
-  // remaining tail so we never read past EOF.
-  const effLength = Math.min(requestedLength, THREAD_MEDIA_CHUNK_MAX_BYTES, totalBytes - offset)
-  const buffer = readAssetSlice(filePath, offset, offset + effLength - 1)
-  return {
-    dataBase64: buffer.toString('base64'),
-    byteLength: buffer.length,
-    offset,
-    totalBytes
+  // Preserve the caller-visible validation errors for malformed identities.
+  transcriptMediaAssetPath(baseDir, sha256, mimeType)
+  const asset = openTranscriptMediaAsset({ baseDir, sha256, mimeType })
+  if (!asset) throw new Error('twmedia: asset is missing or unsafe')
+  try {
+    const totalBytes = asset.size
+    if (offset >= totalBytes) {
+      throw new TranscriptMediaRangeOutOfBoundsError(offset, totalBytes)
+    }
+    // Server-side hard cap wins over the client's requested length; also clamp to the
+    // remaining tail so we never read past EOF.
+    const effLength = Math.min(requestedLength, THREAD_MEDIA_CHUNK_MAX_BYTES, totalBytes - offset)
+    const buffer = readOpenedAssetSlice(asset, offset, offset + effLength - 1)
+    return {
+      dataBase64: buffer.toString('base64'),
+      byteLength: buffer.length,
+      offset,
+      totalBytes
+    }
+  } finally {
+    asset.close()
   }
 }

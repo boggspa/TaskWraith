@@ -1,4 +1,4 @@
-import { ipcMain } from 'electron'
+import { ipcMain, type IpcMainInvokeEvent } from 'electron'
 
 export interface ContextCompactionHandlersDeps {
   /**
@@ -15,13 +15,16 @@ export interface ContextCompactionHandlersDeps {
     participantId?: string
   }) => Promise<{ ok: boolean; error?: string }>
   requireNonEmptyString: (value: unknown, label: string) => string
+  /** Main renderers may address any chat. Secondary renderers must match the
+   * durable chat owner recorded for their exact BrowserWindow. */
+  assertSenderChatScope: (event: IpcMainInvokeEvent, chatId: string) => void
 }
 
 export function registerContextCompactionHandlers(deps: ContextCompactionHandlersDeps): void {
   ipcMain.handle(
     'compact-provider-context',
     async (
-      _event,
+      event,
       payload?: {
         chatId?: string
         provider?: string
@@ -30,6 +33,7 @@ export function registerContextCompactionHandlers(deps: ContextCompactionHandler
       }
     ): Promise<{ ok: boolean; error?: string }> => {
       const chatId = deps.requireNonEmptyString(payload?.chatId, 'Chat id')
+      deps.assertSenderChatScope(event, chatId)
       const provider = deps.requireNonEmptyString(payload?.provider, 'Provider')
       if (
         provider !== 'codex' &&

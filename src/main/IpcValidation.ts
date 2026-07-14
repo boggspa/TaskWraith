@@ -1,4 +1,4 @@
-import type { IpcMain } from 'electron'
+import type { IpcMain, IpcMainInvokeEvent } from 'electron'
 import { assertSafeChatId } from './ChatPath'
 
 type ArgSpec =
@@ -21,6 +21,7 @@ type ArgSpec =
   | 'chatRecord'
   | 'runPayload'
   | 'workspacePath'
+  | 'workspacePathOrObject'
   | 'filePath'
   | 'runId'
   | 'chatId'
@@ -91,6 +92,7 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'create-side-chat': ['object'],
   'get-side-chats': ['chatId'],
   'set-chat-kind': ['object'],
+  'rebind-chat-workspace': ['object'],
   'save-chat': ['chatRecord'],
   'delete-chat': ['chatId'],
   // Human collaboration (shared chat: host + up to 2 human collaborators). These
@@ -321,7 +323,6 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'select-workspace': [],
   'select-image-files': [],
   'save-clipboard-image-attachment': [],
-  'authorize-image-preview': ['array'],
   'composer-audio:transcribe': ['object'],
   'read-image-preview': ['string'],
   'image-generation:get-status': [],
@@ -346,6 +347,7 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   // missing from the registry, so installIpcValidation threw
   // "No IPC schema registered" the moment any add flow fired.
   'external-path:pick-and-persist': ['object'],
+  'external-path:revoke': ['object'],
   'probe-external-path': ['nonEmptyString'],
   'list-workspace-files': ['workspacePath'],
   'list-workspace-files-for-editor': ['workspacePath', 'optionalObject'],
@@ -420,7 +422,7 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'stop-gemini-session': [],
   'write-gemini-session': ['string'],
   'resize-gemini-session': ['number', 'number'],
-  'get-diff': ['workspacePath'],
+  'get-diff': ['workspacePathOrObject'],
   'open-workspace-popout': ['object'],
   'dock-side-chat-popout': ['object'],
   'wake-ensemble-participant-now': ['string'],
@@ -507,6 +509,25 @@ function validateArg(channel: string, spec: ArgSpec, value: unknown, index: numb
   if (spec === 'chatId') assertSafeChatId(value, label)
   if (spec === 'workspacePath' && !/^([/\\~]|[A-Za-z]:[\\/])/.test(value as string))
     throw new Error(`${label} must be an absolute workspace path.`)
+  if (spec === 'workspacePathOrObject') {
+    const candidate =
+      typeof value === 'string'
+        ? value
+        : isRecord(value)
+          ? typeof value.repoPath === 'string'
+            ? value.repoPath
+            : value.workspacePath
+          : undefined
+    if (typeof candidate !== 'string' || !candidate.trim()) {
+      throw new Error(`${label} must include a non-empty workspace path.`)
+    }
+    if (!/^([/\\~]|[A-Za-z]:[\\/])/.test(candidate)) {
+      throw new Error(`${label} must include an absolute workspace path.`)
+    }
+    if (isRecord(value) && value.chatId !== undefined) {
+      assertSafeChatId(value.chatId, `${label} chat id`)
+    }
+  }
   if (spec === 'filePath' && /\0/.test(value as string))
     throw new Error(`${label} must not contain null bytes.`)
   if (
@@ -651,14 +672,23 @@ export function validateIpcArgs(channel: string, args: unknown[]): unknown[] {
   return args
 }
 
-export function installIpcValidation(ipcMain: IpcMain): void {
+export type IpcInvocationAuthorizer = (
+  channel: string,
+  event: IpcMainInvokeEvent
+) => void
+
+export function installIpcValidation(
+  ipcMain: IpcMain,
+  authorizeInvocation?: IpcInvocationAuthorizer
+): void {
   const target = ipcMain as IpcMain & { __agentBenchValidationInstalled?: boolean }
   if (target.__agentBenchValidationInstalled) return
   const originalHandle = ipcMain.handle.bind(ipcMain)
   ;(target as any).handle = (channel: string, listener: any) => {
-    return originalHandle(channel, (event, ...args) =>
-      listener(event, ...validateIpcArgs(channel, args))
-    )
+    return originalHandle(channel, (event, ...args) => {
+      authorizeInvocation?.(channel, event)
+      return listener(event, ...validateIpcArgs(channel, args))
+    })
   }
   target.__agentBenchValidationInstalled = true
 }

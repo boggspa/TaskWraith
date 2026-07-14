@@ -1,10 +1,14 @@
-import { ipcMain } from 'electron'
+import { ipcMain, type IpcMainInvokeEvent } from 'electron'
 import type {
   GeminiAuthProfile,
   GeminiAuthProfileSummary,
   GeminiAuthStatus,
   GeminiOAuthLoginStatus
 } from '../store/types'
+import {
+  rendererSafeGeminiAuthProfile,
+  rendererSafeGeminiAuthStatus
+} from '../RendererProviderProjection'
 
 export interface GeminiAuthHandlersDeps {
   getGeminiAuthStatusSnapshot: () => Promise<GeminiAuthStatus>
@@ -20,18 +24,23 @@ export interface GeminiAuthHandlersDeps {
   startGeminiOAuthLogin: (input: unknown) => Promise<GeminiOAuthLoginStatus>
   getGeminiOAuthLoginStatus: (profileId: unknown) => GeminiOAuthLoginStatus | null
   cancelGeminiOAuthLogin: (profileId: unknown) => GeminiOAuthLoginStatus | null
+  isMainRendererSender: (event: IpcMainInvokeEvent) => boolean
 }
 
 export function registerGeminiAuthHandlers(deps: GeminiAuthHandlersDeps): void {
-  ipcMain.handle('get-gemini-auth-status', async () => {
-    return deps.getGeminiAuthStatusSnapshot()
+  ipcMain.handle('get-gemini-auth-status', async (event) => {
+    const status = await deps.getGeminiAuthStatusSnapshot()
+    return deps.isMainRendererSender(event) ? status : rendererSafeGeminiAuthStatus(status)
   })
 
-  ipcMain.handle('list-gemini-auth-profiles', async () => {
+  ipcMain.handle('list-gemini-auth-profiles', async (event) => {
     const defaultProfileId = deps.getDefaultGeminiAuthProfileId()
-    return deps
+    const profiles = deps
       .getGeminiAuthProfiles()
       .map((profile) => deps.summarizeGeminiAuthProfile(profile, defaultProfileId))
+    return deps.isMainRendererSender(event)
+      ? profiles
+      : profiles.map(rendererSafeGeminiAuthProfile)
   })
 
   ipcMain.handle('save-gemini-auth-profile', async (_, profile: unknown) => {

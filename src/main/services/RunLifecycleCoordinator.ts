@@ -520,6 +520,7 @@ export class RunLifecycleCoordinator {
         typeof request?.displayPrompt === 'string' && request.displayPrompt.trim().length > 0
           ? request.displayPrompt
           : undefined,
+      dmTargetParticipantId: this.normalizeOptionalString(request?.dmTargetParticipantId),
       selectedModelType: this.normalizeString(request?.selectedModelType, 'cli-default'),
       customModel: this.normalizeOptionalString(request?.customModel) || '',
       approvalMode: this.normalizeString(request?.approvalMode, 'default'),

@@ -1,7 +1,8 @@
-import { ipcMain } from 'electron'
+import { ipcMain, type IpcMainInvokeEvent } from 'electron'
 import type { ChildProcess, SpawnOptions } from 'child_process'
 import type { ProviderApiKeyStatus } from '../store/types'
 import type { ResolvedProviderBinary } from '../providers/CliProviderRuntime'
+import { rendererSafeProviderApiKeyStatus } from '../RendererProviderProjection'
 
 interface ClaudeAuthStateReader {
   (resolved: ResolvedProviderBinary): Promise<string>
@@ -28,27 +29,29 @@ export interface ClaudeAuthHandlersDeps {
     extra: Record<string, string>,
     binaryPath?: string | null
   ) => Record<string, string>
+  isMainRendererSender: (event: IpcMainInvokeEvent) => boolean
 }
 
 export function registerClaudeAuthHandlers(deps: ClaudeAuthHandlersDeps): void {
-  ipcMain.handle('get-claude-auth-status', async (): Promise<ProviderApiKeyStatus> => {
+  ipcMain.handle('get-claude-auth-status', async (event): Promise<ProviderApiKeyStatus> => {
     const encryptionAvailable = deps.isEncryptionAvailable()
     const apiKeyConfigured = Boolean(deps.getSettings().claudeApiKey)
     const resolved = await deps.resolveCliProviderBinary('claude')
     if (!resolved.binaryPath) {
-      return {
+      const status: ProviderApiKeyStatus = {
         available: false,
         authState: 'missing',
         apiKeyConfigured,
         encryptionAvailable,
         binaryPath: null
       }
+      return deps.isMainRendererSender(event) ? status : rendererSafeProviderApiKeyStatus(status)
     }
     const [authState, version] = await Promise.all([
       deps.readClaudeAuthState(resolved),
       deps.readResolvedCliVersion(resolved)
     ])
-    return {
+    const status: ProviderApiKeyStatus = {
       available: true,
       authState,
       apiKeyConfigured,
@@ -56,6 +59,7 @@ export function registerClaudeAuthHandlers(deps: ClaudeAuthHandlersDeps): void {
       version,
       binaryPath: resolved.binaryPath
     }
+    return deps.isMainRendererSender(event) ? status : rendererSafeProviderApiKeyStatus(status)
   })
 
   ipcMain.handle('store-claude-api-key', async (_, rawKey: string) => {

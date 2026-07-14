@@ -1,7 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ipcMain } from 'electron'
 import {
+  authorizeAgentReview,
   registerCodexThreadHandlers,
+  type AgentThreadSenderScope,
   type CodexThreadHandlersDeps
 } from './codexThreadHandlers'
 
@@ -43,6 +45,9 @@ function createDeps() {
     getCodexClient: vi.fn(() => client),
     getAppVersion: vi.fn(() => '1.2.3'),
     providerDisplayName: vi.fn((provider: string) => provider.toUpperCase()),
+    resolveSenderAgentThreadScope: vi.fn(
+      (_event: unknown): AgentThreadSenderScope => ({ kind: 'main' })
+    ),
     createEmulatedFork: undefined as CodexThreadHandlersDeps['createEmulatedFork']
   } satisfies CodexThreadHandlersDeps
   return { deps, calls, client }
@@ -109,6 +114,50 @@ describe('registerCodexThreadHandlers', () => {
     expect(calls).toEqual(['ensure:1.2.3', 'request:thread/list:20000'])
   })
 
+  it('locks detached thread listing to the durable chat workspace', async () => {
+    const { deps, client } = createDeps()
+    deps.resolveSenderAgentThreadScope.mockReturnValue({
+      kind: 'chat',
+      chatId: 'chat-test-1',
+      workspacePath: '/Test 1',
+      linkedProviderThreads: []
+    })
+    registerCodexThreadHandlers(deps)
+
+    await handlerFor('list-agent-threads')({ sender: { id: 42 } }, 'codex', {})
+
+    expect(client.request).toHaveBeenCalledWith(
+      'thread/list',
+      expect.objectContaining({ cwd: '/Test 1' }),
+      20_000
+    )
+    await expect(
+      handlerFor('list-agent-threads')({ sender: { id: 42 } }, 'codex', { cwd: '/Test 2' })
+    ).rejects.toThrow('Renderer cannot list provider threads for another workspace.')
+    await expect(
+      handlerFor('list-agent-threads')({ sender: { id: 42 } }, 'codex', {
+        cursor: 'cursor-from-another-view'
+      })
+    ).rejects.toThrow('Provider thread pagination is unavailable in detached chat windows.')
+    expect(client.request).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not expose the global provider thread catalogue to a detached chat', async () => {
+    const { deps, client } = createDeps()
+    deps.resolveSenderAgentThreadScope.mockReturnValue({
+      kind: 'chat',
+      chatId: 'global-chat',
+      workspacePath: null,
+      linkedProviderThreads: [{ provider: 'codex', threadId: 'thread-1' }]
+    })
+    registerCodexThreadHandlers(deps)
+
+    await expect(
+      handlerFor('list-agent-threads')({ sender: { id: 42 } }, 'codex', {})
+    ).rejects.toThrow('Detached provider thread listing requires a workspace-scoped chat.')
+    expect(client.request).not.toHaveBeenCalled()
+  })
+
   it('fork reports emulated fallback requirements while rollback stays codex-only', async () => {
     const { deps } = createDeps()
     registerCodexThreadHandlers(deps)
@@ -153,6 +202,55 @@ describe('registerCodexThreadHandlers', () => {
       sourceProviderThreadId: 'provider-thread-1',
       sourceModel: 'sonnet'
     })
+  })
+
+  it('binds detached emulated forks to the owned chat and linked provider session', async () => {
+    const { deps } = createDeps()
+    deps.createEmulatedFork = vi.fn(
+      () =>
+        ({
+          appChatId: 'fork-chat-1',
+          title: 'Forked',
+          parentChatId: 'chat-test-1'
+        }) as any
+    )
+    deps.resolveSenderAgentThreadScope.mockReturnValue({
+      kind: 'chat',
+      chatId: 'chat-test-1',
+      workspacePath: '/Test 1',
+      linkedProviderThreads: [{ provider: 'claude', threadId: 'claude-session-1' }]
+    })
+    registerCodexThreadHandlers(deps)
+    const handler = handlerFor('fork-agent-thread')
+    const event = { sender: { id: 42 } }
+
+    await expect(
+      handler(event, 'claude', 'claude-session-1', {
+        chatId: 'chat-test-2',
+        cwd: '/Test 1'
+      })
+    ).rejects.toThrow('Renderer cannot manage provider threads for another chat.')
+    await expect(
+      handler(event, 'claude', 'claude-session-2', {
+        chatId: 'chat-test-1',
+        cwd: '/Test 1'
+      })
+    ).rejects.toThrow('Renderer cannot manage an unlinked provider thread.')
+    await expect(
+      handler(event, 'claude', 'claude-session-1', {
+        chatId: 'chat-test-1',
+        cwd: '/Test 2'
+      })
+    ).rejects.toThrow('Renderer cannot fork a provider thread into another workspace.')
+    expect(deps.createEmulatedFork).not.toHaveBeenCalled()
+
+    await expect(
+      handler(event, 'claude', 'claude-session-1', {
+        chatId: 'chat-test-1',
+        cwd: '/Test 1'
+      })
+    ).resolves.toMatchObject({ ok: true, kind: 'emulated' })
+    expect(deps.createEmulatedFork).toHaveBeenCalledTimes(1)
   })
 
   it('fork preserves payload shape, excludeTurns coercion, optional cwd/model, and timeout', async () => {
@@ -203,6 +301,122 @@ describe('registerCodexThreadHandlers', () => {
       timeoutMs: 30_000
     })
     expect(calls).toEqual(['ensure:1.2.3', 'request:thread/fork:30000'])
+  })
+
+  it('allows detached native fork only for the owned linked thread and forces owned cwd', async () => {
+    const { deps, client } = createDeps()
+    deps.resolveSenderAgentThreadScope.mockReturnValue({
+      kind: 'chat',
+      chatId: 'chat-test-1',
+      workspacePath: '/Test 1',
+      linkedProviderThreads: [{ provider: 'codex', threadId: 'thread-owned' }]
+    })
+    registerCodexThreadHandlers(deps)
+    const handler = handlerFor('fork-agent-thread')
+    const event = { sender: { id: 42 } }
+
+    await expect(
+      handler(event, 'codex', 'thread-other', { chatId: 'chat-test-1' })
+    ).rejects.toThrow('Renderer cannot manage an unlinked provider thread.')
+    await expect(
+      handler(event, 'codex', 'thread-owned', { chatId: 'chat-test-2' })
+    ).rejects.toThrow('Renderer cannot manage provider threads for another chat.')
+    expect(client.request).not.toHaveBeenCalled()
+
+    await expect(
+      handler(event, 'codex', 'thread-owned', { chatId: 'chat-test-1' })
+    ).resolves.toMatchObject({
+      ok: true,
+      kind: 'native',
+      payload: expect.objectContaining({
+        threadId: 'thread-owned',
+        cwd: '/Test 1'
+      })
+    })
+  })
+
+  it('allows detached rollback only for the owned linked Codex thread', async () => {
+    const { deps, client } = createDeps()
+    deps.resolveSenderAgentThreadScope.mockReturnValue({
+      kind: 'chat',
+      chatId: 'chat-test-1',
+      workspacePath: '/Test 1',
+      linkedProviderThreads: [{ provider: 'codex', threadId: 'thread-owned' }]
+    })
+    registerCodexThreadHandlers(deps)
+    const handler = handlerFor('rollback-agent-thread')
+    const event = { sender: { id: 42 } }
+
+    await expect(handler(event, 'codex', 'thread-other', 1)).rejects.toThrow(
+      'Renderer cannot manage an unlinked provider thread.'
+    )
+    expect(client.request).not.toHaveBeenCalled()
+    await expect(handler(event, 'codex', 'thread-owned', 2)).resolves.toMatchObject({
+      method: 'thread/rollback',
+      payload: { threadId: 'thread-owned', numTurns: 2 }
+    })
+  })
+
+  it('binds detached native review to the owned chat, linked thread, and workspace', () => {
+    const scope: AgentThreadSenderScope = {
+      kind: 'chat',
+      chatId: 'chat-test-1',
+      workspacePath: '/Test 1',
+      linkedProviderThreads: [{ provider: 'codex', threadId: 'thread-owned' }]
+    }
+    const pathsEqual = (left: string, right: string) => left === right
+
+    expect(() =>
+      authorizeAgentReview(
+        scope,
+        'codex',
+        'thread-owned',
+        { appChatId: 'chat-test-3' },
+        pathsEqual
+      )
+    ).toThrow('Renderer cannot manage provider threads for another chat.')
+    expect(() =>
+      authorizeAgentReview(
+        scope,
+        'codex',
+        'thread-other',
+        { appChatId: 'chat-test-1' },
+        pathsEqual
+      )
+    ).toThrow('Renderer cannot manage an unlinked provider thread.')
+    expect(() =>
+      authorizeAgentReview(
+        scope,
+        'codex',
+        'thread-owned',
+        { appChatId: 'chat-test-1', cwd: '/Test 3' },
+        pathsEqual
+      )
+    ).toThrow('Renderer cannot start a review in another workspace.')
+    expect(
+      authorizeAgentReview(
+        scope,
+        'codex',
+        'thread-owned',
+        { appChatId: 'chat-test-1' },
+        pathsEqual
+      )
+    ).toEqual({ workspacePath: '/Test 1' })
+  })
+
+  it('requires a workspace for main-renderer native review', () => {
+    expect(() =>
+      authorizeAgentReview({ kind: 'main' }, 'codex', 'thread-1', {}, () => true)
+    ).toThrow('Native review requires a workspace.')
+    expect(
+      authorizeAgentReview(
+        { kind: 'main' },
+        'codex',
+        'thread-1',
+        { cwd: '/Test 1' },
+        () => true
+      )
+    ).toEqual({ workspacePath: '/Test 1' })
   })
 
   it.each([

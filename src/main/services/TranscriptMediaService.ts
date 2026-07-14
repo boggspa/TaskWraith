@@ -1,4 +1,4 @@
-import { createHash } from 'crypto'
+import { createHash, randomUUID } from 'crypto'
 import fs from 'fs'
 import path from 'path'
 import type {
@@ -10,6 +10,7 @@ import type {
 
 export const TRANSCRIPT_MEDIA_MAX_TOOL_IMAGE_BYTES = 8 * 1024 * 1024
 export const TRANSCRIPT_MEDIA_MAX_WORKSPACE_IMAGE_BYTES = 12 * 1024 * 1024
+export const TRANSCRIPT_MEDIA_MAX_PDF_BYTES = 80 * 1024 * 1024
 export const TRANSCRIPT_MEDIA_MAX_REFS_PER_MESSAGE = 8
 /**
  * Absolute ceiling on a per-call `maxRefs` override. A caller (the trusted main-side
@@ -99,6 +100,12 @@ export type WorkspaceImageValidationResult =
       mimeType: string
       byteLength: number
       sha256: string
+      /**
+       * The exact bytes read from the already-authorized, nofollow-opened file
+       * descriptor. Consumers must use this snapshot instead of reopening
+       * `realPath`, which would reintroduce a validation-to-use race.
+       */
+      buffer: Buffer
     }
   | { ok: false; reason: 'invalid_path' | 'outside_allowed_roots' | 'missing' | 'not_file' | 'too_large' | 'unsupported' | 'unsafe_svg' }
 
@@ -180,6 +187,15 @@ export function sniffImageMime(buffer: Buffer): string | null {
     return 'image/svg+xml'
   }
   return null
+}
+
+export function sniffPdfMime(buffer: Buffer): 'application/pdf' | null {
+  // ISO 32000 permits the header to occur within the first 1024 bytes. Keep
+  // this bounded so a misleading extension can never classify arbitrary data
+  // as a durable PDF attachment.
+  return buffer.subarray(0, Math.min(buffer.length, 1024)).includes(Buffer.from('%PDF-'))
+    ? 'application/pdf'
+    : null
 }
 
 export function defaultTranscriptMediaThumbnailer({
@@ -608,20 +624,14 @@ export function createWorkspacePathMediaRefs({
       continue
     }
 
-    let thumbnail: TranscriptMediaThumbnail | undefined
-    try {
-      const buffer = fs.readFileSync(validation.realPath)
-      thumbnail =
-        thumbnailer({ buffer, mimeType: validation.mimeType, maxEdge: 512 }) ??
-        (isTranscriptThumbnailMime(validation.mimeType) && buffer.length <= 180_000
-          ? {
-              dataBase64: buffer.toString('base64'),
-              mimeType: validation.mimeType
-            }
-          : undefined)
-    } catch {
-      // The file passed validation but disappeared before thumbnailing.
-    }
+    const thumbnail =
+      thumbnailer({ buffer: validation.buffer, mimeType: validation.mimeType, maxEdge: 512 }) ??
+      (isTranscriptThumbnailMime(validation.mimeType) && validation.buffer.length <= 180_000
+        ? {
+            dataBase64: validation.buffer.toString('base64'),
+            mimeType: validation.mimeType
+          }
+        : undefined)
 
     refs.push({
       id: `${messageId}:workspace-image:${validation.sha256.slice(0, 16)}`,
@@ -671,56 +681,339 @@ function realpathOrNull(value: string): string | null {
   }
 }
 
+function externalGrantCoversRealPath(
+  grant: ExternalPathGrant,
+  realCandidate: string
+): boolean {
+  if (!path.isAbsolute(grant.path)) return false
+  const signedRoot = path.resolve(grant.path)
+  try {
+    const rootStat = fs.lstatSync(signedRoot)
+    if (rootStat.isSymbolicLink()) return false
+    if (grant.kind === 'file') {
+      return rootStat.isFile() && realCandidate === signedRoot
+    }
+    return rootStat.isDirectory() && pathWithinRoot(realCandidate, signedRoot)
+  } catch {
+    return false
+  }
+}
+
+function pathAllowedByWorkspaceOrExternalGrant(
+  workspacePath: string | undefined,
+  realCandidate: string,
+  externalPathGrants: readonly ExternalPathGrant[],
+  authorizedFilePaths: readonly string[] = []
+): boolean {
+  const realWorkspace = workspacePath ? realpathOrNull(workspacePath) : null
+  if (realWorkspace && pathWithinRoot(realCandidate, realWorkspace)) return true
+  if (externalPathGrants.some((grant) => externalGrantCoversRealPath(grant, realCandidate))) {
+    return true
+  }
+  return authorizedFilePaths.some((authorizedPath) => {
+    if (!path.isAbsolute(authorizedPath)) return false
+    return realpathOrNull(authorizedPath) === realCandidate
+  })
+}
+
+type WorkspaceFileOpenReason =
+  | 'invalid_path'
+  | 'outside_allowed_roots'
+  | 'missing'
+  | 'not_file'
+  | 'too_large'
+
+type OpenedWorkspaceFile =
+  | {
+      ok: true
+      fd: number
+      realPath: string
+      stat: fs.Stats
+      workspaceRelativePath?: string
+    }
+  | { ok: false; reason: WorkspaceFileOpenReason }
+
+function sameFileIdentity(left: fs.Stats, right: fs.Stats): boolean {
+  return left.dev === right.dev && left.ino === right.ino
+}
+
+function sameFileSnapshotVersion(left: fs.Stats, right: fs.Stats): boolean {
+  return (
+    sameFileIdentity(left, right) &&
+    left.size === right.size &&
+    left.mtimeMs === right.mtimeMs &&
+    left.ctimeMs === right.ctimeMs
+  )
+}
+
+/**
+ * Resolve, authorize, and open a workspace/grant-backed file as one bounded
+ * operation. The descriptor is opened with O_NOFOLLOW and then checked against
+ * the path's current lstat/realpath identity before it is returned. Callers own
+ * the descriptor and must close it.
+ *
+ * Node does not expose a portable openat(2) directory walk. The post-open
+ * identity checks are therefore important: if an attacker swaps the final path
+ * or an ancestor while resolution is in flight, the opened inode must still be
+ * the inode currently reached by the authorized candidate path. Once this
+ * returns, consumers read/copy from the descriptor and never reopen the source
+ * path, so later swaps cannot alter the consumed bytes.
+ */
+function openAuthorizedWorkspaceFile({
+  workspacePath,
+  candidatePath,
+  externalPathGrants,
+  authorizedFilePaths = [],
+  maxBytes
+}: {
+  workspacePath?: string
+  candidatePath: string
+  externalPathGrants: readonly ExternalPathGrant[]
+  authorizedFilePaths?: readonly string[]
+  maxBytes: number
+}): OpenedWorkspaceFile {
+  const decoded = decodeFileUrl(candidatePath.trim())
+  if (!decoded || decoded.includes('\0') || /^https?:\/\//i.test(decoded)) {
+    return { ok: false, reason: 'invalid_path' }
+  }
+  const absoluteCandidate = path.isAbsolute(decoded)
+    ? decoded
+    : workspacePath
+      ? path.resolve(workspacePath, decoded)
+      : ''
+  if (!absoluteCandidate) return { ok: false, reason: 'invalid_path' }
+  const initialRealPath = realpathOrNull(absoluteCandidate)
+  if (!initialRealPath) return { ok: false, reason: 'missing' }
+  if (
+    !pathAllowedByWorkspaceOrExternalGrant(
+      workspacePath,
+      initialRealPath,
+      externalPathGrants,
+      authorizedFilePaths
+    )
+  ) {
+    return { ok: false, reason: 'outside_allowed_roots' }
+  }
+
+  let initialLstat: fs.Stats
+  try {
+    initialLstat = fs.lstatSync(initialRealPath)
+  } catch {
+    return { ok: false, reason: 'missing' }
+  }
+  if (initialLstat.isSymbolicLink()) return { ok: false, reason: 'missing' }
+  if (!initialLstat.isFile()) return { ok: false, reason: 'not_file' }
+  if (initialLstat.size <= 0 || initialLstat.size > maxBytes) {
+    return { ok: false, reason: 'too_large' }
+  }
+
+  let fd: number
+  try {
+    fd = fs.openSync(initialRealPath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW)
+  } catch {
+    return { ok: false, reason: 'missing' }
+  }
+
+  const fail = (reason: WorkspaceFileOpenReason): OpenedWorkspaceFile => {
+    try {
+      fs.closeSync(fd)
+    } catch {
+      // best-effort close on a rejected descriptor
+    }
+    return { ok: false, reason }
+  }
+
+  try {
+    const descriptorStat = fs.fstatSync(fd)
+    if (!descriptorStat.isFile()) return fail('not_file')
+    if (descriptorStat.size <= 0 || descriptorStat.size > maxBytes) return fail('too_large')
+    if (!sameFileIdentity(initialLstat, descriptorStat)) return fail('missing')
+
+    // Re-resolve the original candidate after opening. This catches swaps of a
+    // symlink candidate or one of its path components during the first lookup.
+    const currentRealPath = realpathOrNull(absoluteCandidate)
+    if (!currentRealPath) return fail('missing')
+    if (
+      !pathAllowedByWorkspaceOrExternalGrant(
+        workspacePath,
+        currentRealPath,
+        externalPathGrants,
+        authorizedFilePaths
+      )
+    ) {
+      return fail('outside_allowed_roots')
+    }
+    if (currentRealPath !== initialRealPath) return fail('missing')
+
+    const currentLstat = fs.lstatSync(currentRealPath)
+    if (currentLstat.isSymbolicLink() || !currentLstat.isFile()) return fail('missing')
+    if (!sameFileIdentity(currentLstat, descriptorStat)) return fail('missing')
+
+    // One final resolution/identity pass closes the window between the first
+    // post-open realpath and lstat checks. Later path swaps are harmless because
+    // all consumption happens through `fd`.
+    const finalRealPath = realpathOrNull(absoluteCandidate)
+    if (finalRealPath !== currentRealPath) return fail('missing')
+    const finalLstat = fs.lstatSync(finalRealPath)
+    if (finalLstat.isSymbolicLink() || !sameFileIdentity(finalLstat, descriptorStat)) {
+      return fail('missing')
+    }
+
+    const realWorkspace = workspacePath ? realpathOrNull(workspacePath) : null
+    const workspaceRelativePath =
+      realWorkspace && pathWithinRoot(finalRealPath, realWorkspace)
+        ? path.relative(realWorkspace, finalRealPath)
+        : undefined
+    return {
+      ok: true,
+      fd,
+      realPath: finalRealPath,
+      stat: descriptorStat,
+      ...(workspaceRelativePath ? { workspaceRelativePath } : {})
+    }
+  } catch {
+    return fail('missing')
+  }
+}
+
+export interface SnapshotRasterOrPdfAttachmentOptions {
+  candidatePath: string
+  /** Optional workspace root for a workspace-relative or workspace-owned file. */
+  workspacePath?: string
+  externalPathGrants?: readonly ExternalPathGrant[]
+  /**
+   * Exact paths authorized by a main-owned picker/attachment registry. This is
+   * the global-chat authority seam: callers must not populate it from renderer
+   * input alone.
+   */
+  authorizedFilePaths?: readonly string[]
+  maxBytes?: number
+}
+
+export type RasterOrPdfAttachmentSnapshotResult =
+  | {
+      ok: true
+      sourceRealPath: string
+      mimeType: string
+      byteLength: number
+      sha256: string
+      buffer: Buffer
+    }
+  | {
+      ok: false
+      reason: WorkspaceFileOpenReason | 'unsupported' | 'unsafe_svg'
+    }
+
+/**
+ * Capture the exact raster/PDF bytes selected for a durable queue or schedule.
+ * Resolution, authority, O_NOFOLLOW open, inode checks, bounded read, MIME
+ * sniffing, and hashing occur as one descriptor-owned operation. Consumers
+ * persist `buffer` immediately into a main-owned content-addressed store and
+ * must never reopen `sourceRealPath`.
+ */
+export function snapshotRasterOrPdfAttachment({
+  candidatePath,
+  workspacePath,
+  externalPathGrants = [],
+  authorizedFilePaths = [],
+  maxBytes = TRANSCRIPT_MEDIA_MAX_PDF_BYTES
+}: SnapshotRasterOrPdfAttachmentOptions): RasterOrPdfAttachmentSnapshotResult {
+  const requestedMaxBytes = Number.isFinite(maxBytes)
+    ? Math.floor(maxBytes)
+    : TRANSCRIPT_MEDIA_MAX_PDF_BYTES
+  const effectiveMaxBytes = Math.max(1, Math.min(TRANSCRIPT_MEDIA_MAX_PDF_BYTES, requestedMaxBytes))
+  const opened = openAuthorizedWorkspaceFile({
+    workspacePath,
+    candidatePath,
+    externalPathGrants,
+    authorizedFilePaths,
+    maxBytes: effectiveMaxBytes
+  })
+  if (!opened.ok) return opened
+  let buffer: Buffer | null
+  try {
+    buffer = readOpenedWorkspaceFile(opened)
+  } finally {
+    fs.closeSync(opened.fd)
+  }
+  if (!buffer) return { ok: false, reason: 'missing' }
+  const imageMime = sniffImageMime(buffer)
+  if (isTranscriptSvgMime(imageMime)) return { ok: false, reason: 'unsafe_svg' }
+  if (
+    isTranscriptRasterImageMime(imageMime) &&
+    buffer.length > TRANSCRIPT_MEDIA_MAX_WORKSPACE_IMAGE_BYTES
+  ) {
+    return { ok: false, reason: 'too_large' }
+  }
+  const mimeType = isTranscriptRasterImageMime(imageMime) ? imageMime : sniffPdfMime(buffer)
+  if (!mimeType) return { ok: false, reason: 'unsupported' }
+  return {
+    ok: true,
+    sourceRealPath: opened.realPath,
+    mimeType,
+    byteLength: buffer.length,
+    sha256: sha256Base64Url(buffer),
+    buffer
+  }
+}
+
+function readOpenedWorkspaceFile(opened: Extract<OpenedWorkspaceFile, { ok: true }>): Buffer | null {
+  const expectedBytes = opened.stat.size
+  const buffer = Buffer.allocUnsafe(expectedBytes)
+  let offset = 0
+  try {
+    while (offset < expectedBytes) {
+      const bytesRead = fs.readSync(opened.fd, buffer, offset, expectedBytes - offset, offset)
+      if (bytesRead === 0) break
+      offset += bytesRead
+    }
+    const finalStat = fs.fstatSync(opened.fd)
+    if (
+      offset !== expectedBytes ||
+      finalStat.size !== expectedBytes ||
+      !sameFileSnapshotVersion(finalStat, opened.stat)
+    ) {
+      return null
+    }
+    return buffer
+  } catch {
+    return null
+  }
+}
+
 export function validateWorkspaceImagePath({
   workspacePath,
   candidatePath,
   externalPathGrants = [],
   maxBytes = TRANSCRIPT_MEDIA_MAX_WORKSPACE_IMAGE_BYTES
 }: WorkspaceImageValidationOptions): WorkspaceImageValidationResult {
-  const decoded = decodeFileUrl(candidatePath.trim())
-  if (!decoded || decoded.includes('\0') || /^https?:\/\//i.test(decoded)) {
-    return { ok: false, reason: 'invalid_path' }
-  }
-  const absoluteCandidate = path.isAbsolute(decoded) ? decoded : path.resolve(workspacePath, decoded)
-  const realCandidate = realpathOrNull(absoluteCandidate)
-  if (!realCandidate) return { ok: false, reason: 'missing' }
-
-  const roots = [workspacePath, ...externalPathGrants.map((grant) => grant.path)].filter(Boolean)
-  const realRoots = roots.map((root) => realpathOrNull(root)).filter((root): root is string => !!root)
-  if (!realRoots.some((root) => pathWithinRoot(realCandidate, root))) {
-    return { ok: false, reason: 'outside_allowed_roots' }
-  }
-
-  let stat: fs.Stats
+  const opened = openAuthorizedWorkspaceFile({
+    workspacePath,
+    candidatePath,
+    externalPathGrants,
+    maxBytes
+  })
+  if (!opened.ok) return opened
+  let buffer: Buffer | null
   try {
-    stat = fs.statSync(realCandidate)
-  } catch {
-    return { ok: false, reason: 'missing' }
+    buffer = readOpenedWorkspaceFile(opened)
+  } finally {
+    fs.closeSync(opened.fd)
   }
-  if (!stat.isFile()) return { ok: false, reason: 'not_file' }
-  if (stat.size <= 0 || stat.size > maxBytes) return { ok: false, reason: 'too_large' }
-
-  let buffer: Buffer
-  try {
-    buffer = fs.readFileSync(realCandidate)
-  } catch {
-    return { ok: false, reason: 'missing' }
-  }
+  if (!buffer) return { ok: false, reason: 'missing' }
   const sniffed = sniffImageMime(buffer)
   if (isTranscriptSvgMime(sniffed)) return { ok: false, reason: 'unsafe_svg' }
   if (!isTranscriptRasterImageMime(sniffed)) return { ok: false, reason: 'unsupported' }
-  const realWorkspace = realpathOrNull(workspacePath)
-  const workspaceRelativePath =
-    realWorkspace && pathWithinRoot(realCandidate, realWorkspace)
-      ? path.relative(realWorkspace, realCandidate)
-      : undefined
   return {
     ok: true,
-    realPath: realCandidate,
-    ...(workspaceRelativePath ? { workspaceRelativePath } : {}),
+    realPath: opened.realPath,
+    ...(opened.workspaceRelativePath
+      ? { workspaceRelativePath: opened.workspaceRelativePath }
+      : {}),
     mimeType: sniffed || 'image/png',
     byteLength: buffer.length,
-    sha256: sha256Base64Url(buffer)
+    sha256: sha256Base64Url(buffer),
+    buffer
   }
 }
 
@@ -776,7 +1069,7 @@ export function sniffAudioMime(buffer: Buffer): string | null {
 export interface WorkspaceAudioValidationOptions {
   workspacePath: string
   candidatePath: string
-  externalPathGrants?: { path: string }[]
+  externalPathGrants?: readonly ExternalPathGrant[]
   maxBytes?: number
 }
 export type WorkspaceAudioValidationResult =
@@ -804,46 +1097,28 @@ export function validateWorkspaceAudioPath({
   externalPathGrants = [],
   maxBytes = TRANSCRIPT_MEDIA_MAX_AUDIO_BYTES
 }: WorkspaceAudioValidationOptions): WorkspaceAudioValidationResult {
-  const decoded = decodeFileUrl(candidatePath.trim())
-  if (!decoded || decoded.includes('\0') || /^https?:\/\//i.test(decoded)) {
-    return { ok: false, reason: 'invalid_path' }
-  }
-  const absoluteCandidate = path.isAbsolute(decoded) ? decoded : path.resolve(workspacePath, decoded)
-  const realCandidate = realpathOrNull(absoluteCandidate)
-  if (!realCandidate) return { ok: false, reason: 'missing' }
-
-  const roots = [workspacePath, ...externalPathGrants.map((grant) => grant.path)].filter(Boolean)
-  const realRoots = roots.map((root) => realpathOrNull(root)).filter((root): root is string => !!root)
-  if (!realRoots.some((root) => pathWithinRoot(realCandidate, root))) {
-    return { ok: false, reason: 'outside_allowed_roots' }
-  }
-
-  let stat: fs.Stats
+  const opened = openAuthorizedWorkspaceFile({
+    workspacePath,
+    candidatePath,
+    externalPathGrants,
+    maxBytes
+  })
+  if (!opened.ok) return opened
+  let buffer: Buffer | null
   try {
-    stat = fs.statSync(realCandidate)
-  } catch {
-    return { ok: false, reason: 'missing' }
+    buffer = readOpenedWorkspaceFile(opened)
+  } finally {
+    fs.closeSync(opened.fd)
   }
-  if (!stat.isFile()) return { ok: false, reason: 'not_file' }
-  if (stat.size <= 0 || stat.size > maxBytes) return { ok: false, reason: 'too_large' }
-
-  let buffer: Buffer
-  try {
-    buffer = fs.readFileSync(realCandidate)
-  } catch {
-    return { ok: false, reason: 'missing' }
-  }
+  if (!buffer) return { ok: false, reason: 'missing' }
   const sniffed = sniffAudioMime(buffer)
   if (!sniffed) return { ok: false, reason: 'unsupported' }
-  const realWorkspace = realpathOrNull(workspacePath)
-  const workspaceRelativePath =
-    realWorkspace && pathWithinRoot(realCandidate, realWorkspace)
-      ? path.relative(realWorkspace, realCandidate)
-      : undefined
   return {
     ok: true,
-    realPath: realCandidate,
-    ...(workspaceRelativePath ? { workspaceRelativePath } : {}),
+    realPath: opened.realPath,
+    ...(opened.workspaceRelativePath
+      ? { workspaceRelativePath: opened.workspaceRelativePath }
+      : {}),
     mimeType: sniffed,
     byteLength: buffer.length,
     dataBase64: buffer.toString('base64')
@@ -894,52 +1169,368 @@ export type WorkspaceMediaValidationResult =
       reason: 'invalid_path' | 'missing' | 'not_file' | 'too_large' | 'outside_allowed_roots' | 'unsupported'
     }
 
-/** Realpath-jailed, size-capped resolution of a workspace AUDIO or VIDEO file for
- * ffmpeg/ffprobe INPUT. Reuses the exact jail primitives as the audio/image
- * validators, but does NOT read the whole file (a video can be gigabytes) — only
- * the 64-byte header for a coarse media sniff — and returns the realPath (ffmpeg
- * opens it by path), never the bytes. */
+/**
+ * Realpath-jailed, size-capped AUDIO/VIDEO preflight. It reads the coarse media
+ * header from a verified descriptor, but the returned source `realPath` is not
+ * a stable handoff: a later path-based consumer would reopen it. Call
+ * `stageWorkspaceMediaSnapshot` before handing media to ffmpeg or a bridge
+ * daemon.
+ */
 export function validateWorkspaceMediaPath({
   workspacePath,
   candidatePath,
   externalPathGrants = [],
   maxBytes = TRANSCRIPT_MEDIA_MAX_INPUT_BYTES
 }: WorkspaceAudioValidationOptions): WorkspaceMediaValidationResult {
-  const decoded = decodeFileUrl(candidatePath.trim())
-  if (!decoded || decoded.includes('\0') || /^https?:\/\//i.test(decoded)) {
-    return { ok: false, reason: 'invalid_path' }
-  }
-  const absoluteCandidate = path.isAbsolute(decoded) ? decoded : path.resolve(workspacePath, decoded)
-  const realCandidate = realpathOrNull(absoluteCandidate)
-  if (!realCandidate) return { ok: false, reason: 'missing' }
-
-  const roots = [workspacePath, ...externalPathGrants.map((grant) => grant.path)].filter(Boolean)
-  const realRoots = roots.map((root) => realpathOrNull(root)).filter((root): root is string => !!root)
-  if (!realRoots.some((root) => pathWithinRoot(realCandidate, root))) {
-    return { ok: false, reason: 'outside_allowed_roots' }
-  }
-
-  let stat: fs.Stats
+  const opened = openAuthorizedWorkspaceFile({
+    workspacePath,
+    candidatePath,
+    externalPathGrants,
+    maxBytes
+  })
+  if (!opened.ok) return opened
+  const header = Buffer.alloc(64)
+  let bytesRead = 0
   try {
-    stat = fs.statSync(realCandidate)
+    bytesRead = fs.readSync(opened.fd, header, 0, header.length, 0)
   } catch {
     return { ok: false, reason: 'missing' }
+  } finally {
+    fs.closeSync(opened.fd)
   }
-  if (!stat.isFile()) return { ok: false, reason: 'not_file' }
-  if (stat.size <= 0 || stat.size > maxBytes) return { ok: false, reason: 'too_large' }
+  const sniffedHeader = header.subarray(0, bytesRead)
+  const sniffed = sniffAudioMime(sniffedHeader) || sniffVideoMime(sniffedHeader)
+  if (!sniffed) return { ok: false, reason: 'unsupported' }
+  return {
+    ok: true,
+    realPath: opened.realPath,
+    mimeType: sniffed,
+    byteLength: opened.stat.size
+  }
+}
 
-  const header = Buffer.alloc(64)
+export type WorkspaceMediaSnapshotKind = 'image' | 'audio' | 'audio_video'
+
+export interface StageWorkspaceMediaSnapshotOptions extends WorkspaceAudioValidationOptions {
+  /** A main-process-owned directory outside agent-writable workspace roots. */
+  stagingDirectory: string
+  kind: WorkspaceMediaSnapshotKind
+}
+
+export type StagedWorkspaceMediaSnapshotResult =
+  | {
+      ok: true
+      /** Stable main-owned snapshot path to hand to ffmpeg / bridge daemons. */
+      realPath: string
+      /** Canonical authorized source path, for audit/display only. Never reopen it. */
+      sourceRealPath: string
+      mimeType: string
+      byteLength: number
+      /**
+       * Remove the exact staged inode. Call in a finally block after the final
+       * subprocess/daemon consumer returns. Returns false if the staged path was
+       * replaced, so cleanup can never unlink an attacker-swapped file.
+       */
+      cleanup: () => boolean
+    }
+  | {
+      ok: false
+      reason:
+        | WorkspaceFileOpenReason
+        | 'unsupported'
+        | 'unsafe_svg'
+        | 'unsafe_staging_directory'
+        | 'snapshot_failed'
+    }
+
+function snapshotMime(
+  header: Buffer,
+  kind: WorkspaceMediaSnapshotKind
+): { ok: true; mimeType: string } | { ok: false; reason: 'unsupported' | 'unsafe_svg' } {
+  if (kind === 'image') {
+    const mimeType = sniffImageMime(header)
+    if (isTranscriptSvgMime(mimeType)) return { ok: false, reason: 'unsafe_svg' }
+    return isTranscriptRasterImageMime(mimeType)
+      ? { ok: true, mimeType: mimeType || 'image/png' }
+      : { ok: false, reason: 'unsupported' }
+  }
+  const audioMime = sniffAudioMime(header)
+  if (audioMime) return { ok: true, mimeType: audioMime }
+  if (kind === 'audio_video') {
+    const videoMime = sniffVideoMime(header)
+    if (videoMime) return { ok: true, mimeType: videoMime }
+  }
+  return { ok: false, reason: 'unsupported' }
+}
+
+function stagedMediaExtension(mimeType: string): string {
+  switch (mimeType) {
+    case 'image/png':
+      return 'png'
+    case 'image/jpeg':
+      return 'jpg'
+    case 'image/webp':
+      return 'webp'
+    case 'image/gif':
+      return 'gif'
+    case 'image/bmp':
+      return 'bmp'
+    case 'audio/wav':
+      return 'wav'
+    case 'audio/mpeg':
+      return 'mp3'
+    case 'audio/mp4':
+      return 'm4a'
+    case 'audio/ogg':
+      return 'ogg'
+    case 'audio/flac':
+      return 'flac'
+    case 'video/mp4':
+      return 'mp4'
+    case 'video/quicktime':
+      return 'mov'
+    case 'video/webm':
+      return 'webm'
+    case 'video/x-msvideo':
+      return 'avi'
+    default:
+      return 'media'
+  }
+}
+
+function prepareMainOwnedStagingDirectory(stagingDirectory: string): string | null {
+  if (!path.isAbsolute(stagingDirectory) || stagingDirectory.includes('\0')) return null
+  const requested = path.resolve(stagingDirectory)
   try {
-    const fd = fs.openSync(realCandidate, 'r')
+    fs.mkdirSync(requested, { recursive: true, mode: 0o700 })
+    const requestedLstat = fs.lstatSync(requested)
+    if (requestedLstat.isSymbolicLink() || !requestedLstat.isDirectory()) return null
+    const canonical = realpathOrNull(requested)
+    if (!canonical) return null
+    const canonicalStat = fs.statSync(canonical)
+    if (!canonicalStat.isDirectory()) return null
+    const currentUid = typeof process.getuid === 'function' ? process.getuid() : null
+    if (currentUid !== null && canonicalStat.uid !== currentUid) return null
+    // Read/execute for other users is acceptable, but no other principal may
+    // write into the directory that owns the stable snapshot paths.
+    if ((canonicalStat.mode & 0o022) !== 0) return null
+    return canonical
+  } catch {
+    return null
+  }
+}
+
+function stagingDirectoryIsAgentWritable(
+  stagingRoot: string,
+  workspacePath: string,
+  externalPathGrants: readonly ExternalPathGrant[]
+): boolean {
+  const resolvedWorkspace = path.resolve(workspacePath)
+  if (pathWithinRoot(stagingRoot, resolvedWorkspace)) return true
+  const realWorkspace = realpathOrNull(workspacePath)
+  if (realWorkspace && pathWithinRoot(stagingRoot, realWorkspace)) return true
+  return externalPathGrants.some((grant) => {
+    if (grant.kind !== 'directory' || !path.isAbsolute(grant.path)) return false
+    const signedRoot = path.resolve(grant.path)
     try {
-      fs.readSync(fd, header, 0, 64, 0)
-    } finally {
-      fs.closeSync(fd)
+      const rootStat = fs.lstatSync(signedRoot)
+      return (
+        !rootStat.isSymbolicLink() &&
+        rootStat.isDirectory() &&
+        pathWithinRoot(stagingRoot, signedRoot)
+      )
+    } catch {
+      return false
+    }
+  })
+}
+
+function exactInodeCleanup(
+  filePath: string,
+  stagingRoot: string,
+  expectedStat: fs.Stats
+): () => boolean {
+  let cleaned = false
+  return () => {
+    if (cleaned || !pathWithinRoot(filePath, stagingRoot)) return false
+    try {
+      const current = fs.lstatSync(filePath)
+      if (current.isSymbolicLink() || !sameFileIdentity(current, expectedStat)) return false
+      fs.unlinkSync(filePath)
+      cleaned = true
+      return true
+    } catch {
+      return false
+    }
+  }
+}
+
+/**
+ * Copy an authorized workspace/grant-backed media file from its verified
+ * nofollow descriptor into a private, main-owned staging directory. This is the
+ * path-safe handoff for APIs that cannot consume bytes (ffmpeg, AVFoundation,
+ * bridge daemons). The returned path is stable because untrusted workspace code
+ * cannot rename or replace entries in the staging directory.
+ *
+ * This helper is synchronous to match the existing jailInput contracts. Keep
+ * the input cap bounded and always invoke `cleanup` in the tool executor's
+ * outermost finally block. The existing staging sweeper remains crash cleanup,
+ * not the normal ownership mechanism.
+ */
+export function stageWorkspaceMediaSnapshot({
+  workspacePath,
+  candidatePath,
+  externalPathGrants = [],
+  maxBytes,
+  stagingDirectory,
+  kind
+}: StageWorkspaceMediaSnapshotOptions): StagedWorkspaceMediaSnapshotResult {
+  const effectiveMaxBytes =
+    maxBytes ??
+    (kind === 'image'
+      ? TRANSCRIPT_MEDIA_MAX_WORKSPACE_IMAGE_BYTES
+      : kind === 'audio'
+        ? TRANSCRIPT_MEDIA_MAX_AUDIO_BYTES
+        : TRANSCRIPT_MEDIA_MAX_INPUT_BYTES)
+  const opened = openAuthorizedWorkspaceFile({
+    workspacePath,
+    candidatePath,
+    externalPathGrants,
+    maxBytes: effectiveMaxBytes
+  })
+  if (!opened.ok) return opened
+
+  let destinationFd: number | null = null
+  let destinationPath: string | null = null
+  let destinationStat: fs.Stats | null = null
+  let cleanupDestination: (() => boolean) | null = null
+  try {
+    const sourceHeader = Buffer.alloc(Math.min(512, opened.stat.size))
+    const sourceHeaderBytes = fs.readSync(
+      opened.fd,
+      sourceHeader,
+      0,
+      sourceHeader.length,
+      0
+    )
+    const sourceMime = snapshotMime(sourceHeader.subarray(0, sourceHeaderBytes), kind)
+    if (!sourceMime.ok) return sourceMime
+
+    if (
+      !path.isAbsolute(stagingDirectory) ||
+      stagingDirectoryIsAgentWritable(
+        path.resolve(stagingDirectory),
+        workspacePath,
+        externalPathGrants
+      )
+    ) {
+      return { ok: false, reason: 'unsafe_staging_directory' }
+    }
+    const stagingRoot = prepareMainOwnedStagingDirectory(stagingDirectory)
+    if (
+      !stagingRoot ||
+      stagingDirectoryIsAgentWritable(stagingRoot, workspacePath, externalPathGrants)
+    ) {
+      return { ok: false, reason: 'unsafe_staging_directory' }
+    }
+    destinationPath = path.join(
+      stagingRoot,
+      `tw-input-${randomUUID()}.${stagedMediaExtension(sourceMime.mimeType)}`
+    )
+    destinationFd = fs.openSync(
+      destinationPath,
+      fs.constants.O_RDWR |
+        fs.constants.O_CREAT |
+        fs.constants.O_EXCL |
+        fs.constants.O_NOFOLLOW,
+      0o600
+    )
+    destinationStat = fs.fstatSync(destinationFd)
+    const destinationLstat = fs.lstatSync(destinationPath)
+    if (
+      destinationLstat.isSymbolicLink() ||
+      !destinationStat.isFile() ||
+      !sameFileIdentity(destinationStat, destinationLstat)
+    ) {
+      return { ok: false, reason: 'snapshot_failed' }
+    }
+    cleanupDestination = exactInodeCleanup(destinationPath, stagingRoot, destinationStat)
+
+    const chunk = Buffer.allocUnsafe(Math.min(1024 * 1024, opened.stat.size))
+    let sourceOffset = 0
+    while (sourceOffset < opened.stat.size) {
+      const requested = Math.min(chunk.length, opened.stat.size - sourceOffset)
+      const bytesRead = fs.readSync(opened.fd, chunk, 0, requested, sourceOffset)
+      if (bytesRead === 0) break
+      let written = 0
+      while (written < bytesRead) {
+        const bytesWritten = fs.writeSync(
+          destinationFd,
+          chunk,
+          written,
+          bytesRead - written,
+          sourceOffset + written
+        )
+        if (bytesWritten <= 0) return { ok: false, reason: 'snapshot_failed' }
+        written += bytesWritten
+      }
+      sourceOffset += bytesRead
+    }
+    const finalSourceStat = fs.fstatSync(opened.fd)
+    if (
+      sourceOffset !== opened.stat.size ||
+      finalSourceStat.size !== opened.stat.size ||
+      !sameFileSnapshotVersion(finalSourceStat, opened.stat)
+    ) {
+      return { ok: false, reason: 'snapshot_failed' }
+    }
+    fs.fsyncSync(destinationFd)
+    const finalDestinationStat = fs.fstatSync(destinationFd)
+    if (
+      finalDestinationStat.size !== opened.stat.size ||
+      !sameFileIdentity(finalDestinationStat, destinationStat)
+    ) {
+      return { ok: false, reason: 'snapshot_failed' }
+    }
+
+    const stagedHeader = Buffer.alloc(Math.min(512, finalDestinationStat.size))
+    const stagedHeaderBytes = fs.readSync(
+      destinationFd,
+      stagedHeader,
+      0,
+      stagedHeader.length,
+      0
+    )
+    const stagedMime = snapshotMime(stagedHeader.subarray(0, stagedHeaderBytes), kind)
+    if (!stagedMime.ok || stagedMime.mimeType !== sourceMime.mimeType) {
+      return { ok: false, reason: stagedMime.ok ? 'snapshot_failed' : stagedMime.reason }
+    }
+
+    const stablePath = destinationPath
+    const stableStat = finalDestinationStat
+    const stableCleanup = exactInodeCleanup(stablePath, stagingRoot, stableStat)
+    cleanupDestination = null
+    return {
+      ok: true,
+      realPath: stablePath,
+      sourceRealPath: opened.realPath,
+      mimeType: stagedMime.mimeType,
+      byteLength: stableStat.size,
+      cleanup: stableCleanup
     }
   } catch {
-    return { ok: false, reason: 'missing' }
+    return { ok: false, reason: 'snapshot_failed' }
+  } finally {
+    try {
+      if (destinationFd !== null) fs.closeSync(destinationFd)
+    } catch {
+      // best-effort close
+    }
+    try {
+      fs.closeSync(opened.fd)
+    } catch {
+      // best-effort close
+    }
+    cleanupDestination?.()
   }
-  const sniffed = sniffAudioMime(header) || sniffVideoMime(header)
-  if (!sniffed) return { ok: false, reason: 'unsupported' }
-  return { ok: true, realPath: realCandidate, mimeType: sniffed, byteLength: stat.size }
 }

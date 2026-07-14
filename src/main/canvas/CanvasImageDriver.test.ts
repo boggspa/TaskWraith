@@ -13,15 +13,24 @@ function pngOf(width: number, height: number): Buffer {
 }
 
 const SHA = 'a'.repeat(43) // a base64url-shaped sha256
+const APP_CHAT_ID = 'chat-a'
 const ctx = { driver: 'image' as const }
 
 describe('CanvasImageDriver', () => {
   it('loads the jailed asset once on open and serves the cached frame', async () => {
     const load = vi.fn(async () => pngOf(300, 200))
-    const driver = new CanvasImageDriver('s1', { load, now: () => 'T' })
+    const driver = new CanvasImageDriver('s1', {
+      load,
+      appChatId: APP_CHAT_ID,
+      now: () => 'T'
+    })
 
     const handle = await driver.open({ ...ctx, mediaSha256: SHA, mediaMimeType: 'image/png' })
-    expect(load).toHaveBeenCalledWith(SHA, 'image/png')
+    expect(load).toHaveBeenCalledWith({
+      sha256: SHA,
+      mimeType: 'image/png',
+      appChatId: APP_CHAT_ID
+    })
     expect(handle.url).toBe(`image://${SHA}`)
     expect(handle.viewport).toEqual({ width: 300, height: 200 })
 
@@ -36,7 +45,7 @@ describe('CanvasImageDriver', () => {
 
   it('rejects a bad hash or non-image mime before touching the asset store', async () => {
     const load = vi.fn(async () => pngOf(1, 1))
-    const driver = new CanvasImageDriver('s1', { load })
+    const driver = new CanvasImageDriver('s1', { load, appChatId: APP_CHAT_ID })
     await expect(driver.open({ ...ctx, mediaSha256: '../etc', mediaMimeType: 'image/png' })).rejects.toThrow()
     await expect(driver.open({ ...ctx, mediaSha256: SHA, mediaMimeType: 'video/mp4' })).rejects.toThrow()
     expect(load).not.toHaveBeenCalled()
@@ -46,12 +55,42 @@ describe('CanvasImageDriver', () => {
     const load = vi.fn(async () => {
       throw new Error('Image attachment unavailable (missing).')
     })
-    const driver = new CanvasImageDriver('s1', { load })
+    const driver = new CanvasImageDriver('s1', { load, appChatId: APP_CHAT_ID })
     await expect(driver.open({ ...ctx, mediaSha256: SHA, mediaMimeType: 'image/png' })).rejects.toThrow(/unavailable/)
   })
 
+  it('cannot request asset bytes without a bound canonical chat authority', () => {
+    const load = vi.fn(async () => pngOf(1, 1))
+    expect(
+      () => new CanvasImageDriver('s1', { load } as unknown as ConstructorParameters<typeof CanvasImageDriver>[1])
+    ).toThrow(/canonical chat authority/)
+    expect(load).not.toHaveBeenCalled()
+  })
+
+  it('threads mismatched chat authority to the host loader and honors its denial', async () => {
+    const load = vi.fn(async (input: { appChatId: string }) => {
+      if (input.appChatId !== 'owner-chat') {
+        throw new Error('Image attachment unavailable (not_owner).')
+      }
+      return pngOf(1, 1)
+    })
+    const driver = new CanvasImageDriver('s1', { load, appChatId: 'other-chat' })
+
+    await expect(
+      driver.open({ ...ctx, mediaSha256: SHA, mediaMimeType: 'image/png' })
+    ).rejects.toThrow(/not_owner/)
+    expect(load).toHaveBeenCalledWith({
+      sha256: SHA,
+      mimeType: 'image/png',
+      appChatId: 'other-chat'
+    })
+  })
+
   it('throws a clear error for resize and the DOM/interactive verbs', async () => {
-    const driver = new CanvasImageDriver('s1', { load: async () => pngOf(1, 1) })
+    const driver = new CanvasImageDriver('s1', {
+      load: async () => pngOf(1, 1),
+      appChatId: APP_CHAT_ID
+    })
     await driver.open({ ...ctx, mediaSha256: SHA, mediaMimeType: 'image/png' })
     await expect(driver.resize({ width: 100, height: 100 })).rejects.toThrow(/not available for the image driver/)
     await expect(driver.snapshot()).rejects.toThrow()

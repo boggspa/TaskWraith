@@ -223,16 +223,11 @@ function emptyContributions(): TaskWraithPluginContributionSnapshot {
 function makeHarness(snapshot: TaskWraithPluginContributionSnapshot = contributions()) {
   let settings = baseSettings()
   let runtimeProfiles: RuntimeProfile[] = []
-  const manager = new PluginContributionManager({
-    pluginHost: {
-      getContributionSnapshot: vi.fn(() => snapshot)
-    },
-    getSettings: () => settings,
-    updateSettings: (partial) => {
-      settings = { ...settings, ...partial }
-    },
-    getRuntimeProfiles: () => runtimeProfiles,
-    saveRuntimeProfile: (profile) => {
+  const updateSettings = vi.fn((partial: Partial<AppSettings>) => {
+    settings = { ...settings, ...partial }
+  })
+  const saveRuntimeProfile = vi.fn(
+    (profile: Partial<RuntimeProfile> & Pick<RuntimeProfile, 'name' | 'provider'>) => {
       const now = materializedAt
       const saved: RuntimeProfile = {
         id: profile.id || `profile-${runtimeProfiles.length + 1}`,
@@ -258,10 +253,20 @@ function makeHarness(snapshot: TaskWraithPluginContributionSnapshot = contributi
       if (index >= 0) runtimeProfiles[index] = saved
       else runtimeProfiles.push(saved)
       return saved
+    }
+  )
+  const deleteRuntimeProfile = vi.fn((id: string) => {
+    runtimeProfiles = runtimeProfiles.filter((profile) => profile.id !== id)
+  })
+  const manager = new PluginContributionManager({
+    pluginHost: {
+      getContributionSnapshot: vi.fn(() => snapshot)
     },
-    deleteRuntimeProfile: (id) => {
-      runtimeProfiles = runtimeProfiles.filter((profile) => profile.id !== id)
-    },
+    getSettings: () => settings,
+    updateSettings,
+    getRuntimeProfiles: () => runtimeProfiles,
+    saveRuntimeProfile,
+    deleteRuntimeProfile,
     now: () => new Date(materializedAt)
   })
   return {
@@ -273,11 +278,28 @@ function makeHarness(snapshot: TaskWraithPluginContributionSnapshot = contributi
     getRuntimeProfiles: () => runtimeProfiles,
     setRuntimeProfiles: (next: RuntimeProfile[]) => {
       runtimeProfiles = next
-    }
+    },
+    updateSettings,
+    saveRuntimeProfile,
+    deleteRuntimeProfile
   }
 }
 
 describe('PluginContributionManager', () => {
+  it('keeps activation snapshot reads pure before the explicit startup sync', () => {
+    const harness = makeHarness()
+
+    const activation = harness.manager.getActivationSnapshot()
+
+    expect(activation.taskwraithToolBundles).toHaveLength(1)
+    expect(activation.workflowTemplates).toHaveLength(1)
+    expect(harness.updateSettings).not.toHaveBeenCalled()
+    expect(harness.saveRuntimeProfile).not.toHaveBeenCalled()
+    expect(harness.deleteRuntimeProfile).not.toHaveBeenCalled()
+    expect(harness.getSettings().userMcpServers).toEqual([])
+    expect(harness.getRuntimeProfiles()).toEqual([])
+  })
+
   it('materializes enabled plugin MCP servers and runtime profiles with provenance', () => {
     const harness = makeHarness()
 

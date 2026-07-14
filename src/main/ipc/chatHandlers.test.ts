@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ipcMain } from 'electron'
 import { registerChatHandlers } from './chatHandlers'
-import type { AppSettings, ChatRecord } from '../store/types'
+import type { AppSettings, ChatListItem, ChatRecord } from '../store/types'
+import type { RebindChatWorkspaceInput, RebindChatWorkspaceOptions } from '../services/ChatService'
 
 vi.mock('electron', () => ({
   ipcMain: {
@@ -30,6 +31,15 @@ function chat(id: string, overrides: Partial<ChatRecord> = {}): ChatRecord {
   }
 }
 
+function chatListItem(record: ChatRecord): ChatListItem {
+  return {
+    ...record,
+    summaryOnly: true,
+    messageCount: record.messages.length,
+    runCount: record.runs.length
+  }
+}
+
 function createDeps(overrides: Partial<Parameters<typeof registerChatHandlers>[0]> = {}) {
   const settings = { ensembleModeEnabled: true } as AppSettings
   return {
@@ -50,6 +60,22 @@ function createDeps(overrides: Partial<Parameters<typeof registerChatHandlers>[0
       getSideChats: vi.fn(() => [chat('side-chat')]),
       setChatKind: vi.fn((args: { chatId: string; targetKind: 'single' | 'ensemble' }) =>
         chat(args.chatId, { chatKind: args.targetKind })
+      ),
+      rebindChatWorkspace: vi.fn(
+        (args: RebindChatWorkspaceInput | undefined, options?: RebindChatWorkspaceOptions) => {
+          if (!args) throw new Error('Missing rebind args')
+          const current = chat(args.chatId, {
+            scope: 'workspace',
+            workspaceId: 'test-1',
+            workspacePath: '/Users/chrisizatt/Documents/Test 1'
+          })
+          options?.assertIdle?.(current)
+          return chat(args.chatId, {
+            scope: args.scope,
+            workspaceId: args.scope === 'workspace' ? args.workspaceId : undefined,
+            workspacePath: args.scope === 'workspace' ? args.workspacePath : undefined
+          })
+        }
       )
     },
     getSettings: vi.fn(() => settings),
@@ -67,6 +93,11 @@ function createDeps(overrides: Partial<Parameters<typeof registerChatHandlers>[0
     reapAbandonedChats: vi.fn(() => []),
     getWorkflowChatIds: vi.fn(() => new Set(['workflow-chat'])),
     getScheduledChatIds: vi.fn(() => new Set(['scheduled-chat'])),
+    resolveSenderChatReadScope: vi.fn(() => ({ kind: 'all' as const })),
+    assertSenderCanManageChatCollection: vi.fn(),
+    assertSenderChatScope: vi.fn(),
+    assertSenderCanRebindChatWorkspace: vi.fn(),
+    getChatWorkspaceRebindBlocker: vi.fn(() => null),
     ...overrides
   }
 }
@@ -87,6 +118,7 @@ describe('registerChatHandlers', () => {
     registerChatHandlers(createDeps())
 
     expect(handlerFor('save-chat')).toBeTypeOf('function')
+    expect(handlerFor('rebind-chat-workspace')).toBeTypeOf('function')
     expect(handlerFor('delete-chat')).toBeTypeOf('function')
     expect(handlerFor('reap-abandoned-chats')).toBeTypeOf('function')
     expect(handlerFor('truncate-chat')).toBeTypeOf('function')
@@ -102,6 +134,111 @@ describe('registerChatHandlers', () => {
 
     expect(handlerFor('get-chat')({} as any, 'chat-1')).toEqual(chat('chat-1'))
     expect(deps.chatService.getChat).toHaveBeenCalledWith('chat-1')
+  })
+
+  it('filters a chat popout to its exact Test1 chat and excludes Test3 records', () => {
+    const test1 = chat('test-1-chat', {
+      scope: 'workspace',
+      workspaceId: 'test-1',
+      workspacePath: '/Users/chrisizatt/Documents/Test 1'
+    })
+    const test3 = chat('test-3-chat', {
+      scope: 'workspace',
+      workspaceId: 'test-3',
+      workspacePath: '/Users/chrisizatt/Documents/Test 3'
+    })
+    const test1ListItem = chatListItem(test1)
+    const test3ListItem = chatListItem(test3)
+    const getChat = vi.fn((chatId: string) =>
+      chatId === test1.appChatId ? test1 : chatId === test3.appChatId ? test3 : null
+    )
+    const deps = createDeps({
+      chatService: {
+        ...createDeps().chatService,
+        getChats: vi.fn(() => [test1, test3]),
+        getChatList: vi.fn(() => [test1ListItem, test3ListItem]),
+        getPinnedMessages: vi.fn(() => [
+          {
+            workspaceId: 'test-1',
+            workspaceDisplayName: 'Test 1',
+            chats: [
+              {
+                chatId: test1.appChatId,
+                chatTitle: 'Test 1 chat',
+                updatedAt: 1,
+                workspaceId: 'test-1',
+                workspaceDisplayName: 'Test 1',
+                messages: []
+              },
+              {
+                chatId: test3.appChatId,
+                chatTitle: 'Test 3 chat',
+                updatedAt: 1,
+                workspaceId: 'test-3',
+                workspaceDisplayName: 'Test 3',
+                messages: []
+              }
+            ]
+          }
+        ]),
+        getChat
+      },
+      resolveSenderChatReadScope: vi.fn(() => ({
+        kind: 'chat' as const,
+        chatId: test1.appChatId,
+        workspaceId: 'test-1'
+      }))
+    })
+    registerChatHandlers(deps)
+    const event = { sender: { id: 41 } }
+
+    expect(handlerFor('get-chats')(event)).toEqual([test1])
+    expect(handlerFor('get-chat-list')(event)).toEqual([test1ListItem])
+    expect(handlerFor('get-pinned-messages')(event)).toEqual([
+      expect.objectContaining({
+        chats: [expect.objectContaining({ chatId: test1.appChatId })]
+      })
+    ])
+    expect(handlerFor('get-chat')(event, test1.appChatId)).toEqual(test1)
+    expect(handlerFor('get-sub-threads')(event, test1.appChatId)).toEqual([])
+    expect(handlerFor('get-side-chats')(event, test1.appChatId)).toEqual([])
+    expect(deps.chatService.getSubThreads).not.toHaveBeenCalled()
+    expect(deps.chatService.getSideChats).not.toHaveBeenCalled()
+  })
+
+  it('denies a Test1 chat popout before reading a Test3 chat or collection', () => {
+    const deps = createDeps({
+      resolveSenderChatReadScope: vi.fn(() => ({
+        kind: 'chat' as const,
+        chatId: 'test-1-chat',
+        workspaceId: 'test-1'
+      }))
+    })
+    registerChatHandlers(deps)
+    const event = { sender: { id: 41 } }
+
+    expect(() => handlerFor('get-chat')(event, 'test-3-chat')).toThrow(
+      'Renderer does not own this chat read.'
+    )
+    expect(() => handlerFor('get-chats')(event, 'test-3')).toThrow(
+      'Renderer does not own this workspace chat collection.'
+    )
+    expect(deps.chatService.getChat).not.toHaveBeenCalled()
+    expect(deps.chatService.getChats).not.toHaveBeenCalled()
+  })
+
+  it('denies non-chat secondary renderers before reading any chat record', () => {
+    const deps = createDeps({
+      resolveSenderChatReadScope: vi.fn(() => {
+        throw new Error('Only chat popouts may read chat records.')
+      })
+    })
+    registerChatHandlers(deps)
+
+    expect(() => handlerFor('get-chat')({ sender: { id: 52 } }, 'test-1-chat')).toThrow(
+      'Only chat popouts may read chat records.'
+    )
+    expect(deps.chatService.getChat).not.toHaveBeenCalled()
   })
 
   it('broadcasts thread updates for created chat records', async () => {
@@ -134,6 +271,62 @@ describe('registerChatHandlers', () => {
     )
     expect(deps.detectConfiguredProviders).not.toHaveBeenCalled()
   })
+
+  it.each([
+    {
+      channel: 'create-chat',
+      args: ['workspace-1', '/repo'],
+      capability: 'create-chat',
+      service: 'createChat'
+    },
+    {
+      channel: 'create-global-chat',
+      args: [],
+      capability: 'create-global-chat',
+      service: 'createGlobalChat'
+    },
+    {
+      channel: 'create-ensemble-chat',
+      args: [undefined],
+      capability: 'create-ensemble-chat',
+      service: 'createEnsembleChat'
+    },
+    {
+      channel: 'clear-chats',
+      args: ['workspace-1'],
+      capability: 'clear-chats',
+      service: 'clearChats'
+    },
+    {
+      channel: 'reap-abandoned-chats',
+      args: [{}],
+      capability: 'reap-abandoned-chats',
+      service: null
+    }
+  ] as const)(
+    'rejects a secondary renderer attempting collection mutation $capability before effects',
+    async ({ channel, args, capability, service }) => {
+      const assertSenderCanManageChatCollection = vi.fn(() => {
+        throw new Error('Only the main renderer may manage the chat collection.')
+      })
+      const deps = createDeps({ assertSenderCanManageChatCollection })
+      registerChatHandlers(deps)
+      const event = { sender: { id: 99 } }
+
+      await expect(
+        Promise.resolve().then(() => handlerFor(channel)(event, ...args))
+      ).rejects.toThrow('Only the main renderer may manage the chat collection.')
+
+      expect(assertSenderCanManageChatCollection).toHaveBeenCalledWith(event, capability)
+      if (service) {
+        expect(deps.chatService[service]).not.toHaveBeenCalled()
+      }
+      expect(deps.reapAbandonedChats).not.toHaveBeenCalled()
+      expect(deps.detectConfiguredProviders).not.toHaveBeenCalled()
+      expect(deps.broadcastThreadUpdate).not.toHaveBeenCalled()
+      expect(deps.broadcastThreadList).not.toHaveBeenCalled()
+    }
+  )
 
   it('routes set-chat-kind through the chat service and broadcasts the result', () => {
     const deps = createDeps()
@@ -180,6 +373,165 @@ describe('registerChatHandlers', () => {
     })
   })
 
+  it.each([
+    {
+      channel: 'set-chat-kind',
+      args: [{ chatId: 'other-chat', targetKind: 'single' }],
+      capability: 'set-chat-kind',
+      service: 'setChatKind'
+    },
+    {
+      channel: 'create-side-chat',
+      args: [{ parentChatId: 'other-chat', title: 'Hostile side chat' }],
+      capability: 'create-side-chat',
+      service: 'createSideChat'
+    },
+    {
+      channel: 'delete-chat',
+      args: ['other-chat'],
+      capability: 'delete-chat',
+      service: 'deleteChat'
+    }
+  ] as const)(
+    'rejects a secondary renderer attempting cross-chat $capability before service or broadcast effects',
+    ({ channel, args, capability, service }) => {
+      const assertSenderChatScope = vi.fn(() => {
+        throw new Error('Renderer chat ownership does not match this request.')
+      })
+      const deps = createDeps({ assertSenderChatScope })
+      registerChatHandlers(deps)
+      const event = { sender: { id: 99 } }
+
+      expect(() => handlerFor(channel)(event, ...args)).toThrow(
+        'Renderer chat ownership does not match this request.'
+      )
+
+      expect(assertSenderChatScope).toHaveBeenCalledWith(event, 'other-chat', capability)
+      expect(deps.chatService[service]).not.toHaveBeenCalled()
+      expect(deps.broadcastThreadUpdate).not.toHaveBeenCalled()
+      expect(deps.broadcastThreadList).not.toHaveBeenCalled()
+      expect(deps.broadcastChatUpdated).not.toHaveBeenCalled()
+    }
+  )
+
+  it('atomically rebinds a canonical chat and broadcasts its new workspace grouping', () => {
+    const deps = createDeps()
+    registerChatHandlers(deps)
+    const event = { sender: { id: 42 } }
+
+    const result = handlerFor('rebind-chat-workspace')(event, {
+      chatId: 'chat-1',
+      scope: 'workspace',
+      workspaceId: 'test-3',
+      workspacePath: '/Users/chrisizatt/Documents/Test 3'
+    })
+
+    expect(deps.assertSenderCanRebindChatWorkspace).toHaveBeenCalledWith(event, 'chat-1')
+    expect(result).toMatchObject({
+      changed: true,
+      chat: {
+        appChatId: 'chat-1',
+        scope: 'workspace',
+        workspaceId: 'test-3',
+        workspacePath: '/Users/chrisizatt/Documents/Test 3'
+      }
+    })
+    expect(deps.getChatWorkspaceRebindBlocker).toHaveBeenCalledWith('chat-1')
+    expect(deps.broadcastChatUpdated).toHaveBeenCalledWith((result as any).chat)
+    expect(deps.broadcastThreadUpdate).toHaveBeenCalledWith('chat-1')
+    expect(deps.broadcastThreadList).toHaveBeenCalledTimes(1)
+  })
+
+  it('rejects an unauthorized secondary renderer before any workspace rebind side effect', () => {
+    const deps = createDeps({
+      assertSenderCanRebindChatWorkspace: vi.fn(() => {
+        throw new Error('Renderer chat ownership does not match this request.')
+      })
+    })
+    registerChatHandlers(deps)
+    const event = { sender: { id: 99 } }
+
+    expect(() =>
+      handlerFor('rebind-chat-workspace')(event, {
+        chatId: 'other-chat',
+        scope: 'workspace',
+        workspaceId: 'test-3',
+        workspacePath: '/Users/chrisizatt/Documents/Test 3'
+      })
+    ).toThrow('Renderer chat ownership does not match this request.')
+
+    expect(deps.assertSenderCanRebindChatWorkspace).toHaveBeenCalledWith(event, 'other-chat')
+    expect(deps.chatService.getChat).not.toHaveBeenCalled()
+    expect(deps.chatService.rebindChatWorkspace).not.toHaveBeenCalled()
+    expect(deps.getChatWorkspaceRebindBlocker).not.toHaveBeenCalled()
+    expect(deps.broadcastChatUpdated).not.toHaveBeenCalled()
+    expect(deps.broadcastThreadUpdate).not.toHaveBeenCalled()
+    expect(deps.broadcastThreadList).not.toHaveBeenCalled()
+  })
+
+  it('returns a canonical no-op without broadcasting workspace churn', () => {
+    const canonical = chat('chat-1', {
+      scope: 'workspace',
+      workspaceId: 'test-3',
+      workspacePath: '/Users/chrisizatt/Documents/Test 3'
+    })
+    const deps = createDeps({
+      chatService: {
+        ...createDeps().chatService,
+        getChat: vi.fn(() => canonical),
+        rebindChatWorkspace: vi.fn(() => canonical)
+      }
+    })
+    registerChatHandlers(deps)
+
+    expect(
+      handlerFor('rebind-chat-workspace')({} as any, {
+        chatId: 'chat-1',
+        scope: 'workspace',
+        workspaceId: 'test-3',
+        workspacePath: '/Users/chrisizatt/Documents/Test 3'
+      })
+    ).toEqual({ chat: canonical, changed: false })
+    expect(deps.broadcastChatUpdated).not.toHaveBeenCalled()
+    expect(deps.broadcastThreadUpdate).not.toHaveBeenCalled()
+    expect(deps.broadcastThreadList).not.toHaveBeenCalled()
+  })
+
+  it.each(['active', 'queued'] as const)(
+    'rejects a workspace rebind while main reports %s turn ownership',
+    (blocker) => {
+      const deps = createDeps({
+        getChatWorkspaceRebindBlocker: vi.fn(() => blocker)
+      })
+      registerChatHandlers(deps)
+
+      expect(() =>
+        handlerFor('rebind-chat-workspace')({} as any, {
+          chatId: 'chat-1',
+          scope: 'workspace',
+          workspaceId: 'test-3',
+          workspacePath: '/Users/chrisizatt/Documents/Test 3'
+        })
+      ).toThrow(`turn is ${blocker}`)
+      expect(deps.broadcastChatUpdated).not.toHaveBeenCalled()
+      expect(deps.broadcastThreadUpdate).not.toHaveBeenCalled()
+      expect(deps.broadcastThreadList).not.toHaveBeenCalled()
+    }
+  )
+
+  it('fails closed when the main lifecycle ownership guard is not wired', () => {
+    const deps = createDeps({ getChatWorkspaceRebindBlocker: undefined })
+    registerChatHandlers(deps)
+
+    expect(() =>
+      handlerFor('rebind-chat-workspace')({} as any, {
+        chatId: 'chat-1',
+        scope: 'global'
+      })
+    ).toThrow('lifecycle guard is unavailable')
+    expect(deps.broadcastChatUpdated).not.toHaveBeenCalled()
+  })
+
   it('saves chats with the renderer-save side effects preserved', () => {
     const previous = chat('chat-1', {
       title: 'Old title',
@@ -203,11 +555,22 @@ describe('registerChatHandlers', () => {
     vi.mocked(deps.chatService.getChat).mockReturnValue(previous)
     vi.mocked(deps.chatService.saveChat).mockImplementation((record: ChatRecord) => ({
       ...record,
-      title: 'New title'
+      title: 'New title',
+      persistenceRevision: 8
     }))
     registerChatHandlers(deps)
 
-    handlerFor('save-chat')({} as any, next)
+    const saved = handlerFor('save-chat')({} as any, next)
+
+    expect(saved).toMatchObject({
+      accepted: true,
+      previous,
+      chat: {
+        appChatId: 'chat-1',
+        title: 'New title',
+        persistenceRevision: 8
+      }
+    })
 
     expect(deps.normalizeTranscriptMarkdownMediaForChat).toHaveBeenCalledWith(next)
     expect(deps.chatService.saveChat).toHaveBeenCalledWith(next)
@@ -228,11 +591,61 @@ describe('registerChatHandlers', () => {
     )
   })
 
+  it('reports a stale save rejection without lending the canonical revision to queued writes', () => {
+    const canonical = chat('chat-1', {
+      title: 'Main-process mutation',
+      persistenceRevision: 8
+    })
+    const stale = chat('chat-1', {
+      title: 'Stale renderer mutation',
+      persistenceRevision: 7
+    })
+    const deps = createDeps()
+    vi.mocked(deps.chatService.getChat).mockReturnValue(canonical)
+    vi.mocked(deps.chatService.saveChat).mockReturnValue(canonical)
+    registerChatHandlers(deps)
+
+    expect(handlerFor('save-chat')({} as any, stale)).toEqual({
+      chat: canonical,
+      previous: canonical,
+      accepted: false
+    })
+    expect(deps.broadcastChatUpdated).toHaveBeenCalledWith(canonical)
+  })
+
+  it('authorizes save-chat from the payload appChatId before normalization or service effects', () => {
+    const assertSenderChatScope = vi.fn(() => {
+      throw new Error('Renderer chat ownership does not match this request.')
+    })
+    const deps = createDeps({ assertSenderChatScope })
+    registerChatHandlers(deps)
+    const event = { sender: { id: 99 } }
+    const hostileRecord = chat('other-chat', { title: 'Cross-chat overwrite' })
+
+    expect(() => handlerFor('save-chat')(event, hostileRecord)).toThrow(
+      'Renderer chat ownership does not match this request.'
+    )
+
+    expect(assertSenderChatScope).toHaveBeenCalledWith(event, 'other-chat', 'save-chat')
+    expect(deps.normalizeTranscriptMarkdownMediaForChat).not.toHaveBeenCalled()
+    expect(deps.chatService.getChat).not.toHaveBeenCalled()
+    expect(deps.chatService.saveChat).not.toHaveBeenCalled()
+    expect(deps.broadcastChatUpdated).not.toHaveBeenCalled()
+    expect(deps.maybeScheduleCodexNativeGoalSync).not.toHaveBeenCalled()
+    expect(deps.broadcastThreadUpdate).not.toHaveBeenCalled()
+    expect(deps.pushRemoteTaskCardDelta).not.toHaveBeenCalled()
+    expect(deps.pushRemoteThreadSnapshot).not.toHaveBeenCalled()
+  })
+
   it('routes delete, truncate, and clear chat channels through the injected service', () => {
     const deps = createDeps()
     vi.mocked(deps.chatService.getChat).mockReturnValue(chat('chat-1', {
       messages: [{ id: 'message-1', role: 'user', content: 'hello', timestamp: 'now' }],
       runs: [{ runId: 'run-1', provider: 'codex', startedAt: '2026-01-01T00:00:00.000Z' }]
+    }))
+    vi.mocked(deps.chatService.saveChat).mockImplementation((record: ChatRecord) => ({
+      ...record,
+      persistenceRevision: 4
     }))
     registerChatHandlers(deps)
 
@@ -241,9 +654,17 @@ describe('registerChatHandlers', () => {
     expect(deps.broadcastThreadList).toHaveBeenCalledTimes(1)
 
     const truncated = handlerFor('truncate-chat')({} as any, 'chat-1')
-    expect(truncated).toMatchObject({ appChatId: 'chat-1', messages: [], runs: [] })
+    expect(truncated).toMatchObject({
+      appChatId: 'chat-1',
+      messages: [],
+      runs: [],
+      persistenceRevision: 4
+    })
     expect(deps.chatService.saveChat).toHaveBeenCalledWith(
       expect.objectContaining({ appChatId: 'chat-1', messages: [], runs: [] })
+    )
+    expect(deps.broadcastChatUpdated).toHaveBeenCalledWith(
+      expect.objectContaining({ appChatId: 'chat-1', persistenceRevision: 4 })
     )
     expect(deps.broadcastThreadUpdate).toHaveBeenCalledWith('chat-1')
 

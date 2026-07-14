@@ -849,16 +849,19 @@ function normalizeComposerExternalPathGrants(
     if (!grant || grant.provider !== provider || typeof grant.path !== 'string') continue
     if (grant.issuedBy !== 'main' || typeof grant.signature !== 'string' || !grant.signature)
       continue
-    const access = grant.access === 'write' ? 'write' : 'read'
-    const grantPath = grant.path.trim()
-    if (!grantPath) continue
-    grants.push({
-      ...grant,
-      path: grantPath,
-      access,
-      kind: grant.kind === 'directory' ? 'directory' : 'file',
-      duration: grant.duration || 'thisThread'
-    })
+    if (!grant.path.trim()) continue
+    if (grant.access !== 'read' && grant.access !== 'write') continue
+    if (grant.kind !== 'file' && grant.kind !== 'directory') continue
+    if (
+      grant.duration !== 'thisRun' &&
+      grant.duration !== 'thisThread' &&
+      grant.duration !== 'workspace'
+    ) {
+      continue
+    }
+    // The run normalizer owns HMAC verification. Preserve the signed object
+    // byte-for-byte here; coercing any authority field would invalidate v2.
+    grants.push(grant)
   }
   // 1.0.6-EW66 — `order` is a renderer/display-only field; it has no
   // meaning in the provider dispatch payload, so strip it here.

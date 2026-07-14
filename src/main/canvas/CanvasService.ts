@@ -54,6 +54,8 @@ export interface CanvasServiceDeps {
     sessionId: string,
     opts?: {
       embedded?: boolean
+      /** Canonical main-owned chat authority for content-addressed image reads. */
+      appChatId?: string
       initialSketchDocument?: CanvasSketchDocument
       onSketchDocumentChange?: (document: CanvasSketchDocument) => void
     }
@@ -180,6 +182,7 @@ export class CanvasService implements CanvasController {
     // Validate up front so a bad input never even spawns a window / boots a sim.
     let recordUrl: string
     let eventHost: string | undefined
+    let imageAppChatId: string | undefined
     if (driverKind === 'device') {
       const bundleId = (input.bundleId || '').trim()
       if (!bundleId || !isValidBundleId(bundleId)) {
@@ -203,6 +206,14 @@ export class CanvasService implements CanvasController {
       const sha256 = (input.mediaSha256 || '').trim()
       const verdict = validateCanvasImageRef(sha256, (input.mediaMimeType || '').trim())
       if (!verdict.ok) throw new Error(verdict.reason || 'Invalid image attachment.')
+      if (
+        typeof ctx.chatId !== 'string' ||
+        !ctx.chatId ||
+        ctx.chatId.trim() !== ctx.chatId
+      ) {
+        throw new Error('The image driver requires an active canonical chat authority.')
+      }
+      imageAppChatId = ctx.chatId
       // The content hash IS the safe, secret-free id for the audit record.
       recordUrl = `image://${sha256}`
       eventHost = undefined
@@ -244,6 +255,7 @@ export class CanvasService implements CanvasController {
     const sketchScope = driverKind === 'sketch' ? this.sketchScope(ctx) : undefined
     const driver = this.deps.createDriver(driverKind, canvasId, {
       embedded,
+      appChatId: imageAppChatId,
       initialSketchDocument: sketchScope
         ? this.deps.store.getSketchDocument(sketchScope) ?? undefined
         : undefined,

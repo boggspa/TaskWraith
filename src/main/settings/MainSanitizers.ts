@@ -14,6 +14,7 @@ import type {
   ProductUpdateChangelog,
   RuntimeProfile,
   ScheduledTask,
+  ScheduledTaskAttachmentRef,
   UserMcpServerConfig,
   WorkspaceBoardCard,
   WorkspaceBoardCardLinkKind,
@@ -36,6 +37,11 @@ import { normalizePromptCacheSettings } from '../PromptCachePolicy'
 import { coerceLiveProvider, isRetiredProvider } from '../../shared/retiredProviders'
 import { isAppIconVariant, isWwdc26IconAvailable } from '../../shared/iconVariants'
 import { canPersistPlaintextFieldValue } from '../PlaintextSecretPolicy'
+import {
+  copyResolvedScheduledAttachments,
+  SCHEDULED_ATTACHMENT_RESELECT_REASON,
+  type StageScheduledAttachments
+} from '../ScheduledAttachmentDurability'
 
 // Grok + Cursor are first-class providers; no eligibility gate (see ProviderId).
 const PROVIDER_IDS = new Set<ProviderId>([
@@ -151,6 +157,7 @@ export interface MainSanitizerDeps {
   requireRegisteredWorkspace: (workspacePath: string, label?: string) => string
   canonicalPath: (value: string) => string
   normalizeExternalPathGrants: (grants: ExternalPathGrant[]) => ExternalPathGrant[]
+  stageScheduledAttachments: StageScheduledAttachments
 }
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
@@ -637,6 +644,82 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
     return workspace
   }
 
+  function normalizeScheduledAttachmentCandidates(
+    value: unknown,
+    label: string
+  ): ScheduledTaskAttachmentRef[] {
+    if (value === undefined) return []
+    if (!Array.isArray(value)) throw new Error(`${label} must be an array.`)
+    return value.map((attachment, index) => {
+      const input = requireRecord(attachment, `${label} ${index + 1}`)
+      const id = requireNonEmptyString(input.id, `${label} ${index + 1} id`)
+      const name = requireNonEmptyString(input.name, `${label} ${index + 1} name`)
+      const path = requireNonEmptyString(input.path, `${label} ${index + 1} path`)
+      if (input.persistenceVersion === undefined) return { id, name, path }
+      if (input.persistenceVersion !== 1) {
+        throw new Error(SCHEDULED_ATTACHMENT_RESELECT_REASON)
+      }
+      const byteLength = Number(input.byteLength)
+      if (!Number.isSafeInteger(byteLength) || byteLength <= 0) {
+        throw new Error(SCHEDULED_ATTACHMENT_RESELECT_REASON)
+      }
+      return {
+        persistenceVersion: 1 as const,
+        id,
+        path,
+        name,
+        sha256: requireNonEmptyString(input.sha256, `${label} ${index + 1} hash`),
+        mimeType: requireNonEmptyString(input.mimeType, `${label} ${index + 1} MIME type`),
+        byteLength
+      }
+    })
+  }
+
+  function stageScheduledAttachments(
+    value: unknown,
+    context: {
+      appChatId: string
+      workspaceId: string
+      workspacePath: string
+      externalPathGrants?: ExternalPathGrant[]
+    },
+    label: string,
+    existingPersistedValue?: unknown
+  ): ScheduledTaskAttachmentRef[] {
+    const attachments = normalizeScheduledAttachmentCandidates(value, label)
+    if (attachments.length === 0) return []
+    const existingLegacyAttachments = Array.isArray(existingPersistedValue)
+      ? existingPersistedValue.filter((attachment) => {
+          if (!isRecord(attachment) || attachment.persistenceVersion === 1) return false
+          return typeof attachment.path === 'string' && Boolean(attachment.path.trim())
+        })
+      : []
+    const resubmitsLegacyPath = attachments.some((attachment) => {
+      if ('persistenceVersion' in attachment && attachment.persistenceVersion === 1) return false
+      return existingLegacyAttachments.some((existing) => {
+        if (!isRecord(existing) || existing.path !== attachment.path) return false
+        const existingId = typeof existing.id === 'string' ? existing.id.trim() : ''
+        return Boolean(existingId) && existingId === attachment.id
+      })
+    })
+    if (resubmitsLegacyPath) throw new Error(SCHEDULED_ATTACHMENT_RESELECT_REASON)
+    try {
+      const staged = deps.stageScheduledAttachments({
+        appChatId: context.appChatId,
+        workspaceId: context.workspaceId,
+        workspacePath: context.workspacePath,
+        externalPathGrants: context.externalPathGrants || [],
+        attachments
+      })
+      if (!staged.ok) throw new Error(staged.reason)
+      const resolved = copyResolvedScheduledAttachments(attachments, staged.attachments)
+      if (!resolved) throw new Error('Attachment persistence returned an incomplete result.')
+      return resolved
+    } catch {
+      throw new Error(SCHEDULED_ATTACHMENT_RESELECT_REASON)
+    }
+  }
+
   function sanitizeScheduledTaskForSave(
     task: unknown
   ): Omit<ScheduledTask, 'id' | 'createdAt' | 'updatedAt' | 'status'> &
@@ -654,14 +737,27 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
       requireNonEmptyString(input.workspacePath, 'Scheduled task workspace'),
       input.workspaceId
     )
+    const workspacePath = deps.canonicalPath(workspace.path)
+    const appChatId = requireNonEmptyString(input.chatId, 'Scheduled task chat')
+    const externalPathGrants = normalizeScheduledTaskExternalGrants(input.externalPathGrants)
+    const imageAttachments = stageScheduledAttachments(
+      input.imageAttachments,
+      { appChatId, workspaceId: workspace.id, workspacePath, externalPathGrants },
+      'Scheduled task attachments',
+      typeof input.id === 'string'
+        ? deps.getScheduledTasks().find((task) => task.id === input.id)?.imageAttachments
+        : undefined
+    )
     const restInput = stripScheduledTaskTrustFields(input)
     return {
       ...restInput,
       runAt: new Date(runAtMs).toISOString(),
       workspaceId: workspace.id,
-      workspacePath: deps.canonicalPath(workspace.path),
+      workspacePath,
+      chatId: appChatId,
       provider: assertProviderId(input.provider),
-      externalPathGrants: normalizeScheduledTaskExternalGrants(input.externalPathGrants),
+      imageAttachments,
+      externalPathGrants,
       grokReasoningEffort: optionalStringOrNull(input.grokReasoningEffort),
       cursorReasoningEffort: optionalStringOrNull(input.cursorReasoningEffort),
       claudeFastMode: typeof input.claudeFastMode === 'boolean' ? input.claudeFastMode : undefined,
@@ -696,18 +792,45 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
     ) {
       throw new Error('Scheduled task workspace id cannot be changed by the renderer.')
     }
+    if (
+      'chatId' in input &&
+      input.chatId !== undefined &&
+      input.chatId !== existing.chatId
+    ) {
+      throw new Error('Scheduled task chat cannot be changed by the renderer.')
+    }
 
     const restInput = stripScheduledTaskTrustFields(input)
+    const workspacePath = deps.canonicalPath(workspace.path)
+    const externalPathGrants =
+      'externalPathGrants' in input
+        ? normalizeScheduledTaskExternalGrants(input.externalPathGrants)
+        : 'imageAttachments' in input
+          ? normalizeScheduledTaskExternalGrants(existing.externalPathGrants)
+          : undefined
     const sanitized: Partial<ScheduledTask> = {
       ...(restInput as Partial<ScheduledTask>),
       workspaceId: workspace.id,
-      workspacePath: deps.canonicalPath(workspace.path)
+      workspacePath
     }
     if ('provider' in input && input.provider !== undefined) {
       sanitized.provider = assertProviderId(input.provider)
     }
     if ('externalPathGrants' in input) {
-      sanitized.externalPathGrants = normalizeScheduledTaskExternalGrants(input.externalPathGrants)
+      sanitized.externalPathGrants = externalPathGrants
+    }
+    if ('imageAttachments' in input) {
+      sanitized.imageAttachments = stageScheduledAttachments(
+        input.imageAttachments,
+        {
+          appChatId: existing.chatId,
+          workspaceId: workspace.id,
+          workspacePath,
+          externalPathGrants
+        },
+        'Scheduled task attachments',
+        existing.imageAttachments
+      )
     }
     if ('claudeFastMode' in input) {
       sanitized.claudeFastMode =
@@ -773,7 +896,10 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
     return { kind: 'manual' }
   }
 
-  function sanitizeWorkflowTemplate(value: unknown): WorkflowRunTemplate {
+  function sanitizeWorkflowTemplate(
+    value: unknown,
+    existingTemplate?: WorkflowRunTemplate
+  ): WorkflowRunTemplate {
     const input = requireRecord(value, 'Workflow template')
     const workspace = assertScheduledTaskWorkspaceIdentity(
       requireNonEmptyString(input.workspacePath, 'Workflow workspace'),
@@ -781,12 +907,21 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
     )
     const prompt = typeof input.prompt === 'string' ? input.prompt : ''
     if (!prompt.trim()) throw new Error('Workflow prompt is required.')
+    const workspacePath = deps.canonicalPath(workspace.path)
+    const appChatId = requireNonEmptyString(input.chatId, 'Workflow chat')
+    const externalPathGrants = normalizeScheduledTaskExternalGrants(input.externalPathGrants)
+    const imageAttachments = stageScheduledAttachments(
+      input.imageAttachments,
+      { appChatId, workspaceId: workspace.id, workspacePath, externalPathGrants },
+      'Workflow attachments',
+      existingTemplate?.imageAttachments
+    )
     const restInput = stripScheduledTaskTrustFields(input)
     return {
       ...restInput,
       workspaceId: workspace.id,
-      workspacePath: deps.canonicalPath(workspace.path),
-      chatId: requireNonEmptyString(input.chatId, 'Workflow chat'),
+      workspacePath,
+      chatId: appChatId,
       provider: assertProviderId(input.provider),
       prompt,
       displayPrompt: optionalString(input.displayPrompt),
@@ -794,10 +929,8 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
       customModel: optionalString(input.customModel) || '',
       approvalMode: optionalString(input.approvalMode) || 'default',
       sessionTrust: Boolean(input.sessionTrust),
-      imageAttachments: Array.isArray(input.imageAttachments)
-        ? (input.imageAttachments as any)
-        : [],
-      externalPathGrants: normalizeScheduledTaskExternalGrants(input.externalPathGrants),
+      imageAttachments,
+      externalPathGrants,
       geminiWorktree: input.geminiWorktree as any,
       codexReasoningEffort: optionalString(input.codexReasoningEffort),
       grokReasoningEffort: optionalString(input.grokReasoningEffort),
@@ -823,7 +956,10 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
       Pick<WorkflowDefinition, 'id' | 'createdAt' | 'updatedAt' | 'history' | 'failureStreak'>
     > {
     const input = requireRecord(workflow, 'Workflow')
-    const template = sanitizeWorkflowTemplate(input.template)
+    const existing = optionalString(input.id)
+      ? deps.getWorkflowDefinitions().find((workflow) => workflow.id === optionalString(input.id))
+      : undefined
+    const template = sanitizeWorkflowTemplate(input.template, existing?.template)
     const limits = isRecord(input.limits) ? input.limits : {}
     return {
       id: optionalString(input.id),
@@ -854,7 +990,9 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
     if ('name' in input) sanitized.name = requireNonEmptyString(input.name, 'Workflow name')
     if ('enabled' in input) sanitized.enabled = input.enabled !== false
     if ('trigger' in input) sanitized.trigger = sanitizeWorkflowTrigger(input.trigger)
-    if ('template' in input) sanitized.template = sanitizeWorkflowTemplate(input.template)
+    if ('template' in input) {
+      sanitized.template = sanitizeWorkflowTemplate(input.template, existing.template)
+    }
     if ('missedRunPolicy' in input) {
       sanitized.missedRunPolicy = input.missedRunPolicy === 'skip' ? 'skip' : 'coalesce'
     }

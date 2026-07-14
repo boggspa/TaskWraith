@@ -48,7 +48,8 @@ function createDeps() {
       setDefaultGeminiAuthProfile: vi.fn(() => summary),
       startGeminiOAuthLogin: vi.fn(async () => oauthStatus),
       getGeminiOAuthLoginStatus: vi.fn(() => oauthStatus),
-      cancelGeminiOAuthLogin: vi.fn(() => oauthStatus)
+      cancelGeminiOAuthLogin: vi.fn(() => oauthStatus),
+      isMainRendererSender: vi.fn(() => true)
     },
     profile,
     summary,
@@ -87,6 +88,57 @@ describe('registerGeminiAuthHandlers', () => {
     expect(deps.getDefaultGeminiAuthProfileId).toHaveBeenCalledTimes(1)
     expect(deps.getGeminiAuthProfiles).toHaveBeenCalledTimes(1)
     expect(deps.summarizeGeminiAuthProfile).toHaveBeenCalledWith(profile, 'profile-1')
+  })
+
+  it('omits binary paths, OAuth identity, and live login state from secondary reads', async () => {
+    const { deps } = createDeps()
+    const profile = {
+      id: 'profile-1',
+      label: 'Work',
+      kind: 'google-oauth',
+      configured: true,
+      isDefault: true,
+      authState: 'google-oauth',
+      createdAt: '2026-07-13T00:00:00.000Z',
+      updatedAt: '2026-07-13T00:00:00.000Z',
+      oauthConfigured: true,
+      oauthEmail: 'private@example.test',
+      oauthLogin: {
+        profileId: 'profile-1',
+        status: 'running',
+        authUrl: 'https://accounts.example.test/private-code'
+      }
+    } as GeminiAuthProfileSummary
+    deps.isMainRendererSender.mockReturnValue(false)
+    deps.summarizeGeminiAuthProfile.mockReturnValue(profile)
+    deps.getGeminiAuthStatusSnapshot.mockResolvedValue({
+      available: true,
+      authState: 'google-oauth',
+      apiKeyConfigured: false,
+      encryptionAvailable: true,
+      version: '1.0.0',
+      binaryPath: '/Users/private/.local/bin/gemini',
+      activeProfileId: 'profile-1',
+      activeProfileLabel: 'Work',
+      profiles: [profile],
+      oauthLogin: profile.oauthLogin
+    })
+    registerGeminiAuthHandlers(deps)
+    const event = { sender: { id: 42 } }
+
+    const status = await handlerFor('get-gemini-auth-status')(event)
+    const profiles = await handlerFor('list-gemini-auth-profiles')(event)
+
+    expect(status).toMatchObject({
+      available: true,
+      authState: 'google-oauth',
+      activeProfileId: 'profile-1',
+      profiles: [expect.objectContaining({ id: 'profile-1', oauthConfigured: true })]
+    })
+    expect(profiles).toEqual([expect.objectContaining({ id: 'profile-1', oauthConfigured: true })])
+    expect(JSON.stringify({ status, profiles })).not.toContain('/Users/private')
+    expect(JSON.stringify({ status, profiles })).not.toContain('private@example.test')
+    expect(JSON.stringify({ status, profiles })).not.toContain('private-code')
   })
 
   it('passes save/delete/set-default/profileId and oauth args through unchanged', async () => {

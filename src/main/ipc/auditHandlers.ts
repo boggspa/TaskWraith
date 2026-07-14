@@ -1,4 +1,4 @@
-import { ipcMain } from 'electron'
+import { ipcMain, type IpcMainInvokeEvent } from 'electron'
 import type { AuditOrchestrator, StartAuditInput } from '../audit/AuditOrchestrator'
 import type { AuditMode, AuditRunRecord } from '../store/types'
 import { assertProviderId, optionalString, requireNonEmptyString } from '../settings/MainSanitizers'
@@ -31,12 +31,26 @@ import { assertProviderId, optionalString, requireNonEmptyString } from '../sett
  * scans `src/main/ipc/*.ts`, so these channels' arg schemas stay enforced at
  * build time (added to IPC_ARGUMENT_SCHEMAS in IpcValidation.ts).
  */
+export type AuditSenderScope =
+  | { kind: 'main' }
+  | {
+      kind: 'chat'
+      chatId: string
+      workspacePath: string
+      workspaceId?: string
+    }
+
 export interface AuditHandlerDeps {
   /** The live orchestrator (assigned in app.whenReady()); null before init. */
   getAuditOrchestrator: () => AuditOrchestrator | null
   /** Store readers for the get-* channels. */
   getAuditRun: (id: string) => AuditRunRecord | null
   getAuditRuns: (workspaceId?: string) => AuditRunRecord[]
+  /** Resolve the calling renderer's durable audit authority. Non-chat popouts
+   * must be rejected by the resolver rather than represented as a wider scope. */
+  resolveSenderAuditScope: (event: IpcMainInvokeEvent) => AuditSenderScope
+  /** Compare canonical workspace identity without trusting renderer strings. */
+  workspacePathsEqual: (left: string, right: string) => boolean
   /** Validate and canonicalize the workspace path before reserving the run slot. */
   validateWorkspacePath?: (workspacePath: string) => string
   /** Reserve the single in-flight audit slot synchronously; returns false if one
@@ -62,11 +76,39 @@ function normalizeMode(mode: unknown): AuditMode {
   return mode === 'deep' || mode === 'release' ? mode : 'quick'
 }
 
+const AUDIT_SCOPE_ERROR = 'Audit run is unavailable to this renderer.'
+
+function auditRecordMatchesScope(
+  scope: AuditSenderScope,
+  record: AuditRunRecord,
+  workspacePathsEqual: AuditHandlerDeps['workspacePathsEqual']
+): boolean {
+  if (scope.kind === 'main') return true
+  if (record.chatId !== scope.chatId) return false
+  if (!workspacePathsEqual(record.workspacePath, scope.workspacePath)) return false
+  if (record.workspaceId && scope.workspaceId && record.workspaceId !== scope.workspaceId) {
+    return false
+  }
+  return true
+}
+
+function assertAuditRecordScope(
+  scope: AuditSenderScope,
+  record: AuditRunRecord | null,
+  workspacePathsEqual: AuditHandlerDeps['workspacePathsEqual']
+): asserts record is AuditRunRecord {
+  if (!record || !auditRecordMatchesScope(scope, record, workspacePathsEqual)) {
+    throw new Error(AUDIT_SCOPE_ERROR)
+  }
+}
+
 export function registerAuditHandlers(deps: AuditHandlerDeps): void {
   const {
     getAuditOrchestrator,
     getAuditRun,
     getAuditRuns,
+    resolveSenderAuditScope,
+    workspacePathsEqual,
     validateWorkspacePath,
     beginAuditRun,
     endAuditRun,
@@ -74,16 +116,22 @@ export function registerAuditHandlers(deps: AuditHandlerDeps): void {
     clearAuditRunCancelled
   } = deps
 
-  ipcMain.handle('audit-run:start', async (_event, input: StartAuditRunInput) => {
-    const orchestrator = getAuditOrchestrator()
-    if (!orchestrator) {
-      throw new Error('Audit orchestrator is not ready yet.')
-    }
+  ipcMain.handle('audit-run:start', async (event, input: StartAuditRunInput) => {
+    const scope = resolveSenderAuditScope(event)
     const chatId = requireNonEmptyString(input?.chatId, 'chatId')
     const rawWorkspacePath = requireNonEmptyString(input?.workspacePath, 'workspacePath')
     const workspacePath = validateWorkspacePath
       ? validateWorkspacePath(rawWorkspacePath)
       : rawWorkspacePath
+    const requestedWorkspaceId = optionalString(input?.workspaceId)
+    if (scope.kind === 'chat') {
+      if (chatId !== scope.chatId || !workspacePathsEqual(workspacePath, scope.workspacePath)) {
+        throw new Error(AUDIT_SCOPE_ERROR)
+      }
+      if (requestedWorkspaceId && requestedWorkspaceId !== scope.workspaceId) {
+        throw new Error(AUDIT_SCOPE_ERROR)
+      }
+    }
     const start: StartAuditInput = {
       mode: normalizeMode(input?.mode),
       chatId,
@@ -91,7 +139,15 @@ export function registerAuditHandlers(deps: AuditHandlerDeps): void {
       ...(optionalString(input?.preferredProvider)
         ? { preferredProvider: assertProviderId(input!.preferredProvider) }
         : {}),
-      ...(optionalString(input?.workspaceId) ? { workspaceId: input!.workspaceId } : {})
+      ...(scope.kind === 'chat' && scope.workspaceId
+        ? { workspaceId: scope.workspaceId }
+        : requestedWorkspaceId
+          ? { workspaceId: requestedWorkspaceId }
+          : {})
+    }
+    const orchestrator = getAuditOrchestrator()
+    if (!orchestrator) {
+      throw new Error('Audit orchestrator is not ready yet.')
     }
     // Reserve the single in-flight slot BEFORE awaiting anything — a second
     // overlapping /audit would otherwise clobber the orchestrator's per-run
@@ -108,6 +164,9 @@ export function registerAuditHandlers(deps: AuditHandlerDeps): void {
     let record: AuditRunRecord | null = null
     try {
       record = await orchestrator.run(start)
+      if (scope.kind === 'chat') {
+        assertAuditRecordScope(scope, record, workspacePathsEqual)
+      }
       return record
     } finally {
       // run() has resolved (completed / failed / cancelled) — clear the cancel
@@ -118,18 +177,37 @@ export function registerAuditHandlers(deps: AuditHandlerDeps): void {
     }
   })
 
-  ipcMain.handle('audit-run:cancel', async (_event, auditRunId: string) => {
+  ipcMain.handle('audit-run:cancel', async (event, auditRunId: string) => {
+    const scope = resolveSenderAuditScope(event)
     const id = requireNonEmptyString(auditRunId, 'auditRunId')
+    if (scope.kind === 'chat') {
+      assertAuditRecordScope(scope, getAuditRun(id), workspacePathsEqual)
+    }
     markAuditRunCancelled(id)
     return { ok: true }
   })
 
-  ipcMain.handle('get-audit-run', async (_event, auditRunId: string) => {
+  ipcMain.handle('get-audit-run', async (event, auditRunId: string) => {
+    const scope = resolveSenderAuditScope(event)
     const id = requireNonEmptyString(auditRunId, 'auditRunId')
-    return getAuditRun(id)
+    const record = getAuditRun(id)
+    if (scope.kind === 'chat') {
+      assertAuditRecordScope(scope, record, workspacePathsEqual)
+    }
+    return record
   })
 
-  ipcMain.handle('get-audit-runs', async (_event, workspaceId?: string) => {
-    return getAuditRuns(optionalString(workspaceId))
+  ipcMain.handle('get-audit-runs', async (event, workspaceId?: string) => {
+    const scope = resolveSenderAuditScope(event)
+    const requestedWorkspaceId = optionalString(workspaceId)
+    if (scope.kind === 'main') {
+      return getAuditRuns(requestedWorkspaceId)
+    }
+    if (requestedWorkspaceId && requestedWorkspaceId !== scope.workspaceId) {
+      throw new Error(AUDIT_SCOPE_ERROR)
+    }
+    return getAuditRuns(scope.workspaceId).filter((record) =>
+      auditRecordMatchesScope(scope, record, workspacePathsEqual)
+    )
   })
 }

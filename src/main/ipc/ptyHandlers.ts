@@ -25,6 +25,10 @@ import type { AgenticServiceId, ProviderId } from '../store/types'
  */
 export interface PtyHandlerDeps {
   requireRegisteredWorkspace: (workspacePath: string, label?: string) => string
+  assertSenderWorkspaceScope: (
+    event: Electron.IpcMainInvokeEvent,
+    workspacePath: string
+  ) => void
   requestAgenticServiceApproval: (
     sender: Electron.WebContents | null,
     provider: ProviderId,
@@ -40,7 +44,7 @@ export interface PtyHandlerDeps {
 }
 
 export function registerPtyHandlers(deps: PtyHandlerDeps): void {
-  const { requireRegisteredWorkspace, requestAgenticServiceApproval } = deps
+  const { requireRegisteredWorkspace, assertSenderWorkspaceScope, requestAgenticServiceApproval } = deps
 
   // PTY for Trust Assistant
   const ptyProcesses = new Map<string, pty.IPty>()
@@ -51,6 +55,7 @@ export function registerPtyHandlers(deps: PtyHandlerDeps): void {
     'start-pty',
     async (event, workspacePath: string, sessionId: string = 'default') => {
       const registeredWorkspace = requireRegisteredWorkspace(workspacePath)
+      assertSenderWorkspaceScope(event, registeredWorkspace)
       const ptySessionId = optionalString(sessionId) || 'default'
       const sessionKey = ptySessionKey(event.sender.id, ptySessionId)
       stoppedPtySessions.delete(sessionKey)

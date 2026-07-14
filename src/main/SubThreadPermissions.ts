@@ -10,10 +10,11 @@ import type {
  * The resolved permissions a delegated sub-thread should run under.
  *
  * A sub-thread must never be MORE permissive than its delegator, so it inherits
- * the parent run's effective posture verbatim — notably read_only's
- * shellCommands / fileChanges denies. When the parent has no explicit posture
- * (undefined), the sub-thread falls back to global settings, unchanged from the
- * pre-fix behaviour for non-posture runs.
+ * the parent run's effective posture — notably read_only's shellCommands /
+ * fileChanges denies — after dropping parent-bound external-path bearer
+ * grants. When the parent has no explicit posture (undefined), the sub-thread
+ * falls back to global settings, unchanged from the pre-fix behaviour for
+ * non-posture runs.
  *
  * SECURITY: without this inheritance a read-only participant could delegate a
  * write. The delegated sub-thread session would carry no effectivePermissions,
@@ -24,7 +25,14 @@ import type {
 export function inheritedSubThreadPermissions(parent: {
   effectivePermissions?: EffectiveRunPermissions
 }): EffectiveRunPermissions | undefined {
-  return parent.effectivePermissions
+  if (!parent.effectivePermissions) return undefined
+  // External-path grants are signed bearer capabilities bound to the parent
+  // chat/run. A child cannot safely inherit them: main must issue a fresh grant
+  // for the child identity if that workflow is ever added. Fail closed today.
+  return {
+    ...clonePermissions(parent.effectivePermissions),
+    externalPathGrants: []
+  }
 }
 
 export type SubThreadWorkerIsolationRequest =
@@ -87,14 +95,6 @@ function cloneGrant(grant: ExternalPathGrant): ExternalPathGrant {
   return { ...grant }
 }
 
-function readOnlyExternalGrants(
-  permissions: EffectiveRunPermissions | undefined
-): ExternalPathGrant[] {
-  return (permissions?.externalPathGrants || [])
-    .filter((grant) => grant.access === 'read')
-    .map(cloneGrant)
-}
-
 function clonePermissions(permissions: EffectiveRunPermissions): EffectiveRunPermissions {
   return {
     ...permissions,
@@ -126,7 +126,7 @@ function capAtReadOnly(
       parentPermissions.networkAccess === 'deny' || readOnly.networkAccess === 'deny'
         ? 'deny'
         : 'allow',
-    externalPathGrants: readOnlyExternalGrants(parentPermissions),
+    externalPathGrants: [],
     workspaceGrantServiceIds: parentPermissions.workspaceGrantServiceIds.filter(
       (service) => agenticServices[service] === 'workspace'
     ),
@@ -145,7 +145,7 @@ function capWriterPermissions(
     // Never let an async worker drop the provider sandbox. An isolated
     // worktree/direct-checkout lease needs workspace writes, not host access.
     presetId: capped.presetId === 'full_access' ? 'workspace_write' : capped.presetId,
-    externalPathGrants: readOnlyExternalGrants(capped),
+    externalPathGrants: [],
     readOnly: false
   }
 }

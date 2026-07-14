@@ -202,7 +202,19 @@ function makeSanitizers(settings: AppSettings) {
       workspacePath === workspace.path ? workspace : undefined,
     requireRegisteredWorkspace: (workspacePath: string) => workspacePath,
     canonicalPath: (value: string) => value,
-    normalizeExternalPathGrants: (grants: ExternalPathGrant[]) => grants
+    normalizeExternalPathGrants: (grants: ExternalPathGrant[]) => grants,
+    stageScheduledAttachments: ({ attachments }) => ({
+      ok: true,
+      attachments: attachments.map((attachment) => ({
+        persistenceVersion: 1,
+        id: attachment.id,
+        path: `/tmp/taskwraith-assets/${attachment.id}.png`,
+        name: attachment.name,
+        sha256: 'a'.repeat(43),
+        mimeType: 'image/png',
+        byteLength: 8
+      }))
+    })
   })
 }
 
@@ -228,6 +240,294 @@ describe('MainSanitizers scheduled tasks', () => {
       })
     ).toThrow('Scheduled task run time must be in the future.')
     expect(sanitizeScheduledTaskForSave(baseTask).runAt).toEqual(baseTask.runAt)
+  })
+
+  it('stages scheduled attachments only after workspace and grant normalization', () => {
+    const events: string[] = []
+    const stageScheduledAttachments = vi.fn(({ attachments }) => {
+      events.push('stage')
+      return {
+        ok: true as const,
+        attachments: attachments.map((attachment) => ({
+          persistenceVersion: 1 as const,
+          path: `/tmp/taskwraith-assets/${attachment.id}.png`,
+          sha256: 'b'.repeat(43),
+          mimeType: 'image/png',
+          byteLength: 12
+        }))
+      }
+    })
+    const { sanitizeScheduledTaskForSave } = createMainSanitizers({
+      getSettings: () => makeSettings(),
+      getScheduledTasks: () => [],
+      getWorkflowDefinitions: () => [],
+      findRegisteredWorkspace: () => ({
+        id: 'workspace-1',
+        path: '/canonical/workspace',
+        displayName: 'Workspace',
+        lastOpenedAt: 1,
+        createdAt: 1,
+        pinned: false
+      }),
+      requireRegisteredWorkspace: (workspacePath: string) => workspacePath,
+      canonicalPath: (value: string) => {
+        events.push('canonical')
+        return value
+      },
+      normalizeExternalPathGrants: (grants: ExternalPathGrant[]) => {
+        events.push('grants')
+        return grants
+      },
+      stageScheduledAttachments
+    })
+
+    const saved = sanitizeScheduledTaskForSave({
+      workspaceId: 'workspace-1',
+      workspacePath: '/canonical/workspace',
+      chatId: 'chat-1',
+      provider: 'codex',
+      prompt: 'Run later',
+      selectedModelType: 'cli-default',
+      customModel: '',
+      approvalMode: 'default',
+      sessionTrust: false,
+      imageAttachments: [{ id: 'image-1', name: 'proof.png', path: '/fresh/proof.png' }],
+      runAt: new Date(Date.now() + 60_000).toISOString(),
+      timezone: 'Europe/London'
+    })
+
+    expect(events).toEqual(['canonical', 'grants', 'stage'])
+    expect(stageScheduledAttachments).toHaveBeenCalledWith({
+      appChatId: 'chat-1',
+      workspaceId: 'workspace-1',
+      workspacePath: '/canonical/workspace',
+      externalPathGrants: [],
+      attachments: [{ id: 'image-1', name: 'proof.png', path: '/fresh/proof.png' }]
+    })
+    expect(saved.imageAttachments).toEqual([
+      {
+        persistenceVersion: 1,
+        id: 'image-1',
+        path: '/tmp/taskwraith-assets/image-1.png',
+        name: 'proof.png',
+        sha256: 'b'.repeat(43),
+        mimeType: 'image/png',
+        byteLength: 12
+      }
+    ])
+  })
+
+  it('requires attachment identity and surfaces re-selection guidance when staging fails', () => {
+    const stageScheduledAttachments = vi.fn(() => ({
+      ok: false as const,
+      reason: 'missing'
+    }))
+    const sanitizer = createMainSanitizers({
+      getSettings: () => makeSettings(),
+      getScheduledTasks: () => [],
+      getWorkflowDefinitions: () => [],
+      findRegisteredWorkspace: () => ({
+        id: 'workspace-1',
+        path: '/tmp/taskwraith-workspace',
+        displayName: 'Workspace',
+        lastOpenedAt: 1,
+        createdAt: 1,
+        pinned: false
+      }),
+      requireRegisteredWorkspace: (workspacePath: string) => workspacePath,
+      canonicalPath: (value: string) => value,
+      normalizeExternalPathGrants: (grants: ExternalPathGrant[]) => grants,
+      stageScheduledAttachments
+    })
+    const baseTask = {
+      workspaceId: 'workspace-1',
+      workspacePath: '/tmp/taskwraith-workspace',
+      chatId: 'chat-1',
+      provider: 'codex',
+      prompt: 'Run later',
+      selectedModelType: 'cli-default',
+      customModel: '',
+      approvalMode: 'default',
+      sessionTrust: false,
+      runAt: new Date(Date.now() + 60_000).toISOString(),
+      timezone: 'Europe/London'
+    }
+
+    expect(() =>
+      sanitizer.sanitizeScheduledTaskForSave({
+        ...baseTask,
+        imageAttachments: [{ id: '', name: 'proof.png', path: '/fresh/proof.png' }]
+      })
+    ).toThrow('Scheduled task attachments 1 id is required.')
+    expect(() =>
+      sanitizer.sanitizeScheduledTaskForSave({
+        ...baseTask,
+        imageAttachments: [{ id: 'image-1', name: 'proof.png', path: '/fresh/proof.png' }]
+      })
+    ).toThrow('Re-select the attachments')
+  })
+
+  it('uses effective stored grants for attachment patches and leaves attachments untouched otherwise', () => {
+    const grant: ExternalPathGrant = {
+      id: 'grant-1',
+      provider: 'codex',
+      path: '/external',
+      kind: 'directory',
+      access: 'read',
+      duration: 'workspace',
+      createdAt: '2026-07-13T00:00:00.000Z'
+    }
+    const existing = {
+      id: 'task-1',
+      workspaceId: 'workspace-1',
+      workspacePath: '/tmp/taskwraith-workspace',
+      chatId: 'chat-1',
+      provider: 'codex' as const,
+      prompt: 'Run later',
+      selectedModelType: 'cli-default',
+      customModel: '',
+      approvalMode: 'default',
+      sessionTrust: false,
+      imageAttachments: [],
+      externalPathGrants: [grant],
+      runAt: new Date(Date.now() + 60_000).toISOString(),
+      timezone: 'Europe/London',
+      status: 'pending' as const,
+      createdAt: '2026-07-13T00:00:00.000Z',
+      updatedAt: '2026-07-13T00:00:00.000Z'
+    }
+    const stageScheduledAttachments = vi.fn(({ attachments }) => ({
+      ok: true as const,
+      attachments: attachments.map(() => ({
+        persistenceVersion: 1 as const,
+        path: '/tmp/taskwraith-assets/proof.png',
+        sha256: 'c'.repeat(43),
+        mimeType: 'image/png',
+        byteLength: 12
+      }))
+    }))
+    const { sanitizeScheduledTaskPatch } = createMainSanitizers({
+      getSettings: () => makeSettings(),
+      getScheduledTasks: () => [existing],
+      getWorkflowDefinitions: () => [],
+      findRegisteredWorkspace: () => ({
+        id: 'workspace-1',
+        path: '/tmp/taskwraith-workspace',
+        displayName: 'Workspace',
+        lastOpenedAt: 1,
+        createdAt: 1,
+        pinned: false
+      }),
+      requireRegisteredWorkspace: (workspacePath: string) => workspacePath,
+      canonicalPath: (value: string) => value,
+      normalizeExternalPathGrants: (grants: ExternalPathGrant[]) => grants,
+      stageScheduledAttachments
+    })
+
+    expect(sanitizeScheduledTaskPatch('task-1', { approvalMode: 'plan' })).not.toHaveProperty(
+      'imageAttachments'
+    )
+    expect(stageScheduledAttachments).not.toHaveBeenCalled()
+    expect(() =>
+      sanitizeScheduledTaskPatch('task-1', { chatId: 'other-chat' })
+    ).toThrow('Scheduled task chat cannot be changed by the renderer.')
+
+    sanitizeScheduledTaskPatch('task-1', {
+      imageAttachments: [{ id: 'image-1', name: 'proof.png', path: '/external/proof.png' }]
+    })
+    expect(stageScheduledAttachments).toHaveBeenCalledWith(
+      expect.objectContaining({ externalPathGrants: [grant] })
+    )
+  })
+
+  it('does not silently upgrade an existing legacy attachment path during a patch', () => {
+    const stageScheduledAttachments = vi.fn(() => ({ ok: true as const, attachments: [] }))
+    const existing = {
+      id: 'task-1',
+      workspaceId: 'workspace-1',
+      workspacePath: '/tmp/taskwraith-workspace',
+      chatId: 'chat-1',
+      provider: 'codex' as const,
+      prompt: 'Run later',
+      selectedModelType: 'cli-default',
+      customModel: '',
+      approvalMode: 'default',
+      sessionTrust: false,
+      imageAttachments: [
+        { id: 'legacy-1', name: 'legacy.png', path: '/tmp/taskwraith-workspace/legacy.png' }
+      ],
+      runAt: new Date(Date.now() + 60_000).toISOString(),
+      timezone: 'Europe/London',
+      status: 'pending' as const,
+      createdAt: '2026-07-13T00:00:00.000Z',
+      updatedAt: '2026-07-13T00:00:00.000Z'
+    }
+    const { sanitizeScheduledTaskPatch } = createMainSanitizers({
+      getSettings: () => makeSettings(),
+      getScheduledTasks: () => [existing],
+      getWorkflowDefinitions: () => [],
+      findRegisteredWorkspace: () => ({
+        id: 'workspace-1',
+        path: '/tmp/taskwraith-workspace',
+        displayName: 'Workspace',
+        lastOpenedAt: 1,
+        createdAt: 1,
+        pinned: false
+      }),
+      requireRegisteredWorkspace: (workspacePath: string) => workspacePath,
+      canonicalPath: (value: string) => value,
+      normalizeExternalPathGrants: (grants: ExternalPathGrant[]) => grants,
+      stageScheduledAttachments
+    })
+
+    expect(() =>
+      sanitizeScheduledTaskPatch('task-1', {
+        imageAttachments: [
+          { id: 'legacy-1', name: 'legacy.png', path: '/tmp/taskwraith-workspace/legacy.png' }
+        ]
+      })
+    ).toThrow('Re-select the attachments')
+    expect(stageScheduledAttachments).not.toHaveBeenCalled()
+  })
+
+  it('persists workflow-template attachments with stable non-empty identity', () => {
+    const { sanitizeWorkflowForSave } = makeSanitizers(makeSettings())
+    const saved = sanitizeWorkflowForSave({
+      name: 'Daily review',
+      workspaceId: 'workspace-1',
+      workspacePath: '/tmp/taskwraith-workspace',
+      enabled: true,
+      trigger: { kind: 'manual' },
+      template: {
+        workspaceId: 'workspace-1',
+        workspacePath: '/tmp/taskwraith-workspace',
+        chatId: 'chat-1',
+        provider: 'codex',
+        prompt: 'Review the project.',
+        selectedModelType: 'cli-default',
+        customModel: '',
+        approvalMode: 'default',
+        sessionTrust: false,
+        imageAttachments: [
+          { id: 'workflow-image', name: 'workflow.png', path: '/fresh/workflow.png' }
+        ]
+      },
+      missedRunPolicy: 'coalesce',
+      concurrencyPolicy: 'skip',
+      limits: {}
+    })
+
+    expect(saved.template.imageAttachments).toEqual([
+      {
+        persistenceVersion: 1,
+        id: 'workflow-image',
+        path: '/tmp/taskwraith-assets/workflow-image.png',
+        name: 'workflow.png',
+        sha256: 'a'.repeat(43),
+        mimeType: 'image/png',
+        byteLength: 8
+      }
+    ])
   })
 
   it('strips renderer-supplied scheduled task posture and dispatch receipts', () => {
@@ -281,7 +581,19 @@ describe('MainSanitizers scheduled tasks', () => {
           : undefined,
       requireRegisteredWorkspace: (workspacePath: string) => workspacePath,
       canonicalPath: (value: string) => value,
-      normalizeExternalPathGrants: (grants: ExternalPathGrant[]) => grants
+      normalizeExternalPathGrants: (grants: ExternalPathGrant[]) => grants,
+      stageScheduledAttachments: ({ attachments }) => ({
+        ok: true,
+        attachments: attachments.map((attachment) => ({
+          persistenceVersion: 1,
+          id: attachment.id,
+          path: `/tmp/taskwraith-assets/${attachment.id}.png`,
+          name: attachment.name,
+          sha256: 'a'.repeat(43),
+          mimeType: 'image/png',
+          byteLength: 8
+        }))
+      })
     })
     const patch = sanitizePatchWithExisting('task-1', {
       status: 'due',

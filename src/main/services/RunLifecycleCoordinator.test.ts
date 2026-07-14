@@ -75,6 +75,7 @@ describe('RunLifecycleCoordinator', () => {
         imageAttachments: [
           { path: '/tmp/a.png', id: 'img-1', name: 'a.png' } as RunQueueRequestSnapshot['imageAttachments'][number]
         ],
+        dmTargetParticipantId: 'participant-codex',
         displayPrompt: '   Clean this up.   '
       })
     })
@@ -112,6 +113,7 @@ describe('RunLifecycleCoordinator', () => {
         workflowMode: 'plan',
         sessionTrust: false,
         imageAttachments: [{ id: 'img-1', path: '/tmp/a.png', name: 'a.png' }],
+        dmTargetParticipantId: 'participant-codex',
         displayPrompt: '   Clean this up.   '
       },
       dispatchReceipt: {

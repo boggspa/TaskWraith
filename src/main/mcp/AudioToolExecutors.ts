@@ -225,17 +225,20 @@ export interface AudioToolExecutorDeps {
     ctx: AudioToolContext
   ) => Promise<ResolvedAudioSource>
   /**
-   * Realpath-jail a workspace audio path → its real path (the daemon reads the FILE,
-   * not bytes). DISTINCT from `resolveAudioSource` (which returns decoded bytes for the
-   * offscreen waveform engine): inspect_audio_segment v2 hands a path to the daemon's
-   * `audio.windowClip` RPC, so it needs the jailed realPath, not a base64 blob. Returns
-   * the same jail failure reasons as resolveAudioSource. OPTIONAL so older callers/tests
-   * that never invoke inspect_audio_segment need not provide it.
+   * Snapshot an authorized workspace audio path into a main-owned staging file (the
+   * daemon reads a FILE, not bytes). DISTINCT from `resolveAudioSource` (which returns
+   * decoded bytes for the offscreen waveform engine): inspect_audio_segment v2 hands a
+   * stable staged path to the daemon's `audio.windowClip` RPC. A successful result owns
+   * that staging file until `cleanup` is called. Returns the same authorization failure
+   * reasons as resolveAudioSource. OPTIONAL so older callers/tests that never invoke
+   * inspect_audio_segment need not provide it.
    */
   jailAudio?: (
     args: Record<string, unknown>,
     ctx: AudioToolContext
-  ) => { ok: true; realPath: string } | { ok: false; reason: string }
+  ) =>
+    | { ok: true; realPath: string; cleanup: () => boolean | void }
+    | { ok: false; reason: string }
   /**
    * Produce a PLAYABLE windowed clip for inspect_audio_segment: slice [startMs,endMs] out
    * of the (already-jailed) `sourcePath` via the daemon's native `audio.windowClip`, read
@@ -485,7 +488,7 @@ export function createAudioToolExecutors(deps: AudioToolExecutorDeps): AudioTool
       return fail('inspect_audio_segment', 'internal: audio window-clip pipeline is not configured')
     }
 
-    // Realpath-jail the source FILE for the daemon (the daemon opens the path, not bytes).
+    // Snapshot the source FILE for the daemon (the daemon opens the path, not bytes).
     const jailed = jailAudio(args, ctx)
     if (!jailed.ok) return fail('inspect_audio_segment', `could not read audio: ${jailed.reason}`)
 
@@ -523,6 +526,12 @@ export function createAudioToolExecutors(deps: AudioToolExecutorDeps): AudioTool
       }
     } catch (error) {
       return fail('inspect_audio_segment', error instanceof Error ? error.message : String(error))
+    } finally {
+      try {
+        jailed.cleanup()
+      } catch {
+        // Best-effort staged-input cleanup must never mask the tool result.
+      }
     }
   }
 

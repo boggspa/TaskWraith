@@ -1,5 +1,5 @@
-import { ipcMain } from 'electron'
-import type { ChatService } from '../services/ChatService'
+import { ipcMain, type IpcMainInvokeEvent } from 'electron'
+import type { ChatService, RebindChatWorkspaceInput } from '../services/ChatService'
 import type {
   AppSettings,
   ChatKind,
@@ -12,6 +12,10 @@ import type {
   ReapAbandonedChatsDeps,
   RendererReapContext
 } from '../AbandonedChatReaper'
+
+export type SenderChatReadScope =
+  | { kind: 'all' }
+  | { kind: 'chat'; chatId: string; workspaceId?: string }
 
 export interface ChatHandlerDeps {
   chatService: Pick<
@@ -30,6 +34,7 @@ export interface ChatHandlerDeps {
     | 'getSubThreads'
     | 'createSideChat'
     | 'setChatKind'
+    | 'rebindChatWorkspace'
     | 'getSideChats'
   >
   getSettings: () => AppSettings
@@ -54,35 +59,135 @@ export interface ChatHandlerDeps {
   ) => string[]
   getWorkflowChatIds: () => Set<string>
   getScheduledChatIds: () => Set<string>
+  /**
+   * Main may read the complete chat collection. A chat popout receives only
+   * its main-owned chat/workspace identity; non-chat secondary renderers must
+   * throw. Handler-side filtering keeps payload ids from becoming authority.
+   */
+  resolveSenderChatReadScope: (event: IpcMainInvokeEvent) => SenderChatReadScope
+  /**
+   * Sender-bound authority check for mutations that create or remove chats
+   * across the collection rather than operating on one owned chat.
+   */
+  assertSenderCanManageChatCollection: (
+    event: IpcMainInvokeEvent,
+    capability:
+      | 'create-chat'
+      | 'create-global-chat'
+      | 'create-ensemble-chat'
+      | 'clear-chats'
+      | 'reap-abandoned-chats'
+  ) => void
+  /**
+   * Sender-bound authority check for mutations scoped to an existing chat.
+   * A payload chat ID is not proof that a secondary renderer owns that chat.
+   */
+  assertSenderChatScope: (
+    event: IpcMainInvokeEvent,
+    chatId: string,
+    capability:
+      | 'create-sub-thread'
+      | 'create-side-chat'
+      | 'set-chat-kind'
+      | 'save-chat'
+      | 'delete-chat'
+      | 'truncate-chat'
+  ) => void
+  /**
+   * Sender-bound authority check for moving a canonical chat between scopes.
+   * Payload chat IDs are not proof that a secondary renderer owns that chat.
+   */
+  assertSenderCanRebindChatWorkspace: (
+    event: IpcMainInvokeEvent,
+    chatId: string
+  ) => void
+  /**
+   * Late-bound main lifecycle ownership. Implementations must inspect both
+   * active provider sessions and queued/starting work for this chat.
+   */
+  getChatWorkspaceRebindBlocker?: (chatId: string) => 'active' | 'queued' | null
 }
 
 const runHasDiff = (run: ChatRun | undefined): boolean =>
   Boolean(run?.runDiff || (run?.runDiffByPath && Object.keys(run.runDiffByPath).length > 0))
 
+function persistenceRevision(chat: Pick<ChatRecord, 'persistenceRevision'> | null): number {
+  const revision = chat?.persistenceRevision
+  return Number.isSafeInteger(revision) && (revision ?? -1) >= 0 ? (revision as number) : 0
+}
+
+function assertReadableChat(scope: SenderChatReadScope, chatId: string): void {
+  if (scope.kind === 'chat' && scope.chatId !== chatId) {
+    throw new Error('Renderer does not own this chat read.')
+  }
+}
+
+function assertReadableWorkspace(
+  scope: SenderChatReadScope,
+  requestedWorkspaceId?: string
+): void {
+  if (
+    scope.kind === 'chat' &&
+    requestedWorkspaceId !== undefined &&
+    scope.workspaceId !== requestedWorkspaceId
+  ) {
+    throw new Error('Renderer does not own this workspace chat collection.')
+  }
+}
+
 export function registerChatHandlers(deps: ChatHandlerDeps): void {
-  ipcMain.handle('get-chats', (_event, workspaceId?: string) =>
-    deps.chatService.getChats(workspaceId)
-  )
-  ipcMain.handle('get-chat-list', (_event, workspaceId?: string) =>
-    deps.chatService.getChatList(workspaceId)
-  )
-  ipcMain.handle('get-pinned-messages', (_event, workspaceId?: string) =>
-    deps.chatService.getPinnedMessages(workspaceId)
-  )
-  ipcMain.handle('get-chat', (_event, chatId: string) => deps.chatService.getChat(chatId))
-  ipcMain.handle('create-chat', (_event, workspaceId: string, workspacePath: string) => {
+  ipcMain.handle('get-chats', (event, workspaceId?: string) => {
+    const scope = deps.resolveSenderChatReadScope(event)
+    assertReadableWorkspace(scope, workspaceId)
+    if (scope.kind === 'all') return deps.chatService.getChats(workspaceId)
+    const owned = deps.chatService.getChat(scope.chatId)
+    return owned ? [owned] : []
+  })
+  ipcMain.handle('get-chat-list', (event, workspaceId?: string) => {
+    const scope = deps.resolveSenderChatReadScope(event)
+    assertReadableWorkspace(scope, workspaceId)
+    const list = deps.chatService.getChatList(
+      scope.kind === 'chat' ? scope.workspaceId : workspaceId
+    )
+    return scope.kind === 'all'
+      ? list
+      : list.filter((chat) => chat.appChatId === scope.chatId)
+  })
+  ipcMain.handle('get-pinned-messages', (event, workspaceId?: string) => {
+    const scope = deps.resolveSenderChatReadScope(event)
+    assertReadableWorkspace(scope, workspaceId)
+    const groups = deps.chatService.getPinnedMessages(
+      scope.kind === 'chat' ? scope.workspaceId : workspaceId
+    )
+    if (scope.kind === 'all') return groups
+    return groups
+      .map((group) => ({
+        ...group,
+        chats: group.chats.filter((chat) => chat.chatId === scope.chatId)
+      }))
+      .filter((group) => group.chats.length > 0)
+  })
+  ipcMain.handle('get-chat', (event, chatId: string) => {
+    const scope = deps.resolveSenderChatReadScope(event)
+    assertReadableChat(scope, chatId)
+    return deps.chatService.getChat(chatId)
+  })
+  ipcMain.handle('create-chat', (event, workspaceId: string, workspacePath: string) => {
+    deps.assertSenderCanManageChatCollection(event, 'create-chat')
     const chat = deps.chatService.createChat(workspaceId, workspacePath)
     deps.broadcastThreadUpdate(chat?.appChatId)
     return chat
   })
-  ipcMain.handle('create-global-chat', () => {
+  ipcMain.handle('create-global-chat', (event) => {
+    deps.assertSenderCanManageChatCollection(event, 'create-global-chat')
     const chat = deps.chatService.createGlobalChat()
     deps.broadcastThreadUpdate(chat?.appChatId)
     return chat
   })
   ipcMain.handle(
     'create-ensemble-chat',
-    async (_event, args?: { workspaceId?: string; workspacePath?: string }) => {
+    async (event, args?: { workspaceId?: string; workspacePath?: string }) => {
+      deps.assertSenderCanManageChatCollection(event, 'create-ensemble-chat')
       if (deps.getSettings().ensembleModeEnabled === false) {
         throw new Error('Ensemble Mode is disabled.')
       }
@@ -95,7 +200,7 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
   ipcMain.handle(
     'create-sub-thread',
     (
-      _event,
+      event,
       args: {
         parentChatId: string
         provider: ProviderId
@@ -105,18 +210,21 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
         workspacePath?: string
       }
     ) => {
+      deps.assertSenderChatScope(event, args.parentChatId, 'create-sub-thread')
       const chat = deps.chatService.createSubThread(args)
       deps.broadcastThreadUpdate(chat?.appChatId)
       return chat
     }
   )
-  ipcMain.handle('get-sub-threads', (_event, parentChatId: string) =>
-    deps.chatService.getSubThreads(parentChatId)
-  )
+  ipcMain.handle('get-sub-threads', (event, parentChatId: string) => {
+    const scope = deps.resolveSenderChatReadScope(event)
+    assertReadableChat(scope, parentChatId)
+    return scope.kind === 'all' ? deps.chatService.getSubThreads(parentChatId) : []
+  })
   ipcMain.handle(
     'create-side-chat',
     (
-      _event,
+      event,
       args: {
         parentChatId: string
         chatKind?: ChatRecord['chatKind']
@@ -127,18 +235,21 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
         sideChatMode?: 'ensembleClone' | 'singleProvider' | 'fanOut'
       }
     ) => {
+      deps.assertSenderChatScope(event, args.parentChatId, 'create-side-chat')
       const chat = deps.chatService.createSideChat(args)
       deps.broadcastThreadUpdate(chat?.appChatId)
       return chat
     }
   )
-  ipcMain.handle('get-side-chats', (_event, parentChatId: string) =>
-    deps.chatService.getSideChats(parentChatId)
-  )
+  ipcMain.handle('get-side-chats', (event, parentChatId: string) => {
+    const scope = deps.resolveSenderChatReadScope(event)
+    assertReadableChat(scope, parentChatId)
+    return scope.kind === 'all' ? deps.chatService.getSideChats(parentChatId) : []
+  })
   ipcMain.handle(
     'set-chat-kind',
     (
-      _event,
+      event,
       args: {
         chatId: string
         targetKind: ChatKind
@@ -147,6 +258,7 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
         canonicalProviderMetadata?: Record<string, unknown>
       }
     ) => {
+      deps.assertSenderChatScope(event, args.chatId, 'set-chat-kind')
       if (args?.targetKind === 'ensemble' && deps.getSettings().ensembleModeEnabled === false) {
         throw new Error('Ensemble Mode is disabled.')
       }
@@ -156,7 +268,40 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
     }
   )
 
-  ipcMain.handle('save-chat', (_, chat: ChatRecord) => {
+  ipcMain.handle('rebind-chat-workspace', (event, args: RebindChatWorkspaceInput) => {
+    deps.assertSenderCanRebindChatWorkspace(event, args?.chatId)
+    const before = deps.chatService.getChat(args?.chatId)
+    const rebound = deps.chatService.rebindChatWorkspace(args, {
+      assertIdle: (canonical) => {
+        if (!deps.getChatWorkspaceRebindBlocker) {
+          throw new Error('Chat workspace rebind lifecycle guard is unavailable.')
+        }
+        const blocker = deps.getChatWorkspaceRebindBlocker(canonical.appChatId)
+        if (blocker) {
+          throw new Error(
+            `Cannot change chat workspace while a turn is ${blocker} — finish or cancel it first.`
+          )
+        }
+      }
+    })
+    const changed = Boolean(
+      !before ||
+        before.scope !== rebound.scope ||
+        before.workspaceId !== rebound.workspaceId ||
+        before.workspacePath !== rebound.workspacePath
+    )
+    if (changed) {
+      deps.broadcastChatUpdated(rebound)
+      deps.broadcastThreadUpdate(rebound.appChatId)
+      // Moving a chat changes its workspace grouping in remote projections.
+      deps.broadcastThreadList()
+    }
+    return { chat: rebound, changed }
+  })
+
+  ipcMain.handle('save-chat', (event, chat: ChatRecord) => {
+    const chatId = chat.appChatId
+    deps.assertSenderChatScope(event, chatId, 'save-chat')
     const normalized = deps.normalizeTranscriptMarkdownMediaForChat(chat)
     const previous = deps.chatService.getChat(normalized.appChatId)
     const saved = deps.chatService.saveChat(normalized)
@@ -177,9 +322,21 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
         deps.pushRemoteThreadSnapshot(saved, workspaceId)
       }
     }
+    return {
+      chat: saved,
+      // The preload needs the exact canonical base that participated in this
+      // compare-and-swap to perform an honest three-way rebase of a queued
+      // renderer snapshot. Queue order alone is never a dependency proof.
+      previous: previous ?? null,
+      accepted:
+        !previous ||
+        deps.getSettings().storeLocalChatHistory === false ||
+        persistenceRevision(saved) > persistenceRevision(previous)
+    }
   })
 
-  ipcMain.handle('delete-chat', (_, chatId: string) => {
+  ipcMain.handle('delete-chat', (event, chatId: string) => {
+    deps.assertSenderChatScope(event, chatId, 'delete-chat')
     deps.chatService.deleteChat(chatId)
     deps.broadcastThreadList()
   })
@@ -196,9 +353,10 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
   ipcMain.handle(
     'reap-abandoned-chats',
     (
-      _,
+      event,
       renderer: { protectedChatIds?: string[]; draftChatIds?: string[]; keepChatId?: string } = {}
     ) => {
+      deps.assertSenderCanManageChatCollection(event, 'reap-abandoned-chats')
       try {
         const reaped = deps.reapAbandonedChats(
           {
@@ -224,7 +382,8 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
    * provider session id, workspace, settings. Mirrors what a "Reset
    * conversation" affordance does in native Claude / Codex apps.
    */
-  ipcMain.handle('truncate-chat', (_, chatId: string) => {
+  ipcMain.handle('truncate-chat', (event, chatId: string) => {
+    deps.assertSenderChatScope(event, chatId, 'truncate-chat')
     const existing = deps.chatService.getChat(chatId)
     if (!existing) return null
     const truncated: ChatRecord = {
@@ -233,12 +392,14 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
       runs: [],
       updatedAt: Date.now()
     }
-    deps.chatService.saveChat(truncated)
+    const saved = deps.chatService.saveChat(truncated)
+    deps.broadcastChatUpdated(saved)
     deps.broadcastThreadUpdate(chatId)
-    return truncated
+    return saved
   })
 
-  ipcMain.handle('clear-chats', (_, workspaceId?: string) => {
+  ipcMain.handle('clear-chats', (event, workspaceId?: string) => {
+    deps.assertSenderCanManageChatCollection(event, 'clear-chats')
     deps.chatService.clearChats(workspaceId)
     deps.broadcastThreadList()
   })

@@ -72,6 +72,7 @@ function createDeps() {
     requireRegisteredWorkspace: vi.fn<PtyHandlerDeps['requireRegisteredWorkspace']>(
       (workspacePath: string) => workspacePath
     ),
+    assertSenderWorkspaceScope: vi.fn<PtyHandlerDeps['assertSenderWorkspaceScope']>(),
     requestAgenticServiceApproval: vi.fn<PtyHandlerDeps['requestAgenticServiceApproval']>(
       async () => true
     )
@@ -103,6 +104,22 @@ describe('registerPtyHandlers', () => {
       'sess-1'
     )
     expect(sender.send).toHaveBeenCalledWith('pty-exit', -1, 'sess-1')
+  })
+
+  it('rejects a secondary renderer targeting another workspace before approval or spawn', async () => {
+    const deps = createDeps()
+    vi.mocked(deps.assertSenderWorkspaceScope).mockImplementation(() => {
+      throw new Error('Renderer workspace ownership does not match this request.')
+    })
+    registerPtyHandlers(deps)
+    const event = { sender: makeSender(42) }
+
+    await expect(handlerFor('start-pty')(event, '/Test 3', 'hostile')).rejects.toThrow(
+      'Renderer workspace ownership'
+    )
+    expect(deps.assertSenderWorkspaceScope).toHaveBeenCalledWith(event, '/Test 3')
+    expect(deps.requestAgenticServiceApproval).not.toHaveBeenCalled()
+    expect(pty.spawn).not.toHaveBeenCalled()
   })
 
   it('spawns a pty on approval using the SHELL env var and forwards data/exit events', async () => {

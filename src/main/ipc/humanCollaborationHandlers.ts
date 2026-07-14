@@ -1,4 +1,4 @@
-import { clipboard, ipcMain } from 'electron'
+import { clipboard, ipcMain, type IpcMainInvokeEvent } from 'electron'
 import * as fsSync from 'fs'
 import { join } from 'path'
 import type { KeyPair } from '../../shared/e2ee/keys'
@@ -87,6 +87,10 @@ interface HumanCollaborationAuditLogLike {
   list: (input: { chatId?: string; limit?: number }) => unknown
 }
 
+export type HumanCollaborationSenderScope =
+  | { kind: 'main' }
+  | { kind: 'chat'; chatId: string }
+
 export interface HumanCollaborationHandlersDeps {
   chatService: HumanCollaborationChatService
   humanCollaborationStore: HumanCollaborationStoreLike
@@ -122,6 +126,19 @@ export interface HumanCollaborationHandlersDeps {
   sendToMainWindow: (channel: string, payload: unknown) => void
   broadcastChatUpdated: (chat: ChatRecord) => void
   broadcastHumanCollaborationUpdate: (chatId: string) => void
+  /**
+   * The main renderer may manage every collaboration share. A chat popout is
+   * bound by main to one persisted chat and must not use payload chat/share
+   * identifiers as authority for another conversation.
+   */
+  resolveSenderHumanCollaborationScope: (
+    event: IpcMainInvokeEvent
+  ) => HumanCollaborationSenderScope
+  /**
+   * Global collaborator-client state and host-runtime operations that cannot
+   * be resolved to a persisted chat before mutation remain main-window only.
+   */
+  assertMainRendererSender: (event: IpcMainInvokeEvent) => void
 }
 
 export interface HumanCollaborationHandlersRegistration {
@@ -150,6 +167,46 @@ function retryableJoinError(err: unknown): boolean {
 export function registerHumanCollaborationHandlers(
   deps: HumanCollaborationHandlersDeps
 ): HumanCollaborationHandlersRegistration {
+  const assertSenderOwnsPersistedChat = (
+    event: IpcMainInvokeEvent,
+    chatId: string
+  ): ChatRecord => {
+    const scope = deps.resolveSenderHumanCollaborationScope(event)
+    if (scope.kind === 'chat' && scope.chatId !== chatId) {
+      throw new Error('Renderer does not own this collaboration chat.')
+    }
+    const chat = deps.chatService.getChat(chatId)
+    if (!chat) throw new Error('Collaboration chat not found.')
+    return chat
+  }
+
+  const assertSenderOwnsPersistedShare = (
+    event: IpcMainInvokeEvent,
+    shareId: string,
+    requestedChatId?: string
+  ): HumanCollaborationShare => {
+    const share = deps.humanCollaborationStore.getShare(shareId)
+    if (!share) throw new Error('Collaboration share not found.')
+    if (requestedChatId !== undefined && share.chatId !== requestedChatId) {
+      throw new Error('Collaboration share does not belong to the requested chat.')
+    }
+    assertSenderOwnsPersistedChat(event, share.chatId)
+    return share
+  }
+
+  const resolveSenderShareListChatId = (
+    event: IpcMainInvokeEvent,
+    requestedChatId?: string
+  ): string | undefined => {
+    const scope = deps.resolveSenderHumanCollaborationScope(event)
+    if (scope.kind === 'main') return requestedChatId
+    if (requestedChatId !== undefined && requestedChatId !== scope.chatId) {
+      throw new Error('Renderer does not own this collaboration chat.')
+    }
+    assertSenderOwnsPersistedChat(event, scope.chatId)
+    return scope.chatId
+  }
+
   const resolveHumanCollaborationProjection = (input: {
     shareId: string
     chatId: string
@@ -228,7 +285,8 @@ export function registerHumanCollaborationHandlers(
     }
   }
 
-  ipcMain.handle('human-collaboration:invite-health', async (_, chatId: string) => {
+  ipcMain.handle('human-collaboration:invite-health', async (event, chatId: string) => {
+    assertSenderOwnsPersistedChat(event, chatId)
     const chat = deps.chatService.getChat(chatId)
     const share = deps.humanCollaborationStore.getShareForChat(chatId)
     const settings = deps.getSettings()
@@ -251,7 +309,8 @@ export function registerHumanCollaborationHandlers(
 
   ipcMain.handle(
     'human-collaboration:create-share',
-    async (_, input: { chatId: string; mode?: 'readOnly' | 'comments'; inviteTtlMs?: number }) => {
+    async (event, input: { chatId: string; mode?: 'readOnly' | 'comments'; inviteTtlMs?: number }) => {
+      assertSenderOwnsPersistedChat(event, input.chatId)
       const inviteTransport = await prepareHumanCollaborationInviteTransport()
       const result: CreateShareResult = deps.chatService.createHumanCollaborationShare({
         chatId: input.chatId,
@@ -282,23 +341,32 @@ export function registerHumanCollaborationHandlers(
     return { ok: true }
   })
 
-  ipcMain.handle('human-collaboration:list-shares', (_, chatId?: string) =>
-    deps.chatService.listHumanCollaborationShares(chatId)
-  )
+  ipcMain.handle('human-collaboration:list-shares', (event, chatId?: string) => {
+    const scopedChatId = resolveSenderShareListChatId(event, chatId)
+    return deps.chatService.listHumanCollaborationShares(scopedChatId)
+  })
 
-  ipcMain.handle('human-collaboration:connected-chat-ids', () =>
-    deps.getCurrentHumanCollaborationRuntime()?.connectedChatIds() ?? []
-  )
+  ipcMain.handle('human-collaboration:connected-chat-ids', (event) => {
+    const scope = deps.resolveSenderHumanCollaborationScope(event)
+    const connected = deps.getCurrentHumanCollaborationRuntime()?.connectedChatIds() ?? []
+    return scope.kind === 'main' ? connected : connected.filter((chatId) => chatId === scope.chatId)
+  })
 
-  ipcMain.handle('human-collaboration:session-status', () =>
-    deps.getCurrentHumanCollaborationRuntime()?.sessionSummaries() ?? []
-  )
+  ipcMain.handle('human-collaboration:session-status', (event) => {
+    const scope = deps.resolveSenderHumanCollaborationScope(event)
+    const sessions = deps.getCurrentHumanCollaborationRuntime()?.sessionSummaries() ?? []
+    if (scope.kind === 'main') return sessions
+    return sessions.filter(
+      (session) =>
+        session !== null &&
+        typeof session === 'object' &&
+        'chatId' in session &&
+        session.chatId === scope.chatId
+    )
+  })
 
-  ipcMain.handle('human-collaboration:revoke-share', (_, shareId: string) => {
-    const target = deps
-      .chatService
-      .listHumanCollaborationShares()
-      .find((share) => share.shareId === shareId)
+  ipcMain.handle('human-collaboration:revoke-share', (event, shareId: string) => {
+    const target = assertSenderOwnsPersistedShare(event, shareId)
     const result = deps.chatService.revokeHumanCollaborationShare(shareId)
     for (const invite of target?.invites || []) {
       if (invite.roomId) deps.closeCollaborationHostRoom(invite.roomId)
@@ -309,7 +377,8 @@ export function registerHumanCollaborationHandlers(
 
   ipcMain.handle(
     'human-collaboration:revoke-participant',
-    (_, input: { shareId: string; collaboratorId: string }) => {
+    (event, input: { shareId: string; collaboratorId: string }) => {
+      assertSenderOwnsPersistedShare(event, input.shareId)
       const result = deps.chatService.revokeHumanCollaborationParticipant(
         input.shareId,
         input.collaboratorId
@@ -328,7 +397,7 @@ export function registerHumanCollaborationHandlers(
   ipcMain.handle(
     'human-collaboration:consume-invite',
     (
-      _,
+      event,
       input: {
         shareId: string
         inviteToken: string
@@ -336,6 +405,7 @@ export function registerHumanCollaborationHandlers(
         publicKeyId: string
       }
     ) => {
+      assertSenderOwnsPersistedShare(event, input.shareId)
       const result = deps.chatService.consumeHumanCollaborationInvite(input)
       deps.broadcastHumanCollaborationUpdate(result.share.chatId)
       return result
@@ -345,7 +415,7 @@ export function registerHumanCollaborationHandlers(
   ipcMain.handle(
     'human-collaboration:append-comment',
     (
-      _,
+      event,
       input: {
         shareId: string
         chatId: string
@@ -354,6 +424,7 @@ export function registerHumanCollaborationHandlers(
         content: string
       }
     ) => {
+      assertSenderOwnsPersistedShare(event, input.shareId, input.chatId)
       const result = deps.chatService.appendCollaboratorComment(input)
       deps.broadcastChatUpdated(result.chat)
       deps.broadcastHumanCollaborationUpdate(result.chat.appChatId)
@@ -363,19 +434,24 @@ export function registerHumanCollaborationHandlers(
 
   ipcMain.handle(
     'human-collaboration:projection',
-    (_, input: { shareId: string; chatId: string; collaboratorId: string }) =>
-      resolveHumanCollaborationProjection(input)
+    (event, input: { shareId: string; chatId: string; collaboratorId: string }) => {
+      assertSenderOwnsPersistedShare(event, input.shareId, input.chatId)
+      return resolveHumanCollaborationProjection(input)
+    }
   )
 
   ipcMain.handle(
     'human-collaboration-runtime:begin-admission',
-    (_, input: HumanCollaborationBeginHandshakeInput) =>
-      deps.getHumanCollaborationRuntime().beginAdmission(input)
+    (event, input: HumanCollaborationBeginHandshakeInput) => {
+      assertSenderOwnsPersistedShare(event, input.shareId, input.chatId)
+      return deps.getHumanCollaborationRuntime().beginAdmission(input)
+    }
   )
 
   ipcMain.handle(
     'human-collaboration-runtime:confirm-sas',
-    async (_, input: HumanCollaborationConfirmSasInput) => {
+    async (event, input: HumanCollaborationConfirmSasInput) => {
+      deps.assertMainRendererSender(event)
       const result = await deps.getHumanCollaborationRuntime().confirmSas(input)
       deps.broadcastHumanCollaborationUpdate(result.chatId)
       return result
@@ -384,31 +460,40 @@ export function registerHumanCollaborationHandlers(
 
   ipcMain.handle(
     'human-collaboration-runtime:subscribe-projection',
-    (_, input: HumanCollaborationSubscribeProjectionInput) =>
-      deps.getHumanCollaborationRuntime().subscribeProjection(input)
+    (event, input: HumanCollaborationSubscribeProjectionInput) => {
+      deps.assertMainRendererSender(event)
+      return deps.getHumanCollaborationRuntime().subscribeProjection(input)
+    }
   )
 
   ipcMain.handle(
     'human-collaboration-runtime:append-comment',
-    (_, input: HumanCollaborationAppendCommentInput) =>
-      deps.getHumanCollaborationRuntime().appendComment(input)
+    (event, input: HumanCollaborationAppendCommentInput) => {
+      deps.assertMainRendererSender(event)
+      return deps.getHumanCollaborationRuntime().appendComment(input)
+    }
   )
 
   ipcMain.handle(
     'human-collaboration-runtime:receive-frame',
-    (_, input: HumanCollaborationEncryptedFrame) =>
-      deps.getHumanCollaborationRuntime().routeEncryptedAction(input)
+    (event, input: HumanCollaborationEncryptedFrame) => {
+      deps.assertMainRendererSender(event)
+      return deps.getHumanCollaborationRuntime().routeEncryptedAction(input)
+    }
   )
 
   ipcMain.handle(
     'human-collaboration-runtime:disconnect',
-    (_, input: HumanCollaborationDisconnectInput) =>
-      deps.getHumanCollaborationRuntime().disconnect(input)
+    (event, input: HumanCollaborationDisconnectInput) => {
+      deps.assertMainRendererSender(event)
+      return deps.getHumanCollaborationRuntime().disconnect(input)
+    }
   )
 
   ipcMain.handle(
     'human-collaboration:promote-comment',
-    (_, input: { chatId: string; messageId: string }) => {
+    (event, input: { chatId: string; messageId: string }) => {
+      assertSenderOwnsPersistedChat(event, input.chatId)
       const result = deps.chatService.promoteCollaboratorComment(input)
       deps.broadcastChatUpdated(result.chat)
       deps.broadcastHumanCollaborationUpdate(result.chat.appChatId)
@@ -418,7 +503,8 @@ export function registerHumanCollaborationHandlers(
 
   ipcMain.handle(
     'human-collaboration:update-share-rules',
-    (_, input: { shareId: string; preset: string }) => {
+    (event, input: { shareId: string; preset: string }) => {
+      assertSenderOwnsPersistedShare(event, input.shareId)
       const result = deps.chatService.updateHumanCollaborationShareRules({
         shareId: input.shareId,
         preset: input.preset as HumanContributionPreset
@@ -430,11 +516,13 @@ export function registerHumanCollaborationHandlers(
 
   ipcMain.handle(
     'human-collaboration:audit-log',
-    (_, input?: { chatId?: string; limit?: number }) =>
-      deps.humanCollaborationAuditLog.list({
-        ...(input?.chatId ? { chatId: String(input.chatId) } : {}),
+    (event, input?: { chatId?: string; limit?: number }) => {
+      const chatId = resolveSenderShareListChatId(event, input?.chatId)
+      return deps.humanCollaborationAuditLog.list({
+        ...(chatId ? { chatId } : {}),
         ...(typeof input?.limit === 'number' ? { limit: input.limit } : {})
       })
+    }
   )
 
   let humanCollaborationCollaboratorClient: HumanCollaborationCollaboratorClient | null = null
@@ -510,7 +598,7 @@ export function registerHumanCollaborationHandlers(
   ipcMain.handle(
     'human-collaboration-collaborator:join',
     async (
-      _,
+      event,
       input: {
         shareId: string
         chatId: string
@@ -523,6 +611,7 @@ export function registerHumanCollaborationHandlers(
         hostIdentityPubKeyB64?: string
       }
     ) => {
+      deps.assertMainRendererSender(event)
       disposeCollaboratorClient()
       const relayUrls = Array.from(
         new Set(
@@ -586,7 +675,8 @@ export function registerHumanCollaborationHandlers(
     }
   )
 
-  ipcMain.handle('human-collaboration-collaborator:confirm', async () => {
+  ipcMain.handle('human-collaboration-collaborator:confirm', async (event) => {
+    deps.assertMainRendererSender(event)
     const client = humanCollaborationCollaboratorClient
     if (!client) throw new Error('No active collaboration join to confirm.')
     const result = await client.confirmAdmission()
@@ -603,7 +693,8 @@ export function registerHumanCollaborationHandlers(
     return result
   })
 
-  ipcMain.handle('human-collaboration-collaborator:last-session', () => {
+  ipcMain.handle('human-collaboration-collaborator:last-session', (event) => {
+    deps.assertMainRendererSender(event)
     const record = readCollaboratorSessionRecord()
     if (!record || !loadCollaboratorIdentity()) return { available: false }
     return {
@@ -615,7 +706,8 @@ export function registerHumanCollaborationHandlers(
     }
   })
 
-  ipcMain.handle('human-collaboration-collaborator:reconnect', async () => {
+  ipcMain.handle('human-collaboration-collaborator:reconnect', async (event) => {
+    deps.assertMainRendererSender(event)
     const record = readCollaboratorSessionRecord()
     if (!record) throw new Error('No previous shared chat to reconnect to.')
     const collaboratorIdentity = loadCollaboratorIdentity()
@@ -664,7 +756,8 @@ export function registerHumanCollaborationHandlers(
 
   ipcMain.handle(
     'human-collaboration-collaborator:append-comment',
-    (_, input: { content: string; clientMessageId?: string; intent?: string }) => {
+    (event, input: { content: string; clientMessageId?: string; intent?: string }) => {
+      deps.assertMainRendererSender(event)
       const client = humanCollaborationCollaboratorClient
       if (!client) throw new Error('No active collaboration session.')
       client.appendComment(
@@ -676,7 +769,8 @@ export function registerHumanCollaborationHandlers(
     }
   )
 
-  ipcMain.handle('human-collaboration-collaborator:leave', () => {
+  ipcMain.handle('human-collaboration-collaborator:leave', (event) => {
+    deps.assertMainRendererSender(event)
     disposeCollaboratorClient()
     return true
   })

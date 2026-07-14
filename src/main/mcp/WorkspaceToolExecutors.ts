@@ -33,6 +33,7 @@ import {
   TRANSCRIPT_MEDIA_MAX_FULL_IMAGE_BYTES,
   type TranscriptMediaAssetReadResult
 } from '../services/TranscriptMediaAssetStore'
+import { readScopedRegularFile } from '../ScopedPathAccess'
 import type { McpToolExecutionResult } from './McpBridgeRuntime'
 import {
   releaseScriptBlockReason,
@@ -145,6 +146,8 @@ export interface WorkspaceToolExecutorDependencies {
     readTranscriptMediaAsset: (input: {
       sha256: string
       mimeType: string
+      /** Canonical main-owned active chat whose grant must authorize this read. */
+      appChatId: string
       maxBytes?: number
     }) => TranscriptMediaAssetReadResult
   }
@@ -1818,7 +1821,13 @@ export async function executeInspectChatAttachment(
     })
   }
 
-  const image = readChatAttachmentImage(deps, entry, maxBytes)
+  const image = await readChatAttachmentImage(
+    deps,
+    chat.appChatId,
+    entry,
+    maxBytes,
+    canonicalChatAttachmentWorkspace(chat, context)
+  )
   if (!image.ok) {
     return chatAttachmentRichJson({
       ok: false,
@@ -3023,6 +3032,9 @@ function requireActiveChatForAttachmentTool(
   }
   const chat = deps.store.getChat(context.appChatId)
   if (!chat) throw new Error(`Active chat ${context.appChatId} was not found.`)
+  if (chat.appChatId !== context.appChatId) {
+    throw new Error(`Active chat ${context.appChatId} did not match its canonical record.`)
+  }
   return chat
 }
 
@@ -3040,6 +3052,7 @@ function collectChatAttachmentEntries(
   chat: ChatRecord,
   context: WorkspaceToolContext
 ): ChatAttachmentEntry[] {
+  const workspacePath = canonicalChatAttachmentWorkspace(chat, context)
   const entries: ChatAttachmentEntry[] = []
   const seen = new Set<string>()
   const pushEntry = (entry: ChatAttachmentEntry) => {
@@ -3072,7 +3085,7 @@ function collectChatAttachmentEntries(
         role: message.role,
         timestamp: message.timestamp,
         path,
-        pathScope: pathScopeForAttachment(path, context),
+        pathScope: pathScopeForAttachment(path, workspacePath),
         hasThumbnail: Boolean(thumbnail),
         thumbnail
       })
@@ -3114,7 +3127,7 @@ function collectChatAttachmentEntries(
           timestamp: message.timestamp,
           mimeType: attachment.mimeType,
           path: attachment.path,
-          pathScope: pathScopeForAttachment(attachment.path, context),
+          pathScope: pathScopeForAttachment(attachment.path, workspacePath),
           hasThumbnail: false
         })
       })
@@ -3138,7 +3151,7 @@ function collectChatAttachmentEntries(
         path,
         workspaceRelativePath: optionalString(ref.workspaceRelativePath),
         pathScope: path
-          ? pathScopeForAttachment(path, context)
+          ? pathScopeForAttachment(path, workspacePath)
           : ref.sha256 || ref.assetId
             ? 'transcript_asset'
             : ref.thumbnail
@@ -3171,7 +3184,7 @@ function collectChatAttachmentEntries(
           runId: run.runId,
           mimeType: attachment.mimeType,
           path: attachment.path,
-          pathScope: pathScopeForAttachment(attachment.path, context),
+          pathScope: pathScopeForAttachment(attachment.path, workspacePath),
           hasThumbnail: false
         })
       })
@@ -3182,6 +3195,7 @@ function collectChatAttachmentEntries(
 }
 
 function summarizeChatAttachmentEntry(entry: ChatAttachmentEntry, includePath: boolean) {
+  const workspaceRelativePath = safeAttachmentWorkspaceRelativePath(entry)
   return {
     attachmentId: entry.attachmentId,
     kind: entry.kind,
@@ -3195,14 +3209,31 @@ function summarizeChatAttachmentEntry(entry: ChatAttachmentEntry, includePath: b
     mimeType: entry.mimeType,
     status: entry.status,
     pathScope: entry.pathScope,
-    workspaceRelativePath: entry.workspaceRelativePath,
+    ...(workspaceRelativePath ? { workspaceRelativePath } : {}),
     byteLength: entry.byteLength,
     sha256: entry.sha256,
     assetId: entry.assetId,
     hasThumbnail: entry.hasThumbnail,
     hasPath: Boolean(entry.path),
-    ...(includePath && entry.path ? { path: entry.path } : {})
+    ...(includePath && entry.path && entry.pathScope === 'workspace' ? { path: entry.path } : {})
   }
+}
+
+function safeAttachmentWorkspaceRelativePath(entry: ChatAttachmentEntry): string | undefined {
+  if (entry.pathScope !== 'workspace' && entry.pathScope !== 'transcript_asset') return undefined
+  const candidate = entry.workspaceRelativePath?.trim()
+  if (
+    !candidate ||
+    isAbsolute(candidate) ||
+    /^[a-z]:[\\/]/i.test(candidate) ||
+    candidate.startsWith('\\\\') ||
+    candidate.includes('\0')
+  ) {
+    return undefined
+  }
+  const segments = candidate.replace(/\\/g, '/').split('/')
+  if (segments.some((segment) => !segment || segment === '.' || segment === '..')) return undefined
+  return candidate
 }
 
 function chatAttachmentRichJson(
@@ -3216,31 +3247,50 @@ function chatAttachmentRichJson(
   }
 }
 
-function readChatAttachmentImage(
+async function readChatAttachmentImage(
   deps: WorkspaceToolExecutorDependencies,
+  appChatId: string,
   entry: ChatAttachmentEntry,
-  maxBytes: number
-):
+  maxBytes: number,
+  workspacePath?: string
+): Promise<
   | { ok: true; dataBase64: string; mimeType: string; byteLength: number; variant: 'full' | 'thumbnail' }
-  | { ok: false; reason: string } {
-  if (entry.mediaRef?.sha256 && deps.media?.readTranscriptMediaAsset) {
-    const read = deps.media.readTranscriptMediaAsset({
-      sha256: entry.mediaRef.sha256,
-      mimeType: entry.mediaRef.mimeType,
-      maxBytes
-    })
-    if (read.ok) {
-      return {
-        ok: true,
-        dataBase64: read.buffer.toString('base64'),
+  | { ok: false; reason: string }
+> {
+  if (entry.mediaRef?.sha256) {
+    if (deps.media?.readTranscriptMediaAsset) {
+      const read = deps.media.readTranscriptMediaAsset({
+        sha256: entry.mediaRef.sha256,
         mimeType: entry.mediaRef.mimeType,
-        byteLength: read.byteLength,
-        variant: 'full'
+        appChatId,
+        maxBytes
+      })
+      if (read.ok) {
+        return {
+          ok: true,
+          dataBase64: read.buffer.toString('base64'),
+          mimeType: entry.mediaRef.mimeType,
+          byteLength: read.byteLength,
+          variant: 'full'
+        }
       }
     }
+    // A content-addressed transcript asset is readable only through the
+    // host-authorized chat grant above. Never fall through to a persisted path
+    // that could bypass cross-chat ownership checks.
+    if (entry.thumbnail?.dataBase64 && isTranscriptThumbnailMime(entry.thumbnail.mimeType)) {
+      return {
+        ok: true,
+        dataBase64: entry.thumbnail.dataBase64,
+        mimeType: entry.thumbnail.mimeType,
+        byteLength: Buffer.byteLength(entry.thumbnail.dataBase64, 'base64'),
+        variant: 'thumbnail'
+      }
+    }
+    return { ok: false, reason: 'Attachment image bytes are unavailable.' }
   }
-  if (entry.path) {
-    const read = readRasterImagePath(entry.path, maxBytes)
+  if (entry.path && entry.pathScope === 'workspace' && workspacePath) {
+    const read = await readRasterImagePath(entry.path, workspacePath, maxBytes)
     if (read.ok) return read
   }
   if (entry.thumbnail?.dataBase64 && isTranscriptThumbnailMime(entry.thumbnail.mimeType)) {
@@ -3255,28 +3305,39 @@ function readChatAttachmentImage(
   return { ok: false, reason: 'Attachment image bytes are unavailable.' }
 }
 
-function readRasterImagePath(
+async function readRasterImagePath(
   path: string,
+  workspacePath: string,
   maxBytes: number
-):
+): Promise<
   | { ok: true; dataBase64: string; mimeType: string; byteLength: number; variant: 'full' }
-  | { ok: false; reason: string } {
-  let stat: ReturnType<typeof fsSync.statSync>
+  | { ok: false; reason: string }
+> {
+  let targetPath: string
   try {
-    stat = fsSync.statSync(path)
+    // macOS temp paths commonly cross the /var -> /private/var alias. Resolve
+    // the existing leaf once for a common lexical root, then let
+    // readScopedRegularFile perform the authoritative directory snapshots,
+    // O_NOFOLLOW open, and path/descriptor identity checks before returning.
+    targetPath = await fs.realpath(path)
   } catch {
     return { ok: false, reason: 'Attachment file is missing.' }
   }
-  if (!stat.isFile()) return { ok: false, reason: 'Attachment path is not a file.' }
-  if (stat.size <= 0 || stat.size > maxBytes) {
-    return { ok: false, reason: `Attachment is too large to inline (${stat.size} bytes).` }
-  }
   let buffer: Buffer
   try {
-    buffer = fsSync.readFileSync(path)
+    const read = await readScopedRegularFile(
+      { rootPath: workspacePath, targetPath },
+      {
+        maxBytes,
+        regularFileErrorMessage: 'Attachment path is not a regular file.',
+        sizeLimitErrorMessage: 'Attachment is too large to inline.'
+      }
+    )
+    buffer = read.buffer
   } catch {
     return { ok: false, reason: 'Attachment file could not be read.' }
   }
+  if (buffer.length === 0) return { ok: false, reason: 'Attachment file is empty.' }
   const mimeType = sniffImageMime(buffer)
   if (!isTranscriptRasterImageMime(mimeType)) {
     return { ok: false, reason: 'Attachment is not a supported raster image.' }
@@ -3354,12 +3415,33 @@ function normalizeAttachmentKind(
   return 'file'
 }
 
+function canonicalChatAttachmentWorkspace(
+  chat: ChatRecord,
+  context: WorkspaceToolContext
+): string | undefined {
+  if (
+    chat.scope === 'global' ||
+    !chat.workspacePath ||
+    context.scope !== 'workspace' ||
+    !context.workspacePath
+  ) {
+    return undefined
+  }
+  try {
+    const chatWorkspace = fsSync.realpathSync.native(chat.workspacePath)
+    const runWorkspace = fsSync.realpathSync.native(context.workspacePath)
+    return chatWorkspace === runWorkspace ? chatWorkspace : undefined
+  } catch {
+    return undefined
+  }
+}
+
 function pathScopeForAttachment(
   path: string | undefined,
-  context: WorkspaceToolContext
+  workspacePath?: string
 ): ChatAttachmentPathScope {
   if (!path) return 'missing'
-  if (context.workspacePath && isPathInsideWorkspace(context.workspacePath, path)) {
+  if (workspacePath && isAbsolute(path) && isPathInsideWorkspace(workspacePath, path)) {
     return 'workspace'
   }
   return 'external'

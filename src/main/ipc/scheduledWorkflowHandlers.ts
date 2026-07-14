@@ -1,4 +1,4 @@
-import { ipcMain } from 'electron'
+import { ipcMain, type IpcMainInvokeEvent } from 'electron'
 import type {
   ScheduledTask,
   WorkflowDefinition,
@@ -33,6 +33,7 @@ export type WorkspaceBoardCardSaveInput = Omit<
   Partial<Pick<WorkspaceBoardCard, 'id' | 'createdAt' | 'updatedAt' | 'activity'>>
 
 export interface ScheduledWorkflowHandlersDeps {
+  assertMainRendererSender: (event: IpcMainInvokeEvent) => void
   getScheduledTasks: (workspaceId?: string) => ScheduledTask[]
   saveScheduledTask: (task: ScheduledTaskSaveInput) => ScheduledTask
   updateScheduledTask: (id: string, partial: Partial<ScheduledTask>) => ScheduledTask | null
@@ -135,11 +136,13 @@ function requestThrottledRemoteProjectionAfterIpcMutation(
 }
 
 export function registerScheduledWorkflowHandlers(deps: ScheduledWorkflowHandlersDeps): void {
-  ipcMain.handle('get-scheduled-tasks', (_, workspaceId?: string) =>
-    deps.getScheduledTasks(workspaceId)
-  )
+  ipcMain.handle('get-scheduled-tasks', (event, workspaceId?: string) => {
+    deps.assertMainRendererSender(event)
+    return deps.getScheduledTasks(workspaceId)
+  })
 
-  ipcMain.handle('save-scheduled-task', (_, task: ScheduledTaskSaveInput) => {
+  ipcMain.handle('save-scheduled-task', (event, task: ScheduledTaskSaveInput) => {
+    deps.assertMainRendererSender(event)
     const saved = deps.saveScheduledTask(deps.sanitizeScheduledTaskForSave(task))
     deps.broadcastScheduledTasksChanged()
     deps.broadcastWorkflowDefinitionsChanged()
@@ -147,7 +150,8 @@ export function registerScheduledWorkflowHandlers(deps: ScheduledWorkflowHandler
     return saved
   })
 
-  ipcMain.handle('update-scheduled-task', (_, id: string, partial: Partial<ScheduledTask>) => {
+  ipcMain.handle('update-scheduled-task', (event, id: string, partial: Partial<ScheduledTask>) => {
+    deps.assertMainRendererSender(event)
     const sanitized = deps.sanitizeScheduledTaskPatch(id, partial)
     if (!sanitized) return null
     const updated = deps.updateScheduledTask(id, sanitized)
@@ -157,18 +161,21 @@ export function registerScheduledWorkflowHandlers(deps: ScheduledWorkflowHandler
     return updated
   })
 
-  ipcMain.handle('delete-scheduled-task', (_, id: string) => {
+  ipcMain.handle('delete-scheduled-task', (event, id: string) => {
+    deps.assertMainRendererSender(event)
     deps.deleteScheduledTask(id)
     deps.broadcastScheduledTasksChanged()
     deps.broadcastWorkflowDefinitionsChanged()
     deps.scheduleNextTaskTimer()
   })
 
-  ipcMain.handle('get-workflow-definitions', (_, workspaceId?: string) =>
-    deps.getWorkflowDefinitions(workspaceId)
-  )
+  ipcMain.handle('get-workflow-definitions', (event, workspaceId?: string) => {
+    deps.assertMainRendererSender(event)
+    return deps.getWorkflowDefinitions(workspaceId)
+  })
 
-  ipcMain.handle('save-workflow-definition', (_, workflow: Parameters<ScheduledWorkflowHandlersDeps['saveWorkflowDefinition']>[0]) => {
+  ipcMain.handle('save-workflow-definition', (event, workflow: Parameters<ScheduledWorkflowHandlersDeps['saveWorkflowDefinition']>[0]) => {
+    deps.assertMainRendererSender(event)
     const saved = deps.saveWorkflowDefinition(deps.sanitizeWorkflowForSave(workflow))
     deps.broadcastWorkflowDefinitionsChanged()
     requestThrottledRemoteProjectionAfterIpcMutation(deps)
@@ -176,7 +183,8 @@ export function registerScheduledWorkflowHandlers(deps: ScheduledWorkflowHandler
     return saved
   })
 
-  ipcMain.handle('update-workflow-definition', (_, id: string, partial: Partial<WorkflowDefinition>) => {
+  ipcMain.handle('update-workflow-definition', (event, id: string, partial: Partial<WorkflowDefinition>) => {
+    deps.assertMainRendererSender(event)
     const sanitized = deps.sanitizeWorkflowPatch(id, partial)
     if (!sanitized) return null
     const updated = deps.updateWorkflowDefinition(id, sanitized)
@@ -186,7 +194,8 @@ export function registerScheduledWorkflowHandlers(deps: ScheduledWorkflowHandler
     return updated
   })
 
-  ipcMain.handle('delete-workflow-definition', (_, id: string) => {
+  ipcMain.handle('delete-workflow-definition', (event, id: string) => {
+    deps.assertMainRendererSender(event)
     deps.deleteWorkflowDefinition(id)
     deps.broadcastWorkflowDefinitionsChanged()
     deps.broadcastScheduledTasksChanged()
@@ -194,84 +203,99 @@ export function registerScheduledWorkflowHandlers(deps: ScheduledWorkflowHandler
     deps.scheduleNextTaskTimer()
   })
 
-  ipcMain.handle('get-workspace-boards', (_, workspaceId?: string) =>
-    deps.getWorkspaceBoards(workspaceId)
-  )
+  ipcMain.handle('get-workspace-boards', (event, workspaceId?: string) => {
+    deps.assertMainRendererSender(event)
+    return deps.getWorkspaceBoards(workspaceId)
+  })
 
-  ipcMain.handle('save-workspace-board', (_, board: WorkspaceBoardSaveInput) => {
+  ipcMain.handle('save-workspace-board', (event, board: WorkspaceBoardSaveInput) => {
+    deps.assertMainRendererSender(event)
     const saved = deps.saveWorkspaceBoard(deps.sanitizeWorkspaceBoardForSave(board))
     deps.broadcastWorkspaceBoardsChanged()
     requestThrottledRemoteProjectionAfterIpcMutation(deps)
     return saved
   })
 
-  ipcMain.handle('update-workspace-board', (_, id: string, partial: Partial<WorkspaceBoardDefinition>) => {
+  ipcMain.handle('update-workspace-board', (event, id: string, partial: Partial<WorkspaceBoardDefinition>) => {
+    deps.assertMainRendererSender(event)
     const updated = deps.updateWorkspaceBoard(id, deps.sanitizeWorkspaceBoardPatch(partial))
     deps.broadcastWorkspaceBoardsChanged()
     requestThrottledRemoteProjectionAfterIpcMutation(deps)
     return updated
   })
 
-  ipcMain.handle('delete-workspace-board', (_, id: string) => {
+  ipcMain.handle('delete-workspace-board', (event, id: string) => {
+    deps.assertMainRendererSender(event)
     deps.deleteWorkspaceBoard(id)
     deps.broadcastWorkspaceBoardsChanged()
     requestThrottledRemoteProjectionAfterIpcMutation(deps)
   })
 
-  ipcMain.handle('get-workspace-board-cards', (_, boardId?: string) =>
-    deps.getWorkspaceBoardCards(boardId)
-  )
+  ipcMain.handle('get-workspace-board-cards', (event, boardId?: string) => {
+    deps.assertMainRendererSender(event)
+    return deps.getWorkspaceBoardCards(boardId)
+  })
 
-  ipcMain.handle('save-workspace-board-card', (_, card: WorkspaceBoardCardSaveInput) => {
+  ipcMain.handle('save-workspace-board-card', (event, card: WorkspaceBoardCardSaveInput) => {
+    deps.assertMainRendererSender(event)
     const saved = deps.saveWorkspaceBoardCard(deps.sanitizeWorkspaceBoardCardForSave(card))
     deps.broadcastWorkspaceBoardsChanged()
     requestThrottledRemoteProjectionAfterIpcMutation(deps)
     return saved
   })
 
-  ipcMain.handle('update-workspace-board-card', (_, id: string, partial: Partial<WorkspaceBoardCard>) => {
+  ipcMain.handle('update-workspace-board-card', (event, id: string, partial: Partial<WorkspaceBoardCard>) => {
+    deps.assertMainRendererSender(event)
     const updated = deps.updateWorkspaceBoardCard(id, deps.sanitizeWorkspaceBoardCardPatch(partial))
     deps.broadcastWorkspaceBoardsChanged()
     requestThrottledRemoteProjectionAfterIpcMutation(deps)
     return updated
   })
 
-  ipcMain.handle('delete-workspace-board-card', (_, id: string) => {
+  ipcMain.handle('delete-workspace-board-card', (event, id: string) => {
+    deps.assertMainRendererSender(event)
     deps.deleteWorkspaceBoardCard(id)
     deps.broadcastWorkspaceBoardsChanged()
     requestThrottledRemoteProjectionAfterIpcMutation(deps)
   })
 
-  ipcMain.handle('get-evidence-packs', (_, workspaceId?: string) =>
-    deps.getEvidencePacks(workspaceId)
-  )
+  ipcMain.handle('get-evidence-packs', (event, workspaceId?: string) => {
+    deps.assertMainRendererSender(event)
+    return deps.getEvidencePacks(workspaceId)
+  })
 
-  ipcMain.handle('save-evidence-pack', (_, pack: Partial<EvidencePackRecord>) => {
+  ipcMain.handle('save-evidence-pack', (event, pack: Partial<EvidencePackRecord>) => {
+    deps.assertMainRendererSender(event)
     const saved = deps.saveEvidencePack(pack)
     deps.broadcastEvidencePacksChanged()
     return saved
   })
 
-  ipcMain.handle('delete-evidence-pack', (_, id: string) => {
+  ipcMain.handle('delete-evidence-pack', (event, id: string) => {
+    deps.assertMainRendererSender(event)
     deps.deleteEvidencePack(id)
     deps.broadcastEvidencePacksChanged()
   })
 
-  ipcMain.handle('get-capability-ledger-snapshot', (_, workspaceId?: string) =>
-    deps.getCapabilityLedgerSnapshot(workspaceId)
-  )
+  ipcMain.handle('get-capability-ledger-snapshot', (event, workspaceId?: string) => {
+    deps.assertMainRendererSender(event)
+    return deps.getCapabilityLedgerSnapshot(workspaceId)
+  })
 
-  ipcMain.handle('get-repo-convention-indexes', (_, workspaceId?: string) =>
-    deps.getRepoConventionIndexes(workspaceId)
-  )
+  ipcMain.handle('get-repo-convention-indexes', (event, workspaceId?: string) => {
+    deps.assertMainRendererSender(event)
+    return deps.getRepoConventionIndexes(workspaceId)
+  })
 
-  ipcMain.handle('save-repo-convention-index', (_, snapshot: Partial<RepoConventionIndexSnapshot>) => {
+  ipcMain.handle('save-repo-convention-index', (event, snapshot: Partial<RepoConventionIndexSnapshot>) => {
+    deps.assertMainRendererSender(event)
     const saved = deps.saveRepoConventionIndex(snapshot)
     deps.broadcastEvidencePacksChanged()
     return saved
   })
 
-  ipcMain.handle('run-workflow-now', (_, id: string) => {
+  ipcMain.handle('run-workflow-now', (event, id: string) => {
+    deps.assertMainRendererSender(event)
     const task = deps.materializeWorkflowNow(id)
     if (task) {
       deps.broadcastWorkflowDefinitionsChanged()
@@ -283,7 +307,8 @@ export function registerScheduledWorkflowHandlers(deps: ScheduledWorkflowHandler
     return task
   })
 
-  ipcMain.handle('set-workflow-unattended-elevation', (_, id: string, level: string) => {
+  ipcMain.handle('set-workflow-unattended-elevation', (event, id: string, level: string) => {
+    deps.assertMainRendererSender(event)
     const wf = deps.getWorkflowDefinition(deps.requireNonEmptyString(id, 'Workflow id'))
     if (!wf) return null
     const ack = deps.buildUnattendedElevationAck(wf as WorkflowForElevationAck, level, (tuple) =>
@@ -300,17 +325,20 @@ export function registerScheduledWorkflowHandlers(deps: ScheduledWorkflowHandler
     return updated
   })
 
-  ipcMain.handle('get-workflow-run-summaries', (_, workflowId?: string) =>
-    deps.getWorkflowRunSummaries(typeof workflowId === 'string' ? workflowId : undefined)
-  )
+  ipcMain.handle('get-workflow-run-summaries', (event, workflowId?: string) => {
+    deps.assertMainRendererSender(event)
+    return deps.getWorkflowRunSummaries(typeof workflowId === 'string' ? workflowId : undefined)
+  })
 
-  ipcMain.handle('get-workflow-run-events', (_, filter: Record<string, unknown> = {}) =>
-    deps.getWorkflowRunEventsFiltered(filter)
-  )
+  ipcMain.handle('get-workflow-run-events', (event, filter: Record<string, unknown> = {}) => {
+    deps.assertMainRendererSender(event)
+    return deps.getWorkflowRunEventsFiltered(filter)
+  })
 
-  ipcMain.handle('get-agent-stats-summaries', (_, agentIds: unknown) =>
-    deps.getAgentStatsSummaries(
+  ipcMain.handle('get-agent-stats-summaries', (event, agentIds: unknown) => {
+    deps.assertMainRendererSender(event)
+    return deps.getAgentStatsSummaries(
       Array.isArray(agentIds) ? agentIds.filter((id): id is string => typeof id === 'string') : []
     )
-  )
+  })
 }

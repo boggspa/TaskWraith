@@ -1,9 +1,37 @@
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
-import { describe, expect, it } from 'vitest'
-import { validateIpcArgs, IPC_ARGUMENT_SCHEMAS } from './IpcValidation'
+import type { IpcMain, IpcMainInvokeEvent } from 'electron'
+import { describe, expect, it, vi } from 'vitest'
+import {
+  installIpcValidation,
+  validateIpcArgs,
+  IPC_ARGUMENT_SCHEMAS
+} from './IpcValidation'
 
 describe('IpcValidation', () => {
+  it('runs renderer authorization before dispatching a validated invocation', async () => {
+    type InvokeHandler = (event: IpcMainInvokeEvent, ...args: unknown[]) => unknown
+    const handlers = new Map<string, InvokeHandler>()
+    const ipcMain = {
+      handle: vi.fn((channel: string, listener: InvokeHandler) => {
+        handlers.set(channel, listener)
+      })
+    } as unknown as IpcMain
+    const authorize = vi.fn(() => {
+      throw new Error('secondary renderer denied')
+    })
+    const listener = vi.fn()
+    installIpcValidation(ipcMain, authorize)
+    ipcMain.handle('update-settings', listener)
+
+    const event = { sender: { id: 42 } } as unknown as IpcMainInvokeEvent
+    await expect(
+      Promise.resolve().then(() => handlers.get('update-settings')!(event, {}))
+    ).rejects.toThrow('secondary renderer denied')
+    expect(authorize).toHaveBeenCalledWith('update-settings', event)
+    expect(listener).not.toHaveBeenCalled()
+  })
+
   // `installIpcValidation` wraps EVERY `ipcMain.handle(channel, …)` and
   // calls `validateIpcArgs`, which THROWS "No IPC schema registered for
   // <channel>" when the channel is missing from IPC_ARGUMENT_SCHEMAS — so
@@ -80,6 +108,19 @@ describe('IpcValidation', () => {
     expect(() => validateIpcArgs('get-codex-usage-snapshot', [])).not.toThrow()
     expect(() => validateIpcArgs('get-codex-usage-snapshot', [{ force: true }])).not.toThrow()
     expect(() => validateIpcArgs('get-codex-usage-snapshot', ['force'])).toThrow(/object/)
+  })
+
+  it('accepts registered and chat-scoped external diff targets', () => {
+    expect(() => validateIpcArgs('get-diff', ['/tmp/workspace'])).not.toThrow()
+    expect(() =>
+      validateIpcArgs('get-diff', [{ repoPath: '/tmp/external-repo', chatId: 'chat-1' }])
+    ).not.toThrow()
+    expect(() => validateIpcArgs('get-diff', [{ repoPath: 'relative', chatId: 'chat-1' }])).toThrow(
+      /absolute workspace path/
+    )
+    expect(() =>
+      validateIpcArgs('get-diff', [{ repoPath: '/tmp/external-repo', chatId: '../settings' }])
+    ).toThrow(/safe chat id/)
   })
 
   it('accepts valid run-agent payloads', () => {
@@ -289,6 +330,15 @@ describe('IpcValidation', () => {
     expect(() => validateIpcArgs('external-path:pick-and-persist', ['nope'])).toThrow()
   })
 
+  it('accepts chat-bound external-path revoke payloads', () => {
+    expect(() =>
+      validateIpcArgs('external-path:revoke', [
+        { chatId: 'chat-1', grantIds: ['grant-1', 'grant-2'] }
+      ])
+    ).not.toThrow()
+    expect(() => validateIpcArgs('external-path:revoke', ['nope'])).toThrow()
+  })
+
   it('rejects unsafe chat ids for chat persistence IPC', () => {
     expect(() => validateIpcArgs('get-chat-list', [])).not.toThrow()
     expect(() => validateIpcArgs('get-chat-list', ['workspace-1'])).not.toThrow()
@@ -296,6 +346,17 @@ describe('IpcValidation', () => {
     expect(() => validateIpcArgs('get-pinned-messages', ['workspace-1'])).not.toThrow()
     expect(() => validateIpcArgs('get-chat', ['../settings'])).toThrow(/safe chat id/)
     expect(() => validateIpcArgs('delete-chat', ['../settings'])).toThrow(/safe chat id/)
+    expect(() =>
+      validateIpcArgs('rebind-chat-workspace', [
+        {
+          chatId: 'chat-1',
+          scope: 'workspace',
+          workspaceId: 'test-3',
+          workspacePath: '/Users/chrisizatt/Documents/Test 3'
+        }
+      ])
+    ).not.toThrow()
+    expect(() => validateIpcArgs('rebind-chat-workspace', ['chat-1'])).toThrow()
     expect(() =>
       validateIpcArgs('save-chat', [
         {

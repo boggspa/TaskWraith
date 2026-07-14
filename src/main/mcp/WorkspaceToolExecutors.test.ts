@@ -1,7 +1,7 @@
 import { resolve } from 'node:path'
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import {
   executeCreateDirectory,
   executeCancelSubthread,
@@ -43,6 +43,7 @@ import {
   enqueueSubThreadMailboxEvent,
   releaseSubThreadMailboxDelivery
 } from '../SubThreadMailbox'
+import { setScopedPathAccessTestHookForTests } from '../ScopedPathAccess'
 
 function makeDeps(
   runHostCommand: WorkspaceToolExecutorDependencies['host']['runHostCommand']
@@ -86,6 +87,10 @@ const PNG_1X1 = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
   'base64'
 )
+
+afterEach(() => {
+  setScopedPathAccessTestHookForTests(undefined)
+})
 
 describe('summarizeTestOutput', () => {
   it('keeps green vitest output green when pass titles and aggregates contain failed', () => {
@@ -809,6 +814,8 @@ describe('chat attachment workspace tools', () => {
       ({
         appChatId: chatId,
         title: 'Attachment chat',
+        scope: 'workspace',
+        workspacePath: workspace,
         messages: [
           {
             id: 'msg-1',
@@ -872,6 +879,8 @@ describe('chat attachment workspace tools', () => {
       ({
         appChatId: chatId,
         title: 'Attachment chat',
+        scope: 'workspace',
+        workspacePath: workspace,
         messages: [
           {
             id: 'msg-1',
@@ -906,6 +915,386 @@ describe('chat attachment workspace tools', () => {
     expect(result.content).toEqual([
       { type: 'image', mimeType: 'image/png', data: PNG_1X1.toString('base64') }
     ])
+  })
+
+  it('passes the canonical active chat id to the host-authorized transcript-media read', async () => {
+    const workspace = await mkdtemp(resolve(tmpdir(), 'tw-attachment-owned-media-'))
+    const reads: Array<{
+      sha256: string
+      mimeType: string
+      appChatId: string
+      maxBytes?: number
+    }> = []
+    const deps = makeDeps(async () => commandResult(''))
+    deps.store.getChat = (chatId) =>
+      ({
+        appChatId: chatId,
+        title: 'Owned media chat',
+        scope: 'workspace',
+        workspacePath: workspace,
+        messages: [
+          {
+            id: 'msg-owned',
+            role: 'user',
+            content: 'owned media',
+            timestamp: '2026-07-13T12:00:00.000Z',
+            metadata: {
+              mediaRefs: [
+                {
+                  id: 'owned-media',
+                  kind: 'image',
+                  format: 'raster',
+                  source: 'tool_result',
+                  name: 'owned.png',
+                  mimeType: 'image/png',
+                  sha256: 'ownedAsset_abcdefghijklmnopqrstuvwxyz0123456789-XYZ',
+                  byteLength: PNG_1X1.length,
+                  status: 'available'
+                }
+              ]
+            }
+          }
+        ],
+        runs: []
+      }) as any
+    deps.media = {
+      readTranscriptMediaAsset: (input) => {
+        reads.push(input)
+        return { ok: true, buffer: PNG_1X1, byteLength: PNG_1X1.length }
+      }
+    }
+
+    const result = await executeInspectChatAttachment(
+      deps,
+      { attachmentId: 'owned-media' },
+      { scope: 'workspace', cwd: workspace, workspacePath: workspace, appChatId: 'chat-owned' }
+    )
+
+    expect(result.isError).toBeUndefined()
+    expect(result.structuredContent).toMatchObject({ ok: true, imageReturned: true })
+    expect(reads).toEqual([
+      {
+        sha256: 'ownedAsset_abcdefghijklmnopqrstuvwxyz0123456789-XYZ',
+        mimeType: 'image/png',
+        appChatId: 'chat-owned',
+        maxBytes: 8 * 1024 * 1024
+      }
+    ])
+  })
+
+  it('honors host cross-chat denial without falling back to a media-ref path', async () => {
+    const workspace = await mkdtemp(resolve(tmpdir(), 'tw-attachment-cross-chat-'))
+    const imagePath = resolve(workspace, 'must-not-bypass.png')
+    await writeFile(imagePath, PNG_1X1)
+    const seenChatIds: string[] = []
+    const deps = makeDeps(async () => commandResult(''))
+    deps.store.getChat = (chatId) =>
+      ({
+        appChatId: chatId,
+        title: 'Cross-chat media reference',
+        scope: 'workspace',
+        workspacePath: workspace,
+        messages: [
+          {
+            id: 'msg-cross-chat',
+            role: 'user',
+            content: 'copied reference',
+            timestamp: '2026-07-13T12:00:00.000Z',
+            metadata: {
+              mediaRefs: [
+                {
+                  id: 'other-chat-media',
+                  kind: 'image',
+                  format: 'raster',
+                  source: 'tool_result',
+                  name: 'other.png',
+                  mimeType: 'image/png',
+                  sha256: 'otherAsset_abcdefghijklmnopqrstuvwxyz0123456789-XYZ',
+                  path: imagePath,
+                  byteLength: PNG_1X1.length,
+                  status: 'available'
+                }
+              ]
+            }
+          }
+        ],
+        runs: []
+      }) as any
+    deps.media = {
+      readTranscriptMediaAsset: (input) => {
+        seenChatIds.push(input.appChatId)
+        return input.appChatId === 'owner-chat'
+          ? { ok: true, buffer: PNG_1X1, byteLength: PNG_1X1.length }
+          : { ok: false, reason: 'missing' }
+      }
+    }
+
+    const result = await executeInspectChatAttachment(
+      deps,
+      { attachmentId: 'other-chat-media', chatId: 'owner-chat' },
+      { scope: 'workspace', cwd: workspace, workspacePath: workspace, appChatId: 'active-chat' }
+    )
+
+    expect(seenChatIds).toEqual(['active-chat'])
+    expect(result.isError).toBe(true)
+    expect(result.structuredContent).toMatchObject({
+      ok: false,
+      imageReturned: false,
+      error: 'Attachment image bytes are unavailable.'
+    })
+    expect(result.content).toBeUndefined()
+  })
+
+  it('rejects a store lookup whose embedded chat id does not match the active chat', async () => {
+    const workspace = await mkdtemp(resolve(tmpdir(), 'tw-attachment-chat-mismatch-'))
+    let mediaRead = false
+    const deps = makeDeps(async () => commandResult(''))
+    deps.store.getChat = () =>
+      ({ appChatId: 'different-chat', title: 'Mismatched chat', messages: [], runs: [] }) as any
+    deps.media = {
+      readTranscriptMediaAsset: () => {
+        mediaRead = true
+        return { ok: false, reason: 'missing' }
+      }
+    }
+
+    await expect(
+      executeInspectChatAttachment(
+        deps,
+        { attachmentId: 'anything' },
+        { scope: 'workspace', cwd: workspace, workspacePath: workspace, appChatId: 'active-chat' }
+      )
+    ).rejects.toThrow('did not match its canonical record')
+    expect(mediaRead).toBe(false)
+  })
+
+  it('keeps renderer-persisted external raw paths opaque and refuses to read them', async () => {
+    const workspace = await mkdtemp(resolve(tmpdir(), 'tw-attachment-external-workspace-'))
+    const outside = await mkdtemp(resolve(tmpdir(), 'tw-attachment-external-source-'))
+    const imagePath = resolve(outside, 'private.png')
+    await writeFile(imagePath, PNG_1X1)
+    const deps = makeDeps(async () => commandResult(''))
+    deps.store.getChat = (chatId) =>
+      ({
+        appChatId: chatId,
+        title: 'Untrusted external attachment path',
+        scope: 'workspace',
+        workspacePath: workspace,
+        messages: [
+          {
+            id: 'msg-external',
+            role: 'user',
+            content: 'renderer-authored path',
+            timestamp: '2026-07-14T10:00:00.000Z',
+            metadata: {
+              imagePaths: [imagePath],
+              mediaRefs: [
+                {
+                  id: 'forged-external-media-ref',
+                  kind: 'image',
+                  format: 'raster',
+                  source: 'tool_result',
+                  name: 'private.png',
+                  mimeType: 'image/png',
+                  path: imagePath,
+                  workspaceRelativePath: '/Users/private/secret.png',
+                  status: 'available'
+                }
+              ]
+            }
+          }
+        ],
+        runs: []
+      }) as any
+
+    try {
+      const listed = executeListChatAttachments(
+        deps,
+        { includePaths: true },
+        { scope: 'workspace', cwd: workspace, workspacePath: workspace, appChatId: 'chat-1' }
+      ) as any
+      expect(listed.attachments[0]).toMatchObject({
+        attachmentId: 'msg-external:image-path:0',
+        pathScope: 'external',
+        hasPath: true
+      })
+      expect(listed.attachments[0]).not.toHaveProperty('path')
+      const forgedRef = listed.attachments.find(
+        (attachment: any) => attachment.attachmentId === 'forged-external-media-ref'
+      )
+      expect(forgedRef).toMatchObject({ pathScope: 'external' })
+      expect(forgedRef).not.toHaveProperty('workspaceRelativePath')
+
+      const inspected = await executeInspectChatAttachment(
+        deps,
+        { attachmentId: 'msg-external:image-path:0', includePath: true },
+        { scope: 'workspace', cwd: workspace, workspacePath: workspace, appChatId: 'chat-1' }
+      )
+      expect(inspected.isError).toBe(true)
+      expect(inspected.structuredContent).toMatchObject({
+        ok: false,
+        imageReturned: false,
+        attachment: { pathScope: 'external' }
+      })
+      expect((inspected.structuredContent as any).attachment).not.toHaveProperty('path')
+      expect(inspected.content).toBeUndefined()
+    } finally {
+      await Promise.all([
+        rm(workspace, { recursive: true, force: true }),
+        rm(outside, { recursive: true, force: true })
+      ])
+    }
+  })
+
+  it('rejects an in-workspace symlink that resolves to an external image', async () => {
+    const workspace = await mkdtemp(resolve(tmpdir(), 'tw-attachment-symlink-workspace-'))
+    const outside = await mkdtemp(resolve(tmpdir(), 'tw-attachment-symlink-source-'))
+    const imagePath = resolve(outside, 'private.png')
+    const aliasPath = resolve(workspace, 'alias.png')
+    await writeFile(imagePath, PNG_1X1)
+    await symlink(imagePath, aliasPath, 'file')
+    const deps = makeDeps(async () => commandResult(''))
+    deps.store.getChat = (chatId) =>
+      ({
+        appChatId: chatId,
+        title: 'Symlinked attachment path',
+        scope: 'workspace',
+        workspacePath: workspace,
+        messages: [
+          {
+            id: 'msg-symlink',
+            role: 'user',
+            content: 'symlink path',
+            timestamp: '2026-07-14T10:00:00.000Z',
+            metadata: { imagePaths: [aliasPath] }
+          }
+        ],
+        runs: []
+      }) as any
+
+    try {
+      const inspected = await executeInspectChatAttachment(
+        deps,
+        { attachmentId: 'msg-symlink:image-path:0' },
+        { scope: 'workspace', cwd: workspace, workspacePath: workspace, appChatId: 'chat-1' }
+      )
+      expect(inspected.isError).toBe(true)
+      expect(inspected.structuredContent).toMatchObject({
+        ok: false,
+        imageReturned: false,
+        attachment: { pathScope: 'external' }
+      })
+      expect(inspected.content).toBeUndefined()
+    } finally {
+      await Promise.all([
+        rm(workspace, { recursive: true, force: true }),
+        rm(outside, { recursive: true, force: true })
+      ])
+    }
+  })
+
+  it('does not return image bytes when an attachment ancestor is swapped before open', async () => {
+    const workspace = await mkdtemp(resolve(tmpdir(), 'tw-attachment-swap-workspace-'))
+    const outside = await mkdtemp(resolve(tmpdir(), 'tw-attachment-swap-source-'))
+    const parentPath = resolve(workspace, 'nested')
+    const originalParentPath = resolve(workspace, 'nested-original')
+    const imagePath = resolve(parentPath, 'screen.png')
+    await mkdir(parentPath)
+    await writeFile(imagePath, PNG_1X1)
+    await writeFile(resolve(outside, 'screen.png'), PNG_1X1)
+    const deps = makeDeps(async () => commandResult(''))
+    deps.store.getChat = (chatId) =>
+      ({
+        appChatId: chatId,
+        title: 'Swapped attachment ancestor',
+        scope: 'workspace',
+        workspacePath: workspace,
+        messages: [
+          {
+            id: 'msg-swap',
+            role: 'user',
+            content: 'ancestor swap',
+            timestamp: '2026-07-14T10:00:00.000Z',
+            metadata: { imagePaths: [imagePath] }
+          }
+        ],
+        runs: []
+      }) as any
+    setScopedPathAccessTestHookForTests(async (stage) => {
+      if (stage !== 'after_directory_snapshot') return
+      await rename(parentPath, originalParentPath)
+      await symlink(outside, parentPath, 'dir')
+    })
+
+    try {
+      const inspected = await executeInspectChatAttachment(
+        deps,
+        { attachmentId: 'msg-swap:image-path:0' },
+        { scope: 'workspace', cwd: workspace, workspacePath: workspace, appChatId: 'chat-1' }
+      )
+      expect(inspected.isError).toBe(true)
+      expect(inspected.structuredContent).toMatchObject({
+        ok: false,
+        imageReturned: false,
+        error: 'Attachment image bytes are unavailable.'
+      })
+      expect(inspected.content).toBeUndefined()
+    } finally {
+      await Promise.all([
+        rm(workspace, { recursive: true, force: true }),
+        rm(outside, { recursive: true, force: true })
+      ])
+    }
+  })
+
+  it('does not let a mismatched run workspace mint attachment authority for its chat', async () => {
+    const chatWorkspace = await mkdtemp(resolve(tmpdir(), 'tw-attachment-chat-workspace-'))
+    const runWorkspace = await mkdtemp(resolve(tmpdir(), 'tw-attachment-run-workspace-'))
+    const imagePath = resolve(runWorkspace, 'other-workspace.png')
+    await writeFile(imagePath, PNG_1X1)
+    const deps = makeDeps(async () => commandResult(''))
+    deps.store.getChat = (chatId) =>
+      ({
+        appChatId: chatId,
+        title: 'Workspace mismatch',
+        scope: 'workspace',
+        workspacePath: chatWorkspace,
+        messages: [
+          {
+            id: 'msg-mismatch',
+            role: 'user',
+            content: 'wrong workspace path',
+            timestamp: '2026-07-14T10:00:00.000Z',
+            metadata: { imagePaths: [imagePath] }
+          }
+        ],
+        runs: []
+      }) as any
+
+    try {
+      const inspected = await executeInspectChatAttachment(
+        deps,
+        { attachmentId: 'msg-mismatch:image-path:0' },
+        {
+          scope: 'workspace',
+          cwd: runWorkspace,
+          workspacePath: runWorkspace,
+          appChatId: 'chat-1'
+        }
+      )
+      expect(inspected.isError).toBe(true)
+      expect(inspected.structuredContent).toMatchObject({
+        ok: false,
+        imageReturned: false,
+        attachment: { pathScope: 'external' }
+      })
+      expect(inspected.content).toBeUndefined()
+    } finally {
+      await Promise.all([
+        rm(chatWorkspace, { recursive: true, force: true }),
+        rm(runWorkspace, { recursive: true, force: true })
+      ])
+    }
   })
 })
 

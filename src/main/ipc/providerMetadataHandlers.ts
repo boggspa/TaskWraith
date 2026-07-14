@@ -1,34 +1,45 @@
-import { ipcMain } from 'electron'
+import { ipcMain, type IpcMainInvokeEvent } from 'electron'
 import type {
   ProviderAdapterDescriptor,
   ProviderCapabilityContract,
   ProviderId
 } from '../store/types'
+import {
+  rendererSafeProviderCapabilityContract,
+  rendererSafeProviderMcpStatus
+} from '../RendererProviderProjection'
 
 export interface ProviderMetadataHandlersDeps {
   assertProviderId: (provider: unknown) => ProviderId
   getAgentMcpStatusSnapshot: (provider: ProviderId) => Promise<unknown>
   getProviderCapabilityContract: (
+    event: IpcMainInvokeEvent,
     provider: ProviderId,
     workspacePath?: string,
     approvalMode?: string
   ) => Promise<ProviderCapabilityContract>
   getProviderAdapterDescriptors: () => ProviderAdapterDescriptor[]
+  isMainRendererSender: (event: IpcMainInvokeEvent) => boolean
 }
 
 export function registerProviderMetadataHandlers(deps: ProviderMetadataHandlersDeps): void {
-  ipcMain.handle('get-agent-mcp-status', async (_, provider: ProviderId) => {
-    return deps.getAgentMcpStatusSnapshot(deps.assertProviderId(provider))
+  ipcMain.handle('get-agent-mcp-status', async (event, provider: ProviderId) => {
+    const status = await deps.getAgentMcpStatusSnapshot(deps.assertProviderId(provider))
+    return deps.isMainRendererSender(event) ? status : rendererSafeProviderMcpStatus(status)
   })
 
   ipcMain.handle(
     'get-provider-capabilities',
-    async (_, provider: ProviderId, workspacePath?: string, approvalMode?: string) => {
-      return deps.getProviderCapabilityContract(
+    async (event, provider: ProviderId, workspacePath?: string, approvalMode?: string) => {
+      const contract = await deps.getProviderCapabilityContract(
+        event,
         deps.assertProviderId(provider),
         workspacePath,
         approvalMode
       )
+      return deps.isMainRendererSender(event)
+        ? contract
+        : rendererSafeProviderCapabilityContract(contract)
     }
   )
 

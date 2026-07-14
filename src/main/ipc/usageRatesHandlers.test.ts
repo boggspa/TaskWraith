@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ipcMain } from 'electron'
-import { registerUsageRatesHandlers } from './usageRatesHandlers'
+import {
+  registerUsageRatesHandlers,
+  type UsageRatesSenderScope
+} from './usageRatesHandlers'
 
 vi.mock('electron', () => ({
   ipcMain: {
@@ -33,6 +36,11 @@ function createDeps() {
 
   return {
     deps: {
+      resolveSenderUsageScope: vi.fn(
+        (_event: unknown): UsageRatesSenderScope => ({ kind: 'main' })
+      ),
+      assertMainRendererSender: vi.fn(),
+      globalUsageWorkspaceId: '__taskwraith_global_chats__',
       recordUsage: vi.fn(),
       getUsage: vi.fn(() => [] as any[]),
       getExternalUsageCached: vi.fn(async () => [] as any[]),
@@ -115,6 +123,120 @@ describe('registerUsageRatesHandlers', () => {
     expect(deps.onUsageChanged).toHaveBeenCalledTimes(1)
   })
 
+  it('forces popout usage reads to the durable owning chat and workspace', () => {
+    const { deps } = createDeps()
+    deps.resolveSenderUsageScope.mockReturnValue({
+      kind: 'chat',
+      chatId: 'chat-test-1',
+      chatScope: 'workspace',
+      workspaceId: 'test-1'
+    })
+    deps.getUsage.mockReturnValue([{ value: 'owned' }])
+    registerUsageRatesHandlers(deps)
+
+    expect(handlerFor('get-usage')({})).toEqual([{ value: 'owned' }])
+    expect(deps.getUsage).toHaveBeenCalledWith('test-1', 'chat-test-1')
+
+    expect(handlerFor('get-usage')({}, 'test-1', 'chat-test-1')).toEqual([{ value: 'owned' }])
+  })
+
+  it('rejects Test 1 popout usage reads that name Test 3', () => {
+    const { deps } = createDeps()
+    deps.resolveSenderUsageScope.mockReturnValue({
+      kind: 'chat',
+      chatId: 'chat-test-1',
+      chatScope: 'workspace',
+      workspaceId: 'test-1'
+    })
+    registerUsageRatesHandlers(deps)
+
+    expect(() => handlerFor('get-usage')({}, 'test-3', 'chat-test-1')).toThrow(
+      'Renderer cannot access usage for another workspace.'
+    )
+    expect(deps.getUsage).not.toHaveBeenCalled()
+  })
+
+  it('rejects popout usage reads for another chat in the same workspace', () => {
+    const { deps } = createDeps()
+    deps.resolveSenderUsageScope.mockReturnValue({
+      kind: 'chat',
+      chatId: 'chat-owned',
+      chatScope: 'workspace',
+      workspaceId: 'test-1'
+    })
+    registerUsageRatesHandlers(deps)
+
+    expect(() => handlerFor('get-usage')({}, 'test-1', 'chat-other')).toThrow(
+      'Renderer cannot access usage for another chat.'
+    )
+    expect(deps.getUsage).not.toHaveBeenCalled()
+  })
+
+  it('rejects forged popout usage records before store writes or notifications', () => {
+    const { deps } = createDeps()
+    deps.resolveSenderUsageScope.mockReturnValue({
+      kind: 'chat',
+      chatId: 'chat-owned',
+      chatScope: 'workspace',
+      workspaceId: 'test-1'
+    })
+    registerUsageRatesHandlers(deps)
+    const ownedUsage = {
+      workspaceId: 'test-1',
+      chatId: 'chat-owned',
+      runId: 'run-1',
+      model: 'gpt-5.6-terra',
+      inputTokens: 10,
+      outputTokens: 5,
+      totalTokens: 15,
+      durationMs: 100
+    }
+
+    expect(handlerFor('record-usage')({}, ownedUsage)).toBeUndefined()
+    expect(deps.recordUsage).toHaveBeenCalledWith(ownedUsage)
+
+    deps.recordUsage.mockClear()
+    deps.onUsageChanged.mockClear()
+    expect(() => handlerFor('record-usage')({}, { ...ownedUsage, workspaceId: 'test-3' })).toThrow(
+      'Renderer cannot record usage for another workspace.'
+    )
+    expect(() => handlerFor('record-usage')({}, { ...ownedUsage, chatId: 'chat-other' })).toThrow(
+      'Renderer cannot record usage for another chat.'
+    )
+    expect(deps.recordUsage).not.toHaveBeenCalled()
+    expect(deps.onUsageChanged).not.toHaveBeenCalled()
+  })
+
+  it('keeps global popouts out of real workspace usage while accepting the global ledger key', () => {
+    const { deps } = createDeps()
+    deps.resolveSenderUsageScope.mockReturnValue({
+      kind: 'chat',
+      chatId: 'chat-global',
+      chatScope: 'global'
+    })
+    registerUsageRatesHandlers(deps)
+    const globalUsage = {
+      workspaceId: '__taskwraith_global_chats__',
+      chatId: 'chat-global',
+      runId: 'run-global',
+      model: 'grok-4.5-fast',
+      inputTokens: 2,
+      outputTokens: 1,
+      totalTokens: 3,
+      durationMs: 20
+    }
+
+    expect(handlerFor('get-usage')({})).toEqual([])
+    expect(deps.getUsage).toHaveBeenCalledWith(undefined, 'chat-global')
+    expect(() => handlerFor('get-usage')({}, 'test-1', 'chat-global')).toThrow(
+      'Global chat renderers cannot read workspace usage.'
+    )
+    expect(handlerFor('record-usage')({}, globalUsage)).toBeUndefined()
+    expect(() => handlerFor('record-usage')({}, { ...globalUsage, workspaceId: 'test-1' })).toThrow(
+      'Renderer cannot record usage for another workspace.'
+    )
+  })
+
   it('proxies usage reads to store-backed dependencies', async () => {
     const { deps } = createDeps()
     registerUsageRatesHandlers(deps)
@@ -127,6 +249,19 @@ describe('registerUsageRatesHandlers', () => {
     const externalUsage = await handlerFor('get-external-usage')({}, { force: true })
     expect(externalUsage).toEqual([{ value: 'external' }])
     expect(deps.getExternalUsageCached).toHaveBeenCalledWith({ maxAgeMs: 0 })
+  })
+
+  it('keeps external provider history main-only', async () => {
+    const { deps } = createDeps()
+    deps.assertMainRendererSender.mockImplementation(() => {
+      throw new Error('Only the main renderer can read external usage history.')
+    })
+    registerUsageRatesHandlers(deps)
+
+    expect(() => handlerFor('get-external-usage')({}, { force: true })).toThrow(
+      'Only the main renderer can read external usage history.'
+    )
+    expect(deps.getExternalUsageCached).not.toHaveBeenCalled()
   })
 
   it('proxies FX rate and provider rate handlers with the current coercion behavior', async () => {
@@ -154,6 +289,7 @@ describe('registerUsageRatesHandlers', () => {
 
     await expect(handlerFor('providerRates:probe')({})).resolves.toEqual({ probe: 'ok' })
     expect(deps.probeAllProviderRates).toHaveBeenCalledOnce()
+    expect(deps.assertMainRendererSender).not.toHaveBeenCalled()
   })
 
   it('triggers remote usage rollup and welcome dashboard broadcasts', async () => {

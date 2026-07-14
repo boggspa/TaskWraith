@@ -513,8 +513,16 @@ export type AgentApprovalAction =
 export interface ExternalPathGrant {
   id: string
   provider: ProviderId
+  /**
+   * Version 2 grants are execution-bound to the originating chat and its
+   * canonical primary workspace. Absence denotes a legacy display-only grant;
+   * legacy signatures may still decode, but cannot authorize a new run.
+   */
+  bindingVersion?: 2
   workspaceId?: string
   chatId?: string
+  /** Exact run binding; required before a `thisRun` grant can execute. */
+  appRunId?: string
   path: string
   kind: 'file' | 'directory'
   access: ExternalPathGrantAccess
@@ -967,6 +975,36 @@ export interface ConcurrentLane {
   reason?: string
 }
 
+/**
+ * Restart-safe representation of one queued Ensemble follow-up. The renderer
+ * continues to read `queuedPrompts` for display, while this versioned mirror
+ * retains routing plus attachment evidence needed to decide whether the exact
+ * turn can resume. Raw attachment paths are evidence only: restart recovery
+ * quarantines those entries until the user re-selects the files.
+ */
+export interface EnsembleQueuedPromptState {
+  persistenceVersion: 1
+  id: string
+  prompt: string
+  dmTargetParticipantId?: string
+  fanoutPolicy?: EnsembleFanoutPolicy
+  /**
+   * Raw Discord snapshots are deliberately run-only and must never be written
+   * into the durable chat record. Preserve only enough evidence for restart
+   * recovery to fail closed instead of dispatching the queued prompt without
+   * the context the user selected.
+   */
+  hadDiscordContext?: boolean
+  imageAttachments: Array<{ id?: string; path: string; name?: string }>
+  imageThumbnails?: Array<{
+    dataBase64: string
+    mimeType: string
+    width?: number
+    height?: number
+  }>
+  externalPathGrants?: ExternalPathGrant[]
+}
+
 export interface EnsembleRoundState {
   roundId: string
   status: 'running' | 'completed' | 'cancelled' | 'failed'
@@ -1032,6 +1070,11 @@ export interface EnsembleRoundState {
    * existing code that checks length doesn't need null guards.
    */
   queuedPrompts?: string[]
+  /**
+   * Versioned structured mirror of `queuedPrompts`. Missing means the queue
+   * predates restart-safe routing metadata and must not be auto-dispatched.
+   */
+  queuedPromptEntries?: EnsembleQueuedPromptState[]
   sleepingParticipantIds?: string[]
   pendingWakeupIds?: string[]
   participants: EnsembleRoundParticipantState[]
@@ -3354,6 +3397,12 @@ export interface ChatRecord {
   workspacePath?: string
   createdAt: number
   updatedAt: number
+  /**
+   * Main-owned optimistic-concurrency token for whole-record persistence.
+   * Legacy records decode as revision 0. Renderers must round-trip this value;
+   * a stale revision is never allowed to replace a newer canonical record.
+   */
+  persistenceRevision?: number
   archived: boolean
   /** When true the chat is rendered in the sidebar's "Pinned" section
    * and excluded from "Recents". Default false. Persisted via the
@@ -4080,11 +4129,12 @@ export interface ScheduledTask {
   permissionPresetId?: PermissionPresetId
   workflowMode?: ChatWorkflowMode
   sessionTrust: boolean
-  imageAttachments: Array<{
-    id: string
-    path: string
-    name: string
-  }>
+  /**
+   * Durable, main-owned attachment snapshots. Scheduled tasks and workflow
+   * templates may outlive the renderer/file-picker session that created them,
+   * so a raw user/workspace path is never sufficient here.
+   */
+  imageAttachments: ScheduledTaskAttachmentRef[]
   externalPathGrants?: ExternalPathGrant[]
   geminiWorktree?: GeminiWorktreeConfig
   codexReasoningEffort?: string | null
@@ -5000,11 +5050,45 @@ export type RunQueueJobSource =
   | 'host_rerun'
   | 'system'
 
-export interface RunQueueImageAttachmentSnapshot {
+/**
+ * Content-addressed attachment persisted beyond the immediate live dispatch.
+ * `path` is the canonical path in TaskWraith's main-owned media asset store,
+ * never the original user/workspace path. The hash + MIME pair is the durable
+ * identity; the path is retained only because existing provider adapters still
+ * consume attachment files by path.
+ */
+export interface PersistedAttachmentRef {
+  persistenceVersion: 1
+  id?: string
+  path: string
+  name?: string
+  sha256: string
+  mimeType: string
+  byteLength: number
+}
+
+/**
+ * Decode-only migration shape for schedules/queue rows written before durable
+ * attachment snapshots. Main-process readers quarantine this shape; it must
+ * never be dispatched or silently upgraded from whatever bytes now occupy the
+ * old path.
+ */
+export interface LegacyPersistedAttachmentPathRef {
   id?: string
   path: string
   name?: string
 }
+
+export type PersistedOrLegacyAttachmentRef =
+  | PersistedAttachmentRef
+  | LegacyPersistedAttachmentPathRef
+
+export type ScheduledTaskAttachmentRef = PersistedOrLegacyAttachmentRef & {
+  id: string
+  name: string
+}
+
+export type RunQueueImageAttachmentSnapshot = PersistedOrLegacyAttachmentRef
 
 export interface RunQueueDiscordContextSelectionSnapshot {
   guildId?: string
@@ -5018,6 +5102,8 @@ export interface RunQueueRequestSnapshot {
   scope?: ChatScope
   prompt: string
   displayPrompt?: string
+  /** Stable participant id for a directed Ensemble round. */
+  dmTargetParticipantId?: string
   selectedModelType: string
   customModel: string
   approvalMode: string
@@ -5040,6 +5126,8 @@ export interface RunQueueRequestSnapshot {
   cursorFastMode?: boolean | null
   scheduledTaskId?: string
   scheduledRunAt?: string
+  /** Linked worktree selected when the queued turn was created. */
+  effectiveWorkspacePath?: string
   preserveComposer?: boolean
   runtimeProfileId?: string
   geminiAuthProfileId?: string | null

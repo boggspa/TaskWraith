@@ -12,6 +12,8 @@ import type {
   ChatScope,
   ExternalPathGrant,
   PermissionPresetId,
+  PersistedAttachmentRef,
+  PersistedOrLegacyAttachmentRef,
   ProviderId,
   RunPermissionPostureSnapshot,
   RunQueueJob,
@@ -21,6 +23,7 @@ import type {
   RunQueueRequestSnapshot,
   WorkspaceRecord
 } from '../store/types'
+import { isPersistedAttachmentRef } from './TranscriptMediaAssetStore'
 
 const RUN_QUEUE_STATUSES = new Set<RunQueueJobStatus>([
   'queued',
@@ -121,8 +124,36 @@ export interface RunQueueServiceDeps {
     chatId: string | undefined,
     workspace: WorkspaceRecord | undefined
   ) => void
+  /**
+   * Fresh-request-only attachment staging. Implementations must snapshot the
+   * authorized source through a nofollow descriptor, persist those exact bytes
+   * in TaskWraith's main-owned content-addressed store, and return only the
+   * resulting durable refs. This callback is deliberately never invoked while
+   * reading/recovering persisted queue rows.
+   */
+  stageAttachments: (input: RunQueueAttachmentStageInput) => RunQueueAttachmentStageResult
   canLeaseJob: (job: RunQueueJob) => boolean
 }
+
+export interface RunQueueAttachmentStageInput {
+  runId: string
+  provider: ProviderId
+  source: RunQueueJobSource
+  chatId?: string
+  workspaceId?: string
+  workspacePath?: string
+  externalPathGrants: ExternalPathGrant[]
+  /** Canonical attachment paths authorized for the requesting renderer. */
+  authorizedFilePaths?: string[]
+  attachments: PersistedOrLegacyAttachmentRef[]
+}
+
+export type RunQueueAttachmentStageResult =
+  | { ok: true; attachments: PersistedAttachmentRef[] }
+  | { ok: false; reason: string }
+
+const DURABLE_ATTACHMENT_QUARANTINE_REASON =
+  'Queued attachments could not be recovered safely. Re-select the attachments and send again.'
 
 /**
  * RunQueueService — Phase B5 extraction.
@@ -136,11 +167,23 @@ export class RunQueueService {
   constructor(private deps: RunQueueServiceDeps) {}
 
   getJobs(filter?: RunQueueJobFilter): RunQueueJob[] {
-    return this.deps.getRunRepository().getRunQueueJobs(filter || {})
+    const jobs = this.deps
+      .getRunRepository()
+      .getRunQueueJobs(filter || {})
+      .map((job) => this.quarantineUnsafePersistedAttachments(job))
+    if (filter?.statuses?.length) {
+      return jobs.filter((job) => filter.statuses?.includes(job.status))
+    }
+    if (filter?.includeTerminal === false) {
+      return jobs.filter((job) => !isTerminalRunQueueStatus(job.status))
+    }
+    return jobs
   }
 
-  requestJob(input: unknown): RunQueueJob {
-    return this.deps.getRunRepository().saveRunQueueJob(this.normalizeJobRequest(input))
+  requestJob(input: unknown, options: { authorizedFilePaths?: string[] } = {}): RunQueueJob {
+    return this.deps
+      .getRunRepository()
+      .saveRunQueueJob(this.normalizeJobRequest(input, options.authorizedFilePaths))
   }
 
   leaseJob(
@@ -153,18 +196,21 @@ export class RunQueueService {
       : this.deps.appStore
           .getRunQueueJobs({ provider, statuses: ['queued'] })
           .find((job) => this.deps.canLeaseJob(job))
-    if (!candidate || candidate.status !== 'queued') {
+    const safeCandidate = candidate
+      ? this.quarantineUnsafePersistedAttachments(candidate)
+      : null
+    if (!safeCandidate || safeCandidate.status !== 'queued') {
       return null
     }
-    if (provider && candidate.provider !== provider) {
+    if (provider && safeCandidate.provider !== provider) {
       return null
     }
-    if (runId && !this.deps.canLeaseJob(candidate)) {
+    if (runId && !this.deps.canLeaseJob(safeCandidate)) {
       return null
     }
     return this.deps.getRunRepository().leaseQueuedRun({
-      runId: candidate.runId,
-      provider: candidate.provider,
+      runId: safeCandidate.runId,
+      provider: safeCandidate.provider,
       statusReason: optionalString(request?.statusReason) || 'Leased by TaskWraith main scheduler.'
     })
   }
@@ -180,21 +226,24 @@ export class RunQueueService {
       : this.deps.appStore
           .getRunQueueJobs({ provider, chatId, statuses: ['queued'] })
           .find((job) => this.deps.canLeaseJob(job))
-    if (!candidate || candidate.status !== 'queued') {
+    const safeCandidate = candidate
+      ? this.quarantineUnsafePersistedAttachments(candidate)
+      : null
+    if (!safeCandidate || safeCandidate.status !== 'queued') {
       return null
     }
-    if (provider && candidate.provider !== provider) {
+    if (provider && safeCandidate.provider !== provider) {
       return null
     }
-    if (chatId && candidate.chatId !== chatId) {
+    if (chatId && safeCandidate.chatId !== chatId) {
       return null
     }
-    if (runId && !this.deps.canLeaseJob(candidate)) {
+    if (runId && !this.deps.canLeaseJob(safeCandidate)) {
       return null
     }
     return this.deps.getRunRepository().leaseQueuedRun({
-      runId: candidate.runId,
-      provider: candidate.provider,
+      runId: safeCandidate.runId,
+      provider: safeCandidate.provider,
       statusReason: optionalString(request?.statusReason) || 'Leased by TaskWraith main scheduler.'
     })
   }
@@ -234,8 +283,11 @@ export class RunQueueService {
     const ownerToken = optionalString(input?.ownerToken)
     if (!runId || !ownerToken) return null
     const candidate = this.deps.appStore.getRunQueueJob(runId)
-    if (!candidate || candidate.status !== 'steer_promoting') return null
-    if (!this.deps.canLeaseJob(candidate)) return null
+    const safeCandidate = candidate
+      ? this.quarantineUnsafePersistedAttachments(candidate)
+      : null
+    if (!safeCandidate || safeCandidate.status !== 'steer_promoting') return null
+    if (!this.deps.canLeaseJob(safeCandidate)) return null
     return this.deps.getRunRepository().leasePromotedSteerJob({
       runId,
       ownerToken,
@@ -284,7 +336,8 @@ export class RunQueueService {
   }
 
   private normalizeJobRequest(
-    value: unknown
+    value: unknown,
+    authorizedFilePaths?: string[]
   ): Partial<RunQueueJob> & Pick<RunQueueJob, 'runId' | 'provider' | 'source'> {
     const record = requireRecord(value, 'Run queue request')
     const provider = assertProviderId(record.provider)
@@ -307,7 +360,16 @@ export class RunQueueService {
     }
     const status = sanitizePublicRunQueueStatus(record.status, 'queued')
     const source = sanitizeRunQueueSource(record.source)
-    const request = this.sanitizeRunQueueRequestSnapshot(record.request)
+    const requestResult = this.sanitizeRunQueueRequestSnapshot(record.request, {
+      runId,
+      provider,
+      source,
+      chatId,
+      workspaceId,
+      workspacePath,
+      ...(authorizedFilePaths ? { authorizedFilePaths } : {})
+    })
+    const request = requestResult?.request
     const permissionPosture = sanitizePermissionPostureSnapshot(record.permissionPosture)
     const normalized: Partial<RunQueueJob> & Pick<RunQueueJob, 'runId' | 'provider' | 'source'> = {
       id: optionalString(record.id) || runId,
@@ -327,7 +389,11 @@ export class RunQueueService {
       workspaceId,
       chatId,
       source,
-      status: status === 'active' || status === 'cancelling' ? 'starting' : status,
+      status: requestResult?.attachmentError
+        ? 'failed'
+        : status === 'active' || status === 'cancelling'
+          ? 'starting'
+          : status,
       priority: optionalNumber(record.priority),
       attempt: optionalNumber(record.attempt),
       promptPreview: optionalString(record.promptPreview),
@@ -338,20 +404,40 @@ export class RunQueueService {
       parentRunId: optionalString(record.parentRunId),
       runtimeProfileId: optionalString(record.runtimeProfileId),
       handoffSourceRunId: optionalString(record.handoffSourceRunId),
-      statusReason: optionalString(record.statusReason),
-      lastError: optionalString(record.lastError)
+      statusReason:
+        requestResult?.attachmentError || optionalString(record.statusReason),
+      lastError: requestResult?.attachmentError || optionalString(record.lastError)
     }
     normalized.dispatchReceipt = buildRunQueueDispatchReceipt(normalized)
     return normalized
   }
 
-  private sanitizeRunQueueRequestSnapshot(value: unknown): RunQueueRequestSnapshot | undefined {
+  private sanitizeRunQueueRequestSnapshot(
+    value: unknown,
+    context: {
+      runId: string
+      provider: ProviderId
+      source: RunQueueJobSource
+      chatId?: string
+      workspaceId?: string
+      workspacePath?: string
+      authorizedFilePaths?: string[]
+    }
+  ): { request: RunQueueRequestSnapshot; attachmentError?: string } | undefined {
     if (!isRecord(value)) return undefined
-    const imageAttachments = Array.isArray(value.imageAttachments)
+    const rawImageAttachments = Array.isArray(value.imageAttachments)
       ? value.imageAttachments.filter(isRecord).map((attachment) => ({
           id: optionalString(attachment.id),
           path: requireNonEmptyString(attachment.path, 'Image attachment path'),
-          name: optionalString(attachment.name)
+          name: optionalString(attachment.name),
+          ...(attachment.persistenceVersion === 1
+            ? {
+                persistenceVersion: 1 as const,
+                sha256: optionalString(attachment.sha256) || '',
+                mimeType: optionalString(attachment.mimeType) || '',
+                byteLength: optionalNumber(attachment.byteLength) || 0
+              }
+            : {})
         }))
       : []
     const rawExternalPathGrants = Array.isArray(value.externalPathGrants)
@@ -367,11 +453,34 @@ export class RunQueueService {
     ) {
       throw new Error('Queued external path grants must be issued by TaskWraith in this app session.')
     }
+    let imageAttachments: PersistedAttachmentRef[] = []
+    let attachmentError: string | undefined
+    if (rawImageAttachments.length) {
+      try {
+        const staged = this.deps.stageAttachments({
+          ...context,
+          externalPathGrants,
+          attachments: rawImageAttachments
+        })
+        if (
+          !staged.ok ||
+          staged.attachments.length !== rawImageAttachments.length ||
+          !staged.attachments.every(isPersistedAttachmentRef)
+        ) {
+          attachmentError = DURABLE_ATTACHMENT_QUARANTINE_REASON
+        } else {
+          imageAttachments = staged.attachments.map(copyPersistedAttachmentRef)
+        }
+      } catch {
+        attachmentError = DURABLE_ATTACHMENT_QUARANTINE_REASON
+      }
+    }
     const workflowMode = sanitizeWorkflowMode(value.workflowMode)
-    return {
+    return { request: {
       scope: value.scope === 'global' ? 'global' : 'workspace',
       prompt: typeof value.prompt === 'string' ? value.prompt : '',
       displayPrompt: optionalString(value.displayPrompt),
+      dmTargetParticipantId: optionalString(value.dmTargetParticipantId),
       selectedModelType: optionalString(value.selectedModelType) || 'cli-default',
       customModel: typeof value.customModel === 'string' ? value.customModel : '',
       approvalMode: optionalString(value.approvalMode) || 'default',
@@ -401,11 +510,52 @@ export class RunQueueService {
         typeof value.kimiThinkingEnabled === 'boolean' ? value.kimiThinkingEnabled : undefined,
       scheduledTaskId: optionalString(value.scheduledTaskId),
       scheduledRunAt: optionalString(value.scheduledRunAt),
+      effectiveWorkspacePath: optionalString(value.effectiveWorkspacePath),
       preserveComposer: Boolean(value.preserveComposer) || undefined,
       runtimeProfileId: optionalString(value.runtimeProfileId),
       handoffSourceRunId: optionalString(value.handoffSourceRunId)
+    }, ...(attachmentError ? { attachmentError } : {}) }
+  }
+
+  private quarantineUnsafePersistedAttachments(job: RunQueueJob): RunQueueJob {
+    const sourceRequest = job.request
+    const attachments = sourceRequest?.imageAttachments
+    if (!sourceRequest || !attachments?.length || attachments.every(isPersistedAttachmentRef)) {
+      return job
+    }
+
+    const request: RunQueueRequestSnapshot = { ...sourceRequest, imageAttachments: [] }
+    if (isTerminalRunQueueStatus(job.status)) {
+      return { ...job, request }
+    }
+    const transitioned = this.deps.getRunRepository().transitionRunQueueJob(job.runId, 'failed', {
+      statusReason: DURABLE_ATTACHMENT_QUARANTINE_REASON,
+      lastError: DURABLE_ATTACHMENT_QUARANTINE_REASON
+    })
+    return {
+      ...(transitioned || job),
+      status: 'failed',
+      statusReason: DURABLE_ATTACHMENT_QUARANTINE_REASON,
+      lastError: DURABLE_ATTACHMENT_QUARANTINE_REASON,
+      request
     }
   }
+}
+
+function copyPersistedAttachmentRef(value: PersistedAttachmentRef): PersistedAttachmentRef {
+  return {
+    persistenceVersion: 1,
+    id: optionalString(value.id),
+    path: value.path,
+    name: optionalString(value.name),
+    sha256: value.sha256,
+    mimeType: value.mimeType.toLowerCase(),
+    byteLength: value.byteLength
+  }
+}
+
+function isTerminalRunQueueStatus(status: RunQueueJobStatus): boolean {
+  return status === 'cancelled' || status === 'failed' || status === 'completed'
 }
 
 function assertProviderId(value: unknown): ProviderId {

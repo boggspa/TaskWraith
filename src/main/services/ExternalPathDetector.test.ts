@@ -88,14 +88,62 @@ describe('detectExternalPath', () => {
     ).toEqual({ needsPrompt: false })
   })
 
-  it('returns needsPrompt=false for relative paths (we only flag absolute)', () => {
+  it('resolves relative paths against the workspace and flags parent escapes', () => {
     expect(
       detectExternalPath({
         toolName: 'read_file',
         params: { path: '../outside/file.ts' },
         workspacePath: '/Users/me/code/proj'
       })
+    ).toEqual({
+      needsPrompt: true,
+      path: '/Users/me/code/outside/file.ts',
+      access: 'read',
+      basename: 'file.ts'
+    })
+  })
+
+  it('keeps relative paths that resolve inside the workspace contained', () => {
+    expect(
+      detectExternalPath({
+        toolName: 'read_file',
+        params: { path: './src/file.ts' },
+        workspacePath: '/Users/me/code/proj'
+      })
     ).toEqual({ needsPrompt: false })
+  })
+
+  it.each(['Read', 'Glob', 'Grep'])(
+    'recognises provider-native %s as a read operation',
+    (toolName) => {
+      expect(
+        detectExternalPath({
+          toolName,
+          params: { path: '/Users/me/Other/proj' },
+          workspacePath: '/Users/me/code/proj'
+        })
+      ).toEqual({
+        needsPrompt: true,
+        path: '/Users/me/Other/proj',
+        access: 'read',
+        basename: 'proj'
+      })
+    }
+  )
+
+  it('recognises provider-native Write as a write operation', () => {
+    expect(
+      detectExternalPath({
+        toolName: 'Write',
+        params: { file_path: '/Users/me/Other/proj/new.ts' },
+        workspacePath: '/Users/me/code/proj'
+      })
+    ).toEqual({
+      needsPrompt: true,
+      path: '/Users/me/Other/proj/new.ts',
+      access: 'write',
+      basename: 'new.ts'
+    })
   })
 
   it('respects existing grants — read covered by read grant', () => {

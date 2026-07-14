@@ -36,7 +36,10 @@ function harness() {
     setChatKind: vi.fn(),
     getChildChats: vi.fn(() => []),
     getSideChats: vi.fn(() => []),
-    saveChat: vi.fn((next: ChatRecord) => chats.set(next.appChatId, next)),
+    saveChat: vi.fn((next: ChatRecord) => {
+      chats.set(next.appChatId, next)
+      return next
+    }),
     deleteChat: vi.fn(),
     clearChats: vi.fn()
   }

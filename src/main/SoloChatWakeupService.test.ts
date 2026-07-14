@@ -436,6 +436,35 @@ describe('SoloChatWakeupService — scheduleWakeup', () => {
     expect(wakeup?.resumePermissions?.effectivePermissions).toEqual(effectivePermissions)
   })
 
+  it('does not persist or replay run-only external path authority into a wakeup', () => {
+    const threadGrant = makeExternalPathGrant({ id: 'thread-grant' })
+    const runGrant = makeExternalPathGrant({
+      id: 'run-grant',
+      duration: 'thisRun',
+      appRunId: 'run-1'
+    })
+    const effectivePermissions = makeEffectivePermissions({
+      externalPathGrants: [threadGrant, runGrant]
+    })
+    const result = service.scheduleWakeup(
+      'chat-solo-1',
+      'codex',
+      'run-1',
+      { delayMs: 60_000 },
+      {
+        externalPathGrants: [threadGrant, runGrant],
+        effectivePermissions
+      }
+    )
+
+    expect(result.ok).toBe(true)
+    const wakeup = saved[0].soloWakeups?.[result.wakeup!.wakeupId]
+    expect(wakeup?.resumePermissions?.externalPathGrants).toEqual([threadGrant])
+    expect(wakeup?.resumePermissions?.effectivePermissions?.externalPathGrants).toEqual([
+      threadGrant
+    ])
+  })
+
   it('rejects when chat already has a pending wakeup', () => {
     service.scheduleWakeup('chat-solo-1', 'codex', 'run-1', { delayMs: 60_000 })
     const result = service.scheduleWakeup('chat-solo-1', 'codex', 'run-2', { delayMs: 60_000 })

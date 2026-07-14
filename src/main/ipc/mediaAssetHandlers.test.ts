@@ -1,8 +1,14 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import fs from 'fs'
+import os from 'os'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { join } from 'path'
 import type { BrowserWindow } from 'electron'
 import { ipcMain } from 'electron'
-import { TRANSCRIPT_MEDIA_ASSET_DIR } from '../services/TranscriptMediaAssetStore'
+import {
+  TRANSCRIPT_MEDIA_ASSET_DIR,
+  TranscriptMediaAssetStore,
+  transcriptMediaAssetPath
+} from '../services/TranscriptMediaAssetStore'
 import { registerMediaAssetHandlers } from './mediaAssetHandlers'
 
 vi.mock('electron', () => ({
@@ -15,16 +21,34 @@ const mockedHandle = vi.mocked(ipcMain.handle)
 
 beforeEach(() => {
   mockedHandle.mockReset()
+  currentUserData = fs.mkdtempSync(join(os.tmpdir(), 'tw-media-handler-'))
+  roots.push(currentUserData)
+  const store = new TranscriptMediaAssetStore(join(currentUserData, TRANSCRIPT_MEDIA_ASSET_DIR))
+  expect(
+    store.write({ sha256: VALID_SHA, mimeType: 'image/png', buffer: ORIGINAL_BYTES })
+  ).toEqual({ ok: true })
+})
+
+afterEach(() => {
+  while (roots.length) {
+    const root = roots.pop()
+    if (root) fs.rmSync(root, { recursive: true, force: true })
+  }
 })
 
 type RegisteredHandler = (event: unknown, ...args: unknown[]) => unknown
 const VALID_SHA = 'abcdefabcdefabcdefabcdefabcdefabcdefabcdef'
-const VALID_ASSET_PATH = join(
-  '/tmp/user-data',
-  TRANSCRIPT_MEDIA_ASSET_DIR,
-  'ab',
-  `${VALID_SHA}.png`
-)
+const ORIGINAL_BYTES = Buffer.from('original-transcript-image-bytes')
+const roots: string[] = []
+let currentUserData = ''
+
+function validAssetPath(): string {
+  return transcriptMediaAssetPath(
+    fs.realpathSync.native(join(currentUserData, TRANSCRIPT_MEDIA_ASSET_DIR)),
+    VALID_SHA,
+    'image/png'
+  )
+}
 
 function handlerFor(channel: string): RegisteredHandler {
   const handler = mockedHandle.mock.calls.find(([registered]) => registered === channel)?.[1] as
@@ -36,13 +60,14 @@ function handlerFor(channel: string): RegisteredHandler {
 }
 
 function createDeps() {
-  let mainWindow: BrowserWindow | null = { id: 1 } as unknown as BrowserWindow
+  let requestingWindow: BrowserWindow | null = { id: 1 } as unknown as BrowserWindow
   const deps = {
     isRecord: (value: unknown): value is Record<string, unknown> =>
       Boolean(value && typeof value === 'object' && !Array.isArray(value)),
-    getUserDataPath: vi.fn(() => '/tmp/user-data'),
-    statIsFile: vi.fn((assetPath: string) => assetPath === VALID_ASSET_PATH),
-    getMainWindow: vi.fn(() => mainWindow),
+    getUserDataPath: vi.fn(() => currentUserData),
+    statIsFile: vi.fn(() => true),
+    authorizeSender: vi.fn(() => true),
+    getRequestingWindow: vi.fn(() => requestingWindow),
     showItemInFolder: vi.fn(),
     showSaveDialog: vi.fn(
       async (): Promise<{ canceled: boolean; filePath?: string }> => ({
@@ -50,13 +75,14 @@ function createDeps() {
         filePath: '/tmp/export.png'
       })
     ),
-    copyFile: vi.fn(async () => undefined)
+    copyFile: vi.fn(async () => undefined),
+    copyOpenedAsset: vi.fn(async () => undefined)
   }
 
   return {
     deps,
-    setMainWindow(next: BrowserWindow | null) {
-      mainWindow = next
+    setRequestingWindow(next: BrowserWindow | null) {
+      requestingWindow = next
     }
   }
 }
@@ -70,7 +96,7 @@ describe('registerMediaAssetHandlers', () => {
     expect(handlerFor('media-asset:save-as')).toBeTypeOf('function')
   })
 
-  it('resolver returns null for invalid input, path-jail failures, and non-file stats', async () => {
+  it('resolver returns null for invalid input, path-jail failures, and missing assets', async () => {
     const { deps } = createDeps()
     registerMediaAssetHandlers(deps)
 
@@ -87,19 +113,9 @@ describe('registerMediaAssetHandlers', () => {
         sha256: VALID_SHA,
         mimeType: 'image/png'
       })
-    ).resolves.toBe(VALID_ASSET_PATH)
+    ).resolves.toBe(validAssetPath())
 
-    deps.statIsFile.mockImplementationOnce(() => {
-      throw new Error('stat failed')
-    })
-    await expect(
-      handlerFor('media-asset:get-path')({}, {
-        sha256: VALID_SHA,
-        mimeType: 'image/png'
-      })
-    ).resolves.toBeNull()
-
-    deps.statIsFile.mockReturnValue(false)
+    fs.renameSync(validAssetPath(), `${validAssetPath()}.gone`)
     await expect(
       handlerFor('media-asset:get-path')({}, {
         sha256: VALID_SHA,
@@ -134,7 +150,7 @@ describe('registerMediaAssetHandlers', () => {
   })
 
   it('save-as preserves invalid/no-window, cancel, dialog-failure, copy-failure, and success shapes', async () => {
-    const { deps, setMainWindow } = createDeps()
+    const { deps, setRequestingWindow } = createDeps()
     registerMediaAssetHandlers(deps)
 
     await expect(handlerFor('media-asset:save-as')({}, null)).resolves.toEqual({
@@ -142,7 +158,7 @@ describe('registerMediaAssetHandlers', () => {
       canceled: false
     })
 
-    setMainWindow(null)
+    setRequestingWindow(null)
     await expect(
       handlerFor('media-asset:save-as')({}, {
         sha256: VALID_SHA,
@@ -150,7 +166,7 @@ describe('registerMediaAssetHandlers', () => {
       })
     ).resolves.toEqual({ ok: false, canceled: false })
 
-    setMainWindow({ id: 1 } as unknown as BrowserWindow)
+    setRequestingWindow({ id: 1 } as unknown as BrowserWindow)
     deps.showSaveDialog.mockResolvedValueOnce({ canceled: true })
     await expect(
       handlerFor('media-asset:save-as')({}, {
@@ -170,7 +186,7 @@ describe('registerMediaAssetHandlers', () => {
     ).resolves.toEqual({ ok: false, canceled: false })
 
     deps.showSaveDialog.mockResolvedValueOnce({ canceled: false, filePath: '/tmp/export.png' })
-    deps.copyFile.mockImplementationOnce(async () => {
+    deps.copyOpenedAsset.mockImplementationOnce(async () => {
       throw new Error('copy failed')
     })
     await expect(
@@ -181,7 +197,7 @@ describe('registerMediaAssetHandlers', () => {
     ).resolves.toEqual({ ok: false, canceled: false })
 
     deps.showSaveDialog.mockResolvedValueOnce({ canceled: false, filePath: '/tmp/export.png' })
-    deps.copyFile.mockResolvedValueOnce(undefined)
+    deps.copyOpenedAsset.mockResolvedValueOnce(undefined)
     await expect(
       handlerFor('media-asset:save-as')({}, {
         sha256: VALID_SHA,
@@ -213,5 +229,154 @@ describe('registerMediaAssetHandlers', () => {
       expect.anything(),
       expect.objectContaining({ defaultPath: `${VALID_SHA}.png` })
     )
+  })
+
+  it('fails closed before filesystem or shell effects when sender authorization is absent', async () => {
+    const { deps } = createDeps()
+    deps.authorizeSender.mockReturnValue(false)
+    registerMediaAssetHandlers(deps)
+    const event = { sender: { id: 99 } }
+    const input = { sha256: VALID_SHA, mimeType: 'image/png' }
+
+    await expect(handlerFor('media-asset:get-path')(event, input)).resolves.toBeNull()
+    await expect(handlerFor('media-asset:reveal')(event, input)).resolves.toEqual({ ok: false })
+    await expect(handlerFor('media-asset:save-as')(event, input)).resolves.toEqual({
+      ok: false,
+      canceled: false
+    })
+
+    expect(deps.authorizeSender).toHaveBeenCalledWith(event, {
+      sha256: VALID_SHA,
+      mimeType: 'image/png'
+    })
+    expect(deps.statIsFile).not.toHaveBeenCalled()
+    expect(deps.getRequestingWindow).not.toHaveBeenCalled()
+    expect(deps.showItemInFolder).not.toHaveBeenCalled()
+    expect(deps.showSaveDialog).not.toHaveBeenCalled()
+    expect(deps.copyFile).not.toHaveBeenCalled()
+    expect(deps.copyOpenedAsset).not.toHaveBeenCalled()
+  })
+
+  it('uses the exact requesting BrowserWindow for an authorized save dialog', async () => {
+    const { deps, setRequestingWindow } = createDeps()
+    const event = { sender: { id: 41 } }
+    const window = { id: 41 } as unknown as BrowserWindow
+    setRequestingWindow(window)
+    registerMediaAssetHandlers(deps)
+
+    await handlerFor('media-asset:save-as')(event, {
+      sha256: VALID_SHA,
+      mimeType: 'image/png'
+    })
+
+    expect(deps.getRequestingWindow).toHaveBeenCalledWith(event)
+    expect(deps.showSaveDialog).toHaveBeenCalledWith(window, expect.anything())
+  })
+
+  it('fails closed when requesting-window resolution throws', async () => {
+    const { deps } = createDeps()
+    deps.getRequestingWindow.mockImplementation(() => {
+      throw new Error('destroyed sender')
+    })
+    registerMediaAssetHandlers(deps)
+
+    await expect(
+      handlerFor('media-asset:save-as')({}, {
+        sha256: VALID_SHA,
+        mimeType: 'image/png'
+      })
+    ).resolves.toEqual({ ok: false, canceled: false })
+    expect(deps.showSaveDialog).not.toHaveBeenCalled()
+    expect(deps.copyFile).not.toHaveBeenCalled()
+  })
+
+  it('reduces POSIX and Windows suggested paths to a safe leaf basename', async () => {
+    const { deps } = createDeps()
+    registerMediaAssetHandlers(deps)
+    const input = { sha256: VALID_SHA, mimeType: 'image/png' }
+
+    await handlerFor('media-asset:save-as')({}, {
+      ...input,
+      suggestedName: '/private/tmp/export/posix-name.png'
+    })
+    expect(deps.showSaveDialog).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.objectContaining({ defaultPath: 'posix-name.png' })
+    )
+
+    await handlerFor('media-asset:save-as')({}, {
+      ...input,
+      suggestedName: 'C:\\Users\\attacker\\windows-name.png'
+    })
+    expect(deps.showSaveDialog).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.objectContaining({ defaultPath: 'windows-name.png' })
+    )
+
+    await handlerFor('media-asset:save-as')({}, { ...input, suggestedName: '..' })
+    expect(deps.showSaveDialog).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.objectContaining({ defaultPath: `${VALID_SHA}.png` })
+    )
+  })
+
+  it('exports from the exact opened descriptor when the store path is replaced during the dialog', async () => {
+    const { deps } = createDeps()
+    const destination = join(currentUserData, 'export.png')
+    const assetPath = validAssetPath()
+    deps.showSaveDialog.mockImplementationOnce(async () => {
+      fs.renameSync(assetPath, `${assetPath}.original`)
+      fs.writeFileSync(assetPath, Buffer.alloc(ORIGINAL_BYTES.length, 0x58), { mode: 0o600 })
+      return { canceled: false, filePath: destination }
+    })
+    delete (deps as Partial<typeof deps>).copyOpenedAsset
+    registerMediaAssetHandlers(deps)
+
+    await expect(
+      handlerFor('media-asset:save-as')({}, {
+        sha256: VALID_SHA,
+        mimeType: 'image/png'
+      })
+    ).resolves.toEqual({ ok: true, canceled: false })
+    expect(fs.readFileSync(destination)).toEqual(ORIGINAL_BYTES)
+  })
+
+  it('fails closed without publishing an export when the opened inode changes in place', async () => {
+    const { deps } = createDeps()
+    const destination = join(currentUserData, 'must-not-exist.png')
+    deps.showSaveDialog.mockImplementationOnce(async () => {
+      fs.truncateSync(validAssetPath(), 1)
+      return { canceled: false, filePath: destination }
+    })
+    delete (deps as Partial<typeof deps>).copyOpenedAsset
+    registerMediaAssetHandlers(deps)
+
+    await expect(
+      handlerFor('media-asset:save-as')({}, {
+        sha256: VALID_SHA,
+        mimeType: 'image/png'
+      })
+    ).resolves.toEqual({ ok: false, canceled: false })
+    expect(fs.existsSync(destination)).toBe(false)
+  })
+
+  it('copies large media with a fixed-size buffer instead of loading the asset whole', async () => {
+    const { deps } = createDeps()
+    const sha256 = 'largeExportHash_abcdefghijklmnopqrstuvwxyz0123456789'
+    const body = Buffer.alloc(1024 * 1024 + 17, 0x6a)
+    const store = new TranscriptMediaAssetStore(join(currentUserData, TRANSCRIPT_MEDIA_ASSET_DIR))
+    expect(store.write({ sha256, mimeType: 'video/mp4', buffer: body })).toEqual({ ok: true })
+    const destination = join(currentUserData, 'large-export.mp4')
+    deps.showSaveDialog.mockResolvedValueOnce({ canceled: false, filePath: destination })
+    delete (deps as Partial<typeof deps>).copyOpenedAsset
+    const allocSpy = vi.spyOn(Buffer, 'allocUnsafe')
+    registerMediaAssetHandlers(deps)
+
+    await expect(
+      handlerFor('media-asset:save-as')({}, { sha256, mimeType: 'video/mp4' })
+    ).resolves.toEqual({ ok: true, canceled: false })
+    expect(allocSpy.mock.calls.some(([size]) => size === 256 * 1024)).toBe(true)
+    expect(allocSpy.mock.calls.every(([size]) => size <= 256 * 1024)).toBe(true)
+    expect(fs.readFileSync(destination).equals(body)).toBe(true)
   })
 })

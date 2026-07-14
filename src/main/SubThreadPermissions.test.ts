@@ -46,12 +46,34 @@ const fullAccess = {
   ]
 } as EffectiveRunPermissions
 
+const parentBoundReadGrant = {
+  id: 'parent-read-grant',
+  provider: 'codex' as const,
+  bindingVersion: 2 as const,
+  workspaceId: 'workspace-parent',
+  chatId: 'chat-parent',
+  appRunId: 'run-parent',
+  path: '/tmp/outside-read',
+  kind: 'directory' as const,
+  access: 'read' as const,
+  duration: 'thisRun' as const,
+  issuedBy: 'main' as const,
+  signature: 'signed-parent',
+  createdAt: '2026-07-11T12:00:00.000Z'
+}
+
 describe('inheritedSubThreadPermissions', () => {
   it('carries a read-only parent posture to the sub-thread (no escalation)', () => {
-    const inherited = inheritedSubThreadPermissions({ effectivePermissions: readOnly })
+    const inherited = inheritedSubThreadPermissions({
+      effectivePermissions: {
+        ...readOnly,
+        externalPathGrants: [parentBoundReadGrant]
+      }
+    })
     expect(inherited?.agenticServices.shellCommands).toBe('deny')
     expect(inherited?.agenticServices.fileChanges).toBe('deny')
     expect(inherited?.readOnly).toBe(true)
+    expect(inherited?.externalPathGrants).toEqual([])
   })
 
   it('returns undefined when the parent has no explicit posture', () => {
@@ -60,7 +82,10 @@ describe('inheritedSubThreadPermissions', () => {
 
   it('defaults async workers to a trusted main-derived read-only floor', () => {
     const decision = resolveSubThreadWorkerPermissions({
-      parentPermissions: fullAccess,
+      parentPermissions: {
+        ...fullAccess,
+        externalPathGrants: [parentBoundReadGrant]
+      },
       readOnlyPermissions: readOnly
     })
 
@@ -84,7 +109,10 @@ describe('inheritedSubThreadPermissions', () => {
 
   it('allows a distinct isolated worktree but never carries Full Access host authority', () => {
     const decision = resolveSubThreadWorkerPermissions({
-      parentPermissions: fullAccess,
+      parentPermissions: {
+        ...fullAccess,
+        externalPathGrants: [parentBoundReadGrant]
+      },
       readOnlyPermissions: readOnly,
       isolation: {
         kind: 'worktree',

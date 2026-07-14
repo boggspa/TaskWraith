@@ -39,6 +39,7 @@ function createDeps() {
   } as any
 
   return {
+    assertMainRendererSender: vi.fn(),
     getScheduledTasks: vi.fn(() => [defaultSanitizedTask]),
     saveScheduledTask: vi.fn((task) => ({ ...defaultSanitizedTask, ...task })),
     updateScheduledTask: vi.fn((id, partial) => ({ ...defaultSanitizedTask, id, ...partial })),
@@ -129,6 +130,55 @@ describe('registerScheduledWorkflowHandlers', () => {
     expect(handlerFor('set-workflow-unattended-elevation')).toBeTypeOf('function')
     expect(handlerFor('get-workflow-run-summaries')).toBeTypeOf('function')
     expect(handlerFor('get-workflow-run-events')).toBeTypeOf('function')
+    expect(handlerFor('get-agent-stats-summaries')).toBeTypeOf('function')
+  })
+
+  it('rejects every scheduled-workflow surface before reading or mutating global state', () => {
+    const deps = createDeps()
+    const rejection = new Error('Only the main renderer can manage workspace authority.')
+    deps.assertMainRendererSender.mockImplementation(() => {
+      throw rejection
+    })
+    registerScheduledWorkflowHandlers(deps)
+
+    const channels = [
+      'get-scheduled-tasks',
+      'save-scheduled-task',
+      'update-scheduled-task',
+      'delete-scheduled-task',
+      'get-workflow-definitions',
+      'save-workflow-definition',
+      'update-workflow-definition',
+      'delete-workflow-definition',
+      'get-workspace-boards',
+      'save-workspace-board',
+      'update-workspace-board',
+      'delete-workspace-board',
+      'get-workspace-board-cards',
+      'save-workspace-board-card',
+      'update-workspace-board-card',
+      'delete-workspace-board-card',
+      'get-evidence-packs',
+      'save-evidence-pack',
+      'delete-evidence-pack',
+      'get-capability-ledger-snapshot',
+      'get-repo-convention-indexes',
+      'save-repo-convention-index',
+      'run-workflow-now',
+      'set-workflow-unattended-elevation',
+      'get-workflow-run-summaries',
+      'get-workflow-run-events',
+      'get-agent-stats-summaries'
+    ]
+    const event = { sender: { id: 42 } }
+
+    for (const channel of channels) {
+      expect(() => handlerFor(channel)(event)).toThrow(rejection)
+    }
+    expect(deps.assertMainRendererSender).toHaveBeenCalledTimes(channels.length)
+    expect(deps.getScheduledTasks).not.toHaveBeenCalled()
+    expect(deps.materializeWorkflowNow).not.toHaveBeenCalled()
+    expect(deps.setWorkflowUnattendedElevation).not.toHaveBeenCalled()
   })
 
   it('saves scheduled tasks through sanitization and broadcasts changed schedules', () => {

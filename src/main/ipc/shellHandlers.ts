@@ -1,4 +1,11 @@
-import { ipcMain } from 'electron'
+import { ipcMain, type IpcMainInvokeEvent } from 'electron'
+import { classifyShellOpenTarget } from '../ShellOpenPolicy'
+import {
+  assertSecondaryRendererLocalOpenIsPassive,
+  resolveAuthorizedRendererLocalPath,
+  type AuthorizeRendererLocalPath,
+  type InspectLocalOpenTarget
+} from '../RendererLocalPathAuthority'
 import type { FaviconService } from '../services/FaviconService'
 
 /**
@@ -25,6 +32,10 @@ export interface ShellHandlerDeps {
   openSafeShellTarget: (hrefRaw: unknown) => Promise<{ ok: boolean; error?: string }>
   revealPathInFinder: (pathRaw: unknown) => Promise<{ ok: boolean; error?: string }>
   getFaviconService: () => FaviconService
+  /** Optional only so a missing integration fails closed instead of weakening authority. */
+  authorizeLocalPath?: AuthorizeRendererLocalPath
+  isMainRendererSender?: (event: IpcMainInvokeEvent) => boolean
+  inspectLocalOpenTarget?: InspectLocalOpenTarget
 }
 
 export function registerShellHandlers(deps: ShellHandlerDeps): void {
@@ -40,14 +51,41 @@ export function registerShellHandlers(deps: ShellHandlerDeps): void {
   //   - everything else (javascript:, data:, ssh:, custom) -> no-op
   ipcMain.handle(
     'shell:open-link',
-    async (_event, hrefRaw: unknown): Promise<{ ok: boolean; error?: string }> => {
-      return openSafeShellTarget(hrefRaw)
+    async (event, hrefRaw: unknown): Promise<{ ok: boolean; error?: string }> => {
+      const decision = classifyShellOpenTarget(hrefRaw)
+      if (decision.action === 'deny') {
+        return { ok: false, error: decision.error }
+      }
+      if (decision.action === 'external') {
+        return openSafeShellTarget(decision.href)
+      }
+
+      const authorizedPath = await resolveAuthorizedRendererLocalPath(
+        deps.authorizeLocalPath,
+        event,
+        { operation: 'open', requestedPath: decision.path }
+      )
+      await assertSecondaryRendererLocalOpenIsPassive(authorizedPath, {
+        isMainRenderer: deps.isMainRendererSender?.(event) === true,
+        inspect: deps.inspectLocalOpenTarget
+      })
+      const authorizedDecision = classifyShellOpenTarget(authorizedPath)
+      if (authorizedDecision.action !== 'path') {
+        throw new Error('Renderer local-path authorization did not return a local path.')
+      }
+      return openSafeShellTarget(authorizedDecision.path)
     }
   )
   ipcMain.handle(
     'shell:reveal-in-finder',
-    async (_event, pathRaw: unknown): Promise<{ ok: boolean; error?: string }> => {
-      return revealPathInFinder(pathRaw)
+    async (event, pathRaw: unknown): Promise<{ ok: boolean; error?: string }> => {
+      const requestedPath = typeof pathRaw === 'string' ? pathRaw.trim() : ''
+      const authorizedPath = await resolveAuthorizedRendererLocalPath(
+        deps.authorizeLocalPath,
+        event,
+        { operation: 'reveal', requestedPath }
+      )
+      return revealPathInFinder(authorizedPath)
     }
   )
   ipcMain.handle('favicon:getForUrl', async (_event, hrefRaw: unknown) => {

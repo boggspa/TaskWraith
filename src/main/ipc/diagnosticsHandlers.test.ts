@@ -1,7 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ipcMain } from 'electron'
 import type { ProductOperationsStatus } from '../store/types'
-import { registerDiagnosticsHandlers } from './diagnosticsHandlers'
+import {
+  assertProductAuditBundleVerificationSize,
+  PRODUCT_AUDIT_BUNDLE_MAX_VERIFY_BYTES,
+  SECONDARY_RENDERER_CRASH_REPORT_LIMIT,
+  registerDiagnosticsHandlers
+} from './diagnosticsHandlers'
 
 vi.mock('electron', () => ({
   ipcMain: {
@@ -70,7 +75,9 @@ function createDeps() {
       path: '/tmp/bug-report.json',
       sizeWarning: false,
       totalBytes: 123
-    }))
+    })),
+    isMainRendererSender: vi.fn(() => true),
+    nowMs: vi.fn(() => 1_000)
   }
   return deps
 }
@@ -88,6 +95,18 @@ type BugReportSubmissionInput = {
 }
 
 describe('registerDiagnosticsHandlers', () => {
+  it('bounds audit bundle verification before the main process parses JSON', () => {
+    expect(() =>
+      assertProductAuditBundleVerificationSize(PRODUCT_AUDIT_BUNDLE_MAX_VERIFY_BYTES)
+    ).not.toThrow()
+    expect(() =>
+      assertProductAuditBundleVerificationSize(PRODUCT_AUDIT_BUNDLE_MAX_VERIFY_BYTES + 1)
+    ).toThrow('Audit bundle exceeds')
+    expect(() => assertProductAuditBundleVerificationSize(Number.NaN)).toThrow(
+      'could not be verified safely'
+    )
+  })
+
   it('registers product/diagnostics IPC channels', () => {
     registerDiagnosticsHandlers(createDeps())
 
@@ -169,6 +188,80 @@ describe('registerDiagnosticsHandlers', () => {
       message: 'x',
       source: 'renderer'
     })
+  })
+
+  it('derives secondary crash identity and bounds cyclic metadata before persistence', () => {
+    const deps = createDeps()
+    deps.isMainRendererSender.mockReturnValue(false)
+    registerDiagnosticsHandlers(deps)
+    const metadata: Record<string, unknown> = {
+      filename: '/work/Test 1/src/App.tsx',
+      accessToken: 'plaintext-secret'
+    }
+    metadata.self = metadata
+
+    handlerFor('record-product-crash')(
+      { sender: { id: 42 } },
+      {
+        id: 'forged-id',
+        source: 'main',
+        severity: 'fatal',
+        occurredAt: '1999-01-01T00:00:00.000Z',
+        appVersion: 'forged-version',
+        platform: 'forged-platform',
+        arch: 'forged-arch',
+        message: 'Renderer exploded',
+        metadata
+      }
+    )
+
+    expect(deps.recordProductCrash).toHaveBeenCalledWith({
+      source: 'renderer',
+      severity: 'error',
+      message: 'Renderer exploded',
+      metadata: {
+        filename: '/work/Test 1/src/App.tsx',
+        accessToken: '[redacted]',
+        self: '[circular]'
+      }
+    })
+  })
+
+  it('rate-limits secondary crash telemetry per sender while leaving main reports exempt', () => {
+    const secondaryDeps = createDeps()
+    secondaryDeps.isMainRendererSender.mockReturnValue(false)
+    registerDiagnosticsHandlers(secondaryDeps)
+    const secondaryEvent = { sender: { id: 77 } }
+    for (let index = 0; index < SECONDARY_RENDERER_CRASH_REPORT_LIMIT; index += 1) {
+      handlerFor('record-product-crash')(secondaryEvent, {
+        source: 'renderer',
+        severity: 'error',
+        message: `error ${index}`
+      })
+    }
+    expect(() =>
+      handlerFor('record-product-crash')(secondaryEvent, {
+        source: 'renderer',
+        severity: 'error',
+        message: 'one too many'
+      })
+    ).toThrow('rate limit exceeded')
+    expect(secondaryDeps.recordProductCrash).toHaveBeenCalledTimes(
+      SECONDARY_RENDERER_CRASH_REPORT_LIMIT
+    )
+
+    mockedHandle.mockReset()
+    const mainDeps = createDeps()
+    registerDiagnosticsHandlers(mainDeps)
+    for (let index = 0; index <= SECONDARY_RENDERER_CRASH_REPORT_LIMIT; index += 1) {
+      handlerFor('record-product-crash')(
+        { sender: { id: 1 } },
+        { source: 'renderer', severity: 'error', message: `main ${index}` }
+      )
+    }
+    expect(mainDeps.recordProductCrash).toHaveBeenCalledTimes(
+      SECONDARY_RENDERER_CRASH_REPORT_LIMIT + 1
+    )
   })
 
   it('returns app version and falls back to unknown when blank', () => {

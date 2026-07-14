@@ -45,6 +45,7 @@ import type {
   EnsembleOrchestrationMode,
   EnsembleParticipant,
   EnsembleParticipantStatus,
+  EnsembleQueuedPromptState,
   EnsembleRunIdentity,
   EnsembleRoundParticipantState,
   EnsembleRoundState,
@@ -323,6 +324,18 @@ export interface EnsembleOrchestratorDeps {
     context?: RunPermissionPostureContext | null
   ) => string
   isTrustedSessionGranted?: (scope: TrustedSessionScope) => boolean
+  /**
+   * Mint host-authorized attachment grants only after the participant run id
+   * exists. A `thisRun` grant is a capability for one exact provider run, so
+   * round-level pre-minting cannot bind it safely (serial seats and fan-out
+   * lanes each receive a different appRunId).
+   */
+  issueRunScopedExternalGrants?: (input: {
+    chat: ChatRecord
+    participant: EnsembleParticipant
+    appRunId: string
+    attachments: EnsembleImageAttachment[]
+  }) => ExternalPathGrant[]
   dispatch: (
     payload: AgentRunPayload,
     event: EnsembleDispatchEvent
@@ -2614,20 +2627,7 @@ function createDiscordContextToolMessage(
   }
 }
 
-/**
- * 1.0.5-EW43a — Runtime-only structured queue entry. Carries both
- * the prompt string (already enriched with `promptWithAttachment
- * References` so any persistence/read-back retains the text refs)
- * AND the structured image-attachment array. The chat-round state
- * still persists only the prompt strings (the renderer reads that
- * shape and would be confused by structured entries), so the
- * `updateChatRound` mirror sites map `entries.map(e => e.prompt)`
- * when writing back. Recovery after app restart loses the
- * attachment objects (the prompt strings survive); for live
- * mid-session queueing — the user's actual symptom — the runtime
- * structure keeps attachments intact through the dequeue + new-
- * round dispatch.
- */
+/** Runtime queue entry. Its restart-safe fields are mirrored to the round. */
 interface QueuedRoundEntry {
   id: string
   prompt: string
@@ -2637,6 +2637,10 @@ interface QueuedRoundEntry {
   imageAttachments: EnsembleImageAttachment[]
   imageThumbnails?: EnsembleImageThumbnail[]
   externalPathGrants?: ExternalPathGrant[]
+  /** Set only when restart recovery cannot safely replay persisted metadata. */
+  restartRecoveryBlockedReason?: string
+  /** Context snapshots are runtime-only; persisted rows retain a presence
+   * marker so restart recovery can quarantine rather than silently drop them. */
   discordContextSnapshots?: DiscordContextSnapshot[]
 }
 
@@ -2687,12 +2691,17 @@ interface ActiveRoundRuntime {
    * were dropped at the enqueue point — the next-round dispatch
    * at line 2131 then fired with `imageAttachments: []` and the
    * agent received only the prompt's text references, with no
-   * actual image data attached. The chat-round state mirror at
-   * `updateChatRound` still persists `queuedPrompts: string[]`
-   * (the renderer reads that shape for the queued-messages
-   * above-row, and the persistence type stays back-compat).
+   * actual image data attached. The chat-round state now persists both the
+   * prompt-only renderer mirror and a versioned structured mirror so restart
+   * recovery can retain the same routing and attachment boundary.
    */
   queuedPrompts: QueuedRoundEntry[]
+  /**
+   * Legacy prompt-only rows found during restart recovery. They remain visible
+   * and persisted, but never auto-dispatch because their original routing and
+   * attachment authority cannot be reconstructed safely.
+   */
+  quarantinedLegacyQueuedPrompts?: string[]
   startAfterCancellation?: Promise<unknown>
   remainingParticipants?: EnsembleParticipant[]
   bossmanParticipantId?: string
@@ -2846,8 +2855,161 @@ export class EnsembleOrchestrator {
   constructor(private deps: EnsembleOrchestratorDeps) {}
 
   private nextQueuedPromptId(chatId: string): string {
-    this.queuedPromptIdCounter += 1
-    return `ensemble-queued-${chatId}-${this.queuedPromptIdCounter}`
+    const usedIds = new Set<string>()
+    for (const entry of this.roundsByChatId.get(chatId)?.queuedPrompts || []) {
+      usedIds.add(entry.id)
+    }
+    for (
+      const entry of
+        this.deps.getChat(chatId)?.ensemble?.activeRound?.queuedPromptEntries || []
+    ) {
+      usedIds.add(entry.id)
+    }
+    let candidate = ''
+    do {
+      this.queuedPromptIdCounter += 1
+      candidate = `ensemble-queued-${chatId}-${this.queuedPromptIdCounter}`
+    } while (usedIds.has(candidate))
+    return candidate
+  }
+
+  private queuedPromptFields(entries: QueuedRoundEntry[]): {
+    queuedPrompt: string | undefined
+    queuedPrompts: string[]
+    queuedPromptEntries: EnsembleQueuedPromptState[]
+  } {
+    const queuedPrompts = entries.map((entry) => entry.prompt)
+    return {
+      queuedPrompt: queuedPrompts[0],
+      queuedPrompts,
+      queuedPromptEntries: entries.map((entry) => ({
+        persistenceVersion: 1,
+        id: entry.id,
+        prompt: entry.prompt,
+        ...(entry.dmTargetParticipantId
+          ? { dmTargetParticipantId: entry.dmTargetParticipantId }
+          : {}),
+        ...(entry.fanoutPolicy ? { fanoutPolicy: entry.fanoutPolicy } : {}),
+        ...(entry.discordContextSnapshots?.length ? { hadDiscordContext: true } : {}),
+        imageAttachments: entry.imageAttachments.map((attachment) => ({ ...attachment })),
+        ...(entry.imageThumbnails?.length
+          ? { imageThumbnails: entry.imageThumbnails.map((thumbnail) => ({ ...thumbnail })) }
+          : {}),
+        ...(entry.externalPathGrants?.some(
+          (grant) => grant.duration !== 'thisRun' && !grant.appRunId
+        )
+          ? {
+              externalPathGrants: entry.externalPathGrants
+                .filter((grant) => grant.duration !== 'thisRun' && !grant.appRunId)
+                .map((grant) => ({ ...grant }))
+            }
+          : {})
+      }))
+    }
+  }
+
+  /**
+   * Rehydrate only a complete, versioned queue mirror. `null` deliberately
+   * means fail closed: prompt-only legacy rows or a mismatched/corrupt mirror
+   * do not contain enough authority to infer their original directed scope.
+   */
+  private restorePersistedQueuedEntries(round: EnsembleRoundState): QueuedRoundEntry[] | null {
+    if (!Array.isArray(round.queuedPromptEntries)) return null
+    const promptMirror =
+      Array.isArray(round.queuedPrompts) && round.queuedPrompts.length > 0
+        ? round.queuedPrompts
+        : round.queuedPrompt
+          ? [round.queuedPrompt]
+          : []
+    if (round.queuedPromptEntries.length !== promptMirror.length) return null
+
+    const restored: QueuedRoundEntry[] = []
+    for (let index = 0; index < round.queuedPromptEntries.length; index += 1) {
+      const entry = round.queuedPromptEntries[index]
+      if (
+        !entry ||
+        entry.persistenceVersion !== 1 ||
+        typeof entry.id !== 'string' ||
+        !entry.id.trim() ||
+        typeof entry.prompt !== 'string' ||
+        entry.prompt !== promptMirror[index] ||
+        (entry.dmTargetParticipantId !== undefined &&
+          (typeof entry.dmTargetParticipantId !== 'string' ||
+            !entry.dmTargetParticipantId.trim())) ||
+        (entry.fanoutPolicy !== undefined && !isEnsembleFanoutPolicy(entry.fanoutPolicy)) ||
+        (entry.hadDiscordContext !== undefined &&
+          typeof entry.hadDiscordContext !== 'boolean') ||
+        !Array.isArray(entry.imageAttachments) ||
+        (entry.imageThumbnails !== undefined && !Array.isArray(entry.imageThumbnails)) ||
+        (entry.externalPathGrants !== undefined &&
+          (!Array.isArray(entry.externalPathGrants) ||
+            entry.externalPathGrants.some(
+              (grant) => !grant || typeof grant !== 'object' || typeof grant.duration !== 'string'
+            )))
+      ) {
+        return null
+      }
+      const imageAttachments = normalizeEnsembleImageAttachments(entry.imageAttachments)
+      const imageThumbnails = normalizeEnsembleImageThumbnails(entry.imageThumbnails)
+      if (
+        imageAttachments.length !== entry.imageAttachments.length ||
+        imageThumbnails.length !== (entry.imageThumbnails?.length || 0)
+      ) {
+        return null
+      }
+      const restartRecoveryBlockedReasons: string[] = []
+      if (imageAttachments.length > 0 || imageThumbnails.length > 0) {
+        restartRecoveryBlockedReasons.push(
+          'attachment paths must be re-selected'
+        )
+      }
+      if (entry.hadDiscordContext) {
+        restartRecoveryBlockedReasons.push(
+          'Discord context was run-only and must be re-selected'
+        )
+      }
+      restored.push({
+        id: entry.id,
+        prompt: entry.prompt,
+        ...(entry.dmTargetParticipantId
+          ? { dmTargetParticipantId: entry.dmTargetParticipantId }
+          : {}),
+        ...(entry.fanoutPolicy ? { fanoutPolicy: entry.fanoutPolicy } : {}),
+        imageAttachments,
+        ...(imageThumbnails.length ? { imageThumbnails } : {}),
+        ...(entry.externalPathGrants?.some(
+          (grant) => grant.duration !== 'thisRun' && !grant.appRunId
+        )
+          ? {
+              externalPathGrants: entry.externalPathGrants
+                .filter((grant) => grant.duration !== 'thisRun' && !grant.appRunId)
+                .map((grant) => ({ ...grant }))
+            }
+          : {}),
+        ...(restartRecoveryBlockedReasons.length > 0
+          ? {
+              restartRecoveryBlockedReason: `Queued prompt preserved but not dispatched after restart because ${restartRecoveryBlockedReasons.join(
+                ' and '
+              )}.`
+            }
+          : {})
+      })
+    }
+    return restored
+  }
+
+  private queuedTargetUnavailableReason(
+    chatId: string,
+    entry: Pick<QueuedRoundEntry, 'dmTargetParticipantId'>
+  ): string | null {
+    const targetId = entry.dmTargetParticipantId
+    if (!targetId) return null
+    const targetExists = this.deps
+      .getChat(chatId)
+      ?.ensemble?.participants.some((participant) => participant.id === targetId)
+    return targetExists
+      ? null
+      : `Directed queued prompt preserved but not dispatched because participant "${targetId}" is no longer in the roster.`
   }
 
   private resolveQueuedPrompt(
@@ -2974,6 +3136,18 @@ export class EnsembleOrchestrator {
       parsed.prompt.trim() ||
       (imageAttachments.length > 0 ? 'Please inspect the attached file(s).' : '')
     if (!prompt) return { status: 'ignored' }
+    if (
+      input.dmTargetParticipantId &&
+      !this.deps
+        .getChat(input.chatId)
+        ?.ensemble?.participants.some(
+          (participant) => participant.id === input.dmTargetParticipantId
+        )
+    ) {
+      throw new Error(
+        `Directed Ensemble target "${input.dmTargetParticipantId}" is no longer in the roster.`
+      )
+    }
     const imageThumbnails = normalizeEnsembleImageThumbnails(input.imageThumbnails)
     let existing = this.roundsByChatId.get(input.chatId)
     if (existing) {
@@ -2991,6 +3165,25 @@ export class EnsembleOrchestrator {
         }
         this.roundsByChatId.delete(input.chatId)
         existing = undefined
+      }
+    }
+    if (!existing) {
+      const persistedRound = this.deps.getChat(input.chatId)?.ensemble?.activeRound
+      const persistedQueue =
+        persistedRound?.queuedPrompts?.length
+          ? persistedRound.queuedPrompts
+          : persistedRound?.queuedPrompt
+            ? [persistedRound.queuedPrompt]
+            : []
+      if (
+        persistedRound && persistedQueue.length > 0
+      ) {
+        this.appendRoundStatus(
+          input.chatId,
+          persistedRound.roundId,
+          'New round not started after restart because queued Ensemble work is still preserved. Resume or delete the queued item first.'
+        )
+        return { status: 'ignored' }
       }
     }
     if (existing && !existing.cancelled) {
@@ -3030,9 +3223,8 @@ export class EnsembleOrchestrator {
       // follow-up round. The prompt string still gets the
       // `promptWithAttachmentReferences` treatment so the
       // persisted/displayed form retains the text references the
-      // renderer + transcript expect. Persistence to chat round
-      // state below maps `e => e.prompt` to keep the back-compat
-      // `string[]` shape that the renderer reads.
+      // renderer + transcript expect. Persistence keeps that string mirror and
+      // a versioned structured mirror for restart-safe recovery.
       existing.queuedPrompts.push({
         id: this.nextQueuedPromptId(input.chatId),
         prompt: promptWithAttachmentReferences(prompt, imageAttachments),
@@ -3050,16 +3242,13 @@ export class EnsembleOrchestrator {
         ),
         discordContextSnapshots: normalizeDiscordContextSnapshots(input.discordContextSnapshots)
       })
-      const nextQueuedPrompts = existing.queuedPrompts.map((entry) => entry.prompt)
       this.updateChatRound(input.chatId, (round) =>
         round
           ? {
               ...round,
-              // Keep legacy `queuedPrompt` in sync with the head of
-              // the array so back-compat readers still see the next
-              // one. New readers should iterate `queuedPrompts`.
-              queuedPrompt: nextQueuedPrompts[0],
-              queuedPrompts: nextQueuedPrompts
+              // Keep the prompt-only renderer view and restart-safe routing
+              // mirror in one atomic round update.
+              ...this.queuedPromptFields(existing.queuedPrompts)
             }
           : round
       )
@@ -3088,11 +3277,10 @@ export class EnsembleOrchestrator {
   /**
    * Restart-orphan recovery resolver. After an app restart the in-memory
    * `roundsByChatId` runtime is gone (nothing rehydrates it), but a persisted
-   * dispatch-live round still renders queued rows + a live Steer/Delete button
-   * because the renderer gates on `isEnsembleRoundDispatchLive`. The persisted
-   * round only carries the back-compat `queuedPrompts: string[]` shape (the
-   * structured `QueuedRoundEntry[]` lived on the runtime, which no longer
-   * exists), so resolve the clicked queued item against that.
+   * active or terminal recovered round can retain queued rows after the
+   * provider process disappears. Resolve the clicked item against its durable
+   * structured mirror; terminal orphan recovery must not make the queue
+   * unreachable merely because it correctly closed the dead parent round.
    *
    * Returns the persisted round + selected prompt + remaining queue when a
    * recoverable item matches, `{ error }` for a stale index/prefix, or `null`
@@ -3101,13 +3289,26 @@ export class EnsembleOrchestrator {
    */
   private resolvePersistedQueuedPromptForRecovery(
     chatId: string,
-    input: { index: number; textPrefix?: string }
+    input: { index: number; textPrefix?: string; queuedPromptId?: string }
   ):
-    | { round: EnsembleRoundState; selectedIndex: number; selected: string; remaining: string[] }
+    | {
+        round: EnsembleRoundState
+        selectedIndex: number
+        selected: QueuedRoundEntry
+        remaining: QueuedRoundEntry[]
+        restartSafe: true
+      }
+    | {
+        round: EnsembleRoundState
+        selectedIndex: number
+        selected: string
+        remaining: string[]
+        restartSafe: false
+      }
     | { error: string }
     | null {
     const round = this.deps.getChat(chatId)?.ensemble?.activeRound
-    if (!round || !isEnsembleRoundDispatchLive(round)) return null
+    if (!round) return null
     const prompts =
       Array.isArray(round.queuedPrompts) && round.queuedPrompts.length > 0
         ? round.queuedPrompts
@@ -3115,8 +3316,34 @@ export class EnsembleOrchestrator {
           ? [round.queuedPrompt]
           : []
     if (prompts.length === 0) return null
+    const restored = this.restorePersistedQueuedEntries(round)
     const index = Number.isFinite(input.index) ? Math.floor(input.index) : -1
     if (index < 0 || index >= prompts.length) {
+      return { error: 'Queued item no longer exists' }
+    }
+    if (restored) {
+      const selectedIndex = input.queuedPromptId
+        ? restored.findIndex((entry) => entry.id === input.queuedPromptId)
+        : index
+      if (selectedIndex < 0 || selectedIndex >= restored.length) {
+        return { error: 'Queued item no longer exists' }
+      }
+      const selected = restored[selectedIndex]
+      if (!selected || selectedIndex !== index) {
+        return { error: 'Queue changed underneath — refresh and retry' }
+      }
+      if (input.textPrefix && !selected.prompt.startsWith(input.textPrefix)) {
+        return { error: 'Queue changed underneath — refresh and retry' }
+      }
+      return {
+        round,
+        selectedIndex,
+        selected,
+        remaining: restored.filter((_, queuedIndex) => queuedIndex !== selectedIndex),
+        restartSafe: true
+      }
+    }
+    if (input.queuedPromptId) {
       return { error: 'Queued item no longer exists' }
     }
     const selected = prompts[index]
@@ -3127,7 +3354,8 @@ export class EnsembleOrchestrator {
       round,
       selectedIndex: index,
       selected,
-      remaining: prompts.filter((_, queuedIndex) => queuedIndex !== index)
+      remaining: prompts.filter((_, queuedIndex) => queuedIndex !== index),
+      restartSafe: false
     }
   }
 
@@ -3152,24 +3380,35 @@ export class EnsembleOrchestrator {
       const recovered = this.resolvePersistedQueuedPromptForRecovery(input.chatId, input)
       if (!recovered) return { status: 'ignored', error: 'No active Ensemble round' }
       if ('error' in recovered) return { status: 'ignored', error: recovered.error }
+      if (!recovered.restartSafe) {
+        const error =
+          'Queued prompt preserved but not dispatched because its restart-era routing metadata is unavailable.'
+        this.appendRoundStatus(input.chatId, recovered.round.roundId, error)
+        return { status: 'ignored', error }
+      }
+      if (recovered.selected.restartRecoveryBlockedReason) {
+        const error = recovered.selected.restartRecoveryBlockedReason
+        this.appendRoundStatus(input.chatId, recovered.round.roundId, error)
+        return { status: 'ignored', error }
+      }
+      const targetError = this.queuedTargetUnavailableReason(input.chatId, recovered.selected)
+      if (targetError) {
+        this.appendRoundStatus(input.chatId, recovered.round.roundId, targetError)
+        return { status: 'ignored', error: targetError }
+      }
       this.cancelPersistedWakeupsOnUserInput(input.chatId)
-      const carryOverQueue: QueuedRoundEntry[] = recovered.remaining.map((queuedPrompt) => ({
-        id: this.nextQueuedPromptId(input.chatId),
-        prompt: queuedPrompt,
-        imageAttachments: []
-      }))
       const roundId = this.beginRound(
         input.chatId,
-        recovered.selected,
+        recovered.selected.prompt,
         input.event.sender,
-        undefined,
-        [],
-        [],
-        carryOverQueue,
+        recovered.selected.dmTargetParticipantId,
+        recovered.selected.imageAttachments,
+        recovered.selected.imageThumbnails ?? [],
+        recovered.remaining,
         false,
-        [],
+        recovered.selected.externalPathGrants ?? [],
         input.concurrentMode,
-        input.fanoutPolicy,
+        recovered.selected.fanoutPolicy ?? input.fanoutPolicy,
         undefined,
         undefined,
         undefined
@@ -3203,6 +3442,16 @@ export class EnsembleOrchestrator {
       return { status: 'ignored', error: resolved.error }
     }
     const { selected, selectedIndex } = resolved
+    if (selected.restartRecoveryBlockedReason) {
+      const error = selected.restartRecoveryBlockedReason
+      this.appendRoundStatus(input.chatId, runtime.roundId, error)
+      return { status: 'ignored', error }
+    }
+    const targetError = this.queuedTargetUnavailableReason(input.chatId, selected)
+    if (targetError) {
+      this.appendRoundStatus(input.chatId, runtime.roundId, targetError)
+      return { status: 'ignored', error: targetError }
+    }
 
     const remainingQueue = runtime.queuedPrompts.filter((_, queuedIndex) => queuedIndex !== selectedIndex)
     const startAfterCancellation = this.cancelRound(input.chatId, 'steered')
@@ -3217,7 +3466,11 @@ export class EnsembleOrchestrator {
       false,
       selected.externalPathGrants ?? [],
       input.concurrentMode,
-      input.fanoutPolicy ?? selected.fanoutPolicy,
+      // The queued entry captured the authority boundary at enqueue time.
+      // Preserve it ahead of the live composer's roster policy: a directed
+      // queued row stores `off`, and clicking Steer must not widen that row
+      // merely because the roster currently displays Read/All fan-out.
+      selected.fanoutPolicy ?? input.fanoutPolicy,
       selected.discordContextSnapshots,
       undefined,
       undefined,
@@ -3250,12 +3503,23 @@ export class EnsembleOrchestrator {
         round?.roundId === recovered.round.roundId
           ? {
               ...round,
-              queuedPrompt: recovered.remaining[0],
-              queuedPrompts: recovered.remaining
+              ...(recovered.restartSafe
+                ? this.queuedPromptFields(recovered.remaining)
+                : {
+                    queuedPrompt: recovered.remaining[0],
+                    queuedPrompts: recovered.remaining,
+                    queuedPromptEntries: undefined
+                  })
             }
           : round
       )
-      return { ok: true, prompt: recovered.selected, queuedPrompts: recovered.remaining }
+      return {
+        ok: true,
+        prompt: recovered.restartSafe ? recovered.selected.prompt : recovered.selected,
+        queuedPrompts: recovered.restartSafe
+          ? recovered.remaining.map((entry) => entry.prompt)
+          : recovered.remaining
+      }
     }
     if (runtime.cancelled) {
       return { ok: false, error: 'No active Ensemble round' }
@@ -3267,17 +3531,16 @@ export class EnsembleOrchestrator {
     const { selected, selectedIndex } = resolved
 
     runtime.queuedPrompts = runtime.queuedPrompts.filter((_, queuedIndex) => queuedIndex !== selectedIndex)
-    const nextQueuedPrompts = runtime.queuedPrompts.map((entry) => entry.prompt)
     this.updateChatRound(input.chatId, (round) =>
       round?.roundId === runtime.roundId
         ? {
             ...round,
-            queuedPrompt: nextQueuedPrompts[0],
-            queuedPrompts: nextQueuedPrompts
+            ...this.queuedPromptFields(runtime.queuedPrompts)
           }
         : round
     )
 
+    const nextQueuedPrompts = runtime.queuedPrompts.map((entry) => entry.prompt)
     return {
       ok: true,
       prompt: selected.prompt,
@@ -3292,7 +3555,8 @@ export class EnsembleOrchestrator {
         ? {
             ...round,
             queuedPrompt: undefined,
-            queuedPrompts: []
+            queuedPrompts: [],
+            queuedPromptEntries: []
           }
         : round
     )
@@ -3330,6 +3594,7 @@ export class EnsembleOrchestrator {
               status: 'cancelled',
               queuedPrompt: undefined,
               queuedPrompts: [],
+              queuedPromptEntries: [],
               activeParticipantId: undefined,
               endedAt,
               participants: current.participants.map((participant) =>
@@ -3391,6 +3656,7 @@ export class EnsembleOrchestrator {
             status: 'cancelled',
             queuedPrompt: undefined,
             queuedPrompts: [],
+            queuedPromptEntries: [],
             activeParticipantId: undefined,
             endedAt: this.deps.nowIso()
         }
@@ -3638,15 +3904,14 @@ export class EnsembleOrchestrator {
     // 1.0.5-EW43a — autonomous follow-ups don't carry attachments
     // (the `ensemble_continue` MCP tool schema doesn't accept
     // them), so the entry's `imageAttachments` is always empty.
-    // Persisted shape mapped to `string[]` for renderer back-compat.
+    // Persist both the renderer string view and restart-safe structured view.
     runtime.queuedPrompts.push({
       id: this.nextQueuedPromptId(chatId),
       prompt: trimmed,
       imageAttachments: []
     })
-    const nextQueuedPrompts = runtime.queuedPrompts.map((entry) => entry.prompt)
     this.updateChatRound(chatId, (round) =>
-      round ? { ...round, queuedPrompts: nextQueuedPrompts } : round
+      round ? { ...round, ...this.queuedPromptFields(runtime.queuedPrompts) } : round
     )
     return true
   }
@@ -7889,6 +8154,22 @@ export class EnsembleOrchestrator {
         error: 'not_ensemble'
       }
     }
+    // A composer-directed round is a user-owned one-seat boundary. Agent
+    // routing already prevents @mentions, yields, and continuous handoffs from
+    // widening it; explicit fan-out must obey the same boundary. In
+    // particular, do not let a live roster policy (or Work Session scout-pass
+    // override) turn an apparent 1/1 round into hidden peer dispatches.
+    if (runtime.dmTargetParticipantId) {
+      return {
+        ok: false,
+        tool: 'ensemble_fanout',
+        mode,
+        ...(targetStage ? { targetStage } : {}),
+        message:
+          'ensemble_fanout: fan-out is unavailable in a user-targeted round. Start a non-directed round to delegate to other participants.',
+        error: 'not_authorized'
+      }
+    }
     const fanoutPolicy = runtime.fanoutPolicy ?? (runtime.concurrentMode ? 'read_only' : 'off')
     const workSessionScoutPass =
       chat.ensemble.workSession?.enabled &&
@@ -9162,33 +9443,45 @@ export class EnsembleOrchestrator {
     }
     const participant = this.participantForWakeup(chat, wakeup)
     if (!participant) return false
+    if (round.dmTargetParticipantId) {
+      const directedTarget = chat.ensemble.participants.find(
+        (entry) => entry.id === round.dmTargetParticipantId
+      )
+      if (!directedTarget || participant.id !== directedTarget.id) {
+        this.appendRoundStatus(
+          wakeup.chatId,
+          wakeup.roundId,
+          `Directed round recovery blocked: participant "${round.dmTargetParticipantId}" is unavailable or does not own this wakeup.`
+        )
+        return false
+      }
+    }
     const recoveredFanoutPolicy =
       round.fanoutPolicy !== undefined || round.concurrentMode !== undefined
         ? resolveEnsembleFanoutPolicy(round)
         : resolveEnsembleFanoutPolicy(chat.ensemble)
+    const recoveredQueuedEntries = this.restorePersistedQueuedEntries(round)
+    const legacyQueuedPrompts =
+      recoveredQueuedEntries === null
+        ? [
+            ...(round.queuedPrompts || (round.queuedPrompt ? [round.queuedPrompt] : []))
+          ]
+        : []
     const runtime: ActiveRoundRuntime = {
       chatId: wakeup.chatId,
       roundId: wakeup.roundId,
       sender,
       prompt: round.prompt,
+      ...(round.dmTargetParticipantId
+        ? { dmTargetParticipantId: round.dmTargetParticipantId }
+        : {}),
       imageAttachments: [],
       imageThumbnails: [],
       cancelled: false,
-      // 1.0.5-EW43a — persisted shape is `string[]`; runtime
-      // wants `QueuedRoundEntry[]`. Wakeup recovery has no
-      // attachment metadata stored (the persisted form lost the
-      // structured objects across the app-quit boundary), so each
-      // restored entry gets an empty attachment array. Mid-session
-      // attachment delivery is preserved through the live queue;
-      // app-restart-mid-queue users will see only the prompt's
-      // text references — known limitation, acceptable for
-      // 1.0.5.
-      queuedPrompts: (round.queuedPrompts || []).map((prompt) => ({
-        id: this.nextQueuedPromptId(wakeup.chatId),
-        prompt,
-        fanoutPolicy: recoveredFanoutPolicy,
-        imageAttachments: []
-      })),
+      queuedPrompts: recoveredQueuedEntries || [],
+      ...(legacyQueuedPrompts.length
+        ? { quarantinedLegacyQueuedPrompts: legacyQueuedPrompts }
+        : {}),
       orchestrationMode: round.orchestrationMode || chat.ensemble.orchestrationMode || 'turn_bound',
       fanoutPolicy: recoveredFanoutPolicy,
       ...(fanoutPolicyEnablesConcurrent(recoveredFanoutPolicy) ? { concurrentMode: true } : {}),
@@ -9219,6 +9512,22 @@ export class EnsembleOrchestrator {
       wakeup.roundId,
       `${participant.role || providerLabel(participant.provider)} woke after app restart (${wakeup.wakeAt}).`
     )
+    if (legacyQueuedPrompts.length > 0) {
+      this.appendRoundStatus(
+        wakeup.chatId,
+        wakeup.roundId,
+        `${legacyQueuedPrompts.length} queued prompt${legacyQueuedPrompts.length === 1 ? '' : 's'} preserved but quarantined because restart-safe routing metadata is unavailable.`
+      )
+    }
+    const attachmentQuarantineCount =
+      recoveredQueuedEntries?.filter((entry) => entry.restartRecoveryBlockedReason).length || 0
+    if (attachmentQuarantineCount > 0) {
+      this.appendRoundStatus(
+        wakeup.chatId,
+        wakeup.roundId,
+        `${attachmentQuarantineCount} queued attachment-bearing prompt${attachmentQuarantineCount === 1 ? '' : 's'} preserved but quarantined until the files are re-selected.`
+      )
+    }
     if (!participant.linkedProviderSessionId) {
       this.appendRoundStatus(
         wakeup.chatId,
@@ -9863,8 +10172,8 @@ export class EnsembleOrchestrator {
      *
      * 1.0.5-EW43a — structured entries (was `string[]` pre-EW43a)
      * so per-entry image attachments propagate through every
-     * follow-up round, not just the first. Persistence into chat-
-     * round state maps `e => e.prompt` for renderer back-compat.
+     * follow-up round, not just the first. Persistence keeps a prompt-only
+     * renderer mirror alongside the structured recovery record.
      */
     carryOverQueue: QueuedRoundEntry[] = [],
     /**
@@ -9899,11 +10208,16 @@ export class EnsembleOrchestrator {
     // A2 (1.0.3) — when DM, filter to just the targeted participant.
     // We still allow disabled participants when explicitly targeted —
     // the user clicked their chip and held Cmd, that's an unambiguous
-    // intent. The filter falls back to the full ordered set if the
-    // id doesn't match (safety net; should never hit in practice).
+    // intent. Unknown ids fail closed; widening a stale directed request to
+    // the full roster would violate the user's routing boundary.
     const dmTargetParticipant = dmTargetParticipantId
       ? chat.ensemble.participants.find((participant) => participant.id === dmTargetParticipantId)
       : undefined
+    if (dmTargetParticipantId && !dmTargetParticipant) {
+      throw new Error(
+        `Directed Ensemble target "${dmTargetParticipantId}" is no longer in the roster.`
+      )
+    }
     const requestedParticipants = dmTargetParticipant ? [dmTargetParticipant] : orderedFull
     const backgroundMentionResolution = resolveBackgroundMentions(
       prompt,
@@ -9991,15 +10305,11 @@ export class EnsembleOrchestrator {
       // renderer's queued-messages above-row reflects everything
       // still pending. Mirrors `runtime.queuedPrompts` below.
       //
-      // 1.0.5-EW43a — persisted shape stays `string[]` (renderer
-      // reads that for the queued-above-row); strip the
-      // structured attachment objects via map here. The runtime
-      // mirror lower in this method keeps the structured form so
-      // the dispatch path can deliver the attachments.
+      // Persist the string queue for renderer back-compat and the structured
+      // queue for restart recovery or explicit quarantine.
       ...(carryOverQueue.length > 0
         ? {
-            queuedPrompt: carryOverQueue[0].prompt,
-            queuedPrompts: carryOverQueue.map((entry) => entry.prompt)
+            ...this.queuedPromptFields(carryOverQueue)
           }
         : {})
     }
@@ -10525,10 +10835,21 @@ export class EnsembleOrchestrator {
       const completion = new Promise<EnsembleParticipantStatus>((resolve) => {
         run.completion = resolve
       })
+      const runScopedExternalPathGrants =
+        this.deps.issueRunScopedExternalGrants?.({
+          chat: dispatchChat,
+          participant,
+          appRunId: run.runId,
+          attachments: runtime.imageAttachments
+        }) || []
+      const participantExternalPathGrants = [
+        ...runScopedExternalPathGrants,
+        ...(runtime.externalPathGrants || [])
+      ]
       const permissions = this.resolveParticipantPermissions(
         dispatchChat,
         participant,
-        runtime.externalPathGrants,
+        participantExternalPathGrants,
         { ensembleLaneId: run.laneId }
       )
       // 1.0.4-AF — merge the round-scoped `selfReflective` flag (set
@@ -11370,14 +11691,29 @@ export class EnsembleOrchestrator {
     const [nextEntry, ...remainingQueue] = sessionTerminal
       ? ([] as QueuedRoundEntry[])
       : runtime.queuedPrompts
-    const queuedPromptsForFinishedRound =
+    const quarantinedLegacyPrompts =
+      !runtime.cancelled && !sessionTerminal
+        ? runtime.quarantinedLegacyQueuedPrompts || []
+        : []
+    const targetError =
+      nextEntry && quarantinedLegacyPrompts.length === 0
+        ? nextEntry.restartRecoveryBlockedReason ||
+          this.queuedTargetUnavailableReason(runtime.chatId, nextEntry)
+        : null
+    const queuedEntriesForFinishedRound =
       nextEntry && !runtime.cancelled && !sessionTerminal
-        ? runtime.queuedPrompts.map((entry) => entry.prompt)
+        ? runtime.queuedPrompts
         : []
     this.finishRound(runtime.chatId, runtime.roundId, runtime.cancelled ? 'cancelled' : 'completed', {
-      queuedPrompts: queuedPromptsForFinishedRound
+      queuedPromptEntries: queuedEntriesForFinishedRound,
+      quarantinedLegacyPrompts
     })
     this.clearRuntimeIfCurrent(runtime)
+    if (targetError) {
+      this.appendRoundStatus(runtime.chatId, runtime.roundId, targetError)
+      return
+    }
+    if (quarantinedLegacyPrompts.length > 0) return
     if (nextEntry && !runtime.cancelled && !sessionTerminal) {
       this.beginRound(
         runtime.chatId,
@@ -11870,11 +12206,23 @@ export class EnsembleOrchestrator {
         run.completion = resolve
       })
       const dispatchMode = options.forceReadOnlyDispatch ? 'read_only' : mode
+      const runScopedExternalPathGrants =
+        this.deps.issueRunScopedExternalGrants?.({
+          chat: dispatchChat,
+          participant,
+          appRunId: run.runId,
+          attachments: runtime.imageAttachments
+        }) || []
+      const participantExternalPathGrants = [
+        ...runScopedExternalPathGrants,
+        ...(runtime.externalPathGrants || [])
+      ]
       const permissions = this.resolveFanoutDispatchPermissions(
         dispatchChat,
         runtime,
         participant,
-        dispatchMode
+        dispatchMode,
+        participantExternalPathGrants
       )
       const lanePromptAuthor = options.sourceRunId ? 'peer-authored' : 'orchestrator-authored'
       const promptForLane = options.prompt?.trim()
@@ -13366,7 +13714,10 @@ export class EnsembleOrchestrator {
     chatId: string,
     roundId: string,
     status: Extract<EnsembleRoundState['status'], 'completed' | 'cancelled' | 'failed'>,
-    options: { queuedPrompts?: string[] } = {}
+    options: {
+      queuedPromptEntries?: QueuedRoundEntry[]
+      quarantinedLegacyPrompts?: string[]
+    } = {}
   ): void {
     const runtime = this.roundsByChatId.get(chatId)
     if (runtime?.roundId === roundId) {
@@ -13378,12 +13729,21 @@ export class EnsembleOrchestrator {
     const endedAt = this.deps.nowIso()
     const activeRound = chat.ensemble.activeRound
     if (activeRound?.roundId !== roundId) return
+    const persistedQueueFields = options.quarantinedLegacyPrompts?.length
+      ? {
+          queuedPrompt: options.quarantinedLegacyPrompts[0],
+          queuedPrompts: [
+            ...options.quarantinedLegacyPrompts,
+            ...(options.queuedPromptEntries || []).map((entry) => entry.prompt)
+          ],
+          queuedPromptEntries: undefined
+        }
+      : this.queuedPromptFields(options.queuedPromptEntries || [])
     const nextRound: EnsembleRoundState = {
       ...activeRound,
       status,
       activeParticipantId: undefined,
-      queuedPrompt: options.queuedPrompts?.[0],
-      queuedPrompts: options.queuedPrompts ?? [],
+      ...persistedQueueFields,
       endedAt,
       participants: activeRound.participants.map((participant) =>
         participant.status === 'idle'
@@ -14040,12 +14400,13 @@ export class EnsembleOrchestrator {
     chat: ChatRecord,
     runtime: ActiveRoundRuntime,
     participant: EnsembleParticipant,
-    mode: EnsembleFanoutMode
+    mode: EnsembleFanoutMode,
+    explicitExternalPathGrants: ExternalPathGrant[] = runtime.externalPathGrants || []
   ): EffectiveRunPermissions {
     return this.resolveParticipantPermissions(
       chat,
       participant,
-      runtime.externalPathGrants,
+      explicitExternalPathGrants,
       mode === 'read_only'
         ? {
             presetId: 'read_only',

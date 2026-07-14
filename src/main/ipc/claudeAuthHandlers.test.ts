@@ -71,7 +71,8 @@ function createDeps() {
       }
       return child as Pick<ChildProcess, 'on'>
     }),
-    createCliEnv: vi.fn<ClaudeAuthHandlersDeps['createCliEnv']>(() => ({ PATH: '/usr/bin' }))
+    createCliEnv: vi.fn<ClaudeAuthHandlersDeps['createCliEnv']>(() => ({ PATH: '/usr/bin' })),
+    isMainRendererSender: vi.fn<ClaudeAuthHandlersDeps['isMainRendererSender']>(() => true)
   }
 
   return {
@@ -124,6 +125,20 @@ describe('registerClaudeAuthHandlers', () => {
     })
     expect(deps.readClaudeAuthState).toHaveBeenCalledWith(createResolved('/usr/local/bin/claude'))
     expect(deps.readResolvedCliVersion).toHaveBeenCalledWith(createResolved('/usr/local/bin/claude'))
+  })
+
+  it('omits the resolved binary path from secondary auth status', async () => {
+    const { deps } = createDeps()
+    deps.isMainRendererSender.mockReturnValue(false)
+    registerClaudeAuthHandlers(deps)
+
+    await expect(handlerFor('get-claude-auth-status')({ sender: { id: 42 } })).resolves.toEqual({
+      available: true,
+      authState: 'authenticated',
+      apiKeyConfigured: true,
+      encryptionAvailable: true,
+      version: '1.2.3'
+    })
   })
 
   it('store-claude-api-key clears on empty input, rejects unavailable secure storage, and stores encrypted keys', async () => {

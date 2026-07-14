@@ -8,7 +8,9 @@ import {
   extractMarkdownImagePathCandidates,
   extractMcpImageBlocksFromRawResult,
   extractProviderImageBlocksFromRawEvent,
+  snapshotRasterOrPdfAttachment,
   sniffImageMime,
+  stageWorkspaceMediaSnapshot,
   TRANSCRIPT_MEDIA_MAX_REFS_CEILING,
   TRANSCRIPT_MEDIA_MAX_REFS_PER_MESSAGE,
   validateWorkspaceImagePath
@@ -410,6 +412,7 @@ describe('TranscriptMediaService', () => {
     const external = path.join(root, 'external')
     fs.mkdirSync(workspace)
     fs.mkdirSync(external)
+    const canonicalExternal = fs.realpathSync.native(external)
     const externalImage = path.join(external, 'shot.png')
     const externalSvg = path.join(external, 'bad.svg')
     fs.writeFileSync(externalImage, PNG_BUFFER)
@@ -424,7 +427,7 @@ describe('TranscriptMediaService', () => {
           provider: 'codex',
           workspaceId: 'ws',
           chatId: 'chat',
-          path: external,
+          path: canonicalExternal,
           kind: 'directory',
           access: 'read',
           duration: 'thisRun',
@@ -444,7 +447,7 @@ describe('TranscriptMediaService', () => {
             provider: 'codex',
             workspaceId: 'ws',
             chatId: 'chat',
-            path: external,
+            path: canonicalExternal,
             kind: 'directory',
             access: 'read',
             duration: 'thisRun',
@@ -462,5 +465,246 @@ describe('TranscriptMediaService', () => {
         maxBytes: 4
       })
     ).toEqual({ ok: false, reason: 'outside_allowed_roots' })
+  })
+
+  it('anchors external media authority to the signed path and signed filesystem kind', () => {
+    const root = makeTempRoot()
+    const workspace = path.join(root, 'workspace')
+    const external = path.join(root, 'external')
+    const redirected = path.join(root, 'redirected')
+    const symlinkGrantPath = path.join(root, 'signed-directory')
+    fs.mkdirSync(workspace)
+    fs.mkdirSync(external)
+    fs.mkdirSync(redirected)
+    const canonicalRoot = fs.realpathSync.native(root)
+    const exactFile = path.join(external, 'exact.png')
+    const siblingFile = path.join(external, 'sibling.png')
+    const redirectedFile = path.join(redirected, 'secret.png')
+    fs.writeFileSync(exactFile, PNG_BUFFER)
+    fs.writeFileSync(siblingFile, PNG_BUFFER)
+    fs.writeFileSync(redirectedFile, PNG_BUFFER)
+    fs.symlinkSync(redirected, symlinkGrantPath, 'dir')
+
+    const fileGrant = {
+      id: 'file-grant',
+      provider: 'codex' as const,
+      path: path.join(canonicalRoot, 'external', 'exact.png'),
+      kind: 'file' as const,
+      access: 'read' as const,
+      duration: 'thisRun' as const,
+      createdAt: new Date().toISOString()
+    }
+    expect(
+      validateWorkspaceImagePath({
+        workspacePath: workspace,
+        candidatePath: exactFile,
+        externalPathGrants: [fileGrant]
+      }).ok
+    ).toBe(true)
+    expect(
+      validateWorkspaceImagePath({
+        workspacePath: workspace,
+        candidatePath: siblingFile,
+        externalPathGrants: [fileGrant]
+      })
+    ).toEqual({ ok: false, reason: 'outside_allowed_roots' })
+
+    expect(
+      validateWorkspaceImagePath({
+        workspacePath: workspace,
+        candidatePath: path.join(symlinkGrantPath, 'secret.png'),
+        externalPathGrants: [
+          {
+            ...fileGrant,
+            id: 'directory-grant',
+            path: path.join(canonicalRoot, 'signed-directory'),
+            kind: 'directory'
+          }
+        ]
+      })
+    ).toEqual({ ok: false, reason: 'outside_allowed_roots' })
+
+    expect(
+      validateWorkspaceImagePath({
+        workspacePath: workspace,
+        candidatePath: exactFile,
+        externalPathGrants: [
+          {
+            ...fileGrant,
+            id: 'wrong-kind-grant',
+            kind: 'directory'
+          }
+        ]
+      })
+    ).toEqual({ ok: false, reason: 'outside_allowed_roots' })
+  })
+
+  it('returns the exact nofollow descriptor bytes so image consumers never reopen the path', () => {
+    const workspace = makeTempRoot()
+    const imagePath = path.join(workspace, 'replaceable.png')
+    fs.writeFileSync(imagePath, PNG_BUFFER)
+
+    const validation = validateWorkspaceImagePath({
+      workspacePath: workspace,
+      candidatePath: imagePath
+    })
+    expect(validation.ok).toBe(true)
+    if (!validation.ok) return
+
+    const replacement = Buffer.from('not an image after validation')
+    fs.writeFileSync(imagePath, replacement)
+    expect(validation.buffer.equals(PNG_BUFFER)).toBe(true)
+    expect(validation.sha256).toBeTruthy()
+    expect(fs.readFileSync(validation.realPath).equals(replacement)).toBe(true)
+  })
+
+  it('snapshots raster and PDF attachments from the verified descriptor for durable persistence', () => {
+    const workspace = makeTempRoot()
+    const imagePath = path.join(workspace, 'image.png')
+    const pdfPath = path.join(workspace, 'spec.pdf')
+    const pdf = Buffer.from('%PDF-1.7\nfixture\n%%EOF\n')
+    fs.writeFileSync(imagePath, PNG_BUFFER)
+    fs.writeFileSync(pdfPath, pdf)
+
+    const image = snapshotRasterOrPdfAttachment({
+      workspacePath: workspace,
+      candidatePath: imagePath
+    })
+    const document = snapshotRasterOrPdfAttachment({
+      workspacePath: workspace,
+      candidatePath: pdfPath
+    })
+
+    expect(image.ok && image.mimeType).toBe('image/png')
+    expect(image.ok && image.buffer.equals(PNG_BUFFER)).toBe(true)
+    expect(document.ok && document.mimeType).toBe('application/pdf')
+    expect(document.ok && document.buffer.equals(pdf)).toBe(true)
+    expect(document.ok && document.sha256).toMatch(/^[A-Za-z0-9_-]{32,96}$/)
+  })
+
+  it('requires workspace, grant, or exact main-owned picker authority before snapshotting', () => {
+    const root = makeTempRoot()
+    const workspace = path.join(root, 'workspace')
+    const outside = path.join(root, 'selected.pdf')
+    fs.mkdirSync(workspace)
+    fs.writeFileSync(outside, '%PDF-1.7\nfixture\n%%EOF\n')
+
+    expect(
+      snapshotRasterOrPdfAttachment({ workspacePath: workspace, candidatePath: outside })
+    ).toEqual({ ok: false, reason: 'outside_allowed_roots' })
+
+    const selected = snapshotRasterOrPdfAttachment({
+      candidatePath: outside,
+      authorizedFilePaths: [outside]
+    })
+    expect(selected.ok && selected.mimeType).toBe('application/pdf')
+  })
+
+  it('keeps durable attachment bytes stable after the source path is replaced', () => {
+    const workspace = makeTempRoot()
+    const imagePath = path.join(workspace, 'replace-after-snapshot.png')
+    fs.writeFileSync(imagePath, PNG_BUFFER)
+
+    const snapshot = snapshotRasterOrPdfAttachment({
+      workspacePath: workspace,
+      candidatePath: imagePath
+    })
+    expect(snapshot.ok).toBe(true)
+    if (!snapshot.ok) return
+
+    fs.writeFileSync(imagePath, Buffer.from('%PDF-1.7\nreplacement\n'))
+    expect(snapshot.buffer.equals(PNG_BUFFER)).toBe(true)
+    expect(snapshot.mimeType).toBe('image/png')
+  })
+
+  it('stages a descriptor-backed media snapshot that survives source replacement', () => {
+    const root = makeTempRoot()
+    const workspace = path.join(root, 'workspace')
+    const staging = path.join(root, 'main-owned-staging')
+    fs.mkdirSync(workspace)
+    const sourcePath = path.join(workspace, 'clip.webm')
+    const source = Buffer.alloc(256, 0x5a)
+    source.set([0x1a, 0x45, 0xdf, 0xa3], 0)
+    fs.writeFileSync(sourcePath, source)
+
+    const staged = stageWorkspaceMediaSnapshot({
+      workspacePath: workspace,
+      candidatePath: sourcePath,
+      stagingDirectory: staging,
+      kind: 'audio_video'
+    })
+    expect(staged.ok).toBe(true)
+    if (!staged.ok) return
+
+    fs.writeFileSync(sourcePath, Buffer.from('replacement'))
+    expect(staged.sourceRealPath).toBe(fs.realpathSync.native(sourcePath))
+    expect(fs.readFileSync(staged.realPath).equals(source)).toBe(true)
+    expect(staged.mimeType).toBe('video/webm')
+    expect(staged.cleanup()).toBe(true)
+    expect(fs.existsSync(staged.realPath)).toBe(false)
+    expect(staged.cleanup()).toBe(false)
+  })
+
+  it('refuses a symlinked staging directory instead of creating a path a workspace can replace', () => {
+    const root = makeTempRoot()
+    const workspace = path.join(root, 'workspace')
+    const attackerOwned = path.join(root, 'attacker-owned')
+    const stagingLink = path.join(root, 'staging-link')
+    fs.mkdirSync(workspace)
+    fs.mkdirSync(attackerOwned)
+    fs.symlinkSync(attackerOwned, stagingLink, 'dir')
+    const imagePath = path.join(workspace, 'image.png')
+    fs.writeFileSync(imagePath, PNG_BUFFER)
+
+    expect(
+      stageWorkspaceMediaSnapshot({
+        workspacePath: workspace,
+        candidatePath: imagePath,
+        stagingDirectory: stagingLink,
+        kind: 'image'
+      })
+    ).toEqual({ ok: false, reason: 'unsafe_staging_directory' })
+    expect(fs.readdirSync(attackerOwned)).toEqual([])
+  })
+
+  it('refuses to stage snapshots inside the agent-writable workspace', () => {
+    const workspace = makeTempRoot()
+    const imagePath = path.join(workspace, 'image.png')
+    const stagingPath = path.join(workspace, '.media-staging')
+    fs.writeFileSync(imagePath, PNG_BUFFER)
+
+    expect(
+      stageWorkspaceMediaSnapshot({
+        workspacePath: workspace,
+        candidatePath: imagePath,
+        stagingDirectory: stagingPath,
+        kind: 'image'
+      })
+    ).toEqual({ ok: false, reason: 'unsafe_staging_directory' })
+    expect(fs.existsSync(stagingPath)).toBe(false)
+  })
+
+  it('cleanup refuses to unlink a replacement at the staged path', () => {
+    const root = makeTempRoot()
+    const workspace = path.join(root, 'workspace')
+    const staging = path.join(root, 'staging')
+    fs.mkdirSync(workspace)
+    const imagePath = path.join(workspace, 'image.png')
+    fs.writeFileSync(imagePath, PNG_BUFFER)
+
+    const staged = stageWorkspaceMediaSnapshot({
+      workspacePath: workspace,
+      candidatePath: imagePath,
+      stagingDirectory: staging,
+      kind: 'image'
+    })
+    expect(staged.ok).toBe(true)
+    if (!staged.ok) return
+
+    fs.unlinkSync(staged.realPath)
+    const replacement = Buffer.from('attacker replacement')
+    fs.writeFileSync(staged.realPath, replacement)
+    expect(staged.cleanup()).toBe(false)
+    expect(fs.readFileSync(staged.realPath).equals(replacement)).toBe(true)
   })
 })

@@ -1,7 +1,13 @@
 import fs from 'fs'
 import { Readable } from 'stream'
 import { protocol } from 'electron'
-import { TW_MEDIA_SCHEME, readAssetSlice, resolveMediaRange, resolveTwMediaAsset } from './twMediaRange'
+import {
+  TW_MEDIA_SCHEME,
+  readOpenedAssetSlice,
+  resolveMediaRange,
+  resolveTwMediaAsset,
+  verifyOpenedTwMediaAssetSnapshot
+} from './twMediaRange'
 
 /**
  * The `twmedia://` custom protocol — Range-seekable streaming of content-addressed
@@ -56,18 +62,26 @@ export function registerTwMediaProtocol(assetBaseDir: string): void {
     }
 
     if (request.method === 'HEAD') {
-      return new Response(null, {
-        status: 200,
-        headers: { ...baseHeaders, 'Content-Length': String(asset.size) }
-      })
+      try {
+        return new Response(null, {
+          status: 200,
+          headers: { ...baseHeaders, 'Content-Length': String(asset.size) }
+        })
+      } finally {
+        asset.close()
+      }
     }
 
     const range = resolveMediaRange(request.headers.get('Range'), asset.size)
     if (range.status === 416) {
-      return new Response('Range not satisfiable', {
-        status: 416,
-        headers: { ...baseHeaders, 'Content-Range': range.contentRange ?? `bytes */${asset.size}` }
-      })
+      try {
+        return new Response('Range not satisfiable', {
+          status: 416,
+          headers: { ...baseHeaders, 'Content-Range': range.contentRange ?? `bytes */${asset.size}` }
+        })
+      } finally {
+        asset.close()
+      }
     }
 
     const headers: Record<string, string> = {
@@ -79,12 +93,36 @@ export function registerTwMediaProtocol(assetBaseDir: string): void {
     // Buffer body for small slices (dodges electron#41872 malformed-stream bug),
     // disk stream for large video. The cast bridges Node's Buffer/stream types to
     // the DOM BodyInit lib type — Electron's Response accepts both at runtime.
-    const body: Buffer | ReadableStream =
-      range.contentLength <= BUFFER_BODY_THRESHOLD
-        ? readAssetSlice(asset.realPath, range.start, range.end)
-        : (Readable.toWeb(
-            fs.createReadStream(asset.realPath, { start: range.start, end: range.end })
-          ) as unknown as ReadableStream)
-    return new Response(body as unknown as BodyInit, { status: range.status, headers })
+    if (range.contentLength <= BUFFER_BODY_THRESHOLD) {
+      try {
+        const body = readOpenedAssetSlice(asset, range.start, range.end)
+        return new Response(body as unknown as BodyInit, { status: range.status, headers })
+      } finally {
+        asset.close()
+      }
+    }
+
+    if (!verifyOpenedTwMediaAssetSnapshot(asset)) {
+      asset.close()
+      return new Response('Not found', { status: 404 })
+    }
+    let nodeStream: fs.ReadStream | null = null
+    try {
+      // Passing the verified fd is load-bearing: `realPath` is display/debug
+      // metadata only once opened. A rename/symlink replacement cannot redirect
+      // the stream, and large AV remains bounded-memory disk I/O.
+      nodeStream = fs.createReadStream(asset.realPath, {
+        fd: asset.fd,
+        autoClose: true,
+        start: range.start,
+        end: range.end
+      })
+      const body = Readable.toWeb(nodeStream) as unknown as ReadableStream
+      return new Response(body as unknown as BodyInit, { status: range.status, headers })
+    } catch {
+      if (nodeStream) nodeStream.destroy()
+      else asset.close()
+      return new Response('Not found', { status: 404 })
+    }
   })
 }

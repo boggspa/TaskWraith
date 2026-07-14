@@ -18,6 +18,7 @@ import {
 import { resolveEffectiveRunPermissions } from '../EffectiveRunPermissions'
 import { normalizeActiveGoalObjective } from '../GoalState'
 import { claudeModelSupportsFastMode } from '../providers/StaticProviderModels'
+import type { ExternalPathGrantRunBindingContext } from '../ExternalPathGrantBinding'
 import {
   assertLiveProviderId,
   assertProviderId,
@@ -62,7 +63,12 @@ export interface AgentRunNormalizerDeps {
   normalizeExternalPathGrants: (grants?: ExternalPathGrant[]) => ExternalPathGrant[]
   /** Timing-safe main-issued-grant check (signing secret). Currently
    *  `isMainIssuedExternalPathGrant`. */
-  isMainIssuedExternalPathGrant: (grant: ExternalPathGrant) => boolean
+  isMainIssuedExternalPathGrant: (
+    grant: ExternalPathGrant,
+    runContext?: Omit<ExternalPathGrantRunBindingContext, 'workspaceId'> & {
+      workspacePath?: string
+    }
+  ) => boolean
   /** Resolve + assert a saved GLOBAL chat by id (AppStore). Currently
    *  `requireGlobalChat`. */
   requireGlobalChat: (chatId: unknown, label?: string) => ChatRecord
@@ -85,6 +91,8 @@ export function normalizeAgentRunPayload(
   // / solo all flow through here): a retired provider can never start a new run.
   const provider = assertLiveProviderId(payload.provider)
   const scope: ChatScope = payload.scope === 'global' ? 'global' : 'workspace'
+  const appChatId = optionalString(payload.appChatId) || optionalString(payload.chatId)
+  const appRunId = optionalString(payload.appRunId)
   const rawExternalPathGrants = Array.isArray(payload.externalPathGrants)
     ? (payload.externalPathGrants as ExternalPathGrant[])
     : []
@@ -104,9 +112,8 @@ export function normalizeAgentRunPayload(
   ) {
     throw new Error('External path grants must be issued by TaskWraith in this app session.')
   }
-  const appChatId = optionalString(payload.appChatId) || optionalString(payload.chatId)
   let workspace: string | undefined
-  let scopedExternalPathGrants = externalPathGrants.filter((grant) => grant.provider === provider)
+  let scopedExternalPathGrants = externalPathGrants
   if (scope === 'global') {
     deps.requireGlobalChat(appChatId, 'Run global chat')
     workspace = deps.globalRunCwd()
@@ -116,6 +123,23 @@ export function normalizeAgentRunPayload(
     scopedExternalPathGrants = []
   } else {
     workspace = deps.canonicalWorkspacePath(requireNonEmptyString(payload.workspace, 'Workspace'))
+    for (const grant of externalPathGrants) {
+      if (grant.provider !== provider) {
+        throw new Error('External path grant provider does not match the dispatched provider.')
+      }
+      if (
+        !deps.isMainIssuedExternalPathGrant(grant, {
+          provider,
+          appChatId,
+          appRunId,
+          workspacePath: workspace
+        })
+      ) {
+        throw new Error(
+          'External path grant does not match this chat, workspace, provider, or run.'
+        )
+      }
+    }
   }
   const suppliedEffectivePermissions = isRecord(payload.effectivePermissions)
     ? (payload.effectivePermissions as unknown as EffectiveRunPermissions)
@@ -174,7 +198,7 @@ export function normalizeAgentRunPayload(
     workspace,
     prompt: typeof payload.prompt === 'string' ? payload.prompt : String(payload.prompt ?? ''),
     activeGoal: normalizeAgentRunActiveGoal(payload.activeGoal),
-    appRunId: optionalString(payload.appRunId),
+    appRunId,
     appChatId,
     model: optionalString(payload.model),
     reasoningEffort: optionalStringOrNull(payload.reasoningEffort),

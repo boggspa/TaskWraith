@@ -1,7 +1,7 @@
 import fs from 'fs'
 import os from 'os'
 import path from 'path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   THREAD_MEDIA_CHUNK_MAX_BYTES,
   TranscriptMediaAssetStore,
@@ -9,8 +9,10 @@ import {
 } from '../services/TranscriptMediaAssetStore'
 import {
   TranscriptMediaRangeOutOfBoundsError,
+  openTranscriptMediaAsset,
   parseTwMediaUrl,
   readAssetSlice,
+  readOpenedAssetSlice,
   readTranscriptMediaRangeSlice,
   resolveMediaRange,
   resolveTwMediaAsset,
@@ -110,12 +112,115 @@ describe('resolveTwMediaAsset (realpath jail)', () => {
     expect(resolved?.mime).toBe('audio/wav')
     expect(resolved?.size).toBe(buffer.length)
     expect(resolved?.realPath).toBe(transcriptMediaAssetPath(fs.realpathSync.native(root), VALID_SHA, 'audio/wav'))
+    resolved?.close()
   })
   it('returns null for a missing file, bad URL, or unsupported ext', () => {
     const root = makeRoot()
     expect(resolveTwMediaAsset(root, `twmedia://asset/${VALID_SHA}.wav`)).toBeNull() // not written
     expect(resolveTwMediaAsset(root, `twmedia://asset/short.wav`)).toBeNull()
     expect(resolveTwMediaAsset(root, `https://asset/${VALID_SHA}.wav`)).toBeNull()
+  })
+})
+
+describe('openTranscriptMediaAsset (descriptor identity)', () => {
+  function writeAsset(baseDir: string, buffer: Buffer): string {
+    const store = new TranscriptMediaAssetStore(baseDir)
+    expect(store.write({ sha256: VALID_SHA, mimeType: 'audio/wav', buffer })).toEqual({ ok: true })
+    return transcriptMediaAssetPath(fs.realpathSync.native(baseDir), VALID_SHA, 'audio/wav')
+  }
+
+  it('rejects leaf symlinks, shard symlinks, and multiply-linked files', () => {
+    const leafRoot = makeRoot()
+    const outsideRoot = makeRoot()
+    const outside = path.join(outsideRoot, 'outside.wav')
+    fs.writeFileSync(outside, 'outside')
+    const leaf = transcriptMediaAssetPath(leafRoot, VALID_SHA, 'audio/wav')
+    fs.mkdirSync(path.dirname(leaf), { recursive: true })
+    fs.symlinkSync(outside, leaf)
+    expect(
+      openTranscriptMediaAsset({ baseDir: leafRoot, sha256: VALID_SHA, mimeType: 'audio/wav' })
+    ).toBeNull()
+
+    const shardRoot = makeRoot()
+    const shard = path.join(shardRoot, VALID_SHA.slice(0, 2))
+    fs.symlinkSync(outsideRoot, shard)
+    fs.writeFileSync(path.join(outsideRoot, `${VALID_SHA}.wav`), 'outside-shard')
+    expect(
+      openTranscriptMediaAsset({ baseDir: shardRoot, sha256: VALID_SHA, mimeType: 'audio/wav' })
+    ).toBeNull()
+
+    const hardLinkRoot = makeRoot()
+    const hardLink = writeAsset(hardLinkRoot, Buffer.from('hard-linked'))
+    fs.linkSync(hardLink, path.join(hardLinkRoot, 'second-link.wav'))
+    expect(
+      openTranscriptMediaAsset({ baseDir: hardLinkRoot, sha256: VALID_SHA, mimeType: 'audio/wav' })
+    ).toBeNull()
+  })
+
+  it('keeps reads on the exact descriptor after the store path is replaced', () => {
+    const root = makeRoot()
+    const original = Buffer.from('ORIGINAL-DESCRIPTOR')
+    const replacement = Buffer.from('REPLACEMENT-CONTENT')
+    expect(replacement.length).toBe(original.length)
+    const target = writeAsset(root, original)
+    const asset = openTranscriptMediaAsset({
+      baseDir: root,
+      sha256: VALID_SHA,
+      mimeType: 'audio/wav'
+    })
+    expect(asset).not.toBeNull()
+    if (!asset) return
+    try {
+      fs.renameSync(target, `${target}.original`)
+      fs.writeFileSync(target, replacement, { mode: 0o600 })
+      expect(readOpenedAssetSlice(asset, 0, original.length - 1)).toEqual(original)
+    } finally {
+      asset.close()
+    }
+  })
+
+  it('fails closed when the leaf is replaced between lstat and O_NOFOLLOW open', () => {
+    const root = makeRoot()
+    const target = writeAsset(root, Buffer.from('first-file'))
+    const originalOpen = fs.openSync
+    let swapped = false
+    const openSpy = vi.spyOn(fs, 'openSync').mockImplementation(((
+      filePath: fs.PathLike,
+      flags: fs.OpenMode,
+      mode?: fs.Mode
+    ) => {
+      if (!swapped && String(filePath) === target) {
+        swapped = true
+        fs.renameSync(target, `${target}.before-open`)
+        fs.writeFileSync(target, 'replacement', { mode: 0o600 })
+      }
+      return originalOpen(filePath, flags, mode)
+    }) as typeof fs.openSync)
+    try {
+      expect(
+        openTranscriptMediaAsset({ baseDir: root, sha256: VALID_SHA, mimeType: 'audio/wav' })
+      ).toBeNull()
+    } finally {
+      openSpy.mockRestore()
+    }
+  })
+
+  it('fails closed when the opened inode is truncated before a read', () => {
+    const root = makeRoot()
+    const target = writeAsset(root, Buffer.from('0123456789'))
+    const asset = openTranscriptMediaAsset({
+      baseDir: root,
+      sha256: VALID_SHA,
+      mimeType: 'audio/wav'
+    })
+    expect(asset).not.toBeNull()
+    if (!asset) return
+    try {
+      fs.truncateSync(target, 3)
+      expect(() => readOpenedAssetSlice(asset, 0, 9)).toThrow(/changed before read/)
+    } finally {
+      asset.close()
+    }
   })
 })
 

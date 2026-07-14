@@ -29,7 +29,7 @@ import type {
   ExternalPublishReceiptWriter
 } from '../ExternalPublishReceiptLedger'
 
-type GitIpcPayload = { workspacePath?: string; repoPath?: string }
+type GitIpcPayload = { workspacePath?: string; repoPath?: string; chatId?: string }
 type GitSnapshotSubscribePayload = GitIpcPayload & { subscriptionId?: string }
 type GitSnapshotInvalidatePayload = GitIpcPayload & { reason?: GitSnapshotInvalidationReason }
 type GitIpcScope = 'registered-workspace' | 'registered-or-granted-read' | 'registered-or-granted-write'
@@ -42,13 +42,19 @@ const GIT_SNAPSHOT_INVALIDATION_REASONS = new Set<GitSnapshotInvalidationReason>
   'run-diff'
 ])
 
+const EXTERNAL_WORKTREE_SCOPE_ERROR =
+  'Worktree actions are limited to registered workspace roots.'
+
 export interface GitHandlersDeps {
-  getChats: () => ChatRecord[]
-  externalPathGrantMetadataLists: (chat: ChatRecord | null | undefined) => ExternalPathGrant[]
-  normalizeExternalPathGrants: (grants?: ExternalPathGrant[]) => ExternalPathGrant[]
+  getChat: (chatId: string) => ChatRecord | null | undefined
+  executableExternalPathGrantsForChat: (
+    chat: ChatRecord | null | undefined
+  ) => ExternalPathGrant[]
   canonicalExternalGrantPath: (value: string) => string | null
   canonicalPath: (value: string) => string
   findRegisteredWorkspace: (workspacePath: string) => unknown
+  gitRepositoryRootForPath: (workspacePath: string) => string | null
+  externalGitRepositoryRootIsSelfContained: (repositoryRoot: string) => boolean
   resolvePath: (value: string) => string
   pathSeparator: string
   gitService: Pick<
@@ -76,6 +82,10 @@ export interface GitHandlersDeps {
   >
   externalPublishReceipts?: Pick<ExternalPublishReceiptWriter, 'begin' | 'complete'>
   openExternal: (url: string) => Promise<unknown>
+  assertSenderScope: (
+    event: IpcMainInvokeEvent,
+    input: { capability: 'git'; chatId?: string; workspacePath: string }
+  ) => void
 }
 
 type ExternalPublishReceiptStart = Omit<
@@ -86,12 +96,6 @@ type ExternalPublishReceiptStart = Omit<
 type ExternalPublishReceiptStartResult =
   | { ok: true; receiptId?: string }
   | { ok: false; error: string; receiptId?: string }
-
-function allSignedExternalPathGrants(deps: GitHandlersDeps): ExternalPathGrant[] {
-  return deps.normalizeExternalPathGrants(
-    deps.getChats().flatMap((chat) => deps.externalPathGrantMetadataLists(chat))
-  )
-}
 
 function externalGrantCoversPath(
   deps: GitHandlersDeps,
@@ -104,9 +108,12 @@ function externalGrantCoversPath(
     ''
   )
   return grants.some((grant) => {
-    const grantPath = (
-      deps.canonicalExternalGrantPath(grant.path) || deps.resolvePath(grant.path)
-    ).replace(/\/+$/, '')
+    if (grant.kind !== 'directory') return false
+    // `grant.path` is part of the signed capability and was canonicalized when
+    // main issued it. Never re-realpath that authority string at use time: if
+    // the original directory is replaced by a symlink, following it here would
+    // silently retarget a still-valid signature to a different repository.
+    const grantPath = deps.resolvePath(grant.path).replace(/\/+$/, '')
     const coversPath =
       target === grantPath ||
       (grant.kind === 'directory' && target.startsWith(grantPath + deps.pathSeparator))
@@ -125,28 +132,65 @@ function gitScopeError(scope: GitIpcScope): string {
 
 function gitPayloadPath(
   deps: GitHandlersDeps,
+  event: IpcMainInvokeEvent,
   payload: GitIpcPayload | undefined,
   scope: GitIpcScope
-): { ok: true; path: string } | { ok: false; error: string } {
+):
+  | { ok: true; path: string; source: 'registered' | 'external' }
+  | { ok: false; error: string } {
   const raw =
     typeof payload?.repoPath === 'string' && payload.repoPath.trim()
       ? payload.repoPath
       : payload?.workspacePath || ''
-  const normalized = deps.canonicalExternalGrantPath(raw) || deps.canonicalPath(raw)
-  if (!normalized.trim()) {
+  const requestedPath = raw.trim()
+  if (!requestedPath) {
     return { ok: false, error: 'Repository path is required.' }
   }
-  if (deps.findRegisteredWorkspace(normalized)) return { ok: true, path: normalized }
+  const lexicalNormalized = deps.canonicalPath(requestedPath)
+  const normalized = deps.canonicalExternalGrantPath(requestedPath) || lexicalNormalized
+  const chatId = typeof payload?.chatId === 'string' ? payload.chatId.trim() : ''
+  deps.assertSenderScope(event, {
+    capability: 'git',
+    ...(chatId ? { chatId } : {}),
+    workspacePath: normalized
+  })
+  const repositoryRoot = deps.gitRepositoryRootForPath(normalized)
   if (
-    scope !== 'registered-workspace' &&
+    deps.findRegisteredWorkspace(lexicalNormalized) ||
+    deps.findRegisteredWorkspace(normalized)
+  ) {
+    // The configured workspace is the filesystem authority boundary. Git's
+    // default repo-root behavior must not widen a registered monorepo package
+    // to sibling packages outside that workspace.
+    if (repositoryRoot !== normalized) {
+      return { ok: false, error: gitScopeError(scope) }
+    }
+    return { ok: true, path: normalized, source: 'registered' }
+  }
+  if (scope === 'registered-workspace') {
+    return { ok: false, error: gitScopeError(scope) }
+  }
+  // External Git operations are repository-wide: even a snapshot resolves to
+  // repoRoot and exposes sibling status, while stage/commit/branch/worktree
+  // actions mutate that root. A grant for only a nested subdirectory must not
+  // silently widen to the containing repository.
+  if (!repositoryRoot || repositoryRoot !== normalized) {
+    return { ok: false, error: gitScopeError(scope) }
+  }
+  if (!deps.externalGitRepositoryRootIsSelfContained(repositoryRoot)) {
+    return { ok: false, error: gitScopeError(scope) }
+  }
+  const chat = chatId ? deps.getChat(chatId) : null
+  if (
+    chat &&
     externalGrantCoversPath(
       deps,
       normalized,
-      allSignedExternalPathGrants(deps),
+      deps.executableExternalPathGrantsForChat(chat),
       scope === 'registered-or-granted-write' ? 'write' : 'read'
     )
   ) {
-    return { ok: true, path: normalized }
+    return { ok: true, path: normalized, source: 'external' }
   }
   return {
     ok: false,
@@ -211,10 +255,14 @@ function worktreeListContainsPath(list: GitWorktreeList, targetPath: string): bo
 }
 
 export function registerGitHandlers(deps: GitHandlersDeps): void {
-  const subscriptionCleanups = new Map<string, () => void>()
+  type SubscriptionCleanup = {
+    cleanup: () => void
+    webContentsId: number
+  }
+  const subscriptionCleanups = new Map<string, SubscriptionCleanup>()
 
-  ipcMain.handle('git:snapshot', async (_event, payload?: GitIpcPayload) => {
-    const repo = gitPayloadPath(deps, payload, 'registered-or-granted-read')
+  ipcMain.handle('git:snapshot', async (event, payload?: GitIpcPayload) => {
+    const repo = gitPayloadPath(deps, event, payload, 'registered-or-granted-read')
     return repo.ok ? deps.gitService.snapshot(repo.path) : repo
   })
 
@@ -233,58 +281,101 @@ export function registerGitHandlers(deps: GitHandlersDeps): void {
       const subscriptionId =
         typeof payload?.subscriptionId === 'string' ? payload.subscriptionId.trim() : ''
       if (!subscriptionId) return { ok: false, error: 'Subscription id is required.' }
-      const repo = gitPayloadPath(deps, payload, 'registered-or-granted-read')
+      const repo = gitPayloadPath(deps, event, payload, 'registered-or-granted-read')
       if (!repo.ok) return repo
       const sender = event.sender
-      subscriptionCleanups.get(subscriptionId)?.()
+      const existing = subscriptionCleanups.get(subscriptionId)
+      if (existing && existing.webContentsId !== sender.id) {
+        return {
+          ok: false,
+          error: 'Git snapshot subscription id belongs to another renderer.'
+        }
+      }
+      existing?.cleanup()
+      const forgetSubscription = (): void => {
+        if (subscriptionCleanups.get(subscriptionId) === subscription) {
+          subscriptionCleanups.delete(subscriptionId)
+        }
+      }
       const onDestroyed = (): void => {
         deps.gitSnapshotPublisher?.unsubscribe(subscriptionId)
-        subscriptionCleanups.delete(subscriptionId)
+        forgetSubscription()
       }
       const cleanup = (): void => {
         sender.removeListener('destroyed', onDestroyed)
         deps.gitSnapshotPublisher?.unsubscribe(subscriptionId)
-        subscriptionCleanups.delete(subscriptionId)
+        forgetSubscription()
       }
+      const subscription: SubscriptionCleanup = { cleanup, webContentsId: sender.id }
       sender.once('destroyed', onDestroyed)
-      subscriptionCleanups.set(subscriptionId, cleanup)
+      subscriptionCleanups.set(subscriptionId, subscription)
       const result = await deps.gitSnapshotPublisher.subscribe({
         subscriptionId,
         requestedPath: repo.path,
         webContentsId: sender.id,
         send: (snapshotPayload) => {
+          const stillAuthorized = gitPayloadPath(
+            deps,
+            event,
+            payload,
+            'registered-or-granted-read'
+          )
+          if (!stillAuthorized.ok || stillAuthorized.path !== repo.path) {
+            cleanup()
+            return
+          }
           if (!sender.isDestroyed()) {
             sender.send('git:snapshot-changed', snapshotPayload)
           }
         }
       })
       if (!result.ok) {
-        subscriptionCleanups.get(subscriptionId)?.()
+        if (subscriptionCleanups.get(subscriptionId) === subscription) cleanup()
+        return result
+      }
+      if (subscriptionCleanups.get(subscriptionId) !== subscription) {
+        return {
+          ok: false,
+          error: 'Git snapshot subscription changed while it was starting.'
+        }
+      }
+      const stillAuthorized = gitPayloadPath(deps, event, payload, 'registered-or-granted-read')
+      if (!stillAuthorized.ok || stillAuthorized.path !== repo.path) {
+        cleanup()
+        return {
+          ok: false,
+          error: 'Git snapshot authorization changed while the subscription was starting.'
+        }
       }
       return result
     }
   )
 
-  ipcMain.handle('git:unsubscribe-snapshot', async (_event, payload?: { subscriptionId?: string }) => {
+  ipcMain.handle('git:unsubscribe-snapshot', async (event, payload?: { subscriptionId?: string }) => {
     const subscriptionId =
       typeof payload?.subscriptionId === 'string' ? payload.subscriptionId.trim() : ''
     if (subscriptionId) {
-      const cleanup = subscriptionCleanups.get(subscriptionId)
-      if (cleanup) cleanup()
-      else deps.gitSnapshotPublisher?.unsubscribe(subscriptionId)
+      const subscription = subscriptionCleanups.get(subscriptionId)
+      if (subscription && subscription.webContentsId !== event.sender.id) {
+        return {
+          ok: false,
+          error: 'Git snapshot subscription id belongs to another renderer.'
+        }
+      }
+      subscription?.cleanup()
     }
     return { ok: true }
   })
 
-  ipcMain.handle('git:invalidate-snapshot', async (_event, payload?: GitSnapshotInvalidatePayload) => {
-    const repo = gitPayloadPath(deps, payload, 'registered-or-granted-read')
+  ipcMain.handle('git:invalidate-snapshot', async (event, payload?: GitSnapshotInvalidatePayload) => {
+    const repo = gitPayloadPath(deps, event, payload, 'registered-or-granted-read')
     if (!repo.ok) return repo
     deps.gitSnapshotPublisher?.invalidatePath(repo.path, gitSnapshotInvalidationReason(payload?.reason))
     return { ok: true }
   })
 
-  ipcMain.handle('git:list-branches', async (_event, payload?: GitIpcPayload) => {
-    const repo = gitPayloadPath(deps, payload, 'registered-or-granted-read')
+  ipcMain.handle('git:list-branches', async (event, payload?: GitIpcPayload) => {
+    const repo = gitPayloadPath(deps, event, payload, 'registered-or-granted-read')
     if (!repo.ok) return { ok: false, branches: [], error: repo.error }
     const result = await deps.gitService.listBranches(repo.path)
     return result.ok
@@ -295,10 +386,10 @@ export function registerGitHandlers(deps: GitHandlersDeps): void {
   ipcMain.handle(
     'git:checkout-branch',
     async (
-      _event,
+      event,
       payload?: GitIpcPayload & Pick<GitCreateBranchInput, 'branch'>
     ): Promise<{ ok: boolean; snapshot?: GitRepositorySnapshot; error?: string }> => {
-      const repo = gitPayloadPath(deps, payload, 'registered-or-granted-write')
+      const repo = gitPayloadPath(deps, event, payload, 'registered-or-granted-write')
       if (!repo.ok) return { ok: false, error: repo.error }
       const result = await deps.gitService.checkoutBranch({
         repoPath: repo.path,
@@ -312,10 +403,10 @@ export function registerGitHandlers(deps: GitHandlersDeps): void {
   ipcMain.handle(
     'git:create-branch',
     async (
-      _event,
+      event,
       payload?: GitIpcPayload & Pick<GitCreateBranchInput, 'branch' | 'from'>
     ): Promise<{ ok: boolean; snapshot?: GitRepositorySnapshot; error?: string }> => {
-      const repo = gitPayloadPath(deps, payload, 'registered-or-granted-write')
+      const repo = gitPayloadPath(deps, event, payload, 'registered-or-granted-write')
       if (!repo.ok) return { ok: false, error: repo.error }
       const result = await deps.gitService.createBranch({
         repoPath: repo.path,
@@ -327,9 +418,12 @@ export function registerGitHandlers(deps: GitHandlersDeps): void {
     }
   )
 
-  ipcMain.handle('git:list-worktrees', async (_event, payload?: GitIpcPayload) => {
-    const repo = gitPayloadPath(deps, payload, 'registered-or-granted-read')
+  ipcMain.handle('git:list-worktrees', async (event, payload?: GitIpcPayload) => {
+    const repo = gitPayloadPath(deps, event, payload, 'registered-or-granted-read')
     if (!repo.ok) return { ok: false, worktrees: [], error: repo.error }
+    if (repo.source === 'external') {
+      return { ok: false, worktrees: [], error: EXTERNAL_WORKTREE_SCOPE_ERROR }
+    }
     const result = await deps.gitService.listWorktrees(repo.path)
     return result.ok
       ? { ok: true, worktrees: result.data.worktrees }
@@ -339,11 +433,12 @@ export function registerGitHandlers(deps: GitHandlersDeps): void {
   ipcMain.handle(
     'git:create-worktree',
     async (
-      _event,
+      event,
       payload?: GitIpcPayload & Pick<GitCreateWorktreeInput, 'name' | 'branch' | 'path'>
     ): Promise<{ ok: boolean; snapshot?: GitRepositorySnapshot; error?: string }> => {
-      const repo = gitPayloadPath(deps, payload, 'registered-or-granted-write')
+      const repo = gitPayloadPath(deps, event, payload, 'registered-or-granted-write')
       if (!repo.ok) return { ok: false, error: repo.error }
+      if (repo.source === 'external') return { ok: false, error: EXTERNAL_WORKTREE_SCOPE_ERROR }
       const result = await deps.gitService.createWorktree({
         repoPath: repo.path,
         name: payload?.name,
@@ -358,11 +453,12 @@ export function registerGitHandlers(deps: GitHandlersDeps): void {
   ipcMain.handle(
     'git:remove-worktree',
     async (
-      _event,
+      event,
       payload?: GitIpcPayload & Pick<GitRemoveWorktreeInput, 'path' | 'force'>
     ): Promise<{ ok: boolean; snapshot?: GitRepositorySnapshot; error?: string }> => {
-      const repo = gitPayloadPath(deps, payload, 'registered-or-granted-write')
+      const repo = gitPayloadPath(deps, event, payload, 'registered-or-granted-write')
       if (!repo.ok) return { ok: false, error: repo.error }
+      if (repo.source === 'external') return { ok: false, error: EXTERNAL_WORKTREE_SCOPE_ERROR }
       const result = await deps.gitService.removeWorktree({
         repoPath: repo.path,
         path: payload?.path || '',
@@ -376,11 +472,12 @@ export function registerGitHandlers(deps: GitHandlersDeps): void {
   ipcMain.handle(
     'git:select-worktree',
     async (
-      _event,
+      event,
       payload?: GitIpcPayload & Pick<GitSelectWorktreeInput, 'path'>
     ): Promise<{ ok: boolean; snapshot?: GitRepositorySnapshot; error?: string }> => {
-      const repo = gitPayloadPath(deps, payload, 'registered-or-granted-read')
+      const repo = gitPayloadPath(deps, event, payload, 'registered-or-granted-read')
       if (!repo.ok) return { ok: false, error: repo.error }
+      if (repo.source === 'external') return { ok: false, error: EXTERNAL_WORKTREE_SCOPE_ERROR }
       const worktrees = await deps.gitService.listWorktrees(repo.path)
       if (!worktrees.ok) return { ok: false, error: worktrees.error }
       const target = String(payload?.path || '').trim()
@@ -398,10 +495,10 @@ export function registerGitHandlers(deps: GitHandlersDeps): void {
   ipcMain.handle(
     'git:stage',
     async (
-      _event,
+      event,
       payload?: GitIpcPayload & Pick<GitStageInput, 'paths' | 'all' | 'update' | 'patch'>
     ): Promise<GitResult<GitRepositorySnapshot> | { ok: false; error: string }> => {
-      const repo = gitPayloadPath(deps, payload, 'registered-or-granted-write')
+      const repo = gitPayloadPath(deps, event, payload, 'registered-or-granted-write')
       if (!repo.ok) return repo
       const result = await deps.gitService.stage({
         repoPath: repo.path,
@@ -418,10 +515,10 @@ export function registerGitHandlers(deps: GitHandlersDeps): void {
   ipcMain.handle(
     'git:unstage',
     async (
-      _event,
+      event,
       payload?: GitIpcPayload & Pick<GitUnstageInput, 'paths'>
     ): Promise<GitResult<GitRepositorySnapshot> | { ok: false; error: string }> => {
-      const repo = gitPayloadPath(deps, payload, 'registered-or-granted-write')
+      const repo = gitPayloadPath(deps, event, payload, 'registered-or-granted-write')
       if (!repo.ok) return repo
       const result = await deps.gitService.unstage({
         repoPath: repo.path,
@@ -435,10 +532,10 @@ export function registerGitHandlers(deps: GitHandlersDeps): void {
   ipcMain.handle(
     'git:commit',
     async (
-      _event,
+      event,
       payload?: GitIpcPayload & Pick<GitCommitInput, 'message'>
     ): Promise<GitResult<GitRepositorySnapshot> | { ok: false; error: string }> => {
-      const repo = gitPayloadPath(deps, payload, 'registered-or-granted-write')
+      const repo = gitPayloadPath(deps, event, payload, 'registered-or-granted-write')
       if (!repo.ok) return repo
       const result = await deps.gitService.commit({
         repoPath: repo.path,
@@ -452,10 +549,10 @@ export function registerGitHandlers(deps: GitHandlersDeps): void {
   ipcMain.handle(
     'git:push',
     async (
-      _event,
+      event,
       payload?: GitIpcPayload & Pick<GitPushInput, 'setUpstream' | 'remote'>
     ): Promise<GitResult<GitRepositorySnapshot> | { ok: false; error: string }> => {
-      const repo = gitPayloadPath(deps, payload, 'registered-or-granted-write')
+      const repo = gitPayloadPath(deps, event, payload, 'registered-or-granted-write')
       if (!repo.ok) return repo
       const receipt = await beginDesktopExternalPublishReceipt(deps, {
         action: 'gitPush',
@@ -468,7 +565,8 @@ export function registerGitHandlers(deps: GitHandlersDeps): void {
       const result = await deps.gitService.push({
         repoPath: repo.path,
         setUpstream: payload?.setUpstream,
-        remote: payload?.remote
+        remote: payload?.remote,
+        ...(repo.source === 'external' ? { externalRepository: true } : {})
       })
       await completeExternalPublishReceipt(deps, receipt.receiptId, {
         outcome: result.ok ? 'completed' : 'failed',
@@ -481,8 +579,8 @@ export function registerGitHandlers(deps: GitHandlersDeps): void {
 
   ipcMain.handle(
     'github:pr-status',
-    async (_event, payload?: GitIpcPayload): Promise<GitResult<GitPrSummary> | { ok: false; error: string }> => {
-      const repo = gitPayloadPath(deps, payload, 'registered-or-granted-read')
+    async (event, payload?: GitIpcPayload): Promise<GitResult<GitPrSummary> | { ok: false; error: string }> => {
+      const repo = gitPayloadPath(deps, event, payload, 'registered-or-granted-read')
       return repo.ok ? deps.gitService.pullRequestStatus(repo.path) : repo
     }
   )
@@ -490,10 +588,10 @@ export function registerGitHandlers(deps: GitHandlersDeps): void {
   ipcMain.handle(
     'github:pr-readiness',
     async (
-      _event,
+      event,
       payload?: GitIpcPayload
     ): Promise<GitResult<GitPrReadiness> | { ok: false; error: string }> => {
-      const repo = gitPayloadPath(deps, payload, 'registered-or-granted-read')
+      const repo = gitPayloadPath(deps, event, payload, 'registered-or-granted-read')
       return repo.ok ? deps.gitService.pullRequestReadiness(repo.path) : repo
     }
   )
@@ -501,7 +599,7 @@ export function registerGitHandlers(deps: GitHandlersDeps): void {
   ipcMain.handle(
     'github:ci-status',
     async (
-      _event,
+      event,
       payload?: GitIpcPayload &
         Pick<
           GitCiStatusInput,
@@ -514,7 +612,7 @@ export function registerGitHandlers(deps: GitHandlersDeps): void {
           | 'maxLogChars'
         >
     ): Promise<GitResult<GitCiStatusSummary> | { ok: false; error: string }> => {
-      const repo = gitPayloadPath(deps, payload, 'registered-or-granted-read')
+      const repo = gitPayloadPath(deps, event, payload, 'registered-or-granted-read')
       if (!repo.ok) return repo
       return deps.gitService.ciStatus({
         repoPath: repo.path,
@@ -532,11 +630,11 @@ export function registerGitHandlers(deps: GitHandlersDeps): void {
   ipcMain.handle(
     'create-github-pr',
     async (
-      _event,
+      event,
       payload?: GitIpcPayload &
         Pick<GitCreatePrInput, 'title' | 'body' | 'draft'> & { openInBrowser?: boolean }
     ): Promise<GitResult<GitPrSummary> | ({ ok: true } & GitPrSummary) | { ok: false; error: string }> => {
-      const repo = gitPayloadPath(deps, payload, 'registered-or-granted-write')
+      const repo = gitPayloadPath(deps, event, payload, 'registered-or-granted-write')
       if (!repo.ok) return repo
       const receipt = await beginDesktopExternalPublishReceipt(deps, {
         action: 'githubCreatePr',

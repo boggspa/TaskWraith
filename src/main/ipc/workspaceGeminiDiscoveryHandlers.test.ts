@@ -23,6 +23,7 @@ function createDeps(
 ) {
   return {
     requireRegisteredWorkspace: vi.fn((workspace: string) => `/registered${workspace}`),
+    assertSenderScope: vi.fn(),
     discoverGeminiCommands: vi.fn(async () => [] as GeminiCommandDiscoveryRecord[]),
     discoverGeminiMemory: vi.fn(async () => [] as GeminiMemoryDiscoveryRecord[]),
     ...overrides
@@ -60,6 +61,7 @@ describe('registerWorkspaceGeminiDiscoveryHandlers', () => {
       commands
     )
     expect(deps.requireRegisteredWorkspace).toHaveBeenCalledWith('/repo')
+    expect(deps.assertSenderScope).toHaveBeenCalledWith(expect.anything(), '/repo')
     expect(deps.discoverGeminiCommands).toHaveBeenCalledWith('/repo/real')
   })
 
@@ -80,6 +82,7 @@ describe('registerWorkspaceGeminiDiscoveryHandlers', () => {
 
     await expect(handlerFor('discover-gemini-memory')({} as any, '/repo')).resolves.toBe(memory)
     expect(deps.requireRegisteredWorkspace).toHaveBeenCalledWith('/repo')
+    expect(deps.assertSenderScope).toHaveBeenCalledWith(expect.anything(), '/repo')
     expect(deps.discoverGeminiMemory).toHaveBeenCalledWith('/repo/real')
   })
 
@@ -112,4 +115,22 @@ describe('registerWorkspaceGeminiDiscoveryHandlers', () => {
     )
     expect(deps.discoverGeminiMemory).not.toHaveBeenCalled()
   })
+
+  it.each(['discover-gemini-commands', 'discover-gemini-memory'])(
+    'rejects another renderer workspace before %s',
+    async (channel) => {
+      const deps = createDeps({
+        assertSenderScope: vi.fn(() => {
+          throw new Error('wrong workspace owner')
+        })
+      })
+      registerWorkspaceGeminiDiscoveryHandlers(deps)
+
+      await expect(handlerFor(channel)({} as any, '/other')).rejects.toThrow(
+        'wrong workspace owner'
+      )
+      expect(deps.discoverGeminiCommands).not.toHaveBeenCalled()
+      expect(deps.discoverGeminiMemory).not.toHaveBeenCalled()
+    }
+  )
 })
