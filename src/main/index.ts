@@ -27393,7 +27393,7 @@ if (isGeminiMcpBridgeProcess) {
       createWindow()
     }
   })
-  app.whenReady().then(() => {
+  app.whenReady().then(async () => {
     // Rebrand continuity: seed the new TaskWraith userData dir from a legacy
     // AGBench install BEFORE the store performs its first lazy read.
     migrateLegacyUserDataSync()
@@ -27628,6 +27628,14 @@ if (isGeminiMcpBridgeProcess) {
       },
       checkTrust: (workspacePath) => TrustStatusService.checkTrust(workspacePath)
     })
+    const adoptedWorkspaceRealPaths = await workspaceService.reconcileWorkspaceRealPaths((line) =>
+      console.log(line)
+    )
+    if (adoptedWorkspaceRealPaths > 0) {
+      console.log(
+        `[workspace-target] ${adoptedWorkspaceRealPaths} direct legacy workspace pin${adoptedWorkspaceRealPaths === 1 ? '' : 's'} adopted at startup`
+      )
+    }
     // Sweep stale phone-attachment temp files (>24h) — they're only needed
     // for the duration of their run; without this the tmpdir accretes one
     // file per attached image forever.
