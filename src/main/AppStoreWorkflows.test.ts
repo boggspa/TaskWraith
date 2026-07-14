@@ -433,6 +433,20 @@ describe('AppStore workflows', () => {
     expect(updated?.lastRunTokens).toBe(0) // negative clamped to ≥0
   })
 
+  it('can disable an orphaned workflow but cannot re-enable it until its chat is runnable', () => {
+    const saved = AppStore.saveWorkflowDefinition(workflowInput())
+    const chat = AppStore.getChat(saved.template.chatId)
+    expect(chat).toBeTruthy()
+    AppStore.saveChat({ ...chat!, archived: true })
+
+    const disabled = AppStore.updateWorkflowDefinition(saved.id, { enabled: false })
+    expect(disabled).toMatchObject({ enabled: false, nextRunAt: undefined })
+    expect(() => AppStore.updateWorkflowDefinition(saved.id, { enabled: true })).toThrow(
+      'Workflow chat is archived.'
+    )
+    expect(AppStore.getWorkflowDefinition(saved.id)?.enabled).toBe(false)
+  })
+
   it('advances a skipped due occurrence when an execution is already active', () => {
     const saved = AppStore.saveWorkflowDefinition(
       workflowInput({

@@ -3937,7 +3937,12 @@ export class AppStore {
     }
     const normalized = normalizeWorkflowDefinitionRecord(merged, nowMs)
     if (!normalized) return null
-    this.assertWorkflowDefinitionCanRun(normalized)
+    // Disabling is the fail-safe escape hatch for an orphaned workflow. A
+    // target chat can be archived, deleted, or moved after the workflow was
+    // saved; requiring that stale target to remain runnable would make the
+    // safety action itself impossible. Any transition back to enabled still
+    // revalidates the complete definition before it can be persisted.
+    if (normalized.enabled) this.assertWorkflowDefinitionCanRun(normalized)
     if (normalized.enabled) {
       if ('trigger' in partial || 'enabled' in partial) {
         normalized.nextRunAt = resolveNextWorkflowRunAt(normalized.trigger, nowMs, nowMs)
