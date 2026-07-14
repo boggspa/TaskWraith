@@ -110,6 +110,17 @@ export interface RebindChatWorkspaceOptions {
   now?: number
 }
 
+export interface PrepareForkMessagesInput {
+  /** Canonical main-owned source record loaded immediately before the fork. */
+  sourceChat: Readonly<ChatRecord>
+  /** Draft fork record with relation metadata established and no copied messages. */
+  targetFork: Readonly<ChatRecord>
+  /** Detached copies of the source transcript for ownership preparation/redaction. */
+  copiedMessages: ChatMessage[]
+}
+
+export type PrepareForkMessages = (input: PrepareForkMessagesInput) => ChatMessage[]
+
 export interface ChatServiceStore {
   getChats: (workspaceId?: string) => ChatRecord[]
   getChatList: (workspaceId?: string) => ChatListItem[]
@@ -143,6 +154,8 @@ export interface ChatServiceDeps {
   humanCollaborationAudit?: HumanCollaborationAuditLike
   findRegisteredWorkspace: (path: string) => WorkspaceRecord | undefined
   canonicalPath: (path: string) => string
+  /** Main-owned authority seam; must prepare copied media before the fork is persisted. */
+  prepareForkMessages: PrepareForkMessages
   sanitizeChatForSave: (chat: ChatRecord) => ChatRecord
   appendDurableRunEventForRoute: (
     provider: ProviderId,
@@ -306,10 +319,10 @@ export class ChatService {
       sideChatMode: parent.chatKind === 'ensemble' ? 'ensembleClone' : 'singleProvider'
     })
     const now = Date.now()
-    const forked: ChatRecord = {
+    const targetFork: ChatRecord = {
       ...sideChat,
       title,
-      messages: parent.messages.map((message) => ({ ...message })),
+      messages: [],
       runs: [],
       linkedProviderSessionId: undefined,
       linkedGeminiSessionId: undefined,
@@ -331,6 +344,18 @@ export class ChatService {
           : {})
       },
       updatedAt: now
+    }
+    const preparedMessages = this.deps.prepareForkMessages({
+      sourceChat: parent,
+      targetFork,
+      copiedMessages: structuredClone(parent.messages)
+    })
+    if (!Array.isArray(preparedMessages)) {
+      throw new Error('Fork transcript preparation did not return a message list.')
+    }
+    const forked: ChatRecord = {
+      ...targetFork,
+      messages: preparedMessages
     }
     return this.saveChat(forked)
   }

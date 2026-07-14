@@ -1,4 +1,9 @@
-import type { TranscriptMediaRef, TranscriptMediaSource } from '../store/types'
+import type {
+  ChatRecord,
+  ChatMessage,
+  TranscriptMediaRef,
+  TranscriptMediaSource
+} from '../store/types'
 import type { TranscriptMediaAssetStore } from './TranscriptMediaAssetStore'
 import {
   createToolResultMediaRefs,
@@ -28,6 +33,18 @@ export interface TransferTranscriptMediaRefsBatchOptions {
   verifyTransfer: (sourceAppChatId: string, targetAppChatId: string) => boolean
 }
 
+export interface TransferTranscriptMediaMessagesBatchOptions
+  extends Omit<TransferTranscriptMediaRefsBatchOptions, 'refs'> {
+  messages: readonly ChatMessage[]
+}
+
+export interface VerifyEmulatedForkMediaTransferOptions {
+  canonicalSource: ChatRecord
+  canonicalTargetShell: ChatRecord
+  targetForkDraft: ChatRecord
+  canonicalizeWorkspacePath: (workspacePath: string) => string
+}
+
 const STORE_BACKED_SOURCES = new Set<TranscriptMediaSource>([
   'generated',
   'tool_result',
@@ -50,6 +67,54 @@ function needsOwnershipTransfer(ref: TranscriptMediaRef): boolean {
   if (!STORE_BACKED_SOURCES.has(ref.source)) return false
   if (ref.sha256 || ref.assetId || ref.path) return true
   return ref.status === undefined || ref.status === 'available'
+}
+
+/** Pure authority check for the empty-shell -> prepared-fork transition. */
+export function isVerifiedEmulatedForkMediaTransfer(
+  options: VerifyEmulatedForkMediaTransferOptions
+): boolean {
+  const { canonicalSource, canonicalTargetShell, targetForkDraft } = options
+  if (
+    canonicalSource.archived ||
+    canonicalTargetShell.archived ||
+    targetForkDraft.archived ||
+    canonicalTargetShell.messages.length !== 0 ||
+    targetForkDraft.messages.length !== 0 ||
+    canonicalTargetShell.appChatId !== targetForkDraft.appChatId ||
+    canonicalTargetShell.parentChatId !== canonicalSource.appChatId ||
+    canonicalTargetShell.parentChatRelation !== 'sideChat' ||
+    targetForkDraft.parentChatId !== canonicalSource.appChatId ||
+    targetForkDraft.parentChatRelation !== 'sideChat' ||
+    targetForkDraft.forkContext?.kind !== 'emulated' ||
+    targetForkDraft.forkContext.sourceChatId !== canonicalSource.appChatId ||
+    canonicalSource.scope !== canonicalTargetShell.scope ||
+    canonicalSource.scope !== targetForkDraft.scope
+  ) {
+    return false
+  }
+  if (canonicalSource.scope === 'global') return true
+  if (
+    !canonicalSource.workspaceId ||
+    canonicalSource.workspaceId !== canonicalTargetShell.workspaceId ||
+    canonicalSource.workspaceId !== targetForkDraft.workspaceId ||
+    !canonicalSource.workspacePath ||
+    !canonicalTargetShell.workspacePath ||
+    !targetForkDraft.workspacePath
+  ) {
+    return false
+  }
+  try {
+    const sourceWorkspacePath = options.canonicalizeWorkspacePath(
+      canonicalSource.workspacePath
+    )
+    return (
+      options.canonicalizeWorkspacePath(canonicalTargetShell.workspacePath) ===
+        sourceWorkspacePath &&
+      options.canonicalizeWorkspacePath(targetForkDraft.workspacePath) === sourceWorkspacePath
+    )
+  } catch {
+    return false
+  }
 }
 
 /**
@@ -190,5 +255,42 @@ export function transferTranscriptMediaRefsBatch(
   return refs.map((ref, index) => {
     if (!candidates.has(index)) return ref
     return batchGranted && grantableIndexes.has(index) ? ref : redactStoreLocators(ref)
+  })
+}
+
+/**
+ * Flatten every message's media refs through one transfer batch, then rebuild
+ * fresh message/metadata objects without mutating the canonical source chat.
+ */
+export function transferTranscriptMediaMessagesBatch(
+  options: TransferTranscriptMediaMessagesBatchOptions
+): ChatMessage[] {
+  const spans = new Map<number, { start: number; length: number }>()
+  const refs: TranscriptMediaRef[] = []
+  for (let index = 0; index < options.messages.length; index += 1) {
+    const messageRefs = Array.isArray(options.messages[index].metadata?.mediaRefs)
+      ? (options.messages[index].metadata?.mediaRefs as TranscriptMediaRef[])
+      : []
+    if (messageRefs.length === 0) continue
+    spans.set(index, { start: refs.length, length: messageRefs.length })
+    refs.push(...messageRefs)
+  }
+  const transferred = transferTranscriptMediaRefsBatch({
+    sourceAppChatId: options.sourceAppChatId,
+    targetAppChatId: options.targetAppChatId,
+    refs,
+    store: options.store,
+    verifyTransfer: options.verifyTransfer
+  })
+  return options.messages.map((message, index) => {
+    const span = spans.get(index)
+    if (!span) return { ...message }
+    return {
+      ...message,
+      metadata: {
+        ...(message.metadata || {}),
+        mediaRefs: transferred.slice(span.start, span.start + span.length)
+      }
+    }
   })
 }

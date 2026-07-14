@@ -223,6 +223,7 @@ function makeDeps(overrides: Partial<ChatServiceDeps> = {}): {
     appStore: store,
     findRegisteredWorkspace: vi.fn(() => makeWorkspace()),
     canonicalPath: vi.fn((value: string) => `/canonical${value}`),
+    prepareForkMessages: vi.fn(({ copiedMessages }) => copiedMessages),
     sanitizeChatForSave: vi.fn((chat: ChatRecord) => ({ ...chat, title: chat.title.trim() })),
     appendDurableRunEventForRoute: vi.fn(),
     ...overrides
@@ -1585,6 +1586,129 @@ describe('ChatService', () => {
       appChatId: 'side-chat-1',
       forkContext: expect.objectContaining({ kind: 'emulated' })
     }))
+  })
+
+  it('prepares detached fork messages after shell creation and before the copied transcript is saved', () => {
+    const events: string[] = []
+    const parent = makeChat({
+      appChatId: 'chat-1',
+      provider: 'claude',
+      messages: [
+        {
+          id: 'msg-1',
+          role: 'assistant',
+          content: 'Original answer',
+          timestamp: '2026-07-05T12:00:00.000Z',
+          metadata: {
+            mediaRefs: [
+              {
+                id: 'media-1',
+                kind: 'image',
+                format: 'raster',
+                source: 'generated',
+                name: 'result.png',
+                mimeType: 'image/png',
+                sha256: 'source-owned-hash',
+                assetId: 'asset:source-owned-hash',
+                status: 'available'
+              }
+            ]
+          }
+        }
+      ]
+    })
+    const parentBefore = structuredClone(parent)
+    const sideChat = makeChat({
+      appChatId: 'side-chat-1',
+      parentChatId: 'chat-1',
+      parentChatRelation: 'sideChat',
+      messages: []
+    })
+    const saveChat = vi.fn((chat: ChatRecord) => {
+      events.push('save')
+      return chat
+    })
+    const store = makeStore({
+      getChat: vi.fn((chatId) => (chatId === parent.appChatId ? parent : sideChat)),
+      createSideChat: vi.fn(() => {
+        events.push('createSideChat')
+        return sideChat
+      }),
+      saveChat
+    })
+    const prepareForkMessages = vi.fn(({ sourceChat, targetFork, copiedMessages }) => {
+      events.push('prepare')
+      expect(sourceChat).toBe(parent)
+      expect(targetFork.messages).toEqual([])
+      expect(targetFork.forkContext).toMatchObject({
+        kind: 'emulated',
+        sourceChatId: parent.appChatId
+      })
+      copiedMessages[0].content = 'Prepared answer'
+      const copiedRef = copiedMessages[0].metadata?.mediaRefs?.[0]
+      if (copiedRef) copiedRef.status = 'denied'
+      return copiedMessages
+    })
+    const { deps } = makeDeps({ appStore: store, prepareForkMessages })
+
+    const fork = new ChatService(deps).createForkChat({ parentChatId: parent.appChatId })
+
+    expect(events).toEqual(['createSideChat', 'prepare', 'save'])
+    expect(prepareForkMessages).toHaveBeenCalledTimes(1)
+    expect(saveChat).toHaveBeenCalledTimes(1)
+    expect(fork.messages[0]).toMatchObject({
+      content: 'Prepared answer',
+      metadata: { mediaRefs: [expect.objectContaining({ status: 'denied' })] }
+    })
+    expect(parent).toEqual(parentBefore)
+  })
+
+  it('leaves only the empty fork shell when transcript preparation throws', () => {
+    const events: string[] = []
+    const parent = makeChat({
+      appChatId: 'chat-1',
+      messages: [
+        {
+          id: 'msg-1',
+          role: 'user',
+          content: 'Do not persist this copy',
+          timestamp: '2026-07-05T12:00:00.000Z'
+        }
+      ]
+    })
+    const sideChat = makeChat({
+      appChatId: 'side-chat-1',
+      parentChatId: parent.appChatId,
+      parentChatRelation: 'sideChat',
+      messages: []
+    })
+    const saveChat = vi.fn((chat: ChatRecord) => {
+      events.push('save')
+      return chat
+    })
+    const store = makeStore({
+      getChat: vi.fn(() => parent),
+      createSideChat: vi.fn(() => {
+        events.push('createSideChat')
+        return sideChat
+      }),
+      saveChat
+    })
+    const { deps } = makeDeps({
+      appStore: store,
+      prepareForkMessages: vi.fn(() => {
+        events.push('prepare')
+        throw new Error('ownership persistence failed')
+      })
+    })
+
+    expect(() =>
+      new ChatService(deps).createForkChat({ parentChatId: parent.appChatId })
+    ).toThrow('ownership persistence failed')
+    expect(events).toEqual(['createSideChat', 'prepare'])
+    expect(store.createSideChat).toHaveBeenCalledTimes(1)
+    expect(saveChat).not.toHaveBeenCalled()
+    expect(sideChat.messages).toEqual([])
   })
 
   it('lets AppStore max-depth validation errors propagate without auditing', () => {

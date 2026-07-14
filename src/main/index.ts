@@ -578,6 +578,8 @@ import {
 } from './services/TranscriptMediaService'
 import {
   createOwnedToolResultMediaRefs,
+  isVerifiedEmulatedForkMediaTransfer,
+  transferTranscriptMediaMessagesBatch,
   transferTranscriptMediaRefsBatch
 } from './services/TranscriptMediaOwnershipBatch'
 import {
@@ -8554,6 +8556,35 @@ function transferTranscriptMediaRefsBetweenChats(
     refs,
     store: getTranscriptMediaAssetStore(),
     verifyTransfer
+  })
+}
+
+function prepareForkMessagesWithMediaOwnership(input: {
+  sourceChat: ChatRecord
+  targetFork: ChatRecord
+  copiedMessages: readonly ChatMessage[]
+}): ChatMessage[] {
+  return transferTranscriptMediaMessagesBatch({
+    sourceAppChatId: input.sourceChat.appChatId,
+    targetAppChatId: input.targetFork.appChatId,
+    messages: input.copiedMessages,
+    store: getTranscriptMediaAssetStore(),
+    verifyTransfer: (sourceAppChatId, targetAppChatId) => {
+      const canonicalSource = AppStore.getChat(sourceAppChatId)
+      const canonicalTarget = AppStore.getChat(targetAppChatId)
+      if (
+        !canonicalSource ||
+        !canonicalTarget ||
+        canonicalSource.appChatId !== input.sourceChat.appChatId ||
+        canonicalTarget.appChatId !== input.targetFork.appChatId
+      ) return false
+      return isVerifiedEmulatedForkMediaTransfer({
+        canonicalSource,
+        canonicalTargetShell: canonicalTarget,
+        targetForkDraft: input.targetFork,
+        canonicalizeWorkspacePath: canonicalPath
+      })
+    }
   })
 }
 
@@ -33033,6 +33064,7 @@ if (isGeminiMcpBridgeProcess) {
       humanCollaborationAudit: humanCollaborationAuditLog,
       findRegisteredWorkspace,
       canonicalPath,
+      prepareForkMessages: prepareForkMessagesWithMediaOwnership,
       sanitizeChatForSave,
       appendDurableRunEventForRoute
     })
@@ -34730,34 +34762,13 @@ if (isGeminiMcpBridgeProcess) {
       getAppVersion: () => app.getVersion(),
       providerDisplayName,
       resolveSenderAgentThreadScope,
-      createEmulatedFork: (input) => {
-        const fork = chatService.createForkChat({
+      createEmulatedFork: (input) =>
+        chatService.createForkChat({
           parentChatId: input.chatId,
           provider: input.provider,
           sourceProviderThreadId: input.sourceProviderThreadId,
           sourceModel: input.sourceModel
         })
-        for (const message of fork.messages) {
-          const refs = Array.isArray(message.metadata?.mediaRefs)
-            ? message.metadata.mediaRefs
-            : []
-          transferTranscriptMediaRefsBetweenChats(
-            input.chatId,
-            fork.appChatId,
-            refs,
-            (sourceAppChatId, targetAppChatId) => {
-              const canonicalTarget = AppStore.getChat(targetAppChatId)
-              return Boolean(
-                canonicalTarget &&
-                  canonicalTarget.parentChatId === sourceAppChatId &&
-                  canonicalTarget.parentChatRelation === 'sideChat' &&
-                  canonicalTarget.forkContext?.sourceChatId === sourceAppChatId
-              )
-            }
-          )
-        }
-        return fork
-      }
     })
 
     ipcMain.handle(

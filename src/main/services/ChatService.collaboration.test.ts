@@ -49,6 +49,7 @@ function harness() {
     humanCollaborationStore: collaboration,
     findRegisteredWorkspace: vi.fn(),
     canonicalPath: vi.fn((value) => value),
+    prepareForkMessages: vi.fn(({ copiedMessages }) => copiedMessages),
     sanitizeChatForSave: vi.fn((value) => value),
     appendDurableRunEventForRoute: vi.fn()
   }

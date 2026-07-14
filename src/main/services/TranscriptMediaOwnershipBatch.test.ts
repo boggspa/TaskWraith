@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { TranscriptMediaRef } from '../store/types'
+import type { ChatMessage, ChatRecord, TranscriptMediaRef } from '../store/types'
 import {
   createOwnedToolResultMediaRefs,
+  isVerifiedEmulatedForkMediaTransfer,
+  transferTranscriptMediaMessagesBatch,
   transferTranscriptMediaRefsBatch,
   type TranscriptMediaOwnershipBatchStore
 } from './TranscriptMediaOwnershipBatch'
@@ -55,6 +57,152 @@ function storeRef(
     ...overrides
   }
 }
+
+function chat(
+  appChatId: string,
+  overrides: Partial<ChatRecord> = {}
+): ChatRecord {
+  return {
+    appChatId,
+    scope: 'workspace',
+    provider: 'codex',
+    title: appChatId,
+    workspaceId: 'workspace-1',
+    workspacePath: '/repo',
+    createdAt: 1,
+    updatedAt: 1,
+    archived: false,
+    messages: [],
+    runs: [],
+    ...overrides
+  }
+}
+
+describe('isVerifiedEmulatedForkMediaTransfer', () => {
+  function fixture() {
+    const canonicalSource = chat('source-chat')
+    const canonicalTargetShell = chat('target-chat', {
+      parentChatId: 'source-chat',
+      parentChatRelation: 'sideChat'
+    })
+    const targetForkDraft = chat('target-chat', {
+      parentChatId: 'source-chat',
+      parentChatRelation: 'sideChat',
+      forkContext: {
+        kind: 'emulated',
+        createdAt: 2,
+        sourceChatId: 'source-chat',
+        sourceProvider: 'codex'
+      }
+    })
+    return { canonicalSource, canonicalTargetShell, targetForkDraft }
+  }
+
+  it('accepts only the main-created same-workspace fork shell and draft', () => {
+    expect(
+      isVerifiedEmulatedForkMediaTransfer({
+        ...fixture(),
+        canonicalizeWorkspacePath: (value) => value
+      })
+    ).toBe(true)
+    expect(
+      isVerifiedEmulatedForkMediaTransfer({
+        ...fixture(),
+        canonicalTargetShell: chat('target-chat', {
+          parentChatId: 'foreign-chat',
+          parentChatRelation: 'sideChat'
+        }),
+        canonicalizeWorkspacePath: (value) => value
+      })
+    ).toBe(false)
+    expect(
+      isVerifiedEmulatedForkMediaTransfer({
+        ...fixture(),
+        targetForkDraft: chat('target-chat', {
+          parentChatId: 'source-chat',
+          parentChatRelation: 'sideChat',
+          workspaceId: 'workspace-2',
+          workspacePath: '/other',
+          forkContext: {
+            kind: 'emulated',
+            createdAt: 2,
+            sourceChatId: 'source-chat',
+            sourceProvider: 'codex'
+          }
+        }),
+        canonicalizeWorkspacePath: (value) => value
+      })
+    ).toBe(false)
+    expect(
+      isVerifiedEmulatedForkMediaTransfer({
+        ...fixture(),
+        canonicalTargetShell: chat('target-chat', {
+          parentChatId: 'source-chat',
+          parentChatRelation: 'sideChat',
+          messages: [
+            {
+              id: 'unexpected-message',
+              role: 'user',
+              content: 'The shell must remain empty until ownership is prepared.',
+              timestamp: '2026-07-14T12:00:00.000Z'
+            }
+          ]
+        }),
+        canonicalizeWorkspacePath: (value) => value
+      })
+    ).toBe(false)
+  })
+
+  it('accepts a global fork but rejects archived authority or canonicalization failure', () => {
+    const global = fixture()
+    global.canonicalSource = chat('source-chat', {
+      scope: 'global',
+      workspaceId: undefined,
+      workspacePath: undefined
+    })
+    global.canonicalTargetShell = chat('target-chat', {
+      scope: 'global',
+      workspaceId: undefined,
+      workspacePath: undefined,
+      parentChatId: 'source-chat',
+      parentChatRelation: 'sideChat'
+    })
+    global.targetForkDraft = chat('target-chat', {
+      scope: 'global',
+      workspaceId: undefined,
+      workspacePath: undefined,
+      parentChatId: 'source-chat',
+      parentChatRelation: 'sideChat',
+      forkContext: {
+        kind: 'emulated',
+        createdAt: 2,
+        sourceChatId: 'source-chat',
+        sourceProvider: 'codex'
+      }
+    })
+    expect(
+      isVerifiedEmulatedForkMediaTransfer({
+        ...global,
+        canonicalizeWorkspacePath: (value) => value
+      })
+    ).toBe(true)
+    expect(
+      isVerifiedEmulatedForkMediaTransfer({
+        ...fixture(),
+        canonicalSource: chat('source-chat', { archived: true }),
+        canonicalizeWorkspacePath: (value) => value
+      })
+    ).toBe(false)
+    expect(
+      isVerifiedEmulatedForkMediaTransfer({
+        ...fixture(),
+        canonicalizeWorkspacePath: () => {
+          throw new Error('unavailable')
+        }
+      })
+    ).toBe(false)
+  })
+})
 
 describe('createOwnedToolResultMediaRefs', () => {
   it('writes assets without chat authority, then grants the successful set once', () => {
@@ -423,5 +571,59 @@ describe('transferTranscriptMediaRefsBatch', () => {
     expect(grantMany).not.toHaveBeenCalled()
     expect(transferred).toEqual(refs)
     expect(transferred).not.toBe(refs)
+  })
+})
+
+describe('transferTranscriptMediaMessagesBatch', () => {
+  it('batches duplicate refs across messages and rebuilds without mutating the source', () => {
+    const { store, owns, grantMany } = makeStoreHarness()
+    const shared = storeRef('shared-upload', 'upload')
+    const messages: ChatMessage[] = [
+      {
+        id: 'message-1',
+        role: 'user',
+        content: 'First',
+        timestamp: '2026-07-14T12:00:00.000Z',
+        metadata: { mediaRefs: [shared] }
+      },
+      {
+        id: 'message-2',
+        role: 'assistant',
+        content: 'Second',
+        timestamp: '2026-07-14T12:00:01.000Z',
+        metadata: { mediaRefs: [{ ...shared, id: 'shared-again' }] }
+      },
+      {
+        id: 'message-3',
+        role: 'assistant',
+        content: 'No media',
+        timestamp: '2026-07-14T12:00:02.000Z'
+      }
+    ]
+    const original = structuredClone(messages)
+
+    const transferred = transferTranscriptMediaMessagesBatch({
+      store,
+      sourceAppChatId: 'source-chat',
+      targetAppChatId: 'target-chat',
+      messages,
+      verifyTransfer: () => true
+    })
+
+    expect(owns).toHaveBeenCalledTimes(1)
+    expect(grantMany).toHaveBeenCalledTimes(1)
+    expect(grantMany).toHaveBeenCalledWith([
+      {
+        sha256: shared.sha256,
+        mimeType: shared.mimeType,
+        appChatId: 'target-chat'
+      }
+    ])
+    expect(transferred).toEqual(messages)
+    expect(transferred).not.toBe(messages)
+    expect(transferred[0]).not.toBe(messages[0])
+    expect(transferred[0].metadata).not.toBe(messages[0].metadata)
+    expect(transferred[0].metadata?.mediaRefs).not.toBe(messages[0].metadata?.mediaRefs)
+    expect(messages).toEqual(original)
   })
 })
