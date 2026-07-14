@@ -478,7 +478,8 @@ public struct EnsembleRosterSheet: View {
             if entry.isBossman {
                 Image(systemName: "crown.fill")
                     .font(.caption.weight(.semibold))
-                    .foregroundStyle(.yellow)
+                    .foregroundStyle(TWTheme.bossCrown)
+                    .shadow(color: TWTheme.statusAttention.opacity(0.34), radius: 4)
                     .accessibilityHidden(true)
             }
             if entry.isSecondInCommand {

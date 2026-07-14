@@ -95,6 +95,11 @@ public enum TWTheme {
         TWThemeStore.shared.systemTheme.isLight ? Color(hex: 0xE9EDF2) : Color(hex: 0x0E0E0E)
     }
 
+    /// Boss crown — desktop .ensemble-above-chip-crown: the warning hue
+    /// lifted 12% toward white; pair with a 4pt statusAttention@34% shadow
+    /// for the drop-glow half of the treatment.
+    public static let bossCrown = mix(statusAttention, 0.88, Color.white)
+
     /// CSS `color-mix(in srgb, a W%, b)` twin — premultiplied-alpha weighted
     /// mix so translucent operands (e.g. textPrimary at partial opacity in
     /// the reasoning chip ramp) resolve exactly like the desktop.
