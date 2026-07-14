@@ -9,6 +9,9 @@ import {
 } from './services/TranscriptMediaAssetStore'
 import { snapshotRasterOrPdfAttachment } from './services/TranscriptMediaService'
 
+/** Main-authority ceiling matching the composer attachment affordance. */
+export const MAX_DURABLE_ATTACHMENT_REFS = 15
+
 export const SCHEDULED_ATTACHMENT_RESELECT_REASON =
   'Saved attachments could not be recovered safely. Re-select the attachments and save the schedule or workflow again.'
 
@@ -82,7 +85,7 @@ export const rejectUnconfiguredScheduledAttachmentResolution: ResolveScheduledAt
 export interface MainOwnedScheduledAttachmentPersistenceDeps {
   getAssetStore: () => Pick<
     TranscriptMediaAssetStore,
-    'owns' | 'resolvePersistedAttachment' | 'writeContentAddressed'
+    'grantMany' | 'owns' | 'resolvePersistedAttachment' | 'writeContentAddressed'
   >
   getAuthorizedFilePaths?: () => readonly string[]
 }
@@ -95,10 +98,14 @@ export function createMainOwnedScheduledAttachmentPersistence(
 } {
   const stage: StageScheduledAttachments = (input) => {
     const persisted: PersistedAttachmentRef[] = []
+    const pendingOwnership: Array<{ sha256: string; mimeType: string; appChatId: string }> = []
     try {
+      if (input.attachments.length > MAX_DURABLE_ATTACHMENT_REFS) {
+        return { ok: false, reason: SCHEDULED_ATTACHMENT_RESELECT_REASON }
+      }
+      const store = deps.getAssetStore()
       for (const attachment of input.attachments) {
         if ('persistenceVersion' in attachment) {
-          const store = deps.getAssetStore()
           const resolved = store.resolvePersistedAttachment(attachment)
           if (!resolved.ok) {
             return { ok: false, reason: SCHEDULED_ATTACHMENT_RESELECT_REASON }
@@ -128,10 +135,9 @@ export function createMainOwnedScheduledAttachmentPersistence(
         if (!snapshot.ok) {
           return { ok: false, reason: SCHEDULED_ATTACHMENT_RESELECT_REASON }
         }
-        const written = deps.getAssetStore().writeContentAddressed({
+        const written = store.writeContentAddressed({
           mimeType: snapshot.mimeType,
-          buffer: snapshot.buffer,
-          appChatId: input.appChatId
+          buffer: snapshot.buffer
         })
         if (!written.ok) {
           return { ok: false, reason: SCHEDULED_ATTACHMENT_RESELECT_REASON }
@@ -145,6 +151,17 @@ export function createMainOwnedScheduledAttachmentPersistence(
           mimeType: written.mimeType,
           byteLength: written.byteLength
         })
+        pendingOwnership.push({
+          sha256: written.sha256,
+          mimeType: written.mimeType,
+          appChatId: input.appChatId
+        })
+      }
+      if (pendingOwnership.length > 0) {
+        const granted = store.grantMany(pendingOwnership)
+        if (!granted.ok) {
+          return { ok: false, reason: SCHEDULED_ATTACHMENT_RESELECT_REASON }
+        }
       }
       return { ok: true, attachments: persisted }
     } catch {
@@ -155,6 +172,9 @@ export function createMainOwnedScheduledAttachmentPersistence(
   const resolve: ResolveScheduledAttachments = (input) => {
     const resolvedAttachments: PersistedAttachmentRef[] = []
     try {
+      if (input.attachments.length > MAX_DURABLE_ATTACHMENT_REFS) {
+        return { ok: false, reason: SCHEDULED_ATTACHMENT_RESELECT_REASON }
+      }
       for (const attachment of input.attachments) {
         if (!isDurableScheduledAttachmentRef(attachment)) {
           return { ok: false, reason: SCHEDULED_ATTACHMENT_RESELECT_REASON }

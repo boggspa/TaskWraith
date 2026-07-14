@@ -3,6 +3,7 @@ import { normalizeDiscordContextSelection } from '../channels/DiscordContextServ
 import { buildRunQueueDispatchReceipt } from '../RunQueueDispatchReceipt'
 import type { RunQueueJobInput } from '../RunQueue'
 import type { RunSession } from '../RunManager'
+import { MAX_DURABLE_ATTACHMENT_REFS } from '../ScheduledAttachmentDurability'
 import type {
   AgenticServiceId,
   AgenticNetworkPolicy,
@@ -425,8 +426,13 @@ export class RunQueueService {
     }
   ): { request: RunQueueRequestSnapshot; attachmentError?: string } | undefined {
     if (!isRecord(value)) return undefined
-    const rawImageAttachments = Array.isArray(value.imageAttachments)
-      ? value.imageAttachments.filter(isRecord).map((attachment) => ({
+    const rawImageAttachmentValues = Array.isArray(value.imageAttachments)
+      ? value.imageAttachments
+      : []
+    const tooManyImageAttachments =
+      rawImageAttachmentValues.length > MAX_DURABLE_ATTACHMENT_REFS
+    const rawImageAttachments = !tooManyImageAttachments
+      ? rawImageAttachmentValues.filter(isRecord).map((attachment) => ({
           id: optionalString(attachment.id),
           path: requireNonEmptyString(attachment.path, 'Image attachment path'),
           name: optionalString(attachment.name),
@@ -454,7 +460,9 @@ export class RunQueueService {
       throw new Error('Queued external path grants must be issued by TaskWraith in this app session.')
     }
     let imageAttachments: PersistedAttachmentRef[] = []
-    let attachmentError: string | undefined
+    let attachmentError: string | undefined = tooManyImageAttachments
+      ? DURABLE_ATTACHMENT_QUARANTINE_REASON
+      : undefined
     if (rawImageAttachments.length) {
       try {
         const staged = this.deps.stageAttachments({
@@ -520,7 +528,12 @@ export class RunQueueService {
   private quarantineUnsafePersistedAttachments(job: RunQueueJob): RunQueueJob {
     const sourceRequest = job.request
     const attachments = sourceRequest?.imageAttachments
-    if (!sourceRequest || !attachments?.length || attachments.every(isPersistedAttachmentRef)) {
+    if (
+      !sourceRequest ||
+      !attachments?.length ||
+      (attachments.length <= MAX_DURABLE_ATTACHMENT_REFS &&
+        attachments.every(isPersistedAttachmentRef))
+    ) {
       return job
     }
 

@@ -503,7 +503,7 @@ import { appendBugReport } from './services/BugReportService'
 import { RunCoordinator } from './services/RunCoordinator'
 import { RunLifecycleCoordinator } from './services/RunLifecycleCoordinator'
 import { RunQueueService } from './services/RunQueueService'
-import { resolveOwnedPersistedRunQueueAttachment } from './RunQueueAttachmentAuthority'
+import { createMainOwnedRunQueueAttachmentStager } from './RunQueueAttachmentAuthority'
 import {
   authorizeRemoteComposerQueueDispatch,
   buildRemoteComposerQueueDispatchAction,
@@ -575,7 +575,6 @@ import {
   validateWorkspaceImagePath,
   validateWorkspaceAudioPath,
   stageWorkspaceMediaSnapshot,
-  snapshotRasterOrPdfAttachment,
   TRANSCRIPT_MEDIA_MAX_WORKSPACE_IMAGE_BYTES
 } from './services/TranscriptMediaService'
 import {
@@ -625,7 +624,6 @@ import {
   RunAnalystSignal,
   RunAnalystSnapshot,
   RunQueueJob,
-  PersistedAttachmentRef,
   RunEventInput,
   AgentApprovalAction,
   ApprovalLedgerRequestInput,
@@ -27637,55 +27635,10 @@ if (isGeminiMcpBridgeProcess) {
       requireRegisteredWorkspace,
       findRegisteredWorkspace,
       validateChatWorkspaceIdentity,
-      stageAttachments: (input) => {
-        const attachments: PersistedAttachmentRef[] = []
-        for (const attachment of input.attachments) {
-          if ('persistenceVersion' in attachment && attachment.persistenceVersion === 1) {
-            const existing = resolveOwnedPersistedRunQueueAttachment({
-              store: getTranscriptMediaAssetStore(),
-              attachment,
-              appChatId: input.chatId
-            })
-            if (!existing.ok) {
-              return { ok: false, reason: 'Attachment snapshot failed.' }
-            }
-            attachments.push({
-              ...existing.attachment,
-              ...(attachment.id ? { id: attachment.id } : {}),
-              ...(attachment.name ? { name: attachment.name } : {})
-            })
-            continue
-          }
-          const snapshot = snapshotRasterOrPdfAttachment({
-            candidatePath: attachment.path,
-            workspacePath: input.workspacePath,
-            externalPathGrants: input.externalPathGrants,
-            authorizedFilePaths:
-              input.authorizedFilePaths ?? attachmentCapabilityRegistry.getMainAuthorizedPaths()
-          })
-          if (!snapshot.ok) {
-            return { ok: false, reason: 'Attachment snapshot failed.' }
-          }
-          const persisted = getTranscriptMediaAssetStore().writeContentAddressed({
-            buffer: snapshot.buffer,
-            mimeType: snapshot.mimeType,
-            ...(input.chatId ? { appChatId: input.chatId } : {})
-          })
-          if (!persisted.ok) {
-            return { ok: false, reason: 'Attachment snapshot failed.' }
-          }
-          attachments.push({
-            persistenceVersion: 1 as const,
-            ...(attachment.id ? { id: attachment.id } : {}),
-            path: persisted.path,
-            ...(attachment.name ? { name: attachment.name } : {}),
-            sha256: persisted.sha256,
-            mimeType: snapshot.mimeType,
-            byteLength: persisted.byteLength
-          })
-        }
-        return { ok: true, attachments }
-      },
+      stageAttachments: createMainOwnedRunQueueAttachmentStager({
+        getAssetStore: getTranscriptMediaAssetStore,
+        getAuthorizedFilePaths: () => attachmentCapabilityRegistry.getMainAuthorizedPaths()
+      }),
       canLeaseJob: (job) => {
         if (!job.chatId) return true
         // 1.0.6-CRUX26 — sweep all AVAILABLE providers (incl. gated grok/cursor)

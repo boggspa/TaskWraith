@@ -39,6 +39,7 @@ import { isAppIconVariant, isWwdc26IconAvailable } from '../../shared/iconVarian
 import { canPersistPlaintextFieldValue } from '../PlaintextSecretPolicy'
 import {
   copyResolvedScheduledAttachments,
+  MAX_DURABLE_ATTACHMENT_REFS,
   SCHEDULED_ATTACHMENT_RESELECT_REASON,
   type StageScheduledAttachments
 } from '../ScheduledAttachmentDurability'
@@ -650,6 +651,9 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
   ): ScheduledTaskAttachmentRef[] {
     if (value === undefined) return []
     if (!Array.isArray(value)) throw new Error(`${label} must be an array.`)
+    if (value.length > MAX_DURABLE_ATTACHMENT_REFS) {
+      throw new Error(SCHEDULED_ATTACHMENT_RESELECT_REASON)
+    }
     return value.map((attachment, index) => {
       const input = requireRecord(attachment, `${label} ${index + 1}`)
       const id = requireNonEmptyString(input.id, `${label} ${index + 1} id`)

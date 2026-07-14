@@ -6,6 +6,7 @@ import {
   type RunQueueStore
 } from './RunQueueService'
 import type { RunSession } from '../RunManager'
+import { MAX_DURABLE_ATTACHMENT_REFS } from '../ScheduledAttachmentDurability'
 import type {
   ChatRecord,
   ExternalPathGrant,
@@ -60,6 +61,18 @@ function makeJob(overrides: Partial<RunQueueJob> = {}): RunQueueJob {
     updatedAt: '2026-05-16T00:00:00.000Z',
     ...overrides
   }
+}
+
+function oversizedDurableAttachments() {
+  return Array.from({ length: MAX_DURABLE_ATTACHMENT_REFS + 1 }, (_, index) => ({
+    persistenceVersion: 1 as const,
+    id: `durable-${index}`,
+    path: `/main-owned/transcript-media/aa/${'a'.repeat(43)}.png`,
+    name: `durable-${index}.png`,
+    sha256: 'a'.repeat(43),
+    mimeType: 'image/png',
+    byteLength: 68
+  }))
 }
 
 function makeRepository(overrides: Partial<RunQueueRepository> = {}): RunQueueRepository {
@@ -324,6 +337,39 @@ describe('RunQueueService', () => {
     )
   })
 
+  it('quarantines attachment arrays above the main-authority ceiling before staging', () => {
+    const stageAttachments = vi.fn(() => ({ ok: true as const, attachments: [] }))
+    const { deps, repository } = makeDeps({ stageAttachments })
+    const service = new RunQueueService(deps)
+
+    service.requestJob({
+      runId: 'run-attachment-overflow',
+      provider: 'codex',
+      workspacePath: '/repo',
+      chatId: 'chat-1',
+      request: {
+        prompt: 'Use too many images',
+        imageAttachments: Array.from({ length: MAX_DURABLE_ATTACHMENT_REFS + 1 }, (_, index) => ({
+          id: `img-${index}`,
+          path: `/tmp/private-${index}.png`,
+          name: `image-${index}.png`
+        }))
+      }
+    })
+
+    expect(stageAttachments).not.toHaveBeenCalled()
+    expect(repository.saveRunQueueJob).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runId: 'run-attachment-overflow',
+        status: 'failed',
+        request: expect.objectContaining({ imageAttachments: [] })
+      })
+    )
+    expect(JSON.stringify(vi.mocked(repository.saveRunQueueJob).mock.calls[0][0])).not.toContain(
+      '/tmp/private-'
+    )
+  })
+
   it('stages fresh attachments with only the requesting renderer capability paths', () => {
     const stageAttachments = vi.fn(() => ({ ok: false as const, reason: 'not authorized' }))
     const { deps } = makeDeps({ stageAttachments })
@@ -446,6 +492,56 @@ describe('RunQueueService', () => {
       lastError: expect.stringContaining('Re-select the attachments')
     })
     expect(stageAttachments).not.toHaveBeenCalled()
+  })
+
+  it('quarantines an oversized all-durable queue row when listing jobs', () => {
+    const oversized = makeJob({
+      request: {
+        prompt: 'oversized durable row',
+        selectedModelType: 'cli-default',
+        customModel: '',
+        approvalMode: 'default',
+        sessionTrust: false,
+        imageAttachments: oversizedDurableAttachments()
+      }
+    })
+    const repository = makeRepository({ getRunQueueJobs: vi.fn(() => [oversized]) })
+    const { deps } = makeDeps({ getRunRepository: vi.fn(() => repository) })
+    const service = new RunQueueService(deps)
+
+    expect(service.getJobs()).toEqual([
+      expect.objectContaining({
+        status: 'failed',
+        request: expect.objectContaining({ imageAttachments: [] })
+      })
+    ])
+    expect(repository.transitionRunQueueJob).toHaveBeenCalledWith('run-1', 'failed', {
+      statusReason: expect.stringContaining('Re-select the attachments'),
+      lastError: expect.stringContaining('Re-select the attachments')
+    })
+  })
+
+  it('refuses to lease an oversized all-durable queue row', () => {
+    const oversized = makeJob({
+      request: {
+        prompt: 'oversized durable row',
+        selectedModelType: 'cli-default',
+        customModel: '',
+        approvalMode: 'default',
+        sessionTrust: false,
+        imageAttachments: oversizedDurableAttachments()
+      }
+    })
+    const store = makeStore({ getRunQueueJob: vi.fn(() => oversized) })
+    const { deps, repository } = makeDeps({ appStore: store })
+    const service = new RunQueueService(deps)
+
+    expect(service.leaseJob({ runId: 'run-1' })).toBeNull()
+    expect(repository.leaseQueuedRun).not.toHaveBeenCalled()
+    expect(repository.transitionRunQueueJob).toHaveBeenCalledWith('run-1', 'failed', {
+      statusReason: expect.stringContaining('Re-select the attachments'),
+      lastError: expect.stringContaining('Re-select the attachments')
+    })
   })
 
   it('normalizes global queue requests through the saved global chat guard', () => {

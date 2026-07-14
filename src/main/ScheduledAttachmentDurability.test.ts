@@ -1,11 +1,13 @@
 import fs from 'fs'
 import os from 'os'
 import path from 'path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   copyResolvedScheduledAttachments,
   createMainOwnedScheduledAttachmentPersistence,
-  isDurableScheduledAttachmentRef
+  isDurableScheduledAttachmentRef,
+  MAX_DURABLE_ATTACHMENT_REFS,
+  SCHEDULED_ATTACHMENT_RESELECT_REASON
 } from './ScheduledAttachmentDurability'
 import { TranscriptMediaAssetStore } from './services/TranscriptMediaAssetStore'
 
@@ -210,5 +212,154 @@ describe('ScheduledAttachmentDurability', () => {
         appChatId: 'chat-2'
       })
     ).toBe(false)
+  })
+
+  it('persists a fresh attachment set before granting its ownership in one batch', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'taskwraith-scheduled-batch-owner-'))
+    temporaryRoots.push(root)
+    const workspacePath = path.join(root, 'workspace')
+    const assetPath = path.join(root, 'assets')
+    fs.mkdirSync(workspacePath, { recursive: true })
+    const firstPath = path.join(workspacePath, 'first.png')
+    const secondPath = path.join(workspacePath, 'second.png')
+    const pngHeader = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]
+    fs.writeFileSync(firstPath, Buffer.from([...pngHeader, 0x01]))
+    fs.writeFileSync(secondPath, Buffer.from([...pngHeader, 0x02]))
+    const assetStore = new TranscriptMediaAssetStore(assetPath)
+    const grantMany = vi.spyOn(assetStore, 'grantMany')
+    const persistence = createMainOwnedScheduledAttachmentPersistence({
+      getAssetStore: () => assetStore
+    })
+
+    const staged = persistence.stage({
+      appChatId: 'chat-batch',
+      workspaceId: 'workspace-1',
+      workspacePath,
+      externalPathGrants: [],
+      attachments: [
+        { id: 'image-1', name: 'first.png', path: firstPath },
+        { id: 'image-2', name: 'second.png', path: secondPath }
+      ]
+    })
+
+    expect(staged.ok).toBe(true)
+    expect(grantMany).toHaveBeenCalledTimes(1)
+    expect(grantMany).toHaveBeenCalledWith([
+      expect.objectContaining({ appChatId: 'chat-batch' }),
+      expect.objectContaining({ appChatId: 'chat-batch' })
+    ])
+    if (!staged.ok) return
+    for (const attachment of staged.attachments) {
+      expect(
+        assetStore.owns({
+          sha256: attachment.sha256,
+          mimeType: attachment.mimeType,
+          appChatId: 'chat-batch'
+        })
+      ).toBe(true)
+    }
+  })
+
+  it('returns no durable refs when the single ownership batch fails', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'taskwraith-scheduled-batch-fail-'))
+    temporaryRoots.push(root)
+    const workspacePath = path.join(root, 'workspace')
+    const assetPath = path.join(root, 'assets')
+    fs.mkdirSync(workspacePath, { recursive: true })
+    const sourcePath = path.join(workspacePath, 'proof.png')
+    fs.writeFileSync(
+      sourcePath,
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x03])
+    )
+    const assetStore = new TranscriptMediaAssetStore(assetPath)
+    const grantMany = vi
+      .spyOn(assetStore, 'grantMany')
+      .mockReturnValue({ ok: false, reason: 'persistence_failed' })
+    const persistence = createMainOwnedScheduledAttachmentPersistence({
+      getAssetStore: () => assetStore
+    })
+
+    expect(
+      persistence.stage({
+        appChatId: 'chat-batch',
+        workspaceId: 'workspace-1',
+        workspacePath,
+        externalPathGrants: [],
+        attachments: [{ id: 'image-1', name: 'proof.png', path: sourcePath }]
+      })
+    ).toEqual({ ok: false, reason: SCHEDULED_ATTACHMENT_RESELECT_REASON })
+    expect(grantMany).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not grant an earlier snapshot when a later attachment is invalid', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'taskwraith-scheduled-late-fail-'))
+    temporaryRoots.push(root)
+    const workspacePath = path.join(root, 'workspace')
+    const assetPath = path.join(root, 'assets')
+    fs.mkdirSync(workspacePath, { recursive: true })
+    const firstPath = path.join(workspacePath, 'first.png')
+    const invalidPath = path.join(workspacePath, 'invalid.txt')
+    const firstBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x44])
+    fs.writeFileSync(firstPath, firstBytes)
+    fs.writeFileSync(invalidPath, 'not an image')
+    const assetStore = new TranscriptMediaAssetStore(assetPath)
+    const persistence = createMainOwnedScheduledAttachmentPersistence({
+      getAssetStore: () => assetStore
+    })
+
+    expect(
+      persistence.stage({
+        appChatId: 'chat-late-fail',
+        workspaceId: 'workspace-1',
+        workspacePath,
+        externalPathGrants: [],
+        attachments: [
+          { id: 'image-1', name: 'first.png', path: firstPath },
+          { id: 'image-2', name: 'invalid.txt', path: invalidPath }
+        ]
+      })
+    ).toEqual({ ok: false, reason: SCHEDULED_ATTACHMENT_RESELECT_REASON })
+    const first = assetStore.writeContentAddressed({ mimeType: 'image/png', buffer: firstBytes })
+    expect(first.ok).toBe(true)
+    if (!first.ok) return
+    expect(
+      assetStore.owns({
+        sha256: first.sha256,
+        mimeType: first.mimeType,
+        appChatId: 'chat-late-fail'
+      })
+    ).toBe(false)
+  })
+
+  it('rejects attachment arrays above the main-authority ceiling before opening files', () => {
+    const getAssetStore = vi.fn()
+    const persistence = createMainOwnedScheduledAttachmentPersistence({ getAssetStore })
+    const attachments = Array.from({ length: MAX_DURABLE_ATTACHMENT_REFS + 1 }, (_, index) => ({
+      id: `image-${index}`,
+      name: `image-${index}.png`,
+      path: `/repo/image-${index}.png`
+    }))
+
+    expect(
+      persistence.stage({
+        appChatId: 'chat-overflow',
+        workspaceId: 'workspace-1',
+        workspacePath: '/repo',
+        externalPathGrants: [],
+        attachments
+      })
+    ).toEqual({ ok: false, reason: SCHEDULED_ATTACHMENT_RESELECT_REASON })
+    expect(
+      persistence.resolve({
+        appChatId: 'chat-overflow',
+        workspaceId: 'workspace-1',
+        workspacePath: '/repo',
+        externalPathGrants: [],
+        source: 'scheduled-task',
+        recordId: 'task-overflow',
+        attachments
+      })
+    ).toEqual({ ok: false, reason: SCHEDULED_ATTACHMENT_RESELECT_REASON })
+    expect(getAssetStore).not.toHaveBeenCalled()
   })
 })

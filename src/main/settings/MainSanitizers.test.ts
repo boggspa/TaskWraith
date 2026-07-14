@@ -6,6 +6,7 @@ import {
   sanitizeAuditOrchestration
 } from './MainSanitizers'
 import type { AppSettings, ExternalPathGrant, WorkspaceRecord } from '../store/types'
+import { MAX_DURABLE_ATTACHMENT_REFS } from '../ScheduledAttachmentDurability'
 
 describe('normalizeAuditRunIdentity', () => {
   it('accepts a valid audit role identity with optional dimension/findingId', () => {
@@ -365,6 +366,19 @@ describe('MainSanitizers scheduled tasks', () => {
         imageAttachments: [{ id: 'image-1', name: 'proof.png', path: '/fresh/proof.png' }]
       })
     ).toThrow('Re-select the attachments')
+
+    stageScheduledAttachments.mockClear()
+    expect(() =>
+      sanitizer.sanitizeScheduledTaskForSave({
+        ...baseTask,
+        imageAttachments: Array.from({ length: MAX_DURABLE_ATTACHMENT_REFS + 1 }, (_, index) => ({
+          id: `image-${index}`,
+          name: `proof-${index}.png`,
+          path: `/fresh/proof-${index}.png`
+        }))
+      })
+    ).toThrow('Re-select the attachments')
+    expect(stageScheduledAttachments).not.toHaveBeenCalled()
   })
 
   it('uses effective stored grants for attachment patches and leaves attachments untouched otherwise', () => {
