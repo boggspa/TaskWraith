@@ -15037,15 +15037,23 @@ function App(): React.JSX.Element {
       })
       setWorkflowDraft(null)
       await refreshWorkflowState(currentWorkspace.id)
-      // P2b: the ack can't ride the saved object (sanitizers strip it). If the user
-      // chose a non-safe level, open the Tier-4-style confirm targeting the SAVED id
-      // + workspacePath; on confirm we mint the verified ack via the IPC.
+      // The ack cannot ride the saved object (sanitizers strip it). Ask MAIN to
+      // present the native, non-renderer-forgeable confirmation before minting it.
       if (draft.unattendedLevel && draft.unattendedLevel !== 'safe') {
-        setPendingUnattendedElevation({
-          workflowId: saved.id,
-          workspacePath: saved.workspacePath,
-          level: draft.unattendedLevel
-        })
+        try {
+          await window.api.setWorkflowUnattendedElevation(saved.id, draft.unattendedLevel)
+        } catch (error) {
+          setRawLogs((prev) => [
+            ...prev,
+            {
+              type: 'stderr',
+              content: `Workflow created, but unattended permissions were not enabled: ${
+                error instanceof Error ? error.message : String(error)
+              }`
+            }
+          ])
+        }
+        await refreshWorkflowState(currentWorkspace.id)
       }
       setRawLogs((prev) => [
         ...prev,
@@ -15112,27 +15120,27 @@ function App(): React.JSX.Element {
     await refreshWorkflowState(currentWorkspace?.id)
   }
 
-  // P2b: no full workflow editor exists yet, so existing workflows get a small
-  // "Unattended permissions" affordance in the sidebar that opens the same confirm.
-  // Elevate to 'default' (the lowest non-safe level) through the gate; the ⚠ badge
-  // then reflects the minted ack. Re-clicking when already elevated REVOKES (level
-  // 'safe') with no modal — setWorkflowUnattendedElevation(id, 'safe') clears it.
+  // No full workflow editor exists yet, so existing workflows get a small
+  // "Unattended permissions" affordance in the sidebar. MAIN owns the native
+  // confirmation for elevation; revocation remains immediate and fail-safe.
   const handleSetWorkflowUnattended = async (workflow: WorkflowDefinition): Promise<void> => {
     const current = workflow.unattendedElevation
-    if (current && current.level !== 'safe') {
-      try {
-        await window.api.setWorkflowUnattendedElevation(workflow.id, 'safe')
-      } catch {
-        /* best-effort revoke */
-      }
-      await refreshWorkflowState(currentWorkspace?.id)
-      return
+    const level: UnattendedElevationLevel =
+      current && current.level !== 'safe' ? 'safe' : 'default'
+    try {
+      await window.api.setWorkflowUnattendedElevation(workflow.id, level)
+    } catch (error) {
+      setRawLogs((prev) => [
+        ...prev,
+        {
+          type: 'stderr',
+          content: `Couldn't set unattended permissions: ${
+            error instanceof Error ? error.message : String(error)
+          }`
+        }
+      ])
     }
-    setPendingUnattendedElevation({
-      workflowId: workflow.id,
-      workspacePath: workflow.workspacePath,
-      level: 'default'
-    })
+    await refreshWorkflowState(currentWorkspace?.id)
   }
 
   const handleCancelWorkflowExecution = async (workflow: WorkflowDefinition) => {
@@ -19020,47 +19028,6 @@ function App(): React.JSX.Element {
     chatId: currentChat?.appChatId || null
   })
   const currentProviderLabel = getProviderLabel(currentProvider)
-  // Tier retirement (2026-07): the composer-side Ollama Tier-4 provider-parity
-  // acknowledgement flow is gone — Ollama is governed by the standard permission
-  // role, not a tier grant, so there is no parity to acknowledge from the composer.
-  // P2b — unattended-elevation confirm (modeled on the Ollama Tier-4 ack above).
-  // The ack is minted ONLY by setWorkflowUnattendedElevation; choosing a non-safe
-  // level opens this "are you sure?" gate, and on confirm we call the IPC + refresh.
-  const [pendingUnattendedElevation, setPendingUnattendedElevation] = useState<{
-    workflowId: string
-    workspacePath: string
-    level: Exclude<UnattendedElevationLevel, 'safe'>
-  } | null>(null)
-  useEffect(() => {
-    if (!pendingUnattendedElevation) return
-    const handleKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') {
-        event.preventDefault()
-        setPendingUnattendedElevation(null)
-      }
-    }
-    document.addEventListener('keydown', handleKeyDown, true)
-    return () => document.removeEventListener('keydown', handleKeyDown, true)
-  }, [pendingUnattendedElevation])
-  const confirmUnattendedElevation = async (): Promise<void> => {
-    const target = pendingUnattendedElevation
-    if (!target) return
-    setPendingUnattendedElevation(null)
-    try {
-      await window.api.setWorkflowUnattendedElevation(target.workflowId, target.level)
-    } catch (error) {
-      setRawLogs((prev) => [
-        ...prev,
-        {
-          type: 'stderr',
-          content: `Couldn't set unattended permissions: ${
-            error instanceof Error ? error.message : String(error)
-          }`
-        }
-      ])
-    }
-    await refreshWorkflowState(currentWorkspace?.id)
-  }
   const selectedComposerModelType = isValidModelForProvider(currentProvider, selectedModelType)
     ? selectedModelType
     : getDefaultModelForProvider(currentProvider)
@@ -28097,78 +28064,6 @@ function App(): React.JSX.Element {
                     : 'Copy command'}
                 </button>
               )}
-            </footer>
-          </div>
-        </div>
-      )}
-      {pendingUnattendedElevation && (
-        <div
-          className="creative-approval-backdrop"
-          role="presentation"
-          onMouseDown={() => setPendingUnattendedElevation(null)}
-        >
-          <div
-            className="creative-approval-modal approval-elevation-modal"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="workflow-unattended-elevation-title"
-            data-elevation-tier={pendingUnattendedElevation.level === 'full_access' ? '4' : '3'}
-            onMouseDown={(event) => event.stopPropagation()}
-          >
-            <header className="creative-approval-modal-header">
-              <span className="creative-approval-modal-eyebrow" aria-hidden>
-                Unattended workflow permissions
-              </span>
-              <h2 id="workflow-unattended-elevation-title" className="creative-approval-modal-title">
-                {pendingUnattendedElevation.level === 'full_access'
-                  ? 'Allow Full Workspace Access on unattended runs?'
-                  : 'Allow default permissions on unattended runs?'}
-              </h2>
-            </header>
-            <p className="creative-approval-modal-description">
-              This workflow runs <strong>unattended</strong> on its schedule, with no human
-              present to review each step.
-            </p>
-            <p className="creative-approval-modal-description">
-              Once enabled, scheduled runs <strong>auto-accept file edits without prompting</strong>{' '}
-              inside this workspace:
-            </p>
-            <p className="creative-approval-modal-description">
-              <code>{pendingUnattendedElevation.workspacePath}</code>
-            </p>
-            {pendingUnattendedElevation.level === 'full_access' && (
-              <p className="creative-approval-modal-description">
-                Full Workspace Access stays <strong>workspace-bounded</strong> — writes are
-                limited to the path above and <strong>network access is denied</strong>.
-              </p>
-            )}
-            <p className="creative-approval-modal-description approval-elevation-caution">
-              This applies to <strong>every future occurrence</strong> until the workflow&apos;s
-              approval mode changes — changing it automatically revokes this elevation.
-            </p>
-            <footer className="creative-approval-modal-actions">
-              <button
-                type="button"
-                className="creative-approval-modal-reject"
-                title="Keep unattended workflow runs at the safer current permission level."
-                onClick={() => setPendingUnattendedElevation(null)}
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                className="creative-approval-modal-approve-once"
-                title={
-                  pendingUnattendedElevation.level === 'full_access'
-                    ? 'Allow future scheduled workflow runs to auto-accept workspace-bounded full-access actions until the workflow approval mode changes.'
-                    : 'Allow future scheduled workflow runs to use default permissions until the workflow approval mode changes.'
-                }
-                onClick={() => void confirmUnattendedElevation()}
-              >
-                {pendingUnattendedElevation.level === 'full_access'
-                  ? 'I understand, allow Full Workspace Access'
-                  : 'I understand, allow default permissions'}
-              </button>
             </footer>
           </div>
         </div>
