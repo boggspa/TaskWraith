@@ -4,6 +4,64 @@ Notable changes to TaskWraith, the local-first macOS desktop workbench for runni
 and reviewing AI coding agents. Entries are user-facing highlights; execution,
 history, and workspace state stay on your machine throughout.
 
+## Unreleased
+
+These changes follow the published `v1.8.1` artifacts and are being prepared for
+the next explicitly versioned desktop and iOS release.
+
+### Added
+- **Kimi Code HighSpeed.** Kimi K2.7 Code now offers Standard and HighSpeed
+  tiers through the familiar Fast control across solo, Ensemble, queued, and
+  remote runs.
+- **Provider plan labels in usage.** Usage surfaces now show the provider's
+  detected account plan where that metadata is available.
+
+### Changed
+- **Provider colours are balanced across light and dark surfaces.** Desktop and
+  iOS now share contrast-balanced provider hues, including upstream-brand
+  overrides for Ollama-hosted models. The Ollama model picker follows the
+  selected model's upstream brand instead of always using Ollama green.
+- **The sidebar usage card has a calmer glass treatment.** Quota values, rails,
+  plan labels, and reference views now use one bounded surface with clearer
+  contrast and less competing chrome.
+
+### Fixed
+- **Transcript navigation keeps the reader's place.** Chat switches, popouts,
+  document-root scrolling, and virtual-window remounts restore the correct
+  reading anchor; expanded Ensemble rounds remain expanded per chat. Explicit
+  wheel, key, touch, or scrollbar input owns scroll-away, while layout clamps
+  no longer break live follow, and the streaming **Jump to latest** control now
+  updates immediately.
+- **Fan-out activity stays coherent.** Interleaved lane activity remains in one
+  first-anchored viewport, foreground ownership closes only after its lanes
+  settle, and the continuation-hop notice is published after live work rather
+  than racing it.
+- **Multiview state stays with its pane.** Chat, workspace, focus, trust,
+  Ensemble controls, file evidence, composer fades, and selection updates no
+  longer bleed between panes or enter selection-update loops.
+- **Provider controls survive edge cases.** Grok can recover from a denied tool
+  without weakening Read-Only mode, Kimi speed tiers resolve through their CLI
+  aliases, and Codex reasoning controls are pinned to the dispatched run and
+  reset safely when its model changes.
+- **Queued rosters and onboarding notices finish cleanly.** A queued agent roster
+  can finalize from its source run's durable terminal event, activity collapse
+  keeps its debounce guard, and iOS retains app notices in First Launch instead
+  of consuming them in the thread detail view.
+
+### Security
+- **Built-in Git actions treat repository configuration as untrusted.**
+  TaskWraith disables repository-selected hooks, filters, monitors, external
+  diff/credential helpers, SSH/signing helpers, transport commands, and URL
+  rewrites; external repositories must also keep their Git metadata inside the
+  granted root.
+- **Native provider file and shell tools stay brokered.** Claude, Kimi, Cursor,
+  and Grok cannot bypass signed chat, run, workspace, and approval boundaries
+  through bare native filesystem or shell tools; they use the namespaced
+  TaskWraith workspace tools instead.
+- **Remote favicon fetches are pinned and bounded.** Public-address validation
+  is repeated across redirects and connections are pinned to validated DNS
+  results, with strict timeout, redirect, byte, concurrency, and queue limits.
+
 ## 1.8.1 - 2026-07-12
 
 ### Added

@@ -182,6 +182,15 @@ describe('ChangelogSheet', () => {
     expect(entry.releaseNotes).toContain('Foreground seats now also hold their reader/writer fan-out lanes')
   })
 
+  it('bundles post-1.8.1 hardening without rewriting the shipped release entry', () => {
+    const entry = resolveChangelogEntry({ currentVersion: 'Unreleased' }, null)
+    expect(entry).toMatchObject({ version: 'Unreleased' })
+    expect(entry.releaseNotes).toContain('Kimi Code HighSpeed')
+    expect(entry.releaseNotes).toContain('Transcript navigation keeps the reader\'s place')
+    expect(entry.releaseNotes).toContain('Native provider file and shell tools stay brokered')
+    expect(entry.releaseNotes).toContain('Remote favicon fetches are pinned and bounded')
+  })
+
   it('formats full changelog arrays from electron-updater metadata', () => {
     expect(
       formatReleaseNotes([
