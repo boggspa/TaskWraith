@@ -39,7 +39,12 @@ export function registerWorkspaceDiffSnapshotHandlers(
   )
 
   ipcMain.handle('capture-snapshot', async (event, workspace: string) => {
-    const resolved = deps.requireRegisteredWorkspace(workspace)
+    // Snapshot capture has the same repository-boundary semantics as diff
+    // loading. In particular, a registered subdirectory inside a larger Git
+    // repository must not widen `git status` to the ancestor repository.
+    const resolved = deps.resolveWorkspaceDiffPath
+      ? deps.resolveWorkspaceDiffPath(workspace)
+      : deps.requireRegisteredWorkspace(workspace)
     deps.assertSenderScope(event, {
       capability: 'workspace-diff',
       workspacePath: resolved

@@ -62,12 +62,18 @@ describe('registerWorkspaceDiffSnapshotHandlers', () => {
     }
     mockedCaptureWorkspaceSnapshot.mockResolvedValue(snapshot as any)
     const requireRegisteredWorkspace = vi.fn(() => '/repo/real')
+    const resolveWorkspaceDiffPath = vi.fn(() => '/repo/real')
     const assertSenderScope = vi.fn()
 
-    registerWorkspaceDiffSnapshotHandlers({ requireRegisteredWorkspace, assertSenderScope })
+    registerWorkspaceDiffSnapshotHandlers({
+      requireRegisteredWorkspace,
+      resolveWorkspaceDiffPath,
+      assertSenderScope
+    })
 
     await expect(handlerFor('capture-snapshot')({} as any, '/repo')).resolves.toBe(snapshot)
-    expect(requireRegisteredWorkspace).toHaveBeenCalledWith('/repo')
+    expect(resolveWorkspaceDiffPath).toHaveBeenCalledWith('/repo')
+    expect(requireRegisteredWorkspace).not.toHaveBeenCalled()
     expect(assertSenderScope).toHaveBeenCalledWith(
       expect.anything(),
       { capability: 'workspace-diff', workspacePath: '/repo/real' }

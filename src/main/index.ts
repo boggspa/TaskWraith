@@ -332,7 +332,8 @@ import { extractThreadId } from './BridgeRunEventSink'
 import { resolveCanonicalWorkspaceId } from './WorkspaceIdentity'
 import {
   externalGitRepositoryRootIsSelfContained,
-  gitRepositoryRootForPath
+  gitRepositoryRootForPath,
+  registeredWorkspaceGitRootIsAllowed
 } from './GitRepositoryScope'
 import { ExternalPathGrantExecutionRegistry } from './ExternalPathGrantExecutionRegistry'
 import {
@@ -4958,7 +4959,7 @@ function resolveRegisteredOrChatGrantedWorkspacePath(
   assertSafeWorkspaceRoot(normalized)
   if (findRegisteredWorkspace(lexicalNormalized) || findRegisteredWorkspace(normalized)) {
     const repositoryRoot = gitRepositoryRootForPath(normalized)
-    if (repositoryRoot !== normalized) {
+    if (!registeredWorkspaceGitRootIsAllowed(normalized, repositoryRoot)) {
       throw new Error(`${label} Git access cannot widen beyond the registered workspace root.`)
     }
     return normalized

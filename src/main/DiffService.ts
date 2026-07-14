@@ -564,58 +564,60 @@ export async function getWorkspaceDiff(workspace: string): Promise<{
 }
 
 export async function captureWorkspaceSnapshot(workspace: string): Promise<WorkspaceSnapshot> {
+  // Detect the repository before the hardened status path probes `git config
+  // --local`. Plain directories reject that probe with a different message
+  // from `git status`, and must take the non-Git file-tree fallback instead of
+  // failing an otherwise valid run.
+  const gitScope = await resolveGitWorkspaceScope(workspace)
+  if (!gitScope) {
+    const files: FileSnapshot[] = []
+    function walk(dir: string) {
+      const entries = fs.readdirSync(dir, { withFileTypes: true })
+      for (const entry of entries) {
+        if (entry.name.startsWith('.')) continue
+        if (isNoiseFile(entry.name)) continue
+        const rel = path.relative(workspace, path.join(dir, entry.name))
+        if (entry.isDirectory()) {
+          walk(path.join(dir, entry.name))
+        } else {
+          const stat = fs.statSync(path.join(dir, entry.name))
+          files.push({
+            path: rel,
+            sizeBytes: stat.size,
+            mtimeMs: stat.mtimeMs
+          })
+        }
+      }
+    }
+    try {
+      walk(workspace)
+    } catch {
+      /* ignore */
+    }
+
+    return {
+      capturedAt: new Date().toISOString(),
+      isGitRepo: false,
+      workspacePath: workspace,
+      files
+    }
+  }
+
   const { stdout: statusOut, stderr: statusErr, code: statusCode } = await spawnGit(workspace, [
     'status',
     '--porcelain=v1',
     '-z',
     '--untracked-files=all'
   ])
-  const isGitRepo = !statusErr.includes('not a git repository')
-
-  if (isGitRepo && statusCode !== 0) {
+  if (statusCode !== 0) {
     throw new Error(statusErr.trim() || 'Git status could not be captured safely.')
-  }
-
-  if (isGitRepo) {
-    return {
-      capturedAt: new Date().toISOString(),
-      isGitRepo: true,
-      workspacePath: workspace,
-      gitStatus: statusOut
-    }
-  }
-
-  // Non-git: lightweight file tree snapshot
-  const files: FileSnapshot[] = []
-  function walk(dir: string, base: string) {
-    const entries = fs.readdirSync(dir, { withFileTypes: true })
-    for (const entry of entries) {
-      if (entry.name.startsWith('.')) continue
-      if (isNoiseFile(entry.name)) continue
-      const rel = path.relative(workspace, path.join(dir, entry.name))
-      if (entry.isDirectory()) {
-        walk(path.join(dir, entry.name), base)
-      } else {
-        const stat = fs.statSync(path.join(dir, entry.name))
-        files.push({
-          path: rel,
-          sizeBytes: stat.size,
-          mtimeMs: stat.mtimeMs
-        })
-      }
-    }
-  }
-  try {
-    walk(workspace, workspace)
-  } catch {
-    /* ignore */
   }
 
   return {
     capturedAt: new Date().toISOString(),
-    isGitRepo: false,
+    isGitRepo: true,
     workspacePath: workspace,
-    files
+    gitStatus: statusOut
   }
 }
 

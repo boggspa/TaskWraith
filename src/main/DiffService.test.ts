@@ -109,6 +109,26 @@ describe('DiffService', () => {
   })
 
   describe('getWorkspaceDiff', () => {
+    it('captures a non-git workspace after the hardened local-filter probe', async () => {
+      const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'taskwraith-non-git-snapshot-'))
+      try {
+        fs.writeFileSync(path.join(workspace, 'canary.txt'), 'plain workspace\n')
+
+        await expect(captureWorkspaceSnapshot(workspace)).resolves.toMatchObject({
+          isGitRepo: false,
+          workspacePath: workspace,
+          files: [
+            expect.objectContaining({
+              path: 'canary.txt',
+              sizeBytes: 16
+            })
+          ]
+        })
+      } finally {
+        fs.rmSync(workspace, { recursive: true, force: true })
+      }
+    })
+
     it('ignores hostile inherited Git routing variables in async and sync diff commands', async () => {
       const { baseDir, repoDir } = makeGitRepo()
       const keys = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_CONFIG_COUNT'] as const

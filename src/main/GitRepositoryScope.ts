@@ -65,3 +65,15 @@ export function gitRepositoryRootForPath(
     return null
   }
 }
+
+/**
+ * A registered workspace may be a repository root or a plain directory. A
+ * non-null, different repository root means Git would widen the read to an
+ * ancestor checkout and must remain blocked.
+ */
+export function registeredWorkspaceGitRootIsAllowed(
+  workspaceRoot: string,
+  repositoryRoot: string | null
+): boolean {
+  return repositoryRoot === null || path.resolve(repositoryRoot) === path.resolve(workspaceRoot)
+}

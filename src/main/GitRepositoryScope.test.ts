@@ -5,7 +5,8 @@ import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   externalGitRepositoryRootIsSelfContained,
-  gitRepositoryRootForPath
+  gitRepositoryRootForPath,
+  registeredWorkspaceGitRootIsAllowed
 } from './GitRepositoryScope'
 
 const tempPaths: string[] = []
@@ -45,6 +46,15 @@ describe('gitRepositoryRootForPath', () => {
 
   it('returns null outside a repository', () => {
     expect(gitRepositoryRootForPath(makeTempDir(), () => null)).toBeNull()
+  })
+
+  it('does not treat a nested child repository as the registered root repository', () => {
+    const registeredRoot = makeTempDir()
+    const nestedRepository = path.join(registeredRoot, 'nested-repository')
+    const init = spawnSync('git', ['init', '--quiet', nestedRepository], { encoding: 'utf8' })
+    expect(init.status, init.stderr).toBe(0)
+
+    expect(gitRepositoryRootForPath(registeredRoot)).toBeNull()
   })
 
   it('accepts a regular .git file used by worktrees', () => {
@@ -136,6 +146,22 @@ describe('externalGitRepositoryRootIsSelfContained', () => {
 
     expect(externalGitRepositoryRootIsSelfContained(repositoryRoot)).toBe(false)
     expect(externalGitRepositoryRootIsSelfContained(path.join(repositoryRoot, 'missing'))).toBe(
+      false
+    )
+  })
+})
+
+describe('registeredWorkspaceGitRootIsAllowed', () => {
+  it('allows a registered plain directory outside Git', () => {
+    expect(registeredWorkspaceGitRootIsAllowed('/workspace/plain', null)).toBe(true)
+  })
+
+  it('allows the registered repository root itself', () => {
+    expect(registeredWorkspaceGitRootIsAllowed('/workspace/repo', '/workspace/repo')).toBe(true)
+  })
+
+  it('rejects a registered subdirectory whose Git root is an ancestor', () => {
+    expect(registeredWorkspaceGitRootIsAllowed('/workspace/repo/app', '/workspace/repo')).toBe(
       false
     )
   })
