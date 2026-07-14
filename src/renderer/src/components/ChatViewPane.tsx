@@ -436,6 +436,7 @@ function ChatViewPaneInner(props: ChatViewPaneProps) {
     chatId: chatId || null,
     messages: props.messages,
     runCompleteNotice: props.runCompleteNotice,
+    transcriptMounted: !props.isWelcomeChat,
     streamingActive: props.isThinking,
     transcriptScrollRef: props.refs.scrollRef,
     transcriptContentRef: props.refs.contentRef,

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const hookHarness = vi.hoisted(() => ({
+  effectDependencies: [] as Array<readonly unknown[] | undefined>,
   effectFactories: [] as Array<() => void | (() => void)>,
   layoutEffectFactories: [] as Array<() => void | (() => void)>,
   listeners: new Map<string, (event: any) => void>(),
@@ -12,8 +13,9 @@ const hookHarness = vi.hoisted(() => ({
 
 vi.mock('react', () => ({
   useCallback: <T extends (...args: any[]) => any>(callback: T): T => callback,
-  useEffect: (factory: () => void | (() => void)) => {
+  useEffect: (factory: () => void | (() => void), dependencies?: readonly unknown[]) => {
     hookHarness.effectFactories.push(factory)
+    hookHarness.effectDependencies.push(dependencies)
   },
   useLayoutEffect: (factory: () => void | (() => void)) => {
     hookHarness.layoutEffectFactories.push(factory)
@@ -34,6 +36,7 @@ import { useTranscriptScrollState } from './useTranscriptScrollState'
 describe('useTranscriptScrollState', () => {
   beforeEach(() => {
     hookHarness.effectFactories.length = 0
+    hookHarness.effectDependencies.length = 0
     hookHarness.layoutEffectFactories.length = 0
     hookHarness.listeners.clear()
     hookHarness.windowListeners.clear()
@@ -85,6 +88,45 @@ describe('useTranscriptScrollState', () => {
     })
     expect(autoFollowStateSetter).toHaveBeenLastCalledWith(true)
     expect(autoFollowStateSetter).toHaveBeenCalledTimes(2)
+  })
+
+  it('rebinds every transcript DOM effect when an empty-start pane mounts its transcript', () => {
+    useTranscriptScrollState({
+      chatId: 'chat-1',
+      messages: [],
+      runCompleteNotice: null,
+      transcriptMounted: false,
+      transcriptScrollRef: { current: hookHarness.scroller as HTMLDivElement },
+      transcriptContentRef: { current: hookHarness.scroller as HTMLDivElement }
+    })
+
+    // A stale ref must not bind while the welcome transcript is absent.
+    for (const effectIndex of [0, 2, 3, 4, 5]) {
+      hookHarness.effectFactories[effectIndex]?.()
+      expect(hookHarness.effectDependencies[effectIndex]).toContain(false)
+    }
+    expect(hookHarness.scroller.addEventListener).not.toHaveBeenCalled()
+
+    hookHarness.effectFactories.length = 0
+    hookHarness.effectDependencies.length = 0
+    hookHarness.refCall = 0
+    useTranscriptScrollState({
+      chatId: 'chat-1',
+      messages: [{ id: 'first-message' }],
+      runCompleteNotice: null,
+      transcriptMounted: true,
+      transcriptScrollRef: { current: hookHarness.scroller as HTMLDivElement },
+      transcriptContentRef: { current: hookHarness.scroller as HTMLDivElement }
+    })
+
+    for (const effectIndex of [0, 2, 3, 4, 5]) {
+      expect(hookHarness.effectDependencies[effectIndex]).toContain(true)
+    }
+    hookHarness.effectFactories[0]?.()
+    hookHarness.effectFactories[2]?.()
+    expect(hookHarness.listeners.has('scroll')).toBe(true)
+    expect(hookHarness.listeners.has('wheel')).toBe(true)
+    expect(hookHarness.windowListeners.has('keydown')).toBe(true)
   })
 
   it('publishes document-root PageUp intent when transcript prose owns the visible scroll', () => {

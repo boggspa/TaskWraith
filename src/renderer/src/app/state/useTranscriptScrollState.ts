@@ -32,6 +32,11 @@ interface UseTranscriptScrollStateBaseInput {
   chatId: string | null
   messages: readonly unknown[] | undefined
   runCompleteNotice: unknown
+  /** Whether the transcript DOM is mounted. Welcome panes mount it only after
+   * their first message, without changing chatId. Including this lifecycle in
+   * DOM-binding effects prevents those panes from permanently missing scroll
+   * and intent listeners. */
+  transcriptMounted?: boolean
   /** True while a run is streaming into this chat — keeps the
    *  jump-to-latest pill visible when follow is off even though text growth
    *  inside one bubble never bumps the message-count-based unread number. */
@@ -67,6 +72,7 @@ export function useTranscriptScrollState({
   chatId,
   messages,
   runCompleteNotice,
+  transcriptMounted = true,
   streamingActive,
   transcriptScrollRef: providedTranscriptScrollRef,
   transcriptContentRef: providedTranscriptContentRef,
@@ -432,6 +438,7 @@ export function useTranscriptScrollState({
   )
 
   useEffect(() => {
+    if (!transcriptMounted) return
     const scroller = transcriptScrollRef.current
     if (!scroller) return
 
@@ -558,13 +565,14 @@ export function useTranscriptScrollState({
       scroller.removeEventListener('scroll', onScroll)
       if (rafId !== null) cancelAnimationFrame(rafId)
     }
-  }, [chatId, clearProgrammaticScrollTarget, setAutoFollow, snapScrollToBottom])
+  }, [chatId, clearProgrammaticScrollTarget, setAutoFollow, snapScrollToBottom, transcriptMounted])
 
   useEffect(() => {
     return () => clearProgrammaticScrollTarget()
   }, [clearProgrammaticScrollTarget])
 
   useEffect(() => {
+    if (!transcriptMounted) return
     const scroller = transcriptScrollRef.current
     if (!scroller) return
 
@@ -685,9 +693,10 @@ export function useTranscriptScrollState({
       window.removeEventListener('blur', endScrollbarPointer)
       scrollbarPointerActiveRef.current = false
     }
-  }, [cancelPendingExternalRestore, chatId, setAutoFollow])
+  }, [cancelPendingExternalRestore, chatId, setAutoFollow, transcriptMounted])
 
   useEffect(() => {
+    if (!transcriptMounted) return
     const scroller = transcriptScrollRef.current
     if (!scroller) return
 
@@ -716,9 +725,10 @@ export function useTranscriptScrollState({
       scroller.removeEventListener(CODE_BLOCK_RESIZE_EVENT, onCodeBlockResize)
       if (rafId !== null) cancelAnimationFrame(rafId)
     }
-  }, [chatId, disengageIfLiveScrollShowsUserAway, snapScrollToBottom])
+  }, [chatId, disengageIfLiveScrollShowsUserAway, snapScrollToBottom, transcriptMounted])
 
   useEffect(() => {
+    if (!transcriptMounted) return
     const scroller = transcriptScrollRef.current
     const content = transcriptContentRef.current
     if (!scroller || !content) return
@@ -749,7 +759,7 @@ export function useTranscriptScrollState({
       observer.disconnect()
       if (rafId !== null) cancelAnimationFrame(rafId)
     }
-  }, [chatId, disengageIfLiveScrollShowsUserAway, snapScrollToBottom])
+  }, [chatId, disengageIfLiveScrollShowsUserAway, snapScrollToBottom, transcriptMounted])
 
   useLayoutEffect(() => {
     const currentMessageCount = messages?.length ?? 0
@@ -812,6 +822,7 @@ export function useTranscriptScrollState({
   }, [chatId, disengageIfLiveScrollShowsUserAway, messages, runCompleteNotice, snapScrollToBottom])
 
   useEffect(() => {
+    if (!transcriptMounted) return
     const scroller = transcriptScrollRef.current
     if (!scroller) return
     const hasPendingManualJump = Boolean(chatId && pendingTranscriptJumpChatIdRef.current === chatId)
@@ -885,7 +896,7 @@ export function useTranscriptScrollState({
     }
     // Chat-switch only: message growth is handled by the message layout effect above.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chatId])
+  }, [chatId, transcriptMounted])
 
   return {
     transcriptScrollRef,
