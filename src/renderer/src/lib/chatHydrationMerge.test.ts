@@ -66,9 +66,11 @@ describe('resolveChatHydration', () => {
       key: 'chat-a',
       updater: (value) => ({ ...value, workspacePath: '/queue-edit', updatedAt: 3 }),
       hydrate: () => queueHydration,
+      resolveAvailableBase: () => null,
       resolveBase: (_key, hydrated) => hydrated,
       apply: (_key, base, updater) => {
         current = updater(base)
+        return current
       }
     })
     resolveQueueHydration({ ...chat('Hydrated'), workspacePath: '/stale', updatedAt: 2 })

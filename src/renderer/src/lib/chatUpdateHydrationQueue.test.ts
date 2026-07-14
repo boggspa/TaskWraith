@@ -9,12 +9,15 @@ interface RecordValue {
 function deferred<T>(): {
   promise: Promise<T>
   resolve: (value: T) => void
+  reject: (reason?: unknown) => void
 } {
   let resolve!: (value: T) => void
-  const promise = new Promise<T>((fulfil) => {
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((fulfil, fail) => {
     resolve = fulfil
+    reject = fail
   })
-  return { promise, resolve }
+  return { promise, resolve, reject }
 }
 
 async function flushPromises(): Promise<void> {
@@ -39,6 +42,7 @@ describe('ChatUpdateHydrationQueue', () => {
         key: 'chat-a',
         updater: (value) => ({ ...value, edits: [...value.edits, edit] }),
         hydrate,
+        resolveAvailableBase: () => null,
         resolveBase: (_key, hydrated) => hydrated,
         apply
       })
@@ -73,8 +77,13 @@ describe('ChatUpdateHydrationQueue', () => {
         key,
         updater: (value) => ({ ...value, edits: [...value.edits, edit] }),
         hydrate,
+        resolveAvailableBase: (chatId) => current.get(chatId) || null,
         resolveBase: (chatId, hydrated) => current.get(chatId) || hydrated,
-        apply: (chatId, base, updater) => committed.set(chatId, updater(base))
+        apply: (chatId, base, updater) => {
+          const updated = updater(base)
+          committed.set(chatId, updated)
+          return updated
+        }
       })
     }
 
@@ -87,7 +96,12 @@ describe('ChatUpdateHydrationQueue', () => {
     hydrationB.resolve({ id: 'chat-b', edits: [] })
     await flushPromises()
     expect(committed.get('chat-b')?.edits).toEqual(['queued-b1'])
-    expect(committed.has('chat-a')).toBe(false)
+    expect(committed.get('chat-a')?.edits).toEqual([
+      'live-individual-edit',
+      'queued-a1',
+      'queued-a2',
+      'queued-after-live-hydration'
+    ])
 
     hydrationA.resolve({ id: 'chat-a', edits: ['stale-hydration'] })
     await flushPromises()
@@ -110,8 +124,12 @@ describe('ChatUpdateHydrationQueue', () => {
       key: 'chat-a',
       updater: (value) => ({ ...value, edits: [...value.edits, 'late'] }),
       hydrate: () => hydration.promise,
+      resolveAvailableBase: () => null,
       resolveBase: (_key, hydrated) => hydrated,
-      apply
+      apply: (_key, base, updater) => {
+        apply()
+        return updater(base)
+      }
     })
     queue.cancel('chat-a')
     hydration.resolve({ id: 'chat-a', edits: [] })
@@ -134,8 +152,12 @@ describe('ChatUpdateHydrationQueue', () => {
         key,
         updater: (value) => value,
         hydrate: () => hydration.promise,
+        resolveAvailableBase: () => null,
         resolveBase: (_chatId, hydrated) => hydrated,
-        apply
+        apply: (_key, base, updater) => {
+          apply()
+          return updater(base)
+        }
       })
     }
 
@@ -145,5 +167,137 @@ describe('ChatUpdateHydrationQueue', () => {
     await flushPromises()
 
     expect(apply).not.toHaveBeenCalled()
+  })
+
+  it('synchronously drains pending and current updates over a full base and returns it', async () => {
+    const queue = new ChatUpdateHydrationQueue<RecordValue>()
+    const hydration = deferred<RecordValue | null>()
+    let current: RecordValue | null = null
+    const apply = (
+      _key: string,
+      base: RecordValue,
+      updater: (value: RecordValue) => RecordValue
+    ): RecordValue => {
+      current = updater(base)
+      return current
+    }
+    const request = (edit: string) => ({
+      key: 'chat-a',
+      updater: (value: RecordValue) => ({ ...value, edits: [...value.edits, edit] }),
+      hydrate: () => hydration.promise,
+      resolveAvailableBase: () => current,
+      resolveBase: (_key: string, hydrated: RecordValue) => current || hydrated,
+      apply
+    })
+
+    expect(queue.enqueue(request('queued-first'))).toBeNull()
+    current = { id: 'chat-a', edits: ['full-base'] }
+    const updated = queue.enqueue(request('current-update'))
+
+    expect(updated).toEqual({
+      id: 'chat-a',
+      edits: ['full-base', 'queued-first', 'current-update']
+    })
+    expect(updated).toBe(current)
+    expect(queue.hasPending('chat-a')).toBe(false)
+
+    hydration.resolve({ id: 'chat-a', edits: ['stale-hydration'] })
+    await flushPromises()
+    expect(current?.edits).toEqual(['full-base', 'queued-first', 'current-update'])
+  })
+
+  it('recovers queued updates onto a full base when hydration resolves null', async () => {
+    const queue = new ChatUpdateHydrationQueue<RecordValue>()
+    const hydration = deferred<RecordValue | null>()
+    let current: RecordValue | null = null
+
+    queue.enqueue({
+      key: 'chat-a',
+      updater: (value) => ({ ...value, edits: [...value.edits, 'queued'] }),
+      hydrate: () => hydration.promise,
+      resolveAvailableBase: () => current,
+      resolveBase: (_key, hydrated) => current || hydrated,
+      apply: (_key, base, updater) => (current = updater(base))
+    })
+    current = { id: 'chat-a', edits: ['full-base'] }
+    hydration.resolve(null)
+    await flushPromises()
+
+    expect(current.edits).toEqual(['full-base', 'queued'])
+    expect(queue.hasPending('chat-a')).toBe(false)
+  })
+
+  it('recovers queued updates onto a full base when hydration rejects', async () => {
+    const queue = new ChatUpdateHydrationQueue<RecordValue>()
+    const hydration = deferred<RecordValue | null>()
+    let current: RecordValue | null = null
+
+    queue.enqueue({
+      key: 'chat-a',
+      updater: (value) => ({ ...value, edits: [...value.edits, 'queued'] }),
+      hydrate: () => hydration.promise,
+      resolveAvailableBase: () => current,
+      resolveBase: (_key, hydrated) => current || hydrated,
+      apply: (_key, base, updater) => (current = updater(base))
+    })
+    current = { id: 'chat-a', edits: ['full-base'] }
+    hydration.reject(new Error('hydrate failed'))
+    await flushPromises()
+
+    expect(current.edits).toEqual(['full-base', 'queued'])
+    expect(queue.hasPending('chat-a')).toBe(false)
+  })
+
+  it('recovers synchronously when hydration throws after a full base becomes available', () => {
+    const queue = new ChatUpdateHydrationQueue<RecordValue>()
+    let current: RecordValue | null = null
+
+    const updated = queue.enqueue({
+      key: 'chat-a',
+      updater: (value) => ({ ...value, edits: [...value.edits, 'queued'] }),
+      hydrate: () => {
+        current = { id: 'chat-a', edits: ['full-base'] }
+        throw new Error('hydrate failed')
+      },
+      resolveAvailableBase: () => current,
+      resolveBase: (_key, hydrated) => current || hydrated,
+      apply: (_key, base, updater) => (current = updater(base))
+    })
+
+    expect(updated).toEqual({ id: 'chat-a', edits: ['full-base', 'queued'] })
+    expect(queue.hasPending('chat-a')).toBe(false)
+  })
+
+  it('retains failed updates until a later full base can drain them', async () => {
+    const queue = new ChatUpdateHydrationQueue<RecordValue>()
+    const failedHydration = deferred<RecordValue | null>()
+    const retryHydration = deferred<RecordValue | null>()
+    let current: RecordValue | null = null
+    let hydrateCalls = 0
+    const request = (edit: string) => ({
+      key: 'chat-a',
+      updater: (value: RecordValue) => ({ ...value, edits: [...value.edits, edit] }),
+      hydrate: () => {
+        hydrateCalls += 1
+        return hydrateCalls === 1 ? failedHydration.promise : retryHydration.promise
+      },
+      resolveAvailableBase: () => current,
+      resolveBase: (_key: string, hydrated: RecordValue) => current || hydrated,
+      apply: (
+        _key: string,
+        base: RecordValue,
+        updater: (value: RecordValue) => RecordValue
+      ) => (current = updater(base))
+    })
+
+    queue.enqueue(request('survives-failure'))
+    failedHydration.resolve(null)
+    await flushPromises()
+    expect(queue.hasPending('chat-a')).toBe(true)
+
+    current = { id: 'chat-a', edits: ['full-base'] }
+    const updated = queue.enqueue(request('later-update'))
+    expect(updated?.edits).toEqual(['full-base', 'survives-failure', 'later-update'])
+    expect(hydrateCalls).toBe(1)
   })
 })

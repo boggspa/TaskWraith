@@ -4910,11 +4910,19 @@ function App(): React.JSX.Element {
         isChatSummaryRecord(base) ||
         summaryChatUpdateQueueRef.current.hasPending(chatId)
       ) {
-        summaryChatUpdateQueueRef.current.enqueue({
+        return summaryChatUpdateQueueRef.current.enqueue({
           key: chatId,
           updater,
           options,
           hydrate: (key) => window.api.getChat(key),
+          resolveAvailableBase: (key) => {
+            const current =
+              chatByIdRef.current.get(key) ||
+              (activeRunChatSnapshotRef.current?.appChatId === key
+                ? activeRunChatSnapshotRef.current
+                : null)
+            return current && !isChatSummaryRecord(current) ? current : null
+          },
           resolveBase: (key, hydrated) => {
             const current =
               chatByIdRef.current.get(key) ||
@@ -4926,10 +4934,9 @@ function App(): React.JSX.Element {
           apply: (key, hydratedBase, queuedUpdater, queuedOptions) => {
             chatByIdRef.current.set(key, hydratedBase)
             setChats((prev) => mergeChatRecord(prev, hydratedBase))
-            updateChatById(key, queuedUpdater, queuedOptions)
+            return updateChatById(key, queuedUpdater, queuedOptions)
           }
         })
-        return null
       }
 
       const updated = updater(base)
@@ -18621,15 +18628,29 @@ function App(): React.JSX.Element {
   )
   const applyEnsemblePermissionsToAllParticipantsForChat = useCallback(
     (chatId: string, participantId: string): void => {
-      updateChatById(chatId, (source) => {
-        if (isEnsembleActiveRoundDispatchLive(source.ensemble?.activeRound)) {
+      void (async () => {
+        const local =
+          chatByIdRef.current.get(chatId) ||
+          (activeRunChatSnapshotRef.current?.appChatId === chatId
+            ? activeRunChatSnapshotRef.current
+            : null)
+        const canonical =
+          local && !isChatSummaryRecord(local)
+            ? local
+            : await refreshSingleChat(chatId).catch(() => null)
+        if (!canonical) return
+        if (isEnsembleActiveRoundDispatchLive(canonical.ensemble?.activeRound)) {
           window.alert(APPLY_PERMISSIONS_TO_ALL_ACTIVE_ROUND_MESSAGE)
-          return source
+          return
         }
-        return applyParticipantPermissionsToEnsemble(source, participantId)
-      })
+        updateChatById(chatId, (source) =>
+          isEnsembleActiveRoundDispatchLive(source.ensemble?.activeRound)
+            ? source
+            : applyParticipantPermissionsToEnsemble(source, participantId)
+        )
+      })()
     },
-    [updateChatById]
+    [refreshSingleChat, updateChatById]
   )
   const updateEnsembleOrchestrationModeForChat = useCallback(
     (chatId: string, mode: EnsembleOrchestrationMode): void => {
