@@ -314,6 +314,11 @@ interface TranscriptMediaOwnershipSnapshot {
   grants: Array<{ asset: string; appChatIds: string[] }>
 }
 
+type TranscriptMediaOwnershipLoadResult =
+  | { status: 'missing'; ownership: Map<string, Set<string>> }
+  | { status: 'valid'; ownership: Map<string, Set<string>> }
+  | { status: 'unavailable'; ownership: Map<string, Set<string>> }
+
 function safeOwnershipChatId(value: unknown): value is string {
   return (
     isSafeChatId(value) &&
@@ -375,13 +380,31 @@ function storedAssetExists(baseDir: string, sha256: string, mimeType: string): b
   }
 }
 
-function loadOwnership(baseDir: string): Map<string, Set<string>> {
+function loadOwnership(baseDir: string): TranscriptMediaOwnershipLoadResult {
+  try {
+    fs.lstatSync(baseDir)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') {
+      return { status: 'missing', ownership: new Map() }
+    }
+    return { status: 'unavailable', ownership: new Map() }
+  }
   const ownershipPath = safeOwnershipPath(baseDir, false)
-  if (!ownershipPath) return new Map()
+  if (!ownershipPath) return { status: 'unavailable', ownership: new Map() }
   let fd: number | null = null
   try {
-    const lstat = fs.lstatSync(ownershipPath)
-    if (lstat.isSymbolicLink() || !lstat.isFile()) return new Map()
+    let lstat: fs.Stats
+    try {
+      lstat = fs.lstatSync(ownershipPath)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') {
+        return { status: 'missing', ownership: new Map() }
+      }
+      return { status: 'unavailable', ownership: new Map() }
+    }
+    if (lstat.isSymbolicLink() || !lstat.isFile()) {
+      return { status: 'unavailable', ownership: new Map() }
+    }
     fd = fs.openSync(ownershipPath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW)
     const stat = fs.fstatSync(fd)
     const uid = typeof process.getuid === 'function' ? process.getuid() : null
@@ -393,17 +416,17 @@ function loadOwnership(baseDir: string): Map<string, Set<string>> {
       stat.size <= 0 ||
       stat.size > TRANSCRIPT_MEDIA_OWNERSHIP_MAX_FILE_BYTES
     ) {
-      return new Map()
+      return { status: 'unavailable', ownership: new Map() }
     }
     const raw = readExactDescriptor(fd, stat.size)
-    if (!raw) return new Map()
+    if (!raw) return { status: 'unavailable', ownership: new Map() }
     const parsed = JSON.parse(raw.toString('utf8')) as Partial<TranscriptMediaOwnershipSnapshot>
     if (
       parsed.version !== TRANSCRIPT_MEDIA_OWNERSHIP_VERSION ||
       !Array.isArray(parsed.grants) ||
       parsed.grants.length > TRANSCRIPT_MEDIA_OWNERSHIP_MAX_ASSETS
     ) {
-      return new Map()
+      return { status: 'unavailable', ownership: new Map() }
     }
     const loaded = new Map<string, Set<string>>()
     for (const grant of parsed.grants) {
@@ -416,18 +439,20 @@ function loadOwnership(baseDir: string): Map<string, Set<string>> {
         grant.appChatIds.length > TRANSCRIPT_MEDIA_OWNERSHIP_MAX_CHATS_PER_ASSET ||
         loaded.has(grant.asset)
       ) {
-        return new Map()
+        return { status: 'unavailable', ownership: new Map() }
       }
       const appChatIds = new Set<string>()
       for (const appChatId of grant.appChatIds) {
-        if (!safeOwnershipChatId(appChatId)) return new Map()
+        if (!safeOwnershipChatId(appChatId)) {
+          return { status: 'unavailable', ownership: new Map() }
+        }
         appChatIds.add(appChatId)
       }
       loaded.set(grant.asset, appChatIds)
     }
-    return loaded
+    return { status: 'valid', ownership: loaded }
   } catch {
-    return new Map()
+    return { status: 'unavailable', ownership: new Map() }
   } finally {
     if (fd !== null) {
       try {
@@ -509,9 +534,24 @@ function persistOwnership(
 
 export class TranscriptMediaAssetStore {
   private ownershipByAsset: Map<string, Set<string>>
+  private ownershipMutationsUnavailable: boolean
 
   constructor(private readonly baseDir: string) {
-    this.ownershipByAsset = loadOwnership(baseDir)
+    const loaded = loadOwnership(baseDir)
+    this.ownershipByAsset = loaded.ownership
+    this.ownershipMutationsUnavailable = loaded.status === 'unavailable'
+  }
+
+  private persistOwnership(
+    ownership: Map<string, Set<string>>,
+    preparedSnapshot?: Buffer
+  ): boolean {
+    if (this.ownershipMutationsUnavailable) return false
+    if (!persistOwnership(this.baseDir, ownership, preparedSnapshot)) {
+      this.ownershipMutationsUnavailable = true
+      return false
+    }
+    return true
   }
 
   /** Exact content-address + canonical-chat ownership check. */
@@ -529,6 +569,7 @@ export class TranscriptMediaAssetStore {
     const asset = ownershipAssetKey(input.sha256, input.mimeType)
     if (!asset) return { ok: false, reason: 'invalid_asset' }
     if (!safeOwnershipChatId(input.appChatId)) return { ok: false, reason: 'invalid_chat' }
+    if (this.ownershipMutationsUnavailable) return { ok: false, reason: 'persistence_failed' }
     if (!storedAssetExists(this.baseDir, input.sha256, input.mimeType)) {
       return { ok: false, reason: 'missing' }
     }
@@ -542,7 +583,7 @@ export class TranscriptMediaAssetStore {
     }
     const next = new Map(this.ownershipByAsset)
     next.set(asset, new Set([...(current ?? []), input.appChatId]))
-    if (!persistOwnership(this.baseDir, next)) {
+    if (!this.persistOwnership(next)) {
       return { ok: false, reason: 'persistence_failed' }
     }
     this.ownershipByAsset = next
@@ -561,6 +602,9 @@ export class TranscriptMediaAssetStore {
   backfillOwnership(
     inputs: readonly TranscriptMediaAssetOwnershipInput[]
   ): TranscriptMediaAssetOwnershipBackfillResult {
+    if (this.ownershipMutationsUnavailable) {
+      return { ok: false, reason: 'persistence_failed' }
+    }
     const grouped = new Map<
       string,
       {
@@ -650,7 +694,7 @@ export class TranscriptMediaAssetStore {
 
     const serialized = serializeOwnership(next)
     if (!serialized) return { ok: false, reason: 'ownership_limit' }
-    if (!persistOwnership(this.baseDir, next, serialized)) {
+    if (!this.persistOwnership(next, serialized)) {
       return { ok: false, reason: 'persistence_failed' }
     }
     this.ownershipByAsset = next
@@ -674,6 +718,7 @@ export class TranscriptMediaAssetStore {
     ) {
       return { ok: false, reason: 'invalid_chat' }
     }
+    if (this.ownershipMutationsUnavailable) return { ok: false, reason: 'persistence_failed' }
     if (
       !this.owns({
         sha256: input.sha256,
@@ -702,12 +747,23 @@ export class TranscriptMediaAssetStore {
       if (input.appChatId !== undefined && !safeOwnershipChatId(input.appChatId)) {
         return { ok: false, reason: 'invalid_chat' }
       }
+      if (!SHA256_BASE64URL_PATTERN.test(input.sha256)) {
+        return { ok: false, reason: 'unsafe_asset_path' }
+      }
       if (!mediaExtension(input.mimeType)) return { ok: false, reason: 'unsupported' }
       if (
         input.buffer.length <= 0 ||
         input.buffer.length > maxTranscriptMediaBytesForMime(input.mimeType)
       ) {
         return { ok: false, reason: 'too_large' }
+      }
+      if (input.appChatId !== undefined && this.ownershipMutationsUnavailable) {
+        return {
+          ok: false,
+          reason: safeOwnershipPath(this.baseDir, false)
+            ? 'persistence_failed'
+            : 'unsafe_asset_path'
+        }
       }
       const target = safeAssetTarget(this.baseDir, input.sha256, input.mimeType, true)
       if (!target) return { ok: false, reason: 'unsafe_asset_path' }

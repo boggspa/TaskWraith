@@ -412,7 +412,182 @@ describe('TranscriptMediaAssetStore', () => {
     expect(fs.readdirSync(root).some((entry) => entry.endsWith('.tmp'))).toBe(false)
   })
 
-  it('ignores hostile or over-budget ownership ledgers and never follows a ledger symlink', () => {
+  it.each([
+    {
+      name: 'invalid JSON',
+      ledger: (_asset: string) => Buffer.from('{"version":1,"grants":[', 'utf8')
+    },
+    {
+      name: 'a malformed entry',
+      ledger: (asset: string) =>
+        Buffer.from(
+          JSON.stringify({
+            version: 1,
+            grants: [
+              { asset, appChatIds: ['source-chat'] },
+              { asset: '../../outside.png', appChatIds: ['attacker-chat'] }
+            ]
+          }),
+          'utf8'
+        )
+    }
+  ])(
+    'locks every ownership mutation after loading $name without replacing its bytes',
+    ({ ledger }) => {
+      const root = makeRoot()
+      const seed = new TranscriptMediaAssetStore(root)
+      const buffer = Buffer.from('corrupt-ledger-image')
+      const persisted = seed.writeContentAddressed({ mimeType: 'image/png', buffer })
+      expect(persisted.ok).toBe(true)
+      if (!persisted.ok) return
+      const ledgerPath = path.join(root, TRANSCRIPT_MEDIA_OWNERSHIP_FILE)
+      const ledgerBytes = ledger(`${persisted.sha256}.png`)
+      fs.writeFileSync(ledgerPath, ledgerBytes, { mode: 0o600 })
+
+      const store = new TranscriptMediaAssetStore(root)
+      expect(
+        store.owns({
+          sha256: persisted.sha256,
+          mimeType: persisted.mimeType,
+          appChatId: 'source-chat'
+        })
+      ).toBe(false)
+      expect(
+        store.grant({
+          sha256: persisted.sha256,
+          mimeType: persisted.mimeType,
+          appChatId: 'new-owner'
+        })
+      ).toEqual({ ok: false, reason: 'persistence_failed' })
+      expect(
+        store.backfillOwnership([
+          {
+            sha256: persisted.sha256,
+            mimeType: persisted.mimeType,
+            appChatId: 'backfilled-owner'
+          }
+        ])
+      ).toEqual({ ok: false, reason: 'persistence_failed' })
+      const verifyTransfer = vi.fn(() => true)
+      expect(
+        store.grantVerifiedTransfer(
+          {
+            sha256: persisted.sha256,
+            mimeType: persisted.mimeType,
+            sourceAppChatId: 'source-chat',
+            targetAppChatId: 'child-chat'
+          },
+          verifyTransfer
+        )
+      ).toEqual({ ok: false, reason: 'persistence_failed' })
+      expect(verifyTransfer).not.toHaveBeenCalled()
+      expect(
+        store.write({
+          sha256: persisted.sha256,
+          mimeType: persisted.mimeType,
+          buffer,
+          appChatId: 'write-owner'
+        })
+      ).toEqual({ ok: false, reason: 'persistence_failed' })
+      const newHash = 'lockedWrite_abcdefghijklmnopqrstuvwxyz0123456789-XYZ'
+      expect(
+        store.write({
+          sha256: newHash,
+          mimeType: 'image/png',
+          buffer: Buffer.from('must-not-write'),
+          appChatId: 'write-owner'
+        })
+      ).toEqual({ ok: false, reason: 'persistence_failed' })
+      expect(fs.existsSync(transcriptMediaAssetPath(root, newHash, 'image/png'))).toBe(false)
+      const unownedHash = 'unownedWrite_abcdefghijklmnopqrstuvwxyz0123456789-XYZ'
+      expect(
+        store.write({
+          sha256: unownedHash,
+          mimeType: 'image/png',
+          buffer: Buffer.from('unowned-write-remains-available')
+        })
+      ).toEqual({ ok: true })
+      expect(fs.readFileSync(ledgerPath).equals(ledgerBytes)).toBe(true)
+
+      const restarted = new TranscriptMediaAssetStore(root)
+      expect(
+        restarted.grant({
+          sha256: persisted.sha256,
+          mimeType: persisted.mimeType,
+          appChatId: 'restart-owner'
+        })
+      ).toEqual({ ok: false, reason: 'persistence_failed' })
+      expect(fs.readFileSync(ledgerPath).equals(ledgerBytes)).toBe(true)
+    }
+  )
+
+  it.each(['openSync', 'readSync'] as const)(
+    'locks ownership mutations after a transient %s failure and recovers only on restart',
+    (method) => {
+      const root = makeRoot()
+      const seed = new TranscriptMediaAssetStore(root)
+      const persisted = seed.writeContentAddressed({
+        mimeType: 'image/png',
+        buffer: Buffer.from('transient-ledger-image'),
+        appChatId: 'existing-owner'
+      })
+      expect(persisted.ok).toBe(true)
+      if (!persisted.ok) return
+      const ledgerPath = path.join(root, TRANSCRIPT_MEDIA_OWNERSHIP_FILE)
+      const ledgerBytes = fs.readFileSync(ledgerPath)
+      const transientError = Object.assign(new Error('transient ledger I/O failure'), {
+        code: 'EIO'
+      })
+      let store: TranscriptMediaAssetStore
+      if (method === 'openSync') {
+        const failure = vi.spyOn(fs, 'openSync').mockImplementationOnce(() => {
+          throw transientError
+        })
+        store = new TranscriptMediaAssetStore(root)
+        failure.mockRestore()
+      } else {
+        const failure = vi.spyOn(fs, 'readSync').mockImplementationOnce(() => {
+          throw transientError
+        })
+        store = new TranscriptMediaAssetStore(root)
+        failure.mockRestore()
+      }
+
+      expect(
+        store.owns({
+          sha256: persisted.sha256,
+          mimeType: persisted.mimeType,
+          appChatId: 'existing-owner'
+        })
+      ).toBe(false)
+      expect(
+        store.grant({
+          sha256: persisted.sha256,
+          mimeType: persisted.mimeType,
+          appChatId: 'new-owner'
+        })
+      ).toEqual({ ok: false, reason: 'persistence_failed' })
+      expect(fs.readFileSync(ledgerPath).equals(ledgerBytes)).toBe(true)
+
+      const restarted = new TranscriptMediaAssetStore(root)
+      expect(
+        restarted.owns({
+          sha256: persisted.sha256,
+          mimeType: persisted.mimeType,
+          appChatId: 'existing-owner'
+        })
+      ).toBe(true)
+      expect(
+        restarted.owns({
+          sha256: persisted.sha256,
+          mimeType: persisted.mimeType,
+          appChatId: 'new-owner'
+        })
+      ).toBe(false)
+    }
+  )
+
+  it('locks hostile or over-budget ownership ledgers and never follows a ledger symlink', () => {
     const root = makeRoot()
     const outside = makeRoot()
     const store = new TranscriptMediaAssetStore(root)
@@ -441,22 +616,29 @@ describe('TranscriptMediaAssetStore', () => {
     ).toBe(false)
     expect(
       linked.grant({ sha256: persisted.sha256, mimeType: 'image/png', appChatId: 'chat-1' })
-    ).toEqual({ ok: true })
-    expect(fs.lstatSync(ledgerPath).isSymbolicLink()).toBe(false)
+    ).toEqual({ ok: false, reason: 'persistence_failed' })
+    expect(fs.lstatSync(ledgerPath).isSymbolicLink()).toBe(true)
     expect(fs.readFileSync(outsideLedger, 'utf8')).toBe(outsideContents)
 
-    fs.writeFileSync(
-      ledgerPath,
-      Buffer.alloc(TRANSCRIPT_MEDIA_OWNERSHIP_MAX_FILE_BYTES + 1),
-      { mode: 0o600 }
-    )
+    fs.unlinkSync(ledgerPath)
+    const oversizedLedger = Buffer.alloc(TRANSCRIPT_MEDIA_OWNERSHIP_MAX_FILE_BYTES + 1, 0x61)
+    fs.writeFileSync(ledgerPath, oversizedLedger, { mode: 0o600 })
+    const oversized = new TranscriptMediaAssetStore(root)
     expect(
-      new TranscriptMediaAssetStore(root).owns({
+      oversized.owns({
         sha256: persisted.sha256,
         mimeType: 'image/png',
         appChatId: 'chat-1'
       })
     ).toBe(false)
+    expect(
+      oversized.grant({
+        sha256: persisted.sha256,
+        mimeType: 'image/png',
+        appChatId: 'chat-1'
+      })
+    ).toEqual({ ok: false, reason: 'persistence_failed' })
+    expect(fs.readFileSync(ledgerPath).equals(oversizedLedger)).toBe(true)
   })
 
   it('rejects an ownership ledger whose per-asset chat bound is exceeded', () => {
