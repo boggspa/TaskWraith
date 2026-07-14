@@ -350,6 +350,7 @@ import { resolveDaemonShouldRun } from './BridgeDaemonSettings'
 import { BridgeActionRouter } from './BridgeActionRouter'
 import { buildRunQueueDispatchReceipt } from './RunQueueDispatchReceipt'
 import type {
+  BridgeActionAuthorizationResolver,
   BridgeActionOwnershipCheck,
   BridgeActionOwnershipValidator,
   BridgeOwnershipValidationResult
@@ -362,6 +363,12 @@ import {
   type RemoteWorkspaceCapability
 } from './RemoteWorkspaceAllowlist'
 import { RemoteBridgeRuntime } from './remote/RemoteBridgeRuntime'
+import {
+  isRemoteWorkflowRunnableChat,
+  RemoteWorkflowActions,
+  remoteWorkflowApprovalMode,
+  type RemoteWorkflowAuthorizationResult
+} from './remote/RemoteWorkflowActions'
 import {
   abandonedRemoteDraftIdsToDelete,
   buildRemoteDraftChat,
@@ -537,7 +544,11 @@ import {
   probeAllProviderRates
 } from './services/ProviderRateService'
 import { MainProcessActionExecutor } from './BridgeActionExecutor'
-import type { BridgeComposerPromptAction } from './BridgeActionPayload'
+import type {
+  BridgeComposerPromptAction,
+  BridgeWorkflowRunNowAction,
+  BridgeWorkflowSetEnabledAction
+} from './BridgeActionPayload'
 import {
   buildAgentExitStats,
   codexUsageToStats,
@@ -620,6 +631,7 @@ import {
   AuditRunRecord,
   ExternalPathGrant,
   ScheduledTask,
+  WorkflowDefinition,
   ScheduledEnsembleSnapshot,
   EnsembleFanoutPolicy,
   AgenticServiceId,
@@ -5160,18 +5172,9 @@ function signWorkflowUnattendedElevation(
   })
 }
 
-// Resolve a VERIFIED, CURRENT elevation for a scheduled occurrence. Both gates
-// fail-closed: the HMAC must verify AND isUnattendedElevationAckCurrent must hold
-// (template.approvalMode unchanged since the ack + the level still authorizes it).
-// Returns null on any miss → the unattended run stays clamped to 'plan'. Injected
-// into ComposerService + reused by the ensemble dispatch handler.
-function resolveUnattendedElevation(
-  scheduledTaskId: string
+function resolveWorkflowUnattendedElevation(
+  wf: WorkflowDefinition
 ): { ack: UnattendedElevationAck; templateApprovalMode: string } | null {
-  const task = AppStore.getScheduledTasks().find((t) => t.id === scheduledTaskId)
-  if (!task?.workflowId) return null
-  const wf = AppStore.getWorkflowDefinition(task.workflowId)
-  if (!wf) return null
   const ack = wf.unattendedElevation
   if (!ack) return null
   const verified = verifyUnattendedElevation(
@@ -5187,6 +5190,21 @@ function resolveUnattendedElevation(
   if (!verified) return null
   if (!isUnattendedElevationAckCurrent(ack, wf.template.approvalMode)) return null
   return { ack, templateApprovalMode: wf.template.approvalMode }
+}
+
+// Resolve a VERIFIED, CURRENT elevation for a scheduled occurrence. Both gates
+// fail-closed: the HMAC must verify AND isUnattendedElevationAckCurrent must hold
+// (template.approvalMode unchanged since the ack + the level still authorizes it).
+// Returns null on any miss → the unattended run stays clamped to 'plan'. Injected
+// into ComposerService + reused by the ensemble dispatch handler.
+function resolveUnattendedElevation(
+  scheduledTaskId: string
+): { ack: UnattendedElevationAck; templateApprovalMode: string } | null {
+  const task = AppStore.getScheduledTasks().find((t) => t.id === scheduledTaskId)
+  if (!task?.workflowId) return null
+  const wf = AppStore.getWorkflowDefinition(task.workflowId)
+  if (!wf) return null
+  return resolveWorkflowUnattendedElevation(wf)
 }
 
 function buildScheduledTaskPostureForRecord(
@@ -28563,6 +28581,9 @@ if (isGeminiMcpBridgeProcess) {
           // gemini/codex-specific cleanup, so a lenient cast is safe here.
           return cancelProviderRun(provider as ProviderId, runId)
         },
+	        workflowSetEnabledFn: (action, ctx) =>
+	          remoteWorkflowActions.setEnabled(action, ctx),
+	        workflowRunNowFn: (action, ctx) => remoteWorkflowActions.runNow(action, ctx),
 	        respondApprovalFn: async (requestId, action, options) => {
 	          return approvalService?.resolve(requestId, action, options) ?? false
 	        },
@@ -31686,6 +31707,101 @@ if (isGeminiMcpBridgeProcess) {
     // bridge for exactly the headless scenario it exists for. Env keeps
     // override semantics (force-on/off) via the same resolver the Swift
     // daemon toggle uses.
+    const resolveRemoteWorkflowAuthorization = (
+      action: BridgeWorkflowSetEnabledAction | BridgeWorkflowRunNowAction
+    ): RemoteWorkflowAuthorizationResult => {
+      const wf = AppStore.getWorkflowDefinition(action.workflowId)
+      if (!wf) return { allowed: false, reason: 'Workflow not found' }
+
+      const workspaceId = canonicalRemoteWorkspaceId(wf.workspaceId)
+      const templateWorkspaceId = canonicalRemoteWorkspaceId(wf.template.workspaceId)
+      const workspace = workspaceId
+        ? AppStore.getWorkspaces().find((entry) => entry.id === workspaceId)
+        : null
+      if (
+        !workspaceId ||
+        !workspace ||
+        templateWorkspaceId !== workspaceId ||
+        canonicalPath(workspace.path) !== canonicalPath(wf.workspacePath) ||
+        canonicalPath(workspace.path) !== canonicalPath(wf.template.workspacePath)
+      ) {
+        return {
+          allowed: false,
+          reason: 'Workflow does not belong to a registered canonical workspace'
+        }
+      }
+
+      // Disabling is a non-escalating safety action and remains available when
+      // the workflow's chat is orphaned, provided its own canonical workspace
+      // ownership is still intact. Enabling or running must target a live chat
+      // in that same workspace before provider/posture can be authorized.
+      const requiresRunnableTarget =
+        action.kind === 'workflowRunNow' ||
+        (action.kind === 'workflowSetEnabled' && action.enabled)
+      if (requiresRunnableTarget) {
+        const chat = AppStore.getChat(wf.template.chatId)
+        if (
+          !isRemoteWorkflowRunnableChat({
+            chat,
+            workspaceId,
+            workspacePath: workspace.path,
+            canonicalWorkspaceId: canonicalRemoteWorkspaceId,
+            canonicalPath
+          })
+        ) {
+          return {
+            allowed: false,
+            reason: 'Workflow chat is missing, archived, or belongs to a different workspace'
+          }
+        }
+      }
+
+      const elevation = requiresRunnableTarget
+        ? resolveWorkflowUnattendedElevation(wf)
+        : null
+      const approvalMode = remoteWorkflowApprovalMode(
+        action,
+        wf.template.approvalMode,
+        elevation?.ack
+      )
+      return {
+        allowed: true,
+        authorization: {
+          workspaceId,
+          provider: wf.template.provider,
+          approvalMode
+        }
+      }
+    }
+
+    const bridgeActionAuthorizationResolver: BridgeActionAuthorizationResolver = (payload) => {
+      if (payload.kind !== 'workflowSetEnabled' && payload.kind !== 'workflowRunNow') {
+        return null
+      }
+      const result = resolveRemoteWorkflowAuthorization(payload)
+      return result.allowed
+        ? { allowed: true, ...result.authorization }
+        : { allowed: false, reason: result.reason, reasonCode: 'ownershipDenied' }
+    }
+
+    const remoteWorkflowActions = new RemoteWorkflowActions({
+      getWorkflowDefinition: (id) => AppStore.getWorkflowDefinition(id),
+      resolveAuthorization: resolveRemoteWorkflowAuthorization,
+      updateWorkflowDefinition: (id, partial) => AppStore.updateWorkflowDefinition(id, partial),
+      materializeWorkflowNow: (id, nowMs) =>
+        AppStore.materializeWorkflowNow(id, nowMs, scheduledAttachmentPersistence.resolve),
+      ensureScheduledTaskSignedPosture,
+      broadcastWorkflowDefinitionsChanged: () => {
+        mainWindow?.webContents.send('workflow-definitions-changed', AppStore.getWorkflowDefinitions())
+      },
+      broadcastScheduledTasksChanged: () => {
+        mainWindow?.webContents.send('scheduled-tasks-changed', AppStore.getScheduledTasks())
+      },
+      broadcastRemoteProjectionSnapshot: requestThrottledRemoteProjectionSnapshot,
+      emitDueScheduledTasks,
+      scheduleNextTaskTimer
+    })
+
     // BD3 (security review): production routers get a REAL ownership
     // validator — the seam's missing-validator fallback is allow, which let
     // a paired device present an allowlisted workspaceId while targeting an
@@ -31870,7 +31986,8 @@ if (isGeminiMcpBridgeProcess) {
           (line) => console.log(line),
           bridgeAllowlist,
           bridgeActionExecutor,
-          bridgeOwnershipValidator
+          bridgeOwnershipValidator,
+          bridgeActionAuthorizationResolver
         )
         const runtime = new RemoteBridgeRuntime({
           relayUrl,
@@ -32387,7 +32504,8 @@ if (isGeminiMcpBridgeProcess) {
         },
         bridgeAllowlist,
         bridgeActionExecutor,
-        bridgeOwnershipValidator
+        bridgeOwnershipValidator,
+        bridgeActionAuthorizationResolver
       )
       const daemon = new BridgeDaemonClient({
         onHello: (hello) => {

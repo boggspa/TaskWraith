@@ -160,6 +160,26 @@ export interface BridgeActionOwnershipValidator {
   ) => BridgeOwnershipValidationResult | Promise<BridgeOwnershipValidationResult>
 }
 
+export type BridgeActionAuthorizationResolution =
+  | {
+      allowed: true
+      workspaceId: string
+      provider?: string
+      approvalMode?: string
+    }
+  | {
+      allowed: false
+      reason: string
+      reasonCode?: BridgeActionAckReasonCode
+    }
+
+export type BridgeActionAuthorizationResolver = (
+  payload: BridgeActionPayload
+) =>
+  | BridgeActionAuthorizationResolution
+  | null
+  | Promise<BridgeActionAuthorizationResolution | null>
+
 export interface BridgeActionRouterOptions {
   /** When true, ALL ack requests are accepted regardless of payload OR
    * allowlist state. For local end-to-end testing only — never enable in
@@ -182,6 +202,10 @@ export interface BridgeActionRouterOptions {
   /** Optional seam for verifying that the target thread/run/approval/question
    * belongs to the named workspace before the store-level integration lands. */
   ownershipValidator?: BridgeActionOwnershipValidator
+  /** Resolve canonical authorization fields from Mac-owned records for actions
+   * that intentionally carry no client-trusted workspace/posture (workflows).
+   * Returning null keeps the ordinary payload-derived path. */
+  actionAuthorizationResolver?: BridgeActionAuthorizationResolver
   /** Clock injectable for stale/replay tests. */
   now?: () => number
   /** How long actionIds without an explicit expiresAt remain replay-blocked. */
@@ -210,6 +234,7 @@ export class BridgeActionRouter {
   private readonly allowlist?: RemoteWorkspaceAllowlist
   private readonly executor: BridgeActionExecutor
   private readonly ownershipValidator?: BridgeActionOwnershipValidator
+  private readonly actionAuthorizationResolver?: BridgeActionAuthorizationResolver
   private readonly now: () => number
   private readonly replayRetentionMs: number
   private readonly auditLedger?: RemoteDeviceAuditLedgerWriter
@@ -221,6 +246,7 @@ export class BridgeActionRouter {
     this.allowlist = options.allowlist
     this.executor = options.executor ?? new NoopActionExecutor()
     this.ownershipValidator = options.ownershipValidator
+    this.actionAuthorizationResolver = options.actionAuthorizationResolver
     this.now = options.now ?? (() => Date.now())
     this.replayRetentionMs = options.replayRetentionMs ?? 24 * 60 * 60 * 1000
     this.auditLedger =
@@ -241,6 +267,7 @@ export class BridgeActionRouter {
     allowlist?: RemoteWorkspaceAllowlist,
     executor?: BridgeActionExecutor,
     ownershipValidator?: BridgeActionOwnershipValidator,
+    actionAuthorizationResolver?: BridgeActionAuthorizationResolver,
     auditLedger?: RemoteDeviceAuditLedgerWriter | null
   ): BridgeActionRouter {
     const permissiveDev =
@@ -252,6 +279,7 @@ export class BridgeActionRouter {
       allowlist,
       executor,
       ownershipValidator,
+      actionAuthorizationResolver,
       auditLedger
     })
   }
@@ -429,9 +457,48 @@ export class BridgeActionRouter {
     const replayGuard = await this.reserveActionId(pairID, payload)
     if (replayGuard) return replayGuard
 
+    const dispatchContext: BridgeActionDispatchContext = { requestingDeviceKey }
+    let resolvedWorkspaceId: string | undefined
     if (payloadRequiresWorkspaceGating(payload)) {
       const capability = capabilityForPayload(payload)
-      const workspaceId = workspaceIdFromPayload(payload)
+      let resolvedAuthorization: BridgeActionAuthorizationResolution | null = null
+      if (
+        this.actionAuthorizationResolver &&
+        (payload.kind === 'workflowSetEnabled' || payload.kind === 'workflowRunNow')
+      ) {
+        try {
+          resolvedAuthorization = await this.actionAuthorizationResolver(payload)
+        } catch (err) {
+          resolvedAuthorization = {
+            allowed: false,
+            reason: `Action authorization resolution failed: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+            reasonCode: 'ownershipDenied'
+          }
+        }
+      }
+      if (resolvedAuthorization && !resolvedAuthorization.allowed) {
+        await this.auditActionDecision({
+          pairID,
+          payload,
+          capability,
+          decision: 'denied',
+          reasonCode: resolvedAuthorization.reasonCode ?? 'ownershipDenied',
+          reason: resolvedAuthorization.reason
+        })
+        return this.buildActionAck({
+          pairID,
+          accepted: false,
+          reasonCode: resolvedAuthorization.reasonCode ?? 'ownershipDenied',
+          payload,
+          scope: 'once',
+          message: resolvedAuthorization.reason
+        })
+      }
+      const workspaceId = resolvedAuthorization?.allowed
+        ? resolvedAuthorization.workspaceId
+        : workspaceIdFromPayload(payload)
       if (workspaceId === null) {
         this.log(
           `[BridgeActionRouter] DENY actionAck pairID=${pairID} kind=${payload.kind} missing workspaceId`
@@ -453,11 +520,29 @@ export class BridgeActionRouter {
           message: 'Action payload is missing workspaceId'
         })
       }
+      if (!workspaceId.trim()) {
+        return this.buildActionAck({
+          pairID,
+          accepted: false,
+          reasonCode: 'missingWorkspaceId',
+          payload,
+          scope: 'once',
+          message: 'Resolved action authorization is missing workspaceId'
+        })
+      }
+      resolvedWorkspaceId = workspaceId
+      dispatchContext.workspaceId = workspaceId
+      dispatchContext.provider = resolvedAuthorization?.allowed
+        ? resolvedAuthorization.provider
+        : providerFromPayload(payload)
+      dispatchContext.approvalMode = resolvedAuthorization?.allowed
+        ? resolvedAuthorization.approvalMode
+        : approvalModeFromPayload(payload)
       if (this.allowlist) {
         const decision = this.allowlist.evaluate({
           workspaceId,
-          provider: providerFromPayload(payload),
-          approvalMode: approvalModeFromPayload(payload),
+          provider: dispatchContext.provider,
+          approvalMode: dispatchContext.approvalMode,
           capability: capability ?? undefined
         })
         if (!decision.allowed) {
@@ -474,13 +559,15 @@ export class BridgeActionRouter {
             capability,
             decision: 'denied',
             reasonCode,
-            reason: decision.reason
+            reason: decision.reason,
+            metadata: { workspaceId }
           })
           return this.buildActionAck({
             pairID,
             accepted: false,
             reasonCode,
             payload,
+            workspaceId,
             scope: 'once',
             message: decision.reason
           })
@@ -497,13 +584,15 @@ export class BridgeActionRouter {
             capability,
             decision: 'denied',
             reasonCode: ownershipDecision.reasonCode ?? 'ownershipDenied',
-            reason: ownershipDecision.reason
+            reason: ownershipDecision.reason,
+            metadata: { workspaceId }
           })
           return this.buildActionAck({
             pairID,
             accepted: false,
             reasonCode: ownershipDecision.reasonCode ?? 'ownershipDenied',
             payload,
+            workspaceId,
             scope: 'once',
             message: ownershipDecision.reason
           })
@@ -518,13 +607,15 @@ export class BridgeActionRouter {
           capability,
           decision: 'denied',
           reasonCode: 'allowlistUnavailable',
-          reason: 'iOS action routing not yet enabled — no workspace allowlist configured'
+          reason: 'iOS action routing not yet enabled — no workspace allowlist configured',
+          metadata: { workspaceId }
         })
         return this.buildActionAck({
           pairID,
           accepted: false,
           reasonCode: 'allowlistUnavailable',
           payload,
+          workspaceId,
           scope: 'once',
           message: 'iOS action routing not yet enabled — no workspace allowlist configured'
         })
@@ -535,8 +626,8 @@ export class BridgeActionRouter {
       )
     }
 
-    const dispatch = await this.dispatch(payload, { requestingDeviceKey })
-    const workspaceIdForLog = workspaceIdFromPayload(payload) ?? 'null'
+    const dispatch = await this.dispatch(payload, dispatchContext)
+    const workspaceIdForLog = resolvedWorkspaceId ?? workspaceIdFromPayload(payload) ?? 'null'
     this.log(
       `[BridgeActionRouter] ACCEPT actionAck pairID=${pairID} kind=${payload.kind} ws=${workspaceIdForLog} executed=${dispatch.executed}`
     )
@@ -546,13 +637,15 @@ export class BridgeActionRouter {
       capability: capabilityForPayload(payload),
       decision: 'allowed',
       reasonCode: dispatch.reasonCode ?? 'accepted',
-      reason: dispatch.message || 'accepted'
+      reason: dispatch.message || 'accepted',
+      ...(resolvedWorkspaceId ? { metadata: { workspaceId: resolvedWorkspaceId } } : {})
     })
     return this.buildActionAck({
       pairID,
       accepted: true,
       reasonCode: dispatch.reasonCode ?? 'accepted',
       payload,
+      workspaceId: resolvedWorkspaceId,
       message: dispatch.message,
       executed: dispatch.executed,
       data: dispatch.data
@@ -617,6 +710,10 @@ export class BridgeActionRouter {
         return this.executor.executeGithubCreatePr(payload)
       case 'cancelRun':
         return this.executor.executeCancelRun(payload)
+      case 'workflowSetEnabled':
+        return this.executor.executeWorkflowSetEnabled(payload, ctx)
+      case 'workflowRunNow':
+        return this.executor.executeWorkflowRunNow(payload, ctx)
       case 'ensembleCancelRound':
         return this.executor.executeEnsembleCancelRound(payload)
       case 'ensembleSkipActiveParticipant':
@@ -848,9 +945,10 @@ export class BridgeActionRouter {
     message?: string
     executed?: boolean
     data?: Record<string, unknown>
+    workspaceId?: string
   }): BridgeActionAckResult {
     const descriptor = input.payload
-      ? actionAckDescriptorFromPayload(input.payload, input.data)
+      ? actionAckDescriptorFromPayload(input.payload, input.data, input.workspaceId)
       : undefined
     return {
       v: 1,
@@ -1235,6 +1333,10 @@ function capabilityForPayload(payload: BridgeActionPayload): RemoteWorkspaceCapa
     case 'ensembleCancelRound':
     case 'ensembleCancelWakeup':
       return 'cancel'
+    case 'workflowSetEnabled':
+      return payload.enabled ? 'startTurn' : 'cancel'
+    case 'workflowRunNow':
+      return 'startTurn'
     case 'ensembleSkipActiveParticipant':
     case 'ensembleWakeNow':
     case 'ensembleQueuePrompt':
@@ -1293,7 +1395,8 @@ function scopeForPayload(payload: BridgeActionPayload): BridgeActionAckScope {
 
 function actionAckDescriptorFromPayload(
   payload: BridgeActionPayload,
-  data?: Record<string, unknown>
+  data?: Record<string, unknown>,
+  resolvedWorkspaceId?: string
 ): Pick<
   BridgeActionAckV1,
   | 'actionKind'
@@ -1326,7 +1429,7 @@ function actionAckDescriptorFromPayload(
   > = {
     actionKind: payload.kind,
     actionId: actionIdFromPayload(payload) ?? undefined,
-    workspaceId: workspaceIdFromPayload(payload) ?? undefined
+    workspaceId: resolvedWorkspaceId ?? workspaceIdFromPayload(payload) ?? undefined
   }
 
   if ('threadId' in payload && typeof payload.threadId === 'string') {

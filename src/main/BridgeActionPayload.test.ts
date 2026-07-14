@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  BRIDGE_WORKFLOW_ID_MAX_CHARS,
   BridgeActionPayloadDecodeError,
   MAX_BRIDGE_ENSEMBLE_PARTICIPANTS,
   actionIdFromPayload,
@@ -1096,6 +1097,72 @@ describe('decodeBridgeActionPayload', () => {
       }
     })
 
+    it('decodes workflow controls without client-trusted workspace fields', () => {
+      const setEnabled = decodeBridgeActionPayload(
+        encode({
+          kind: 'workflowSetEnabled',
+          workflowId: 'wf-1',
+          enabled: true,
+          actionId: 'a-1',
+          expiresAt: 123
+        })
+      ).payload
+      const runNow = decodeBridgeActionPayload(
+        encode({
+          kind: 'workflowRunNow',
+          workflowId: 'wf-1',
+          actionId: 'a-2',
+          expiresAt: 123
+        })
+      ).payload
+
+      expect(setEnabled).toMatchObject({
+        kind: 'workflowSetEnabled',
+        workflowId: 'wf-1',
+        enabled: true
+      })
+      expect(runNow).toMatchObject({ kind: 'workflowRunNow', workflowId: 'wf-1' })
+      expect(workspaceIdFromPayload(setEnabled)).toBeNull()
+      expect(workspaceIdFromPayload(runNow)).toBeNull()
+      expect(payloadRequiresWorkspaceGating(setEnabled)).toBe(true)
+      expect(payloadRequiresWorkspaceGating(runNow)).toBe(true)
+      expect(payloadIsMutating(setEnabled)).toBe(true)
+      expect(payloadIsMutating(runNow)).toBe(true)
+    })
+
+    it('rejects malformed or client-injected workflow authorization fields', () => {
+      for (const raw of [
+        { kind: 'workflowSetEnabled', workflowId: '', enabled: true },
+        { kind: 'workflowSetEnabled', workflowId: ' wf-1', enabled: true },
+        { kind: 'workflowSetEnabled', workflowId: 'wf-1', enabled: 'yes' },
+        { kind: 'workflowRunNow', workflowId: '' },
+        { kind: 'workflowRunNow', workflowId: 'wf-1 ' },
+        {
+          kind: 'workflowRunNow',
+          workflowId: 'w'.repeat(BRIDGE_WORKFLOW_ID_MAX_CHARS + 1)
+        },
+        { kind: 'workflowRunNow', workflowId: 'wf-1', workspaceId: 'attacker-workspace' },
+        { kind: 'workflowRunNow', workflowId: 'wf-1', approvalMode: 'auto_edit' },
+        { kind: 'workflowSetEnabled', workflowId: 'wf-1', enabled: true, provider: 'codex' }
+      ]) {
+        expect(decodeBridgeActionPayload(encode(raw)).payload).toMatchObject({
+          kind: 'unknown',
+          rawKind: raw.kind
+        })
+      }
+    })
+
+    it('accepts a canonical workflow id at the wire ceiling', () => {
+      expect(
+        decodeBridgeActionPayload(
+          encode({
+            kind: 'workflowRunNow',
+            workflowId: 'w'.repeat(BRIDGE_WORKFLOW_ID_MAX_CHARS)
+          })
+        ).payload
+      ).toMatchObject({ kind: 'workflowRunNow' })
+    })
+
     it('decodes setYoloMode', () => {
       const wire = encode({
         kind: 'setYoloMode',
@@ -2013,6 +2080,8 @@ describe('payloadRequiresWorkspaceGating', () => {
       },
       { kind: 'threadMediaFetch', workspaceId: 'w', threadId: 't', rowId: 'm', mediaId: 'img' },
       { kind: 'cancelRun', workspaceId: 'w', threadId: 't', provider: 'gemini', runId: 'r' },
+      { kind: 'workflowSetEnabled', workflowId: 'wf', enabled: true },
+      { kind: 'workflowRunNow', workflowId: 'wf' },
       { kind: 'setYoloMode', workspaceId: 'w', enabled: false },
       { kind: 'setThreadTitle', workspaceId: 'w', threadId: 't', title: 'Rename' },
       {
@@ -2116,6 +2185,13 @@ describe('payloadIsMutating', () => {
         runId: 'r'
       })
     ).toBe(true)
+  })
+
+  it('classifies workflow controls as mutating', () => {
+    expect(
+      payloadIsMutating({ kind: 'workflowSetEnabled', workflowId: 'wf', enabled: false })
+    ).toBe(true)
+    expect(payloadIsMutating({ kind: 'workflowRunNow', workflowId: 'wf' })).toBe(true)
   })
 
   it('classifies questionReply as mutating (provides typed input to agent)', () => {

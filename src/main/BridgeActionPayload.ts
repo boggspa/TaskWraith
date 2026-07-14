@@ -34,10 +34,11 @@
  *   - `ensemble*`        — remote task-console controls for ensemble rounds,
  *                          wakeups, queued prompts, and steering.
  *
- * Workspace-bound payloads MUST carry `workspaceId`. The router relies on
- * this for allowlist evaluation; a workspace-bound payload missing it decodes
- * as `BridgeUnknownAction` (deny). Device-level system payloads such as
- * `registerApnsToken` are pair-scoped instead.
+ * Most workspace-bound payloads MUST carry `workspaceId`. Workflow-control
+ * actions are the deliberate exception: they carry only a `workflowId`, and
+ * Electron resolves the canonical workspace/provider/posture from its own
+ * workflow record before allowlist evaluation. Device-level system payloads
+ * such as `registerApnsToken` are pair-scoped instead.
  */
 
 import { THREAD_TITLE_MAX_CHARS } from '../shared/threadTitles'
@@ -66,6 +67,7 @@ const BRIDGE_WORKSPACE_FILE_PATH_MAX_CHARS = 4096
 const BRIDGE_WORKSPACE_FILE_WRITE_MAX_CHARS = 1_600_000
 const BRIDGE_GOAL_OBJECTIVE_MAX_CHARS = 4000
 const BRIDGE_GOAL_REASON_MAX_CHARS = 800
+export const BRIDGE_WORKFLOW_ID_MAX_CHARS = 512
 export interface BridgeApprovalReplyAction extends BridgeActionMetadata {
   kind: 'approvalReply'
   workspaceId: string
@@ -464,6 +466,22 @@ export interface BridgeCancelRunAction extends BridgeActionMetadata {
   message?: string
 }
 
+/** Enable or disable a saved workflow from a paired device. The phone MUST
+ * NOT supply a workspace id or permission posture: the router derives both
+ * from the Mac-owned workflow record before policy evaluation. */
+export interface BridgeWorkflowSetEnabledAction extends BridgeActionMetadata {
+  kind: 'workflowSetEnabled'
+  workflowId: string
+  enabled: boolean
+}
+
+/** Materialize one immediate occurrence of a saved workflow. As above, the
+ * canonical workspace/provider/posture are server-derived from workflowId. */
+export interface BridgeWorkflowRunNowAction extends BridgeActionMetadata {
+  kind: 'workflowRunNow'
+  workflowId: string
+}
+
 export interface BridgeEnsembleCancelRoundAction extends BridgeActionMetadata {
   kind: 'ensembleCancelRound'
   workspaceId: string
@@ -780,6 +798,8 @@ export type BridgeActionPayload =
   | BridgeGithubPrReadinessAction
   | BridgeGithubCreatePrAction
   | BridgeCancelRunAction
+  | BridgeWorkflowSetEnabledAction
+  | BridgeWorkflowRunNowAction
   | BridgeEnsembleCancelRoundAction
   | BridgeEnsembleSkipActiveParticipantAction
   | BridgeEnsembleWakeNowAction
@@ -937,6 +957,8 @@ export function workspaceIdFromPayload(payload: BridgeActionPayload): string | n
     case 'setChatArchived':
     case 'chatMarkdownTranscript':
       return payload.workspaceId
+    case 'workflowSetEnabled':
+    case 'workflowRunNow':
     case 'registerApnsToken':
     case 'ensemblePresetMutate':
     case 'discoverTailnetHosts':
@@ -989,6 +1011,8 @@ export function payloadRequiresWorkspaceGating(payload: BridgeActionPayload): bo
     case 'githubPrReadiness':
     case 'githubCreatePr':
     case 'cancelRun':
+    case 'workflowSetEnabled':
+    case 'workflowRunNow':
     case 'ensembleCancelRound':
     case 'ensembleSkipActiveParticipant':
     case 'ensembleWakeNow':
@@ -1067,6 +1091,8 @@ export function payloadIsMutating(payload: BridgeActionPayload): boolean {
     case 'composerQueueItem':
     case 'createThread':
     case 'cancelRun':
+    case 'workflowSetEnabled':
+    case 'workflowRunNow':
     case 'questionReply':
     case 'ensembleCancelRound':
     case 'ensembleSkipActiveParticipant':
@@ -1232,6 +1258,14 @@ function coerceToPayload(parsed: unknown): BridgeActionPayload {
       return isCancelRun(parsed)
         ? (parsed as unknown as BridgeCancelRunAction)
         : { kind: 'unknown', rawKind: 'cancelRun', raw: parsed }
+    case 'workflowSetEnabled':
+      return isWorkflowSetEnabled(parsed)
+        ? (parsed as unknown as BridgeWorkflowSetEnabledAction)
+        : { kind: 'unknown', rawKind: 'workflowSetEnabled', raw: parsed }
+    case 'workflowRunNow':
+      return isWorkflowRunNow(parsed)
+        ? (parsed as unknown as BridgeWorkflowRunNowAction)
+        : { kind: 'unknown', rawKind: 'workflowRunNow', raw: parsed }
     case 'ensembleCancelRound':
       return isEnsembleCancelRound(parsed)
         ? (parsed as unknown as BridgeEnsembleCancelRoundAction)
@@ -1702,6 +1736,34 @@ function isCancelRun(v: Record<string, unknown>): boolean {
     typeof v.runId === 'string' &&
     (v.message === undefined || typeof v.message === 'string')
   )
+}
+
+function isWorkflowSetEnabled(v: Record<string, unknown>): boolean {
+  return (
+    hasValidActionMetadata(v) &&
+    hasOnlyKeys(v, ['kind', 'workflowId', 'enabled', 'actionId', 'issuedAt', 'expiresAt']) &&
+    typeof v.workflowId === 'string' &&
+    v.workflowId.length > 0 &&
+    v.workflowId.length <= BRIDGE_WORKFLOW_ID_MAX_CHARS &&
+    v.workflowId === v.workflowId.trim() &&
+    typeof v.enabled === 'boolean'
+  )
+}
+
+function isWorkflowRunNow(v: Record<string, unknown>): boolean {
+  return (
+    hasValidActionMetadata(v) &&
+    hasOnlyKeys(v, ['kind', 'workflowId', 'actionId', 'issuedAt', 'expiresAt']) &&
+    typeof v.workflowId === 'string' &&
+    v.workflowId.length > 0 &&
+    v.workflowId.length <= BRIDGE_WORKFLOW_ID_MAX_CHARS &&
+    v.workflowId === v.workflowId.trim()
+  )
+}
+
+function hasOnlyKeys(v: Record<string, unknown>, allowed: readonly string[]): boolean {
+  const allowedKeys = new Set(allowed)
+  return Object.keys(v).every((key) => allowedKeys.has(key))
 }
 
 function isWorkspaceThreadAction(v: Record<string, unknown>): boolean {

@@ -3,6 +3,8 @@ import { MainProcessActionExecutor, NoopActionExecutor } from './BridgeActionExe
 import type {
   BridgeApprovalReplyAction,
   BridgeCancelRunAction,
+  BridgeWorkflowRunNowAction,
+  BridgeWorkflowSetEnabledAction,
   BridgeComposerPromptAction,
   BridgeEnsembleCancelRoundAction,
   BridgeEnsembleCancelWakeupAction,
@@ -82,6 +84,15 @@ const sample = {
     provider: 'gemini',
     runId: 'run-42'
   } satisfies BridgeCancelRunAction,
+  workflowSetEnabled: {
+    kind: 'workflowSetEnabled',
+    workflowId: 'wf-1',
+    enabled: true
+  } satisfies BridgeWorkflowSetEnabledAction,
+  workflowRunNow: {
+    kind: 'workflowRunNow',
+    workflowId: 'wf-1'
+  } satisfies BridgeWorkflowRunNowAction,
   ensembleCancelRound: {
     kind: 'ensembleCancelRound',
     workspaceId: 'ws-1',
@@ -326,7 +337,11 @@ describe('NoopActionExecutor', () => {
       executor.executeThreadMediaFetch(sample.threadMediaFetch),
       executor.executeDiscoverTailnetHosts(sample.discoverTailnetHosts),
       executor.executeSetThreadTitle(sample.setThreadTitle),
-      executor.executeSetChatKind(sample.setChatKind)
+      executor.executeSetChatKind(sample.setChatKind),
+      executor.executeWorkflowSetEnabled(sample.workflowSetEnabled, {
+        requestingDeviceKey: null
+      }),
+      executor.executeWorkflowRunNow(sample.workflowRunNow, { requestingDeviceKey: null })
     ])
     for (const r of results) {
       expect(r.executed).toBe(false)
@@ -357,6 +372,8 @@ describe('NoopActionExecutor', () => {
     expect(results[21].message).toContain('media-1')
     expect(results[22].message).toContain('oracle')
     expect(results[23].message).toContain('t-1')
+    expect(results[25].message).toContain('wf-1')
+    expect(results[26].message).toContain('wf-1')
   })
 })
 
@@ -703,6 +720,73 @@ describe('MainProcessActionExecutor.executeCancelRun', () => {
       await executor.executeCancelRun({ ...sample.cancelRun, provider })
     }
     expect(cancelRunFn.mock.calls.map((c) => c[0])).toEqual(['codex', 'claude', 'kimi'])
+  })
+})
+
+describe('MainProcessActionExecutor workflow controls', () => {
+  const ctx = {
+    requestingDeviceKey: 'device-key',
+    workspaceId: 'ws-canonical',
+    provider: 'codex',
+    approvalMode: 'plan'
+  }
+
+  it('passes Mac-derived context and returns task/execution identifiers without a fake runId', async () => {
+    const workflowSetEnabledFn = vi.fn().mockResolvedValue({ ok: true, enabled: true })
+    const workflowRunNowFn = vi.fn().mockResolvedValue({
+      ok: true,
+      scheduledTaskId: 'task-1',
+      workflowExecutionId: 'execution-1'
+    })
+    const executor = new MainProcessActionExecutor({
+      cancelRunFn: vi.fn(),
+      workflowSetEnabledFn,
+      workflowRunNowFn
+    })
+
+    await expect(
+      executor.executeWorkflowSetEnabled(sample.workflowSetEnabled, ctx)
+    ).resolves.toMatchObject({ executed: true, data: { workflowId: 'wf-1', enabled: true } })
+    const runResult = await executor.executeWorkflowRunNow(sample.workflowRunNow, ctx)
+    expect(runResult).toMatchObject({
+      executed: true,
+      data: {
+        workflowId: 'wf-1',
+        scheduledTaskId: 'task-1',
+        workflowExecutionId: 'execution-1'
+      }
+    })
+    expect(runResult.data).not.toHaveProperty('runId')
+    expect(workflowSetEnabledFn).toHaveBeenCalledWith(sample.workflowSetEnabled, ctx)
+    expect(workflowRunNowFn).toHaveBeenCalledWith(sample.workflowRunNow, ctx)
+  })
+
+  it('surfaces callback declines and exceptions as executed=false', async () => {
+    const executor = new MainProcessActionExecutor({
+      cancelRunFn: vi.fn(),
+      workflowSetEnabledFn: vi.fn().mockResolvedValue({
+        ok: false,
+        reason: 'authorization changed'
+      }),
+      workflowRunNowFn: vi.fn().mockRejectedValue(new Error('scheduler offline'))
+    })
+
+    await expect(
+      executor.executeWorkflowSetEnabled(sample.workflowSetEnabled, ctx)
+    ).resolves.toMatchObject({ executed: false, message: 'authorization changed' })
+    await expect(
+      executor.executeWorkflowRunNow(sample.workflowRunNow, ctx)
+    ).resolves.toMatchObject({ executed: false, message: expect.stringMatching(/scheduler offline/) })
+  })
+
+  it('returns notWired when workflow callbacks are absent', async () => {
+    const executor = new MainProcessActionExecutor({ cancelRunFn: vi.fn() })
+    await expect(
+      executor.executeWorkflowSetEnabled(sample.workflowSetEnabled, ctx)
+    ).resolves.toMatchObject({ executed: false, message: expect.stringMatching(/not yet wired/i) })
+    await expect(
+      executor.executeWorkflowRunNow(sample.workflowRunNow, ctx)
+    ).resolves.toMatchObject({ executed: false, message: expect.stringMatching(/not yet wired/i) })
   })
 })
 

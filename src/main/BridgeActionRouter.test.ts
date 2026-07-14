@@ -114,11 +114,14 @@ function makeStubExecutor(
   overrides: Partial<
     Record<keyof BridgeActionExecutor, () => Promise<BridgeActionExecutionResult>>
   > = {}
-): { executor: BridgeActionExecutor; calls: Array<{ method: string; payload: unknown }> } {
-  const calls: Array<{ method: string; payload: unknown }> = []
+): {
+  executor: BridgeActionExecutor
+  calls: Array<{ method: string; payload: unknown; context?: unknown }>
+} {
+  const calls: Array<{ method: string; payload: unknown; context?: unknown }> = []
   const make = (method: keyof BridgeActionExecutor, defaultResult: BridgeActionExecutionResult) =>
-    vi.fn(async (payload: unknown) => {
-      calls.push({ method, payload })
+    vi.fn(async (payload: unknown, context?: unknown) => {
+      calls.push({ method, payload, ...(context !== undefined ? { context } : {}) })
       return (await overrides[method]?.()) ?? defaultResult
     })
   const executor: BridgeActionExecutor = {
@@ -213,6 +216,14 @@ function makeStubExecutor(
       message: 'githubCreatePr done'
     }),
     executeCancelRun: make('executeCancelRun', { executed: true, message: 'cancelRun done' }),
+    executeWorkflowSetEnabled: make('executeWorkflowSetEnabled', {
+      executed: true,
+      message: 'workflowSetEnabled done'
+    }),
+    executeWorkflowRunNow: make('executeWorkflowRunNow', {
+      executed: true,
+      message: 'workflowRunNow done'
+    }),
     executeEnsembleCancelRound: make('executeEnsembleCancelRound', {
       executed: true,
       message: 'ensembleCancelRound done'
@@ -908,6 +919,182 @@ describe('BridgeActionRouter', () => {
       })) as { accepted: boolean; message?: string }
       expect(result.accepted).toBe(true)
       expect(result.message).toMatch(/permissive-dev/i)
+    })
+  })
+
+  describe('Mac-resolved workflow authorization', () => {
+    const workflowAllowlist = (capabilities: Array<'startTurn' | 'cancel'> = ['startTurn', 'cancel']) => {
+      const allowlist = new RemoteWorkspaceAllowlist()
+      allowlist.upsert({
+        workspaceId: 'ws-canonical',
+        path: '/workspace',
+        mode: 'read-write',
+        capabilities,
+        allowedProviders: ['codex'],
+        allowedApprovalModes: ['plan', 'default']
+      })
+      return allowlist
+    }
+    const encodeWorkflow = (payload: Record<string, unknown>) =>
+      Buffer.from(
+        JSON.stringify(withReplayMeta(payload)),
+        'utf-8'
+      ).toString('base64')
+
+    it('resolves canonical policy fields before allowlist and threads them to execution', async () => {
+      const { executor, calls } = makeStubExecutor({
+        executeWorkflowRunNow: async () => ({
+          executed: true,
+          message: 'queued',
+          data: { scheduledTaskId: 'task-1', workflowExecutionId: 'exec-1' }
+        })
+      })
+      const resolver = vi.fn(async () => ({
+        allowed: true as const,
+        workspaceId: 'ws-canonical',
+        provider: 'codex',
+        approvalMode: 'plan'
+      }))
+      const router = new BridgeActionRouter({
+        allowlist: workflowAllowlist(),
+        executor,
+        actionAuthorizationResolver: resolver
+      })
+
+      const result = (await router.route('bridge.requestActionAck', {
+        pairID: 'phone-1',
+        payloadBase64: encodeWorkflow({ kind: 'workflowRunNow', workflowId: 'wf-1' })
+      })) as Record<string, unknown>
+
+      expect(result).toMatchObject({
+        accepted: true,
+        executed: true,
+        workspaceId: 'ws-canonical',
+        data: { scheduledTaskId: 'task-1', workflowExecutionId: 'exec-1' }
+      })
+      expect(resolver).toHaveBeenCalledWith(expect.objectContaining({ workflowId: 'wf-1' }))
+      expect(calls).toHaveLength(1)
+      expect(calls[0]).toMatchObject({
+        method: 'executeWorkflowRunNow',
+        context: {
+          workspaceId: 'ws-canonical',
+          provider: 'codex',
+          approvalMode: 'plan'
+        }
+      })
+    })
+
+    it('fails closed when no Mac resolver can map a workflow id', async () => {
+      const { executor, calls } = makeStubExecutor()
+      const router = new BridgeActionRouter({ allowlist: workflowAllowlist(), executor })
+      const result = (await router.route('bridge.requestActionAck', {
+        payloadBase64: encodeWorkflow({ kind: 'workflowRunNow', workflowId: 'wf-unknown' })
+      })) as Record<string, unknown>
+
+      expect(result).toMatchObject({ accepted: false, reasonCode: 'missingWorkspaceId' })
+      expect(calls).toHaveLength(0)
+    })
+
+    it('never invokes the Mac workflow resolver for ordinary workspace actions', async () => {
+      const { executor, calls } = makeStubExecutor()
+      const resolver = vi.fn(() => ({
+        allowed: true as const,
+        workspaceId: 'attacker-workspace',
+        provider: 'claude',
+        approvalMode: 'auto_edit'
+      }))
+      const router = new BridgeActionRouter({
+        allowlist: workflowAllowlist(),
+        executor,
+        actionAuthorizationResolver: resolver
+      })
+
+      const result = (await router.route('bridge.requestActionAck', {
+        payloadBase64: encodeWorkflow({
+          kind: 'cancelRun',
+          workspaceId: 'ws-canonical',
+          threadId: 'thread-1',
+          provider: 'codex',
+          runId: 'run-1'
+        })
+      })) as Record<string, unknown>
+
+      expect(result).toMatchObject({ accepted: true, workspaceId: 'ws-canonical' })
+      expect(resolver).not.toHaveBeenCalled()
+      expect(calls[0]?.method).toBe('executeCancelRun')
+    })
+
+    it('denies an unknown/orphaned workflow before allowlist dispatch', async () => {
+      const { executor, calls } = makeStubExecutor()
+      const router = new BridgeActionRouter({
+        allowlist: workflowAllowlist(),
+        executor,
+        actionAuthorizationResolver: () => ({
+          allowed: false,
+          reason: 'Workflow not found',
+          reasonCode: 'ownershipDenied'
+        })
+      })
+      const result = (await router.route('bridge.requestActionAck', {
+        payloadBase64: encodeWorkflow({ kind: 'workflowRunNow', workflowId: 'wf-missing' })
+      })) as Record<string, unknown>
+
+      expect(result).toMatchObject({ accepted: false, reasonCode: 'ownershipDenied' })
+      expect(calls).toHaveLength(0)
+    })
+
+    it('uses startTurn for run/enable and cancel for disable', async () => {
+      const resolved = () => ({
+        allowed: true as const,
+        workspaceId: 'ws-canonical',
+        provider: 'codex',
+        approvalMode: 'plan'
+      })
+      const runDenied = new BridgeActionRouter({
+        allowlist: workflowAllowlist(['cancel']),
+        executor: makeStubExecutor().executor,
+        actionAuthorizationResolver: resolved
+      })
+      const disableDenied = new BridgeActionRouter({
+        allowlist: workflowAllowlist(['startTurn']),
+        executor: makeStubExecutor().executor,
+        actionAuthorizationResolver: resolved
+      })
+
+      const run = (await runDenied.route('bridge.requestActionAck', {
+        payloadBase64: encodeWorkflow({ kind: 'workflowRunNow', workflowId: 'wf-1' })
+      })) as Record<string, unknown>
+      const disable = (await disableDenied.route('bridge.requestActionAck', {
+        payloadBase64: encodeWorkflow({
+          kind: 'workflowSetEnabled',
+          workflowId: 'wf-1',
+          enabled: false
+        })
+      })) as Record<string, unknown>
+
+      expect(run).toMatchObject({ accepted: false, reasonCode: 'capabilityDenied' })
+      expect(disable).toMatchObject({ accepted: false, reasonCode: 'capabilityDenied' })
+    })
+
+    it('does not silently downgrade a verified posture the allowlist rejects', async () => {
+      const { executor, calls } = makeStubExecutor()
+      const router = new BridgeActionRouter({
+        allowlist: workflowAllowlist(),
+        executor,
+        actionAuthorizationResolver: () => ({
+          allowed: true,
+          workspaceId: 'ws-canonical',
+          provider: 'codex',
+          approvalMode: 'auto_edit'
+        })
+      })
+      const result = (await router.route('bridge.requestActionAck', {
+        payloadBase64: encodeWorkflow({ kind: 'workflowRunNow', workflowId: 'wf-elevated' })
+      })) as Record<string, unknown>
+
+      expect(result).toMatchObject({ accepted: false, workspaceId: 'ws-canonical' })
+      expect(String(result.message)).toMatch(/approval mode/i)
+      expect(calls).toHaveLength(0)
     })
   })
 

@@ -22,6 +22,8 @@ import type {
   BridgeGithubPrStatusAction,
   BridgeGithubPrReadinessAction,
   BridgeGithubCreatePrAction,
+  BridgeWorkflowRunNowAction,
+  BridgeWorkflowSetEnabledAction,
   BridgeEnsembleCancelRoundAction,
   BridgeEnsembleCancelWakeupAction,
   BridgeEnsembleQueuePromptAction,
@@ -85,6 +87,12 @@ import type { AgentApprovalAction } from './store/types'
  * exactly that device. Not client-supplied. */
 export interface BridgeActionDispatchContext {
   requestingDeviceKey: string | null
+  /** Mac-derived authorization context. Workflow actions deliberately omit
+   * workspace/provider/posture on the wire, so the router resolves these from
+   * the canonical workflow record and the executor revalidates them before use. */
+  workspaceId?: string
+  provider?: string
+  approvalMode?: string
 }
 
 export interface BridgeActionExecutionResult {
@@ -154,6 +162,14 @@ export interface BridgeActionExecutor {
   ): Promise<BridgeActionExecutionResult>
   executeGithubCreatePr(action: BridgeGithubCreatePrAction): Promise<BridgeActionExecutionResult>
   executeCancelRun(action: BridgeCancelRunAction): Promise<BridgeActionExecutionResult>
+  executeWorkflowSetEnabled(
+    action: BridgeWorkflowSetEnabledAction,
+    ctx: BridgeActionDispatchContext
+  ): Promise<BridgeActionExecutionResult>
+  executeWorkflowRunNow(
+    action: BridgeWorkflowRunNowAction,
+    ctx: BridgeActionDispatchContext
+  ): Promise<BridgeActionExecutionResult>
   executeEnsembleCancelRound(
     action: BridgeEnsembleCancelRoundAction
   ): Promise<BridgeActionExecutionResult>
@@ -340,6 +356,18 @@ export class NoopActionExecutor implements BridgeActionExecutor {
   }
   async executeCancelRun(action: BridgeCancelRunAction): Promise<BridgeActionExecutionResult> {
     return notWired('cancelRun', action.runId)
+  }
+  async executeWorkflowSetEnabled(
+    action: BridgeWorkflowSetEnabledAction,
+    _ctx: BridgeActionDispatchContext
+  ): Promise<BridgeActionExecutionResult> {
+    return notWired('workflowSetEnabled', action.workflowId)
+  }
+  async executeWorkflowRunNow(
+    action: BridgeWorkflowRunNowAction,
+    _ctx: BridgeActionDispatchContext
+  ): Promise<BridgeActionExecutionResult> {
+    return notWired('workflowRunNow', action.workflowId)
   }
   async executeEnsembleCancelRound(
     action: BridgeEnsembleCancelRoundAction
@@ -654,6 +682,23 @@ export interface MainProcessActionExecutorDependencies {
   githubCreatePrFn?: (action: BridgeGithubCreatePrAction) => Promise<{
     ok: boolean
     pr?: Record<string, unknown>
+    reason?: string
+  }>
+  workflowSetEnabledFn?: (
+    action: BridgeWorkflowSetEnabledAction,
+    ctx: BridgeActionDispatchContext
+  ) => Promise<{
+    ok: boolean
+    enabled?: boolean
+    reason?: string
+  }>
+  workflowRunNowFn?: (
+    action: BridgeWorkflowRunNowAction,
+    ctx: BridgeActionDispatchContext
+  ) => Promise<{
+    ok: boolean
+    scheduledTaskId?: string
+    workflowExecutionId?: string
     reason?: string
   }>
   registerApnsTokenFn?: (action: BridgeRegisterApnsTokenAction) => Promise<{
@@ -1447,6 +1492,61 @@ export class MainProcessActionExecutor implements BridgeActionExecutor {
         executed: false,
         message: `Cancel dispatch failed: ${errMessage}`
       }
+    }
+  }
+
+  async executeWorkflowSetEnabled(
+    action: BridgeWorkflowSetEnabledAction,
+    ctx: BridgeActionDispatchContext
+  ): Promise<BridgeActionExecutionResult> {
+    if (!this.deps.workflowSetEnabledFn) {
+      return notWired('workflowSetEnabled', action.workflowId)
+    }
+    try {
+      const result = await this.deps.workflowSetEnabledFn(action, ctx)
+      return {
+        executed: result.ok,
+        message: result.ok
+          ? `Workflow "${action.workflowId}" ${result.enabled ? 'enabled' : 'disabled'}`
+          : result.reason || 'Workflow state could not be updated',
+        data: {
+          workflowId: action.workflowId,
+          ...(result.enabled !== undefined ? { enabled: result.enabled } : {})
+        }
+      }
+    } catch (err) {
+      const errMessage = err instanceof Error ? err.message : String(err)
+      this.log(`[BridgeActionExecutor] workflowSetEnabled failed: ${errMessage}`)
+      return { executed: false, message: `Workflow state update failed: ${errMessage}` }
+    }
+  }
+
+  async executeWorkflowRunNow(
+    action: BridgeWorkflowRunNowAction,
+    ctx: BridgeActionDispatchContext
+  ): Promise<BridgeActionExecutionResult> {
+    if (!this.deps.workflowRunNowFn) {
+      return notWired('workflowRunNow', action.workflowId)
+    }
+    try {
+      const result = await this.deps.workflowRunNowFn(action, ctx)
+      return {
+        executed: result.ok,
+        message: result.ok
+          ? `Workflow "${action.workflowId}" queued to run now`
+          : result.reason || 'Workflow could not be queued',
+        data: {
+          workflowId: action.workflowId,
+          ...(result.scheduledTaskId ? { scheduledTaskId: result.scheduledTaskId } : {}),
+          ...(result.workflowExecutionId
+            ? { workflowExecutionId: result.workflowExecutionId }
+            : {})
+        }
+      }
+    } catch (err) {
+      const errMessage = err instanceof Error ? err.message : String(err)
+      this.log(`[BridgeActionExecutor] workflowRunNow failed: ${errMessage}`)
+      return { executed: false, message: `Workflow run-now failed: ${errMessage}` }
     }
   }
 
