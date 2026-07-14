@@ -44,6 +44,19 @@ Security notes for the Mac-side review:
 - Both actions are WRITE authority on a workspace-scoped resource: gate on the
   workspace remote allowlist and the run-permission posture clamp, and treat
   `workflowRunNow` as run-dispatch (HMAC-normalized payload), not as a UI ping.
+- **Posture decision (must be explicit, else this is an escalation hole):** a
+  workflow's SAVED posture may be full-access while phone-origin turns are
+  clamped to plan/read_only. `workflowRunNow` MUST NOT silently dispatch at
+  saved posture — that would let a plan-clamped phone execute arbitrary writes
+  by proxy. Pick one: (a) dispatch clamped to the phone posture (schedule vs
+  run-now then behave differently — document it in the ack), or (b) dispatch
+  at saved posture ONLY behind the existing two-tier elevation sheet. Same
+  shape applies one step removed to `workflowSetEnabled(enabled: true)`
+  re-arming future saved-posture runs — at minimum surface the workflow's
+  posture in the confirm affordance.
+- `workflowId → workspaceId` resolution happens ON THE MAC (the payload
+  carries no client workspaceId to trust); the allowlist gate runs against the
+  resolved workspace.
 - Rate-limit `workflowRunNow` acks per workflow to avoid a wedged phone
   retry-looping a scheduler dispatch.
 
