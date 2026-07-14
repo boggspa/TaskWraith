@@ -28,7 +28,7 @@ import {
   type ChatScrollState
 } from '../../lib/TranscriptScroll'
 
-export interface UseTranscriptScrollStateInput {
+interface UseTranscriptScrollStateBaseInput {
   chatId: string | null
   messages: readonly unknown[] | undefined
   runCompleteNotice: unknown
@@ -40,9 +40,20 @@ export interface UseTranscriptScrollStateInput {
    * reader position and follow ownership survive transcript remounts. */
   transcriptScrollRef?: RefObject<HTMLDivElement | null>
   transcriptContentRef?: RefObject<HTMLDivElement | null>
-  autoFollowRef?: MutableRefObject<boolean>
   chatScrollStateByIdRef?: MutableRefObject<Map<string, CachedChatScrollState>>
 }
+
+/** When a pane supplies its persistent latch it must also supply the owner
+ * setter. The hook keeps synchronous reads on the same ref without mutating
+ * an object received through its input boundary. */
+export type UseTranscriptScrollStateInput = UseTranscriptScrollStateBaseInput &
+  (
+    | { autoFollowRef?: undefined; setAutoFollowRef?: undefined }
+    | {
+        autoFollowRef: MutableRefObject<boolean>
+        setAutoFollowRef: (next: boolean) => void
+      }
+  )
 
 export interface RestoreTranscriptScrollOptions {
   syncAutoFollow?: boolean
@@ -60,6 +71,7 @@ export function useTranscriptScrollState({
   transcriptScrollRef: providedTranscriptScrollRef,
   transcriptContentRef: providedTranscriptContentRef,
   autoFollowRef: providedAutoFollowRef,
+  setAutoFollowRef: providedSetAutoFollowRef,
   chatScrollStateByIdRef: providedChatScrollStateByIdRef
 }: UseTranscriptScrollStateInput) {
   const ownedTranscriptScrollRef = useRef<HTMLDivElement>(null)
@@ -72,7 +84,11 @@ export function useTranscriptScrollState({
   const [autoFollowActive, setAutoFollowActive] = useState(initialAutoFollow)
   const publishedAutoFollowRef = useRef(initialAutoFollow)
   const setAutoFollow = useCallback((next: boolean) => {
-    autoFollowRef.current = next
+    if (providedSetAutoFollowRef) {
+      providedSetAutoFollowRef(next)
+    } else {
+      ownedAutoFollowRef.current = next
+    }
     // TranscriptPanel shares this ref and may update it before invoking one of
     // the callbacks below. Compare against the last published React state, not
     // the externally mutable decision ref, so those callback paths still
@@ -84,7 +100,7 @@ export function useTranscriptScrollState({
     // do not necessarily change messages, so without this state update the
     // jump-to-latest pill can remain stale for an entire streaming lane.
     setAutoFollowActive(next)
-  }, [])
+  }, [providedAutoFollowRef, providedSetAutoFollowRef])
   const userScrolledAwayInFrameRef = useRef(false)
   // True from a jump-to-latest click until the scroll arrives at the live
   // edge (or the user cancels with an upward gesture). The smooth-scroll

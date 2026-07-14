@@ -440,16 +440,13 @@ function ChatViewPaneInner(props: ChatViewPaneProps) {
     transcriptScrollRef: props.refs.scrollRef,
     transcriptContentRef: props.refs.contentRef,
     autoFollowRef: props.refs.autoFollowRef,
+    setAutoFollowRef: props.refs.setAutoFollow,
     chatScrollStateByIdRef: props.refs.chatScrollStateByIdRef
   })
-  useLayoutEffect(() => {
-    props.refs.relockToLatestRef.current = paneScrollState.relockToLatest
-    return () => {
-      if (props.refs.relockToLatestRef.current === paneScrollState.relockToLatest) {
-        props.refs.relockToLatestRef.current = null
-      }
-    }
-  }, [paneScrollState.relockToLatest, props.refs])
+  useLayoutEffect(
+    () => props.refs.bindRelockToLatest(paneScrollState.relockToLatest),
+    [paneScrollState.relockToLatest, props.refs]
+  )
   useEffect(() => {
     const transcript = rootRef.current
     const composerArea = paneComposerAreaRef.current

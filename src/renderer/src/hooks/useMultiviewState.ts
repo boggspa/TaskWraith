@@ -688,20 +688,33 @@ export interface MultiviewPaneRefs {
   /** Reader ownership is pane-local and chat-keyed: two panes may show the same
    * chat at different positions without influencing each other. */
   autoFollowRef: MutableRefObject<boolean>
+  setAutoFollow: (next: boolean) => void
   chatScrollStateByIdRef: MutableRefObject<Map<string, CachedChatScrollState>>
   /** Bound by ChatViewPane while mounted so sending from a resting pane matches
    * the focused composer's relock-to-latest behavior. */
-  relockToLatestRef: MutableRefObject<(() => void) | null>
+  bindRelockToLatest: (handler: () => void) => () => void
+  relockToLatest: () => void
 }
 
 export function createMultiviewPaneRefs(): MultiviewPaneRefs {
+  const autoFollowRef: MutableRefObject<boolean> = { current: true }
+  let relockToLatestHandler: (() => void) | null = null
   return {
     scrollRef: { current: null },
     contentRef: { current: null },
     endRef: { current: null },
-    autoFollowRef: { current: true },
+    autoFollowRef,
+    setAutoFollow: (next) => {
+      autoFollowRef.current = next
+    },
     chatScrollStateByIdRef: { current: new Map() },
-    relockToLatestRef: { current: null }
+    bindRelockToLatest: (handler) => {
+      relockToLatestHandler = handler
+      return () => {
+        if (relockToLatestHandler === handler) relockToLatestHandler = null
+      }
+    },
+    relockToLatest: () => relockToLatestHandler?.()
   }
 }
 

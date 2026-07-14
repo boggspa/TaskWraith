@@ -104,11 +104,17 @@ describe('useTranscriptScrollState', () => {
   })
 
   it('publishes follow changes after a shared consumer pre-mutates the decision ref', () => {
+    const autoFollowRef = { current: true }
+    const setAutoFollowRef = vi.fn((next: boolean) => {
+      autoFollowRef.current = next
+    })
     const result = useTranscriptScrollState({
       chatId: 'chat-1',
       messages: [],
       runCompleteNotice: null,
-      streamingActive: true
+      streamingActive: true,
+      autoFollowRef,
+      setAutoFollowRef
     })
 
     // TranscriptPanel prepares a message jump this way: it updates the shared
@@ -116,6 +122,7 @@ describe('useTranscriptScrollState', () => {
     result.autoFollowRef.current = false
     result.beginManualTranscriptJump()
 
+    expect(setAutoFollowRef).toHaveBeenLastCalledWith(false)
     expect(hookHarness.stateSetters[0]).toHaveBeenLastCalledWith(false)
   })
 
@@ -129,6 +136,9 @@ describe('useTranscriptScrollState', () => {
       transcriptScrollRef: { current: hookHarness.scroller as HTMLDivElement },
       transcriptContentRef: { current: null },
       autoFollowRef,
+      setAutoFollowRef: (next) => {
+        autoFollowRef.current = next
+      },
       chatScrollStateByIdRef
     })
 

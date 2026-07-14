@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type {
   MultiviewPaneMediaRef,
   MultiviewPaneRecord
@@ -115,6 +115,22 @@ describe('Multiview pane reader ownership', () => {
     const right = createMultiviewPaneRefs()
     expect(left.autoFollowRef).not.toBe(right.autoFollowRef)
     expect(left.chatScrollStateByIdRef.current).not.toBe(right.chatScrollStateByIdRef.current)
+
+    left.setAutoFollow(false)
+    expect(left.autoFollowRef.current).toBe(false)
+    expect(right.autoFollowRef.current).toBe(true)
+
+    const first = vi.fn()
+    const second = vi.fn()
+    const unbindFirst = left.bindRelockToLatest(first)
+    const unbindSecond = left.bindRelockToLatest(second)
+    unbindFirst()
+    left.relockToLatest()
+    expect(first).not.toHaveBeenCalled()
+    expect(second).toHaveBeenCalledTimes(1)
+    unbindSecond()
+    left.relockToLatest()
+    expect(second).toHaveBeenCalledTimes(1)
   })
 })
 

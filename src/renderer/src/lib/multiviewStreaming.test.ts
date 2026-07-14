@@ -129,6 +129,9 @@ describe('two-pane simultaneous streaming', () => {
     expect(appSource).toContain('autoFollow: incomingCachedScroll.autoFollow')
     expect(paneSource).toContain('useTranscriptScrollState({')
     expect(paneSource).toContain('chatScrollStateByIdRef: props.refs.chatScrollStateByIdRef')
-    expect(paneSource).toContain('props.refs.relockToLatestRef.current = paneScrollState.relockToLatest')
+    expect(paneSource).toContain('setAutoFollowRef: props.refs.setAutoFollow')
+    expect(paneSource).toContain(
+      'props.refs.bindRelockToLatest(paneScrollState.relockToLatest)'
+    )
   })
 })

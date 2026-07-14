@@ -24111,7 +24111,7 @@ function App(): React.JSX.Element {
           scrollState: outgoingScrollState,
           autoFollow: autoFollowRef.current
         }
-        outgoingPaneRefs.autoFollowRef.current = outgoingCachedScroll.autoFollow
+        outgoingPaneRefs.setAutoFollow(outgoingCachedScroll.autoFollow)
         outgoingPaneRefs.chatScrollStateByIdRef.current.set(outgoingChatId, outgoingCachedScroll)
       }
       const paneWorkspace = resolvePaneWorkspace({
@@ -24366,7 +24366,7 @@ function App(): React.JSX.Element {
       const panePrompt = composerDraftsByChatIdRef.current[chatId] || ''
       const paneAttachments = imageAttachmentsByChatIdRef.current[chatId] || EMPTY_IMAGE_ATTACHMENTS
       if (!hasAttachmentPromptContent(panePrompt, paneAttachments)) return
-      multiview.paneRefs[paneIndex]?.relockToLatestRef.current?.()
+      multiview.paneRefs[paneIndex]?.relockToLatest()
       const request = buildRunRequestRef.current(undefined, undefined, {
         chat: paneChat,
         prompt: panePrompt,
