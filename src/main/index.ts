@@ -569,7 +569,6 @@ import {
   estimateChatMarkdownTranscriptChars
 } from './TranscriptMarkdownExport'
 import {
-  createToolResultMediaRefs,
   createWorkspacePathMediaRefs,
   extractProviderImageBlocksFromRawEvent,
   validateWorkspaceImagePath,
@@ -577,6 +576,10 @@ import {
   stageWorkspaceMediaSnapshot,
   TRANSCRIPT_MEDIA_MAX_WORKSPACE_IMAGE_BYTES
 } from './services/TranscriptMediaService'
+import {
+  createOwnedToolResultMediaRefs,
+  transferTranscriptMediaRefsBatch
+} from './services/TranscriptMediaOwnershipBatch'
 import {
   TRANSCRIPT_MEDIA_ASSET_DIR,
   TRANSCRIPT_MEDIA_MAX_FULL_IMAGE_BYTES,
@@ -6920,18 +6923,6 @@ function getPdfAttachmentRenderCacheDir(): string {
   return defaultPdfAttachmentRenderCacheDir(app.getPath('userData'))
 }
 
-function writeTranscriptMediaAsset(input: {
-  sha256: string
-  buffer: Buffer
-  mimeType: string
-  appChatId?: string
-}): void {
-  const result = getTranscriptMediaAssetStore().write(input)
-  if (!result.ok) {
-    console.warn(`[TranscriptMedia] original persistence skipped: ${result.reason}`)
-  }
-}
-
 function saveAndBroadcastChat(chat: ChatRecord): ChatRecord {
   const normalized = normalizeTranscriptMarkdownMediaForChat(chat)
   const previous = AppStore.getChat(normalized.appChatId)
@@ -8530,20 +8521,25 @@ function grantTranscriptMediaRefsToChat(
   refs: readonly TranscriptMediaRef[]
 ): TranscriptMediaRef[] {
   if (!appChatId) return []
-  return refs.filter((ref) => {
-    if (!ref.sha256 || !ref.mimeType) return false
-    const granted = getTranscriptMediaAssetStore().grant({
+  const grantable = refs.filter(
+    (ref): ref is TranscriptMediaRef & { sha256: string; mimeType: string } =>
+      Boolean(ref.sha256 && ref.mimeType)
+  )
+  if (grantable.length === 0) return []
+  const granted = getTranscriptMediaAssetStore().grantMany(
+    grantable.map((ref) => ({
       sha256: ref.sha256,
       mimeType: ref.mimeType,
       appChatId
-    })
-    if (!granted.ok) {
-      console.warn(
-        `[TranscriptMedia] ownership grant skipped for chat ${appChatId}: ${granted.reason}`
-      )
-    }
-    return granted.ok
-  })
+    }))
+  )
+  if (!granted.ok) {
+    console.warn(
+      `[TranscriptMedia] ownership batch skipped for chat ${appChatId}: ${granted.reason}`
+    )
+    return []
+  }
+  return grantable
 }
 
 function transferTranscriptMediaRefsBetweenChats(
@@ -8552,34 +8548,12 @@ function transferTranscriptMediaRefsBetweenChats(
   refs: readonly TranscriptMediaRef[],
   verifyTransfer: (sourceAppChatId: string, targetAppChatId: string) => boolean
 ): TranscriptMediaRef[] {
-  return refs.map((ref) => {
-    if (
-      !ref.sha256 ||
-      !ref.mimeType ||
-      (ref.source !== 'generated' && ref.source !== 'tool_result')
-    ) {
-      return ref
-    }
-    const transferred = getTranscriptMediaAssetStore().grantVerifiedTransfer(
-      {
-        sha256: ref.sha256,
-        mimeType: ref.mimeType,
-        sourceAppChatId,
-        targetAppChatId
-      },
-      verifyTransfer
-    )
-    if (transferred.ok) return ref
-    console.warn(
-      `[TranscriptMedia] verified transfer ${sourceAppChatId} -> ${targetAppChatId} skipped: ${transferred.reason}`
-    )
-    return {
-      ...ref,
-      sha256: undefined,
-      assetId: undefined,
-      path: undefined,
-      status: 'denied'
-    }
+  return transferTranscriptMediaRefsBatch({
+    sourceAppChatId,
+    targetAppChatId,
+    refs,
+    store: getTranscriptMediaAssetStore(),
+    verifyTransfer
   })
 }
 
@@ -12544,19 +12518,14 @@ function emitCliProviderMediaRefs(state: CliProviderStreamState, event: unknown)
   if (providerEventIsToolResultLike(event)) return
   const blocks = extractProviderImageBlocksFromRawEvent(event)
   if (blocks.length === 0) return
-  const refs = createToolResultMediaRefs({
+  const refs = createOwnedToolResultMediaRefs({
+    store: getTranscriptMediaAssetStore(),
+    appChatId: state.appChatId,
     messageId: state.appRunId || state.runId || `${state.provider}-${state.startedAt}`,
     runId: state.appRunId || state.runId || undefined,
     toolName: `${state.provider} output`,
     source: 'generated',
-    blocks,
-    assetWriter: ({ sha256, buffer, mimeType }) =>
-      writeTranscriptMediaAsset({
-        sha256,
-        buffer,
-        mimeType,
-        ...(state.appChatId ? { appChatId: state.appChatId } : {})
-      })
+    blocks
   })
   if (refs.length === 0) return
   const seen = state.providerMediaRefKeys ?? new Set<string>()
@@ -17677,19 +17646,14 @@ function emitCodexReasoningDelta(state: CodexRunState, params: any, label: strin
 function emitCodexProviderMediaRefs(state: CodexRunState, raw: unknown): void {
   const blocks = extractProviderImageBlocksFromRawEvent(raw)
   if (blocks.length === 0) return
-  const refs = createToolResultMediaRefs({
+  const refs = createOwnedToolResultMediaRefs({
+    store: getTranscriptMediaAssetStore(),
+    appChatId: state.appChatId,
     messageId: state.appRunId || state.turnId || state.threadId,
     runId: state.appRunId || state.turnId || undefined,
     toolName: 'codex output',
     source: 'generated',
-    blocks,
-    assetWriter: ({ sha256, buffer, mimeType }) =>
-      writeTranscriptMediaAsset({
-        sha256,
-        buffer,
-        mimeType,
-        ...(state.appChatId ? { appChatId: state.appChatId } : {})
-      })
+    blocks
   })
   if (refs.length === 0) return
   const seen = state.providerMediaRefKeys ?? new Set<string>()
@@ -26438,7 +26402,9 @@ async function executeGeminiMcpTool(
       (block) => block.type === 'image'
     )
     if (resultImageBlocks.length > 0 && context.sender) {
-      const mediaRefs = createToolResultMediaRefs({
+      const mediaRefs = createOwnedToolResultMediaRefs({
+        store: getTranscriptMediaAssetStore(),
+        appChatId: context.appChatId,
         messageId: context.appRunId || `${parentProvider}-mcp-${toolName}`,
         runId: context.appRunId || undefined,
         toolName,
@@ -26451,14 +26417,7 @@ async function executeGeminiMcpTool(
         // Per-call ref cap (e.g. inspect_video_frames's 24-frame filmstrip). A TRUSTED
         // main-side hint — createToolResultMediaRefs ceiling-clamps it to 32 so even a
         // forged value can't emit an unbounded number of refs. Absent → the default 8.
-        maxRefs: finalRichResult?.mediaRefHints?.maxRefs,
-        assetWriter: ({ sha256, buffer, mimeType }) =>
-          writeTranscriptMediaAsset({
-            sha256,
-            buffer,
-            mimeType,
-            ...(context.appChatId ? { appChatId: context.appChatId } : {})
-          })
+        maxRefs: finalRichResult?.mediaRefHints?.maxRefs
       })
       if (mediaRefs.length > 0) {
         sendAgentCompatLine(context.sender, parentProvider, {
