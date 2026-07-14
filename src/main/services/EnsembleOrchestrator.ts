@@ -513,6 +513,22 @@ interface ActiveParticipantRun {
   ownedFanoutSettlements?: Set<Promise<void>>
   /** Concrete lane runs represented by the owned settlements. */
   ownedFanoutRunIds?: Set<string>
+  /**
+   * Explicit fan-out calls that have entered the owner queue but have not yet
+   * produced a dispatch receipt. These are ownership barriers too: a provider
+   * can exit while a target seat is compacting or its dispatch is pending, and
+   * foreground rotation must not escape before that call either accepts lanes
+   * or fails closed.
+   */
+  pendingFanoutDispatches?: Set<Promise<void>>
+  /**
+   * User cancellation/skip landed while an explicit fan-out call was still
+   * inside its dispatch window. Unlike an ordinary answered/yielded terminal
+   * owner, this owner must not accept a late dispatch receipt: the target may
+   * have been seeded before the provider adapter registered it, so cancellation
+   * is repeated after the receipt to close that race.
+   */
+  fanoutDispatchCancelled?: boolean
   /** Per-owner tail that serializes explicit fan-out dispatch windows. */
   fanoutDispatchQueue?: Promise<void>
   /**
@@ -3632,7 +3648,7 @@ export class EnsembleOrchestrator {
         run.chatId === chatId &&
         run.roundId === roundId &&
         !run.laneId &&
-        run.ownedFanoutSettlements?.size
+        this.hasOwnedFanoutWork(run)
       ) {
         activeRunIds.add(run.runId)
       }
@@ -3699,7 +3715,7 @@ export class EnsembleOrchestrator {
           run.roundId === runtime.roundId &&
           !run.laneId &&
           run.terminalFinalized === true &&
-          Boolean(run.ownedFanoutSettlements?.size)
+          this.hasOwnedFanoutWork(run)
       )
     if (!active) return false
     const ownerWasTerminal = active.terminalFinalized === true
@@ -3708,6 +3724,7 @@ export class EnsembleOrchestrator {
       .filter((run): run is ActiveParticipantRun => Boolean(run?.laneId))
     // Finalise/suppress first, then terminally cancel every lane this owner is
     // awaiting so the serial loop can advance without a provider callback.
+    active.fanoutDispatchCancelled = true
     this.finalizeRun(active, 'skipped', 'Skipped by user.')
     if (runtime.activeRunId === active.runId) runtime.activeRunId = undefined
     for (const lane of ownedLanes) {
@@ -3772,7 +3789,7 @@ export class EnsembleOrchestrator {
   }
 
   markYielded(runId: string, reason?: string, target?: string): boolean {
-    const run = this.runsByRunId.get(runId)
+    const run = this.actionableRunForTool(runId)
     if (!run) return false
     run.status = 'yielded'
     const runtime = this.roundsByChatId.get(run.chatId)
@@ -3875,17 +3892,26 @@ export class EnsembleOrchestrator {
     }
   }
 
+  /** Resolve live tool/event authority without exposing retained terminal owners. */
+  private actionableRunForTool(runId: string | undefined): ActiveParticipantRun | undefined {
+    if (!runId) return undefined
+    const run = this.runsByRunId.get(runId)
+    // Terminal fan-out owners remain in runsByRunId solely so Stop and
+    // settlement cleanup can find them. Map membership must not keep their MCP
+    // authority alive for late/retried calls or provider events.
+    return run?.terminalFinalized ? undefined : run
+  }
+
   /**
    * 1.0.4-AK — public lookup for which participant owns a given
    * runId. The `ensemble_continue` MCP dispatcher in `index.ts`
    * uses this to populate `EnsembleContinueDeps.callingParticipantId`
    * for the allowed-participants gate. Returns `null` when no
-   * orchestrator-tracked run matches (e.g. the call came from a
-   * non-ensemble single-participant run).
+   * actionable orchestrator-tracked run matches (e.g. the call came
+   * from a non-ensemble single-participant or terminal run).
    */
   getParticipantIdForRun(runId: string | undefined): string | null {
-    if (!runId) return null
-    const run = this.runsByRunId.get(runId)
+    const run = this.actionableRunForTool(runId)
     return run?.participant.id || null
   }
 
@@ -3926,7 +3952,7 @@ export class EnsembleOrchestrator {
    */
   appendStatusForRun(runId: string, note: string): boolean {
     if (!runId || !note) return false
-    const run = this.runsByRunId.get(runId)
+    const run = this.actionableRunForTool(runId)
     if (!run) return false
     this.appendRoundStatus(run.chatId, run.roundId, note)
     return true
@@ -3954,7 +3980,7 @@ export class EnsembleOrchestrator {
         error: 'no_active_run'
       }
     }
-    const caller = this.runsByRunId.get(runId)
+    const caller = this.actionableRunForTool(runId)
     if (!caller) {
       return {
         ok: false,
@@ -4061,7 +4087,9 @@ export class EnsembleOrchestrator {
         error: 'stale_target'
       }
     }
-    const targetRun = input.targetRunId ? this.runsByRunId.get(input.targetRunId) : undefined
+    const targetRun = input.targetRunId
+      ? this.actionableRunForTool(input.targetRunId)
+      : undefined
     if (
       input.targetRunId &&
       (!targetRun ||
@@ -4192,7 +4220,7 @@ export class EnsembleOrchestrator {
         error: 'no_active_run'
       }
     }
-    const caller = this.runsByRunId.get(runId)
+    const caller = this.actionableRunForTool(runId)
     if (!caller) {
       return {
         ok: false,
@@ -4578,7 +4606,7 @@ export class EnsembleOrchestrator {
         error: 'no_active_run'
       }
     }
-    const caller = this.runsByRunId.get(runId)
+    const caller = this.actionableRunForTool(runId)
     if (!caller) {
       return {
         ok: false,
@@ -4726,7 +4754,7 @@ export class EnsembleOrchestrator {
         error: 'no_active_run'
       }
     }
-    const caller = this.runsByRunId.get(runId)
+    const caller = this.actionableRunForTool(runId)
     if (!caller) {
       return {
         ok: false,
@@ -5523,6 +5551,7 @@ export class EnsembleOrchestrator {
       }
     }
     if (active) {
+      active.fanoutDispatchCancelled = true
       this.finalizeRun(active, 'skipped', reason)
       if (runtime.activeRunId === active.runId) runtime.activeRunId = undefined
       runtime.activeScoutRunIds?.delete(active.runId)
@@ -6455,7 +6484,7 @@ export class EnsembleOrchestrator {
         error: 'no_active_run'
       }
     }
-    const run = this.runsByRunId.get(runId)
+    const run = this.actionableRunForTool(runId)
     if (!run) {
       return {
         ok: false,
@@ -6637,7 +6666,7 @@ export class EnsembleOrchestrator {
         error: 'no_active_run'
       }
     }
-    const run = this.runsByRunId.get(runId)
+    const run = this.actionableRunForTool(runId)
     if (!run) {
       return {
         ok: false,
@@ -7976,6 +8005,7 @@ export class EnsembleOrchestrator {
         targetRun ||
         (runtime.activeRunId ? this.runsByRunId.get(runtime.activeRunId) : undefined)
       if (activeRun) {
+        activeRun.fanoutDispatchCancelled = true
         this.finalizeRun(activeRun, 'skipped', input.reason || 'Replaced by Boss.')
         if (runtime.activeRunId === activeRun.runId) runtime.activeRunId = undefined
         runtime.activeScoutRunIds?.delete(activeRun.runId)
@@ -8070,7 +8100,7 @@ export class EnsembleOrchestrator {
     runId: string | undefined,
     input: EnsembleFanoutInput
   ): Promise<EnsembleFanoutResult> {
-    const owner = runId ? this.runsByRunId.get(runId) : undefined
+    const owner = this.actionableRunForTool(runId)
     if (!owner) return this.fanoutForRunExclusive(runId, input)
 
     const previous = owner.fanoutDispatchQueue || Promise.resolve()
@@ -8080,12 +8110,19 @@ export class EnsembleOrchestrator {
     })
     const tail = previous.catch(() => undefined).then(() => current)
     owner.fanoutDispatchQueue = tail
+    owner.pendingFanoutDispatches ??= new Set()
+    owner.pendingFanoutDispatches.add(current)
     await previous.catch(() => undefined)
     try {
       return await this.fanoutForRunExclusive(runId, input)
     } finally {
       releaseCurrent()
+      owner.pendingFanoutDispatches?.delete(current)
+      if (owner.pendingFanoutDispatches?.size === 0) {
+        owner.pendingFanoutDispatches = undefined
+      }
       if (owner.fanoutDispatchQueue === tail) owner.fanoutDispatchQueue = undefined
+      this.releaseOwnedFanoutHold(owner)
     }
   }
 
@@ -8133,7 +8170,7 @@ export class EnsembleOrchestrator {
         error: 'no_active_run'
       }
     }
-    const run = this.runsByRunId.get(runId)
+    const run = this.actionableRunForTool(runId)
     if (!run) {
       return {
         ok: false,
@@ -8440,7 +8477,7 @@ export class EnsembleOrchestrator {
         error: 'no_active_run'
       }
     }
-    const run = this.runsByRunId.get(runId)
+    const run = this.actionableRunForTool(runId)
     if (!run) {
       return {
         ok: false,
@@ -8539,7 +8576,7 @@ export class EnsembleOrchestrator {
 
   markLaneBlockedForRun(runId: string | undefined, reason: string): boolean {
     if (!runId) return false
-    const run = this.runsByRunId.get(runId)
+    const run = this.actionableRunForTool(runId)
     if (!run?.laneId) return false
     const nowIso = this.deps.nowIso()
     this.updateChatRound(run.chatId, (round) => {
@@ -8573,7 +8610,14 @@ export class EnsembleOrchestrator {
     }
   ): { ok: true } | { ok: false; reason: string } {
     if (!runId) return { ok: true }
-    const run = this.runsByRunId.get(runId)
+    const retainedRun = this.runsByRunId.get(runId)
+    if (retainedRun?.terminalFinalized) {
+      return {
+        ok: false,
+        reason: 'This Ensemble participant run is no longer active and cannot mutate workspace state.'
+      }
+    }
+    const run = this.actionableRunForTool(runId)
     if (!run?.laneId) return { ok: true }
     const lane = this.deps.getChat(run.chatId)?.ensemble?.activeRound?.lanes?.[run.laneId]
     if (lane?.intent !== 'write') {
@@ -9078,7 +9122,7 @@ export class EnsembleOrchestrator {
    */
   isParticipantInScoutPass(runId: string): boolean {
     if (!runId) return false
-    const run = this.runsByRunId.get(runId)
+    const run = this.actionableRunForTool(runId)
     if (!run) return false
     const runtime = this.roundsByChatId.get(run.chatId)
     return Boolean(runtime?.activeScoutRunIds?.has(runId))
@@ -9092,7 +9136,7 @@ export class EnsembleOrchestrator {
    */
   getParticipantMetaForRun(runId: string): { role: string; provider: ProviderId } | null {
     if (!runId) return null
-    const run = this.runsByRunId.get(runId)
+    const run = this.actionableRunForTool(runId)
     if (!run) return null
     return {
       role: run.participant.role || '',
@@ -9112,7 +9156,7 @@ export class EnsembleOrchestrator {
    */
   recordScoutBrief(runId: string, brief: ScoutBriefRecord): void {
     if (!runId) return
-    const run = this.runsByRunId.get(runId)
+    const run = this.actionableRunForTool(runId)
     if (!run) return
     const runtime = this.roundsByChatId.get(run.chatId)
     if (!runtime) return
@@ -9194,7 +9238,7 @@ export class EnsembleOrchestrator {
     }>
   } {
     if (!runId) return { ok: false, error: 'list_ensemble_participants requires an active run id.' }
-    const run = this.runsByRunId.get(runId)
+    const run = this.actionableRunForTool(runId)
     if (!run)
       return { ok: false, error: 'No active Ensemble participant run matches this tool call.' }
     const chat = this.deps.getChat(run.chatId)
@@ -9275,7 +9319,7 @@ export class EnsembleOrchestrator {
     message?: string
   } {
     if (!runId) return { ok: false, error: 'schedule_wakeup requires an active run id.' }
-    const run = this.runsByRunId.get(runId)
+    const run = this.actionableRunForTool(runId)
     if (!run)
       return { ok: false, error: 'No active Ensemble participant run matches this wakeup request.' }
     const runtime = this.roundsByChatId.get(run.chatId)
@@ -9354,7 +9398,7 @@ export class EnsembleOrchestrator {
     message?: string
   } {
     if (!runId) return { ok: false, error: 'cancel_wakeup requires an active run id.' }
-    const run = this.runsByRunId.get(runId)
+    const run = this.actionableRunForTool(runId)
     if (!run)
       return {
         ok: false,
@@ -9796,7 +9840,7 @@ export class EnsembleOrchestrator {
     source?: { provider?: ProviderId; chatId?: string }
   ): boolean {
     if (!runId || !stats || typeof stats !== 'object' || Array.isArray(stats)) return false
-    const run = this.runsByRunId.get(runId)
+    const run = this.actionableRunForTool(runId)
     if (!run) return false
     if (source?.provider && run.participant.provider !== source.provider) return false
     if (source?.chatId && run.chatId !== source.chatId) return false
@@ -9866,7 +9910,7 @@ export class EnsembleOrchestrator {
     if (!isHostSeatCompactionProvider(provider)) return false
     const runId = routed.appRunId
     if (!runId) return false
-    const run = this.runsByRunId.get(runId)
+    const run = this.actionableRunForTool(runId)
     if (!run || run.participant.provider !== provider) return false
     if (routed.appChatId && routed.appChatId !== run.chatId) return false
     if (!isContextOverflowErrorText(text)) return false
@@ -9876,7 +9920,7 @@ export class EnsembleOrchestrator {
 
   markRunExited(runId: string | undefined, exitCode: number): boolean {
     if (!runId) return false
-    const run = this.runsByRunId.get(runId)
+    const run = this.actionableRunForTool(runId)
     if (!run || run.status === 'answered' || run.status === 'yielded') return false
     // A clean exit (code 0) that already streamed content is a FINISHED turn,
     // not a skip — mirror the result-event path (which finalizes 'answered' when
@@ -9900,7 +9944,7 @@ export class EnsembleOrchestrator {
   handleProviderOutput(provider: ProviderId, routed: AgentRunRoute, payload: any): boolean {
     const runId = routed.appRunId
     if (!runId) return false
-    const run = this.runsByRunId.get(runId)
+    const run = this.actionableRunForTool(runId)
     if (!run || run.participant.provider !== provider) return false
     if (routed.appChatId && routed.appChatId !== run.chatId) return false
 
@@ -11098,7 +11142,7 @@ export class EnsembleOrchestrator {
       // below is intentionally evaluated AFTER the wait so its exact target and
       // hop accounting are preserved. Stop/steer still cancels the runtime and
       // releases the wait through lane finalization.
-      if (run.ownedFanoutSettlements?.size) {
+      if (this.hasOwnedFanoutWork(run)) {
         await this.waitForOwnedFanoutSettlements(runtime, run)
         if (runtime.cancelled) break
       }
@@ -11622,14 +11666,75 @@ export class EnsembleOrchestrator {
     runtime: ActiveRoundRuntime,
     run: ActiveParticipantRun
   ): Promise<void> {
-    const settlements = [...(run.ownedFanoutSettlements || [])]
-    if (settlements.length === 0 || runtime.cancelled) return
-    this.appendRoundStatus(
-      runtime.chatId,
-      runtime.roundId,
-      `${participantDisplayName(run.participant)} is waiting for its fan-out lane(s) to return before foreground handoff.`
-    )
-    await Promise.all(settlements)
+    let noted = false
+    while (!runtime.cancelled) {
+      const settlements = [
+        ...(run.pendingFanoutDispatches || []),
+        ...(run.ownedFanoutSettlements || [])
+      ]
+      if (settlements.length === 0) return
+      if (!noted) {
+        noted = true
+        this.appendRoundStatus(
+          runtime.chatId,
+          runtime.roundId,
+          `${participantDisplayName(run.participant)} is waiting for its fan-out lane(s) to return before foreground handoff.`
+        )
+      }
+      // Re-read after every wave. A dispatch reservation can resolve only after
+      // it has attached the accepted lane settlement, and concurrent fan-out
+      // calls can add another reservation while this owner is still live.
+      await Promise.all(settlements)
+    }
+  }
+
+  private hasOwnedFanoutWork(run: ActiveParticipantRun): boolean {
+    return Boolean(run.pendingFanoutDispatches?.size || run.ownedFanoutSettlements?.size)
+  }
+
+  /**
+   * Release terminal bookkeeping/transcript ownership only after both the
+   * dispatch window and every accepted lane settlement have drained.
+   */
+  private releaseOwnedFanoutHold(sourceRun: ActiveParticipantRun): void {
+    if (this.hasOwnedFanoutWork(sourceRun)) return
+    try {
+      const round = this.deps.getChat(sourceRun.chatId)?.ensemble?.activeRound
+      const runtime = this.roundsByChatId.get(sourceRun.chatId)
+      const suppressRelease =
+        !runtime ||
+        runtime.roundId !== sourceRun.roundId ||
+        runtime.cancelled ||
+        sourceRun.suppressOwnedFanoutTranscriptRelease === true ||
+        !round ||
+        round.roundId !== sourceRun.roundId ||
+        round.status !== 'running'
+      if (suppressRelease) {
+        sourceRun.suppressOwnedFanoutTranscriptRelease = true
+        sourceRun.releaseOwnedFanoutTranscriptAtTail = undefined
+      } else if (sourceRun.ownedFanoutTranscriptBoundary !== undefined) {
+        const boundary = sourceRun.ownedFanoutTranscriptBoundary
+        const hasPostFanoutTimeline = (sourceRun.timeline?.length || 0) > boundary
+        sourceRun.ownedFanoutTranscriptBoundary = undefined
+        sourceRun.forceNextTimelineContentEntry = !hasPostFanoutTimeline
+        sourceRun.releaseOwnedFanoutTranscriptAtTail = true
+        this.flushRun(
+          sourceRun,
+          sourceRun.terminalFinalized === true,
+          sourceRun.terminalReason
+        )
+      }
+      if (sourceRun.terminalFinalized) {
+        this.applyTerminalRunSideEffects(sourceRun)
+      }
+    } finally {
+      if (
+        sourceRun.terminalFinalized &&
+        this.runsByRunId.get(sourceRun.runId) === sourceRun
+      ) {
+        this.runsByRunId.delete(sourceRun.runId)
+      }
+    }
   }
 
   /**
@@ -12101,6 +12206,13 @@ export class EnsembleOrchestrator {
     } = {}
   ): Promise<string[]> {
     if (participants.length === 0) return []
+    const sourceRun =
+      options.sourceRunId && options.completionDisposition !== 'background'
+        ? this.runsByRunId.get(options.sourceRunId)
+        : undefined
+    const sourceOwner = sourceRun && !sourceRun.laneId ? sourceRun : undefined
+    const dispatchWasCancelled = (): boolean =>
+      runtime.cancelled || sourceOwner?.fanoutDispatchCancelled === true
     const mode = options.mode || 'read_only'
     if (mode === 'locked_writers' && !concurrentWriteLanesEnabled()) {
       throw new Error('Locked writer fan-out requires TASKWRAITH_CONCURRENT_WRITE_LANES.')
@@ -12174,7 +12286,7 @@ export class EnsembleOrchestrator {
     // would seed + dispatch zombie fan-out lanes that speak to completion after
     // the cancel. The post-`Promise.all(completionPromises)` check further down
     // fires only AFTER the lanes have already run — too late.
-    if (runtime.cancelled) return []
+    if (dispatchWasCancelled()) return []
     const laneRuns: ActiveParticipantRun[] = participants.map((participant) => {
       const freshChat = this.deps.getChat(runtime.chatId) || chat
       const freshParticipant =
@@ -12198,6 +12310,16 @@ export class EnsembleOrchestrator {
     for (const run of laneRuns) {
       runtime.activeScoutRunIds.add(run.runId)
     }
+    // Ownership starts at seeding, not at provider acceptance. Skip/Stop can
+    // land while dispatch is still in main-side preflight, before the provider
+    // adapter knows this run id; recording provisional ids here lets those
+    // controls terminally close the lane immediately, while the post-receipt
+    // cancellation below catches any adapter that starts after that first
+    // cancel attempt.
+    if (sourceOwner) {
+      sourceOwner.ownedFanoutRunIds ??= new Set()
+      for (const run of laneRuns) sourceOwner.ownedFanoutRunIds.add(run.runId)
+    }
 
     // Build the per-lane dispatch payload + completion promise pair. Keep
     // dispatch-start and completion promises separate: an async mapper that
@@ -12206,6 +12328,7 @@ export class EnsembleOrchestrator {
     // dispatch attempt. That was visible to MCP callers as a tool timeout even
     // though the fan-out had launched successfully.
     const dispatchStartPromises: Array<Promise<void>> = []
+    const acceptedLaneRuns: ActiveParticipantRun[] = []
     const completionPromises = laneRuns.map((run) => {
       const participant = run.participant
       const dispatchChat = this.deps.getChat(runtime.chatId) || chat
@@ -12353,33 +12476,85 @@ export class EnsembleOrchestrator {
         ...ollamaRunControls
       }
       dispatchStartPromises.push(
-        Promise.resolve()
-          .then(() => this.deps.dispatch(payload, { sender: runtime.sender }))
-          .then((dispatched) => {
-            if (!dispatched.dispatched) {
-              if (this.runsByRunId.get(run.runId) === run) {
-                const note = formatDispatchFailureNote(participant, { kind: 'unknown', message: '' })
-                this.appendRoundStatus(runtime.chatId, runtime.roundId, note)
-                this.finalizeRun(run, 'failed', note)
-              }
-            } else {
-              options.acceptedRuns?.push(run)
-              // Candidate only after the adapter confirms it accepted the
-              // prompt. flushRun persists it only after an eligible terminal
-              // response, matching the serial dispatch contract.
-              run.promptShellStamp = promptShellStamp
-              run.promptDynamicStateVersion = dynamicStateSnapshot.version
-              run.ensemblePromptUsageTelemetry = promptUsageTelemetry
+        (async () => {
+          if (dispatchWasCancelled()) {
+            if (this.runsByRunId.get(run.runId) === run) {
+              this.finalizeRun(
+                run,
+                'cancelled',
+                runtime.cancelled
+                  ? 'Round cancelled before fan-out dispatch.'
+                  : 'Owning participant was skipped before fan-out dispatch.'
+              )
             }
-          })
-          .catch((error) => {
+            return
+          }
+
+          let dispatched: Awaited<ReturnType<EnsembleOrchestratorDeps['dispatch']>>
+          try {
+            dispatched = await this.deps.dispatch(payload, { sender: runtime.sender })
+          } catch (error) {
+            if (dispatchWasCancelled()) {
+              // Dispatch may have crossed into the provider adapter before it
+              // rejected. Repeat cancellation against the now-known run id.
+              await this.deps.cancelRun(participant.provider, run.runId).catch(() => undefined)
+              if (this.runsByRunId.get(run.runId) === run) {
+                this.finalizeRun(
+                  run,
+                  'cancelled',
+                  runtime.cancelled
+                    ? 'Round cancelled during fan-out dispatch.'
+                    : 'Owning participant was skipped during fan-out dispatch.'
+                )
+              }
+              return
+            }
             if (this.runsByRunId.get(run.runId) === run) {
               const reason = classifyDispatchError(error)
               const note = formatDispatchFailureNote(participant, reason)
               this.appendRoundStatus(runtime.chatId, runtime.roundId, note)
               this.finalizeRun(run, 'failed', note)
             }
-          })
+            return
+          }
+
+          if (dispatchWasCancelled()) {
+            if (dispatched.dispatched) {
+              // A Stop/Skip may have called cancel before the dispatch facade
+              // registered the provider run. The accepted receipt closes that
+              // gap: cancel again before treating the lane as accepted.
+              await this.deps.cancelRun(participant.provider, run.runId).catch(() => undefined)
+            }
+            if (this.runsByRunId.get(run.runId) === run) {
+              this.finalizeRun(
+                run,
+                'cancelled',
+                runtime.cancelled
+                  ? 'Round cancelled during fan-out dispatch.'
+                  : 'Owning participant was skipped during fan-out dispatch.'
+              )
+            }
+            return
+          }
+
+          if (!dispatched.dispatched) {
+            if (this.runsByRunId.get(run.runId) === run) {
+              const note = formatDispatchFailureNote(participant, { kind: 'unknown', message: '' })
+              this.appendRoundStatus(runtime.chatId, runtime.roundId, note)
+              this.finalizeRun(run, 'failed', note)
+            }
+            return
+          }
+
+          acceptedLaneRuns.push(run)
+          options.acceptedRuns?.push(run)
+          // Candidate only after the adapter confirms it accepted the
+          // prompt. flushRun persists it only after an eligible terminal
+          // response, matching the serial dispatch contract.
+          run.promptShellStamp = promptShellStamp
+          run.promptDynamicStateVersion = dynamicStateSnapshot.version
+          run.ensemblePromptUsageTelemetry = promptUsageTelemetry
+        })()
       )
       return completion
     })
@@ -12392,6 +12567,15 @@ export class EnsembleOrchestrator {
     // callers get a real dispatch receipt while serial orchestrator fan-out can
     // still wait for lane completion below.
     await Promise.all(dispatchStartPromises)
+    if (sourceOwner?.ownedFanoutRunIds) {
+      const acceptedRunIds = new Set(acceptedLaneRuns.map((run) => run.runId))
+      for (const run of laneRuns) {
+        if (!acceptedRunIds.has(run.runId)) sourceOwner.ownedFanoutRunIds.delete(run.runId)
+      }
+      if (sourceOwner.ownedFanoutRunIds.size === 0) {
+        sourceOwner.ownedFanoutRunIds = undefined
+      }
+    }
     if (runtime.cancelled) {
       if (options.waitForCompletion === false) return laneIds
       return []
@@ -12442,73 +12626,44 @@ export class EnsembleOrchestrator {
     }
 
     if (options.waitForCompletion === false) {
-      const settlement = finishFanoutPass().catch((error) => {
-        const message =
-          error instanceof Error ? error.message : 'fan-out completion tracking failed.'
-        try {
-          this.appendRoundStatus(
-            runtime.chatId,
-            runtime.roundId,
-            `${label} tracking failed: ${message}`
-          )
-        } catch {
-          // Ownership cleanup below must still run if status persistence fails.
-        }
-      })
-      if (options.sourceRunId && options.completionDisposition !== 'background') {
-        const sourceRun = this.runsByRunId.get(options.sourceRunId)
-        if (sourceRun && !sourceRun.laneId && (options.acceptedRuns?.length || 0) > 0) {
-          const ownedRunIds = (options.acceptedRuns || []).map((run) => run.runId)
-          sourceRun.ownedFanoutSettlements ??= new Set()
-          sourceRun.ownedFanoutSettlements.add(settlement)
-          sourceRun.ownedFanoutRunIds ??= new Set()
-          for (const runId of ownedRunIds) sourceRun.ownedFanoutRunIds.add(runId)
-          void settlement.finally(() => {
-            sourceRun.ownedFanoutSettlements?.delete(settlement)
-            for (const runId of ownedRunIds) sourceRun.ownedFanoutRunIds?.delete(runId)
-            if (sourceRun.ownedFanoutRunIds?.size === 0) {
-              sourceRun.ownedFanoutRunIds = undefined
-            }
-            if (sourceRun.ownedFanoutSettlements?.size === 0) {
-              sourceRun.ownedFanoutSettlements = undefined
-              try {
-                const round = this.deps.getChat(sourceRun.chatId)?.ensemble?.activeRound
-                const suppressRelease =
-                  runtime.cancelled ||
-                  sourceRun.suppressOwnedFanoutTranscriptRelease === true ||
-                  round?.roundId !== sourceRun.roundId ||
-                  round.status !== 'running'
-                if (suppressRelease) {
-                  sourceRun.suppressOwnedFanoutTranscriptRelease = true
-                  sourceRun.releaseOwnedFanoutTranscriptAtTail = undefined
-                  return
-                }
-                if (sourceRun.ownedFanoutTranscriptBoundary !== undefined) {
-                  const boundary = sourceRun.ownedFanoutTranscriptBoundary
-                  const hasPostFanoutTimeline = (sourceRun.timeline?.length || 0) > boundary
-                  sourceRun.ownedFanoutTranscriptBoundary = undefined
-                  sourceRun.forceNextTimelineContentEntry = !hasPostFanoutTimeline
-                  sourceRun.releaseOwnedFanoutTranscriptAtTail = true
-                  this.flushRun(
-                    sourceRun,
-                    sourceRun.terminalFinalized === true,
-                    sourceRun.terminalReason
-                  )
-                }
-                if (sourceRun.terminalFinalized) {
-                  this.applyTerminalRunSideEffects(sourceRun)
-                }
-              } finally {
-                if (
-                  sourceRun.terminalFinalized &&
-                  this.runsByRunId.get(sourceRun.runId) === sourceRun
-                ) {
-                  this.runsByRunId.delete(sourceRun.runId)
-                }
-              }
-            }
-          }).catch(() => undefined)
-        }
+      const settlement = finishFanoutPass()
+        .catch((error) => {
+          const message =
+            error instanceof Error ? error.message : 'fan-out completion tracking failed.'
+          try {
+            this.appendRoundStatus(
+              runtime.chatId,
+              runtime.roundId,
+              `${label} tracking failed: ${message}`
+            )
+          } catch {
+            // Ownership cleanup below must still run if status persistence fails.
+          }
+        })
+        .finally(() => {
+          // A detached BG lane can be the last live work in a deferred round.
+          // Resume only after its completion/tracking status has been appended;
+          // otherwise finishRound (and a queued next round) can overtake that
+          // old-round status in the transcript.
+          this.maybeResumeDeferredDrain(runtime.chatId)
+        })
+      if (sourceOwner && acceptedLaneRuns.length > 0) {
+        const ownedRunIds = acceptedLaneRuns.map((run) => run.runId)
+        sourceOwner.ownedFanoutSettlements ??= new Set()
+        sourceOwner.ownedFanoutSettlements.add(settlement)
+        sourceOwner.ownedFanoutRunIds ??= new Set()
+        for (const runId of ownedRunIds) sourceOwner.ownedFanoutRunIds.add(runId)
+        void settlement.finally(() => {
+          sourceOwner.ownedFanoutSettlements?.delete(settlement)
+          for (const runId of ownedRunIds) sourceOwner.ownedFanoutRunIds?.delete(runId)
+          if (sourceOwner.ownedFanoutRunIds?.size === 0) {
+            sourceOwner.ownedFanoutRunIds = undefined
+          }
+          if (sourceOwner.ownedFanoutSettlements?.size === 0) {
+            sourceOwner.ownedFanoutSettlements = undefined
+          }
+          this.releaseOwnedFanoutHold(sourceOwner)
+        }).catch(() => undefined)
       }
       return laneIds
     }
@@ -13123,7 +13278,7 @@ export class EnsembleOrchestrator {
     reason?: string
   ): void {
     const suppressOwnedFanout =
-      (status === 'cancelled' || status === 'skipped') && run.ownedFanoutSettlements?.size
+      (status === 'cancelled' || status === 'skipped') && this.hasOwnedFanoutWork(run)
     if (suppressOwnedFanout) {
       run.suppressOwnedFanoutTranscriptRelease = true
     }
@@ -13152,10 +13307,10 @@ export class EnsembleOrchestrator {
       )
     }
     this.flushRun(run, true, reason)
-    if (!run.ownedFanoutSettlements?.size || suppressOwnedFanout) {
+    if (!this.hasOwnedFanoutWork(run) || suppressOwnedFanout) {
       this.applyTerminalRunSideEffects(run)
     }
-    if (!run.ownedFanoutSettlements?.size) this.runsByRunId.delete(run.runId)
+    if (!this.hasOwnedFanoutWork(run)) this.runsByRunId.delete(run.runId)
     // Promote only after terminal transcript/queue bookkeeping. An owner with
     // live fan-out settlements remains addressable for Stop until its lanes
     // return; resolving completion still happens last so serial/fan-out
@@ -13176,7 +13331,9 @@ export class EnsembleOrchestrator {
     // every lane is terminal. Checked on every run finalization because lane
     // runs end through this path from dispatch failures, cancels, and normal
     // completion alike; no-ops when nothing is deferred for this chat.
-    this.maybeResumeDeferredDrain(run.chatId)
+    if (!run.laneId || !runtime?.activeScoutRunIds?.has(run.runId)) {
+      this.maybeResumeDeferredDrain(run.chatId)
+    }
   }
 
   private applyTerminalRunSideEffects(run: ActiveParticipantRun): void {
@@ -13240,7 +13397,7 @@ export class EnsembleOrchestrator {
    */
   appendTrustedMediaRefs(appRunId: string, refs: readonly TranscriptMediaRef[]): void {
     if (!appRunId || refs.length === 0) return
-    const run = this.runsByRunId.get(appRunId)
+    const run = this.actionableRunForTool(appRunId)
     if (!run) return
     run.mediaRefs = mergeTranscriptMediaRefs(run.mediaRefs, refs)
     this.flushRun(run)
@@ -13256,7 +13413,7 @@ export class EnsembleOrchestrator {
     const timestamp = this.deps.nowIso()
     const holdingOwnedFanoutTranscript =
       run.ownedFanoutTranscriptBoundary !== undefined &&
-      Boolean(run.ownedFanoutSettlements?.size)
+      this.hasOwnedFanoutWork(run)
     const suppressingOwnedFanoutTranscript =
       run.ownedFanoutTranscriptBoundary !== undefined &&
       run.suppressOwnedFanoutTranscriptRelease === true

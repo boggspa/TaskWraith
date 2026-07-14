@@ -435,8 +435,8 @@ function getRuntimeQueuedPrompts(
   return internal?.queuedPrompts ? [...internal.queuedPrompts] : []
 }
 
-function makeFanoutRaceHarness() {
-  const harness = makeHarness()
+function makeFanoutRaceHarness(options: Parameters<typeof makeHarness>[0] = {}) {
+  const harness = makeHarness(options)
   harness.chat.ensemble!.fanoutPolicy = 'read_only'
   harness.chat.ensemble!.participants = [
     {
@@ -13738,6 +13738,294 @@ Next action:
     completeDispatchedRun(harness, 2)
   })
 
+  it('holds foreground ownership while an accepted fan-out dispatch receipt is pending', async () => {
+    const dispatchGate = deferred<boolean>()
+    const harness = makeFanoutRaceHarness({
+      dispatch: async (payload) => {
+        if (!payload.ensembleRun?.laneId) {
+          return { dispatched: true, appRunId: payload.appRunId || '' }
+        }
+        const accepted = await dispatchGate.promise
+        return { dispatched: accepted, appRunId: payload.appRunId || '' }
+      }
+    })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Keep the lead in charge while the reviewer dispatch is pending.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const ownerRunId = harness.dispatched[0].appRunId!
+
+    const fanout = harness.orchestrator.fanoutForRun(ownerRunId, {
+      targets: ['Reviewer'],
+      prompt: 'Review this before foreground rotation continues.'
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    completeDispatchedRun(harness, 0)
+
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(harness.dispatched).toHaveLength(2)
+    const internals = harness.orchestrator as unknown as {
+      runsByRunId: Map<
+        string,
+        { terminalFinalized?: boolean; pendingFanoutDispatches?: Set<Promise<void>> }
+      >
+    }
+    expect(internals.runsByRunId.get(ownerRunId)?.terminalFinalized).toBe(true)
+    expect(internals.runsByRunId.get(ownerRunId)?.pendingFanoutDispatches?.size).toBe(1)
+
+    dispatchGate.resolve(true)
+    await expect(fanout).resolves.toMatchObject({ ok: true, participantIds: ['claude'] })
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(harness.dispatched).toHaveLength(2)
+
+    completeDispatchedRun(harness, 1)
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
+    expect(harness.dispatched[2].ensembleRun?.participantId).toBe('gemini')
+    expect(internals.runsByRunId.has(ownerRunId)).toBe(false)
+    completeDispatchedRun(harness, 2)
+  })
+
+  it('releases foreground ownership when a pending fan-out dispatch is rejected', async () => {
+    const dispatchGate = deferred<boolean>()
+    const harness = makeFanoutRaceHarness({
+      dispatch: async (payload) => {
+        if (!payload.ensembleRun?.laneId) {
+          return { dispatched: true, appRunId: payload.appRunId || '' }
+        }
+        const accepted = await dispatchGate.promise
+        return { dispatched: accepted, appRunId: payload.appRunId || '' }
+      }
+    })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Release the lead if the reviewer lane cannot start.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const ownerRunId = harness.dispatched[0].appRunId!
+
+    const fanout = harness.orchestrator.fanoutForRun(ownerRunId, {
+      targets: ['Reviewer'],
+      prompt: 'This lane dispatch will be rejected.'
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    completeDispatchedRun(harness, 0)
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(harness.dispatched).toHaveLength(2)
+
+    dispatchGate.resolve(false)
+    await expect(fanout).resolves.toMatchObject({ ok: false, error: 'dispatch_failed' })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
+    expect(harness.dispatched[2].ensembleRun?.participantId).toBe('claude')
+    expect(harness.dispatched[2].ensembleRun?.laneId).toBeUndefined()
+
+    completeDispatchedRun(harness, 2)
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(4))
+    expect(harness.dispatched[3].ensembleRun?.participantId).toBe('gemini')
+    completeDispatchedRun(harness, 3)
+  })
+
+  it('cancels a provisionally owned lane when its owner is skipped before dispatch receipt', async () => {
+    const dispatchGate = deferred<boolean>()
+    const harness = makeFanoutRaceHarness({
+      dispatch: async (payload) => {
+        if (!payload.ensembleRun?.laneId) {
+          return { dispatched: true, appRunId: payload.appRunId || '' }
+        }
+        const accepted = await dispatchGate.promise
+        return { dispatched: accepted, appRunId: payload.appRunId || '' }
+      }
+    })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Skip the owner while its reviewer dispatch is pending.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const ownerRunId = harness.dispatched[0].appRunId!
+
+    const fanout = harness.orchestrator.fanoutForRun(ownerRunId, {
+      targets: ['Reviewer'],
+      prompt: 'This provisional lane must be cancelled with its owner.'
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    const provisionalLane = harness.dispatched[1]
+
+    await expect(harness.orchestrator.skipActiveParticipant('ensemble-chat')).resolves.toBe(true)
+    expect(harness.cancelRun).toHaveBeenCalledWith('codex', ownerRunId)
+    expect(harness.cancelRun).toHaveBeenCalledWith('claude', provisionalLane.appRunId)
+    expect(
+      harness.orchestrator.handleProviderOutput(
+        'claude',
+        { appRunId: provisionalLane.appRunId, appChatId: 'ensemble-chat' },
+        { type: 'content', text: 'ZOMBIE-LANE-OUTPUT-BEFORE-RECEIPT.' }
+      )
+    ).toBe(false)
+    expect(harness.dispatched).toHaveLength(2)
+
+    dispatchGate.resolve(true)
+    await expect(fanout).resolves.toMatchObject({ ok: false, error: 'dispatch_failed' })
+    const targetCancelCount = harness.cancelRun.mock.calls.filter(
+      ([provider, runId]) => provider === 'claude' && runId === provisionalLane.appRunId
+    ).length
+    expect(targetCancelCount).toBeGreaterThanOrEqual(2)
+    expect(
+      harness.orchestrator.handleProviderOutput(
+        'claude',
+        { appRunId: provisionalLane.appRunId, appChatId: 'ensemble-chat' },
+        { type: 'content', text: 'ZOMBIE-LANE-OUTPUT-AFTER-RECEIPT.' }
+      )
+    ).toBe(false)
+    expect(
+      harness.chat.messages.some((message) => message.content.includes('ZOMBIE-LANE-OUTPUT'))
+    ).toBe(false)
+
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
+    expect(harness.dispatched[2].ensembleRun?.participantId).toBe('claude')
+    expect(harness.dispatched[2].ensembleRun?.laneId).toBeUndefined()
+    completeDispatchedRun(harness, 2)
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(4))
+    expect(harness.dispatched[3].ensembleRun?.participantId).toBe('gemini')
+    completeDispatchedRun(harness, 3)
+  })
+
+  it('re-cancels a target accepted after Stop during its pending dispatch receipt', async () => {
+    const dispatchGate = deferred<boolean>()
+    const harness = makeFanoutRaceHarness({
+      dispatch: async (payload) => {
+        if (!payload.ensembleRun?.laneId) {
+          return { dispatched: true, appRunId: payload.appRunId || '' }
+        }
+        const accepted = await dispatchGate.promise
+        return { dispatched: accepted, appRunId: payload.appRunId || '' }
+      }
+    })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Stop the round while its reviewer dispatch is pending.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const ownerRunId = harness.dispatched[0].appRunId!
+
+    const fanout = harness.orchestrator.fanoutForRun(ownerRunId, {
+      targets: ['Reviewer'],
+      prompt: 'This target must not survive a Stop before dispatch receipt.'
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    const provisionalLane = harness.dispatched[1]
+
+    await expect(harness.orchestrator.cancelRound('ensemble-chat', 'Stopped by user.')).resolves.toBe(
+      true
+    )
+    expect(harness.chat.ensemble?.activeRound?.status).toBe('cancelled')
+    expect(harness.cancelRun).toHaveBeenCalledWith('codex', ownerRunId)
+    expect(harness.cancelRun).toHaveBeenCalledWith('claude', provisionalLane.appRunId)
+    expect(
+      harness.orchestrator.handleProviderOutput(
+        'claude',
+        { appRunId: provisionalLane.appRunId, appChatId: 'ensemble-chat' },
+        { type: 'content', text: 'STOPPED-ZOMBIE-LANE-OUTPUT-BEFORE-RECEIPT.' }
+      )
+    ).toBe(false)
+
+    dispatchGate.resolve(true)
+    await expect(fanout).resolves.toMatchObject({ ok: false, error: 'dispatch_failed' })
+    const targetCancelCount = harness.cancelRun.mock.calls.filter(
+      ([provider, runId]) => provider === 'claude' && runId === provisionalLane.appRunId
+    ).length
+    expect(targetCancelCount).toBeGreaterThanOrEqual(2)
+    expect(
+      harness.orchestrator.handleProviderOutput(
+        'claude',
+        { appRunId: provisionalLane.appRunId, appChatId: 'ensemble-chat' },
+        { type: 'content', text: 'STOPPED-ZOMBIE-LANE-OUTPUT-AFTER-RECEIPT.' }
+      )
+    ).toBe(false)
+    expect(
+      harness.chat.messages.some((message) =>
+        message.content.includes('STOPPED-ZOMBIE-LANE-OUTPUT')
+      )
+    ).toBe(false)
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(harness.dispatched).toHaveLength(2)
+    expect(harness.chat.ensemble?.activeRound?.status).toBe('cancelled')
+  })
+
+  it('rejects late tools and provider events from a terminal owner retained for settlement', async () => {
+    const harness = makeFanoutRaceHarness()
+    harness.chat.ensemble!.bossmanParticipantId = 'codex'
+    const { fanout } = await startUnresolvedReviewerFanout(harness)
+    await expect(fanout).resolves.toMatchObject({ ok: true })
+    const ownerRunId = harness.dispatched[0].appRunId!
+
+    expect(
+      harness.orchestrator.handleProviderOutput(
+        'codex',
+        { appRunId: ownerRunId, appChatId: 'ensemble-chat' },
+        { type: 'content', text: 'OWNER-TERMINAL-ANSWER.' }
+      )
+    ).toBe(true)
+    completeDispatchedRun(harness, 0)
+    await new Promise((resolve) => setTimeout(resolve, 20))
+
+    const internals = harness.orchestrator as unknown as {
+      runsByRunId: Map<string, { terminalFinalized?: boolean }>
+    }
+    expect(internals.runsByRunId.get(ownerRunId)?.terminalFinalized).toBe(true)
+    expect(harness.orchestrator.getParticipantIdForRun(ownerRunId)).toBeNull()
+    expect(harness.orchestrator.markYielded(ownerRunId, 'late yield', 'Researcher')).toBe(false)
+    await expect(
+      harness.orchestrator.fanoutForRun(ownerRunId, {
+        targets: ['Researcher'],
+        prompt: 'This late fan-out must not start.'
+      })
+    ).resolves.toMatchObject({ ok: false, error: 'no_active_run' })
+    await expect(
+      harness.orchestrator.bossmanControlForRun(ownerRunId, {
+        action: 'adjust_hops',
+        maxContinuationHops: 99
+      })
+    ).resolves.toMatchObject({ ok: false, error: 'no_active_run' })
+    expect(harness.orchestrator.appendStatusForRun(ownerRunId, 'LATE-STATUS')).toBe(false)
+    expect(
+      harness.orchestrator.validateLaneWriteScopeForRun(ownerRunId, {
+        toolName: 'write_file',
+        workspacePath: '/repo',
+        resourcePath: '/repo/late.txt'
+      })
+    ).toMatchObject({ ok: false })
+    expect(
+      harness.orchestrator.reportParticipantTokenUsage(ownerRunId, { total_tokens: 999 })
+    ).toBe(false)
+    expect(
+      harness.orchestrator.handleProviderOutput(
+        'codex',
+        { appRunId: ownerRunId, appChatId: 'ensemble-chat' },
+        { type: 'content', text: 'LATE-PROVIDER-CONTENT.' }
+      )
+    ).toBe(false)
+    expect(harness.dispatched).toHaveLength(2)
+    expect(
+      harness.chat.messages.some(
+        (message) =>
+          message.content.includes('LATE-PROVIDER-CONTENT.') ||
+          message.content.includes('LATE-STATUS')
+      )
+    ).toBe(false)
+
+    completeDispatchedRun(harness, 1)
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
+    expect(harness.dispatched[2].ensembleRun?.participantId).toBe('gemini')
+    expect(internals.runsByRunId.has(ownerRunId)).toBe(false)
+    expect(
+      harness.chat.messages.filter((message) => message.content.includes('OWNER-TERMINAL-ANSWER.'))
+    ).toHaveLength(1)
+    completeDispatchedRun(harness, 2)
+  })
+
   it('defers an ensemble_yield handoff until the caller\'s fan-out lane returns', async () => {
     const harness = makeFanoutRaceHarness()
     const { fanout } = await startUnresolvedReviewerFanout(harness)
@@ -15947,6 +16235,77 @@ describe('background stage routing', () => {
       ensembleStageRole: 'background',
       ensembleLaneIntent: 'read'
     })
+  })
+
+  it('appends detached BG completion before draining into a queued round', async () => {
+    const harness = makeHarness()
+    harness.chat.ensemble!.participants = [
+      {
+        id: 'lead',
+        provider: 'codex',
+        enabled: true,
+        role: 'Lead',
+        instructions: 'Lead the foreground round.',
+        order: 1,
+        permissionPresetId: 'workspace_write'
+      },
+      backgroundParticipant()
+    ]
+
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: '@BG run checks while Lead handles the first round.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    const backgroundIndex = harness.dispatched.findIndex(
+      (payload) => payload.ensembleRun?.participantId === 'background-shell'
+    )
+    const leadIndex = harness.dispatched.findIndex(
+      (payload) => payload.ensembleRun?.participantId === 'lead'
+    )
+    expect(
+      harness.orchestrator.startRound({
+        chatId: 'ensemble-chat',
+        prompt: 'QUEUED-AFTER-BACKGROUND',
+        event: { sender: {} as Electron.WebContents }
+      })
+    ).toMatchObject({ status: 'queued' })
+
+    completeDispatchedRun(harness, leadIndex)
+    await vi.waitFor(() => expect(harness.chat.ensemble?.activeRound?.status).toBe('running'))
+    harness.orchestrator.handleProviderOutput(
+      harness.dispatched[backgroundIndex].provider,
+      {
+        appRunId: harness.dispatched[backgroundIndex].appRunId,
+        appChatId: 'ensemble-chat'
+      },
+      {
+        type: 'message',
+        role: 'assistant',
+        delta: true,
+        content: 'BG-BEFORE-QUEUED-ROUND'
+      }
+    )
+    completeDispatchedRun(harness, backgroundIndex)
+
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
+    expect(harness.dispatched[2].ensembleRun?.participantId).toBe('lead')
+    const bgResultIndex = harness.chat.messages.findIndex(
+      (message) => message.content === 'BG-BEFORE-QUEUED-ROUND'
+    )
+    const bgCompleteIndex = harness.chat.messages.findIndex((message) =>
+      message.content.includes('Background complete')
+    )
+    const queuedRoundIndex = harness.chat.messages.findIndex(
+      (message) => message.role === 'user' && message.content === 'QUEUED-AFTER-BACKGROUND'
+    )
+    expect(bgResultIndex).toBeGreaterThanOrEqual(0)
+    expect(bgCompleteIndex).toBeGreaterThan(bgResultIndex)
+    expect(queuedRoundIndex).toBeGreaterThan(bgCompleteIndex)
+
+    completeDispatchedRun(harness, 2)
+    await vi.waitFor(() => expect(harness.chat.ensemble?.activeRound?.status).toBe('completed'))
   })
 
   it('does not bypass the global parallel-lane kill switch', async () => {
