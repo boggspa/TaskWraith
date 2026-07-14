@@ -24,6 +24,26 @@ interface RuntimeBinding {
   readonly dispatchAuthorityDigest: string
 }
 
+export interface ScheduledOccurrenceRootOwnershipInput {
+  taskId: string
+  rootRunId: string
+  sealSignature: string
+  owner: ScheduledOccurrenceRootOwner
+}
+
+export interface ScheduledOccurrenceChildOwnershipInput {
+  owner: ScheduledOccurrenceChildOwner
+}
+
+export interface ScheduledOccurrenceFinalBindingInput {
+  appRunId: string
+  provider: string | null
+  runtimeProfileId: string | null
+  dispatchAuthorityDigest: string
+}
+
+type ScheduledOccurrenceFinalBindingSnapshot = Readonly<ScheduledOccurrenceFinalBindingInput>
+
 export interface ScheduledOccurrenceRootBinding extends RuntimeBinding {
   readonly kind: 'root'
   readonly taskId: string
@@ -89,6 +109,7 @@ export type ScheduledOccurrenceLeaseErrorCode =
   | 'invalid-lease-kind'
   | 'invalid-transition'
   | 'lease-mismatch'
+  | 'lease-not-bound'
   | 'lease-not-live'
   | 'lease-not-reserved'
   | 'lease-required'
@@ -119,13 +140,31 @@ type TombstoneState = Extract<ScheduledOccurrenceLeaseState, 'terminal' | 'abort
 
 interface Entry {
   readonly lease: ScheduledOccurrenceLease
-  readonly binding: ScheduledOccurrenceBinding
-  readonly runIds: readonly string[]
+  readonly ownership: ScheduledOccurrenceOwnership
+  binding?: ScheduledOccurrenceBinding
+  readonly runIds: Set<string>
   readonly children: Set<Entry>
   root?: Entry
   state: ScheduledOccurrenceLeaseState
   terminalAt?: number
 }
+
+interface ScheduledOccurrenceRootOwnership extends ScheduledOccurrenceRootOwnershipInput {
+  readonly kind: 'root'
+}
+
+interface ScheduledOccurrenceChildOwnership {
+  readonly kind: 'child'
+  readonly taskId: string
+  readonly rootRunId: string
+  readonly rootAppRunId: string
+  readonly sealSignature: string
+  readonly owner: ScheduledOccurrenceChildOwner
+}
+
+type ScheduledOccurrenceOwnership =
+  | ScheduledOccurrenceRootOwnership
+  | ScheduledOccurrenceChildOwnership
 
 /**
  * Bounded process-local state machine for one-shot scheduled dispatches.
@@ -140,6 +179,7 @@ export class ScheduledOccurrenceLeaseRegistry {
   private readonly byRunId = new Map<string, Entry>()
   private readonly byLease = new WeakMap<object, Entry>()
   private validationActive = false
+  private operationActive = false
 
   constructor(options: ScheduledOccurrenceLeaseRegistryOptions) {
     if (!options || typeof options.validateLive !== 'function') {
@@ -165,21 +205,61 @@ export class ScheduledOccurrenceLeaseRegistry {
     runtimeProfileId: string | null
     dispatchAuthorityDigest: string
   }): ScheduledOccurrenceLease {
-    this.prepare(true)
-    const binding = Object.freeze({
-      kind: 'root' as const,
-      taskId: nonEmpty(input.taskId, 'taskId'),
-      rootRunId: nonEmpty(input.rootRunId, 'rootRunId'),
-      appRunId: nonEmpty(input.appRunId, 'appRunId'),
-      sealSignature: nonEmpty(input.sealSignature, 'sealSignature'),
-      owner: rootOwner(input.owner),
-      provider: nullableString(input.provider, 'provider'),
-      runtimeProfileId: nullableString(input.runtimeProfileId, 'runtimeProfileId'),
-      dispatchAuthorityDigest: nonEmpty(input.dispatchAuthorityDigest, 'dispatchAuthorityDigest')
+    return this.withOperation(true, () => {
+      const ownership = rootOwnershipSnapshot(input)
+      const finalBinding = finalBindingSnapshot(input)
+      this.assertRunIdsAvailable([...new Set([ownership.rootRunId, finalBinding.appRunId])])
+      const entry = this.register(ownership, [ownership.rootRunId])
+      this.bind(entry, finalBinding)
+      return entry.lease
     })
-    const runIds = [...new Set([binding.rootRunId, binding.appRunId])]
-    this.assertRunIdsAvailable(runIds)
-    return this.register(binding, runIds).lease
+  }
+
+  /**
+   * Reserves the durable/root ownership identity before asynchronous runtime preflight.
+   * Runtime authority is intentionally absent until bindAndStart executes.
+   */
+  reserveRootOwnership(input: ScheduledOccurrenceRootOwnershipInput): ScheduledOccurrenceLease {
+    return this.withOperation(true, () => {
+      const ownership = rootOwnershipSnapshot(input)
+      this.assertRunIdsAvailable([ownership.rootRunId])
+      return this.register(ownership, [ownership.rootRunId]).lease
+    })
+  }
+
+  reserveChildOwnership(
+    rootLease: ScheduledOccurrenceLease,
+    input: ScheduledOccurrenceChildOwnershipInput
+  ): ScheduledOccurrenceLease {
+    return this.withOperation(true, () => {
+      const root = this.known(rootLease)
+      if (root.ownership.kind !== 'root') fail('invalid-lease-kind', 'A root lease is required.')
+      if (root.state !== 'started') fail('root-not-started', 'The root must be started first.')
+      if (!input || typeof input !== 'object' || Array.isArray(input)) {
+        fail('invalid-input', 'Child ownership must be an object.')
+      }
+
+      const owner = childOwner(input.owner)
+      assertCompatibleOwner(root.ownership.owner, owner)
+      const ownership = childOwnershipSnapshot(root, owner)
+      const child = this.register(ownership, [], root)
+      root.children.add(child)
+      return child.lease
+    })
+  }
+
+  /**
+   * Atomically fixes the final runtime/run authority and starts a reserved owner.
+   * Once fixed, a failed live validation may be retried only with the exact same binding.
+   */
+  bindAndStart(
+    lease: ScheduledOccurrenceLease,
+    input: ScheduledOccurrenceFinalBindingInput
+  ): ScheduledOccurrenceStartResult {
+    return this.withOperation(false, () => {
+      const snapshot = finalBindingSnapshot(input)
+      return this.startScheduled(this.known(lease), snapshot)
+    })
   }
 
   reserveChild(
@@ -192,101 +272,110 @@ export class ScheduledOccurrenceLeaseRegistry {
       dispatchAuthorityDigest: string
     }
   ): ScheduledOccurrenceLease {
-    this.prepare(true)
-    const root = this.known(rootLease)
-    if (root.binding.kind !== 'root') fail('invalid-lease-kind', 'A root lease is required.')
-    if (root.state !== 'started') fail('root-not-started', 'The root must be started first.')
+    return this.withOperation(true, () => {
+      const root = this.known(rootLease)
+      if (root.ownership.kind !== 'root') fail('invalid-lease-kind', 'A root lease is required.')
+      if (root.state !== 'started') fail('root-not-started', 'The root must be started first.')
 
-    const owner = childOwner(input.owner)
-    assertCompatibleOwner(root.binding.owner, owner)
-    const binding = Object.freeze({
-      kind: 'child' as const,
-      taskId: root.binding.taskId,
-      rootRunId: root.binding.rootRunId,
-      rootAppRunId: root.binding.appRunId,
-      appRunId: nonEmpty(input.appRunId, 'appRunId'),
-      sealSignature: root.binding.sealSignature,
-      owner,
-      provider: nullableString(input.provider, 'provider'),
-      runtimeProfileId: nullableString(input.runtimeProfileId, 'runtimeProfileId'),
-      dispatchAuthorityDigest: nonEmpty(input.dispatchAuthorityDigest, 'dispatchAuthorityDigest')
+      const owner = childOwner(input.owner)
+      assertCompatibleOwner(root.ownership.owner, owner)
+      const ownership = childOwnershipSnapshot(root, owner)
+      const finalBinding = finalBindingSnapshot(input)
+      this.assertRunIdsAvailable([finalBinding.appRunId])
+      const child = this.register(ownership, [], root)
+      this.bind(child, finalBinding)
+      root.children.add(child)
+      return child.lease
     })
-    this.assertRunIdsAvailable([binding.appRunId])
-    const child = this.register(binding, [binding.appRunId], root)
-    root.children.add(child)
-    return child.lease
   }
 
   validateLive(
     lease: ScheduledOccurrenceLease,
     payload: ScheduledOccurrenceLeasePayload
   ): ScheduledOccurrenceLeasePayloadSnapshot {
-    this.prepare()
-    const snapshot = snapshotPayload(payload)
-    const entry = this.known(lease)
-    this.assertLive(entry)
-    this.assertPayload(entry, snapshot)
-    this.validate(entry, snapshot)
-    return snapshot
+    return this.withOperation(false, () => {
+      const snapshot = snapshotPayload(payload)
+      const entry = this.known(lease)
+      this.assertLive(entry)
+      this.assertPayload(entry, snapshot)
+      this.validate(entry, snapshot)
+      return snapshot
+    })
   }
 
   assertAndStart(
     lease: ScheduledOccurrenceLease | undefined,
     payload: ScheduledOccurrenceLeasePayload
   ): ScheduledOccurrenceStartResult {
-    this.prepare()
-    const snapshot = snapshotPayload(payload)
-    if (!lease) return this.startOrdinary(snapshot)
-
-    const entry = this.known(lease)
-    const registered = this.byRunId.get(snapshot.appRunId)
-    if (!registered || registered !== entry) fail('lease-mismatch', 'Lease and run do not match.')
-    if (entry.state !== 'reserved') fail('lease-not-reserved', 'Lease is not reserved.')
-    this.assertRootStartedWhenChild(entry)
-    this.assertPayload(entry, snapshot)
-    this.validate(entry, snapshot)
-    entry.state = 'started'
-    return frozenResult('scheduled', snapshot)
+    return this.withOperation(false, () => {
+      const snapshot = snapshotPayload(payload)
+      if (!lease) return this.startOrdinary(snapshot)
+      return this.startScheduled(this.known(lease), scheduledPayload(snapshot))
+    })
   }
 
   abortReserved(lease: ScheduledOccurrenceLease): boolean {
-    this.prepare()
-    const entry = this.known(lease)
-    if (isTerminal(entry.state)) return false
-    if (entry.state !== 'reserved') fail('invalid-transition', 'Lease is not reserved.')
-    this.end(entry, 'aborted')
-    return true
+    return this.withOperation(false, () => {
+      const entry = this.known(lease)
+      if (isTerminal(entry.state)) return false
+      if (entry.state !== 'reserved') fail('invalid-transition', 'Lease is not reserved.')
+      this.end(entry, 'aborted')
+      return true
+    })
   }
 
   markTerminal(lease: ScheduledOccurrenceLease): boolean {
-    this.prepare()
-    const entry = this.known(lease)
-    if (isTerminal(entry.state)) return false
-    if (entry.state !== 'started') fail('invalid-transition', 'Lease is not started.')
-    if (entry.binding.kind === 'root' && hasLiveChildren(entry)) {
-      fail('live-children', 'Root still has live children.')
-    }
-    this.end(entry, 'terminal')
-    return true
+    return this.withOperation(false, () => {
+      const entry = this.known(lease)
+      if (isTerminal(entry.state)) return false
+      if (entry.state !== 'started') fail('invalid-transition', 'Lease is not started.')
+      if (entry.ownership.kind === 'root' && hasLiveChildren(entry)) {
+        fail('live-children', 'Root still has live children.')
+      }
+      this.end(entry, 'terminal')
+      return true
+    })
   }
 
   revokeRoot(lease: ScheduledOccurrenceLease): boolean {
-    this.prepare()
-    const root = this.known(lease)
-    if (root.binding.kind !== 'root') fail('invalid-lease-kind', 'A root lease is required.')
-    if (isTerminal(root.state)) return false
-    for (const child of root.children) {
-      if (isLive(child.state)) this.end(child, 'revoked')
-    }
-    this.end(root, 'revoked')
-    return true
+    return this.withOperation(false, () => {
+      const root = this.known(lease)
+      if (root.ownership.kind !== 'root') fail('invalid-lease-kind', 'A root lease is required.')
+      if (isTerminal(root.state)) return false
+      for (const child of root.children) {
+        if (isLive(child.state)) this.end(child, 'revoked')
+      }
+      this.end(root, 'revoked')
+      return true
+    })
   }
 
   taskIdForRun(runId: string): string | undefined {
-    this.prepare()
-    return typeof runId === 'string' && runId.trim()
-      ? this.byRunId.get(runId)?.binding.taskId
-      : undefined
+    return this.withOperation(false, () =>
+      typeof runId === 'string' && runId.trim()
+        ? this.byRunId.get(runId)?.ownership.taskId
+        : undefined
+    )
+  }
+
+  private startScheduled(
+    entry: Entry,
+    snapshot: ScheduledOccurrenceFinalBindingSnapshot
+  ): ScheduledOccurrenceStartResult {
+    if (entry.state !== 'reserved') fail('lease-not-reserved', 'Lease is not reserved.')
+    this.assertRootStartedWhenChild(entry)
+
+    if (entry.binding) {
+      const registered = this.byRunId.get(snapshot.appRunId)
+      if (!registered || registered !== entry) fail('lease-mismatch', 'Lease and run do not match.')
+      this.assertPayload(entry, snapshot)
+    } else {
+      this.bind(entry, snapshot)
+    }
+
+    this.validate(entry, snapshot)
+    entry.state = 'started'
+    return frozenResult('scheduled', snapshot)
   }
 
   private startOrdinary(
@@ -302,15 +391,15 @@ export class ScheduledOccurrenceLeaseRegistry {
   }
 
   private register(
-    binding: ScheduledOccurrenceBinding,
+    ownership: ScheduledOccurrenceOwnership,
     runIds: readonly string[],
     root?: Entry
   ): Entry {
     const lease = opaqueLease()
     const entry: Entry = {
       lease,
-      binding,
-      runIds,
+      ownership,
+      runIds: new Set(runIds),
       children: new Set(),
       root,
       state: 'reserved'
@@ -321,13 +410,27 @@ export class ScheduledOccurrenceLeaseRegistry {
     return entry
   }
 
+  private bind(entry: Entry, snapshot: ScheduledOccurrenceFinalBindingSnapshot): void {
+    if (entry.binding) {
+      this.assertPayload(entry, snapshot)
+      return
+    }
+    this.assertRunIdAvailableFor(entry, snapshot.appRunId)
+    entry.binding = bindingSnapshot(entry.ownership, snapshot)
+    entry.runIds.add(snapshot.appRunId)
+    this.byRunId.set(snapshot.appRunId, entry)
+  }
+
   private validate(entry: Entry, payload: ScheduledOccurrenceLeasePayloadSnapshot): void {
+    const binding = this.bound(entry)
+    const rootBinding = this.bound(rootOf(entry))
+    if (rootBinding.kind !== 'root') fail('invalid-lease-kind', 'Root binding is invalid.')
     this.validationActive = true
     try {
       const result = this.validateCallback(
         Object.freeze({
-          binding: entry.binding,
-          rootBinding: rootOf(entry).binding as ScheduledOccurrenceRootBinding,
+          binding,
+          rootBinding,
           state: entry.state
         }),
         payload
@@ -340,7 +443,7 @@ export class ScheduledOccurrenceLeaseRegistry {
   }
 
   private assertPayload(entry: Entry, payload: ScheduledOccurrenceLeasePayloadSnapshot): void {
-    const binding = entry.binding
+    const binding = this.bound(entry)
     if (
       payload.appRunId !== binding.appRunId ||
       payload.provider !== binding.provider ||
@@ -357,7 +460,7 @@ export class ScheduledOccurrenceLeaseRegistry {
   }
 
   private assertRootStartedWhenChild(entry: Entry): void {
-    if (entry.binding.kind === 'child' && rootOf(entry).state !== 'started') {
+    if (entry.ownership.kind === 'child' && rootOf(entry).state !== 'started') {
       fail('lease-not-live', 'Child root is not started.')
     }
   }
@@ -377,13 +480,31 @@ export class ScheduledOccurrenceLeaseRegistry {
     }
   }
 
-  private prepare(reserving = false): void {
-    if (this.validationActive) {
-      fail('reentrant-validation', 'Validation cannot re-enter or mutate the registry.')
+  private assertRunIdAvailableFor(entry: Entry, runId: string): void {
+    const registered = this.byRunId.get(runId)
+    if (registered && registered !== entry) {
+      fail('duplicate-run-id', `Run id already registered: ${runId}`)
     }
-    this.prune()
-    if (reserving && this.entries.size >= this.maxEntries) {
-      fail('capacity-exhausted', 'Lease capacity is exhausted by live or recent entries.')
+  }
+
+  private bound(entry: Entry): ScheduledOccurrenceBinding {
+    if (!entry.binding) fail('lease-not-bound', 'Lease runtime authority is not bound.')
+    return entry.binding
+  }
+
+  private withOperation<T>(reserving: boolean, operation: () => T): T {
+    if (this.validationActive || this.operationActive) {
+      fail('reentrant-validation', 'Lease operations cannot re-enter the registry.')
+    }
+    this.operationActive = true
+    try {
+      this.prune()
+      if (reserving && this.entries.size >= this.maxEntries) {
+        fail('capacity-exhausted', 'Lease capacity is exhausted by live or recent entries.')
+      }
+      return operation()
+    } finally {
+      this.operationActive = false
     }
   }
 
@@ -424,6 +545,102 @@ function snapshotPayload(
       dispatchAuthorityDigest,
       'payload.dispatchAuthorityDigest'
     )
+  })
+}
+
+function finalBindingSnapshot(
+  input: ScheduledOccurrenceFinalBindingInput
+): ScheduledOccurrenceFinalBindingSnapshot {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    fail('invalid-input', 'Final binding must be an object.')
+  }
+  // Exactly one read per caller-owned scalar; this copy becomes the immutable binding.
+  const appRunId = input.appRunId
+  const provider = input.provider
+  const runtimeProfileId = input.runtimeProfileId
+  const dispatchAuthorityDigest = input.dispatchAuthorityDigest
+  return Object.freeze({
+    appRunId: nonEmpty(appRunId, 'binding.appRunId'),
+    provider: nullableString(provider, 'binding.provider'),
+    runtimeProfileId: nullableString(runtimeProfileId, 'binding.runtimeProfileId'),
+    dispatchAuthorityDigest: nonEmpty(dispatchAuthorityDigest, 'binding.dispatchAuthorityDigest')
+  })
+}
+
+function scheduledPayload(
+  payload: ScheduledOccurrenceLeasePayloadSnapshot
+): ScheduledOccurrenceFinalBindingSnapshot {
+  if (payload.dispatchAuthorityDigest === null) {
+    fail('payload-mismatch', 'A scheduled lease requires dispatch authority.')
+  }
+  return payload as ScheduledOccurrenceFinalBindingSnapshot
+}
+
+function rootOwnershipSnapshot(
+  input: ScheduledOccurrenceRootOwnershipInput
+): ScheduledOccurrenceRootOwnership {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    fail('invalid-input', 'Root ownership must be an object.')
+  }
+  const taskId = input.taskId
+  const rootRunId = input.rootRunId
+  const sealSignature = input.sealSignature
+  const owner = input.owner
+  return Object.freeze({
+    kind: 'root',
+    taskId: nonEmpty(taskId, 'taskId'),
+    rootRunId: nonEmpty(rootRunId, 'rootRunId'),
+    sealSignature: nonEmpty(sealSignature, 'sealSignature'),
+    owner: rootOwner(owner)
+  })
+}
+
+function childOwnershipSnapshot(
+  root: Entry,
+  owner: ScheduledOccurrenceChildOwner
+): ScheduledOccurrenceChildOwnership {
+  const rootBinding = root.binding
+  if (!rootBinding || rootBinding.kind !== 'root') {
+    fail('lease-not-bound', 'Root runtime authority is not bound.')
+  }
+  return Object.freeze({
+    kind: 'child',
+    taskId: rootBinding.taskId,
+    rootRunId: rootBinding.rootRunId,
+    rootAppRunId: rootBinding.appRunId,
+    sealSignature: rootBinding.sealSignature,
+    owner
+  })
+}
+
+function bindingSnapshot(
+  ownership: ScheduledOccurrenceOwnership,
+  runtime: ScheduledOccurrenceFinalBindingSnapshot
+): ScheduledOccurrenceBinding {
+  if (ownership.kind === 'root') {
+    return Object.freeze({
+      kind: 'root',
+      taskId: ownership.taskId,
+      rootRunId: ownership.rootRunId,
+      appRunId: runtime.appRunId,
+      sealSignature: ownership.sealSignature,
+      owner: ownership.owner,
+      provider: runtime.provider,
+      runtimeProfileId: runtime.runtimeProfileId,
+      dispatchAuthorityDigest: runtime.dispatchAuthorityDigest
+    })
+  }
+  return Object.freeze({
+    kind: 'child',
+    taskId: ownership.taskId,
+    rootRunId: ownership.rootRunId,
+    rootAppRunId: ownership.rootAppRunId,
+    appRunId: runtime.appRunId,
+    sealSignature: ownership.sealSignature,
+    owner: ownership.owner,
+    provider: runtime.provider,
+    runtimeProfileId: runtime.runtimeProfileId,
+    dispatchAuthorityDigest: runtime.dispatchAuthorityDigest
   })
 }
 

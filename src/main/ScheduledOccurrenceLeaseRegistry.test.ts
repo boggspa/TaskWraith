@@ -576,4 +576,501 @@ describe('ScheduledOccurrenceLeaseRegistry', () => {
     registry.assertAndStart(started, payload('started'))
     expectCode(() => registry.abortReserved(started), 'invalid-transition')
   })
+
+  it('reserves root ownership before preflight and binds final runtime authority once', () => {
+    const observed: Array<{
+      entry: ScheduledOccurrenceLeaseEntry
+      payload: ScheduledOccurrenceLeasePayloadSnapshot
+    }> = []
+    const registry = createRegistry({
+      validateLive: (entry, checkedPayload) => {
+        observed.push({ entry, payload: checkedPayload })
+        return true
+      }
+    })
+    const lease = registry.reserveRootOwnership({
+      taskId: 'task-late-root',
+      rootRunId: 'root-late-root',
+      sealSignature: 'seal-late-root',
+      owner: 'solo'
+    })
+
+    expect(registry.taskIdForRun('root-late-root')).toBe('task-late-root')
+    expect(registry.taskIdForRun('run-late-root')).toBeUndefined()
+    expectCode(
+      () =>
+        registry.validateLive(lease, {
+          appRunId: 'run-late-root',
+          provider: 'codex',
+          runtimeProfileId: 'profile-late-root',
+          dispatchAuthorityDigest: 'dispatch-late-root'
+        }),
+      'lease-not-bound'
+    )
+
+    const result = registry.bindAndStart(lease, {
+      appRunId: 'run-late-root',
+      provider: 'codex',
+      runtimeProfileId: 'profile-late-root',
+      dispatchAuthorityDigest: 'dispatch-late-root'
+    })
+
+    expect(result).toEqual({
+      kind: 'scheduled',
+      payload: {
+        appRunId: 'run-late-root',
+        provider: 'codex',
+        runtimeProfileId: 'profile-late-root',
+        dispatchAuthorityDigest: 'dispatch-late-root'
+      }
+    })
+    expect(registry.taskIdForRun('run-late-root')).toBe('task-late-root')
+    expect(observed).toHaveLength(1)
+    expect(observed[0]?.entry).toMatchObject({
+      state: 'reserved',
+      binding: {
+        kind: 'root',
+        taskId: 'task-late-root',
+        rootRunId: 'root-late-root',
+        appRunId: 'run-late-root',
+        sealSignature: 'seal-late-root',
+        owner: 'solo',
+        provider: 'codex',
+        runtimeProfileId: 'profile-late-root',
+        dispatchAuthorityDigest: 'dispatch-late-root'
+      }
+    })
+    expect(observed[0]?.entry.binding).toBe(observed[0]?.entry.rootBinding)
+    expect(observed[0]?.payload).toBe(result.payload)
+    expect(Object.isFrozen(observed[0]?.entry.binding)).toBe(true)
+  })
+
+  it('fixes a late binding before live validation and never permits rebinding it', () => {
+    let validationSucceeds = false
+    const registry = createRegistry({
+      validateLive: () => {
+        if (!validationSucceeds) {
+          return false as unknown as true
+        }
+        return true
+      }
+    })
+    const lease = registry.reserveRootOwnership({
+      taskId: 'task-fixed',
+      rootRunId: 'root-fixed',
+      sealSignature: 'seal-fixed',
+      owner: 'solo'
+    })
+    const finalBinding = {
+      appRunId: 'run-fixed',
+      provider: 'grok',
+      runtimeProfileId: null,
+      dispatchAuthorityDigest: 'dispatch-fixed'
+    } as const
+
+    expectCode(() => registry.bindAndStart(lease, finalBinding), 'live-validation-failed')
+    expect(registry.taskIdForRun('run-fixed')).toBe('task-fixed')
+    expectCode(
+      () => registry.bindAndStart(lease, { ...finalBinding, appRunId: 'run-rebound' }),
+      'lease-mismatch'
+    )
+    expectCode(
+      () => registry.bindAndStart(lease, { ...finalBinding, provider: 'codex' }),
+      'payload-mismatch'
+    )
+
+    validationSucceeds = true
+    expect(registry.bindAndStart(lease, finalBinding).kind).toBe('scheduled')
+    expectCode(() => registry.bindAndStart(lease, finalBinding), 'lease-not-reserved')
+  })
+
+  it('snapshots every final binding scalar once before fixing it', () => {
+    const reads = { appRunId: 0, provider: 0, runtimeProfileId: 0, dispatchAuthorityDigest: 0 }
+    const registry = createRegistry()
+    const lease = registry.reserveRootOwnership({
+      taskId: 'task-getters',
+      rootRunId: 'root-getters',
+      sealSignature: 'seal-getters',
+      owner: 'solo'
+    })
+    const source = {
+      get appRunId() {
+        reads.appRunId += 1
+        return 'run-getters'
+      },
+      get provider() {
+        reads.provider += 1
+        return 'claude'
+      },
+      get runtimeProfileId() {
+        reads.runtimeProfileId += 1
+        return 'profile-getters'
+      },
+      get dispatchAuthorityDigest() {
+        reads.dispatchAuthorityDigest += 1
+        return 'dispatch-getters'
+      }
+    }
+
+    const result = registry.bindAndStart(lease, source)
+
+    expect(reads).toEqual({
+      appRunId: 1,
+      provider: 1,
+      runtimeProfileId: 1,
+      dispatchAuthorityDigest: 1
+    })
+    expect(Object.isFrozen(result.payload)).toBe(true)
+    expect(result.payload).toEqual({
+      appRunId: 'run-getters',
+      provider: 'claude',
+      runtimeProfileId: 'profile-getters',
+      dispatchAuthorityDigest: 'dispatch-getters'
+    })
+  })
+
+  it('blocks ownership getter reentrancy before consuming capacity or run ids', () => {
+    const registry = createRegistry({ maxEntries: 1 })
+    const reentrantOwnership = {
+      get taskId() {
+        registry.reserveRootOwnership({
+          taskId: 'task-nested-owner',
+          rootRunId: 'root-nested-owner',
+          sealSignature: 'seal-nested-owner',
+          owner: 'solo'
+        })
+        return 'task-outer-owner'
+      },
+      rootRunId: 'root-outer-owner',
+      sealSignature: 'seal-outer-owner',
+      owner: 'solo' as const
+    }
+
+    expectCode(() => registry.reserveRootOwnership(reentrantOwnership), 'reentrant-validation')
+    expect(registry.taskIdForRun('root-outer-owner')).toBeUndefined()
+    expect(registry.taskIdForRun('root-nested-owner')).toBeUndefined()
+    expect(
+      registry.reserveRootOwnership({
+        taskId: 'task-after-reentry',
+        rootRunId: 'root-after-reentry',
+        sealSignature: 'seal-after-reentry',
+        owner: 'solo'
+      })
+    ).toBeDefined()
+  })
+
+  it('keeps aborted and revoked unbound ownership reservations unusable', () => {
+    const registry = createRegistry()
+    const aborted = registry.reserveRootOwnership({
+      taskId: 'task-aborted-late',
+      rootRunId: 'root-aborted-late',
+      sealSignature: 'seal-aborted-late',
+      owner: 'solo'
+    })
+    expect(registry.abortReserved(aborted)).toBe(true)
+    expectCode(
+      () =>
+        registry.bindAndStart(aborted, {
+          appRunId: 'run-aborted-late',
+          provider: 'codex',
+          runtimeProfileId: null,
+          dispatchAuthorityDigest: 'dispatch-aborted-late'
+        }),
+      'lease-not-reserved'
+    )
+
+    const revoked = registry.reserveRootOwnership({
+      taskId: 'task-revoked-late',
+      rootRunId: 'root-revoked-late',
+      sealSignature: 'seal-revoked-late',
+      owner: 'solo'
+    })
+    expect(registry.revokeRoot(revoked)).toBe(true)
+    expectCode(
+      () =>
+        registry.bindAndStart(revoked, {
+          appRunId: 'run-revoked-late',
+          provider: 'codex',
+          runtimeProfileId: null,
+          dispatchAuthorityDigest: 'dispatch-revoked-late'
+        }),
+      'lease-not-reserved'
+    )
+    expect(registry.taskIdForRun('root-aborted-late')).toBe('task-aborted-late')
+    expect(registry.taskIdForRun('root-revoked-late')).toBe('task-revoked-late')
+  })
+
+  it('reserves child ownership without runtime authority and blocks root termination', () => {
+    const observed: ScheduledOccurrenceLeaseEntry[] = []
+    const registry = createRegistry({
+      validateLive: (entry) => {
+        observed.push(entry)
+        return true
+      }
+    })
+    const root = registry.reserveRoot({
+      taskId: 'task-late-child',
+      rootRunId: 'root-late-child',
+      appRunId: 'run-late-child-root',
+      sealSignature: 'seal-late-child',
+      owner: 'loop-root',
+      provider: 'codex',
+      runtimeProfileId: 'profile-root',
+      dispatchAuthorityDigest: 'dispatch-late-child-root'
+    })
+    registry.assertAndStart(root, {
+      appRunId: 'run-late-child-root',
+      provider: 'codex',
+      runtimeProfileId: 'profile-root',
+      dispatchAuthorityDigest: 'dispatch-late-child-root'
+    })
+    const child = registry.reserveChildOwnership(root, {
+      owner: { kind: 'loop-step', stepId: 'late-step' }
+    })
+
+    expectCode(() => registry.markTerminal(root), 'live-children')
+    expectCode(
+      () =>
+        registry.validateLive(child, {
+          appRunId: 'run-late-step',
+          provider: 'grok',
+          runtimeProfileId: null,
+          dispatchAuthorityDigest: 'dispatch-late-step'
+        }),
+      'lease-not-bound'
+    )
+    expect(
+      registry.bindAndStart(child, {
+        appRunId: 'run-late-step',
+        provider: 'grok',
+        runtimeProfileId: null,
+        dispatchAuthorityDigest: 'dispatch-late-step'
+      }).kind
+    ).toBe('scheduled')
+    expect(observed.at(-1)).toMatchObject({
+      state: 'reserved',
+      binding: {
+        kind: 'child',
+        taskId: 'task-late-child',
+        rootRunId: 'root-late-child',
+        rootAppRunId: 'run-late-child-root',
+        appRunId: 'run-late-step',
+        owner: { kind: 'loop-step', stepId: 'late-step' },
+        provider: 'grok',
+        runtimeProfileId: null,
+        dispatchAuthorityDigest: 'dispatch-late-step'
+      }
+    })
+    expect(registry.markTerminal(child)).toBe(true)
+    expect(registry.markTerminal(root)).toBe(true)
+  })
+
+  it('applies root-start, root-kind, and owner compatibility to child ownership reservations', () => {
+    const registry = createRegistry()
+    const root = registry.reserveRootOwnership({
+      taskId: 'task-child-guards',
+      rootRunId: 'root-child-guards',
+      sealSignature: 'seal-child-guards',
+      owner: 'loop-root'
+    })
+    expectCode(
+      () =>
+        registry.reserveChildOwnership(root, {
+          owner: { kind: 'loop-step', stepId: 'too-early' }
+        }),
+      'root-not-started'
+    )
+    registry.bindAndStart(root, {
+      appRunId: 'run-child-guards-root',
+      provider: 'codex',
+      runtimeProfileId: null,
+      dispatchAuthorityDigest: 'dispatch-child-guards-root'
+    })
+    expectCode(
+      () =>
+        registry.reserveChildOwnership(root, {
+          owner: {
+            kind: 'ensemble-seat',
+            roundId: 'wrong-round',
+            participantId: 'wrong-participant'
+          }
+        }),
+      'owner-mismatch'
+    )
+    const child = registry.reserveChildOwnership(root, {
+      owner: { kind: 'loop-step', stepId: 'valid-step' }
+    })
+    expectCode(
+      () =>
+        registry.reserveChildOwnership(child, {
+          owner: { kind: 'loop-step', stepId: 'nested-step' }
+        }),
+      'invalid-lease-kind'
+    )
+    expectCode(
+      () =>
+        registry.reserveChildOwnership(
+          root,
+          null as unknown as { owner: { kind: 'loop-step'; stepId: string } }
+        ),
+      'invalid-input'
+    )
+    expect(registry.abortReserved(child)).toBe(true)
+    expect(registry.markTerminal(root)).toBe(true)
+  })
+
+  it('revokes an unbound child with its root and never lets it start later', () => {
+    const registry = createRegistry()
+    const root = registry.reserveRoot({
+      taskId: 'task-revoke-child',
+      rootRunId: 'root-revoke-child',
+      appRunId: 'run-revoke-child-root',
+      sealSignature: 'seal-revoke-child',
+      owner: 'ensemble-root',
+      provider: null,
+      runtimeProfileId: null,
+      dispatchAuthorityDigest: 'dispatch-revoke-child-root'
+    })
+    registry.assertAndStart(root, {
+      appRunId: 'run-revoke-child-root',
+      provider: null,
+      runtimeProfileId: null,
+      dispatchAuthorityDigest: 'dispatch-revoke-child-root'
+    })
+    const child = registry.reserveChildOwnership(root, {
+      owner: {
+        kind: 'ensemble-seat',
+        roundId: 'round-revoke',
+        participantId: 'participant-revoke'
+      }
+    })
+
+    expect(registry.revokeRoot(root)).toBe(true)
+    expectCode(
+      () =>
+        registry.bindAndStart(child, {
+          appRunId: 'run-revoked-child',
+          provider: 'claude',
+          runtimeProfileId: null,
+          dispatchAuthorityDigest: 'dispatch-revoked-child'
+        }),
+      'lease-not-reserved'
+    )
+  })
+
+  it('blocks late binding reentrancy without partially binding the target lease', () => {
+    let reenter = true
+    const targetBinding = {
+      appRunId: 'run-reentrant-target',
+      provider: 'codex',
+      runtimeProfileId: null,
+      dispatchAuthorityDigest: 'dispatch-reentrant-target'
+    } as const
+    const registry = createRegistry({
+      validateLive: () => {
+        if (reenter) registry.bindAndStart(target, targetBinding)
+        return true
+      }
+    })
+    const source = registry.reserveRootOwnership({
+      taskId: 'task-reentrant-source',
+      rootRunId: 'root-reentrant-source',
+      sealSignature: 'seal-reentrant-source',
+      owner: 'solo'
+    })
+    const target = registry.reserveRootOwnership({
+      taskId: 'task-reentrant-target',
+      rootRunId: 'root-reentrant-target',
+      sealSignature: 'seal-reentrant-target',
+      owner: 'solo'
+    })
+    const sourceBinding = {
+      appRunId: 'run-reentrant-source',
+      provider: 'grok',
+      runtimeProfileId: null,
+      dispatchAuthorityDigest: 'dispatch-reentrant-source'
+    } as const
+
+    expectCode(() => registry.bindAndStart(source, sourceBinding), 'reentrant-validation')
+    expect(registry.taskIdForRun('run-reentrant-source')).toBe('task-reentrant-source')
+    expect(registry.taskIdForRun('run-reentrant-target')).toBeUndefined()
+
+    reenter = false
+    expect(registry.bindAndStart(source, sourceBinding).kind).toBe('scheduled')
+    expect(registry.bindAndStart(target, targetBinding).kind).toBe('scheduled')
+  })
+
+  it('blocks reentrancy from final-binding getters before any authority is fixed', () => {
+    const registry = createRegistry()
+    const source = registry.reserveRootOwnership({
+      taskId: 'task-getter-reentry',
+      rootRunId: 'root-getter-reentry',
+      sealSignature: 'seal-getter-reentry',
+      owner: 'solo'
+    })
+    const nested = registry.reserveRootOwnership({
+      taskId: 'task-getter-nested',
+      rootRunId: 'root-getter-nested',
+      sealSignature: 'seal-getter-nested',
+      owner: 'solo'
+    })
+    const nestedBinding = {
+      appRunId: 'run-getter-nested',
+      provider: 'codex',
+      runtimeProfileId: null,
+      dispatchAuthorityDigest: 'dispatch-getter-nested'
+    } as const
+    const reentrantBinding = {
+      get appRunId() {
+        registry.bindAndStart(nested, nestedBinding)
+        return 'run-getter-reentry'
+      },
+      provider: 'codex',
+      runtimeProfileId: null,
+      dispatchAuthorityDigest: 'dispatch-getter-reentry'
+    }
+
+    expectCode(() => registry.bindAndStart(source, reentrantBinding), 'reentrant-validation')
+    expect(registry.taskIdForRun('run-getter-reentry')).toBeUndefined()
+    expect(registry.taskIdForRun('run-getter-nested')).toBeUndefined()
+    expect(
+      registry.bindAndStart(source, {
+        appRunId: 'run-getter-reentry',
+        provider: 'codex',
+        runtimeProfileId: null,
+        dispatchAuthorityDigest: 'dispatch-getter-reentry'
+      }).kind
+    ).toBe('scheduled')
+    expect(registry.bindAndStart(nested, nestedBinding).kind).toBe('scheduled')
+  })
+
+  it('rejects a colliding final run id without consuming the unbound reservation', () => {
+    const registry = createRegistry()
+    reserveSolo(registry, 'occupied')
+    const late = registry.reserveRootOwnership({
+      taskId: 'task-collision-late',
+      rootRunId: 'root-collision-late',
+      sealSignature: 'seal-collision-late',
+      owner: 'solo'
+    })
+
+    expectCode(
+      () =>
+        registry.bindAndStart(late, {
+          appRunId: 'run-occupied',
+          provider: 'codex',
+          runtimeProfileId: 'profile-codex',
+          dispatchAuthorityDigest: 'dispatch-collision'
+        }),
+      'duplicate-run-id'
+    )
+    expect(
+      registry.bindAndStart(late, {
+        appRunId: 'run-collision-late',
+        provider: 'codex',
+        runtimeProfileId: 'profile-codex',
+        dispatchAuthorityDigest: 'dispatch-collision'
+      }).kind
+    ).toBe('scheduled')
+  })
 })
