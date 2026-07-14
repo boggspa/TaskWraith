@@ -1,7 +1,9 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
+import { randomUUID } from 'node:crypto'
 import type {
   GeminiWorktreeLaunchOption,
   BlackboardEntry,
+  ChatRecord,
   EnsembleFanoutPolicy,
   ProviderId,
   RunAnalystRequest,
@@ -55,12 +57,51 @@ import type {
   ChatPopoutRoundExpansionSnapshot,
   ChatPopoutScrollState
 } from '../shared/chatPopoutTransfer'
+import {
+  SerializedChatPersistence,
+  type CanonicalChatSaveResult
+} from './SerializedChatPersistence'
 
 type ComposerImageAttachment = {
   id?: string
   path?: string
   name?: string
 }
+
+const CLIPBOARD_PASTE_INTENT_TTL_MS = 1_500
+let pendingClipboardPasteIntent: { token: string; expiresAt: number } | null = null
+
+// Only the isolated preload observes the real DOM event and keeps the opaque
+// token. Renderer code can request an image save, but cannot mint or read the
+// proof required by main to touch the host clipboard.
+window.addEventListener(
+  'paste',
+  (event) => {
+    if (!event.isTrusted) return
+    const containsImage = Array.from(event.clipboardData?.items || []).some((item) =>
+      item.type.startsWith('image/')
+    )
+    if (!containsImage) return
+    const token = randomUUID()
+    pendingClipboardPasteIntent = {
+      token,
+      expiresAt: Date.now() + CLIPBOARD_PASTE_INTENT_TTL_MS
+    }
+    ipcRenderer.send('authorize-clipboard-paste-intent', token)
+  },
+  true
+)
+
+async function saveClipboardImageAttachmentFromTrustedPaste(): Promise<string[]> {
+  const intent = pendingClipboardPasteIntent
+  pendingClipboardPasteIntent = null
+  if (!intent || Date.now() > intent.expiresAt) return []
+  return ipcRenderer.invoke('save-clipboard-image-attachment', intent.token)
+}
+
+const serializedChatPersistence = new SerializedChatPersistence((chat) =>
+  ipcRenderer.invoke('save-chat', chat) as Promise<CanonicalChatSaveResult>
+)
 
 // Custom APIs for renderer
 const api = {
@@ -73,10 +114,17 @@ const api = {
   // preload). The renderer's drop/paste collectors call this to restore
   // drag-and-drop attach that regressed on the Electron 39 upgrade. Param type
   // is derived from Electron's own signature so it needs no DOM lib here.
-  getPathForFile: (file: Parameters<typeof webUtils.getPathForFile>[0]): string =>
-    webUtils.getPathForFile(file),
-  saveClipboardImageAttachment: () => ipcRenderer.invoke('save-clipboard-image-attachment'),
-  authorizeImagePreview: (paths: string[]) => ipcRenderer.invoke('authorize-image-preview', paths),
+  getPathForFile: (file: Parameters<typeof webUtils.getPathForFile>[0]): string => {
+    const filePath = webUtils.getPathForFile(file)
+    if (filePath) {
+      // The renderer can request authorization only through this preload-owned
+      // File capability. It cannot mint an arbitrary local path for a detached
+      // chat now that the generic invoke channel is main-renderer-only.
+      ipcRenderer.send('authorize-dropped-attachment', filePath)
+    }
+    return filePath
+  },
+  saveClipboardImageAttachment: saveClipboardImageAttachmentFromTrustedPaste,
   readImagePreview: (path: string) => ipcRenderer.invoke('read-image-preview', path),
   transcribeComposerAudio: (input: { localeIdentifier?: string; wav: ArrayBuffer }) =>
     ipcRenderer.invoke('composer-audio:transcribe', input) as Promise<
@@ -160,10 +208,15 @@ const api = {
     // "attach a known workspace as a secondary" action).
     path?: string
     deferPersist?: boolean
+    selectionReceipt?: string
   }): Promise<
-    | { ok: true; grants: unknown[]; path: string }
+    | { ok: true; grants: unknown[]; path: string; selectionReceipt?: string }
     | { ok: false; reason: 'no-chat' | 'cancelled' | 'no-provider' | 'no-window' }
   > => ipcRenderer.invoke('external-path:pick-and-persist', payload),
+  revokeExternalPathGrants: (payload: { chatId: string; grantIds: string[] }): Promise<
+    | { ok: true; grants: unknown[]; revokedGrantIds: string[] }
+    | { ok: false; reason: 'no-chat' | 'no-grants' }
+  > => ipcRenderer.invoke('external-path:revoke', payload),
   /**
    * Slice 1 of the external-path-redesign arc. Renderer asks main to
    * look at an absolute path and report whether it's a git repo (and
@@ -247,10 +300,10 @@ const api = {
   getExternalUsage: (options?: { force?: boolean }) =>
     ipcRenderer.invoke('get-external-usage', options),
   probeGrokUsage: () => ipcRenderer.invoke('grok-usage:probe'),
-  gitSnapshot: (payload: { workspacePath?: string; repoPath?: string }) =>
+  gitSnapshot: (payload: { workspacePath?: string; repoPath?: string; chatId?: string }) =>
     ipcRenderer.invoke('git:snapshot', payload) as Promise<GitResult<GitRepositorySnapshot>>,
   gitSubscribeSnapshot: (
-    payload: { workspacePath?: string; repoPath?: string },
+    payload: { workspacePath?: string; repoPath?: string; chatId?: string },
     callback: (payload: GitSnapshotChangedPayload) => void
   ) => {
     const subscriptionId =
@@ -284,41 +337,69 @@ const api = {
   gitInvalidateSnapshot: (payload: {
     workspacePath?: string
     repoPath?: string
+    chatId?: string
     reason?: GitSnapshotInvalidationReason
   }) => ipcRenderer.invoke('git:invalidate-snapshot', payload) as Promise<{ ok: true } | { ok: false; error: string }>,
   gitStage: (payload: {
     workspacePath?: string
     repoPath?: string
+    chatId?: string
     paths?: string[]
     all?: boolean
     update?: boolean
     patch?: string
   }) => ipcRenderer.invoke('git:stage', payload) as Promise<GitResult<GitRepositorySnapshot>>,
-  gitUnstage: (payload: { workspacePath?: string; repoPath?: string; paths?: string[] }) =>
+  gitUnstage: (payload: {
+    workspacePath?: string
+    repoPath?: string
+    chatId?: string
+    paths?: string[]
+  }) =>
     ipcRenderer.invoke('git:unstage', payload) as Promise<GitResult<GitRepositorySnapshot>>,
-  gitCommit: (payload: { workspacePath?: string; repoPath?: string; message: string }) =>
+  gitCommit: (payload: {
+    workspacePath?: string
+    repoPath?: string
+    chatId?: string
+    message: string
+  }) =>
     ipcRenderer.invoke('git:commit', payload) as Promise<GitResult<GitRepositorySnapshot>>,
   gitPush: (payload: {
     workspacePath?: string
     repoPath?: string
+    chatId?: string
     setUpstream?: boolean
     remote?: string
   }) => ipcRenderer.invoke('git:push', payload) as Promise<GitResult<GitRepositorySnapshot>>,
-  'git:list-branches': (payload: { workspacePath?: string; repoPath?: string }) =>
+  'git:list-branches': (payload: {
+    workspacePath?: string
+    repoPath?: string
+    chatId?: string
+  }) =>
     ipcRenderer.invoke('git:list-branches', payload),
-  'git:checkout-branch': (payload: { workspacePath?: string; repoPath?: string; branch?: string }) =>
+  'git:checkout-branch': (payload: {
+    workspacePath?: string
+    repoPath?: string
+    chatId?: string
+    branch?: string
+  }) =>
     ipcRenderer.invoke('git:checkout-branch', payload),
   'git:create-branch': (payload: {
     workspacePath?: string
     repoPath?: string
+    chatId?: string
     branch?: string
     from?: string
   }) => ipcRenderer.invoke('git:create-branch', payload),
-  'git:list-worktrees': (payload: { workspacePath?: string; repoPath?: string }) =>
+  'git:list-worktrees': (payload: {
+    workspacePath?: string
+    repoPath?: string
+    chatId?: string
+  }) =>
     ipcRenderer.invoke('git:list-worktrees', payload),
   'git:create-worktree': (payload: {
     workspacePath?: string
     repoPath?: string
+    chatId?: string
     name?: string
     branch?: string
     path?: string
@@ -326,18 +407,33 @@ const api = {
   'git:remove-worktree': (payload: {
     workspacePath?: string
     repoPath?: string
+    chatId?: string
     path?: string
     force?: boolean
   }) => ipcRenderer.invoke('git:remove-worktree', payload),
-  'git:select-worktree': (payload: { workspacePath?: string; repoPath?: string; path?: string }) =>
+  'git:select-worktree': (payload: {
+    workspacePath?: string
+    repoPath?: string
+    chatId?: string
+    path?: string
+  }) =>
     ipcRenderer.invoke('git:select-worktree', payload),
-  githubPrStatus: (payload: { workspacePath?: string; repoPath?: string }) =>
+  githubPrStatus: (payload: {
+    workspacePath?: string
+    repoPath?: string
+    chatId?: string
+  }) =>
     ipcRenderer.invoke('github:pr-status', payload) as Promise<GitResult<GitPrSummary>>,
-  githubPrReadiness: (payload: { workspacePath?: string; repoPath?: string }) =>
+  githubPrReadiness: (payload: {
+    workspacePath?: string
+    repoPath?: string
+    chatId?: string
+  }) =>
     ipcRenderer.invoke('github:pr-readiness', payload) as Promise<GitResult<GitPrReadiness>>,
   githubCiStatus: (payload: {
     workspacePath?: string
     repoPath?: string
+    chatId?: string
     pr?: string | number
     branch?: string
     commitSha?: string
@@ -349,6 +445,7 @@ const api = {
   createGithubPr: (payload: {
     workspacePath?: string
     repoPath?: string
+    chatId?: string
     title?: string
     body?: string
     draft?: boolean
@@ -400,12 +497,15 @@ const api = {
     intentNote?: string
   ) => ipcRenderer.invoke('respond-agent-approval', requestId, action, intentNote),
   writeGeminiInput: (data: string) => ipcRenderer.invoke('write-gemini-input', data),
-  getDiff: (workspace: string) => ipcRenderer.invoke('get-diff', workspace),
+  getDiff: (
+    workspace: string | { workspacePath?: string; repoPath?: string; chatId?: string }
+  ) => ipcRenderer.invoke('get-diff', workspace),
   openWorkspacePopout: (
     input:
       | {
           kind: 'file-editor' | 'diff-studio' | 'workbench'
           workspacePath: string
+          chatId?: string
           targetPath?: string
           targetView?: 'editor' | 'diff'
         }
@@ -1169,6 +1269,20 @@ const api = {
     canonicalProvider?: string
     canonicalProviderMetadata?: Record<string, unknown>
   }) => ipcRenderer.invoke('set-chat-kind', args),
+  rebindChatWorkspace: (
+    args:
+      | { chatId: string; scope: 'global' }
+      | {
+          chatId: string
+          scope: 'workspace'
+          workspaceId: string
+          workspacePath: string
+        }
+  ) =>
+    ipcRenderer.invoke('rebind-chat-workspace', args) as Promise<{
+      chat: ChatRecord
+      changed: boolean
+    }>,
   listDiscordContextTargets: () => ipcRenderer.invoke('discord-context:list-targets'),
   readDiscordContext: (selection: DiscordContextSelection) =>
     ipcRenderer.invoke('discord-context:read-channel', selection),
@@ -1279,7 +1393,7 @@ const api = {
     ipcRenderer.invoke('human-collaboration-collaborator:last-session'),
   humanCollaborationCollaboratorReconnect: () =>
     ipcRenderer.invoke('human-collaboration-collaborator:reconnect'),
-  saveChat: (chat: any) => ipcRenderer.invoke('save-chat', chat),
+  saveChat: (chat: ChatRecord) => serializedChatPersistence.save(chat),
   deleteChat: (chatId: string) => ipcRenderer.invoke('delete-chat', chatId),
   reapAbandonedChats: (renderer: {
     protectedChatIds?: string[]
@@ -1288,7 +1402,11 @@ const api = {
   }) => ipcRenderer.invoke('reap-abandoned-chats', renderer),
   /** Slash-picker `/clear` — wipes the chat's messages + runs while
    * leaving the record (and its provider session id) intact. */
-  truncateChat: (chatId: string) => ipcRenderer.invoke('truncate-chat', chatId),
+  truncateChat: (chatId: string) =>
+    serializedChatPersistence.run(
+      chatId,
+      () => ipcRenderer.invoke('truncate-chat', chatId) as Promise<ChatRecord | null>
+    ),
   clearChats: (workspaceId?: string) => ipcRenderer.invoke('clear-chats', workspaceId),
   recordUsage: (usage: any) => ipcRenderer.invoke('record-usage', usage),
   getUsage: (workspaceId?: string, chatId?: string) =>
@@ -1742,10 +1860,16 @@ const api = {
   // re-fetch on its end. Returns an unsubscribe function so the
   // popout can clean up on unmount.
   onWorkspacePopoutRefresh: (
-    callback: (payload: { workspacePath: string; reason: string }) => void
+    callback: (payload: {
+      workspacePath: string
+      reason: string
+      externalWriteAllowed?: boolean
+    }) => void
   ) => {
-    const wrapped = (_event: unknown, payload: { workspacePath: string; reason: string }): void =>
-      callback(payload)
+    const wrapped = (
+      _event: unknown,
+      payload: { workspacePath: string; reason: string; externalWriteAllowed?: boolean }
+    ): void => callback(payload)
     ipcRenderer.on('workspace-popout-refresh', wrapped)
     return () => ipcRenderer.removeListener('workspace-popout-refresh', wrapped)
   },

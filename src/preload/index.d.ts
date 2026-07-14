@@ -426,7 +426,6 @@ declare global {
       // `File.path`; webUtils.getPathForFile is the replacement).
       getPathForFile: (file: File) => string
       saveClipboardImageAttachment: () => Promise<string[]>
-      authorizeImagePreview: (paths: string[]) => Promise<void>
       readImagePreview: (path: string) => Promise<string | null>
       transcribeComposerAudio: (input: {
         localeIdentifier?: string
@@ -498,9 +497,24 @@ declare global {
         // Defer metadata persistence until the user confirms grants in
         // the composer preflight modal.
         deferPersist?: boolean
+        // Opaque, short-lived proof returned by a native deferred picker.
+        // Required to confirm an unregistered external path.
+        selectionReceipt?: string
       }) => Promise<
-        | { ok: true; grants: ExternalPathGrant[]; path: string }
+        | {
+            ok: true
+            grants: ExternalPathGrant[]
+            path: string
+            selectionReceipt?: string
+          }
         | { ok: false; reason: 'no-chat' | 'cancelled' | 'no-provider' | 'no-window' }
+      >
+      revokeExternalPathGrants: (payload: {
+        chatId: string
+        grantIds: string[]
+      }) => Promise<
+        | { ok: true; grants: ExternalPathGrant[]; revokedGrantIds: string[] }
+        | { ok: false; reason: 'no-chat' | 'no-grants' }
       >
       probeExternalPath: (
         absolutePath: string
@@ -572,22 +586,26 @@ declare global {
       gitSnapshot: (payload: {
         workspacePath?: string
         repoPath?: string
+        chatId?: string
       }) => Promise<GitResult<GitRepositorySnapshot>>
       gitSubscribeSnapshot: (
         payload: {
           workspacePath?: string
           repoPath?: string
+          chatId?: string
         },
         callback: (payload: GitSnapshotChangedPayload) => void
       ) => () => void
       gitInvalidateSnapshot: (payload: {
         workspacePath?: string
         repoPath?: string
+        chatId?: string
         reason?: GitSnapshotInvalidationReason
       }) => Promise<{ ok: true } | { ok: false; error: string }>
       gitStage: (payload: {
         workspacePath?: string
         repoPath?: string
+        chatId?: string
         paths?: string[]
         all?: boolean
         update?: boolean
@@ -596,41 +614,49 @@ declare global {
       gitUnstage: (payload: {
         workspacePath?: string
         repoPath?: string
+        chatId?: string
         paths?: string[]
       }) => Promise<GitResult<GitRepositorySnapshot>>
       gitCommit: (payload: {
         workspacePath?: string
         repoPath?: string
+        chatId?: string
         message: string
       }) => Promise<GitResult<GitRepositorySnapshot>>
       gitPush: (payload: {
         workspacePath?: string
         repoPath?: string
+        chatId?: string
         setUpstream?: boolean
         remote?: string
       }) => Promise<GitResult<GitRepositorySnapshot>>
       'git:list-branches': (payload: {
         workspacePath?: string
         repoPath?: string
+        chatId?: string
       }) => Promise<{ ok: boolean; branches: GitBranchInfo[]; currentBranch?: string; error?: string }>
       'git:checkout-branch': (payload: {
         workspacePath?: string
         repoPath?: string
+        chatId?: string
         branch?: string
       }) => Promise<{ ok: boolean; snapshot?: GitRepositorySnapshot; error?: string }>
       'git:create-branch': (payload: {
         workspacePath?: string
         repoPath?: string
+        chatId?: string
         branch?: string
         from?: string
       }) => Promise<{ ok: boolean; snapshot?: GitRepositorySnapshot; error?: string }>
       'git:list-worktrees': (payload: {
         workspacePath?: string
         repoPath?: string
+        chatId?: string
       }) => Promise<{ ok: boolean; worktrees: GitWorktreeInfo[]; error?: string }>
       'git:create-worktree': (payload: {
         workspacePath?: string
         repoPath?: string
+        chatId?: string
         name?: string
         branch?: string
         path?: string
@@ -638,25 +664,30 @@ declare global {
       'git:remove-worktree': (payload: {
         workspacePath?: string
         repoPath?: string
+        chatId?: string
         path?: string
         force?: boolean
       }) => Promise<{ ok: boolean; snapshot?: GitRepositorySnapshot; error?: string }>
       'git:select-worktree': (payload: {
         workspacePath?: string
         repoPath?: string
+        chatId?: string
         path?: string
       }) => Promise<{ ok: boolean; snapshot?: GitRepositorySnapshot; error?: string }>
       githubPrStatus: (payload: {
         workspacePath?: string
         repoPath?: string
+        chatId?: string
       }) => Promise<GitResult<GitPrSummary>>
       githubPrReadiness: (payload: {
         workspacePath?: string
         repoPath?: string
+        chatId?: string
       }) => Promise<GitResult<GitPrReadiness>>
       githubCiStatus: (payload: {
         workspacePath?: string
         repoPath?: string
+        chatId?: string
         pr?: string | number
         branch?: string
         commitSha?: string
@@ -668,6 +699,7 @@ declare global {
       createGithubPr: (payload: {
         workspacePath?: string
         repoPath?: string
+        chatId?: string
         title?: string
         body?: string
         draft?: boolean
@@ -730,7 +762,9 @@ declare global {
         intentNote?: string
       ) => Promise<boolean>
       writeGeminiInput: (data: string) => Promise<boolean>
-      getDiff: (workspace: string) => Promise<{
+      getDiff: (
+        workspace: string | { workspacePath?: string; repoPath?: string; chatId?: string }
+      ) => Promise<{
         type: 'not_repo' | 'no_changes' | 'changes' | 'error'
         text?: string
         statusText?: string
@@ -742,6 +776,7 @@ declare global {
           | {
               kind: 'file-editor' | 'diff-studio' | 'workbench'
               workspacePath: string
+              chatId?: string
               targetPath?: string
               targetView?: 'editor' | 'diff'
             }
@@ -1514,6 +1549,16 @@ declare global {
         canonicalProvider?: ProviderId
         canonicalProviderMetadata?: Record<string, unknown>
       }) => Promise<ChatRecord>
+      rebindChatWorkspace: (
+        args:
+          | { chatId: string; scope: 'global' }
+          | {
+              chatId: string
+              scope: 'workspace'
+              workspaceId: string
+              workspacePath: string
+            }
+      ) => Promise<{ chat: ChatRecord; changed: boolean }>
       listDiscordContextTargets: () => Promise<DiscordContextTargets>
       readDiscordContext: (selection: DiscordContextSelection) => Promise<DiscordContextSnapshot>
       humanCollaborationCreateShare: (input: {
@@ -1652,7 +1697,7 @@ declare global {
         mode: 'readOnly' | 'comments'
         displayName: string
       }>
-      saveChat: (chat: ChatRecord) => Promise<void>
+      saveChat: (chat: ChatRecord) => Promise<ChatRecord>
       deleteChat: (chatId: string) => Promise<void>
       reapAbandonedChats: (renderer: {
         protectedChatIds?: string[]
@@ -1978,7 +2023,11 @@ declare global {
       ) => () => void
       onAppShellStatsChanged: (callback: (snapshot: AppShellStatsSnapshot) => void) => () => void
       onWorkspacePopoutRefresh: (
-        callback: (payload: { workspacePath: string; reason: string }) => void
+        callback: (payload: {
+          workspacePath: string
+          reason: string
+          externalWriteAllowed?: boolean
+        }) => void
       ) => () => void
       onWorkspacePopoutOpenFile: (
         callback: (payload: { workspacePath: string; path: string; view?: 'editor' | 'diff' }) => void
