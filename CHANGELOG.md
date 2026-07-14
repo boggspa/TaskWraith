@@ -36,6 +36,9 @@ the next explicitly versioned desktop and iOS release.
   first-anchored viewport, foreground ownership closes only after its lanes
   settle, and the continuation-hop notice is published after live work rather
   than racing it.
+- **Directed Ensemble steers stay single-recipient.** A direct or remote Steer
+  with one structured `@participant` target preserves that participant scope
+  and forces inherited Read/All fan-out off instead of widening to the roster.
 - **Multiview lifecycle state stays with its pane and chat.** Workspace and
   worktree selection, focus, trust, permissions, Ensemble controls, queued-run
   scope, attachments, external grants, Git/PR/CI snapshots, file evidence, and
