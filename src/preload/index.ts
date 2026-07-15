@@ -1435,6 +1435,8 @@ const api = {
     ipcRenderer.invoke('save-scheduled-task', task),
   updateScheduledTask: (id: string, partial: ScheduledTaskLifecycleUpdate) =>
     ipcRenderer.invoke('update-scheduled-task', id, partial),
+  cancelScheduledTask: (id: string, reason?: string) =>
+    ipcRenderer.invoke('cancel-scheduled-task', id, reason),
   deleteScheduledTask: (id: string) => ipcRenderer.invoke('delete-scheduled-task', id),
   getWorkflowDefinitions: (workspaceId?: string) =>
     ipcRenderer.invoke('get-workflow-definitions', workspaceId),
@@ -1670,11 +1672,6 @@ const api = {
     ): void => callback(payload)
     ipcRenderer.on('agent-approval-resolved', wrapped)
     return () => ipcRenderer.removeListener('agent-approval-resolved', wrapped)
-  },
-  onScheduledTaskDue: (callback: (payload: any) => void) => {
-    const wrapped = (_event: unknown, payload: unknown): void => callback(payload)
-    ipcRenderer.on('scheduled-task-due', wrapped)
-    return () => ipcRenderer.removeListener('scheduled-task-due', wrapped)
   },
   onScheduledTasksChanged: (callback: (payload: any) => void) => {
     const wrapped = (_event: unknown, payload: unknown): void => callback(payload)
@@ -1944,7 +1941,6 @@ const api = {
     ipcRenderer.removeAllListeners('agent-approval-resolved')
     ipcRenderer.removeAllListeners('spellcheck:context-menu')
     ipcRenderer.removeAllListeners('update-status-changed')
-    ipcRenderer.removeAllListeners('scheduled-task-due')
     ipcRenderer.removeAllListeners('scheduled-tasks-changed')
     ipcRenderer.removeAllListeners('workflow-definitions-changed')
     ipcRenderer.removeAllListeners('workspace-boards-changed')

@@ -1725,6 +1725,7 @@ declare global {
         id: string,
         partial: ScheduledTaskLifecycleUpdate
       ) => Promise<ScheduledTask | null>
+      cancelScheduledTask: (id: string, reason?: string) => Promise<ScheduledTask | null>
       deleteScheduledTask: (id: string) => Promise<void>
       getWorkflowDefinitions: (workspaceId?: string) => Promise<WorkflowDefinition[]>
       saveWorkflowDefinition: (
@@ -1950,7 +1951,6 @@ declare global {
           threadId?: string
         }) => void
       ) => () => void
-      onScheduledTaskDue: (callback: (payload: ScheduledTask) => void) => () => void
       onScheduledTasksChanged: (callback: (payload: ScheduledTask[]) => void) => () => void
       onEnsembleRosterPresetSaveRequested: (
         callback: (payload: { name: string; participants: unknown[] }) => void
