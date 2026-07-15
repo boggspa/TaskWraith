@@ -79,6 +79,7 @@ import {
   probeKimiFlavour
 } from './providers/KimiFlavour'
 import { kimiAcpEnabled } from './kimiGate'
+import { wireResumeSessionId } from './kimi/KimiSessionGeneration'
 import { prepareKimiIsolatedHome, type KimiHomeFs } from './kimi/KimiAcpHome'
 import { runKimiAcpTurn, type KimiAcpFs } from './kimi/KimiAcpClient'
 import { createAcpTurnAbortController } from './acp/AcpTurnClient'
@@ -16682,7 +16683,11 @@ async function runKimiWireProvider(
   // External grants remain broker-only; this deliberately contributes no
   // native Kimi directory flags.
   args.push(...externalPathGrantsToCliAddDirArgs(payload.externalPathGrants))
-  if (payload.providerSessionId) args.push('--resume', payload.providerSessionId)
+  // Transport-generation fence: resume ONLY a Wire-minted session id. An
+  // ACP-minted `session_<uuid>` (from a kimi-code run) must never reach the
+  // legacy Wire `--resume`; refuse the crossing and start fresh (slice 5).
+  const wireResumeId = wireResumeSessionId(payload.providerSessionId)
+  if (wireResumeId) args.push('--resume', wireResumeId)
 
   // Prepare this app's broker, then pin the exact server document to THIS
   // Kimi process. The explicit file suppresses ~/.kimi/mcp.json, preventing a
@@ -17824,7 +17829,10 @@ async function runKimiProvider(event: Electron.IpcMainInvokeEvent, payload: Agen
   }
   // External grants remain broker-only in print fallback too.
   baseArgs.push(...externalPathGrantsToCliAddDirArgs(payload.externalPathGrants))
-  if (payload.providerSessionId) baseArgs.push('--resume', payload.providerSessionId)
+  // Same transport-generation fence as the Wire path (slice 5): never resume an
+  // ACP-minted id under the legacy print fallback.
+  const printResumeId = wireResumeSessionId(payload.providerSessionId)
+  if (printResumeId) baseArgs.push('--resume', printResumeId)
   const args = extendKimiCliArgsWithMcpConfig(baseArgs, kimiMcpConfigPath)
   const kimiKey = getStoredKimiApiKey()
   const fallbackRoute = routeWithRunId('kimi', payload)
