@@ -7710,6 +7710,17 @@ export function SettingsPanel({
                 )}
 
                 <label className="settings-label">Moonshot API key</label>
+                <p
+                  style={{
+                    fontSize: '0.72rem',
+                    color: 'var(--text-secondary)',
+                    margin: '0 0 var(--space-xs)'
+                  }}
+                >
+                  Kimi Code signs in with <code>kimi login</code> (OAuth) in your shell — no API key
+                  required. Set a Moonshot API key here only to use an API key instead of the signed-in
+                  session.
+                </p>
                 <div
                   style={{
                     display: 'flex',

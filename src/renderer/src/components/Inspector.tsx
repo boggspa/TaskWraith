@@ -2716,8 +2716,8 @@ function SafetyTab(props: InspectorProps) {
         : approvalMode === 'plan'
           ? 'Kimi plan/read-only intent'
           : approvalMode === 'auto_edit'
-            ? 'Kimi Wire approvals; YOLO not enabled'
-            : 'Kimi Wire approvals'
+            ? 'Kimi provider approvals; YOLO not enabled'
+            : 'Kimi provider approvals'
     return (
       <div className="safety-panel">
         <div className="safety-card">
