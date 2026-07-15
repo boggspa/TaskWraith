@@ -43,6 +43,9 @@ export interface AcpChildProcess {
   stdin: {
     write(data: string, cb?: (err?: Error | null) => void): boolean | void
     on?(event: 'error', listener: (err: Error) => void): void
+    /** Close the stdin stream (EOF). Some ACP servers (Kimi Code) exit on stdin
+     *  EOF and ignore SIGINT/SIGTERM entirely — see endProcess. */
+    end?(): void
     destroyed?: boolean
     writable?: boolean
     writableEnded?: boolean
@@ -107,6 +110,17 @@ export interface AcpTurnOptions {
   deniedToolRecovery?: AcpDeniedToolRecovery | null
   /** Provider-specific formatting for a spawn/process error (ENOENT copy etc). */
   formatProcessError?: (err: Error) => string
+  /**
+   * How to terminate the ACP process after a completed turn or on cancel.
+   * Default kills with SIGINT (Grok's `agent stdio` exits on SIGINT). Kimi Code's
+   * `kimi acp` IGNORES SIGINT AND SIGTERM and only exits on stdin EOF, so its
+   * adapter passes an stdin-close terminator. A SIGKILL backstop
+   * (endProcessGraceMs) fires if the graceful terminator does not produce a
+   * `close` in time, so no provider can ever hang a run.
+   */
+  endProcess?: (child: AcpChildProcess) => void
+  /** Grace period before the SIGKILL backstop force-kills (default 4000ms). */
+  endProcessGraceMs?: number
   /**
    * Called once when the child exits. `turnComplete` is true when the prompt
    * reached a terminal stopReason before exit; `terminalStatus` is that raw
@@ -225,6 +239,41 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
 
   const writeResponse = (message: Record<string, unknown>): void => {
     writeFrame(message)
+  }
+
+  // Terminate the ACP process using the provider's terminator (default SIGINT),
+  // with a SIGKILL backstop so a server that ignores the graceful signal (Kimi
+  // Code ignores SIGINT+SIGTERM) can never leave the run hanging. Idempotent.
+  let terminationRequested = false
+  let killBackstop: ReturnType<typeof setTimeout> | null = null
+  const clearKillBackstop = (): void => {
+    if (killBackstop) {
+      clearTimeout(killBackstop)
+      killBackstop = null
+    }
+  }
+  const endProcess = (): void => {
+    if (terminationRequested) return
+    terminationRequested = true
+    try {
+      if (options.endProcess) options.endProcess(child)
+      else child.kill('SIGINT')
+    } catch {
+      try {
+        child.kill('SIGKILL')
+      } catch {
+        /* ignore */
+      }
+    }
+    if (!closed) {
+      killBackstop = setTimeout(() => {
+        try {
+          child.kill('SIGKILL')
+        } catch {
+          /* ignore */
+        }
+      }, options.endProcessGraceMs ?? 4000)
+    }
   }
 
   const answerPermissionRequest = (request: AcpPermissionRequest): void => {
@@ -386,7 +435,7 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
         }
       }
       if (turnComplete) {
-        setTimeout(() => child.kill('SIGINT'), 25)
+        setTimeout(() => endProcess(), 25)
       }
     }
   })
@@ -398,6 +447,7 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
 
   child.on('error', (err) => {
     closed = true
+    clearKillBackstop()
     activePromptRpcId = null
     deniedPromptRpcId = null
     const text = options.formatProcessError ? options.formatProcessError(err) : err.message || String(err)
@@ -406,6 +456,7 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
   })
   child.on('close', (code) => {
     closed = true
+    clearKillBackstop()
     activePromptRpcId = null
     deniedPromptRpcId = null
     options.onClose?.(code, turnComplete, terminalStatus)
@@ -416,8 +467,10 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
       cancelRequested = true
       activePromptRpcId = null
       deniedPromptRpcId = null
+      // Interrupt an in-progress turn first (protocol), then terminate the
+      // process via the provider terminator + SIGKILL backstop.
       if (sessionId && !turnComplete) writeRpc(null, 'session/cancel', { sessionId })
-      child.kill('SIGINT')
+      endProcess()
     }
   }
 }

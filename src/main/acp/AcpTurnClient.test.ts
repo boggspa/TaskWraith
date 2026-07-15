@@ -9,12 +9,18 @@ class FakeAcpChild implements AcpChildProcess {
   private closeListener?: (code: number | null) => void
   private errorListener?: (err: Error) => void
 
+  stdinEnded = false
   stdin = {
     write: (data: string, cb?: (err?: Error | null) => void): void => {
       this.writes.push(data)
       cb?.(null)
     },
-    on: (_event: 'error', _listener: (err: Error) => void): void => {}
+    on: (_event: 'error', _listener: (err: Error) => void): void => {},
+    // A Kimi-style server exits on stdin EOF (NOT on SIGINT); model that.
+    end: (): void => {
+      this.stdinEnded = true
+      this.closeListener?.(0)
+    }
   }
   stdout = {
     on: (_event: 'data', listener: (chunk: string) => void): void => {
@@ -27,7 +33,7 @@ class FakeAcpChild implements AcpChildProcess {
     if (event === 'close') this.closeListener = listener as (code: number | null) => void
     else this.errorListener = listener as (err: Error) => void
   }
-  kill(): void {
+  kill(_signal?: string): void {
     this.killed = true
     this.closeListener?.(0)
   }
@@ -170,6 +176,45 @@ describe('runAcpTurn — neutral core', () => {
     expect(child.sent().filter((m) => m.method === 'session/prompt')).toHaveLength(1)
     expect(child.killed).toBe(true)
     expect(events.some((e) => e.type === 'result')).toBe(false)
+  })
+
+  it('terminates via the endProcess hook (stdin EOF) instead of SIGINT', async () => {
+    const child = new FakeAcpChild()
+    const { events } = baseOptions(child, {
+      // Kimi terminator: close stdin, never SIGINT.
+      endProcess: (c) => c.stdin?.end?.()
+    })
+    void events
+    child.emit({ jsonrpc: '2.0', id: 1, result: {} })
+    child.emit({ jsonrpc: '2.0', id: 2, result: { sessionId: 's-1' } })
+    child.emit({ jsonrpc: '2.0', id: 3, result: { stopReason: 'end_turn' } })
+    await new Promise((r) => setTimeout(r, 40))
+    // Terminated by stdin EOF, and the process was NOT SIGINT-killed.
+    expect(child.stdinEnded).toBe(true)
+    expect(child.killed).toBe(false)
+  })
+
+  it('force-kills as a backstop when the terminator never produces a close', async () => {
+    const child = new FakeAcpChild()
+    // A server that ignores BOTH stdin end and the default kill (no close fires).
+    child.stdin.end = (): void => {
+      /* swallow: model a server that ignores stdin EOF */
+    }
+    const originalKill = child.kill.bind(child)
+    let sigkilled = false
+    child.kill = (signal?: string): void => {
+      if (signal === 'SIGKILL') {
+        sigkilled = true
+        originalKill('SIGKILL')
+      }
+      // ignore non-SIGKILL signals (Kimi ignores SIGINT/SIGTERM)
+    }
+    baseOptions(child, { endProcess: (c) => c.stdin?.end?.(), endProcessGraceMs: 20 })
+    child.emit({ jsonrpc: '2.0', id: 1, result: {} })
+    child.emit({ jsonrpc: '2.0', id: 2, result: { sessionId: 's-1' } })
+    child.emit({ jsonrpc: '2.0', id: 3, result: { stopReason: 'end_turn' } })
+    await new Promise((r) => setTimeout(r, 80))
+    expect(sigkilled).toBe(true)
   })
 
   it('uses the provider formatProcessError for spawn failures', () => {

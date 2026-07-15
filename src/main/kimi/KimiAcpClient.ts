@@ -165,6 +165,20 @@ export function runKimiAcpTurn(options: KimiAcpRunOptions): KimiAcpRunHandle {
     onInboundRequest,
     deniedToolRecovery: null,
     formatProcessError: formatKimiProcessError,
+    // Kimi Code's `kimi acp` ignores SIGINT AND SIGTERM; it exits only on stdin
+    // EOF. Terminate by closing stdin; the neutral core's SIGKILL backstop
+    // catches the (unobserved) case where even that does not exit in time.
+    endProcess: (child) => {
+      try {
+        child.stdin?.end?.()
+      } catch {
+        try {
+          child.kill('SIGKILL')
+        } catch {
+          /* ignore */
+        }
+      }
+    },
     onClose: options.onClose,
     onRawFrame: options.onRawFrame
   })

@@ -17594,6 +17594,16 @@ async function runKimiAcpProvider(
     },
     onPermissionRequest: kimiPermissionHandler,
     onEvent: (evt) => applyKimiAcpRunEvent(state, evt as NormalizedGrokRunEvent),
+    onRawFrame: (direction, message) => {
+      const flag = String(process.env.TASKWRAITH_KIMI_ACP_DEBUG || '').toLowerCase()
+      if (flag === '1' || flag === 'true' || flag === 'yes') {
+        try {
+          process.stderr.write(`[kimi-acp] ${direction} ${JSON.stringify(message).slice(0, 300)}\n`)
+        } catch {
+          /* ignore */
+        }
+      }
+    },
     onClose: (_code, turnComplete, terminalStatus) => {
       void teardown()
       if (!state.completed) {
