@@ -66,9 +66,7 @@ describe('chat popout authority projection', () => {
     expect(appSource).toContain(
       'if (isChatPopoutWindow) return\n    void window.api.getScheduledTasks(currentWorkspace?.id)'
     )
-    expect(appSource).toContain(
-      "if (!isChatPopoutWindow && typeof window.api.onScheduledTaskDue === 'function')"
-    )
+    expect(appSource).not.toContain('onScheduledTaskDue')
     expect(appSource).toContain(
       "if (!isChatPopoutWindow && typeof window.api.onScheduledTasksChanged === 'function')"
     )

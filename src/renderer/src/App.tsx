@@ -31,10 +31,7 @@ import {
   type HumanCollaborationInviteCopyResult,
   type HumanCollaborationInviteHealth
 } from './lib/humanCollaborationInviteHealth'
-import {
-  applyScheduledEnsembleSnapshot,
-  buildScheduledEnsembleSnapshot
-} from './lib/scheduledEnsembleSnapshot'
+import { buildScheduledEnsembleSnapshot } from './lib/scheduledEnsembleSnapshot'
 import { classifyError, redactLog } from './lib/ErrorClassifier'
 import { shouldBackfillRunStats } from './lib/RunStatsBackfill'
 import { sealOrphanExitRun } from './lib/sealOrphanExitRun'
@@ -502,7 +499,6 @@ import { findNextRunnableQueueIndex, isTerminalRunQueueStatus } from './lib/runQ
 import {
   acceptedEnsembleRunQueueWrapperReason,
   isQueuedDesktopRunQueueJob,
-  isScheduledTaskReadyToDispatch,
   queuedRunFallbackId,
   queuedRunJobSortTime
 } from './lib/runQueuePredicates'
@@ -1345,7 +1341,6 @@ function App(): React.JSX.Element {
   const [providerRates, setProviderRates] = useState<RendererProviderRates>({})
   const [chatContextTurns, setChatContextTurns] = useState<number>(DEFAULT_CONTEXT_TURNS)
   const [workspaces, setWorkspaces] = useState<WorkspaceRecord[]>([])
-  const [workspacesHydrated, setWorkspacesHydrated] = useState(false)
   const [currentWorkspace, setCurrentWorkspace] = useState<WorkspaceRecord | null>(null)
   const {
     attempts: launchAttempts,
@@ -3018,7 +3013,6 @@ function App(): React.JSX.Element {
   )
   const [chatKindMutationBusy, setChatKindMutationBusy] = useState(false)
   const [scheduleRunAtByChatId, setScheduleRunAtForChat] = usePerChatState('')
-  const [dueScheduledTasks, setDueScheduledTasks] = useState<ScheduledTask[]>([])
   const [runningChatIds, setRunningChatIds] = useState<Set<string>>(new Set())
   // Multiview: split the central pane into 1-4 panes. Inert until a layout is
   // chosen — single layout renders byte-identically to before Multiview.
@@ -6216,7 +6210,6 @@ function App(): React.JSX.Element {
     setHandoffCards(handoffs)
     chatMutations.replaceAll(allChats)
     setWorkspaces(wsList)
-    setWorkspacesHydrated(true)
     await rehydrateQueuedRuns(wsList).catch(() => {})
     if (isChatPopoutWindow) {
       const popoutSummary = allChats.find(
@@ -9468,19 +9461,6 @@ function App(): React.JSX.Element {
     scheduledTasksRef.current = scheduledTasks
   }, [scheduledTasks])
 
-  useEffect(() => {
-    const nowMs = Date.now()
-    const overdueTasks = scheduledTasks.filter((task) =>
-      isScheduledTaskReadyToDispatch(task, nowMs)
-    )
-    if (overdueTasks.length === 0) return
-    setDueScheduledTasks((prev) => {
-      const existingIds = new Set(prev.map((task) => task.id))
-      const next = overdueTasks.filter((task) => !existingIds.has(task.id))
-      return next.length > 0 ? [...prev, ...next] : prev
-    })
-  }, [scheduledTasks])
-
   // ----- Raw Events auto-follow scrolling -------------------------------
   // Mirrors the transcript auto-follow design owned by
   // `useTranscriptScrollState`. The Raw Events panel streams
@@ -10555,29 +10535,10 @@ function App(): React.JSX.Element {
       )
     }
 
-    if (!isChatPopoutWindow && typeof window.api.onScheduledTaskDue === 'function') {
-      addIpcSubscription(
-        window.api.onScheduledTaskDue((task) => {
-          if (!isScheduledTaskReadyToDispatch(task)) return
-          setDueScheduledTasks((prev) =>
-            prev.some((item) => item.id === task.id) ? prev : [...prev, task]
-          )
-        })
-      )
-    }
-
     if (!isChatPopoutWindow && typeof window.api.onScheduledTasksChanged === 'function') {
       addIpcSubscription(
         window.api.onScheduledTasksChanged((tasks) => {
           setScheduledTasks(tasks)
-          const taskById = new Map(tasks.map((task) => [task.id, task]))
-          const nowMs = Date.now()
-          setDueScheduledTasks((prev) =>
-            prev.filter((task) => {
-              const latest = taskById.get(task.id)
-              return latest ? isScheduledTaskReadyToDispatch(latest, nowMs) : false
-            })
-          )
         })
       )
     }
@@ -14374,7 +14335,29 @@ function App(): React.JSX.Element {
     void executeRun(request)
   }
 
+  const cancelRunningScheduledTaskForChat = async (
+    chatId: string,
+    reason: string
+  ): Promise<boolean> => {
+    const task = scheduledTasksRef.current.find(
+      (candidate) => candidate.chatId === chatId && candidate.status === 'running'
+    )
+    if (!task) return false
+    const cancelled = await window.api.cancelScheduledTask(task.id, reason)
+    return cancelled?.status === 'cancelled'
+  }
+
   const cancelLinkedChatRun = async (targetChat: ChatRecord) => {
+    if (
+      await cancelRunningScheduledTaskForChat(
+        targetChat.appChatId,
+        'Cancelled from linked chat.'
+      )
+    ) {
+      syncRunningState()
+      void refreshSingleChat(targetChat.appChatId)
+      return
+    }
     if (targetChat.chatKind === 'ensemble') {
       await window.api.cancelEnsembleRound(targetChat.appChatId)
       void refreshSingleChat(targetChat.appChatId)
@@ -15155,14 +15138,10 @@ function App(): React.JSX.Element {
       (execution) => execution.id === workflow.activeExecutionId
     )
     if (!activeExecution?.scheduledTaskId) return
-    const task = scheduledTasksRef.current.find((item) => item.id === activeExecution.scheduledTaskId)
-    await window.api.updateScheduledTask(activeExecution.scheduledTaskId, {
-      status: 'cancelled',
-      lastError: 'Cancelled from Workflows.'
-    })
-    if (task?.runId) {
-      await window.api.cancelAgentRun(task.provider, task.runId).catch(() => {})
-    }
+    await window.api.cancelScheduledTask(
+      activeExecution.scheduledTaskId,
+      'Cancelled from Workflows.'
+    )
     await refreshWorkflowState(currentWorkspace?.id)
   }
 
@@ -15609,18 +15588,8 @@ function App(): React.JSX.Element {
 
   const handleCancelRunLane = (lane: RunLane) => {
     if (lane.scheduledTaskId) {
-      if (lane.runId && (lane.phase === 'active' || lane.status === 'running')) {
-        void window.api.cancelAgentRun(lane.provider, lane.runId).catch(() => {
-          if (lane.provider === 'gemini') {
-            void window.api.cancelGemini(lane.runId)
-          }
-        })
-      }
       void window.api
-        .updateScheduledTask(lane.scheduledTaskId, {
-          status: 'cancelled' as any,
-          lastError: 'Cancelled from Cockpit.'
-        })
+        .cancelScheduledTask(lane.scheduledTaskId, 'Cancelled from Cockpit.')
         .then(() => refreshWorkflowState(currentWorkspaceIdRef.current || undefined))
       return
     }
@@ -15848,164 +15817,6 @@ function App(): React.JSX.Element {
     )
     void window.api.saveChat(updatedChat).catch(() => {})
   }
-
-  const dispatchScheduledTask = async (task: ScheduledTask) => {
-    try {
-      const latestTasks = await window.api.getScheduledTasks(task.workspaceId)
-      const latestTask = latestTasks.find((item) => item.id === task.id)
-      if (!latestTask || !isScheduledTaskReadyToDispatch(latestTask)) {
-        setScheduledTasks(await window.api.getScheduledTasks(currentWorkspace?.id))
-        setDueScheduledTasks((prev) => prev.filter((item) => item.id !== task.id))
-        return
-      }
-      const dispatchTask = latestTask
-      let workspace = workspaces.find((item) => item.id === dispatchTask.workspaceId)
-      if (!workspace) {
-        const latestWorkspaces = await window.api.getWorkspaces()
-        setWorkspaces(latestWorkspaces)
-        setWorkspacesHydrated(true)
-        workspace = latestWorkspaces.find((item) => item.id === dispatchTask.workspaceId)
-      }
-      let chat = await window.api.getChat(dispatchTask.chatId)
-      if (!workspace || !chat) {
-        await window.api.updateScheduledTask(dispatchTask.id, {
-          status: 'failed',
-          lastError: 'Workspace or chat could not be loaded.'
-        })
-        setScheduledTasks(await window.api.getScheduledTasks(currentWorkspace?.id))
-        return
-      }
-
-      // 1.0.4-AT3 — apply the schedule-time ensemble snapshot to the
-      // chat record before dispatch so the orchestrator sees the
-      // roster + mode the user actually scheduled, not whatever
-      // edits happened between schedule + fire. Persist the snapshot
-      // application so the renderer's local cache + main-process
-      // store agree on the dispatch-time state.
-      if (
-        dispatchTask.kind === 'ensemble' &&
-        dispatchTask.ensembleSnapshot &&
-        chat.chatKind === 'ensemble'
-      ) {
-        chat = applyScheduledEnsembleSnapshot(chat, dispatchTask.ensembleSnapshot)
-        await window.api.saveChat(chat)
-      }
-
-      setCurrentWorkspace(workspace)
-      currentWorkspaceIdRef.current = workspace.id
-      currentWorkspacePathRef.current = workspace.path
-      void refreshWorkspaceTrust(workspace)
-      setCurrentChatIdForNavigation(chat.appChatId)
-      chatByIdRef.current.set(chat.appChatId, chat)
-      setCurrentChat(chat)
-      applyChatComposerSelection(chat, dispatchTask.provider)
-      const taskSelectedModel = isValidModelForProvider(
-        dispatchTask.provider,
-        dispatchTask.selectedModelType
-      )
-        ? dispatchTask.selectedModelType
-        : getDefaultModelForProvider(dispatchTask.provider)
-      setSelectedModelType(taskSelectedModel)
-      setCustomModel(dispatchTask.customModel)
-      setApprovalMode(dispatchTask.approvalMode)
-      setSessionTrust(dispatchTask.sessionTrust)
-      if (dispatchTask.provider === 'codex') {
-        setCodexReasoningEffort(dispatchTask.codexReasoningEffort || 'medium')
-        setCodexServiceTier(dispatchTask.codexServiceTier || '')
-      }
-      if (dispatchTask.provider === 'claude') {
-        setClaudeFastMode(Boolean(dispatchTask.claudeFastMode))
-      }
-      if (dispatchTask.provider === 'kimi') {
-        setKimiFastMode(Boolean(dispatchTask.kimiFastMode))
-        setKimiThinkingEnabled(dispatchTask.kimiThinkingEnabled !== false)
-      }
-      if (dispatchTask.provider === 'grok') {
-        setGrokReasoningEffort(dispatchTask.grokReasoningEffort || GROK_45_DEFAULT_REASONING_EFFORT)
-      }
-      if (dispatchTask.provider === 'cursor') {
-        setCursorReasoningEffort(
-          dispatchTask.cursorReasoningEffort || GROK_45_DEFAULT_REASONING_EFFORT
-        )
-        setCursorFastMode(Boolean(dispatchTask.cursorFastMode))
-      }
-
-      const scheduledRunId =
-        dispatchTask.runId || `${dispatchTask.provider}-scheduled-${Date.now()}`
-      const runningTask = await window.api.updateScheduledTask(dispatchTask.id, {
-        status: 'running',
-        firedAt: dispatchTask.firedAt || new Date().toISOString(),
-        runId: scheduledRunId
-      })
-      if (!runningTask || runningTask.status !== 'running') {
-        setScheduledTasks(await window.api.getScheduledTasks(currentWorkspace?.id))
-        setDueScheduledTasks((prev) => prev.filter((item) => item.id !== dispatchTask.id))
-        return
-      }
-      setDueScheduledTasks((prev) => prev.filter((item) => item.id !== dispatchTask.id))
-      setScheduledTasks(await window.api.getScheduledTasks(currentWorkspace?.id))
-
-      void executeRun({
-        appRunId: scheduledRunId,
-        provider: dispatchTask.provider,
-        prompt: dispatchTask.prompt,
-        displayPrompt:
-          dispatchTask.displayPrompt ||
-          `[scheduled ${formatScheduledRunTime(dispatchTask.runAt)}] ${dispatchTask.prompt}`,
-        selectedModelType: taskSelectedModel,
-        customModel: dispatchTask.customModel,
-        approvalMode: dispatchTask.approvalMode,
-        workflowMode: dispatchTask.workflowMode || 'normal',
-        sessionTrust: dispatchTask.sessionTrust,
-        imageAttachments: dispatchTask.imageAttachments,
-        externalPathGrants: dispatchTask.externalPathGrants,
-        geminiWorktree: dispatchTask.geminiWorktree,
-        codexReasoningEffort: dispatchTask.codexReasoningEffort,
-        codexServiceTier: dispatchTask.codexServiceTier,
-        claudeReasoningEffort: dispatchTask.claudeReasoningEffort,
-        claudeFastMode: dispatchTask.claudeFastMode,
-        kimiFastMode: dispatchTask.kimiFastMode,
-        kimiThinkingEnabled: dispatchTask.kimiThinkingEnabled,
-        grokReasoningEffort: dispatchTask.grokReasoningEffort,
-        cursorReasoningEffort: dispatchTask.cursorReasoningEffort,
-        cursorFastMode: dispatchTask.cursorFastMode,
-        runtimeProfileId: dispatchTask.runtimeProfileId,
-        geminiAuthProfileId: dispatchTask.geminiAuthProfileId,
-        handoffSourceRunId: dispatchTask.handoffSourceRunId,
-        scheduledTaskId: dispatchTask.id,
-        workspaceRecord: workspace,
-        chatRecord: chat,
-        preserveComposer: true
-      }).catch(async (error) => {
-        await window.api.updateScheduledTask(dispatchTask.id, {
-          status: 'failed',
-          lastError: String(error)
-        })
-        setScheduledTasks(await window.api.getScheduledTasks(currentWorkspace?.id))
-      })
-    } catch (error) {
-      await window.api.updateScheduledTask(task.id, { status: 'failed', lastError: String(error) })
-      setScheduledTasks(await window.api.getScheduledTasks(currentWorkspace?.id))
-    }
-  }
-
-  const dispatchScheduledTaskRef = useRef(dispatchScheduledTask)
-  dispatchScheduledTaskRef.current = dispatchScheduledTask
-
-  useEffect(() => {
-    if (!workspacesHydrated) {
-      return
-    }
-    if (dueScheduledTasks.length === 0) {
-      return
-    }
-    const nextIndex = dueScheduledTasks.findIndex((task) => !isChatBusy(task.chatId))
-    if (nextIndex < 0) return
-    const nextTask = dueScheduledTasks[nextIndex]
-    const remainingTasks = dueScheduledTasks.filter((task) => task.id !== nextTask.id)
-    setDueScheduledTasks(remainingTasks)
-    void dispatchScheduledTaskRef.current(nextTask)
-  }, [dueScheduledTasks, runningChatIds, workspacesHydrated, workspaces])
 
   const appendRawInfoOnce = (content: string) => {
     setRawLogs((prev) =>
@@ -17517,6 +17328,18 @@ function App(): React.JSX.Element {
   }
 
   const handleCancel = async () => {
+    if (
+      currentChat &&
+      (await cancelRunningScheduledTaskForChat(
+        currentChat.appChatId,
+        'Cancelled from composer.'
+      ))
+    ) {
+      setIsThinking(false)
+      syncRunningState()
+      void refreshSingleChat(currentChat.appChatId)
+      return
+    }
     if (currentChat?.chatKind === 'ensemble') {
       await window.api.cancelEnsembleRound(currentChat.appChatId)
       setIsThinking(false)

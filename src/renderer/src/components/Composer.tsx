@@ -4905,14 +4905,19 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                         {formatScheduledTaskCountdown(task, scheduledNowMs)}
                       </span>
                       <span className="scheduled-task-status">{task.status}</span>
-                      {(task.status === 'pending' || task.status === 'due') && (
+                      {(task.status === 'pending' ||
+                        task.status === 'due' ||
+                        task.status === 'running') && (
                         <button
                           type="button"
                           className="scheduled-task-cancel"
                           title="Cancel scheduled task"
                           aria-label="Cancel scheduled task"
                           onClick={async () => {
-                            await window.api.updateScheduledTask(task.id, { status: 'cancelled' })
+                            await window.api.cancelScheduledTask(
+                              task.id,
+                              'Cancelled from scheduled task pill.'
+                            )
                             await refreshWorkflowState(currentWorkspace?.id)
                           }}
                         >
