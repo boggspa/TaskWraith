@@ -86,6 +86,7 @@ import {
 } from './kimi/KimiHttpMcpBridge'
 import { prepareKimiIsolatedHome, type KimiHomeFs } from './kimi/KimiAcpHome'
 import { runKimiAcpTurn, type KimiAcpFs } from './kimi/KimiAcpClient'
+import { classifyKimiToolPermission, isKimiSafeMcpTool } from './kimi/KimiToolPolicy'
 import { createAcpTurnAbortController } from './acp/AcpTurnClient'
 import type {
   CodexRunState,
@@ -17665,9 +17666,21 @@ async function runKimiAcpProvider(
     }
   }
 
-  // Bash/MCP tool asks route through the approval ledger; egress + sub-agent
-  // fan-out never reach the client (denied by the isolated-home deny wall).
+  // Per-tool approval policy matching the stdio providers: read-only / safe
+  // tools auto-allow (read-only MCP + capability gateway, read-only shell,
+  // read/search native kinds), mutating tools are gated by the ledger on a
+  // write-capable seat and denied on a plan / read-only seat. Egress + sub-agent
+  // fan-out never reach the client (denied by the isolated-home deny wall); the
+  // per-instrument host gate for mutating MCP still applies inside the broker.
+  const kimiWriteCapable = payload.approvalMode !== 'plan'
   const kimiPermissionHandler = async (request: AcpPermissionRequest) => {
+    const decision = classifyKimiToolPermission(request, {
+      writeCapable: kimiWriteCapable,
+      isSafeMcpTool: isKimiSafeMcpTool,
+      isReadOnlyShell: grokReadOnlyShellRequestAllowed
+    })
+    if (decision === 'allow') return 'allow'
+    if (decision === 'deny') return 'deny'
     const service = grokToolKindToService(request.toolKind)
     const allowed = await requestAgenticServiceApproval(
       event.sender,
