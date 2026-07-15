@@ -76,9 +76,11 @@ function harness(inputTask = dueTask()) {
     })
   }
   const owners = new ScheduledOccurrenceOwnerRegistry()
+  const recordRootRunIdTombstone = vi.fn()
   const transaction = new ScheduledOccurrenceTransaction({
     store,
     owners,
+    recordRootRunIdTombstone,
     resolveRootOwner: (candidate) =>
       candidate.kind === 'ensemble'
         ? 'ensemble-root'
@@ -88,18 +90,34 @@ function harness(inputTask = dueTask()) {
     createRunId: () => 'owner-run-one',
     now: () => NOW
   })
-  return { get task() { return task }, store, owners, transaction }
+  return {
+    get task() {
+      return task
+    },
+    store,
+    owners,
+    recordRootRunIdTombstone,
+    transaction
+  }
 }
 
 describe('ScheduledOccurrenceTransaction', () => {
   it('lets racing entry points claim one occurrence only', () => {
     const h = harness()
+    const register = vi.spyOn(h.owners, 'register')
     const timerOwner = h.transaction.claim(h.task)
     const runNowOwner = h.transaction.claim(dueTask())
 
     expect(timerOwner?.ownerRunId).toBe('owner-run-one')
     expect(runNowOwner).toBeNull()
     expect(h.store.claimDueScheduledTaskForRun).toHaveBeenCalledTimes(2)
+    expect(h.recordRootRunIdTombstone).toHaveBeenCalledTimes(1)
+    expect(
+      vi.mocked(h.store.claimDueScheduledTaskForRun).mock.invocationCallOrder[0]
+    ).toBeLessThan(h.recordRootRunIdTombstone.mock.invocationCallOrder[0])
+    expect(h.recordRootRunIdTombstone.mock.invocationCallOrder[0]).toBeLessThan(
+      register.mock.invocationCallOrder[0]
+    )
     expect(h.owners.lookupByTaskId('task-one')).toBe(timerOwner)
   })
 
@@ -146,6 +164,15 @@ describe('ScheduledOccurrenceTransaction', () => {
     expect(h.owners.lookupByOwnerRunId(owner.ownerRunId)).toBe(owner)
   })
 
+  it('keeps ownership live when a durable heartbeat rejects', () => {
+    const h = harness()
+    const owner = h.transaction.claim(h.task)!
+    vi.mocked(h.store.heartbeatScheduledTaskForRun).mockReturnValueOnce(null)
+
+    expect(h.transaction.heartbeat(owner)).toBeNull()
+    expect(h.owners.lookupByOwnerRunId(owner.ownerRunId)).toBe(owner)
+  })
+
   it('rejects stale owner objects after the live owner settles', () => {
     const h = harness()
     const owner = h.transaction.claim(h.task)!
@@ -168,10 +195,29 @@ describe('ScheduledOccurrenceTransaction', () => {
 
     expect(() => h.transaction.claim(h.task)).toThrow(/already has a live owner/)
     expect(h.task.status).toBe('failed')
-    expect(h.task.lastError).toBe('Scheduled occurrence owner registration failed.')
+    expect(h.task.lastError).toBe('Scheduled occurrence owner initialization failed.')
     expect(h.store.settleScheduledTaskForRun).toHaveBeenCalledWith(
       'task-one',
       expect.objectContaining({ runId: 'owner-run-one' })
+    )
+  })
+
+  it('rolls back the durable claim and never registers when the root tombstone fails', () => {
+    const h = harness()
+    h.recordRootRunIdTombstone.mockImplementationOnce(() => {
+      throw new Error('Injected tombstone fsync failure.')
+    })
+
+    expect(() => h.transaction.claim(h.task)).toThrow('Injected tombstone fsync failure.')
+    expect(h.task.status).toBe('failed')
+    expect(h.owners.lookupByOwnerRunId('owner-run-one')).toBeUndefined()
+    expect(h.store.settleScheduledTaskForRun).toHaveBeenCalledWith(
+      'task-one',
+      expect.objectContaining({
+        runId: 'owner-run-one',
+        status: 'failed',
+        lastError: 'Scheduled occurrence owner initialization failed.'
+      })
     )
   })
 

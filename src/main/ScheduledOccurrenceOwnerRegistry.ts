@@ -40,6 +40,8 @@ export interface ScheduledOccurrenceOwner {
 }
 
 export type ScheduledOccurrenceOwnerRegistryErrorCode =
+  | 'duplicate-chat'
+  | 'duplicate-child-run'
   | 'duplicate-round'
   | 'duplicate-run'
   | 'duplicate-task'
@@ -63,6 +65,19 @@ export interface ScheduledSoloExitIdentity {
   readonly appRunId: string
   readonly provider: ProviderId
   readonly chatId: string
+}
+
+type ScheduledChildKind = 'loop' | 'ensemble'
+
+interface ScheduledChildBinding {
+  readonly kind: ScheduledChildKind
+  readonly owner: ScheduledOccurrenceOwner
+  readonly provider: ProviderId
+}
+
+export interface OrdinaryChatDispatchReservation {
+  readonly chatId: string
+  readonly nonce: symbol
 }
 
 /**
@@ -148,19 +163,38 @@ export function createScheduledOccurrenceOwner(
 export class ScheduledOccurrenceOwnerRegistry {
   private readonly byTaskId = new Map<string, ScheduledOccurrenceOwner>()
   private readonly byOwnerRunId = new Map<string, ScheduledOccurrenceOwner>()
+  private readonly byChatId = new Map<string, ScheduledOccurrenceOwner>()
+  private readonly ordinaryDispatchByChatId = new Map<
+    string,
+    OrdinaryChatDispatchReservation
+  >()
+  private readonly byChildRunId = new Map<string, ScheduledChildBinding>()
+  private readonly childRunIdsByOwnerRunId = new Map<string, Set<string>>()
+  // A released child id must not become an ordinary renderer run later in the
+  // same process. Root ids remain durable on ScheduledTask; child ids need this
+  // process-local replay tombstone after their live indexes are removed.
+  private readonly observedChildRunIds = new Set<string>()
   private readonly byRoundId = new Map<string, ScheduledOccurrenceOwner>()
   private readonly roundIdByOwnerRunId = new Map<string, string>()
+  private readonly observedRoundIds = new Set<string>()
 
   register(input: ScheduledOccurrenceOwner): ScheduledOccurrenceOwner {
     const owner = snapshotOwner(input)
+    if (this.byChatId.has(owner.chatId) || this.ordinaryDispatchByChatId.has(owner.chatId)) {
+      fail('duplicate-chat', `Chat ${owner.chatId} already has a live dispatch owner.`)
+    }
     if (this.byTaskId.has(owner.taskId)) {
       fail('duplicate-task', `Scheduled task ${owner.taskId} already has a live owner.`)
     }
-    if (this.byOwnerRunId.has(owner.ownerRunId)) {
+    if (
+      this.byOwnerRunId.has(owner.ownerRunId) ||
+      this.observedChildRunIds.has(owner.ownerRunId)
+    ) {
       fail('duplicate-run', `Scheduled run ${owner.ownerRunId} already has a live owner.`)
     }
     this.byTaskId.set(owner.taskId, owner)
     this.byOwnerRunId.set(owner.ownerRunId, owner)
+    this.byChatId.set(owner.chatId, owner)
     return owner
   }
 
@@ -170,6 +204,32 @@ export class ScheduledOccurrenceOwnerRegistry {
 
   lookupByOwnerRunId(ownerRunId: string): ScheduledOccurrenceOwner | undefined {
     return isExactNonEmptyString(ownerRunId) ? this.byOwnerRunId.get(ownerRunId) : undefined
+  }
+
+  lookupByChatId(chatId: string): ScheduledOccurrenceOwner | undefined {
+    return isExactNonEmptyString(chatId) ? this.byChatId.get(chatId) : undefined
+  }
+
+  reserveOrdinaryChatDispatch(chatId: string): OrdinaryChatDispatchReservation {
+    if (!isExactNonEmptyString(chatId)) {
+      fail('invalid-input', 'An exact chat id is required for dispatch reservation.')
+    }
+    if (this.byChatId.has(chatId) || this.ordinaryDispatchByChatId.has(chatId)) {
+      fail('duplicate-chat', `Chat ${chatId} already has a live dispatch owner.`)
+    }
+    const reservation = Object.freeze({ chatId, nonce: Symbol(chatId) })
+    this.ordinaryDispatchByChatId.set(chatId, reservation)
+    return reservation
+  }
+
+  releaseOrdinaryChatDispatch(reservation: OrdinaryChatDispatchReservation): boolean {
+    if (this.ordinaryDispatchByChatId.get(reservation.chatId) !== reservation) return false
+    this.ordinaryDispatchByChatId.delete(reservation.chatId)
+    return true
+  }
+
+  hasOrdinaryChatDispatchReservation(chatId: string): boolean {
+    return isExactNonEmptyString(chatId) && this.ordinaryDispatchByChatId.has(chatId)
   }
 
   /** Resolve a solo provider exit only when run, provider, and chat all match. */
@@ -204,11 +264,94 @@ export class ScheduledOccurrenceOwnerRegistry {
     }
     this.byRoundId.set(roundId, owner)
     this.roundIdByOwnerRunId.set(owner.ownerRunId, roundId)
+    this.observedRoundIds.add(roundId)
     return owner
   }
 
   lookupEnsembleRound(roundId: string): ScheduledOccurrenceOwner | undefined {
     return isExactNonEmptyString(roundId) ? this.byRoundId.get(roundId) : undefined
+  }
+
+  lookupEnsembleRoundIdForOwner(owner: ScheduledOccurrenceOwner): string | undefined {
+    if (this.lookupByOwnerRunId(owner.ownerRunId) !== owner) return undefined
+    return this.roundIdByOwnerRunId.get(owner.ownerRunId)
+  }
+
+  wasEnsembleRoundIdObserved(roundId: string): boolean {
+    return isExactNonEmptyString(roundId) && this.observedRoundIds.has(roundId)
+  }
+
+  /** Bind one provider child run to its already-claimed loop root. */
+  bindLoopChildRun(
+    childRunId: string,
+    ownerRunId: string,
+    provider: ProviderId
+  ): ScheduledOccurrenceOwner {
+    if (
+      !isExactNonEmptyString(childRunId) ||
+      !isExactNonEmptyString(ownerRunId) ||
+      !isProviderId(provider)
+    ) {
+      fail('invalid-input', 'An exact child run id, owner run id, and provider are required.')
+    }
+    const owner = this.byOwnerRunId.get(ownerRunId)
+    if (!owner || owner.rootOwner !== 'loop-root') {
+      fail('owner-kind-mismatch', 'Scheduled loop child owner is not a live loop root.')
+    }
+    return this.bindChildRun(childRunId, owner, 'loop', provider)
+  }
+
+  lookupLoopChildRun(
+    childRunId: string,
+    provider: ProviderId
+  ): ScheduledOccurrenceOwner | undefined {
+    if (!isExactNonEmptyString(childRunId) || !isProviderId(provider)) return undefined
+    const binding = this.byChildRunId.get(childRunId)
+    return binding?.kind === 'loop' && binding.provider === provider
+      ? binding.owner
+      : undefined
+  }
+
+  /** Bind one provider child run to its exact reserved ensemble round. */
+  bindEnsembleChildRun(
+    childRunId: string,
+    roundId: string,
+    provider: ProviderId
+  ): ScheduledOccurrenceOwner {
+    if (
+      !isExactNonEmptyString(childRunId) ||
+      !isExactNonEmptyString(roundId) ||
+      !isProviderId(provider)
+    ) {
+      fail('invalid-input', 'An exact child run id, round id, and provider are required.')
+    }
+    const owner = this.byRoundId.get(roundId)
+    if (!owner || owner.rootOwner !== 'ensemble-root') {
+      fail('round-owner-mismatch', 'Scheduled ensemble child has no live owning round.')
+    }
+    return this.bindChildRun(childRunId, owner, 'ensemble', provider)
+  }
+
+  lookupEnsembleChildRun(
+    childRunId: string,
+    provider: ProviderId
+  ): ScheduledOccurrenceOwner | undefined {
+    if (!isExactNonEmptyString(childRunId) || !isProviderId(provider)) return undefined
+    const binding = this.byChildRunId.get(childRunId)
+    return binding?.kind === 'ensemble' && binding.provider === provider
+      ? binding.owner
+      : undefined
+  }
+
+  wasChildRunIdObserved(childRunId: string): boolean {
+    return isExactNonEmptyString(childRunId) && this.observedChildRunIds.has(childRunId)
+  }
+
+  lookupChildRunIdsForOwner(owner: ScheduledOccurrenceOwner): readonly string[] {
+    if (this.lookupByOwnerRunId(owner.ownerRunId) !== owner) return Object.freeze([])
+    return Object.freeze([
+      ...(this.childRunIdsByOwnerRunId.get(owner.ownerRunId) ?? new Set<string>())
+    ])
   }
 
   /**
@@ -223,16 +366,46 @@ export class ScheduledOccurrenceOwnerRegistry {
   }
 
   isAppRunIdLiveOwned(appRunId: string): boolean {
-    return isExactNonEmptyString(appRunId) && this.byOwnerRunId.has(appRunId)
+    return (
+      isExactNonEmptyString(appRunId) &&
+      (this.byOwnerRunId.has(appRunId) || this.byChildRunId.has(appRunId))
+    )
+  }
+
+  private bindChildRun(
+    childRunId: string,
+    owner: ScheduledOccurrenceOwner,
+    kind: ScheduledChildKind,
+    provider: ProviderId
+  ): ScheduledOccurrenceOwner {
+    if (
+      this.byOwnerRunId.has(childRunId) ||
+      this.byChildRunId.has(childRunId) ||
+      this.observedChildRunIds.has(childRunId)
+    ) {
+      fail('duplicate-child-run', `Scheduled ${kind} child ${childRunId} is already bound.`)
+    }
+    this.byChildRunId.set(childRunId, Object.freeze({ kind, owner, provider }))
+    this.observedChildRunIds.add(childRunId)
+    const childRunIds = this.childRunIdsByOwnerRunId.get(owner.ownerRunId) ?? new Set<string>()
+    childRunIds.add(childRunId)
+    this.childRunIdsByOwnerRunId.set(owner.ownerRunId, childRunIds)
+    return owner
   }
 
   private remove(owner: ScheduledOccurrenceOwner): void {
     this.byTaskId.delete(owner.taskId)
     this.byOwnerRunId.delete(owner.ownerRunId)
+    this.byChatId.delete(owner.chatId)
     const roundId = this.roundIdByOwnerRunId.get(owner.ownerRunId)
     if (roundId !== undefined) {
       this.roundIdByOwnerRunId.delete(owner.ownerRunId)
       this.byRoundId.delete(roundId)
+    }
+    const childRunIds = this.childRunIdsByOwnerRunId.get(owner.ownerRunId)
+    if (childRunIds) {
+      this.childRunIdsByOwnerRunId.delete(owner.ownerRunId)
+      for (const childRunId of childRunIds) this.byChildRunId.delete(childRunId)
     }
   }
 }

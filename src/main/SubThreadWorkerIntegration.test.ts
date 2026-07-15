@@ -51,6 +51,41 @@ describe('sub-thread long-lived worker main-process integration', () => {
     expectContains(drain, 'sessionTrust: false')
   })
 
+  it('fails closed for workers queued by a scheduled parent without waking that parent', () => {
+    const drain = sourceBetween(
+      'async function maybeDrainSubThreadWorkerQueue(',
+      'function recoverSubThreadWorkerQueues()'
+    )
+    const localFailure = sourceBetween(
+      'function failClaimedScheduledParentSubThreadWorker(',
+      'function settleSubThreadWorkerRun('
+    )
+
+    expectContains(drain, 'wasScheduledOccurrenceRunIdObserved(event.parentRunId)')
+    expectContains(drain, 'failClaimedScheduledParentSubThreadWorker(chat, event, claimId)')
+    expect(drain.indexOf('wasScheduledOccurrenceRunIdObserved(event.parentRunId)')).toBeLessThan(
+      drain.indexOf('failClaimedSubThreadWorker(')
+    )
+    expectContains(localFailure, 'failClaimedSubThreadWorkerEvent(')
+    expect(localFailure).not.toContain('enqueueSubThreadMailboxEvent(')
+    expect(localFailure).not.toContain('maybeDrainParentSubThreadMailbox(')
+  })
+
+  it('rejects scheduled delegation before approval, spawn, or recall dispatch', () => {
+    const delegation = sourceBetween(
+      "} else if (toolName === 'delegate_to_subthread') {",
+      'const finalRichResult = richResult as McpToolExecutionResult | null'
+    )
+    const guard = delegation.indexOf(
+      'wasScheduledOccurrenceRunIdObserved(context.appRunId)'
+    )
+
+    expect(guard).toBeGreaterThanOrEqual(0)
+    expect(guard).toBeLessThan(delegation.indexOf('resolveSubThreadRecall('))
+    expect(guard).toBeLessThan(delegation.indexOf('requestAgenticServiceApproval('))
+    expect(guard).toBeLessThan(delegation.indexOf('seedAgentDrivenSubThreadTranscript({'))
+  })
+
   it('settles terminal worker events, drains the next item, and recovers queues on startup', () => {
     expectContains(indexSource, 'settleSubThreadWorkerEvent(')
     expectContains(indexSource, 'recoverSubThreadWorkerControl(')

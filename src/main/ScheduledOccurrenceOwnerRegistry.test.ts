@@ -120,6 +120,28 @@ describe('ScheduledOccurrenceOwnerRegistry', () => {
     )
   })
 
+  it('makes scheduled and ordinary chat reservations mutually exclusive', () => {
+    const registry = new ScheduledOccurrenceOwnerRegistry()
+    const reservation = registry.reserveOrdinaryChatDispatch('chat-reserved')
+
+    expect(registry.hasOrdinaryChatDispatchReservation('chat-reserved')).toBe(true)
+    expectCode(
+      () => registry.register({ ...owner('scheduled'), chatId: 'chat-reserved' }),
+      'duplicate-chat'
+    )
+    expect(registry.releaseOrdinaryChatDispatch({ ...reservation })).toBe(false)
+    expect(registry.releaseOrdinaryChatDispatch(reservation)).toBe(true)
+
+    const scheduled = registry.register({ ...owner('scheduled'), chatId: 'chat-reserved' })
+    expect(registry.lookupByChatId('chat-reserved')).toBe(scheduled)
+    expectCode(
+      () => registry.reserveOrdinaryChatDispatch('chat-reserved'),
+      'duplicate-chat'
+    )
+    expect(registry.release(scheduled)).toBe(true)
+    expect(registry.lookupByChatId('chat-reserved')).toBeUndefined()
+  })
+
   it('requires exact provider and chat identity for solo exit lookup', () => {
     const registry = new ScheduledOccurrenceOwnerRegistry()
     const registered = registry.register(owner('solo'))
@@ -161,11 +183,67 @@ describe('ScheduledOccurrenceOwnerRegistry', () => {
       'duplicate-round'
     )
     expect(registry.lookupEnsembleRound('round-one')).toBe(ensemble)
+    expect(registry.wasEnsembleRoundIdObserved('round-one')).toBe(true)
+    expect(registry.lookupEnsembleRoundIdForOwner(ensemble)).toBe('round-one')
     expect(registry.release({ ...ensemble })).toBe(false)
     expect(registry.release(ensemble)).toBe(true)
     expect(registry.release(ensemble)).toBe(false)
     expect(registry.lookupEnsembleRound('round-one')).toBeUndefined()
+    expect(registry.wasEnsembleRoundIdObserved('round-one')).toBe(true)
     expect(registry.isAppRunIdLiveOwned(ensemble.ownerRunId)).toBe(false)
+  })
+
+  it('binds ensemble children to their exact round and tombstones them after release', () => {
+    const registry = new ScheduledOccurrenceOwnerRegistry()
+    const ensemble = registry.register(owner('ensemble-child', { rootOwner: 'ensemble-root' }))
+    registry.bindEnsembleRound('round-child', ensemble.ownerRunId)
+
+    expect(registry.bindEnsembleChildRun('child-ensemble', 'round-child', 'claude')).toBe(
+      ensemble
+    )
+    expect(registry.lookupEnsembleChildRun('child-ensemble', 'claude')).toBe(ensemble)
+    expect(registry.lookupEnsembleChildRun('child-ensemble', 'codex')).toBeUndefined()
+    expect(registry.isAppRunIdLiveOwned('child-ensemble')).toBe(true)
+
+    expect(registry.release(ensemble)).toBe(true)
+    expect(registry.lookupEnsembleChildRun('child-ensemble', 'claude')).toBeUndefined()
+    expect(registry.isAppRunIdLiveOwned('child-ensemble')).toBe(false)
+    expect(registry.wasChildRunIdObserved('child-ensemble')).toBe(true)
+    expectCode(
+      () => registry.register({ ...owner('replacement'), ownerRunId: 'child-ensemble' }),
+      'duplicate-run'
+    )
+  })
+
+  it('binds loop children only to a live loop root and releases every child with it', () => {
+    const registry = new ScheduledOccurrenceOwnerRegistry()
+    const loop = registry.register(owner('loop', { rootOwner: 'loop-root' }))
+
+    expectCode(
+      () => registry.bindLoopChildRun('child-wrong-owner', owner('solo').ownerRunId, 'codex'),
+      'owner-kind-mismatch'
+    )
+    expect(registry.bindLoopChildRun('child-one', loop.ownerRunId, 'claude')).toBe(loop)
+    expect(registry.bindLoopChildRun('child-two', loop.ownerRunId, 'codex')).toBe(loop)
+    expect(registry.lookupLoopChildRun('child-one', 'claude')).toBe(loop)
+    expect(registry.lookupLoopChildRun('child-one', 'codex')).toBeUndefined()
+    expect(registry.lookupChildRunIdsForOwner(loop)).toEqual(['child-one', 'child-two'])
+    expect(Object.isFrozen(registry.lookupChildRunIdsForOwner(loop))).toBe(true)
+    expect(registry.isAppRunIdLiveOwned('child-one')).toBe(true)
+    expectCode(
+      () => registry.bindLoopChildRun('child-one', loop.ownerRunId, 'claude'),
+      'duplicate-child-run'
+    )
+
+    expect(registry.release(loop)).toBe(true)
+    expect(registry.lookupLoopChildRun('child-one', 'claude')).toBeUndefined()
+    expect(registry.lookupChildRunIdsForOwner(loop)).toEqual([])
+    expect(registry.isAppRunIdLiveOwned('child-one')).toBe(false)
+    expect(registry.wasChildRunIdObserved('child-one')).toBe(true)
+    expectCode(
+      () => registry.bindLoopChildRun('child-one', loop.ownerRunId, 'claude'),
+      'owner-kind-mismatch'
+    )
   })
 
   it('looks up a solo exit without consuming settlement authority', () => {

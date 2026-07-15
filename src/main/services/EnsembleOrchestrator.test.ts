@@ -709,6 +709,41 @@ describe('EnsembleOrchestrator', () => {
     expect(harness.dispatched[0].ensembleRun?.participantId).toBe('scheduled-codex')
   })
 
+  it('dispatches the lexical grant identity for a scheduled fresh round', async () => {
+    const harness = makeHarness()
+
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Run from the pinned target.',
+      event: { sender: {} as Electron.WebContents },
+      requireFreshRound: true
+    })
+
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    expect(harness.dispatched[0].workspace).toBe('/repo')
+    expect(harness.chat.workspacePath).toBe('/repo')
+  })
+
+  it('keeps the lexical grant identity on fan-out children', async () => {
+    const harness = makeFanoutRaceHarness()
+
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Lead starts and fans out.',
+      event: { sender: {} as Electron.WebContents },
+      requireFreshRound: true
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    harness.orchestrator.fanoutForRun(harness.dispatched[0].appRunId, {
+      targets: ['Reviewer'],
+      prompt: 'Review from the same pinned target.'
+    })
+
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    expect(harness.dispatched.map((payload) => payload.workspace)).toEqual(['/repo', '/repo'])
+    expect(harness.chat.workspacePath).toBe('/repo')
+  })
+
   it('resolves a directed target from the prepared scheduled roster', async () => {
     const harness = makeHarness()
     const scheduledTarget = {
@@ -757,6 +792,7 @@ describe('EnsembleOrchestrator', () => {
         prepareFreshChat: (chat) => ({ ...chat, scope: 'global' })
       })
     ).toThrow('changed immutable round authority')
+
   })
 
   it('rejects a directed target absent from the prepared scheduled roster', () => {
@@ -9774,6 +9810,29 @@ Next action:
     expect(failureNote?.content).toContain('Skipping for this round')
   })
 
+  it('cancels an exact serial transport when adapter dispatch throws after entry', async () => {
+    let calls = 0
+    const harness = makeHarness({
+      dispatch: async (payload) => {
+        if (++calls === 1) throw new Error('adapter rejected after entry')
+        return { dispatched: true, appRunId: payload.appRunId || '' }
+      }
+    })
+
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Continue after a partial adapter start.',
+      event: { sender: {} as Electron.WebContents }
+    })
+
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    expect(harness.cancelRun).toHaveBeenCalledWith(
+      harness.dispatched[0].provider,
+      harness.dispatched[0].appRunId
+    )
+    completeDispatchedRun(harness, 1)
+  })
+
   it('stores human-readable ensemble yield tool activity labels', async () => {
     const harness = makeHarness()
     harness.orchestrator.startRound({
@@ -10008,6 +10067,27 @@ Next action:
     expect(
       harness.chat.ensemble?.activeRound?.participants.map((participant) => participant.status)
     ).toEqual(['cancelled', 'cancelled'])
+  })
+
+  it('does not let an expected-round cancellation hit a replacement round', async () => {
+    const harness = makeHarness()
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Replacement-sensitive round.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const liveRoundId = harness.chat.ensemble!.activeRound!.roundId
+
+    await expect(
+      harness.orchestrator.cancelRound('ensemble-chat', 'stale cancel', 'older-round')
+    ).resolves.toBe(false)
+    expect(harness.chat.ensemble?.activeRound?.roundId).toBe(liveRoundId)
+    expect(harness.chat.ensemble?.activeRound?.status).toBe('running')
+
+    await expect(
+      harness.orchestrator.cancelRound('ensemble-chat', 'exact cancel', liveRoundId)
+    ).resolves.toBe(true)
   })
 
   it('does not queue behind a stale runtime whose persisted round already ended', async () => {
@@ -14234,6 +14314,34 @@ Next action:
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(4))
     expect(harness.dispatched[3].ensembleRun?.participantId).toBe('gemini')
     completeDispatchedRun(harness, 3)
+  })
+
+  it('cancels an exact fan-out transport when adapter dispatch throws after entry', async () => {
+    const harness = makeFanoutRaceHarness({
+      dispatch: async (payload) => {
+        if (payload.ensembleRun?.laneId) {
+          throw new Error('fan-out adapter rejected after entry')
+        }
+        return { dispatched: true, appRunId: payload.appRunId || '' }
+      }
+    })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Cancel a partial reviewer lane.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const fanout = harness.orchestrator.fanoutForRun(harness.dispatched[0].appRunId, {
+      targets: ['Reviewer'],
+      prompt: 'This lane throws after adapter entry.'
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    await expect(fanout).resolves.toMatchObject({ ok: false, error: 'dispatch_failed' })
+    expect(harness.cancelRun).toHaveBeenCalledWith(
+      harness.dispatched[1].provider,
+      harness.dispatched[1].appRunId
+    )
+    await harness.orchestrator.cancelRound('ensemble-chat', 'test cleanup')
   })
 
   it('cancels a provisionally owned lane when its owner is skipped before dispatch receipt', async () => {

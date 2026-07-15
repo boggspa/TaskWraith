@@ -72,41 +72,46 @@ describe('runProviderAutoFailover', () => {
     expect(notices.at(-1)).toMatchObject({ kind: 'rerouted', target: 'codex' })
   })
 
-  it('carries scheduledTaskId onto the rerouted payload (and omits it when absent)', async () => {
-    const withTask = makeDeps()
-    await runProviderAutoFailover(withTask.deps, {
+  it('fails closed for a scheduled occurrence without mutating settings, signing, allocating, dispatching, or notifying', async () => {
+    const getSettings = vi.fn(() => ({ providerRunPauses: {} }))
+    const availableProviders = vi.fn((): ('claude' | 'codex')[] => ['claude', 'codex'])
+    const isPaused = vi.fn(() => false)
+    const updateSettings = vi.fn()
+    const signPosture = vi.fn(() => 'must-not-be-used')
+    const makeRunId = vi.fn(() => 'must-not-be-used')
+    const dispatch = vi.fn(async () => undefined)
+    const notify = vi.fn()
+    const { deps, settingsWrites, dispatched, notices } = makeDeps({
+      getSettings,
+      availableProviders,
+      isPaused,
+      updateSettings,
+      signPosture,
+      makeRunId,
+      dispatch,
+      notify
+    })
+    const result = await runProviderAutoFailover(deps, {
       failedRunId: 'run-A',
       failedProvider: 'claude',
       appChatId: 'chat-1',
       snapshot: baseSnapshot({ scheduledTaskId: 'task-7' })
     })
-    expect(withTask.dispatched).toHaveLength(1)
-    expect(withTask.dispatched[0].scheduledTaskId).toBe('task-7')
-
-    const noTask = makeDeps()
-    await runProviderAutoFailover(noTask.deps, {
-      failedRunId: 'run-B',
-      failedProvider: 'claude',
-      appChatId: 'chat-1',
-      snapshot: baseSnapshot()
-    })
-    expect(noTask.dispatched).toHaveLength(1)
-    expect('scheduledTaskId' in noTask.dispatched[0]).toBe(false)
+    expect(result).toEqual({ ok: false, reason: 'scheduled-run' })
+    expect(getSettings).not.toHaveBeenCalled()
+    expect(availableProviders).not.toHaveBeenCalled()
+    expect(isPaused).not.toHaveBeenCalled()
+    expect(updateSettings).not.toHaveBeenCalled()
+    expect(signPosture).not.toHaveBeenCalled()
+    expect(makeRunId).not.toHaveBeenCalled()
+    expect(dispatch).not.toHaveBeenCalled()
+    expect(notify).not.toHaveBeenCalled()
+    expect(settingsWrites).toHaveLength(0)
+    expect(dispatched).toHaveLength(0)
+    expect(notices).toHaveLength(0)
   })
 
-  it('re-asserts a safe posture for a scheduled (unattended) failover, leaving interactive elevated', async () => {
-    // A scheduled occurrence carries scheduledTaskId — its re-dispatch must clamp
-    // back to plan (this path bypasses ComposerService's unattended clamp).
-    const scheduled = makeDeps()
-    await runProviderAutoFailover(scheduled.deps, {
-      failedRunId: 'run-A',
-      failedProvider: 'claude',
-      appChatId: 'chat-1',
-      snapshot: baseSnapshot({ scheduledTaskId: 'task-7', approvalMode: 'auto_edit' })
-    })
-    expect(scheduled.dispatched[0].approvalMode).toBe('plan')
-
-    // An interactive failover (no scheduledTaskId) keeps its requested mode.
+  it('keeps the requested approval mode for an interactive failover', async () => {
     const interactive = makeDeps()
     await runProviderAutoFailover(interactive.deps, {
       failedRunId: 'run-B',
@@ -114,6 +119,7 @@ describe('runProviderAutoFailover', () => {
       snapshot: baseSnapshot({ approvalMode: 'auto_edit' })
     })
     expect(interactive.dispatched[0].approvalMode).toBe('auto_edit')
+    expect('scheduledTaskId' in interactive.dispatched[0]).toBe(false)
   })
 
   it('uses the configured reroute target when set and live', async () => {

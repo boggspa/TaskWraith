@@ -35,6 +35,12 @@ export interface ScheduledOccurrenceTransactionStore {
 export interface ScheduledOccurrenceTransactionDeps {
   store: ScheduledOccurrenceTransactionStore
   owners: ScheduledOccurrenceOwnerRegistry
+  recordRootRunIdTombstone: (input: {
+    runId: string
+    rootRunId: string
+    taskId: string
+    kind: 'root'
+  }) => void
   /** Main-owned workflow lookup; callers do not choose their terminal family. */
   resolveRootOwner: (task: ScheduledTask) => ScheduledOccurrenceRootOwner
   createRunId: (task: ScheduledTask, rootOwner: ScheduledOccurrenceRootOwner) => string
@@ -68,6 +74,12 @@ export class ScheduledOccurrenceTransaction {
     if (!claimed) return null
 
     try {
+      this.deps.recordRootRunIdTombstone({
+        runId,
+        rootRunId: runId,
+        taskId: claimed.id,
+        kind: 'root'
+      })
       return this.deps.owners.register(
         createScheduledOccurrenceOwner(claimed, rootOwner)
       )
@@ -76,7 +88,7 @@ export class ScheduledOccurrenceTransaction {
         runId,
         status: 'failed',
         completedAt: new Date(this.now()).toISOString(),
-        lastError: 'Scheduled occurrence owner registration failed.',
+        lastError: 'Scheduled occurrence owner initialization failed.',
         ...(expectedWorkflowOccurrence ? { expectedWorkflowOccurrence } : {})
       })
       if (!rolledBack) {

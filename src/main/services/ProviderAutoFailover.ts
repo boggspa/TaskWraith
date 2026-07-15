@@ -7,7 +7,6 @@ import type {
 } from '../store/types'
 import type { AgentRunPayload } from '../run/AgentRunTypes'
 import type { RunPermissionPostureContext } from '../RunPermissionPosture'
-import { resolveUnattendedApprovalMode } from '../UnattendedPostureGate'
 import { selectFailoverTarget } from '../RerouteFailoverPosture'
 
 /**
@@ -42,8 +41,8 @@ export interface FailoverRunSnapshot {
   kimiThinking?: boolean | null
   runtimeProfileId?: string
   geminiAuthProfileId?: string | null
-  /** Scheduled-task linkage so a rerouted run can still mark its task terminal
-   * (a main-dispatched failover run never registers a renderer run context). */
+  /** Scheduled-task linkage. Its presence makes auto-failover fail closed:
+   * main-owned occurrences must retain their exact provider/run owner. */
   scheduledTaskId?: string
   /** Hop count of THIS run (0 for a user-initiated run, N for the Nth failover). */
   failoverHopCount?: number
@@ -87,7 +86,7 @@ export interface AutoFailoverDeps {
 
 export interface AutoFailoverResult {
   ok: boolean
-  reason?: 'no-snapshot' | 'hop-cap' | 'no-target' | 'dispatch-failed'
+  reason?: 'no-snapshot' | 'scheduled-run' | 'hop-cap' | 'no-target' | 'dispatch-failed'
   target?: ProviderId
   newRunId?: string
 }
@@ -96,10 +95,17 @@ export async function runProviderAutoFailover(
   deps: AutoFailoverDeps,
   req: AutoFailoverRequest
 ): Promise<AutoFailoverResult> {
-  const now = deps.now ? deps.now() : Date.now()
-  const maxHops = deps.maxHops ?? 2
   const snap = req.snapshot
   if (!snap) return { ok: false, reason: 'no-snapshot' }
+  // A scheduled occurrence is owned by an exact, immutable provider/run
+  // identity. Pausing the provider or dispatching a replacement run would
+  // mutate authority underneath that owner and could let the replacement
+  // settle the wrong occurrence. Leave settings and dispatch untouched; the
+  // scheduled lifecycle owner will settle the failed run itself.
+  if (snap.scheduledTaskId !== undefined) return { ok: false, reason: 'scheduled-run' }
+
+  const now = deps.now ? deps.now() : Date.now()
+  const maxHops = deps.maxHops ?? 2
 
   const sourceHop = snap.failoverHopCount ?? 0
   if (sourceHop >= maxHops) {
@@ -140,14 +146,6 @@ export async function runProviderAutoFailover(
   // Re-run the SAME request. provider stays the FAILED one; the dispatch seam
   // reroutes it to `target` and re-signs the (capped, non-escalating) posture.
   const newRunId = deps.makeRunId(req.failedProvider)
-  // An unattended (scheduled) run that fails over must NOT regain its elevated
-  // posture on the re-sign. This re-dispatch bypasses ComposerService.composeRun's
-  // unattended clamp, so re-assert the safe posture here when the snapshot is a
-  // scheduled occurrence (presence of scheduledTaskId). Non-scheduled failovers are
-  // byte-for-byte unchanged.
-  const reroutedApprovalMode = snap.scheduledTaskId
-    ? resolveUnattendedApprovalMode(undefined, snap.approvalMode)
-    : snap.approvalMode
   const payload: AgentRunPayload = {
     provider: req.failedProvider,
     scope: snap.scope,
@@ -156,7 +154,7 @@ export async function runProviderAutoFailover(
     activeGoal: snap.activeGoal,
     appRunId: newRunId,
     appChatId: snap.appChatId,
-    approvalMode: reroutedApprovalMode,
+    approvalMode: snap.approvalMode,
     workflowMode: snap.workflowMode === 'plan' ? 'plan' : 'normal',
     model: snap.model,
     reasoningEffort: snap.reasoningEffort,
@@ -168,10 +166,6 @@ export async function runProviderAutoFailover(
     geminiAuthProfileId: snap.geminiAuthProfileId,
     handoffSourceRunId: req.failedRunId,
     failoverHopCount: sourceHop + 1,
-    // Transport-only (NOT a typed AgentRunPayload field; normalize strips it) —
-    // via spread to dodge the excess-property check, and so a 2nd-hop snapshot
-    // re-reads it and the linkage survives failover chains.
-    ...(snap.scheduledTaskId ? { scheduledTaskId: snap.scheduledTaskId } : {}),
     ...(snap.effectivePermissions ? { effectivePermissions: snap.effectivePermissions } : {})
   }
   // Sign for the (current) failed provider as a defensive baseline; the seam

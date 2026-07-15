@@ -16,10 +16,10 @@
 //
 // TERMINAL MARK TIMING — the task is marked failed in triggerKill (the kill
 // DECISION), NOT on the run's exit. This is deliberate and load-bearing:
-//   - The default Claude path is the Agent SDK; a budget-kill abort makes
-//     tryRunClaudeSdk throw/return-false into runClaudeProvider's catch, which
-//     does NOT emit sendAgentCompatExit (that only fires on SDK success) — so an
-//     onExit-based mark would never run for the most common provider.
+//   - The default Claude path is the Agent SDK; a budget-kill abort may make
+//     tryRunClaudeSdk throw/return-false before its normal terminal event. The
+//     outer fallback guard now publishes a synthetic compat exit, but the task
+//     failure must already be durable before transport cleanup races with it.
 //   - The renderer also marks a solo scheduled task when the run ends
 //     (App.tsx); a cancelled run could be marked 'cancelled' and beat a later
 //     'failed'+reason. Marking at the kill decision wins that race and makes the
@@ -60,14 +60,19 @@ export type RegisteredBudget = OccurrenceBudget & { provider: ProviderId }
  * Injected I/O. index.ts supplies real implementations; tests supply fakes.
  *  - abort: terminate the run MID-FLIGHT. Wired to cancelProviderRun(provider,
  *    runId) — NOT runManager.cancel, which skips Codex's turn/interrupt RPC.
- *  - markTaskFailed: mark the ScheduledTask terminal. Wired to
- *    AppStore.updateScheduledTask(id, { status:'failed', completedAt, lastError }).
+ *  - markTaskFailed: settle the exact ScheduledTask occurrence terminal. The
+ *    runId is deliberately carried alongside scheduledTaskId so the production
+ *    owner registry can reject a stale run trying to settle a newer occurrence.
  *  - now / setTimer / clearTimer: clock + timer seam (real = Date.now /
  *    setTimeout / clearTimeout) so wall-clock arming is deterministic in tests.
  */
 export interface WorkflowBudgetRegistryDeps {
   abort: (provider: ProviderId, runId: string) => void
-  markTaskFailed: (scheduledTaskId: string, lastError: string) => void
+  markTaskFailed: (failure: {
+    runId: string
+    scheduledTaskId: string
+    lastError: string
+  }) => void
   now: () => number
   setTimer: (fn: () => void, ms: number) => unknown
   clearTimer: (handle: unknown) => void
@@ -174,7 +179,11 @@ export class WorkflowBudgetRegistry {
     this.killedRuns.add(runId)
     this.clearRunTimer(runId)
     const lastError = budgetLastErrorMessage(breach, { terminal: true })
-    this.deps.markTaskFailed(entry.budget.scheduledTaskId, lastError)
+    this.deps.markTaskFailed({
+      runId,
+      scheduledTaskId: entry.budget.scheduledTaskId,
+      lastError
+    })
     this.deps.onEvent?.({
       kind: 'task-failed',
       runId,
@@ -215,15 +224,15 @@ export class WorkflowBudgetRegistry {
     const { provider, scheduledTaskId } = entry.budget
     const lastError = budgetLastErrorMessage(breach)
     this.deps.onEvent?.({ kind: 'killed', runId, provider, scheduledTaskId, breach })
-    this.deps.markTaskFailed(scheduledTaskId, lastError)
+    this.deps.markTaskFailed({ runId, scheduledTaskId, lastError })
     this.deps.onEvent?.({ kind: 'task-failed', runId, scheduledTaskId, lastError })
 
     this.deps.abort(provider, runId)
   }
 
   /**
-   * Called on EVERY terminal exit (killed or not) AND from the Claude SDK
-   * fallback guard. CLEANUP ONLY: clear the armed timer + drop per-run state so a
+   * Called on EVERY terminal exit (killed or not). CLEANUP ONLY: clear the armed
+   * timer + drop per-run state so a
    * late timer can't fire on a finished or reused run. The terminal mark already
    * happened in triggerKill. Idempotent + a no-op for unregistered runs. Drops
    * the killed flag so a fresh run with a reused id starts clean.

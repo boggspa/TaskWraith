@@ -16,12 +16,12 @@ function makeHarness(startNow = 1_000_000) {
   let nextHandle = 1
   const timers = new Map<number, FakeTimer>()
   const aborts: Array<{ provider: string; runId: string }> = []
-  const marks: Array<{ scheduledTaskId: string; lastError: string }> = []
+  const marks: Array<{ runId: string; scheduledTaskId: string; lastError: string }> = []
   const events: WorkflowBudgetEvent[] = []
 
   const registry = new WorkflowBudgetRegistry({
     abort: (provider, runId) => aborts.push({ provider, runId }),
-    markTaskFailed: (scheduledTaskId, lastError) => marks.push({ scheduledTaskId, lastError }),
+    markTaskFailed: (failure) => marks.push(failure),
     now: () => nowMs,
     setTimer: (fn, ms) => {
       const handle = nextHandle++
@@ -118,10 +118,10 @@ describe('WorkflowBudgetRegistry.onUsage — token breach', () => {
     h.registry.onUsage('run-1', { total_tokens: 1000 })
     expect(h.aborts).toEqual([{ provider: 'claude', runId: 'run-1' }])
     expect(h.registry.isKilled('run-1')).toBe(true)
-    // The terminal mark is made at the kill DECISION — deterministic, independent
-    // of whether the abort reaches sendAgentCompatExit (the default Claude SDK
-    // abort does not), and ahead of the renderer's run-end mark.
+    // The terminal mark is made at the kill DECISION — deterministic and ahead
+    // of any transport/compat-exit cleanup or renderer run-end mark.
     expect(h.marks).toHaveLength(1)
+    expect(h.marks[0].runId).toBe('run-1')
     expect(h.marks[0].scheduledTaskId).toBe('task-1')
     expect(h.marks[0].lastError).toContain('token budget exceeded')
     expect(h.marks[0].lastError).toContain('1000 / 1000 tokens')
@@ -175,6 +175,7 @@ describe('WorkflowBudgetRegistry.onWallclock — wall-clock breach', () => {
     expect(h.aborts).toEqual([{ provider: 'claude', runId: 'run-1' }])
     expect(h.timers.get(handle)?.cleared).toBe(true)
     expect(h.marks).toHaveLength(1)
+    expect(h.marks[0]).toMatchObject({ runId: 'run-1', scheduledTaskId: 'task-1' })
     expect(h.marks[0].lastError).toContain('wall-clock budget exceeded')
   })
 
@@ -199,6 +200,19 @@ describe('WorkflowBudgetRegistry.onWallclock — wall-clock breach', () => {
 })
 
 describe('WorkflowBudgetRegistry idempotency', () => {
+  it('passes the exact breached run identity when live runs share a scheduled task id', () => {
+    const h = makeHarness()
+    h.registry.register(budget({ runId: 'run-old', scheduledTaskId: 'task-shared', maxTokens: 1000 }))
+    h.registry.register(budget({ runId: 'run-current', scheduledTaskId: 'task-shared', maxTokens: 1000 }))
+
+    h.registry.onUsage('run-current', { total_tokens: 1000 })
+
+    expect(h.marks).toEqual([
+      expect.objectContaining({ runId: 'run-current', scheduledTaskId: 'task-shared' })
+    ])
+    expect(h.aborts).toEqual([{ provider: 'claude', runId: 'run-current' }])
+  })
+
   it('aborts ONCE and marks ONCE when token + wall-clock both breach', () => {
     const h = makeHarness(1_000_000)
     h.registry.register(budget({ timeoutSeconds: 60, maxTokens: 1000 }))
@@ -334,6 +348,7 @@ describe('WorkflowBudgetRegistry.onTerminalUsage — post-hoc (grok/cursor)', ()
     // No abort — the run already exited; this is a post-hoc budget signal only.
     expect(h.aborts).toHaveLength(0)
     expect(h.marks).toHaveLength(1)
+    expect(h.marks[0]).toMatchObject({ runId: 'run-1', scheduledTaskId: 'task-1' })
     expect(h.marks[0].lastError).toContain('finished over its token budget')
     expect(h.marks[0].lastError).toContain('1500 / 1000 tokens')
     expect(h.registry.isKilled('run-1')).toBe(true)

@@ -29,6 +29,7 @@ function createDeps() {
   const authorityDigest = 'a'.repeat(64)
   const defaultSanitizedTask = {
     id: 'task-1',
+    chatId: 'chat-1',
     workspaceId: 'ws-1',
     workflowId: 'wf-1'
   } as any
@@ -41,9 +42,16 @@ function createDeps() {
 
   return {
     assertMainRendererSender: vi.fn(),
+    assertRendererChatScope: vi.fn(),
     getScheduledTasks: vi.fn(() => [defaultSanitizedTask]),
     saveScheduledTask: vi.fn((task) => ({ ...defaultSanitizedTask, ...task })),
     updateScheduledTask: vi.fn((id, partial) => ({ ...defaultSanitizedTask, id, ...partial })),
+    cancelScheduledTask: vi.fn(async (id, reason) => ({
+      ...defaultSanitizedTask,
+      id,
+      status: 'cancelled',
+      lastError: reason
+    })),
     deleteScheduledTask: vi.fn(),
     getWorkflowDefinitions: vi.fn(() => [defaultWorkflow]),
     getWorkflowDefinition: vi.fn(() => defaultWorkflow),
@@ -116,6 +124,7 @@ describe('registerScheduledWorkflowHandlers', () => {
     expect(handlerFor('get-scheduled-tasks')).toBeTypeOf('function')
     expect(handlerFor('save-scheduled-task')).toBeTypeOf('function')
     expect(handlerFor('update-scheduled-task')).toBeTypeOf('function')
+    expect(handlerFor('cancel-scheduled-task')).toBeTypeOf('function')
     expect(handlerFor('delete-scheduled-task')).toBeTypeOf('function')
     expect(handlerFor('get-workflow-definitions')).toBeTypeOf('function')
     expect(handlerFor('save-workflow-definition')).toBeTypeOf('function')
@@ -195,6 +204,7 @@ describe('registerScheduledWorkflowHandlers', () => {
     expect(deps.assertMainRendererSender).toHaveBeenCalledTimes(channels.length)
     expect(deps.getScheduledTasks).not.toHaveBeenCalled()
     expect(deps.materializeWorkflowNow).not.toHaveBeenCalled()
+    expect(deps.cancelScheduledTask).not.toHaveBeenCalled()
     expect(deps.setWorkflowUnattendedElevation).not.toHaveBeenCalled()
   })
 
@@ -220,6 +230,34 @@ describe('registerScheduledWorkflowHandlers', () => {
       workspaceId: 'ws-1',
       workflowId: 'wf-1'
     })
+  })
+
+  it('delegates scheduled cancellation after exact chat-scope and id validation', async () => {
+    const deps = createDeps()
+    registerScheduledWorkflowHandlers(deps)
+
+    await expect(
+      handlerFor('cancel-scheduled-task')({}, 'task-1', '  Cancelled from test.  ')
+    ).resolves.toMatchObject({ id: 'task-1', status: 'cancelled' })
+    expect(deps.assertRendererChatScope).toHaveBeenCalledWith({}, 'chat-1')
+    expect(deps.requireNonEmptyString).toHaveBeenCalledWith('task-1', 'Scheduled task id')
+    expect(deps.cancelScheduledTask).toHaveBeenCalledWith(
+      'task-1',
+      'Cancelled from test.'
+    )
+  })
+
+  it('rejects scheduled cancellation before mutation when the renderer lacks chat scope', async () => {
+    const deps = createDeps()
+    deps.assertRendererChatScope.mockImplementation(() => {
+      throw new Error('Renderer does not own this chat.')
+    })
+    registerScheduledWorkflowHandlers(deps)
+
+    await expect(
+      handlerFor('cancel-scheduled-task')({}, 'task-1', 'Denied cancel.')
+    ).rejects.toThrow('Renderer does not own this chat.')
+    expect(deps.cancelScheduledTask).not.toHaveBeenCalled()
   })
 
   it('does not reach workflow persistence when create-only sanitization rejects a victim id', () => {
@@ -306,7 +344,7 @@ describe('registerScheduledWorkflowHandlers', () => {
     expect(updated).toMatchObject({ id: 'wf-1', enabled: false })
   })
 
-  it('proxies safe run-now execution to workflow materialization and emits due-task signal', async () => {
+  it('routes safe Run Now execution through the main-owned due-task emitter', async () => {
     const deps = createDeps()
     registerScheduledWorkflowHandlers(deps)
 
@@ -315,8 +353,22 @@ describe('registerScheduledWorkflowHandlers', () => {
     expect(deps.materializeWorkflowNow).toHaveBeenCalledWith('wf-1')
     expect(deps.broadcastWorkflowDefinitionsChanged).toHaveBeenCalledTimes(1)
     expect(deps.broadcastScheduledTasksChanged).toHaveBeenCalledTimes(1)
-    expect(deps.broadcastScheduledTaskDue).toHaveBeenCalledWith(dueTask)
+    expect(deps.emitDueScheduledTasks).toHaveBeenCalledTimes(1)
+    expect(deps.broadcastScheduledTaskDue).not.toHaveBeenCalled()
     expect(deps.broadcastRemoteProjectionSnapshot).toHaveBeenCalledTimes(1)
+    expect(deps.scheduleNextTaskTimer).not.toHaveBeenCalled()
+    expect(dueTask).toMatchObject({ id: 'task-1' })
+  })
+
+  it('rearms the schedule when Run Now cannot materialize a due task', async () => {
+    const deps = createDeps()
+    deps.materializeWorkflowNow.mockReturnValue(null)
+    registerScheduledWorkflowHandlers(deps)
+
+    await expect(handlerFor('run-workflow-now')({}, 'wf-1')).resolves.toBeNull()
+
+    expect(deps.emitDueScheduledTasks).not.toHaveBeenCalled()
+    expect(deps.broadcastScheduledTaskDue).not.toHaveBeenCalled()
     expect(deps.scheduleNextTaskTimer).toHaveBeenCalledTimes(1)
   })
 

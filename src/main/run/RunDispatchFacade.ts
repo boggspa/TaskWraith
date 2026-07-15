@@ -4,8 +4,26 @@ import type { RunCoordinator } from '../services/RunCoordinator'
 import type { WorkflowBudgetRegistry } from '../WorkflowBudgetRegistry'
 import type { FailoverRunSnapshot } from '../services/ProviderAutoFailover'
 import type { AppSettings, ScheduledTask, WorkflowDefinition } from '../store/types'
+import type {
+  ScheduledOccurrenceOwner,
+  ScheduledOccurrenceOwnerRegistry
+} from '../ScheduledOccurrenceOwnerRegistry'
 import { applyReroutePlanToPayload, resolveProviderDispatch } from '../ProviderRunPause'
 import { hasAnyBudget } from '../WorkflowBudgetGuard'
+
+const mainOwnedScheduledOccurrencePayloads = new WeakSet<object>()
+
+/**
+ * One-shot process-local authorization for every scheduled payload.
+ * Renderer IPC can reproduce fields but cannot reproduce object identity in
+ * this WeakSet. The facade consumes the authorization before its first await.
+ */
+export function authorizeMainOwnedScheduledOccurrenceDispatch(
+  payload: AgentRunPayload
+): AgentRunPayload {
+  mainOwnedScheduledOccurrencePayloads.add(payload)
+  return payload
+}
 
 /**
  * RunDispatchFacade — M3-2b orchestration-facade extraction (per design-m3-2-spec).
@@ -25,7 +43,10 @@ import { hasAnyBudget } from '../WorkflowBudgetGuard'
 export interface RunDispatchFacadeDeps {
   /** Re-derive + re-sign a capped, non-escalating failover posture on a
    *  provider-change reroute (secret-bound). Currently `applyFailoverReroutePosture`. */
-  applyFailoverReroutePosture: (routedPayload: AgentRunPayload, originalPayload: AgentRunPayload) => void
+  applyFailoverReroutePosture: (
+    routedPayload: AgentRunPayload,
+    originalPayload: AgentRunPayload
+  ) => void
   /** Self-heal stale persisted MCP configs (best-effort, error-swallowed).
    *  Currently `repairKnownStaleGeminiMcpBridgeConfigs`. */
   repairKnownStaleGeminiMcpBridgeConfigs: (cwd?: string) => Promise<void>
@@ -35,8 +56,8 @@ export interface RunDispatchFacadeDeps {
   /** Snapshot the dispatched request for a later failover re-run. Currently
    *  `captureFailoverSnapshot`. */
   captureFailoverSnapshot: (payload: AgentRunPayload) => FailoverRunSnapshot
-  /** soloRunId → scheduledTaskId bookkeeping (const Map, owned in index.ts). */
-  scheduledTaskIdBySoloRun: Map<string, string>
+  /** Exact main-owned live scheduled occurrence registry. */
+  scheduledOccurrenceOwners: ScheduledOccurrenceOwnerRegistry
   /** Per-run budget-kill registry (const, owned in index.ts). */
   workflowBudgetRegistry: WorkflowBudgetRegistry
   /** appRunId → failover snapshot registry (const Map, owned in index.ts). */
@@ -47,6 +68,8 @@ export interface RunDispatchFacadeDeps {
   getSettings: () => AppSettings
   getScheduledTasks: () => ScheduledTask[]
   getWorkflowDefinitions: () => WorkflowDefinition[]
+  /** Durable scheduled run-id replay fence, including prior process lifetimes. */
+  wasDurableScheduledRunIdObserved: (runId: string) => boolean
 }
 
 export function createRunDispatchFacade(deps: RunDispatchFacadeDeps) {
@@ -54,6 +77,27 @@ export function createRunDispatchFacade(deps: RunDispatchFacadeDeps) {
     payload: AgentRunPayload,
     event: IpcMainInvokeEvent | { sender: WebContents }
   ): Promise<{ dispatched: boolean; appRunId: string }> => {
+    // A scheduled occurrence is claimed + registered by the main scheduler
+    // before it reaches this facade. Prove that exact ownership synchronously,
+    // before repair, attachment expansion, or an adapter can run. Conversely,
+    // an ordinary dispatch may never reuse either a process-live owner run id
+    // or any run id already observed in durable scheduled-task state.
+    const scheduledTaskId = scheduledTaskIdFromPayload(payload)
+    const occurrenceAuthorized = mainOwnedScheduledOccurrencePayloads.delete(payload)
+    const scheduledOwner = scheduledTaskId
+      ? requireExactScheduledSoloOwner(deps, payload, scheduledTaskId)
+      : resolveExactScheduledChildOwner(deps, payload)
+    if (occurrenceAuthorized !== Boolean(scheduledOwner)) {
+      throw new Error('Scheduled occurrence dispatch requires one-shot MAIN authorization.')
+    }
+    if (!scheduledOwner) rejectObservedScheduledRunIdReplay(deps, payload.appRunId)
+
+    const ordinaryChatReservation =
+      !scheduledOwner && payload.appChatId
+        ? deps.scheduledOccurrenceOwners.reserveOrdinaryChatDispatch(payload.appChatId)
+        : undefined
+    try {
+
     const settings = deps.getSettings()
     const claimedReroute = payload.providerReroute
     const payloadWithoutClaim = { ...payload, providerReroute: undefined }
@@ -62,7 +106,15 @@ export function createRunDispatchFacade(deps: RunDispatchFacadeDeps) {
     // pause plan proves the exact source→target route. All other claims vanish.
     let resolution = resolveProviderDispatch(settings, payload.provider)
     let dispatchInput = payloadWithoutClaim
-    if (
+    if (scheduledOwner) {
+      if (
+        claimedReroute !== undefined ||
+        resolution.reroute ||
+        (resolution.provider !== undefined && resolution.provider !== payload.provider)
+      ) {
+        throw new Error('Scheduled occurrence dispatch cannot be rerouted to another provider.')
+      }
+    } else if (
       (claimedReroute?.reason === 'provider-paused' ||
         claimedReroute?.reason === 'user-failover') &&
       claimedReroute.to === payload.provider &&
@@ -85,6 +137,24 @@ export function createRunDispatchFacade(deps: RunDispatchFacadeDeps) {
       }
     }
     const routedPayload = applyReroutePlanToPayload(dispatchInput, resolution)
+    const routedScheduledTaskId = scheduledTaskIdFromPayload(routedPayload)
+    if (scheduledOwner) {
+      const exactIdentityPreserved =
+        routedPayload.provider === payload.provider &&
+        routedPayload.appRunId === payload.appRunId &&
+        routedPayload.appChatId === scheduledOwner.chatId &&
+        routedPayload.providerReroute === undefined &&
+        (scheduledOwner.rootOwner === 'solo'
+          ? routedScheduledTaskId === scheduledOwner.taskId &&
+            routedPayload.appRunId === scheduledOwner.ownerRunId &&
+            routedPayload.provider === scheduledOwner.provider
+          : routedScheduledTaskId === undefined)
+      if (!exactIdentityPreserved) {
+        throw new Error('Scheduled occurrence dispatch identity changed before launch.')
+      }
+    } else if (routedScheduledTaskId !== undefined) {
+      throw new Error('Scheduled occurrence dispatch identity changed before launch.')
+    }
     // Auto-failover re-dispatch: a provider-change reroute clears
     // effectivePermissions, which normalize would then downgrade to read-only.
     // Re-derive + re-sign a CAPPED, non-escalating posture for the target so a
@@ -111,27 +181,26 @@ export function createRunDispatchFacade(deps: RunDispatchFacadeDeps) {
         }`
       )
     })
-    // Per-occurrence SOLO-scheduled-run bookkeeping (completion mark + mid-run
-    // budget kill) MUST be wired BEFORE dispatch. The default Claude (Agent SDK)
-    // path consumes its stream INLINE and fires sendAgentCompatExit SYNCHRONOUSLY
-    // before runCoordinator.dispatch returns; a post-dispatch set/register would
-    // miss the whole run — the solo completion mark would never fire (the task
-    // wedges 'running' until the 6h stall reconciler, which records it 'failed'
-    // and can auto-disable the workflow after maxConsecutiveFailures), and onUsage
-    // budget checks during the inline run would find no registration. routedPayload
-    // is the PRE-normalize raw payload, so scheduledTaskId + appRunId are present;
-    // routeWithRunId PRESERVES a set appRunId and a scheduled run always carries
-    // one (composeRun), so soloRunId matches the appRunId sendAgentCompatExit reads.
+    if (
+      scheduledOwner &&
+      deps.scheduledOccurrenceOwners.lookupByOwnerRunId(scheduledOwner.ownerRunId) !==
+        scheduledOwner
+    ) {
+      throw new Error('Scheduled occurrence ownership ended before provider dispatch.')
+    }
+    // Per-occurrence SOLO scheduled-run budget bookkeeping MUST be wired BEFORE
+    // dispatch. Ownership itself was already registered atomically with the
+    // durable claim; this facade never mints or repairs ownership. The default
+    // Claude path can consume its stream inline, so the budget registration must
+    // still precede runCoordinator.dispatch.
     // Per-workflow limits ARE the opt-in (hasAnyBudget); workflowBudgetKillEnabled
     // is the escape hatch. NOT wired for ensemble — this chokepoint never sees a
     // round runId.
-    const budgetScheduledTaskId = (routedPayload as { scheduledTaskId?: string }).scheduledTaskId
-    const soloRunId = typeof routedPayload.appRunId === 'string' ? routedPayload.appRunId : ''
+    const soloScheduledOwner =
+      scheduledOwner?.rootOwner === 'solo' ? scheduledOwner : undefined
+    const budgetScheduledTaskId = soloScheduledOwner?.taskId
+    const soloRunId = soloScheduledOwner?.ownerRunId
     if (budgetScheduledTaskId && soloRunId) {
-      // Stage 0b-completion: main marks this solo scheduled run terminal in
-      // sendAgentCompatExit, so a mid-run renderer close (or a windowless run)
-      // can't wedge it.
-      deps.scheduledTaskIdBySoloRun.set(soloRunId, budgetScheduledTaskId)
       const budgetSettings = deps.getSettings()
       if (budgetSettings.workflowBudgetKillEnabled !== false) {
         const task = deps.getScheduledTasks().find((t) => t.id === budgetScheduledTaskId)
@@ -156,6 +225,7 @@ export function createRunDispatchFacade(deps: RunDispatchFacadeDeps) {
     // A provider-native `/compact` dispatch is excluded: failing it over
     // would send the literal slash text to a DIFFERENT provider as prose.
     if (
+      !scheduledOwner &&
       dispatchResult.dispatched &&
       deps.getSettings().autoFailoverEnabled &&
       dispatchResult.appRunId &&
@@ -167,5 +237,92 @@ export function createRunDispatchFacade(deps: RunDispatchFacadeDeps) {
       )
     }
     return dispatchResult
+    } finally {
+      if (ordinaryChatReservation) {
+        deps.scheduledOccurrenceOwners.releaseOrdinaryChatDispatch(ordinaryChatReservation)
+      }
+    }
+  }
+}
+
+function scheduledTaskIdFromPayload(payload: AgentRunPayload): string | undefined {
+  if (!Object.prototype.hasOwnProperty.call(payload, 'scheduledTaskId')) return undefined
+  const value = (payload as AgentRunPayload & { scheduledTaskId?: unknown }).scheduledTaskId
+  if (typeof value !== 'string' || value.length === 0 || value !== value.trim()) {
+    throw new Error('Scheduled occurrence dispatch requires an exact task id.')
+  }
+  return value
+}
+
+function requireExactScheduledSoloOwner(
+  deps: RunDispatchFacadeDeps,
+  payload: AgentRunPayload,
+  scheduledTaskId: string
+): ScheduledOccurrenceOwner {
+  const owner = deps.scheduledOccurrenceOwners.lookupByTaskId(scheduledTaskId)
+  if (
+    !owner ||
+    owner.rootOwner !== 'solo' ||
+    payload.appRunId !== owner.ownerRunId ||
+    payload.provider !== owner.provider ||
+    payload.appChatId !== owner.chatId ||
+    payload.scope !== 'workspace' ||
+    payload.workspace !== owner.workspacePath
+  ) {
+    throw new Error('Scheduled occurrence dispatch does not match its live solo owner.')
+  }
+  return owner
+}
+
+function resolveExactScheduledChildOwner(
+  deps: RunDispatchFacadeDeps,
+  payload: AgentRunPayload
+): ScheduledOccurrenceOwner | undefined {
+  const appRunId = payload.appRunId
+  const loopOwner = appRunId
+    ? deps.scheduledOccurrenceOwners.lookupLoopChildRun(appRunId, payload.provider)
+    : undefined
+  const roundId = payload.ensembleRun?.roundId
+  const ensembleChildOwner = appRunId
+    ? deps.scheduledOccurrenceOwners.lookupEnsembleChildRun(appRunId, payload.provider)
+    : undefined
+  const ensembleRoundOwner = roundId
+    ? deps.scheduledOccurrenceOwners.lookupEnsembleRound(roundId)
+    : undefined
+  if (loopOwner && (ensembleChildOwner || ensembleRoundOwner)) {
+    throw new Error('A scheduled child run cannot belong to both a loop and an ensemble round.')
+  }
+  if (
+    Boolean(ensembleChildOwner) !== Boolean(ensembleRoundOwner) ||
+    (ensembleChildOwner && ensembleRoundOwner && ensembleChildOwner !== ensembleRoundOwner)
+  ) {
+    throw new Error('Scheduled ensemble child identity does not match its live round.')
+  }
+  const ensembleOwner = ensembleChildOwner ?? ensembleRoundOwner
+  const owner = loopOwner ?? ensembleOwner
+  if (!owner) return undefined
+  if (
+    payload.appChatId !== owner.chatId ||
+    payload.scope !== 'workspace' ||
+    (loopOwner && owner.rootOwner !== 'loop-root') ||
+    (ensembleOwner && owner.rootOwner !== 'ensemble-root')
+  ) {
+    throw new Error('Scheduled child dispatch does not match its live root owner.')
+  }
+  return owner
+}
+
+function rejectObservedScheduledRunIdReplay(
+  deps: RunDispatchFacadeDeps,
+  appRunId: string | undefined
+): void {
+  if (typeof appRunId !== 'string' || appRunId.length === 0) return
+  if (
+    deps.scheduledOccurrenceOwners.isAppRunIdLiveOwned(appRunId) ||
+    deps.scheduledOccurrenceOwners.wasChildRunIdObserved(appRunId) ||
+    deps.getScheduledTasks().some((task) => task.runId === appRunId) ||
+    deps.wasDurableScheduledRunIdObserved(appRunId)
+  ) {
+    throw new Error('Ordinary dispatch cannot reuse a scheduled occurrence run id.')
   }
 }

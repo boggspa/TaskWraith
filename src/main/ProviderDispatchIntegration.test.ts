@@ -21,4 +21,63 @@ describe('provider dispatch integration', () => {
     expect(handler).not.toContain('await runGeminiProvider(')
     expect(handler).not.toContain('ensureProviderRunPreflight(')
   })
+
+  it('keeps the unscoped legacy Gemini stdin channel inert', () => {
+    const handler = sourceBetween(
+      "ipcMain.handle('write-gemini-input'",
+      "ipcMain.handle(\n      'start-gemini-session'"
+    )
+
+    expect(handler).toContain('assertMainRendererSender(event)')
+    expect(handler).toContain('return false')
+    expect(handler).not.toContain('geminiSessionProcess.write(')
+    expect(handler).not.toContain('geminiProcess.stdin.write(')
+  })
+
+  it('treats a supplied cancellation run id as an exact provider-scoped target', () => {
+    const cancelProvider = sourceBetween(
+      'async function cancelProviderRun(',
+      '// Phase M1 Step 2: bundle the module-local helpers GeminiApiProvider'
+    )
+
+    expect(cancelProvider).toContain('if (queuedJob.provider !== provider) return false')
+    expect(cancelProvider).toContain(
+      'if (runId && (!session || session.provider !== provider)) return false'
+    )
+    expect(cancelProvider).toContain(
+      'if (!runId && wasScheduledOccurrenceRunIdObserved(session.runId)) return false'
+    )
+    expect(cancelProvider).toContain(
+      'Provider-global process/controller handles cannot prove chat or occurrence'
+    )
+    expect(cancelProvider).not.toContain('cliProviderProcesses.get(provider)')
+  })
+
+  it('terminates an exact transport before clearing its RunManager handles', () => {
+    const terminate = sourceBetween(
+      'async function terminateExactProviderSession(',
+      'async function cancelProviderRun('
+    )
+    expect(terminate.indexOf('session.abortController?.abort()')).toBeLessThan(
+      terminate.indexOf('runManager.finish(runId, terminalStatus)')
+    )
+    expect(terminate.indexOf('session.process?.kill()')).toBeLessThan(
+      terminate.indexOf('runManager.finish(runId, terminalStatus)')
+    )
+  })
+
+  it('publishes the shared terminal exit when a Claude SDK budget abort blocks fallback', () => {
+    const claudeProvider = sourceBetween(
+      'async function runClaudeProvider(',
+      'function geminiApiProviderDeps()'
+    )
+    const budgetGuard = sourceBetween(
+      'if (route.appRunId && workflowBudgetRegistry.isKilled(route.appRunId)) {',
+      '// Review fix: a `/compact` dispatch'
+    )
+
+    expect(claudeProvider).toContain(budgetGuard)
+    expect(budgetGuard).toContain("sendAgentCompatExit(event.sender, 'claude', 130, route)")
+    expect(budgetGuard).not.toContain('workflowBudgetRegistry.onExit(')
+  })
 })

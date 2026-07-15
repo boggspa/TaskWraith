@@ -3633,12 +3633,17 @@ export class EnsembleOrchestrator {
     return true
   }
 
-  async cancelRound(chatId: string, reason = 'cancelled'): Promise<boolean> {
+  async cancelRound(
+    chatId: string,
+    reason = 'cancelled',
+    expectedRoundId?: string
+  ): Promise<boolean> {
     const runtime = this.roundsByChatId.get(chatId)
     if (!runtime) {
       const chat = this.deps.getChat(chatId)
       const round = chat?.ensemble?.activeRound
       if (!round || round.status !== 'running') return false
+      if (expectedRoundId && round.roundId !== expectedRoundId) return false
       const endedAt = this.deps.nowIso()
       this.updateChatRound(chatId, (current) =>
         current?.roundId === round.roundId
@@ -3665,6 +3670,17 @@ export class EnsembleOrchestrator {
       )
       this.completeCheckpoint(chatId, round.roundId, 'cancelled')
       return true
+    }
+    if (expectedRoundId && runtime.roundId !== expectedRoundId) return false
+    if (expectedRoundId) {
+      const persistedRound = this.deps.getChat(chatId)?.ensemble?.activeRound
+      if (
+        !persistedRound ||
+        persistedRound.roundId !== expectedRoundId ||
+        persistedRound.status !== 'running'
+      ) {
+        return false
+      }
     }
     runtime.cancelled = true
     // Stop closes the round immediately: a drain deferred behind active
@@ -11148,7 +11164,9 @@ export class EnsembleOrchestrator {
       const payload: AgentRunPayload = {
         provider: participant.provider,
         scope: dispatchChat.scope === 'global' ? 'global' : 'workspace',
-        ...(dispatchChat.scope === 'global' ? {} : { workspace: dispatchChat.workspacePath || '' }),
+        ...(dispatchChat.scope === 'global'
+          ? {}
+          : { workspace: dispatchChat.workspacePath || '' }),
         prompt: promptWithDiscordContext,
         imagePaths: imagePathsForEnsembleAttachments(runtime.imageAttachments),
         appRunId: run.runId,
@@ -11213,6 +11231,9 @@ export class EnsembleOrchestrator {
       try {
         dispatchedResult = await this.deps.dispatch(payload, { sender: runtime.sender })
       } catch (error) {
+        // Adapter entry may publish a process/controller before rejecting. Stop
+        // that exact run before failed bookkeeping clears its only handle.
+        await this.deps.cancelRun(participant.provider, run.runId).catch(() => undefined)
         dispatchFailure = classifyDispatchError(error)
       }
       if (dispatchFailure || !dispatchedResult?.dispatched) {
@@ -12646,6 +12667,9 @@ export class EnsembleOrchestrator {
               }
               return
             }
+            // A thrown dispatch can occur after adapter entry. Exact cancellation
+            // is safe even when preflight rejected before any transport existed.
+            await this.deps.cancelRun(participant.provider, run.runId).catch(() => undefined)
             if (this.runsByRunId.get(run.runId) === run) {
               const reason = classifyDispatchError(error)
               const note = formatDispatchFailureNote(participant, reason)

@@ -37,9 +37,11 @@ export type WorkspaceBoardCardSaveInput = Omit<
 
 export interface ScheduledWorkflowHandlersDeps {
   assertMainRendererSender: (event: IpcMainInvokeEvent) => void
+  assertRendererChatScope: (event: IpcMainInvokeEvent, chatId: string) => void
   getScheduledTasks: (workspaceId?: string) => ScheduledTask[]
   saveScheduledTask: (task: ScheduledTaskSaveInput) => ScheduledTask
   updateScheduledTask: (id: string, partial: Partial<ScheduledTask>) => ScheduledTask | null
+  cancelScheduledTask: (id: string, reason?: string) => Promise<ScheduledTask | null>
   deleteScheduledTask: (id: string) => void
   getWorkflowDefinitions: (workspaceId?: string) => WorkflowDefinition[]
   getWorkflowDefinition: (id: string) => WorkflowDefinition | null
@@ -148,7 +150,6 @@ export interface ScheduledWorkflowHandlersDeps {
 
   broadcastScheduledTasksChanged: () => void
   broadcastWorkflowDefinitionsChanged: () => void
-  broadcastScheduledTaskDue: (task: ScheduledTask) => void
   broadcastWorkspaceBoardsChanged: () => void
   broadcastEvidencePacksChanged: () => void
   broadcastRemoteProjectionSnapshot: () => void
@@ -184,6 +185,18 @@ export function registerScheduledWorkflowHandlers(deps: ScheduledWorkflowHandler
     deps.broadcastWorkflowDefinitionsChanged()
     deps.scheduleNextTaskTimer()
     return updated
+  })
+
+  ipcMain.handle('cancel-scheduled-task', async (event, id: string, reason?: string) => {
+    const taskId = deps.requireNonEmptyString(id, 'Scheduled task id')
+    const task = deps.getScheduledTasks().find((candidate) => candidate.id === taskId)
+    if (!task) {
+      // Do not let a secondary renderer use missing ids as a global task oracle.
+      deps.assertMainRendererSender(event)
+      return null
+    }
+    deps.assertRendererChatScope(event, task.chatId)
+    return deps.cancelScheduledTask(taskId, reason?.trim() || undefined)
   })
 
   ipcMain.handle('delete-scheduled-task', (event, id: string) => {
@@ -351,10 +364,11 @@ export function registerScheduledWorkflowHandlers(deps: ScheduledWorkflowHandler
     if (task) {
       deps.broadcastWorkflowDefinitionsChanged()
       deps.broadcastScheduledTasksChanged()
-      deps.broadcastScheduledTaskDue(task)
       requestThrottledRemoteProjectionAfterIpcMutation(deps)
+      deps.emitDueScheduledTasks()
+    } else {
+      deps.scheduleNextTaskTimer()
     }
-    deps.scheduleNextTaskTimer()
     return task
   })
 

@@ -168,6 +168,41 @@ describe('WorkflowLoopEngine', () => {
     expect(snap.iterationsCompleted).toBe(1) // the maker ran; the verifier was skipped
   })
 
+  it('lets cancellation outrank a late maker failure', async () => {
+    let cancelled = false
+    const { engine } = harness(
+      () => {
+        cancelled = true
+        return { failed: true, error: 'transport aborted' }
+      },
+      { isCancelled: () => cancelled }
+    )
+
+    const snap = await engine.run(cfg({ maxIterations: 5 }))
+    expect(snap.status).toBe('cancelled')
+    expect(snap.stopReason).toBe('cancelled')
+    expect(snap.error).toBeUndefined()
+  })
+
+  it('lets cancellation outrank a late verifier result', async () => {
+    let cancelled = false
+    const { engine, calls } = harness(
+      (input) => {
+        if (input.role === 'verifier') {
+          cancelled = true
+          return { failed: true, error: 'verifier transport aborted' }
+        }
+        return { output: 'draft' }
+      },
+      { isCancelled: () => cancelled }
+    )
+
+    const snap = await engine.run(cfg({ maxIterations: 5, verifier: {} }))
+    expect(calls.map((call) => call.role)).toEqual(['maker', 'verifier'])
+    expect(snap.status).toBe('cancelled')
+    expect(snap.error).toBeUndefined()
+  })
+
   it('emits progress snapshots + a terminal snapshot via onState', async () => {
     const snaps: { status: string; stopReason?: string }[] = []
     const { engine } = harness(

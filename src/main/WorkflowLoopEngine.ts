@@ -160,6 +160,13 @@ export class WorkflowLoopEngine {
         record.makerOutput = makerResult.output
         finalOutput = makerResult.output
       }
+      // Cancellation may settle/release the owning occurrence while the child
+      // transport is unwinding. Preserve the completed-step accounting, but let
+      // cancellation outrank a late failed result from that child.
+      if (this.deps.isCancelled()) {
+        iterations.push(record)
+        return settle('cancelled', 'cancelled')
+      }
       if (makerResult.failed) {
         record.failed = true
         iterations.push(record)
@@ -196,6 +203,10 @@ export class WorkflowLoopEngine {
           costUsd: verifierResult.costUsd
         })
         record.verifierRunId = verifierRunId
+        if (this.deps.isCancelled()) {
+          iterations.push(record)
+          return settle('cancelled', 'cancelled')
+        }
         if (verifierResult.failed) record.failed = true
         verdict = verifierResult.verdict ?? { decision: 'revise' }
         record.verdict = verdict
