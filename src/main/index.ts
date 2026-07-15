@@ -20322,6 +20322,21 @@ async function compactCliSeatContext(payload: {
       maintenanceStopError = failureError
     } else {
       const boundedProvider = payload.provider
+      // Fence (review #5): the legacy print-mode compaction argv below
+      // (--print / --work-dir / --resume) is rejected at parse by a kimi-code
+      // binary, and its --resume would feed an ACP session id to legacy resume
+      // — crossing the transport-generation fence. Only a legacy-wire Kimi
+      // binary may run this path; a kimi-code seat skips compaction (ACP-
+      // transport compaction is a separate follow-up).
+      const kimiCompactionFenced =
+        boundedProvider === 'kimi' &&
+        (await probeKimiFlavourForBinary(resolved.binaryPath!)).flavour !== 'legacy-wire'
+      if (kimiCompactionFenced) {
+        failureError =
+          'Kimi Code seats use the ACP transport; host-seat compaction over ACP is not supported yet, so this maintenance turn was skipped.'
+        maintenanceStopReason = 'no_progress'
+        maintenanceStopError = failureError
+      } else {
       const convergence = await convergeHostSeatCompaction({
         provider: boundedProvider,
         snapshotMessages,
@@ -20343,13 +20358,17 @@ async function compactCliSeatContext(payload: {
             args = ['--print', '--plan', '--output-format', 'stream-json', '--work-dir', workspace]
             appendKimiModelArgs(args, normalizeCliProviderModel('kimi', identity.model))
             args.push('--prompt', prompt)
-            if (identity.linkedProviderSessionId) {
+            // Only resume a Wire-minted session id (this path is legacy-wire-
+            // fenced above; the wireResumeSessionId gate is belt-and-braces so
+            // an ACP session_<uuid> can never reach legacy --resume).
+            const compactionResumeId = wireResumeSessionId(identity.linkedProviderSessionId)
+            if (compactionResumeId) {
               // Deliberate: Kimi's verified Wire contract treats --resume as a
               // session identity token, not transcript restoration (the same
               // invariant behind PromptComposition's unconditional Kimi
               // context injection). Each fresh child therefore depends only on
               // this prompt's prior durable summary + new material.
-              args.push('--resume', identity.linkedProviderSessionId)
+              args.push('--resume', compactionResumeId)
             }
           }
           return runHostSeatSummaryProcess({
@@ -20394,6 +20413,7 @@ async function compactCliSeatContext(payload: {
         ) {
           grokSeatSessionRegistry.disposeSeat(`${payload.chatId}:${payload.participantId}`)
         }
+      }
       }
     }
 

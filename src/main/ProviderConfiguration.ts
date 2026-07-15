@@ -1,6 +1,23 @@
+import { promises as fsp } from 'fs'
 import type { AppSettings, ProviderId } from './store/types'
 import { resolveCliProviderBinary } from './providers/CliProviderRuntime'
 import { getOllamaStatusSnapshot } from './ollama/OllamaProvider'
+import { kimiCredentialCandidatePaths } from './providers/KimiCredential'
+
+/** True when a Kimi OAuth credential is present (Kimi Code home first, legacy
+ *  fallback) — i.e. the user is signed in via `kimi login` even without an API
+ *  key or an explicit binary path in settings. */
+async function kimiOAuthCredentialPresent(): Promise<boolean> {
+  for (const path of kimiCredentialCandidatePaths()) {
+    try {
+      await fsp.access(path)
+      return true
+    } catch {
+      // Try the next candidate.
+    }
+  }
+  return false
+}
 
 /**
  * The set of providers the user has actually set up ("logged in + activated") —
@@ -25,7 +42,19 @@ export async function detectConfiguredProviders(settings: AppSettings): Promise<
   if ((settings.geminiAuthProfiles?.length ?? 0) > 0 || settings.defaultGeminiAuthProfileId) {
     configured.add('gemini')
   }
-  if (settings.kimiApiKey || settings.kimiBinaryPath) configured.add('kimi')
+  // kimi: an API key or explicit binary path, OR an OAuth-signed-in Kimi Code
+  // install — the binary auto-resolves (~/.kimi-code/bin) and a credential file
+  // exists, with neither field set in settings (dossier slice 3 OAuth-aware arm).
+  if (settings.kimiApiKey || settings.kimiBinaryPath) {
+    configured.add('kimi')
+  } else {
+    try {
+      const resolvedKimi = await resolveCliProviderBinary('kimi')
+      if (resolvedKimi.binaryPath && (await kimiOAuthCredentialPresent())) configured.add('kimi')
+    } catch {
+      // Unresolved binary / probe error → treat as not configured.
+    }
+  }
   try {
     const ollamaStatus = await getOllamaStatusSnapshot(settings)
     if (ollamaStatus.available && ollamaStatus.modelCount > 0) configured.add('ollama')
