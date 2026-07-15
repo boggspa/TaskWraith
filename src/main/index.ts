@@ -90,6 +90,7 @@ import {
   type KimiHomeFs
 } from './kimi/KimiAcpHome'
 import { buildKimiWorkspaceConfigRefusalMessage } from './kimi/KimiAcpContainment'
+import { kimiCredentialCandidatePaths } from './providers/KimiCredential'
 import { runKimiAcpTurn, type KimiAcpFs } from './kimi/KimiAcpClient'
 import { classifyKimiToolPermission, isKimiSafeMcpTool } from './kimi/KimiToolPolicy'
 import { createAcpTurnAbortController } from './acp/AcpTurnClient'
@@ -36347,6 +36348,17 @@ if (isGeminiMcpBridgeProcess) {
       resolveCliProviderBinary,
       readResolvedCliVersion,
       probeKimiFlavour: probeKimiFlavourForBinary,
+      hasOAuthCredential: async () => {
+        for (const path of kimiCredentialCandidatePaths()) {
+          try {
+            await fs.access(path)
+            return true
+          } catch {
+            // Try the next candidate.
+          }
+        }
+        return false
+      },
       isMainRendererSender
     })
 

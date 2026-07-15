@@ -67,13 +67,22 @@ async function openProviderAuthTerminal(
       label = 'Kimi'
       const resolved = await deps.resolveCliProviderBinary('kimi')
       if (action === 'upgrade') {
+        // Kimi Code's subcommand is `upgrade` — the legacy `/upgrade` slash-arg
+        // is gone and errors on a kimi-code binary.
         if (resolved.binaryPath) {
-          commandParts = [resolved.binaryPath, '/upgrade']
+          commandParts = [resolved.binaryPath, 'upgrade']
         } else {
           rawCommand = 'curl -LsSf https://code.kimi.com/install.sh | bash'
         }
+      } else if (action === 'logout') {
+        // Kimi Code has no `logout` subcommand (running it errors); open a Kimi
+        // session so the user can manage account state instead.
+        commandParts = [resolved.binaryPath || 'kimi']
+        postscript =
+          'Kimi Code does not expose a logout subcommand. Manage your account in the opened Kimi session, then close this window.'
       } else {
-        commandParts = [resolved.binaryPath || 'kimi', action]
+        // login → `kimi login` (device-code flow).
+        commandParts = [resolved.binaryPath || 'kimi', 'login']
       }
     } else if (provider === 'cursor') {
       label = 'Cursor'

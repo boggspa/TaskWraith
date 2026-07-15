@@ -52,6 +52,7 @@ function createDeps() {
         evidence: '--wire advertised in --help'
       })
     ),
+    hasOAuthCredential: vi.fn(async () => false),
     isMainRendererSender: vi.fn(() => true)
   }
 
@@ -109,6 +110,30 @@ describe('registerKimiAuthHandlers', () => {
       binaryPath: '/usr/local/bin/kimi',
       cliFlavour: 'legacy-wire',
       transportSupported: true
+    })
+  })
+
+  it('reports oauth authState for a signed-in user with no API key', async () => {
+    const { deps } = createDeps()
+    deps.getSettings.mockReturnValue({ kimiApiKey: undefined })
+    deps.hasOAuthCredential.mockResolvedValue(true)
+    registerKimiAuthHandlers(deps)
+
+    await expect(handlerFor('get-kimi-auth-status')({})).resolves.toMatchObject({
+      available: true,
+      authState: 'oauth',
+      apiKeyConfigured: false
+    })
+  })
+
+  it('stays unknown when neither an API key nor an OAuth credential is present', async () => {
+    const { deps } = createDeps()
+    deps.getSettings.mockReturnValue({ kimiApiKey: undefined })
+    deps.hasOAuthCredential.mockResolvedValue(false)
+    registerKimiAuthHandlers(deps)
+
+    await expect(handlerFor('get-kimi-auth-status')({})).resolves.toMatchObject({
+      authState: 'unknown'
     })
   })
 

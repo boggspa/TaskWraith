@@ -16,6 +16,8 @@ export interface KimiAuthHandlersDeps {
   resolveCliProviderBinary: (provider: 'kimi') => Promise<ResolvedProviderBinary>
   readResolvedCliVersion: KimiVersionReader
   probeKimiFlavour: (binaryPath: string) => Promise<KimiFlavourFindings>
+  /** True when a Kimi OAuth credential file is present (signed in via `kimi login`). */
+  hasOAuthCredential: () => Promise<boolean>
   isMainRendererSender: (event: IpcMainInvokeEvent) => boolean
 }
 
@@ -40,9 +42,12 @@ export function registerKimiAuthHandlers(deps: KimiAuthHandlersDeps): void {
     // positively-identified generation for the Settings UI to explain why
     // runs are gated (migration dossier §4).
     const flavour = await deps.probeKimiFlavour(resolved.binaryPath)
+    // Kimi Code signs in via `kimi login` (OAuth), so a user with no API key can
+    // still be authenticated — surface 'oauth' rather than 'unknown'.
+    const oauthSignedIn = apiKeyConfigured ? false : await deps.hasOAuthCredential()
     const status: ProviderApiKeyStatus = {
       available: true,
-      authState: apiKeyConfigured ? 'api-key' : 'unknown',
+      authState: apiKeyConfigured ? 'api-key' : oauthSignedIn ? 'oauth' : 'unknown',
       apiKeyConfigured,
       encryptionAvailable,
       version,
