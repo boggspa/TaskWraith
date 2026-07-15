@@ -68,7 +68,8 @@ describe('RendererIpcPolicy', () => {
     'git:snapshot',
     'read-workspace-file',
     'read-image-preview',
-    'record-product-crash'
+    'record-product-crash',
+    'cancel-scheduled-task'
   ])('allows %s to reach its read or owner-scoped domain policy', (channel) => {
     expect(ipcChannelRequiresMainRenderer(channel)).toBe(false)
     expect(SECONDARY_RENDERER_SAFE_IPC_CHANNELS.has(channel)).toBe(true)

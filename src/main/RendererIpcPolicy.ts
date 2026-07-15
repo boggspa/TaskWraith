@@ -20,6 +20,7 @@ export const SECONDARY_RENDERER_SAFE_IPC_CHANNELS = new Set<string>([
   'blackboard-queued-ensemble-prompt',
   'cancel-agent-question',
   'cancel-agent-run',
+  'cancel-scheduled-task',
   'cancel-ensemble-participant-wakeup',
   'cancel-ensemble-round',
   'cancel-gemini',

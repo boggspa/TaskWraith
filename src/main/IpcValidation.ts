@@ -143,6 +143,7 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   // project presets to iOS (the renderer is the source of truth).
   'ensemble-roster-presets:sync': ['array'],
   'update-scheduled-task': ['string', 'object'],
+  'cancel-scheduled-task': ['nonEmptyString', 'optionalString'],
   'delete-scheduled-task': ['string'],
   'get-workflow-definitions': ['optionalString'],
   'save-workflow-definition': ['object'],

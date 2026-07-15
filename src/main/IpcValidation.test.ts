@@ -84,6 +84,13 @@ describe('IpcValidation', () => {
     )
   })
 
+  it('requires an exact scheduled task id for cancellation', () => {
+    expect(() =>
+      validateIpcArgs('cancel-scheduled-task', ['task-1', 'Cancelled from test.'])
+    ).not.toThrow()
+    expect(() => validateIpcArgs('cancel-scheduled-task', [''])).toThrow(/non-empty/)
+  })
+
   it('validates Canvas open payloads and embedded bounds deeply', () => {
     expect(() =>
       validateIpcArgs('canvas:open-window', [
