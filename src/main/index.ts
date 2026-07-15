@@ -80,6 +80,10 @@ import {
 } from './providers/KimiFlavour'
 import { kimiAcpEnabled } from './kimiGate'
 import { wireResumeSessionId } from './kimi/KimiSessionGeneration'
+import {
+  startKimiHttpMcpBridge,
+  type KimiHttpMcpBridgeHandle
+} from './kimi/KimiHttpMcpBridge'
 import { prepareKimiIsolatedHome, type KimiHomeFs } from './kimi/KimiAcpHome'
 import { runKimiAcpTurn, type KimiAcpFs } from './kimi/KimiAcpClient'
 import { createAcpTurnAbortController } from './acp/AcpTurnClient'
@@ -978,6 +982,7 @@ import {
   applyMcpBridgeProfileArgvToEnv,
   createMcpBridgeRuntime,
   GEMINI_MCP_AUDIT_SUBSET_ARG,
+  handleMcpJsonRpcMessage,
   mcpToolCallResponseFromBrokerResult as mcpBridgeToolCallResponseFromBrokerResult,
   startGeminiMcpBridgeProcess as startGeminiMcpBridgeProcessWithDeps
 } from './mcp/McpBridgeRuntime'
@@ -17453,6 +17458,88 @@ function applyKimiAcpRunEvent(state: CliProviderStreamState, evt: NormalizedGrok
 }
 
 /**
+ * Build the per-run MCP JSON-RPC dispatcher for a Kimi HTTP MCP bridge. Feeds
+ * each inbound message into the SHARED gateway dispatch (handleMcpJsonRpcMessage
+ * — the same code every stdio provider uses: initialize / tools/list subset /
+ * tools/call guards) with a capturing writer, so all subset filtering + broker
+ * routing + approvals are reused. The gateway-subset env pins the progressive-
+ * disclosure profile and stamps the Kimi run route so tools/call resolves to the
+ * right workspace/run. Returns null for notifications (no reply).
+ */
+function makeKimiMcpDispatch(
+  route: AgentRunRoute,
+  workspace: string | undefined
+): (message: Record<string, unknown>) => Promise<Record<string, unknown> | null> {
+  const deps = {
+    getDefaultSocketPath: () => geminiMcpSocketPath(),
+    getAppVersion: () => app.getVersion(),
+    getMcpToolDefinitions: () => mcpToolDefinitions(),
+    brokerRequest: mcpBridgeBrokerRequest,
+    mcpToolCallResponseFromBrokerResult: mcpBridgeToolCallResponseFromBrokerResult,
+    env: {
+      ...process.env,
+      // Progressive-disclosure gateway profile — the same subset the other
+      // capable seats advertise; the isolated home keeps this the ONLY MCP.
+      TASKWRAITH_MCP_GATEWAY_SUBSET: '1',
+      TASKWRAITH_PARENT_PROVIDER: 'kimi',
+      TASKWRAITH_RUN_ID: route.appRunId || '',
+      TASKWRAITH_CHAT_ID: route.appChatId || '',
+      TASKWRAITH_WORKSPACE_PATH: workspace || ''
+    } as NodeJS.ProcessEnv
+  }
+  return (message) =>
+    new Promise((resolve) => {
+      if (typeof message.method === 'string' && message.method.startsWith('notifications/')) {
+        resolve(null)
+        return
+      }
+      let settled = false
+      const finish = (value: Record<string, unknown> | null): void => {
+        if (settled) return
+        settled = true
+        resolve(value)
+      }
+      // handleMcpJsonRpcMessage writes exactly one framed/line response per
+      // request via this stdout shim; 'line' emits a single JSON line we parse.
+      const writer = {
+        write: (line: string) => {
+          try {
+            finish(JSON.parse(String(line).trim()))
+          } catch {
+            finish(null)
+          }
+          return true
+        }
+      } as unknown as NodeJS.WriteStream
+      try {
+        handleMcpJsonRpcMessage(
+          { ...deps, stdout: writer },
+          geminiMcpSocketPath(),
+          geminiMcpBrokerToken,
+          message,
+          'line'
+        )
+      } catch (error) {
+        finish({
+          jsonrpc: '2.0',
+          id: message.id ?? null,
+          error: { code: -32000, message: error instanceof Error ? error.message : String(error) }
+        })
+      }
+      // Never hang the Kimi turn on a wedged tool call.
+      setTimeout(
+        () =>
+          finish({
+            jsonrpc: '2.0',
+            id: message.id ?? null,
+            error: { code: -32000, message: 'TaskWraith MCP dispatch timed out.' }
+          }),
+        30_000
+      )
+    })
+}
+
+/**
  * Kimi Code ACP provider (migration slice 4, gated behind kimiAcpEnabled()).
  * Runs a full-tool Kimi seat inside a per-run isolated KIMI_CODE_HOME (curated
  * config: telemetry off, allow-rules stripped, FetchURL/WebSearch/AgentSwarm
@@ -17541,6 +17628,43 @@ async function runKimiAcpProvider(
     ...(payload.externalPathGrants || []).map((grant) => grant.path).filter(Boolean)
   ]
 
+  // Advertise the TaskWraith gateway to this Kimi session over a per-run
+  // localhost HTTP MCP bridge. Kimi ACP rejects stdio MCP servers (http/sse
+  // only), so unlike every other provider Kimi reaches the SAME in-process
+  // gateway (handleMcpJsonRpcMessage → broker → executeGeminiMcpTool) through a
+  // hand-rolled JSON HTTP endpoint. The isolated home keeps this the ONLY MCP
+  // Kimi sees. Best-effort: a bridge-start failure degrades to Kimi's built-in
+  // tools rather than failing the run.
+  let kimiMcpBridge: KimiHttpMcpBridgeHandle | null = null
+  let kimiMcpServers: unknown[] = []
+  if (payload.taskWraithMcpAdvertised !== false) {
+    try {
+      await mcpBridgeRuntime.startGeminiMcpBroker()
+      kimiMcpBridge = await startKimiHttpMcpBridge({
+        dispatch: makeKimiMcpDispatch(
+          route,
+          payload.scope === 'global' ? undefined : payload.workspace
+        )
+      })
+      kimiMcpServers = [
+        {
+          name: 'taskwraith',
+          type: 'http',
+          url: kimiMcpBridge.url,
+          headers: [{ name: kimiMcpBridge.headerName, value: kimiMcpBridge.headerValue }]
+        }
+      ]
+    } catch (error) {
+      sendAgentCompatLine(event.sender, 'kimi', {
+        type: 'provider_diagnostic',
+        provider: 'kimi',
+        message: `TaskWraith MCP tools are unavailable for this Kimi run (${
+          error instanceof Error ? error.message : String(error)
+        }); continuing with Kimi's built-in tools only.`
+      })
+    }
+  }
+
   // Bash/MCP tool asks route through the approval ledger; egress + sub-agent
   // fan-out never reach the client (denied by the isolated-home deny wall).
   const kimiPermissionHandler = async (request: AcpPermissionRequest) => {
@@ -17564,7 +17688,7 @@ async function runKimiAcpProvider(
   const teardown = async (): Promise<void> => {
     if (teardownDone) return
     teardownDone = true
-    await home.cleanup()
+    await Promise.all([home.cleanup(), kimiMcpBridge ? kimiMcpBridge.close() : Promise.resolve()])
   }
 
   const handle = runKimiAcpTurn({
@@ -17572,6 +17696,7 @@ async function runKimiAcpProvider(
     cwd: payload.workspace || os.homedir(),
     fsRoots,
     fs: kimiAcpFsAdapter,
+    mcpServers: kimiMcpServers,
     spawnProcess: () => {
       const args = [...(model ? ['--model', model] : []), 'acp']
       return spawn(binaryPath, args, {
