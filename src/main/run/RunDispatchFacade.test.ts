@@ -260,4 +260,17 @@ describe('createRunDispatchFacade — ordered side-effect sequence (faked deps)'
       senderEvent
     )
   })
+
+  it('does not capture a failover snapshot when dispatch is rejected', async () => {
+    const deps = makeDeps([])
+    vi.mocked(deps.runCoordinator.dispatch).mockResolvedValueOnce({
+      dispatched: false,
+      appRunId: 'run-1'
+    })
+
+    await createRunDispatchFacade(deps)(payload(), senderEvent)
+
+    expect(deps.captureFailoverSnapshot).not.toHaveBeenCalled()
+    expect(deps.failoverSnapshotByRun.set).not.toHaveBeenCalled()
+  })
 })

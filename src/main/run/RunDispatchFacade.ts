@@ -156,6 +156,7 @@ export function createRunDispatchFacade(deps: RunDispatchFacadeDeps) {
     // A provider-native `/compact` dispatch is excluded: failing it over
     // would send the literal slash text to a DIFFERENT provider as prose.
     if (
+      dispatchResult.dispatched &&
       deps.getSettings().autoFailoverEnabled &&
       dispatchResult.appRunId &&
       routedPayload.prompt?.trim() !== '/compact'
