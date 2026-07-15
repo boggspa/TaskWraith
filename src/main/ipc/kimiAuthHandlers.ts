@@ -1,6 +1,7 @@
 import { ipcMain, type IpcMainInvokeEvent } from 'electron'
 import type { ProviderApiKeyStatus } from '../store/types'
 import type { ResolvedProviderBinary } from '../providers/CliProviderRuntime'
+import type { KimiFlavourFindings } from '../providers/KimiFlavour'
 import { rendererSafeProviderApiKeyStatus } from '../RendererProviderProjection'
 
 interface KimiVersionReader {
@@ -14,6 +15,7 @@ export interface KimiAuthHandlersDeps {
   encryptApiKey: (value: string) => string | null
   resolveCliProviderBinary: (provider: 'kimi') => Promise<ResolvedProviderBinary>
   readResolvedCliVersion: KimiVersionReader
+  probeKimiFlavour: (binaryPath: string) => Promise<KimiFlavourFindings>
   isMainRendererSender: (event: IpcMainInvokeEvent) => boolean
 }
 
@@ -33,13 +35,20 @@ export function registerKimiAuthHandlers(deps: KimiAuthHandlersDeps): void {
       return deps.isMainRendererSender(event) ? status : rendererSafeProviderApiKeyStatus(status)
     }
     const version = await deps.readResolvedCliVersion(resolved)
+    // Kimi Code (the kimi-cli successor) resolves like a legacy binary but
+    // cannot be driven by the Wire transport, so the status carries the
+    // positively-identified generation for the Settings UI to explain why
+    // runs are gated (migration dossier §4).
+    const flavour = await deps.probeKimiFlavour(resolved.binaryPath)
     const status: ProviderApiKeyStatus = {
       available: true,
       authState: apiKeyConfigured ? 'api-key' : 'unknown',
       apiKeyConfigured,
       encryptionAvailable,
       version,
-      binaryPath: resolved.binaryPath
+      binaryPath: resolved.binaryPath,
+      cliFlavour: flavour.flavour,
+      transportSupported: flavour.flavour === 'legacy-wire'
     }
     return deps.isMainRendererSender(event) ? status : rendererSafeProviderApiKeyStatus(status)
   })

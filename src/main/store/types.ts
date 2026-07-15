@@ -2050,6 +2050,13 @@ export interface ProviderApiKeyStatus {
   encryptionAvailable: boolean
   version?: string
   binaryPath?: string | null
+  /** Positively-identified CLI generation for providers with a generation
+   *  probe (Kimi: 'legacy-wire' | 'kimi-code' | 'unsupported'). */
+  cliFlavour?: string
+  /** False when the resolved binary's generation cannot be driven by the
+   *  current transport: the binary is installed, but runs fail closed as
+   *  setup-required until the matching transport migration lands. */
+  transportSupported?: boolean
 }
 
 export type GeminiAuthProfileKind = 'api-key' | 'vertex-ai' | 'google-oauth'

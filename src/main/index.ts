@@ -73,6 +73,11 @@ import {
   shouldBreakThinkingChronology
 } from './providers/CliProviderThinking'
 import { claudeSdkThinkingConfigForEffort } from './providers/ClaudeThinkingConfig'
+import {
+  KIMI_FLAVOUR_PROBE_TIMEOUT_MS,
+  buildKimiFlavourGateMessage,
+  probeKimiFlavour
+} from './providers/KimiFlavour'
 import type {
   CodexRunState,
   GeminiToolContext,
@@ -17352,6 +17357,23 @@ async function runKimiWireProvider(
   })
 }
 
+/** Real-runtime wiring for the pure Kimi generation probe (results are
+ *  cached inside the module per binary path+mtime+size). */
+function probeKimiFlavourForBinary(binaryPath: string) {
+  return probeKimiFlavour(binaryPath, {
+    capture: (command, args) =>
+      captureProcessOutput(command, args, undefined, KIMI_FLAVOUR_PROBE_TIMEOUT_MS),
+    statBinary: async (path) => {
+      try {
+        const stats = await fs.stat(path)
+        return { mtimeMs: stats.mtimeMs, size: stats.size }
+      } catch {
+        return null
+      }
+    }
+  })
+}
+
 async function runKimiProvider(event: Electron.IpcMainInvokeEvent, payload: AgentRunPayload) {
   const route = routeWithRunId('kimi', payload)
   const startingSession = registerRunSession(
@@ -17397,6 +17419,34 @@ async function runKimiProvider(event: Electron.IpcMainInvokeEvent, payload: Agen
   const resolved = await resolveCliProviderBinary('kimi', payload.runtimeProfile)
   if (!resolved.binaryPath) {
     sendAgentCompatError(event.sender, 'kimi', resolved.error || 'Kimi CLI is not configured.')
+    sendAgentCompatLine(event.sender, 'kimi', {
+      type: 'result',
+      status: 'failed',
+      stats: {},
+      provider: 'kimi',
+      setupRequired: true
+    })
+    sendAgentCompatExit(event.sender, 'kimi', 1)
+    runManager.finish(route.appRunId, 'failed')
+    return
+  }
+
+  // Slice 1b of the Kimi Code migration (dossier §4): positively identify
+  // the CLI generation BEFORE any spawn and fail closed otherwise. Kimi Code
+  // removed --wire AND renamed --print to -p/--prompt, so both legacy
+  // transports die at argv parse — and Kimi Code's -p one-shot mode runs
+  // under auto-approve semantics with no --agent-file containment sink
+  // (dossier B1/B6), so the print-mode fallback below must NEVER be adapted
+  // to reach a kimi-code binary. Only a positively-identified legacy-wire
+  // binary proceeds into the Wire path; kimi-code stays setup-required until
+  // the ACP transport migration (A2) lands.
+  const kimiFlavour = await probeKimiFlavourForBinary(resolved.binaryPath)
+  if (kimiFlavour.flavour !== 'legacy-wire') {
+    sendAgentCompatError(
+      event.sender,
+      'kimi',
+      buildKimiFlavourGateMessage(kimiFlavour, resolved.binaryPath)
+    )
     sendAgentCompatLine(event.sender, 'kimi', {
       type: 'result',
       status: 'failed',
@@ -35788,6 +35838,7 @@ if (isGeminiMcpBridgeProcess) {
       encryptApiKey,
       resolveCliProviderBinary,
       readResolvedCliVersion,
+      probeKimiFlavour: probeKimiFlavourForBinary,
       isMainRendererSender
     })
 

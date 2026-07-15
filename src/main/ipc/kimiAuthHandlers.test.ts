@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ipcMain } from 'electron'
 import type { ResolvedProviderBinary } from '../providers/CliProviderRuntime'
+import type { KimiFlavourFindings } from '../providers/KimiFlavour'
 import { registerKimiAuthHandlers } from './kimiAuthHandlers'
 
 vi.mock('electron', () => ({
@@ -45,6 +46,12 @@ function createDeps() {
     encryptApiKey: vi.fn((value: string) => `encrypted:${value}`),
     resolveCliProviderBinary: vi.fn(async () => createResolved('/usr/local/bin/kimi')),
     readResolvedCliVersion: vi.fn(async () => '2.7.0'),
+    probeKimiFlavour: vi.fn(
+      async (): Promise<KimiFlavourFindings> => ({
+        flavour: 'legacy-wire',
+        evidence: '--wire advertised in --help'
+      })
+    ),
     isMainRendererSender: vi.fn(() => true)
   }
 
@@ -87,7 +94,9 @@ describe('registerKimiAuthHandlers', () => {
       apiKeyConfigured: true,
       encryptionAvailable: true,
       version: '2.7.0',
-      binaryPath: '/usr/local/bin/kimi'
+      binaryPath: '/usr/local/bin/kimi',
+      cliFlavour: 'legacy-wire',
+      transportSupported: true
     })
 
     deps.getSettings.mockReturnValueOnce({ kimiApiKey: undefined })
@@ -97,8 +106,26 @@ describe('registerKimiAuthHandlers', () => {
       apiKeyConfigured: false,
       encryptionAvailable: true,
       version: '2.7.0',
-      binaryPath: '/usr/local/bin/kimi'
+      binaryPath: '/usr/local/bin/kimi',
+      cliFlavour: 'legacy-wire',
+      transportSupported: true
     })
+  })
+
+  it('marks a Kimi Code binary as available but transport-unsupported', async () => {
+    const { deps } = createDeps()
+    deps.probeKimiFlavour.mockResolvedValue({
+      flavour: 'kimi-code' as const,
+      evidence: "no --wire option; 'acp' subcommand advertised in --help"
+    })
+    registerKimiAuthHandlers(deps)
+
+    await expect(handlerFor('get-kimi-auth-status')({})).resolves.toMatchObject({
+      available: true,
+      cliFlavour: 'kimi-code',
+      transportSupported: false
+    })
+    expect(deps.probeKimiFlavour).toHaveBeenCalledWith('/usr/local/bin/kimi')
   })
 
   it('omits the resolved binary path from secondary auth status', async () => {

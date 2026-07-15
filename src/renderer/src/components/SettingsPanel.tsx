@@ -7690,6 +7690,13 @@ export function SettingsPanel({
                       <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
                         ● Binary not found
                       </span>
+                    ) : kimiAuthStatus.transportSupported === false ? (
+                      <span
+                        style={{ fontSize: '0.78rem', color: 'var(--color-warning, #d29922)' }}
+                      >
+                        ● Kimi Code detected — runs are temporarily unavailable until the ACP
+                        transport migration lands
+                      </span>
                     ) : kimiAuthStatus.apiKeyConfigured ? (
                       <span style={{ fontSize: '0.78rem', color: 'var(--accent)' }}>
                         ● API key configured
