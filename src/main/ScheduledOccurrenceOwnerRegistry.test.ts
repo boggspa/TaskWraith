@@ -147,7 +147,7 @@ describe('ScheduledOccurrenceOwnerRegistry', () => {
     ).toBe(registered)
   })
 
-  it('binds one unique ensemble round and consumes it exactly once', () => {
+  it('binds one unique ensemble round and releases only the exact live owner', () => {
     const registry = new ScheduledOccurrenceOwnerRegistry()
     const ensemble = registry.register(owner('ensemble', { rootOwner: 'ensemble-root' }))
     registry.bindEnsembleRound('round-one', ensemble.ownerRunId)
@@ -161,12 +161,14 @@ describe('ScheduledOccurrenceOwnerRegistry', () => {
       'duplicate-round'
     )
     expect(registry.lookupEnsembleRound('round-one')).toBe(ensemble)
-    expect(registry.consumeEnsembleRound('round-one')).toBe(ensemble)
-    expect(registry.consumeEnsembleRound('round-one')).toBeUndefined()
+    expect(registry.release({ ...ensemble })).toBe(false)
+    expect(registry.release(ensemble)).toBe(true)
+    expect(registry.release(ensemble)).toBe(false)
+    expect(registry.lookupEnsembleRound('round-one')).toBeUndefined()
     expect(registry.isAppRunIdLiveOwned(ensemble.ownerRunId)).toBe(false)
   })
 
-  it('consumes a solo exit once and releases all indexes', () => {
+  it('looks up a solo exit without consuming settlement authority', () => {
     const registry = new ScheduledOccurrenceOwnerRegistry()
     const solo = registry.register(owner('solo'))
     const exit = {
@@ -176,8 +178,9 @@ describe('ScheduledOccurrenceOwnerRegistry', () => {
     }
 
     expect(registry.isAppRunIdLiveOwned(solo.ownerRunId)).toBe(true)
-    expect(registry.consumeSoloExit(exit)).toBe(solo)
-    expect(registry.consumeSoloExit(exit)).toBeUndefined()
+    expect(registry.lookupSoloExit(exit)).toBe(solo)
+    expect(registry.lookupSoloExit(exit)).toBe(solo)
+    expect(registry.release(solo)).toBe(true)
     expect(registry.lookupByTaskId(solo.taskId)).toBeUndefined()
   })
 
@@ -186,8 +189,8 @@ describe('ScheduledOccurrenceOwnerRegistry', () => {
     const first = registry.register(owner('first'))
     const second = registry.register(owner('second'))
 
-    expect(registry.release(first.ownerRunId)).toBe(first)
-    expect(registry.release(first.ownerRunId)).toBeUndefined()
+    expect(registry.release(first)).toBe(true)
+    expect(registry.release(first)).toBe(false)
     expect(registry.isAppRunIdLiveOwned(first.ownerRunId)).toBe(false)
     expect(registry.lookupByOwnerRunId(second.ownerRunId)).toBe(second)
   })

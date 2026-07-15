@@ -187,14 +187,6 @@ export class ScheduledOccurrenceOwnerRegistry {
     return owner
   }
 
-  /** One-shot solo terminal lookup. A mismatch consumes nothing. */
-  consumeSoloExit(input: ScheduledSoloExitIdentity): ScheduledOccurrenceOwner | undefined {
-    const owner = this.lookupSoloExit(input)
-    if (!owner) return undefined
-    this.remove(owner)
-    return owner
-  }
-
   /** Bind one newly reserved ensemble round to its already-registered root. */
   bindEnsembleRound(roundId: string, ownerRunId: string): ScheduledOccurrenceOwner {
     if (!isExactNonEmptyString(roundId) || !isExactNonEmptyString(ownerRunId)) {
@@ -219,20 +211,15 @@ export class ScheduledOccurrenceOwnerRegistry {
     return isExactNonEmptyString(roundId) ? this.byRoundId.get(roundId) : undefined
   }
 
-  /** One-shot ensemble terminal lookup; also releases task/run ownership. */
-  consumeEnsembleRound(roundId: string): ScheduledOccurrenceOwner | undefined {
-    const owner = this.lookupEnsembleRound(roundId)
-    if (!owner) return undefined
+  /**
+   * Release exactly the live object returned by `register` after its durable
+   * terminal mutation succeeds. Stale clones and mismatched identities consume
+   * nothing, so callers cannot accidentally discard settlement authority.
+   */
+  release(owner: ScheduledOccurrenceOwner): boolean {
+    if (this.lookupByOwnerRunId(owner.ownerRunId) !== owner) return false
     this.remove(owner)
-    return owner
-  }
-
-  /** Release a live owner after launch failure/cancellation or explicit cleanup. */
-  release(ownerRunId: string): ScheduledOccurrenceOwner | undefined {
-    const owner = this.lookupByOwnerRunId(ownerRunId)
-    if (!owner) return undefined
-    this.remove(owner)
-    return owner
+    return true
   }
 
   isAppRunIdLiveOwned(appRunId: string): boolean {
