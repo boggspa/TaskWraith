@@ -1037,6 +1037,11 @@ import {
 } from './cursorGate'
 import { buildCursorCliArgs, buildCursorProviderCliArgs, cursorWriteCapable } from './cursor/CursorCliArgs'
 import {
+  assertCursorWriteMcpPosture,
+  cursorMcpToolsDenied,
+  resolveCursorUserMcpLaunchServers
+} from './cursor/CursorMcpPolicy'
+import {
   cursorEffectiveExitCode,
   cursorEventToRunEvents,
   cursorTerminalCompatOutcome,
@@ -14709,22 +14714,32 @@ async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
   // File edits should therefore flow through TaskWraith MCP tools
   // (write_file/replace/apply_patch), which enforce approval policy and workspace
   // path checks before execution. The config is restored on completion. If the
-  // broker/config setup fails, we fall back to read-only (`--mode plan`) rather
-  // than launching write mode without TaskWraith-controlled side effects.
+  // broker/config setup fails, the run is rejected rather than silently
+  // degrading to a different permission posture.
   const writeCapable = cursorWriteCapable(payload.approvalMode)
+  const mcpToolsDenied = cursorMcpToolsDenied(payload.effectivePermissions)
   let restoreCursorConfig: (() => void) | undefined
   let cursorTaskWraithMcpActive = false
   let cursorTaskWraithReadOnlyMcpActive = false
-  if (writeCapable && payload.workspace) {
+  if (writeCapable) {
     try {
+      const workspace = payload.workspace
+      if (!workspace) {
+        throw new Error('Cursor write mode requires a workspace-bound TaskWraith MCP broker.')
+      }
+      assertCursorWriteMcpPosture(writeCapable, payload.effectivePermissions)
       const settings = AppStore.getSettings()
-      const userMcpServers = buildUserMcpLaunchServers(settings.userMcpServers, {
-        supportedTransports: ['stdio', 'http'],
-        allowlistPolicy: managedUserMcpLaunchAllowlistPolicy?.(),
-        resolveSecretValues: (refs) => AppStore.resolveExtensionSecretValues(refs),
-        validatePluginProvenance: validateUserMcpPluginProvenance
-      })
-      const cursorDir = join(payload.workspace, '.cursor')
+      const userMcpServers = resolveCursorUserMcpLaunchServers(
+        payload.effectivePermissions,
+        () =>
+          buildUserMcpLaunchServers(settings.userMcpServers, {
+            supportedTransports: ['stdio', 'http'],
+            allowlistPolicy: managedUserMcpLaunchAllowlistPolicy?.(),
+            resolveSecretValues: (refs) => AppStore.resolveExtensionSecretValues(refs),
+            validatePluginProvenance: validateUserMcpPluginProvenance
+          })
+      )
+      const cursorDir = join(workspace, '.cursor')
       const cliPath = join(cursorDir, 'cli.json')
       const mcpPath = join(cursorDir, 'mcp.json')
       const bridgeCommandStatus = taskwraithMcpBridgeCommandStatus()
@@ -14794,17 +14809,17 @@ async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
         // posture; every other write run keeps native shell/writes contained.
         { fullAccess: isFullShellAccessGranted(payload.effectivePermissions) }
       )
-      await ensureCursorMcpApproved(resolved.binaryPath, payload.workspace)
+      await ensureCursorMcpApproved(resolved.binaryPath, workspace)
       if (!useGlobalBroker) {
         await ensureCursorMcpApproved(
           resolved.binaryPath,
-          payload.workspace,
+          workspace,
           CURSOR_LEGACY_WEB_MCP_SERVER_NAME
         )
       }
       await Promise.all(
         userMcpServers.map((server) =>
-          ensureCursorMcpApproved(resolved.binaryPath!, payload.workspace!, server.serverName)
+          ensureCursorMcpApproved(resolved.binaryPath!, workspace, server.serverName)
         )
       )
       cursorTaskWraithMcpActive = true
@@ -14848,6 +14863,7 @@ async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
     !writeCapable &&
     !cursorTaskWraithMcpActive &&
     payload.workspace &&
+    !mcpToolsDenied &&
     cursorReadOnlyMcpEnabled()
   ) {
     try {
@@ -14966,6 +14982,7 @@ async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
     approvalMode: payload.approvalMode,
     taskWraithMcpActive: cursorTaskWraithMcpActive,
     taskWraithReadOnlyMcpActive: cursorTaskWraithReadOnlyMcpActive,
+    effectivePermissions: payload.effectivePermissions,
     // --force (gated) so Cursor executes the broker's MCP tool CALLS headlessly;
     // safe because the workspace deny-list keeps native shell/write blocked.
     forceAllowMcpTools: cursorForceMcpEnabled()

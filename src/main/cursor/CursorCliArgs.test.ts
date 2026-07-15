@@ -1,5 +1,21 @@
 import { describe, it, expect } from 'vitest'
 import { buildCursorCliArgs, buildCursorProviderCliArgs, cursorWriteCapable } from './CursorCliArgs'
+import type { EffectiveRunPermissions } from '../store/types'
+
+const mcpDeniedPermissions: Pick<EffectiveRunPermissions, 'agenticServices'> = {
+  agenticServices: {
+    shellCommands: 'allow',
+    fileChanges: 'allow',
+    externalPublish: 'deny',
+    mcpTools: 'deny',
+    subThreadDelegation: 'deny',
+    canvasInteraction: 'deny',
+    crossThreadRead: 'deny',
+    mediaEditing: 'deny',
+    mediaRecording: 'deny',
+    canvasEval: 'deny'
+  }
+}
 
 describe('cursorWriteCapable', () => {
   it('is read-only for plan / empty / unset', () => {
@@ -106,6 +122,37 @@ describe('buildCursorCliArgs', () => {
     })
     expect(off).not.toContain('--force')
     expect(off).toContain('--approve-mcps')
+  })
+
+  it('suppresses every MCP widening flag and clamps to plan when the effective posture denies MCP', () => {
+    const args = buildCursorCliArgs({
+      ...base,
+      approvalMode: 'default',
+      webBridgeActive: true,
+      readOnlyBridgeActive: true,
+      forceAllowTools: true,
+      effectivePermissions: mcpDeniedPermissions
+    })
+
+    expect(args.join(' ')).toContain('--mode plan')
+    expect(args).not.toContain('--approve-mcps')
+    expect(args).not.toContain('--force')
+    expect(args).not.toContain('--yolo')
+  })
+
+  it('provider wrapper cannot widen an MCP-denied run through stale active-bridge flags', () => {
+    const args = buildCursorProviderCliArgs({
+      ...base,
+      approvalMode: 'default',
+      taskWraithMcpActive: true,
+      taskWraithReadOnlyMcpActive: true,
+      forceAllowMcpTools: true,
+      effectivePermissions: mcpDeniedPermissions
+    })
+
+    expect(args.join(' ')).toContain('--mode plan')
+    expect(args).not.toContain('--approve-mcps')
+    expect(args).not.toContain('--force')
   })
 
   it('forwards Composer 2.5 model ids without applying reasoning/Fast overrides', () => {

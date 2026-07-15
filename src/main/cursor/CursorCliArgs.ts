@@ -12,6 +12,8 @@
 
 import { CURSOR_COMPOSER_MODEL_IDS } from './CursorCliProbe'
 import { resolveCursorGrok45CliModelId } from '../../shared/grok45Models'
+import type { EffectiveRunPermissions } from '../store/types'
+import { cursorMcpToolsDenied } from './CursorMcpPolicy'
 
 /**
  * `'plan'` / unset = read-only (`--mode plan`, no edits). Anything else =
@@ -32,6 +34,9 @@ export interface BuildCursorCliArgsInput {
   providerSessionId?: string | null
   /** Composer approval mode: 'plan'/unset = read-only; else write-capable. */
   approvalMode?: string | null
+  /** Canonical main-resolved posture. An explicit MCP deny suppresses every
+   * bridge approval/force flag even if a stale caller claims a bridge is live. */
+  effectivePermissions?: Pick<EffectiveRunPermissions, 'agenticServices'> | null
   /**
    * True when the TaskWraith MCP bridge is active for this run (a per-run
    * `.cursor/mcp.json` registering the full brokered TaskWraith MCP server was
@@ -92,7 +97,12 @@ function resolveCursorModelArg(input: {
 }
 
 export function buildCursorCliArgs(input: BuildCursorCliArgsInput): string[] {
-  const writeCapable = cursorWriteCapable(input.approvalMode)
+  const mcpToolsDenied = cursorMcpToolsDenied(input.effectivePermissions)
+  // Cursor write mode is implemented exclusively through the governed
+  // TaskWraith MCP bridge. The production caller rejects this combination; the
+  // pure argv builder independently clamps it to plan mode so stale bridge
+  // booleans can never produce an uncontained default-mode process.
+  const writeCapable = cursorWriteCapable(input.approvalMode) && !mcpToolsDenied
   const args: string[] = [
     '-p',
     '--output-format',
@@ -106,8 +116,11 @@ export function buildCursorCliArgs(input: BuildCursorCliArgsInput): string[] {
   // A read-only seat with an active safe-subset bridge is CONTAINED (deny-list +
   // read-only-only broker) and must run in DEFAULT mode, because `--mode plan`
   // executes no tools — including the read tools the seat was just given.
-  const readOnlyContained = !writeCapable && Boolean(input.readOnlyBridgeActive)
-  const bridgeActive = (writeCapable && Boolean(input.webBridgeActive)) || readOnlyContained
+  const readOnlyContained =
+    !mcpToolsDenied && !writeCapable && Boolean(input.readOnlyBridgeActive)
+  const bridgeActive =
+    !mcpToolsDenied &&
+    ((writeCapable && Boolean(input.webBridgeActive)) || readOnlyContained)
   // Read-only safety: plan mode performs no edits (proven). Write mode runs in
   // default mode; native side effects are contained by the deny-list config.
   // A read-only-contained seat also runs in default mode (contained instead).
@@ -147,15 +160,18 @@ export function buildCursorCliArgs(input: BuildCursorCliArgsInput): string[] {
 }
 
 export function buildCursorProviderCliArgs(input: BuildCursorProviderCliArgsInput): string[] {
+  const mcpToolsDenied = cursorMcpToolsDenied(input.effectivePermissions)
   return buildCursorCliArgs({
     ...input,
     // Honor the chat's approval mode only when the WRITE containment config is
     // in place; otherwise force read-only. A read-only seat with the safe-subset
     // broker still runs (contained) in default mode via readOnlyBridgeActive.
-    approvalMode: input.taskWraithMcpActive ? input.approvalMode : 'plan',
-    webBridgeActive: Boolean(input.taskWraithMcpActive),
+    approvalMode: input.taskWraithMcpActive && !mcpToolsDenied ? input.approvalMode : 'plan',
+    webBridgeActive: !mcpToolsDenied && Boolean(input.taskWraithMcpActive),
     readOnlyBridgeActive:
-      !input.taskWraithMcpActive && Boolean(input.taskWraithReadOnlyMcpActive),
+      !mcpToolsDenied &&
+      !input.taskWraithMcpActive &&
+      Boolean(input.taskWraithReadOnlyMcpActive),
     forceAllowTools: input.forceAllowMcpTools
   })
 }
