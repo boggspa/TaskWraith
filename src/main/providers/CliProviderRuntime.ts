@@ -46,6 +46,7 @@ export interface CapturedProcessOutput {
 }
 
 export interface CliProviderRuntimeDependencies {
+  env?: Readonly<Record<string, string | undefined>>
   getSettings?: () => AppSettings
   getRuntimeProfiles?: (provider?: ProviderId) => RuntimeProfile[]
   getGeminiAuthStatusSnapshot?: () => Promise<Pick<GeminiAuthStatus, 'authState'> | null>
@@ -55,6 +56,13 @@ export interface CliProviderRuntimeDependencies {
   getCodexStatusSnapshot?: () => Promise<unknown>
   getCodexMcpStatusSnapshot?: () => Promise<unknown>
   resolveExtensionSecretValues?: (refs: ExtensionSecretRef[]) => ExtensionSecretResolution[]
+}
+
+export class RuntimeProfileEnvironmentResolutionError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'RuntimeProfileEnvironmentResolutionError'
+  }
 }
 
 export interface RuntimeProfilePayload {
@@ -110,25 +118,28 @@ export async function fileExists(candidate: string): Promise<boolean> {
   }
 }
 
-export function getCliSearchDirs(binaryPath?: string | null): string[] {
+export function getCliSearchDirs(
+  binaryPath?: string | null,
+  inheritedEnv: Readonly<Record<string, string | undefined>> = process.env
+): string[] {
   const windowsDirs =
     process.platform === 'win32'
       ? [
-          process.env.APPDATA ? join(process.env.APPDATA, 'npm') : '',
-          process.env.LOCALAPPDATA
-            ? join(process.env.LOCALAPPDATA, 'Microsoft', 'WindowsApps')
+          inheritedEnv.APPDATA ? join(inheritedEnv.APPDATA, 'npm') : '',
+          inheritedEnv.LOCALAPPDATA
+            ? join(inheritedEnv.LOCALAPPDATA, 'Microsoft', 'WindowsApps')
             : '',
-          process.env.LOCALAPPDATA ? join(process.env.LOCALAPPDATA, 'Programs') : '',
-          process.env.USERPROFILE ? join(process.env.USERPROFILE, 'scoop', 'shims') : '',
-          process.env.ProgramFiles ? join(process.env.ProgramFiles, 'nodejs') : '',
-          process.env.ProgramData ? join(process.env.ProgramData, 'chocolatey', 'bin') : '',
+          inheritedEnv.LOCALAPPDATA ? join(inheritedEnv.LOCALAPPDATA, 'Programs') : '',
+          inheritedEnv.USERPROFILE ? join(inheritedEnv.USERPROFILE, 'scoop', 'shims') : '',
+          inheritedEnv.ProgramFiles ? join(inheritedEnv.ProgramFiles, 'nodejs') : '',
+          inheritedEnv.ProgramData ? join(inheritedEnv.ProgramData, 'chocolatey', 'bin') : '',
           'C:\\Program Files\\nodejs',
           'C:\\ProgramData\\chocolatey\\bin'
         ]
       : []
   const dirs = [
     binaryPath ? dirname(binaryPath) : '',
-    ...(process.env.PATH || '').split(delimiter),
+    ...(inheritedEnv.PATH || '').split(delimiter),
     ...windowsDirs,
     join(os.homedir(), '.local', 'bin'),
     join(os.homedir(), '.npm-global', 'bin'),
@@ -207,7 +218,8 @@ export function resolveRuntimeProfileEnv(
   if (refs.length === 0) return env
 
   const resolveSecretValues =
-    deps?.resolveExtensionSecretValues || ((items: ExtensionSecretRef[]) => AppStore.resolveExtensionSecretValues(items))
+    deps?.resolveExtensionSecretValues ||
+    ((items: ExtensionSecretRef[]) => AppStore.resolveExtensionSecretValues(items))
   const resolutions = resolveSecretValues(refs)
   refs.forEach((ref, index) => {
     const resolution = resolutions[index]
@@ -219,7 +231,7 @@ export function resolveRuntimeProfileEnv(
       resolvedRef.fieldName === ref.fieldName
     if (resolution?.status !== 'ok' || !matchesRef || typeof resolution.value !== 'string') {
       const status = resolution?.status || 'missing'
-      throw new Error(
+      throw new RuntimeProfileEnvironmentResolutionError(
         `Runtime profile ${profile.name || profile.id} cannot launch because encrypted env secret ${ref.fieldName} is ${status}.`
       )
     }
@@ -228,19 +240,54 @@ export function resolveRuntimeProfileEnv(
   return env
 }
 
+/**
+ * Resolve the environment for an opaque provider process from one authority
+ * path: inherited host variables, selected runtime-profile env/secret refs,
+ * caller-owned route variables, binary-aware PATH, then the shared scrubber.
+ *
+ * Both direct CLI launches and SDKs that spawn a provider CLI must use this
+ * builder. Supplying an SDK `env` replaces the host environment entirely, so a
+ * raw `process.env` spread at an SDK call site would bypass both profile
+ * resolution and the credential scrubber.
+ */
+export function createResolvedProviderEnv(
+  extra: Record<string, string>,
+  binaryPath?: string | null,
+  deps?: CliProviderRuntimeDependencies,
+  exactRuntimeProfile?: RuntimeProfile | null
+): Record<string, string> {
+  const inheritedEnv = deps?.env ?? process.env
+  if (
+    exactRuntimeProfile !== undefined &&
+    exactRuntimeProfile !== null &&
+    extra.TASKWRAITH_RUNTIME_PROFILE_ID !== exactRuntimeProfile.id
+  ) {
+    throw new RuntimeProfileEnvironmentResolutionError(
+      'The resolved runtime profile does not match the launch environment identity.'
+    )
+  }
+  const runtimeProfileEnv =
+    exactRuntimeProfile === undefined
+      ? activeRuntimeProfileEnv(extra, deps)
+      : exactRuntimeProfile === null
+        ? null
+        : resolveRuntimeProfileEnv(exactRuntimeProfile, deps)
+  return scrubCliEnv({
+    ...inheritedEnv,
+    PATH: getCliSearchDirs(binaryPath, inheritedEnv).join(delimiter),
+    TERM: inheritedEnv.TERM || 'xterm-256color',
+    COLORTERM: inheritedEnv.COLORTERM || 'truecolor',
+    ...(runtimeProfileEnv || {}),
+    ...extra
+  })
+}
+
 export function createCliEnv(
   extra: Record<string, string>,
   binaryPath?: string | null,
   deps?: CliProviderRuntimeDependencies
 ): Record<string, string> {
-  return scrubCliEnv({
-    ...(process.env as Record<string, string>),
-    PATH: getCliSearchDirs(binaryPath).join(delimiter),
-    TERM: process.env.TERM || 'xterm-256color',
-    COLORTERM: process.env.COLORTERM || 'truecolor',
-    ...(activeRuntimeProfileEnv(extra, deps) || {}),
-    ...extra
-  })
+  return createResolvedProviderEnv(extra, binaryPath, deps)
 }
 
 export function runtimeSettings(base: AppSettings, profile?: RuntimeProfile | null): AppSettings {
@@ -319,9 +366,17 @@ export function resolveRuntimeProfileForPayload(
   deps?: CliProviderRuntimeDependencies
 ): RuntimeProfile | undefined {
   if (!payload.runtimeProfileId) return undefined
-  const profile = runtimeProfilesFromDeps(deps, payload.provider).find(
-    (candidate) => candidate.id === payload.runtimeProfileId
-  )
+  const preparedProfile = payload.runtimeProfile
+  if (preparedProfile && preparedProfile.id !== payload.runtimeProfileId) {
+    throw new Error(
+      `Prepared runtime profile ${preparedProfile.id} does not match ${payload.runtimeProfileId}.`
+    )
+  }
+  const profile =
+    preparedProfile ||
+    runtimeProfilesFromDeps(deps, payload.provider).find(
+      (candidate) => candidate.id === payload.runtimeProfileId
+    )
   if (!profile) {
     throw new Error(`Runtime profile was not found: ${payload.runtimeProfileId}`)
   }

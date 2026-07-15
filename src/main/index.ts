@@ -792,6 +792,13 @@ import {
   runtimeSettings
 } from './providers/CliProviderRuntime'
 import {
+  canonicalizeClaudeRuntimeProfilePayload,
+  ClaudeEnvironmentAuthorityError,
+  prepareClaudeEnvironmentAuthority,
+  resolvePreparedClaudeRunAuthority,
+  type ClaudeEnvironmentAuthoritySnapshot
+} from './providers/ClaudeRuntimeEnvironment'
+import {
   buildBridgeApnsPusherFromSettings,
   cancelGeminiOAuthLogin,
   clearCodexUsageCredential,
@@ -12122,6 +12129,12 @@ function refreshTaskWraithMcpProfileFenceStoreIdentity(payload: AgentRunPayload)
 }
 
 function applyRuntimeProfileToPayload(payload: AgentRunPayload): AgentRunPayload {
+  if (payload.provider === 'claude') {
+    canonicalizeClaudeRuntimeProfilePayload(
+      payload,
+      AppStore.getRuntimeProfiles('claude')
+    )
+  }
   const applied = applyRuntimeProfileToPayloadViaCliRuntime(
     payload,
     cliProviderRuntimeDeps
@@ -12251,13 +12264,16 @@ function applyRuntimeProfileToPayload(payload: AgentRunPayload): AgentRunPayload
   })
   if (truthfulPrompt !== applied.prompt) {
     applied.prompt = truthfulPrompt
-    if (applied.effectivePermissionsSignature) {
-      applied.effectivePermissionsSignature = signRunPosture(
-        applied.approvalMode,
-        applied.effectivePermissions,
-        runPostureContextFromPayload(applied)
-      )
-    }
+  }
+  // Runtime-profile application, worktree selection intent, session rotation,
+  // and prompt truthfulness all participate in the signed run context. Only a
+  // posture that survived normalization as trusted is re-signed here.
+  if (applied.effectivePermissionsSignature) {
+    applied.effectivePermissionsSignature = signRunPosture(
+      applied.approvalMode,
+      applied.effectivePermissions,
+      runPostureContextFromPayload(applied)
+    )
   }
   return applied
 }
@@ -13377,9 +13393,15 @@ function runCliProviderProcess(
     fallback: boolean
     requireExistingRun?: boolean
     warning?: string
-    extraEnv?: Record<string, string>
     onComplete?: () => Promise<void> | void
-  } = { fallback: true }
+  } & (
+    | { extraEnv?: Record<string, string>; resolvedEnv?: never }
+    | {
+        extraEnv?: never
+        /** Main-resolved immutable launch authority; never merge or re-resolve it here. */
+        resolvedEnv: Readonly<Record<string, string>>
+      }
+  ) = { fallback: true }
 ) {
   const route = routeWithRunId(provider, payload)
   let onCompleteFired = false
@@ -13480,23 +13502,25 @@ function runCliProviderProcess(
   const child = spawn(command, args, {
     cwd,
     shell: false,
-    env: createCliEnv(
-      {
-        FORCE_COLOR: '0',
-        NO_COLOR: '1',
-        TASKWRAITH_RUNTIME_PROFILE_ID: payload.runtimeProfileId || '',
-        TASKWRAITH_PARENT_PROVIDER: provider,
-        TASKWRAITH_RUN_ID: route.appRunId || '',
-        TASKWRAITH_CHAT_ID: route.appChatId || '',
-        TASKWRAITH_WORKSPACE_PATH: payload.scope === 'global' ? '' : payload.workspace || '',
-        // Audit role-run: advertise the audit_* MCP tools to THIS run's bridge
-        // child (it inherits the CLI's env). Set only for audit runs; a normal
-        // run never carries payload.auditRun, so the namespace stays hidden.
-        ...(payload.auditRun ? { TASKWRAITH_MCP_AUDIT: '1' } : {}),
-        ...(options.extraEnv || {})
-      },
-      command
-    )
+    env:
+      options.resolvedEnv ??
+      createCliEnv(
+        {
+          FORCE_COLOR: '0',
+          NO_COLOR: '1',
+          TASKWRAITH_RUNTIME_PROFILE_ID: payload.runtimeProfileId || '',
+          TASKWRAITH_PARENT_PROVIDER: provider,
+          TASKWRAITH_RUN_ID: route.appRunId || '',
+          TASKWRAITH_CHAT_ID: route.appChatId || '',
+          TASKWRAITH_WORKSPACE_PATH: payload.scope === 'global' ? '' : payload.workspace || '',
+          // Audit role-run: advertise the audit_* MCP tools to THIS run's bridge
+          // child (it inherits the CLI's env). Set only for audit runs; a normal
+          // run never carries payload.auditRun, so the namespace stays hidden.
+          ...(payload.auditRun ? { TASKWRAITH_MCP_AUDIT: '1' } : {}),
+          ...(options.extraEnv || {})
+        },
+        command
+      )
   })
   child.stdin?.end()
   runManager.attachProcess(route.appRunId!, child)
@@ -14049,32 +14073,13 @@ async function tryRunClaudeSdk(
   event: Electron.IpcMainInvokeEvent,
   payload: AgentRunPayload,
   sdk: any,
-  route: AgentRunRoute
+  route: AgentRunRoute,
+  environmentAuthority: ClaudeEnvironmentAuthoritySnapshot
 ): Promise<boolean> {
   const query = sdk?.query || sdk?.default?.query
   if (typeof query !== 'function') return false
   const model = normalizeCliProviderModel('claude', payload.model)
-  const claudeApiKey = getStoredClaudeApiKey()
-  // In a packaged Electron build the SDK's bundled CLI lives inside app.asar,
-  // which appears as a regular file to subprocess spawn — the SDK then fails
-  // with ENOTDIR. Point it at the system-installed Claude binary instead so it
-  // can spawn a real executable. We resolve this lazily so dev (unpackaged)
-  // continues to use whatever the SDK ships with.
-  let pathToClaudeCodeExecutable: string | undefined
-  if (app.isPackaged) {
-    try {
-      const resolvedClaude = await resolveCliProviderBinary('claude', payload.runtimeProfile)
-      if (resolvedClaude.binaryPath) {
-        pathToClaudeCodeExecutable = resolvedClaude.binaryPath
-      } else {
-        // No system binary either; skip the SDK path so we fail over cleanly
-        // to the CLI fallback (which surfaces a useful setup-required error).
-        return false
-      }
-    } catch {
-      return false
-    }
-  }
+  const pathToClaudeCodeExecutable = environmentAuthority.binaryPath || undefined
   if (!canStartRunTransport(runManager.get(route.appRunId)?.status, true)) return true
   const controller = new AbortController()
   cliProviderAbortControllers.set('claude', controller)
@@ -14140,7 +14145,10 @@ async function tryRunClaudeSdk(
     },
     state
   )
-  const claudeUsageWarning = claudeProgrammaticUsageWarning('sdk', Boolean(claudeApiKey))
+  const claudeUsageWarning = claudeProgrammaticUsageWarning(
+    'sdk',
+    environmentAuthority.hasAnthropicApiKey
+  )
   if (claudeUsageWarning) {
     sendAgentCompatLine(
       event.sender,
@@ -14188,21 +14196,6 @@ async function tryRunClaudeSdk(
     : null
   const claudeSdkSettings =
     typeof payload.claudeFastMode === 'boolean' ? { fastMode: payload.claudeFastMode } : undefined
-  // Belt-and-braces env stamp on the SDK process: in addition to the
-  // per-server env block in the MCP config, set provider/run/chat route
-  // stamps on the Claude CLI process itself. Some platforms / SDK code
-  // paths strip the MCP env block when re-spawning the bridge, so the
-  // values should also be inheritable from the parent. When the SDK env
-  // option is set, it REPLACES process.env entirely — so we splat
-  // process.env first to preserve the user's PATH etc.
-  const claudeSdkEnv: Record<string, string | undefined> = {
-    ...(process.env as Record<string, string | undefined>),
-    TASKWRAITH_PARENT_PROVIDER: 'claude',
-    TASKWRAITH_RUN_ID: route.appRunId || '',
-    TASKWRAITH_CHAT_ID: route.appChatId || '',
-    TASKWRAITH_WORKSPACE_PATH: payload.scope === 'global' ? '' : payload.workspace || '',
-    ...(claudeApiKey ? { ANTHROPIC_API_KEY: claudeApiKey } : {})
-  }
   // 1.0.71 dogfood fix: make sure the TaskWraith MCP broker socket is actually
   // listening before the SDK spawns Claude's bridge subprocess. Otherwise the
   // subprocess connects to a dead socket and Claude reports "MCP socket is
@@ -14293,7 +14286,7 @@ async function tryRunClaudeSdk(
         ? { allowedTools: claudeSdkAllowedTools }
         : {}),
       ...(claudeSdkSettings ? { settings: claudeSdkSettings } : {}),
-      env: claudeSdkEnv
+      env: environmentAuthority.env
       }
     })
 
@@ -14343,8 +14336,87 @@ async function tryRunClaudeSdk(
   }
 }
 
+async function prepareClaudeRunEnvironmentAuthority(
+  payload: AgentRunPayload,
+  route: AgentRunRoute,
+  sdkAvailable: boolean
+): Promise<ClaudeEnvironmentAuthoritySnapshot> {
+  try {
+    const prepared = resolvePreparedClaudeRunAuthority({
+      payload,
+      route,
+      registryAudit: auditRuntime.registry.get(route.appRunId)
+    })
+    const resolvedBinary = await resolveCliProviderBinary(
+      'claude',
+      prepared.runtimeProfile,
+      cliProviderRuntimeDeps
+    )
+    const explicitBinaryResolutionFailed =
+      !resolvedBinary.binaryPath &&
+      (resolvedBinary.source === 'runtime_profile' || resolvedBinary.source === 'settings')
+    if (
+      !resolvedBinary.binaryPath &&
+      (app.isPackaged || !sdkAvailable || explicitBinaryResolutionFailed)
+    ) {
+      throw new ClaudeEnvironmentAuthorityError(
+        resolvedBinary.error || 'Claude Code CLI was not found for the resolved runtime profile.'
+      )
+    }
+    return prepareClaudeEnvironmentAuthority(
+      {
+        runtimeProfile: prepared.runtimeProfile,
+        binaryPath: resolvedBinary.binaryPath,
+        scope: payload.scope,
+        workspace: payload.workspace,
+        runId: route.appRunId,
+        chatId: route.appChatId,
+        apiKey: getStoredClaudeApiKey(),
+        auditRun: prepared.auditRun
+      },
+      cliProviderRuntimeDeps
+    )
+  } catch (error) {
+    if (error instanceof ClaudeEnvironmentAuthorityError) throw error
+    throw new ClaudeEnvironmentAuthorityError(
+      'The Claude launch environment could not be resolved safely.'
+    )
+  }
+}
+
 async function runClaudeProvider(event: Electron.IpcMainInvokeEvent, payload: AgentRunPayload) {
   const route = routeWithRunId('claude', payload)
+  const sdk = await loadOptionalClaudeSdk()
+  let environmentAuthority: ClaudeEnvironmentAuthoritySnapshot
+  try {
+    environmentAuthority = await prepareClaudeRunEnvironmentAuthority(
+      payload,
+      route,
+      Boolean(sdk)
+    )
+  } catch (error) {
+    const message =
+      error instanceof ClaudeEnvironmentAuthorityError
+        ? error.message
+        : 'The Claude launch environment could not be resolved safely.'
+    runManager.finish(route.appRunId, 'failed')
+    sendAgentCompatError(event.sender, 'claude', message, route)
+    sendAgentCompatLine(
+      event.sender,
+      'claude',
+      {
+        type: 'result',
+        status: 'failed',
+        stats: {},
+        provider: 'claude',
+        setupRequired: true,
+        fallback: false
+      },
+      route
+    )
+    sendAgentCompatExit(event.sender, 'claude', 1, route)
+    return
+  }
   const startingSession = registerRunSession(
     'claude',
     event.sender,
@@ -14354,11 +14426,10 @@ async function runClaudeProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
     payload.providerSessionId || null
   )
   if (!startingSession) return
-  const sdk = await loadOptionalClaudeSdk()
   if (!canStartRunTransport(runManager.get(route.appRunId)?.status, true)) return
   if (sdk) {
     try {
-      if (await tryRunClaudeSdk(event, payload, sdk, route)) return
+      if (await tryRunClaudeSdk(event, payload, sdk, route, environmentAuthority)) return
     } catch (error) {
       sendAgentCompatError(
         event.sender,
@@ -14395,14 +14466,13 @@ async function runClaudeProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
     }
   }
 
-  const resolved = await resolveCliProviderBinary('claude', payload.runtimeProfile)
   if (!canStartRunTransport(runManager.get(route.appRunId)?.status, true)) return
-  if (!resolved.binaryPath) {
+  if (!environmentAuthority.binaryPath) {
     runManager.finish(route.appRunId, 'failed')
     sendAgentCompatError(
       event.sender,
       'claude',
-      resolved.error || 'Claude CLI is not configured.',
+      'Claude Agent SDK failed and the resolved environment has no CLI fallback binary.',
       route
     )
     sendAgentCompatLine(
@@ -14523,20 +14593,10 @@ async function runClaudeProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
       args = baseArgs
     }
   }
-  const claudeKey = getStoredClaudeApiKey()
-  // Belt-and-braces env stamp: some platforms strip env on subprocess
-  // spawn, so set provider/run/chat route stamps on the Claude CLI
-  // process env in addition to the per-server env block in the MCP config.
-  // The bridge subprocess, started by the CLI's MCP host, then inherits
-  // it regardless of how the host propagates env.
-  const claudeProcessExtraEnv: Record<string, string> = {
-    TASKWRAITH_PARENT_PROVIDER: 'claude',
-    TASKWRAITH_RUN_ID: route.appRunId || '',
-    TASKWRAITH_CHAT_ID: route.appChatId || '',
-    TASKWRAITH_WORKSPACE_PATH: payload.scope === 'global' ? '' : payload.workspace || '',
-    ...(claudeKey ? { ANTHROPIC_API_KEY: claudeKey } : {})
-  }
-  const claudeUsageWarning = claudeProgrammaticUsageWarning('cli-print', Boolean(claudeKey))
+  const claudeUsageWarning = claudeProgrammaticUsageWarning(
+    'cli-print',
+    environmentAuthority.hasAnthropicApiKey
+  )
   const claudeFallbackWarning = sdk
     ? 'Using Claude Code CLI fallback for this run.'
     : 'Claude Agent SDK is not bundled in this app build; using Claude Code CLI stream-json fallback for this run.'
@@ -14546,13 +14606,13 @@ async function runClaudeProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
     }
     return
   }
-  runCliProviderProcess(event, 'claude', resolved.binaryPath, args, payload, {
+  runCliProviderProcess(event, 'claude', environmentAuthority.binaryPath, args, payload, {
     fallback: true,
     requireExistingRun: true,
     warning: claudeUsageWarning
       ? `${claudeFallbackWarning} ${claudeUsageWarning}`
       : claudeFallbackWarning,
-    extraEnv: claudeProcessExtraEnv,
+    resolvedEnv: environmentAuthority.env,
     onComplete: mcpConfigPath
       ? async () => {
           try {
