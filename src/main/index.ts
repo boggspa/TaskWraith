@@ -78,6 +78,10 @@ import {
   buildKimiFlavourGateMessage,
   probeKimiFlavour
 } from './providers/KimiFlavour'
+import { kimiAcpEnabled } from './kimiGate'
+import { prepareKimiIsolatedHome, type KimiHomeFs } from './kimi/KimiAcpHome'
+import { runKimiAcpTurn, type KimiAcpFs } from './kimi/KimiAcpClient'
+import { createAcpTurnAbortController } from './acp/AcpTurnClient'
 import type {
   CodexRunState,
   GeminiToolContext,
@@ -17357,6 +17361,257 @@ async function runKimiWireProvider(
   })
 }
 
+/** Per-run isolated KIMI_CODE_HOME dir path (unique, torn down after the run). */
+function kimiIsolatedHomeDirForRun(runId: string): string {
+  const tempDir = (() => {
+    try {
+      return app.getPath('temp')
+    } catch {
+      return os.tmpdir()
+    }
+  })()
+  const safeRunId = String(runId)
+    .replace(/[^A-Za-z0-9._-]/g, '_')
+    .slice(0, 80)
+  return join(tempDir, `taskwraith-kimi-home-${safeRunId}-${randomUUID()}`)
+}
+
+/** node fs adapter for the isolated-home builder (KimiAcpHome). */
+const kimiHomeFsAdapter: KimiHomeFs = {
+  readFile: (path) => fs.readFile(path, 'utf8'),
+  writeFile: (path, data, mode) => fs.writeFile(path, data, { encoding: 'utf8', mode }),
+  mkdir: async (path) => {
+    await fs.mkdir(path, { recursive: true })
+  },
+  copyFile: (from, to) => fs.copyFile(from, to),
+  chmod: (path, mode) => fs.chmod(path, mode),
+  exists: async (path) => {
+    try {
+      await fs.access(path)
+      return true
+    } catch {
+      return false
+    }
+  },
+  rm: (path) => fs.rm(path, { recursive: true, force: true }),
+  join: (...parts) => join(...parts)
+}
+
+/** node fs adapter for the ACP client's workspace-authority fs handlers. */
+const kimiAcpFsAdapter: KimiAcpFs = {
+  readTextFile: (path) => fs.readFile(path, 'utf8'),
+  writeTextFile: (path, content) => fs.writeFile(path, content, { encoding: 'utf8' }),
+  resolve: (path) => resolve(path),
+  relative: (from, to) => relative(from, to)
+}
+
+/** Stream an ACP run event from a Kimi ACP turn to the renderer. Mirrors
+ *  applyGrokRunEvent (provider-agnostic renderer shape), tagged 'kimi'. */
+function applyKimiAcpRunEvent(state: CliProviderStreamState, evt: NormalizedGrokRunEvent): void {
+  if (evt.sessionId) updateCliProviderSession(state, evt.sessionId)
+  if (evt.type === 'content' && evt.text) {
+    state.assistantText = `${state.assistantText || ''}${evt.text}`
+    sendAgentCompatLine(state.sender, 'kimi', { type: 'content', text: evt.text, provider: 'kimi' }, state)
+  } else if (evt.type === 'thinking' && evt.text) {
+    emitCliProviderThinkingEvent(state, evt.text)
+  } else if (evt.type === 'tool_use') {
+    sendAgentCompatLine(
+      state.sender,
+      'kimi',
+      {
+        type: 'tool_use',
+        tool_id: evt.toolId || `kimi-tool-${randomUUID()}`,
+        tool_name: evt.toolName || 'tool',
+        tool_kind: evt.toolKind,
+        parameters: evt.toolInput || {},
+        provider: 'kimi'
+      },
+      state
+    )
+  } else if (evt.type === 'tool_result') {
+    sendAgentCompatLine(
+      state.sender,
+      'kimi',
+      {
+        type: 'tool_result',
+        tool_id: evt.toolId || `kimi-tool-${randomUUID()}`,
+        status: evt.toolStatus || 'success',
+        output: evt.toolOutput || '',
+        provider: 'kimi'
+      },
+      state
+    )
+  } else if (evt.type === 'provider_warning' && evt.text) {
+    sendAgentCompatError(state.sender, 'kimi', evt.text, state)
+  }
+  // 'result' terminal status is synthesized by the close handler (mirrors Grok).
+}
+
+/**
+ * Kimi Code ACP provider (migration slice 4, gated behind kimiAcpEnabled()).
+ * Runs a full-tool Kimi seat inside a per-run isolated KIMI_CODE_HOME (curated
+ * config: telemetry off, allow-rules stripped, FetchURL/WebSearch/AgentSwarm
+ * deny wall, seeded credential, empty plugins/skills) and drives it over ACP
+ * with client fs workspace authority + ledger-mediated Bash/MCP approvals.
+ * Every containment element was live-verified on kimi-code 0.24.1.
+ */
+async function runKimiAcpProvider(
+  event: Electron.IpcMainInvokeEvent,
+  payload: AgentRunPayload,
+  binaryPath: string
+): Promise<void> {
+  const route = routeWithRunId('kimi', payload)
+  const model = normalizeCliProviderModel('kimi', payload.model)
+
+  // Build the isolated home BEFORE registering the run so a fail-closed
+  // not-authenticated / build error surfaces as setup-required without a
+  // half-started run.
+  const home = await prepareKimiIsolatedHome({
+    runId: route.appRunId || 'unknown',
+    homeDir: kimiIsolatedHomeDirForRun(route.appRunId || 'unknown'),
+    sourceHome: join(os.homedir(), '.kimi-code'),
+    fs: kimiHomeFsAdapter
+  })
+  if (!home.ok) {
+    sendAgentCompatError(event.sender, 'kimi', home.message, route)
+    sendAgentCompatLine(event.sender, 'kimi', {
+      type: 'result',
+      status: 'failed',
+      stats: {},
+      provider: 'kimi',
+      setupRequired: home.reason === 'not-authenticated'
+    })
+    sendAgentCompatExit(event.sender, 'kimi', 1, route)
+    runManager.finish(route.appRunId, 'failed')
+    return
+  }
+
+  const state: CliProviderStreamState = {
+    provider: 'kimi',
+    sender: event.sender,
+    startedAt: Date.now(),
+    model,
+    fallback: false,
+    completed: false,
+    assistantText: '',
+    providerSessionId: payload.providerSessionId || null,
+    approvalMode: payload.approvalMode,
+    workflowMode: payload.workflowMode,
+    sessionTrust: Boolean(payload.sessionTrust),
+    externalPathGrants: payload.externalPathGrants,
+    runtimeProfileId: payload.runtimeProfileId,
+    effectivePermissions: payload.effectivePermissions,
+    effectivePermissionsSignature: payload.effectivePermissionsSignature,
+    ensembleRun: payload.ensembleRun,
+    ...route
+  }
+  registerRunSession(
+    'kimi',
+    event.sender,
+    route,
+    payload.scope === 'global' ? undefined : payload.workspace,
+    state,
+    payload.providerSessionId || null
+  )
+  sendAgentCompatLine(
+    event.sender,
+    'kimi',
+    {
+      type: 'init',
+      session_id: state.providerSessionId || '',
+      model,
+      timestamp: new Date().toISOString(),
+      provider: 'kimi',
+      fallback: false
+    },
+    state
+  )
+
+  // The fs handlers serve the workspace plus any signed external path grants.
+  const fsRoots = [
+    ...(payload.scope === 'global' || !payload.workspace ? [] : [payload.workspace]),
+    ...(payload.externalPathGrants || []).map((grant) => grant.path).filter(Boolean)
+  ]
+
+  // Bash/MCP tool asks route through the approval ledger; egress + sub-agent
+  // fan-out never reach the client (denied by the isolated-home deny wall).
+  const kimiPermissionHandler = async (request: AcpPermissionRequest) => {
+    const service = grokToolKindToService(request.toolKind)
+    const allowed = await requestAgenticServiceApproval(
+      event.sender,
+      'kimi',
+      service,
+      payload.scope === 'global' ? undefined : payload.workspace,
+      {
+        method: `kimi/${request.toolKind || 'tool'}`,
+        title: `Kimi wants to run: ${request.toolName}`,
+        body: `Kimi requested a "${request.toolName}" tool call (${service}). Approve to let it run, or deny to block it.`,
+        runId: route.appRunId
+      }
+    )
+    return allowed ? 'allow' : 'deny'
+  }
+
+  let teardownDone = false
+  const teardown = async (): Promise<void> => {
+    if (teardownDone) return
+    teardownDone = true
+    await home.cleanup()
+  }
+
+  const handle = runKimiAcpTurn({
+    prompt: payload.prompt,
+    cwd: payload.workspace || os.homedir(),
+    fsRoots,
+    fs: kimiAcpFsAdapter,
+    spawnProcess: () => {
+      const args = [...(model ? ['--model', model] : []), 'acp']
+      return spawn(binaryPath, args, {
+        cwd: payload.workspace || os.homedir(),
+        env: createCliEnv(
+          {
+            ...home.env,
+            TASKWRAITH_PARENT_PROVIDER: 'kimi',
+            TASKWRAITH_RUN_ID: route.appRunId || '',
+            TASKWRAITH_CHAT_ID: route.appChatId || ''
+          },
+          binaryPath
+        )
+      }) as unknown as import('./kimi/KimiAcpClient').AcpChildProcess
+    },
+    onProcess: (child) => {
+      const proc = child as unknown as ChildProcess
+      runManager.attachProcess(route.appRunId!, proc)
+      cliProviderProcesses.set('kimi', proc)
+    },
+    onPermissionRequest: kimiPermissionHandler,
+    onEvent: (evt) => applyKimiAcpRunEvent(state, evt as NormalizedGrokRunEvent),
+    onClose: (_code, turnComplete, terminalStatus) => {
+      void teardown()
+      if (!state.completed) {
+        state.completed = true
+        const status = turnComplete ? terminalStatus || 'success' : 'failed'
+        const failed = !turnComplete || (status !== 'success' && status !== 'end_turn')
+        sendAgentCompatLine(
+          event.sender,
+          'kimi',
+          {
+            type: 'result',
+            status: failed ? 'failed' : 'completed',
+            stats: {},
+            provider: 'kimi',
+            session_id: state.providerSessionId || ''
+          },
+          state
+        )
+        sendAgentCompatExit(event.sender, 'kimi', failed ? 1 : 0, route)
+        runManager.finish(route.appRunId, failed ? 'failed' : 'completed')
+      }
+    }
+  })
+  runManager.attachAbortController(route.appRunId!, createAcpTurnAbortController(handle))
+}
+
 /** Real-runtime wiring for the pure Kimi generation probe (results are
  *  cached inside the module per binary path+mtime+size). */
 function probeKimiFlavourForBinary(binaryPath: string) {
@@ -17431,16 +17686,20 @@ async function runKimiProvider(event: Electron.IpcMainInvokeEvent, payload: Agen
     return
   }
 
-  // Slice 1b of the Kimi Code migration (dossier §4): positively identify
-  // the CLI generation BEFORE any spawn and fail closed otherwise. Kimi Code
-  // removed --wire AND renamed --print to -p/--prompt, so both legacy
-  // transports die at argv parse — and Kimi Code's -p one-shot mode runs
-  // under auto-approve semantics with no --agent-file containment sink
-  // (dossier B1/B6), so the print-mode fallback below must NEVER be adapted
-  // to reach a kimi-code binary. Only a positively-identified legacy-wire
-  // binary proceeds into the Wire path; kimi-code stays setup-required until
-  // the ACP transport migration (A2) lands.
+  // Slice 1b/4 of the Kimi Code migration (dossier §4): positively identify
+  // the CLI generation BEFORE any spawn and dispatch by generation. Kimi Code
+  // removed --wire AND renamed --print to -p/--prompt (auto-approve, no
+  // --agent-file sink — dossier B1/B6), so the legacy Wire + print paths must
+  // NEVER reach a kimi-code binary.
+  //   - legacy-wire  → the retained Wire path (bounded deprecation window).
+  //   - kimi-code    → the contained ACP transport when kimiAcpEnabled(), else
+  //                    fail closed as setup-required (the honest 1b gate).
+  //   - unsupported  → fail closed as setup-required.
   const kimiFlavour = await probeKimiFlavourForBinary(resolved.binaryPath)
+  if (kimiFlavour.flavour === 'kimi-code' && kimiAcpEnabled()) {
+    await runKimiAcpProvider(event, payload, resolved.binaryPath)
+    return
+  }
   if (kimiFlavour.flavour !== 'legacy-wire') {
     sendAgentCompatError(
       event.sender,
