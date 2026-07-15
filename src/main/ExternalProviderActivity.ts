@@ -626,6 +626,16 @@ async function readCodexSqliteActivity(
   return events
 }
 
+// The kimi-cli → Kimi Code migration (2026-07) moved sessions to
+// ~/.kimi-code/sessions/wd_*/ses_*/agents/main/wire.jsonl AND dropped the
+// per-turn `StatusUpdate.payload.token_usage` records the legacy parser keys
+// off — a scan of the migrated tree confirms kimi-code writes NO structured
+// token usage to disk. So the new root would yield zero usage events and is not
+// scanned here; the AUTHORITATIVE Kimi usage source is the live
+// api.kimi.com/coding/v1/usages endpoint (fetchKimiUsageSnapshot), which the
+// credential-path fix in ProviderAuthUsage now reaches. This reader stays on
+// the legacy ~/.kimi/sessions root purely to surface any pre-migration
+// StatusUpdate history that still parses; it is not the live meter.
 async function readKimiActivity(homeDir: string, sinceMs: number): Promise<ExternalUsageEvent[]> {
   const root = join(homeDir, '.kimi', 'sessions')
   const files = await collectFiles(root, isKimiWireActivityPath, sinceMs)

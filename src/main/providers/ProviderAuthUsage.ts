@@ -33,6 +33,10 @@ import {
 } from './ProviderPlanMetadata'
 import { AppStore } from '../store'
 import { looksLikeTailscaleOAuthClientSecret } from '../../shared/tailscaleAuthKey'
+import {
+  kimiCredentialCandidatePaths,
+  selectValidKimiAccessToken
+} from './KimiCredential'
 import type {
   GeminiAuthProfile,
   GeminiAuthProfileKind,
@@ -1227,23 +1231,26 @@ const KIMI_USAGE_STALE_TTL_MS = 30 * 60_000
 
 let kimiUsageCache: { snapshot: NormalizedProviderUsageSnapshot; fetchedAt: number } | null = null
 
+/**
+ * Read a live Kimi OAuth access token, Kimi Code home first then legacy. The
+ * migration moved the credential to ~/.kimi-code and the legacy token expired
+ * the same evening, so new-first is what actually unblocks the usage endpoint.
+ * Re-read live on every call (no token caching) so a refresh in either home is
+ * picked up immediately. Parse + path logic live in the Electron-free
+ * KimiCredential module so they stay unit-testable.
+ */
 export async function readKimiOAuthAccessToken(): Promise<string | null> {
-  try {
-    const raw = await fs.readFile(
-      join(os.homedir(), '.kimi', 'credentials', 'kimi-code.json'),
-      'utf8'
-    )
-    const parsed = JSON.parse(raw)
-    const accessToken = String(parsed?.access_token || '').trim()
-    if (!accessToken) return null
-    const expiresAt = Number(parsed?.expires_at || 0)
-    if (Number.isFinite(expiresAt) && expiresAt > 0 && expiresAt * 1000 <= Date.now()) {
-      return null
+  for (const path of kimiCredentialCandidatePaths()) {
+    let raw: string
+    try {
+      raw = await fs.readFile(path, 'utf8')
+    } catch {
+      continue
     }
-    return accessToken
-  } catch {
-    return null
+    const token = selectValidKimiAccessToken(raw)
+    if (token) return token
   }
+  return null
 }
 
 export async function getKimiUsageAccessToken(): Promise<string | null> {
