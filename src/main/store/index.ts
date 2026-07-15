@@ -1,6 +1,7 @@
 import * as electron from 'electron'
 import * as fs from 'fs'
 import * as path from 'path'
+import { isDeepStrictEqual } from 'util'
 import { coerceLiveProvider, DEFAULT_PROVIDER } from '../../shared/retiredProviders'
 import { redactSecrets } from '../../shared/secretRedaction'
 import { DEFAULT_DIFF_STAT_COLORS, normalizeDiffStatColors } from '../../shared/diffStatColors'
@@ -24,6 +25,7 @@ import {
   ChatListRunSummary,
   PooledAgentStatsSummary,
   UsageRecord,
+  PersistedAttachmentRef,
   ScheduledTask,
   ScheduledTaskAttachmentRef,
   RunQueueJob,
@@ -339,6 +341,10 @@ function statSettingsFile(): { mtimeMs: number; size: number } | null {
 const providerUsageSnapshotsPath = path.join(userDataPath, 'provider-usage-snapshots.json')
 const scheduledTasksPath = path.join(userDataPath, 'scheduled-tasks.json')
 const workflowsPath = path.join(userDataPath, 'workflows.json')
+const scheduledOccurrenceMutationsPath = path.join(
+  userDataPath,
+  'scheduled-occurrence-mutation.json'
+)
 const workspaceBoardsPath = path.join(userDataPath, 'workspace-boards.json')
 const workspaceBoardCardsPath = path.join(userDataPath, 'workspace-board-cards.json')
 const evidencePacksPath = path.join(userDataPath, 'evidence-packs.json')
@@ -393,7 +399,6 @@ const runEventHashCache = new Map<string, string>()
 // Stage 1 — durable per-execution workflow run ledger (one .jsonl per
 // workflowExecutionId, append-only; the run-events model). Single writer per file.
 const workflowRunsDir = path.join(userDataPath, 'workflow-runs')
-const workflowRunSequenceCache = new Map<string, number>()
 // Agent Pool (Phase 2) — per-Agent stats ledger (one .jsonl per pooledAgentId,
 // append-only). The in-memory seen-set dedupes runIds so re-harvesting a chat
 // (saveChat fires on every mutation) never double-counts; lazy-loaded per agent.
@@ -894,7 +899,9 @@ function workflowStatusToRunEventKind(
   }
 }
 
-function isTerminalScheduledTaskStatus(status: ScheduledTask['status']): boolean {
+function isTerminalScheduledTaskStatus(
+  status: ScheduledTask['status']
+): status is ScheduledOccurrenceTerminalStatus {
   return status === 'completed' || status === 'failed' || status === 'cancelled'
 }
 
@@ -905,6 +912,1213 @@ function isInvalidScheduledTaskStatusTransition(
   if (isTerminalScheduledTaskStatus(current) && next !== current) return true
   if (current === 'running' && (next === 'pending' || next === 'due')) return true
   return false
+}
+
+type ScheduledOccurrenceMutationKind = 'materialize' | 'claim' | 'settle'
+const SCHEDULED_TASK_MAINTENANCE_FIELDS = new Set<keyof ScheduledTask>([
+  'permissionPosture',
+  'imageAttachments'
+])
+const SCHEDULED_TASK_CREATE_PROHIBITED_FIELDS = new Set<keyof ScheduledTask>([
+  'workflowId',
+  'workflowExecutionId',
+  'workflowOccurrenceAt',
+  'runId',
+  'dispatchReceipt',
+  'occurrenceSeal',
+  'firedAt',
+  'runningSince',
+  'completedAt',
+  'lastError',
+  'status',
+  'createdAt',
+  'updatedAt'
+])
+type ScheduledOccurrenceMutationCrashPoint =
+  | 'after-intent'
+  | 'after-task'
+  | 'after-workflow'
+  | 'after-ledger'
+type ScheduledOccurrenceTerminalStatus = Extract<
+  ScheduledTask['status'],
+  'completed' | 'failed' | 'cancelled'
+>
+
+interface ScheduledOccurrenceIdentity {
+  taskId: string
+  workflowId: string
+  executionId: string
+  plannedFor: string
+  runId?: string
+}
+
+interface ScheduledOccurrenceLedgerPrefix {
+  schemaVersion: 1
+  fileExisted: boolean
+  sha256: string
+  byteLength: number
+  eventCount: number
+  tailSequence: number
+}
+
+interface ScheduledOccurrenceMutationIntent {
+  schemaVersion: 1
+  id: string
+  kind: ScheduledOccurrenceMutationKind
+  createdAt: string
+  identity: ScheduledOccurrenceIdentity
+  taskBefore: ScheduledTask | null
+  taskAfter: ScheduledTask
+  workflowBefore: WorkflowDefinition
+  workflowAfter: WorkflowDefinition
+  ledgerBefore: ScheduledOccurrenceLedgerPrefix | null
+  ledgerAfter: WorkflowRunEvent | null
+}
+
+export type ScheduledOccurrenceMutationReplayResult =
+  | { status: 'none' }
+  | {
+      status: 'replayed'
+      mutationId: string
+      kind: ScheduledOccurrenceMutationKind
+      taskId: string
+    }
+  | { status: 'blocked'; reason: string }
+
+let scheduledOccurrenceMutationCrashPoint: ScheduledOccurrenceMutationCrashPoint | null = null
+let scheduledOccurrenceDurabilityFailureIntent: ScheduledOccurrenceMutationIntent | null = null
+
+function cloneJsonValue<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T
+}
+
+function sameJsonValue(a: unknown, b: unknown): boolean {
+  if (a === undefined || b === undefined) return a === b
+  return isDeepStrictEqual(cloneJsonValue(a), cloneJsonValue(b))
+}
+
+function isNonEmptyTrimmedString(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0 && value.trim() === value
+}
+
+function canonicalIsoTimestampMs(value: unknown): number | null {
+  if (typeof value !== 'string' || !value) return null
+  const parsed = Date.parse(value)
+  if (!Number.isFinite(parsed) || new Date(parsed).toISOString() !== value) return null
+  return parsed
+}
+
+function optionalCanonicalIsoTimestamp(value: unknown): boolean {
+  return value === undefined || canonicalIsoTimestampMs(value) !== null
+}
+
+function canonicalScheduledOccurrenceLedgerEvent(
+  task: ScheduledTask,
+  timestamp: string,
+  sequence: number
+): WorkflowRunEvent | null {
+  if (!task.workflowId || !task.workflowExecutionId) return null
+  const status = scheduledTaskStatusToWorkflowStatus(task.status)
+  const kind = status ? workflowStatusToRunEventKind(status) : null
+  if (!kind) return null
+  return createWorkflowRunEvent(
+    {
+      workflowExecutionId: task.workflowExecutionId,
+      workflowId: task.workflowId,
+      kind,
+      timestamp,
+      scheduledTaskId: task.id,
+      runId: task.runId,
+      plannedFor: task.workflowOccurrenceAt || task.runAt,
+      ...(task.lastError ? { error: task.lastError } : {})
+    },
+    sequence
+  )
+}
+
+function workflowExecutionMatchesIdentity(
+  execution: WorkflowExecutionRecord,
+  identity: ScheduledOccurrenceIdentity
+): boolean {
+  return (
+    execution.id === identity.executionId &&
+    execution.workflowId === identity.workflowId &&
+    execution.scheduledTaskId === identity.taskId &&
+    execution.plannedFor === identity.plannedFor
+  )
+}
+
+function taskMatchesOccurrenceIdentity(
+  task: ScheduledTask,
+  identity: ScheduledOccurrenceIdentity
+): boolean {
+  return (
+    task.id === identity.taskId &&
+    task.workflowId === identity.workflowId &&
+    task.workflowExecutionId === identity.executionId &&
+    task.workflowOccurrenceAt === identity.plannedFor
+  )
+}
+
+function jsonObjectWithoutKeys<T extends object>(
+  value: T,
+  keys: ReadonlySet<string>
+): Record<string, unknown> {
+  const clone = cloneJsonValue(value) as Record<string, unknown>
+  for (const key of keys) delete clone[key]
+  return clone
+}
+
+function hasOnlyAllowedObjectDeltas<T extends object>(
+  before: T,
+  after: T,
+  allowedKeys: ReadonlySet<string>
+): boolean {
+  return sameJsonValue(
+    jsonObjectWithoutKeys(before, allowedKeys),
+    jsonObjectWithoutKeys(after, allowedKeys)
+  )
+}
+
+function materializedTaskMatchesWorkflowAuthority(
+  task: ScheduledTask,
+  workflow: WorkflowDefinition
+): boolean {
+  if (
+    task.workspaceId !== workflow.workspaceId ||
+    task.workspacePath !== workflow.workspacePath
+  ) {
+    return false
+  }
+  const template = workflow.template as Record<string, unknown>
+  const taskRecord = task as unknown as Record<string, unknown>
+  for (const [key, expected] of Object.entries(template)) {
+    if (key === 'imageAttachments') continue
+    if (key === 'displayPrompt') {
+      if (!isDeepStrictEqual(task.displayPrompt, expected || workflow.template.prompt)) return false
+      continue
+    }
+    if (!isDeepStrictEqual(taskRecord[key], expected)) return false
+  }
+  const lifecycleKeys = new Set([
+    ...Object.keys(template),
+    'displayPrompt',
+    'workflowMode',
+    'id',
+    'runAt',
+    'timezone',
+    'status',
+    'createdAt',
+    'updatedAt',
+    'workflowId',
+    'workflowExecutionId',
+    'workflowOccurrenceAt',
+    'dispatchReceipt',
+    'occurrenceSeal'
+  ])
+  return Object.keys(taskRecord).every((key) => lifecycleKeys.has(key))
+}
+
+function scheduledTaskDispatchReceiptIsExact(task: ScheduledTask): boolean {
+  return Boolean(
+    task.dispatchReceipt &&
+      sameJsonValue(
+        task.dispatchReceipt,
+        buildScheduledTaskDispatchReceipt(task, task.dispatchReceipt.generatedAt)
+      )
+  )
+}
+
+function materializedAttachmentsMatchTemplate(
+  task: ScheduledTask,
+  workflow: WorkflowDefinition
+): boolean {
+  const source = workflow.template.imageAttachments
+  const resolved = task.imageAttachments
+  if (
+    !scheduledAttachmentsAreDurable(source) ||
+    !scheduledAttachmentsAreDurable(resolved) ||
+    source.length !== resolved.length
+  ) {
+    return false
+  }
+  return resolved.every((attachment, index) => {
+    const original = source[index]
+    return (
+      attachment.persistenceVersion === original.persistenceVersion &&
+      attachment.id === original.id &&
+      attachment.name === original.name &&
+      attachment.sha256 === original.sha256 &&
+      attachment.mimeType.toLowerCase() === original.mimeType.toLowerCase() &&
+      attachment.byteLength === original.byteLength
+    )
+  })
+}
+
+function validateScheduledOccurrenceMutationTimestamps(
+  intent: ScheduledOccurrenceMutationIntent,
+  beforeExecution: WorkflowExecutionRecord | null,
+  afterExecution: WorkflowExecutionRecord
+): string | null {
+  const { taskBefore, taskAfter, workflowBefore, workflowAfter, identity } = intent
+  const requiredTimestamps: unknown[] = [
+    intent.createdAt,
+    identity.plannedFor,
+    taskAfter.runAt,
+    taskAfter.createdAt,
+    taskAfter.updatedAt,
+    taskAfter.workflowOccurrenceAt,
+    workflowBefore.createdAt,
+    workflowBefore.updatedAt,
+    workflowAfter.createdAt,
+    workflowAfter.updatedAt,
+    afterExecution.plannedFor,
+    afterExecution.createdAt,
+    afterExecution.updatedAt
+  ]
+  const optionalTimestamps: unknown[] = [
+    taskAfter.firedAt,
+    taskAfter.runningSince,
+    taskAfter.completedAt,
+    taskAfter.dispatchReceipt?.generatedAt,
+    taskAfter.occurrenceSeal?.issuedAt,
+    workflowBefore.nextRunAt,
+    workflowBefore.lastRunAt,
+    workflowBefore.lastCompletedAt,
+    workflowAfter.nextRunAt,
+    workflowAfter.lastRunAt,
+    workflowAfter.lastCompletedAt,
+    afterExecution.startedAt,
+    afterExecution.completedAt,
+    taskBefore?.runAt,
+    taskBefore?.createdAt,
+    taskBefore?.updatedAt,
+    taskBefore?.workflowOccurrenceAt,
+    taskBefore?.firedAt,
+    taskBefore?.runningSince,
+    taskBefore?.completedAt,
+    taskBefore?.dispatchReceipt?.generatedAt,
+    taskBefore?.occurrenceSeal?.issuedAt,
+    beforeExecution?.plannedFor,
+    beforeExecution?.createdAt,
+    beforeExecution?.updatedAt,
+    beforeExecution?.startedAt,
+    beforeExecution?.completedAt
+  ]
+  if (
+    requiredTimestamps.some((value) => canonicalIsoTimestampMs(value) === null) ||
+    optionalTimestamps.some((value) => !optionalCanonicalIsoTimestamp(value))
+  ) {
+    return 'Scheduled occurrence mutation contains a non-canonical lifecycle timestamp.'
+  }
+
+  const mutationAtMs = canonicalIsoTimestampMs(intent.createdAt) as number
+  const plannedForMs = canonicalIsoTimestampMs(identity.plannedFor) as number
+  const taskRunAtMs = canonicalIsoTimestampMs(taskAfter.runAt) as number
+  const taskCreatedAtMs = canonicalIsoTimestampMs(taskAfter.createdAt) as number
+  const taskUpdatedAtMs = canonicalIsoTimestampMs(taskAfter.updatedAt) as number
+  const executionCreatedAtMs = canonicalIsoTimestampMs(afterExecution.createdAt) as number
+  const executionUpdatedAtMs = canonicalIsoTimestampMs(afterExecution.updatedAt) as number
+  if (
+    identity.plannedFor !== taskAfter.workflowOccurrenceAt ||
+    identity.plannedFor !== afterExecution.plannedFor ||
+    plannedForMs > taskRunAtMs ||
+    taskRunAtMs !== taskCreatedAtMs ||
+    taskCreatedAtMs > taskUpdatedAtMs ||
+    executionCreatedAtMs > executionUpdatedAtMs
+  ) {
+    return 'Scheduled occurrence mutation lifecycle timestamps are not logically ordered.'
+  }
+
+  if (intent.kind === 'materialize') {
+    if (
+      taskRunAtMs !== mutationAtMs ||
+      taskUpdatedAtMs !== mutationAtMs ||
+      taskAfter.dispatchReceipt?.generatedAt !== intent.createdAt ||
+      executionCreatedAtMs !== mutationAtMs ||
+      executionUpdatedAtMs !== mutationAtMs ||
+      workflowAfter.updatedAt !== intent.createdAt ||
+      workflowAfter.lastRunAt !== intent.createdAt
+    ) {
+      return 'Scheduled occurrence materialization timestamps are not an exact post-image.'
+    }
+    return null
+  }
+
+  if (!taskBefore || !beforeExecution) {
+    return 'Scheduled occurrence mutation timestamps are missing their before-image.'
+  }
+  const beforeTaskUpdatedAtMs = canonicalIsoTimestampMs(taskBefore.updatedAt) as number
+  const beforeExecutionUpdatedAtMs = canonicalIsoTimestampMs(beforeExecution.updatedAt) as number
+  if (
+    taskBefore.runAt !== taskAfter.runAt ||
+    taskBefore.createdAt !== taskAfter.createdAt ||
+    taskBefore.workflowOccurrenceAt !== taskAfter.workflowOccurrenceAt ||
+    beforeExecution.createdAt !== afterExecution.createdAt ||
+    beforeExecution.plannedFor !== afterExecution.plannedFor ||
+    beforeTaskUpdatedAtMs > mutationAtMs ||
+    beforeExecutionUpdatedAtMs > mutationAtMs ||
+    taskUpdatedAtMs !== mutationAtMs ||
+    executionUpdatedAtMs !== mutationAtMs ||
+    workflowAfter.updatedAt !== intent.createdAt
+  ) {
+    return 'Scheduled occurrence mutation timestamps do not preserve their exact timeline.'
+  }
+
+  if (intent.kind === 'claim') {
+    if (
+      taskRunAtMs > mutationAtMs ||
+      taskAfter.firedAt !== intent.createdAt ||
+      taskAfter.runningSince !== intent.createdAt ||
+      taskAfter.dispatchReceipt?.generatedAt !== intent.createdAt ||
+      (taskAfter.occurrenceSeal !== undefined &&
+        taskAfter.occurrenceSeal.issuedAt !== intent.createdAt) ||
+      afterExecution.startedAt !== intent.createdAt
+    ) {
+      return 'Scheduled occurrence claim timestamps are not an exact due-task transition.'
+    }
+    return null
+  }
+
+  const completedAtMs = canonicalIsoTimestampMs(taskAfter.completedAt) as number
+  const executionCompletedAtMs = canonicalIsoTimestampMs(afterExecution.completedAt) as number
+  const startedAt = beforeExecution.startedAt || taskBefore.runningSince || taskBefore.firedAt
+  const lowerBoundMs = startedAt
+    ? (canonicalIsoTimestampMs(startedAt) as number)
+    : taskRunAtMs
+  if (
+    taskAfter.completedAt !== afterExecution.completedAt ||
+    completedAtMs !== executionCompletedAtMs ||
+    completedAtMs < lowerBoundMs ||
+    completedAtMs > mutationAtMs
+  ) {
+    return 'Scheduled occurrence settlement timestamps are not logically ordered.'
+  }
+  return null
+}
+
+function validateScheduledOccurrenceLedgerPostImage(
+  intent: ScheduledOccurrenceMutationIntent
+): string | null {
+  if (intent.kind === 'materialize') {
+    return intent.ledgerBefore === null && intent.ledgerAfter === null
+      ? null
+      : 'Scheduled occurrence materialization must not carry lifecycle ledger evidence.'
+  }
+  const ledgerBefore = intent.ledgerBefore
+  const ledgerAfter = intent.ledgerAfter
+  if (
+    !ledgerBefore ||
+    ledgerBefore.schemaVersion !== 1 ||
+    typeof ledgerBefore.fileExisted !== 'boolean' ||
+    !/^[a-f0-9]{64}$/.test(ledgerBefore.sha256) ||
+    !Number.isSafeInteger(ledgerBefore.byteLength) ||
+    ledgerBefore.byteLength < 0 ||
+    !Number.isSafeInteger(ledgerBefore.eventCount) ||
+    ledgerBefore.eventCount < 0 ||
+    !Number.isSafeInteger(ledgerBefore.tailSequence) ||
+    ledgerBefore.tailSequence < 0 ||
+    ledgerBefore.tailSequence !== ledgerBefore.eventCount ||
+    (ledgerBefore.fileExisted === false &&
+      (ledgerBefore.byteLength !== 0 || ledgerBefore.eventCount !== 0)) ||
+    !ledgerAfter ||
+    !Number.isSafeInteger(ledgerAfter.sequence) ||
+    ledgerAfter.sequence !== ledgerBefore.eventCount + 1 ||
+    canonicalIsoTimestampMs(ledgerAfter.timestamp) === null ||
+    ledgerAfter.timestamp !== intent.createdAt
+  ) {
+    return 'Scheduled occurrence lifecycle ledger evidence is invalid.'
+  }
+  const expected = canonicalScheduledOccurrenceLedgerEvent(
+    intent.taskAfter,
+    intent.createdAt,
+    ledgerAfter.sequence
+  )
+  return expected && sameJsonValue(expected, ledgerAfter)
+    ? null
+    : 'Scheduled occurrence lifecycle ledger post-image is not canonical.'
+}
+
+function validateScheduledOccurrenceMutationDeltas(
+  intent: ScheduledOccurrenceMutationIntent,
+  beforeExecution: WorkflowExecutionRecord | null,
+  afterExecution: WorkflowExecutionRecord
+): string | null {
+  const workflowAllowedKeys =
+    intent.kind === 'materialize'
+      ? new Set([
+          'history',
+          'activeExecutionId',
+          'lastRunAt',
+          'lastStatus',
+          'lastError',
+          'nextRunAt',
+          'updatedAt'
+        ])
+      : intent.kind === 'claim'
+        ? new Set(['history', 'lastStatus', 'lastError', 'updatedAt'])
+        : new Set([
+            'history',
+            'lastStatus',
+            'lastError',
+            'lastCompletedAt',
+            'activeExecutionId',
+            'failureStreak',
+            'enabled',
+            'nextRunAt',
+            'updatedAt'
+          ])
+  if (
+    !hasOnlyAllowedObjectDeltas(
+      intent.workflowBefore,
+      intent.workflowAfter,
+      workflowAllowedKeys
+    )
+  ) {
+    return 'Scheduled occurrence mutation changes unrelated workflow authority.'
+  }
+
+  if (intent.kind === 'materialize') {
+    const expectedHistory = [...intent.workflowBefore.history, afterExecution].slice(
+      -WORKFLOW_HISTORY_LIMIT
+    )
+    const materializedAtMs = Date.parse(intent.taskAfter.runAt)
+    const expectedNextRunAt = Number.isFinite(materializedAtMs)
+      ? resolveNextWorkflowRunAt(
+          intent.workflowBefore.trigger,
+          materializedAtMs,
+          materializedAtMs
+        )
+      : undefined
+    const queuedExecutionKeys = new Set([
+      'id',
+      'workflowId',
+      'scheduledTaskId',
+      'plannedFor',
+      'status',
+      'createdAt',
+      'updatedAt'
+    ])
+    if (
+      !sameJsonValue(intent.workflowAfter.history, expectedHistory) ||
+      !materializedTaskMatchesWorkflowAuthority(intent.taskAfter, intent.workflowBefore) ||
+      !materializedAttachmentsMatchTemplate(intent.taskAfter, intent.workflowBefore) ||
+      !scheduledTaskDispatchReceiptIsExact(intent.taskAfter) ||
+      intent.taskAfter.occurrenceSeal !== undefined ||
+      Object.keys(afterExecution).some((key) => !queuedExecutionKeys.has(key)) ||
+      afterExecution.startedAt !== undefined ||
+      afterExecution.completedAt !== undefined ||
+      afterExecution.error !== undefined ||
+      !Number.isFinite(materializedAtMs) ||
+      intent.taskAfter.createdAt !== intent.taskAfter.runAt ||
+      intent.taskAfter.updatedAt !== intent.taskAfter.runAt ||
+      intent.createdAt !== intent.taskAfter.updatedAt ||
+      afterExecution.createdAt !== intent.taskAfter.updatedAt ||
+      afterExecution.updatedAt !== intent.taskAfter.updatedAt ||
+      intent.workflowAfter.updatedAt !== intent.taskAfter.updatedAt ||
+      intent.workflowAfter.lastRunAt !== intent.taskAfter.updatedAt ||
+      intent.workflowAfter.activeExecutionId !== afterExecution.id ||
+      intent.workflowAfter.lastStatus !== 'queued' ||
+      intent.workflowAfter.lastError !== undefined ||
+      intent.workflowAfter.nextRunAt !== expectedNextRunAt
+    ) {
+      return 'Scheduled occurrence materialization changes unrelated occurrence authority.'
+    }
+    return null
+  }
+
+  if (!intent.taskBefore || !beforeExecution) {
+    return 'Scheduled occurrence mutation is missing an exact delta before-image.'
+  }
+  const taskAllowedKeys =
+    intent.kind === 'claim'
+      ? new Set(['status', 'runId', 'firedAt', 'runningSince', 'updatedAt', 'dispatchReceipt'])
+      : new Set(['status', 'completedAt', 'lastError', 'updatedAt'])
+  if (!hasOnlyAllowedObjectDeltas(intent.taskBefore, intent.taskAfter, taskAllowedKeys)) {
+    return 'Scheduled occurrence mutation changes unrelated task authority.'
+  }
+  if (
+    intent.createdAt !== intent.taskAfter.updatedAt ||
+    (intent.kind === 'claim' &&
+      (intent.taskAfter.firedAt !== intent.taskAfter.updatedAt ||
+        intent.taskAfter.runningSince !== intent.taskAfter.updatedAt ||
+        !scheduledTaskDispatchReceiptIsExact(intent.taskAfter))) ||
+    (intent.kind === 'settle' &&
+      (!intent.taskAfter.completedAt ||
+        !Number.isFinite(Date.parse(intent.taskAfter.completedAt))))
+  ) {
+    return 'Scheduled occurrence mutation timestamps or receipt are not exact.'
+  }
+
+  if (
+    intent.workflowBefore.history.length !== intent.workflowAfter.history.length ||
+    intent.workflowBefore.history.findIndex((item) => item.id === beforeExecution.id) !==
+      intent.workflowAfter.history.findIndex((item) => item.id === afterExecution.id)
+  ) {
+    return 'Scheduled occurrence mutation changes unrelated workflow history.'
+  }
+  for (let index = 0; index < intent.workflowBefore.history.length; index += 1) {
+    const before = intent.workflowBefore.history[index]
+    const after = intent.workflowAfter.history[index]
+    if (before.id !== beforeExecution.id) {
+      if (!sameJsonValue(before, after)) {
+        return 'Scheduled occurrence mutation changes an unrelated workflow execution.'
+      }
+      continue
+    }
+    const executionAllowedKeys =
+      intent.kind === 'claim'
+        ? new Set(['status', 'runId', 'updatedAt', 'startedAt'])
+        : new Set(['status', 'updatedAt', 'completedAt', 'error'])
+    if (!hasOnlyAllowedObjectDeltas(before, after, executionAllowedKeys)) {
+      return 'Scheduled occurrence mutation changes unrelated execution authority.'
+    }
+  }
+  const expectedProjection = projectWorkflowFromScheduledTask(
+    intent.workflowBefore,
+    intent.taskAfter,
+    intent.taskAfter.updatedAt
+  )
+  if (!expectedProjection || !sameJsonValue(expectedProjection.workflow, intent.workflowAfter)) {
+    return 'Scheduled occurrence workflow post-image is not the exact task projection.'
+  }
+  return null
+}
+
+function validateScheduledOccurrenceMutationIntent(
+  intent: ScheduledOccurrenceMutationIntent
+): string | null {
+  const { identity } = intent
+  if (
+    intent.schemaVersion !== 1 ||
+    !isNonEmptyTrimmedString(intent.id) ||
+    !isNonEmptyTrimmedString(intent.createdAt) ||
+    !['materialize', 'claim', 'settle'].includes(intent.kind) ||
+    !isNonEmptyTrimmedString(identity.taskId) ||
+    !isNonEmptyTrimmedString(identity.workflowId) ||
+    !isNonEmptyTrimmedString(identity.executionId) ||
+    !isNonEmptyTrimmedString(identity.plannedFor)
+  ) {
+    return 'Scheduled occurrence mutation metadata is invalid.'
+  }
+  if (
+    !taskMatchesOccurrenceIdentity(intent.taskAfter, identity) ||
+    intent.workflowBefore.id !== identity.workflowId ||
+    intent.workflowAfter.id !== identity.workflowId
+  ) {
+    return 'Scheduled occurrence mutation linkage does not match its exact tuple.'
+  }
+  if (intent.taskBefore && !taskMatchesOccurrenceIdentity(intent.taskBefore, identity)) {
+    return 'Scheduled occurrence mutation before-image does not match its exact tuple.'
+  }
+
+  const beforeExecutionIds = intent.workflowBefore.history.filter(
+    (execution) => execution.id === identity.executionId
+  )
+  const afterExecutionIds = intent.workflowAfter.history.filter(
+    (execution) => execution.id === identity.executionId
+  )
+  const beforeExecutions = beforeExecutionIds.filter((execution) =>
+    workflowExecutionMatchesIdentity(execution, identity)
+  )
+  const afterExecutions = afterExecutionIds.filter((execution) =>
+    workflowExecutionMatchesIdentity(execution, identity)
+  )
+  if (afterExecutionIds.length !== 1 || afterExecutions.length !== 1) {
+    return 'Scheduled occurrence mutation after-image has an ambiguous workflow execution.'
+  }
+  const deltaReason = validateScheduledOccurrenceMutationDeltas(
+    intent,
+    beforeExecutions[0] || null,
+    afterExecutions[0]
+  )
+  if (deltaReason) return deltaReason
+  const timestampReason = validateScheduledOccurrenceMutationTimestamps(
+    intent,
+    beforeExecutions[0] || null,
+    afterExecutions[0]
+  )
+  if (timestampReason) return timestampReason
+  const ledgerReason = validateScheduledOccurrenceLedgerPostImage(intent)
+  if (ledgerReason) return ledgerReason
+
+  if (intent.kind === 'materialize') {
+    if (
+      intent.taskBefore !== null ||
+      beforeExecutionIds.length !== 0 ||
+      identity.runId !== undefined ||
+      intent.taskAfter.status !== 'due' ||
+      intent.taskAfter.runId !== undefined ||
+      afterExecutions[0].status !== 'queued' ||
+      afterExecutions[0].runId !== undefined
+    ) {
+      return 'Scheduled occurrence materialization intent is not a fresh queued occurrence.'
+    }
+    return null
+  }
+
+  if (!intent.taskBefore || beforeExecutionIds.length !== 1 || beforeExecutions.length !== 1) {
+    return 'Scheduled occurrence mutation is missing an exact before-image.'
+  }
+  if (intent.kind === 'claim') {
+    if (
+      !isNonEmptyTrimmedString(identity.runId) ||
+      intent.taskBefore.status !== 'due' ||
+      intent.taskBefore.runId !== undefined ||
+      beforeExecutions[0].status !== 'queued' ||
+      beforeExecutions[0].runId !== undefined ||
+      intent.taskAfter.status !== 'running' ||
+      intent.taskAfter.runId !== identity.runId ||
+      afterExecutions[0].status !== 'running' ||
+      afterExecutions[0].runId !== identity.runId
+    ) {
+      return 'Scheduled occurrence claim intent does not establish exactly one owner.'
+    }
+    return null
+  }
+
+  if (identity.runId === undefined) {
+    const queuedTerminal =
+      (intent.taskBefore.status === 'due' || intent.taskBefore.status === 'pending') &&
+      beforeExecutions[0].status === 'queued' &&
+      (intent.taskAfter.status === 'failed' || intent.taskAfter.status === 'cancelled')
+    const legacyRunningTerminal =
+      intent.taskBefore.status === 'running' &&
+      beforeExecutions[0].status === 'running' &&
+      isTerminalScheduledTaskStatus(intent.taskAfter.status)
+    if (
+      (!queuedTerminal && !legacyRunningTerminal) ||
+      intent.taskBefore.runId !== undefined ||
+      beforeExecutions[0].runId !== undefined ||
+      intent.taskAfter.runId !== undefined ||
+      !isTerminalWorkflowExecutionStatus(afterExecutions[0].status) ||
+      afterExecutions[0].runId !== undefined ||
+      scheduledTaskStatusToWorkflowStatus(intent.taskAfter.status) !== afterExecutions[0].status
+    ) {
+      return 'Scheduled occurrence unowned settle intent is not an exact queued terminal.'
+    }
+    return null
+  }
+  if (!isNonEmptyTrimmedString(identity.runId)) {
+    return 'Scheduled occurrence mutation has an invalid run owner.'
+  }
+  if (
+    intent.taskBefore.status !== 'running' ||
+    intent.taskBefore.runId !== identity.runId ||
+    beforeExecutions[0].status !== 'running' ||
+    beforeExecutions[0].runId !== identity.runId ||
+    !isTerminalScheduledTaskStatus(intent.taskAfter.status) ||
+    intent.taskAfter.runId !== identity.runId ||
+    !isTerminalWorkflowExecutionStatus(afterExecutions[0].status) ||
+    scheduledTaskStatusToWorkflowStatus(intent.taskAfter.status) !== afterExecutions[0].status ||
+    afterExecutions[0].runId !== identity.runId
+  ) {
+    return 'Scheduled occurrence settle intent does not preserve its exact run owner.'
+  }
+  return null
+}
+
+function decodeScheduledOccurrenceMutationIntent(
+  value: unknown
+): ScheduledOccurrenceMutationIntent | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const input = value as Partial<ScheduledOccurrenceMutationIntent>
+  if (
+    input.schemaVersion !== 1 ||
+    !input.identity ||
+    typeof input.identity !== 'object' ||
+    !input.taskAfter ||
+    typeof input.taskAfter !== 'object' ||
+    !input.workflowBefore ||
+    typeof input.workflowBefore !== 'object' ||
+    !input.workflowAfter ||
+    typeof input.workflowAfter !== 'object'
+  ) {
+    return null
+  }
+  const intent = input as ScheduledOccurrenceMutationIntent
+  try {
+    return validateScheduledOccurrenceMutationIntent(intent) ? null : intent
+  } catch {
+    return null
+  }
+}
+
+function maybeCrashScheduledOccurrenceMutation(point: ScheduledOccurrenceMutationCrashPoint): void {
+  if (scheduledOccurrenceMutationCrashPoint !== point) return
+  scheduledOccurrenceMutationCrashPoint = null
+  throw new Error(`Injected scheduled occurrence mutation crash ${point}.`)
+}
+
+interface WorkflowTaskProjection {
+  workflow: WorkflowDefinition
+  priorStatus: WorkflowExecutionRecord['status']
+  nextStatus: WorkflowExecutionRecord['status']
+}
+
+type ScheduledTaskWorkflowPairValidation =
+  | {
+      ok: true
+      workflow: WorkflowDefinition
+      execution: WorkflowExecutionRecord | null
+      linkage: 'exact' | 'pruned-terminal'
+    }
+  | { ok: false; reason: string }
+
+function readCanonicalRawWorkflowHistories(
+  workflows: WorkflowDefinition[]
+): Map<string, WorkflowExecutionRecord[]> | null {
+  try {
+    const raw = JSON.parse(fs.readFileSync(workflowsPath, 'utf-8')) as unknown
+    if (!Array.isArray(raw) || raw.length !== workflows.length) return null
+    const histories = new Map<string, WorkflowExecutionRecord[]>()
+    for (const workflow of workflows) {
+      const matches = raw.filter(
+        (candidate) =>
+          Boolean(candidate) &&
+          typeof candidate === 'object' &&
+          (candidate as { id?: unknown }).id === workflow.id
+      )
+      if (matches.length !== 1 || histories.has(workflow.id)) return null
+      const rawHistory = (matches[0] as { history?: unknown }).history
+      if (
+        !Array.isArray(rawHistory) ||
+        rawHistory.length > WORKFLOW_HISTORY_LIMIT ||
+        !sameJsonValue(rawHistory, workflow.history)
+      ) {
+        return null
+      }
+      histories.set(workflow.id, rawHistory as WorkflowExecutionRecord[])
+    }
+    return histories.size === raw.length ? histories : null
+  } catch {
+    return null
+  }
+}
+
+function validatePrunedTerminalScheduledTaskLinkage(
+  task: ScheduledTask,
+  workflow: WorkflowDefinition,
+  rawHistory: WorkflowExecutionRecord[]
+): string | null {
+  const workflowExecutionId = task.workflowExecutionId as string
+  const workflowOccurrenceAt = task.workflowOccurrenceAt as string
+  const expectedStatus = scheduledTaskStatusToWorkflowStatus(task.status)
+  const plannedForMs = canonicalIsoTimestampMs(workflowOccurrenceAt)
+  const runAtMs = canonicalIsoTimestampMs(task.runAt)
+  const createdAtMs = canonicalIsoTimestampMs(task.createdAt)
+  const updatedAtMs = canonicalIsoTimestampMs(task.updatedAt)
+  const completedAtMs = canonicalIsoTimestampMs(task.completedAt)
+  if (
+    !isTerminalScheduledTaskStatus(task.status) ||
+    !expectedStatus ||
+    !isTerminalWorkflowExecutionStatus(expectedStatus) ||
+    plannedForMs === null ||
+    runAtMs === null ||
+    createdAtMs === null ||
+    updatedAtMs === null ||
+    completedAtMs === null ||
+    // Pre-WAL schema-v1 rows did not carry a discriminator and could stamp
+    // createdAt after runAt. They deliberately remain fail-closed here until a
+    // versioned migration can attest them; destructive validation must not
+    // infer legacy provenance from loose clock ranges.
+    task.runAt !== task.createdAt ||
+    plannedForMs > runAtMs ||
+    runAtMs > completedAtMs ||
+    completedAtMs > updatedAtMs ||
+    !optionalCanonicalIsoTimestamp(task.firedAt) ||
+    !optionalCanonicalIsoTimestamp(task.runningSince)
+  ) {
+    return 'Workflow-linked scheduled task is not a canonical terminal pruned occurrence.'
+  }
+  const firedAtMs = task.firedAt === undefined ? undefined : canonicalIsoTimestampMs(task.firedAt)
+  const runningSinceMs =
+    task.runningSince === undefined ? undefined : canonicalIsoTimestampMs(task.runningSince)
+  if (
+    (firedAtMs !== undefined && (firedAtMs === null || firedAtMs < runAtMs)) ||
+    (runningSinceMs !== undefined &&
+      (runningSinceMs === null || runningSinceMs < (firedAtMs ?? runAtMs))) ||
+    (runningSinceMs ?? firedAtMs ?? runAtMs) > completedAtMs ||
+    (task.runId !== undefined &&
+      (!isNonEmptyTrimmedString(task.runId) ||
+        firedAtMs === undefined ||
+        firedAtMs === null ||
+        runningSinceMs === undefined ||
+        runningSinceMs === null))
+  ) {
+    return 'Workflow-linked scheduled task has a divergent terminal run timeline.'
+  }
+
+  let ledger: StrictWorkflowRunLedgerRead
+  try {
+    ledger = readWorkflowRunLedgerStrict(workflowRunFilePath(workflowExecutionId))
+  } catch {
+    return 'Workflow-linked pruned occurrence has an invalid lifecycle ledger.'
+  }
+  if (
+    ledger.hasTornTail ||
+    ledger.events.length === 0 ||
+    ledger.events.some(
+      (event, index) =>
+        event.sequence !== index + 1 ||
+        event.workflowExecutionId !== workflowExecutionId ||
+        event.workflowId !== workflow.id ||
+        canonicalIsoTimestampMs(event.timestamp) === null ||
+        (event.scheduledTaskId !== undefined && event.scheduledTaskId !== task.id) ||
+        (event.plannedFor !== undefined && event.plannedFor !== workflowOccurrenceAt) ||
+        (event.iteration === undefined &&
+          event.runId !== undefined &&
+          event.runId !== task.runId)
+    )
+  ) {
+    return 'Workflow-linked pruned occurrence has an invalid lifecycle ledger.'
+  }
+  const terminalEvents = ledger.events.filter(
+    (event) =>
+      event.iteration === undefined &&
+      (event.kind === 'completed' || event.kind === 'failed' || event.kind === 'cancelled')
+  )
+  const matchingTerminalEvents = terminalEvents.filter((event) => {
+    const eventAtMs = canonicalIsoTimestampMs(event.timestamp)
+    const expected = canonicalScheduledOccurrenceLedgerEvent(
+      task,
+      event.timestamp,
+      event.sequence
+    )
+    return (
+      expected !== null &&
+      sameJsonValue(expected, event) &&
+      eventAtMs !== null &&
+      eventAtMs >= completedAtMs &&
+      eventAtMs <= updatedAtMs
+    )
+  })
+  if (terminalEvents.length !== 1 || matchingTerminalEvents.length !== 1) {
+    return 'Workflow-linked pruned occurrence terminal fields do not match its lifecycle ledger.'
+  }
+  const executionRunningEvents = ledger.events.filter(
+    (event) => event.iteration === undefined && event.kind === 'running'
+  )
+  if (task.runId === undefined) {
+    if (executionRunningEvents.length !== 0) {
+      return 'Workflow-linked pruned occurrence has an unexpected lifecycle claim owner.'
+    }
+  } else {
+    const matchingRunningEvents = executionRunningEvents.filter((event) => {
+      const expected = canonicalScheduledOccurrenceLedgerEvent(
+        {
+          ...task,
+          status: 'running',
+          completedAt: undefined,
+          lastError: undefined
+        },
+        task.firedAt as string,
+        event.sequence
+      )
+      return (
+        expected !== null &&
+        sameJsonValue(expected, event) &&
+        event.timestamp === task.firedAt &&
+        event.sequence < matchingTerminalEvents[0].sequence
+      )
+    })
+    if (executionRunningEvents.length !== 1 || matchingRunningEvents.length !== 1) {
+      return 'Workflow-linked pruned occurrence has no unique canonical lifecycle claim.'
+    }
+  }
+
+  // Use the unnormalized row: workflow normalization repairs missing history
+  // timestamps with `now`, which must not manufacture pruning evidence during
+  // a destructive operation.
+  const retainedCreatedAt = rawHistory.map((execution) =>
+    canonicalIsoTimestampMs(execution.createdAt)
+  )
+  const terminalEventAtMs = canonicalIsoTimestampMs(matchingTerminalEvents[0].timestamp) as number
+  const retainedIds = rawHistory.map((execution) => execution.id)
+  const retainedTaskIds = rawHistory
+    .map((execution) => execution.scheduledTaskId)
+    .filter((value): value is string => value !== undefined)
+  const retainedRunIds = rawHistory
+    .map((execution) => execution.runId)
+    .filter((value): value is string => value !== undefined)
+  if (
+    rawHistory.length !== WORKFLOW_HISTORY_LIMIT ||
+    retainedCreatedAt.some((timestamp) => timestamp === null) ||
+    retainedCreatedAt.some((timestamp) => (timestamp as number) < terminalEventAtMs) ||
+    retainedCreatedAt.some(
+      (timestamp, index) => index > 0 && (timestamp as number) < (retainedCreatedAt[index - 1] as number)
+    ) ||
+    new Set(retainedIds).size !== retainedIds.length ||
+    new Set(retainedTaskIds).size !== retainedTaskIds.length ||
+    new Set(retainedRunIds).size !== retainedRunIds.length
+  ) {
+    return 'Workflow-linked scheduled task execution is missing without proof of history pruning.'
+  }
+  return null
+}
+
+function validateScheduledTaskWorkflowPair(
+  task: ScheduledTask,
+  workflows: WorkflowDefinition[],
+  tasks: ScheduledTask[]
+): ScheduledTaskWorkflowPairValidation {
+  const { workflowId, workflowExecutionId, workflowOccurrenceAt } = task
+  if (!isNonEmptyTrimmedString(task.id)) {
+    return { ok: false, reason: 'Workflow-linked scheduled task has an invalid task owner.' }
+  }
+  if (
+    !isNonEmptyTrimmedString(workflowId) ||
+    !isNonEmptyTrimmedString(workflowExecutionId) ||
+    !isNonEmptyTrimmedString(workflowOccurrenceAt) ||
+    canonicalIsoTimestampMs(workflowOccurrenceAt) === null
+  ) {
+    return { ok: false, reason: 'Workflow-linked scheduled task has an incomplete W/E/P tuple.' }
+  }
+  const workflowMatches = workflows.filter((workflow) => workflow.id === workflowId)
+  if (workflowMatches.length !== 1) {
+    return { ok: false, reason: 'Workflow-linked scheduled task has no unique workflow.' }
+  }
+  const workflow = workflowMatches[0]
+  const rawHistories = readCanonicalRawWorkflowHistories(workflows)
+  if (!rawHistories) {
+    return {
+      ok: false,
+      reason: 'Workflow-linked scheduled task history is not a canonical persisted projection.'
+    }
+  }
+  const rawHistory = rawHistories.get(workflow.id)
+  if (!rawHistory) {
+    return {
+      ok: false,
+      reason: 'Workflow-linked scheduled task history is missing its persisted projection.'
+    }
+  }
+  const executionMatches = workflow.history.filter(
+    (execution) => execution.id === workflowExecutionId
+  )
+  if (executionMatches.length > 1) {
+    return { ok: false, reason: 'Workflow-linked scheduled task has no unique execution.' }
+  }
+  const prunedTerminalCandidate = executionMatches.length === 0
+  const terminal = isTerminalScheduledTaskStatus(task.status)
+  const currentExecutions = [...rawHistories.values()].flat()
+  const taskIdOwners = tasks.filter((candidate) => candidate.id === task.id)
+  const executionTaskOwners = tasks.filter(
+    (candidate) => candidate.workflowExecutionId === workflowExecutionId
+  )
+  const historyExecutionOwners = currentExecutions.filter(
+    (execution) => execution.id === workflowExecutionId
+  )
+  const historyTaskOwners = currentExecutions.filter(
+    (execution) => execution.scheduledTaskId === task.id
+  )
+  const activeExecutionOwners = workflows.filter(
+    (candidate) => candidate.activeExecutionId === workflowExecutionId
+  )
+  const expectedHistoryOwnerCount = prunedTerminalCandidate ? 0 : 1
+  const expectedActiveOwnerCount = !prunedTerminalCandidate && !terminal ? 1 : 0
+  if (
+    taskIdOwners.length !== 1 ||
+    !sameJsonValue(taskIdOwners[0], task) ||
+    executionTaskOwners.length !== 1 ||
+    executionTaskOwners[0].id !== task.id ||
+    historyExecutionOwners.length !== expectedHistoryOwnerCount ||
+    historyTaskOwners.length !== expectedHistoryOwnerCount ||
+    activeExecutionOwners.length !== expectedActiveOwnerCount
+  ) {
+    return {
+      ok: false,
+      reason: 'Workflow-linked scheduled task has missing or duplicate lifecycle ownership.'
+    }
+  }
+  if (task.runId !== undefined) {
+    if (!isNonEmptyTrimmedString(task.runId)) {
+      return {
+        ok: false,
+        reason: 'Workflow-linked scheduled task has an invalid run owner.'
+      }
+    }
+    const taskRunOwners = tasks.filter((candidate) => candidate.runId === task.runId)
+    const executionRunOwners = currentExecutions.filter(
+      (execution) => execution.runId === task.runId
+    )
+    if (
+      taskRunOwners.length !== 1 ||
+      taskRunOwners[0].id !== task.id ||
+      executionRunOwners.length !== expectedHistoryOwnerCount
+    ) {
+      return {
+        ok: false,
+        reason: 'Workflow-linked scheduled task has missing or duplicate run ownership.'
+      }
+    }
+  }
+  if (executionMatches.length === 0) {
+    const prunedReason = validatePrunedTerminalScheduledTaskLinkage(
+      task,
+      workflow,
+      rawHistory
+    )
+    return prunedReason
+      ? { ok: false, reason: prunedReason }
+      : { ok: true, workflow, execution: null, linkage: 'pruned-terminal' }
+  }
+  const execution = executionMatches[0]
+  if (!isNonEmptyTrimmedString(execution.scheduledTaskId)) {
+    return { ok: false, reason: 'Workflow-linked scheduled task has an invalid task owner.' }
+  }
+  const identity: ScheduledOccurrenceIdentity = {
+    taskId: task.id,
+    workflowId,
+    executionId: workflowExecutionId,
+    plannedFor: workflowOccurrenceAt,
+    runId: task.runId
+  }
+  if (!workflowExecutionMatchesIdentity(execution, identity)) {
+    return { ok: false, reason: 'Workflow-linked scheduled task has a divergent W/E/P tuple.' }
+  }
+  const expectedStatus =
+    task.status === 'pending' || task.status === 'due'
+      ? 'queued'
+      : scheduledTaskStatusToWorkflowStatus(task.status)
+  if (!expectedStatus || execution.status !== expectedStatus || execution.runId !== task.runId) {
+    return {
+      ok: false,
+      reason: 'Workflow-linked scheduled task and execution lifecycle projections diverge.'
+    }
+  }
+  if (
+    (!terminal && workflow.activeExecutionId !== execution.id) ||
+    (terminal && workflow.activeExecutionId === execution.id)
+  ) {
+    return {
+      ok: false,
+      reason: 'Workflow-linked scheduled task and workflow active projection diverge.'
+    }
+  }
+  if (
+    terminal &&
+    (canonicalIsoTimestampMs(task.completedAt) === null ||
+      task.completedAt !== execution.completedAt ||
+      (task.lastError || undefined) !== execution.error)
+  ) {
+    return {
+      ok: false,
+      reason: 'Workflow-linked terminal task does not match its terminal execution.'
+    }
+  }
+  if (
+    task.status === 'running' &&
+    (!isNonEmptyTrimmedString(task.runId) ||
+      canonicalIsoTimestampMs(task.firedAt) === null ||
+      task.firedAt !== execution.startedAt)
+  ) {
+    return { ok: false, reason: 'Workflow-linked running task does not match its execution.' }
+  }
+  return { ok: true, workflow, execution, linkage: 'exact' }
+}
+
+function projectWorkflowFromScheduledTask(
+  source: WorkflowDefinition,
+  task: ScheduledTask,
+  nowIso: string
+): WorkflowTaskProjection | null {
+  if (
+    !task.workflowId ||
+    !task.workflowExecutionId ||
+    !task.workflowOccurrenceAt ||
+    source.id !== task.workflowId
+  ) {
+    return null
+  }
+  const nextStatus = scheduledTaskStatusToWorkflowStatus(task.status)
+  if (!nextStatus) return null
+  const workflow = cloneJsonValue(source)
+  const executionIndexes = workflow.history
+    .map((execution, index) => (execution.id === task.workflowExecutionId ? index : -1))
+    .filter((index) => index >= 0)
+  if (executionIndexes.length !== 1) return null
+  const executionIndex = executionIndexes[0]
+  const previous = workflow.history[executionIndex]
+  if (!workflowExecutionMatchesIdentity(previous, {
+    taskId: task.id,
+    workflowId: task.workflowId,
+    executionId: task.workflowExecutionId,
+    plannedFor: task.workflowOccurrenceAt,
+    runId: task.runId
+  })) {
+    return null
+  }
+
+  const priorStatus = previous.status
+  const terminal = isTerminalWorkflowExecutionStatus(nextStatus)
+  const wasTerminal = isTerminalWorkflowExecutionStatus(previous.status)
+  const isActiveExecution = workflow.activeExecutionId === task.workflowExecutionId
+  const terminalRunOwnerMatches = previous.runId
+    ? task.runId === previous.runId
+    : previous.runId === undefined && task.runId === undefined
+
+  if (wasTerminal || nextStatus === previous.status) return null
+  if (
+    nextStatus === 'running' &&
+    (previous.status !== 'queued' || !isActiveExecution || !task.runId)
+  ) {
+    return null
+  }
+  if (terminal && previous.status === 'running' && !terminalRunOwnerMatches) return null
+  if (
+    terminal &&
+    previous.status !== 'running' &&
+    !(
+      previous.status === 'queued' &&
+      (nextStatus === 'failed' || nextStatus === 'cancelled')
+    )
+  ) {
+    return null
+  }
+
+  workflow.history[executionIndex] = {
+    ...previous,
+    runId: task.runId || previous.runId,
+    status: nextStatus,
+    updatedAt: nowIso,
+    ...(nextStatus === 'running' && !previous.startedAt
+      ? { startedAt: task.firedAt || nowIso }
+      : {}),
+    ...(terminal ? { completedAt: task.completedAt || nowIso } : {}),
+    ...(task.lastError ? { error: task.lastError } : {})
+  }
+  workflow.history = workflow.history.slice(-WORKFLOW_HISTORY_LIMIT)
+  workflow.updatedAt = nowIso
+  if (isActiveExecution) {
+    workflow.lastStatus = nextStatus
+    workflow.lastError = task.lastError
+  }
+  if (terminal && isActiveExecution) {
+    workflow.lastCompletedAt = task.completedAt || nowIso
+    workflow.activeExecutionId = undefined
+    workflow.failureStreak = nextStatus === 'failed' ? workflow.failureStreak + 1 : 0
+    const maxFailures = workflow.limits.maxConsecutiveFailures || 3
+    if (nextStatus === 'failed' && workflow.failureStreak >= maxFailures) {
+      workflow.enabled = false
+      workflow.nextRunAt = undefined
+      workflow.lastError =
+        task.lastError || `Workflow auto-disabled after ${workflow.failureStreak} failures.`
+    } else if (workflow.enabled) {
+      const completedAtMs = task.completedAt ? Date.parse(task.completedAt) : Number.NaN
+      const nowMs = Number.isFinite(completedAtMs) ? completedAtMs : Date.now()
+      const existingNextRunAtMs = workflow.nextRunAt
+        ? Date.parse(workflow.nextRunAt)
+        : Number.NaN
+      workflow.nextRunAt =
+        Number.isFinite(existingNextRunAtMs) && existingNextRunAtMs > nowMs
+          ? workflow.nextRunAt
+          : resolveNextWorkflowRunAt(workflow.trigger, nowMs, nowMs)
+    } else {
+      workflow.nextRunAt = undefined
+    }
+  }
+  return { workflow, priorStatus, nextStatus }
 }
 
 function sameWorkflowPath(a: string | undefined, b: string | undefined): boolean {
@@ -923,7 +2137,64 @@ function sameWorkflowAuthority(a: WorkflowDefinition, b: WorkflowDefinition): bo
   }
 }
 
-function scheduledAttachmentsAreDurable(value: unknown): value is ScheduledTaskAttachmentRef[] {
+const WORKFLOW_OCCURRENCE_PROJECTION_FIELDS = [
+  'history',
+  'activeExecutionId',
+  'lastStatus',
+  'lastError',
+  'lastRunAt',
+  'lastCompletedAt',
+  'failureStreak'
+] as const
+
+function workflowHasNonterminalOccurrence(workflow: WorkflowDefinition): boolean {
+  if (workflow.activeExecutionId) {
+    const active = workflow.history.find(
+      (execution) => execution.id === workflow.activeExecutionId
+    )
+    if (!active || !isTerminalWorkflowExecutionStatus(active.status)) return true
+  }
+  return workflow.history.some(
+    (execution) =>
+      Boolean(execution.scheduledTaskId) && !isTerminalWorkflowExecutionStatus(execution.status)
+  )
+}
+
+function assertWorkflowOccurrenceProjectionInputUnchanged(
+  source: WorkflowDefinition,
+  input: object
+): void {
+  if (!workflowHasNonterminalOccurrence(source)) return
+  const sourceRecord = source as unknown as Record<string, unknown>
+  const inputRecord = input as Record<string, unknown>
+  for (const field of WORKFLOW_OCCURRENCE_PROJECTION_FIELDS) {
+    if (
+      Object.prototype.hasOwnProperty.call(inputRecord, field) &&
+      !sameJsonValue(inputRecord[field], sourceRecord[field])
+    ) {
+      throw new Error(
+        'Workflow occurrence lifecycle projections are immutable while an execution is active.'
+      )
+    }
+  }
+}
+
+function preserveWorkflowOccurrenceProjection(
+  source: WorkflowDefinition,
+  target: WorkflowDefinition
+): void {
+  if (!workflowHasNonterminalOccurrence(source)) return
+  const sourceRecord = source as unknown as Record<string, unknown>
+  const targetRecord = target as unknown as Record<string, unknown>
+  for (const field of WORKFLOW_OCCURRENCE_PROJECTION_FIELDS) {
+    if (sourceRecord[field] === undefined) delete targetRecord[field]
+    else targetRecord[field] = cloneJsonValue(sourceRecord[field])
+  }
+}
+
+function scheduledAttachmentsAreDurable(
+  value: unknown
+): value is Array<ScheduledTaskAttachmentRef & PersistedAttachmentRef> {
   return Array.isArray(value) && value.every(isDurableScheduledAttachmentRef)
 }
 
@@ -1593,6 +2864,305 @@ function writeJson<T>(filePath: string, data: T) {
   }
 }
 
+function writeScheduledOccurrenceJsonStrict<T>(filePath: string, data: T): void {
+  const directoryPath = path.dirname(filePath)
+  const tempPath = `${filePath}.${process.pid}.${randomUUID()}.wal.tmp`
+  let renamed = false
+  fs.mkdirSync(directoryPath, { recursive: true })
+  try {
+    let fileDescriptor: number | null = null
+    try {
+      fileDescriptor = fs.openSync(tempPath, 'w', 0o600)
+      fs.writeFileSync(fileDescriptor, JSON.stringify(data, null, 2), 'utf-8')
+      fs.fsyncSync(fileDescriptor)
+    } finally {
+      if (fileDescriptor !== null) fs.closeSync(fileDescriptor)
+    }
+    fs.renameSync(tempPath, filePath)
+    renamed = true
+    try {
+      fs.chmodSync(filePath, 0o600)
+    } catch {
+      // Best effort on filesystems that do not support POSIX modes.
+    }
+    let directoryDescriptor: number | null = null
+    try {
+      directoryDescriptor = fs.openSync(directoryPath, 'r')
+      fs.fsyncSync(directoryDescriptor)
+    } finally {
+      if (directoryDescriptor !== null) fs.closeSync(directoryDescriptor)
+    }
+  } catch (error) {
+    if (!renamed) {
+      try {
+        if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath)
+      } catch {
+        // Preserve the strict write failure; a stale temp file is not authoritative.
+      }
+    }
+    throw error
+  }
+}
+
+type ScheduledOccurrenceMutationJournalRead =
+  | { status: 'none' }
+  | { status: 'ready'; intent: ScheduledOccurrenceMutationIntent }
+  | { status: 'blocked'; reason: string }
+
+function readScheduledOccurrenceMutationJournal(): ScheduledOccurrenceMutationJournalRead {
+  if (scheduledOccurrenceDurabilityFailureIntent) {
+    return {
+      status: 'ready',
+      intent: cloneJsonValue(scheduledOccurrenceDurabilityFailureIntent)
+    }
+  }
+  if (!fs.existsSync(scheduledOccurrenceMutationsPath)) return { status: 'none' }
+  let value: unknown
+  try {
+    value = JSON.parse(fs.readFileSync(scheduledOccurrenceMutationsPath, 'utf-8'))
+  } catch {
+    return { status: 'blocked', reason: 'Scheduled occurrence mutation journal is unreadable.' }
+  }
+  if (value === null) return { status: 'none' }
+  const intent = decodeScheduledOccurrenceMutationIntent(value)
+  if (!intent) {
+    return { status: 'blocked', reason: 'Scheduled occurrence mutation journal is invalid.' }
+  }
+  return { status: 'ready', intent }
+}
+
+function assertNoPendingScheduledOccurrenceMutation(): void {
+  const journal = readScheduledOccurrenceMutationJournal()
+  if (journal.status === 'none') return
+  throw new Error(
+    journal.status === 'blocked'
+      ? journal.reason
+      : 'Scheduled occurrence mutation recovery is pending.'
+  )
+}
+
+function occurrenceRecordState<T extends { id: string }>(
+  records: T[],
+  id: string,
+  before: T | null,
+  after: T
+): { status: 'before' | 'after'; index: number } | { status: 'blocked'; reason: string } {
+  const indexes = records
+    .map((record, index) => (record.id === id ? index : -1))
+    .filter((index) => index >= 0)
+  if (indexes.length > 1) {
+    return { status: 'blocked', reason: `Scheduled occurrence record ${id} is duplicated.` }
+  }
+  if (indexes.length === 0) {
+    return before === null
+      ? { status: 'before', index: -1 }
+      : { status: 'blocked', reason: `Scheduled occurrence record ${id} is missing.` }
+  }
+  const index = indexes[0]
+  if (sameJsonValue(records[index], after)) return { status: 'after', index }
+  if (before && sameJsonValue(records[index], before)) return { status: 'before', index }
+  return {
+    status: 'blocked',
+    reason: `Scheduled occurrence record ${id} no longer matches its journal images.`
+  }
+}
+
+function scheduledOccurrenceMutationWriteOrderReason(
+  intent: ScheduledOccurrenceMutationIntent,
+  taskState: 'before' | 'after',
+  workflowState: 'before' | 'after',
+  ledgerState: 'before' | 'after'
+): string | null {
+  const projectionState = `${taskState}/${workflowState}`
+  if (intent.kind === 'materialize') {
+    return projectionState === 'before/before' ||
+      projectionState === 'after/before' ||
+      projectionState === 'after/after'
+      ? null
+      : 'Scheduled occurrence WAL projections are not a valid write-order prefix.'
+  }
+  const lifecycleState = `${projectionState}/${ledgerState}`
+  return lifecycleState === 'before/before/before' ||
+    lifecycleState === 'after/before/before' ||
+    lifecycleState === 'after/after/before' ||
+    lifecycleState === 'after/after/after'
+    ? null
+    : 'Scheduled occurrence WAL projections are not a valid write-order prefix.'
+}
+
+interface ScheduledOccurrenceWorkflowRecordSet {
+  raw: Array<{ id: string }>
+  normalized: WorkflowDefinition[]
+}
+
+function readScheduledOccurrenceWorkflowRecordsStrict(): ScheduledOccurrenceWorkflowRecordSet | null {
+  try {
+    const value = JSON.parse(fs.readFileSync(workflowsPath, 'utf-8')) as unknown
+    if (!Array.isArray(value)) return null
+    const ids = new Set<string>()
+    const raw: Array<{ id: string }> = []
+    const workflows: WorkflowDefinition[] = []
+    for (const candidate of value) {
+      if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return null
+      const input = candidate as Partial<WorkflowDefinition>
+      if (
+        !isNonEmptyTrimmedString(input.id) ||
+        ids.has(input.id) ||
+        !Array.isArray(input.history) ||
+        input.history.some(
+          (execution) =>
+            !execution || typeof execution !== 'object' || Array.isArray(execution)
+        )
+      ) {
+        return null
+      }
+      const workflow = normalizeWorkflowDefinitionRecord(input, Date.now())
+      const fullHistory = input.history
+        .map((execution) => normalizeWorkflowExecutionRecord(execution, input.id as string))
+        .filter((execution): execution is WorkflowExecutionRecord => Boolean(execution))
+      if (
+        !workflow ||
+        fullHistory.length !== input.history.length ||
+        fullHistory.some((execution, index) => !sameJsonValue(execution, input.history?.[index]))
+      ) {
+        return null
+      }
+      workflow.history = fullHistory
+      ids.add(input.id)
+      raw.push(candidate as { id: string })
+      workflows.push(workflow)
+    }
+    return { raw, normalized: workflows }
+  } catch {
+    return null
+  }
+}
+
+function canonicalizeScheduledOccurrenceWorkflowSource(
+  expected: WorkflowDefinition
+): WorkflowDefinition | null {
+  try {
+    const value = JSON.parse(fs.readFileSync(workflowsPath, 'utf-8')) as unknown
+    if (!Array.isArray(value)) return null
+    const ids = new Set<string>()
+    let targetIndex = -1
+    for (let index = 0; index < value.length; index += 1) {
+      const candidate = value[index]
+      if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return null
+      const id = (candidate as { id?: unknown }).id
+      if (!isNonEmptyTrimmedString(id) || ids.has(id)) return null
+      ids.add(id)
+      if (id === expected.id) targetIndex = index
+    }
+    if (targetIndex < 0) return null
+    const candidate = value[targetIndex] as Partial<WorkflowDefinition>
+    if (!Array.isArray(candidate.history)) return null
+    const normalizationAt =
+      canonicalIsoTimestampMs(expected.updatedAt) ??
+      canonicalIsoTimestampMs(expected.createdAt) ??
+      Date.now()
+    const normalized = normalizeWorkflowDefinitionRecord(candidate, normalizationAt)
+    const fullHistory = candidate.history
+      .map((execution) => normalizeWorkflowExecutionRecord(execution, expected.id))
+      .filter((execution): execution is WorkflowExecutionRecord => Boolean(execution))
+    if (
+      !normalized ||
+      fullHistory.length !== candidate.history.length ||
+      fullHistory.some((execution, index) => !sameJsonValue(execution, candidate.history?.[index]))
+    ) {
+      return null
+    }
+    normalized.history = fullHistory
+    if (!sameJsonValue(normalized, expected)) return null
+    if (!sameJsonValue(candidate, expected)) {
+      value[targetIndex] = cloneJsonValue(expected)
+      writeScheduledOccurrenceJsonStrict(workflowsPath, value)
+    }
+    return cloneJsonValue(expected)
+  } catch {
+    return null
+  }
+}
+
+function validateCurrentRunOwnerReferences(
+  intent: ScheduledOccurrenceMutationIntent,
+  tasks: ScheduledTask[],
+  workflows: WorkflowDefinition[]
+): string | null {
+  const taskIdRefs = tasks.filter((task) => task.id === intent.identity.taskId)
+  const taskExecutionRefs = tasks.filter(
+    (task) => task.workflowExecutionId === intent.identity.executionId
+  )
+  const executionIdRefs = workflows.flatMap((workflow) =>
+    workflow.history
+      .filter((execution) => execution.id === intent.identity.executionId)
+      .map((execution) => ({ workflow, execution }))
+  )
+  const executionTaskRefs = workflows.flatMap((workflow) =>
+    workflow.history
+      .filter((execution) => execution.scheduledTaskId === intent.identity.taskId)
+      .map((execution) => ({ workflow, execution }))
+  )
+  const activeExecutionRefs = workflows.filter(
+    (workflow) => workflow.activeExecutionId === intent.identity.executionId
+  )
+  const expectedEstablishedCount = intent.kind === 'materialize' ? null : 1
+  if (
+    taskIdRefs.length > 1 ||
+    taskExecutionRefs.length > 1 ||
+    executionIdRefs.length > 1 ||
+    executionTaskRefs.length > 1 ||
+    activeExecutionRefs.length > 1 ||
+    taskIdRefs.length !== taskExecutionRefs.length ||
+    executionIdRefs.length !== executionTaskRefs.length ||
+    (expectedEstablishedCount !== null &&
+      (taskIdRefs.length !== expectedEstablishedCount ||
+        executionIdRefs.length !== expectedEstablishedCount)) ||
+    (intent.kind === 'materialize' &&
+      activeExecutionRefs.length !== executionIdRefs.length) ||
+    (intent.kind === 'claim' && activeExecutionRefs.length !== 1) ||
+    activeExecutionRefs.some((workflow) => workflow.id !== intent.identity.workflowId) ||
+    taskIdRefs.some((task) => !taskMatchesOccurrenceIdentity(task, intent.identity)) ||
+    taskExecutionRefs.some((task) => !taskMatchesOccurrenceIdentity(task, intent.identity)) ||
+    executionIdRefs.some(
+      ({ workflow, execution }) =>
+        workflow.id !== intent.identity.workflowId ||
+        !workflowExecutionMatchesIdentity(execution, intent.identity)
+    ) ||
+    executionTaskRefs.some(
+      ({ workflow, execution }) =>
+        workflow.id !== intent.identity.workflowId ||
+        !workflowExecutionMatchesIdentity(execution, intent.identity)
+    )
+  ) {
+    return 'Scheduled occurrence task or execution owner is duplicated or belongs to another occurrence.'
+  }
+  const runId = intent.identity.runId
+  if (!runId) return null
+  const taskRefs = tasks.filter((task) => task.runId === runId)
+  const executionRefs = workflows.flatMap((workflow) =>
+    workflow.history
+      .filter((execution) => execution.runId === runId)
+      .map((execution) => ({ workflow, execution }))
+  )
+  if (
+    taskRefs.length > 1 ||
+    executionRefs.length > 1 ||
+    taskRefs.some((task) => !taskMatchesOccurrenceIdentity(task, intent.identity)) ||
+    executionRefs.some(
+      ({ workflow, execution }) =>
+        workflow.id !== intent.identity.workflowId ||
+        !workflowExecutionMatchesIdentity(execution, intent.identity)
+    )
+  ) {
+    return `Run owner ${runId} is duplicated or belongs to another occurrence.`
+  }
+  if (intent.kind === 'settle' && (taskRefs.length !== 1 || executionRefs.length !== 1)) {
+    return `Run owner ${runId} is not established on both occurrence projections.`
+  }
+  return null
+}
+
 function readSubThreadMailboxLedger(): SubThreadMailboxLedger {
   return normalizeSubThreadMailboxLedger(readJson<unknown>(subThreadMailboxesPath, {}))
 }
@@ -1643,9 +3213,9 @@ function normalizeChatWorkflowMode(value: unknown): ChatWorkflowMode {
   return value === 'plan' ? 'plan' : 'normal'
 }
 
-function buildScheduledTaskDispatchReceipt(task: ScheduledTask) {
+function buildScheduledTaskDispatchReceipt(task: ScheduledTask, generatedAt?: string) {
   const workflowMode = normalizeChatWorkflowMode(task.workflowMode)
-  return buildRunQueueDispatchReceipt({
+  const input: Parameters<typeof buildRunQueueDispatchReceipt>[0] = {
     runId: task.runId || task.id,
     provider: task.provider,
     source: 'scheduled',
@@ -1690,7 +3260,8 @@ function buildScheduledTaskDispatchReceipt(task: ScheduledTask) {
       ...(task.geminiAuthProfileId ? { geminiAuthProfileId: task.geminiAuthProfileId } : {}),
       ...(task.handoffSourceRunId ? { handoffSourceRunId: task.handoffSourceRunId } : {})
     }
-  })
+  }
+  return buildRunQueueDispatchReceipt(input, generatedAt)
 }
 
 function summarizeLastRun(
@@ -1806,6 +3377,250 @@ function readWorkflowRunFile(filePath: string): WorkflowRunEvent[] {
   } catch (e) {
     console.error(`Failed to read ${filePath}`, e)
     return []
+  }
+}
+
+interface StrictWorkflowRunLedgerRead {
+  events: WorkflowRunEvent[]
+  committedBytes: Buffer
+  committedByteLength: number
+  fileExisted: boolean
+  hasTornTail: boolean
+}
+
+const WORKFLOW_RUN_LEDGER_EVENT_KINDS = new Set<WorkflowRunEvent['kind']>([
+  'materialized',
+  'dispatched',
+  'running',
+  'completed',
+  'failed',
+  'cancelled',
+  'skipped',
+  'budget_breach',
+  'stall_settled',
+  'harvested',
+  'loop_settled'
+])
+
+interface WorkflowRunLedgerExpectedIdentity {
+  workflowExecutionId: string
+  workflowId: string
+  scheduledTaskId?: string
+  plannedFor?: string
+  runId?: string | null
+}
+
+function workflowRunEventInputStructureReason(input: WorkflowRunEventInput): string | null {
+  if (
+    !isNonEmptyTrimmedString(input.workflowExecutionId) ||
+    safeWorkflowRunFileName(input.workflowExecutionId) !== `${input.workflowExecutionId}.jsonl` ||
+    !isNonEmptyTrimmedString(input.workflowId) ||
+    !WORKFLOW_RUN_LEDGER_EVENT_KINDS.has(input.kind) ||
+    (input.timestamp !== undefined && canonicalIsoTimestampMs(input.timestamp) === null) ||
+    (input.scheduledTaskId !== undefined &&
+      !isNonEmptyTrimmedString(input.scheduledTaskId)) ||
+    (input.runId !== undefined && !isNonEmptyTrimmedString(input.runId)) ||
+    (input.plannedFor !== undefined && canonicalIsoTimestampMs(input.plannedFor) === null) ||
+    (input.iteration !== undefined &&
+      (!Number.isSafeInteger(input.iteration) || input.iteration < 1))
+  ) {
+    return 'Workflow run ledger event input is structurally invalid.'
+  }
+  return null
+}
+
+function workflowRunEventStructureReason(
+  event: WorkflowRunEvent,
+  index: number,
+  previous?: WorkflowRunEvent
+): string | null {
+  const eventTimestampMs = canonicalIsoTimestampMs(event.timestamp)
+  const inputReason = workflowRunEventInputStructureReason(event)
+  if (
+    inputReason ||
+    event.schemaVersion !== 1 ||
+    event.sequence !== index + 1 ||
+    eventTimestampMs === null ||
+    (previous !== undefined &&
+      (previous.workflowExecutionId !== event.workflowExecutionId ||
+        previous.workflowId !== event.workflowId ||
+        (previous.scheduledTaskId !== undefined &&
+          event.scheduledTaskId !== undefined &&
+          previous.scheduledTaskId !== event.scheduledTaskId) ||
+        (previous.plannedFor !== undefined &&
+          event.plannedFor !== undefined &&
+          previous.plannedFor !== event.plannedFor) ||
+        (canonicalIsoTimestampMs(previous.timestamp) as number) > eventTimestampMs))
+  ) {
+    return inputReason || 'Workflow run ledger contains a structurally invalid event sequence.'
+  }
+  return null
+}
+
+function workflowRunLedgerIdentityReason(
+  events: WorkflowRunEvent[],
+  expected: WorkflowRunLedgerExpectedIdentity
+): string | null {
+  if (
+    events.some(
+      (event) =>
+        event.workflowExecutionId !== expected.workflowExecutionId ||
+        event.workflowId !== expected.workflowId ||
+        (expected.scheduledTaskId !== undefined &&
+          event.scheduledTaskId !== undefined &&
+          event.scheduledTaskId !== expected.scheduledTaskId) ||
+        (expected.plannedFor !== undefined &&
+          event.plannedFor !== undefined &&
+          event.plannedFor !== expected.plannedFor) ||
+        (expected.runId !== undefined &&
+          event.iteration === undefined &&
+          event.runId !== undefined &&
+          event.runId !== expected.runId)
+    )
+  ) {
+    return 'Workflow run ledger contains a cross-occurrence identity.'
+  }
+  return null
+}
+
+function readWorkflowRunLedgerStrict(filePath: string): StrictWorkflowRunLedgerRead {
+  if (!fs.existsSync(filePath)) {
+    return {
+      events: [],
+      committedBytes: Buffer.alloc(0),
+      committedByteLength: 0,
+      fileExisted: false,
+      hasTornTail: false
+    }
+  }
+  const contents = fs.readFileSync(filePath)
+  const events: WorkflowRunEvent[] = []
+  let lineStart = 0
+  let committedByteLength = 0
+  for (let index = 0; index < contents.length; index += 1) {
+    if (contents[index] !== 0x0a) continue
+    const line = contents.subarray(lineStart, index).toString('utf-8')
+    if (line.trim()) {
+      const event = parseWorkflowRunEventLine(line)
+      if (!event) {
+        throw new Error('Workflow run ledger contains an invalid framed event.')
+      }
+      const structureReason = workflowRunEventStructureReason(event, events.length, events.at(-1))
+      if (structureReason) throw new Error(structureReason)
+      events.push(event)
+    }
+    lineStart = index + 1
+    committedByteLength = lineStart
+  }
+  const scheduledTaskIds = new Set(
+    events
+      .map((event) => event.scheduledTaskId)
+      .filter((value): value is string => value !== undefined)
+  )
+  const plannedForValues = new Set(
+    events
+      .map((event) => event.plannedFor)
+      .filter((value): value is string => value !== undefined)
+  )
+  if (scheduledTaskIds.size > 1 || plannedForValues.size > 1) {
+    throw new Error('Workflow run ledger contains cross-occurrence rows.')
+  }
+  return {
+    events,
+    committedBytes: contents.subarray(0, committedByteLength),
+    committedByteLength,
+    fileExisted: true,
+    hasTornTail: committedByteLength !== contents.length
+  }
+}
+
+function scheduledOccurrenceLedgerPrefix(
+  read: StrictWorkflowRunLedgerRead
+): ScheduledOccurrenceLedgerPrefix {
+  return {
+    schemaVersion: 1,
+    fileExisted: read.fileExisted,
+    sha256: createHash('sha256').update(read.committedBytes).digest('hex'),
+    byteLength: read.committedByteLength,
+    eventCount: read.events.length,
+    tailSequence: read.events.at(-1)?.sequence || 0
+  }
+}
+
+function scheduledOccurrenceLedgerPrefixMatches(
+  expected: ScheduledOccurrenceLedgerPrefix,
+  bytes: Buffer,
+  events: WorkflowRunEvent[],
+  fileExisted: boolean
+): boolean {
+  return (
+    expected.fileExisted === fileExisted &&
+    expected.byteLength === bytes.length &&
+    expected.eventCount === events.length &&
+    expected.tailSequence === (events.at(-1)?.sequence || 0) &&
+    expected.sha256 === createHash('sha256').update(bytes).digest('hex')
+  )
+}
+
+function strictWorkflowLedgerTaskIds(workflowId: string): Set<string> {
+  const taskIds = new Set<string>()
+  if (!fs.existsSync(workflowRunsDir)) return taskIds
+  for (const entry of fs.readdirSync(workflowRunsDir, { withFileTypes: true })) {
+    if (!entry.isFile() || !entry.name.endsWith('.jsonl')) continue
+    const filePath = path.join(workflowRunsDir, entry.name)
+    const looseEvents = readWorkflowRunFile(filePath)
+    if (!looseEvents.some((event) => event.workflowId === workflowId)) continue
+    const ledger = readWorkflowRunLedgerStrict(filePath)
+    if (
+      ledger.hasTornTail ||
+      ledger.events.length === 0 ||
+      ledger.events.some((event) => event.workflowId !== workflowId)
+    ) {
+      throw new Error('Workflow-linked lifecycle ledger is not a canonical complete projection.')
+    }
+    for (const event of ledger.events) {
+      if (event.scheduledTaskId !== undefined) taskIds.add(event.scheduledTaskId)
+    }
+  }
+  return taskIds
+}
+
+function readWorkflowRunLedgerForAppend(
+  filePath: string,
+  expected?: WorkflowRunLedgerExpectedIdentity
+): WorkflowRunEvent[] {
+  const read = readWorkflowRunLedgerStrict(filePath)
+  if (expected) {
+    const identityReason = workflowRunLedgerIdentityReason(read.events, expected)
+    if (identityReason) throw new Error(identityReason)
+  }
+  if (read.hasTornTail) {
+    const fd = fs.openSync(filePath, 'r+')
+    try {
+      fs.ftruncateSync(fd, read.committedByteLength)
+      fs.fsyncSync(fd)
+    } finally {
+      fs.closeSync(fd)
+    }
+  }
+  return read.events
+}
+
+function fsyncWorkflowRunLedger(filePath: string): void {
+  const fd = fs.openSync(filePath, 'r')
+  try {
+    fs.fsyncSync(fd)
+  } finally {
+    fs.closeSync(fd)
+  }
+}
+
+function fsyncDirectory(directoryPath: string): void {
+  const fd = fs.openSync(directoryPath, 'r')
+  try {
+    fs.fsyncSync(fd)
+  } finally {
+    fs.closeSync(fd)
   }
 }
 
@@ -3846,6 +5661,7 @@ export class AppStore {
     id: string,
     ack: UnattendedElevationAck | undefined
   ): WorkflowDefinition | null {
+    assertNoPendingScheduledOccurrenceMutation()
     const workflows = this.getWorkflowDefinitions()
     const index = workflows.findIndex((workflow) => workflow.id === id)
     if (index < 0) return null
@@ -3909,6 +5725,7 @@ export class AppStore {
         Pick<WorkflowDefinition, 'id' | 'createdAt' | 'updatedAt' | 'history' | 'failureStreak'>
       >
   ): WorkflowDefinition {
+    assertNoPendingScheduledOccurrenceMutation()
     const workflows = this.getWorkflowDefinitions()
     const nowMs = Date.now()
     const nowIso = new Date(nowMs).toISOString()
@@ -3937,6 +5754,8 @@ export class AppStore {
     if (index >= 0) {
       const prior = workflows[index]
       const next: WorkflowDefinition = { ...prior, ...normalized, updatedAt: nowIso }
+      assertWorkflowOccurrenceProjectionInputUnchanged(prior, workflow)
+      preserveWorkflowOccurrenceProjection(prior, next)
       // An acknowledgement authorizes the complete execution envelope, not just
       // approvalMode. Any authority-bearing change revokes it before persistence.
       if (!sameWorkflowAuthority(prior, next)) {
@@ -3955,12 +5774,14 @@ export class AppStore {
     id: string,
     partial: Partial<WorkflowDefinition>
   ): WorkflowDefinition | null {
+    assertNoPendingScheduledOccurrenceMutation()
     const workflows = this.getWorkflowDefinitions()
     const index = workflows.findIndex((workflow) => workflow.id === id)
     if (index < 0) return null
     const nowMs = Date.now()
     const nowIso = new Date(nowMs).toISOString()
     const source = workflows[index]
+    assertWorkflowOccurrenceProjectionInputUnchanged(source, partial)
     const merged = {
       ...source,
       ...partial,
@@ -3994,19 +5815,152 @@ export class AppStore {
   }
 
   static deleteWorkflowDefinition(id: string) {
+    assertNoPendingScheduledOccurrenceMutation()
     const workflow = this.getWorkflowDefinition(id)
     if (workflow) {
-      const linkedTasks = this.getScheduledTasks().filter(
-        (task) =>
-          task.workflowId === id &&
-          (task.status === 'pending' || task.status === 'due' || task.status === 'running')
+      const tasks = this.getScheduledTasks()
+      const nonterminalExecutions = workflow.history.filter(
+        (execution) => !isTerminalWorkflowExecutionStatus(execution.status)
       )
-      for (const task of linkedTasks) {
-        this.updateScheduledTask(task.id, {
-          status: 'cancelled',
-          lastError: 'Workflow deleted.'
-        })
+      if (
+        nonterminalExecutions.some((execution) => !execution.scheduledTaskId) ||
+        (workflow.activeExecutionId &&
+          nonterminalExecutions.filter(
+            (execution) => execution.id === workflow.activeExecutionId
+          ).length !== 1)
+      ) {
+        throw new Error(
+          'Workflow definition could not be deleted because a linked occurrence did not settle: active execution linkage is missing or divergent.'
+        )
       }
+      const requiredTaskIds = new Set(
+        nonterminalExecutions
+          .filter((execution) => execution.scheduledTaskId)
+          .map((execution) => execution.scheduledTaskId as string)
+      )
+      const retainedHistoryTaskIds = workflow.history
+        .filter(
+          (execution) =>
+            execution.scheduledTaskId &&
+            tasks.some((task) => task.id === execution.scheduledTaskId)
+        )
+        .map((execution) => execution.scheduledTaskId as string)
+      const retainedExecutionIds = new Set(workflow.history.map((execution) => execution.id))
+      const retainedRunIds = new Set(
+        workflow.history
+          .map((execution) => execution.runId)
+          .filter((runId): runId is string => runId !== undefined)
+      )
+      const retainedAliasOwnerTaskIds = tasks
+        .filter(
+          (task) =>
+            (task.workflowExecutionId && retainedExecutionIds.has(task.workflowExecutionId)) ||
+            (task.runId && retainedRunIds.has(task.runId))
+        )
+        .map((task) => task.id)
+      const ledgerLinkedTaskIds = [...strictWorkflowLedgerTaskIds(id)].filter((taskId) =>
+        tasks.some((task) => task.id === taskId)
+      )
+      const linkedTaskIds = new Set([
+        ...tasks.filter((task) => task.workflowId === id).map((task) => task.id),
+        ...requiredTaskIds,
+        ...retainedHistoryTaskIds,
+        ...retainedAliasOwnerTaskIds,
+        ...ledgerLinkedTaskIds
+      ])
+      const linkedTasks = [...linkedTaskIds].map((taskId) => {
+        const matches = tasks.filter((task) => task.id === taskId)
+        if (matches.length !== 1) {
+          throw new Error(
+            'Workflow definition could not be deleted because a linked occurrence did not settle: scheduled task is missing or duplicated.'
+          )
+        }
+        return matches[0]
+      })
+      for (const task of linkedTasks) {
+        const pair = validateScheduledTaskWorkflowPair(
+          task,
+          this.getWorkflowDefinitions(),
+          this.getScheduledTasks()
+        )
+        if (!pair.ok || pair.workflow.id !== id) {
+          throw new Error(
+            `Workflow definition could not be deleted because a linked occurrence did not settle: ${pair.ok ? 'workflow id diverges.' : pair.reason}`
+          )
+        }
+      }
+      // Validate every candidate before terminalizing any live row. A corrupt
+      // later candidate must not leave an earlier occurrence partially changed.
+      for (const task of linkedTasks) {
+        if (!isTerminalScheduledTaskStatus(task.status)) {
+          if (task.status === 'running' || task.runId !== undefined) {
+            throw new Error(
+              'Workflow definition could not be deleted while a linked occurrence is live; its exact run owner must settle it first.'
+            )
+          }
+          const terminalized = this.settleUnownedScheduledWorkflowTask(task.id, {
+            status: 'cancelled',
+            completedAt: new Date().toISOString(),
+            lastError: 'Workflow deleted.'
+          })
+          if (!terminalized || !isTerminalScheduledTaskStatus(terminalized.status)) {
+            throw new Error(
+              'Workflow definition could not be deleted because a linked occurrence did not settle.'
+            )
+          }
+          const terminalPair = validateScheduledTaskWorkflowPair(
+            terminalized,
+            this.getWorkflowDefinitions(),
+            this.getScheduledTasks()
+          )
+          if (!terminalPair.ok || terminalPair.workflow.id !== id) {
+            throw new Error(
+              `Workflow definition could not be deleted because a linked occurrence did not settle: ${terminalPair.ok ? 'workflow id diverges.' : terminalPair.reason}`
+            )
+          }
+        }
+      }
+      const finalTasks = this.getScheduledTasks()
+      const finalWorkflows = this.getWorkflowDefinitions()
+      for (const taskId of linkedTaskIds) {
+        const finalMatches = finalTasks.filter((task) => task.id === taskId)
+        if (finalMatches.length !== 1) {
+          throw new Error(
+            'Workflow definition could not be deleted because a linked occurrence did not settle: scheduled task is missing or duplicated.'
+          )
+        }
+        const finalTask = finalMatches[0]
+        const finalPair = validateScheduledTaskWorkflowPair(
+          finalTask,
+          finalWorkflows,
+          finalTasks
+        )
+        if (
+          !isTerminalScheduledTaskStatus(finalTask.status) ||
+          !finalPair.ok ||
+          finalPair.workflow.id !== id
+        ) {
+          throw new Error(
+            `Workflow definition could not be deleted because a linked occurrence remains active or divergent: ${finalPair.ok ? 'terminal state is missing.' : finalPair.reason}`
+          )
+        }
+      }
+      const unexpectedLinkedTasks = finalTasks.filter(
+        (task) => task.workflowId === id && !linkedTaskIds.has(task.id)
+      )
+      if (unexpectedLinkedTasks.length > 0) {
+        throw new Error(
+          'Workflow definition could not be deleted because a linked occurrence appeared during deletion.'
+        )
+      }
+      // Remove terminal task projections first. If the process stops before the
+      // following workflow write, the remaining workflow history is still a
+      // complete durable record; the inverse order would strand task rows that
+      // can no longer validate their workflow authority.
+      writeJson(
+        scheduledTasksPath,
+        finalTasks.filter((task) => !linkedTaskIds.has(task.id))
+      )
     }
     writeJson(
       workflowsPath,
@@ -4875,6 +6829,379 @@ export class AppStore {
     }
   }
 
+  static setScheduledOccurrenceMutationCrashPointForTests(
+    point: ScheduledOccurrenceMutationCrashPoint | null
+  ): void {
+    scheduledOccurrenceMutationCrashPoint = point
+    if (point === null) scheduledOccurrenceDurabilityFailureIntent = null
+  }
+
+  private static createScheduledOccurrenceLedgerTransition(
+    task: ScheduledTask,
+    timestamp: string
+  ): {
+    ledgerBefore: ScheduledOccurrenceLedgerPrefix
+    ledgerAfter: WorkflowRunEvent
+  } {
+    if (!task.workflowExecutionId || !task.workflowId || !task.workflowOccurrenceAt) {
+      throw new Error('Scheduled occurrence lifecycle ledger is missing its W/E/P identity.')
+    }
+    const ledgerPath = workflowRunFilePath(task.workflowExecutionId)
+    const events = readWorkflowRunLedgerForAppend(
+      ledgerPath,
+      {
+        workflowExecutionId: task.workflowExecutionId,
+        workflowId: task.workflowId,
+        scheduledTaskId: task.id,
+        plannedFor: task.workflowOccurrenceAt,
+        runId: task.runId ?? null
+      }
+    )
+    const read = readWorkflowRunLedgerStrict(ledgerPath)
+    if (!sameJsonValue(read.events, events) || read.hasTornTail) {
+      throw new Error('Scheduled occurrence lifecycle ledger predecessor is not durable.')
+    }
+    const event = canonicalScheduledOccurrenceLedgerEvent(
+      task,
+      timestamp,
+      nextWorkflowRunSequence(events)
+    )
+    if (!event) {
+      throw new Error('Scheduled occurrence lifecycle ledger post-image could not be created.')
+    }
+    return {
+      ledgerBefore: scheduledOccurrenceLedgerPrefix(read),
+      ledgerAfter: event
+    }
+  }
+
+  private static scheduledOccurrenceLedgerState(
+    intent: ScheduledOccurrenceMutationIntent
+  ): 'before' | 'after' | { blocked: string } {
+    const expected = intent.ledgerAfter
+    const prefix = intent.ledgerBefore
+    if (!expected || !prefix) {
+      return intent.kind === 'materialize'
+        ? 'after'
+        : { blocked: 'Scheduled occurrence lifecycle ledger evidence is missing.' }
+    }
+    const ledgerPath = workflowRunFilePath(expected.workflowExecutionId)
+    const read = readWorkflowRunLedgerStrict(ledgerPath)
+    const identityReason = workflowRunLedgerIdentityReason(read.events, {
+      workflowExecutionId: expected.workflowExecutionId,
+      workflowId: expected.workflowId,
+      scheduledTaskId: expected.scheduledTaskId,
+      plannedFor: expected.plannedFor,
+      runId: intent.identity.runId ?? null
+    })
+    if (identityReason) return { blocked: identityReason }
+
+    const predecessorReason = (events: WorkflowRunEvent[]): string | null => {
+      const priorExecutionTerminals = events.filter(
+        (event) =>
+          event.iteration === undefined &&
+          (event.kind === 'completed' ||
+            event.kind === 'failed' ||
+            event.kind === 'cancelled' ||
+            event.kind === 'skipped' ||
+            event.kind === 'stall_settled' ||
+            event.kind === 'loop_settled')
+      )
+      if (priorExecutionTerminals.length !== 0) {
+        return 'Scheduled occurrence lifecycle ledger already contains a terminal transition.'
+      }
+      const priorExecutionClaims = events.filter(
+        (event) => event.iteration === undefined && event.kind === 'running'
+      )
+      if (intent.kind === 'claim' && priorExecutionClaims.length !== 0) {
+        return 'Scheduled occurrence lifecycle ledger already contains a claim transition.'
+      }
+      if (intent.kind !== 'settle' || !intent.taskBefore) return null
+      if (intent.identity.runId === undefined) {
+        if (intent.taskBefore.status !== 'running') {
+          return priorExecutionClaims.length === 0
+            ? null
+            : 'Scheduled occurrence queued settlement has an unexpected claim predecessor.'
+        }
+        return events.length === 0
+          ? null
+          : 'Scheduled occurrence legacy ownerless settlement has a non-empty ledger predecessor.'
+      }
+      if (priorExecutionClaims.length !== 1) {
+        return 'Scheduled occurrence lifecycle ledger has no unique claim predecessor.'
+      }
+      const claim = priorExecutionClaims[0]
+      const expectedClaim = canonicalScheduledOccurrenceLedgerEvent(
+        intent.taskBefore,
+        claim.timestamp,
+        claim.sequence
+      )
+      return expectedClaim &&
+        claim.timestamp === intent.taskBefore.firedAt &&
+        sameJsonValue(expectedClaim, claim)
+        ? null
+        : 'Scheduled occurrence lifecycle ledger claim predecessor is not canonical.'
+    }
+
+    if (
+      scheduledOccurrenceLedgerPrefixMatches(
+        prefix,
+        read.committedBytes,
+        read.events,
+        read.fileExisted
+      )
+    ) {
+      const reason = predecessorReason(read.events)
+      return reason ? { blocked: reason } : 'before'
+    }
+
+    const serializedPostImage = Buffer.from(serializeWorkflowRunEvent(expected), 'utf-8')
+    const predecessorBytes = read.committedBytes.subarray(0, prefix.byteLength)
+    const predecessorEvents = read.events.slice(0, prefix.eventCount)
+    const appendedEvents = read.events.slice(prefix.eventCount)
+    if (
+      read.fileExisted &&
+      read.committedBytes.length === prefix.byteLength + serializedPostImage.length &&
+      scheduledOccurrenceLedgerPrefixMatches(
+        prefix,
+        predecessorBytes,
+        predecessorEvents,
+        prefix.fileExisted
+      ) &&
+      read.committedBytes.subarray(prefix.byteLength).equals(serializedPostImage) &&
+      appendedEvents.length === 1 &&
+      sameJsonValue(appendedEvents[0], expected)
+    ) {
+      const reason = predecessorReason(predecessorEvents)
+      return reason ? { blocked: reason } : 'after'
+    }
+
+    const transition = read.events.filter(
+      (event) =>
+        event.workflowExecutionId === expected.workflowExecutionId &&
+        event.workflowId === expected.workflowId &&
+        event.kind === expected.kind &&
+        event.scheduledTaskId === expected.scheduledTaskId
+    )
+    if (transition.length > 1) {
+      return { blocked: 'Workflow run ledger contains a duplicate occurrence transition.' }
+    }
+    if (transition.length !== 0 || read.events.some((event) => event.sequence === expected.sequence)) {
+      return { blocked: 'Workflow run ledger contains a conflicting occurrence post-image.' }
+    }
+    return { blocked: 'Workflow run ledger no longer matches its exact WAL prefix.' }
+  }
+
+  private static appendScheduledOccurrenceMutationLedgerEvent(
+    intent: ScheduledOccurrenceMutationIntent
+  ): void {
+    if (intent.kind === 'materialize') return
+    const expected = intent.ledgerAfter
+    if (!expected) {
+      throw new Error('Scheduled occurrence lifecycle ledger post-image is missing.')
+    }
+    const ledgerPath = workflowRunFilePath(expected.workflowExecutionId)
+    const state = this.scheduledOccurrenceLedgerState(intent)
+    if (typeof state === 'object') throw new Error(state.blocked)
+    const preRepair = readWorkflowRunLedgerStrict(ledgerPath)
+    if (preRepair.hasTornTail) {
+      readWorkflowRunLedgerForAppend(ledgerPath, {
+        workflowExecutionId: expected.workflowExecutionId,
+        workflowId: expected.workflowId,
+        scheduledTaskId: expected.scheduledTaskId,
+        plannedFor: expected.plannedFor,
+        runId: intent.identity.runId ?? null
+      })
+      const repairedState = this.scheduledOccurrenceLedgerState(intent)
+      if (typeof repairedState === 'object' || repairedState !== state) {
+        throw new Error(
+          typeof repairedState === 'object'
+            ? repairedState.blocked
+            : 'Workflow run ledger changed while repairing its torn tail.'
+        )
+      }
+    }
+    if (state === 'after') {
+      fsyncWorkflowRunLedger(ledgerPath)
+      fsyncDirectory(path.dirname(ledgerPath))
+      return
+    }
+    const directoryPath = path.dirname(ledgerPath)
+    const directoryExisted = fs.existsSync(directoryPath)
+    const fileExisted = fs.existsSync(ledgerPath)
+    fs.mkdirSync(directoryPath, { recursive: true })
+    if (!directoryExisted) fsyncDirectory(path.dirname(directoryPath))
+    const descriptor = fs.openSync(ledgerPath, 'a')
+    try {
+      fs.writeFileSync(descriptor, serializeWorkflowRunEvent(expected), 'utf-8')
+      fs.fsyncSync(descriptor)
+    } finally {
+      fs.closeSync(descriptor)
+    }
+    if (!fileExisted) fsyncDirectory(directoryPath)
+    const verified = readWorkflowRunLedgerStrict(ledgerPath)
+    const verifiedState = this.scheduledOccurrenceLedgerState(intent)
+    if (verified.hasTornTail || verifiedState !== 'after') {
+      throw new Error('Workflow run ledger WAL post-image could not be verified durably.')
+    }
+  }
+
+  private static applyScheduledOccurrenceMutationIntent(
+    intent: ScheduledOccurrenceMutationIntent,
+    injectCrashPoints: boolean
+  ): string | null {
+    const invalidReason = validateScheduledOccurrenceMutationIntent(intent)
+    if (invalidReason) return invalidReason
+
+    const tasks = this.getScheduledTasks()
+    const workflowRecords = readScheduledOccurrenceWorkflowRecordsStrict()
+    if (!workflowRecords) {
+      return 'Scheduled occurrence workflow projection is not a canonical raw record set.'
+    }
+    const taskState = occurrenceRecordState(
+      tasks,
+      intent.identity.taskId,
+      intent.taskBefore,
+      intent.taskAfter
+    )
+    if (taskState.status === 'blocked') return taskState.reason
+    const workflowState = occurrenceRecordState(
+      workflowRecords.raw,
+      intent.identity.workflowId,
+      intent.workflowBefore,
+      intent.workflowAfter
+    )
+    if (workflowState.status === 'blocked') return workflowState.reason
+    const ledgerState = this.scheduledOccurrenceLedgerState(intent)
+    if (typeof ledgerState === 'object') return ledgerState.blocked
+    const writeOrderReason = scheduledOccurrenceMutationWriteOrderReason(
+      intent,
+      taskState.status,
+      workflowState.status,
+      ledgerState
+    )
+    if (writeOrderReason) return writeOrderReason
+    const ownerReason = validateCurrentRunOwnerReferences(
+      intent,
+      tasks,
+      workflowRecords.normalized
+    )
+    if (ownerReason) return ownerReason
+
+    if (taskState.status === 'before') {
+      if (taskState.index < 0) tasks.push(cloneJsonValue(intent.taskAfter))
+      else tasks[taskState.index] = cloneJsonValue(intent.taskAfter)
+      writeScheduledOccurrenceJsonStrict(scheduledTasksPath, tasks)
+    }
+    if (injectCrashPoints) maybeCrashScheduledOccurrenceMutation('after-task')
+
+    const tasksAfter = this.getScheduledTasks()
+    const ownerAfterTaskReason = validateCurrentRunOwnerReferences(
+      intent,
+      tasksAfter,
+      workflowRecords.normalized
+    )
+    if (ownerAfterTaskReason) return ownerAfterTaskReason
+    if (workflowState.status === 'before') {
+      workflowRecords.raw[workflowState.index] = cloneJsonValue(intent.workflowAfter)
+      writeScheduledOccurrenceJsonStrict(workflowsPath, workflowRecords.raw)
+    }
+    if (injectCrashPoints) maybeCrashScheduledOccurrenceMutation('after-workflow')
+
+    this.appendScheduledOccurrenceMutationLedgerEvent(intent)
+    if (injectCrashPoints) maybeCrashScheduledOccurrenceMutation('after-ledger')
+    try {
+      writeScheduledOccurrenceJsonStrict(scheduledOccurrenceMutationsPath, null)
+      scheduledOccurrenceDurabilityFailureIntent = null
+    } catch (error) {
+      scheduledOccurrenceDurabilityFailureIntent = cloneJsonValue(intent)
+      throw error
+    }
+    return null
+  }
+
+  private static commitScheduledOccurrenceMutation(
+    intent: ScheduledOccurrenceMutationIntent
+  ): void {
+    const invalidReason = validateScheduledOccurrenceMutationIntent(intent)
+    if (invalidReason) throw new Error(invalidReason)
+    const pending = readScheduledOccurrenceMutationJournal()
+    if (pending.status !== 'none') {
+      throw new Error(
+        pending.status === 'blocked'
+          ? pending.reason
+          : 'Scheduled occurrence mutation recovery is pending.'
+      )
+    }
+
+    const tasks = this.getScheduledTasks()
+    const workflowRecords = readScheduledOccurrenceWorkflowRecordsStrict()
+    if (!workflowRecords) {
+      throw new Error('Scheduled occurrence workflow projection is not a canonical raw record set.')
+    }
+    const taskState = occurrenceRecordState(
+      tasks,
+      intent.identity.taskId,
+      intent.taskBefore,
+      intent.taskAfter
+    )
+    const workflowState = occurrenceRecordState(
+      workflowRecords.raw,
+      intent.identity.workflowId,
+      intent.workflowBefore,
+      intent.workflowAfter
+    )
+    const ownerReason = validateCurrentRunOwnerReferences(
+      intent,
+      tasks,
+      workflowRecords.normalized
+    )
+    const ledgerState = this.scheduledOccurrenceLedgerState(intent)
+    if (
+      taskState.status !== 'before' ||
+      workflowState.status !== 'before' ||
+      ownerReason ||
+      (intent.kind !== 'materialize' && ledgerState !== 'before') ||
+      typeof ledgerState === 'object'
+    ) {
+      const reason =
+        taskState.status === 'blocked'
+          ? taskState.reason
+          : workflowState.status === 'blocked'
+            ? workflowState.reason
+            : typeof ledgerState === 'object'
+              ? ledgerState.blocked
+              : ownerReason || 'Scheduled occurrence mutation compare-and-swap failed.'
+      throw new Error(reason)
+    }
+
+    writeScheduledOccurrenceJsonStrict(scheduledOccurrenceMutationsPath, intent)
+    maybeCrashScheduledOccurrenceMutation('after-intent')
+    const applyError = this.applyScheduledOccurrenceMutationIntent(intent, true)
+    if (applyError) throw new Error(applyError)
+  }
+
+  static replayScheduledOccurrenceMutations(): ScheduledOccurrenceMutationReplayResult {
+    const journal = readScheduledOccurrenceMutationJournal()
+    if (journal.status === 'none') return { status: 'none' }
+    if (journal.status === 'blocked') return journal
+    try {
+      const applyError = this.applyScheduledOccurrenceMutationIntent(journal.intent, false)
+      if (applyError) return { status: 'blocked', reason: applyError }
+      return {
+        status: 'replayed',
+        mutationId: journal.intent.id,
+        kind: journal.intent.kind,
+        taskId: journal.intent.identity.taskId
+      }
+    } catch (error) {
+      return {
+        status: 'blocked',
+        reason: error instanceof Error ? error.message : String(error)
+      }
+    }
+  }
+
   static getNextWorkflowRunAtMs(): number | null {
     let next: number | null = null
     for (const workflow of this.getWorkflowDefinitions()) {
@@ -4891,6 +7218,7 @@ export class AppStore {
     resolveAttachments: ResolveScheduledAttachments =
       rejectUnconfiguredScheduledAttachmentResolution
   ): ScheduledTask[] {
+    assertNoPendingScheduledOccurrenceMutation()
     const workflows = this.getWorkflowDefinitions()
     const materialized: ScheduledTask[] = []
     let changed = false
@@ -4909,7 +7237,7 @@ export class AppStore {
       if (task) {
         materialized.push(task)
       }
-      if (task || JSON.stringify(workflow) !== before) changed = true
+      if (!task && JSON.stringify(workflow) !== before) changed = true
     }
     if (changed) writeJson(workflowsPath, workflows)
     return materialized
@@ -4921,6 +7249,7 @@ export class AppStore {
     resolveAttachments: ResolveScheduledAttachments =
       rejectUnconfiguredScheduledAttachmentResolution
   ): ScheduledTask | null {
+    assertNoPendingScheduledOccurrenceMutation()
     const workflows = this.getWorkflowDefinitions()
     const workflow = workflows.find((item) => item.id === id)
     if (!workflow) return null
@@ -4932,7 +7261,7 @@ export class AppStore {
       true,
       resolveAttachments
     )
-    if (task || JSON.stringify(workflow) !== before) writeJson(workflowsPath, workflows)
+    if (!task && JSON.stringify(workflow) !== before) writeJson(workflowsPath, workflows)
     return task
   }
 
@@ -5031,8 +7360,15 @@ export class AppStore {
       }
     }
 
+    const canonicalWorkflow = canonicalizeScheduledOccurrenceWorkflowSource(workflow)
+    if (!canonicalWorkflow) {
+      throw new Error(
+        'Scheduled occurrence workflow source could not be canonicalized before materialization.'
+      )
+    }
+    const workflowBefore = cloneJsonValue(canonicalWorkflow)
     const executionId = randomUUID()
-    const task = this.saveScheduledTask({
+    const task: ScheduledTask = {
       ...workflow.template,
       imageAttachments,
       // No `[workflow: …]` text prefix — workflows are identified by the
@@ -5042,11 +7378,16 @@ export class AppStore {
       runAt: nowIso,
       timezone:
         workflow.trigger.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || 'local',
+      id: randomUUID(),
       status: 'due',
+      createdAt: nowIso,
+      updatedAt: nowIso,
       workflowId: workflow.id,
       workflowExecutionId: executionId,
       workflowOccurrenceAt: plannedFor
-    })
+    }
+    task.workflowMode = normalizeChatWorkflowMode(task.workflowMode)
+    task.dispatchReceipt = buildScheduledTaskDispatchReceipt(task, nowIso)
     const execution: WorkflowExecutionRecord = {
       id: executionId,
       workflowId: workflow.id,
@@ -5056,16 +7397,38 @@ export class AppStore {
       createdAt: nowIso,
       updatedAt: nowIso
     }
-    workflow.history = [...workflow.history, execution].slice(-WORKFLOW_HISTORY_LIMIT)
-    workflow.activeExecutionId = executionId
-    workflow.lastRunAt = nowIso
-    workflow.lastStatus = 'queued'
-    workflow.lastError = undefined
-    workflow.nextRunAt = resolveNextWorkflowRunAt(workflow.trigger, nowMs, nowMs)
-    workflow.updatedAt = nowIso
-    if (manual && workflow.trigger.kind === 'manual') {
-      workflow.nextRunAt = undefined
+    const workflowAfter: WorkflowDefinition = {
+      ...workflowBefore,
+      history: [...workflowBefore.history, execution].slice(-WORKFLOW_HISTORY_LIMIT),
+      activeExecutionId: executionId,
+      lastRunAt: nowIso,
+      lastStatus: 'queued',
+      lastError: undefined,
+      nextRunAt: resolveNextWorkflowRunAt(workflowBefore.trigger, nowMs, nowMs),
+      updatedAt: nowIso
     }
+    if (manual && workflowAfter.trigger.kind === 'manual') workflowAfter.nextRunAt = undefined
+    this.commitScheduledOccurrenceMutation({
+      schemaVersion: 1,
+      id: randomUUID(),
+      kind: 'materialize',
+      createdAt: nowIso,
+      identity: {
+        taskId: task.id,
+        workflowId: workflow.id,
+        executionId,
+        plannedFor
+      },
+      taskBefore: null,
+      taskAfter: cloneJsonValue(task),
+      workflowBefore,
+      workflowAfter,
+      ledgerBefore: null,
+      ledgerAfter: null
+    })
+    Object.assign(workflow, cloneJsonValue(workflowAfter))
+    workflow.lastError = workflowAfter.lastError
+    workflow.nextRunAt = workflowAfter.nextRunAt
     return task
   }
 
@@ -5097,133 +7460,21 @@ export class AppStore {
   }
 
   static syncWorkflowFromScheduledTask(task: ScheduledTask): WorkflowDefinition | null {
+    assertNoPendingScheduledOccurrenceMutation()
     if (!task.workflowId || !task.workflowExecutionId) return null
+    const persistedTasks = this.getScheduledTasks().filter((item) => item.id === task.id)
+    if (persistedTasks.length !== 1 || !sameJsonValue(persistedTasks[0], task)) return null
     const workflows = this.getWorkflowDefinitions()
     const index = workflows.findIndex((workflow) => workflow.id === task.workflowId)
     if (index < 0) return null
     const workflow = workflows[index]
-    const nextStatus = scheduledTaskStatusToWorkflowStatus(task.status)
-    if (!nextStatus) return workflow
     const nowIso = new Date().toISOString()
-    const history = [...workflow.history]
-    const executionIndex = history.findIndex(
-      (execution) => execution.id === task.workflowExecutionId
-    )
-    // A ScheduledTask is a projection of a workflow execution, never authority
-    // for creating one. Missing or mismatched linkage therefore fails closed
-    // instead of manufacturing durable workflow history from task-controlled
-    // fields.
-    if (executionIndex < 0 || !task.workflowOccurrenceAt) return workflow
-    const previous = history[executionIndex]
-    if (
-      previous.workflowId !== workflow.id ||
-      previous.scheduledTaskId !== task.id ||
-      previous.plannedFor !== task.workflowOccurrenceAt
-    ) {
-      return workflow
-    }
-    // Stage 1 — the prior recorded status, captured BEFORE the history mutation,
-    // so the durable ledger only gets an event on an ACTUAL status transition.
-    const priorExecStatus = previous.status
-    const terminal = isTerminalWorkflowExecutionStatus(nextStatus)
-    const wasTerminal = isTerminalWorkflowExecutionStatus(previous.status)
-    const isActiveExecution = workflow.activeExecutionId === task.workflowExecutionId
-    const terminalRunOwnerMatches = previous.runId
-      ? task.runId === previous.runId
-      : previous.runId === undefined && task.runId === undefined
-
-    // Terminal executions are immutable. In particular, a replayed/stale task
-    // may not resurrect one to running or rewrite its terminal evidence.
-    if (wasTerminal || nextStatus === previous.status) return workflow
-    if (
-      nextStatus === 'running' &&
-      (previous.status !== 'queued' || !isActiveExecution || !task.runId)
-    ) {
-      return workflow
-    }
-    if (terminal && previous.status === 'running' && !terminalRunOwnerMatches) {
-      return workflow
-    }
-    if (
-      terminal &&
-      previous.status !== 'running' &&
-      !(
-        previous.status === 'queued' &&
-        (nextStatus === 'failed' || nextStatus === 'cancelled')
-      )
-    ) {
-      return workflow
-    }
-
-    history[executionIndex] = {
-      ...previous,
-      runId: task.runId || previous.runId,
-      status: nextStatus,
-      updatedAt: nowIso,
-      ...(nextStatus === 'running' && !previous.startedAt
-        ? { startedAt: task.firedAt || nowIso }
-        : {}),
-      ...(terminal ? { completedAt: task.completedAt || nowIso } : {}),
-      ...(task.lastError ? { error: task.lastError } : {})
-    }
-
-    workflow.history = history.slice(-WORKFLOW_HISTORY_LIMIT)
-    workflow.updatedAt = nowIso
-    // An old occurrence may settle after a newer execution became active. Its
-    // own history remains useful evidence, but it must not clobber the current
-    // workflow projection, failure streak, cadence, or active execution.
-    if (isActiveExecution) {
-      workflow.lastStatus = nextStatus
-      workflow.lastError = task.lastError
-    }
-    if (terminal && isActiveExecution) {
-      workflow.lastCompletedAt = task.completedAt || nowIso
-      workflow.activeExecutionId = undefined
-      workflow.failureStreak = nextStatus === 'failed' ? workflow.failureStreak + 1 : 0
-      const maxFailures = workflow.limits.maxConsecutiveFailures || 3
-      if (nextStatus === 'failed' && workflow.failureStreak >= maxFailures) {
-        workflow.enabled = false
-        workflow.nextRunAt = undefined
-        workflow.lastError =
-          task.lastError || `Workflow auto-disabled after ${workflow.failureStreak} failures.`
-      } else if (workflow.enabled) {
-        const completedAtMs = task.completedAt ? Date.parse(task.completedAt) : Number.NaN
-        const nowMs = Number.isFinite(completedAtMs) ? completedAtMs : Date.now()
-        const existingNextRunAtMs = workflow.nextRunAt
-          ? Date.parse(workflow.nextRunAt)
-          : Number.NaN
-        workflow.nextRunAt =
-          Number.isFinite(existingNextRunAtMs) && existingNextRunAtMs > nowMs
-            ? workflow.nextRunAt
-            : resolveNextWorkflowRunAt(workflow.trigger, nowMs, nowMs)
-      } else {
-        workflow.nextRunAt = undefined
-      }
-    }
-    // Stage 1 — append a durable ledger event on a real status transition
-    // (running/completed/failed/cancelled — the values sync produces). Best-effort:
-    // a ledger write failure must NEVER break the workflow sync.
-    if (priorExecStatus !== nextStatus) {
-      const ledgerKind = workflowStatusToRunEventKind(nextStatus)
-      if (ledgerKind) {
-        try {
-          this.appendWorkflowRunEvent({
-            workflowExecutionId: task.workflowExecutionId,
-            workflowId: workflow.id,
-            kind: ledgerKind,
-            scheduledTaskId: task.id,
-            runId: task.runId,
-            plannedFor: task.workflowOccurrenceAt || task.runAt,
-            ...(task.lastError ? { error: task.lastError } : {})
-          })
-        } catch (e) {
-          console.error('Failed to append workflow run event', e)
-        }
-      }
-    }
-    workflows[index] = workflow
-    writeJson(workflowsPath, workflows)
-    return workflow
+    const projection = projectWorkflowFromScheduledTask(workflow, task, nowIso)
+    if (!projection) return workflow
+    // Lifecycle projection changes must enter through the occurrence journal.
+    // This legacy compatibility surface may confirm an already-aligned record,
+    // but it must never repair one side by writing only the workflow projection.
+    return null
   }
 
   // Scheduled tasks
@@ -5238,10 +7489,20 @@ export class AppStore {
     task: Omit<ScheduledTask, 'id' | 'createdAt' | 'updatedAt' | 'status'> &
       Partial<Pick<ScheduledTask, 'id' | 'createdAt' | 'updatedAt' | 'status'>>
   ): ScheduledTask {
+    assertNoPendingScheduledOccurrenceMutation()
+    const tasks = this.getScheduledTasks()
+    if (task.id && tasks.some((item) => item.id === task.id)) {
+      throw new Error('Scheduled task already exists. Use the lifecycle update APIs.')
+    }
+    const inputFields = Object.keys(task) as Array<keyof ScheduledTask>
+    if (inputFields.some((field) => SCHEDULED_TASK_CREATE_PROHIBITED_FIELDS.has(field))) {
+      throw new Error(
+        'Scheduled task creation cannot pre-own workflow linkage, run identity, lifecycle state, or an occurrence seal.'
+      )
+    }
     if (!scheduledAttachmentsAreDurable(task.imageAttachments)) {
       throw new Error(SCHEDULED_ATTACHMENT_RESELECT_REASON)
     }
-    const tasks = this.getScheduledTasks()
     const now = new Date().toISOString()
     const record: ScheduledTask = {
       ...task,
@@ -5252,20 +7513,22 @@ export class AppStore {
     }
     record.workflowMode = normalizeChatWorkflowMode(record.workflowMode)
     record.dispatchReceipt = task.dispatchReceipt || buildScheduledTaskDispatchReceipt(record)
-    const index = tasks.findIndex((item) => item.id === record.id)
-    if (index >= 0) {
-      throw new Error('Scheduled task already exists. Use the lifecycle update APIs.')
-    }
     tasks.push(record)
     writeJson(scheduledTasksPath, tasks)
     return record
   }
 
   static updateScheduledTask(id: string, partial: Partial<ScheduledTask>): ScheduledTask | null {
+    assertNoPendingScheduledOccurrenceMutation()
     const tasks = this.getScheduledTasks()
     const index = tasks.findIndex((task) => task.id === id)
     if (index < 0) return null
     const current = tasks[index]
+    const partialFields = Object.keys(partial) as Array<keyof ScheduledTask>
+    if (!partial.status && partialFields.length === 0) return current
+    if (!partial.status && partialFields.some((field) => !SCHEDULED_TASK_MAINTENANCE_FIELDS.has(field))) {
+      return current
+    }
     if (
       Object.prototype.hasOwnProperty.call(partial, 'imageAttachments') &&
       !scheduledAttachmentsAreDurable(partial.imageAttachments)
@@ -5276,8 +7539,10 @@ export class AppStore {
       return current
     }
     // Run ownership is established exclusively by claimDueScheduledTaskForRun.
-    // The generic lifecycle updater may settle or annotate that owner, but it
-    // cannot create, replace, or clear it.
+    // A task-id-only caller can neither establish nor infer that owner. In
+    // particular, renderer/status callbacks must use settleScheduledTaskForRun
+    // with the exact run + occurrence tuple instead of borrowing the persisted
+    // owner from a stale task id.
     if (partial.status === 'running' && current.status !== 'running') return current
     if (
       Object.prototype.hasOwnProperty.call(partial, 'runId') &&
@@ -5285,6 +7550,54 @@ export class AppStore {
     ) {
       return current
     }
+    const exactTerminalFields = new Set(['status', 'runId', 'completedAt', 'lastError'])
+    const hasOnlyExactTerminalFields = Object.keys(partial).every((field) =>
+      exactTerminalFields.has(field)
+    )
+    const hasWorkflowLink = Boolean(
+      current.workflowId || current.workflowExecutionId || current.workflowOccurrenceAt
+    )
+    if (
+      partial.status &&
+      isTerminalScheduledTaskStatus(partial.status) &&
+      current.status === 'running'
+    ) {
+      return current
+    }
+    if (
+      (partial.status === 'failed' || partial.status === 'cancelled') &&
+      (current.status === 'due' || current.status === 'pending') &&
+      current.runId === undefined &&
+      hasOnlyExactTerminalFields
+    ) {
+      const terminalOptions = {
+        status: partial.status,
+        completedAt: partial.completedAt,
+        lastError: partial.lastError
+      }
+      if (hasWorkflowLink) {
+        if (
+          !current.workflowId ||
+          !current.workflowExecutionId ||
+          !current.workflowOccurrenceAt
+        ) {
+          return current
+        }
+        return this.settleUnownedScheduledWorkflowTask(id, terminalOptions)
+      }
+      return this.settleUnownedStandaloneScheduledTask(id, terminalOptions)
+    }
+    if (
+      partial.status &&
+      isTerminalScheduledTaskStatus(partial.status) &&
+      (current.status === 'due' || current.status === 'pending')
+    ) {
+      return current
+    }
+    // Every workflow-linked status projection is paired with its workflow
+    // execution through the occurrence journal. Unsupported lifecycle shapes
+    // fail closed here rather than direct-writing one side of the pair.
+    if (partial.status && hasWorkflowLink) return current
     const updated = { ...current, ...partial, id, updatedAt: new Date().toISOString() }
     if ('permissionPosture' in partial || 'runId' in partial || 'workflowMode' in partial) {
       updated.dispatchReceipt = buildScheduledTaskDispatchReceipt(updated)
@@ -5302,7 +7615,7 @@ export class AppStore {
     }
     tasks[index] = updated
     writeJson(scheduledTasksPath, tasks)
-    this.syncWorkflowFromScheduledTask(updated)
+    if (!hasWorkflowLink) this.syncWorkflowFromScheduledTask(updated)
     return updated
   }
 
@@ -5330,10 +7643,14 @@ export class AppStore {
     const nowMs = options.nowMs ?? Date.now()
     const nowDate = new Date(nowMs)
     if (!Number.isFinite(nowMs) || !Number.isFinite(nowDate.getTime())) return null
+    if (readScheduledOccurrenceMutationJournal().status !== 'none') return null
 
     const tasks = this.getScheduledTasks()
-    const index = tasks.findIndex((task) => task.id === id)
-    if (index < 0) return null
+    const taskIndexes = tasks
+      .map((task, index) => (task.id === id ? index : -1))
+      .filter((index) => index >= 0)
+    if (taskIndexes.length !== 1) return null
+    const index = taskIndexes[0]
     const current = tasks[index]
     const runAtMs =
       typeof current.runAt === 'string' && current.runAt.trim()
@@ -5349,6 +7666,8 @@ export class AppStore {
     }
 
     const expected = options.expectedWorkflowOccurrence
+    const workflows = this.getWorkflowDefinitions()
+    let linkedWorkflow: WorkflowDefinition | null = null
     const hasWorkflowLink = Boolean(
       current.workflowId || current.workflowExecutionId || current.workflowOccurrenceAt
     )
@@ -5362,19 +7681,25 @@ export class AppStore {
       ) {
         return null
       }
-      const workflow = this.getWorkflowDefinition(expected.workflowId)
-      const execution = workflow?.history.find((item) => item.id === expected.executionId)
+      const workflowMatches = workflows.filter((workflow) => workflow.id === expected.workflowId)
+      if (workflowMatches.length !== 1) return null
+      const workflow = workflowMatches[0]
+      const executionMatches = workflow.history.filter(
+        (item) => item.id === expected.executionId
+      )
+      if (executionMatches.length !== 1) return null
+      const execution = executionMatches[0]
       if (
-        !workflow ||
         workflow.activeExecutionId !== expected.executionId ||
-        !execution ||
         execution.workflowId !== expected.workflowId ||
         execution.scheduledTaskId !== expected.taskId ||
         execution.plannedFor !== expected.plannedFor ||
-        execution.status !== 'queued'
+        execution.status !== 'queued' ||
+        execution.runId !== undefined
       ) {
         return null
       }
+      linkedWorkflow = workflow
     } else if (expected) {
       return null
     }
@@ -5383,7 +7708,7 @@ export class AppStore {
     for (const task of tasks) {
       if (task.runId) occupiedRunIds.add(task.runId)
     }
-    for (const workflow of this.getWorkflowDefinitions()) {
+    for (const workflow of workflows) {
       for (const execution of workflow.history) {
         if (execution.runId) occupiedRunIds.add(execution.runId)
       }
@@ -5404,24 +7729,544 @@ export class AppStore {
         runId = randomUUID()
       } while (occupiedRunIds.has(runId))
     }
+    const claimedRunId = runId
+    if (!claimedRunId) return null
 
     const nowIso = nowDate.toISOString()
     const updated: ScheduledTask = {
       ...current,
       status: 'running',
-      runId,
+      runId: claimedRunId,
       firedAt: nowIso,
       runningSince: nowIso,
       updatedAt: nowIso
     }
-    updated.dispatchReceipt = buildScheduledTaskDispatchReceipt(updated)
+    updated.dispatchReceipt = buildScheduledTaskDispatchReceipt(updated, nowIso)
+    if (linkedWorkflow && expected) {
+      const canonicalWorkflow = canonicalizeScheduledOccurrenceWorkflowSource(linkedWorkflow)
+      if (!canonicalWorkflow) return null
+      linkedWorkflow = canonicalWorkflow
+      const projection = projectWorkflowFromScheduledTask(linkedWorkflow, updated, nowIso)
+      if (!projection || projection.nextStatus !== 'running') return null
+      const { ledgerBefore, ledgerAfter } =
+        this.createScheduledOccurrenceLedgerTransition(updated, nowIso)
+      this.commitScheduledOccurrenceMutation({
+        schemaVersion: 1,
+        id: randomUUID(),
+        kind: 'claim',
+        createdAt: nowIso,
+        identity: {
+          taskId: expected.taskId,
+          workflowId: expected.workflowId,
+          executionId: expected.executionId,
+          plannedFor: expected.plannedFor,
+          runId: claimedRunId
+        },
+        taskBefore: cloneJsonValue(current),
+        taskAfter: cloneJsonValue(updated),
+        workflowBefore: cloneJsonValue(linkedWorkflow),
+        workflowAfter: projection.workflow,
+        ledgerBefore,
+        ledgerAfter
+      })
+    } else {
+      tasks[index] = updated
+      writeJson(scheduledTasksPath, tasks)
+    }
+    return updated
+  }
+
+  /**
+   * Refresh the stall backstop for exactly one already-established run owner.
+   * This is task-only liveness state, not a workflow lifecycle transition, so
+   * it does not enter the occurrence WAL; the exact task/execution owner CAS is
+   * nevertheless required before the heartbeat can advance.
+   */
+  static heartbeatScheduledTaskForRun(
+    id: string,
+    options: {
+      runId: string
+      at?: string
+      expectedWorkflowOccurrence?: {
+        workflowId: string
+        executionId: string
+        plannedFor: string
+        taskId: string
+      }
+    }
+  ): ScheduledTask | null {
+    if (!isNonEmptyTrimmedString(options.runId)) return null
+    if (readScheduledOccurrenceMutationJournal().status !== 'none') return null
+    const heartbeatAt = options.at || new Date().toISOString()
+    const heartbeatMs = canonicalIsoTimestampMs(heartbeatAt)
+    if (heartbeatMs === null || heartbeatMs > Date.now()) return null
+
+    const tasks = this.getScheduledTasks()
+    const indexes = tasks
+      .map((task, index) => (task.id === id ? index : -1))
+      .filter((index) => index >= 0)
+    if (indexes.length !== 1) return null
+    const index = indexes[0]
+    const current = tasks[index]
+    const firedAtMs = canonicalIsoTimestampMs(current.firedAt)
+    const priorHeartbeatMs = canonicalIsoTimestampMs(current.runningSince)
+    const updatedAtMs = canonicalIsoTimestampMs(current.updatedAt)
+    if (
+      current.status !== 'running' ||
+      current.runId !== options.runId ||
+      firedAtMs === null ||
+      priorHeartbeatMs === null ||
+      updatedAtMs === null ||
+      heartbeatMs < firedAtMs ||
+      heartbeatMs < priorHeartbeatMs ||
+      heartbeatMs < updatedAtMs ||
+      tasks.filter((task) => task.runId === options.runId).length !== 1
+    ) {
+      return null
+    }
+
+    const expected = options.expectedWorkflowOccurrence
+    const hasWorkflowLink = Boolean(
+      current.workflowId || current.workflowExecutionId || current.workflowOccurrenceAt
+    )
+    const workflows = this.getWorkflowDefinitions()
+    if (hasWorkflowLink) {
+      if (
+        !expected ||
+        expected.taskId !== current.id ||
+        expected.workflowId !== current.workflowId ||
+        expected.executionId !== current.workflowExecutionId ||
+        expected.plannedFor !== current.workflowOccurrenceAt
+      ) {
+        return null
+      }
+      const pair = validateScheduledTaskWorkflowPair(current, workflows, tasks)
+      if (
+        !pair.ok ||
+        !pair.execution ||
+        pair.execution.status !== 'running' ||
+        pair.execution.runId !== options.runId
+      ) {
+        return null
+      }
+    } else {
+      if (expected) return null
+      if (
+        workflows.some((workflow) =>
+          workflow.history.some((execution) => execution.runId === options.runId)
+        )
+      ) {
+        return null
+      }
+    }
+
+    if (current.runningSince === heartbeatAt && current.updatedAt === heartbeatAt) return current
+    const updated: ScheduledTask = {
+      ...current,
+      runningSince: heartbeatAt,
+      updatedAt: heartbeatAt
+    }
     tasks[index] = updated
     writeJson(scheduledTasksPath, tasks)
-    this.syncWorkflowFromScheduledTask(updated)
+    return updated
+  }
+
+  private static settleUnownedScheduledWorkflowTask(
+    id: string,
+    options: {
+      status: ScheduledOccurrenceTerminalStatus
+      completedAt?: string
+      lastError?: string
+    }
+  ): ScheduledTask | null {
+    return this.settleUnownedScheduledWorkflowTaskForProjection(id, options, 'queued')
+  }
+
+  private static recoverLegacyOwnerlessRunningScheduledWorkflowTask(
+    id: string,
+    options: {
+      status: ScheduledOccurrenceTerminalStatus
+      completedAt?: string
+      lastError?: string
+    }
+  ): ScheduledTask | null {
+    return this.settleUnownedScheduledWorkflowTaskForProjection(id, options, 'running')
+  }
+
+  private static settleUnownedScheduledWorkflowTaskForProjection(
+    id: string,
+    options: {
+      status: ScheduledOccurrenceTerminalStatus
+      completedAt?: string
+      lastError?: string
+    },
+    expectedProjection: 'queued' | 'running'
+  ): ScheduledTask | null {
+    if (readScheduledOccurrenceMutationJournal().status !== 'none') return null
+    const mutationAt = new Date().toISOString()
+    const completedAt = options.completedAt || mutationAt
+    if (!Number.isFinite(Date.parse(completedAt))) return null
+    const tasks = this.getScheduledTasks()
+    const taskIndexes = tasks
+      .map((task, index) => (task.id === id ? index : -1))
+      .filter((index) => index >= 0)
+    if (taskIndexes.length !== 1) return null
+    const current = tasks[taskIndexes[0]]
+    const queuedTerminal =
+      (current.status === 'due' || current.status === 'pending') &&
+      (options.status === 'failed' || options.status === 'cancelled')
+    const legacyRunningTerminal =
+      expectedProjection === 'running' && current.status === 'running'
+    if (
+      (expectedProjection === 'queued' ? !queuedTerminal : !legacyRunningTerminal) ||
+      current.runId !== undefined ||
+      !current.workflowId ||
+      !current.workflowExecutionId ||
+      !current.workflowOccurrenceAt
+    ) {
+      return null
+    }
+
+    const workflows = this.getWorkflowDefinitions()
+    const workflowMatches = workflows.filter((workflow) => workflow.id === current.workflowId)
+    if (workflowMatches.length !== 1) return null
+    const workflow = workflowMatches[0]
+    const executionMatches = workflow.history.filter(
+      (execution) => execution.id === current.workflowExecutionId
+    )
+    if (executionMatches.length !== 1) return null
+    const execution = executionMatches[0]
+    const identity: ScheduledOccurrenceIdentity = {
+      taskId: current.id,
+      workflowId: current.workflowId,
+      executionId: current.workflowExecutionId,
+      plannedFor: current.workflowOccurrenceAt
+    }
+    if (
+      !workflowExecutionMatchesIdentity(execution, identity) ||
+      execution.status !== expectedProjection ||
+      execution.runId !== undefined ||
+      workflow.activeExecutionId !== execution.id ||
+      (legacyRunningTerminal &&
+        (canonicalIsoTimestampMs(current.firedAt) === null ||
+          canonicalIsoTimestampMs(current.runningSince) === null ||
+          execution.startedAt !== current.firedAt))
+    ) {
+      return null
+    }
+
+    const updated: ScheduledTask = {
+      ...current,
+      status: options.status,
+      completedAt,
+      ...(options.lastError !== undefined ? { lastError: options.lastError } : {}),
+      updatedAt: mutationAt
+    }
+    const canonicalWorkflow = canonicalizeScheduledOccurrenceWorkflowSource(workflow)
+    if (!canonicalWorkflow) return null
+    const projection = projectWorkflowFromScheduledTask(canonicalWorkflow, updated, mutationAt)
+    if (!projection || projection.nextStatus !== options.status) return null
+    const { ledgerBefore, ledgerAfter } =
+      this.createScheduledOccurrenceLedgerTransition(updated, mutationAt)
+    this.commitScheduledOccurrenceMutation({
+      schemaVersion: 1,
+      id: randomUUID(),
+      kind: 'settle',
+      createdAt: mutationAt,
+      identity,
+      taskBefore: cloneJsonValue(current),
+      taskAfter: cloneJsonValue(updated),
+      workflowBefore: cloneJsonValue(canonicalWorkflow),
+      workflowAfter: projection.workflow,
+      ledgerBefore,
+      ledgerAfter
+    })
+    return updated
+  }
+
+  private static settleUnownedStandaloneScheduledTask(
+    id: string,
+    options: {
+      status: ScheduledOccurrenceTerminalStatus
+      completedAt?: string
+      lastError?: string
+    }
+  ): ScheduledTask | null {
+    if (
+      (options.status !== 'failed' && options.status !== 'cancelled') ||
+      readScheduledOccurrenceMutationJournal().status !== 'none'
+    ) {
+      return null
+    }
+    const mutationAt = new Date().toISOString()
+    const completedAt = options.completedAt || mutationAt
+    if (canonicalIsoTimestampMs(completedAt) === null) return null
+    const tasks = this.getScheduledTasks()
+    const indexes = tasks
+      .map((task, index) => (task.id === id ? index : -1))
+      .filter((index) => index >= 0)
+    if (indexes.length !== 1) return null
+    const index = indexes[0]
+    const current = tasks[index]
+    if (
+      (current.status !== 'due' && current.status !== 'pending') ||
+      current.runId !== undefined ||
+      current.workflowId !== undefined ||
+      current.workflowExecutionId !== undefined ||
+      current.workflowOccurrenceAt !== undefined ||
+      this.getWorkflowDefinitions().some((workflow) =>
+        workflow.history.some((execution) => execution.scheduledTaskId === current.id)
+      )
+    ) {
+      return null
+    }
+    const updated: ScheduledTask = {
+      ...current,
+      status: options.status,
+      completedAt,
+      ...(options.lastError !== undefined ? { lastError: options.lastError } : {}),
+      updatedAt: mutationAt
+    }
+    tasks[index] = updated
+    writeJson(scheduledTasksPath, tasks)
+    return updated
+  }
+
+  private static recoverLegacyOwnerlessRunningStandaloneScheduledTask(
+    id: string,
+    options: {
+      status: ScheduledOccurrenceTerminalStatus
+      completedAt?: string
+      lastError?: string
+    }
+  ): ScheduledTask | null {
+    if (
+      (options.status !== 'failed' && options.status !== 'cancelled') ||
+      readScheduledOccurrenceMutationJournal().status !== 'none'
+    ) {
+      return null
+    }
+    const mutationAt = new Date().toISOString()
+    const completedAt = options.completedAt || mutationAt
+    if (canonicalIsoTimestampMs(completedAt) === null) return null
+    const tasks = this.getScheduledTasks()
+    const indexes = tasks
+      .map((task, index) => (task.id === id ? index : -1))
+      .filter((index) => index >= 0)
+    if (indexes.length !== 1) return null
+    const index = indexes[0]
+    const current = tasks[index]
+    if (
+      current.status !== 'running' ||
+      current.runId !== undefined ||
+      canonicalIsoTimestampMs(current.firedAt) === null ||
+      canonicalIsoTimestampMs(current.runningSince) === null ||
+      current.workflowId !== undefined ||
+      current.workflowExecutionId !== undefined ||
+      current.workflowOccurrenceAt !== undefined ||
+      this.getWorkflowDefinitions().some((workflow) =>
+        workflow.history.some((execution) => execution.scheduledTaskId === current.id)
+      )
+    ) {
+      return null
+    }
+    const updated: ScheduledTask = {
+      ...current,
+      status: options.status,
+      completedAt,
+      ...(options.lastError !== undefined ? { lastError: options.lastError } : {}),
+      updatedAt: mutationAt
+    }
+    tasks[index] = updated
+    writeJson(scheduledTasksPath, tasks)
+    return updated
+  }
+
+  /**
+   * Settle a running occurrence only while the task, workflow execution, and
+   * caller all name the same immutable run owner. The paired post-images are
+   * journaled before either projection is replaced.
+   */
+  static settleScheduledTaskForRun(
+    id: string,
+    options: {
+      runId: string
+      status: ScheduledOccurrenceTerminalStatus
+      completedAt?: string
+      lastError?: string
+      expectedWorkflowOccurrence?: {
+        workflowId: string
+        executionId: string
+        plannedFor: string
+        taskId: string
+      }
+    }
+  ): ScheduledTask | null {
+    if (
+      !isNonEmptyTrimmedString(options.runId) ||
+      !isTerminalScheduledTaskStatus(options.status)
+    ) {
+      return null
+    }
+    if (readScheduledOccurrenceMutationJournal().status !== 'none') return null
+    const completedAt = options.completedAt || new Date().toISOString()
+    if (!Number.isFinite(Date.parse(completedAt))) return null
+    const mutationAt = new Date().toISOString()
+
+    const tasks = this.getScheduledTasks()
+    const taskIndexes = tasks
+      .map((task, index) => (task.id === id ? index : -1))
+      .filter((index) => index >= 0)
+    if (taskIndexes.length !== 1) return null
+    const index = taskIndexes[0]
+    const current = tasks[index]
+    if (current.status !== 'running' || current.runId !== options.runId) return null
+
+    const updated: ScheduledTask = {
+      ...current,
+      status: options.status,
+      completedAt,
+      ...(options.lastError !== undefined ? { lastError: options.lastError } : {}),
+      updatedAt: mutationAt
+    }
+    const expected = options.expectedWorkflowOccurrence
+    const hasWorkflowLink = Boolean(
+      current.workflowId || current.workflowExecutionId || current.workflowOccurrenceAt
+    )
+    const workflows = this.getWorkflowDefinitions()
+    if (!hasWorkflowLink) {
+      if (expected) return null
+      const taskOwners = tasks.filter((task) => task.runId === options.runId)
+      const workflowOwners = workflows.flatMap((workflow) =>
+        workflow.history.filter((execution) => execution.runId === options.runId)
+      )
+      if (taskOwners.length !== 1 || workflowOwners.length !== 0) return null
+      tasks[index] = updated
+      writeJson(scheduledTasksPath, tasks)
+      return updated
+    }
+    if (
+      !expected ||
+      expected.taskId !== current.id ||
+      expected.workflowId !== current.workflowId ||
+      expected.executionId !== current.workflowExecutionId ||
+      expected.plannedFor !== current.workflowOccurrenceAt
+    ) {
+      return null
+    }
+
+    const workflowMatches = workflows.filter((workflow) => workflow.id === expected.workflowId)
+    if (workflowMatches.length !== 1) return null
+    const workflow = workflowMatches[0]
+    const executionMatches = workflow.history.filter(
+      (execution) => execution.id === expected.executionId
+    )
+    if (executionMatches.length !== 1) return null
+    const execution = executionMatches[0]
+    if (
+      !workflowExecutionMatchesIdentity(execution, {
+        ...expected,
+        runId: options.runId
+      }) ||
+      execution.status !== 'running' ||
+      execution.runId !== options.runId
+    ) {
+      return null
+    }
+    const canonicalWorkflow = canonicalizeScheduledOccurrenceWorkflowSource(workflow)
+    if (!canonicalWorkflow) return null
+    const projection = projectWorkflowFromScheduledTask(canonicalWorkflow, updated, mutationAt)
+    if (!projection || !isTerminalWorkflowExecutionStatus(projection.nextStatus)) return null
+    const { ledgerBefore, ledgerAfter } =
+      this.createScheduledOccurrenceLedgerTransition(updated, mutationAt)
+    const intent: ScheduledOccurrenceMutationIntent = {
+      schemaVersion: 1,
+      id: randomUUID(),
+      kind: 'settle',
+      createdAt: mutationAt,
+      identity: {
+        taskId: expected.taskId,
+        workflowId: expected.workflowId,
+        executionId: expected.executionId,
+        plannedFor: expected.plannedFor,
+        runId: options.runId
+      },
+      taskBefore: cloneJsonValue(current),
+      taskAfter: cloneJsonValue(updated),
+      workflowBefore: cloneJsonValue(canonicalWorkflow),
+      workflowAfter: projection.workflow,
+      ledgerBefore,
+      ledgerAfter
+    }
+    if (validateCurrentRunOwnerReferences(intent, tasks, workflows)) return null
+    this.commitScheduledOccurrenceMutation(intent)
     return updated
   }
 
   static deleteScheduledTask(id: string) {
+    assertNoPendingScheduledOccurrenceMutation()
+    const matches = this.getScheduledTasks().filter((task) => task.id === id)
+    if (matches.length === 0) return
+    if (matches.length !== 1) {
+      throw new Error('Scheduled task deletion is ambiguous.')
+    }
+    let current = matches[0]
+    const hasWorkflowLink = Boolean(
+      current.workflowId || current.workflowExecutionId || current.workflowOccurrenceAt
+    )
+    if (
+      current.status === 'running' ||
+      (!isTerminalScheduledTaskStatus(current.status) && current.runId !== undefined)
+    ) {
+      throw new Error(
+        'Scheduled task could not be deleted while its occurrence is live; its exact run owner must settle it first.'
+      )
+    }
+    if (hasWorkflowLink) {
+      const pair = validateScheduledTaskWorkflowPair(
+        current,
+        this.getWorkflowDefinitions(),
+        this.getScheduledTasks()
+      )
+      if (!pair.ok) {
+        throw new Error(
+          `Workflow-linked scheduled task could not be terminalized before deletion: ${pair.reason}`
+        )
+      }
+    }
+    if (hasWorkflowLink && !isTerminalScheduledTaskStatus(current.status)) {
+      const terminalized = this.settleUnownedScheduledWorkflowTask(id, {
+        status: 'cancelled',
+        completedAt: new Date().toISOString(),
+        lastError: 'Scheduled task deleted.'
+      })
+      if (!terminalized || !isTerminalScheduledTaskStatus(terminalized.status)) {
+        throw new Error('Workflow-linked scheduled task could not be terminalized before deletion.')
+      }
+      current = terminalized
+    } else if (!hasWorkflowLink && !isTerminalScheduledTaskStatus(current.status)) {
+      const terminalized = this.settleUnownedStandaloneScheduledTask(id, {
+        status: 'cancelled',
+        completedAt: new Date().toISOString(),
+        lastError: 'Scheduled task deleted.'
+      })
+      if (!terminalized || !isTerminalScheduledTaskStatus(terminalized.status)) {
+        throw new Error('Scheduled task could not be terminalized before deletion.')
+      }
+      current = terminalized
+    }
+    if (hasWorkflowLink) {
+      const terminalPair = validateScheduledTaskWorkflowPair(
+        current,
+        this.getWorkflowDefinitions(),
+        this.getScheduledTasks()
+      )
+      if (!isTerminalScheduledTaskStatus(current.status) || !terminalPair.ok) {
+        throw new Error(
+          `Workflow-linked scheduled task deletion requires an exact terminal occurrence${terminalPair.ok ? '.' : `: ${terminalPair.reason}`}`
+        )
+      }
+    }
     writeJson(
       scheduledTasksPath,
       this.getScheduledTasks().filter((task) => task.id !== id)
@@ -5433,6 +8278,7 @@ export class AppStore {
     resolveAttachments: ResolveScheduledAttachments =
       rejectUnconfiguredScheduledAttachmentResolution
   ): ScheduledTask[] {
+    assertNoPendingScheduledOccurrenceMutation()
     const due: ScheduledTask[] = []
     for (const task of this.getScheduledTasks()) {
       const runAtMs = typeof task.runAt === 'string' ? Date.parse(task.runAt) : Number.NaN
@@ -5472,25 +8318,62 @@ export class AppStore {
   }
 
   static recoverInterruptedScheduledTasksAfterStartup(nowMs: number = Date.now()): ScheduledTask[] {
-    const tasks = this.getScheduledTasks()
     const recoveredAt = new Date(nowMs).toISOString()
     const recovered: ScheduledTask[] = []
-    const nextTasks = tasks.map((task) => {
-      if (task.status !== 'running') return task
-      const updated: ScheduledTask = {
-        ...task,
-        status: 'failed',
-        completedAt: task.completedAt || recoveredAt,
-        lastError: task.lastError || 'TaskWraith restarted before this scheduled run completed.',
-        updatedAt: recoveredAt
+    for (const snapshot of this.getScheduledTasks()) {
+      if (snapshot.status !== 'running') continue
+      const matches = this.getScheduledTasks().filter((task) => task.id === snapshot.id)
+      if (matches.length !== 1 || matches[0].status !== 'running') continue
+      const current = matches[0]
+      const terminalOptions = {
+        status: 'failed' as const,
+        completedAt: current.completedAt || recoveredAt,
+        lastError:
+          current.lastError || 'TaskWraith restarted before this scheduled run completed.'
       }
-      recovered.push(updated)
-      return updated
-    })
-    if (recovered.length === 0) return []
-    writeJson(scheduledTasksPath, nextTasks)
-    for (const task of recovered) {
-      this.syncWorkflowFromScheduledTask(task)
+      const hasWorkflowLink = Boolean(
+        current.workflowId || current.workflowExecutionId || current.workflowOccurrenceAt
+      )
+      let updated: ScheduledTask | null = null
+      if (isNonEmptyTrimmedString(current.runId)) {
+        const expectedWorkflowOccurrence = hasWorkflowLink
+          ? current.workflowId &&
+            current.workflowExecutionId &&
+            current.workflowOccurrenceAt
+            ? {
+                taskId: current.id,
+                workflowId: current.workflowId,
+                executionId: current.workflowExecutionId,
+                plannedFor: current.workflowOccurrenceAt
+              }
+            : null
+          : undefined
+        if (expectedWorkflowOccurrence !== null) {
+          updated = this.settleScheduledTaskForRun(current.id, {
+            runId: current.runId,
+            ...terminalOptions,
+            expectedWorkflowOccurrence
+          })
+        }
+      } else if (
+        current.runId === undefined &&
+        current.workflowId &&
+        current.workflowExecutionId &&
+        current.workflowOccurrenceAt
+      ) {
+        // Explicit migration-only recovery for the legacy shape that could mark
+        // both projections running before durable run ownership was introduced.
+        updated = this.recoverLegacyOwnerlessRunningScheduledWorkflowTask(
+          current.id,
+          terminalOptions
+        )
+      } else if (current.runId === undefined && !hasWorkflowLink) {
+        updated = this.recoverLegacyOwnerlessRunningStandaloneScheduledTask(
+          current.id,
+          terminalOptions
+        )
+      }
+      if (updated?.status === 'failed' && updated.completedAt) recovered.push(updated)
     }
     return recovered
   }
@@ -5500,13 +8383,11 @@ export class AppStore {
    * workflow stamps `activeExecutionId` at materialize time and skips the next
    * occurrence while that execution is non-terminal; a stuck occurrence
    * ('due'/'running'/overdue 'pending') silently disables the workflow forever.
-   * Settles any occurrence aged past `backstopMs` with no live run to 'failed' via
-   * the normal `updateScheduledTask` path — which (through
-   * `syncWorkflowFromScheduledTask`) clears `activeExecutionId`, bumps
-   * `failureStreak`, and engages `maxConsecutiveFailures`. Idempotent (the
-   * transition guard makes already-terminal tasks no-ops), so a genuinely-alive
-   * run's real terminal write is never stolen. Returns only the tasks actually
-   * settled this call so the caller can de-dupe the loud event per real settle.
+   * Settles any occurrence aged past `backstopMs` with no live run to 'failed'.
+   * Running rows are re-read, rechecked for liveness, and settled only through
+   * their exact run + occurrence owner API. Queued ownerless rows use the
+   * isolated unowned recovery path. Returns only tasks actually settled this
+   * call so the caller can de-dupe the loud event per real settle.
    */
   static settleStalledScheduledTasks(
     isRunLive: (runId: string) => boolean,
@@ -5522,14 +8403,63 @@ export class AppStore {
     if (candidates.length === 0) return []
     const completedAt = new Date(nowMs).toISOString()
     const settled: ScheduledTask[] = []
-    for (const { task, basis, ageMs } of candidates) {
-      const updated = this.updateScheduledTask(task.id, {
-        status: 'failed',
+    for (const { task: snapshot } of candidates) {
+      const matches = this.getScheduledTasks().filter((task) => task.id === snapshot.id)
+      if (matches.length !== 1) continue
+      const [revalidated] = findStalledScheduledTasks(
+        [matches[0]],
+        isRunLive,
+        nowMs,
+        backstopMs
+      )
+      if (!revalidated) continue
+      const current = revalidated.task
+      const terminalOptions = {
+        status: 'failed' as const,
         completedAt,
-        lastError: stallReason(task, basis, ageMs, backstopMs)
-      })
-      // Count as settled ONLY if the write actually flipped it to failed (the
-      // guard returns the unchanged record if it was concurrently advanced).
+        lastError: stallReason(current, revalidated.basis, revalidated.ageMs, backstopMs)
+      }
+      const hasWorkflowLink = Boolean(
+        current.workflowId || current.workflowExecutionId || current.workflowOccurrenceAt
+      )
+      let updated: ScheduledTask | null = null
+      if (current.status === 'running') {
+        if (!isNonEmptyTrimmedString(current.runId) || isRunLive(current.runId)) continue
+        const expectedWorkflowOccurrence = hasWorkflowLink
+          ? current.workflowId &&
+            current.workflowExecutionId &&
+            current.workflowOccurrenceAt
+            ? {
+                taskId: current.id,
+                workflowId: current.workflowId,
+                executionId: current.workflowExecutionId,
+                plannedFor: current.workflowOccurrenceAt
+              }
+            : null
+          : undefined
+        if (expectedWorkflowOccurrence === null) continue
+        updated = this.settleScheduledTaskForRun(current.id, {
+          runId: current.runId,
+          ...terminalOptions,
+          expectedWorkflowOccurrence
+        })
+      } else if (
+        (current.status === 'due' || current.status === 'pending') &&
+        current.runId === undefined
+      ) {
+        if (hasWorkflowLink) {
+          if (
+            !current.workflowId ||
+            !current.workflowExecutionId ||
+            !current.workflowOccurrenceAt
+          ) {
+            continue
+          }
+          updated = this.settleUnownedScheduledWorkflowTask(current.id, terminalOptions)
+        } else {
+          updated = this.settleUnownedStandaloneScheduledTask(current.id, terminalOptions)
+        }
+      }
       if (updated && updated.status === 'failed' && updated.completedAt === completedAt) {
         settled.push(updated)
       }
@@ -5644,12 +8574,30 @@ export class AppStore {
    * fsync'd (the ledger is low-frequency — a handful of events per occurrence).
    */
   static appendWorkflowRunEvent(input: WorkflowRunEventInput): WorkflowRunEvent {
+    assertNoPendingScheduledOccurrenceMutation()
+    return this.appendWorkflowRunEventFromOccurrenceMutation(input)
+  }
+
+  private static appendWorkflowRunEventFromOccurrenceMutation(
+    input: WorkflowRunEventInput
+  ): WorkflowRunEvent {
+    const inputStructureReason = workflowRunEventInputStructureReason(input)
+    if (inputStructureReason) throw new Error(inputStructureReason)
     const filePath = workflowRunFilePath(input.workflowExecutionId)
-    const cached = workflowRunSequenceCache.get(input.workflowExecutionId)
-    const sequence =
-      cached !== undefined ? cached + 1 : nextWorkflowRunSequence(readWorkflowRunFile(filePath))
+    const existingEvents = readWorkflowRunLedgerForAppend(filePath, input)
+    const sequence = nextWorkflowRunSequence(existingEvents)
     const event = createWorkflowRunEvent(input, sequence)
-    fs.mkdirSync(path.dirname(filePath), { recursive: true })
+    const eventStructureReason = workflowRunEventStructureReason(
+      event,
+      existingEvents.length,
+      existingEvents.at(-1)
+    )
+    if (eventStructureReason) throw new Error(eventStructureReason)
+    const directoryPath = path.dirname(filePath)
+    const directoryExisted = fs.existsSync(directoryPath)
+    const fileExisted = fs.existsSync(filePath)
+    fs.mkdirSync(directoryPath, { recursive: true })
+    if (!directoryExisted) fsyncDirectory(path.dirname(directoryPath))
     const fd = fs.openSync(filePath, 'a')
     try {
       fs.writeFileSync(fd, serializeWorkflowRunEvent(event), 'utf-8')
@@ -5657,7 +8605,14 @@ export class AppStore {
     } finally {
       fs.closeSync(fd)
     }
-    workflowRunSequenceCache.set(input.workflowExecutionId, event.sequence)
+    if (!fileExisted) fsyncDirectory(directoryPath)
+    const verified = readWorkflowRunLedgerStrict(filePath)
+    if (
+      verified.hasTornTail ||
+      !verified.events.some((candidate) => sameJsonValue(candidate, event))
+    ) {
+      throw new Error('Workflow run ledger append could not be verified durably.')
+    }
     return event
   }
 
@@ -5825,10 +8780,11 @@ export class AppStore {
    * permanently open. Idempotent: stall_settled IS terminal, so an already-settled
    * (or normally-completed) execution is skipped on every later boot. Best-effort
    * per file. Runs AFTER the ScheduledTask recoveries, so executions they already
-   * settled (via syncWorkflowFromScheduledTask) are terminal → no-ops here. Returns
+   * settled through the occurrence journal are terminal → no-ops here. Returns
    * the executions actually settled.
    */
   static reconcileStaleWorkflowRunLedgers(nowMs: number = Date.now()): StaleLedgerExecution[] {
+    assertNoPendingScheduledOccurrenceMutation()
     const stale = reconcileStaleLedgerExecutions(this.foldAllWorkflowRunLedgers())
     const settled: StaleLedgerExecution[] = []
     const timestamp = new Date(nowMs).toISOString()
