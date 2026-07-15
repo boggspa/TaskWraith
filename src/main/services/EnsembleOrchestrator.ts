@@ -3152,7 +3152,17 @@ export class EnsembleOrchestrator {
      * Runs after the runtime reservation is installed and before `runRound`.
      */
     onRoundReserved?: (roundId: string) => void
+    /**
+     * Main-owned scheduled snapshot transform. It is evaluated only after all
+     * fresh-round busy checks pass, inside the same synchronous stack that
+     * persists the new active round, so a scheduled roster can never overwrite
+     * an interactive round that already owns the chat.
+     */
+    prepareFreshChat?: (chat: ChatRecord) => ChatRecord
   }): { status: 'started' | 'queued' | 'steered' | 'ignored' | 'busy'; roundId?: string } {
+    if (input.prepareFreshChat && !input.requireFreshRound) {
+      throw new Error('A prepared Ensemble chat requires fresh-round ownership.')
+    }
     // 1.0.4-AF — strip a leading `/discuss` (alias `/meta`) token so
     // the slash never reaches the panel verbatim. The flag flows
     // through to `beginRound` and lands on the runtime for the
@@ -3166,6 +3176,7 @@ export class EnsembleOrchestrator {
     if (!prompt) return { status: 'ignored' }
     if (
       input.dmTargetParticipantId &&
+      !input.prepareFreshChat &&
       !this.deps
         .getChat(input.chatId)
         ?.ensemble?.participants.some(
@@ -3243,7 +3254,8 @@ export class EnsembleOrchestrator {
           input.unattended,
           input.unattendedElevationLevel,
           startAfterCancellation,
-          input.onRoundReserved
+          input.onRoundReserved,
+          input.prepareFreshChat
         )
         this.appendRoundStatus(
           input.chatId,
@@ -3309,7 +3321,8 @@ export class EnsembleOrchestrator {
       input.unattended,
       input.unattendedElevationLevel,
       undefined,
-      input.onRoundReserved
+      input.onRoundReserved,
+      input.prepareFreshChat
     )
     return { status: 'started', roundId }
   }
@@ -3689,6 +3702,7 @@ export class EnsembleOrchestrator {
     for (const active of activeRuns) {
       this.updateParticipantState(chatId, roundId, active.participant.id, 'cancelled', reason)
     }
+    const endedAt = this.deps.nowIso()
     this.updateChatRound(chatId, (round) =>
       round?.roundId === roundId
         ? {
@@ -3698,8 +3712,18 @@ export class EnsembleOrchestrator {
             queuedPrompts: [],
             queuedPromptEntries: [],
             activeParticipantId: undefined,
-            endedAt: this.deps.nowIso()
-        }
+            endedAt,
+            participants: round.participants.map((participant) =>
+              participant.status === 'idle' || participant.status === 'running'
+                ? {
+                    ...participant,
+                    status: 'cancelled',
+                    reason,
+                    endedAt
+                  }
+                : participant
+            )
+          }
         : round
     )
     this.completeCheckpoint(chatId, roundId, 'cancelled')
@@ -9603,7 +9627,9 @@ export class EnsembleOrchestrator {
         `${participant.role || providerLabel(participant.provider)} is resuming from TaskWraith transcript context; no native provider session id was available.`
       )
     }
-    void this.runRound(runtime, [participant])
+    void this.runRound(runtime, [participant]).catch((error) =>
+      this.failUnexpectedRound(runtime, error)
+    )
     return true
   }
 
@@ -10268,10 +10294,22 @@ export class EnsembleOrchestrator {
     unattended?: boolean,
     unattendedElevationLevel?: UnattendedElevationLevel,
     startAfterCancellation?: Promise<unknown>,
-    onRoundReserved?: (roundId: string) => void
+    onRoundReserved?: (roundId: string) => void,
+    prepareFreshChat?: (chat: ChatRecord) => ChatRecord
   ): string {
-    const chat = this.deps.getChat(chatId)
-    if (!chat?.ensemble) throw new Error('Ensemble chat not found.')
+    const storedChat = this.deps.getChat(chatId)
+    if (!storedChat?.ensemble) throw new Error('Ensemble chat not found.')
+    const chat = prepareFreshChat ? prepareFreshChat(storedChat) : storedChat
+    if (
+      !chat?.ensemble ||
+      chat.appChatId !== storedChat.appChatId ||
+      chat.workspaceId !== storedChat.workspaceId ||
+      chat.workspacePath !== storedChat.workspacePath ||
+      chat.scope !== storedChat.scope ||
+      chat.chatKind !== storedChat.chatKind
+    ) {
+      throw new Error('Prepared Ensemble chat changed immutable round authority.')
+    }
     const roundId = `ensemble-${this.deps.now()}-${Math.random().toString(36).slice(2)}`
     const orderedFull = getOrderedEnsembleParticipants(chat.ensemble, prompt)
     // A2 (1.0.3) — when DM, filter to just the targeted participant.
@@ -10457,56 +10495,123 @@ export class EnsembleOrchestrator {
       ...(unattended && unattendedElevationLevel ? { unattendedElevationLevel } : {})
     }
     this.roundsByChatId.set(chatId, runtime)
-    onRoundReserved?.(roundId)
-    for (const mention of backgroundMentionResolution.ambiguities) {
-      const candidates = [mention.participant, ...(mention.ambiguousAmong || [])]
-      this.appendRoundStatus(
-        chatId,
-        roundId,
-        `@-mention: \`@${mention.text}\` was ambiguous (${candidates
-          .map((participant) => participantDisplayName(participant))
-          .join(', ')}). No background lane launched. Use a unique @role, @model, or @id.`
-      )
-    }
-    const backgroundAuthorityAssignments = [
-      ['Boss', chat.ensemble.bossmanParticipantId],
-      ['Captain', chat.ensemble.secondInCommandParticipantId],
-      ['synthesizer', chat.ensemble.synthesizerParticipantId],
-      ['Work Session lead', chat.ensemble.workSession?.leadParticipantId],
-      ['Work Session manager', chat.ensemble.workSession?.managerParticipantId]
-    ]
-      .filter((entry): entry is [string, string] => Boolean(entry[1]))
-      .filter(([, participantId]) =>
-        chat.ensemble!.participants.some(
-          (participant) =>
-            participant.id === participantId && isBackgroundParticipant(participant)
+    try {
+      onRoundReserved?.(roundId)
+      for (const mention of backgroundMentionResolution.ambiguities) {
+        const candidates = [mention.participant, ...(mention.ambiguousAmong || [])]
+        this.appendRoundStatus(
+          chatId,
+          roundId,
+          `@-mention: \`@${mention.text}\` was ambiguous (${candidates
+            .map((participant) => participantDisplayName(participant))
+            .join(', ')}). No background lane launched. Use a unique @role, @model, or @id.`
         )
+      }
+      const backgroundAuthorityAssignments = [
+        ['Boss', chat.ensemble.bossmanParticipantId],
+        ['Captain', chat.ensemble.secondInCommandParticipantId],
+        ['synthesizer', chat.ensemble.synthesizerParticipantId],
+        ['Work Session lead', chat.ensemble.workSession?.leadParticipantId],
+        ['Work Session manager', chat.ensemble.workSession?.managerParticipantId]
+      ]
+        .filter((entry): entry is [string, string] => Boolean(entry[1]))
+        .filter(([, participantId]) =>
+          chat.ensemble!.participants.some(
+            (participant) =>
+              participant.id === participantId && isBackgroundParticipant(participant)
+          )
+        )
+      if (backgroundAuthorityAssignments.length > 0) {
+        this.appendRoundStatus(
+          chatId,
+          roundId,
+          `BG seats cannot own Ensemble authority; ignored ${backgroundAuthorityAssignments
+            .map(([role, participantId]) => `${role}=${participantId}`)
+            .join(', ')} for this round.`
+        )
+      }
+      if (ordered.length === 0 && backgroundParticipants.length === 0) {
+        this.appendRoundStatus(
+          chatId,
+          roundId,
+          'No foreground participant was scheduled. @mention a BG seat explicitly, or change at least one participant Stage to Any, Scout, Work, or Review.'
+        )
+      }
+      if (concurrentFallbackReason) {
+        this.appendRoundStatus(
+          chatId,
+          roundId,
+          'Fan-out requested but parallel lanes are disabled (TASKWRAITH_CONCURRENT_LANES=0) — running participants serially.'
+        )
+      }
+      void this.runRound(runtime, ordered, { backgroundParticipants }).catch((error) =>
+        this.failUnexpectedRound(runtime, error)
       )
-    if (backgroundAuthorityAssignments.length > 0) {
-      this.appendRoundStatus(
-        chatId,
-        roundId,
-        `BG seats cannot own Ensemble authority; ignored ${backgroundAuthorityAssignments
-          .map(([role, participantId]) => `${role}=${participantId}`)
-          .join(', ')} for this round.`
-      )
+    } catch (error) {
+      this.failUnexpectedRound(runtime, error)
+      throw error
     }
-    if (ordered.length === 0 && backgroundParticipants.length === 0) {
-      this.appendRoundStatus(
-        chatId,
-        roundId,
-        'No foreground participant was scheduled. @mention a BG seat explicitly, or change at least one participant Stage to Any, Scout, Work, or Review.'
-      )
-    }
-    if (concurrentFallbackReason) {
-      this.appendRoundStatus(
-        chatId,
-        roundId,
-        'Fan-out requested but parallel lanes are disabled (TASKWRAITH_CONCURRENT_LANES=0) — running participants serially.'
-      )
-    }
-    void this.runRound(runtime, ordered, { backgroundParticipants })
     return roundId
+  }
+
+  private failUnexpectedRound(runtime: ActiveRoundRuntime, error: unknown): void {
+    const current = this.roundsByChatId.get(runtime.chatId)
+    const activeRound = this.deps.getChat(runtime.chatId)?.ensemble?.activeRound
+    if (
+      current !== runtime ||
+      runtime.cancelled ||
+      activeRound?.roundId !== runtime.roundId ||
+      activeRound.status !== 'running'
+    ) {
+      return
+    }
+    runtime.cancelled = true
+    const reason = `Ensemble round failed before completion: ${
+      error instanceof Error ? error.message : String(error)
+    }`
+    this.deferredLaneDrainByChatId.delete(runtime.chatId)
+    runtime.fanoutReservedParticipantIds = undefined
+    try {
+      this.cancelWakeupsForRuntime(runtime, reason)
+    } catch {
+      // Wakeup cleanup is best-effort; terminal round ownership must continue.
+    }
+    const seededRuns = [...this.runsByRunId.values()]
+      .filter((run) => run.chatId === runtime.chatId && run.roundId === runtime.roundId)
+      // Drain lanes first so an owner holding their settlement can finalize.
+      .sort((left, right) => Number(Boolean(right.laneId)) - Number(Boolean(left.laneId)))
+    for (const run of seededRuns) {
+      try {
+        this.finalizeRun(run, 'failed', reason)
+      } catch {
+        this.runsByRunId.delete(run.runId)
+      }
+      try {
+        void Promise.resolve(this.deps.cancelRun(run.participant.provider, run.runId)).catch(
+          () => undefined
+        )
+      } catch {
+        // A malformed synchronous cancellation dependency cannot interrupt
+        // the terminal round transition.
+      }
+    }
+    runtime.activeRunId = undefined
+    runtime.activeScoutRunIds = undefined
+    try {
+      this.appendRoundStatus(runtime.chatId, runtime.roundId, reason)
+    } catch {
+      // The terminal transition below remains authoritative when the status
+      // annotation itself cannot be persisted.
+    }
+    try {
+      this.finishRound(runtime.chatId, runtime.roundId, 'failed')
+    } catch {
+      // If the round projection cannot be persisted, still notify terminal
+      // ownership. The callback itself is guarded by completeCheckpoint.
+      this.completeCheckpoint(runtime.chatId, runtime.roundId, 'failed')
+    } finally {
+      this.clearRuntimeIfCurrent(runtime)
+    }
   }
 
   private async runRound(
@@ -11509,6 +11614,12 @@ export class EnsembleOrchestrator {
         stageGateExemptIds.add(remaining[0].id)
       }
     }
+
+    // cancelRound owns the terminal projection and checkpoint notification.
+    // A participant completion resolved by that cancellation wakes this serial
+    // loop; returning here prevents the stale async tail from terminalizing the
+    // same round a second time.
+    if (runtime.cancelled) return
 
     // 1.0.4 — user-fallback note. When every dispatch in this round
     // failed with `unreachable`, the round closed with no speaker.

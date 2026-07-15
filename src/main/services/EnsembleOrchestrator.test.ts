@@ -503,6 +503,7 @@ function completeDispatchedRun(
 describe('EnsembleOrchestrator', () => {
   it('rejects a fresh-only start while an interactive round owns the chat without queueing or mutation', () => {
     const harness = makeHarness()
+    const prepareFreshChat = vi.fn((chat: ChatRecord) => chat)
     const active = harness.orchestrator.startRound({
       chatId: 'ensemble-chat',
       prompt: 'Interactive owner.',
@@ -515,11 +516,13 @@ describe('EnsembleOrchestrator', () => {
       chatId: 'ensemble-chat',
       prompt: 'Scheduled contender.',
       event: { sender: {} as Electron.WebContents },
-      requireFreshRound: true
+      requireFreshRound: true,
+      prepareFreshChat
     })
 
     expect(scheduled).toEqual({ status: 'busy' })
     expect(scheduled.roundId).toBeUndefined()
+    expect(prepareFreshChat).not.toHaveBeenCalled()
     expect(harness.chat).toEqual(before)
     expect(getRuntimeQueuedPrompts(harness.orchestrator, 'ensemble-chat')).toEqual([])
     expect(harness.chat.messages.some((message) => message.content === 'Scheduled contender.')).toBe(
@@ -556,6 +559,92 @@ describe('EnsembleOrchestrator', () => {
     expect(getRuntimeQueuedPrompts(harness.orchestrator, 'ensemble-chat')).toEqual([])
   })
 
+  it('fails an exactly reserved round when its ownership callback throws', () => {
+    const completed: Array<{ roundId: string; status: string }> = []
+    const reservationError = new Error('scheduled ownership bind failed')
+    const harness = makeHarness({
+      completeSessionCheckpoint: (_chatId, roundId, status) => {
+        completed.push({ roundId, status })
+      }
+    })
+
+    let thrown: unknown
+    try {
+      harness.orchestrator.startRound({
+        chatId: 'ensemble-chat',
+        prompt: 'Reserve before dispatch.',
+        event: { sender: {} as Electron.WebContents },
+        requireFreshRound: true,
+        onRoundReserved: () => {
+          throw reservationError
+        }
+      })
+    } catch (error) {
+      thrown = error
+    }
+
+    expect(thrown).toBe(reservationError)
+    expect(harness.dispatched).toHaveLength(0)
+    expect(harness.chat.ensemble?.activeRound?.status).toBe('failed')
+    expect(completed).toEqual([
+      {
+        roundId: harness.chat.ensemble!.activeRound!.roundId,
+        status: 'failed'
+      }
+    ])
+    expect(
+      (
+        harness.orchestrator as unknown as {
+          roundsByChatId: Map<string, unknown>
+        }
+      ).roundsByChatId.has('ensemble-chat')
+    ).toBe(false)
+  })
+
+  it('fails a bound round when post-reservation projection setup throws', () => {
+    let saveCount = 0
+    const completed: Array<{ roundId: string; status: string }> = []
+    const projectionError = new Error('post-reservation status write failed')
+    const harness = makeHarness({
+      beforeSaveChat: () => {
+        saveCount += 1
+        if (saveCount === 2) throw projectionError
+      },
+      completeSessionCheckpoint: (_chatId, roundId, status) => {
+        completed.push({ roundId, status })
+      }
+    })
+    harness.chat.ensemble!.participants = []
+
+    let reservedRoundId: string | undefined
+    let thrown: unknown
+    try {
+      harness.orchestrator.startRound({
+        chatId: 'ensemble-chat',
+        prompt: 'Reserve an empty scheduled round.',
+        event: { sender: {} as Electron.WebContents },
+        requireFreshRound: true,
+        onRoundReserved: (roundId) => {
+          reservedRoundId = roundId
+        }
+      })
+    } catch (error) {
+      thrown = error
+    }
+
+    expect(thrown).toBe(projectionError)
+    expect(harness.dispatched).toHaveLength(0)
+    expect(harness.chat.ensemble?.activeRound?.status).toBe('failed')
+    expect(completed).toEqual([{ roundId: reservedRoundId!, status: 'failed' }])
+    expect(
+      (
+        harness.orchestrator as unknown as {
+          roundsByChatId: Map<string, unknown>
+        }
+      ).roundsByChatId.has('ensemble-chat')
+    ).toBe(false)
+  })
+
   it('binds round ownership before an empty roster can complete synchronously', () => {
     const completionOrder: string[] = []
     const harness = makeHarness({
@@ -582,6 +671,167 @@ describe('EnsembleOrchestrator', () => {
     expect(result.status).toBe('started')
     expect(completionOrder).toEqual(['reserved', 'completed'])
     expect(harness.chat.ensemble?.activeRound?.status).toBe('completed')
+  })
+
+  it('applies a scheduled chat snapshot atomically with the newly reserved round', async () => {
+    const harness = makeHarness()
+    const scheduledParticipant = {
+      ...harness.chat.ensemble!.participants[1],
+      id: 'scheduled-codex',
+      role: 'Scheduled Worker',
+      order: 1
+    }
+
+    const result = harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Scheduled snapshot.',
+      event: { sender: {} as Electron.WebContents },
+      requireFreshRound: true,
+      prepareFreshChat: (chat) => ({
+        ...chat,
+        ensemble: {
+          ...chat.ensemble!,
+          participants: [scheduledParticipant]
+        }
+      }),
+      onRoundReserved: (roundId) => {
+        expect(harness.chat.ensemble?.activeRound?.roundId).toBe(roundId)
+        expect(harness.chat.ensemble?.activeRound?.participants).toHaveLength(1)
+        expect(harness.chat.ensemble?.activeRound?.participants[0].participantId).toBe(
+          'scheduled-codex'
+        )
+      }
+    })
+
+    expect(result.status).toBe('started')
+    expect(harness.chat.ensemble?.participants).toEqual([scheduledParticipant])
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    expect(harness.dispatched[0].ensembleRun?.participantId).toBe('scheduled-codex')
+  })
+
+  it('resolves a directed target from the prepared scheduled roster', async () => {
+    const harness = makeHarness()
+    const scheduledTarget = {
+      ...harness.chat.ensemble!.participants[1],
+      id: 'frozen-directed-seat',
+      role: 'Frozen Target',
+      order: 1
+    }
+    harness.chat.ensemble!.participants = [harness.chat.ensemble!.participants[0]]
+
+    const result = harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Run only the frozen target.',
+      event: { sender: {} as Electron.WebContents },
+      dmTargetParticipantId: scheduledTarget.id,
+      requireFreshRound: true,
+      prepareFreshChat: (chat) => ({
+        ...chat,
+        ensemble: { ...chat.ensemble!, participants: [scheduledTarget] }
+      })
+    })
+
+    expect(result.status).toBe('started')
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    expect(harness.dispatched[0].ensembleRun?.participantId).toBe(scheduledTarget.id)
+    expect(harness.chat.ensemble?.activeRound?.dmTargetParticipantId).toBe(scheduledTarget.id)
+  })
+
+  it('rejects prepared chat transforms without fresh ownership or immutable authority', () => {
+    const harness = makeHarness()
+    expect(() =>
+      harness.orchestrator.startRound({
+        chatId: 'ensemble-chat',
+        prompt: 'Invalid prepared ordinary round.',
+        event: { sender: {} as Electron.WebContents },
+        prepareFreshChat: (chat) => chat
+      })
+    ).toThrow('requires fresh-round ownership')
+
+    expect(() =>
+      harness.orchestrator.startRound({
+        chatId: 'ensemble-chat',
+        prompt: 'Invalid prepared scope.',
+        event: { sender: {} as Electron.WebContents },
+        requireFreshRound: true,
+        prepareFreshChat: (chat) => ({ ...chat, scope: 'global' })
+      })
+    ).toThrow('changed immutable round authority')
+  })
+
+  it('rejects a directed target absent from the prepared scheduled roster', () => {
+    const harness = makeHarness()
+    expect(() =>
+      harness.orchestrator.startRound({
+        chatId: 'ensemble-chat',
+        prompt: 'Missing frozen target.',
+        event: { sender: {} as Electron.WebContents },
+        dmTargetParticipantId: 'missing-target',
+        requireFreshRound: true,
+        prepareFreshChat: (chat) => chat
+      })
+    ).toThrow('no longer in the roster')
+  })
+
+  it('fails and clears a reserved round when unexpected orchestration work rejects', async () => {
+    let saveCount = 0
+    const completed: Array<{ roundId: string; status: string }> = []
+    const harness = makeHarness({
+      probeParticipant: async () => ({ reachable: true }),
+      beforeSaveChat: () => {
+        saveCount += 1
+        if (saveCount === 2) throw new Error('projection write failed')
+      },
+      completeSessionCheckpoint: (_chatId, roundId, status) => {
+        completed.push({ roundId, status })
+      }
+    })
+
+    const result = harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Exercise unexpected rejection.',
+      event: { sender: {} as Electron.WebContents },
+      requireFreshRound: true
+    })
+
+    expect(result.status).toBe('started')
+    await vi.waitFor(() => expect(harness.chat.ensemble?.activeRound?.status).toBe('failed'))
+    expect(completed).toContainEqual({ roundId: result.roundId!, status: 'failed' })
+    expect(getRuntimeQueuedPrompts(harness.orchestrator, 'ensemble-chat')).toEqual([])
+  })
+
+  it('finalizes and cancels a seeded participant when pre-dispatch construction throws', async () => {
+    const completed: Array<{ roundId: string; status: string }> = []
+    const harness = makeHarness({
+      cancelRun: () => {
+        throw new Error('synchronous cancel failure')
+      },
+      issueRunScopedExternalGrants: () => {
+        throw new Error('grant construction failed')
+      },
+      completeSessionCheckpoint: (_chatId, roundId, status) => {
+        completed.push({ roundId, status })
+      }
+    })
+
+    const result = harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Exercise seeded cleanup.',
+      event: { sender: {} as Electron.WebContents },
+      requireFreshRound: true
+    })
+
+    expect(result.status).toBe('started')
+    await vi.waitFor(() => expect(harness.chat.ensemble?.activeRound?.status).toBe('failed'))
+    expect(harness.cancelRun).toHaveBeenCalledTimes(1)
+    expect(completed).toContainEqual({ roundId: result.roundId!, status: 'failed' })
+    expect(
+      (
+        harness.orchestrator as unknown as {
+          runsByRunId: Map<string, unknown>
+        }
+      ).runsByRunId.size
+    ).toBe(0)
   })
 
   it('dispatches participants serially in configured order', async () => {
@@ -2753,6 +3003,48 @@ describe('EnsembleOrchestrator', () => {
     expect(restarted.dispatched[1].provider).toBe('codex')
     expect(restarted.dispatched[1].imagePaths).toEqual([])
     expect(restarted.chat.ensemble?.activeRound?.dmTargetParticipantId).toBe('codex')
+  })
+
+  it('fails a recovered wakeup round when pre-dispatch construction rejects', async () => {
+    const original = makeHarness({ scheduleWakeupTimer: () => {} })
+    original.chat.ensemble!.participants = [original.chat.ensemble!.participants[0]]
+    original.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Sleep through a restart.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(original.dispatched).toHaveLength(1))
+    const scheduled = original.orchestrator.scheduleWakeupForRun(
+      original.dispatched[0].appRunId!,
+      { delayMs: 60_000, reason: 'Resume me.' }
+    )
+    expect(scheduled.ok).toBe(true)
+
+    const completed: Array<{ roundId: string; status: string }> = []
+    const restarted = makeHarness({
+      initialChat: original.chat,
+      issueRunScopedExternalGrants: () => {
+        throw new Error('recovered grant construction failed')
+      },
+      completeSessionCheckpoint: (_chatId, roundId, status) => {
+        completed.push({ roundId, status })
+      }
+    })
+    const pending = restarted.chat.ensemble!.wakeups![scheduled.wakeup!.wakeupId]
+
+    expect(
+      restarted.orchestrator.resumePersistedWakeup(pending, {} as Electron.WebContents)
+    ).toBe(true)
+    await vi.waitFor(() => expect(restarted.chat.ensemble?.activeRound?.status).toBe('failed'))
+
+    expect(restarted.cancelRun).toHaveBeenCalledTimes(1)
+    expect(completed).toEqual([{ roundId: pending.roundId, status: 'failed' }])
+    const internals = restarted.orchestrator as unknown as {
+      roundsByChatId: Map<string, unknown>
+      runsByRunId: Map<string, unknown>
+    }
+    expect(internals.roundsByChatId.has('ensemble-chat')).toBe(false)
+    expect(internals.runsByRunId.size).toBe(0)
   })
 
   it('cancelWakeupById flips a pending wakeup to cancelled and clears the sleeping state', async () => {
@@ -9682,6 +9974,40 @@ Next action:
       'cancelled',
       { statusReason: 'cancelled' }
     )
+  })
+
+  it('publishes exactly one terminal outcome when cancellation wakes the serial loop', async () => {
+    let cancelledProjectionCount = 0
+    const completeSessionCheckpoint = vi.fn()
+    const harness = makeHarness({
+      beforeSaveChat: (chat) => {
+        if (chat.ensemble?.activeRound?.status === 'cancelled') {
+          cancelledProjectionCount += 1
+        }
+      },
+      completeSessionCheckpoint
+    })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Cancel while the participant is active.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const roundId = harness.chat.ensemble!.activeRound!.roundId
+
+    await expect(harness.orchestrator.cancelRound('ensemble-chat')).resolves.toBe(true)
+    await new Promise((resolve) => setTimeout(resolve, 20))
+
+    expect(cancelledProjectionCount).toBe(1)
+    expect(completeSessionCheckpoint).toHaveBeenCalledTimes(1)
+    expect(completeSessionCheckpoint).toHaveBeenCalledWith(
+      'ensemble-chat',
+      roundId,
+      'cancelled'
+    )
+    expect(
+      harness.chat.ensemble?.activeRound?.participants.map((participant) => participant.status)
+    ).toEqual(['cancelled', 'cancelled'])
   })
 
   it('does not queue behind a stale runtime whose persisted round already ended', async () => {
