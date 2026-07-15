@@ -98,11 +98,38 @@ export function buildKimiDenyWall(tools: readonly string[] = KIMI_ACP_DENY_TOOLS
     .join('')
 }
 
+/**
+ * Force `[thinking] enabled = <value>` in a config body. Kimi Code dropped the
+ * `--thinking/--no-thinking` CLI flags (poison on any kimi-code argv); thinking
+ * is a config setting now, so a per-run thinking preference is applied here,
+ * never as an argument. Replaces an existing `enabled` under `[thinking]`, adds
+ * one if the table exists without it, or appends the whole table if absent.
+ */
+export function forceThinkingMode(configBody: string, enabled: boolean): string {
+  const value = enabled ? 'true' : 'false'
+  const lines = configBody.split(/\r?\n/)
+  const tableIdx = lines.findIndex((l) => l.trim() === '[thinking]')
+  if (tableIdx === -1) {
+    return `${configBody.replace(/\s*$/, '')}\n\n[thinking]\nenabled = ${value}\n`
+  }
+  for (let i = tableIdx + 1; i < lines.length; i++) {
+    if (/^\s*\[/.test(lines[i].trim())) break // next table ends [thinking]
+    if (/^\s*enabled\s*=/.test(lines[i])) {
+      lines[i] = `enabled = ${value}`
+      return lines.join('\n')
+    }
+  }
+  lines.splice(tableIdx + 1, 0, `enabled = ${value}`)
+  return lines.join('\n')
+}
+
 export interface KimiIsolatedConfigOptions {
   /** The user's real config.toml body (the transform base). */
   baseConfig: string
   /** Extra tools to deny beyond the default egress/sub-agent wall. */
   extraDenyTools?: readonly string[]
+  /** Per-run thinking preference; when omitted the base config's setting is kept. */
+  thinkingEnabled?: boolean
 }
 
 /**
@@ -114,13 +141,17 @@ export interface KimiIsolatedConfigOptions {
 export function buildKimiIsolatedConfig(options: KimiIsolatedConfigOptions): string {
   const stripped = stripAllowPermissionRules(options.baseConfig)
   const telemetryOff = forceTelemetryOff(stripped)
+  const withThinking =
+    options.thinkingEnabled === undefined
+      ? telemetryOff
+      : forceThinkingMode(telemetryOff, options.thinkingEnabled)
   const denyTools = [...KIMI_ACP_DENY_TOOLS, ...(options.extraDenyTools ?? [])]
   const deny = buildKimiDenyWall(denyTools)
   return (
     `# TaskWraith-managed isolated Kimi Code profile (per-run KIMI_CODE_HOME).\n` +
     `# Generated from the user config with allow-rules stripped, telemetry off,\n` +
     `# and a static deny wall (${denyTools.join(', ')}). Do not edit by hand.\n` +
-    `${telemetryOff.replace(/\s*$/, '')}\n${deny}`
+    `${withThinking.replace(/\s*$/, '')}\n${deny}`
   )
 }
 

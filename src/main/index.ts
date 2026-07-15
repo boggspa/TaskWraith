@@ -17470,6 +17470,9 @@ async function runKimiAcpProvider(
     runId: route.appRunId || 'unknown',
     homeDir: kimiIsolatedHomeDirForRun(route.appRunId || 'unknown'),
     sourceHome: join(os.homedir(), '.kimi-code'),
+    // Kimi Code dropped the --thinking flag; the per-run preference rides the
+    // isolated config instead (absent → keep the config default, which is on).
+    thinkingEnabled: payload.kimiThinking ?? undefined,
     fs: kimiHomeFsAdapter
   })
   if (!home.ok) {

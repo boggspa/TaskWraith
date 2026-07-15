@@ -32,6 +32,8 @@ export interface PrepareKimiHomeInput {
   /** The real Kimi Code data root to transform config + seed credentials from. */
   sourceHome: string
   extraDenyTools?: readonly string[]
+  /** Per-run thinking preference; omitted keeps the user config's setting. */
+  thinkingEnabled?: boolean
   fs: KimiHomeFs
 }
 
@@ -94,7 +96,8 @@ export async function prepareKimiIsolatedHome(
 
     const isolatedConfig = buildKimiIsolatedConfig({
       baseConfig,
-      extraDenyTools: input.extraDenyTools
+      extraDenyTools: input.extraDenyTools,
+      thinkingEnabled: input.thinkingEnabled
     })
     await fs.writeFile(fs.join(homeDir, 'config.toml'), isolatedConfig, 0o600)
 

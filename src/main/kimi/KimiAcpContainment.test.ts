@@ -5,6 +5,7 @@ import {
   buildKimiDenyWall,
   buildKimiIsolatedConfig,
   forceTelemetryOff,
+  forceThinkingMode,
   isPathWithinRoots,
   stripAllowPermissionRules
 } from './KimiAcpContainment'
@@ -104,6 +105,44 @@ describe('buildKimiIsolatedConfig', () => {
   it('honours extra deny tools', () => {
     const out = buildKimiIsolatedConfig({ baseConfig: base, extraDenyTools: ['Bash'] })
     expect(out).toContain('pattern = "Bash"')
+  })
+})
+
+describe('forceThinkingMode', () => {
+  it('replaces enabled under an existing [thinking] table', () => {
+    expect(forceThinkingMode('[thinking]\nenabled = true', false)).toBe(
+      '[thinking]\nenabled = false'
+    )
+    expect(forceThinkingMode('[thinking]\nenabled = false', true)).toContain('enabled = true')
+  })
+
+  it('adds enabled to a [thinking] table that lacks it', () => {
+    const out = forceThinkingMode('[thinking]\nbudget = 5', false)
+    expect(out).toContain('enabled = false')
+    expect(out).toContain('budget = 5')
+  })
+
+  it('appends a [thinking] table when absent', () => {
+    const out = forceThinkingMode('default_model = "x"', true)
+    expect(out).toContain('[thinking]')
+    expect(out).toContain('enabled = true')
+  })
+
+  it('does not cross into the next table', () => {
+    const out = forceThinkingMode('[thinking]\nbudget = 5\n\n[other]\nenabled = true', false)
+    // The [other] table's enabled must stay true; a new enabled lands in [thinking].
+    expect(out).toMatch(/\[thinking\]\nenabled = false/)
+    expect(out).toContain('[other]\nenabled = true')
+  })
+})
+
+describe('buildKimiIsolatedConfig thinking control', () => {
+  it('forces thinking off when requested, leaves it when omitted', () => {
+    const base = 'telemetry = true\n\n[thinking]\nenabled = true'
+    expect(buildKimiIsolatedConfig({ baseConfig: base, thinkingEnabled: false })).toContain(
+      'enabled = false'
+    )
+    expect(buildKimiIsolatedConfig({ baseConfig: base })).toContain('enabled = true')
   })
 })
 
