@@ -103,7 +103,24 @@ import { createDefaultEnsembleConfig } from '../EnsembleDefaults'
 import { isEnsembleRoundDispatchLive } from '../../shared/ensembleRoundLifecycle'
 import { isCursorGrok45ModelId, isGrok45ReasoningModelId } from '../../shared/grok45Models'
 import { createHash, randomUUID } from 'crypto'
-import { buildRunQueueDispatchReceipt } from '../RunQueueDispatchReceipt'
+import {
+  buildScheduledTaskDispatchReceipt,
+  canonicalScheduledOccurrenceLedgerEvent,
+  decodeScheduledOccurrenceMutationIntent,
+  isTerminalScheduledTaskStatus,
+  LEGACY_STORE_MUTATION_VALIDATION_POLICY,
+  projectWorkflowFromScheduledTask,
+  scheduledTaskStatusToWorkflowStatus,
+  taskMatchesOccurrenceIdentity,
+  validateScheduledOccurrenceMutationIntent,
+  WORKFLOW_HISTORY_LIMIT,
+  workflowExecutionMatchesIdentity,
+  type ScheduledOccurrenceIdentity,
+  type ScheduledOccurrenceLedgerPrefix,
+  type ScheduledOccurrenceMutationIntent,
+  type ScheduledOccurrenceMutationKind,
+  type ScheduledOccurrenceTerminalStatus
+} from '../ScheduledOccurrenceMutationSemantics'
 import {
   DEFAULT_PROMPT_CACHE_SETTINGS,
   normalizePromptCacheSettings
@@ -409,7 +426,6 @@ const agentStatsSeenCache = new Map<string, Set<string>>()
 const agentStatsRawCountCache = new Map<string, number>()
 const deletedChatIds = new Set<string>()
 const deletedRunIds = new Set<string>()
-const WORKFLOW_HISTORY_LIMIT = 50
 // Newest-N audit runs kept on disk. Each run holds its own findings/verdicts;
 // the per-run JSONL ledger (run-events) carries the replayable detail.
 const AUDIT_RUN_HISTORY_LIMIT = 100
@@ -867,44 +883,6 @@ function normalizeWorkspaceBoardCardRecord(
   }
 }
 
-function scheduledTaskStatusToWorkflowStatus(
-  status: ScheduledTask['status']
-): WorkflowExecutionRecord['status'] | null {
-  if (status === 'running') return 'running'
-  if (status === 'completed') return 'completed'
-  if (status === 'failed') return 'failed'
-  if (status === 'cancelled') return 'cancelled'
-  return null
-}
-
-/** Map a workflow execution status to a durable-ledger event kind (Stage 1). */
-function workflowStatusToRunEventKind(
-  status: WorkflowExecutionRecord['status']
-): WorkflowRunEvent['kind'] | null {
-  switch (status) {
-    case 'running':
-      return 'running'
-    case 'completed':
-      return 'completed'
-    case 'failed':
-      return 'failed'
-    case 'cancelled':
-      return 'cancelled'
-    case 'skipped':
-      return 'skipped'
-    case 'queued':
-      return 'materialized'
-    default:
-      return null
-  }
-}
-
-function isTerminalScheduledTaskStatus(
-  status: ScheduledTask['status']
-): status is ScheduledOccurrenceTerminalStatus {
-  return status === 'completed' || status === 'failed' || status === 'cancelled'
-}
-
 function isInvalidScheduledTaskStatusTransition(
   current: ScheduledTask['status'],
   next: ScheduledTask['status']
@@ -914,7 +892,6 @@ function isInvalidScheduledTaskStatusTransition(
   return false
 }
 
-type ScheduledOccurrenceMutationKind = 'materialize' | 'claim' | 'settle'
 const SCHEDULED_TASK_MAINTENANCE_FIELDS = new Set<keyof ScheduledTask>([
   'permissionPosture',
   'imageAttachments'
@@ -939,42 +916,6 @@ type ScheduledOccurrenceMutationCrashPoint =
   | 'after-task'
   | 'after-workflow'
   | 'after-ledger'
-type ScheduledOccurrenceTerminalStatus = Extract<
-  ScheduledTask['status'],
-  'completed' | 'failed' | 'cancelled'
->
-
-interface ScheduledOccurrenceIdentity {
-  taskId: string
-  workflowId: string
-  executionId: string
-  plannedFor: string
-  runId?: string
-}
-
-interface ScheduledOccurrenceLedgerPrefix {
-  schemaVersion: 1
-  fileExisted: boolean
-  sha256: string
-  byteLength: number
-  eventCount: number
-  tailSequence: number
-}
-
-interface ScheduledOccurrenceMutationIntent {
-  schemaVersion: 1
-  id: string
-  kind: ScheduledOccurrenceMutationKind
-  createdAt: string
-  identity: ScheduledOccurrenceIdentity
-  taskBefore: ScheduledTask | null
-  taskAfter: ScheduledTask
-  workflowBefore: WorkflowDefinition
-  workflowAfter: WorkflowDefinition
-  ledgerBefore: ScheduledOccurrenceLedgerPrefix | null
-  ledgerAfter: WorkflowRunEvent | null
-}
-
 export type ScheduledOccurrenceMutationReplayResult =
   | { status: 'none' }
   | {
@@ -1012,648 +953,10 @@ function optionalCanonicalIsoTimestamp(value: unknown): boolean {
   return value === undefined || canonicalIsoTimestampMs(value) !== null
 }
 
-function canonicalScheduledOccurrenceLedgerEvent(
-  task: ScheduledTask,
-  timestamp: string,
-  sequence: number
-): WorkflowRunEvent | null {
-  if (!task.workflowId || !task.workflowExecutionId) return null
-  const status = scheduledTaskStatusToWorkflowStatus(task.status)
-  const kind = status ? workflowStatusToRunEventKind(status) : null
-  if (!kind) return null
-  return createWorkflowRunEvent(
-    {
-      workflowExecutionId: task.workflowExecutionId,
-      workflowId: task.workflowId,
-      kind,
-      timestamp,
-      scheduledTaskId: task.id,
-      runId: task.runId,
-      plannedFor: task.workflowOccurrenceAt || task.runAt,
-      ...(task.lastError ? { error: task.lastError } : {})
-    },
-    sequence
-  )
-}
-
-function workflowExecutionMatchesIdentity(
-  execution: WorkflowExecutionRecord,
-  identity: ScheduledOccurrenceIdentity
-): boolean {
-  return (
-    execution.id === identity.executionId &&
-    execution.workflowId === identity.workflowId &&
-    execution.scheduledTaskId === identity.taskId &&
-    execution.plannedFor === identity.plannedFor
-  )
-}
-
-function taskMatchesOccurrenceIdentity(
-  task: ScheduledTask,
-  identity: ScheduledOccurrenceIdentity
-): boolean {
-  return (
-    task.id === identity.taskId &&
-    task.workflowId === identity.workflowId &&
-    task.workflowExecutionId === identity.executionId &&
-    task.workflowOccurrenceAt === identity.plannedFor
-  )
-}
-
-function jsonObjectWithoutKeys<T extends object>(
-  value: T,
-  keys: ReadonlySet<string>
-): Record<string, unknown> {
-  const clone = cloneJsonValue(value) as Record<string, unknown>
-  for (const key of keys) delete clone[key]
-  return clone
-}
-
-function hasOnlyAllowedObjectDeltas<T extends object>(
-  before: T,
-  after: T,
-  allowedKeys: ReadonlySet<string>
-): boolean {
-  return sameJsonValue(
-    jsonObjectWithoutKeys(before, allowedKeys),
-    jsonObjectWithoutKeys(after, allowedKeys)
-  )
-}
-
-function materializedTaskMatchesWorkflowAuthority(
-  task: ScheduledTask,
-  workflow: WorkflowDefinition
-): boolean {
-  if (
-    task.workspaceId !== workflow.workspaceId ||
-    task.workspacePath !== workflow.workspacePath
-  ) {
-    return false
-  }
-  const template = workflow.template as Record<string, unknown>
-  const taskRecord = task as unknown as Record<string, unknown>
-  for (const [key, expected] of Object.entries(template)) {
-    if (key === 'imageAttachments') continue
-    if (key === 'displayPrompt') {
-      if (!isDeepStrictEqual(task.displayPrompt, expected || workflow.template.prompt)) return false
-      continue
-    }
-    if (!isDeepStrictEqual(taskRecord[key], expected)) return false
-  }
-  const lifecycleKeys = new Set([
-    ...Object.keys(template),
-    'displayPrompt',
-    'workflowMode',
-    'id',
-    'runAt',
-    'timezone',
-    'status',
-    'createdAt',
-    'updatedAt',
-    'workflowId',
-    'workflowExecutionId',
-    'workflowOccurrenceAt',
-    'dispatchReceipt',
-    'occurrenceSeal'
-  ])
-  return Object.keys(taskRecord).every((key) => lifecycleKeys.has(key))
-}
-
-function scheduledTaskDispatchReceiptIsExact(task: ScheduledTask): boolean {
-  return Boolean(
-    task.dispatchReceipt &&
-      sameJsonValue(
-        task.dispatchReceipt,
-        buildScheduledTaskDispatchReceipt(task, task.dispatchReceipt.generatedAt)
-      )
-  )
-}
-
-function materializedAttachmentsMatchTemplate(
-  task: ScheduledTask,
-  workflow: WorkflowDefinition
-): boolean {
-  const source = workflow.template.imageAttachments
-  const resolved = task.imageAttachments
-  if (
-    !scheduledAttachmentsAreDurable(source) ||
-    !scheduledAttachmentsAreDurable(resolved) ||
-    source.length !== resolved.length
-  ) {
-    return false
-  }
-  return resolved.every((attachment, index) => {
-    const original = source[index]
-    return (
-      attachment.persistenceVersion === original.persistenceVersion &&
-      attachment.id === original.id &&
-      attachment.name === original.name &&
-      attachment.sha256 === original.sha256 &&
-      attachment.mimeType.toLowerCase() === original.mimeType.toLowerCase() &&
-      attachment.byteLength === original.byteLength
-    )
-  })
-}
-
-function validateScheduledOccurrenceMutationTimestamps(
-  intent: ScheduledOccurrenceMutationIntent,
-  beforeExecution: WorkflowExecutionRecord | null,
-  afterExecution: WorkflowExecutionRecord
-): string | null {
-  const { taskBefore, taskAfter, workflowBefore, workflowAfter, identity } = intent
-  const requiredTimestamps: unknown[] = [
-    intent.createdAt,
-    identity.plannedFor,
-    taskAfter.runAt,
-    taskAfter.createdAt,
-    taskAfter.updatedAt,
-    taskAfter.workflowOccurrenceAt,
-    workflowBefore.createdAt,
-    workflowBefore.updatedAt,
-    workflowAfter.createdAt,
-    workflowAfter.updatedAt,
-    afterExecution.plannedFor,
-    afterExecution.createdAt,
-    afterExecution.updatedAt
-  ]
-  const optionalTimestamps: unknown[] = [
-    taskAfter.firedAt,
-    taskAfter.runningSince,
-    taskAfter.completedAt,
-    taskAfter.dispatchReceipt?.generatedAt,
-    taskAfter.occurrenceSeal?.issuedAt,
-    workflowBefore.nextRunAt,
-    workflowBefore.lastRunAt,
-    workflowBefore.lastCompletedAt,
-    workflowAfter.nextRunAt,
-    workflowAfter.lastRunAt,
-    workflowAfter.lastCompletedAt,
-    afterExecution.startedAt,
-    afterExecution.completedAt,
-    taskBefore?.runAt,
-    taskBefore?.createdAt,
-    taskBefore?.updatedAt,
-    taskBefore?.workflowOccurrenceAt,
-    taskBefore?.firedAt,
-    taskBefore?.runningSince,
-    taskBefore?.completedAt,
-    taskBefore?.dispatchReceipt?.generatedAt,
-    taskBefore?.occurrenceSeal?.issuedAt,
-    beforeExecution?.plannedFor,
-    beforeExecution?.createdAt,
-    beforeExecution?.updatedAt,
-    beforeExecution?.startedAt,
-    beforeExecution?.completedAt
-  ]
-  if (
-    requiredTimestamps.some((value) => canonicalIsoTimestampMs(value) === null) ||
-    optionalTimestamps.some((value) => !optionalCanonicalIsoTimestamp(value))
-  ) {
-    return 'Scheduled occurrence mutation contains a non-canonical lifecycle timestamp.'
-  }
-
-  const mutationAtMs = canonicalIsoTimestampMs(intent.createdAt) as number
-  const plannedForMs = canonicalIsoTimestampMs(identity.plannedFor) as number
-  const taskRunAtMs = canonicalIsoTimestampMs(taskAfter.runAt) as number
-  const taskCreatedAtMs = canonicalIsoTimestampMs(taskAfter.createdAt) as number
-  const taskUpdatedAtMs = canonicalIsoTimestampMs(taskAfter.updatedAt) as number
-  const executionCreatedAtMs = canonicalIsoTimestampMs(afterExecution.createdAt) as number
-  const executionUpdatedAtMs = canonicalIsoTimestampMs(afterExecution.updatedAt) as number
-  if (
-    identity.plannedFor !== taskAfter.workflowOccurrenceAt ||
-    identity.plannedFor !== afterExecution.plannedFor ||
-    plannedForMs > taskRunAtMs ||
-    taskRunAtMs !== taskCreatedAtMs ||
-    taskCreatedAtMs > taskUpdatedAtMs ||
-    executionCreatedAtMs > executionUpdatedAtMs
-  ) {
-    return 'Scheduled occurrence mutation lifecycle timestamps are not logically ordered.'
-  }
-
-  if (intent.kind === 'materialize') {
-    if (
-      taskRunAtMs !== mutationAtMs ||
-      taskUpdatedAtMs !== mutationAtMs ||
-      taskAfter.dispatchReceipt?.generatedAt !== intent.createdAt ||
-      executionCreatedAtMs !== mutationAtMs ||
-      executionUpdatedAtMs !== mutationAtMs ||
-      workflowAfter.updatedAt !== intent.createdAt ||
-      workflowAfter.lastRunAt !== intent.createdAt
-    ) {
-      return 'Scheduled occurrence materialization timestamps are not an exact post-image.'
-    }
-    return null
-  }
-
-  if (!taskBefore || !beforeExecution) {
-    return 'Scheduled occurrence mutation timestamps are missing their before-image.'
-  }
-  const beforeTaskUpdatedAtMs = canonicalIsoTimestampMs(taskBefore.updatedAt) as number
-  const beforeExecutionUpdatedAtMs = canonicalIsoTimestampMs(beforeExecution.updatedAt) as number
-  if (
-    taskBefore.runAt !== taskAfter.runAt ||
-    taskBefore.createdAt !== taskAfter.createdAt ||
-    taskBefore.workflowOccurrenceAt !== taskAfter.workflowOccurrenceAt ||
-    beforeExecution.createdAt !== afterExecution.createdAt ||
-    beforeExecution.plannedFor !== afterExecution.plannedFor ||
-    beforeTaskUpdatedAtMs > mutationAtMs ||
-    beforeExecutionUpdatedAtMs > mutationAtMs ||
-    taskUpdatedAtMs !== mutationAtMs ||
-    executionUpdatedAtMs !== mutationAtMs ||
-    workflowAfter.updatedAt !== intent.createdAt
-  ) {
-    return 'Scheduled occurrence mutation timestamps do not preserve their exact timeline.'
-  }
-
-  if (intent.kind === 'claim') {
-    if (
-      taskRunAtMs > mutationAtMs ||
-      taskAfter.firedAt !== intent.createdAt ||
-      taskAfter.runningSince !== intent.createdAt ||
-      taskAfter.dispatchReceipt?.generatedAt !== intent.createdAt ||
-      (taskAfter.occurrenceSeal !== undefined &&
-        taskAfter.occurrenceSeal.issuedAt !== intent.createdAt) ||
-      afterExecution.startedAt !== intent.createdAt
-    ) {
-      return 'Scheduled occurrence claim timestamps are not an exact due-task transition.'
-    }
-    return null
-  }
-
-  const completedAtMs = canonicalIsoTimestampMs(taskAfter.completedAt) as number
-  const executionCompletedAtMs = canonicalIsoTimestampMs(afterExecution.completedAt) as number
-  const startedAt = beforeExecution.startedAt || taskBefore.runningSince || taskBefore.firedAt
-  const lowerBoundMs = startedAt
-    ? (canonicalIsoTimestampMs(startedAt) as number)
-    : taskRunAtMs
-  if (
-    taskAfter.completedAt !== afterExecution.completedAt ||
-    completedAtMs !== executionCompletedAtMs ||
-    completedAtMs < lowerBoundMs ||
-    completedAtMs > mutationAtMs
-  ) {
-    return 'Scheduled occurrence settlement timestamps are not logically ordered.'
-  }
-  return null
-}
-
-function validateScheduledOccurrenceLedgerPostImage(
-  intent: ScheduledOccurrenceMutationIntent
-): string | null {
-  if (intent.kind === 'materialize') {
-    return intent.ledgerBefore === null && intent.ledgerAfter === null
-      ? null
-      : 'Scheduled occurrence materialization must not carry lifecycle ledger evidence.'
-  }
-  const ledgerBefore = intent.ledgerBefore
-  const ledgerAfter = intent.ledgerAfter
-  if (
-    !ledgerBefore ||
-    ledgerBefore.schemaVersion !== 1 ||
-    typeof ledgerBefore.fileExisted !== 'boolean' ||
-    !/^[a-f0-9]{64}$/.test(ledgerBefore.sha256) ||
-    !Number.isSafeInteger(ledgerBefore.byteLength) ||
-    ledgerBefore.byteLength < 0 ||
-    !Number.isSafeInteger(ledgerBefore.eventCount) ||
-    ledgerBefore.eventCount < 0 ||
-    !Number.isSafeInteger(ledgerBefore.tailSequence) ||
-    ledgerBefore.tailSequence < 0 ||
-    ledgerBefore.tailSequence !== ledgerBefore.eventCount ||
-    (ledgerBefore.fileExisted === false &&
-      (ledgerBefore.byteLength !== 0 || ledgerBefore.eventCount !== 0)) ||
-    !ledgerAfter ||
-    !Number.isSafeInteger(ledgerAfter.sequence) ||
-    ledgerAfter.sequence !== ledgerBefore.eventCount + 1 ||
-    canonicalIsoTimestampMs(ledgerAfter.timestamp) === null ||
-    ledgerAfter.timestamp !== intent.createdAt
-  ) {
-    return 'Scheduled occurrence lifecycle ledger evidence is invalid.'
-  }
-  const expected = canonicalScheduledOccurrenceLedgerEvent(
-    intent.taskAfter,
-    intent.createdAt,
-    ledgerAfter.sequence
-  )
-  return expected && sameJsonValue(expected, ledgerAfter)
-    ? null
-    : 'Scheduled occurrence lifecycle ledger post-image is not canonical.'
-}
-
-function validateScheduledOccurrenceMutationDeltas(
-  intent: ScheduledOccurrenceMutationIntent,
-  beforeExecution: WorkflowExecutionRecord | null,
-  afterExecution: WorkflowExecutionRecord
-): string | null {
-  const workflowAllowedKeys =
-    intent.kind === 'materialize'
-      ? new Set([
-          'history',
-          'activeExecutionId',
-          'lastRunAt',
-          'lastStatus',
-          'lastError',
-          'nextRunAt',
-          'updatedAt'
-        ])
-      : intent.kind === 'claim'
-        ? new Set(['history', 'lastStatus', 'lastError', 'updatedAt'])
-        : new Set([
-            'history',
-            'lastStatus',
-            'lastError',
-            'lastCompletedAt',
-            'activeExecutionId',
-            'failureStreak',
-            'enabled',
-            'nextRunAt',
-            'updatedAt'
-          ])
-  if (
-    !hasOnlyAllowedObjectDeltas(
-      intent.workflowBefore,
-      intent.workflowAfter,
-      workflowAllowedKeys
-    )
-  ) {
-    return 'Scheduled occurrence mutation changes unrelated workflow authority.'
-  }
-
-  if (intent.kind === 'materialize') {
-    const expectedHistory = [...intent.workflowBefore.history, afterExecution].slice(
-      -WORKFLOW_HISTORY_LIMIT
-    )
-    const materializedAtMs = Date.parse(intent.taskAfter.runAt)
-    const expectedNextRunAt = Number.isFinite(materializedAtMs)
-      ? resolveNextWorkflowRunAt(
-          intent.workflowBefore.trigger,
-          materializedAtMs,
-          materializedAtMs
-        )
-      : undefined
-    const queuedExecutionKeys = new Set([
-      'id',
-      'workflowId',
-      'scheduledTaskId',
-      'plannedFor',
-      'status',
-      'createdAt',
-      'updatedAt'
-    ])
-    if (
-      !sameJsonValue(intent.workflowAfter.history, expectedHistory) ||
-      !materializedTaskMatchesWorkflowAuthority(intent.taskAfter, intent.workflowBefore) ||
-      !materializedAttachmentsMatchTemplate(intent.taskAfter, intent.workflowBefore) ||
-      !scheduledTaskDispatchReceiptIsExact(intent.taskAfter) ||
-      intent.taskAfter.occurrenceSeal !== undefined ||
-      Object.keys(afterExecution).some((key) => !queuedExecutionKeys.has(key)) ||
-      afterExecution.startedAt !== undefined ||
-      afterExecution.completedAt !== undefined ||
-      afterExecution.error !== undefined ||
-      !Number.isFinite(materializedAtMs) ||
-      intent.taskAfter.createdAt !== intent.taskAfter.runAt ||
-      intent.taskAfter.updatedAt !== intent.taskAfter.runAt ||
-      intent.createdAt !== intent.taskAfter.updatedAt ||
-      afterExecution.createdAt !== intent.taskAfter.updatedAt ||
-      afterExecution.updatedAt !== intent.taskAfter.updatedAt ||
-      intent.workflowAfter.updatedAt !== intent.taskAfter.updatedAt ||
-      intent.workflowAfter.lastRunAt !== intent.taskAfter.updatedAt ||
-      intent.workflowAfter.activeExecutionId !== afterExecution.id ||
-      intent.workflowAfter.lastStatus !== 'queued' ||
-      intent.workflowAfter.lastError !== undefined ||
-      intent.workflowAfter.nextRunAt !== expectedNextRunAt
-    ) {
-      return 'Scheduled occurrence materialization changes unrelated occurrence authority.'
-    }
-    return null
-  }
-
-  if (!intent.taskBefore || !beforeExecution) {
-    return 'Scheduled occurrence mutation is missing an exact delta before-image.'
-  }
-  const taskAllowedKeys =
-    intent.kind === 'claim'
-      ? new Set(['status', 'runId', 'firedAt', 'runningSince', 'updatedAt', 'dispatchReceipt'])
-      : new Set(['status', 'completedAt', 'lastError', 'updatedAt'])
-  if (!hasOnlyAllowedObjectDeltas(intent.taskBefore, intent.taskAfter, taskAllowedKeys)) {
-    return 'Scheduled occurrence mutation changes unrelated task authority.'
-  }
-  if (
-    intent.createdAt !== intent.taskAfter.updatedAt ||
-    (intent.kind === 'claim' &&
-      (intent.taskAfter.firedAt !== intent.taskAfter.updatedAt ||
-        intent.taskAfter.runningSince !== intent.taskAfter.updatedAt ||
-        !scheduledTaskDispatchReceiptIsExact(intent.taskAfter))) ||
-    (intent.kind === 'settle' &&
-      (!intent.taskAfter.completedAt ||
-        !Number.isFinite(Date.parse(intent.taskAfter.completedAt))))
-  ) {
-    return 'Scheduled occurrence mutation timestamps or receipt are not exact.'
-  }
-
-  if (
-    intent.workflowBefore.history.length !== intent.workflowAfter.history.length ||
-    intent.workflowBefore.history.findIndex((item) => item.id === beforeExecution.id) !==
-      intent.workflowAfter.history.findIndex((item) => item.id === afterExecution.id)
-  ) {
-    return 'Scheduled occurrence mutation changes unrelated workflow history.'
-  }
-  for (let index = 0; index < intent.workflowBefore.history.length; index += 1) {
-    const before = intent.workflowBefore.history[index]
-    const after = intent.workflowAfter.history[index]
-    if (before.id !== beforeExecution.id) {
-      if (!sameJsonValue(before, after)) {
-        return 'Scheduled occurrence mutation changes an unrelated workflow execution.'
-      }
-      continue
-    }
-    const executionAllowedKeys =
-      intent.kind === 'claim'
-        ? new Set(['status', 'runId', 'updatedAt', 'startedAt'])
-        : new Set(['status', 'updatedAt', 'completedAt', 'error'])
-    if (!hasOnlyAllowedObjectDeltas(before, after, executionAllowedKeys)) {
-      return 'Scheduled occurrence mutation changes unrelated execution authority.'
-    }
-  }
-  const expectedProjection = projectWorkflowFromScheduledTask(
-    intent.workflowBefore,
-    intent.taskAfter,
-    intent.taskAfter.updatedAt
-  )
-  if (!expectedProjection || !sameJsonValue(expectedProjection.workflow, intent.workflowAfter)) {
-    return 'Scheduled occurrence workflow post-image is not the exact task projection.'
-  }
-  return null
-}
-
-function validateScheduledOccurrenceMutationIntent(
-  intent: ScheduledOccurrenceMutationIntent
-): string | null {
-  const { identity } = intent
-  if (
-    intent.schemaVersion !== 1 ||
-    !isNonEmptyTrimmedString(intent.id) ||
-    !isNonEmptyTrimmedString(intent.createdAt) ||
-    !['materialize', 'claim', 'settle'].includes(intent.kind) ||
-    !isNonEmptyTrimmedString(identity.taskId) ||
-    !isNonEmptyTrimmedString(identity.workflowId) ||
-    !isNonEmptyTrimmedString(identity.executionId) ||
-    !isNonEmptyTrimmedString(identity.plannedFor)
-  ) {
-    return 'Scheduled occurrence mutation metadata is invalid.'
-  }
-  if (
-    !taskMatchesOccurrenceIdentity(intent.taskAfter, identity) ||
-    intent.workflowBefore.id !== identity.workflowId ||
-    intent.workflowAfter.id !== identity.workflowId
-  ) {
-    return 'Scheduled occurrence mutation linkage does not match its exact tuple.'
-  }
-  if (intent.taskBefore && !taskMatchesOccurrenceIdentity(intent.taskBefore, identity)) {
-    return 'Scheduled occurrence mutation before-image does not match its exact tuple.'
-  }
-
-  const beforeExecutionIds = intent.workflowBefore.history.filter(
-    (execution) => execution.id === identity.executionId
-  )
-  const afterExecutionIds = intent.workflowAfter.history.filter(
-    (execution) => execution.id === identity.executionId
-  )
-  const beforeExecutions = beforeExecutionIds.filter((execution) =>
-    workflowExecutionMatchesIdentity(execution, identity)
-  )
-  const afterExecutions = afterExecutionIds.filter((execution) =>
-    workflowExecutionMatchesIdentity(execution, identity)
-  )
-  if (afterExecutionIds.length !== 1 || afterExecutions.length !== 1) {
-    return 'Scheduled occurrence mutation after-image has an ambiguous workflow execution.'
-  }
-  const deltaReason = validateScheduledOccurrenceMutationDeltas(
-    intent,
-    beforeExecutions[0] || null,
-    afterExecutions[0]
-  )
-  if (deltaReason) return deltaReason
-  const timestampReason = validateScheduledOccurrenceMutationTimestamps(
-    intent,
-    beforeExecutions[0] || null,
-    afterExecutions[0]
-  )
-  if (timestampReason) return timestampReason
-  const ledgerReason = validateScheduledOccurrenceLedgerPostImage(intent)
-  if (ledgerReason) return ledgerReason
-
-  if (intent.kind === 'materialize') {
-    if (
-      intent.taskBefore !== null ||
-      beforeExecutionIds.length !== 0 ||
-      identity.runId !== undefined ||
-      intent.taskAfter.status !== 'due' ||
-      intent.taskAfter.runId !== undefined ||
-      afterExecutions[0].status !== 'queued' ||
-      afterExecutions[0].runId !== undefined
-    ) {
-      return 'Scheduled occurrence materialization intent is not a fresh queued occurrence.'
-    }
-    return null
-  }
-
-  if (!intent.taskBefore || beforeExecutionIds.length !== 1 || beforeExecutions.length !== 1) {
-    return 'Scheduled occurrence mutation is missing an exact before-image.'
-  }
-  if (intent.kind === 'claim') {
-    if (
-      !isNonEmptyTrimmedString(identity.runId) ||
-      intent.taskBefore.status !== 'due' ||
-      intent.taskBefore.runId !== undefined ||
-      beforeExecutions[0].status !== 'queued' ||
-      beforeExecutions[0].runId !== undefined ||
-      intent.taskAfter.status !== 'running' ||
-      intent.taskAfter.runId !== identity.runId ||
-      afterExecutions[0].status !== 'running' ||
-      afterExecutions[0].runId !== identity.runId
-    ) {
-      return 'Scheduled occurrence claim intent does not establish exactly one owner.'
-    }
-    return null
-  }
-
-  if (identity.runId === undefined) {
-    const queuedTerminal =
-      (intent.taskBefore.status === 'due' || intent.taskBefore.status === 'pending') &&
-      beforeExecutions[0].status === 'queued' &&
-      (intent.taskAfter.status === 'failed' || intent.taskAfter.status === 'cancelled')
-    const legacyRunningTerminal =
-      intent.taskBefore.status === 'running' &&
-      beforeExecutions[0].status === 'running' &&
-      isTerminalScheduledTaskStatus(intent.taskAfter.status)
-    if (
-      (!queuedTerminal && !legacyRunningTerminal) ||
-      intent.taskBefore.runId !== undefined ||
-      beforeExecutions[0].runId !== undefined ||
-      intent.taskAfter.runId !== undefined ||
-      !isTerminalWorkflowExecutionStatus(afterExecutions[0].status) ||
-      afterExecutions[0].runId !== undefined ||
-      scheduledTaskStatusToWorkflowStatus(intent.taskAfter.status) !== afterExecutions[0].status
-    ) {
-      return 'Scheduled occurrence unowned settle intent is not an exact queued terminal.'
-    }
-    return null
-  }
-  if (!isNonEmptyTrimmedString(identity.runId)) {
-    return 'Scheduled occurrence mutation has an invalid run owner.'
-  }
-  if (
-    intent.taskBefore.status !== 'running' ||
-    intent.taskBefore.runId !== identity.runId ||
-    beforeExecutions[0].status !== 'running' ||
-    beforeExecutions[0].runId !== identity.runId ||
-    !isTerminalScheduledTaskStatus(intent.taskAfter.status) ||
-    intent.taskAfter.runId !== identity.runId ||
-    !isTerminalWorkflowExecutionStatus(afterExecutions[0].status) ||
-    scheduledTaskStatusToWorkflowStatus(intent.taskAfter.status) !== afterExecutions[0].status ||
-    afterExecutions[0].runId !== identity.runId
-  ) {
-    return 'Scheduled occurrence settle intent does not preserve its exact run owner.'
-  }
-  return null
-}
-
-function decodeScheduledOccurrenceMutationIntent(
-  value: unknown
-): ScheduledOccurrenceMutationIntent | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
-  const input = value as Partial<ScheduledOccurrenceMutationIntent>
-  if (
-    input.schemaVersion !== 1 ||
-    !input.identity ||
-    typeof input.identity !== 'object' ||
-    !input.taskAfter ||
-    typeof input.taskAfter !== 'object' ||
-    !input.workflowBefore ||
-    typeof input.workflowBefore !== 'object' ||
-    !input.workflowAfter ||
-    typeof input.workflowAfter !== 'object'
-  ) {
-    return null
-  }
-  const intent = input as ScheduledOccurrenceMutationIntent
-  try {
-    return validateScheduledOccurrenceMutationIntent(intent) ? null : intent
-  } catch {
-    return null
-  }
-}
-
 function maybeCrashScheduledOccurrenceMutation(point: ScheduledOccurrenceMutationCrashPoint): void {
   if (scheduledOccurrenceMutationCrashPoint !== point) return
   scheduledOccurrenceMutationCrashPoint = null
   throw new Error(`Injected scheduled occurrence mutation crash ${point}.`)
-}
-
-interface WorkflowTaskProjection {
-  workflow: WorkflowDefinition
-  priorStatus: WorkflowExecutionRecord['status']
-  nextStatus: WorkflowExecutionRecord['status']
 }
 
 type ScheduledTaskWorkflowPairValidation =
@@ -2016,109 +1319,6 @@ function validateScheduledTaskWorkflowPair(
     return { ok: false, reason: 'Workflow-linked running task does not match its execution.' }
   }
   return { ok: true, workflow, execution, linkage: 'exact' }
-}
-
-function projectWorkflowFromScheduledTask(
-  source: WorkflowDefinition,
-  task: ScheduledTask,
-  nowIso: string
-): WorkflowTaskProjection | null {
-  if (
-    !task.workflowId ||
-    !task.workflowExecutionId ||
-    !task.workflowOccurrenceAt ||
-    source.id !== task.workflowId
-  ) {
-    return null
-  }
-  const nextStatus = scheduledTaskStatusToWorkflowStatus(task.status)
-  if (!nextStatus) return null
-  const workflow = cloneJsonValue(source)
-  const executionIndexes = workflow.history
-    .map((execution, index) => (execution.id === task.workflowExecutionId ? index : -1))
-    .filter((index) => index >= 0)
-  if (executionIndexes.length !== 1) return null
-  const executionIndex = executionIndexes[0]
-  const previous = workflow.history[executionIndex]
-  if (!workflowExecutionMatchesIdentity(previous, {
-    taskId: task.id,
-    workflowId: task.workflowId,
-    executionId: task.workflowExecutionId,
-    plannedFor: task.workflowOccurrenceAt,
-    runId: task.runId
-  })) {
-    return null
-  }
-
-  const priorStatus = previous.status
-  const terminal = isTerminalWorkflowExecutionStatus(nextStatus)
-  const wasTerminal = isTerminalWorkflowExecutionStatus(previous.status)
-  const isActiveExecution = workflow.activeExecutionId === task.workflowExecutionId
-  const terminalRunOwnerMatches = previous.runId
-    ? task.runId === previous.runId
-    : previous.runId === undefined && task.runId === undefined
-
-  if (wasTerminal || nextStatus === previous.status) return null
-  if (
-    nextStatus === 'running' &&
-    (previous.status !== 'queued' || !isActiveExecution || !task.runId)
-  ) {
-    return null
-  }
-  if (terminal && previous.status === 'running' && !terminalRunOwnerMatches) return null
-  if (
-    terminal &&
-    previous.status !== 'running' &&
-    !(
-      previous.status === 'queued' &&
-      (nextStatus === 'failed' || nextStatus === 'cancelled')
-    )
-  ) {
-    return null
-  }
-
-  workflow.history[executionIndex] = {
-    ...previous,
-    runId: task.runId || previous.runId,
-    status: nextStatus,
-    updatedAt: nowIso,
-    ...(nextStatus === 'running' && !previous.startedAt
-      ? { startedAt: task.firedAt || nowIso }
-      : {}),
-    ...(terminal ? { completedAt: task.completedAt || nowIso } : {}),
-    ...(task.lastError ? { error: task.lastError } : {})
-  }
-  workflow.history = workflow.history.slice(-WORKFLOW_HISTORY_LIMIT)
-  workflow.updatedAt = nowIso
-  if (isActiveExecution) {
-    workflow.lastStatus = nextStatus
-    workflow.lastError = task.lastError
-  }
-  if (terminal && isActiveExecution) {
-    workflow.lastCompletedAt = task.completedAt || nowIso
-    workflow.activeExecutionId = undefined
-    workflow.failureStreak = nextStatus === 'failed' ? workflow.failureStreak + 1 : 0
-    const maxFailures = workflow.limits.maxConsecutiveFailures || 3
-    if (nextStatus === 'failed' && workflow.failureStreak >= maxFailures) {
-      workflow.enabled = false
-      workflow.nextRunAt = undefined
-      workflow.lastError =
-        task.lastError || `Workflow auto-disabled after ${workflow.failureStreak} failures.`
-    } else if (workflow.enabled) {
-      const completedAtMs = task.completedAt ? Date.parse(task.completedAt) : Number.NaN
-      const nowMs = Number.isFinite(completedAtMs) ? completedAtMs : Date.now()
-      const existingNextRunAtMs = workflow.nextRunAt
-        ? Date.parse(workflow.nextRunAt)
-        : Number.NaN
-      workflow.nextRunAt =
-        Number.isFinite(existingNextRunAtMs) && existingNextRunAtMs > nowMs
-          ? workflow.nextRunAt
-          : resolveNextWorkflowRunAt(workflow.trigger, nowMs, nowMs)
-    } else {
-      workflow.nextRunAt = undefined
-    }
-  }
-  return { workflow, priorStatus, nextStatus }
 }
 
 function sameWorkflowPath(a: string | undefined, b: string | undefined): boolean {
@@ -2924,7 +2124,10 @@ function readScheduledOccurrenceMutationJournal(): ScheduledOccurrenceMutationJo
     return { status: 'blocked', reason: 'Scheduled occurrence mutation journal is unreadable.' }
   }
   if (value === null) return { status: 'none' }
-  const intent = decodeScheduledOccurrenceMutationIntent(value)
+  const intent = decodeScheduledOccurrenceMutationIntent(
+    value,
+    LEGACY_STORE_MUTATION_VALIDATION_POLICY
+  )
   if (!intent) {
     return { status: 'blocked', reason: 'Scheduled occurrence mutation journal is invalid.' }
   }
@@ -3211,57 +2414,6 @@ function previewText(value: unknown, maxLength: number): string {
 
 function normalizeChatWorkflowMode(value: unknown): ChatWorkflowMode {
   return value === 'plan' ? 'plan' : 'normal'
-}
-
-function buildScheduledTaskDispatchReceipt(task: ScheduledTask, generatedAt?: string) {
-  const workflowMode = normalizeChatWorkflowMode(task.workflowMode)
-  const input: Parameters<typeof buildRunQueueDispatchReceipt>[0] = {
-    runId: task.runId || task.id,
-    provider: task.provider,
-    source: 'scheduled',
-    scope: 'workspace',
-    workspaceId: task.workspaceId,
-    chatId: task.chatId,
-    permissionPosture: task.permissionPosture,
-    request: {
-      scope: 'workspace',
-      prompt: task.prompt,
-      ...(task.displayPrompt ? { displayPrompt: task.displayPrompt } : {}),
-      selectedModelType: task.selectedModelType,
-      customModel: task.customModel,
-      approvalMode: task.permissionPosture?.approvalMode || task.approvalMode,
-      workflowMode,
-      sessionTrust: task.sessionTrust,
-      imageAttachments: task.imageAttachments || [],
-      ...(task.externalPathGrants?.length ? { externalPathGrants: task.externalPathGrants } : {}),
-      ...(task.geminiWorktree ? { geminiWorktree: task.geminiWorktree } : {}),
-      ...(task.codexReasoningEffort !== undefined
-        ? { codexReasoningEffort: task.codexReasoningEffort }
-        : {}),
-      ...(task.codexServiceTier !== undefined ? { codexServiceTier: task.codexServiceTier } : {}),
-      ...(task.claudeReasoningEffort !== undefined
-        ? { claudeReasoningEffort: task.claudeReasoningEffort }
-        : {}),
-      ...(task.claudeFastMode !== undefined ? { claudeFastMode: task.claudeFastMode } : {}),
-      ...(task.kimiFastMode !== undefined ? { kimiFastMode: task.kimiFastMode } : {}),
-      ...(task.grokReasoningEffort !== undefined
-        ? { grokReasoningEffort: task.grokReasoningEffort }
-        : {}),
-      ...(task.cursorReasoningEffort !== undefined
-        ? { cursorReasoningEffort: task.cursorReasoningEffort }
-        : {}),
-      ...(task.cursorFastMode !== undefined ? { cursorFastMode: task.cursorFastMode } : {}),
-      ...(task.kimiThinkingEnabled !== undefined
-        ? { kimiThinkingEnabled: task.kimiThinkingEnabled }
-        : {}),
-      scheduledTaskId: task.id,
-      scheduledRunAt: task.runAt,
-      ...(task.runtimeProfileId ? { runtimeProfileId: task.runtimeProfileId } : {}),
-      ...(task.geminiAuthProfileId ? { geminiAuthProfileId: task.geminiAuthProfileId } : {}),
-      ...(task.handoffSourceRunId ? { handoffSourceRunId: task.handoffSourceRunId } : {})
-    }
-  }
-  return buildRunQueueDispatchReceipt(input, generatedAt)
 }
 
 function summarizeLastRun(
@@ -7050,7 +6202,10 @@ export class AppStore {
     intent: ScheduledOccurrenceMutationIntent,
     injectCrashPoints: boolean
   ): string | null {
-    const invalidReason = validateScheduledOccurrenceMutationIntent(intent)
+    const invalidReason = validateScheduledOccurrenceMutationIntent(
+      intent,
+      LEGACY_STORE_MUTATION_VALIDATION_POLICY
+    )
     if (invalidReason) return invalidReason
 
     const tasks = this.getScheduledTasks()
@@ -7123,7 +6278,10 @@ export class AppStore {
   private static commitScheduledOccurrenceMutation(
     intent: ScheduledOccurrenceMutationIntent
   ): void {
-    const invalidReason = validateScheduledOccurrenceMutationIntent(intent)
+    const invalidReason = validateScheduledOccurrenceMutationIntent(
+      intent,
+      LEGACY_STORE_MUTATION_VALIDATION_POLICY
+    )
     if (invalidReason) throw new Error(invalidReason)
     const pending = readScheduledOccurrenceMutationJournal()
     if (pending.status !== 'none') {
