@@ -1514,6 +1514,7 @@ let codexExecProcess: ChildProcess | null = null
 // don't nag on every run. See `maybeWarnNewerCodexBinary`.
 let codexNewerBinaryWarned = false
 let scheduledTaskTimer: ReturnType<typeof setTimeout> | null = null
+let scheduledOccurrenceRecoveryBlockedReason: string | null = null
 // ~10-min floor sweep so a 'due'/'pending'/'running' wedge self-heals even when
 // no occurrence is being materialized (the piggyback path is event-driven).
 let stallReconcilerInterval: ReturnType<typeof setInterval> | null = null
@@ -11437,6 +11438,12 @@ async function dispatchDueScheduledTaskHeadless(task: ScheduledTask): Promise<vo
 }
 
 function emitDueScheduledTasks() {
+  if (scheduledOccurrenceRecoveryBlockedReason) {
+    console.error(
+      `[scheduled-occurrence] dispatch disabled: ${scheduledOccurrenceRecoveryBlockedReason}`
+    )
+    return
+  }
   const materialized = AppStore.materializeDueWorkflows(
     Date.now(),
     scheduledAttachmentPersistence.resolve
@@ -11616,6 +11623,7 @@ function reconcileStalledScheduledTasks(): void {
 
 function scheduleNextTaskTimer() {
   clearScheduledTaskTimer()
+  if (scheduledOccurrenceRecoveryBlockedReason) return
   const nowMs = Date.now()
   const nextRunAtMs = getNextScheduledTaskRunAtMs({
     tasks: AppStore.getScheduledTasks(),
@@ -27636,6 +27644,13 @@ if (isGeminiMcpBridgeProcess) {
         `[workspace-target] ${adoptedWorkspaceRealPaths} direct legacy workspace pin${adoptedWorkspaceRealPaths === 1 ? '' : 's'} adopted at startup`
       )
     }
+    const occurrenceReplay = AppStore.replayScheduledOccurrenceMutations()
+    if (occurrenceReplay.status === 'blocked') {
+      scheduledOccurrenceRecoveryBlockedReason = occurrenceReplay.reason
+      console.error(
+        `[scheduled-occurrence] startup recovery blocked; scheduled dispatch is disabled: ${occurrenceReplay.reason}`
+      )
+    }
     // Sweep stale phone-attachment temp files (>24h) — they're only needed
     // for the duration of their run; without this the tmpdir accretes one
     // file per attached image forever.
@@ -32710,27 +32725,31 @@ if (isGeminiMcpBridgeProcess) {
 
     const startupRecoveryRecords = AppStore.recoverRunQueueAfterStartup()
     recordStartupRecoveryEvents(startupRecoveryRecords)
-    AppStore.recoverInterruptedScheduledTasksAfterStartup()
-    // Widened backstop at boot: the 'running'-only startup recovery above misses a
-    // 'due'/'pending' wedge held across a restart (e.g. renderer closed mid-dispatch).
-    // Settle those too so the workflow unblocks at launch.
-    reconcileStalledScheduledTasks()
-    // Stage 1 slice 2: close any workflow-runs ledger left open by a crash mid-run
-    // with a terminal stall_settled event. Runs AFTER both ScheduledTask recoveries
-    // so executions they already settled (via syncWorkflowFromScheduledTask) are
-    // terminal here → no-ops. Boot-only (an open ledger only arises from a crash).
-    AppStore.reconcileStaleWorkflowRunLedgers()
+    if (!scheduledOccurrenceRecoveryBlockedReason) {
+      AppStore.recoverInterruptedScheduledTasksAfterStartup()
+      // Widened backstop at boot: the 'running'-only startup recovery above misses a
+      // 'due'/'pending' wedge held across a restart (e.g. renderer closed mid-dispatch).
+      // Settle those too so the workflow unblocks at launch.
+      reconcileStalledScheduledTasks()
+      // Stage 1 slice 2: close any workflow-runs ledger left open by a crash mid-run
+      // with a terminal stall_settled event. Runs AFTER both ScheduledTask recoveries
+      // so executions they already settled (via syncWorkflowFromScheduledTask) are
+      // terminal here → no-ops. Boot-only (an open ledger only arises from a crash).
+      AppStore.reconcileStaleWorkflowRunLedgers()
+    }
     // Slice 6: same boot-time close-out for orphaned AUDIT runs — an audit run is a
     // hard singleton with no resume, so any record left 'planning'/'awaitingConfirm'/
     // 'running' at launch was orphaned by a crash and would otherwise sit non-terminal
     // forever. Settles each to 'failed' with a restart-interruption note.
     AppStore.reconcileStaleAuditRuns()
     // ~10-min floor sweep so a wedge self-heals even with no materialize traffic.
-    stallReconcilerInterval = setInterval(
-      reconcileStalledScheduledTasks,
-      Math.min(10 * 60 * 1000, DEFAULT_STALL_BACKSTOP_MS)
-    )
-    stallReconcilerInterval.unref?.()
+    if (!scheduledOccurrenceRecoveryBlockedReason) {
+      stallReconcilerInterval = setInterval(
+        reconcileStalledScheduledTasks,
+        Math.min(10 * 60 * 1000, DEFAULT_STALL_BACKSTOP_MS)
+      )
+      stallReconcilerInterval.unref?.()
+    }
     AppStore.recoverExpiredApprovalLedger()
     void getGeminiMcpBridgeStatus({
       autoRepairIfEnabled: AppStore.getSettings().geminiMcpBridgeEnabled
@@ -36497,23 +36516,21 @@ if (isGeminiMcpBridgeProcess) {
         runRoute: AgentRunRoute | null = null
       ) => {
         assertMainRendererSender(event)
-        const normalizedPayload = normalizeAgentRunPayload({
-          provider: 'gemini',
-          workspace,
-          prompt,
-          model,
-          approvalMode,
-          sessionTrust,
-          imagePaths: imageAttachments,
-          providerSessionId: resumeSessionId,
-          geminiWorktree: worktree,
-          ...runRoute
-        }, agentRunNormalizerDeps)
-        normalizedPayload.appRunId = routeWithRunId('gemini', normalizedPayload).appRunId
-        if (!(await ensureProviderRunPreflight(event.sender, normalizedPayload))) {
-          return
-        }
-        await runGeminiProvider(event, normalizedPayload)
+        await dispatchRunWithProviderPause(
+          {
+            provider: 'gemini',
+            workspace,
+            prompt,
+            model,
+            approvalMode,
+            sessionTrust,
+            imagePaths: imageAttachments,
+            providerSessionId: resumeSessionId,
+            geminiWorktree: worktree,
+            ...runRoute
+          } as AgentRunPayload,
+          event
+        )
       }
     )
 

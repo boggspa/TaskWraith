@@ -11,6 +11,18 @@ describe('workspace target authority integration', () => {
       service
     )
     const runQueue = indexSource.indexOf('const runQueueService = new RunQueueService({', service)
+    const occurrenceReplay = indexSource.indexOf(
+      'const occurrenceReplay = AppStore.replayScheduledOccurrenceMutations()',
+      service
+    )
+    const remoteWorkflowActions = indexSource.indexOf(
+      'const remoteWorkflowActions = new RemoteWorkflowActions({',
+      service
+    )
+    const runQueueRecovery = indexSource.indexOf(
+      'const startupRecoveryRecords = AppStore.recoverRunQueueAfterStartup()',
+      service
+    )
     const scheduledRecovery = indexSource.indexOf(
       'AppStore.recoverInterruptedScheduledTasksAfterStartup()',
       service
@@ -19,8 +31,36 @@ describe('workspace target authority integration', () => {
 
     expect(service).toBeGreaterThanOrEqual(0)
     expect(reconcile).toBeGreaterThan(service)
-    expect(runQueue).toBeGreaterThan(reconcile)
-    expect(scheduledRecovery).toBeGreaterThan(reconcile)
-    expect(schedulerTimer).toBeGreaterThan(reconcile)
+    expect(occurrenceReplay).toBeGreaterThan(reconcile)
+    expect(runQueue).toBeGreaterThan(occurrenceReplay)
+    expect(remoteWorkflowActions).toBeGreaterThan(occurrenceReplay)
+    expect(runQueueRecovery).toBeGreaterThan(occurrenceReplay)
+    expect(scheduledRecovery).toBeGreaterThan(occurrenceReplay)
+    expect(schedulerTimer).toBeGreaterThan(occurrenceReplay)
+  })
+
+  it('fails scheduled startup closed when occurrence replay is blocked', () => {
+    const replay = indexSource.indexOf(
+      'const occurrenceReplay = AppStore.replayScheduledOccurrenceMutations()'
+    )
+    const blocked = indexSource.indexOf("if (occurrenceReplay.status === 'blocked')", replay)
+    const scheduledRecovery = indexSource.indexOf(
+      'AppStore.recoverInterruptedScheduledTasksAfterStartup()',
+      replay
+    )
+    const guardedRecovery = indexSource.lastIndexOf(
+      'if (!scheduledOccurrenceRecoveryBlockedReason)',
+      scheduledRecovery
+    )
+    const emitGuard = indexSource.indexOf(
+      'if (scheduledOccurrenceRecoveryBlockedReason) {',
+      indexSource.indexOf('function emitDueScheduledTasks()')
+    )
+
+    expect(replay).toBeGreaterThanOrEqual(0)
+    expect(blocked).toBeGreaterThan(replay)
+    expect(guardedRecovery).toBeGreaterThan(blocked)
+    expect(guardedRecovery).toBeLessThan(scheduledRecovery)
+    expect(emitGuard).toBeGreaterThanOrEqual(0)
   })
 })
