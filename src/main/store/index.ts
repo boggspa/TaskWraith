@@ -362,6 +362,36 @@ const scheduledOccurrenceMutationsPath = path.join(
   userDataPath,
   'scheduled-occurrence-mutation.json'
 )
+const scheduledRunIdTombstonesPath = path.join(
+  userDataPath,
+  'scheduled-run-id-tombstones.jsonl'
+)
+type ScheduledRunIdTombstoneKind = 'root' | 'loop-child' | 'ensemble-child'
+interface ScheduledRunIdTombstoneRecord {
+  schemaVersion: 1
+  sequence: number
+  runId: string
+  rootRunId: string
+  taskId: string
+  kind: ScheduledRunIdTombstoneKind
+  recordedAt: string
+  prevHash: string | null
+  hash: string
+}
+const SCHEDULED_RUN_ID_TOMBSTONE_MAX_BYTES = 128 * 1024 * 1024
+const SCHEDULED_RUN_ID_TOMBSTONE_MAX_RECORDS = 500_000
+const SCHEDULED_RUN_ID_TOMBSTONE_MAX_LINE_BYTES = 4 * 1024
+const SCHEDULED_RUN_ID_TOMBSTONE_MAX_ID_CHARS = 512
+let scheduledRunIdTombstoneCache: {
+  dev: number
+  ino: number
+  ctimeMs: number
+  mtimeMs: number
+  size: number
+  lastSequence: number
+  lastHash: string | null
+  records: Map<string, ScheduledRunIdTombstoneRecord>
+} | null = null
 const workspaceBoardsPath = path.join(userDataPath, 'workspace-boards.json')
 const workspaceBoardCardsPath = path.join(userDataPath, 'workspace-board-cards.json')
 const evidencePacksPath = path.join(userDataPath, 'evidence-packs.json')
@@ -2061,6 +2091,353 @@ function writeJson<T>(filePath: string, data: T) {
       // Best effort: stale temp files are safer than masking the original failure.
     }
     throw e
+  }
+}
+
+function normalizedScheduledRunIdTombstone(
+  value: unknown
+): ScheduledRunIdTombstoneRecord | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const candidate = value as Partial<ScheduledRunIdTombstoneRecord>
+  const keys = Object.keys(value).sort()
+  const expectedKeys = [
+    'hash',
+    'kind',
+    'prevHash',
+    'recordedAt',
+    'rootRunId',
+    'runId',
+    'schemaVersion',
+    'sequence',
+    'taskId'
+  ]
+  if (!isDeepStrictEqual(keys, expectedKeys)) return null
+  const runId = typeof candidate.runId === 'string' ? candidate.runId : ''
+  const rootRunId = typeof candidate.rootRunId === 'string' ? candidate.rootRunId : ''
+  const taskId = typeof candidate.taskId === 'string' ? candidate.taskId : ''
+  const recordedAt = typeof candidate.recordedAt === 'string' ? candidate.recordedAt : ''
+  if (
+    candidate.schemaVersion !== 1 ||
+    !Number.isSafeInteger(candidate.sequence) ||
+    (candidate.sequence as number) < 1 ||
+    !runId ||
+    runId !== runId.trim() ||
+    runId.length > SCHEDULED_RUN_ID_TOMBSTONE_MAX_ID_CHARS ||
+    !rootRunId ||
+    rootRunId !== rootRunId.trim() ||
+    rootRunId.length > SCHEDULED_RUN_ID_TOMBSTONE_MAX_ID_CHARS ||
+    !taskId ||
+    taskId !== taskId.trim() ||
+    taskId.length > SCHEDULED_RUN_ID_TOMBSTONE_MAX_ID_CHARS ||
+    !Number.isFinite(Date.parse(recordedAt)) ||
+    new Date(Date.parse(recordedAt)).toISOString() !== recordedAt ||
+    (candidate.prevHash !== null &&
+      (typeof candidate.prevHash !== 'string' || !/^[a-f0-9]{64}$/.test(candidate.prevHash))) ||
+    typeof candidate.hash !== 'string' ||
+    !/^[a-f0-9]{64}$/.test(candidate.hash) ||
+    (candidate.kind !== 'root' &&
+      candidate.kind !== 'loop-child' &&
+      candidate.kind !== 'ensemble-child')
+  ) {
+    return null
+  }
+  return {
+    schemaVersion: 1,
+    sequence: candidate.sequence as number,
+    runId,
+    rootRunId,
+    taskId,
+    kind: candidate.kind,
+    recordedAt,
+    prevHash: candidate.prevHash,
+    hash: candidate.hash
+  }
+}
+
+function scheduledRunIdTombstoneHash(
+  record: Omit<ScheduledRunIdTombstoneRecord, 'hash'>
+): string {
+  return createHash('sha256')
+    .update(
+      'TaskWraith:scheduled-run-id-tombstone:v1\0' +
+      JSON.stringify({
+        schemaVersion: record.schemaVersion,
+        sequence: record.sequence,
+        runId: record.runId,
+        rootRunId: record.rootRunId,
+        taskId: record.taskId,
+        kind: record.kind,
+        recordedAt: record.recordedAt,
+        prevHash: record.prevHash
+      })
+    )
+    .digest('hex')
+}
+
+function sameScheduledRunIdTombstoneIdentity(
+  left: ScheduledRunIdTombstoneRecord,
+  right: ScheduledRunIdTombstoneRecord
+): boolean {
+  return (
+    left.runId === right.runId &&
+    left.rootRunId === right.rootRunId &&
+    left.taskId === right.taskId &&
+    left.kind === right.kind
+  )
+}
+
+function scheduledRunIdTombstoneFileStat(): fs.Stats | null {
+  try {
+    const stat = fs.lstatSync(scheduledRunIdTombstonesPath)
+    if (!stat.isFile()) {
+      throw new Error('Scheduled run-id tombstone ledger must be a regular file.')
+    }
+    return stat
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
+    throw error
+  }
+}
+
+function openScheduledRunIdTombstoneFile(flags: number, mode?: number): number {
+  const noFollow = fs.constants.O_NOFOLLOW ?? 0
+  const nonBlocking = fs.constants.O_NONBLOCK ?? 0
+  const descriptor = fs.openSync(
+    scheduledRunIdTombstonesPath,
+    flags | noFollow | nonBlocking,
+    mode
+  )
+  const stat = fs.fstatSync(descriptor)
+  if (!stat.isFile()) {
+    fs.closeSync(descriptor)
+    throw new Error('Scheduled run-id tombstone ledger descriptor is not a regular file.')
+  }
+  return descriptor
+}
+
+function readScheduledRunIdTombstones(): Map<string, ScheduledRunIdTombstoneRecord> {
+  const stat = scheduledRunIdTombstoneFileStat()
+  if (!stat) {
+    scheduledRunIdTombstoneCache = null
+    return new Map()
+  }
+  if (stat.size > SCHEDULED_RUN_ID_TOMBSTONE_MAX_BYTES) {
+    throw new Error('Scheduled run-id tombstone ledger exceeds its safe storage boundary.')
+  }
+  if (
+    scheduledRunIdTombstoneCache &&
+    scheduledRunIdTombstoneCache.dev === stat.dev &&
+    scheduledRunIdTombstoneCache.ino === stat.ino &&
+    scheduledRunIdTombstoneCache.ctimeMs === stat.ctimeMs &&
+    scheduledRunIdTombstoneCache.mtimeMs === stat.mtimeMs &&
+    scheduledRunIdTombstoneCache.size === stat.size
+  ) {
+    return scheduledRunIdTombstoneCache.records
+  }
+  let descriptor: number | null = null
+  let raw: string
+  try {
+    descriptor = openScheduledRunIdTombstoneFile(fs.constants.O_RDONLY)
+    const openedStat = fs.fstatSync(descriptor)
+    if (openedStat.dev !== stat.dev || openedStat.ino !== stat.ino || openedStat.size !== stat.size) {
+      throw new Error('Scheduled run-id tombstone ledger changed while it was being opened.')
+    }
+    raw = fs.readFileSync(descriptor, 'utf8')
+  } finally {
+    if (descriptor !== null) fs.closeSync(descriptor)
+  }
+  if (raw.length > 0 && !raw.endsWith('\n')) {
+    throw new Error('Scheduled run-id tombstone ledger has an incomplete durable tail.')
+  }
+  const records = new Map<string, ScheduledRunIdTombstoneRecord>()
+  let lastHash: string | null = null
+  const lines = raw.length === 0 ? [] : raw.slice(0, -1).split('\n')
+  if (lines.some((line) => line.length === 0)) {
+    throw new Error('Scheduled run-id tombstone ledger contains an empty record.')
+  }
+  for (const line of lines) {
+    if (Buffer.byteLength(line, 'utf8') > SCHEDULED_RUN_ID_TOMBSTONE_MAX_LINE_BYTES) {
+      throw new Error('Scheduled run-id tombstone ledger contains an oversized record.')
+    }
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(line)
+    } catch {
+      throw new Error('Scheduled run-id tombstone ledger contains invalid JSON.')
+    }
+    const record = normalizedScheduledRunIdTombstone(parsed)
+    if (!record) {
+      throw new Error('Scheduled run-id tombstone ledger contains an invalid record.')
+    }
+    if (JSON.stringify(record) !== line) {
+      throw new Error('Scheduled run-id tombstone ledger contains a non-canonical record.')
+    }
+    if (
+      record.sequence !== records.size + 1 ||
+      record.prevHash !== lastHash ||
+      scheduledRunIdTombstoneHash({
+        schemaVersion: record.schemaVersion,
+        sequence: record.sequence,
+        runId: record.runId,
+        rootRunId: record.rootRunId,
+        taskId: record.taskId,
+        kind: record.kind,
+        recordedAt: record.recordedAt,
+        prevHash: record.prevHash
+      }) !== record.hash
+    ) {
+      throw new Error('Scheduled run-id tombstone ledger hash chain is invalid.')
+    }
+    if (records.has(record.runId)) {
+      throw new Error('Scheduled run-id tombstone ledger contains a duplicate run id.')
+    }
+    if (record.kind === 'root') {
+      if (record.runId !== record.rootRunId) {
+        throw new Error('Scheduled run-id tombstone root identity is invalid.')
+      }
+    } else {
+      const root = records.get(record.rootRunId)
+      if (
+        record.runId === record.rootRunId ||
+        !root ||
+        root.kind !== 'root' ||
+        root.taskId !== record.taskId
+      ) {
+        throw new Error('Scheduled run-id tombstone child has no matching prior root.')
+      }
+    }
+    if (records.size >= SCHEDULED_RUN_ID_TOMBSTONE_MAX_RECORDS) {
+      throw new Error('Scheduled run-id tombstone ledger exceeds its safe record boundary.')
+    }
+    records.set(record.runId, record)
+    lastHash = record.hash
+  }
+  scheduledRunIdTombstoneCache = {
+    dev: stat.dev,
+    ino: stat.ino,
+    ctimeMs: stat.ctimeMs,
+    mtimeMs: stat.mtimeMs,
+    size: stat.size,
+    lastSequence: records.size,
+    lastHash,
+    records
+  }
+  return records
+}
+
+function appendScheduledRunIdTombstone(record: ScheduledRunIdTombstoneRecord): void {
+  const records = readScheduledRunIdTombstones()
+  const existing = records.get(record.runId)
+  if (existing) {
+    if (!sameScheduledRunIdTombstoneIdentity(existing, record)) {
+      throw new Error('Scheduled run id is already bound to another occurrence.')
+    }
+    return
+  }
+  if (records.size >= SCHEDULED_RUN_ID_TOMBSTONE_MAX_RECORDS) {
+    throw new Error('Scheduled run-id tombstone ledger reached its safe record boundary.')
+  }
+  if (record.kind !== 'root') {
+    const root = records.get(record.rootRunId)
+    if (!root || root.kind !== 'root' || root.taskId !== record.taskId) {
+      throw new Error('Scheduled child run id requires its durable root tombstone first.')
+    }
+  }
+  const directoryPath = path.dirname(scheduledRunIdTombstonesPath)
+  const fileExisted = scheduledRunIdTombstoneCache !== null
+  fs.mkdirSync(directoryPath, { recursive: true })
+  const prevHash = scheduledRunIdTombstoneCache?.lastHash ?? null
+  const sequence = (scheduledRunIdTombstoneCache?.lastSequence ?? 0) + 1
+  const unsigned = { ...record, sequence, prevHash }
+  const durableRecord: ScheduledRunIdTombstoneRecord = {
+    ...unsigned,
+    hash: scheduledRunIdTombstoneHash(unsigned)
+  }
+  const serialized = `${JSON.stringify(durableRecord)}\n`
+  const serializedBytes = Buffer.byteLength(serialized, 'utf8')
+  const previousSize = scheduledRunIdTombstoneCache?.size ?? 0
+  if (
+    serializedBytes > SCHEDULED_RUN_ID_TOMBSTONE_MAX_LINE_BYTES ||
+    previousSize + serializedBytes > SCHEDULED_RUN_ID_TOMBSTONE_MAX_BYTES
+  ) {
+    throw new Error('Scheduled run-id tombstone ledger reached its safe byte boundary.')
+  }
+  let descriptor: number | null = null
+  let appendedStat: fs.Stats | null = null
+  try {
+    descriptor = openScheduledRunIdTombstoneFile(
+      fs.constants.O_APPEND | fs.constants.O_CREAT | fs.constants.O_RDWR,
+      0o600
+    )
+    const openedStat = fs.fstatSync(descriptor)
+    if (
+      openedStat.size !== previousSize ||
+      (fileExisted &&
+        (openedStat.dev !== scheduledRunIdTombstoneCache?.dev ||
+          openedStat.ino !== scheduledRunIdTombstoneCache?.ino))
+    ) {
+      throw new Error('Scheduled run-id tombstone ledger changed before append.')
+    }
+    fs.writeFileSync(descriptor, serialized, 'utf8')
+    fs.fsyncSync(descriptor)
+    try {
+      fs.fchmodSync(descriptor, 0o600)
+    } catch {
+      // Best effort on filesystems that do not support POSIX modes.
+    }
+    appendedStat = fs.fstatSync(descriptor)
+    if (appendedStat.size !== previousSize + serializedBytes) {
+      throw new Error('Scheduled run-id tombstone append changed the unexpected file extent.')
+    }
+    const tail = Buffer.alloc(serializedBytes)
+    const bytesRead = fs.readSync(
+      descriptor,
+      tail,
+      0,
+      serializedBytes,
+      appendedStat.size - serializedBytes
+    )
+    if (bytesRead !== serializedBytes || tail.toString('utf8') !== serialized) {
+      throw new Error('Scheduled run-id tombstone durable tail verification failed.')
+    }
+    if (!fileExisted) {
+      let directoryDescriptor: number | null = null
+      try {
+        directoryDescriptor = fs.openSync(directoryPath, 'r')
+        fs.fsyncSync(directoryDescriptor)
+      } finally {
+        if (directoryDescriptor !== null) fs.closeSync(directoryDescriptor)
+      }
+    }
+    const pathStat = scheduledRunIdTombstoneFileStat()
+    if (
+      !pathStat ||
+      pathStat.dev !== appendedStat.dev ||
+      pathStat.ino !== appendedStat.ino ||
+      pathStat.size !== appendedStat.size
+    ) {
+      throw new Error('Scheduled run-id tombstone ledger changed after append.')
+    }
+  } finally {
+    if (descriptor !== null) fs.closeSync(descriptor)
+  }
+  if (!appendedStat) {
+    throw new Error('Scheduled run-id tombstone ledger append was not verified.')
+  }
+  records.set(durableRecord.runId, durableRecord)
+  scheduledRunIdTombstoneCache = {
+    dev: appendedStat.dev,
+    ino: appendedStat.ino,
+    ctimeMs: appendedStat.ctimeMs,
+    mtimeMs: appendedStat.mtimeMs,
+    size: appendedStat.size,
+    lastSequence: durableRecord.sequence,
+    lastHash: durableRecord.hash,
+    records
+  }
+  const persisted = scheduledRunIdTombstoneCache.records.get(record.runId)
+  if (!persisted || !sameScheduledRunIdTombstoneIdentity(persisted, durableRecord)) {
+    throw new Error('Scheduled run-id tombstone could not be verified durably.')
   }
 }
 
@@ -6636,6 +7013,46 @@ export class AppStore {
   }
 
   // Scheduled tasks
+  static recordScheduledRunIdTombstone(input: {
+    runId: string
+    rootRunId: string
+    taskId: string
+    kind: ScheduledRunIdTombstoneKind
+  }): void {
+    const record = normalizedScheduledRunIdTombstone({
+      schemaVersion: 1,
+      sequence: 1,
+      ...input,
+      recordedAt: new Date().toISOString(),
+      prevHash: null,
+      hash: '0'.repeat(64)
+    })
+    if (
+      !record ||
+      (record.kind === 'root' && record.runId !== record.rootRunId) ||
+      (record.kind !== 'root' && record.runId === record.rootRunId)
+    ) {
+      throw new Error('Scheduled run-id tombstone identity is invalid.')
+    }
+    appendScheduledRunIdTombstone(record)
+  }
+
+  static hasScheduledRunIdTombstone(runId: string): boolean {
+    if (
+      typeof runId !== 'string' ||
+      !runId ||
+      runId !== runId.trim() ||
+      runId.length > SCHEDULED_RUN_ID_TOMBSTONE_MAX_ID_CHARS
+    ) {
+      return false
+    }
+    return readScheduledRunIdTombstones().has(runId)
+  }
+
+  static validateScheduledRunIdTombstoneLedger(): void {
+    readScheduledRunIdTombstones()
+  }
+
   static getScheduledTasks(workspaceId?: string): ScheduledTask[] {
     const tasks = readJson<ScheduledTask[]>(scheduledTasksPath, [])
     return tasks

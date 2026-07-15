@@ -2115,13 +2115,10 @@ export interface AppSettings {
    * `workflowBudgetKillEnabled !== false && hasAnyBudget(limits)`. */
   workflowBudgetKillEnabled?: boolean
   /**
-   * Stage 0b-dispatch — when TRUE (default) a SOLO scheduled task that comes due
-   * while the app is WINDOWLESS (window closed but process alive) is composed +
-   * dispatched by MAIN instead of waiting for a renderer to receive the
-   * 'scheduled-task-due' broadcast. Set false to revert to renderer-only dispatch
-   * (a windowless app then defers its solo runs until a window opens; the task
-   * stays 'due' and is retried each scheduler tick). Ensemble occurrences are
-   * never headless-dispatched regardless (they run through runEnsembleRound). */
+   * When TRUE (default), MAIN may dispatch due scheduled occurrences while the
+   * app is windowless. Set false to defer windowless occurrences until a window
+   * opens. MAIN remains the sole claim/dispatch owner in either mode; renderer
+   * availability never creates a second scheduled-run path. */
   headlessScheduledDispatchEnabled?: boolean
   windowBounds?: {
     x?: number

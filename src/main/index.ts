@@ -194,11 +194,6 @@ import {
   derivePopoutRunPayload
 } from './RendererRunAuthority'
 import { resolveComposerRunAuthority } from './ComposerRunAuthority'
-import {
-  assertRunAgentScheduledAuthority,
-  assertScheduledRunAuthority
-} from './ScheduledRunAuthority'
-import { ScheduledRunDispatchReceiptRegistry } from './ScheduledRunDispatchReceipt'
 import { appendGeminiCliWorktreeArgs } from './gemini/GeminiCliArgs'
 import {
   buildCodexFastServiceTierCompatibilityArgs,
@@ -450,7 +445,11 @@ import type { HumanShareProjection } from './collaboration/HumanShareProjection'
 import { detectConfiguredProviders } from './ProviderConfiguration'
 import { createDefaultEnsembleConfig } from './EnsembleDefaults'
 import { isProviderPaused } from './ProviderRunPause'
-import { createRunDispatchFacade, type RunDispatchFacadeDeps } from './run/RunDispatchFacade'
+import {
+  authorizeMainOwnedScheduledOccurrenceDispatch,
+  createRunDispatchFacade,
+  type RunDispatchFacadeDeps
+} from './run/RunDispatchFacade'
 import {
   createApprovalOrchestration,
   createMainApprovalOrchestration,
@@ -473,8 +472,14 @@ import {
   confirmNativeWorkflowAuthority
 } from './NativeWorkflowConfirmation'
 import { decideCancelInterrupt, shouldFlushPendingInterrupt } from './CodexPendingInterrupt'
-import { routeDueScheduledTask } from './HeadlessScheduledDispatch'
 import { getNextScheduledTaskRunAtMs } from './ScheduledTaskTimer'
+import {
+  ScheduledOccurrenceOwnerRegistry,
+  type ScheduledOccurrenceOwner
+} from './ScheduledOccurrenceOwnerRegistry'
+import { ScheduledOccurrenceTransaction } from './ScheduledOccurrenceTransaction'
+import type { ScheduledOccurrenceTerminalStatus } from './ScheduledOccurrenceMutationSemantics'
+import { assertPinnedWorkspaceTarget } from './WorkspaceTargetAuthority'
 import {
   WorkflowLoopEngine,
   mapLoopSnapshotToScheduledOutcome,
@@ -999,6 +1004,7 @@ import { isPathInsideWorkspace } from './AgenticPolicy'
 import {
   RunManager,
   canStartRunTransport,
+  isActiveRunSessionStatus,
   isTerminalRunSessionStatus
 } from './RunManager'
 import { decideClaudeSdkFailure } from './ClaudeSdkFallbackDecision'
@@ -2197,23 +2203,50 @@ let dispatchRunWithProviderPauseRef:
       event: { sender: Electron.WebContents }
     ) => Promise<{ dispatched: boolean; appRunId: string }>)
   | null = null
+// Scheduled occurrences bypass parent-turn mailbox enrichment. MAIN already
+// owns their exact durable prompt + run identity; treating one as an ordinary
+// user turn could both splice unrelated child mail into the occurrence and
+// clone away the process-local child authorization before the dispatch facade.
+let dispatchMainOwnedScheduledOccurrenceRef:
+  | ((
+      payload: AgentRunPayload,
+      event: { sender: Electron.WebContents }
+    ) => Promise<{ dispatched: boolean; appRunId: string }>)
+  | null = null
 const quotaWallSignalByRun = new Map<string, { provider: ProviderId; resetHintAt?: string }>()
 const failoverSnapshotByRun = new Map<string, FailoverRunSnapshot>()
-// A failover-rerouted run is dispatched MAIN-side with a fresh runId — the renderer
-// never registers an ActiveRunContext carrying scheduledTaskId for it, so its per-run
-// exit can't mark the scheduled task terminal (it would stay stuck 'running'). Bridge
-// it main-side: remember newRunId -> scheduledTaskId on reroute, mark terminal in
-// sendAgentCompatExit. Mirrors the ensemble fix (bb6b3aa8).
-const scheduledTaskIdByFailoverRun = new Map<string, string>()
-
-// Stage 0b-completion: a SOLO scheduled run is normally marked terminal by the
-// renderer; if the renderer closes mid-run the task wedges (the stall reconciler
-// is the only backstop, 6h later). Bridge it main-side too: remember
-// appRunId -> scheduledTaskId at dispatch, mark terminal in sendAgentCompatExit.
-// Idempotent vs the renderer mark (updateScheduledTask's transition guard).
-const scheduledTaskIdBySoloRun = new Map<string, string>()
-const scheduledRunDispatchReceipts = new ScheduledRunDispatchReceiptRegistry()
-const scheduledTaskIdsDispatching = new Set<string>()
+const scheduledOccurrenceOwners = new ScheduledOccurrenceOwnerRegistry()
+const scheduledOccurrenceTransaction = new ScheduledOccurrenceTransaction({
+  store: {
+    claimDueScheduledTaskForRun: (taskId, options) =>
+      AppStore.claimDueScheduledTaskForRun(taskId, options),
+    heartbeatScheduledTaskForRun: (taskId, options) =>
+      AppStore.heartbeatScheduledTaskForRun(taskId, options),
+    settleScheduledTaskForRun: (taskId, options) =>
+      AppStore.settleScheduledTaskForRun(taskId, options)
+  },
+  owners: scheduledOccurrenceOwners,
+  recordRootRunIdTombstone: (input) => AppStore.recordScheduledRunIdTombstone(input),
+  resolveRootOwner: (task) => {
+    const currentLoop = task.workflowId
+      ? AppStore.getWorkflowDefinition(task.workflowId)?.loop
+      : undefined
+    if (task.kind === 'ensemble') {
+      if (currentLoop) {
+        throw new Error('Ensemble scheduled occurrences cannot own workflow loops.')
+      }
+      return 'ensemble-root'
+    }
+    return currentLoop ? 'loop-root' : 'solo'
+  },
+  createRunId: (task, rootOwner) =>
+    rootOwner === 'ensemble-root'
+      ? `ensemble-scheduled-${randomUUID()}`
+      : rootOwner === 'loop-root'
+        ? `loop-${task.provider}-${randomUUID()}`
+        : `${task.provider}-scheduled-${randomUUID()}`,
+  now: () => Date.now()
+})
 
 // Stage 0b-dispatch — composerServiceRef lets the scheduler compose a run from
 // MAIN (the ComposerService is constructed later, in whenReady); headlessRunSender
@@ -2327,12 +2360,18 @@ const workflowBudgetRegistry = new WorkflowBudgetRegistry({
   abort: (provider, runId) => {
     void cancelProviderRun(provider, runId)
   },
-  markTaskFailed: (scheduledTaskId, lastError) => {
-    AppStore.updateScheduledTask(scheduledTaskId, {
-      status: 'failed',
+  markTaskFailed: ({ runId, scheduledTaskId, lastError }) => {
+    const owner = scheduledOccurrenceOwners.lookupByOwnerRunId(runId)
+    if (!owner || owner.taskId !== scheduledTaskId || owner.rootOwner !== 'solo') return
+    const settled = settleScheduledOccurrence(owner, 'failed', {
       completedAt: new Date().toISOString(),
       lastError
     })
+    if (!settled) {
+      console.error(
+        `[workflow-budget] exact scheduled occurrence settlement failed for run ${runId}`
+      )
+    }
   },
   now: () => Date.now(),
   setTimer: (fn, ms) => {
@@ -2438,6 +2477,12 @@ function maybeTriggerProviderAutoFailover(
   quotaWallSignalByRun.delete(appRunId)
   failoverSnapshotByRun.delete(appRunId)
   if (!failed) return
+  if (
+    scheduledOccurrenceOwners.isAppRunIdLiveOwned(appRunId) ||
+    AppStore.getScheduledTasks().some((task) => task.runId === appRunId)
+  ) {
+    return
+  }
   if (!signal || AppStore.getSettings().autoFailoverEnabled !== true) return
   // Dedup is via signal consumption above (signal+snapshot are deleted before
   // we fire), so a second terminal exit for the same run finds no signal and
@@ -2463,7 +2508,7 @@ async function triggerProviderAutoFailover(
       ? mainWindow.webContents
       : createHeadlessRunSender()
   try {
-    const failoverResult = await runProviderAutoFailover(
+    await runProviderAutoFailover(
       {
         getSettings: () => AppStore.getSettings(),
         updateSettings: (partial) => AppStore.updateSettings(partial),
@@ -2476,11 +2521,6 @@ async function triggerProviderAutoFailover(
       },
       { failedRunId, failedProvider, appChatId, snapshot, resetHintAt }
     )
-    // Carry the scheduled-task linkage onto the rerouted run so its main-side exit
-    // marks the task terminal (the renderer never sees this run).
-    if (failoverResult.ok && failoverResult.newRunId && snapshot?.scheduledTaskId) {
-      scheduledTaskIdByFailoverRun.set(failoverResult.newRunId, snapshot.scheduledTaskId)
-    }
   } catch (error) {
     console.warn('[auto-failover] orchestration failed', error)
   }
@@ -2496,12 +2536,6 @@ function emitAutoFailoverNotice(notice: AutoFailoverNotice): void {
   }
 }
 let ensembleOrchestratorRef: EnsembleOrchestrator | null = null
-// Scheduled ENSEMBLE occurrences carry no per-participant scheduledTaskId, so the
-// renderer's per-run exit (which marks single-provider scheduled tasks terminal)
-// never fires for them — the task would stay stuck 'running' forever. Bridge it
-// main-side: capture roundId -> scheduledTaskId at dispatch, mark the task in the
-// round-settle hook (completeSessionCheckpoint), then forget it.
-const scheduledTaskIdByEnsembleRound = new Map<string, string>()
 let wakeupTimerServiceRef: WakeupTimerService | null = null
 let sessionCheckpointStoreRef: SessionCheckpointStore | null = null
 let updateServiceRef: UpdateService | null = null
@@ -4068,7 +4102,7 @@ type BridgeRunTranscriptState = {
   modelLabel?: string
   providerSessionId?: string | null
   stats?: Record<string, unknown>
-  status: 'running' | 'success' | 'failed'
+  status: 'running' | 'success' | 'failed' | 'cancelled'
   errorMessage?: string
   flushedOnce: boolean
   flushTimer?: NodeJS.Timeout
@@ -5482,13 +5516,109 @@ function sealSoloCodexRunOnCompletion(args: {
  * Body stays inline this slice; zero behaviour change (each dep IS the exact
  * function the body previously referenced directly).
  */
+function scheduledOccurrenceOwnerForPayload(
+  payload: AgentRunPayload
+): ScheduledOccurrenceOwner | undefined {
+  const appRunId = optionalString(payload.appRunId)
+  const rootOwner = appRunId
+    ? scheduledOccurrenceOwners.lookupByOwnerRunId(appRunId)
+    : undefined
+  const loopOwner = appRunId
+    ? scheduledOccurrenceOwners.lookupLoopChildRun(appRunId, payload.provider)
+    : undefined
+  const roundId = optionalString(payload.ensembleRun?.roundId)
+  const ensembleChildOwner = appRunId
+    ? scheduledOccurrenceOwners.lookupEnsembleChildRun(appRunId, payload.provider)
+    : undefined
+  const ensembleRoundOwner = roundId
+    ? scheduledOccurrenceOwners.lookupEnsembleRound(roundId)
+    : undefined
+  if (
+    Boolean(ensembleChildOwner) !== Boolean(ensembleRoundOwner) ||
+    (ensembleChildOwner && ensembleRoundOwner && ensembleChildOwner !== ensembleRoundOwner)
+  ) {
+    throw new Error('Provider run does not match its scheduled ensemble child and round.')
+  }
+  const ensembleOwner = ensembleChildOwner ?? ensembleRoundOwner
+  const candidates = [rootOwner, loopOwner, ensembleOwner].filter(
+    (candidate): candidate is ScheduledOccurrenceOwner => Boolean(candidate)
+  )
+  const distinct = new Set(candidates)
+  if (distinct.size > 1) {
+    throw new Error('Provider run matches multiple scheduled occurrence owners.')
+  }
+  const owner = candidates[0]
+  if (!owner) return undefined
+  if (
+    (rootOwner && owner.rootOwner !== 'solo') ||
+    (loopOwner && owner.rootOwner !== 'loop-root') ||
+    (ensembleOwner && owner.rootOwner !== 'ensemble-root')
+  ) {
+    throw new Error('Provider run does not match its scheduled occurrence root family.')
+  }
+  return owner
+}
+
 async function ensureProviderRunPreflight(
   sender: Electron.WebContents,
   payload: AgentRunPayload
 ): Promise<boolean> {
   const route = routeWithRunId(payload.provider, payload)
   payload.appRunId = route.appRunId
-  if (payload.scope === 'global') {
+  const routedRunId = optionalString(route.appRunId)
+  let scheduledOwner: ScheduledOccurrenceOwner | undefined
+  try {
+    scheduledOwner = scheduledOccurrenceOwnerForPayload(payload)
+    const scheduledIdentityObserved =
+      Object.prototype.hasOwnProperty.call(payload, 'scheduledTaskId') ||
+      Boolean(routedRunId && wasScheduledOccurrenceRunIdObserved(routedRunId))
+    if (!scheduledOwner && scheduledIdentityObserved) {
+      throw new Error('Scheduled occurrence ownership ended before provider preflight.')
+    }
+  } catch (error) {
+    sendAgentCompatError(
+      sender,
+      payload.provider,
+      error instanceof Error ? error.message : String(error),
+      route
+    )
+    sendAgentCompatExit(sender, payload.provider, -1, route)
+    return false
+  }
+  if (scheduledOwner) {
+    try {
+      if (
+        payload.scope !== 'workspace' ||
+        payload.appChatId !== scheduledOwner.chatId ||
+        (scheduledOwner.rootOwner === 'solo' && payload.provider !== scheduledOwner.provider) ||
+        payload.runtimeWorktree?.requested
+      ) {
+        throw new Error('Scheduled occurrence dispatch authority changed before preflight.')
+      }
+      const initialPinnedWorkspace = assertScheduledOccurrenceWorkspace(scheduledOwner)
+      if (
+        payload.workspace !== scheduledOwner.workspacePath &&
+        payload.workspace !== initialPinnedWorkspace
+      ) {
+        throw new Error('Scheduled occurrence execution workspace changed before preflight.')
+      }
+      const registeredWorkspace = requireRegisteredWorkspace(scheduledOwner.workspacePath)
+      const workspaceRecord = findRegisteredWorkspace(registeredWorkspace)
+      if (!workspaceRecord || workspaceRecord.id !== scheduledOwner.workspaceId) {
+        throw new Error('Scheduled occurrence workspace registration changed before preflight.')
+      }
+      validateChatWorkspaceIdentity(payload.appChatId, workspaceRecord)
+    } catch (error) {
+      sendAgentCompatError(
+        sender,
+        payload.provider,
+        error instanceof Error ? error.message : String(error),
+        route
+      )
+      sendAgentCompatExit(sender, payload.provider, -1, route)
+      return false
+    }
+  } else if (payload.scope === 'global') {
     try {
       requireGlobalChat(payload.appChatId, 'Run global chat')
       payload.workspace = globalRunCwd()
@@ -5524,6 +5654,21 @@ async function ensureProviderRunPreflight(
     return false
   }
 
+  if (scheduledOwner) {
+    try {
+      payload.workspace = assertScheduledOccurrenceWorkspace(scheduledOwner)
+    } catch (error) {
+      sendAgentCompatError(
+        sender,
+        payload.provider,
+        error instanceof Error ? error.message : String(error),
+        route
+      )
+      sendAgentCompatExit(sender, payload.provider, -1, route)
+      return false
+    }
+  }
+
   const adapter = providerAdapters.require(payload.provider)
   const contract = await adapter.getCapabilityContract({
     workspacePath: payload.workspace,
@@ -5541,6 +5686,23 @@ async function ensureProviderRunPreflight(
     adapter
   )
   if (preflight.state === 'ready') {
+    if (scheduledOwner) {
+      try {
+        // Capability/model probes above are asynchronous. Re-validate every
+        // durable binding and re-pin the real directory at the last boundary
+        // before RunCoordinator enters the provider adapter.
+        payload.workspace = assertScheduledOccurrenceWorkspace(scheduledOwner)
+      } catch (error) {
+        sendAgentCompatError(
+          sender,
+          payload.provider,
+          error instanceof Error ? error.message : String(error),
+          route
+        )
+        sendAgentCompatExit(sender, payload.provider, -1, route)
+        return false
+      }
+    }
     return true
   }
   sendAgentCompatError(sender, payload.provider, preflight.reason, route)
@@ -7002,6 +7164,22 @@ function saveAndBroadcastChat(chat: ChatRecord): ChatRecord {
   return normalized
 }
 
+function saveEnsembleChatWithScheduledHeartbeat(chat: ChatRecord): ChatRecord {
+  const saved = saveAndBroadcastChat(chat)
+  const round = saved.ensemble?.activeRound
+  if (!round || round.status !== 'running') return saved
+  const owner = scheduledOccurrenceOwners.lookupEnsembleRound(round.roundId)
+  if (!owner) return saved
+  if (!scheduledOccurrenceTransaction.heartbeat(owner, new Date().toISOString())) {
+    failScheduledEnsembleOccurrenceAndAbort(
+      owner,
+      round.roundId,
+      'Scheduled ensemble heartbeat could not be persisted.'
+    )
+  }
+  return saved
+}
+
 function providerForTranscriptMessage(chat: ChatRecord, message: ChatMessage): ProviderId | undefined {
   const metadata = message.metadata || {}
   const metadataProvider =
@@ -7967,6 +8145,25 @@ function failClaimedSubThreadWorker(
   })
 }
 
+function failClaimedScheduledParentSubThreadWorker(
+  chat: ChatRecord,
+  event: SubThreadWorkerEvent,
+  claimId: string
+): void {
+  const current = AppStore.getChat(chat.appChatId) || chat
+  const control = current.delegationContext?.workerControl
+  if (!control) return
+  saveSubThreadWorkerControl(
+    current,
+    failClaimedSubThreadWorkerEvent(
+      control,
+      event.id,
+      claimId,
+      'Scheduled parent occurrences cannot dispatch detached sub-thread workers.'
+    )
+  )
+}
+
 function settleSubThreadWorkerRun(
   chatId: string | undefined,
   runId: string,
@@ -7999,6 +8196,11 @@ async function maybeDrainSubThreadWorkerQueue(subThreadId: string): Promise<void
       if (!claimed.event) return
       chat = saveSubThreadWorkerControl(chat, claimed.control)
       const event = claimed.event
+
+      if (event.parentRunId && wasScheduledOccurrenceRunIdObserved(event.parentRunId)) {
+        failClaimedScheduledParentSubThreadWorker(chat, event, claimId)
+        continue
+      }
 
       if (
         event.subThreadId !== chat.appChatId ||
@@ -8357,7 +8559,13 @@ function flushBridgeRunTranscript(runId: string, final = false): void {
     ...(state.runDiffByPath ? { runDiffByPath: state.runDiffByPath } : {}),
     status: final ? state.status : 'running',
     endedAt: final ? timestamp : existingRun?.endedAt,
-    exitCode: final && state.status === 'failed' ? 1 : existingRun?.exitCode
+    exitCode:
+      final && state.status === 'failed'
+        ? 1
+        : final && state.status === 'cancelled'
+          ? 130
+          : existingRun?.exitCode,
+    cancelled: final && state.status === 'cancelled' ? true : existingRun?.cancelled
   }
   if (runIndex >= 0) {
     runs[runIndex] = updatedRun
@@ -8419,7 +8627,7 @@ function scheduleBridgeRunFlush(runId: string): void {
 
 function finalizeBridgeRunTranscript(
   runId: string,
-  status: 'success' | 'failed',
+  status: 'success' | 'failed' | 'cancelled',
   errorMessage?: string
 ): void {
   const state = bridgeRunTranscripts.get(runId)
@@ -8436,7 +8644,9 @@ function finalizeBridgeRunTranscript(
       ? 'The provider ended this turn without producing an assistant response after a tool failed or was rejected.'
       : undefined)
   state.status = resolvedStatus
-  if (resolvedStatus === 'success') state.errorMessage = undefined
+  if (resolvedStatus === 'success' || resolvedStatus === 'cancelled') {
+    state.errorMessage = undefined
+  }
   else if (resolvedErrorMessage) state.errorMessage = resolvedErrorMessage
   // Chain link 3/3 (see registerBridgeRunTranscript).
   console.log(
@@ -10974,75 +11184,461 @@ function verifyScheduledTaskAttachmentOwnership(task: ScheduledTask): boolean {
   return resolved.ok
 }
 
+function assertScheduledOccurrenceWorkspace(owner: ScheduledOccurrenceOwner): string {
+  if (scheduledOccurrenceOwners.lookupByOwnerRunId(owner.ownerRunId) !== owner) {
+    throw new Error('Scheduled occurrence no longer has live process ownership.')
+  }
+  const task = AppStore.getScheduledTasks().find((candidate) => candidate.id === owner.taskId)
+  if (
+    !task ||
+    task.status !== 'running' ||
+    task.runId !== owner.ownerRunId ||
+    task.provider !== owner.provider ||
+    task.chatId !== owner.chatId ||
+    task.workspaceId !== owner.workspaceId ||
+    task.workspacePath !== owner.workspacePath
+  ) {
+    throw new Error('Scheduled occurrence no longer matches its exact durable owner.')
+  }
+  if (owner.workflowOccurrence) {
+    if (
+      task.workflowId !== owner.workflowOccurrence.workflowId ||
+      task.workflowExecutionId !== owner.workflowOccurrence.executionId ||
+      task.workflowOccurrenceAt !== owner.workflowOccurrence.plannedFor
+    ) {
+      throw new Error('Scheduled occurrence workflow linkage changed after claim.')
+    }
+  }
+
+  const chat = AppStore.getChat(owner.chatId)
+  if (
+    !chat ||
+    chat.scope === 'global' ||
+    chat.workspaceId !== owner.workspaceId ||
+    chat.workspacePath !== owner.workspacePath ||
+    (owner.rootOwner === 'ensemble-root') !== (chat.chatKind === 'ensemble')
+  ) {
+    throw new Error('Scheduled occurrence chat authority changed after claim.')
+  }
+  const workspace = AppStore.getWorkspaces().find(
+    (candidate) => candidate.id === owner.workspaceId
+  )
+  if (!workspace) throw new Error('Scheduled occurrence workspace is no longer registered.')
+  const workflow = owner.workflowOccurrence
+    ? AppStore.getWorkflowDefinition(owner.workflowOccurrence.workflowId)
+    : null
+  if (
+    owner.workflowOccurrence &&
+    (!workflow ||
+      workflow.workspaceId !== owner.workspaceId ||
+      workflow.workspacePath !== owner.workspacePath)
+  ) {
+    throw new Error('Scheduled occurrence workflow authority changed after claim.')
+  }
+
+  return assertPinnedWorkspaceTarget({
+    workspace,
+    task,
+    chat: { workspaceId: owner.workspaceId, workspacePath: owner.workspacePath },
+    workflow,
+    canonicalPath,
+    resolveRealDirectory: (value) => {
+      const stat = fsSync.statSync(value)
+      if (!stat.isDirectory()) throw new Error('Workspace target is not a directory.')
+      return fsSync.realpathSync.native(value)
+    }
+  })
+}
+
+function isScheduledOccurrenceChatBusy(task: ScheduledTask): boolean {
+  if (
+    scheduledOccurrenceOwners.lookupByChatId(task.chatId) ||
+    scheduledOccurrenceOwners.hasOrdinaryChatDispatchReservation(task.chatId)
+  ) {
+    return true
+  }
+  if (
+    RUN_MANAGER_PROVIDERS.some((provider) =>
+      runManager
+        .getActiveByProvider(provider)
+        .some((session) => session.appChatId === task.chatId)
+    )
+  ) {
+    return true
+  }
+  if (
+    AppStore.getRunQueueJobs({
+      chatId: task.chatId,
+      statuses: ['queued', 'steer_promoting', 'starting', 'active', 'paused', 'cancelling']
+    }).length > 0
+  ) {
+    return true
+  }
+  const chat = AppStore.getChat(task.chatId)
+  if (chat?.ensemble?.activeRound?.status === 'running') return true
+  return AppStore.getScheduledTasks().some(
+    (candidate) =>
+      candidate.id !== task.id &&
+      candidate.chatId === task.chatId &&
+      candidate.status === 'running'
+  )
+}
+
+function failScheduledOccurrence(owner: ScheduledOccurrenceOwner, lastError: string): void {
+  if (scheduledOccurrenceOwners.lookupByOwnerRunId(owner.ownerRunId) !== owner) return
+  const settled = settleScheduledOccurrence(owner, 'failed', {
+    completedAt: new Date().toISOString(),
+    lastError
+  })
+  if (!settled) {
+    console.error(
+      `[scheduled-occurrence] exact failure settlement rejected for task ${owner.taskId}, run ${owner.ownerRunId}`
+    )
+  }
+}
+
+function failScheduledEnsembleOccurrenceAndAbort(
+  owner: ScheduledOccurrenceOwner,
+  expectedRoundId: string,
+  lastError: string
+): void {
+  if (
+    owner.rootOwner !== 'ensemble-root' ||
+    scheduledOccurrenceOwners.lookupByOwnerRunId(owner.ownerRunId) !== owner ||
+    scheduledOccurrenceOwners.lookupEnsembleRoundIdForOwner(owner) !== expectedRoundId
+  ) {
+    return
+  }
+  const settled = settleScheduledOccurrence(owner, 'failed', {
+    completedAt: new Date().toISOString(),
+    lastError
+  })
+  if (!settled) {
+    console.error(
+      `[scheduled-occurrence] exact ensemble failure settlement rejected for task ${owner.taskId}, run ${owner.ownerRunId}`
+    )
+    return
+  }
+
+  workflowBudgetRegistry.onExit(owner.ownerRunId)
+  void ensembleOrchestratorRef
+    ?.cancelRound(owner.chatId, lastError, expectedRoundId)
+    .catch((error) => {
+      console.error(
+        '[scheduled-occurrence] exact failed ensemble round abort failed',
+        error instanceof Error ? error.message : String(error)
+      )
+      return false
+    })
+}
+
+function publishScheduledOccurrenceSettlement(): void {
+  try {
+    mainWindow?.webContents.send('scheduled-tasks-changed', AppStore.getScheduledTasks())
+    mainWindow?.webContents.send(
+      'workflow-definitions-changed',
+      AppStore.getWorkflowDefinitions()
+    )
+  } catch (error) {
+    console.error(
+      '[scheduled-occurrence] durable settlement renderer publication failed',
+      error instanceof Error ? error.message : String(error)
+    )
+  }
+  try {
+    requestThrottledRemoteProjectionSnapshot()
+  } catch (error) {
+    console.error(
+      '[scheduled-occurrence] durable settlement remote publication failed',
+      error instanceof Error ? error.message : String(error)
+    )
+  }
+  try {
+    scheduleNextTaskTimer()
+  } catch (error) {
+    console.error(
+      '[scheduled-occurrence] durable settlement timer rearm failed',
+      error instanceof Error ? error.message : String(error)
+    )
+  }
+}
+
+function settleScheduledOccurrence(
+  owner: ScheduledOccurrenceOwner,
+  status: ScheduledOccurrenceTerminalStatus,
+  options: { completedAt?: string; lastError?: string } = {}
+): ScheduledTask | null {
+  const settled = scheduledOccurrenceTransaction.settle(owner, status, options)
+  if (settled) publishScheduledOccurrenceSettlement()
+  return settled
+}
+
+async function cancelScheduledOccurrence(
+  taskId: string,
+  reason = 'Cancelled by user.'
+): Promise<ScheduledTask | null> {
+  const task = AppStore.getScheduledTasks().find((candidate) => candidate.id === taskId)
+  if (!task) return null
+  if (task.status === 'completed' || task.status === 'failed' || task.status === 'cancelled') {
+    return task
+  }
+  const completedAt = new Date().toISOString()
+  if ((task.status === 'pending' || task.status === 'due') && !task.runId) {
+    const cancelled = AppStore.updateScheduledTask(task.id, {
+      status: 'cancelled',
+      completedAt,
+      lastError: reason
+    })
+    if (cancelled?.status === 'cancelled') publishScheduledOccurrenceSettlement()
+    return cancelled?.status === 'cancelled' ? cancelled : null
+  }
+  if (task.status !== 'running' || !task.runId) return null
+
+  const owner = scheduledOccurrenceOwners.lookupByTaskId(task.id)
+  if (
+    !owner ||
+    owner.ownerRunId !== task.runId ||
+    owner.provider !== task.provider ||
+    owner.chatId !== task.chatId ||
+    owner.workspaceId !== task.workspaceId ||
+    owner.workspacePath !== task.workspacePath
+  ) {
+    return null
+  }
+
+  const exactTransportTargets: Array<{ provider: ProviderId; runId: string }> = []
+  let soloHarvestRoute: unknown
+  if (owner.rootOwner === 'solo') {
+    const session = runManager.get(owner.ownerRunId)
+    if (
+      session &&
+      session.provider === owner.provider &&
+      isActiveRunSessionStatus(session.status)
+    ) {
+      exactTransportTargets.push({ provider: session.provider, runId: session.runId })
+      soloHarvestRoute = session.state
+    }
+  } else if (owner.rootOwner === 'loop-root') {
+    for (const childRunId of scheduledOccurrenceOwners.lookupChildRunIdsForOwner(owner)) {
+      const session = runManager.get(childRunId)
+      if (
+        session &&
+        isActiveRunSessionStatus(session.status) &&
+        scheduledOccurrenceOwners.lookupLoopChildRun(childRunId, session.provider) === owner
+      ) {
+        exactTransportTargets.push({ provider: session.provider, runId: session.runId })
+      }
+    }
+  }
+  const expectedRoundId =
+    owner.rootOwner === 'ensemble-root'
+      ? scheduledOccurrenceOwners.lookupEnsembleRoundIdForOwner(owner)
+      : undefined
+
+  // Durable exact settlement is the authorization boundary. If it rejects,
+  // transport state is untouched; a stale caller cannot kill a replacement.
+  const settled = settleScheduledOccurrence(owner, 'cancelled', {
+    completedAt,
+    lastError: reason
+  })
+  if (!settled) return null
+
+  workflowBudgetRegistry.onExit(owner.ownerRunId)
+  for (const target of exactTransportTargets) {
+    cancelPendingAgentQuestionsForRun(target.runId, 'scheduled-run-cancelled')
+  }
+  if (owner.rootOwner === 'ensemble-root' && expectedRoundId) {
+    await ensembleOrchestratorRef
+      ?.cancelRound(owner.chatId, reason, expectedRoundId)
+      .catch(() => false)
+  } else {
+    await Promise.allSettled(
+      exactTransportTargets.map((target) =>
+        cancelProviderRun(target.provider, target.runId)
+      )
+    )
+  }
+  if (owner.rootOwner === 'solo') {
+    finalizeBridgeRunTranscript(owner.ownerRunId, 'cancelled')
+    recordWorkflowRunHarvest(owner.taskId, owner.ownerRunId, soloHarvestRoute)
+  }
+  return settled
+}
+
+function scheduledOccurrenceOwnerForCancellationRunId(
+  runId: string,
+  provider: ProviderId
+): ScheduledOccurrenceOwner | undefined {
+  const root = scheduledOccurrenceOwners.lookupByOwnerRunId(runId)
+  const loop = scheduledOccurrenceOwners.lookupLoopChildRun(runId, provider)
+  const ensemble = scheduledOccurrenceOwners.lookupEnsembleChildRun(runId, provider)
+  const candidates = [
+    root && root.provider === provider ? root : undefined,
+    loop,
+    ensemble
+  ].filter((candidate): candidate is ScheduledOccurrenceOwner => Boolean(candidate))
+  return new Set(candidates).size === 1 ? candidates[0] : undefined
+}
+
+const SCHEDULED_CHILD_BOUND_EVENT_TYPE = 'scheduled_occurrence_child_bound'
+
+function recordScheduledOccurrenceChildBinding(input: {
+  owner: ScheduledOccurrenceOwner
+  childRunId: string
+  childKind: 'loop' | 'ensemble'
+  childProvider: ProviderId
+}): void {
+  AppStore.recordScheduledRunIdTombstone({
+    runId: input.childRunId,
+    rootRunId: input.owner.ownerRunId,
+    taskId: input.owner.taskId,
+    kind: input.childKind === 'loop' ? 'loop-child' : 'ensemble-child'
+  })
+  try {
+    appendDurableRunEvent({
+      runId: input.childRunId,
+      chatId: input.owner.chatId,
+      workspaceId: input.owner.workspaceId,
+      workspacePath: input.owner.workspacePath,
+      provider: input.childProvider,
+      kind: 'lifecycle',
+      phase: 'control',
+      source: 'main',
+      summary: `Bound scheduled ${input.childKind} child to its exact occurrence root`,
+      payload: {
+        eventType: SCHEDULED_CHILD_BOUND_EVENT_TYPE,
+        scheduledTaskId: input.owner.taskId,
+        rootRunId: input.owner.ownerRunId,
+        childKind: input.childKind
+      }
+    })
+  } catch (error) {
+    // The dedicated tombstone ledger is the authority record. Ordinary audit
+    // publication is useful evidence but must not strand a claimed occurrence.
+    console.error('[scheduled-occurrence] child-binding audit publication failed', error)
+  }
+}
+
+function wasDurableScheduledRunIdObserved(runId: string): boolean {
+  return AppStore.hasScheduledRunIdTombstone(runId)
+}
+
+function wasScheduledOccurrenceRunIdObserved(runId: string): boolean {
+  return (
+    scheduledOccurrenceOwners.isAppRunIdLiveOwned(runId) ||
+    scheduledOccurrenceOwners.wasChildRunIdObserved(runId) ||
+    AppStore.getScheduledTasks().some((task) => task.runId === runId) ||
+    wasDurableScheduledRunIdObserved(runId)
+  )
+}
+
+const SCHEDULED_ENSEMBLE_INTERACTIVE_BLOCK =
+  'A scheduled occurrence currently owns this chat. Cancel it before starting, queueing, or steering interactive Ensemble work.'
+
+function scheduledEnsembleInteractiveBlock(chatId: string): string | undefined {
+  return scheduledOccurrenceOwners.lookupByChatId(chatId)
+    ? SCHEDULED_ENSEMBLE_INTERACTIVE_BLOCK
+    : undefined
+}
+
+function assertScheduledEnsembleInteractiveAvailable(chatId: string): void {
+  const reason = scheduledEnsembleInteractiveBlock(chatId)
+  if (reason) throw new Error(reason)
+}
+
 // Stage 0b-dispatch (ensemble) — start a due ENSEMBLE scheduled round from MAIN
 // when no renderer can (windowless). Mirrors the run-ensemble-round IPC handler:
 // apply the schedule-time roster/mode snapshot + persist (the orchestrator reads
 // the chat LIVE via getChat), then startRound with the headless sender. The
 // 'running' mark + startRound are SYNCHRONOUS, so a racing tick can't
 // double-dispatch. Completion rides the EXISTING bridge —
-// scheduledTaskIdByEnsembleRound[roundId] -> the orchestrator's round-settle hook
-// (completeSessionCheckpoint) marks the task terminal, the same path the
-// renderer-dispatched ensemble uses.
-async function dispatchDueEnsembleScheduledTaskHeadless(task: ScheduledTask): Promise<void> {
+// The round-reservation callback binds this root into the exact occurrence
+// registry; completeSessionCheckpoint settles that same owner terminal.
+async function dispatchDueEnsembleScheduledTaskHeadless(
+  task: ScheduledTask,
+  owner: ScheduledOccurrenceOwner
+): Promise<void> {
   const orchestrator = ensembleOrchestratorRef
-  if (!orchestrator) return
-  const failTask = (lastError: string): void => {
-    AppStore.updateScheduledTask(task.id, {
-      status: 'failed',
-      completedAt: new Date().toISOString(),
-      lastError
-    })
+  if (!orchestrator) {
+    failScheduledOccurrence(owner, 'Scheduled ensemble dispatch is not initialized.')
+    return
   }
   try {
     const chat = AppStore.getChat(task.chatId)
     if (!chat || chat.chatKind !== 'ensemble' || !chat.ensemble) {
-      failTask('Headless ensemble dispatch: chat is not an ensemble.')
+      failScheduledOccurrence(owner, 'Scheduled ensemble dispatch: chat is not an ensemble.')
       return
     }
     if (!verifyScheduledTaskAttachmentOwnership(task)) {
-      failTask('Headless ensemble dispatch: attachment ownership could not be verified.')
+      failScheduledOccurrence(
+        owner,
+        'Scheduled ensemble dispatch: attachment ownership could not be verified.'
+      )
       return
     }
-    // Apply the schedule-time snapshot + persist so the orchestrator (getChat) sees
-    // the dispatch-time roster/mode — exactly as the renderer does before dispatch.
-    if (task.ensembleSnapshot) {
-      AppStore.saveChat(applyScheduledEnsembleSnapshotMain(chat, task.ensembleSnapshot))
-    }
-    const running = AppStore.updateScheduledTask(task.id, {
-      status: 'running',
-      firedAt: task.firedAt || new Date().toISOString(),
-      runId: task.runId || `ensemble-scheduled-${randomUUID()}`
-    })
-    // Transition guard rejected due->running (a racing path claimed it).
-    if (!running || running.status !== 'running') return
     // P2 — honor a verified unattended elevation (HMAC + current); null => the
     // orchestrator clamps every participant read-only (P1b).
     const elevation = resolveUnattendedElevation(task.id)
     const scheduledImageAttachments = imageAttachmentSnapshots(task.imageAttachments)
     const dispatchImageAttachments = await expandPdfAttachmentsForDispatch(scheduledImageAttachments)
     const scheduledExternalPathGrants = normalizeExternalPathGrants(task.externalPathGrants)
+    // Async attachment preparation can race a workspace retarget. Re-read every
+    // main-owned binding and pin the current real directory immediately before
+    // the synchronous round reservation/launch.
+    assertScheduledOccurrenceWorkspace(owner)
+    const scheduledSnapshot = task.ensembleSnapshot
+    const scheduledFanoutPolicy = scheduledSnapshot
+      ? normalizeScheduledFanoutPolicy(
+          scheduledSnapshot.fanoutPolicy,
+          scheduledSnapshot.concurrentModeEnabled
+        )
+      : undefined
+    const scheduledConcurrentMode = scheduledSnapshot
+      ? scheduledSnapshot.concurrentModeEnabled ?? scheduledFanoutPolicy !== 'off'
+      : undefined
+    const sender =
+      mainWindow && !mainWindow.webContents.isDestroyed()
+        ? mainWindow.webContents
+        : headlessRunSender
     const started = orchestrator.startRound({
       chatId: task.chatId,
       prompt: task.prompt,
-      event: { sender: headlessRunSender },
+      event: { sender },
       mode: 'normal',
       imageAttachments: dispatchImageAttachments,
       unattended: true,
+      requireFreshRound: true,
+      ...(scheduledConcurrentMode !== undefined
+        ? { concurrentMode: Boolean(scheduledConcurrentMode) }
+        : {}),
+      ...(scheduledFanoutPolicy !== undefined ? { fanoutPolicy: scheduledFanoutPolicy } : {}),
+      ...(scheduledSnapshot?.dmTargetParticipantId
+        ? { dmTargetParticipantId: scheduledSnapshot.dmTargetParticipantId }
+        : {}),
       ...(scheduledExternalPathGrants.length > 0
         ? { externalPathGrants: scheduledExternalPathGrants }
         : {}),
-      ...(elevation ? { unattendedElevationLevel: elevation.ack.level } : {})
+      ...(elevation ? { unattendedElevationLevel: elevation.ack.level } : {}),
+      ...(scheduledSnapshot
+        ? {
+            prepareFreshChat: (current: ChatRecord) =>
+              applyScheduledEnsembleSnapshotMain(current, scheduledSnapshot)
+          }
+        : {}),
+      onRoundReserved: (roundId) => {
+        scheduledOccurrenceOwners.bindEnsembleRound(roundId, owner.ownerRunId)
+      }
     })
-    if (started.roundId) {
-      // Bridge roundId -> scheduledTaskId so the round-settle hook marks terminal.
-      scheduledTaskIdByEnsembleRound.set(started.roundId, task.id)
-    } else {
-      // No round began (e.g. empty roster / no participants) — don't wedge 'running'.
-      failTask(`Headless ensemble dispatch: round did not start (${started.status}).`)
+    if (started.status !== 'started' || !started.roundId) {
+      failScheduledOccurrence(
+        owner,
+        `Scheduled ensemble dispatch: round did not start (${started.status}).`
+      )
     }
   } catch (error) {
-    failTask(
-      `Headless ensemble dispatch failed: ${error instanceof Error ? error.message : String(error)}`
+    failScheduledOccurrence(
+      owner,
+      `Scheduled ensemble dispatch failed: ${error instanceof Error ? error.message : String(error)}`
     )
   }
 }
@@ -11071,27 +11667,24 @@ async function dispatchDueEnsembleScheduledTaskHeadless(task: ScheduledTask): Pr
 // already feed), tracked BEFORE dispatch (the Claude SDK fires the exit INLINE).
 async function dispatchDueScheduledLoopHeadless(
   task: ScheduledTask,
-  loopCfg: WorkflowLoopConfig
+  loopCfg: WorkflowLoopConfig,
+  owner: ScheduledOccurrenceOwner
 ): Promise<void> {
   const composer = composerServiceRef
-  const dispatch = dispatchRunWithProviderPauseRef
-  if (!composer || !dispatch) return
-  if (!verifyScheduledTaskAttachmentOwnership(task)) {
-    AppStore.updateScheduledTask(task.id, {
-      status: 'failed',
-      completedAt: new Date().toISOString(),
-      lastError: 'Workflow loop attachment ownership could not be verified.'
-    })
+  const dispatch = dispatchMainOwnedScheduledOccurrenceRef
+  if (!composer || !dispatch) {
+    failScheduledOccurrence(owner, 'Scheduled workflow loop dispatch is not initialized.')
     return
   }
-  // Claim the task synchronously (before any await) so a racing tick can't double-fire.
-  const running = AppStore.updateScheduledTask(task.id, {
-    status: 'running',
-    firedAt: task.firedAt || new Date().toISOString(),
-    runId: task.runId || `loop-${task.provider}-${randomUUID()}`,
-    runningSince: new Date().toISOString()
-  })
-  if (!running || running.status !== 'running') return
+  if (!verifyScheduledTaskAttachmentOwnership(task)) {
+    failScheduledOccurrence(owner, 'Workflow loop attachment ownership could not be verified.')
+    return
+  }
+  if (owner.rootOwner !== 'loop-root') {
+    failScheduledOccurrence(owner, 'Scheduled workflow loop has the wrong root owner.')
+    return
+  }
+  let ownershipLost = false
 
   // 7c — live loop-progress broadcast to BOTH the local Electron renderer (a window may
   // be open) and paired phones. Reused at run-start (reset), per iteration (onState), and
@@ -11177,6 +11770,15 @@ async function dispatchDueScheduledLoopHeadless(
     const crossProviderVerifier =
       isVerifier && verifierProvider !== undefined && verifierProvider !== task.provider
     const composeProvider = crossProviderVerifier ? verifierProvider! : task.provider
+    try {
+      // Revalidate the exact durable root at every child iteration. The central
+      // provider preflight repeats this after its async probes, immediately before
+      // adapter launch, using the child binding installed below.
+      assertScheduledOccurrenceWorkspace(owner)
+    } catch (error) {
+      ownershipLost = true
+      return { failed: true, error: error instanceof Error ? error.message : String(error) }
+    }
     // Role branch (slice 5b). MAKER: continue/refine the task, threading the prior
     // attempt + the reviewer's revise feedback. VERIFIER: an independent judge run
     // over the maker's latest output (buildLoopVerifierPrompt); its final text is
@@ -11240,6 +11842,23 @@ async function dispatchDueScheduledLoopHeadless(
       return { failed: true, error: error instanceof Error ? error.message : String(error) }
     }
     // Track BEFORE dispatch (inline-exit landmine) + arm an absolute backstop.
+    try {
+      recordScheduledOccurrenceChildBinding({
+        owner,
+        childRunId: input.runId,
+        childKind: 'loop',
+        childProvider: composeProvider
+      })
+      scheduledOccurrenceOwners.bindLoopChildRun(
+        input.runId,
+        owner.ownerRunId,
+        composeProvider
+      )
+    } catch (error) {
+      ownershipLost =
+        scheduledOccurrenceOwners.lookupByOwnerRunId(owner.ownerRunId) !== owner
+      return { failed: true, error: error instanceof Error ? error.message : String(error) }
+    }
     const completion = auditRunTracker.track(input.runId)
     const clearBackstop = armScheduledLoopStepTimeout({
       composeProvider,
@@ -11253,12 +11872,19 @@ async function dispatchDueScheduledLoopHeadless(
       mainWindow && !mainWindow.webContents.isDestroyed()
         ? mainWindow.webContents
         : headlessRunSender
-    // NO scheduledTaskId on the dispatched payload (Option A) → chokepoint skips it.
+    // The loop root owns terminal settlement; each child is bound process-locally
+    // and receives a one-shot MAIN authorization at the dedicated dispatch seam.
+    const failDispatch = async (): Promise<void> => {
+      if (
+        scheduledOccurrenceOwners.lookupLoopChildRun(input.runId, composeProvider) === owner
+      ) {
+        await terminateExactProviderSession(composeProvider, input.runId, 'failed')
+      }
+      auditRunTracker.handleExit(input.runId, -1)
+    }
     void dispatch(composed, { sender })
-      .then((r) => {
-        if (!r?.dispatched) auditRunTracker.handleExit(input.runId, -1)
-      })
-      .catch(() => auditRunTracker.handleExit(input.runId, -1))
+      .then((r) => (r?.dispatched ? undefined : failDispatch()))
+      .catch(() => failDispatch())
     const outcome = await completion
     // Verifier steps parse a structured verdict from their final text; a missing or
     // unparseable marker leaves verdict null → the engine defaults to an evidence-less
@@ -11302,9 +11928,9 @@ async function dispatchDueScheduledLoopHeadless(
     dispatchStep,
     now: () => Date.now(),
     uuid: () => `loop-${task.provider}-${randomUUID()}`,
-    // Slice 5: no mid-loop cancel wiring yet (the loop is bounded by maxIterations +
-    // budget; a cancel surface is a follow-up).
-    isCancelled: () => false,
+    isCancelled: () =>
+      ownershipLost ||
+      scheduledOccurrenceOwners.lookupByOwnerRunId(owner.ownerRunId) !== owner,
     onState: (snap) => {
       // Keep the stall reconciler's basis fresh per iteration: each completed
       // iteration re-stamps runningSince so the 6h backstop measures time-since-last-
@@ -11314,7 +11940,14 @@ async function dispatchDueScheduledLoopHeadless(
       // RunQueueJob), so runningSince freshness is the sole stall safety — which
       // suffices, since each iteration is itself bounded by stepTimeoutMs.
       if (snap.status !== 'running') return
-      AppStore.updateScheduledTask(task.id, { runningSince: new Date().toISOString() })
+      if (!scheduledOccurrenceTransaction.heartbeat(owner, new Date().toISOString())) {
+        ownershipLost = true
+        failScheduledOccurrence(
+          owner,
+          'Scheduled workflow loop heartbeat could not be persisted.'
+        )
+        return
+      }
       // 7c — LIVE per-iteration progress: refresh the cached count/spend on the
       // definition (the start-of-run reset already cleared the prior stopReason, so it
       // stays absent until completion) and fire the broadcasts so the Electron row + iOS
@@ -11334,11 +11967,20 @@ async function dispatchDueScheduledLoopHeadless(
   try {
     snap = await engine.run(engineConfig)
   } catch (error) {
-    AppStore.updateScheduledTask(task.id, {
-      status: 'failed',
-      completedAt: new Date().toISOString(),
-      lastError: `Workflow loop crashed: ${error instanceof Error ? error.message : String(error)}`
-    })
+    failScheduledOccurrence(
+      owner,
+      `Workflow loop crashed: ${error instanceof Error ? error.message : String(error)}`
+    )
+    return
+  }
+
+  // An external cancel or failed heartbeat can release/poison authority while
+  // the current child transport unwinds. Do not append a second terminal event
+  // or try to overwrite the already-settled durable outcome.
+  if (
+    ownershipLost ||
+    scheduledOccurrenceOwners.lookupByOwnerRunId(owner.ownerRunId) !== owner
+  ) {
     return
   }
 
@@ -11355,11 +11997,16 @@ async function dispatchDueScheduledLoopHeadless(
 
   // The SINGLE terminal mark — only an infra 'failed' bumps failureStreak.
   const outcome = mapLoopSnapshotToScheduledOutcome(snap)
-  AppStore.updateScheduledTask(task.id, {
-    status: outcome.status,
+  const settled = settleScheduledOccurrence(owner, outcome.status, {
     completedAt: new Date().toISOString(),
     ...(outcome.lastError ? { lastError: outcome.lastError } : {})
   })
+  if (!settled && !ownershipLost) {
+    console.error(
+      `[scheduled-occurrence] exact loop settlement rejected for task ${owner.taskId}`
+    )
+  }
+  if (!settled) return
 
   // Slice 7b — cache THIS loop's summary on the workflow definition (mirrors how
   // lastStatus/lastRunAt are cached) so the SYNC remote-projection builder can carry
@@ -11380,37 +12027,128 @@ async function dispatchDueScheduledLoopHeadless(
   }
 }
 
-async function dispatchDueScheduledTaskHeadless(task: ScheduledTask): Promise<void> {
-  if (task.kind === 'ensemble') {
-    await dispatchDueEnsembleScheduledTaskHeadless(task)
+function seedScheduledSoloTranscript(
+  task: ScheduledTask,
+  owner: ScheduledOccurrenceOwner,
+  payload: AgentRunPayload,
+  executionWorkspacePath: string
+): void {
+  const chat = AppStore.getChat(owner.chatId)
+  if (!chat || chat.chatKind === 'ensemble') {
+    throw new Error('Scheduled solo transcript target is not a solo chat.')
+  }
+  if ((chat.runs || []).some((run) => run.runId === owner.ownerRunId)) {
+    throw new Error('Scheduled solo transcript already contains this occurrence run.')
+  }
+  const timestamp = new Date().toISOString()
+  const promptMessageId = `scheduled-user-${randomUUID()}`
+  const userMessage: ChatMessage = {
+    id: promptMessageId,
+    role: 'user',
+    content: task.displayPrompt || task.prompt,
+    timestamp
+  }
+  const run: ChatRun = {
+    runId: owner.ownerRunId,
+    provider: owner.provider,
+    startedAt: timestamp,
+    promptMessageId,
+    requestedModel: payload.model,
+    approvalMode: payload.approvalMode,
+    workflowMode: payload.workflowMode,
+    ...(payload.runtimeProfileId ? { runtimeProfileId: payload.runtimeProfileId } : {}),
+    ...(payload.geminiAuthProfileId !== undefined
+      ? { geminiAuthProfileId: payload.geminiAuthProfileId }
+      : {}),
+    effectiveWorkspacePath: executionWorkspacePath,
+    status: 'running',
+    rawEventsFile: `run-events/${owner.ownerRunId}.jsonl`
+  }
+  // Install the terminal-finalization owner before persistence. If chat saving
+  // succeeds and any later seed step throws, the catch path can still close the
+  // exact persisted ChatRun instead of leaving a permanent running transcript.
+  registerBridgeRunTranscript({
+    runId: owner.ownerRunId,
+    chatId: owner.chatId,
+    provider: owner.provider,
+    promptMessageId,
+    workspacePath: executionWorkspacePath
+  })
+  const updated = saveAndBroadcastChat({
+    ...chat,
+    messages: [...(chat.messages || []), userMessage],
+    runs: [...(chat.runs || []), run],
+    updatedAt: Date.now()
+  })
+  void captureWorkspaceSnapshot(executionWorkspacePath)
+    .then((snapshot) => {
+      const transcript = bridgeRunTranscripts.get(owner.ownerRunId)
+      if (transcript) transcript.preSnapshot = snapshot
+    })
+    .catch((error) => {
+      console.warn(
+        `[scheduled-occurrence] pre-run snapshot failed for ${owner.ownerRunId}:`,
+        error
+      )
+    })
+  bridgeBroadcasterRef?.broadcastThreadUpdated(updated.appChatId)
+  pushRemoteThreadSnapshotForChat?.(updated)
+}
+
+async function failScheduledSoloLaunchAfterTranscriptSeed(
+  owner: ScheduledOccurrenceOwner,
+  error: unknown
+): Promise<void> {
+  const message = error instanceof Error ? error.message : String(error)
+  const route = { appRunId: owner.ownerRunId, appChatId: owner.chatId }
+  await terminateExactProviderSession(owner.provider, owner.ownerRunId, 'failed')
+  const bridgeState = bridgeRunTranscripts.get(owner.ownerRunId)
+  if (bridgeState?.status !== 'running') {
+    workflowBudgetRegistry.onExit(owner.ownerRunId)
+    failScheduledOccurrence(owner, `Headless scheduled dispatch failed: ${message}`)
     return
   }
+  try {
+    sendAgentCompatError(headlessRunSender, owner.provider, message, route)
+  } catch (publishError) {
+    console.error('[scheduled-occurrence] solo launch error publication failed', publishError)
+  }
+  try {
+    sendAgentCompatExit(headlessRunSender, owner.provider, -1, route)
+  } catch (exitError) {
+    console.error('[scheduled-occurrence] solo launch exit publication failed', exitError)
+    finalizeBridgeRunTranscript(owner.ownerRunId, 'failed')
+  } finally {
+    workflowBudgetRegistry.onExit(owner.ownerRunId)
+    failScheduledOccurrence(owner, `Headless scheduled dispatch failed: ${message}`)
+  }
+}
+
+async function dispatchDueScheduledTaskHeadless(
+  task: ScheduledTask,
+  owner: ScheduledOccurrenceOwner
+): Promise<void> {
   const composer = composerServiceRef
-  const dispatch = dispatchRunWithProviderPauseRef
-  if (!composer || !dispatch) return
-  const scheduledRunId = task.runId || `${task.provider}-scheduled-${randomUUID()}`
+  const dispatch = dispatchMainOwnedScheduledOccurrenceRef
+  if (!composer || !dispatch) {
+    failScheduledOccurrence(owner, 'Scheduled solo dispatch is not initialized.')
+    return
+  }
+  let transcriptSeeded = false
   try {
     if (!verifyScheduledTaskAttachmentOwnership(task)) {
-      AppStore.updateScheduledTask(task.id, {
-        status: 'failed',
-        completedAt: new Date().toISOString(),
-        lastError: 'Headless scheduled attachment ownership could not be verified.'
-      })
+      failScheduledOccurrence(
+        owner,
+        'Headless scheduled attachment ownership could not be verified.'
+      )
       return
     }
-    const running = AppStore.updateScheduledTask(task.id, {
-      status: 'running',
-      firedAt: task.firedAt || new Date().toISOString(),
-      runId: scheduledRunId
-    })
-    // Transition guard rejected the due->running move (already running/terminal):
-    // a racing path claimed it; don't double-dispatch.
-    if (!running || running.status !== 'running') return
+    const executionWorkspacePath = assertScheduledOccurrenceWorkspace(owner)
     const composed = composer.composeRun({
       chatId: task.chatId,
-      appRunId: scheduledRunId,
+      appRunId: owner.ownerRunId,
       provider: task.provider,
-      workspace: task.workspacePath,
+      workspace: owner.workspacePath,
       prompt: task.prompt,
       selectedModelType: task.selectedModelType,
       customModel: task.customModel,
@@ -11432,105 +12170,159 @@ async function dispatchDueScheduledTaskHeadless(task: ScheduledTask): Promise<vo
       handoffSourceRunId: task.handoffSourceRunId,
       scheduledTaskId: task.id
     })
-    // composeRun consumes scheduledTaskId (forces the unattended posture) but does
-    // NOT echo it; re-add it so the chokepoint registers budget + the solo
-    // completion mark (scheduledTaskIdBySoloRun), exactly as the renderer path does.
-    await dispatch({ ...composed, scheduledTaskId: task.id } as AgentRunPayload, {
+    transcriptSeeded = true
+    seedScheduledSoloTranscript(task, owner, composed, executionWorkspacePath)
+    const result = await dispatch({ ...composed, scheduledTaskId: task.id } as AgentRunPayload, {
       sender: headlessRunSender
     })
+    if (
+      !result.dispatched &&
+      scheduledOccurrenceOwners.lookupByOwnerRunId(owner.ownerRunId) === owner
+    ) {
+      failScheduledOccurrence(owner, 'Scheduled solo provider preflight did not dispatch.')
+    }
   } catch (error) {
-    AppStore.updateScheduledTask(task.id, {
-      status: 'failed',
-      completedAt: new Date().toISOString(),
-      lastError: `Headless scheduled dispatch failed: ${
-        error instanceof Error ? error.message : String(error)
-      }`
-    })
+    if (transcriptSeeded) {
+      await failScheduledSoloLaunchAfterTranscriptSeed(owner, error)
+    } else {
+      failScheduledOccurrence(
+        owner,
+        `Headless scheduled dispatch failed: ${error instanceof Error ? error.message : String(error)}`
+      )
+    }
   }
 }
 
 function emitDueScheduledTasks() {
-  if (scheduledOccurrenceRecoveryBlockedReason) {
-    console.error(
-      `[scheduled-occurrence] dispatch disabled: ${scheduledOccurrenceRecoveryBlockedReason}`
-    )
-    return
-  }
-  const materialized = AppStore.materializeDueWorkflows(
-    Date.now(),
-    scheduledAttachmentPersistence.resolve
-  ).map(ensureScheduledTaskSignedPosture)
-  mainWindow?.webContents.send('workflow-definitions-changed', AppStore.getWorkflowDefinitions())
-  if (materialized.length > 0) {
-    mainWindow?.webContents.send('scheduled-tasks-changed', AppStore.getScheduledTasks())
-  }
-  const dueTasks = AppStore.getDueScheduledTasks(
-    Date.now(),
-    scheduledAttachmentPersistence.resolve
-  )
-  const rendererAvailable = Boolean(mainWindow && !mainWindow.webContents.isDestroyed())
-  const headlessEnabled = AppStore.getSettings().headlessScheduledDispatchEnabled !== false
-  const soloDispatchReady = Boolean(composerServiceRef && dispatchRunWithProviderPauseRef)
-  const ensembleDispatchReady = Boolean(ensembleOrchestratorRef)
-  for (const task of dueTasks) {
-    // Mark 'due' only on the FIRST transition (overdue 'pending' -> 'due'). An
-    // already-'due' task (deferred + retried each tick) is used as-is: re-writing it
-    // every tick would churn scheduledTasks.json AND bump firedAt — which also resets
-    // the stall reconciler's 'due' basis (firedAt), so a genuinely wedged 'due' task
-    // could never reach the backstop. The broadcast/headless retry below still fires
-    // each tick regardless, so deferral stays self-healing.
-    const dueTaskRaw =
-      task.status === 'due'
-        ? task
-        : AppStore.updateScheduledTask(task.id, {
-            status: 'due',
-            firedAt: new Date().toISOString()
-          }) || task
-    const dueTask = ensureScheduledTaskSignedPosture(dueTaskRaw)
-    if (!verifyScheduledTaskAttachmentOwnership(dueTask)) {
-      AppStore.updateScheduledTask(dueTask.id, {
-        status: 'failed',
-        completedAt: new Date().toISOString(),
-        lastError: 'Scheduled attachment ownership could not be verified.'
-      })
-      continue
+  let dueTaskCount = 0
+  try {
+    if (scheduledOccurrenceRecoveryBlockedReason) {
+      console.error(
+        `[scheduled-occurrence] dispatch disabled: ${scheduledOccurrenceRecoveryBlockedReason}`
+      )
+      return
     }
-    // Stage 2 slice 5 — a LOOP-workflow occurrence runs the engine in MAIN regardless
-    // of rendererAvailable (the renderer has no loop engine). Solo only; bypasses
-    // routeDueScheduledTask. If the composer isn't wired yet (early boot) leave it
-    // 'due' to retry — never broadcast (a renderer would single-dispatch a loop).
-    const loopCfg =
-      dueTask.kind !== 'ensemble' && dueTask.workflowId
-        ? AppStore.getWorkflowDefinition(dueTask.workflowId)?.loop
-        : undefined
-    if (loopCfg) {
-      if (soloDispatchReady) void dispatchDueScheduledLoopHeadless(dueTask, loopCfg)
-      continue
+    let materialized: ScheduledTask[] = []
+    try {
+      materialized = AppStore.materializeDueWorkflows(
+        Date.now(),
+        scheduledAttachmentPersistence.resolve
+      ).map(ensureScheduledTaskSignedPosture)
+    } catch (error) {
+      console.error('[scheduled-occurrence] workflow materialization failed', error)
     }
-    const route = routeDueScheduledTask(dueTask, {
-      rendererAvailable,
-      headlessEnabled,
-      soloDispatchReady,
-      ensembleDispatchReady
-    })
-    if (route === 'broadcast') {
-      mainWindow?.webContents.send('scheduled-task-due', dueTask)
-    } else if (route === 'headless') {
-      // Stage 0b-dispatch: no renderer to receive the broadcast — fire this task
-      // from main (composeRun for SOLO, the orchestrator for ENSEMBLE). The
-      // dispatcher marks it 'running' synchronously, so the next tick won't
-      // re-dispatch it. A 'defer' route leaves it 'due' to retry next tick.
-      void dispatchDueScheduledTaskHeadless(dueTask)
+    try {
+      mainWindow?.webContents.send(
+        'workflow-definitions-changed',
+        AppStore.getWorkflowDefinitions()
+      )
+      if (materialized.length > 0) {
+        mainWindow?.webContents.send('scheduled-tasks-changed', AppStore.getScheduledTasks())
+      }
+    } catch (error) {
+      console.warn('[scheduled-occurrence] initial scheduler broadcast failed', error)
     }
+
+    let dueTasks: ScheduledTask[] = []
+    try {
+      dueTasks = AppStore.getDueScheduledTasks(
+        Date.now(),
+        scheduledAttachmentPersistence.resolve
+      )
+    } catch (error) {
+      console.error('[scheduled-occurrence] due-task listing failed', error)
+    }
+    dueTaskCount = dueTasks.length
+    const rendererAvailable = Boolean(mainWindow && !mainWindow.webContents.isDestroyed())
+    const headlessEnabled = AppStore.getSettings().headlessScheduledDispatchEnabled !== false
+    for (const task of dueTasks) {
+      try {
+        const dueTaskRaw =
+          task.status === 'due'
+            ? task
+            : AppStore.updateScheduledTask(task.id, {
+                status: 'due',
+                firedAt: new Date().toISOString()
+              }) || task
+        const dueTask = ensureScheduledTaskSignedPosture(dueTaskRaw)
+        const configuredLoop = dueTask.workflowId
+          ? AppStore.getWorkflowDefinition(dueTask.workflowId)?.loop
+          : undefined
+        if (dueTask.kind === 'ensemble' && configuredLoop) {
+          const invalid = AppStore.updateScheduledTask(dueTask.id, {
+            status: 'failed',
+            completedAt: new Date().toISOString(),
+            lastError: 'Ensemble scheduled occurrences cannot own workflow loops.'
+          })
+          if (invalid?.status === 'failed') {
+            publishScheduledOccurrenceSettlement()
+          } else {
+            console.error(
+              `[scheduled-occurrence] invalid ensemble loop could not be settled for task ${dueTask.id}`
+            )
+          }
+          continue
+        }
+        const loopCfg = dueTask.kind !== 'ensemble' ? configuredLoop : undefined
+        const ready =
+          dueTask.kind === 'ensemble'
+            ? Boolean(ensembleOrchestratorRef)
+            : Boolean(composerServiceRef && dispatchMainOwnedScheduledOccurrenceRef)
+        // The setting remains a daemon-mode kill switch. A live renderer no longer
+        // owns dispatch; MAIN does, so opening or closing a window cannot change who
+        // claims an occurrence.
+        if (!ready || (!rendererAvailable && !headlessEnabled)) continue
+        if (isScheduledOccurrenceChatBusy(dueTask)) continue
+
+        const owner = scheduledOccurrenceTransaction.claim(dueTask)
+        if (!owner) continue
+        const claimedTask = AppStore.getScheduledTasks().find(
+          (candidate) => candidate.id === owner.taskId
+        )
+        if (!claimedTask) {
+          failScheduledOccurrence(owner, 'Claimed scheduled occurrence disappeared before launch.')
+          continue
+        }
+        const launch =
+          owner.rootOwner === 'ensemble-root'
+            ? dispatchDueEnsembleScheduledTaskHeadless(claimedTask, owner)
+            : owner.rootOwner === 'loop-root' && loopCfg
+              ? dispatchDueScheduledLoopHeadless(claimedTask, loopCfg, owner)
+              : owner.rootOwner === 'solo'
+                ? dispatchDueScheduledTaskHeadless(claimedTask, owner)
+                : Promise.reject(new Error('Scheduled occurrence root family is inconsistent.'))
+        void launch.catch((error) => {
+          failScheduledOccurrence(
+            owner,
+            `Scheduled occurrence launch failed: ${error instanceof Error ? error.message : String(error)}`
+          )
+        })
+      } catch (error) {
+        console.error(`[scheduled-occurrence] task ${task.id} failed in scheduler pump`, error)
+      }
+    }
+  } catch (error) {
+    console.error('[scheduled-occurrence] scheduler pump failed', error)
+  } finally {
+    if (dueTaskCount > 0) {
+      try {
+        mainWindow?.webContents.send(
+          'workflow-definitions-changed',
+          AppStore.getWorkflowDefinitions()
+        )
+        mainWindow?.webContents.send('scheduled-tasks-changed', AppStore.getScheduledTasks())
+      } catch (error) {
+        console.warn('[scheduled-occurrence] terminal scheduler broadcast failed', error)
+      }
+    }
+    try {
+      reconcileStalledScheduledTasks()
+    } catch (error) {
+      console.error('[scheduled-occurrence] stalled-task reconciliation failed', error)
+    }
+    emitDueIntrospectionSchedules()
+    scheduleNextTaskTimer()
   }
-  if (dueTasks.length > 0) {
-    mainWindow?.webContents.send('workflow-definitions-changed', AppStore.getWorkflowDefinitions())
-    mainWindow?.webContents.send('scheduled-tasks-changed', AppStore.getScheduledTasks())
-  }
-  // Universal wedge backstop, piggybacked on every materialize tick.
-  reconcileStalledScheduledTasks()
-  emitDueIntrospectionSchedules()
-  scheduleNextTaskTimer()
 }
 
 function emitDueIntrospectionSchedules(): void {
@@ -11561,25 +12353,38 @@ function emitDueIntrospectionSchedules(): void {
 }
 
 /**
- * Liveness predicate for the stall reconciler. A run-queue job counts as ALIVE
- * iff it is in a not-yet-terminal status. NOTE: the live in-flight status is
- * 'active' (NOT 'running' — that value does not exist in RunQueueJobStatus).
- * 'paused' = approval-paused (a legitimately stalled-but-alive run we must not
- * false-fail). Terminal = completed/failed/cancelled; a missing job is dead.
+ * Liveness predicate for the stall reconciler. MAIN-owned occurrence roots and
+ * active RunManager sessions are authoritative even when no RunQueueJob exists;
+ * otherwise a queue job counts as live only in a non-terminal state. The queue
+ * status is `active` (not `running`) and approval-paused work remains live.
  */
 function isScheduledRunLive(runId: string): boolean {
-  const job = AppStore.getRunQueueJob(runId)
-  if (!job) return false
-  switch (job.status) {
-    case 'queued':
-    case 'starting':
-    case 'active':
-    case 'paused':
-    case 'cancelling':
-      return true
-    default:
-      return false
+  const owner = scheduledOccurrenceOwners.lookupByOwnerRunId(runId)
+  const transportRunIds = owner
+    ? [owner.ownerRunId, ...scheduledOccurrenceOwners.lookupChildRunIdsForOwner(owner)]
+    : [runId]
+  if (
+    transportRunIds.some((transportRunId) => {
+      const session = runManager.get(transportRunId)
+      return Boolean(session && isActiveRunSessionStatus(session.status))
+    })
+  ) {
+    return true
   }
+  return transportRunIds.some((transportRunId) => {
+    const job = AppStore.getRunQueueJob(transportRunId)
+    if (!job) return false
+    switch (job.status) {
+      case 'queued':
+      case 'starting':
+      case 'active':
+      case 'paused':
+      case 'cancelling':
+        return true
+      default:
+        return false
+    }
+  })
 }
 
 /**
@@ -11599,37 +12404,49 @@ function reconcileStalledScheduledTasks(): void {
   }
   if (settled.length === 0) return
 
-  let emittedLoud = false
-  for (const task of settled) {
-    const key = task.workflowExecutionId || task.id
-    if (stalledOccurrenceEventKeys.has(key)) continue
-    stalledOccurrenceEventKeys.add(key)
-    emittedLoud = true
-    appendDurableRunEvent({
-      runId: task.runId || task.id,
-      chatId: task.chatId,
-      workspaceId: task.workspaceId,
-      workspacePath: task.workspacePath,
-      provider: task.provider,
-      kind: 'lifecycle',
-      phase: 'control',
-      source: 'main',
-      summary:
-        task.lastError ||
-        'Settled a wedged scheduled-workflow occurrence to unblock future runs',
-      payload: {
-        eventType: 'scheduled_workflow_stall_settled',
-        scheduledTaskId: task.id,
-        workflowId: task.workflowId,
-        workflowExecutionId: task.workflowExecutionId,
-        settledAt: task.completedAt,
-        lastError: task.lastError
+  try {
+    for (const task of settled) {
+      try {
+        const owner = task.runId
+          ? scheduledOccurrenceOwners.lookupByOwnerRunId(task.runId)
+          : undefined
+        if (owner && owner.taskId === task.id) {
+          scheduledOccurrenceOwners.release(owner)
+        }
+      } catch (error) {
+        console.error('[scheduled-occurrence] stalled owner release failed', error)
       }
-    })
-  }
-  if (emittedLoud) {
-    mainWindow?.webContents.send('scheduled-tasks-changed', AppStore.getScheduledTasks())
-    mainWindow?.webContents.send('workflow-definitions-changed', AppStore.getWorkflowDefinitions())
+      const key = task.workflowExecutionId || task.id
+      if (stalledOccurrenceEventKeys.has(key)) continue
+      stalledOccurrenceEventKeys.add(key)
+      try {
+        appendDurableRunEvent({
+          runId: task.runId || task.id,
+          chatId: task.chatId,
+          workspaceId: task.workspaceId,
+          workspacePath: task.workspacePath,
+          provider: task.provider,
+          kind: 'lifecycle',
+          phase: 'control',
+          source: 'main',
+          summary:
+            task.lastError ||
+            'Settled a wedged scheduled-workflow occurrence to unblock future runs',
+          payload: {
+            eventType: 'scheduled_workflow_stall_settled',
+            scheduledTaskId: task.id,
+            workflowId: task.workflowId,
+            workflowExecutionId: task.workflowExecutionId,
+            settledAt: task.completedAt,
+            lastError: task.lastError
+          }
+        })
+      } catch (error) {
+        console.error('[scheduled-occurrence] stalled settlement audit failed', error)
+      }
+    }
+  } finally {
+    publishScheduledOccurrenceSettlement()
   }
 }
 
@@ -14448,11 +15265,12 @@ async function runClaudeProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
     // kill (cancelProviderRun aborts the SDK controller), tryRunClaudeSdk throws /
     // returns false and execution would otherwise FALL THROUGH to a CLI re-run =
     // DOUBLE SPEND on a run we deliberately killed. The terminal mark already
-    // happened in triggerKill; here we settle the run, clean up the registry (the
-    // SDK abort never reaches sendAgentCompatExit), and SKIP the CLI fallback.
+    // happened in triggerKill; here we settle the run and publish the shared
+    // terminal exit (which also clears the budget registry), then SKIP the CLI
+    // fallback.
     if (route.appRunId && workflowBudgetRegistry.isKilled(route.appRunId)) {
       runManager.finish(route.appRunId, 'cancelled')
-      workflowBudgetRegistry.onExit(route.appRunId)
+      sendAgentCompatExit(event.sender, 'claude', 130, route)
       return
     }
     // Review fix: a `/compact` dispatch is NOT safely re-runnable — if the SDK
@@ -17274,6 +18092,14 @@ function sendAgentCompatExit(
     exitStats ? { code, stats: exitStats } : { code },
     route
   )
+  const scheduledSoloOwner =
+    routed.appRunId && routed.appChatId
+      ? scheduledOccurrenceOwners.lookupSoloExit({
+          appRunId: routed.appRunId,
+          provider,
+          chatId: routed.appChatId
+        })
+      : undefined
   const runCancelled = Boolean(
     routed.appRunId && runManager.get(routed.appRunId)?.status === 'cancelled'
   )
@@ -17315,16 +18141,13 @@ function sendAgentCompatExit(
   if (routed.appRunId) {
     finalizeBridgeRunTranscript(
       routed.appRunId,
-      (code ?? -1) === 0 ? 'success' : 'failed'
+      runCancelled ? 'cancelled' : (code ?? -1) === 0 ? 'success' : 'failed'
     )
     // Auto-failover: on a terminal FAILED exit with a stashed quota-wall signal,
     // pause the throttled provider and re-dispatch the request to a healthy one.
-    if (!runCancelled) {
+    if (!runCancelled && !scheduledSoloOwner) {
       maybeTriggerProviderAutoFailover(routed.appRunId, provider, routed.appChatId, code)
     }
-    // A failover-rerouted run exits MAIN-side; mark its scheduled task terminal
-    // (the renderer never registered a context for it). Idempotent: updateScheduledTask
-    // guards invalid terminal->terminal transitions, so a stale renderer mark is a no-op.
     // Per-occurrence budget kill: cleanup on EVERY exit (clear the armed timer +
     // drop per-run state so a late timer can't fire on a finished/reused run). The
     // terminal mark already happened at the kill decision (triggerKill); this is
@@ -17338,42 +18161,34 @@ function sendAgentCompatExit(
       route as { tokenUsage?: { total_tokens?: number; total_cost_usd?: number } } | null | undefined
     )?.tokenUsage
     if (terminalUsage) workflowBudgetRegistry.onTerminalUsage(routed.appRunId, terminalUsage)
+    const budgetKilled = workflowBudgetRegistry.isKilled(routed.appRunId)
     workflowBudgetRegistry.onExit(routed.appRunId)
-    // A USER-cancelled run settles via cancelProviderRun -> runManager.finish(
-    // 'cancelled'), which is terminal-STICKY (a later exit-code finish() no-ops,
-    // RunManager.finish guard). So a deliberate cancel must mark the scheduled task
-    // 'cancelled', NOT 'failed' from the abort exit code — else it wrongly bumps the
-    // workflow failureStreak. The renderer marks 'cancelled' too, but a WINDOWLESS
-    // run has no renderer, so main owns it. (A budget kill also routes through
-    // cancelProviderRun, but triggerKill already marked the task 'failed' first, so
-    // the transition guard no-ops this 'cancelled' write — the 'failed' stands.)
-    const failoverScheduledTaskId = scheduledTaskIdByFailoverRun.get(routed.appRunId)
-    if (failoverScheduledTaskId) {
-      scheduledTaskIdByFailoverRun.delete(routed.appRunId)
-      const failoverFailed = !runCancelled && (code ?? -1) !== 0
-      AppStore.updateScheduledTask(failoverScheduledTaskId, {
-        status: runCancelled ? 'cancelled' : failoverFailed ? 'failed' : 'completed',
-        completedAt: new Date().toISOString(),
-        ...(failoverFailed ? { lastError: 'Scheduled run failed after provider auto-failover.' } : {})
-      })
-      // Slice 3: harvest the run's tokens/cost/duration into the durable run ledger.
-      recordWorkflowRunHarvest(failoverScheduledTaskId, routed.appRunId, route)
-      // A failover run also lives in the solo map (it dispatched through the same
-      // chokepoint); the failover mark above is authoritative — drop the solo entry.
-      scheduledTaskIdBySoloRun.delete(routed.appRunId)
-    }
-    // Stage 0b-completion: mark a SOLO scheduled run terminal MAIN-side so a
-    // mid-run renderer close can't leave it wedged. Idempotent: updateScheduledTask's
-    // transition guard no-ops if the renderer already marked it.
-    const soloScheduledTaskId = scheduledTaskIdBySoloRun.get(routed.appRunId)
-    if (soloScheduledTaskId) {
-      scheduledTaskIdBySoloRun.delete(routed.appRunId)
-      AppStore.updateScheduledTask(soloScheduledTaskId, {
-        status: runCancelled ? 'cancelled' : (code ?? -1) === 0 ? 'completed' : 'failed',
-        completedAt: new Date().toISOString()
-      })
-      // Slice 3: harvest the run's tokens/cost/duration into the durable run ledger.
-      recordWorkflowRunHarvest(soloScheduledTaskId, routed.appRunId, route)
+    if (scheduledSoloOwner) {
+      // Capture exact ownership before budget callbacks: a successful budget mark
+      // releases the owner, while a failed store write deliberately leaves it live
+      // for this terminal retry. Budget failure outranks the cancellation emitted by
+      // the abort path, so it cannot be misreported as a user cancellation.
+      if (scheduledOccurrenceOwners.lookupByOwnerRunId(routed.appRunId) === scheduledSoloOwner) {
+        const failed = budgetKilled || (code ?? -1) !== 0
+        const status = budgetKilled
+          ? 'failed'
+          : runCancelled
+            ? 'cancelled'
+            : failed
+              ? 'failed'
+              : 'completed'
+        settleScheduledOccurrence(scheduledSoloOwner, status, {
+          completedAt: new Date().toISOString(),
+          ...(failed
+            ? {
+                lastError: budgetKilled
+                  ? 'Scheduled run exceeded its workflow budget.'
+                  : `Scheduled provider exited with code ${code ?? 'unknown'}.`
+              }
+            : {})
+        })
+      }
+      recordWorkflowRunHarvest(scheduledSoloOwner.taskId, routed.appRunId, route)
     }
   }
   publishRunEvent('agent-exit', provider, routedForWire, sender)
@@ -21898,12 +22713,74 @@ async function runOllamaProviderAdapter(
   )
 }
 
+async function terminateExactProviderSession(
+  provider: ProviderId,
+  runId: string,
+  terminalStatus: 'failed' | 'cancelled'
+): Promise<boolean> {
+  const session = runManager.get(runId)
+  if (
+    !session ||
+    session.provider !== provider ||
+    !isActiveRunSessionStatus(session.status)
+  ) {
+    return false
+  }
+
+  const codexState = provider === 'codex' ? getCodexStateFromSession(session) : undefined
+  try {
+    try {
+      session.abortController?.abort()
+    } catch {
+      // Continue through every exact transport stop before terminalizing.
+    }
+    try {
+      session.process?.kill()
+    } catch {
+      // A provider process may already have exited after publishing its handle.
+    }
+    if (cliProviderProcesses.get(provider) === session.process) {
+      cliProviderProcesses.delete(provider)
+    }
+    if (cliProviderAbortControllers.get(provider) === session.abortController) {
+      cliProviderAbortControllers.delete(provider)
+    }
+    if (provider === 'gemini' && geminiProcess === session.process) {
+      geminiProcess = null
+    }
+    if (provider === 'codex' && codexExecProcess === session.process) {
+      codexExecProcess = null
+    }
+    if (provider === 'codex') {
+      const decision = decideCancelInterrupt(codexState)
+      if (decision.interruptNow && codexState?.threadId && codexState.turnId) {
+        await issueCodexTurnInterrupt(codexState.threadId, codexState.turnId).catch(
+          () => undefined
+        )
+      } else if (decision.deferThreadId) {
+        pendingCodexInterrupts.add(decision.deferThreadId)
+      }
+    }
+  } finally {
+    runManager.finish(runId, terminalStatus)
+  }
+
+  if (provider === 'gemini' && !geminiSessionProcess) {
+    const latestGemini = getSingleActiveProviderSession('gemini')?.state as
+      | GeminiToolContext
+      | undefined
+    activeGeminiToolContext = latestGemini?.sender ? latestGemini : null
+  }
+  return true
+}
+
 async function cancelProviderRun(
   provider: ProviderId = 'gemini',
   runId?: string
 ): Promise<boolean> {
   const queuedJob = runId ? AppStore.getRunQueueJob(runId) : null
   if (queuedJob && (queuedJob.status === 'queued' || queuedJob.status === 'paused')) {
+    if (queuedJob.provider !== provider) return false
     getRunRepository().markCancelled({
       runId: queuedJob.runId,
       provider: queuedJob.provider,
@@ -21915,91 +22792,18 @@ async function cancelProviderRun(
     return true
   }
 
-  const session =
-    runManager.get(runId) || (!runId ? getSingleActiveProviderSession(provider) : undefined)
+  const session = runId ? runManager.get(runId) : getSingleActiveProviderSession(provider)
+  // A supplied run id is an exact cancellation target. Never fall through to
+  // provider-global process/controller state when that run is absent, and do
+  // not let a mismatched provider label cancel a different provider's run.
+  if (runId && (!session || session.provider !== provider)) return false
   if (session) {
-    session.abortController?.abort()
-    session.process?.kill()
-    runManager.finish(session.runId, 'cancelled')
-    if (provider === 'gemini') {
-      if (geminiProcess === session.process) {
-        geminiProcess = null
-      }
-      if (!geminiSessionProcess) {
-        const latestGemini = getSingleActiveProviderSession('gemini')?.state as
-          | GeminiToolContext
-          | undefined
-        activeGeminiToolContext = latestGemini?.sender ? latestGemini : null
-      }
-    }
-    if (provider === 'codex') {
-      const codexState = getCodexStateFromSession(session)
-      const decision = decideCancelInterrupt(codexState)
-      if (decision.interruptNow && codexState?.threadId && codexState.turnId) {
-        await issueCodexTurnInterrupt(codexState.threadId, codexState.turnId)
-      } else if (decision.deferThreadId) {
-        // Cancelled before turn/started — defer the interrupt so the server turn
-        // doesn't run on after cancel (flushed in handleCodexNotification).
-        pendingCodexInterrupts.add(decision.deferThreadId)
-      }
-    }
-    return true
+    if (!runId && wasScheduledOccurrenceRunIdObserved(session.runId)) return false
+    return terminateExactProviderSession(provider, session.runId, 'cancelled')
   }
 
-  if (!runId && runManager.getActiveByProvider(provider).length > 1) {
-    return false
-  }
-
-  if (
-    provider === 'claude' ||
-    provider === 'kimi' ||
-    provider === 'grok' ||
-    provider === 'cursor' ||
-    provider === 'ollama'
-  ) {
-    const child = cliProviderProcesses.get(provider)
-    if (child) {
-      child.kill()
-      cliProviderProcesses.delete(provider)
-      return true
-    }
-    const controller = cliProviderAbortControllers.get(provider)
-    if (controller) {
-      controller.abort()
-      cliProviderAbortControllers.delete(provider)
-      return true
-    }
-    return false
-  }
-
-  if (provider !== 'codex') {
-    if (geminiProcess) {
-      geminiProcess.kill()
-      geminiProcess = null
-      if (!geminiSessionProcess) {
-        activeGeminiToolContext = null
-      }
-      return true
-    }
-    return false
-  }
-
-  if (codexExecProcess) {
-    codexExecProcess.kill()
-    codexExecProcess = null
-    return true
-  }
-
-  const activeDecision = decideCancelInterrupt(activeCodexRunState)
-  if (activeDecision.interruptNow && activeCodexRunState?.threadId && activeCodexRunState.turnId) {
-    await issueCodexTurnInterrupt(activeCodexRunState.threadId, activeCodexRunState.turnId)
-    return true
-  }
-  if (activeDecision.deferThreadId) {
-    pendingCodexInterrupts.add(activeDecision.deferThreadId)
-    return true
-  }
-
+  // Provider-global process/controller handles cannot prove chat or occurrence
+  // authority. Exact run ids (or a unique RunManager session above) are required.
   return false
 }
 
@@ -25950,6 +26754,11 @@ async function executeGeminiMcpTool(
       if (!parentChatId) {
         throw new Error('delegate_to_subthread requires an active parent chat context.')
       }
+      if (context.appRunId && wasScheduledOccurrenceRunIdObserved(context.appRunId)) {
+        throw new Error(
+          'Scheduled occurrences cannot launch detached sub-threads; use an owned ensemble lane or wait for user control.'
+        )
+      }
       const providerArgRaw = String(args.provider || '').trim()
       const promptArg = String(args.prompt || '').trim()
       const returnResult = args.returnResult !== false
@@ -27721,9 +28530,18 @@ if (isGeminiMcpBridgeProcess) {
         `[workspace-target] ${adoptedWorkspaceRealPaths} direct legacy workspace pin${adoptedWorkspaceRealPaths === 1 ? '' : 's'} adopted at startup`
       )
     }
+    try {
+      AppStore.validateScheduledRunIdTombstoneLedger()
+    } catch (error) {
+      scheduledOccurrenceRecoveryBlockedReason =
+        error instanceof Error ? error.message : String(error)
+      console.error(
+        `[scheduled-occurrence] run-id replay ledger is invalid; scheduled dispatch is disabled: ${scheduledOccurrenceRecoveryBlockedReason}`
+      )
+    }
     const occurrenceReplay = AppStore.replayScheduledOccurrenceMutations()
     if (occurrenceReplay.status === 'blocked') {
-      scheduledOccurrenceRecoveryBlockedReason = occurrenceReplay.reason
+      scheduledOccurrenceRecoveryBlockedReason ||= occurrenceReplay.reason
       console.error(
         `[scheduled-occurrence] startup recovery blocked; scheduled dispatch is disabled: ${occurrenceReplay.reason}`
       )
@@ -28696,7 +29514,22 @@ if (isGeminiMcpBridgeProcess) {
           // Unpark any approval/question the run is blocked on, mirroring the
           // desktop cancel-agent-run handler, so a parked run is fully torn down
           // (not just its process).
-          if (runId) cancelPendingAgentQuestionsForRun(runId, 'run-cancelled')
+          if (runId) {
+            const scheduledOwner = scheduledOccurrenceOwnerForCancellationRunId(
+              runId,
+              provider as ProviderId
+            )
+            if (scheduledOwner) {
+              return Boolean(
+                await cancelScheduledOccurrence(
+                  scheduledOwner.taskId,
+                  'Cancelled from paired device.'
+                )
+              )
+            }
+            if (wasScheduledOccurrenceRunIdObserved(runId)) return false
+            cancelPendingAgentQuestionsForRun(runId, 'run-cancelled')
+          }
           // Call cancelProviderRun directly instead of
           // providerAdapters.require(assertProviderId(provider)) — assertProviderId
           // THROWS for experimental providers (grok/cursor without the flag),
@@ -28944,12 +29777,17 @@ if (isGeminiMcpBridgeProcess) {
           ) {
             return { ok: false, error: 'Round id is no longer active' }
           }
-          const ok = Boolean(
-            await ensembleOrchestratorRef?.cancelRound(
-              action.threadId,
-              action.message || 'cancelled from iOS'
-            )
+          const reason = action.message || 'cancelled from iOS'
+          const scheduledOwner = scheduledOccurrenceOwners.lookupByChatId(
+            action.threadId
           )
+          const ok = scheduledOwner
+            ? Boolean(
+                await cancelScheduledOccurrence(scheduledOwner.taskId, reason)
+              )
+            : Boolean(
+                await ensembleOrchestratorRef?.cancelRound(action.threadId, reason)
+              )
           if (ok) {
             broadcastThreadUpdate(action.threadId, { remoteProjectionSnapshot: false })
             // Round status is projected in the task card; avoid a duplicate full rebuild.
@@ -29023,6 +29861,8 @@ if (isGeminiMcpBridgeProcess) {
         ensembleQueuePromptFn: async (action) => {
           const chat = AppStore.getChat(action.threadId)
           if (!chat?.ensemble) return { ok: false, error: 'Thread is not an Ensemble chat' }
+          const scheduledBlock = scheduledEnsembleInteractiveBlock(action.threadId)
+          if (scheduledBlock) return { ok: false, error: scheduledBlock }
           const writeBlock = globalEnsembleWriteBlock(chat)
           if (writeBlock) return { ok: false, error: writeBlock }
           const text = action.text.trim()
@@ -29346,6 +30186,8 @@ if (isGeminiMcpBridgeProcess) {
             return { ok: false, error: 'Queue changed underneath — refresh and retry' }
           }
           if (action.op === 'steerNow') {
+            const scheduledBlock = scheduledEnsembleInteractiveBlock(action.threadId)
+            if (scheduledBlock) return { ok: false, error: scheduledBlock }
             const liveQueueSender = mainWindow?.webContents
             const sender =
               liveQueueSender && !liveQueueSender.isDestroyed()
@@ -29565,6 +30407,8 @@ if (isGeminiMcpBridgeProcess) {
         ensembleSteerFn: async (action) => {
           const chat = AppStore.getChat(action.threadId)
           if (!chat?.ensemble) return { ok: false, error: 'Thread is not an Ensemble chat' }
+          const scheduledBlock = scheduledEnsembleInteractiveBlock(action.threadId)
+          if (scheduledBlock) return { ok: false, error: scheduledBlock }
           const writeBlock = globalEnsembleWriteBlock(chat)
           if (writeBlock) return { ok: false, error: writeBlock }
           const text = action.text.trim()
@@ -29624,6 +30468,8 @@ if (isGeminiMcpBridgeProcess) {
           // mention matcher. Two+ tagged participants stay a full panel round.
           const dmTargetParticipantId =
             resolveSingleEnsembleDmTarget(text, chat.ensemble.participants) ?? undefined
+          const lateScheduledBlock = scheduledEnsembleInteractiveBlock(action.threadId)
+          if (lateScheduledBlock) return { ok: false, error: lateScheduledBlock }
           const result = ensembleOrchestratorRef?.startRound({
             chatId: action.threadId,
             prompt: text,
@@ -33851,28 +34697,19 @@ if (isGeminiMcpBridgeProcess) {
         const chat = AppStore.getChat(chatId)
         if (!chat) throw new Error('Composer chat authority is unavailable.')
         const scheduledTaskId = optionalString(input.scheduledTaskId)
-        const scheduledTask = scheduledTaskId
-          ? AppStore.getScheduledTasks().find((task) => task.id === scheduledTaskId)
-          : undefined
+        if (scheduledTaskId) {
+          throw new Error('Scheduled occurrences are composed and dispatched by MAIN only.')
+        }
         return resolveComposerRunAuthority({
           input,
           chat,
           isMainRenderer: isMainRendererSender(event),
           owner: workspacePopoutOwnerForSender(event.sender.id),
-          scheduledTask,
           canonicalizePath: canonicalPath
         })
       },
       resolveSenderAttachmentPaths: (event, paths) =>
         resolveRendererAttachmentPaths(event, paths),
-      onScheduledRunComposed: (event, input, payload) => {
-        scheduledRunDispatchReceipts.issue({
-          senderId: event.sender.id,
-          scheduledTaskId: requireNonEmptyString(input.scheduledTaskId, 'Scheduled task id'),
-          appRunId: requireNonEmptyString(input.appRunId, 'Run id'),
-          payload
-        })
-      },
       assertSenderChatScope: (event, chatId) => assertRendererChatScope(event, chatId)
     })
     registerDiscordContextHandlers({
@@ -34161,6 +34998,7 @@ if (isGeminiMcpBridgeProcess) {
     })
     registerScheduledWorkflowHandlers({
       assertMainRendererSender,
+      assertRendererChatScope,
       getScheduledTasks: (workspaceId) => AppStore.getScheduledTasks(workspaceId),
       saveScheduledTask: (task) => saveScheduledTaskWithSignedPosture(task),
       updateScheduledTask: (id, partial) => {
@@ -34172,6 +35010,7 @@ if (isGeminiMcpBridgeProcess) {
           ? ensureScheduledTaskSignedPosture(updated)
           : updated
       },
+      cancelScheduledTask: (id, reason) => cancelScheduledOccurrence(id, reason),
       deleteScheduledTask: (id) => AppStore.deleteScheduledTask(id),
       getWorkflowDefinitions: (workspaceId) => AppStore.getWorkflowDefinitions(workspaceId),
       getWorkflowDefinition: (id) => AppStore.getWorkflowDefinition(id),
@@ -34267,9 +35106,6 @@ if (isGeminiMcpBridgeProcess) {
       },
       broadcastWorkflowDefinitionsChanged: () => {
         mainWindow?.webContents.send('workflow-definitions-changed', AppStore.getWorkflowDefinitions())
-      },
-      broadcastScheduledTaskDue: (task) => {
-        mainWindow?.webContents.send('scheduled-task-due', task)
       },
       broadcastWorkspaceBoardsChanged: () => {
         mainWindow?.webContents.send('workspace-boards-changed', {
@@ -35431,13 +36267,14 @@ if (isGeminiMcpBridgeProcess) {
       repairKnownStaleGeminiMcpBridgeConfigs,
       expandPdfImagePathsForPayload,
       captureFailoverSnapshot,
-      scheduledTaskIdBySoloRun,
+      scheduledOccurrenceOwners,
       workflowBudgetRegistry,
       failoverSnapshotByRun,
       runCoordinator,
       getSettings: () => AppStore.getSettings(),
       getScheduledTasks: () => AppStore.getScheduledTasks(),
-      getWorkflowDefinitions: () => AppStore.getWorkflowDefinitions()
+      getWorkflowDefinitions: () => AppStore.getWorkflowDefinitions(),
+      wasDurableScheduledRunIdObserved
     }
     const baseDispatchRunWithProviderPause = createRunDispatchFacade(runDispatchFacadeDeps)
     const dispatchRunWithProviderPause: ParentRunDispatch = (payload, event) =>
@@ -35447,6 +36284,13 @@ if (isGeminiMcpBridgeProcess) {
         baseDispatchRunWithProviderPause
       )
     dispatchRunWithProviderPauseRef = dispatchRunWithProviderPause
+    const dispatchMainOwnedScheduledOccurrence: ParentRunDispatch = (payload, event) => {
+      return baseDispatchRunWithProviderPause(
+        authorizeMainOwnedScheduledOccurrenceDispatch(payload),
+        event
+      )
+    }
+    dispatchMainOwnedScheduledOccurrenceRef = dispatchMainOwnedScheduledOccurrence
     // Stage 0b-dispatch: expose the composer + dispatcher to the module-scope
     // scheduler so a windowless app can compose + fire a due SOLO run itself.
     composerServiceRef = composerService
@@ -35458,7 +36302,7 @@ if (isGeminiMcpBridgeProcess) {
     })
     ensembleOrchestratorRef = new EnsembleOrchestrator({
       getChat: (chatId) => AppStore.getChat(chatId),
-      saveChat: saveAndBroadcastChat,
+      saveChat: saveEnsembleChatWithScheduledHeartbeat,
       getSettings: () => AppStore.getSettings(),
       signRunPermissionPosture: signRunPosture,
       isTrustedSessionGranted: (scope) => trustedSessionGrants.isGranted(scope),
@@ -35469,7 +36313,42 @@ if (isGeminiMcpBridgeProcess) {
           appRunId,
           attachments
         ),
-      dispatch: (payload, event) => dispatchRunWithProviderPause(payload, event),
+      dispatch: (payload, event) => {
+        const scheduledRoundId = payload.ensembleRun?.roundId
+        const scheduledRoundOwner = scheduledRoundId
+          ? scheduledOccurrenceOwners.lookupEnsembleRound(scheduledRoundId)
+          : undefined
+        if (!scheduledRoundOwner || !scheduledRoundId) {
+          assertScheduledEnsembleInteractiveAvailable(
+            requireNonEmptyString(payload.appChatId, 'Ensemble dispatch chat id')
+          )
+          if (
+            scheduledRoundId &&
+            scheduledOccurrenceOwners.wasEnsembleRoundIdObserved(scheduledRoundId)
+          ) {
+            throw new Error(
+              'Scheduled ensemble ownership ended before participant dispatch.'
+            )
+          }
+          return dispatchRunWithProviderPause(payload, event)
+        }
+        const childRunId = requireNonEmptyString(
+          payload.appRunId,
+          'Scheduled ensemble child run id'
+        )
+        recordScheduledOccurrenceChildBinding({
+          owner: scheduledRoundOwner,
+          childRunId,
+          childKind: 'ensemble',
+          childProvider: payload.provider
+        })
+        scheduledOccurrenceOwners.bindEnsembleChildRun(
+          childRunId,
+          scheduledRoundId,
+          payload.provider
+        )
+        return dispatchMainOwnedScheduledOccurrence(payload, event)
+      },
       shouldPersistProviderSessionForRun,
       releaseProviderSessionPersistenceDecision,
       cancelRun: (provider, runId) => providerAdapters.require(provider).cancel(runId),
@@ -35503,18 +36382,31 @@ if (isGeminiMcpBridgeProcess) {
       persistSessionCheckpoint: (chat, reason) =>
         sessionCheckpointStoreRef?.upsertFromChat(chat, reason),
       completeSessionCheckpoint: (chatId, roundId, status) => {
-        sessionCheckpointStoreRef?.completeRound(chatId, roundId, status)
-        // Mark a scheduled ensemble occurrence terminal here — focus-independent,
-        // main-side — since the renderer never sees a per-participant scheduledTaskId.
-        const ensembleScheduledTaskId = scheduledTaskIdByEnsembleRound.get(roundId)
-        if (ensembleScheduledTaskId) {
-          scheduledTaskIdByEnsembleRound.delete(roundId)
-          AppStore.updateScheduledTask(ensembleScheduledTaskId, {
-            status:
-              status === 'completed' ? 'completed' : status === 'cancelled' ? 'cancelled' : 'failed',
-            completedAt: new Date().toISOString(),
-            ...(status === 'failed' ? { lastError: 'Scheduled ensemble round failed.' } : {})
-          })
+        try {
+          sessionCheckpointStoreRef?.completeRound(chatId, roundId, status)
+        } catch (error) {
+          console.error(`Failed to complete ensemble checkpoint for round ${roundId}`, error)
+        } finally {
+          const owner = scheduledOccurrenceOwners.lookupEnsembleRound(roundId)
+          if (owner) {
+            const terminalStatus =
+              status === 'completed'
+                ? 'completed'
+                : status === 'cancelled'
+                  ? 'cancelled'
+                  : 'failed'
+            const settled = settleScheduledOccurrence(owner, terminalStatus, {
+              completedAt: new Date().toISOString(),
+              ...(terminalStatus === 'failed'
+                ? { lastError: 'Scheduled ensemble round failed.' }
+                : {})
+            })
+            if (!settled) {
+              console.error(
+                `[scheduled-occurrence] exact ensemble settlement rejected for round ${roundId}`
+              )
+            }
+          }
         }
       },
       transitionRunQueueJob: (runIdOrId, status, partial) =>
@@ -35792,44 +36684,11 @@ if (isGeminiMcpBridgeProcess) {
     ipcMain.handle('run-agent', async (event, payload: AgentRunPayload) => {
       const chatId = requireNonEmptyString(payload?.appChatId, 'Chat id')
       assertRendererChatScope(event, chatId)
-      const rawScheduledTaskId = (payload as AgentRunPayload & { scheduledTaskId?: unknown })
-        .scheduledTaskId
-      const scheduledTaskId =
-        typeof rawScheduledTaskId === 'string' ? rawScheduledTaskId.trim() : ''
-      const scheduledTask = assertRunAgentScheduledAuthority({
-        scheduledTaskId: rawScheduledTaskId,
-        isMainRenderer: isMainRendererSender(event),
-        task: scheduledTaskId
-          ? AppStore.getScheduledTasks().find((task) => task.id === scheduledTaskId)
-          : undefined,
-        chat: AppStore.getChat(chatId),
-        appRunId: payload?.appRunId,
-        canonicalizePath: canonicalPath,
-        alreadyBound:
-          Boolean(scheduledTaskId) &&
-          (scheduledTaskIdsDispatching.has(scheduledTaskId) ||
-            [...scheduledTaskIdBySoloRun.values()].includes(scheduledTaskId))
-      })
-      if (scheduledTask) {
-        const canonicalPayload = scheduledRunDispatchReceipts.consume({
-          senderId: event.sender.id,
-          scheduledTaskId: scheduledTask.id,
-          appRunId: requireNonEmptyString(scheduledTask.runId, 'Run id'),
-          payload
-        })
-        scheduledTaskIdsDispatching.add(scheduledTask.id)
-        try {
-          // The receipt returns the exact main-composed payload. Only the
-          // bookkeeping id is reattached; renderer-only worktree/attachment
-          // mutations are discarded before reaching the shared normalizer.
-          await dispatchAgentRun(
-            { ...canonicalPayload, scheduledTaskId: scheduledTask.id } as AgentRunPayload,
-            event
-          )
-        } finally {
-          scheduledTaskIdsDispatching.delete(scheduledTask.id)
-        }
-        return
+      if (Object.prototype.hasOwnProperty.call(payload, 'scheduledTaskId')) {
+        throw new Error('Renderer scheduled-run dispatch is retired; MAIN owns every occurrence.')
+      }
+      if (payload.ensembleRun || payload.auditRun) {
+        throw new Error('Renderer orchestration identities are MAIN-owned.')
       }
       const authorityBoundPayload = deriveRendererRunPayload(event, payload)
       await dispatchWithAuthorizedAttachmentPaths(
@@ -35861,113 +36720,56 @@ if (isGeminiMcpBridgeProcess) {
         }
         const chatId = requireNonEmptyString(payload?.chatId, 'Ensemble chat id')
         assertRendererChatScope(event, chatId)
-        const scheduledTaskId = optionalString(payload?.scheduledTaskId)
-        let scheduledTask: ScheduledTask | undefined
-        if (scheduledTaskId) {
-          assertMainRendererSender(event)
-          const chat = AppStore.getChat(chatId)
-          scheduledTask = assertScheduledRunAuthority({
-            task: AppStore.getScheduledTasks().find((task) => task.id === scheduledTaskId),
-            chat,
-            expectedKind: 'ensemble',
-            canonicalizePath: canonicalPath
-          })
-          if ([...scheduledTaskIdByEnsembleRound.values()].includes(scheduledTask.id)) {
-            throw new Error('Scheduled Ensemble occurrence is already bound to an active round.')
-          }
-          if (scheduledTask.ensembleSnapshot && chat?.ensemble) {
-            AppStore.saveChat(
-              applyScheduledEnsembleSnapshotMain(chat, scheduledTask.ensembleSnapshot)
-            )
-          }
+        if (Object.prototype.hasOwnProperty.call(payload, 'scheduledTaskId')) {
+          throw new Error('Renderer scheduled-round dispatch is retired; MAIN owns every occurrence.')
         }
         const imageAttachments = imageAttachmentSnapshots(
-          scheduledTask?.imageAttachments ?? payload?.imageAttachments
+          payload?.imageAttachments
         )
-        const prompt =
-          scheduledTask?.prompt ?? (typeof payload?.prompt === 'string' ? payload.prompt : '')
+        const prompt = typeof payload?.prompt === 'string' ? payload.prompt : ''
         if (!prompt.trim() && imageAttachments.length === 0) {
           throw new Error('Ensemble prompt or attachment is required.')
         }
-        const dispatchImageAttachments = scheduledTask
-          ? await expandPdfAttachmentsForDispatch(imageAttachments)
-          : await authorizeThenExpandAttachmentRecords(
-              imageAttachments,
-              (paths) => resolveRendererAttachmentPaths(event, paths),
-              expandPdfAttachmentsForDispatch
-            )
+        const dispatchImageAttachments = await authorizeThenExpandAttachmentRecords(
+          imageAttachments,
+          (paths) => resolveRendererAttachmentPaths(event, paths),
+          expandPdfAttachmentsForDispatch
+        )
         // 1.0.4-AT4 — normalize the renderer-supplied grants the
         // same way solo-run dispatch does. Drops malformed entries
         // and produces an [] when nothing is granted.
-        const externalPathGrantInput =
-          scheduledTask?.externalPathGrants ?? payload?.externalPathGrants
+        const externalPathGrantInput = payload?.externalPathGrants
         const externalPathGrants = Array.isArray(externalPathGrantInput)
           ? normalizeExternalPathGrants(externalPathGrantInput as ExternalPathGrant[])
           : []
-        const discordContextSnapshots =
-          !scheduledTask && Array.isArray(payload?.discordContextSnapshots)
-            ? payload.discordContextSnapshots
-            : []
-        // P2 — resolve a VERIFIED elevation for the scheduled occurrence (HMAC +
-        // current); null ⇒ the round stays read-only (P1b). The orchestrator
-        // applies the uniform level → preset when honoring.
-        const ensembleElevation = scheduledTask
-          ? resolveUnattendedElevation(scheduledTask.id)
-          : null
-        const scheduledSnapshot = scheduledTask?.ensembleSnapshot
-        const scheduledFanoutPolicy = scheduledSnapshot
-          ? normalizeScheduledFanoutPolicy(
-              scheduledSnapshot.fanoutPolicy,
-              scheduledSnapshot.concurrentModeEnabled
-            )
-          : undefined
-        const scheduledConcurrentMode = scheduledSnapshot
-          ? scheduledSnapshot.concurrentModeEnabled ?? scheduledFanoutPolicy !== 'off'
-          : undefined
+        const discordContextSnapshots = Array.isArray(payload?.discordContextSnapshots)
+          ? payload.discordContextSnapshots
+          : []
+        assertScheduledEnsembleInteractiveAvailable(chatId)
         const ensembleStartResult = ensembleOrchestratorRef?.startRound({
           chatId,
           prompt,
           event,
-          mode: scheduledTask ? 'normal' : payload?.mode || 'normal',
-          ...((scheduledTask ? scheduledConcurrentMode : payload?.concurrentMode) !== undefined
+          mode: payload?.mode || 'normal',
+          ...(payload?.concurrentMode !== undefined
             ? {
-                concurrentMode: Boolean(
-                  scheduledTask ? scheduledConcurrentMode : payload?.concurrentMode
-                )
+                concurrentMode: Boolean(payload.concurrentMode)
               }
             : {}),
-          ...((scheduledTask ? scheduledFanoutPolicy : payload?.fanoutPolicy) !== undefined
-            ? { fanoutPolicy: scheduledTask ? scheduledFanoutPolicy : payload?.fanoutPolicy }
+          ...(payload?.fanoutPolicy !== undefined
+            ? { fanoutPolicy: payload.fanoutPolicy }
             : {}),
           imageAttachments: dispatchImageAttachments,
           ...(discordContextSnapshots.length > 0 ? { discordContextSnapshots } : {}),
-          ...((scheduledTask
-            ? scheduledSnapshot?.dmTargetParticipantId
-            : payload?.dmTargetParticipantId)
+          ...(payload?.dmTargetParticipantId
             ? {
-                dmTargetParticipantId: scheduledTask
-                  ? scheduledSnapshot?.dmTargetParticipantId
-                  : payload?.dmTargetParticipantId
+                dmTargetParticipantId: payload.dmTargetParticipantId
               }
             : {}),
           ...(externalPathGrants.length > 0
             ? { externalPathGrants }
-            : {}),
-          // P1b — a scheduled occurrence is unattended; the orchestrator
-          // clamps every participant to a read-only posture so an
-          // unattended round can't auto-accept edits.
-          unattended: Boolean(scheduledTask),
-          // P2 — when a verified elevation exists, lift the uniform participant
-          // posture from read-only to the level's preset.
-          ...(ensembleElevation
-            ? { unattendedElevationLevel: ensembleElevation.ack.level }
             : {})
         })
-        // Scheduled ensemble: remember roundId -> scheduledTaskId so the round-settle
-        // hook can mark the task terminal. Keyed by roundId so only THIS round counts.
-        if (scheduledTask && ensembleStartResult?.roundId) {
-          scheduledTaskIdByEnsembleRound.set(ensembleStartResult.roundId, scheduledTask.id)
-        }
         return ensembleStartResult
       }
     )
@@ -35990,6 +36792,7 @@ if (isGeminiMcpBridgeProcess) {
         const chatId = requireNonEmptyString(payload?.chatId, 'Ensemble chat id')
         assertRendererChatScope(event, chatId)
         const index = Number.isFinite(payload?.index) ? Math.floor(Number(payload.index)) : -1
+        assertScheduledEnsembleInteractiveAvailable(chatId)
         return ensembleOrchestratorRef?.steerQueuedPrompt({
           chatId,
           index,
@@ -36038,6 +36841,15 @@ if (isGeminiMcpBridgeProcess) {
     ipcMain.handle('cancel-ensemble-round', async (event, chatId?: string) => {
       const canonicalChatId = requireNonEmptyString(chatId, 'Ensemble chat id')
       assertRendererChatScope(event, canonicalChatId)
+      const scheduledOwner = scheduledOccurrenceOwners.lookupByChatId(canonicalChatId)
+      if (scheduledOwner) {
+        return Boolean(
+          await cancelScheduledOccurrence(
+            scheduledOwner.taskId,
+            'Cancelled from Ensemble controls.'
+          )
+        )
+      }
       return ensembleOrchestratorRef?.cancelRound(canonicalChatId)
     })
 
@@ -36452,6 +37264,19 @@ if (isGeminiMcpBridgeProcess) {
           assertRendererChatScope(event, chatId)
         }
         if (runIdString) {
+          const scheduledOwner = scheduledOccurrenceOwnerForCancellationRunId(
+            runIdString,
+            normalizedProvider
+          )
+          if (scheduledOwner) {
+            return Boolean(
+              await cancelScheduledOccurrence(
+                scheduledOwner.taskId,
+                'Cancelled from run controls.'
+              )
+            )
+          }
+          if (wasScheduledOccurrenceRunIdObserved(runIdString)) return false
           cancelPendingAgentQuestionsForRun(runIdString, 'run-cancelled')
         }
         return providerAdapters.require(normalizedProvider).cancel(runIdString)
@@ -36616,26 +37441,11 @@ if (isGeminiMcpBridgeProcess) {
       return providerAdapters.require('gemini').cancel(optionalString(runId))
     })
 
-    ipcMain.handle('write-gemini-input', async (event, data: string) => {
+    ipcMain.handle('write-gemini-input', async (event, _data: string) => {
       assertMainRendererSender(event)
-      if (typeof data !== 'string' || !data.length) {
-        return false
-      }
-
-      try {
-        if (geminiSessionProcess) {
-          geminiSessionProcess.write(data)
-          return true
-        }
-
-        if (geminiProcess?.stdin && !geminiProcess.killed) {
-          geminiProcess.stdin.write(data)
-          return true
-        }
-      } catch {
-        return false
-      }
-
+      // Gemini is retired for new runs, and this legacy channel carries no
+      // chat/run identity. Writing to whichever process happened to start last
+      // would cross thread and scheduled-occurrence ownership boundaries.
       return false
     })
 
