@@ -1,6 +1,12 @@
 # iOS workflow write-actions — landed Mac contract and Swift handoff
 
-Status: **Mac/TypeScript contract landed in `d17bdd5a1`; Swift UI remains.**
+Status: **COMPLETE on both sides.** Mac/TypeScript contract landed in
+`d17bdd5a1`; the Swift client landed on `fable/ios-workflow-controls`:
+`BridgeAction.workflowSetEnabled/.workflowRunNow` builders,
+`RemoteSessionModel.setWorkflowEnabled/.runWorkflowNow` (optimistic flip +
+ack reconcile + verbatim Mac denial reasons), and swipe/context-menu
+controls on the sidebar workflow rows (run-now withheld while an execution
+is live).
 The Mac can now accept narrowly decoded pause/resume and run-now actions once
 the Swift client emits them. It resolves and revalidates all workspace,
 provider, and permission authority from its canonical workflow record; those
