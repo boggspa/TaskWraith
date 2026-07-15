@@ -484,6 +484,16 @@ export async function resolveCliProviderBinary(
     ...(provider === 'grok'
       ? binaryCandidates.map((name) => join(os.homedir(), '.grok', 'bin', name))
       : []),
+    // Kimi Code (the kimi-cli successor) installs its binary at
+    // ~/.kimi-code/bin/kimi and only exposes that dir via a ~/.zshrc PATH
+    // export, so a packaged (launchd-PATH) launch never sees it. Mirror the
+    // Grok case so Kimi resolves in a limited-PATH context. NOTE: resolving
+    // the binary is necessary but NOT sufficient — the Kimi Code binary
+    // dropped Wire mode, so runs still require the ACP transport migration
+    // before Kimi can actually execute.
+    ...(provider === 'kimi'
+      ? binaryCandidates.map((name) => join(os.homedir(), '.kimi-code', 'bin', name))
+      : []),
     ...binaryCandidates.flatMap((name) => [
       join(os.homedir(), '.local', 'bin', name),
       join(os.homedir(), '.npm-global', 'bin', name),
