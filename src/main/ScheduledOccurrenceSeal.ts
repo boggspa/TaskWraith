@@ -1,29 +1,53 @@
-import { createHash, createHmac, timingSafeEqual } from 'node:crypto'
+import { createHash, timingSafeEqual } from 'node:crypto'
 import { isAbsolute, parse, resolve } from 'node:path'
 import { isRetiredProvider } from '../shared/retiredProviders'
 import type {
+  AgenticNetworkPolicy,
+  AgenticServiceId,
+  AgenticServicePolicy,
   AgenticServicesSettings,
   ProviderId,
-  RunPermissionPostureSnapshot,
   RuntimeProfile,
-  ScheduledOccurrenceSeal,
+  ScheduledOccurrenceSealV1,
+  ScheduledOccurrenceSealV2,
+  ScheduledOccurrenceRootOwner,
   ScheduledTask,
   WorkflowDefinition,
   WorkflowRunTemplate
 } from './store/types'
+import type { ScheduledOccurrenceAuthorityRoot } from './ScheduledOccurrenceAuthorityRootStore'
+import {
+  SCHEDULED_OCCURRENCE_POSTURE_AGENTIC_SERVICE_IDS,
+  type ScheduledOccurrencePostureAuthority,
+  type ScheduledOccurrencePostureCapability,
+  type ScheduledOccurrencePostureResolver
+} from './ScheduledOccurrencePostureAuthority'
+import { approvalModeRank, coerceApprovalMode } from './RunPermissionPosture'
+import {
+  buildProviderLaunchAuthority,
+  providerLaunchAuthorityDigest,
+  type CanonicalProviderLaunchAuthority,
+  type ClaudeLaunchControls,
+  type CodexLaunchControls,
+  type CursorLaunchControls,
+  type GrokLaunchControls,
+  type KimiLaunchControls,
+  type OllamaLaunchControls,
+  type ProviderLaunchAuthorityInput
+} from './ProviderLaunchAuthorityDigest'
 import {
   workflowAuthorityEnvelope,
   workflowRunTemplateAuthority
 } from './WorkflowAuthorityDigest'
 
 const TASK_DOMAIN = 'taskwraith:scheduled-task-authority:v1\0'
-const RUNTIME_SET_DOMAIN = 'taskwraith:runtime-profile-set:v1\0'
-const POSTURE_SET_DOMAIN = 'taskwraith:permission-posture-set:v1\0'
 const WORKFLOW_DOMAIN = 'taskwraith:workflow-base-authority:v1\0'
 const WORKFLOW_EXECUTION_DOMAIN = 'taskwraith:workflow-execution-authority:v1\0'
-const SEAL_DOMAIN = 'taskwraith:scheduled-occurrence:v1\0'
 const ROOT_SEAT_ID = 'root'
 export const SCHEDULED_LOOP_VERIFIER_SEAT_ID = 'loop-verifier'
+/** Canonical non-path marker for Ollama's HTTP runtime (which has no CLI binary). */
+export const SCHEDULED_OCCURRENCE_OLLAMA_EFFECTIVE_BINARY_SENTINEL =
+  'taskwraith:ollama-http-runtime'
 const MAX_TEXT_LENGTH = 4_096
 
 const PROVIDER_IDS = {
@@ -50,7 +74,21 @@ const AGENTIC_SERVICE_AUTHORITY_FIELDS = {
   networkAccess: true
 } as const satisfies Record<keyof Required<AgenticServicesSettings>, true>
 
-const SEAL_KEYS = [
+const SEAL_V2_KEYS = [
+  'schemaVersion',
+  'rootId',
+  'issuedAt',
+  'ownerRunId',
+  'rootOwner',
+  'taskAuthorityDigest',
+  'compositeWorkflowAuthorityDigest',
+  'workspaceRealPath',
+  'runtimeProfileSetHmac',
+  'permissionPostureSetHmac',
+  'sealMac'
+] as const satisfies readonly (keyof ScheduledOccurrenceSealV2)[]
+
+const SEAL_V1_KEYS = [
   'schemaVersion',
   'issuedAt',
   'taskAuthorityDigest',
@@ -59,7 +97,7 @@ const SEAL_KEYS = [
   'runtimeProfileSetHmac',
   'permissionPostureSetHmac',
   'sealSignature'
-] as const satisfies readonly (keyof ScheduledOccurrenceSeal)[]
+] as const satisfies readonly (keyof ScheduledOccurrenceSealV1)[]
 
 /**
  * Exhaustive compile-time classification of the current RuntimeProfile schema.
@@ -155,37 +193,54 @@ export type RuntimeProfileAuthority = Readonly<
 >
 
 /**
- * Main derives this record after resolving the actual binary, effective policy,
- * MCP surface and provider launch plan. The provider-specific plan is represented
- * by a mandatory digest, not a caller-authored open-ended object. Its producer
- * must use an exhaustive provider-discriminated builder before calling this
- * primitive.
+ * Main derives this defensive preflight record after resolving the intended
+ * binary, effective policy, MCP surface and provider launch plan. The
+ * provider-specific plan is represented by a mandatory digest, not a
+ * caller-authored open-ended object. Its producer must use an exhaustive
+ * provider-discriminated builder before calling this primitive.
+ *
+ * This record does not attest what was actually spawned and is never sufficient
+ * launch authority. A process-local, one-shot launch receipt must bind and
+ * consume the exact executable/request, environment, workspace and session at
+ * the irreversible provider start boundary.
  */
-export interface EffectiveRuntimeLaunchAuthority {
+interface EffectiveRuntimeLaunchAuthorityCommon {
   readonly schemaVersion: 1
   readonly provider: ProviderId
   readonly effectiveBinary: string
   readonly effectiveWorkspaceMode: RuntimeProfile['workspaceMode']
   readonly effectiveMcpProfileId: string | null
   readonly effectiveApprovalMode: string
-  readonly effectiveAgenticServices: Readonly<Required<AgenticServicesSettings>>
-  readonly effectiveNetworkPolicy: RuntimeProfile['networkPolicy']
+  readonly effectiveAgenticServices: Readonly<
+    Record<AgenticServiceId, AgenticServicePolicy>
+  >
+  readonly effectiveNetworkPolicy: AgenticNetworkPolicy
   readonly effectivePersistence: RuntimeProfile['persistence']
+}
+
+export interface EffectiveRuntimeLaunchAuthorityInput
+  extends EffectiveRuntimeLaunchAuthorityCommon {
+  readonly providerLaunchAuthority: ProviderLaunchAuthorityInput
+}
+
+export interface EffectiveRuntimeLaunchAuthority
+  extends EffectiveRuntimeLaunchAuthorityCommon {
   readonly providerLaunchAuthorityDigest: string
 }
 
 /** Compatibility name for callers that are resolving a no-profile seat. */
+export type DefaultRuntimeLaunchAuthorityInput = EffectiveRuntimeLaunchAuthorityInput
 export type DefaultRuntimeLaunchAuthority = EffectiveRuntimeLaunchAuthority
 
 export type ScheduledOccurrenceSeatLaunchAuthority =
   | Readonly<{
       kind: 'selected-runtime-profile'
       profile: RuntimeProfile
-      effectiveAuthority: EffectiveRuntimeLaunchAuthority
+      effectiveAuthority: EffectiveRuntimeLaunchAuthorityInput
     }>
   | Readonly<{
       kind: 'default-runtime'
-      effectiveAuthority: EffectiveRuntimeLaunchAuthority
+      effectiveAuthority: EffectiveRuntimeLaunchAuthorityInput
     }>
 
 export interface ScheduledOccurrenceRuntimeSeatContext {
@@ -197,7 +252,7 @@ export interface ScheduledOccurrenceRuntimeSeatContext {
    * A freshly re-derived, main-signed posture for this exact seat. Persisted
    * ScheduledTask.permissionPosture is intentionally not consulted.
    */
-  readonly permissionPostureAuthority: RunPermissionPostureSnapshot
+  readonly permissionPostureCapability: ScheduledOccurrencePostureCapability
 }
 
 export type ScheduledOccurrenceAuthorityPhase =
@@ -220,7 +275,8 @@ export interface ScheduledOccurrenceCurrentContext {
   readonly effectiveLoopVerifierProvider: ProviderId | null
 }
 
-export type ScheduledOccurrenceSealPayload = Omit<ScheduledOccurrenceSeal, 'sealSignature'>
+export type ScheduledOccurrenceSealPayload = Omit<ScheduledOccurrenceSealV2, 'sealMac'>
+type ScheduledOccurrenceSealDerivationMode = 'mint' | 'verify'
 
 /**
  * This primitive authenticates current authority, not storage monotonicity.
@@ -230,49 +286,68 @@ export type ScheduledOccurrenceSealPayload = Omit<ScheduledOccurrenceSeal, 'seal
  * scope here and needs an external monotonic anchor.
  */
 export function mintScheduledOccurrenceSeal(
-  key: Buffer,
+  authorityRoot: ScheduledOccurrenceAuthorityRoot,
+  postureResolver: ScheduledOccurrencePostureResolver,
   context: ScheduledOccurrenceCurrentContext,
   issuedAt: string = new Date().toISOString()
-): ScheduledOccurrenceSeal {
-  if (context.phase.kind !== 'queued') {
-    throw new TypeError('Scheduled occurrence seals may only be minted before run ownership.')
+): ScheduledOccurrenceSealV2 {
+  if (context.phase.kind !== 'running') {
+    throw new TypeError('Scheduled occurrence seals may only be minted from a running post-image.')
   }
-  const strongKey = requireStrongKey(key)
-  const payload = deriveScheduledOccurrenceSealPayload(strongKey, context, issuedAt)
-  return normalizeSeal({
+  const payload = deriveScheduledOccurrenceSealPayload(
+    authorityRoot,
+    postureResolver,
+    context,
+    issuedAt,
+    'mint'
+  )
+  return normalizeSealV2({
     ...payload,
-    sealSignature: signSeal(strongKey, payload)
+    sealMac: authorityRoot.sealPayloadMac(sealPayloadBytes(payload))
   })
 }
 
-export function deriveScheduledOccurrenceSealPayload(
-  key: Buffer,
+function deriveScheduledOccurrenceSealPayload(
+  authorityRoot: ScheduledOccurrenceAuthorityRoot,
+  postureResolver: ScheduledOccurrencePostureResolver,
   context: ScheduledOccurrenceCurrentContext,
-  issuedAt: string
+  issuedAt: string,
+  mode: ScheduledOccurrenceSealDerivationMode
 ): Readonly<ScheduledOccurrenceSealPayload> {
-  const strongKey = requireStrongKey(key)
-  assertOccurrencePhase(context.task, context.phase)
+  const rootId = authorityRootId(authorityRoot)
+  const canonicalIssuedAt = canonicalIso(issuedAt, 'issuedAt')
+  assertOccurrencePhase(context.task, context.phase, canonicalIssuedAt, mode)
+  if (context.phase.kind !== 'running') {
+    throw new TypeError('Scheduled occurrence authority requires a running post-image.')
+  }
+  const rootOwner = scheduledOccurrenceRootOwner(context.task, context.workflow)
   const workspaceRealPath = canonicalWorkspaceRealPath(context.workspaceRealPath)
-  const seatRows = authorityRows(context)
-  const runtimeProfileSetHmac = keyedSetHmac(
-    strongKey,
-    RUNTIME_SET_DOMAIN,
-    seatRows.map((row) => row.runtime)
+  const seatRows = authorityRows(
+    context,
+    postureResolver,
+    rootId,
+    workspaceRealPath
   )
-  const permissionPostureSetHmac = keyedSetHmac(
-    strongKey,
-    POSTURE_SET_DOMAIN,
-    seatRows.map((row) => row.posture)
+  const runtimeProfileSetHmac = authorityRoot.runtimeProfileSetHmac(
+    authoritySetBytes(seatRows.map((row) => row.runtime))
+  )
+  const permissionPostureSetHmac = authorityRoot.permissionPostureSetHmac(
+    authoritySetBytes(seatRows.map((row) => row.posture))
   )
   const workflowDigest = currentWorkflowDigest(
     context.task,
     context.workflow,
     context.phase,
-    context.canonicalizePath
+    context.canonicalizePath,
+    canonicalIssuedAt,
+    mode
   )
   return Object.freeze({
-    schemaVersion: 1 as const,
-    issuedAt: canonicalIso(issuedAt, 'issuedAt'),
+    schemaVersion: 2 as const,
+    rootId,
+    issuedAt: canonicalIssuedAt,
+    ownerRunId: trimmedText(context.phase.ownerRunId, 'scheduled occurrence owner run id'),
+    rootOwner,
     taskAuthorityDigest: scheduledTaskAuthorityDigest(
       context.task,
       context.canonicalizePath
@@ -294,17 +369,41 @@ export function deriveScheduledOccurrenceSealPayload(
 
 /** Verify an untrusted persisted seal against one freshly resolved context. */
 export function verifyScheduledOccurrenceSealAgainstCurrentContext(
-  key: Buffer,
+  authorityRoot: ScheduledOccurrenceAuthorityRoot,
+  postureResolver: ScheduledOccurrencePostureResolver,
   value: unknown,
   context: ScheduledOccurrenceCurrentContext
-): ScheduledOccurrenceSeal | null {
+): ScheduledOccurrenceSealV2 | null {
   try {
-    const strongKey = requireStrongKey(key)
-    const seal = normalizeSeal(value)
+    const rootId = authorityRootId(authorityRoot)
+    const seal = normalizeSealV2(value)
+    if (seal.rootId !== rootId || context.phase.kind !== 'running') return null
+    const persistedSeal = normalizeSealV2(context.task.occurrenceSeal)
+    if (!equalText(canonicalEncode(persistedSeal), canonicalEncode(seal))) return null
     const stored = sealPayload(seal)
-    if (!equalHex(signSeal(strongKey, stored), seal.sealSignature)) return null
-    const expected = deriveScheduledOccurrenceSealPayload(strongKey, context, seal.issuedAt)
+    if (!authorityRoot.verifySealPayloadMac(sealPayloadBytes(stored), seal.sealMac)) return null
+    const expected = deriveScheduledOccurrenceSealPayload(
+      authorityRoot,
+      postureResolver,
+      context,
+      seal.issuedAt,
+      'verify'
+    )
     return equalText(canonicalEncode(stored), canonicalEncode(expected)) ? seal : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Strictly decode a legacy v1 record for migration/audit only. No launch
+ * verifier accepts this type, irrespective of its historical signature.
+ */
+export function decodeLegacyScheduledOccurrenceSealV1ForMigration(
+  value: unknown
+): ScheduledOccurrenceSealV1 | null {
+  try {
+    return normalizeSealV1(value)
   } catch {
     return null
   }
@@ -323,8 +422,19 @@ export function buildRuntimeProfileAuthority(profile: RuntimeProfile): RuntimePr
 
 /** Strict builder for freshly resolved effective launch authority. */
 export function buildEffectiveRuntimeLaunchAuthority(
-  input: EffectiveRuntimeLaunchAuthority
+  input: EffectiveRuntimeLaunchAuthorityInput
 ): EffectiveRuntimeLaunchAuthority {
+  return resolveEffectiveRuntimeLaunchAuthority(input).authority
+}
+
+interface ResolvedEffectiveRuntimeLaunchAuthority {
+  authority: EffectiveRuntimeLaunchAuthority
+  providerLaunchAuthority: CanonicalProviderLaunchAuthority
+}
+
+function resolveEffectiveRuntimeLaunchAuthority(
+  input: EffectiveRuntimeLaunchAuthorityInput
+): ResolvedEffectiveRuntimeLaunchAuthority {
   const record = exactPlainDataObject(
     input,
     [
@@ -337,28 +447,58 @@ export function buildEffectiveRuntimeLaunchAuthority(
       'effectiveAgenticServices',
       'effectiveNetworkPolicy',
       'effectivePersistence',
-      'providerLaunchAuthorityDigest'
+      'providerLaunchAuthority'
     ],
     'effective runtime launch authority'
   )
   if (record.schemaVersion !== 1) throw new TypeError('Invalid effective launch schema version.')
+  const provider = runnableProviderId(record.provider, 'effective launch provider')
+  const providerLaunchAuthority = buildProviderLaunchAuthority(
+    record.providerLaunchAuthority as ProviderLaunchAuthorityInput
+  )
+  if (providerLaunchAuthority.provider !== provider) {
+    throw new TypeError('Provider launch plan does not match the effective launch provider.')
+  }
+  const effectiveBinary = nonEmptyText(record.effectiveBinary, 'effective binary')
+  if (provider === 'ollama') {
+    if (
+      providerLaunchAuthority.runtime.kind !== 'http' ||
+      effectiveBinary !== SCHEDULED_OCCURRENCE_OLLAMA_EFFECTIVE_BINARY_SENTINEL
+    ) {
+      throw new TypeError('Ollama effective binary must use the canonical HTTP runtime marker.')
+    }
+  } else {
+    if (
+      providerLaunchAuthority.runtime.kind !== 'cli' ||
+      providerLaunchAuthority.runtime.executableRealPath !== effectiveBinary
+    ) {
+      throw new TypeError('Effective binary does not match the provider launch runtime.')
+    }
+  }
+  const effectiveMcpProfileId = nullableText(
+    record.effectiveMcpProfileId,
+    'effective MCP profile id'
+  )
+  if (effectiveMcpProfileId !== providerLaunchAuthority.tools.taskWraithMcpProfileId) {
+    throw new TypeError('Effective MCP profile does not match the provider launch tool surface.')
+  }
   const normalized: EffectiveRuntimeLaunchAuthority = {
     schemaVersion: 1,
-    provider: runnableProviderId(record.provider, 'effective launch provider'),
-    effectiveBinary: nonEmptyText(record.effectiveBinary, 'effective binary'),
+    provider,
+    effectiveBinary,
     effectiveWorkspaceMode: oneOf(
       record.effectiveWorkspaceMode,
-      ['local', 'worktree', 'container'],
+      ['local', 'worktree'],
       'effective workspace mode'
     ),
-    effectiveMcpProfileId: nullableText(record.effectiveMcpProfileId, 'effective MCP profile id'),
+    effectiveMcpProfileId,
     effectiveApprovalMode: nonEmptyText(record.effectiveApprovalMode, 'effective approval mode'),
-    effectiveAgenticServices: normalizeRequiredAgenticServices(
+    effectiveAgenticServices: normalizeEffectiveAgenticServices(
       record.effectiveAgenticServices
     ),
     effectiveNetworkPolicy: oneOf(
       record.effectiveNetworkPolicy,
-      ['inherit', 'allow', 'deny'],
+      ['allow', 'deny'],
       'effective network policy'
     ),
     effectivePersistence: oneOf(
@@ -366,17 +506,17 @@ export function buildEffectiveRuntimeLaunchAuthority(
       ['reusable', 'ephemeral'],
       'effective persistence'
     ),
-    providerLaunchAuthorityDigest: sha256Hex(
-      record.providerLaunchAuthorityDigest,
-      'provider launch authority digest'
-    )
+    providerLaunchAuthorityDigest: providerLaunchAuthorityDigest(providerLaunchAuthority)
   }
-  return canonicalClone(normalized)
+  return {
+    authority: canonicalClone(normalized),
+    providerLaunchAuthority
+  }
 }
 
 /** Compatibility wrapper for no-profile callers. */
 export function buildDefaultRuntimeLaunchAuthority(
-  input: DefaultRuntimeLaunchAuthority
+  input: DefaultRuntimeLaunchAuthorityInput
 ): DefaultRuntimeLaunchAuthority {
   return buildEffectiveRuntimeLaunchAuthority(input)
 }
@@ -414,13 +554,22 @@ interface SeatAuthorityRow {
   posture: Readonly<Record<string, unknown>>
 }
 
-function authorityRows(context: ScheduledOccurrenceCurrentContext): readonly SeatAuthorityRow[] {
+function authorityRows(
+  context: ScheduledOccurrenceCurrentContext,
+  postureResolver: ScheduledOccurrencePostureResolver,
+  rootId: string,
+  workspaceRealPath: string
+): readonly SeatAuthorityRow[] {
   const seats = context.runtimeSeats
   if (!Array.isArray(seats)) throw new TypeError('Runtime seats must be an array.')
   const requirements = runtimeRequirements(context)
   const bySeat = new Map<string, ScheduledOccurrenceRuntimeSeatContext>()
   for (const seat of seats) {
-    assertPlainDataObject(seat, 'runtime seat')
+    exactPlainDataObject(
+      seat,
+      ['seatId', 'launchAuthority', 'resolvedEnv', 'permissionPostureCapability'],
+      'runtime seat'
+    )
     const seatId = nonEmptyText(seat.seatId, 'runtime seat id')
     if (bySeat.has(seatId)) throw new TypeError(`Duplicate runtime seat: ${seatId}`)
     bySeat.set(seatId, seat)
@@ -435,7 +584,25 @@ function authorityRows(context: ScheduledOccurrenceCurrentContext): readonly Sea
     const resolvedEnv = stringRecord(seat.resolvedEnv, 'resolved runtime environment')
     const launch = seat.launchAuthority
     assertPlainDataObject(launch, 'runtime seat launch authority')
-    const effective = buildEffectiveRuntimeLaunchAuthority(launch.effectiveAuthority)
+    if (launch.kind === 'selected-runtime-profile') {
+      exactPlainDataObject(
+        launch,
+        ['kind', 'profile', 'effectiveAuthority'],
+        'selected runtime seat launch authority'
+      )
+    } else if (launch.kind === 'default-runtime') {
+      exactPlainDataObject(
+        launch,
+        ['kind', 'effectiveAuthority'],
+        'default runtime seat launch authority'
+      )
+    } else {
+      throw new TypeError('Runtime seat launch authority kind is invalid.')
+    }
+    const resolvedLaunch = resolveEffectiveRuntimeLaunchAuthority(
+      launch.effectiveAuthority
+    )
+    const effective = resolvedLaunch.authority
     if (effective.provider !== requirement.provider) {
       throw new TypeError('Effective runtime authority does not match the scheduled seat provider.')
     }
@@ -458,12 +625,21 @@ function authorityRows(context: ScheduledOccurrenceCurrentContext): readonly Sea
       ) {
         throw new TypeError('Runtime profile does not match the scheduled seat.')
       }
+      assertSelectedProfileEffectiveReconciliation(profileAuthority, effective)
     }
 
     const posture = trustedPostureAuthority(
-      seat.permissionPostureAuthority,
+      postureResolver,
+      seat.permissionPostureCapability,
       requirement,
-      context.task
+      context.task,
+      rootId,
+      workspaceRealPath
+    )
+    assertRuntimePostureReconciliation(
+      effective,
+      resolvedLaunch.providerLaunchAuthority,
+      posture
     )
     return {
       runtime: {
@@ -477,11 +653,108 @@ function authorityRows(context: ScheduledOccurrenceCurrentContext): readonly Sea
       posture: {
         seatId: requirement.seatId,
         provider: requirement.provider,
-        postureHash: posture.postureHash,
-        signature: posture.signature
+        authority: posture
       }
     }
   })
+}
+
+function assertSelectedProfileEffectiveReconciliation(
+  profile: RuntimeProfileAuthority,
+  effective: EffectiveRuntimeLaunchAuthority
+): void {
+  if (
+    profile.provider === 'ollama' &&
+    (profile.binaryPath !== null ||
+      Object.keys(profile.env).length !== 0 ||
+      profile.secretRefs.env.length !== 0)
+  ) {
+    throw new TypeError(
+      'An Ollama HTTP runtime profile cannot carry CLI binary or environment overrides.'
+    )
+  }
+  if (profile.workspaceMode !== effective.effectiveWorkspaceMode) {
+    throw new TypeError(
+      'Effective workspace mode does not match the selected runtime profile.'
+    )
+  }
+  if (profile.persistence !== effective.effectivePersistence) {
+    throw new TypeError(
+      'Effective persistence does not match the selected runtime profile.'
+    )
+  }
+  if (
+    profile.mcpProfileId !== null &&
+    profile.mcpProfileId !== effective.effectiveMcpProfileId
+  ) {
+    throw new TypeError(
+      'Effective MCP profile does not match the selected runtime profile.'
+    )
+  }
+
+  if (profile.approvalMode !== null) {
+    const profileMode = coerceApprovalMode(profile.approvalMode)
+    const effectiveMode = coerceApprovalMode(effective.effectiveApprovalMode)
+    if (
+      profileMode === undefined ||
+      effectiveMode === undefined ||
+      approvalModeRank(effectiveMode) > approvalModeRank(profileMode)
+    ) {
+      throw new TypeError(
+        'Effective approval mode is more permissive than the selected runtime profile.'
+      )
+    }
+  }
+
+  for (const service of SCHEDULED_OCCURRENCE_POSTURE_AGENTIC_SERVICE_IDS) {
+    const profilePolicy = profile.agenticServices[service]
+    if (
+      profilePolicy !== null &&
+      agenticServicePolicyRank(effective.effectiveAgenticServices[service]) >
+        agenticServicePolicyRank(profilePolicy)
+    ) {
+      throw new TypeError(
+        `Effective ${service} policy is more permissive than the selected runtime profile.`
+      )
+    }
+  }
+
+  const profileAgenticNetwork = profile.agenticServices.networkAccess
+  if (
+    profileAgenticNetwork !== null &&
+    networkPolicyRank(effective.effectiveNetworkPolicy) >
+      networkPolicyRank(profileAgenticNetwork)
+  ) {
+    throw new TypeError(
+      'Effective network policy is more permissive than the selected runtime profile services.'
+    )
+  }
+  if (
+    profile.networkPolicy !== 'inherit' &&
+    networkPolicyRank(effective.effectiveNetworkPolicy) >
+      networkPolicyRank(profile.networkPolicy)
+  ) {
+    throw new TypeError(
+      'Effective network policy is more permissive than the selected runtime profile.'
+    )
+  }
+}
+
+function agenticServicePolicyRank(value: AgenticServicePolicy): number {
+  switch (value) {
+    case 'deny':
+      return 0
+    case 'ask':
+      return 1
+    case 'workspace':
+      return 2
+    case 'allow':
+      return 3
+  }
+}
+
+function networkPolicyRank(value: AgenticNetworkPolicy): number {
+  return value === 'deny' ? 0 : 1
 }
 
 function runtimeRequirements(context: ScheduledOccurrenceCurrentContext): RuntimeRequirement[] {
@@ -558,18 +831,17 @@ function compareRequirements(left: RuntimeRequirement, right: RuntimeRequirement
   return compareText(left.seatId, right.seatId)
 }
 
-function keyedSetHmac(key: Buffer, domain: string, rows: readonly unknown[]): string {
-  return createHmac('sha256', key)
-    .update(domain)
-    .update(canonicalEncode({ rows }))
-    .digest('hex')
+function authoritySetBytes(rows: readonly unknown[]): Buffer {
+  return Buffer.from(canonicalEncode({ rows }), 'utf8')
 }
 
 function currentWorkflowDigest(
   task: ScheduledTask,
   workflow: WorkflowDefinition | null,
   phase: ScheduledOccurrenceAuthorityPhase,
-  canonicalizePath: (value: string) => string
+  canonicalizePath: (value: string) => string,
+  issuedAt: string,
+  mode: ScheduledOccurrenceSealDerivationMode
 ): string | null {
   const workflowId = nullableText(task.workflowId, 'workflow id')
   const executionId = nullableText(task.workflowExecutionId, 'workflow execution id')
@@ -585,6 +857,9 @@ function currentWorkflowDigest(
     return null
   }
   if (!workflow) throw new TypeError('A linked scheduled task requires its current workflow.')
+  if (workflow.enabled !== true) {
+    throw new TypeError('A linked scheduled occurrence requires an enabled workflow.')
+  }
   if (workflow.id !== workflowId || workflow.activeExecutionId !== executionId) {
     throw new TypeError('Scheduled task workflow identity is not current.')
   }
@@ -598,22 +873,27 @@ function currentWorkflowDigest(
   }
   canonicalIso(task.runAt, 'scheduled task run time')
   canonicalIso(occurrenceAt, 'workflow occurrence time')
-  const execution = workflow.history.find((candidate) => candidate.id === executionId)
+  const matchingExecutions = workflow.history.filter(
+    (candidate) => candidate.id === executionId
+  )
+  if (matchingExecutions.length !== 1) {
+    throw new TypeError('Scheduled workflow active execution identity must be unique.')
+  }
+  const execution = matchingExecutions[0]
   if (
-    !execution ||
     execution.workflowId !== workflow.id ||
     execution.scheduledTaskId !== task.id ||
     execution.plannedFor !== occurrenceAt
   ) {
     throw new TypeError('Scheduled workflow execution linkage does not match.')
   }
-  if (phase.kind === 'queued') {
-    if (execution.status !== 'queued' || execution.runId !== undefined) {
-      throw new TypeError('Scheduled workflow execution is not queued and unowned.')
-    }
-  } else if (execution.status !== 'running' || execution.runId !== phase.ownerRunId) {
+  if (phase.kind !== 'running') {
+    throw new TypeError('Scheduled workflow authority requires a running owner.')
+  }
+  if (execution.status !== 'running' || execution.runId !== phase.ownerRunId) {
     throw new TypeError('Scheduled workflow execution is not owned by the running occurrence.')
   }
+  assertWorkflowRunningPostImage(workflow, execution, issuedAt, mode)
 
   const taskTemplate = normalizedTemplateAuthority(task, canonicalizePath)
   const workflowTemplate = normalizedTemplateAuthority(workflow.template, canonicalizePath)
@@ -627,9 +907,10 @@ function currentWorkflowDigest(
     envelope,
     template: workflowTemplate,
     // `workflowAuthorityEnvelope` deliberately excludes projection/lifecycle
-    // state for saved-definition acknowledgements. Occurrence authority is
-    // narrower: once materialized, toggling enabled must invalidate that exact
-    // occurrence rather than allowing a disabled workflow to dispatch later.
+    // state for saved-definition acknowledgements. Occurrence preflight is
+    // narrower: the workflow must be enabled in the current verification
+    // snapshot. A future durable authority epoch is required if disable then
+    // re-enable must remain distinguishable.
     enabled: workflow.enabled
   })
 }
@@ -647,26 +928,41 @@ function normalizedTemplateAuthority(
 }
 
 function trustedPostureAuthority(
-  posture: RunPermissionPostureSnapshot,
+  resolver: ScheduledOccurrencePostureResolver,
+  capability: ScheduledOccurrencePostureCapability,
   requirement: RuntimeRequirement,
-  task: ScheduledTask
-): { postureHash: string; signature: string } {
-  assertPlainDataObject(posture, 'fresh permission posture authority')
-  if (posture.schemaVersion !== 1 || posture.signaturePresent !== true) {
-    throw new TypeError('A fresh signed permission posture is required for every runtime seat.')
+  task: ScheduledTask,
+  rootId: string,
+  workspaceRealPath: string
+): ScheduledOccurrencePostureAuthority {
+  const posture = resolver.consume(capability)
+  if (!posture) {
+    throw new TypeError('A fresh verified permission posture capability is required.')
   }
-  const context = posture.context
-  if (!context || context.provider !== requirement.provider) {
+  if (
+    posture.rootId !== rootId ||
+    posture.workspaceId !== task.workspaceId ||
+    posture.workspaceRealPath !== workspaceRealPath
+  ) {
+    throw new TypeError('Permission posture authority root or workspace does not match.')
+  }
+  const context = posture.signedPosture.context
+  if (context.provider !== requirement.provider) {
     throw new TypeError('Permission posture provider does not match its runtime seat.')
   }
   if (
     context.scope !== 'workspace' ||
     context.appRunId !== task.id ||
     context.appChatId !== task.chatId ||
-    (context.workflowMode ?? 'normal') !== (task.workflowMode === 'plan' ? 'plan' : 'normal') ||
-    (context.runtimeProfileId ?? null) !== requirement.runtimeProfileId
+    context.prompt !== task.prompt ||
+    context.workflowMode !== (task.workflowMode === 'plan' ? 'plan' : 'normal') ||
+    context.runtimeProfileId !== requirement.runtimeProfileId
   ) {
     throw new TypeError('Permission posture context does not match its scheduled occurrence.')
+  }
+  const expectedPromptSha256 = createHash('sha256').update(task.prompt).digest('hex')
+  if (posture.promptSha256 !== expectedPromptSha256) {
+    throw new TypeError('Permission posture prompt authority does not match.')
   }
   if (
     requirement.ensembleParticipant &&
@@ -674,18 +970,188 @@ function trustedPostureAuthority(
   ) {
     throw new TypeError('Permission posture participant does not match its runtime seat.')
   }
-  if (!requirement.ensembleParticipant && context.ensembleParticipantId !== undefined) {
-    throw new TypeError('A non-Ensemble posture cannot claim an Ensemble participant.')
+  if (
+    (!requirement.ensembleParticipant && context.ensembleParticipantId !== null) ||
+    context.ensembleLaneId !== null
+  ) {
+    throw new TypeError('Permission posture participant or lane authority does not match.')
   }
-  return {
-    postureHash: sha256Hex(posture.postureHash, 'permission posture hash'),
-    signature: sha256Hex(posture.signature, 'permission posture signature')
+  if (
+    posture.signedPosture.approvalMode !==
+    posture.signedPosture.effectivePermissions.approvalMode
+  ) {
+    throw new TypeError('Permission posture approval authority does not match.')
   }
+  return posture
+}
+
+function assertRuntimePostureReconciliation(
+  effective: EffectiveRuntimeLaunchAuthority,
+  providerLaunch: CanonicalProviderLaunchAuthority,
+  posture: ScheduledOccurrencePostureAuthority
+): void {
+  const signed = posture.signedPosture
+  const permissions = signed.effectivePermissions
+  if (effective.effectiveApprovalMode !== signed.approvalMode) {
+    throw new TypeError('Effective approval mode does not match the signed posture.')
+  }
+  if (
+    !equalText(
+      canonicalEncode(effective.effectiveAgenticServices),
+      canonicalEncode(permissions.agenticServices)
+    )
+  ) {
+    throw new TypeError('Effective agentic services do not match the signed posture.')
+  }
+  if (effective.effectiveNetworkPolicy !== permissions.networkAccess) {
+    throw new TypeError('Effective network policy does not match the signed posture.')
+  }
+  assertProviderPostureControls(providerLaunch, signed.context, permissions)
+}
+
+function assertProviderPostureControls(
+  launch: CanonicalProviderLaunchAuthority,
+  context: ScheduledOccurrencePostureAuthority['signedPosture']['context'],
+  permissions: ScheduledOccurrencePostureAuthority['signedPosture']['effectivePermissions']
+): void {
+  const readOnly = permissions.readOnly
+  const approvalMode = permissions.approvalMode
+  const recon =
+    approvalMode === 'plan' &&
+    context.workflowMode === 'normal' &&
+    permissions.presetId === 'read_only' &&
+    readOnly
+
+  if (
+    permissions.agenticServices.mcpTools === 'deny' &&
+    launch.tools.taskWraithMcpAdvertised
+  ) {
+    throw new TypeError(
+      'A denied MCP posture cannot advertise the TaskWraith MCP tool surface.'
+    )
+  }
+
+  switch (launch.provider) {
+    case 'codex': {
+      const controls = launch.controls as CodexLaunchControls
+      const autoEditWithoutApprovalGate =
+        permissions.agenticServices.shellCommands === 'allow' &&
+        permissions.agenticServices.fileChanges === 'allow' &&
+        permissions.agenticServices.mcpTools === 'allow'
+      const expectedApprovalPolicy =
+        approvalMode === 'plan'
+          ? 'never'
+          : approvalMode === 'auto_edit' && autoEditWithoutApprovalGate
+            ? 'never'
+            : 'on-request'
+      if (controls.approvalPolicy !== expectedApprovalPolicy) {
+        throw new TypeError('Codex approval policy does not match the signed posture.')
+      }
+      if (controls.transport === 'exec-json' && expectedApprovalPolicy !== 'never') {
+        throw new TypeError(
+          'Codex exec transport cannot satisfy an interactive approval posture.'
+        )
+      }
+      const expectedSandbox =
+        approvalMode === 'plan'
+          ? 'read-only'
+          : permissions.presetId === 'full_access' &&
+              permissions.agenticServices.shellCommands === 'allow'
+            ? 'danger-full-access'
+            : 'workspace-write'
+      if (controls.sandboxMode !== expectedSandbox) {
+        throw new TypeError('Codex sandbox does not match the signed posture.')
+      }
+      return
+    }
+    case 'claude': {
+      const controls = launch.controls as ClaudeLaunchControls
+      if (controls.builtinToolMode !== 'disabled') {
+        throw new TypeError('Scheduled Claude launches must disable provider-native tools.')
+      }
+      const expectedMode =
+        controls.transport === 'agent-sdk' && recon
+          ? 'default'
+          : approvalMode === 'plan'
+            ? 'plan'
+            : 'acceptEdits'
+      if (controls.permissionMode !== expectedMode) {
+        throw new TypeError('Claude permission mode does not match the signed posture.')
+      }
+      return
+    }
+    case 'kimi': {
+      const controls = launch.controls as KimiLaunchControls
+      const expectedPlanMode =
+        controls.transport === 'cli-print' || (approvalMode === 'plan' && !recon)
+      if (controls.planMode !== expectedPlanMode) {
+        throw new TypeError('Kimi plan mode does not match the signed posture.')
+      }
+      return
+    }
+    case 'grok': {
+      const controls = launch.controls as GrokLaunchControls
+      if (controls.readOnlySeat !== readOnly) {
+        throw new TypeError('Grok read-only control does not match the signed posture.')
+      }
+      const expectedMode =
+        controls.transport === 'acp'
+          ? 'host-gated'
+          : readOnly
+            ? 'plan'
+            : 'acceptEdits'
+      if (controls.permissionMode !== expectedMode) {
+        throw new TypeError('Grok permission mode does not match the signed posture.')
+      }
+      if (controls.webSearchEnabled) {
+        throw new TypeError('Scheduled Grok launches cannot enable provider web search.')
+      }
+      return
+    }
+    case 'cursor': {
+      const controls = launch.controls as CursorLaunchControls
+      const allowedBridgeModes: readonly CursorLaunchControls['bridgeMode'][] = !readOnly
+        ? ['full']
+        : permissions.presetId === 'plan'
+          ? ['none', 'plan-subset']
+          : ['none', 'safe-subset']
+      if (!allowedBridgeModes.includes(controls.bridgeMode)) {
+        throw new TypeError('Cursor bridge mode does not match the signed posture tier.')
+      }
+      const bridgeActive = controls.bridgeMode !== 'none'
+      if (launch.tools.taskWraithMcpAdvertised !== bridgeActive) {
+        throw new TypeError('Cursor MCP advertisement does not match its signed bridge mode.')
+      }
+      const expectedMode = bridgeActive ? 'contained-default' : 'plan'
+      if (controls.executionMode !== expectedMode) {
+        throw new TypeError('Cursor execution mode does not match the signed posture.')
+      }
+      return
+    }
+    case 'ollama': {
+      const controls = launch.controls as OllamaLaunchControls
+      if (
+        controls.readOnly !== readOnly ||
+        controls.networkAccess !== permissions.networkAccess
+      ) {
+        throw new TypeError('Ollama controls do not match the signed posture.')
+      }
+      return
+    }
+    default:
+      return assertNeverProviderLaunch(launch)
+  }
+}
+
+function assertNeverProviderLaunch(value: never): never {
+  throw new TypeError(`Unsupported provider launch authority: ${String(value)}`)
 }
 
 function assertOccurrencePhase(
   task: ScheduledTask,
-  phase: ScheduledOccurrenceAuthorityPhase
+  phase: ScheduledOccurrenceAuthorityPhase,
+  issuedAt: string,
+  mode: ScheduledOccurrenceSealDerivationMode
 ): void {
   assertPlainDataObject(phase, 'scheduled occurrence phase')
   if (phase.kind === 'queued') {
@@ -701,9 +1167,60 @@ function assertOccurrencePhase(
     ['kind', 'ownerRunId'],
     'running scheduled occurrence phase'
   )
-  const ownerRunId = nonEmptyText(phase.ownerRunId, 'scheduled occurrence owner run id')
+  const ownerRunId = trimmedText(phase.ownerRunId, 'scheduled occurrence owner run id')
   if (task.status !== 'running' || task.runId !== ownerRunId) {
     throw new TypeError('Running occurrence authority does not match the durable run owner.')
+  }
+  if (task.completedAt !== undefined || task.lastError !== undefined) {
+    throw new TypeError('Running occurrence authority cannot carry terminal task fields.')
+  }
+  if (task.firedAt !== issuedAt) {
+    throw new TypeError('Running occurrence firedAt must equal the seal issue time.')
+  }
+  if (mode === 'mint') {
+    if (
+      task.runningSince !== issuedAt ||
+      task.updatedAt !== issuedAt ||
+      task.occurrenceSeal !== undefined
+    ) {
+      throw new TypeError('Seal minting requires the exact unsealed claim post-image.')
+    }
+    return
+  }
+  if (
+    !canonicalIsoAtOrAfter(task.runningSince, issuedAt, 'runningSince') ||
+    !canonicalIsoAtOrAfter(task.updatedAt, issuedAt, 'task updatedAt')
+  ) {
+    throw new TypeError('Running occurrence heartbeat predates its sealed claim.')
+  }
+}
+
+function assertWorkflowRunningPostImage(
+  workflow: WorkflowDefinition,
+  execution: NonNullable<WorkflowDefinition['history'][number]>,
+  issuedAt: string,
+  mode: ScheduledOccurrenceSealDerivationMode
+): void {
+  if (
+    execution.startedAt !== issuedAt ||
+    execution.completedAt !== undefined ||
+    execution.error !== undefined ||
+    workflow.lastStatus !== 'running' ||
+    workflow.lastError !== undefined
+  ) {
+    throw new TypeError('Scheduled workflow is not an exact running post-image.')
+  }
+  if (mode === 'mint') {
+    if (execution.updatedAt !== issuedAt || workflow.updatedAt !== issuedAt) {
+      throw new TypeError('Seal minting requires exact workflow claim timestamps.')
+    }
+    return
+  }
+  if (
+    !canonicalIsoAtOrAfter(execution.updatedAt, issuedAt, 'execution updatedAt') ||
+    !canonicalIsoAtOrAfter(workflow.updatedAt, issuedAt, 'workflow updatedAt')
+  ) {
+    throw new TypeError('Scheduled workflow heartbeat predates its sealed claim.')
   }
 }
 
@@ -713,12 +1230,29 @@ function taskKind(task: ScheduledTask): 'single' | 'ensemble' {
   throw new TypeError('Invalid scheduled task kind.')
 }
 
+function scheduledOccurrenceRootOwner(
+  task: ScheduledTask,
+  workflow: WorkflowDefinition | null
+): ScheduledOccurrenceRootOwner {
+  const kind = taskKind(task)
+  if (kind === 'ensemble') {
+    if (workflow?.loop) {
+      throw new TypeError('An Ensemble scheduled task cannot run a maker-verifier loop.')
+    }
+    return 'ensemble-root'
+  }
+  return workflow?.loop ? 'loop-root' : 'solo'
+}
+
 function sealPayload(
-  seal: ScheduledOccurrenceSealPayload | ScheduledOccurrenceSeal
+  seal: ScheduledOccurrenceSealPayload | ScheduledOccurrenceSealV2
 ): ScheduledOccurrenceSealPayload {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
+    rootId: seal.rootId,
     issuedAt: seal.issuedAt,
+    ownerRunId: seal.ownerRunId,
+    rootOwner: seal.rootOwner,
     taskAuthorityDigest: seal.taskAuthorityDigest,
     compositeWorkflowAuthorityDigest: seal.compositeWorkflowAuthorityDigest,
     workspaceRealPath: seal.workspaceRealPath,
@@ -727,9 +1261,50 @@ function sealPayload(
   }
 }
 
-function normalizeSeal(value: unknown): ScheduledOccurrenceSeal {
-  const record = exactPlainDataObject(value, SEAL_KEYS, 'scheduled occurrence seal')
-  if (record.schemaVersion !== 1) throw new TypeError('Invalid seal schema version.')
+function sealPayloadBytes(
+  seal: ScheduledOccurrenceSealPayload | ScheduledOccurrenceSealV2
+): Buffer {
+  return Buffer.from(canonicalEncode(sealPayload(seal)), 'utf8')
+}
+
+function normalizeSealV2(value: unknown): ScheduledOccurrenceSealV2 {
+  const record = exactPlainDataObject(value, SEAL_V2_KEYS, 'scheduled occurrence seal v2')
+  if (record.schemaVersion !== 2) throw new TypeError('Invalid seal schema version.')
+  return Object.freeze({
+    schemaVersion: 2 as const,
+    rootId: rootId(record.rootId),
+    issuedAt: canonicalIso(record.issuedAt, 'issuedAt'),
+    ownerRunId: trimmedText(record.ownerRunId, 'ownerRunId'),
+    rootOwner: oneOf(
+      record.rootOwner,
+      ['solo', 'loop-root', 'ensemble-root'],
+      'rootOwner'
+    ),
+    taskAuthorityDigest: sha256Hex(record.taskAuthorityDigest, 'taskAuthorityDigest'),
+    compositeWorkflowAuthorityDigest:
+      record.compositeWorkflowAuthorityDigest === null
+        ? null
+        : sha256Hex(
+            record.compositeWorkflowAuthorityDigest,
+            'compositeWorkflowAuthorityDigest'
+          ),
+    workspaceRealPath: canonicalWorkspaceRealPath(record.workspaceRealPath),
+    runtimeProfileSetHmac: sha256Hex(record.runtimeProfileSetHmac, 'runtimeProfileSetHmac'),
+    permissionPostureSetHmac: sha256Hex(
+      record.permissionPostureSetHmac,
+      'permissionPostureSetHmac'
+    ),
+    sealMac: sha256Hex(record.sealMac, 'sealMac')
+  })
+}
+
+function normalizeSealV1(value: unknown): ScheduledOccurrenceSealV1 {
+  const record = exactPlainDataObject(
+    value,
+    SEAL_V1_KEYS,
+    'legacy scheduled occurrence seal v1'
+  )
+  if (record.schemaVersion !== 1) throw new TypeError('Invalid legacy seal schema version.')
   return Object.freeze({
     schemaVersion: 1 as const,
     issuedAt: canonicalIso(record.issuedAt, 'issuedAt'),
@@ -751,22 +1326,22 @@ function normalizeSeal(value: unknown): ScheduledOccurrenceSeal {
   })
 }
 
-function signSeal(key: Buffer, payload: ScheduledOccurrenceSealPayload): string {
-  return createHmac('sha256', key)
-    .update(SEAL_DOMAIN)
-    .update(canonicalEncode(sealPayload(payload)))
-    .digest('hex')
-}
-
 function hash(domain: string, value: unknown): string {
   return createHash('sha256').update(domain).update(canonicalEncode(value)).digest('hex')
 }
 
-function requireStrongKey(key: Buffer): Buffer {
-  if (!Buffer.isBuffer(key) || key.byteLength < 32) {
-    throw new TypeError('Scheduled occurrence signing key must be a Buffer of at least 32 bytes.')
+function authorityRootId(authorityRoot: ScheduledOccurrenceAuthorityRoot): string {
+  if (!authorityRoot || typeof authorityRoot !== 'object') {
+    throw new TypeError('Scheduled occurrence authority root is required.')
   }
-  return key
+  return rootId(authorityRoot.rootId)
+}
+
+function rootId(value: unknown): string {
+  if (typeof value !== 'string' || !/^twso-root-v1:[0-9a-f]{64}$/.test(value)) {
+    throw new TypeError('rootId must identify a canonical scheduled occurrence authority root.')
+  }
+  return value
 }
 
 function canonicalIso(value: unknown, label: string): string {
@@ -776,6 +1351,14 @@ function canonicalIso(value: unknown, label: string): string {
     throw new TypeError(`${label} must be a canonical ISO timestamp.`)
   }
   return value
+}
+
+function canonicalIsoAtOrAfter(value: unknown, minimum: string, label: string): boolean {
+  try {
+    return Date.parse(canonicalIso(value, label)) >= Date.parse(minimum)
+  } catch {
+    return false
+  }
 }
 
 function canonicalWorkspaceRealPath(value: unknown): string {
@@ -811,6 +1394,14 @@ function nonEmptyText(value: unknown, label: string): string {
     throw new TypeError(`${label} must be a bounded non-empty string.`)
   }
   return value
+}
+
+function trimmedText(value: unknown, label: string): string {
+  const text = nonEmptyText(value, label)
+  if (text !== text.trim() || text.includes('\0')) {
+    throw new TypeError(`${label} must be trimmed text.`)
+  }
+  return text
 }
 
 function nullableText(value: unknown, label: string): string | null {
@@ -888,28 +1479,25 @@ function normalizePartialAgenticServices(
   return canonicalClone(output) as NormalizedAgenticServicesAuthority
 }
 
-function normalizeRequiredAgenticServices(
+function normalizeEffectiveAgenticServices(
   value: unknown
-): Readonly<Required<AgenticServicesSettings>> {
+): Readonly<Record<AgenticServiceId, AgenticServicePolicy>> {
   const record = exactPlainDataObject(
     value,
-    Object.keys(AGENTIC_SERVICE_AUTHORITY_FIELDS) as Array<
-      keyof Required<AgenticServicesSettings>
-    >,
+    SCHEDULED_OCCURRENCE_POSTURE_AGENTIC_SERVICE_IDS,
     'effective agentic services'
   )
-  const output: Record<string, string> = {}
-  for (const key of Object.keys(AGENTIC_SERVICE_AUTHORITY_FIELDS).sort(compareText)) {
-    output[key] =
-      key === 'networkAccess'
-        ? oneOf(record[key], ['allow', 'deny'], `effective agentic service ${key}`)
-        : oneOf(
-            record[key],
-            ['ask', 'workspace', 'allow', 'deny'],
-            `effective agentic service ${key}`
-          )
+  const output = Object.create(null) as Record<AgenticServiceId, AgenticServicePolicy>
+  for (const key of SCHEDULED_OCCURRENCE_POSTURE_AGENTIC_SERVICE_IDS) {
+    output[key] = oneOf(
+      record[key],
+      ['ask', 'workspace', 'allow', 'deny'],
+      `effective agentic service ${key}`
+    )
   }
-  return canonicalClone(output) as Readonly<Required<AgenticServicesSettings>>
+  return canonicalClone(output) as Readonly<
+    Record<AgenticServiceId, AgenticServicePolicy>
+  >
 }
 
 function normalizeRuntimeProfileContainer(
@@ -1147,14 +1735,6 @@ function deepFreeze<T>(value: T): T {
     Object.freeze(value)
   }
   return value
-}
-
-function equalHex(left: string, right: string): boolean {
-  return (
-    /^[0-9a-f]{64}$/.test(left) &&
-    /^[0-9a-f]{64}$/.test(right) &&
-    timingSafeEqual(Buffer.from(left, 'hex'), Buffer.from(right, 'hex'))
-  )
 }
 
 function equalText(left: string, right: string): boolean {

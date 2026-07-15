@@ -4121,17 +4121,11 @@ export interface ScheduledEnsembleSnapshot {
 }
 
 /**
- * Main-issued proof that a persisted scheduled occurrence still matches the
- * exact task, workflow execution, workspace target, runtime profiles, and
- * permission posture that were authorized when it was materialized.
- *
- * Plain runtime-profile environment values never enter this record. They are
- * represented only by `runtimeProfileSetHmac`, which is derived while those
- * values remain in main-process memory. Permission authority is also resolved
- * afresh for every runnable seat and represented only by a keyed set HMAC; the
- * task's persisted posture snapshot is projection/audit data, not seal input.
+ * Legacy queued-state proof. Schema v1 is retained only so startup migration
+ * can recognize old persisted data and fail it closed; it must never authorize
+ * a provider launch.
  */
-export interface ScheduledOccurrenceSeal {
+export interface ScheduledOccurrenceSealV1 {
   readonly schemaVersion: 1
   readonly issuedAt: string
   readonly taskAuthorityDigest: string
@@ -4141,6 +4135,46 @@ export interface ScheduledOccurrenceSeal {
   readonly permissionPostureSetHmac: string
   readonly sealSignature: string
 }
+
+export type ScheduledOccurrenceRootOwner =
+  | 'solo'
+  | 'loop-root'
+  | 'ensemble-root'
+
+/**
+ * Main-issued defensive preflight metadata showing that one exact,
+ * already-owned running occurrence matched its task, workflow execution,
+ * workspace target, intended runtime profiles, permission postures, root owner,
+ * and durable authority root when derived.
+ *
+ * This seal is not executable launch authority and does not prove which binary,
+ * environment, workspace or provider session was actually started. Scheduled
+ * dispatch must additionally consume a main-only, one-shot exact launch receipt
+ * at the irreversible provider boundary.
+ *
+ * Plain runtime-profile environment values never enter this record. They are
+ * represented only by `runtimeProfileSetHmac`, which is derived while those
+ * values remain in main-process memory. Permission authority is also resolved
+ * afresh for every runnable seat and represented only by a keyed set HMAC; the
+ * task's persisted posture snapshot is projection/audit data, not seal input.
+ */
+export interface ScheduledOccurrenceSealV2 {
+  readonly schemaVersion: 2
+  readonly rootId: string
+  readonly issuedAt: string
+  readonly ownerRunId: string
+  readonly rootOwner: ScheduledOccurrenceRootOwner
+  readonly taskAuthorityDigest: string
+  readonly compositeWorkflowAuthorityDigest: string | null
+  readonly workspaceRealPath: string
+  readonly runtimeProfileSetHmac: string
+  readonly permissionPostureSetHmac: string
+  readonly sealMac: string
+}
+
+export type ScheduledOccurrenceSeal =
+  | ScheduledOccurrenceSealV1
+  | ScheduledOccurrenceSealV2
 
 export interface ScheduledTask {
   id: string
