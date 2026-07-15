@@ -1757,6 +1757,103 @@ describe('AppStore workflows', () => {
     expect(workflow?.lastStatus).toBe('failed')
   })
 
+  it('isolates a poisoned stalled occurrence and continues settling healthy candidates', () => {
+    const poisonedWorkflow = AppStore.saveWorkflowDefinition(
+      workflowInput({ name: 'Poisoned stalled workflow' })
+    )
+    const healthyWorkflow = AppStore.saveWorkflowDefinition(
+      workflowInput({ name: 'Healthy stalled workflow' })
+    )
+    const materializeMs = Date.parse(plannedFor)
+    const tasks = AppStore.materializeDueWorkflows(materializeMs)
+    const poisonedTask = tasks.find((task) => task.workflowId === poisonedWorkflow.id)!
+    const healthyTask = tasks.find((task) => task.workflowId === healthyWorkflow.id)!
+    const tasksPath = `${userDataPath}/scheduled-tasks.json`
+    const persistedTasks = JSON.parse(fs.readFileSync(tasksPath, 'utf8')) as ScheduledTask[]
+    const persistedPoison = persistedTasks.find((task) => task.id === poisonedTask.id)!
+    const persistedHealthy = persistedTasks.find((task) => task.id === healthyTask.id)!
+    persistedPoison.runAt = '2026-06-07T19:59:00Z'
+    fs.writeFileSync(tasksPath, JSON.stringify([persistedPoison, persistedHealthy]))
+    expect(AppStore.getScheduledTasks().map((task) => task.id)).toEqual([
+      poisonedTask.id,
+      healthyTask.id
+    ])
+
+    const settled = AppStore.settleStalledScheduledTasks(
+      () => false,
+      materializeMs + 7 * 60 * 60 * 1000,
+      6 * 60 * 60 * 1000
+    )
+
+    expect(settled.map((task) => task.id)).toEqual([healthyTask.id])
+    expect(AppStore.getScheduledTasks().find((task) => task.id === poisonedTask.id)).toMatchObject({
+      status: 'due',
+      runAt: '2026-06-07T19:59:00Z'
+    })
+    expect(AppStore.getWorkflowDefinition(poisonedWorkflow.id)).toMatchObject({
+      activeExecutionId: poisonedTask.workflowExecutionId,
+      lastStatus: 'queued'
+    })
+    expect(AppStore.getScheduledTasks().find((task) => task.id === healthyTask.id)).toMatchObject({
+      status: 'failed'
+    })
+    expect(AppStore.getWorkflowDefinition(healthyWorkflow.id)).toMatchObject({
+      activeExecutionId: undefined,
+      lastStatus: 'failed'
+    })
+  })
+
+  it('isolates a throwing running-task liveness probe and settles a later due candidate', () => {
+    const runningWorkflow = AppStore.saveWorkflowDefinition(
+      workflowInput({ name: 'Throwing liveness workflow' })
+    )
+    const healthyWorkflow = AppStore.saveWorkflowDefinition(
+      workflowInput({ name: 'Healthy due workflow' })
+    )
+    const materializeMs = Date.parse(plannedFor)
+    const tasks = AppStore.materializeDueWorkflows(materializeMs)
+    const runningTask = tasks.find((task) => task.workflowId === runningWorkflow.id)!
+    const healthyTask = tasks.find((task) => task.workflowId === healthyWorkflow.id)!
+    expect(claimScheduledTask(runningTask, 'throwing-liveness-run', materializeMs)).toBeTruthy()
+    const tasksPath = `${userDataPath}/scheduled-tasks.json`
+    const persistedTasks = AppStore.getScheduledTasks()
+    const persistedRunning = persistedTasks.find((task) => task.id === runningTask.id)!
+    const persistedHealthy = persistedTasks.find((task) => task.id === healthyTask.id)!
+    fs.writeFileSync(tasksPath, JSON.stringify([persistedRunning, persistedHealthy]))
+    expect(AppStore.getScheduledTasks().map((task) => task.id)).toEqual([
+      runningTask.id,
+      healthyTask.id
+    ])
+    const isRunLive = vi.fn((runId: string) => {
+      if (runId === 'throwing-liveness-run') throw new Error('Liveness probe failed.')
+      return false
+    })
+
+    const settled = AppStore.settleStalledScheduledTasks(
+      isRunLive,
+      materializeMs + 7 * 60 * 60 * 1000
+    )
+
+    expect(isRunLive).toHaveBeenCalledTimes(1)
+    expect(isRunLive).toHaveBeenCalledWith('throwing-liveness-run')
+    expect(settled.map((task) => task.id)).toEqual([healthyTask.id])
+    expect(AppStore.getScheduledTasks().find((task) => task.id === runningTask.id)).toMatchObject({
+      status: 'running',
+      runId: 'throwing-liveness-run'
+    })
+    expect(AppStore.getWorkflowDefinition(runningWorkflow.id)).toMatchObject({
+      activeExecutionId: runningTask.workflowExecutionId,
+      lastStatus: 'running'
+    })
+    expect(AppStore.getScheduledTasks().find((task) => task.id === healthyTask.id)).toMatchObject({
+      status: 'failed'
+    })
+    expect(AppStore.getWorkflowDefinition(healthyWorkflow.id)).toMatchObject({
+      activeExecutionId: undefined,
+      lastStatus: 'failed'
+    })
+  })
+
   it('settleStalledScheduledTasks settles a running-wedge with a dead job but SKIPS a live one', () => {
     const saved = AppStore.saveWorkflowDefinition(workflowInput())
     const materializeMs = Date.parse(plannedFor)

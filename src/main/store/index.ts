@@ -7552,74 +7552,80 @@ export class AppStore {
     nowMs: number = Date.now(),
     backstopMs: number = DEFAULT_STALL_BACKSTOP_MS
   ): ScheduledTask[] {
-    const candidates = findStalledScheduledTasks(
-      this.getScheduledTasks(),
-      isRunLive,
-      nowMs,
-      backstopMs
-    )
-    if (candidates.length === 0) return []
+    const snapshots = this.getScheduledTasks()
+    if (snapshots.length === 0) return []
     const completedAt = new Date(nowMs).toISOString()
     const settled: ScheduledTask[] = []
-    for (const { task: snapshot } of candidates) {
-      const matches = this.getScheduledTasks().filter((task) => task.id === snapshot.id)
-      if (matches.length !== 1) continue
-      const [revalidated] = findStalledScheduledTasks(
-        [matches[0]],
-        isRunLive,
-        nowMs,
-        backstopMs
-      )
-      if (!revalidated) continue
-      const current = revalidated.task
-      const terminalOptions = {
-        status: 'failed' as const,
-        completedAt,
-        lastError: stallReason(current, revalidated.basis, revalidated.ageMs, backstopMs)
-      }
-      const hasWorkflowLink = Boolean(
-        current.workflowId || current.workflowExecutionId || current.workflowOccurrenceAt
-      )
-      let updated: ScheduledTask | null = null
-      if (current.status === 'running') {
-        if (!isNonEmptyTrimmedString(current.runId) || isRunLive(current.runId)) continue
-        const expectedWorkflowOccurrence = hasWorkflowLink
-          ? current.workflowId &&
-            current.workflowExecutionId &&
-            current.workflowOccurrenceAt
-            ? {
-                taskId: current.id,
-                workflowId: current.workflowId,
-                executionId: current.workflowExecutionId,
-                plannedFor: current.workflowOccurrenceAt
-              }
-            : null
-          : undefined
-        if (expectedWorkflowOccurrence === null) continue
-        updated = this.settleScheduledTaskForRun(current.id, {
-          runId: current.runId,
-          ...terminalOptions,
-          expectedWorkflowOccurrence
-        })
-      } else if (
-        (current.status === 'due' || current.status === 'pending') &&
-        current.runId === undefined
-      ) {
-        if (hasWorkflowLink) {
-          if (
-            !current.workflowId ||
-            !current.workflowExecutionId ||
-            !current.workflowOccurrenceAt
-          ) {
-            continue
-          }
-          updated = this.settleUnownedScheduledWorkflowTask(current.id, terminalOptions)
-        } else {
-          updated = this.settleUnownedStandaloneScheduledTask(current.id, terminalOptions)
+    for (const snapshot of snapshots) {
+      try {
+        const [candidate] = findStalledScheduledTasks(
+          [snapshot],
+          isRunLive,
+          nowMs,
+          backstopMs
+        )
+        if (!candidate) continue
+        const matches = this.getScheduledTasks().filter((task) => task.id === snapshot.id)
+        if (matches.length !== 1) continue
+        const [revalidated] = findStalledScheduledTasks(
+          [matches[0]],
+          isRunLive,
+          nowMs,
+          backstopMs
+        )
+        if (!revalidated) continue
+        const current = revalidated.task
+        const terminalOptions = {
+          status: 'failed' as const,
+          completedAt,
+          lastError: stallReason(current, revalidated.basis, revalidated.ageMs, backstopMs)
         }
-      }
-      if (updated && updated.status === 'failed' && updated.completedAt === completedAt) {
-        settled.push(updated)
+        const hasWorkflowLink = Boolean(
+          current.workflowId || current.workflowExecutionId || current.workflowOccurrenceAt
+        )
+        let updated: ScheduledTask | null = null
+        if (current.status === 'running') {
+          if (!isNonEmptyTrimmedString(current.runId) || isRunLive(current.runId)) continue
+          const expectedWorkflowOccurrence = hasWorkflowLink
+            ? current.workflowId &&
+              current.workflowExecutionId &&
+              current.workflowOccurrenceAt
+              ? {
+                  taskId: current.id,
+                  workflowId: current.workflowId,
+                  executionId: current.workflowExecutionId,
+                  plannedFor: current.workflowOccurrenceAt
+                }
+              : null
+            : undefined
+          if (expectedWorkflowOccurrence === null) continue
+          updated = this.settleScheduledTaskForRun(current.id, {
+            runId: current.runId,
+            ...terminalOptions,
+            expectedWorkflowOccurrence
+          })
+        } else if (
+          (current.status === 'due' || current.status === 'pending') &&
+          current.runId === undefined
+        ) {
+          if (hasWorkflowLink) {
+            if (
+              !current.workflowId ||
+              !current.workflowExecutionId ||
+              !current.workflowOccurrenceAt
+            ) {
+              continue
+            }
+            updated = this.settleUnownedScheduledWorkflowTask(current.id, terminalOptions)
+          } else {
+            updated = this.settleUnownedStandaloneScheduledTask(current.id, terminalOptions)
+          }
+        }
+        if (updated && updated.status === 'failed' && updated.completedAt === completedAt) {
+          settled.push(updated)
+        }
+      } catch {
+        // One malformed row or failed liveness probe must not starve later candidates.
       }
     }
     return settled
