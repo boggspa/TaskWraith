@@ -42,7 +42,14 @@ export interface ScheduledOccurrenceFinalBindingInput {
   dispatchAuthorityDigest: string
 }
 
+export interface ScheduledOccurrenceAdapterAdmissionInput {
+  taskId: string
+  appRunId: string
+}
+
 type ScheduledOccurrenceFinalBindingSnapshot = Readonly<ScheduledOccurrenceFinalBindingInput>
+type ScheduledOccurrenceAdapterAdmissionSnapshot =
+  Readonly<ScheduledOccurrenceAdapterAdmissionInput>
 
 export interface ScheduledOccurrenceRootBinding extends RuntimeBinding {
   readonly kind: 'root'
@@ -102,6 +109,7 @@ export interface ScheduledOccurrenceLeaseRegistryOptions {
 }
 
 export type ScheduledOccurrenceLeaseErrorCode =
+  | 'adapter-entry-replay'
   | 'async-live-validator'
   | 'capacity-exhausted'
   | 'duplicate-run-id'
@@ -141,6 +149,7 @@ type TombstoneState = Extract<ScheduledOccurrenceLeaseState, 'terminal' | 'abort
 interface Entry {
   readonly lease: ScheduledOccurrenceLease
   readonly ownership: ScheduledOccurrenceOwnership
+  adapterAdmission?: ScheduledOccurrenceAdapterAdmissionSnapshot
   binding?: ScheduledOccurrenceBinding
   readonly runIds: Set<string>
   readonly children: Set<Entry>
@@ -245,6 +254,38 @@ export class ScheduledOccurrenceLeaseRegistry {
       const child = this.register(ownership, [], root)
       root.children.add(child)
       return child.lease
+    })
+  }
+
+  /**
+   * Consumes adapter admission exactly once for a main-issued reserved lease.
+   * This registers the prospective app run id without fixing any provider/runtime
+   * authority; bindAndStart must later present this same app run id.
+   */
+  admitAdapterEntry(
+    lease: ScheduledOccurrenceLease,
+    input: ScheduledOccurrenceAdapterAdmissionInput
+  ): true {
+    return this.withOperation(false, () => {
+      const snapshot = adapterAdmissionSnapshot(input)
+      const entry = this.known(lease)
+      if (entry.state !== 'reserved') fail('lease-not-reserved', 'Lease is not reserved.')
+      this.assertRootStartedWhenChild(entry)
+      if (entry.adapterAdmission) {
+        fail('adapter-entry-replay', 'Lease adapter admission is already consumed.')
+      }
+      if (snapshot.taskId !== entry.ownership.taskId) {
+        fail('lease-mismatch', 'Adapter task does not match lease ownership.')
+      }
+      if (entry.binding && snapshot.appRunId !== entry.binding.appRunId) {
+        fail('lease-mismatch', 'Adapter run does not match the bound lease.')
+      }
+      this.assertRunIdAvailableFor(entry, snapshot.appRunId)
+
+      entry.adapterAdmission = snapshot
+      entry.runIds.add(snapshot.appRunId)
+      this.byRunId.set(snapshot.appRunId, entry)
+      return true
     })
   }
 
@@ -364,6 +405,9 @@ export class ScheduledOccurrenceLeaseRegistry {
   ): ScheduledOccurrenceStartResult {
     if (entry.state !== 'reserved') fail('lease-not-reserved', 'Lease is not reserved.')
     this.assertRootStartedWhenChild(entry)
+    if (entry.adapterAdmission && snapshot.appRunId !== entry.adapterAdmission.appRunId) {
+      fail('lease-mismatch', 'Final run does not match adapter admission.')
+    }
 
     if (entry.binding) {
       const registered = this.byRunId.get(snapshot.appRunId)
@@ -524,6 +568,21 @@ export class ScheduledOccurrenceLeaseRegistry {
       entry.root?.children.delete(entry)
     }
   }
+}
+
+function adapterAdmissionSnapshot(
+  input: ScheduledOccurrenceAdapterAdmissionInput
+): ScheduledOccurrenceAdapterAdmissionSnapshot {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    fail('invalid-input', 'Adapter admission must be an object.')
+  }
+  // Exactly one read per caller-owned scalar; this copy is the one-shot admission record.
+  const taskId = input.taskId
+  const appRunId = input.appRunId
+  return Object.freeze({
+    taskId: exactNonEmpty(taskId, 'admission.taskId'),
+    appRunId: exactNonEmpty(appRunId, 'admission.appRunId')
+  })
 }
 
 function snapshotPayload(
@@ -699,6 +758,13 @@ function isTerminal(state: ScheduledOccurrenceLeaseState): boolean {
 
 function nonEmpty(value: unknown, label: string): string {
   if (typeof value !== 'string' || !value.trim()) fail('invalid-input', `${label} is required.`)
+  return value
+}
+
+function exactNonEmpty(value: unknown, label: string): string {
+  if (typeof value !== 'string' || !value || value.trim() !== value) {
+    fail('invalid-input', `${label} must be an exact non-empty string.`)
+  }
   return value
 }
 

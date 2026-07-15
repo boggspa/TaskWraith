@@ -645,6 +645,363 @@ describe('ScheduledOccurrenceLeaseRegistry', () => {
     expect(Object.isFrozen(observed[0]?.entry.binding)).toBe(true)
   })
 
+  it('admits a late root exactly once without binding runtime authority', () => {
+    const registry = createRegistry()
+    const lease = registry.reserveRootOwnership({
+      taskId: 'task-admitted-root',
+      rootRunId: 'root-admitted-root',
+      sealSignature: 'seal-admitted-root',
+      owner: 'solo'
+    })
+    const admittedBinding = {
+      appRunId: 'run-admitted-root',
+      provider: 'codex',
+      runtimeProfileId: 'profile-admitted-root',
+      dispatchAuthorityDigest: 'dispatch-admitted-root'
+    } as const
+
+    const admission = registry.admitAdapterEntry(lease, {
+      taskId: 'task-admitted-root',
+      appRunId: admittedBinding.appRunId
+    })
+
+    expect(admission).toBe(true)
+    expect(admission).not.toHaveProperty('then')
+    expect(registry.taskIdForRun(admittedBinding.appRunId)).toBe('task-admitted-root')
+    expectCode(() => registry.validateLive(lease, admittedBinding), 'lease-not-bound')
+    expectCode(
+      () =>
+        registry.assertAndStart(undefined, {
+          ...admittedBinding,
+          provider: null,
+          runtimeProfileId: null,
+          dispatchAuthorityDigest: null
+        }),
+      'lease-required'
+    )
+    expectCode(
+      () =>
+        registry.bindAndStart(lease, {
+          ...admittedBinding,
+          appRunId: 'run-not-admitted'
+        }),
+      'lease-mismatch'
+    )
+    expect(registry.taskIdForRun('run-not-admitted')).toBeUndefined()
+    expect(registry.bindAndStart(lease, admittedBinding).kind).toBe('scheduled')
+  })
+
+  it('admits late child ownership and constrains its eventual binding', () => {
+    const registry = createRegistry()
+    const root = registry.reserveRootOwnership({
+      taskId: 'task-admitted-child',
+      rootRunId: 'root-admitted-child',
+      sealSignature: 'seal-admitted-child',
+      owner: 'loop-root'
+    })
+    registry.admitAdapterEntry(root, {
+      taskId: 'task-admitted-child',
+      appRunId: 'run-admitted-child-root'
+    })
+    registry.bindAndStart(root, {
+      appRunId: 'run-admitted-child-root',
+      provider: 'codex',
+      runtimeProfileId: null,
+      dispatchAuthorityDigest: 'dispatch-admitted-child-root'
+    })
+    const child = registry.reserveChildOwnership(root, {
+      owner: { kind: 'loop-step', stepId: 'admitted-step' }
+    })
+
+    expectCode(
+      () =>
+        registry.admitAdapterEntry(child, {
+          taskId: 'task-wrong-child',
+          appRunId: 'run-admitted-child'
+        }),
+      'lease-mismatch'
+    )
+    expect(registry.taskIdForRun('run-admitted-child')).toBeUndefined()
+    expect(
+      registry.admitAdapterEntry(child, {
+        taskId: 'task-admitted-child',
+        appRunId: 'run-admitted-child'
+      })
+    ).toBe(true)
+    expectCode(
+      () =>
+        registry.bindAndStart(child, {
+          appRunId: 'run-wrong-child',
+          provider: 'grok',
+          runtimeProfileId: null,
+          dispatchAuthorityDigest: 'dispatch-admitted-child'
+        }),
+      'lease-mismatch'
+    )
+    expect(
+      registry.bindAndStart(child, {
+        appRunId: 'run-admitted-child',
+        provider: 'grok',
+        runtimeProfileId: null,
+        dispatchAuthorityDigest: 'dispatch-admitted-child'
+      }).kind
+    ).toBe('scheduled')
+  })
+
+  it('rejects adapter replay and cross-entry run collisions without partial admission', () => {
+    const registry = createRegistry()
+    const first = registry.reserveRootOwnership({
+      taskId: 'task-admission-first',
+      rootRunId: 'root-admission-first',
+      sealSignature: 'seal-admission-first',
+      owner: 'solo'
+    })
+    const second = registry.reserveRootOwnership({
+      taskId: 'task-admission-second',
+      rootRunId: 'root-admission-second',
+      sealSignature: 'seal-admission-second',
+      owner: 'solo'
+    })
+    registry.admitAdapterEntry(first, {
+      taskId: 'task-admission-first',
+      appRunId: 'run-shared-admission'
+    })
+
+    expectCode(
+      () =>
+        registry.admitAdapterEntry(first, {
+          taskId: 'task-admission-first',
+          appRunId: 'run-shared-admission'
+        }),
+      'adapter-entry-replay'
+    )
+    expectCode(
+      () =>
+        registry.admitAdapterEntry(first, {
+          taskId: 'task-admission-first',
+          appRunId: 'run-alternate-replay'
+        }),
+      'adapter-entry-replay'
+    )
+    expectCode(
+      () =>
+        registry.admitAdapterEntry(second, {
+          taskId: 'task-admission-second',
+          appRunId: 'run-shared-admission'
+        }),
+      'duplicate-run-id'
+    )
+    expect(registry.taskIdForRun('run-alternate-replay')).toBeUndefined()
+    expect(
+      registry.admitAdapterEntry(second, {
+        taskId: 'task-admission-second',
+        appRunId: 'run-admission-second'
+      })
+    ).toBe(true)
+  })
+
+  it('requires exact admission scalars and snapshots each one once', () => {
+    const reads = { taskId: 0, appRunId: 0 }
+    const registry = createRegistry()
+    const lease = registry.reserveRootOwnership({
+      taskId: 'task-exact-admission',
+      rootRunId: 'root-exact-admission',
+      sealSignature: 'seal-exact-admission',
+      owner: 'solo'
+    })
+    const input = {
+      get taskId() {
+        reads.taskId += 1
+        return 'task-exact-admission'
+      },
+      get appRunId() {
+        reads.appRunId += 1
+        return 'run-exact-admission'
+      }
+    }
+
+    expectCode(
+      () =>
+        registry.admitAdapterEntry(lease, {
+          taskId: ' task-exact-admission',
+          appRunId: 'run-exact-admission'
+        }),
+      'invalid-input'
+    )
+    expectCode(
+      () =>
+        registry.admitAdapterEntry(lease, {
+          taskId: 'task-exact-admission',
+          appRunId: Promise.resolve('run-exact-admission')
+        } as unknown as { taskId: string; appRunId: string }),
+      'invalid-input'
+    )
+    expect(registry.admitAdapterEntry(lease, input)).toBe(true)
+    expect(reads).toEqual({ taskId: 1, appRunId: 1 })
+  })
+
+  it('rejects admission after abort, revoke, start, or terminal transition', () => {
+    const registry = createRegistry()
+    const reserve = (suffix: string) =>
+      registry.reserveRootOwnership({
+        taskId: `task-${suffix}`,
+        rootRunId: `root-${suffix}`,
+        sealSignature: `seal-${suffix}`,
+        owner: 'solo'
+      })
+
+    const aborted = reserve('admission-aborted')
+    registry.abortReserved(aborted)
+    expectCode(
+      () =>
+        registry.admitAdapterEntry(aborted, {
+          taskId: 'task-admission-aborted',
+          appRunId: 'run-admission-aborted'
+        }),
+      'lease-not-reserved'
+    )
+
+    const revoked = reserve('admission-revoked')
+    registry.revokeRoot(revoked)
+    expectCode(
+      () =>
+        registry.admitAdapterEntry(revoked, {
+          taskId: 'task-admission-revoked',
+          appRunId: 'run-admission-revoked'
+        }),
+      'lease-not-reserved'
+    )
+
+    const terminal = reserve('admission-terminal')
+    registry.admitAdapterEntry(terminal, {
+      taskId: 'task-admission-terminal',
+      appRunId: 'run-admission-terminal'
+    })
+    registry.bindAndStart(terminal, {
+      appRunId: 'run-admission-terminal',
+      provider: 'codex',
+      runtimeProfileId: null,
+      dispatchAuthorityDigest: 'dispatch-admission-terminal'
+    })
+    expectCode(
+      () =>
+        registry.admitAdapterEntry(terminal, {
+          taskId: 'task-admission-terminal',
+          appRunId: 'run-admission-terminal'
+        }),
+      'lease-not-reserved'
+    )
+    registry.markTerminal(terminal)
+    expectCode(
+      () =>
+        registry.admitAdapterEntry(terminal, {
+          taskId: 'task-admission-terminal',
+          appRunId: 'run-admission-terminal'
+        }),
+      'lease-not-reserved'
+    )
+  })
+
+  it('retains admitted run ids through tombstones and releases them only after expiry', () => {
+    let now = 100
+    const registry = createRegistry({ tombstoneTtlMs: 50, now: () => now })
+    const lease = registry.reserveRootOwnership({
+      taskId: 'task-admission-tombstone',
+      rootRunId: 'root-admission-tombstone',
+      sealSignature: 'seal-admission-tombstone',
+      owner: 'solo'
+    })
+    registry.admitAdapterEntry(lease, {
+      taskId: 'task-admission-tombstone',
+      appRunId: 'run-admission-tombstone'
+    })
+    registry.abortReserved(lease)
+
+    expectCode(
+      () =>
+        registry.assertAndStart(undefined, {
+          appRunId: 'run-admission-tombstone',
+          provider: null,
+          runtimeProfileId: null,
+          dispatchAuthorityDigest: null
+        }),
+      'lease-required'
+    )
+    const collision = registry.reserveRootOwnership({
+      taskId: 'task-admission-collision',
+      rootRunId: 'root-admission-collision',
+      sealSignature: 'seal-admission-collision',
+      owner: 'solo'
+    })
+    expectCode(
+      () =>
+        registry.admitAdapterEntry(collision, {
+          taskId: 'task-admission-collision',
+          appRunId: 'run-admission-tombstone'
+        }),
+      'duplicate-run-id'
+    )
+
+    now = 151
+    expect(registry.taskIdForRun('run-admission-tombstone')).toBeUndefined()
+    expect(
+      registry.assertAndStart(undefined, {
+        appRunId: 'run-admission-tombstone',
+        provider: null,
+        runtimeProfileId: null,
+        dispatchAuthorityDigest: null
+      }).kind
+    ).toBe('ordinary')
+    expect(
+      registry.admitAdapterEntry(collision, {
+        taskId: 'task-admission-collision',
+        appRunId: 'run-admission-tombstone'
+      })
+    ).toBe(true)
+  })
+
+  it('blocks admission getter reentrancy without registering either prospective run', () => {
+    const registry = createRegistry()
+    const outer = registry.reserveRootOwnership({
+      taskId: 'task-admission-outer',
+      rootRunId: 'root-admission-outer',
+      sealSignature: 'seal-admission-outer',
+      owner: 'solo'
+    })
+    const nested = registry.reserveRootOwnership({
+      taskId: 'task-admission-nested',
+      rootRunId: 'root-admission-nested',
+      sealSignature: 'seal-admission-nested',
+      owner: 'solo'
+    })
+    const reentrant = {
+      taskId: 'task-admission-outer',
+      get appRunId() {
+        registry.admitAdapterEntry(nested, {
+          taskId: 'task-admission-nested',
+          appRunId: 'run-admission-nested'
+        })
+        return 'run-admission-outer'
+      }
+    }
+
+    expectCode(() => registry.admitAdapterEntry(outer, reentrant), 'reentrant-validation')
+    expect(registry.taskIdForRun('run-admission-outer')).toBeUndefined()
+    expect(registry.taskIdForRun('run-admission-nested')).toBeUndefined()
+    expect(
+      registry.admitAdapterEntry(outer, {
+        taskId: 'task-admission-outer',
+        appRunId: 'run-admission-outer'
+      })
+    ).toBe(true)
+    expect(
+      registry.admitAdapterEntry(nested, {
+        taskId: 'task-admission-nested',
+        appRunId: 'run-admission-nested'
+      })
+    ).toBe(true)
+  })
+
   it('fixes a late binding before live validation and never permits rebinding it', () => {
     let validationSucceeds = false
     const registry = createRegistry({
