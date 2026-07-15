@@ -1,5 +1,7 @@
 import type { ScheduledTask } from './store/types'
 
+export const SCHEDULED_DUE_RETRY_DELAY_MS = 1_000
+
 type NowProvider = { nowMs?: number }
 
 interface ScheduledTaskTimerInputs extends NowProvider {
@@ -27,7 +29,9 @@ export function getNextScheduledTaskRunAtMs({
   for (const task of tasks) {
     if (task.status === 'due') {
       const runAtMs = parseRunAtMs(task.runAt)
-      if (Number.isFinite(runAtMs)) candidates.push(Math.max(runAtMs, nowMs))
+      if (Number.isFinite(runAtMs)) {
+        candidates.push(runAtMs <= nowMs ? nowMs + SCHEDULED_DUE_RETRY_DELAY_MS : runAtMs)
+      }
       continue
     }
     if (task.status !== 'pending') continue

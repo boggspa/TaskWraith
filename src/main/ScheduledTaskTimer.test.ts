@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { getNextScheduledTaskRunAtMs } from './ScheduledTaskTimer'
+import { getNextScheduledTaskRunAtMs, SCHEDULED_DUE_RETRY_DELAY_MS } from './ScheduledTaskTimer'
 import type { ScheduledTask } from './store/types'
 
 function task(overrides: Partial<ScheduledTask> = {}): ScheduledTask {
@@ -25,18 +25,21 @@ function task(overrides: Partial<ScheduledTask> = {}): ScheduledTask {
 }
 
 describe('getNextScheduledTaskRunAtMs', () => {
-  it('returns now when an overdue due task exists', () => {
+  it('bounds retries when an overdue due task remains unclaimed', () => {
     const nowMs = 1_000_000_000_000
     expect(
       getNextScheduledTaskRunAtMs({
         nowMs,
-        tasks: [task({ status: 'due', runAt: '1999-01-01T00:00:00.000Z' }), task({ status: 'pending' })],
+        tasks: [
+          task({ status: 'due', runAt: '1999-01-01T00:00:00.000Z' }),
+          task({ status: 'pending' })
+        ],
         nextWorkflowRunAtMs: nowMs + 60000
       })
-    ).toBe(nowMs)
+    ).toBe(nowMs + SCHEDULED_DUE_RETRY_DELAY_MS)
   })
 
-  it('accepts the exact-now due boundary', () => {
+  it('bounds retries at the exact-now due boundary', () => {
     const nowMs = 1_000_000_000_000
     expect(
       getNextScheduledTaskRunAtMs({
@@ -44,7 +47,18 @@ describe('getNextScheduledTaskRunAtMs', () => {
         tasks: [task({ status: 'due', runAt: new Date(nowMs).toISOString() })],
         nextWorkflowRunAtMs: null
       })
-    ).toBe(nowMs)
+    ).toBe(nowMs + SCHEDULED_DUE_RETRY_DELAY_MS)
+  })
+
+  it('does not let a deferred due retry delay an earlier independent timer', () => {
+    const nowMs = 1_000_000_000_000
+    expect(
+      getNextScheduledTaskRunAtMs({
+        nowMs,
+        tasks: [task({ status: 'due', runAt: '1999-01-01T00:00:00.000Z' })],
+        nextWorkflowRunAtMs: nowMs + 250
+      })
+    ).toBe(nowMs + 250)
   })
 
   it('waits until runAt for a future due task', () => {
