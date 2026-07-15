@@ -457,7 +457,10 @@ demands):**
       invoking parent currently has a Trusted Session grant.
     - Codex, Claude, and Kimi register the full TaskWraith MCP surface with
       their native runtimes where available. Cursor and Grok receive a brokered
-      `taskwraith` MCP surface alongside their native shell/file tooling.
+      `taskwraith` MCP surface alongside their native shell/file tooling. On the
+      Kimi Code (ACP) transport, that surface is the gateway subset served over a
+      per-run localhost HTTP MCP bridge inside a sandboxed `KIMI_CODE_HOME` — see
+      [`docs/kimi-code-acp-migration.md`](docs/kimi-code-acp-migration.md).
       Ollama runs through TaskWraith's local tool loop with full tool-surface
       parity where local capability exists; the standard signed run permission
       posture and per-call approval gate decide what executes. Gemini is
@@ -588,7 +591,8 @@ This document is updated as features ship. Sections currently documented (as of
   gates); see `THREAD_INTROSPECTION.md`.
 - Codex / Claude / Kimi share the full brokered MCP tool surface. Cursor and
   Grok get a brokered `taskwraith` MCP server but keep their native shell/file
-  tools. Ollama runs a TaskWraith-controlled local tool loop with full
+  tools. (Kimi Code reaches the gateway over ACP via a per-run HTTP bridge, since
+  its ACP `session/new` rejects stdio MCP servers.) Ollama runs a TaskWraith-controlled local tool loop with full
   tool-surface parity where local capability exists, governed by the same signed
   permission posture and approval gates rather than a safety-tier subset. Gemini
   is retained for historical chats and decode paths only. See
