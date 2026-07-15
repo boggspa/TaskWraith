@@ -378,6 +378,26 @@ export class ScheduledOccurrenceLeaseRegistry {
     })
   }
 
+  /**
+   * Fail closed when launch or protocol execution has an ambiguous outcome.
+   * Reserved owners are aborted; started owners become terminal. A failed root
+   * revokes every live descendant first so no child can outlive lost root
+   * authority. Child failure is isolated to that child.
+   */
+  failAttempt(lease: ScheduledOccurrenceLease): boolean {
+    return this.withOperation(false, () => {
+      const entry = this.known(lease)
+      if (isTerminal(entry.state)) return false
+      if (entry.ownership.kind === 'root') {
+        for (const child of entry.children) {
+          if (isLive(child.state)) this.end(child, 'revoked')
+        }
+      }
+      this.end(entry, entry.state === 'reserved' ? 'aborted' : 'terminal')
+      return true
+    })
+  }
+
   revokeRoot(lease: ScheduledOccurrenceLease): boolean {
     return this.withOperation(false, () => {
       const root = this.known(lease)

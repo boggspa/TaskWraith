@@ -1430,4 +1430,114 @@ describe('ScheduledOccurrenceLeaseRegistry', () => {
       }).kind
     ).toBe('scheduled')
   })
+
+  it('fails an unlaunched reservation closed and cannot replay it', () => {
+    const registry = createRegistry()
+    const lease = registry.reserveRootOwnership({
+      taskId: 'task-failed-reservation',
+      rootRunId: 'root-failed-reservation',
+      sealSignature: 'seal-failed-reservation',
+      owner: 'solo'
+    })
+
+    expect(registry.failAttempt(lease)).toBe(true)
+    expect(registry.failAttempt(lease)).toBe(false)
+    expectCode(
+      () =>
+        registry.bindAndStart(lease, {
+          appRunId: 'run-failed-reservation',
+          provider: 'codex',
+          runtimeProfileId: null,
+          dispatchAuthorityDigest: 'dispatch-failed-reservation'
+        }),
+      'lease-not-reserved'
+    )
+  })
+
+  it('terminalizes a failed started root and revokes all live children', () => {
+    const registry = createRegistry()
+    const root = registry.reserveRoot({
+      taskId: 'task-failed-root',
+      rootRunId: 'root-failed-root',
+      appRunId: 'run-failed-root',
+      sealSignature: 'seal-failed-root',
+      owner: 'loop-root',
+      provider: 'codex',
+      runtimeProfileId: null,
+      dispatchAuthorityDigest: 'dispatch-failed-root'
+    })
+    registry.assertAndStart(root, {
+      appRunId: 'run-failed-root',
+      provider: 'codex',
+      runtimeProfileId: null,
+      dispatchAuthorityDigest: 'dispatch-failed-root'
+    })
+    const startedChild = registry.reserveChild(root, {
+      appRunId: 'run-failed-child-started',
+      owner: { kind: 'loop-step', stepId: 'started' },
+      provider: 'grok',
+      runtimeProfileId: null,
+      dispatchAuthorityDigest: 'dispatch-failed-child-started'
+    })
+    registry.assertAndStart(startedChild, {
+      appRunId: 'run-failed-child-started',
+      provider: 'grok',
+      runtimeProfileId: null,
+      dispatchAuthorityDigest: 'dispatch-failed-child-started'
+    })
+    const reservedChild = registry.reserveChildOwnership(root, {
+      owner: { kind: 'loop-step', stepId: 'reserved' }
+    })
+
+    expect(registry.failAttempt(root)).toBe(true)
+    expect(registry.failAttempt(root)).toBe(false)
+    expect(registry.failAttempt(startedChild)).toBe(false)
+    expect(registry.failAttempt(reservedChild)).toBe(false)
+    expectCode(
+      () =>
+        registry.validateLive(startedChild, {
+          appRunId: 'run-failed-child-started',
+          provider: 'grok',
+          runtimeProfileId: null,
+          dispatchAuthorityDigest: 'dispatch-failed-child-started'
+        }),
+      'lease-not-live'
+    )
+  })
+
+  it('isolates child attempt failure while leaving its root live', () => {
+    const registry = createRegistry()
+    const root = registry.reserveRoot({
+      taskId: 'task-failed-child-isolated',
+      rootRunId: 'root-failed-child-isolated',
+      appRunId: 'run-failed-child-isolated-root',
+      sealSignature: 'seal-failed-child-isolated',
+      owner: 'loop-root',
+      provider: 'codex',
+      runtimeProfileId: null,
+      dispatchAuthorityDigest: 'dispatch-failed-child-isolated-root'
+    })
+    registry.assertAndStart(root, {
+      appRunId: 'run-failed-child-isolated-root',
+      provider: 'codex',
+      runtimeProfileId: null,
+      dispatchAuthorityDigest: 'dispatch-failed-child-isolated-root'
+    })
+    const child = registry.reserveChild(root, {
+      appRunId: 'run-failed-child-isolated',
+      owner: { kind: 'loop-step', stepId: 'isolated' },
+      provider: 'claude',
+      runtimeProfileId: null,
+      dispatchAuthorityDigest: 'dispatch-failed-child-isolated'
+    })
+    registry.assertAndStart(child, {
+      appRunId: 'run-failed-child-isolated',
+      provider: 'claude',
+      runtimeProfileId: null,
+      dispatchAuthorityDigest: 'dispatch-failed-child-isolated'
+    })
+
+    expect(registry.failAttempt(child)).toBe(true)
+    expect(registry.markTerminal(root)).toBe(true)
+  })
 })
