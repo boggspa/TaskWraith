@@ -156,6 +156,16 @@ describe('RunManager', () => {
     expect(manager.get('run-1')?.status).toBe('cancelled')
   })
 
+  it('preserves a claimed failure when abort emits a competing cancelled exit', () => {
+    const manager = new RunManager()
+    manager.create({ runId: 'run-1', provider: 'codex', status: 'running' })
+
+    expect(manager.claimTerminalStatus('run-1', 'failed')?.runId).toBe('run-1')
+    manager.finish('run-1', 'cancelled')
+
+    expect(manager.get('run-1')?.status).toBe('failed')
+  })
+
   it.each(['completed', 'failed', 'cancelled'] as const)(
     'makes %s sessions absorbing and contains late resources',
     (terminalStatus) => {

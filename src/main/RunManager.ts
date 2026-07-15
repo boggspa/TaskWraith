@@ -85,6 +85,7 @@ export class RunManager<TState = unknown> {
   private runIdsByProvider = new Map<ProviderId, Set<string>>()
   private runIdByProviderSession = new Map<string, string>()
   private approvalIdToRunId = new Map<string, string>()
+  private terminalStatusClaims = new Map<string, RunSessionStatus>()
   private listeners = new Set<(event: RunSessionChangeEvent<TState>) => void>()
 
   onChange(listener: (event: RunSessionChangeEvent<TState>) => void): () => void {
@@ -289,24 +290,51 @@ export class RunManager<TState = unknown> {
     )
   }
 
+  /**
+   * Reserve the first terminal meaning before abort/kill can synchronously emit
+   * a competing provider exit. The session keeps its transport handles until
+   * `finish`, so callers can still stop the exact process/controller.
+   */
+  claimTerminalStatus(
+    runId: string,
+    status: Extract<RunSessionStatus, 'failed' | 'cancelled'>
+  ): RunSession<TState> | undefined {
+    const session = this.sessionsByRunId.get(runId)
+    if (!session || isTerminalRunSessionStatus(session.status)) return undefined
+    const existing = this.terminalStatusClaims.get(runId)
+    if (existing && existing !== status) return undefined
+    this.terminalStatusClaims.set(runId, status)
+    return session
+  }
+
   finish(runId: string | undefined, status: RunSessionStatus): RunSession<TState> | undefined {
     if (!runId) return undefined
     const session = this.sessionsByRunId.get(runId)
+    const claimedTerminalStatus = this.terminalStatusClaims.get(runId)
+    const effectiveStatus =
+      isTerminalRunSessionStatus(status) && claimedTerminalStatus
+        ? claimedTerminalStatus
+        : status
     if (
       session &&
       isTerminalRunSessionStatus(session.status) &&
-      isTerminalRunSessionStatus(status)
+      isTerminalRunSessionStatus(effectiveStatus)
     ) {
       return session
     }
-    if (session && isTerminalRunSessionStatus(status)) {
+    if (session && isTerminalRunSessionStatus(effectiveStatus)) {
       for (const approvalId of session.approvalIds) {
         this.approvalIdToRunId.delete(approvalId)
       }
       session.approvalIds.clear()
       session.sessionGrants.clear()
+      this.terminalStatusClaims.delete(runId)
     }
-    return this.update(runId, { status, process: undefined, abortController: undefined })
+    return this.update(runId, {
+      status: effectiveStatus,
+      process: undefined,
+      abortController: undefined
+    })
   }
 
   remove(runId: string): void {
@@ -314,6 +342,7 @@ export class RunManager<TState = unknown> {
     if (!session) return
 
     this.sessionsByRunId.delete(runId)
+    this.terminalStatusClaims.delete(runId)
     this.runIdsByProvider.get(session.provider)?.delete(runId)
     if (session.providerSessionId) {
       this.runIdByProviderSession.delete(
@@ -340,6 +369,7 @@ export class RunManager<TState = unknown> {
     this.runIdsByProvider.clear()
     this.runIdByProviderSession.clear()
     this.approvalIdToRunId.clear()
+    this.terminalStatusClaims.clear()
   }
 
   private emit(event: RunSessionChangeEvent<TState>): void {
