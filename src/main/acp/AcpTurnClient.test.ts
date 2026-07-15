@@ -217,6 +217,20 @@ describe('runAcpTurn — neutral core', () => {
     expect(sigkilled).toBe(true)
   })
 
+  it('terminates a lifecycle error via endProcess (stdin EOF), not a bare SIGINT', async () => {
+    const child = new FakeAcpChild()
+    const { events } = baseOptions(child, { endProcess: (c) => c.stdin?.end?.() })
+    void events
+    // session/new returns a JSON-RPC error → the turn must fail-close by
+    // terminating the process the provider's way, so a Kimi child (ignores
+    // SIGINT) still exits and onClose runs.
+    child.emit({ jsonrpc: '2.0', id: 1, result: { protocolVersion: 1 } })
+    child.emit({ jsonrpc: '2.0', id: 2, error: { code: -32602, message: 'bad params' } })
+    await new Promise((r) => setTimeout(r, 20))
+    expect(child.stdinEnded).toBe(true)
+    expect(child.killed).toBe(false)
+  })
+
   it('uses the provider formatProcessError for spawn failures', () => {
     const child = new FakeAcpChild()
     const { events } = baseOptions(child, {

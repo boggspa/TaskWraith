@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { resolve, relative } from 'path'
+import { resolve, relative, dirname, basename, join } from 'path'
 import {
   createKimiFsInboundHandler,
   formatKimiProcessError,
@@ -16,8 +16,16 @@ const realFs = (
   writeTextFile: async () => {},
   resolve,
   relative,
+  // Default: identity realpath (no symlinks) so the lexical-boundary tests hold;
+  // symlink tests override realpath to model a link resolving elsewhere.
+  realpath: async (p) => p,
+  dirname,
+  basename,
+  join,
   ...over
 })
+
+const tick = () => new Promise((r) => setTimeout(r, 0))
 
 function makeReply(): { reply: AcpInboundReply; results: unknown[]; errors: [number, string][] } {
   const results: unknown[] = []
@@ -64,12 +72,60 @@ describe('createKimiFsInboundHandler — workspace path authority', () => {
       reply
     )
     expect(handled).toBe(true)
+    await tick()
     expect(readSpy).not.toHaveBeenCalled()
     expect(results).toHaveLength(0)
     expect(errors[0][1]).toContain('outside the granted workspace')
     expect(events.some((e) => e.type === 'provider_warning' && /denied it/.test(e.text || ''))).toBe(
       true
     )
+  })
+
+  it('denies a read through a workspace-internal symlink that escapes (realpath)', async () => {
+    const events: AcpRunEvent[] = []
+    const readSpy = vi.fn(async () => 'SECRET')
+    // /ws/link -> /etc: the lexical path /ws/link/passwd looks inside /ws, but
+    // realpath resolves it to /etc/passwd (outside). Must deny.
+    const handler = createKimiFsInboundHandler({
+      fsRoots: ['/ws'],
+      fs: realFs({
+        readTextFile: readSpy,
+        realpath: async (p) => (p === '/ws/link/passwd' ? '/etc/passwd' : p)
+      }),
+      onEvent: (e) => events.push(e)
+    })
+    const { reply, results, errors } = makeReply()
+    handler({ method: 'fs/read_text_file', id: 21, params: { path: '/ws/link/passwd' } }, reply)
+    await tick()
+    expect(readSpy).not.toHaveBeenCalled()
+    expect(results).toHaveLength(0)
+    expect(errors[0][1]).toContain('outside the granted workspace')
+  })
+
+  it('denies a write into a symlinked directory that escapes (realpath of parent)', async () => {
+    const writeSpy = vi.fn(async () => {})
+    // /ws/link -> /etc, writing a NEW file /ws/link/evil.txt (target doesn't
+    // exist, so the parent is realpath'd). Must deny.
+    const handler = createKimiFsInboundHandler({
+      fsRoots: ['/ws'],
+      fs: realFs({
+        writeTextFile: writeSpy,
+        realpath: async (p) => {
+          if (p === '/ws/link/evil.txt') throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
+          if (p === '/ws/link') return '/etc'
+          return p
+        }
+      }),
+      onEvent: () => {}
+    })
+    const { reply, errors } = makeReply()
+    handler(
+      { method: 'fs/write_text_file', id: 22, params: { path: '/ws/link/evil.txt', content: 'X' } },
+      reply
+    )
+    await tick()
+    expect(writeSpy).not.toHaveBeenCalled()
+    expect(errors[0][1]).toContain('outside the granted workspace')
   })
 
   it('serves a write inside the workspace and denies one outside', async () => {
@@ -94,6 +150,7 @@ describe('createKimiFsInboundHandler — workspace path authority', () => {
       { method: 'fs/write_text_file', id: 4, params: { path: '/tmp/evil', content: 'X' } },
       outside.reply
     )
+    await tick()
     expect(writeSpy).toHaveBeenCalledTimes(1)
     expect(outside.errors).toHaveLength(1)
   })

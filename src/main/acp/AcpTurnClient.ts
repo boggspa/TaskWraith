@@ -355,7 +355,11 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
           type: 'provider_warning',
           text: `ACP ${step} failed: ${rpcError?.message || 'request error'}${detail}`
         })
-        child.kill('SIGINT')
+        // Terminate via the provider terminator + SIGKILL backstop — a bare
+        // SIGINT is ignored by Kimi Code's `kimi acp`, which would orphan the
+        // process and hang the run (close never fires → onClose teardown never
+        // runs → isolated home leaks).
+        endProcess()
         continue
       }
       if (message.id === ACP_ID.initialize && message.result) {

@@ -31,6 +31,11 @@ export interface KimiAcpFs {
   writeTextFile: (path: string, content: string) => Promise<void>
   resolve: (path: string) => string
   relative: (from: string, to: string) => string
+  /** Resolve symlinks; rejects if the path does not exist. */
+  realpath: (path: string) => Promise<string>
+  dirname: (path: string) => string
+  basename: (path: string) => string
+  join: (...parts: string[]) => string
 }
 
 export interface KimiAcpRunOptions {
@@ -96,39 +101,68 @@ export function createKimiFsInboundHandler(options: {
   onEvent: (event: AcpRunEvent) => void
 }) {
   const { fsRoots, fs, onEvent } = options
-  const withinAuthority = (target: string): boolean =>
-    isPathWithinRoots(target, fsRoots, { resolve: fs.resolve, relative: fs.relative })
+
+  // Resolve symlinks BEFORE the authority check: path.resolve/relative are
+  // lexical, so a symlink inside a granted root (shipped in a repo or created
+  // mid-run) could otherwise read/write OUTSIDE it — e.g. /ws/link/passwd passes
+  // the lexical check when /ws/link -> /etc. A brand-new write target won't
+  // exist, so resolve its PARENT (which does) and re-attach the basename, so the
+  // symlinked directory is caught for writes too.
+  const realResolve = async (target: string): Promise<string> => {
+    try {
+      return await fs.realpath(target)
+    } catch {
+      try {
+        return fs.join(await fs.realpath(fs.dirname(target)), fs.basename(target))
+      } catch {
+        return fs.resolve(target)
+      }
+    }
+  }
+  const withinAuthority = async (target: string): Promise<boolean> => {
+    const [resolvedTarget, resolvedRoots] = await Promise.all([
+      realResolve(target),
+      Promise.all(
+        fsRoots.map(async (root) => {
+          try {
+            return await fs.realpath(root)
+          } catch {
+            return fs.resolve(root)
+          }
+        })
+      )
+    ])
+    return isPathWithinRoots(resolvedTarget, resolvedRoots, {
+      resolve: fs.resolve,
+      relative: fs.relative
+    })
+  }
 
   return (message: Record<string, unknown>, reply: AcpInboundReply): boolean => {
     const method = message.method
     if (method !== KIMI_FS_READ && method !== KIMI_FS_WRITE) return false
     const target = pathParam(message)
-    if (!withinAuthority(target)) {
-      onEvent({
-        type: 'provider_warning',
-        text: `Kimi requested a ${method === KIMI_FS_WRITE ? 'write' : 'read'} outside the workspace (${target || 'unknown path'}); TaskWraith denied it.`
+    withinAuthority(target)
+      .then((ok) => {
+        if (!ok) {
+          onEvent({
+            type: 'provider_warning',
+            text: `Kimi requested a ${method === KIMI_FS_WRITE ? 'write' : 'read'} outside the workspace (${target || 'unknown path'}); TaskWraith denied it.`
+          })
+          reply.respondError(KIMI_FS_DENIED_CODE, 'Path is outside the granted workspace roots.')
+          return undefined
+        }
+        if (method === KIMI_FS_READ) {
+          return fs.readTextFile(target).then((content) => reply.respondResult({ content }))
+        }
+        return fs.writeTextFile(target, contentParam(message)).then(() => reply.respondResult(null))
       })
-      reply.respondError(KIMI_FS_DENIED_CODE, 'Path is outside the granted workspace roots.')
-      return true
-    }
-    if (method === KIMI_FS_READ) {
-      fs.readTextFile(target)
-        .then((content) => reply.respondResult({ content }))
-        .catch((error) =>
-          reply.respondError(
-            KIMI_FS_DENIED_CODE,
-            `Read failed: ${error instanceof Error ? error.message : String(error)}`
-          )
-        )
-      return true
-    }
-    // KIMI_FS_WRITE
-    fs.writeTextFile(target, contentParam(message))
-      .then(() => reply.respondResult(null))
       .catch((error) =>
         reply.respondError(
           KIMI_FS_DENIED_CODE,
-          `Write failed: ${error instanceof Error ? error.message : String(error)}`
+          `${method === KIMI_FS_WRITE ? 'Write' : 'Read'} failed: ${
+            error instanceof Error ? error.message : String(error)
+          }`
         )
       )
     return true

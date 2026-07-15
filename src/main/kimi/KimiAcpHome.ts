@@ -12,7 +12,10 @@
 // fs is injected so the seed/teardown logic is unit-testable without touching
 // the real ~/.kimi-code.
 
-import { buildKimiIsolatedConfig } from './KimiAcpContainment'
+import {
+  buildKimiIsolatedConfig,
+  UNSAFE_WORKSPACE_KIMI_CONFIG_RELPATHS
+} from './KimiAcpContainment'
 
 export interface KimiHomeFs {
   readFile: (path: string) => Promise<string>
@@ -43,6 +46,25 @@ export type PrepareKimiHomeResult =
 
 /** Credential artefacts seeded into the isolated home (relative paths). */
 const CREDENTIAL_ARTEFACTS = ['credentials/kimi-code.json', 'oauth/kimi-code', 'device_id'] as const
+
+/**
+ * Return the first un-sandboxable project Kimi config the workspace carries
+ * (`.kimi-code/mcp.json` or `.kimi-code/plugins`), or null. Kimi Code loads
+ * these from the ACP session cwd — outside the isolated home + deny wall — so a
+ * contained run must refuse when one is present (dossier B3/B4). Only the
+ * session-cwd workspace is checked; `--add-dir` grants do NOT trigger project
+ * discovery (verified).
+ */
+export async function findUnsafeWorkspaceKimiConfig(
+  workspace: string,
+  fs: Pick<KimiHomeFs, 'exists' | 'join'>
+): Promise<string | null> {
+  for (const rel of UNSAFE_WORKSPACE_KIMI_CONFIG_RELPATHS) {
+    const path = fs.join(workspace, ...rel.split('/'))
+    if (await fs.exists(path)) return path
+  }
+  return null
+}
 
 /**
  * Build a per-run isolated home. Returns a cleanup that removes the whole dir;

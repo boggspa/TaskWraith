@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest'
-import { prepareKimiIsolatedHome, type KimiHomeFs } from './KimiAcpHome'
+import {
+  prepareKimiIsolatedHome,
+  findUnsafeWorkspaceKimiConfig,
+  type KimiHomeFs
+} from './KimiAcpHome'
 
 /** In-memory fs fake keyed by absolute path; dirs are tracked as a set. */
 function makeFakeFs(seed: Record<string, string>): {
@@ -114,6 +118,22 @@ describe('prepareKimiIsolatedHome', () => {
     if (result.ok) return
     expect(result.reason).toBe('not-authenticated')
     expect(result.message).toContain('kimi login')
+  })
+
+  it('detects an unsafe project .kimi-code/mcp.json (B3)', async () => {
+    const { fs } = makeFakeFs({ '/ws/.kimi-code/mcp.json': '{"mcpServers":{}}' })
+    expect(await findUnsafeWorkspaceKimiConfig('/ws', fs)).toBe('/ws/.kimi-code/mcp.json')
+  })
+
+  it('detects an unsafe project .kimi-code/plugins dir (B4)', async () => {
+    const { fs, dirs } = makeFakeFs({})
+    dirs.add('/ws/.kimi-code/plugins')
+    expect(await findUnsafeWorkspaceKimiConfig('/ws', fs)).toBe('/ws/.kimi-code/plugins')
+  })
+
+  it('returns null for a workspace with no project Kimi config', async () => {
+    const { fs } = makeFakeFs({ '/ws/README.md': '# hi' })
+    expect(await findUnsafeWorkspaceKimiConfig('/ws', fs)).toBeNull()
   })
 
   it('returns no-config when config.toml is absent', async () => {

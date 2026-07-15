@@ -84,7 +84,12 @@ import {
   startKimiHttpMcpBridge,
   type KimiHttpMcpBridgeHandle
 } from './kimi/KimiHttpMcpBridge'
-import { prepareKimiIsolatedHome, type KimiHomeFs } from './kimi/KimiAcpHome'
+import {
+  prepareKimiIsolatedHome,
+  findUnsafeWorkspaceKimiConfig,
+  type KimiHomeFs
+} from './kimi/KimiAcpHome'
+import { buildKimiWorkspaceConfigRefusalMessage } from './kimi/KimiAcpContainment'
 import { runKimiAcpTurn, type KimiAcpFs } from './kimi/KimiAcpClient'
 import { classifyKimiToolPermission, isKimiSafeMcpTool } from './kimi/KimiToolPolicy'
 import { createAcpTurnAbortController } from './acp/AcpTurnClient'
@@ -17413,7 +17418,11 @@ const kimiAcpFsAdapter: KimiAcpFs = {
   readTextFile: (path) => fs.readFile(path, 'utf8'),
   writeTextFile: (path, content) => fs.writeFile(path, content, { encoding: 'utf8' }),
   resolve: (path) => resolve(path),
-  relative: (from, to) => relative(from, to)
+  relative: (from, to) => relative(from, to),
+  realpath: (path) => fs.realpath(path),
+  dirname: (path) => dirname(path),
+  basename: (path) => basename(path),
+  join: (...parts) => join(...parts)
 }
 
 /** Stream an ACP run event from a Kimi ACP turn to the renderer. Mirrors
@@ -17554,6 +17563,35 @@ async function runKimiAcpProvider(
   binaryPath: string
 ): Promise<void> {
   const route = routeWithRunId('kimi', payload)
+
+  // B3 (dossier): a project-level `.kimi-code/mcp.json` / `.kimi-code/plugins`
+  // in the workspace is loaded by Kimi Code from the ACP session cwd BEFORE any
+  // prompt or permission check — outside the isolated home, the deny wall, and
+  // the HTTP-only MCP surface — and executes arbitrary stdio servers (verified
+  // RCE). The session cwd must be the real workspace for the seat to function,
+  // so it cannot be relocated; a workspace carrying such config cannot be
+  // sandboxed. Refuse the run fail-closed BEFORE building the home or spawning.
+  if (payload.scope !== 'global' && payload.workspace) {
+    const unsafeProjectConfig = await findUnsafeWorkspaceKimiConfig(
+      payload.workspace,
+      kimiHomeFsAdapter
+    )
+    if (unsafeProjectConfig) {
+      const message = buildKimiWorkspaceConfigRefusalMessage(unsafeProjectConfig)
+      sendAgentCompatError(event.sender, 'kimi', message, route)
+      sendAgentCompatLine(event.sender, 'kimi', {
+        type: 'result',
+        status: 'failed',
+        stats: {},
+        provider: 'kimi',
+        setupRequired: true
+      })
+      sendAgentCompatExit(event.sender, 'kimi', 1, route)
+      runManager.finish(route.appRunId, 'failed')
+      return
+    }
+  }
+
   const model = normalizeCliProviderModel('kimi', payload.model)
 
   // Build the isolated home BEFORE registering the run so a fail-closed
@@ -17704,14 +17742,24 @@ async function runKimiAcpProvider(
     await Promise.all([home.cleanup(), kimiMcpBridge ? kimiMcpBridge.close() : Promise.resolve()])
   }
 
-  const handle = runKimiAcpTurn({
+  let handle: ReturnType<typeof runKimiAcpTurn>
+  try {
+    handle = runKimiAcpTurn({
     prompt: payload.prompt,
     cwd: payload.workspace || os.homedir(),
     fsRoots,
     fs: kimiAcpFsAdapter,
     mcpServers: kimiMcpServers,
     spawnProcess: () => {
-      const args = [...(model ? ['--model', model] : []), 'acp']
+      // Build the CLI model arg the same way every other Kimi path does:
+      // kimiCliModelArg omits `--model` for the default (kimi-code uses its
+      // config default_model) and maps the Fast/standard service tier to the
+      // real kimi-for-coding[-highspeed] alias. Passing the display id directly
+      // would send a non-existent CLI alias and never engage Fast mode. The
+      // root `--model` flag precedes the `acp` subcommand.
+      const modelArgs: string[] = []
+      appendKimiModelArgs(modelArgs, model, payload.serviceTier)
+      const args = [...modelArgs, 'acp']
       return spawn(binaryPath, args, {
         cwd: payload.workspace || os.homedir(),
         env: createCliEnv(
@@ -17764,7 +17812,29 @@ async function runKimiAcpProvider(
         runManager.finish(route.appRunId, failed ? 'failed' : 'completed')
       }
     }
-  })
+    })
+  } catch (error) {
+    // A synchronous throw before the turn's onClose is wired (e.g. spawnProcess
+    // throwing RuntimeProfileEnvironmentResolutionError inside runAcpTurn) would
+    // otherwise leak the isolated home — a 0600 copy of the real OAuth token.
+    // Tear it down and surface the failure.
+    await teardown()
+    sendAgentCompatError(
+      event.sender,
+      'kimi',
+      error instanceof Error ? error.message : String(error),
+      route
+    )
+    sendAgentCompatLine(event.sender, 'kimi', {
+      type: 'result',
+      status: 'failed',
+      stats: {},
+      provider: 'kimi'
+    })
+    sendAgentCompatExit(event.sender, 'kimi', 1, route)
+    runManager.finish(route.appRunId, 'failed')
+    return
+  }
   runManager.attachAbortController(route.appRunId!, createAcpTurnAbortController(handle))
 }
 

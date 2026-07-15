@@ -25,6 +25,34 @@
 // also strips any migrated `decision = "allow"` permission rule (dossier B8) so
 // no standing always-allow reaches the ACP session.
 
+/**
+ * Workspace-relative Kimi project-config entries that auto-execute or auto-load
+ * at session start. Kimi Code discovers project config from the ACP `session/new`
+ * cwd (verified: a project `.kimi-code/mcp.json` ran `/usr/bin/touch` at
+ * session/new despite the isolated KIMI_CODE_HOME, `mcpServers:[]`, and the deny
+ * wall) — that discovery is driven by the session cwd, which MUST be the real
+ * workspace for the seat to be usable, so it cannot be relocated like the data
+ * root. `.kimi-code/mcp.json` executes arbitrary stdio servers pre-prompt (RCE +
+ * egress that bypasses the by-name deny wall); `.kimi-code/plugins` auto-loads
+ * MCP servers / hooks. A workspace carrying either cannot be sandboxed, so a
+ * contained Kimi ACP run must REFUSE rather than execute it. (dossier B3/B4.)
+ */
+export const UNSAFE_WORKSPACE_KIMI_CONFIG_RELPATHS = [
+  '.kimi-code/mcp.json',
+  '.kimi-code/plugins'
+] as const
+
+/** User-facing copy for the refuse-to-run when a workspace carries an
+ *  un-sandboxable project Kimi config. */
+export function buildKimiWorkspaceConfigRefusalMessage(offendingPath: string): string {
+  return (
+    `This workspace contains a project-level Kimi config (${offendingPath}) that TaskWraith cannot sandbox: ` +
+    `Kimi Code loads it from the session working directory before any prompt or permission check, outside the ` +
+    `isolated profile and the tool deny wall, so it could run arbitrary commands. Kimi runs are blocked in this ` +
+    `workspace for safety. Remove or relocate the .kimi-code project config to run Kimi here.`
+  )
+}
+
 /** Built-in tools denied by construction on every contained Kimi ACP seat.
  *  FetchURL/WebSearch are the server-side egress vector; AgentSwarm/Agent are
  *  denied so a seat cannot fan out unbrokered sub-agents. Deny rules are static
