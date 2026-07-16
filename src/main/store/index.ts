@@ -2400,7 +2400,10 @@ function appendScheduledRunIdTombstone(record: ScheduledRunIdTombstoneRecord): v
     if (bytesRead !== serializedBytes || tail.toString('utf8') !== serialized) {
       throw new Error('Scheduled run-id tombstone durable tail verification failed.')
     }
-    if (!fileExisted) {
+    if (!fileExisted && process.platform !== 'win32') {
+      // Windows maps fsync to FlushFileBuffers, which rejects directory
+      // handles with EPERM — skip the directory barrier there (matches
+      // ScheduledOccurrenceAuthorityRootStore's platform guard).
       let directoryDescriptor: number | null = null
       try {
         directoryDescriptor = fs.openSync(directoryPath, 'r')
@@ -2462,12 +2465,16 @@ function writeScheduledOccurrenceJsonStrict<T>(filePath: string, data: T): void 
     } catch {
       // Best effort on filesystems that do not support POSIX modes.
     }
-    let directoryDescriptor: number | null = null
-    try {
-      directoryDescriptor = fs.openSync(directoryPath, 'r')
-      fs.fsyncSync(directoryDescriptor)
-    } finally {
-      if (directoryDescriptor !== null) fs.closeSync(directoryDescriptor)
+    if (process.platform !== 'win32') {
+      // Directory fsync EPERMs on Windows (FlushFileBuffers rejects
+      // directory handles); the rename above is the publication point there.
+      let directoryDescriptor: number | null = null
+      try {
+        directoryDescriptor = fs.openSync(directoryPath, 'r')
+        fs.fsyncSync(directoryDescriptor)
+      } finally {
+        if (directoryDescriptor !== null) fs.closeSync(directoryDescriptor)
+      }
     }
   } catch (error) {
     if (!renamed) {
@@ -3136,6 +3143,10 @@ function readWorkflowRunLedgerForAppend(
 }
 
 function fsyncWorkflowRunLedger(filePath: string): void {
+  // Windows FlushFileBuffers requires write access; a read-only handle
+  // EPERMs. The appenders fsync their own write descriptors, so this extra
+  // path-level barrier is POSIX-only.
+  if (process.platform === 'win32') return
   const fd = fs.openSync(filePath, 'r')
   try {
     fs.fsyncSync(fd)
@@ -3145,6 +3156,9 @@ function fsyncWorkflowRunLedger(filePath: string): void {
 }
 
 function fsyncDirectory(directoryPath: string): void {
+  // Windows rejects fsync on directory handles (EPERM) — skip the barrier
+  // there, matching ScheduledOccurrenceAuthorityRootStore's platform guard.
+  if (process.platform === 'win32') return
   const fd = fs.openSync(directoryPath, 'r')
   try {
     fs.fsyncSync(fd)

@@ -430,9 +430,13 @@ describe('AppStore workflows', () => {
     }
 
     const task = AppStore.materializeWorkflowNow(saved.id, Date.parse(plannedFor))
+    // A manual trigger has no timezone, so materialization falls back to the
+    // host zone — resolve it dynamically so the assertion holds on UTC CI
+    // runners as well as local machines.
+    const hostTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone
     expect(task).toMatchObject({
       runAt: plannedFor,
-      timezone: 'Europe/London',
+      timezone: hostTimezone,
       status: 'due',
       workflowId: saved.id,
       workflowOccurrenceAt: plannedFor,
