@@ -211,6 +211,41 @@ describe('createRunDispatchFacade — ordered side-effect sequence (faked deps)'
     )
   })
 
+  // Ensemble fan-out launches its lanes concurrently into ONE chat, and the
+  // default Claude SDK path holds runCoordinator.dispatch open for its whole
+  // turn — overlapping ordinary dispatches on a chat are legitimate. Only a
+  // scheduled claim must stay excluded while any of them is mid-flight.
+  it('dispatches concurrent ordinary runs into one chat (fan-out lanes)', async () => {
+    const deps = makeDeps([])
+    const gates: Array<() => void> = []
+    vi.mocked(deps.runCoordinator.dispatch).mockImplementation(
+      (dispatchPayload: AgentRunPayload) =>
+        new Promise<{ dispatched: boolean; appRunId: string }>((resolve) => {
+          gates.push(() =>
+            resolve({ dispatched: true, appRunId: dispatchPayload.appRunId ?? '' })
+          )
+        })
+    )
+
+    const facade = createRunDispatchFacade(deps)
+    const first = facade(payload({ appRunId: 'lane-run-1' }), senderEvent)
+    const second = facade(payload({ appRunId: 'lane-run-2' }), senderEvent)
+    for (let flush = 0; flush < 50 && gates.length < 2; flush++) await Promise.resolve()
+    expect(gates).toHaveLength(2)
+
+    expect(deps.scheduledOccurrenceOwners.hasOrdinaryChatDispatchReservation('chat-1')).toBe(
+      true
+    )
+    expect(() => registerScheduledOwner(deps)).toThrow('already has a live dispatch owner')
+
+    for (const open of gates) open()
+    await expect(first).resolves.toEqual({ dispatched: true, appRunId: 'lane-run-1' })
+    await expect(second).resolves.toEqual({ dispatched: true, appRunId: 'lane-run-2' })
+    expect(deps.scheduledOccurrenceOwners.hasOrdinaryChatDispatchReservation('chat-1')).toBe(
+      false
+    )
+  })
+
   it('accepts an exact live scheduled owner and registers only its budget before dispatch', async () => {
     const order: string[] = []
     const deps = makeDeps(order)

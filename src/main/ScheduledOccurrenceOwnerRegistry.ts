@@ -159,14 +159,23 @@ export function createScheduledOccurrenceOwner(
  * Registration snapshots caller data. A task id, owner run id, and ensemble
  * round id may each name at most one live occurrence. Terminal consumers remove
  * all indexes synchronously so a duplicate exit/round callback has no authority.
+ *
+ * Ordinary (non-scheduled) dispatch reservations are the OTHER direction of the
+ * scheduled↔ordinary exclusion only — many may be live on one chat at once.
+ * Legitimate ordinary dispatches overlap per chat: ensemble fan-out launches
+ * its lanes concurrently, and the default Claude SDK path holds its dispatch
+ * open for the whole turn. Serializing ordinary dispatches here skipped live
+ * fan-out lanes with `duplicate-chat`.
  */
 export class ScheduledOccurrenceOwnerRegistry {
   private readonly byTaskId = new Map<string, ScheduledOccurrenceOwner>()
   private readonly byOwnerRunId = new Map<string, ScheduledOccurrenceOwner>()
   private readonly byChatId = new Map<string, ScheduledOccurrenceOwner>()
+  // chatId → every live ordinary reservation; empty sets are deleted so
+  // `.has(chatId)` always means "at least one dispatch is mid-flight".
   private readonly ordinaryDispatchByChatId = new Map<
     string,
-    OrdinaryChatDispatchReservation
+    Set<OrdinaryChatDispatchReservation>
   >()
   private readonly byChildRunId = new Map<string, ScheduledChildBinding>()
   private readonly childRunIdsByOwnerRunId = new Map<string, Set<string>>()
@@ -210,21 +219,31 @@ export class ScheduledOccurrenceOwnerRegistry {
     return isExactNonEmptyString(chatId) ? this.byChatId.get(chatId) : undefined
   }
 
+  /**
+   * Reserve one in-flight ordinary dispatch on a chat. Only a live SCHEDULED
+   * owner blocks the reservation; concurrent ordinary reservations coexist
+   * (fan-out lanes, a Claude dispatch consuming its stream inline). While any
+   * reservation is live, `register` refuses a scheduled claim on the chat.
+   */
   reserveOrdinaryChatDispatch(chatId: string): OrdinaryChatDispatchReservation {
     if (!isExactNonEmptyString(chatId)) {
       fail('invalid-input', 'An exact chat id is required for dispatch reservation.')
     }
-    if (this.byChatId.has(chatId) || this.ordinaryDispatchByChatId.has(chatId)) {
+    if (this.byChatId.has(chatId)) {
       fail('duplicate-chat', `Chat ${chatId} already has a live dispatch owner.`)
     }
     const reservation = Object.freeze({ chatId, nonce: Symbol(chatId) })
-    this.ordinaryDispatchByChatId.set(chatId, reservation)
+    const reservations = this.ordinaryDispatchByChatId.get(chatId) ?? new Set()
+    reservations.add(reservation)
+    this.ordinaryDispatchByChatId.set(chatId, reservations)
     return reservation
   }
 
   releaseOrdinaryChatDispatch(reservation: OrdinaryChatDispatchReservation): boolean {
-    if (this.ordinaryDispatchByChatId.get(reservation.chatId) !== reservation) return false
-    this.ordinaryDispatchByChatId.delete(reservation.chatId)
+    const reservations = this.ordinaryDispatchByChatId.get(reservation.chatId)
+    if (!reservations?.has(reservation)) return false
+    reservations.delete(reservation)
+    if (reservations.size === 0) this.ordinaryDispatchByChatId.delete(reservation.chatId)
     return true
   }
 

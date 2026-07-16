@@ -142,6 +142,32 @@ describe('ScheduledOccurrenceOwnerRegistry', () => {
     expect(registry.lookupByChatId('chat-reserved')).toBeUndefined()
   })
 
+  it('keeps concurrent ordinary reservations independently live on one chat', () => {
+    const registry = new ScheduledOccurrenceOwnerRegistry()
+    const first = registry.reserveOrdinaryChatDispatch('chat-fanout')
+    const second = registry.reserveOrdinaryChatDispatch('chat-fanout')
+
+    expect(second).not.toBe(first)
+    expect(registry.hasOrdinaryChatDispatchReservation('chat-fanout')).toBe(true)
+    expectCode(
+      () => registry.register({ ...owner('scheduled'), chatId: 'chat-fanout' }),
+      'duplicate-chat'
+    )
+
+    expect(registry.releaseOrdinaryChatDispatch(first)).toBe(true)
+    expect(registry.releaseOrdinaryChatDispatch(first)).toBe(false)
+    expect(registry.hasOrdinaryChatDispatchReservation('chat-fanout')).toBe(true)
+    expectCode(
+      () => registry.register({ ...owner('scheduled'), chatId: 'chat-fanout' }),
+      'duplicate-chat'
+    )
+
+    expect(registry.releaseOrdinaryChatDispatch(second)).toBe(true)
+    expect(registry.hasOrdinaryChatDispatchReservation('chat-fanout')).toBe(false)
+    const scheduled = registry.register({ ...owner('scheduled'), chatId: 'chat-fanout' })
+    expect(registry.lookupByChatId('chat-fanout')).toBe(scheduled)
+  })
+
   it('requires exact provider and chat identity for solo exit lookup', () => {
     const registry = new ScheduledOccurrenceOwnerRegistry()
     const registered = registry.register(owner('solo'))
