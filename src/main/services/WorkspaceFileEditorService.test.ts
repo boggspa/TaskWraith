@@ -215,7 +215,8 @@ describe('WorkspaceFileEditorService', () => {
     )
   })
 
-  it('fails closed before descriptor writes when an ancestor changes', async () => {
+  // POSIX-only sim: renames `safe` while the service holds an open descriptor inside it — Windows EPERMs that rename, so the domain error can never fire.
+  it.skipIf(process.platform === 'win32')('fails closed before descriptor writes when an ancestor changes', async () => {
     const workspace = await makeWorkspace()
     const outside = await makeWorkspace()
     await mkdir(join(workspace, 'safe'), { recursive: true })
@@ -472,7 +473,8 @@ describe('WorkspaceFileEditorService', () => {
     )
   })
 
-  it('denies delete when its verified ancestor is replaced', async () => {
+  // POSIX-only sim: renames `safe` while the service holds an open descriptor inside it — Windows EPERMs that rename, so the domain error can never fire.
+  it.skipIf(process.platform === 'win32')('denies delete when its verified ancestor is replaced', async () => {
     const workspace = await makeWorkspace()
     const outside = await makeWorkspace()
     await mkdir(join(workspace, 'safe'), { recursive: true })

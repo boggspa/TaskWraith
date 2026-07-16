@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { homedir } from 'os'
+import { join } from 'path'
 import {
   kimiCredentialCandidatePaths,
   selectValidKimiAccessToken
@@ -45,7 +46,9 @@ describe('selectValidKimiAccessToken', () => {
 describe('kimiCredentialCandidatePaths', () => {
   it('tries the Kimi Code home before the legacy home', () => {
     const paths = kimiCredentialCandidatePaths()
-    expect(paths[0]).toBe(`${homedir()}/.kimi-code/credentials/kimi-code.json`)
-    expect(paths[1]).toBe(`${homedir()}/.kimi/credentials/kimi-code.json`)
+    // Build expectations with join — the product path.join()s, so '/'-joined
+    // template strings mismatch on Windows ('\' separators).
+    expect(paths[0]).toBe(join(homedir(), '.kimi-code', 'credentials', 'kimi-code.json'))
+    expect(paths[1]).toBe(join(homedir(), '.kimi', 'credentials', 'kimi-code.json'))
   })
 })

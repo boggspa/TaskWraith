@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest'
+import * as path from 'node:path'
 import { detectExternalPath } from './ExternalPathDetector'
 
 describe('detectExternalPath', () => {
@@ -97,7 +98,9 @@ describe('detectExternalPath', () => {
       })
     ).toEqual({
       needsPrompt: true,
-      path: '/Users/me/code/outside/file.ts',
+      // The detector path.resolve()s relative paths against the workspace; on
+      // Windows that yields drive-lettered '\'-separated output, so mirror it.
+      path: path.resolve('/Users/me/code/proj', '../outside/file.ts'),
       access: 'read',
       basename: 'file.ts'
     })
