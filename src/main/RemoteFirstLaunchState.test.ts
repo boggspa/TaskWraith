@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import { buildRemoteFirstLaunchState } from './RemoteFirstLaunchState'
-import { resolveAppNotifications } from '../shared/appNotifications'
+import {
+  NEW_ADDITIONS_NOTIFICATION_ID,
+  resolveAppNotifications
+} from '../shared/appNotifications'
 import type { ProviderUsageSummary } from './ProviderUsageStatus'
 import type { ProviderCapabilityContract, ProviderId } from './store/types'
 import type { TaskWraithPluginActivatedProviderSetup } from '../shared/plugins/PluginTypes'
@@ -251,7 +254,11 @@ describe('buildRemoteFirstLaunchState', () => {
       usage: {}
     })
 
-    expect(state.notifications.map((notice) => notice.id)).toContain('new-additions-2026-07-13')
+    // Pin via the registry constant, not a dated literal — the id bumps every
+    // time the New Additions lineup changes.
+    expect(state.notifications.map((notice) => notice.id)).toContain(
+      NEW_ADDITIONS_NOTIFICATION_ID
+    )
     expect(state.notifications.map((notice) => notice.id)).not.toContain(
       'gemini-retirement-2026-06-18'
     )
@@ -260,7 +267,7 @@ describe('buildRemoteFirstLaunchState', () => {
     )
 
     const newAdditions = state.notifications.find(
-      (notice) => notice.id === 'new-additions-2026-07-13'
+      (notice) => notice.id === NEW_ADDITIONS_NOTIFICATION_ID
     )
     expect(newAdditions?.tone).toBe('default')
     expect(newAdditions?.accent).toBe('default')
@@ -276,6 +283,10 @@ describe('buildRemoteFirstLaunchState', () => {
     expect(newAdditions?.groups?.some((group) => group.provider === 'claude')).toBe(false)
     const kimiGroup = newAdditions?.groups?.find((group) => group.provider === 'kimi')
     expect(kimiGroup?.models).toEqual([
+      expect.objectContaining({
+        name: 'Kimi K3',
+        blurb: expect.stringMatching(/256K context.*Max-effort thinking/)
+      }),
       expect.objectContaining({
         name: 'Kimi Code HighSpeed',
         blurb: expect.stringMatching(/5–6×.*Fast mode/)
