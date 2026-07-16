@@ -560,6 +560,50 @@ export function shouldTreatScrollAsUserScrollAway(input: {
 }
 
 /**
+ * Chromium's native scrollbar can move a scroll container without delivering
+ * a usable wheel or pointer gesture to its content element. Treat that
+ * unclassified upward movement as reader intent only when its geometry rules
+ * out the two browser-owned clamps that look identical in a bare `scroll`
+ * event: content shrinking, or the viewport growing.
+ *
+ * This is deliberately narrower than `shouldTreatScrollAsUserScrollAway`.
+ * The regular wheel/touch/key and tracked-scrollbar paths still own the
+ * general case. This fallback exists so an ordinary native thumb/track drag
+ * cannot leave auto-follow armed and let the next streamed transcript update
+ * pull the reader to the tail.
+ */
+export function shouldTreatUnclassifiedNativeScrollAsUserScrollAway(input: {
+  previousScrollTop: number
+  nextScrollTop: number
+  previousScrollHeight: number
+  nextScrollHeight: number
+  previousClientHeight: number
+  nextClientHeight: number
+  isProgrammatic: boolean
+}): boolean {
+  const geometry = [
+    input.previousScrollHeight,
+    input.nextScrollHeight,
+    input.previousClientHeight,
+    input.nextClientHeight
+  ]
+  if (geometry.some((value) => !Number.isFinite(value))) return false
+
+  // A tail shrink or a taller viewport can clamp a previously pinned
+  // scrollTop downward without any user gesture. Keep app ownership in those
+  // cases; the normal resize re-pin path will restore the live edge.
+  if (input.nextScrollHeight < input.previousScrollHeight - 0.5) return false
+  if (input.nextClientHeight > input.previousClientHeight + 0.5) return false
+
+  return shouldTreatScrollAsUserScrollAway({
+    previousScrollTop: input.previousScrollTop,
+    nextScrollTop: input.nextScrollTop,
+    distanceFromBottom: input.nextScrollHeight - input.nextScrollTop - input.nextClientHeight,
+    isProgrammatic: input.isProgrammatic
+  })
+}
+
+/**
  * Scroll geometry is shared by user gestures and browser-owned layout clamps.
  * Only input paths that TaskWraith can attribute to the user may disengage a
  * pinned transcript. Wheel/touch/key handlers set the frame flag directly;

@@ -145,6 +145,57 @@ describe('useTranscriptScrollState', () => {
     expect(autoFollowStateSetter).toHaveBeenCalledWith(false)
   })
 
+  it('releases follow from an unclassified native scrollbar scroll before the next transcript update', () => {
+    ;(hookHarness.scroller as unknown as { scrollTop: number }).scrollTop = 800
+    vi.stubGlobal(
+      'requestAnimationFrame',
+      vi.fn(() => 1)
+    )
+    vi.stubGlobal('cancelAnimationFrame', vi.fn())
+    useTranscriptScrollState({
+      chatId: 'chat-1',
+      messages: [],
+      runCompleteNotice: null,
+      streamingActive: true
+    })
+
+    // Effect 1 owns the passive native scroll listener. Simulate a scrollbar
+    // drag that Chromium did not pair with a wheel/pointer event on the
+    // transcript content element.
+    hookHarness.effectFactories[0]?.()
+    ;(hookHarness.scroller as unknown as { scrollTop: number }).scrollTop = 620
+    hookHarness.listeners.get('scroll')?.({})
+
+    expect(hookHarness.stateSetters[0]).toHaveBeenLastCalledWith(false)
+  })
+
+  it('releases follow when a native scrollbar move outruns the streaming layout snap', () => {
+    ;(hookHarness.scroller as unknown as { scrollTop: number }).scrollTop = 800
+    vi.stubGlobal(
+      'requestAnimationFrame',
+      vi.fn(() => 1)
+    )
+    vi.stubGlobal('cancelAnimationFrame', vi.fn())
+    useTranscriptScrollState({
+      chatId: 'chat-1',
+      messages: [{ id: 'streaming-message' }],
+      runCompleteNotice: null,
+      streamingActive: true
+    })
+
+    // The browser can apply a native scrollbar move before it has delivered
+    // the matching scroll event. A streaming render must see that live DOM
+    // position and decline its layout-effect snap instead of teleporting the
+    // reader to the tail.
+    hookHarness.effectFactories[0]?.()
+    ;(hookHarness.scroller as unknown as { scrollTop: number }).scrollTop = 620
+    ;(hookHarness.scroller as unknown as { scrollHeight: number }).scrollHeight = 1_240
+    hookHarness.layoutEffectFactories[2]?.()
+
+    expect(hookHarness.stateSetters[0]).toHaveBeenLastCalledWith(false)
+    expect((hookHarness.scroller as unknown as { scrollTop: number }).scrollTop).toBe(620)
+  })
+
   it('publishes follow changes after a shared consumer pre-mutates the decision ref', () => {
     const autoFollowRef = { current: true }
     const setAutoFollowRef = vi.fn((next: boolean) => {

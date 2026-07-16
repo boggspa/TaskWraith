@@ -30,6 +30,7 @@ import {
   shouldClearScrollbarDownwardIntent,
   shouldSnapAfterChatSwitch,
   shouldShowJumpToLatestPill,
+  shouldTreatUnclassifiedNativeScrollAsUserScrollAway,
   buildCodeBlockResizeEventInit,
   CODE_BLOCK_RESIZE_EVENT
 } from './TranscriptScroll'
@@ -838,6 +839,56 @@ describe('TranscriptScroll', () => {
           nextScrollTop: 4700,
           distanceFromBottom: Number.NaN,
           isProgrammatic: false
+        })
+      ).toBe(false)
+    })
+  })
+
+  describe('shouldTreatUnclassifiedNativeScrollAsUserScrollAway', () => {
+    const atLiveEdge = {
+      previousScrollTop: 800,
+      previousScrollHeight: 1_000,
+      previousClientHeight: 200,
+      isProgrammatic: false
+    }
+
+    it('releases follow for an unclassified native scrollbar drag', () => {
+      expect(
+        shouldTreatUnclassifiedNativeScrollAsUserScrollAway({
+          ...atLiveEdge,
+          nextScrollTop: 620,
+          nextScrollHeight: 1_000,
+          nextClientHeight: 200
+        })
+      ).toBe(true)
+    })
+
+    it('still recognises reader scroll-away while new transcript content grows', () => {
+      expect(
+        shouldTreatUnclassifiedNativeScrollAsUserScrollAway({
+          ...atLiveEdge,
+          nextScrollTop: 620,
+          nextScrollHeight: 1_240,
+          nextClientHeight: 200
+        })
+      ).toBe(true)
+    })
+
+    it('does not mistake a shrink clamp or viewport growth for reader intent', () => {
+      expect(
+        shouldTreatUnclassifiedNativeScrollAsUserScrollAway({
+          ...atLiveEdge,
+          nextScrollTop: 700,
+          nextScrollHeight: 950,
+          nextClientHeight: 200
+        })
+      ).toBe(false)
+      expect(
+        shouldTreatUnclassifiedNativeScrollAsUserScrollAway({
+          ...atLiveEdge,
+          nextScrollTop: 700,
+          nextScrollHeight: 1_000,
+          nextClientHeight: 250
         })
       ).toBe(false)
     })

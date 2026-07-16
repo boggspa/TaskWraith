@@ -23,6 +23,7 @@ import {
   shouldRecordScrollbarDownwardIntent,
   shouldClearScrollbarDownwardIntent,
   shouldShowJumpToLatestPill,
+  shouldTreatUnclassifiedNativeScrollAsUserScrollAway,
   shouldTreatScrollAsUserScrollAway,
   type CachedChatScrollState,
   type ChatScrollState
@@ -131,6 +132,13 @@ export function useTranscriptScrollState({
   // Updated for every native `scroll` event (not just the coalesced rAF) so a
   // scrollbar drag that reverses within one frame clears its downward voucher.
   const lastNativeScrollTopRef = useRef(0)
+  // Keep the geometry that accompanied the last native scroll sample. Chromium
+  // may apply a scrollbar thumb/track drag without surfacing a wheel or
+  // pointer event to the content element; comparing these metrics lets the
+  // scroll listener distinguish that reader action from a browser clamp after
+  // content shrink or viewport growth.
+  const lastNativeScrollHeightRef = useRef(0)
+  const lastNativeClientHeightRef = useRef(0)
   const programmaticScrollTargetRef = useRef<number | null>(null)
   const programmaticScrollClearRafRef = useRef<number | null>(null)
   const [unreadFromBottomCount, setUnreadFromBottomCount] = useState(0)
@@ -365,6 +373,26 @@ export function useTranscriptScrollState({
   const disengageIfLiveScrollShowsUserAway = useCallback(
     (scroller: HTMLElement): boolean => {
       const nextScrollTop = scroller.scrollTop
+      const hasExplicitScrollAwayIntent = hasExplicitTranscriptScrollAwayIntent({
+        userScrolledAwayInThisFrame: userScrolledAwayInFrameRef.current,
+        scrollbarPointerActive: scrollbarPointerActiveRef.current,
+        previousScrollTop: lastNativeScrollTopRef.current,
+        nextScrollTop
+      })
+      const hasUnclassifiedNativeScrollAwayIntent =
+        !hasExplicitScrollAwayIntent &&
+        shouldTreatUnclassifiedNativeScrollAsUserScrollAway({
+          previousScrollTop: lastNativeScrollTopRef.current,
+          nextScrollTop,
+          previousScrollHeight: lastNativeScrollHeightRef.current,
+          nextScrollHeight: scroller.scrollHeight,
+          previousClientHeight: lastNativeClientHeightRef.current,
+          nextClientHeight: scroller.clientHeight,
+          isProgrammatic: isExpectedProgrammaticScroll({
+            expectedScrollTop: programmaticScrollTargetRef.current,
+            nextScrollTop
+          })
+        })
       if (
         !shouldAbortAutoFollowSnap({
           lastRecordedScrollTop: lastTranscriptScrollTopRef.current,
@@ -373,12 +401,8 @@ export function useTranscriptScrollState({
           scrollHeight: scroller.scrollHeight,
           clientHeight: scroller.clientHeight,
           expectedProgrammaticScrollTop: programmaticScrollTargetRef.current,
-          hasExplicitScrollAwayIntent: hasExplicitTranscriptScrollAwayIntent({
-            userScrolledAwayInThisFrame: userScrolledAwayInFrameRef.current,
-            scrollbarPointerActive: scrollbarPointerActiveRef.current,
-            previousScrollTop: lastNativeScrollTopRef.current,
-            nextScrollTop
-          })
+          hasExplicitScrollAwayIntent:
+            hasExplicitScrollAwayIntent || hasUnclassifiedNativeScrollAwayIntent
         })
       ) {
         return false
@@ -390,6 +414,8 @@ export function useTranscriptScrollState({
       downwardIntentAtRef.current = 0
       lastTranscriptScrollTopRef.current = nextScrollTop
       lastNativeScrollTopRef.current = nextScrollTop
+      lastNativeScrollHeightRef.current = scroller.scrollHeight
+      lastNativeClientHeightRef.current = scroller.clientHeight
       return true
     },
     [clearProgrammaticScrollTarget, setAutoFollow]
@@ -510,6 +536,8 @@ export function useTranscriptScrollState({
     const onScroll = () => {
       const nextScrollTop = scroller.scrollTop
       const previousNativeScrollTop = lastNativeScrollTopRef.current
+      const nextScrollHeight = scroller.scrollHeight
+      const nextClientHeight = scroller.clientHeight
       const expectedProgrammatic = isExpectedProgrammaticScroll({
         expectedScrollTop: programmaticScrollTargetRef.current,
         nextScrollTop
@@ -539,13 +567,26 @@ export function useTranscriptScrollState({
         previousScrollTop: previousNativeScrollTop,
         nextScrollTop
       })
+      const hasNativeScrollbarScrollAwayIntent =
+        !hasExplicitScrollAwayIntent &&
+        shouldTreatUnclassifiedNativeScrollAsUserScrollAway({
+          previousScrollTop: previousNativeScrollTop,
+          nextScrollTop,
+          previousScrollHeight: lastNativeScrollHeightRef.current,
+          nextScrollHeight,
+          previousClientHeight: lastNativeClientHeightRef.current,
+          nextClientHeight,
+          isProgrammatic: expectedProgrammatic
+        })
       lastNativeScrollTopRef.current = nextScrollTop
+      lastNativeScrollHeightRef.current = nextScrollHeight
+      lastNativeClientHeightRef.current = nextClientHeight
       if (
-        hasExplicitScrollAwayIntent &&
+        (hasExplicitScrollAwayIntent || hasNativeScrollbarScrollAwayIntent) &&
         shouldTreatScrollAsUserScrollAway({
           previousScrollTop: previousNativeScrollTop,
           nextScrollTop,
-          distanceFromBottom: scroller.scrollHeight - nextScrollTop - scroller.clientHeight,
+          distanceFromBottom: nextScrollHeight - nextScrollTop - nextClientHeight,
           isProgrammatic: expectedProgrammatic
         })
       ) {
@@ -560,6 +601,8 @@ export function useTranscriptScrollState({
     }
     lastTranscriptScrollTopRef.current = scroller.scrollTop
     lastNativeScrollTopRef.current = scroller.scrollTop
+    lastNativeScrollHeightRef.current = scroller.scrollHeight
+    lastNativeClientHeightRef.current = scroller.clientHeight
     scroller.addEventListener('scroll', onScroll, { passive: true })
     return () => {
       scroller.removeEventListener('scroll', onScroll)
