@@ -144,8 +144,11 @@ const GEMINI_MODELS: CombinedModelPickerModelOption[] = [
 ]
 
 const KIMI_MODELS: CombinedModelPickerModelOption[] = [
-  { id: 'kimi-k2.7-code', label: 'Kimi K2.7 Code' }
+  { id: 'kimi-k2.7-code', label: 'Kimi K2.7 Code' },
+  { id: 'kimi-k3', label: 'Kimi K3' }
 ]
+// Fast (Standard/HighSpeed) stays exclusive to K2.7 Code — Kimi K3 has no
+// HighSpeed tier (its Max-effort thinking is applied server-side instead).
 const KIMI_FAST_CAPABLE = new Set<string>(['kimi-k2.7-code'])
 
 // Grok — mirrors App.tsx GROK_DEFAULT_MODELS. Keep Grok Composer separate from

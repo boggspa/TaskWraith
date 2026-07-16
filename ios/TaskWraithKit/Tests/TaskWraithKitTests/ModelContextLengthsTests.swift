@@ -153,6 +153,24 @@ struct ModelContextLengthsTests {
         #expect(row?.formatted == "256k")
     }
 
+    @Test("kimi kimi-k3: 256_000 / 256k")
+    func kimiK3() {
+        let groups = ModelContextLengths.buildGroups()
+        let row = groups.first { $0.provider == "kimi" }?
+            .models.first { $0.modelId == "kimi-k3" }
+        #expect(row != nil)
+        #expect(row?.label == "Kimi K3")
+        #expect(row?.contextWindow == 256_000)
+        #expect(row?.formatted == "256k")
+    }
+
+    @Test("kimi group mirrors the current picker rows (K2.7 default first, then K3)")
+    func kimiGroupMirrorsPickerRows() {
+        let groups = ModelContextLengths.buildGroups()
+        let kimiModels = groups.first { $0.provider == "kimi" }?.models ?? []
+        #expect(kimiModels.map(\.modelId) == ["kimi-k2.7-code", "kimi-k3"])
+    }
+
     // MARK: - Grok group
 
     @Test("grok grok-4.5: 500_000 / 500k")

@@ -197,12 +197,19 @@ describe('Grok provider model defaults', () => {
 })
 
 describe('provider model picker sentinels', () => {
-  it('keeps K2.7 Code as one model row with a Fast-capable HighSpeed tier', () => {
-    expect(KIMI_DEFAULT_MODELS).toHaveLength(1)
+  it('keeps K2.7 Code as the Fast-capable default row with K3 selectable after it', () => {
+    expect(KIMI_DEFAULT_MODELS.map((model) => model.id)).toEqual(['kimi-k2.7-code', 'kimi-k3'])
     expect(KIMI_DEFAULT_MODELS[0]).toMatchObject({
       id: 'kimi-k2.7-code',
+      isDefault: true,
       additionalSpeedTiers: ['fast']
     })
+    // K3 is NOT the default and has no HighSpeed tier — Fast stays exclusive
+    // to K2.7 Code; K3's Max-effort thinking is applied server-side.
+    const k3 = KIMI_DEFAULT_MODELS.find((model) => model.id === 'kimi-k3')
+    expect(k3?.label).toBe('Kimi K3')
+    expect(k3?.isDefault).toBeUndefined()
+    expect(k3?.additionalSpeedTiers).toBeUndefined()
   })
 
   it('does not expose Default or CLI Default as selectable model rows', () => {

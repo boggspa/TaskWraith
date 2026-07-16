@@ -213,6 +213,15 @@ const KIMI_DEFAULT_MODELS = [
     description: 'Kimi Code CLI standard and HighSpeed tiers',
     isDefault: true,
     additionalSpeedTiers: ['fast']
+  },
+  {
+    // Managed `kimi-code/k3` alias: 256K context, always-on Max-effort
+    // thinking applied server-side. No HighSpeed tier — Fast stays a K2.7
+    // Code capability — and K2.7 Code remains the default. Mirrors the
+    // authoritative main-process row (KIMI_STATIC_MODELS).
+    id: 'kimi-k3',
+    label: 'Kimi K3',
+    description: "Moonshot's flagship K3 - 256K context - always-on Max-effort thinking"
   }
 ] satisfies CodexModelOption[]
 const KIMI_DEFAULT_MODEL = KIMI_DEFAULT_MODELS[0].id

@@ -46,6 +46,7 @@ export interface ComposerChipContext {
  * Codex (`gpt-5.5`, `gpt-5.4-mini`)        → `5.5`, `5.4-Mini`
  * Claude (`claude-opus-4-7-1m`)            → `Opus 4.7 1M`
  * Kimi (`kimi-k2.7-code`, `kimi-k2.7-code-thinking`) → `K2.7 Code`
+ * Kimi (`kimi-k3`)                         → `K3`
  * Gemini (`gemini-2.5-pro`)                → `2.5 Pro`
  * Cursor (`grok-4.5`)                      → `Cursor Grok 4.5`
  * Grok (`grok-4.5`)                        → `Grok 4.5 Fast` (permanently Fast-mode)
@@ -101,7 +102,9 @@ export function shortModelName(provider: ProviderId, modelLabel: string, modelId
   }
 
   if (provider === 'kimi') {
-    // kimi-k2.7-code, kimi-k2.7-code-thinking → K2.7 Code
+    // kimi-k2.7-code, kimi-k2.7-code-thinking → K2.7 Code. The explicit branch
+    // exists because the generic version matcher below would drop " Code";
+    // plain version ids (kimi-k3 → K3, kimi-k2.6 → K2.6) fall through to it.
     if (id.startsWith('kimi-k2.7-code')) return 'K2.7 Code'
     const match = id.match(/^kimi-(k[\d.]+)/)
     if (match) {

@@ -127,7 +127,7 @@ export function activeAppNotifications(args: {
 /** Stable id for the current "New Additions" card — bump the date suffix (and
  *  never reuse this exact id) when the lineup below changes, so a user who
  *  already dismissed the old lineup sees the refreshed one. */
-export const NEW_ADDITIONS_NOTIFICATION_ID = 'new-additions-2026-07-13'
+export const NEW_ADDITIONS_NOTIFICATION_ID = 'new-additions-2026-07-16'
 
 /** Always-on carousel notices. Currently just the "New Additions" model-launch
  *  card — replace/extend this list the next time a significant provider or
@@ -137,7 +137,7 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
     id: NEW_ADDITIONS_NOTIFICATION_ID,
     kind: 'addition',
     title: 'New Additions',
-    body: 'Kimi Code HighSpeed, the GPT-5.6 Luna/Terra/Sol trio, Cursor Grok 4.5, Grok 4.5 Fast, and four new local Ollama models are all available now.',
+    body: 'Kimi K3, Kimi Code HighSpeed, the GPT-5.6 Luna/Terra/Sol trio, Cursor Grok 4.5, Grok 4.5 Fast, and four new local Ollama models are all available now.',
     dismissible: true,
     groups: [
       {
@@ -164,6 +164,11 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
         provider: 'kimi',
         label: 'Kimi',
         models: [
+          {
+            name: 'Kimi K3',
+            blurb:
+              "Moonshot's new flagship — long-horizon agentic coding with 256K context and always-on Max-effort thinking."
+          },
           {
             name: 'Kimi Code HighSpeed',
             blurb:

@@ -38,6 +38,7 @@ describe('shortModelName', () => {
     expect(shortModelName('kimi', 'Kimi K2.7 Code Thinking', 'kimi-k2.7-code-thinking')).toBe(
       'K2.7 Code'
     )
+    expect(shortModelName('kimi', 'Kimi K3', 'kimi-k3')).toBe('K3')
     expect(shortModelName('kimi', 'Kimi K2.6 Thinking', 'kimi-k2.6-thinking')).toBe('K2.6')
   })
 
@@ -386,6 +387,17 @@ describe('formatComposerModelChip', () => {
         kimiThinkingEnabled: true
       })
     ).toBe('K2.7 Code Thinking')
+  })
+
+  it('Kimi shell + kimi K3 → "K3" (thinking is server-side, no toggle suffix)', () => {
+    expect(
+      formatComposerModelChip({
+        provider: 'kimi',
+        composerStyle: 'kimi',
+        modelId: 'kimi-k3',
+        modelLabel: 'Kimi K3'
+      })
+    ).toBe('K3')
   })
 
   it('TaskWraith native shell + codex provider falls back to "GPT-5.5 · High"', () => {

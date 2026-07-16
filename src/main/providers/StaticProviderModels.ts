@@ -521,6 +521,14 @@ const KIMI_STATIC_MODELS = [
     description: 'Kimi Code CLI standard and HighSpeed tiers',
     isDefault: true,
     additionalSpeedTiers: ['fast']
+  },
+  {
+    // Managed `kimi-code/k3` alias (2026-07-16): 256K context, always-on
+    // Max-effort thinking applied server-side (support_efforts=["max"]).
+    // No HighSpeed tier — Fast stays a K2.7 Code capability.
+    id: 'kimi-k3',
+    label: 'Kimi K3',
+    description: "Moonshot's flagship K3 - 256K context - always-on Max-effort thinking"
   }
 ]
 const OLLAMA_STATIC_MODELS = [
@@ -628,10 +636,13 @@ const KIMI_HIGHSPEED_API_MODEL = 'kimi-for-coding-highspeed'
 // CLI without an LLM even though that is the correct third-party API model id.
 export const KIMI_STANDARD_CLI_MODEL = `kimi-code/${KIMI_STANDARD_API_MODEL}`
 export const KIMI_HIGHSPEED_CLI_MODEL = `kimi-code/${KIMI_HIGHSPEED_API_MODEL}`
+const KIMI_K3_API_MODEL = 'k3'
+export const KIMI_K3_CLI_MODEL = `kimi-code/${KIMI_K3_API_MODEL}`
 const KIMI_CLI_MODEL_IDS = new Set([
   ...KIMI_STATIC_MODELS.map((model) => model.id),
   KIMI_STANDARD_CLI_MODEL,
-  KIMI_HIGHSPEED_CLI_MODEL
+  KIMI_HIGHSPEED_CLI_MODEL,
+  KIMI_K3_CLI_MODEL
 ])
 const KIMI_CLI_MODEL_ALIASES = new Map<string, string>([
   ['default', KIMI_DEFAULT_MODEL],
@@ -642,6 +653,10 @@ const KIMI_CLI_MODEL_ALIASES = new Map<string, string>([
   ['kimi-code', KIMI_DEFAULT_MODEL],
   [KIMI_STANDARD_API_MODEL, KIMI_STANDARD_CLI_MODEL],
   [KIMI_HIGHSPEED_API_MODEL, KIMI_HIGHSPEED_CLI_MODEL],
+  // K3's raw API id and managed CLI alias both resolve to the canonical
+  // TaskWraith id; 'kimi-k3' itself passes through via KIMI_CLI_MODEL_IDS.
+  [KIMI_K3_API_MODEL, 'kimi-k3'],
+  [KIMI_K3_CLI_MODEL, 'kimi-k3'],
   ['kimi-k2.7', KIMI_DEFAULT_MODEL],
   ['kimi-k2.7-code', KIMI_DEFAULT_MODEL],
   ['kimi-k2.7-code-thinking', KIMI_DEFAULT_MODEL],
@@ -768,9 +783,19 @@ export function appendKimiThinkingArgs(args: string[], kimiThinking?: boolean | 
 }
 
 function kimiCliModelArg(model: string, serviceTier?: string | null): string | null {
+  const normalized = model.trim().toLowerCase()
+  // Resolve K3 before the tier switch: it has no speed tiers, so a stale or
+  // queued Fast flag must never silently reroute a K3 run onto the K2.7
+  // HighSpeed alias.
+  if (
+    normalized === 'kimi-k3' ||
+    normalized === KIMI_K3_API_MODEL ||
+    normalized === KIMI_K3_CLI_MODEL
+  ) {
+    return KIMI_K3_CLI_MODEL
+  }
   if (serviceTier === 'fast') return KIMI_HIGHSPEED_CLI_MODEL
   if (serviceTier === 'standard') return KIMI_STANDARD_CLI_MODEL
-  const normalized = model.trim().toLowerCase()
   if (!normalized || normalized === 'default' || normalized === KIMI_DEFAULT_MODEL) return null
   return model
 }

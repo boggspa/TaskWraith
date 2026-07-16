@@ -76,6 +76,7 @@ describe('humaniseModelId', () => {
 
   describe('Kimi', () => {
     it('maps Kimi ids including the old/new thinking aliases', () => {
+      expect(humaniseModelId('kimi', 'kimi-k3')).toBe('Kimi K3')
       expect(humaniseModelId('kimi', 'kimi-k2.7-code')).toBe('Kimi K2.7 Code')
       expect(humaniseModelId('kimi', 'kimi-k2.7-code-thinking')).toBe('Kimi K2.7 Code Thinking')
       expect(humaniseModelId('kimi', 'kimi-k2.6')).toBe('Kimi K2.6')
@@ -218,6 +219,7 @@ describe('humaniseModelId', () => {
       expect(labels['gemini-3-flash-preview']).toBeDefined()
       expect(labels['claude-opus-4-7']).toBeDefined()
       expect(labels['gpt-5.5']).toBeDefined()
+      expect(labels['kimi-k3']).toBeDefined()
       expect(labels['kimi-k2.7-code']).toBeDefined()
       expect(labels['kimi-k2.6']).toBeDefined()
       expect(labels['kimi-k2.6-thinking']).toBeDefined()

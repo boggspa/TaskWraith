@@ -103,7 +103,8 @@ describe('FirstLaunchSheet', () => {
     expect(html).toContain('choose individual saved panels')
     expect(html).toContain('namespaced workspace tools')
     expect(html).toContain('repository-local hooks, filters')
-    expect(html).toContain('Kimi switches between Standard and HighSpeed')
+    expect(html).toContain('Kimi K2.7 Code switches between Standard and HighSpeed')
+    expect(html).toContain('the new Kimi K3 is available but has no Fast tier')
   })
 
   it('intro prose advertises live providers but not the retired Gemini', () => {

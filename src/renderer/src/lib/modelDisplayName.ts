@@ -85,7 +85,8 @@ const KNOWN_MODEL_LABELS: Record<string, string> = {
   // mappings; includes the variants visible in the user's
   // Settings → Model usage list). The legacy K2.6 aliases remain
   // readable for historical usage rows; new dispatch defaults to
-  // Kimi K2.7 Code. ───────────────────────────────────────────
+  // Kimi K2.7 Code, with Kimi K3 selectable alongside it. ──────
+  'kimi-k3': 'Kimi K3',
   'kimi-k2.7-code': 'Kimi K2.7 Code',
   'kimi-k2.7-code-thinking': 'Kimi K2.7 Code Thinking',
   'kimi-k2.7-thinking': 'Kimi K2.7 Code Thinking',

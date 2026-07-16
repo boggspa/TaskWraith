@@ -78,6 +78,9 @@ public enum ModelContextLengths {
         case "kimi":
             return [
                 (id: "kimi-k2.7-code", label: "Kimi K2.7 Code"),
+                // Kimi K3 (2026-07-16) — Moonshot's flagship; 256K context,
+                // always-on Max-effort thinking server-side, no HighSpeed tier.
+                (id: "kimi-k3",        label: "Kimi K3"),
             ]
         case "grok":
             return [

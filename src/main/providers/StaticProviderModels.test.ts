@@ -9,6 +9,7 @@ import {
   appendKimiModelArgs,
   getStaticProviderModels,
   KIMI_HIGHSPEED_CLI_MODEL,
+  KIMI_K3_CLI_MODEL,
   KIMI_STANDARD_CLI_MODEL,
   mergeCodexLiveModelRows,
   normalizeCliProviderModel
@@ -440,6 +441,12 @@ describe('normalizeCliProviderModel (kimi)', () => {
     expect(normalizeCliProviderModel('kimi', 'kimi-k2-thinking')).toBe('kimi-k2.7-code')
   })
 
+  it('resolves Kimi K3 ids to the canonical row instead of the default', () => {
+    expect(normalizeCliProviderModel('kimi', 'kimi-k3')).toBe('kimi-k3')
+    expect(normalizeCliProviderModel('kimi', 'k3')).toBe('kimi-k3')
+    expect(normalizeCliProviderModel('kimi', KIMI_K3_CLI_MODEL)).toBe('kimi-k3')
+  })
+
   it('preserves the managed Kimi CLI Standard and HighSpeed aliases', () => {
     expect(normalizeCliProviderModel('kimi', KIMI_STANDARD_CLI_MODEL)).toBe(
       KIMI_STANDARD_CLI_MODEL
@@ -468,17 +475,43 @@ describe('normalizeCliProviderModel (kimi)', () => {
     expect(standardArgs).toEqual(['--model', 'kimi-code/kimi-for-coding'])
     expect(highSpeedArgs).toEqual(['--model', 'kimi-code/kimi-for-coding-highspeed'])
   })
+
+  it('maps Kimi K3 to its managed CLI alias and ignores stale speed tiers', () => {
+    const plainArgs: string[] = []
+    const staleFastArgs: string[] = []
+    const rawApiArgs: string[] = []
+
+    appendKimiModelArgs(plainArgs, 'kimi-k3')
+    // K3 has no speed tiers — a stale/queued Fast flag must not reroute the
+    // run onto the K2.7 HighSpeed alias.
+    appendKimiModelArgs(staleFastArgs, 'kimi-k3', 'fast')
+    appendKimiModelArgs(rawApiArgs, 'k3')
+
+    expect(plainArgs).toEqual(['--model', KIMI_K3_CLI_MODEL])
+    expect(staleFastArgs).toEqual(['--model', KIMI_K3_CLI_MODEL])
+    expect(rawApiArgs).toEqual(['--model', KIMI_K3_CLI_MODEL])
+  })
 })
 
 describe('getStaticProviderModels (kimi)', () => {
   it('advertises K2.7 Code as Fast-capable without adding a duplicate model row', () => {
     const models = getStaticProviderModels('kimi') as StaticModelShape[]
 
-    expect(models).toHaveLength(1)
+    expect(models).toHaveLength(2)
     expect(models[0]).toMatchObject({
       id: 'kimi-k2.7-code',
       additionalSpeedTiers: ['fast']
     })
+  })
+
+  it('lists Kimi K3 as a non-default row without speed tiers', () => {
+    const models = getStaticProviderModels('kimi') as StaticModelShape[]
+    const k3 = models.find((model) => model.id === 'kimi-k3')
+
+    expect(k3).toMatchObject({ id: 'kimi-k3', label: 'Kimi K3' })
+    expect(k3?.isDefault).toBeUndefined()
+    expect(k3?.additionalSpeedTiers).toBeUndefined()
+    expect(models[0]?.isDefault).toBe(true)
   })
 })
 

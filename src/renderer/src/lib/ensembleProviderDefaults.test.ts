@@ -466,6 +466,15 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
     expect(kimi.fastModeCapableModelIds.has('kimi-k2.7-code')).toBe(true)
   })
 
+  it('lists Kimi K3 after K2.7 Code without Fast capability or default status', () => {
+    const kimi = getEnsembleModelDefaults('kimi')
+    expect(kimi.modelOptions.map((option) => option.id)).toEqual(['kimi-k2.7-code', 'kimi-k3'])
+    // K3 has no HighSpeed tier — Fast stays a K2.7 Code exclusive — and the
+    // provider default remains K2.7 Code.
+    expect(kimi.fastModeCapableModelIds.has('kimi-k3')).toBe(false)
+    expect(kimi.defaultModelId).toBe('kimi-k2.7-code')
+  })
+
   it('exposes returned Claude 5 family rows and Sonnet 4.6 Legacy without Mythos', () => {
     const claude = getEnsembleModelDefaults('claude')
     expect(claude.modelOptions.map((option) => option.id)).not.toEqual(
