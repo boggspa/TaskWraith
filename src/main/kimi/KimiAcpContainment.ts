@@ -54,10 +54,29 @@ export function buildKimiWorkspaceConfigRefusalMessage(offendingPath: string): s
 }
 
 /** Built-in tools denied by construction on every contained Kimi ACP seat.
- *  FetchURL/WebSearch are the server-side egress vector; AgentSwarm/Agent are
- *  denied so a seat cannot fan out unbrokered sub-agents. Deny rules are static
- *  and inherit into any sub-agent that is spawned. */
-export const KIMI_ACP_DENY_TOOLS = ['FetchURL', 'WebSearch', 'AgentSwarm'] as const
+ *  Two classes:
+ *   - EGRESS / fan-out: FetchURL/WebSearch auto-run the server-side network
+ *     egress vector; AgentSwarm fans out unbrokered sub-agents.
+ *   - SERVER-SIDE FS / EXEC: Bash/Glob/Grep execute INSIDE the kimi acp process
+ *     and do NOT route through the client fs authority, so they can read AND
+ *     write ANY absolute path outside the workspace roots. Verified live: Bash
+ *     `cat` leaked an out-of-workspace file and Bash `echo >` WROTE one; Glob
+ *     enumerated an out-of-workspace directory. (Read/Write/Edit route through
+ *     the client fs handler — `fs/read_text_file`/`fs/write_text_file` — and are
+ *     already boundary-enforced: they returned `failed` for the same paths.)
+ *     Denying the escapers forces all filesystem/exec access onto the two
+ *     ENFORCED doors — the client fs handler (Read/Write/Edit) and the
+ *     workspace-confined TaskWraith gateway MCP (run_shell_command /
+ *     list_directory / find_files / workspace_search).
+ *  Deny rules are static and inherit into any sub-agent that is spawned. */
+export const KIMI_ACP_DENY_TOOLS = [
+  'FetchURL',
+  'WebSearch',
+  'AgentSwarm',
+  'Bash',
+  'Glob',
+  'Grep'
+] as const
 
 /**
  * Strip every `[[permission.rules]]` block whose decision is `allow` from a

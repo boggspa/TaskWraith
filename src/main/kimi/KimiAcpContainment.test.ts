@@ -106,6 +106,22 @@ describe('buildKimiIsolatedConfig', () => {
     const out = buildKimiIsolatedConfig({ baseConfig: base, extraDenyTools: ['Bash'] })
     expect(out).toContain('pattern = "Bash"')
   })
+
+  it('denies the server-side fs/exec escapers, not just egress (CI guard for the live probe)', () => {
+    // Verified live (KimiAcpEscapeProbe.live.test.ts): built-in Bash (`cat`, and
+    // `echo >` which WROTE outside the workspace) and Glob (list/find) run
+    // server-side and bypass the client fs authority, reading AND writing
+    // absolute paths outside the workspace roots. Read/Write/Edit route through
+    // the client fs handler and stay boundary-enforced. These must remain denied
+    // so all fs/exec goes through the client fs handler or the confined gateway;
+    // the live probe proves it but is gated out of CI, so lock it here too.
+    for (const escaper of ['Bash', 'Glob', 'Grep']) {
+      expect(KIMI_ACP_DENY_TOOLS as readonly string[]).toContain(escaper)
+    }
+    for (const egress of ['FetchURL', 'WebSearch', 'AgentSwarm']) {
+      expect(KIMI_ACP_DENY_TOOLS as readonly string[]).toContain(egress)
+    }
+  })
 })
 
 describe('forceThinkingMode', () => {
