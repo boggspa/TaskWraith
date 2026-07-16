@@ -35,8 +35,8 @@ Responsible for the UI:
    app-server, or Ollama harness. Live selectable providers are Codex, Claude,
    Kimi, Grok, Cursor, and local Ollama; Gemini is retained for historical
    chats and decode paths only. Kimi Code runs over its `kimi acp` (Agent Client
-   Protocol) transport inside a per-run sandboxed `KIMI_CODE_HOME`, behind the
-   default-OFF `TASKWRAITH_KIMI_ACP` flag — see
+   Protocol) transport inside a per-run sandboxed `KIMI_CODE_HOME`, default-ON
+   behind the `TASKWRAITH_KIMI_ACP` flag (set `=0` to force it off) — see
    [`docs/kimi-code-acp-migration.md`](docs/kimi-code-acp-migration.md).
 3. Main process reads provider events and tool calls using the provider adapter.
 4. Sensitive actions route through TaskWraith policy, approval ledgers, and

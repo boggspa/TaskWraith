@@ -4,10 +4,13 @@ Developer reference for TaskWraith's Kimi provider after the **kimi-cli → Kimi
 Code** migration (2026-07). Covers the transport change (Wire → ACP), the
 per-run sandbox, the HTTP MCP bridge, auth/usage, and the rollout gate.
 
-> **Status:** the ACP transport is behind a default-OFF flag,
-> `TASKWRAITH_KIMI_ACP` (`kimiGate.ts`). A legacy Kimi CLI keeps working on the
-> retained Wire path. Flip the flag on only after running the live containment
-> trace (see [Rollout gate](#rollout-gate)).
+> **Status:** the ACP transport is **default-ON**, gated by `TASKWRAITH_KIMI_ACP`
+> (`kimiGate.ts`; set `=0` to force it off, landing a kimi-code binary on the
+> setup-required gate). The rollout gate is **cleared** — the live containment
+> trace (see [Rollout gate](#rollout-gate)) passed every assertion against the
+> real binary: fs client-authority routing, the FetchURL/WebSearch deny wall,
+> sub-agent deny inheritance, and the B3 refusal + tripwire. A legacy Kimi CLI
+> still routes to the retained Wire path.
 
 ## What changed
 
@@ -144,7 +147,9 @@ unconditional transcript injection, and host-seat compaction is flavour-gated
 
 ## Rollout gate
 
-Run the codified live containment trace before flipping the flag on:
+The flag is default-ON; this codified live containment trace cleared the gate and
+remains the re-confirmation procedure (re-run it after a Kimi Code upgrade or any
+containment change):
 
 ```bash
 KIMI_ACP_LIVE_TRACE=1 npx vitest run src/main/kimi/KimiAcpContainment.live.test.ts
