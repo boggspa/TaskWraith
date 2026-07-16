@@ -170,7 +170,7 @@ describe('ChangelogSheet', () => {
     expect(entry.releaseNotes).toContain('Async delegated workers cannot inherit Trusted Session')
   })
 
-  it('bundles the current 1.8.1 release notes', () => {
+  it('bundles the frozen 1.8.1 release notes', () => {
     const entry = resolveChangelogEntry({ currentVersion: '1.8.1' }, null)
     expect(entry).toMatchObject({
       version: '1.8.1',
@@ -182,9 +182,14 @@ describe('ChangelogSheet', () => {
     expect(entry.releaseNotes).toContain('Foreground seats now also hold their reader/writer fan-out lanes')
   })
 
-  it('bundles post-1.8.1 hardening without rewriting the shipped release entry', () => {
-    const entry = resolveChangelogEntry({ currentVersion: 'Unreleased' }, null)
-    expect(entry).toMatchObject({ version: 'Unreleased' })
+  it('bundles the current 1.8.2 release notes', () => {
+    const entry = resolveChangelogEntry({ currentVersion: '1.8.2' }, null)
+    expect(entry).toMatchObject({
+      version: '1.8.2',
+      releaseDate: '2026-07-16'
+    })
+    expect(entry.releaseNotes).toContain('Kimi Code now runs through a contained ACP transport')
+    expect(entry.releaseNotes).toContain('Workflow controls from the iPhone/iPad companion')
     expect(entry.releaseNotes).toContain('Kimi Code HighSpeed')
     expect(entry.releaseNotes).toContain('Transcript navigation keeps the reader\'s place')
     expect(entry.releaseNotes).toContain('Native provider file and shell tools stay brokered')
