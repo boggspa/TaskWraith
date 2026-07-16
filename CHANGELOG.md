@@ -4,12 +4,20 @@ Notable changes to TaskWraith, the local-first macOS desktop workbench for runni
 and reviewing AI coding agents. Entries are user-facing highlights; execution,
 history, and workspace state stay on your machine throughout.
 
-## Unreleased
-
-These changes follow the published `v1.8.1` artifacts and are being prepared for
-the next explicitly versioned desktop and iOS release.
+## 1.8.2 - 2026-07-16
 
 ### Added
+- **Kimi Code now runs through a contained ACP transport (the new default).**
+  Kimi Code sessions run in an isolated provider home over ACP while TaskWraith
+  holds workspace file authority through its brokered read/write/edit tools,
+  with per-tool approvals matching the stdio providers and the TaskWraith
+  gateway MCP served over HTTP. Setup copy is transport-aware, per-run thinking
+  is honored through ACP configuration, and the usage meter reads the Kimi Code
+  OAuth credential — refresh-token rotation persists back to the CLI home so
+  later logins stay valid.
+- **Workflow controls from the iPhone/iPad companion.** Scheduled workflows can
+  be paused, resumed, or run immediately from iOS, with every write action
+  authorized against the host's native consent and authority checks.
 - **Kimi Code HighSpeed.** Kimi K2.7 Code now offers Standard and HighSpeed
   tiers through the familiar Fast control across solo, Ensemble, queued, and
   remote runs.
@@ -17,6 +25,11 @@ the next explicitly versioned desktop and iOS release.
   detected account plan where that metadata is available.
 
 ### Changed
+- **Scheduled workflow occurrences dispatch exactly once.** Occurrence
+  lifecycles are transacted with single-owner claims, journaled transitions,
+  and bounded deferred retries; launches fail closed when preflight, admission,
+  lease, or provider authority cannot be established, and a stalled occurrence
+  is isolated instead of blocking the queue.
 - **Provider colours are balanced across light and dark surfaces.** Desktop and
   iOS now share contrast-balanced provider hues, including upstream-brand
   overrides for Ollama-hosted models. The Ollama model picker follows the
@@ -65,6 +78,22 @@ the next explicitly versioned desktop and iOS release.
   can finalize from its source run's durable terminal event, activity collapse
   keeps its debounce guard, and iOS retains app notices in First Launch instead
   of consuming them in the thread detail view.
+- **Transcript media and attachments keep durable ownership.** Ownership grants
+  batch atomically — including forked runs and audio/video outputs — corrupt
+  ownership ledgers lock fail-safe, large assets are ingested from files rather
+  than buffered in memory, and workspace inputs stage asynchronously.
+- **Workspace execution targets stay pinned.** Direct target pins are adopted at
+  startup and runs resolve their real execution targets, so a scheduled or
+  queued run cannot drift to a different workspace than the one it was created
+  for.
+- **Queued and scheduled state stays consistent.** Queued chat updates survive
+  hydration, only persisted due tasks dispatch and their due times must
+  actually arrive, and scheduled Ensemble rounds reserve fresh round state
+  instead of reusing a stale reservation.
+- **iOS streaming reveal stays smooth and scoped.** The type-out reveal drains
+  fully when a stream exits, tracks provider aliases, remains scoped to its
+  run, and the composer diff pill no longer risks a first-frame layout
+  livelock.
 
 ### Security
 - **Run authority is reconstructed from canonical state.** Main revalidates the
@@ -84,6 +113,18 @@ the next explicitly versioned desktop and iOS release.
 - **Remote favicon fetches are pinned and bounded.** Public-address validation
   is repeated across redirects and connections are pinned to validated DNS
   results, with strict timeout, redirect, byte, concurrency, and queue limits.
+- **Kimi Code's contained transport is deny-walled.** The ACP session cannot
+  reach network tools or the CLI's server-side filesystem/exec tools (including
+  sub-agent inheritance); file access flows only through TaskWraith's
+  workspace-scoped client tools, runs fail closed at a generation gate, and
+  project-level configuration cannot execute code at session start.
+- **Scheduled and unattended workflow authority is native-owned.** Occurrence
+  mutations are authenticated against a persisted authority root, workflow
+  consent is delegated to the main process rather than the renderer, unattended
+  authority binds to native intent, elevation revocations persist, runnable
+  template fields are whitelisted, and canvas IPC, Cursor MCP denial, Claude
+  launch environments, Git snapshot subscriptions, and secondary renderer
+  windows enforce the same signed, fail-closed boundaries.
 
 ## 1.8.1 - 2026-07-12
 
