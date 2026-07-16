@@ -20,10 +20,11 @@ import {
 const roots: string[] = []
 
 function makeRoot(): string {
-  // realpath the tmp root: Windows runners hand out 8.3 short names
-  // (RUNNER~1) that the store's canonicalization expands, and strict
-  // path-equality mocks/assertions must agree with the long form.
-  const root = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'tw-media-assets-'))
+  // realpath.native the tmp root: Windows runners hand out 8.3 short names
+  // (RUNNER~1) that the store canonicalizes via fs.realpathSync.native — the
+  // JS realpathSync resolves symlinks but does NOT expand short names, so it
+  // must be the native flavor for strict path-equality mocks/assertions.
+  const root = fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), 'tw-media-assets-'))
   roots.push(root)
   return root
 }
