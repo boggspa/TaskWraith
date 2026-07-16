@@ -94,7 +94,9 @@ function trustedDirectorySnapshot(directory: string): fs.Stats | null {
     return (
       sameFileIdentity(lstat, stat) &&
       (uid === null || stat.uid === uid) &&
-      (stat.mode & 0o022) === 0
+      // POSIX-only gate: Windows synthesizes mode bits, so world/group-
+      // writable checks carry no signal there (ACLs are not modeled).
+      (process.platform === 'win32' || (stat.mode & 0o022) === 0)
         ? stat
         : null
     )
@@ -139,7 +141,7 @@ export function openTranscriptMediaAsset(input: {
       before.isSymbolicLink() ||
       !before.isFile() ||
       before.nlink !== 1 ||
-      (before.mode & 0o022) !== 0
+      (process.platform !== 'win32' && (before.mode & 0o022) !== 0)
     ) {
       return null
     }
@@ -159,7 +161,7 @@ export function openTranscriptMediaAsset(input: {
       opened.size <= 0 ||
       opened.size > maxTranscriptMediaBytesForMime(input.mimeType) ||
       (uid !== null && opened.uid !== uid) ||
-      (opened.mode & 0o022) !== 0 ||
+      (process.platform !== 'win32' && (opened.mode & 0o022) !== 0) ||
       after.isSymbolicLink() ||
       baseAfter.isSymbolicLink() ||
       shardAfter.isSymbolicLink() ||

@@ -1312,8 +1312,9 @@ function prepareMainOwnedStagingDirectory(stagingDirectory: string): string | nu
     const currentUid = typeof process.getuid === 'function' ? process.getuid() : null
     if (currentUid !== null && canonicalStat.uid !== currentUid) return null
     // Read/execute for other users is acceptable, but no other principal may
-    // write into the directory that owns the stable snapshot paths.
-    if ((canonicalStat.mode & 0o022) !== 0) return null
+    // write into the directory that owns the stable snapshot paths. POSIX
+    // only: Windows synthesizes mode bits (no signal there; ACLs unmodeled).
+    if (process.platform !== 'win32' && (canonicalStat.mode & 0o022) !== 0) return null
     return canonical
   } catch {
     return null

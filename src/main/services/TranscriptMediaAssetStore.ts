@@ -286,7 +286,11 @@ function directoryIsMainOwned(directory: string): boolean {
     return (
       sameFileIdentity(lstat, stat) &&
       (uid === null || stat.uid === uid) &&
-      (stat.mode & 0o022) === 0
+      // POSIX-only: Windows synthesizes mode bits (0o777 directories), so the
+      // group/world-writable gate carries no signal there. ACLs are the
+      // Windows mechanism and are not modeled; the structural, symlink, and
+      // identity checks above still apply on every platform.
+      (process.platform === 'win32' || (stat.mode & 0o022) === 0)
     )
   } catch {
     return false
@@ -620,7 +624,7 @@ function loadOwnership(baseDir: string): TranscriptMediaOwnershipLoadResult {
       !stat.isFile() ||
       !sameFileIdentity(stat, lstat) ||
       (uid !== null && stat.uid !== uid) ||
-      (stat.mode & 0o022) !== 0 ||
+      (process.platform !== 'win32' && (stat.mode & 0o022) !== 0) ||
       stat.size <= 0 ||
       stat.size > TRANSCRIPT_MEDIA_OWNERSHIP_MAX_FILE_BYTES
     ) {
