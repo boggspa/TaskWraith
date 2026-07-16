@@ -104,6 +104,54 @@ describe('prepareKimiIsolatedHome', () => {
     expect([...files.keys()].some((k) => k.startsWith('/iso'))).toBe(false)
   })
 
+  it('persists a refreshed (rotated) credential back to the real home on cleanup', async () => {
+    const seed = seededSource()
+    seed['/src/credentials/kimi-code.json'] = JSON.stringify({ expires_at: 1000, refresh_token: 'R0' })
+    const { fs, files } = makeFakeFs(seed)
+    const result = await prepareKimiIsolatedHome({ runId: 'r1', homeDir: '/iso', sourceHome: '/src', fs })
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    // Kimi Code refreshed during the run: newer expires_at + a ROTATED refresh
+    // token, written into the throwaway home. Without write-back this is lost and
+    // the real-home refresh token is invalidated server-side (forces re-login).
+    const refreshed = JSON.stringify({ expires_at: 2000, refresh_token: 'R1' })
+    await fs.writeFile('/iso/credentials/kimi-code.json', refreshed, 0o600)
+    await fs.writeFile('/iso/oauth/kimi-code', 'oauth-R1', 0o600)
+    await result.cleanup()
+    expect(files.get('/src/credentials/kimi-code.json')).toBe(refreshed)
+    expect(files.get('/src/oauth/kimi-code')).toBe('oauth-R1')
+    expect([...files.keys()].some((k) => k.startsWith('/iso'))).toBe(false) // still torn down
+  })
+
+  it('never regresses the real home to an older credential (concurrency safety)', async () => {
+    const seed = seededSource()
+    seed['/src/credentials/kimi-code.json'] = JSON.stringify({ expires_at: 1000, refresh_token: 'R0' })
+    const { fs, files } = makeFakeFs(seed)
+    const result = await prepareKimiIsolatedHome({ runId: 'r1', homeDir: '/iso', sourceHome: '/src', fs })
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    // A concurrent run already advanced the real home to a fresher token...
+    const fresher = JSON.stringify({ expires_at: 3000, refresh_token: 'R2' })
+    await fs.writeFile('/src/credentials/kimi-code.json', fresher, 0o600)
+    // ...while THIS run only refreshed to an older expiry.
+    await fs.writeFile('/iso/credentials/kimi-code.json', JSON.stringify({ expires_at: 2000, refresh_token: 'R1' }), 0o600)
+    await result.cleanup()
+    expect(files.get('/src/credentials/kimi-code.json')).toBe(fresher) // preserved, not clobbered
+  })
+
+  it('leaves the real home untouched when no refresh happened', async () => {
+    const seed = seededSource()
+    const original = JSON.stringify({ expires_at: 1000, refresh_token: 'R0' })
+    seed['/src/credentials/kimi-code.json'] = original
+    const { fs, files } = makeFakeFs(seed)
+    const result = await prepareKimiIsolatedHome({ runId: 'r1', homeDir: '/iso', sourceHome: '/src', fs })
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    // No refresh: the seeded isolated credential is identical to the real one.
+    await result.cleanup()
+    expect(files.get('/src/credentials/kimi-code.json')).toBe(original)
+  })
+
   it('fails closed with not-authenticated when the source credential is missing', async () => {
     const seed = seededSource()
     delete seed['/src/credentials/kimi-code.json']

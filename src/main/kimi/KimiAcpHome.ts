@@ -76,7 +76,51 @@ export async function prepareKimiIsolatedHome(
   input: PrepareKimiHomeInput
 ): Promise<PrepareKimiHomeResult> {
   const { fs, homeDir, sourceHome } = input
+
+  // Kimi Code (Moonshot) issues SINGLE-USE refresh tokens: every refresh
+  // consumes the current refresh token and mints a new one (verified live — the
+  // refresh token's jti + value rotate on each refresh). Because each run
+  // executes in this throwaway home (a 0600 copy of ~/.kimi-code), a refresh
+  // during the run writes the ROTATED credential HERE; deleting the home would
+  // discard it while the real-home refresh token is now invalidated server-side
+  // — forcing `kimi login` again every ~15-minute access-token lifetime. So
+  // before teardown, persist a STRICTLY-NEWER refreshed credential back to the
+  // real home. Newness-gated on `expires_at` so a concurrent staler run can't
+  // clobber a fresher real-home token; best-effort so it never fails a run.
+  const persistRotatedCredential = async (): Promise<void> => {
+    try {
+      const isoCred = fs.join(homeDir, 'credentials', 'kimi-code.json')
+      if (!(await fs.exists(isoCred))) return
+      const isoRaw = await fs.readFile(isoCred)
+      const realCred = fs.join(sourceHome, 'credentials', 'kimi-code.json')
+      const realRaw = (await fs.exists(realCred)) ? await fs.readFile(realCred) : null
+      if (realRaw === isoRaw) return // no refresh happened this run
+      const expiryOf = (raw: string): number => {
+        try {
+          const value = (JSON.parse(raw) as { expires_at?: unknown }).expires_at
+          return typeof value === 'number' ? value : 0
+        } catch {
+          return 0
+        }
+      }
+      // Only ever advance the real home forward — never regress it.
+      if (realRaw !== null && expiryOf(isoRaw) <= expiryOf(realRaw)) return
+      // A refresh happened — persist every credential artefact back to the real
+      // home (copyFile is binary-safe for the oauth/device artefacts), 0600.
+      for (const rel of CREDENTIAL_ARTEFACTS) {
+        const isoArtefact = fs.join(homeDir, ...rel.split('/'))
+        if (!(await fs.exists(isoArtefact))) continue
+        const realArtefact = fs.join(sourceHome, ...rel.split('/'))
+        await fs.copyFile(isoArtefact, realArtefact)
+        await fs.chmod(realArtefact, 0o600)
+      }
+    } catch {
+      // Best-effort; a failed write-back must never break teardown.
+    }
+  }
+
   const cleanup = async (): Promise<void> => {
+    await persistRotatedCredential()
     try {
       if (await fs.exists(homeDir)) await fs.rm(homeDir)
     } catch {
