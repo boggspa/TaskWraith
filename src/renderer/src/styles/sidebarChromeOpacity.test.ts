@@ -91,11 +91,26 @@ describe('sidebar chrome fixed opacity CSS', () => {
     const css = readCss('05-polish-fx-layouts.css')
     const band = cssBlockStartingAt(css, '.app-sidebar .sidebar-top-chrome {')
     expect(band).toContain('background: var(--sidebar-chrome-fixed-bg);')
-    // Bleeds the sidebar-content side padding + the 10px gap so it reads as one
-    // flat edge-to-edge rectangle rather than the old floating masthead card.
-    expect(band).toContain('margin: 0 calc(var(--space-md) * -1) -10px;')
+    // Bleeds the sidebar-content padding (top + sides) + the 10px gap so it reads
+    // as one flat edge-to-edge rectangle rather than the old floating masthead
+    // card, ALWAYS reaching the content's top edge — the update pill renders
+    // inside the band, so there is no conditional carve-out above it.
+    expect(band).toContain('margin: calc(var(--space-md) * -1) calc(var(--space-md) * -1) -10px;')
+    expect(band).toContain('padding: var(--space-md) var(--space-md) 10px;')
     // The list + its own scroll container are NOT part of the band.
     expect(band).not.toContain('sidebar-hierarchy-scroll')
+  })
+
+  it('keeps the update pill row on the band fill instead of carving a gap above it', () => {
+    const css = readCss('05-polish-fx-layouts.css')
+    // The old layout rendered the pill row ABOVE the band and suppressed the
+    // band's top bleed via :has(), leaving the row on the raw slider-opacity
+    // sidebar surface — a visible gap in the chrome. The pill row now lives
+    // inside .sidebar-top-chrome and must stay paint-free (band supplies the
+    // fill), with no :has() escape hatch reintroducing the gap.
+    expect(css).not.toContain(':has(> .sidebar-update-pill-row)')
+    const row = cssBlockStartingAt(css, '.sidebar-update-pill-row {')
+    expect(row).not.toContain('background')
   })
 
   it('paints the chrome fill behind the macOS traffic lights, non-interactively', () => {

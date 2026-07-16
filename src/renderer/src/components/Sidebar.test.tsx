@@ -19,6 +19,7 @@ import {
 } from './Sidebar'
 import { assignAgentIdentityFromSeed } from '../lib/agentIdentitySeed'
 import type { AgentApprovalRequest } from '../lib/agentApprovalTypes'
+import type { UpdateStateSnapshot } from '../../../main/UpdateService'
 
 const COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY = 'taskwraith-sidebar-collapsed-sections'
 const COLLAPSED_SIDEBAR_SECTIONS_DEFAULT_VERSION_KEY =
@@ -191,6 +192,8 @@ function renderSidebar(
     onDeleteChat?: (chatId: string) => void
     onOpenInMultiview?: (chat: ChatRecord) => void
     runningChatIds?: string[]
+    updateSnapshot?: UpdateStateSnapshot | null
+    onQuickUpdate?: () => void
   } = {}
 ) {
   const workspace = makeWorkspace()
@@ -236,6 +239,8 @@ function renderSidebar(
       onToggleArchiveChat={options.onToggleArchiveChat}
       onDeleteChat={options.onDeleteChat}
       onOpenInMultiview={options.onOpenInMultiview}
+      updateSnapshot={options.updateSnapshot}
+      onQuickUpdate={options.onQuickUpdate}
     />
   )
 }
@@ -257,6 +262,38 @@ afterEach(() => {
 })
 
 describe('Sidebar masthead', () => {
+  it('renders the update pill inside the fixed top-chrome band, above the masthead', () => {
+    stubSidebarStorage({})
+
+    const html = renderSidebar([], {
+      updateSnapshot: {
+        status: 'downloading',
+        enabled: true,
+        channel: 'stable',
+        latestVersion: '1.9.0',
+        downloadProgress: {
+          bytesPerSecond: 10,
+          delta: 1,
+          percent: 42.4,
+          transferred: 42,
+          total: 100
+        }
+      },
+      onQuickUpdate: () => {}
+    })
+
+    const bandIndex = html.indexOf('sidebar-top-chrome')
+    const pillRowIndex = html.indexOf('sidebar-update-pill-row')
+    const mastheadIndex = html.indexOf('sidebar-masthead')
+    expect(bandIndex).toBeGreaterThanOrEqual(0)
+    // The pill row opens AFTER the band wrapper (i.e. inside it) and BEFORE the
+    // masthead. Rendered as a sibling above the band it sat on the raw
+    // slider-opacity sidebar surface and read as a gap in the fixed chrome.
+    expect(pillRowIndex).toBeGreaterThan(bandIndex)
+    expect(mastheadIndex).toBeGreaterThan(pillRowIndex)
+    expect(html).toContain('42%')
+  })
+
   it('uses the inline monoline TaskWraith mark', () => {
     stubSidebarStorage({})
 

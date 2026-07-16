@@ -3963,6 +3963,10 @@ export function Sidebar({
     >
       <div className="sidebar-titlebar-fill" aria-hidden />
       <div className="sidebar-content">
+        <div className="sidebar-top-chrome">
+        {/* The update pill lives INSIDE the fixed-opacity top-chrome band so the
+            row shares the band's fill — outside it the row sat on the raw
+            slider-opacity sidebar surface and read as a gap in the chrome. */}
         {isUpdatePillVisible(updateSnapshot) && (onQuickUpdate || onOpenChangelog) ? (
           <div className="sidebar-update-pill-row">
             <UpdatePill
@@ -3973,7 +3977,6 @@ export function Sidebar({
             />
           </div>
         ) : null}
-        <div className="sidebar-top-chrome">
         <div className="sidebar-masthead">
           <div className="sidebar-masthead-copy">
             <span className="sidebar-product-label">
