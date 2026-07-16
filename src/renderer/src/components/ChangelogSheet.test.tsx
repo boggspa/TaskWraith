@@ -182,7 +182,7 @@ describe('ChangelogSheet', () => {
     expect(entry.releaseNotes).toContain('Foreground seats now also hold their reader/writer fan-out lanes')
   })
 
-  it('bundles the current 1.8.2 release notes', () => {
+  it('bundles the frozen 1.8.2 release notes', () => {
     const entry = resolveChangelogEntry({ currentVersion: '1.8.2' }, null)
     expect(entry).toMatchObject({
       version: '1.8.2',
@@ -194,6 +194,18 @@ describe('ChangelogSheet', () => {
     expect(entry.releaseNotes).toContain('Transcript navigation keeps the reader\'s place')
     expect(entry.releaseNotes).toContain('Native provider file and shell tools stay brokered')
     expect(entry.releaseNotes).toContain('Remote favicon fetches are pinned and bounded')
+  })
+
+  it('bundles the current 1.8.3 release notes', () => {
+    const entry = resolveChangelogEntry({ currentVersion: '1.8.3' }, null)
+    expect(entry).toMatchObject({
+      version: '1.8.3',
+      releaseDate: '2026-07-16'
+    })
+    expect(entry.releaseNotes).toContain('Kimi K3')
+    expect(entry.releaseNotes).toContain('Windows is a first-class platform again')
+    expect(entry.releaseNotes).toContain('Linux media staging is safe against inode reuse')
+    expect(entry.releaseNotes).toContain('Concurrent identical media ingests always deduplicate')
   })
 
   it('formats full changelog arrays from electron-updater metadata', () => {

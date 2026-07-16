@@ -4,6 +4,34 @@ Notable changes to TaskWraith, the local-first macOS desktop workbench for runni
 and reviewing AI coding agents. Entries are user-facing highlights; execution,
 history, and workspace state stay on your machine throughout.
 
+## 1.8.3 - 2026-07-16
+
+### Added
+- **Kimi K3.** Moonshot's new flagship model joins the Kimi provider with a
+  256K context window and always-on Max-effort thinking, selectable alongside
+  Kimi K2.7 Code in solo, Ensemble, queued, scheduled, and remote runs. K2.7
+  Code remains the default and keeps its Standard/HighSpeed Fast toggle; K3
+  has no speed tiers, and a stale Fast flag can never reroute a K3 run onto
+  the K2.7 family.
+
+### Fixed
+- **Windows is a first-class platform again.** The 1.8.2 Windows and Linux
+  artifacts were never published; this release is the first since 1.8.1 for
+  those platforms and repairs four Windows-fatal defects that had landed with
+  the recent hardening work: scheduled-workflow persistence no longer fails on
+  directory-fsync (Windows rejects it), media persistence no longer rejects
+  every asset (POSIX permission-bit gates and mixed stat-flavor identity
+  checks are now platform-aware), and every hardened Git invocation no longer
+  fatals on a relative `include.path` override.
+- **Linux media staging is safe against inode reuse.** A completed staged
+  snapshot's cleanup now also requires size and mtime to match before
+  unlinking, so an ext4-reused inode number cannot cause a replacement file to
+  be removed.
+- **Concurrent identical media ingests always deduplicate.** The
+  content-addressed store's adopt path no longer races the winning ingest's
+  cleanup, so simultaneous ingests of the same bytes both succeed with the
+  canonical asset.
+
 ## 1.8.2 - 2026-07-16
 
 ### Added
