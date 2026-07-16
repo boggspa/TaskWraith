@@ -1101,7 +1101,10 @@ describe('TranscriptMediaAssetStore', () => {
     expect(writeSync).not.toHaveBeenCalled()
     if (!result.ok) return
     expect(fs.readFileSync(result.path).equals(bytes)).toBe(true)
-    expect(fs.statSync(result.path).mode & 0o077).toBe(0)
+    if (process.platform !== 'win32') {
+      // POSIX-only: Windows synthesizes mode bits (0o666), no privacy signal.
+      expect(fs.statSync(result.path).mode & 0o077).toBe(0)
+    }
     expect(fs.readFileSync(sourcePath).equals(bytes)).toBe(true)
     expect(fs.readdirSync(root).some((entry) => entry.startsWith('.ingest-'))).toBe(false)
   })
