@@ -20,7 +20,10 @@ import {
 const roots: string[] = []
 
 function makeRoot(): string {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tw-media-assets-'))
+  // realpath the tmp root: Windows runners hand out 8.3 short names
+  // (RUNNER~1) that the store's canonicalization expands, and strict
+  // path-equality mocks/assertions must agree with the long form.
+  const root = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'tw-media-assets-'))
   roots.push(root)
   return root
 }
@@ -113,7 +116,11 @@ describe('TranscriptMediaAssetStore', () => {
     ).toBe(true)
     const ledgerPath = path.join(root, TRANSCRIPT_MEDIA_OWNERSHIP_FILE)
     expect(fs.lstatSync(ledgerPath).isSymbolicLink()).toBe(false)
-    expect(fs.statSync(ledgerPath).mode & 0o077).toBe(0)
+    if (process.platform !== 'win32') {
+      // POSIX-only: Windows synthesizes mode bits (0o666), so the privacy
+      // assertion carries no signal there.
+      expect(fs.statSync(ledgerPath).mode & 0o077).toBe(0)
+    }
     expect(fs.readdirSync(root).some((entry) => entry.endsWith('.tmp'))).toBe(false)
   })
 

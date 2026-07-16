@@ -83,7 +83,12 @@ describe('ScopedPathAccess', () => {
     await expect(readScopedDirectory({ rootPath, targetPath })).rejects.toThrow()
   })
 
-  it('denies a parent swap before an existing write or replace mutates bytes', async () => {
+  // The swap simulation renames a directory that has an open descriptor
+  // inside it — Windows EPERMs that rename, so the scenario is POSIX-only
+  // (the no-open-handle swap siblings still run on Windows).
+  it.skipIf(process.platform === 'win32')(
+    'denies a parent swap before an existing write or replace mutates bytes',
+    async () => {
     const rootPath = tempDir('tw-scoped-write-root-')
     const outside = tempDir('tw-scoped-write-outside-')
     const parentPath = path.join(rootPath, 'nested')

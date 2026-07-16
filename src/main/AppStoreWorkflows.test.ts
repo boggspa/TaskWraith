@@ -2116,7 +2116,11 @@ describe('AppStore workflows', () => {
     expect(AppStore.getWorkflowDefinition(saved.id)?.history).toEqual([])
   })
 
-  it('fsyncs both directory entries when creating the first workflow ledger', () => {
+  // The directory-fsync barrier is POSIX-only (Windows FlushFileBuffers
+  // rejects directory handles), so its instrumentation never fires there.
+  it.skipIf(process.platform === 'win32')(
+    'fsyncs both directory entries when creating the first workflow ledger',
+    () => {
     const workflowRunsPath = `${userDataPath}/workflow-runs`
     fs.rmSync(workflowRunsPath, { recursive: true, force: true })
     fsMockState.directoryFsyncCount = 0
@@ -2217,7 +2221,10 @@ describe('AppStore workflows', () => {
     expect(AppStore.getWorkflowDefinition(saved.id)?.history[0]?.status).toBe('running')
   })
 
-  it.each([
+  // POSIX-only: the injected directory-fsync failure cannot fire on Windows,
+  // where the barrier is skipped by design (FlushFileBuffers rejects
+  // directory handles).
+  it.skipIf(process.platform === 'win32').each([
     [1, 'journal intent'],
     [2, 'task post-image'],
     [3, 'workflow post-image'],

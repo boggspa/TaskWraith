@@ -1349,7 +1349,8 @@ function stagingDirectoryIsAgentWritable(
 function exactInodeCleanup(
   filePath: string,
   stagingRoot: string,
-  expectedStat: fs.Stats
+  expectedStat: fs.Stats,
+  options?: { requireStableSnapshot?: boolean }
 ): () => boolean {
   let cleaned = false
   return () => {
@@ -1357,6 +1358,18 @@ function exactInodeCleanup(
     try {
       const current = fs.lstatSync(filePath)
       if (current.isSymbolicLink() || !sameFileIdentity(current, expectedStat)) return false
+      // dev+ino alone is not enough once the snapshot is final: ext4 reuses
+      // freed inode numbers, so a replacement can inherit the staged file's
+      // identity. A completed snapshot is written exactly once, so size and
+      // mtime must also match — anything else refuses (fail closed). The
+      // mid-copy failure sweeper cannot use this: its expected stat predates
+      // the copy, so size/mtime drift there is legitimate.
+      if (
+        options?.requireStableSnapshot &&
+        (current.size !== expectedStat.size || current.mtimeMs !== expectedStat.mtimeMs)
+      ) {
+        return false
+      }
       fs.unlinkSync(filePath)
       cleaned = true
       return true
@@ -1606,7 +1619,9 @@ export async function stageWorkspaceMediaSnapshot({
 
     const stablePath = destinationPath
     const stableStat = finalDestinationStat
-    const stableCleanup = exactInodeCleanup(stablePath, stagingRoot, stableStat)
+    const stableCleanup = exactInodeCleanup(stablePath, stagingRoot, stableStat, {
+      requireStableSnapshot: true
+    })
     cleanupDestination = null
     return {
       ok: true,
