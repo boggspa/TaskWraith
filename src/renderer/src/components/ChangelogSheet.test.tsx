@@ -196,7 +196,7 @@ describe('ChangelogSheet', () => {
     expect(entry.releaseNotes).toContain('Remote favicon fetches are pinned and bounded')
   })
 
-  it('bundles the current 1.8.3 release notes', () => {
+  it('bundles the frozen 1.8.3 release notes', () => {
     const entry = resolveChangelogEntry({ currentVersion: '1.8.3' }, null)
     expect(entry).toMatchObject({
       version: '1.8.3',
@@ -206,6 +206,18 @@ describe('ChangelogSheet', () => {
     expect(entry.releaseNotes).toContain('Windows is a first-class platform again')
     expect(entry.releaseNotes).toContain('Linux media staging is safe against inode reuse')
     expect(entry.releaseNotes).toContain('Concurrent identical media ingests always deduplicate')
+  })
+
+  it('bundles the current 1.8.4 release notes', () => {
+    const entry = resolveChangelogEntry({ currentVersion: '1.8.4' }, null)
+    expect(entry).toMatchObject({
+      version: '1.8.4',
+      releaseDate: '2026-07-16'
+    })
+    expect(entry.releaseNotes).toContain('Transcript scrolling stays under the reader\'s control')
+    expect(entry.releaseNotes).toContain('Concurrent Ensemble seats no longer collide')
+    expect(entry.releaseNotes).toContain('Sidebar update pill stays inside the fixed chrome band')
+    expect(entry.releaseNotes).toContain('Jump to latest')
   })
 
   it('formats full changelog arrays from electron-updater metadata', () => {

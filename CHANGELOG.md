@@ -4,6 +4,25 @@ Notable changes to TaskWraith, the local-first macOS desktop workbench for runni
 and reviewing AI coding agents. Entries are user-facing highlights; execution,
 history, and workspace state stay on your machine throughout.
 
+## 1.8.4 - 2026-07-16
+
+### Fixed
+- **Transcript scrolling stays under the reader's control from the first
+  message.** New messages, thinking traces, and tool activity no longer pull a
+  reader back to the live edge after they scroll away. The initial
+  welcome-to-transcript transition now rebinds every scroll-intent listener to
+  the replacement transcript, while **Jump to latest** keeps counting unseen
+  activity until the reader deliberately returns.
+- **Concurrent Ensemble seats no longer collide on one chat.** Multiple
+  ordinary provider dispatches may hold independent reservations while fan-out
+  lanes overlap, eliminating false “already has a live dispatch owner” seat
+  failures. Scheduled runs remain mutually exclusive with every live ordinary
+  dispatch, preserving the scheduler's exactly-once authority boundary.
+- **The Sidebar update pill stays inside the fixed chrome band.** Download and
+  update progress no longer exposes a mismatched-opacity gap above the
+  masthead; the pill, title, workspace counters, tabs, and search now share one
+  seamless top surface.
+
 ## 1.8.3 - 2026-07-16
 
 ### Added
