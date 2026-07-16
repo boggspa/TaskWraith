@@ -60,4 +60,18 @@ describe('transcript chat navigation integration', () => {
     expect(cachedPlanIndex).toBeGreaterThan(retainedRecordIndex)
     expect(planIndex).toBeGreaterThan(cachedPlanIndex)
   })
+
+  it('rebinds the main scroll owner when an empty chat becomes a transcript', () => {
+    const source = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8')
+    const lifecycleStart = source.indexOf('const mainTranscriptMounted =')
+    const navigationStart = source.indexOf('const setCurrentChatIdForNavigation')
+    const scrollHookLifecycle = source.slice(lifecycleStart, navigationStart)
+
+    expect(lifecycleStart).toBeGreaterThanOrEqual(0)
+    expect(navigationStart).toBeGreaterThan(lifecycleStart)
+    expect(scrollHookLifecycle).toContain('!shouldRenderWelcome({')
+    expect(scrollHookLifecycle).toContain('isRunQueueJobVisibleForChat(job, currentChat)')
+    expect(scrollHookLifecycle).toContain('isEnsembleActiveRoundDispatchLive(')
+    expect(scrollHookLifecycle).toContain('transcriptMounted: mainTranscriptMounted')
+  })
 })

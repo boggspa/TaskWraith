@@ -3113,6 +3113,28 @@ function App(): React.JSX.Element {
   const geminiTerminalEndRef = useRef<HTMLDivElement>(null)
   const chatSplitRegionRef = useRef<HTMLDivElement>(null)
   const appTranscriptRef = useRef<HTMLDivElement>(null)
+  // MainAppLayout deliberately keys TranscriptPanel at the welcome/transcript
+  // boundary. A pristine chat therefore replaces its scroll container on the
+  // first send without changing chatId. Tell the scroll hook when the real
+  // transcript side of that boundary is mounted so its native scroll, wheel,
+  // touch, key, ResizeObserver, and code-resize bindings move off the discarded
+  // welcome node. Without this, message layout effects still snap to the live
+  // edge but reader intent is never observed after an empty-start chat begins.
+  const mainTranscriptMounted = !shouldRenderWelcome({
+    currentChat,
+    messages: currentChat?.messages || EMPTY_CHAT_MESSAGES,
+    isCurrentChatRunning: Boolean(
+      currentChat?.appChatId &&
+      (runningChatIds.has(currentChat.appChatId) ||
+        runQueueJobs.some(
+          (job) =>
+            job.chatId === currentChat.appChatId &&
+            ACTIVE_RUN_QUEUE_STATUSES.has(job.status) &&
+            isRunQueueJobVisibleForChat(job, currentChat)
+        ) ||
+        isEnsembleActiveRoundDispatchLive(currentChat.ensemble?.activeRound))
+    )
+  })
   const {
     transcriptScrollRef,
     transcriptContentRef,
@@ -3134,6 +3156,7 @@ function App(): React.JSX.Element {
     chatId: currentChat?.appChatId ?? null,
     messages: currentChat?.messages,
     runCompleteNotice,
+    transcriptMounted: mainTranscriptMounted,
     // Raw runningChatIds is purely additive when an exit is missed; apply the
     // same terminal-last-run / inactive-ensemble-round filters the sidebar
     // badge uses so an orphaned entry can't pin a phantom streaming pill.
