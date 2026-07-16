@@ -252,7 +252,15 @@ export function transcriptMediaAssetPath(
 }
 
 function sameFileIdentity(left: fs.Stats, right: fs.Stats): boolean {
-  return left.dev === right.dev && left.ino === right.ino
+  if (left.ino !== right.ino) return false
+  if (process.platform === 'win32') {
+    // libuv fills `dev` inconsistently between handle-derived (fstat) and
+    // path-derived (stat/lstat) stats on Windows, so a strict dev compare
+    // rejects the very file we just wrote. The NTFS file index (`ino`) is
+    // the identity authority there; tolerate a missing dev on either side.
+    return left.dev === right.dev || left.dev === 0 || right.dev === 0
+  }
+  return left.dev === right.dev
 }
 
 function sameFileSnapshotVersion(left: fs.Stats, right: fs.Stats): boolean {
@@ -1197,12 +1205,27 @@ export class TranscriptMediaAssetStore {
             fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW
           )
           const existingStat = await existingHandle.stat()
+          // Identity + size only — no timestamp comparison. The concurrent
+          // winner legitimately mutates the target's ctime when it unlinks
+          // its temp hard-link twin, so a snapshot-version check here races
+          // that cleanup and misreports identical content as a collision.
+          // The open handle pins the inode and descriptorsEqual proves the
+          // bytes; a fresh identity re-check proves the path still names
+          // the inode we validated.
           if (
             !existingStat.isFile() ||
             existingStat.size !== sourceStat.size ||
-            !sameFileSnapshotVersion(existingStat, existingPathStat) ||
-            !(await descriptorsEqual(tempHandle, existingHandle, sourceStat.size)) ||
-            !(await descriptorSnapshotMatchesPath(existingHandle, target, existingStat))
+            !sameFileIdentity(existingStat, existingPathStat) ||
+            !(await descriptorsEqual(tempHandle, existingHandle, sourceStat.size))
+          ) {
+            return { ok: false, reason: 'content_address_collision' }
+          }
+          const adoptedPathStat = await fs.promises.lstat(target)
+          if (
+            adoptedPathStat.isSymbolicLink() ||
+            !adoptedPathStat.isFile() ||
+            !sameFileIdentity(adoptedPathStat, existingStat) ||
+            adoptedPathStat.size !== sourceStat.size
           ) {
             return { ok: false, reason: 'content_address_collision' }
           }
