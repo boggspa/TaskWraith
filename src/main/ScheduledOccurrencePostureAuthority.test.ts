@@ -1,3 +1,4 @@
+import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { signRunPermissionPosture, type RunPermissionPostureContext } from './RunPermissionPosture'
 import {
@@ -10,6 +11,11 @@ import type { EffectiveRunPermissions, ExternalPathGrant } from './store/types'
 const SECRET = Buffer.alloc(32, 41)
 const ROOT_ID = `twso-root-v1:${'1'.repeat(64)}`
 const NOW = '2026-07-15T05:00:00.000Z'
+// resolve() keeps these fixtures lexically canonical on every platform; the
+// posture validators require `resolve(p) === p`.
+const REAL_WORKSPACE_PATH = resolve('/real/workspace')
+const READABLE_GRANT_PATH = resolve('/external/readable')
+const CHANGED_GRANT_PATH = resolve('/external/changed')
 
 function permissions(
   overrides: Partial<EffectiveRunPermissions> = {}
@@ -61,7 +67,7 @@ function signedInput(
   return {
     rootId: ROOT_ID,
     workspaceId: 'workspace-1',
-    workspaceRealPath: '/real/workspace',
+    workspaceRealPath: REAL_WORKSPACE_PATH,
     approvalMode,
     effectivePermissions,
     signature:
@@ -87,7 +93,7 @@ describe('ScheduledOccurrencePostureAuthority', () => {
       workspaceId: 'workspace-1',
       chatId: 'chat-1',
       appRunId: 'task-1',
-      path: '/external/readable',
+      path: READABLE_GRANT_PATH,
       kind: 'directory',
       access: 'read',
       duration: 'thisRun',
@@ -106,7 +112,7 @@ describe('ScheduledOccurrencePostureAuthority', () => {
       schemaVersion: 1,
       rootId: ROOT_ID,
       workspaceId: 'workspace-1',
-      workspaceRealPath: '/real/workspace',
+      workspaceRealPath: REAL_WORKSPACE_PATH,
       signedPosture: {
         approvalMode: 'default',
         effectivePermissions: {
@@ -148,7 +154,7 @@ describe('ScheduledOccurrencePostureAuthority', () => {
         {
           id: 'grant-2',
           provider: 'codex',
-          path: '/external/changed',
+          path: CHANGED_GRANT_PATH,
           kind: 'file',
           access: 'write',
           duration: 'thisRun',

@@ -1,4 +1,5 @@
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto'
+import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { buildRunQueueDispatchReceipt } from './RunQueueDispatchReceipt'
 import type { ScheduledOccurrenceAuthorityRoot } from './ScheduledOccurrenceAuthorityRootStore'
@@ -23,6 +24,9 @@ import type { WorkflowRunEvent } from './WorkflowRunStore'
 
 const NOW = '2026-07-15T12:00:00.000Z'
 const ROOT_ID = `twso-root-v1:${'a'.repeat(64)}`
+// resolve() keeps the fixture path lexically canonical on every platform;
+// the seal validator requires `resolve(p) === p`.
+const WORKSPACE_PATH = resolve('/tmp/Test 1')
 
 type StandaloneMaterializePayload = Extract<
   ScheduledOccurrenceMutationWalPayload,
@@ -97,7 +101,7 @@ function task(
   const record: ScheduledTask = {
     id,
     workspaceId: 'workspace-1',
-    workspacePath: '/tmp/Test 1',
+    workspacePath: WORKSPACE_PATH,
     chatId: 'chat-1',
     provider: 'codex',
     prompt: 'Run the scheduled task.',
@@ -150,12 +154,12 @@ function workflow(overrides: Partial<WorkflowDefinition> = {}): WorkflowDefiniti
     id: 'workflow-1',
     name: 'Workflow 1',
     workspaceId: 'workspace-1',
-    workspacePath: '/tmp/Test 1',
+    workspacePath: WORKSPACE_PATH,
     enabled: true,
     trigger: { kind: 'once', runAt: NOW },
     template: {
       workspaceId: 'workspace-1',
-      workspacePath: '/tmp/Test 1',
+      workspacePath: WORKSPACE_PATH,
       chatId: 'chat-1',
       provider: 'codex',
       prompt: 'Run the scheduled task.',
@@ -437,7 +441,7 @@ function occurrenceSeal(
     rootOwner: 'solo' as const,
     taskAuthorityDigest: '1'.repeat(64),
     compositeWorkflowAuthorityDigest: '2'.repeat(64),
-    workspaceRealPath: '/tmp/Test 1',
+    workspaceRealPath: WORKSPACE_PATH,
     runtimeProfileSetHmac: '3'.repeat(64),
     permissionPostureSetHmac: '4'.repeat(64),
     ...overrides
@@ -770,7 +774,7 @@ describe('ScheduledOccurrenceMutationWal', () => {
         issuedAt: NOW,
         taskAuthorityDigest: '1'.repeat(64),
         compositeWorkflowAuthorityDigest: '2'.repeat(64),
-        workspaceRealPath: '/tmp/Test 1',
+        workspaceRealPath: WORKSPACE_PATH,
         runtimeProfileSetHmac: '3'.repeat(64),
         permissionPostureSetHmac: '4'.repeat(64),
         sealSignature: '5'.repeat(64)

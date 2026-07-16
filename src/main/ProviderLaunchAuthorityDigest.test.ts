@@ -1,3 +1,4 @@
+import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
   PROVIDER_LAUNCH_CONTROL_FIELDS,
@@ -35,7 +36,9 @@ const tools = () => ({
 
 const cliRuntime = (provider: string) => ({
   kind: 'cli' as const,
-  executableRealPath: `/opt/taskwraith/bin/${provider}`,
+  // resolve() keeps the path lexically canonical on every platform; the
+  // validator requires `resolve(p) === p`.
+  executableRealPath: resolve(`/opt/taskwraith/bin/${provider}`),
   executableSha256: hex('4'),
   runtimeBundleSha256: hex('5'),
   interpreterRuntimeAttestationSha256: hex('6'),
@@ -326,6 +329,7 @@ describe('ProviderLaunchAuthorityDigest', () => {
     expect(() =>
       buildProviderLaunchAuthority({
         ...codex,
+        // The trailing space keeps this path deliberately invalid on every platform.
         runtime: { ...codex.runtime, executableRealPath: `${codex.runtime.executableRealPath} ` }
       } as never)
     ).toThrow(/executable real path is invalid/i)

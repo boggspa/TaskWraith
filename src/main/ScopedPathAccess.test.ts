@@ -14,8 +14,13 @@ import {
 
 const tempPaths: string[] = []
 
+// realpathSync() expands the temp root up front (e.g. Windows 8.3 short names
+// like C:\Users\RUNNER~1, macOS /var -> /private/var) so test paths match the
+// product's realpath-canonicalized root exactly.
+const tempRoot = fs.realpathSync(os.tmpdir())
+
 function tempDir(prefix: string): string {
-  const result = fs.mkdtempSync(path.join(os.tmpdir(), prefix))
+  const result = fs.mkdtempSync(path.join(tempRoot, prefix))
   tempPaths.push(result)
   return result
 }

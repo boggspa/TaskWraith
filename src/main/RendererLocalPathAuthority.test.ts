@@ -1,3 +1,4 @@
+import { join, resolve } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import {
   assertSecondaryRendererLocalOpenIsPassive,
@@ -46,33 +47,36 @@ describe('resolveAuthorizedRendererLocalPath', () => {
 })
 
 describe('resolveRendererLocalPath', () => {
-  const canonicalizePath = (path: string): string => {
-    const resolved = path.replace('/workspace/link-out', '/private/secret')
-    return resolved.replace(/\/+/g, '/')
-  }
+  // resolve()/join() keep these fixtures lexically canonical on every
+  // platform; relative requests are resolved against them by the product.
+  const workspacePath = resolve('/workspace')
+  const linkOutPath = join(workspacePath, 'link-out')
+  const secretRootPath = resolve('/private/secret')
+  const attachmentPath = resolve('/private/selected/report.pdf')
+  const canonicalizePath = (path: string): string => path.replace(linkOutPath, secretRootPath)
 
   it('resolves relative secondary paths inside the frozen workspace', () => {
     expect(
       resolveRendererLocalPath({
         requestedPath: 'reports/result.pdf',
         isMainRenderer: false,
-        ownerWorkspacePath: '/workspace',
+        ownerWorkspacePath: workspacePath,
         canonicalizePath
       })
-    ).toBe('/workspace/reports/result.pdf')
+    ).toBe(join(workspacePath, 'reports', 'result.pdf'))
   })
 
   it('rejects traversal, sibling prefixes, and symlink escapes', () => {
     for (const requestedPath of [
-      '../private/secret.txt',
-      '/workspace-other/secret.txt',
-      '/workspace/link-out/secret.txt'
+      join('..', 'private', 'secret.txt'),
+      resolve('/workspace-other/secret.txt'),
+      join(linkOutPath, 'secret.txt')
     ]) {
       expect(() =>
         resolveRendererLocalPath({
           requestedPath,
           isMainRenderer: false,
-          ownerWorkspacePath: '/workspace',
+          ownerWorkspacePath: workspacePath,
           canonicalizePath
         })
       ).toThrow(/outside its owned workspace/i)
@@ -82,18 +86,18 @@ describe('resolveRendererLocalPath', () => {
   it('allows an exact renderer attachment outside the workspace', () => {
     expect(
       resolveRendererLocalPath({
-        requestedPath: '/private/selected/report.pdf',
+        requestedPath: attachmentPath,
         isMainRenderer: false,
-        authorizedAttachmentPaths: ['/private/selected/report.pdf'],
+        authorizedAttachmentPaths: [attachmentPath],
         canonicalizePath
       })
-    ).toBe('/private/selected/report.pdf')
+    ).toBe(attachmentPath)
   })
 
   it('fails closed for a secondary renderer without workspace or attachment authority', () => {
     expect(() =>
       resolveRendererLocalPath({
-        requestedPath: '/private/secret.txt',
+        requestedPath: resolve('/private/secret.txt'),
         isMainRenderer: false,
         canonicalizePath
       })
@@ -103,11 +107,11 @@ describe('resolveRendererLocalPath', () => {
   it('preserves main renderer authority while returning a canonical path', () => {
     expect(
       resolveRendererLocalPath({
-        requestedPath: '/workspace/link-out/report.pdf',
+        requestedPath: join(linkOutPath, 'report.pdf'),
         isMainRenderer: true,
         canonicalizePath
       })
-    ).toBe('/private/secret/report.pdf')
+    ).toBe(join(secretRootPath, 'report.pdf'))
   })
 })
 

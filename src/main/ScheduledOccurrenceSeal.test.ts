@@ -1,4 +1,5 @@
 import { createHmac } from 'node:crypto'
+import { parse, resolve, sep } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
   RUNTIME_PROFILE_AUTHORITY_FIELD_POLICY,
@@ -44,6 +45,13 @@ const now = '2026-07-14T12:00:00.000Z'
 const plannedFor = '2026-07-14T13:00:00.000Z'
 const runAt = '2026-07-14T13:05:00.000Z'
 const canonicalPath = (value: string): string => value.replace(/\/+$/, '') || '/'
+// resolve() keeps these fixtures lexically canonical on every platform; the
+// posture/seal validators require `resolve(p) === p`.
+const REAL_WORKSPACE_PATH = resolve('/real/workspace')
+const OTHER_REAL_PATH = resolve('/real/other')
+const OTHER_CODEX_BINARY = resolve('/other/codex')
+const EXTERNAL_GRANT_PATH = resolve('/external-two')
+const providerBinary = (provider: string): string => resolve(`/opt/taskwraith/bin/${provider}`)
 
 function testAuthorityRoot(
   key: Buffer = ROOT_KEY,
@@ -131,6 +139,8 @@ function task(overrides: Partial<ScheduledTask> = {}): ScheduledTask {
   return {
     id: 'scheduled-1',
     workspaceId: 'workspace-1',
+    // Lexical-only binding (never platform-validated); the trailing slash
+    // deliberately exercises the test canonicalPath normalizer.
     workspacePath: '/workspace/',
     chatId: 'chat-1',
     provider: 'codex',
@@ -194,7 +204,7 @@ function profile(overrides: Partial<RuntimeProfile> = {}): RuntimeProfile {
     provider: 'codex',
     scope: 'workspace',
     workspaceMode: 'local',
-    binaryPath: '/opt/taskwraith/bin/codex',
+    binaryPath: providerBinary('codex'),
     env: { PUBLIC_MODE: 'review' },
     secretRefs: { env: ['SERVICE_TOKEN'] },
     mcpProfileId: 'taskwraith-full-v1',
@@ -240,7 +250,7 @@ function providerLaunchPlan(provider: ProviderId): ProviderLaunchAuthorityInput 
   }
   const cli = {
     kind: 'cli' as const,
-    executableRealPath: `/opt/taskwraith/bin/${provider}`,
+    executableRealPath: providerBinary(provider),
     executableSha256: hex('c'),
     runtimeBundleSha256: hex('d'),
     interpreterRuntimeAttestationSha256: hex('e'),
@@ -533,7 +543,7 @@ function effectiveAuthority(
     effectiveBinary:
       provider === 'ollama'
         ? SCHEDULED_OCCURRENCE_OLLAMA_EFFECTIVE_BINARY_SENTINEL
-        : `/opt/taskwraith/bin/${provider}`,
+        : providerBinary(provider),
     effectiveWorkspaceMode: 'local',
     effectiveMcpProfileId: 'taskwraith-full-v1',
     effectiveApprovalMode: permissions.approvalMode,
@@ -607,7 +617,7 @@ function postureCapability(
   const input: ScheduledOccurrencePostureIssueInput = {
     rootId: options.rootId ?? ROOT.rootId,
     workspaceId: options.workspaceId ?? 'workspace-1',
-    workspaceRealPath: options.workspaceRealPath ?? '/real/workspace',
+    workspaceRealPath: options.workspaceRealPath ?? REAL_WORKSPACE_PATH,
     approvalMode: permissions.approvalMode,
     effectivePermissions: permissions,
     signature,
@@ -720,7 +730,7 @@ function context(
     task: currentTask,
     workflow,
     canonicalizePath: canonicalPath,
-    workspaceRealPath: '/real/workspace',
+    workspaceRealPath: REAL_WORKSPACE_PATH,
     runtimeSeats:
       overrides.runtimeSeats ?? defaultRuntimeSeats(currentTask, workflow),
     phase,
@@ -741,7 +751,7 @@ function defaultRuntimeSeats(
               profile({
                 id: participant.runtimeProfileId,
                 provider: participant.provider,
-                binaryPath: `/opt/taskwraith/bin/${participant.provider}`
+                binaryPath: providerBinary(participant.provider)
               }),
               { seatId: participant.id }
             )
@@ -753,7 +763,7 @@ function defaultRuntimeSeats(
         profile({
           id: scheduledTask.runtimeProfileId,
           provider: scheduledTask.provider,
-          binaryPath: `/opt/taskwraith/bin/${scheduledTask.provider}`
+          binaryPath: providerBinary(scheduledTask.provider)
         })
       )
     : defaultSeat(scheduledTask.provider)
@@ -959,7 +969,7 @@ describe('ScheduledOccurrenceSeal lifecycle and posture authority', () => {
     expect(
       verifyScheduledOccurrenceSealAgainstCurrentContext(KEY, seal, {
         ...running,
-        workspaceRealPath: '/real/other'
+        workspaceRealPath: OTHER_REAL_PATH
       })
     ).toBeNull()
   })
@@ -1301,7 +1311,7 @@ describe('ScheduledOccurrenceSeal lifecycle and posture authority', () => {
           workspaceId: 'workspace-1',
           chatId: 'chat-1',
           appRunId: 'scheduled-1',
-          path: '/external-two',
+          path: EXTERNAL_GRANT_PATH,
           kind: 'directory',
           access: 'read',
           duration: 'thisRun',
@@ -1340,7 +1350,7 @@ describe('ScheduledOccurrenceSeal lifecycle and posture authority', () => {
     const forgedCapability = POSTURE_VERIFIER.issue({
       rootId: ROOT.rootId,
       workspaceId: 'workspace-1',
-      workspaceRealPath: '/real/workspace',
+      workspaceRealPath: REAL_WORKSPACE_PATH,
       approvalMode: permissions.approvalMode,
       effectivePermissions: permissions,
       signature: signRunPermissionPosture(
@@ -1411,7 +1421,7 @@ describe('ScheduledOccurrenceSeal lifecycle and posture authority', () => {
     }
     for (const bindingPatch of [
       { workspaceId: 'other-workspace' },
-      { workspaceRealPath: '/real/other' },
+      { workspaceRealPath: OTHER_REAL_PATH },
       { rootId: `twso-root-v1:${'9'.repeat(64)}` }
     ]) {
       expect(() =>
@@ -1745,7 +1755,7 @@ describe('runtime launch and loop verifier authority', () => {
     const current = context()
     const expected = mintScheduledOccurrenceSeal(ROOT, current, now).runtimeProfileSetHmac
     const profileVariants: RuntimeProfile[] = [
-      profile({ binaryPath: '/other/codex' }),
+      profile({ binaryPath: OTHER_CODEX_BINARY }),
       profile({ env: { PUBLIC_MODE: 'changed' } }),
       profile({ secretRefs: { env: ['OTHER_TOKEN'] } }),
       profile({ agenticServices: { fileChanges: 'deny' } }),
@@ -1829,7 +1839,7 @@ describe('runtime launch and loop verifier authority', () => {
     }
 
     for (const contradiction of [
-      { effectiveBinary: '/other/codex' },
+      { effectiveBinary: OTHER_CODEX_BINARY },
       { effectiveMcpProfileId: 'taskwraith-core-v1' },
       { effectiveApprovalMode: 'default' },
       { effectiveNetworkPolicy: 'allow' }
@@ -1854,7 +1864,7 @@ describe('runtime launch and loop verifier authority', () => {
         ROOT,
         seal,
         context(current.task, {
-          runtimeSeats: [selectedSeat(profile({ binaryPath: '/other/codex' }))]
+          runtimeSeats: [selectedSeat(profile({ binaryPath: OTHER_CODEX_BINARY }))]
         })
       )
     ).toBeNull()
@@ -1904,7 +1914,7 @@ describe('runtime launch and loop verifier authority', () => {
     expect(() =>
       buildEffectiveRuntimeLaunchAuthority({
         ...effectiveAuthority('codex'),
-        effectiveBinary: '/other/codex'
+        effectiveBinary: OTHER_CODEX_BINARY
       })
     ).toThrow(/binary does not match/i)
     expect(() =>
@@ -1928,7 +1938,7 @@ describe('runtime launch and loop verifier authority', () => {
     expect(() =>
       buildEffectiveRuntimeLaunchAuthority({
         ...effectiveAuthority('ollama'),
-        effectiveBinary: '/opt/taskwraith/bin/ollama'
+        effectiveBinary: providerBinary('ollama')
       })
     ).toThrow(/canonical HTTP runtime marker/i)
     const missingAgenticField = { ...effectiveAuthority().effectiveAgenticServices }
@@ -2396,7 +2406,7 @@ describe('runtime launch and loop verifier authority', () => {
     ).toMatchObject({ schemaVersion: 2 })
 
     for (const candidate of [
-      profile({ ...ollamaProfile, binaryPath: '/opt/taskwraith/bin/ollama' }),
+      profile({ ...ollamaProfile, binaryPath: providerBinary('ollama') }),
       profile({ ...ollamaProfile, env: { OLLAMA_HOST: 'http://localhost:11434' } }),
       profile({ ...ollamaProfile, secretRefs: { env: ['OLLAMA_TOKEN'] } })
     ]) {
@@ -2632,7 +2642,8 @@ describe('strict persisted seal schema', () => {
         {
           ...current,
           task: { ...current.task, occurrenceSeal: undefined },
-          workspaceRealPath: '/'
+          // A bare filesystem root is rejected on every platform.
+          workspaceRealPath: parse(REAL_WORKSPACE_PATH).root
         },
         now
       )
@@ -2646,7 +2657,8 @@ describe('strict persisted seal schema', () => {
       { ...seal, ownerRunId: '' },
       { ...seal, rootOwner: 'caller-root' },
       { ...seal, workspaceRealPath: 'relative/workspace' },
-      { ...seal, workspaceRealPath: '/real/workspace/' },
+      // Trailing separator keeps this non-canonical on every platform.
+      { ...seal, workspaceRealPath: `${REAL_WORKSPACE_PATH}${sep}` },
       { ...seal, taskAuthorityDigest: seal.taskAuthorityDigest.toUpperCase() }
     ]) {
       expect(
@@ -2665,7 +2677,7 @@ describe('strict persisted seal schema', () => {
       { ...seal, rootOwner: 'ensemble-root' },
       { ...seal, taskAuthorityDigest: '1'.repeat(64) },
       { ...seal, compositeWorkflowAuthorityDigest: '2'.repeat(64) },
-      { ...seal, workspaceRealPath: '/real/other' },
+      { ...seal, workspaceRealPath: OTHER_REAL_PATH },
       { ...seal, runtimeProfileSetHmac: '3'.repeat(64) },
       { ...seal, permissionPostureSetHmac: '4'.repeat(64) },
       { ...seal, sealMac: '5'.repeat(64) }
