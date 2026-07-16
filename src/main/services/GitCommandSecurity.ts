@@ -3,6 +3,17 @@ import { scrubCliEnv } from '../CliEnvSecurity'
 
 const DISABLED_GIT_PATH = process.platform === 'win32' ? 'NUL' : '/dev/null'
 
+// `include.path` cannot reuse DISABLED_GIT_PATH: git refuses RELATIVE include
+// paths in command-line config ("relative config includes must come from
+// files" -> "fatal: unable to parse command-line config"), and `NUL` is a
+// relative path under Windows rules (no drive prefix or leading separator),
+// which broke every hardened git invocation on Windows. Git for Windows
+// treats the literal "/dev/null" as absolute (win32_offset_1st_component
+// returns 1) and maps it to the NUL device in its compat layer (mingw_fopen /
+// mingw_access), so this one spelling is an absolute, empty include target on
+// every platform.
+const DISABLED_GIT_INCLUDE_PATH = '/dev/null'
+
 const SAFE_GIT_CONFIG_OVERRIDES = [
   '-c',
   'core.fsmonitor=false',
@@ -11,7 +22,7 @@ const SAFE_GIT_CONFIG_OVERRIDES = [
   '-c',
   `core.attributesFile=${DISABLED_GIT_PATH}`,
   '-c',
-  `include.path=${DISABLED_GIT_PATH}`,
+  `include.path=${DISABLED_GIT_INCLUDE_PATH}`,
   '-c',
   'diff.external=',
   '-c',
