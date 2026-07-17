@@ -7,6 +7,7 @@ import {
   codexWireReasoningEffort,
   claudeModelSupportsFastMode,
   appendKimiModelArgs,
+  kimiAcpModelConfigValue,
   getStaticProviderModels,
   KIMI_HIGHSPEED_CLI_MODEL,
   KIMI_K3_CLI_MODEL,
@@ -474,6 +475,10 @@ describe('normalizeCliProviderModel (kimi)', () => {
 
     expect(standardArgs).toEqual(['--model', 'kimi-code/kimi-for-coding'])
     expect(highSpeedArgs).toEqual(['--model', 'kimi-code/kimi-for-coding-highspeed'])
+    expect(kimiAcpModelConfigValue('kimi-k2.7-code')).toBe('kimi-code/kimi-for-coding')
+    expect(kimiAcpModelConfigValue('kimi-k2.7-code', 'fast')).toBe(
+      'kimi-code/kimi-for-coding-highspeed'
+    )
   })
 
   it('maps Kimi K3 to its managed CLI alias and ignores stale speed tiers', () => {

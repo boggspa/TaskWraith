@@ -79,6 +79,226 @@ describe('runAcpTurn — neutral core', () => {
     })
   })
 
+  it('resumes an advertised native session before sending the prompt', () => {
+    const child = new FakeAcpChild()
+    const ready: Array<{ sessionId: string; resumed: boolean; fallbackFromResume: boolean }> = []
+    baseOptions(child, {
+      prompt: 'slim follow-up',
+      resumeSessionId: 'session-existing',
+      resumeFallbackPrompt: 'full cold-start context',
+      onSessionReady: (session) => ready.push(session)
+    })
+    child.emit({
+      jsonrpc: '2.0',
+      id: 1,
+      result: {
+        protocolVersion: 1,
+        agentCapabilities: { sessionCapabilities: { resume: {} } }
+      }
+    })
+    expect(child.sent()[1]).toMatchObject({
+      id: 4,
+      method: 'session/resume',
+      params: { sessionId: 'session-existing', cwd: '/tmp/ws', mcpServers: [] }
+    })
+    child.emit({ jsonrpc: '2.0', id: 4, result: {} })
+    expect(child.sent()[2]).toMatchObject({
+      id: 3,
+      method: 'session/prompt',
+      params: { sessionId: 'session-existing', prompt: [{ type: 'text', text: 'slim follow-up' }] }
+    })
+    expect(ready).toEqual([
+      { sessionId: 'session-existing', resumed: true, fallbackFromResume: false }
+    ])
+  })
+
+  it('re-asserts advertised model and thinking selections before a resumed prompt', () => {
+    const child = new FakeAcpChild()
+    baseOptions(child, {
+      prompt: 'continue',
+      resumeSessionId: 'session-existing',
+      resumeConfigOptions: [
+        { configId: 'model', value: 'kimi-code/kimi-for-coding' },
+        { configId: 'thinking', value: 'on' }
+      ]
+    })
+    child.emit({
+      jsonrpc: '2.0',
+      id: 1,
+      result: { agentCapabilities: { sessionCapabilities: { resume: {} } } }
+    })
+    child.emit({
+      jsonrpc: '2.0',
+      id: 4,
+      result: {
+        configOptions: [
+          {
+            id: 'model',
+            currentValue: 'kimi-code/k3',
+            options: [
+              { value: 'kimi-code/kimi-for-coding' },
+              { value: 'kimi-code/k3' }
+            ]
+          },
+          {
+            id: 'thinking',
+            currentValue: 'off',
+            options: [{ value: 'off' }, { value: 'on' }]
+          }
+        ]
+      }
+    })
+    expect(child.sent()[2]).toMatchObject({
+      id: 1000,
+      method: 'session/set_config_option',
+      params: {
+        sessionId: 'session-existing',
+        configId: 'model',
+        value: 'kimi-code/kimi-for-coding'
+      }
+    })
+    child.emit({
+      jsonrpc: '2.0',
+      id: 1000,
+      result: {
+        configOptions: [
+          {
+            id: 'model',
+            currentValue: 'kimi-code/kimi-for-coding',
+            options: [{ value: 'kimi-code/kimi-for-coding' }]
+          },
+          {
+            id: 'thinking',
+            currentValue: 'off',
+            options: [{ value: 'off' }, { value: 'on' }]
+          }
+        ]
+      }
+    })
+    expect(child.sent()[3]).toMatchObject({
+      id: 1001,
+      method: 'session/set_config_option',
+      params: { configId: 'thinking', value: 'on' }
+    })
+    child.emit({
+      jsonrpc: '2.0',
+      id: 1001,
+      result: {
+        configOptions: [
+          { id: 'thinking', currentValue: 'on', options: [{ value: 'on' }] }
+        ]
+      }
+    })
+    expect(child.sent()[4]).toMatchObject({
+      id: 3,
+      method: 'session/prompt',
+      params: { prompt: [{ type: 'text', text: 'continue' }] }
+    })
+  })
+
+  it('continues a resumed turn when an optional session config update rejects', () => {
+    const child = new FakeAcpChild()
+    const { events } = baseOptions(child, {
+      prompt: 'continue',
+      resumeSessionId: 'session-existing',
+      resumeConfigOptions: [{ configId: 'thinking', value: 'on' }]
+    })
+    child.emit({
+      jsonrpc: '2.0',
+      id: 1,
+      result: { agentCapabilities: { sessionCapabilities: { resume: {} } } }
+    })
+    child.emit({
+      jsonrpc: '2.0',
+      id: 4,
+      result: {
+        configOptions: [
+          {
+            id: 'thinking',
+            currentValue: 'off',
+            options: [{ value: 'off' }, { value: 'on' }]
+          }
+        ]
+      }
+    })
+    child.emit({
+      jsonrpc: '2.0',
+      id: 1000,
+      error: { code: -32602, message: 'thinking is locked' }
+    })
+
+    expect(child.sent().at(-1)).toMatchObject({ id: 3, method: 'session/prompt' })
+    expect(events).toContainEqual({
+      type: 'provider_warning',
+      text: 'ACP session config "thinking" was not applied: thinking is locked'
+    })
+  })
+
+  it('falls back to session/new with the full prompt when resume rejects', () => {
+    const child = new FakeAcpChild()
+    const ready: Array<{ sessionId: string; resumed: boolean; fallbackFromResume: boolean }> = []
+    baseOptions(child, {
+      prompt: 'slim follow-up',
+      resumeSessionId: 'session-missing',
+      resumeFallbackPrompt: 'full cold-start context',
+      onSessionReady: (session) => ready.push(session)
+    })
+    child.emit({
+      jsonrpc: '2.0',
+      id: 1,
+      result: { agentCapabilities: { sessionCapabilities: { resume: {} } } }
+    })
+    child.emit({
+      jsonrpc: '2.0',
+      id: 4,
+      error: { code: -32000, message: 'session not found' }
+    })
+    expect(child.sent()[2]).toMatchObject({ id: 2, method: 'session/new' })
+    child.emit({ jsonrpc: '2.0', id: 2, result: { sessionId: 'session-new' } })
+    expect(child.sent()[3]).toMatchObject({
+      method: 'session/prompt',
+      params: { sessionId: 'session-new', prompt: [{ type: 'text', text: 'full cold-start context' }] }
+    })
+    expect(ready).toEqual([
+      { sessionId: 'session-new', resumed: false, fallbackFromResume: true }
+    ])
+  })
+
+  it('uses the cold-start prompt when initialize does not advertise resume', () => {
+    const child = new FakeAcpChild()
+    baseOptions(child, {
+      prompt: 'slim follow-up',
+      resumeSessionId: 'session-old-agent',
+      resumeFallbackPrompt: 'full cold-start context'
+    })
+    child.emit({ jsonrpc: '2.0', id: 1, result: { agentCapabilities: {} } })
+    expect(child.sent()[1]).toMatchObject({ id: 2, method: 'session/new' })
+    child.emit({ jsonrpc: '2.0', id: 2, result: { sessionId: 'session-new' } })
+    expect(child.sent()[2]).toMatchObject({
+      method: 'session/prompt',
+      params: { prompt: [{ type: 'text', text: 'full cold-start context' }] }
+    })
+  })
+
+  it('fails a resume-only maintenance turn instead of opening a fresh session', async () => {
+    const child = new FakeAcpChild()
+    baseOptions(child, {
+      prompt: '/compact',
+      resumeSessionId: 'session-existing',
+      allowResumeFallback: false,
+      endProcess: (c) => c.stdin?.end?.()
+    })
+    child.emit({
+      jsonrpc: '2.0',
+      id: 1,
+      result: { agentCapabilities: { sessionCapabilities: { resume: {} } } }
+    })
+    child.emit({ jsonrpc: '2.0', id: 4, error: { code: -32000, message: 'missing' } })
+    await new Promise((r) => setTimeout(r, 20))
+    expect(child.sent().some((message) => message.method === 'session/new')).toBe(false)
+    expect(child.stdinEnded).toBe(true)
+  })
+
   it('routes an inbound fs request to onInboundRequest and replies with its result', () => {
     const child = new FakeAcpChild()
     const seen: string[] = []

@@ -204,6 +204,39 @@ describe('canonical posture + sign/verify', () => {
 	    ).toBe(false)
 	  })
 
+  it('binds a native-resume recovery prompt into the same signature', () => {
+    const context = {
+      provider: 'kimi',
+      scope: 'workspace',
+      appRunId: 'run-kimi-1',
+      appChatId: 'chat-kimi-1',
+      prompt: 'Slim resumed-turn prompt',
+      resumeFallbackPrompt: 'Full cold-session recovery prompt',
+      workflowMode: 'normal'
+    }
+    const signature = signRunPermissionPosture(SECRET, 'plan', readOnlyPerms(), context)
+
+    expect(
+      verifyRunPermissionPosture(SECRET, 'plan', readOnlyPerms(), signature, context)
+    ).toBe(true)
+    expect(
+      verifyRunPermissionPosture(SECRET, 'plan', readOnlyPerms(), signature, {
+        ...context,
+        resumeFallbackPrompt: 'Altered recovery prompt'
+      })
+    ).toBe(false)
+
+    const snapshot = buildRunPermissionPostureSnapshot({
+      approvalMode: 'plan',
+      workflowMode: 'normal',
+      effectivePermissions: readOnlyPerms(),
+      signature,
+      context
+    })
+    expect(snapshot.context?.resumeFallbackPromptHash).toMatch(/^[a-f0-9]{64}$/)
+    expect(JSON.stringify(snapshot)).not.toContain('Full cold-session recovery prompt')
+  })
+
   it('signs even when effectivePermissions is undefined (binds approvalMode)', () => {
     const sig = signRunPermissionPosture(SECRET, 'auto_edit', undefined)
     expect(verifyRunPermissionPosture(SECRET, 'auto_edit', undefined, sig)).toBe(true)

@@ -53,6 +53,12 @@ export interface AgentRunPayload {
   scope: ChatScope
   workspace?: string
   prompt: string
+  /**
+   * Separately authorized cold-session prompt used only when a provider-native
+   * resume cannot be completed. Bound into effectivePermissionsSignature with
+   * `prompt`; never selected by providers that do not implement this contract.
+   */
+  resumeFallbackPrompt?: string
   activeGoal?: ActiveGoal | null
   appRunId?: string
   appChatId?: string

@@ -179,7 +179,7 @@ export function defaultProviderDescriptor(provider: ProviderId): ProviderAdapter
         speedTiers: ['fast'],
         imageAttachments: true,
         contextInjection: true,
-        sessionResumption: false,
+        sessionResumption: true,
         perThreadMcp: false,
         assistantTextStreaming: 'token'
       }

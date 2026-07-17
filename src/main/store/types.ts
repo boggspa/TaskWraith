@@ -625,6 +625,7 @@ export interface RunPermissionPostureSnapshot {
     ensembleParticipantId?: string
     ensembleLaneId?: string
     promptHash?: string
+    resumeFallbackPromptHash?: string
   }
 }
 
@@ -724,16 +725,18 @@ export interface EnsembleParticipant {
   /** See EnsembleStageRole — absent means pre-stage dispatch behavior. */
   stageRole?: EnsembleStageRole
   linkedProviderSessionId?: string | null
+  /** Kimi Code seat state is persisted and can be rehydrated via ACP session/resume. */
+  kimiAcpNativeSession?: boolean
   /** TaskWraith MCP profile pinned to linkedProviderSessionId. */
   taskWraithMcpProfileReceipt?: TaskWraithMcpProfileReceipt
   /** Provider-specific continuity generation and honest cache evidence. */
   seatGeneration?: ProviderSeatGeneration
   /**
    * Host-side SEAT compaction (src/shared/contextCompaction.ts) — the stored
-   * session summary for cursor/kimi participants (no native compaction lever).
+   * session summary for Cursor and legacy/unmarked Kimi participants.
    * Cursor seats bloat because every round re-embeds the tagged transcript
    * into the seat's native session: compaction stores this summary AND clears
-   * `linkedProviderSessionId` above (fresh seat session next round). Kimi
+   * `linkedProviderSessionId` above (fresh seat session next round). Legacy Kimi
    * seats keep their token (injection-bounded) — the summary is durable
    * memory of rounds that fell off the tagged-transcript budget.
    * EnsemblePrompt injects it above the tagged transcript. Transcript pruning
@@ -3430,8 +3433,8 @@ export interface ChatRecord {
    * Cursor: written when the host summarize-and-reset flow completes (the
    * session id above is cleared so the next turn starts fresh and
    * composeRunPrompt injects this block once). Kimi: written without a
-   * session reset (its cross-turn context is injection-bounded); the block
-   * upgrades the lossy recent-transcript window. Transcript pruning is
+   * session reset for legacy/unmarked seats (their context is injection-
+   * bounded); the block upgrades the lossy recent-transcript window. Transcript pruning is
    * fail-open and requires exact contiguous-prefix provenance.
    */
   contextCompactionSummary?: {

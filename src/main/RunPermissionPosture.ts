@@ -146,6 +146,7 @@ export interface RunPermissionPostureContext {
   appRunId?: string | null
   appChatId?: string | null
   prompt?: string | null
+  resumeFallbackPrompt?: string | null
   workflowMode?: string | null
   runtimeProfileId?: string | null
   ensembleParticipantId?: string | null
@@ -165,17 +166,21 @@ export function runPostureContextFromPayload(payload: {
   appRunId?: unknown
   appChatId?: unknown
   prompt?: unknown
+  resumeFallbackPrompt?: unknown
   workflowMode?: unknown
   runtimeProfileId?: unknown
   ensembleRun?: unknown
 }): RunPermissionPostureContext {
   const ensembleRun = isRecord(payload.ensembleRun) ? payload.ensembleRun : null
+  const resumeFallbackPrompt =
+    typeof payload.resumeFallbackPrompt === 'string' ? payload.resumeFallbackPrompt : ''
   return {
     provider: optionalString(payload.provider),
     scope: optionalString(payload.scope),
     appRunId: optionalString(payload.appRunId),
     appChatId: optionalString(payload.appChatId),
     prompt: typeof payload.prompt === 'string' ? payload.prompt : String(payload.prompt ?? ''),
+    ...(resumeFallbackPrompt ? { resumeFallbackPrompt } : {}),
     workflowMode: payload.workflowMode === 'plan' ? 'plan' : 'normal',
     runtimeProfileId: optionalString(payload.runtimeProfileId),
     ensembleParticipantId: ensembleRun ? optionalString(ensembleRun.participantId) : null,
@@ -284,12 +289,14 @@ function normalizeRunPermissionPostureContext(
   context?: RunPermissionPostureContext | null
 ): RunPermissionPostureContext | null {
   if (!context) return null
+  const resumeFallbackPrompt = normalizeContextString(context.resumeFallbackPrompt)
   return {
     provider: normalizeContextString(context.provider),
     scope: normalizeContextString(context.scope),
     appRunId: normalizeContextString(context.appRunId),
     appChatId: normalizeContextString(context.appChatId),
     prompt: normalizeContextString(context.prompt),
+    ...(resumeFallbackPrompt ? { resumeFallbackPrompt } : {}),
     workflowMode: normalizeContextString(context.workflowMode),
     runtimeProfileId: normalizeContextString(context.runtimeProfileId),
     ensembleParticipantId: normalizeContextString(context.ensembleParticipantId),
@@ -306,6 +313,9 @@ function snapshotContext(
 ): RunPermissionPostureSnapshot['context'] | undefined {
   if (!context) return undefined
   const promptHash = context.prompt ? sha256Hex(context.prompt) : undefined
+  const resumeFallbackPromptHash = context.resumeFallbackPrompt
+    ? sha256Hex(context.resumeFallbackPrompt)
+    : undefined
   const snapshot = {
     ...(context.provider ? { provider: context.provider } : {}),
     ...(context.scope ? { scope: context.scope } : {}),
@@ -317,7 +327,8 @@ function snapshotContext(
       ? { ensembleParticipantId: context.ensembleParticipantId }
       : {}),
     ...(context.ensembleLaneId ? { ensembleLaneId: context.ensembleLaneId } : {}),
-    ...(promptHash ? { promptHash } : {})
+    ...(promptHash ? { promptHash } : {}),
+    ...(resumeFallbackPromptHash ? { resumeFallbackPromptHash } : {})
   }
   return Object.keys(snapshot).length > 0 ? snapshot : undefined
 }

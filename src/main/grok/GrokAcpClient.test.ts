@@ -358,7 +358,7 @@ describe('runGrokAcpTurn', () => {
     const prompts = child.sent().filter((message) => message.method === 'session/prompt')
     expect(prompts).toHaveLength(2)
     expect(prompts[1]).toMatchObject({
-      id: 4,
+      id: 5,
       params: { sessionId: 's-1' }
     })
     expect(JSON.stringify(prompts[1])).toContain('denied by TaskWraith policy')
@@ -371,7 +371,8 @@ describe('runGrokAcpTurn', () => {
     ).toBe(true)
 
     // A delayed duplicate response and the uncorrelated extension notification
-    // from prompt 3 cannot terminate the now-active prompt 4.
+    // from prompt 3 cannot terminate the now-active prompt 5 (id 4 is reserved
+    // for the optional session/resume lifecycle request).
     child.emit({ jsonrpc: '2.0', id: 3, result: { stopReason: 'cancelled' } })
     child.emit({
       jsonrpc: '2.0',
@@ -393,7 +394,7 @@ describe('runGrokAcpTurn', () => {
         }
       }
     })
-    child.emit({ jsonrpc: '2.0', id: 4, result: { stopReason: 'end_turn' } })
+    child.emit({ jsonrpc: '2.0', id: 5, result: { stopReason: 'end_turn' } })
     await new Promise((r) => setTimeout(r, 40))
 
     expect(child.killed).toBe(true)
@@ -430,7 +431,7 @@ describe('runGrokAcpTurn', () => {
     expect(child.sent().filter((message) => message.method === 'session/prompt')).toHaveLength(2)
     expect(child.killed).toBe(false)
 
-    await denyTool(43, 4)
+    await denyTool(43, 5)
     await new Promise((r) => setTimeout(r, 40))
     expect(child.sent().filter((message) => message.method === 'session/prompt')).toHaveLength(2)
     expect(child.killed).toBe(true)

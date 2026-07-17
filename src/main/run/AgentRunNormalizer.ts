@@ -163,6 +163,8 @@ export function normalizeAgentRunPayload(
         appRunId: optionalString(payload.appRunId),
         appChatId,
         prompt: typeof payload.prompt === 'string' ? payload.prompt : String(payload.prompt ?? ''),
+        resumeFallbackPrompt:
+          typeof payload.resumeFallbackPrompt === 'string' ? payload.resumeFallbackPrompt : undefined,
         workflowMode: requestedWorkflowMode,
         runtimeProfileId: optionalString(payload.runtimeProfileId),
         ensembleRun: payload.ensembleRun
@@ -197,6 +199,7 @@ export function normalizeAgentRunPayload(
     scope,
     workspace,
     prompt: typeof payload.prompt === 'string' ? payload.prompt : String(payload.prompt ?? ''),
+    resumeFallbackPrompt: optionalString(payload.resumeFallbackPrompt),
     activeGoal: normalizeAgentRunActiveGoal(payload.activeGoal),
     appRunId,
     appChatId,

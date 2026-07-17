@@ -2,7 +2,7 @@
 //
 // Unlike Grok (which executes file/shell tools natively and only asks via
 // session/request_permission), Kimi Code routes its built-in file tools
-// (Read/Grep/Glob/Write/Edit) through the ACP CLIENT fs capabilities when the
+// (Read/Write/Edit) through the ACP CLIENT fs capabilities when the
 // client advertises them. This adapter advertises fs read+write and implements
 // the handlers with WORKSPACE PATH AUTHORITY: a read or write for a path
 // outside the granted roots is refused, so the model cannot use its auto-
@@ -40,12 +40,20 @@ export interface KimiAcpFs {
 
 export interface KimiAcpRunOptions {
   prompt: string
+  /** Existing Kimi Code ACP session persisted in this seat's KIMI_CODE_HOME. */
+  resumeSessionId?: string | null
+  /** Full-context prompt used only when native resume cannot be completed. */
+  resumeFallbackPrompt?: string
+  /** Native maintenance turns such as /compact must never cold-start. */
+  allowResumeFallback?: boolean
+  /** Model/thinking selections to re-assert on a resumed native session. */
+  resumeConfigOptions?: ReadonlyArray<{ configId: string; value: string }>
   cwd: string
   spawnProcess: () => AcpChildProcess
   /** Roots the fs handlers will serve: the workspace + external path grants. */
   fsRoots: readonly string[]
   fs: KimiAcpFs
-  /** MCP servers advertised to session/new (per-run TaskWraith bridge). */
+  /** MCP servers advertised to session/new or session/resume. */
   mcpServers?: unknown[]
   onEvent: (event: AcpRunEvent) => void
   onProcess?: (child: AcpChildProcess) => void
@@ -55,6 +63,11 @@ export interface KimiAcpRunOptions {
   ) => AcpPermissionDecision | Promise<AcpPermissionDecision>
   onClose?: (code: number | null, turnComplete: boolean, terminalStatus?: string) => void
   onRawFrame?: (direction: 'in' | 'out', message: unknown) => void
+  onSessionReady?: (session: {
+    sessionId: string
+    resumed: boolean
+    fallbackFromResume: boolean
+  }) => void
 }
 
 export type KimiAcpRunHandle = AcpTurnHandle
@@ -184,6 +197,10 @@ export function runKimiAcpTurn(options: KimiAcpRunOptions): KimiAcpRunHandle {
   })
   return runAcpTurn({
     prompt: options.prompt,
+    resumeSessionId: options.resumeSessionId,
+    resumeFallbackPrompt: options.resumeFallbackPrompt,
+    allowResumeFallback: options.allowResumeFallback,
+    resumeConfigOptions: options.resumeConfigOptions,
     cwd: options.cwd,
     spawnProcess: options.spawnProcess,
     initializeParams: {
@@ -214,6 +231,7 @@ export function runKimiAcpTurn(options: KimiAcpRunOptions): KimiAcpRunHandle {
       }
     },
     onClose: options.onClose,
-    onRawFrame: options.onRawFrame
+    onRawFrame: options.onRawFrame,
+    onSessionReady: options.onSessionReady
   })
 }

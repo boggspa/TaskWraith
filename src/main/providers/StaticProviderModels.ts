@@ -800,6 +800,13 @@ function kimiCliModelArg(model: string, serviceTier?: string | null): string | n
   return model
 }
 
+/** Exact model value understood by Kimi Code's ACP config picker. Unlike the
+ * CLI argv helper, this must be explicit for the default model because a
+ * resumed session's persisted model takes precedence over process defaults. */
+export function kimiAcpModelConfigValue(model: string, serviceTier?: string | null): string {
+  return kimiCliModelArg(model, serviceTier) || KIMI_STANDARD_CLI_MODEL
+}
+
 export function appendKimiModelArgs(
   args: string[],
   model: string,
