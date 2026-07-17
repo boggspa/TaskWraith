@@ -29308,6 +29308,9 @@ if (isGeminiMcpBridgeProcess) {
   app.on('second-instance', () => {
     // A second launch attempted — surface the existing window (recreating
     // it if the app is running headless after window-all-closed).
+    void startGeminiMcpBroker().catch((error) => {
+      console.error('Failed to restart Gemini MCP broker on second-instance activation', error)
+    })
     if (mainWindow && !mainWindow.isDestroyed()) {
       if (mainWindow.isMinimized()) mainWindow.restore()
       mainWindow.show()
@@ -38944,6 +38947,12 @@ if (isGeminiMcpBridgeProcess) {
     scheduleNextTaskTimer()
 
     app.on('activate', function () {
+      // macOS keeps the process alive after the last window closes. That path
+      // deliberately stops the MCP broker, so a Dock reopen must restore it
+      // before a newly-created provider seat can advertise TaskWraith tools.
+      void startGeminiMcpBroker().catch((error) => {
+        console.error('Failed to restart Gemini MCP broker on app activation', error)
+      })
       if (BrowserWindow.getAllWindows().length === 0) createWindow()
     })
   })

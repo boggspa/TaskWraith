@@ -1116,8 +1116,34 @@ export class McpBridgeRuntime {
   }
 
   async startGeminiMcpBroker(): Promise<void> {
-    if (this.geminiMcpBroker) return
     if (this.geminiMcpBrokerStartPromise) return this.geminiMcpBrokerStartPromise
+
+    if (this.geminiMcpBroker) {
+      const broker = this.geminiMcpBroker
+      const socketPath = this.deps.getGeminiMcpSocketPath()
+      const socketPresent =
+        process.platform === 'win32'
+          ? true
+          : await fs
+              .stat(socketPath)
+              .then((stat) => stat.isSocket())
+              .catch(() => false)
+      if (this.geminiMcpBroker === broker && broker.listening && socketPresent) return
+      // A Unix server can remain `listening` after its pathname is unlinked.
+      // In that state every new provider bridge gets ENOENT while this field
+      // still looks healthy. Retire the unreachable listener and rebind below.
+      if (this.geminiMcpBroker === broker) this.geminiMcpBroker = null
+      try {
+        broker.close()
+      } catch {
+        // An already-closed stale listener is safe to replace.
+      }
+    }
+
+    // Another caller may have repaired the broker while the socket stat above
+    // was in flight. Share its startup rather than unlinking its fresh socket.
+    if (this.geminiMcpBrokerStartPromise) return this.geminiMcpBrokerStartPromise
+    if (this.geminiMcpBroker) return
 
     this.geminiMcpBrokerStartPromise = (async () => {
       const socketPath = this.deps.getGeminiMcpSocketPath()
@@ -1166,6 +1192,9 @@ export class McpBridgeRuntime {
       })
 
       this.geminiMcpBroker = server
+      server.once('close', () => {
+        if (this.geminiMcpBroker === server) this.geminiMcpBroker = null
+      })
       try {
         await new Promise<void>((resolveListen, rejectListen) => {
           const handleError = (error: Error) => {
