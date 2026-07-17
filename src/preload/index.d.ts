@@ -79,10 +79,12 @@ import {
   MemoryProposal,
   MemoryProposalPack
 } from '../main/store/types'
-import type { Project, ProjectOp } from '../shared/projects'
+import type { Project, ProjectOp, ProjectWorkProfile } from '../shared/projects'
 import type {
   ProjectLegacyImportMarker,
-  ProjectLegacyImportResult
+  ProjectLegacyImportResult,
+  ProjectRegistryMutationResult,
+  ProjectRegistryState
 } from '../main/store/ProjectRegistry'
 import type {
   ChatPopoutRoundExpansionSnapshot,
@@ -1437,9 +1439,14 @@ declare global {
       removeWorkspace: (id: string) => Promise<void>
       getProjectsSnapshot: () => Promise<{
         projects: Project[]
+        workProfiles: ProjectWorkProfile[]
         legacyImportMarker: ProjectLegacyImportMarker | null
       }>
-      applyProjectOp: (op: ProjectOp) => Promise<{ projects: Project[]; changed: boolean }>
+      applyProjectOp: (op: ProjectOp) => Promise<ProjectRegistryMutationResult>
+      setProjectHomeChat: (
+        projectId: string,
+        chatId: string | null
+      ) => Promise<ProjectRegistryMutationResult>
       importLegacyProjects: (rawJson: string | null) => Promise<ProjectLegacyImportResult>
       clearWorkspaces: () => Promise<void>
       getChats: (workspaceId?: string) => Promise<ChatRecord[]>
@@ -2004,7 +2011,7 @@ declare global {
       onAuditRunChanged: (callback: (run: AuditRunRecord) => void) => () => void
       onUsageChanged: (callback: () => void) => () => void
       onChatUpdated: (callback: (chat: ChatRecord) => void) => () => void
-      onProjectsChanged: (callback: (projects: Project[]) => void) => () => void
+      onProjectsChanged: (callback: (state: ProjectRegistryState) => void) => () => void
       onContextCompactionProgress: (
         callback: (event: ContextCompactionProgressEvent) => void
       ) => () => void

@@ -270,6 +270,7 @@ export const MAIN_RENDERER_ONLY_IPC_CHANNELS = new Set<string>([
   // from the main window only; the domain handler asserts the same authority.
   'projects:snapshot',
   'projects:apply-op',
+  'projects:set-home-chat',
   'projects:import-legacy',
 
   // Global settings, runtime profiles, encrypted secrets, and handoff records.

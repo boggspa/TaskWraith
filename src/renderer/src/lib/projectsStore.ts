@@ -10,6 +10,8 @@ import {
   applyReorderProject,
   applySetProjectIconAndHue,
   cloneProject,
+  cloneProjectWorkProfile,
+  migrateProjectWorkProfiles,
   migrateProjects,
   newProjectId,
   projectById,
@@ -17,7 +19,8 @@ import {
   type Project,
   type ProjectInput,
   type ProjectOp,
-  type ProjectPatch
+  type ProjectPatch,
+  type ProjectWorkProfile
 } from '../../../shared/projects'
 
 /**
@@ -55,11 +58,17 @@ const STORAGE_KEY = 'taskwraith-sidebar-projects'
 
 export const PROJECTS_STORAGE_KEY = STORAGE_KEY
 
-export type { Project, ProjectIcon, ProjectInput } from '../../../shared/projects'
+export type {
+  Project,
+  ProjectIcon,
+  ProjectInput,
+  ProjectWorkProfile
+} from '../../../shared/projects'
 
 type ProjectsBridge = Window['api']
 
 let snapshot: Project[] = []
+let workProfiles: ProjectWorkProfile[] = []
 let pendingOpCount = 0
 let initPromise: Promise<void> | null = null
 let unsubscribeBroadcast: (() => void) | null = null
@@ -80,14 +89,39 @@ function notifyProjectListeners(): void {
   }
 }
 
-/** Adopt an authoritative record list from main (snapshot fetch, op result,
- * or broadcast). Skipped while ops are in flight — see module doc. */
-function adoptAuthoritative(projects: unknown): void {
-  if (!Array.isArray(projects)) return
+/**
+ * Adopt authoritative registry state from main (snapshot fetch, op/claim
+ * result, or broadcast). Skipped while ops are in flight — see module doc.
+ * Accepts the `{ projects, workProfiles }` state object or a bare project
+ * array (a payload without profiles leaves the current profiles untouched).
+ */
+function adoptAuthoritative(payload: unknown): void {
   if (pendingOpCount > 0) return
-  const next = migrateProjects(projects, Date.now())
-  if (JSON.stringify(next) === JSON.stringify(snapshot)) return
-  snapshot = next
+  let projectsCandidate: unknown = payload
+  let profilesCandidate: unknown
+  if (payload && typeof payload === 'object' && !Array.isArray(payload)) {
+    const state = payload as { projects?: unknown; workProfiles?: unknown }
+    projectsCandidate = state.projects
+    profilesCandidate = state.workProfiles
+  }
+  if (!Array.isArray(projectsCandidate)) return
+  const now = Date.now()
+  const nextProjects = migrateProjects(projectsCandidate, now)
+  const nextProfiles = Array.isArray(profilesCandidate)
+    ? migrateProjectWorkProfiles(
+        profilesCandidate,
+        new Set(nextProjects.map((project) => project.id)),
+        now
+      )
+    : workProfiles
+  if (
+    JSON.stringify(nextProjects) === JSON.stringify(snapshot) &&
+    JSON.stringify(nextProfiles) === JSON.stringify(workProfiles)
+  ) {
+    return
+  }
+  snapshot = nextProjects
+  workProfiles = nextProfiles
   notifyProjectListeners()
 }
 
@@ -146,8 +180,7 @@ async function runLegacyMigrationHandshake(
   writeLegacyTombstone()
   if (typeof api.getProjectsSnapshot === 'function') {
     try {
-      const snap = await api.getProjectsSnapshot()
-      adoptAuthoritative(snap?.projects)
+      adoptAuthoritative(await api.getProjectsSnapshot())
     } catch {
       // The projects-changed broadcast already carried the imported records.
     }
@@ -168,7 +201,7 @@ function ensureInitialized(): Promise<void> {
   initPromise = (async () => {
     try {
       const snap = await api.getProjectsSnapshot()
-      adoptAuthoritative(snap?.projects)
+      adoptAuthoritative(snap)
       await runLegacyMigrationHandshake(api, Boolean(snap?.legacyImportMarker))
     } catch (error) {
       console.error('Projects store hydrate failed', error)
@@ -185,6 +218,7 @@ export function whenProjectsStoreReady(): Promise<void> {
 /** Test seam: module state survives across specs otherwise. */
 export function resetProjectsStoreForTests(): void {
   snapshot = []
+  workProfiles = []
   pendingOpCount = 0
   initPromise = null
   unsubscribeBroadcast?.()
@@ -199,7 +233,7 @@ function dispatchOp(op: ProjectOp): void {
   void api.applyProjectOp(op).then(
     (result) => {
       pendingOpCount -= 1
-      adoptAuthoritative(result?.projects)
+      adoptAuthoritative(result)
     },
     (error) => {
       pendingOpCount -= 1
@@ -207,7 +241,7 @@ function dispatchOp(op: ProjectOp): void {
       if (typeof api.getProjectsSnapshot === 'function') {
         void api
           .getProjectsSnapshot()
-          .then((snap) => adoptAuthoritative(snap?.projects))
+          .then((snap) => adoptAuthoritative(snap))
           .catch(() => {})
       }
     }
@@ -232,6 +266,39 @@ export function getProject(projectId: string): Project | null {
   void ensureInitialized()
   const project = projectById(snapshot, projectId)
   return project ? cloneProject(project) : null
+}
+
+export function listProjectWorkProfiles(): ProjectWorkProfile[] {
+  void ensureInitialized()
+  return workProfiles.map(cloneProjectWorkProfile)
+}
+
+export function getProjectWorkProfile(projectId: string): ProjectWorkProfile | null {
+  if (!projectId) return null
+  void ensureInitialized()
+  const profile = workProfiles.find((entry) => entry.projectId === projectId)
+  return profile ? cloneProjectWorkProfile(profile) : null
+}
+
+/**
+ * The home-chat claim. Deliberately ASYNC and non-optimistic, unlike the
+ * list mutations: claims are rare, main enforces one-home-per-chat against
+ * authoritative state, and an optimistic twin would need that uniqueness
+ * check locally without the authority to make it. Callers await the result;
+ * validation errors ('Chat is already the home of another project.', …)
+ * propagate for the UI to surface.
+ */
+export async function setProjectHomeChat(
+  projectId: string,
+  chatId: string | null
+): Promise<void> {
+  await ensureInitialized()
+  const api = bridge()
+  if (!api || typeof api.setProjectHomeChat !== 'function') {
+    throw new Error('Project home chats need the desktop bridge.')
+  }
+  const result = await api.setProjectHomeChat(projectId, chatId)
+  adoptAuthoritative(result)
 }
 
 export function createProject(input: ProjectInput): Project {
@@ -335,11 +402,19 @@ export function removeChatFromProject(projectId: string, chatId: string): Projec
 }
 
 /**
- * Chat-deletion reconciliation. Unlike the other mutations this ALWAYS
- * dispatches (when the chat id is non-empty): the local snapshot may not be
- * hydrated yet when App.tsx deletes a chat right after boot, and main must
- * clean authoritative membership regardless of what this renderer can see.
- * Main's apply is a persisted no-op when nothing references the chat.
+ * Remove a chat id from every project's membership.
+ *
+ * NOT part of the chat-deletion flow anymore: main reconciles membership
+ * itself at the AppStore.deleteChat / clearChats choke points (covering the
+ * reaper, clear-chats, and iOS-bridge deletes the renderer never sees) and
+ * broadcasts `projects-changed`. The App.tsx delete path used to call this as
+ * belt-and-braces; that call was removed because main coverage is total and
+ * secondary windows could never dispatch project ops anyway
+ * (`projects:apply-op` is main-renderer-only). This wrapper stays as the
+ * explicit UI-level lever for the same op — unlike the other mutations it
+ * ALWAYS dispatches, so it can clean authoritative membership even when the
+ * local snapshot isn't hydrated. Main's apply is a persisted no-op when
+ * nothing references the chat.
  */
 export function removeChatFromAllProjects(chatId: string): number {
   void ensureInitialized()

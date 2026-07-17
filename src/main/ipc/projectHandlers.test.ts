@@ -35,8 +35,15 @@ function createDeps() {
   }
   const deps: ProjectHandlerDeps = {
     getProjects: vi.fn(() => []),
+    getWorkProfiles: vi.fn(() => [{ projectId: 'project-a', homeChatId: 'chat-1', updatedAt: 9 }]),
     getLegacyImportMarker: vi.fn(() => marker),
-    applyProjectOp: vi.fn((op: ProjectOp) => ({ projects: [], changed: op.kind !== 'delete' })),
+    applyProjectOp: vi.fn((op: ProjectOp) => ({
+      projects: [],
+      workProfiles: [],
+      changed: op.kind !== 'delete'
+    })),
+    setProjectHomeChat: vi.fn(() => ({ projects: [], workProfiles: [], changed: true })),
+    chatExists: vi.fn((chatId: string) => chatId !== 'chat-missing'),
     importLegacyProjects: vi.fn((rawJson: string | null) => ({
       status: rawJson === null ? ('nothing-to-import' as const) : ('imported' as const),
       importedCount: 0,
@@ -48,10 +55,11 @@ function createDeps() {
 }
 
 describe('registerProjectHandlers', () => {
-  it('registers the three project channels', () => {
+  it('registers the four project channels', () => {
     registerProjectHandlers(createDeps().deps)
     expect(handlerFor('projects:snapshot')).toBeTypeOf('function')
     expect(handlerFor('projects:apply-op')).toBeTypeOf('function')
+    expect(handlerFor('projects:set-home-chat')).toBeTypeOf('function')
     expect(handlerFor('projects:import-legacy')).toBeTypeOf('function')
   })
 
@@ -60,17 +68,43 @@ describe('registerProjectHandlers', () => {
     registerProjectHandlers(deps)
     handlerFor('projects:snapshot')({})
     handlerFor('projects:apply-op')({}, { kind: 'delete', projectId: 'p' })
+    handlerFor('projects:set-home-chat')({}, 'project-a', 'chat-1')
     handlerFor('projects:import-legacy')({}, null)
-    expect(deps.assertSenderCanManageProjects).toHaveBeenCalledTimes(3)
+    expect(deps.assertSenderCanManageProjects).toHaveBeenCalledTimes(4)
   })
 
-  it('returns projects plus the import marker as the snapshot', () => {
+  it('returns projects, work profiles, and the import marker as the snapshot', () => {
     const { deps, marker } = createDeps()
     registerProjectHandlers(deps)
     expect(handlerFor('projects:snapshot')({})).toEqual({
       projects: [],
+      workProfiles: [{ projectId: 'project-a', homeChatId: 'chat-1', updatedAt: 9 }],
       legacyImportMarker: marker
     })
+  })
+
+  it('validates home-chat claims and gates them on chat existence', () => {
+    const { deps } = createDeps()
+    registerProjectHandlers(deps)
+    const handler = handlerFor('projects:set-home-chat')
+
+    expect(handler({}, 'project-a', '  chat-1  ')).toEqual({
+      projects: [],
+      workProfiles: [],
+      changed: true
+    })
+    expect(deps.setProjectHomeChat).toHaveBeenCalledWith('project-a', 'chat-1')
+
+    handler({}, 'project-a', null)
+    expect(deps.setProjectHomeChat).toHaveBeenCalledWith('project-a', null)
+    handler({}, 'project-a', undefined)
+    expect(deps.setProjectHomeChat).toHaveBeenLastCalledWith('project-a', null)
+
+    expect(() => handler({}, '', 'chat-1')).toThrow('Project id is required.')
+    expect(() => handler({}, 'project-a', 42)).toThrow('Malformed chat id.')
+    expect(() => handler({}, 'project-a', '   ')).toThrow('Chat id is required.')
+    expect(() => handler({}, 'project-a', 'chat-missing')).toThrow('Chat not found.')
+    expect(deps.setProjectHomeChat).toHaveBeenCalledTimes(3)
   })
 
   it('parses ops before applying and rejects malformed payloads', () => {
@@ -78,7 +112,11 @@ describe('registerProjectHandlers', () => {
     registerProjectHandlers(deps)
 
     const op: ProjectOp = { kind: 'rename', projectId: 'p', name: 'Next', now: 5 }
-    expect(handlerFor('projects:apply-op')({}, op)).toEqual({ projects: [], changed: true })
+    expect(handlerFor('projects:apply-op')({}, op)).toEqual({
+      projects: [],
+      workProfiles: [],
+      changed: true
+    })
     expect(deps.applyProjectOp).toHaveBeenCalledWith(op)
 
     expect(() => handlerFor('projects:apply-op')({}, { kind: 'rename', projectId: 'p' })).toThrow(

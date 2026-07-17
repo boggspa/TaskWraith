@@ -71,6 +71,7 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'clear-workspaces': [],
   'projects:snapshot': [],
   'projects:apply-op': ['object'],
+  'projects:set-home-chat': ['nonEmptyString', 'optionalString'],
   'projects:import-legacy': ['optionalString'],
   'get-chats': ['optionalString'],
   'get-chat-list': ['optionalString'],

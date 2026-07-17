@@ -1134,6 +1134,8 @@ const api = {
   clearWorkspaces: () => ipcRenderer.invoke('clear-workspaces'),
   getProjectsSnapshot: () => ipcRenderer.invoke('projects:snapshot'),
   applyProjectOp: (op: unknown) => ipcRenderer.invoke('projects:apply-op', op),
+  setProjectHomeChat: (projectId: string, chatId: string | null) =>
+    ipcRenderer.invoke('projects:set-home-chat', projectId, chatId),
   importLegacyProjects: (rawJson: string | null) =>
     ipcRenderer.invoke('projects:import-legacy', rawJson),
   getChats: (workspaceId?: string) => ipcRenderer.invoke('get-chats', workspaceId),

@@ -35839,8 +35839,11 @@ if (isGeminiMcpBridgeProcess) {
     })
     registerProjectHandlers({
       getProjects: () => AppStore.getProjects(),
+      getWorkProfiles: () => AppStore.getProjectWorkProfiles(),
       getLegacyImportMarker: () => AppStore.getProjectsLegacyImportMarker(),
       applyProjectOp: (op) => AppStore.applyProjectOp(op),
+      setProjectHomeChat: (projectId, chatId) => AppStore.setProjectHomeChat(projectId, chatId),
+      chatExists: (chatId) => Boolean(AppStore.getChat(chatId)),
       importLegacyProjects: (rawJson) => AppStore.importLegacyProjects(rawJson),
       assertSenderCanManageProjects: assertMainRendererSender
     })

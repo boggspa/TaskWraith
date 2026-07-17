@@ -22,6 +22,7 @@ const fake = vi.hoisted(() => {
   const api = {
     getProjectsSnapshot: vi.fn(),
     applyProjectOp: vi.fn(),
+    setProjectHomeChat: vi.fn(),
     importLegacyProjects: vi.fn(),
     onProjectsChanged: vi.fn()
   }
@@ -33,11 +34,14 @@ const fake = vi.hoisted(() => {
 import {
   addChatToProject,
   createProject,
+  getProjectWorkProfile,
   listProjects,
+  listProjectWorkProfiles,
   PROJECTS_STORAGE_KEY,
   removeChatFromAllProjects,
   renameProject,
   resetProjectsStoreForTests,
+  setProjectHomeChat,
   subscribeProjects,
   whenProjectsStoreReady,
   type Project
@@ -74,13 +78,20 @@ beforeEach(() => {
   fake.broadcast.cb = null
   fake.api.getProjectsSnapshot.mockReset()
   fake.api.applyProjectOp.mockReset()
+  fake.api.setProjectHomeChat.mockReset()
   fake.api.importLegacyProjects.mockReset()
   fake.api.onProjectsChanged.mockReset()
   fake.api.getProjectsSnapshot.mockImplementation(async () => ({
     projects: [],
+    workProfiles: [],
     legacyImportMarker: null
   }))
   fake.api.applyProjectOp.mockImplementation(async () => ({ projects: [], changed: true }))
+  fake.api.setProjectHomeChat.mockImplementation(async () => ({
+    projects: [],
+    workProfiles: [],
+    changed: true
+  }))
   fake.api.importLegacyProjects.mockImplementation(async () => ({
     status: 'imported',
     importedCount: 0,
@@ -191,6 +202,61 @@ describe('projectsStore optimistic mutations', () => {
       kind: 'remove-chat-everywhere',
       chatId: 'chat-unknown'
     })
+  })
+})
+
+describe('projectsStore work profiles', () => {
+  it('hydrates profiles from the snapshot and adopts them from state broadcasts', async () => {
+    fake.api.getProjectsSnapshot.mockImplementation(async () => ({
+      projects: [legacyRecord('project-a', 'Alpha', ['chat-1'])],
+      workProfiles: [{ projectId: 'project-a', homeChatId: 'chat-1', updatedAt: 5 }],
+      legacyImportMarker: null
+    }))
+    await whenProjectsStoreReady()
+    expect(getProjectWorkProfile('project-a')).toEqual({
+      projectId: 'project-a',
+      homeChatId: 'chat-1',
+      updatedAt: 5
+    })
+
+    fake.broadcast.cb?.({
+      projects: [legacyRecord('project-a', 'Alpha', ['chat-1'])],
+      workProfiles: []
+    })
+    expect(listProjectWorkProfiles()).toEqual([])
+  })
+
+  it('drops profiles whose project vanished from the adopted payload', async () => {
+    await whenProjectsStoreReady()
+    fake.broadcast.cb?.({
+      projects: [],
+      workProfiles: [{ projectId: 'project-gone', homeChatId: 'chat-1', updatedAt: 5 }]
+    })
+    expect(listProjectWorkProfiles()).toEqual([])
+  })
+
+  it('claims a home chat through main and adopts the authoritative result', async () => {
+    await whenProjectsStoreReady()
+    fake.api.setProjectHomeChat.mockImplementation(async () => ({
+      projects: [legacyRecord('project-a', 'Alpha', ['chat-1'])],
+      workProfiles: [{ projectId: 'project-a', homeChatId: 'chat-1', updatedAt: 6 }],
+      changed: true
+    }))
+    await setProjectHomeChat('project-a', 'chat-1')
+    expect(fake.api.setProjectHomeChat).toHaveBeenCalledWith('project-a', 'chat-1')
+    expect(getProjectWorkProfile('project-a')?.homeChatId).toBe('chat-1')
+    expect(listProjects().map((project) => project.id)).toEqual(['project-a'])
+  })
+
+  it('propagates claim rejections to the caller', async () => {
+    await whenProjectsStoreReady()
+    fake.api.setProjectHomeChat.mockImplementation(async () => {
+      throw new Error('Chat is already the home of another project.')
+    })
+    await expect(setProjectHomeChat('project-a', 'chat-1')).rejects.toThrow(
+      'Chat is already the home of another project.'
+    )
+    expect(listProjectWorkProfiles()).toEqual([])
   })
 })
 
