@@ -18,13 +18,16 @@ import {
   createProject,
   deleteProject,
   listProjects,
+  listProjectWorkProfiles,
   moveProject,
   removeChatFromProject,
   renameProject,
   reorderProject,
+  setProjectHomeChat,
   setProjectIconAndHue,
   subscribeProjects,
-  type Project
+  type Project,
+  type ProjectWorkProfile
 } from '../lib/projectsStore'
 import { getProviderLabel } from '../lib/providerLabels'
 import { SidebarRunningGhost } from './AppChromeSymbols'
@@ -204,6 +207,9 @@ export function ProjectsSidebarView({
   onSearchResultCountChange
 }: ProjectsSidebarViewProps): JSX.Element {
   const [projects, setProjects] = useState<Project[]>(() => listProjects())
+  const [workProfiles, setWorkProfiles] = useState<ProjectWorkProfile[]>(() =>
+    listProjectWorkProfiles()
+  )
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null)
   const [projectDropTargetId, setProjectDropTargetId] = useState<string | null>(null)
   const [projectDraft, setProjectDraft] = useState<ProjectDraft | null>(null)
@@ -220,7 +226,10 @@ export function ProjectsSidebarView({
   })
 
   useEffect(() => {
-    const refresh = (): void => setProjects(listProjects())
+    const refresh = (): void => {
+      setProjects(listProjects())
+      setWorkProfiles(listProjectWorkProfiles())
+    }
     refresh()
     return subscribeProjects(refresh)
   }, [])
@@ -243,6 +252,13 @@ export function ProjectsSidebarView({
 
   const runningChatIdSet = useMemo(() => new Set(runningChatIds), [runningChatIds])
   const selectedChatId = activeChatId ?? currentChat?.appChatId ?? null
+  const homeChatIdByProjectId = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const profile of workProfiles) {
+      if (profile.homeChatId) map.set(profile.projectId, profile.homeChatId)
+    }
+    return map
+  }, [workProfiles])
   const projectTree = useMemo(() => buildProjectTree(projects), [projects])
   const flatNodes = useMemo(() => flattenNodes(projectTree), [projectTree])
   const selectedProject = selectedProjectId
@@ -275,6 +291,21 @@ export function ProjectsSidebarView({
     } catch (error) {
       window.alert(error instanceof Error ? error.message : 'Project update failed.')
     }
+  }
+
+  /** Claims are async (main enforces one-home-per-chat authoritatively); the
+   * subscribe refresh usually lands first via the adoption notify, and the
+   * explicit re-read here covers the in-flight-op window where adoption is
+   * deferred. Rejections surface exactly like runStoreAction failures. */
+  const updateHomeChat = (projectId: string, chatId: string | null): void => {
+    void setProjectHomeChat(projectId, chatId)
+      .then(() => {
+        setProjects(listProjects())
+        setWorkProfiles(listProjectWorkProfiles())
+      })
+      .catch((error) => {
+        window.alert(error instanceof Error ? error.message : 'Project home update failed.')
+      })
   }
 
   const startProjectDraft = (parentId: string | null): void => {
@@ -439,12 +470,15 @@ export function ProjectsSidebarView({
     const provider = chatProviderId(chat)
     const isRunning = runningChatIdSet.has(chat.appChatId)
     const isArchived = chat.archived === true
+    const isHome = homeChatIdByProjectId.get(project.id) === chat.appChatId
     return (
       <div
         key={chat.appChatId}
         className={`sidebar-project-member provider-${provider} ${
           selectedChatId === chat.appChatId ? 'active' : ''
-        } ${isRunning ? 'running' : ''} ${isArchived ? 'is-archived' : ''}`}
+        } ${isRunning ? 'running' : ''} ${isArchived ? 'is-archived' : ''} ${
+          isHome ? 'is-home' : ''
+        }`}
         title={chat.title}
       >
         <button
@@ -476,9 +510,30 @@ export function ProjectsSidebarView({
           </span>
           <span className="sidebar-project-member-meta">
             {workspaceLabel(chat)}
+            {isHome && <span className="sidebar-project-home-chip">Home</span>}
             {isArchived && <span className="sidebar-project-archived-chip">Archived</span>}
           </span>
           {isRunning && <SidebarRunningGhost />}
+        </button>
+        <button
+          type="button"
+          className={`sidebar-project-icon-button sidebar-project-home-toggle ${
+            isHome ? 'is-home' : ''
+          }`}
+          onClick={(event) => {
+            event.stopPropagation()
+            updateHomeChat(project.id, isHome ? null : chat.appChatId)
+          }}
+          disabled={isArchived && !isHome}
+          title={isHome ? 'Clear Project Home' : 'Set as Project Home'}
+          aria-label={
+            isHome
+              ? `Clear ${chat.title} as home of ${project.name}`
+              : `Set ${chat.title} as home of ${project.name}`
+          }
+          aria-pressed={isHome}
+        >
+          ⌂
         </button>
         <button
           type="button"
@@ -513,6 +568,9 @@ export function ProjectsSidebarView({
     const siblings = projects.filter((item) => item.parentId === project.parentId)
     const hasChildren = node.children.length > 0
     const childRows = node.children.map((child) => renderNode(child, depth + 1))
+    const homeChatId = homeChatIdByProjectId.get(project.id)
+    const homeChat = homeChatId ? chatById.get(homeChatId) : undefined
+    const openableHomeChat = homeChat && homeChat.archived !== true ? homeChat : null
 
     return (
       <div
@@ -576,6 +634,20 @@ export function ProjectsSidebarView({
             </span>
           </button>
           <span className="sidebar-project-actions">
+            {openableHomeChat && (
+              <button
+                type="button"
+                className="sidebar-project-icon-button sidebar-project-open-home"
+                onClick={(event) => {
+                  event.stopPropagation()
+                  onSelectChat(openableHomeChat)
+                }}
+                title="Open Project Home"
+                aria-label={`Open ${project.name} Project Home`}
+              >
+                ⌂
+              </button>
+            )}
             <button
               type="button"
               className="sidebar-project-icon-button"

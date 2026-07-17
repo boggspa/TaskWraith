@@ -2846,13 +2846,30 @@
   line-height: 1.2;
 }
 
+.sidebar-project-home-chip {
+  flex: 0 0 auto;
+  padding: 1px 5px;
+  border: 1px solid color-mix(in srgb, var(--sidebar-accent, var(--sidebar-border)) 55%, transparent);
+  border-radius: 999px;
+  color: color-mix(in srgb, var(--sidebar-accent, var(--sidebar-text-secondary)) 92%, transparent);
+  font-size: 9px;
+  font-weight: 760;
+  line-height: 1.2;
+}
+
 .sidebar-project-member .sidebar-project-icon-button {
   opacity: 0;
 }
 
 .sidebar-project-member:hover .sidebar-project-icon-button,
-.sidebar-project-member.active .sidebar-project-icon-button {
+.sidebar-project-member.active .sidebar-project-icon-button,
+/* The active home toggle stays visible - it doubles as the row's home mark. */
+.sidebar-project-member .sidebar-project-home-toggle.is-home {
   opacity: 1;
+}
+
+.sidebar-project-home-toggle.is-home {
+  color: color-mix(in srgb, var(--sidebar-accent, var(--sidebar-text)) 92%, transparent);
 }
 
 .sidebar-project-empty {
