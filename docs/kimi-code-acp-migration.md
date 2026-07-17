@@ -2,7 +2,8 @@
 
 Developer reference for TaskWraith's Kimi provider after the **kimi-cli → Kimi
 Code** migration (2026-07). Covers the transport change (Wire → ACP), the
-per-run sandbox, the HTTP MCP bridge, auth/usage, and the rollout gate.
+durable isolated seat, native session continuity/compaction, the HTTP MCP
+bridge, auth/usage, and the rollout gate.
 
 > **Status:** the ACP transport is **default-ON**, gated by `TASKWRAITH_KIMI_ACP`
 > (`kimiGate.ts`; set `=0` to force it off, landing a kimi-code binary on the
@@ -10,7 +11,9 @@ per-run sandbox, the HTTP MCP bridge, auth/usage, and the rollout gate.
 > trace (see [Rollout gate](#rollout-gate)) passed every assertion against the
 > real binary: fs client-authority routing, the FetchURL/WebSearch deny wall,
 > sub-agent deny inheritance, and the B3 refusal + tripwire. A legacy Kimi CLI
-> still routes to the retained Wire path.
+> still routes to the retained Wire path. Native `session/resume` requires a
+> Kimi Code build that advertises the ACP capability (implemented in 0.26.0);
+> older Kimi Code builds safely fall back to a fresh full-context session.
 
 ## What changed
 
@@ -26,7 +29,9 @@ Code**. The binary keeps the name `kimi` but:
   `--agent-file`, `--resume`, `--thinking` are all gone or renamed).
 
 TaskWraith drives the new generation over ACP, riding the same neutral ACP core
-as Grok, inside a per-run sandbox.
+as Grok. Each durable TaskWraith seat gets its own isolated Kimi data root;
+credentials/config exist only while a process is live, while Kimi's native
+session checkpoint remains for the next turn.
 
 ## Generation detection (never semver)
 
@@ -45,8 +50,9 @@ Code's `-p/--prompt` runs under auto-approve).
 
 ## Transport
 
-The bidirectional JSON-RPC state machine (`initialize → session/new →
-session/prompt`, `session/update` streaming, client-mediated
+The bidirectional JSON-RPC state machine (`initialize → session/resume` for a
+known native seat or `session/new` for a new/recovery seat, then
+`session/prompt`; `session/update` streaming, client-mediated
 `session/request_permission`, default-deny, transport keep-alive, cancellation)
 is provider-neutral and lives in `acp/AcpTurnClient.ts` — extracted from Grok's
 client so both providers share it. Grok and Kimi differ only by hooks:
@@ -57,6 +63,11 @@ client so both providers share it. Grok and Kimi differ only by hooks:
 | `onInboundRequest` | — | answers `fs/read_text_file` / `fs/write_text_file` |
 | `deniedToolRecovery` | one-shot recovery prompt | none |
 | `endProcess` | `SIGINT` | **stdin EOF** (Kimi ignores SIGINT/SIGTERM) |
+
+On a Kimi resume, TaskWraith also re-asserts the selected model and thinking
+setting through ACP `session/set_config_option` before sending the user prompt.
+Kimi stores those choices in its native session, so process-level CLI flags
+alone are not authoritative after rehydration.
 
 **Termination:** `kimi acp` ignores SIGINT *and* SIGTERM and exits only on stdin
 EOF. The neutral core terminates via the provider `endProcess` hook with a
@@ -69,14 +80,17 @@ Kimi Code's built-in tools can't be stripped, so the seat is sandboxed instead.
 Every element is verified by the live trace (see below).
 
 - **Isolated `KIMI_CODE_HOME`** (`kimi/KimiAcpHome.ts`, `KimiAcpContainment.ts`) —
-  a per-run throwaway data root containing a curated config (telemetry off,
+  a seat-scoped data root containing a per-process curated config (telemetry off,
   migrated `[[permission.rules]] allow` stripped, empty `plugins/`+`skills/`),
   a **deny wall** (`[[permission.rules]] deny` for the egress tools `FetchURL`,
   `WebSearch`, `AgentSwarm` **and the server-side fs/exec escapers** `Bash`,
   `Glob`, `Grep`), and a **0600-seeded credential** copied from the real home
-  (resolving the empty-home `-32000` auth paradox). Torn down on every exit path
-  (completion, cancel, and a synchronous throw before the turn wires its close
-  handler — the seed is a live token copy and must not leak).
+  (resolving the empty-home `-32000` auth paradox). Runtime config, credentials,
+  OAuth state, plugins, and skills are removed on every exit path (completion,
+  cancel, and synchronous setup failure); only `sessions/` and
+  `session_index.jsonl` remain. Non-chat probes still use a fully throwaway
+  per-run home. Preparation scrubs crash residue before reseeding current
+  credentials.
 - **Egress deny wall** — `FetchURL`/`WebSearch` auto-run server-side and hit
   `api.kimi.com/coding/v1/{search,fetch}`; the static deny rule blocks them
   before the network, survives auto/`-p` mode, and **inherits into sub-agents**.
@@ -126,7 +140,7 @@ against an http/sse schema — `mcpCapabilities: {http, sse}`). Every other
 provider reaches the gateway over the stdio bridge, so Kimi needs an HTTP
 transport. `kimi/KimiHttpMcpBridge.ts` is a per-run localhost
 (`127.0.0.1:0`) HTTP MCP server with a random Bearer token, advertised to
-exactly one Kimi session via `session/new mcpServers`
+exactly one Kimi process via `session/new` or `session/resume` `mcpServers`
 (`{name, type:'http', url, headers:[{name,value}]}`). It hand-rolls JSON-RPC
 responses (no MCP SDK — the app hand-rolls MCP anyway; Kimi accepts plain
 `application/json`) and proxies every request into the existing
@@ -153,10 +167,36 @@ MCP the seat sees, and MCP tool calls are gated by `session/request_permission`
 
 Wire mints bare-uuid session ids; ACP mints `session_<uuid>`. Feeding one to the
 other's resume is refused: `wireResumeSessionId` (`kimi/KimiSessionGeneration.ts`)
-only resumes a Wire-generation id on the legacy path. ACP v1 opens a fresh
-`session/new` per turn (Grok-parity), so cross-turn context relies on the
-unconditional transcript injection, and host-seat compaction is flavour-gated
-(kimi-code seats skip the legacy print-mode argv).
+only resumes a Wire-generation id on the legacy path. A Kimi Code seat is marked
+native only after ACP successfully returns its `session_<uuid>` id from
+`session/new` or `session/resume`; that marker plus the prefix gates slim prompt
+composition. Unmarked/older seats keep the legacy full-context path.
+
+## Native continuity and compaction
+
+Durable solo chats, delegated sub-threads, and each ensemble participant map to
+different stable homes under Electron `userData/kimi-acp-seats-v1/`. A normal
+continuation uses ACP `session/resume`, which rehydrates Kimi's on-disk history
+without replaying it into TaskWraith's transcript. The prompt therefore carries
+only current turn state. TaskWraith prepares a separate full-context recovery
+prompt and binds both prompts into the signed permission posture; if resume is
+unsupported or the saved checkpoint is missing, ACP opens `session/new` and
+uses only that authorized recovery prompt.
+
+Kimi Code's built-in `/compact` command is sent as a normal ACP
+`session/prompt` against the resumed session:
+
+- solo chats use the visible run lane, so progress/result cards follow the
+  ordinary stream lifecycle;
+- ensemble seats use a detached, tool-denied maintenance lane and a per-seat
+  barrier, preventing the next round from racing the checkpoint rewrite;
+- compaction is resume-only and fails closed—an invalid checkpoint never turns
+  `/compact` into a fresh empty session;
+- automatic native Kimi compaction requires a classified context-overflow
+  failure. Host transcript-window and generic usage estimates are not treated
+  as native occupancy evidence.
+
+Legacy Wire Kimi remains on host-injected context and host summary compaction.
 
 ## Rollout gate
 
@@ -189,12 +229,14 @@ KIMI_ACP_LIVE_TRACE=1 npx vitest run \
 | Generation probe | `providers/KimiFlavour.ts` |
 | Neutral ACP core | `acp/AcpTurnClient.ts`, `acp/AcpProtocol.ts` |
 | Kimi ACP client (fs authority) | `kimi/KimiAcpClient.ts` |
-| Isolated home + B3 refusal | `kimi/KimiAcpHome.ts`, `kimi/KimiAcpContainment.ts` |
+| Durable isolated seat + B3 refusal | `kimi/KimiAcpSeatState.ts`, `kimi/KimiAcpHome.ts`, `kimi/KimiAcpContainment.ts` |
 | Deny wall (egress + fs/exec escapers) | `kimi/KimiAcpContainment.ts` (`KIMI_ACP_DENY_TOOLS`) |
 | Live escape probe | `kimi/KimiAcpEscapeProbe.live.test.ts` |
 | HTTP MCP bridge | `kimi/KimiHttpMcpBridge.ts` |
 | Per-tool approval policy | `kimi/KimiToolPolicy.ts` |
 | Generation fence | `kimi/KimiSessionGeneration.ts` |
+| Native prompt/fallback composition | `PromptComposition.ts`, `services/ComposerService.ts`, `services/EnsembleOrchestrator.ts` |
+| Native compaction lanes | `index.ts` (`runKimiAcpProvider`, `compactKimiProviderContext`) |
 | Credential paths | `providers/KimiCredential.ts` |
 | Flag | `kimiGate.ts` |
 | Provider dispatch + glue | `index.ts` (`runKimiProvider`, `runKimiAcpProvider`) |

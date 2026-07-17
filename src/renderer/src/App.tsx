@@ -13136,6 +13136,12 @@ function App(): React.JSX.Element {
             if (sessionId && (effectiveRunProvider !== 'gemini' || !event.fallback)) {
               if (effectiveRunProvider !== 'gemini') {
                 updated.linkedProviderSessionId = sessionId
+                if (effectiveRunProvider === 'kimi' && event.kimiAcpNativeSession) {
+                  updated.providerMetadata = {
+                    ...(updated.providerMetadata || {}),
+                    kimiAcpNativeSession: true
+                  }
+                }
               } else {
                 updated.linkedGeminiSessionId = sessionId
               }
@@ -19644,12 +19650,12 @@ function App(): React.JSX.Element {
   }
   // Provider-native "compact now" for the focused chat (context-meter popover
   // button + the /compact slash action). Offered only where a real compaction
-  // lever exists: a SOLO claude/codex chat with a linked provider session,
+  // lever exists: a solo native provider session or a legacy host-summary lane,
   // while idle (compacting under a live turn would race the provider process —
   // Claude shares the per-provider process slot, Codex the active thread turn).
-  // Claude compacts via a normal `/compact` run (the CLI/SDK execute the slash
-  // command with --resume; probe-verified), so the card arrives through the
-  // stream-observation lane; Codex compacts via the thread/compact/start IPC,
+  // Claude and marked Kimi ACP seats compact via normal `/compact` runs against
+  // native sessions, so the card arrives through the stream-observation lane;
+  // Codex compacts via the thread/compact/start IPC,
   // whose card is appended main-side. Refs-only body so the callback identity
   // stays stable for the memoized composer prop bag.
   const compactChatContext = useCallback(
@@ -19658,6 +19664,11 @@ function App(): React.JSX.Element {
       if (!chat || isChatSummaryRecord(chat) || chat.chatKind === 'ensemble') return
       const provider = getChatProvider(chat)
       const sessionId = chat.linkedProviderSessionId
+      const kimiNativeSession = Boolean(
+        provider === 'kimi' &&
+          sessionId?.startsWith('session_') &&
+          chat.providerMetadata?.kimiAcpNativeSession === true
+      )
       if (provider === 'codex') {
         if (!sessionId) return
         // Failure feedback arrives as the main-authored failed compaction card.
@@ -19668,7 +19679,7 @@ function App(): React.JSX.Element {
         })
         return
       }
-      if (provider === 'claude') {
+      if (provider === 'claude' || kimiNativeSession) {
         if (!sessionId) return
         const request = buildRunRequestRef.current(undefined, undefined, {
           chat,
@@ -19695,8 +19706,8 @@ function App(): React.JSX.Element {
         // summarize turn on the session, captured on exit by
         // finalizeHostCompactionRun (stores chat.contextCompactionSummary,
         // resets Cursor's provider session, appends the card). Cursor needs a
-        // session to summarize (its context lives provider-side); Kimi's
-        // context is the injected transcript, so it only needs material.
+        // session to summarize; legacy/unmarked Kimi summarizes the bounded
+        // transcript projection carried in this prompt.
         if (provider === 'cursor' && !sessionId) return
         if (provider === 'kimi' && !(chat.messages || []).some((m) => m.role === 'assistant'))
           return
@@ -19724,7 +19735,7 @@ function App(): React.JSX.Element {
           provider === 'cursor'
             ? {
                 kind: 'provider_session',
-                providerSessionId: sessionId,
+                providerSessionId: sessionId!,
                 observedMessageIds: [],
                 ...(previousSummaryText && previousSummary?.createdAt
                   ? { previousSummaryCreatedAt: previousSummary.createdAt }
@@ -19765,9 +19776,9 @@ function App(): React.JSX.Element {
         void executeRunRef.current({
           ...request,
           appRunId,
-          // The exact bounded Kimi projection (or Cursor's provider-session
-          // instruction) was assembled above. Send it verbatim so persisted
-          // provenance cannot drift from what the summarizer actually saw.
+          // The exact Kimi projection or Cursor provider-session instruction was
+          // assembled above. Send it verbatim so persisted provenance cannot
+          // drift from what the summarizer actually saw.
           verbatimPrompt: true,
           discordContextSelection: undefined,
           discordContextSnapshots: undefined,
@@ -19781,11 +19792,13 @@ function App(): React.JSX.Element {
   const canCompactCurrentChatContext =
     !isCurrentEnsembleChat &&
     !isCurrentChatRunning &&
-    ((currentProvider === 'claude' || currentProvider === 'codex' || currentProvider === 'cursor'
+    (currentProvider === 'claude' || currentProvider === 'codex' || currentProvider === 'cursor'
       ? Boolean(currentChat?.linkedProviderSessionId)
       : currentProvider === 'kimi'
-        ? Boolean(currentChat?.messages?.some((m) => m.role === 'assistant'))
-        : false))
+        ? currentChat?.providerMetadata?.kimiAcpNativeSession === true
+          ? Boolean(currentChat.linkedProviderSessionId?.startsWith('session_'))
+          : Boolean(currentChat?.messages?.some((m) => m.role === 'assistant'))
+        : false)
   const onCompactContext = useMemo(
     () =>
       canCompactCurrentChatContext

@@ -442,6 +442,25 @@ describe('ComposerService', () => {
     )
   })
 
+  it('pairs a slim native Kimi ACP resume prompt with a full-context fallback', () => {
+    const payload = compose(
+      {
+        provider: 'kimi',
+        linkedProviderSessionId: 'session_native_1',
+        providerMetadata: {
+          kimiAcpNativeSession: true,
+          taskWraithRuntimePreambleVersion: TASKWRAITH_RUNTIME_PREAMBLE_VERSION,
+          taskWraithRuntimePreambleProvider: 'kimi'
+        }
+      },
+      { selectedModelType: 'kimi-k2.7-code' }
+    )
+
+    expect(payload.prompt).not.toContain('Conversation context')
+    expect(payload.resumeFallbackPrompt).toContain('Conversation context')
+    expect(payload.composer.applicationLog).toContain('resuming Kimi Code ACP session context')
+  })
+
   it('defaults Kimi thinking to true from provider metadata defaults', () => {
     const payload = compose({ provider: 'kimi' }, { selectedModelType: undefined })
     expect(payload.model).toBe('kimi-k2.7-code')

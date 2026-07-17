@@ -316,7 +316,7 @@ export function shouldAutoCompactHostContext(
   return provider === 'kimi' && evidence.messageIds.some((id) => Boolean(id.trim()))
 }
 
-// ── Host-side fallback compaction (Cursor/Kimi) ─────────────────────────────
+// ── Host-side fallback compaction (Cursor/legacy Kimi/Grok) ─────────────────
 
 /**
  * The summarize instruction dispatched as a REAL turn when the host compacts

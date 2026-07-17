@@ -393,7 +393,13 @@ export class ComposerService {
       profileReceiptCanPersist: provider !== 'claude' || !crossProviderReroute,
       grokMcpAdvertised: provider === 'grok' ? taskWraithMcpAdvertised : undefined
     })
-    const composed = composeRunPrompt({
+    const kimiNativeSessionResume = Boolean(
+      provider === 'kimi' &&
+        resumeDecision.sessionId &&
+        resumeDecision.sessionId.startsWith('session_') &&
+        metadataBoolean(chat, 'kimiAcpNativeSession') === true
+    )
+    const promptInput = {
       provider,
       verbatimPrompt: input.verbatimPrompt === true,
       contextCompactionSummary: chat.contextCompactionSummary || null,
@@ -414,12 +420,20 @@ export class ComposerService {
       activeGoal,
       taskWraithMcpProfileId: taskWraithMcpProfile.profileId,
       taskWraithMcpAdvertised,
+      ...(kimiNativeSessionResume ? { nativeSessionResume: true } : {}),
       ...(provider === 'ollama'
         ? {
             ollamaSessionMemory: normalizeOllamaSessionMemory(chat.ollamaSessionMemory)
           }
         : {})
-    })
+    } satisfies Parameters<typeof composeRunPrompt>[0]
+    const composed = composeRunPrompt(promptInput)
+    // The slim native-resume prompt and this full-context recovery prompt are
+    // signed together below. AcpTurnClient selects the latter only when Kimi
+    // cannot rehydrate the saved session and must use session/new.
+    const resumeFallbackPrompt = kimiNativeSessionResume
+      ? composeRunPrompt({ ...promptInput, nativeSessionResume: false }).contextualPrompt
+      : undefined
 
     const providerMetadataPatchData = {
       ...buildProviderMetadataPatch(composed, codexHandoffsApplied),
@@ -516,6 +530,9 @@ export class ComposerService {
         ? { ollamaRunProfile: chatOllamaRunProfile }
         : {}),
       prompt: composed.contextualPrompt,
+      ...(resumeFallbackPrompt && resumeFallbackPrompt !== composed.contextualPrompt
+        ? { resumeFallbackPrompt }
+        : {}),
       activeGoal,
       appRunId,
       appChatId: chatId,
@@ -570,6 +587,9 @@ export class ComposerService {
                 appRunId,
                 appChatId: chatId,
                 prompt: composed.contextualPrompt,
+                ...(resumeFallbackPrompt && resumeFallbackPrompt !== composed.contextualPrompt
+                  ? { resumeFallbackPrompt }
+                  : {}),
                 workflowMode,
                 runtimeProfileId
               }

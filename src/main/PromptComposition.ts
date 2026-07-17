@@ -285,13 +285,23 @@ function shouldInjectTaskWraithRuntimePreamble(args: {
   runtimePreambleVersion?: string | null
   runtimePreambleProvider?: string | null
   taskWraithMcpAdvertised: boolean
+  nativeSessionResume?: boolean
 }): boolean {
   if (args.isGlobalRun || args.approvalMode === 'plan') return false
   if (!args.taskWraithMcpAdvertised) return false
-  if (args.provider === 'kimi' || args.provider === 'cursor' || args.provider === 'grok') {
+  if (
+    (args.provider === 'kimi' && !args.nativeSessionResume) ||
+    args.provider === 'cursor' ||
+    args.provider === 'grok'
+  ) {
     return true
   }
-  if (args.provider === 'gemini' || args.provider === 'claude' || args.provider === 'codex') {
+  if (
+    args.provider === 'gemini' ||
+    args.provider === 'claude' ||
+    args.provider === 'codex' ||
+    (args.provider === 'kimi' && args.nativeSessionResume)
+  ) {
     if (!args.resumeSessionId) return true
     return (
       args.runtimePreambleVersion !== TASKWRAITH_RUNTIME_PREAMBLE_VERSION ||
@@ -757,9 +767,13 @@ export interface ComposeRunPromptInput {
   messages: ChatMessage[]
   /** User setting: how many prior turns to consider. Will be clamped. */
   chatContextTurns: number
-  /** When set, the provider's own session will resume — Gemini skips its
-   * generic context block in that case; Kimi still injects. */
+  /** When set, the provider's own session will resume. */
   resumeSessionId?: string
+  /**
+   * The resume target is backed by a provider-native history store. Kimi ACP
+   * sets this for `session/resume`; legacy Kimi Wire leaves it false.
+   */
+  nativeSessionResume?: boolean
   /** For Codex model-handoff detection. The last completed Codex model in
    * this chat (so we can detect handoffs like 5.5 → 5.4-mini). */
   lastCompletedCodexModel?: string | null
@@ -804,10 +818,12 @@ export interface ComposeRunPromptInput {
    * same name). Injected as a "Prior session summary" block for providers
    * whose cross-turn context is host-fed: Cursor only on a FRESH session (the
    * compaction flow cleared the session id; once the new session resumes
-   * natively its own history carries the summary), Kimi/Grok on every turn
-   * (their context IS the injected block). Only exact, resolvable
+   * natively its own history carries the summary), legacy Kimi/Grok on every
+   * turn (their context IS the injected block). Only exact, resolvable
    * `contiguous_prompt_prefix` provenance may prune recent transcript rows;
-   * legacy timestamps and bounded/session summaries remain non-pruning.
+   * legacy timestamps and bounded/session summaries remain non-pruning. A
+   * native Kimi ACP resume carries its compacted history provider-side and does
+   * not receive this host summary again.
    */
   contextCompactionSummary?: {
     text: string
@@ -889,6 +905,8 @@ export function composeRunPrompt(input: ComposeRunPromptInput): ComposeRunPrompt
     : shouldUseCoreMcpProfile(provider, normalizeCliProviderModel(provider, nextModel))
   const gatewayMcpProfile = isGatewayTaskWraithMcpProfile(input.taskWraithMcpProfileId)
   const taskWraithMcpAdvertised = input.taskWraithMcpAdvertised !== false
+  const nativeKimiSessionResume =
+    provider === 'kimi' && Boolean(input.nativeSessionResume && resumeSessionId)
 
   const pendingSubThreadResultContext = buildPendingSubThreadResultContextBlock(
     messages,
@@ -908,9 +926,9 @@ export function composeRunPrompt(input: ComposeRunPromptInput): ComposeRunPrompt
   }
 
   // (1) Decide whether to append the generic conversation-context block.
-  // Kimi's Wire-protocol --resume restores only a session token, not the
-  // transcript, so we always inject for Kimi. Gemini's CLI resume restores
-  // context properly, so we skip when resuming. Codex/Claude rely on their
+  // Kimi's legacy Wire-protocol --resume restores only a session token, not the
+  // transcript, while Kimi Code ACP session/resume restores native history.
+  // Gemini's CLI resume restores context properly. Codex/Claude rely on their
   // own session continuity (with a special Codex handoff branch below).
   //
   // Codex cold runs (no resumable app-server thread) inject like Gemini —
@@ -935,10 +953,12 @@ export function composeRunPrompt(input: ComposeRunPromptInput): ComposeRunPrompt
   ) as ChatMessage[]
   const compactionSummaryBlock =
     compactionSummary?.text &&
-    (provider === 'kimi' || provider === 'grok' || (provider === 'cursor' && !resumeSessionId))
+    ((provider === 'kimi' && !nativeKimiSessionResume) ||
+      provider === 'grok' ||
+      (provider === 'cursor' && !resumeSessionId))
       ? `Prior session summary (context was compacted ${compactionSummary.createdAt}):\n${compactionSummary.text}`
       : ''
-  const kimiNeedsContextInjection = provider === 'kimi'
+  const kimiNeedsContextInjection = provider === 'kimi' && !nativeKimiSessionResume
   // Grok over its DEFAULT ACP transport opens a fresh `session/new` every turn
   // and never resumes prior history (there is no ACP `session/load`; the headless
   // `--resume` path is bypassed, and each turn spawns a fresh `grok agent stdio`
@@ -1003,20 +1023,22 @@ export function composeRunPrompt(input: ComposeRunPromptInput): ComposeRunPrompt
     return `${activeGoalContext}\n\nCurrent user request:\n${prompt}`
   }
   let applicationLog = kimiNeedsContextInjection
-    ? `Context turns: ${contextTurnsApplied} (Kimi: appending compact conversation context because Wire protocol --resume does not restore message history)`
-    : grokNeedsContextInjection
-      ? `Context turns: ${contextTurnsApplied} (Grok: appending compact conversation context because the ACP transport opens a fresh session each turn)`
-      : codexNeedsContextInjection
-        ? `Context turns: ${contextTurnsApplied} (Codex: no resumable app-server thread; sending compact context + current request)`
-        : provider === 'ollama' && ollamaPromptIntent !== 'workspace'
-          ? 'Context turns: 0 (Ollama: conversational turn; skipping compact workspace context)'
-          : ollamaNeedsContextInjection
-            ? `Context turns: ${contextTurnsApplied} (Ollama: model-aware local context; ${contextBudget.maxBlockChars} char cap)`
-            : provider !== 'gemini'
-              ? `Context turns: 0 (${providerLabel} provider/session history is authoritative when available)`
-              : resumeSessionId
-                ? 'Context turns: 0 (resuming Gemini CLI session context)'
-                : `Context turns: ${contextTurnsApplied} (sending compact context + current request)`
+    ? `Context turns: ${contextTurnsApplied} (Kimi: appending compact conversation context because no native ACP resume is available)`
+    : nativeKimiSessionResume
+      ? 'Context turns: 0 (resuming Kimi Code ACP session context)'
+      : grokNeedsContextInjection
+        ? `Context turns: ${contextTurnsApplied} (Grok: appending compact conversation context because the ACP transport opens a fresh session each turn)`
+        : codexNeedsContextInjection
+          ? `Context turns: ${contextTurnsApplied} (Codex: no resumable app-server thread; sending compact context + current request)`
+          : provider === 'ollama' && ollamaPromptIntent !== 'workspace'
+            ? 'Context turns: 0 (Ollama: conversational turn; skipping compact workspace context)'
+            : ollamaNeedsContextInjection
+              ? `Context turns: ${contextTurnsApplied} (Ollama: model-aware local context; ${contextBudget.maxBlockChars} char cap)`
+              : provider !== 'gemini'
+                ? `Context turns: 0 (${providerLabel} provider/session history is authoritative when available)`
+                : resumeSessionId
+                  ? 'Context turns: 0 (resuming Gemini CLI session context)'
+                  : `Context turns: ${contextTurnsApplied} (sending compact context + current request)`
 
   let codexHandoffApplied: ComposeRunPromptResult['codexHandoffApplied'] | undefined
   let uiNoticeMessage: string | undefined
@@ -1062,7 +1084,8 @@ export function composeRunPrompt(input: ComposeRunPromptInput): ComposeRunPrompt
   // the active MCP catalog is available through tool metadata, while the prompt
   // only carries the provider namespace, edit discipline, and cross-provider
   // delegation guardrails. Gemini/Claude/Codex skip on resumable sessions;
-  // Kimi/Cursor/Grok keep injecting until their session retention is verified.
+  // Legacy Kimi/Cursor/Grok keep injecting; native Kimi ACP resumes like the
+  // other history-bearing sessions.
   let runtimePreambleInjected = false
   if (
     shouldInjectTaskWraithRuntimePreamble({
@@ -1072,7 +1095,8 @@ export function composeRunPrompt(input: ComposeRunPromptInput): ComposeRunPrompt
       resumeSessionId,
       runtimePreambleVersion,
       runtimePreambleProvider,
-      taskWraithMcpAdvertised
+      taskWraithMcpAdvertised,
+      nativeSessionResume: nativeKimiSessionResume
     })
   ) {
     const taskWraithRuntimePreamble = buildTaskWraithRuntimePreamble({

@@ -460,11 +460,17 @@ type ParticipantTimelineEntry = { kind: 'content'; text: string } | { kind: 'too
 /**
  * Spike 5 — providers whose sessions genuinely resume with full history
  * across ensemble turns, making them eligible for the slim resumed-turn
- * prompt. Kimi's --resume restores a session token (not the transcript),
- * Grok's default ACP transport opens a fresh session every turn, and
- * Ollama is stateless — all three must keep the full shell.
+ * prompt. Marked Kimi Code ACP seats join this set because session/resume
+ * restores native history; legacy Kimi is filtered at the call site. Grok's
+ * default ACP transport opens a fresh session every turn and Ollama is
+ * stateless, so neither is eligible.
  */
-const SLIM_RESUME_PROVIDERS: ReadonlySet<ProviderId> = new Set(['claude', 'codex', 'cursor'])
+const SLIM_RESUME_PROVIDERS: ReadonlySet<ProviderId> = new Set([
+  'claude',
+  'codex',
+  'cursor',
+  'kimi'
+])
 
 type EnsemblePromptUsageTelemetry = Required<
   Pick<
@@ -11062,9 +11068,10 @@ export class EnsembleOrchestrator {
       const chatContextTurns = this.deps.getSettings().chatContextTurns
       // Spike 5 — slim resumed-turn prompt (TASKWRAITH_ENSEMBLE_SLIM_RESUME,
       // default OFF). Eligible only when: the flag is on; the seat's provider
-      // session genuinely resumes across turns (claude/codex/cursor — Kimi's
-      // --resume restores a token not history, Grok-ACP opens a fresh session
-      // per turn, Ollama is stateless); a resume id exists; this is NOT a
+      // session genuinely resumes across turns (claude/codex/cursor plus Kimi
+      // Code ACP seats marked after a successful session/new or session/resume;
+      // legacy Kimi Wire, Grok-ACP, and Ollama remain ineligible); a resume id
+      // exists; this is NOT a
       // wakeup re-entry (those explicitly rebuild working memory from the
       // transcript); and the seat's persisted shell stamp matches the current
       // config (roster/rules/instructions unchanged since its last full
@@ -11083,6 +11090,11 @@ export class EnsembleOrchestrator {
           isCodexAppServerThreadId(
             run.providerSessionId || participant.linkedProviderSessionId
           )) &&
+        (participant.provider !== 'kimi' ||
+          (participant.kimiAcpNativeSession === true &&
+            String(run.providerSessionId || participant.linkedProviderSessionId).startsWith(
+              'session_'
+            ))) &&
         !resumeWakeup &&
         participant.promptShellVersion === promptShellStamp
       const promptUsageTelemetry = buildEnsemblePromptUsageTelemetry({
@@ -11125,6 +11137,23 @@ export class EnsembleOrchestrator {
       const promptWithDiscordContext = `${prompt}${formatDiscordContextPromptAppendix(
         runtime.discordContextSnapshots
       )}${externalPathGrantPromptAppendix(permissions.externalPathGrants)}`
+      const resumeFallbackPrompt =
+        slimTurn && participant.provider === 'kimi'
+          ? `${buildEnsembleParticipantPrompt({
+              chat: dispatchChat,
+              config: ensembleConfigForRound,
+              participant,
+              currentPrompt: runtime.prompt,
+              roundId: runtime.roundId,
+              chatContextTurns,
+              scoutBriefs: runtime.scoutBriefs,
+              slimTurn: false,
+              dynamicStateSnapshot,
+              effectiveApprovalMode: permissions.approvalMode
+            })}${formatDiscordContextPromptAppendix(
+              runtime.discordContextSnapshots
+            )}${externalPathGrantPromptAppendix(permissions.externalPathGrants)}`
+          : undefined
       // Slice D (1.0.3) — per-participant reasoning + speed + thinking
       // settings flow through the same AgentRunPayload fields the
       // composer uses for solo runs. Provider adapters already accept
@@ -11168,6 +11197,7 @@ export class EnsembleOrchestrator {
           ? {}
           : { workspace: dispatchChat.workspacePath || '' }),
         prompt: promptWithDiscordContext,
+        ...(resumeFallbackPrompt ? { resumeFallbackPrompt } : {}),
         imagePaths: imagePathsForEnsembleAttachments(runtime.imageAttachments),
         appRunId: run.runId,
         appChatId: dispatchChat.appChatId,
@@ -11191,6 +11221,7 @@ export class EnsembleOrchestrator {
                   appRunId: run.runId,
                   appChatId: dispatchChat.appChatId,
                   prompt: promptWithDiscordContext,
+                  ...(resumeFallbackPrompt ? { resumeFallbackPrompt } : {}),
                   workflowMode: dispatchChat.workflowMode === 'plan' ? 'plan' : 'normal',
                   runtimeProfileId: participant.runtimeProfileId,
                   ensembleParticipantId: participant.id
@@ -14422,6 +14453,7 @@ export class EnsembleOrchestrator {
         participant.promptShellVersion = refreshed.promptShellVersion
         participant.promptDynamicStateVersion = refreshed.promptDynamicStateVersion
         participant.taskWraithMcpProfileReceipt = refreshed.taskWraithMcpProfileReceipt
+        participant.kimiAcpNativeSession = refreshed.kimiAcpNativeSession
       }
     }
     await this.maybeAutoCompactSeatBeforeDispatch(chatId, participant)
@@ -14457,6 +14489,7 @@ export class EnsembleOrchestrator {
       participant.promptShellVersion = refreshed.promptShellVersion
       participant.promptDynamicStateVersion = refreshed.promptDynamicStateVersion
       participant.taskWraithMcpProfileReceipt = refreshed.taskWraithMcpProfileReceipt
+      participant.kimiAcpNativeSession = refreshed.kimiAcpNativeSession
     }
   }
 
@@ -14537,6 +14570,12 @@ export class EnsembleOrchestrator {
         trigger: 'auto'
       }
     }
+    if (participant.provider === 'kimi' && participant.kimiAcpNativeSession === true) {
+      // Kimi ACP now owns live occupancy. Without provider-semantic token
+      // telemetry, compact only after a classified overflow (handled above),
+      // never from the host transcript projection.
+      return null
+    }
     if (participant.provider === 'kimi') {
       const messageIds = findUncoveredEnsemblePromptMessageIds({
         chat,
@@ -14592,8 +14631,9 @@ export class EnsembleOrchestrator {
   }
 
   /**
-   * Wave 3 — post-round host auto-compaction for cursor/kimi/grok seats (the
-   * providers with no native lever). Runs in the idle dead-time after a
+   * Wave 3 — post-round host auto-compaction for cursor/grok and legacy Kimi
+   * seats. Native Kimi ACP compacts only on a classified overflow or a manual
+   * request because its live occupancy is provider-owned. Runs in idle time after a
    * COMPLETED round: deferred a tick so a chained queued round is visible.
    * Kimi may refresh its non-destructive durable summary when exact transcript
    * projection proves rows fell outside the live prompt window. Generic run
@@ -14621,6 +14661,7 @@ export class EnsembleOrchestrator {
         for (const participant of chat.ensemble.participants || []) {
           if (participant.enabled === false) continue
           if (!isHostSeatCompactionProvider(participant.provider)) continue
+          if (participant.provider === 'kimi' && participant.kimiAcpNativeSession === true) continue
           if (participant.provider === 'cursor' && !participant.linkedProviderSessionId) continue
           // Cooldown applies only to a seat we've ALREADY attempted — a
           // genuinely-new seat (no recorded attempt) is never held back. Using

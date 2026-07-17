@@ -17310,6 +17310,63 @@ describe('slim resumed-turn prompts', () => {
     }
   })
 
+  it('pairs a native Kimi slim resume with a signed full-shell recovery prompt', async () => {
+    const previous = process.env.TASKWRAITH_ENSEMBLE_SLIM_RESUME
+    process.env.TASKWRAITH_ENSEMBLE_SLIM_RESUME = '1'
+    try {
+      const chat = makeChat()
+      chat.ensemble!.participants = [
+        {
+          id: 'kimi',
+          provider: 'kimi',
+          enabled: true,
+          role: 'Worker',
+          instructions: 'Continue the work.',
+          order: 1,
+          model: 'kimi-k2.7-code',
+          permissionPresetId: 'read_only',
+          linkedProviderSessionId: 'session_native-kimi-1',
+          kimiAcpNativeSession: true
+        }
+      ]
+      chat.ensemble!.participants[0].promptShellVersion =
+        computeEnsemblePromptShellStamp(chat.ensemble!)
+      const signRunPermissionPosture = vi.fn(() => 'a'.repeat(64))
+      const harness = makeHarness({ initialChat: chat, signRunPermissionPosture })
+
+      harness.orchestrator.startRound({
+        chatId: 'ensemble-chat',
+        prompt: 'Continue from the native Kimi session.',
+        event: { sender: {} as Electron.WebContents }
+      })
+
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+      const payload = harness.dispatched[0]
+      expect(payload.provider).toBe('kimi')
+      expect(payload.providerSessionId).toBe('session_native-kimi-1')
+      expect(payload.ensembleRun?.promptMode).toBe('slim')
+      expect(payload.prompt).toContain('TaskWraith Ensemble Mode — resumed turn')
+      expect(payload.prompt).not.toContain('Participant roster:')
+      expect(payload.resumeFallbackPrompt).toContain('Participant roster:')
+      expect(payload.resumeFallbackPrompt).not.toContain(
+        'TaskWraith Ensemble Mode — resumed turn'
+      )
+      expect(signRunPermissionPosture).toHaveBeenCalledWith(
+        'plan',
+        expect.objectContaining({ presetId: 'read_only', readOnly: true }),
+        expect.objectContaining({
+          provider: 'kimi',
+          prompt: payload.prompt,
+          resumeFallbackPrompt: payload.resumeFallbackPrompt,
+          ensembleParticipantId: 'kimi'
+        })
+      )
+    } finally {
+      if (previous === undefined) delete process.env.TASKWRAITH_ENSEMBLE_SLIM_RESUME
+      else process.env.TASKWRAITH_ENSEMBLE_SLIM_RESUME = previous
+    }
+  })
+
   it.each(['codex-exec-1780439561126', 'not-a-codex-thread'])(
     'keeps a stamped Codex seat on the full prompt for non-app-server session %s',
     async (linkedProviderSessionId) => {

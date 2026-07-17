@@ -1371,6 +1371,29 @@ describe('composeRunPrompt host-compaction summary injection', () => {
     expect(result.applicationLog).toContain('prior-session compaction summary injected')
   })
 
+  it('defers to Kimi Code native history on ACP session/resume', () => {
+    const result = composeRunPrompt({
+      provider: 'kimi',
+      finalPrompt: 'Continue the work.',
+      messages: [coveredTurn, freshTurn],
+      chatContextTurns: 6,
+      codexHandoffsApplied: [],
+      isGlobalRun: false,
+      approvalMode: 'default',
+      providerLabel: 'Kimi',
+      resumeSessionId: 'session-native',
+      nativeSessionResume: true,
+      runtimePreambleVersion: TASKWRAITH_RUNTIME_PREAMBLE_VERSION,
+      runtimePreambleProvider: 'kimi',
+      contextCompactionSummary: summary
+    })
+
+    expect(result.contextualPrompt).toBe('Continue the work.')
+    expect(result.contextualPrompt).not.toContain('Prior session summary')
+    expect(result.contextualPrompt).not.toContain('FRESH detail')
+    expect(result.applicationLog).toContain('resuming Kimi Code ACP session context')
+  })
+
   it('prunes only an exact contiguous-prefix provenance claim', () => {
     const result = composeRunPrompt({
       provider: 'kimi',

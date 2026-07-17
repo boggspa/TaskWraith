@@ -90,6 +90,7 @@ import {
   type KimiHomeFs
 } from './kimi/KimiAcpHome'
 import { buildKimiWorkspaceConfigRefusalMessage } from './kimi/KimiAcpContainment'
+import { kimiAcpSeatStatePath } from './kimi/KimiAcpSeatState'
 import { kimiCredentialCandidatePaths } from './providers/KimiCredential'
 import { runKimiAcpTurn, type KimiAcpFs } from './kimi/KimiAcpClient'
 import { classifyKimiToolPermission, isKimiSafeMcpTool } from './kimi/KimiToolPolicy'
@@ -758,6 +759,7 @@ import {
   claudePermissionModeForApproval,
   codexReasoningEffortsForModel,
   getStaticProviderModels,
+  kimiAcpModelConfigValue,
   mergeCodexLiveModelRows,
   normalizeCliProviderModel,
   normalizeCodexModel
@@ -7763,25 +7765,30 @@ function recoverPersistedSoloChatWakeups(): void {
   }
 }
 
-function composeDelegatedProviderPrompt(args: {
+function composeDelegatedProviderPrompts(args: {
   provider: ProviderId
   subThread: ChatRecord
   prompt: string
   approvalMode: string
   model?: string
   resumeSessionId?: string
-}): string {
-  // Kimi's `--resume` restores the session token but not the visible
-  // transcript; Grok's default ACP transport opens a fresh session each turn
-  // with no resume at all. Normal composer turns compensate via
-  // PromptComposition; agent-driven sub-thread RECALLS (a 2nd+ delegated turn)
-  // need the same treatment or the child sees only the newest follow-up prompt.
-  // Other providers resume their native session, so pass their prompt through.
-  // (composeRunPrompt below performs the actual provider-gated injection — for
-  // Grok it only fires when ACP is on, matching the gate there.)
+}): { prompt: string; resumeFallbackPrompt?: string } {
+  // Grok's default ACP transport opens a fresh session each turn. Legacy Kimi
+  // seats also need host transcript injection, while marked Kimi Code 0.26+
+  // seats rehydrate provider history with session/resume. Recalled delegated
+  // turns use the same native slim + signed cold-recovery pair as solo and
+  // ensemble turns.
+  const kimiNativeSessionResume = Boolean(
+    args.provider === 'kimi' &&
+      args.resumeSessionId?.startsWith('session_') &&
+      args.subThread.providerMetadata?.kimiAcpNativeSession === true
+  )
   const needsHostTranscriptInjection =
-    args.provider === 'kimi' || (args.provider === 'grok' && grokAcpEnabled())
-  if (!needsHostTranscriptInjection) return args.prompt
+    (args.provider === 'kimi' && !kimiNativeSessionResume) ||
+    (args.provider === 'grok' && grokAcpEnabled())
+  if (!needsHostTranscriptInjection && !kimiNativeSessionResume) {
+    return { prompt: args.prompt }
+  }
   const settings = AppStore.getSettings()
   const taskWraithMcpAdvertised =
     args.provider !== 'grok' ||
@@ -7800,7 +7807,7 @@ function composeDelegatedProviderPrompt(args: {
     coreProfileOptIn: taskWraithCoreMcpProfileOptInEnabled(),
     grokMcpAdvertised: args.provider === 'grok' ? taskWraithMcpAdvertised : undefined
   })
-  return composeRunPrompt({
+  const promptInput = {
     provider: args.provider,
     finalPrompt: args.prompt,
     messages: args.subThread.messages || [],
@@ -7816,8 +7823,19 @@ function composeDelegatedProviderPrompt(args: {
     providerLabel: providerLabel(args.provider),
     nativeSubAgentRequests: settings.nativeSubAgentRequests,
     taskWraithMcpAdvertised,
-    taskWraithMcpProfileId: taskWraithMcpProfile.profileId
+    taskWraithMcpProfileId: taskWraithMcpProfile.profileId,
+    ...(kimiNativeSessionResume ? { nativeSessionResume: true } : {})
+  } satisfies Parameters<typeof composeRunPrompt>[0]
+  const prompt = composeRunPrompt(promptInput).contextualPrompt
+  if (!kimiNativeSessionResume) return { prompt }
+  const resumeFallbackPrompt = composeRunPrompt({
+    ...promptInput,
+    nativeSessionResume: false
   }).contextualPrompt
+  return {
+    prompt,
+    ...(resumeFallbackPrompt !== prompt ? { resumeFallbackPrompt } : {})
+  }
 }
 
 function seedAgentDrivenSubThreadTranscript(args: {
@@ -8273,9 +8291,9 @@ async function maybeDrainSubThreadWorkerQueue(subThreadId: string): Promise<void
         continue
       }
       const approvalMode = workerPermissions.effectivePermissions.approvalMode
-      let providerPrompt: string
+      let providerPrompts: { prompt: string; resumeFallbackPrompt?: string }
       try {
-        providerPrompt = composeDelegatedProviderPrompt({
+        providerPrompts = composeDelegatedProviderPrompts({
           provider: chat.provider,
           subThread: chat,
           prompt: event.prompt,
@@ -8324,7 +8342,10 @@ async function maybeDrainSubThreadWorkerQueue(subThreadId: string): Promise<void
         provider: chat.provider,
         scope: chat.scope ?? (chat.workspacePath ? 'workspace' : 'global'),
         workspace: chat.workspacePath,
-        prompt: providerPrompt,
+        prompt: providerPrompts.prompt,
+        ...(providerPrompts.resumeFallbackPrompt
+          ? { resumeFallbackPrompt: providerPrompts.resumeFallbackPrompt }
+          : {}),
         appRunId: subThreadRunId,
         appChatId: chat.appChatId,
         approvalMode,
@@ -13104,6 +13125,20 @@ function applyRuntimeProfileToPayload(payload: AgentRunPayload): AgentRunPayload
   if (truthfulPrompt !== applied.prompt) {
     applied.prompt = truthfulPrompt
   }
+  if (applied.resumeFallbackPrompt) {
+    applied.resumeFallbackPrompt = sanitizeTaskWraithMcpPromptClaims(
+      applied.resumeFallbackPrompt,
+      {
+        advertised: applied.taskWraithMcpAdvertised === true,
+        coreProfile: isCoreTaskWraithMcpProfile(applied.taskWraithMcpProfileId),
+        gatewayProfile: isGatewayTaskWraithMcpProfile(applied.taskWraithMcpProfileId),
+        injectCoreNote: applied.provider !== 'claude' || !applied.providerSessionId,
+        injectGatewayNote: applied.provider !== 'claude' || !applied.providerSessionId,
+        crossProviderReroute: storeState.ephemeralProviderReroute,
+        targetProvider: applied.provider
+      }
+    )
+  }
   // Runtime-profile application, worktree selection intent, session rotation,
   // and prompt truthfulness all participate in the signed run context. Only a
   // posture that survived normalization as trusted is re-signed here.
@@ -13410,6 +13445,48 @@ function updateCliProviderSession(
     )
   }
   return true
+}
+
+/** Persist the fact that this Kimi seat is backed by the durable ACP home and
+ * can use session/resume. The marker gates slim prompt composition; legacy Wire
+ * session ids never set it. */
+function persistKimiAcpNativeSession(
+  state: CliProviderStreamState,
+  sessionId: string
+): void {
+  if (!state.appChatId || !sessionId) return
+  if (state.appRunId && !shouldPersistProviderSessionForRun(state.appRunId)) return
+  const participantId = state.ensembleRun?.participantId
+  const target = providerSeatStoreTarget(state.appChatId, 'kimi', participantId)
+  if (!target) return
+  const { chat } = target
+  const updated: ChatRecord = participantId
+    ? {
+        ...chat,
+        ensemble: {
+          ...chat.ensemble!,
+          participants: chat.ensemble!.participants.map((participant) =>
+            participant.id === participantId
+              ? {
+                  ...participant,
+                  linkedProviderSessionId: sessionId,
+                  kimiAcpNativeSession: true
+                }
+              : participant
+          )
+        },
+        updatedAt: Date.now()
+      }
+    : {
+        ...chat,
+        linkedProviderSessionId: sessionId,
+        providerMetadata: {
+          ...(chat.providerMetadata || {}),
+          kimiAcpNativeSession: true
+        },
+        updatedAt: Date.now()
+      }
+  saveAndBroadcastChat(updated)
 }
 
 function claudeProgrammaticUsageWarning(
@@ -17378,7 +17455,7 @@ async function runKimiWireProvider(
   })
 }
 
-/** Per-run isolated KIMI_CODE_HOME dir path (unique, torn down after the run). */
+/** Per-run isolated KIMI_CODE_HOME dir path for legacy/non-chat ACP probes. */
 function kimiIsolatedHomeDirForRun(runId: string): string {
   const tempDir = (() => {
     try {
@@ -17391,6 +17468,25 @@ function kimiIsolatedHomeDirForRun(runId: string): string {
     .replace(/[^A-Za-z0-9._-]/g, '_')
     .slice(0, 80)
   return join(tempDir, `taskwraith-kimi-home-${safeRunId}-${randomUUID()}`)
+}
+
+/**
+ * Stable, isolated KIMI_CODE_HOME for one TaskWraith Kimi seat. Kimi Code keeps
+ * its resumable context under this root, so solo chats and ensemble participants
+ * must never share it. The digest avoids exposing chat titles/ids as filesystem
+ * names and bounds the path length. Runtime credentials/config are stripped by
+ * KimiAcpHome after every turn; only native session state remains at rest.
+ */
+function kimiAcpSeatHomeDirForIdentity(chatId: string, participantId = 'solo'): string {
+  return kimiAcpSeatStatePath(app.getPath('userData'), chatId, participantId)
+}
+
+function kimiAcpSeatHomeDir(payload: AgentRunPayload): string {
+  if (!payload.appChatId) return kimiIsolatedHomeDirForRun(payload.appRunId || 'unknown')
+  return kimiAcpSeatHomeDirForIdentity(
+    payload.appChatId,
+    payload.ensembleRun?.participantId || 'solo'
+  )
 }
 
 /** node fs adapter for the isolated-home builder (KimiAcpHome). */
@@ -17429,7 +17525,24 @@ const kimiAcpFsAdapter: KimiAcpFs = {
 /** Stream an ACP run event from a Kimi ACP turn to the renderer. Mirrors
  *  applyGrokRunEvent (provider-agnostic renderer shape), tagged 'kimi'. */
 function applyKimiAcpRunEvent(state: CliProviderStreamState, evt: NormalizedGrokRunEvent): void {
-  if (evt.sessionId) updateCliProviderSession(state, evt.sessionId)
+  if (evt.sessionId) {
+    updateCliProviderSession(state, evt.sessionId)
+    persistKimiAcpNativeSession(state, evt.sessionId)
+    sendAgentCompatLine(
+      state.sender,
+      'kimi',
+      {
+        type: 'init',
+        session_id: evt.sessionId,
+        model: state.model,
+        timestamp: new Date().toISOString(),
+        provider: 'kimi',
+        fallback: false,
+        kimi_acp_native_session: true
+      },
+      state
+    )
+  }
   if (evt.type === 'content' && evt.text) {
     state.assistantText = `${state.assistantText || ''}${evt.text}`
     sendAgentCompatLine(state.sender, 'kimi', { type: 'content', text: evt.text, provider: 'kimi' }, state)
@@ -17552,11 +17665,13 @@ function makeKimiMcpDispatch(
 
 /**
  * Kimi Code ACP provider (migration slice 4, gated behind kimiAcpEnabled()).
- * Runs a full-tool Kimi seat inside a per-run isolated KIMI_CODE_HOME (curated
+ * Runs a full-tool Kimi seat inside a seat-isolated KIMI_CODE_HOME (curated
  * config: telemetry off, allow-rules stripped, FetchURL/WebSearch/AgentSwarm
  * deny wall, seeded credential, empty plugins/skills) and drives it over ACP
  * with client fs workspace authority + ledger-mediated Bash/MCP approvals.
- * Every containment element was live-verified on kimi-code 0.24.1.
+ * Runtime secrets remain per-process; only Kimi's native session state persists
+ * for ACP session/resume. Containment was live-verified on kimi-code 0.24.1 and
+ * the resume path on 0.26.0.
  */
 async function runKimiAcpProvider(
   event: Electron.IpcMainInvokeEvent,
@@ -17600,11 +17715,12 @@ async function runKimiAcpProvider(
   // half-started run.
   const home = await prepareKimiIsolatedHome({
     runId: route.appRunId || 'unknown',
-    homeDir: kimiIsolatedHomeDirForRun(route.appRunId || 'unknown'),
+    homeDir: kimiAcpSeatHomeDir(payload),
     sourceHome: join(os.homedir(), '.kimi-code'),
     // Kimi Code dropped the --thinking flag; the per-run preference rides the
     // isolated config instead (absent → keep the config default, which is on).
     thinkingEnabled: payload.kimiThinking ?? undefined,
+    preserveSessionState: Boolean(payload.appChatId),
     fs: kimiHomeFsAdapter
   })
   if (!home.ok) {
@@ -17648,19 +17764,16 @@ async function runKimiAcpProvider(
     state,
     payload.providerSessionId || null
   )
-  sendAgentCompatLine(
-    event.sender,
-    'kimi',
-    {
-      type: 'init',
-      session_id: state.providerSessionId || '',
-      model,
-      timestamp: new Date().toISOString(),
-      provider: 'kimi',
-      fallback: false
-    },
-    state
-  )
+  const kimiNativeCompactionStartedAt =
+    payload.prompt.trim() === '/compact' && payload.providerSessionId ? Date.now() : null
+  if (kimiNativeCompactionStartedAt !== null) {
+    emitContextCompactionCompatLine(
+      event.sender,
+      'kimi',
+      { kind: 'started', telemetry: { provider: 'kimi', trigger: 'manual' } },
+      state
+    )
+  }
 
   // The fs handlers serve the workspace plus any signed external path grants.
   const fsRoots = [
@@ -17746,73 +17859,106 @@ async function runKimiAcpProvider(
   let handle: ReturnType<typeof runKimiAcpTurn>
   try {
     handle = runKimiAcpTurn({
-    prompt: payload.prompt,
-    cwd: payload.workspace || os.homedir(),
-    fsRoots,
-    fs: kimiAcpFsAdapter,
-    mcpServers: kimiMcpServers,
-    spawnProcess: () => {
-      // Build the CLI model arg the same way every other Kimi path does:
-      // kimiCliModelArg omits `--model` for the default (kimi-code uses its
-      // config default_model) and maps the Fast/standard service tier to the
-      // real kimi-for-coding[-highspeed] alias. Passing the display id directly
-      // would send a non-existent CLI alias and never engage Fast mode. The
-      // root `--model` flag precedes the `acp` subcommand.
-      const modelArgs: string[] = []
-      appendKimiModelArgs(modelArgs, model, payload.serviceTier)
-      const args = [...modelArgs, 'acp']
-      return spawn(binaryPath, args, {
-        cwd: payload.workspace || os.homedir(),
-        env: createCliEnv(
-          {
-            ...home.env,
-            TASKWRAITH_PARENT_PROVIDER: 'kimi',
-            TASKWRAITH_RUN_ID: route.appRunId || '',
-            TASKWRAITH_CHAT_ID: route.appChatId || ''
-          },
-          binaryPath
-        )
-      }) as unknown as import('./kimi/KimiAcpClient').AcpChildProcess
-    },
-    onProcess: (child) => {
-      const proc = child as unknown as ChildProcess
-      runManager.attachProcess(route.appRunId!, proc)
-      cliProviderProcesses.set('kimi', proc)
-    },
-    onPermissionRequest: kimiPermissionHandler,
-    onEvent: (evt) => applyKimiAcpRunEvent(state, evt as NormalizedGrokRunEvent),
-    onRawFrame: (direction, message) => {
-      const flag = String(process.env.TASKWRAITH_KIMI_ACP_DEBUG || '').toLowerCase()
-      if (flag === '1' || flag === 'true' || flag === 'yes') {
-        try {
-          process.stderr.write(`[kimi-acp] ${direction} ${JSON.stringify(message).slice(0, 300)}\n`)
-        } catch {
-          /* ignore */
+      prompt: payload.prompt,
+      resumeSessionId: payload.providerSessionId,
+      resumeFallbackPrompt: payload.resumeFallbackPrompt,
+      // `/compact` only makes sense against the linked native history. Never
+      // turn a stale compaction target into a new empty session.
+      allowResumeFallback: payload.prompt.trim() !== '/compact',
+      resumeConfigOptions: [
+        {
+          configId: 'model',
+          value: kimiAcpModelConfigValue(model, payload.serviceTier)
+        },
+        {
+          configId: 'thinking',
+          value: payload.kimiThinking === false ? 'off' : 'on'
+        }
+      ],
+      cwd: payload.workspace || os.homedir(),
+      fsRoots,
+      fs: kimiAcpFsAdapter,
+      mcpServers: kimiMcpServers,
+      spawnProcess: () => {
+        // Build the CLI model arg the same way every other Kimi path does:
+        // kimiCliModelArg omits `--model` for the default (kimi-code uses its
+        // config default_model) and maps the Fast/standard service tier to the
+        // real kimi-for-coding[-highspeed] alias. Passing the display id directly
+        // would send a non-existent CLI alias and never engage Fast mode. The
+        // root `--model` flag precedes the `acp` subcommand.
+        const modelArgs: string[] = []
+        appendKimiModelArgs(modelArgs, model, payload.serviceTier)
+        const args = [...modelArgs, 'acp']
+        return spawn(binaryPath, args, {
+          cwd: payload.workspace || os.homedir(),
+          env: createCliEnv(
+            {
+              ...home.env,
+              TASKWRAITH_PARENT_PROVIDER: 'kimi',
+              TASKWRAITH_RUN_ID: route.appRunId || '',
+              TASKWRAITH_CHAT_ID: route.appChatId || ''
+            },
+            binaryPath
+          )
+        }) as unknown as import('./kimi/KimiAcpClient').AcpChildProcess
+      },
+      onProcess: (child) => {
+        const proc = child as unknown as ChildProcess
+        runManager.attachProcess(route.appRunId!, proc)
+        cliProviderProcesses.set('kimi', proc)
+      },
+      onPermissionRequest: kimiPermissionHandler,
+      onEvent: (evt) => applyKimiAcpRunEvent(state, evt as NormalizedGrokRunEvent),
+      onRawFrame: (direction, message) => {
+        const flag = String(process.env.TASKWRAITH_KIMI_ACP_DEBUG || '').toLowerCase()
+        if (flag === '1' || flag === 'true' || flag === 'yes') {
+          try {
+            process.stderr.write(
+              `[kimi-acp] ${direction} ${JSON.stringify(message).slice(0, 300)}\n`
+            )
+          } catch {
+            /* ignore */
+          }
+        }
+      },
+      onClose: (_code, turnComplete, terminalStatus) => {
+        void teardown()
+        if (!state.completed) {
+          state.completed = true
+          const status = turnComplete ? terminalStatus || 'success' : 'failed'
+          const failed = !turnComplete || (status !== 'success' && status !== 'end_turn')
+          if (kimiNativeCompactionStartedAt !== null) {
+            emitContextCompactionCompatLine(
+              event.sender,
+              'kimi',
+              {
+                kind: failed ? 'failed' : 'completed',
+                telemetry: {
+                  provider: 'kimi',
+                  trigger: 'manual',
+                  durationMs: Date.now() - kimiNativeCompactionStartedAt,
+                  ...(failed ? { error: 'Kimi Code did not complete native compaction.' } : {})
+                }
+              },
+              state
+            )
+          }
+          sendAgentCompatLine(
+            event.sender,
+            'kimi',
+            {
+              type: 'result',
+              status: failed ? 'failed' : 'completed',
+              stats: {},
+              provider: 'kimi',
+              session_id: state.providerSessionId || ''
+            },
+            state
+          )
+          sendAgentCompatExit(event.sender, 'kimi', failed ? 1 : 0, route)
+          runManager.finish(route.appRunId, failed ? 'failed' : 'completed')
         }
       }
-    },
-    onClose: (_code, turnComplete, terminalStatus) => {
-      void teardown()
-      if (!state.completed) {
-        state.completed = true
-        const status = turnComplete ? terminalStatus || 'success' : 'failed'
-        const failed = !turnComplete || (status !== 'success' && status !== 'end_turn')
-        sendAgentCompatLine(
-          event.sender,
-          'kimi',
-          {
-            type: 'result',
-            status: failed ? 'failed' : 'completed',
-            stats: {},
-            provider: 'kimi',
-            session_id: state.providerSessionId || ''
-          },
-          state
-        )
-        sendAgentCompatExit(event.sender, 'kimi', failed ? 1 : 0, route)
-        runManager.finish(route.appRunId, failed ? 'failed' : 'completed')
-      }
-    }
     })
   } catch (error) {
     // A synchronous throw before the turn's onClose is wired (e.g. spawnProcess
@@ -19483,7 +19629,7 @@ function broadcastContextCompactionSignalProgress(input: {
 function invalidateEnsemblePromptReceiptsForSession(input: {
   chatId: string
   participantId?: string
-  provider: 'claude' | 'codex'
+  provider: ProviderId
   linkedProviderSessionId: string
 }): boolean {
   if (!input.participantId) return false
@@ -19975,8 +20121,182 @@ async function compactClaudeProviderContext(payload: {
     : { ok: false, error: signal.telemetry.error }
 }
 
+/** Kimi Code native compaction for an ensemble seat. Solo Kimi chats dispatch
+ * the same `/compact` command through the visible normal-run lane; ensemble
+ * seats need this detached maintenance lane so no extra participant answer is
+ * appended to the active round. The command resumes the exact ACP session,
+ * hard-denies tools, and never falls back to a fresh empty session. */
+const activeKimiNativeCompactions = new Set<string>()
+async function compactKimiProviderContext(payload: {
+  chatId: string
+  providerSessionId: string
+  participantId: string
+  model?: string
+  cardMetadata?: Record<string, unknown>
+  trigger?: 'auto' | 'manual'
+}): Promise<{ ok: boolean; error?: string }> {
+  const chat = AppStore.getChat(payload.chatId)
+  if (!chat?.ensemble) return { ok: false, error: 'Ensemble chat not found.' }
+  const participant = chat.ensemble.participants.find(
+    (candidate) => candidate.id === payload.participantId
+  )
+  if (
+    !participant ||
+    participant.provider !== 'kimi' ||
+    participant.linkedProviderSessionId !== payload.providerSessionId ||
+    participant.kimiAcpNativeSession !== true
+  ) {
+    return { ok: false, error: 'The Kimi native session changed before compaction.' }
+  }
+  if (activeKimiNativeCompactions.has(payload.providerSessionId)) {
+    return { ok: false, error: 'A compaction is already in progress for this Kimi session.' }
+  }
+  const workspace = chat.workspacePath || globalRunCwd()
+  const unsafeProjectConfig = await findUnsafeWorkspaceKimiConfig(workspace, kimiHomeFsAdapter)
+  if (unsafeProjectConfig) {
+    return { ok: false, error: buildKimiWorkspaceConfigRefusalMessage(unsafeProjectConfig) }
+  }
+  const resolved = await resolveCliProviderBinary('kimi', undefined)
+  if (!resolved.binaryPath) {
+    return { ok: false, error: resolved.error || 'Kimi Code CLI was not found.' }
+  }
+  const flavour = await probeKimiFlavourForBinary(resolved.binaryPath)
+  if (flavour.flavour !== 'kimi-code' || !kimiAcpEnabled()) {
+    return { ok: false, error: 'This Kimi seat is not running on the resumable ACP transport.' }
+  }
+  const home = await prepareKimiIsolatedHome({
+    runId: `compact-${payload.chatId}-${payload.participantId}`,
+    homeDir: kimiAcpSeatHomeDirForIdentity(payload.chatId, payload.participantId),
+    sourceHome: join(os.homedir(), '.kimi-code'),
+    thinkingEnabled: participant.thinkingEnabled ?? true,
+    preserveSessionState: true,
+    fs: kimiHomeFsAdapter
+  })
+  if (!home.ok) return { ok: false, error: home.message }
+
+  const trigger = payload.trigger || 'manual'
+  const startedAtMs = Date.now()
+  activeKimiNativeCompactions.add(payload.providerSessionId)
+  broadcastContextCompactionSignalProgress({
+    chatId: payload.chatId,
+    provider: 'kimi',
+    signal: { kind: 'started', telemetry: { provider: 'kimi', trigger } },
+    cardMetadata: payload.cardMetadata,
+    trigger
+  })
+
+  let lastWarning: string | undefined
+  let handle: ReturnType<typeof runKimiAcpTurn> | null = null
+  const outcome = await new Promise<{ ok: boolean; error?: string }>((resolveOutcome) => {
+    let settled = false
+    const finish = (result: { ok: boolean; error?: string }): void => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      resolveOutcome(result)
+    }
+    const timer = setTimeout(() => {
+      handle?.cancel()
+      finish({ ok: false, error: 'Timed out waiting for Kimi Code to compact.' })
+    }, 180_000)
+    try {
+      handle = runKimiAcpTurn({
+        prompt: '/compact',
+        resumeSessionId: payload.providerSessionId,
+        allowResumeFallback: false,
+        cwd: workspace,
+        fsRoots: [workspace],
+        fs: kimiAcpFsAdapter,
+        mcpServers: [],
+        spawnProcess: () => {
+          const modelArgs: string[] = []
+          appendKimiModelArgs(
+            modelArgs,
+            normalizeCliProviderModel('kimi', payload.model || participant.model),
+            participant.fastModeEnabled ? 'fast' : 'standard'
+          )
+          return spawn(resolved.binaryPath!, [...modelArgs, 'acp'], {
+            cwd: workspace,
+            env: createCliEnv(
+              {
+                ...home.env,
+                TASKWRAITH_PARENT_PROVIDER: 'kimi',
+                TASKWRAITH_CHAT_ID: payload.chatId
+              },
+              resolved.binaryPath!
+            )
+          }) as unknown as import('./kimi/KimiAcpClient').AcpChildProcess
+        },
+        // Native compaction is provider-internal and must remain tool-free.
+        onPermissionRequest: () => 'deny',
+        onEvent: (event) => {
+          if (event.type === 'provider_warning' && event.text) lastWarning = event.text
+        },
+        onClose: (_code, turnComplete, terminalStatus) => {
+          const succeeded =
+            turnComplete && (terminalStatus === 'success' || terminalStatus === 'end_turn')
+          finish({
+            ok: succeeded,
+            ...(succeeded
+              ? {}
+              : { error: lastWarning || 'Kimi Code did not complete native compaction.' })
+          })
+        }
+      })
+    } catch (error) {
+      finish({ ok: false, error: error instanceof Error ? error.message : String(error) })
+    }
+  })
+
+  await home.cleanup()
+  activeKimiNativeCompactions.delete(payload.providerSessionId)
+  const telemetry: ContextCompactionTelemetry = {
+    provider: 'kimi',
+    trigger,
+    durationMs: Date.now() - startedAtMs,
+    ...(outcome.error ? { error: outcome.error } : {})
+  }
+  const signal: ContextCompactionSignal = {
+    kind: outcome.ok ? 'completed' : 'failed',
+    telemetry
+  }
+  if (outcome.ok) {
+    invalidateEnsemblePromptReceiptsForSession({
+      chatId: payload.chatId,
+      participantId: payload.participantId,
+      provider: 'kimi',
+      linkedProviderSessionId: payload.providerSessionId
+    })
+  }
+  appendContextCompactionMessageToChat(
+    payload.chatId,
+    signal,
+    `native-kimi-${payload.providerSessionId}-${startedAtMs}`,
+    payload.cardMetadata
+  )
+  broadcastContextCompactionSignalProgress({
+    chatId: payload.chatId,
+    provider: 'kimi',
+    signal,
+    cardMetadata: payload.cardMetadata,
+    trigger
+  })
+  const lastRunId = [...(chat.runs || [])].reverse().find((run) => run?.runId)?.runId
+  if (lastRunId) {
+    appendDurableRunEventForRoute(
+      'kimi',
+      { appRunId: lastRunId, appChatId: payload.chatId },
+      'context_compaction',
+      'control',
+      formatContextCompactionSummary(signal, providerLabel('kimi')),
+      { compaction: signal, manual: trigger === 'manual', native: true }
+    )
+  }
+  return outcome
+}
+
 /**
- * Host-side SEAT compaction for ensemble cursor/kimi/grok participants (wave 3) —
+ * Host-side SEAT compaction for ensemble cursor/grok participants (wave 3) —
  * the providers with no native compaction lever. A maintenance-lane one-shot
  * CLI spawn OUTSIDE the run registry (mirrors compactClaudeProviderContext):
  *  - cursor: `-p --mode plan --resume <seatSession>` with the summarize
@@ -19985,7 +20305,7 @@ async function compactClaudeProviderContext(payload: {
  *    why cursor seats bloat). On success the seat's linkedProviderSessionId
  *    is CLEARED so the next round starts a fresh session, seeded by the
  *    summary block EnsemblePrompt now injects.
- *  - kimi/grok: sequential fresh read-only children carry bounded transcript
+ *  - grok: sequential fresh read-only children carry bounded transcript
  *    material in-prompt, chain and checkpoint the rolling summary after every
  *    exact-prefix advance, and stop at the shared deadline/source cap. Grok's
  *    persistent ACP seat is disposed only after fresh complete-coverage proof.
@@ -20327,14 +20647,14 @@ async function compactCliSeatContext(payload: {
       // (--print / --work-dir / --resume) is rejected at parse by a kimi-code
       // binary, and its --resume would feed an ACP session id to legacy resume
       // — crossing the transport-generation fence. Only a legacy-wire Kimi
-      // binary may run this path; a kimi-code seat skips compaction (ACP-
-      // transport compaction is a separate follow-up).
+      // binary may run this path; marked kimi-code seats route to native ACP
+      // compaction before reaching this branch.
       const kimiCompactionFenced =
         boundedProvider === 'kimi' &&
         (await probeKimiFlavourForBinary(resolved.binaryPath!)).flavour !== 'legacy-wire'
       if (kimiCompactionFenced) {
         failureError =
-          'Kimi Code seats use the ACP transport; host-seat compaction over ACP is not supported yet, so this maintenance turn was skipped.'
+          'This Kimi Code seat has no verified native ACP checkpoint, so compaction was skipped rather than guessing across session generations.'
         maintenanceStopReason = 'no_progress'
         maintenanceStopError = failureError
       } else {
@@ -20491,6 +20811,7 @@ async function compactProviderContextForRequest(payload: {
   let model: string | undefined
   let reasoningEffort: string | null | undefined
   let cardMetadata: Record<string, unknown> | undefined
+  let kimiNativeSession = false
   const isHostSeatProvider =
     payload.provider === 'cursor' || payload.provider === 'kimi' || payload.provider === 'grok'
   // Host seat providers (cursor/kimi/grok) only compact as ENSEMBLE seats here.
@@ -20535,6 +20856,7 @@ async function compactProviderContextForRequest(payload: {
       }
     }
     providerSessionId = participant.linkedProviderSessionId || undefined
+    kimiNativeSession = participant.kimiAcpNativeSession === true
     model = participant.model
     reasoningEffort = participant.reasoningEffort
     const presentation = resolveHealthEntryPresentation(
@@ -20547,6 +20869,30 @@ async function compactProviderContextForRequest(payload: {
       ensembleParticipantId: participant.id,
       displayParticipantLabel: `${presentation.displayProviderLabel} / ${role}`,
       displayHueClass: presentation.displayHueClass
+    }
+  }
+  if (
+    payload.provider === 'kimi' &&
+    kimiNativeSession &&
+    payload.participantId &&
+    providerSessionId
+  ) {
+    const pendingKey = seatCompactionKey(payload.chatId, payload.participantId)
+    const existing = pendingSeatCompactions.get(pendingKey)
+    if (existing) return existing
+    const work = compactKimiProviderContext({
+      chatId: payload.chatId,
+      participantId: payload.participantId,
+      providerSessionId,
+      model,
+      cardMetadata,
+      trigger: payload.trigger || 'manual'
+    })
+    pendingSeatCompactions.set(pendingKey, work)
+    try {
+      return await work
+    } finally {
+      pendingSeatCompactions.delete(pendingKey)
     }
   }
   if (payload.provider === 'cursor' || payload.provider === 'kimi' || payload.provider === 'grok') {
@@ -27763,7 +28109,7 @@ async function executeGeminiMcpTool(
       }
       const recalledProviderSessionId =
         recallResolution.mode === 'recall' ? recallResolution.resumeSessionId : undefined
-      const providerPrompt = composeDelegatedProviderPrompt({
+      const providerPrompts = composeDelegatedProviderPrompts({
         provider: providerArg,
         subThread,
         prompt: promptArg,
@@ -27788,7 +28134,10 @@ async function executeGeminiMcpTool(
         provider: providerArg,
         scope: context.scope ?? 'workspace',
         workspace: subThread.workspacePath,
-        prompt: providerPrompt,
+        prompt: providerPrompts.prompt,
+        ...(providerPrompts.resumeFallbackPrompt
+          ? { resumeFallbackPrompt: providerPrompts.resumeFallbackPrompt }
+          : {}),
         appRunId: subThreadRunId,
         appChatId: subThread.appChatId,
         approvalMode: delegatedApprovalMode,
@@ -27802,7 +28151,7 @@ async function executeGeminiMcpTool(
         // Phase J2: on recall, inject the existing sub-thread's
         // linked provider session id so the target provider's native
         // session resumes (Codex `thread/resume`, Claude SDK
-        // `resume:`, Claude CLI `--resume`, Kimi `--resume`, Gemini
+        // `resume:`, Claude CLI `--resume`, Kimi ACP `session/resume`, Gemini
         // `--resume`). Recall resolution rejects sub-threads without a
         // resumable provider session so this path never silently starts
         // a fresh provider-side session.
