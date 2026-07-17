@@ -84,6 +84,11 @@ import {
   startKimiHttpMcpBridge,
   type KimiHttpMcpBridgeHandle
 } from './kimi/KimiHttpMcpBridge'
+import { createKimiMcpDispatch } from './kimi/KimiMcpDispatch'
+import {
+  flushKimiThinkingChunks,
+  queueKimiThinkingChunk
+} from './kimi/KimiThinkingBatcher'
 import {
   prepareKimiIsolatedHome,
   findUnsafeWorkspaceKimiConfig,
@@ -993,7 +998,6 @@ import {
   applyMcpBridgeProfileArgvToEnv,
   createMcpBridgeRuntime,
   GEMINI_MCP_AUDIT_SUBSET_ARG,
-  handleMcpJsonRpcMessage,
   mcpToolCallResponseFromBrokerResult as mcpBridgeToolCallResponseFromBrokerResult,
   startGeminiMcpBridgeProcess as startGeminiMcpBridgeProcessWithDeps
 } from './mcp/McpBridgeRuntime'
@@ -4397,6 +4401,42 @@ function globalGeminiCwd(): string {
     // full), fall back to `$HOME` rather than crashing the run.
     // Worst case the user is back where they were before EW17.
     return globalRunCwd()
+  }
+  return canonicalPath(dir)
+}
+
+/**
+ * Kimi Code treats `<cwd>/.kimi-code/mcp.json` as project-local MCP config.
+ * A global chat used to launch from `$HOME`, which made the user's
+ * `~/.kimi-code/mcp.json` visible a second time even though KIMI_CODE_HOME was
+ * isolated. That could resurrect a stale TaskWraith socket registration beside
+ * the per-run HTTP bridge. Keep global Kimi sessions in their own stable,
+ * TaskWraith-managed cwd so native resume remains stable without loading any
+ * user/project MCP config.
+ */
+function globalKimiCwd(): string {
+  const dir = join(app.getPath('userData'), 'global-kimi-cwd-v1')
+  try {
+    fsSync.mkdirSync(dir, { recursive: true, mode: 0o700 })
+    fsSync.chmodSync(dir, 0o700)
+    const marker = join(dir, '.taskwraith-global-cwd')
+    if (!fsSync.existsSync(marker)) {
+      fsSync.writeFileSync(
+        marker,
+        'TaskWraith-managed isolated cwd for global-mode Kimi Code runs. ' +
+          'Do not add .mcp.json or .kimi-code configuration here.\n',
+        { mode: 0o600 }
+      )
+    }
+  } catch (error) {
+    // Unlike Gemini's performance-only cwd isolation, falling back to $HOME
+    // here would cross a containment boundary by re-enabling project-local MCP
+    // discovery. Fail closed and let the provider adapter surface the reason.
+    throw new Error(
+      `Could not prepare Kimi's isolated global-chat directory: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    )
   }
   return canonicalPath(dir)
 }
@@ -17585,7 +17625,12 @@ const kimiAcpFsAdapter: KimiAcpFs = {
 
 /** Stream an ACP run event from a Kimi ACP turn to the renderer. Mirrors
  *  applyGrokRunEvent (provider-agnostic renderer shape), tagged 'kimi'. */
+function flushKimiAcpThinking(state: CliProviderStreamState): void {
+  flushKimiThinkingChunks(state, (text) => emitCliProviderThinkingEvent(state, text))
+}
+
 function applyKimiAcpRunEvent(state: CliProviderStreamState, evt: NormalizedGrokRunEvent): void {
+  if (evt.type !== 'thinking') flushKimiAcpThinking(state)
   if (evt.sessionId) {
     updateCliProviderSession(state, evt.sessionId)
     persistKimiAcpNativeSession(state, evt.sessionId)
@@ -17608,7 +17653,9 @@ function applyKimiAcpRunEvent(state: CliProviderStreamState, evt: NormalizedGrok
     state.assistantText = `${state.assistantText || ''}${evt.text}`
     sendAgentCompatLine(state.sender, 'kimi', { type: 'content', text: evt.text, provider: 'kimi' }, state)
   } else if (evt.type === 'thinking' && evt.text) {
-    emitCliProviderThinkingEvent(state, evt.text)
+    queueKimiThinkingChunk(state, evt.text, (text) =>
+      emitCliProviderThinkingEvent(state, text)
+    )
   } else if (evt.type === 'tool_use') {
     sendAgentCompatLine(
       state.sender,
@@ -17643,88 +17690,6 @@ function applyKimiAcpRunEvent(state: CliProviderStreamState, evt: NormalizedGrok
 }
 
 /**
- * Build the per-run MCP JSON-RPC dispatcher for a Kimi HTTP MCP bridge. Feeds
- * each inbound message into the SHARED gateway dispatch (handleMcpJsonRpcMessage
- * — the same code every stdio provider uses: initialize / tools/list subset /
- * tools/call guards) with a capturing writer, so all subset filtering + broker
- * routing + approvals are reused. The gateway-subset env pins the progressive-
- * disclosure profile and stamps the Kimi run route so tools/call resolves to the
- * right workspace/run. Returns null for notifications (no reply).
- */
-function makeKimiMcpDispatch(
-  route: AgentRunRoute,
-  workspace: string | undefined
-): (message: Record<string, unknown>) => Promise<Record<string, unknown> | null> {
-  const deps = {
-    getDefaultSocketPath: () => geminiMcpSocketPath(),
-    getAppVersion: () => app.getVersion(),
-    getMcpToolDefinitions: () => mcpToolDefinitions(),
-    brokerRequest: mcpBridgeBrokerRequest,
-    mcpToolCallResponseFromBrokerResult: mcpBridgeToolCallResponseFromBrokerResult,
-    env: {
-      ...process.env,
-      // Progressive-disclosure gateway profile — the same subset the other
-      // capable seats advertise; the isolated home keeps this the ONLY MCP.
-      TASKWRAITH_MCP_GATEWAY_SUBSET: '1',
-      TASKWRAITH_PARENT_PROVIDER: 'kimi',
-      TASKWRAITH_RUN_ID: route.appRunId || '',
-      TASKWRAITH_CHAT_ID: route.appChatId || '',
-      TASKWRAITH_WORKSPACE_PATH: workspace || ''
-    } as NodeJS.ProcessEnv
-  }
-  return (message) =>
-    new Promise((resolve) => {
-      if (typeof message.method === 'string' && message.method.startsWith('notifications/')) {
-        resolve(null)
-        return
-      }
-      let settled = false
-      const finish = (value: Record<string, unknown> | null): void => {
-        if (settled) return
-        settled = true
-        resolve(value)
-      }
-      // handleMcpJsonRpcMessage writes exactly one framed/line response per
-      // request via this stdout shim; 'line' emits a single JSON line we parse.
-      const writer = {
-        write: (line: string) => {
-          try {
-            finish(JSON.parse(String(line).trim()))
-          } catch {
-            finish(null)
-          }
-          return true
-        }
-      } as unknown as NodeJS.WriteStream
-      try {
-        handleMcpJsonRpcMessage(
-          { ...deps, stdout: writer },
-          geminiMcpSocketPath(),
-          geminiMcpBrokerToken,
-          message,
-          'line'
-        )
-      } catch (error) {
-        finish({
-          jsonrpc: '2.0',
-          id: message.id ?? null,
-          error: { code: -32000, message: error instanceof Error ? error.message : String(error) }
-        })
-      }
-      // Never hang the Kimi turn on a wedged tool call.
-      setTimeout(
-        () =>
-          finish({
-            jsonrpc: '2.0',
-            id: message.id ?? null,
-            error: { code: -32000, message: 'TaskWraith MCP dispatch timed out.' }
-          }),
-        30_000
-      )
-    })
-}
-
-/**
  * Kimi Code ACP provider (migration slice 4, gated behind kimiAcpEnabled()).
  * Runs a full-tool Kimi seat inside a seat-isolated KIMI_CODE_HOME (curated
  * config: telemetry off, allow-rules stripped, FetchURL/WebSearch/AgentSwarm
@@ -17740,6 +17705,24 @@ async function runKimiAcpProvider(
   binaryPath: string
 ): Promise<void> {
   const route = routeWithRunId('kimi', payload)
+
+  let kimiCwd: string
+  try {
+    kimiCwd = payload.scope === 'global' ? globalKimiCwd() : payload.workspace || os.homedir()
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    sendAgentCompatError(event.sender, 'kimi', message, route)
+    sendAgentCompatLine(event.sender, 'kimi', {
+      type: 'result',
+      status: 'failed',
+      stats: {},
+      provider: 'kimi',
+      setupRequired: true
+    })
+    sendAgentCompatExit(event.sender, 'kimi', 1, route)
+    runManager.finish(route.appRunId, 'failed')
+    return
+  }
 
   // B3 (dossier): a project-level `.kimi-code/mcp.json` / `.kimi-code/plugins`
   // in the workspace is loaded by Kimi Code from the ACP session cwd BEFORE any
@@ -17856,12 +17839,16 @@ async function runKimiAcpProvider(
   let kimiMcpServers: unknown[] = []
   if (payload.taskWraithMcpAdvertised !== false) {
     try {
-      await mcpBridgeRuntime.startGeminiMcpBroker()
       kimiMcpBridge = await startKimiHttpMcpBridge({
-        dispatch: makeKimiMcpDispatch(
+        dispatch: createKimiMcpDispatch({
           route,
-          payload.scope === 'global' ? undefined : payload.workspace
-        )
+          workspace: payload.scope === 'global' ? undefined : payload.workspace,
+          appVersion: app.getVersion(),
+          brokerToken: geminiMcpBrokerToken,
+          getMcpToolDefinitions: () => mcpToolDefinitions(),
+          dispatchBrokerRequest: (request) =>
+            mcpBridgeRuntime.handleGeminiMcpBrokerRequest(request)
+        })
       })
       kimiMcpServers = [
         {
@@ -17939,7 +17926,7 @@ async function runKimiAcpProvider(
           value: kimiThinkingConfig
         }
       ],
-      cwd: payload.workspace || os.homedir(),
+      cwd: kimiCwd,
       fsRoots,
       fs: kimiAcpFsAdapter,
       mcpServers: kimiMcpServers,
@@ -17954,7 +17941,7 @@ async function runKimiAcpProvider(
         appendKimiModelArgs(modelArgs, model, payload.serviceTier)
         const args = [...modelArgs, 'acp']
         return spawn(binaryPath, args, {
-          cwd: payload.workspace || os.homedir(),
+          cwd: kimiCwd,
           env: createCliEnv(
             {
               ...home.env,
@@ -17988,6 +17975,7 @@ async function runKimiAcpProvider(
       onClose: (_code, turnComplete, terminalStatus) => {
         void teardown()
         if (!state.completed) {
+          flushKimiAcpThinking(state)
           state.completed = true
           const status = turnComplete ? terminalStatus || 'success' : 'failed'
           const failed = !turnComplete || (status !== 'success' && status !== 'end_turn')

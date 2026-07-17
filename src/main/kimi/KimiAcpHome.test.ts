@@ -114,7 +114,10 @@ describe('prepareKimiIsolatedHome', () => {
       '/iso/session_index.jsonl': '{"id":"session-1"}\n',
       // Model a credential residue left by a prior crashed process. Preparation
       // must replace it before the new process starts.
-      '/iso/credentials/kimi-code.json': '{"token":"STALE"}'
+      '/iso/credentials/kimi-code.json': '{"token":"STALE"}',
+      // An obsolete global TaskWraith registration must never survive in the
+      // isolated user-level MCP slot between durable seat turns.
+      '/iso/mcp.json': '{"mcpServers":{"TaskWraith":{}}}'
     }
     const { fs, files, dirs } = makeFakeFs(seed)
     dirs.add('/iso')
@@ -130,6 +133,7 @@ describe('prepareKimiIsolatedHome', () => {
     expect(result.ok).toBe(true)
     if (!result.ok) return
     expect(files.get('/iso/credentials/kimi-code.json')).toBe('{"token":"SECRET"}')
+    expect(files.has('/iso/mcp.json')).toBe(false)
 
     await result.cleanup()
 
@@ -140,6 +144,7 @@ describe('prepareKimiIsolatedHome', () => {
     expect(files.has('/iso/oauth/kimi-code')).toBe(false)
     expect(files.has('/iso/device_id')).toBe(false)
     expect(files.has('/iso/config.toml')).toBe(false)
+    expect(files.has('/iso/mcp.json')).toBe(false)
   })
 
   it('fails closed when crash residue cannot be scrubbed from a durable seat', async () => {

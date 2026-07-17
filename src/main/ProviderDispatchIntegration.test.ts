@@ -80,4 +80,17 @@ describe('provider dispatch integration', () => {
     expect(budgetGuard).toContain("sendAgentCompatExit(event.sender, 'claude', 130, route)")
     expect(budgetGuard).not.toContain('workflowBudgetRegistry.onExit(')
   })
+
+  it('keeps global Kimi ACP sessions out of HOME project-local MCP discovery', () => {
+    const kimiAcpProvider = sourceBetween(
+      'async function runKimiAcpProvider(',
+      'async function runKimiProvider('
+    )
+
+    expect(kimiAcpProvider).toContain(
+      "payload.scope === 'global' ? globalKimiCwd() : payload.workspace || os.homedir()"
+    )
+    expect(kimiAcpProvider).toContain('cwd: kimiCwd')
+    expect(kimiAcpProvider).not.toContain('cwd: payload.workspace || os.homedir()')
+  })
 })

@@ -140,6 +140,9 @@ export interface CliProviderStreamState extends CliProviderThinkingSegmentsState
    */
   terminalResultFailed?: boolean
   assistantText: string
+  /** Token-sized Kimi ACP thinking deltas awaiting their next UI/ledger batch. */
+  kimiThinkingPendingText?: string
+  kimiThinkingFlushTimer?: NodeJS.Timeout
   providerSessionId?: string | null
   approvalMode?: string
   workflowMode?: ChatWorkflowMode

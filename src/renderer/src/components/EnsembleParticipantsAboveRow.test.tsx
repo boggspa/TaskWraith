@@ -442,7 +442,7 @@ describe('EnsembleParticipantsAboveRow', () => {
         model: 'kimi-k2.7-code',
         fastModeEnabled: false,
         thinkingEnabled: true,
-        reasoningEffort: undefined,
+        reasoningEffort: 'on',
         serviceTier: 'standard'
       })
       expect(createEnsembleParticipantAddConfiguration('claude', 'claude-haiku-4-5')).toMatchObject(

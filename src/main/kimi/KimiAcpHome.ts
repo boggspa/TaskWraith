@@ -64,6 +64,7 @@ const KIMI_RUNTIME_ARTEFACTS = [
   'oauth',
   'device_id',
   'config.toml',
+  'mcp.json',
   'plugins',
   'skills'
 ] as const
