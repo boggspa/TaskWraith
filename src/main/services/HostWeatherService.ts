@@ -415,17 +415,38 @@ export async function getCachedHostWeather(): Promise<HostWeatherState> {
   if (weatherCache && nowMs - weatherCacheAt < WEATHER_CACHE_MS) {
     return weatherCache
   }
-  if (inflight) return inflight
-  inflight = readHostWeather()
-    .then((state) => {
-      weatherCache = state
-      weatherCacheAt = Date.now()
-      if (state.source === 'open-meteo') persistCache()
-      return state
-    })
-    .finally(() => {
-      inflight = null
-    })
+  if (!inflight) {
+    inflight = readHostWeather()
+      .then((state) => {
+        weatherCache = state
+        weatherCacheAt = Date.now()
+        if (state.source === 'open-meteo') persistCache()
+        return state
+      })
+      .finally(() => {
+        inflight = null
+      })
+  }
+  // Stale-while-revalidate: a cold launch must never leave the renderer
+  // weatherless while the network round-trip runs — the sky layer would boot
+  // on its clock-only guess (a UK summer 21:50 reads as deep night → a full
+  // starfield that then visibly fades once real astronomy arrives). Answer
+  // instantly from the persisted snapshot with day/night recomputed from its
+  // coordinates; the refresh lands for the renderer's follow-up poll.
+  if (weatherCache && nowMs - weatherCacheAt < STALE_WEATHER_REUSE_MS) {
+    if (weatherCache.latitude !== undefined && weatherCache.longitude !== undefined) {
+      return {
+        ...weatherCache,
+        isDay: isSunUp(nowMs, weatherCache.latitude, weatherCache.longitude)
+      }
+    }
+    return weatherCache
+  }
+  // Snapshot too old to trust its conditions, but known coordinates still
+  // give the correct sun/moon/twilight immediately (kind stays 'unknown').
+  if (geoCache) {
+    return composeAstronomyFallback(geoCache, nowMs)
+  }
   return inflight
 }
 

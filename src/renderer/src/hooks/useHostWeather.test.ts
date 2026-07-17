@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { fallbackHostWeather } from './useHostWeather'
+import { fallbackHostWeather, isStaleHostWeather } from './useHostWeather'
 
 // Assertions are derived from the same `date.getHours()` the implementation
 // reads, so they hold regardless of the machine/CI timezone.
@@ -38,5 +38,22 @@ describe('fallbackHostWeather', () => {
       const weather = fallbackHostWeather(new Date(2026, 5, 13, hour, 0, 0))
       expect(weather.description).toBe(weather.isDay ? 'Local daytime sky' : 'Local night sky')
     }
+  })
+})
+
+describe('isStaleHostWeather', () => {
+  const at = (iso: string) => fallbackHostWeather(new Date(iso))
+
+  it('flags snapshots older than the refresh TTL (stale-while-revalidate answers)', () => {
+    const nowMs = Date.parse('2026-07-17T21:00:00.000Z')
+    expect(isStaleHostWeather(at('2026-07-17T20:59:00.000Z'), nowMs)).toBe(false)
+    expect(isStaleHostWeather(at('2026-07-17T20:46:00.000Z'), nowMs)).toBe(false)
+    expect(isStaleHostWeather(at('2026-07-17T20:30:00.000Z'), nowMs)).toBe(true)
+    expect(isStaleHostWeather(at('2026-07-17T09:00:00.000Z'), nowMs)).toBe(true)
+  })
+
+  it('treats an unparseable timestamp as fresh (no follow-up churn)', () => {
+    const weather = { ...at('2026-07-17T20:59:00.000Z'), updatedAt: 'not-a-date' }
+    expect(isStaleHostWeather(weather, Date.parse('2026-07-17T21:00:00.000Z'))).toBe(false)
   })
 })
