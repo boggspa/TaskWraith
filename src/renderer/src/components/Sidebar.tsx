@@ -56,6 +56,10 @@ import { SidebarOverflowMenu, type SidebarOverflowMenuItem } from './SidebarOver
 import { WorkflowRunHistory } from './WorkflowRunHistory'
 import { ProviderGlyph } from './icons/ProviderGlyph'
 import { isSubThreadChat } from '../lib/chatScope'
+import {
+  primarySurfaceForSidebarTabChange,
+  type SidebarPrimarySurface
+} from '../lib/primarySurfaceToggle'
 import { assignAgentIdentityFromSeed } from '../lib/agentIdentitySeed'
 import { AgentIdentityIcon } from './icons/AgentIdentityIcon'
 import type { AgentApprovalAction, AgentApprovalRequest } from '../lib/agentApprovalTypes'
@@ -180,6 +184,14 @@ interface SidebarProps {
   onNewGlobalChat: () => void
   onNewEnsemble: () => void
   ensembleModeEnabled?: boolean
+  /**
+   * The user clicked (or arrow-keyed) the Chat / Code segmented control onto a
+   * primary chat surface. Fires only on a genuine user-initiated tab change —
+   * never from the tab-follows-chat effect or the `+ New` create handlers —
+   * and never for Projects, which is sidebar-only. The host may re-scope a
+   * pristine welcome draft to the selected surface.
+   */
+  onPrimarySurfaceSelect?: (surface: SidebarPrimarySurface) => void
   onSelectChat: (chat: ChatRecord) => void
   onOpenChatInSidePanel?: (chat: ChatRecord, presentation?: 'split' | 'drawer') => void
   /** Open this chat in a Multiview pane (all chat types). */
@@ -2575,6 +2587,7 @@ export function Sidebar({
   onNewGlobalChat,
   onNewEnsemble,
   ensembleModeEnabled = true,
+  onPrimarySurfaceSelect,
   onSelectChat,
   onOpenChatInSidePanel,
   onOpenInMultiview,
@@ -3199,6 +3212,17 @@ export function Sidebar({
     if (activeSidebarTabRef.current === 'projects') return
     setActiveSidebarTab(getChatSidebarTab(selectedChat))
   }, [selectedChat, selectedChatSurfaceKey])
+  // Single entry point for USER-initiated tab selection (segment click +
+  // arrow-key roving). A genuine Chat/Code change is reported to the host so
+  // it can re-scope a pristine welcome draft onto the selected surface. The
+  // tab-follows-chat effect above and the `+ New` create handlers below call
+  // setActiveSidebarTab directly — they react to or create the right chat
+  // themselves and must never fire the callback.
+  const selectSidebarTab = (nextTab: SidebarActiveTab): void => {
+    const surface = primarySurfaceForSidebarTabChange(activeSidebarTab, nextTab)
+    setActiveSidebarTab(nextTab)
+    if (surface) onPrimarySurfaceSelect?.(surface)
+  }
   const currentScopeTitle =
     currentWorkspace?.displayName || (currentChat?.scope === 'global' ? null : 'TaskWraith')
   const runningCount =
@@ -4309,7 +4333,7 @@ export function Sidebar({
                 activeSidebarTab === tab ? 'is-active' : ''
               }`}
               id={`sidebar-${tab}-tab`}
-              onClick={() => setActiveSidebarTab(tab)}
+              onClick={() => selectSidebarTab(tab)}
               onKeyDown={(event) => {
                 if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
                 event.preventDefault()
@@ -4320,7 +4344,7 @@ export function Sidebar({
                     (currentIndex + direction + SIDEBAR_ACTIVE_TABS.length) %
                       SIDEBAR_ACTIVE_TABS.length
                   ]
-                setActiveSidebarTab(nextTab)
+                selectSidebarTab(nextTab)
                 window.requestAnimationFrame(() => {
                   document.getElementById(`sidebar-${nextTab}-tab`)?.focus()
                 })
