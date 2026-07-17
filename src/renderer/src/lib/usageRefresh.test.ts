@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   fingerprintUsageSummary,
   hasUsageSummaryChanged,
+  shouldLoadUsageRecords,
   shouldRunUsageRefresh
 } from './usageRefresh'
 
@@ -103,6 +104,46 @@ describe('fingerprintUsageSummary', () => {
       }
     ]
     expect(hasUsageSummaryChanged(a, b)).toBe(false)
+  })
+
+  it('ignores fetch-only timestamps but detects rendered telemetry changes', () => {
+    const prev = [
+      {
+        provider: 'cursor' as const,
+        model: 'usage limits',
+        quotaFetchedAt: '2026-07-17T12:00:00.000Z',
+        balances: [{ id: 'spend', label: 'On-Demand Spend', amount: 8, unit: 'USD' }]
+      }
+    ]
+    const timestampOnly = [
+      {
+        ...prev[0],
+        quotaFetchedAt: '2026-07-17T12:01:30.000Z'
+      }
+    ]
+    const changedBalance = [
+      {
+        ...timestampOnly[0],
+        balances: [{ id: 'spend', label: 'On-Demand Spend', amount: 9, unit: 'USD' }]
+      }
+    ]
+
+    expect(hasUsageSummaryChanged(prev, timestampOnly)).toBe(false)
+    expect(hasUsageSummaryChanged(prev, changedBalance)).toBe(true)
+  })
+})
+
+describe('shouldLoadUsageRecords', () => {
+  it('skips the historical record sweep for an initialized quota heartbeat', () => {
+    expect(shouldLoadUsageRecords({ quotaOnly: true, recordsInitialized: true })).toBe(false)
+  })
+
+  it('hydrates records before the first quota-only refresh can reuse aggregates', () => {
+    expect(shouldLoadUsageRecords({ quotaOnly: true, recordsInitialized: false })).toBe(true)
+  })
+
+  it('loads records for normal refreshes after initialization', () => {
+    expect(shouldLoadUsageRecords({ quotaOnly: false, recordsInitialized: true })).toBe(true)
   })
 })
 

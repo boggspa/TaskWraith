@@ -6,53 +6,95 @@
 
 import type { ProviderId } from '../../../main/store/types'
 
-export interface UsageRefreshWindowFingerprint {
-  id: string
-  label: string
-  limitLabel: string
-  resetAt: string
-  usedPercent: number | null
-  remainingPercent: number | null
-}
-
-export interface UsageRefreshEntryFingerprint {
-  provider: ProviderId
-  model: string
-  windows: UsageRefreshWindowFingerprint[]
-}
-
 export interface UsageSummaryLike {
   provider: ProviderId
   model: string
+  planName?: string
+  runs?: number
+  inputTokens?: number
+  outputTokens?: number
+  totalTokens?: number
+  durationMs?: number
+  inputTokenLimit?: number
+  outputTokenLimit?: number
+  totalTokenLimit?: number
+  resetAt?: string
+  resetText?: string
   windows?: Array<{
     id: string
     label: string
     limitLabel: string
+    runs?: number
+    totalTokens?: number
+    runLimitMax?: number
     resetAt?: string
+    trackingOnly?: boolean
     usedPercent?: number
     remainingPercent?: number
+    limitWindowSeconds?: number
   }>
+  balances?: Array<{
+    id: string
+    label: string
+    amount: number
+    unit: string
+    subtitle?: string
+    resetAt?: string
+  }>
+  quotaSource?: string
+  quotaFetchedAt?: string
+  quotaConfigured?: boolean
+  quotaError?: string
+  quotaStale?: boolean
 }
 
 /**
- * Produce a compact, stable fingerprint of the usage summary payload — only
- * the fields the sidebar meters actually render. Equal payloads (regardless
- * of object identity) produce equal strings, so consumers can `===` the
- * results to decide whether `setState` would be a no-op.
+ * Produce a stable fingerprint of the semantic usage-summary payload. The
+ * provider snapshots stamp every successful response with a new
+ * `quotaFetchedAt`; that transport metadata is intentionally excluded so an
+ * unchanged heartbeat cannot invalidate the root React tree. A manual refresh
+ * may still publish the fresh timestamp explicitly.
  */
 export function fingerprintUsageSummary(summary: ReadonlyArray<UsageSummaryLike>): string {
-  const ordered: UsageRefreshEntryFingerprint[] = summary.map((entry) => ({
+  const ordered = summary.map((entry) => ({
     provider: entry.provider,
     model: entry.model,
+    planName: entry.planName || '',
+    runs: entry.runs ?? 0,
+    inputTokens: entry.inputTokens ?? 0,
+    outputTokens: entry.outputTokens ?? 0,
+    totalTokens: entry.totalTokens ?? 0,
+    durationMs: entry.durationMs ?? 0,
+    inputTokenLimit: entry.inputTokenLimit ?? null,
+    outputTokenLimit: entry.outputTokenLimit ?? null,
+    totalTokenLimit: entry.totalTokenLimit ?? null,
+    resetAt: entry.resetAt || '',
+    resetText: entry.resetText || '',
     windows: (entry.windows || []).map((windowEntry) => ({
       id: windowEntry.id,
       label: windowEntry.label,
       limitLabel: windowEntry.limitLabel,
+      runs: windowEntry.runs ?? 0,
+      totalTokens: windowEntry.totalTokens ?? 0,
+      runLimitMax: windowEntry.runLimitMax ?? null,
       resetAt: windowEntry.resetAt || '',
-      usedPercent: typeof windowEntry.usedPercent === 'number' ? windowEntry.usedPercent : null,
-      remainingPercent:
-        typeof windowEntry.remainingPercent === 'number' ? windowEntry.remainingPercent : null
-    }))
+      trackingOnly: windowEntry.trackingOnly ?? null,
+      usedPercent: windowEntry.usedPercent ?? null,
+      remainingPercent: windowEntry.remainingPercent ?? null,
+      limitWindowSeconds: windowEntry.limitWindowSeconds ?? null
+    })),
+    balances: (entry.balances || []).map((balance) => ({
+      id: balance.id,
+      label: balance.label,
+      amount: balance.amount,
+      unit: balance.unit,
+      subtitle: balance.subtitle || '',
+      resetAt: balance.resetAt || ''
+    })),
+    quotaSource: entry.quotaSource || '',
+    quotaConfigured: entry.quotaConfigured ?? null,
+    quotaError: entry.quotaError || '',
+    quotaStale: entry.quotaStale ?? false
   }))
   return JSON.stringify(ordered)
 }
@@ -67,6 +109,22 @@ export function hasUsageSummaryChanged(
   next: ReadonlyArray<UsageSummaryLike>
 ): boolean {
   return fingerprintUsageSummary(prev) !== fingerprintUsageSummary(next)
+}
+
+export interface UsageRecordsRefreshInput {
+  /** The caller only needs live provider quota/balance telemetry. */
+  quotaOnly: boolean
+  /** At least one full usage-record load has completed in this renderer. */
+  recordsInitialized: boolean
+}
+
+/**
+ * The quota heartbeat reuses the last run aggregates after initial hydration.
+ * Full/manual/post-run refreshes still load records, and a quota-only request
+ * safely falls back to a full load when it happens before initialization.
+ */
+export function shouldLoadUsageRecords(input: UsageRecordsRefreshInput): boolean {
+  return !input.quotaOnly || !input.recordsInitialized
 }
 
 export interface UsageRefreshDecisionInput {

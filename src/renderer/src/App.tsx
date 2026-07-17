@@ -586,7 +586,11 @@ import {
   selectCompletionRunIds,
   selectRunEvidenceMessages
 } from './lib/RunWorkspaceDiff'
-import { shouldRunUsageRefresh } from './lib/usageRefresh'
+import {
+  fingerprintUsageSummary,
+  shouldLoadUsageRecords,
+  shouldRunUsageRefresh
+} from './lib/usageRefresh'
 import { isCiStatusTerminal, shouldRunCiPoll } from './lib/ciStatusRefresh'
 import type { CiNotice } from './lib/ciNotice'
 import {
@@ -2316,6 +2320,8 @@ function App(): React.JSX.Element {
   })
   const usageSummarySignatureRef = useRef('')
   const usageRecordsSignatureRef = useRef('')
+  const usageRecordsInitializedRef = useRef(false)
+  const usageRunAggregatesRef = useRef<ModelUsageAggregate[]>([])
   // Autonomous-refresh plumbing — see the matching `useEffect` below for the
   // heartbeat that polls usage IPC on a 90s cadence without touching focused
   // UI state. The ref-to-latest pattern keeps the timer stable across renders
@@ -2325,7 +2331,7 @@ function App(): React.JSX.Element {
       _workspaceId?: string,
       _providerHint?: ProviderId,
       codexStatusHint?: any,
-      options?: { force?: boolean; forceUsageRecords?: boolean }
+      options?: { force?: boolean; forceUsageRecords?: boolean; quotaOnly?: boolean }
     ) => Promise<void>
   >(async () => {})
   const usageRefreshInFlightRef = useRef(false)
@@ -7492,11 +7498,22 @@ function App(): React.JSX.Element {
     // records cache — the usage-changed handler uses it so post-run data is
     // immediate WITHOUT hammering the provider quota endpoints (whose
     // fetchers deliberately TTL, e.g. the Codex 429 guard) on every run.
-    options: { force?: boolean; forceUsageRecords?: boolean } = {}
+    // `quotaOnly` is the autonomous heartbeat's lightweight path: after the
+    // initial hydration it reuses cached run aggregates instead of fetching,
+    // fingerprinting, and reducing the entire usage history every 90 seconds.
+    options: {
+      force?: boolean
+      forceUsageRecords?: boolean
+      quotaOnly?: boolean
+    } = {}
   ) => {
     const now = Date.now()
     const effectiveCodexStatus = codexStatusHint ?? codexStatus
     const quotaRefreshOptions = options.force ? { force: true } : undefined
+    const loadUsageRecords = shouldLoadUsageRecords({
+      quotaOnly: options.quotaOnly === true,
+      recordsInitialized: usageRecordsInitializedRef.current
+    })
 
     // gemini retired — no live quota fetch, and omitted from the Model Usage
     // card's quota meters below (its historical token usage is still shown).
@@ -7511,33 +7528,38 @@ function App(): React.JSX.Element {
         window.api.getAgentRateLimits('claude', quotaRefreshOptions).catch(() => null),
         window.api.getAgentRateLimits('kimi', quotaRefreshOptions).catch(() => null),
         window.api.getAgentRateLimits('cursor', quotaRefreshOptions).catch(() => null),
-        loadRendererUsageRecords('taskwraith', {
-          force: options.force === true || options.forceUsageRecords === true
-        }).catch(() => [])
+        loadUsageRecords
+          ? loadRendererUsageRecords('taskwraith', {
+              force: options.force === true || options.forceUsageRecords === true
+            }).catch(() => [])
+          : Promise.resolve(null)
       ])
 
     const normalizedUsageRecords = Array.isArray(allUsageRecords) ? allUsageRecords : []
-    const nextUsageRecordsSignature = JSON.stringify(
-      normalizedUsageRecords.map((record) => [
-        record.id,
-        record.timestamp,
-        record.provider || '',
-        record.model,
-        record.inputTokens,
-        record.outputTokens,
-        record.totalTokens,
-        record.cacheReadInputTokens,
-        record.cacheCreationInputTokens,
-        record.chatId
-      ])
-    )
-    if (usageRecordsSignatureRef.current !== nextUsageRecordsSignature) {
-      usageRecordsSignatureRef.current = nextUsageRecordsSignature
-      setUsageRecords(normalizedUsageRecords)
+    if (loadUsageRecords) {
+      const nextUsageRecordsSignature = JSON.stringify(
+        normalizedUsageRecords.map((record) => [
+          record.id,
+          record.timestamp,
+          record.provider || '',
+          record.model,
+          record.inputTokens,
+          record.outputTokens,
+          record.totalTokens,
+          record.cacheReadInputTokens,
+          record.cacheCreationInputTokens,
+          record.chatId
+        ])
+      )
+      if (usageRecordsSignatureRef.current !== nextUsageRecordsSignature) {
+        usageRecordsSignatureRef.current = nextUsageRecordsSignature
+        setUsageRecords(normalizedUsageRecords)
+      }
+      usageRecordsInitializedRef.current = true
+      // First fetch resolved — the welcome dashboard's presence is now known,
+      // so the welcome screen can stop reserving the dashboard's placeholder.
+      setUsageInitialized(true)
     }
-    // First fetch resolved — the welcome dashboard's presence is now known, so
-    // the welcome screen can stop reserving the dashboard's placeholder height.
-    setUsageInitialized(true)
 
     const normalizeQuotaWindow = (
       provider: ProviderId,
@@ -7767,92 +7789,63 @@ function App(): React.JSX.Element {
       provider === 'cursor' ||
       provider === 'ollama'
 
-    const runAggregateMap = new Map<string, ModelUsageAggregate>()
-    const modelComparisonCutoff = now - 30 * 24 * 60 * 60 * 1000
-    for (const record of normalizedUsageRecords) {
-      if (record?.usageKind === 'reset_hint') continue
-      if (Number(record?.timestamp || 0) < modelComparisonCutoff) continue
-      const model = String(record?.model || '').trim() || 'unknown'
-      const provider = isKnownProvider(record?.provider)
-        ? record.provider
-        : inferUsageProvider(model)
-      const key = `${provider}:${model}`
-      const inputTokens = usageRecordInputTokens(record)
-      const outputTokens = Math.max(0, Number(record?.outputTokens || 0))
-      const totalTokens = usageRecordTotalTokens(record)
-      const durationMs = Math.max(0, Number(record?.durationMs || 0))
-      const existing =
-        runAggregateMap.get(key) ||
-        ({
-          provider,
-          model,
-          runs: 0,
-          inputTokens: 0,
-          outputTokens: 0,
-          totalTokens: 0,
-          durationMs: 0
-        } satisfies ModelUsageAggregate)
-      existing.runs += 1
-      existing.inputTokens += inputTokens
-      existing.outputTokens += outputTokens
-      existing.totalTokens += totalTokens
-      existing.durationMs += durationMs
-      existing.inputTokenLimit = Math.max(
-        existing.inputTokenLimit || 0,
-        Number(record?.inputTokenLimit || 0)
-      )
-      existing.outputTokenLimit = Math.max(
-        existing.outputTokenLimit || 0,
-        Number(record?.outputTokenLimit || 0)
-      )
-      existing.totalTokenLimit = Math.max(
-        existing.totalTokenLimit || 0,
-        Number(record?.totalTokenLimit || 0)
-      )
-      if (typeof record?.resetAt === 'string') existing.resetAt = record.resetAt
-      if (typeof record?.resetText === 'string') existing.resetText = record.resetText
-      runAggregateMap.set(key, existing)
-    }
+    if (loadUsageRecords) {
+      const runAggregateMap = new Map<string, ModelUsageAggregate>()
+      const modelComparisonCutoff = now - 30 * 24 * 60 * 60 * 1000
+      for (const record of normalizedUsageRecords) {
+        if (record?.usageKind === 'reset_hint') continue
+        if (Number(record?.timestamp || 0) < modelComparisonCutoff) continue
+        const model = String(record?.model || '').trim() || 'unknown'
+        const provider = isKnownProvider(record?.provider)
+          ? record.provider
+          : inferUsageProvider(model)
+        const key = `${provider}:${model}`
+        const inputTokens = usageRecordInputTokens(record)
+        const outputTokens = Math.max(0, Number(record?.outputTokens || 0))
+        const totalTokens = usageRecordTotalTokens(record)
+        const durationMs = Math.max(0, Number(record?.durationMs || 0))
+        const existing =
+          runAggregateMap.get(key) ||
+          ({
+            provider,
+            model,
+            runs: 0,
+            inputTokens: 0,
+            outputTokens: 0,
+            totalTokens: 0,
+            durationMs: 0
+          } satisfies ModelUsageAggregate)
+        existing.runs += 1
+        existing.inputTokens += inputTokens
+        existing.outputTokens += outputTokens
+        existing.totalTokens += totalTokens
+        existing.durationMs += durationMs
+        existing.inputTokenLimit = Math.max(
+          existing.inputTokenLimit || 0,
+          Number(record?.inputTokenLimit || 0)
+        )
+        existing.outputTokenLimit = Math.max(
+          existing.outputTokenLimit || 0,
+          Number(record?.outputTokenLimit || 0)
+        )
+        existing.totalTokenLimit = Math.max(
+          existing.totalTokenLimit || 0,
+          Number(record?.totalTokenLimit || 0)
+        )
+        if (typeof record?.resetAt === 'string') existing.resetAt = record.resetAt
+        if (typeof record?.resetText === 'string') existing.resetText = record.resetText
+        runAggregateMap.set(key, existing)
+      }
 
-    ordered.push(
-      ...Array.from(runAggregateMap.values()).sort(
+      usageRunAggregatesRef.current = Array.from(runAggregateMap.values()).sort(
         (a, b) => b.totalTokens - a.totalTokens || b.runs - a.runs
       )
-    )
+    }
 
-    const nextUsageSignature = JSON.stringify(
-      ordered.map((entry) => ({
-        provider: entry.provider,
-        model: entry.model,
-        runs: entry.runs,
-        inputTokens: entry.inputTokens,
-        outputTokens: entry.outputTokens,
-        totalTokens: entry.totalTokens,
-        durationMs: entry.durationMs,
-        planName: entry.planName || '',
-        windows: (entry.windows || []).map((windowEntry) => ({
-          id: windowEntry.id,
-          label: windowEntry.label,
-          limitLabel: windowEntry.limitLabel,
-          resetAt: windowEntry.resetAt || '',
-          usedPercent: windowEntry.usedPercent ?? null,
-          remainingPercent: windowEntry.remainingPercent ?? null,
-          limitWindowSeconds: windowEntry.limitWindowSeconds ?? null
-        })),
-        balances: (entry.balances || []).map((balance) => ({
-          id: balance.id,
-          label: balance.label,
-          amount: balance.amount,
-          unit: balance.unit,
-          resetAt: balance.resetAt || ''
-        })),
-        quotaSource: entry.quotaSource || '',
-        quotaFetchedAt: entry.quotaFetchedAt || '',
-        quotaError: entry.quotaError || '',
-        quotaStale: entry.quotaStale || false
-      }))
-    )
-    if (usageSummarySignatureRef.current !== nextUsageSignature) {
+    ordered.push(...usageRunAggregatesRef.current)
+
+    const nextUsageSignature = fingerprintUsageSummary(ordered)
+    if (options.force || usageSummarySignatureRef.current !== nextUsageSignature) {
       usageSummarySignatureRef.current = nextUsageSignature
       setUsageSummary(ordered)
     }
@@ -9304,8 +9297,8 @@ function App(): React.JSX.Element {
   //
   // Previously the meters only refreshed when the user switched chats or
   // workspaces, so a long-lived window would show stale provider quotas
-  // until the user clicked around. This effect polls the same usage IPC
-  // path on a 90s cadence, fully off the UI thread.
+  // until the user clicked around. This effect polls quota telemetry on a
+  // 90s cadence and keeps the renderer-side projection deliberately small.
   //
   // Guarantees:
   //  - Mounts once and lives for the lifetime of the app — no thrash on
@@ -9316,9 +9309,11 @@ function App(): React.JSX.Element {
   //  - Polling pauses when the window is hidden/blurred (`visibilitychange`
   //    + `online`/`offline`). On regaining focus we kick a refresh and
   //    resume the heartbeat.
-  //  - `refreshUsageSummary` already does signature-based diff suppression,
-  //    so identical payloads don't call `setState` — selection, scroll
-  //    position, and in-flight composer text are not perturbed.
+  //  - The heartbeat polls only live quota/balance telemetry after initial
+  //    hydration. It does not fetch, fingerprint, or reduce the full usage
+  //    history on every tick.
+  //  - Semantic diff suppression ignores fetch-only timestamps, so unchanged
+  //    telemetry does not call `setState` or invalidate the root view.
   useEffect(() => {
     const INTERVAL_MS = 90_000
 
@@ -9342,7 +9337,7 @@ function App(): React.JSX.Element {
       usageRefreshLastFiredAtRef.current = Date.now()
       const workspaceId = currentWorkspaceIdRef.current || undefined
       void refreshUsageSummaryRef
-        .current(workspaceId)
+        .current(workspaceId, undefined, undefined, { quotaOnly: true })
         .catch(() => {
           // Swallow — `refreshUsageSummary` already swallows its own IPC
           // failures via `.catch(() => null)`. Anything that reaches here is
