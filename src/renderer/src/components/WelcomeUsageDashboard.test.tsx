@@ -2,7 +2,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import type { UsageRecord } from '../../../main/store/types'
 import { buildWelcomeUsageDashboardData } from '../lib/welcomeUsageDashboard'
-import { WelcomeUsageDashboard } from './WelcomeUsageDashboard'
+import { nextWelcomeUsageTab, WelcomeUsageDashboard } from './WelcomeUsageDashboard'
 
 describe('WelcomeUsageDashboard model comparisons', () => {
   it('keeps dashboard meter-card chrome isolated from the Settings table', () => {
@@ -25,8 +25,7 @@ describe('WelcomeUsageDashboard model comparisons', () => {
     const html = renderToStaticMarkup(
       <WelcomeUsageDashboard
         data={data}
-        tab="models"
-        onTabChange={() => undefined}
+        initialTab="models"
         autoCycleSeconds={0}
       />
     )
@@ -35,5 +34,14 @@ describe('WelcomeUsageDashboard model comparisons', () => {
     expect(html).toContain('welcome-usage-model-meter provider-codex')
     expect(html).not.toContain('model-usage-table--comparisons')
     expect(html).not.toContain('settings-model-comparisons')
+  })
+
+  it('advances locally through only the visible tabs', () => {
+    const visible = ['overview', 'models', 'agents'] as const
+
+    expect(nextWelcomeUsageTab('overview', [...visible])).toBe('models')
+    expect(nextWelcomeUsageTab('models', [...visible])).toBe('agents')
+    expect(nextWelcomeUsageTab('agents', [...visible])).toBe('overview')
+    expect(nextWelcomeUsageTab('providers', [...visible])).toBe('overview')
   })
 })

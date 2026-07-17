@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { ReactElement } from 'react'
 import { formatCost, type DisplayCurrency } from '../lib/formatCost'
 import {
@@ -56,6 +56,15 @@ const WELCOME_USAGE_TABS: Array<{
   // Comparisons.
   { value: 'agents', label: 'Agents', Icon: AgentsTabIcon }
 ]
+
+export function nextWelcomeUsageTab(
+  current: WelcomeUsageTab,
+  visibleTabs: WelcomeUsageTab[]
+): WelcomeUsageTab {
+  if (visibleTabs.length === 0) return 'overview'
+  const currentIndex = visibleTabs.indexOf(current)
+  return visibleTabs[(currentIndex + 1) % visibleTabs.length] ?? visibleTabs[0]
+}
 
 // 1.0.5-EW52 — Lightweight icon for the Providers tab. Same
 // stroke language as the other tab icons (1.4 weight, rounded
@@ -119,8 +128,7 @@ function AgentsTabIcon(): React.JSX.Element {
 
 export function WelcomeUsageDashboard({
   data,
-  tab,
-  onTabChange,
+  initialTab = 'overview',
   displayCurrency,
   overestimatePercent,
   dashboardStatVisibility,
@@ -130,8 +138,12 @@ export function WelcomeUsageDashboard({
   autoCycleSeconds
 }: {
   data: WelcomeUsageDashboardData
-  tab: WelcomeUsageTab
-  onTabChange: (tab: WelcomeUsageTab) => void
+  /**
+   * Ephemeral presentation state belongs to this dashboard instance. Keeping
+   * it local prevents the auto-cycle timer and manual tab clicks from
+   * invalidating the root App tree (including an active composer).
+   */
+  initialTab?: WelcomeUsageTab
   // 1.0.5-EW49 — Currency + overestimate bias passed in so the
   // EW49 "Total cost" chip can route through `formatCost` with
   // the user's preferences. Defaults to USD + 0 if the caller
@@ -157,6 +169,7 @@ export function WelcomeUsageDashboard({
   providersTabEnabled?: boolean
   autoCycleSeconds?: number
 }) {
+  const [tab, setTab] = useState<WelcomeUsageTab>(initialTab)
   const resolvedCurrency: DisplayCurrency = displayCurrency || 'USD'
   const resolvedOverestimate = Math.max(0, Math.min(25, Number(overestimatePercent ?? 0) || 0))
   const resolvedWorkspacesEnabled = workspacesTabEnabled !== false
@@ -185,19 +198,17 @@ export function WelcomeUsageDashboard({
     }).map((option) => option.value)
   }, [resolvedWorkspacesEnabled, resolvedProvidersEnabled])
   useEffect(() => {
+    setTab((current) =>
+      visibleTabValues.includes(current) ? current : (visibleTabValues[0] ?? 'overview')
+    )
+  }, [visibleTabValues])
+  useEffect(() => {
     if (!resolvedAutoCycleSeconds || visibleTabValues.length < 2) return
     const intervalId = setInterval(() => {
-      // Use a callback-style state read so we don't capture a
-      // stale `tab` value in the closure. `onTabChange` is the
-      // setter the parent owns; calling it with the next tab
-      // moves the dashboard forward by one slot.
-      const currentIndex = visibleTabValues.indexOf(tab)
-      const nextIndex = (currentIndex + 1) % visibleTabValues.length
-      const nextTab = visibleTabValues[nextIndex] ?? visibleTabValues[0]
-      if (nextTab && nextTab !== tab) onTabChange(nextTab)
+      setTab((current) => nextWelcomeUsageTab(current, visibleTabValues))
     }, resolvedAutoCycleSeconds * 1000)
     return () => clearInterval(intervalId)
-  }, [resolvedAutoCycleSeconds, visibleTabValues, tab, onTabChange])
+  }, [resolvedAutoCycleSeconds, visibleTabValues])
   // Phase K-followup — Provider color palette + mixed rail colour.
   // Each stat chip carries a thin top rail in this colour. The mix
   // is computed from this dashboard's per-provider token totals so
@@ -363,7 +374,7 @@ export function WelcomeUsageDashboard({
                 role="tab"
                 aria-selected={tab === option.value}
                 className={`welcome-usage-tab ${tab === option.value ? 'active' : ''}`}
-                onClick={() => onTabChange(option.value)}
+                onClick={() => setTab(option.value)}
               >
                 <Icon />
                 <span className="welcome-usage-tab-label">{option.label}</span>

@@ -415,7 +415,6 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   setThreadRawLogs,
   setThreadSearchActiveIndex,
   setThreadSearchQuery,
-  setWelcomeUsageTab,
   settings,
   settingsActiveTab,
   settingsPinnedMessageGroups,
@@ -518,7 +517,6 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   welcomeFitLevel,
   welcomeDashboardRegionRef,
   welcomeUsageDashboardData,
-  welcomeUsageTab,
   workflowDefinitions,
   workspaceBoardApiReady,
   workspaceBoardCards,
@@ -2065,8 +2063,6 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
             <div className="welcome-usage-region welcome-usage-region-small" ref={welcomeDashboardRegionRef}>
               <WelcomeUsageDashboard
                 data={welcomeUsageDashboardData}
-                tab={welcomeUsageTab}
-                onTabChange={setWelcomeUsageTab}
                 /*
                   1.0.5-EW49 — Thread the user's currency + EW34
                   overestimate bias + EW49 per-stat visibility map

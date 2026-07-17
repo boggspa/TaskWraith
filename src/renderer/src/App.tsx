@@ -690,10 +690,7 @@ import {
   usageRecordTotalTokens,
   type RendererProviderRates
 } from './lib/providerRateEstimate'
-import {
-  buildWelcomeUsageDashboardData,
-  type WelcomeUsageTab
-} from './lib/welcomeUsageDashboard'
+import { buildWelcomeUsageDashboardData } from './lib/welcomeUsageDashboard'
 import {
   type AgentAuraProviderKey,
   type AgentAuraStatus
@@ -2304,7 +2301,6 @@ function App(): React.JSX.Element {
   // the dashboard pops in a moment after launch. See `welcome-usage-region-
   // reserved` in the welcome JSX + CSS.
   const [usageInitialized, setUsageInitialized] = useState(false)
-  const [welcomeUsageTab, setWelcomeUsageTab] = useState<WelcomeUsageTab>('overview')
   // Welcome L7 — fixed 30-day rolling window; the toggle UI is gone.
   // (Builder still accepts the range param so the lib stays flexible
   // for future surfaces; this is the single canonical caller.)
@@ -21965,8 +21961,7 @@ function App(): React.JSX.Element {
     welcomeFitActive,
     welcomeFitChatId,
     welcomeFitLevel,
-    welcomeHeatmapSlots.length,
-    welcomeUsageTab
+    welcomeHeatmapSlots.length
   ])
   const transcriptStyle = useMemo<CSSProperties | undefined>(() => {
     const style: CSSProperties = {}
@@ -25797,8 +25792,6 @@ function App(): React.JSX.Element {
         currentRun={viewerRun}
         currentWorkspacePath={viewerWorkspace?.path}
         welcomeUsageDashboardData={welcomeUsageDashboardData}
-        welcomeUsageTab={welcomeUsageTab}
-        onWelcomeUsageTabChange={setWelcomeUsageTab}
         showWelcomeUsageDashboard={
           viewerShouldShowWelcomeUsageDashboard &&
           !viewerIsGlobalChat &&
@@ -27537,7 +27530,6 @@ function App(): React.JSX.Element {
     setThreadRawLogs,
     setThreadSearchActiveIndex,
     setThreadSearchQuery,
-    setWelcomeUsageTab,
     settings,
     settingsActiveTab,
     settingsPinnedMessageGroups,
@@ -27661,7 +27653,6 @@ function App(): React.JSX.Element {
     welcomeFitLevel,
     welcomeDashboardRegionRef,
     welcomeUsageDashboardData,
-    welcomeUsageTab,
     pluginWorkflowTemplates: pluginActivation?.workflowTemplates ?? [],
     workflowDefinitions,
     workspaceBoardApiReady,

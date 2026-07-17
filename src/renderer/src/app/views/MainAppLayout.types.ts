@@ -503,7 +503,6 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   setThreadRawLogs: any
   setThreadSearchActiveIndex: any
   setThreadSearchQuery: any
-  setWelcomeUsageTab: any
   settings: MainAppLayoutSidebarProps['settings']
   settingsActiveTab: MainAppLayoutSidebarProps['settingsActiveTab']
   settingsPinnedMessageGroups: any
@@ -619,7 +618,6 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   welcomeFitLevel: any
   welcomeDashboardRegionRef: any
   welcomeUsageDashboardData: any
-  welcomeUsageTab: any
   workflowDefinitions: MainAppLayoutSidebarProps['workflowDefinitions']
   workspaceBoardApiReady: MainAppLayoutSidebarProps['workspaceBoardApiReady']
   workspaceBoardCards: MainAppLayoutSidebarProps['workspaceBoardCards']

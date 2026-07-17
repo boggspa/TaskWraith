@@ -9,7 +9,7 @@ import { FileMenuSelectionIcon } from './AppChromeSymbols'
 import { MainPaneActionPill } from './MainPaneActionPill'
 import { ProviderBadgeIcon } from './Sidebar'
 import { WelcomeUsageDashboard } from './WelcomeUsageDashboard'
-import type { WelcomeUsageDashboardData, WelcomeUsageTab } from '../lib/welcomeUsageDashboard'
+import type { WelcomeUsageDashboardData } from '../lib/welcomeUsageDashboard'
 import { bindComposerReservation } from '../lib/composerReservation'
 import { useTranscriptScrollState } from '../app/state/useTranscriptScrollState'
 import {
@@ -85,8 +85,6 @@ export interface ChatViewPaneProps extends Omit<
   //    (driven by `composerProps`), so those props were removed from this
   //    interface in the multiview composer-parity slice.
   welcomeUsageDashboardData?: WelcomeUsageDashboardData
-  welcomeUsageTab?: WelcomeUsageTab
-  onWelcomeUsageTabChange?: (tab: WelcomeUsageTab) => void
   showWelcomeUsageDashboard?: boolean
   reserveWelcomeUsageDashboard?: boolean
   dashboardStatVisibility?: Record<string, boolean>
@@ -230,7 +228,6 @@ export function chatViewPanePropsEqual(a: ChatViewPaneProps, b: ChatViewPaneProp
     a.welcomeIsGlobalChat === b.welcomeIsGlobalChat &&
     // Welcome usage dashboard (pane-shell-owned).
     a.welcomeUsageDashboardData === b.welcomeUsageDashboardData &&
-    a.welcomeUsageTab === b.welcomeUsageTab &&
     a.showWelcomeUsageDashboard === b.showWelcomeUsageDashboard &&
     a.reserveWelcomeUsageDashboard === b.reserveWelcomeUsageDashboard &&
     a.dashboardStatVisibility === b.dashboardStatVisibility &&
@@ -238,7 +235,6 @@ export function chatViewPanePropsEqual(a: ChatViewPaneProps, b: ChatViewPaneProp
     a.dashboardWorkspacesShown === b.dashboardWorkspacesShown &&
     a.dashboardProvidersTabEnabled === b.dashboardProvidersTabEnabled &&
     a.dashboardAutoCycleSeconds === b.dashboardAutoCycleSeconds &&
-    a.onWelcomeUsageTabChange === b.onWelcomeUsageTabChange &&
     // Chrome.
     a.topLeftChrome === b.topLeftChrome &&
     a.topRightChrome === b.topRightChrome &&
@@ -512,14 +508,10 @@ function ChatViewPaneInner(props: ChatViewPaneProps) {
       <ChatViewPaneChrome {...props} />
       {props.isWelcomeChat &&
         props.showWelcomeUsageDashboard &&
-        props.welcomeUsageDashboardData &&
-        props.welcomeUsageTab &&
-        props.onWelcomeUsageTabChange && (
+        props.welcomeUsageDashboardData && (
           <div className="welcome-usage-region welcome-usage-region-small multiview-pane-welcome-usage">
             <WelcomeUsageDashboard
               data={props.welcomeUsageDashboardData}
-              tab={props.welcomeUsageTab}
-              onTabChange={props.onWelcomeUsageTabChange}
               displayCurrency={props.currency}
               overestimatePercent={props.currencyOverestimatePercent}
               dashboardStatVisibility={props.dashboardStatVisibility}
