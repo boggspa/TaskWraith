@@ -1455,16 +1455,20 @@
     8px 0 18px color-mix(in srgb, var(--provider-kimi-color) 18%, transparent);
 }
 
-/* Light themes get a tighter, slightly stronger glow so the workspace
- * name still reads as accented without bleeding into the light surface. */
-[data-theme="light"] .workspace-name-glow,
-[data-theme="mist"] .workspace-name-glow,
-[data-theme="sage"] .workspace-name-glow {
+/* Light themes use opaque dark ink for every emphasized welcome greeting.
+ * General Chat wraps the whole time-of-day greeting in this span; workspace,
+ * workflow, and Ensemble greetings use it for their emphasized name. Keep the
+ * provider identity in the shadow instead of washing the glyph fill toward
+ * white on an already-light surface. */
+:is([data-theme="light"], [data-theme="citrus"], [data-theme="mist"], [data-theme="sage"])
+  .workspace-name-glow {
+  color: var(--text-primary);
   text-shadow:
     0 0 8px color-mix(in srgb, var(--workspace-name-glow-color, var(--text-primary)) 30%, transparent),
     0 0 18px color-mix(in srgb, var(--workspace-name-glow-color, var(--text-primary)) 16%, transparent);
 }
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .workspace-name-glow.workspace-name-glow-ensemble {
+:is([data-theme="light"], [data-theme="citrus"], [data-theme="mist"], [data-theme="sage"])
+  .workspace-name-glow.workspace-name-glow-ensemble {
   color: color-mix(in srgb, var(--text-primary) 94%, #ffffff 6%);
   text-shadow:
     0 0 6px rgba(255, 255, 255, 0.72),
@@ -1480,7 +1484,7 @@
     0 0 16px rgba(255, 255, 255, 0.22),
     0 0 28px color-mix(in srgb, var(--text-primary) 18%, transparent);
 }
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])
+:is([data-theme="light"], [data-theme="citrus"], [data-theme="mist"], [data-theme="sage"])
   .app-transcript.chat-kind-ensemble
   .welcome-hero
   h1
