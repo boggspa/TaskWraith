@@ -272,6 +272,22 @@ describe('ApprovalTimeoutScheduler', () => {
     expect(DEFAULT_APPROVAL_TIMEOUT_POLICY.defaultTimeoutsMs.cursor).toBe(120_000)
     expect(DEFAULT_APPROVAL_TIMEOUT_POLICY.defaultTimeoutsMs.ollama).toBe(120_000)
     expect(DEFAULT_APPROVAL_TIMEOUT_POLICY.mainTimeoutMs).toBe(60_000)
+    expect(
+      DEFAULT_APPROVAL_TIMEOUT_POLICY.perKindOverridesMs?.[
+        'kimi-mcp/ensemble_roster_edit'
+      ]
+    ).toBe(40_000)
+  })
+
+  it('settles Kimi roster approvals before the MCP client deadline', () => {
+    const scheduler = new ApprovalTimeoutScheduler(DEFAULT_APPROVAL_TIMEOUT_POLICY, vi.fn())
+    expect(
+      scheduler.resolveTimeout({
+        approvalId: 'kimi-roster',
+        provider: 'kimi',
+        kind: 'kimi-mcp/ensemble_roster_edit'
+      })
+    ).toEqual({ ms: 40_000, source: 'perKind' })
   })
 
   it('deadlineFor() exposes the armed auto-deny moment and clears on cancel/fire', async () => {

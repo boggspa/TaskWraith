@@ -719,6 +719,7 @@ import {
   agentRosterPresetContractGuide,
   applyPendingEnsembleRosterPresetOnFinalize,
   applyPendingEnsembleRosterPresetOnRunTerminal,
+  buildAgentRosterPresetExportFromDraft,
   buildEnsembleRosterPresetApply,
   parseSingleAgentRosterPresetExport,
   queuePendingEnsembleRosterPresetApply
@@ -1353,6 +1354,7 @@ import { executeWebMcpTool, isWebMcpToolName } from './mcp/WebTools'
 import { resolveSubThreadWorkerPermissions } from './SubThreadPermissions'
 import { isNetworkAccessBlockedTool, isReadOnlyBlockedTool } from './ToolClassTaxonomy'
 import { isExactReviewerVerdictInvocation } from './ReviewerVerdictInvocation'
+import { shouldAutoAllowUserRequestedEnsembleImport } from './EnsembleRosterImportConsent'
 import {
   detectCrossProviderDelegationMisuse,
   crossProviderDelegationWarningMessage
@@ -9758,7 +9760,8 @@ function networkAccessBlockedToolName(
 function isMcpAutoAllowedForRun(
   toolName: string | null | undefined,
   effectivePermissions?: EffectiveRunPermissions,
-  toolArgs?: unknown
+  toolArgs?: unknown,
+  requestContext?: { appRunId?: string; appChatId?: string }
 ): boolean {
   const raw = String(toolName || '').trim()
   if (!raw) return false
@@ -9772,11 +9775,62 @@ function isMcpAutoAllowedForRun(
   // args fail CLOSED via the classifier → falls through to the normal name-gated
   // path below, so no other Bossman action is ever auto-allowed.
   if (isExactReviewerVerdictInvocation(canonical, toolArgs)) return true
+  if (
+    resolveExplicitUserRequestedRosterImport(
+      canonical,
+      toolArgs,
+      effectivePermissions,
+      requestContext
+    ).allowed
+  ) {
+    return true
+  }
   return (
     isTaskWraithMcpToolName(canonical) &&
     MCP_AUTO_ALLOWED_TOOLS.has(canonical as TaskWraithMcpToolName) &&
     !networkAccessBlockedToolName(canonical, effectivePermissions)
   )
+}
+
+interface ExplicitUserRequestedRosterImportResolution {
+  allowed: boolean
+  promptMessageId?: string
+  runSource?: 'manual' | 'remote'
+}
+
+function resolveExplicitUserRequestedRosterImport(
+  toolName: string | null | undefined,
+  toolArgs: unknown,
+  effectivePermissions: EffectiveRunPermissions | undefined,
+  requestContext?: { appRunId?: string; appChatId?: string }
+): ExplicitUserRequestedRosterImportResolution {
+  const appRunId = String(requestContext?.appRunId || '').trim()
+  const requestedChatId = String(requestContext?.appChatId || '').trim()
+  if (!appRunId) return { allowed: false }
+
+  const session = runManager.get(appRunId)
+  if (!session || !isActiveRunSessionStatus(session.status)) return { allowed: false }
+  if (requestedChatId && session.appChatId && requestedChatId !== session.appChatId) {
+    return { allowed: false }
+  }
+
+  const appChatId = requestedChatId || session.appChatId || ''
+  const chat = appChatId ? AppStore.getChat(appChatId) : null
+  const run = chat?.runs?.find((entry) => entry.runId === appRunId)
+  const promptMessageId = String(run?.promptMessageId || '').trim()
+  const promptMessage = promptMessageId
+    ? chat?.messages?.find((message) => message.id === promptMessageId && message.role === 'user')
+    : undefined
+  const runSource = AppStore.getRunQueueJob(appRunId)?.source
+  const allowed = shouldAutoAllowUserRequestedEnsembleImport({
+    toolName,
+    toolArgs,
+    readOnly: effectivePermissions?.readOnly === true,
+    runSource,
+    prompt: promptMessage?.content
+  })
+  if (!allowed || (runSource !== 'manual' && runSource !== 'remote')) return { allowed: false }
+  return { allowed: true, promptMessageId, runSource }
 }
 
 function networkAccessBlockedMessage(toolName: string): string {
@@ -14928,7 +14982,10 @@ async function canUseClaudeSdkTool(
     .replace(/^taskwraith__/, '')
   const approvalPriority = nativeProviderApprovalPriority(
     toolName,
-    isMcpAutoAllowedForRun(unprefixedToolName, payload.effectivePermissions, normalizedInput)
+    isMcpAutoAllowedForRun(unprefixedToolName, payload.effectivePermissions, normalizedInput, {
+      appRunId: route.appRunId,
+      appChatId: route.appChatId
+    })
   )
   if (approvalPriority === 'deny-native') {
     return {
@@ -17111,7 +17168,8 @@ async function runKimiWireProvider(
                   isMcpAutoAllowedForRun(
                     kimiCanonicalToolName,
                     state.effectivePermissions,
-                    kimiToolArgs
+                    kimiToolArgs,
+                    { appRunId: route.appRunId, appChatId: route.appChatId }
                   )
               )
               if (approvalPriority === 'deny-native') {
@@ -21812,7 +21870,14 @@ function handleCodexServerRequest(message: any) {
   const codexToolArgs =
     (params as Record<string, unknown>)?.arguments ??
     (params as Record<string, unknown>)?.input
-  if (isMcpAutoAllowedForRun(codexCanonicalToolName, state.effectivePermissions, codexToolArgs)) {
+  if (
+    isMcpAutoAllowedForRun(
+      codexCanonicalToolName,
+      state.effectivePermissions,
+      codexToolArgs,
+      { appRunId: state.appRunId, appChatId: state.appChatId }
+    )
+  ) {
     if (method === 'mcpServer/elicitation/request' || method === 'mcp/elicitation/request') {
       codexClient.respond(message.id, { action: 'accept', content: null, _meta: null })
     } else if (method === 'tool/requestUserInput') {
@@ -25635,7 +25700,7 @@ async function readAgentRosterPresetImportSource(
   args: Record<string, any>,
   context: GeminiToolContext,
   parentProvider: ProviderId
-): Promise<{ json: string; source: { kind: 'inline' | 'path'; path?: string } }> {
+): Promise<{ json: string; source: { kind: 'inline' | 'preset' | 'path'; path?: string } }> {
   const requestedPath = optionalString(args.path || args.filePath || args.file_path)
   const inlineJson =
     typeof args.json === 'string'
@@ -25645,14 +25710,28 @@ async function readAgentRosterPresetImportSource(
         : typeof args.preset_json === 'string'
           ? args.preset_json
           : undefined
-  if (requestedPath && inlineJson !== undefined) {
-    throw new Error('Roster preset import accepts either path or json, not both.')
+  const inlinePreset = args.preset
+  const sourceCount =
+    Number(Boolean(requestedPath)) +
+    Number(inlineJson !== undefined) +
+    Number(inlinePreset !== undefined)
+  if (sourceCount > 1) {
+    throw new Error('Roster preset import accepts exactly one of path, json, or preset.')
   }
-  if (!requestedPath && inlineJson === undefined) {
-    throw new Error('Roster preset import requires a roster export path or inline json.')
+  if (sourceCount === 0) {
+    throw new Error('Roster preset import requires a roster export path, inline json, or preset.')
   }
   if (inlineJson !== undefined) {
     return { json: inlineJson, source: { kind: 'inline' } }
+  }
+  if (inlinePreset !== undefined) {
+    return {
+      json: buildAgentRosterPresetExportFromDraft(inlinePreset, {
+        id: `agent-roster-${randomUUID()}`,
+        now: Date.now()
+      }),
+      source: { kind: 'preset' }
+    }
   }
 
   const authority = resolveGeminiMcpGrantAwarePathAuthority(
@@ -26268,6 +26347,12 @@ async function executeGeminiMcpTool(
     params: args,
     workspacePath: context.scope === 'global' ? undefined : workspacePath
   })
+  const explicitUserRequestedRosterImport = resolveExplicitUserRequestedRosterImport(
+    toolName,
+    args,
+    context.effectivePermissions,
+    { appRunId: context.appRunId, appChatId: context.appChatId }
+  )
   // Phase J3: delegate_to_subthread runs its OWN approval gate further
   // down (using the richer `subThreadDelegation` service with delegation
   // prompt + target provider in the preview). Without this short-circuit
@@ -26277,6 +26362,7 @@ async function executeGeminiMcpTool(
   const skipGenericApproval =
     toolName === 'delegate_to_subthread' ||
     isRecallMcpToolName(toolName) ||
+    explicitUserRequestedRosterImport.allowed ||
     isMcpAutoAllowedForRun(toolName, context.effectivePermissions, args)
   // 1.0.72 — read-only hard-deny for side-effecting fall-through tools. The host
   // gate denies file/shell under read_only, but a mutating tool that classifies
@@ -26288,6 +26374,30 @@ async function executeGeminiMcpTool(
     approvalPreview.service === 'mcpTools'
       ? 'shellCommands'
       : approvalPreview.service
+  if (explicitUserRequestedRosterImport.allowed) {
+    auditService.recordAutomaticApprovalDecision(
+      parentProvider,
+      { appRunId: context.appRunId, appChatId: context.appChatId },
+      gateService,
+      context.scope === 'global' ? undefined : workspacePath,
+      {
+        method: `${parentProvider}-mcp/${toolName}`,
+        title: approvalPreview.title,
+        body: approvalPreview.body,
+        preview: approvalPreview.preview
+      },
+      'autoAllow',
+      'explicit_user_request',
+      'request',
+      {
+        action: 'import_preset',
+        promptMessageId: explicitUserRequestedRosterImport.promptMessageId,
+        runSource: explicitUserRequestedRosterImport.runSource,
+        rationale:
+          'The active user-started turn explicitly requested Ensemble creation; live roster edits remain approval-gated.'
+      }
+    )
+  }
   // Tier retirement (2026-07): Ollama approval is now 100% standard-role driven
   // via requestAgenticServiceApproval (which reads the run's effectivePermissions
   // — deny under read_only/plan, prompt under default, honor grants under

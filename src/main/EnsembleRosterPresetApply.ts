@@ -73,6 +73,40 @@ export function parseSingleAgentRosterPresetExport(json: string): EnsembleRoster
   return cloneEnsembleRosterPreset(parsed.validPresets[0])
 }
 
+/**
+ * Turn the compact object accepted by `ensemble_roster_edit.preset` into the
+ * normal portable export contract. Agent callers should describe the roster,
+ * not manufacture storage metadata or reach for a clock/shell just to obtain
+ * timestamps. The host owns those fields and validates the resulting export
+ * through the exact same parser used by file/string imports.
+ */
+export function buildAgentRosterPresetExportFromDraft(
+  draft: unknown,
+  metadata: { id: string; now: number }
+): string {
+  if (!draft || typeof draft !== 'object' || Array.isArray(draft)) {
+    throw new Error('Roster preset import requires preset to be an object.')
+  }
+  const preset = draft as Record<string, unknown>
+  const json = JSON.stringify({
+    format: ENSEMBLE_ROSTER_PRESET_EXPORT_FORMAT,
+    version: ENSEMBLE_ROSTER_PRESET_EXPORT_VERSION,
+    exportedAt: new Date(metadata.now).toISOString(),
+    presets: [
+      {
+        orchestrationMode: 'turn_bound',
+        maxParticipants: MAX_ROSTER_PRESET_PARTICIPANTS,
+        ...preset,
+        id: metadata.id,
+        createdAt: metadata.now,
+        updatedAt: metadata.now
+      }
+    ]
+  })
+  parseSingleAgentRosterPresetExport(json)
+  return json
+}
+
 export interface PendingEnsembleRosterPresetApply {
   schemaVersion: 1
   presetId: string
@@ -614,6 +648,18 @@ export function agentRosterPresetContractGuide(activeProvider?: ProviderId): Rec
       exportedAt: 'ISO-8601 string',
       createdAt: 'epoch milliseconds',
       updatedAt: 'epoch milliseconds'
+    },
+    preferredAgentImport: {
+      tool: 'ensemble_roster_edit',
+      arguments: ['action="import_preset"', 'preset=<object>'],
+      requiredPresetFields: ['name', 'participants'],
+      hostGeneratedFields: ['id', 'createdAt', 'updatedAt', 'exportedAt'],
+      hostDefaults: {
+        orchestrationMode: 'turn_bound',
+        maxParticipants: MAX_ROSTER_PRESET_PARTICIPANTS
+      },
+      note:
+        'Prefer the preset object over inline json. Do not call a shell, file, or time tool to create ids or timestamps; TaskWraith supplies them.'
     },
     participantRules: {
       count: `1-${MAX_ROSTER_PRESET_PARTICIPANTS}`,

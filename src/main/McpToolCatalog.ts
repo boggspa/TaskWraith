@@ -2421,7 +2421,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
     {
       name: 'ensemble_roster_edit',
       description:
-        'Manage an Ensemble roster. Existing add/remove/edit actions retain their live-round Boss authority rules and Allow Auto Approvals requirement. For a user request such as "set up my ensemble", first call list_ensemble_participants, generate exactly one normal TaskWraith roster-export JSON, then call action=import_preset with either its workspace path or inline JSON. Import works from a single-provider chat (the current provider must be the marked Boss and inherits Boss authority) or from an existing Ensemble (assigned Boss or Captain only); it saves a unique roster preset and activates it at the next safe turn/round boundary. The export controls participant order, role, brief, stage, provider/model/reasoning, read_only|plan|default permissions, Boss/Captain markers, Turn/Continuous mode, Off/Read/Write/All fan-out, hop cap, max participants, and CHARS. Work Session is intentionally unsupported.',
+        'Manage an Ensemble roster. add/remove/edit remain Boss-authorized and gated. On an active manual/remote turn explicitly requesting Ensemble creation, only import_preset is request-scoped auto-allowed; scheduled/system/read-only/live edits stay gated. Call list_ensemble_participants first, then import_preset once with compact preset (preferred), workspace path, or inline json. The host supplies ids/timestamps; do not call shell, file, or time tools for metadata. A single-provider chat import makes the current seat Boss; Ensemble import needs Boss/Captain. Supports seat configuration, orchestration, fan-out, hops, capacity, and CHARS. Work Session is intentionally unsupported.',
       annotations: {
         readOnlyHint: false,
         destructiveHint: false,
@@ -2520,6 +2520,71 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
             description:
               'For import_preset: inline standard TaskWraith roster-export JSON containing exactly one preset. Useful in global chats; mutually exclusive with path.'
           },
+          preset: {
+            type: 'object',
+            description:
+              'Preferred for import_preset: one compact roster object. TaskWraith generates id, createdAt, updatedAt, and exportedAt; orchestrationMode defaults to turn_bound and maxParticipants defaults to 20. Mutually exclusive with path and json.',
+            properties: {
+              name: { type: 'string' },
+              orchestrationMode: {
+                type: 'string',
+                enum: ['turn_bound', 'continuous']
+              },
+              maxParticipants: { type: 'number' },
+              maxContinuationHops: { type: 'number' },
+              fanoutPolicy: {
+                type: 'string',
+                enum: [
+                  'off',
+                  'read_only',
+                  'locked_writers_with_boss',
+                  'locked_writers_user_preflight',
+                  'all'
+                ]
+              },
+              ensembleContextChars: { type: 'number' },
+              participants: {
+                type: 'array',
+                minItems: 1,
+                maxItems: 20,
+                items: {
+                  type: 'object',
+                  properties: {
+                    provider: { type: 'string', enum: selectableProviderIds() },
+                    model: { type: 'string' },
+                    enabled: { type: 'boolean' },
+                    role: { type: 'string' },
+                    instructions: { type: 'string' },
+                    order: { type: 'number' },
+                    isBossman: { type: 'boolean' },
+                    isSecondInCommand: { type: 'boolean' },
+                    stageRole: {
+                      type: 'string',
+                      enum: ['scout', 'worker', 'reviewer', 'background']
+                    },
+                    permissionPresetId: {
+                      type: 'string',
+                      enum: [...ASSIGNABLE_PERMISSION_PRESETS]
+                    },
+                    reasoningEffort: { type: 'string' },
+                    fastModeEnabled: { type: 'boolean' },
+                    thinkingEnabled: { type: 'boolean' }
+                  },
+                  required: [
+                    'provider',
+                    'enabled',
+                    'role',
+                    'instructions',
+                    'order',
+                    'permissionPresetId'
+                  ],
+                  additionalProperties: false
+                }
+              }
+            },
+            required: ['name', 'participants'],
+            additionalProperties: false
+          },
           apply: {
             type: 'boolean',
             description:
@@ -2570,7 +2635,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
     {
       name: 'list_ensemble_participants',
       description:
-        'Inspect the current single-provider or Ensemble chat before roster work. Returns the current seat/participants, setup authority, runnable-provider configuration, provider/model/reasoning catalog, per-model context windows, coarse quota bands, and the canonical TaskWraith roster-export JSON contract. Call this first when the user asks to "set up my ensemble", then create one task-specific export and pass it to ensemble_roster_edit action=import_preset. In a solo chat the current provider is the required inherited Boss; in an Ensemble only the assigned Boss or Captain may import. Existing Ensemble context usage fields are latest usage-bearing run estimates; in-flight output is not included.',
+        'Inspect a single-provider or Ensemble roster. Returns seats, authority, provider/model/reasoning catalog, quota/context, and the canonical TaskWraith roster-export JSON contract. For setup call once, then pass one compact preset to ensemble_roster_edit import_preset.',
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,

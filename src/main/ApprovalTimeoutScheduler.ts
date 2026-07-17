@@ -72,7 +72,12 @@ export const DEFAULT_APPROVAL_TIMEOUT_POLICY: ApprovalTimeoutPolicy = {
   mainTimeoutMs: 60_000,
   perKindOverridesMs: {
     'hostCommand/rerun': 90_000,
-    'workspace/session-trust': 180_000
+    'workspace/session-trust': 180_000,
+    // Kimi Code starts its fixed MCP client deadline when streamed tool args
+    // begin, before the complete request reaches TaskWraith. A 60s approval
+    // therefore loses the race and returns an ambiguous client timeout. Settle
+    // this user-visible roster mutation clearly (accept or auto-deny) first.
+    'kimi-mcp/ensemble_roster_edit': 40_000
   }
 }
 

@@ -806,11 +806,11 @@ In Ensemble Mode, propose completing the active goal by opening a BINDING goal-c
 
 ## ensemble_roster_edit
 
-Manage an Ensemble roster. Existing add/remove/edit actions retain their live-round Boss authority rules and Allow Auto Approvals requirement. For a user request such as "set up my ensemble", first call list_ensemble_participants, generate exactly one normal TaskWraith roster-export JSON, then call action=import_preset with either its workspace path or inline JSON. Import works from a single-provider chat (the current provider must be the marked Boss and inherits Boss authority) or from an existing Ensemble (assigned Boss or Captain only); it saves a unique roster preset and activates it at the next safe turn/round boundary. The export controls participant order, role, brief, stage, provider/model/reasoning, read_only|plan|default permissions, Boss/Captain markers, Turn/Continuous mode, Off/Read/Write/All fan-out, hop cap, max participants, and CHARS. Work Session is intentionally unsupported.
+Manage an Ensemble roster. add/remove/edit remain Boss-authorized and gated. On an active manual/remote turn explicitly requesting Ensemble creation, only import_preset is request-scoped auto-allowed; scheduled/system/read-only/live edits stay gated. Call list_ensemble_participants first, then import_preset once with compact preset (preferred), workspace path, or inline json. The host supplies ids/timestamps; do not call shell, file, or time tools for metadata. A single-provider chat import makes the current seat Boss; Ensemble import needs Boss/Captain. Supports seat configuration, orchestration, fan-out, hops, capacity, and CHARS. Work Session is intentionally unsupported.
 
 - Access: governed by your run permission role
 - Required args: action
-- Optional args: roundId, targetParticipantId, participant, path, json, apply
+- Optional args: roundId, targetParticipantId, participant, path, json, preset, apply
 - Example: `{"taskwraith_tool":{"name":"ensemble_roster_edit","arguments":{"action":"text"}}}`
 
 ## ensemble_brief_update
@@ -824,7 +824,7 @@ In Ensemble Mode, lets the assigned Boss participant, or Captain only after Boss
 
 ## list_ensemble_participants
 
-Inspect the current single-provider or Ensemble chat before roster work. Returns the current seat/participants, setup authority, runnable-provider configuration, provider/model/reasoning catalog, per-model context windows, coarse quota bands, and the canonical TaskWraith roster-export JSON contract. Call this first when the user asks to "set up my ensemble", then create one task-specific export and pass it to ensemble_roster_edit action=import_preset. In a solo chat the current provider is the required inherited Boss; in an Ensemble only the assigned Boss or Captain may import. Existing Ensemble context usage fields are latest usage-bearing run estimates; in-flight output is not included.
+Inspect a single-provider or Ensemble roster. Returns seats, authority, provider/model/reasoning catalog, quota/context, and the canonical TaskWraith roster-export JSON contract. For setup call once, then pass one compact preset to ensemble_roster_edit import_preset.
 
 - Access: read-only (no approval needed)
 - Required args: none

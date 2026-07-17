@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   applyPendingEnsembleRosterPresetOnFinalize,
   applyPendingEnsembleRosterPresetOnRunTerminal,
+  buildAgentRosterPresetExportFromDraft,
   buildEnsembleRosterPresetApply,
   hasPendingEnsembleRosterPresetApply,
   parseSingleAgentRosterPresetExport,
@@ -129,6 +130,58 @@ function idFactory(...ids: string[]): () => string {
 }
 
 describe('EnsembleRosterPresetApply', () => {
+  it('builds a valid export from compact agent input without caller metadata', () => {
+    const json = buildAgentRosterPresetExportFromDraft(
+      {
+        name: 'Compact QA roster',
+        participants: [
+          {
+            provider: 'kimi',
+            enabled: true,
+            role: 'Boss',
+            instructions: 'Coordinate the panel.',
+            order: 1,
+            isBossman: true,
+            permissionPresetId: 'default'
+          }
+        ]
+      },
+      { id: 'host-generated', now: 1_784_316_912_899 }
+    )
+
+    expect(JSON.parse(json)).toMatchObject({
+      exportedAt: '2026-07-17T19:35:12.899Z',
+      presets: [
+        {
+          id: 'host-generated',
+          createdAt: 1_784_316_912_899,
+          updatedAt: 1_784_316_912_899,
+          orchestrationMode: 'turn_bound',
+          maxParticipants: 20
+        }
+      ]
+    })
+    expect(parseSingleAgentRosterPresetExport(json).name).toBe('Compact QA roster')
+  })
+
+  it('overwrites caller-supplied storage metadata in compact agent input', () => {
+    const json = buildAgentRosterPresetExportFromDraft(
+      {
+        ...preset(),
+        id: 'caller-id',
+        createdAt: 1,
+        updatedAt: 2
+      },
+      { id: 'host-id', now: 3 }
+    )
+
+    expect(parseSingleAgentRosterPresetExport(json)).toMatchObject({
+      id: 'host-id',
+      createdAt: 3,
+      updatedAt: 3
+    })
+  })
+
   it('accepts exactly one normal versioned export and rejects loose/multi-preset JSON', () => {
     const source = preset()
     const envelope = JSON.stringify({

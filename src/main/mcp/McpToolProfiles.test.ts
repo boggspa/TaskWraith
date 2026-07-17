@@ -126,8 +126,8 @@ describe('GATEWAY_MCP_ADVERTISE_TOOLS', () => {
     const fullChars = serializedChars(FULL_MCP_ADVERTISE_TOOLS)
     const gatewayChars = serializedChars(GATEWAY_MCP_DIRECT_TOOLS, gatewayToolDefinitions())
 
-    expect(fullChars).toBe(129_962)
-    expect(gatewayChars).toBe(38_340)
+    expect(fullChars).toBe(130_825)
+    expect(gatewayChars).toBe(39_203)
     expect(gatewayChars).toBeLessThan(40_000)
     expect(gatewayChars / fullChars).toBeLessThan(0.3)
   })

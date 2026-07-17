@@ -18,8 +18,10 @@ describe('agent-authored Ensemble roster MCP schema', () => {
     expect(properties?.action?.enum).toContain('import_preset')
     expect(properties?.path?.type).toBe('string')
     expect(properties?.json).toMatchObject({ type: 'string', maxLength: 1_000_000 })
+    expect(properties?.preset?.type).toBe('object')
     expect(properties?.apply?.type).toBe('boolean')
     expect(rosterEdit?.description).toMatch(/single-provider chat/i)
+    expect(rosterEdit?.description).toMatch(/do not call shell, file, or time tools/i)
     expect(rosterEdit?.description).toMatch(/Work Session is intentionally unsupported/i)
   })
 
