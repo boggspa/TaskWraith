@@ -11,6 +11,7 @@ import {
 } from '../../shared/systemThemeAppearance'
 import { isRetiredExternalChannelInboundMessage } from '../LegacyExternalChannelHistory'
 import { resolveActiveGoalForEnsemble } from '../GoalState'
+import { kimiAcpSeatStatePath, kimiAcpSeatStateRoot } from '../kimi/KimiAcpSeatState'
 import { partitionUsageRecordsForRotation } from './usageRotation'
 import type { TaskWraithPluginResourceProvenance } from '../../shared/plugins/PluginTypes'
 import type { UnattendedElevationAck } from '../UnattendedPostureGate'
@@ -4977,6 +4978,22 @@ export class AppStore {
         deleteRunForensicFiles(run.runId)
       }
     }
+    if (chat) {
+      const seatIds = new Set([
+        'solo',
+        ...(chat.ensemble?.participants || []).map((participant) => participant.id)
+      ])
+      for (const seatId of seatIds) {
+        try {
+          fs.rmSync(kimiAcpSeatStatePath(userDataPath, chat.appChatId, seatId), {
+            recursive: true,
+            force: true
+          })
+        } catch {
+          // Best-effort, like run-forensic cleanup; chat deletion must proceed.
+        }
+      }
+    }
 
     const chatPath = chatPathForId(chatsDir, chatId)
     if (fs.existsSync(chatPath)) {
@@ -5020,6 +5037,7 @@ export class AppStore {
       deletePathBestEffort(runRecoveryPath, 'run recovery history')
       deletePathBestEffort(messageFeedbackLedgerPath, 'message feedback receipt ledger')
       deletePathBestEffort(subThreadMailboxesPath, 'sub-thread mailbox ledger')
+      deletePathBestEffort(kimiAcpSeatStateRoot(userDataPath), 'Kimi ACP seat history')
       this.chatRecordCache.clear()
       this.chatListIndexCache = null
       this.chatListIndexWriteAtByChatId.clear()

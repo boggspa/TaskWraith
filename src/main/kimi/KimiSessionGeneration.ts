@@ -6,12 +6,11 @@
 //     state.json custom.kimi_cli_session_id).
 // Feeding one generation's id to the other's resume is a silent hazard: a
 // `session_<uuid>` handed to legacy `--resume` either errors or, worse,
-// prefix-matches a different session. The ACP transport never resumes (it
-// opens a fresh session/new every turn, Grok-parity), so the only crossing
-// that can happen in practice is a stored ACP id reaching the retained Wire
-// path after a rollback / flag flip. This guard refuses that crossing: the
-// Wire path resumes ONLY a Wire-generation id, and starts fresh otherwise
-// (never guesses across generations).
+// prefix-matches a different session. Kimi Code 0.26+ resumes ACP-native ids;
+// the retained Wire path must still never receive one after a rollback or flag
+// flip. This guard makes that boundary explicit: Wire resumes ONLY a
+// Wire-generation id and starts fresh otherwise (never guesses across
+// generations).
 //
 // A full persisted generation tag on linkedProviderSessionId (store/types.ts)
 // is the dossier's belt-and-braces follow-up; this prefix classifier closes

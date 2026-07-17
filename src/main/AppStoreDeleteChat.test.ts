@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import fs from 'fs'
 import { join } from 'path'
 import { AppStore } from './store'
+import { kimiAcpSeatStatePath, kimiAcpSeatStateRoot } from './kimi/KimiAcpSeatState'
 import type { ChatRecord, ChatRun } from './store/types'
 
 const userDataPath = vi.hoisted(() => `/tmp/taskwraith-delete-chat-test-${process.pid}`)
@@ -27,6 +28,13 @@ function seedRunFiles(runId: string): void {
   fs.writeFileSync(runEventPath(runId), `{"runId":"${runId}"}\n`, 'utf8')
   fs.mkdirSync(artifactDir(runId), { recursive: true })
   fs.writeFileSync(join(artifactDir(runId), 'stdout.log'), 'stream\n', 'utf8')
+}
+
+function seedKimiSeat(chatId: string, participantId = 'solo'): string {
+  const seatPath = kimiAcpSeatStatePath(userDataPath, chatId, participantId)
+  fs.mkdirSync(join(seatPath, 'sessions'), { recursive: true })
+  fs.writeFileSync(join(seatPath, 'sessions', 'checkpoint.json'), '{}', 'utf8')
+  return seatPath
 }
 
 function resetStoreTestState(): void {
@@ -108,6 +116,39 @@ describe('AppStore.deleteChat run cleanup', () => {
 
     expect(fs.existsSync(runEventPath('run-1'))).toBe(false)
     expect(fs.existsSync(join(userDataPath, 'chats', 'chat-a.json'))).toBe(false)
+  })
+
+  it('removes only the deleted chat native Kimi seat checkpoints', () => {
+    saveChatWithRuns('chat-a', [])
+    saveChatWithRuns('chat-b', [])
+    const solo = seedKimiSeat('chat-a')
+    const participant = seedKimiSeat('chat-a', 'worker')
+    const sibling = seedKimiSeat('chat-b')
+    const chat = AppStore.getChat('chat-a')!
+    AppStore.saveChat({
+      ...chat,
+      chatKind: 'ensemble',
+      ensemble: {
+        enabled: true,
+        maxParticipants: 1,
+        participants: [
+          {
+            id: 'worker',
+            provider: 'kimi',
+            enabled: true,
+            role: 'Worker',
+            instructions: '',
+            order: 1
+          }
+        ]
+      }
+    })
+
+    AppStore.deleteChat('chat-a')
+
+    expect(fs.existsSync(solo)).toBe(false)
+    expect(fs.existsSync(participant)).toBe(false)
+    expect(fs.existsSync(sibling)).toBe(true)
   })
 })
 
@@ -222,6 +263,7 @@ describe('AppStore.clearChats all-history cleanup', () => {
     seedRunFiles('run-parent')
     seedRunFiles('run-ensemble')
     seedRunFiles('orphan-run')
+    seedKimiSeat('parent')
 
     expect(fs.existsSync(chatListIndexPath())).toBe(true)
     expect(fs.existsSync(chatFile('malformed'))).toBe(true)
@@ -252,6 +294,7 @@ describe('AppStore.clearChats all-history cleanup', () => {
     expect(fs.existsSync(artifactDir('orphan-run'))).toBe(false)
     expect(fs.existsSync(runQueuePath())).toBe(false)
     expect(fs.existsSync(runRecoveryPath())).toBe(false)
+    expect(fs.existsSync(kimiAcpSeatStateRoot(userDataPath))).toBe(false)
     expect(AppStore.getChats()).toEqual([])
   })
 

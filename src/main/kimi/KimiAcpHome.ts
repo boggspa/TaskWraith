@@ -1,13 +1,15 @@
-// Per-run isolated KIMI_CODE_HOME builder. Relocates Kimi Code's entire data
-// root to a throwaway per-run directory so a contained ACP seat gets: only the
+// Isolated KIMI_CODE_HOME builder. Relocates Kimi Code's entire data root to a
+// TaskWraith-owned directory so a contained ACP seat gets: only the
 // TaskWraith-curated config (telemetry off + deny wall + no standing allow
 // rules), empty plugins/skills (no auto-loaded MCP servers / hooks / skills),
-// and a 0600 seeded credential copy that is torn down on every exit path.
+// and a 0600 seeded credential copy that is removed on every exit path. The
+// default remains a throwaway per-run home; resumable seats retain only Kimi's
+// native session files between turns.
 //
 // Why seed the credential: an isolated home with an empty credentials/ dir
 // fails session/new with -32000 (the B5 paradox). Seeding the real credential
-// into the throwaway home resolves it (verified: session/new OK) while keeping
-// the isolation — the token lives only for the run and is removed after.
+// into the isolated home resolves it (verified: session/new OK) while keeping
+// the isolation — the token lives only for the process and is removed after.
 //
 // fs is injected so the seed/teardown logic is unit-testable without touching
 // the real ~/.kimi-code.
@@ -30,13 +32,19 @@ export interface KimiHomeFs {
 
 export interface PrepareKimiHomeInput {
   runId: string
-  /** Absolute path of the throwaway home dir to create (per-run, unique). */
+  /** Absolute isolated home path (per-run for probes, stable for durable seats). */
   homeDir: string
   /** The real Kimi Code data root to transform config + seed credentials from. */
   sourceHome: string
   extraDenyTools?: readonly string[]
   /** Per-run thinking preference; omitted keeps the user config's setting. */
   thinkingEnabled?: boolean
+  /**
+   * Keep Kimi's `sessions/` + `session_index.jsonl` in this home after cleanup.
+   * Runtime config, credentials, oauth state, plugins, and skills are still
+   * removed after every process exit and regenerated before the next turn.
+   */
+  preserveSessionState?: boolean
   fs: KimiHomeFs
 }
 
@@ -46,6 +54,17 @@ export type PrepareKimiHomeResult =
 
 /** Credential artefacts seeded into the isolated home (relative paths). */
 const CREDENTIAL_ARTEFACTS = ['credentials/kimi-code.json', 'oauth/kimi-code', 'device_id'] as const
+
+/** Everything materialized only while the ACP process is live. Session state is
+ * deliberately absent from this list. */
+const KIMI_RUNTIME_ARTEFACTS = [
+  'credentials',
+  'oauth',
+  'device_id',
+  'config.toml',
+  'plugins',
+  'skills'
+] as const
 
 /**
  * Return the first un-sandboxable project Kimi config the workspace carries
@@ -67,8 +86,8 @@ export async function findUnsafeWorkspaceKimiConfig(
 }
 
 /**
- * Build a per-run isolated home. Returns a cleanup that removes the whole dir;
- * callers MUST invoke it on every exit path (success, failure, cancel). Fails
+ * Build an isolated Kimi home. Cleanup removes either the whole directory or
+ * all runtime-only material; callers MUST invoke it on every exit path. Fails
  * closed: a missing source credential returns `not-authenticated` (surfaced as
  * setup-required) rather than building a home that would run unauthenticated.
  */
@@ -76,6 +95,19 @@ export async function prepareKimiIsolatedHome(
   input: PrepareKimiHomeInput
 ): Promise<PrepareKimiHomeResult> {
   const { fs, homeDir, sourceHome } = input
+
+  const removeRuntimeArtefacts = async (bestEffort: boolean): Promise<void> => {
+    for (const rel of KIMI_RUNTIME_ARTEFACTS) {
+      const path = fs.join(homeDir, ...rel.split('/'))
+      try {
+        if (await fs.exists(path)) await fs.rm(path)
+      } catch (error) {
+        if (!bestEffort) throw error
+        // Teardown keeps cleaning the rest; preparation uses the strict path
+        // and refuses to spawn if stale runtime material cannot be removed.
+      }
+    }
+  }
 
   // Kimi Code (Moonshot) issues SINGLE-USE refresh tokens: every refresh
   // consumes the current refresh token and mints a new one (verified live — the
@@ -122,9 +154,26 @@ export async function prepareKimiIsolatedHome(
   const cleanup = async (): Promise<void> => {
     await persistRotatedCredential()
     try {
-      if (await fs.exists(homeDir)) await fs.rm(homeDir)
+      if (input.preserveSessionState) await removeRuntimeArtefacts(true)
+      else if (await fs.exists(homeDir)) await fs.rm(homeDir)
     } catch {
-      // Best-effort teardown; a leaked throwaway dir is not worth failing a run.
+      // Best-effort teardown; cleanup errors must not replace the run result.
+    }
+  }
+
+  // Scrub crash residue even when the current run cannot proceed (for example,
+  // the user logged out and the source credential is now missing).
+  if (input.preserveSessionState && (await fs.exists(homeDir))) {
+    try {
+      await removeRuntimeArtefacts(false)
+    } catch (error) {
+      return {
+        ok: false,
+        reason: 'error',
+        message: `Failed to scrub the isolated Kimi Code home: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      }
     }
   }
 
@@ -154,6 +203,9 @@ export async function prepareKimiIsolatedHome(
   try {
     await fs.mkdir(homeDir)
     await fs.chmod(homeDir, 0o700)
+    // A prior process crash may have left live runtime material in a durable
+    // seat home. Strip it before seeding current credentials/config.
+    if (input.preserveSessionState) await removeRuntimeArtefacts(false)
     await fs.mkdir(fs.join(homeDir, 'credentials'))
     await fs.mkdir(fs.join(homeDir, 'oauth'))
     // Empty plugins/skills so nothing auto-loads (dossier B4/I3).

@@ -104,6 +104,68 @@ describe('prepareKimiIsolatedHome', () => {
     expect([...files.keys()].some((k) => k.startsWith('/iso'))).toBe(false)
   })
 
+  it('durable cleanup preserves native session state but strips every runtime secret', async () => {
+    const seed = {
+      ...seededSource(),
+      '/iso/sessions/session-1/context.jsonl': '{"role":"user"}',
+      '/iso/session_index.jsonl': '{"id":"session-1"}\n',
+      // Model a credential residue left by a prior crashed process. Preparation
+      // must replace it before the new process starts.
+      '/iso/credentials/kimi-code.json': '{"token":"STALE"}'
+    }
+    const { fs, files, dirs } = makeFakeFs(seed)
+    dirs.add('/iso')
+    dirs.add('/iso/sessions')
+    dirs.add('/iso/credentials')
+    const result = await prepareKimiIsolatedHome({
+      runId: 'r1',
+      homeDir: '/iso',
+      sourceHome: '/src',
+      preserveSessionState: true,
+      fs
+    })
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(files.get('/iso/credentials/kimi-code.json')).toBe('{"token":"SECRET"}')
+
+    await result.cleanup()
+
+    expect(dirs.has('/iso')).toBe(true)
+    expect(files.get('/iso/sessions/session-1/context.jsonl')).toBe('{"role":"user"}')
+    expect(files.get('/iso/session_index.jsonl')).toBe('{"id":"session-1"}\n')
+    expect(files.has('/iso/credentials/kimi-code.json')).toBe(false)
+    expect(files.has('/iso/oauth/kimi-code')).toBe(false)
+    expect(files.has('/iso/device_id')).toBe(false)
+    expect(files.has('/iso/config.toml')).toBe(false)
+  })
+
+  it('fails closed when crash residue cannot be scrubbed from a durable seat', async () => {
+    const { fs, dirs } = makeFakeFs({
+      ...seededSource(),
+      '/iso/credentials/kimi-code.json': '{"token":"STALE"}'
+    })
+    dirs.add('/iso')
+    dirs.add('/iso/credentials')
+    const remove = fs.rm
+    fs.rm = async (path) => {
+      if (path === '/iso/credentials') throw new Error('permission denied')
+      await remove(path)
+    }
+
+    const result = await prepareKimiIsolatedHome({
+      runId: 'r1',
+      homeDir: '/iso',
+      sourceHome: '/src',
+      preserveSessionState: true,
+      fs
+    })
+
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.reason).toBe('error')
+    expect(result.message).toContain('Failed to scrub')
+  })
+
   it('persists a refreshed (rotated) credential back to the real home on cleanup', async () => {
     const seed = seededSource()
     seed['/src/credentials/kimi-code.json'] = JSON.stringify({ expires_at: 1000, refresh_token: 'R0' })
