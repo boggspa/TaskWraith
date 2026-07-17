@@ -89,6 +89,31 @@ describe('buildParticipantContextRows — per-participant honest context', () =>
     expect(rows.every((r) => r.usedTokens === 0 && r.percent === 0)).toBe(true)
   })
 
+  it('uses the latest run-reported context limit for a plan-entitled Kimi seat', () => {
+    const kimi = {
+      id: 'kimi-k3',
+      provider: 'kimi',
+      model: 'kimi-k3',
+      enabled: true,
+      role: 'Builder',
+      order: 0
+    } as EnsembleParticipant
+    const rows = buildParticipantContextRows(
+      [
+        run({
+          provider: 'kimi',
+          ensembleParticipantId: kimi.id,
+          stats: { ...usage(250_000, 12_000), totalTokenLimit: 1_048_576 }
+        })
+      ],
+      [kimi]
+    )
+
+    expect(rows[0].usedTokens).toBe(262_000)
+    expect(rows[0].windowTokens).toBe(1_048_576)
+    expect(rows[0].percent).toBeCloseTo(24.99, 1)
+  })
+
   it('adds the live output estimate ONLY to the actively-running participant', () => {
     const runs = [
       run({ runId: 'p1a', ensembleParticipantId: 'p1', stats: usage(80_000, 2_000) }),

@@ -17783,6 +17783,7 @@ async function runKimiAcpProvider(
 
   const model = normalizeCliProviderModel('kimi', payload.model)
   const kimiThinkingConfig = kimiAcpThinkingConfigValue(model, payload.reasoningEffort)
+  const kimiModelConfig = kimiAcpModelConfigValue(model, payload.serviceTier)
 
   // Build the isolated home BEFORE registering the run so a fail-closed
   // not-authenticated / build error surfaces as setup-required without a
@@ -17796,6 +17797,7 @@ async function runKimiAcpProvider(
     // re-asserted below when resuming a native session.
     thinkingEnabled: true,
     ...(kimiThinkingConfig === 'on' ? {} : { thinkingEffort: kimiThinkingConfig }),
+    selectedModelAlias: kimiModelConfig,
     preserveSessionState: Boolean(payload.appChatId),
     fs: kimiHomeFsAdapter
   })
@@ -17950,7 +17952,7 @@ async function runKimiAcpProvider(
       resumeConfigOptions: [
         {
           configId: 'model',
-          value: kimiAcpModelConfigValue(model, payload.serviceTier)
+          value: kimiModelConfig
         },
         {
           configId: 'thinking',
@@ -18015,7 +18017,8 @@ async function runKimiAcpProvider(
             outputChars: state.kimiUsageOutputChars || 0,
             model,
             serviceTier: payload.serviceTier,
-            durationMs: Date.now() - state.startedAt
+            durationMs: Date.now() - state.startedAt,
+            totalTokenLimit: home.modelContextWindow
           })
           state.tokenUsage = stats
           let usageRecorded = false

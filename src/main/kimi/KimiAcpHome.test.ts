@@ -92,6 +92,30 @@ describe('prepareKimiIsolatedHome', () => {
     expect(result.env).toEqual({ KIMI_CODE_HOME: '/iso' })
   })
 
+  it('returns the selected model effective context window from the copied config', async () => {
+    const seed = seededSource()
+    seed['/src/config.toml'] += [
+      '',
+      '[models."kimi-code/k3"]',
+      'max_context_size = 262144',
+      '',
+      '[models."kimi-code/k3".overrides]',
+      'max_context_size = 1048576'
+    ].join('\n')
+    const { fs } = makeFakeFs(seed)
+    const result = await prepareKimiIsolatedHome({
+      runId: 'r1',
+      homeDir: '/iso',
+      sourceHome: '/src',
+      selectedModelAlias: 'kimi-code/k3',
+      fs
+    })
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.modelContextWindow).toBe(1_048_576)
+  })
+
   it('cleanup removes the whole isolated home', async () => {
     const { fs, files, dirs } = makeFakeFs(seededSource())
     const result = await prepareKimiIsolatedHome({

@@ -13,13 +13,15 @@ describe('estimateKimiAcpTokenUsage', () => {
         inputChars: 9,
         outputChars: 5,
         model: 'kimi-k2.7-code',
-        durationMs: 1234
+        durationMs: 1234,
+        totalTokenLimit: 262_144
       })
     ).toEqual({
       input_tokens: 3,
       output_tokens: 2,
       total_tokens: 5,
       duration_ms: 1234,
+      totalTokenLimit: 262_144,
       _taskwraith_token_count_confidence: 'estimated',
       _taskwraith_usage_source: KIMI_ACP_TOKEN_ESTIMATE_SOURCE,
       _taskwraith_cost_rate_model: 'kimi-k2.7-code'

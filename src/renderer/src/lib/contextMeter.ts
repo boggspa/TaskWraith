@@ -18,7 +18,7 @@
 // stays a pure, dependency-light, testable module.
 import type { ChatRun, EnsembleParticipant, ProviderId } from '../../../main/store/types'
 import { resolveContextWindow } from './contextWindows'
-import { extractUsageCountsFromCandidate } from './usageStats'
+import { extractUsageCountsFromCandidate, extractUsageLimits } from './usageStats'
 
 export interface ContextMeterRow {
   /** Stable key: 'solo', or the ensemble participant id. */
@@ -56,9 +56,9 @@ export function contextPercent(used: number, window: number): number {
 function latestRunContext(
   runs: ReadonlyArray<ChatRun>,
   participantId?: string
-): { input: number; output: number } {
+): { input: number; output: number; totalTokenLimit?: number } {
   let bestTime = Number.NEGATIVE_INFINITY
-  let best: { input: number; output: number } | null = null
+  let best: { input: number; output: number; totalTokenLimit?: number } | null = null
   for (const run of runs) {
     if (participantId && run.ensembleParticipantId !== participantId) continue
     const counts = extractUsageCountsFromCandidate(run?.stats)
@@ -67,7 +67,11 @@ function latestRunContext(
     const time = Number.isFinite(parsed) ? parsed : 0
     if (time >= bestTime) {
       bestTime = time
-      best = { input: counts.inputTokens, output: counts.outputTokens }
+      best = {
+        input: counts.inputTokens,
+        output: counts.outputTokens,
+        ...extractUsageLimits(run?.stats)
+      }
     }
   }
   return best ?? { input: 0, output: 0 }
@@ -151,7 +155,7 @@ export function buildParticipantContextRows(
     const windowTokens = resolveContextWindow(
       participant.provider,
       participant.model,
-      undefined,
+      latest.totalTokenLimit,
       liveWindowTokens
     )
     return {

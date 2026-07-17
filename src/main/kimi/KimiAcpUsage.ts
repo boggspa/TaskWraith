@@ -18,6 +18,7 @@ export interface KimiAcpTokenEstimateInput {
   model: string
   serviceTier?: string | null
   durationMs?: number
+  totalTokenLimit?: number
 }
 
 export interface KimiAcpTokenEstimateStats extends Record<string, unknown> {
@@ -25,6 +26,7 @@ export interface KimiAcpTokenEstimateStats extends Record<string, unknown> {
   output_tokens: number
   total_tokens: number
   duration_ms: number
+  totalTokenLimit?: number
   _taskwraith_token_count_confidence: 'estimated'
   _taskwraith_usage_source: typeof KIMI_ACP_TOKEN_ESTIMATE_SOURCE
   _taskwraith_cost_rate_model: string
@@ -66,11 +68,13 @@ export function estimateKimiAcpTokenUsage(
 ): KimiAcpTokenEstimateStats {
   const inputTokens = estimateTokens(input.inputChars)
   const outputTokens = estimateTokens(input.outputChars)
+  const totalTokenLimit = finiteChars(input.totalTokenLimit || 0)
   return {
     input_tokens: inputTokens,
     output_tokens: outputTokens,
     total_tokens: inputTokens + outputTokens,
     duration_ms: finiteChars(input.durationMs || 0),
+    ...(totalTokenLimit > 0 ? { totalTokenLimit } : {}),
     _taskwraith_token_count_confidence: 'estimated',
     _taskwraith_usage_source: KIMI_ACP_TOKEN_ESTIMATE_SOURCE,
     _taskwraith_cost_rate_model: kimiCostRateModel(input.model, input.serviceTier)

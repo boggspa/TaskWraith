@@ -18,6 +18,7 @@ import {
   buildKimiIsolatedConfig,
   UNSAFE_WORKSPACE_KIMI_CONFIG_RELPATHS
 } from './KimiAcpContainment'
+import { effectiveKimiModelContextWindow } from './KimiModelContext'
 
 export interface KimiHomeFs {
   readFile: (path: string) => Promise<string>
@@ -41,6 +42,8 @@ export interface PrepareKimiHomeInput {
   thinkingEnabled?: boolean
   /** Per-run K3 thinking effort; omitted keeps the user config's setting. */
   thinkingEffort?: string
+  /** Exact managed model alias selected for this run (for its effective window). */
+  selectedModelAlias?: string
   /**
    * Keep Kimi's `sessions/` + `session_index.jsonl` in this home after cleanup.
    * Runtime config, credentials, oauth state, plugins, and skills are still
@@ -51,7 +54,13 @@ export interface PrepareKimiHomeInput {
 }
 
 export type PrepareKimiHomeResult =
-  | { ok: true; home: string; env: Record<string, string>; cleanup: () => Promise<void> }
+  | {
+      ok: true
+      home: string
+      env: Record<string, string>
+      modelContextWindow?: number
+      cleanup: () => Promise<void>
+    }
   | { ok: false; reason: 'not-authenticated' | 'no-config' | 'error'; message: string }
 
 /** Credential artefacts seeded into the isolated home (relative paths). */
@@ -204,6 +213,9 @@ export async function prepareKimiIsolatedHome(
   }
 
   try {
+    const modelContextWindow = input.selectedModelAlias
+      ? effectiveKimiModelContextWindow(baseConfig, input.selectedModelAlias)
+      : undefined
     await fs.mkdir(homeDir)
     await fs.chmod(homeDir, 0o700)
     // A prior process crash may have left live runtime material in a durable
@@ -238,6 +250,7 @@ export async function prepareKimiIsolatedHome(
       ok: true,
       home: homeDir,
       env: { KIMI_CODE_HOME: homeDir },
+      ...(modelContextWindow ? { modelContextWindow } : {}),
       cleanup
     }
   } catch (error) {
