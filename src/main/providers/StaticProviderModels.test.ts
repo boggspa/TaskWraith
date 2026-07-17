@@ -110,6 +110,7 @@ describe('claudeModelSupportsFastMode', () => {
 interface StaticModelShape {
   id: string
   label?: string
+  description?: string
   isDefault?: boolean
   disabled?: boolean
   disabledReason?: string
@@ -531,6 +532,7 @@ describe('getStaticProviderModels (kimi)', () => {
     })
     expect(k3?.isDefault).toBeUndefined()
     expect(k3?.additionalSpeedTiers).toBeUndefined()
+    expect(k3?.description).toContain('256K on Moderato, up to 1M on Allegretto+')
     expect(models[0]?.isDefault).toBe(true)
   })
 

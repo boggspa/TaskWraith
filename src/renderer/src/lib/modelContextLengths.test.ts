@@ -83,6 +83,19 @@ describe('buildModelContextLengthGroups', () => {
     expect(row!.formatted).toBe('256k')
   })
 
+  it('shows K3 as a plan-dependent 256k to 1M range', () => {
+    const groups = buildModelContextLengthGroups()
+    const row = groups
+      .find((group) => group.provider === 'kimi')
+      ?.models.find((model) => model.modelId === 'kimi-k3')
+
+    expect(row).toMatchObject({
+      contextWindow: 256_000,
+      maxContextWindow: 1_048_576,
+      formatted: '256k–1.0M'
+    })
+  })
+
   it('gemini flash-lite resolves to 200k', () => {
     const groups = buildModelContextLengthGroups()
     const geminiGroup = groups.find((g) => g.provider === 'gemini')

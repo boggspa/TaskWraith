@@ -708,7 +708,16 @@ export function ContextLengthsView() {
             {group.models.map((m) => (
               <div key={m.modelId} className="model-usage-context-row">
                 <span className="model-usage-context-model" title={m.modelId}>{humaniseModelIdCompact(group.provider, m.modelId) || m.label}</span>
-                <span className="model-usage-context-window" title={`${m.contextWindow.toLocaleString()} tokens`}>{m.formatted}</span>
+                <span
+                  className="model-usage-context-window"
+                  title={
+                    m.maxContextWindow
+                      ? `${m.contextWindow.toLocaleString()}–${m.maxContextWindow.toLocaleString()} tokens (plan-dependent)`
+                      : `${m.contextWindow.toLocaleString()} tokens`
+                  }
+                >
+                  {m.formatted}
+                </span>
               </div>
             ))}
           </div>

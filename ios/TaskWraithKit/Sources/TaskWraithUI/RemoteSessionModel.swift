@@ -1964,7 +1964,7 @@ public final class RemoteSessionModel: ObservableObject {
               {"name":"GPT-5.6-Sol","blurb":"Latest frontier agentic coding model — Max and Ultra reasoning tiers."}
             ]},
             {"provider":"kimi","label":"Kimi","models":[
-              {"name":"K3","blurb":"Moonshot's new flagship for long-horizon coding with 256K context and always-on Low, High, or Max thinking."},
+              {"name":"K3","blurb":"Moonshot's flagship: 256K on Moderato, up to 1M on Allegretto+, with always-on Low, High, or Max thinking."},
               {"name":"K2.7 Coding Highspeed","blurb":"The same K2.7 Coding intelligence at roughly 5–6× output speed — enable Fast mode. Thinking is always on."}
             ]},
             {"provider":"cursor","label":"Cursor","models":[

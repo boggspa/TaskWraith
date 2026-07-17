@@ -164,7 +164,7 @@ describe('notification registry', () => {
       {
         name: 'K3',
         blurb:
-          "Moonshot's new flagship for long-horizon coding with 256K context and always-on Low, High, or Max thinking."
+          "Moonshot's flagship: 256K on Moderato, up to 1M on Allegretto+, with always-on Low, High, or Max thinking."
       },
       {
         name: 'K2.7 Coding Highspeed',

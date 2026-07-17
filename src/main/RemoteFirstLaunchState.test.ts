@@ -285,7 +285,7 @@ describe('buildRemoteFirstLaunchState', () => {
     expect(kimiGroup?.models).toEqual([
       expect.objectContaining({
         name: 'K3',
-        blurb: expect.stringMatching(/256K context.*Low, High, or Max thinking/)
+        blurb: expect.stringMatching(/256K on Moderato.*up to 1M on Allegretto\+.*Low, High, or Max thinking/)
       }),
       expect.objectContaining({
         name: 'K2.7 Coding Highspeed',

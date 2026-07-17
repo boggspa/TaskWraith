@@ -219,6 +219,7 @@ describe('provider model picker sentinels', () => {
     ])
     expect(k3?.isDefault).toBeUndefined()
     expect(k3?.additionalSpeedTiers).toBeUndefined()
+    expect(k3?.description).toContain('256K on Moderato, up to 1M on Allegretto+')
   })
 
   it('does not expose Default or CLI Default as selectable model rows', () => {

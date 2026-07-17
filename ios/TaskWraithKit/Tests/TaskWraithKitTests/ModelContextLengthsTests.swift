@@ -153,7 +153,7 @@ struct ModelContextLengthsTests {
         #expect(row?.formatted == "256k")
     }
 
-    @Test("kimi kimi-k3: 256_000 / 256k")
+    @Test("kimi kimi-k3: 256k base and plan-dependent 1M maximum")
     func kimiK3() {
         let groups = ModelContextLengths.buildGroups()
         let row = groups.first { $0.provider == "kimi" }?
@@ -161,7 +161,8 @@ struct ModelContextLengthsTests {
         #expect(row != nil)
         #expect(row?.label == "K3")
         #expect(row?.contextWindow == 256_000)
-        #expect(row?.formatted == "256k")
+        #expect(row?.maxContextWindow == 1_048_576)
+        #expect(row?.formatted == "256k–1.0M")
     }
 
     @Test("kimi group mirrors the current picker rows (K2.7 default first, then K3)")

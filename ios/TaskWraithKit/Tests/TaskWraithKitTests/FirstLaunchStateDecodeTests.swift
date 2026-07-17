@@ -53,7 +53,7 @@ struct FirstLaunchStateDecodeTests {
         {"id":"new-additions-2026-07-17","kind":"addition","title":"New Additions","body":"Summary fallback.","tone":"default","dismissible":true,
          "groups":[
           {"provider":"kimi","label":"Kimi","models":[
-            {"name":"K3","blurb":"Moonshot's new flagship for long-horizon coding with 256K context and always-on Low, High, or Max thinking."},
+            {"name":"K3","blurb":"Moonshot's flagship: 256K on Moderato, up to 1M on Allegretto+, with always-on Low, High, or Max thinking."},
             {"name":"K2.7 Coding Highspeed","blurb":"The same K2.7 Coding intelligence at roughly 5–6× output speed — enable Fast mode. Thinking is always on."}
           ]},
           {"provider":"ollama","label":"Ollama","models":[
@@ -70,6 +70,7 @@ struct FirstLaunchStateDecodeTests {
         #expect(notice.groups?.first?.label == "Kimi")
         #expect(notice.groups?.first?.models.map(\.name) == ["K3", "K2.7 Coding Highspeed"])
         #expect(notice.groups?.first?.models.first?.blurb.contains("256K") == true)
+        #expect(notice.groups?.first?.models.first?.blurb.contains("up to 1M") == true)
         #expect(notice.groups?.first?.models.last?.blurb.contains("5–6×") == true)
         #expect(notice.groups?.contains { $0.provider == "claude" } == false)
         #expect(notice.groups?.last?.provider == "ollama")

@@ -30,8 +30,9 @@ const NON_MODEL_ALIAS_IDS = new Set<string>(['auto'])
 export interface ModelContextLengthRow {
   modelId: string          // canonical model id, e.g. 'claude-opus-4-8-1m'
   label: string            // curated catalog picker label, e.g. 'Claude Opus 4.8 1M'
-  contextWindow: number    // resolved official window in tokens
-  formatted: string        // formatContextTokens(contextWindow), e.g. '1.0M' / '256k' / '200k'
+  contextWindow: number    // resolved base/default window in tokens
+  maxContextWindow?: number // plan-dependent upper bound, when different
+  formatted: string        // e.g. '1.0M', '256k', or plan-dependent '256k–1.0M'
 }
 
 export interface ModelContextLengthGroup {
@@ -54,11 +55,16 @@ export function buildModelContextLengthGroups(
       .modelOptions.filter((opt) => !NON_MODEL_ALIAS_IDS.has(opt.id))
       .map((opt) => {
         const contextWindow = resolveContextWindow(provider, opt.id)
+        const maxContextWindow =
+          provider === 'kimi' && opt.id === 'kimi-k3' ? 1_048_576 : undefined
         return {
           modelId: opt.id,
           label: opt.label,
           contextWindow,
-          formatted: formatContextTokens(contextWindow)
+          ...(maxContextWindow ? { maxContextWindow } : {}),
+          formatted: maxContextWindow
+            ? `${formatContextTokens(contextWindow)}–${formatContextTokens(maxContextWindow)}`
+            : formatContextTokens(contextWindow)
         }
       })
     if (models.length > 0) {

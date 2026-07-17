@@ -409,6 +409,12 @@ describe('ModelContextLengthsSettingsTable (SSR — static data, no effects)', (
     expect(html).toContain('1.0M')
   })
 
+  it('shows K3 context as a plan-dependent 256k to 1M range', () => {
+    const html = renderToStaticMarkup(<ModelContextLengthsSettingsTable />)
+    expect(html).toContain('256k–1.0M')
+    expect(html).toContain('plan-dependent')
+  })
+
   it('is currency-free — does not contain ~ cost badge or $ symbol', () => {
     const html = renderToStaticMarkup(<ModelContextLengthsSettingsTable />)
     expect(html).not.toContain('~')

@@ -527,12 +527,13 @@ const KIMI_STATIC_MODELS = [
     additionalSpeedTiers: ['fast']
   },
   {
-    // Managed `kimi-code/k3` alias (2026-07-16): 256K context and always-on
-    // thinking with model-advertised Low/High/Max effort choices. No Highspeed
-    // tier — Fast stays a K2.7 Coding capability.
+    // Managed `kimi-code/k3` alias (2026-07-16): 256K on Moderato and up to 1M
+    // on Allegretto+, with model-advertised Low/High/Max effort choices. No
+    // Highspeed tier — Fast stays a K2.7 Coding capability.
     id: 'kimi-k3',
     label: 'K3',
-    description: "Moonshot's flagship K3 - 256K context - Low, High, or Max thinking",
+    description:
+      "Moonshot's flagship K3 - 256K on Moderato, up to 1M on Allegretto+ - Low, High, or Max thinking",
     supportedReasoningEfforts: KIMI_K3_REASONING_EFFORTS.map((reasoningEffort) => ({
       reasoningEffort
     })),

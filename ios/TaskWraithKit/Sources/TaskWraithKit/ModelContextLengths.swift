@@ -19,6 +19,7 @@ public struct ModelContextLengthRow: Hashable, Sendable {
     public let modelId: String
     public let label: String
     public let contextWindow: Int
+    public let maxContextWindow: Int?
     public let formatted: String
 }
 
@@ -78,8 +79,8 @@ public enum ModelContextLengths {
         case "kimi":
             return [
                 (id: "kimi-k2.7-code", label: "K2.7 Coding"),
-                // K3 (2026-07-16) — Moonshot's flagship; 256K context,
-                // always-on Low/High/Max thinking, no Highspeed tier.
+                // K3 (2026-07-16) — Moonshot's flagship; 256K on Moderato and
+                // up to 1M on Allegretto+, with no Highspeed tier.
                 (id: "kimi-k3",        label: "K3"),
             ]
         case "grok":
@@ -153,11 +154,16 @@ public enum ModelContextLengths {
                 .filter { !aliasIds.contains($0.id) }
                 .map { opt in
                     let window = ContextWindows.resolve(provider: provider, model: opt.id)
+                    let maxWindow: Int? =
+                        provider == "kimi" && opt.id == "kimi-k3" ? 1_048_576 : nil
                     return ModelContextLengthRow(
                         modelId: opt.id,
                         label: opt.label,
                         contextWindow: window,
-                        formatted: formatContextTokens(window)
+                        maxContextWindow: maxWindow,
+                        formatted: maxWindow.map {
+                            "\(formatContextTokens(window))–\(formatContextTokens($0))"
+                        } ?? formatContextTokens(window)
                     )
                 }
             if !rows.isEmpty {

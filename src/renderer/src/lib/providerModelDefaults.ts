@@ -217,12 +217,13 @@ const KIMI_DEFAULT_MODELS = [
     additionalSpeedTiers: ['fast']
   },
   {
-    // Managed `kimi-code/k3` alias: 256K context and always-on thinking with
-    // Low/High/Max effort choices. No Highspeed tier — Fast stays a K2.7
-    // Coding capability — and K2.7 Coding remains the default. Mirrors main.
+    // Managed `kimi-code/k3` alias: 256K on Moderato and up to 1M on
+    // Allegretto+, with Low/High/Max effort choices. No Highspeed tier — Fast
+    // stays a K2.7 Coding capability — and K2.7 Coding remains the default.
     id: 'kimi-k3',
     label: 'K3',
-    description: "Moonshot's flagship K3 - 256K context - Low, High, or Max thinking",
+    description:
+      "Moonshot's flagship K3 - 256K on Moderato, up to 1M on Allegretto+ - Low, High, or Max thinking",
     supportedReasoningEfforts: [
       { reasoningEffort: 'low' },
       { reasoningEffort: 'high' },
