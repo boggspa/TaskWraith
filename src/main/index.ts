@@ -35845,9 +35845,10 @@ if (isGeminiMcpBridgeProcess) {
       assertSenderCanManageProjects: assertMainRendererSender
     })
     // Authoritative project changes fan out to the main window; the renderer
-    // facade reconciles its optimistic snapshot from this event.
-    AppStore.setProjectsChangeListener((projects) => {
-      safeSendToWebContents(mainWindow, 'projects-changed', projects)
+    // facade reconciles its optimistic snapshot from this event. The payload
+    // is the full registry state: { projects, workProfiles }.
+    AppStore.setProjectsChangeListener((state) => {
+      safeSendToWebContents(mainWindow, 'projects-changed', state)
     })
     registerWorkspaceActivityHandlers({
       requireRegisteredWorkspace,

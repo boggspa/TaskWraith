@@ -65,6 +65,27 @@ export type ProjectPatch = {
   hue?: number
 }
 
+/**
+ * Main-owned companion record for a Project's Work-surface semantics. Kept
+ * OUTSIDE the V1 Project shape on purpose: the V1 record round-trips through
+ * strip-unknown-fields migration in old builds, so companion data grafted
+ * onto it would be silently discarded. Device-local view preferences do NOT
+ * belong here — this record is durable, broadcast, and (eventually) bridged.
+ *
+ * `homeChatId` is the lazy home-chat claim: written only when a chat is
+ * explicitly designated (or, later, on a home draft's first send), never at
+ * Project creation. A chat can be the home of at most one Project — the
+ * registry enforces uniqueness at claim time and the normalizer heals
+ * violations deterministically on read.
+ */
+export type ProjectWorkProfile = {
+  projectId: string
+  homeChatId?: string
+  brief?: string
+  preferredWorkspaceId?: string
+  updatedAt: number
+}
+
 /** Seed data a `create` op must carry so apply stays deterministic. */
 export type CreateProjectSeed = {
   id: string
@@ -248,6 +269,70 @@ export function migrateProjects(candidates: unknown[], now: number): Project[] {
 
 export function projectById(projects: Project[], id: string): Project | null {
   return projects.find((project) => project.id === id) ?? null
+}
+
+export function cloneProjectWorkProfile(profile: ProjectWorkProfile): ProjectWorkProfile {
+  return { ...profile }
+}
+
+function normalizeOptionalIdField(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined
+  const trimmed = value.trim()
+  return trimmed.length > 0 ? trimmed : undefined
+}
+
+/** A profile carrying no semantic fields is dead weight — drop it. */
+function isMeaningfulWorkProfile(profile: ProjectWorkProfile): boolean {
+  return (
+    profile.homeChatId !== undefined ||
+    profile.brief !== undefined ||
+    profile.preferredWorkspaceId !== undefined
+  )
+}
+
+/**
+ * Best-effort work-profile migration with the same philosophy as
+ * `migrateProjects`: reconstruct known fields, drop what can't be trusted.
+ * Referential integrity is enforced against `validProjectIds` (a profile for
+ * a vanished Project is dropped), duplicate projectIds keep the first entry,
+ * and a `homeChatId` claimed by an earlier profile is cleared from later
+ * ones — one home per chat, healed deterministically on read.
+ */
+export function migrateProjectWorkProfiles(
+  candidates: unknown[],
+  validProjectIds: ReadonlySet<string>,
+  now: number
+): ProjectWorkProfile[] {
+  const seenProjectIds = new Set<string>()
+  const claimedHomeChatIds = new Set<string>()
+  const profiles: ProjectWorkProfile[] = []
+  for (const candidate of candidates) {
+    if (!candidate || typeof candidate !== 'object') continue
+    const entry = candidate as Partial<ProjectWorkProfile>
+    const projectId = normalizeOptionalIdField(entry.projectId)
+    if (!projectId || !validProjectIds.has(projectId) || seenProjectIds.has(projectId)) continue
+    let homeChatId = normalizeOptionalIdField(entry.homeChatId)
+    if (homeChatId) {
+      if (claimedHomeChatIds.has(homeChatId)) homeChatId = undefined
+      else claimedHomeChatIds.add(homeChatId)
+    }
+    const brief = typeof entry.brief === 'string' && entry.brief.trim() ? entry.brief : undefined
+    const preferredWorkspaceId = normalizeOptionalIdField(entry.preferredWorkspaceId)
+    const profile: ProjectWorkProfile = {
+      projectId,
+      ...(homeChatId ? { homeChatId } : {}),
+      ...(brief !== undefined ? { brief } : {}),
+      ...(preferredWorkspaceId ? { preferredWorkspaceId } : {}),
+      updatedAt:
+        typeof entry.updatedAt === 'number' && Number.isFinite(entry.updatedAt)
+          ? entry.updatedAt
+          : now
+    }
+    if (!isMeaningfulWorkProfile(profile)) continue
+    seenProjectIds.add(projectId)
+    profiles.push(profile)
+  }
+  return profiles
 }
 
 function assertProjectExists(projects: Project[], projectId: string): Project {

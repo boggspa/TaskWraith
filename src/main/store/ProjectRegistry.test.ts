@@ -1,20 +1,24 @@
 import { describe, expect, it } from 'vitest'
 
-import { createProjectRegistry, type ProjectRegistry } from './ProjectRegistry'
+import {
+  createProjectRegistry,
+  type ProjectRegistry,
+  type ProjectRegistryState
+} from './ProjectRegistry'
 import { applyProjectOp, type Project, type ProjectOp } from '../../shared/projects'
 
 interface Harness {
   registry: ProjectRegistry
   files: Map<string, unknown>
   writes: () => number
-  changes: Project[][]
+  changes: ProjectRegistryState[]
 }
 
 function buildHarness(seedFile?: unknown): Harness {
   const files = new Map<string, unknown>()
   if (seedFile !== undefined) files.set('projects.json', seedFile)
   let writeCount = 0
-  const changes: Project[][] = []
+  const changes: ProjectRegistryState[] = []
   let tick = 1000
   const registry = createProjectRegistry({
     filePath: 'projects.json',
@@ -28,7 +32,7 @@ function buildHarness(seedFile?: unknown): Harness {
     },
     now: () => ++tick
   })
-  registry.setChangeListener((projects) => changes.push(projects))
+  registry.setChangeListener((state) => changes.push(state))
   return { registry, files, writes: () => writeCount, changes }
 }
 
@@ -194,5 +198,120 @@ describe('ProjectRegistry legacy import', () => {
     expect(result.importedCount).toBe(0)
     expect(harness.registry.getLegacyImportMarker()?.status).toBe('invalid-payload')
     expect(harness.registry.importLegacyProjects('[]').status).toBe('already-imported')
+  })
+})
+
+describe('ProjectRegistry home-chat claims', () => {
+  function harnessWithProjects(): Harness {
+    const harness = buildHarness()
+    harness.registry.applyOp(createOp('project-a', 'Alpha'))
+    harness.registry.applyOp(createOp('project-b', 'Beta'))
+    return harness
+  }
+
+  it('claims a home chat and adds membership in one write', () => {
+    const harness = harnessWithProjects()
+    const before = harness.writes()
+    const result = harness.registry.setHomeChat('project-a', 'chat-home')
+    expect(result.changed).toBe(true)
+    expect(harness.writes()).toBe(before + 1)
+    expect(result.workProfiles).toEqual([
+      expect.objectContaining({ projectId: 'project-a', homeChatId: 'chat-home' })
+    ])
+    expect(result.projects.find((p) => p.id === 'project-a')?.memberChatIds).toContain('chat-home')
+    expect(harness.changes.at(-1)?.workProfiles).toHaveLength(1)
+  })
+
+  it('is idempotent for an already-claimed home', () => {
+    const harness = harnessWithProjects()
+    harness.registry.setHomeChat('project-a', 'chat-home')
+    const before = harness.writes()
+    const result = harness.registry.setHomeChat('project-a', 'chat-home')
+    expect(result.changed).toBe(false)
+    expect(harness.writes()).toBe(before)
+  })
+
+  it('enforces one home per chat across projects', () => {
+    const harness = harnessWithProjects()
+    harness.registry.setHomeChat('project-a', 'chat-home')
+    expect(() => harness.registry.setHomeChat('project-b', 'chat-home')).toThrow(
+      'Chat is already the home of another project.'
+    )
+    expect(() => harness.registry.setHomeChat('missing', 'chat-x')).toThrow('Project not found.')
+    expect(() => harness.registry.setHomeChat('project-b', '   ')).toThrow('Chat id is required.')
+  })
+
+  it('re-homing a project replaces its claim and keeps prior membership', () => {
+    const harness = harnessWithProjects()
+    harness.registry.setHomeChat('project-a', 'chat-old')
+    const result = harness.registry.setHomeChat('project-a', 'chat-new')
+    expect(result.workProfiles).toEqual([
+      expect.objectContaining({ projectId: 'project-a', homeChatId: 'chat-new' })
+    ])
+    const project = result.projects.find((p) => p.id === 'project-a')
+    expect(project?.memberChatIds).toEqual(['chat-old', 'chat-new'])
+  })
+
+  it('clears a claim without touching membership and no-ops when nothing is claimed', () => {
+    const harness = harnessWithProjects()
+    harness.registry.setHomeChat('project-a', 'chat-home')
+    const cleared = harness.registry.setHomeChat('project-a', null)
+    expect(cleared.changed).toBe(true)
+    expect(cleared.workProfiles).toEqual([])
+    expect(cleared.projects.find((p) => p.id === 'project-a')?.memberChatIds).toContain(
+      'chat-home'
+    )
+    expect(harness.registry.setHomeChat('project-a', null).changed).toBe(false)
+  })
+
+  it('drops orphaned profiles when the project is deleted', () => {
+    const harness = harnessWithProjects()
+    harness.registry.setHomeChat('project-a', 'chat-home')
+    const result = harness.registry.applyOp({ kind: 'delete', projectId: 'project-a' })
+    expect(result.workProfiles).toEqual([])
+  })
+
+  it('clears the claim when the home chat leaves the project or is deleted everywhere', () => {
+    const removed = harnessWithProjects()
+    removed.registry.setHomeChat('project-a', 'chat-home')
+    const afterRemove = removed.registry.applyOp({
+      kind: 'remove-chat',
+      projectId: 'project-a',
+      chatId: 'chat-home',
+      now: 60
+    })
+    expect(afterRemove.workProfiles).toEqual([])
+    expect(afterRemove.changed).toBe(true)
+
+    const everywhere = harnessWithProjects()
+    everywhere.registry.setHomeChat('project-b', 'chat-shared')
+    const afterEverywhere = everywhere.registry.applyOp({
+      kind: 'remove-chat-everywhere',
+      chatId: 'chat-shared',
+      now: 70
+    })
+    expect(afterEverywhere.workProfiles).toEqual([])
+  })
+
+  it('persists claims across registry instances and heals duplicate claims on read', () => {
+    const harness = harnessWithProjects()
+    harness.registry.setHomeChat('project-a', 'chat-home')
+    const reopened = createProjectRegistry({
+      filePath: 'projects.json',
+      readJson: <T>(filePath: string, defaultData: T): T =>
+        harness.files.has(filePath) ? (harness.files.get(filePath) as T) : defaultData,
+      writeJson: () => {},
+      now: () => 9999
+    })
+    expect(reopened.getWorkProfiles()).toEqual([
+      expect.objectContaining({ projectId: 'project-a', homeChatId: 'chat-home' })
+    ])
+
+    // Hand-corrupted duplicate claim: the second profile loses its home.
+    const file = harness.files.get('projects.json') as { workProfiles: unknown[] }
+    file.workProfiles.push({ projectId: 'project-b', homeChatId: 'chat-home', updatedAt: 1 })
+    expect(reopened.getWorkProfiles()).toEqual([
+      expect.objectContaining({ projectId: 'project-a', homeChatId: 'chat-home' })
+    ])
   })
 })

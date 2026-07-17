@@ -103,9 +103,11 @@ import { pickWorkflowRunTemplateFields } from './WorkflowRunTemplate'
 import {
   createProjectRegistry,
   type ProjectLegacyImportMarker,
-  type ProjectLegacyImportResult
+  type ProjectLegacyImportResult,
+  type ProjectRegistryMutationResult,
+  type ProjectRegistryState
 } from './ProjectRegistry'
-import type { Project, ProjectOp } from '../../shared/projects'
+import type { Project, ProjectOp, ProjectWorkProfile } from '../../shared/projects'
 import { createDefaultEnsembleConfig } from '../EnsembleDefaults'
 import { isEnsembleRoundDispatchLive } from '../../shared/ensembleRoundLifecycle'
 import { isCursorGrok45ModelId, isGrok45ReasoningModelId } from '../../shared/grok45Models'
@@ -3849,8 +3851,19 @@ export class AppStore {
     return projectRegistry.getProjects()
   }
 
-  static applyProjectOp(op: ProjectOp): { projects: Project[]; changed: boolean } {
+  static getProjectWorkProfiles(): ProjectWorkProfile[] {
+    return projectRegistry.getWorkProfiles()
+  }
+
+  static applyProjectOp(op: ProjectOp): ProjectRegistryMutationResult {
     return projectRegistry.applyOp(op)
+  }
+
+  static setProjectHomeChat(
+    projectId: string,
+    chatId: string | null
+  ): ProjectRegistryMutationResult {
+    return projectRegistry.setHomeChat(projectId, chatId)
   }
 
   static importLegacyProjects(rawJson: string | null): ProjectLegacyImportResult {
@@ -3861,7 +3874,7 @@ export class AppStore {
     return projectRegistry.getLegacyImportMarker()
   }
 
-  static setProjectsChangeListener(listener: ((projects: Project[]) => void) | null): void {
+  static setProjectsChangeListener(listener: ((state: ProjectRegistryState) => void) | null): void {
     projectRegistry.setChangeListener(listener)
   }
 
@@ -5048,6 +5061,18 @@ export class AppStore {
     }
     this.removeMessageFeedbackReceipts({ chatIds: [chatId] })
     this.deleteSubThreadMailbox(chatId)
+    // Project-membership reconciliation at the delete choke point: every
+    // durable per-chat delete funnels through this method (renderer IPC,
+    // per-workspace clearChats, AbandonedChatReaper, remote-draft cleanup,
+    // the orphan sub-thread sweep), so no delete path can strand a stale
+    // memberChatIds entry in projects.json. Runs even when the chat file was
+    // already gone — that is what heals memberships that were already stale.
+    // Best-effort: a projects.json failure must never abort the deletion.
+    try {
+      this.applyProjectOp({ kind: 'remove-chat-everywhere', chatId, now: Date.now() })
+    } catch (error) {
+      console.error('Failed to remove deleted chat from project membership', chatId, error)
+    }
   }
 
   static clearChats(workspaceId?: string) {
@@ -5084,6 +5109,22 @@ export class AppStore {
       this.orphanSubThreadsReaped = false
       runEventSequenceCache.clear()
       runEventHashCache.clear()
+      // A full-history clear removes the chats directory wholesale without
+      // routing through deleteChat, so reconcile membership here instead:
+      // with no chats left, EVERY memberChatIds entry is stale by definition
+      // (including ids that were already stale before the clear).
+      try {
+        const now = Date.now()
+        const memberChatIds = new Set<string>()
+        for (const project of this.getProjects()) {
+          for (const id of project.memberChatIds) memberChatIds.add(id)
+        }
+        for (const id of memberChatIds) {
+          this.applyProjectOp({ kind: 'remove-chat-everywhere', chatId: id, now })
+        }
+      } catch (error) {
+        console.error('Failed to clear project chat membership after clear-chats', error)
+      }
       return
     }
     const chats = this.getChats(workspaceId)

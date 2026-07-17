@@ -10,6 +10,7 @@ import {
   applyRenameProject,
   applyReorderProject,
   applySetProjectIconAndHue,
+  migrateProjectWorkProfiles,
   migrateProjects,
   parseProjectOp,
   sortProjectsForDisplay,
@@ -213,6 +214,55 @@ describe('parseProjectOp', () => {
     const parsed = parseProjectOp({ kind: 'reorder', projectId: 'p', order: Number.NaN, now: 1 })
     expect(parsed).not.toBeNull()
     expect(() => applyProjectOp(buildThreeRoots(), parsed!)).toThrow('Invalid order.')
+  })
+})
+
+describe('migrateProjectWorkProfiles', () => {
+  const validIds = new Set(['project-a', 'project-b'])
+
+  it('keeps known fields, seeds missing timestamps, and drops empty or orphaned profiles', () => {
+    const migrated = migrateProjectWorkProfiles(
+      [
+        {
+          projectId: 'project-a',
+          homeChatId: '  chat-1  ',
+          brief: 'Ship the Work surface',
+          preferredWorkspaceId: 'ws-1'
+        },
+        { projectId: 'project-b', updatedAt: 42 },
+        { projectId: 'project-gone', homeChatId: 'chat-2' },
+        { projectId: 'project-b' },
+        'garbage',
+        null
+      ],
+      validIds,
+      777
+    )
+    expect(migrated).toEqual([
+      {
+        projectId: 'project-a',
+        homeChatId: 'chat-1',
+        brief: 'Ship the Work surface',
+        preferredWorkspaceId: 'ws-1',
+        updatedAt: 777
+      }
+    ])
+  })
+
+  it('deduplicates by projectId and heals duplicate home claims deterministically', () => {
+    const migrated = migrateProjectWorkProfiles(
+      [
+        { projectId: 'project-a', homeChatId: 'chat-1', updatedAt: 1 },
+        { projectId: 'project-a', homeChatId: 'chat-other', updatedAt: 2 },
+        { projectId: 'project-b', homeChatId: 'chat-1', brief: 'keeps brief', updatedAt: 3 }
+      ],
+      validIds,
+      9
+    )
+    expect(migrated).toEqual([
+      { projectId: 'project-a', homeChatId: 'chat-1', updatedAt: 1 },
+      { projectId: 'project-b', brief: 'keeps brief', updatedAt: 3 }
+    ])
   })
 })
 
