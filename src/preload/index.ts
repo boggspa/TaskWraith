@@ -1132,6 +1132,10 @@ const api = {
     ipcRenderer.invoke('add-or-update-workspace', path, partial),
   removeWorkspace: (id: string) => ipcRenderer.invoke('remove-workspace', id),
   clearWorkspaces: () => ipcRenderer.invoke('clear-workspaces'),
+  getProjectsSnapshot: () => ipcRenderer.invoke('projects:snapshot'),
+  applyProjectOp: (op: unknown) => ipcRenderer.invoke('projects:apply-op', op),
+  importLegacyProjects: (rawJson: string | null) =>
+    ipcRenderer.invoke('projects:import-legacy', rawJson),
   getChats: (workspaceId?: string) => ipcRenderer.invoke('get-chats', workspaceId),
   getChatList: (workspaceId?: string) => ipcRenderer.invoke('get-chat-list', workspaceId),
   getPinnedMessages: (workspaceId?: string) =>
@@ -1751,6 +1755,11 @@ const api = {
     const wrapped = (_event: unknown, chat: unknown): void => callback(chat)
     ipcRenderer.on('chat-updated', wrapped)
     return () => ipcRenderer.removeListener('chat-updated', wrapped)
+  },
+  onProjectsChanged: (callback: (projects: unknown) => void) => {
+    const wrapped = (_event: unknown, projects: unknown): void => callback(projects)
+    ipcRenderer.on('projects-changed', wrapped)
+    return () => ipcRenderer.removeListener('projects-changed', wrapped)
   },
   onContextCompactionProgress: (callback: (event: ContextCompactionProgressEvent) => void) => {
     const wrapped = (_event: unknown, event: ContextCompactionProgressEvent): void =>

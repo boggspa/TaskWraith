@@ -1183,6 +1183,7 @@ import { createMainRuntimeContext } from './runtime/MainRuntimeContext'
 import { registerChatHandlers } from './ipc/chatHandlers'
 import { registerHumanCollaborationHandlers } from './ipc/humanCollaborationHandlers'
 import { registerWorkspaceHandlers } from './ipc/workspaceHandlers'
+import { registerProjectHandlers } from './ipc/projectHandlers'
 import { registerWorkspaceActivityHandlers } from './ipc/workspaceActivityHandlers'
 import { registerWorkspaceFileEditorHandlers } from './ipc/workspaceFileEditorHandlers'
 import { registerWorkspaceGeminiDiscoveryHandlers } from './ipc/workspaceGeminiDiscoveryHandlers'
@@ -35835,6 +35836,18 @@ if (isGeminiMcpBridgeProcess) {
         }
         return { kind: 'workspace', workspaceId: workspace.id }
       }
+    })
+    registerProjectHandlers({
+      getProjects: () => AppStore.getProjects(),
+      getLegacyImportMarker: () => AppStore.getProjectsLegacyImportMarker(),
+      applyProjectOp: (op) => AppStore.applyProjectOp(op),
+      importLegacyProjects: (rawJson) => AppStore.importLegacyProjects(rawJson),
+      assertSenderCanManageProjects: assertMainRendererSender
+    })
+    // Authoritative project changes fan out to the main window; the renderer
+    // facade reconciles its optimistic snapshot from this event.
+    AppStore.setProjectsChangeListener((projects) => {
+      safeSendToWebContents(mainWindow, 'projects-changed', projects)
     })
     registerWorkspaceActivityHandlers({
       requireRegisteredWorkspace,
