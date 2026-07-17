@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
   SUNSET_ELEVATION_DEG,
+  equatorialToHorizontal,
+  greenwichSiderealTimeDeg,
   isSunUp,
   moonPhase,
   solarPosition,
@@ -145,5 +147,71 @@ describe('moonPhase', () => {
     expect(Math.abs(half.phase - 0.5)).toBeLessThan(0.03)
     const cycle = moonPhase(start + 29.53 * 86_400_000)
     expect(Math.min(cycle.phase, 1 - cycle.phase)).toBeLessThan(0.03)
+  })
+})
+
+describe('sidereal time + equatorial projection', () => {
+  // J2000 star coordinates (RA converted hours -> degrees).
+  const POLARIS = { ra: 37.95, dec: 89.26 }
+  const VEGA = { ra: 279.23, dec: 38.78 }
+  const SIRIUS = { ra: 101.29, dec: -16.72 }
+  const ACRUX = { ra: 186.65, dec: -63.1 }
+
+  it('matches the textbook GMST at the J2000 epoch', () => {
+    // 2000-01-01 12:00 UTC (JD 2451545.0): GMST = 280.4606°.
+    expect(greenwichSiderealTimeDeg(utc(2000, 1, 1, 12, 0))).toBeCloseTo(280.4606, 1)
+  })
+
+  it('pins Polaris at the observer latitude, due north, around the clock', () => {
+    for (const hour of [0, 6, 12, 18]) {
+      const pos = equatorialToHorizontal(
+        utc(2026, 7, 17, hour),
+        CAMBRIDGE.lat,
+        CAMBRIDGE.lon,
+        POLARIS.ra,
+        POLARIS.dec
+      )
+      expect(Math.abs(pos.altitudeDeg - CAMBRIDGE.lat)).toBeLessThan(1)
+      const northDistance = Math.min(pos.azimuthDeg, 360 - pos.azimuthDeg)
+      expect(northDistance).toBeLessThan(2)
+    }
+  })
+
+  it('puts Vega nearly overhead on a UK July night and Sirius below the horizon', () => {
+    const at = utc(2026, 7, 17, 22, 30)
+    const vega = equatorialToHorizontal(at, CAMBRIDGE.lat, CAMBRIDGE.lon, VEGA.ra, VEGA.dec)
+    expect(vega.altitudeDeg).toBeGreaterThan(55)
+
+    const sirius = equatorialToHorizontal(at, CAMBRIDGE.lat, CAMBRIDGE.lon, SIRIUS.ra, SIRIUS.dec)
+    expect(sirius.altitudeDeg).toBeLessThan(0)
+  })
+
+  it('raises Sirius in the southern evening sky on a UK January night', () => {
+    const sirius = equatorialToHorizontal(
+      utc(2026, 1, 15, 22, 0),
+      CAMBRIDGE.lat,
+      CAMBRIDGE.lon,
+      SIRIUS.ra,
+      SIRIUS.dec
+    )
+    expect(sirius.altitudeDeg).toBeGreaterThan(10)
+    expect(sirius.azimuthDeg).toBeGreaterThan(120)
+    expect(sirius.azimuthDeg).toBeLessThan(240)
+  })
+
+  it('never shows the Southern Cross from Cambridge but does from Sydney', () => {
+    for (const hour of [0, 6, 12, 18]) {
+      const fromUk = equatorialToHorizontal(
+        utc(2026, 7, 17, hour),
+        CAMBRIDGE.lat,
+        CAMBRIDGE.lon,
+        ACRUX.ra,
+        ACRUX.dec
+      )
+      expect(fromUk.altitudeDeg).toBeLessThan(0)
+    }
+    // Sydney mid-winter evening: Crux high in the south.
+    const fromSydney = equatorialToHorizontal(utc(2026, 7, 17, 9, 0), -33.87, 151.21, ACRUX.ra, ACRUX.dec)
+    expect(fromSydney.altitudeDeg).toBeGreaterThan(20)
   })
 })

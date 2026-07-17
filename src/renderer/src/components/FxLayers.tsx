@@ -1,6 +1,7 @@
 import { useEffect, useId, useMemo, useRef, useState, type CSSProperties } from 'react'
 import type { AppSettings, ProviderId } from '../../../main/store/types'
 import { computeSkyScene, legacyTimePhase, moonShadowPath } from '../lib/skyScene'
+import { projectBrightStars } from '../lib/brightStarCatalog'
 
 export type SkyWeatherKind =
   | 'clear'
@@ -442,6 +443,28 @@ export function SkyWeatherVisual({
   const moonLitOnRight = southernHemisphere ? scene.moonPhase >= 0.5 : scene.moonPhase < 0.5
   const moonHighlightX = moonShadow === null ? '42%' : moonLitOnRight ? '68%' : '32%'
 
+  // The REAL night sky: the bright-star catalog projected onto the panorama
+  // via local sidereal time, recomputed each 30 s scene tick (stars drift
+  // ~0.1°/tick — sub-pixel steps, no transitions needed). Needs coordinates;
+  // the coordinate-free fallback keeps the procedural dust only. The dust
+  // stays mounted beneath as faint filler so real constellations blaze over
+  // an ambient field instead of floating in an empty sky.
+  const starLatitude =
+    typeof weather?.latitude === 'number' && Number.isFinite(weather.latitude)
+      ? weather.latitude
+      : null
+  const starLongitude =
+    typeof weather?.longitude === 'number' && Number.isFinite(weather.longitude)
+      ? weather.longitude
+      : null
+  const catalogStars = useMemo(
+    () =>
+      starLatitude !== null && starLongitude !== null
+        ? projectBrightStars(sceneClockMs, starLatitude, starLongitude)
+        : [],
+    [starLatitude, starLongitude, sceneClockMs]
+  )
+
   useEffect(() => {
     if (typeof window === 'undefined') {
       return
@@ -604,7 +627,7 @@ export function SkyWeatherVisual({
        * id across the up-to-4 panes that can mount this layer at once. */}
       <div className="sky-gradient" />
       <div className="sky-glow" />
-      <div className="sky-starfield">
+      <div className={`sky-starfield${catalogStars.length > 0 ? ' is-dust' : ''}`}>
         {SKY_STARFIELD.map((star, index) => (
           <span
             key={`star-${index}`}
@@ -622,6 +645,27 @@ export function SkyWeatherVisual({
         ))}
         <span className="sky-shooting-star" />
       </div>
+      {catalogStars.length > 0 && (
+        <div className="sky-catalog-stars">
+          {catalogStars.map((star) => (
+            <span
+              key={`cat-${star.index}`}
+              className={`sky-cat-star${star.major ? ' is-major' : ''}`}
+              style={
+                {
+                  left: `${star.x.toFixed(2)}%`,
+                  top: `${star.y.toFixed(2)}%`,
+                  width: `${star.sizePx.toFixed(1)}px`,
+                  height: `${star.sizePx.toFixed(1)}px`,
+                  '--st-bright': star.brightness.toFixed(2),
+                  '--st-delay': `-${((star.index * 1.7) % 9).toFixed(2)}s`,
+                  '--st-dur': `${(5.5 + (star.index % 7) * 0.7).toFixed(1)}s`
+                } as CSSProperties
+              }
+            />
+          ))}
+        </div>
+      )}
       <div className="sky-orb" />
       {scene.moonVisible && (
         <div className="sky-moon">
@@ -653,7 +697,13 @@ export function SkyWeatherVisual({
               fill={`url(#${moonFillId})`}
             />
             <g mask={moonShadow ? `url(#${moonMaskId})` : undefined}>
-              <circle className="sky-moon-disc" cx="48" cy="48" r="44" fill={`url(#${moonFillId})`} />
+              <circle
+                className="sky-moon-disc"
+                cx="48"
+                cy="48"
+                r="44"
+                fill={`url(#${moonFillId})`}
+              />
               <g className="sky-moon-maria">
                 <ellipse cx="36" cy="38" rx="11" ry="9" />
                 <ellipse cx="58" cy="30" rx="7" ry="6" />

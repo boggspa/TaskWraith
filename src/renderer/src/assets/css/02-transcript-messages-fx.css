@@ -1297,6 +1297,54 @@
   box-shadow: 0 0 6px rgba(150, 195, 255, 0.5);
 }
 
+/* When the REAL catalog is painting, the procedural dust recedes to faint
+ * filler so actual constellations carry the sky. */
+.sky-starfield.is-dust {
+  opacity: min(1, calc(var(--sky-stars, 0) * var(--fx-sky-night-star-opacity, 1) * 0.4));
+}
+
+/* The real night sky: bright-star catalog projected by local sidereal time
+ * (lib/brightStarCatalog). Positions are inline left/top updated each 30 s
+ * scene tick — sub-pixel steps, so no per-element transitions and, unlike
+ * the dust, NO will-change: 100+ promoted compositor layers would cost more
+ * than the trivial paint. Master visibility rides the same --sky-stars
+ * astronomical gate as the dust. */
+.sky-catalog-stars {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: min(1, calc(var(--sky-stars, 0) * var(--fx-sky-night-star-opacity, 1)));
+  transition: opacity 2600ms linear;
+  contain: strict;
+  transform: translateZ(0);
+  backface-visibility: hidden;
+}
+
+.sky-cat-star {
+  position: absolute;
+  border-radius: 50%;
+  background: rgba(246, 250, 255, 0.98);
+  box-shadow:
+    0 0 6px rgba(186, 218, 255, 0.72),
+    0 0 13px rgba(126, 182, 255, 0.3);
+  animation: skyCatalogTwinkle var(--st-dur, 7s) ease-in-out infinite;
+  animation-delay: var(--st-delay, 0s);
+}
+
+.sky-cat-star.is-major {
+  box-shadow:
+    0 0 9px rgba(206, 230, 255, 0.95),
+    0 0 20px rgba(150, 198, 255, 0.55),
+    0 0 34px rgba(110, 168, 255, 0.28);
+}
+
+:is([data-theme="light"], [data-theme="citrus"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"])
+  .sky-cat-star {
+  box-shadow:
+    0 0 10px rgba(172, 211, 255, 1),
+    0 0 20px rgba(120, 178, 255, 0.6);
+}
+
 /* One rare meteor: a 46 s cycle, visible for well under a second. */
 .sky-shooting-star {
   position: absolute;
@@ -2089,6 +2137,19 @@
   45% {
     transform: scale(1.45);
     opacity: 0.95;
+  }
+}
+
+/* Catalog stars twinkle around their magnitude-driven brightness — Vega
+ * breathes near full, a mag-3 belt star flickers faintly. */
+@keyframes skyCatalogTwinkle {
+  0%, 100% {
+    transform: scale(0.88);
+    opacity: calc(var(--st-bright, 0.8) * 0.55);
+  }
+  45% {
+    transform: scale(1.16);
+    opacity: var(--st-bright, 0.9);
   }
 }
 

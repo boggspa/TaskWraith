@@ -214,6 +214,66 @@ export function isSunUp(atMs: number, latitudeDeg: number, longitudeDeg: number)
   return solarPosition(atMs, latitudeDeg, longitudeDeg).elevationDeg > SUNSET_ELEVATION_DEG
 }
 
+/** Greenwich Mean Sidereal Time in degrees [0, 360). */
+export function greenwichSiderealTimeDeg(atMs: number): number {
+  const julianDay = atMs / DAY_MS + 2440587.5
+  const d = julianDay - 2451545
+  const t = d / 36525
+  const gmst = 280.46061837 + 360.98564736629 * d + 0.000387933 * t * t - (t * t * t) / 38710000
+  return ((gmst % 360) + 360) % 360
+}
+
+/** Local Sidereal Time in degrees (east longitudes positive). */
+export function localSiderealTimeDeg(atMs: number, longitudeDeg: number): number {
+  return (((greenwichSiderealTimeDeg(atMs) + longitudeDeg) % 360) + 360) % 360
+}
+
+export interface HorizontalPosition {
+  altitudeDeg: number
+  /** Degrees clockwise from true north. */
+  azimuthDeg: number
+}
+
+/**
+ * Projects a J2000 equatorial position (right ascension / declination, both
+ * in degrees) onto the observer's sky. Precession since J2000 is ~0.4° —
+ * irrelevant at ambient-art scale, so catalog coordinates are used as-is.
+ */
+export function equatorialToHorizontal(
+  atMs: number,
+  latitudeDeg: number,
+  longitudeDeg: number,
+  rightAscensionDeg: number,
+  declinationDeg: number
+): HorizontalPosition {
+  const hourAngleDeg =
+    (((localSiderealTimeDeg(atMs, longitudeDeg) - rightAscensionDeg) % 360) + 360) % 360
+  const latRad = latitudeDeg * DEG
+  const decRad = declinationDeg * DEG
+  const haRad = hourAngleDeg * DEG
+
+  const sinAlt = clamp(
+    Math.sin(latRad) * Math.sin(decRad) + Math.cos(latRad) * Math.cos(decRad) * Math.cos(haRad),
+    -1,
+    1
+  )
+  const altitudeDeg = Math.asin(sinAlt) / DEG
+
+  const cosAlt = Math.cos(altitudeDeg * DEG)
+  let azimuthDeg = 180
+  if (cosAlt > 1e-6) {
+    const cosAz = clamp(
+      (Math.sin(decRad) - sinAlt * Math.sin(latRad)) / (cosAlt * Math.cos(latRad)),
+      -1,
+      1
+    )
+    const azFromNorth = Math.acos(cosAz) / DEG
+    // Hour angle 0–180° = object west of the meridian (setting side).
+    azimuthDeg = hourAngleDeg < 180 ? 360 - azFromNorth : azFromNorth
+  }
+  return { altitudeDeg, azimuthDeg }
+}
+
 export interface MoonPhase {
   /** 0 = new, 0.25 = first quarter, 0.5 = full, 0.75 = last quarter. */
   phase: number

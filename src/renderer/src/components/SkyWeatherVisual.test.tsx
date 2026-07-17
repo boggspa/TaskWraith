@@ -52,6 +52,24 @@ describe('SkyWeatherVisual', () => {
     expect(html).toContain('sky-orb')
   })
 
+  it('projects the real bright-star catalog over dimmed dust when coords exist', () => {
+    const withCoords = renderToStaticMarkup(
+      <SkyWeatherVisual weather={weather(false)} nowMs={MIDNIGHT_UTC} />
+    )
+    expect(withCoords).toContain('sky-catalog-stars')
+    expect(withCoords).toContain('sky-cat-star')
+    expect(withCoords).toContain('is-major')
+    expect(withCoords).toContain('sky-starfield is-dust')
+
+    // Coordinate-free fallback: procedural dust only, at full strength.
+    const { latitude: _lat, longitude: _lon, ...coordless } = weather(false)
+    const withoutCoords = renderToStaticMarkup(
+      <SkyWeatherVisual weather={coordless} nowMs={MIDNIGHT_UTC} />
+    )
+    expect(withoutCoords).not.toContain('sky-catalog-stars')
+    expect(withoutCoords).not.toContain('is-dust')
+  })
+
   it('lights the correct limb through the real lunar cycle', () => {
     // Three nights AFTER the 2024-04-08 eclipse (new moon): waxing — lit on
     // the right, highlight aimed right. Three nights BEFORE: waning — left.
