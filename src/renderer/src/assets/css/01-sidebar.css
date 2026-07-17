@@ -1256,6 +1256,7 @@
 }
 
 #sidebar-threads-panel,
+#sidebar-chat-panel,
 #sidebar-projects-panel {
   min-width: 0;
   display: flex;
@@ -1266,7 +1267,8 @@
   gap: 0;
 }
 
-#sidebar-threads-panel > .sidebar-hierarchy-section {
+#sidebar-threads-panel > .sidebar-hierarchy-section,
+#sidebar-chat-panel > .sidebar-hierarchy-section {
   margin-bottom: 0;
 }
 

@@ -1925,7 +1925,7 @@
 }
 
 /* Top chrome band. The optional update pill, masthead, workspace/thread counts,
- * Threads/Projects tabs, and search box are wrapped in .sidebar-top-chrome
+ * Chat/Code/Projects tabs, and search box are wrapped in .sidebar-top-chrome
  * (Sidebar.tsx) so the whole top region reads as ONE flat fixed-alpha band — not
  * the floating rounded card the masthead alone used to be — flush to the sidebar
  * edges. Negative margins bleed .sidebar-content's padding (--space-md, top and
@@ -2215,7 +2215,7 @@
   --segmented-control-foreground: var(--sidebar-text);
   --segmented-control-border: color-mix(in srgb, var(--sidebar-text) 16%, var(--sidebar-border));
   --segmented-control-bg: color-mix(in srgb, var(--sidebar-text) 8%, transparent);
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .sidebar-view-tab {
