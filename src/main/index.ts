@@ -15754,6 +15754,10 @@ function globalCursorMcpPath(): string {
   return join(globalCursorMcpDir(), 'mcp.json')
 }
 
+function cursorWorkspaceMcpAliasesGlobalRegistry(mcpPath: string): boolean {
+  return canonicalPath(mcpPath) === canonicalPath(globalCursorMcpPath())
+}
+
 // CR4/CR6/CRUX parity — Cursor (Composer 2.5) runtime over the shared CLI streaming
 // machinery (runCliProviderProcess → handleCliProviderJsonEvent → the
 // state.provider==='cursor' branch → the fixture-tested CursorStreamJson mapper).
@@ -15878,7 +15882,17 @@ async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
           // Even B-mode writes a transient workspace config so reserved names
           // cannot shadow the canonical global broker during this --force run.
           ...(hasWorkspaceServers || useGlobalBroker
-            ? { mcpConfigPath: mcpPath, serverEntry: workspaceServers }
+            ? {
+                mcpConfigPath: mcpPath,
+                serverEntry: workspaceServers,
+                // Global chats normalize their workspace to $HOME. In that
+                // case `<workspace>/.cursor/mcp.json` IS the global registry;
+                // stripping reserved workspace names would remove the broker
+                // immediately before `cursor-agent mcp enable` looks it up.
+                ...(useGlobalBroker && cursorWorkspaceMcpAliasesGlobalRegistry(mcpPath)
+                  ? { preserveExistingMcpServers: true }
+                  : {})
+              }
             : {})
         },
         // Full Workspace Access → drop the native shell/write deny-list (see
@@ -16008,7 +16022,10 @@ async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
         // merge strips reserved workspace names that could shadow the global
         // TaskWraith broker, while preserving unrelated workspace servers.
         mcpConfigPath: mcpPath,
-        serverEntry: useGlobalBroker ? {} : scopedEntry
+        serverEntry: useGlobalBroker ? {} : scopedEntry,
+        ...(useGlobalBroker && cursorWorkspaceMcpAliasesGlobalRegistry(mcpPath)
+          ? { preserveExistingMcpServers: true }
+          : {})
       })
       await ensureCursorMcpApproved(
         resolved.binaryPath,

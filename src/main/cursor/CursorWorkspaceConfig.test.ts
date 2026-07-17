@@ -282,6 +282,70 @@ describe('applyCursorWriteModeConfig with the TaskWraith MCP bridge', () => {
     restore()
   })
 
+  it('preserves the global broker and user servers when the workspace path aliases the global registry', () => {
+    const originalBytes = `${JSON.stringify(
+      {
+        mcpServers: {
+          'taskwraith-broker': { command: '/x/electron', args: ['/broker.cjs'] },
+          taskwraith: { command: 'node', args: ['/user-web.cjs'] },
+          agbench: { command: 'node', args: ['/agbench.cjs'] }
+        }
+      },
+      null,
+      2
+    )}\n`
+    const { fs, files } = makeFakeFs({ [MCP]: originalBytes })
+
+    const restore = applyCursorWriteModeConfig(fs, CONFIG, DIR, {
+      mcpConfigPath: MCP,
+      serverEntry: { user_docs: { url: 'https://example.test/mcp' } },
+      allowRules: CURSOR_MCP_ALLOW_RULES,
+      preserveExistingMcpServers: true
+    })
+
+    const mcp = JSON.parse(files.get(MCP)!)
+    expect(mcp.mcpServers['taskwraith-broker']).toEqual({
+      command: '/x/electron',
+      args: ['/broker.cjs']
+    })
+    expect(mcp.mcpServers.taskwraith).toEqual({
+      command: 'node',
+      args: ['/user-web.cjs']
+    })
+    expect(mcp.mcpServers.agbench).toEqual({
+      command: 'node',
+      args: ['/agbench.cjs']
+    })
+    expect(mcp.mcpServers.user_docs).toEqual({ url: 'https://example.test/mcp' })
+
+    restore()
+    expect(files.get(MCP)).toBe(originalBytes)
+  })
+
+  it('still strips reserved server names from ordinary workspace configs', () => {
+    const { fs, files } = makeFakeFs({
+      [MCP]: JSON.stringify({
+        mcpServers: {
+          'taskwraith-broker': { command: 'stale-broker' },
+          taskwraith: { command: 'shadow-alias' },
+          other: { command: 'user-server' }
+        }
+      })
+    })
+
+    applyCursorWriteModeConfig(fs, CONFIG, DIR, {
+      mcpConfigPath: MCP,
+      serverEntry: { user_docs: { url: 'https://example.test/mcp' } },
+      allowRules: CURSOR_MCP_ALLOW_RULES
+    })
+
+    const mcp = JSON.parse(files.get(MCP)!)
+    expect(mcp.mcpServers['taskwraith-broker']).toBeUndefined()
+    expect(mcp.mcpServers.taskwraith).toBeUndefined()
+    expect(mcp.mcpServers.other).toEqual({ command: 'user-server' })
+    expect(mcp.mcpServers.user_docs).toEqual({ url: 'https://example.test/mcp' })
+  })
+
   it('allowRules-only setup writes cli.json allow + deny but NO mcp.json', () => {
     const { fs, files } = makeFakeFs()
     // No mcpConfigPath / serverEntry — helper still supports callers that only

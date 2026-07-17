@@ -96,6 +96,16 @@ export interface CursorMcpBridgeOptions {
   mcpConfigPath?: string
   /** The `mcpServers` entry (from `buildCursorMcpServerEntry`; omit in "B" mode). */
   serverEntry?: Record<string, unknown>
+  /**
+   * Preserve reserved/global server entries while merging `serverEntry`.
+   *
+   * This is only for a global chat whose normalized workspace is the user's
+   * home directory: in that case the apparent workspace config path and the
+   * global registry are the same `~/.cursor/mcp.json` file. Ordinary workspace
+   * configs must leave this false so a project-local reserved name cannot
+   * shadow TaskWraith's canonical global broker.
+   */
+  preserveExistingMcpServers?: boolean
 }
 
 /**
@@ -214,7 +224,11 @@ export function applyCursorWriteModeConfig(
   const writeMcp = Boolean(mcpConfigPath && serverEntry)
   const mcp = writeMcp && mcpConfigPath ? captureFile(fs, mcpConfigPath) : null
   const mcpMerged =
-    writeMcp && serverEntry ? mergeCursorMcpConfig(mcp?.parsed ?? null, serverEntry) : null
+    writeMcp && serverEntry
+      ? bridge?.preserveExistingMcpServers
+        ? mergeGlobalCursorMcpServers(mcp?.parsed ?? null, serverEntry)
+        : mergeCursorMcpConfig(mcp?.parsed ?? null, serverEntry)
+      : null
 
   if (!dirExisted) fs.mkdirSync(dirPath, { recursive: true })
   fs.writeFileSync(configPath, `${JSON.stringify(cliMerged, null, 2)}\n`)
