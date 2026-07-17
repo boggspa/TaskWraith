@@ -99,6 +99,10 @@ import { kimiAcpSeatStatePath } from './kimi/KimiAcpSeatState'
 import { kimiCredentialCandidatePaths } from './providers/KimiCredential'
 import { runKimiAcpTurn, type KimiAcpFs } from './kimi/KimiAcpClient'
 import { classifyKimiToolPermission, isKimiSafeMcpTool } from './kimi/KimiToolPolicy'
+import {
+  estimateKimiAcpTokenUsage,
+  kimiAcpVisiblePayloadChars
+} from './kimi/KimiAcpUsage'
 import { createAcpTurnAbortController } from './acp/AcpTurnClient'
 import type {
   CodexRunState,
@@ -17668,12 +17672,18 @@ function applyKimiAcpRunEvent(state: CliProviderStreamState, evt: NormalizedGrok
   }
   if (evt.type === 'content' && evt.text) {
     state.assistantText = `${state.assistantText || ''}${evt.text}`
+    state.kimiUsageOutputChars = (state.kimiUsageOutputChars || 0) + evt.text.length
     sendAgentCompatLine(state.sender, 'kimi', { type: 'content', text: evt.text, provider: 'kimi' }, state)
   } else if (evt.type === 'thinking' && evt.text) {
+    state.kimiUsageOutputChars = (state.kimiUsageOutputChars || 0) + evt.text.length
     queueKimiThinkingChunk(state, evt.text, (text) =>
       emitCliProviderThinkingEvent(state, text)
     )
   } else if (evt.type === 'tool_use') {
+    state.kimiUsageOutputChars =
+      (state.kimiUsageOutputChars || 0) +
+      (evt.toolName || '').length +
+      kimiAcpVisiblePayloadChars(evt.toolInput)
     sendAgentCompatLine(
       state.sender,
       'kimi',
@@ -17688,6 +17698,8 @@ function applyKimiAcpRunEvent(state: CliProviderStreamState, evt: NormalizedGrok
       state
     )
   } else if (evt.type === 'tool_result') {
+    state.kimiUsageInputChars =
+      (state.kimiUsageInputChars || 0) + kimiAcpVisiblePayloadChars(evt.toolOutput)
     sendAgentCompatLine(
       state.sender,
       'kimi',
@@ -17809,6 +17821,8 @@ async function runKimiAcpProvider(
     fallback: false,
     completed: false,
     assistantText: '',
+    kimiUsageInputChars: payload.prompt.length,
+    kimiUsageOutputChars: 0,
     providerSessionId: payload.providerSessionId || null,
     approvalMode: payload.approvalMode,
     workflowMode: payload.workflowMode,
@@ -17996,6 +18010,46 @@ async function runKimiAcpProvider(
           state.completed = true
           const status = turnComplete ? terminalStatus || 'success' : 'failed'
           const failed = !turnComplete || (status !== 'success' && status !== 'end_turn')
+          const stats = estimateKimiAcpTokenUsage({
+            inputChars: state.kimiUsageInputChars || 0,
+            outputChars: state.kimiUsageOutputChars || 0,
+            model,
+            serviceTier: payload.serviceTier,
+            durationMs: Date.now() - state.startedAt
+          })
+          state.tokenUsage = stats
+          let usageRecorded = false
+          if (!state.ensembleRun && route.appChatId && route.appRunId) {
+            const chat = AppStore.getChat(route.appChatId)
+            if (chat) {
+              try {
+                AppStore.recordUsage({
+                  provider: 'kimi',
+                  workspaceId:
+                    chat.workspaceId ||
+                    (chat.scope === 'global' ? '__taskwraith_global_chats__' : ''),
+                  chatId: route.appChatId,
+                  runId: route.appRunId,
+                  usageKind: 'run',
+                  model,
+                  inputTokens: stats.input_tokens,
+                  outputTokens: stats.output_tokens,
+                  totalTokens: stats.total_tokens,
+                  tokenCountConfidence: 'estimated',
+                  costRateModel: stats._taskwraith_cost_rate_model,
+                  durationMs: stats.duration_ms,
+                  promptText: payload.prompt,
+                  responseText: state.assistantText
+                })
+                usageRecorded = true
+              } catch {
+                // Renderer recording remains the fallback when persistence fails.
+              }
+            }
+          }
+          if (usageRecorded) {
+            stats._taskwraith_usage_recorded = true
+          }
           if (kimiNativeCompactionStartedAt !== null) {
             emitContextCompactionCompatLine(
               event.sender,
@@ -18018,13 +18072,13 @@ async function runKimiAcpProvider(
             {
               type: 'result',
               status: failed ? 'failed' : 'completed',
-              stats: {},
+              stats,
               provider: 'kimi',
               session_id: state.providerSessionId || ''
             },
             state
           )
-          sendAgentCompatExit(event.sender, 'kimi', failed ? 1 : 0, route)
+          sendAgentCompatExit(event.sender, 'kimi', failed ? 1 : 0, state)
           runManager.finish(route.appRunId, failed ? 'failed' : 'completed')
         }
       }

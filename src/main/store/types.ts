@@ -3957,6 +3957,10 @@ export interface UsageRecord {
   outputTokens: number
   /** Inclusive provider total: fresh input + cache input + output when available. */
   totalTokens: number
+  /** Whether token counts came from the provider or a transparent local estimate. */
+  tokenCountConfidence?: 'reported' | 'estimated'
+  /** Rate-table row used for cost projection when it differs from the display model. */
+  costRateModel?: string
   /** Input tokens served from a provider prompt cache. */
   cacheReadInputTokens?: number
   /** Input tokens written to a provider prompt cache. */

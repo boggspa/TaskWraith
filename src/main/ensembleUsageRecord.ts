@@ -80,6 +80,13 @@ export function buildEnsembleUsageRecord(
   const inputTokenLimit = readCount(stats, ['input_tokens_limit', 'inputTokenLimit'])
   const outputTokenLimit = readCount(stats, ['output_tokens_limit', 'outputTokenLimit'])
   const totalTokenLimit = readCount(stats, ['total_tokens_limit', 'totalTokenLimit'])
+  const tokenCountConfidence =
+    stats?.['_taskwraith_token_count_confidence'] === 'estimated' ? 'estimated' : undefined
+  const costRateModel =
+    typeof stats?.['_taskwraith_cost_rate_model'] === 'string' &&
+    stats['_taskwraith_cost_rate_model'].trim()
+      ? stats['_taskwraith_cost_rate_model'].trim()
+      : undefined
 
   return {
     provider: input.provider,
@@ -91,6 +98,8 @@ export function buildEnsembleUsageRecord(
     inputTokens,
     outputTokens,
     totalTokens,
+    ...(tokenCountConfidence ? { tokenCountConfidence } : {}),
+    ...(costRateModel ? { costRateModel } : {}),
     ...(cacheReadInputTokens > 0 ? { cacheReadInputTokens } : {}),
     ...(cacheCreationInputTokens > 0 ? { cacheCreationInputTokens } : {}),
     ...(input.ensemblePromptKind ? { ensemblePromptKind: input.ensemblePromptKind } : {}),

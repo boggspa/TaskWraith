@@ -128,6 +128,22 @@ describe('buildEnsembleUsageRecord', () => {
     expect(without).not.toHaveProperty('totalTokenLimit')
   })
 
+  it('persists transparent estimate provenance and the cost-rate model', () => {
+    const rec = buildEnsembleUsageRecord(
+      base({
+        input_tokens: 100,
+        output_tokens: 20,
+        _taskwraith_token_count_confidence: 'estimated',
+        _taskwraith_cost_rate_model: 'kimi-k2.7-code-highspeed'
+      })
+    )
+
+    expect(rec).toMatchObject({
+      tokenCountConfidence: 'estimated',
+      costRateModel: 'kimi-k2.7-code-highspeed'
+    })
+  })
+
   it('copies content-free ensemble prompt telemetry when provided', () => {
     const rec = buildEnsembleUsageRecord({
       ...base({ total_tokens: 12, duration_ms: 10 }),
