@@ -2336,6 +2336,7 @@ function App(): React.JSX.Element {
   >(async () => {})
   const usageRefreshInFlightRef = useRef(false)
   const usageRefreshLastFiredAtRef = useRef<number | null>(null)
+  const usageRecordsRefreshPendingRef = useRef(false)
   const rawLogHydrationInFlightRef = useRef<Set<string>>(new Set())
   const [imageAttachmentsByChatId, setImageAttachmentsByChatId] = useState<
     Record<string, ImageAttachment[]>
@@ -3382,6 +3383,24 @@ function App(): React.JSX.Element {
   })
   const fxBurstTimeoutRef = useRef<number | null>(null)
   const currentWorkspaceIdRef = useRef<string | null>(null)
+  const completeUsageRefresh = () => {
+    usageRefreshInFlightRef.current = false
+    if (!usageRecordsRefreshPendingRef.current) return
+
+    // A usage-changed broadcast can land while the quota-only heartbeat is in
+    // flight. Coalesce any number of those broadcasts into one forced records
+    // load after the current request, so the lightweight poll never makes a
+    // newly completed run disappear until some later navigation refresh.
+    usageRecordsRefreshPendingRef.current = false
+    usageRefreshInFlightRef.current = true
+    usageRefreshLastFiredAtRef.current = Date.now()
+    void refreshUsageSummaryRef
+      .current(currentWorkspaceIdRef.current || undefined, undefined, undefined, {
+        forceUsageRecords: true
+      })
+      .catch(() => {})
+      .finally(completeUsageRefresh)
+  }
   const currentWorkspacePathRef = useRef<string | null>(null)
   const workspaceTrustGenerationRef = useRef(0)
   const currentChatIdRef = useRef<string | null>(null)
@@ -7882,9 +7901,7 @@ function App(): React.JSX.Element {
         // `refreshUsageSummary` catches expected IPC failures internally.
         return false
       })
-      .finally(() => {
-        usageRefreshInFlightRef.current = false
-      })
+      .finally(completeUsageRefresh)
   }
 
   const handleManualUsageRefresh = async () => {
@@ -9344,9 +9361,7 @@ function App(): React.JSX.Element {
           // unexpected, but we still want the in-flight flag cleared so
           // future heartbeats fire.
         })
-        .finally(() => {
-          usageRefreshInFlightRef.current = false
-        })
+        .finally(completeUsageRefresh)
     }
 
     const intervalId = window.setInterval(() => fireRefresh(false), INTERVAL_MS)
@@ -10642,9 +10657,9 @@ function App(): React.JSX.Element {
               { forceUsageRecords: true }
             )
               .catch(() => {})
-              .finally(() => {
-                usageRefreshInFlightRef.current = false
-              })
+              .finally(completeUsageRefresh)
+          } else {
+            usageRecordsRefreshPendingRef.current = true
           }
           // Nudge the sidebar API-spend view to re-query the priced records.
           setUsageRefreshTick((tick) => tick + 1)
