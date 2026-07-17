@@ -359,7 +359,7 @@ describe('Sidebar primary views', () => {
   })
   const mixedChats = [workspacePinned, workspaceRecent, globalPinned, globalRecent]
 
-  it('renders Chat, Code, and Projects in primary-mode order', () => {
+  it('renders Chat, Code, and Work in primary-mode order', () => {
     stubSidebarStorage({})
 
     const html = renderSidebar([workspaceRecent])
@@ -372,7 +372,8 @@ describe('Sidebar primary views', () => {
     expect(codeTabIndex).toBeLessThan(projectsTabIndex)
     expect(html).toContain('>Chat</button>')
     expect(html).toContain('>Code</button>')
-    expect(html).toContain('>Projects</button>')
+    // Label is "Work"; the tab id stays 'projects' (see SIDEBAR_ACTIVE_TABS).
+    expect(html).toContain('>Work</button>')
   })
 
   it('keeps workspace pinned and recent chats in Code only', () => {

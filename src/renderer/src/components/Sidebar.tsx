@@ -407,6 +407,10 @@ const getLinkedChildRouteLabel = (chat: ChatRecord, parentChat: ChatRecord | nul
 }
 
 const SIDEBAR_ACTIVE_TAB_STORAGE_KEY = 'taskwraith-sidebar-active-tab'
+// The third tab presents as "Work" but its id stays 'projects': persisted tab
+// state, the panel/tab DOM ids, and the surface-toggle planner all key on the
+// id, so the label can change (or be A/B'd) without touching the route. The
+// noun inside the panel remains "Projects".
 type SidebarActiveTab = 'chat' | 'threads' | 'projects'
 const SIDEBAR_ACTIVE_TABS: readonly SidebarActiveTab[] = ['chat', 'threads', 'projects']
 
@@ -4351,7 +4355,7 @@ export function Sidebar({
               }}
               tabIndex={activeSidebarTab === tab ? 0 : -1}
             >
-              {tab === 'chat' ? 'Chat' : tab === 'threads' ? 'Code' : 'Projects'}
+              {tab === 'chat' ? 'Chat' : tab === 'threads' ? 'Code' : 'Work'}
             </button>
           ))}
         </div>
