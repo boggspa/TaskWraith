@@ -217,8 +217,17 @@ interface HostWeatherState {
   location?: string
   isDay: boolean
   updatedAt: string
-  source: 'wttr' | 'fallback'
+  source: 'open-meteo' | 'fallback'
   error?: string
+  /** Coordinates rounded to ~11 km; drive the renderer's local astronomy. */
+  latitude?: number
+  longitude?: number
+  cloudCoverPct?: number
+  precipitationMmHr?: number
+  snowfallCmHr?: number
+  windSpeedKph?: number
+  windGustKph?: number
+  humidityPct?: number
 }
 
 type AgentApprovalAction =
